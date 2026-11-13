@@ -1,0 +1,133 @@
+0x0013A9C0  and        al, 0xc
+0x0013A9C2  jle        0x13a9c5
+0x0013A9C4  push       eax
+0x0013A9C5  inc        ecx
+0x0013A9C6  mov        dword ptr [esp], 0x80000000
+0x0013A9CD  mov        dword ptr [esp + 4], 0x4147ffff
+0x0013A9D5  xor        eax, eax
+0x0013A9D7  mov        al, byte ptr [0x1ddad]
+0x0013A9DC  cmp        eax, 3
+0x0013A9DF  jl         0x13aa04
+0x0013A9E1  fld        qword ptr [esp + 8]
+0x0013A9E5  fld        st(0)
+0x0013A9E7  fld        qword ptr [esp]
+0x0013A9EA  fxch       st(1)
+0x0013A9EC  fdiv       st(1)
+0x0013A9EE  fmulp      st(1)
+0x0013A9F0  fsubp      st(1)
+0x0013A9F2  fcomp      qword ptr [0x1370c]
+0x0013A9F8  fnstsw     ax
+0x0013A9FA  sahf       
+0x0013A9FB  jbe        0x13aa04
+0x0013A9FD  or         byte ptr [0x1e89c], 1
+0x0013AA04  add        esp, 0x10
+0x0013AA07  ret        
+0x0013AA08  push       ebx
+0x0013AA09  push       ecx
+0x0013AA0A  push       edx
+0x0013AA0B  push       esi
+0x0013AA0C  push       edi
+0x0013AA0D  xor        eax, eax
+0x0013AA0F  mov        edx, 0x8000
+0x0013AA14  mov        al, byte ptr [0x1e58e]
+0x0013AA19  mov        dword ptr [0x21c54], edx
+0x0013AA1F  cmp        eax, 2
+0x0013AA22  jl         0x13aa29
+0x0013AA24  cmp        eax, 8
+0x0013AA27  jle        0x13aa30
+0x0013AA29  mov        eax, 1
+0x0013AA2E  jmp        0x13aa32
+0x0013AA30  xor        eax, eax
+0x0013AA32  test       eax, eax
+0x0013AA34  je         0x13aa6b
+0x0013AA36  call       0x13bf15
+0x0013AA3B  cmp        eax, 1
+0x0013AA3E  jne        0x13aa6b
+0x0013AA40  mov        edx, 0xfc9db
+0x0013AA45  mov        eax, 0xfc9d0
+0x0013AA4A  sub        edx, 0xfc9d0
+0x0013AA50  mov        di, dx
+0x0013AA53  shr        edx, 0x10
+0x0013AA56  mov        si, dx
+0x0013AA59  mov        bx, ax
+0x0013AA5C  shr        eax, 0x10
+0x0013AA5F  mov        cx, ax
+0x0013AA62  mov        ax, 0x600
+0x0013AA66  int        0x31
+0x0013AA68  sbb        ax, ax
+0x0013AA6B  pop        edi
+0x0013AA6C  pop        esi
+0x0013AA6D  pop        edx
+0x0013AA6E  pop        ecx
+0x0013AA6F  pop        ebx
+0x0013AA70  ret        
+0x0013AA71  push       ebx
+0x0013AA72  push       ecx
+0x0013AA73  push       edx
+0x0013AA74  mov        ah, byte ptr [0x1e5e1]
+0x0013AA7A  and        ah, 0xf8
+0x0013AA7D  mov        dl, ah
+0x0013AA7F  mov        byte ptr [0x1e5e1], ah
+0x0013AA85  or         dl, 4
+0x0013AA88  mov        ecx, 0x1e5a0
+0x0013AA8D  mov        byte ptr [0x1e5e1], dl
+0x0013AA93  jmp        0x13aad7
+0x0013AA95  mov        eax, 8
+0x0013AA9A  call       0x10afde
+0x0013AA9F  mov        ebx, eax
+0x0013AAA1  test       eax, eax
+0x0013AAA3  jne        0x13aac4
+0x0013AAA5  mov        eax, 8
+0x0013AAAA  call       0x10afde
+0x0013AAAF  mov        ebx, eax
+0x0013AAB1  test       eax, eax
+0x0013AAB3  jne        0x13aac4
+0x0013AAB5  mov        edx, 1
+0x0013AABA  mov        eax, 0x13714
+0x0013AABF  call       0x121002
+0x0013AAC4  mov        eax, dword ptr [0x6b70c]
+0x0013AAC9  mov        dword ptr [ebx + 4], ecx
+0x0013AACC  mov        dword ptr [0x6b70c], ebx
+0x0013AAD2  add        ecx, 0x1a
+0x0013AAD5  mov        dword ptr [ebx], eax
+0x0013AAD7  mov        edx, dword ptr [ecx + 0xc]
+0x0013AADA  test       edx, edx
+0x0013AADC  jne        0x13aa95
+0x0013AADE  mov        dword ptr [0x6a1f4], edx
+0x0013AAE4  pop        edx
+0x0013AAE5  pop        ecx
+0x0013AAE6  pop        ebx
+0x0013AAE7  ret        
+0x0013AAE8  xor        eax, eax
+0x0013AAEA  call       0x13aaf9
+0x0013AAEF  jmp        0x12d5b5
+0x0013AAF4  mov        eax, 5
+0x0013AAF9  push       ebx
+0x0013AAFA  push       ecx
+0x0013AAFB  push       edx
+0x0013AAFC  push       esi
+0x0013AAFD  mov        edx, eax
+0x0013AAFF  shl        eax, 2
+0x0013AB02  sub        eax, edx
+0x0013AB04  shl        eax, 2
+0x0013AB07  add        eax, edx
+0x0013AB09  mov        esi, 0x1e5a0
+0x0013AB0E  add        eax, eax
+0x0013AB10  xor        ebx, ebx
+0x0013AB12  add        esi, eax
+0x0013AB14  mov        eax, dword ptr [0x6b70c]
+0x0013AB19  jmp        0x13ab46
+0x0013AB1B  mov        ecx, dword ptr [eax]
+0x0013AB1D  mov        eax, dword ptr [eax + 4]
+0x0013AB20  mov        edx, 1
+0x0013AB25  test       byte ptr [eax + 0xd], 0x40
+0x0013AB29  jne        0x13ab3e
+0x0013AB2B  test       byte ptr [eax + 0xd], 8
+0x0013AB2F  jne        0x13ab3e
+0x0013AB31  cmp        eax, esi
+0x0013AB33  jb         0x13ab44
+0x0013AB35  cmp        eax, 0x1e622
+0x0013AB3A  jae        0x13ab3e
+0x0013AB3C  xor        edx, edx
+0x0013AB3E  .byte      0xe8
+0x0013AB3F  push       ebx
