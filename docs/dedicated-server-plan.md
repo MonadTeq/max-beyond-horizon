@@ -4,7 +4,7 @@
 
 Цель — поднять выделенный сервер (dedicated server) для M.A.X. Port, который
 работает без участия игрока-хоста: круглосуточные публичные игры, серверные
-ИИ-команды, лобби/матчмейкинг, администрирование. В `horizon-server/` лежит
+ИИ-команды, лобби/матчмейкинг, администрирование. В `max-horizon-server/` лежит
 готовый Rust-фреймворк игрового сервера (WebSocket/WebTransport, плагины,
 событийная шина, GORC-репликация) — он станет управляющей плоскостью, а
 симуляция игры останется в родном C++-движке.
@@ -56,7 +56,7 @@
 ## 3. Целевая архитектура
 
 ```text
-                        Horizon Server (Rust, horizon-server/)
+                        Horizon Server (Rust, max-horizon-server/)
   ┌──────────────────────────────────────────────────────────────────┐
   │  WS/WebTransport listeners (config.toml)                          │
   │   ├─ max_lobby    — список игр, создание/вход, матчмейкинг        │
@@ -190,7 +190,7 @@ zstd/lz4; опционально WebTransport/QUIC с датаграммами �
 
 - Новый транспорт `"horizon"` (настройка `transport`): клиент коннектится к
   Horizon по WS (`libcurl`/минимальный WS-клиент или встроенный в
-  `horizon-server` формат JSON), получает список игр и тикет, затем обычный
+  `max-horizon-server` формат JSON), получает список игр и тикет, затем обычный
   ENet-коннект к адресу сессии.
 - В `src/networkmenu.cpp`: вместо «Searching for hosts» — список серверов из
   Horizon (название, карта, игроки, пинг), кнопка «подключиться», ввод пароля.
@@ -276,14 +276,14 @@ zstd/lz4; опционально WebTransport/QUIC с датаграммами �
   `server_session_ticket`) + SHA256-хеш данных в `TRANSPORT_PACKET_00`,
   reject `TRANSPORT_PACKET_03` с причиной (version/ticket/data); негативный
   тест с неверным тикетом пройден.
-- **Крейт `max_session` (horizon-server/crates/max_session) — готов**:
+- **Крейт `max_session` (max-horizon-server/crates/max_session) — готов**:
   `SessionManager` (start/stop/restart/health/list/shutdown_all), пул портов,
   изолированная директория сессии (копия шаблона + `settings.json` с портом,
   тикетом и правилами игры), watchdog с рестартом при падении и backoff,
   генерация тикета для защищённых сессий. Сборка и 19 тестов проходят
   (`cargo test -p max_session`); интеграционный smoke-тест гоняет реальный
   headless-процесс при установленном `MAX_SESSION_TEST_EXE`.
-- **Плагин `max_lobby` (horizon-server/crates/max_lobby) — готов**:
+- **Плагин `max_lobby` (max-horizon-server/crates/max_lobby) — готов**:
   клиентские события `max_lobby:list_games` / `create_game` / `join_game`,
   ленивый SessionManager из `MAX_*`-переменных, реестр сессий без хранения
   паролей/тикетов в открытом виде, `shutdown_all()` на остановке.
@@ -378,7 +378,7 @@ zstd/lz4; опционально WebTransport/QUIC с датаграммами �
   "max-admin") во всех 5 событиях max_admin. Тесты: max_session 31,
   max_lobby 5, max_admin 7 — все зелёные; + бонус-тест разбора реального
   config.toml.
-- **B2 (max_auth) — готов**: крейт `horizon-server/crates/max_auth` —
+- **B2 (max_auth) — готов**: крейт `max-horizon-server/crates/max_auth` —
   `Auth::issue/verify` (тикет `v1.<session>.<player>.<expiry>.<hmac>`),
   constant-time HMAC-SHA256 (`hmac`/`subtle`), fuzz-безопасный парсинг,
   инъекция времени в тестах; 17 тестов + doctest зелёные, `max_lobby` не сломан

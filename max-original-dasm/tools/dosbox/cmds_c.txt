@@ -1,0 +1,32 @@
+# Рабочая цепочка поимки входа игры (T=0x54C в DOSBox-X, memsize=64).
+# Вход: 0x20D714 = XMS-база 0x110010 + LE.eip 0xFC704.
+# После GDT обязателен Q (выход из пейджера), иначе RUN уходит в пейджер.
+BP 829:2C6C
+BP 552:1141
+BP 667:D
+BP 5F6:2
+BP 90E:7
+BP 20D71:4
+BP 20D72:4
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 30
