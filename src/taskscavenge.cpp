@@ -1,0 +1,144 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "taskscavenge.hpp"
+
+#include "access.hpp"
+#include "ai.hpp"
+#include "task_manager.hpp"
+#include "taskremoverubble.hpp"
+#include "units_manager.hpp"
+
+TaskScavenge::TaskScavenge(uint16_t team_) : Task(team_, nullptr, TASK_PRIORITY_SCAVENGE) { wait_for_unit = false; }
+
+TaskScavenge::~TaskScavenge() {}
+
+bool TaskScavenge::IsUnitUsable(UnitInfo& unit) { return unit.GetUnitType() == BULLDOZR; }
+
+std::string TaskScavenge::WriteStatusLog() const { return "Scavenge raw materials."; }
+
+uint8_t TaskScavenge::GetType() const { return TaskType_TaskScavenge; }
+
+bool TaskScavenge::IsNeeded() { return units.GetCount() == 0; }
+
+void TaskScavenge::AddUnit(UnitInfo& unit) {
+    units.PushBack(unit);
+    unit.AddTask(this);
+    Task_RemindMoveFinished(&unit);
+}
+
+void TaskScavenge::BeginTurn() {
+    if (units.GetCount() == 0 && !wait_for_unit) {
+        SmartPointer<UnitInfo> dummy_unit(new (std::nothrow) UnitInfo(BULLDOZR, m_team, 0xFFFF));
+
+        for (auto it = UnitsManager_GroundCoverUnits.Begin(), it_end = UnitsManager_GroundCoverUnits.End();
+             it != it_end; ++it) {
+            if ((*it).IsVisibleToTeam(m_team) && ((*it).GetUnitType() == SMLRUBLE || (*it).GetUnitType() == LRGRUBLE) &&
+                !Ai_IsDangerousLocation(&*dummy_unit, Point((*it).grid_x, (*it).grid_y), CAUTION_LEVEL_AVOID_ALL_DAMAGE,
+                                        true)) {
+                SmartPointer<TaskObtainUnits> obtain_task(new (std::nothrow)
+                                                              TaskObtainUnits(this, Point((*it).grid_x, (*it).grid_y)));
+                obtain_task->AddUnit(BULLDOZR);
+                wait_for_unit = true;
+
+                TaskManager.AppendTask(*obtain_task);
+
+                return;
+            }
+        }
+    }
+
+    if (!IsScheduledForTurnEnd()) {
+        TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+    }
+}
+
+void TaskScavenge::ChildComplete(Task* task) {
+    if (task->GetType() == TaskType_TaskObtainUnits) {
+        wait_for_unit = false;
+    }
+}
+
+void TaskScavenge::EndTurn() {
+    for (auto it = units.Begin(), it_end = units.End(); it != it_end; ++it) {
+        if (Execute(*it)) {
+            break;
+        }
+    }
+}
+
+bool TaskScavenge::Execute(UnitInfo& unit) {
+    bool result;
+
+    if (unit.IsReadyForOrders(this)) {
+        UnitInfo* target = nullptr;
+        int32_t distance;
+        int32_t minimum_distance{INT32_MAX};
+
+        for (auto it = UnitsManager_GroundCoverUnits.Begin(), it_end = UnitsManager_GroundCoverUnits.End();
+             it != it_end; ++it) {
+            if ((*it).IsVisibleToTeam(m_team) && ((*it).GetUnitType() == SMLRUBLE || (*it).GetUnitType() == LRGRUBLE)) {
+                Point position((*it).grid_x, (*it).grid_y);
+
+                distance = Access_GetSquaredDistance(&unit, it->Get());
+
+                if ((!target || distance < minimum_distance) &&
+                    !Ai_IsDangerousLocation(&unit, position, CAUTION_LEVEL_AVOID_ALL_DAMAGE, true) &&
+                    Access_GetRemovableRubble(m_team, (*it).grid_x, (*it).grid_y)) {
+                    target = it->Get();
+                    minimum_distance = distance;
+                }
+            }
+        }
+
+        if (target) {
+            SmartPointer<Task> remove_rubble_task(new (std::nothrow)
+                                                      TaskRemoveRubble(this, target, TASK_PRIORITY_SCAVENGE));
+
+            remove_rubble_task->AddUnit(unit);
+
+            TaskManager.AppendTask(*remove_rubble_task);
+
+            result = true;
+
+        } else {
+            result = false;
+        }
+
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+void TaskScavenge::RemoveSelf() {
+    for (auto it = units.Begin(), it_end = units.End(); it != it_end; ++it) {
+        TaskManager.ClearUnitTasksAndRemindAvailable(it->Get());
+    }
+
+    units.Clear();
+    m_parent = nullptr;
+
+    TaskManager.RemoveTask(*this);
+}
+
+void TaskScavenge::RemoveUnit(UnitInfo& unit) { units.Remove(unit); }

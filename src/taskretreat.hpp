@@ -1,0 +1,54 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#ifndef TASKRETREAT_HPP
+#define TASKRETREAT_HPP
+
+#include "task.hpp"
+
+class TaskRetreat : public Task {
+    SmartPointer<UnitInfo> unit_to_retreat;
+    int16_t search_radius;
+    Point position;
+    int16_t direction;
+    int16_t steps_in_direction;
+    char caution_level;
+    char found_valid_position;
+
+    void RemoveTask();
+    void Search();
+
+    static void TaskMoveResultCallback(Task* task, UnitInfo* unit, char result);
+
+public:
+    TaskRetreat(UnitInfo* unit, Task* task, uint16_t priority, int32_t caution_level);
+    ~TaskRetreat();
+
+    bool IsUnitTransferable(UnitInfo& unit);
+    std::string WriteStatusLog() const;
+    uint8_t GetType() const;
+    void Init();
+    void EndTurn();
+    void RemoveSelf();
+    void RemoveUnit(UnitInfo& unit);
+};
+
+#endif /* TASKRETREAT_HPP */

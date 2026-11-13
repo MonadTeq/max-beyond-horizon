@@ -1,0 +1,23 @@
+[package]
+name = "max_lobby"
+version = "0.1.0"
+edition = "2021"
+description = "M.A.X. Port lobby plugin for Horizon: creates, lists and joins headless game sessions through max_session."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+horizon_event_system = { path = "../horizon_event_system" }
+max_session = { path = "../max_session" }
+max_auth = { path = "../max_auth" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+# Required by the create_simple_plugin! macro expansion (futures::executor::block_on),
+# the same way plugin_greeter and plugin_logger need it.
+futures = { workspace = true }

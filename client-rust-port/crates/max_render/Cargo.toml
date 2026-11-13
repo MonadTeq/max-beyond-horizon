@@ -1,0 +1,9 @@
+[package]
+name = "max_render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+max_core = { path = "../max_core" }
+tracing.workspace = true

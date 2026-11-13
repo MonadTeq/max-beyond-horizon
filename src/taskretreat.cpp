@@ -1,0 +1,190 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "taskretreat.hpp"
+
+#include "access.hpp"
+#include "aiplayer.hpp"
+#include "resource_manager.hpp"
+#include "task_manager.hpp"
+#include "taskmove.hpp"
+#include "ticktimer.hpp"
+#include "transportermap.hpp"
+
+TaskRetreat::TaskRetreat(UnitInfo* unit, Task* task, uint16_t priority, int32_t caution_level_)
+    : Task(unit->team, task, priority), unit_to_retreat(unit), caution_level(caution_level_) {}
+
+TaskRetreat::~TaskRetreat() {}
+
+bool TaskRetreat::IsUnitTransferable(UnitInfo& unit) { return unit_to_retreat != unit; }
+
+std::string TaskRetreat::WriteStatusLog() const { return "Retreat from danger"; }
+
+uint8_t TaskRetreat::GetType() const { return TaskType_TaskRetreat; }
+
+void TaskRetreat::Init() {
+    search_radius = 0;
+    position.x = unit_to_retreat->grid_x;
+    position.y = unit_to_retreat->grid_y;
+    direction = 6;
+    steps_in_direction = 0;
+    found_valid_position = 1;
+
+    for (auto it = unit_to_retreat->GetTasks().Begin(), it_end = unit_to_retreat->GetTasks().End(); it != it_end;
+         ++it) {
+        if ((*it).GetType() == TaskType_TaskRetreat) {
+            TaskManager.RemoveTask(*this);
+            return;
+        }
+    }
+
+    unit_to_retreat->AddTask(this);
+
+    RemindTurnEnd(true);
+}
+
+void TaskRetreat::EndTurn() {
+    if (unit_to_retreat != nullptr && unit_to_retreat->IsReadyForOrders(this)) {
+        Point site(unit_to_retreat->grid_x, unit_to_retreat->grid_y);
+
+        if (AiPlayer_Teams[m_team].GetDamagePotential(&*unit_to_retreat, site, caution_level, false)) {
+            Search();
+
+        } else {
+            RemoveTask();
+        }
+    }
+}
+
+void TaskRetreat::RemoveSelf() {
+    if (unit_to_retreat != nullptr) {
+        unit_to_retreat->RemoveTask(this);
+        unit_to_retreat = nullptr;
+        m_parent = nullptr;
+
+        TaskManager.RemoveTask(*this);
+    }
+}
+
+void TaskRetreat::RemoveTask() {
+    if (unit_to_retreat != nullptr) {
+        unit_to_retreat->RemoveTask(this, false);
+        unit_to_retreat = nullptr;
+        m_parent = nullptr;
+
+        TaskManager.RemoveTask(*this);
+    }
+}
+
+void TaskRetreat::Search() {
+    int16_t** damage_potential_map;
+    Rect bounds;
+    int32_t unit_hits;
+    int32_t index;
+
+    damage_potential_map = AiPlayer_Teams[m_team].GetDamagePotentialMap(&*unit_to_retreat, caution_level, false);
+
+    rect_init(&bounds, 0, 0, ResourceManager_MapSize.x, ResourceManager_MapSize.y);
+
+    unit_hits = unit_to_retreat->hits;
+
+    TransporterMap transporter_map(&*unit_to_retreat, 0x01, CAUTION_LEVEL_NONE);
+
+    index = 0;
+
+    if (caution_level == CAUTION_LEVEL_AVOID_ALL_DAMAGE) {
+        unit_hits = 1;
+    }
+
+    if (damage_potential_map) {
+        while (TickTimer_HaveTimeToThink() || index < 20) {
+            ++steps_in_direction;
+
+            if (steps_in_direction >= search_radius) {
+                direction += 2;
+
+                if (direction >= 8) {
+                    search_radius += 2;
+
+                    if (found_valid_position == 0 ||
+                        search_radius > unit_to_retreat->GetBaseValues()->GetAttribute(ATTRIB_SPEED) * 2) {
+                        unit_to_retreat->ChangeAiStateBits(UnitInfo::AI_STATE_NO_RETREAT, true);
+                        RemoveTask();
+
+                        return;
+                    }
+
+                    --position.x;
+                    ++position.y;
+
+                    direction = 0;
+
+                    found_valid_position = 0;
+                }
+
+                steps_in_direction = 0;
+            }
+
+            position += DIRECTION_OFFSETS[direction];
+
+            ++index;
+
+            if (Access_IsInsideBounds(&bounds, &position)) {
+                found_valid_position = 1;
+
+                if (damage_potential_map[position.x][position.y] < unit_hits) {
+                    if (Access_IsAccessible(unit_to_retreat->GetUnitType(), m_team, position.x, position.y,
+                                            AccessModifier_SameClassBlocks)) {
+                        if (transporter_map.Search(position)) {
+                            SmartPointer<TaskMove> task_move(new (std::nothrow) TaskMove(
+                                &*unit_to_retreat, this, 0, CAUTION_LEVEL_NONE, position, &TaskMoveResultCallback));
+                            task_move->SetFinishOnArrival(true);
+
+                            TaskManager.AppendTask(*task_move);
+
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        RemindTurnEnd(true);
+
+    } else {
+        RemoveTask();
+    }
+}
+
+void TaskRetreat::TaskMoveResultCallback(Task* task, UnitInfo* unit, char result) {
+    TaskRetreat* retreat_task = dynamic_cast<TaskRetreat*>(task);
+
+    if (retreat_task->unit_to_retreat != nullptr) {
+        if (result == 3 || result == 0) {
+            retreat_task->RemoveTask();
+
+        } else {
+            retreat_task->Search();
+        }
+    }
+}
+
+void TaskRetreat::RemoveUnit(UnitInfo& unit) { RemoveTask(); }

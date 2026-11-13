@@ -1,0 +1,78 @@
+{
+    "buildId": "51306888885882103",
+    "clientId": "49964621806168969",
+    "gameId": "1207663773",
+    "language": "English",
+    "languages": [
+        "en-US"
+    ],
+    "name": "M.A.X.",
+    "playTasks": [
+        {
+            "arguments": "-conf \"..\\dosboxMAX1.conf\" -conf \"..\\dosboxMAX1_single.conf\" -noconsole -c \"exit\"",
+            "category": "game",
+            "isPrimary": true,
+            "languages": [
+                "*"
+            ],
+            "name": "M.A.X.",
+            "path": "DOSBOX\\dosbox.exe",
+            "type": "FileTask",
+            "workingDir": "DOSBOX"
+        },
+        {
+            "arguments": "1207663773",
+            "category": "tool",
+            "languages": [
+                "*"
+            ],
+            "name": "Graphic Mode Setup",
+            "path": "DOSBOX\\GOGDOSConfig.exe",
+            "type": "FileTask",
+            "workingDir": "DOSBOX"
+        },
+        {
+            "arguments": "1207663773 NET",
+            "category": "tool",
+            "languages": [
+                "*"
+            ],
+            "name": "Launch Multiplayer",
+            "path": "DOSBOX\\GOGDOSConfig.exe",
+            "type": "FileTask",
+            "workingDir": "DOSBOX"
+        },
+        {
+            "arguments": "-conf \"..\\dosboxMAX1.conf\" -conf \"..\\dosboxMAX1_settings.conf\" -noconsole -c \"exit\"",
+            "category": "tool",
+            "icon": "DOSBOX\\dosbox.exe",
+            "languages": [
+                "*"
+            ],
+            "name": "Sound Settings",
+            "path": "DOSBOX\\dosbox.exe",
+            "type": "FileTask",
+            "workingDir": "DOSBOX"
+        },
+        {
+            "category": "document",
+            "languages": [
+                "*"
+            ],
+            "link": "http://www.gog.com/support/m_a_x_m_a_x_2",
+            "name": "Support",
+            "type": "URLTask"
+        },
+        {
+            "category": "document",
+            "languages": [
+                "*"
+            ],
+            "name": "Manual",
+            "path": "Manual.pdf",
+            "type": "FileTask"
+        }
+    ],
+    "rootGameId": "1207663773",
+    "version": 1
+}

@@ -1,0 +1,6 @@
+Objective: Engineer must be building a gun turret when the turn ends.
+
+Your sole engineer is down to 4 raw materials. The material storage unit is too far to reach in one turn to resupply directly from it and start building on the first turn. Fortunately M.A.X allows transfer of materials to flow through any part of the complex, as long as the connectivity exists. In other words, your engineer can resupply by just moving next to the closest structure that has connection to material reserves.
+
+Move your engineer next to the nearest connector. Now select the storage unit or the mining station. Click again to display its commands and select "Transfer". Now click on your engineer to designate the other participant. Adjust values until both participants in the transfer operation have the desired levels. Note that this mechanism allows transferring both to and from.
+

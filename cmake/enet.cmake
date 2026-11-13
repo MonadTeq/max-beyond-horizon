@@ -1,0 +1,52 @@
+include(versions)
+include(FetchContent)
+
+if(ENET_RELEASE)
+	if(EXISTS ${PROJECT_SOURCE_DIR}/dependencies/${ENET_FILE})
+		file(${ENET_HASH_TYPE} ${PROJECT_SOURCE_DIR}/dependencies/${ENET_FILE} ENET_FILE_HASH)
+
+		if(${ENET_FILE_HASH} STREQUAL ${ENET_HASH})
+			set(ENET_URI file://${PROJECT_SOURCE_DIR}/dependencies/${ENET_FILE})
+		endif()
+	endif()
+
+	FetchContent_Declare(
+		ENET
+		TIMEOUT 60
+		URL ${ENET_URI}
+		URL_HASH ${ENET_HASH_TYPE}=${ENET_HASH}
+		DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+		OVERRIDE_FIND_PACKAGE
+		EXCLUDE_FROM_ALL
+	)
+else()
+	FetchContent_Declare(
+		ENET
+		TIMEOUT 60
+		GIT_REPOSITORY ${ENET_REPOSITORY}
+		GIT_TAG ${ENET_TAG}
+		DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+		OVERRIDE_FIND_PACKAGE
+		EXCLUDE_FROM_ALL
+	)
+endif()
+
+# Force Release build without debug info (treat as system library)
+set(CMAKE_BUILD_TYPE_BACKUP ${CMAKE_BUILD_TYPE})
+set(CMAKE_BUILD_TYPE Release)
+
+FetchContent_MakeAvailable(ENET)
+
+# Restore build configuration
+set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE_BACKUP})
+
+set(ENET_BINARY_DIR ${PROJECT_BINARY_DIR}/_deps/enet-build)
+set(ENET_SOURCE_DIR ${PROJECT_BINARY_DIR}/_deps/enet-src)
+
+file(COPY ${ENET_SOURCE_DIR}/include DESTINATION ${ENET_BINARY_DIR})
+
+set_property(TARGET enet APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${ENET_BINARY_DIR}/include")
+
+if(NOT TARGET Enet::Enet)
+	add_library(Enet::Enet ALIAS enet)
+endif()

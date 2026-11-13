@@ -1,0 +1,6 @@
+Objective: Store gold in storage
+
+Move your surveyor around your complex until you locate gold deposits.  Use your constructor to build a mine positioned above the spot with gold.  Have your engineers build a gold vault, a new power generator, and connectors that connect all the new structures to the rest.
+
+Use your tanks and scouts to defend your construction site. Mission ends when your new mining station transfers at least 1 unit of unrefined gold into storage vault.
+

@@ -1,0 +1,247 @@
+//! Server configuration types and defaults.
+//!
+//! This module contains the server configuration structure and default values
+//! used to initialize and customize the game server behavior.
+
+use horizon_event_system::RegionBounds;
+use plugin_system::PluginSafetyConfig;
+use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+
+/// Configuration structure for the game server.
+/// 
+/// Contains all necessary parameters to configure server behavior including
+/// network settings, region boundaries, plugin management, and connection limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// The socket address to bind the server to
+    pub bind_address: SocketAddr,
+    
+    /// The spatial bounds for this server region
+    pub region_bounds: RegionBounds,
+    
+    /// Directory path where plugins are stored
+    pub plugin_directory: PathBuf,
+    
+    /// Maximum number of concurrent connections allowed
+    pub max_connections: usize,
+    
+    /// Connection timeout in seconds
+    pub connection_timeout: u64,
+    
+    /// Whether to use SO_REUSEPORT for multi-threaded accept loops
+    pub use_reuse_port: bool,
+    
+    /// Server tick interval in milliseconds (0 to disable)
+    pub tick_interval_ms: u64,
+    
+    /// Security configuration settings
+    pub security: SecurityConfig,
+    
+    /// Plugin safety configuration settings
+    pub plugin_safety: PluginSafetyConfig,
+
+    /// WebSocket listener settings
+    #[serde(default)]
+    pub websocket: WebSocketConfig,
+
+    /// Settings of listeners with compression
+    #[serde(default)]
+    pub compression: CompressionConfig,
+
+    /// WebTransport listener settings
+    #[serde(default)]
+    pub webtransport: WebTransportConfig,
+}
+
+/// Settings of the WebSocket listener.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebSocketConfig {
+    /// Message format: today's JSON envelopes, or bitcode frames.
+    #[serde(default)]
+    pub protocol: horizon_event_system::Format,
+    /// Compression codec: none (default), zstd or lz4.
+    #[serde(default)]
+    pub compression: horizon_event_system::protocol::Codec,
+    /// TLS certificate (PEM). Set with `key_path` to serve `wss://`; not needed when
+    /// an ingress or load balancer terminates TLS.
+    #[serde(default)]
+    pub cert_path: Option<PathBuf>,
+    /// TLS private key (PEM).
+    #[serde(default)]
+    pub key_path: Option<PathBuf>,
+}
+
+/// Settings of the WebTransport listener (`[server.webtransport]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebTransportConfig {
+    /// Whether to open the listener.
+    pub enabled: bool,
+    /// UDP address: reliable streams and datagrams share this one QUIC port.
+    pub bind_address: SocketAddr,
+    /// Message format.
+    pub protocol: horizon_event_system::Format,
+    /// Compression codec.
+    pub compression: horizon_event_system::protocol::Codec,
+    /// TLS certificate (PEM), required: WebTransport always runs over TLS.
+    pub cert_path: Option<PathBuf>,
+    /// TLS private key (PEM).
+    pub key_path: Option<PathBuf>,
+    /// Close sessions without traffic for this long.
+    pub idle_timeout_ms: u64,
+    /// QUIC keep-alive interval.
+    pub keepalive_ms: u64,
+    /// Cap on the datagram size, in bytes.
+    pub max_datagram_size: usize,
+    /// quinn's buffer of datagrams waiting for congestion control, in bytes (quinn's
+    /// own default is 1 MiB: seconds of stale positions on a slow link).
+    pub datagram_send_buffer_bytes: usize,
+    /// Unreliable frames older than this are dropped instead of sent.
+    pub unreliable_max_age_ms: u64,
+    /// How often the certificate files are checked for changes.
+    pub cert_reload_interval_ms: u64,
+}
+
+impl Default for WebTransportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind_address: "0.0.0.0:4433".parse().expect("valid default address"),
+            protocol: horizon_event_system::Format::Bitcode,
+            compression: horizon_event_system::protocol::Codec::None,
+            cert_path: None,
+            key_path: None,
+            idle_timeout_ms: 15_000,
+            keepalive_ms: 5_000,
+            max_datagram_size: 1200,
+            datagram_send_buffer_bytes: 16 * 1024,
+            unreliable_max_age_ms: 100,
+            cert_reload_interval_ms: 10_000,
+        }
+    }
+}
+
+/// Settings shared by the listeners with compression.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionConfig {
+    /// zstd level: 1 to 3 on the hot path, negative for speed. Ignored by lz4.
+    #[serde(default = "default_compression_level")]
+    pub level: i32,
+    /// Frames shorter than this many bytes are batched per recipient instead of being
+    /// compressed alone.
+    #[serde(default = "default_compression_min_size")]
+    pub min_size: usize,
+    /// How long a writer waits for more small frames before compressing a batch, in
+    /// milliseconds (0: only what is already waiting).
+    #[serde(default)]
+    pub batch_delay_ms: u64,
+    /// Optional dictionary file, trained on the game's payloads. Clients must hold the
+    /// same one.
+    #[serde(default)]
+    pub dictionary_path: Option<PathBuf>,
+}
+
+fn default_compression_level() -> i32 {
+    1
+}
+
+fn default_compression_min_size() -> usize {
+    128
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            level: default_compression_level(),
+            min_size: default_compression_min_size(),
+            batch_delay_ms: 0,
+            dictionary_path: None,
+        }
+    }
+}
+
+/// Security configuration for input validation and protection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityConfig {
+    /// Enable rate limiting
+    pub enable_rate_limiting: bool,
+    
+    /// Maximum requests per minute per IP
+    pub max_requests_per_minute: u32,
+    
+    /// Maximum message size in bytes
+    pub max_message_size: usize,
+    
+    /// Maximum allowed nesting depth for JSON messages
+    pub max_json_depth: usize,
+    
+    /// Maximum allowed string length in JSON
+    pub max_string_length: usize,
+    
+    /// Maximum allowed array/object size
+    pub max_collection_size: usize,
+    
+    /// Enable DDoS protection
+    pub enable_ddos_protection: bool,
+    
+    /// Banned IP addresses
+    pub banned_ips: Vec<IpAddr>,
+    
+    /// Maximum concurrent connections per IP
+    pub max_connections_per_ip: u32,
+
+    /// Frames a client may send that cannot be decoded before it is disconnected
+    #[serde(default = "default_max_decode_errors")]
+    pub max_decode_errors: u32,
+    
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "127.0.0.1:8080".parse().expect("Invalid default bind address"),
+            region_bounds: RegionBounds {
+                min_x: -1000.0,
+                max_x: 1000.0,
+                min_y: -1000.0,
+                max_y: 1000.0,
+                min_z: -100.0,
+                max_z: 100.0,
+            },
+            plugin_directory: PathBuf::from("plugins"),
+            max_connections: 1000,
+            connection_timeout: 60,
+            use_reuse_port: false,
+            tick_interval_ms: 50, // 20 ticks per second by default
+            security: SecurityConfig::default(),
+            plugin_safety: PluginSafetyConfig::default(),
+            websocket: WebSocketConfig::default(),
+            compression: CompressionConfig::default(),
+            webtransport: WebTransportConfig::default(),
+        }
+    }
+}
+
+fn default_max_decode_errors() -> u32 {
+    5
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            enable_rate_limiting: true,
+            max_requests_per_minute: 60,
+            max_message_size: 64 * 1024, // 64KB
+            max_json_depth: 10,
+            max_string_length: 1024,
+            max_collection_size: 100,
+            enable_ddos_protection: true,
+            banned_ips: Vec::new(),
+            max_connections_per_ip: 10,
+            max_decode_errors: default_max_decode_errors(),
+        }
+    }
+}

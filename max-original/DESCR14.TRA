@@ -1,0 +1,9 @@
+Objective: Reload ammo to all tanks with less than maximum rounds.
+
+Note your Tanks 3, 6, and 7 don't have their full ammo. To find the tanks click on "Names" display on the left panel which will display ID numbers of all the units along with their names.
+
+You can reload them either in the depot or with the supply truck. Load the tanks into the depot.  Select the depot, and click on the "Activate" button.  This will display the interior of the depot.  From this menu you can reload the tanks individually, or you can click "reload all". Now "activate all" and they are back on the field.
+
+The supply truck will reload any adjacent unit while its materials cargo lasts. Note that filling each unit with ammunition costs one material in either the depot or the supply truck.
+
+

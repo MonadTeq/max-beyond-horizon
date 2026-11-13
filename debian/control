@@ -1,0 +1,22 @@
+Source: max-port
+Section: contrib/games
+Priority: optional
+Maintainer: M.A.X. Port Team <maxport@maxport.org>
+Build-Depends: cmake, ninja-build, wget, gettext, p7zip-full, libasound2-dev, libpulse-dev, libx11-dev, libxext-dev, libxcursor-dev, libxrandr-dev, libxfixes-dev, libxi-dev, libxss-dev, libxtst-dev, libxkbcommon-dev, libwayland-dev, wayland-protocols, libdecor-0-dev, libdbus-1-dev, libgl-dev, libegl-dev, libudev-dev,
+ debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://klei1984.github.io/max/
+Rules-Requires-Root: no
+#Vcs-Git: https://salsa.debian.org/debian/max-port.git
+#Vcs-Browser: https://salsa.debian.org/debian/max-port
+
+Package: max-port
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: conquer and plunder-type turn-based sci-fi strategy game
+ M.A.X. Port is an SDL library based runtime executable for the 1996 DOS game
+ M.A.X.: Mechanized Assault & Exploration developed and published by Interplay
+ Productions.
+ .
+ Original game files are needed to play this game.

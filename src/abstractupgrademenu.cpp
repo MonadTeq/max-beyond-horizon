@@ -1,0 +1,788 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "abstractupgrademenu.hpp"
+
+#include <utility>
+
+#include "builder.hpp"
+#include "cargo.hpp"
+#include "cursor.hpp"
+#include "flicsmgr.hpp"
+#include "game_manager.hpp"
+#include "remote.hpp"
+#include "reportstats.hpp"
+#include "researchmenu.hpp"
+#include "scrollbar.hpp"
+#include "text.hpp"
+#include "unit.hpp"
+#include "units_manager.hpp"
+#include "unitstats.hpp"
+#include "window_manager.hpp"
+
+AbstractUpgradeMenu::AbstractUpgradeMenu(uint16_t team, ResourceID resource_id)
+    : AbstractMenu(resource_id, GameManager_GetDialogWindowCenterMode()),
+      team(team),
+      upgrade_control_count(0),
+      upgrade_control_next_uly(0),
+      stats_background(nullptr),
+      cost_background(nullptr),
+      gold_background(nullptr),
+      button_background(nullptr),
+      button_scroll_up(nullptr),
+      button_scroll_down(nullptr),
+      button_done(nullptr),
+      button_help(nullptr),
+      button_cancel(nullptr),
+      button_ground(nullptr),
+      button_air(nullptr),
+      button_sea(nullptr),
+      button_building(nullptr),
+      button_combat(nullptr),
+      button_description(nullptr),
+      type_selector(nullptr),
+      start_gold(0),
+      team_gold(0),
+      unit_type(INVALID_ID),
+      interface_icon_full(I_RAW),
+      interface_icon_empty(I_RAWE),
+      event_click_done(0),
+      event_click_cancel(0),
+      buy_upgrade_toggle_state(0),
+      event_release(0) {
+    for (int32_t i = 0; i < UPGRADE_CONTROL_COUNT; ++i) {
+        upgrade_controls[i] = nullptr;
+    }
+
+    for (int32_t i = 0; i < UNIT_END; ++i) {
+        unitvalues_base[i] =
+            UnitsManager_GetCurrentUnitValues(&UnitsManager_TeamInfo[team], static_cast<ResourceID>(i));
+        unitvalues_actual[i] = new (std::nothrow) UnitValues(*unitvalues_base[i]);
+    }
+
+    Cursor_SetCursor(CURSOR_HAND);
+    Add(true);
+    FillWindowInfo(&dialog_window);
+    unit_portrait_window = dialog_window;
+
+    GameManager_DisableMainMenu();
+}
+
+bool AbstractUpgradeMenu::button_ground_rest_state = true;
+bool AbstractUpgradeMenu::button_air_rest_state = true;
+bool AbstractUpgradeMenu::button_sea_rest_state = true;
+bool AbstractUpgradeMenu::button_building_rest_state = true;
+bool AbstractUpgradeMenu::button_combat_rest_state = false;
+
+void AbstractUpgradeMenu::Init() {
+    SDL_assert(stats_background);
+    SDL_assert(cost_background);
+    SDL_assert(gold_background);
+    SDL_assert(button_background);
+    SDL_assert(button_scroll_up);
+    SDL_assert(button_scroll_down);
+    SDL_assert(button_done);
+    SDL_assert(button_help);
+    SDL_assert(button_cancel);
+    SDL_assert(button_ground);
+    SDL_assert(button_air);
+    SDL_assert(button_sea);
+    SDL_assert(button_building);
+    SDL_assert(button_combat);
+    SDL_assert(button_description);
+
+    button_scroll_up->CopyUpDisabled(BLDUP__X);
+    button_scroll_down->CopyUpDisabled(BLDDWN_X);
+
+    button_done->SetCaption(_(bd89));
+    button_done->SetRValue(1000);
+    button_done->SetPValue(GNW_INPUT_PRESS + 1000);
+    button_done->SetSfx(NDONE0);
+    button_done->RegisterButton(dialog_window.id);
+
+    button_cancel->SetCaption(_(c6aa));
+    button_cancel->SetRValue(1002);
+    button_cancel->SetPValue(GNW_INPUT_PRESS + 1002);
+    button_cancel->SetSfx(NCANC0);
+    button_cancel->RegisterButton(dialog_window.id);
+
+    button_help->SetRValue(1001);
+    button_help->SetPValue(GNW_INPUT_PRESS + 1001);
+    button_help->SetSfx(NHELP0);
+    button_help->RegisterButton(dialog_window.id);
+
+    button_ground->SetRValue(1004);
+    button_ground->SetPValue(1003);
+    button_ground->SetFlags(0x01);
+    button_ground->SetSfx(KCARG0);
+    button_ground->RegisterButton(dialog_window.id);
+
+    button_air->SetRValue(1006);
+    button_air->SetPValue(1005);
+    button_air->SetFlags(0x01);
+    button_air->SetSfx(KCARG0);
+    button_air->RegisterButton(dialog_window.id);
+
+    button_sea->SetRValue(1008);
+    button_sea->SetPValue(1007);
+    button_sea->SetFlags(0x01);
+    button_sea->SetSfx(KCARG0);
+    button_sea->RegisterButton(dialog_window.id);
+
+    button_building->SetRValue(1010);
+    button_building->SetPValue(1009);
+    button_building->SetFlags(0x01);
+    button_building->SetSfx(KCARG0);
+    button_building->RegisterButton(dialog_window.id);
+
+    button_combat->SetRValue(1012);
+    button_combat->SetPValue(1011);
+    button_combat->SetFlags(0x01);
+    button_combat->SetSfx(KCARG0);
+    button_combat->RegisterButton(dialog_window.id);
+
+    button_description->SetRValue(1014);
+    button_description->SetPValue(1013);
+    button_description->SetFlags(0x01);
+    button_description->SetSfx(KCARG0);
+    button_description->RegisterButton(dialog_window.id);
+
+    if (buy_upgrade_toggle_state) {
+        button_ground->Disable(false);
+        button_air->Disable(false);
+        button_sea->Disable(false);
+        button_building->Disable(false);
+        button_combat->Disable(false);
+    }
+
+    button_ground->SetRestState(button_ground_rest_state);
+    button_air->SetRestState(button_air_rest_state);
+    button_sea->SetRestState(button_sea_rest_state);
+    button_building->SetRestState(button_building_rest_state);
+    button_combat->SetRestState(button_combat_rest_state);
+    button_description->SetRestState(button_description_rest_state);
+
+    stats_background->Copy(&dialog_window);
+    cost_background->Copy(&dialog_window);
+    button_background->Copy(&dialog_window);
+    gold_background->Copy(&dialog_window);
+}
+
+AbstractUpgradeMenu::~AbstractUpgradeMenu() {
+    for (int32_t i = 0; i < upgrade_control_count; ++i) {
+        delete upgrade_controls[i];
+    }
+
+    delete type_selector;
+
+    delete stats_background;
+    delete cost_background;
+    delete button_background;
+    delete gold_background;
+
+    delete button_scroll_up;
+    delete button_scroll_down;
+    delete button_done;
+    delete button_help;
+    delete button_cancel;
+    delete button_ground;
+    delete button_air;
+    delete button_sea;
+    delete button_building;
+    delete button_combat;
+    delete button_description;
+}
+
+void AbstractUpgradeMenu::AddUpgrade(int32_t id, int32_t value1, int32_t value2, uint16_t* attribute, int32_t value) {
+    upgrade_controls[upgrade_control_count] =
+        new (std::nothrow) UpgradeControl(dialog_window.id, cost_background->GetULX() - 38, upgrade_control_next_uly,
+                                          upgrade_control_count + 1015, upgrade_control_count + 1025, &team_gold);
+
+    upgrade_controls[upgrade_control_count]->Init(id, value1, value2, attribute, value);
+    ++upgrade_control_count;
+    upgrade_control_next_uly += 19;
+}
+
+void AbstractUpgradeMenu::AddUpgradeMilitary(ResourceID unit_type) {
+    SmartPointer<UnitValues> base_unitvalues(UnitsManager_TeamInfo[team].team_units->GetBaseUnitValues(unit_type));
+
+    if (base_unitvalues->GetAttribute(ATTRIB_ATTACK)) {
+        SmartPointer<UnitValues> base_attribs = unitvalues_base[unit_type];
+        SmartPointer<UnitValues> actual_attribs = unitvalues_actual[unit_type];
+
+        AddUpgrade(UPGRADE_CONTROL_1, base_unitvalues->GetAttribute(ATTRIB_ATTACK),
+                   base_attribs->GetAttribute(ATTRIB_ATTACK), actual_attribs->GetAttributeAddress(ATTRIB_ATTACK),
+                   ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_ATTACK, unit_type));
+
+        if (base_unitvalues->GetAttribute(ATTRIB_ROUNDS)) {
+            AddUpgrade(UPGRADE_CONTROL_2, base_unitvalues->GetAttribute(ATTRIB_ROUNDS),
+                       base_attribs->GetAttribute(ATTRIB_ROUNDS), actual_attribs->GetAttributeAddress(ATTRIB_ROUNDS),
+                       ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_SHOTS, unit_type));
+        }
+
+        if (base_unitvalues->GetAttribute(ATTRIB_RANGE)) {
+            AddUpgrade(UPGRADE_CONTROL_3, base_unitvalues->GetAttribute(ATTRIB_RANGE),
+                       base_attribs->GetAttribute(ATTRIB_RANGE), actual_attribs->GetAttributeAddress(ATTRIB_RANGE),
+                       ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_RANGE, unit_type));
+        }
+
+        if (base_unitvalues->GetAttribute(ATTRIB_AMMO)) {
+            AddUpgrade(UPGRADE_CONTROL_4, base_unitvalues->GetAttribute(ATTRIB_AMMO),
+                       base_attribs->GetAttribute(ATTRIB_AMMO), actual_attribs->GetAttributeAddress(ATTRIB_AMMO), 0);
+        }
+    }
+}
+
+void AbstractUpgradeMenu::AdjustRowStorage(ResourceID unit_type) {
+    if (unitvalues_actual[unit_type]->GetAttribute(ATTRIB_STORAGE)) {
+        switch (unit_type) {
+            case ADUMP:
+            case FDUMP:
+            case GOLDSM:
+            case ENGINEER:
+            case CONSTRCT:
+            case CARGOSHP:
+            case SPLYTRCK:
+            case FUELTRCK:
+            case GOLDTRCK: {
+                upgrade_control_next_uly += 19;
+            } break;
+        }
+    }
+}
+
+void AbstractUpgradeMenu::AdjustRowConsumptions(ResourceID unit_type) {
+    int32_t raw_consumption;
+    int32_t fuel_consumption;
+    int32_t power_consumption;
+    int32_t life_consumption;
+
+    raw_consumption = Cargo_GetRawConsumptionRate(unit_type, 1);
+    fuel_consumption = Cargo_GetFuelConsumptionRate(unit_type);
+    power_consumption = Cargo_GetPowerConsumptionRate(unit_type);
+    life_consumption = Cargo_GetLifeConsumptionRate(unit_type);
+
+    if (power_consumption < 0) {
+        upgrade_control_next_uly += 19;
+    }
+
+    if (life_consumption < 0) {
+        upgrade_control_next_uly += 19;
+    }
+
+    if (raw_consumption > 0 || fuel_consumption > 0 || power_consumption > 0 || life_consumption > 0) {
+        upgrade_control_next_uly += 19;
+    }
+}
+
+void AbstractUpgradeMenu::AddUpgradeGeneric(ResourceID unit_type) {
+    SmartPointer<UnitValues> base_unitvalues(UnitsManager_TeamInfo[team].team_units->GetBaseUnitValues(unit_type));
+    SmartPointer<UnitValues> base_attribs = unitvalues_base[unit_type];
+    SmartPointer<UnitValues> actual_attribs = unitvalues_actual[unit_type];
+
+    if (base_unitvalues->GetAttribute(ATTRIB_ARMOR)) {
+        AddUpgrade(UPGRADE_CONTROL_5, base_unitvalues->GetAttribute(ATTRIB_ARMOR),
+                   base_attribs->GetAttribute(ATTRIB_ARMOR), actual_attribs->GetAttributeAddress(ATTRIB_ARMOR),
+                   ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_ARMOR, unit_type));
+    }
+
+    if (base_unitvalues->GetAttribute(ATTRIB_HITS)) {
+        AddUpgrade(UPGRADE_CONTROL_6, base_unitvalues->GetAttribute(ATTRIB_HITS),
+                   base_attribs->GetAttribute(ATTRIB_HITS), actual_attribs->GetAttributeAddress(ATTRIB_HITS),
+                   ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_HITS, unit_type));
+    }
+
+    if (base_unitvalues->GetAttribute(ATTRIB_SCAN)) {
+        AddUpgrade(UPGRADE_CONTROL_7, base_unitvalues->GetAttribute(ATTRIB_SCAN),
+                   base_attribs->GetAttribute(ATTRIB_SCAN), actual_attribs->GetAttributeAddress(ATTRIB_SCAN),
+                   ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_SCAN, unit_type));
+    }
+}
+
+void AbstractUpgradeMenu::AddUpgradeMobile(ResourceID unit_type) {
+    SmartPointer<UnitValues> base_unitvalues(UnitsManager_TeamInfo[team].team_units->GetBaseUnitValues(unit_type));
+
+    if (base_unitvalues->GetAttribute(ATTRIB_SPEED)) {
+        SmartPointer<UnitValues> base_attribs = unitvalues_base[unit_type];
+        SmartPointer<UnitValues> actual_attribs = unitvalues_actual[unit_type];
+
+        AddUpgrade(UPGRADE_CONTROL_8, base_unitvalues->GetAttribute(ATTRIB_SPEED),
+                   base_attribs->GetAttribute(ATTRIB_SPEED), actual_attribs->GetAttributeAddress(ATTRIB_SPEED),
+                   ResearchMenu_CalculateFactor(team, RESEARCH_TOPIC_SPEED, unit_type));
+    }
+}
+
+bool AbstractUpgradeMenu::EventHandler(Event* event) {
+    bool result;
+
+    if (event->GetEventId() == EVENTS_GET_EVENT_ID(UnitSelectEvent)) {
+        EventUnitSelect* select = dynamic_cast<EventUnitSelect*>(event);
+
+        result = HandleUnitTypeSelection(select->GetSelector(), select->GetValue());
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+void AbstractUpgradeMenu::DrawUnitInfo(ResourceID unit_type) {
+    this->unit_type = unit_type;
+
+    if (unit_type == INVALID_ID) {
+        buf_fill(unit_portrait_window.buffer, 300, 240, dialog_window.width, 0);
+
+    } else {
+        const Unit& base_unit = ResourceManager_GetUnit(unit_type);
+
+        if (!WindowManager_LoadBigImage(base_unit.GetPortrait(), &unit_portrait_window, dialog_window.width, false,
+                                        false)) {
+            buf_fill(unit_portrait_window.buffer, 300, 240, dialog_window.width, 0);
+            flicsmgr_construct(base_unit.GetFlicsAnimation(), &unit_portrait_window, dialog_window.width, 16, 17, false,
+                               false);
+        }
+
+        if (button_description_rest_state) {
+            Text_SetFont(GNW_TEXT_FONT_5);
+            Text_TextBox(unit_portrait_window.buffer, dialog_window.width, base_unit.GetDescription().data(), 16, 17,
+                         280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false);
+        }
+    }
+
+    for (int32_t i = 0; i < upgrade_control_count; ++i) {
+        delete upgrade_controls[i];
+        upgrade_controls[i] = nullptr;
+    }
+
+    upgrade_control_count = 0;
+    upgrade_control_next_uly = static_cast<uint16_t>(cost_background->GetULY());
+    button_background->Write(&dialog_window);
+
+    if (unit_type != INVALID_ID && IsBuildable(unit_type)) {
+        AddUpgradeMilitary(unit_type);
+        AdjustRowStorage(unit_type);
+        AdjustRowConsumptions(unit_type);
+        AddUpgradeGeneric(unit_type);
+        AddUpgradeMobile(unit_type);
+    }
+
+    DrawUnitStats(unit_type);
+}
+
+void AbstractUpgradeMenu::OnUnitTypeConfirmed(ResourceID unit_type) {}
+
+bool AbstractUpgradeMenu::HandleUnitTypeSelection(UnitTypeSelector* selector, bool mode) {
+    bool result;
+
+    if (type_selector == selector) {
+        ResourceID unit_type = selector->GetLast();
+
+        if (mode && this->unit_type == unit_type) {
+            OnUnitTypeConfirmed(unit_type);
+        } else {
+            DrawUnitInfo(unit_type);
+        }
+
+        result = true;
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+void AbstractUpgradeMenu::PopulateTeamUnitsList() {
+    SmartObjectArray<ResourceID> unit_types;
+
+    SDL_assert(type_selector);
+
+    for (int32_t i = 0; i < UNIT_END; ++i) {
+        if (IsUnitFiltered(static_cast<ResourceID>(i))) {
+            ResourceID type = static_cast<ResourceID>(i);
+            unit_types.PushBack(&type);
+        }
+    }
+
+    if (unit_types.GetCount() > 1) {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(static_cast<int64_t>(unit_types.GetCount()) - 1); ++i) {
+            for (uint32_t j = i + 1; unit_types.GetCount() > j; ++j) {
+                if (IsBetterUnit(*unit_types[i], *unit_types[j])) {
+                    std::swap(*unit_types[i], *unit_types[j]);
+                }
+            }
+        }
+    }
+
+    type_selector->AddItems(unit_types);
+}
+
+void AbstractUpgradeMenu::DrawUnitStats(ResourceID unit_type) {
+    struct ImageSimpleHeader* image;
+    uint8_t* buffer_text;
+    uint8_t* buffer_icon;
+
+    stats_background->Write(&dialog_window);
+
+    if (unit_type != INVALID_ID) {
+        UnitStats_DrawStats(
+            &dialog_window.buffer[stats_background->GetULY() * dialog_window.width + stats_background->GetULX()],
+            dialog_window.width, unit_type, team, *unitvalues_actual[unit_type], stats_background->GetWidth(),
+            interface_icon_full, interface_icon_empty);
+    }
+
+    Text_SetFont(GNW_TEXT_FONT_5);
+
+    cost_background->Write(&dialog_window);
+
+    image = reinterpret_cast<struct ImageSimpleHeader*>(ResourceManager_LoadResource(I_GOLD));
+
+    buffer_text = &dialog_window.buffer[cost_background->GetULX() + dialog_window.width * 5 + 24];
+    buffer_icon = &dialog_window.buffer[cost_background->GetULX() + dialog_window.width * 3 + 25];
+
+    for (int32_t i = 0; i < upgrade_control_count; ++i) {
+        int32_t cost;
+
+        upgrade_controls[i]->UpdateControlState();
+        cost = upgrade_controls[i]->GetCost();
+
+        if (cost > 0 && cost < UPGRADECONTROL_UPGRADE_COST_LIMIT) {
+            int32_t offset;
+
+            offset = dialog_window.width * upgrade_controls[i]->GetUly();
+
+            ReportStats_DrawNumber(&buffer_text[offset], cost, 24, dialog_window.width, 5);
+            UnitStats_DrawImage(&buffer_icon[offset], dialog_window.width, image);
+        }
+    }
+
+    {
+        int32_t height;
+        uint8_t* buffer;
+
+        gold_background->Write(&dialog_window);
+
+        if (start_gold) {
+            height = ((gold_background->GetHeight() - 25) * team_gold) / start_gold;
+        } else {
+            height = 0;
+        }
+
+        buffer =
+            &dialog_window.buffer[gold_background->GetULX() + (gold_background->GetULY() + 25) * dialog_window.width +
+                                  (gold_background->GetHeight() - 25 - height) * dialog_window.width];
+
+        LoadVerticalBar(buffer, dialog_window.width, height, gold_background->GetWidth(), VERTGOLD);
+    }
+
+    {
+        char text[20];
+        uint8_t* buffer;
+        int32_t length;
+
+        snprintf(text, sizeof(text), "%i", team_gold);
+
+        length = Text_GetWidth(text);
+        buffer = &dialog_window.buffer[dialog_window.width * gold_background->GetULY() + gold_background->GetULX() +
+                                       (gold_background->GetWidth() - length) / 2];
+
+        Text_Blit(buffer, text, length, dialog_window.width, COLOR_CHROME_YELLOW);
+    }
+
+    win_draw(dialog_window.id);
+}
+
+void AbstractUpgradeMenu::CommitUpgradeChanges() {
+    for (uint16_t i = 0; i < UNIT_END; ++i) {
+        if (*unitvalues_actual[i] != *unitvalues_base[i]) {
+            unitvalues_actual[i]->UpdateVersion();
+            unitvalues_actual[i]->MarkAsNotInUse();
+
+            UnitsManager_TeamInfo[team].team_units->SetCurrentUnitValues(i, *unitvalues_actual[i]);
+
+            if (Remote_IsNetworkGame) {
+                Remote_SendNetPacket_10(team, static_cast<ResourceID>(i));
+            }
+        }
+    }
+
+    UnitsManager_TeamInfo[team].stats_gold_spent_on_upgrades += start_gold - team_gold;
+}
+
+bool AbstractUpgradeMenu::ProcessKey(int32_t key) {
+    bool result;
+
+    if (key > 0 && key < GNW_INPUT_PRESS) {
+        event_release = false;
+    }
+
+    if (key >= 1015 && key < 1025) {
+        upgrade_controls[key - 1015]->Increase();
+        DrawUnitStats(unit_type);
+        result = true;
+
+    } else if (key >= 1025 && key < 1035) {
+        upgrade_controls[key - 1025]->Decrease();
+        DrawUnitStats(unit_type);
+        result = true;
+
+    } else {
+        switch (key) {
+            case 1002:
+            case GNW_KB_KEY_ESCAPE: {
+                event_click_cancel = true;
+                event_click_done = true;
+                result = true;
+            } break;
+
+            case 1000:
+            case GNW_KB_KEY_RETURN: {
+                CommitUpgradeChanges();
+                event_click_done = true;
+                result = true;
+            } break;
+
+            case 1003: {
+                button_ground->PlaySound();
+                button_ground_rest_state = true;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1004: {
+                button_ground->PlaySound();
+                button_ground_rest_state = false;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1005: {
+                button_air->PlaySound();
+                button_air_rest_state = true;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1006: {
+                button_air->PlaySound();
+                button_air_rest_state = false;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1007: {
+                button_sea->PlaySound();
+                button_sea_rest_state = true;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1008: {
+                button_sea->PlaySound();
+                button_sea_rest_state = false;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1009: {
+                button_building->PlaySound();
+                button_building_rest_state = true;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1010: {
+                button_building->PlaySound();
+                button_building_rest_state = false;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1011: {
+                button_combat->PlaySound();
+                button_combat_rest_state = true;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1012: {
+                button_combat->PlaySound();
+                button_combat_rest_state = false;
+                PopulateTeamUnitsList();
+                result = true;
+            } break;
+
+            case 1013: {
+                button_description->PlaySound();
+                button_description_rest_state = true;
+                DrawUnitInfo(unit_type);
+                result = true;
+            } break;
+
+            case 1014: {
+                button_description->PlaySound();
+                button_description_rest_state = false;
+                DrawUnitInfo(unit_type);
+                result = true;
+            } break;
+
+            default: {
+                if (key < GNW_INPUT_PRESS) {
+                    result = type_selector->ProcessKeys(key);
+                } else {
+                    if (!event_release) {
+                        key -= GNW_INPUT_PRESS;
+                        switch (key) {
+                            case 1000: {
+                                button_done->PlaySound();
+                            } break;
+
+                            case 1001: {
+                                button_help->PlaySound();
+                            } break;
+
+                            case 1002: {
+                                button_cancel->PlaySound();
+                            } break;
+
+                            default: {
+                                type_selector->ProcessKeys(key + GNW_INPUT_PRESS);
+                            } break;
+                        }
+                    }
+
+                    event_release = true;
+                    result = true;
+                }
+            } break;
+        }
+    }
+
+    return result;
+}
+
+bool AbstractUpgradeMenu::IsBuildable(ResourceID unit_type) {
+    const uint32_t flags = ResourceManager_GetUnit(unit_type).GetFlags();
+
+    bool is_buildable = Builder_IsBuildable(team, unit_type);
+
+    // Mines are upgradable but not buildable. They should be upgradable only if their deployer unit is buildable.
+    if (!is_buildable && (flags & GROUND_COVER) && (flags & STATIONARY) && (flags & SENTRY_UNIT)) {
+        if (unit_type == LANDMINE) {
+            is_buildable = Builder_IsBuildable(team, MINELAYR);
+
+        } else if (unit_type == SEAMINE) {
+            is_buildable = Builder_IsBuildable(team, SEAMNLYR);
+        }
+    }
+
+    return is_buildable;
+}
+
+bool AbstractUpgradeMenu::IsUnitFiltered(ResourceID unit_type) {
+    bool result;
+    uint32_t flags;
+
+    flags = ResourceManager_GetUnit(unit_type).GetFlags();
+
+    if ((flags & UPGRADABLE) && IsBuildable(unit_type)) {
+        if (((flags & MOBILE_LAND_UNIT) && button_ground_rest_state) ||
+            ((flags & MOBILE_AIR_UNIT) && button_air_rest_state) ||
+            ((flags & MOBILE_SEA_UNIT) && button_sea_rest_state) ||
+            ((flags & STATIONARY) && button_building_rest_state)) {
+            if (!button_combat_rest_state ||
+                UnitsManager_TeamInfo[0].team_units->GetBaseUnitValues(unit_type)->GetAttribute(ATTRIB_ATTACK) > 0) {
+                result = true;
+            } else {
+                result = false;
+            }
+        } else {
+            result = false;
+        }
+
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+bool AbstractUpgradeMenu::IsBetterUnit(ResourceID unit_type1, ResourceID unit_type2) {
+    bool result;
+    uint32_t flags1;
+    uint32_t flags2;
+
+    flags1 = ResourceManager_GetUnit(unit_type1).GetFlags();
+    flags2 = ResourceManager_GetUnit(unit_type2).GetFlags();
+
+    if ((flags1 & MOBILE_LAND_UNIT) != (flags2 & MOBILE_LAND_UNIT)) {
+        return !(flags1 & MOBILE_LAND_UNIT);
+    }
+
+    if ((flags1 & MOBILE_SEA_UNIT) != (flags2 & MOBILE_SEA_UNIT)) {
+        return !(flags1 & MOBILE_SEA_UNIT);
+    }
+
+    if ((flags1 & MOBILE_AIR_UNIT) != (flags2 & MOBILE_AIR_UNIT)) {
+        return !(flags1 & MOBILE_AIR_UNIT);
+    }
+
+    {
+        SmartPointer<UnitValues> values1(UnitsManager_TeamInfo[0].team_units->GetBaseUnitValues(unit_type1));
+        SmartPointer<UnitValues> values2(UnitsManager_TeamInfo[0].team_units->GetBaseUnitValues(unit_type2));
+
+        if (!values1->GetAttribute(ATTRIB_ATTACK) || values2->GetAttribute(ATTRIB_ATTACK)) {
+            if (values1->GetAttribute(ATTRIB_ATTACK) || !values2->GetAttribute(ATTRIB_ATTACK)) {
+                if (values1->GetAttribute(ATTRIB_TURNS) == values2->GetAttribute(ATTRIB_TURNS)) {
+                    result = unit_type1 > unit_type2;
+                } else {
+                    result = values1->GetAttribute(ATTRIB_TURNS) > values2->GetAttribute(ATTRIB_TURNS);
+                }
+
+            } else {
+                result = true;
+            }
+
+        } else {
+            result = false;
+        }
+    }
+
+    return result;
+}
+
+bool AbstractUpgradeMenu::Run() {
+    type_selector->Draw();
+    DrawUnitInfo(type_selector->GetLast());
+
+    while (!event_click_done) {
+        int32_t key;
+
+        key = get_input();
+
+        if (key > 0) {
+            ProcessKey(key);
+        }
+
+        GameManager_ProcessState(false);
+    }
+
+    return event_click_cancel == false;
+}

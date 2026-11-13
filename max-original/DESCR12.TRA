@@ -1,0 +1,5 @@
+Objective: Place a mine anywhere on the map, and detect and destroy one enemy mine.
+
+Build a mine layer in your Light Vehicle plant. Load it with Materials as you learned in Training mission 9. Double click to select "Place" command and move the unit.
+
+Use your infiltrator to detect enemy mines. Alternately, your surveyor or your mine layer can also perform the same function. When an enemy mine is detected, it will remain visible under regular scan. Move a scout or a tank in range to shoot at the mine.

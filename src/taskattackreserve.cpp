@@ -1,0 +1,301 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "taskattackreserve.hpp"
+
+#include "ai.hpp"
+#include "aiattack.hpp"
+#include "aiplayer.hpp"
+#include "builder.hpp"
+#include "resource_manager.hpp"
+#include "settings.hpp"
+#include "task_manager.hpp"
+#include "taskmovehome.hpp"
+#include "taskobtainunits.hpp"
+#include "taskreload.hpp"
+#include "taskrepair.hpp"
+#include "taskupgrade.hpp"
+#include "unit.hpp"
+#include "units_manager.hpp"
+#include "weighttable.hpp"
+
+TaskAttackReserve::TaskAttackReserve(uint16_t team, Point site_)
+    : Task(team, nullptr, TASK_PRIORITY_ATTACK_RESERVE_POOL) {
+    site = site_;
+    total_worth = 0;
+}
+
+TaskAttackReserve::~TaskAttackReserve() {}
+
+void TaskAttackReserve::MoveFinishedCallback(Task* task, UnitInfo* unit, char result) {
+    TaskAttackReserve* attack_reserve_task = dynamic_cast<TaskAttackReserve*>(task);
+
+    if (result || !AiAttack_EvaluateAssault(unit, task, &MoveFinishedCallback)) {
+        if (unit->IsReadyForOrders(task)) {
+            attack_reserve_task->ChaseAttacker(unit);
+        }
+    }
+}
+
+bool TaskAttackReserve::ChaseAttacker(UnitInfo* unit) {
+    bool result;
+
+    if (AiAttack_FollowAttacker(this, unit, TASK_PRIORITY_FOLLOW_ATTACK)) {
+        result = true;
+
+    } else {
+        SmartPointer<Task> move_home_task(new (std::nothrow) TaskMoveHome(unit, this));
+
+        TaskManager.AppendTask(*move_home_task);
+
+        result = true;
+    }
+
+    return result;
+}
+
+bool TaskAttackReserve::IsUnitUsable(UnitInfo& unit) {
+    bool result;
+
+    if (unit.GetBaseValues()->GetAttribute(ATTRIB_ROUNDS) > 0 &&
+        unit.ammo >= unit.GetBaseValues()->GetAttribute(ATTRIB_ROUNDS) && unit.speed > 0) {
+        result = true;
+
+    } else if (unit.GetUnitType() == ENGINEER || unit.GetUnitType() == CONSTRCT || unit.GetUnitType() == LANDPLT ||
+               unit.GetUnitType() == LIGHTPLT || unit.GetUnitType() == AIRPLT || unit.GetUnitType() == SHIPYARD ||
+               unit.GetUnitType() == TRAINHAL) {
+        result = true;
+
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+std::string TaskAttackReserve::WriteStatusLog() const { return "Maintain an attack reserve."; }
+
+uint8_t TaskAttackReserve::GetType() const { return TaskType_TaskAttackReserve; }
+
+void TaskAttackReserve::AddUnit(UnitInfo& unit) {
+    if (unit.GetBaseValues()->GetAttribute(ATTRIB_ROUNDS)) {
+        if (unit.speed > 0) {
+            SmartPointer<Task> best_task;
+            int32_t distance;
+            int32_t minimum_distance{INT32_MAX};
+
+            units.PushBack(unit);
+            unit.AddTask(this);
+
+            for (auto it = TaskManager.GetTaskList().Begin(), it_end = TaskManager.GetTaskList().End(); it != it_end;
+                 ++it) {
+                if ((*it).GetTeam() == unit.team && (*it).GetType() != TaskType_TaskAttackReserve &&
+                    (*it).IsUnitUsable(unit)) {
+                    Rect bounds;
+
+                    (*it).GetBounds(&bounds);
+
+                    distance = (unit.grid_x - bounds.ulx) * (unit.grid_x - bounds.ulx) +
+                               (unit.grid_y - bounds.uly) * (unit.grid_y - bounds.uly);
+
+                    if (!best_task || distance < minimum_distance) {
+                        best_task = *it;
+                        minimum_distance = distance;
+                    }
+                }
+            }
+
+            if (best_task) {
+                unit.RemoveTasks();
+
+                best_task->AddUnit(unit);
+            }
+
+        } else {
+            TaskManager.ClearUnitTasksAndRemindAvailable(&unit);
+        }
+
+    } else if (unit.team == m_team && unit.GetOrder() != ORDER_IDLE) {
+        if (unit.GetUnitType() == LANDPLT || unit.GetUnitType() == LIGHTPLT || unit.GetUnitType() == AIRPLT ||
+            unit.GetUnitType() == SHIPYARD || unit.GetUnitType() == TRAINHAL) {
+            if (unit.GetComplex()->material > 10 && unit.GetComplex()->fuel > 10) {
+                int32_t turns_till_mission_end = Task_EstimateTurnsTillMissionEnd();
+                WeightTable table = AiPlayer_Teams[m_team].GetFilteredWeightTable(INVALID_ID, 3);
+
+                for (uint32_t i = 0; i < table.GetCount(); ++i) {
+                    const auto builder_type = Builder_GetBuilderType(m_team, table[i].unit_type);
+                    if (builder_type == INVALID_ID || builder_type != unit.GetUnitType() ||
+                        UnitsManager_GetCurrentUnitValues(&UnitsManager_TeamInfo[m_team], table[i].unit_type)
+                                ->GetAttribute(ATTRIB_TURNS) > turns_till_mission_end) {
+                        table[i].weight = 0;
+                    }
+                }
+
+                ResourceID unit_type = table.RollUnitType();
+
+                if (unit_type != INVALID_ID) {
+                    SmartPointer<TaskObtainUnits> obtain_units_task(new (std::nothrow) TaskObtainUnits(this, site));
+
+                    obtain_units_task->AddUnit(unit_type);
+
+                    total_worth += Ai_GetNormalRateBuildCost(unit_type, m_team);
+
+                    TaskManager.AppendTask(*obtain_units_task);
+                }
+            }
+        }
+
+        if (unit.GetUnitType() == CONSTRCT || unit.GetUnitType() == ENGINEER) {
+            if (!TaskManager_NeedToReserveRawMaterials(m_team)) {
+                WeightTable table;
+                bool builders_needed = false;
+                ResourceID unit_type;
+                uint16_t unit_types[UNIT_END];
+
+                memset(unit_types, 0, sizeof(unit_types));
+
+                for (auto it = UnitsManager_StationaryUnits.Begin(), it_end = UnitsManager_StationaryUnits.End();
+                     it != it_end; ++it) {
+                    if ((*it).team == m_team) {
+                        ++unit_types[(*it).GetUnitType()];
+                    }
+                }
+
+                if (!unit_types[LANDPLT] || !unit_types[LIGHTPLT] || !unit_types[AIRPLT]) {
+                    builders_needed = true;
+                }
+
+                table += AiPlayer_Teams[m_team].GetFilteredWeightTable(INVALID_ID, 2);
+
+                for (uint32_t i = 0; i < table.GetCount(); ++i) {
+                    if (table[i].unit_type == INVALID_ID) {
+                        table[i].weight = 0;
+
+                        continue;
+                    }
+
+                    unit_type = Builder_GetBuilderType(m_team, table[i].unit_type);
+
+                    if (unit_type == INVALID_ID || (unit_type != unit.GetUnitType() &&
+                                                    Builder_GetBuilderType(m_team, unit_type) != unit.GetUnitType())) {
+                        table[i].weight = 0;
+                    }
+
+                    if (builders_needed) {
+                        const auto builder_type = Builder_GetBuilderType(m_team, table[i].unit_type);
+
+                        if (builder_type != INVALID_ID &&
+                            (ResourceManager_GetUnit(table[i].unit_type).GetFlags() &
+                             (MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) &&
+                            unit_types[builder_type] > 0) {
+                            table[i].weight = 0;
+                        }
+                    }
+                }
+
+                unit_type = table.RollUnitType();
+
+                if (unit_type != INVALID_ID) {
+                    const auto builder_type = Builder_GetBuilderType(m_team, unit_type);
+
+                    if (builder_type != unit.GetUnitType()) {
+                        unit_type = builder_type;
+                    }
+
+                    if (unit_type != INVALID_ID) {
+                        AiPlayer_Teams[m_team].CreateBuilding(unit_type, site, this);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void TaskAttackReserve::ChildComplete(Task* task) {}
+
+void TaskAttackReserve::EndTurn() {
+    for (auto it = units.Begin(), it_end = units.End(); it != it_end; ++it) {
+        if ((*it).GetTask() == this) {
+            if ((*it).ammo < (*it).GetBaseValues()->GetAttribute(ATTRIB_ROUNDS) ||
+                (((*it).flags & STATIONARY) && (*it).ammo < (*it).GetBaseValues()->GetAttribute(ATTRIB_AMMO) / 2)) {
+                SmartPointer<Task> reload_task(new (std::nothrow) TaskReload(it->Get()));
+
+                TaskManager.AppendTask(*reload_task);
+
+            } else if ((*it).hits < (*it).GetBaseValues()->GetAttribute(ATTRIB_HITS) / 2 &&
+                       ResourceManager_GetSettings()->GetNumericValue("opponent") >= OPPONENT_TYPE_APPRENTICE) {
+                SmartPointer<Task> repair_task(new (std::nothrow) TaskRepair(it->Get()));
+
+                TaskManager.AppendTask(*repair_task);
+
+            } else if (((*it).flags & (MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) &&
+                       !((*it).flags & REGENERATING_UNIT) &&
+                       ResourceManager_GetSettings()->GetNumericValue("opponent") >= OPPONENT_TYPE_EXPERT &&
+                       AiPlayer_Teams[(*it).team].ShouldUpgradeUnit(it->Get())) {
+                SmartPointer<Task> upgrade_task(new (std::nothrow) TaskUpgrade(it->Get()));
+
+                TaskManager.AppendTask(*upgrade_task);
+            }
+        }
+    }
+
+    for (auto it = units.Begin(), it_end = units.End(); it != it_end; ++it) {
+        if ((*it).speed > 0 && (*it).IsReadyForOrders(this)) {
+            Task_RemindMoveFinished(it->Get());
+        }
+    }
+}
+
+bool TaskAttackReserve::Execute(UnitInfo& unit) {
+    bool result;
+
+    if (unit.speed > 0 && unit.IsReadyForOrders(this)) {
+        if (AiAttack_EvaluateAssault(&unit, this, &MoveFinishedCallback)) {
+            result = true;
+
+        } else {
+            result = ChaseAttacker(&unit);
+        }
+
+    } else {
+        result = false;
+    }
+
+    return result;
+}
+
+void TaskAttackReserve::RemoveSelf() {
+    for (auto it = units.Begin(), it_end = units.End(); it != it_end; ++it) {
+        TaskManager.ClearUnitTasksAndRemindAvailable(it->Get());
+    }
+
+    units.Clear();
+
+    m_parent = nullptr;
+
+    TaskManager.RemoveTask(*this);
+}
+
+void TaskAttackReserve::RemoveUnit(UnitInfo& unit) {
+    total_worth -= unit.GetNormalRateBuildCost();
+
+    units.Remove(unit);
+}

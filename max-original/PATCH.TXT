@@ -1,0 +1,23 @@
+-----------------------------------------------------------------------
+MAX Patch Version 1.04
+-----------------------------------------------------------------------
+
+The patch should include the following files:
+
+    MAXRUN.NEW   (New Max EXE file)
+    READMET.NEW  (Text version of the readme file)
+    READMEW.NEW  (Windows Write version of the readme file)
+    PATCH.BAT    (Batch file to update MAX to 1.04)
+    PATCH.TXT    (This file)
+
+
+To install the MAX Patch, copy all files into your current MAX subdirectory
+and type:
+
+      PATCH  <enter>
+
+This will rename your current files with a .000 extension and update your
+MAX version to 1.04.
+
+
+

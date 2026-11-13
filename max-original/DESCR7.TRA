@@ -1,0 +1,6 @@
+Objective: Increase fuel reserve without shutting down production.
+
+Your complex currently has 2 vehicle plants and a mining station in operation. this means your current power demand is 3 units per turn. Thus, you also have 3 power generators running. Each power generator needs 2 units of fuel to produce 1 power, so your total fuel need per turn is 6.
+
+Now click on your mining station twice, then click on "Allocate" button to bring up the allocation panel. Here you see that your current fuel mining matches your consumption so nothing goes to reserve. Reduce your Raw Material mining by 2 which allows you to increase fuel production by the same amount. You should win next turn.
+

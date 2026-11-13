@@ -1,0 +1,36 @@
+---
+app-id: io.github.klei1984.max
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: max-port
+finish-args:
+- --device=all
+- --share=network
+- --socket=x11
+- --socket=wayland
+- --socket=pulseaudio
+- --filesystem=xdg-data
+modules:
+- name: max-port
+  buildsystem: cmake-ninja
+  builddir: true
+  build-options:
+    config-opts:
+    - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    - -DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG
+    - -DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG
+    - -DMAX_SPLIT_DEBUG_SYMBOLS=OFF
+    - -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-linux-x86_64.cmake
+    - -DBUILD_SHARED_LIBS=ON
+    - -DMAXPORT_FLATPAK_BUILD=TRUE
+    - -DFLATPAK_ID=io.github.klei1984.max
+  sources:
+  - type: dir
+    path: ..
+  post-install:
+    - install -Dm644 max-port.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+    - install -Dm644 ${FLATPAK_BUILDER_BUILDDIR}/assets/max.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/${FLATPAK_ID}.png
+    - desktop-file-edit --set-key="Icon" --set-value="${FLATPAK_ID}" ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+    - desktop-file-edit --set-key="Exec" --set-value="max-port" ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+    - install -Dm644 metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml

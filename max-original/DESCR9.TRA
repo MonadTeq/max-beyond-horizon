@@ -1,0 +1,6 @@
+Objective: Have at least one Mark II Tank.
+
+Note that Your complex now has a refinery. It is built by the constructor. It refines 5 units of gold per turn, effectively increasing your credit for upgrades by that much. Click on the refinery and you'll see buttons appear. Click on "Buy Upg" to bring up the upgrade purchase screen. Your credit should show 0 at this time. End turn and look again. You should now see 5 gold credit.  Select Tank in the units window. See what attributes are possible to upgrade for 5 or less credit, as the two small arrows placed next to each attribute indicates. Chose one and press done.
+
+Now, you can either wait for a new tank to be built (make sure that's what your heavy vehicle plant is doing), or build a depot in which you can apply upgrades to your existing tanks on the field.
+

@@ -1,0 +1,415 @@
+/* Copyright (c) 2022 M.A.X. Port Team
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "taskfrontalattack.hpp"
+
+#include <format>
+
+#include "access.hpp"
+#include "aiattack.hpp"
+#include "aiplayer.hpp"
+#include "game_manager.hpp"
+#include "settings.hpp"
+#include "task_manager.hpp"
+#include "taskmove.hpp"
+#include "unit.hpp"
+#include "units_manager.hpp"
+
+void TaskFrontalAttack::MoveFinishedCallback(Task* task, UnitInfo* unit, char result) {
+    TaskFrontalAttack* frontal_attack_task = dynamic_cast<TaskFrontalAttack*>(task);
+
+    if (result == TASKMOVE_RESULT_BLOCKED) {
+        frontal_attack_task->units2.PushBack(*unit);
+        frontal_attack_task->units1.Remove(*unit);
+    }
+
+    frontal_attack_task->IssueOrders();
+}
+
+void TaskFrontalAttack::Finish() {
+    SmartPointer<Task> frontal_attack_task(this);
+
+    for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+        Task_RemoveMovementTasks(it->Get());
+        (*it).RemoveTask(this);
+    }
+
+    units1.Clear();
+
+    for (auto it = units2.Begin(), it_end = units2.End(); it != it_end; ++it) {
+        Task_RemoveMovementTasks(it->Get());
+        (*it).RemoveTask(this);
+    }
+
+    units2.Clear();
+
+    TaskManager.RemoveTask(*this);
+}
+
+void TaskFrontalAttack::IssueOrders() {
+    UnitInfo* target = spotted_unit->GetUnit();
+    int32_t units_ready_for_orders = 0;
+
+    if (GameManager_PlayMode != PLAY_MODE_UNKNOWN && target->hits > 0) {
+        for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+            if ((*it).shots == 0 && ((*it).speed == 0 || ((*it).GetBaseValues()->GetAttribute(ATTRIB_MOVE_AND_FIRE) &&
+                                                          ResourceManager_GetSettings()->GetNumericValue("opponent") >=
+                                                              OPPONENT_TYPE_AVERAGE))) {
+                (*it).RemoveTask(this);
+                units1.Remove(*it);
+            }
+        }
+
+        if (GameManager_IsActiveTurn(m_team)) {
+            for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+                if (Task_IsReadyToTakeOrders(it->Get())) {
+                    if ((*it).speed == 0 || Access_GetSquaredDistance(it->Get(), spotted_unit->GetLastPosition()) <=
+                                                (*it).GetBaseValues()->GetAttribute(ATTRIB_RANGE) *
+                                                    (*it).GetBaseValues()->GetAttribute(ATTRIB_RANGE)) {
+                        if (!AiAttack_EvaluateAttack(it->Get())) {
+                            units2.PushBack(*it);
+                            units1.Remove(*it);
+                        }
+
+                        if (units1.GetCount() > 0 && !IsScheduledForTurnEnd()) {
+                            TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+                        }
+
+                        return;
+                    }
+                }
+            }
+        }
+
+        for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+            if ((*it).speed == 0) {
+                (*it).RemoveTask(this);
+                units1.Remove(*it);
+            }
+        }
+
+        while (units1.GetCount() > 0) {
+            UnitInfo* attacker = nullptr;
+            bool has_attack_target = false;
+            int32_t unit_value;
+            int32_t best_unit_value{0};
+
+            for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+                if ((*it).GetOrder() == ORDER_MOVE_TO_ATTACK ||
+                    Access_GetSquaredDistance(it->Get(), spotted_unit->GetLastPosition()) <=
+                        (*it).GetBaseValues()->GetAttribute(ATTRIB_RANGE) *
+                            (*it).GetBaseValues()->GetAttribute(ATTRIB_RANGE)) {
+                    has_attack_target = true;
+
+                } else if ((*it).GetTask() == this || (*it).GetTask() == nullptr ||
+                           (*it).GetTask()->GetType() == TaskType_TaskFindPath ||
+                           (*it).GetTask()->GetType() == TaskType_TaskMove) {
+                    UnitValues* unit_values = (*it).GetBaseValues();
+
+                    if (units1.GetCount() == 1 ||
+                        (UnitsManager_TeamInfo[m_team].heat_map &&
+                         UnitsManager_TeamInfo[m_team].heat_map->GetComplete(target->grid_x, target->grid_y) != 1) ||
+                        Access_GetSquaredDistance(it->Get(), target) >
+                            unit_values->GetAttribute(ATTRIB_SCAN) * unit_values->GetAttribute(ATTRIB_SCAN)) {
+                        unit_value = ((unit_values->GetAttribute(ATTRIB_ARMOR) * 4 + (*it).hits) * 12) /
+                                     unit_values->GetAttribute(ATTRIB_TURNS);
+
+                        if (attacker && unit_value < best_unit_value && !attacker->IsReadyForOrders(this)) {
+                            unit_value = best_unit_value;
+                        }
+
+                        if ((*it).IsReadyForOrders(this)) {
+                            ++units_ready_for_orders;
+                        }
+
+                        if (!attacker || unit_value > best_unit_value ||
+                            (unit_value == best_unit_value && !attacker->IsReadyForOrders(this))) {
+                            attacker = it->Get();
+                            best_unit_value = unit_value;
+                        }
+                    }
+                }
+            }
+
+            if (attacker) {
+                if (attacker->IsReadyForOrders(this)) {
+                    Point site;
+                    int32_t damage_potential_on_friendly_unit;
+                    int32_t attacker_range;
+                    int32_t total_predicted_damage_to_enemy;
+                    int32_t local_caution_level;
+                    bool is_found;
+
+                    if (attacker->GetBaseValues()->GetAttribute(ATTRIB_MOVE_AND_FIRE) &&
+                        ResourceManager_GetSettings()->GetNumericValue("opponent") >= OPPONENT_TYPE_AVERAGE) {
+                        local_caution_level = CAUTION_LEVEL_AVOID_REACTION_FIRE;
+
+                    } else {
+                        local_caution_level = CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE;
+                    }
+
+                    if (AiAttack_IsValidSabotageTarget(attacker, target)) {
+                        is_found = AiAttack_ChooseSiteToSabotage(
+                            attacker, target, &site, &damage_potential_on_friendly_unit, local_caution_level);
+
+                    } else {
+                        attacker_range = attacker->GetBaseValues()->GetAttribute(ATTRIB_RANGE);
+
+                        if (!spotted_unit->GetUnit()->IsVisibleToTeam(m_team)) {
+                            attacker_range =
+                                std::min(attacker_range, attacker->GetBaseValues()->GetAttribute(ATTRIB_SCAN));
+                        }
+
+                        is_found = AiAttack_ChooseSiteForAttacker(attacker, spotted_unit->GetLastPosition(), &site,
+                                                                  &damage_potential_on_friendly_unit,
+                                                                  local_caution_level, attacker_range, true);
+                    }
+
+                    if (is_found && !AiAttack_DecideDesperationAttack(attacker, target)) {
+                        total_predicted_damage_to_enemy = 0;
+
+                        for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+                            total_predicted_damage_to_enemy +=
+                                AiPlayer_CalculateProjectedDamage(it->Get(), target, local_caution_level);
+                        }
+
+                        damage_potential_on_friendly_unit =
+                            AiPlayer_Teams[m_team].GetDamagePotential(attacker, site, local_caution_level, true);
+
+                        if (!AiAttack_IsAttackProfitable(attacker, target, damage_potential_on_friendly_unit,
+                                                         local_caution_level, total_predicted_damage_to_enemy, true)) {
+                            is_found = false;
+
+                            if (local_caution_level == CAUTION_LEVEL_AVOID_REACTION_FIRE) {
+                                total_predicted_damage_to_enemy = 0;
+
+                                for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+                                    total_predicted_damage_to_enemy += AiPlayer_CalculateProjectedDamage(
+                                        it->Get(), target, CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE);
+                                }
+
+                                damage_potential_on_friendly_unit = AiPlayer_Teams[m_team].GetDamagePotential(
+                                    attacker, site, CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE, true);
+
+                                if (AiAttack_IsAttackProfitable(attacker, target, damage_potential_on_friendly_unit,
+                                                                CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE,
+                                                                total_predicted_damage_to_enemy, true)) {
+                                    is_found = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (is_found) {
+                        if (attacker->grid_x != site.x || attacker->grid_y != site.y) {
+                            SmartPointer<TaskMove> move_task(new (std::nothrow) TaskMove(
+                                attacker, this, 0, CAUTION_LEVEL_NONE, site, &MoveFinishedCallback));
+
+                            move_task->SetOptional(true);
+                            move_task->SetFinishOnArrival(true);
+
+                            movement_in_progress = true;
+
+                            TaskManager.AppendTask(*move_task);
+
+                            if (units_ready_for_orders > 1) {
+                                RemindTurnEnd(true);
+                            }
+
+                            return;
+
+                        } else {
+                            break;
+                        }
+
+                    } else {
+                        units1.Remove(*attacker);
+                        units2.PushBack(*attacker);
+
+                        if (!IsScheduledForTurnEnd()) {
+                            TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+                        }
+
+                        return;
+                    }
+
+                } else {
+                    return;
+                }
+
+            } else {
+                if (!has_attack_target) {
+                    for (auto it = units2.Begin(), it_end = units2.End(); it != it_end; ++it) {
+                        if (Task_RetreatIfNecessary(this, it->Get(), CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE)) {
+                            if (!IsScheduledForTurnEnd()) {
+                                TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+                            }
+
+                            return;
+                        }
+                    }
+
+                    for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+                        if (Task_RetreatIfNecessary(this, it->Get(), CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE)) {
+                            if (!IsScheduledForTurnEnd()) {
+                                TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+                            }
+
+                            return;
+                        }
+                    }
+                }
+
+                Finish();
+
+                return;
+            }
+        }
+
+    } else {
+        Finish();
+    }
+}
+
+TaskFrontalAttack::TaskFrontalAttack(uint16_t team_, SpottedUnit* spotted_unit_, int32_t caution_level_)
+    : Task(team_, nullptr, TASK_PRIORITY_FRONTAL_ATTACK) {
+    spotted_unit = spotted_unit_;
+    caution_level = caution_level_;
+    movement_in_progress = false;
+}
+
+TaskFrontalAttack::~TaskFrontalAttack() {}
+
+int32_t TaskFrontalAttack::GetCautionLevel(UnitInfo& unit) {
+    int32_t result;
+
+    if (units1.Find(unit) != units1.End()) {
+        result = CAUTION_LEVEL_NONE;
+
+    } else {
+        result = CAUTION_LEVEL_AVOID_NEXT_TURNS_FIRE;
+    }
+
+    return result;
+}
+
+std::string TaskFrontalAttack::WriteStatusLog() const {
+    if (spotted_unit && spotted_unit->GetUnit() && spotted_unit->GetUnit()->hits > 0) {
+        return std::format("Frontal attack on {} in [{},{}]",
+                           ResourceManager_GetUnit(spotted_unit->GetUnit()->GetUnitType()).GetSingularName().data(),
+                           spotted_unit->GetLastPositionX() + 1, spotted_unit->GetLastPositionY() + 1);
+    } else {
+        return "Completed frontal attack.";
+    }
+}
+
+uint8_t TaskFrontalAttack::GetType() const { return TaskType_TaskFrontalAttack; }
+
+void TaskFrontalAttack::AddUnit(UnitInfo& unit) {
+    unit.AddTask(this);
+    units1.PushBack(unit);
+}
+
+void TaskFrontalAttack::Init() {
+    UnitInfo* target = spotted_unit->GetUnit();
+
+    for (auto it = UnitsManager_MobileAirUnits.Begin(), it_end = UnitsManager_MobileAirUnits.End(); it != it_end;
+         ++it) {
+        if ((*it).team == m_team &&
+            ((*it).GetTask() == nullptr || (*it).GetTask()->ComparePriority(m_base_priority) > 0) &&
+            AiPlayer_GetProjectedDamage(it->Get(), target, caution_level) > 0) {
+            AddUnit(*it);
+        }
+    }
+
+    for (auto it = UnitsManager_MobileLandSeaUnits.Begin(), it_end = UnitsManager_MobileLandSeaUnits.End();
+         it != it_end; ++it) {
+        if ((*it).team == m_team &&
+            ((*it).GetTask() == nullptr || (*it).GetTask()->ComparePriority(m_base_priority) > 0) &&
+            AiPlayer_GetProjectedDamage(it->Get(), target, caution_level) > 0) {
+            AddUnit(*it);
+        }
+    }
+
+    if (!IsScheduledForTurnEnd()) {
+        TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+    }
+}
+
+void TaskFrontalAttack::BeginTurn() {
+    if (movement_in_progress) {
+        Finish();
+    }
+}
+
+void TaskFrontalAttack::EndTurn() {
+    if (units1.GetCount()) {
+        IssueOrders();
+
+    } else {
+        Finish();
+    }
+}
+
+bool TaskFrontalAttack::Execute(UnitInfo& unit) {
+    IssueOrders();
+
+    return true;
+}
+
+void TaskFrontalAttack::RemoveSelf() {
+    m_parent = nullptr;
+    spotted_unit = nullptr;
+
+    for (auto it = units1.Begin(), it_end = units1.End(); it != it_end; ++it) {
+        TaskManager.ClearUnitTasksAndRemindAvailable(it->Get());
+    }
+
+    units1.Clear();
+
+    for (auto it = units2.Begin(), it_end = units2.End(); it != it_end; ++it) {
+        TaskManager.ClearUnitTasksAndRemindAvailable(it->Get());
+    }
+
+    units2.Clear();
+
+    TaskManager.RemoveTask(*this);
+}
+
+void TaskFrontalAttack::RemoveUnit(UnitInfo& unit) {
+    units1.Remove(unit);
+    units2.Remove(unit);
+
+    if (units1.GetCount()) {
+        if (!IsScheduledForTurnEnd()) {
+            TaskManager.AppendReminder(new (std::nothrow) class RemindTurnEnd(*this));
+        }
+
+    } else {
+        Finish();
+    }
+}
+
+void TaskFrontalAttack::EventUnitDestroyed(UnitInfo& unit) {
+    if (spotted_unit->GetUnit() == &unit) {
+        Finish();
+    }
+}
