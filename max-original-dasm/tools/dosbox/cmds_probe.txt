@@ -1,0 +1,39 @@
+# Замер фактического размещения объекта #1: ядро DOS/32A хранит вход в данных.
+# T=0x54C: _sel32_cs @ T*16+0x30E0 = 0x85A0, _app_eip @ T*16+0x32C0 = 0x8780.
+# Прелюдия как cmds_c.txt до стопа на клиенте INT21 (1048:2714), затем замеры.
+BP 829:2C6C
+BP 552:1141
+BP 667:D
+BP 5F6:2
+BP 90E:7
+BP 20D71:4
+BP 20D72:4
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 20
+BPDEL 1
+BPDEL 0
+DV 8780
+DV 85A0
+DOS XMS
+GDT
+Q
