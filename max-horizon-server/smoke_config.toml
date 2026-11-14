@@ -67,6 +67,9 @@ max_file_descriptors = 65536
 executable = "/src/build/linux-server-template/max-port"
 template_dir = "/src/build/linux-server-template"
 session_root = "/tmp/horizon-sessions"
+# game_data без PATCHES.RES: headless C++ падает при загрузке ресурсов, если
+# PATCHES.RES лежит в game_data (баг серверной загрузки); тогда data_hash
+# сервера = sha256(MAX.RES) + "" (пустая часть для отсутствующего файла).
 game_data = "/src/max-original"
 port_range_start = 32000
 port_range_end = 32100

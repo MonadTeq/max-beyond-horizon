@@ -37,68 +37,85 @@ pub const MAX_RES_FILE: &str = "MAX.RES";
 /// Patches file name looked up by [`DataHash::from_data_dir`].
 pub const PATCHES_RES_FILE: &str = "PATCHES.RES";
 
-/// Two SHA-256 digests whose hex concatenation is the `data_hash` field.
+/// Two optional SHA-256 digests whose hex concatenation is the `data_hash`
+/// field. `None` contributes **nothing** to the wire value, mirroring the
+/// C++ `ResourceManager_Sha256File`: a missing file yields an empty string,
+/// not a hash of empty bytes (`if (!fp) return {};`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataHash {
-    /// `SHA256(MAX.RES)`.
-    pub max_res: [u8; 32],
-    /// `SHA256(PATCHES.RES)`.
-    pub patches_res: [u8; 32],
+    /// `SHA256(MAX.RES)`, or `None` when the file is absent.
+    pub max_res: Option<[u8; 32]>,
+    /// `SHA256(PATCHES.RES)`, or `None` when the file is absent.
+    pub patches_res: Option<[u8; 32]>,
 }
 
 impl DataHash {
-    /// Hash of the two input buffers.
+    /// Hash of the two input buffers (always present).
     pub fn from_bytes(max_res: &[u8], patches_res: &[u8]) -> Self {
         Self {
-            max_res: Sha256::digest(max_res).into(),
-            patches_res: Sha256::digest(patches_res).into(),
+            max_res: Some(Sha256::digest(max_res).into()),
+            patches_res: Some(Sha256::digest(patches_res).into()),
         }
     }
 
     /// Wraps already-computed digests.
     pub const fn from_digests(max_res: [u8; 32], patches_res: [u8; 32]) -> Self {
         Self {
-            max_res,
-            patches_res,
+            max_res: Some(max_res),
+            patches_res: Some(patches_res),
         }
     }
 
-    /// Hashes the two data files on disk.
+    /// Hashes the two data files on disk. A missing file contributes
+    /// **nothing** to the wire value, mirroring `ResourceManager_Sha256File`
+    /// in the C++ server (`if (!fp) return {};`): the wire hash of a missing
+    /// file is the zero-length string, not a hash of empty bytes.
     pub fn from_files(
         max_res: impl AsRef<Path>,
         patches_res: impl AsRef<Path>,
     ) -> io::Result<Self> {
-        let max_res_path = max_res.as_ref().to_path_buf();
-        let max_res_bytes = std::fs::read(&max_res_path).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("cannot read {}: {error}", max_res_path.display()),
-            )
-        })?;
-        let patches_path = patches_res.as_ref().to_path_buf();
-        let patches_bytes = std::fs::read(&patches_path).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("cannot read {}: {error}", patches_path.display()),
-            )
-        })?;
-        Ok(Self::from_bytes(&max_res_bytes, &patches_bytes))
+        fn read_or_none(path: &Path) -> io::Result<Option<Vec<u8>>> {
+            match std::fs::read(path) {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(io::Error::new(
+                    error.kind(),
+                    format!("cannot read {}: {error}", path.display()),
+                )),
+            }
+        }
+        let max_res = read_or_none(max_res.as_ref())?;
+        let patches_res = read_or_none(patches_res.as_ref())?;
+        Ok(Self {
+            max_res: max_res.as_deref().map(|bytes| Sha256::digest(bytes).into()),
+            patches_res: patches_res
+                .as_deref()
+                .map(|bytes| Sha256::digest(bytes).into()),
+        })
     }
 
     /// Looks up `MAX.RES` and `PATCHES.RES` in `dir` (case-insensitive
-    /// fallback for lowercase file names).
+    /// fallback for lowercase file names); missing files contribute nothing.
     pub fn from_data_dir(dir: impl AsRef<Path>) -> io::Result<Self> {
         let dir = dir.as_ref();
-        let max_res = find_file(dir, MAX_RES_FILE)?;
-        let patches_res = find_file(dir, PATCHES_RES_FILE)?;
-        Self::from_files(max_res, patches_res)
+        let max_res = find_file_optional(dir, MAX_RES_FILE);
+        let patches_res = find_file_optional(dir, PATCHES_RES_FILE);
+        match (max_res, patches_res) {
+            (Some(max_res), Some(patches_res)) => Self::from_files(max_res, patches_res),
+            (Some(max_res), None) => Self::from_files(max_res, dir.join(PATCHES_RES_FILE)),
+            (None, Some(patches_res)) => Self::from_files(dir.join(MAX_RES_FILE), patches_res),
+            (None, None) => Ok(Self {
+                max_res: None,
+                patches_res: None,
+            }),
+        }
     }
 
-    /// The 128-hex-character wire value: `hex(SHA256(MAX.RES)) +
-    /// hex(SHA256(PATCHES.RES))`.
+    /// The wire value: `hex(SHA256(MAX.RES)) + hex(SHA256(PATCHES.RES))`,
+    /// with absent files contributing nothing (64, 128 or 0 hex chars).
     pub fn to_hex(self) -> String {
         let mut out = String::with_capacity(128);
-        for digest in [self.max_res, self.patches_res] {
+        for digest in [self.max_res, self.patches_res].into_iter().flatten() {
             for byte in digest {
                 out.push(hex_digit(byte >> 4));
                 out.push(hex_digit(byte & 0x0F));
@@ -107,51 +124,51 @@ impl DataHash {
         out
     }
 
-    /// Parses the 128-hex-character wire value back into digests.
+    /// Parses the wire value back into digests: 128 hex chars (both files),
+    /// 64 (MAX.RES only), or empty (neither).
     pub fn from_hex(value: &str) -> Result<Self, HandshakeError> {
         let bytes = value.as_bytes();
-        if bytes.len() != 128 {
-            return Err(HandshakeError::InvalidDataHash(format!(
-                "expected 128 hex characters, got {}",
-                bytes.len()
-            )));
+        let parse = |chunk: &[u8]| -> Result<[u8; 32], HandshakeError> {
+            let mut digest = [0u8; 32];
+            for (index, pair) in chunk.chunks_exact(2).enumerate() {
+                let high = hex_value(pair[0])
+                    .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
+                let low = hex_value(pair[1])
+                    .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
+                digest[index] = (high << 4) | low;
+            }
+            Ok(digest)
+        };
+        match bytes.len() {
+            0 => Ok(Self {
+                max_res: None,
+                patches_res: None,
+            }),
+            64 => Ok(Self {
+                max_res: Some(parse(&bytes[..64])?),
+                patches_res: None,
+            }),
+            128 => Ok(Self {
+                max_res: Some(parse(&bytes[..64])?),
+                patches_res: Some(parse(&bytes[64..])?),
+            }),
+            other => Err(HandshakeError::InvalidDataHash(format!(
+                "expected 0, 64 or 128 hex characters, got {other}"
+            ))),
         }
-        let mut max_res = [0u8; 32];
-        let mut patches_res = [0u8; 32];
-        for (index, chunk) in bytes[..64].chunks_exact(2).enumerate() {
-            let high = hex_value(chunk[0])
-                .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
-            let low = hex_value(chunk[1])
-                .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
-            max_res[index] = (high << 4) | low;
-        }
-        for (index, chunk) in bytes[64..].chunks_exact(2).enumerate() {
-            let high = hex_value(chunk[0])
-                .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
-            let low = hex_value(chunk[1])
-                .ok_or_else(|| HandshakeError::InvalidDataHash("non-hex digit".into()))?;
-            patches_res[index] = (high << 4) | low;
-        }
-        Ok(Self {
-            max_res,
-            patches_res,
-        })
     }
 }
 
-fn find_file(dir: &Path, name: &str) -> io::Result<PathBuf> {
+fn find_file_optional(dir: &Path, name: &str) -> Option<PathBuf> {
     let exact = dir.join(name);
     if exact.is_file() {
-        return Ok(exact);
+        return Some(exact);
     }
     let lower = dir.join(name.to_ascii_lowercase());
     if lower.is_file() {
-        return Ok(lower);
+        return Some(lower);
     }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        format!("{name} not found in {}", dir.display()),
-    ))
+    None
 }
 
 fn hex_digit(nibble: u8) -> char {

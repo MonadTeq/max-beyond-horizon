@@ -81,3 +81,7 @@ max-port-site/
 
 # Rust workspace artifacts
 max-rust/target/
+
+
+# Smoke data dir (MAX.RES + PATCHES.RES together)
+build/game-data-smoke/

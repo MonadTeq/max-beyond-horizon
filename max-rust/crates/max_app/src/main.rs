@@ -71,6 +71,7 @@ impl Cli {
         let mut mode_set = false;
         let mut data_dir_set = false;
         let mut assets_dir_set = false;
+        let mut patches_explicit = false;
         let mut args = std::env::args().skip(1);
 
         while let Some(arg) = args.next() {
@@ -154,6 +155,7 @@ impl Cli {
                 "--patches" => {
                     cli.config.patches_res =
                         PathBuf::from(args.next().context("--patches требует путь")?);
+                    patches_explicit = true;
                 }
                 "--palette" => {
                     cli.config.color_pal =
@@ -199,7 +201,10 @@ impl Cli {
                 cli.config = cli.config.with_data_dir(root.join("max-original"));
             }
         }
-        if !assets_dir_set && !cli.config.patches_res.exists() {
+        // Явный --patches отключает fallback: клиент может намеренно указать
+        // несуществующий файл, повторяя семантику C++-сервера (отсутствующий
+        // файл даёт пустую часть data_hash в хендшейке).
+        if !assets_dir_set && !patches_explicit && !cli.config.patches_res.exists() {
             if let Some(root) = repository_root() {
                 cli.config = cli.config.with_assets_dir(root.join("assets"));
             }
