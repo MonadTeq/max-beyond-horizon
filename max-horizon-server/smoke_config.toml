@@ -1,0 +1,75 @@
+# Живой smoke: Horizon (WS 8080 + gRPC 8082) + headless-шаблон из build/linux-server-template.
+[server]
+bind_address = "0.0.0.0:8080"
+max_connections = 100
+connection_timeout = 120
+use_reuse_port = false
+tick_interval_ms = 16
+
+[server.region]
+min_x = -5000.0
+max_x = 5000.0
+min_y = -5000.0
+max_y = 5000.0
+min_z = -500.0
+max_z = 500.0
+
+[server.security]
+enable_rate_limiting = false
+max_requests_per_minute = 100
+max_message_size = 32768
+max_json_depth = 8
+max_string_length = 512
+max_collection_size = 50
+enable_ddos_protection = false
+banned_ips = []
+max_connections_per_ip = 10
+
+[server.grpc]
+enabled = true
+bind_address = "0.0.0.0:8082"
+
+[plugins]
+directory = "/tmp/horizon-plugins"
+auto_load = false
+whitelist = []
+
+[logging]
+level = "info"
+json_format = false
+
+[health]
+enable_health_checks = false
+enable_metrics = false
+
+[monitoring]
+enable_prometheus = false
+prometheus_port = 9090
+enable_jaeger = false
+
+[database]
+enabled = false
+
+[tls]
+enabled = false
+
+[performance]
+worker_threads = 0
+blocking_threads = 512
+thread_keep_alive_seconds = 10
+
+[limits]
+max_memory_mb = 2048
+max_cpu_percent = 80.0
+max_file_descriptors = 65536
+
+[max]
+executable = "/src/build/linux-server-template/max-port"
+template_dir = "/src/build/linux-server-template"
+session_root = "/tmp/horizon-sessions"
+game_data = "/src/max-original"
+port_range_start = 32000
+port_range_end = 32100
+max_restarts = 0
+session_secret = "smoke-secret"
+admin_secret = "smoke-admin"
