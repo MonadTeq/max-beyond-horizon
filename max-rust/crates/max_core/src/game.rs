@@ -19,8 +19,13 @@
 //! (`pathfinding`): `ProcessOrders` вызывает `AssessAttacks` для отложенных
 //! реакций, `PendingAirGroupLeader` — `Access_ProcessNewGroupOrder`, тик —
 //! синхронный `PollResults`; `MapHash` и `DelayedAttackTargets` входят в
-//! состояние. ИИ-задачи (P6) по-прежнему заменены помеченными заглушками,
-//! **порядок вызовов и переходы состояний сохранены 1:1**.
+//! состояние.
+//!
+//! P6 подключает ИИ (`crate::ai`): `Ai_ClearTasksPendingFlags` в
+//! `ProcessOrders`, `Ai_CheckReactions`/`Ai_CheckEndTurn` в тике, покрытие
+//! сканирования (`Access_UpdateMapStatus`) и `Ai_RemoveUnit` при
+//! спавне/движении/уничтожении юнитов. Состояние ИИ — `GameState.ai` —
+//! входит в канонический дайджест состояния.
 //!
 //! # Создание карты и юнитов
 //!
@@ -224,6 +229,8 @@ pub struct GameState {
     pub real_time: bool,
     /// Очередь входных команд (DESIGN §5.1 шаг 1).
     pub commands: CommandQueue,
+    /// Состояние ИИ: игроки, менеджер задач, тепловые карты (P6, `ai.cpp`).
+    pub ai: crate::ai::AiState,
 }
 
 impl Default for GameState {
@@ -295,6 +302,7 @@ impl GameState {
             disable_fire: false,
             real_time: false,
             commands: CommandQueue::new(),
+            ai: crate::ai::AiState::new(),
         }
     }
 
@@ -375,7 +383,9 @@ impl GameState {
     /// `Hash_MapHash.Remove/Add` в `UnitInfo::Move`/`UpdateGridPosition`.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
         if let Some(slot) = self.lookup(id) {
-            if let Some(previous) = self.units.get(slot).and_then(|entry| entry.as_ref()) {
+            let previous = self.units.get(slot).and_then(|entry| entry.as_ref()).cloned();
+
+            if let Some(previous) = &previous {
                 if previous.grid != unit.grid {
                     self.map_hash.remove(
                         id,
@@ -385,12 +395,22 @@ impl GameState {
                     );
                     self.map_hash
                         .add(id, unit.grid.x as u16, unit.grid.y as u16, unit.flags, false);
+
+                    // `Access_UpdateMapStatus` — покрытие сканирования
+                    // переезжает вместе с юнитом (P6).
+                    self.update_map_status_unit(previous, false);
                 }
             }
+
             if let Some(entry) = self.units.get_mut(slot) {
-                *entry = Some(unit);
+                *entry = Some(unit.clone());
             }
-        }
+
+            if let Some(previous) = &previous {
+                if previous.grid != unit.grid {
+                    self.update_map_status(id, true);
+                }
+            }        }
     }
 
     /// `Hash_MapHash[Point]` — юниты клетки в порядке вставки.
@@ -867,15 +887,18 @@ impl GameState {
         self.map_hash.add(id, grid.x as u16, grid.y as u16, flags, false);
 
         self.add_to_draw_list(id);
+
+        // `Access_UpdateMapStatus(unit, true)` — покрытие сканирования (P6).
+        self.update_map_status(id, true);
+
         Some(id)
     }
 
     /// Уничтожение юнита — подмножество `UnitsManager_DestroyUnit`
     /// (`units_manager.cpp`), достаточное циклу P4: снятие со списков, из
-    /// хэшей, из атак и событий.
+    /// хэшей, из атак и событий, покрытия сканирования и задач ИИ.
     ///
-    /// TODO(P3): комплексы, грузы, следы/обломки, статистика потерь и
-    /// отложенные задачи ИИ.
+    /// TODO(P3): комплексы, грузы, следы/обломки, статистика потерь.
     pub fn destroy_unit(&mut self, id: UnitId) {
         let Some(slot) = self.lookup(id) else {
             return;
@@ -884,6 +907,11 @@ impl GameState {
         // Атаку завершаем до удаления из хэша (`UnitsManager_EndAttack` ищет
         // юнита по id).
         self.end_attack(id);
+
+        // `Access_UpdateMapStatus(unit, false)` и `Ai_RemoveUnit` (P6).
+        self.update_map_status(id, false);
+        crate::ai::ai_remove_unit(self, id);
+
         self.clear_group_member(id);
         self.remove_unit_from_unit_lists(id);
         self.unit_hash.remove_at(u32::from(id.0), &(slot as u16));
@@ -1064,8 +1092,8 @@ impl GameState {
     pub fn process_orders(&mut self) {
         self.bob_effect_quota = 5;
 
-        // `Ai_ClearTasksPendingFlags` — P6 (флаги ожидания задач ИИ).
-        // TODO(P6): AiPlayer_Teams[team].ChangeTasksPendingFlag(false).
+        // `Ai_ClearTasksPendingFlags` (`ai.cpp:273`).
+        crate::ai::ai_clear_tasks_pending_flags(self);
 
         // `for team: UnitsManager_Units[team] = nullptr`.
         self.units_active = [None; TEAM_SLOTS];
@@ -1452,48 +1480,19 @@ impl GameState {
         crate::pathfinding::dispatch_jobs(self);
     }
 
-    /// `Ai_CheckReactions` (`ai.cpp:407`) — P6. Точка вызова сохранена.
+    /// `Ai_CheckReactions` (`ai.cpp:407`) — реакции ИИ на замеченные цели,
+    /// разбор очереди напоминаний через чередование `Ai_AiReactionState`.
     fn check_reactions(&mut self) {
-        // TODO(P6): Ai_CheckReactions — реакции ИИ на замеченные цели.
+        crate::ai::ai_check_reactions(self);
     }
 
-    /// `Ai_CheckEndTurn` (`ai.cpp:239`) — проверка условий завершения хода.
+    /// `Ai_CheckEndTurn` (`ai.cpp:239)` — проверка условий завершения хода.
     ///
-    /// Для компьютерных команд решение принимает ИИ-игрок (`AiPlayer::
-    /// CheckEndTurn`, P6); люди и удалённые команды завершают ход пакетом 06.
-    /// Здесь портирована структура ветвлений, чтобы порядок фаз совпадал.
+    /// Для компьютерных команд решение принимает ИИ-игрок
+    /// (`AiPlayer::CheckEndTurn`); люди и удалённые команды завершают ход
+    /// пакетом 06.
     pub fn check_end_turn(&mut self) {
-        if self.play_mode == PlayMode::TurnBased {
-            if self.game_state == GameStateType::InGame {
-                let team = self.active_turn_team;
-                if self.teams[team.0 as usize].team_type == TeamKind::Computer
-                    && !self.teams[team.0 as usize].finished_turn
-                {
-                    // TODO(P6): AiPlayer_Teams[team].CheckEndTurn().
-                }
-            }
-        } else if self.game_state == GameStateType::EndTurn
-            || self.game_state == GameStateType::InGame
-        {
-            for team in 0..PLAYER_TEAM_COUNT {
-                if self.teams[team].team_type == TeamKind::Computer
-                    && !self.teams[team].finished_turn
-                {
-                    // TODO(P6): AiPlayer_Teams[team].CheckEndTurn();
-                    // при true — вернуться из цикла (как в C++ `return`).
-                }
-            }
-
-            if self.game_state == GameStateType::InGame {
-                let team = self.active_turn_team;
-                if self.teams[team.0 as usize].team_type == TeamKind::Computer
-                    && self.teams[team.0 as usize].finished_turn
-                {
-                    // «Error- had to force ENDTURN!»
-                    self.game_state = GameStateType::EndTurn;
-                }
-            }
-        }
+        crate::ai::ai_check_end_turn(self);
     }
 
     // -----------------------------------------------------------------------
@@ -1728,6 +1727,9 @@ impl GameState {
                 put_i16(&mut out, unit.base_values.get_attribute(attribute) as i16);
             }
         }
+
+        // Состояние ИИ (P6): задачи, напоминания, игроки, тепловые карты.
+        self.ai.digest_into(&mut out);
 
         out
     }

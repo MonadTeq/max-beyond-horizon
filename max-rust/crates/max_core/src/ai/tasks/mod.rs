@@ -1,0 +1,1747 @@
+//! Классы задач ИИ (`ai/tasks/*`) — порт `task*.cpp` / `task*.hpp`.
+//!
+//! Каждый класс задачи — вариант [`TaskKind`] с полями состояния из
+//! соответствующего `task*.hpp`, плюс обработчики жизненного цикла
+//! (`Init`/`BeginTurn`/`EndTurn`/`Execute`/`AddUnit`/…). Обработчики
+//! сгруппированы по файлам:
+//!
+//! | Файл | Классы C++ |
+//! |---|---|
+//! | [`create`] | `taskcreate.cpp`, `taskcreateunit.cpp`, `taskcreatebuilding.cpp`, `taskobtainunits.cpp`, `taskactivate.cpp` |
+//! | [`combat`] | `taskattack.cpp`, `taskkillunit.cpp`, `taskfrontalattack.cpp`, `taskwaittoattack.cpp`, `tasksupportattack.cpp`, `taskattackreserve.cpp`, `taskdefensereserve.cpp`, `taskescort.cpp`, `taskretreat.cpp` |
+//! | [`move`] | `taskmove.cpp`, `taskmovehome.cpp`, `taskfindpath.cpp`, `tasksearchdestination.cpp`, `taskrendezvous.cpp`, `taskassistmove.cpp`, `tasktransport.cpp`, `taskdump.cpp` |
+//! | [`build`] | `taskmanagebuildings.cpp`, `taskpowerassistant.cpp`, `taskhabitatassistant.cpp`, `taskradarassistant.cpp`, `taskconnectionassistant.cpp`, `taskdefenseassistant.cpp`, `taskfrontierassistant.cpp`, `taskmineassistant.cpp`, `taskupdateterrain.cpp` |
+//! | [`misc`] | `taskgetresource.cpp`, `taskgetmaterials.cpp`, `taskrepair.cpp`, `taskreload.cpp`, `taskupgrade.cpp`, `taskremoverubble.cpp`, `taskremovemines.cpp`, `taskfindmines.cpp`, `taskplacemines.cpp`, `taskscavenge.cpp`, `taskabstractsearch.cpp`, `tasksurvey.cpp`, `taskexplore.cpp`, `taskautosurvey.cpp`, `taskclearzone.cpp`, `taskcheckassaults.cpp` |
+//!
+//! # Как задачи получают доступ к партии
+//!
+//! Задача живёт в [`crate::ai::task_manager::TaskManager`], который лежит в
+//! `GameState.ai.task_manager`. Мутирующие обработчики получают
+//! [`TaskCtx`] — `&mut TaskManager` + `&mut GameState` одновременно; сам
+//! `TaskKind` берётся из клона задачи, а после вызова записывается обратно
+//! (`TaskManager::write_kind`). Это повторяет семантику C++-указателей
+//! (`SmartPointer<Task>`) и исключает заимствование `Self` из-за состояния
+//! партии.
+
+use crate::game::GameState;
+use crate::geo::Point;
+use crate::team::{Cargo, TeamId};
+use crate::unit::{UnitId, UnitInfo, UnitListKind, Rect};
+use crate::unit_order;
+use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
+
+use super::task::{
+    TaskHeader, TASK_PRIORITY_MOVE, TASK_TYPE_ACTIVATE, TASK_TYPE_ASSIST_MOVE, TASK_TYPE_ATTACK,
+    TASK_TYPE_ATTACK_RESERVE, TASK_TYPE_AUTO_SURVEY, TASK_TYPE_CHECK_ASSAULTS, TASK_TYPE_CLEAR_ZONE,
+    TASK_TYPE_CONNECTION_ASSISTANT, TASK_TYPE_CREATE_BUILDING, TASK_TYPE_CREATE_UNIT,
+    TASK_TYPE_DEFENSE_ASSISTANT, TASK_TYPE_DEFENSE_RESERVE, TASK_TYPE_DUMP, TASK_TYPE_ESCORT,
+    TASK_TYPE_EXPLORE, TASK_TYPE_FIND_MINES, TASK_TYPE_FIND_PATH, TASK_TYPE_FRONTIER_ASSISTANT,
+    TASK_TYPE_FRONTAL_ATTACK, TASK_TYPE_GET_MATERIALS, TASK_TYPE_HABITAT_ASSISTANT,
+    TASK_TYPE_KILL_UNIT, TASK_TYPE_MANAGE_BUILDINGS, TASK_TYPE_MINE_ASSISTANT, TASK_TYPE_MOVE,
+    TASK_TYPE_MOVE_HOME, TASK_TYPE_OBTAIN_UNITS, TASK_TYPE_PLACE_MINES,
+    TASK_TYPE_POWER_ASSISTANT, TASK_TYPE_RADAR_ASSISTANT, TASK_TYPE_RELOAD,
+    TASK_TYPE_REMOVE_MINES, TASK_TYPE_REMOVE_RUBBLE, TASK_TYPE_RENDEZVOUS, TASK_TYPE_REPAIR,
+    TASK_TYPE_RETREAT, TASK_TYPE_SCAVENGE, TASK_TYPE_SEARCH_DESTINATION,
+    TASK_TYPE_SUPPORT_ATTACK, TASK_TYPE_SURVEY, TASK_TYPE_TRANSPORT,
+    TASK_TYPE_UPDATE_TERRAIN, TASK_TYPE_UPGRADE, TASK_TYPE_WAIT_TO_ATTACK,
+};
+use super::task_manager::TaskManager;
+use super::Task;
+
+pub mod build;
+pub mod combat;
+pub mod create;
+pub mod misc;
+pub mod move_tasks;
+pub mod search;
+
+// ---------------------------------------------------------------------------
+// Состояние классов задач (поля из task*.hpp)
+// ---------------------------------------------------------------------------
+
+/// `ATTACK_STATE_*` (`taskattack.hpp:33`).
+pub mod attack_state {
+    /// `ATTACK_STATE_INIT`.
+    pub const INIT: u8 = 0;
+    /// `ATTACK_STATE_WAIT`.
+    pub const WAIT: u8 = 1;
+    /// `ATTACK_STATE_GATHER_FORCES`.
+    pub const GATHER_FORCES: u8 = 2;
+    /// `ATTACK_STATE_ADVANCE`.
+    pub const ADVANCE: u8 = 3;
+    /// `ATTACK_STATE_ADVANCE_USING_TRANSPORT`.
+    pub const ADVANCE_USING_TRANSPORT: u8 = 4;
+    /// `ATTACK_STATE_NORMAL_SEARCH`.
+    pub const NORMAL_SEARCH: u8 = 5;
+    /// `ATTACK_STATE_BOLD_SEARCH`.
+    pub const BOLD_SEARCH: u8 = 6;
+    /// `ATTACK_STATE_ATTACK`.
+    pub const ATTACK: u8 = 7;
+}
+
+/// `CREATE_UNIT_STATE_*` (`taskcreateunit.cpp:33`).
+pub mod create_unit_state {
+    /// `CREATE_UNIT_STATE_INITIALIZING`.
+    pub const INITIALIZING: u8 = 0;
+    /// `CREATE_UNIT_STATE_OBTAININING_BUILDER`.
+    pub const OBTAINING_BUILDER: u8 = 1;
+    /// `CREATE_UNIT_STATE_WAITING_FOR_MATERIALS`.
+    pub const WAITING_FOR_MATERIALS: u8 = 2;
+    /// `CREATE_UNIT_STATE_BUILDING`.
+    pub const BUILDING: u8 = 3;
+    /// `CREATE_UNIT_STATE_ACTIVATING`.
+    pub const ACTIVATING: u8 = 4;
+    /// `CREATE_UNIT_STATE_FINISHED`.
+    pub const FINISHED: u8 = 5;
+}
+
+/// `CREATE_BUILDING_STATE_*` (`taskcreatebuilding.cpp:50`).
+pub mod create_building_state {
+    /// `CREATE_BUILDING_STATE_INITIALIZING`.
+    pub const INITIALIZING: u8 = 0;
+    /// `CREATE_BUILDING_STATE_WAITING_FOR_PLATFORM`.
+    pub const WAITING_FOR_PLATFORM: u8 = 1;
+    /// `CREATE_BUILDING_STATE_REMOVING_MINE`.
+    pub const REMOVING_MINE: u8 = 2;
+    /// `CREATE_BUILDING_STATE_GETTING_BUILDER`.
+    pub const GETTING_BUILDER: u8 = 3;
+    /// `CREATE_BUILDING_STATE_GETTING_MATERIALS`.
+    pub const GETTING_MATERIALS: u8 = 4;
+    /// `CREATE_BUILDING_STATE_EVALUTING_SITE`.
+    pub const EVALUATING_SITE: u8 = 5;
+    /// `CREATE_BUILDING_STATE_SITE_BLOCKED`.
+    pub const SITE_BLOCKED: u8 = 6;
+    /// `CREATE_BUILDING_STATE_MOVING_TO_SITE`.
+    pub const MOVING_TO_SITE: u8 = 7;
+    /// `CREATE_BUILDING_STATE_CLEARING_SITE`.
+    pub const CLEARING_SITE: u8 = 8;
+    /// `CREATE_BUILDING_STATE_BUILDING`.
+    pub const BUILDING: u8 = 9;
+    /// `CREATE_BUILDING_STATE_MOVING_OFF_SITE`.
+    pub const MOVING_OFF_SITE: u8 = 10;
+    /// `CREATE_BUILDING_STATE_FINISHED`.
+    pub const FINISHED: u8 = 11;
+}
+
+/// `TaskAttack` — состояние атаки (`taskattack.hpp:44`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttackState {
+    /// `target_team`.
+    pub target_team: Option<TeamId>,
+    /// `op_state`.
+    pub op_state: u8,
+    /// `primary_targets` — задачи `TaskKillUnit`.
+    pub primary_targets: Vec<u32>,
+    /// `secondary_targets`.
+    pub secondary_targets: Vec<u32>,
+    /// `kill_unit_task`.
+    pub kill_unit_task: Option<u32>,
+    /// `support_attack_task`.
+    pub support_attack_task: Option<u32>,
+    /// `leader`.
+    pub leader: Option<UnitId>,
+    /// `leader_task`.
+    pub leader_task: Option<u32>,
+    /// `access_flags`.
+    pub access_flags: u32,
+    /// `recon_unit`.
+    pub recon_unit: Option<UnitId>,
+    /// `managed_unit_types`.
+    pub managed_unit_types: Vec<UnitType>,
+    /// `attack_zone_reached`.
+    pub attack_zone_reached: bool,
+    /// `fire_target` (id цели, которая была обстреляна).
+    pub fire_target: Option<UnitId>,
+    /// `fire_turn`.
+    pub fire_turn: i32,
+    /// `defenders_fire`.
+    pub defenders_fire: i32,
+    /// Сайт сбора (`DeterminePosition`).
+    pub site: Point,
+}
+
+/// `TaskKillUnit::UnitDamage` — вклад юнита в урон по цели.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitDamage {
+    /// Юнит.
+    pub unit: UnitId,
+    /// Ожидаемый урон.
+    pub damage: i32,
+}
+
+/// `TaskKillUnit` — состояние уничтожения цели (`taskkillunit.hpp:42`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KillUnitState {
+    /// `unit_requests`.
+    pub unit_requests: u16,
+    /// `spotted_unit` — id `SpottedUnit` в списке `AiPlayer::spotted_units`.
+    pub spotted_unit: Option<u32>,
+    /// `units`.
+    pub units: Vec<UnitId>,
+    /// `unit_damages`.
+    pub unit_damages: Vec<UnitDamage>,
+    /// `required_damage`.
+    pub required_damage: u16,
+    /// `hits`.
+    pub hits: u16,
+    /// `managed_unit`.
+    pub managed_unit: Option<UnitId>,
+    /// `weight_table` — типы, которыми добивают цель.
+    pub weight_table: super::weight::WeightTable,
+    /// `seek_target`.
+    pub seek_target: bool,
+    /// `recruit_turn`.
+    pub recruit_turn: i32,
+    /// Позиция цели (`spotted_unit->GetLastPosition`).
+    pub target_position: Point,
+    /// Тип цели.
+    pub target_type: Option<UnitType>,
+    /// Активный сбор рекрутов в этом ходу (`HoldRecruitsThisTurn`).
+    pub recruits_held: bool,
+}
+
+/// `TaskMove` — состояние перемещения (`taskmove.hpp:41`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveState {
+    /// `passenger`.
+    pub passenger: Option<UnitId>,
+    /// `minimum_distance`.
+    pub minimum_distance: u16,
+    /// `caution_level`.
+    pub caution_level: CautionLevel,
+    /// `passenger_waypoint`.
+    pub passenger_waypoint: Point,
+    /// `transport_waypoint`.
+    pub transport_waypoint: Point,
+    /// `destination_waypoint`.
+    pub destination_waypoint: Point,
+    /// `transporter_unit_type`.
+    pub transporter_unit_type: Option<UnitType>,
+    /// `passenger_destination`.
+    pub passenger_destination: Point,
+    /// `planned_path`.
+    pub planned_path: Vec<Point>,
+    /// `finish_on_arrival`.
+    pub finish_on_arrival: bool,
+    /// `is_optional`.
+    pub is_optional: bool,
+    /// `move_order_issued`.
+    pub move_order_issued: bool,
+    /// `path_result`.
+    pub path_result: u8,
+    /// Конечная точка (`GetDestination`).
+    pub destination: Point,
+    /// Юнит, который едет.
+    pub unit: Option<UnitId>,
+    /// Приказ отдан и путь запрошен.
+    pub started: bool,
+}
+
+impl Default for MoveState {
+    fn default() -> Self {
+        Self {
+            passenger: None,
+            minimum_distance: 0,
+            caution_level: CautionLevel::AvoidNextTurnsFire,
+            passenger_waypoint: Point::ZERO,
+            transport_waypoint: Point::ZERO,
+            destination_waypoint: Point::ZERO,
+            transporter_unit_type: None,
+            passenger_destination: Point::ZERO,
+            planned_path: Vec::new(),
+            finish_on_arrival: false,
+            is_optional: false,
+            move_order_issued: false,
+            path_result: TASKMOVE_RESULT_NONE,
+            destination: Point::ZERO,
+            unit: None,
+            started: false,
+        }
+    }
+}
+
+/// «Нет результата» для `TaskMove::path_result`.
+pub const TASKMOVE_RESULT_NONE: u8 = 0xFF;
+
+/// `TaskAbstractSearch` — состояние абстрактного поиска (`taskabstractsearch.hpp`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SearchState {
+    /// `point`.
+    pub point: Point,
+    /// `units`.
+    pub units: Vec<UnitId>,
+    /// `requestors`.
+    pub requestors: i16,
+    /// Юниты, уже посещённые (для `IsVisited`).
+    pub visited: Vec<(UnitId, Point)>,
+}
+
+/// `TaskRepair` (база для `TaskReload`/`TaskUpgrade`) — `taskrepair.hpp:43`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RepairState {
+    /// `target_unit`.
+    pub target_unit: Option<UnitId>,
+    /// `operator_unit`.
+    pub operator_unit: Option<UnitId>,
+    /// Ожидание прибытия оператора.
+    pub operator_requested: bool,
+}
+
+/// `TaskRemoveRubble` (база для `TaskRemoveMines`) — `taskremoverubble.hpp:33`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemoveRubbleState {
+    /// `unit`.
+    pub unit: Option<UnitId>,
+    /// `target`.
+    pub target: Option<UnitId>,
+    /// Целевая клетка (`target->grid`).
+    pub site: Point,
+    /// Запрос на юнита сделан.
+    pub unit_requested: bool,
+}
+
+/// `TaskGetResource` — состояние снабжения (`taskgetresource.hpp:32`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GetResourceState {
+    /// `requestor` — кому везут.
+    pub requestor: Option<UnitId>,
+    /// `supplier` — кто везёт.
+    pub supplier: Option<UnitId>,
+    /// `source` — откуда.
+    pub source: Option<UnitId>,
+    /// Перевозка начата.
+    pub started: bool,
+}
+
+/// Режим завершения `TaskRendezvous` — результат `Primary/Secondary`-колбэка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendezvousMode {
+    /// Оба юнита на месте.
+    Success,
+    /// Не удалось.
+    Failed,
+}
+
+/// `TaskDump`/`TaskTransport` — направление разгрузки.
+pub const DUMP_NONE: i16 = -1;
+
+// ---------------------------------------------------------------------------
+// TaskKind
+// ---------------------------------------------------------------------------
+
+/// Состояние и тип конкретной задачи — аналог `class Task*` из `task*.hpp`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskKind {
+    /// `TaskActivate`.
+    Activate {
+        /// `unit_to_activate`.
+        unit_to_activate: Option<UnitId>,
+        /// `unit_parent`.
+        unit_parent: Option<UnitId>,
+        /// Зона очищена (`EventZoneCleared`).
+        zone_cleared: bool,
+        /// Активация заказана.
+        activate_issued: bool,
+    },
+    /// `TaskAssistMove`.
+    AssistMove {
+        /// `transporters`.
+        transporters: Vec<UnitId>,
+    },
+    /// `TaskAttack`.
+    Attack(Box<AttackState>),
+    /// `TaskAttackReserve`.
+    AttackReserve {
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `site`.
+        site: Point,
+        /// `total_worth`.
+        total_worth: i32,
+    },
+    /// `TaskAutoSurvey`.
+    AutoSurvey {
+        /// `central_site`.
+        central_site: Point,
+        /// `unit`.
+        unit: Option<UnitId>,
+        /// `radius`.
+        radius: u16,
+        /// `direction`.
+        direction: u16,
+        /// `position`.
+        position: Point,
+        /// `destination`.
+        destination: Point,
+        /// `direction2`.
+        direction2: u16,
+        /// `continue_search`.
+        continue_search: bool,
+        /// `location_found`.
+        location_found: bool,
+        /// `current_radius`.
+        current_radius: u16,
+    },
+    /// `TaskCheckAssaults`.
+    CheckAssaults {
+        /// Индекс текущего юнита в списке (итератор C++ заменён индексом).
+        index: usize,
+        /// Есть незавершённые проверки.
+        active: bool,
+    },
+    /// `TaskClearZone`.
+    ClearZone {
+        /// `state` (`CLEARZONE_STATE_*`).
+        state: u8,
+        /// `zones` — сайты, требующие очистки.
+        zones: Vec<Point>,
+        /// `moving_unit`.
+        moving_unit: Option<UnitId>,
+    },
+    /// `TaskCreateUnit`.
+    CreateUnit {
+        /// `unit_type`.
+        unit_type: UnitType,
+        /// `site`.
+        site: Point,
+        /// `op_state`.
+        op_state: u8,
+        /// `builder` (`TaskCreate::builder`).
+        builder: Option<UnitId>,
+    },
+    /// `TaskCreateBuilding`.
+    CreateBuilding {
+        /// `unit_type`.
+        unit_type: UnitType,
+        /// `site`.
+        site: Point,
+        /// `op_state`.
+        op_state: u8,
+        /// `builder`.
+        builder: Option<UnitId>,
+        /// `building`.
+        building: Option<UnitId>,
+        /// `manager` — id `TaskManageBuildings` (или `None`).
+        manager: Option<u32>,
+        /// `needs_water_platforms`.
+        needs_water_platforms: bool,
+        /// `tasks` — дочерние задачи (снос обломков/мин, платформа).
+        tasks: Vec<u32>,
+    },
+    /// `TaskEscort`.
+    Escort {
+        /// `target`.
+        target: Option<UnitId>,
+        /// `escort`.
+        escort: Option<UnitId>,
+        /// `unit_type`.
+        unit_type: UnitType,
+        /// `is_escort_requested`.
+        is_escort_requested: bool,
+    },
+    /// `TaskExplore`.
+    Explore {
+        /// `TaskAbstractSearch`.
+        search: SearchState,
+        /// `obtain_requests[UNIT_END]`.
+        obtain_requests: Vec<UnitType>,
+    },
+    /// `TaskDefenseAssistant`.
+    DefenseAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+        /// `unit_type`.
+        unit_type: UnitType,
+    },
+    /// `TaskDefenseReserve`.
+    DefenseReserve {
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `site`.
+        site: Point,
+    },
+    /// `TaskDump`.
+    Dump {
+        /// `task_move`.
+        task_move: Option<u32>,
+        /// `transporter_unit`.
+        transporter_unit: Option<UnitId>,
+        /// `steps_limit`.
+        steps_limit: i16,
+        /// `direction`.
+        direction: i16,
+        /// `steps_counter`.
+        steps_counter: i16,
+        /// `destination`.
+        destination: Point,
+        /// `keep_searching`.
+        keep_searching: bool,
+    },
+    /// `TaskFindMines`.
+    FindMines {
+        /// `TaskAbstractSearch`.
+        search: SearchState,
+    },
+    /// `TaskFindPath`.
+    FindPath {
+        /// Юнит запроса.
+        unit: Option<UnitId>,
+        /// Пункт назначения.
+        destination: Point,
+        /// Родительская задача, ожидающая путь.
+        parent_move: Option<u32>,
+        /// Запрос завершён.
+        finished: bool,
+    },
+    /// `TaskFrontalAttack`.
+    FrontalAttack {
+        /// `movement_in_progress`.
+        movement_in_progress: bool,
+        /// `spotted_unit`.
+        spotted_unit: Option<u32>,
+        /// `units1`.
+        units1: Vec<UnitId>,
+        /// `units2`.
+        units2: Vec<UnitId>,
+        /// `caution_level`.
+        caution_level: CautionLevel,
+        /// Целевая клетка.
+        site: Point,
+    },
+    /// `TaskGetMaterials`.
+    GetMaterials {
+        /// `TaskGetResource`.
+        resource: GetResourceState,
+        /// `materials_needed`.
+        materials_needed: u16,
+    },
+    /// `TaskHabitatAssistant`.
+    HabitatAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+    },
+    /// `TaskKillUnit`.
+    KillUnit(Box<KillUnitState>),
+    /// `TaskManageBuildings`.
+    ManageBuildings {
+        /// `building_site`.
+        building_site: Point,
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `tasks` — дочерние `TaskCreateBuilding`.
+        tasks: Vec<u32>,
+        /// `cargo_demand`.
+        cargo_demand: Cargo,
+        /// Первичная инициализация выполнена.
+        initialized: bool,
+    },
+    /// `TaskMineAssistant`.
+    MineAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+    },
+    /// `TaskMove`.
+    Move(Box<MoveState>),
+    /// `TaskMoveHome`.
+    MoveHome {
+        /// `unit`.
+        unit: Option<UnitId>,
+        /// Целевая клетка.
+        site: Point,
+    },
+    /// `TaskObtainUnits`.
+    ObtainUnits {
+        /// `units` — требуемые типы.
+        units: Vec<UnitType>,
+        /// `point`.
+        point: Point,
+        /// `init`.
+        init: bool,
+        /// `reinit`.
+        reinit: bool,
+    },
+    /// `TaskPlaceMines`.
+    PlaceMines {
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `mine_layer_count`.
+        mine_layer_count: u16,
+        /// `sea_mine_layer_count`.
+        sea_mine_layer_count: u16,
+    },
+    /// `TaskConnectionAssistant`.
+    ConnectionAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+    },
+    /// `TaskRadarAssistant`.
+    RadarAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+    },
+    /// `TaskFrontierAssistant`.
+    FrontierAssistant {
+        /// Сайт, вокруг которого ищется фронтир.
+        site: Point,
+    },
+    /// `TaskPowerAssistant`.
+    PowerAssistant {
+        /// `manager`.
+        manager: Option<u32>,
+    },
+    /// `TaskReload` (наследник `TaskRepair`).
+    Reload {
+        /// `TaskRepair`.
+        repair: RepairState,
+    },
+    /// `TaskRemoveMines` (наследник `TaskRemoveRubble`).
+    RemoveMines {
+        /// `TaskRemoveRubble`.
+        rubble: RemoveRubbleState,
+    },
+    /// `TaskRemoveRubble`.
+    RemoveRubble(RemoveRubbleState),
+    /// `TaskRendezvous`.
+    Rendezvous {
+        /// `unit1`.
+        unit1: Option<UnitId>,
+        /// `unit2`.
+        unit2: Option<UnitId>,
+        /// Режим завершения.
+        mode: RendezvousMode,
+    },
+    /// `TaskRepair`.
+    Repair {
+        /// `TaskRepair`.
+        repair: RepairState,
+    },
+    /// `TaskRetreat`.
+    Retreat {
+        /// `unit_to_retreat`.
+        unit_to_retreat: Option<UnitId>,
+        /// `search_radius`.
+        search_radius: i16,
+        /// `position`.
+        position: Point,
+        /// `direction`.
+        direction: i16,
+        /// `steps_in_direction`.
+        steps_in_direction: i16,
+        /// `caution_level`.
+        caution_level: CautionLevel,
+        /// `found_valid_position`.
+        found_valid_position: i8,
+        /// Найденный сайт отступления.
+        destination: Point,
+    },
+    /// `TaskSearchDestination`.
+    SearchDestination {
+        /// `unit`.
+        unit: Option<UnitId>,
+        /// `initial_position`.
+        initial_position: Point,
+        /// `search_task` — id `TaskAbstractSearch`.
+        search_task: Option<u32>,
+        /// `search_radius`.
+        search_radius: u16,
+        /// `index`.
+        index: i16,
+        /// `continue_search_at_radius`.
+        continue_search_at_radius: bool,
+        /// `is_doomed`.
+        is_doomed: bool,
+        /// `valid_sites`.
+        valid_sites: i16,
+        /// `searched_sites`.
+        searched_sites: i16,
+        /// `enterable_sites`.
+        enterable_sites: i16,
+        /// Найденный сайт.
+        destination: Point,
+    },
+    /// `TaskScavenge`.
+    Scavenge {
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `wait_for_unit`.
+        wait_for_unit: bool,
+    },
+    /// `TaskSupportAttack`.
+    SupportAttack {
+        /// `units`.
+        units: Vec<UnitId>,
+        /// `unit_type1`.
+        unit_type1: UnitType,
+        /// `unit_type2`.
+        unit_type2: UnitType,
+        /// `unit_flags`.
+        unit_flags: u32,
+    },
+    /// `TaskSurvey`.
+    Survey {
+        /// `TaskAbstractSearch`.
+        search: SearchState,
+    },
+    /// `TaskTransport`.
+    Transport {
+        /// `transporter_unit_type`.
+        transporter_unit_type: UnitType,
+        /// `unit_transporter`.
+        unit_transporter: Option<UnitId>,
+        /// `move_tasks` — клиенты.
+        move_tasks: Vec<u32>,
+        /// `task_move`.
+        task_move: Option<u32>,
+        /// `task_obtain_units`.
+        task_obtain_units: Option<u32>,
+    },
+    /// `TaskUpdateTerrain`.
+    UpdateTerrain {
+        /// `location`.
+        location: Point,
+    },
+    /// `TaskUpgrade` (наследник `TaskRepair`).
+    Upgrade {
+        /// `TaskRepair`.
+        repair: RepairState,
+    },
+    /// `TaskWaitToAttack`.
+    WaitToAttack {
+        /// `attacker`.
+        attacker: Option<UnitId>,
+    },
+}
+
+impl Default for TaskKind {
+    fn default() -> Self {
+        Self::MineAssistant { manager: None }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Конструкторы классов задач (C++ конструкторы `Task*::Task*`)
+// ---------------------------------------------------------------------------
+
+impl TaskKind {
+    /// `TaskCreateUnit::TaskCreateUnit(unit_type, task, site)`.
+    pub fn create_unit(unit_type: UnitType, site: Point) -> Self {
+        Self::CreateUnit {
+            unit_type,
+            site,
+            op_state: create_unit_state::INITIALIZING,
+            builder: None,
+        }
+    }
+
+    /// `TaskCreateBuilding::TaskCreateBuilding(task, priority, unit_type, site, manager)`.
+    pub fn create_building(unit_type: UnitType, site: Point, manager: Option<u32>) -> Self {
+        Self::CreateBuilding {
+            unit_type,
+            site,
+            op_state: create_building_state::INITIALIZING,
+            builder: None,
+            building: None,
+            manager,
+            needs_water_platforms: false,
+            tasks: Vec::new(),
+        }
+    }
+
+    /// `TaskObtainUnits::TaskObtainUnits(task, point)` (`taskobtainunits.cpp:26`):
+    /// конструктор C++ ставит `init = reinit = true`.
+    pub fn obtain_units(point: Point) -> Self {
+        Self::ObtainUnits {
+            units: Vec::new(),
+            point,
+            init: true,
+            reinit: true,
+        }
+    }
+
+    /// `TaskMove::TaskMove(unit, task, minimum_distance, caution_level, destination, callback)`.
+    pub fn move_to(
+        unit: UnitId,
+        destination: Point,
+        minimum_distance: u16,
+        caution_level: CautionLevel,
+    ) -> Self {
+        let mut state = MoveState::default();
+        state.unit = Some(unit);
+        state.destination = destination;
+        state.destination_waypoint = destination;
+        state.minimum_distance = minimum_distance;
+        state.caution_level = caution_level;
+        Self::Move(Box::new(state))
+    }
+
+    /// `TaskRetreat::TaskRetreat(unit, task, priority, caution_level)`.
+    pub fn retreat(unit: UnitId, _task: Option<u32>, caution_level: CautionLevel) -> Self {
+        Self::Retreat {
+            unit_to_retreat: Some(unit),
+            search_radius: 3,
+            position: Point::ZERO,
+            direction: 0,
+            steps_in_direction: 0,
+            caution_level,
+            found_valid_position: 0,
+            destination: Point::ZERO,
+        }
+    }
+
+    /// `TaskRepair::TaskRepair(unit)`.
+    pub fn repair(unit: UnitId) -> Self {
+        Self::Repair {
+            repair: RepairState {
+                target_unit: Some(unit),
+                operator_unit: None,
+                operator_requested: false,
+            },
+        }
+    }
+
+    /// `TaskReload::TaskReload(unit)`.
+    pub fn reload(unit: UnitId) -> Self {
+        Self::Reload {
+            repair: RepairState {
+                target_unit: Some(unit),
+                operator_unit: None,
+                operator_requested: false,
+            },
+        }
+    }
+
+    /// `TaskUpgrade::TaskUpgrade(unit)`.
+    pub fn upgrade(unit: UnitId) -> Self {
+        Self::Upgrade {
+            repair: RepairState {
+                target_unit: Some(unit),
+                operator_unit: None,
+                operator_requested: false,
+            },
+        }
+    }
+
+    /// `TaskWaitToAttack::TaskWaitToAttack(unit)`.
+    pub fn wait_to_attack(unit: UnitId) -> Self {
+        Self::WaitToAttack {
+            attacker: Some(unit),
+        }
+    }
+
+    /// `TaskAttack::TaskAttack(spotted_unit, priority)`.
+    pub fn attack(target_team: TeamId, site: Point) -> Self {
+        let mut state = AttackState::default();
+        state.target_team = Some(target_team);
+        state.site = site;
+        state.access_flags = crate::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
+        Self::Attack(Box::new(state))
+    }
+
+    /// `TaskKillUnit::TaskKillUnit(task_attack, spotted_unit, priority)`.
+    pub fn kill_unit(target: UnitId, target_type: UnitType, position: Point) -> Self {
+        let mut state = KillUnitState::default();
+        state.target_position = position;
+        state.target_type = Some(target_type);
+        let _ = target;
+        state.required_damage = u16::MAX;
+        state.recruit_turn = -1;
+        let _ = TASK_PRIORITY_MOVE;
+        Self::KillUnit(Box::new(state))
+    }
+
+    /// `TaskManageBuildings::TaskManageBuildings(team, site)`.
+    pub fn manage_buildings(site: Point) -> Self {
+        Self::ManageBuildings {
+            building_site: site,
+            units: Vec::new(),
+            tasks: Vec::new(),
+            cargo_demand: Cargo::init(),
+            initialized: false,
+        }
+    }
+
+    /// `TaskMineAssistant::TaskMineAssistant(team)`.
+    pub fn mine_assistant() -> Self {
+        Self::MineAssistant { manager: None }
+    }
+
+    /// `TaskSurvey::TaskSurvey(team, point)`.
+    pub fn survey(point: Point) -> Self {
+        Self::Survey {
+            search: SearchState {
+                point,
+                ..SearchState::default()
+            },
+        }
+    }
+
+    /// `TaskExplore::TaskExplore(team, point)`.
+    pub fn explore(point: Point) -> Self {
+        Self::Explore {
+            search: SearchState {
+                point,
+                ..SearchState::default()
+            },
+            obtain_requests: Vec::new(),
+        }
+    }
+
+    /// Прототип `TaskFindMines::TaskFindMines(team, point)`.
+    pub fn find_mines(point: Point) -> Self {
+        Self::FindMines {
+            search: SearchState {
+                point,
+                ..SearchState::default()
+            },
+        }
+    }
+
+    /// `TaskUpdateTerrain::TaskUpdateTerrain(team)`.
+    pub fn update_terrain() -> Self {
+        Self::UpdateTerrain {
+            location: Point::ZERO,
+        }
+    }
+
+    /// `TaskScavenge::TaskScavenge(team)`.
+    pub fn scavenge() -> Self {
+        Self::Scavenge {
+            units: Vec::new(),
+            wait_for_unit: false,
+        }
+    }
+
+    /// `TaskPlaceMines::TaskPlaceMines(team)`.
+    pub fn place_mines() -> Self {
+        Self::PlaceMines {
+            units: Vec::new(),
+            mine_layer_count: 0,
+            sea_mine_layer_count: 0,
+        }
+    }
+
+    /// Тип задачи (`GetType`).
+    pub fn get_type(&self) -> u8 {
+        match self {
+            Self::Activate { .. } => TASK_TYPE_ACTIVATE,
+            Self::AssistMove { .. } => TASK_TYPE_ASSIST_MOVE,
+            Self::Attack(_) => TASK_TYPE_ATTACK,
+            Self::AttackReserve { .. } => TASK_TYPE_ATTACK_RESERVE,
+            Self::AutoSurvey { .. } => TASK_TYPE_AUTO_SURVEY,
+            Self::CheckAssaults { .. } => TASK_TYPE_CHECK_ASSAULTS,
+            Self::ClearZone { .. } => TASK_TYPE_CLEAR_ZONE,
+            Self::CreateUnit { .. } => TASK_TYPE_CREATE_UNIT,
+            Self::CreateBuilding { .. } => TASK_TYPE_CREATE_BUILDING,
+            Self::Escort { .. } => TASK_TYPE_ESCORT,
+            Self::Explore { .. } => TASK_TYPE_EXPLORE,
+            Self::DefenseAssistant { .. } => TASK_TYPE_DEFENSE_ASSISTANT,
+            Self::DefenseReserve { .. } => TASK_TYPE_DEFENSE_RESERVE,
+            Self::Dump { .. } => TASK_TYPE_DUMP,
+            Self::FindMines { .. } => TASK_TYPE_FIND_MINES,
+            Self::FindPath { .. } => TASK_TYPE_FIND_PATH,
+            Self::FrontalAttack { .. } => TASK_TYPE_FRONTAL_ATTACK,
+            Self::GetMaterials { .. } => TASK_TYPE_GET_MATERIALS,
+            Self::HabitatAssistant { .. } => TASK_TYPE_HABITAT_ASSISTANT,
+            Self::KillUnit(_) => TASK_TYPE_KILL_UNIT,
+            Self::ManageBuildings { .. } => TASK_TYPE_MANAGE_BUILDINGS,
+            Self::MineAssistant { .. } => TASK_TYPE_MINE_ASSISTANT,
+            Self::Move(_) => TASK_TYPE_MOVE,
+            Self::MoveHome { .. } => TASK_TYPE_MOVE_HOME,
+            Self::ObtainUnits { .. } => TASK_TYPE_OBTAIN_UNITS,
+            Self::PlaceMines { .. } => TASK_TYPE_PLACE_MINES,
+            Self::ConnectionAssistant { .. } => TASK_TYPE_CONNECTION_ASSISTANT,
+            Self::RadarAssistant { .. } => TASK_TYPE_RADAR_ASSISTANT,
+            Self::FrontierAssistant { .. } => TASK_TYPE_FRONTIER_ASSISTANT,
+            Self::PowerAssistant { .. } => TASK_TYPE_POWER_ASSISTANT,
+            Self::Reload { .. } => TASK_TYPE_RELOAD,
+            Self::RemoveMines { .. } => TASK_TYPE_REMOVE_MINES,
+            Self::RemoveRubble(_) => TASK_TYPE_REMOVE_RUBBLE,
+            Self::Rendezvous { .. } => TASK_TYPE_RENDEZVOUS,
+            Self::Repair { .. } => TASK_TYPE_REPAIR,
+            Self::Retreat { .. } => TASK_TYPE_RETREAT,
+            Self::SearchDestination { .. } => TASK_TYPE_SEARCH_DESTINATION,
+            Self::Scavenge { .. } => TASK_TYPE_SCAVENGE,
+            Self::SupportAttack { .. } => TASK_TYPE_SUPPORT_ATTACK,
+            Self::Survey { .. } => TASK_TYPE_SURVEY,
+            Self::Transport { .. } => TASK_TYPE_TRANSPORT,
+            Self::UpdateTerrain { .. } => TASK_TYPE_UPDATE_TERRAIN,
+            Self::Upgrade { .. } => TASK_TYPE_UPGRADE,
+            Self::WaitToAttack { .. } => TASK_TYPE_WAIT_TO_ATTACK,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TaskCtx — задача + партия одновременно
+// ---------------------------------------------------------------------------
+
+/// Контекст обработчика задачи: менеджер задач и состояние партии.
+pub struct TaskCtx<'a> {
+    /// Менеджер задач (очереди, списки, регистрация).
+    pub tm: &'a mut TaskManager,
+    /// Состояние партии.
+    pub world: &'a mut GameState,
+}
+
+impl<'a> TaskCtx<'a> {
+    /// Создаёт контекст.
+    pub fn new(tm: &'a mut TaskManager, world: &'a mut GameState) -> Self {
+        Self { tm, world }
+    }
+
+    /// Копия юнита (`Hash_UnitHash[...]`).
+    pub fn unit(&self, id: UnitId) -> Option<UnitInfo> {
+        self.world.unit(id).cloned()
+    }
+
+    /// Есть ли юнит.
+    pub fn has_unit(&self, id: UnitId) -> bool {
+        self.world.has_unit(id)
+    }
+
+    /// Записывает юнита.
+    pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
+        self.world.write_unit(id, unit);
+    }
+
+    /// Данные приказа (`move_to`/`fire_on`).
+    pub fn order_data(&self, id: UnitId) -> crate::game::OrderData {
+        self.world.order_data(id)
+    }
+
+    /// Устанавливает данные приказа.
+    pub fn set_order_data(&mut self, id: UnitId, data: crate::game::OrderData) {
+        self.world.set_order_data(id, data);
+    }
+
+    /// `UnitsManager_SetNewOrder` (`units_manager.cpp:1945`) для юнита.
+    pub fn set_new_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) {
+        self.world.set_order(id, order, state);
+    }
+
+    /// `Task_IsReadyToTakeOrders` для юнита.
+    pub fn ready_to_take_orders(&self, unit: UnitId) -> bool {
+        super::task::task_is_ready_to_take_orders(self.world, unit)
+    }
+
+    /// `Task_RemindMoveFinished`.
+    pub fn remind_move_finished(&mut self, unit: UnitId, priority: bool) {
+        self.tm.remind_move_finished(self.world, unit, priority);
+    }
+
+    /// `Task::RemindTurnEnd` для задачи.
+    pub fn remind_turn_end(&mut self, task_id: u32, priority: bool) {
+        self.tm.remind_turn_end(task_id, priority);
+    }
+
+    /// `Task::RemindTurnStart` для задачи.
+    pub fn remind_turn_start(&mut self, task_id: u32, priority: bool) {
+        self.tm.remind_turn_start(task_id, priority);
+    }
+
+    /// `UnitInfo::AddTask` — «верхняя» задача юнита.
+    pub fn attach(&mut self, task_id: u32, unit: UnitId) {
+        self.tm.attach_task_to_unit(unit, task_id);
+    }
+
+    /// `UnitInfo::RemoveTask` (с напоминанием новой верхней задаче, если `mode`).
+    pub fn detach(&mut self, task_id: u32, unit: UnitId, mode: bool) {
+        self.tm.detach_task_from_unit(self.world, task_id, unit, mode);
+    }
+
+    /// `TaskManager::ClearUnitTasksAndRemindAvailable`.
+    pub fn clear_unit_tasks(&mut self, unit: UnitId, priority: bool) {
+        self.tm
+            .clear_unit_tasks_and_remind_available(self.world, unit, priority);
+    }
+
+    /// Регистрирует задачу (`TaskManager::AppendTask`).
+    pub fn append_task(
+        &mut self,
+        team: TeamId,
+        parent: Option<u32>,
+        priority: u16,
+        kind: TaskKind,
+    ) -> u32 {
+        self.tm
+            .append_task(self.world, Task::new(0, team, parent, priority, kind))
+    }
+
+    /// `Task::RemoveSelf` для задачи.
+    pub fn remove_self(&mut self, task_id: u32) {
+        self.tm.remove_task(self.world, task_id);
+    }
+
+    /// Базовый приоритет задачи.
+    pub fn priority_of(&self, task_id: u32) -> u16 {
+        self.tm
+            .task(task_id)
+            .map(|task| task.base_priority)
+            .unwrap_or(0)
+    }
+
+    /// Устанавливает приоритет (`Task::SetPriority`).
+    pub fn set_priority(&mut self, task_id: u32, priority: u16) {
+        if let Some(task) = self.tm.task_mut(task_id) {
+            task.base_priority = priority;
+        }
+    }
+
+    /// Устанавливает родителя (`Task::SetParent`).
+    pub fn set_parent(&mut self, task_id: u32, parent: Option<u32>) {
+        if let Some(task) = self.tm.task_mut(task_id) {
+            task.parent = parent;
+        }
+    }
+
+    /// `Task::SetProcessingNeeded`.
+    pub fn set_processing_needed(&mut self, task_id: u32, value: bool) {
+        if let Some(task) = self.tm.task_mut(task_id) {
+            task.needs_processing = value;
+        }
+    }
+
+    /// Регистрирует юнит как «потерявший задачу» (`RemindAvailable`).
+    pub fn remind_available(&mut self, unit: UnitId, priority: bool) {
+        self.tm
+            .append_reminder(self.world, super::reminders::Reminder::Available { unit }, priority);
+    }
+
+    /// `AiPlayer::CreateBuilding` для команды.
+    pub fn create_building(&mut self, team: TeamId, unit_type: UnitType, site: Point, task: Option<u32>) {
+        super::strategy::create_building(self.world, team, unit_type, site, task);
+    }
+
+    /// Ставит приказ `ORDER_MOVE` с целью (как `UnitsManager_SetNewOrder`).
+    pub fn issue_move(&mut self, unit_id: UnitId, site: Point) -> bool {
+        let Some(mut unit) = self.unit(unit_id) else {
+            return false;
+        };
+
+        if !self.ready_to_take_orders(unit_id)
+            && unit.orders != UnitOrder::Move
+            && unit.orders != UnitOrder::MoveToAttack
+        {
+            return false;
+        }
+
+        unit.target_grid = site;
+        self.write_unit(unit_id, unit);
+
+        let mut data = self.order_data(unit_id);
+        data.move_to = site;
+        self.set_order_data(unit_id, data);
+
+        self.set_new_order(unit_id, UnitOrder::Move, UnitOrderState::Init);
+
+        true
+    }
+
+    /// `UnitInfo::BuildOrder` (`unitinfo.cpp:1380`): очередь постройки + `ORDER_BUILD`.
+    pub fn build_order(&mut self, unit_id: UnitId, unit_type: UnitType, site: Point, build_rate: u16) -> bool {
+        let Some(mut unit) = self.unit(unit_id) else {
+            return false;
+        };
+
+        let turns = super::strategy::turns_to_build(self.world, unit.team, unit_type);
+        unit.build_time = turns as u8;
+        unit.build_rate = build_rate;
+        unit.build_list.clear();
+        unit.build_list.push(unit_type);
+        unit.target_grid = site;
+        unit.orders = UnitOrder::Await;
+        unit.state = UnitOrderState::ExecutingOrder;
+        self.write_unit(unit_id, unit);
+
+        let mut data = self.order_data(unit_id);
+        data.move_to = site;
+        self.set_order_data(unit_id, data);
+
+        self.set_new_order(unit_id, UnitOrder::Build, UnitOrderState::Init);
+
+        let _ = unit_order::start_building;
+        true
+    }
+
+    /// `UnitsManager_SetNewOrder(unit, ORDER_HALT_BUILDING(_2), BUILD_CANCEL)`.
+    pub fn halt_building(&mut self, unit_id: UnitId) {
+        self.set_new_order(unit_id, UnitOrder::HaltBuilding, UnitOrderState::BuildCancel);
+    }
+
+    /// Список юнитов команды с флагами (`Task_GetReadyUnitsCount`-фильтр).
+    pub fn team_units_in(&self, team: TeamId, kind: UnitListKind) -> Vec<UnitId> {
+        self.world
+            .unit_list(kind)
+            .iter()
+            .copied()
+            .filter(|id| self.world.unit(*id).map(|unit| unit.team == team).unwrap_or(false))
+            .collect()
+    }
+
+    /// Копия списка юнитов списка.
+    pub fn list(&self, kind: UnitListKind) -> Vec<UnitId> {
+        self.world.unit_list(kind).to_vec()
+    }
+
+    /// `AiPlayer::IsEnemyTeam`.
+    pub fn is_enemy_team(&self, team: TeamId) -> bool {
+        super::task::is_enemy_team(self.world, team)
+    }
+
+    /// `Access_IsAccessible` для типа.
+    pub fn accessible(&self, unit_type: UnitType, team: TeamId, grid: Point, flags: u32) -> bool {
+        crate::access::is_accessible(self.world, unit_type, team, grid, flags) != 0
+    }
+}
+
+/// Регистрация задачи (свободная функция для `task.rs`).
+pub fn append_task(
+    manager: &mut TaskManager,
+    world: &mut GameState,
+    team: TeamId,
+    parent: Option<u32>,
+    priority: u16,
+    kind: TaskKind,
+) -> u32 {
+    manager.append_task(world, Task::new(0, team, parent, priority, kind))
+}
+
+/// `RemindTurnStart`-обработчик (обёртка для `reminders.rs`).
+pub fn task_begin_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
+    manager.task_begin_turn(world, task_id);
+}
+
+/// `RemindTurnEnd`-обработчик (обёртка для `reminders.rs`).
+pub fn task_end_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
+    manager.task_end_turn(world, task_id);
+}
+
+/// `RemindMoveFinished`-обработчик (обёртка для `reminders.rs`).
+pub fn task_execute(
+    manager: &mut TaskManager,
+    world: &mut GameState,
+    task_id: u32,
+    unit: UnitId,
+) {
+    manager.task_execute(world, task_id, unit);
+}
+
+/// Состояние `TaskRetreat` (поля `taskretreat.hpp:28`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetreatState {
+    /// `unit_to_retreat`.
+    pub unit_to_retreat: Option<UnitId>,
+    /// `search_radius`.
+    pub search_radius: i16,
+    /// `position`.
+    pub position: Point,
+    /// `direction`.
+    pub direction: i16,
+    /// `steps_in_direction`.
+    pub steps_in_direction: i16,
+    /// `caution_level`.
+    pub caution_level: CautionLevel,
+    /// `found_valid_position`.
+    pub found_valid_position: i8,
+    /// Найденный сайт отступления.
+    pub destination: Point,
+}
+
+impl Default for RetreatState {
+    fn default() -> Self {
+        Self {
+            unit_to_retreat: None,
+            search_radius: 0,
+            position: Point::ZERO,
+            direction: 0,
+            steps_in_direction: 0,
+            caution_level: CautionLevel::None,
+            found_valid_position: 0,
+            destination: Point::ZERO,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Жизненный цикл: диспетчеризация по классу задачи
+// ---------------------------------------------------------------------------
+
+impl TaskKind {
+    /// `Task::GetPriority()` — по умолчанию базовый; переопределения в классах.
+    pub fn get_priority(&self, world: &GameState, task: &Task) -> u16 {
+        match self {
+            // `TaskCreateUnit::GetPriority` (`taskcreateunit.cpp:56`).
+            Self::CreateUnit { .. } => match task.parent {
+                Some(parent) => world
+                    .ai
+                    .task_manager
+                    .task(parent)
+                    .map(|parent| parent.kind.get_priority(world, parent))
+                    .unwrap_or(task.base_priority),
+                None => task.base_priority,
+            },
+            // `TaskObtainUnits::GetPriority` (`taskobtainunits.cpp:157`).
+            Self::ObtainUnits { .. } => match task.parent {
+                Some(parent) => world
+                    .ai
+                    .task_manager
+                    .task(parent)
+                    .map(|parent| parent.kind.get_priority(world, parent))
+                    .unwrap_or(super::task::TASK_PRIORITY_MOVE),
+                None => super::task::TASK_PRIORITY_MOVE,
+            },
+            Self::GetMaterials { .. } => task.base_priority,
+            // `TaskKillUnit::GetPriority` — пока цель не оценена, задача
+            // считается «без целей» и получает штраф
+            // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` без цели).
+            Self::KillUnit(state) => {
+                if state.required_damage == u16::MAX {
+                    task.base_priority.wrapping_add(super::task::TASK_PRIORITY_TOLERANCE)
+                } else {
+                    task.base_priority
+                }
+            }
+            _ => task.base_priority,
+        }
+    }
+
+    /// `Task::GetCautionLevel(unit)` — переопределения классов.
+    pub fn get_caution_level(
+        &self,
+        world: &GameState,
+        task: &Task,
+        unit: &UnitInfo,
+    ) -> Option<CautionLevel> {
+        let _ = task;
+        match self {
+            Self::Attack(_) => Some(CautionLevel::AvoidReactionFire),
+            Self::FrontalAttack { caution_level, .. } => Some(*caution_level),
+            Self::Retreat { caution_level, .. } => Some(*caution_level),
+            Self::Move(state) => Some(state.caution_level),
+            _ => {
+                let _ = world;
+                let _ = unit;
+                None
+            }
+        }
+    }
+
+    /// `Task::GetBounds(Rect*)`.
+    pub fn get_bounds(&self, world: &GameState, header: TaskHeader) -> Rect {
+        let _ = world;
+        let _ = header;
+        match self {
+            Self::CreateBuilding { site, unit_type, .. } => {
+                let size = if crate::access::unit_type_flags(*unit_type) & crate::enums::unit_flags::BUILDING != 0 {
+                    2
+                } else {
+                    1
+                };
+                Rect {
+                    ulx: i32::from(site.x),
+                    uly: i32::from(site.y),
+                    lrx: i32::from(site.x) + size,
+                    lry: i32::from(site.y) + size,
+                }
+            }
+            Self::CreateUnit { site, .. } => Rect {
+                ulx: i32::from(site.x),
+                uly: i32::from(site.y),
+                lrx: i32::from(site.x) + 1,
+                lry: i32::from(site.y) + 1,
+            },
+            Self::Move(state) => Rect {
+                ulx: i32::from(state.destination.x),
+                uly: i32::from(state.destination.y),
+                lrx: i32::from(state.destination.x),
+                lry: i32::from(state.destination.y),
+            },
+            Self::KillUnit(state) => Rect {
+                ulx: i32::from(state.target_position.x),
+                uly: i32::from(state.target_position.y),
+                lrx: i32::from(state.target_position.x),
+                lry: i32::from(state.target_position.y),
+            },
+            Self::Attack(state) => Rect {
+                ulx: i32::from(state.site.x),
+                uly: i32::from(state.site.y),
+                lrx: i32::from(state.site.x),
+                lry: i32::from(state.site.y),
+            },
+            Self::ManageBuildings { building_site, .. } => Rect {
+                ulx: i32::from(building_site.x),
+                uly: i32::from(building_site.y),
+                lrx: i32::from(building_site.x),
+                lry: i32::from(building_site.y),
+            },
+            Self::SupportAttack { .. } | Self::Escort { .. } | Self::DefenseReserve { .. } => {
+                Rect::default()
+            }
+            _ => Rect::default(),
+        }
+    }
+
+    /// `Task::IsUnitUsable(unit)` — по умолчанию `false`.
+    pub fn is_unit_usable(&self, world: &GameState, header: TaskHeader, unit: UnitId) -> bool {
+        match self {
+            Self::Attack(_) => combat::attack_is_unit_usable(world, header, unit),
+            Self::KillUnit(state) => combat::kill_unit_is_unit_usable(world, header, state, unit),
+            Self::ManageBuildings { .. } => build::manage_buildings_is_unit_usable(world, header, unit),
+            Self::ObtainUnits { .. } => create::obtain_units_is_unit_usable(world, header, self, unit),
+            Self::DefenseReserve { .. } => combat::defense_reserve_is_unit_usable(world, header, unit),
+            Self::PlaceMines { .. } => misc::place_mines_is_unit_usable(world, header, unit),
+            Self::Scavenge { .. } => misc::scavenge_is_unit_usable(world, header, unit),
+            Self::SupportAttack { .. } => combat::support_attack_is_unit_usable(world, header, self, unit),
+            Self::AssistMove { .. } => move_tasks::assist_move_is_unit_usable(world, header, unit),
+            Self::Explore { .. } => search::explore_is_unit_usable(world, header, unit),
+            _ => {
+                let _ = (world, header, unit);
+                false
+            }
+        }
+    }
+
+    /// `Task::IsUnitTransferable(unit)` — по умолчанию `true` с учётом родителя.
+    pub fn is_unit_transferable(&self, world: &GameState, task: &Task, unit: &UnitInfo) -> bool {
+        match self {
+            Self::Attack(_)
+            | Self::KillUnit(_)
+            | Self::FrontalAttack { .. }
+            | Self::Retreat { .. } => combat::is_unit_transferable(world, task, unit),
+            Self::Repair { .. } | Self::Reload { .. } | Self::Upgrade { .. } => false,
+            _ => match task.parent {
+                Some(parent) => match world.ai.task_manager.task(parent) {
+                    Some(parent_task) => parent_task.kind.is_unit_transferable(world, parent_task, unit),
+                    None => true,
+                },
+                None => true,
+            },
+        }
+    }
+
+    /// `Task::IsNeeded()` — переопределения (CreateBuilding, ObtainUnits, …).
+    pub fn is_needed_kind(&self, world: &GameState) -> bool {
+        let _ = world;
+        match self {
+            Self::Attack(_) => true,
+            Self::KillUnit(_) => true,
+            Self::CreateBuilding { op_state, .. } => *op_state < create_building_state::BUILDING,
+            _ => true,
+        }
+    }
+
+    /// `Task::IsEndTurnNeeded()` — по умолчанию `true`.
+    pub fn is_end_turn_needed_kind(&self) -> bool {
+        match self {
+            // `TaskCreateBuilding::IsEndTurnNeeded` (`taskcreatebuilding.cpp:699`).
+            Self::CreateBuilding {
+                builder,
+                op_state,
+                tasks,
+                ..
+            } => {
+                builder.is_some()
+                    || (*op_state != create_building_state::GETTING_BUILDER
+                        && *op_state < create_building_state::BUILDING
+                        && tasks.is_empty())
+            }
+            Self::CreateUnit { .. } => true,
+            Self::ObtainUnits { .. } => true,
+            _ => true,
+        }
+    }
+
+    /// `Task::IsThinking()` — по умолчанию `false`.
+    pub fn is_thinking_kind(&self) -> bool {
+        matches!(
+            self,
+            Self::CheckAssaults { .. } | Self::ClearZone { .. } | Self::FindPath { .. } | Self::WaitToAttack { .. }
+        )
+    }
+
+    /// `WriteStatusLog()`.
+    pub fn write_status_log(&self, task: &Task) -> String {
+        let name = super::task::task_get_name(self.get_type());
+        match self {
+            Self::Move(state) => format!("Move to [{},{}]", state.destination.x + 1, state.destination.y + 1),
+            Self::CreateBuilding { unit_type, site, op_state, .. } => format!(
+                "Create {:?} at [{},{}] state {}",
+                unit_type,
+                site.x + 1,
+                site.y + 1,
+                op_state
+            ),
+            Self::CreateUnit { unit_type, site, .. } => {
+                format!("Create a {:?} at [{},{}]", unit_type, site.x + 1, site.y + 1)
+            }
+            Self::Attack(_) => "Attack".to_string(),
+            Self::KillUnit(state) => format!(
+                "Kill unit at [{},{}]",
+                state.target_position.x + 1,
+                state.target_position.y + 1
+            ),
+            Self::ManageBuildings { building_site, .. } => {
+                format!("Manage buildings at [{},{}]", building_site.x + 1, building_site.y + 1)
+            }
+            _ => format!("{} ({})", name, task.base_priority),
+        }
+    }
+
+    /// `Task::IsUnitTransferable` — базовая реализация для наследников.
+    fn _unused(&self) {}
+
+    /// `TaskObtainUnits::CountInstancesOfUnitType`.
+    pub fn count_instances_of_unit_type(&self, unit_type: UnitType) -> u32 {
+        match self {
+            Self::ObtainUnits { units, .. } => {
+                units.iter().filter(|candidate| **candidate == unit_type).count() as u32
+            }
+            _ => 0,
+        }
+    }
+
+    /// `TaskCreate::GetUnitType` — тип создаваемого юнита (для переписи).
+    pub fn create_unit_type(&self) -> Option<UnitType> {
+        match self {
+            Self::CreateUnit { unit_type, .. } | Self::CreateBuilding { unit_type, .. } => Some(*unit_type),
+            _ => None,
+        }
+    }
+
+    /// `TaskCreate::IsActivelyBuilding`.
+    pub fn is_actively_building(&self) -> bool {
+        match self {
+            Self::CreateUnit { op_state, .. } => *op_state >= create_unit_state::BUILDING,
+            Self::CreateBuilding { op_state, .. } => *op_state >= create_building_state::BUILDING,
+            _ => false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Жизненный цикл: каждый модуль обрабатывает свои варианты и сообщает об этом
+// ---------------------------------------------------------------------------
+
+impl TaskKind {
+    /// `Task::Init()` — по умолчанию `RemindTurnStart(true)`.
+    pub fn init(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+        // Классы `TaskCreate*`/`TaskObtainUnits`/`TaskActivate` переопределяют
+        // `Task::Init` и сами планируют первое напоминание.
+        if create::init(self, ctx, header) {
+            return;
+        }
+
+        // Остальные наследуют `Task::Init` → `RemindTurnStart(true)`.
+        let _ = move_tasks::init(self, ctx, header);
+        let _ = combat::init(self, ctx, header);
+        let _ = build::init(self, ctx, header);
+        let _ = misc::init(self, ctx, header);
+        let _ = search::init(self, ctx, header);
+
+        ctx.remind_turn_start(header.id, true);
+    }
+
+    /// `Task::BeginTurn()` — по умолчанию `EndTurn()`.
+    pub fn begin_turn(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+        if create::begin_turn(self, ctx, header)
+            || move_tasks::begin_turn(self, ctx, header)
+            || combat::begin_turn(self, ctx, header)
+            || build::begin_turn(self, ctx, header)
+            || misc::begin_turn(self, ctx, header)
+            || search::begin_turn(self, ctx, header)
+        {
+            return;
+        }
+
+        self.end_turn(ctx, header);
+    }
+
+    /// `Task::EndTurn()` — по умолчанию пусто.
+    pub fn end_turn(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+        if create::end_turn(self, ctx, header)
+            || move_tasks::end_turn(self, ctx, header)
+            || combat::end_turn(self, ctx, header)
+            || build::end_turn(self, ctx, header)
+            || misc::end_turn(self, ctx, header)
+            || search::end_turn(self, ctx, header)
+        {
+            return;
+        }
+
+        let _ = (ctx, header);
+    }
+
+    /// `Task::Execute(unit)` — по умолчанию `false`.
+    pub fn execute(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+        create::execute(self, ctx, header, unit)
+            || move_tasks::execute(self, ctx, header, unit)
+            || combat::execute(self, ctx, header, unit)
+            || build::execute(self, ctx, header, unit)
+            || misc::execute(self, ctx, header, unit)
+            || search::execute(self, ctx, header, unit)
+    }
+
+    /// `Task::AddUnit(unit)` — по умолчанию пусто.
+    ///
+    /// Каждый модуль обрабатывает свои варианты и молча пропускает чужие,
+    /// поэтому вызовы идут последовательно.
+    pub fn add_unit(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+        create::add_unit(self, ctx, header, unit);
+        move_tasks::add_unit(self, ctx, header, unit);
+        combat::add_unit(self, ctx, header, unit);
+        build::add_unit(self, ctx, header, unit);
+        misc::add_unit(self, ctx, header, unit);
+        search::add_unit(self, ctx, header, unit);
+    }
+
+    /// `Task::RemoveUnit(unit)` — по умолчанию пусто.
+    pub fn remove_unit(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+        create::remove_unit(self, ctx, header, unit);
+        move_tasks::remove_unit(self, ctx, header, unit);
+        combat::remove_unit(self, ctx, header, unit);
+        build::remove_unit(self, ctx, header, unit);
+        misc::remove_unit(self, ctx, header, unit);
+        search::remove_unit(self, ctx, header, unit);
+    }
+
+    /// `Task::RemoveSelf()` — по умолчанию сброс родителя и удаление.
+    pub fn remove_self(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+        if create::remove_self(self, ctx, header)
+            || move_tasks::remove_self(self, ctx, header)
+            || combat::remove_self(self, ctx, header)
+            || build::remove_self(self, ctx, header)
+            || misc::remove_self(self, ctx, header)
+            || search::remove_self(self, ctx, header)
+        {
+            return;
+        }
+
+        ctx.set_parent(header.id, None);
+        ctx.remove_self(header.id);
+    }
+
+    /// `Task::ChildComplete(task)`.
+    pub fn child_complete(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) {
+        if create::child_complete(self, ctx, header, child)
+            || build::child_complete(self, ctx, header, child)
+            || move_tasks::child_complete(self, ctx, header, child)
+            || combat::child_complete(self, ctx, header, child)
+            || misc::child_complete(self, ctx, header, child)
+            || search::child_complete(self, ctx, header, child)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, child);
+    }
+
+    /// Уведомление о завершении дочернего `TaskMove`.
+    pub fn move_finished(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId, result: i8) {
+        if create::move_finished(self, ctx, header, unit, result)
+            || move_tasks::move_finished(self, ctx, header, unit, result)
+            || combat::move_finished(self, ctx, header, unit, result)
+            || build::move_finished(self, ctx, header, unit, result)
+            || misc::move_finished(self, ctx, header, unit, result)
+            || search::move_finished(self, ctx, header, unit, result)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit, result);
+    }
+
+    /// `Task::CheckReactions()` — по умолчанию `false`.
+    pub fn check_reactions(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
+        combat::check_reactions(self, ctx, header)
+            || build::check_reactions(self, ctx, header)
+            || misc::check_reactions(self, ctx, header)
+            || move_tasks::check_reactions(self, ctx, header)
+            || create::check_reactions(self, ctx, header)
+            || search::check_reactions(self, ctx, header)
+    }
+
+    /// `Task::ExchangeOperator(unit)` — по умолчанию `false`.
+    pub fn exchange_operator(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+        create::exchange_operator(self, ctx, header, unit)
+            || build::exchange_operator(self, ctx, header, unit)
+            || move_tasks::exchange_operator(self, ctx, header, unit)
+            || combat::exchange_operator(self, ctx, header, unit)
+            || misc::exchange_operator(self, ctx, header, unit)
+            || search::exchange_operator(self, ctx, header, unit)
+    }
+
+    /// `Task::EventUnitDestroyed(unit)`.
+    pub fn event_unit_destroyed(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+        if create::event_unit_destroyed(self, ctx, header, unit)
+            || build::event_unit_destroyed(self, ctx, header, unit)
+            || move_tasks::event_unit_destroyed(self, ctx, header, unit)
+            || combat::event_unit_destroyed(self, ctx, header, unit)
+            || misc::event_unit_destroyed(self, ctx, header, unit)
+            || search::event_unit_destroyed(self, ctx, header, unit)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit);
+    }
+
+    /// `Task::EventEnemyUnitSpotted(unit)`.
+    pub fn event_enemy_unit_spotted(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+        if combat::event_enemy_unit_spotted(self, ctx, header, unit)
+            || create::event_enemy_unit_spotted(self, ctx, header, unit)
+            || build::event_enemy_unit_spotted(self, ctx, header, unit)
+            || move_tasks::event_enemy_unit_spotted(self, ctx, header, unit)
+            || misc::event_enemy_unit_spotted(self, ctx, header, unit)
+            || search::event_enemy_unit_spotted(self, ctx, header, unit)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit);
+    }
+
+    /// `Task::EventCargoTransfer(unit)`.
+    pub fn event_cargo_transfer(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+        if misc::event_cargo_transfer(self, ctx, header, unit)
+            || create::event_cargo_transfer(self, ctx, header, unit)
+            || combat::event_cargo_transfer(self, ctx, header, unit)
+            || build::event_cargo_transfer(self, ctx, header, unit)
+            || move_tasks::event_cargo_transfer(self, ctx, header, unit)
+            || search::event_cargo_transfer(self, ctx, header, unit)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit);
+    }
+
+    /// `Task::EventUnitLoaded(unit1, unit2)`.
+    pub fn event_unit_loaded(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit1: UnitId, unit2: UnitId) {
+        if move_tasks::event_unit_loaded(self, ctx, header, unit1, unit2)
+            || create::event_unit_loaded(self, ctx, header, unit1, unit2)
+            || combat::event_unit_loaded(self, ctx, header, unit1, unit2)
+            || build::event_unit_loaded(self, ctx, header, unit1, unit2)
+            || misc::event_unit_loaded(self, ctx, header, unit1, unit2)
+            || search::event_unit_loaded(self, ctx, header, unit1, unit2)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit1, unit2);
+    }
+
+    /// `Task::EventUnitUnloaded(unit1, unit2)`.
+    pub fn event_unit_unloaded(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit1: UnitId, unit2: UnitId) {
+        if move_tasks::event_unit_unloaded(self, ctx, header, unit1, unit2)
+            || create::event_unit_unloaded(self, ctx, header, unit1, unit2)
+            || combat::event_unit_unloaded(self, ctx, header, unit1, unit2)
+            || build::event_unit_unloaded(self, ctx, header, unit1, unit2)
+            || misc::event_unit_unloaded(self, ctx, header, unit1, unit2)
+            || search::event_unit_unloaded(self, ctx, header, unit1, unit2)
+        {
+            return;
+        }
+
+        let _ = (ctx, header, unit1, unit2);
+    }
+}

@@ -8,7 +8,7 @@
 //! | Шаг `GameManager_InitGame()` | Файл оракула | Что делает | Порт |
 //! |---|---|---|---|
 //! | `ResourceManager_InitInGameAssets(world)` | `world.cpp` (LoadTilesAndMetadata) | строит `SurfaceMap` из `.wrl`-файла планеты: `surface[i] = PassData[pass_table[tile_ids[i]]]` | [`derive_surface_map`] — чистая функция от `tile_ids`/`pass_table` |
-//! | `Ai_SetupStrategy(team)` (для компьютеров) | `aiplayer.cpp` | тратит RNG, но **до** пересеивания | не портируется (P6) |
+//! | `Ai_SetupStrategy(team)` (для компьютеров) | `aiplayer.cpp` | тратит RNG, но **до** пересеивания | [`crate::ai::ai_setup_strategy`] (P6: только выбор стратегии, без генерации карты) |
 //! | `GameManager_PopulateMapWithResources()` | `game_manager.cpp:4730` + `resource_allocator.cpp` | `Randomizer_SetSeed(Remote_RngSeed)`, 3×`PopulateCargoMap`, `Optimize` у стартовых позиций команд, `SeparateResources`, 3×`ConcentrateResources`, `SettleMinimumResourceLevels` | [`populate_map_with_resources`] |
 //! | `GameManager_PopulateMapWithAlienUnits(...)` | `game_manager.cpp:4942` | сетка точек (RNG), `SpawnAlienDerelicts` (RNG: здание, мосты, юниты) | [`populate_map_with_alien_units`] |
 //! | `GameManager_InitMap()` | `game_manager.cpp:1531` | только UI (зум/рендер) | не портируется |

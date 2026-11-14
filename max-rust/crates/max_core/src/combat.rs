@@ -129,14 +129,18 @@ pub fn attack_unit(
     target.hits = u16::try_from((i32::from(target.hits) - attack_damage).max(0)).unwrap_or(0);
 
     if target.hits > 0 {
-        // `ScheduleDelayedTasks(true)` и `Ai_AddUnitToTrackerList` — P6.
+        // `ScheduleDelayedTasks(true)` и `Ai_AddUnitToTrackerList` (`ai.cpp:182`):
+        // у команды-компьютера появляется проверка реакции, а верхняя задача
+        // юнита получает напоминание о завершении состояния.
+        state.write_unit(target_id, target.clone());
+        crate::ai::ai_add_unit_to_tracker_list(state, target_id);
     }
 
     if target.hits == 0 {
         state.remove_delayed_attack_target(target.team, target.id);
         state.remove_pending_attack(target.id);
 
-        // `RemoveTasks`/`RemoveDelayedTasks`/`Ai_RemoveUnit` — P6.
+        // `RemoveTasks`/`RemoveDelayedTasks`/`Ai_RemoveUnit` (`ai.cpp:295`).
         if target.unit_type == UnitType::Infantry || target.unit_type == UnitType::Commando {
             target.angle = ((direction + 5) & 0x07) as u8;
         }
@@ -598,13 +602,12 @@ pub fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> 
         unit.state = UnitOrderState::ReadyToFire;
 
         // C++ `SpotByTeam` для команд, у которых открыта клетка в heat map
-        // (`HeatMap::GetComplete`); heat map — P6, поэтому используется
-        // фактическая видимость юнита этой команде.
+        // (`HeatMap::GetComplete`): покрытие сканирования — P6.
         for team_index in 0..PLAYER_TEAM_COUNT {
             let team = TeamId(team_index as u8);
             if unit.team != team
                 && state.teams[team_index].team_type != TeamKind::None
-                && unit.is_visible_to_team(team)
+                && state.ai_heat_map_complete(team, i32::from(unit.grid.x), i32::from(unit.grid.y)) > 0
             {
                 unit.spot_by_team(team);
             }

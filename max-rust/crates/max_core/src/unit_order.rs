@@ -30,16 +30,19 @@
 //! цель, живая атака, списки) выполняются явными методами `GameState`, поэтому
 //! они видны остальным юнитам сразу — как в C++.
 //!
-//! # Интеграция P5
+//! # Интеграция P5/P6
 //!
 //! Бой (`crate::combat`), проходимость/занятость (`crate::access`) и пути
 //! (`crate::pathfinding`) подключены к машине приказов: `ProcessOrderFire`
 //! использует `AimAtTarget`/`PrepareFire`/`ProgressFire`/`Attack`,
 //! `InitUnitPath` ставит запросы в `PathsManager`-очередь, `PursueEnemy` и
 //! `MoveToAttack` ищут путь к позиции атаки, `IsEngaged`/`CanReceiveUnits`/
-//! `SetUnitDestination` берутся из `access`. Оставшиеся `TODO(P3/P6)` —
-//! экономика/комплексы и ИИ-задачи; `TODO(P5)` в точках, где требуется
-//! `UnitsManager_DeployUnit` конкретных типов (мастер-билдер, активация).
+//! `SetUnitDestination` берутся из `access`. ИИ-хуки P6 подключены:
+//! `MoveFinished` вызывает `Ai_EvaluateAttackTargets` и `Ai_CheckMines`,
+//! `PerformAutoSurvey` — `Ai_EnableAutoSurvey`, `ScheduleDelayedTasks` —
+//! `TaskManager::ScheduleDelayedTasks`. Оставшиеся `TODO(P3)` — экономика и
+//! комплексы; `TODO(P5)` в точках, где требуется `UnitsManager_DeployUnit`
+//! конкретных типов (мастер-билдер, активация).
 //!
 //! # Расхождения с C++
 //!
@@ -74,7 +77,7 @@ pub const MOVEMENT_WAIT_LIMIT: u16 = 512;
 pub const GFX_MAP_TILE_SIZE: i32 = 64;
 
 // ---------------------------------------------------------------------------
-// Заглушки отсутствующих модулей (P6)
+// Мосты в ИИ (P6)
 // ---------------------------------------------------------------------------
 
 /// `UnitInfo::Animate` / `RefreshScreen` — UI-анимация и грязные зоны (P4 не нужны).
@@ -86,12 +89,21 @@ fn refresh_screen(_unit: &UnitInfo) {}
 /// `UnitsManager_UpdateConnectors` (`units_manager.cpp:2051`) — P3 комплексы.
 fn update_connectors(_unit: &mut UnitInfo) {}
 
-/// `Ai_SetTasksPendingFlag(name)` (`ai.cpp`) — P6: флаг «у команды есть
-/// несделанная работа» для планировщика задач.
+/// `Ai_SetTasksPendingFlag(name)` (`ai.cpp:140`) — P6: в C++ выставляет флаг
+/// «у команды есть несделанная работа» для планировщика задач.
+///
+/// В max_core флаг не нужен: `AiPlayer::CheckEndTurn` сам проверяет очередь
+/// напоминаний и незавершённые приказы (`TaskManager::has_pending_work`), а
+/// вызовы этой функции разбросаны по чистым операциям без доступа к партии.
 fn ai_task_flag(_name: &str) {}
 
-/// `UnitInfo::ScheduleDelayedTasks` — P6 (очередь отложенных задач ИИ).
-fn schedule_delayed_tasks(_state: &mut GameState, _id: UnitId, _priority: bool) {}
+/// `UnitInfo::ScheduleDelayedTasks` — P6: напоминание верхней задаче юнита
+/// о завершении перегона (C++ `Task_RemindMoveFinished`).
+fn schedule_delayed_tasks(state: &mut GameState, id: UnitId, priority: bool) {
+    state.with_task_manager(|task_manager, world| {
+        task_manager.schedule_delayed_tasks(world, id, priority);
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Чистые операции над UnitInfo (порт методов UnitInfo)
@@ -280,6 +292,9 @@ pub fn blocked_on_path_request(unit: &mut UnitInfo, mode: bool, disable_fire: bo
 /// выполняются вызывающим слоем ([`OrderContext::move_finished`]), потому что
 /// им нужен доступ к состоянию партии. Здесь — сброс счётчиков движения,
 /// которые целиком локальны для юнита.
+///
+/// `Ai_CheckMines` тоже требует партии, поэтому вызывается из
+/// [`OrderContext::move_finished`].
 pub fn move_finished(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
     unit.velocity = 0;
     unit.moved = 0;
@@ -291,10 +306,6 @@ pub fn move_finished(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
     }
 
     unit.in_transit = false;
-
-    if unit.unit_type == UnitType::MineLayer || unit.unit_type == UnitType::SeaMineLayer {
-        // TODO(P6): Ai_CheckMines(this).
-    }
 
     if mode && !disable_fire {
         unit.delayed_reaction = 1;
@@ -719,12 +730,21 @@ impl<'a> OrderContext<'a> {
     pub fn move_finished(&mut self, mode: bool) {
         move_finished(&mut self.unit, mode, self.world.disable_fire);
 
+        // `Ai_CheckMines(this)` (`ai.cpp:365`) — миноукладчик сообщает командам.
+        if matches!(
+            self.unit.unit_type,
+            UnitType::MineLayer | UnitType::SeaMineLayer
+        ) {
+            crate::ai::ai_check_mines(self.world, self.id);
+        }
+
         if mode && !self.world.disable_fire {
             self.unit.delayed_reaction = 1;
             self.world.add_to_delayed_reaction_list(self.id);
 
             if self.unit.ammo > 0 {
-                // TODO(P6): Ai_EvaluateAttackTargets(this).
+                // `Ai_EvaluateAttackTargets` (`ai.cpp:361`).
+                self.world.ai_evaluate_attack_targets(self.id);
             }
         }
     }
@@ -1120,7 +1140,8 @@ fn perform_auto_survey(ctx: &mut OrderContext<'_>) {
     if team_type == crate::team::TeamKind::Computer || team_type == crate::team::TeamKind::Remote {
         ctx.unit.auto_survey = false;
     } else {
-        // TODO(P6): `Ai_EnableAutoSurvey` создаёт TaskAutoSurvey.
+        // `Ai_EnableAutoSurvey` (`ai.cpp:184`) создаёт `TaskAutoSurvey`.
+        ctx.world.ai_enable_auto_survey(ctx.id);
         schedule_delayed_tasks(ctx.world, ctx.id, false);
     }
 }

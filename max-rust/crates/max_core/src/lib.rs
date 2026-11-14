@@ -41,7 +41,11 @@
 //! * [`input`] — структуры входящих пакетов (08 с процессорами P0–P5, 38, 41,
 //!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) как чистые данные;
 //! * [`events`] — очередь команд, события юнитов и применение пакетов к
-//!   `GameState` в порядке получения (P4/P5).
+//!   `GameState` в порядке получения (P4/P5);
+//! * [`ai`] — ИИ: `AiPlayer` (стратегия, карты угроз, приоритеты атак),
+//!   `TaskManager` (очереди напоминаний `priority→normal→deferred`),
+//!   49 классов задач `task*.cpp`, `HeatMap`/`ThreatMap`, `WeightTable`,
+//!   решения `aiattack.cpp` (P6).
 //!
 //! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
 //! `f32`/`f64` в симуляции, итерация по `HashMap`.
@@ -51,6 +55,7 @@
 
 pub mod enums;
 pub mod access;
+pub mod ai;
 pub mod combat;
 pub mod events;
 pub mod game;
@@ -79,6 +84,15 @@ pub use access::{
     unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
     ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
 };
+pub use ai::{
+    ai_begin_turn, ai_check_end_turn, ai_check_mines, ai_check_reactions, ai_clear_tasks_pending_flags,
+    ai_determine_caution_level, ai_enable_auto_survey, ai_evaluate_attack_targets, ai_init,
+    ai_is_dangerous_location, ai_remove_unit, ai_select_starting_position,
+    ai_set_info_map_point, ai_set_tasks_pending_flag, ai_setup_strategy, ai_unit_hidden,
+    ai_unit_spotted, task_manager_need_to_reserve_raw_materials, AiPlayer, AiReactionState,
+    AiSettings, AiState, Reminder, Task, TaskHeader, TaskKind, TaskManager, ThreatMap, WeightTable,
+};
+pub use ai::HeatMap as AiHeatMap;
 pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
     progress_fire, ATTACK_DAMAGE_MIN,
