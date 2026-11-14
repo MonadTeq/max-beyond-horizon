@@ -1,0 +1,303 @@
+// Horizon lobby/admin gRPC service.
+//
+// gRPC + protobuf counterpart of the WebSocket JSON protocol described in
+// docs/protocol.md §5 (PLAN v6.0: lobby/admin moves to gRPC, the ENet/UDP
+// game session stays untouched). One unary RPC per WS request/response pair:
+//
+//   hello                      -> Hello
+//   max_lobby:list_games       -> ListGames
+//   max_lobby:create_game      -> CreateGame
+//   max_lobby:join_game        -> JoinGame
+//   max_admin:list_sessions    -> AdminListSessions
+//   max_admin:session_status   -> AdminSessionStatus
+//   max_admin:stop_session     -> AdminSessionStop
+//   max_admin:restart_session  -> AdminSessionRestart
+//   max_admin:start_session    -> AdminSessionStart
+//   system:ping                -> Ping
+//
+// All methods are unary request/response; the WS protocol has no pushes and
+// the lobby list is a small snapshot, so no streaming is defined in v1
+// (rationale in docs/protocol-grpc.md §4.1, together with the backward-
+// compatible extension path). Errors use the standard gRPC status; the
+// WS `event` keys disappear because the RPC name is the event
+// (docs/protocol-grpc.md §4.2).
+
+syntax = "proto3";
+
+package horizon.v1;
+
+import "types.proto";
+
+// The Horizon lobby/admin service. One server instance serves WS (legacy,
+// config.toml `[server]` bind_address) and gRPC (this service, new listener)
+// side by side during the transition.
+service Horizon {
+  // Optional handshake, mirrors the WS `hello` frame. An unsupported
+  // `protocol_version` fails with FAILED_PRECONDITION (WS: close 4000).
+  rpc Hello(HelloRequest) returns (HelloAck);
+
+  // Snapshot of the games registered in the lobby (WS `game_list`).
+  rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
+
+  // Starts a headless session and hands the session ticket to the creator
+  // (WS `game_created`).
+  rpc CreateGame(CreateGameRequest) returns (CreateGameResponse);
+
+  // Validates the game and hands host/port/ticket to the joining player
+  // (WS `game_joined`).
+  rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
+
+  // Admin: snapshot of all sessions the manager tracks (WS `sessions_listed`).
+  rpc AdminListSessions(AdminListSessionsRequest) returns (AdminListSessionsResponse);
+
+  // Admin: lifecycle state of one session (WS `session_status`).
+  rpc AdminSessionStatus(AdminSessionStatusRequest) returns (AdminSessionStatusResponse);
+
+  // Admin: stop one session (WS `session_stopped`).
+  rpc AdminSessionStop(AdminSessionStopRequest) returns (AdminSessionStopResponse);
+
+  // Admin: stop the old session and start a fresh one with the same settings
+  // (WS `session_restarted`; the id and port change).
+  rpc AdminSessionRestart(AdminSessionRestartRequest) returns (AdminSessionRestartResponse);
+
+  // Admin: start a new session (WS `session_started`).
+  rpc AdminSessionStart(AdminSessionStartRequest) returns (AdminSessionStartResponse);
+
+  // Liveness probe (WS `system:ping`).
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// ---------------------------------------------------------------------------
+// hello / hello_ack
+// ---------------------------------------------------------------------------
+
+// WS parity: {"type":"hello","protocol_version":1,"client":"max_net/0.1",
+// "dictionary_id":null}.
+message HelloRequest {
+  // Horizon protocol version the client speaks (PROTOCOL_VERSION = 1).
+  // JSON carries a u16; protobuf has no 16-bit ints, so uint32 and the
+  // server rejects values > 65535.
+  uint32 protocol_version = 1;
+  // Free-form client identifier, e.g. "max_net/0.1". May be empty.
+  string client = 2;
+  // Compression-dictionary id of the WS transport; meaningless over gRPC and
+  // kept only for 1:1 JSON-key parity. Clients must leave it unset.
+  optional uint32 dictionary_id = 3;
+}
+
+// WS parity: {"type":"hello_ack","protocol_version":1,"format":"json",
+// "compression":"none"}.
+message HelloAck {
+  // Protocol version the server speaks; equal to the client's on success.
+  uint32 protocol_version = 1;
+  // Always "protobuf" on this transport (the WS values "json"/"bitcode" have
+  // no gRPC equivalent; the field exists for JSON-key parity).
+  string format = 2;
+  // Message compression negotiated by gRPC for this connection
+  // ("none", "gzip", "zstd", ...) — analogous to the WS "none"|"zstd"|"lz4".
+  string compression = 3;
+  // Always unset over gRPC (a WS compression-dictionary concept); kept for
+  // JSON-key parity.
+  optional uint32 dictionary_id = 4;
+}
+
+// ---------------------------------------------------------------------------
+// max_lobby
+// ---------------------------------------------------------------------------
+
+// max_lobby:list_games — the WS protocol sends no payload ({}).
+message ListGamesRequest {}
+
+// WS parity: {"event":"game_list","games":[...]}.
+message ListGamesResponse {
+  repeated GameInfo games = 1;
+}
+
+// max_lobby:create_game — every field is optional; unset fields keep the
+// SessionConfig defaults (docs/protocol.md §5.3).
+message CreateGameRequest {
+  // Human readable game name; default: the first 8 characters of the
+  // session UUID.
+  optional string name = 1;
+  // World index, 0..=23; default 0.
+  optional int64 world = 2;
+  // Seconds per turn; default 30.
+  optional int64 timer = 3;
+  // End-turn timer in seconds; default 15.
+  optional int64 endturn = 4;
+  // 1 = turn based, 0 = simultaneous; default 1.
+  optional int64 play_mode = 5;
+  // Starting credits; default 200.
+  optional int64 start_gold = 6;
+  // Victory type (0 = turns, 1 = score, 2 = conquest...); default 0.
+  optional int64 victory_type = 7;
+  // Victory limit (turns or score depending on the type); default 100.
+  optional int64 victory_limit = 8;
+  // Minimum players; must be >= 2, otherwise INVALID_ARGUMENT with the WS
+  // text "a network game needs at least 2 players"; default 2.
+  optional uint32 min_players = 9;
+  // Game password; when set the game is protected and the password doubles
+  // as the session ticket.
+  optional string password = 10;
+}
+
+// WS parity: {"event":"game_created","game":{...},"ticket":"..."}.
+message CreateGameResponse {
+  GameInfo game = 1;
+  // Ticket handed to the creator (see types.proto Ticket).
+  Ticket ticket = 2;
+}
+
+// max_lobby:join_game.
+message JoinGameRequest {
+  // Session UUID. Input that is not a UUID fails with NOT_FOUND
+  // (WS: "game not found").
+  string game_id = 1;
+  // Required only for protected games, otherwise PERMISSION_DENIED
+  // (WS: "invalid password").
+  optional string password = 2;
+}
+
+// WS parity: {"event":"game_joined","game_id":"...","host":"127.0.0.1",
+// "port":..., "ticket":"..."}.
+message JoinGameResponse {
+  string game_id = 1;
+  // Host the ENet client connects to for the game session.
+  //
+  // KNOWN LIMITATION: the WS implementation hardcodes "127.0.0.1"
+  // (docs/protocol.md §12). `host` is part of the schema precisely so the
+  // value can be fixed (e.g. taken from server config / advertised address)
+  // without a protocol change.
+  string host = 2;
+  // UDP port of the headless process (u16 in JSON).
+  uint32 port = 3;
+  // Session ticket to present in the TP 00 handshake (see types.proto Ticket).
+  Ticket ticket = 4;
+}
+
+// ---------------------------------------------------------------------------
+// max_admin
+// ---------------------------------------------------------------------------
+
+// max_admin:list_sessions — no payload besides the optional token.
+message AdminListSessionsRequest {
+  // Admin authorization token: hex(HMAC-SHA256(admin_secret, "max-admin")),
+  // compared in constant time (docs/protocol.md §5.4). Kept as a message
+  // field for WS parity; moving it to gRPC metadata (e.g. an
+  // `x-horizon-admin-token` header) is a backward-compatible alternative
+  // documented in docs/protocol-grpc.md.
+  optional string admin_token = 1;
+}
+
+// WS parity: {"event":"sessions_listed","sessions":[...]}.
+message AdminListSessionsResponse {
+  repeated AdminSession sessions = 1;
+}
+
+// max_admin:session_status — the id of the session to act on, plus the
+// optional admin token.
+message AdminSessionStatusRequest {
+  string game_id = 1;
+  optional string admin_token = 2;
+}
+
+// WS parity: {"event":"session_status","game_id":"...",
+// "status":{"state":"..."}}.
+message AdminSessionStatusResponse {
+  string game_id = 1;
+  SessionStatusInfo status = 2;
+}
+
+// max_admin:stop_session — the id of the session to act on, plus the
+// optional admin token.
+message AdminSessionStopRequest {
+  string game_id = 1;
+  optional string admin_token = 2;
+}
+
+// WS parity: {"event":"session_stopped","game_id":"...","ok":true} or
+// {"event":"session_stopped","game_id":"...","ok":false,"error":"..."}.
+message AdminSessionStopResponse {
+  string game_id = 1;
+  // true when the session was stopped; false when the manager failed.
+  bool ok = 2;
+  // Present only when ok == false; mirrors the inline `error` of the WS frame.
+  optional Error error = 3;
+}
+
+// max_admin:restart_session — the id of the session to act on, plus the
+// optional admin token.
+message AdminSessionRestartRequest {
+  string game_id = 1;
+  optional string admin_token = 2;
+}
+
+// WS parity: {"event":"session_restarted","game_id":"...","ok":true,
+// "new_game_id":"...","port":...} or {"event":"session_restarted",
+// "game_id":"...","ok":false,"error":"..."}.
+message AdminSessionRestartResponse {
+  string game_id = 1;
+  // true when the old session was stopped and a fresh one started.
+  bool ok = 2;
+  // Set on success: id of the fresh session (id and port change on restart).
+  optional string new_game_id = 3;
+  // Set on success: UDP port of the fresh session.
+  optional uint32 port = 4;
+  // Present only when ok == false.
+  optional Error error = 5;
+}
+
+// max_admin:start_session — the same optional game fields as
+// CreateGameRequest plus the optional port pre-check and the admin token.
+message AdminSessionStartRequest {
+  // Admin authorization token (see AdminListSessionsRequest).
+  optional string admin_token = 1;
+  // Optional *conflict pre-check only*: the manager always allocates ports
+  // itself from MAX_PORT_RANGE, so a requested port is validated against the
+  // range and the running sessions but the session still receives an
+  // allocated port (returned in the response).
+  optional uint32 port = 2;
+  optional string name = 3;
+  optional int64 world = 4;
+  optional int64 timer = 5;
+  optional int64 endturn = 6;
+  optional int64 play_mode = 7;
+  optional int64 start_gold = 8;
+  optional int64 victory_type = 9;
+  optional int64 victory_limit = 10;
+  optional uint32 min_players = 11;
+}
+
+// WS parity: success {"event":"session_started","game_id":"...","port":...},
+// failure {"event":"session_started","ok":false,"error":"..."}.
+message AdminSessionStartResponse {
+  // Set on success.
+  optional string game_id = 1;
+  // Set on success.
+  optional uint32 port = 2;
+  // true on success (the WS success frame omits `ok`; the proto sets it true
+  // explicitly), false on failure.
+  bool ok = 3;
+  // Present only when ok == false.
+  optional Error error = 4;
+}
+
+// ---------------------------------------------------------------------------
+// system:ping
+// ---------------------------------------------------------------------------
+
+// system:ping — the WS protocol accepts any JSON payload; the server does not
+// interpret it.
+message PingRequest {
+  // Raw payload (e.g. the original JSON bytes) for parity; the server may
+  // ignore or echo it.
+  optional bytes payload = 1;
+}
+
+// WS parity: {"timestamp":<u64 ms>,"message":"pong"}.
+message PingResponse {
+  // Server wall-clock time in milliseconds since the Unix epoch.
+  uint64 timestamp = 1;
+  // Always "pong".
+  string message = 2;
+}

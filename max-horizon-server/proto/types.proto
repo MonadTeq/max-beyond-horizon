@@ -1,0 +1,166 @@
+// Common types of the Horizon lobby/admin gRPC protocol.
+//
+// Package `horizon.v1` is the versioned contract shared by `horizon.proto`
+// (the service) and this file. Field names deliberately mirror the JSON keys
+// of the legacy WebSocket protocol (docs/protocol.md §5) so that a JSON frame
+// and its protobuf counterpart can be mapped 1:1; the mapping tables live in
+// docs/protocol-grpc.md.
+//
+// Backward-compatibility rules for this file: field numbers never change and
+// are never reused; existing fields are only extended with new enum values or
+// made optional; new fields are always appended (new numbers). Breaking
+// changes require a new package, e.g. `horizon.v2`.
+
+syntax = "proto3";
+
+package horizon.v1;
+
+// ---------------------------------------------------------------------------
+// Game / session lifecycle state
+// ---------------------------------------------------------------------------
+
+// Lifecycle state of a game session (max_session::SessionStatus).
+//
+// WebSocket JSON parity:
+//   STARTING <-> "starting"
+//   RUNNING  <-> "running"
+//   EXITED   <-> "exited"
+//   STOPPED  <-> "stopped"
+//   UNKNOWN  <-> "unknown"  (max_admin:session_status for a session the
+//                            manager does not track)
+enum GameStatus {
+  // proto3 requires the first enum value to be zero. The server never sends
+  // this value; clients may treat it as "unspecified".
+  GAME_STATUS_UNSPECIFIED = 0;
+  // The headless process is being spawned (or a watchdog restart is pending).
+  STARTING = 1;
+  // The headless process is running and accepting players.
+  RUNNING = 2;
+  // The process exited on its own and is not restarted any more.
+  EXITED = 3;
+  // The session was stopped through the session manager.
+  STOPPED = 4;
+  // The session id is unknown to the manager (AdminSessionStatus only).
+  UNKNOWN = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Lobby view of one game
+// ---------------------------------------------------------------------------
+
+// One lobby game, as sent inside `game_list` / `game_created.game` of the
+// WebSocket protocol. Field names match the JSON keys:
+// {"id","name","world","status","port","players","min_players","password_protected"}.
+message GameInfo {
+  // Session UUID in lowercase hyphenated form (e.g. "5e2f9f3a-8b4d-4c1e-9a7b-2d0e6f8a1c3b").
+  // The JSON contract is a string; keeping the string form avoids a breaking
+  // representation change. Clients that need the 16 raw bytes can parse it.
+  string id = 1;
+  // Human readable game name.
+  string name = 2;
+  // World index (0..=23 in the original game data).
+  int64 world = 3;
+  // Session lifecycle state.
+  GameStatus status = 4;
+  // UDP port of the headless process (the game's ENet endpoint).
+  // JSON carries a u16; protobuf has no 16-bit ints, so uint32 with
+  // values <= 65535 (the server rejects anything larger).
+  uint32 port = 5;
+  // Players currently registered in the lobby (counting the creator).
+  uint32 players = 6;
+  // Minimum players the headless server waits for before starting.
+  uint32 min_players = 7;
+  // Whether the game is protected by a password (the password doubles as the
+  // legacy session ticket).
+  bool password_protected = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Admin view of one session
+// ---------------------------------------------------------------------------
+
+// One session as sent inside `max_admin:sessions_listed` (the admin view).
+// JSON keys: {"game_id","name","port","state","dir"}.
+//
+// NOTE: the admin view uses `state` while the lobby view (GameInfo) uses
+// `status` — the asymmetry of the legacy WS protocol is preserved on purpose,
+// so field names stay greppable in both codebases.
+message AdminSession {
+  // Session UUID in lowercase hyphenated form.
+  string game_id = 1;
+  // Human readable game name.
+  string name = 2;
+  // UDP port of the headless process (u16 in JSON).
+  uint32 port = 3;
+  // Session lifecycle state.
+  GameStatus state = 4;
+  // Session directory on the server filesystem (sessions/<uuid>).
+  string dir = 5;
+}
+
+// `status` object of `max_admin:session_status` — parity with the nested WS
+// shape {"status":{"state":"..."}}.
+message SessionStatusInfo {
+  GameStatus state = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Session ticket
+// ---------------------------------------------------------------------------
+
+// Format of the `value` string of a Ticket.
+//
+// Two formats exist (docs/protocol.md §6):
+//   * legacy — the game password for protected games, "" for open games;
+//   * signed — "v1.<session_id>.<player_id>.<unix_expiry>.<hex_hmac>", minted
+//     by max_auth when MAX_SESSION_SECRET is configured (24 h TTL).
+enum TicketKind {
+  TICKET_KIND_UNSPECIFIED = 0;
+  // Legacy password-as-ticket (empty string for open games).
+  LEGACY = 1;
+  // Signed v1.<session_id>.<player_id>.<unix_expiry>.<hex_hmac> ticket.
+  SIGNED = 2;
+}
+
+// A session ticket a client presents in the ENet transport handshake (TP 00).
+//
+// `value` is the exact string to send in the handshake; the parsed fields are
+// convenience metadata for clients that want to display or validate the
+// ticket without parsing the wire format themselves.
+message Ticket {
+  // The exact ticket string the game handshake expects.
+  string value = 1;
+  // Parsed fields of a SIGNED ticket; unset for LEGACY tickets.
+  optional string session_id = 2;
+  optional string player_id = 3;
+  // Expiration in whole Unix seconds; the ticket is valid while
+  // `now < expires_at_unix`.
+  optional int64 expires_at_unix = 4;
+  // Which of the two ticket formats `value` carries.
+  TicketKind kind = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Error payload
+// ---------------------------------------------------------------------------
+
+// A business error carried *inside* a successful gRPC response.
+//
+// The primary error channel of the gRPC protocol is the standard gRPC status
+// (code + message). This message is used only where the legacy WS protocol
+// reports a failure inline inside a normal frame — the `error` field of
+// `session_stopped` / `session_restarted` / `session_started` with
+// `ok:false`. Everything else (lobby errors, admin auth errors, malformed
+// input) is raised as a standard gRPC status; see docs/protocol-grpc.md §6
+// for the full mapping.
+message Error {
+  // Standard gRPC status code this error would carry if it were raised as a
+  // status (numeric values of google.rpc.Code, e.g. 8 = RESOURCE_EXHAUSTED).
+  int32 code = 1;
+  // Legacy WebSocket close code (4000–4008) when the error originates from a
+  // connection-level condition; 0 for plain business errors.
+  uint32 legacy_close_code = 2;
+  // Human readable message; for parity this is the exact text of the legacy
+  // `error` / `admin_error` JSON field.
+  string message = 3;
+}
