@@ -1,0 +1,71 @@
+# Финальная цепочка RE2: от входа игры до main() (рантайм-адреса из
+# runtime-placement.md: runtime = static + 0x160010).
+# Прелюдия до стопа на цикле apply_fixups (1048:2714), затем BP через плоский
+# селектор 1038 (база 0) и прогон по CRT: __astart -> __InitRtns -> __cstart_
+# -> lock RT -> main -> main_menu.
+BP 829:2C6C
+BP 552:1141
+BP 667:D
+BP 5F6:2
+BP 90E:7
+BP 20D71:4
+BP 20D72:4
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 20
+BPDEL 1
+BPDEL 0
+BP 1038:26C714
+BP 1038:26C78C
+BP 1038:287E82
+BP 1038:287E32
+BP 1038:29BA18
+BP 1038:20884E
+BP 1038:211E10
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q
+RUN
+WAIT 30
+GDT
+Q

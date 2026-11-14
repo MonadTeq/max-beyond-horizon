@@ -1,0 +1,37 @@
+# Замер стека клиента INT21: адрес возврата = адрес в коде игры.
+# На стопе SS=0050, ESP=0x7C0; снимаем окно стека и смотрим возвратный CS:IP.
+BP 829:2C6C
+BP 552:1141
+BP 667:D
+BP 5F6:2
+BP 90E:7
+BP 20D71:4
+BP 20D72:4
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 15
+GDT
+Q
+RUN
+WAIT 20
+GDT
+Q
+RUN
+WAIT 20
+BPDEL 1
+BPDEL 0
+DV 50:7A0
+DV 50:7C0
+GDT
+Q
