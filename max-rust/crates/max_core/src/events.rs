@@ -1,0 +1,1199 @@
+//! Очередь команд, события юнитов и применение пакетов к [`GameState`].
+//!
+//! Оракул: `max-cpp-port/src/remote.cpp` (`Remote_ProcessNetPackets` и
+//! обработчики `Remote_ReceiveNetPacket_*`, процессоры приказов
+//! `Remote_OrderProcessor{0..5}_Read`), `unitevents.cpp`
+//! (`UnitEventEmergencyStop`), DESIGN.md §5.1 (шаг 1) и §6.2.
+//!
+//! # Модель применения
+//!
+//! Сеть в `max_core` нет: команды приходят уже разобранными
+//! ([`crate::input::Command`]) и кладутся в [`CommandQueue`]. Применяются они
+//! **строго в порядке получения** в детерминированной точке цикла — в начале
+//! тика ([`crate::game::GameState::tick`], шаг 2), аналог
+//! `Remote_Synchronize()`/`Remote_ProcessNetPackets()`.
+//!
+//! # Соответствие C++-порту
+//!
+//! * Пакет **08** повторяет вложенность процессоров: сначала
+//!   `Remote_OrderProcessor1_Read` как предварительная проверка
+//!   (`Remote_ReceiveNetPacket_08` разбирает копию пакета), затем процессор
+//!   уровня приказа (который снова применяет поля `P1`). Оба прохода
+//!   выполняются, как в C++.
+//! * Пакет **50** не меняет юнита сразу: C++ создаёт
+//!   `UnitEventEmergencyStop` и кладёт его в `UnitEvent_UnitEvents`, а событие
+//!   обрабатывается в `UnitsManager_ProcessOrders` — так же и здесь
+//!   ([`UnitEvent::EmergencyStop`]).
+//! * Пакеты **00/01/45/52** — барьерные факты: они только записываются в
+//!   поля состояния и не влияют на юнитов (DESIGN §8.4/§8.6).
+//! * Пакеты **10/20** апгрейдят атрибуты через копию `UnitValues`
+//!   (`UpdateVersion`/`MarkAsInUse`), как `Remote_ReceiveNetPacket_10/20`.
+//! * Пакет **14** (высадка) в P4 не применяется: `UnitsManager_DeployUnit`
+//!   требует таблицу флагов 93 типов юнитов (`units.json` —
+//!   `ResourceManager_InitUnits`, P3-данные). Команда возвращает
+//!   [`ApplyOutcome::Unsupported`], а вызывающий слой деплоит юнита сам через
+//!   [`crate::game::GameState::spawn_unit`].
+//! * Пакет **12** (снабжение миссии) сохраняется как данные
+//!   ([`crate::game::GameState::mission_supplies`]) и обновляет
+//!   `stats_gold_spent_on_upgrades` — как приёмник C++.
+
+use crate::enums::{ResearchTopic, UnitOrder, UnitOrderState, UnitType};
+use crate::game::{GameState, OrderData};
+use crate::geo::Point;
+use crate::input::{
+    is_valid_order, is_valid_team_index, Command, MovePathData, OrderPayload,
+    Packet08Order, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
+    UPGRADE_VALUE_COUNT,
+};
+use crate::team::TeamId;
+use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitPath};
+use crate::unit_order;
+use crate::unit_values::{
+    ATTRIB_AGENT_ADJUST, ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_ATTACK_RADIUS,
+    ATTRIB_HITS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED,
+    ATTRIB_STORAGE, ATTRIB_TURNS,
+};
+
+// ---------------------------------------------------------------------------
+// События юнитов (C++ `UnitEvent_UnitEvents`)
+// ---------------------------------------------------------------------------
+
+/// Событие юнита — C++ `class UnitEvent` (`unitevents.hpp`).
+///
+/// Единственный вариант оригинала — аварийный стоп (`UnitEventEmergencyStop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitEvent {
+    /// `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`).
+    EmergencyStop {
+        /// Юнит, которому пришёл пакет 50.
+        unit: UnitId,
+    },
+}
+
+impl UnitEvent {
+    /// Юнит, к которому относится событие.
+    pub const fn unit(&self) -> UnitId {
+        match self {
+            Self::EmergencyStop { unit } => *unit,
+        }
+    }
+}
+
+/// `UnitEvent::Process` — применяет событие к партии.
+pub fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
+    match event {
+        UnitEvent::EmergencyStop { unit } => {
+            let Some(target) = state.unit(*unit).cloned() else {
+                return;
+            };
+            if target.hits == 0 {
+                return;
+            }
+            let mut target = target;
+            unit_order::stop_movement(&mut target, state.disable_fire);
+            state.write_unit(*unit, target);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Очередь команд
+// ---------------------------------------------------------------------------
+
+/// Очередь входных команд в порядке получения (DESIGN §5.1 шаг 1).
+///
+/// `VecDeque` — FIFO без итерации по хэш-таблицам; порядок полностью
+/// определяется порядком поступления пакетов.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommandQueue {
+    pending: std::collections::VecDeque<Command>,
+    applied: u64,
+}
+
+impl CommandQueue {
+    /// Пустая очередь.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Кладёт команду в конец (порядок получения).
+    pub fn push(&mut self, command: Command) {
+        self.pending.push_back(command);
+    }
+
+    /// Забирает самую старую команду.
+    pub fn pop_front(&mut self) -> Option<Command> {
+        let command = self.pending.pop_front()?;
+        self.applied = self.applied.wrapping_add(1);
+        Some(command)
+    }
+
+    /// Сколько команд ещё не применено.
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Пуста ли очередь.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    /// Сколько команд применено с момента создания (диагностика).
+    pub const fn applied(&self) -> u64 {
+        self.applied
+    }
+
+    /// Очищает очередь (реконнект/новый прогон).
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Результат применения
+// ---------------------------------------------------------------------------
+
+/// Результат применения команды.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyOutcome {
+    /// Команда применена.
+    Applied,
+    /// Пакет относится к неизвестному юниту (`Remote_NetErrorUnknownUnit`).
+    UnknownUnit,
+    /// Пакет неверного формата (`NetPacket::SetMalformed` в C++).
+    Malformed,
+    /// Пакет валиден, но не применим на этой фазе (см. шапку модуля).
+    Unsupported,
+    /// Пакет проигнорирован (невалидный индекс команды, неизвестный комплекс).
+    Ignored,
+}
+
+// ---------------------------------------------------------------------------
+// Применение очереди
+// ---------------------------------------------------------------------------
+
+/// Применяет все накопленные команды в порядке получения.
+///
+/// Возвращает количество применённых команд (как `Remote_ProcessNetPackets`
+/// вычерпывает очередь до `REMOTE_RECEIVE_EMPTY`).
+pub fn apply_pending(state: &mut GameState) -> usize {
+    let mut applied = 0;
+
+    while let Some(command) = state.commands.pop_front() {
+        apply_command(state, &command);
+        applied += 1;
+    }
+
+    applied
+}
+
+/// Применяет одну команду к состоянию — аналог `Remote_ReceiveNetPacket_*`.
+pub fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
+    match command {
+        Command::Order(order) => apply_packet_08(state, order),
+        Command::Move(movement) => apply_packet_38(state, movement),
+        Command::MoveFinished(finished) => apply_packet_41(state, finished),
+        Command::Stop(stop) => apply_packet_50(state, stop),
+        Command::FinishedTurn(finished) => apply_packet_06(state, finished),
+        Command::EndTurnBarrier(barrier) => apply_packet_52(state, barrier),
+        Command::CrcBarrier(barrier) => apply_packet_45(state, barrier),
+        Command::TurnBarrier(barrier) => apply_packet_00(state, barrier),
+        Command::FrameBarrier(barrier) => apply_packet_01(state, barrier),
+        Command::Chat(chat) => apply_packet_18(state, chat),
+        Command::ComplexOrder(order) => apply_packet_11(state, order),
+        Command::ComplexSummary(summary) => apply_packet_53(state, summary),
+        Command::UpgradeUnitType(upgrade) => apply_packet_10(state, upgrade),
+        Command::UpgradeUnit(upgrade) => apply_packet_20(state, upgrade),
+        Command::Rename(rename) => apply_packet_43(state, rename),
+        Command::Seed(seed) => {
+            // Пакет 13 — единственная точка сидирования симуляции
+            // (DESIGN §6.1). C++ хранит seed в `Remote_RngSeed` и применяет его
+            // при старте партии; `max_core` применяет сразу — других
+            // потребителей seed'а в симуляции нет.
+            state.rng.set_seed(seed.seed);
+            ApplyOutcome::Applied
+        }
+        Command::Deploy(_deploy) => ApplyOutcome::Unsupported,
+        Command::MissionSupply(supply) => apply_packet_12(state, supply),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 08 — приказ юниту
+// ---------------------------------------------------------------------------
+
+fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(packet.unit).cloned() else {
+        return ApplyOutcome::UnknownUnit;
+    };
+
+    // `Remote_ReceiveNetPacket_08`: предварительный проход `P1` по копии
+    // пакета — валидация приказов до выбора процессора.
+    if let Some(p1) = packet.payload.p1() {
+        if !is_valid_order(p1.order) || !is_valid_order(p1.prior_order) {
+            return ApplyOutcome::Malformed;
+        }
+        apply_payload_p1(&mut unit, p1);
+    }
+
+    // Выбор процессора по *новому* приказу юнита (`Remote_OrderProcessors[...]`).
+    let Some(order) = packet.payload.order() else {
+        // `ORDER_17` (P0): пустой payload, менять нечего.
+        state.write_unit(packet.unit, unit);
+        return ApplyOutcome::Applied;
+    };
+
+    // Процессор должен соответствовать приказу (иначе — malformed). В C++
+    // процессор выбирается по уже применённому приказу юнита, поэтому
+    // предварительный проход `P1` к этому моменту уже изменяет юнита — как и
+    // здесь (сначала записываем копию, затем сообщаем о malformed).
+    if packet.payload.level() != PayloadLevel::for_order(order) {
+        state.write_unit(packet.unit, unit);
+        return ApplyOutcome::Malformed;
+    }
+
+    let result = match &packet.payload {
+        OrderPayload::Empty => ApplyOutcome::Applied,
+        OrderPayload::P1(p1) => {
+            apply_payload_p1(&mut unit, p1);
+            ApplyOutcome::Applied
+        }
+        OrderPayload::P2(p2) => {
+            apply_payload_p2(state, &mut unit, p2);
+            ApplyOutcome::Applied
+        }
+        OrderPayload::P3(p3) => {
+            apply_payload_p3(state, &mut unit, p3);
+            ApplyOutcome::Applied
+        }
+        OrderPayload::P4(p4) => {
+            apply_payload_p4(state, &mut unit, p4);
+            ApplyOutcome::Applied
+        }
+        OrderPayload::P5(p5) => {
+            apply_payload_p5(state, &mut unit, p5);
+            ApplyOutcome::Applied
+        }
+    };
+
+    state.write_unit(packet.unit, unit);
+    result
+}
+
+/// `Remote_OrderProcessor1_Read` (`remote.cpp:379`).
+fn apply_payload_p1(unit: &mut UnitInfo, p1: &PayloadP1) {
+    if !is_valid_order(p1.order) || !is_valid_order(p1.prior_order) {
+        return;
+    }
+
+    // Сброс незавершённой анимации масштаба до смены приказа.
+    unit_order::new_order_while_scaling(unit);
+
+    unit.disabled_reaction_fire = p1.disabled_reaction_fire;
+    unit.orders = p1.order;
+    unit.state = p1.state;
+    unit.prior_orders = p1.prior_order;
+    unit.prior_state = p1.prior_state;
+}
+
+/// `Remote_OrderProcessor2_Read` (`remote.cpp:426`).
+fn apply_payload_p2(state: &mut GameState, unit: &mut UnitInfo, p2: &PayloadP2) {
+    apply_payload_p1(unit, &p2.p1);
+
+    unit.parent_unit = p2.parent_unit;
+    unit.experience = p2.experience;
+    let _ = state;
+}
+
+/// `Remote_OrderProcessor3_Read` (`remote.cpp:462`).
+fn apply_payload_p3(state: &mut GameState, unit: &mut UnitInfo, p3: &PayloadP3) {
+    apply_payload_p2(state, unit, &p3.p2);
+
+    let mut data = state.order_data(unit.id);
+    data.move_to = p3.move_to;
+    data.fire_on = p3.fire_on;
+    // V70-поле `target_grid` зеркалит `move_to` (см. `OrderData`).
+    unit.target_grid = p3.move_to;
+    state.set_order_data(unit.id, data);
+
+    unit.enemy_unit = p3.enemy_unit;
+    unit.transfer_cargo = p3.transfer_cargo;
+    unit.stealth_dice_roll = p3.stealth_dice_roll;
+}
+
+/// `Remote_OrderProcessor4_Read` (`remote.cpp:502`).
+fn apply_payload_p4(state: &mut GameState, unit: &mut UnitInfo, p4: &PayloadP4) {
+    apply_payload_p3(state, unit, &p4.p3);
+
+    unit.repeat_build = p4.repeat_build;
+    unit.build_time = p4.build_time;
+    unit.build_rate = p4.build_rate;
+
+    unit.build_list.clear();
+    unit.build_list.extend_from_slice(&p4.build_list);
+}
+
+/// `Remote_OrderProcessor5_Read` (`remote.cpp:535`).
+fn apply_payload_p5(state: &mut GameState, unit: &mut UnitInfo, p5: &PayloadP5) {
+    apply_payload_p3(state, unit, &p5.p3);
+
+    unit.total_mining = p5.total_mining;
+    unit.raw_mining = p5.raw_mining;
+    unit.fuel_mining = p5.fuel_mining;
+    unit.gold_mining = p5.gold_mining;
+}
+
+// ---------------------------------------------------------------------------
+// 38 — движение с путём
+// ---------------------------------------------------------------------------
+
+fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(packet.unit).cloned() else {
+        return ApplyOutcome::UnknownUnit;
+    };
+
+    // `Remote_ReceiveNetPacket_38`: снять прежний путь, завершить масштаб,
+    // затем выставить приказ/состояние.
+    if unit.path.is_some() {
+        unit.path = None;
+    }
+
+    unit_order::new_order_while_scaling(&mut unit);
+
+    unit.orders = packet.order;
+    unit.state = packet.state;
+
+    let mut data = state.order_data(packet.unit);
+    data.move_to = packet.move_to;
+    unit.target_grid = packet.move_to;
+    state.set_order_data(packet.unit, data);
+
+    unit.group_speed = packet.group_speed;
+
+    // `grid_x/grid_y` (протокол §8.4, `Remote_RelocateUnit`): у получателя
+    // юнит стоит на клетке владельца. C++-порт отправляет 38 без этих полей,
+    // поэтому применяется только реальное расхождение.
+    if unit.grid != packet.grid {
+        unit.grid = packet.grid;
+    }
+
+    match &packet.path {
+        Some(MovePathData::Ground(steps)) if !steps.is_empty() => {
+            unit.path = Some(UnitPath::Ground(GroundPath {
+                end_x: packet.move_to.x,
+                end_y: packet.move_to.y,
+                step_index: 0,
+                steps: steps.clone(),
+            }));
+        }
+        Some(MovePathData::Air {
+            end_x,
+            end_y,
+            distance_x,
+            distance_y,
+            euclidean_distance,
+            speed,
+            move_fraction,
+            max_velocity,
+        }) => {
+            let angle = unit_order::paths_get_angle(
+                i32::from(*end_x) - i32::from(unit.grid.x),
+                i32::from(*end_y) - i32::from(unit.grid.y),
+            );
+            unit.path = Some(UnitPath::Air(AirPath {
+                length: *euclidean_distance,
+                angle: (angle & 7) as i8,
+                start_x: unit.grid.x,
+                start_y: unit.grid.y,
+                end_x: *end_x,
+                end_y: *end_y,
+                step_x: *distance_x,
+                step_y: *distance_y,
+                delta_x: 0,
+                delta_y: 0,
+            }));
+            unit.speed = *speed;
+            unit.move_fraction = *move_fraction;
+            unit.max_velocity = *max_velocity;
+        }
+        _ => {}
+    }
+
+    state.write_unit(packet.unit, unit);
+    state.set_order_data(packet.unit, data);
+    ApplyOutcome::Applied
+}
+
+/// Вспомогательная проверка «путь без шагов» (см. ветвление 38).
+#[allow(dead_code)]
+fn steps_is_empty(packet: &crate::input::Packet38Move) -> bool {
+    match &packet.path {
+        None => true,
+        Some(MovePathData::Ground(steps)) => steps.is_empty(),
+        Some(MovePathData::Air { .. }) => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 41 / 50 — завершение и аварийный стоп
+// ---------------------------------------------------------------------------
+
+fn apply_packet_41(
+    state: &mut GameState,
+    packet: &crate::input::Packet41MoveFinished,
+) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(packet.unit).cloned() else {
+        return ApplyOutcome::UnknownUnit;
+    };
+
+    // Поля протокола §8.4 (в короткой форме C++-порта отсутствуют).
+    if let Some(grid) = packet.grid {
+        unit.grid = grid;
+    }
+    if let Some(speed) = packet.speed {
+        unit.speed = speed;
+    }
+    if let Some(group_speed) = packet.group_speed {
+        unit.group_speed = group_speed;
+    }
+    if let Some(shots) = packet.shots {
+        unit.shots = shots;
+    }
+    if let Some(move_fraction) = packet.move_fraction {
+        unit.move_fraction = move_fraction;
+    }
+
+    // `Remote_ReceiveNetPacket_41`: `unit->BlockedOnPathRequest(mode, true)`.
+    // `MoveFinished(mode)` добавляет юнита в список отложенных реакций только
+    // при `mode` и включённом ответном огне.
+    unit_order::blocked_on_path_request(&mut unit, packet.mode, state.disable_fire);
+    state.write_unit(packet.unit, unit);
+    if packet.mode && !state.disable_fire {
+        state.add_to_delayed_reaction_list(packet.unit);
+    }
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_50(
+    state: &mut GameState,
+    packet: &crate::input::Packet50StopUnit,
+) -> ApplyOutcome {
+    if !state.has_unit(packet.unit) {
+        return ApplyOutcome::UnknownUnit;
+    }
+
+    // `Remote_ReceiveNetPacket_50`: событие ставится в очередь и выполняется
+    // в `UnitsManager_ProcessOrders`.
+    state.unit_events.push(UnitEvent::EmergencyStop {
+        unit: packet.unit,
+    });
+    ApplyOutcome::Applied
+}
+
+// ---------------------------------------------------------------------------
+// 06 / 52 / 45 / 00 / 01 — конец хода и барьеры
+// ---------------------------------------------------------------------------
+
+fn apply_packet_06(
+    state: &mut GameState,
+    packet: &crate::input::Packet06FinishedTurn,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    state.teams[packet.team.0 as usize].finished_turn = true;
+
+    if state.play_mode == crate::enums::PlayMode::TurnBased {
+        state.game_state = crate::enums::GameStateType::EndTurn;
+    } else {
+        // `GameManager_HandleTurnTimer()` — UI; проверка «есть ли ещё
+        // незавершённые команды» — для логов/сообщений.
+        let _pending = !state.are_teams_finished_turn();
+    }
+
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_52(
+    state: &mut GameState,
+    packet: &crate::input::Packet52EndTurnBarrier,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+    state.turn_indices[packet.team.0 as usize] = packet.counter;
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_45(
+    state: &mut GameState,
+    packet: &crate::input::Packet45CrcBarrier,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+    state.next_turn_indices[packet.team.0 as usize] = packet.next_turn_index;
+    state.team_data_crc16[packet.team.0 as usize] = packet.crc16;
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_00(
+    state: &mut GameState,
+    packet: &crate::input::Packet00TurnBarrier,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+    state.frame_sync_counter[packet.team.0 as usize] = packet.counter;
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_01(
+    state: &mut GameState,
+    packet: &crate::input::Packet01FrameBarrier,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+    state.frame_sync_counter2[packet.team.0 as usize] = packet.counter;
+    ApplyOutcome::Applied
+}
+
+// ---------------------------------------------------------------------------
+// 18 / 11 / 53 — чат, комплексы
+// ---------------------------------------------------------------------------
+
+fn apply_packet_18(state: &mut GameState, packet: &crate::input::Packet18Chat) -> ApplyOutcome {
+    if !is_valid_team_index(packet.sender) {
+        return ApplyOutcome::Ignored;
+    }
+    state.chat_log.push((packet.sender, packet.message.clone()));
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_11(
+    state: &mut GameState,
+    packet: &crate::input::Packet11ComplexOrder,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    let Some(complex) = state.complex_mut(packet.team, packet.complex_id) else {
+        return ApplyOutcome::Ignored;
+    };
+
+    complex.material = packet.material;
+    complex.fuel = packet.fuel;
+    complex.gold = packet.gold;
+    complex.power = packet.power;
+    complex.workers = packet.workers;
+    complex.buildings = packet.buildings;
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_53(
+    state: &mut GameState,
+    packet: &crate::input::Packet53ComplexSummary,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    // Применяем все записи; отсутствующие комплексы пропускаются (как
+    // `TeamUnits::ReadComplexPacket` с `GetComplex(id)` == nullptr в порту).
+    for entry in &packet.complexes {
+        if let Some(complex) = state.complex_mut(packet.team, entry.complex_id) {
+            complex.material = entry.values[0];
+            complex.fuel = entry.values[1];
+            complex.gold = entry.values[2];
+            complex.power = entry.values[3];
+            complex.workers = entry.values[4];
+            complex.buildings = entry.values[5];
+        }
+    }
+
+    ApplyOutcome::Applied
+}
+
+// ---------------------------------------------------------------------------
+// 10 / 20 / 43 / 12 — апгрейды, имя, снабжение
+// ---------------------------------------------------------------------------
+
+/// Порядок 13 атрибутов пакетов 10/20 (`docs/protocol.md` §8.4).
+///
+/// Совпадает с порядком присваиваний в `Remote_ReceiveNetPacket_10/20`.
+pub const UPGRADE_ATTRIBUTE_ORDER: [u8; UPGRADE_VALUE_COUNT] = [
+    ATTRIB_TURNS,
+    ATTRIB_HITS,
+    ATTRIB_ARMOR,
+    ATTRIB_ATTACK,
+    ATTRIB_SPEED,
+    ATTRIB_RANGE,
+    ATTRIB_ROUNDS,
+    ATTRIB_MOVE_AND_FIRE,
+    ATTRIB_SCAN,
+    ATTRIB_STORAGE,
+    ATTRIB_AMMO,
+    ATTRIB_ATTACK_RADIUS,
+    ATTRIB_AGENT_ADJUST,
+];
+
+fn apply_packet_10(
+    state: &mut GameState,
+    packet: &crate::input::Packet10UpgradeUnitType,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    let index = packet.unit_type as usize;
+    if index >= crate::unit_values::UNIT_COUNT {
+        return ApplyOutcome::Malformed;
+    }
+
+    let Some(team_units) = state.team_units.get_mut(packet.team.0 as usize) else {
+        return ApplyOutcome::Ignored;
+    };
+
+    let mut values = team_units.current_values[index];
+    values.update_version();
+    values.mark_as_not_in_use();
+
+    for (attribute, value) in UPGRADE_ATTRIBUTE_ORDER.iter().zip(packet.values.iter()) {
+        values.set_attribute(*attribute, i32::from(*value));
+    }
+
+    team_units.current_values[index] = values;
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_20(
+    state: &mut GameState,
+    packet: &crate::input::Packet20UpgradeUnit,
+) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(packet.unit).cloned() else {
+        return ApplyOutcome::UnknownUnit;
+    };
+
+    // Апгрейд ложится на копию: базовые значения общие для типа до первого
+    // копирования (`Remote_ReceiveNetPacket_20`).
+    let mut values = unit.base_values;
+    values.update_version();
+    values.mark_as_in_use();
+
+    for (attribute, value) in UPGRADE_ATTRIBUTE_ORDER.iter().zip(packet.values.iter()) {
+        values.set_attribute(*attribute, i32::from(*value));
+    }
+
+    unit.base_values = values;
+    state.write_unit(packet.unit, unit);
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_43(
+    state: &mut GameState,
+    packet: &crate::input::Packet43Rename,
+) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(packet.unit).cloned() else {
+        return ApplyOutcome::UnknownUnit;
+    };
+    unit.name = packet.name.clone();
+    state.write_unit(packet.unit, unit);
+    ApplyOutcome::Applied
+}
+
+fn apply_packet_12(
+    state: &mut GameState,
+    packet: &crate::input::Packet12MissionSupply,
+) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    state.teams[packet.team.0 as usize].stats_gold_spent_on_upgrades =
+        packet.gold_spent_on_upgrades;
+    state.mission_supplies[packet.team.0 as usize] = Some(packet.clone());
+    ApplyOutcome::Applied
+}
+
+// ---------------------------------------------------------------------------
+// Помощники для тестов и сетевого слоя
+// ---------------------------------------------------------------------------
+
+/// Собирает payload `P1` с приказом, сохранив остальные поля как у `unit`.
+pub fn payload_p1_for(
+    order: UnitOrder,
+    state: UnitOrderState,
+    prior_order: UnitOrder,
+    prior_state: UnitOrderState,
+) -> PayloadP1 {
+    PayloadP1 {
+        order,
+        state,
+        prior_order,
+        prior_state,
+        disabled_reaction_fire: false,
+    }
+}
+
+/// Собирает команду 08 с payload уровня `P1`.
+pub fn command_order_p1(unit: UnitId, p1: PayloadP1) -> Command {
+    Command::Order(Packet08Order {
+        unit,
+        payload: OrderPayload::P1(p1),
+    })
+}
+
+/// Собирает команду 38 «движение по линейному маршруту» (как
+/// `GroundPath::AppendLinearSteps`).
+pub fn command_move_linear(
+    unit: UnitId,
+    from: Point,
+    to: Point,
+    order: UnitOrder,
+    state: UnitOrderState,
+) -> Command {
+    let mut steps = Vec::new();
+    let mut x = i32::from(to.x) - i32::from(from.x);
+    let mut y = i32::from(to.y) - i32::from(from.y);
+
+    while x != 0 || y != 0 {
+        let step_x = x.signum() as i8;
+        let step_y = y.signum() as i8;
+        steps.push(crate::geo::PathStep::new(step_x, step_y));
+        x -= i32::from(step_x);
+        y -= i32::from(step_y);
+    }
+
+    Command::Move(crate::input::Packet38Move {
+        unit,
+        order,
+        state,
+        grid: from,
+        move_to: to,
+        group_speed: 0,
+        path: Some(MovePathData::Ground(steps)),
+    })
+}
+
+/// Собирает команду 06 (конец хода команды).
+pub fn command_finished_turn(team: TeamId) -> Command {
+    Command::FinishedTurn(crate::input::Packet06FinishedTurn { team })
+}
+
+/// Собирает команду 52 (барьер конца хода).
+pub fn command_end_turn_barrier(team: TeamId, counter: u8) -> Command {
+    Command::EndTurnBarrier(crate::input::Packet52EndTurnBarrier { team, counter })
+}
+
+/// Порядок данных приказа, пришедших с пакетом (для тестов и отладки).
+pub fn order_data_of(unit: &UnitInfo, state: &GameState) -> OrderData {
+    state.order_data(unit.id)
+}
+
+/// Тема исследования по индексу — проверка формы пакетов 10/20 в тестах.
+pub fn research_topic_at(index: u8) -> Option<ResearchTopic> {
+    RESEARCH_TOPICS.get(index as usize).copied()
+}
+
+const RESEARCH_TOPICS: [ResearchTopic; 8] = [
+    ResearchTopic::Attack,
+    ResearchTopic::Shots,
+    ResearchTopic::Range,
+    ResearchTopic::Armor,
+    ResearchTopic::Hits,
+    ResearchTopic::Speed,
+    ResearchTopic::Scan,
+    ResearchTopic::Cost,
+];
+
+/// Тип юнита из `u16` (для сборки пакетов) — `None` вне `UNIT_END`.
+pub fn unit_type_from_raw(raw: u16) -> Option<UnitType> {
+    UnitType::try_from(raw).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enums::TeamClan;
+    use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+    use crate::input::{
+        Packet13Seed, Packet41MoveFinished, Packet45CrcBarrier, Packet52EndTurnBarrier,
+        Packet50StopUnit,
+    };
+    use crate::team::TeamKind;
+    use crate::input::ComplexSummaryEntry;
+    use crate::unit_values::ATTRIB_HITS;
+
+    fn state_with_tank() -> (GameState, UnitId) {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+        let id = state
+            .spawn_unit(
+                UnitType::Tank,
+                TeamId::RED,
+                Point::new(10, 10),
+                MOBILE_LAND_UNIT | SELECTABLE,
+            )
+            .expect("spawn");
+        (state, id)
+    }
+
+    #[test]
+    fn command_queue_is_fifo() {
+        let (mut state, id) = state_with_tank();
+        state.commands.push(Command::Stop(Packet50StopUnit { unit: id }));
+        state.commands.push(Command::Seed(Packet13Seed { seed: 7 }));
+        assert_eq!(state.commands.len(), 2);
+
+        assert_eq!(state.apply_pending_commands(), 2);
+        assert!(state.commands.is_empty());
+        assert_eq!(state.commands.applied(), 2);
+        assert_eq!(state.unit_events.len(), 1);
+        assert_eq!(state.rng, crate::rng::Randomizer::new(7));
+    }
+
+    #[test]
+    fn packet_08_p1_sets_orders_and_validates_range() {
+        let (mut state, id) = state_with_tank();
+        let p1 = payload_p1_for(
+            UnitOrder::Sentry,
+            UnitOrderState::ExecutingOrder,
+            UnitOrder::Await,
+            UnitOrderState::ExecutingOrder,
+        );
+        assert_eq!(
+            apply_command(&mut state, &command_order_p1(id, p1)),
+            ApplyOutcome::Applied
+        );
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.orders, UnitOrder::Sentry);
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+        assert_eq!(unit.prior_orders, UnitOrder::Await);
+    }
+
+    #[test]
+    fn packet_08_p3_applies_targets_and_payload_level_mismatch_is_malformed() {
+        let (mut state, id) = state_with_tank();
+        let p1 = payload_p1_for(
+            UnitOrder::Move,
+            UnitOrderState::Init,
+            UnitOrder::Await,
+            UnitOrderState::ExecutingOrder,
+        );
+        let p3 = PayloadP3 {
+            p2: PayloadP2 {
+                p1,
+                parent_unit: None,
+                experience: 5,
+            },
+            move_to: Point::new(12, 13),
+            fire_on: Point::new(14, 15),
+            enemy_unit: None,
+            transfer_cargo: 3,
+            stealth_dice_roll: 9,
+        };
+        let command = Command::Order(Packet08Order {
+            unit: id,
+            payload: OrderPayload::P3(p3),
+        });
+        assert_eq!(apply_command(&mut state, &command), ApplyOutcome::Applied);
+
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.experience, 5);
+        assert_eq!(unit.transfer_cargo, 3);
+        assert_eq!(unit.stealth_dice_roll, 9);
+        assert_eq!(unit.target_grid, Point::new(12, 13));
+        let data = state.order_data(id);
+        assert_eq!(data.move_to, Point::new(12, 13));
+        assert_eq!(data.fire_on, Point::new(14, 15));
+
+        // P3-payload с приказом уровня P1 — malformed.
+        let malformed = Command::Order(Packet08Order {
+            unit: id,
+            payload: OrderPayload::P3(PayloadP3 {
+                p2: PayloadP2 {
+                    p1: payload_p1_for(
+                        UnitOrder::Sentry,
+                        UnitOrderState::Init,
+                        UnitOrder::Await,
+                        UnitOrderState::ExecutingOrder,
+                    ),
+                    parent_unit: None,
+                    experience: 0,
+                },
+                move_to: Point::ZERO,
+                fire_on: Point::ZERO,
+                enemy_unit: None,
+                transfer_cargo: 0,
+                stealth_dice_roll: 0,
+            }),
+        });
+        assert_eq!(
+            apply_command(&mut state, &malformed),
+            ApplyOutcome::Malformed
+        );
+    }
+
+    #[test]
+    fn packet_38_builds_ground_path() {
+        let (mut state, id) = state_with_tank();
+        let command = command_move_linear(
+            id,
+            Point::new(10, 10),
+            Point::new(13, 10),
+            UnitOrder::Move,
+            UnitOrderState::Init,
+        );
+        assert_eq!(apply_command(&mut state, &command), ApplyOutcome::Applied);
+        let unit = state.unit(id).unwrap();
+        match unit.path.as_ref().expect("path") {
+            UnitPath::Ground(path) => {
+                assert_eq!(path.end_x, 13);
+                assert_eq!(path.end_y, 10);
+                assert_eq!(path.steps.len(), 3);
+                assert_eq!(path.step_index, 0);
+            }
+            other => panic!("ожидался наземный путь, получено {other:?}"),
+        }
+        assert_eq!(state.order_data(id).move_to, Point::new(13, 10));
+    }
+
+    #[test]
+    fn packet_41_stops_movement_and_restores_await() {
+        let (mut state, id) = state_with_tank();
+        let command = command_move_linear(
+            id,
+            Point::new(10, 10),
+            Point::new(20, 10),
+            UnitOrder::Move,
+            UnitOrderState::InProgress,
+        );
+        apply_command(&mut state, &command);
+        assert!(state.unit(id).unwrap().path.is_some());
+
+        let stop = Command::MoveFinished(Packet41MoveFinished {
+            unit: id,
+            mode: true,
+            grid: Some(Point::new(11, 10)),
+            speed: Some(5),
+            group_speed: Some(0),
+            shots: Some(2),
+            move_fraction: Some(1),
+        });
+        assert_eq!(apply_command(&mut state, &stop), ApplyOutcome::Applied);
+
+        let unit = state.unit(id).unwrap();
+        assert!(unit.path.is_none());
+        assert_eq!(unit.orders, UnitOrder::Await);
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+        assert_eq!(unit.grid, Point::new(11, 10));
+        assert_eq!(unit.speed, 5);
+        assert_eq!(unit.shots, 2);
+        assert_eq!(unit.delayed_reaction, 1);
+    }
+
+    #[test]
+    fn packet_50_creates_emergency_stop_event_processed_by_cycle() {
+        let (mut state, id) = state_with_tank();
+        // Начнём движение.
+        let command = command_move_linear(
+            id,
+            Point::new(10, 10),
+            Point::new(10, 15),
+            UnitOrder::Move,
+            UnitOrderState::InProgress,
+        );
+        apply_command(&mut state, &command);
+        state.unit_mut(id).unwrap().state = UnitOrderState::InProgress;
+
+        assert_eq!(
+            apply_command(
+                &mut state,
+                &Command::Stop(Packet50StopUnit { unit: id })
+            ),
+            ApplyOutcome::Applied
+        );
+        assert_eq!(state.unit_events.len(), 1);
+        assert!(state.unit(id).unwrap().path.is_some(), "событие ещё не обработано");
+
+        state.tick();
+        assert!(state.unit_events.is_empty(), "очередь событий очищается за тик");
+        assert!(state.unit(id).unwrap().path.is_none());
+    }
+
+    #[test]
+    fn packet_06_sets_finished_turn_and_end_state() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.play_mode = crate::enums::PlayMode::TurnBased;
+        assert_eq!(
+            apply_command(&mut state, &command_finished_turn(TeamId::RED)),
+            ApplyOutcome::Applied
+        );
+        assert!(state.teams[0].finished_turn);
+        assert_eq!(state.game_state, crate::enums::GameStateType::EndTurn);
+
+        // Невалидный индекс команды (ALIEN=4) отвергается.
+        assert_eq!(
+            apply_command(&mut state, &command_finished_turn(TeamId::ALIEN)),
+            ApplyOutcome::Ignored
+        );
+    }
+
+    #[test]
+    fn barriers_are_recorded_not_simulated() {
+        let mut state = GameState::new();
+        apply_command(
+            &mut state,
+            &command_end_turn_barrier(TeamId::GREEN, 7),
+        );
+        assert_eq!(state.turn_indices[1], 7);
+        apply_command(
+            &mut state,
+            &Command::CrcBarrier(Packet45CrcBarrier {
+                team: TeamId::GREEN,
+                next_turn_index: 3,
+                crc16: 0xABCD,
+            }),
+        );
+        assert_eq!(state.next_turn_indices[1], 3);
+        assert_eq!(state.team_data_crc16[1], 0xABCD);
+        assert!(!Command::EndTurnBarrier(Packet52EndTurnBarrier {
+            team: TeamId::RED,
+            counter: 1
+        })
+        .affects_simulation());
+    }
+
+    #[test]
+    fn upgrade_packets_update_attributes_in_protocol_order() {
+        let (mut state, id) = state_with_tank();
+        let mut values = [0u16; UPGRADE_VALUE_COUNT];
+        values[1] = 99; // hits — второй атрибут в порядке пакета.
+
+        apply_command(
+            &mut state,
+            &Command::UpgradeUnit(crate::input::Packet20UpgradeUnit { unit: id, values }),
+        );
+        assert_eq!(state.unit(id).unwrap().base_values.get_attribute(ATTRIB_HITS), 99);
+
+        apply_command(
+            &mut state,
+            &Command::UpgradeUnitType(crate::input::Packet10UpgradeUnitType {
+                team: TeamId::RED,
+                unit_type: UnitType::Tank,
+                values,
+            }),
+        );
+        assert_eq!(
+            state.team_units[0]
+                .current_unit_values(UnitType::Tank as u16)
+                .get_attribute(ATTRIB_HITS),
+            99
+        );
+    }
+
+    #[test]
+    fn complex_packets_apply_six_fields() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        let complex_id = state.team_units[0].create_complex();
+        apply_command(
+            &mut state,
+            &Command::ComplexOrder(crate::input::Packet11ComplexOrder {
+                team: TeamId::RED,
+                complex_id: complex_id.0 as u16,
+                material: 5,
+                fuel: 6,
+                gold: 7,
+                power: 8,
+                workers: 9,
+                buildings: 10,
+            }),
+        );
+        let complex = state.complex(TeamId::RED, complex_id.0 as u16).expect("complex");
+        assert_eq!(complex.material, 5);
+        assert_eq!(complex.buildings, 10);
+
+        apply_command(
+            &mut state,
+            &Command::ComplexSummary(crate::input::Packet53ComplexSummary {
+                team: TeamId::RED,
+                turn: 3,
+                complexes: vec![ComplexSummaryEntry {
+                    complex_id: complex_id.0 as u16,
+                    values: [1, 2, 3, 4, 5, 6],
+                }],
+            }),
+        );
+        let complex = state.complex(TeamId::RED, complex_id.0 as u16).expect("complex");
+        assert_eq!(complex.material, 1);
+        assert_eq!(complex.buildings, 6);
+    }
+
+    #[test]
+    fn deploy_is_reported_unsupported_until_unit_flag_data_exists() {
+        let mut state = GameState::new();
+        let outcome = apply_command(
+            &mut state,
+            &Command::Deploy(crate::input::Packet14DeployUnit {
+                team: TeamId::RED,
+                unit_type: UnitType::Tank,
+                grid: Point::new(4, 4),
+            }),
+        );
+        assert_eq!(outcome, ApplyOutcome::Unsupported);
+    }
+
+    #[test]
+    fn rename_and_unknown_unit() {
+        let (mut state, id) = state_with_tank();
+        apply_command(
+            &mut state,
+            &Command::Rename(crate::input::Packet43Rename {
+                unit: id,
+                name: "Tank 1".into(),
+            }),
+        );
+        assert_eq!(state.unit(id).unwrap().name, "Tank 1");
+
+        assert_eq!(
+            apply_command(
+                &mut state,
+                &Command::Rename(crate::input::Packet43Rename {
+                    unit: UnitId(0x7FFF),
+                    name: "x".into(),
+                })
+            ),
+            ApplyOutcome::UnknownUnit
+        );
+    }
+
+    #[test]
+    fn chat_is_logged() {
+        let mut state = GameState::new();
+        apply_command(
+            &mut state,
+            &Command::Chat(crate::input::Packet18Chat {
+                sender: TeamId::BLUE,
+                message: "hello".into(),
+            }),
+        );
+        assert_eq!(state.chat_log.len(), 1);
+        assert_eq!(state.chat_log[0].0, TeamId::BLUE);
+    }
+
+    #[test]
+    fn unit_event_helpers_are_consistent() {
+        let event = UnitEvent::EmergencyStop { unit: UnitId(5) };
+        assert_eq!(event.unit(), UnitId(5));
+        assert_eq!(unit_type_from_raw(0x33), Some(UnitType::Tank));
+        assert_eq!(unit_type_from_raw(0xFFFF), None);
+        assert_eq!(research_topic_at(0), Some(ResearchTopic::Attack));
+        assert_eq!(research_topic_at(8), None);
+    }
+}

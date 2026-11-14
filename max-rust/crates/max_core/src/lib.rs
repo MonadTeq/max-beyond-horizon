@@ -23,7 +23,16 @@
 //! * [`unit`] — `UnitId`, `UnitInfo` (симуляционные `S`-поля), пути юнита;
 //! * [`hash`] — `UnitHash`/`MapHash` с упорядоченными ведёрками;
 //! * [`save`] — V70 `&[u8]` ⇄ [`save::SaveFile`] (полный разбор и запись);
-//! * [`order`] — каркас клиентских команд (входной API, DESIGN §2.4).
+//! * [`order`] — каркас клиентских команд (входной API, DESIGN §2.4);
+//! * [`unit_order`] — машина приказов `UnitOrder`×`UnitOrderState` (32×47):
+//!   `SetNewOrderInt`, `RestoreOrders`, `BlockedOnPathRequest`, движение
+//!   (`ExecuteMove`/`Move`), 32 процессора `ProcessOrder*` (P4);
+//! * [`game`] — `GameState`: пять списков юнитов, `ProcessOrders`, тик-цикл,
+//!   конец хода, барьеры, канонический дайджест состояния (P4);
+//! * [`input`] — структуры входящих пакетов (08 с процессорами P0–P5, 38, 41,
+//!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) как чистые данные;
+//! * [`events`] — очередь команд, события юнитов и применение пакетов к
+//!   `GameState` в порядке получения (P4).
 //!
 //! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
 //! `f32`/`f64` в симуляции, итерация по `HashMap`.
@@ -32,8 +41,11 @@
 #![deny(clippy::float_arithmetic)]
 
 pub mod enums;
+pub mod events;
+pub mod game;
 pub mod geo;
 pub mod hash;
+pub mod input;
 pub mod map;
 pub mod order;
 pub mod rng;
@@ -41,6 +53,7 @@ pub mod save;
 pub mod setup;
 pub mod team;
 pub mod unit;
+pub mod unit_order;
 pub mod unit_values;
 
 pub use enums::{
@@ -49,10 +62,23 @@ pub use enums::{
     TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType, UnitOrderType,
     UnitType, VictoryType, WinLossState,
 };
+pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
+pub use game::{
+    GameState, LiveAttack, OrderData, GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
+    INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, TEAM_SLOTS,
+};
 pub use geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
 };
 pub use hash::{MapHash, MapHashObject, UnitHash};
+pub use input::{
+    Command, ComplexSummaryEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
+    Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet10UpgradeUnitType,
+    Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat,
+    Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier,
+    Packet50StopUnit, Packet52EndTurnBarrier, Packet53ComplexSummary, PacketKind, PayloadLevel,
+    PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
+};
 pub use map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;
 pub use rng::{GenerateValue, Randomizer};
@@ -71,6 +97,10 @@ pub use team::{
 };
 pub use unit::{
     AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
+};
+pub use unit_order::{
+    blocked_on_path_request, move_finished, restore_orders, set_new_order_int, OrderContext,
+    MOVEMENT_WAIT_LIMIT,
 };
 pub use unit_values::{
     apply_clan_tradeoffs, base_unit_values, base_unit_values_by_index, clan_tradeoff,
