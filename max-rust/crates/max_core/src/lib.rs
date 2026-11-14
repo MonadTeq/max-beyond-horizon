@@ -1,40 +1,78 @@
-//! max_core — чистая игровая модель M.A.X. без I/O.
+//! max_core — чистая детерминированная модель M.A.X. без I/O.
 //!
-//! Крейт описывает состояние партии и правила игры так, как их понимает клиент:
-//! мир, команды, юниты, приказы. Никакой сети и никакого рендера. Состояние
-//! приходит от сервера (снапшоты/дельты), приказы уходят на сервер; локально
-//! модель используется для отображения, интерполяции и предпросмотра.
+//! Крейт повторяет поведение C++-порта (`max-cpp-port/src`) бит-в-бит: типы и
+//! константы оригинала (P0), детерминированный RNG (P1), далее — карта, юниты,
+//! приказы, бой и ИИ (DESIGN.md §7).
+//!
+//! Текущее состояние:
+//! * [`enums`] — все перечисления/битовые маски C++ с точными `#[repr]` и
+//!   `TryFrom`-преобразованиями;
+//! * [`geo`] — `Point`, `PathStep`, `Direction`, `DIRECTION_OFFSETS`, размеры
+//!   карты;
+//! * [`rng`] — `Randomizer` (SplitMix64 + Xoshiro128\*\*) с эталонными
+//!   векторами из C++ (P1);
+//! * [`map`], [`order`], [`team`], [`unit`] — каркас, сохранённый для
+//!   совместимости потребителей (`max_net`, `max_render`) и поэтапной замены
+//!   по DESIGN.md §2.3.
+//!
+//! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
+//! `f32`/`f64` в симуляции, итерация по `HashMap`.
 
+#![forbid(unsafe_code)]
+#![deny(clippy::float_arithmetic)]
+
+pub mod enums;
+pub mod geo;
 pub mod map;
 pub mod order;
+pub mod rng;
 pub mod team;
 pub mod unit;
 
+pub use enums::{
+    AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
+    Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
+    TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType, UnitOrderType,
+    UnitType, VictoryType, WinLossState,
+};
+pub use geo::{
+    Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
+};
 pub use map::Map;
 pub use order::Order;
+pub use rng::{GenerateValue, Randomizer};
 pub use team::{Team, TeamId, TeamKind};
 pub use unit::{Unit, UnitId, UnitKind};
 
-/// Идентификатор партии/сессии Horizon.
-pub type SessionId = uuid_like::Id;
-
-/// Внутренний модуль с минимальным UUID-типом без внешней зависимости.
-mod uuid_like {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-    pub struct Id(pub u128);
-
-    impl std::fmt::Display for Id {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:032X}", self.0)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::enums::{UnitOrder, UnitOrderState, UnitType};
+    use crate::geo::{Direction, Point, DIRECTION_OFFSETS, MAP_TILES};
+    use crate::rng::Randomizer;
+    use crate::{Team, TeamId, TeamKind};
+
     #[test]
     fn core_smoke() {
-        let team = crate::Team::new(crate::TeamId(0), crate::TeamKind::Player);
-        assert_eq!(team.kind, crate::TeamKind::Player);
+        let team = Team::new(TeamId(0), TeamKind::Player);
+        assert_eq!(team.kind, TeamKind::Player);
+    }
+
+    #[test]
+    fn p0_constants_are_visible_from_crate_root() {
+        assert_eq!(UnitType::COUNT, 93);
+        assert_eq!(UnitOrder::COUNT, 32);
+        assert_eq!(UnitOrderState::COUNT, 47);
+        assert_eq!(MAP_TILES, 12_544);
+        assert_eq!(Direction::COUNT, DIRECTION_OFFSETS.len());
+        assert_eq!(Point::new(1, 2).x, 1);
+    }
+
+    #[test]
+    fn p1_rng_is_deterministic() {
+        let mut first = Randomizer::new(0xDEAD_BEEF);
+        let mut second = Randomizer::new(0xDEAD_BEEF);
+        for _ in 0..1000 {
+            assert_eq!(first.next_u32(), second.next_u32());
+        }
     }
 }

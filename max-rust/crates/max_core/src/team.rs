@@ -6,19 +6,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TeamId(pub u8);
 
-/// Кем управляется команда.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Кем управляется команда (C++ `PlayerType`, save.md `TeamType`).
+///
+/// Значения зафиксированы как в C++/V70: `None=0`, `Player=1` (HUMAN),
+/// `Computer=2`, `Remote=3`, `Eliminated=4`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum TeamKind {
-    /// Локальный игрок.
-    Player,
-    /// Удалённый игрок (другой клиент) — с точки зрения сервера любой клиент удалённый.
-    Remote,
-    /// Компьютер (ИИ симулируется сервером).
-    Computer,
     /// Пустой слот.
-    None,
+    None = 0,
+    /// Локальный игрок (`TEAM_TYPE_HUMAN`).
+    Player = 1,
+    /// Компьютер (ИИ симулируется сервером).
+    Computer = 2,
+    /// Удалённый игрок (другой клиент).
+    Remote = 3,
     /// Выбыла.
-    Eliminated,
+    Eliminated = 4,
 }
 
 /// Команда.
