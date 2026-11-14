@@ -480,9 +480,10 @@ name = "max_app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "max_assets",
  "max_core",
  "max_net",
- "serde_json",
+ "max_render",
  "tokio",
  "tracing",
  "tracing-subscriber",
