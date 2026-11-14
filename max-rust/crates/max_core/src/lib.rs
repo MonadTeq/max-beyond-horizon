@@ -11,9 +11,13 @@
 //!   карты;
 //! * [`rng`] — `Randomizer` (SplitMix64 + Xoshiro128\*\*) с эталонными
 //!   векторами из C++ (P1);
-//! * [`map`], [`order`], [`team`], [`unit`] — каркас, сохранённый для
-//!   совместимости потребителей (`max_net`, `max_render`) и поэтапной замены
-//!   по DESIGN.md §2.3.
+//! * [`map`] — `SurfaceMap` (112×112 битмаска `Surface`), `ResourceMapEntry`
+//!   (u16-битфилд количества/типа/видимости) и `Map` (state-model §3.10);
+//! * [`setup`] — детерминированная генерация карты при старте партии: вывод
+//!   `SurfaceMap` из tile-data `.wrl`, ресурсы (`ResourceAllocator`), стартовые
+//!   позиции и alien-обломки, с порядком RNG 1:1 к C++;
+//! * [`order`], [`team`], [`unit`] — каркас, сохранённый для совместимости
+//!   потребителей (`max_net`, `max_render`) и поэтапной замены по DESIGN.md §2.3.
 //!
 //! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
 //! `f32`/`f64` в симуляции, итерация по `HashMap`.
@@ -26,6 +30,7 @@ pub mod geo;
 pub mod map;
 pub mod order;
 pub mod rng;
+pub mod setup;
 pub mod team;
 pub mod unit;
 
@@ -38,9 +43,13 @@ pub use enums::{
 pub use geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
 };
-pub use map::Map;
+pub use map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;
 pub use rng::{GenerateValue, Randomizer};
+pub use setup::{
+    derive_surface_map, generate_map, AlienPlacement, AlienUnitCosts, GameSetup,
+    GenerationSettings, ResourceLevel, SetupOutput, TeamStart,
+};
 pub use team::{Team, TeamId, TeamKind};
 pub use unit::{Unit, UnitId, UnitKind};
 
