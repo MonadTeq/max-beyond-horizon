@@ -29,10 +29,19 @@
 //!   (`ExecuteMove`/`Move`), 32 процессора `ProcessOrder*` (P4);
 //! * [`game`] — `GameState`: пять списков юнитов, `ProcessOrders`, тик-цикл,
 //!   конец хода, барьеры, канонический дайджест состояния (P4);
+//! * [`access`] — проходимость клетки (`Access_IsAccessible` с флагами и
+//!   `land_type` 93 типов из `SC_UNITS`), `MapHash`-занятость, цели атаки,
+//!   приём в транспорт, `IsEngaged`, групповые списки (P5);
+//! * [`combat`] — `GetAttackDamage`/`AttackUnit`, `Attack` (площадная атака),
+//!   `PrepareFire`/`ProgressFire`/`AimAtTarget`, реактивный огонь
+//!   (`AssessAttacks`), стелс-действия диверсанта (P5);
+//! * [`pathfinding`] — `Paths_RequestPath` (очередь в порядке постановки),
+//!   детерминированный поиск по `AccessMap`, `Paths_GetAirPath`, ракеты,
+//!   `PathFill`, `BuilderPath` (P5, синхронно);
 //! * [`input`] — структуры входящих пакетов (08 с процессорами P0–P5, 38, 41,
 //!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) как чистые данные;
 //! * [`events`] — очередь команд, события юнитов и применение пакетов к
-//!   `GameState` в порядке получения (P4).
+//!   `GameState` в порядке получения (P4/P5).
 //!
 //! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
 //! `f32`/`f64` в симуляции, итерация по `HashMap`.
@@ -41,6 +50,8 @@
 #![deny(clippy::float_arithmetic)]
 
 pub mod enums;
+pub mod access;
+pub mod combat;
 pub mod events;
 pub mod game;
 pub mod geo;
@@ -48,6 +59,7 @@ pub mod hash;
 pub mod input;
 pub mod map;
 pub mod order;
+pub mod pathfinding;
 pub mod rng;
 pub mod save;
 pub mod setup;
@@ -61,6 +73,15 @@ pub use enums::{
     Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
     TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType, UnitOrderType,
     UnitType, VictoryType, WinLossState,
+};
+pub use access::{
+    get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
+    unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
+    ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
+};
+pub use combat::{
+    aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
+    progress_fire, ATTACK_DAMAGE_MIN,
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
@@ -81,6 +102,9 @@ pub use input::{
 };
 pub use map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;
+pub use pathfinding::{
+    find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,
+};
 pub use rng::{GenerateValue, Randomizer};
 pub use save::{
     AiPlayerState, GameManagerState, HeatMap, IniOptions, IniPreferences, MessageLogEntry,

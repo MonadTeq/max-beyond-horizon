@@ -28,10 +28,10 @@
 //!   поля состояния и не влияют на юнитов (DESIGN §8.4/§8.6).
 //! * Пакеты **10/20** апгрейдят атрибуты через копию `UnitValues`
 //!   (`UpdateVersion`/`MarkAsInUse`), как `Remote_ReceiveNetPacket_10/20`.
-//! * Пакет **14** (высадка) в P4 не применяется: `UnitsManager_DeployUnit`
-//!   требует таблицу флагов 93 типов юнитов (`units.json` —
-//!   `ResourceManager_InitUnits`, P3-данные). Команда возвращает
-//!   [`ApplyOutcome::Unsupported`], а вызывающий слой деплоит юнита сам через
+//! * Пакет **14** (высадка) возвращает [`ApplyOutcome::Unsupported`]:
+//!   `UnitsManager_DeployUnit` требует данных миссии/точки высадки, которые
+//!   приходят из setup-слоя (P3); флаги типов уже есть в
+//!   [`crate::access::unit_type_flags`], и вызывающий слой деплоит юнита через
 //!   [`crate::game::GameState::spawn_unit`].
 //! * Пакет **12** (снабжение миссии) сохраняется как данные
 //!   ([`crate::game::GameState::mission_supplies`]) и обновляет
@@ -419,8 +419,31 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
         _ => {}
     }
 
+    let path_is_missing = unit.path.is_none();
+    let needs_path = matches!(
+        unit.orders,
+        UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
+    ) && matches!(
+        unit.state,
+        UnitOrderState::Init
+            | UnitOrderState::MoveInit
+            | UnitOrderState::NewOrder
+            | UnitOrderState::MoveGettingPath
+    );
+
     state.write_unit(packet.unit, unit);
     state.set_order_data(packet.unit, data);
+
+    // Пакет 38 без шагов (короткая форма C++-порта): путь запрашивается у
+    // синхронного pathfinding, а не строится линейно (DESIGN §5.1, риск 2).
+    if path_is_missing && needs_path {
+        crate::pathfinding::request_path(
+            state,
+            packet.unit,
+            crate::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+        );
+    }
+
     ApplyOutcome::Applied
 }
 

@@ -30,13 +30,16 @@
 //! цель, живая атака, списки) выполняются явными методами `GameState`, поэтому
 //! они видны остальным юнитам сразу — как в C++.
 //!
-//! # Заглушки P5/P6
+//! # Интеграция P5
 //!
-//! Модули боя (`combat`), путей (`pathfinding`), проходимости (`access`) и ИИ
-//! (`ai`) в этой фазе отсутствуют. Каждая их точка вызова помечена `TODO(P5)`/
-//! `TODO(P6)` и возвращает документированное значение; **порядок вызовов и
-//! переходы состояний приказов сохранены 1:1**, чтобы при появлении модулей
-//! заглушки заменились вызовами без переписывания машины.
+//! Бой (`crate::combat`), проходимость/занятость (`crate::access`) и пути
+//! (`crate::pathfinding`) подключены к машине приказов: `ProcessOrderFire`
+//! использует `AimAtTarget`/`PrepareFire`/`ProgressFire`/`Attack`,
+//! `InitUnitPath` ставит запросы в `PathsManager`-очередь, `PursueEnemy` и
+//! `MoveToAttack` ищут путь к позиции атаки, `IsEngaged`/`CanReceiveUnits`/
+//! `SetUnitDestination` берутся из `access`. Оставшиеся `TODO(P3/P6)` —
+//! экономика/комплексы и ИИ-задачи; `TODO(P5)` в точках, где требуется
+//! `UnitsManager_DeployUnit` конкретных типов (мастер-билдер, активация).
 //!
 //! # Расхождения с C++
 //!
@@ -55,9 +58,12 @@
 //!    учитывается только там, где она меняет поля состояния
 //!    (`moved` в `ORDER_BUILD`); см. [`crate::game::GameState::settings_effects`].
 
+use crate::access;
+use crate::combat;
 use crate::enums::{unit_flags::*, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, OrderData};
 use crate::geo::{PathStep, Point, DIRECTION_OFFSETS};
+use crate::pathfinding;
 use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
 use crate::unit_values::{ATTRIB_AMMO, ATTRIB_MOVE_AND_FIRE, ATTRIB_ROUNDS, ATTRIB_SPEED};
 
@@ -68,22 +74,8 @@ pub const MOVEMENT_WAIT_LIMIT: u16 = 512;
 pub const GFX_MAP_TILE_SIZE: i32 = 64;
 
 // ---------------------------------------------------------------------------
-// Заглушки отсутствующих модулей (P5/P6)
+// Заглушки отсутствующих модулей (P6)
 // ---------------------------------------------------------------------------
-
-/// `UnitsManager_IsEngaged` (`units_manager.cpp:1422`) — юнит занят боем или
-/// стелс-действием и не может двигаться/маневрировать.
-///
-/// TODO(P5): `combat`/`access` — engaged-флаг приказа FIRE /
-/// AWAIT_STEAL_UNIT / AWAIT_DISABLE_UNIT и `shake_effect_state`.
-fn is_engaged(_unit: &UnitInfo) -> bool {
-    false
-}
-
-/// `UnitsManager_IsEngagedByInfiltrator` (`units_manager.cpp:1408`) — P5.
-fn is_engaged_by_infiltrator(_unit: &UnitInfo) -> bool {
-    false
-}
 
 /// `UnitInfo::Animate` / `RefreshScreen` — UI-анимация и грязные зоны (P4 не нужны).
 fn animate(_unit: &UnitInfo) {}
@@ -97,65 +89,6 @@ fn update_connectors(_unit: &mut UnitInfo) {}
 /// `Ai_SetTasksPendingFlag(name)` (`ai.cpp`) — P6: флаг «у команды есть
 /// несделанная работа» для планировщика задач.
 fn ai_task_flag(_name: &str) {}
-
-/// `Hash_UnitHash`-проверка «клетка занята наземным/морским юнитом»
-/// (`Access_GetActiveUnitWithFlags`) — P5.
-fn has_active_unit_with_flags(_state: &GameState, _grid: Point, _flags: u32) -> bool {
-    false
-}
-
-/// `Access_IsAccessible` (`access.cpp`) — стоимость входа в клетку.
-///
-/// TODO(P5): полноценные правила проходимости (`access.rs`). До P5 принята
-/// «нейтральная» стоимость 4 (ровный проход), чтобы движение и
-/// `Paths_CalculateStep` работали как в C++ на свободной карте.
-fn access_is_accessible(state: &GameState, unit: &UnitInfo, grid: Point, _modifiers: u32) -> i32 {
-    if state.map.index(grid.x, grid.y).is_none() {
-        return 0;
-    }
-    let _ = unit;
-    4
-}
-
-/// `Paths_IsOccupied` (`paths.cpp`) — P5 (занятость клетки другим юнитом).
-fn paths_is_occupied(_state: &GameState, _grid: Point) -> bool {
-    false
-}
-
-/// `Access_GetReceiverUnit` (`access.cpp`) — P5 (юнит, принимающий груз).
-fn receiver_unit(_state: &GameState, _unit: &UnitInfo, _grid: Point) -> Option<UnitId> {
-    None
-}
-
-/// `Access_SetUnitDestination` (`access.cpp`) — P5 (частичная проходимость).
-fn set_unit_destination(_state: &mut GameState, _unit: &UnitInfo, _from: Point, _to: Point) {}
-
-/// `UnitsManager_IsUnloadSiteTaken` (`units_manager.cpp:4074`) — занято ли
-/// место высадки другим воздушным транспортом.
-///
-/// Портировано полностью: обход `UnitsManager_MobileAirUnits` в порядке
-/// вставки.
-fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
-    for id in state.unit_list(UnitListKind::MobileAir) {
-        let Some(other) = state.unit(*id) else { continue };
-        if other.id != unit.id
-            && other.hits > 0
-            && other.grid == unit.grid
-        {
-            let is_suspended = (other.orders == UnitOrder::Disable
-                || other.orders == UnitOrder::Explode)
-                && other.prior_orders == UnitOrder::Unload
-                && other.prior_state == UnitOrderState::UnloadingInProgress;
-            if (other.orders == UnitOrder::Unload
-                && other.state == UnitOrderState::UnloadingInProgress)
-                || is_suspended
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// `UnitInfo::ScheduleDelayedTasks` — P6 (очередь отложенных задач ИИ).
 fn schedule_delayed_tasks(_state: &mut GameState, _id: UnitId, _priority: bool) {}
@@ -246,17 +179,13 @@ pub fn new_order_while_scaling(unit: &mut UnitInfo) {
     }
 }
 
-/// `UnitsManager_FinishUnitScaling` (`units_manager.cpp:2471`).
-///
-/// Ветка «юнит вернулся в контейнер» требует `access`
-/// (`Access_CanReceiveUnits`, `Hash_MapHash`) — P5; принята ветка «контейнер
-/// не принимает» (иначе юнит останется в `ORDER_IDLE` навсегда).
+/// `UnitsManager_FinishUnitScaling` (`units_manager.cpp:2471`) — версия без
+/// состояния партии (для пакетного пути `NewOrderWhileScaling`); «контейнер
+/// не принимает» — безопасный вариант, иначе юнит остался бы в `ORDER_IDLE`.
 pub fn finish_unit_scaling(unit: &mut UnitInfo) {
     restore_orders(unit);
 
     if unit.orders == UnitOrder::Idle {
-        // TODO(P5): если родитель может принять юнита — вернуть его в трюм
-        // (`Access_CanReceiveUnits`, `Hash_MapHash.Remove`, `++parent->storage`).
         unit.parent_unit = None;
 
         unit.orders = UnitOrder::Await;
@@ -268,6 +197,61 @@ pub fn finish_unit_scaling(unit: &mut UnitInfo) {
 
         scale_unit(unit, UnitOrderState::Expand);
     }
+}
+
+/// `UnitsManager_FinishUnitScaling` с доступом к партии: если контейнер может
+/// принять юнита (`Access_CanReceiveUnits`, `storage < ATTRIB_STORAGE`, та же
+/// команда), юнит уходит в трюм (`ORDER_IDLE` + `Hash_MapHash.Remove`).
+pub fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo) {
+    restore_orders(unit);
+
+    if unit.orders != UnitOrder::Idle {
+        return;
+    }
+
+    let parent_id = unit.parent_unit;
+    let mut stored = false;
+
+    if let Some(parent_id) = parent_id {
+        if let Some(mut parent) = state.unit(parent_id).cloned() {
+            let storage_limit = parent.base_values.get_attribute(
+                crate::unit_values::ATTRIB_STORAGE,
+            );
+            if access::can_receive_units(&parent)
+                && i32::from(parent.storage) < storage_limit
+                && parent.team == unit.team
+            {
+                unit.orders = UnitOrder::Await;
+                state.map_hash_remove(unit.id, unit.grid, unit.flags);
+                unit.orders = UnitOrder::Idle;
+                parent.storage = parent.storage.wrapping_add(1);
+                state.write_unit(parent_id, parent);
+                stored = true;
+            }
+        }
+    }
+
+    if stored {
+        return;
+    }
+
+    let parent_alive = parent_id
+        .and_then(|parent_id| state.unit(parent_id))
+        .map(access::can_receive_units)
+        .unwrap_or(false);
+
+    if !parent_alive {
+        unit.parent_unit = None;
+    }
+
+    unit.orders = UnitOrder::Await;
+    unit.state = UnitOrderState::ExecutingOrder;
+
+    if unit.flags & MOBILE_AIR_UNIT != 0 {
+        set_new_order_int(unit, UnitOrder::TakeOff, UnitOrderState::Init);
+    }
+
+    scale_unit(unit, UnitOrderState::Expand);
 }
 
 /// `UnitInfo::BlockedOnPathRequest` (`unitinfo.cpp:3628`).
@@ -309,7 +293,7 @@ pub fn move_finished(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
     unit.in_transit = false;
 
     if unit.unit_type == UnitType::MineLayer || unit.unit_type == UnitType::SeaMineLayer {
-        // TODO(P5): Ai_CheckMines(this).
+        // TODO(P6): Ai_CheckMines(this).
     }
 
     if mode && !disable_fire {
@@ -463,7 +447,8 @@ pub fn cancel_building(unit: &mut UnitInfo) {
     } else {
         unit.build_list.clear();
         unit.build_time = 0;
-        // TODO(P5): Access_DestroyUtilities(grid, ...).
+        // `Access_DestroyUtilities` требует `GameState`; вызывается
+        // процессором приказа (`cancel_building` — чистая операция).
         unit.path = None;
         unit.moved = 0;
         unit.orders = UnitOrder::Await;
@@ -506,7 +491,8 @@ pub fn position_in_tape(unit: &mut UnitInfo) {
     refresh_screen(unit);
 
     if unit.moved >= 4 {
-        // TODO(P5): проверки `UnitsManager_IsEngaged` и занятости площадки.
+        // TODO(P3/P5): проверки `UnitsManager_IsEngaged` и занятости площадки
+        // (`UnitInfo_IsSiteEngaged` требует `Access_GetConstructionUtility`).
         let old_state = unit.state;
         restore_orders(unit);
         unit.moved = 0;
@@ -689,10 +675,27 @@ impl<'a> OrderContext<'a> {
         let delete_path = set_new_order_int(&mut self.unit, order, state);
 
         if delete_path {
-            // `ResourceManager_GetPathsManager().RemoveRequest(unit)` — P5.
+            self.world.remove_path_request(self.id);
         }
 
         delete_path
+    }
+
+    /// Записывает рабочую копию в состояние, не завершая контекст (нужно перед
+    /// вызовами боевых функций, которые работают с `GameState`).
+    pub fn sync_to_world(&mut self) {
+        if self.world.has_unit(self.id) {
+            self.world.write_unit(self.id, self.unit.clone());
+            self.world.set_order_data(self.id, self.data);
+        }
+    }
+
+    /// Перечитывает рабочую копию из состояния (после боевых функций).
+    pub fn sync_from_world(&mut self) {
+        if let Some(unit) = self.world.unit(self.id) {
+            self.unit = unit.clone();
+        }
+        self.data = self.world.order_data(self.id);
     }
 
     /// `UnitsManager_ScaleUnit` для текущего юнита.
@@ -707,6 +710,7 @@ impl<'a> OrderContext<'a> {
 
     /// `BlockedOnPathRequest` текущего юнита (+ отложенная реакция).
     pub fn blocked_on_path_request(&mut self, mode: bool) {
+        self.world.remove_path_request(self.id);
         blocked_on_path_request(&mut self.unit, mode, self.world.disable_fire);
         self.world.add_to_delayed_reaction_list(self.id);
     }
@@ -720,7 +724,7 @@ impl<'a> OrderContext<'a> {
             self.world.add_to_delayed_reaction_list(self.id);
 
             if self.unit.ammo > 0 {
-                // TODO(P5): Ai_EvaluateAttackTargets(this).
+                // TODO(P6): Ai_EvaluateAttackTargets(this).
             }
         }
     }
@@ -733,14 +737,13 @@ impl<'a> OrderContext<'a> {
 
     /// `UnitsManager_PinAttackTargets` для текущего юнита.
     pub fn pin_attack_targets(&mut self) {
-        self.end_attack();
-        self.world.live_attack_counter = self.world.live_attack_counter.wrapping_add(1);
-        let attack = self.world.live_attack_counter;
-        self.unit.live_attack = attack;
-        self.world.live_attacks.push(crate::game::LiveAttack {
-            id: attack,
-            targets: Vec::new(), // TODO(P5): Access_GetAreaAttackTargets/GetAttackTarget.
-        });
+        self.sync_to_world();
+        self.world.pin_attack_targets(self.id);
+        self.unit.live_attack = self
+            .world
+            .unit(self.id)
+            .map(|unit| unit.live_attack)
+            .unwrap_or(0);
     }
 
     /// Копия другого юнита (`Hash_UnitHash[id]`).
@@ -775,7 +778,7 @@ impl<'a> OrderContext<'a> {
 fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
     refresh_screen(&ctx.unit);
 
-    if is_engaged(&ctx.unit) {
+    if access::is_engaged(ctx.world, &ctx.unit) {
         return false;
     }
 
@@ -791,8 +794,14 @@ fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
             path_execute(ctx)
         }
     } else if ctx.unit.flags & MISSILE_UNIT != 0 {
-        // TODO(P5): ракета без пути — взрыв в текущей клетке
-        // (`parent->Attack(grid)` + `UnitsManager_DestroyUnit`).
+        // C++ `UnitInfo::ExecuteMove`: ракета без пути взрывается в текущей
+        // клетке — родитель наносит удар, сама ракета уничтожается.
+        if let Some(parent_id) = ctx.unit.parent_unit {
+            let position = ctx.unit.grid;
+            ctx.world.end_attack(ctx.id);
+            combat::attack(ctx.world, parent_id, position);
+            ctx.world.destroy_unit(ctx.id);
+        }
         false
     } else {
         ctx.unit.orders = UnitOrder::Await;
@@ -889,15 +898,18 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
 
     // `ORDER_MOVE_TO_UNIT`: приём груза в целевой клетке.
     if ctx.unit.orders == UnitOrder::MoveToUnit {
-        if let Some(receiver) = receiver_unit(ctx.world, &ctx.unit, target) {
+        if let Some(receiver) = access::get_receiver_unit(ctx.world, &ctx.unit, target) {
             let receiver_unit = ctx.other(receiver);
-            let stored = receiver_unit.as_ref().map(|unit| unit.storage).unwrap_or(0);
+            let stored = receiver_unit
+                .as_ref()
+                .map(|unit| access::get_stored_unit_count(ctx.world, unit))
+                .unwrap_or(0);
             let storable = receiver_unit
                 .as_ref()
                 .map(|unit| unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE))
                 .unwrap_or(0);
 
-            if stored >= storable as i16 {
+            if stored >= storable {
                 ctx.blocked_on_path_request(true);
             } else {
                 ctx.unit.orders = UnitOrder::Idle;
@@ -917,15 +929,21 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
         }
     }
 
-    let _ = paths_is_occupied(ctx.world, target);
+    access::paths_is_occupied(ctx.world, target, i32::from(ctx.unit.angle), ctx.unit.team);
 
-    let cost = access_is_accessible(ctx.world, &ctx.unit, target, 0);
+    let cost = access::is_accessible_unit(
+        ctx.world,
+        &ctx.unit,
+        target,
+        access::ACCESS_MODIFIER_IGNORE_VISIBILITY
+            | access::ACCESS_MODIFIER_MOVES_UNDER_BRIDGE
+            | access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) as i32;
 
     if cost != 0 {
         let is_diagonal_step = offset.x != 0 && offset.y != 0;
 
         if paths_calculate_step(&mut ctx.unit, cost, is_diagonal_step, false, ctx.world.real_time) {
-            // `MoveInTransitUnitInMapHash` — P5 (`Hash_MapHash`).
             ctx.unit.moved = 0;
             clear_movement_wait(&mut ctx.unit);
             ctx.unit.state = UnitOrderState::InTransition;
@@ -937,15 +955,39 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
             false
         }
     } else {
-        set_unit_destination(ctx.world, &ctx.unit, ctx.unit.grid, target);
-        // C++ продолжает поиск пути (`Paths_RequestPath`); без P5 путь
-        // остаётся прежним, юнит повторит попытку на следующем тике.
+        // `Access_SetUnitDestination` (`groundpath.cpp:398`).
+        let mode = ctx.unit.flags & MOBILE_SEA_UNIT == 0;
+        if access::set_unit_destination(ctx.world, &ctx.unit, grid, target, mode) {
+            if register_movement_wait(&mut ctx.unit) {
+                ctx.blocked_on_path_request(true);
+            }
+        } else {
+            clear_movement_wait(&mut ctx.unit);
+
+            if ctx.unit.orders == UnitOrder::Build
+                || ctx.world.teams[ctx.unit.team.0 as usize].team_type
+                    == crate::team::TeamKind::Eliminated
+                || ctx.world.game_state == crate::enums::GameStateType::EndTurn
+            {
+                ctx.blocked_on_path_request(true);
+            } else if ctx.world.teams[ctx.unit.team.0 as usize].team_type
+                == crate::team::TeamKind::Remote
+                || pathfinding::request_path(
+                    ctx.world,
+                    ctx.id,
+                    access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                )
+            {
+                ctx.unit.state = UnitOrderState::NewOrder;
+            }
+        }
         false
     }
 }
 
-/// `AirPath::Execute` (`airpath.cpp`) — в P4 сводится к «шагу к конечной
-/// клетке»; пиксельная интерполяция отрезка — P5.
+/// `AirPath::Execute` (`airpath.cpp`) — шаг к конечной клетке по `m_angle`;
+/// пиксельная интерполяция отрезка (`m_delta_*`) в lockstep-модели заменена
+/// переходом на одну клетку за тик (расхождение 1 в шапке модуля).
 fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     ctx.data.move_to = Point::new(path.end_x, path.end_y);
     ctx.unit.target_grid = ctx.data.move_to;
@@ -955,7 +997,16 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     let dy = i32::from(path.end_y) - i32::from(grid.y);
 
     if dx == 0 && dy == 0 {
-        ctx.blocked_on_path_request(true);
+        if ctx.unit.flags & MISSILE_UNIT != 0 {
+            if let Some(parent_id) = ctx.unit.parent_unit {
+                let position = ctx.unit.grid;
+                ctx.world.end_attack(ctx.id);
+                combat::attack(ctx.world, parent_id, position);
+                ctx.world.destroy_unit(ctx.id);
+            }
+        } else {
+            ctx.blocked_on_path_request(true);
+        }
         return false;
     }
 
@@ -965,26 +1016,40 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
         return false;
     }
 
-    let angle = paths_get_angle(dx, dy);
-    ctx.unit.angle = (angle & 7) as u8;
+    if paths_update_angle(&mut ctx.unit, paths_get_angle(dx, dy)) {
+        return false;
+    }
+
     ctx.unit.state = UnitOrderState::InTransition;
     ctx.unit.in_transit = true;
     ctx.unit.moved = 0;
     true
 }
 
-/// `BuilderPath` — путь конструктора (P3/P5): без модуля путей шаг не
-/// начинается, приказ остаётся в текущем состоянии.
-fn builder_path_execute(_ctx: &mut OrderContext<'_>) -> bool {
-    // TODO(P5): BuilderPath::Execute.
-    false
+/// `BuilderPath::Execute` (`builderpath.cpp`) — шаг строителя к цели.
+fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
+    let target = ctx.data.move_to;
+    let Some(step) = pathfinding::builder_path_step(ctx.world, &ctx.unit, target) else {
+        ctx.blocked_on_path_request(true);
+        return false;
+    };
+
+    let angle = paths_get_angle(i32::from(step.x), i32::from(step.y));
+    if paths_update_angle(&mut ctx.unit, angle) {
+        return false;
+    }
+
+    ctx.unit.state = UnitOrderState::InTransition;
+    ctx.unit.in_transit = true;
+    ctx.unit.moved = 0;
+    true
 }
 
 /// `UnitInfo::Move` (`unitinfo.cpp:1730`) — завершение перехода клетки.
 ///
 /// В P4 один вызов завершает одну клетку (расхождение 1 в шапке модуля).
 fn unit_move(ctx: &mut OrderContext<'_>) {
-    if is_engaged(&ctx.unit) {
+    if access::is_engaged(ctx.world, &ctx.unit) {
         return;
     }
 
@@ -1069,7 +1134,7 @@ fn process_order_await(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
             if ctx.unit.unit_type == UnitType::Bridge && is_bridge_elevated(&ctx.unit) {
-                if !has_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT) {
+                if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_none() {
                     ctx.set_new_order(UnitOrder::Move, UnitOrderState::Lower);
                 }
             }
@@ -1087,7 +1152,7 @@ fn process_order_await(ctx: &mut OrderContext<'_>) {
 
             if ctx.unit.unit_type == UnitType::Bridge
                 && is_bridge_elevated(&ctx.unit)
-                && !has_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT)
+                && access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_none()
             {
                 ctx.set_new_order(UnitOrder::Move, UnitOrderState::Lower);
             }
@@ -1117,7 +1182,7 @@ fn process_order_transform(ctx: &mut OrderContext<'_>) {
             );
         }
         UnitOrderState::ProgressTransforming => {
-            // TODO(P5): `UnitsManager_DeployMasterBuilder` — разрушение
+            // TODO(P3/P5): `UnitsManager_DeployMasterBuilder` — разрушение
             // конструктора и постановка шахты/генератора/плиты.
         }
         UnitOrderState::FinishTransforming => {
@@ -1193,7 +1258,7 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
             }
         }
         UnitOrderState::Lower => {
-            if has_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT) {
+            if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_some() {
                 ctx.set_new_order(UnitOrder::Move, UnitOrderState::Elevate);
             } else if is_bridge_elevated(&ctx.unit) {
                 ctx.unit.image_index = ctx.unit.image_index.wrapping_sub(1);
@@ -1204,10 +1269,12 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
                 ctx.set_new_order(UnitOrder::Await, UnitOrderState::ExecutingOrder);
             }        }
         UnitOrderState::NewOrder => {
+            // C++ ставит `PendingAirGroupLeader` только для члена группового
+            // списка (`UnitInfo::GetUnitList() != nullptr`).
             if ctx.unit.flags & MOBILE_AIR_UNIT != 0
                 && ctx.world.teams[ctx.unit.team.0 as usize].team_type
                     == crate::team::TeamKind::Player
-                && ctx.world.list_position(ctx.id).is_some()
+                && ctx.world.group_members(ctx.id).is_some()
             {
                 ctx.world.pending_air_group_leader = Some(ctx.id);
             }
@@ -1286,17 +1353,21 @@ fn pursue_enemy(ctx: &mut OrderContext<'_>) -> bool {
     );
 
     if squared_distance > unit_range * unit_range
-        && (ctx.unit.path.is_none()
-            || move_to.x != enemy.grid.x
-            || move_to.y != enemy.grid.y)
+        && (ctx.unit.path.is_none() || move_to.x != enemy.grid.x || move_to.y != enemy.grid.y)
         && (!enemy_is_moving || enemy.state == UnitOrderState::ExecutingOrder)
     {
-        // `Paths_RequestPath` на позицию атаки — P5. Приказ и путь остаются;
-        // без модуля путей юнит продолжает идти к прежней точке.
+        // `Paths_RequestPath(unit, SameClassBlocks)` — путь к позиции атаки.
+        pathfinding::request_path(
+            ctx.world,
+            ctx.id,
+            access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+        );
         return false;
     }
 
-    if ctx.unit.shots > 0 && within_attack_range(ctx.unit.grid, position, unit_range) {
+    if ctx.unit.shots > 0
+        && access::is_within_attack_range(ctx.world, &ctx.unit, position, unit_range)
+    {
         if !ctx.world.unit_list(UnitListKind::Particle).is_empty() {
             return false;
         }
@@ -1314,27 +1385,9 @@ fn pursue_enemy(ctx: &mut OrderContext<'_>) -> bool {
     }
 }
 
-/// `Access_IsWithinAttackRange` (`access.cpp`) — P5: приближение квадратом
-/// расстояния клеток с учётом габаритов зданий (не моделируются).
-fn within_attack_range(from: Point, target: Point, range: i32) -> bool {
-    squared_distance(from, target) <= range * range
-}
-
-/// `UnitsManager_GetAttackPosition` (`units_manager.cpp:4847`) без
-/// `Access_GetConstructionUtility` (P5).
+/// `UnitsManager_GetAttackPosition` (`units_manager.cpp:4847`).
 fn attack_position(ctx: &OrderContext<'_>, enemy: &UnitInfo) -> Point {
-    let mut position = enemy.grid;
-
-    if enemy.flags & BUILDING != 0 {
-        if ctx.unit.grid.x > position.x {
-            position.x += 1;
-        }
-        if ctx.unit.grid.y > position.y {
-            position.y += 1;
-        }
-    }
-
-    position
+    access::get_attack_position(ctx.world, &ctx.unit, enemy)
 }
 
 /// `Access_GetSquaredDistance` (`access.cpp`) — квадрат расстояния в клетках.
@@ -1365,15 +1418,16 @@ fn init_unit_move(ctx: &mut OrderContext<'_>) -> bool {
 
 /// `UnitsManager_InitUnitPath` (`units_manager.cpp:4776`).
 ///
-/// В C++ путь запрашивается у `PathsManager` асинхронно; в max_core
-/// pathfinding синхронный (DESIGN риск 2), а сам модуль — P5. До его появления
-/// путь строится линейно (`AppendLinearSteps`) — это единственный
-/// детерминированный вариант без карты проходимости.
+/// Воздушный путь считается сразу (`Paths_GetAirPath`); наземный ставится в
+/// очередь [`pathfinding::request_path`] (синхронный pathfinding, DESIGN
+/// §1.4/риск 2), а приказ переходит в `MOVE_GETTING_PATH`/`NEW_ORDER` до
+/// применения результата в `poll_results`.
 fn init_unit_path(ctx: &mut OrderContext<'_>) {
     ctx.unit.path = None;
 
     if ctx.unit.flags & MISSILE_UNIT != 0 {
-        // TODO(P5): UnitsManager_GetMissilePath.
+        let fire_on = ctx.data.fire_on;
+        ctx.unit.path = pathfinding::get_missile_path(&ctx.unit, fire_on).map(UnitPath::Air);
         return;
     }
 
@@ -1384,74 +1438,39 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
 
     if ctx.unit.state == UnitOrderState::MoveInit {
         if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.orders != UnitOrder::MoveToAttack {
-            ctx.unit.path = Some(UnitPath::Air(AirPath {
-                end_x: ctx.data.move_to.x,
-                end_y: ctx.data.move_to.y,
-                ..AirPath::default()
-            }));
-
+            let target = ctx.data.move_to;
+            ctx.unit.path = pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target)
+                .map(UnitPath::Air);
             ctx.restore_orders();
-        } else {
-            // TODO(P5): Paths_RequestPath → состояние MOVE_GETTING_PATH.
+        } else if pathfinding::request_path(
+            ctx.world,
+            ctx.id,
+            access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+        ) {
             ctx.unit.state = UnitOrderState::MoveGettingPath;
-            build_linear_path(ctx);
         }
-    } else {
-        if has_group_order(&ctx.unit) {
-            // TODO(P5): `Access_GroupAttackOrder(unit, true)` — групповой
-            // приказ (список `UnitInfo::GetUnitList`).
-        } else if ctx.unit.flags & MOBILE_AIR_UNIT != 0
-            && ctx.unit.orders != UnitOrder::MoveToAttack
-        {
-            ctx.unit.path = Some(UnitPath::Air(AirPath {
-                end_x: ctx.data.move_to.x,
-                end_y: ctx.data.move_to.y,
-                ..AirPath::default()
-            }));
-        } else {
-            // TODO(P5): Paths_RequestPath → состояние NEW_ORDER.
-            build_linear_path(ctx);
-        }
+    } else if ctx.world.group_members(ctx.id).is_some() {
+        access::group_attack_order(ctx.world, ctx.id, true);
+    } else if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.orders != UnitOrder::MoveToAttack {
+        let target = ctx.data.move_to;
+        ctx.unit.path = pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target)
+            .map(UnitPath::Air);
+    } else if pathfinding::request_path(
+        ctx.world,
+        ctx.id,
+        access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) {
+        ctx.unit.state = UnitOrderState::NewOrder;
     }
 }
 
-/// `UnitInfo::GetUnitList() != nullptr` — приказ группе (`UnitInfoGroup`).
-///
-/// Списки групп — часть модуля `access` (P5); в C++ это отдельный
-/// `SmartList<UnitInfo>`, который не имеет отношения к пяти глобальным
-/// спискам юнитов.
-fn has_group_order(_unit: &UnitInfo) -> bool {
-    false
-}
-
-/// Линейный маршрут (`GroundPath::AppendLinearSteps`) — замена P5-путей.
+/// Линейный маршрут (`GroundPath::AppendLinearSteps`) — используется
+/// сетевым слоем/тестами (пакет 38), не симуляционным поиском.
+#[allow(dead_code)]
 fn build_linear_path(ctx: &mut OrderContext<'_>) {
     let start = ctx.unit.grid;
     let target = ctx.data.move_to;
-    let mut steps = Vec::new();
-    let mut x = i32::from(target.x) - i32::from(start.x);
-    let mut y = i32::from(target.y) - i32::from(start.y);
-
-    while x != 0 || y != 0 {
-        let step_x = if x > 0 {
-            1
-        } else if x == 0 {
-            0
-        } else {
-            -1
-        };
-        let step_y = if y > 0 {
-            1
-        } else if y == 0 {
-            0
-        } else {
-            -1
-        };
-
-        steps.push(PathStep::new(step_x, step_y));
-        x -= i32::from(step_x);
-        y -= i32::from(step_y);
-    }
+    let steps = pathfinding::append_linear_steps(start, target);
 
     ctx.unit.path = Some(UnitPath::Ground(GroundPath {
         end_x: target.x,
@@ -1494,39 +1513,39 @@ fn process_order_fire(ctx: &mut OrderContext<'_>) {
         UnitOrderState::InProgress => {
             ctx.world.orders_pending = true;
 
-            if aim_at_target(ctx) {
+            if combat::aim_at_target(ctx.world, &mut ctx.unit, ctx.data.fire_on) {
                 ctx.world.orders_pending = true;
-                // `PrepareFire()` — P5.
+                combat::prepare_fire(ctx.world, &mut ctx.unit);
             }
         }
         UnitOrderState::ReadyToFire => {
             ctx.world.orders_pending = true;
-            // `PrepareFire()` — P5.
+            combat::prepare_fire(ctx.world, &mut ctx.unit);
         }
         UnitOrderState::FireInProgress => {
             ctx.world.orders_pending = true;
-            // `ProgressFire()` — P5.
+            let fire_on = ctx.data.fire_on;
+            let finished = combat::progress_fire(ctx.world, &mut ctx.unit);
+            if finished {
+                // `Attack(fire_on)` работает с состоянием партии: сначала
+                // фиксируем рабочую копию, затем перечитываем её после боя.
+                ctx.sync_to_world();
+                combat::attack(ctx.world, ctx.id, fire_on);
+                ctx.sync_from_world();
+            }
         }
         UnitOrderState::AttackPending => {}
         UnitOrderState::AttackBeginning => {
             ctx.unit.state = UnitOrderState::InProgress;
             ctx.world.orders_pending = true;
 
-            if aim_at_target(ctx) {
+            if combat::aim_at_target(ctx.world, &mut ctx.unit, ctx.data.fire_on) {
                 ctx.world.orders_pending = true;
-                // `PrepareFire()` — P5.
+                combat::prepare_fire(ctx.world, &mut ctx.unit);
             }
         }
         _ => {}
     }
-}
-
-/// `UnitInfo::AimAtTarget` (`unitinfo.cpp:5207`) — P5: поворот башни/корпуса
-/// к цели. Без модуля боя цель не захватывается.
-fn aim_at_target(ctx: &mut OrderContext<'_>) -> bool {
-    // TODO(P5): поворот к `fire_on_grid_*` и проверка готовности к выстрелу.
-    let _ = &ctx.unit;
-    false
 }
 
 /// `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2834`).
@@ -1555,6 +1574,8 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
         UnitOrderState::BuildCancel | UnitOrderState::BuildAbort => {
             ai_task_flag("Build cancel");
             cancel_building(&mut ctx.unit);
+            // `Access_DestroyUtilities(grid, …)` (`units_manager.cpp:2880`).
+            access::destroy_utilities(ctx.world, ctx.unit.grid, true, true, true, true);
         }
         UnitOrderState::SelectSite => {
             animate(&ctx.unit);
@@ -1582,7 +1603,7 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
 
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
-            // TODO(P5): `UnitsManager_ActivateUnit` — проверка занятости
+            // TODO(P3/P5): `UnitsManager_ActivateUnit` — проверка занятости
             // площадки (`Paths_IsOccupied`, `Access_IsAccessible`), перенос
             // клиента на карту; без модуля доступа активация не выполняется и
             // приказ возвращается к отложенному (как в ветке отказа C++).
@@ -1608,7 +1629,9 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ActivateEngineer` (`units_manager.cpp:3407`).
 fn activate_engineer(ctx: &mut OrderContext<'_>) {
-    // TODO(P5): Access_DestroyUtilities.
+    // `Access_DestroyUtilities(grid, false, false, false, false)` — снимаются
+    // только ленты/конусы строительной площадки.
+    access::destroy_utilities(ctx.world, ctx.unit.grid, false, false, false, false);
     ctx.unit.prior_orders = UnitOrder::Await;
     ctx.unit.prior_state = UnitOrderState::ExecutingOrder;
     ctx.unit.orders = UnitOrder::Move;
@@ -1671,8 +1694,8 @@ fn process_order_explode(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_StartExplosion` (`units_manager.cpp:3915`).
 ///
-/// Спавн юнита-эффекта (`*EXPLD`, флаги `EXPLODING|MISSILE_UNIT`) —
-/// P3-таблица флагов + P5; переходы состояний портированы.
+/// Спавнит юнит-эффект (`HITEXPLD`/`BLDEXPLD`/`LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`)
+/// с флагами класса, как C++ (`base_unit.SetFlags(...)`).
 fn start_explosion(ctx: &mut OrderContext<'_>) {
     refresh_screen(&ctx.unit);
 
@@ -1685,12 +1708,49 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
         return;
     }
 
-    // TODO(P5): DeployUnit(*EXPLD) рядом с юнитом.
+    let unit_flags = ctx.unit.flags;
+    let explosion_type = if ctx.unit.hits > 0 {
+        UnitType::HitExplosion
+    } else if unit_flags & BUILDING != 0 {
+        UnitType::BuildingExplosion
+    } else if unit_flags & MOBILE_LAND_UNIT != 0 {
+        UnitType::LandExplosion
+    } else if unit_flags & MOBILE_AIR_UNIT != 0 {
+        UnitType::AirExplosion
+    } else if unit_flags & MOBILE_SEA_UNIT != 0 {
+        UnitType::SeaExplosion
+    } else {
+        UnitType::LandExplosion
+    };
+
+    let explosion_flags = if unit_flags & GROUND_COVER != 0 {
+        MOBILE_LAND_UNIT
+    } else if unit_flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {
+        STATIONARY
+    } else if unit_flags & STATIONARY != 0 {
+        MOBILE_AIR_UNIT
+    } else {
+        MISSILE_UNIT
+    };
+
+    let explosion = ctx.world.spawn_unit(
+        explosion_type,
+        ctx.unit.team,
+        ctx.unit.grid,
+        explosion_flags,
+    );
+
     ctx.unit.orders = ctx.unit.prior_orders;
     ctx.unit.state = ctx.unit.prior_state;
     restore_orders(&mut ctx.unit);
 
     if ctx.unit.hits == 0 {
+        if let Some(explosion_id) = explosion {
+            if let Some(mut explosion_unit) = ctx.world.unit(explosion_id).cloned() {
+                explosion_unit.parent_unit = Some(ctx.id);
+                ctx.world.write_unit(explosion_id, explosion_unit);
+            }
+        }
         ctx.unit.state = UnitOrderState::Destroy;
     }
 }
@@ -1716,8 +1776,8 @@ fn process_order_unload(ctx: &mut OrderContext<'_>) {
             ctx.unit.moved = 0;
             ctx.unit.state = UnitOrderState::UnloadingInProgress;
 
-            if is_unload_site_taken(ctx.world, &ctx.unit)
-                || paths_is_occupied(ctx.world, ctx.unit.grid)
+            if access::is_unload_site_taken(ctx.world, &ctx.unit)
+                || access::paths_is_occupied(ctx.world, ctx.unit.grid, i32::from(ctx.unit.angle), ctx.unit.team)
             {
                 ctx.unit.orders = UnitOrder::Await;
                 ctx.unit.state = UnitOrderState::ExecutingOrder;
@@ -1745,11 +1805,16 @@ fn progress_unloading(ctx: &mut OrderContext<'_>) {
         return;
     };
 
-    // TODO(P5): Access_TriggerEnemyMine + UnitsManager_UpdateMapHash.
+    // `Access_TriggerEnemyMine` (`units_manager.cpp:4035`): мина под
+    // высадившимся юнитом взрывается.
+    let landing_grid = client.grid;
+    let landing_team = client.team;
+    access::trigger_enemy_mine(ctx.world, landing_team, landing_grid);
+
     restore_orders(&mut client);
     ctx.world.write_unit(parent_id, client);
 
-    // `Access_UpdateMapStatus` — P5.
+    // `Access_UpdateMapStatus` — P5 (карта видимости); клетка уже в MapHash.
 
     ctx.scale_other(parent_id, UnitOrderState::Expand);
 
@@ -1809,7 +1874,7 @@ fn process_order_land(ctx: &mut OrderContext<'_>) {
 
     // Занятый самолёт не снижается в ангар; посадочная площадка держит его на
     // карте.
-    if ctx.unit.parent_unit.is_some() && is_engaged(&ctx.unit) {
+    if ctx.unit.parent_unit.is_some() && access::is_engaged(ctx.world, &ctx.unit) {
         return;
     }
 
@@ -1880,7 +1945,7 @@ fn process_order_load(ctx: &mut OrderContext<'_>) {
             // Занятый пассажир не подбирается до конца атаки/стелс-действия.
             let parent_engaged = ctx
                 .parent()
-                .map(|parent| is_engaged(&parent))
+                .map(|parent| access::is_engaged(ctx.world, &parent))
                 .unwrap_or(false);
 
             if !parent_engaged {
@@ -1904,7 +1969,7 @@ fn process_order_load(ctx: &mut OrderContext<'_>) {
 fn progress_loading(ctx: &mut OrderContext<'_>) {
     let parent_engaged = ctx
         .parent()
-        .map(|parent| is_engaged(&parent))
+        .map(|parent| access::is_engaged(ctx.world, &parent))
         .unwrap_or(false);
     if parent_engaged {
         return;
@@ -2021,6 +2086,7 @@ fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::BuildCancel {
         ai_task_flag("Build halting");
         cancel_building(&mut ctx.unit);
+        access::destroy_utilities(ctx.world, ctx.unit.grid, true, true, true, true);
     }
 }
 
@@ -2047,7 +2113,7 @@ fn process_order_await_scaling(ctx: &mut OrderContext<'_>) {
         }
         UnitOrderState::Shrink => {
             if ctx.unit.scaler_adjust == 4 {
-                finish_unit_scaling(&mut ctx.unit);
+                finish_unit_scaling_in(ctx.world, &mut ctx.unit);
             } else {
                 ctx.unit.scaler_adjust = ctx.unit.scaler_adjust.wrapping_add(1);
             }
@@ -2073,12 +2139,13 @@ fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
             ctx.scale(UnitOrderState::Shrink);
         }
         UnitOrderState::ExecutingOrder => {
-            // `UnitsManager_AttemptStealthAction` — P5.
-            if attempt_stealth_action(ctx) {
+            if combat::attempt_stealth_action(ctx.world, &mut ctx.unit) {
                 if ctx.unit.orders == UnitOrder::AwaitStealUnit {
-                    // `UnitsManager_CaptureUnit` — P5.
-                } else {
-                    // `UnitsManager_DisableUnit` — P5.
+                    if let Some(parent) = ctx.unit.parent_unit {
+                        combat::capture_unit(ctx.world, ctx.id, parent);
+                    }
+                } else if let Some(parent) = ctx.unit.parent_unit {
+                    combat::disable_unit(ctx.world, ctx.id, parent);
                 }
             }
 
@@ -2086,10 +2153,12 @@ fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
         }
         UnitOrderState::InProgress => {
             if let Some(parent_id) = ctx.unit.parent_unit {
+                // `UnitInfo::ShakeSabotage` (`unitinfo.cpp:4680`): счётчик
+                // тряски 0..15; полный цикл возвращает цель в исходное
+                // состояние, затем диверсант «расширяется».
                 if let Some(mut parent) = ctx.other(parent_id) {
-                    // `ShakeSabotage()` — P5; без него анимация завершается
-                    // сразу, чтобы приказ не завис навсегда.
-                    parent.shake_effect_state = 0;
+                    parent.shake_effect_state =
+                        parent.shake_effect_state.wrapping_add(1) & 0x0F;
                     ctx.world.write_unit(parent_id, parent);
                 }
 
@@ -2110,9 +2179,11 @@ fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
     }
 }
 
-/// `UnitsManager_AttemptStealthAction` (`units_manager.cpp:4254`) — P5.
-fn attempt_stealth_action(_ctx: &mut OrderContext<'_>) -> bool {
-    false
+/// `UnitsManager_AttemptStealthAction` — тонкая обёртка над
+/// [`combat::attempt_stealth_action`] (см. вызов в процессоре приказа).
+#[allow(dead_code)]
+fn attempt_stealth_action(ctx: &mut OrderContext<'_>) -> bool {
+    combat::attempt_stealth_action(ctx.world, &mut ctx.unit)
 }
 
 /// `UnitsManager_ProcessOrderDisable` (`units_manager.cpp:3226`).
@@ -2143,17 +2214,106 @@ fn process_order_lay_mine(ctx: &mut OrderContext<'_>) {
         }
         UnitOrderState::PlacingMines => {
             ctx.unit.laying_state = 2;
-            // TODO(P5): UnitInfo::PlaceMine — мина на карту.
+            place_mine(ctx.world, &mut ctx.unit);
         }
         UnitOrderState::RemovingMines => {
             ctx.unit.laying_state = 1;
-            // TODO(P5): UnitInfo::PickUpMine.
+            pick_up_mine(ctx.world, &mut ctx.unit);
         }
         _ => {}
     }
 
     ctx.restore_orders();
     schedule_delayed_tasks(ctx.world, ctx.id, true);
+}
+
+/// `UnitInfo::PlaceMine` (`unitinfo.cpp:4500`).
+fn place_mine(state: &mut GameState, unit: &mut UnitInfo) {
+    if (unit.unit_type != UnitType::MineLayer && unit.unit_type != UnitType::SeaMineLayer)
+        || unit.storage <= 0
+    {
+        return;
+    }
+
+    let mine_type = if unit.unit_type == UnitType::SeaMineLayer {
+        UnitType::SeaMine
+    } else {
+        UnitType::LandMine
+    };
+
+    if state
+        .units_at(unit.grid)
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .any(|other| other.unit_type == mine_type)
+    {
+        return;
+    }
+
+    let flags = access::unit_type_flags(mine_type);
+    if let Some(mine) = state.spawn_unit(mine_type, unit.team, unit.grid, flags) {
+        // Мина видна командам всех surveyor-юнитов в 3×3 (`SpotByTeam`).
+        let mut surveyor_teams = Vec::new();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let grid = Point::new(unit.grid.x + dx, unit.grid.y + dy);
+                for id in state.units_at(grid) {
+                    if let Some(other) = state.unit(*id) {
+                        if other.unit_type == UnitType::Surveyor
+                            && !surveyor_teams.contains(&other.team)
+                        {
+                            surveyor_teams.push(other.team);
+                        }
+                    }
+                }
+            }
+        }
+        for team in surveyor_teams {
+            combat::spot_unit(state, mine, team);
+        }
+    }
+
+    unit.storage = unit.storage.wrapping_sub(1);
+    if unit.storage == 0 {
+        unit.laying_state = 0;
+    }
+}
+
+/// `UnitInfo::PickUpMine` (`unitinfo.cpp:4559`).
+fn pick_up_mine(state: &mut GameState, unit: &mut UnitInfo) {
+    if unit.unit_type != UnitType::MineLayer && unit.unit_type != UnitType::SeaMineLayer {
+        return;
+    }
+
+    let storage_limit = unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE);
+    if i32::from(unit.storage) >= storage_limit {
+        return;
+    }
+
+    let mine_type = if unit.unit_type == UnitType::SeaMineLayer {
+        UnitType::SeaMine
+    } else {
+        UnitType::LandMine
+    };
+
+    let mine = state
+        .units_at(unit.grid)
+        .iter()
+        .copied()
+        .find(|id| {
+            state
+                .unit(*id)
+                .map(|other| other.unit_type == mine_type)
+                .unwrap_or(false)
+        });
+
+    if let Some(mine) = mine {
+        state.destroy_unit(mine);
+        unit.storage = unit.storage.wrapping_add(1);
+        if i32::from(unit.storage) == storage_limit {
+            unit.laying_state = 0;
+        }
+    }
 }
 
 /// `UnitsManager_ProcessOrder` (`units_manager.cpp:3257`) — диспетчер 32
@@ -2179,7 +2339,9 @@ pub fn process_order(state: &mut GameState, id: UnitId) {
     };
 
     // Шапка `UnitsManager_ProcessOrder`.
-    if ctx.unit.shake_effect_state != 0 && !is_engaged_by_infiltrator(&ctx.unit) {
+    if ctx.unit.shake_effect_state != 0
+        && !access::is_engaged_by_infiltrator(ctx.world, &ctx.unit)
+    {
         // Инфильтратор, тряхнувший юнита, погиб или вышел из стелса.
         ctx.unit.shake_effect_state = 0;
     }
@@ -2308,9 +2470,13 @@ mod tests {
     fn move_order_is_replaced_by_new_order() {
         let (mut state, id) = state_with_tank();
         order_move_to(&mut state, id, Point::new(30, 10));
+        // Первый тик ставит запрос пути (`NEW_ORDER`), второй применяет его
+        // (`poll_results` → `IN_PROGRESS`) — как в C++ с `PathsManager`.
         state.tick();
+        state.tick();
+        assert_eq!(state.unit(id).unwrap().state, UnitOrderState::InProgress);
 
-        // Смена приказа во время движения: prior фиксирует Move/Init.
+        // Смена приказа во время движения: prior фиксирует Move/InProgress.
         state.set_order(id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
         let unit = state.unit(id).expect("unit");
         assert_eq!(unit.orders, UnitOrder::Sentry);
@@ -2407,12 +2573,18 @@ mod tests {
         // `speed == 0`: состояние EXECUTING_ORDER, путь сохраняется до
         // восстановления скорости в начале хода).
         state.unit_mut(id).unwrap().speed = 0;
+        // Тик 1 — запрос пути; тик 2 — путь применён и `GroundPath::Execute`
+        // при `speed == 0` оставляет приказ MOVE с состоянием EXECUTING_ORDER.
+        state.tick();
         state.tick();
         let unit = state.unit(id).unwrap();
         assert_eq!(unit.orders, UnitOrder::Move);
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert!(unit.path.is_some());
-        assert_eq!(unit.delayed_reaction, 1);
+        // `MoveFinished` выставил `delayed_reaction`, но `AssessAttacks` в
+        // конце того же тика (`ProcessOrders`) очистил его: у команды нет
+        // отложенных целей (`UnitsManager_ClearDelayedReactions`).
+        assert_eq!(unit.delayed_reaction, 0);
         assert_eq!(unit.moved, 0);
 
         // Начало хода возвращает скорость (`UpdateProduction`) — движение
@@ -2431,6 +2603,35 @@ mod tests {
             }
         }
         assert_eq!(state.unit(id).unwrap().orders, UnitOrder::Await);
+    }
+
+    #[test]
+    fn air_move_reaches_target_cell() {
+        use crate::enums::unit_flags::MOBILE_AIR_UNIT;
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+        let id = state
+            .spawn_unit(
+                UnitType::Fighter,
+                TeamId::RED,
+                Point::new(5, 5),
+                MOBILE_AIR_UNIT,
+            )
+            .expect("spawn");
+        order_move_to(&mut state, id, Point::new(10, 10));
+
+        let mut ticks = 0;
+        loop {
+            state.tick();
+            ticks += 1;
+            assert!(ticks < 64, "самолёт не долетел до цели");
+            let unit = state.unit(id).unwrap();
+            if unit.grid == Point::new(10, 10) && !unit.has_move_order() {
+                break;
+            }
+        }
+        assert_eq!(state.unit(id).unwrap().grid, Point::new(10, 10));
     }
 
     #[test]
@@ -2573,3 +2774,4 @@ mod tests {
         assert_eq!(state.unit(id).unwrap().orders, UnitOrder::Move);
     }
 }
+

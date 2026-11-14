@@ -15,11 +15,12 @@
 //! очков, смена команд), барьеры как факты сети и канонический дайджест
 //! состояния для тестов детерминизма.
 //!
-//! Модули P5/P6 (бой, пути, доступность, ИИ-задачи) отсутствуют, поэтому
-//! вызовы в их точки заменены явно помеченными заглушками
-//! (`TODO(P5)`/`TODO(P6)`), но **порядок вызовов и переходы состояний
-//! сохранены 1:1** — при появлении модулей заглушки заменяются вызовами без
-//! переписывания цикла.
+//! P5 подключает бой (`combat`), проходимость (`access`) и пути
+//! (`pathfinding`): `ProcessOrders` вызывает `AssessAttacks` для отложенных
+//! реакций, `PendingAirGroupLeader` — `Access_ProcessNewGroupOrder`, тик —
+//! синхронный `PollResults`; `MapHash` и `DelayedAttackTargets` входят в
+//! состояние. ИИ-задачи (P6) по-прежнему заменены помеченными заглушками,
+//! **порядок вызовов и переходы состояний сохранены 1:1**.
 //!
 //! # Создание карты и юнитов
 //!
@@ -49,12 +50,15 @@
 //! 4. `UnitInfo::x/y` (пиксельные координаты, UI) поддерживаются только как
 //!    производные от клетки: `x = grid*64 + 32` (+31 для зданий).
 
-use crate::enums::{unit_flags, GameStateType, PlayMode, UnitOrder, UnitOrderState, UnitType};
+use crate::enums::{
+    unit_flags, GameStateType, PlayMode, Surface, UnitOrder, UnitOrderState, UnitType,
+};
 use crate::events::CommandQueue;
 use crate::geo::Point;
-use crate::hash::{UnitHash, HASH_UNIT_HASH_SIZE};
+use crate::hash::{MapHash, UnitHash, HASH_UNIT_HASH_SIZE};
 use crate::input::Command;
 use crate::map::Map;
+use crate::pathfinding::PathRequest;
 use crate::rng::Randomizer;
 use crate::team::{Complex, TeamId, TeamInfo, TeamKind, TeamUnits, SCORE_GRAPH_LEN};
 use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPath};
@@ -133,6 +137,20 @@ pub struct GameState {
     order_data: Vec<OrderData>,
     /// Пять списков юнитов в порядке `UnitListKind` (порядок вставки).
     lists: [Vec<UnitId>; 5],
+    /// `Hash_MapHash` — клетка → юниты (`P5`; `access.rs`/`pathfinding.rs`).
+    pub map_hash: MapHash,
+    /// Групповой список юнита (`UnitInfo::unit_list` в C++ — `UnitInfoGroup`).
+    /// Параллельно слотам `units`/`order_data`.
+    unit_group: Vec<Option<u32>>,
+    /// Групповые списки (`SmartList<UnitInfo> UnitInfoGroup` C++).
+    pub groups: Vec<Option<Vec<UnitId>>>,
+    /// Очередь запросов путей (`PathsManager::m_pending_requests`).
+    pub path_requests: std::collections::VecDeque<PathRequest>,
+    /// `UnitsManager_DelayedAttackTargets[team]` — цели реактивного огня.
+    pub delayed_attack_targets: [Vec<UnitId>; TEAM_SLOTS],
+    /// `UnitsManager_DelayedReactionsTeam` — команда, чья очередь проверять
+    /// отложенные реакции.
+    pub delayed_reactions_team: TeamId,
 
     // --- фаза и ход ---
     /// `GameManager_GameState`.
@@ -222,8 +240,17 @@ impl GameState {
             team.team_type = TeamKind::None;
         }
         let team_units = std::array::from_fn(|_| TeamUnits::new());
+        // Пустая партия для юнит-тестов: поверхность `LAND`, иначе ни один
+        // наземный юнит не смог бы двигаться (реальная карта приходит из
+        // `setup::generate_map` и подменяет её целиком).
+        let mut map = Map::new();
+        for y in 0..crate::geo::MAP_HEIGHT {
+            for x in 0..crate::geo::MAP_WIDTH {
+                map.surface.set(x, y, Surface::LAND);
+            }
+        }
         Self {
-            map: Map::new(),
+            map,
             teams,
             team_units,
             rng: Randomizer::new(0),
@@ -232,6 +259,12 @@ impl GameState {
             unit_hash: UnitHash::new(HASH_UNIT_HASH_SIZE),
             order_data: Vec::new(),
             lists: std::array::from_fn(|_| Vec::new()),
+            map_hash: MapHash::for_standard_map(),
+            unit_group: Vec::new(),
+            groups: Vec::new(),
+            path_requests: std::collections::VecDeque::new(),
+            delayed_attack_targets: std::array::from_fn(|_| Vec::new()),
+            delayed_reactions_team: TeamId::RED,
             game_state: GameStateType::InGame,
             play_mode: PlayMode::TurnBased,
             turn_counter: 0,
@@ -337,12 +370,143 @@ impl GameState {
     }
 
     /// Записывает изменённую копию юнита обратно (см. `unit_order`).
+    ///
+    /// Если клетка изменилась, обновляется `Hash_MapHash` — аналог
+    /// `Hash_MapHash.Remove/Add` в `UnitInfo::Move`/`UpdateGridPosition`.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
         if let Some(slot) = self.lookup(id) {
+            if let Some(previous) = self.units.get(slot).and_then(|entry| entry.as_ref()) {
+                if previous.grid != unit.grid {
+                    self.map_hash.remove(
+                        id,
+                        previous.grid.x as u16,
+                        previous.grid.y as u16,
+                        previous.flags,
+                    );
+                    self.map_hash
+                        .add(id, unit.grid.x as u16, unit.grid.y as u16, unit.flags, false);
+                }
+            }
             if let Some(entry) = self.units.get_mut(slot) {
                 *entry = Some(unit);
             }
         }
+    }
+
+    /// `Hash_MapHash[Point]` — юниты клетки в порядке вставки.
+    #[inline]
+    pub fn units_at(&self, grid: Point) -> &[UnitId] {
+        self.units_at_opt(grid).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// `Hash_MapHash[Point]`: `None`, если клетка пуста или вне карты.
+    #[inline]
+    pub fn units_at_opt(&self, grid: Point) -> Option<&Vec<UnitId>> {
+        if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+        {
+            return None;
+        }
+        self.map_hash.get(grid.x as u16, grid.y as u16)
+    }
+
+    /// `Hash_MapHash.Add` для внешних модулей (`MoveInTransitUnitInMapHash`).
+    pub fn map_hash_add(&mut self, id: UnitId, grid: Point, flags: u32) {
+        if grid.x >= 0 && grid.y >= 0 {
+            self.map_hash
+                .add(id, grid.x as u16, grid.y as u16, flags, false);
+        }
+    }
+
+    /// `Hash_MapHash.Remove` для внешних модулей.
+    pub fn map_hash_remove(&mut self, id: UnitId, grid: Point, flags: u32) {
+        if grid.x >= 0 && grid.y >= 0 {
+            self.map_hash
+                .remove(id, grid.x as u16, grid.y as u16, flags);
+        }
+    }
+
+    /// `ResourceManager_GetPathsManager().RemoveRequest(unit)`.
+    pub fn remove_path_request(&mut self, id: UnitId) {
+        self.path_requests.retain(|request| request.unit != id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Групповые списки (`UnitInfoGroup`)
+    // -----------------------------------------------------------------------
+
+    /// Список группы юнита (`UnitInfo::GetUnitList`).
+    pub fn group_members(&self, id: UnitId) -> Option<Vec<UnitId>> {
+        let slot = self.lookup(id)?;
+        let group = self.unit_group.get(slot).copied().flatten()?;
+        self.groups.get(group as usize)?.clone()
+    }
+
+    /// Номер группы юнита (`None` — юнит вне группы).
+    pub fn group_id_of(&self, id: UnitId) -> Option<u32> {
+        let slot = self.lookup(id)?;
+        self.unit_group.get(slot).copied().flatten()
+    }
+
+    /// `AllocateUnitList` + `AssignUnitList` для лидера: создаёт группу.
+    pub fn create_group_with_leader(&mut self, leader: UnitId) -> u32 {
+        let group_id = self.groups.len() as u32;
+        self.groups.push(Some(vec![leader]));
+        if let Some(slot) = self.lookup(leader) {
+            if let Some(entry) = self.unit_group.get_mut(slot) {
+                *entry = Some(group_id);
+            }
+        }
+        group_id
+    }
+
+    /// Приписывает юнита к группе (`UnitInfo::AssignUnitList`).
+    pub fn assign_group_member(&mut self, id: UnitId, group_id: u32) {
+        if !self.has_unit(id) {
+            return;
+        }
+        let Some(slot) = self.lookup(id) else { return };
+        if let Some(entry) = self.unit_group.get_mut(slot) {
+            *entry = Some(group_id);
+        }
+        if let Some(Some(group)) = self.groups.get_mut(group_id as usize) {
+            if !group.contains(&id) {
+                group.push(id);
+            }
+        }
+    }
+
+    /// `UnitInfo::ClearUnitList` — снимает юнита с группового списка.
+    pub fn clear_group_member(&mut self, id: UnitId) {
+        let Some(slot) = self.lookup(id) else { return };
+        let Some(group_id) = self.unit_group.get(slot).copied().flatten() else {
+            return;
+        };
+        if let Some(entry) = self.unit_group.get_mut(slot) {
+            *entry = None;
+        }
+        if let Some(group) = self.groups.get_mut(group_id as usize) {
+            match group {
+                Some(members) => {
+                    members.retain(|member| *member != id);
+                    if members.is_empty() {
+                        *group = None;
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Снимает цель из `UnitsManager_DelayedAttackTargets[team]`.
+    pub fn remove_delayed_attack_target(&mut self, team: TeamId, id: UnitId) {
+        if let Some(targets) = self.delayed_attack_targets.get_mut(team.0 as usize) {
+            targets.retain(|unit| *unit != id);
+        }
+    }
+
+    /// Снимает юнита из `UnitsManager_PendingAttacks`.
+    pub fn remove_pending_attack(&mut self, id: UnitId) {
+        self.pending_attacks.retain(|unit| *unit != id);
     }
 
     /// Юниты одного из пяти списков в порядке обхода (`UnitsManager_*Units`).
@@ -567,10 +731,9 @@ impl GameState {
     /// объёме P4: id, счётчики имён, стартовые приказы по типу, атрибуты,
     /// позиция и список.
     ///
-    /// `flags` — флаги типа юнита (`unit_flags::*`). В C++ они приходят из
-    /// данных `units.json` (`ResourceManager_InitUnits`, `units.cpp`), которых
-    /// в Rust-порте ещё нет (P3-данные); таблица флагов на 93 типа — отдельная
-    /// задача, поэтому вызывающий слой передаёт их явно.
+    /// `flags` — дополнительные флаги вызывающего слоя; они объединяются с
+    /// флагами типа из `SC_UNITS` ([`crate::access::unit_type_flags`]), как
+    /// `UnitsManager_DeployUnit` берёт флаги из данных юнита.
     pub fn spawn_unit(
         &mut self,
         unit_type: UnitType,
@@ -581,7 +744,9 @@ impl GameState {
         let id = self.allocate_unit_id(team);
         let team_index = team.0 as usize;
         let mut unit = UnitInfo::new(unit_type, team, id);
-        unit.flags = flags;
+        // Флаги типа — из таблицы `SC_UNITS` (`Unit::m_flags`); явные флаги
+        // вызывающего слоя объединяются с ними (P3-совместимый вход).
+        unit.flags = flags | crate::access::unit_type_flags(unit_type);
 
         // `UnitInfo::UnitInfo`: атрибуты из current values команды.
         if let Some(values) = self
@@ -681,6 +846,9 @@ impl GameState {
                     move_to: grid,
                     fire_on: Point::ZERO,
                 };
+                if let Some(entry) = self.unit_group.get_mut(slot as usize) {
+                    *entry = None;
+                }
                 slot as usize
             }
             None => {
@@ -689,11 +857,14 @@ impl GameState {
                     move_to: grid,
                     fire_on: Point::ZERO,
                 });
+                self.unit_group.push(None);
                 self.units.len() - 1
             }
         };
         // `Hash_UnitHash.PushBack(unit)` — ведёрко по `id % hash_size`.
         self.unit_hash.push_at(u32::from(id.0), slot as u16);
+        // `Hash_MapHash.Add` (`units_manager.cpp`): клетка (у зданий — 2×2).
+        self.map_hash.add(id, grid.x as u16, grid.y as u16, flags, false);
 
         self.add_to_draw_list(id);
         Some(id)
@@ -709,18 +880,36 @@ impl GameState {
         let Some(slot) = self.lookup(id) else {
             return;
         };
+        let placement = self.unit(id).map(|unit| (unit.grid, unit.flags));
         // Атаку завершаем до удаления из хэша (`UnitsManager_EndAttack` ищет
         // юнита по id).
         self.end_attack(id);
+        self.clear_group_member(id);
         self.remove_unit_from_unit_lists(id);
         self.unit_hash.remove_at(u32::from(id.0), &(slot as u16));
+        if let Some((grid, flags)) = placement {
+            self.map_hash
+                .remove(id, grid.x as u16, grid.y as u16, flags);
+        }
         if let Some(entry) = self.units.get_mut(slot) {
+            *entry = None;
+        }
+        if let Some(entry) = self.unit_group.get_mut(slot) {
             *entry = None;
         }
         self.free_slots.push(slot as u16);
         self.pending_attacks.retain(|unit| *unit != id);
         self.pending_air_group_leader = self.pending_air_group_leader.filter(|unit| *unit != id);
         self.unit_events.retain(|event| event.unit() != id);
+        self.path_requests.retain(|request| request.unit != id);
+        for targets in &mut self.delayed_attack_targets {
+            targets.retain(|unit| *unit != id);
+        }
+        for active in &mut self.units_active {
+            if *active == Some(id) {
+                *active = None;
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -734,6 +923,9 @@ impl GameState {
             return false;
         };
         let delete_path = unit_order::set_new_order_int(&mut unit, order, state);
+        if delete_path {
+            self.remove_path_request(id);
+        }
         self.write_unit(id, unit);
         delete_path
     }
@@ -761,7 +953,9 @@ impl GameState {
             let targets = self.live_attacks.remove(position).targets;
             for target in targets {
                 if let Some(target_unit) = self.unit_mut(target) {
-                    target_unit.pin_count = target_unit.pin_count.saturating_sub(1);
+                    // C++ `--pin_count` без насыщения; возможный «минус» —
+                    // точное поведение оракула (DESIGN §6.3).
+                    target_unit.pin_count = target_unit.pin_count.wrapping_sub(1);
                 }
             }
         }
@@ -772,9 +966,9 @@ impl GameState {
 
     /// `UnitsManager_PinAttackTargets` (`units_manager.cpp:2542`).
     ///
-    /// Захват целей (`Access_GetAreaAttackTargets` / `Access_GetAttackTarget`)
-    /// — P5; здесь фиксируется сама живая атака и её номер, как в C++.
-    /// TODO(P5): список целей из модуля `access`/`combat`.
+    /// Захват целей — `Access_GetAreaAttackTargets` для площадной атаки,
+    /// иначе `Access_GetAttackTarget` по `fire_on`. Каждая цель получает
+    /// `pin_count += 1`; она не может сойти с клетки/карты до `EndAttack`.
     pub fn pin_attack_targets(&mut self, id: UnitId) {
         self.end_attack(id);
         self.live_attack_counter = self.live_attack_counter.wrapping_add(1);
@@ -782,30 +976,61 @@ impl GameState {
         if let Some(unit) = self.unit_mut(id) {
             unit.live_attack = attack;
         }
+
+        let Some(unit) = self.unit(id).cloned() else {
+            return;
+        };
+        let fire_on = self.order_data(id).fire_on;
+        let targets = if unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_ATTACK_RADIUS)
+            != 0
+        {
+            let targets: Vec<UnitId> =
+                crate::combat::get_area_attack_targets(self, &unit, fire_on)
+                    .into_iter()
+                    .map(|(target, _)| target)
+                    .collect();
+            targets
+        } else {
+            crate::access::get_attack_target(self, &unit, fire_on, false)
+                .into_iter()
+                .collect()
+        };
+
+        for target in &targets {
+            if let Some(target_unit) = self.unit_mut(*target) {
+                target_unit.pin_count = target_unit.pin_count.wrapping_add(1);
+            }
+        }
+
         self.live_attacks.push(LiveAttack {
             id: attack,
-            targets: Vec::new(),
+            targets,
         });
     }
 
     /// `UnitsManager_AddToDelayedReactionList` (`units_manager.cpp:3435`).
-    pub fn add_to_delayed_reaction_list(&mut self, _id: UnitId) {
+    pub fn add_to_delayed_reaction_list(&mut self, id: UnitId) {
         // Настройка `disable_fire` выключает реактивный огонь целиком.
         if self.disable_fire {
             return;
         }
 
-        // TODO(P5): `UnitsManager_DelayedAttackTargets[team]` — список целей
-        // реактивного огня (бой, P5). Флаг выставляется, чтобы цикл вёл себя
-        // как в C++.
+        let Some(unit) = self.unit(id) else {
+            return;
+        };
+        let team = unit.team;
+        if let Some(targets) = self.delayed_attack_targets.get_mut(team.0 as usize) {
+            if !targets.contains(&id) {
+                targets.push(id);
+            }
+        }
         self.delayed_reactions_pending = true;
     }
 
-    /// `UnitsManager_ClearDelayedReaction` для трёх списков
-    /// (`units_manager.cpp:3448-3461`) — очистка флага у живых юнитов.
-    ///
-    /// Точка вызова — `UnitsManager_AssessAttacks` (P5, `units_manager.cpp:4552`
-    /// и далее); метод подготовлен для боевого модуля.
+    /// `UnitsManager_ClearDelayedReactions` (`units_manager.cpp:3456`) —
+    /// сброс флага, `delayed_reaction` живых юнитов и всех списков целей.
     pub fn clear_delayed_reactions(&mut self) {
         self.delayed_reactions_pending = false;
 
@@ -823,6 +1048,10 @@ impl GameState {
                     self.write_unit(id, unit);
                 }
             }
+        }
+
+        for targets in &mut self.delayed_attack_targets {
+            targets.clear();
         }
     }
 
@@ -856,11 +1085,11 @@ impl GameState {
         }
 
         // `UnitsManager_PendingAirGroupLeader` → `Access_ProcessNewGroupOrder`:
-        // групповой приказ воздушной группы (P5 access).
+        // лидер остаётся в поле, пока путь группы не разрешён (C++).
         if let Some(leader) = self.pending_air_group_leader {
-            // TODO(P5): Access_ProcessNewGroupOrder (маршрут группы).
-            let _ = leader;
-            self.pending_air_group_leader = None;
+            if crate::access::process_new_group_order(self, leader) {
+                self.pending_air_group_leader = None;
+            }
         }
 
         // `UnitEvent_UnitEvents`: Process() каждого, затем Clear().
@@ -892,8 +1121,8 @@ impl GameState {
     /// Голова `UnitsManager_PendingAttacks` (`units_manager.cpp:1884-1930`).
     fn process_pending_attacks(&mut self) {
         if self.pending_attacks.is_empty() {
-            // `UnitsManager_AssessAttacks()` — P5 бой/реакции.
-            // TODO(P5): AssessAttacks().
+            // `UnitsManager_AssessAttacks()` — проверка отложенных реакций.
+            crate::combat::assess_attacks(self);
             return;
         }
 
@@ -1209,15 +1438,18 @@ impl GameState {
     }
 
     /// `ResourceManager_GetPathsManager().PollResults()` — P5 pathfinding.
+    ///
+    /// Синхронно считает и применяет все запросы в порядке постановки
+    /// (DESIGN риск 2): очередь `GameState::path_requests`.
     fn poll_path_results(&mut self) {
-        // TODO(P5): применить готовые пути в порядке постановки запросов
-        // (DESIGN риск 2). В P4 пути приходят готовыми: пакет 38 или
-        // `ORDER_MOVE` с линейным маршрутом.
+        crate::pathfinding::poll_results(self);
     }
 
-    /// `ResourceManager_GetPathsManager().DispatchJobs()` — P5 pathfinding.
+    /// `ResourceManager_GetPathsManager().DispatchJobs()` — в синхронной модели
+    /// работа выполнена в [`Self::poll_path_results`]; точка вызова сохранена,
+    /// чтобы порядок тика совпадал с C++ (DESIGN §5.1).
     fn dispatch_path_jobs(&mut self) {
-        // TODO(P5): синхронный обход очереди запросов путей.
+        crate::pathfinding::dispatch_jobs(self);
     }
 
     /// `Ai_CheckReactions` (`ai.cpp:407`) — P6. Точка вызова сохранена.
@@ -1350,6 +1582,45 @@ impl GameState {
         }
         out.push(u8::from(self.pending_air_group_leader.is_some()));
         put_u32(&mut out, self.unit_events.len() as u32);
+
+        // Отложенные реакции (`UnitsManager_DelayedAttackTargets`).
+        out.push(self.delayed_reactions_team.0);
+        for targets in &self.delayed_attack_targets {
+            put_u32(&mut out, targets.len() as u32);
+            for id in targets {
+                put_u16(&mut out, id.0);
+            }
+        }
+
+        // Очередь запросов путей (порядок = порядок постановки).
+        put_u32(&mut out, self.path_requests.len() as u32);
+        for request in &self.path_requests {
+            put_u16(&mut out, request.unit.0);
+            put_i16(&mut out, request.destination.x);
+            put_i16(&mut out, request.destination.y);
+            put_u32(&mut out, request.flags);
+            put_i32(&mut out, request.minimum_distance);
+            out.push(u8::from(request.board_transport));
+        }
+
+        // Групповые списки (`UnitInfoGroup`): номера групп по слотам.
+        put_u32(&mut out, self.groups.len() as u32);
+        for group in &self.groups {
+            match group {
+                Some(members) => {
+                    out.push(1);
+                    put_u32(&mut out, members.len() as u32);
+                    for id in members {
+                        put_u16(&mut out, id.0);
+                    }
+                }
+                None => out.push(0),
+            }
+        }
+        put_u32(&mut out, self.unit_group.len() as u32);
+        for group in &self.unit_group {
+            put_u32(&mut out, group.unwrap_or(u32::MAX));
+        }
 
         // Юниты: канонический порядок — пять списков (+ юниты вне списков).
         let ids = self.snapshot_unit_ids();
@@ -1717,6 +1988,72 @@ mod tests {
                 UnitOrderState::AttackPending
             );
         }
+    }
+
+    #[test]
+    fn scripted_combat_replay_is_deterministic() {
+        use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE, UPGRADABLE};
+
+        fn run() -> (Vec<u8>, u16, u16, u8) {
+            let mut state = GameState::new();
+            state.teams[0].team_type = TeamKind::Player;
+            state.teams[1].team_type = TeamKind::Player;
+            state.team_units[0] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
+            state.team_units[1] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
+            state.rng.set_seed(0xDEAD_BEEF);
+
+            let red = state
+                .spawn_unit(
+                    UnitType::Tank,
+                    TeamId::RED,
+                    Point::new(10, 10),
+                    MOBILE_LAND_UNIT | SELECTABLE | UPGRADABLE,
+                )
+                .unwrap();
+            let green = state
+                .spawn_unit(
+                    UnitType::Tank,
+                    TeamId::GREEN,
+                    Point::new(13, 10),
+                    MOBILE_LAND_UNIT | SELECTABLE | UPGRADABLE,
+                )
+                .unwrap();
+
+            // Серия выстрелов: каждый FIRE-приказ — один выстрел (после
+            // выстрела `RestoreOrders` возвращает AWAIT); начало хода
+            // восстанавливает `shots` (`UpdateProduction`).
+            for _ in 0..8 {
+                state.manage_economy(TeamId::RED);
+                let mut data = state.order_data(red);
+                data.fire_on = Point::new(13, 10);
+                data.move_to = Point::new(13, 10);
+                state.set_order_data(red, data);
+                state.set_order(red, UnitOrder::Fire, UnitOrderState::Init);
+                for _ in 0..8 {
+                    state.tick();
+                }
+                if !state.has_unit(green) || state.unit(green).map(|unit| unit.hits).unwrap_or(0) == 0 {
+                    break;
+                }
+            }
+            for _ in 0..2 {
+                state.tick();
+            }
+
+            let green_hits = state.unit(green).map(|unit| unit.hits).unwrap_or(0);
+            let red_ammo = state.unit(red).map(|unit| unit.ammo).unwrap_or(0);
+            let red_shots = state.unit(red).map(|unit| unit.shots).unwrap_or(0);
+            (state.snapshot_bytes(), green_hits, u16::from(red_ammo), red_shots)
+        }
+
+        let first = run();
+        let second = run();
+        assert_eq!(first.0, second.0, "боевой реплей недетерминирован");
+        assert_eq!((first.1, first.2, first.3), (second.1, second.2, second.3));
+        // 4 выстрела по 6 урона (24 hp) уничтожают цель; поведение
+        // зафиксировано, чтобы регрессия формул была видна.
+        assert_eq!(first.1, 0, "цель должна быть уничтожена");
+        assert_eq!(first.2, 10, "израсходовано 4 патрона из 14");
     }
 
     #[test]
