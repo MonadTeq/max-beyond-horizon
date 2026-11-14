@@ -6,4 +6,21 @@ license.workspace = true
 
 [dependencies]
 max_core = { path = "../max_core" }
+max_assets = { path = "../max_assets" }
 tracing.workspace = true
+
+# SDL3-обвязка — только под feature `sdl`, чтобы чистая часть крейта
+# собиралась и тестировалась без системного SDL3 (см. src/sdl_window.rs).
+sdl3 = { version = "0.22", optional = true, default-features = false }
+
+[features]
+default = []
+# Окно и вывод кадра: требует установленного SDL3 (libsdl3-dev / vcpkg).
+sdl = ["dep:sdl3"]
+# То же, но SDL3 собирается из исходников (нужен cmake); путь для CI/docker,
+# где системного SDL3 нет.
+sdl-from-source = ["sdl", "sdl3/build-from-source"]
+
+[[example]]
+name = "window"
+required-features = ["sdl"]
