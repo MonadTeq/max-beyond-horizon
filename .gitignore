@@ -77,3 +77,7 @@ max-original-dasm/tools/dos32a_src/
 
 # Worktree сайта автора (восстанавливается из max-cpp-port gh-pages)
 max-port-site/
+
+
+# Rust workspace artifacts
+max-rust/target/
