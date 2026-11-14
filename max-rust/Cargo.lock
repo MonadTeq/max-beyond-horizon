@@ -87,6 +87,7 @@ name = "max_assets"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "max_core",
  "serde",
 ]
 
