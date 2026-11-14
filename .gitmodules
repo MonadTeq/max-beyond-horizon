@@ -1,0 +1,3 @@
+[submodule "max-cpp-port"]
+	path = max-cpp-port
+	url = https://github.com/klei1984/max.git
