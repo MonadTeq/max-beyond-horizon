@@ -145,10 +145,10 @@ RE-стенд (1.4) ведётся параллельно как фоновая 
 - Формат: MZ + DOS/32A v9.1.2 (bound) + LE (заголовок 0x6B90); объекты 1-базовые:
   #1 код 0x10000 (0x12D469), #2 ISR COM2 0x140000, #3 данные 0x150000 (0x6F170).
 - Статический вход игры: **0x10C704** (плоский образ `maxrun.flat`, base 0x10000).
-- Динамика: T=0x54C; XMS-блок DOS/32A = 0x170000 (62.5 МБ); якорь — клиент INT21
-  (CS=1048, EIP=2714, Pr16); рантайм-размещение объекта #1 — открытый вопрос
-  (гипотезы 0x20D714/0x26C714 опровергнуты). Адреса CRT: `__astart` 0x10C77C,
-  `__InitRtns` 0x127E72, `__cstart_` 0x127E22, main 0x1A883E, main_menu 0x1B1E00.
-- Розеттский камень: 18 372 строки, 2583 → файлы C++.
+- **Рантайм (решено)**: obj#1 база 0x170010, вход **0x26C714**, формула
+  `runtime = static + 0x160010`, main() = 0x20884E, main_menu() = 0x211E10;
+  CS приложения = 1038 (плоский). Стоп-якорь: 1048:2714 (цикл apply_fixups).
+- Каталог: radare2 (с LE-fixups) — 6857 функций; 159 с именами файлов C++;
+  розеттский камень: 18 372 строки, 2583 → файлы C++.
 - Подробности: `max-original-dasm/README.md`, `TOOLS.md`,
-  `tools/dosbox/entry-strategy.md`, `tools/dosbox/runtime-mapping-analysis.md`.
+  `tools/dosbox/entry-strategy.md`, `tools/dosbox/runtime-placement.md`.

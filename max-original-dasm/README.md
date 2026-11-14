@@ -20,10 +20,14 @@
 - Статический вход игры: 0x10C704 = base(#1) + LE.eip(0xFC704); там `EB 76` через
   баннер WATCOM.
 - Рантайм (динамика, DOSBox-X): T (параграф загрузки стаба) = 0x54C; XMS-блок
-  DOS/32A = 0x170000 (62.5 МБ, `DOS XMS`); стабильный якорь — стоп на клиенте
-  INT 21h (CS=1048 база 0x20B000, EIP=2714, Pr16). **Точное рантайм-размещение
-  объекта #1 ещё не подтверждено** (гипотезы 0x20D714/0x26C714 опровергнуты:
-  0x20D714 — стаб INT21); следующий шаг — адрес возврата со стека клиента
-  (`DV 50:7C0`). См. `tools/dosbox/runtime-mapping-analysis.md` и `PLAN.md` §4.2.
-- Проектные документы: `PLAN.md` (v4.0), `TOOLS.md`, `docs/protocol.md`,
+  DOS/32A = 0x170000 (62.5 МБ). **Рантайм-размещение РЕШЕНО** (декодирован стек
+  цикла apply_fixups загрузчика): obj#1 база **0x170010**, obj#2 0x29D490,
+  obj#3 0x29D610; **вход игры = 0x26C714** (= 0x170010 + LE.eip 0xFC704),
+  формула `runtime = static + 0x160010`; main() = 0x20884E (CS приложения —
+  плоский 1038). Стоп 1048:2714 — цикл apply_fixups, а не INT21-клиент.
+  Детали: `tools/dosbox/runtime-placement.md`.
+- Каталог функций: radare2 (с применением LE-fixups) — 6857 функций, 428 строк
+  с xref'ами; `functions-named.csv/.md` — 159 функций с именами файлов C++
+  (`tools/r2_export.sh` + `tools/r2_to_csv.py` + `tools/join_functions.py`).
+- Проектные документы: `PLAN.md` (v5.0), `TOOLS.md`, `docs/protocol.md`,
   `docs/state-model.md`.
