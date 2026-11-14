@@ -32,4 +32,8 @@
 
 ## Статус
 
-Каркас workspace; модули наполняются по фазам R1–R4 из PLAN.md.
+- **R1 (каркас) — выполнено**: workspace собирается, тесты зелёные.
+- **R2 (Horizon + рендер) — текущая цель**: парсер PATCHES.RES (`max_assets`, по
+  `max-original-dasm/formats/res.md`), WS-лобби + UDP-сессия (`max_net`, по
+  `docs/protocol.md`), рендер мира из снапшота (`max_render`).
+- Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M5).
