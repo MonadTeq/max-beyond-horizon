@@ -38,7 +38,7 @@ Horizon, рендерит мир и юнитов из авторитетных �
 | `max-port-site/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
 | `src/` | C++-порт + наши доработки (headless/транспорт/RNG-чекпоинты) | сборка сервера | да |
 | `max-horizon-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
-| `client-rust-port/` | Rust-клиент | продукт (Цель 2) | да |
+| `max-rust/` | Rust-клиент | продукт (Цель 2) | да |
 | `docs/` | protocol.md, state-model.md, dedicated-server-plan.md | спецификации (Цель 1) | да |
 | `max-original-dasm/` | RE-артефакты и инструменты | верификация/пробелы | да (кроме пересобираемого) |
 | `max-original/` | оригинальная игра | источник данных/байтов | да, целиком |
@@ -88,7 +88,7 @@ Horizon, рендерит мир и юнитов из авторитетных �
 ## 4. Цель 2 — Rust-клиент
 
 ### R1 — Каркас ✅ выполнено
-Workspace `client-rust-port` (core/net/assets/render/app), `cargo check/test` зелёные.
+Workspace `max-rust` (core/net/assets/render/app), `cargo check/test` зелёные.
 
 ### R2 — Сессия Horizon + рендер мира
 - **2.1 `max_assets`** — парсер PATCHES.RES по 1.2 + таблицы ресурсов.
