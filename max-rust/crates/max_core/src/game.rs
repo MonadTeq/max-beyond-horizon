@@ -56,7 +56,7 @@
 //!    производные от клетки: `x = grid*64 + 32` (+31 для зданий).
 
 use crate::enums::{
-    unit_flags, GameStateType, PlayMode, Surface, UnitOrder, UnitOrderState, UnitType,
+    unit_flags, GameStateType, PlayMode, Surface, UnitOrder, UnitOrderState, UnitType, VictoryType,
 };
 use crate::events::CommandQueue;
 use crate::geo::Point;
@@ -231,6 +231,16 @@ pub struct GameState {
     pub commands: CommandQueue,
     /// Состояние ИИ: игроки, менеджер задач, тепловые карты (P6, `ai.cpp`).
     pub ai: crate::ai::AiState,
+
+    // --- правила партии (setup-константы; P7) ---
+    /// `SaveFormatHeader::mission_index` (0 — generic custom game).
+    pub mission_index: u16,
+    /// `MissionManager::GetMission()->GetCategory()` (`winloss.cpp:57`).
+    pub mission_category: crate::victory::MissionCategory,
+    /// `ini_setting_victory_type` (`VICTORY_TYPE_DURATION`/`SCORE`).
+    pub victory_type: VictoryType,
+    /// `ini_setting_victory_limit` — лимит ходов или очков.
+    pub victory_limit: i32,
 }
 
 impl Default for GameState {
@@ -303,6 +313,11 @@ impl GameState {
             real_time: false,
             commands: CommandQueue::new(),
             ai: crate::ai::AiState::new(),
+            // `settings.cpp` defaults: generic custom game, duration, лимит 50.
+            mission_index: 0,
+            mission_category: crate::victory::MissionCategory::Custom,
+            victory_type: VictoryType::Duration,
+            victory_limit: 50,
         }
     }
 
@@ -318,6 +333,274 @@ impl GameState {
         state.team_units[PLAYER_TEAM_COUNT] =
             TeamUnits::with_clan(crate::enums::TeamClan::Random);
         state
+    }
+
+    // -----------------------------------------------------------------------
+    // Загрузка V70-сейва (P7): нормализации `saveload.cpp` / `unitinfo.cpp`
+    // -----------------------------------------------------------------------
+
+    /// Партия из V70-сейва: [`Self::new`] + [`Self::load_state`].
+    pub fn from_save(save: &crate::save::SaveFile) -> Self {
+        let mut state = Self::new();
+        state.load_state(save);
+        state
+    }
+
+    /// Применяет разобранный V70-сейв к состоянию, **с нормализациями C++**,
+    /// чтобы загруженную партию сразу можно было тикать.
+    ///
+    /// # Порт `SaveLoad_LoadFormatV70` (`saveload.cpp:756`) и
+    /// `UnitInfo::FileLoad` (`unitinfo.cpp:2489`)
+    ///
+    /// 1. `UnitsManager_UnitIdCounter = PLAYER_TEAM_MAX << 13`
+    ///    (`saveload.cpp:834`) — новые id не пересекаются с V70-диапазоном.
+    /// 2. `unit.movement_wait_count = 0` (V70-ветка `FileLoad`).
+    /// 3. `unit.ai_state_bits &= ~(AI_STATE_MOVE_FINISHED_REMINDER |
+    ///    AI_STATE_RETREAT_REMINDER)` (`unitinfo.cpp:2512`) — напоминания ИИ
+    ///    живут только в текущем процессе и в сейв не переносятся.
+    /// 4. `build_rate == 0 → 1` (`unitinfo.cpp:2514`).
+    /// 5. `state ∈ {NEW_ORDER, MOVE_GETTING_PATH, ISSUING_PATH, IN_TRANSITION,
+    ///    IN_PROGRESS} → EXECUTING_ORDER` (`unitinfo.cpp:2527`): после загрузки
+    ///    незавершённых переходов нет.
+    /// 6. `HeatMap::LoadV70` — отрицательные значения клеток клампятся в 0
+    ///    (`heatmap.cpp:212`) для команд с `team_type != NONE`.
+    /// 7. `stats_gold_spent_on_upgrades` — кламп ≥ 0 (это делает `save.rs` при
+    ///    разборе, `read_team_info`).
+    /// 8. `TeamUnits` и `TeamInfo` переносятся как есть (`TeamUnits::FileLoad`).
+    ///
+    /// # Осознанные расхождения
+    ///
+    /// * `Randomizer` в V70 не сериализуется: C++ читает `rng_seed` заголовка
+    ///   только для лобби и **не** трогает состояние ГПСЧ при загрузке
+    ///   (`saveload.cpp:776`, `Randomizer_SetSeed` вызывается лишь при старте
+    ///   партии). Для детерминизма «загрузил → тикаешь» здесь поток
+    ///   пере-сидируется `header.rng_seed`.
+    /// * `Hash_MapHash`/`Hash_UnitHash` не копируются из файла как объекты: они
+    ///   восстанавливаются по спискам и id (порядок вставки — порядок файла).
+    /// * `MessageLog`, `selected_unit`, камера/зум и прочие UI-поля — вне
+    ///   `max_core` (state-model §6).
+    pub fn load_state(&mut self, save: &crate::save::SaveFile) {
+        use crate::enums::{AI_STATE_MOVE_FINISHED_REMINDER, AI_STATE_RETREAT_REMINDER};
+
+        // --- карта и заголовок партии ---
+        self.map = Map::from_parts(save.surface(), save.resource_map());
+        self.mission_index = save.header.mission_index;
+        self.mission_category =
+            crate::victory::MissionCategory::from_file_type(save.header.save_game_type);
+        self.play_mode = save.header.play_mode;
+        self.victory_type = save.ini_options.victory_type;
+        self.victory_limit = save.ini_options.victory_limit;
+
+        // --- глобальное состояние партии ---
+        self.game_state = save.game.game_state;
+        self.turn_counter = save.game.turn_counter;
+        self.active_turn_team = save.game.active_turn_team;
+        self.player_team = save.game.player_team;
+        // V70 не хранит состояние ГПСЧ (см. «Осознанные расхождения»).
+        self.rng = Randomizer::new(save.header.rng_seed);
+        self.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
+        self.live_attack_counter = 0;
+        self.orders_pending = false;
+        self.combat_effects_active = false;
+        self.delayed_reactions_pending = false;
+        self.pending_attacks.clear();
+        self.pending_air_group_leader = None;
+        self.unit_events.clear();
+        self.live_attacks.clear();
+        self.path_requests.clear();
+        self.chat_log.clear();
+        for targets in &mut self.delayed_attack_targets {
+            targets.clear();
+        }
+        self.delayed_reactions_team = TeamId::RED;
+        self.units_active = [None; TEAM_SLOTS];
+        self.turn_indices = [0; TEAM_SLOTS];
+        self.next_turn_indices = [0; TEAM_SLOTS];
+        self.team_data_crc16 = [0; TEAM_SLOTS];
+        self.frame_sync_counter = [0; TEAM_SLOTS];
+        self.frame_sync_counter2 = [0; TEAM_SLOTS];
+        self.commands = CommandQueue::new();
+
+        // --- команды: TeamInfo × 4 из файла, ALIEN — служебный слот ---
+        for team in 0..crate::save::SAVE_TEAM_COUNT {
+            self.teams[team] = save.teams[team].clone();
+        }
+        self.teams[PLAYER_TEAM_COUNT].team_type = TeamKind::Computer;
+        self.teams[PLAYER_TEAM_COUNT].team_clan = save.header.team_clan[PLAYER_TEAM_COUNT];
+
+        // --- TeamUnits × 4 из файла; ALIEN — пустые значения ---
+        let saved_team_units = save.team_units();
+        for team in 0..crate::save::SAVE_TEAM_COUNT {
+            self.team_units[team] = saved_team_units[team].clone();
+        }
+        self.team_units[PLAYER_TEAM_COUNT] = TeamUnits::new();
+
+        // --- юниты ---
+        self.units.clear();
+        self.free_slots.clear();
+        self.order_data.clear();
+        self.unit_group.clear();
+        self.groups.clear();
+        self.lists = std::array::from_fn(|_| Vec::new());
+        self.unit_hash = UnitHash::new(HASH_UNIT_HASH_SIZE);
+
+        let mut object_ids: Vec<(u16, UnitId)> = Vec::with_capacity(save.units.len());
+
+        for saved in &save.units {
+            let mut unit = saved.info.clone();
+
+            // `UnitInfo::FileLoad` (V70-ветка) + нормализации.
+            unit.movement_wait_count = 0;
+            unit.ai_state_bits &=
+                !(AI_STATE_MOVE_FINISHED_REMINDER | AI_STATE_RETREAT_REMINDER);
+            if unit.build_rate == 0 {
+                unit.build_rate = 1;
+            }
+            if matches!(
+                unit.state,
+                UnitOrderState::NewOrder
+                    | UnitOrderState::MoveGettingPath
+                    | UnitOrderState::IssuingPath
+                    | UnitOrderState::InTransition
+                    | UnitOrderState::InProgress
+            ) {
+                unit.state = UnitOrderState::ExecutingOrder;
+            }
+            // Ссылки разрешаются вторым проходом по номеру объекта.
+            unit.parent_unit = None;
+            unit.enemy_unit = None;
+
+            let slot = self.units.len();
+            object_ids.push((saved.object_index, unit.id));
+            self.units.push(Some(unit.clone()));
+            self.order_data.push(OrderData {
+                move_to: saved.info.target_grid,
+                fire_on: Point::ZERO,
+            });
+            self.unit_group.push(None);
+            self.unit_hash.push_at(u32::from(unit.id.0), slot as u16);
+        }
+
+        object_ids.sort_by_key(|(object_index, _)| *object_index);
+        let resolve = |object_index: u16| -> Option<UnitId> {
+            object_ids
+                .binary_search_by_key(&object_index, |entry| entry.0)
+                .ok()
+                .map(|index| object_ids[index].1)
+        };
+
+        for (index, saved) in save.units.iter().enumerate() {
+            let Some(entry) = self.units.get_mut(index) else { continue };
+            let Some(unit) = entry.as_mut() else { continue };
+
+            unit.parent_unit = if saved.parent_object_index == 0 {
+                None
+            } else {
+                resolve(saved.parent_object_index)
+            };
+            unit.enemy_unit = if saved.enemy_object_index == 0 {
+                None
+            } else {
+                resolve(saved.enemy_object_index)
+            };
+        }
+
+        // Пять списков — в порядке файла (`SmartList_UnitInfo_FileLoad`).
+        for kind in UnitListKind::ALL {
+            let mut members = Vec::new();
+            for &object_index in save.unit_list(kind) {
+                if let Some(id) = resolve(object_index) {
+                    members.push(id);
+                }
+            }
+            for &id in &members {
+                if let Some(unit) = self.unit_mut(id) {
+                    unit.unit_list = kind;
+                }
+            }
+            self.lists[kind.index()] = members;
+        }
+
+        // `Hash_MapHash` — из файла (порядок ведёрок/клеток/юнитов сохраняется).
+        self.map_hash = MapHash::for_standard_map();
+        for bucket in save.map_hash.buckets() {
+            for object in bucket {
+                let mut units = Vec::with_capacity(object.units.len());
+                for &object_index in &object.units {
+                    if let Some(id) = resolve(object_index) {
+                        units.push(id);
+                    }
+                }
+                if !units.is_empty() {
+                    self.map_hash.bucket_mut(object.x, object.y).push(
+                        crate::hash::MapHashObject {
+                            x: object.x,
+                            y: object.y,
+                            units,
+                        },
+                    );
+                }
+            }
+        }
+        // Страховка: юнит, которого нет в восстановленном хэше, добавляется по
+        // своей клетке (иначе `Access_*` его «не увидит»).
+        for id in self.snapshot_unit_ids() {
+            let Some(unit) = self.unit(id) else { continue };
+            let present = self
+                .units_at_opt(unit.grid)
+                .is_some_and(|ids| ids.contains(&id));
+            if !present {
+                self.map_hash_add(id, unit.grid, unit.flags);
+            }
+        }
+
+        // --- тепловые карты: `HeatMap::LoadV70` с клампом отрицательных ---
+        for team in 0..PLAYER_TEAM_COUNT {
+            let Some(saved) = save.heat_maps[team].as_deref() else { continue };
+            self.ai.heat_maps[team].load_v70(
+                &saved.complete,
+                &saved.stealth_sea,
+                &saved.stealth_land,
+            );
+        }
+
+        // --- состояние ИИ: игроки из сейва, очереди задач пусты ---
+        self.ai.task_manager = crate::ai::TaskManager::new();
+        self.ai.reaction_state = crate::ai::AiReactionState::Idle;
+        for team in 0..PLAYER_TEAM_COUNT {
+            let mut player = crate::ai::AiPlayer::new(TeamId(team as u8));
+
+            if let Some(saved) = save.ai_players[team].as_deref() {
+                player.strategy = crate::enums::AiStrategy::try_from(saved.strategy)
+                    .unwrap_or(crate::enums::AiStrategy::Random);
+                player.greenhouse_ratio = saved.greenhouse_ratio;
+                player.minefield_density = saved.minefield_density;
+                player.target_location = saved.target_location;
+                player.need_init = false;
+                player.spotted_units = saved
+                    .spotted_units
+                    .iter()
+                    .filter_map(|spotted| {
+                        let unit = spotted.unit?;
+                        Some(crate::ai::SpottedUnit {
+                            unit: Some(unit),
+                            task: None,
+                            team: TeamId(team as u8),
+                            last_position: spotted.last_position,
+                            visible_to_team: spotted.visible_to_team,
+                        })
+                    })
+                    .collect();
+                if let Some(map) = saved.info_map.as_deref() {
+                    player.info_map = map.to_vec();
+                }
+                if let Some(map) = saved.mine_map.as_deref() {
+                    player.mine_map = map.to_vec();
+                }
+            }
+
+            self.ai.players[team] = player;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1395,17 +1678,23 @@ impl GameState {
     }
 
     /// `GameManager_TeamTurnFinish` (`game_manager.cpp:583`) — закрытие хода:
-    /// проверка победы (P7), сброс `finished_turn`, график очков, счётчик хода.
+    /// проверка победы/поражения (P7), сброс `finished_turn`, график очков,
+    /// счётчик хода.
     ///
-    /// Возвращает `true`, если партия завершена (P7: `menu_check_end_game_conditions`).
-    /// TODO(P7): victory.rs — сейчас всегда «партия продолжается».
+    /// Возвращает `true`, если партия завершена
+    /// ([`crate::victory::check_end_game_conditions`] — порт
+    /// `menu_check_end_game_conditions`): тогда C++ не сбрасывает
+    /// `finished_turn` и не увеличивает счётчик хода.
     pub fn finish_turn(&mut self) -> bool {
         if self.game_state != GameStateType::EndTurn {
             return false;
         }
         self.game_state = GameStateType::InGame;
 
-        // TODO(P7): `menu_check_end_game_conditions(...)`.
+        // `menu_check_end_game_conditions(GameManager_TurnCounter, …, false)`.
+        if crate::victory::check_end_game_conditions(self) {
+            return true;
+        }
 
         for team in 0..PLAYER_TEAM_COUNT {
             self.teams[team].finished_turn = false;
@@ -1870,14 +2159,31 @@ mod tests {
 
     #[test]
     fn finish_turn_advances_counter_and_resets_flags() {
-        let mut state = GameState::new();
-        state.teams[0].team_type = TeamKind::Player;
+        let (mut state, _red, _green) = tank_state();
+        // P7: конец хода сначала проверяет победу/поражение
+        // (`menu_check_end_game_conditions`); живая команда + лимит не достигнут →
+        // партия продолжается. Сетевая ветка выключена (локальная семантика).
+        state.network_game = false;
+        state.victory_type = VictoryType::Duration;
+        state.victory_limit = 50;
         state.teams[0].finished_turn = true;
         state.game_state = GameStateType::EndTurn;
         assert!(!state.finish_turn());
         assert_eq!(state.turn_counter, 1);
         assert!(!state.teams[0].finished_turn);
         assert_eq!(state.game_state, GameStateType::InGame);
+    }
+
+    #[test]
+    fn finish_turn_stops_when_victory_condition_met() {
+        let (mut state, _red, _green) = tank_state();
+        state.network_game = false;
+        // `VICTORY_TYPE_DURATION` с нулевым лимитом: `limit <= turn_counter` → конец.
+        state.victory_type = VictoryType::Duration;
+        state.victory_limit = 0;
+        state.game_state = GameStateType::EndTurn;
+        assert!(state.finish_turn());
+        assert_eq!(state.turn_counter, 0);
     }
 
     #[test]

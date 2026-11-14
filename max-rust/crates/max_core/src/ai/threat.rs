@@ -220,6 +220,35 @@ impl HeatMap {
         &self.cells
     }
 
+    /// `HeatMap::LoadV70` (`heatmap.cpp:197`) — загрузка трёх слоёв из сейва.
+    ///
+    /// C++ читает `int8_t[112*112]` и **клампит отрицательные значения в 0**
+    /// (`legacy < 0 ? 0 : legacy`): в DOS-сейвах неинициализированные клетки
+    /// могли быть отрицательными. Аналог `complete_clamped` в `save.rs`, но
+    /// здесь — сразу в живую структуру `AiState::heat_maps`.
+    pub fn load_v70(
+        &mut self,
+        complete: &[i8; MAP_TILES],
+        stealth_sea: &[i8; MAP_TILES],
+        stealth_land: &[i8; MAP_TILES],
+    ) {
+        let clamp = |value: i8| -> u32 {
+            if value < 0 {
+                0
+            } else {
+                value as u32
+            }
+        };
+
+        for (index, cell) in self.cells.iter_mut().enumerate() {
+            *cell = HeatMapCell {
+                complete: clamp(complete[index]),
+                stealth_sea: clamp(stealth_sea[index]),
+                stealth_land: clamp(stealth_land[index]),
+            };
+        }
+    }
+
     /// `HeatMap::GetIndex` — `y * width + x`.
     fn index(x: i32, y: i32) -> Option<usize> {
         if x < 0 || y < 0 || x >= i32::from(MAP_WIDTH) || y >= i32::from(MAP_HEIGHT) {

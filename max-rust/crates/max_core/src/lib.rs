@@ -45,7 +45,13 @@
 //! * [`ai`] — ИИ: `AiPlayer` (стратегия, карты угроз, приоритеты атак),
 //!   `TaskManager` (очереди напоминаний `priority→normal→deferred`),
 //!   49 классов задач `task*.cpp`, `HeatMap`/`ThreatMap`, `WeightTable`,
-//!   решения `aiattack.cpp` (P6).
+//!   решения `aiattack.cpp` (P6);
+//! * [`victory`] — победа/поражение (P7): generic-правила (`winloss.cpp`,
+//!   `menu_check_end_game_conditions`), предикаты Lua-API `max_*`
+//!   (`scripter.cpp`), правила миссий 1:1 из `assets/PATCHES.RES`
+//!   (`SC_T*`/`SC_S*`/`SC_C*`), сортировка и ранги команд;
+//! * [`crc`] — CRC16 пакета 45 (`crc16.c`, `GameManager_CheckDesync`) и
+//!   канонические дайджесты состояния для сквозных тестов паритета (P7).
 //!
 //! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
 //! `f32`/`f64` в симуляции, итерация по `HashMap`.
@@ -57,6 +63,7 @@ pub mod enums;
 pub mod access;
 pub mod ai;
 pub mod combat;
+pub mod crc;
 pub mod events;
 pub mod game;
 pub mod geo;
@@ -72,6 +79,7 @@ pub mod team;
 pub mod unit;
 pub mod unit_order;
 pub mod unit_values;
+pub mod victory;
 
 pub use enums::{
     AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
@@ -96,6 +104,11 @@ pub use ai::HeatMap as AiHeatMap;
 pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
     progress_fire, ATTACK_DAMAGE_MIN,
+};
+pub use crc::{
+    crc16, crc16_update_byte, get_crc16_word, get_unit_list_checksum, replay_digest_bytes,
+    replay_digest_crc, state_checksum, state_digest, CRC16_INITIAL, CRC16_POLYNOMIAL,
+    REPLAY_DIGEST_MAGIC,
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
@@ -146,6 +159,19 @@ pub use unit_values::{
     ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_ATTACK_RADIUS, ATTRIB_COUNT, ATTRIB_FUEL, ATTRIB_HITS,
     ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED, ATTRIB_STORAGE,
     ATTRIB_TURNS, BASE_UNIT_VALUES, CLAN_TRADEOFFS, UNIT_COUNT,
+};
+pub use victory::{
+    cargo_fuel_consumption_rate, cargo_get_net_production, cargo_gold_consumption_rate,
+    cargo_life_consumption_rate, cargo_power_consumption_rate, cargo_raw_consumption_rate,
+    cargo_type_of, check_end_game_conditions, count_casualties, count_damaged_units,
+    count_ready_units, count_total_mining, count_units_above_attrib_level,
+    count_units_with_reduced_attrib, default_win_loss_conditions, evaluate_status,
+    get_normal_rate_build_cost, get_research_level, get_total_consumption, get_total_mining,
+    get_total_power_consumption, get_total_units_being_constructed, get_total_worth_of_assets,
+    get_worth_of_assets, has_attack_power, has_construction_infrastructure, has_materials,
+    has_production_infrastructure, has_unit_above_mark_level, has_unit_experience,
+    mission_win_loss, relevant_list, CargoType, MissionCategory, NetProduction, UnitClass,
+    WinLossStatus, PLAYING_TEAMS,
 };
 
 #[cfg(test)]
