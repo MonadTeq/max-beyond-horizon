@@ -286,7 +286,13 @@ impl GameState {
             self.write_unit(id, info);
         }
 
-        if self.teams[unit.team.0 as usize].team_type == TeamKind::Computer {
+        // C++-слот `PLAYER_TEAM_ALIEN` имеет `team_type = TEAM_TYPE_NONE`:
+        // у него нет `AiPlayer`, поэтому чужой трекер реакции не заводится.
+        // Уведомление spotting-команды (`Ai_UnitSpotted`) ниже остаётся, как в
+        // `UnitInfo::SpotByTeam`.
+        if unit.team != TeamId::ALIEN
+            && self.teams[unit.team.0 as usize].team_type == TeamKind::Computer
+        {
             self.ai_add_unit_to_tracker_list(id);
         }
 
@@ -566,6 +572,11 @@ pub fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
         return;
     };
 
+    // У `PLAYER_TEAM_ALIEN` нет `AiPlayer` (C++ `team_type == TEAM_TYPE_NONE`).
+    if info.team.0 as usize >= PLAYER_TEAM_COUNT {
+        return;
+    }
+
     if world.teams[info.team.0 as usize].team_type == TeamKind::Computer
         && info.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) > 0
     {
@@ -614,7 +625,8 @@ pub fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId) {
         return;
     };
 
-    let is_computer = world.teams[team.0 as usize].team_type == TeamKind::Computer;
+    let is_computer = (team.0 as usize) < PLAYER_TEAM_COUNT
+        && world.teams[team.0 as usize].team_type == TeamKind::Computer;
 
     if is_computer && info.flags & crate::enums::unit_flags::SELECTABLE != 0 {
         let mut player = std::mem::replace(
@@ -638,9 +650,10 @@ pub fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
         return;
     };
 
-    if world.teams[team.0 as usize].team_type == TeamKind::Computer
-        && info.flags & crate::enums::unit_flags::SELECTABLE != 0
-    {
+    let is_computer = (team.0 as usize) < PLAYER_TEAM_COUNT
+        && world.teams[team.0 as usize].team_type == TeamKind::Computer;
+
+    if is_computer && info.flags & crate::enums::unit_flags::SELECTABLE != 0 {
         let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
         player.unit_hidden(world, unit);

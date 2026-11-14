@@ -1049,7 +1049,11 @@ impl GameState {
         let mut unit = UnitInfo::new(unit_type, team, id);
         // Флаги типа — из таблицы `SC_UNITS` (`Unit::m_flags`); явные флаги
         // вызывающего слоя объединяются с ними (P3-совместимый вход).
-        unit.flags = flags | crate::access::unit_type_flags(unit_type);
+        // C++-код ниже (`DeployUnit`, `UnitInfo::SetPosition`) читает уже
+        // собранные флаги `unit->flags`, поэтому дальше используется
+        // `unit_flags`, а не только входной `flags`.
+        let merged_flags = flags | crate::access::unit_type_flags(unit_type);
+        unit.flags = merged_flags;
 
         // `UnitInfo::UnitInfo`: атрибуты из current values команды.
         if let Some(values) = self
@@ -1128,7 +1132,7 @@ impl GameState {
             _ => {}
         }
 
-        if team == TeamId::ALIEN && flags & unit_flags::REGENERATING_UNIT != 0 {
+        if team == TeamId::ALIEN && merged_flags & unit_flags::REGENERATING_UNIT != 0 {
             unit.orders = UnitOrder::Disable;
         }
 
@@ -1136,7 +1140,7 @@ impl GameState {
         unit.grid = grid;
         unit.x = (grid.x as i32 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
         unit.y = (grid.y as i32 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
-        if flags & unit_flags::BUILDING != 0 {
+        if merged_flags & unit_flags::BUILDING != 0 {
             unit.x = unit.x.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
             unit.y = unit.y.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
         }
@@ -1167,7 +1171,8 @@ impl GameState {
         // `Hash_UnitHash.PushBack(unit)` — ведёрко по `id % hash_size`.
         self.unit_hash.push_at(u32::from(id.0), slot as u16);
         // `Hash_MapHash.Add` (`units_manager.cpp`): клетка (у зданий — 2×2).
-        self.map_hash.add(id, grid.x as u16, grid.y as u16, flags, false);
+        self.map_hash
+            .add(id, grid.x as u16, grid.y as u16, merged_flags, false);
 
         self.add_to_draw_list(id);
 

@@ -80,6 +80,7 @@ Horizon-Network-Common = "0.2.0"
 # === Workspace Dependencies ===
 game_server = { path = "crates/game_server" }
 horizon = { path = "crates/horizon" }
+horizon_grpc = { path = "crates/horizon_grpc" }
 horizon_protocol = { path = "crates/horizon_protocol" }
 horizon_event_system = { path = "crates/horizon_event_system" }
 plugin_system = { path = "crates/plugin_system" }

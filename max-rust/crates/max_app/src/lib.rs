@@ -275,8 +275,8 @@ pub struct NewGameReport {
     /// Сколько команд участвует.
     pub teams: usize,
     /// Сколько alien-обломков вернул `setup::generate_map` (порядок
-    /// `UnitsManager_DeployUnit`; в `GameState` не развёрнуты — см.
-    /// [`App::new_game_on_surface`]).
+    /// `UnitsManager_DeployUnit`; все они развёрнуты в `GameState` под
+    /// `TeamId::ALIEN`).
     pub aliens: usize,
     /// Сколько юнитов в состоянии после генерации.
     pub units: usize,
@@ -535,20 +535,19 @@ impl App {
     /// Создаёт локальную партию на готовой карте поверхности.
     ///
     /// Порт `GameManager_InitGame` в объёме P2: `setup::generate_map` (ресурсы +
-    /// alien-обломки), затем `GameState::with_setup` и продолжение потока ГПСЧ
-    /// (как в C++, где `Randomizer_SetSeed` стоит в начале генерации партии).
+    /// alien-обломки), затем `GameState::with_setup`, развёртывание alien-обломков
+    /// (`UnitsManager_DeployUnit` с `team = PLAYER_TEAM_ALIEN`) и продолжение
+    /// потока ГПСЧ (как в C++, где `Randomizer_SetSeed` стоит в начале
+    /// генерации партии).
     ///
-    /// # Осознанное ограничение R2.4
+    /// # Alien-обломки
     ///
-    /// Расстановка alien-обломков **не разворачивается** в `GameState`:
-    /// `GameState::spawn_unit` для `TeamId::ALIEN` обращается к heat-map слою
-    /// `max_core` (`ai::heat_maps[team]`), который в P6 имеет длину
-    /// `PLAYER_TEAM_COUNT == 4`, и паникует на индексе 4. Пока этот слой
-    /// `max_core` не расширен, приложение возвращает число размещений в
-    /// [`NewGameReport::aliens`] (порядок `UnitsManager_DeployUnit` из
-    /// `setup::generate_map`), а `GameState` остаётся без юнитов. Рендер
-    /// карты/ресурсов от этого не страдает; развёртывание обломков — задача
-    /// следующего этапа вместе с правкой heat-map в `max_core`.
+    /// Порядок [`NewGameReport::aliens`] — это порядок `setup::generate_map`
+    /// (плита → здание → мосты → юниты), в котором C++
+    /// `GameManager_SpawnAlienDerelicts` вызывает `UnitsManager_DeployUnit`.
+    /// Юниты создаются в `GameState` от имени `TeamId::ALIEN`; тепловые карты
+    /// и командная статистика/условия победы их не видят (как в C++:
+    /// у `PLAYER_TEAM_ALIEN` `team_type == TEAM_TYPE_NONE` и `heat_map == null`).
     pub fn new_game_on_surface(
         &mut self,
         config: &NewGameConfig,
@@ -594,7 +593,20 @@ impl App {
         // Поток ГПСЧ продолжается после генерации — как в оригинале.
         state.rng = rng;
 
-        // См. «Осознанное ограничение R2.4» выше: обломки не разворачиваются.
+        // `GameManager_SpawnAlienDerelicts`: все размещения — `DeployUnit` с
+        // `team = PLAYER_TEAM_ALIEN`, в порядке генерации. C++ передаёт
+        // `skip_map_status_update = true`; в max_core `update_map_status`
+        // сам игнорирует `ALIEN` (у команды нет heat-map), поэтому
+        // результат тот же — командные слои не трогаются.
+        for placement in &output.aliens {
+            let _ = state.spawn_unit(
+                placement.unit_type,
+                TeamId::ALIEN,
+                placement.position,
+                0,
+            );
+        }
+
         let report = NewGameReport {
             planet: config.planet,
             seed: config.seed,

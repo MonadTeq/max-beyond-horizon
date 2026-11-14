@@ -19,6 +19,7 @@ A high-performance, modular game server architecture built in Rust, designed for
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [gRPC lobby/admin API](#grpc-lobbyadmin-api-horizonv1)
 - [Plugin Development](#plugin-development)
 - [Event System](#event-system)
 - [GORC System](#gorc-system)
@@ -136,6 +137,95 @@ max_connections_per_ip = 10
 ```
 
 Configuration options cover network settings, security parameters, plugin management, and game world boundaries. The server validates all configuration values at startup and provides detailed error messages for invalid settings.
+
+## gRPC lobby/admin API (`horizon.v1`)
+
+Besides the WebSocket listener the server can expose the lobby/admin control
+plane as **gRPC**. The contract lives in [`proto/`](proto/): `horizon.proto`
+(service `horizon.v1.Horizon`, ten unary RPCs) and `types.proto` (shared
+messages); the rationale and the JSON↔proto mapping are in
+[`docs/protocol-grpc.md`](../docs/protocol-grpc.md).
+
+The gRPC listener runs **in parallel** with WebSocket — both ports are served by
+the same process, and the WS protocol and plugins are unchanged. The server side
+is the `horizon_grpc` crate: a thin adapter that reuses the same services as the
+`max_lobby` / `max_admin` plugins — `max_session` for process lifecycle and
+ports, `max_auth` for signed per-player tickets, the same `[max]` config section
+and the same admin token scheme.
+
+### Enabling the listener
+
+```toml
+[server.grpc]
+enabled = true
+bind_address = "0.0.0.0:8082"   # default
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | start the gRPC listener |
+| `bind_address` | `"0.0.0.0:8082"` | address the listener binds |
+
+Add the section to the server's `config.toml` to run both transports; the sample
+config in this checkout enables it (WS stays on 8081, gRPC on 8082). Set
+`enabled = false` or omit the section to run WS-only. Remember to expose the
+gRPC port in your firewall / container (`EXPOSE`/`-p 8082:8082`). The `[max]`
+section below is shared with the plugins — `MAX_*` environment variables keep
+priority. TLS is not part of phase 1: the listener speaks plaintext HTTP/2
+(`h2c`); terminate TLS in front of it if clients need `https://`.
+
+### Methods
+
+| RPC | WebSocket equivalent |
+|---|---|
+| `Hello` | `hello` → `hello_ack` |
+| `ListGames` | `max_lobby:list_games` → `game_list` |
+| `CreateGame` | `max_lobby:create_game` → `game_created` |
+| `JoinGame` | `max_lobby:join_game` → `game_joined` |
+| `AdminListSessions` | `max_admin:list_sessions` → `sessions_listed` |
+| `AdminSessionStatus` | `max_admin:session_status` |
+| `AdminSessionStop` | `max_admin:stop_session` |
+| `AdminSessionRestart` | `max_admin:restart_session` |
+| `AdminSessionStart` | `max_admin:start_session` |
+| `Ping` | `system:ping` |
+
+Errors are standard gRPC statuses: `status.message` carries the exact legacy WS
+`error`/`admin_error` text and `status.code` the category (`NOT_FOUND`,
+`PERMISSION_DENIED`, `INVALID_ARGUMENT`, `UNAVAILABLE`, `UNAUTHENTICATED`, …;
+complete tables in `docs/protocol-grpc.md` §6). The three admin responses that
+report failures *inline* keep `ok:false` + `horizon.v1.Error` for tooling parity.
+Tickets (`Ticket.value`, `Ticket.kind`, parsed `session_id`/`player_id`/
+`expires_at_unix`) and `host`/`port` are exactly the values the WS protocol
+returns, so a session obtained over one transport works over the other.
+
+### Trying it out
+
+```bash
+cargo test -p horizon_grpc          # unit tests + integration test (real tonic server on 127.0.0.1:0)
+
+# with the server running and [server.grpc] enabled:
+grpcurl -plaintext -import-path proto -proto horizon.proto \
+  -d '{"protocol_version":1,"client":"max_net/0.1"}' \
+  127.0.0.1:8082 horizon.v1.Horizon/Hello
+
+grpcurl -plaintext -import-path proto -proto horizon.proto \
+  127.0.0.1:8082 horizon.v1.Horizon/ListGames
+
+# Admin token: hex(HMAC-SHA256([max].admin_secret, "max-admin")).
+TOKEN=$(python3 -c 'import hmac,hashlib;print(hmac.new(b"change-me-admin",b"max-admin",hashlib.sha256).hexdigest())')
+grpcurl -plaintext -import-path proto -proto horizon.proto \
+  -d "{\"admin_token\":\"$TOKEN\"}" \
+  127.0.0.1:8082 horizon.v1.Horizon/AdminListSessions
+```
+
+### Implementation note
+
+In phase 1 the adapter owns its own `max_session::SessionManager`, just as the
+`max_lobby` and `max_admin` plugins each own one. All of them are configured from
+the same `[max]` section, so game rules, ports and tickets match on both
+transports, but a game created over gRPC is not listed by the WS plugin until
+the shared-handle refactor described in `docs/protocol-grpc.md` §4.4. During the
+transition pick one transport per lobby.
 
 ## Plugin Development
 

@@ -356,15 +356,36 @@ impl HeatMap {
 // Интеграция с GameState: Access_UpdateMapStatus и callouts
 // ---------------------------------------------------------------------------
 
+/// Индекс тепловой карты команды или `None` для `ALIEN`.
+///
+/// В C++ тепловая карта — `std::unique_ptr` слота `TeamInfo`, и
+/// `ResourceManager_InitHeatMaps` создаёт её только для команд с
+/// `team_type != TEAM_TYPE_NONE`; у `PLAYER_TEAM_ALIEN` `team_type` — `NONE`, а
+/// `heat_map == nullptr`. Поэтому все обращения к слоям для `ALIEN` (и любого
+/// индекса вне `0..PLAYER_TEAM_COUNT`) игнорируются, как проверки
+/// `if (team_info.heat_map)` в `access.cpp`/`unitinfo.cpp`.
+#[inline]
+fn heat_map_index(team: TeamId) -> Option<usize> {
+    let index = team.0 as usize;
+    (index < crate::game::PLAYER_TEAM_COUNT).then_some(index)
+}
+
 impl GameState {
     /// Идиома временного изъятия тепловой карты: `&mut self.ai.heat_maps` и
     /// доступ к юнитам через `&mut GameState` несовместимы по заимствованию.
-    fn with_heat_map<R>(&mut self, team: TeamId, f: impl FnOnce(&mut HeatMap, &mut GameState) -> R) -> R {
-        let index = team.0 as usize;
+    ///
+    /// `None` — у команды нет карты (C++ `heat_map == nullptr`), операция
+    /// пропускается.
+    fn with_heat_map<R>(
+        &mut self,
+        team: TeamId,
+        f: impl FnOnce(&mut HeatMap, &mut GameState) -> R,
+    ) -> Option<R> {
+        let index = heat_map_index(team)?;
         let mut map = std::mem::replace(&mut self.ai.heat_maps[index], HeatMap::new(team));
         let result = f(&mut map, self);
         self.ai.heat_maps[index] = map;
-        result
+        Some(result)
     }
 
     /// `Access_IsWithinScanRange` (`access.cpp:353`).
@@ -525,11 +546,19 @@ impl GameState {
         };
 
         let team = unit.team;
+        if heat_map_index(team).is_none() {
+            // C++ `Access_UpdateMapStatusAddUnit`: `heat_map` у `ALIEN` — null.
+            return access::TARGET_CLASS_NONE;
+        }
+
         let sea_was_zero = self.ai_heat_map_stealth_sea(team, grid_x, grid_y) == 0;
         let land_was_zero = self.ai_heat_map_stealth_land(team, grid_x, grid_y) == 0;
 
-        let (complete_was_hidden, sea_transition, land_transition) =
-            self.with_heat_map(team, |map, _world| map.add_raw(&unit, grid_x, grid_y));
+        let Some((complete_was_hidden, sea_transition, land_transition)) =
+            self.with_heat_map(team, |map, _world| map.add_raw(&unit, grid_x, grid_y))
+        else {
+            return access::TARGET_CLASS_NONE;
+        };
 
         let mut result = access::TARGET_CLASS_NONE;
 
@@ -583,7 +612,16 @@ impl GameState {
         };
 
         let team = unit.team;
-        let became_hidden = self.with_heat_map(team, |map, _world| map.remove_raw(&unit, grid_x, grid_y));
+        if heat_map_index(team).is_none() {
+            // C++ `Access_UpdateMapStatusRemoveUnit`: у `ALIEN` карты нет.
+            return;
+        }
+
+        let Some(became_hidden) =
+            self.with_heat_map(team, |map, _world| map.remove_raw(&unit, grid_x, grid_y))
+        else {
+            return;
+        };
 
         if became_hidden {
             self.hide_cell(team, grid_x, grid_y);
@@ -614,6 +652,16 @@ impl GameState {
 
         let visible_team = unit.team;
         if self.teams[visible_team.0 as usize].team_type == TeamKind::None {
+            return;
+        }
+
+        // C++ `Access_UpdateMapStatus` обновляет слои только для команд
+        // `PLAYER_TEAM_RED..GRAY`; у `PLAYER_TEAM_ALIEN` тепловой карты нет
+        // (`ResourceManager_InitHeatMaps`), поэтому alien-юниты в командных
+        // heat-map/статистиках не участвуют. Явная проверка индекса нужна
+        // потому, что в max_core слот `ALIEN` помечен `Computer` (см.
+        // `GameState::with_setup`), в отличие от `TEAM_TYPE_NONE` в C++.
+        if heat_map_index(visible_team).is_none() {
             return;
         }
 
@@ -675,23 +723,34 @@ impl GameState {
     }
 
     /// `Access_IsVisibleOnHeatMap` (`access.cpp:538`).
+    ///
+    /// C++: `heat_map && heat_map->IsVisible(unit)`; у `ALIEN` карты нет —
+    /// `false`.
     pub fn is_visible_on_heat_map(&self, unit: &UnitInfo, team: TeamId) -> bool {
-        self.ai.heat_maps[team.0 as usize].is_unit_visible(unit)
+        heat_map_index(team)
+            .and_then(|index| self.ai.heat_maps.get(index))
+            .is_some_and(|map| map.is_unit_visible(unit))
     }
 
     /// Сканирование клетки командой (`HeatMap::GetComplete`).
     pub fn ai_heat_map_complete(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
-        self.ai.heat_maps[team.0 as usize].get_complete(grid_x, grid_y)
+        heat_map_index(team)
+            .and_then(|index| self.ai.heat_maps.get(index))
+            .map_or(0, |map| map.get_complete(grid_x, grid_y))
     }
 
     /// Стелс-море клетки (`HeatMap::GetStealthSea`).
     pub fn ai_heat_map_stealth_sea(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
-        self.ai.heat_maps[team.0 as usize].get_stealth_sea(grid_x, grid_y)
+        heat_map_index(team)
+            .and_then(|index| self.ai.heat_maps.get(index))
+            .map_or(0, |map| map.get_stealth_sea(grid_x, grid_y))
     }
 
     /// Стелс-земля клетки (`HeatMap::GetStealthLand`).
     pub fn ai_heat_map_stealth_land(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
-        self.ai.heat_maps[team.0 as usize].get_stealth_land(grid_x, grid_y)
+        heat_map_index(team)
+            .and_then(|index| self.ai.heat_maps.get(index))
+            .map_or(0, |map| map.get_stealth_land(grid_x, grid_y))
     }
 }
 

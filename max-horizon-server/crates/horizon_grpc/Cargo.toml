@@ -1,0 +1,38 @@
+[package]
+name = "horizon_grpc"
+version = "0.1.0"
+edition = "2021"
+description = "Horizon lobby/admin gRPC server (horizon.v1): a thin adapter over max_session and max_auth that runs next to the WebSocket listener."
+
+[dependencies]
+# The control-plane services the gRPC adapter is a thin layer over: session
+# lifecycle/manager and signed tickets. The WebSocket plugins use the very same
+# crates, so `Ticket.value`/`host`/`port` are identical on both transports.
+max_session = { path = "../max_session" }
+max_auth = { path = "../max_auth" }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["net"] }
+tracing = { workspace = true }
+serde = { workspace = true }
+
+# gRPC stack. Tonic 0.14 keeps protobuf compilation in `tonic-prost-build` and
+# the codec in `tonic-prost`; this mirrors max-rust/crates/max_net (the client).
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+
+[build-dependencies]
+# `protoc-bin-vendored` ships a prebuilt protoc, so neither Docker nor CI needs
+# an `apt-get install protobuf-compiler` (same approach as max_net).
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+toml = { workspace = true }

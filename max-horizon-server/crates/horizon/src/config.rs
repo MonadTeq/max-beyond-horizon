@@ -64,6 +64,11 @@ pub struct ServerSettings {
     /// WebTransport listener settings (`[server.webtransport]`), disabled by default
     #[serde(default)]
     pub webtransport: game_server::config::WebTransportConfig,
+    /// gRPC lobby/admin listener settings (`[server.grpc]`). The listener speaks
+    /// `horizon.v1.Horizon` (see `horizon_grpc` / `docs/protocol-grpc.md`) and
+    /// runs next to the WebSocket listener; disabled by default.
+    #[serde(default)]
+    pub grpc: horizon_grpc::GrpcSettings,
     /// Security limits (`[server.security]`); every key is optional
     #[serde(default)]
     pub security: game_server::config::SecurityConfig,
@@ -410,6 +415,7 @@ impl Default for AppConfig {
                 websocket: WebSocketSettings::default(),
                 compression: Default::default(),
                 webtransport: Default::default(),
+                grpc: Default::default(),
                 security: Default::default(),
             },
             plugins: PluginSettings {
@@ -584,6 +590,9 @@ impl AppConfig {
             return Err("Plugin directory cannot be empty".to_string());
         }
 
+        // Validate the optional gRPC lobby/admin listener (`[server.grpc]`)
+        self.server.grpc.validate()?;
+
         // Validate log level
         let valid_levels = ["trace", "debug", "info", "warn", "error"];
         if !valid_levels.contains(&self.logging.level.as_str()) {
@@ -622,6 +631,9 @@ mod tests {
         assert_eq!(config.server.connection_timeout, 60);
         assert_eq!(config.server.use_reuse_port, false);
         assert_eq!(config.server.tick_interval_ms, 50);
+        // The gRPC lobby/admin listener is opt-in and defaults to port 8082.
+        assert!(!config.server.grpc.enabled);
+        assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
         
         // Test region settings
         assert_eq!(config.server.region.min_x, -1000.0);
@@ -661,6 +673,7 @@ mod tests {
             websocket: WebSocketSettings::default(),
             compression: Default::default(),
             webtransport: Default::default(),
+            grpc: Default::default(),
             security: Default::default(),
         };
 
@@ -809,6 +822,7 @@ file_path = "/tmp/test.log"
                 websocket: WebSocketSettings::default(),
                 compression: Default::default(),
                 webtransport: Default::default(),
+                grpc: Default::default(),
                 security: Default::default(),
             },
             plugins: PluginSettings {
@@ -955,6 +969,53 @@ json_format = false
         assert_eq!(config.server.use_reuse_port, false);
         assert_eq!(config.server.tick_interval_ms, 50); // Default from default_tick_interval()
         assert!(config.logging.file_path.is_none());
+        // A config without [server.grpc] keeps the listener disabled.
+        assert!(!config.server.grpc.enabled);
+        assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
+    }
+
+    #[test]
+    fn test_grpc_listener_section() {
+        let toml_content = r#"
+[server]
+bind_address = "0.0.0.0:8081"
+
+[server.region]
+min_x = -1000.0
+max_x = 1000.0
+min_y = -1000.0
+max_y = 1000.0
+min_z = -100.0
+max_z = 100.0
+
+[server.grpc]
+enabled = true
+bind_address = "0.0.0.0:8082"
+
+[plugins]
+directory = "plugins"
+auto_load = true
+whitelist = []
+
+[logging]
+level = "info"
+json_format = false
+"#;
+
+        let config: AppConfig = toml::from_str(toml_content).unwrap();
+        assert!(config.server.grpc.enabled);
+        assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
+        assert_eq!(
+            config.server.grpc.socket_addr().unwrap().to_string(),
+            "0.0.0.0:8082"
+        );
+        assert!(config.validate().is_ok());
+
+        // A malformed gRPC bind address fails validation.
+        let mut invalid = config;
+        invalid.server.grpc.bind_address = "not-an-address".to_string();
+        let error = invalid.validate().unwrap_err();
+        assert!(error.contains("invalid [server.grpc] bind_address"));
     }
 
     #[test]

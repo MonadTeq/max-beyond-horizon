@@ -133,7 +133,14 @@ pub fn attack_unit(
         // у команды-компьютера появляется проверка реакции, а верхняя задача
         // юнита получает напоминание о завершении состояния.
         state.write_unit(target_id, target.clone());
-        crate::ai::ai_add_unit_to_tracker_list(state, target_id);
+        // C++ `UnitInfo::AttackUnit` (`unitinfo.cpp:1575`): трекер реакции —
+        // только у компьютерной команды цели. У `PLAYER_TEAM_ALIEN` нет
+        // `AiPlayer` (`team_type == TEAM_TYPE_NONE`), поэтому пропускаем.
+        if (target.team.0 as usize) < PLAYER_TEAM_COUNT
+            && state.teams[target.team.0 as usize].team_type == TeamKind::Computer
+        {
+            crate::ai::ai_add_unit_to_tracker_list(state, target_id);
+        }
     }
 
     if target.hits == 0 {
@@ -779,6 +786,14 @@ fn is_team_reaction_pending(
 
 /// `UnitsManager_CheckDelayedReactions(team)` (`units_manager.cpp:4888`).
 pub fn check_delayed_reactions(state: &mut GameState, team: TeamId) -> bool {
+    // C++ (`units_manager.cpp:4891`): реактивный огонь только у команд с
+    // `team_type != TEAM_TYPE_NONE`. У `PLAYER_TEAM_ALIEN` тип — `NONE`, а в
+    // max_core слот помечен `Computer`, поэтому проверяем индекс явно:
+    // alien-юниты не должны получать реактивные приказы.
+    if team.0 as usize >= PLAYER_TEAM_COUNT {
+        return false;
+    }
+
     let team_type = state.teams[team.0 as usize].team_type;
     if team_type == TeamKind::None || team_type == TeamKind::Eliminated {
         return false;

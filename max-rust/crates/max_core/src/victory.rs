@@ -1411,7 +1411,11 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
         let team_id = TeamId(team as u8);
         let kind = state.teams[team].team_type;
 
-        if kind == TeamKind::None {
+        // C++: у `PLAYER_TEAM_ALIEN` `team_type = TEAM_TYPE_NONE` (`ResourceManager_InitTeamInfo`),
+        // поэтому служебная команда обломков не попадает в `teams_total`/
+        // `teams_in_play` и не участвует в условиях победы. В max_core слот
+        // `ALIEN` помечен `Computer`, поэтому пропускаем его явно.
+        if team == TeamId::ALIEN.0 as usize || kind == TeamKind::None {
             continue;
         }
 

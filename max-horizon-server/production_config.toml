@@ -27,6 +27,13 @@ enable_ddos_protection = true
 banned_ips = []
 max_connections_per_ip = 5
 
+# gRPC lobby/admin listener (horizon.v1.Horizon). Runs beside the WebSocket
+# listener; see docs/protocol-grpc.md and the README. Terminate TLS in front of
+# this port if clients connect over https:// (phase 1 serves plaintext h2c).
+[server.grpc]
+enabled = true
+bind_address = "0.0.0.0:8082"
+
 [plugins]
 directory = "/opt/horizon/plugins"
 auto_load = true

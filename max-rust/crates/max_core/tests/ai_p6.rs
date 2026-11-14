@@ -22,10 +22,14 @@
 //! приказов → `EndTurn` + `finish_turn`.
 
 use max_core::ai::{TaskKind, TASK_TYPE_CREATE_BUILDING, TASK_TYPE_MOVE};
-use max_core::enums::{GameStateType, Opponent, Surface, TeamClan, UnitOrder, UnitType};
+use max_core::enums::{
+    unit_flags, GameStateType, Opponent, Surface, TeamClan, UnitOrder, UnitOrderState, UnitType,
+};
+use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
 use max_core::map::{Map, ResourceKind, ResourceMapEntry};
 use max_core::team::{TeamId, TeamKind};
+use max_core::victory;
 use max_core::GameState;
 
 /// Маленькая карта: суша 24×24 в левом верхнем углу, остальное — вода.
@@ -296,4 +300,117 @@ fn ai_turns_advance_and_reminders_are_processed() {
         "constructor must be building or moving, got {:?}",
         unit.orders
     );
+}
+
+// ---------------------------------------------------------------------------
+// Alien-юниты вне командных структур (C++ `PLAYER_TEAM_ALIEN`)
+// ---------------------------------------------------------------------------
+
+/// Спавн от имени `ALIEN` не трогает heat-map/игроков 0..4 и не паникует.
+///
+/// C++: `ResourceManager_InitHeatMaps` не создаёт карту для
+/// `PLAYER_TEAM_ALIEN` (`team_type == TEAM_TYPE_NONE`), а `DeployUnit` для
+/// обломков вызывается с `skip_map_status_update = true`.
+#[test]
+fn alien_units_stay_outside_team_heat_maps_and_victory() {
+    let mut state = computer_state();
+
+    // Ровно тот вызов, что делает `App::new_game_on_surface`: `flags = 0`,
+    // флаги типа (включая `REGENERATING_UNIT`) добавляет `spawn_unit`.
+    let alien_tank = state
+        .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(12, 12), 0)
+        .expect("alien tank deploys");
+    let alien_gun = state
+        .spawn_unit(UnitType::AlienAssaultGun, TeamId::ALIEN, Point::new(13, 12), 0)
+        .expect("alien assault gun deploys");
+    let alien_building = state
+        .spawn_unit(UnitType::LargeSlab, TeamId::ALIEN, Point::new(15, 15), 0)
+        .expect("alien building deploys");
+
+    // `DeployUnit`: `team == PLAYER_TEAM_ALIEN && flags & REGENERATING_UNIT`
+    // → `ORDER_DISABLE` (флаги берутся из типа, а не только из аргумента).
+    assert_eq!(
+        state.unit(alien_tank).map(|unit| unit.orders),
+        Some(UnitOrder::Disable)
+    );
+    assert_eq!(
+        state.unit(alien_gun).map(|unit| unit.orders),
+        Some(UnitOrder::Disable)
+    );
+
+    // Юниты в списках и в хэше карты; здание занимает 2×2, как
+    // `Hash_MapHash.Add(unit, flags & GROUND_COVER)` в C++.
+    for id in [alien_tank, alien_gun, alien_building] {
+        let unit = state.unit(id).expect("alien unit alive");
+        assert_eq!(unit.team, TeamId::ALIEN);
+        assert!(state.unit_list(unit.unit_list).contains(&id));
+        assert!(state.units_at(unit.grid).contains(&id));
+    }
+
+    let building = state.unit(alien_building).expect("building alive");
+    assert_ne!(building.flags & unit_flags::BUILDING, 0);
+    for cell in [
+        Point::new(building.grid.x + 1, building.grid.y),
+        Point::new(building.grid.x, building.grid.y + 1),
+        Point::new(building.grid.x + 1, building.grid.y + 1),
+    ] {
+        assert!(
+            state.units_at(cell).contains(&alien_building),
+            "building must occupy {cell:?}"
+        );
+    }
+
+    // Слои реальных команд не получили вклада от alien-юнитов.
+    for team in 0..PLAYER_TEAM_COUNT {
+        for cell in [Point::new(12, 12), Point::new(13, 12), Point::new(15, 15)] {
+            let team = TeamId(team as u8);
+            assert_eq!(state.ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)), 0);
+            assert_eq!(state.ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)), 0);
+            assert_eq!(state.ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)), 0);
+        }
+    }
+
+    // Для `ALIEN` карты нет: C++-проверки `heat_map && …` дают 0/false.
+    assert_eq!(state.ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
+    assert_eq!(state.ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12), 0);
+    assert_eq!(state.ai_heat_map_stealth_land(TeamId::ALIEN, 12, 12), 0);
+    let unit = state.unit(alien_tank).expect("alien tank alive");
+    assert!(!state.is_visible_on_heat_map(unit, TeamId::ALIEN));
+
+    // Служебная команда не участвует в условиях победы: раньше `ALIEN` с
+    // `team_type = Computer` попадал в `teams_total`.
+    let status = victory::evaluate_status(&state, state.turn_counter);
+    assert_eq!(status.teams_total, 1, "в партии только красные");
+    assert_eq!(
+        status.teams_in_play, 0,
+        "у красных нет юнитов, а ALIEN не считается играющей командой"
+    );
+    assert_eq!(status.team_type[TeamId::ALIEN.0 as usize], 0);
+
+    // Тик, смена приказа и уничтожение alien-юнитов не паникуют.
+    state.tick();
+    state.set_order(alien_building, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
+    state.tick();
+
+    // Атака alien-юнита: C++ `UnitInfo::AttackUnit` не заводит трекер
+    // реакции для команды с `team_type == NONE`, а `Ai_UnitSpotted` с
+    // `team = ALIEN` не обращается к несуществующему `AiPlayer`.
+    let commando = state
+        .spawn_unit(UnitType::Commando, TeamId::RED, Point::new(11, 12), 0)
+        .expect("commando deploys");
+    max_core::combat::attack_unit(&mut state, alien_tank, commando, 0, 0);
+    state.tick();
+
+    state.destroy_unit(alien_building);
+    state.destroy_unit(alien_tank);
+    state.destroy_unit(alien_gun);
+    state.destroy_unit(commando);
+    state.tick();
+
+    for id in [alien_building, alien_tank, alien_gun, commando] {
+        assert!(state.unit(id).is_none(), "юнит {id:?} должен быть уничтожен");
+    }
+    // Взрыв уничтоженного alien-танка — законный юнит-эффект его команды
+    // (`StartExplosion` спавнит `HITEXPLD` с `team` погибшего), поэтому
+    // проверяем только отсутствие самих обломков.
 }

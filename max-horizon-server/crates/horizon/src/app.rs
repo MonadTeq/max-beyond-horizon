@@ -8,6 +8,7 @@ use crate::{cli::CliArgs, config::AppConfig, logging::display_banner, signals::{
 use horizon_event_system::ShutdownState;
 use game_server::GameServer;
 use game_server::atlas_client::{AtlasClient, AtlasConfig, register_with_atlas};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -26,6 +27,9 @@ use tracing::{error, info, warn};
 pub struct Application {
     /// Loaded application configuration
     config: AppConfig,
+    /// Path the configuration was loaded from (the gRPC adapter re-reads the
+    /// same file for its `[max]` section)
+    config_path: PathBuf,
     /// Game server instance
     server: GameServer,
     /// Atlas client for registration (if enabled)
@@ -56,6 +60,11 @@ impl Application {
     /// 5. Initialize game server with configuration
     /// 6. Log startup information and feature summary
     pub async fn new(args: CliArgs) -> Result<Self, Box<dyn std::error::Error>> {
+        // Keep the path: the gRPC lobby/admin listener is configured from the
+        // same file (its `[max]` section is read by the adapter itself, exactly
+        // like the WS plugins read it).
+        let config_path = args.config_path.clone();
+
         // Load configuration first (before logging setup)
         info!("🔧 Loading configuration from: {}", args.config_path.display());
         let mut config = AppConfig::load_from_file(&args.config_path).await?;
@@ -127,7 +136,7 @@ impl Application {
             config.plugins.directory
         );
 
-        Ok(Self { config, server, atlas_client })
+        Ok(Self { config, config_path, server, atlas_client })
     }
 
     /// Runs the application with enhanced monitoring and error handling.
@@ -164,6 +173,33 @@ impl Application {
 
         // Clone the config for final statistics display
         let config = self.config.clone();
+
+        // ---- gRPC lobby/admin listener (`[server.grpc]`) ----
+        // Runs next to the WebSocket listener (docs/protocol-grpc.md §4.4): the
+        // WS plugin path is untouched, the gRPC adapter is additive.
+        let grpc_settings = self.config.server.grpc.clone();
+        let grpc_config_path = self.config_path.clone();
+        let (grpc_shutdown_tx, grpc_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut grpc_shutdown_tx = Some(grpc_shutdown_tx);
+        let grpc_handle = if grpc_settings.enabled {
+            info!(
+                "🌐 Starting the gRPC lobby/admin listener on {}",
+                grpc_settings.bind_address
+            );
+            Some(tokio::spawn(async move {
+                let shutdown = async move {
+                    let _ = grpc_shutdown_rx.await;
+                };
+                if let Err(error) =
+                    horizon_grpc::serve(&grpc_settings, &grpc_config_path, shutdown).await
+                {
+                    error!("❌ gRPC lobby/admin listener error: {error}");
+                }
+            }))
+        } else {
+            info!("🌐 gRPC lobby/admin listener disabled ([server.grpc].enabled = false)");
+            None
+        };
 
         // Create shutdown state for coordinated shutdown  
         let shutdown_state = ShutdownState::new();
@@ -307,6 +343,18 @@ impl Application {
             info!("✅ Plugin shutdown completed successfully");
         }
 
+        // Stop the gRPC listener (if any) and the sessions its backend owns.
+        if let Some(shutdown) = grpc_shutdown_tx.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(handle) = grpc_handle {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => info!("✅ gRPC lobby/admin listener stopped"),
+                Ok(Err(error)) => warn!("⚠️ gRPC listener task failed: {error}"),
+                Err(_) => warn!("⏰ gRPC listener did not stop within 5 seconds"),
+            }
+        }
+
         // Give time for connection cleanup
         info!("⏳ Waiting for connections to close...");
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -339,6 +387,14 @@ impl Application {
             "  ⏱️ Connection timeout: {}s",
             self.config.server.connection_timeout
         );
+        if self.config.server.grpc.enabled {
+            info!(
+                "  🌐 gRPC lobby/admin listener: {} (horizon.v1.Horizon)",
+                self.config.server.grpc.bind_address
+            );
+        } else {
+            info!("  🌐 gRPC lobby/admin listener: disabled");
+        }
     }
 }
 

@@ -197,7 +197,7 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     );
     assert_eq!(
         report.units, 0,
-        "развёртывание alien-обломков пока не выполняется (heat-map max_core)"
+        "derelicts=0 не должен создавать юнитов в GameState"
     );
     // У P2-вектора `p00_l111_d0_s0` уровень обломков 0 — размещений нет
     // (в самом векторе тоже 0 строк `placement`).
@@ -222,8 +222,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     assert_eq!(stats.units(), report.units);
     assert!(frame.pixels().chunks_exact(4).all(|pixel| pixel[3] == 255));
 
-    // Уровень обломков 2 даёт непустую расстановку из setup (сами юниты в
-    // GameState не разворачиваются — ограничение R2.4).
+    // Уровень обломков 2 даёт непустую расстановку из setup, и все размещения
+    // разворачиваются в GameState от имени ALIEN (C++ `DeployUnit`).
     let mut with_aliens = config.clone();
     with_aliens.derelicts = ResourceLevel::HIGH;
 
@@ -234,16 +234,81 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         aliens_report.aliens > 0,
         "derelicts=2 должен дать размещения: {aliens_report:?}"
     );
-    assert_eq!(aliens_report.units, 0);
+    assert_eq!(
+        aliens_report.units, aliens_report.aliens,
+        "каждое размещение alien-обломков должно стать юнитом GameState"
+    );
     assert_eq!(
         aliens_report.resources_crc, expected_resources_crc,
         "уровень обломков не влияет на карту ресурсов"
     );
-    assert_eq!(app_aliens.digest().units, 0);
+    assert_eq!(app_aliens.digest().units, aliens_report.units);
+
+    // Юниты — в списках, хэше карты и с корректной командой; у зданий заняты
+    // все четыре клетки 2×2 (`Hash_MapHash.Add`).
+    {
+        let state = app_aliens.state();
+        let alien_ids: Vec<_> = state
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|id| state.unit(*id).is_some_and(|unit| unit.team == TeamId::ALIEN))
+            .collect();
+
+        assert_eq!(alien_ids.len(), aliens_report.units);
+        assert_eq!(
+            state.unit_ids_in_order().len(),
+            aliens_report.units,
+            "кроме alien-обломков в новой партии юнитов нет"
+        );
+
+        for id in &alien_ids {
+            let unit = state.unit(*id).expect("юнит из unit_ids_in_order");
+            assert!(
+                state.unit_list(unit.unit_list).contains(id),
+                "юнит {id:?} должен быть в списке {:?}",
+                unit.unit_list
+            );
+            assert!(
+                state.units_at(unit.grid).contains(id),
+                "юнит {id:?} должен быть в map hash клетки {:?}",
+                unit.grid
+            );
+
+            if unit.flags & max_core::enums::unit_flags::BUILDING != 0 {
+                let right = Point::new(unit.grid.x + 1, unit.grid.y);
+                let down = Point::new(unit.grid.x, unit.grid.y + 1);
+                let corner = Point::new(unit.grid.x + 1, unit.grid.y + 1);
+                for cell in [right, down, corner] {
+                    assert!(
+                        state.units_at(cell).contains(id),
+                        "здание {id:?} должно занимать клетку {cell:?} (2×2)"
+                    );
+                }
+            }
+        }
+    }
+
+    // Тик не паникует, дайджест стабилен между одинаковыми прогонами.
+    let mut replay_aliens = App::new(AppConfig::default().with_screen(320, 240));
+    let replay_aliens_report = replay_aliens.new_game_on_surface(&with_aliens, &surface);
+    assert_eq!(aliens_report, replay_aliens_report);
+    assert_eq!(app_aliens.digest(), replay_aliens.digest());
+
+    for _ in 0..3 {
+        app_aliens.tick();
+        replay_aliens.tick();
+    }
+    assert_eq!(app_aliens.digest(), replay_aliens.digest());
+    assert_eq!(
+        app_aliens.digest().units, aliens_report.units,
+        "alien-обломки не исчезают за тики"
+    );
 
     let (aliens_frame, aliens_stats) = app_aliens.render_frame_with_stats();
     assert_eq!((aliens_frame.width(), aliens_frame.height()), (320, 240));
-    assert_eq!(aliens_stats.units(), 0);
+    // В камеру 320×240 попадает лишь часть карты, поэтому рисуется не больше
+    // юнитов, чем есть в состоянии (обломки обычно вне стартового вида).
+    assert!(aliens_stats.units() <= aliens_report.units);
 }
 
 // ---------------------------------------------------------------------------
