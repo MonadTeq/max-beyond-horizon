@@ -8,6 +8,38 @@
 не входят как свободные ассеты и остаются собственностью Interplay Productions
 (см. `README.md`).
 
+## [Unreleased]
+
+### Добавлено
+
+- **M-SP — одиночная игра против ИИ** (`docs/plan-modes.md`):
+  - экран настройки 1:1 из трёх экранов C++-порта (`max_app/src/setup.rs`):
+    `GameConfigMenu` (`OPTNFRM`: сложность ИИ, таймеры, режим игры, кредиты,
+    уровни ресурсов, условие победы), `PlanetSelectMenu` (`PLANETSE`: 3×2
+    мини-карты из `.WRL`, стрелки групп, описания 24 планет),
+    `ChoosePlayerMenu` (`CHOSPLYR`: 4 слота Human/Computer/None, флаги команд
+    с эмблемой клана);
+  - локальный цикл (`max_app/src/local.rs`, порт `GameManager_TeamTurnTurnBased`):
+    `manage_economy` → `Ai_BeginTurn` → тики ИИ до `end_turn_retry_counter > 120`
+    → пакет `06` → следующая команда → `finish_turn`; End Turn, таймер хода,
+    пауза; 1 человек + 1–3 компьютера, V70 читается в локальную партию;
+  - экран победы/поражения 1:1 (`max_app/src/winloss.rs`):
+    `menu_draw_game_over_screen` — `ENDGAME1..9`, места, статистика,
+    `ENDARM`/`ENDOK`;
+  - контейнер сохранения локальной партии `MXLS`
+    (`App::local_save_bytes`/`write_local_save`/`read_local_save`): настройки +
+    фаза + снимок состояния с CRC (запись `GameState → V70` — открытый пункт);
+  - 12 сквозных тестов `max_app/tests/local_sp.rs`, кадры
+    `cargo run -p max_app --example sp_frames`.
+
+### Исправлено
+
+- **Декодер big image**: RLE начинается с байта 776, а не 777 (C++
+  `WindowManager_DecodeBigImage` читает с `&image->transparent_color`).
+  До исправления `FRAMEPIC` и `ENDGAME1..9` декодировались со сдвигом на байт
+  («scanline»-артефакты); исправление затронуло хром игрового окна, фоны
+  экрана победы и все big image меню.
+
 ## [1.0.1] — 2026-11-15
 
 - Исправлено зеркальное отображение текста UI (порядок битов глифов font8x8 — LSB-first); пересобраны Windows UI- и Linux-артефакты.

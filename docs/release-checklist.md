@@ -529,3 +529,12 @@ bash release.sh                             # §5, артефакты
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max_app.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |
+
+## Приложение C. M-SP (локальная партия против ИИ)
+
+| Гейт | Команда | Результат | Ссылка |
+|---|---|---|---|
+| Настройка 1:1 | `cargo run -p max_app --example sp_frames` | `OPTNFRM`/`PLANETSE`/`CHOSPLYR` кадры | `build/sp-*.png` |
+| Локальный цикл | `cargo test -p max_app --test local_sp` | 12 тестов | — |
+| Windows UI | `build\scripts\build-windows-ui.ps1` | zip + sha256 | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Декодер big image | `cargo test -p max_assets` | RLE с 776 | — |

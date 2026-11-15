@@ -66,7 +66,7 @@ pub struct MenuButtonPair {
 }
 
 impl MenuButtonPair {
-    fn image(&self, down: bool) -> &SimpleImage {
+    pub fn image(&self, down: bool) -> &SimpleImage {
         if down {
             &self.down
         } else {
@@ -346,6 +346,27 @@ pub struct MenuAssets {
     pub multgame: Option<BigImage>,
     /// Фон окна игры (`FRAMEPIC`) — fallback, если чего-то из меню нет.
     pub framepic: Option<BigImage>,
+    /// Фон экрана настройки партии (`OPTNFRM`, `GameConfigMenu`).
+    pub optnfrm: Option<BigImage>,
+    /// Фон экрана выбора команд (`CHOSPLYR`, `ChoosePlayerMenu`).
+    pub chosplyr: Option<BigImage>,
+    /// Картинки планет по группам (`SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC`).
+    pub planet_group_pictures: [Option<BigImage>; 4],
+    /// Стрелки смены группы планет (`MNULAROU`, `MNURAROU`).
+    pub planet_arrows: Option<(SimpleImage, SimpleImage)>,
+    /// Кнопки выбора типа команды: `CH_HUM_U/D`, `CH_CMP_U/D`, `CH_NON_U/D`.
+    pub team_kind_buttons: [Option<MenuButtonPair>; 3],
+    /// Флаги команд `CH_TM1_U/D` … `CH_TM4_U/D`.
+    pub team_banners: [Option<MenuButtonPair>; 4],
+    /// Эмблема клана `CLN0LOGO` (42×65): `ChoosePlayerMenu::ButtonInit`
+    /// копирует её на флаг команды в (41,40).
+    pub clan_logo: Option<SimpleImage>,
+    /// Фоны экрана победы/поражения (`ENDGAME1`…`ENDGAME9`).
+    pub endgame_backgrounds: Vec<BigImage>,
+    /// `ENDARM` — картинка в правом нижнем углу экрана победы.
+    pub endarm: Option<SimpleImage>,
+    /// Кнопка `OK` экрана победы (`ENDOK_U/D`).
+    pub endok: Option<MenuButtonPair>,
     /// «Портрет» главного меню (`P_TANK` 300×240).
     pub portrait: Option<BigImage>,
     /// Большие кнопки `BLANK_UP/DN` 200×29.
@@ -420,6 +441,36 @@ impl MenuAssets {
             planetse: read_big("PLANETSE"),
             multgame: read_big("MULTGAME"),
             framepic,
+            optnfrm: read_big("OPTNFRM"),
+            chosplyr: read_big("CHOSPLYR"),
+            planet_group_pictures: [
+                read_big("SNOW_PIC"),
+                read_big("CRTR_PIC"),
+                read_big("GREN_PIC"),
+                read_big("DSRT_PIC"),
+            ],
+            planet_arrows: read_simple("MNULAROU").zip(read_simple("MNURAROU")),
+            team_kind_buttons: [
+                pair("CH_HUM_U", "CH_HUM_D"),
+                pair("CH_CMP_U", "CH_CMP_D"),
+                pair("CH_NON_U", "CH_NON_D"),
+            ],
+            team_banners: [
+                pair("CH_TM1_U", "CH_TM1_D"),
+                pair("CH_TM2_U", "CH_TM2_D"),
+                pair("CH_TM3_U", "CH_TM3_D"),
+                pair("CH_TM4_U", "CH_TM4_D"),
+            ],
+            clan_logo: read_simple("CLN0LOGO"),
+            endgame_backgrounds: [
+                "ENDGAME1", "ENDGAME2", "ENDGAME3", "ENDGAME4", "ENDGAME5", "ENDGAME6", "ENDGAME7",
+                "ENDGAME8", "ENDGAME9",
+            ]
+            .iter()
+            .filter_map(|name| read_big(name))
+            .collect(),
+            endarm: read_simple("ENDARM"),
+            endok: pair("ENDOK_U", "ENDOK_D"),
             portrait,
             blank: pair("BLANK_UP", "BLANK_DN")?,
             small_blank: pair("SBLNK_UP", "SBLNK_DN")?,

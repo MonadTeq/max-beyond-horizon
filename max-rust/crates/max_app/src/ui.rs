@@ -61,8 +61,11 @@ use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::hud::{self, HudButton};
+use crate::local::LocalSetup;
 use crate::menu;
 use crate::panels::{self, PanelButton};
+use crate::setup::{self, GameSetupForm, SetupTransition};
+use crate::winloss;
 use crate::App;
 
 /// Имя игры по умолчанию, если поле «Name» пустое.
@@ -148,6 +151,8 @@ pub enum Transition {
     None,
     /// Войти в игру: `main.rs` запускает существующий `run_network`.
     StartSession(SessionRequest),
+    /// Начать локальную партию (M-SP) с этими настройками.
+    StartLocal(Box<LocalSetup>),
     /// Выйти из сессии (Esc в SDL-цикле).
     LeaveSession,
     /// Закрыть приложение.
@@ -386,6 +391,10 @@ pub enum Screen {
     },
     /// Форма создания игры.
     CreateForm(CreateForm),
+    /// Настройка локальной партии (M-SP): Options → Planet → Players.
+    LocalSetup(GameSetupForm),
+    /// Экран победы/поражения локальной партии.
+    GameOver,
     /// Игра идёт: карта + статус; сетевой цикл запускает `main.rs`.
     InSession {
         /// Куда подключаться.
@@ -486,6 +495,10 @@ pub struct UiContext {
     pub mouse: Option<Point>,
     /// Фокус главного меню (`0..=2`).
     pub focus: usize,
+    /// Имя игрока по умолчанию (`--player`) для настройки M-SP.
+    pub player_name: String,
+    /// Каталог `.WRL`-карт для мини-карт экрана планет.
+    pub world_dir: std::path::PathBuf,
     /// Звук (M6.2): клики меню. Без feature `sound` — тихий no-op.
     pub audio: AudioPlayer,
 }
@@ -500,6 +513,8 @@ impl UiContext {
             status: String::new(),
             mouse: None,
             focus: 0,
+            player_name: "Player".to_string(),
+            world_dir: std::path::PathBuf::from("max-original"),
             audio: AudioPlayer::new(),
         }
     }
@@ -588,10 +603,39 @@ impl Screen {
         if matches!(self, Self::CreateForm(_)) {
             return self.handle_create_form(ctx, event);
         }
+        if matches!(self, Self::LocalSetup(_)) {
+            return self.handle_local_setup(ctx, event);
+        }
+        if matches!(self, Self::GameOver) {
+            return match event {
+                InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Escape) => {
+                    Transition::LeaveSession
+                }
+                InputEvent::MouseClick(x, y) if winloss::ok_at(x, y) => Transition::LeaveSession,
+                _ => Transition::None,
+            };
+        }
 
         match event {
             InputEvent::Key(Key::Escape) => Transition::LeaveSession,
             _ => Transition::None,
+        }
+    }
+
+    /// Ввод на экране настройки M-SP (`Options` → `Planet` → `Players`).
+    fn handle_local_setup(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let Self::LocalSetup(form) = self else {
+            return Transition::None;
+        };
+
+        match form.handle_input(event, ctx.width, ctx.height) {
+            SetupTransition::None => Transition::None,
+            SetupTransition::Back => {
+                *self = Self::MainMenu;
+                ctx.status = "New game cancelled".to_string();
+                Transition::None
+            }
+            SetupTransition::Start(setup) => Transition::StartLocal(setup),
         }
     }
 
@@ -660,6 +704,34 @@ impl Screen {
                     view.height,
                 );
             }
+            Self::LocalSetup(form) => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    setup::draw_setup(buffer, menu_assets, form, view.status, mouse);
+                    return;
+                }
+
+                // Кадр не 640×480: экраны настройки нарисованы в координатах
+                // оригинала, поэтому показываем честную подсказку.
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Setup screens use the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
+            Self::GameOver => {
+                if let (Some(menu_assets), Some(app)) = (menu_assets, view.app) {
+                    if let Some(local) = app.local() {
+                        winloss::draw_game_over(buffer, menu_assets, app.state(), local, mouse);
+                        return;
+                    }
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(buffer, 12, 12, view.status, Rgba::rgb(232, 236, 244));
+            }
             Self::InSession { .. } => render_session(buffer, view),
         }
     }
@@ -708,8 +780,13 @@ impl Screen {
 
         match activate {
             Some(MAIN_CREATE) => {
-                *self = Self::CreateForm(CreateForm::default());
-                ctx.status = "Configure the game and press Enter".to_string();
+                // M-SP: «New Game» открывает настройку локальной партии
+                // (`menu_custom_game_menu`: Options → Planet → Players).
+                let mut form = GameSetupForm::default();
+                form.setup.player_name = ctx.player_name.clone();
+                form.world_dir = ctx.world_dir.clone();
+                *self = Self::LocalSetup(form);
+                ctx.status = "New game: options, Enter — next screen, Esc — back".to_string();
                 Transition::None
             }
             Some(MAIN_JOIN) => {
@@ -760,6 +837,7 @@ impl Screen {
             Refresh,
             Join,
             Help,
+            Create,
         }
 
         let mut action = None;
@@ -809,6 +887,9 @@ impl Screen {
             InputEvent::Key(Key::Enter) => action = Some(Action::Join),
             InputEvent::Key(Key::Escape) => action = Some(Action::Back),
             InputEvent::Key(Key::Char('r' | 'R')) => action = Some(Action::Refresh),
+            // Создание сетевой игры (форма `CreateForm`) — с экрана списка игр:
+            // в главном меню эта кнопка теперь открывает настройку M-SP.
+            InputEvent::Key(Key::Char('c' | 'C')) => action = Some(Action::Create),
             _ => {}
         }
 
@@ -834,6 +915,11 @@ impl Screen {
             }
             Some(Action::Help) => {
                 ctx.status = "Help: screen is not ported yet".to_string();
+                Transition::None
+            }
+            Some(Action::Create) => {
+                *self = Self::CreateForm(CreateForm::default());
+                ctx.status = "Create a network game (Enter creates, Esc back)".to_string();
                 Transition::None
             }
             Some(Action::Join) => {
@@ -1086,6 +1172,11 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 session_right_click(app, x, y, online)
             }
         }
+        InputEvent::Key(Key::Char('p' | 'P')) if app.local_active() => {
+            // Пауза локальной партии (`PauseMenu`): тики и таймер стоят.
+            app.local_toggle_pause();
+            Transition::None
+        }
         InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) => {
             app.hud_mut().chat.open();
             app.hud_mut()
@@ -1269,6 +1360,11 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
             app.hud_mut().panels.minimap_tnt = !current;
             return Transition::None;
         }
+        PanelButton::Pause if app.local_active() => {
+            // Пауза M-SP: `PauseMenu` — тики и таймер хода останавливаются.
+            app.local_toggle_pause();
+            return Transition::None;
+        }
         PanelButton::Files
         | PanelButton::Preferences
         | PanelButton::Play
@@ -1439,10 +1535,12 @@ fn session_map_right_click(
     Transition::None
 }
 
-/// End Turn: в сети — флаг для игрового цикла (`06`+`52` там же), в демо —
-/// локальный проход [`App::end_turn`].
+/// End Turn: в локальной партии — ход ИИ, в сети — флаг для игрового цикла
+/// (`06`+`52` там же), в демо — локальный проход [`App::end_turn`].
 fn session_end_turn(app: &mut App, online: bool) {
-    if online {
+    if app.local_active() {
+        app.local_end_turn();
+    } else if online {
         app.hud_mut().request_end_turn();
         app.hud_mut().push_log("End Turn requested");
     } else {
@@ -2284,19 +2382,21 @@ mod tests {
     }
 
     #[test]
-    fn main_menu_opens_the_create_form_and_escape_goes_back() {
+    fn main_menu_opens_the_local_setup_and_escape_goes_back() {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::MainMenu;
 
+        // M-SP: «New Game» открывает настройку локальной партии (Options).
         assert_eq!(key(&mut screen, &mut ctx, Key::Enter), Transition::None);
-        assert!(matches!(screen, Screen::CreateForm(_)));
+        assert!(matches!(screen, Screen::LocalSetup(_)));
+        if let Screen::LocalSetup(form) = &screen {
+            assert_eq!(form.screen, crate::setup::SetupScreen::Options);
+        }
 
-        // Tab ведёт к следующему полю.
-        key(&mut screen, &mut ctx, Key::Tab);
-        if let Screen::CreateForm(form) = &screen {
-            assert_eq!(form.focus, CreateField::World);
-        } else {
-            panic!("ожидалась форма создания");
+        // Enter ведёт к следующему экрану (Planet).
+        key(&mut screen, &mut ctx, Key::Enter);
+        if let Screen::LocalSetup(form) = &screen {
+            assert_eq!(form.screen, crate::setup::SetupScreen::Planet);
         }
 
         key(&mut screen, &mut ctx, Key::Escape);
@@ -2424,8 +2524,10 @@ mod tests {
         let (mut ctx, log) = context(Vec::new(), Some(created.clone()));
         let mut screen = Screen::MainMenu;
 
-        // Create game (фокус по умолчанию — первая кнопка).
-        key(&mut screen, &mut ctx, Key::Enter);
+        // Сетевая форма доступна со списка игр (клавиша C): «New Game» заняла
+        // настройка M-SP.
+        char(&mut screen, &mut ctx, 'j');
+        char(&mut screen, &mut ctx, 'c');
         for c in "Duel".chars() {
             char(&mut screen, &mut ctx, c);
         }
@@ -2664,7 +2766,10 @@ mod tests {
         );
 
         assert_eq!(transition, Transition::None);
-        assert!(matches!(screen, Screen::CreateForm(_)));
+        assert!(
+            matches!(screen, Screen::LocalSetup(_)),
+            "New Game открывает настройку локальной партии"
+        );
 
         let mut screen = Screen::MainMenu;
         let exit = menu::main_menu_rect(menu::MainMenuAction::Quit).expect("Exit");
@@ -2810,7 +2915,7 @@ mod tests {
         let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(create.x, create.y));
 
         assert_eq!(transition, Transition::None);
-        assert!(matches!(screen, Screen::CreateForm(_)));
+        assert!(matches!(screen, Screen::LocalSetup(_)));
         assert_eq!(*calls.lock().expect("lock"), 1, "клик должен озвучиваться");
         assert_eq!(ctx.audio.plays(), 1);
     }

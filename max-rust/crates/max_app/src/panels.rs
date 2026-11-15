@@ -93,6 +93,40 @@ impl UiPalette {
     pub fn palette_rgba(&self) -> max_render::terrain::PaletteRgba {
         self.colors.map(|color| [color[0], color[1], color[2], 255])
     }
+
+    /// Ближайший цвет палитры — дословный `Color_MapColor(palette, r, g, b, true)`
+    /// (`color.cpp:79`): перебор всех 256 цветов по сумме квадратов разностей,
+    /// первый минимальный выигрывает.
+    ///
+    /// Нужен для мини-карт планет: `Menu_LoadPlanetMinimap` переводит цвета
+    /// `.WRL` (делённые на 4) в палитру окна этим вызовом.
+    pub fn map_color(&self, rgb: [u8; 3]) -> Rgba {
+        let mut best = 0usize;
+        let mut best_distance = i32::MAX;
+
+        for (index, color) in self.colors.iter().enumerate() {
+            let red = i32::from(color[0]) - i32::from(rgb[0]);
+            let green = i32::from(color[1]) - i32::from(rgb[1]);
+            let blue = i32::from(color[2]) - i32::from(rgb[2]);
+            let distance = red * red + green * green + blue * blue;
+
+            if distance < best_distance {
+                best_distance = distance;
+                best = index;
+
+                if distance == 0 {
+                    break;
+                }
+            }
+        }
+
+        Rgba::from_rgb(self.colors[best])
+    }
+
+    /// Цвет палитры по индексу как `[r, g, b]`.
+    pub fn color_rgb(&self, index: u8) -> [u8; 3] {
+        self.colors[usize::from(index)]
+    }
 }
 
 /// Переключатель панели или кнопка, обрабатываемая хромом.

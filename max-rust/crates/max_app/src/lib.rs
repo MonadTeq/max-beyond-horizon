@@ -38,11 +38,14 @@ pub mod audio;
 pub mod chrome;
 pub mod cursor;
 pub mod hud;
+pub mod local;
 pub mod menu;
 pub mod net;
 pub mod panels;
 pub mod render;
+pub mod setup;
 pub mod ui;
+pub mod winloss;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -74,6 +77,7 @@ pub use hud::{
     build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
     HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
+pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
@@ -455,6 +459,8 @@ pub struct App {
     /// маршрута и приказы из ввода. В снапшот/CRC **не входит** — выделение
     /// не должно менять детерминизм симуляции ([`AppDigest`] его не видит).
     hud: hud::HudState,
+    /// Состояние локальной партии M-SP (`None` — сети/демо/меню).
+    pub(crate) local: Option<local::LocalGame>,
 }
 
 impl App {
@@ -470,6 +476,7 @@ impl App {
             ticks: 0,
             applied_commands: 0,
             hud: hud::HudState::new(),
+            local: None,
         }
     }
 
@@ -607,6 +614,7 @@ impl App {
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
+        self.local = None;
         self.focus_player();
 
         Ok(())
@@ -751,6 +759,7 @@ impl App {
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
+        self.local = None;
         self.focus_player();
 
         report

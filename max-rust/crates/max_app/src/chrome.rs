@@ -131,7 +131,6 @@ mod tests {
         let mut palette = [0u8; max_assets::image::PALETTE_BYTES];
         palette[3..6].copy_from_slice(&[1, 2, 3]);
         bytes.extend_from_slice(&palette);
-        bytes.push(0);
 
         // Каждая строка: литерал из width байт индекса 1 (RLE с n > 0).
         let row = vec![1u8; width as usize];

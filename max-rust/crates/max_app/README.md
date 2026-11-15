@@ -161,10 +161,46 @@ max_app --ui --turn-wait 0           # прежнее поведение (по �
 
 | Экран | Что делает | Клавиши/мышь |
 |---|---|---|
-| **MainMenu** | Create game / Join game / Quit | Up/Down/Tab + Enter; клик; `C`/`J`/`Q`; Esc — выход |
-| **CreateForm** | имя, планета (`0..=23`), таймеры, число противников, пароль | Tab/Up/Down — поле; ввод; Left/Right — числа; Enter — создать; Esc — назад |
-| **JoinList** | список игр из `ListGames`; выбор и вход | Up/Down + Enter; клик по строке; `R` — обновить; Esc — назад |
-| **InSession** | карта (`map_render`) + HUD (M4.2) | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, клик по миникарте — камера, Esc — отмена/выход |
+| **MainMenu** | New game (M-SP) / Join game / Quit | Up/Down/Tab + Enter; клик; `C`/`J`/`Q`; Esc — выход |
+| **LocalSetup** | M-SP 1:1: Options (`OPTNFRM`) → Planet (`PLANETSE`) → Players (`CHOSPLYR`) | клик по радиокнопкам/слотам/кнопкам; ввод имени и лимита победы; Enter — дальше; Esc — назад |
+| **CreateForm** | сетевая игра: имя, планета (`0..=23`), таймеры, число противников, пароль (открывается клавишей `C` в списке игр) | Tab/Up/Down — поле; ввод; Left/Right — числа; Enter — создать; Esc — назад |
+| **JoinList** | список игр из `ListGames`; выбор и вход | Up/Down + Enter; клик по строке; `R` — обновить; `C` — создать игру; Esc — назад |
+| **InSession** | карта (`map_render`) + HUD (M4.2); в локальной партии — ходы ИИ и таймер | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, `P` — пауза (M-SP), клик по миникарте — камера, Esc — отмена/выход |
+| **GameOver** | экран победы/поражения 1:1 (`ENDGAME*`, `ENDARM`, `ENDOK`) | Enter/Esc/клик по OK — в меню |
+
+### M-SP: одиночная игра против ИИ
+
+«New Game» в главном меню открывает настройку локальной партии — три экрана
+1:1 с C++-портом (`max_app/src/setup.rs`):
+
+1. **Options** (`OPTNFRM`): сложность ИИ, таймеры хода и конца хода, режим
+   игры, стартовые кредиты, уровни ресурсов, условие победы + поле имени;
+2. **Planet** (`PLANETSE`): 3×2 мини-карты текущей группы планет (из `.WRL`),
+   стрелки групп, имя/описание, Random/Cancel/?/Done;
+3. **Players** (`CHOSPLYR`): четыре слота Human/Computer/None, флаги команд с
+   эмблемой клана; Done проверяет «минимум два игрока» и стартует партию.
+
+Локальный цикл (`max_app/src/local.rs`, порт `GameManager_TeamTurnTurnBased`):
+`manage_economy` → `Ai_BeginTurn` для компьютеров → тики до
+`end_turn_retry_counter > 120` → пакет `06` → следующая команда → после
+последней команды `GameState::finish_turn` (условия победы, `turn_counter+1`).
+End Turn и таймер хода закрывают ход человека, `P` — пауза. Победа/поражение —
+экран `max_app/src/winloss.rs` (`menu_draw_game_over_screen` 1:1).
+
+Сохранение: V70 **читается** в локальную партию
+(`App::start_local_game_from_save`); запись `GameState → V70` пока не
+реализована, поэтому быстрое сохранение локальной партии — контейнер `MXLS`
+(`App::local_save_bytes` / `write_local_save` / `read_local_save`: настройки +
+фаза + `snapshot_bytes` + CRC).
+
+Кадры-свидетельства:
+
+```sh
+cargo run -p max_app --example sp_frames -- ../max-original ../build
+# → build/sp-{options,planets,players,game,victory,defeat}.ppm
+```
+
+Тесты: `cargo test -p max_app --test local_sp` (12).
 
 Кнопка **Create** вызывает `CreateGame`; при успехе экран сразу переходит в
 **InSession**, и `main.rs` запускает существующий сетевой путь

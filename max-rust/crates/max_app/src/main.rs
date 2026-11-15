@@ -668,6 +668,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut mouse: Option<(i32, i32)> = None;
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
+    // M-SP: имя игрока и каталог карт для настройки и мини-карт планет.
+    ctx.player_name = config.player_name.clone();
+    ctx.world_dir = config
+        .world_dir
+        .clone()
+        .or_else(|| config.max_res.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_default();
+    let mut last_frame = std::time::Instant::now();
     // M6.1-заготовка: политика реконнекта, общая для `--connect` и `--ui`.
     let mut reconnect = ReconnectPolicy::default();
     if let Some(attempts) = cli.reconnect_attempts {
@@ -715,13 +723,58 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 Transition::Quit => return Ok(()),
                 Transition::LeaveSession => {
                     screen = Screen::MainMenu;
+                    app.leave_local_game();
                     ctx.status = "Left the session".to_string();
+                }
+                Transition::StartLocal(setup) => {
+                    // M-SP: старт локальной партии (Options → Planet → Players).
+                    match app.start_local_game(&setup) {
+                        Ok(()) => {
+                            ctx.status = String::new();
+                            screen = Screen::InSession {
+                                request: SessionRequest {
+                                    game_id: "local".to_string(),
+                                    password: None,
+                                },
+                            };
+                        }
+                        Err(error) => {
+                            eprintln!("max_app: local game: {error}");
+                            ctx.status = format!("Local game: {error}");
+                        }
+                    }
                 }
                 Transition::StartSession(request) => {
                     pending = Some(request);
                     break;
                 }
             }
+        }
+
+        // M-SP: тик локальной партии, таймер хода и ходы ИИ.
+        let frame_dt = last_frame.elapsed().as_secs_f32().clamp(0.0, 0.25);
+        last_frame = std::time::Instant::now();
+
+        if matches!(screen, Screen::InSession { .. }) && app.local_active() {
+            let update = app.local_update(frame_dt);
+
+            if let Some(local) = app.local() {
+                ctx.status = local.status_line(app.state().turn_counter);
+            }
+
+            if update.finished || app.local().is_some_and(|local| local.finished()) {
+                screen = Screen::GameOver;
+                ctx.status = "Game over — Enter/Esc returns to the menu".to_string();
+            }
+        }
+
+        // Мини-карты планет для экрана настройки (`.WRL` грузятся один раз).
+        if let Screen::LocalSetup(form) = &mut screen {
+            let palette = app
+                .assets()
+                .and_then(|assets| assets.menu.as_ref())
+                .map(|menu| menu.palette);
+            form.ensure_minimaps(palette.as_ref());
         }
 
         // Курсор мыши: меню/панели — HANDPTR, карта — MAP_PTR/приказы/юниты
@@ -886,7 +939,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             match handle_session_input(app, input_event(event), true) {
                 Transition::None => {}
                 Transition::LeaveSession | Transition::Quit => leave = true,
-                Transition::StartSession(_) => {}
+                Transition::StartSession(_) | Transition::StartLocal(_) => {}
             }
         }
 

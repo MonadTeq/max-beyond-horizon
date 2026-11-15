@@ -119,6 +119,17 @@ RLE по строкам: i16 n;
   `SNOW_PIC` 128×128 (миниатюра планеты; в C++ — `SNOW_PIC + world/6`,
   `planetselectmenu.cpp:94`).
 
+**Уточнение (M-SP, 2026-11-15): RLE начинается с байта 776, а не 777.**
+В C++ `sizeof(ImageBigHeader) == 777` (`resource_manager.hpp:54-63`), но
+`WindowManager_DecodeBigImage` берёт данные с `&image->transparent_color`
+(`window_manager.cpp:626`) — то есть первое слово RLE читается **из** последнего
+байта структуры и следующего за ним. Проверено на реальных ресурсах
+(`FRAMEPIC`, `ENDGAME1..9`): декод со смещением 776 даёт целый кадр, со
+смещением 777 — сдвиг на байт, «scanline»-артефакты и обрыв потока.
+`max_assets::image::BIG_HEADER` исправлен на 776 (тест
+`chrome_draws_frame_and_reports_ready` и новый `sp-*`-набор кадров зелёные);
+это исправило и хром игрового окна, и фоны экрана победы `ENDGAME*`.
+
 ### 2.3 Спрайты зданий/юнитов
 
 - Мультикадровые RLE-спрайты с `hotx/hoty`: `HANGAR` (10×42, 24 613 Б),
@@ -848,3 +859,38 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui --scale 2 \
 5. ~~**Миникарта:** нужна ли FOV-маска и поведение `2x`/`TNT`?~~ Решено: FOV —
    точный порт `Access_UpdateMinimapFogOfWar` по heat map, `2x`/`TNT` — как
    `GameManager_RenderMinimap`/`DrawMap_RenderMiniMapUnitList` (см. §2.5).
+
+## 10. Пункт G. M-SP: настройка, локальная партия, экран победы — **сделано** (2026-11-15)
+
+Одиночная игра против ИИ (1 человек + 1–3 компьютера), визуал по C++-ресурсам.
+
+| Экран | Ресурсы | Раскладка (C++) | Код |
+|---|---|---|---|
+| Options | `OPTNFRM` 640×480 | `game_config_menu_items[71]` + `game_config_menu_controls[51]`: 6 панелей 200×190 в (6/216/426, 38/233), подписи 15 px, `draw_box(0xFF)` вокруг выбранного | `max_app/src/setup.rs::draw_options` |
+| Planet | `PLANETSE`, `SNOW_PIC+world/6`, `MNULAROU/MNURAROU`, `MNUBTN4/5/6` | слоты 112×112 в (192/330/469, 51/189), имя (16,61,150,20), описание (41,350,561,60), Random/Cancel/?/Done y=438 | `draw_planet` |
+| Players | `CHOSPLYR`, `CH_HUM/CMP/NON_U/D`, `CH_TM1..4_U/D`, `CLN0LOGO` | 4×3 кнопки 55×71 (175/285/394, 67+92·i), флаги 93×89 (495, 61+92·i), эмблема клана (41,40), заголовки колонок (61/162/272/380/497, 31, 79/80×20) | `draw_players` |
+
+**Локальная партия**: цикл `GameManager_TeamTurnTurnBased` (`manage_economy` →
+`Ai_BeginTurn` → тики до `end_turn_retry_counter > 120` → `06` → следующая
+команда → `finish_turn`), таймер хода, пауза, End Turn. Кадр — штатный
+`render_frame` с хромом `FRAMEPIC` (карта 180,18 448×448, панели, миникарта).
+
+**Экран победы/поражения**: `menu_draw_game_over_screen` 1:1 — фон
+`ENDGAME1..9`, `Game Over` (100,10), 4 колонки (80+110·i), строки 116…326,
+`1st place`…`Eliminated`, `ENDARM` (273,458), `ENDOK` (293,458) + `OK`.
+
+**Свидетельства**
+
+* `cargo run -p max_app --example sp_frames -- ../max-original ../build` →
+  `build/sp-options.png`, `build/sp-planets.png`, `build/sp-players.png`,
+  `build/sp-game.png`, `build/sp-victory.png`, `build/sp-defeat.png`;
+* `cargo test -p max_app --test local_sp` — 12 тестов: настройка из UI
+  (team_types/планета/таймер), 5 ходов против ИИ (чередование, задачи и
+  приказы ИИ), таймер/пауза, победа при элиминации ИИ + отрисовка экрана,
+  round-trip контейнера `MXLS` после хода, загрузка V70 в локальную партию;
+* найдено и исправлено по пути: **декодер big image читал RLE с 777 вместо
+  776** (см. §2.2) — исправило хром `FRAMEPIC` и фоны `ENDGAME*`.
+
+**Ограничения**: Simultaneous Moves идёт последовательными ходами команд;
+кланы (`ClanSelectMenu`) и Help-экраны не портированы; `GameState → V70`
+(запись) отсутствует — локальный сейв это контейнер `MXLS`.

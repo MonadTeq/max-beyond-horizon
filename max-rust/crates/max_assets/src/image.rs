@@ -54,8 +54,16 @@ impl std::error::Error for ImageError {}
 /// то есть с 8-го байта: девятый байт структуры — это **первый пиксель**, а не
 /// отдельное поле. Проверено на `PANELTOP`/`PANELBTM`: `8 + w*h == size` точно.
 pub const SIMPLE_HEADER: usize = 8;
-/// Размер заголовка [`BigImage`] (`static_assert(sizeof(ImageBigHeader) == 777)`).
-pub const BIG_HEADER: usize = 777;
+/// Смещение RLE-потока [`BigImage`] в ресурсе.
+///
+/// C++ `sizeof(ImageBigHeader) == 777` (после палитры есть поле
+/// `transparent_color`), но `WindowManager_DecodeBigImage` берёт данные с
+/// `&image->transparent_color`, т.е. RLE начинается **в** байте 776. Проверено
+/// на реальных ресурсах: декод с 776 даёт целый кадр (`FRAMEPIC`, `ENDGAME*`),
+/// а с 777 — сдвиг на байт и «scanline»-артефакты. Поэтому смещение — 776;
+/// `transparent` в [`BigImage`] читается из того же байта (для фоновых картинок
+/// C++ это поле не использует).
+pub const BIG_HEADER: usize = 776;
 /// Байт на цвет в палитре big-картинки.
 pub const PALETTE_BYTES: usize = 3 * 256;
 
@@ -347,7 +355,6 @@ mod tests {
         palette[3..6].copy_from_slice(&[10, 20, 30]);
         palette[6..9].copy_from_slice(&[40, 50, 60]);
         bytes.extend_from_slice(&palette);
-        bytes.push(0);
         for row in rows {
             bytes.extend_from_slice(row);
         }
