@@ -15,9 +15,18 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Звук (M6.2): только под feature `sound`, чтобы базовые сборки/CI/докер не
+# тянули ALSA/CPAL. Декодер WAV живёт в max_assets и работает всегда.
+rodio = { version = "0.19", optional = true, default-features = false }
+
 [features]
 default = []
+# Воспроизведение WAV через rodio/cpal. На Linux нужен libasound2-dev при
+# сборке и libasound2 в рантайме; без фичи — тихий no-op backend.
+sound = ["dep:rodio"]
 # Окно SDL3 (интерактивный режим): требует системного SDL3 (libsdl3-dev / vcpkg).
 sdl = ["max_render/sdl"]
 # То же, но SDL3 собирается из исходников (нужен cmake) — путь для CI/docker.
 sdl-from-source = ["sdl", "max_render/sdl-from-source"]
+# Windows: SDL3 из vcpkg (vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
+sdl-vcpkg = ["sdl", "max_render/sdl-vcpkg"]

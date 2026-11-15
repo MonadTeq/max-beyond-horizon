@@ -26,27 +26,68 @@
 |--------------|-------------------------------------------------------------------|
 | `max_core`   | Чистая игровая модель: карта, юниты, команды, приказы, правила. Без I/O. |
 | `max_net`    | Wire-протокол: WS-события Horizon + UDP-пакеты сессии (join/state/orders), тикеты. |
-| `max_assets` | Чтение ресурсов оригинальной игры: RES/PATCHES, карты (WRL/SCE/MPS), спрайты (SPW), анимации (FLC), шрифты (FON). |
+| `max_assets` | Чтение ресурсов оригинальной игры: RES/PATCHES, карты (WRL/SCE/MPS), спрайты (RES-теги), звуки (`*.SPW`, RIFF/WAVE PCM16), FLC/FON — в планах. |
 | `max_render` | Окно и отрисовка (SDL3), UI-слой над событиями core.              |
 | `max_app`    | Бинарь: инициализация, запуск net+render, игровой цикл.           |
 
 ## Статус
 
-- **R1 (каркас) — выполнено**: workspace собирается, тесты зелёные.
-- **R2 (Horizon + рендер) — текущая цель**: парсер PATCHES.RES (`max_assets`, по
-  `max-original-dasm/formats/res.md`), WS-лобби + UDP-сессия (`max_net`, по
-  `docs/protocol.md`), рендер мира из снапшота (`max_render`).
-- Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M5).
+- **Версия 1.0.0** (2026-11-15): workspace собирается, тесты зелёные; клиент
+  проходит лобби, играет партию, показывает SDL3-меню/HUD, поддерживает
+  реконнект транспорта (M6.1-заготовка) и звук меню (feature `sound`).
+- Релизный чек-лист (гейты, live-smoke 2×10, человеческий сценарий M4,
+  Linux/Windows-бинарники, тег) — `../docs/release-checklist.md`; история —
+  `../CHANGELOG.md`.
+- Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M6).
+
+## Звук (M6.2)
+
+`*.SPW` в каталоге игры — обычные WAV (PCM, 22050 Гц, моно, 16 бит), а теги
+`MAX.RES` (`TANK1`, `KBUY0`, …) — ASCIIZ-ссылки на файлы рядом с `MAX.RES`.
+Декодер работает всегда и не тянет внешних зависимостей:
+
+```rust
+use max_assets::wav::WavClip;
+
+let clip = WavClip::open("max-original/KBUY0.SPW")?; // samples: Vec<i16>
+println!("{} Гц, {} каналов, {} кадров", clip.sample_rate, clip.channels, clip.frames());
+```
+
+Воспроизведение — `max_app::audio::AudioPlayer` за feature **`sound`**
+(rodio/cpal); без фичи используется тихий `NoopBackend`, поэтому базовые
+сборки, тесты и Docker не требуют ALSA/CPAL:
+
+```sh
+# со звуком (Linux: apt install pkg-config libasound2-dev)
+cargo run -p max_app --features sdl,sound -- --ui
+
+# без звука (по умолчанию): окно работает, клики беззвучны
+cargo run -p max_app --features sdl -- --ui
+```
+
+`AudioPlayer::play_once("KBUY0")`/`play_loop("TANK1")` принимает тег или имя
+файла; поиск регистронезависимый, клипы кэшируются, вывод неблокирующий.
+Клики меню (`ui.rs`) озвучены; звуки юнитов/выстрелов пока только декодируются.
 
 ## CI и развёртывание
 
 - Локальный CI (M6.3): `bash ci.sh` из корня репозитория — `cargo check` +
-  `cargo test` всего `max-rust` и `cargo test --workspace` Horizon в
-  `rust:1.94.0-bookworm`; `bash ci.sh --smoke` добавляет живой
-  `build/scripts/live-smoke.sh` (2 клиента × N ходов). GitHub-эквивалент —
-  `../.github/workflows/ci.yml`.
+  `cargo test` всего `max-rust` (включая feature `sound`) и
+  `cargo test --workspace` Horizon в `rust:1.94.0-bookworm`; `bash ci.sh --smoke`
+  добавляет живой `build/scripts/live-smoke.sh` (2 клиента × N ходов).
+  GitHub-эквивалент — `../.github/workflows/ci.yml`.
+- Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
+  `sdl-from-source,sound`, упаковывает `release/` и готовит тег `v1.0.0`;
+  полный порядок — `../docs/release-checklist.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
   восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
   M6.1-финал, см. `crates/max_app/README.md` и `docs/protocol.md` §9.
+
+## Лицензия
+
+Код клиента — MIT, см. [`../LICENSE`](../LICENSE) и [`../CHANGELOG.md`](../CHANGELOG.md).
+Данные оригинальной M.A.X. (`MAX.RES`, `PATCHES.RES`, `COLOR.PAL`, `*.SPW`,
+`*.WRL`, сейвы) лицензией клиента не покрываются: M.A.X. (C) 1996 Interplay
+Productions, все права сохранены.

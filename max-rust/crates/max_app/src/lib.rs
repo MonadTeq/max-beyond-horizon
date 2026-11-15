@@ -17,6 +17,7 @@
 //! | [`App::apply`] | команда `max_core::input::Command` (сетевой пакет или локальный ввод) |
 //! | [`App::render_frame`] | кадр [`max_render::buffer::RgbaBuffer`] без SDL |
 //! | [`hud::render_hud`] | HUD (M4.2): миникарта, панель юнита, журнал, ресурсы, кнопки |
+//! | [`audio::AudioPlayer`] | звук (M6.2): WAV-клипы, `play_once`/`play_loop`; вывод — за feature `sound` |
 //! | [`hud::build_move_order`] | пакет 38 из выделения/клика (путь `Paths_RequestPath`) |
 //! | [`hud::build_attack_order`] | пакет 08 (`P3`, `ORDER_MOVE_TO_ATTACK`) по врагу |
 //! | [`App::digest`] | CRC/снапшот состояния для десинк-детектора и тестов |
@@ -33,6 +34,7 @@
 #![forbid(unsafe_code)]
 
 pub mod assets;
+pub mod audio;
 pub mod hud;
 pub mod net;
 pub mod render;
@@ -62,6 +64,7 @@ pub use assets::{
     resolve_color_pal, resolve_patches_res, Assets, AssetsReport, LoadedSprite, SpriteInfo,
     PATCHES_RES_FALLBACKS, UNIT_SPRITES, WORLD_ASSETS,
 };
+pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use hud::{
     build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
     HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,

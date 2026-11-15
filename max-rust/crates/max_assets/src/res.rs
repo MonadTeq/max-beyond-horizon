@@ -366,6 +366,17 @@ impl ResArchive {
         self.by_name.get(name).map(|&index| &self.entries[index])
     }
 
+    /// Имя файла из тела ресурса-ссылки (`TANK1` → `"tank1.spw"`).
+    ///
+    /// В MAX.RES лежат 721 такая ссылка (`max-original-dasm/formats/spw.md`
+    /// §1): тело ресурса — ASCIIZ-имя файла рядом с `MAX.RES`. Для обычных
+    /// ресурсов (спрайты, карты) возвращается [`None`].
+    pub fn file_reference(&self, name: &str) -> Option<&str> {
+        let bytes = self.read(name).ok()?;
+
+        parse_file_ref(bytes)
+    }
+
     /// Байты ресурса по тегу.
     ///
     /// Тег сравнивается как C-строка (без учёта мусора после NUL), но с учётом
@@ -448,6 +459,39 @@ fn decode_tag(raw: &[u8]) -> String {
         .take_while(|&&byte| byte != 0)
         .map(|&byte| byte as char)
         .collect()
+}
+
+/// Имя файла из тела ресурса-ссылки: ASCIIZ без пути.
+///
+/// Ресурсы-ссылки (`TANK1` → `"tank1.spw\0"`, `SNOW_1` → `"snow_1.w\0"`)
+/// хранят в теле обычную C-строку. Возвращается срез **без** завершающего NUL
+/// и только если имя безопасно для склейки с каталогом: ASCII-буквы/цифры,
+/// `.`, `_`, `-`, без `/`, `\`, `:` и `..`. Всё остальное (спрайт, карта,
+/// битые байты) — [`None`], чтобы вызывающий не принял данные за имя файла.
+pub fn parse_file_ref(bytes: &[u8]) -> Option<&str> {
+    let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
+    let name = &bytes[..end];
+
+    if name.is_empty() {
+        return None;
+    }
+
+    if !name
+        .iter()
+        .all(|&byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
+
+    let name = std::str::from_utf8(name).ok()?;
+
+    // `..` и абсолютные пути (двоеточие) отсекаются проверкой выше, но
+    // страхуемся явно: имя склеивается с каталогом игры.
+    if name.contains("..") {
+        return None;
+    }
+
+    Some(name)
 }
 
 #[cfg(test)]
@@ -575,5 +619,79 @@ mod tests {
             Err(ResError::ResourceOutOfBounds { .. })
         ));
         assert!(archive.extract_all().is_err());
+    }
+
+    #[test]
+    fn file_references_are_ascii_names_without_paths() {
+        let bytes = build_archive(&[
+            ("TANK1", b"tank1.spw\0"),
+            ("SNOW_1", b"snow_1.w"),
+            ("NO_NUL", b"menu38.spw"),
+            ("BINARY", &[0x18, 0x00, 0x62, 0x00]),
+            ("TRAVERSAL", b"../secret\0"),
+            ("ABSOLUTE", b"C:\\game\\x.spw\0"),
+            ("EMPTY", b"\0"),
+        ]);
+        let archive = ResArchive::parse(&bytes).unwrap();
+
+        assert_eq!(archive.file_reference("TANK1"), Some("tank1.spw"));
+        assert_eq!(archive.file_reference("SNOW_1"), Some("snow_1.w"));
+        assert_eq!(
+            archive.file_reference("NO_NUL"),
+            Some("menu38.spw"),
+            "NUL в конце не обязателен"
+        );
+        assert_eq!(archive.file_reference("BINARY"), None);
+        assert_eq!(archive.file_reference("TRAVERSAL"), None);
+        assert_eq!(archive.file_reference("ABSOLUTE"), None);
+        assert_eq!(archive.file_reference("EMPTY"), None);
+        assert_eq!(archive.file_reference("MISSING"), None, "нет тега — нет ссылки");
+
+        assert_eq!(parse_file_ref(b"tank1.spw\0"), Some("tank1.spw"));
+        assert_eq!(parse_file_ref(b""), None);
+        assert_eq!(parse_file_ref(b"snow_1.w\0garbage"), Some("snow_1.w"));
+    }
+
+    /// Реальный `MAX.RES`: сотни ASCIIZ-ссылок на `*.spw` и другие файлы.
+    ///
+    /// Проверка ловит расхождение с форматом (`spw.md` §1: 607 ссылок на
+    /// `.spw`, 721 всего). Если игровых данных нет, тест пропускается.
+    #[test]
+    fn real_max_res_exposes_ascii_file_references() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../max-original/MAX.RES");
+
+        if !path.is_file() {
+            return;
+        }
+
+        let archive = ResArchive::open(&path).expect("MAX.RES");
+        assert_eq!(archive.file_reference("TANK1"), Some("tank1.spw"));
+        assert_eq!(archive.file_reference("KBUY0"), Some("kbuy0.spw"));
+        assert_eq!(
+            archive.file_reference("TANK"),
+            None,
+            "спрайт TANK — не ссылка на файл"
+        );
+
+        let mut spw = 0usize;
+        let mut other = 0usize;
+
+        for entry in archive.list() {
+            // Ссылки крошечные; спрайты/карты отбрасываем до чтения.
+            if entry.size == 0 || entry.size > 64 {
+                continue;
+            }
+            if let Some(name) = archive.file_reference(&entry.name) {
+                if name.ends_with(".spw") {
+                    spw += 1;
+                } else {
+                    other += 1;
+                }
+            }
+        }
+
+        assert!(spw >= 600, "ожидались сотни ссылок .spw, найдено {spw}");
+        assert!(other >= 20, "ссылки .wrl/.flc/.msc/.mve тоже читаются: {other}");
     }
 }

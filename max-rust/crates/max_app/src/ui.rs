@@ -8,8 +8,8 @@
 //! * [`Screen::handle_input`] — машина переходов: `MainMenu → CreateForm`,
 //!   `MainMenu → JoinList` (через `list_games`), `CreateForm → create_game →
 //!   InSession`, `JoinList → InSession`;
-//! * [`UiContext`] — размер экрана, позиция мыши, строка статуса и клиент
-//!   Horizon за трейтом [`MenuClient`];
+//! * [`UiContext`] — размер экрана, позиция мыши, строка статуса, клиент
+//!   Horizon за трейтом [`MenuClient`] и [`AudioPlayer`] для кликов (M6.2);
 //! * [`Screen::render`] — кадр без SDL: `render_ui` для меню и карта
 //!   (`App::render_frame` → `max_render::map_render`) + строка статуса для
 //!   [`Screen::InSession`].
@@ -59,6 +59,7 @@ use max_render::ui::{
     Widget,
 };
 
+use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::hud::{self, HudButton};
 use crate::App;
 
@@ -463,6 +464,8 @@ pub struct UiContext {
     pub mouse: Option<Point>,
     /// Фокус главного меню (`0..=2`).
     pub focus: usize,
+    /// Звук (M6.2): клики меню. Без feature `sound` — тихий no-op.
+    pub audio: AudioPlayer,
 }
 
 impl UiContext {
@@ -475,6 +478,7 @@ impl UiContext {
             status: String::new(),
             mouse: None,
             focus: 0,
+            audio: AudioPlayer::new(),
         }
     }
 
@@ -502,6 +506,14 @@ impl UiContext {
             app,
         }
     }
+
+    /// Звук клика меню (`KBUY0` → `kbuy0.spw`).
+    ///
+    /// Вызывается на активации кнопок/строк меню. Ошибка/отсутствие файла не
+    /// меняют состояние UI: звук — не блокер (M6.2).
+    pub fn click(&mut self) {
+        let _ = self.audio.play_once(MENU_CLICK);
+    }
 }
 
 impl fmt::Debug for UiContext {
@@ -512,6 +524,7 @@ impl fmt::Debug for UiContext {
             .field("status", &self.status)
             .field("mouse", &self.mouse)
             .field("focus", &self.focus)
+            .field("audio", &self.audio)
             .finish_non_exhaustive()
     }
 }
@@ -621,6 +634,10 @@ impl Screen {
             },
         }
 
+        if activate.is_some() {
+            ctx.click();
+        }
+
         match activate {
             Some(MAIN_CREATE) => {
                 *self = Self::CreateForm(CreateForm::default());
@@ -711,6 +728,10 @@ impl Screen {
             _ => {}
         }
 
+        if action.is_some() {
+            ctx.click();
+        }
+
         match action {
             Some(Action::Select(index)) => {
                 if let Self::JoinList { selected, .. } = self {
@@ -757,6 +778,7 @@ impl Screen {
 
         let mut back = false;
         let mut submit = false;
+        let mut clicked = false;
 
         match event {
             InputEvent::MouseMove(..) => {}
@@ -765,9 +787,16 @@ impl Screen {
                 let point = Point::new(x, y);
 
                 match hit_test(&ui, point) {
-                    Some(7) => back = true,
-                    Some(8) => submit = true,
+                    Some(7) => {
+                        back = true;
+                        clicked = true;
+                    }
+                    Some(8) => {
+                        submit = true;
+                        clicked = true;
+                    }
                     Some(index @ 1..=6) => {
+                        clicked = true;
                         if let Self::CreateForm(form) = self {
                             form.focus = CreateField::ALL[index - 1];
                         }
@@ -790,6 +819,10 @@ impl Screen {
                     }
                 }
             }
+        }
+
+        if clicked || back || submit {
+            ctx.click();
         }
 
         if back {
@@ -1472,6 +1505,28 @@ mod tests {
         }
     }
 
+    /// Backend, считающий вызовы `play` (звук в тестах без устройства).
+    #[derive(Debug)]
+    struct CountingBackend {
+        calls: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl crate::audio::AudioBackend for CountingBackend {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        fn play(
+            &mut self,
+            _clip: std::sync::Arc<max_assets::WavClip>,
+            _mode: crate::audio::PlayMode,
+        ) -> Result<(), String> {
+            *self.calls.lock().expect("lock") += 1;
+
+            Ok(())
+        }
+    }
+
     fn context(
         games: Vec<GameInfo>,
         created: Option<GameInfo>,
@@ -1745,5 +1800,37 @@ mod tests {
         assert_eq!(params.min_players, Some(4));
         assert_eq!(params.password.as_deref(), Some("sesame"));
         assert_eq!(form.password_value().as_deref(), Some("sesame"));
+    }
+
+    /// M6.2: клик по кнопке меню вызывает `AudioPlayer::play_once(KBUY0)`.
+    ///
+    /// Клип кладётся в кэш (`preload`), поэтому тесту не нужны ни игровые
+    /// данные, ни аудиоустройство — проверяется именно хук UI.
+    #[test]
+    fn menu_button_click_triggers_menu_sound() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let (mut ctx, _log) = context(Vec::new(), None);
+        ctx.audio = AudioPlayer::with_backend(Box::new(CountingBackend {
+            calls: std::sync::Arc::clone(&calls),
+        }));
+        ctx.audio.preload(
+            MENU_CLICK,
+            max_assets::WavClip {
+                sample_rate: 22050,
+                channels: 1,
+                samples: vec![1, 2, 3],
+            },
+        );
+
+        let ui = build_main_menu(ctx.width, ctx.height, &ctx.status, ctx.mouse, ctx.focus);
+        let create = ui.widgets[MAIN_CREATE].rect().center();
+        let mut screen = Screen::MainMenu;
+
+        let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(create.x, create.y));
+
+        assert_eq!(transition, Transition::None);
+        assert!(matches!(screen, Screen::CreateForm(_)));
+        assert_eq!(*calls.lock().expect("lock"), 1, "клик должен озвучиваться");
+        assert_eq!(ctx.audio.plays(), 1);
     }
 }

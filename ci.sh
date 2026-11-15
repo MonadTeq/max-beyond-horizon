@@ -63,18 +63,22 @@ command -v docker >/dev/null 2>&1 || {
     exit 1
 }
 
+mkdir -p "$ROOT/build/cargo-home"
+
 step() {
     printf '\n===== %s =====\n' "$*"
 }
 
 started=$(date +%s)
 
-step "1/2 max-rust: cargo check + cargo test"
+step "1/2 max-rust: cargo check + test (+ sound feature)"
 docker run --rm \
     -v "$ROOT:/src" \
+    -v "$ROOT/build/cargo-home:/cargo-home" \
+    -e "CARGO_HOME=/cargo-home" \
     -w /src/max-rust \
     "$RUST_IMAGE" bash -c \
-    'apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test'
+    'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev >/dev/null && cargo check && cargo test && cargo check --features sound && cargo test --features sound'
 
 step "2/2 max-horizon-server: cargo test --workspace"
 docker run --rm \

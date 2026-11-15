@@ -20,6 +20,8 @@ sdl = ["dep:sdl3"]
 # То же, но SDL3 собирается из исходников (нужен cmake); путь для CI/docker,
 # где системного SDL3 нет.
 sdl-from-source = ["sdl", "sdl3/build-from-source"]
+# SDL3 из vcpkg (Windows: vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
+sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]
 
 [[example]]
 name = "window"

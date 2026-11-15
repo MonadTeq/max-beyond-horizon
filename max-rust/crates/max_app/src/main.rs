@@ -19,6 +19,8 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use max_app::assets::AssetsReport;
 #[cfg(feature = "sdl")]
+use max_app::audio::AudioPlayer;
+#[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
 use max_app::net::{run_network, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
@@ -599,6 +601,27 @@ fn run_ui(cli: &Cli) -> Result<()> {
         config.screen_width,
         config.screen_height,
     );
+    // M6.2: звук меню. `with_default_backend` за feature `sound` поднимает
+    // rodio/cpal; без фичи (или без устройства) — тихий no-op. Ссылки на
+    // файлы берутся из MAX.RES, сами файлы — рядом с MAX.RES.
+    ctx.audio = AudioPlayer::with_default_backend();
+    if let Some(assets) = app.assets() {
+        let sound_dir = config
+            .max_res
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        ctx.audio.load_from(&assets.max_res, sound_dir);
+    }
+    println!(
+        "UI: звук: backend={} файлов={} ссылок={}",
+        ctx.audio.backend_name(),
+        ctx.audio.file_count(),
+        ctx.audio.reference_count()
+    );
+    if let Some(error) = ctx.audio.errors().first() {
+        eprintln!("UI: звук: {error}");
+    }
     let mut screen = Screen::MainMenu;
     let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
     let mut runtime: Option<tokio::runtime::Runtime> = None;

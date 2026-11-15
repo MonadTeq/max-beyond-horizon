@@ -13,6 +13,13 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 
 - [x] **M5.3** — compose-развёртывание Horizon+headless, healthcheck, README.
 - [x] **M6.3** — `ci.sh` + GitHub Actions, смоук-стадия за флагом `--smoke`.
+- [x] **M6.2** — звук: `max_assets::wav` (RIFF/WAVE PCM16, фикстура
+  `KBUY0.SPW`), `max_app::audio` (`AudioPlayer`, noop + rodio за feature
+  `sound`), клики меню; базовые сборки не тянут ALSA/CPAL.
+- [~] **M6.4 — артефакты готовы**: версия 1.0.0, `CHANGELOG.md`,
+  `docs/release-checklist.md`, `release.sh` (Linux-бинарь в Docker, архив,
+  подготовка тега `v1.0.0`). Осталось выполнить гейты чек-листа: тесты max-rust
+  + Horizon, live-smoke 2×10, человеческий сценарий M4, Windows-бинарь, тег.
 - [~] **M6.1 — заготовка**: транспортный реконнект (ENet+`TP 00`, настраиваемые
   попытки/таймаут), полное восстановление состояния — в M6.1-финале.
 
@@ -72,14 +79,21 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   `reconnect_pending_state`. **Осталось в M6.1-финале**: восстановление
   состояния (вход в партию, перезапрос 54/SNAP, барьеры), спектатор. Тесты
   retry-логики на мок-сессии, без паник.
-- **6.2 Звук** (WAV-*.SPW) и FLC-ролики — не блокеры релиза (feature-флаги).
+- **6.2 Звук — выполнено (M6.2)**: WAV-декодер `max_assets::wav` (PCM16,
+  моно/стерео; 272 реальных `*.SPW`), ASCIIZ-ссылки `MAX.RES`, `AudioPlayer` с
+  noop-backend'ом и rodio за feature `sound`, клики меню в `--ui`; полный
+  вывод — `docs/release-checklist.md` §2.2. FLC-ролики — по-прежнему не
+  блокер.
 - **6.3 CI — готово (M6.3)**: `ci.sh` (локальный CI в Docker: `cargo
-  check`+`cargo test` max-rust, `cargo test --workspace` Horizon, optional
-  `--smoke` → `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml`
-  (push/PR); использование описано в `README.md`,
-  `max-horizon-server/README.Docker.md`, `max-rust/README.md`.
-- **6.4 Релиз**: версия, бинарники Windows x64 + Linux, README, чек-лист, git tag
-  `v1.0.0`.
+  check`+`cargo test` max-rust + `cargo check/test --features sound`,
+  `cargo test --workspace` Horizon, optional `--smoke` →
+  `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml` (push/PR);
+  использование описано в `README.md`, `max-horizon-server/README.Docker.md`,
+  `max-rust/README.md`.
+- **6.4 Релиз — артефакты готовы (M6.4)**: версия 1.0.0, `CHANGELOG.md`,
+  `docs/release-checklist.md`, `release.sh` (сборка Linux-бинаря в Docker,
+  `release/` с README/LICENSE/SHA256SUMS/архивом, тег `v1.0.0` по `--tag`).
+  Бинарники Windows x64 + Linux, README и git tag выпускаются по чек-листу.
 
 ## Гейты релиза
 

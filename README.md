@@ -31,6 +31,12 @@ Visit the [Installation Guideline](https://klei1984.github.io/max/install/) arti
 - `bash ci.sh` — локальный CI (M6.3): тесты `max-rust` и `max-horizon-server` в
   Docker; `bash ci.sh --smoke` добавляет живой smoke на 2 клиента. GitHub-версия —
   [.github/workflows/ci.yml](.github/workflows/ci.yml).
+- Версия **1.0.0**: `bash release.sh` собирает Linux-бинарь в Docker и кладёт
+  архив в `release/`; порядок выпуска — [docs/release-checklist.md](docs/release-checklist.md),
+  история — [CHANGELOG.md](CHANGELOG.md), лицензия — [LICENSE](LICENSE).
+- Звук (M6.2): WAV/`*.SPW`-декодер работает всегда, воспроизведение — за
+  feature `sound` (`cargo run -p max_app --features sdl,sound -- --ui`); без
+  фичи сборка не тянет ALSA/CPAL. Клики меню озвучены.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts` / `--reconnect-timeout` в
   `max_app`; восстановление транспорта ENet+`TP 00`, полное восстановление партии
   — M6.1-финал (`docs/protocol.md` §9).

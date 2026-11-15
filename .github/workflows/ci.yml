@@ -26,10 +26,10 @@ jobs:
         with:
           toolchain: 1.94.0
 
-      - name: Install build deps (gcc/cmake for vendored ENet/SDL)
+      - name: Install build deps (gcc/cmake for vendored ENet/SDL, ALSA for sound)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc g++ cmake
+          sudo apt-get install -y --no-install-recommends gcc g++ cmake pkg-config libasound2-dev
 
       - name: cargo check
         working-directory: max-rust
@@ -38,6 +38,12 @@ jobs:
       - name: cargo test
         working-directory: max-rust
         run: cargo test
+
+      - name: cargo check + test (feature sound)
+        working-directory: max-rust
+        run: |
+          cargo check --features sound
+          cargo test --features sound
 
   horizon:
     name: max-horizon-server (workspace tests)

@@ -83,6 +83,10 @@ max-port-site/
 max-rust/target/
 
 
+# Release artifacts (собираются release.sh, не коммитятся)
+release/
+
+
 # Smoke data dir (MAX.RES + PATCHES.RES together)
 build/game-data-smoke/
 
