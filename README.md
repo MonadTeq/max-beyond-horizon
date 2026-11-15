@@ -1,42 +1,91 @@
-# M.A.X. Port
+# M.A.X. — Rust-клиент под Horizon
 
-![Build Workflow](https://github.com/klei1984/max/workflows/Build%20Workflow/badge.svg)
-[![Discord](https://img.shields.io/discord/1085572457466974248?label=discord&logo=discord&logoColor=ffffff)](https://discord.gg/TCn8DpeBaY)
-[![YouTube Channel Views](https://img.shields.io/youtube/channel/views/UCDnKVYEpcgZZz8okGIC4vkA)](https://www.youtube.com/channel/UCDnKVYEpcgZZz8okGIC4vkA)
-![Downloads](https://img.shields.io/github/downloads/klei1984/max/total)
+Современный клиент игры **M.A.X.: Mechanized Assault & Exploration** (Interplay, 1996),
+написанный заново на **Rust**, с серверной инфраструктурой **Horizon** и
+визуальным паритетом **1:1 с оригиналом**.
 
-![max](https://user-images.githubusercontent.com/53688147/218547807-5738f04f-e64f-4d59-9790-b3e248faed9b.jpg)
+M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
+Для игры требуются оригинальные данные (`MAX.RES`, `PATCHES.RES`, `COLOR.PAL`, карты `.WRL`, звуки `.SPW`) — они не входят в репозиторий.
 
-M.A.X. Port is an [SDL library](https://wiki.libsdl.org/) based runtime executable for the 1996 DOS game M.A.X.: Mechanized Assault & Exploration developed and published by Interplay Productions. Portions of this software are copyright © 2023 The FreeType Project (www.freetype.org). All rights reserved.
+---
 
-Official home page: [https://klei1984.github.io/max/](https://klei1984.github.io/max/)
+## Чем это отличается от M.A.X. Port
 
-The goal of the project is to fix the game breaking [defects](https://klei1984.github.io/max/defects/) present in the original game executable and to create a runtime that natively runs on modern operating systems.
+[M.A.X. Port](https://github.com/klei1984/max) (klei1984) — нативный порт оригинального
+движка на C++ (та же логика, тот же сетевой P2P/lockstep-стек). Этот проект —
+**переосмысление клиента**, а не порт 1:1:
 
-M.A.X. Port requires the original game data. The port only provides a modernized executable.
+| Аспект | M.A.X. Port | Наш проект |
+|---|---|---|
+| Язык клиента | C++ (порт оригинального кода) | **Rust**, чистая модульная архитектура |
+| Архитектура | монолит порта | `max_core` (симуляция) / `max_net` / `max_assets` / `max_render` / `max_app` — строгие границы |
+| Сеть | P2P-меш, ENet | **серверная звезда через Horizon**: gRPC-лобби (protobuf) + headless-арбитр, релей пакетов, подписанные тикеты |
+| Серверная инфраструктура | — | **Horizon** (Rust): лобби/админ, сессии, масштабирование (docker compose) |
+| Согласованность | lockstep как есть | lockstep с **бит-в-бит верификацией** (RNG-векторы, CRC-барьеры, C++-эталоны) |
+| Качество | ручное | **QA-фабрика**: Test-Suite (149 TC), скриптовый драйвер, golden-кадры, CI, запись сценариев вручную |
+| RE-база | частная IDA-база автора | собственная RE-линия (`max-original-dasm/`) + оракулы C++ |
 
-M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS.  ALL RIGHTS RESERVED.
-INTERPLAY PRODUCTIONS IS THE EXCLUSIVE LICENSEE AND DISTRIBUTOR.
+M.A.X. Port используется как **оракул** (канонический референс логики и визуала) и
+не изменяется; C++-headless из нашей развилки остаётся игровым арбитром для сетевых сессий.
 
-### How to play M.A.X. Port
+## Принципиально новое
 
-Visit the [Installation Guideline](https://klei1984.github.io/max/install/) article found on the home page.
+1. **Rust-переписывание с детерминизмом**: вся симуляция (карта, юниты, приказы,
+   бой, пути, ИИ с 44 классами задач, победа/поражение) портирована бит-в-бит с
+   C++ (RNG Xoshiro128\*\* 1:1, CRC16 барьеров, мини-реплей совпал побайтово).
+2. **Три режима игры**: одиночная против ИИ, hot-seat 2–4 игрока на одном ПК,
+   сетевая через Horizon.
+3. **Бинарные протоколы**: protobuf/gRPC для Horizon, плоские LE-пакеты для сессии.
+4. **Визуальный паритет 1:1**: тайлы карт, спрайты, окно FRAMEPIC, панели,
+   оригинальные шрифты GNW, курсоры, меню — из оригинальных ресурсов.
+5. **Автоматическое QA**: 650+ тестов, скриптовые UI-сценарии, golden-кадры,
+   живой сетевой smoke — в каждом CI-прогоне.
 
-### Rust-клиент, dedicated server и CI
+## Структура репозитория
 
-- `max-rust/` — Rust-клиент M.A.X. (gRPC → ENet → лобби → игра).
-- `docker-compose.yml` — Horizon + C++-headless одной командой
-  (`docker compose up --build`), порты 8080/tcp, 8082/tcp, 32000-32100/udp.
-  Инструкция: [max-horizon-server/README.Docker.md](max-horizon-server/README.Docker.md).
-- `bash ci.sh` — локальный CI (M6.3): тесты `max-rust` и `max-horizon-server` в
-  Docker; `bash ci.sh --smoke` добавляет живой smoke на 2 клиента. GitHub-версия —
-  [.github/workflows/ci.yml](.github/workflows/ci.yml).
-- Версия **1.0.0**: `bash release.sh` собирает Linux-бинарь в Docker и кладёт
-  архив в `release/`; порядок выпуска — [docs/release-checklist.md](docs/release-checklist.md),
-  история — [CHANGELOG.md](CHANGELOG.md), лицензия — [LICENSE](LICENSE).
-- Звук (M6.2): WAV/`*.SPW`-декодер работает всегда, воспроизведение — за
-  feature `sound` (`cargo run -p max_app --features sdl,sound -- --ui`); без
-  фичи сборка не тянет ALSA/CPAL. Клики меню озвучены.
-- Реконнект (M6.1-заготовка): `--reconnect-attempts` / `--reconnect-timeout` в
-  `max_app`; восстановление транспорта ENet+`TP 00`, полное восстановление партии
-  — M6.1-финал (`docs/protocol.md` §9).
+| Каталог | Назначение |
+|---|---|
+| `max-rust/` | Rust-клиент (workspace: core/net/assets/render/app) |
+| `max-horizon-server/` | Horizon: оркестратор сессий (Rust, gRPC+WS) |
+| `src/` | наша развилка C++-порта: headless-сервер-арбитр |
+| `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
+| `max-port-site/` | документация автора (формат сейвов V70 и пр.) |
+| `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
+| `max-rust-qa/` | QA: Test-Suite, сценарии, golden, драйверы |
+| `docs/` | документация по направлениям: `architecture/`, `analysis/`, `qa/`, `development/` |
+| `build/`, `deploy/`, `release/` | сборки, развёртывание, артефакты |
+
+## Собрать
+
+Кратко — в [docs/development/build.md](docs/development/build.md). Основное:
+
+```sh
+bash ci.sh                                   # тесты + QA + golden (Docker)
+powershell -File build\scripts\build-windows-ui.ps1   # Windows-бинарь с окном (MSVC+vcpkg)
+bash release.sh                              # Linux-бинарь + архив
+docker compose up -d --build                 # сервер Horizon
+```
+
+Необходимые инструменты и библиотеки — там же (Rust 1.94, MSVC+vcpkg/SDL3, Docker,
+Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
+
+## Запустить (как играть)
+
+```powershell
+# одиночная / hot-seat (окно):
+release\max_app-1.0.0-windows-x86_64-ui\max_app.exe --ui
+#   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
+#   LMB — выбрать юнит; RMB — движение; клик по врагу — атака; T — чат; End Turn.
+
+# сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
+```
+
+Подробно: [docs/development/build.md](docs/development/build.md) (раздел «Запуск»).
+
+## Документация
+
+- **Architecture**: [docs/architecture/](docs/architecture/) — протоколы, модель состояния, режимы игры, барьеры.
+- **Analysis**: [docs/analysis/](docs/analysis/) — визуальный паритет, реверс-инжиниринг.
+- **QA**: [docs/qa/](docs/qa/) и [max-rust-qa/](max-rust-qa/) — Test-Suite, драйверы, golden.
+- **Development**: [docs/development/](docs/development/) — планы, сборка, чек-лист релиза.
+- История изменений: [CHANGELOG.md](CHANGELOG.md). Лицензия: [LICENSE](LICENSE).

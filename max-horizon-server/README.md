@@ -144,7 +144,7 @@ Besides the WebSocket listener the server can expose the lobby/admin control
 plane as **gRPC**. The contract lives in [`proto/`](proto/): `horizon.proto`
 (service `horizon.v1.Horizon`, ten unary RPCs) and `types.proto` (shared
 messages); the rationale and the JSON↔proto mapping are in
-[`docs/protocol-grpc.md`](../docs/protocol-grpc.md).
+[`docs/architecture/protocol-grpc.md`](../docs/architecture/protocol-grpc.md).
 
 The gRPC listener runs **in parallel** with WebSocket — both ports are served by
 the same process, and the WS protocol and plugins are unchanged. The server side
@@ -194,7 +194,7 @@ priority. TLS is not part of phase 1: the listener speaks plaintext HTTP/2
 Errors are standard gRPC statuses: `status.message` carries the exact legacy WS
 `error`/`admin_error` text and `status.code` the category (`NOT_FOUND`,
 `PERMISSION_DENIED`, `INVALID_ARGUMENT`, `UNAVAILABLE`, `UNAUTHENTICATED`, …;
-complete tables in `docs/protocol-grpc.md` §6). The three admin responses that
+complete tables in `docs/architecture/protocol-grpc.md` §6). The three admin responses that
 report failures *inline* keep `ok:false` + `horizon.v1.Error` for tooling parity.
 Tickets (`Ticket.value`, `Ticket.kind`, parsed `session_id`/`player_id`/
 `expires_at_unix`) and `host`/`port` are exactly the values the WS protocol
@@ -229,7 +229,7 @@ In phase 1 the adapter owns its own `max_session::SessionManager`, just as the
 `max_lobby` and `max_admin` plugins each own one. All of them are configured from
 the same `[max]` section, so game rules, ports and tickets match on both
 transports, but a game created over gRPC is not listed by the WS plugin until
-the shared-handle refactor described in `docs/protocol-grpc.md` §4.4. During the
+the shared-handle refactor described in `docs/architecture/protocol-grpc.md` §4.4. During the
 transition pick one transport per lobby.
 
 ## Plugin Development

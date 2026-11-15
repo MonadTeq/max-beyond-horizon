@@ -20,7 +20,7 @@
 #   release/max_app-<version>-linux-x86_64.tar.gz.sha256
 #
 # Тег создаётся только по --tag и только на чистом рабочем дереве; пуш тега —
-# отдельное осознанное действие (см. docs/release-checklist.md §8).
+# отдельное осознанное действие (см. docs/development/release-checklist.md §8).
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -116,7 +116,7 @@ TARBALL_HASH="$TARBALL.sha256"
 BINARY="$ROOT/max-rust/target/release/max_app"
 CARGO_HOME_DIR="$ROOT/build/cargo-home"
 
-for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/docs/release-checklist.md"; do
+for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/docs/development/release-checklist.md"; do
     [ -f "$required" ] || {
         echo "release.sh: отсутствует обязательный файл $required" >&2
         exit 1
@@ -244,7 +244,7 @@ M.A.X. Rust client ${VERSION} — Linux x86_64
 Документация
 ------------
   README.txt (этот файл), CHANGELOG.md, LICENSE.
-  Полный чек-лист релиза — docs/release-checklist.md в репозитории.
+  Полный чек-лист релиза — docs/development/release-checklist.md в репозитории.
 
 Лицензия
 --------

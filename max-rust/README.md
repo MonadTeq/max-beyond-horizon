@@ -36,7 +36,7 @@
   проходит лобби, играет партию, показывает SDL3-меню/HUD, поддерживает
   реконнект транспорта (M6.1-заготовка) и звук меню (feature `sound`).
 - Релизный чек-лист (гейты, live-smoke 2×10, человеческий сценарий M4,
-  Linux/Windows-бинарники, тег) — `../docs/release-checklist.md`; история —
+  Linux/Windows-бинарники, тег) — `../docs/development/release-checklist.md`; история —
   `../CHANGELOG.md`.
 - Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M6).
 
@@ -78,7 +78,7 @@ cargo run -p max_app --features sdl -- --ui
   GitHub-эквивалент — `../.github/workflows/ci.yml`.
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
   `sdl-from-source,sound`, упаковывает `release/` и готовит тег `v1.0.0`;
-  полный порядок — `../docs/release-checklist.md`.
+  полный порядок — `../docs/development/release-checklist.md`.
 - Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
@@ -91,13 +91,13 @@ cargo run -p max_app --features sdl -- --ui
   `release/max_app-<ver>-windows-x86_64-ui.zip` (`max_app.exe` + `SDL3.dll`).
   Проверено на MSVC 14.51 + SDL3 3.4.20: окно `M.A.X. — Rust client (M4.2 HUD)`
   открывается, звук — `rodio/cpal` (WASAPI, без отдельных DLL). Требования к
-  тулчейну — `../docs/release-checklist.md` §6.1, разбор грабель —
+  тулчейну — `../docs/development/release-checklist.md` §6.1, разбор грабель —
   `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
   восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
-  M6.1-финал, см. `crates/max_app/README.md` и `docs/protocol.md` §9.
+  M6.1-финал, см. `crates/max_app/README.md` и `docs/architecture/protocol.md` §9.
 
 ## Визуал 1:1 с оригиналом (в работе)
 

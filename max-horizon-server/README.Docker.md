@@ -37,7 +37,7 @@ Ubuntu 24.04. Плюсы: `up` занимает секунды, не нужен 
   docker compose --profile build run --rm builder
   ```
 - `build/linux-server-template/` — headless `max-port` + `.so` + `PATCHES.RES`
-  (собирается отдельно, см. `docs/dedicated-server-plan.md` §9).
+  (собирается отдельно, см. `docs/architecture/dedicated-server-plan.md` §9).
 - `max-original/` с `MAX.RES` (и `COLOR.PAL`, `.WRL`). **PATCHES.RES в этом
   каталоге быть не должно** — headless падает при загрузке ресурсов, если
   `PATCHES.RES` лежит в `game_data` (M5.2). `PATCHES.RES` берётся из
@@ -159,7 +159,7 @@ Docker вычисляются от расположения скрипта (не
   `max_session`), WS-плагины `max_lobby`/`max_admin` в этом compose не грузятся.
 - Реконнект: M6.1-заготовка в клиенте (`--reconnect-attempts`,
   `--reconnect-timeout`) восстанавливает только транспорт ENet+`TP 00`; полное
-  восстановление партии (SNAP/54) — M6.1-финал, см. `docs/protocol.md` §9.
+  восстановление партии (SNAP/54) — M6.1-финал, см. `docs/architecture/protocol.md` §9.
 - `max-original` и `build/linux-server-template` содержат данные игры и не
   предназначены для распространения.
 

@@ -36,7 +36,7 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
 нужен CMake/MSVC и Windows-импорты) и `sound` (rodio/cpal → WASAPI) не
 включаются. Полная SDL-сборка — только на Windows-хосте, инструкция лежит в
 `release/max_app-<версия>-windows-x86_64/README.txt` и в
-`docs/release-checklist.md` §6.
+`docs/development/release-checklist.md` §6.
 
 Артефакты (`$OUT` = `release/` по умолчанию):
 
@@ -139,7 +139,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 
 ## live-smoke.sh
 
-См. заголовок скрипта; подробности прогона — `docs/release-checklist.md` §3.
+См. заголовок скрипта; подробности прогона — `docs/development/release-checklist.md` §3.
 `--handshake-patches` скрипт не передаёт: клиент сам переходит на хэш только
 `MAX.RES` после `TP 03 GameData`, а скрипт проверяет `data_hash=<hex>(64)` в
 логах. На Git Bash запускать с `MSYS_NO_PATHCONV=1` (иначе `-w /src/...`
