@@ -176,7 +176,8 @@ pub const FONT_8X8: [[u8; 8]; ASCII_CHARS] = [
 
 /// Строки глифа `ch`; вне ASCII — [`FALLBACK_GLYPH`].
 ///
-/// Бит 7 — левый пиксель строки, бит 0 — правый; строки идут сверху вниз.
+/// Бит 0 — левый пиксель строки, бит 7 — правый; строки идут сверху вниз
+/// (конвенция font8x8 / VGA: `0x7F` у 'E' — сплошная верхняя строка).
 #[inline]
 pub fn glyph(ch: char) -> &'static [u8; 8] {
     let code = ch as usize;
@@ -322,7 +323,9 @@ pub fn draw_text_line(
             }
 
             for column in 0..GLYPH_WIDTH {
-                if bits & (0x80 >> column) == 0 {
+                // Бит 0 — левый пиксель (font8x8/VGA), иначе весь текст
+                // рисуется зеркально: 'N' → 'И', 'e' → 'ǝ', 't' → 'ʇ'.
+                if bits & (0x01 << column) == 0 {
                     continue;
                 }
 
@@ -440,11 +443,31 @@ mod tests {
         assert_eq!(metrics.height, 16);
         assert_eq!(metrics.width, 24, "ширина — самая длинная строка");
         assert!(painted_pixels(&buffer) > 0);
-        // 'A' в первой строке начинается с пикселя (4, 0) (бит 0x0C).
-        assert_eq!(buffer.get(4, 0), Some(Rgba::WHITE));
+        // 'A' (0x0C = биты 2 и 3) — в первой строке пиксели (2, 0) и (3, 0).
+        assert_eq!(buffer.get(2, 0), Some(Rgba::WHITE));
+        assert_eq!(buffer.get(3, 0), Some(Rgba::WHITE));
         // 'D' — уже во второй строке (D = 0x1F, 0x36, …).
         assert_eq!(buffer.get(3, 8), Some(Rgba::WHITE));
         assert_eq!(buffer.get(24, 0), None, "за правым краем буфера");
+    }
+
+    /// Ориентация глифов: бит 0 — левый пиксель. Регрессия этого места давала
+    /// зеркальный текст во всём UI ('N' → 'И', 'e' → 'ǝ').
+    #[test]
+    fn glyph_bits_are_lsb_first() {
+        let mut buffer = RgbaBuffer::new(8, 8);
+        // 'E' = 0x7F в верхней строке → пиксели 0..=6, правый (7) пустой.
+        draw_text_line(&mut buffer, 0, 0, "E", Rgba::WHITE);
+
+        assert_eq!(buffer.get(0, 0), Some(Rgba::WHITE), "бит 0 — левый пиксель");
+        assert_eq!(buffer.get(6, 0), Some(Rgba::WHITE));
+        assert_ne!(buffer.get(7, 0), Some(Rgba::WHITE), "бит 7 — правый");
+
+        // 't' (0x08 = бит 3): ножка слева от центра, а не справа.
+        let mut buffer = RgbaBuffer::new(8, 8);
+        draw_text_line(&mut buffer, 0, 0, "t", Rgba::WHITE);
+        assert_eq!(buffer.get(3, 0), Some(Rgba::WHITE), "'t': бит 3 → колонка 3");
+        assert_ne!(buffer.get(4, 0), Some(Rgba::WHITE), "зеркальный 't' → 'ʇ'");
     }
 
     #[test]

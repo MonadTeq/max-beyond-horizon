@@ -341,13 +341,22 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC, 14.9 с на кэше; `max_app.exe` 5 246 464 байт). _(2026-11-15)_
+      (MSVC, 14.9 с на кэше; `max_app.exe` 5 246 976 байт,
+      sha256 `3fd6bfe9f732a6fa16e2bf7c8d712a3f9af791dcc3c054a1b6cf800f8b58f404`).
+      _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
       (rc=0). _(2026-11-15)_
 - [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
       `M.A.X. — Rust client (M4.2 HUD)`, в логе `UI: окно 512x384; меню — …`.
       Звук — `backend=rodio/cpal` (WASAPI, отдельных DLL не нужно), 272 файла
       `*.SPW`, 607 ссылок. _(2026-11-15)_
+- [x] Текст в окне читается слева направо. При первом запуске он был
+      **зеркальным** ('N' → 'И', 'e' → 'ǝ', 't' → 'ʇ'): `max_render/src/text.rs`
+      читал биты глифа MSB-первым, а таблица font8x8 — LSB-первая (бит 0 =
+      левый пиксель). Исправлено (`0x01 << column`), добавлен тест
+      `text::tests::glyph_bits_are_lsb_first`; проверено визуально по скриншоту
+      окна: `NEW GAME ? settings`, `Name: …`, `World: 23`, `Back`/`Create`,
+      `Configure the game and press Enter`. _(2026-11-15)_
 - [x] Бинарь и DLL заархивированы в
       `release/max_app-1.0.0-windows-x86_64-ui.zip` (sha256 в `.zip.sha256`) —
       отдельно от headless-zip из §6. _(2026-11-15)_
@@ -409,6 +418,12 @@ git push origin v1.0.0              # публикация тега (по реш
       (M6.1-финал, FLC, звуки юнитов) перенесены в следующий milestone.
 - [ ] Открыть issue на ограничения из `CHANGELOG.md` §«Ограничения 1.0.0».
 - [ ] Проверить, что `main` после тега собирается `bash ci.sh`.
+- [ ] Пост-релизная правка, попавшая в Windows UI-бинарь и **ещё не** в
+      Linux-артефакт: `max_render/src/text.rs` — бит 0 = левый пиксель
+      (текст был зеркальным во всём UI). Нужно: запись в `CHANGELOG.md` для
+      1.0.1 и пересборка `release/max_app-1.0.0-linux-x86_64.tar.gz`
+      (`bash release.sh`) — в текущем Linux-архиве текст ещё зеркальный.
+      Headless-сборки (Windows-gnu) текст не рисуют, их пересборка не нужна.
 
 ---
 
@@ -432,6 +447,6 @@ bash release.sh                             # §5, артефакты
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 246 464 Б; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 246 976 Б, sha256 `3fd6bfe9…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |
