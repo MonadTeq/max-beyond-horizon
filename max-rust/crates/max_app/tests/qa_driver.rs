@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use max_app::hud;
 use max_app::menu;
 use max_app::qa::{
-    parse_script, png, Assertion, Command, QaConfig, QaMenuClient, QaRunner, RecordContext,
+    parse_script, png, Assertion, Cmp, Command, QaConfig, QaMenuClient, QaRunner, RecordContext,
     Recorder, ScreenName, Step,
 };
 use max_app::setup;
@@ -69,6 +69,7 @@ key t
 type \"hello world\"
 wait 5
 tick 7
+mem
 shot frame
 assert turn=1
 assert team=RED
@@ -107,7 +108,7 @@ exit
 
     let parsed = steps(script);
 
-    assert_eq!(parsed.len(), 41, "все строки-команды разобраны");
+    assert_eq!(parsed.len(), 42, "все строки-команды разобраны");
     assert_eq!(parsed[0].command, Command::Click(10, 20));
     assert_eq!(parsed[1].command, Command::RightClick(30, 40));
     assert!(parsed
@@ -596,4 +597,95 @@ fn recorded_manual_session_round_trips_through_qa_run() {
 
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(replay_dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// 7. P4: soak/edge-сценарии и команда `mem`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mem_command_writes_rss_to_the_log() {
+    let dir = temp_dir("mem");
+    let mut runner = runner(&dir);
+
+    let report = runner.run(&steps("mem\nassert screen=MainMenu\nmem\n"), "mem");
+
+    assert!(report.passed, "{:?}\n{}", report.failures, report.log);
+    assert!(report.log.contains("# mem start:"), "{}", report.log);
+    assert!(report.log.contains("# mem end:"), "{}", report.log);
+    assert!(report.log.contains("mem -> ok (rss="), "{}", report.log);
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn soak_script_is_100_turns_with_periodic_checks() {
+    let text = std::fs::read_to_string(repo_root().join("max-rust-qa/scripts/soak-100.qa"))
+        .expect("soak-100.qa читается");
+    let parsed = parse_script(&text).expect("soak-100.qa разбирается");
+
+    let end_turns = parsed
+        .iter()
+        .filter(|step| step.command == Command::EndTurn)
+        .count();
+    let shots = parsed
+        .iter()
+        .filter(|step| matches!(step.command, Command::Shot(_)))
+        .count();
+
+    assert_eq!(end_turns, 100, "soak обязан закрыть 100 ходов");
+    assert!(shots >= 5, "кадры каждые 20 ходов: {shots}");
+    assert!(
+        parsed.iter().any(|step| step.command == Command::Mem),
+        "память должна попадать в лог"
+    );
+    assert!(
+        parsed
+            .iter()
+            .any(|step| step.command == Command::Assert(Assertion::Turn(Cmp::Eq, 101))),
+        "финальный assert turn=101"
+    );
+    assert!(
+        parsed
+            .iter()
+            .any(|step| step.command == Command::SaveV70("soak-turn100.dta".to_string())),
+        "P3-сейв на 100-м ходу"
+    );
+}
+
+#[test]
+fn edge_cases_script_passes_click_spam_and_unicode() {
+    if !has_game_data() {
+        return;
+    }
+
+    let dir = temp_dir("edge_cases");
+    let mut runner = runner(&dir);
+    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/edge-cases.qa"));
+
+    assert!(
+        report.passed,
+        "edge-cases.qa упал: {:?}\n{}",
+        report.failures, report.log
+    );
+    assert!(report.frames > 0, "партия прокручивала кадры");
+    assert!(
+        runner.app().state().turn_counter >= 2,
+        "второй старт доигран до хода 2: turn={}",
+        runner.app().state().turn_counter
+    );
+
+    for name in [
+        "edge-menu-spam",
+        "edge-game-spam",
+        "edge-unicode-chat",
+        "edge-unicode-name",
+        "edge-repeat-start",
+        "edge-second-game",
+    ] {
+        let path = dir.join(format!("{name}.png"));
+        assert!(path.is_file(), "нет кадра {name}: {}", path.display());
+    }
+
+    std::fs::remove_dir_all(dir).ok();
 }

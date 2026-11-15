@@ -290,6 +290,8 @@ pub enum Command {
     Wait(u32),
     /// `tick N` — ровно N кадров игрового цикла.
     Tick(u32),
+    /// `mem` — записать текущий RSS процесса в лог (P4 soak, TC-1108).
+    Mem,
     /// `shot NAME` — PNG кадра в каталог вывода.
     Shot(String),
     /// `assert …`.
@@ -415,6 +417,13 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "type" => Ok(Command::Type(parse_text(rest)?)),
         "wait" => Ok(Command::Wait(parse_count(rest, "wait")?)),
         "tick" => Ok(Command::Tick(parse_count(rest, "tick")?)),
+        "mem" => {
+            if rest.is_empty() {
+                Ok(Command::Mem)
+            } else {
+                Err(format!("mem не принимает аргументов: «{rest}»"))
+            }
+        }
         "shot" => Ok(Command::Shot(parse_name(rest, "shot")?)),
         "assert" => Ok(Command::Assert(parse_assertion(rest)?)),
         "save" => Ok(Command::Save(parse_name(rest, "save")?)),
@@ -950,6 +959,7 @@ mod tests {
         );
         assert_eq!(one("wait 40"), Command::Wait(40));
         assert_eq!(one("tick 3"), Command::Tick(3));
+        assert_eq!(one("mem"), Command::Mem);
         assert_eq!(one("shot main-menu"), Command::Shot("main-menu".to_string()));
         assert_eq!(one("save sp.mxs"), Command::Save("sp.mxs".to_string()));
         assert_eq!(
@@ -1096,6 +1106,7 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "type hello world",
             "type \"unterminated",
             "wait",
+            "mem 1",
             "shot a/b",
             "shot ..",
             "save ../x.mxs",

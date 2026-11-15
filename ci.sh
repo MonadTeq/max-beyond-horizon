@@ -2,7 +2,8 @@
 # M6.3: локальный CI (то же, что .github/workflows/ci.yml) в Docker.
 #
 #   bash ci.sh                 # cargo check/test max-rust + cargo test --workspace Horizon
-#                              # + QA: qa_run (sp-full/hs-2/visual-screens/victory/production/save-load) и golden
+#                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) и golden
+#                              # + SOAK: soak_headless 120 ходов
 #   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
 #   bash ci.sh --smoke --turns 10
 #
@@ -82,7 +83,7 @@ step() {
 
 started=$(date +%s)
 
-step "1/3 max-rust: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
+step "1/4 max-rust: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
 # через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux
 # CMake собирает SDL3 с теми драйверами, чьи dev-заголовки видит, поэтому ставим
@@ -107,7 +108,7 @@ docker run --rm \
      cargo check --features sound && cargo test --features sound && \
      cargo test --no-default-features"
 
-step "2/3 max-horizon-server: cargo test --workspace"
+step "2/4 max-horizon-server: cargo test --workspace"
 docker run --rm \
     -v "$ROOT/max-horizon-server:/src/max-horizon-server" \
     -w /src/max-horizon-server \
@@ -119,7 +120,7 @@ docker run --rm \
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
 # Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
-step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load) + golden"
+step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, edge-cases) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
@@ -135,8 +136,26 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production'
+
+# P4: soak — отдельная стадия (не быстрая QA): 100 ходов UI-партии с ходами ИИ
+# + 120 ходов headless ИИ×ИИ с профилем тика (MAX_TICK_PROFILE=1) и RSS.
+# Каталог qa-out/ уже создан стадией 3/4; soak-логи дописываются рядом.
+step "4/4 SOAK: soak-100.qa (100 ходов, память+профиль) + soak_headless (120 ходов)"
+docker run --rm \
+    -v "$ROOT:/src" \
+    -v "$ROOT/build/cargo-home:/cargo-home" \
+    -e "CARGO_HOME=/cargo-home" \
+    -e "MAX_TICK_PROFILE=1" \
+    -w /src/max-rust \
+    "$RUST_IMAGE" bash -c \
+    'set -e
+     apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
+     mkdir -p qa-out/soak-100 qa-out/soak-headless
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+     cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --out qa-out/soak-headless'
 
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"

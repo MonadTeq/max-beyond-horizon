@@ -13,7 +13,7 @@
 | Слой | Что проверяет | Где | Частота | Статус |
 |---|---|---|---|---|
 | 1. Юнит/интеграционные (650 тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
-| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 6 сценариев) |
+| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 8 сценариев) |
 | 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max-rust --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
 | 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 8 эталонов) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC | live-smoke.sh | релизный гейт | **готово** (ручной запуск) |
@@ -61,7 +61,11 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
      завод → INFANTRY за 2 хода;
   6. `save-load.qa` — P3: два хода → `save_v70` (настоящий V70) → окно
      `Save Game` (`key s`, кадр `save-menu`) → `load` в свежем состоянии →
-     `assert turn=3`, `assert units=14` → `end_turn` после загрузки.
+     `assert turn=3`, `assert units=14` → `end_turn` после загрузки;
+  7. `soak-100.qa` — P4: 100 ходов человек+ИИ, снимки/`mem` каждые 20 ходов,
+     `assert turn=101`, V70-сейв на 100-м ходу;
+  8. `edge-cases.qa` — P4 TC-1106/1111/1112: 50+50 кликов (меню/карта),
+     не-ASCII ввод в чате/имени, повторный старт.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;
   ассерт-фейл → exit 1 с текстом (`строка N: assert …: фактически …`).
 - Тесты драйвера: `src/qa/script.rs` (все команды парсера),
@@ -113,11 +117,14 @@ cargo run -p max_app -- \
 
 ## Интеграция в CI (слой 4)
 
-- `ci.sh`: стадия **3/3** после `cargo test` и тестов Horizon — прогон
-  `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa` и golden-сверка;
+- `ci.sh`: стадия **3/4** после `cargo test` и тестов Horizon — прогон
+  `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa`, `production.qa`,
+  `save-load.qa`, `edge-cases.qa` и golden-сверка; стадия **4/4** — soak
+  (`soak-100.qa` с `MAX_TICK_PROFILE=1` + `soak_headless --turns 120`);
   `--smoke` дополнительно запускает `live-smoke.sh`.
-- `.github/workflows/ci.yml`: job `qa` с теми же командами; при падении логи и
-  кадры уходят артефактом `qa-artifacts`.
+- `.github/workflows/ci.yml`: job `qa` с теми же командами и job `soak`
+  (`timeout-minutes: 45`); при падении логи и кадры уходят артефактом
+  `qa-artifacts`.
 - Docker (rust:1.94.0-bookworm + gcc/cmake) — всё headless, без SDL; PNG-кодек
   свой, поэтому новые крейты и сеть для картинок не нужны.
 

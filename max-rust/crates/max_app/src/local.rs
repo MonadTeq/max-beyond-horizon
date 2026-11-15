@@ -798,7 +798,14 @@ impl App {
         // передаёт его на экран; `finish_turn` внутри делает ту же проверку.
         let status = victory::evaluate_status(self.state(), self.state().turn_counter);
         let turn_counter = self.state().turn_counter;
-        let over = self.state_mut().finish_turn();
+        // P4: замер `GameManager_TeamTurnFinish` (победа/поражение, очки,
+        // производство всех команд). Замер не меняет порядок вызовов —
+        // `finish_turn` вызывается ровно один раз в той же точке.
+        let over = {
+            let _profile = crate::profile::finish_turn_scope(turn_counter);
+
+            self.state_mut().finish_turn()
+        };
 
         // События хода производства (`GameManager_ReportNewUnitsMessage`):
         // только для локального игрока, чтобы журнал не забивался чужими
@@ -959,6 +966,9 @@ impl App {
         if local.paused || local.phase == LocalPhase::Finished || local.notice.is_some() {
             return update;
         }
+        // P4: время кадра локальной партии (`MAX_TICK_PROFILE=1`). `dt` не
+        // влияет на симуляцию — тик по-прежнему один за кадр.
+        let _profile = crate::profile::local_update_scope();
         let phase = local.phase;
 
         match phase {

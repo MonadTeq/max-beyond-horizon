@@ -109,7 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
-      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load)
+      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, edge-cases)
         working-directory: max-rust
         # --no-default-features: QA-драйверу окно не нужно, иначе примеры
         # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
@@ -123,6 +123,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
@@ -139,5 +140,47 @@ jobs:
           path: |
             max-rust/qa-out/**/*.png
             max-rust/qa-out/**/log.txt
+            max-rust/qa-out/**/soak.txt
+          if-no-files-found: warn
+
+  # P4: soak — 100 ходов QA-партии с ходами ИИ + 120 ходов headless ИИ×ИИ
+  # с профилем тика (`MAX_TICK_PROFILE=1`) и замером RSS. Отдельный job:
+  # длинный прогон не должен задерживать PR, поэтому только push/ручной запуск.
+  soak:
+    name: soak (soak-100.qa + soak_headless 120 turns)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - name: Install build deps (gcc/cmake)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc g++ cmake
+
+      - name: Soak (100 turns QA + 120 turns headless, memory/profile)
+        working-directory: max-rust
+        env:
+          MAX_TICK_PROFILE: "1"
+        run: |
+          set -e
+          mkdir -p qa-out/soak-100 qa-out/soak-headless
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+          cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --out qa-out/soak-headless
+
+      - name: Upload soak logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-artifacts
+          path: |
+            max-rust/qa-out/soak-100/log.txt
+            max-rust/qa-out/soak-headless/soak.txt
           if-no-files-found: warn
 

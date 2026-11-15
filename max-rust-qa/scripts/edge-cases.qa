@@ -1,0 +1,207 @@
+# edge-cases.qa — TC-1106/1111/1112: спам кликов, юникод, повторный старт.
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
+#
+# Проверяется (слой 2, тот же путь ввода, что у мыши/клавиатуры):
+# * TC-1106: 50 кликов подряд в главном меню (пустые области, кнопки не
+#   задеваются) и 50 кликов по карте в партии — без паник, экран/партия живы;
+# * TC-1111: не-ASCII ввод (`type "Привет… 汉字 🚀"`) в чате и в поле имени —
+#   символы отклоняются без паники, кадр рисуется (fallback-глиф проверен
+#   unit-тестом `max_render::text::glyph('Ж') == '?'`);
+# * TC-1112 (UI-часть): выход из партии в главное меню и повторный старт New
+#   Game → Cancel; повторное создание `App` проверяется тестом
+#   `tests/app.rs::app_can_be_created_twice_and_start_exit_twice`.
+#
+# Битые файлы (TC-1102) и пустой каталог данных (TC-1101) — unit-тесты
+# `max_core`/`max_app`, здесь не дублируются.
+
+# --- TC-1106, часть 1: спам кликов в главном меню -------------------------
+shot main-menu
+assert screen=MainMenu
+click 40 60
+click 320 120
+click 120 220
+click 260 300
+click 60 380
+click 340 420
+click 200 450
+click 90 90
+click 300 250
+click 150 330
+click 40 60
+click 320 120
+click 120 220
+click 260 300
+click 60 380
+click 340 420
+click 200 450
+click 90 90
+click 300 250
+click 150 330
+click 40 60
+click 320 120
+click 120 220
+click 260 300
+click 60 380
+click 340 420
+click 200 450
+click 90 90
+click 300 250
+click 150 330
+click 40 60
+click 320 120
+click 120 220
+click 260 300
+click 60 380
+click 340 420
+click 200 450
+click 90 90
+click 300 250
+click 150 330
+click 40 60
+click 320 120
+click 120 220
+click 260 300
+click 60 380
+click 340 420
+click 200 450
+click 90 90
+click 300 250
+click 150 330
+assert screen=MainMenu
+shot edge-menu-spam
+
+# --- Новая игра (тот же путь, что sp-full.qa) ----------------------------
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+mem
+
+# --- TC-1106, часть 2: 50 кликов по карте --------------------------------
+click 200 40
+click 400 100
+click 300 200
+click 500 300
+click 250 400
+click 600 50
+click 350 350
+click 450 150
+click 220 280
+click 550 420
+click 200 40
+click 400 100
+click 300 200
+click 500 300
+click 250 400
+click 600 50
+click 350 350
+click 450 150
+click 220 280
+click 550 420
+click 200 40
+click 400 100
+click 300 200
+click 500 300
+click 250 400
+click 600 50
+click 350 350
+click 450 150
+click 220 280
+click 550 420
+click 200 40
+click 400 100
+click 300 200
+click 500 300
+click 250 400
+click 600 50
+click 350 350
+click 450 150
+click 220 280
+click 550 420
+click 200 40
+click 400 100
+click 300 200
+click 500 300
+click 250 400
+click 600 50
+click 350 350
+click 450 150
+click 220 280
+click 550 420
+assert screen=InGame
+assert turn=1
+shot edge-game-spam
+
+# --- TC-1111: не-ASCII в чате -------------------------------------------
+key t
+type "Привет, мир! 汉字 🚀"
+key ENTER
+tick 2
+shot edge-unicode-chat
+assert screen=InGame
+
+# Строка только из не-ASCII: буфер остаётся пустым, Enter просто закрывает
+# ввод (как `Remote_SendNetPacket_18` по пустому сообщению) — без паники.
+key t
+type "Привет"
+key ENTER
+tick 1
+assert screen=InGame
+
+# --- TC-1111 + TC-1112: не-ASCII в имени игрока и повторный старт -------
+select unit 0
+assert selected
+key ESC             # снять выделение
+assert screen=InGame
+key ESC             # выйти из партии
+assert screen=MainMenu
+shot edge-back-to-menu
+
+menu new_game
+assert screen=Options
+click 100 452       # поле Name
+type "Командир 汉字"
+key ENTER
+shot edge-unicode-name
+setup cancel
+assert screen=MainMenu
+shot edge-repeat-start
+
+# --- TC-1112 (UI): второй полный старт после выхода ----------------------
+# Тот же `App`, но новая партия: экраны настройки и мобилизация поднимаются
+# заново, состояние не «залипает».
+menu new_game
+assert screen=Options
+setup done
+setup done
+assert screen=Players
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+end_turn
+assert turn=2
+assert screen=InGame
+shot edge-second-game

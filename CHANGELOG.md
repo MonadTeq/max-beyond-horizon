@@ -2,6 +2,59 @@
 
 ### Добавлено
 
+- **P4 — стабильность и производительность клиента** (`docs/development/PLAN-production.md`):
+  - **Soak 100+ ходов.** `max-rust-qa/scripts/soak-100.qa`: партия RED
+    (человек, `end_turn` + `select`/`move`) против GREEN (Clueless, Duration
+    200), 100 ходов, `assert turn=21/41/61/81/101`, `shot`/`mem` каждые
+    20 ходов, `save_v70 soak-turn100.dta`. **PASS**: 12 208 кадров, V70-сейв
+    157 921 байт, RSS 54 696 → 60 944 КиБ (+6.1 МиБ, плато после 20-го хода).
+    Headless `max_app/examples/soak_headless.rs` (RED + 2 компьютера,
+    `--turns 120`, `dt = 1/60`): **PASS**, 120/120 ходов, 362 502 кадра,
+    21.8 с, RSS 53 548 → 53 708 КиБ (+160 КиБ, peak 53 884).
+  - **Замер памяти** `max_app::mem`: RSS/пик без внешних крейтов (Linux
+    `/proc/self/status` `VmRSS`/`VmHWM`, Windows `GetProcessMemoryInfo`);
+    команда qa-драйвера `mem` + автоматические `# mem start/end` (с дельтой)
+    в каждом `log.txt`; `soak_headless` пишет `soak.txt` со строкой на ход,
+    итогом `SOAK RESULT`, `MEMORY` (порог стабильности 64 МиБ) и `PROFILE`.
+  - **Профиль тика** `max_app::profile` (`MAX_TICK_PROFILE=1`): время каждого
+    `App::local_update` и каждого `GameState::finish_turn`, среднее/максимум/
+    число кадров сверх бюджета 60 Гц (16.67 мс) + номер хода максимума.
+    QA-soak (debug): средний кадр 289 µs, max 15.69 мс, сверх бюджета 0;
+    `finish_turn` на 100-м ходу 23.7 µs (max 56.6 µs). Headless 120 ходов
+    (debug): средний кадр 59.9 µs, один планировочный выброс 121.9 мс (1 из
+    362 502). Релизная сборка тех же 120 ходов: 2.47 с, средний кадр
+    **6.76 µs**, max 5.21 мс, кадров сверх 16.67 мс — **0**, средний ход
+    20.6 мс, RSS 51 544 → 51 824 КиБ (+280 КиБ); `finish_turn` avg 58 µs,
+    max 5.19 мс. Порядок/арифметика симуляции не меняются — `Instant::now()`
+    вокруг тех же вызовов.
+  - **Оптимизация кадра без изменения детерминизма**:
+    `App::update_visual_units` обновляет карту визуальных позиций на месте
+    (`retain` + `insert`) вместо сборки `HashMap` каждый кадр; визуальные
+    позиции не входят в CRC/снапшот — `AppDigest` и порядок симуляции те же.
+  - **Краевые TC-11xx**: `max-rust-qa/scripts/edge-cases.qa` — 50 кликов по
+    пустым областям главного меню + 50 по карте, не-ASCII `type` в чате и
+    поле имени (отклоняется без паник, кадры `edge-unicode-*`), выход →
+    New Game → Cancel → полный второй старт (кадр `edge-second-game`);
+    TC-1112 — `tests/app.rs::app_can_be_created_twice_and_start_exit_twice`
+    (`App::new` дважды, один и тот же файл сейва, свежие `turn=1`/`ticks=0`,
+    одинаковый digest); TC-1107 — явная нейтральность SDL-событий
+    alt-tab/сворачивания `max_render::sdl_window::window_event_is_input_neutral`
+    (+тест). `suite/11-edge-cases.md`: **13 ✅ / 1 🟡** (живой alt-tab —
+    ручной WINDOW-пункт).
+  - **Тесты**: `tests/soak.rs` (детерминизм soak, профиль видит каждый кадр,
+    бюджет 60 Гц, память), `tests/qa_driver.rs` (команда `mem`, проверка
+    структуры `soak-100.qa` — 100 `end_turn`/кадры/финальный assert,
+    прогон `edge-cases.qa`), unit-тесты `profile`/`mem`/`window_event_is_input_neutral`.
+  - **CI**: `ci.sh` — стадия **4/4 SOAK** (`soak-100.qa` с
+    `MAX_TICK_PROFILE=1` + `soak_headless --turns 120`); job `soak` в
+    `.github/workflows/ci.yml` (`timeout-minutes: 45`, push/ручной запуск,
+    не PR) с артефактами `soak.txt`/`log.txt` при падении; `edge-cases.qa`
+    добавлен в стадию 3/4 и job `qa`.
+  - Документация: `docs/development/PLAN-production.md` (P4 закрыт),
+    `max-rust-qa/scripts/README.md` §P4 (команды, метрики, пороги),
+    `max-rust-qa/plans/qa-plan.md`, `docs/development/release-checklist.md`
+    §2.9 (свидетельства soak), `max-rust-qa/suite/11-edge-cases.md`.
+
 - **P3 — запись V70-сейвов из живой партии** (`docs/development/PLAN-production.md`):
   - `max_core::save_write`: `build_save_file(&GameState) -> SaveFile`,
     `GameState::to_save()`/`to_save_bytes()`, `SaveMeta` — мост

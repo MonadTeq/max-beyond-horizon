@@ -31,7 +31,10 @@
 //! диагностики (`ticks`, `applied_commands`), поэтому два прогона одного сейва
 //! дают одинаковый [`AppDigest`].
 
-#![forbid(unsafe_code)]
+// `deny`, а не `forbid`: единственное исключение — чтение RSS процесса для
+// soak-прогонов P4 (`mem.rs`, Windows: `GetProcessMemoryInfo`). Оно помечено
+// `#[allow(unsafe_code)]` точечно; остальной крейт по-прежнему без unsafe.
+#![deny(unsafe_code)]
 
 pub mod assets;
 pub mod audio;
@@ -42,15 +45,18 @@ pub mod hotseat;
 pub mod hud;
 pub mod landing;
 pub mod local;
+pub mod mem;
 pub mod menu;
 pub mod mobilize;
 pub mod net;
 pub mod panels;
 pub mod pregame;
+pub mod profile;
 pub mod qa;
 pub mod render;
 pub mod saveload;
 pub mod setup;
+pub mod soak;
 pub mod ui;
 pub mod winloss;
 
@@ -91,8 +97,11 @@ pub use hud::{
 pub use hotseat::TurnNotice;
 pub use landing::{LandingAction, LandingScreen};
 pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
+pub use mem::{memory_line, process_memory, ProcessMemory};
 pub use mobilize::Mobilization;
 pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
+pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
+pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
@@ -972,19 +981,28 @@ impl App {
     /// плавно (как пиксельное движение `UnitInfo::Move` в оригинале).
     /// `dt <= 0` — снимок без интерполяции: headless/QA-кадры остаются
     /// детерминированными и совпадают с эталонами.
+    ///
+    /// P4: карта обновляется на месте (`retain` + `insert`), а не собирается
+    /// заново каждый кадр. Это убирает аллокацию `HashMap` с `ids.len()`
+    /// ячеек на каждом кадре 60 Гц; значения/порядок обхода не используются
+    /// ни симуляцией, ни CRC (визуальные позиции — только для кадра).
     pub fn update_visual_units(&mut self, dt: f32) {
         let ids = self.state.unit_ids_in_order();
-        let mut next = std::collections::HashMap::with_capacity(ids.len());
         let dt = dt.clamp(0.0, 0.1);
         // Скорость догоняния: клетка примерно за 1/12 секунды.
         let max_step = dt * 12.0;
 
+        // Раздельные заимствования полей: `retain` читает состояние.
+        let state = &self.state;
+        let visual = &mut self.visual_units;
+        visual.retain(|id, _| state.unit(*id).is_some());
+
         for id in ids {
-            let Some(unit) = self.state.unit(id) else {
+            let Some(unit) = state.unit(id) else {
                 continue;
             };
             let target = (f32::from(unit.grid.x), f32::from(unit.grid.y));
-            let current = self.visual_units.get(&id).copied().unwrap_or(target);
+            let current = visual.get(&id).copied().unwrap_or(target);
             let dx = target.0 - current.0;
             let dy = target.1 - current.1;
             let distance = dx.abs().max(dy.abs());
@@ -1002,10 +1020,8 @@ impl App {
                 )
             };
 
-            next.insert(id, position);
+            visual.insert(id, position);
         }
-
-        self.visual_units = next;
     }
 
     /// Применяет команду сразу (порядок команд задаёт вызывающий).

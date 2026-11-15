@@ -677,3 +677,136 @@ fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
     click(&mut app, max_render::layout::ZOOM_PLUS);
     assert_eq!(app.viewport().zoom(), 64, "кнопка + возвращает 1:1");
 }
+
+// ---------------------------------------------------------------------------
+// 6. TC-1112: повторный запуск/выход (`App::new` дважды) — без залипаний
+// ---------------------------------------------------------------------------
+
+/// TC-1112: приложение создаётся, играет, пишет сейв, выходит — и всё это
+/// дважды подряд в одном процессе. Проверяет, что нет залипшего состояния,
+/// блокировок файлов сейва и «второй `App` видит первый».
+///
+/// Это ровно сценарий «игрок закрыл игру и запустил снова» без перезапуска
+/// процесса: `App::new` не трогает глобальные ресурсы, а `leave_local_game`
+/// освобождает партию. Файл сейва намеренно один и тот же — на Windows
+/// открытый дескриптор дал бы ошибку записи во втором раунде.
+#[test]
+fn app_can_be_created_twice_and_start_exit_twice() {
+    let config = || AppConfig {
+        max_res: repo_path("max-original/MAX.RES"),
+        color_pal: repo_path("max-original/COLOR.PAL"),
+        patches_res: repo_path("assets/PATCHES.RES"),
+        ..Default::default()
+    };
+
+    if !config().max_res.is_file() {
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!(
+        "max_app_restart_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let save = dir.join("restart.mxs");
+    let mut digests = Vec::new();
+
+    for _ in 0..2 {
+        let mut app = App::new(config());
+        app.init_assets().expect("ассеты игры");
+
+        let setup = max_app::LocalSetup::default();
+        app.start_local_game(&setup).expect("локальная партия");
+
+        assert!(app.local_active(), "партия поднялась");
+        assert_eq!(app.state().turn_counter, 1, "новый App — новый ход");
+        assert_eq!(app.ticks(), 0, "счётчик тиков нового App сброшен");
+
+        app.local_update(0.0);
+        app.write_local_save(&save).expect("сейв записан");
+        assert!(save.is_file(), "{}", save.display());
+        digests.push(app.digest());
+
+        app.leave_local_game();
+        assert!(!app.local_active(), "выход освобождает партию");
+        assert!(app.local().is_none());
+        assert!(app.build_menu().is_none());
+    }
+
+    // Оба раунда начинаются с одного и того же состояния (seed по умолчанию):
+    // второй App не «помнит» первый.
+    assert_eq!(digests[0].state_digest, digests[1].state_digest);
+    assert_eq!(digests[0].snapshot_len, digests[1].snapshot_len);
+
+    let bytes = std::fs::read(&save).expect("сейв читается после выхода");
+    assert!(!bytes.is_empty());
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// 7. TC-1111: не-ASCII в отрисовке — fallback-глиф '?' (без паники)
+// ---------------------------------------------------------------------------
+
+/// Кадр HUD локальной партии с заданным именем игрока (имя видно в журнале).
+///
+/// Рисуем именно HUD (`render_hud`), а не `render_frame`: журнал сообщений и
+/// строка «Local game: <имя> vs …» — часть HUD-слоя.
+fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
+    let config = AppConfig {
+        max_res: repo_path("max-original/MAX.RES"),
+        color_pal: repo_path("max-original/COLOR.PAL"),
+        patches_res: repo_path("assets/PATCHES.RES"),
+        ..Default::default()
+    };
+
+    if !config.max_res.is_file() {
+        return None;
+    }
+
+    let mut app = App::new(config);
+    app.init_assets().expect("ассеты игры");
+
+    let mut setup = max_app::LocalSetup::default();
+    setup.player_name = name.to_string();
+    app.start_local_game(&setup).expect("локальная партия");
+
+    let mut buffer = max_render::buffer::RgbaBuffer::new(640, 480);
+    max_app::render_hud(
+        &mut buffer,
+        &max_app::HudView {
+            state: app.state(),
+            hud: app.hud(),
+            viewport: app.viewport(),
+            team: app.player_team(),
+            status: "Local game",
+        },
+    );
+
+    Some(buffer.pixels().to_vec())
+}
+
+#[test]
+fn non_ascii_player_name_renders_with_the_fallback_glyph() {
+    let Some(question) = frame_for_player_name("?") else {
+        return;
+    };
+    let ascii = frame_for_player_name("A").expect("кадр с ASCII-именем");
+    let cyrillic = frame_for_player_name("Ж").expect("кадр с не-ASCII именем");
+
+    // Имя действительно попадает в кадр (иначе сравнение ниже ничего не значит).
+    assert_ne!(
+        question, ascii,
+        "имя игрока должно рисоваться в HUD (журнал локальной партии)"
+    );
+    // Не-ASCII символ заменяется тем же '?', поэтому кадры совпадают побитово.
+    assert_eq!(
+        question, cyrillic,
+        "не-ASCII имя должно рисоваться fallback-глифом '?' без паники"
+    );
+}
+

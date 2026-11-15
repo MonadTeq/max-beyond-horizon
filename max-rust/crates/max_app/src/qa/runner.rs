@@ -293,6 +293,12 @@ impl QaRunner {
 
         self.log
             .push_str(&format!("# qa_run: {title} ({} шагов)\n", steps.len()));
+        // P4 (TC-1108): память на старте прогона — чтобы soak-лог показывал
+        // рост RSS между «до» и «после», а не только абсолютное значение.
+        let mem_start = crate::mem::process_memory();
+        self.log
+            .push_str(&format!("# mem start: {}\n", crate::mem::memory_line()));
+        crate::profile::reset();
 
         let mut failures = Vec::new();
 
@@ -322,6 +328,22 @@ impl QaRunner {
         }
 
         let passed = failures.is_empty();
+
+        let mem_end = crate::mem::process_memory();
+        let delta = match (mem_start, mem_end) {
+            (Some(start), Some(end)) => format!(" (delta={:+} KiB)", end.growth_kb(start)),
+            _ => String::new(),
+        };
+        self.log.push_str(&format!(
+            "# mem end: {}{delta}\n",
+            crate::mem::memory_line()
+        ));
+        // P4: профиль тика — только когда включён `MAX_TICK_PROFILE=1`
+        // (иначе счётчики пусты и строка была бы шумом).
+        if crate::profile::enabled() {
+            self.log.push_str(&crate::profile::summary());
+            self.log.push('\n');
+        }
 
         self.log.push_str(&format!(
             "RESULT: {} · кадров {}, PNG {}\n",
@@ -359,6 +381,7 @@ impl QaRunner {
                 self.detail = Some(format!("{frames} кадров"));
                 Ok(Flow::Continue)
             }
+            Command::Mem => self.mem(),
             Command::Shot(name) => self.shot(name),
             Command::Assert(assertion) => self.check(assertion.clone()),
             Command::Save(name) => self.save(name),
@@ -677,6 +700,13 @@ impl QaRunner {
         }
 
         self.detail = Some(format!("{frames} кадров"));
+        Ok(Flow::Continue)
+    }
+
+    /// `mem`: текущий RSS процесса в лог шага (P4 soak, TC-1108).
+    fn mem(&mut self) -> Result<Flow, String> {
+        self.detail = Some(crate::mem::memory_line());
+
         Ok(Flow::Continue)
     }
 

@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 
+use sdl3::event::WindowEvent;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::{Cursor, MouseButton};
 use sdl3::pixels::PixelFormat;
@@ -452,6 +453,13 @@ impl SdlWindow {
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseRightClick { x, y });
                 }
+                // P4 (TC-1107): alt-tab/сворачивание/разворачивание не
+                // останавливают цикл. SDL3 присылает Window-события, ввод по ним
+                // не идёт, окно остаётся живым, следующий кадр рисуется как
+                // обычно. Ветка явная, чтобы поведение было видно и покрыто
+                // тестом [`window_event_is_input_neutral`].
+                sdl3::event::Event::Window { win_event, .. }
+                    if window_event_is_input_neutral(win_event) => {}
                 _ => {}
             }
         }
@@ -473,3 +481,70 @@ impl SdlWindow {
                 .any(|input| matches!(input, WindowInput::Key(WindowKey::Escape)))
     }
 }
+
+/// P4 (TC-1107): события окна, которые не несут ввода и не должны
+/// останавливать цикл — потеря/получение фокуса (alt-tab), сворачивание,
+/// разворачивание, показ/скрытие/перерисовка, вход/выход курсора.
+///
+/// Окно при них остаётся живым: `poll_input` возвращает `running = true`, а
+/// следующий кадр рисуется как обычно. Явный предикат — чтобы это поведение
+/// было видно в коде и проверялось тестом без настоящего окна.
+pub fn window_event_is_input_neutral(event: WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::FocusLost
+            | WindowEvent::FocusGained
+            | WindowEvent::Minimized
+            | WindowEvent::Restored
+            | WindowEvent::Maximized
+            | WindowEvent::Shown
+            | WindowEvent::Hidden
+            | WindowEvent::Exposed
+            | WindowEvent::Occluded
+            | WindowEvent::MouseEnter
+            | WindowEvent::MouseLeave
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_and_minimize_events_are_input_neutral() {
+        for event in [
+            WindowEvent::FocusLost,
+            WindowEvent::FocusGained,
+            WindowEvent::Minimized,
+            WindowEvent::Restored,
+            WindowEvent::Maximized,
+            WindowEvent::Shown,
+            WindowEvent::Hidden,
+            WindowEvent::Exposed,
+            WindowEvent::Occluded,
+            WindowEvent::MouseEnter,
+            WindowEvent::MouseLeave,
+        ] {
+            assert!(
+                window_event_is_input_neutral(event),
+                "{event:?} не должен останавливать цикл или давать ввод"
+            );
+        }
+    }
+
+    #[test]
+    fn resize_move_and_close_are_not_neutral_input_events() {
+        for event in [
+            WindowEvent::Resized(640, 480),
+            WindowEvent::Moved(10, 20),
+            WindowEvent::CloseRequested,
+            WindowEvent::HitTest(1, 2),
+        ] {
+            assert!(
+                !window_event_is_input_neutral(event),
+                "{event:?} не должен считаться нейтральным"
+            );
+        }
+    }
+}
+

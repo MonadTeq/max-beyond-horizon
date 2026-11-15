@@ -13,6 +13,8 @@ max-rust-qa/
 ├── scripts/victory.qa          # партия до исхода «победа» + экран победы
 ├── scripts/production.qa       # P2: конструктор → BuildMenu → TRAINHAL за 10 ходов → завод → INFANTRY
 ├── scripts/save-load.qa        # P3: 2 хода → save_v70 → load в свежем App → те же ход/юниты
+├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
+├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
 ├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~980 КиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 └── scripts/README.md
@@ -52,6 +54,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `type "text"` | печатные символы по одному (поле имени, чат, лимит победы) |
 | `wait N` | до N кадров, пока игра не будет готова к вводу (ход игрока, окно перехода или конец партии) |
 | `tick N` | ровно N кадров игрового цикла (`App::local_update`) |
+| `mem` | текущий RSS процесса (и пик) в лог шага — P4 soak/TC-1108; `# mem start/end` пишутся автоматически |
 | `shot NAME` | PNG кадра 640×480 в `<out_dir>/NAME.png` |
 | `assert …` | проверка состояния (таблица ниже); падение → exit 1 |
 | `save NAME` | контейнер локальной партии `MXLS` (`App::write_local_save`) |
@@ -132,6 +135,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
 | `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL (10 ходов) → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`) |
 | `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |
+| `soak-100.qa` | P4 soak: Options (Clueless, No Limit, Turn Based, Duration 200) → мобилизация без покупок → высадка → `select unit 0`/`move near` в начале и на 41-м ходу → 100 × `end_turn` (ходы ИИ) → `assert turn=21/41/61/81/101`, `assert screen=InGame`, `shot` и `mem` каждые 20 ходов, `save_v70 soak-turn100.dta`; в `log.txt` — `# mem start/end` и (при `MAX_TICK_PROFILE=1`) строка `PROFILE` | **PASS** (100 ходов, 12 208 кадров, 7 PNG; V70-сейв 157 921 Б; RSS 54 696 → 60 944 КиБ) |
+| `edge-cases.qa` | P4 TC-1106/1111/1112: 50 кликов по пустым областям главного меню + 50 по карте (без паник), не-ASCII `type` в чате и в поле имени, выход из партии → New Game → Cancel → полный второй старт до `turn=2`; кадры `edge-menu-spam`/`edge-game-spam`/`edge-unicode-*`/`edge-repeat-start`/`edge-second-game` | **PASS** |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -139,6 +144,68 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 «элиминация ИИ → победа» покрыт тестом
 `crates/max_app/tests/local_sp.rs::eliminating_the_ai_wins_and_the_game_over_screen_renders`
 (слой 1). Слой 2 закроет его, когда в языке появится команда урона/разрушения.
+
+## P4: soak и производительность (`soak-100.qa`, `soak_headless`)
+
+Два независимых прогона P4 (`docs/development/PLAN-production.md`):
+
+1. **QA-сценарий** `soak-100.qa` — тот же UI-путь игрока (100 × `end_turn` с
+   ходами ИИ), поэтому он ловит паники/десинк экранов и заодно пишет
+   `# mem start`/`# mem end` в `log.txt` (RSS процесса до/после), а команда
+   `mem` — промежуточные замеры каждые 20 ходов.
+2. **Headless-пример** `soak_headless` — 120 ходов ИИ×ИИ без UI:
+
+   ```sh
+   cd max-rust
+   cargo run -q -p max_app --no-default-features --example soak_headless -- \
+       --turns 120 --out qa-out/soak-headless
+   # qa-out/soak-headless/soak.txt: строка на ход (wall/frames/units/rss),
+   # SOAK RESULT, PROFILE, MEMORY
+   ```
+
+   Опции: `--turns`, `--out`, `--ai 1..3`, `--world`, `--seed`, `--opponent`,
+   `--dt-ms`, `--data-dir/--assets-dir`, `--quiet`. Сложность по умолчанию 0
+   (Clueless), условие победы Duration 200 — иначе партия закрылась бы
+   лимитом раньше soak-окна.
+
+**Профиль тика.** Переменная `MAX_TICK_PROFILE=1` включает замеры в
+`max_app::profile`: время каждого `App::local_update` (кадр) и каждого
+`GameState::finish_turn` (закрытие раунда). Итоговая строка пишется в
+`log.txt` QA и в `soak.txt`:
+
+```
+PROFILE: local_update n=… avg=…us max=…us over_16.67ms=… (…%);
+         finish_turn n=… avg=…us max=… last=…@turn100 max_at=turn…
+```
+
+Бюджет кадра 60 Гц — 16 666 667 нс (`profile::FRAME_BUDGET_NS`); счётчик
+`over_16.67ms` показывает, сколько кадров в него не уложились. Замер не меняет
+порядок/арифметику симуляции: `Instant::now()` стоит вокруг тех же вызовов,
+CRC/снапшоты не затрагиваются.
+
+**Память.** `max_app::mem` читает RSS и пик: Linux — `/proc/self/status`
+(`VmRSS`/`VmHWM`), Windows — `GetProcessMemoryInfo`; на прочих ОС
+`rss=unavailable`. `soak_headless` печатает рост RSS и считает его стабильным
+при `growth ≤ 64 МиБ` (порог от грубых утечек; реальный рост за 120 ходов —
+единицы МиБ). Цифры прогона P4 (2026-11-16, `rust:1.94.0-bookworm`, debug):
+
+| Прогон | Ходы | Кадры | Время | RSS старт → конец | Профиль кадра |
+|---|---|---|---|---|---|
+| `soak-100.qa` | 100/100 | 12 208 | ≈3.5 c (12208 × avg 289 µs) | 54 696 → 60 944 КиБ (+6.1 МиБ, плато после 20-го хода) | avg 289 µs, max 15.69 мс, over 16.67 мс = 0 |
+| `soak_headless` (debug) | 120/120 | 362 502 | 21.8 c | 53 548 → 53 708 КиБ (+160 КиБ, peak 53 884) | avg 59.9 µs; 1 выброс 121.9 мс (планировщик, 1 кадр из 362 502) |
+| `soak_headless` (`--release`) | 120/120 | 362 502 | 2.47 c | 51 544 → 51 824 КиБ (+280 КиБ) | avg **6.76 µs**, max 5.21 мс, over 16.67 мс = **0** |
+
+`finish_turn` на 100-м ходу QA-партии — 23.7 µs (avg 23.6 µs, max 56.6 µs
+на 48-м ходу); в релизной сборке headless — avg 58 µs, max 5.19 мс (24-й ход),
+на 120-м ходу 9.4 µs. Память QA-партии растёт только на прогреве аллокатора в
+первые 20 ходов, дальше — плато, то есть линейного роста нет. Бюджет кадра
+60 Гц (16.67 мс) в релизной сборке не превышен ни на одном кадре из 362 502.
+
+**Оптимизация без изменения детерминизма.** `App::update_visual_units`
+(интерполяция кадра) больше не собирает `HashMap` заново каждый кадр, а
+обновляет её на месте (`retain` + `insert`); визуальные позиции не входят в
+CRC/снапшот, порядок симуляции не меняется. Симуляция и `finish_turn` не
+тронуты (только замеры).
 
 ## Golden-кадры (слой 3)
 
@@ -186,23 +253,30 @@ git add ../max-rust-qa/golden && git commit -m "..."
 
 ## CI (слой 4)
 
-`ci.sh` (Docker `rust:1.94.0-bookworm`) и `.github/workflows/ci.yml` содержат
-одну и ту же стадию **qa** (`3/3` в `ci.sh`):
+`ci.sh` (Docker `rust:1.94.0-bookworm`) содержит стадии `1/4` (cargo
+check/test), `2/4` (Horizon), `3/4` — QA-сценарии и golden, `4/4` — soak:
 
 ```sh
+# 3/4: сценарии + golden
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
+
+# 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
+MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --out qa-out/soak-headless
 ```
 
-`set -e` + exit 1 у `qa_run`/`qa_golden_check` = красный CI. Каталог `qa-out/`
-(логи, кадры, diff, `*.mxs`) в git не попадает. В GitHub Actions при падении
-стадии логи и кадры уходят артефактом `qa-artifacts`.
+`set -e` + exit 1 у `qa_run`/`soak_headless`/`qa_golden_check` = красный CI.
+Каталог `qa-out/` (логи, кадры, diff, `*.mxs`, `soak.txt`) в git не попадает.
+В GitHub Actions `soak` — отдельный job (`timeout-minutes: 45`, не на PR); при
+падении стадии логи и кадры уходят артефактом `qa-artifacts`.
 
 ## Тесты драйвера (слой 1 для слоя 2)
 
@@ -243,4 +317,5 @@ cd max-rust && cargo test -p max_app --lib qa:: && cargo test -p max_app --test 
 2. Прогнать локально: `cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/NAME.qa qa-out/NAME`.
 3. Если сценарий проверяет экран, который должен быть в golden — добавить
    `shot` в `visual-screens.qa` (не в новый файл), перегенерировать эталоны.
-4. Добавить прогон в `ci.sh` (стадия 3/3) и `.github/workflows/ci.yml` (job `qa`).
+4. Добавить прогон в `ci.sh` (стадия 3/4 — обычные сценарии, 4/4 — soak) и
+   `.github/workflows/ci.yml` (job `qa` / `soak`).

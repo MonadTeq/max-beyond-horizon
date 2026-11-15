@@ -1,0 +1,199 @@
+# soak-100.qa — soak-партия P4: 100 ходов «человек + компьютер» (слой 2 QA).
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+#
+# Что проверяется:
+# * длинная партия (100+ ходов) без паник: каждый ход закрывается кнопкой
+#   End Turn, ходы компьютера прокручиваются игровым циклом;
+# * состояние действительно доиграно: `assert turn=N` после каждых 20 ходов,
+#   финальный `assert turn=101`;
+# * экран не «уехал»: `assert screen=InGame` и кадры каждые 20 ходов;
+# * память: `mem` на старте/каждые 20 ходов/в конце (RSS в log.txt);
+# * P3-сейв на 100-м ходу (`save_v70`) — длинная партия пишется без ошибок.
+#
+# Настройка: сложность Clueless (ИИ не агрессивен — партия обязана дожить до
+# 100-го хода), таймеры выключены, Turn Based, Duration 200 (иначе Duration
+# 50/100 закрыл бы партию раньше soak-окна). Ход человека — RED, GREEN —
+# компьютер. `select/move` в начале и на 41-м ходу дают активность в партии.
+
+# --- Главное меню ---------------------------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+# --- Options --------------------------------------------------------------
+assert screen=Options
+click 106 92        # Computer Opponent: Clueless (0)
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+click 477 332       # Victory Condition: Duration Medium (200 ходов)
+setup done
+assert screen=Planet
+
+# --- Planet / Players -----------------------------------------------------
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация и высадка -----------------------------------------------
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+mem
+shot soak-start
+
+# --- Активность в первом ходу --------------------------------------------
+select unit 0
+assert selected
+move near
+tick 5
+assert screen=InGame
+
+# --- Ходы 1..20 -----------------------------------------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert turn=21
+assert screen=InGame
+shot soak-turn20
+mem
+
+# --- Ходы 21..40 ----------------------------------------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert turn=41
+assert screen=InGame
+shot soak-turn40
+mem
+
+# --- Активность на 41-м ходу ---------------------------------------------
+select unit 0
+assert selected
+move near
+tick 5
+
+# --- Ходы 41..60 ----------------------------------------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert turn=61
+assert screen=InGame
+shot soak-turn60
+mem
+
+# --- Ходы 61..80 ----------------------------------------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert turn=81
+assert screen=InGame
+shot soak-turn80
+mem
+
+# --- Ходы 81..100 ---------------------------------------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert turn=101
+assert screen=InGame
+shot soak-turn100
+mem
+
+# --- Итог: длинная партия жива, V70-сейв пишется -------------------------
+save_v70 soak-turn100.dta
+assert screen=InGame
