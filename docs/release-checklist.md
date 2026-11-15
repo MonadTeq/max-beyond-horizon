@@ -125,12 +125,15 @@ MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10
 - [x] Пройдено ≥ 10 ходов, `turns_finished`/`ticks` в отчёте соответствуют
       ожиданию. _(2026-11-15: `turns=10`, `ticks=10`, `join_attempts=1`,
       `data_hash=dd24703e(64)` у A и B — fallback сработал)_
-- [ ] Скрипт воспроизводим: повторный запуск даёт тот же результат (не
+- [x] Скрипт воспроизводим: повторный запуск даёт тот же результат (не
       обязательно тот же CRC между разными seed, но без desync внутри партии).
+      _(2026-11-15: два прогона — `83621ef3-…` и `87b1c4dc-…`; оба 10 ходов,
+      `data_hash=dd24703e(64)`, `barrier_timeouts=0`)_
 
 Свидетельство (дата, GAME_ID, хвосты логов): 2026-11-15,
-`GAME_ID=83621ef3-6153-4da7-9b0b-ca05320ee2c5`,
-`build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log`; оба клиента
+`GAME_ID=87b1c4dc-9e71-4256-b4b0-39b475c7c44e` (повтор: `83621ef3-…`),
+`build/live-smoke-mnet-final.log` (+ `build/live-smoke-mnet.log`),
+`build/smoke-logs/a.log`/`b.log`; оба клиента
 `handshake=true lobby=true turns=10 barrier_timeouts=0`, fallback data_hash
 подтверждён (`live-smoke: fallback data_hash (MAX.RES-only) подтверждён`).
 
@@ -591,9 +594,9 @@ bash release.sh                             # §5, артефакты
 |---|---|---|---|---|
 | Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **622 теста, 0 failed**; `cargo check` — 0 ошибок и 0 предупреждений; SDL-сборка — 0 ошибок | `build/cargo-docker-mnet-final.log`, `build/cargo-docker-ef-sdl-final.log` |
 | M-HS (hot-seat) | 2026-11-15 | та же команда Docker; `cargo test -p max_app --test hot_seat`; `cargo run -p max_app --example sp_frames -- ../max-original ../build`; `build\scripts\build-windows-ui.ps1` | 13 тестов hot-seat (2 и 4 человека, ИИ между людьми, окно `DialogMenu` 1:1, таймер до подтверждения, только свои юниты); 5 кадров; Windows UI exe 5 572 096 Б sha256 `7af62ac1…` | `build/hs-{players,turn,turn2,game,ai}.png`, `build/cargo-docker-hotseat-final.log`, `release/max_app-1.0.0-windows-x86_64-ui.zip` |
-| M-NET-доводки (ретрай + data_hash fallback) | 2026-11-15 | `docker run … rust:1.94.0-bookworm … cargo check && cargo test`; `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10`; `build\scripts\build-windows-ui.ps1` | **622 теста, 0 failed** (+7: тайм-контролируемый ретрай, fallback MAX-only, отказ `Version` без fallback, варианты хэша, статус, backoff; UI Create→InSession); smoke 2×10 без `--handshake-patches`: `data_hash=dd24703e(64)`, `barrier_timeouts=0`, fallback подтверждён; Windows UI exe 5 540 864 Б sha256 `136ff774…`, zip `40d644ff…` | `build/cargo-docker-mnet-final.log`, `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log`, `build/win-ui-mnet-final.log` |
+| M-NET-доводки (ретрай + data_hash fallback) | 2026-11-15 | `docker run … rust:1.94.0-bookworm … cargo check && cargo test`; `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10`; `build\scripts\build-windows-ui.ps1` | **622 теста, 0 failed** (+7: тайм-контролируемый ретрай, fallback MAX-only, отказ `Version` без fallback, варианты хэша, статус, backoff; UI Create→InSession); smoke 2×10 без `--handshake-patches`: `data_hash=dd24703e(64)`, `barrier_timeouts=0`, fallback подтверждён; Windows UI exe 5 540 864 Б sha256 `136ff774…`, zip `40d644ff…` | `build/cargo-docker-mnet-final.log`, `build/live-smoke-mnet-final.log`, `build/smoke-logs/a.log`/`b.log`, `build/win-ui-mnet-final.log` |
 | Тесты Horizon | | | | |
-| Live smoke 2×10 | 2026-11-15 | `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10` без `--handshake-patches` | `GAME_ID=83621ef3-…`; A/B: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, fallback подтверждён | `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log` |
+| Live smoke 2×10 | 2026-11-15 | `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10` без `--handshake-patches`, два прогона | `GAME_ID=87b1c4dc-…` (повтор `83621ef3-…`); A/B: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, fallback подтверждён | `build/live-smoke-mnet-final.log`, `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log` |
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
