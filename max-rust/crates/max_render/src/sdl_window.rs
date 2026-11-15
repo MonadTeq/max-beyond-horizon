@@ -74,6 +74,13 @@ pub enum WindowInput {
         /// Координата y.
         y: i32,
     },
+    /// Нажатие правой кнопки мыши (в игре — приказ движения/отмена).
+    MouseRightClick {
+        /// Координата x.
+        x: i32,
+        /// Координата y.
+        y: i32,
+    },
 }
 
 /// Переводит SDL-клавишу в [`WindowKey`].
@@ -245,6 +252,15 @@ impl SdlWindow {
                     y,
                     ..
                 } => inputs.push(WindowInput::MouseClick {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                }),
+                sdl3::event::Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Right,
+                    x,
+                    y,
+                    ..
+                } => inputs.push(WindowInput::MouseRightClick {
                     x: x.round() as i32,
                     y: y.round() as i32,
                 }),

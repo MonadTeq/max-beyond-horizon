@@ -31,10 +31,23 @@
 //! | MainMenu | Up/Down/Tab, Enter, мышь; `c`/`j`/`q`; Esc — выход |
 //! | JoinList | Up/Down, Enter — войти, `r` — обновить, Esc — назад, мышь |
 //! | CreateForm | Tab/Up/Down — поле, ввод, Left/Right — числа, Enter — создать, Esc — назад |
-//! | InSession | Esc — выйти из сессии (SDL-цикл), остальное — на сервер |
+//! | InSession | LMB — выбрать юнита, RMB — приказ движения, LMB по врагу — атака, End Turn/Menu, Esc — отмена (дважды — выход) |
+//!
+//! # Ввод в сессии (M4.3)
+//!
+//! Меню живёт в [`Screen::handle_input`], а ввод внутри партии — в
+//! [`handle_session_input`]: он работает с [`App`] (выделение и приказы в
+//! [`crate::hud::HudState`], а не в `GameState`), поэтому выделение юнита не
+//! попадает в снапшот/CRC. Приказы (`38`/`08`) собирает
+//! [`crate::hud::build_move_order`]/[`crate::hud::build_attack_order`] и кладёт
+//! в `App::hud().pending`: в сетевой сессии их отправляет `net.rs`
+//! (`flush_hud_orders`), в демо-режиме (`online = false`) они применяются
+//! локально через `events::apply_command`.
 
 use std::fmt;
 
+use max_core::geo::Point as GridPoint;
+use max_core::unit::UnitInfo;
 use max_net::{
     CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
 };
@@ -45,6 +58,7 @@ use max_render::ui::{
     Widget,
 };
 
+use crate::hud::{self, HudButton};
 use crate::App;
 
 /// Имя игры по умолчанию, если поле «Name» пустое.
@@ -94,6 +108,8 @@ pub enum InputEvent {
     Key(Key),
     /// Клик левой кнопкой в пикселях окна.
     MouseClick(i32, i32),
+    /// Клик правой кнопкой в пикселях окна (RMB — приказ движения/отмена).
+    RightClick(i32, i32),
     /// Движение мыши в пикселях окна.
     MouseMove(i32, i32),
 }
@@ -578,6 +594,7 @@ impl Screen {
 
         match event {
             InputEvent::MouseMove(..) => {}
+            InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
                 let point = Point::new(x, y);
 
@@ -663,6 +680,7 @@ impl Screen {
 
         match event {
             InputEvent::MouseMove(..) => {}
+            InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
                 let point = Point::new(x, y);
 
@@ -741,6 +759,7 @@ impl Screen {
 
         match event {
             InputEvent::MouseMove(..) => {}
+            InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
                 let point = Point::new(x, y);
 
@@ -818,14 +837,237 @@ impl Screen {
     }
 }
 
-/// Кадр сессии: карта из [`App::render_frame`] + строка статуса внизу.
+/// Ввод внутри сессии: карта, HUD, приказы (M4.3).
+///
+/// Работает с [`App`] напрямую (а не через [`Screen`]): выделение и приказы
+/// живут в [`crate::hud::HudState`], которому нужен доступ к `GameState` и
+/// камере. Чистая функция: ни сети, ни SDL, ни времени — всё тестируется
+/// headless.
+///
+/// * **LMB по своему юниту** — выделение (`App::hud().selected`);
+/// * **LMB по врагу** — приказ атаки (пакет `08`, процессор `P3`);
+/// * **RMB по свободной клетке** — маршрут `Paths_RequestPath` +
+///   предпросмотр линии + пакет `38` (`Command::Move`);
+/// * **RMB по юниту / Esc** — отмена (второй Esc — выход из сессии);
+/// * **End Turn** — тот же путь, что и таймер (`06` + `52`/`finish_turn`);
+/// * **Menu** — выход в главное меню.
+///
+/// `online = true` — приказы копятся в `App::hud().pending` и уходят в сессию
+/// (`net::flush_hud_orders`); `false` — демо-режим, приказы применяются сразу
+/// через `max_core::events::apply_command` ([`App::flush_orders`]).
+pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let (width, height) = app.viewport().screen();
+
+    match event {
+        InputEvent::MouseMove(x, y) => {
+            app.hud_mut().hover_button = hud::hud_button_at(width, height, x, y);
+            Transition::None
+        }
+        InputEvent::MouseClick(x, y) => session_left_click(app, width, height, x, y, online),
+        InputEvent::RightClick(x, y) => session_right_click(app, x, y, online),
+        InputEvent::Key(Key::Escape) => {
+            if app.hud().selected.is_some() || app.hud().preview.is_some() {
+                app.hud_mut().clear_interaction();
+                app.hud_mut().push_log("Cancelled");
+                Transition::None
+            } else {
+                Transition::LeaveSession
+            }
+        }
+        InputEvent::Key(_) => Transition::None,
+    }
+}
+
+/// Левая кнопка: кнопки HUD → миникарта → выделение/атака на карте.
+fn session_left_click(
+    app: &mut App,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    online: bool,
+) -> Transition {
+    if let Some(button) = hud::hud_button_at(width, height, x, y) {
+        return match button {
+            HudButton::EndTurn => {
+                session_end_turn(app, online);
+                Transition::None
+            }
+            HudButton::Menu => Transition::LeaveSession,
+        };
+    }
+
+    // Клик по миникарте — центрирование камеры (как в оригинале).
+    let layout = hud::hud_layout(width, height);
+
+    if let Some(grid) = hud::minimap_grid_at(&layout, x, y) {
+        app.viewport_mut().center_on_grid(grid.x, grid.y);
+        return Transition::None;
+    }
+
+    let team = app.player_team();
+    let Some(id) = hud::unit_at_screen(app.state(), app.viewport(), team, x, y) else {
+        if app.hud().selected.is_some() {
+            app.hud_mut().clear_interaction();
+            app.hud_mut().push_log("Deselected");
+        }
+        return Transition::None;
+    };
+
+    let (unit_team, label) = match app.state().unit(id) {
+        Some(unit) => (unit.team, unit_label(unit)),
+        None => return Transition::None,
+    };
+
+    if unit_team == team {
+        app.hud_mut().select(Some(id));
+        app.hud_mut().preview = None;
+        app.hud_mut().push_log(format!("Selected {label}"));
+        return Transition::None;
+    }
+
+    // Враг: атака по выделенному юниту (пакет 08, P3).
+    let Some(selected) = app.hud().selected else {
+        app.hud_mut().push_log("Enemy unit — select your unit first");
+        return Transition::None;
+    };
+
+    match hud::build_attack_order(app.state(), selected, id) {
+        Some(command) => {
+            app.hud_mut().preview = None;
+            app.hud_mut().pending.push(command);
+            app.hud_mut().push_log(format!("Attack: {label}"));
+            if !online {
+                apply_pending_orders(app);
+            }
+        }
+        None => app.hud_mut().push_log("Cannot attack this unit"),
+    }
+
+    Transition::None
+}
+
+/// Правая кнопка: отмена по юниту, иначе приказ движения в клетку.
+fn session_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+    let team = app.player_team();
+
+    // «Отмена — Esc/правый клик по юниту».
+    if let Some(id) = hud::unit_at_screen(app.state(), app.viewport(), team, x, y) {
+        let label = app
+            .state()
+            .unit(id)
+            .map(unit_label)
+            .unwrap_or_else(|| "unit".to_string());
+
+        app.hud_mut().clear_interaction();
+        app.hud_mut().push_log(format!("Cancelled ({label})"));
+        return Transition::None;
+    }
+
+    let Some(selected) = app.hud().selected else {
+        app.hud_mut().push_log("No unit selected — LMB selects");
+        return Transition::None;
+    };
+
+    let (grid_x, grid_y) = app.viewport().screen_to_grid(x, y);
+    let destination = GridPoint::new(grid_x, grid_y);
+
+    if grid_x < 0
+        || grid_y < 0
+        || grid_x >= max_core::geo::MAP_WIDTH
+        || grid_y >= max_core::geo::MAP_HEIGHT
+    {
+        app.hud_mut().push_log("Outside the map");
+        return Transition::None;
+    }
+
+    let can_move = app
+        .state()
+        .unit(selected)
+        .is_some_and(hud::unit_can_move);
+
+    if !can_move {
+        app.hud_mut()
+            .push_log("Unit cannot move (air/stationary)");
+        return Transition::None;
+    }
+
+    match hud::build_move_order(app.state(), selected, destination) {
+        Some(order) => {
+            let steps = order.preview.len();
+            app.hud_mut().preview = Some(order.preview);
+            app.hud_mut().pending.push(order.command);
+            app.hud_mut().push_log(format!(
+                "Move: {steps} steps to ({}, {})",
+                destination.x, destination.y
+            ));
+            if !online {
+                apply_pending_orders(app);
+            }
+        }
+        None => {
+            app.hud_mut().preview = None;
+            app.hud_mut().push_log(format!(
+                "No path to ({}, {})",
+                destination.x, destination.y
+            ));
+        }
+    }
+
+    Transition::None
+}
+
+/// End Turn: в сети — флаг для игрового цикла (`06`+`52` там же), в демо —
+/// локальный проход [`App::end_turn`].
+fn session_end_turn(app: &mut App, online: bool) {
+    if online {
+        app.hud_mut().request_end_turn();
+        app.hud_mut().push_log("End Turn requested");
+    } else {
+        app.end_turn();
+    }
+}
+
+/// Применяет накопленные приказы локально (демо-режим) и пишет об этом в журнал.
+fn apply_pending_orders(app: &mut App) {
+    let applied = app.flush_orders();
+
+    if applied > 0 {
+        let line = format!("{applied} order(s) applied locally");
+        app.hud_mut().push_log(line);
+    }
+}
+
+/// Подпись юнита для журнала: имя (если задано) и тип.
+fn unit_label(unit: &UnitInfo) -> String {
+    if unit.name.is_empty() {
+        format!("{:?}", unit.unit_type)
+    } else {
+        format!("{} [{:?}]", unit.name, unit.unit_type)
+    }
+}
+
+/// Кадр сессии: карта из [`App::render_frame`] + HUD (M4.2) поверх неё.
+///
+/// Без `App` (headless-рендер до сети) остаётся прежний фон со строкой статуса.
 fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
     if let Some(app) = view.app {
         let frame = app.render_frame();
         blit(buffer, &frame);
-    } else {
-        buffer.fill(Rgba::rgb(8, 12, 20));
+
+        let hud_view = hud::HudView {
+            state: app.state(),
+            hud: app.hud(),
+            viewport: app.viewport(),
+            team: app.player_team(),
+            status: view.status,
+        };
+
+        hud::render_hud(buffer, &hud_view);
+        return;
     }
+
+    buffer.fill(Rgba::rgb(8, 12, 20));
 
     let bar_height = (GLYPH_HEIGHT + 8).max(16);
     let y = view.height as i32 - bar_height;

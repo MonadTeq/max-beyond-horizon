@@ -22,7 +22,8 @@ use max_app::net::run_network_with_sink;
 use max_app::net::{run_network, NetworkOptions, NetworkReport};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
-    HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest, Transition, UiContext,
+    handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
+    Transition, UiContext,
 };
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
@@ -448,6 +449,28 @@ fn print_network(report: &NetworkReport) {
     println!("digest: {}", report.digest);
 }
 
+/// Один SDL-ввод окна → [`InputEvent`] UI.
+///
+/// Левая кнопка — выбор/атака, правая — приказ движения/отмена (M4.3).
+#[cfg(feature = "sdl")]
+fn input_event(input: WindowInput) -> InputEvent {
+    match input {
+        WindowInput::Key(WindowKey::Escape) => InputEvent::Key(Key::Escape),
+        WindowInput::Key(WindowKey::Enter) => InputEvent::Key(Key::Enter),
+        WindowInput::Key(WindowKey::Tab) => InputEvent::Key(Key::Tab),
+        WindowInput::Key(WindowKey::Backspace) => InputEvent::Key(Key::Backspace),
+        WindowInput::Key(WindowKey::Up) => InputEvent::Key(Key::Up),
+        WindowInput::Key(WindowKey::Down) => InputEvent::Key(Key::Down),
+        WindowInput::Key(WindowKey::Left) => InputEvent::Key(Key::Left),
+        WindowInput::Key(WindowKey::Right) => InputEvent::Key(Key::Right),
+        WindowInput::Key(WindowKey::Char(character)) => InputEvent::Key(Key::Char(character)),
+        WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
+        WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),
+        WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
+        WindowInput::MouseRightClick { x, y } => InputEvent::RightClick(x, y),
+    }
+}
+
 /// Окно SDL3: кадр библиотеки → текстура → экран.
 #[cfg(feature = "sdl")]
 struct WindowSink {
@@ -456,7 +479,7 @@ struct WindowSink {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for WindowSink {
-    fn frame(&mut self, app: &App) -> bool {
+    fn frame(&mut self, app: &mut App) -> bool {
         let buffer = app.render_frame();
 
         if let Err(error) = self.window.present(&buffer) {
@@ -534,7 +557,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     }
 
     let mut window = SdlWindow::new(
-        "M.A.X. — Rust client (M4.1 UI)",
+        "M.A.X. — Rust client (M4.2 HUD)",
         config.screen_width,
         config.screen_height,
     )
@@ -553,7 +576,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut pending: Option<SessionRequest> = None;
 
     println!(
-        "UI: окно {}x{}; меню — мышь/стрелки, Enter; Esc — выход",
+        "UI: окно {}x{}; меню — мышь/стрелки, Enter; в игре — LMB выбор, \
+         RMB движение, клик по врагу — атака, End Turn; Esc — выход",
         config.screen_width, config.screen_height
     );
 
@@ -565,22 +589,18 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
 
         for event in events {
-            let input = match event {
-                WindowInput::Key(WindowKey::Escape) => InputEvent::Key(Key::Escape),
-                WindowInput::Key(WindowKey::Enter) => InputEvent::Key(Key::Enter),
-                WindowInput::Key(WindowKey::Tab) => InputEvent::Key(Key::Tab),
-                WindowInput::Key(WindowKey::Backspace) => InputEvent::Key(Key::Backspace),
-                WindowInput::Key(WindowKey::Up) => InputEvent::Key(Key::Up),
-                WindowInput::Key(WindowKey::Down) => InputEvent::Key(Key::Down),
-                WindowInput::Key(WindowKey::Left) => InputEvent::Key(Key::Left),
-                WindowInput::Key(WindowKey::Right) => InputEvent::Key(Key::Right),
-                WindowInput::Key(WindowKey::Char(character)) => InputEvent::Key(Key::Char(character)),
-                WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
-                WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),
-                WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
+            let input = input_event(event);
+
+            // Внутри сессии ввод идёт в HUD (`handle_session_input`): выделение,
+            // приказы 38/08, кнопки End Turn/Menu. В меню — машина экранов.
+            let in_session = matches!(screen, Screen::InSession { .. });
+            let transition = if in_session {
+                handle_session_input(&mut app, input, false)
+            } else {
+                screen.handle_input(&mut ctx, input)
             };
 
-            match screen.handle_input(&mut ctx, input) {
+            match transition {
                 Transition::None => {}
                 Transition::Quit => return Ok(()),
                 Transition::LeaveSession => {
@@ -678,7 +698,12 @@ fn run_ui_session(
     runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
 }
 
-/// Кадры сессии: карта + статус, Esc завершает сетевой цикл.
+/// Кадры сессии: ввод (мышь/клавиши) → HUD, карта + HUD → окно.
+///
+/// Ввод обрабатывает [`handle_session_input`]: клик по своему юниту — выбор,
+/// RMB — приказ движения (пакет 38), клик по врагу — атака (08), кнопки
+/// End Turn/Menu. Собранные приказы сетевой цикл забирает и отправляет сам
+/// (`net::flush_hud_orders`), поэтому здесь достаточно `online = true`.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
     window: &'a mut max_render::SdlWindow,
@@ -690,9 +715,26 @@ struct UiSessionSink<'a> {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for UiSessionSink<'_> {
-    fn frame(&mut self, app: &App) -> bool {
+    fn frame(&mut self, app: &mut App) -> bool {
+        // 1. Ввод этого кадра → HUD (выделение, приказы, кнопки).
+        let (running, events) = self.window.poll_input();
+        let mut leave = false;
+
+        for event in events {
+            match handle_session_input(app, input_event(event), true) {
+                Transition::None => {}
+                Transition::LeaveSession | Transition::Quit => leave = true,
+                Transition::StartSession(_) => {}
+            }
+        }
+
+        if !running || leave {
+            return false;
+        }
+
+        // 2. Кадр: карта + HUD поверх неё.
         self.status = format!(
-            "IN SESSION · {} · tick={} turn={} · Esc — leave",
+            "IN SESSION · {} · tick={} turn={} · LMB select · RMB move · Esc cancel",
             self.game_id,
             app.ticks(),
             app.state().turn_counter
@@ -713,12 +755,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             return false;
         }
 
-        let (running, events) = self.window.poll_input();
-
-        running
-            && !events
-                .iter()
-                .any(|event| matches!(event, WindowInput::Key(WindowKey::Escape)))
+        true
     }
 }
 

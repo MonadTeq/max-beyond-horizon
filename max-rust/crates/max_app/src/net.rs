@@ -106,9 +106,14 @@ impl NetworkOptions {
 /// Библиотека не знает про SDL: бинарник под feature `sdl` передаёт сюда
 /// обёртку над [`max_render::SdlWindow`], тесты — счётчик кадров. `false`
 /// означает «закрыть окно» и корректно завершить сессию.
+///
+/// Кадр получает `&mut App`, потому что интерактивный клиент (`--ui`) здесь же
+/// обрабатывает мышь: выделение юнита и приказы живут в
+/// [`crate::hud::HudState`] (вне `GameState`), а собранные пакеты `38`/`08`
+/// забирает и отправляет [`flush_hud_orders`].
 pub trait FrameSink {
     /// Показать кадр текущего состояния; `false` — выйти из цикла.
-    fn frame(&mut self, app: &App) -> bool;
+    fn frame(&mut self, app: &mut App) -> bool;
 }
 
 /// Результат сетевого прогона (`--connect`).
@@ -875,6 +880,31 @@ async fn send_barrier(handle: &SessionHandle, packets: &[Packet]) -> Result<()> 
     Ok(())
 }
 
+/// Отправляет приказы, собранные вводом HUD (M4.3), в сессию.
+///
+/// Порядок как в C++: сначала локальное применение (`Remote_ReceiveNetPacket_*`
+/// для собственной команды), затем multicast — `Packet::Command` через
+/// [`SessionHandle::send`]. Пакеты 38/08 барьерами не являются, поэтому трекер
+/// повторов сессии их не регистрирует (там только 00/45/52).
+///
+/// Источник приказов — [`crate::hud::HudState::pending`]: их собирает
+/// [`crate::ui::handle_session_input`] из кликов (38 — движение с путём,
+/// 08 — атака).
+async fn flush_hud_orders(app: &mut App, handle: &SessionHandle) -> Result<()> {
+    for command in app.take_outgoing_orders() {
+        let kind = format!("{:?}", command.kind());
+
+        app.apply(command.clone());
+        handle
+            .send(Packet::Command(command))
+            .await
+            .with_context(|| format!("отправка приказа HUD ({kind})"))?;
+        tracing::debug!("HUD: приказ {kind} применён локально и отправлен в сессию");
+    }
+
+    Ok(())
+}
+
 /// Покадровый барьер 01 (real-time pacing, §8.6).
 async fn send_frame_barrier(
     app: &mut App,
@@ -1029,7 +1059,17 @@ async fn run_game_loop(
             }
         }
 
+        // Приказы, собранные вводом в этом кадре (38 — движение, 08 — атака):
+        // локальное применение + multicast в сессию (M4.3).
+        flush_hud_orders(app, handle).await?;
+
         // 06 — ровно один раз за ход, когда локальная команда закончила.
+        if app.hud_mut().take_end_turn_request() {
+            tracing::info!(
+                "HUD: End Turn нажат — закрываем ход команды {} (06 + 52)",
+                local_team.0
+            );
+        }
         if !fsm.local_finished_sent() {
             let finish = Command::FinishedTurn(Packet06FinishedTurn { team: local_team });
             app.apply(finish.clone());

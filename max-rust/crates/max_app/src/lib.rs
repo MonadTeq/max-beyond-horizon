@@ -16,6 +16,9 @@
 //! | [`App::tick`] | один тик симуляции (`GameManager_ProcessTick`) |
 //! | [`App::apply`] | команда `max_core::input::Command` (сетевой пакет или локальный ввод) |
 //! | [`App::render_frame`] | кадр [`max_render::buffer::RgbaBuffer`] без SDL |
+//! | [`hud::render_hud`] | HUD (M4.2): миникарта, панель юнита, журнал, ресурсы, кнопки |
+//! | [`hud::build_move_order`] | пакет 38 из выделения/клика (путь `Paths_RequestPath`) |
+//! | [`hud::build_attack_order`] | пакет 08 (`P3`, `ORDER_MOVE_TO_ATTACK`) по врагу |
 //! | [`App::digest`] | CRC/снапшот состояния для десинк-детектора и тестов |
 //! | [`App::run_demo`] | headless-сценарий «загрузить сейв → N тиков → digest» |
 //!
@@ -30,6 +33,7 @@
 #![forbid(unsafe_code)]
 
 pub mod assets;
+pub mod hud;
 pub mod net;
 pub mod render;
 pub mod ui;
@@ -58,13 +62,17 @@ pub use assets::{
     resolve_color_pal, resolve_patches_res, Assets, AssetsReport, LoadedSprite, SpriteInfo,
     PATCHES_RES_FALLBACKS, UNIT_SPRITES, WORLD_ASSETS,
 };
+pub use hud::{
+    build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
+    HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
+};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
 pub use render::{write_ppm, RenderStats};
 pub use ui::{
-    CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
-    SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD,
+    handle_session_input, CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient,
+    Screen, ScreenView, SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD,
 };
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).
@@ -432,6 +440,10 @@ pub struct App {
     viewport: Viewport,
     ticks: u64,
     applied_commands: u64,
+    /// UI-состояние сессии (M4.2): выделенный юнит, журнал, предпросмотр
+    /// маршрута и приказы из ввода. В снапшот/CRC **не входит** — выделение
+    /// не должно менять детерминизм симуляции ([`AppDigest`] его не видит).
+    hud: hud::HudState,
 }
 
 impl App {
@@ -446,6 +458,7 @@ impl App {
             viewport,
             ticks: 0,
             applied_commands: 0,
+            hud: hud::HudState::new(),
         }
     }
 
@@ -555,6 +568,7 @@ impl App {
         self.state = GameState::from_save(&save);
         self.ticks = 0;
         self.applied_commands = 0;
+        self.hud.clear();
         self.focus_player();
 
         Ok(())
@@ -703,6 +717,7 @@ impl App {
         self.state = state;
         self.ticks = 0;
         self.applied_commands = 0;
+        self.hud.clear();
         self.focus_player();
 
         report
