@@ -90,3 +90,13 @@ release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 - **QA**: [docs/qa/](docs/qa/) и [max-rust-qa/](max-rust-qa/) — Test-Suite, драйверы, golden.
 - **Development**: [docs/development/](docs/development/) — планы, сборка, чек-лист релиза.
 - История изменений: [CHANGELOG.md](CHANGELOG.md). Лицензия: [LICENSE](LICENSE).
+
+
+### Быстрая сборка на Windows (автокопирование SDL3.dll)
+
+`powershell
+powershell -ExecutionPolicy Bypass -File build.ps1          # release + DLL в target\\release\\ и dist\\
+powershell -ExecutionPolicy Bypass -File build.ps1 -Debug   # debug-сборка
+``r
+
+Скрипт сам находит SDL3 (vcpkg → build\\sdl3-3.4.20 → бандл клиента) и копирует SDL3.dll рядом с exe — отдельный запуск с ошибкой «SDL3.dll not found» не повторится.
