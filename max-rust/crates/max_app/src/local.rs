@@ -96,6 +96,8 @@ pub struct LocalSetup {
     pub victory_limit: i32,
     /// Кто кем управляет: 4 слота (`menu_team_player_setting`).
     pub team_types: [TeamKind; LOCAL_TEAM_COUNT],
+    /// Клан каждой команды (`menu_team_clan_setting`); `Random` — 0.
+    pub team_clans: [max_core::enums::TeamClan; LOCAL_TEAM_COUNT],
     /// M-HS: партия **hot-seat** (`MISSION_CATEGORY_HOT_SEAT`).
     ///
     /// В C++ режим задаётся не настройкой партии, а выбранным пунктом меню:
@@ -133,6 +135,7 @@ impl Default for LocalSetup {
                 TeamKind::None,
                 TeamKind::None,
             ],
+            team_clans: [max_core::enums::TeamClan::Random; LOCAL_TEAM_COUNT],
             hot_seat: false,
             seed: 0,
         }
@@ -289,6 +292,7 @@ impl LocalSetup {
                 .collect(),
             player_team: human,
             start_gold: self.start_gold,
+            clans: self.team_clans,
         }
     }
 }
@@ -544,6 +548,9 @@ impl App {
             state.teams[team.0 as usize].team_type = TeamKind::Player;
         }
         state.teams[human.0 as usize].team_type = TeamKind::Player;
+        for index in 0..LOCAL_TEAM_COUNT {
+            state.teams[index].team_clan = setup.team_clans[index];
+        }
         state.ai.settings.opponent = setup.opponent;
         state.ai.all_visible = false;
 
@@ -874,6 +881,7 @@ impl App {
         match phase {
             LocalPhase::PlayerTurn => {
                 self.state.tick();
+                self.update_visual_units(dt);
                 update.ticked = true;
 
                 let timer = self
@@ -896,6 +904,7 @@ impl App {
             }
             LocalPhase::AiTurn(team) => {
                 self.state.tick();
+                self.update_visual_units(dt);
                 update.ticked = true;
 
                 let timed_out = {
@@ -977,7 +986,7 @@ pub const LOCAL_SAVE_MAGIC: [u8; 4] = *b"MXLS";
 ///
 /// `2` — добавлен флаг `LocalSetup::hot_seat` (M-HS); файлы версии 1
 /// отклоняются, контейнер локальный и переживает только одну сборку.
-pub const LOCAL_SAVE_VERSION: u16 = 2;
+pub const LOCAL_SAVE_VERSION: u16 = 3;
 /// РРјСЏ С„Р°Р№Р»Р° Р±С‹СЃС‚СЂРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё.
 pub const LOCAL_SAVE_FILE: &str = "max-local.mxs";
 
@@ -1068,6 +1077,12 @@ impl LocalSave {
         out.push(self.setup.victory_type as u8);
         out.extend_from_slice(&self.setup.victory_limit.to_le_bytes());
         out.extend(self.setup.team_types.iter().map(|kind| *kind as u8));
+        out.extend(
+            self.setup
+                .team_clans
+                .iter()
+                .map(|clan| *clan as u8),
+        );
         out.push(u8::from(self.setup.hot_seat));
         out.extend_from_slice(&self.setup.seed.to_le_bytes());
 
@@ -1106,7 +1121,7 @@ impl LocalSave {
             return Err("not a local session save (bad magic)".to_string());
         }
         let version = reader.u16()?;
-        if version != LOCAL_SAVE_VERSION {
+        if version != 2 && version != LOCAL_SAVE_VERSION {
             return Err(format!("unsupported local save version {version}"));
         }
 
@@ -1136,6 +1151,13 @@ impl LocalSave {
                 3 => TeamKind::Remote,
                 _ => TeamKind::Eliminated,
             };
+        }
+        let mut team_clans = [max_core::enums::TeamClan::Random; LOCAL_TEAM_COUNT];
+        if version >= 3 {
+            for slot in team_clans.iter_mut() {
+                *slot = max_core::enums::TeamClan::try_from(reader.u8()?)
+                    .unwrap_or(max_core::enums::TeamClan::Random);
+            }
         }
         let hot_seat = reader.u8()? != 0;
         let seed = reader.u32()?;
@@ -1179,6 +1201,7 @@ impl LocalSave {
                 victory_type,
                 victory_limit,
                 team_types,
+                team_clans,
                 hot_seat,
                 seed,
             },

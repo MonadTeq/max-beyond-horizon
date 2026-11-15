@@ -71,7 +71,7 @@ fn main() {
 
     let mut frames: Vec<(&str, RgbaBuffer)> = Vec::new();
 
-    // Главное меню, курсор на «New Game» (кнопка нажата, *D).
+    // Главное меню, курсор на «New Game»: hover не нажимает кнопку (*U).
     let mut main_frame = RgbaBuffer::new(640, 480);
     Screen::MainMenu.render(
         &mut main_frame,

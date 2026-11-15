@@ -118,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TeamKind::Computer,
             TeamKind::None,
         ],
+        team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: false,
         seed: 11,
     };
@@ -285,6 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TeamKind::Computer,
             TeamKind::None,
         ],
+        team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: true,
         seed: 21,
     };

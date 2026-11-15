@@ -1,4 +1,4 @@
-# UI-тест одиночной игры: главное меню -> New Game -> Options/Planet/Players -> партия с ИИ.
+﻿# UI-тест одиночной игры: главное меню -> New Game -> Options/Planet/Players -> партия с ИИ.
 $ErrorActionPreference = 'Stop'
 $root = 'D:\dev\max-port-debug'
 $out = "$root\build\ui-test-sp"
@@ -9,6 +9,8 @@ Add-Type -Namespace Win32 -Name Mouse -MemberDefinition @'
 [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT p);
 [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT r);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 public struct POINT { public int x; public int y; }
 public struct RECT { public int left; public int top; public int right; public int bottom; }
 '@
@@ -27,9 +29,25 @@ function Click-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
     Start-Sleep -Milliseconds 250
 }
 
+function RightClick-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
+    $p = New-Object Win32.Mouse+POINT; $p.x = $cx; $p.y = $cy
+    [Win32.Mouse]::ClientToScreen($hwnd, [ref]$p) | Out-Null
+    [Win32.Mouse]::SetCursorPos($p.x, $p.y) | Out-Null
+    Start-Sleep -Milliseconds 120
+    [Win32.Mouse]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)   # right down
+    Start-Sleep -Milliseconds 60
+    [Win32.Mouse]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)  # right up
+    Start-Sleep -Milliseconds 250
+}
+
 function Shot([string]$name) {
     $proc = Get-Process max-rust -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if (-not $proc) { Write-Host "shot ${name}: no window"; return }
+    # Скриншот снимается с экрана: окно должно быть сверху, иначе в кадр
+    # попадает браузер/терминал, а клики уходят не в игру.
+    [Win32.Mouse]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null
+    [Win32.Mouse]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+    Start-Sleep -Milliseconds 250
     $r = New-Object Win32.Mouse+RECT
     [Win32.Mouse]::GetClientRect($proc.MainWindowHandle, [ref]$r) | Out-Null
     $w = $r.right - $r.left; $h = $r.bottom - $r.top
@@ -51,6 +69,9 @@ Start-Sleep -Seconds 6
 $proc = Get-Process max-rust | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $proc) { Write-Host 'window not found'; exit 1 }
 $hwnd = $proc.MainWindowHandle
+[Win32.Mouse]::ShowWindow($hwnd, 9) | Out-Null
+[Win32.Mouse]::SetForegroundWindow($hwnd) | Out-Null
+Start-Sleep -Seconds 1
 
 Shot '01-main-menu'
 Click-Client $hwnd 485 189    # New Game
@@ -68,11 +89,12 @@ Shot '05-players-green-computer'
 Click-Client $hwnd 568 458    # Done -> start
 Start-Sleep -Seconds 4
 Shot '06-game-start'
-# Выделение юнита около центра карты и приказ движения
-Click-Client $hwnd 404 242
+# Выделение Surveyor (верхний правый мобильный юнит) и приказ движения вниз.
+# Координаты — как в кадре build/ui-test-sp/06-game-start.png (640×480).
+Click-Client $hwnd 532 114
 Start-Sleep -Seconds 1
 Shot '07-selected'
-Click-Client $hwnd 468 242    # RMB: move
+RightClick-Client $hwnd 540 350    # RMB: move
 Start-Sleep -Seconds 1
 Shot '08-move-order'
 # End Turn -> ход ИИ -> снова ход игрока

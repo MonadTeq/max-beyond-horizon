@@ -352,8 +352,55 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn move_command_replays_through_app() {
-    fn run() -> AppDigest {
+fn visual_units_smoothly_catch_up_and_snap_without_dt() {
+    let mut app = App::new(AppConfig::default());
+    app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
+
+    let id = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            app.state().unit(*id).is_some_and(|unit| {
+                unit.team == TeamId::RED && unit.unit_list == UnitListKind::MobileLandSea
+            })
+        })
+        .expect("мобильный юнит RED");
+
+    let from = app.state().unit(id).expect("юнит").grid;
+    let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
+    let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
+    app.apply(command);
+
+    // Без dt — снимок: визуальная позиция равна симуляционной.
+    app.update_visual_units(0.0);
+    assert_eq!(
+        app.visual_position(id),
+        Some((f32::from(from.x), f32::from(from.y)))
+    );
+
+    for _ in 0..6 {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+    }
+
+    let visual = app.visual_position(id).expect("юнит жив");
+    assert!(
+        visual.0 > f32::from(from.x),
+        "кадр плавно догоняет движение: {visual:?} vs {from:?}"
+    );
+
+    app.update_visual_units(0.0);
+    let grid = app.state().unit(id).expect("юнит").grid;
+    assert_eq!(
+        app.visual_position(id),
+        Some((f32::from(grid.x), f32::from(grid.y))),
+        "dt=0 (headless/QA) — без интерполяции"
+    );
+}
+
+#[test]
+fn move_command_replays_through_app() {    fn run() -> AppDigest {
         let mut app = App::new(AppConfig::default());
         app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
 

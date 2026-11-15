@@ -1168,6 +1168,7 @@ impl QaRunner {
                 SetupScreen::Options => "Options",
                 SetupScreen::Planet => "Planet",
                 SetupScreen::Players => "Players",
+                SetupScreen::Clan => "Clan",
             },
         }
     }

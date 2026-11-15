@@ -192,6 +192,106 @@ impl<'a> SpriteRenderer<'a> {
         stats.merge(self.draw_frame(dst, frame, anchor))
     }
 
+    /// Рисует юнит с масштабом камеры (`zoom`, 64 — 1:1).
+    ///
+    /// Повторяет `UnitInfo::RenderSprite`/`RenderShadow`: при `Gfx_ZoomLevel`
+    /// спрайт и тень масштабируются вместе с клеткой (`zoom / 64`), иначе на
+    /// уменьшенном/увеличенном масштабе юниты выглядят «приклеенными» к
+    /// экрану, а не к карте. Горячая точка и смещение тени тоже масштабируются.
+    pub fn draw_unit_scaled(
+        &self,
+        dst: &mut RgbaBuffer,
+        frame: &SpriteFrame,
+        shadow: Option<&ShadowFrame>,
+        anchor: (i32, i32),
+        shadow_offset: (i32, i32),
+        zoom: u32,
+    ) -> DrawStats {
+        let mut stats = DrawStats::default();
+        let zoom = zoom.max(1);
+
+        if let Some(shadow) = shadow {
+            let scaled_offset = (
+                scale_pixels(shadow_offset.0, zoom),
+                scale_pixels(shadow_offset.1, zoom),
+            );
+            stats = stats.merge(self.draw_shadow_scaled(
+                dst,
+                shadow,
+                (anchor.0 + scaled_offset.0, anchor.1 + scaled_offset.1),
+                zoom,
+            ));
+        }
+
+        stats.merge(self.draw_frame_scaled(dst, frame, anchor, zoom))
+    }
+
+    /// Кадр с масштабом `zoom` (64 — 1:1), ближайший сосед.
+    pub fn draw_frame_scaled(
+        &self,
+        dst: &mut RgbaBuffer,
+        frame: &SpriteFrame,
+        anchor: (i32, i32),
+        zoom: u32,
+    ) -> DrawStats {
+        let (ulx, uly) = self.frame_origin_scaled(frame, anchor, zoom);
+        let width = scale_length(frame.width, zoom);
+        let height = scale_length(frame.height, zoom);
+        let mut stats = DrawStats::default();
+
+        for y in 0..height {
+            let source_y = source_coordinate(y, zoom, i32::from(frame.height));
+            for x in 0..width {
+                let source_x = source_coordinate(x, zoom, i32::from(frame.width));
+                let Some(index) = frame.pixel(source_x as u32, source_y as u32) else {
+                    continue;
+                };
+
+                if dst.set(ulx + x, uly + y, self.color_for(index)) {
+                    stats.drawn += 1;
+                } else {
+                    stats.clipped += 1;
+                }
+            }
+        }
+
+        stats
+    }
+
+    /// Тень с масштабом `zoom` (64 — 1:1), ближайший сосед.
+    pub fn draw_shadow_scaled(
+        &self,
+        dst: &mut RgbaBuffer,
+        frame: &ShadowFrame,
+        anchor: (i32, i32),
+        zoom: u32,
+    ) -> DrawStats {
+        let zoom = zoom.max(1);
+        let ulx = anchor.0 - scale_pixels(i32::from(frame.hotx), zoom);
+        let uly = anchor.1 - scale_pixels(i32::from(frame.hoty), zoom);
+        let width = scale_length(frame.width, zoom);
+        let height = scale_length(frame.height, zoom);
+        let mut stats = DrawStats::default();
+
+        for y in 0..height {
+            let source_y = source_coordinate(y, zoom, i32::from(frame.height));
+            for x in 0..width {
+                let source_x = source_coordinate(x, zoom, i32::from(frame.width));
+                if !frame.darkened(source_x as u32, source_y as u32) {
+                    continue;
+                }
+
+                if dst.modify(ulx + x, uly + y, |color| color.darken(SHADOW_BRIGHTNESS_LEVEL)) {
+                    stats.drawn += 1;
+                } else {
+                    stats.clipped += 1;
+                }
+            }
+        }
+
+        stats
+    }
+
     /// Буфер `width × height` с одним кадром (якорь в горячей точке).
     ///
     /// Удобно для тестов и для кэширования кадра как текстуры.
@@ -218,6 +318,18 @@ impl<'a> SpriteRenderer<'a> {
         (
             anchor.0 - i32::from(frame.hotx),
             anchor.1 - i32::from(frame.hoty),
+        )
+    }
+
+    fn frame_origin_scaled(
+        &self,
+        frame: &SpriteFrame,
+        anchor: (i32, i32),
+        zoom: u32,
+    ) -> (i32, i32) {
+        (
+            anchor.0 - scale_pixels(i32::from(frame.hotx), zoom),
+            anchor.1 - scale_pixels(i32::from(frame.hoty), zoom),
         )
     }
 
@@ -248,6 +360,22 @@ impl<'a> SpriteRenderer<'a> {
 
         stats
     }
+}
+
+/// Масштаб координаты/горячей точки: `value * zoom / 64` (64 — 1:1).
+fn scale_pixels(value: i32, zoom: u32) -> i32 {
+    ((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32
+}
+
+/// Масштаб длины (минимум 1 пиксель, чтобы спрайт не исчезал).
+fn scale_length(value: u16, zoom: u32) -> i32 {
+    (((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32).max(1)
+}
+
+/// Координата источника для destination-пикселя при nearest-neighbour.
+fn source_coordinate(destination: i32, zoom: u32, source_len: i32) -> i32 {
+    let source = (i64::from(destination) * 64 / i64::from(zoom.max(1))) as i32;
+    source.min(source_len.saturating_sub(1)).max(0)
 }
 
 #[cfg(test)]
@@ -419,6 +547,48 @@ mod tests {
         assert_ne!(bright_buffer.get(1, 0), dim_buffer.get(1, 0));
         // Полная яркость — identity.
         assert_eq!(brightness.map(FULL_BRIGHTNESS_LEVEL, 1), 1);
+    }
+
+    #[test]
+    fn scaled_sprite_follows_zoom_and_hot_spot() {
+        let palette = ramp_palette();
+        let brightness = BrightnessLut::build(&palette);
+        let renderer = renderer(&palette, &brightness);
+        let body = build_sprite(
+            2,
+            2,
+            1,
+            1,
+            vec![vec![0, 2, 1, 2, 0xFF], vec![0, 2, 1, 2, 0xFF]],
+        );
+        let sheet = decode_sprite(&body).unwrap();
+        let frame = sheet.frame(0).unwrap();
+
+        // 1:1 — 2×2, горячая точка (1,1) в якоре.
+        let mut native = RgbaBuffer::filled(16, 16, Rgba::TRANSPARENT);
+        renderer.draw_frame_scaled(&mut native, frame, (8, 8), 64);
+        assert_eq!(native.get(7, 7), Some(palette.rgba(1)));
+        assert_eq!(native.get(8, 7), Some(palette.rgba(2)));
+        assert_eq!(native.get(7, 8), Some(palette.rgba(1)));
+        assert_eq!(native.get(8, 8), Some(palette.rgba(2)));
+
+        // 2× — каждый пиксель блока 2×2, горячая точка тоже ×2.
+        let mut zoomed = RgbaBuffer::filled(24, 24, Rgba::TRANSPARENT);
+        renderer.draw_frame_scaled(&mut zoomed, frame, (12, 12), 128);
+        for y in 10..14 {
+            for x in 10..14 {
+                let expected = if x < 12 { 1 } else { 2 };
+                assert_eq!(zoomed.get(x, y), Some(palette.rgba(expected)));
+            }
+        }
+        assert_eq!(zoomed.get(10, 10), Some(palette.rgba(1)));
+        assert_eq!(zoomed.get(13, 13), Some(palette.rgba(2)));
+
+        // 1/2 — один пиксель, в него попадает левый верхний источник.
+        let mut half = RgbaBuffer::filled(16, 16, Rgba::TRANSPARENT);
+        renderer.draw_frame_scaled(&mut half, frame, (8, 8), 32);
+        assert_eq!(half.get(8, 8), Some(palette.rgba(1)));
+        assert_eq!(half.get(7, 8), Some(Rgba::TRANSPARENT));
     }
 
     #[test]

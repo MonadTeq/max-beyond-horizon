@@ -27,8 +27,9 @@
 //!   Rust-клиенте ещё нет (`Load Game`, `Setup`, `Introduction`, `Credits`),
 //!   пишут строку статуса «экран не портирован» — как кнопки панелей в
 //!   `panels.rs`.
-//! * «Наведение» подсвечивает кнопку нажатой картинкой `*D` (в C++ меняется
-//!   только по нажатию) — так просил пункт E.
+//! * Наведение мыши **не** переключает кнопку на `*D`: нажатая картинка
+//!   остаётся только у выбранных radio/toggle-кнопок (как `Button::SetRestState`
+//!   в C++); у обычных кнопок `*D` — лишь на время реального нажатия.
 //! * Сетка планет 8×3 оставлена из Rust-клиента (в оригинале 3×2 на экране
 //!   `PLANETSE`), но вписана в область 3×2-слотов `PLANETSE` (192,51) 388×249.
 //! * `BTNHIDE` в C++-порте не используется (проверено `grep`); здесь он —
@@ -446,6 +447,12 @@ pub struct MenuAssets {
     /// Эмблема клана `CLN0LOGO` (42×65): `ChoosePlayerMenu::ButtonInit`
     /// копирует её на флаг команды в (41,40).
     pub clan_logo: Option<SimpleImage>,
+    /// Эмблемы кланов `CLN0LOGO`…`CLN8LOGO` (0 — Random).
+    pub clan_logos: [Option<SimpleImage>; 9],
+    /// Карточки `CH_CN1_U/D`…`CH_CN8_U/D` (91×86) экрана `ClanSelectMenu`.
+    pub clan_buttons: [Option<MenuButtonPair>; 8],
+    /// Фон экрана выбора клана (`CLANSEL`).
+    pub clansel: Option<BigImage>,
     /// Фоны экрана победы/поражения (`ENDGAME1`…`ENDGAME9`).
     pub endgame_backgrounds: Vec<BigImage>,
     /// `ENDARM` — картинка в правом нижнем углу экрана победы.
@@ -551,6 +558,14 @@ impl MenuAssets {
                 pair("CH_TM4_U", "CH_TM4_D"),
             ],
             clan_logo: read_simple("CLN0LOGO"),
+            clan_logos: std::array::from_fn(|index| read_simple(&format!("CLN{index}LOGO"))),
+            clan_buttons: std::array::from_fn(|index| {
+                pair(
+                    &format!("CH_CN{}_U", index + 1),
+                    &format!("CH_CN{}_D", index + 1),
+                )
+            }),
+            clansel: read_big("CLANSEL"),
             endgame_backgrounds: [
                 "ENDGAME1", "ENDGAME2", "ENDGAME3", "ENDGAME4", "ENDGAME5", "ENDGAME6", "ENDGAME7",
                 "ENDGAME8", "ENDGAME9",
@@ -714,25 +729,24 @@ pub fn draw_title(frame: &mut RgbaBuffer, palette: &UiPalette, rect: PixelRect, 
 
 /// Кнопка меню с картинкой `up/down` и подписью `GNW_TEXT_FONT_1`.
 ///
-/// `down` — наведение/нажатие: рисуется `*D` и подпись `Fonts_DarkOrageColor`.
+/// В оригинале `*D` показывается только пока кнопка **нажата** (`Button` в
+/// `GNW`/`Button::Run`). Наведение мыши не является нажатием, поэтому здесь
+/// всегда рисуется `up`; нажатое состояние оставлено для radio/toggle-кнопок,
+/// которые передают `down` явно. `_down_image` и `_pressed` сохранены в
+/// сигнатуре, чтобы не менять все вызовы.
 pub fn draw_image_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
     image: &SimpleImage,
-    down_image: &SimpleImage,
+    _down_image: &SimpleImage,
     rect: PixelRect,
     label: &str,
-    hovered: bool,
+    _pressed: bool,
 ) -> u32 {
-    let image = if hovered { down_image } else { image };
     let mut painted = blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
 
     if !label.is_empty() {
-        let (base, outline, shadow) = if hovered {
-            (5u8, 56u8, 199u8)
-        } else {
-            (165u8, 175u8, 199u8)
-        };
+        let (base, outline, shadow) = (165u8, 175u8, 199u8);
 
         painted += draw_text_gnw_centered_shadowed(
             frame,
@@ -1462,16 +1476,12 @@ mod tests {
         );
 
         let gold = menu.palette.rgba(165);
-        let dark_orange = menu.palette.rgba(5);
         let mut gold_pixels = 0;
-        let mut orange_pixels = 0;
 
         for y in 160..460 {
             for x in 380..600 {
-                match frame.get(x, y) {
-                    Some(color) if color == gold => gold_pixels += 1,
-                    Some(color) if color == dark_orange => orange_pixels += 1,
-                    _ => {}
+                if frame.get(x, y) == Some(gold) {
+                    gold_pixels += 1;
                 }
             }
         }
@@ -1480,16 +1490,15 @@ mod tests {
             gold_pixels > 50,
             "подписи кнопок — Fonts_GoldColor: {gold_pixels}"
         );
-        assert!(
-            orange_pixels > 20,
-            "наведение рисует *D и Fonts_DarkOrageColor: {orange_pixels}"
-        );
 
-        // Кнопка под курсором отличается от соседней, не наведённой.
-        assert_ne!(
-            frame.get(390, 180),
-            frame.get(390, 215),
-            "наведённая кнопка использует нажатую картинку"
+        // Наведение мыши не нажимает кнопку: кадр с курсором побитово равен
+        // кадру без курсора (в оригинале `*D` — только пока кнопка нажата).
+        let mut idle = RgbaBuffer::new(640, 480);
+        draw_main_menu(&mut idle, &menu, "", None);
+        assert_eq!(
+            frame.pixels(),
+            idle.pixels(),
+            "наведение не должно рисовать нажатую кнопку *D"
         );
     }
 

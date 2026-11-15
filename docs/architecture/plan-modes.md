@@ -22,7 +22,8 @@
 |---|---|---|
 | Options (`OPTNFRM`) | `gameconfigmenu.cpp/.hpp` | все 6 панелей: сложность ИИ (6), таймеры хода/конца хода (7+7), режим игры (2), стартовые кредиты (6), уровни ресурсов (4×3), условие победы (2×3 + числовой лимит) |
 | Planet (`PLANETSE`) | `planetselectmenu.cpp/.hpp` | 3×2 мини-карты планет (`.WRL` + палитра/4 + `Color_MapColor(...,true)`), стрелки групп `MNULAROU/MNURAROU`, большая картинка `SNOW_PIC+world/6`, имя и описание 24 планет, Random/Cancel/?/Done |
-| Players (`CHOSPLYR`) | `chooseplayermenu.cpp/.hpp` | 4 слота × Human/Computer/None (`CH_HUM/CH_CMP/CH_NON`), флаги команд `CH_TM1..4` + эмблема клана `CLN0LOGO` в (41,40), Cancel/?/Done |
+| Players (`CHOSPLYR`) | `chooseplayermenu.cpp/.hpp` | 4 слота × Human/Computer/None (`CH_HUM/CH_CMP/CH_NON`), флаги команд `CH_TM1..4` + эмблема выбранного клана `CLN0..8LOGO` в (41,40), Cancel/?/Done |
+| Clan (`CLANSEL`) | `clanselectmenu.cpp/.hpp` | 8 карточек `CH_CN1..8_U/D` 91×86, логотипы `CLN1..8LOGO`, имена, Random/Cancel/?/Done; выбор пишется в `team_clans` |
 
 Единственное дополнение к раскладке: поле **Name** на свободной полосе
 `OPTNFRM` слева от кнопок (в C++ имя задаётся в Preferences, экран ещё не
@@ -189,8 +190,11 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 * Экран `Hot Seat Scenarios` (`MISSION_CATEGORY_MULTI_PLAYER_SCENARIO`) и
   `Load Hot Seat Game` (`SaveLoadMenu_MenuLoop(MISSION_CATEGORY_HOT_SEAT)`) не
   портированы — кнопки пишут статус.
-* Кланы (`ClanSelectMenu`) не портированы: флаг команды рисуется с `CLN0LOGO`,
-  как при `player_clan = 0`.
+* Кланы (`ClanSelectMenu`) реализованы: 8 карточек с логотипами, Random/
+  Cancel/?/Done, выбранный клан пишется в `LocalSetup::team_clans` и
+  применяется к стартовым атрибутам юнитов (`NewGameConfig::clans`).
+  Полные описания/таблица бонусов из `SC_CLANS`/`clans.json` пока не
+  загружаются — на экране имя и подсказка.
 * Полная запись V70 для hot-seat не появилась (общий пункт M-SP).
 
 ### M-NET — Сетевая игра (Horizon) — работает; доводки **сделано (v1.3)**

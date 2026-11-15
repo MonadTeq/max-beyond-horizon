@@ -65,6 +65,7 @@ use max_core::setup::{
     generate_map, AlienUnitCosts, GameSetup, GenerationSettings, ResourceLevel, TeamStart,
 };
 use max_core::team::{TeamId, TeamKind};
+use max_core::unit::UnitId;
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
@@ -303,6 +304,9 @@ pub struct NewGameConfig {
     pub derelicts: ResourceLevel,
     /// Стартовые позиции команд (мутируются `FindValidStartingPosition`).
     pub teams: Vec<TeamStart>,
+    /// Клан каждой из четырёх игровых команд (`menu_team_clan_setting`).
+    /// `TeamClan::Random` — C++ выберет клан случайно.
+    pub clans: [TeamClan; PLAYER_TEAM_COUNT],
     /// Какая команда — локальный игрок.
     pub player_team: TeamId,
     /// `start_gold` — золото команды на старте (`settings.cpp:118`, 150).
@@ -332,6 +336,7 @@ impl NewGameConfig {
                 TeamStart::new(TeamId::RED, Point::new(20, 20)),
                 TeamStart::new(TeamId::BLUE, Point::new(70, 70)),
             ],
+            clans: [TeamClan::Random; PLAYER_TEAM_COUNT],
             player_team: TeamId::RED,
             start_gold: max_core::deploy::DEFAULT_START_GOLD,
         }
@@ -464,6 +469,11 @@ pub struct App {
     hud: hud::HudState,
     /// Состояние локальной партии M-SP (`None` — сети/демо/меню).
     pub(crate) local: Option<local::LocalGame>,
+    /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
+    ///
+    /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
+    /// догоняет её плавно; в CRC/снапшот эти значения не входят.
+    visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
 }
 
 impl App {
@@ -480,6 +490,7 @@ impl App {
             applied_commands: 0,
             hud: hud::HudState::new(),
             local: None,
+            visual_units: std::collections::HashMap::new(),
         }
     }
 
@@ -618,6 +629,7 @@ impl App {
         self.applied_commands = 0;
         self.hud.clear();
         self.local = None;
+        self.visual_units.clear();
         self.focus_player();
 
         Ok(())
@@ -712,6 +724,19 @@ impl App {
 
         let mut state = GameState::with_setup(output.map, team_kinds);
         state.player_team = config.player_team;
+        // Кланы из настроек — до высадки юнитов: `deploy_starting_units`
+        // берёт атрибуты из `team_units` (`ResourceManager_InitClanUnitValues`).
+        for index in 0..PLAYER_TEAM_COUNT {
+            let clan = config
+                .clans
+                .get(index)
+                .copied()
+                .unwrap_or(TeamClan::Random);
+            state.teams[index].team_clan = clan;
+            let values = max_core::unit_values::team_base_values(clan);
+            state.team_units[index].base_values = values;
+            state.team_units[index].current_values = values;
+        }
         // Поток ГПСЧ продолжается после генерации — как в оригинале.
         state.rng = rng;
 
@@ -763,6 +788,7 @@ impl App {
         self.applied_commands = 0;
         self.hud.clear();
         self.local = None;
+        self.visual_units.clear();
         self.focus_player();
 
         report
@@ -779,6 +805,62 @@ impl App {
             game_state: self.state.game_state,
             units: self.state.unit_count(),
         }
+    }
+
+    /// Визуальная позиция юнита в клетках (дробная) для кадра.
+    ///
+    /// Если [`App::update_visual_units`] ещё не вызывался, возвращается
+    /// симуляционная клетка — headless-кадры и тесты видят ровно `grid`.
+    pub fn visual_position(&self, id: UnitId) -> Option<(f32, f32)> {
+        let unit = self.state.unit(id)?;
+        Some(
+            self.visual_units
+                .get(&id)
+                .copied()
+                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y))),
+        )
+    }
+
+    /// Подтягивает визуальные позиции к симуляционным.
+    ///
+    /// Симуляция перемещает юнита на целую клетку за тик; кадр догоняет её
+    /// плавно (как пиксельное движение `UnitInfo::Move` в оригинале).
+    /// `dt <= 0` — снимок без интерполяции: headless/QA-кадры остаются
+    /// детерминированными и совпадают с эталонами.
+    pub fn update_visual_units(&mut self, dt: f32) {
+        let ids = self.state.unit_ids_in_order();
+        let mut next = std::collections::HashMap::with_capacity(ids.len());
+        let dt = dt.clamp(0.0, 0.1);
+        // Скорость догоняния: клетка примерно за 1/12 секунды.
+        let max_step = dt * 12.0;
+
+        for id in ids {
+            let Some(unit) = self.state.unit(id) else {
+                continue;
+            };
+            let target = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+            let current = self.visual_units.get(&id).copied().unwrap_or(target);
+            let dx = target.0 - current.0;
+            let dy = target.1 - current.1;
+            let distance = dx.abs().max(dy.abs());
+
+            let position = if dt <= 0.0 || distance <= f32::EPSILON {
+                target
+            } else if distance > 2.5 {
+                // Телепорт/синхронизация состояния — не растягиваем через карту.
+                target
+            } else {
+                let step = max_step.min(distance);
+                (
+                    current.0 + dx * (step / distance),
+                    current.1 + dy * (step / distance),
+                )
+            };
+
+            next.insert(id, position);
+        }
+
+        self.visual_units = next;
     }
 
     /// Применяет команду сразу (порядок команд задаёт вызывающий).

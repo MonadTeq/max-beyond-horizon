@@ -1211,6 +1211,7 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
         gold: level(settings.ini_gold_resource),
         derelicts: level(settings.ini_alien_derelicts),
         teams,
+        clans: [max_core::enums::TeamClan::Random; PLAYER_TEAM_COUNT],
         player_team: local_team,
         start_gold: settings.ini_start_gold.max(0) as u32,
     };

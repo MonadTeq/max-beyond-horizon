@@ -664,6 +664,8 @@ Enter или Esc. **Другого экрана перехода в оригин
 | Вход в режим | `Screen::MultiplayerMenu` (`menu.cpp:2361`) | «Multiplayer Game» → `Hot Seat Game` → Options → Planet → Players | `build/hs-players.png` |
 
 Ограничения M-HS: `Hot Seat Scenarios` и `Load Hot Seat Game` не портированы
-(кнопки пишут статус), кланы — `CLN0LOGO`; запись V70 отсутствует (общий пункт
-M-SP), контейнер `MXLS` — версия 2 с флагом `hot_seat`.
+(кнопки пишут статус); кланы выбираются экраном `ClanSelectMenu` (8 карточек,
+бонусы применяются к стартовым юнитам), но описания/таблица бонусов из
+`clans.json` ещё не загружаются; запись V70 отсутствует (общий пункт M-SP),
+контейнер `MXLS` — версия 3 (флаг `hot_seat` + `team_clans`).
 

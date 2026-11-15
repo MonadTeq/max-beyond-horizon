@@ -194,7 +194,7 @@ pub fn draw_turn_notice(
     menu: &MenuAssets,
     palette: &UiPalette,
     notice: &TurnNotice,
-    mouse: Option<(i32, i32)>,
+    _mouse: Option<(i32, i32)>,
 ) -> u32 {
     let mut painted = 0;
 
@@ -238,10 +238,9 @@ pub fn draw_turn_notice(
 
     // Кнопка `OK`: `HELPOK_U`/`HELPOK_D`, подпись `_(ae0b)` = "OK".
     let ok = ok_rect_frame();
-    let hovered = mouse.is_some_and(|(x, y)| ok.contains(x, y));
 
     if let Some(pair) = menu.helpok.as_ref() {
-        painted += blit_simple(frame, palette, pair.image(hovered), ok.ulx, ok.uly, true);
+        painted += blit_simple(frame, palette, pair.image(false), ok.ulx, ok.uly, true);
     } else {
         frame.fill_rect(ok, palette.rgba(0x17));
     }
@@ -249,12 +248,7 @@ pub fn draw_turn_notice(
     // `Button::SetCaption(caption, 2, 2)` → область (0,0) 63×22, текст по центру
     // на `((22 - 10) / 2) = 6` от верха кнопки.
     let caption_rect = PixelRect::new(ok.ulx, ok.uly + 6, ok.width - 2, font.height());
-    let (base, outline, shadow) = if hovered {
-        // `Fonts_DarkOrageColor` — нажатое состояние.
-        (5u8, 56u8, 199u8)
-    } else {
-        CAPTION_GOLD
-    };
+    let (base, outline, shadow) = CAPTION_GOLD;
 
     painted += draw_text_gnw_centered_shadowed(
         frame,

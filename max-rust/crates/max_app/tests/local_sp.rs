@@ -120,6 +120,7 @@ fn setup_vs_one_ai() -> LocalSetup {
             TeamKind::None,
             TeamKind::None,
         ],
+        team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: false,
         seed: 7,
     }
@@ -128,6 +129,69 @@ fn setup_vs_one_ai() -> LocalSetup {
 // ---------------------------------------------------------------------------
 // 1. Настройка из UI
 // ---------------------------------------------------------------------------
+
+#[test]
+fn clan_choice_changes_starting_team_values() {
+    let Some(mut app) = local_app() else {
+        return;
+    };
+
+    let mut setup = setup_vs_one_ai();
+    setup.team_clans[0] = max_core::enums::TeamClan::VonGriffin;
+    setup.team_clans[1] = max_core::enums::TeamClan::Musashi;
+    app.start_local_game(&setup).expect("локальная партия");
+
+    assert_eq!(
+        app.state().teams[0].team_clan,
+        max_core::enums::TeamClan::VonGriffin,
+        "клан человека сохраняется"
+    );
+    // Компьютерный игрок выбирает клан сам (`AiPlayer::SelectTeamClan`), как в
+    // C++ — его слот может отличаться от настройки.
+    assert_ne!(
+        app.state().teams[1].team_clan,
+        max_core::enums::TeamClan::Random,
+        "ИИ получает конкретный клан"
+    );
+
+    // Von Griffin даёт Scout +2 атаки (`clan_tradeoffs_apply` в max_core).
+    let expected =
+        max_core::unit_values::team_base_values(max_core::enums::TeamClan::VonGriffin)
+            [max_core::UnitType::Scout as usize]
+            .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
+    let actual = app.state().team_units[0]
+        .base_unit_values(max_core::UnitType::Scout as u16)
+        .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
+    assert_eq!(
+        actual, expected,
+        "Von Griffin должен дать клановые бонусы скауту RED"
+    );
+
+    let random =
+        max_core::unit_values::team_base_values(max_core::enums::TeamClan::Random)
+            [max_core::UnitType::Scout as usize]
+            .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
+    assert_ne!(actual, random, "клановый бонус реально применён");
+}
+
+#[test]
+fn local_save_roundtrips_clans() {
+    let Some(mut app) = local_app() else {
+        return;
+    };
+
+    let mut setup = setup_vs_one_ai();
+    setup.team_clans[2] = max_core::enums::TeamClan::SevenKnights;
+    app.start_local_game(&setup).expect("локальная партия");
+
+    let bytes = app.local_save_bytes().expect("контейнер MXLS");
+    let save = LocalSave::decode(&bytes).expect("MXLS разбирается");
+    assert_eq!(
+        save.setup.team_clans,
+        setup.team_clans,
+        "кланы сохраняются в LocalSetup"
+    );
+}
 
 #[test]
 fn setup_form_produces_team_types_planet_and_timer() {

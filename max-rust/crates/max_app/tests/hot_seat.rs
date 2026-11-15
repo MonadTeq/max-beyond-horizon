@@ -82,6 +82,7 @@ fn hot_seat_setup(team_types: [TeamKind; 4]) -> LocalSetup {
         victory_type: max_core::enums::VictoryType::Duration,
         victory_limit: 50,
         team_types,
+        team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: true,
         seed: 13,
     }

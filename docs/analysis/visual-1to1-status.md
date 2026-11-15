@@ -617,7 +617,8 @@ FOV-перепад, красная рамка камеры, точки юнит�
    (6,173)/(166,173), шесть кнопок `BLANK_UP/DN` 200×29 на x=385 с шагом 35
    (y=175…350), `Exit` `SBLNK_UP/DN` 100×30 в (435,420), копирайт
    (10,469) 620×10 `FONT5` чёрным. Подписи — `GNW_TEXT_FONT_1`,
-   `Fonts_GoldColor`; наведение/нажатие — `*_DN` и `Fonts_DarkOrageColor`.
+   `Fonts_GoldColor`; нажатие (а не наведение) — `*_DN` и
+   `Fonts_DarkOrageColor`; выбранные radio/toggle остаются `*_DN`.
    Действия Rust-клиента: `New Game`, `Multiplayer Game`, `Exit`; четыре
    остальные кнопки оригинала пишут «screen is not ported yet».
 2. **Форма создания игры** — `PLANETSE`, заголовок и имя планеты `FONT5`
@@ -868,7 +869,8 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 |---|---|---|---|
 | Options | `OPTNFRM` 640×480 | `game_config_menu_items[71]` + `game_config_menu_controls[51]`: 6 панелей 200×190 в (6/216/426, 38/233), подписи 15 px, `draw_box(0xFF)` вокруг выбранного | `max_app/src/setup.rs::draw_options` |
 | Planet | `PLANETSE`, `SNOW_PIC+world/6`, `MNULAROU/MNURAROU`, `MNUBTN4/5/6` | слоты 112×112 в (192/330/469, 51/189), имя (16,61,150,20), описание (41,350,561,60), Random/Cancel/?/Done y=438 | `draw_planet` |
-| Players | `CHOSPLYR`, `CH_HUM/CMP/NON_U/D`, `CH_TM1..4_U/D`, `CLN0LOGO` | 4×3 кнопки 55×71 (175/285/394, 67+92·i), флаги 93×89 (495, 61+92·i), эмблема клана (41,40), заголовки колонок (61/162/272/380/497, 31, 79/80×20) | `draw_players` |
+| Players | `CHOSPLYR`, `CH_HUM/CMP/NON_U/D`, `CH_TM1..4_U/D`, `CLN0..8LOGO` | 4×3 кнопки 55×71 (175/285/394, 67+92·i), флаги 93×89 (495, 61+92·i), эмблема выбранного клана (41,40), заголовки колонок (61/162/272/380/497, 31, 79/80×20) | `draw_players` |
+| Clan | `CLANSEL`, `CH_CN1..8_U/D`, `CLN1..8LOGO`, `MNUBTN3..6U/D` | 8 карточек 91×86 (46/201/355/510, 44/194), имена (32/188/344/497, 140/290), Random/Cancel/?/Done y=438 | `draw_clan` |
 
 **Локальная партия**: цикл `GameManager_TeamTurnTurnBased` (`manage_economy` →
 `Ai_BeginTurn` → тики до `end_turn_retry_counter > 120` → `06` → следующая

@@ -346,6 +346,7 @@ impl Cli {
             config.derelicts = ResourceLevel::new(derelicts).expect("level validated by CLI");
         }
         config.player_team = max_core::team::TeamId(self.config.team_slot);
+        config.clans[self.config.team_slot as usize] = self.config.clan;
 
         config
     }
@@ -615,6 +616,7 @@ struct WindowSink {
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for WindowSink {
     fn frame(&mut self, app: &mut App) -> bool {
+        app.update_visual_units(1.0 / 60.0);
         let buffer = app.render_frame();
 
         if let Err(error) = self.window.present(&buffer) {
@@ -1067,6 +1069,8 @@ struct UiSessionSink<'a> {
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn frame(&mut self, app: &mut App) -> bool {
+        app.update_visual_units(1.0 / 60.0);
+
         // 1. Ввод этого кадра → HUD (выделение, приказы, кнопки).
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.begin_frame();

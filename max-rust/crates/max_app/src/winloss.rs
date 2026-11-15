@@ -146,7 +146,7 @@ pub fn draw_game_over(
     menu: &MenuAssets,
     state: &GameState,
     local: &LocalGame,
-    mouse: Option<(i32, i32)>,
+    _mouse: Option<(i32, i32)>,
 ) -> u32 {
     let palette = &menu.palette;
     let font = GnwFontId::Font5.font();
@@ -326,13 +326,14 @@ pub fn draw_game_over(
         painted += blit_simple(frame, palette, arm, ARM_POSITION.0, ARM_POSITION.1, true);
     }
     if let Some(pair) = menu.endok.as_ref() {
-        let hovered = mouse.is_some_and(|(x, y)| OK_RECT.contains(x, y));
-        let image = if hovered {
-            pair.image(true)
-        } else {
-            pair.image(false)
-        };
-        painted += blit_simple(frame, palette, image, OK_RECT.ulx, OK_RECT.uly, true);
+        painted += blit_simple(
+            frame,
+            palette,
+            pair.image(false),
+            OK_RECT.ulx,
+            OK_RECT.uly,
+            true,
+        );
         silver(frame, OK_RECT.ulx, OK_RECT.uly + 5, "OK", 2, OK_RECT.width);
     }
 

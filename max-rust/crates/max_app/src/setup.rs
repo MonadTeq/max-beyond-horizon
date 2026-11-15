@@ -325,6 +325,57 @@ pub const PLAYER_BUTTONS: [(PixelRect, &str, usize); 3] = [
     (PixelRect::new(514, 438, 109, 40), "Done", 6),
 ];
 
+// ---------------------------------------------------------------------------
+// ClanSelectMenu
+// ---------------------------------------------------------------------------
+
+/// Фон экрана выбора клана (`CLANSEL`).
+pub const CLAN_BACKGROUND: &str = "CLANSEL";
+/// Заголовок `clan_select_menu_screen_title`.
+pub const CLAN_TITLE: PixelRect = PixelRect::new(230, 6, 180, 20);
+/// Восемь карточек `CH_CN1_U`…`CH_CN8_U` 91×86
+/// (`clan_select_menu_controls[0..8]`; `lrx/lry` в C++ нулевые, размер берётся
+/// из картинки — 91×86).
+pub const CLAN_SLOTS: [PixelRect; 8] = [
+    PixelRect::new(46, 44, 91, 86),
+    PixelRect::new(201, 44, 91, 86),
+    PixelRect::new(355, 44, 91, 86),
+    PixelRect::new(510, 44, 91, 86),
+    PixelRect::new(46, 194, 91, 86),
+    PixelRect::new(201, 194, 91, 86),
+    PixelRect::new(355, 194, 91, 86),
+    PixelRect::new(510, 194, 91, 86),
+];
+/// Подписи кланов под карточками (`clan_select_menu_clan_icons`).
+pub const CLAN_NAME_RECTS: [PixelRect; 8] = [
+    PixelRect::new(32, 140, 110, 20),
+    PixelRect::new(188, 140, 110, 20),
+    PixelRect::new(344, 140, 110, 20),
+    PixelRect::new(497, 140, 110, 20),
+    PixelRect::new(32, 290, 110, 20),
+    PixelRect::new(188, 290, 110, 20),
+    PixelRect::new(344, 290, 110, 20),
+    PixelRect::new(497, 290, 110, 20),
+];
+/// Имена кланов в порядке `TeamClan` (1 — The Chosen … 8 — Axis Inc.).
+pub const CLAN_NAMES: [&str; 8] = [
+    "The Chosen",
+    "Crimson Path",
+    "Von Griffin",
+    "Ayer's Hand",
+    "Musashi",
+    "Sacred Eights",
+    "Seven Knights",
+    "Axis Inc.",
+];
+/// Нижняя строка `ClanSelectMenu` (`clan_select_menu_controls[8..12]`).
+pub const CLAN_BUTTONS: [(PixelRect, &str, usize); 4] = [
+    (PixelRect::new(243, 438, 109, 40), "Random", 3),
+    (PixelRect::new(354, 438, 109, 40), "Cancel", 4),
+    (PixelRect::new(465, 438, 48, 40), "?", 5),
+    (PixelRect::new(514, 438, 109, 40), "Done", 6),
+];
+
 /// Сообщения `ChoosePlayerMenu::EventDone`.
 ///
 /// `_(bc94)` — нужно два участника; `_(06ec)` — hot-seat требует двух людей.
@@ -341,6 +392,24 @@ pub enum SetupScreen {
     Planet,
     /// `ChoosePlayerMenu`.
     Players,
+    /// `ClanSelectMenu` — выбор клана команды.
+    Clan,
+}
+
+/// Клан по индексу карточки `0..8` (`CLN1`…`CLN8`).
+pub fn clan_from_index(index: usize) -> max_core::enums::TeamClan {
+    max_core::enums::TeamClan::try_from((index + 1).min(8) as u8)
+        .unwrap_or(max_core::enums::TeamClan::Random)
+}
+
+/// Имя клана для подписи (`Random` — «No clan chosen»).
+pub fn clan_name(clan: max_core::enums::TeamClan) -> &'static str {
+    let index = clan as usize;
+    if index == 0 {
+        "Random"
+    } else {
+        CLAN_NAMES[(index - 1).min(CLAN_NAMES.len() - 1)]
+    }
 }
 
 /// Стартовые типы команд hot-seat (`menu_choose_player_menu_loop`, `menu.cpp:1883`):
@@ -386,6 +455,10 @@ pub struct GameSetupForm {
     pub minimaps: Vec<Option<Vec<u8>>>,
     /// Откуда грузить `.WRL` (каталог данных игры).
     pub world_dir: PathBuf,
+    /// Команда, для которой открыт `ClanSelectMenu`.
+    pub clan_team: usize,
+    /// Выбранный в `ClanSelectMenu` клан (применяется по Done/Random).
+    pub clan_selection: max_core::enums::TeamClan,
 }
 
 impl Default for GameSetupForm {
@@ -400,6 +473,8 @@ impl Default for GameSetupForm {
             status: String::new(),
             minimaps: (0..24).map(|_| None).collect(),
             world_dir: PathBuf::from("max-original"),
+            clan_team: 0,
+            clan_selection: max_core::enums::TeamClan::Random,
         }
     }
 }
@@ -561,6 +636,10 @@ impl GameSetupForm {
     fn key(&mut self, key: crate::ui::Key) -> SetupTransition {
         use crate::ui::Key;
 
+        if self.screen == SetupScreen::Clan {
+            return self.key_clan(key);
+        }
+
         match key {
             Key::Escape => {
                 if self.editing_name {
@@ -622,7 +701,41 @@ impl GameSetupForm {
                 SetupTransition::None
             }
             SetupScreen::Players => self.done(),
+            SetupScreen::Clan => self.apply_clan(),
         }
+    }
+
+    fn key_clan(&mut self, key: crate::ui::Key) -> SetupTransition {
+        use crate::ui::Key;
+
+        match key {
+            Key::Escape => {
+                self.screen = SetupScreen::Players;
+                self.status.clear();
+                SetupTransition::None
+            }
+            Key::Enter => self.apply_clan(),
+            _ => SetupTransition::None,
+        }
+    }
+
+    /// `ClanSelectMenu::EventDone`: сохранить выбранный клан команде.
+    fn apply_clan(&mut self) -> SetupTransition {
+        let team = self.clan_team.min(LOCAL_TEAM_COUNT - 1);
+        self.setup.team_clans[team] = self.clan_selection;
+        self.status = format!("Clan: {}", clan_name(self.clan_selection));
+        self.screen = SetupScreen::Players;
+        SetupTransition::None
+    }
+
+    /// `ClanSelectMenu::EventRandom`.
+    fn apply_random_clan(&mut self) -> SetupTransition {
+        let team = self.clan_team.min(LOCAL_TEAM_COUNT - 1);
+        self.setup.team_clans[team] = max_core::enums::TeamClan::Random;
+        self.clan_selection = max_core::enums::TeamClan::Random;
+        self.status = "Clan: random (chosen by the computer)".to_string();
+        self.screen = SetupScreen::Players;
+        SetupTransition::None
     }
 
     /// `ChoosePlayerMenu::EventDone` + запуск партии.
@@ -646,6 +759,7 @@ impl GameSetupForm {
             SetupScreen::Options => self.click_options(x, y),
             SetupScreen::Planet => self.click_planet(x, y),
             SetupScreen::Players => self.click_players(x, y),
+            SetupScreen::Clan => self.click_clan(x, y),
         }
     }
 
@@ -862,7 +976,12 @@ impl GameSetupForm {
             }
 
             if Self::inside(player_banner_rect(row), x, y) {
-                self.status = "Clan selection is not ported yet".to_string();
+                // `ChoosePlayerMenu::EventSelectClan`: открыть `ClanSelectMenu`
+                // для этой команды, сохранив текущий выбор.
+                self.clan_team = row;
+                self.clan_selection = self.setup.team_clans[row];
+                self.screen = SetupScreen::Clan;
+                self.status.clear();
                 return SetupTransition::None;
             }
         }
@@ -879,6 +998,38 @@ impl GameSetupForm {
                 "Done" => self.done(),
                 _ => {
                     self.status = "Setup help is not ported yet".to_string();
+                    SetupTransition::None
+                }
+            };
+        }
+
+        SetupTransition::None
+    }
+
+    /// `ClanSelectMenu`: восемь карточек, Random/Cancel/?/Done.
+    fn click_clan(&mut self, x: i32, y: i32) -> SetupTransition {
+        for (index, rect) in CLAN_SLOTS.iter().enumerate() {
+            if Self::inside(*rect, x, y) {
+                self.clan_selection = clan_from_index(index);
+                self.status = format!("Clan: {}", CLAN_NAMES[index]);
+                return SetupTransition::None;
+            }
+        }
+
+        for (rect, label, _resource) in CLAN_BUTTONS {
+            if !Self::inside(rect, x, y) {
+                continue;
+            }
+            return match label {
+                "Random" => self.apply_random_clan(),
+                "Cancel" => {
+                    self.screen = SetupScreen::Players;
+                    self.status.clear();
+                    SetupTransition::None
+                }
+                "Done" => self.apply_clan(),
+                _ => {
+                    self.status = "Clan help is not ported yet".to_string();
                     SetupTransition::None
                 }
             };
@@ -937,6 +1088,7 @@ pub fn draw_setup(
         SetupScreen::Options => draw_options(frame, menu, form, status, mouse),
         SetupScreen::Planet => draw_planet(frame, menu, form, status, mouse),
         SetupScreen::Players => draw_players(frame, menu, form, status, mouse),
+        SetupScreen::Clan => draw_clan(frame, menu, form, status, mouse),
     }
 }
 
@@ -1440,8 +1592,7 @@ fn draw_players(
             let Some(pair) = menu.team_kind_buttons[column].as_ref() else {
                 continue;
             };
-            let hovered = mouse.is_some_and(|(x, y)| rect.contains(x, y));
-            let image = if selected || hovered {
+            let image = if selected {
                 pair.image(true)
             } else {
                 pair.image(false)
@@ -1449,22 +1600,28 @@ fn draw_players(
             painted += blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
         }
 
-        // Флаг команды (`CH_TM1_U`…): клик — выбор клана (не портирован).
+        // Флаг команды (`CH_TM1_U`…): клик — выбор клана.
         let rect = player_banner_rect(row);
         if let Some(pair) = menu.team_banners[row].as_ref() {
-            let hovered = mouse.is_some_and(|(x, y)| rect.contains(x, y));
-            let image = if hovered {
-                pair.image(true)
-            } else {
-                pair.image(false)
-            };
-            painted += blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
+            painted += blit_simple(
+                frame,
+                palette,
+                pair.image(false),
+                rect.ulx,
+                rect.uly,
+                true,
+            );
         }
 
-        // Эмблема клана на флаге команды: C++ `Copy(clan_logo_id, 41, 40)`
-        // (`CLN0LOGO + clan`). Настройки клана ещё не портированы — рисуем
-        // `CLN0LOGO`, как при `player_clan = 0` (Random).
-        if let Some(logo) = menu.clan_logo.as_ref() {
+        // Эмблема выбранного клана на флаге команды: C++ `Copy(clan_logo_id,
+        // 41, 40)` (`CLN0LOGO + clan`).
+        let clan_index = form.setup.team_clans[row] as usize;
+        let logo = menu
+            .clan_logos
+            .get(clan_index)
+            .and_then(Option::as_ref)
+            .or(menu.clan_logo.as_ref());
+        if let Some(logo) = logo {
             painted += blit_simple(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
         }
     }
@@ -1486,6 +1643,110 @@ fn draw_players(
     }
 
     draw_status(frame, palette, status, PixelRect::new(16, 424, 330, 12));
+    painted
+}
+
+/// Экран `ClanSelectMenu` (`clanselectmenu.cpp`): 8 кланов, логотипы на
+/// карточках, имена, Random/Cancel/?/Done.
+///
+/// Полные описания кланов и таблица бонусов из `SC_CLANS`/`clans.json` в
+/// Rust-клиент ещё не загружаются, поэтому здесь показываются имя выбранного
+/// клана и подсказка; сама механика (выбор + применение к `team_clans`)
+/// реализована и влияет на стартовые атрибуты юнитов.
+fn draw_clan(
+    frame: &mut RgbaBuffer,
+    menu: &MenuAssets,
+    form: &GameSetupForm,
+    status: &str,
+    mouse: Option<(i32, i32)>,
+) -> u32 {
+    let palette = &menu.palette;
+    let mut painted = match menu.clansel.as_ref() {
+        Some(background) => draw_big_image(frame, background),
+        None => draw_background(frame, menu, PLAYERS_BACKGROUND),
+    };
+    let font = GnwFontId::Font5.font();
+
+    draw_text_gnw_centered(
+        frame,
+        CLAN_TITLE,
+        font,
+        "Clan Selection",
+        palette.rgba(GREEN),
+    );
+
+    for index in 0..CLAN_NAMES.len() {
+        let rect = CLAN_SLOTS[index];
+        let selected = form.clan_selection as usize == index + 1;
+
+        if let Some(pair) = menu.clan_buttons[index].as_ref() {
+            painted += blit_simple(
+                frame,
+                palette,
+                pair.image(selected),
+                rect.ulx,
+                rect.uly,
+                true,
+            );
+        }
+        if let Some(logo) = menu.clan_logos[index + 1].as_ref() {
+            painted += blit_simple(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
+        }
+
+        let color = if selected { GREEN } else { TEXT };
+        draw_text_gnw_centered(
+            frame,
+            CLAN_NAME_RECTS[index],
+            font,
+            CLAN_NAMES[index],
+            palette.rgba(color),
+        );
+    }
+
+    let team = form.clan_team.min(LOCAL_TEAM_COUNT - 1);
+    let line = format!(
+        "{}: {}",
+        crate::hotseat::team_display_name(max_core::team::TeamId(team as u8)),
+        clan_name(form.clan_selection)
+    );
+    draw_text_gnw_shadowed(
+        frame,
+        41,
+        350,
+        font,
+        &line,
+        palette.rgba(GREEN),
+        palette.rgba(0xA7),
+        palette.rgba(0xE6),
+    );
+    draw_text_gnw_shadowed(
+        frame,
+        41,
+        370,
+        font,
+        "Unit bonuses are applied to this team when the game starts.",
+        palette.rgba(TEXT),
+        palette.rgba(0xA7),
+        palette.rgba(0xE6),
+    );
+
+    for (rect, label, resource) in CLAN_BUTTONS {
+        let Some(pair) = menu.mnubtn_pair(resource) else {
+            continue;
+        };
+        let hovered = mouse.is_some_and(|(x, y)| rect.contains(x, y));
+        painted += draw_image_button(
+            frame,
+            palette,
+            pair.image(false),
+            pair.image(true),
+            rect,
+            label,
+            hovered,
+        );
+    }
+
+    draw_status(frame, palette, status, PixelRect::new(16, 424, 560, 12));
     painted
 }
 
@@ -1713,5 +1974,107 @@ mod tests {
             "прежний человек получает тип нового слота"
         );
         assert_eq!(form.setup.human_team(), Some(TeamId(1)));
+    }
+
+    #[test]
+    fn clan_selection_screen_applies_to_team() {
+        use crate::ui::InputEvent;
+
+        let mut form = GameSetupForm::default();
+        form.screen = SetupScreen::Players;
+        let banner = player_banner_rect(1);
+        form.handle_input(
+            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            640,
+            480,
+        );
+        assert_eq!(form.screen, SetupScreen::Clan);
+        assert_eq!(form.clan_team, 1);
+
+        let card = CLAN_SLOTS[4];
+        form.handle_input(
+            InputEvent::MouseClick(card.ulx + card.width / 2, card.uly + card.height / 2),
+            640,
+            480,
+        );
+        assert_eq!(
+            form.clan_selection,
+            max_core::enums::TeamClan::Musashi,
+            "карточка 5 — Musashi"
+        );
+
+        let done = CLAN_BUTTONS[3].0;
+        form.handle_input(
+            InputEvent::MouseClick(done.ulx + done.width / 2, done.uly + done.height / 2),
+            640,
+            480,
+        );
+
+        assert_eq!(form.screen, SetupScreen::Players);
+        assert_eq!(
+            form.setup.team_clans[1],
+            max_core::enums::TeamClan::Musashi,
+            "клан применён к команде GREEN"
+        );
+        assert_eq!(
+            form.setup.team_clans[0],
+            max_core::enums::TeamClan::Random,
+            "другие команды не тронуты"
+        );
+        assert_eq!(
+            form.setup.new_game_config().clans[1],
+            max_core::enums::TeamClan::Musashi,
+            "кланы уходят в NewGameConfig"
+        );
+    }
+
+    #[test]
+    fn clan_cancel_and_random_are_mechanics() {
+        use crate::ui::InputEvent;
+
+        let mut form = GameSetupForm::default();
+        form.setup.team_clans[0] = max_core::enums::TeamClan::TheChosen;
+        form.screen = SetupScreen::Players;
+        let banner = player_banner_rect(0);
+        form.handle_input(
+            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            640,
+            480,
+        );
+        let card = CLAN_SLOTS[7];
+        form.handle_input(
+            InputEvent::MouseClick(card.ulx + card.width / 2, card.uly + card.height / 2),
+            640,
+            480,
+        );
+        let cancel = CLAN_BUTTONS[1].0;
+        form.handle_input(
+            InputEvent::MouseClick(cancel.ulx + cancel.width / 2, cancel.uly + cancel.height / 2),
+            640,
+            480,
+        );
+        assert_eq!(
+            form.setup.team_clans[0],
+            max_core::enums::TeamClan::TheChosen,
+            "Cancel не меняет клан"
+        );
+
+        let banner = player_banner_rect(0);
+        form.handle_input(
+            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            640,
+            480,
+        );
+        let random = CLAN_BUTTONS[0].0;
+        form.handle_input(
+            InputEvent::MouseClick(random.ulx + random.width / 2, random.uly + random.height / 2),
+            640,
+            480,
+        );
+        assert_eq!(
+            form.setup.team_clans[0],
+            max_core::enums::TeamClan::Random,
+            "Random сбрасывает клан"
+        );
     }
 }

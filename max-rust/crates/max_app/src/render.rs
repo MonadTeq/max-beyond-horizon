@@ -170,13 +170,23 @@ impl App {
     ) {
         let mut positions = Vec::new();
         let mut visible = Vec::new();
+        // Спрайт юнита может свисать в кадр из-за края, даже если его клетка
+        // уже за границей видимого диапазона: берём запас в 2 клетки.
+        let range = viewport.visible_tiles();
+        let margin = 2;
 
         for id in self.state().unit_ids_in_order() {
             let Some(unit) = self.state().unit(id) else {
                 stats.units_skipped += 1;
                 continue;
             };
-            if !viewport.is_tile_visible(unit.grid.x, unit.grid.y) {
+            let in_range = range.is_some_and(|range| {
+                unit.grid.x >= range.x0 - margin
+                    && unit.grid.y >= range.y0 - margin
+                    && unit.grid.x <= range.x1 + margin
+                    && unit.grid.y <= range.y1 + margin
+            });
+            if !in_range {
                 continue;
             }
             if !unit.is_visible_to_team(self.state().player_team) {
@@ -190,8 +200,15 @@ impl App {
             let Some(unit) = self.state().unit(visible[index]) else {
                 continue;
             };
-            let rect = viewport.tile_rect(unit.grid.x, unit.grid.y);
-            let anchor = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+            // Визуальная позиция — дробная клетка, догоняющая симуляцию
+            // (см. `App::update_visual_units`). Якорь — центр клетки в мировых
+            // пикселях, затем камера переводит его в экранные.
+            let (grid_x, grid_y) = self
+                .visual_position(visible[index])
+                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+            let world_x = (grid_x * 64.0 + 32.0).round() as i32;
+            let world_y = (grid_y * 64.0 + 32.0).round() as i32;
+            let anchor = viewport.world_to_screen(world_x, world_y);
 
             let drawn = self.assets().and_then(|assets| {
                 let sprite = assets.sprite(unit.unit_type)?;
@@ -209,7 +226,7 @@ impl App {
                     level,
                 );
 
-                renderer.draw_unit(
+                renderer.draw_unit_scaled(
                     frame,
                     sprite_frame,
                     shadow,
@@ -218,6 +235,7 @@ impl App {
                         i32::from(unit.shadow_offset.x),
                         i32::from(unit.shadow_offset.y),
                     ),
+                    viewport.zoom(),
                 );
 
                 Some(())
@@ -226,7 +244,7 @@ impl App {
             match drawn {
                 Some(()) => stats.units_drawn += 1,
                 None => {
-                    draw_marker(frame, anchor, unit.team.0);
+                    draw_marker(frame, anchor, unit.team.0, viewport.zoom());
                     stats.units_marker += 1;
                 }
             }
@@ -281,15 +299,17 @@ fn render_resources(
     }
 }
 
-/// Маркер юнита 6×6 в точке `anchor` (центр клетки).
-fn draw_marker(frame: &mut RgbaBuffer, anchor: (i32, i32), team: u8) {
+/// Маркер юнита 6×6 в точке `anchor` (центр клетки), масштабируется вместе
+/// с картой (`zoom`, 64 — 1:1).
+fn draw_marker(frame: &mut RgbaBuffer, anchor: (i32, i32), team: u8, zoom: u32) {
     let color = MARKER_COLORS
         .get(usize::from(team))
         .copied()
         .unwrap_or(MARKER_COLORS[4]);
+    let radius = ((6 * i64::from(zoom.max(1))) / 64).max(2) as i32;
 
-    for y in -3..=3 {
-        for x in -3..=3 {
+    for y in -radius..=radius {
+        for x in -radius..=radius {
             frame.set(anchor.0 + x, anchor.1 + y, color);
         }
     }
