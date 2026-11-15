@@ -88,7 +88,7 @@ docker run --rm \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
-# Слои 2–3 QA (docs/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
+# Слои 2–3 QA (max-rust-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
 # Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
 step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory) + golden"
 docker run --rm \
@@ -104,7 +104,7 @@ docker run --rm \
      cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
      cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
      cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
-     cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden'
+     cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden'
 
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"

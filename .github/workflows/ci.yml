@@ -2,7 +2,7 @@ name: CI
 
 # M6.3: то же, что ./ci.sh, но на GitHub-hosted ubuntu.
 # Стадии: max-rust (check/test), horizon (workspace-тесты), qa (слои 2–3:
-# qa_run-сценарии + golden-кадры, см. docs/qa-plan.md).
+# qa_run-сценарии + golden-кадры, см. max-rust-qa/plans/qa-plan.md).
 # Живой live-smoke здесь не запускается: ему нужен собранный C++-headless.
 # Локально:
 #   ./ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
@@ -68,7 +68,7 @@ jobs:
         working-directory: max-horizon-server
         run: cargo test --workspace
 
-  # Слои 2–3 QA (docs/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
+  # Слои 2–3 QA (max-rust-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
   # Те же команды, что в ci.sh (стадия 3/3): один сценарий = один процесс
   # qa_run, падение любого assert → exit 1 → красный CI.
   qa:
@@ -99,7 +99,7 @@ jobs:
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
-        run: cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+        run: cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden
 
       - name: Upload log + frames + diff on failure
         if: failure()
@@ -107,7 +107,7 @@ jobs:
         with:
           name: qa-artifacts
           path: |
-            max-rust/qa-out/**/*.png
-            max-rust/qa-out/**/log.txt
+            max-rust-qa-out/**/*.png
+            max-rust-qa-out/**/log.txt
           if-no-files-found: warn
 
