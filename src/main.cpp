@@ -62,14 +62,14 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& e) {
         SDL_Log("Unhandled exception: %s.", e.what());
 
-        ResourceManager_Exit();
+        ResourceManager_Exit(EXIT_FAILURE);
 
         return EXIT_FAILURE;
 
     } catch (...) {
         SDL_Log("Unhandled exception of unknown type.");
 
-        ResourceManager_Exit();
+        ResourceManager_Exit(EXIT_FAILURE);
 
         return EXIT_FAILURE;
     }

@@ -73,7 +73,7 @@ int Server_Main() {
         fprintf(stderr, "SERVER: unhandled exception: %s\n", e.what());
         fflush(stderr);
 
-        ResourceManager_Exit();
+        ResourceManager_Exit(EXIT_FAILURE);
 
         return EXIT_FAILURE;
 
@@ -81,7 +81,7 @@ int Server_Main() {
         fprintf(stderr, "SERVER: unhandled exception of unknown type\n");
         fflush(stderr);
 
-        ResourceManager_Exit();
+        ResourceManager_Exit(EXIT_FAILURE);
 
         return EXIT_FAILURE;
     }

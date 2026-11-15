@@ -23,6 +23,7 @@
 #define RESOURCE_MANAGER_HPP
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -109,7 +110,7 @@ extern int32_t ResourceManager_MainmapZoomLimit;
 
 void ResourceManager_InitResources();
 void ResourceManager_ExitGame(int32_t error_code);
-void ResourceManager_Exit();
+void ResourceManager_Exit(int32_t exit_code = EXIT_SUCCESS);
 uint8_t* ResourceManager_ReadResource(ResourceID id);
 uint8_t* ResourceManager_LoadResource(ResourceID id);
 uint32_t ResourceManager_GetResourceSize(ResourceID id);

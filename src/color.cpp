@@ -21,6 +21,8 @@
 
 #include "color.h"
 
+#include <cstdio>
+
 #include "cursor.hpp"
 #include "resource_manager.hpp"
 
@@ -91,6 +93,35 @@ uint8_t* Color_GetColorPalette(void) { return Color_ColorPalette; }
 
 void Color_SetColorPalette(uint8_t* palette) { memmove(Color_ColorPalette, palette, sizeof(Color_ColorPalette)); }
 
+#if defined(MAX_HEADLESS)
+/* Deterministic stand-in for COLOR.PAL on the dedicated server: a grey ramp plus a luminance lookup for
+ * the RGB555 to palette-index table. It is never presented to a display; it only keeps the rendering
+ * helpers that run inside the headless process from reading a zeroed, uninitialized palette.
+ */
+static void Color_InitHeadlessPalette() {
+    for (int32_t i = 0; i < PALETTE_SIZE; ++i) {
+        Color_ColorPalette[i * PALETTE_STRIDE + 0] = static_cast<uint8_t>(i);
+        Color_ColorPalette[i * PALETTE_STRIDE + 1] = static_cast<uint8_t>(i);
+        Color_ColorPalette[i * PALETTE_STRIDE + 2] = static_cast<uint8_t>(i);
+    }
+
+    for (int32_t rgb = 0; rgb < static_cast<int32_t>(RGB555_COLOR_COUNT); ++rgb) {
+        const int32_t r = (rgb >> 10) & 0x1F;
+        const int32_t g = (rgb >> 5) & 0x1F;
+        const int32_t b = rgb & 0x1F;
+        const int32_t r8 = (r << 3) | (r >> 2);
+        const int32_t g8 = (g << 3) | (g >> 2);
+        const int32_t b8 = (b << 3) | (b >> 2);
+
+        Color_RgbIndexTable[rgb] = static_cast<ColorIndex>((r8 * 77 + g8 * 151 + b8 * 28) >> 8);
+    }
+
+    Color_SetSystemPalette(Color_ColorPalette);
+
+    Color_Inited = 1;
+}
+#endif /* defined(MAX_HEADLESS) */
+
 int32_t Color_Init(void) {
     int32_t result;
 
@@ -98,11 +129,35 @@ int32_t Color_Init(void) {
         result = 1;
 
     } else {
+        /* The palette ships as a loose file of the original installation. Portable layouts keep it next
+         * to PATCHES.RES in the base path, so fall back there when SETUP.game_data points at another
+         * folder (for example a folder holding only the packed .RES files).
+         */
         auto fp{ResourceManager_OpenFileResource("COLOR.PAL", ResourceType_GameData)};
 
         if (!fp) {
-            result = 0;
+            fp = ResourceManager_OpenFileResource("COLOR.PAL", ResourceType_GameBase);
+        }
 
+        if (!fp) {
+#if defined(MAX_HEADLESS)
+            /* A dedicated server never presents a frame: it renders into memory windows only, so colours
+             * have no effect on the simulation. MAX.RES and PATCHES.RES do not carry COLOR.PAL, therefore
+             * a minimal game_data folder (MAX.RES [+ PATCHES.RES]) cannot provide it. Treating the missing,
+             * rendering-only file as a fatal error made the server stop inside win_init() with the
+             * misleading "Screen Init failed." message instead of reaching the lobby.
+             */
+            fprintf(stderr,
+                    "RM: COLOR.PAL is missing from game data and base path, using the built-in headless "
+                    "palette\n");
+            fflush(stderr);
+
+            Color_InitHeadlessPalette();
+
+            result = 1;
+#else
+            result = 0;
+#endif
         } else {
             fread(Color_ColorPalette, sizeof(Color_ColorPalette), 1, fp);
             fread(Color_RgbIndexTable, sizeof(Color_RgbIndexTable), 1, fp);

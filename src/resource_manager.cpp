@@ -113,6 +113,7 @@ static std::unique_ptr<SoundManager> ResourceManager_SoundManager;
 static std::unique_ptr<std::unordered_map<std::string, ResourceID>> ResourceManager_ResourceIDLUT;
 static std::unique_ptr<std::vector<SDL_Mutex**>> ResourceManager_SDLMutexes;
 static std::string ResourceManager_SystemLocale{"en-US"};
+static int32_t ResourceManager_ExitStatusCode{EXIT_SUCCESS};
 
 FILE* res_file_handle_array[2];
 struct res_index* ResourceManager_ResItemTable;
@@ -449,14 +450,51 @@ void ResourceManager_InitGameDataPath() {
      * directory, so a failed test is not an error, it starts the interactive first run setup.
      */
     if (!ResourceManager_GetGameDataPath(path) || !GameSetup_IsGameDataFolder(path)) {
+        fprintf(stderr, "RM: no usable game data folder (SETUP.game_data is '%s', MAX.RES not found)\n",
+                ResourceManager_GetSettings()->GetStringValue("game_data").c_str());
+        fflush(stderr);
+
         if (!GameSetup_Run(path)) {
+#if defined(MAX_HEADLESS)
+            /* A dedicated server has no windowed first run setup to fall back to. Report the
+             * misconfiguration to the supervisor instead of terminating with a success status.
+             */
+            exit(EXIT_FAILURE);
+#else
             exit(EXIT_SUCCESS);
+#endif /* defined(MAX_HEADLESS) */
         }
     }
 
     ResourceManager_FilePathGameData = path;
 }
 
+/* Start-up data layout, including the M5.2 headless fix (manual regression scenario, there is no
+ * automated test harness for the server):
+ *
+ *  - PATCHES.RES is preloaded from the base path (portable layout: next to the executable, i.e. the
+ *    session directory) before MAX.RES is loaded from SETUP.game_data. Both files share one resource
+ *    table; PATCHES is registered first, so its entries win over the same tags in MAX.RES.
+ *  - game_data may also contain PATCHES.RES. It is not registered a second time: the only two calls to
+ *    ResourceManager_BuildResourceTable() are ResourceManager_PreloadPatches() and
+ *    ResourceManager_LoadMaxResources(), so a second copy on disk is harmless. The function also
+ *    refuses a registration beyond the two-slot res_file_handle_array instead of writing past it.
+ *  - A headless server may run with a minimal game_data folder holding only MAX.RES (plus PATCHES.RES).
+ *    Such a folder has no loose COLOR.PAL, and MAX.RES does not embed it; COLOR.PAL is only needed for
+ *    presentation, so Color_Init() installs the built-in headless palette instead of aborting the
+ *    start-up (see color.cpp). A fatal start-up path now also prints an "RM: fatal error" line to
+ *    stderr and exits with a non-zero status instead of exiting 0 after logging to stdout.txt only.
+ *
+ * Manual verification, all in Docker (ubuntu:24.04, template copied to a writable /tmp dir):
+ *   1. SETUP.game_data = /src/max-original (full game data, no PATCHES.RES there).
+ *   2. SETUP.game_data = a folder holding MAX.RES + PATCHES.RES (build/game-data-smoke).
+ *   3. SETUP.game_data = a folder holding MAX.RES, PATCHES.RES and COLOR.PAL (real palette still wins).
+ *   In all three cases the server must print "SERVER: resources ready" and keep running (the wrapper
+ *   kills it with timeout, so the expected exit status is 124, or 137 after the SIGKILL follow-up).
+ *   A fourth case, SETUP.game_data without MAX.RES (for example the template's shipped Windows path),
+ *   must report the folder on stderr and exit non-zero instead of silently stopping after "RM: gamedata
+ *   path".
+ */
 void ResourceManager_InitResources() {
     // nothing is available
     fprintf(stderr, "RM: locale\n"); fflush(stderr);
@@ -557,6 +595,9 @@ void ResourceManager_InitInternals() {
     }
 
     if (WindowManager_Init()) {
+        fprintf(stderr, "RM: window manager initialization failed\n");
+        fflush(stderr);
+
         ResourceManager_ExitGame(EXIT_CODE_SCREEN_INIT_FAILED);
     }
 
@@ -601,10 +642,22 @@ void ResourceManager_ExitGame(int32_t error_code) {
         SDL_Log("%.*s", static_cast<int>(exit_message.size()), exit_message.data());
     }
 
-    ResourceManager_Exit();
+    /* A start-up failure must not look like a clean shutdown. The log file already receives the reason,
+     * but a supervised (headless) server is diagnosed by its stderr and exit status, and exit(0) from a
+     * failed ResourceManager_InitResources() made such failures look like a silent, successful stop.
+     */
+    if ((error_code != EXIT_CODE_NO_ERROR) && (error_code != EXIT_CODE_THANKS)) {
+        fprintf(stderr, "RM: fatal error, exit code %d: %.*s\n", error_code, static_cast<int>(exit_message.size()),
+                exit_message.data());
+        fflush(stderr);
+
+        ResourceManager_ExitStatusCode = EXIT_FAILURE;
+    }
+
+    ResourceManager_Exit(ResourceManager_ExitStatusCode);
 }
 
-void ResourceManager_Exit() {
+void ResourceManager_Exit(int32_t exit_code) {
     ResourceManager_DeinitSoundManager();
     win_exit();
     ResourceManager_PathsManager.reset();
@@ -613,7 +666,7 @@ void ResourceManager_Exit() {
 
     ResourceManager_DestroyMutexes();
 
-    exit(0);
+    exit(exit_code);
 }
 
 void ResourceManager_InitResourceHandler() {
@@ -661,9 +714,12 @@ void ResourceManager_PreloadPatches() {
 }
 
 void ResourceManager_LoadMaxResources() {
-    if (ResourceManager_BuildResourceTable(
-            (ResourceManager_GetFileResourcePath("MAX.RES", ResourceManager_FilePathGameData)).lexically_normal()) !=
-        EXIT_CODE_NO_ERROR) {
+    const auto filepath{ResourceManager_GetFileResourcePath("MAX.RES", ResourceManager_FilePathGameData)};
+
+    if (ResourceManager_BuildResourceTable(filepath.lexically_normal()) != EXIT_CODE_NO_ERROR) {
+        fprintf(stderr, "RM: failed to load MAX.RES from %s\n", filepath.string().c_str());
+        fflush(stderr);
+
         /// \todo Convert to translated string
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "M.A.X. Error", "Failed to load MAX.RES.", nullptr);
         SDL_Log("%s", "Failed to load MAX.RES.");
@@ -1035,6 +1091,19 @@ int32_t ResourceManager_BuildResourceTable(const std::filesystem::path filepath)
     int32_t result;
     FILE* fp;
     struct res_header header;
+
+    /* The resource table tracks at most one open handle per registered .RES file (currently PATCHES.RES
+     * and MAX.RES). Guard the two-slot array explicitly so a future third registration fails cleanly
+     * instead of writing past the end of it.
+     */
+    if (static_cast<size_t>(ResourceManager_ResFileCount) >=
+        sizeof(res_file_handle_array) / sizeof(res_file_handle_array[0])) {
+        fprintf(stderr, "RM: refusing to register %s, the resource file table is full\n",
+                filepath.string().c_str());
+        fflush(stderr);
+
+        return EXIT_CODE_INSUFFICIENT_MEMORY;
+    }
 
     fp = fopen(filepath.string().c_str(), "rb");
 
