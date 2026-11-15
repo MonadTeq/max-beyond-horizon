@@ -40,6 +40,20 @@
 //! юнитов команды, а не вход в сессию), поэтому после успешного реконнекта
 //! прогон завершается с `reconnect_pending_state`: восстановление состояния
 //! (лобби/барьеры/54-перезапрос) — задача M6.1-финала.
+//!
+//! # Ретрай первого подключения и `data_hash` (M-NET-доводки)
+//!
+//! После `Create game` сессия headless поднимается 10–15 с, и первый
+//! `ENet connect` падает (`connect timed out after 10s`). [`open_network_session`]
+//! повторяет `SessionHandle::start` по [`JoinRetryPolicy`] (backoff
+//! 1,2,3,5,8,11 с, окно ~30 с), не возвращая игрока в список игр; прогресс
+//! уходит в [`FrameSink::join_status`] («Session warming up — attempt N/M»).
+//!
+//! `data_hash` согласуется без `--handshake-patches`: [`handshake_data_hashes`]
+//! даёт полный хэш (`MAX.RES` + `PATCHES.RES`), затем хэш только `MAX.RES`;
+//! после `TP 03 reason=GameData` клиент один раз переподключается со вторым
+//! вариантом (тикет тот же — Horizon `JoinGame` не повторяется). Любой другой
+//! `TP 03` (`Version`, `SessionTicket`) fallback не запускает.
 
 use std::time::Duration;
 
@@ -54,7 +68,7 @@ use max_core::input::{
 };
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
-use max_net::handshake::DataHash;
+use max_net::handshake::{DataHash, HandshakeError, RejectReason};
 use max_net::session::{DEFAULT_BARRIER_REPEAT, DEFAULT_BARRIER_TIMEOUT};
 use max_net::{
     complex_summary_for, crc_barrier_for, state_sync_for, GameJoined, HorizonClient,
@@ -89,6 +103,9 @@ pub struct NetworkOptions {
     pub event_wait: Duration,
     /// Политика переподключения при разрыве ENet-сессии (M6.1-заготовка).
     pub reconnect: ReconnectPolicy,
+    /// Политика ретрая **первого** подключения (Create game → Join → start):
+    /// сессия headless греется 10–15 с, и ENet connect в это окно падает.
+    pub join_retry: JoinRetryPolicy,
     /// Сколько ждать ввода игрока в фазе PLAY, прежде чем закрыть ход.
     ///
     /// `Duration::ZERO` (по умолчанию) — headless-поведение: тик, кадр и сразу
@@ -109,6 +126,7 @@ impl Default for NetworkOptions {
             tick_interval: DEFAULT_TICK_INTERVAL,
             event_wait: DEFAULT_EVENT_WAIT,
             reconnect: ReconnectPolicy::default(),
+            join_retry: JoinRetryPolicy::default(),
             turn_wait: Duration::ZERO,
         }
     }
@@ -156,6 +174,447 @@ impl Default for ReconnectPolicy {
         }
     }
 }
+
+/// Сколько попыток первого подключения делать по умолчанию.
+///
+/// Это **не** реконнект: после `Create game` сессия headless поднимается
+/// 10–15 с, и `ENet connect` до этого просто не отвечает
+/// (`connect timed out after 10s`). Ретрай делает Create → InSession
+/// самодостаточным, без «создать → подождать → Join из списка».
+pub const DEFAULT_JOIN_RETRY_ATTEMPTS: u32 = 6;
+/// Таймаут одной попытки первого подключения (ENet connect + `TP 00`).
+pub const DEFAULT_JOIN_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
+/// Общее окно ретраев: новые попытки после него не начинаются.
+pub const DEFAULT_JOIN_RETRY_BUDGET: Duration = Duration::from_secs(30);
+
+/// Задержки перед повторными попытками: 1, 2, 3, 5, 8, 11 с (сумма 30 с).
+pub const JOIN_RETRY_BACKOFF: [Duration; 6] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(3),
+    Duration::from_secs(5),
+    Duration::from_secs(8),
+    Duration::from_secs(11),
+];
+
+/// Политика ретрая первого подключения к сессии (`Create game → Join → start`).
+///
+/// `attempts` — **всего** попыток (`0` трактуется как одна попытка без
+/// ретраев); `timeout` — таймаут одной попытки (`ENet connect + TP 00`);
+/// `budget` — окно, после которого новые попытки не начинаются (по умолчанию
+/// 30 с). Задержки между попытками — [`JOIN_RETRY_BACKOFF`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinRetryPolicy {
+    /// Всего попыток подключения (`0` — одна, без ретраев).
+    pub attempts: u32,
+    /// Таймаут одной попытки (ENet connect + `TP 00`).
+    pub timeout: Duration,
+    /// Общее окно ретраев; `Duration::ZERO` — без ограничения.
+    pub budget: Duration,
+}
+
+impl Default for JoinRetryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: DEFAULT_JOIN_RETRY_ATTEMPTS,
+            timeout: DEFAULT_JOIN_RETRY_TIMEOUT,
+            budget: DEFAULT_JOIN_RETRY_BUDGET,
+        }
+    }
+}
+
+impl JoinRetryPolicy {
+    /// Задержка перед следующей попыткой после `failures` неудач.
+    pub fn backoff_after(failures: u32) -> Duration {
+        if failures == 0 {
+            return Duration::ZERO;
+        }
+        let index = (failures - 1) as usize;
+        JOIN_RETRY_BACKOFF
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| *JOIN_RETRY_BACKOFF.last().expect("непустая таблица задержек"))
+    }
+
+    /// Всего попыток с учётом `0` = «одна, без ретраев».
+    pub fn total_attempts(self) -> u32 {
+        self.attempts.max(1)
+    }
+}
+
+/// Прогресс первого подключения — для строки статуса UI и лога.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinProgress {
+    /// Очередная попытка `attempt` из `total` (сессия греется).
+    Attempt {
+        /// Номер попытки (1-based).
+        attempt: u32,
+        /// Всего попыток по политике.
+        total: u32,
+    },
+    /// Сервер отверг `data_hash` (`TP 03`, reason `GameData`) — клиент
+    /// переподключается с fallback-хэшем (только `MAX.RES`).
+    FallbackDataHash {
+        /// Номер варианта хэша (1-based), с которым сейчас подключаемся.
+        hash: u32,
+        /// Сколько вариантов всего.
+        hashes: u32,
+    },
+}
+
+impl JoinProgress {
+    /// Строка статуса для окна/меню (английский — как весь UI оригинала).
+    pub fn status_text(self) -> String {
+        match self {
+            Self::Attempt { attempt, total } => {
+                format!("Session warming up — attempt {attempt}/{total}")
+            }
+            Self::FallbackDataHash { hash, hashes } => format!(
+                "Server expects the MAX.RES-only data_hash — reconnecting (hash {hash}/{hashes})"
+            ),
+        }
+    }
+}
+
+/// Ошибка одной попытки подключения (Horizon JoinGame или ENet + `TP 00`).
+#[derive(Debug, thiserror::Error)]
+pub enum JoinAttemptError {
+    /// Horizon `JoinGame` не ответил/ответил ошибкой.
+    #[error("Horizon JoinGame: {0}")]
+    Horizon(String),
+    /// ENet connect / `TP 00`.
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    /// Внешний таймаут попытки ([`JoinRetryPolicy::timeout`]).
+    #[error("join timed out after {0:?}")]
+    Timeout(Duration),
+}
+
+impl JoinAttemptError {
+    /// Стоит ли повторять попытку: таймаут/транспорт — да, `TP 03` — нет.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Horizon(_) | Self::Timeout(_) => true,
+            Self::Session(error) => match error {
+                // Версия/тикет/данные и битый TP 00 — ответ сервера, повтор
+                // ничего не изменит.
+                SessionError::Handshake(_) | SessionError::Closed | SessionError::Wire(_) => false,
+                // Таймаут connect/handshake, разрыв, ENet, DNS — транспортные.
+                SessionError::Timeout { .. }
+                | SessionError::Disconnected { .. }
+                | SessionError::Enet(_)
+                | SessionError::Resolution { .. } => true,
+            },
+        }
+    }
+
+    /// `TP 03` с `reason = GameData` (сервер ждёт другой `data_hash`).
+    pub fn is_game_data_reject(&self) -> bool {
+        matches!(
+            self,
+            Self::Session(SessionError::Handshake(HandshakeError::Rejected {
+                reason: RejectReason::GameData,
+                ..
+            }))
+        )
+    }
+}
+
+/// Итог ретрая одного этапа подключения.
+enum JoinRetryOutcome<T> {
+    /// Подключение прошло на попытке `attempts`.
+    Connected {
+        /// Результат коннектора.
+        value: T,
+        /// Номер успешной попытки.
+        attempts: u32,
+    },
+    /// Попытки кончились (ошибки были retryable).
+    Exhausted {
+        /// Последняя ошибка.
+        error: JoinAttemptError,
+        /// Сколько попыток сделано.
+        attempts: u32,
+    },
+    /// Ошибка, которую повторять бессмысленно (`TP 03` и т.п.).
+    Rejected {
+        /// Ошибка сервера.
+        error: JoinAttemptError,
+        /// Сколько попыток сделано.
+        attempts: u32,
+    },
+}
+
+/// Выполняет попытки подключения с backoff и общим окном.
+///
+/// Функция не знает, что именно подключается: тесты передают мок-коннектор, а
+/// боевой код — Horizon `JoinGame` и [`SessionHandle::start`]. Каждая попытка
+/// ограничена [`JoinRetryPolicy::timeout`], паузы — [`JOIN_RETRY_BACKOFF`],
+/// новые попытки после [`JoinRetryPolicy::budget`] не начинаются.
+async fn retry_join<T, F, Fut>(
+    policy: JoinRetryPolicy,
+    mut notify: impl FnMut(JoinProgress),
+    mut connect: F,
+) -> JoinRetryOutcome<T>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<T, JoinAttemptError>>,
+{
+    let total = policy.total_attempts();
+    let started = Instant::now();
+    let mut attempts = 0u32;
+    let mut last_error: Option<JoinAttemptError> = None;
+
+    loop {
+        if attempts >= total {
+            break;
+        }
+
+        if attempts > 0 {
+            let delay = JoinRetryPolicy::backoff_after(attempts);
+            if !policy.budget.is_zero() && started.elapsed() + delay >= policy.budget {
+                break;
+            }
+            if !delay.is_zero() {
+                tracing::debug!("join: пауза {delay:?} перед попыткой {}", attempts + 1);
+                tokio::time::sleep(delay).await;
+            }
+        }
+
+        attempts = attempts.saturating_add(1);
+        notify(JoinProgress::Attempt { attempt: attempts, total });
+
+        let attempt_timeout = policy.timeout.max(Duration::from_millis(1));
+        match tokio::time::timeout(attempt_timeout, connect(attempts)).await {
+            Ok(Ok(value)) => {
+                return JoinRetryOutcome::Connected { value, attempts };
+            }
+            Ok(Err(error)) => {
+                if !error.is_retryable() {
+                    tracing::warn!("join: попытка {attempts}/{total} — ошибка без ретрая: {error}");
+                    return JoinRetryOutcome::Rejected { error, attempts };
+                }
+                tracing::warn!("join: попытка {attempts}/{total} не удалась: {error}");
+                last_error = Some(error);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "join: попытка {attempts}/{total} — таймаут {attempt_timeout:?} \
+                     (ENet connect + TP 00)"
+                );
+                last_error = Some(JoinAttemptError::Timeout(attempt_timeout));
+            }
+        }
+    }
+
+    let error = last_error.unwrap_or(JoinAttemptError::Timeout(policy.timeout));
+    JoinRetryOutcome::Exhausted {
+        error,
+        attempts: attempts.max(1),
+    }
+}
+
+/// Варианты `data_hash` для хендшейка — в порядке попыток.
+///
+/// Явный `--handshake-patches` — ровно один вариант (поведение до M-NET-
+/// доводок). Без него:
+///
+/// 1. полный хэш `SHA256(MAX.RES) ‖ SHA256(PATCHES.RES)` (assets-путь);
+/// 2. только `SHA256(MAX.RES)` — сервер, чей `game_data` не содержит
+///    `PATCHES.RES`, ждёт 64-символьный `data_hash`
+///    (`DataHash::from_files`: отсутствующий файл = пустая часть).
+///
+/// Второй вариант добавляется только если локальный `PATCHES.RES`
+/// существует и хэши действительно различаются.
+pub fn handshake_data_hashes(config: &AppConfig) -> Result<Vec<DataHash>> {
+    let patches = config.handshake_patches_path().to_path_buf();
+    let full = DataHash::from_files(&config.max_res, &patches).with_context(|| {
+        format!(
+            "не удалось посчитать SHA256({} + {})",
+            config.max_res.display(),
+            patches.display()
+        )
+    })?;
+
+    let mut hashes = vec![full];
+    if config.handshake_patches.is_none() && full.patches_res.is_some() {
+        hashes.push(DataHash {
+            max_res: full.max_res,
+            patches_res: None,
+        });
+    }
+
+    Ok(hashes)
+}
+
+/// Подключается к сессии, перебирая варианты `data_hash` после `TP 03`.
+///
+/// Логика: [`retry_join`] по каждому варианту. Отказ `GameData` — повод взять
+/// следующий вариант (тикет тот же, повторный `JoinGame` не нужен); любой
+/// другой отказ (`Version`, `SessionTicket`, `Unknown`) — сразу ошибка, как и
+/// исчерпание ретраев.
+async fn start_with_hash_fallback<T, F, Fut>(
+    base_config: &SessionConfig,
+    hashes: &[DataHash],
+    policy: JoinRetryPolicy,
+    mut notify: impl FnMut(JoinProgress),
+    mut connect: F,
+) -> Result<(T, DataHash, u32), JoinAttemptError>
+where
+    F: FnMut(SessionConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<T, JoinAttemptError>>,
+{
+    let hash_count = hashes.len().max(1);
+    let mut last_reject: Option<JoinAttemptError> = None;
+
+    for (index, hash) in hashes.iter().enumerate() {
+        let mut config = base_config.clone();
+        config.data_hash = *hash;
+
+        let connect_call = |_attempt: u32| {
+            let config = config.clone();
+            connect(config)
+        };
+        let outcome = retry_join(policy, &mut notify, connect_call).await;
+
+        match outcome {
+            JoinRetryOutcome::Connected { value, attempts } => {
+                return Ok((value, *hash, attempts));
+            }
+            JoinRetryOutcome::Rejected { error, .. } if error.is_game_data_reject() => {
+                if index + 1 < hashes.len() {
+                    tracing::warn!(
+                        "join: сервер отверг data_hash с PATCHES.RES (GameData) — \
+                         пробую вариант без PATCHES.RES"
+                    );
+                    notify(JoinProgress::FallbackDataHash {
+                        hash: index as u32 + 2,
+                        hashes: hash_count as u32,
+                    });
+                    last_reject = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+            JoinRetryOutcome::Rejected { error, .. } => return Err(error),
+            JoinRetryOutcome::Exhausted { error, .. } => return Err(error),
+        }
+    }
+
+    Err(last_reject.unwrap_or(JoinAttemptError::Session(SessionError::Timeout {
+        stage: "join",
+        timeout: policy.timeout,
+    })))
+}
+
+/// Ретрай `Horizon JoinGame`: сервер мог ещё не зарегистрировать игру.
+///
+/// Прогресс в окно не идёт (JoinGame — gRPC, а не «прогрев ENet»): строка
+/// `Session warming up — attempt N/M` описывает попытки `SessionHandle::start`.
+async fn join_horizon_with_retry(
+    config: &AppConfig,
+    options: &NetworkOptions,
+) -> Result<GameJoined> {
+    let game_id = options.game_id.clone();
+    let password = options.password.clone();
+    let connect = |_attempt: u32| {
+        let config = config.clone();
+        let game_id = game_id.clone();
+        let password = password.clone();
+        async move {
+            connect_horizon(&config, &game_id, password.as_deref())
+                .await
+                .map_err(|error| JoinAttemptError::Horizon(format!("{error:#}")))
+        }
+    };
+
+    match retry_join(options.join_retry, |_| {}, connect).await {
+        JoinRetryOutcome::Connected { value, attempts } => {
+            if attempts > 1 {
+                tracing::info!("join: Horizon JoinGame прошёл с попытки {attempts}");
+            }
+            Ok(value)
+        }
+        JoinRetryOutcome::Exhausted { error, attempts } => Err(anyhow!(
+            "не удалось войти в игру {game_id} за {attempts} попыт(ок): {error}"
+        )),
+        JoinRetryOutcome::Rejected { error, attempts } => Err(anyhow!(
+            "Horizon JoinGame({game_id}) отклонён на попытке {attempts}: {error}"
+        )),
+    }
+}
+
+/// Ошибка первого подключения с подсказкой про `--handshake-patches`.
+fn join_failure(error: JoinAttemptError, tried_hashes: usize) -> anyhow::Error {
+    if error.is_game_data_reject() && tried_hashes > 1 {
+        anyhow!(
+            "data_hash не принят сервером ни с PATCHES.RES, ни без него ({error}); \
+             укажите --handshake-patches <PATCHES.RES, которым считает сервер>"
+        )
+    } else if error.is_game_data_reject() {
+        anyhow!(
+            "data_hash не принят сервером ({error}); сервер без PATCHES.RES ждёт хэш \
+             только MAX.RES — проверьте --data-dir/--patches или укажите \
+             --handshake-patches"
+        )
+    } else {
+        anyhow!("{error}")
+    }
+}
+
+/// Сообщает прогресс подключения в лог и в окно (если есть [`FrameSink`]).
+fn report_join_progress(sink: &mut Option<&mut dyn FrameSink>, progress: JoinProgress) {
+    match progress {
+        JoinProgress::Attempt { attempt, total } => {
+            tracing::warn!("join: сессия разогревается — попытка {attempt}/{total}");
+        }
+        JoinProgress::FallbackDataHash { hash, hashes } => {
+            tracing::warn!(
+                "join: вариантов data_hash {hashes}; пробую {hash} — только MAX.RES \
+                 (PATCHES.RES-часть пуста)"
+            );
+        }
+    }
+
+    if let Some(sink) = sink.as_deref_mut() {
+        sink.join_status(&progress.status_text());
+    }
+}
+
+/// Открывает сессию: Horizon `JoinGame` + ENet/TP00, с ретраем и fallback.
+async fn open_network_session(
+    config: &AppConfig,
+    options: &NetworkOptions,
+    hashes: &[DataHash],
+    sink: &mut Option<&mut dyn FrameSink>,
+) -> Result<(GameJoined, SessionConfig, SessionHandle, DataHash, u32)> {
+    let mut notify = |progress: JoinProgress| report_join_progress(sink, progress);
+
+    let joined = join_horizon_with_retry(config, options).await?;
+    let base_config = SessionConfig::from_joined(&joined, hashes[0]).with_player(
+        &config.player_name,
+        config.team_slot.min(3),
+        config.clan,
+    );
+
+    let connect = |session_config: SessionConfig| async move {
+        SessionHandle::start(session_config)
+            .await
+            .map_err(JoinAttemptError::from)
+    };
+    let (handle, hash, attempts) =
+        start_with_hash_fallback(&base_config, hashes, options.join_retry, &mut notify, connect)
+            .await
+            .map_err(|error| join_failure(error, hashes.len()))?;
+
+    // Реконнект (`--reconnect-*`) должен повторять хэндшейк тем же хэшем,
+    // которым сервер принял клиента.
+    let mut session_config = base_config;
+    session_config.data_hash = hash;
+
+    Ok((joined, session_config, handle, hash, attempts))
+}
+
 
 /// Учёт попыток переподключения — чистая логика без сети.
 ///
@@ -361,6 +820,15 @@ async fn reconnect_session(
 pub trait FrameSink {
     /// Показать кадр текущего состояния; `false` — выйти из цикла.
     fn frame(&mut self, app: &mut App) -> bool;
+
+    /// Статус первого подключения (ретрай/fallback `data_hash`).
+    ///
+    /// Вызывается до первого кадра партии, пока `SessionHandle::start`
+    /// повторяется. `false` означает «закрыть окно»; по умолчанию — no-op,
+    /// поэтому headless-смоук и тестовые приёмники ничего не меняют.
+    fn join_status(&mut self, _message: &str) -> bool {
+        true
+    }
 }
 
 /// Результат сетевого прогона (`--connect`).
@@ -389,6 +857,12 @@ pub struct NetworkReport {
     /// Транспорт восстановлен, но состояние партии не восстановлено
     /// (M6.1-финал): прогон завершён, полный реконнект ещё не реализован.
     pub reconnect_pending_state: bool,
+    /// `data_hash`, с которым сервер принял клиента (hex; 64 символа — сервер
+    /// без `PATCHES.RES`, 128 — полный).
+    pub data_hash: String,
+    /// Сколько попыток первого подключения (`Create game → Join → start`)
+    /// понадобилось; `1` — сессия уже была готова.
+    pub join_attempts: u32,
     /// Дайджест итогового состояния.
     pub digest: AppDigest,
 }
@@ -620,27 +1094,13 @@ pub async fn run_network_with_sink(
     // не содержать файла, и тогда его часть хэша пуста. Ассеты грузятся
     // отдельно (`App::init_assets` → `assets::resolve_patches_res`), поэтому
     // несуществующий `--handshake-patches` не оставляет игру без карты.
-    let handshake_patches = config.handshake_patches_path().to_path_buf();
-    let data_hash =
-        DataHash::from_files(&config.max_res, &handshake_patches).with_context(|| {
-            format!(
-                "не удалось посчитать SHA256({} + {})",
-                config.max_res.display(),
-                handshake_patches.display()
-            )
-        })?;
-
-    let joined = connect_horizon(&config, &options.game_id, options.password.as_deref()).await?;
-    let session_config = SessionConfig::from_joined(&joined, data_hash).with_player(
-        &config.player_name,
-        config.team_slot.min(3),
-        config.clan,
-    );
-    // Конфиг нужен и после старта: по нему выполняется повторный ENet
-    // connect + TP 00 при разрыве (M6.1-заготовка).
-    let mut handle = SessionHandle::start(session_config.clone())
-        .await
-        .context("ENet-сессия: connect + TP 00")?;
+    //
+    // Без явного `--handshake-patches` пробуем два варианта (полный → только
+    // MAX.RES): так Create game работает против сервера без PATCHES.RES без
+    // обходного флага.
+    let hashes = handshake_data_hashes(&config)?;
+    let (joined, session_config, mut handle, data_hash, join_attempts) =
+        open_network_session(&config, options, &hashes, &mut sink).await?;
 
     let lobby = run_lobby(app, &mut handle, &session_config, &config, options).await?;
 
@@ -695,6 +1155,8 @@ pub async fn run_network_with_sink(
         reconnects: stats.reconnects,
         reconnect_attempts: stats.reconnect_attempts,
         reconnect_pending_state: stats.reconnect_pending_state,
+        data_hash: data_hash.to_hex(),
+        join_attempts,
         digest: app.digest(),
     })
 }
@@ -2254,6 +2716,262 @@ mod tests {
             "last_error: {:?}",
             tracker.last_error()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // M-NET-доводки: ретрай первого подключения и fallback data_hash
+    // -----------------------------------------------------------------------
+
+    fn reject(reason: RejectReason) -> JoinAttemptError {
+        JoinAttemptError::Session(SessionError::Handshake(HandshakeError::Rejected {
+            reason,
+            reason_text: reason.text().to_string(),
+        }))
+    }
+
+    fn join_policy(attempts: u32, timeout: Duration) -> JoinRetryPolicy {
+        JoinRetryPolicy {
+            attempts,
+            timeout,
+            budget: Duration::from_secs(30),
+        }
+    }
+
+    fn max_patches_hashes() -> [DataHash; 2] {
+        let max = [0x11u8; 32];
+        let patches = [0x22u8; 32];
+        [
+            DataHash::from_digests(max, patches),
+            DataHash {
+                max_res: Some(max),
+                patches_res: None,
+            },
+        ]
+    }
+
+    fn session_config(hash: DataHash) -> SessionConfig {
+        SessionConfig::new("127.0.0.1", 32000, "ticket", hash)
+    }
+
+    #[test]
+    fn join_backoff_is_one_two_three_five_eight_eleven() {
+        assert_eq!(JoinRetryPolicy::backoff_after(0), Duration::ZERO);
+        assert_eq!(
+            (1..=6)
+                .map(JoinRetryPolicy::backoff_after)
+                .collect::<Vec<_>>(),
+            vec![
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(5),
+                Duration::from_secs(8),
+                Duration::from_secs(11),
+            ]
+        );
+        assert_eq!(
+            JoinRetryPolicy::backoff_after(9),
+            Duration::from_secs(11),
+            "после таблицы задержка не растёт"
+        );
+        assert_eq!(
+            JoinRetryPolicy {
+                attempts: 0,
+                ..Default::default()
+            }
+            .total_attempts(),
+            1,
+            "0 попыток = одна попытка без ретраев"
+        );
+    }
+
+    /// Мок-коннектор: первая попытка падает, вторая проходит. Время
+    /// контролируется `start_paused`: между попытками ровно backoff (1 с).
+    #[tokio::test(start_paused = true)]
+    async fn join_retry_succeeds_on_the_second_attempt_after_backoff() {
+        let started = tokio::time::Instant::now();
+        let mut calls = 0u32;
+
+        let outcome = retry_join(join_policy(3, Duration::from_secs(2)), |_| {}, |attempt| {
+            calls += 1;
+            async move {
+                if attempt == 1 {
+                    Err(JoinAttemptError::Timeout(Duration::from_secs(2)))
+                } else {
+                    Ok(42u32)
+                }
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(
+                outcome,
+                JoinRetryOutcome::Connected {
+                    value: 42,
+                    attempts: 2
+                }
+            ),
+            "успех на второй попытке"
+        );
+        assert_eq!(calls, 2);
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(1),
+            "мок отвечает мгновенно; 1 с — backoff после первой неудачи"
+        );
+    }
+
+    /// Таймаут попытки ограничен политикой и не вешает прогон: 2 с + 1 с
+    /// backoff + 2 с = 5 с виртуального времени на две попытки.
+    #[tokio::test(start_paused = true)]
+    async fn join_retry_attempt_timeout_is_bounded_by_the_policy() {
+        let started = tokio::time::Instant::now();
+
+        let outcome = retry_join(join_policy(2, Duration::from_secs(2)), |_| {}, |_attempt| async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok::<(), JoinAttemptError>(())
+        })
+        .await;
+
+        match outcome {
+            JoinRetryOutcome::Exhausted { error, attempts } => {
+                assert_eq!(attempts, 2);
+                assert!(
+                    matches!(error, JoinAttemptError::Timeout(timeout) if timeout == Duration::from_secs(2))
+                );
+            }
+            _ => panic!("ожидалось исчерпание попыток"),
+        }
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
+    }
+
+    /// `TP 03 GameData` → один переподключ с хэшем только MAX.RES (тикет тот
+    /// же), сессия стартует. Отвергается именно полный хэш.
+    #[tokio::test]
+    async fn game_data_reject_falls_back_to_the_max_only_hash() {
+        let hashes = max_patches_hashes();
+        let base = session_config(hashes[0]);
+        let mut tried: Vec<String> = Vec::new();
+
+        let outcome: Result<((), DataHash, u32), JoinAttemptError> = start_with_hash_fallback(
+            &base,
+            &hashes,
+            join_policy(2, Duration::from_secs(1)),
+            |_| {},
+            |config| {
+                tried.push(config.data_hash.to_hex());
+                let full = config.data_hash.patches_res.is_some();
+                async move {
+                    if full {
+                        Err(reject(RejectReason::GameData))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .await;
+
+        let (_, accepted, attempts) = outcome.expect("fallback-хэш принят");
+        assert_eq!(attempts, 1, "fallback — тоже первая попытка");
+        assert_eq!(accepted.patches_res, None);
+        assert_eq!(tried.len(), 2, "полный хэш, затем MAX-only");
+        assert_eq!(tried[0].len(), 128);
+        assert_eq!(tried[1].len(), 64);
+        assert_eq!(tried[0][..64], tried[1][..], "MAX.RES-часть та же");
+        assert!(
+            base.data_hash.patches_res.is_some(),
+            "базовый конфиг не мутируется"
+        );
+    }
+
+    /// Отказ по другой причине (`Version`) — без fallback и без ретрая.
+    #[tokio::test]
+    async fn version_reject_is_neither_retried_nor_fallen_back() {
+        let hashes = max_patches_hashes();
+        let base = session_config(hashes[0]);
+        let mut calls = 0u32;
+
+        let outcome: Result<((), DataHash, u32), JoinAttemptError> = start_with_hash_fallback(
+            &base,
+            &hashes,
+            join_policy(3, Duration::from_secs(1)),
+            |_| {},
+            |_config| {
+                calls += 1;
+                async move { Err(reject(RejectReason::Version)) }
+            },
+        )
+        .await;
+
+        assert!(outcome.is_err(), "Version не лечится сменой data_hash");
+        assert_eq!(calls, 1, "ретраев и fallback нет");
+        assert!(!outcome.unwrap_err().is_game_data_reject());
+    }
+
+    /// Сетевой цикл ждёт `PATCHES.RES`-вариант только без явного флага.
+    #[test]
+    fn handshake_hashes_try_full_then_max_only_by_default() {
+        let dir = std::env::temp_dir().join(format!(
+            "max_app_join_hashes_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join("MAX.RES"), b"max-res").expect("MAX.RES");
+        std::fs::write(dir.join("PATCHES.RES"), b"patches").expect("PATCHES.RES");
+
+        let config = AppConfig {
+            max_res: dir.join("MAX.RES"),
+            patches_res: dir.join("PATCHES.RES"),
+            ..Default::default()
+        };
+        let hashes = handshake_data_hashes(&config).expect("хэши");
+        assert_eq!(hashes.len(), 2);
+        assert!(hashes[0].patches_res.is_some());
+        assert_eq!(hashes[0].to_hex().len(), 128);
+        assert!(hashes[1].patches_res.is_none());
+        assert_eq!(hashes[1].to_hex().len(), 64);
+        assert_eq!(hashes[0].max_res, hashes[1].max_res);
+
+        // Явный --handshake-patches — ровно один вариант, без угадывания.
+        let explicit = AppConfig {
+            handshake_patches: Some(dir.join("nonexistent.res")),
+            ..config.clone()
+        };
+        let explicit_hashes = handshake_data_hashes(&explicit).expect("хэши");
+        assert_eq!(explicit_hashes.len(), 1);
+        assert!(explicit_hashes[0].patches_res.is_none());
+
+        // Локального PATCHES.RES нет — полный вариант уже MAX-only.
+        let without_patches = AppConfig {
+            patches_res: dir.join("nonexistent.res"),
+            ..config
+        };
+        let max_only = handshake_data_hashes(&without_patches).expect("хэши");
+        assert_eq!(max_only.len(), 1);
+        assert_eq!(max_only[0].to_hex().len(), 64);
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn join_progress_status_names_the_attempt_and_the_fallback() {
+        assert_eq!(
+            JoinProgress::Attempt {
+                attempt: 2,
+                total: 6
+            }
+            .status_text(),
+            "Session warming up — attempt 2/6"
+        );
+        let fallback = JoinProgress::FallbackDataHash { hash: 2, hashes: 2 }.status_text();
+        assert!(fallback.contains("MAX.RES-only"));
+        assert!(fallback.contains("2/2"));
     }
 
     fn test_settings() -> LobbyGameSettings {

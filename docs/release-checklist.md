@@ -80,10 +80,10 @@ bash ci.sh
 ```
 
 - [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
-  Свидетельство: **615 тестов, 0 failed**, `cargo check` — 0 ошибок и 0
+  Свидетельство: **622 теста, 0 failed**, `cargo check` — 0 ошибок и 0
   предупреждений (2026-11-15, `rust:1.94.0-bookworm`, M-SP 12 +
-  M-HS 13 в `tests/hot_seat.rs` + 5 модульных в `hotseat.rs`); лог
-  `build/cargo-docker-hotseat-final.log`.
+  M-HS 13 в `tests/hot_seat.rs` + M-NET 7 в `net.rs`); лог
+  `build/cargo-docker-mnet-final.log`.
 - [ ] 2.2 `--features sound` — `check` и `test` зелёные. Тест
       `max_assets::wav::tests::parses_real_kbuy0_spw` проходит на реальном
       `KBUY0.SPW`; `all_real_spw_files_are_pcm16_22050_mono` проверяет все 272
@@ -105,22 +105,34 @@ bash ci.sh
 Rust-клиента в общем network namespace).
 
 ```sh
-bash build/scripts/live-smoke.sh 10
+# Git Bash: MSYS_NO_PATHCONV=1 — иначе -w /src/... станет C:/Program Files/Git/src/...
+MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10
 # опционально: bash ci.sh --smoke --turns 10
 ```
 
-- [ ] Horizon поднялся (`horizon-live` healthy), `horizon_probe` создал игру,
-      `GAME_ID` непустой.
-- [ ] Оба клиента (`client-a`, `client-b`) завершились с exit 0, в логах
-      `build/smoke-logs/a.log` и `b.log` нет паник/таймаутов.
-- [ ] В логах обоих клиентов одинаковые CRC-барьеры (`45`) на каждом ходу;
-      расхождений (desync) нет.
-- [ ] Пройдено ≥ 10 ходов, `turns_finished`/`ticks` в отчёте соответствуют
-      ожиданию.
+`--handshake-patches` скрипт **не** передаёт: клиент сам пробует полный
+`data_hash`, получает `TP 03 GameData` и переподключается с хэшем только
+`MAX.RES`, а скрипт проверяет `data_hash=<hex>(64)` и отсутствие
+`Session failed` в логах.
+
+- [x] Horizon поднялся (`horizon-live` healthy), `horizon_probe` создал игру,
+      `GAME_ID` непустой. _(2026-11-15: `83621ef3-6153-4da7-9b0b-ca05320ee2c5`)_
+- [x] Оба клиента (`client-a`, `client-b`) завершились с exit 0, в логах
+      `build/smoke-logs/a.log` и `b.log` нет паник/таймаутов. _(2026-11-15)_
+- [x] В логах обоих клиентов одинаковые CRC-барьеры (`45`) на каждом ходу;
+      расхождений (desync) нет. _(2026-11-15: `state_checksum=0x7035` у обоих,
+      `barrier_timeouts=0`)_
+- [x] Пройдено ≥ 10 ходов, `turns_finished`/`ticks` в отчёте соответствуют
+      ожиданию. _(2026-11-15: `turns=10`, `ticks=10`, `join_attempts=1`,
+      `data_hash=dd24703e(64)` у A и B — fallback сработал)_
 - [ ] Скрипт воспроизводим: повторный запуск даёт тот же результат (не
       обязательно тот же CRC между разными seed, но без desync внутри партии).
 
-Свидетельство (дата, GAME_ID, хвосты логов): ______________________
+Свидетельство (дата, GAME_ID, хвосты логов): 2026-11-15,
+`GAME_ID=83621ef3-6153-4da7-9b0b-ca05320ee2c5`,
+`build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log`; оба клиента
+`handshake=true lobby=true turns=10 barrier_timeouts=0`, fallback data_hash
+подтверждён (`live-smoke: fallback data_hash (MAX.RES-only) подтверждён`).
 
 ## 4. Человеческий сценарий M4 (SDL, мышь)
 
@@ -137,10 +149,14 @@ cargo run -p max_app --features sdl,sound -- --ui --turn-wait 60
 
 `--turn-wait 60` обязателен для игры руками: без него сетевой цикл закрывает ход
 сразу после тика (~16 мс) и клики не успевают попасть в партию — это режим для
-headless/live-smoke. Если каталог данных headless-сервера без `PATCHES.RES`
-(как в `docker-compose.yml`), добавьте `--handshake-patches <несуществующий
-файл>`, иначе handshake вернёт `game data`. Подробности — `max_app/README.md`,
-раздел «Сетевая партия в окне».
+headless/live-smoke. **Обходные флаги не нужны (M-NET-доводки):** если каталог
+данных headless-сервера без `PATCHES.RES` (как в `docker-compose.yml`), клиент
+сам после `TP 03 GameData` переподключается с хэшем только `MAX.RES`; пока
+сессия греется 10–15 с, `SessionHandle::start` повторяется с backoff
+(статус `Session warming up — attempt N/M`), поэтому `Create game` сразу ведёт
+в партию. `--handshake-patches <файл>` остался явным override'ом (один вариант
+хэша, без fallback) — нужен только для нестандартного стенда. Подробности —
+`max_app/README.md`, раздел «Сетевая партия в окне».
 
 Шаги (все — только мышью, кроме ввода имени игры):
 
@@ -456,6 +472,16 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `Hot Seat Menu`, `Begin turn.`, `HELPFRAM`, `HELPOK_U` (проверка
       `build/exe_hs_probe.py`). Лог `build/win-ui-hotseat-final.log`.
       _(2026-11-15)_
+- [x] **M-NET: пересборка Windows UI с ретраем первого подключения и
+      fallback `data_hash`**:
+      `cargo build --release -p max_app --features sdl-vcpkg,sound`
+      (`build\scripts\build-windows-ui.ps1`) — `max_app.exe` 5 540 864 Б,
+      sha256 `136ff7743019702d94c3c7ad364138d1f97e640b3c1342d5e3ee9e6855e8c3c3`;
+      zip `release/max_app-1.0.0-windows-x86_64-ui.zip` sha256
+      `40d644ff4d4ab00a972a03845de4ebe570467a7efa30a5f7419dea974b6b71ca`
+      (меняется от mtime упаковки); `max_app.exe --help` — rc=0, в справке
+      `--join-retry-attempts`/`--join-retry-timeout` и необязательный
+      `--handshake-patches`. Лог `build/win-ui-mnet-final.log`. _(2026-11-15)_
 - [x] **Сетевая партия 2 игрока в окне** (`--ui --turn-wait 45`,
       `docker compose up -d --build` + игра создана `horizon_probe`): два клиента,
       team 0/1, `local_team` и `team_types=[Player, Remote, None, None]`;
@@ -466,14 +492,22 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `barrier_timeouts=0`, десинков (`CRC 45 … десинк`) — 0.
       Отмечено: `--turn-wait` добавлен именно по итогам этого прогона — без него
       ход закрывался за один кадр (~16 мс). _(2026-11-15)_
-- [x] Найдено и обойдено при прогоне: (1) UI `Create game` получает
-      `connect timed out after 10s`, пока сессия `max-port` поднимается
-      (~10–15 с) — лечится «создать → подождать → Join»; (2) без
-      `--handshake-patches <несуществующий>` сервер отвечает
-      `handshake rejected: game data (reason GameData)` — в данных headless нет
-      `PATCHES.RES`. Оба пункта описаны в `max_app/README.md`. _(2026-11-15)_
-- [ ] Партия в окне без обходных флагов: `Create game` → сессия сразу (нужен
-      ретрай/прогрев в клиенте) и дефолтный `data_hash`, совпадающий с сервером.
+- [x] **M-NET-доводки: оба обхода убраны из клиента** _(2026-11-15)_:
+      (1) `Create game` больше не падает с `connect timed out after 10s`:
+      первый `SessionHandle::start` повторяется с backoff 1,2,3,5,8,11 с
+      (окно 30 с, статус `Session warming up — attempt N/M`), `CreateForm`
+      сразу ведёт в `InSession`; (2) без `--handshake-patches` клиент сам
+      пробует полный `data_hash`, после `TP 03 GameData` один раз
+      переподключается с хэшем только `MAX.RES` (тикет тот же), при повторном
+      отказе — ошибка с подсказкой. Тесты: 7 модульных в `net.rs`
+      (тайм-контролируемый ретрай, fallback, отказ другого `TP 03`) + UI
+      `create_form_creates_a_game_and_enters_the_session_with_mock_client`;
+      `max_app/README.md` обновлён.
+- [x] Партия в окне без обходных флагов: `Create game` → сессия сразу
+      (ретрай/прогрев в клиенте) и дефолтный `data_hash`, совпадающий с
+      сервером. Свидетельство: UI-переход Create→InSession (тест), живой smoke
+      2×10 без `--handshake-patches` (§3), прежний прогон окна 2 клиентов
+      (6 ходов). _(2026-11-15)_
 - [ ] Полный сценарий §4 (меню → create → бой/чат/End Turn до победы) на живом
       сервере, без ручных флагов совместимости.
 
@@ -555,10 +589,11 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **615 тестов, 0 failed**; `cargo check` — 0 ошибок; SDL-сборка — 0 ошибок | `build/cargo-docker-hotseat-final.log`, `build/cargo-docker-ef-sdl-final.log` |
+| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **622 теста, 0 failed**; `cargo check` — 0 ошибок и 0 предупреждений; SDL-сборка — 0 ошибок | `build/cargo-docker-mnet-final.log`, `build/cargo-docker-ef-sdl-final.log` |
 | M-HS (hot-seat) | 2026-11-15 | та же команда Docker; `cargo test -p max_app --test hot_seat`; `cargo run -p max_app --example sp_frames -- ../max-original ../build`; `build\scripts\build-windows-ui.ps1` | 13 тестов hot-seat (2 и 4 человека, ИИ между людьми, окно `DialogMenu` 1:1, таймер до подтверждения, только свои юниты); 5 кадров; Windows UI exe 5 572 096 Б sha256 `7af62ac1…` | `build/hs-{players,turn,turn2,game,ai}.png`, `build/cargo-docker-hotseat-final.log`, `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| M-NET-доводки (ретрай + data_hash fallback) | 2026-11-15 | `docker run … rust:1.94.0-bookworm … cargo check && cargo test`; `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10`; `build\scripts\build-windows-ui.ps1` | **622 теста, 0 failed** (+7: тайм-контролируемый ретрай, fallback MAX-only, отказ `Version` без fallback, варианты хэша, статус, backoff; UI Create→InSession); smoke 2×10 без `--handshake-patches`: `data_hash=dd24703e(64)`, `barrier_timeouts=0`, fallback подтверждён; Windows UI exe 5 540 864 Б sha256 `136ff774…`, zip `40d644ff…` | `build/cargo-docker-mnet-final.log`, `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log`, `build/win-ui-mnet-final.log` |
 | Тесты Horizon | | | | |
-| Live smoke 2×10 | | | | |
+| Live smoke 2×10 | 2026-11-15 | `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10` без `--handshake-patches` | `GAME_ID=83621ef3-…`; A/B: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, fallback подтверждён | `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log` |
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |

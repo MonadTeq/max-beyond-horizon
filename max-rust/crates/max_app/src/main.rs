@@ -22,7 +22,7 @@ use max_app::assets::AssetsReport;
 use max_app::audio::AudioPlayer;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
-use max_app::net::{run_network, NetworkOptions, NetworkReport, ReconnectPolicy};
+use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
@@ -66,6 +66,10 @@ struct Cli {
     reconnect_attempts: Option<u32>,
     /// M6.1-заготовка: таймаут одной попытки переподключения в секундах.
     reconnect_timeout_secs: Option<u32>,
+    /// Сколько попыток первого подключения (Create game → Join → start).
+    join_retry_attempts: Option<u32>,
+    /// Таймаут одной попытки первого подключения в секундах.
+    join_retry_timeout_secs: Option<u32>,
     /// Окно ввода в фазе PLAY сессии, секунды (`0`/нет — headless: ход
     /// закрывается сразу; см. `max_app::net::NetworkOptions::turn_wait`).
     turn_wait_secs: Option<u32>,
@@ -91,6 +95,8 @@ impl Cli {
             derelicts: None,
             reconnect_attempts: None,
             reconnect_timeout_secs: None,
+            join_retry_attempts: None,
+            join_retry_timeout_secs: None,
             turn_wait_secs: None,
             window_scale: None,
         };
@@ -142,6 +148,13 @@ impl Cli {
                 }
                 "--reconnect-timeout" => {
                     cli.reconnect_timeout_secs = Some(parse_u32(&mut args, "--reconnect-timeout")?);
+                }
+                "--join-retry-attempts" => {
+                    cli.join_retry_attempts = Some(parse_u32(&mut args, "--join-retry-attempts")?);
+                }
+                "--join-retry-timeout" => {
+                    cli.join_retry_timeout_secs =
+                        Some(parse_u32(&mut args, "--join-retry-timeout")?);
                 }
                 "--turn-wait" => {
                     cli.turn_wait_secs = Some(parse_u32(&mut args, "--turn-wait")?);
@@ -233,6 +246,11 @@ impl Cli {
             && !matches!(cli.mode, Mode::Connect | Mode::Ui)
         {
             bail!("--reconnect-* имеет смысл только с --connect/--ui");
+        }
+        if (cli.join_retry_attempts.is_some() || cli.join_retry_timeout_secs.is_some())
+            && !matches!(cli.mode, Mode::Connect | Mode::Ui)
+        {
+            bail!("--join-retry-* имеет смысл только с --connect/--ui");
         }
         if cli.mode == Mode::Connect && cli.game_id.is_none() {
             bail!("--connect требует --join <game_id>");
@@ -443,6 +461,7 @@ async fn run_connect(cli: &Cli) -> Result<()> {
         password: cli.password.clone(),
         max_turns: cli.turns.unwrap_or(0),
         reconnect,
+        join_retry: join_retry_policy(cli),
         turn_wait: Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
         ..NetworkOptions::default()
     };
@@ -456,6 +475,18 @@ async fn run_connect(cli: &Cli) -> Result<()> {
     print_network(&report);
 
     Ok(())
+}
+
+/// Политика ретрая первого подключения из CLI (`--join-retry-*`).
+fn join_retry_policy(cli: &Cli) -> JoinRetryPolicy {
+    let mut policy = JoinRetryPolicy::default();
+    if let Some(attempts) = cli.join_retry_attempts {
+        policy.attempts = attempts;
+    }
+    if let Some(seconds) = cli.join_retry_timeout_secs {
+        policy.timeout = Duration::from_secs(u64::from(seconds));
+    }
+    policy
 }
 
 fn print_assets(report: Option<&AssetsReport>) {
@@ -498,7 +529,7 @@ fn print_new_game(report: &NewGameReport) {
 
 fn print_network(report: &NetworkReport) {
     println!(
-        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={} reconnects={} reconnect_attempts={} reconnect_pending_state={}",
+        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={} reconnects={} reconnect_attempts={} reconnect_pending_state={} join_attempts={} data_hash={}({})",
         report.game_id,
         report.handshake,
         report.lobby_complete,
@@ -509,7 +540,10 @@ fn print_network(report: &NetworkReport) {
         report.barrier_timeouts,
         report.reconnects,
         report.reconnect_attempts,
-        report.reconnect_pending_state
+        report.reconnect_pending_state,
+        report.join_attempts,
+        &report.data_hash[..report.data_hash.len().min(8)],
+        report.data_hash.len()
     );
     println!("digest: {}", report.digest);
 }
@@ -684,6 +718,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.reconnect_timeout_secs {
         reconnect.timeout = Duration::from_secs(u64::from(seconds));
     }
+    // Create game → InSession: сессия headless греется 10–15 с, поэтому первый
+    // `SessionHandle::start` повторяется с backoff, а не падает в меню.
+    let join_retry = join_retry_policy(cli);
 
     println!(
         "UI: кадр {}x{}, окно {}x{} (масштаб {}); меню — мышь/стрелки, Enter; \
@@ -804,6 +841,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 &request,
                 cli.turns.unwrap_or(0),
                 reconnect,
+                join_retry,
                 Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
             ) {
                 Ok(report) => {
@@ -894,6 +932,7 @@ fn run_ui_session(
     request: &SessionRequest,
     max_turns: u32,
     reconnect: ReconnectPolicy,
+    join_retry: JoinRetryPolicy,
     turn_wait: Duration,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
@@ -901,6 +940,7 @@ fn run_ui_session(
         password: request.password.clone(),
         max_turns,
         reconnect,
+        join_retry,
         turn_wait,
         ..NetworkOptions::default()
     };
@@ -965,6 +1005,28 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             mouse: None,
             focus: 0,
             app: Some(app),
+        };
+        self.screen.render(&mut self.buffer, view);
+
+        if let Err(error) = self.window.present(&self.buffer) {
+            eprintln!("SDL: {error}");
+            return false;
+        }
+
+        true
+    }
+
+    /// Строка «сессия разогревается… попытка N» поверх окна: пока
+    /// `SessionHandle::start` повторяется, кадров партии ещё нет.
+    fn join_status(&mut self, message: &str) -> bool {
+        self.status = message.to_string();
+        let view = ScreenView {
+            width: self.buffer.width(),
+            height: self.buffer.height(),
+            status: &self.status,
+            mouse: None,
+            focus: 0,
+            app: None,
         };
         self.screen.render(&mut self.buffer, view);
 
@@ -1068,6 +1130,10 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
     --reconnect-attempts N   попыток переподключения при разрыве ENet (3; 0 — выкл.)
     --reconnect-timeout S    таймаут одной попытки переподключения в секундах (10)
+    --join-retry-attempts N  попыток первого подключения после Create game (6;
+                             0 — одна попытка без ретраев)
+    --join-retry-timeout S   таймаут одной попытки подключения в секундах (4);
+                             backoff 1,2,3,5,8,11 с, окно ретраев ~30 с
     --turn-wait N        окно ввода в фазе PLAY сессии, секунды (0 — сразу)
     --scale N            масштаб окна: кадр 640x480 умножается на N (0/нет —
                          подобрать под рабочий стол, nearest-neighbour)
@@ -1086,8 +1152,9 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --world-dir <dir>    каталог .WRL-карт (по умолчанию рядом с MAX.RES)
     --max-res/--patches/--palette <path>   отдельные пути
     --handshake-patches <path>             PATCHES.RES только для data_hash
-                                           (сервер без PATCHES.RES: путь может
-                                           не существовать — хэш без этой части)
+                                           (необязательно: без флага клиент сам
+                                           пробует полный хэш, затем только
+                                           MAX.RES — сервер без PATCHES.RES)
     --width/--height N   размер **кадра** (по умолчанию 640x480 — окно
                          оригинала); окно = кадр × --scale
 

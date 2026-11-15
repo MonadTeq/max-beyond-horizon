@@ -14,6 +14,8 @@ anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# M-NET-доводки: JoinAttemptError (ретрай первого подключения).
+thiserror = "2"
 
 # Звук (M6.2): только под feature `sound`, чтобы базовые сборки/CI/докер не
 # тянули ALSA/CPAL. Декодер WAV живёт в max_assets и работает всегда.
@@ -33,3 +35,8 @@ sdl = ["max_render/sdl"]
 sdl-from-source = ["sdl", "max_render/sdl-from-source"]
 # Windows: SDL3 из vcpkg (vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
 sdl-vcpkg = ["sdl", "max_render/sdl-vcpkg"]
+
+[dev-dependencies]
+# `start_paused` для тайм-контролируемого теста ретрая первого подключения
+# (в обычную сборку не входит: фича включается только в тестовом профиле).
+tokio = { workspace = true, features = ["test-util"] }

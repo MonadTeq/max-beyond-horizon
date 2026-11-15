@@ -39,12 +39,15 @@ fi
 echo "GAME_ID=$GAME_ID"
 
 # 3. Два Rust-клиента (общий network namespace)
+#    --handshake-patches НЕ передаётся: клиент сам пробует полный data_hash
+#    (MAX.RES+PATCHES.RES), получает TP03 GameData и переподключается с хэшем
+#    только MAX.RES — как считает сервер без PATCHES.RES в game_data.
 docker run -d --rm --name client-a --network=container:horizon-live -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustA --team 0 --data-dir $WS/max-original --assets-dir $WS/assets --handshake-patches /tmp/nonexistent.res --turns $TURNS > $WS/build/smoke-logs/a.log 2>&1"
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustA --team 0 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/a.log 2>&1"
 docker run -d --rm --name client-b --network=container:horizon-live -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && sleep 8 && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustB --team 1 --data-dir $WS/max-original --assets-dir $WS/assets --handshake-patches /tmp/nonexistent.res --turns $TURNS > $WS/build/smoke-logs/b.log 2>&1"
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && sleep 8 && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustB --team 1 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/b.log 2>&1"
 
 # 4. Ждать завершения клиентов (max ~16 мин)
 for i in $(seq 1 96); do
@@ -54,3 +57,21 @@ done
 
 echo "== client A =="; tail -6 "$LOGS/a.log"
 echo "== client B =="; tail -6 "$LOGS/b.log"
+
+# 5. Проверка fallback data_hash: сервер без PATCHES.RES принимает только
+#    64-символьный хэш (MAX.RES), клиент переподключается сам, без флага.
+fallback_ok=0
+for log in "$LOGS/a.log" "$LOGS/b.log"; do
+  if grep -q 'data_hash=[0-9a-f]*(64)' "$log"; then
+    fallback_ok=1
+  fi
+  if grep -q 'Session failed' "$log"; then
+    echo "live-smoke: $log: сессия упала (см. лог)" >&2
+    exit 1
+  fi
+done
+if [ "$fallback_ok" -ne 1 ]; then
+  echo "live-smoke: fallback data_hash (64 hex) не сработал — проверьте TP03 GameData в логах" >&2
+  exit 1
+fi
+echo "live-smoke: fallback data_hash (MAX.RES-only) подтверждён"

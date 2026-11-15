@@ -1,6 +1,6 @@
 # План: три режима игры с визуальным паритетом 1:1 (v1)
 
-Версия: 1.2 · 2026-11-15 · Цель: `goal-094b619d`.
+Версия: 1.3 · 2026-11-15 · Цель: `goal-094b619d`.
 
 ## Принцип
 
@@ -193,17 +193,77 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   как при `player_clan = 0`.
 * Полная запись V70 для hot-seat не появилась (общий пункт M-SP).
 
-### M-NET — Сетевая игра (Horizon)
-Уже работает (2 клиента × 10 ходов, UI-партия 6 ходов). Доводки:
-- Одиночный сетевой лобби: снять `min_players >= 2` ограничение Horizon для
-  игр с ИИ-слотами (1 человек + ИИ через сеть — если нужно; иначе оставить 2+).
-- Согласование data_hash по умолчанию (без `--handshake-patches`).
-- Ретрай при Create game (сессия греется 10–15 с).
-- Критерий: существующий smoke 2×10 ходов + партия в окне без обходных флагов.
+### M-NET — Сетевая игра (Horizon) — работает; доводки **сделано (v1.3)**
+
+Уже работает: 2 клиента × 10 ходов headless (`live-smoke.sh`) и партия в окне
+(6 ходов, приказы `38`, чат `18`, барьеры `45/52/53/54` без таймаутов).
+Доводки M-NET (v1.3) убрали два UX-обхода, без которых Create не доходил до
+игры:
+
+**1. Ретрай первого подключения (`Create game → Join → SessionHandle::start`).**
+Сессия headless греется 10–15 с, и первый `ENet connect` падал с
+`connect timed out after 10s`. Теперь `max_app/src/net.rs`:
+`JoinRetryPolicy { attempts, timeout, budget }` и `retry_join` — те же
+принципы, что у `ReconnectPolicy` (M6.1-заготовка), но **для первого**
+подключения:
+
+* задержки `1, 2, 3, 5, 8, 11` с (`JOIN_RETRY_BACKOFF`), окно 30 с;
+* таймаут одной попытки — 4 с (ENet connect + `TP 00`), по умолчанию
+  6 попыток; `--join-retry-attempts N` / `--join-retry-timeout S`
+  (только `--connect`/`--ui`; `0` попыток = одна попытка без ретраев);
+* статус в окне: `Session warming up — attempt N/M` через
+  `FrameSink::join_status`; в логе — `join: сессия разогревается — попытка N`;
+* `CreateForm`: `create_game` → сразу `InSession` с ретраем, в список игр не
+  возвращает; `Horizon JoinGame` тоже повторяется, если сервер ещё не
+  зарегистрировал игру (`join_horizon_with_retry`).
+
+**2. `data_hash` по умолчанию (без `--handshake-patches`).**
+Сервер без `PATCHES.RES` в `game_data` считает хэш как
+`SHA256(MAX.RES) + ""` (64 hex). Клиент без явного флага
+(`handshake_data_hashes`) пробует по порядку:
+
+1. полный хэш `SHA256(MAX.RES) ‖ SHA256(PATCHES.RES)` (128 hex);
+2. после `TP 03 reason=GameData` — один раз переподключается с хэшем только
+   `MAX.RES` (64 hex), **тикет тот же** (повторного `JoinGame` нет —
+   `start_with_hash_fallback`);
+3. повторный отказ `GameData` или отказ другой причины (`Version`,
+   `SessionTicket`, `Unknown`) — ошибка; для `GameData` с подсказкой
+   `--handshake-patches <PATCHES.RES сервера>`, без fallback.
+
+Явный `--handshake-patches` сохраняет старое поведение: ровно один вариант
+хэша, fallback выключен.
+
+**Тесты** (`max_app/src/net.rs`, 7 модульных + UI-тест):
+
+* `join_backoff_is_one_two_three_five_eight_eleven` — расписание и `0`;
+* `join_retry_succeeds_on_the_second_attempt_after_backoff` — мок-коннектор:
+  1-я попытка падает, 2-я проходит; `start_paused` фиксирует ровно 1 с
+  backoff;
+* `join_retry_attempt_timeout_is_bounded_by_the_policy` — тайм-контроль:
+  2 попытки по 2 с + 1 с backoff = 5 с, без зависания;
+* `game_data_reject_falls_back_to_the_max_only_hash` — мок отвергает полный
+  хэш, принимает MAX-only; сессия стартует, MAX-часть та же;
+* `version_reject_is_neither_retried_nor_fallen_back` — другой `TP 03` не
+  запускает fallback;
+* `handshake_hashes_try_full_then_max_only_by_default` — варианты хэша,
+  явный флаг и отсутствующий локальный `PATCHES.RES`;
+* `join_progress_status_names_the_attempt_and_the_fallback` — строка статуса;
+* UI: `ui::tests::create_form_creates_a_game_and_enters_the_session_with_mock_client`
+  — Create сразу `InSession`, `CreateGame` один раз, `ListGames` не
+  повторяется.
+
+**Живой smoke** — `bash build/scripts/live-smoke.sh 10` **без**
+`--handshake-patches`: оба клиента получают `TP 03 GameData`, переподключаются
+с 64-символьным хэшем и проходят 10 ходов; скрипт проверяет
+`data_hash=<hex>(64)` и отсутствие `Session failed` в `a.log`/`b.log`.
+
+Открытые вопросы: `min_players`/одиночное лобби Horizon и полный реконнект в
+идущую партию (M6.1-финал) — не в этой задаче; `--handshake-patches` остаётся
+аварийным override'ом.
 
 ## Порядок
 
-M-SP ✅ → M-HS ✅ → M-NET-доводки. Каждый этап: коммит + тесты +
+M-SP ✅ → M-HS ✅ → M-NET-доводки ✅. Каждый этап: коммит + тесты +
 скриншот-свидетельство.
 
 ## Общее для всех режимов

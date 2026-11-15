@@ -2772,6 +2772,15 @@ mod tests {
 
         let log = log.borrow();
         assert_eq!(log.create_calls, 1);
+        assert_eq!(
+            log.list_calls, 1,
+            "Create не возвращается в список: единственный ListGames — вход в список"
+        );
+        assert!(
+            ctx.status.contains("Created \"Duel\""),
+            "статус подтверждает создание: {}",
+            ctx.status
+        );
         let params = log.last_params.as_ref().expect("параметры CreateGame");
         assert_eq!(params.name.as_deref(), Some("Duel"));
         assert_eq!(params.world, Some(12));
