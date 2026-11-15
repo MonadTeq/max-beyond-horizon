@@ -91,10 +91,10 @@ docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
 ```
 
 - [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
-  Свидетельство: **622 теста, 0 failed**, `cargo check` — 0 ошибок и 0
-  предупреждений (2026-11-15, `rust:1.94.0-bookworm`, M-SP 12 +
-  M-HS 13 в `tests/hot_seat.rs` + M-NET 7 в `net.rs`); лог
-  `build/cargo-docker-mnet-final.log`.
+  Свидетельство: **705 тестов, 0 failed**, `cargo check` — 0 ошибок и 0
+  предупреждений (2026-11-15, `rust:1.94.0-bookworm`); M-SP 14 в
+  `tests/local_sp.rs`, фазы старта 10 в `tests/start_phases.rs`, M-HS 13 в
+  `tests/hot_seat.rs`, M-NET 7 в `net.rs`.
 - [ ] 2.2 `--features sound` — `check` и `test` зелёные. Тест
       `max_assets::wav::tests::parses_real_kbuy0_spw` проходит на реальном
       `KBUY0.SPW`; `all_real_spw_files_are_pcm16_22050_mono` проверяет все 272
@@ -113,12 +113,24 @@ docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
       `visual-screens`, `victory` — PASS, golden-кадры без дрейфа (порог:
       1 % пикселей с Δ>30). Свидетельство: 2026-11-15,
       `rust:1.94.0-bookworm`; `qa-out/*/log.txt` (`RESULT: PASS`),
-      `qa_golden_check: сверено 8 кадров (865 КиБ эталонов)` — 0 дрейфа;
+      `qa_golden_check: сверено 10 кадров (980 КиБ эталонов)` — 0 дрейфа;
       повторный прогон `visual-screens.qa` даёт 0 отличающихся пикселей;
-      `cargo test -p max_app --test qa_driver` — 7 тестов, 0 failed.
-- [ ] 2.7 Golden-эталоны проверены глазами (каждый `diff-*.png` после
+      `cargo test -p max_app --test qa_driver` — 8 тестов, 0 failed.
+- [x] 2.7 Golden-эталоны проверены глазами (каждый `diff-*.png` после
       осознанного изменения рендера объяснён и закоммичен вместе с ним).
-  Свидетельство: ______________________
+  Свидетельство: 2026-11-15 — обновлены `players.png` (эмблемы кланов теперь
+  с якорем 41,40 — сверено с кадром C++-порта), `game.png` (ИИ выбирает точку
+  сам → иначе расставлены маркеры ресурсов; 148 px, 0.05 %) и `winloss.png`
+  (32 px, 0.01 % — мелкая статистика партии), добавлены `mobilize.png` и
+  `landing.png` (новые экраны фаз старта).
+- [x] 2.8 Фазы старта M-SP: `sp-full.qa` проходит мобилизацию и выбор точки
+      высадки; `hs-2.qa` — фазы для GREEN и RED по очереди (порядок C++
+      GRAY→RED); `cargo test -p max_app --test start_phases` — 10 тестов
+      (точка → база, покупки → состав/кредиты, ИИ-точки, старый путь без фаз).
+  Свидетельство: 2026-11-15, `rust:1.94.0-bookworm`; кадры
+  `qa-out/*/mobilize.png`, `landing.png`; golden `players.png` обновлён после
+  исправления эмблем кланов (якорь 41,40), знак `?` сверен с кадром самого
+  C++-порта (Alt+C) — совпадение.
 
 ## 3. Живой smoke: 2 клиента × 10 ходов
 

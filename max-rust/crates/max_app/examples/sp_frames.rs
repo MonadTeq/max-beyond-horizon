@@ -121,6 +121,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: false,
         seed: 11,
+        start_positions: [None; 4],
+        team_loadouts: std::array::from_fn(|_| None),
+        team_gold: [None; 4],
     };
 
     app.start_local_game(&setup)?;
@@ -289,6 +292,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: true,
         seed: 21,
+        start_positions: [None; 4],
+        team_loadouts: std::array::from_fn(|_| None),
+        team_gold: [None; 4],
     };
 
     app.start_local_game(&hs_setup)?;

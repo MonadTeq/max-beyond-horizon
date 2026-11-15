@@ -588,6 +588,36 @@ pub fn deploy_team_supplies(
     deployed
 }
 
+/// Готовая к высадке команда: точка высадки, остаток кредитов и загрузка.
+///
+/// Это `UnitsManager_TeamMissionSupplies[team]` после фаз старта
+/// (`CargoMenu` + выбор точки высадки, см. `GameManager_PlayerMissionSetup`):
+/// `position` — выбранная игроком (или ИИ) точка, `gold` — `team_gold` после
+/// закупки, `supplies` — итоговый список `units`/`cargos`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamDeployment {
+    /// Команда.
+    pub team: TeamId,
+    /// Точка высадки (`starting_position`).
+    pub position: Point,
+    /// Кредиты команды на момент высадки (`team_gold`).
+    pub gold: u32,
+    /// Загрузка: бесплатный mission-loadout плюс купленные юниты.
+    pub supplies: Vec<TeamSupply>,
+}
+
+impl TeamDeployment {
+    /// Команда со стандартной загрузкой `SC_L0001` и заданным золотом.
+    pub fn default_loadout(team: TeamId, position: Point, gold: u32) -> Self {
+        Self {
+            team,
+            position,
+            gold,
+            supplies: DEFAULT_MISSION_LOADOUT.to_vec(),
+        }
+    }
+}
+
 /// Высадка стартовых армий всех играющих команд — цикл
 /// `for (i = RED; i < MAX - 1; ++i)` из `GameManager_InitGame`, в котором
 /// `GameManager_ProcessTeamMissionSupplyUnits(i)` вызывается для
@@ -604,6 +634,25 @@ pub fn deploy_starting_units(
     max_resources: i32,
     teams: &[TeamStart],
 ) -> usize {
+    let deployments: Vec<TeamDeployment> = teams
+        .iter()
+        .map(|start| TeamDeployment::default_loadout(start.team, start.position, start_gold))
+        .collect();
+
+    deploy_starting_units_with(state, max_resources, &deployments)
+}
+
+/// То же, но с готовыми [`TeamDeployment`] — точками высадки, кредитами и
+/// загрузкой, которые вернули фазы старта (`CargoMenu`/site select).
+///
+/// Порядок обхода — возрастающий индекс команды (как в `GameManager_InitGame`),
+/// поэтому поток ГПСЧ (кадры плит по две на команду) совпадает с
+/// [`deploy_starting_units`].
+pub fn deploy_starting_units_with(
+    state: &mut GameState,
+    max_resources: i32,
+    deployments: &[TeamDeployment],
+) -> usize {
     let mut total = 0;
 
     for index in 0..PLAYER_TEAM_COUNT {
@@ -613,16 +662,16 @@ pub fn deploy_starting_units(
             continue;
         }
 
-        let Some(start) = teams.iter().find(|start| start.team == team) else {
+        let Some(deployment) = deployments.iter().find(|entry| entry.team == team) else {
             continue;
         };
 
         total += deploy_team_supplies(
             state,
             team,
-            start_gold,
-            &DEFAULT_MISSION_LOADOUT,
-            start.position,
+            deployment.gold,
+            &deployment.supplies,
+            deployment.position,
             max_resources,
         )
         .len();

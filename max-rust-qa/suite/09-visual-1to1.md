@@ -23,5 +23,9 @@
 | TC-0917 | Дрейф-гейт | golden-сверка всех кадров, порог 1% | ✅ CI |
 | TC-0918 | Паритет кадров с C++-порталом | сравнение с build/run/dbg.png, smoke-window.png | 🟡 выборочно (вручную) |
 | TC-0919 | Портрет в CORNER_FLIC | FLIC-анимация (сейчас статичный спрайт) | ⬜ FLC не разобран |
+| TC-0920 | Эмблемы кланов на флагах/карточках | `Players` с кланом и экран `Clans` | `CLNnLOGO` с якорем (41,40): `ulx/uly` ресурса вычитаются, логотип по центру флага 93×89 и карточки 91×86 | ✅ golden players.png; UNIT menu/setup |
+| TC-0921 | Центровка знака `?` | кнопка `MNUBTN5` 48×40 | `x = ulx + (48 − (Text_GetWidth+1))/2 = 484`, `y = uly + (40−16)/2 = 450` — как `Button::SetCaption`; сверено с оракульным кадром C++ | ✅ UNIT menu; сверка с C++ |
+| TC-0922 | Экран мобилизации | после `Players` Done | `CARGOPIC`, список 15 юнитов с ценами, списки Purchased/Available, `Buy/Delete/Cancel/Done` | ✅ golden mobilize.png; QA sp-full |
+| TC-0923 | Экран выбора точки высадки | после мобилизации | карта 112×112 в `MAIN_MAP` (4 px/клетка), курсор 4×4, рамка «Select starting location.», `Cancel/Done` | ✅ golden landing.png; QA sp-full |
 
-Итог: 19 TC, ✅ 17, 🟡 1, ⬜ 1.
+Итог: 23 TC, ✅ 21, 🟡 1, ⬜ 1.

@@ -109,6 +109,17 @@ pub struct LocalSetup {
     pub hot_seat: bool,
     /// Seed генерации карты (`Remote_RngSeed`).
     pub seed: u32,
+    /// Точки высадки, выбранные в фазе site select (`GameManager_SelectSite`).
+    ///
+    /// `None` — команда не проходила выбор (ИИ или старый путь): берётся
+    /// [`START_POSITIONS`] и `setup::find_valid_starting_position`.
+    pub start_positions: [Option<Point>; LOCAL_TEAM_COUNT],
+    /// Загрузка после мобилизации (`CargoMenu`): бесплатный `SC_L0001` плюс
+    /// купленные юниты. `None` — [`max_core::deploy::DEFAULT_MISSION_LOADOUT`].
+    pub team_loadouts: [Option<Vec<max_core::deploy::TeamSupply>>; LOCAL_TEAM_COUNT],
+    /// Остаток кредитов после мобилизации (`TeamMissionSupplies::team_gold`).
+    /// `None` — `start_gold`.
+    pub team_gold: [Option<u32>; LOCAL_TEAM_COUNT],
 }
 
 impl Default for LocalSetup {
@@ -138,6 +149,9 @@ impl Default for LocalSetup {
             team_clans: [max_core::enums::TeamClan::Random; LOCAL_TEAM_COUNT],
             hot_seat: false,
             seed: 0,
+            start_positions: [None; LOCAL_TEAM_COUNT],
+            team_loadouts: std::array::from_fn(|_| None),
+            team_gold: [None; LOCAL_TEAM_COUNT],
         }
     }
 }
@@ -272,9 +286,49 @@ impl LocalSetup {
     }
 
     /// `NewGameConfig` для [`App::start_local_game`].
+    ///
+    /// Если фазы старта уже отработали (мобилизация и/или выбор точки), их
+    /// результат уходит в [`NewGameConfig::deployments`]: точки высадки — из
+    /// [`Self::start_positions`], кредиты — из [`Self::team_gold`], загрузка —
+    /// из [`Self::team_loadouts`]. Без фаз поведение прежнее (одна загрузка
+    /// `SC_L0001` и `start_gold` на всех).
     pub fn new_game_config(&self) -> NewGameConfig {
         let level = |value: u8| ResourceLevel::new(value).unwrap_or(ResourceLevel::NORMAL);
         let human = self.human_team().unwrap_or(TeamId::RED);
+        let phases_ran = self.start_positions.iter().any(Option::is_some)
+            || self.team_loadouts.iter().any(Option::is_some)
+            || self.team_gold.iter().any(Option::is_some);
+        let teams: Vec<TeamStart> = self
+            .playing_teams()
+            .into_iter()
+            .map(|team| {
+                let index = team.0 as usize % LOCAL_TEAM_COUNT;
+
+                TeamStart::new(
+                    team,
+                    self.start_positions[index].unwrap_or(START_POSITIONS[index]),
+                )
+            })
+            .collect();
+        let deployments = if phases_ran {
+            teams
+                .iter()
+                .map(|start| {
+                    let index = start.team.0 as usize % LOCAL_TEAM_COUNT;
+
+                    max_core::deploy::TeamDeployment {
+                        team: start.team,
+                        position: start.position,
+                        gold: self.team_gold[index].unwrap_or(self.start_gold),
+                        supplies: self.team_loadouts[index]
+                            .clone()
+                            .unwrap_or_else(|| max_core::deploy::DEFAULT_MISSION_LOADOUT.to_vec()),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         NewGameConfig {
             planet: planet_for_world(self.world),
@@ -283,16 +337,11 @@ impl LocalSetup {
             fuel: level(self.fuel),
             gold: level(self.gold),
             derelicts: level(self.derelicts),
-            teams: self
-                .playing_teams()
-                .into_iter()
-                .map(|team| {
-                    TeamStart::new(team, START_POSITIONS[team.0 as usize % LOCAL_TEAM_COUNT])
-                })
-                .collect(),
+            teams,
             player_team: human,
             start_gold: self.start_gold,
             clans: self.team_clans,
+            deployments,
         }
     }
 }
@@ -1204,6 +1253,9 @@ impl LocalSave {
                 team_clans,
                 hot_seat,
                 seed,
+                start_positions: [None; LOCAL_TEAM_COUNT],
+                team_loadouts: std::array::from_fn(|_| None),
+                team_gold: [None; LOCAL_TEAM_COUNT],
             },
             phase,
             active_team,

@@ -123,6 +123,9 @@ fn setup_vs_one_ai() -> LocalSetup {
         team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: false,
         seed: 7,
+        start_positions: [None; 4],
+        team_loadouts: std::array::from_fn(|_| None),
+        team_gold: [None; 4],
     }
 }
 
@@ -284,7 +287,8 @@ fn screen_routes_setup_to_start_local_and_back() {
     );
     assert_eq!(screen, Screen::MainMenu);
 
-    // Экран команд с готовыми настройками отдаёт StartLocal.
+    // Экран команд с готовыми настройками открывает фазы старта
+    // (мобилизация), а `StartLocal` отдаёт уже последняя фаза.
     let mut form = GameSetupForm::default();
     form.screen = SetupScreen::Players;
     form.setup.team_types = [
@@ -298,12 +302,15 @@ fn screen_routes_setup_to_start_local_and_back() {
     let transition =
         screen.handle_input(&mut ctx, InputEvent::MouseClick(done.ulx + 2, done.uly + 2));
 
-    match transition {
-        Transition::StartLocal(setup) => {
-            assert_eq!(setup.team_types[0], TeamKind::Player);
-            assert_eq!(setup.team_types[1], TeamKind::Computer);
-        }
-        other => panic!("ожидался StartLocal, получено {other:?}"),
+    assert_eq!(transition, Transition::None);
+    assert!(
+        matches!(screen, Screen::PreGame(_)),
+        "Done на Players должен открыть мобилизацию, а не начать партию"
+    );
+
+    if let Screen::PreGame(flow) = &screen {
+        assert_eq!(flow.setup.team_types[0], TeamKind::Player);
+        assert_eq!(flow.setup.team_types[1], TeamKind::Computer);
     }
 }
 

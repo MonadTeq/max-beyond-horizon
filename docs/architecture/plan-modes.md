@@ -61,10 +61,12 @@
 (`LocalSave`: настройки + фаза + `GameState::snapshot_bytes()` + CRC), см.
 `App::local_save_bytes`/`write_local_save`/`read_local_save`.
 
-**Тесты**: `max_app/tests/local_sp.rs` (12) — настройка из UI → `team_types`,
+**Тесты**: `max_app/tests/local_sp.rs` (14) — настройка из UI → `team_types`,
 5 ходов против ИИ (чередование, `Ai_BeginTurn`, задачи/приказы ИИ), таймер,
 пауза, победа при элиминации ИИ + отрисовка экрана победы без паник,
-round-trip `MXLS` после хода, загрузка V70 в локальную партию.
+round-trip `MXLS` после хода, загрузка V70 в локальную партию;
+`max_app/tests/start_phases.rs` (10) — мобилизация, выбор точки высадки,
+порядок фаз hot-seat, ИИ-точки, детерминизм.
 
 **Кадры**: `cargo run -p max_app --example sp_frames -- ../max-original ../build`
 → `build/sp-options.png`, `sp-planets.png`, `sp-players.png`, `sp-game.png`,
@@ -85,6 +87,35 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 * Производство (`ProgressBuildState`: `SpawnNewUnits`,
   `ResearchMenu_NewTurn`) в max_core всё ещё P3/TODO — ИИ строит через задачи,
   но очередь производства юнитов из `ProductionManager` не спавнится.
+
+### M-SP+: фазы старта — мобилизация и выбор точки высадки — **сделано (v1.4, 2026-11-15)**
+
+В C++ после `ChoosePlayerMenu` партия не начинается сразу:
+`menu_custom_game_menu` (`menu.cpp:2166`) вызывает
+`GameManager_GameLoop(GAME_STATE_6_GAME_SETUP)`, а `GameManager_InitGame`
+(`game_manager.cpp:3056`) для каждой человеческой команды **в порядке убывания
+слота** (`for (i = PLAYER_TEAM_MAX - 1; i >= PLAYER_TEAM_RED; --i)`) делает:
+
+1. `GameManager_CargoSelection(team)` → `CargoMenu` (`cargomenu.cpp`) —
+   мобилизация: покупка стартовых юнитов за `start_gold` (только если
+   `team_gold != 0`; `team_gold = start_gold + Clans::GetCredits(clan)`, у всех
+   кланов `SC_CLANS` кредиты = 0);
+2. `GameManager_SelectSite(team)` → `GAME_STATE_7_SITE_SELECT` — карта 112×112
+   на зуме 4 (клетка 4 px), клик выбирает точку, `Enter`/валидный клик —
+   подтвердить, `Esc` — отмена; `GameManager_IsValidStartingPosition` требует
+   4×4 чистой суши;
+3. `GameManager_HandleProximityOverlaps` — проверка близости высадок.
+
+Затем компьютерные команды выбирают точки сами (`Ai_SelectStartingPosition`:
+5×5 суши, ≥ `AI_SAFE_ENEMY_DISTANCE` от уже выбравших), и только после этого
+`GameManager_PopulateMapWithResources` генерирует ресурсы, а
+`GameManager_ProcessTeamMissionSupplyUnits` высаживает армии.
+
+Порт: `max_app/src/pregame.rs` (очередь фаз), `mobilize.rs` (CargoMenu),
+`landing.rs` (SelectSite); результаты уходят в `LocalSetup::start_positions` /
+`team_loadouts` / `team_gold` → `NewGameConfig::deployments` →
+`deploy_starting_units_with`. ИИ-точки — `setup::ai_choose_starting_position`.
+Подробности и упрощения: `docs/analysis/visual-1to1-status.md` §11.
 
 ### M-HS — Hot-seat (2–4 игрока на одном ПК) — **сделано (v1.2)**
 

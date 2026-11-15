@@ -111,10 +111,11 @@ pub use crc::{
     REPLAY_DIGEST_MAGIC,
 };
 pub use deploy::{
-    deploy_starting_units, deploy_team_supplies, find_reachable_spot, is_valid_starting_position,
-    set_initial_mining, start_position_mining_station, starting_position_power_generator,
-    survey_resources_in_area, TeamSupply, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
-    DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT,
+    deploy_starting_units, deploy_starting_units_with, deploy_team_supplies, find_reachable_spot,
+    is_valid_starting_position, set_initial_mining, start_position_mining_station,
+    starting_position_power_generator, survey_resources_in_area, TeamDeployment, TeamSupply,
+    DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD, DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT,
+    SMALL_SLAB_IMAGE_COUNT,
 };
 pub use enums::{
     AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
@@ -151,8 +152,9 @@ pub use save::{
     SpottedUnit, SAVE_VERSION_V70,
 };
 pub use setup::{
-    derive_surface_map, generate_map, AlienPlacement, AlienUnitCosts, GameSetup,
-    GenerationSettings, ResourceLevel, SetupOutput, TeamStart,
+    ai_choose_starting_position, ai_is_safe_starting_position, derive_surface_map, generate_map,
+    AlienPlacement, AlienUnitCosts, GameSetup, GenerationSettings, ResourceLevel, SetupOutput,
+    TeamStart,
 };
 pub use team::{
     Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId, TeamInfo,

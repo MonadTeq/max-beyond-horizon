@@ -25,11 +25,17 @@ use max_render::buffer::RgbaBuffer;
 use max_render::layout;
 
 use crate::hud;
+use crate::landing::{LANDING_AREA, LANDING_CELL};
 use crate::local::{LocalPhase, LocalSetup};
 use crate::menu;
+use crate::mobilize::{
+    AVAILABLE_AREA, AVAILABLE_ROW, BUY_BUTTON, CANCEL_BUTTON as MOBILIZE_CANCEL, DELETE_BUTTON,
+    DONE_BUTTON as MOBILIZE_DONE, PURCHASE_UNITS,
+};
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
-    self, Assertion, Command, MenuTarget, PhaseName, ScreenName, SetupAction, Step,
+    self, Assertion, Command, LandingCommand, MenuTarget, MobilizeAction, PhaseName, ScreenName,
+    SetupAction, Step,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -364,6 +370,77 @@ impl QaRunner {
             Command::MoveGrid(x, y) => self.move_grid(*x, *y),
             Command::MoveNear => self.move_near(),
             Command::EndTurn => self.end_turn(),
+            Command::Mobilize(action) => self.mobilize(*action),
+            Command::Landing(action) => self.landing(*action),
+        }
+    }
+
+    /// `mobilize …`: действия на экране `CargoMenu` через те же клики, что у
+    /// игрока (строки списков, кнопки Buy/Delete/Done/Cancel).
+    fn mobilize(&mut self, action: MobilizeAction) -> Result<Flow, String> {
+        match action {
+            MobilizeAction::Buy => {
+                self.send(InputEvent::MouseClick(
+                    BUY_BUTTON.ulx + BUY_BUTTON.width / 2,
+                    BUY_BUTTON.uly + BUY_BUTTON.height / 2,
+                ))
+            }
+            MobilizeAction::BuyIndex(index) => {
+                let index = index as usize;
+
+                if index >= PURCHASE_UNITS.len() {
+                    return Err(format!(
+                        "mobilize buy {index}: в списке {} юнитов",
+                        PURCHASE_UNITS.len()
+                    ));
+                }
+
+                self.send(InputEvent::MouseClick(
+                    AVAILABLE_AREA.ulx + 4,
+                    AVAILABLE_AREA.uly + AVAILABLE_ROW * index as i32 + 4,
+                ))?;
+
+                self.send(InputEvent::MouseClick(
+                    BUY_BUTTON.ulx + BUY_BUTTON.width / 2,
+                    BUY_BUTTON.uly + BUY_BUTTON.height / 2,
+                ))
+            }
+            MobilizeAction::Delete => self.send(InputEvent::MouseClick(
+                DELETE_BUTTON.ulx + DELETE_BUTTON.width / 2,
+                DELETE_BUTTON.uly + DELETE_BUTTON.height / 2,
+            )),
+            MobilizeAction::Step(delta) => {
+                let key = if delta < 0 { Key::Up } else { Key::Down };
+
+                for _ in 0..delta.unsigned_abs() {
+                    self.send(InputEvent::Key(key))?;
+                }
+
+                Ok(Flow::Continue)
+            }
+            MobilizeAction::Done => self.send(InputEvent::MouseClick(
+                MOBILIZE_DONE.ulx + MOBILIZE_DONE.width / 2,
+                MOBILIZE_DONE.uly + MOBILIZE_DONE.height / 2,
+            )),
+            MobilizeAction::Cancel => self.send(InputEvent::MouseClick(
+                MOBILIZE_CANCEL.ulx + MOBILIZE_CANCEL.width / 2,
+                MOBILIZE_CANCEL.uly + MOBILIZE_CANCEL.height / 2,
+            )),
+        }
+    }
+
+    /// `landing …`: выбор точки высадки через клики по кадру и `Enter`/`Esc`.
+    fn landing(&mut self, action: LandingCommand) -> Result<Flow, String> {
+        match action {
+            LandingCommand::Click(x, y) => self.send(InputEvent::MouseClick(x, y)),
+            LandingCommand::Grid(grid_x, grid_y) => {
+                let x = LANDING_AREA.ulx + i32::from(grid_x) * LANDING_CELL + LANDING_CELL / 2;
+                let y = LANDING_AREA.uly + i32::from(grid_y) * LANDING_CELL + LANDING_CELL / 2;
+
+                self.send(InputEvent::MouseClick(x, y))
+            }
+            LandingCommand::Done => self.send(InputEvent::Key(Key::Enter)),
+            LandingCommand::Cancel => self.send(InputEvent::Key(Key::Escape)),
         }
     }
 
@@ -1152,6 +1229,13 @@ impl QaRunner {
             (Screen::LocalSetup(form), ScreenName::Options) => form.screen == SetupScreen::Options,
             (Screen::LocalSetup(form), ScreenName::Planet) => form.screen == SetupScreen::Planet,
             (Screen::LocalSetup(form), ScreenName::Players) => form.screen == SetupScreen::Players,
+            (Screen::LocalSetup(form), ScreenName::Clan) => form.screen == SetupScreen::Clan,
+            (Screen::PreGame(flow), ScreenName::Mobilize) => {
+                matches!(flow.stage, crate::pregame::PreGameStage::Mobilize(_))
+            }
+            (Screen::PreGame(flow), ScreenName::Landing) => {
+                matches!(flow.stage, crate::pregame::PreGameStage::Landing(_))
+            }
             _ => false,
         }
     }
@@ -1169,6 +1253,11 @@ impl QaRunner {
                 SetupScreen::Planet => "Planet",
                 SetupScreen::Players => "Players",
                 SetupScreen::Clan => "Clan",
+            },
+            Screen::PreGame(flow) => match &flow.stage {
+                crate::pregame::PreGameStage::Mobilize(_) => "Mobilize",
+                crate::pregame::PreGameStage::Landing(_) => "Landing",
+                crate::pregame::PreGameStage::Finished => "PreGame",
             },
         }
     }

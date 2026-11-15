@@ -45,11 +45,16 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
     `end_turn`.
 - Покрытие сценариями (`max-rust-qa/scripts/*.qa`, все — PASS):
   1. `sp-full.qa` — New Game → Options → Planet → Players (RED человек,
-     GREEN компьютер) → выделение юнита, приказ движения, 3 × End Turn с
-     ходами ИИ, `assert turn>=3`, `save` (MXLS);
-  2. `hs-2.qa` — hot-seat 2 человека: окна «Begin turn» для RED и GREEN,
+     GREEN компьютер) → мобилизация (`mobilize buy` ×2 + Done) → выбор точки
+     высадки (`landing grid 30 22` + Done; точка не совпадает со стартовой
+     четвертью — кадр доказывает, что выбор применён) → выделение юнита,
+     приказ движения,
+     3 × End Turn с ходами ИИ, `assert turn>=3`, `save` (MXLS);
+  2. `hs-2.qa` — hot-seat 2 человека: фазы старта для GREEN и RED по очереди
+     (мобилизация + высадка), окна «Begin turn» для RED и GREEN,
      3 раунда, `assert team` чередуется, подтверждение окна Enter;
-  3. `visual-screens.qa` — проход по ВСЕМ экранам с `shot` (эталоны golden);
+  3. `visual-screens.qa` — проход по ВСЕМ экранам с `shot` (эталоны golden,
+     включая `mobilize.png` и `landing.png`);
   4. `victory.qa` — партия до победы (лимит ходов 1) + `assert victory`;
      элиминация ИИ скриптом недостижима — pending, покрыта тестом слоя 1.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;

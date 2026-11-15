@@ -40,6 +40,15 @@ players 3 none
 shot players
 assert screen=Players
 setup done
+
+# --- Фазы старта: мобилизация и выбор точки высадки -----------------------
+assert screen=Mobilize
+shot mobilize
+mobilize done
+assert screen=Landing
+shot landing
+landing grid 22 22
+landing done
 assert screen=InGame
 
 # --- Партия ---------------------------------------------------------------

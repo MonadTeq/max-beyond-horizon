@@ -61,9 +61,16 @@ use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::hud::{self, HudButton};
+use crate::landing::LandingAction;
 use crate::local::LocalSetup;
 use crate::menu;
+use crate::mobilize::{
+    Mobilization, AVAILABLE_AREA, AVAILABLE_ROW, BUY_BUTTON, CANCEL_BUTTON as MOBILIZE_CANCEL,
+    DELETE_BUTTON, DONE_BUTTON as MOBILIZE_DONE, PURCHASED_LEFT, PURCHASED_ROW, PURCHASED_TOP,
+    PURCHASE_UNITS,
+};
 use crate::panels::{self, PanelButton};
+use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::winloss;
 use crate::App;
@@ -395,6 +402,9 @@ pub enum Screen {
     MultiplayerMenu,
     /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
     LocalSetup(GameSetupForm),
+    /// Фазы старта после `Players`: мобилизация (`CargoMenu`) и выбор точки
+    /// высадки (`GameManager_SelectSite`).
+    PreGame(PreGameFlow),
     /// Экран победы/поражения локальной партии.
     GameOver,
     /// Игра идёт: карта + статус; сетевой цикл запускает `main.rs`.
@@ -585,6 +595,62 @@ pub struct ScreenView<'a> {
     pub app: Option<&'a App>,
 }
 
+/// Действие ввода на экранах фаз старта.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreGameInput {
+    /// Ничего.
+    None,
+    /// Отмена всей цепочки (назад на `Players`).
+    Cancel,
+    /// Купить выбранный юнит.
+    MobilizeBuy,
+    /// Продать выбранный купленный юнит.
+    MobilizeDelete,
+    /// Стрелка по списку «доступно».
+    MobilizeStep(i32),
+    /// Выбрать строку списка «доступно».
+    MobilizeSelect(usize),
+    /// Выбрать строку списка «куплено».
+    MobilizeSelectBought(usize),
+    /// Кнопка `Done` мобилизации.
+    MobilizeDone,
+    /// Подтвердить точку высадки.
+    LandingConfirm,
+    /// Сдвинуть курсор высадки.
+    LandingStep(i32, i32),
+    /// Клик по экрану высадки.
+    LandingClick(i32, i32),
+}
+
+/// Строка списка «доступно» под точкой кадра (`CargoMenu::unit_types1`).
+fn mobilization_row(x: i32, y: i32) -> Option<usize> {
+    if !AVAILABLE_AREA.contains(x, y) {
+        return None;
+    }
+
+    let row = (y - AVAILABLE_AREA.uly) / AVAILABLE_ROW;
+
+    ((0..PURCHASE_UNITS.len() as i32).contains(&row)).then_some(row as usize)
+}
+
+/// Строка списка «куплено» под точкой кадра; индекс — среди купленных.
+fn purchased_row(x: i32, y: i32, mobilization: &Mobilization) -> Option<usize> {
+    let area = PixelRect::new(PURCHASED_LEFT, PURCHASED_TOP, 118, 230 - PURCHASED_TOP);
+
+    if !area.contains(x, y) {
+        return None;
+    }
+
+    let row = (y - PURCHASED_TOP) / PURCHASED_ROW;
+    let total = mobilization.free.len() + mobilization.bought.len();
+
+    if row < 0 || row as usize >= total || (row as usize) < mobilization.free.len() {
+        return None;
+    }
+
+    Some(row as usize - mobilization.free.len())
+}
+
 impl Screen {
     /// Обрабатывает ввод и двигает машину состояний.
     ///
@@ -610,6 +676,9 @@ impl Screen {
         }
         if matches!(self, Self::LocalSetup(_)) {
             return self.handle_local_setup(ctx, event);
+        }
+        if matches!(self, Self::PreGame(_)) {
+            return self.handle_pregame(ctx, event);
         }
         if matches!(self, Self::GameOver) {
             return match event {
@@ -648,8 +717,161 @@ impl Screen {
                 ctx.status = "New game cancelled".to_string();
                 Transition::None
             }
-            SetupTransition::Start(setup) => Transition::StartLocal(setup),
+            SetupTransition::Start(setup) => {
+                // Фазы старта: мобилизация и выбор точки высадки — до партии,
+                // как `GameManager_PlayerMissionSetup` в C++.
+                let flow = PreGameFlow::start(form.clone(), *setup, &ctx.world_dir);
+                let finished = flow.finished();
+                let ready = flow.setup.clone();
+
+                *self = Self::PreGame(flow);
+                ctx.status.clear();
+
+                if finished {
+                    Transition::StartLocal(Box::new(ready))
+                } else {
+                    Transition::None
+                }
+            }
         }
+    }
+
+    /// Ввод на экранах фаз старта (`CargoMenu` и выбор точки высадки).
+    fn handle_pregame(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let Self::PreGame(flow) = self else {
+            return Transition::None;
+        };
+
+        // Действие считается по текущему экрану, применяется уже без borrow.
+        let action = match &mut flow.stage {
+            PreGameStage::Mobilize(mobilization) => match event {
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
+                InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
+                InputEvent::Key(Key::Enter) => PreGameInput::MobilizeDone,
+                InputEvent::Key(Key::Up) => PreGameInput::MobilizeStep(-1),
+                InputEvent::Key(Key::Down) => PreGameInput::MobilizeStep(1),
+                InputEvent::Key(Key::Char(character)) => match character.to_ascii_lowercase() {
+                    'b' => PreGameInput::MobilizeBuy,
+                    'd' => PreGameInput::MobilizeDelete,
+                    _ => PreGameInput::None,
+                },
+                InputEvent::Key(_) => PreGameInput::None,
+                InputEvent::MouseClick(x, y) => {
+                    if MOBILIZE_DONE.contains(x, y) {
+                        PreGameInput::MobilizeDone
+                    } else if MOBILIZE_CANCEL.contains(x, y) {
+                        PreGameInput::Cancel
+                    } else if BUY_BUTTON.contains(x, y) {
+                        PreGameInput::MobilizeBuy
+                    } else if DELETE_BUTTON.contains(x, y) {
+                        PreGameInput::MobilizeDelete
+                    } else if let Some(row) = mobilization_row(x, y) {
+                        PreGameInput::MobilizeSelect(row)
+                    } else if let Some(row) = purchased_row(x, y, mobilization) {
+                        PreGameInput::MobilizeSelectBought(row)
+                    } else {
+                        PreGameInput::None
+                    }
+                }
+            },
+            PreGameStage::Landing(_) => match event {
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
+                InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
+                InputEvent::Key(Key::Enter) => PreGameInput::LandingConfirm,
+                InputEvent::Key(Key::Left) => PreGameInput::LandingStep(-1, 0),
+                InputEvent::Key(Key::Right) => PreGameInput::LandingStep(1, 0),
+                InputEvent::Key(Key::Up) => PreGameInput::LandingStep(0, -1),
+                InputEvent::Key(Key::Down) => PreGameInput::LandingStep(0, 1),
+                InputEvent::Key(_) => PreGameInput::None,
+                InputEvent::MouseClick(x, y) => PreGameInput::LandingClick(x, y),
+            },
+            PreGameStage::Finished => PreGameInput::None,
+        };
+
+        let mut back_to_form = false;
+        let mut confirmed = false;
+
+        match action {
+            PreGameInput::None => {}
+            PreGameInput::Cancel => back_to_form = true,
+            PreGameInput::MobilizeDone => {
+                flow.commit_mobilization();
+                confirmed = true;
+            }
+            PreGameInput::MobilizeBuy => {
+                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
+                    mobilization.buy_selected();
+                }
+            }
+            PreGameInput::MobilizeDelete => {
+                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
+                    mobilization.delete_selected();
+                }
+            }
+            PreGameInput::MobilizeStep(delta) => {
+                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
+                    mobilization.step(delta);
+                }
+            }
+            PreGameInput::MobilizeSelect(row) => {
+                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
+                    mobilization.selected = row;
+                    mobilization.status.clear();
+                }
+            }
+            PreGameInput::MobilizeSelectBought(row) => {
+                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
+                    mobilization.selected_bought = Some(row);
+                    mobilization.status.clear();
+                }
+            }
+            PreGameInput::LandingConfirm => {
+                let ok = if let PreGameStage::Landing(landing) = &mut flow.stage {
+                    landing.confirm() == LandingAction::Confirm
+                } else {
+                    false
+                };
+
+                if ok {
+                    flow.commit_landing();
+                    confirmed = true;
+                }
+            }
+            PreGameInput::LandingStep(dx, dy) => {
+                if let PreGameStage::Landing(landing) = &mut flow.stage {
+                    landing.step(dx, dy);
+                }
+            }
+            PreGameInput::LandingClick(x, y) => {
+                let result = if let PreGameStage::Landing(landing) = &mut flow.stage {
+                    landing.click(x, y)
+                } else {
+                    LandingAction::None
+                };
+
+                match result {
+                    LandingAction::Confirm => {
+                        flow.commit_landing();
+                        confirmed = true;
+                    }
+                    LandingAction::Cancel => back_to_form = true,
+                    LandingAction::None => {}
+                }
+            }
+        }
+
+        if back_to_form {
+            *self = Self::LocalSetup(flow.form.clone());
+            ctx.status = "Start cancelled".to_string();
+
+            return Transition::None;
+        }
+
+        if confirmed && flow.finished() {
+            return Transition::StartLocal(Box::new(flow.setup.clone()));
+        }
+
+        Transition::None
     }
 
     /// Ввод `Multiplayer Menu` (`menu_multiplayer_menu_loop`).
@@ -802,6 +1024,35 @@ impl Screen {
                     12,
                     12,
                     "Multiplayer Menu uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
+            Self::PreGame(flow) => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    match &flow.stage {
+                        PreGameStage::Mobilize(mobilization) => {
+                            mobilization.draw(buffer, menu_assets, view.status, mouse);
+                        }
+                        PreGameStage::Landing(landing) => {
+                            let chrome = view
+                                .app
+                                .and_then(|app| app.assets())
+                                .and_then(|assets| assets.chrome.as_ref());
+                            landing.draw(buffer, menu_assets, chrome, view.status, mouse);
+                        }
+                        PreGameStage::Finished => {
+                            buffer.fill(Rgba::rgb(12, 14, 18));
+                        }
+                    }
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Start phases use the original 640x480 frame",
                     Rgba::rgb(232, 236, 244),
                 );
             }

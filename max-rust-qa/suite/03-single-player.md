@@ -19,5 +19,10 @@
 | TC-0313 | Победа по очкам (Duration) | победа через Duration=1 | экран победы 1:1 (ENDGAME), «1st place» у человека | ✅ QA victory.qa |
 | TC-0314 | Поражение | человек элиминирован | экран поражения | 🟡 UNIT (winloss), сквозной сценарий — после TC-0309 |
 | TC-0315 | Сохранение во время партии | сохранить/загрузить | состояние восстанавливается (MXLS контейнер; полный V70 — см. TC-07xx) | ✅ UNIT |
+| TC-0316 | Мобилизация (CargoMenu) | Players Done → экран мобилизации; купить юнитов, Done | CARGOPIC, список 15 юнитов, цены `3 × ATTRIB_TURNS`, кредиты уменьшаются, загрузка растёт; при `start_gold = 0` фазы нет | ✅ QA sp-full/hs-2; UNIT mobilize; golden mobilize.png |
+| TC-0317 | Выбор точки высадки (SelectSite) | мобилизация Done → карта 4 px/клетка, клик по клетке, Done | точка применяется: база высаживается у выбранной клетки, 4×4-суши; невалидная клетка отклоняется | ✅ QA sp-full/hs-2; UNIT start_phases; golden landing.png |
+| TC-0318 | ИИ сам выбирает точку | партия с ИИ после фаз людей | ИИ получает точку `Ai_SelectStartingPosition` (5×5 суши, ≥ `AI_SAFE_ENEMY_DISTANCE`), не четверть карты | ✅ UNIT start_phases; UNIT max_core setup |
+| TC-0319 | Порядок фаз hot-seat | hot-seat 2 человека → Done | фазы идут GRAY→RED (у нас GREEN→RED): мобилизация+высадка на каждого человека | ✅ QA hs-2; UNIT start_phases |
+| TC-0320 | Кредиты после мобилизации | купить юнитов и закрыть Done | `TeamUnits::SetGold` = остаток; состав = `SC_L0001` + покупки | ✅ UNIT start_phases |
 
-Итог: 15 TC, ✅ 10, 🟡 2, ⬜ 1, ❌ 2.
+Итог: 20 TC, ✅ 15, 🟡 2, ⬜ 1, ❌ 2.

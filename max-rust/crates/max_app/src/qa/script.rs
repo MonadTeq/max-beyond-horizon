@@ -75,8 +75,14 @@ pub enum ScreenName {
     Planet,
     /// `Screen::LocalSetup` на экране Players.
     Players,
+    /// `Screen::LocalSetup` на экране Clan.
+    Clan,
     /// Любой экран `Screen::LocalSetup` (не важно, какой из трёх).
     LocalSetup,
+    /// `Screen::PreGame` — мобилизация (`CargoMenu`).
+    Mobilize,
+    /// `Screen::PreGame` — выбор точки высадки (`GameManager_SelectSite`).
+    Landing,
     /// `Screen::GameOver`.
     GameOver,
     /// `Screen::InSession` (идёт партия).
@@ -94,7 +100,10 @@ impl ScreenName {
             "options" => Some(Self::Options),
             "planet" | "planets" => Some(Self::Planet),
             "players" => Some(Self::Players),
+            "clan" | "clans" => Some(Self::Clan),
             "localsetup" | "local_setup" | "setup" => Some(Self::LocalSetup),
+            "mobilize" | "mobilization" | "cargo" => Some(Self::Mobilize),
+            "landing" | "siteselect" | "site_select" => Some(Self::Landing),
             "gameover" | "game_over" | "winloss" => Some(Self::GameOver),
             "ingame" | "in_game" | "session" => Some(Self::InGame),
             _ => None,
@@ -111,7 +120,10 @@ impl ScreenName {
             Self::Options => "Options",
             Self::Planet => "Planet",
             Self::Players => "Players",
+            Self::Clan => "Clan",
             Self::LocalSetup => "LocalSetup",
+            Self::Mobilize => "Mobilize",
+            Self::Landing => "Landing",
             Self::GameOver => "GameOver",
             Self::InGame => "InGame",
         }
@@ -203,6 +215,36 @@ pub enum SetupAction {
     Random,
 }
 
+/// Действие на экране мобилизации (`CargoMenu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobilizeAction {
+    /// `buy` — купить выбранный юнит.
+    Buy,
+    /// `buy N` — выбрать строку N и купить её.
+    BuyIndex(u32),
+    /// `delete` — продать выбранный купленный юнит.
+    Delete,
+    /// `step N` — сдвинуть выбор по списку (может быть отрицательным).
+    Step(i32),
+    /// `done` — `Done` (закрыть мобилизацию).
+    Done,
+    /// `cancel` — `Cancel`.
+    Cancel,
+}
+
+/// Действие на экране выбора точки высадки (`GameManager_SelectSite`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandingCommand {
+    /// `click X Y` — клик по кадру (двигает курсор).
+    Click(i32, i32),
+    /// `grid X Y` — клик по клетке карты 112×112.
+    Grid(i16, i16),
+    /// `done` — подтвердить точку (Enter/`Done`).
+    Done,
+    /// `cancel` — отменить выбор (Esc).
+    Cancel,
+}
+
 /// Одна команда скрипта.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -251,6 +293,10 @@ pub enum Command {
     MoveNear,
     /// `end_turn` — кнопка End Turn + ходы ИИ до готовности к вводу.
     EndTurn,
+    /// `mobilize buy|buy N|delete|step N|done|cancel`.
+    Mobilize(MobilizeAction),
+    /// `landing click X Y|grid X Y|done|cancel`.
+    Landing(LandingCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -343,6 +389,8 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "players" => parse_players(rest),
         "select" => parse_select(rest),
         "move" => parse_move(rest),
+        "mobilize" | "cargo" => parse_mobilize(rest),
+        "landing" => parse_landing(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -630,6 +678,86 @@ fn parse_players(rest: &str) -> Result<Command, String> {
         slot: slot as u8,
         kind: parse_team_kind(parts[1])?,
     })
+}
+
+fn parse_mobilize(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    let action = match parts.first().map(|part| part.to_ascii_lowercase()) {
+        Some(word) if word == "buy" => match parts.get(1) {
+            Some(index) => MobilizeAction::BuyIndex(parse_u32(index, "mobilize buy")?),
+            None => MobilizeAction::Buy,
+        },
+        Some(word) if word == "delete" => MobilizeAction::Delete,
+        Some(word) if word == "done" => MobilizeAction::Done,
+        Some(word) if word == "cancel" => MobilizeAction::Cancel,
+        Some(word) if word == "step" => {
+            let value = parts
+                .get(1)
+                .ok_or_else(|| "mobilize step: требуется число".to_string())?;
+
+            MobilizeAction::Step(parse_i32(value, "mobilize step")?)
+        }
+        _ => {
+            return Err(format!(
+                "mobilize: ожидалось buy [N]|delete|step N|done|cancel, получено «{rest}»"
+            ))
+        }
+    };
+
+    if parts.len() > 2 {
+        return Err(format!("mobilize: лишние аргументы «{rest}»"));
+    }
+
+    Ok(Command::Mobilize(action))
+}
+
+fn parse_landing(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    if parts.is_empty() {
+        return Err("landing: требуется действие".to_string());
+    }
+
+    let command = match parts[0].to_ascii_lowercase().as_str() {
+        "click" => {
+            if parts.len() != 3 {
+                return Err(format!(
+                    "landing click: ожидалось «landing click X Y», получено «{rest}»"
+                ));
+            }
+
+            LandingCommand::Click(
+                parse_i32(parts[1], "landing click X")?,
+                parse_i32(parts[2], "landing click Y")?,
+            )
+        }
+        "grid" => {
+            if parts.len() != 3 {
+                return Err(format!(
+                    "landing grid: ожидалось «landing grid X Y», получено «{rest}»"
+                ));
+            }
+
+            let x = parse_i32(parts[1], "landing grid X")?;
+            let y = parse_i32(parts[2], "landing grid Y")?;
+
+            if !(0..112).contains(&x) || !(0..112).contains(&y) {
+                return Err(format!("landing grid: клетка ({x}, {y}) вне карты 112×112"));
+            }
+
+            LandingCommand::Grid(x as i16, y as i16)
+        }
+        "done" => LandingCommand::Done,
+        "cancel" => LandingCommand::Cancel,
+        other => {
+            return Err(format!(
+                "landing: неизвестное действие «{other}» (click|grid|done|cancel)"
+            ))
+        }
+    };
+
+    Ok(Command::Landing(command))
 }
 
 fn parse_select(rest: &str) -> Result<Command, String> {

@@ -72,8 +72,10 @@ cd D:\dev\max-port-debug
 release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 ```
 По умолчанию (без флагов) клиент открывает GUI; `--ui` — совместимый alias.
-В меню: **New Game** (одиночная: Options → Planet → Players, «Human/Computer») или
-**Multiplayer Game → Hot Seat Game** (2–4 человека на одном ПК).
+В меню: **New Game** (одиночная: Options → Planet → Players, «Human/Computer» →
+мобилизация (покупка стартовых юнитов) → выбор точки высадки на карте) или
+**Multiplayer Game → Hot Seat Game** (2–4 человека на одном ПК; те же две фазы
+проходит каждый человек по очереди).
 Управление: LMB — выбрать юнит; RMB — приказ движения (зелёный предпросмотр);
 клик по врагу — атака; **T**+Enter — чат; **End Turn** — конец хода; клик по
 миникарте — камера; **P** — пауза.

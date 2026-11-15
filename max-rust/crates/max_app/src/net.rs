@@ -1214,6 +1214,9 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
         clans: [max_core::enums::TeamClan::Random; PLAYER_TEAM_COUNT],
         player_team: local_team,
         start_gold: settings.ini_start_gold.max(0) as u32,
+        // Сетевая игра стартует без фаз мобилизации/высадки — точки приходят
+        // из пакета 30 (`supplies`), состав — стандартный.
+        deployments: Vec::new(),
     };
 
     match app.new_game(&config) {

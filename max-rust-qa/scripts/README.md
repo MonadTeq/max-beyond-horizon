@@ -62,10 +62,20 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
 | `menu multiplayer` | `Multiplayer Game` → `Multiplayer Menu` |
 | `menu hot_seat` | `Multiplayer Menu` → `Hot Seat Game` → настройка hot-seat |
 | `menu join` | `Multiplayer Menu` → `Join Network Game` → список игр (клиент лобби — заглушка QA, 2 детерминированные игры) |
-| `setup done` | кнопка `Done` текущего экрана настройки (Options → Planet → Players → старт партии) |
+| `setup done` | кнопка `Done` текущего экрана настройки (Options → Planet → Players → открыть фазы старта) |
 | `setup cancel` | кнопка `Cancel` |
 | `setup random` | кнопка `Random` на экране планет |
 | `players SLOT human\|computer\|none` | клик по кнопке типа команды в слоте `0..3` (RED/GREEN/BLUE/GRAY) |
+| `mobilize buy` | кнопка `Buy` экрана мобилизации (покупает выбранную строку) |
+| `mobilize buy N` | выбрать строку `N` списка `CargoMenu::unit_types1` (0..14) и купить её |
+| `mobilize delete` | кнопка `Delete` (продать выбранный купленный юнит) |
+| `mobilize step N` | сдвинуть выбор по списку (N > 0 — вниз, N < 0 — вверх) |
+| `mobilize done` | кнопка `Done` мобилизации → выбор точки высадки |
+| `mobilize cancel` | кнопка `Cancel` мобилизации → назад на `Players` |
+| `landing click X Y` | клик по кадру 640×480: двигает курсор высадки |
+| `landing grid X Y` | клик по клетке карты 112×112 (4 px/клетка) |
+| `landing done` | `Enter` — подтвердить точку (`GameManager_IsValidStartingPosition`) |
+| `landing cancel` | `Esc` — отменить выбор → назад на `Players` |
 | `select X Y` | левый клик + проверка, что выделен юнит **своей** команды |
 | `select unit N` | левый клик по N-му **подвижному** юниту игрока (камера центрируется на нём) |
 | `move X Y` | правый клик + проверка, что приказ движения принят |
@@ -85,7 +95,7 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
 | `assert turn=3`, `turn>=3`, `turn<=3`, `turn>3`, `turn<3` | `GameState::turn_counter` |
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
-| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Options`, `Planet`, `Players`, `LocalSetup`, `GameOver`, `InGame` |
+| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
 | `assert phase=PlayerTurn` | фаза локальной партии: `PlayerTurn`, `AiTurn`, `Advancing`, `Finished` |
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
@@ -99,10 +109,10 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
 
 | Скрипт | Покрытие | Результат |
 |---|---|---|
-| `sp-full.qa` | главное меню → Options (No Limit, Turn Based) → Planet → Players (`RED` человек, `GREEN` компьютер) → партия: `select unit`, `move near`, 3 × `end_turn` с ходами ИИ, `assert turn>=3`, сохранение `MXLS` | **PASS** (38 шагов, 9 кадров, ~380 кадров цикла) |
-| `hs-2.qa` | `Hot Seat Game` → 2 человека → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (50 шагов, 10 кадров) |
-| `visual-screens.qa` | 8 экранов только с `shot` (main menu, options, planet, players, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (37 шагов, 8 кадров = эталоны) |
-| `victory.qa` | партия до исхода: лимит ходов 1 → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (26 шагов, 3 кадра) |
+| `sp-full.qa` | главное меню → Options (No Limit, Turn Based) → Planet → Players (`RED` человек, `GREEN` компьютер) → экран клана (`clan`) → мобилизация (`mobilize buy` ×2 + Done) → выбор точки высадки (`landing grid 30 22`, не совпадает со стартовой четвертью, + Done) → партия: `select unit`, `move near`, 3 × `end_turn` с ходами ИИ, `assert turn>=3`, сохранение `MXLS` | **PASS** (55 шагов, 14 кадров, ~380 кадров цикла) |
+| `hs-2.qa` | `Hot Seat Game` → 2 человека → фазы старта для GREEN и RED по очереди (мобилизация + высадка) → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (64 шага, 14 кадров) |
+| `visual-screens.qa` | 10 экранов только с `shot` (main menu, options, planet, players, mobilize, landing, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (45 шагов, 10 кадров = эталоны) |
+| `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому

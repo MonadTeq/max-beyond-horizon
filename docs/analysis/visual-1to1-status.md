@@ -896,3 +896,89 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 **Ограничения**: Simultaneous Moves идёт последовательными ходами команд;
 кланы (`ClanSelectMenu`) и Help-экраны не портированы; `GameState → V70`
 (запись) отсутствует — локальный сейв это контейнер `MXLS`.
+
+## 11. Пункт H. Фазы старта M-SP и выравнивание логотипов/`?` — **сделано** (2026-11-15)
+
+### 11.1. Цепочка экранов из C++
+
+`menu_custom_game_menu` (`menu.cpp:2115`) после `ChoosePlayerMenu` вызывает
+`GameManager_GameLoop(GAME_STATE_6_GAME_SETUP)` → `GameManager_GameSetup` →
+`GameManager_InitGame` (`game_manager.cpp:3056`). Там для каждой **человеческой**
+команды в порядке убывания слота (`for (i = PLAYER_TEAM_MAX - 1; i >=
+PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
+`GameManager_PlayerMissionSetup(team)`:
+
+| # | Экран C++ | Что делает | Условие |
+|---|---|---|---|
+| 1 | `CargoMenu` (`cargomenu.cpp`, фон `CARGOPIC`) — `GameManager_CargoSelection` | мобилизация: покупка стартовых юнитов за `team_gold = start_gold + Clans::GetCredits(clan)` | `team_gold != 0` (иначе сразу `GetMissionLoadout`) |
+| 2 | `GAME_STATE_7_SITE_SELECT` — `GameManager_SelectSite` | выбор точки высадки: карта 112×112 на зуме 4 (4 px/клетку), клик/`Enter`, `Esc` — отмена | всегда |
+| 3 | `GameManager_HandleProximityOverlaps` | предупреждения о близких высадках | люди |
+
+После людей компьютерные команды выбирают точки сами
+(`Ai_SelectStartingPosition`: 5×5 суши, ≥ `AI_SAFE_ENEMY_DISTANCE` от уже
+выбравших) и состав (`AiPlayer::RollTeamMissionSupplies`). Только затем
+`GameManager_PopulateMapWithResources` генерирует ресурсы (поэтому на экране
+высадки ресурсов ещё нет), а `GameManager_ProcessTeamMissionSupplyUnits`
+высаживает армии.
+
+### 11.2. Что портировано
+
+| Экран | Ресурсы/раскладка | Код |
+|---|---|---|
+| Мобилизация | `CARGOPIC` 640×480; списки Available (482,80,123,290) / Purchased (337,45,118,185), ряды 15 px; `Cost`/`Credit`/`Cargo` (320/358/409, 283, 48×16); `Buy` (590,386,41,22), `Delete` (412,240,53,23), `Cancel` (357,452,62,23), `Done` (447,452,54,23) | `max_app/src/mobilize.rs` |
+| Выбор точки | область карты `MAIN_MAP` (180,18,448,448) = 112 × 4 px; курсор 4×4; рамка «Select starting location.»; `Cancel`/`Done` нижней строки | `max_app/src/landing.rs` |
+| Очередь фаз | люди в порядке C++ (убывание слота), мобилизация → высадка на каждого; `start_gold = 0` пропускает мобилизацию | `max_app/src/pregame.rs` |
+
+Формулы (байт-совместимы с C++):
+* цена юнита — `Cargo_GetRawConsumptionRate(LANDPLT, 1)` (для `LANDPLT` = 3,
+  `cargo.cpp:168`) × `ATTRIB_TURNS` **текущих** значений команды
+  (`Clans`-модификаторы учтены, `unit_values::team_base_values`);
+* валидность точки — `GameManager_IsValidStartingPosition`: 4×4 клетки
+  `x-1…x+2`, `y-1…y+2` — ровно `LAND`;
+* высадка — `deploy_starting_units_with` (позиция/кредиты/загрузка на команду)
+  с тем же порядком ГПСЧ (две плиты на команду).
+
+### 11.3. Визуальные исправления (задача A)
+
+* **Эмблемы кланов**: `Button::Copy(CLNnLOGO, 41, 40)` кладёт картинку в точку
+  **якоря**, а `WindowManager_DecodeSimpleImage` вычитает её собственные
+  `ulx/uly` (`window_manager.cpp:784`). Добавлен
+  `menu::blit_simple_anchored`; применён на экране `Players` (флаги 93×89) и
+  `Clans` (карточки 91×86). До фикса логотип рисовался от `(41,40)` и вылезал
+  вправо-вниз за кнопку.
+* **Знак `?`**: сверен с оракульным кадром C++-порта (снят самим портом по
+  Alt+C, 640×480: `Players`) — подпись `?` в кнопке `MNUBTN5` (48×40)
+  совпадает с `Button::SetCaption`/`Text_TextLine`: `x = ulx + (48 −
+  (Text_GetWidth+1))/2 = 484`, `y = uly + (40 − 16)/2 = 450`, тень/обводка —
+  как `Text_TextLine`. Наш кадр совпал с оракулом в этой области
+  пиксель-в-пиксель; формула закреплена юнит-тестом
+  `menu::tests::quest_caption_is_centered_like_cpp`.
+
+### 11.4. Упрощения (честно)
+
+* Мобилизация — не весь `CargoMenu`: нет покупки апгрейдов атрибутов
+  (`UpgradeControl_CalculateCost` с исследовательскими множителями
+  `ResearchMenu_CalculateFactor` не портированы), нет загрузки cargo в юниты и
+  полос прокрутки. Клановые бонусы применяются автоматически
+  (`unit_values::team_base_values`), кредиты кланов `SC_CLANS` у всех кланов = 0.
+* Состав ИИ — стандартная загрузка `SC_L0001` (как человек, ничего не купивший);
+  `AiPlayer::RollTeamMissionSupplies` не портирован.
+* Экран высадки рисует **поверхностную** карту цветами `TileStyle`, а не
+  изометрические тайлы `.WRL`; зоны близости (`CheckLandingZones`) и
+  `HandleProximityOverlaps` не портированы.
+* `Cancel` фаз возвращает на экран `Players` (в C++ отмена прерывает старт и
+  уводит в главное меню).
+
+### 11.5. Свидетельства
+
+* `qa_run sp-full.qa` → кадры `clan.png` (логотипы 8 кланов по центру
+  карточек), `mobilize.png`, `mobilize-bought.png`, `landing.png`,
+  `landing-cursor.png`; база в `game-start.png` стоит у выбранной клетки
+  (30,22), а не в стартовой четверти; `hs-2.qa` — фазы для GREEN и RED по
+  очереди; `victory.qa`/`visual-screens.qa` обновлены.
+* `cargo test -p max_app --test start_phases` — точка применяется (база у
+  выбранной клетки), мобилизация меняет состав/кредиты, порядок фаз hot-seat,
+  ИИ-точки, старый путь без фаз не изменился.
+* `cargo test -p max_app start_phases` и `cargo test -p max_core` — формулы цен
+  и валидности.
+

@@ -33,8 +33,8 @@ use crate::assets::WORLD_ASSETS;
 use crate::hotseat::{MSG_TWO_HUMANS, TITLE_HOT_SEAT, TITLE_SINGLE};
 use crate::local::{LocalSetup, LOCAL_TEAM_COUNT};
 use crate::menu::{
-    blit_simple, clean_status, draw_big_image, draw_image_button, truncate_to_width, wrap_gnw_text,
-    MenuAssets,
+    blit_simple, blit_simple_anchored, clean_status, draw_big_image, draw_image_button,
+    truncate_to_width, wrap_gnw_text, MenuAssets,
 };
 
 /// Цвет текста (в палитре окна) — `COLOR_GREEN`.
@@ -1614,7 +1614,8 @@ fn draw_players(
         }
 
         // Эмблема выбранного клана на флаге команды: C++ `Copy(clan_logo_id,
-        // 41, 40)` (`CLN0LOGO + clan`).
+        // 41, 40)` (`CLN0LOGO + clan`). Точка (41,40) — якорь картинки, поэтому
+        // её собственные `ulx/uly` вычитаются (`WindowManager_DecodeSimpleImage`).
         let clan_index = form.setup.team_clans[row] as usize;
         let logo = menu
             .clan_logos
@@ -1622,7 +1623,14 @@ fn draw_players(
             .and_then(Option::as_ref)
             .or(menu.clan_logo.as_ref());
         if let Some(logo) = logo {
-            painted += blit_simple(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
+            painted += blit_simple_anchored(
+                frame,
+                palette,
+                logo,
+                rect.ulx + 41,
+                rect.uly + 40,
+                true,
+            );
         }
     }
 
@@ -1690,7 +1698,22 @@ fn draw_clan(
             );
         }
         if let Some(logo) = menu.clan_logos[index + 1].as_ref() {
-            painted += blit_simple(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
+            // `ClanSelectMenu::ButtonInit`: `Copy(CLN1LOGO + index, 41, 40)` —
+            // якорь (41,40) внутри карточки 91×86.
+            painted += blit_simple_anchored(
+                frame,
+                palette,
+                logo,
+                rect.ulx + 41,
+                rect.uly + 40,
+                true,
+            );
+        }
+
+        // Наведение: подсветка рамкой (в C++ hover не рисуется, но клик по
+        // карточке — основной способ выбора; подсветка не двигает логотип).
+        if mouse.is_some_and(|(x, y)| rect.contains(x, y)) && !selected {
+            draw_box(frame, rect, Rgba::rgb(252, 252, 252), 1);
         }
 
         let color = if selected { GREEN } else { TEXT };

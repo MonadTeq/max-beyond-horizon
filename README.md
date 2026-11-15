@@ -75,6 +75,7 @@ Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
 # одиночная / hot-seat (окно; без флагов — GUI, --ui — совместимый alias):
 release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 #   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
+#   После экрана Players: мобилизация (покупка юнитов) → выбор точки высадки.
 #   LMB — выбрать юнит; RMB — движение; клик по врагу — атака; T — чат; End Turn.
 
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.

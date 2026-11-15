@@ -853,6 +853,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
                         Err(error) => {
                             eprintln!("max-rust: local game: {error}");
                             ctx.status = format!("Local game: {error}");
+                            // Старт не удался (например, нет данных планеты для
+                            // фаз) — возвращаемся в меню, а не остаёмся на
+                            // пустом экране PreGame.
+                            screen = Screen::MainMenu;
                         }
                     }
                 }

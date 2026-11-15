@@ -1,31 +1,31 @@
-# Changelog
-
-Все заметные изменения Rust-клиента M.A.X. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
-нумерация — [Semantic Versioning](https://semver.org/lang/ru/).
-
-Проект распространяется по лицензии [MIT](LICENSE); оригинальные данные игры
-(`MAX.RES`, `PATCHES.RES`, `COLOR.PAL`, `*.SPW`, `*.WRL`, сейвы) в репозиторий
-не входят как свободные ассеты и остаются собственностью Interplay Productions
-(см. `README.md`).
-
 ## [Unreleased]
-
-### Изменено
-
-- **Бинарь клиента переименован `max_app` → `max-rust`** (Windows:
-  `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
-  `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему
-  работает (бинарь в пакете один), а артефакты теперь `max-rust(.exe)`.
-  Каталоги артефактов (`max_app-<version>-…`) сохранены.
-- **Запуск без флагов открывает GUI** (меню SDL3): headless-режимы доступны
-  только по явным `--demo`, `--new-game`, `--connect`; `--ui` оставлен
-  совместимым alias. В headless-сборке без feature `sdl` запуск без флагов
-  даёт понятную ошибку с подсказкой про `--features sdl` и headless-флаги.
-- Help-текст, build/release-скрипты и документация переведены на
-  `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
 
 ### Добавлено
 
+- **Фазы старта партии M-SP (порт `GameManager_PlayerMissionSetup`)**: после
+  экрана `Players` партия больше не начинается сразу — человека ждут две фазы
+  оригинала, для каждой человеческой команды в порядке C++ (убывание слота):
+  - **мобилизация** (`CargoMenu`, фон `CARGOPIC`): список 15 стартовых юнитов
+    (`CargoMenu::unit_types1`), цена `Cargo_GetRawConsumptionRate(LANDPLT, 1) =
+    3` × `ATTRIB_TURNS` текущих значений команды, кредиты `start_gold`,
+    покупка/продажа, `Buy`/`Delete`/`Cancel`/`Done`; бесплатная загрузка
+    `SC_L0001` (`CONSTRCT` 40, `ENGINEER` 20, `SURVEYOR` 0) не удаляется. При
+    `start_gold = 0` фазы нет (как C++). `max_app/src/mobilize.rs`.
+  - **выбор точки высадки** (`GameManager_SelectSite`,
+    `GAME_STATE_7_SITE_SELECT`): карта 112×112 в области 448×448 (4 px на
+    клетку, зум 4 C++), курсор 4×4, проверка `GameManager_IsValidStartingPosition`
+    (4×4 чистой суши), `Enter`/`Done` — подтвердить, `Esc`/`Cancel` — отмена,
+    стрелки двигают курсор. `max_app/src/landing.rs`.
+  - результаты фаз уходят в `LocalSetup::start_positions`/`team_loadouts`/
+    `team_gold` → `NewGameConfig::deployments` → новая
+    `deploy::deploy_starting_units_with`: база встаёт у выбранной точки,
+    кредиты и состав — как куплено. ИИ-команды выбирают точку сами
+    (`setup::ai_choose_starting_position` = `Ai_SelectStartingPosition`: 5×5
+    суши, ≥ `AI_SAFE_ENEMY_DISTANCE`); их состав — стандартная загрузка.
+  - QA: `mobilize buy|delete|step|done|cancel`, `landing click|grid|done|cancel`,
+    `assert screen=Mobilize|Landing|Clan`; сценарии `sp-full.qa`/`hs-2.qa`/
+    `victory.qa`/`visual-screens.qa` обновлены, новые golden-кадры
+    `mobilize.png`, `landing.png`.
 - **Выбор клана в настройке партии** (`ClanSelectMenu`): экран `CLANSEL` с
   8 карточками `CH_CN1..8_U/D` и логотипами `CLN1..8LOGO`, Random/Cancel/?/Done;
   выбранный клан пишется в `LocalSetup::team_clans`, попадает в
@@ -54,6 +54,15 @@
 
 ### Исправлено
 
+- **Эмблемы кланов на экране `Players` и `Clans`**: логотипы `CLN0..8LOGO`
+  рисуются с якорем (41,40) внутри кнопки, как `Button::Copy(id, 41, 40)`:
+  собственные `ulx/uly` ресурса вычитаются
+  (`WindowManager_DecodeSimpleImage`: `ulx -= image->ulx`). Раньше картинка
+  рисовалась от `(41,40)` без поправки и уезжала вправо-вниз, вылезая за
+  флаг/карточку (`max_app/src/menu.rs::blit_simple_anchored`).
+- **Центровка знака `?`**: сверено с оракульным кадром C++-порта (Alt+C,
+  `Players` 640×480) — подпись `?` в кнопке 48×40 совпадает пиксель-в-пиксель
+  с `Button::SetCaption`/`Text_TextLine`; формула закреплена тестом.
 - **Юниты плавно двигаются в кадре**: `App::update_visual_units` догоняет
   симуляционную клетку (`UnitInfo::Move` в оригинале двигает спрайт
   пиксельно); `dt = 0` (headless/QA) оставляет снимок без интерполяции, поэтому
@@ -69,6 +78,20 @@
   До исправления `FRAMEPIC` и `ENDGAME1..9` декодировались со сдвигом на байт
   («scanline»-артефакты); исправление затронуло хром игрового окна, фоны
   экрана победы и все big image меню.
+
+### Изменено
+
+- **Бинарь клиента переименован `max_app` → `max-rust`** (Windows:
+  `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
+  `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему
+  работает (бинарь в пакете один), а артефакты теперь `max-rust(.exe)`.
+  Каталоги артефактов (`max_app-<version>-…`) сохранены.
+- **Запуск без флагов открывает GUI** (меню SDL3): headless-режимы доступны
+  только по явным `--demo`, `--new-game`, `--connect`; `--ui` оставлен
+  совместимым alias. В headless-сборке без feature `sdl` запуск без флагов
+  даёт понятную ошибку с подсказкой про `--features sdl` и headless-флаги.
+- Help-текст, build/release-скрипты и документация переведены на
+  `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
 
 ## [1.0.1] — 2026-11-15
 

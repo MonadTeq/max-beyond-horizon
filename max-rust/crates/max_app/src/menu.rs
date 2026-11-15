@@ -453,6 +453,16 @@ pub struct MenuAssets {
     pub clan_buttons: [Option<MenuButtonPair>; 8],
     /// Фон экрана выбора клана (`CLANSEL`).
     pub clansel: Option<BigImage>,
+    /// Фон экрана мобилизации (`CARGOPIC`, 640×480) — `CargoMenu`.
+    pub cargopic: Option<BigImage>,
+    /// Кнопка `Buy` экрана мобилизации (`CRGBUY_U/D`, 41×22).
+    pub cargo_buy: Option<MenuButtonPair>,
+    /// Кнопка `Delete` (`CRGDEL_U/D`, 53×23).
+    pub cargo_delete: Option<MenuButtonPair>,
+    /// Кнопка `Cancel` (`BLDCAN_U/D`, 62×23).
+    pub cargo_cancel: Option<MenuButtonPair>,
+    /// Кнопка `Done` (`BLDONE_U/D`, 54×23).
+    pub cargo_done: Option<MenuButtonPair>,
     /// Фоны экрана победы/поражения (`ENDGAME1`…`ENDGAME9`).
     pub endgame_backgrounds: Vec<BigImage>,
     /// `ENDARM` — картинка в правом нижнем углу экрана победы.
@@ -566,6 +576,11 @@ impl MenuAssets {
                 )
             }),
             clansel: read_big("CLANSEL"),
+            cargopic: read_big("CARGOPIC"),
+            cargo_buy: pair("CRGBUY_U", "CRGBUY_D"),
+            cargo_delete: pair("CRGDEL_U", "CRGDEL_D"),
+            cargo_cancel: pair("BLDCAN_U", "BLDCAN_D"),
+            cargo_done: pair("BLDONE_U", "BLDONE_D"),
             endgame_backgrounds: [
                 "ENDGAME1", "ENDGAME2", "ENDGAME3", "ENDGAME4", "ENDGAME5", "ENDGAME6", "ENDGAME7",
                 "ENDGAME8", "ENDGAME9",
@@ -663,6 +678,37 @@ pub fn blit_simple(
     }
 
     painted
+}
+
+/// Копирует simple image с учётом её собственного `ulx/uly` — точка «якоря».
+///
+/// Это дословно `WindowManager_DecodeSimpleImage` (`window_manager.cpp:784`):
+///
+/// ```c
+/// ulx -= image->ulx;
+/// uly -= image->uly;
+/// ```
+///
+/// Именно так рисуются эмблемы кланов: `Button::Copy(CLNnLOGO, 41, 40)` кладёт
+/// картинку в точку `(41,40)` **якоря**, а собственные `ulx/uly` ресурса
+/// (`CLN0LOGO` — 21,32; `CLN1LOGO` — 37,28; …) сдвигают её так, что логотип
+/// оказывается по центру кнопки. Без этой поправки картинка уезжает вправо-вниз.
+pub fn blit_simple_anchored(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    image: &SimpleImage,
+    anchor_x: i32,
+    anchor_y: i32,
+    transparent: bool,
+) -> u32 {
+    blit_simple(
+        frame,
+        palette,
+        image,
+        anchor_x - i32::from(image.ulx),
+        anchor_y - i32::from(image.uly),
+        transparent,
+    )
 }
 
 /// Перенос текста по словам шириной GNW-шрифта `FONT5` (`Text_SplitText`).
@@ -1425,6 +1471,84 @@ mod tests {
         assert_eq!(PLANET_BUTTONS[3].rect, PixelRect::new(514, 438, 109, 40));
         assert_eq!(JOIN_LIST, PixelRect::new(359, 28, 209, 160));
         assert_eq!(JOIN_ROW_HEIGHT, 20);
+    }
+
+    #[test]
+    fn clan_logos_are_drawn_at_their_anchor() {
+        // `WindowManager_DecodeSimpleImage`: `ulx -= image->ulx`, `uly -= image->uly`.
+        let Some((_archive, menu)) = test_assets() else {
+            return;
+        };
+
+        let logo = menu.clan_logos[1].as_ref().expect("CLN1LOGO");
+        // CLN1LOGO: 74×57, ulx=37, uly=28 — якорь внутри картинки.
+        assert_eq!((logo.width, logo.height), (74, 57));
+        assert_eq!((logo.ulx, logo.uly), (37, 28));
+
+        let mut frame = RgbaBuffer::filled(640, 480, Rgba::rgb(0, 0, 0));
+        blit_simple_anchored(&mut frame, &menu.palette, logo, 41, 40, true);
+
+        // Прямоугольник нарисованного: от (41-37, 40-28) = (4, 12) и не шире
+        // картинки — иначе (как было до фикса) логотип уезжал за кнопку.
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        for y in 0..480 {
+            for x in 0..640 {
+                if frame.get(x, y) != Some(Rgba::rgb(0, 0, 0)) {
+                    xs.push(x);
+                    ys.push(y);
+                }
+            }
+        }
+
+        assert!(!xs.is_empty(), "логотип нарисован");
+        assert!(xs.iter().min().copied().unwrap() >= 4);
+        assert!(ys.iter().min().copied().unwrap() >= 12);
+        assert!(
+            xs.iter().max().copied().unwrap() <= 4 + 74 - 1,
+            "логотип не должен выходить за 74 px от левого края картинки"
+        );
+        assert!(ys.iter().max().copied().unwrap() <= 12 + 57 - 1);
+    }
+
+    #[test]
+    fn quest_caption_is_centered_like_cpp() {
+        // `Button::SetCaption` + `Text_TextLine` (`button.cpp:433`, `text.cpp:778`):
+        //   uly = ((40 - 16) / 2) = 12; ulx = (48 - (Text_GetWidth+1)) / 2.
+        let font = GnwFontId::Font1.font();
+        let text_width = font.text_width("?") + 1;
+        let expected_x = 465 + (48 - text_width).max(0) / 2;
+        let expected_y = 438 + (40 - font.height()).max(0) / 2;
+
+        assert_eq!(expected_x, 484, "знак ? в кнопке 48×40");
+        assert_eq!(expected_y, 450);
+
+        let mut frame = RgbaBuffer::filled(640, 480, Rgba::rgb(0, 0, 0));
+        draw_text_gnw_centered(
+            &mut frame,
+            PixelRect::new(465, 438, 48, 40),
+            font,
+            "?",
+            Rgba::WHITE,
+        );
+
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        for y in 438..478 {
+            for x in 465..513 {
+                if frame.get(x, y) == Some(Rgba::WHITE) {
+                    xs.push(x);
+                    ys.push(y);
+                }
+            }
+        }
+
+        assert_eq!(xs.iter().min().copied(), Some(expected_x));
+        // «Чернила» '?' начинаются со второй строки ячейки (ink bbox y0 = 1).
+        assert_eq!(ys.iter().min().copied(), Some(expected_y + 1));
+        // По горизонтали знак действительно внутри кнопки, а не у края.
+        assert!(xs.iter().max().copied().unwrap() < 513);
+        assert!(ys.iter().max().copied().unwrap() < 478);
     }
 
     #[test]

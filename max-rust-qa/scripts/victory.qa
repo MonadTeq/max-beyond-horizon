@@ -38,6 +38,11 @@ players 1 computer
 players 2 none
 players 3 none
 setup done
+
+# --- Фазы старта (мобилизация + точка высадки) ----------------------------
+mobilize done
+landing grid 22 22
+landing done
 assert screen=InGame
 assert turn=1
 

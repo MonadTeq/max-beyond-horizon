@@ -39,10 +39,13 @@ pub mod chrome;
 pub mod cursor;
 pub mod hotseat;
 pub mod hud;
+pub mod landing;
 pub mod local;
 pub mod menu;
+pub mod mobilize;
 pub mod net;
 pub mod panels;
+pub mod pregame;
 pub mod qa;
 pub mod render;
 pub mod setup;
@@ -54,6 +57,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use max_core::crc;
+use max_core::deploy::TeamDeployment;
 use max_core::enums::{GameStateType, Planet, TeamClan};
 use max_core::events::{apply_command, ApplyOutcome};
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
@@ -81,7 +85,10 @@ pub use hud::{
     HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
 pub use hotseat::TurnNotice;
+pub use landing::{LandingAction, LandingScreen};
 pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
+pub use mobilize::Mobilization;
+pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
@@ -314,6 +321,11 @@ pub struct NewGameConfig {
     /// Из него же считается `team_gold` после высадки: в custom-игре
     /// стартовая загрузка `SC_L0001` выдаётся бесплатно, апгрейдов нет.
     pub start_gold: u32,
+    /// Готовые к высадке команды после фаз старта (`CargoMenu` + site select).
+    ///
+    /// Пусто — старый путь: всем командам [`Self::start_gold`] и
+    /// [`max_core::deploy::DEFAULT_MISSION_LOADOUT`] по [`Self::teams`].
+    pub deployments: Vec<TeamDeployment>,
 }
 
 impl Default for NewGameConfig {
@@ -339,6 +351,7 @@ impl NewGameConfig {
             clans: [TeamClan::Random; PLAYER_TEAM_COUNT],
             player_team: TeamId::RED,
             start_gold: max_core::deploy::DEFAULT_START_GOLD,
+            deployments: Vec::new(),
         }
     }
 }
@@ -707,7 +720,54 @@ impl App {
             alien_costs,
         };
         let mut rng = Randomizer::new(config.seed);
+
+        // Фазы старта (`CargoMenu` + site select) уже отработали: люди выбрали
+        // точки сами, компьютеры выбирают их как `Ai_SelectStartingPosition`
+        // (`GameManager_InitGame`: цикл по командам-компьютерам после людей, но
+        // до `GameManager_PopulateMapWithResources`).
+        //
+        // C++ пересеивает ГПСЧ в `GameManager_PopulateMapWithResources`, поэтому
+        // выбор ИИ идёт отдельным потоком от того же seed, а генерация карты —
+        // уже с чистого seed (как и раньше).
+        let mut deployments = config.deployments.clone();
+        let mut ai_added: Vec<TeamId> = Vec::new();
+
+        if !deployments.is_empty() {
+            let mut choice_rng = Randomizer::new(config.seed);
+            let mut taken: Vec<Point> = deployments.iter().map(|entry| entry.position).collect();
+
+            for start in setup.teams.iter_mut() {
+                if deployments.iter().any(|entry| entry.team == start.team) {
+                    continue;
+                }
+
+                let position =
+                    max_core::setup::ai_choose_starting_position(surface, &mut choice_rng, &taken);
+
+                start.position = position;
+                taken.push(position);
+                ai_added.push(start.team);
+                deployments.push(TeamDeployment::default_loadout(
+                    start.team,
+                    position,
+                    config.start_gold,
+                ));
+            }
+        }
+
         let output = generate_map(&mut setup, surface, &mut rng);
+
+        // `FindValidStartingPosition` мог сдвинуть выбранную ИИ точку —
+        // высадка обязана идти по итоговой позиции генерации.
+        for deployment in deployments.iter_mut() {
+            if !ai_added.contains(&deployment.team) {
+                continue;
+            }
+
+            if let Some(start) = setup.teams.iter().find(|start| start.team == deployment.team) {
+                deployment.position = start.position;
+            }
+        }
 
         // Команды из setup (позиции могли сдвинуться `FindValidStartingPosition`).
         let mut team_kinds = [TeamKind::None; PLAYER_TEAM_COUNT];
@@ -754,12 +814,24 @@ impl App {
         // после alien-обломков — ровно как в `GameManager_InitGame`. Без этого
         // `menu_check_end_game_conditions` завершает партию сразу после первого
         // хода: у команд нет ни инфраструктуры, ни войск.
-        let start_units = max_core::deploy::deploy_starting_units(
-            &mut state,
-            config.start_gold,
-            setup.settings.max_resources,
-            &setup.teams,
-        );
+        //
+        // Если фазы старта уже отработали (`Mobilization` + site select), у
+        // каждой команды свои точка высадки, кредиты и загрузка
+        // (`TeamMissionSupplies` в C++).
+        let start_units = if deployments.is_empty() {
+            max_core::deploy::deploy_starting_units(
+                &mut state,
+                config.start_gold,
+                setup.settings.max_resources,
+                &setup.teams,
+            )
+        } else {
+            max_core::deploy::deploy_starting_units_with(
+                &mut state,
+                setup.settings.max_resources,
+                &deployments,
+            )
+        };
 
         let report = NewGameReport {
             planet: config.planet,

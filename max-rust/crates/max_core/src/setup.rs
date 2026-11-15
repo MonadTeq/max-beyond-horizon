@@ -863,6 +863,74 @@ pub fn is_valid_starting_position(surface: &SurfaceMap, grid_x: i32, grid_y: i32
     true
 }
 
+/// `Ai_SelectStartingPosition` (`ai.cpp:105`) на готовой поверхности.
+///
+/// Компьютерная команда сама выбирает точку высадки до генерации ресурсов —
+/// ровно как C++ в `GameManager_InitGame` (`Ai_SetupStrategy` → `Ai_SelectStartingPosition`
+/// до `GameManager_PopulateMapWithResources`). Условия те же:
+///
+/// * `random(3 .. size - 3)` по обеим осям (`Randomizer_Generate(size - 6) + 3`);
+/// * площадка 5×5 вокруг точки — только `LAND` (`Ai_IsValidStartingPosition`);
+/// * до уже высаженных команд — не ближе [`crate::ai::AI_SAFE_ENEMY_DISTANCE`]
+///   (`Ai_IsSafeStartingPosition`).
+///
+/// В отличие от C++ (бесконечный `do … while`) число попыток ограничено:
+/// на карте без подходящей площадки функция возвращает последнюю точку, а не
+/// зависает. Возвращаемая точка не гарантирует 4×4-условие
+/// [`is_valid_starting_position`] — его всё равно проверяет высадка.
+pub fn ai_choose_starting_position(
+    surface: &SurfaceMap,
+    rng: &mut Randomizer,
+    taken: &[Point],
+) -> Point {
+    let mut position = Point::ZERO;
+    let mut attempts = 0;
+
+    loop {
+        position.x = rng.generate_i32(i32::from(MAP_WIDTH) - 6) as i16 + 3;
+        position.y = rng.generate_i32(i32::from(MAP_HEIGHT) - 6) as i16 + 3;
+        attempts += 1;
+
+        if ai_is_safe_starting_position(surface, position, taken) || attempts >= 64 {
+            return position;
+        }
+    }
+}
+
+/// `Ai_IsSafeStartingPosition` (`ai.cpp:80`) без состояния `GameState`.
+///
+/// `taken` — точки уже высаженных команд (в C++ учитываются только команды,
+/// у которых `units.GetCount() > 0`, то есть прошедшие выбор точки).
+pub fn ai_is_safe_starting_position(surface: &SurfaceMap, position: Point, taken: &[Point]) -> bool {
+    let grid_x = i32::from(position.x);
+    let grid_y = i32::from(position.y);
+
+    // `Ai_IsValidStartingPosition`: 5×5 вокруг точки (x-2 … x+2) — суша.
+    for y in (grid_y - 2)..=(grid_y + 2) {
+        for x in (grid_x - 2)..=(grid_x + 2) {
+            let tile = surface.get(x as i16, y as i16);
+
+            if !tile.intersects(Surface::LAND)
+                || tile.intersects(Surface::WATER)
+                || tile.intersects(Surface::COAST)
+            {
+                return false;
+            }
+        }
+    }
+
+    for point in taken {
+        let dx = grid_x - i32::from(point.x);
+        let dy = grid_y - i32::from(point.y);
+
+        if dx * dx + dy * dy < crate::ai::AI_SAFE_ENEMY_DISTANCE {
+            return false;
+        }
+    }
+
+    true
+}
+
 /// `GameManager_FindValidStartingPosition(Point* position)` (`game_manager.cpp:4712`).
 ///
 /// Мутирует позицию; если валидных клеток нет вообще — цикл не завершится
@@ -1782,6 +1850,35 @@ mod tests {
     }
 
     /// `is_valid_starting_position` требует ровно `LAND` (побережье не годится).
+    /// `Ai_SelectStartingPosition` (`ai.cpp:105`): точка на суше, не ближе
+    /// `AI_SAFE_ENEMY_DISTANCE` к уже выбранным.
+    #[test]
+    fn ai_starting_position_is_land_and_away_from_taken() {
+        let surface = SurfaceMap::from_tiles([Surface::LAND; MAP_TILES]);
+        let mut rng = Randomizer::new(0);
+
+        let first = ai_choose_starting_position(&surface, &mut rng, &[]);
+        assert!(is_valid_starting_position(&surface, i32::from(first.x), i32::from(first.y)));
+
+        let taken = [Point::new(56, 56)];
+        let second = ai_choose_starting_position(&surface, &mut rng, &taken);
+        let dx = i32::from(second.x) - 56;
+        let dy = i32::from(second.y) - 56;
+
+        assert!(
+            dx * dx + dy * dy >= crate::ai::AI_SAFE_ENEMY_DISTANCE,
+            "{second:?} слишком близко к (56,56)"
+        );
+        // Тот же seed и тот же `taken` — та же точка (детерминизм).
+        let mut rng_a = Randomizer::new(5);
+        let mut rng_b = Randomizer::new(5);
+
+        assert_eq!(
+            ai_choose_starting_position(&surface, &mut rng_a, &taken),
+            ai_choose_starting_position(&surface, &mut rng_b, &taken)
+        );
+    }
+
     #[test]
     fn starting_position_requires_pure_land() {
         let mut surface = SurfaceMap::new();

@@ -21,7 +21,8 @@ max-rust-qa/
 1. **Драйвер `qa_run`** (пример в `max-rust/crates/max_app/examples/qa_run.rs`) исполняет
    `.qa`-скрипты через реальные обработчики ввода клиента (без SDL): команды
    `click/rclick/key/type/wait/tick/shot/assert …`, высокоуровневые `menu/setup/players/
-   select/move/end_turn`. Формат — в `plans/qa-plan.md` и `drivers/README.md`.
+   mobilize/landing/select/move/end_turn`. Формат — в `plans/qa-plan.md` и
+   `drivers/README.md`.
 2. **Скрипты** лежат в `scripts/`; каждый скрипт покрывает один или несколько TC из `suite/`.
 3. **Golden** в `golden/` — эталоны кадров; дрейф ловится `qa_golden_check` (порог 1 %).
 4. **CI**: `ci.sh` гоняет все скрипты + golden; падение = красный билд.

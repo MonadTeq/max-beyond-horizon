@@ -92,6 +92,10 @@ setup random
 players 0 human
 players 1 computer
 players 2 none
+mobilize buy 0
+mobilize done
+landing grid 22 22
+landing done
 select 404 242
 select unit 0
 move 468 306
@@ -103,7 +107,7 @@ exit
 
     let parsed = steps(script);
 
-    assert_eq!(parsed.len(), 37, "все строки-команды разобраны");
+    assert_eq!(parsed.len(), 41, "все строки-команды разобраны");
     assert_eq!(parsed[0].command, Command::Click(10, 20));
     assert_eq!(parsed[1].command, Command::RightClick(30, 40));
     assert!(parsed
@@ -492,13 +496,29 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     play.send(InputEvent::MouseClick(516, 440));
     assert!(matches!(&play.screen, Screen::LocalSetup(_)));
 
-    // Players: RED — человек, GREEN — компьютер, Done → партия.
+    // Players: RED — человек, GREEN — компьютер, Done → мобилизация.
     play.send(click_rect(setup::player_type_button_rect(0, 0)));
     play.send(click_rect(setup::player_type_button_rect(1, 1)));
     play.send(InputEvent::MouseClick(516, 440));
     assert!(
+        matches!(&play.screen, Screen::PreGame(_)),
+        "Done на Players открывает фазу мобилизации: {:?}",
+        play.ctx.status
+    );
+
+    // Мобилизация: `Done` (`BLDONE_U` 54×23 в 447,452).
+    play.send(InputEvent::MouseClick(447 + 27, 452 + 11));
+    assert!(
+        matches!(&play.screen, Screen::PreGame(_)),
+        "после мобилизации — выбор точки высадки"
+    );
+
+    // Выбор точки: клетка 22,22 (суша Snowcrab) и `Done` (514,438,109,40).
+    play.send(InputEvent::MouseClick(180 + 22 * 4 + 2, 18 + 22 * 4 + 2));
+    play.send(InputEvent::MouseClick(568, 458));
+    assert!(
         matches!(&play.screen, Screen::InSession { .. }),
-        "Done на Players должен начать партию: {:?}",
+        "Done на высадке должен начать партию: {:?}",
         play.ctx.status
     );
 

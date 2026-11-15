@@ -22,6 +22,23 @@ players 2 none
 players 3 none
 shot hs-players
 setup done
+
+# --- Фазы старта для двух людей (порядок C++: GRAY→RED, у нас GREEN→RED) --
+assert screen=Mobilize
+shot hs-mobilize-green
+mobilize done
+assert screen=Landing
+shot hs-landing-green
+landing grid 88 22
+landing done
+
+assert screen=Mobilize
+shot hs-mobilize-red
+mobilize done
+assert screen=Landing
+shot hs-landing-red
+landing grid 22 22
+landing done
 assert screen=InGame
 
 # --- Раунд 1 --------------------------------------------------------------

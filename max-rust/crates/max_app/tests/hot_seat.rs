@@ -85,6 +85,9 @@ fn hot_seat_setup(team_types: [TeamKind; 4]) -> LocalSetup {
         team_clans: [max_core::enums::TeamClan::Random; 4],
         hot_seat: true,
         seed: 13,
+        start_positions: [None; 4],
+        team_loadouts: std::array::from_fn(|_| None),
+        team_gold: [None; 4],
     }
 }
 

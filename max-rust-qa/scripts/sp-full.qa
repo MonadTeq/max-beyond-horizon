@@ -37,7 +37,38 @@ players 1 computer
 players 2 none
 players 3 none
 shot players
+
+# --- Выбор клана RED (ClanSelectMenu) ------------------------------------
+# Клик по флагу команды открывает CLANSEL: логотипы CLN1..8LOGO с якорем
+# (41,40) должны стоять по центру карточек 91×86.
+click 541 105
+assert screen=Clan
+shot clan
+key ESC
+assert screen=Players
+
 setup done
+
+# --- Мобилизация (CargoMenu) ---------------------------------------------
+# C++: `GameManager_CargoSelection` открывает `CargoMenu`, пока `team_gold`
+# не ноль (start_gold 150). Покупаем двух юнитов в список и закрываем Done.
+assert screen=Mobilize
+shot mobilize
+mobilize buy 0          # Constructor (3 * 8 = 24 кредита)
+mobilize buy 4          # Scanner (3 * 4 = 12 кредитов)
+shot mobilize-bought
+mobilize done
+assert screen=Landing
+
+# --- Выбор точки высадки (GameManager_SelectSite) ------------------------
+# Карта 112×112 в кадре 4 px/клетка: клетка 30,22 — суша (Snowcrab) и НЕ
+# совпадает со стартовой четвертью (22,22), поэтому кадр партии доказывает,
+# что выбранная точка применена.
+assert screen=Landing
+shot landing
+landing grid 30 22
+shot landing-cursor
+landing done
 assert screen=InGame
 
 # --- Партия ---------------------------------------------------------------
