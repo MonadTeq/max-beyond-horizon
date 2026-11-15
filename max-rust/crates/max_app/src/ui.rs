@@ -1160,11 +1160,36 @@ fn unit_label(unit: &UnitInfo) -> String {
 
 /// Кадр сессии: карта из [`App::render_frame`] + HUD (M4.2) поверх неё.
 ///
+/// Если загружен хром окна 1:1 (`FRAMEPIC`) и кадр 640×480, HUD оригинала уже
+/// нарисован в самой картинке — процедурный HUD не рисуется, поверх области
+/// карты выводится только строка статуса. Без хрома — прежний вид.
+///
 /// Без `App` (headless-рендер до сети) остаётся прежний фон со строкой статуса.
 fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
     if let Some(app) = view.app {
         let frame = app.render_frame();
         blit(buffer, &frame);
+
+        let chrome_active = frame.width() as i32 == max_render::layout::WINDOW_WIDTH
+            && frame.height() as i32 == max_render::layout::WINDOW_HEIGHT
+            && app
+                .assets()
+                .and_then(|assets| assets.chrome.as_ref())
+                .is_some_and(|chrome| chrome.is_ready());
+
+        if chrome_active {
+            // Область карты уже содержит тайлы и юнитов; пишем только статус —
+            // как строка сообщений в оригинале (верхний левый угол карты).
+            let area = max_render::layout::MAIN_MAP;
+            draw_text_line(
+                buffer,
+                area.ulx + 4,
+                area.uly + 4,
+                view.status,
+                Rgba::rgb(232, 236, 244),
+            );
+            return;
+        }
 
         let hud_view = hud::HudView {
             state: app.state(),

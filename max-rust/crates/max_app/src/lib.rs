@@ -35,6 +35,7 @@
 
 pub mod assets;
 pub mod audio;
+pub mod chrome;
 pub mod hud;
 pub mod net;
 pub mod render;
@@ -165,8 +166,8 @@ impl Default for AppConfig {
             team_slot: 0,
             clan: TeamClan::Random,
             planet: Planet::Snowcrab,
-            screen_width: 512,
-            screen_height: 384,
+            screen_width: max_render::layout::WINDOW_WIDTH as u32,
+            screen_height: max_render::layout::WINDOW_HEIGHT as u32,
             mode: AppMode::Demo,
             demo_turns: 5,
         }

@@ -932,7 +932,7 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --handshake-patches <path>             PATCHES.RES только для data_hash
                                            (сервер без PATCHES.RES: путь может
                                            не существовать — хэш без этой части)
-    --width/--height N   размер кадра (по умолчанию 512x384)
+    --width/--height N   размер кадра (по умолчанию 640x480 — окно оригинала)
 
 ПРИМЕРЫ:
     cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5

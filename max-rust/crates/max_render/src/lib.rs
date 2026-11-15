@@ -34,6 +34,7 @@
 #![forbid(unsafe_code)]
 
 pub mod buffer;
+pub mod layout;
 pub mod map_render;
 pub mod palette;
 pub mod sprite_atlas;
@@ -58,6 +59,11 @@ pub use palette::{
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};
+pub use layout::{
+    AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON, HITS_BUTTON,
+    MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON, SIDE_PANEL_TOP_HEIGHT,
+    SIDE_PANEL_WIDTH, STAT_WINDOW, STATUS_BUTTON, SURVEY_BUTTON, WINDOW_HEIGHT, WINDOW_WIDTH,
+};
 pub use text::{
     draw_text, draw_text_line, draw_text_wrapped, glyph, line_width, text_height, wrap_text,
     TextMetrics, ASCII_CHARS, FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,

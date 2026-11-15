@@ -7,6 +7,8 @@
 //!   модуль [`wrl`];
 //! - спрайты — мультикадровые RLE-спрайты `COMMTWR`…`WALDO` и тени `S_*`
 //!   из MAX.RES — модуль [`sprite`];
+//! - картинки интерфейса — `FRAMEPIC`/`PANELTOP`/`PANELBTM`/`MNUBTN*`
+//!   (`ImageSimpleHeader`/`ImageBigHeader`) — модуль [`image`];
 //! - звуки — RIFF/WAVE `*.SPW` (PCM16) рядом с `MAX.RES` — модуль [`wav`];
 //! - SCE/MPS — миссии; FLC — анимации; FON — шрифты;
 //!   MSC/MVE — музыка/видео (пока не разбираются).
@@ -17,11 +19,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod image;
 pub mod res;
 pub mod sprite;
 pub mod wav;
 pub mod wrl;
 
+pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,
     RES_SIGNATURE, TAG_LEN,

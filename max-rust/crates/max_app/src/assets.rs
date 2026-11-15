@@ -307,6 +307,8 @@ pub struct Assets {
     pub world: WrlMap,
     /// Настоящие тайлы поверхности (палитра + 64×64 из `.WRL`) для рендера 1:1.
     pub terrain: max_render::terrain::TerrainAtlas,
+    /// Хром окна 1:1 (`FRAMEPIC` + панели), если он есть в `MAX.RES`.
+    pub chrome: Option<crate::chrome::Chrome>,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
@@ -411,8 +413,13 @@ impl Assets {
             });
         }
 
+        // Хром окна 1:1 (`FRAMEPIC` + панели) — необязателен: без него рендер
+        // работает в прежнем полноэкранном режиме.
+        let chrome = crate::chrome::Chrome::load(&max_res);
+
         Ok(Self {
             max_res,
+            chrome,
             patches_res,
             palette,
             brightness,

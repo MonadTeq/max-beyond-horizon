@@ -61,8 +61,24 @@ impl App {
     }
 
     /// То же, что [`App::render_frame`], плюс статистика отрисовки.
+    ///
+    /// Если загружен хром окна (`FRAMEPIC`) и размер кадра — 640×480, рисуется
+    /// окно 1:1 как в оригинале: фон-панели из `MAX.RES`, а карта — в области
+    /// [`max_render::layout::MAIN_MAP`] (7×7 клеток). Иначе — прежний
+    /// полноэкранный режим.
     pub fn render_frame_with_stats(&self) -> (RgbaBuffer, RenderStats) {
         let (width, height) = self.viewport().screen();
+
+        if width == max_render::layout::WINDOW_WIDTH as u32
+            && height == max_render::layout::WINDOW_HEIGHT as u32
+        {
+            if let Some(chrome) = self.assets().and_then(|assets| assets.chrome.as_ref()) {
+                if chrome.is_ready() {
+                    return self.render_with_chrome(chrome);
+                }
+            }
+        }
+
         let style = TileStyle::default();
         let mut frame = RgbaBuffer::filled(width, height, style.unknown);
         let mut stats = RenderStats::default();
@@ -85,7 +101,62 @@ impl App {
             }
         }
 
-        // Юниты: только видимые камере и локальному игроку; порядок — по `y`.
+        self.draw_units(&mut frame, self.viewport(), &mut stats);
+
+        (frame, stats)
+    }
+
+    /// Кадр в окне 1:1: `FRAMEPIC` + карта в области карты.
+    fn render_with_chrome(&self, chrome: &crate::chrome::Chrome) -> (RgbaBuffer, RenderStats) {
+        let style = TileStyle::default();
+        let mut frame = RgbaBuffer::filled(
+            max_render::layout::WINDOW_WIDTH as u32,
+            max_render::layout::WINDOW_HEIGHT as u32,
+            style.unknown,
+        );
+        chrome.draw(&mut frame);
+
+        // Карта рисуется в собственный буфер размером с область карты: так она
+        // сама обрезается по краям `MAIN_MAP` (как в оригинале), а камера и зум
+        // остаются общими с приложением.
+        let area = max_render::layout::MAIN_MAP;
+        let viewport = max_render::viewport::Viewport::with_center(
+            area.width.max(1) as u32,
+            area.height.max(1) as u32,
+            self.viewport().center(),
+            self.viewport().zoom(),
+        );
+        let mut map = RgbaBuffer::filled(area.width as u32, area.height as u32, style.unknown);
+        let mut stats = RenderStats::default();
+
+        match self.assets() {
+            Some(assets) if !assets.terrain.is_empty() => {
+                stats.map_tiles = assets.terrain.render_into(&mut map, &viewport);
+                max_render::map_render::render_resources_into(
+                    &mut map,
+                    &self.state().map,
+                    &viewport,
+                    &style,
+                );
+            }
+            _ => {
+                stats.map_tiles = render_map_into(&mut map, &self.state().map, &viewport, &style);
+            }
+        }
+
+        self.draw_units(&mut map, &viewport, &mut stats);
+        crate::chrome::blit_map(&mut frame, &map);
+
+        (frame, stats)
+    }
+
+    /// Юниты в буфер через камеру: только видимые и известные команде.
+    fn draw_units(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
         let mut positions = Vec::new();
         let mut visible = Vec::new();
 
@@ -94,7 +165,7 @@ impl App {
                 stats.units_skipped += 1;
                 continue;
             };
-            if !self.viewport().is_tile_visible(unit.grid.x, unit.grid.y) {
+            if !viewport.is_tile_visible(unit.grid.x, unit.grid.y) {
                 continue;
             }
             if !unit.is_visible_to_team(self.state().player_team) {
@@ -108,7 +179,7 @@ impl App {
             let Some(unit) = self.state().unit(visible[index]) else {
                 continue;
             };
-            let rect = self.viewport().tile_rect(unit.grid.x, unit.grid.y);
+            let rect = viewport.tile_rect(unit.grid.x, unit.grid.y);
             let anchor = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
             let drawn = self.assets().and_then(|assets| {
@@ -128,7 +199,7 @@ impl App {
                 );
 
                 renderer.draw_unit(
-                    &mut frame,
+                    frame,
                     sprite_frame,
                     shadow,
                     anchor,
@@ -144,13 +215,12 @@ impl App {
             match drawn {
                 Some(()) => stats.units_drawn += 1,
                 None => {
-                    draw_marker(&mut frame, anchor, unit.team.0);
+                    draw_marker(frame, anchor, unit.team.0);
                     stats.units_marker += 1;
                 }
             }
         }
 
-        (frame, stats)
     }
 }
 
