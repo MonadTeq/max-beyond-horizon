@@ -109,6 +109,9 @@ impl App {
 
         self.draw_units(&mut frame, self.viewport(), &mut stats);
 
+        // `BuildMenu` в полноэкранном режиме (без `FRAMEPIC`).
+        self.draw_build_menu(&mut frame);
+
         (frame, stats)
     }
 
@@ -158,7 +161,20 @@ impl App {
             panels.draw(&mut frame, self);
         }
 
+        // `BuildMenu` — модальный экран поверх кадра (C++ `AbstractMenu`
+        // закрывает главное меню: `GameManager_DisableMainMenu`).
+        self.draw_build_menu(&mut frame);
+
         (frame, stats)
+    }
+
+    /// Рисует открытый `BuildMenu` поверх кадра (P2).
+    pub(crate) fn draw_build_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.build_menu(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets, self.state(), self.hud().mouse_position);
     }
 
     /// Юниты в буфер через камеру: только видимые и известные команде.

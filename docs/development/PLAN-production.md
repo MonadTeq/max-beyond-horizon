@@ -12,16 +12,46 @@
 ## Этапы
 
 ### P1 — Быстрые UX-фиксы (1–2 дня)
-- [ ] TC-1109: поиск данных игры от каталога exe (сейчас только от CWD).
+- [x] TC-1109: поиск данных игры от каталога exe (сейчас только от CWD).
+  `assets::data_search_roots` — каталог `current_exe` и вверх до ближайшего
+  `max-original`; `resolve_max_res`/`resolve_patches_res`/`resolve_color_pal`
+  используют общий порядок, тесты — `max-rust/crates/max_app/src/assets.rs`
+  (`exe_dir_resolves_game_data_when_cwd_is_elsewhere`).
 - [ ] Согласование путей: `--data-dir/--assets-dir` единообразны во всех режимах и документации.
+  Сделано частично: сообщение об ошибке `MAX.RES` подсказывает
+  `--data-dir/--max-res`, fallback предупреждает о подмене. Полный аудит флагов
+  (все режимы + `docs/development/build.md`) — не закрыт.
 - Критерий: запуск из любого каталога находит данные или даёт точную подсказку.
 
 ### P2 — Производство и строительство (крупнейший геймплейный пробел)
-- [ ] ProductionManager: очереди заводов, `SpawnNewUnits`, стоимости (Cargo/Upgrade-формулы).
-- [ ] BuildMenu: заказ юнитов/зданий (UI 1:1, ресурсы `B_*`/иконки из max-assets).
+- [x] ProductionManager: очереди заводов, `SpawnNewUnits`, стоимости (Cargo/Upgrade-формулы).
+  `max-rust/crates/max_core/src/production.rs`: таблица
+  `max_builder_capability_list`, `turns_to_build`, `cost_per_turn`,
+  `max_possible_build_rate` (порт `buildmenu.cpp:729`), `ProductionManager`
+  (queue/commit/cancel/progress), `GameState::finish_turn` → ход производства
+  для команд в порядке `RED..GRAY` (`ManageEconomy` → `ProgressBuildState`).
+  Экономика: золото списывается ставкой `Cargo_GetRawConsumptionRate` за ход
+  (материалы комплексов — TODO(P3)); нехватка золота — пауза, а не отмена.
+- [x] BuildMenu: заказ юнитов/зданий (UI 1:1, ресурсы `B_*`/иконки из max-assets).
+  `max-rust/crates/max_app/src/buildmenu.rs`: `FACBUILD`/`CONBUILD` + `BLD*`
+  (фон 640×480, списки 483,60 / 337,60, кнопки по координатам C++), клавиша
+  `B`, модальный ввод, заказ — `Command::Order` с `PayloadP4` (пакет 08).
 - [ ] Исследования/апгрейды: ResearchMenu-факторы (float-формулы → build-time таблицы по DESIGN).
-- [ ] Интеграция с ИИ (ИИ строит через ProductionManager, как C++).
+  **Помечено как необъятное для P2**: `researchmenu.cpp` + `abstractupgrademenu.cpp`
+  (~27 КБ, `pow`-формулы `ResearchMenu_CalculateFactor`) требуют
+  build-time-таблиц; текущий `manage_economy` только сбрасывает прогресс тем
+  (`TODO(риск 1)`). Вынести в отдельный этап (после P3).
+- [x] Интеграция с ИИ (ИИ строит через ProductionManager, как C++).
+  ИИ уже выдаёт `ORDER_BUILD` с очередью (`TaskCreateBuilding`/`TaskCreateUnit`
+  → `TaskCtx::build_order`); теперь очередь реально тикает и выпускает юнитов
+  в `finish_turn`. `builder_type_for`/`turns_to_build` делегируют в
+  `production` (единая таблица). Тест:
+  `max_core/tests/ai_p6.rs::ai_completes_a_build_queue_through_production`.
 - Критерий: скриптом строится завод → заказан юнит → юнит появляется через N ходов; ИИ строит флот; партия 30+ ходов с производством без расхождений (детерминизм).
+  Завод → юнит: `max-rust-qa/scripts/production.qa` (TRAINHAL за 10 ходов,
+  INFANTRY за 2). ИИ использует флот, только если `TaskObtainUnits` запросит
+  морской юнит (зависит от стратегии ИИ — отдельная задача); детерминизм
+  очереди проверен (`tests/production.rs::two_identical_production_runs_have_identical_state`).
 
 ### P3 — Сейвы V70 (запись)
 - [ ] Сериализатор GameState→SaveFile (SaveUnit, HeatMap, AiPlayerState, хэши) — по save.rs чтению.

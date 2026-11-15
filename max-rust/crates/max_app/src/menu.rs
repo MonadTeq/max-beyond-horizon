@@ -67,6 +67,12 @@ pub struct MenuButtonPair {
 }
 
 impl MenuButtonPair {
+    /// Пара из готовых картинок (для экранов, которые грузят свои ресурсы —
+    /// например `BuildMenu` с `BLDBLD_U`/`BLD2X_U`/`BLD4X_U`).
+    pub fn new(up: SimpleImage, down: SimpleImage) -> Self {
+        Self { up, down }
+    }
+
     pub fn image(&self, down: bool) -> &SimpleImage {
         if down {
             &self.down

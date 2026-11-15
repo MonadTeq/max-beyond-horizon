@@ -21,6 +21,7 @@
 | TC-0615 | Панели не ловят клики карты | клик по панели | не проваливается в карту (в т.ч. End Turn поверх карты) | ✅ UNIT chrome-тесты |
 | TC-0616 | Координаты мыши с масштабом | --scale 2 клики | пересчёт окно→кадр→карта верен | ✅ UNIT frame_scale |
 | TC-0617 | Курсоры по контексту | курсор над картой/своим/врагом/меню | MAP_PTR/FRND_PTR/ENMY_PTR/HANDPTR… | ✅ UNIT cursor |
-| TC-0618 | Сборка юнита (build) | приказ строить | меню строительства/заказ | ❌ TODO (production) |
+| TC-0618 | Сборка юнита (build) | выделить конструктора → `B` (`Build`) → список → `Done` | `BuildMenu` 1:1 (`CONBUILD`): 15 зданий `CONSTRCT`, выбор строки/скролл, скорости 1×/2×/4×, заказ уходит пакетом **08/P4** (`build_list`, `build_time`, `build_rate`), `Esc`/`Cancel` закрывает без заказа | ✅ QA production.qa; UNIT buildmenu; golden `golden/production/buildmenu.png` |
+| TC-0619 | Модальность BuildMenu | пока экран открыт — клики по карте/RMB/End Turn | ввод получает только меню (как `GameManager_DisableMainMenu`), карта не двигается и приказов не получает | ✅ UNIT buildmenu (click/key), QA production.qa |
 
-Итог: 18 TC, ✅ 14, 🟡 2, ⬜ 1, ❌ 1.
+Итог: 19 TC, ✅ 16, 🟡 2, ⬜ 1, ❌ 0.

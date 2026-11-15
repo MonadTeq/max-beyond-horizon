@@ -1499,6 +1499,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         };
     }
 
+    // Пока открыт `BuildMenu` (P2), он модален: как `AbstractBuildMenu::Run` в
+    // C++ (`GameManager_DisableMainMenu`), карта/панели/чат приказов не видят.
+    if app.build_menu().is_some() {
+        return session_build_menu_input(app, event, online);
+    }
+
     // Пока ходит компьютер/идёт переход, приказы и выделение невозможны:
     // в C++ карта в это время не перерисовывается (`game_manager.cpp:1179`),
     // а приказы отбрасываются по `GameManager_ActiveTurnTeam`.
@@ -1564,6 +1570,19 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             app.local_toggle_pause();
             Transition::None
         }
+        // `B` — кнопка `Build` панели юнита (`GameManager_MenuClickBuildButton`
+        // → `BuildMenu_Menu`): открывает заказ для выделенного строителя.
+        InputEvent::Key(Key::Char('b' | 'B')) if !blocked => {
+            if app.open_build_menu() {
+                app.hud_mut().mouse_position = None;
+                app.hud_mut().push_log("Build menu");
+            } else {
+                app.hud_mut().push_log(
+                    "Build: select a constructor, engineer or factory first",
+                );
+            }
+            Transition::None
+        }
         InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) if !blocked => {
             app.hud_mut().chat.open();
             app.hud_mut()
@@ -1581,6 +1600,30 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::Key(_) => Transition::None,
     }
+}
+
+/// Ввод в открытый `BuildMenu` (модальный экран P2).
+///
+/// `Done`/Enter — `Build()`: заказ уходит `Command::Order` с `PayloadP4`
+/// (пакет 08) — локально применяется сразу, в сети уходит в очередь HUD.
+/// `Cancel`/Esc — закрыть без заказа.
+fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let action = app.build_menu_input(event);
+
+    match action {
+        Some(crate::buildmenu::BuildMenuAction::Commit) => {
+            if let Some(line) = app.commit_build_menu(online) {
+                app.hud_mut().push_log(line);
+            }
+        }
+        Some(crate::buildmenu::BuildMenuAction::Close) => {
+            app.close_build_menu();
+            app.hud_mut().push_log("Build cancelled");
+        }
+        _ => {}
+    }
+
+    Transition::None
 }
 
 /// Клавиша в открытой строке ввода чата.
@@ -1975,17 +2018,21 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             let area = max_render::layout::MAIN_MAP;
             let status: String = view.status.chars().take(70).collect();
 
-            if let Some(assets) = app.assets() {
-                max_render::text::draw_text_gnw_shadowed(
-                    buffer,
-                    area.ulx + 4,
-                    area.uly + 4,
-                    max_render::text::GnwFontId::Font5.font(),
-                    &status,
-                    assets.palette.rgba(0xA0),
-                    assets.palette.rgba(0xE6),
-                    assets.palette.rgba(0x3F),
-                );
+            // Открытый `BuildMenu` — модальный экран поверх кадра: строка
+            // статуса партии его не перекрывает (как `GameManager_DisableMainMenu`).
+            if app.build_menu().is_none() {
+                if let Some(assets) = app.assets() {
+                    max_render::text::draw_text_gnw_shadowed(
+                        buffer,
+                        area.ulx + 4,
+                        area.uly + 4,
+                        max_render::text::GnwFontId::Font5.font(),
+                        &status,
+                        assets.palette.rgba(0xA0),
+                        assets.palette.rgba(0xE6),
+                        assets.palette.rgba(0x3F),
+                    );
+                }
             }
 
             // M-HS: окно перехода хода поверх кадра — модальное, как `DialogMenu`.
@@ -2001,7 +2048,9 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             status: view.status,
         };
 
-        hud::render_hud(buffer, &hud_view);
+        if app.build_menu().is_none() {
+            hud::render_hud(buffer, &hud_view);
+        }
         draw_local_notice(buffer, app, view.mouse);
         return;
     }

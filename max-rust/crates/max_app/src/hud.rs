@@ -399,6 +399,8 @@ pub struct HudState {
     pub panels: crate::panels::PanelState,
     /// Нажата End Turn в сетевой сессии (закрытие хода делает игровой цикл).
     pub end_turn_requested: bool,
+    /// Позиция курсора в пикселях кадра (модальные экраны: `BuildMenu`).
+    pub mouse_position: Option<(i32, i32)>,
 }
 
 impl Default for HudState {
@@ -420,6 +422,7 @@ impl HudState {
             hover_panel: None,
             panels: crate::panels::PanelState::default(),
             end_turn_requested: false,
+            mouse_position: None,
         }
     }
 

@@ -109,7 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
-      - name: QA scenarios (sp-full, hs-2, visual-screens, victory)
+      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production)
         working-directory: max-rust
         # --no-default-features: QA-драйверу окно не нужно, иначе примеры
         # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
@@ -121,10 +121,14 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
-        run: cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
+        run: |
+          set -e
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 
       - name: Upload log + frames + diff on failure
         if: failure()

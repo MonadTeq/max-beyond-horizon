@@ -77,6 +77,7 @@ pub mod input;
 pub mod map;
 pub mod order;
 pub mod pathfinding;
+pub mod production;
 pub mod rng;
 pub mod save;
 pub mod setup;
@@ -144,6 +145,12 @@ pub use map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, Surface
 pub use order::Order;
 pub use pathfinding::{
     find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,
+};
+pub use production::{
+    builder_type, buildable_units, can_afford_turn, can_build, cost_per_turn, find_build_site,
+    is_builder, is_factory, is_mobile_builder, max_possible_build_rate, progress_build_state,
+    total_cost, turns_to_build as production_turns_to_build, BuildError, BuildReport,
+    ProductionEvent, ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
 };
 pub use rng::{GenerateValue, Randomizer};
 pub use save::{

@@ -669,6 +669,7 @@ impl App {
     /// Выход в меню: локальная партия забывается.
     pub fn leave_local_game(&mut self) {
         self.local = None;
+        self.close_build_menu();
         self.hud.clear();
     }
 
@@ -795,6 +796,33 @@ impl App {
         let status = victory::evaluate_status(self.state(), self.state().turn_counter);
         let turn_counter = self.state().turn_counter;
         let over = self.state_mut().finish_turn();
+
+        // События хода производства (`GameManager_ReportNewUnitsMessage`):
+        // только для локального игрока, чтобы журнал не забивался чужими
+        // заводами.
+        if !over {
+            let player = self.state().player_team;
+            let events = self.state_mut().take_production_events();
+
+            for event in events.iter().filter(|event| event.builder.team() == player) {
+                let name = crate::buildmenu::unit_name(event.unit_type);
+
+                match event.kind {
+                    max_core::ProductionEventKind::Spawned => {
+                        self.hud.push_log(format!("{name} ready"))
+                    }
+                    max_core::ProductionEventKind::BuildingDone => {
+                        self.hud.push_log(format!("{name} built"))
+                    }
+                    max_core::ProductionEventKind::PausedNoGold => {
+                        self.hud.push_log("Production paused: not enough gold")
+                    }
+                    max_core::ProductionEventKind::NoSpawnCell => {
+                        self.hud.push_log("Production: no free cell near the factory")
+                    }
+                }
+            }
+        }
 
         if over {
             let player_team = self.state().player_team;

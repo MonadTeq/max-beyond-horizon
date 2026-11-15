@@ -56,6 +56,133 @@ pub const PATCHES_RES_FALLBACKS: [&str; 2] = [
     "assets/PATCHES.RES",
 ];
 
+/// Имя каталога данных игры в корне поставки (`max-original/`).
+pub const DATA_DIR_NAME: &str = "max-original";
+/// Имя основного архива данных.
+pub const MAX_RES_NAME: &str = "MAX.RES";
+/// Имя палитры.
+pub const COLOR_PAL_NAME: &str = "COLOR.PAL";
+
+/// Корни поиска данных игры в порядке приоритета (дефект **TC-1109**).
+///
+/// Порядок:
+/// 1. каталог [`AppConfig::max_res`] и его родитель (данные рядом с конфигом);
+/// 2. текущий каталог и его родитель (историческое поведение, запуск из `max-rust/`);
+/// 3. каталог запущенного **exe** ([`std::env::current_exe`]) и вверх по дереву
+///    до ближайшего каталога с `max-original` включительно.
+///
+/// Пункт 3 — фикс TC-1109: `release\max_app.exe` (или `target\debug\…` в
+/// checkout'е) находит данные, даже если CWD — чужой каталог.
+pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
+    let cwd = std::env::current_dir().ok();
+    let exe = std::env::current_exe().ok();
+
+    data_search_roots_from(config, cwd.as_deref(), exe.as_deref())
+}
+
+/// [`data_search_roots`] с явными CWD/exe — для тестов с временными каталогами.
+fn data_search_roots_from(
+    config: &AppConfig,
+    cwd: Option<&std::path::Path>,
+    exe: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    let push = |path: PathBuf, roots: &mut Vec<PathBuf>| {
+        if !roots.iter().any(|existing| *existing == path) {
+            roots.push(path);
+        }
+    };
+
+    if let Some(dir) = config.max_res.parent() {
+        push(dir.to_path_buf(), &mut roots);
+        if let Some(parent) = dir.parent() {
+            push(parent.to_path_buf(), &mut roots);
+        }
+    }
+
+    if let Some(cwd) = cwd {
+        push(cwd.to_path_buf(), &mut roots);
+        if let Some(parent) = cwd.parent() {
+            push(parent.to_path_buf(), &mut roots);
+        }
+    }
+
+    if let Some(exe) = exe {
+        for root in exe_search_roots(exe) {
+            push(root, &mut roots);
+        }
+    }
+
+    roots
+}
+
+/// Каталог exe и вверх до ближайшего каталога с `max-original` (включительно).
+///
+/// Если `max-original` рядом нет, остаётся только сам каталог exe: подниматься
+/// выше без признака данных опасно — этим можно случайно найти `assets/`
+/// чужого репозитория (см. тест `absent_everywhere_keeps_the_configured_path`).
+fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let Some(dir) = exe.parent() else {
+        return roots;
+    };
+
+    roots.push(dir.to_path_buf());
+
+    for ancestor in dir.ancestors().skip(1) {
+        if ancestor.join(DATA_DIR_NAME).is_dir() {
+            roots.push(ancestor.to_path_buf());
+            break;
+        }
+    }
+
+    roots
+}
+
+/// Находит `MAX.RES` для **загрузки ассетов**, если путь конфига отсутствует.
+///
+/// Дефект TC-1109: относительный `max-original/MAX.RES` не резолвился при
+/// запуске из другого каталога, хотя данные лежат рядом с exe. Возвращает
+/// выбранный путь и предупреждение (путь конфига при этом не меняется).
+pub fn resolve_max_res(config: &AppConfig) -> (PathBuf, Option<String>) {
+    let configured = &config.max_res;
+
+    if configured.is_file() {
+        return (configured.clone(), None);
+    }
+
+    resolve_max_res_at(config, &data_search_roots(config))
+}
+
+/// [`resolve_max_res`] по заданным корням поиска (для тестов).
+fn resolve_max_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
+    let configured = &config.max_res;
+
+    if configured.is_file() {
+        return (configured.clone(), None);
+    }
+
+    for root in roots {
+        for candidate in [
+            root.join(DATA_DIR_NAME).join(MAX_RES_NAME),
+            root.join(MAX_RES_NAME),
+        ] {
+            if candidate.is_file() {
+                let warning = format!(
+                    "{} не найден; MAX.RES грузится из fallback {} (проверьте --data-dir/--max-res)",
+                    configured.display(),
+                    candidate.display()
+                );
+
+                return (candidate, Some(warning));
+            }
+        }
+    }
+
+    (configured.clone(), None)
+}
+
 /// Находит `PATCHES.RES` для **загрузки ассетов** (SC_*/таблицы, спрайты).
 ///
 /// Хэндшейк (`data_hash`) этот путь не использует: `net.rs` берёт
@@ -63,28 +190,18 @@ pub const PATCHES_RES_FALLBACKS: [&str; 2] = [
 /// `PATCHES.RES` и реальные ассеты могут расходиться. Возвращает выбранный
 /// путь и предупреждение, если сработал fallback.
 pub fn resolve_patches_res(config: &AppConfig) -> (PathBuf, Option<String>) {
+    resolve_patches_res_at(config, &data_search_roots(config))
+}
+
+/// [`resolve_patches_res`] по заданным корням поиска (для тестов).
+fn resolve_patches_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
     let configured = &config.patches_res;
 
     if configured.is_file() {
         return (configured.clone(), None);
     }
 
-    let mut bases: Vec<PathBuf> = Vec::new();
-
-    if let Ok(cwd) = std::env::current_dir() {
-        bases.push(cwd.clone());
-        if let Some(parent) = cwd.parent() {
-            bases.push(parent.to_path_buf());
-        }
-    }
-    if let Some(dir) = config.max_res.parent() {
-        bases.push(dir.to_path_buf());
-        if let Some(parent) = dir.parent() {
-            bases.push(parent.to_path_buf());
-        }
-    }
-
-    for base in &bases {
+    for base in roots {
         for relative in PATCHES_RES_FALLBACKS {
             let candidate = base.join(relative);
 
@@ -110,6 +227,11 @@ pub fn resolve_patches_res(config: &AppConfig) -> (PathBuf, Option<String>) {
 /// `max-original/COLOR.PAL` нерезолвимым, и мир не генерировался. Хэндшейк
 /// `COLOR.PAL` не использует, поэтому подмена безопасна.
 pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
+    resolve_color_pal_at(config, &data_search_roots(config))
+}
+
+/// [`resolve_color_pal`] по заданным корням поиска (для тестов).
+fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
     let configured = &config.color_pal;
 
     if configured.is_file() {
@@ -118,14 +240,9 @@ pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    if let Some(dir) = config.max_res.parent() {
-        candidates.push(dir.join("COLOR.PAL"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("max-original/COLOR.PAL"));
-        if let Some(parent) = cwd.parent() {
-            candidates.push(parent.join("max-original/COLOR.PAL"));
-        }
+    for root in roots {
+        candidates.push(root.join(COLOR_PAL_NAME));
+        candidates.push(root.join(DATA_DIR_NAME).join(COLOR_PAL_NAME));
     }
 
     for candidate in candidates {
@@ -326,6 +443,8 @@ pub struct Assets {
     /// Меню на оригинальных ресурсах (`MAINPIC`/`PLANETSE`/`MULTGAME` +
     /// `BLANK_*`/`MNUBTN*`/`BTNHIDE`), пункт E.
     pub menu: Option<crate::menu::MenuAssets>,
+    /// Экран заказа юнитов/зданий (`FACBUILD`/`CONBUILD` + `BLD*`), P2.
+    pub build_menu: Option<crate::buildmenu::BuildMenuAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -346,8 +465,15 @@ impl Assets {
     /// (путь/имя ресурса). Отсутствующий спрайт — только запись в
     /// [`Self::warnings`].
     pub fn load(config: &AppConfig) -> Result<Self> {
-        let max_res = ResArchive::open(&config.max_res)
-            .with_context(|| format!("не удалось открыть {}", config.max_res.display()))?;
+        // TC-1109: `MAX.RES` тоже ищется от каталога exe/вверх, а не только по
+        // конфигу (запуск `release\max_app.exe` из чужого CWD).
+        let (max_res_path, max_res_warning) = resolve_max_res(config);
+        let max_res = ResArchive::open(&max_res_path).with_context(|| {
+            format!(
+                "не удалось открыть {} (искали также рядом с exe; проверьте --data-dir/--max-res)",
+                max_res_path.display()
+            )
+        })?;
         // Ассеты и data_hash разделены: `config.patches_res` может намеренно
         // отсутствовать (сервер без PATCHES.RES), тогда архив берётся из
         // fallback, а хэш по-прежнему считается по пути хендшейка.
@@ -367,7 +493,7 @@ impl Assets {
         let world_dir = config
             .world_dir
             .clone()
-            .or_else(|| config.max_res.parent().map(std::path::Path::to_path_buf))
+            .or_else(|| max_res_path.parent().map(std::path::Path::to_path_buf))
             .unwrap_or_default();
         let world_file = world_dir.join(format!("{world_name}.WRL"));
         let (world, world_source) = if world_file.is_file() {
@@ -380,16 +506,19 @@ impl Assets {
                 format!(
                     "нет {world_name}.WRL в {} и нет ресурса {world_name} в {}",
                     world_dir.display(),
-                    config.max_res.display()
+                    max_res_path.display()
                 )
             })?;
             let world = WrlMap::parse(bytes)
                 .with_context(|| format!("не удалось разобрать ресурс {world_name}"))?;
-            (world, format!("{}:{world_name}", config.max_res.display()))
+            (world, format!("{}:{world_name}", max_res_path.display()))
         };
 
         let mut warnings = Vec::new();
 
+        if let Some(warning) = max_res_warning {
+            warnings.push(warning);
+        }
         if let Some(warning) = patches_warning {
             warnings.push(warning);
         }
@@ -441,6 +570,14 @@ impl Assets {
         let chrome = crate::chrome::Chrome::load(&max_res);
         let panels = crate::panels::Panels::load(&max_res);
         let menu = crate::menu::MenuAssets::load(&max_res);
+        let build_menu = crate::buildmenu::BuildMenuAssets::load(&max_res);
+
+        if !build_menu.is_ready() {
+            warnings.push(
+                "BuildMenu: FACBUILD/CONBUILD или кнопки BLD* не загрузились — экран на рамках"
+                    .to_string(),
+            );
+        }
 
         if menu.is_none() {
             warnings.push(
@@ -500,6 +637,7 @@ impl Assets {
             chrome,
             panels,
             menu,
+            build_menu: Some(build_menu),
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,
@@ -783,15 +921,114 @@ mod tests {
 
     #[test]
     fn absent_everywhere_keeps_the_configured_path() {
+        // Тест герметичен: с TC-1109 ambient-резолвер ищет ещё и рядом с exe,
+        // а тестовый бинарь лежит внутри checkout'а, где `assets/PATCHES.RES`
+        // реально существует. «Нигде нет» проверяется на пустых корнях.
+        let dir = temp_dir("nowhere");
         let config = AppConfig {
-            max_res: std::path::PathBuf::from("/definitely/missing/MAX.RES"),
-            patches_res: std::path::PathBuf::from("/definitely/missing/PATCHES.RES"),
+            max_res: dir.join("missing/MAX.RES"),
+            patches_res: dir.join("missing/PATCHES.RES"),
+            color_pal: dir.join("missing/COLOR.PAL"),
             ..Default::default()
         };
+        let roots = vec![dir.clone()];
 
-        let (path, warning) = resolve_patches_res(&config);
+        let (path, warning) = resolve_patches_res_at(&config, &roots);
         assert_eq!(path, config.patches_res);
         assert!(warning.is_none());
+
+        let (path, warning) = resolve_max_res_at(&config, &roots);
+        assert_eq!(path, config.max_res);
+        assert!(warning.is_none());
+
+        let (path, warning) = resolve_color_pal_at(&config, &roots);
+        assert_eq!(path, config.color_pal);
+        assert!(warning.is_none());
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// TC-1109: `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` находятся от каталога exe,
+    /// когда CWD — чужой пустой каталог (запуск `release\max_app.exe`).
+    #[test]
+    fn exe_dir_resolves_game_data_when_cwd_is_elsewhere() {
+        let root = temp_dir("exe");
+        let cwd = root.join("cwd");
+        let exe_dir = root.join("release");
+        let data = exe_dir.join(DATA_DIR_NAME);
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&data).expect("data dir");
+        std::fs::create_dir_all(exe_dir.join("assets")).expect("assets dir");
+
+        let max_res = data.join(MAX_RES_NAME);
+        let palette = data.join(COLOR_PAL_NAME);
+        let patches = exe_dir.join("assets/PATCHES.RES");
+        std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
+        std::fs::write(&palette, b"palette").expect("write COLOR.PAL");
+        std::fs::write(&patches, b"RES0").expect("write PATCHES.RES");
+
+        let config = AppConfig {
+            max_res: cwd.join("max-original/MAX.RES"),
+            color_pal: cwd.join("max-original/COLOR.PAL"),
+            patches_res: cwd.join("assets/PATCHES.RES"),
+            ..Default::default()
+        };
+        let exe = exe_dir.join("max_app.exe");
+        let roots = data_search_roots_from(&config, Some(&cwd), Some(&exe));
+
+        let (path, warning) = resolve_max_res_at(&config, &roots);
+        assert_eq!(path, max_res, "MAX.RES от каталога exe");
+        assert!(
+            warning.as_deref().unwrap_or("").contains("MAX.RES"),
+            "предупреждение о подмене: {warning:?}"
+        );
+
+        let (path, warning) = resolve_color_pal_at(&config, &roots);
+        assert_eq!(path, palette, "COLOR.PAL от каталога exe");
+        assert!(warning.is_some());
+
+        let (path, warning) = resolve_patches_res_at(&config, &roots);
+        assert_eq!(path, patches, "PATCHES.RES от каталога exe");
+        assert!(warning.is_some());
+
+        // Конфиг не мутируется: хэндшейк считает путь из `config`.
+        assert_eq!(config.max_res, cwd.join("max-original/MAX.RES"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// TC-1109: если exe лежит глубже (`bin/`), данные ищутся вверх до корня
+    /// с `max-original/` — но не выше него (без находки выше не поднимаемся).
+    #[test]
+    fn exe_ancestors_are_searched_up_to_the_data_root() {
+        let root = temp_dir("exe-up");
+        let bin = root.join("release/bin");
+        let data = root.join(DATA_DIR_NAME);
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::create_dir_all(&data).expect("data dir");
+        std::fs::write(data.join(MAX_RES_NAME), b"RES0").expect("write MAX.RES");
+
+        let exe = bin.join("max_app.exe");
+        let roots = exe_search_roots(&exe);
+
+        assert_eq!(
+            roots.first(),
+            Some(&bin),
+            "первый корень — сам каталог exe"
+        );
+        assert!(
+            roots.iter().any(|candidate| *candidate == root),
+            "корень с max-original должен войти в поиск: {roots:?}"
+        );
+
+        let config = AppConfig {
+            max_res: bin.join("max-original/MAX.RES"),
+            ..Default::default()
+        };
+        let (path, _) = resolve_max_res_at(&config, &roots);
+        assert_eq!(path, data.join(MAX_RES_NAME));
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -443,3 +443,65 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     // (`StartExplosion` спавнит `HITEXPLD` с `team` погибшего), поэтому
     // проверяем только отсутствие самих обломков.
 }
+
+/// P2: ИИ доводит заказ до юнита через `ProductionManager`, а не мгновенным
+/// спавном — очередь строителя тикает в конце хода
+/// (`GameManager_ProgressBuildState`).
+///
+/// Ход проигрывается явно (`progress_build_state` после `Ai_BeginTurn`), потому
+/// что «голая» база без армии закрывает партию generic-условиями
+/// (`SC_L0002`) и `finish_turn` до производства не доходит.
+#[test]
+fn ai_completes_a_build_queue_through_production() {
+    let mut state = computer_state();
+    // Золото команды: производство списывает ставку C++ за ход.
+    state.team_units[TeamId::RED.0 as usize].set_gold(500);
+    put_ore(&mut state, Point::new(12, 11), 20);
+    put_ore(&mut state, Point::new(13, 11), 20);
+
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+    assert!(max_core::ai_setup_strategy(&mut state, TeamId::RED));
+
+    let mut built = None;
+    let mut saw_queue = false;
+
+    for _ in 0..26 {
+        state.manage_economy(TeamId::RED);
+        state.ai_begin_turn(TeamId::RED);
+
+        for _ in 0..24 {
+            state.tick();
+        }
+
+        // Ход производства команды (C++ `GameManager_ProgressBuildState`).
+        max_core::production::progress_build_state(&mut state, TeamId::RED);
+
+        if let Some(unit) = state.unit(constructor) {
+            if !unit.build_list.is_empty() {
+                saw_queue = true;
+            }
+        }
+
+        built = state.unit_ids_in_order().into_iter().find(|id| {
+            state.unit(*id).is_some_and(|unit| {
+                unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation
+            })
+        });
+
+        if built.is_some() {
+            break;
+        }
+    }
+
+    assert!(
+        saw_queue || built.is_some(),
+        "ИИ обязан держать очередь постройки (build_list) у строителя"
+    );
+    assert!(
+        built.is_some(),
+        "ИИ должен достроить шахту через очередь производства (12 ходов)"
+    );
+}
+

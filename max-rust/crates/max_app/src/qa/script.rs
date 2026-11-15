@@ -167,7 +167,7 @@ impl PhaseName {
 }
 
 /// Проверка состояния в `assert`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Assertion {
     /// `assert turn=N` / `turn>=N`: счётчик хода.
     Turn(Cmp, i32),
@@ -187,6 +187,11 @@ pub enum Assertion {
     Defeat,
     /// `assert selected`: выделен подвижный юнит игрока.
     Selected,
+    /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
+    BuildOpen(bool),
+    /// `assert unit=NAME`: у игрока есть юнит с таким именем (P2: юнит/здание
+    /// появились после ходов производства).
+    UnitType(String),
     /// `assert digest=HEX`: CRC16 снапшота состояния (`App::digest`).
     Digest(u16),
 }
@@ -229,6 +234,31 @@ pub enum MobilizeAction {
     /// `done` — `Done` (закрыть мобилизацию).
     Done,
     /// `cancel` — `Cancel`.
+    Cancel,
+}
+
+/// Действие экрана `BuildMenu` (P2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildCommand {
+    /// `open` — открыть меню для выделенного строителя (клавиша `B`).
+    Open,
+    /// `select N` — выбрать строку списка.
+    Select(u32),
+    /// `add` — `Build` завода: добавить выбранный тип в очередь.
+    Add,
+    /// `delete` — `Delete`: убрать выбранный элемент очереди.
+    Delete,
+    /// `rate N` — скорость 1/2/4.
+    Rate(u16),
+    /// `repeat` — кнопка `Repeat` (только завод).
+    Repeat,
+    /// `step N` — стрелки списка (N > 0 — вниз).
+    Step(i32),
+    /// `queue step N` — стрелки очереди.
+    QueueStep(i32),
+    /// `done` — `Done`/Enter: заказ (`Build()`).
+    Done,
+    /// `cancel` — `Cancel`/Esc: закрыть без заказа.
     Cancel,
 }
 
@@ -285,6 +315,13 @@ pub enum Command {
     Select(i32, i32),
     /// `select unit N` — левый клик по N-му подвижному юниту игрока.
     SelectUnit(u32),
+    /// `select last` — клик по самому новому юниту игрока (например, только что
+    /// достроенному заводу — он не «подвижный», поэтому `select unit` не
+    /// подходит).
+    SelectLast,
+    /// `select type NAME` — клик по юниту игрока с таким именем (`BuildMenu`
+    /// показывает те же имена: «Training Hall», «Mining Station», …).
+    SelectType(String),
     /// `move X Y` — правый клик по точке кадра + проверка приказа.
     Move(i32, i32),
     /// `move grid X Y` — правый клик по клетке карты.
@@ -297,6 +334,8 @@ pub enum Command {
     Mobilize(MobilizeAction),
     /// `landing click X Y|grid X Y|done|cancel`.
     Landing(LandingCommand),
+    /// `build open|select N|add|delete|rate N|repeat|step N|queue step N|done|cancel`.
+    Build(BuildCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -391,6 +430,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "move" => parse_move(rest),
         "mobilize" | "cargo" => parse_mobilize(rest),
         "landing" => parse_landing(rest),
+        "build" => parse_build(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -625,6 +665,14 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 Ok(Assertion::Notice(Some(parse_team(value)?)))
             }
         }
+        "build" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::BuildOpen(true)),
+            "closed" | "none" => Ok(Assertion::BuildOpen(false)),
+            other => Err(format!(
+                "assert build: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "unit" => Ok(Assertion::UnitType(value.to_string())),
         "digest" => {
             let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
@@ -760,6 +808,43 @@ fn parse_landing(rest: &str) -> Result<Command, String> {
     Ok(Command::Landing(command))
 }
 
+fn parse_build(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err("build: ожидалось действие (open|select N|add|delete|rate N|repeat|step N|queue step N|done|cancel)".to_string());
+    };
+
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("open", [_]) => BuildCommand::Open,
+        ("select", [_, index]) => BuildCommand::Select(parse_u32(index, "build select")?),
+        ("add", [_]) => BuildCommand::Add,
+        ("delete", [_]) => BuildCommand::Delete,
+        ("rate", [_, rate]) => {
+            let rate = parse_u32(rate, "build rate")?;
+
+            if ![1, 2, 4].contains(&rate) {
+                return Err(format!("build rate: скорость {rate} не из 1/2/4"));
+            }
+
+            BuildCommand::Rate(rate as u16)
+        }
+        ("repeat", [_]) => BuildCommand::Repeat,
+        ("step", [_, delta]) => BuildCommand::Step(parse_i32(delta, "build step")?),
+        ("queue", [_, step, delta]) if step.eq_ignore_ascii_case("step") => {
+            BuildCommand::QueueStep(parse_i32(delta, "build queue step")?)
+        }
+        ("done", [_]) => BuildCommand::Done,
+        ("cancel", [_]) => BuildCommand::Cancel,
+        _ => {
+            return Err(format!(
+                "build: неизвестное действие «{rest}» (open|select N|add|delete|rate N|repeat|step N|queue step N|done|cancel)"
+            ))
+        }
+    };
+
+    Ok(Command::Build(command))
+}
+
 fn parse_select(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
@@ -771,6 +856,31 @@ fn parse_select(rest: &str) -> Result<Command, String> {
         }
 
         return Ok(Command::SelectUnit(parse_u32(parts[1], "select unit")?));
+    }
+
+    if parts.first().is_some_and(|part| part.eq_ignore_ascii_case("last")) {
+        if parts.len() != 1 {
+            return Err(format!("select last: лишние аргументы «{rest}»"));
+        }
+
+        return Ok(Command::SelectLast);
+    }
+
+    if parts
+        .first()
+        .is_some_and(|part| part.eq_ignore_ascii_case("type"))
+    {
+        let name = rest
+            .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+            .trim();
+
+        if name.is_empty() {
+            return Err(format!(
+                "select type: ожидалось «select type NAME», получено «{rest}»"
+            ));
+        }
+
+        return Ok(Command::SelectType(name.to_string()));
     }
 
     let (x, y) = parse_point(rest)?;

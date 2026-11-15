@@ -1,0 +1,111 @@
+# production.qa — производство/строительство (P2, слой 2 QA).
+#
+# Путь игрока целиком: главное меню → Options → Planet → Players (RED — человек,
+# GREEN — компьютер) → мобилизация без покупок (150 кредитов остаются на
+# производство) → высадка → выделение конструктора → BuildMenu → заказ
+# Training Hall (10 ходов) → здание появляется → выделение завода →
+# BuildMenu завода → заказ Infantry (2 хода) → юнит появляется.
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/production.qa qa-out/production
+#
+# Что проверяется:
+# * `BuildMenu` открывается для конструктора и показывает список зданий
+#   (`CONBUILD`, 15 строк `max_builder_capability_list[CONSTRCT]`);
+# * заказ уходит `Command::Order` с `PayloadP4` и строится 10 ходов
+#   (`ATTRIB_TURNS` TRAINHAL), золото списывается по ставке C++
+#   (`Cargo_GetRawConsumptionRate(CONSTRCT, 1) = 2` за ход);
+# * построенное здание появляется в конце хода (`SpawnNewUnit`) и его видно
+#   ассертом `assert unit=Training Hall`;
+# * завод строит пехоту 2 хода (`ATTRIB_TURNS` INFANTRY) и юнит появляется.
+
+# --- Главное меню ---------------------------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+# --- Options --------------------------------------------------------------
+# No Limit + Turn Based: ходы воспроизводимы без настенных часов.
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+shot planet
+setup done
+assert screen=Players
+
+# --- Players --------------------------------------------------------------
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+shot players
+setup done
+
+# --- Мобилизация ----------------------------------------------------------
+# Ничего не покупаем: 150 кредитов — бюджет производства.
+assert screen=Mobilize
+shot mobilize
+mobilize done
+assert screen=Landing
+
+# --- Высадка --------------------------------------------------------------
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- BuildMenu конструктора ---------------------------------------------
+# Конструктор из загрузки SC_L0001 (порядок в списке юнитов зависит от
+# развёртывания базы, поэтому выбираем по имени).
+select type Constructor
+assert selected
+build open
+assert build=open
+shot buildmenu
+# TRAINHAL — 14-я строка списка CONSTRCT (индекс 13, порядок Lua-таблицы).
+build select 13
+build done
+assert build=closed
+shot build-ordered
+
+# --- 10 ходов постройки (ATTRIB_TURNS TRAINHAL) --------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert unit=Training Hall
+assert build=closed
+
+# --- BuildMenu завода: очередь и заказ пехоты ----------------------------
+# Завод — стационарный юнит: `select unit` его не видит, выбираем по имени.
+select type Training Hall
+assert unit=Training Hall
+build open
+assert build=open
+shot buildmenu-factory
+# Список TRAINHAL = [COMMANDO, INFANTRY]: выбираем пехоту (индекс 1).
+build select 1
+build add
+build done
+assert build=closed
+
+# --- 2 хода постройки (ATTRIB_TURNS INFANTRY) ----------------------------
+end_turn
+end_turn
+assert unit=Infantry
+shot production-done
+
+# Итог: партия продолжается, производство не сломало цикл хода.
+assert screen=InGame
+assert turn>=12

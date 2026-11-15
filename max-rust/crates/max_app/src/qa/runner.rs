@@ -34,8 +34,8 @@ use crate::mobilize::{
 };
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
-    self, Assertion, Command, LandingCommand, MenuTarget, MobilizeAction, PhaseName, ScreenName,
-    SetupAction, Step,
+    self, Assertion, BuildCommand, Command, LandingCommand, MenuTarget, MobilizeAction, PhaseName,
+    ScreenName, SetupAction, Step,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -357,7 +357,7 @@ impl QaRunner {
                 Ok(Flow::Continue)
             }
             Command::Shot(name) => self.shot(name),
-            Command::Assert(assertion) => self.check(*assertion),
+            Command::Assert(assertion) => self.check(assertion.clone()),
             Command::Save(name) => self.save(name),
             Command::Load(name) => self.load(name),
             Command::Exit => Ok(Flow::Exit),
@@ -366,13 +366,128 @@ impl QaRunner {
             Command::Players { slot, kind } => self.players(*slot, *kind),
             Command::Select(x, y) => self.select_point(*x, *y),
             Command::SelectUnit(index) => self.select_unit(*index),
+            Command::SelectLast => self.select_last(),
+            Command::SelectType(name) => self.select_type(name),
             Command::Move(x, y) => self.move_point(*x, *y, &format!("move {x} {y}")),
             Command::MoveGrid(x, y) => self.move_grid(*x, *y),
             Command::MoveNear => self.move_near(),
             Command::EndTurn => self.end_turn(),
             Command::Mobilize(action) => self.mobilize(*action),
             Command::Landing(action) => self.landing(*action),
+            Command::Build(action) => self.build(*action),
         }
+    }
+
+    /// `build …`: экран `BuildMenu` (P2) — те же действия, что у игрока
+    /// (клавиша `B`, клики по строкам списка, кнопки Build/Delete/Done).
+    fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {
+        let app = &mut self.app;
+
+        let detail = match action {
+            BuildCommand::Open => {
+                if !app.open_build_menu() {
+                    return Err(
+                        "build open: выделенный юнит не строитель (нужен CONSTRCT/ENGINEER/завод)"
+                            .to_string(),
+                    );
+                }
+                "меню открыто".to_string()
+            }
+            BuildCommand::Select(index) => {
+                let Some(menu) = app.build_menu() else {
+                    return Err("build select: меню не открыто".to_string());
+                };
+
+                if index as usize >= menu.unit_types.len() {
+                    return Err(format!(
+                        "build select {index}: в списке {} типов",
+                        menu.unit_types.len()
+                    ));
+                }
+
+                let name = crate::buildmenu::unit_name(menu.unit_types[index as usize]).to_string();
+                app.build_menu_select(index as usize);
+                format!("выбран {name}")
+            }
+            BuildCommand::Add => {
+                if app.build_menu().is_none() {
+                    return Err("build add: меню не открыто".to_string());
+                }
+
+                if !app.build_menu_add() {
+                    return Err("build add: тип не добавлен в очередь".to_string());
+                }
+
+                format!("очередь: {}", app.build_menu_queue().len())
+            }
+            BuildCommand::Delete => {
+                if !app.build_menu_delete() {
+                    return Err("build delete: очередь пуста".to_string());
+                }
+
+                format!("очередь: {}", app.build_menu_queue().len())
+            }
+            BuildCommand::Rate(rate) => {
+                if !app.build_menu_set_rate(rate) {
+                    let status = app
+                        .build_menu()
+                        .map(|menu| menu.status.clone())
+                        .unwrap_or_default();
+                    return Err(format!("build rate {rate}: {status}"));
+                }
+
+                format!("{rate}x")
+            }
+            BuildCommand::Repeat => {
+                if !app.build_menu_toggle_repeat() {
+                    return Err("build repeat: повтор только у завода".to_string());
+                }
+
+                "repeat переключён".to_string()
+            }
+            BuildCommand::Step(delta) => {
+                for _ in 0..delta.unsigned_abs() {
+                    app.build_menu_step(delta > 0);
+                }
+
+                format!("шаг {delta}")
+            }
+            BuildCommand::QueueStep(delta) => {
+                for _ in 0..delta.unsigned_abs() {
+                    app.build_menu_queue_step(delta > 0);
+                }
+
+                format!("очередь, шаг {delta}")
+            }
+            BuildCommand::Done => {
+                if app.build_menu().is_none() {
+                    return Err("build done: меню не открыто".to_string());
+                }
+
+                let line = app.commit_build_menu(false);
+
+                if app.build_menu().is_some() {
+                    return Err(format!(
+                        "build done: заказ не принят ({})",
+                        line.unwrap_or_default()
+                    ));
+                }
+
+                line.unwrap_or_else(|| "заказ принят".to_string())
+            }
+            BuildCommand::Cancel => {
+                if app.build_menu().is_none() {
+                    return Err("build cancel: меню не открыто".to_string());
+                }
+
+                app.close_build_menu();
+                "меню закрыто".to_string()
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
     }
 
     /// `mobilize …`: действия на экране `CargoMenu` через те же клики, что у
@@ -803,8 +918,74 @@ impl QaRunner {
         self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
     }
 
-    fn require_selection(&mut self, what: &str) -> Result<Flow, String> {
+    /// `select last`: самый новый юнит игрока (в т.ч. стационарный — только что
+    /// достроенный завод). Камера центрируется, клик идёт по клетке.
+    fn select_last(&mut self) -> Result<Flow, String> {
         let team = self.app.player_team();
+        let id = self
+            .app
+            .state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|id| {
+                self.app
+                    .state()
+                    .unit(*id)
+                    .is_some_and(|unit| unit.team == team)
+            })
+            .next_back()
+            .ok_or_else(|| format!("select last: у команды {team:?} нет юнитов"))?;
+
+        let grid = self
+            .app
+            .state()
+            .unit(id)
+            .map(|unit| unit.grid)
+            .ok_or_else(|| "select last: юнит исчез".to_string())?;
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
+
+        self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
+    }
+
+    /// `select type NAME`: юнит игрока с таким именем (`unit_name` из
+    /// `BuildMenu`, без учёта регистра). Берётся самый новый подходящий.
+    fn select_type(&mut self, name: &str) -> Result<Flow, String> {
+        let team = self.app.player_team();
+        let wanted = name.trim().to_ascii_lowercase();
+        let id = self
+            .app
+            .state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|id| {
+                self.app.state().unit(*id).is_some_and(|unit| {
+                    unit.team == team
+                        && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
+                            == wanted
+                            || format!("{:?}", unit.unit_type).to_ascii_lowercase() == wanted)
+                })
+            })
+            .next_back()
+            .ok_or_else(|| format!("select type {name}: у команды {team:?} нет такого юнита"))?;
+
+        let grid = self
+            .app
+            .state()
+            .unit(id)
+            .map(|unit| unit.grid)
+            .ok_or_else(|| "select type: юнит исчез".to_string())?;
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
+
+        self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
+    }
+
+    fn require_selection(&mut self, what: &str) -> Result<Flow, String> {        let team = self.app.player_team();
         let selected = self.app.hud().selected;
 
         match selected.and_then(|id| self.app.state().unit(id)) {
@@ -1151,8 +1332,37 @@ impl QaRunner {
                     )),
                 }
             }
-            Assertion::Selected => {
+            Assertion::BuildOpen(expected) => {
+                let actual = self.app.build_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("build={}", if expected { "open" } else { "closed" }),
+                    format!("build={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::UnitType(name) => {
                 let team = self.app.player_team();
+                let wanted = name.trim().to_ascii_lowercase();
+                let found = self.app.state().unit_ids_in_order().into_iter().any(|id| {
+                    self.app.state().unit(id).is_some_and(|unit| {
+                        unit.team == team
+                            && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
+                                == wanted
+                                || format!("{:?}", unit.unit_type).to_ascii_lowercase() == wanted)
+                    })
+                });
+
+                self.expect(
+                    found,
+                    format!("unit={name}"),
+                    format!(
+                        "юнита «{name}» у команды {team:?} {}",
+                        if found { "есть" } else { "нет" }
+                    ),
+                )
+            }
+            Assertion::Selected => {                let team = self.app.player_team();
                 let selected = self
                     .app
                     .hud()

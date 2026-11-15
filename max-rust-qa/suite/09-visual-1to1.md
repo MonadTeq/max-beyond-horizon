@@ -27,5 +27,6 @@
 | TC-0921 | Центровка знака `?` | кнопка `MNUBTN5` 48×40 | `x = ulx + (48 − (Text_GetWidth+1))/2 = 484`, `y = uly + (40−16)/2 = 450` — как `Button::SetCaption`; сверено с оракульным кадром C++ | ✅ UNIT menu; сверка с C++ |
 | TC-0922 | Экран мобилизации | после `Players` Done | `CARGOPIC`, список 15 юнитов с ценами, списки Purchased/Available, `Buy/Delete/Cancel/Done` | ✅ golden mobilize.png; QA sp-full |
 | TC-0923 | Экран выбора точки высадки | после мобилизации | карта 112×112 в `MAIN_MAP` (4 px/клетка), курсор 4×4, рамка «Select starting location.», `Cancel/Done` | ✅ golden landing.png; QA sp-full |
+| TC-0924 | Экран BuildMenu | выделить конструктора/завод → `B` | `CONBUILD`/`FACBUILD` 640×480, список 483,60 (115×369, строки 32 px = 11), очередь завода 337,60 (116×220 = 6), кнопки `BLDBLD/2X/4X/ONE/CAN/UP__/DWN/DEL/REP` по координатам C++, портрет-спрайт 2×, цифры ходов/цены | ✅ golden `golden/production/buildmenu*.png`; QA production.qa |
 
-Итог: 23 TC, ✅ 21, 🟡 1, ⬜ 1.
+Итог: 24 TC, ✅ 22, 🟡 1, ⬜ 1.

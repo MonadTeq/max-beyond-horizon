@@ -11,7 +11,9 @@ max-rust-qa/
 ├── scripts/hs-2.qa             # hot-seat на двоих: окна «Begin turn», 2+ раунда, чередование команд
 ├── scripts/visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
 ├── scripts/victory.qa          # партия до исхода «победа» + экран победы
+├── scripts/production.qa       # P2: конструктор → BuildMenu → TRAINHAL за 10 ходов → завод → INFANTRY
 ├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~980 КиБ)
+├── golden/production/*.png     # эталон BuildMenu (production.qa)
 └── scripts/README.md
 ```
 
@@ -79,6 +81,16 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `landing cancel` | `Esc` — отменить выбор → назад на `Players` |
 | `select X Y` | левый клик + проверка, что выделен юнит **своей** команды |
 | `select unit N` | левый клик по N-му **подвижному** юниту игрока (камера центрируется на нём) |
+| `select last` | левый клик по самому новому юниту игрока (в т.ч. стационарный завод) |
+| `select type NAME` | клик по юниту игрока с именем из `BuildMenu` («Training Hall», «Tank», …) |
+| `build open` | открыть `BuildMenu` для выделенного строителя/завода (клавиша `B`) |
+| `build select N` | выбрать строку списка доступного |
+| `build add` / `build delete` | `Build` (в очередь) / `Delete` завода |
+| `build rate 1\|2\|4` | кнопки скорости 1×/2×/4× |
+| `build repeat` | кнопка `Repeat` завода |
+| `build step N` / `build queue step N` | стрелки списка / очереди (N > 0 — вниз) |
+| `build done` | `Done`/Enter — заказ (`PayloadP4`, пакет 08) |
+| `build cancel` | `Cancel`/Esc — закрыть без заказа |
 | `move X Y` | правый клик + проверка, что приказ движения принят |
 | `move grid X Y` | то же по клетке карты (0..111), если она видна в области карты |
 | `move near` | приказ в соседнюю свободную клетку выделенного юнита (перебор 8 направлений) |
@@ -102,6 +114,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
 | `assert selected` | выделен подвижный юнит игрока |
 | `assert digest=0xBEEF` | CRC16 снапшота состояния (`App::digest`) |
+| `assert build=open` / `build=closed` | открыт ли `BuildMenu` (P2) |
+| `assert unit=NAME` | у игрока есть юнит с именем из `BuildMenu` («Training Hall», «Infantry», …) |
 
 При падении в `log.txt` пишется строка шага и **фактическое** значение
 (`assert turn=3: фактически turn=1`), прогон останавливается, `qa_run` → exit 1.
@@ -114,6 +128,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → фазы старта для GREEN и RED по очереди (мобилизация + высадка) → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (64 шага, 14 кадров) |
 | `visual-screens.qa` | 10 экранов только с `shot` (main menu, options, planet, players, mobilize, landing, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (45 шагов, 10 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
+| `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL (10 ходов) → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -176,7 +191,9 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 ```
 
 `set -e` + exit 1 у `qa_run`/`qa_golden_check` = красный CI. Каталог `qa-out/`

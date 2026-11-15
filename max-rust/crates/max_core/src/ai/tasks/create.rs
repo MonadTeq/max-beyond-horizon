@@ -52,11 +52,16 @@ use super::{create_building_state, create_unit_state, TaskCtx, TaskKind};
 /// `Builder_GetBuilderType(team, unit_type)` — тип юнита, которым строят
 /// (`builder.cpp`).
 ///
-/// В C++ перебирает `Builder_GetBuildableUnits(team, …)` и возвращает первый
-/// доступный тип строителя; в max_core выбор детерминированно выводится из
-/// класса юнита: здания строит `CONSTRCT`, мобильные юниты — соответствующий
-/// завод.
+/// P2: сначала точная таблица `max_builder_capability_list` из
+/// `default.game_rules.lua` ([`crate::production::builder_type`]) — она задаёт
+/// и `LIGHTPLT` для `SCOUT`/`REPAIR`, и `TRAINHAL` для `INFANTRY`/`COMMANDO`,
+/// и `SHIPYARD`/`AIRPLT` для флота/авиации. Fallback по классу юнита — для
+/// типов вне таблицы (aliens, ракеты, обломки).
 pub fn builder_type_for(unit_type: UnitType) -> UnitType {
+    if let Some(builder) = crate::production::builder_type(unit_type) {
+        return builder;
+    }
+
     let flags = crate::access::unit_type_flags(unit_type);
 
     if flags & unit_flags::STATIONARY != 0 {
@@ -75,10 +80,11 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
 }
 
 /// `BuildMenu_GetTurnsToBuild(unit_type, team)` — ходы на постройку.
+///
+/// P2: единая формула с `BuildMenu` (`max_core::production::turns_to_build`,
+/// включая множитель сложности для компьютера).
 pub fn turns_to_build(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> i32 {
-    world.team_units[team.0 as usize]
-        .current_unit_values(unit_type as u16)
-        .get_attribute(crate::unit_values::ATTRIB_TURNS)
+    crate::production::turns_to_build(world, team, unit_type)
 }
 
 /// Материалы команды (сумма по комплексам). `None` — комплексов нет.

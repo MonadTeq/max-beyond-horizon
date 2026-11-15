@@ -192,6 +192,9 @@ pub struct GameState {
     pub live_attacks: Vec<LiveAttack>,
     /// `UnitsManager_DelayedReactionsPending` (флаг для сети/ИИ).
     pub delayed_reactions_pending: bool,
+    /// События последнего хода производства (`GameManager_ProgressBuildState`):
+    /// что выпущено/прервано. Не входит в дайджест — это отчёт для UI/QA.
+    pub production_events: Vec<crate::production::ProductionEvent>,
     /// `UnitsManager_TeamInfo[*].finished_turn` дублируется в `teams`; здесь —
     /// счётчики барьеров, чтобы состояние было самодостаточным.
     pub turn_indices: [u8; TEAM_SLOTS],
@@ -308,6 +311,7 @@ impl GameState {
             unit_events: Vec::new(),
             live_attacks: Vec::new(),
             delayed_reactions_pending: false,
+            production_events: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -1764,7 +1768,30 @@ impl GameState {
 
         self.update_score_graph();
         self.turn_counter += 1;
+
+        // `GameManager_ManageEconomy` → `GameManager_ProgressBuildState` для
+        // каждой играющей команды в порядке RED..GRAY (C++ `UpdateGui`): ход
+        // производства идёт сразу после смены хода, до ходов ИИ/игрока.
+        // Порядок вызовов 1:1: списание стоимости хода → `SpawnNewUnits`
+        // (`GroundCover → MobileLandSea → Stationary → MobileAir`).
+        self.production_events.clear();
+
+        for team in 0..PLAYER_TEAM_COUNT {
+            let kind = self.teams[team].team_type;
+            if kind == TeamKind::None || kind == TeamKind::Eliminated {
+                continue;
+            }
+
+            let events = crate::production::progress_build_state(self, TeamId(team as u8));
+            self.production_events.extend(events);
+        }
+
         false
+    }
+
+    /// Забирает события последнего хода производства (для HUD-лога).
+    pub fn take_production_events(&mut self) -> Vec<crate::production::ProductionEvent> {
+        std::mem::take(&mut self.production_events)
     }
 
     // -----------------------------------------------------------------------

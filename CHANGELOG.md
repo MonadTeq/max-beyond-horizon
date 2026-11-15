@@ -2,6 +2,60 @@
 
 ### Добавлено
 
+- **P2 — производство и строительство** (`docs/development/PLAN-production.md`):
+  - `max_core::production` — порт `buildmenu.cpp`/`unitinfo.cpp`/`game_manager.cpp`:
+    таблица `max_builder_capability_list` из `default.game_rules.lua`
+    (`BUILDABLE`: 7 строителей, 45 типов), `turns_to_build`
+    (`BuildMenu_GetTurnsToBuild` с множителем сложности ИИ), `cost_per_turn`
+    (`Cargo_GetRawConsumptionRate`), `max_possible_build_rate` (1×/2×/4×,
+    `buildmenu.cpp:729` 1:1), `ProductionManager` (queue/enqueue/commit/
+    cancel/progress/`SpawnNewUnit`), площадка `find_build_site` и свободная
+    клетка выпуска (детерминированный обход).
+  - Экономика: за ход списывается ставка C++ с **золота команды** (сырьё
+    комплексов — TODO(P3)); при 1× суммарная стоимость = `Cargo_GetRawConsumptionRate
+    (builder, 1) × ATTRIB_TURNS` (= `GetNormalRateBuildCost`/`CargoMenu::BuyUnit`).
+    Нехватка золота ставит постройку на паузу, заказ не теряется; отмена —
+    `CancelBuilding` (очередь очищается, `build_time = 0`).
+  - `GameState::finish_turn` теперь выполняет ход производства для играющих
+    команд в порядке `RED..GRAY`: списание (`ManageEconomy`) → спавн по спискам
+    `GroundCover → MobileLandSea → Stationary → MobileAir`
+    (`GameManager_ProgressBuildState`). События — `GameState::take_production_events`
+    (журнал HUD).
+  - `max_app::buildmenu` — экран `BuildMenu` 1:1: фон `FACBUILD`/`CONBUILD`
+    (640×480), списки 483,60 (11×32) и очередь завода 337,60 (6×32), кнопки
+    `BLDBLD`/`BLD2X`/`BLD4X`/`BLDONE`/`BLDCAN`/`BLDUP__U`/`BLDDWN_U`/
+    `BLDDEL_U`/`BLDREP_U`/`BLDDES_U` по координатам C++, портрет-спрайт,
+    цифры «ходов/цены». Клавиша `B` открывает экран для выделенного
+    конструктора/инженера/завода; экран модален (`GameManager_DisableMainMenu`).
+    Заказ уходит `Command::Order` с `PayloadP4` (пакет 08) — та же схема, что в
+    сети (`build_list`, `build_time`, `build_rate`, `repeat_build`).
+  - ИИ: `builder_type_for`/`turns_to_build` делегируют в `production` (единая
+    таблица `max_builder_capability_list`), очередь ИИ теперь доходит до спавна.
+  - Тесты: `max_core/tests/production.rs` (13 тестов: таблицы, цены, очередь
+    за N ходов, ускорение 2×, отмена, пауза без золота, детерминизм,
+    `finish_turn`), `max_app/src/buildmenu.rs` (unit), AI-тест
+    `ai_completes_a_build_queue_through_production`.
+  - QA: новые команды `build open|select N|add|delete|rate N|repeat|step N|
+    queue step N|done|cancel`, `select last`, `select type NAME`,
+    `assert build=open|closed`, `assert unit=NAME`; сценарий
+    `max-rust-qa/scripts/production.qa` (конструктор → BuildMenu → TRAINHAL за
+    10 ходов → завод → INFANTRY за 2 хода), golden-кадр
+    `max-rust-qa/golden/production/buildmenu.png`, прогоны в `ci.sh` и
+    `.github/workflows/ci.yml`.
+
+### Исправлено
+
+- **TC-1109 — поиск данных игры от каталога exe**: `max_app::assets` получил
+  общий порядок корней (`data_search_roots`): каталог `MAX.RES` и его родитель →
+  текущий каталог и его родитель → каталог запущенного exe
+  (`std::env::current_exe`) и вверх по дереву до ближайшего каталога с
+  `max-original`. Резолверы `resolve_max_res` (новый), `resolve_patches_res`,
+  `resolve_color_pal` ходят по этому списку; запуск `release\max_app.exe` из
+  чужого CWD находит данные, а ошибка `MAX.RES` теперь подсказывает
+  `--data-dir/--max-res`. Тесты: `assets::tests::exe_dir_resolves_game_data_when_cwd_is_elsewhere`,
+  `exe_ancestors_are_searched_up_to_the_data_root`; `absent_everywhere…`
+  сделан герметичным (пустые корни).
+
 - **Фазы старта партии M-SP (порт `GameManager_PlayerMissionSetup`)**: после
   экрана `Players` партия больше не начинается сразу — человека ждут две фазы
   оригинала, для каждой человеческой команды в порядке C++ (убывание слота):

@@ -35,6 +35,7 @@
 
 pub mod assets;
 pub mod audio;
+pub mod buildmenu;
 pub mod chrome;
 pub mod cursor;
 pub mod hotseat;
@@ -75,10 +76,12 @@ use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
 
 pub use assets::{
-    resolve_color_pal, resolve_patches_res, Assets, AssetsReport, LoadedSprite, SpriteInfo,
+    data_search_roots, resolve_color_pal, resolve_max_res, resolve_patches_res, Assets,
+    AssetsReport, LoadedSprite, SpriteInfo, COLOR_PAL_NAME, DATA_DIR_NAME, MAX_RES_NAME,
     PATCHES_RES_FALLBACKS, PLANET_GROUP_PICTURES, UNIT_SPRITES, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
+pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hud::{
     build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
@@ -482,6 +485,8 @@ pub struct App {
     hud: hud::HudState,
     /// Состояние локальной партии M-SP (`None` — сети/демо/меню).
     pub(crate) local: Option<local::LocalGame>,
+    /// Открытый `BuildMenu` (P2). В снапшот/CRC не входит — это UI.
+    build_menu: Option<buildmenu::BuildMenu>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
@@ -503,6 +508,7 @@ impl App {
             applied_commands: 0,
             hud: hud::HudState::new(),
             local: None,
+            build_menu: None,
             visual_units: std::collections::HashMap::new(),
         }
     }
@@ -525,6 +531,42 @@ impl App {
     /// Изменяемое состояние партии.
     pub fn state_mut(&mut self) -> &mut GameState {
         &mut self.state
+    }
+
+    /// Открытый `BuildMenu` (P2); `None` — экран закрыт.
+    pub fn build_menu(&self) -> Option<&buildmenu::BuildMenu> {
+        self.build_menu.as_ref()
+    }
+
+    /// Открытый `BuildMenu` для ввода (изменяемый).
+    pub fn build_menu_mut(&mut self) -> Option<&mut buildmenu::BuildMenu> {
+        self.build_menu.as_mut()
+    }
+
+    /// Открывает `BuildMenu` для выделенного юнита — кнопка `Build` в C++
+    /// (`GameManager_MenuClickBuildButton` → `BuildMenu_Menu`).
+    ///
+    /// `false`, если юнит не выделен или не умеет строить.
+    pub fn open_build_menu(&mut self) -> bool {
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+
+        let Some(menu) = buildmenu::BuildMenu::new(&self.state, id) else {
+            return false;
+        };
+
+        if menu.team != self.state.player_team {
+            return false;
+        }
+
+        self.build_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает `BuildMenu` (Esc/`Cancel`/после заказа).
+    pub fn close_build_menu(&mut self) {
+        self.build_menu = None;
     }
 
     /// Ассеты игры (`None` до [`App::init_assets`]).
