@@ -67,7 +67,23 @@ impl App {
         let mut frame = RgbaBuffer::filled(width, height, style.unknown);
         let mut stats = RenderStats::default();
 
-        stats.map_tiles = render_map_into(&mut frame, &self.state().map, self.viewport(), &style);
+        // Поверхность: если загружены данные планеты — настоящие тайлы 64×64 из
+        // `.WRL` (как в оригинале), иначе процедурная заглушка `TileStyle`.
+        match self.assets() {
+            Some(assets) if !assets.terrain.is_empty() => {
+                stats.map_tiles = assets.terrain.render_into(&mut frame, self.viewport());
+                max_render::map_render::render_resources_into(
+                    &mut frame,
+                    &self.state().map,
+                    self.viewport(),
+                    &style,
+                );
+            }
+            _ => {
+                stats.map_tiles =
+                    render_map_into(&mut frame, &self.state().map, self.viewport(), &style);
+            }
+        }
 
         // Юниты: только видимые камере и локальному игроку; порядок — по `y`.
         let mut positions = Vec::new();

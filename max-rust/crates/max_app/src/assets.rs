@@ -145,8 +145,42 @@ pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
 ///
 /// Формат: `(тип, имя спрайта, имя тени)`. Тени в оригинале обрезаны до 8
 /// символов (`S_` + первые 6 букв имени), поэтому имена заданы явно.
-pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 12] = [
+///
+/// Список покрывает не только подвижные юниты, но и **здания**: в M.A.X.
+/// постройки — это тоже `UnitType` со спрайтом из `MAX.RES` (`HANGAR`,
+/// `DEPOT`, `POWERSTN`, …). Без них карта выглядела пустой: здания рисовались
+/// квадратным маркером команды вместо изометрии 1:1.
+pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 39] = [
+    // --- здания (стационарные юниты, `UNIT_START..`) ----------------------
     (UnitType::CommTower, "COMMTWR", Some("S_COMMTW")),
+    (UnitType::PowerStation, "POWERSTN", Some("S_POWERS")),
+    (UnitType::PowerGenerator, "POWGEN", Some("S_POWGEN")),
+    (UnitType::Barracks, "BARRACKS", Some("S_BARRAC")),
+    (UnitType::ShieldGenerator, "SHIELDGN", Some("S_SHIELD")),
+    (UnitType::Radar, "RADAR", Some("S_RADAR")),
+    (UnitType::ADump, "ADUMP", Some("S_ADUMP")),
+    (UnitType::FDump, "FDUMP", Some("S_FDUMP")),
+    (UnitType::GoldSmelter, "GOLDSM", Some("S_GOLDSM")),
+    (UnitType::Depot, "DEPOT", Some("S_DEPOT")),
+    (UnitType::Hangar, "HANGAR", Some("S_HANGAR")),
+    (UnitType::Dock, "DOCK", Some("S_DOCK")),
+    (UnitType::Connector, "CNCT_4W", Some("S_CNCT4W")),
+    (UnitType::Road, "ROAD", Some("S_ROAD")),
+    (UnitType::LandingPad, "LANDPAD", Some("S_LANDPA")),
+    (UnitType::Shipyard, "SHIPYARD", Some("S_SHIPYA")),
+    (UnitType::LightVehiclePlant, "LIGHTPLT", Some("S_LIGHTP")),
+    (UnitType::HeavyVehiclePlant, "LANDPLT", Some("S_LANDPL")),
+    (UnitType::SupportPlant, "SUPRTPLT", Some("S_SUPRTP")),
+    (UnitType::AirUnitsPlant, "AIRPLT", Some("S_AIRPLT")),
+    (UnitType::Habitat, "HABITAT", Some("S_HABITA")),
+    (UnitType::ResearchCenter, "RESEARCH", Some("S_RESEAR")),
+    (UnitType::Greenhouse, "GREENHSE", Some("S_GREENH")),
+    (UnitType::RecreationCenter, "RECCENTR", Some("S_RECCEN")),
+    (UnitType::TrainingHall, "TRAINHAL", Some("S_TRAINH")),
+    (UnitType::WaterPlatform, "WTRPLTFM", Some("S_WTRPLT")),
+    (UnitType::GunTurret, "GUNTURRT", Some("S_GUNTUR")),
+    (UnitType::AntiAir, "ANTIAIR", Some("S_ANTIAI")),
+    // --- подвижные юниты --------------------------------------------------
     (UnitType::Tank, "TANK", Some("S_TANK")),
     (UnitType::Infantry, "INFANTRY", Some("S_INFANT")),
     (UnitType::Scout, "SCOUT", Some("S_SCOUT")),
@@ -271,6 +305,8 @@ pub struct Assets {
     pub world_source: String,
     /// Разобранная карта планеты.
     pub world: WrlMap,
+    /// Настоящие тайлы поверхности (палитра + 64×64 из `.WRL`) для рендера 1:1.
+    pub terrain: max_render::terrain::TerrainAtlas,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
@@ -383,6 +419,7 @@ impl Assets {
             planet: config.planet,
             world_name: world_name.to_string(),
             world_source,
+            terrain: max_render::terrain::TerrainAtlas::from_wrl(&world),
             world,
             sprites,
             warnings,

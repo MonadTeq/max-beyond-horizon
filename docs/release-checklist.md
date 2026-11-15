@@ -348,9 +348,10 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC; `max_app.exe` 5 256 192 байта,
-      sha256 `816d90e2162ba227093feeccc70923162b0fee03cb5de7fb06cf4bee653722f5` —
-      сборка с `--turn-wait`). _(2026-11-15)_
+      (MSVC; `max_app.exe` 5 264 896 байт,
+      sha256 `9c5f6febfa28a5d07b7a73f3988f6e8036aed8a87878cbb0c7c40d8642a7e97e` —
+      сборка с `--turn-wait`, настоящими тайлами поверхности и спрайтами зданий).
+      _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
       (rc=0). _(2026-11-15)_
 - [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
@@ -472,7 +473,8 @@ bash release.sh                             # §5, артефакты
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 256 192 Б, sha256 `816d90e2…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 264 896 Б, sha256 `9c5f6feb…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max_app.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 39 (здания видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max_app.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |

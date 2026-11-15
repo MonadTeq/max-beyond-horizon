@@ -37,6 +37,7 @@ pub mod buffer;
 pub mod map_render;
 pub mod palette;
 pub mod sprite_atlas;
+pub mod terrain;
 pub mod text;
 pub mod ui;
 pub mod viewport;
@@ -56,6 +57,7 @@ pub use palette::{
     TEAM_GRAY_COLORS, TEAM_GREEN_COLORS, TEAM_RED_COLORS,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
+pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};
 pub use text::{
     draw_text, draw_text_line, draw_text_wrapped, glyph, line_width, text_height, wrap_text,
     TextMetrics, ASCII_CHARS, FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,

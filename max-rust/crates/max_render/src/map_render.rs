@@ -265,6 +265,62 @@ pub fn render_map_into(
     painted
 }
 
+/// Рисует только маркеры ресурсов поверх уже нарисованных тайлов.
+///
+/// Нужен, когда поверхность рисуется настоящими пикселями из `.WRL`
+/// ([`crate::terrain::TerrainAtlas`]): шахматная заглушка [`TileStyle`] тогда не
+/// нужна, но точки ресурсов должны остаться.
+pub fn render_resources_into(
+    dst: &mut RgbaBuffer,
+    map: &Map,
+    viewport: &Viewport,
+    style: &TileStyle,
+) -> u32 {
+    let Some(range) = viewport.visible_tiles() else {
+        return 0;
+    };
+    let mut painted = 0;
+
+    for (grid_x, grid_y) in range.cells() {
+        if grid_x < 0
+            || grid_y < 0
+            || grid_x >= map.size.width
+            || grid_y >= map.size.height
+        {
+            continue;
+        }
+
+        let entry = map.resource_at(grid_x, grid_y);
+        let Some(kind) = entry.resource_type().filter(|_| entry.amount() > 0) else {
+            continue;
+        };
+
+        let rect = viewport.tile_rect(grid_x, grid_y);
+        if rect.width <= 0 || rect.height <= 0 {
+            continue;
+        }
+
+        let color = style.resource_color(kind);
+        let radius = dot_radius_for(rect.width, style);
+        let centre = (rect.width / 2, rect.height / 2);
+
+        for local_y in 0..rect.height {
+            for local_x in 0..rect.width {
+                let dx = local_x - centre.0;
+                let dy = local_y - centre.1;
+
+                if dx * dx + dy * dy <= radius * radius
+                    && dst.set(rect.ulx + local_x, rect.uly + local_y, color)
+                {
+                    painted += 1;
+                }
+            }
+        }
+    }
+
+    painted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
