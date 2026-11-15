@@ -84,9 +84,14 @@ cargo run -p max_app --features sdl -- --ui
   Windows-тулчейна на хосте: `cargo build --release --target
   x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
   `max_app.exe` + `release/max_app-<ver>-windows-x86_64.zip` и wine-smoke
-  (`--help`, `--demo SAVE1.CAM`). Окно SDL3 и звук кросс-сборкой не
-  собираются (нужны CMake/MSVC/vcpkg и WASAPI) — полная SDL-сборка
-  выполняется на Windows-хосте, см. `../docs/release-checklist.md` §6.1 и
+  (`--help`, `--demo SAVE1.CAM`).
+- Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
+  Windows-хосте через `powershell -File build\scripts\build-windows-ui.ps1`
+  (`--features sdl-vcpkg,sound`, SDL3 из vcpkg) →
+  `release/max_app-<ver>-windows-x86_64-ui.zip` (`max_app.exe` + `SDL3.dll`).
+  Проверено на MSVC 14.51 + SDL3 3.4.20: окно `M.A.X. — Rust client (M4.2 HUD)`
+  открывается, звук — `rodio/cpal` (WASAPI, без отдельных DLL). Требования к
+  тулчейну — `../docs/release-checklist.md` §6.1, разбор грабель —
   `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.

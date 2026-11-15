@@ -27,6 +27,10 @@
       (`gcc-mingw-w64-x86-64`, `wine`) и crates.io; запуск из Git Bash
       (`cygpath` + `MSYS_NO_PATHCONV` — иначе Docker получает пути вида
       `C:/Program Files/Git/src/...`).
+- [ ] Для Windows UI-бинаря (§6.1): VS с workload «Desktop development with
+      C++» (MSVC + Windows SDK + CMake), Rust 1.94.0 и vcpkg с
+      `sdl3:x64-windows`. На текущем хосте всё это уже стоит (см. таблицу в
+      §6.1); MSVC ставится только установщиком VS и требует прав администратора.
 - [ ] Для человеческого сценария: Linux-хост с SDL3 и аудиоустройством либо
       Windows-хост (см. §6.1), плюс запущенный Horizon + headless.
 - [ ] Нет незакоммиченных изменений в оракулах: `max-cpp-port/`,
@@ -278,40 +282,77 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
       `--demo`, `--new-game`) — подтверждение, что mingw-сборка не зависит от
       wine-шимов.
 
-### 6.1. Полная сборка с окном SDL3 и звуком (только Windows-хост)
+### 6.1. Полная сборка с окном SDL3 и звуком (Windows-хост)
 
-```powershell
-# 1. Rust 1.94.0 + MSVC target
-rustup toolchain install 1.94.0
-rustup default 1.94.0
-rustup target add x86_64-pc-windows-msvc
+Скрипт: `build/scripts/build-windows-ui.ps1` (PowerShell 5.1+, без прав
+администратора). Он сам находит VS через `vswhere`, vcpkg с `sdl3:x64-windows`,
+поднимает окружение `vcvars64` и собирает
 
-# 2. Visual Studio Build Tools 2022: "Desktop development with C++"
-#    (MSVC, Windows SDK, CMake) — обязательны для линковки SDL3.
-
-# 3. SDL3 через vcpkg
-git clone https://github.com/microsoft/vcpkg C:\vcpkg
-C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install sdl3:x64-windows
-$env:VCPKG_ROOT = "C:\vcpkg"        # переменная окружения для sdl3-sys
-
-# 4. Сборка (vcpkg-фича max_app/max_render); звук — +,sound
-cd max-rust
-cargo build --release -p max_app --features sdl-vcpkg,sound
-# вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC)
-
-# 5. Рядом с exe положить SDL3.dll (vcpkg: C:\vcpkg\installed\x64-windows\bin\SDL3.dll)
-#    и запустить:
-.\target\release\max_app.exe --ui
+```sh
+cargo build --release --locked -p max_app --features sdl-vcpkg,sound
 ```
 
-- [ ] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно.
-- [ ] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает.
-- [ ] `--ui` открывает окно, меню и партия играются мышью; звук (если собрано
-      с `sound`) слышен без дополнительных DLL (WASAPI).
-- [ ] Бинарь и DLL заархивированы в `release/max_app-1.0.0-windows-x86_64-ui.zip`
-      (собирается на Windows; в git не коммитится) — отдельно от headless-zip
-      из §6, чтобы не путать два разных артефакта.
+```powershell
+powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
+# только собрать, без упаковки:
+powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoPackage
+```
+
+Артефакты: `release/max_app-1.0.0-windows-x86_64-ui/` (`max_app.exe`,
+`SDL3.dll`, `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`) и
+`release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256`. Сборка идёт в
+`build/win-msvc-target/`, чтобы не смешиваться с Linux/Docker-артефактами
+`max-rust/target/`.
+
+Тулчейн на этом хосте **уже установлен** (всё, кроме VS, ставится без
+администратора):
+
+| Компонент | Где | Как проверено |
+|---|---|---|
+| Visual Studio Community 2026 (MSVC 14.51, Windows SDK 10.0.26100, CMake) | `D:\Program Files\Microsoft Visual Studio\18\Community`, SDK `D:\Windows Kits\10` | `vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64` → путь; `cl.exe`, `link.exe`, `vcvars64.bat`, `kernel32.lib` на месте |
+| Rust 1.94.0 + target `x86_64-pc-windows-msvc` | `%USERPROFILE%\.cargo\bin` (rustup, `--no-modify-path`) | `rustc -vV` → host `x86_64-pc-windows-msvc` |
+| vcpkg + `sdl3:x64-windows` 3.4.20 | `D:\dev\toolchain\vcpkg` | `installed\x64-windows\lib\SDL3.lib`, `bin\SDL3.dll` |
+
+Переустановка при необходимости:
+
+```powershell
+# Rust (user-level, без администратора)
+Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile $env:TEMP\rustup-init.exe
+& $env:TEMP\rustup-init.exe -y --default-toolchain 1.94.0 --profile minimal
+
+# SDL3 (vcpkg тоже user-level)
+git clone --depth 1 https://github.com/microsoft/vcpkg D:\dev\toolchain\vcpkg
+D:\dev\toolchain\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
+
+# MSVC + Windows SDK: только через установщик Visual Studio
+# (workload "Desktop development with C++") — требует прав администратора
+```
+
+Два подводных камня, из-за которых «просто cargo build» в cmd не работает
+(учтены в скрипте):
+
+- `set VAR=value && …` в cmd записывает в значение **пробел** перед `&&`
+  (`CARGO_TARGET_DIR=…\win-msvc-target ` → «The system cannot find the path»);
+  нужно `set "VAR=value"`.
+- `link.exe` не находит `SDL3.lib`: `sdl3-sys` с vcpkg линкует `SDL3.lib`, но не
+  добавляет путь поиска, поэтому в `LIB` дописывается
+  `<vcpkg>\installed\x64-windows\lib`. Плюс `SDL3.dll` должен лежать рядом с
+  exe (скрипт копирует).
+
+- [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
+      (MSVC, 14.9 с на кэше; `max_app.exe` 5 246 464 байт). _(2026-11-15)_
+- [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
+      (rc=0). _(2026-11-15)_
+- [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
+      `M.A.X. — Rust client (M4.2 HUD)`, в логе `UI: окно 512x384; меню — …`.
+      Звук — `backend=rodio/cpal` (WASAPI, отдельных DLL не нужно), 272 файла
+      `*.SPW`, 607 ссылок. _(2026-11-15)_
+- [x] Бинарь и DLL заархивированы в
+      `release/max_app-1.0.0-windows-x86_64-ui.zip` (sha256 в `.zip.sha256`) —
+      отдельно от headless-zip из §6. _(2026-11-15)_
+- [ ] Партия в окне: меню → Create game (нужен `docker compose up -d --build`),
+      выделение юнита, приказ движения, End Turn, чат — по сценарию §4.
 
 ## 7. Документация и лицензии
 
@@ -354,6 +395,9 @@ git push origin v1.0.0              # публикация тега (по реш
 - [ ] `release/max_app-1.0.0-windows-x86_64.zip` + `.zip.sha256` сохранены
       (продукт `build/scripts/build-windows.sh`); headless-каталог
       `release/max_app-1.0.0-windows-x86_64/` тоже несёт свой `SHA256SUMS`.
+- [ ] `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256` сохранены
+      (продукт `build/scripts/build-windows-ui.ps1`; в архиве `max_app.exe` +
+      `SDL3.dll`).
 - [ ] Логи гейтов: `max-rust/target/cargo-test.log` (если писали),
       `build/smoke-logs/*.log`, `build/smoke-logs/windows-wine-smoke.log`,
       скриншоты M4 — приложены к релизной записи.
@@ -388,5 +432,6 @@ bash release.sh                             # §5, артефакты
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 246 464 Б; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |
