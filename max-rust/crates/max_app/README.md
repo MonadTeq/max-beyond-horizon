@@ -111,6 +111,21 @@ cargo run -p max_app --features sdl-from-source -- \
 Кадры рисует библиотека (`render_frame`), окно только выводит `RgbaBuffer`
 через `max_render::SdlWindow`.
 
+#### Windows: без консольного окна
+
+GUI-сборки (`--features sdl`, `sdl-vcpkg`, `sdl-from-source`; последние две
+включают `sdl`) собираются с
+`#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]` в `src/main.rs`:
+у `max-rust.exe` подсистема **windows** (PE Subsystem=2), поэтому двойной клик
+открывает только окно SDL3 — окно cmd не появляется. Обратная сторона: у этой
+сборки нет stdout в терминале, `--help`/`--demo` печатают только при
+перенаправлении (`max-rust.exe --help > help.txt`).
+
+Headless-сборка **без** `sdl` остаётся **console** (Subsystem=3): `--demo`,
+`--new-game`, `--connect` печатают в терминал и CI, как раньше. Примеры
+(`qa_run`, `qa_golden_check`) — отдельные console-бинари и подсистемой
+клиента не затрагиваются.
+
 ## UI (M4.1): меню, список игр, сессия
 
 Запуск без флагов (или с `--ui`) открывает интерактивный клиент: главное

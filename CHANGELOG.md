@@ -81,6 +81,18 @@
 
 ### Изменено
 
+- **Windows GUI-сборки без консольного окна**: `max_app/src/main.rs` —
+  `#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]`; фичи
+  `sdl-vcpkg`/`sdl-from-source` включают `sdl`, поэтому все оконные сборки
+  получают **PE Subsystem=2** (двойной клик — только окно SDL3), а headless
+  без `sdl` остаётся **Console (3)**: `--demo`/`--new-game`/`--connect` и
+  пример `qa_run` по-прежнему печатают в терминал/CI. `max-resource-editor` —
+  безусловный `#![windows_subsystem = "windows"]`; чтобы headless-режимы не
+  теряли вывод, итог и ошибки дублируются в файлы
+  (`<OUT_ROOT>/export-log.txt`, `./report.txt`,
+  `./max-resource-editor-error.txt`). Сборки проверяют подсистему PE
+  (`build/scripts/pe-subsystem.ps1`), `build-windows.sh` — console для
+  headless; README/чек-лист обновлены.
 - **Бинарь клиента переименован `max_app` → `max-rust`** (Windows:
   `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
   `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему

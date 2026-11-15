@@ -109,3 +109,8 @@ max-assets/images/
 tools/max-resource-editor/target/
 tools/max-resource-editor/*.png
 !tools/max-resource-editor/screenshot.png
+
+# max-resource-editor: файловые логи headless-режимов (GUI-подсистема без консоли)
+export-log.txt
+report.txt
+max-resource-editor-error.txt

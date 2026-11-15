@@ -283,6 +283,14 @@ echo "СТАДИЯ: verify"
 file "$EXE"
 EXE_SIZE="$(stat -c %s "$EXE")"
 head -c 2 "$EXE" | grep -q '^MZ' || fail "нет MZ-заголовка"
+# Headless-бинарь обязан остаться Console (PE Subsystem=3): подсистема windows
+# включается только с feature sdl (main.rs), иначе --help/--demo не печатают в
+# терминал/CI. `file` пишет "(console)" для Subsystem=3, "(GUI)" — для 2.
+FILE_INFO="$(file -b "$EXE")"
+case "$FILE_INFO" in
+    *"PE32+ executable (console) x86-64"*) : ;;
+    *) fail "headless-бинарь должен быть Console (Subsystem=3): $FILE_INFO" ;;
+esac
 # Вывод objdump забираем в переменную: `objdump | grep -q` при `pipefail`
 # получает SIGPIPE (grep -q выходит по первому совпадению) и роняет проверку.
 OBJDUMP_HEADER="$(x86_64-w64-mingw32-objdump -f "$EXE" 2>&1 || true)"
@@ -291,7 +299,7 @@ case "$OBJDUMP_HEADER" in
     *) fail "objdump: не pei-x86-64 (ожидался PE32+ x86-64): $OBJDUMP_HEADER" ;;
 esac
 DLLS="$(x86_64-w64-mingw32-objdump -p "$EXE" | awk '/DLL Name:/ {print $3}' | sort -u | tr '\n' ' ')"
-echo "PE: size=$EXE_SIZE, format=pei-x86-64, imports: ${DLLS:-<нет>}"
+echo "PE: size=$EXE_SIZE, format=pei-x86-64, subsystem=console, imports: ${DLLS:-<нет>}"
 case "$DLLS" in
     *libgcc_s*|*libwinpthread*) fail "mingw-рантайм в импортах: $DLLS" ;;
 esac

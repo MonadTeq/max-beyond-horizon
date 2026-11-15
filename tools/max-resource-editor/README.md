@@ -23,6 +23,9 @@
   архивом или заглушка-палитра с предупреждением.
 * **Экспорт 1069 PNG** из реального `MAX.RES` ≈ 10,1 МБ (см.
   [`max-assets/README.md`](../../max-assets/README.md)).
+* **Без консольного окна**: `.exe` всегда собирается с подсистемой Windows
+  (GUI), двойной клик открывает только окно редактора. Headless-режимы
+  дублируют вывод в файлы — см. «Логи headless-режимов».
 * **Тесты** на реальном архиве: 1828/1828, известные теги, размеры PNG,
   идемпотентность.
 
@@ -43,9 +46,13 @@ cargo run --release -- --export \
 vcpkg install sdl3:x64-windows
 $env:VCPKG_ROOT = "C:\path\to\vcpkg"
 cargo build --release --features sdl-vcpkg
+# или одной командой (MSVC + vcpkg, DLL рядом с exe, пакет в dist\):
+powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-`SDL3.dll` должна быть рядом с `.exe` или в `PATH`.
+`SDL3.dll` должна быть рядом с `.exe` или в `PATH`. `build.ps1` после сборки
+проверяет PE-заголовок: Subsystem=2 (GUI), иначе двойной клик открыл бы
+консоль (`build/scripts/pe-subsystem.ps1`).
 
 ### Windows + готовый SDL3 (вариант без vcpkg)
 
@@ -85,8 +92,9 @@ cargo build --release --features sdl
    с фильтром `*.RES` (SDL3). Окно редактора открывается только после выбора:
    приложение ждёт решения пользователя.
 
-Отмена диалога — не аварийная ситуация, но работать не с чем: печатается
-понятное сообщение и процесс завершается с кодом **1**:
+Отмена диалога — не аварийная ситуация, но работать не с чем: сообщение
+пишется в `max-resource-editor-error.txt` в текущем каталоге (консоли у
+GUI-подсистемы нет), процесс завершается с кодом **1**:
 
 ```
 error: выбор MAX.RES отменён — редактор не открыт.
@@ -118,10 +126,34 @@ cargo run --features sdl -- --res ../../max-original/MAX.RES \
 
 Headless-команды (`--export`, `--report`) работают как раньше: диалог не
 показывается, пути передаются аргументами, `COLOR.PAL` для `--export`
-обязателен.
+обязателен. Итог этих команд дополнительно пишется в файл — см. ниже.
 
 Без `--features sdl` бинарник всё равно собирается и умеет `--export`/
 `--report`; попытка открыть UI завершается понятной ошибкой.
+
+### Логи headless-режимов (GUI-подсистема)
+
+Бинарь всегда собирается с подсистемой Windows (GUI), поэтому двойной клик не
+открывает консоль; у `.exe` нет stdout/stderr в терминале. Чтобы результат
+`--export`/`--report` не терялся, он дублируется в файл:
+
+| Режим | Файл с итогом |
+|---|---|
+| `--export <RES> <PAL> <OUT_ROOT>` | `<OUT_ROOT>/export-log.txt` — рядом с `images/` и `manifest.csv`; полный отчёт по записям — `<OUT_ROOT>/images/EXPORT-REPORT.txt` |
+| `--report <RES> [PAL]` | `./report.txt` — в текущем каталоге |
+| любая ошибка (включая UI и отмену диалога) | `./max-resource-editor-error.txt` — в текущем каталоге |
+
+Ошибки `--export`/`--report` попадают и в их лог (`export-log.txt`/`report.txt`),
+и в `max-resource-editor-error.txt`. Если `OUT_ROOT` не передан (не хватает
+аргументов), `export-log.txt` пишется в текущий каталог. Вывод в stdout
+сохранён: под `cargo run` или с перенаправлением он виден как раньше.
+
+```powershell
+# справка и итог отчёта доступны через файл/перенаправление:
+max-resource-editor.exe --help > help.txt
+max-resource-editor.exe --report ../../max-original/MAX.RES
+Get-Content .\report.txt
+```
 
 ### Ручная проверка диалога
 
@@ -135,12 +167,12 @@ Headless-команды (`--export`, `--report`) работают как ран�
    фильтром `*.RES`, а окно редактора не появилось;
 4. выбрать `MAX.RES` — редактор должен открыться; при отсутствии
    `COLOR.PAL` рядом появится предупреждение и серое превью;
-5. повторить запуск и нажать «Отмена» — в консоли сообщение об отмене,
-   код возврата 1.
+5. повторить запуск и нажать «Отмена» — сообщение об отмене в
+   `max-resource-editor-error.txt` (текущий каталог), код возврата 1.
 
 Проверка на Windows без ручного клика: диалог можно закрыть крестиком через
-`WM_CLOSE`; процесс завершается с кодом 1 и тем же сообщением (так проверялся
-этот сценарий).
+`WM_CLOSE`; процесс завершается с кодом 1 и тем же сообщением в
+`max-resource-editor-error.txt` (так проверялся этот сценарий).
 
 ## Горячие клавиши
 
@@ -170,15 +202,15 @@ Headless-команды (`--export`, `--report`) работают как ран�
 ```
 max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]
 max-resource-editor [MAX.RES]
-max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>
-max-resource-editor --report <MAX.RES> [COLOR.PAL]
+max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>   # итог: <OUT_ROOT>/export-log.txt
+max-resource-editor --report <MAX.RES> [COLOR.PAL]            # итог: ./report.txt
 max-resource-editor --help
 ```
 
 `--res` и позиционный `MAX.RES` эквивалентны; при отсутствии пути работает
 поиск/диалог из раздела «Запуск».
 
-`--export` печатает сводку:
+`--export` печатает сводку (она же сохраняется в `<OUT_ROOT>/export-log.txt`):
 
 ```
 entries: 1828  images: 1070 (ui 537, sprites/units 170, misc 363)
@@ -258,7 +290,7 @@ cargo test --features sdl  # то же + сборка SDL-слоя и диало
 | `startup.rs` | поиск `MAX.RES`/`COLOR.PAL`, порядок старта, заглушка-палитра |
 | `app.rs` | SDL3-окно, ввод, презентация (feature `sdl`) |
 | `dialog.rs` | нативный диалог выбора `MAX.RES` через SDL3 FFI (feature `sdl`) |
-| `main.rs` | CLI и выбор headless/UI |
+| `main.rs` | CLI и выбор headless/UI; файловые логи `--export`/`--report` |
 
 `ui.rs` рисует тот же кадр, что уходит в SDL; `--shot`/F12 сохраняют его без
 окна. Реальный скриншот окна снят с запущенного `.exe` (Windows, SDL3).

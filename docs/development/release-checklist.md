@@ -364,6 +364,10 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
       SHA256 `15cd9fa29dbec8cb930819708f0ea85a60b4fc3aff059c26941718bf7e8a2234`.
       _(2026-11-15; хеш зависит от снапшота `rust:1.94.0-bookworm` — mingw-версии
       из apt влияют на код ENet)_
+- [x] Подсистема PE — **Console (Subsystem=3)**: `file` →
+      `PE32+ executable (console)`; проверка зашита в
+      `build/scripts/build-windows.sh` (headless-бинарь не должен быть GUI,
+      иначе `--help`/`--demo` теряют stdout в терминале/CI). _(2026-11-15)_
 - [x] Импорты только системные: `kernel32`, `msvcrt`, `ntdll`, `ws2_32`,
       `winmm`, `userenv`, `bcryptprimitives`,
       `api-ms-win-core-synch-l1-2-0` — нет `libgcc_s_seh-1.dll` и
@@ -459,7 +463,14 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       (`FrameScale`, ресайз, `--scale`), панелями 1:1, GNW-шрифтами,
       маркерами C/D и курсорами). _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max-rust.exe`; `max-rust.exe --help` работает
-      (rc=0), в справке есть `--scale N`. _(2026-11-15)_
+      (rc=0, справка читается через `cmd` с `>` в файл — у GUI-сборки нет
+      консоли), в справке есть `--scale N`. _(2026-11-15)_
+- [x] Подсистема PE — **Windows GUI (Subsystem=2)**: `Start-Process max-rust.exe`
+      открывает окно SDL3 без консольного окна; проверка зашита в
+      `build-windows-ui.ps1` (`build/scripts/pe-subsystem.ps1 -Expected 2`).
+      `--help`/`--demo` этой сборки видны только при перенаправлении —
+      для терминала/CI есть Console-сборка
+      `max_app-1.0.0-windows-x86_64.zip`. _(2026-11-15)_
 - [x] `--ui` открывает окно: при `--scale 1` клиент 640×480, при `--scale 2` —
       1280×960 (кадр целочисленно увеличен, каждый пиксель 2×2); клик
       `New Game` в окне 2× открывает форму (обратный пересчёт координат).

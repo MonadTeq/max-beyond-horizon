@@ -83,15 +83,19 @@ cargo run -p max_app --features sdl                # --ui — совместим
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
   x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
-  `max-rust.exe` + `release/max_app-<ver>-windows-x86_64.zip` и wine-smoke
-  (`--help`, `--demo SAVE1.CAM`).
+  **console** (`max-rust.exe` + `release/max_app-<ver>-windows-x86_64.zip` и
+  wine-smoke `--help`, `--demo SAVE1.CAM`): без feature `sdl` подсистема
+  остаётся 3, вывод `--demo`/`--new-game`/`--connect` виден в терминале/CI.
 - Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
   Windows-хосте через `powershell -File build\scripts\build-windows-ui.ps1`
   (`--features sdl-vcpkg,sound`, SDL3 из vcpkg) →
   `release/max_app-<ver>-windows-x86_64-ui.zip` (`max-rust.exe` + `SDL3.dll`).
-  Проверено на MSVC 14.51 + SDL3 3.4.20: окно `M.A.X. — Rust client (M4.2 HUD)`
-  открывается, звук — `rodio/cpal` (WASAPI, без отдельных DLL). Требования к
-  тулчейну — `../docs/development/release-checklist.md` §6.1, разбор грабель —
+  Подсистема — **windows** (Subsystem=2): двойной клик открывает окно SDL3 без
+  консоли; `--help`/`--demo` этой сборки видны только при перенаправлении
+  (`max-rust.exe --help > help.txt`). Проверено на MSVC 14.51 + SDL3 3.4.20:
+  окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук — `rodio/cpal`
+  (WASAPI, без отдельных DLL). Требования к тулчейну —
+  `../docs/development/release-checklist.md` §6.1, разбор грабель —
   `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.

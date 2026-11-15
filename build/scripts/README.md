@@ -11,6 +11,7 @@
 |---|---|---|
 | `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-rust` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
 | `build-windows-ui.ps1` | **нативная** Windows-сборка `max-rust` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-horizon-server/target/release/horizon` и `build/linux-server-template/max-port` |
 
 ## build-windows.sh
@@ -51,6 +52,10 @@ release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 
 - PE-заголовок: `file` → `PE32+ executable (console) x86-64`,
   `objdump -f` → `file format pei-x86-64`, первые байты `MZ`;
+- подсистема PE: `file` должен давать `PE32+ executable (console)` —
+  headless-бинарь обязан остаться **Console** (Subsystem=3): подсистема
+  `windows` включается только feature `sdl`, а без неё `--help`/`--demo`
+  должны печатать в терминал/CI (несовпадение — ошибка сборки);
 - импорты перечисляются в логе; `libgcc_s_seh-1.dll`/`libwinpthread-1.dll` в
   них быть не должно (иначе exe не запустится без mingw-рантайма) — это
   проверяется как ошибка сборки;
@@ -106,9 +111,17 @@ Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), ищет vcpkg с
 cargo build --release --locked -p max_app --features sdl-vcpkg,sound
 ```
 
-кладёт `SDL3.dll` рядом с exe, проверяет `max-rust.exe --help` и пакует
+кладёт `SDL3.dll` рядом с exe, проверяет PE-заголовок (`pe-subsystem.ps1`,
+Subsystem=2 = GUI) и `max-rust.exe --help`, затем пакует
 `release/max_app-<ver>-windows-x86_64-ui/` (exe + SDL3.dll + README.txt +
 LICENSE + CHANGELOG.md + SHA256SUMS) и `.zip` + `.zip.sha256`.
+
+Справка проверяется через `cmd` с перенаправлением в
+`build/win-msvc-target/max-rust-help.txt`: у GUI-сборки нет консоли, поэтому
+`& max-rust.exe --help | Out-String` в PowerShell не дожидается процесса и
+возвращает пустоту, а `cmd` ждёт exit code, и перенаправленный stdout читается
+из файла. Тот же приём работает и для ручного запуска:
+`max-rust.exe --help > help.txt`.
 
 Установка тулчейна (Windows, без администратора — кроме самого VS):
 
@@ -136,6 +149,24 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   **с BOM**, иначе русские строки ломают парсер.
 - Сборка идёт в `build/win-msvc-target/`, а не в `max-rust/target/`, чтобы не
   смешивать MSVC-артефакты с Linux/Docker-сборками.
+
+## pe-subsystem.ps1
+
+Проверка подсистемы PE без `dumpbin`/`vcvars` (PowerShell 5.1):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build\scripts\pe-subsystem.ps1 `
+    -Path release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe -Expected 2
+# PE: ...\max-rust.exe — PE32+ x64, Subsystem=2 (Windows GUI)
+```
+
+`Subsystem` лежит в Optional Header по смещению `0x44` и для PE32, и для
+PE32+ (в PE32+ нет `BaseOfData`, но `ImageBase` шире — смещение не меняется);
+абсолютное смещение — `e_lfanew + 4 + 20 + 0x44 = e_lfanew + 0x5C`. Скрипт
+проверяет `MZ` и сигнатуру `PE\0\0`, печатает машину и `PE32(+)`, а с
+`-Expected 2|3` возвращает exit 1 при несовпадении. Его вызывают
+`build-windows-ui.ps1` и `tools/max-resource-editor/build.ps1` (ожидается 2 —
+GUI без консоли).
 
 ## live-smoke.sh
 

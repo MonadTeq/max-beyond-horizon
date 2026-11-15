@@ -81,6 +81,12 @@ release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```
 
+UI-сборка (`release\max_app-*-windows-x86_64-ui\max-rust.exe`) — подсистема
+Windows (GUI): двойной клик открывает окно без консоли, а `--help`/`--demo` у
+неё видны только при перенаправлении (`max-rust.exe --help > help.txt`).
+Вывод для терминала/CI даёт headless-сборка
+`release\max_app-*-windows-x86_64.zip` (подсистема Console).
+
 Подробно: [docs/development/build.md](docs/development/build.md) (раздел «Запуск»).
 
 ## Документация

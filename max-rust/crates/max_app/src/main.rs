@@ -12,6 +12,13 @@
 //! Вся игровая логика — в библиотеке (`max_app`), здесь только разбор
 //! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
 
+// Windows: GUI-сборки (`--features sdl*`) — подсистема `windows`, поэтому
+// двойной клик по `max-rust.exe` не открывает консоль. Headless-сборка без
+// `sdl` остаётся console: `--demo`/`--new-game`/`--connect` печатают в stdout
+// терминала и CI. `sdl-vcpkg` и `sdl-from-source` включают `sdl` (см.
+// Cargo.toml), поэтому одного cfg достаточно для всех оконных фич.
+#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;

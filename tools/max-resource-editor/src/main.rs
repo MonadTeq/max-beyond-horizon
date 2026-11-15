@@ -8,12 +8,22 @@
 //!
 //! Без флагов открывается окно; `--export` работает headless и не требует SDL.
 //!
+//! Редактор — GUI-инструмент, поэтому бинарь всегда собирается с подсистемой
+//! `windows`: двойной клик не открывает консоль. Плата за это — у `.exe` нет
+//! stdout/stderr в консоли, поэтому headless-режимы дублируют итог в файл:
+//! `--export` → `<OUT_ROOT>/export-log.txt`, `--report` → `./report.txt`,
+//! сообщения об ошибках (включая UI-режим) → `./max-resource-editor-error.txt`.
+//!
 //! При запуске UI путь к `MAX.RES` ищется в порядке: аргумент (`--res` или
 //! позиционный) → рядом с `.exe` → `CWD` → вверх по дереву каталогов
 //! (`max-original/MAX.RES`). Если ничего не найдено, показывается нативный
 //! диалог «Укажите файл MAX.RES»; отмена — сообщение и код возврата 1.
 //! `COLOR.PAL` ищется рядом с выбранным `MAX.RES`, его отсутствие — только
 //! предупреждение (превью рисуется заглушкой-палитрой).
+
+// GUI-подсистема без условий: редактор — оконный инструмент. Headless-вывод
+// (`--export`/`--report`) и ошибки смотри в файлах, см. `FileLog`.
+#![windows_subsystem = "windows"]
 
 #[cfg(feature = "sdl")]
 mod dialog;
@@ -25,7 +35,7 @@ use max_resource_editor::startup;
 #[cfg(feature = "sdl")]
 use max_resource_editor::ui;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[cfg(feature = "sdl")]
@@ -37,11 +47,81 @@ use max_render::palette::Palette;
 use crate::export::ExportOptions;
 use crate::model::ClassificationStats;
 
+/// Лог `--export`: рядом с результатом экспорта (`<OUT_ROOT>/export-log.txt`).
+const EXPORT_LOG_NAME: &str = "export-log.txt";
+/// Лог `--report`: в текущем каталоге (`./report.txt`).
+const REPORT_LOG_NAME: &str = "report.txt";
+/// Ошибки (в том числе UI-режима, где консоли нет): в текущем каталоге.
+const ERROR_LOG_NAME: &str = "max-resource-editor-error.txt";
+
+/// Журнал headless-режима: дублирует stdout в файл.
+///
+/// С подсистемой `windows` у `.exe` нет консоли, поэтому `println!`/`eprintln!`
+/// пользователь не увидит: итог `--export`/`--report` (и ошибки) пишется в
+/// файл, путь к которому знает README. Вывод в stdout оставлен: под
+/// `cargo run`, перенаправлением или wine он по-прежнему виден.
+struct FileLog {
+    path: PathBuf,
+    text: String,
+}
+
+impl FileLog {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            text: String::new(),
+        }
+    }
+
+    /// Строка — в stdout и в файл.
+    fn line(&mut self, line: impl AsRef<str>) {
+        let line = line.as_ref();
+        println!("{line}");
+        self.text.push_str(line);
+        self.text.push('\n');
+    }
+
+    /// Готовый многострочный текст (со своими `\n`) — в stdout и в файл.
+    fn raw(&mut self, text: &str) {
+        print!("{text}");
+        self.text.push_str(text);
+    }
+
+    /// Ошибка — в stderr и в файл.
+    fn error(&mut self, error: &anyhow::Error) {
+        let message = format!("error: {error:#}");
+        eprintln!("{message}");
+        self.text.push_str(&message);
+        self.text.push('\n');
+    }
+
+    /// Пишет файл (создавая каталог) и печатает его путь в stdout.
+    fn write(&self) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("создание каталога {}", parent.display()))?;
+            }
+        }
+        std::fs::write(&self.path, &self.text)
+            .with_context(|| format!("запись лога {}", self.path.display()))?;
+        println!("log: {}", self.path.display());
+
+        Ok(())
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("error: {error:#}");
+            let message = format!("error: {error:#}");
+            eprintln!("{message}");
+            // Консоли у GUI-подсистемы нет — ошибку дублируем в файл, чтобы
+            // пользователь мог её прочитать (Message-бокс не нужен).
+            if let Err(write_error) = std::fs::write(ERROR_LOG_NAME, format!("{message}\n")) {
+                eprintln!("error: не удалось записать {ERROR_LOG_NAME}: {write_error}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -51,10 +131,10 @@ fn run() -> Result<ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.first().map(String::as_str) == Some("--export") {
-        return export_command(&args[1..]);
+        return run_export(&args[1..]);
     }
     if args.first().map(String::as_str) == Some("--report") {
-        return report_command(&args[1..]);
+        return run_report(&args[1..]);
     }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
@@ -62,6 +142,46 @@ fn run() -> Result<ExitCode> {
     }
 
     ui_command(&args)
+}
+
+/// `--export`: лог — `<OUT_ROOT>/export-log.txt` (рядом с PNG и manifest.csv).
+fn run_export(args: &[String]) -> Result<ExitCode> {
+    let log_path = args
+        .get(2)
+        .map(|root| Path::new(root).join(EXPORT_LOG_NAME))
+        .unwrap_or_else(|| PathBuf::from(EXPORT_LOG_NAME));
+    let mut log = FileLog::new(log_path);
+
+    let result = export_command(args, &mut log);
+    if let Err(error) = &result {
+        log.error(error);
+    }
+
+    match (result, log.write()) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(write_error)) => Err(write_error),
+        (Err(error), Err(write_error)) => {
+            Err(error.context(format!("лог не записан: {write_error:#}")))
+        }
+    }
+}
+
+/// `--report`: лог — `./report.txt` (в текущем каталоге).
+fn run_report(args: &[String]) -> Result<ExitCode> {
+    let mut log = FileLog::new(PathBuf::from(REPORT_LOG_NAME));
+
+    let result = report_command(args, &mut log);
+    if let Err(error) = &result {
+        log.error(error);
+    }
+
+    match (result, log.write()) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(write_error)) => Err(write_error),
+        (Err(error), Err(write_error)) => {
+            Err(error.context(format!("лог не записан: {write_error:#}")))
+        }
+    }
 }
 
 fn print_help() {
@@ -78,11 +198,17 @@ fn print_help() {
          \n\
          Отчёт без записи файлов:\n  max-resource-editor --report <MAX.RES> [COLOR.PAL]\n\
          \n\
+         Подсистема Windows — GUI (окно без консоли), поэтому stdout headless-режимов\n\
+         не виден в консоли. Итог и ошибки дублируются в файлы:\n\
+           --export  → <OUT_ROOT>/export-log.txt\n\
+           --report  → ./report.txt\n\
+           ошибки    → ./max-resource-editor-error.txt\n\
+         \n\
          UI требует сборки с --features sdl (SDL3); headless-команды работают без SDL."
     );
 }
 
-fn export_command(args: &[String]) -> Result<ExitCode> {
+fn export_command(args: &[String], log: &mut FileLog) -> Result<ExitCode> {
     if args.len() < 3 {
         bail!("usage: max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>");
     }
@@ -93,8 +219,8 @@ fn export_command(args: &[String]) -> Result<ExitCode> {
     let report =
         export::export_archive(&archive, &palette, &args[2], &infos, &ExportOptions::all())?;
 
-    print!("{}", export::summary(&report));
-    println!("out: {}", report.out_root.display());
+    log.raw(&export::summary(&report));
+    log.line(format!("out: {}", report.out_root.display()));
 
     if report.errors.is_empty() {
         Ok(ExitCode::SUCCESS)
@@ -103,7 +229,7 @@ fn export_command(args: &[String]) -> Result<ExitCode> {
     }
 }
 
-fn report_command(args: &[String]) -> Result<ExitCode> {
+fn report_command(args: &[String], log: &mut FileLog) -> Result<ExitCode> {
     let Some(path) = args.first() else {
         bail!("usage: max-resource-editor --report <MAX.RES> [COLOR.PAL]");
     };
@@ -112,7 +238,7 @@ fn report_command(args: &[String]) -> Result<ExitCode> {
     let infos = model::classify_archive(&archive);
     let stats = ClassificationStats::from_infos(&infos);
 
-    println!("{}", report_text(&stats));
+    log.raw(&report_text(&stats));
 
     Ok(ExitCode::SUCCESS)
 }

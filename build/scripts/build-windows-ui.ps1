@@ -142,23 +142,30 @@ $buildRc = $LASTEXITCODE
 if ($buildRc -ne 0) { Fail "cargo build завершился с кодом $buildRc (лог выше)" }
 if (-not (Test-Path $exePath)) { Fail "после сборки нет $exePath" }
 
-# --- DLL рядом с exe + проверка --help --------------------------------------
+# --- DLL рядом с exe, подсистема PE и проверка --help ----------------------
 $exeDir = Split-Path -Parent $exePath
 Copy-Item $sdlDll $exeDir -Force
 $exeSize = (Get-Item $exePath).Length
 Write-Host ("exe: {0} ({1:N0} байт), SDL3.dll рядом" -f $exePath, $exeSize)
 
-Push-Location $root
-try {
-    $help = & $exePath --help 2>&1 | Out-String
-    $helpRc = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
+# GUI-сборка обязана иметь подсистему windows (Subsystem=2), иначе двойной клик
+# откроет консоль. Проверяем PE-заголовок напрямую (без dumpbin/vcvars).
+$peScript = Join-Path $PSScriptRoot "pe-subsystem.ps1"
+& powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
+if ($LASTEXITCODE -ne 0) { Fail "PE-подсистема $exePath не GUI (ожидалось Subsystem=2)" }
+
+# Подсистема windows не подключается к консоли: `& $exe --help` в PowerShell не
+# дождётся процесса и не соберёт вывод. cmd ждёт дочерний процесс, а
+# перенаправление `>` всё равно отдаёт GUI-exe stdout — читаем справку из файла.
+$helpFile = Join-Path $targetDir "max-rust-help.txt"
+if (Test-Path $helpFile) { Remove-Item $helpFile -Force }
+& cmd.exe /c "`"$exePath`" --help > `"$helpFile`" 2>&1"
+$helpRc = $LASTEXITCODE
+$help = if (Test-Path $helpFile) { Get-Content $helpFile -Raw -Encoding UTF8 } else { "" }
 if ($helpRc -ne 0 -or $help -notmatch "ИСПОЛЬЗОВАНИЕ") {
-    Fail "max-rust.exe --help не отработал (rc=$helpRc):`n$help"
+    Fail "max-rust.exe --help не отработал (rc=$helpRc, Subsystem=2):`n$help"
 }
-Write-Host "проверка: max-rust.exe --help — OK (GUI по умолчанию, --ui — alias)"
+Write-Host "проверка: PE Subsystem=2 (GUI), max-rust.exe --help — OK (GUI по умолчанию, --ui — alias)"
 
 if ($NoPackage) {
     Write-Host ""
@@ -186,6 +193,15 @@ M.A.X. Rust client $version — Windows x86_64 (UI: SDL3 + звук)
   cargo build --release -p max_app --features $Features
 Рядом с max-rust.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
 Звук — rodio/cpal (WASAPI), отдельных DLL не требует.
+
+Окно без консоли
+----------------
+Это GUI-сборка: подсистема Windows (Subsystem=2 в PE-заголовке), поэтому
+двойной клик по max-rust.exe открывает только окно SDL3 — окно cmd не
+появляется. Плата за это: stdout этой сборки не виден в терминале.
+Для справки и headless-режимов есть Console-сборка
+max_app-$version-windows-x86_64.zip; при необходимости вывод перенаправляется:
+  max-rust.exe --help > help.txt
 
 Запуск
 ------
