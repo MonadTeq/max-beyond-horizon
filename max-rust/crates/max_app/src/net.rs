@@ -89,6 +89,14 @@ pub struct NetworkOptions {
     pub event_wait: Duration,
     /// Политика переподключения при разрыве ENet-сессии (M6.1-заготовка).
     pub reconnect: ReconnectPolicy,
+    /// Сколько ждать ввода игрока в фазе PLAY, прежде чем закрыть ход.
+    ///
+    /// `Duration::ZERO` (по умолчанию) — headless-поведение: тик, кадр и сразу
+    /// `06 + 52`, ход не ждёт человека (так работают `--connect`, live-smoke и
+    /// тесты). `--turn-wait N` включает интерактивное окно: с SDL-окном цикл
+    /// крутит тики/кадры и держит ход открытым до нажатия **End Turn** или до
+    /// истечения `N` секунд.
+    pub turn_wait: Duration,
 }
 
 impl Default for NetworkOptions {
@@ -101,6 +109,7 @@ impl Default for NetworkOptions {
             tick_interval: DEFAULT_TICK_INTERVAL,
             event_wait: DEFAULT_EVENT_WAIT,
             reconnect: ReconnectPolicy::default(),
+            turn_wait: Duration::ZERO,
         }
     }
 }
@@ -1359,33 +1368,47 @@ async fn run_game_loop(
         handle.clear_barriers().await?;
         tracing::debug!("барьер 53 (итоги баз) пройден: turn={}", fsm.complex_turn);
 
-        // Тики хода: у headless-клиента нет локального ввода, поэтому ход
-        // закрывается сразу после обработки очереди пришедших команд
-        // (`Access_AreTaskEventsPending` == false).
-        if !pump_events(app, handle, session_config, &mut stats, &mut fsm, options).await? {
-            return Ok(stats);
-        }
-        app.tick();
-        send_frame_barrier(app, handle, local_team, &mut frame_counter).await?;
+        // Тики хода. Headless (без окна или без `--turn-wait`) — один тик и
+        // сразу 06: ход закрывается, как только разобрана очередь команд.
+        // С окном и `--turn-wait N` — интерактивное окно: крутим тики и кадры,
+        // пока игрок не нажмёт End Turn (или не истечёт N секунд), иначе
+        // человек не успевает ничего сделать — ход длится один кадр.
+        let interactive = sink.is_some() && !options.turn_wait.is_zero();
+        let play_deadline = Instant::now() + options.turn_wait;
 
-        if let Some(sink) = sink.as_deref_mut() {
-            if !sink.frame(app) {
-                tracing::info!("окно закрыто — завершаем сессию");
+        loop {
+            if !pump_events(app, handle, session_config, &mut stats, &mut fsm, options).await? {
                 return Ok(stats);
             }
-        }
+            app.tick();
+            send_frame_barrier(app, handle, local_team, &mut frame_counter).await?;
 
-        // Приказы, собранные вводом в этом кадре (38 — движение, 08 — атака):
-        // локальное применение + multicast в сессию (M4.3).
-        flush_hud_orders(app, handle).await?;
+            if let Some(sink) = sink.as_deref_mut() {
+                if !sink.frame(app) {
+                    tracing::info!("окно закрыто — завершаем сессию");
+                    return Ok(stats);
+                }
+            }
+
+            // Приказы, собранные вводом в этом кадре (38 — движение, 08 — атака):
+            // локальное применение + multicast в сессию (M4.3).
+            flush_hud_orders(app, handle).await?;
+
+            let end_requested = app.hud_mut().take_end_turn_request();
+            if end_requested {
+                tracing::info!(
+                    "HUD: End Turn нажат — закрываем ход команды {} (06 + 52)",
+                    local_team.0
+                );
+            }
+
+            if !interactive || end_requested || Instant::now() >= play_deadline {
+                break;
+            }
+            tokio::time::sleep(options.tick_interval).await;
+        }
 
         // 06 — ровно один раз за ход, когда локальная команда закончила.
-        if app.hud_mut().take_end_turn_request() {
-            tracing::info!(
-                "HUD: End Turn нажат — закрываем ход команды {} (06 + 52)",
-                local_team.0
-            );
-        }
         if !fsm.local_finished_sent() {
             let finish = Command::FinishedTurn(Packet06FinishedTurn { team: local_team });
             app.apply(finish.clone());

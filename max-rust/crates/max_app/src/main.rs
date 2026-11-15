@@ -66,6 +66,9 @@ struct Cli {
     reconnect_attempts: Option<u32>,
     /// M6.1-заготовка: таймаут одной попытки переподключения в секундах.
     reconnect_timeout_secs: Option<u32>,
+    /// Окно ввода в фазе PLAY сессии, секунды (`0`/нет — headless: ход
+    /// закрывается сразу; см. `max_app::net::NetworkOptions::turn_wait`).
+    turn_wait_secs: Option<u32>,
 }
 
 impl Cli {
@@ -86,6 +89,7 @@ impl Cli {
             derelicts: None,
             reconnect_attempts: None,
             reconnect_timeout_secs: None,
+            turn_wait_secs: None,
         };
         let mut mode_set = false;
         let mut data_dir_set = false;
@@ -135,6 +139,9 @@ impl Cli {
                 }
                 "--reconnect-timeout" => {
                     cli.reconnect_timeout_secs = Some(parse_u32(&mut args, "--reconnect-timeout")?);
+                }
+                "--turn-wait" => {
+                    cli.turn_wait_secs = Some(parse_u32(&mut args, "--turn-wait")?);
                 }
                 "--seed" => {
                     cli.seed = Some(parse_u32(&mut args, "--seed")?);
@@ -410,6 +417,7 @@ async fn run_connect(cli: &Cli) -> Result<()> {
         password: cli.password.clone(),
         max_turns: cli.turns.unwrap_or(0),
         reconnect,
+        turn_wait: Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
         ..NetworkOptions::default()
     };
 
@@ -693,6 +701,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 &request,
                 cli.turns.unwrap_or(0),
                 reconnect,
+                Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
             ) {
                 Ok(report) => {
                     print_network(&report);
@@ -738,12 +747,14 @@ fn run_ui_session(
     request: &SessionRequest,
     max_turns: u32,
     reconnect: ReconnectPolicy,
+    turn_wait: Duration,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
         game_id: request.game_id.clone(),
         password: request.password.clone(),
         max_turns,
         reconnect,
+        turn_wait,
         ..NetworkOptions::default()
     };
     let (width, height) = (

@@ -125,10 +125,17 @@ bash build/scripts/live-smoke.sh 10
 ```sh
 docker compose up -d --build          # Horizon + headless
 # клиент из исходников (SDL3 из системы) либо релизный бинарь из §5:
-cargo run -p max_app --features sdl -- --ui
+cargo run -p max_app --features sdl -- --ui --turn-wait 60
 # со звуком:
-cargo run -p max_app --features sdl,sound -- --ui
+cargo run -p max_app --features sdl,sound -- --ui --turn-wait 60
 ```
+
+`--turn-wait 60` обязателен для игры руками: без него сетевой цикл закрывает ход
+сразу после тика (~16 мс) и клики не успевают попасть в партию — это режим для
+headless/live-smoke. Если каталог данных headless-сервера без `PATCHES.RES`
+(как в `docker-compose.yml`), добавьте `--handshake-patches <несуществующий
+файл>`, иначе handshake вернёт `game data`. Подробности — `max_app/README.md`,
+раздел «Сетевая партия в окне».
 
 Шаги (все — только мышью, кроме ввода имени игры):
 
@@ -341,9 +348,9 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC, 14.9 с на кэше; `max_app.exe` 5 246 976 байт,
-      sha256 `3fd6bfe9f732a6fa16e2bf7c8d712a3f9af791dcc3c054a1b6cf800f8b58f404`).
-      _(2026-11-15)_
+      (MSVC; `max_app.exe` 5 256 192 байта,
+      sha256 `816d90e2162ba227093feeccc70923162b0fee03cb5de7fb06cf4bee653722f5` —
+      сборка с `--turn-wait`). _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
       (rc=0). _(2026-11-15)_
 - [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
@@ -360,8 +367,26 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 - [x] Бинарь и DLL заархивированы в
       `release/max_app-1.0.0-windows-x86_64-ui.zip` (sha256 в `.zip.sha256`) —
       отдельно от headless-zip из §6. _(2026-11-15)_
-- [ ] Партия в окне: меню → Create game (нужен `docker compose up -d --build`),
-      выделение юнита, приказ движения, End Turn, чат — по сценарию §4.
+- [x] **Сетевая партия 2 игрока в окне** (`--ui --turn-wait 45`,
+      `docker compose up -d --build` + игра создана `horizon_probe`): два клиента,
+      team 0/1, `local_team` и `team_types=[Player, Remote, None, None]`;
+      **6 ходов** в lockstep (`turn_counter=1…6` совпадают у обоих),
+      приказы движения `38` доходят до сервера (`ai_log.txt`),
+      чат `18` доставляется пиру (`RED: hi bob` в логе bob),
+      `End Turn` → `06 + 52`, барьеры `45/53/54` без таймаутов,
+      `barrier_timeouts=0`, десинков (`CRC 45 … десинк`) — 0.
+      Отмечено: `--turn-wait` добавлен именно по итогам этого прогона — без него
+      ход закрывался за один кадр (~16 мс). _(2026-11-15)_
+- [x] Найдено и обойдено при прогоне: (1) UI `Create game` получает
+      `connect timed out after 10s`, пока сессия `max-port` поднимается
+      (~10–15 с) — лечится «создать → подождать → Join»; (2) без
+      `--handshake-patches <несуществующий>` сервер отвечает
+      `handshake rejected: game data (reason GameData)` — в данных headless нет
+      `PATCHES.RES`. Оба пункта описаны в `max_app/README.md`. _(2026-11-15)_
+- [ ] Партия в окне без обходных флагов: `Create game` → сессия сразу (нужен
+      ретрай/прогрев в клиенте) и дефолтный `data_hash`, совпадающий с сервером.
+- [ ] Полный сценарий §4 (меню → create → бой/чат/End Turn до победы) на живом
+      сервере, без ручных флагов совместимости.
 
 ## 7. Документация и лицензии
 
@@ -447,6 +472,7 @@ bash release.sh                             # §5, артефакты
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 246 976 Б, sha256 `3fd6bfe9…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 256 192 Б, sha256 `816d90e2…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Сетевая партия 2×UI | 2026-11-15 | 2× `max_app.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |
