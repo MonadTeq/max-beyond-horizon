@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use max_app::{App, AppConfig, AppDigest, NewGameConfig};
 use max_core::crc;
-use max_core::enums::Planet;
+use max_core::enums::{GameStateType, Planet};
 use max_core::events::command_move_linear;
 use max_core::events::ApplyOutcome;
 use max_core::geo::{Point, MAP_WIDTH};
@@ -195,9 +195,14 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         crc::crc16(&expected_surface),
         "surface_crc должен совпадать с P2-вектором"
     );
+    // M3.2: `GameManager_InitGame` высаживает стартовые армии обеих команд
+    // (шахта, генератор, две плиты и загрузка SC_L0001), иначе условия
+    // победы/поражения считают команду выбитой на первом же ходу.
+    let per_team = 4 + max_core::DEFAULT_MISSION_LOADOUT.len();
+    assert_eq!(report.start_units, 2 * per_team);
     assert_eq!(
-        report.units, 0,
-        "derelicts=0 не должен создавать юнитов в GameState"
+        report.units, report.start_units,
+        "derelicts=0 не должен создавать alien-юнитов, только стартовые армии"
     );
     // У P2-вектора `p00_l111_d0_s0` уровень обломков 0 — размещений нет
     // (в самом векторе тоже 0 строк `placement`).
@@ -219,8 +224,25 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     assert_eq!(frame.pixels().len(), 320 * 240 * 4);
     assert_eq!(frame.stride(), 320 * 4);
     assert!(stats.map_tiles > 0);
-    assert_eq!(stats.units(), report.units);
+    // Камера центрируется на стартовой базе игрока, поэтому на кадр попадает
+    // только часть юнитов (остальные — вне вьюпорта).
+    assert!(
+        stats.units() > 0 && stats.units() <= report.units,
+        "на кадре должны быть юниты: {stats:?} при {} в состоянии",
+        report.units
+    );
     assert!(frame.pixels().chunks_exact(4).all(|pixel| pixel[3] == 255));
+
+    // M3.2: стартовые армии не дают партии завершиться на первом ходу —
+    // `menu_check_end_game_conditions` больше не видит команды «выбитыми».
+    for turn in 0..3 {
+        app.state_mut().game_state = GameStateType::EndTurn;
+        assert!(
+            !app.state_mut().finish_turn(),
+            "партия не должна завершаться на ходу {turn}"
+        );
+    }
+    assert_eq!(app.digest().units, report.units, "ходы не элиминируют команду");
 
     // Уровень обломков 2 даёт непустую расстановку из setup, и все размещения
     // разворачиваются в GameState от имени ALIEN (C++ `DeployUnit`).
@@ -235,8 +257,13 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         "derelicts=2 должен дать размещения: {aliens_report:?}"
     );
     assert_eq!(
-        aliens_report.units, aliens_report.aliens,
-        "каждое размещение alien-обломков должно стать юнитом GameState"
+        aliens_report.units,
+        aliens_report.aliens + aliens_report.start_units,
+        "юниты состояния = alien-обломки + стартовые армии"
+    );
+    assert_eq!(
+        aliens_report.start_units, report.start_units,
+        "уровень обломков не влияет на стартовые армии"
     );
     assert_eq!(
         aliens_report.resources_crc, expected_resources_crc,
@@ -254,11 +281,11 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
             .filter(|id| state.unit(*id).is_some_and(|unit| unit.team == TeamId::ALIEN))
             .collect();
 
-        assert_eq!(alien_ids.len(), aliens_report.units);
+        assert_eq!(alien_ids.len(), aliens_report.aliens);
         assert_eq!(
             state.unit_ids_in_order().len(),
             aliens_report.units,
-            "кроме alien-обломков в новой партии юнитов нет"
+            "кроме alien-обломков в новой партии есть только стартовые армии"
         );
 
         for id in &alien_ids {
@@ -456,6 +483,11 @@ fn assets_integration_smoke() {
     assert_eq!(report.planet, Planet::NewLuzon);
     assert_eq!(report.seed, 7);
     assert_eq!(report.teams, 2);
-    assert_eq!(report.units, 0);
+    assert_eq!(
+        report.start_units,
+        2 * (4 + max_core::DEFAULT_MISSION_LOADOUT.len()),
+        "на реальной карте стартовые армии тоже высаживаются"
+    );
+    assert_eq!(report.units, report.start_units);
     assert!(report.resources_crc != 0);
 }

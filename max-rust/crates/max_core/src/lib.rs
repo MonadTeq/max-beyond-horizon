@@ -17,6 +17,10 @@
 //! * [`setup`] — детерминированная генерация карты при старте партии: вывод
 //!   `SurfaceMap` из tile-data `.wrl`, ресурсы (`ResourceAllocator`), стартовые
 //!   позиции и alien-обломки, с порядком RNG 1:1 к C++;
+//! * [`deploy`] — развёртывание стартовых армий при создании партии
+//!   (`GameManager_ProcessTeamMissionSupplyUnits`): шахта/генератор/плиты и
+//!   загрузка из `SC_L0001` (`CONSTRCT`/`ENGINEER`/`SURVEYOR`), с двумя
+//!   RNG-вызовами на команду;
 //! * [`unit_values`] — `UnitValues`, индексы `ATTRIB_*`, таблица базовых
 //!   значений 93 типов (`SC_ATTRI`) и клановые модификаторы (`SC_CLANS`);
 //! * [`team`] — `TeamInfo`/`ResearchTopicInfo`/`TeamUnits`, `Complex`, `Cargo`;
@@ -64,6 +68,7 @@ pub mod access;
 pub mod ai;
 pub mod combat;
 pub mod crc;
+pub mod deploy;
 pub mod events;
 pub mod game;
 pub mod geo;
@@ -109,6 +114,12 @@ pub use crc::{
     crc16, crc16_update_byte, get_crc16_word, get_unit_list_checksum, replay_digest_bytes,
     replay_digest_crc, state_checksum, state_digest, CRC16_INITIAL, CRC16_POLYNOMIAL,
     REPLAY_DIGEST_MAGIC,
+};
+pub use deploy::{
+    deploy_starting_units, deploy_team_supplies, find_reachable_spot, is_valid_starting_position,
+    set_initial_mining, start_position_mining_station, starting_position_power_generator,
+    survey_resources_in_area, TeamSupply, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
+    DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT,
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{

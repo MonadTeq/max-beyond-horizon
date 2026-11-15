@@ -396,11 +396,12 @@ fn print_assets(report: Option<&AssetsReport>) {
 
 fn print_new_game(report: &NewGameReport) {
     println!(
-        "new-game: planet={:?} seed={} teams={} aliens={} units={} surface_crc=0x{:04X} resources_crc=0x{:04X}",
+        "new-game: planet={:?} seed={} teams={} aliens={} start_units={} units={} surface_crc=0x{:04X} resources_crc=0x{:04X}",
         report.planet,
         report.seed,
         report.teams,
         report.aliens,
+        report.start_units,
         report.units,
         report.surface_crc,
         report.resources_crc

@@ -456,15 +456,17 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
         derelicts: level(settings.ini_alien_derelicts),
         teams,
         player_team: local_team,
+        start_gold: settings.ini_start_gold.max(0) as u32,
     };
 
     match app.new_game(&config) {
         Ok(report) => tracing::info!(
-            "мир из пакета 30: planet={:?} seed={} teams={} units={} aliens={}",
+            "мир из пакета 30: planet={:?} seed={} teams={} units={} start_units={} aliens={}",
             report.planet,
             report.seed,
             report.teams,
             report.units,
+            report.start_units,
             report.aliens
         ),
         Err(error) => {

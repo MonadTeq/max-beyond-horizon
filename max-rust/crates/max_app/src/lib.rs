@@ -271,6 +271,11 @@ pub struct NewGameConfig {
     pub teams: Vec<TeamStart>,
     /// Какая команда — локальный игрок.
     pub player_team: TeamId,
+    /// `start_gold` — золото команды на старте (`settings.cpp:118`, 150).
+    ///
+    /// Из него же считается `team_gold` после высадки: в custom-игре
+    /// стартовая загрузка `SC_L0001` выдаётся бесплатно, апгрейдов нет.
+    pub start_gold: u32,
 }
 
 impl Default for NewGameConfig {
@@ -294,6 +299,7 @@ impl NewGameConfig {
                 TeamStart::new(TeamId::BLUE, Point::new(70, 70)),
             ],
             player_team: TeamId::RED,
+            start_gold: max_core::deploy::DEFAULT_START_GOLD,
         }
     }
 }
@@ -311,7 +317,10 @@ pub struct NewGameReport {
     /// `UnitsManager_DeployUnit`; все они развёрнуты в `GameState` под
     /// `TeamId::ALIEN`).
     pub aliens: usize,
-    /// Сколько юнитов в состоянии после генерации.
+    /// Сколько стартовых юнитов высадил `deploy::deploy_starting_units`
+    /// (`GameManager_ProcessTeamMissionSupplyUnits` для каждой команды).
+    pub start_units: usize,
+    /// Сколько юнитов в состоянии после генерации (`aliens` + `start_units`).
     pub units: usize,
     /// CRC16 поверхности карты.
     pub surface_crc: u16,
@@ -567,11 +576,20 @@ impl App {
 
     /// Создаёт локальную партию на готовой карте поверхности.
     ///
-    /// Порт `GameManager_InitGame` в объёме P2: `setup::generate_map` (ресурсы +
-    /// alien-обломки), затем `GameState::with_setup`, развёртывание alien-обломков
-    /// (`UnitsManager_DeployUnit` с `team = PLAYER_TEAM_ALIEN`) и продолжение
-    /// потока ГПСЧ (как в C++, где `Randomizer_SetSeed` стоит в начале
-    /// генерации партии).
+    /// Порт `GameManager_InitGame` в объёме P2 + M3.2: `setup::generate_map`
+    /// (ресурсы + alien-обломки), затем `GameState::with_setup`, развёртывание
+    /// alien-обломков (`UnitsManager_DeployUnit` с `team = PLAYER_TEAM_ALIEN`),
+    /// высадка стартовых армий
+    /// ([`max_core::deploy::deploy_starting_units`] —
+    /// `GameManager_ProcessTeamMissionSupplyUnits`) и продолжение потока ГПСЧ
+    /// (как в C++, где `Randomizer_SetSeed` стоит в начале генерации партии).
+    ///
+    /// # Стартовые армии
+    ///
+    /// Каждая играющая команда получает шахту, генератор, две плиты и загрузку
+    /// `SC_L0001` (`CONSTRCT` 40, `ENGINEER` 20, `SURVEYOR` 0), золото —
+    /// [`NewGameConfig::start_gold`]. Без этого условия победы/поражения
+    /// (`SC_L0002`) считают команду выбитой уже на первом ходу.
     ///
     /// # Alien-обломки
     ///
@@ -640,22 +658,36 @@ impl App {
             );
         }
 
+        // `GameManager_ProcessTeamMissionSupplyUnits` для каждой команды
+        // (`team_type != NONE`), в порядке возрастания индекса команды и уже
+        // после alien-обломков — ровно как в `GameManager_InitGame`. Без этого
+        // `menu_check_end_game_conditions` завершает партию сразу после первого
+        // хода: у команд нет ни инфраструктуры, ни войск.
+        let start_units = max_core::deploy::deploy_starting_units(
+            &mut state,
+            config.start_gold,
+            setup.settings.max_resources,
+            &setup.teams,
+        );
+
         let report = NewGameReport {
             planet: config.planet,
             seed: config.seed,
             teams: setup.teams.len(),
             aliens: output.aliens.len(),
+            start_units,
             units: state.unit_count(),
             surface_crc: crc::crc16(&state.map.surface.to_bytes()),
             resources_crc: crc::crc16(&state.map.resources.to_le_bytes()),
         };
 
         tracing::info!(
-            "new game: planet={:?} seed={} teams={} aliens={} units={} surface_crc=0x{:04X}",
+            "new game: planet={:?} seed={} teams={} aliens={} start_units={} units={} surface_crc=0x{:04X}",
             report.planet,
             report.seed,
             report.teams,
             report.aliens,
+            report.start_units,
             report.units,
             report.surface_crc
         );
