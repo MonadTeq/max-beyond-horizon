@@ -379,6 +379,27 @@ fn run_new_game(cli: &Cli) -> Result<()> {
     let report = app.new_game(&cli.new_game_config())?;
     print_new_game(&report);
 
+    // Как в оригинале: к началу партии выбран первый боеспособный юнит игрока
+    // со спрайтом — тогда кадр `--new-game` сразу показывает портрет,
+    // статистику и описание, а не пустые панели.
+    let selected = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter_map(|id| app.state().unit(id))
+        .find(|unit| {
+            unit.team == app.player_team()
+                && unit.hits > 0
+                && app
+                    .assets()
+                    .is_some_and(|assets| assets.sprite(unit.unit_type).is_some())
+        })
+        .map(|unit| unit.id);
+
+    if let Some(id) = selected {
+        app.hud_mut().select(Some(id));
+    }
+
     let (frame, stats) = app.render_frame_with_stats();
     println!(
         "frame: {}x{} rgba8 ({} байт), tiles={} units={} sprite={} marker={} team={:?}",

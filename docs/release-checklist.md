@@ -348,10 +348,10 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC; `max_app.exe` 5 270 016 байт,
-      sha256 `d4d68f8427a8d075f88a1741d0ff615aaebca044b46c904d4b203159b3933a18` —
-      сборка с `--turn-wait`, настоящими тайлами поверхности и спрайтами зданий).
-      _(2026-11-15)_
+      (MSVC; `max_app.exe` 5 338 624 байт,
+      sha256 `0000219043a7c34d72fa94b9c499c67599599e27bcb283c9a2427772ed43341e` —
+      сборка с панелями 1:1 и шрифтами GNW, `--turn-wait`, настоящими тайлами
+      поверхности и спрайтами зданий). _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
       (rc=0). _(2026-11-15)_
 - [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
@@ -365,6 +365,20 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `text::tests::glyph_bits_are_lsb_first`; проверено визуально по скриншоту
       окна: `NEW GAME ? settings`, `Name: …`, `World: 23`, `Back`/`Create`,
       `Configure the game and press Enter`. _(2026-11-15)_
+- [x] **Панели 1:1 и шрифты GNW (пункты A/B `docs/visual-1to1-status.md`)**:
+      `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`,
+      `UNITNAME`, 9 переключателей `*_OFF/ON`, `ZOOMPNL1`/`ZOOMPTR`, портрет
+      (кадр спрайта ×2), миникарта из `.WRL`, миникарта `2x`/`TNT`; текст —
+      оригинальные `FONT1/2/5.FON`, сверенные с FreeType-путём C++-порта
+      побайтово для ASCII. Кадр: `build/frame-panels.png`; сборка артефакта
+      отрисовывает его же (`build/frame-windows-artifact.png`). _(2026-11-15)_
+- [x] **Координаты мыши (риск 4)**: при хроме клик переводится из окна в
+      область карты (`panels::screen_to_map`, −180/−18), камера карты 448×448
+      одна для рендера и ввода (`App::map_viewport`); клики по панелям
+      обрабатываются до карты, End Turn не проваливается в карту. Тесты:
+      `chrome_click_on_the_map_centre_selects_the_unit_under_it`,
+      `chrome_end_turn_click_is_a_button_not_a_map_click`,
+      `chrome_toggle_and_zoom_clicks_work_on_the_panels`. _(2026-11-15)_
 - [x] Бинарь и DLL заархивированы в
       `release/max_app-1.0.0-windows-x86_64-ui.zip` (sha256 в `.zip.sha256`) —
       отдельно от headless-zip из §6. _(2026-11-15)_
@@ -467,14 +481,15 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | 2026-11-15 | `cargo check && cargo test` в `rust:1.94.0-bookworm` после кросс-правок; плюс `cargo check --features sound` и `cargo check -p max_net --features tls` | 500 тестов, 0 failed; check'и OK | `max-rust/target/cargo-test.log` |
+| Тесты max-rust | 2026-11-15 | `cargo check && cargo test` в `rust:1.94.0-bookworm` после панелей/шрифтов; плюс `cargo check --features sound`, `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) и `cargo check -p max_net --features tls` | 539 тестов, 0 failed; все check'и OK | `max-rust/target/cargo-test.log` |
 | Тесты Horizon | | | | |
 | Live smoke 2×10 | | | | |
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 270 016 Б, sha256 `d4d68f84…`; окно `M.A.X. — Rust client (M4.2 HUD)` открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
-| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max_app.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-framed-session-final.png`, `build/ui-framepic.png` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 338 624 Б, sha256 `00002190…`; окно открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip 3 029 288 Б, sha256 `0bd9fbd8…` + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max_app.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
+| Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max_app.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-rust/tools/font_vectors/render.txt` |
 | Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max_app.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 39 (здания видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max_app.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |

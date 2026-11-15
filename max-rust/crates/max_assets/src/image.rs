@@ -70,8 +70,8 @@ pub struct SimpleImage {
     pub ulx: i16,
     /// Смещение от верха окна.
     pub uly: i16,
-    /// Индекс прозрачного цвета (в файле поля нет — оставлено для совместимости
-    /// с C++, где он читается как первый пиксель; здесь всегда 0).
+    /// Индекс прозрачного цвета: первый байт пикселей (в C++ поле
+    /// `transparent_color` — это `&pixels[0]`).
     pub transparent: u8,
     pixels: Vec<u8>,
 }
@@ -90,8 +90,10 @@ impl SimpleImage {
         let height = i16::from_le_bytes([bytes[2], bytes[3]]);
         let ulx = i16::from_le_bytes([bytes[4], bytes[5]]);
         let uly = i16::from_le_bytes([bytes[6], bytes[7]]);
-        // Поле `transparent` в файле отсутствует (см. комментарий к SIMPLE_HEADER).
-        let transparent = 0u8;
+        // Поля `transparent_color` в файле нет: C++ читает его как первый
+        // байт пикселей (`&image->transparent_color`), поэтому прозрачный
+        // индекс — это `pixels[0]`.
+        let transparent = bytes[SIMPLE_HEADER];
 
         if width <= 0 || height <= 0 {
             return Err(ImageError::BadSize {
@@ -299,6 +301,10 @@ mod tests {
         assert_eq!(image.pixel(0, 0), Some(1));
         assert_eq!(image.pixel(2, 1), Some(6));
         assert_eq!(image.pixel(3, 1), None);
+        assert_eq!(
+            image.transparent, 1,
+            "прозрачный индекс — первый пиксель (C++ читает его с offset 8)"
+        );
         assert_eq!(bytes.len(), SIMPLE_HEADER + 6, "8-байтный заголовок + пиксели");
     }
 

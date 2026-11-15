@@ -491,3 +491,135 @@ fn assets_integration_smoke() {
     assert_eq!(report.units, report.start_units);
     assert!(report.resources_crc != 0);
 }
+
+// ---------------------------------------------------------------------------
+// 4. Хром 1:1: координаты мыши и клики по панелям
+// ---------------------------------------------------------------------------
+
+/// Загружает приложение с ассетами игры; `None`, если данных нет рядом.
+fn chrome_app() -> Option<App> {
+    let max_res = repo_path("max-original/MAX.RES");
+    let color_pal = repo_path("max-original/COLOR.PAL");
+    let patches = repo_path("assets/PATCHES.RES");
+
+    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+        return None;
+    }
+
+    let config = AppConfig {
+        max_res,
+        color_pal,
+        patches_res: patches,
+        ..Default::default()
+    };
+    let mut app = App::new(config);
+    app.init_assets().expect("ассеты игры");
+    app.new_game(&NewGameConfig::p2_reference()).expect("партия");
+
+    Some(app)
+}
+
+#[test]
+fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+
+    assert!(app.chrome_active(), "640×480 + FRAMEPIC = хром 1:1");
+
+    let unit = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter_map(|id| app.state().unit(id))
+        .find(|unit| unit.team == app.player_team())
+        .expect("стартовый юнит игрока");
+    let grid = unit.grid;
+
+    app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+    // Клик в центр клетки на экране: карта начинается с (180,18), и без
+    // пересчёта координат клик попадал бы в (0,0) области карты (риск 4).
+    let map_view = app.map_viewport();
+    let tile = map_view.tile_rect(grid.x, grid.y);
+    let x = max_render::layout::MAIN_MAP.ulx + tile.ulx + tile.width / 2;
+    let y = max_render::layout::MAIN_MAP.uly + tile.uly + tile.height / 2;
+
+    assert_eq!(
+        map_view.screen_to_grid(tile.ulx + tile.width / 2, tile.uly + tile.height / 2),
+        (grid.x, grid.y)
+    );
+
+    let transition = max_app::ui::handle_session_input(
+        &mut app,
+        max_app::ui::InputEvent::MouseClick(x, y),
+        false,
+    );
+
+    assert_eq!(transition, max_app::ui::Transition::None);
+    let selected = app
+        .hud()
+        .selected
+        .expect("клик по карте выбирает юнита");
+    assert_eq!(
+        app.state().unit(selected).expect("юнит").grid,
+        grid,
+        "клик в центр окна карты выбирает юнита в ожидаемой клетке"
+    );
+}
+
+#[test]
+fn chrome_end_turn_click_is_a_button_not_a_map_click() {
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+    let rect = max_render::layout::END_TURN_BUTTON;
+    let x = rect.ulx + rect.width / 2;
+    let y = rect.uly + rect.height / 2;
+
+    assert_eq!(
+        max_app::panels::panel_button_at(x, y),
+        Some(max_app::PanelButton::EndTurn)
+    );
+    assert_eq!(
+        max_app::panels::screen_to_map(x, y),
+        None,
+        "End Turn заходит на карту, но клик принадлежит кнопке"
+    );
+
+    max_app::ui::handle_session_input(&mut app, max_app::ui::InputEvent::MouseClick(x, y), true);
+
+    assert!(
+        app.hud().end_turn_requested,
+        "клик по End Turn ставит запрос закрытия хода"
+    );
+    assert_eq!(app.hud().selected, None, "клик не ушёл в карту");
+}
+
+#[test]
+fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+    let click = |app: &mut App, rect: max_render::buffer::PixelRect| {
+        max_app::ui::handle_session_input(
+            app,
+            max_app::ui::InputEvent::MouseClick(
+                rect.ulx + rect.width / 2,
+                rect.uly + rect.height / 2,
+            ),
+            false,
+        );
+    };
+
+    click(&mut app, max_render::layout::SURVEY_BUTTON);
+    assert!(app.hud().panels.survey, "Survey — локальный флаг HudState");
+    click(&mut app, max_render::layout::SURVEY_BUTTON);
+    assert!(!app.hud().panels.survey);
+
+    assert_eq!(app.viewport().zoom(), 64);
+    click(&mut app, max_render::layout::ZOOM_MINUS);
+    assert_eq!(app.viewport().zoom(), 56, "кнопка − уменьшает зум");
+    click(&mut app, max_render::layout::ZOOM_PLUS);
+    assert_eq!(app.viewport().zoom(), 64, "кнопка + возвращает 1:1");
+}

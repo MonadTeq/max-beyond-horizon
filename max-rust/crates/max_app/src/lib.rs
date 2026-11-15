@@ -37,6 +37,7 @@ pub mod assets;
 pub mod audio;
 pub mod chrome;
 pub mod hud;
+pub mod panels;
 pub mod net;
 pub mod render;
 pub mod ui;
@@ -73,6 +74,7 @@ pub use hud::{
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
+pub use panels::{PanelButton, PanelState, Panels};
 pub use render::{write_ppm, RenderStats};
 pub use ui::{
     handle_session_input, CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient,
@@ -494,6 +496,33 @@ impl App {
     /// Камера/масштаб кадра.
     pub fn viewport(&self) -> &Viewport {
         &self.viewport
+    }
+
+    /// Активен ли хром окна 1:1 (`FRAMEPIC` и кадр ровно 640×480).
+    pub fn chrome_active(&self) -> bool {
+        self.viewport.screen()
+            == (
+                max_render::layout::WINDOW_WIDTH as u32,
+                max_render::layout::WINDOW_HEIGHT as u32,
+            )
+            && self
+                .assets
+                .as_ref()
+                .and_then(|assets| assets.chrome.as_ref())
+                .is_some_and(|chrome| chrome.is_ready())
+    }
+
+    /// Камера области карты окна: 448×448, тот же центр и зум.
+    ///
+    /// При активном хроме карта рисуется в собственный буфер 448×448
+    /// (`WINDOW_MAIN_MAP`), поэтому и мышь переводится этой камерой, а не
+    /// камерой всего окна.
+    pub fn map_viewport(&self) -> Viewport {
+        if self.chrome_active() {
+            crate::panels::map_viewport(&self.viewport)
+        } else {
+            self.viewport
+        }
     }
 
     /// Изменяемая камера.

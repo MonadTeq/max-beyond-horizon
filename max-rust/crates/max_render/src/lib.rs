@@ -65,8 +65,10 @@ pub use layout::{
     SIDE_PANEL_WIDTH, STAT_WINDOW, STATUS_BUTTON, SURVEY_BUTTON, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 pub use text::{
-    draw_text, draw_text_line, draw_text_wrapped, glyph, line_width, text_height, wrap_text,
-    TextMetrics, ASCII_CHARS, FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,
+    draw_text, draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed,
+    draw_text_gnw_shadowed, draw_text_line, draw_text_wrapped, glyph, line_width, text_height,
+    wrap_text, GnwFont, GnwFontError, GnwFontId, GnwGlyph, TextMetrics, ASCII_CHARS,
+    FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,
 };
 pub use ui::{
     hit_test, layout, layout_uniform, render_ui, Button, Label, ListBox, Point, Rect, TextBox,

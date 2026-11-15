@@ -309,6 +309,8 @@ pub struct Assets {
     pub terrain: max_render::terrain::TerrainAtlas,
     /// Хром окна 1:1 (`FRAMEPIC` + панели), если он есть в `MAX.RES`.
     pub chrome: Option<crate::chrome::Chrome>,
+    /// Наполнение панелей поверх `FRAMEPIC` (кнопки, счётчики, сетка, зум).
+    pub panels: Option<crate::panels::Panels>,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
@@ -416,10 +418,19 @@ impl Assets {
         // Хром окна 1:1 (`FRAMEPIC` + панели) — необязателен: без него рендер
         // работает в прежнем полноэкранном режиме.
         let chrome = crate::chrome::Chrome::load(&max_res);
+        let panels = crate::panels::Panels::load(&max_res);
+
+        if chrome.is_some() && panels.is_none() {
+            warnings.push(
+                "FRAMEPIC есть, а картинки панелей (FILES_OF/ENDTRN_U/…) не загрузились"
+                    .to_string(),
+            );
+        }
 
         Ok(Self {
             max_res,
             chrome,
+            panels,
             patches_res,
             palette,
             brightness,

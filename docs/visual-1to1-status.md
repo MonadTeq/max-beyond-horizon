@@ -19,16 +19,20 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Юниты (спрайты, тени, командные цвета) | **1:1** | `MAX.RES`: `TANK`, `INFANTRY`, … + `S_*` | `max_render::sprite_atlas`, `max_assets::sprite` |
 | Окно и рамки интерфейса | **1:1** | `MAX.RES`: `FRAMEPIC` (640×480, своя палитра, RLE) | `max_app::chrome`, `max_render::layout` |
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
-| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **заглушка/пусто** | `P_*`, `I_*`, `MNUBTN*`, `UNTBTN_U/D`, `BTNHIDE`, `MENU_ON/OFF`, `RADAR` | не подключено |
-| Миникарта | **процедурная** (в режиме хрома пустая рамка) | `.WRL::minimap()` + `RADAR` | не подключено |
-| Шрифт | **8×8 заглушка** | шрифты GNW (`GNW_TEXT_FONT_1/5`), **не** в `MAX.RES` | `max_render::text` |
+| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (кроме портрета-анимации) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
+| Миникарта | **1:1 по `minimap`-слою `.WRL`** (+ рамка камеры, кнопки `2x`/`TNT`) | `.WRL::minimap()`, палитра `.WRL`; `MIN2X_*`/`MINFL_*` | `max_app::panels::draw_minimap` |
+| Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
 | Иконки ресурсов/обломков | **цветные точки** | `I_*` (спрайты) | `map_render::render_resources_into` |
 | Курсор мыши | **системный SDL** | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | не подключено |
 | Меню (главное, create/join) | **процедурное** | `MNUBTN*U/D`, `FRAMEPIC` | `max_app::ui` |
 | Экран выбора планеты | **нет** | `SNOW_PIC + world/6` (big image 128×128) | — |
 
-Итог: **в игре** (сессия/`--new-game` при 640×480) окно и карта уже выглядят как
-оригинал; панели внутри окна пока пустые, шрифт и меню — процедурные.
+Итог: **в игре** (сессия/`--new-game` при 640×480) окно, карта и панели уже
+выглядят как оригинал: верхние кнопки/счётчики, портрет (статичный кадр
+спрайта), четыре строки статистики, сетка переключателей, зум, координаты,
+описание юнита и миникарта рисуются на координатах и ресурсах C++-порта,
+текст — оригинальными растровыми шрифтами GNW. Остались анимация портрета
+(FLIC), курсоры, иконки ресурсов, меню и масштабирование элементов.
 
 ---
 
@@ -180,6 +184,11 @@ RLE по строкам: i16 n;
 | `max_render/src/terrain.rs` | 282 | `TerrainAtlas`: палитра `.WRL` (6→8 бит), пиксели тайлов, блит с зумом; 4 теста |
 | `max_render/src/layout.rs` | 125 | константы раскладки 640×480 из `windows[]`; 3 теста (в т.ч. непересечение с картой) |
 | `max_app/src/chrome.rs` | 196 | `Chrome` (`FRAMEPIC` + `PANELTOP/PANELBTM`), `draw`, `blit_map`; 3 теста |
+| `max_render/src/text/gnw.rs` | 788 | `GnwFont`/`GnwFontId`: декодер `.FON` GNW, `draw_text_gnw`, `draw_text_gnw_shadowed`, центрирование; 10 тестов (включая сверку с C++-эталоном) |
+| `max_render/data/gnw_font_{1,2,5}.fnt` | 6932/4399/4868 | оригинальные `FONT1/2/5.FON` (растровые шрифты, вкомпилированы через `include_bytes!`) |
+| `max_app/src/panels.rs` | 1251 | `Panels`: 30+ картинок панелей из `MAX.RES`, 27 кнопок, портрет, статистика, миникарта, зум, координаты; `PanelState` в `HudState`; 10 тестов |
+| `max-rust/tools/font_vectors/main.cpp` + `vectors.txt`/`render.txt` | 388 + 34 КБ | эталонный генератор: FreeType-путь C++-порта и `.FON`-декодер, побайтовое сравнение |
+| `max_app/examples/panel_frame.rs` | 80 | кадр 640×480 с выбранным юнитом (доказательство пункта A) |
 | `max_app/src/render.rs` | +82 | режим «окно 1:1»: хром + карта в `MAIN_MAP`; `draw_units` вынесен |
 | `max_app/src/ui.rs` | +25 | в сессии при активном хроме процедурный HUD не рисуется — только строка статуса в углу карты |
 | `max_app/src/assets.rs` | +7 | `Assets.terrain` и `Assets.chrome` |
@@ -205,23 +214,45 @@ Chrome::load(&ResArchive) -> Option<Chrome>
 Chrome::draw(&mut RgbaBuffer) -> u32
 chrome::blit_map(&mut RgbaBuffer, &RgbaBuffer) -> u32   // в layout::MAIN_MAP
 
+// шрифт GNW (оригинальный растровый)
+GnwFontId::{Font1,Font2,Font5}.font() -> &'static GnwFont
+GnwFont::decode(&[u8]) -> Result<GnwFont, GnwFontError>
+GnwFont::text_width(&str) -> i32, GnwFont::line_height() -> i32
+text::draw_text_gnw(&mut RgbaBuffer, x, y, font, text, color) -> i32
+text::draw_text_gnw_shadowed(buf, x, y, font, text, base, outline, shadow) -> i32
+// Старый 8×8 остался fallback'ом: draw_text / draw_text_line / wrap_text.
+
+// панели поверх FRAMEPIC
+Panels::load(&ResArchive) -> Option<Panels>
+Panels::draw(&mut RgbaBuffer, &App) -> u32
+panels::panel_button_at(x, y) -> Option<PanelButton>    // клики по хрому
+panels::screen_to_map(x, y) -> Option<(i32, i32)>      // (180,18) → (0,0)
+App::map_viewport() -> Viewport                        // 448×448 для карты
+App::chrome_active() -> bool
+
 // раскладка (max_render::layout)
 WINDOW_WIDTH = 640, WINDOW_HEIGHT = 480, MAIN_MAP = (180,18,448,448)
 MINIMAP = (15,356,112,112), END_TURN_BUTTON = (390,2,72,21), …
+TURN_COUNTER = (468,2,61,21), TURN_TIMER, ZOOM_SLIDER, COORDINATES, …
 ```
 
 ---
 
 ## 4. Свидетельства проверки
 
-**Тесты:** `516 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`);
-`cargo check --all-targets` — 0 ошибок.
+**Тесты:** `539 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`);
+`cargo check --all-targets` — 0 ошибок; `cargo check -p max_app --features
+sdl-from-source` — 0 ошибок (Linux, полный набор X11/ALSA dev-пакетов).
+Из них новые: 10 тестов `max_render::text::gnw` (включая побайтовую сверку с
+C++/FreeType-эталоном), 10 тестов `max_app::panels`, 3 интеграционных теста
+координат мыши и панельных кликов.
 
 **Артефакт (Windows UI):** `release/max_app-1.0.0-windows-x86_64-ui/`
-- `max_app.exe` — 5 270 016 Б,
-  sha256 `d4d68f8427a8d075f88a1741d0ff615aaebca044b46c904d4b203159b3933a18`
-- `zip` — sha256 `1d84cba546495814c732316ee16449311fd83627a41c1ac1b154f70921c6cc5b`
-- `SHA256SUMS` по 5 файлам — `OK`
+- `max_app.exe` — 5 338 624 Б,
+  sha256 `0000219043a7c34d72fa94b9c499c67599599e27bcb283c9a2427772ed43341e`
+- `zip` — sha256 `0bd9fbd8b2a350937acc0835796fbc149a0f6ce3a3440d10be557486cbdac24b`
+- `SHA256SUMS` по 5 файлам — `OK`; `max_app.exe --help` и `--new-game
+  --width 640 --height 480` отрабатывают (кадр с панелями — `build/frame-windows-artifact.png`).
 
 **Изображения (в `build/`, не коммитятся):**
 
@@ -232,7 +263,11 @@ MINIMAP = (15,356,112,112), END_TURN_BUTTON = (390,2,72,21), …
 | `build/wrl-snow-detail.png` | фрагмент 1:1 (64 px/клетка): снег, скальный берег, вода |
 | `build/frame-original-terrain.png` | кадр 512×384: настоящие тайлы + спрайт шахты |
 | `build/frame-chrome2.png` | кадр 640×480: `FRAMEPIC` + карта ровно в `MAIN_MAP` |
-| `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + статус |
+| `build/frame-panels.png` | **пункт A:** кадр 640×480 с выбранным юнитом: верхние кнопки/End Turn/счётчики, портрет, 4 строки статистики, сетка, зум, координаты/описание, миникарта |
+| `build/frame-newgame-panels.png` | тот же кадр из `--new-game --width 640 --height 480` (выбор первого юнита игрока) |
+| `build/frame-panels-left.png` | левая панель `frame-panels.png` в 2× (детали подписей/статистики) |
+| `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max_app.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
+| `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + панели |
 | `build/rle-FRAMEPIC.bmp` | независимая (Python) эмуляция RLE — сверка с Rust-декодером |
 
 **Измерения раскладки** (по пикселям кадра `frame-chrome2.png`): карта занимает
@@ -241,56 +276,90 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
 
 ---
 
-## 5. Что осталось — план по приоритетам
+## 5. Пункты плана: статус (A и B сделаны, C частично)
 
-### Пункт A. Наполнение панелей и верхней строки (наибольший визуальный эффект)
+### Пункт A. Наполнение панелей и верхней строки — **сделано**
 
-Данные готовы, нужен код отрисовки поверх `FRAMEPIC`:
+Реализация — `max_app::panels` (`Panels::load`/`draw`), координаты — из
+`windows[]`, картинки — из `MAX.RES`, подписи — из `language.json`, цвета —
+индексы палитры `FRAMEPIC` (в игре системная палитра — её, а не `COLOR.PAL`;
+поэтому `UiPalette` в `panels.rs`).
 
-1. **Верхние кнопки и счётчики** (правый верх): `End Turn` (390,2) 72×21,
-   счётчик хода (468,2) 60×21, таймер (534,2) 60×21; кнопки `Files` (17,4) 67×18
-   и `Preferences` (86,4) 67×18 слева.
-   Ресурсы: `MNUBTN1U..4D` (109×40) и `MNUBTN5U/D..6` (48×40), `UNTBTN_U/D` (42×21), `BTNHIDE` (38×21),
-   `MENU_ON/OFF` (44×14) — все уже декодируются как `SimpleImage`.
-2. **Портрет/анимация юнита** — `WINDOW_CORNER_FLIC` (10,29) 128×128.
-   Для статичного портрета: `P_*` (300×240, big image) или `I_*` (спрайты);
-   для анимации — FLIC (`FLC`), пока не разобран.
-3. **Статистика юнита** — `WINDOW_STAT_WINDOW` (10,173) 153×48, четыре строки
-   (HP/ammo/speed…), значения — из `HudState`/`UnitInfo` (уже есть в
-   `max_app::hud`).
-4. **Сетка кнопок** SURVEY/STATUS/COLORS, HITS/AMMO/RANGE, SCAN/GRID/NAME
-   (по 55×16/18, координаты в §2.4) — это переключатели режимов HUD; сейчас
-   логики нет, нужны как минимум состояния «нажата» через `MNUBTN*D`.
-5. **Зум-слайдер** (20,275) 130×14 и кнопки `+`/`−` — привязать к
-   `Viewport::set_zoom` (API уже есть).
-6. **Нижняя строка** координат (242,456) 90×21 и описания юнита (338,456)
-   222×21 — текст потребует шрифта (пункт B).
+1. **Верхние кнопки и счётчики:** `FILES_OF/ON` (17,4) 67×18,
+   `PREF_OFF/ON` (86,4) 67×18, `ENDTRN_U` (390,2) 72×21, `TURNS` (468,2)
+   61×21, `TIMER` (534,2) 61×21. Подписи — `FontColor(0xA2,0xA7,0xE6)`,
+   у End Turn — `(0xA0,0xA2,0xE6)` и `GNW_TEXT_FONT_5`.
+   *Уточнение против плана:* `Files`/`Preferences` — это `FILES_OF/ON` и
+   `PREF_OFF/ON` (67×18, ровно окно), а не `MENU_ON/OFF`; `UNTBTN_U/D` (42×21)
+   и `BTNHIDE` (38×21) в C++-порте для End Turn не используются.
+2. **Портрет** `CORNER_FLIC` (10,29) 128×128: чёрный фон, кадр спрайта
+   выбранного юнита (`Assets::sprite` → `frame_for` + тень), увеличенный ×2;
+   сверху — имя и статус (`GNW_TEXT_FONT_2`). FLIC-анимация (`PlayerCorner`)
+   остаётся неразобранной.
+3. **Статистика** `STAT_WINDOW` (10,173) 153×48: четыре строки по 12 px
+   (`WINDOW_STAT_ROW_1..4`), значения `Hits/Ammo/Speed/Shots` из `UnitInfo`
+   (`ATTRIB_HITS/AMMO/SPEED/ROUNDS`), цвета — как
+   `GameManager_DrawInfoDisplayRow` (красный ≤ ¼, жёлтый ≤ ½, зелёный иначе).
+4. **Сетка переключателей** 3×3 на (4,298)…(168,348): `SURV_*`, `STAT_*`,
+   `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_UP/DN`
+   (55×16/18), нажатое состояние — `*_ON`/`*_DN`, локальные флаги
+   `HudState::panels: PanelState`. *Уточнение против плана:* это ресурсы
+   `SURV_OFF/ON` и т.п., а не `MNUBTN*U/D` (те — кнопки главного меню 109×40).
+5. **Зум** `ZOOMPNL1` + `ZOOMPTR` в (20,275) 130×19 (формула смещения
+   `GameManager_UpdateZoomSlider`), кнопки `+`/`−` (2,275) и (150,275) меняют
+   `Viewport::set_zoom` на шаг 8 в диапазоне 8…64; клик по ползунку —
+   `zoom_from_slider_x`.
+6. **Нижняя строка:** `XYPOS` (242,456) 90×21 — `%03d-%03d` под курсором
+   (или выбранный юнит/центр камеры), `UNITNAME` (338,456) 222×21 — имя
+   выбранного/наведённого юнита. Шрифт — `GNW_TEXT_FONT_5`.
+7. **Бонусом:** `PLAY_OF`/`PAUSE_OF`, `FIND_OFF`/`LOCK_OF`/`PREV_OF`/
+   `UDONE_OF`/`NEXT_OF`, `HELP_OF`/`REPT_OFF`/`CHAT_OFF`, `MIN2X_*`/`MINFL_*`
+   и подписи `Prev/Done/Next/Reports/Chat`; клики по ним пока пишут в журнал
+   «экран не портирован».
 
-**Критерий готовности:** скриншот сессии совпадает с `build/smoke-window.png`
-по расположению всех подписей/кнопок (пиксельная сверка панелей).
+**Критерий:** живой кадр сессии сравнивается с `build/smoke-window.png` по
+расположению и наполнению панелей — `build/frame-newgame-panels.png` (кадр
+`--new-game --width 640 --height 480`, первый юнит выбран автоматически),
+`build/frame-panels.png` (тот же кадр из примера `panel_frame`, камера на
+юните) и `build/frame-panels-left.png` (кроп левой панели 2×).
 
-### Пункт B. Шрифт оригинала
+### Пункт B. Шрифт оригинала — **сделано**
 
-- В C++-порте текст рисуется через `Text_SetFont(GNW_TEXT_FONT_1/5)` — это
-  растровые шрифты библиотеки **GNW**, а не ресурс `MAX.RES` (проверено: среди
-  1 828 тегов нет `FONT`/`FON`; есть только `FRAMEPIC` и иконки).
-- Варианты: (1) извлечь битмапы шрифтов GNW из исходников C++-порта и перенести
-  в `max_render::text`; (2) пока оставить 8×8 и подключить текст позже.
-- От шрифта зависят: таймер/счётчик хода, статистика, координаты, описания,
-  меню, чат, журнал.
+- В C++-порте `Text_SetFont(GNW_TEXT_FONT_1/2/5)` действительно выбирает
+  GNW-шрифт, но битмапы в `max-cpp-port/src` не лежат: порт грузит
+  **TTF-ресурсы** `FONT_1`/`FONT_2`/`FONT_5` из `PATCHES.RES` (не из
+  `MAX.RES`) и растеризует их FreeType (`Text_LoadFontTTF`/`Text_BlitTTF`,
+  `text.cpp:194-298`, `:485-544`). TTF — конверсия оригинальных растровых
+  `FONT1.FON`/`FONT2.FON`/`FONT5.FON` (файлы рядом с `MAX.RES`).
+- Найдены и разобраны **оригинальные `.FON`**: заголовок 28 байт, 255 записей
+  `{u32 width; u32 offset}`, битмапы `ceil(width/8) × height`, MSB-first.
+  Декодер — `max_render::text::gnw::GnwFont::decode`; сами файлы вкомпилированы
+  в `max_render/data/README.md`.
+- Инструмент `max-rust/tools/font_vectors` собрал эталон C++/FreeType и
+  независимый декодер `.FON`: для ASCII **оба пути дают побайтово одинаковые
+  битмапы** строк `M.A.X.`, `Hits 15/15`, `End Turn`, `SURVEY STATUS COLORS`,
+  `044-034` (все три шрифта). Метрики: высота 16/9/10, `ascender` 13/7/8,
+  `advance` совпадает с шириной глифа (у `FONT_1` 4 символа расходятся на 1 px
+  из-за хинтинга TTF).
+- API: `GnwFontId::Font1/2/5`, `GnwFont::text_width/line_height`,
+  `draw_text_gnw`, `draw_text_gnw_shadowed` (тень/обводка как
+  `Text_TextLine`), `draw_text_gnw_centered`. Старый 8×8 `draw_text` оставлен
+  как fallback и не удалён.
+- Тест `text::gnw::tests::rendering_matches_the_cpp_reference_bitmaps` сверяет
+  каждый пиксель с `tools/font_vectors/render.txt`; тест
+  `embedded_fonts_match_the_original_files` — с `max-original/FONT*.FON`.
 
-**Критерий:** текст в окне совпадает с оригиналом по начертанию и метрикам
-(ширина/высота глифа, межстрочный интервал).
+**Критерий:** начертание/метрики совпадают с оригиналом — подтверждено
+побайтовой сверкой с C++-путём (FreeType) для ASCII.
 
-### Пункт C. Миникарта
+### Пункт C. Миникарта — **частично сделано**
 
-- В `.WRL` уже есть `minimap` (парсится как `WrlMap::minimap()`), в C++ —
-  `World::GetMinimap()` / `GetMinimapFov()` (fov-маска), размеры/смещение окна
-  миникарты берутся из `WrlMap`.
-- Рамка миникарты: `RADAR` (спрайт-лист, 60 449 Б); кнопки `2x` (136,387) и
-  `TNT` (136,413) — 26×26.
-- Нужно: нарисовать миникарту в `WINDOW_MINIMAP` (15,356) 112×112, подсветить
-  прямоугольник камеры и FOV.
+- [x] `minimap`-слой `.WRL` рисуется в `WINDOW_MINIMAP` (15,356) 112×112
+  (`panels::draw_minimap`), палитра — из `.WRL`; сверху рамка камеры.
+- [x] Кнопки `2x` (136,387) и `TNT` (136,413): картинки `MIN2X_*`/`MINFL_*`,
+  клики переключают локальные флаги `PanelState::minimap_2x/minimap_tnt`.
+- [ ] FOV-маска (`World::GetMinimapFov`) и реальное поведение `2x`/`TNT`
+  (увеличение/подсветка) — не портированы; рамка `RADAR` тоже.
 
 ### Пункт D. Иконки, курсоры и мелочи
 
@@ -331,17 +400,23 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
    `PANELTOP/PANELBTM` (`40878 ≠ 40877`). Не «исправлять» обратно.
 3. **Хвост потока big image**: последние 2 байта C++ читает за границей записи;
    у нас остаток кадра = нули. Если появится рассинхрон картинки — смотреть сюда.
-4. **Координаты мыши**: при хроме карта занимает (180,18) 448×448, а `Viewport`
-   приложения — 448×448. Клики окна **не смещены** на (180,18): в
-   `main.rs::UiSessionSink` координаты из SDL идут как есть. Это надо учесть при
-   подключении кликов по панелям (пункт A) и при кликах по карте (сейчас карта
-   в сессии рисуется через `render_with_chrome`, но ввод `handle_session_input`
-   считает экран 640×480 — требует отдельной проверки/правки).
+4. **Координаты мыши (закрыт).** При хроме карта занимает (180,18) 448×448, а
+   `Viewport` приложения — 640×480. Теперь ввод сессии при активном хроме
+   переводит экранные координаты в локальные координаты карты
+   (`panels::screen_to_map`), а клики по панелям обрабатываются до карты —
+   включая End Turn, который намеренно заходит на карту. Камера карты
+   (448×448) для рендера и ввода — одна и та же (`App::map_viewport`), поэтому
+   клик в центр окна карты попадает в ожидаемую клетку (тест
+   `chrome_click_on_the_map_centre_selects_the_unit_under_it`), а клик по
+   End Turn не уходит в карту (`chrome_end_turn_click_is_a_button_not_a_map_click`).
 5. **`hud.rs` (74 КБ) рисует процедурный HUD**; в сессии при активном хроме он
    отключён. Включать его обратно нельзя, пока не перенесём его элементы на
    оригинальные координаты — иначе снова «два HUD».
 6. **Палитра `FRAMEPIC` своя** (не `COLOR.PAL`), 8-битные каналы. Не смешивать с
-   палитрой спрайтов: спрайты берут `COLOR.PAL` + brightness LUT.
+   палитрой спрайтов: спрайты берут `COLOR.PAL` + brightness LUT, а **весь UI**
+   (картинки панелей и текст) — системную палитру окна, то есть палитру
+   `FRAMEPIC` (`UiPalette` в `panels.rs`). Проверка: индекс `0x02` в `COLOR.PAL`
+   — пурпурный, в `FRAMEPIC` — зелёный (цвет полоски Hits), `0xA2` — текст.
 7. **`P_*` 300×240** — крупные картинки юнитов/зданий для диалогов и
    информационных панелей (`resourcetable.cpp:223-225`), а не портрет 128×128
    для `CORNER_FLIC`: там в C++ отдельная FLIC-анимация (`PlayerCorner`), формат
@@ -365,10 +440,18 @@ cargo run -p max_assets --example ui_images -- ../max-original/MAX.RES build/ui
 # 3) вся карта и фрагмент 1:1 настоящими тайлами
 cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL build/wrl-snow [cx cy]
 
-# 4) тесты
-cargo check --all-targets && cargo test          # 516 passed
+# 4) кадр 640×480 с панелями и выбранным юнитом (пункт A)
+cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm
+powershell -File build/ppm2png.ps1 -Ppm build/frame-panels.ppm -Png build/frame-panels.png
 
-# 5) живая сессия в окне
+# 5) эталон шрифтов: FreeType-путь C++-порта против .FON (пункт B)
+docker run --rm -v "D:/dev/max-port-debug:/src" \
+    -w /src/max-rust/tools/font_vectors rust:1.94.0-bookworm bash run.sh
+
+# 6) тесты
+cargo check --all-targets && cargo test          # см. §4
+
+# 7) живая сессия в окне
 docker compose up -d --build                     # Horizon + headless
 release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
     --handshake-patches build/nonexistent.res --turn-wait 45
@@ -379,12 +462,12 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
 ## 8. Состояние репозитория
 
 Изменено (не закоммичено): `max-rust/crates/max_app/src/{assets,lib,main,render,ui}.rs`,
-`max-rust/crates/max_assets/src/lib.rs`, `max-rust/crates/max_render/src/lib.rs`,
-`max-rust/README.md`, `docs/release-checklist.md`.
+`max_app/src/hud.rs` (`Panels`-состояние), `max_render/src/{lib,layout,text}.rs`,
+`max_assets/src/image.rs` (прозрачный индекс), `docs/{visual-1to1-status,release-checklist}.md`.
 
-Новые файлы: `max_assets/src/image.rs`, `max_assets/examples/ui_images.rs`,
-`max_render/src/{layout,terrain}.rs`, `max_render/examples/terrain.rs`,
-`max_app/src/chrome.rs`.
+Новые файлы: `max_render/src/text/gnw.rs` (+ `max_render/data/gnw_font_*.fnt`),
+`max_app/src/panels.rs`, `max_app/examples/panel_frame.rs`,
+`max-rust/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
 
 Ранее закоммичено: `6295a8e` (Windows-кросс-сборка + `build-windows.sh`),
 `ba8279a` (нативная Windows UI-сборка + `build-windows-ui.ps1`), плюс правки
@@ -397,10 +480,12 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
 1. **Масштаб:** фиксированные 640×480 с апскейлом кадра или масштабирование
    элементов как в C++ (пункт F)? От этого зависит, где хранить координаты
    (константы 640×480 или пересчёт).
-2. **Шрифт:** тащить битмапы GNW в репозиторий (лицензия GNW?) или рисовать
-   свой шрифт, близкий к оригиналу?
-3. **Портрет юнита:** FLIC-анимация (нужен разбор FLC) или статичная картинка
-   (`P_*`/`I_*`) как первый шаг?
-4. **Приоритет:** панели (A) или меню (E)? Меню проще (кнопки+рамка уже
-   декодируются), но в игре чаще смотрят на панели.
-5. **Миникарта:** только `.WRL::minimap()` или ещё FOV-маска (`GetMinimapFov`)?
+2. ~~**Шрифт:** тащить битмапы GNW в репозиторий или рисовать свой?~~ Решено:
+   оригинальные `FONT*.FON` вкомпилированы (12 КБ) и сверены с FreeType-путём
+   порта; 8×8 остался fallback'ом.
+3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено для первого шага:
+   статичный кадр спрайта ×2; FLIC-анимация — отдельная задача.
+4. ~~**Приоритет:** панели (A) или меню (E)?~~ Панели A и шрифт B сделаны;
+   следующий визуальный шаг — меню (E) на `MNUBTN*U/D` + `FRAMEPIC`.
+5. **Миникарта:** осталось решить, нужна ли FOV-маска (`GetMinimapFov`) и
+   реальное поведение `2x`/`TNT`, или достаточно `.WRL::minimap()`, как сейчас.

@@ -393,6 +393,10 @@ pub struct HudState {
     pub pending: Vec<Command>,
     /// Кнопка HUD под курсором.
     pub hover_button: Option<HudButton>,
+    /// Кнопка панелей 1:1 под курсором (когда активен хром).
+    pub hover_panel: Option<crate::panels::PanelButton>,
+    /// Локальное состояние панелей окна 1:1: переключатели, таймер, курсор.
+    pub panels: crate::panels::PanelState,
     /// Нажата End Turn в сетевой сессии (закрытие хода делает игровой цикл).
     pub end_turn_requested: bool,
 }
@@ -413,6 +417,8 @@ impl HudState {
             chat: ChatInput::new(),
             pending: Vec::new(),
             hover_button: None,
+            hover_panel: None,
+            panels: crate::panels::PanelState::default(),
             end_turn_requested: false,
         }
     }

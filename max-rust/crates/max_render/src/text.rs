@@ -1,14 +1,15 @@
-//! Встроенный 8×8 ASCII bitmap-шрифт и отрисовка текста без SDL.
+//! Текст UI: встроенный 8×8 ASCII bitmap-шрифт (fallback) и оригинальные
+//! растровые шрифты GNW (модуль [`gnw`]).
 //!
-//! Игра рисует текст TTF-шрифтами из `PATCHES.RES` (`FONT_1…`), но UI-каркасу
-//! они пока не нужны: этот модуль даёт **встроенный** моноширинный шрифт
-//! 8×8 на 128 символов ASCII (U+0000…U+007F) и функции рисования в
-//! [`RgbaBuffer`]. Всё чистое и целочисленное — тесты не требуют ни окна, ни
-//! SDL, ни данных игры.
-//!
-//! Таблица — общественное достояние: [font8x8][] Daniel Hepper (на основе
-//! IBM VGA / Marcel Sondaar). В таблицу попали все 128 символов; управляющие
-//! коды (0x00–0x1F, 0x7F) пустые, поэтому `\n` и `\t` не рисуются.
+//! * [`draw_text`]/[`draw_text_line`]/[`wrap_text`] — моноширинный 8×8 на 128
+//!   символов ASCII (U+0000…U+007F). Общественное достояние: [font8x8][]
+//!   Daniel Hepper (на основе IBM VGA / Marcel Sondaar). Используется, пока
+//!   нет данных игры или для служебных сообщений.
+//! * [`gnw`] — `GnwFont`, `GnwFontId::{Font1,Font2,Font5}` и
+//!   [`draw_text_gnw`]/[`draw_text_gnw_shadowed`]: оригинальные `.FON`
+//!   (`FONT1.FON`/`FONT2.FON`/`FONT5.FON`), метрики и тень/обводка как в
+//!   C++-порте (`Text_TextLine`). Это шрифт игрового окна: подписи кнопок,
+//!   статистика, таймер, координаты.
 //!
 //! [font8x8]: https://github.com/dhepper/font8x8
 //!
@@ -29,6 +30,13 @@
 //! ```
 
 use crate::buffer::{Rgba, RgbaBuffer};
+
+pub mod gnw;
+
+pub use gnw::{
+    draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed, draw_text_gnw_shadowed,
+    GnwFont, GnwFontError, GnwFontId, GnwGlyph,
+};
 
 /// Ширина одного глифа в пикселях.
 pub const GLYPH_WIDTH: i32 = 8;

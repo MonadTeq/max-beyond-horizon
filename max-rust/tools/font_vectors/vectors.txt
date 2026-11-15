@@ -1,0 +1,315 @@
+font font1 ttf_height=16 ttf_ascender=13 fon_height=16 fon_valid=1
+  differs code=32 ' ' fon_w=12 ft_w=0 ft_h=0 ulx=0 uly=13 adv=12
+glyph font1 32 adv=12 fon_w=12 ft_w=0 ft_h=0 ulx=0 uly=13
+  differs code=33 '!' fon_w=3 ft_w=2 ft_h=11 ulx=0 uly=1 adv=3
+glyph font1 33 adv=3 fon_w=3 ft_w=2 ft_h=11 ulx=0 uly=1
+  differs code=34 '"' fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=1 adv=7
+glyph font1 34 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=1
+  differs code=35 '#' fon_w=10 ft_w=9 ft_h=10 ulx=0 uly=2 adv=10
+glyph font1 35 adv=10 fon_w=10 ft_w=9 ft_h=10 ulx=0 uly=2
+  differs code=36 '$' fon_w=9 ft_w=8 ft_h=13 ulx=0 uly=0 adv=9
+glyph font1 36 adv=9 fon_w=9 ft_w=8 ft_h=13 ulx=0 uly=0
+  differs code=37 '%' fon_w=16 ft_w=15 ft_h=12 ulx=0 uly=1 adv=16
+glyph font1 37 adv=16 fon_w=16 ft_w=15 ft_h=12 ulx=0 uly=1
+  differs code=38 '&' fon_w=12 ft_w=11 ft_h=12 ulx=0 uly=1 adv=12
+glyph font1 38 adv=12 fon_w=12 ft_w=11 ft_h=12 ulx=0 uly=1
+  differs code=39 ''' fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=1 adv=4
+glyph font1 39 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=1
+glyph font1 40 adv=5 fon_w=5 ft_w=4 ft_h=14 ulx=0 uly=1
+glyph font1 41 adv=5 fon_w=5 ft_w=4 ft_h=14 ulx=0 uly=1
+glyph font1 42 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=2
+glyph font1 43 adv=9 fon_w=9 ft_w=8 ft_h=8 ulx=0 uly=4
+glyph font1 44 adv=4 fon_w=3 ft_w=3 ft_h=5 ulx=0 uly=10
+glyph font1 45 adv=6 fon_w=6 ft_w=5 ft_h=2 ulx=0 uly=7
+glyph font1 46 adv=3 fon_w=3 ft_w=2 ft_h=2 ulx=0 uly=11
+glyph font1 47 adv=8 fon_w=8 ft_w=7 ft_h=12 ulx=0 uly=1
+glyph font1 48 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 49 adv=5 fon_w=5 ft_w=4 ft_h=12 ulx=0 uly=1
+glyph font1 50 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 51 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 52 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 53 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 54 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 55 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 56 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 57 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 58 adv=3 fon_w=3 ft_w=2 ft_h=8 ulx=0 uly=3
+glyph font1 59 adv=4 fon_w=4 ft_w=3 ft_h=10 ulx=0 uly=3
+glyph font1 60 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=3
+glyph font1 61 adv=7 fon_w=7 ft_w=6 ft_h=6 ulx=0 uly=4
+glyph font1 62 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=3
+glyph font1 63 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 64 adv=12 fon_w=13 ft_w=11 ft_h=11 ulx=0 uly=2
+glyph font1 65 adv=13 fon_w=13 ft_w=12 ft_h=12 ulx=0 uly=1
+glyph font1 66 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 67 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 68 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 69 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 70 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 71 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 72 adv=11 fon_w=11 ft_w=10 ft_h=12 ulx=0 uly=1
+glyph font1 73 adv=5 fon_w=5 ft_w=4 ft_h=12 ulx=0 uly=1
+glyph font1 74 adv=8 fon_w=8 ft_w=7 ft_h=12 ulx=0 uly=1
+glyph font1 75 adv=11 fon_w=11 ft_w=10 ft_h=12 ulx=0 uly=1
+glyph font1 76 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 77 adv=13 fon_w=13 ft_w=12 ft_h=12 ulx=0 uly=1
+glyph font1 78 adv=11 fon_w=11 ft_w=10 ft_h=12 ulx=0 uly=1
+glyph font1 79 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 80 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 81 adv=10 fon_w=10 ft_w=9 ft_h=14 ulx=0 uly=1
+glyph font1 82 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 83 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 84 adv=11 fon_w=11 ft_w=10 ft_h=12 ulx=0 uly=1
+glyph font1 85 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 86 adv=12 fon_w=12 ft_w=11 ft_h=12 ulx=0 uly=1
+glyph font1 87 adv=15 fon_w=15 ft_w=14 ft_h=12 ulx=0 uly=1
+glyph font1 88 adv=10 fon_w=10 ft_w=9 ft_h=12 ulx=0 uly=1
+glyph font1 89 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 90 adv=9 fon_w=10 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 91 adv=5 fon_w=5 ft_w=4 ft_h=14 ulx=0 uly=0
+glyph font1 92 adv=8 fon_w=8 ft_w=7 ft_h=12 ulx=0 uly=1
+glyph font1 93 adv=5 fon_w=5 ft_w=4 ft_h=14 ulx=0 uly=0
+glyph font1 94 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=0
+glyph font1 95 adv=10 fon_w=10 ft_w=9 ft_h=2 ulx=0 uly=12
+glyph font1 96 adv=7 fon_w=7 ft_w=6 ft_h=2 ulx=0 uly=1
+glyph font1 97 adv=9 fon_w=9 ft_w=8 ft_h=9 ulx=0 uly=4
+glyph font1 98 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 99 adv=8 fon_w=8 ft_w=7 ft_h=9 ulx=0 uly=4
+glyph font1 100 adv=8 fon_w=8 ft_w=7 ft_h=12 ulx=0 uly=1
+glyph font1 101 adv=8 fon_w=8 ft_w=7 ft_h=9 ulx=0 uly=4
+glyph font1 102 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 103 adv=8 fon_w=8 ft_w=7 ft_h=12 ulx=0 uly=4
+glyph font1 104 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 105 adv=4 fon_w=4 ft_w=3 ft_h=12 ulx=0 uly=1
+glyph font1 106 adv=7 fon_w=7 ft_w=6 ft_h=15 ulx=0 uly=1
+glyph font1 107 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=1
+glyph font1 108 adv=5 fon_w=5 ft_w=4 ft_h=12 ulx=0 uly=1
+glyph font1 109 adv=13 fon_w=13 ft_w=12 ft_h=9 ulx=0 uly=4
+glyph font1 110 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=4
+glyph font1 111 adv=8 fon_w=8 ft_w=7 ft_h=9 ulx=0 uly=4
+glyph font1 112 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=4
+glyph font1 113 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=4
+glyph font1 114 adv=8 fon_w=8 ft_w=7 ft_h=9 ulx=0 uly=4
+glyph font1 115 adv=8 fon_w=8 ft_w=7 ft_h=9 ulx=0 uly=4
+glyph font1 116 adv=8 fon_w=8 ft_w=7 ft_h=10 ulx=0 uly=3
+glyph font1 117 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=4
+glyph font1 118 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=4
+glyph font1 119 adv=14 fon_w=14 ft_w=13 ft_h=9 ulx=0 uly=4
+glyph font1 120 adv=11 fon_w=11 ft_w=10 ft_h=9 ulx=0 uly=4
+glyph font1 121 adv=9 fon_w=9 ft_w=8 ft_h=12 ulx=0 uly=4
+glyph font1 122 adv=10 fon_w=10 ft_w=9 ft_h=9 ulx=0 uly=4
+glyph font1 123 adv=7 fon_w=7 ft_w=6 ft_h=14 ulx=0 uly=0
+glyph font1 124 adv=3 fon_w=3 ft_w=2 ft_h=12 ulx=0 uly=1
+glyph font1 125 adv=7 fon_w=8 ft_w=6 ft_h=14 ulx=0 uly=0
+glyph font1 126 adv=8 fon_w=8 ft_w=7 ft_h=3 ulx=0 uly=5
+summary font1 same=0 diff=95 advance_diff=4
+font font2 ttf_height=9 ttf_ascender=7 fon_height=9 fon_valid=1
+  differs code=32 ' ' fon_w=4 ft_w=0 ft_h=0 ulx=0 uly=7 adv=4
+glyph font2 32 adv=4 fon_w=4 ft_w=0 ft_h=0 ulx=0 uly=7
+  differs code=33 '!' fon_w=2 ft_w=1 ft_h=5 ulx=0 uly=3 adv=2
+glyph font2 33 adv=2 fon_w=2 ft_w=1 ft_h=5 ulx=0 uly=3
+  differs code=34 '"' fon_w=4 ft_w=3 ft_h=2 ulx=0 uly=3 adv=4
+glyph font2 34 adv=4 fon_w=4 ft_w=3 ft_h=2 ulx=0 uly=3
+  differs code=35 '#' fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3 adv=6
+glyph font2 35 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+  differs code=36 '$' fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3 adv=6
+glyph font2 36 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+  differs code=37 '%' fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3 adv=5
+glyph font2 37 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+  differs code=38 '&' fon_w=4 ft_w=3 ft_h=3 ulx=0 uly=4 adv=4
+glyph font2 38 adv=4 fon_w=4 ft_w=3 ft_h=3 ulx=0 uly=4
+  differs code=39 ''' fon_w=2 ft_w=1 ft_h=2 ulx=0 uly=3 adv=2
+glyph font2 39 adv=2 fon_w=2 ft_w=1 ft_h=2 ulx=0 uly=3
+glyph font2 40 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font2 41 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font2 42 adv=4 fon_w=4 ft_w=3 ft_h=3 ulx=0 uly=4
+glyph font2 43 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 44 adv=3 fon_w=3 ft_w=2 ft_h=2 ulx=0 uly=6
+glyph font2 45 adv=4 fon_w=4 ft_w=3 ft_h=1 ulx=0 uly=5
+glyph font2 46 adv=2 fon_w=2 ft_w=1 ft_h=1 ulx=0 uly=7
+glyph font2 47 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 48 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 49 adv=2 fon_w=2 ft_w=1 ft_h=5 ulx=0 uly=3
+glyph font2 50 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 51 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 52 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 53 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 54 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 55 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 56 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 57 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 58 adv=2 fon_w=2 ft_w=1 ft_h=4 ulx=0 uly=3
+glyph font2 59 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font2 60 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 61 adv=4 fon_w=4 ft_w=3 ft_h=3 ulx=0 uly=4
+glyph font2 62 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 63 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 64 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 65 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 66 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 67 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 68 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 69 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 70 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 71 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 72 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 73 adv=2 fon_w=2 ft_w=1 ft_h=5 ulx=0 uly=3
+glyph font2 74 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 75 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 76 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 77 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 78 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 79 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 80 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 81 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 82 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 83 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 84 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 85 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 86 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 87 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=3
+glyph font2 88 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 89 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 90 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 91 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font2 92 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 93 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font2 94 adv=4 fon_w=4 ft_w=3 ft_h=2 ulx=0 uly=3
+glyph font2 95 adv=5 fon_w=5 ft_w=4 ft_h=1 ulx=0 uly=7
+glyph font2 96 adv=3 fon_w=3 ft_w=2 ft_h=2 ulx=0 uly=3
+glyph font2 97 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 98 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 99 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 100 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 101 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 102 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 103 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 104 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 105 adv=2 fon_w=2 ft_w=1 ft_h=5 ulx=0 uly=3
+glyph font2 106 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 107 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 108 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 109 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 110 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 111 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 112 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 113 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 114 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 115 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 116 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 117 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 118 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 119 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=3
+glyph font2 120 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 121 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font2 122 adv=5 fon_w=5 ft_w=4 ft_h=5 ulx=0 uly=3
+glyph font2 123 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 124 adv=2 fon_w=2 ft_w=1 ft_h=6 ulx=0 uly=2
+glyph font2 125 adv=4 fon_w=4 ft_w=3 ft_h=5 ulx=0 uly=3
+glyph font2 126 adv=5 fon_w=5 ft_w=4 ft_h=2 ulx=0 uly=3
+summary font2 same=0 diff=95 advance_diff=0
+font font5 ttf_height=10 ttf_ascender=8 fon_height=10 fon_valid=1
+  differs code=32 ' ' fon_w=7 ft_w=0 ft_h=0 ulx=0 uly=8 adv=7
+glyph font5 32 adv=7 fon_w=7 ft_w=0 ft_h=0 ulx=0 uly=8
+  differs code=33 '!' fon_w=3 ft_w=2 ft_h=7 ulx=0 uly=1 adv=3
+glyph font5 33 adv=3 fon_w=3 ft_w=2 ft_h=7 ulx=0 uly=1
+  differs code=34 '"' fon_w=6 ft_w=5 ft_h=3 ulx=0 uly=1 adv=6
+glyph font5 34 adv=6 fon_w=6 ft_w=5 ft_h=3 ulx=0 uly=1
+  differs code=35 '#' fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1 adv=8
+glyph font5 35 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+  differs code=36 '$' fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1 adv=8
+glyph font5 36 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+  differs code=37 '%' fon_w=10 ft_w=9 ft_h=7 ulx=0 uly=1 adv=10
+glyph font5 37 adv=10 fon_w=10 ft_w=9 ft_h=7 ulx=0 uly=1
+  differs code=38 '&' fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1 adv=8
+glyph font5 38 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+  differs code=39 ''' fon_w=3 ft_w=2 ft_h=3 ulx=0 uly=1 adv=3
+glyph font5 39 adv=3 fon_w=3 ft_w=2 ft_h=3 ulx=0 uly=1
+glyph font5 40 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 41 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 42 adv=6 fon_w=6 ft_w=5 ft_h=4 ulx=0 uly=2
+glyph font5 43 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=2
+glyph font5 44 adv=3 fon_w=3 ft_w=2 ft_h=3 ulx=0 uly=6
+glyph font5 45 adv=5 fon_w=5 ft_w=4 ft_h=2 ulx=0 uly=4
+glyph font5 46 adv=3 fon_w=3 ft_w=2 ft_h=2 ulx=0 uly=6
+glyph font5 47 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 48 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 49 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 50 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 51 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 52 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 53 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 54 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 55 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 56 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 57 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 58 adv=3 fon_w=3 ft_w=2 ft_h=5 ulx=0 uly=3
+glyph font5 59 adv=3 fon_w=3 ft_w=2 ft_h=6 ulx=0 uly=3
+glyph font5 60 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font5 61 adv=6 fon_w=6 ft_w=5 ft_h=3 ulx=0 uly=3
+glyph font5 62 adv=6 fon_w=6 ft_w=5 ft_h=5 ulx=0 uly=3
+glyph font5 63 adv=6 fon_w=6 ft_w=5 ft_h=7 ulx=0 uly=1
+glyph font5 64 adv=10 fon_w=10 ft_w=9 ft_h=7 ulx=0 uly=1
+glyph font5 65 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 66 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 67 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 68 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 69 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 70 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 71 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 72 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 73 adv=5 fon_w=5 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 74 adv=6 fon_w=6 ft_w=5 ft_h=7 ulx=0 uly=1
+glyph font5 75 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 76 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 77 adv=11 fon_w=11 ft_w=10 ft_h=7 ulx=0 uly=1
+glyph font5 78 adv=10 fon_w=10 ft_w=9 ft_h=7 ulx=0 uly=1
+glyph font5 79 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 80 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 81 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 82 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 83 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 84 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 85 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 86 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 87 adv=12 fon_w=12 ft_w=11 ft_h=7 ulx=0 uly=1
+glyph font5 88 adv=10 fon_w=10 ft_w=9 ft_h=7 ulx=0 uly=1
+glyph font5 89 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 90 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 91 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 92 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 93 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 94 adv=6 fon_w=6 ft_w=5 ft_h=4 ulx=0 uly=1
+glyph font5 95 adv=8 fon_w=8 ft_w=7 ft_h=1 ulx=0 uly=8
+glyph font5 96 adv=4 fon_w=4 ft_w=3 ft_h=3 ulx=0 uly=1
+glyph font5 97 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=3
+glyph font5 98 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 99 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 100 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=1
+glyph font5 101 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 102 adv=6 fon_w=6 ft_w=5 ft_h=7 ulx=0 uly=1
+glyph font5 103 adv=7 fon_w=7 ft_w=6 ft_h=7 ulx=0 uly=3
+glyph font5 104 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=1
+glyph font5 105 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 106 adv=6 fon_w=6 ft_w=5 ft_h=9 ulx=0 uly=1
+glyph font5 107 adv=9 fon_w=9 ft_w=8 ft_h=7 ulx=0 uly=1
+glyph font5 108 adv=4 fon_w=4 ft_w=3 ft_h=7 ulx=0 uly=1
+glyph font5 109 adv=10 fon_w=10 ft_w=9 ft_h=5 ulx=0 uly=3
+glyph font5 110 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=3
+glyph font5 111 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 112 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=3
+glyph font5 113 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=3
+glyph font5 114 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 115 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 116 adv=7 fon_w=7 ft_w=6 ft_h=6 ulx=0 uly=2
+glyph font5 117 adv=8 fon_w=8 ft_w=7 ft_h=5 ulx=0 uly=3
+glyph font5 118 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 119 adv=11 fon_w=11 ft_w=10 ft_h=5 ulx=0 uly=3
+glyph font5 120 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 121 adv=8 fon_w=8 ft_w=7 ft_h=7 ulx=0 uly=3
+glyph font5 122 adv=7 fon_w=7 ft_w=6 ft_h=5 ulx=0 uly=3
+glyph font5 123 adv=5 fon_w=5 ft_w=4 ft_h=7 ulx=0 uly=1
+glyph font5 124 adv=2 fon_w=2 ft_w=1 ft_h=7 ulx=0 uly=1
+glyph font5 125 adv=5 fon_w=5 ft_w=4 ft_h=7 ulx=0 uly=1
+glyph font5 126 adv=7 fon_w=7 ft_w=6 ft_h=2 ulx=0 uly=2
+summary font5 same=0 diff=95 advance_diff=0

@@ -82,6 +82,9 @@ max-port-site/
 # Rust workspace artifacts
 max-rust/target/
 
+# C++ font reference generator (собирается tools/font_vectors/run.sh)
+max-rust/tools/font_vectors/font_vectors
+
 
 # Release artifacts (собираются release.sh, не коммитятся)
 release/

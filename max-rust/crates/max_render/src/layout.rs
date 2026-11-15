@@ -28,6 +28,62 @@ pub const FILES_BUTTON: PixelRect = PixelRect::new(17, 4, 67, 18);
 /// Кнопка Preferences (`WINDOW_PREFS_BUTTON`).
 pub const PREFS_BUTTON: PixelRect = PixelRect::new(86, 4, 67, 18);
 
+/// Номер хода (`WINDOW_TURN_COUNTER_DISPLAY`), ресурс `TURNS` 61×21.
+pub const TURN_COUNTER: PixelRect = PixelRect::new(468, 2, 61, 21);
+/// Таймер хода (`WINDOW_TURN_TIMER_DISPLAY`), ресурс `TIMER` 61×21.
+pub const TURN_TIMER: PixelRect = PixelRect::new(534, 2, 61, 21);
+
+/// Кнопка `+` зума (`WINDOW_ZOOM_PLUS_BUTTON`).
+pub const ZOOM_PLUS: PixelRect = PixelRect::new(2, 275, 18, 14);
+/// Кнопка-ползунок зума (`WINDOW_ZOOM_SLIDER_BUTTON`) — область клика.
+pub const ZOOM_SLIDER_BUTTON: PixelRect = PixelRect::new(20, 275, 130, 14);
+/// Окно ползунка зума (`WINDOW_ZOOM_SLIDER_WINDOW` / `ZOOMPNL1` 130×19).
+pub const ZOOM_SLIDER: PixelRect = PixelRect::new(20, 275, 130, 19);
+/// Кнопка `−` зума (`WINDOW_ZOOM_MINUS_BUTTON`).
+pub const ZOOM_MINUS: PixelRect = PixelRect::new(150, 275, 20, 14);
+
+/// Строка 1 статистики юнита (`WINDOW_STAT_ROW_1`).
+pub const STAT_ROW_1: PixelRect = PixelRect::new(10, 173, 153, 12);
+/// Строка 2 статистики юнита.
+pub const STAT_ROW_2: PixelRect = PixelRect::new(10, 185, 153, 12);
+/// Строка 3 статистики юнита.
+pub const STAT_ROW_3: PixelRect = PixelRect::new(10, 197, 153, 12);
+/// Строка 4 статистики юнита.
+pub const STAT_ROW_4: PixelRect = PixelRect::new(10, 209, 153, 12);
+
+/// Координаты клетки (`WINDOW_COORDINATES_DISPLAY`), `XYPOS` 90×21.
+pub const COORDINATES: PixelRect = PixelRect::new(242, 456, 90, 21);
+/// Описание юнита (`WINDOW_UNIT_DESCRIPTION_DISPLAY`), `UNITNAME` 222×21.
+pub const UNIT_DESCRIPTION: PixelRect = PixelRect::new(338, 456, 222, 21);
+
+/// Кнопка Play (`WINDOW_PLAY_BUTTON`), `PLAY_OF` 19×18.
+pub const PLAY_BUTTON: PixelRect = PixelRect::new(146, 123, 19, 18);
+/// Кнопка Pause (`WINDOW_PAUSE_BUTTON`), `PAUSE_OF` 19×19.
+pub const PAUSE_BUTTON: PixelRect = PixelRect::new(146, 143, 19, 19);
+
+/// Кнопка Center (`WINDOW_CENTER_BUTTON`), `FIND_OFF` 20×23.
+pub const CENTER_BUTTON: PixelRect = PixelRect::new(4, 227, 20, 23);
+/// Кнопка Lock (`WINDOW_LOCK_BUTTON`), `LOCK_OF` 20×22.
+pub const LOCK_BUTTON: PixelRect = PixelRect::new(32, 227, 20, 22);
+/// Кнопка Prev (`WINDOW_PRE_BUTTON`), `PREV_OF` 38×22.
+pub const PREV_BUTTON: PixelRect = PixelRect::new(60, 228, 38, 22);
+/// Кнопка Done (`WINDOW_DONE_BUTTON`), `UDONE_OF` 26×23.
+pub const DONE_BUTTON: PixelRect = PixelRect::new(99, 228, 26, 22);
+/// Кнопка Next (`WINDOW_NXT_BUTTON`), `NEXT_OF` 38×22.
+pub const NEXT_BUTTON: PixelRect = PixelRect::new(125, 228, 38, 22);
+
+/// Кнопка Help (`WINDOW_HELP_BUTTON`), `HELP_OF` 25×24.
+pub const HELP_BUTTON: PixelRect = PixelRect::new(21, 250, 25, 24);
+/// Кнопка Reports (`WINDOW_REPORTS_BUTTON`), `REPT_OFF` 48×19.
+pub const REPORTS_BUTTON: PixelRect = PixelRect::new(51, 252, 48, 19);
+/// Кнопка Chat (`WINDOW_CHAT_BUTTON`), `CHAT_OFF` 48×19.
+pub const CHAT_BUTTON: PixelRect = PixelRect::new(102, 252, 48, 19);
+
+/// Кнопка `2x` миникарты (`WINDOW_2X_MINIMAP`), `MIN2X_OF` 27×26.
+pub const MINIMAP_2X: PixelRect = PixelRect::new(136, 387, 27, 26);
+/// Кнопка `TNT` миникарты (`WINDOW_TNT_MINIMAP`), `MINFL_OF` 27×27.
+pub const MINIMAP_TNT: PixelRect = PixelRect::new(136, 413, 27, 27);
+
 /// Окно со статистикой (4 строки) в левой панели (`WINDOW_STAT_WINDOW`).
 pub const STAT_WINDOW: PixelRect = PixelRect::new(10, 173, 153, 48);
 /// Окно портрета/анимации юнита (`WINDOW_CORNER_FLIC`).

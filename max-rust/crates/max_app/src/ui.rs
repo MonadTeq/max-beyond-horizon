@@ -46,7 +46,7 @@
 
 use std::fmt;
 
-use max_core::geo::Point as GridPoint;
+use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
 use max_net::{
@@ -58,9 +58,11 @@ use max_render::ui::{
     hit_test, layout, render_ui, Button, Label, ListBox, Point, Rect, TextBox, UiState, UiTheme,
     Widget,
 };
+use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::hud::{self, HudButton};
+use crate::panels::{self, PanelButton};
 use crate::App;
 
 /// Имя игры по умолчанию, если поле «Name» пустое.
@@ -898,6 +900,7 @@ impl Screen {
 /// сразу через `max_core::events::apply_command` ([`App::flush_orders`]).
 pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let (width, height) = app.viewport().screen();
+    let chrome = app.chrome_active();
 
     // Пока открыта строка чата (M4.4), клавиатура принадлежит ей: печатные
     // ASCII-символы идут в буфер, Backspace/Enter/Esc управляют вводом. Мышь
@@ -911,11 +914,39 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
 
     match event {
         InputEvent::MouseMove(x, y) => {
-            app.hud_mut().hover_button = hud::hud_button_at(width, height, x, y);
+            if chrome {
+                // Панели: подпись/подсветка и клетка под курсором для нижней
+                // строки координат.
+                app.hud_mut().hover_button = None;
+                app.hud_mut().hover_panel = panels::panel_button_at(x, y);
+                let grid = panels::screen_to_map(x, y).and_then(|(map_x, map_y)| {
+                    let (grid_x, grid_y) = app.map_viewport().screen_to_grid(map_x, map_y);
+
+                    (grid_x >= 0 && grid_y >= 0 && grid_x < MAP_WIDTH && grid_y < MAP_HEIGHT)
+                        .then_some((grid_x, grid_y))
+                });
+
+                app.hud_mut().panels.cursor_grid = grid;
+            } else {
+                app.hud_mut().hover_button = hud::hud_button_at(width, height, x, y);
+            }
+
             Transition::None
         }
-        InputEvent::MouseClick(x, y) => session_left_click(app, width, height, x, y, online),
-        InputEvent::RightClick(x, y) => session_right_click(app, x, y, online),
+        InputEvent::MouseClick(x, y) => {
+            if chrome {
+                session_chrome_left_click(app, x, y, online)
+            } else {
+                session_left_click(app, width, height, x, y, online)
+            }
+        }
+        InputEvent::RightClick(x, y) => {
+            if chrome {
+                session_chrome_right_click(app, x, y, online)
+            } else {
+                session_right_click(app, x, y, online)
+            }
+        }
         InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) => {
             app.hud_mut().chat.open();
             app.hud_mut()
@@ -989,7 +1020,7 @@ fn submit_chat(app: &mut App, online: bool) -> Transition {
     Transition::None
 }
 
-/// Левая кнопка: кнопки HUD → миникарта → выделение/атака на карте.
+/// Левая кнопка без хрома: кнопки процедурного HUD → миникарта → карта.
 fn session_left_click(
     app: &mut App,
     width: u32,
@@ -1016,8 +1047,128 @@ fn session_left_click(
         return Transition::None;
     }
 
+    let viewport = *app.viewport();
+
+    session_map_left_click(app, &viewport, x, y, online)
+}
+
+/// Левая кнопка с хромом 1:1: панели → миникарта → карта.
+///
+/// Экранные координаты окна переводятся в координаты области карты
+/// ([`panels::screen_to_map`]) до `screen_to_grid` — иначе клик уезжает на
+/// (180,18) (риск 4 в `docs/visual-1to1-status.md`).
+fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+    if let Some(button) = panels::panel_button_at(x, y) {
+        return session_panel_button(app, button, x, online);
+    }
+
+    // Миникарта: 112×112 клеток мира в окне (15,356).
+    let minimap = max_render::layout::MINIMAP;
+
+    if minimap.contains(x, y) {
+        let grid_x = ((x - minimap.ulx) * i32::from(MAP_WIDTH) / minimap.width)
+            .clamp(0, i32::from(MAP_WIDTH) - 1) as i16;
+        let grid_y = ((y - minimap.uly) * i32::from(MAP_HEIGHT) / minimap.height)
+            .clamp(0, i32::from(MAP_HEIGHT) - 1) as i16;
+
+        app.viewport_mut().center_on_grid(grid_x, grid_y);
+        return Transition::None;
+    }
+
+    // Клик вне карты (рамка/прокрутка) — не приказ.
+    let Some((map_x, map_y)) = panels::screen_to_map(x, y) else {
+        return Transition::None;
+    };
+    let viewport = app.map_viewport();
+
+    session_map_left_click(app, &viewport, map_x, map_y, online)
+}
+
+/// Кнопка панели 1:1: End Turn, переключатели, зум, миникарта, меню.
+fn session_panel_button(
+    app: &mut App,
+    button: PanelButton,
+    x: i32,
+    online: bool,
+) -> Transition {
+    match button {
+        PanelButton::EndTurn => {
+            session_end_turn(app, online);
+            return Transition::None;
+        }
+        PanelButton::Center => {
+            if let Some(grid) = app.selected_unit().map(|unit| unit.grid) {
+                app.viewport_mut().center_on_grid(grid.x, grid.y);
+                app.hud_mut().push_log("Center on selected unit");
+            }
+            return Transition::None;
+        }
+        PanelButton::ZoomPlus => {
+            let zoom = (app.viewport().zoom() + 8).clamp(8, 64);
+            app.viewport_mut().set_zoom(zoom);
+            return Transition::None;
+        }
+        PanelButton::ZoomMinus => {
+            let zoom = app.viewport().zoom().saturating_sub(8).max(8);
+            app.viewport_mut().set_zoom(zoom);
+            return Transition::None;
+        }
+        PanelButton::ZoomSlider => {
+            let zoom = panels::zoom_from_slider_x(x);
+            app.viewport_mut().set_zoom(zoom);
+            return Transition::None;
+        }
+        PanelButton::Minimap2x => {
+            let current = app.hud().panels.minimap_2x;
+            app.hud_mut().panels.minimap_2x = !current;
+            return Transition::None;
+        }
+        PanelButton::MinimapTnt => {
+            let current = app.hud().panels.minimap_tnt;
+            app.hud_mut().panels.minimap_tnt = !current;
+            return Transition::None;
+        }
+        PanelButton::Files
+        | PanelButton::Preferences
+        | PanelButton::Play
+        | PanelButton::Pause
+        | PanelButton::Lock
+        | PanelButton::Prev
+        | PanelButton::Done
+        | PanelButton::Next
+        | PanelButton::Help
+        | PanelButton::Reports
+        | PanelButton::Chat => {
+            // Экраны этих кнопок ещё не портированы (пункты C/E плана).
+            app.hud_mut()
+                .push_log(format!("{button:?}: screen is not ported yet"));
+            return Transition::None;
+        }
+        _ if button.is_toggle() => {
+            let enabled = app.hud_mut().panels.toggle(button);
+            let caption = button.caption().unwrap_or("toggle");
+            app.hud_mut().push_log(format!(
+                "{caption}: {}",
+                if enabled { "on" } else { "off" }
+            ));
+            return Transition::None;
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
+/// Выделение/атака по точке **камеры карты** (448×448 при хроме).
+fn session_map_left_click(
+    app: &mut App,
+    viewport: &Viewport,
+    x: i32,
+    y: i32,
+    online: bool,
+) -> Transition {
     let team = app.player_team();
-    let Some(id) = hud::unit_at_screen(app.state(), app.viewport(), team, x, y) else {
+    let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
         if app.hud().selected.is_some() {
             app.hud_mut().clear_interaction();
             app.hud_mut().push_log("Deselected");
@@ -1058,12 +1209,38 @@ fn session_left_click(
     Transition::None
 }
 
-/// Правая кнопка: отмена по юниту, иначе приказ движения в клетку.
+/// Правая кнопка без хрома.
 fn session_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+    let viewport = *app.viewport();
+
+    session_map_right_click(app, &viewport, x, y, online)
+}
+
+/// Правая кнопка с хромом: сначала панели (они не дают приказ), затем карта.
+fn session_chrome_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+    if panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y) {
+        return Transition::None;
+    }
+    let Some((map_x, map_y)) = panels::screen_to_map(x, y) else {
+        return Transition::None;
+    };
+    let viewport = app.map_viewport();
+
+    session_map_right_click(app, &viewport, map_x, map_y, online)
+}
+
+/// Правая кнопка по карте: отмена по юниту, иначе приказ движения в клетку.
+fn session_map_right_click(
+    app: &mut App,
+    viewport: &Viewport,
+    x: i32,
+    y: i32,
+    online: bool,
+) -> Transition {
     let team = app.player_team();
 
     // «Отмена — Esc/правый клик по юниту».
-    if let Some(id) = hud::unit_at_screen(app.state(), app.viewport(), team, x, y) {
+    if let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) {
         let label = app
             .state()
             .unit(id)
@@ -1080,7 +1257,7 @@ fn session_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transitio
         return Transition::None;
     };
 
-    let (grid_x, grid_y) = app.viewport().screen_to_grid(x, y);
+    let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
     let destination = GridPoint::new(grid_x, grid_y);
 
     if grid_x < 0
@@ -1170,24 +1347,27 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
         let frame = app.render_frame();
         blit(buffer, &frame);
 
-        let chrome_active = frame.width() as i32 == max_render::layout::WINDOW_WIDTH
-            && frame.height() as i32 == max_render::layout::WINDOW_HEIGHT
-            && app
-                .assets()
-                .and_then(|assets| assets.chrome.as_ref())
-                .is_some_and(|chrome| chrome.is_ready());
+        let chrome_active = app.chrome_active();
 
         if chrome_active {
-            // Область карты уже содержит тайлы и юнитов; пишем только статус —
-            // как строка сообщений в оригинале (верхний левый угол карты).
+            // Область карты уже содержит тайлы, юнитов и панели; пишем только
+            // строку сообщений в верхнем левом углу карты — шрифтом GNW, как
+            // `MessageManager_DrawMessage`.
             let area = max_render::layout::MAIN_MAP;
-            draw_text_line(
-                buffer,
-                area.ulx + 4,
-                area.uly + 4,
-                view.status,
-                Rgba::rgb(232, 236, 244),
-            );
+            let status: String = view.status.chars().take(70).collect();
+
+            if let Some(assets) = app.assets() {
+                max_render::text::draw_text_gnw_shadowed(
+                    buffer,
+                    area.ulx + 4,
+                    area.uly + 4,
+                    max_render::text::GnwFontId::Font5.font(),
+                    &status,
+                    assets.palette.rgba(0xA0),
+                    assets.palette.rgba(0xE6),
+                    assets.palette.rgba(0x3F),
+                );
+            }
             return;
         }
 

@@ -118,14 +118,10 @@ impl App {
 
         // Карта рисуется в собственный буфер размером с область карты: так она
         // сама обрезается по краям `MAIN_MAP` (как в оригинале), а камера и зум
-        // остаются общими с приложением.
+        // остаются общими с приложением. `map_viewport` — та же камера, которой
+        // пользуется ввод мыши (`App::map_viewport`), иначе клики уезжают.
         let area = max_render::layout::MAIN_MAP;
-        let viewport = max_render::viewport::Viewport::with_center(
-            area.width.max(1) as u32,
-            area.height.max(1) as u32,
-            self.viewport().center(),
-            self.viewport().zoom(),
-        );
+        let viewport = self.map_viewport();
         let mut map = RgbaBuffer::filled(area.width as u32, area.height as u32, style.unknown);
         let mut stats = RenderStats::default();
 
@@ -146,6 +142,12 @@ impl App {
 
         self.draw_units(&mut map, &viewport, &mut stats);
         crate::chrome::blit_map(&mut frame, &map);
+
+        // Панели поверх карты: кнопки, портрет, статистика, сетка, зум,
+        // координаты — как `GameManager_Draw*` в оригинале.
+        if let Some(panels) = self.assets().and_then(|assets| assets.panels.as_ref()) {
+            panels.draw(&mut frame, self);
+        }
 
         (frame, stats)
     }
