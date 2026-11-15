@@ -85,3 +85,6 @@ max-rust/target/
 
 # Smoke data dir (MAX.RES + PATCHES.RES together)
 build/game-data-smoke/
+
+!build/scripts/
+!build/scripts/**
