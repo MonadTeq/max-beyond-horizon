@@ -428,11 +428,11 @@ hit-test прямоугольников, сетка 8×3), 3 теста `max_app
 (`snow_pic_decodes_all_rows`), плюс `max_app::assets`/`planet`-тесты.
 
 **Артефакт (Windows UI):** `release/max_app-1.0.0-windows-x86_64-ui/`
-- `max_app.exe` — 5 423 616 Б,
+- `max-rust.exe` — 5 423 616 Б,
   sha256 `279e472dcc41e1747548a7e38d9c1b98738e861db913b9f1d1228ac858ff23c9`
 - `zip` — 3 065 885 Б,
   sha256 `d7415687a5d70381d30bf7ccd1bb2f67dc8afcabea993775fe22aca22b91f0d0`
-- `SHA256SUMS` по 5 файлам — `OK`; `max_app.exe --help` работает,
+- `SHA256SUMS` по 5 файлам — `OK`; `max-rust.exe --help` работает,
   `--ui` открывается (окно 640×480 при `--scale 1`, 1280×960 при
   `--scale 2`), клик `New Game` в окне 2× открывает форму создания
   (`build/frame-ef-main-windows*.png`,
@@ -450,18 +450,18 @@ hit-test прямоугольников, сетка 8×3), 3 теста `max_app
 | `build/frame-panels.png` | **пункт A:** кадр 640×480 с выбранным юнитом: верхние кнопки/End Turn/счётчики, портрет, 4 строки статистики, сетка, зум, координаты/описание, миникарта |
 | `build/frame-newgame-panels.png` | тот же кадр из `--new-game --width 640 --height 480` (выбор первого юнита игрока) |
 | `build/frame-panels-left.png` | левая панель `frame-panels.png` в 2× (детали подписей/статистики) |
-| `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max_app.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
+| `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max-rust.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
 | `build/frame-cd-game.png` | **пункт C/D:** 640×480: маркеры ресурсов `RAWMSK*`/`GOLDMK*` (не точки), миникарта с FOV-маской, рамкой камеры, точками юнитов, кнопки `2x`/`TNT` |
 | `build/frame-cd-game-2x.png` | тот же кадр в режиме `2x` (миникарта 56×56 → 112×112, кнопка нажата) |
 | `build/frame-cd-game-minimap-4x.png` | кроп миникарты 4× (виден перепад FOV и красная рамка камеры) |
 | `build/frame-cd-planets.png` | **пункт D:** форма создания игры — сетка 24 планет на `SNOW_PIC + world/6`, имя под каждой, красная рамка выбранной, поле `World` как fallback |
 | `build/frame-cd-cursors.png` | все 30 курсоров из `MAX.RES` (контактный лист: hotspot/кадры/палитра) |
-| `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max_app.exe` (Windows UI) |
+| `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max-rust.exe` (Windows UI) |
 | `build/frame-ef-main.png` | **пункт E:** главное меню 640×480 на `MAINPIC`: 6 кнопок `BLANK_*` + `Exit` `SBLNK_*`, портрет `P_TANK` в рамках `BGRSCRN*`, `FONT1`-подписи, наведение на `New Game` |
 | `build/frame-ef-create.png` | **пункт E:** форма создания на `PLANETSE`: большая картинка планеты (26,98), сетка 8×3, поля 3×2, кнопки `MNUBTN4/5/6` в y=438 |
 | `build/frame-ef-join.png` | **пункт E:** список игр на `MULTGAME`: рамка (359,28) 209×160, строки по 20 px, `BTNHIDE`, кнопки `MNUBTN3/4/5/6` |
 | `build/frame-ef-main-2x.png` | **пункт F:** тот же кадр главного меню после `FrameScale` 2× — 1280×960, каждый пиксель блоком 2×2 |
-| `build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png` | те же экраны из живого `max_app.exe --ui --scale 1` (клиент 640×480) |
+| `build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png` | те же экраны из живого `max-rust.exe --ui --scale 1` (клиент 640×480) |
 | `build/frame-ef-main-windows-2x.png`, `build/frame-ef-create-windows-2x.png` | живое окно `--ui --scale 2` (1280×960); клик в окне 2× открывает форму — обратный пересчёт координат работает |
 | `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + панели |
 | `build/rle-FRAMEPIC.bmp` | независимая (Python) эмуляция RLE — сверка с Rust-декодером |
@@ -775,7 +775,7 @@ nearest-neighbour апскейл всего кадра; по-элементно�
 
 ```sh
 # 1) окно 1:1 в кадре (без SDL): FRAMEPIC + карта
-release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --new-game --world 0 --seed 42 \
+release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --new-game --world 0 --seed 42 \
     --width 640 --height 480 --out build/frame-chrome2.ppm
 powershell -File build/ppm2png.ps1 -Ppm build/frame-chrome2.ppm -Png build/frame-chrome2.png
 
@@ -816,7 +816,7 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust \
 
 # 7) живая сессия в окне (--scale 2 — окно 1280×960; без флага — авто)
 docker compose up -d --build                     # Horizon + headless
-release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui --scale 2 \
+release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
     --handshake-patches build/nonexistent.res --turn-wait 45
 ```
 

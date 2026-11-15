@@ -1,13 +1,13 @@
-//! `max_app` — CLI клиента M.A.X.
+//! `max-rust` — CLI клиента M.A.X. (крейт/библиотека — `max_app`).
 //!
 //! Режимы:
 //!
+//! * без флагов (или `--ui`) — интерактивное меню (создать/выбрать игру) и
+//!   сессия в окне SDL3: это режим по умолчанию, нужна feature `sdl`;
 //! * `--demo <save> [--turns N]` — headless: V70-сейв → N тиков → digest;
 //! * `--new-game` — локальная партия на карте планеты + кадр в PPM (`--out`);
 //! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet-сессия;
-//!   без `--sdl` цикл headless, с `--sdl` — окно SDL3 (feature `sdl`);
-//! * `--ui` — интерактивное меню (создать/выбрать игру) и сессия в окне SDL3
-//!   (только с feature `sdl`).
+//!   без `--sdl` цикл headless, с `--sdl` — окно SDL3 (feature `sdl`).
 //!
 //! Вся игровая логика — в библиотеке (`max_app`), здесь только разбор
 //! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
@@ -83,8 +83,16 @@ struct Cli {
 
 impl Cli {
     fn parse() -> Result<Self> {
+        let cli = Self::parse_from(std::env::args().skip(1))?;
+        cli.ensure_gui_available()?;
+        Ok(cli)
+    }
+
+    /// Разбор аргументов без проверки наличия SDL-фичи (её проверяет
+    /// [`Cli::parse`]): так CLI-тесты не зависят от feature-набора сборки.
+    fn parse_from(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut cli = Self {
-            mode: Mode::Demo,
+            mode: Mode::Ui,
             config: AppConfig::default(),
             save: None,
             turns: None,
@@ -109,7 +117,7 @@ impl Cli {
         let mut data_dir_set = false;
         let mut assets_dir_set = false;
         let mut patches_explicit = false;
-        let mut args = std::env::args().skip(1);
+        let mut args = args.into_iter();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -266,14 +274,8 @@ impl Cli {
         }
         if cli.record.is_some() && cli.mode != Mode::Ui {
             bail!(
-                "--record работает только с --ui (запись ручной игры); \
+                "--record работает только с GUI (запись ручной игры); \
                  без SDL доступен API max_app::qa::Recorder"
-            );
-        }
-        if cli.mode == Mode::Ui && !cfg!(feature = "sdl") {
-            bail!(
-                "--ui требует сборки с feature sdl: \
-                 cargo run -p max_app --features sdl -- --ui"
             );
         }
 
@@ -303,6 +305,25 @@ impl Cli {
         }
 
         Ok(cli)
+    }
+
+    /// GUI (режим по умолчанию, он же `--ui`) требует feature `sdl`.
+    /// Headless-режимы (`--demo`/`--new-game`/`--connect` без `--sdl`) — нет.
+    #[cfg(not(feature = "sdl"))]
+    fn ensure_gui_available(&self) -> Result<()> {
+        if self.mode == Mode::Ui {
+            bail!(
+                "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl: \
+                 cargo run -p max_app --features sdl\n\
+                 headless-режимы: --demo <save>, --new-game, --connect <host> --join <game>"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "sdl")]
+    fn ensure_gui_available(&self) -> Result<()> {
+        Ok(())
     }
 
     fn new_game_config(&self) -> NewGameConfig {
@@ -336,7 +357,7 @@ fn main() -> ExitCode {
     match Cli::parse().and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("max_app: {error:#}");
+            eprintln!("max-rust: {error:#}");
             ExitCode::FAILURE
         }
     }
@@ -828,7 +849,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                             };
                         }
                         Err(error) => {
-                            eprintln!("max_app: local game: {error}");
+                            eprintln!("max-rust: local game: {error}");
                             ctx.status = format!("Local game: {error}");
                         }
                     }
@@ -902,7 +923,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     )
                 }
                 Err(error) => {
-                    eprintln!("max_app: UI session: {error:#}");
+                    eprintln!("max-rust: UI session: {error:#}");
                     format!("Session failed: {error:#}")
                 }
             };
@@ -939,12 +960,13 @@ fn finish_recording(recorder: &mut Option<Recorder>) -> Result<()> {
     Ok(())
 }
 
-/// `--ui` без feature `sdl`: понятная ошибка вместо «окна нет».
+/// GUI (запуск без флагов или `--ui`) без feature `sdl`: понятная ошибка
+/// вместо «окна нет».
 #[cfg(not(feature = "sdl"))]
 fn run_ui(_cli: &Cli) -> Result<()> {
     bail!(
-        "--ui требует сборки с feature sdl: \
-         cargo run -p max_app --features sdl -- --ui"
+        "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl: \
+         cargo run -p max_app --features sdl"
     )
 }
 
@@ -1196,23 +1218,24 @@ fn repository_root() -> Option<PathBuf> {
 fn print_help() {
     println!(
         "\
-max_app — клиент M.A.X. (core + net + assets + render)
+max-rust — клиент M.A.X. (core + net + assets + render)
 
 ИСПОЛЬЗОВАНИЕ:
-    max_app [--demo <save>] [--turns N] [ОПЦИИ]
-    max_app --new-game [ОПЦИИ]
-    max_app --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
-    max_app --ui [ОПЦИИ]
+    max-rust.exe [ОПЦИИ]                     # по умолчанию — GUI (окно SDL3)
+    max-rust.exe --demo <save> [--turns N] [ОПЦИИ]
+    max-rust.exe --new-game [ОПЦИИ]
+    max-rust.exe --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
 
 РЕЖИМЫ:
+    (без флагов)         интерактивное меню: создать/выбрать игру и играть
+                         (нужна сборка --features sdl; то же, что --ui)
+    --ui                 совместимый alias для запуска по умолчанию (GUI)
     --demo <save>        V70-сейв → N тиков → digest (headless)
     --new-game           локальная партия (setup::generate_map) + кадр
     --connect <host>     Horizon gRPC (порт по умолчанию {}) + ENet-сессия
     --join <game_id>     игра для --connect
     --sdl                окно SDL3 для --connect (нужна сборка --features sdl)
-    --ui                 интерактивное меню: создать/выбрать игру и играть
-                         (нужна сборка --features sdl)
-    --record <file.qa>   записать ручную игру в QA-сценарий (работает с --ui;
+    --record <file.qa>   записать ручную игру в QA-сценарий (GUI; --ui не нужен;
                          существующий файл не перезаписывается — суффикс -1;
                          без SDL запись доступна как API max_app::qa::Recorder)
 
@@ -1249,12 +1272,129 @@ max_app — клиент M.A.X. (core + net + assets + render)
                          оригинала); окно = кадр × --scale
 
 ПРИМЕРЫ:
-    cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5
-    cargo run -p max_app -- --new-game --world 12 --seed 42 --out frame.ppm
-    cargo run -p max_app --features sdl -- --connect 127.0.0.1:8082 --join demo --sdl
-    cargo run -p max_app --features sdl-from-source -- --ui
-    cargo run -p max_app --features sdl -- --ui --record ../max-rust-qa/scripts/my.qa
+    max-rust.exe                                     # GUI: меню + партия
+    max-rust.exe --demo max-original\\SAVE1.CAM --turns 5
+    max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
+    max-rust.exe --connect 127.0.0.1:8082 --join demo --sdl
+    cargo run -p max_app --features sdl              # из max-rust/: то же GUI
+    cargo run -p max_app -- --new-game --world 12    # headless-пример
 ",
         DEFAULT_GRPC_PORT
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Разбор без `std::env::args` и без проверки feature `sdl`.
+    fn parse(args: &[&str]) -> Result<Cli> {
+        Cli::parse_from(args.iter().map(|arg| (*arg).to_string()))
+    }
+
+    #[test]
+    fn no_flags_selects_gui_mode() {
+        let cli = parse(&[]).expect("пустой список аргументов разбирается");
+
+        assert_eq!(cli.mode, Mode::Ui);
+        assert_eq!(cli.config.mode, AppMode::Ui);
+    }
+
+    #[test]
+    fn ui_flag_is_a_compatible_alias_for_the_default() {
+        let cli = parse(&["--ui"]).expect("--ui разбирается");
+
+        assert_eq!(cli.mode, Mode::Ui);
+        assert_eq!(cli.config.mode, AppMode::Ui);
+    }
+
+    #[test]
+    fn demo_flag_selects_headless_demo() {
+        let cli = parse(&["--demo", "max-original/SAVE1.CAM", "--turns", "7"])
+            .expect("--demo разбирается");
+
+        assert_eq!(cli.mode, Mode::Demo);
+        assert_eq!(cli.config.mode, AppMode::Demo);
+        assert_eq!(cli.turns, Some(7));
+        assert_eq!(
+            cli.save.as_deref(),
+            Some(std::path::Path::new("max-original/SAVE1.CAM"))
+        );
+    }
+
+    #[test]
+    fn new_game_flag_selects_headless_new_game() {
+        let cli = parse(&["--new-game", "--world", "12"]).expect("--new-game разбирается");
+
+        assert_eq!(cli.mode, Mode::NewGame);
+        assert_eq!(cli.config.mode, AppMode::NewGame);
+    }
+
+    #[test]
+    fn connect_flag_selects_headless_connect() {
+        let cli = parse(&["--connect", "127.0.0.1:8082", "--join", "demo"])
+            .expect("--connect разбирается");
+
+        assert_eq!(cli.mode, Mode::Connect);
+        assert_eq!(cli.config.mode, AppMode::Connect);
+        assert_eq!(cli.config.horizon_host, "127.0.0.1");
+        assert_eq!(cli.config.horizon_port, 8082);
+        assert_eq!(cli.game_id.as_deref(), Some("demo"));
+        assert!(!cli.sdl, "без --sdl сессия остаётся headless");
+    }
+
+    #[test]
+    fn record_is_accepted_in_the_default_gui_mode() {
+        let cli = parse(&["--record", "run.qa"]).expect("--record в GUI разбирается");
+
+        assert_eq!(cli.mode, Mode::Ui);
+        assert_eq!(cli.record.as_deref(), Some(std::path::Path::new("run.qa")));
+    }
+
+    #[test]
+    fn record_is_rejected_in_headless_modes() {
+        let error = parse(&["--demo", "save.cam", "--record", "run.qa"])
+            .expect_err("--record с --demo должен отклоняться");
+
+        assert!(error.to_string().contains("--record"), "{error:#}");
+    }
+
+    #[test]
+    fn sdl_still_requires_connect() {
+        let error = parse(&["--sdl"]).expect_err("--sdl без --connect отклоняется");
+
+        assert!(error.to_string().contains("--connect"), "{error:#}");
+    }
+
+    #[test]
+    fn unknown_flag_is_rejected() {
+        let error = parse(&["--bogus"]).expect_err("неизвестный флаг отклоняется");
+
+        assert!(error.to_string().contains("--bogus"), "{error:#}");
+    }
+
+    #[cfg(not(feature = "sdl"))]
+    #[test]
+    fn gui_without_sdl_feature_reports_a_build_hint() {
+        let cli = parse(&[]).expect("аргументы разбираются без SDL");
+
+        let error = cli
+            .ensure_gui_available()
+            .expect_err("без feature sdl GUI недоступен");
+        let text = format!("{error:#}");
+
+        assert!(text.contains("feature sdl"), "{text}");
+        assert!(text.contains("--demo"), "{text}");
+        assert!(text.contains("--new-game"), "{text}");
+        assert!(text.contains("--connect"), "{text}");
+    }
+
+    #[cfg(feature = "sdl")]
+    #[test]
+    fn gui_is_available_with_sdl_feature() {
+        parse(&[])
+            .expect("аргументы разбираются")
+            .ensure_gui_available()
+            .expect("с feature sdl GUI доступен");
+    }
 }

@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "M.A.X. Rust client: core + net + assets + render in one headless-capable application loop"
 
+# Крейт остаётся `max_app` (библиотеку используют примеры qa_run/qa_golden_check),
+# а исполняемый файл клиента называется `max-rust` (max-rust.exe на Windows).
+[[bin]]
+name = "max-rust"
+path = "src/main.rs"
+
 [dependencies]
 max_core = { path = "../max_core" }
 max_net = { path = "../max_net" }

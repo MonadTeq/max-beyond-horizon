@@ -59,6 +59,10 @@ ticks=5 turn=1 state=InGame units=312 state_digest=0xC354 state_checksum=0x408A 
 
 ```sh
 # из max-rust/; пути по умолчанию — относительно корня репозитория
+# без флагов (или --ui) — GUI: меню, создать/выбрать игру, партия
+cargo run -p max_app --features sdl
+
+# headless: V70-сейв → N тиков → digest
 cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5
 
 # локальная партия: карта планеты + генерация ресурсов/обломков + кадр в PPM
@@ -72,15 +76,16 @@ cargo run -p max_app -- --help
 
 | Флаг | Поведение |
 |---|---|
+| *(без флагов)* | GUI по умолчанию: интерактивное меню в окне SDL3 — создать игру / выбрать игру из лобби / сессия (нужна сборка `--features sdl`) |
 | `--demo <save> [--turns N]` | headless: загрузить V70-сейв, прокрутить N тиков (по умолчанию 5), напечатать digest |
 | `--new-game` | `setup::generate_map` по параметрам P2 (`--seed`, `--raw/--fuel/--gold/--derelicts`, `--world`), печать отчёта и размеров кадра; `--out` пишет PPM |
 | `--connect <host[:port]> --join <game> [--sdl]` | Horizon gRPC (по умолчанию `127.0.0.1:8082`) → ENet → лобби → игровой цикл; без `--sdl` — headless, с `--sdl` — окно |
-| `--ui` | интерактивное меню в окне SDL3: создать игру / выбрать игру из лобби / сессия (нужна сборка `--features sdl`) |
-| `--record <file.qa>` | запись ручной игры в `.qa`-сценарий для `qa_run` (работает с `--ui`; существующий файл не перезаписывается — суффикс `-1`) |
+| `--ui` | совместимый alias для GUI-режима по умолчанию |
+| `--record <file.qa>` | запись ручной игры в `.qa`-сценарий для `qa_run` (работает в GUI; существующий файл не перезаписывается — суффикс `-1`) |
 | `--player/--team/--clan/--password` | параметры лобби |
 | `--reconnect-attempts N` | M6.1-заготовка: сколько раз переподключаться при разрыве ENet (по умолчанию 3; `0` — выключить) |
 | `--reconnect-timeout S` | таймаут одной попытки переподключения (ENet connect + `TP 00`) в секундах, по умолчанию 10 |
-| `--turn-wait N` | окно ввода в ходу сессии, секунды: `0`/нет — headless, ход закрывается сразу после тика (так идут live-smoke/тесты); `N > 0` с `--ui`/`--sdl` — ход держится открытым до **End Turn** или до `N` секунд, чтобы игрок успел отдать приказы |
+| `--turn-wait N` | окно ввода в ходу сессии, секунды: `0`/нет — headless, ход закрывается сразу после тика (так идут live-smoke/тесты); `N > 0` в GUI/с `--sdl` — ход держится открытым до **End Turn** или до `N` секунд, чтобы игрок успел отдать приказы |
 | `--data-dir`, `--assets-dir`, `--world-dir`, `--max-res`, `--patches`, `--palette` | где искать данные игры |
 
 По умолчанию `MAX.RES`/`COLOR.PAL` берутся из `max-original/`, `PATCHES.RES` —
@@ -108,18 +113,18 @@ cargo run -p max_app --features sdl-from-source -- \
 
 ## UI (M4.1): меню, список игр, сессия
 
-`--ui` открывает интерактивный клиент: главное меню → создание игры или
-список игр Horizon → сессия. Вся логика переходов — в `max_app::ui`
+Запуск без флагов (или с `--ui`) открывает интерактивный клиент: главное
+меню → создание игры или список игр Horizon → сессия. Вся логика переходов — в `max_app::ui`
 (`Screen`, `InputEvent`, `MenuClient`), SDL-цикл — только в `main.rs`.
 Меню не требует данных игры; если `MAX.RES`/`COLOR.PAL` не найдены, карта
 рисуется упрощённо, а загрузка ассетов пишет предупреждение.
 
 ```sh
 # системный SDL3 (Linux: libsdl3-dev; Windows: vcpkg)
-cargo run -p max_app --features sdl -- --ui
+cargo run -p max_app --features sdl
 
 # SDL3 из исходников (нужен cmake; docker/CI)
-cargo run -p max_app --features sdl-from-source -- --ui \
+cargo run -p max_app --features sdl-from-source -- \
     --connect 127.0.0.1:8082 --player rust --team 0
 ```
 
@@ -135,8 +140,8 @@ Horizon задаётся `--connect <host[:port]>` (по умолчанию `127
 (~16 мс), и игрок ничего не успевает. Для интерактивной игры:
 
 ```sh
-max_app --ui --turn-wait 60          # ход ждёт End Turn или 60 секунд
-max_app --ui --turn-wait 0           # прежнее поведение (по умолчанию)
+max-rust --turn-wait 60          # ход ждёт End Turn или 60 секунд
+max-rust --turn-wait 0           # прежнее поведение (по умолчанию)
 ```
 
 В фазе PLAY с окном и `--turn-wait N > 0` цикл крутит тики и кадры, клики
@@ -164,13 +169,13 @@ max_app --ui --turn-wait 0           # прежнее поведение (по �
 
 ### Запись QA-сценария: `--record`
 
-`--ui --record <file.qa>` записывает ручную игру в скрипт слоя 2 (см.
+`--record <file.qa>` записывает ручную игру в скрипт слоя 2 (см.
 `max-rust-qa/drivers/README.md`, раздел «Запись сценариев вручную»):
 
 ```sh
 # из max-rust/; системный SDL3 или sdl-from-source
 cargo run -p max_app --features sdl -- \
-  --ui --record ../max-rust-qa/scripts/my-run.qa
+  --record ../max-rust-qa/scripts/my-run.qa
 ```
 
 Запись начинается с главного меню и дописывается при выходе. В файл попадают

@@ -9,8 +9,8 @@
 
 | Скрипт | Что делает | Требования |
 |---|---|---|
-| `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max_app` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
-| `build-windows-ui.ps1` | **нативная** Windows-сборка `max_app` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-rust` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
+| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-rust` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-horizon-server/target/release/horizon` и `build/linux-server-template/max-port` |
 
 ## build-windows.sh
@@ -41,7 +41,7 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
 Артефакты (`$OUT` = `release/` по умолчанию):
 
 ```
-release/max_app-<ver>-windows-x86_64/            max_app.exe, README.txt,
+release/max_app-<ver>-windows-x86_64/            max-rust.exe, README.txt,
                                                  LICENSE, CHANGELOG.md, SHA256SUMS
 release/max_app-<ver>-windows-x86_64.zip         архив каталога
 release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
@@ -54,8 +54,8 @@ release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 - импорты перечисляются в логе; `libgcc_s_seh-1.dll`/`libwinpthread-1.dll` в
   них быть не должно (иначе exe не запустится без mingw-рантайма) — это
   проверяется как ошибка сборки;
-- wine-smoke (если wine поставлен): `max_app.exe --help` и
-  `max_app.exe --demo SAVE1.CAM --turns 1` в каталоге с сейвом
+- wine-smoke (если wine поставлен): `max-rust.exe --help` и
+  `max-rust.exe --demo SAVE1.CAM --turns 1` в каталоге с сейвом
   `max-original/SAVE1.CAM`; лог — `build/smoke-logs/windows-wine-smoke.log`.
 
 Про wine: в Debian bookworm (база образа) wine 8.0, а `std` Rust импортирует
@@ -106,7 +106,7 @@ Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), ищет vcpkg с
 cargo build --release --locked -p max_app --features sdl-vcpkg,sound
 ```
 
-кладёт `SDL3.dll` рядом с exe, проверяет `max_app.exe --help` и пакует
+кладёт `SDL3.dll` рядом с exe, проверяет `max-rust.exe --help` и пакует
 `release/max_app-<ver>-windows-x86_64-ui/` (exe + SDL3.dll + README.txt +
 LICENSE + CHANGELOG.md + SHA256SUMS) и `.zip` + `.zip.sha256`.
 

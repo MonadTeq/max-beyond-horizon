@@ -36,13 +36,13 @@ cargo build --release -p max_app --features sdl-vcpkg,sound
 ### Windows UI-бинарь (готовый путь)
 ```powershell
 powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
-# артефакт: release\max_app-1.0.0-windows-x86_64-ui\max_app.exe (+SDL3.dll)
+# артефакт: release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe (+SDL3.dll)
 ```
 
 ### Windows headless-бинарь (кросс-сборка, без MSVC)
 ```sh
 bash build/scripts/build-windows.sh
-# артефакт: release\max_app-1.0.0-windows-x86_64\max_app.exe
+# артефакт: release\max_app-1.0.0-windows-x86_64\max-rust.exe
 ```
 
 ### Linux-бинарь + архив
@@ -69,8 +69,9 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src max-port-build:latest \
 ### Одиночная игра / hot-seat (окно)
 ```powershell
 cd D:\dev\max-port-debug
-release\max_app-1.0.0-windows-x86_64-ui\max_app.exe --ui
+release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 ```
+По умолчанию (без флагов) клиент открывает GUI; `--ui` — совместимый alias.
 В меню: **New Game** (одиночная: Options → Planet → Players, «Human/Computer») или
 **Multiplayer Game → Hot Seat Game** (2–4 человека на одном ПК).
 Управление: LMB — выбрать юнит; RMB — приказ движения (зелёный предпросмотр);
@@ -82,15 +83,15 @@ release\max_app-1.0.0-windows-x86_64-ui\max_app.exe --ui
 # 1. сервер:
 docker compose up -d --build
 # 2. клиенты (в меню: Multiplayer Game → Host/Join Network Game):
-release\max_app-1.0.0-windows-x86_64-ui\max_app.exe --ui
+release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 ```
 Автоматический smoke: `bash build/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
 ### Headless-режимы (без окна)
 ```cmd
-max_app.exe --demo max-original\SAVE1.CAM --turns 5
-max_app.exe --new-game --world 12 --seed 42 --out frame.ppm
-max_app.exe --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
+max-rust.exe --demo max-original\SAVE1.CAM --turns 5
+max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
+max-rust.exe --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
 
 ### Данные игры

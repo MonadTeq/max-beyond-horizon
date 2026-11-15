@@ -113,7 +113,7 @@ BUNDLE_NAME="max_app-${VERSION}-linux-x86_64"
 BUNDLE="$OUT/$BUNDLE_NAME"
 TARBALL="$OUT/$BUNDLE_NAME.tar.gz"
 TARBALL_HASH="$TARBALL.sha256"
-BINARY="$ROOT/max-rust/target/release/max_app"
+BINARY="$ROOT/max-rust/target/release/max-rust"
 CARGO_HOME_DIR="$ROOT/build/cargo-home"
 
 for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/docs/development/release-checklist.md"; do
@@ -151,7 +151,7 @@ if [ "$DRY_RUN" = "1" ]; then
     printf '  mkdir -p %q\n' "$OUT_HOST/$BUNDLE_NAME/lib"
     printf '  docker run --rm -v %q -v %q -e CARGO_HOME=/cargo-home -w /src/max-rust %q bash -c %q\n' \
         "$ROOT:/src" "$CARGO_HOME_DIR:/cargo-home" "$RUST_IMAGE" "$INNER"
-    printf '  cp %q %q\n' "$BINARY" "$BUNDLE/max_app"
+    printf '  cp %q %q\n' "$BINARY" "$BUNDLE/max-rust"
     printf '  cp -a max-rust/target/release/libSDL3.so* %q\n' "$BUNDLE/lib/"
     printf '  tar -C %q -czf %q %q\n' "$OUT_HOST" "$OUT_HOST/$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME"
     if [ "$MAKE_TAG" = "1" ]; then
@@ -189,8 +189,8 @@ echo
 echo "== 2/3: упаковка $BUNDLE_NAME =="
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/lib"
-cp "$BINARY" "$BUNDLE/max_app"
-chmod +x "$BUNDLE/max_app"
+cp "$BINARY" "$BUNDLE/max-rust"
+chmod +x "$BUNDLE/max-rust"
 cp "$ROOT/LICENSE" "$BUNDLE/LICENSE"
 cp "$ROOT/CHANGELOG.md" "$BUNDLE/CHANGELOG.md"
 
@@ -210,7 +210,7 @@ cat > "$BUNDLE/run.sh" <<'EOF'
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$HERE/max_app" "$@"
+exec "$HERE/max-rust" "$@"
 EOF
 chmod +x "$BUNDLE/run.sh"
 
@@ -225,7 +225,8 @@ M.A.X. Rust client ${VERSION} — Linux x86_64
 Запуск
 ------
   ./run.sh --help
-  ./run.sh --ui                    # меню + партия (нужен дисплей)
+  ./run.sh                         # GUI: меню + партия (нужен дисплей)
+  ./run.sh --ui                    # то же (совместимый alias)
   ./run.sh --connect HOST:8082 --join GAME_ID --sdl
   ./run.sh --demo SAVE1.CAM --turns 5
 
@@ -253,7 +254,7 @@ M.A.X. Rust client ${VERSION} — Linux x86_64
 EOF
 
 echo "== 3/3: sha256 + архив =="
-FILES=(max_app run.sh README.txt CHANGELOG.md LICENSE)
+FILES=(max-rust run.sh README.txt CHANGELOG.md LICENSE)
 shopt -s nullglob
 for lib in "$BUNDLE"/lib/*; do
     FILES+=("lib/$(basename "$lib")")

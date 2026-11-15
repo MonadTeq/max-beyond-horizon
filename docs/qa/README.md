@@ -18,7 +18,7 @@ cargo run -p max_app --example qa_run -- max-rust-qa/scripts/sp-full.qa out
 cargo run -p max_app --example qa_golden_check -- max-rust-qa/golden out
 ```
 
-Запись сценария вручную: `max_app.exe --ui --record my.qa` — играете, действия
-пишутся в скрипт (см. `max-rust-qa/drivers/README.md`).
+Запись сценария вручную: `max-rust.exe --record my.qa` — GUI открывается без
+флагов, действия пишутся в скрипт (см. `max-rust-qa/drivers/README.md`).
 
 Чек-лист релиза: `docs/development/release-checklist.md`.

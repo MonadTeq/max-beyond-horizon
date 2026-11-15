@@ -28,7 +28,7 @@
 | `max_net`    | Wire-протокол: WS-события Horizon + UDP-пакеты сессии (join/state/orders), тикеты. |
 | `max_assets` | Чтение ресурсов оригинальной игры: RES/PATCHES, карты (WRL/SCE/MPS), спрайты (RES-теги), звуки (`*.SPW`, RIFF/WAVE PCM16), FLC/FON — в планах. |
 | `max_render` | Окно и отрисовка (SDL3), UI-слой над событиями core.              |
-| `max_app`    | Бинарь: инициализация, запуск net+render, игровой цикл.           |
+| `max_app`    | Библиотека клиента + бинарь `max-rust`: инициализация, запуск net+render, игровой цикл. |
 
 ## Статус
 
@@ -59,10 +59,10 @@ println!("{} Гц, {} каналов, {} кадров", clip.sample_rate, clip.c
 
 ```sh
 # со звуком (Linux: apt install pkg-config libasound2-dev)
-cargo run -p max_app --features sdl,sound -- --ui
+cargo run -p max_app --features sdl,sound          # без флагов — GUI
 
 # без звука (по умолчанию): окно работает, клики беззвучны
-cargo run -p max_app --features sdl -- --ui
+cargo run -p max_app --features sdl                # --ui — совместимый alias
 ```
 
 `AudioPlayer::play_once("KBUY0")`/`play_loop("TANK1")` принимает тег или имя
@@ -83,12 +83,12 @@ cargo run -p max_app --features sdl -- --ui
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
   x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
-  `max_app.exe` + `release/max_app-<ver>-windows-x86_64.zip` и wine-smoke
+  `max-rust.exe` + `release/max_app-<ver>-windows-x86_64.zip` и wine-smoke
   (`--help`, `--demo SAVE1.CAM`).
 - Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
   Windows-хосте через `powershell -File build\scripts\build-windows-ui.ps1`
   (`--features sdl-vcpkg,sound`, SDL3 из vcpkg) →
-  `release/max_app-<ver>-windows-x86_64-ui.zip` (`max_app.exe` + `SDL3.dll`).
+  `release/max_app-<ver>-windows-x86_64-ui.zip` (`max-rust.exe` + `SDL3.dll`).
   Проверено на MSVC 14.51 + SDL3 3.4.20: окно `M.A.X. — Rust client (M4.2 HUD)`
   открывается, звук — `rodio/cpal` (WASAPI, без отдельных DLL). Требования к
   тулчейну — `../docs/development/release-checklist.md` §6.1, разбор грабель —

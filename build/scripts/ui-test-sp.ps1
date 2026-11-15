@@ -28,7 +28,7 @@ function Click-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
 }
 
 function Shot([string]$name) {
-    $proc = Get-Process max_app -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    $proc = Get-Process max-rust -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if (-not $proc) { Write-Host "shot ${name}: no window"; return }
     $r = New-Object Win32.Mouse+RECT
     [Win32.Mouse]::GetClientRect($proc.MainWindowHandle, [ref]$r) | Out-Null
@@ -43,11 +43,12 @@ function Shot([string]$name) {
     Write-Host "shot $name ($w x $h)"
 }
 
-Get-Process max_app -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
-Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max_app.exe" -ArgumentList '--ui','--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
+# Без --ui: клиент по умолчанию открывает GUI (окно SDL3).
+Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe" -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
 Start-Sleep -Seconds 6
-$proc = Get-Process max_app | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$proc = Get-Process max-rust | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $proc) { Write-Host 'window not found'; exit 1 }
 $hwnd = $proc.MainWindowHandle
 

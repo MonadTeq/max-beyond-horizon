@@ -105,7 +105,7 @@ if (-not (Test-Path $cargo)) {
 $cargoBin = Split-Path -Parent $cargo
 
 $targetDir = Join-Path $root "build\win-msvc-target"
-$exePath = Join-Path $targetDir "release\max_app.exe"
+$exePath = Join-Path $targetDir "release\max-rust.exe"
 $bundleName = "max_app-$version-windows-x86_64-ui"
 $bundle = Join-Path $Out $bundleName
 $zip = Join-Path $Out "$bundleName.zip"
@@ -156,14 +156,14 @@ try {
     Pop-Location
 }
 if ($helpRc -ne 0 -or $help -notmatch "ИСПОЛЬЗОВАНИЕ") {
-    Fail "max_app.exe --help не отработал (rc=$helpRc):`n$help"
+    Fail "max-rust.exe --help не отработал (rc=$helpRc):`n$help"
 }
-Write-Host "проверка: max_app.exe --help — OK (--ui доступен)"
+Write-Host "проверка: max-rust.exe --help — OK (GUI по умолчанию, --ui — alias)"
 
 if ($NoPackage) {
     Write-Host ""
     Write-Host "Готово (без упаковки): $exePath"
-    Write-Host "Запуск: `"$exePath`" --ui"
+    Write-Host "Запуск: `"$exePath`" (без флагов — GUI)"
     exit 0
 }
 
@@ -184,14 +184,15 @@ M.A.X. Rust client $version — Windows x86_64 (UI: SDL3 + звук)
 
 Собран на Windows-хосте (MSVC + SDL3 из vcpkg):
   cargo build --release -p max_app --features $Features
-Рядом с max_app.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
+Рядом с max-rust.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
 Звук — rodio/cpal (WASAPI), отдельных DLL не требует.
 
 Запуск
 ------
-  max_app.exe --ui                      # меню: создать/выбрать игру, партия
-  max_app.exe --connect HOST:8082 --join GAME_ID --sdl
-  max_app.exe --help
+  max-rust.exe                          # GUI: меню, создать/выбрать игру, партия
+  max-rust.exe --ui                     # то же (совместимый alias)
+  max-rust.exe --connect HOST:8082 --join GAME_ID --sdl
+  max-rust.exe --help
 
 Управление в игре: мышь (LMB — выбор/атака, RMB — движение/отмена),
 стрелки/Enter — меню, End Turn — конец хода, Esc — выход.
@@ -225,7 +226,7 @@ Set-Content -Path (Join-Path $bundle "README.txt") -Value $readme -Encoding UTF8
 
 Push-Location $bundle
 try {
-    $files = @("max_app.exe", "SDL3.dll", "README.txt", "LICENSE", "CHANGELOG.md")
+    $files = @("max-rust.exe", "SDL3.dll", "README.txt", "LICENSE", "CHANGELOG.md")
     $sums = foreach ($file in $files) {
         $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
         "$hash  $file"
@@ -240,13 +241,13 @@ Compress-Archive -Path $bundle -DestinationPath $zip -CompressionLevel Optimal
 $zipHash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
 Set-Content -Path "$zip.sha256" -Value "$zipHash  $bundleName.zip" -Encoding ASCII
 
-$exeHash = (Get-FileHash -Algorithm SHA256 (Join-Path $bundle "max_app.exe")).Hash.ToLower()
+$exeHash = (Get-FileHash -Algorithm SHA256 (Join-Path $bundle "max-rust.exe")).Hash.ToLower()
 Write-Host ""
 Write-Host "Готово:"
 Write-Host "  $bundle\"
-Write-Host ("    max_app.exe   {0:N0} байт, sha256 {1}" -f $exeSize, $exeHash)
+Write-Host ("    max-rust.exe  {0:N0} байт, sha256 {1}" -f $exeSize, $exeHash)
 Write-Host "    SDL3.dll, README.txt, LICENSE, CHANGELOG.md, SHA256SUMS"
 Write-Host "  $zip"
 Write-Host ("    sha256 {0}" -f $zipHash)
 Write-Host ""
-Write-Host "Запуск: `"$(Join-Path $bundle 'max_app.exe')`" --ui"
+Write-Host "Запуск: `"$(Join-Path $bundle 'max-rust.exe')`" (без флагов — GUI)"

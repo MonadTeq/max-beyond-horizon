@@ -72,8 +72,8 @@ Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
 ## Запустить (как играть)
 
 ```powershell
-# одиночная / hot-seat (окно):
-release\max_app-1.0.0-windows-x86_64-ui\max_app.exe --ui
+# одиночная / hot-seat (окно; без флагов — GUI, --ui — совместимый alias):
+release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 #   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
 #   LMB — выбрать юнит; RMB — движение; клик по врагу — атака; T — чат; End Turn.
 

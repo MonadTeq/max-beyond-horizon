@@ -10,6 +10,20 @@
 
 ## [Unreleased]
 
+### Изменено
+
+- **Бинарь клиента переименован `max_app` → `max-rust`** (Windows:
+  `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
+  `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему
+  работает (бинарь в пакете один), а артефакты теперь `max-rust(.exe)`.
+  Каталоги артефактов (`max_app-<version>-…`) сохранены.
+- **Запуск без флагов открывает GUI** (меню SDL3): headless-режимы доступны
+  только по явным `--demo`, `--new-game`, `--connect`; `--ui` оставлен
+  совместимым alias. В headless-сборке без feature `sdl` запуск без флагов
+  даёт понятную ошибку с подсказкой про `--features sdl` и headless-флаги.
+- Help-текст, build/release-скрипты и документация переведены на
+  `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
+
 ### Добавлено
 
 - **M-SP — одиночная игра против ИИ** (`docs/architecture/plan-modes.md`):
