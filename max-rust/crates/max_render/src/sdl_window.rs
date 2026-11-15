@@ -21,12 +21,81 @@
 //! Запуск без feature `sdl` даёт ошибку компиляции у вызывающего кода
 //! (модуля просто нет) — это осознанно: SDL не должен протекать в чистые тесты.
 
+use sdl3::keyboard::Keycode;
+use sdl3::mouse::MouseButton;
 use sdl3::pixels::PixelFormat;
 use sdl3::render::{Canvas, TextureCreator};
 use sdl3::video::{Window, WindowContext};
 use sdl3::EventPump;
 
 use crate::buffer::RgbaBuffer;
+
+/// Клавиша окна в терминах UI: `max_app` не зависит от типов SDL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowKey {
+    /// Esc.
+    Escape,
+    /// Enter / KpEnter.
+    Enter,
+    /// Tab.
+    Tab,
+    /// Backspace.
+    Backspace,
+    /// Стрелка вверх.
+    Up,
+    /// Стрелка вниз.
+    Down,
+    /// Стрелка влево.
+    Left,
+    /// Стрелка вправо.
+    Right,
+    /// Печатный ASCII-символ (SDL отдаёт базовую раскладку: `a`, `0`, `.`).
+    Char(char),
+    /// Любая другая клавиша (модификаторы, F-клавиши, …).
+    Other,
+}
+
+/// Событие окна, пригодное для UI-цикла без протекания SDL-типов.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowInput {
+    /// Нажатие клавиши (автоповтор отфильтрован).
+    Key(WindowKey),
+    /// Движение мыши в пикселях окна.
+    MouseMove {
+        /// Координата x.
+        x: i32,
+        /// Координата y.
+        y: i32,
+    },
+    /// Нажатие левой кнопки мыши.
+    MouseClick {
+        /// Координата x.
+        x: i32,
+        /// Координата y.
+        y: i32,
+    },
+}
+
+/// Переводит SDL-клавишу в [`WindowKey`].
+fn window_key(code: Keycode) -> WindowKey {
+    match code {
+        Keycode::Escape => WindowKey::Escape,
+        Keycode::Return | Keycode::Return2 | Keycode::KpEnter => WindowKey::Enter,
+        Keycode::Tab | Keycode::KpTab => WindowKey::Tab,
+        Keycode::Backspace | Keycode::KpBackspace => WindowKey::Backspace,
+        Keycode::Up => WindowKey::Up,
+        Keycode::Down => WindowKey::Down,
+        Keycode::Left => WindowKey::Left,
+        Keycode::Right => WindowKey::Right,
+        _ => {
+            // Базовые ASCII-коды SDL3 совпадают с ASCII (`A = 97`, `_0 = 48`).
+            match code as u32 {
+                raw @ 0x20..=0x7E => WindowKey::Char(char::from_u32(raw).unwrap_or('?')),
+                _ => WindowKey::Other,
+            }
+        }
+    }
+}
 
 /// Ошибка инициализации окна/вывода кадра.
 #[derive(Debug)]
@@ -147,23 +216,56 @@ impl SdlWindow {
         self.canvas.clear();
     }
 
-    /// Опрашивает очередь событий.
+    /// Опрашивает очередь событий и возвращает их UI-слою.
     ///
-    /// Возвращает `false`, когда окно пора закрывать (закрытие окна или Esc).
-    pub fn poll(&mut self) -> bool {
+    /// `running == false` означает закрытие окна (`Quit`); Esc **не** закрывает
+    /// окно на этом уровне — UI решает сам (в меню — выход, в подэкране —
+    /// назад). Для старого поведения «Esc закрывает окно» есть [`Self::poll`].
+    pub fn poll_input(&mut self) -> (bool, Vec<WindowInput>) {
         let mut running = true;
+        let mut inputs = Vec::new();
 
         for event in self.events.poll_iter() {
             match event {
                 sdl3::event::Event::Quit { .. } => running = false,
                 sdl3::event::Event::KeyDown {
-                    keycode: Some(sdl3::keyboard::Keycode::Escape),
+                    keycode: Some(code),
+                    repeat: false,
                     ..
-                } => running = false,
+                } => inputs.push(WindowInput::Key(window_key(code))),
+                sdl3::event::Event::MouseMotion { x, y, .. } => {
+                    inputs.push(WindowInput::MouseMove {
+                        x: x.round() as i32,
+                        y: y.round() as i32,
+                    });
+                }
+                sdl3::event::Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                } => inputs.push(WindowInput::MouseClick {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                }),
                 _ => {}
             }
         }
 
+        (running, inputs)
+    }
+
+    /// Опрашивает очередь событий.
+    ///
+    /// Возвращает `false`, когда окно пора закрывать (закрытие окна или Esc).
+    /// Это прежнее поведение `--connect --sdl`; UI-цикл использует
+    /// [`Self::poll_input`], чтобы обрабатывать Esc как навигацию.
+    pub fn poll(&mut self) -> bool {
+        let (running, inputs) = self.poll_input();
+
         running
+            && !inputs
+                .iter()
+                .any(|input| matches!(input, WindowInput::Key(WindowKey::Escape)))
     }
 }

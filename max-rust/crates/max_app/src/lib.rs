@@ -32,6 +32,7 @@
 pub mod assets;
 pub mod net;
 pub mod render;
+pub mod ui;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,10 @@ pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
 pub use render::{write_ppm, RenderStats};
+pub use ui::{
+    CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
+    SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD,
+};
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +76,8 @@ pub enum AppMode {
     NewGame,
     /// `--connect`: Horizon + ENet-сессия.
     Connect,
+    /// `--ui`: интерактивное меню (создать/выбрать игру) и сессия.
+    Ui,
 }
 
 impl fmt::Display for AppMode {
@@ -79,6 +86,7 @@ impl fmt::Display for AppMode {
             Self::Demo => "demo",
             Self::NewGame => "new-game",
             Self::Connect => "connect",
+            Self::Ui => "ui",
         })
     }
 }

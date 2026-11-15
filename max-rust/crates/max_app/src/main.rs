@@ -5,7 +5,9 @@
 //! * `--demo <save> [--turns N]` — headless: V70-сейв → N тиков → digest;
 //! * `--new-game` — локальная партия на карте планеты + кадр в PPM (`--out`);
 //! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet-сессия;
-//!   без `--sdl` цикл headless, с `--sdl` — окно SDL3 (feature `sdl`).
+//!   без `--sdl` цикл headless, с `--sdl` — окно SDL3 (feature `sdl`);
+//! * `--ui` — интерактивное меню (создать/выбрать игру) и сессия в окне SDL3
+//!   (только с feature `sdl`).
 //!
 //! Вся игровая логика — в библиотеке (`max_app`), здесь только разбор
 //! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
@@ -18,9 +20,15 @@ use max_app::assets::AssetsReport;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
 use max_app::net::{run_network, NetworkOptions, NetworkReport};
+#[cfg(feature = "sdl")]
+use max_app::ui::{
+    HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest, Transition, UiContext,
+};
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
 use max_core::setup::ResourceLevel;
+#[cfg(feature = "sdl")]
+use max_render::sdl_window::{WindowInput, WindowKey};
 
 const DEFAULT_SAVE: &str = "max-original/SAVE1.CAM";
 const DEFAULT_GRPC_PORT: u16 = 8082;
@@ -31,6 +39,7 @@ enum Mode {
     Demo,
     NewGame,
     Connect,
+    Ui,
 }
 
 /// Разобранные аргументы CLI.
@@ -86,6 +95,10 @@ impl Cli {
                 }
                 "--new-game" => {
                     cli.mode = Mode::NewGame;
+                    mode_set = true;
+                }
+                "--ui" => {
+                    cli.mode = Mode::Ui;
                     mode_set = true;
                 }
                 "--connect" => {
@@ -191,11 +204,18 @@ impl Cli {
         if cli.mode == Mode::Connect && cli.game_id.is_none() {
             bail!("--connect требует --join <game_id>");
         }
+        if cli.mode == Mode::Ui && !cfg!(feature = "sdl") {
+            bail!(
+                "--ui требует сборки с feature sdl: \
+                 cargo run -p max_app --features sdl -- --ui"
+            );
+        }
 
         cli.config.mode = match cli.mode {
             Mode::Demo => AppMode::Demo,
             Mode::NewGame => AppMode::NewGame,
             Mode::Connect => AppMode::Connect,
+            Mode::Ui => AppMode::Ui,
         };
         cli.config.save = cli.save.clone();
         cli.config.demo_turns = cli.turns.unwrap_or(5);
@@ -257,6 +277,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    if cli.mode == Mode::Ui {
+        return run_ui(&cli);
+    }
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -267,6 +291,7 @@ fn run(cli: Cli) -> Result<()> {
             Mode::Demo => run_demo(&cli),
             Mode::NewGame => run_new_game(&cli),
             Mode::Connect => run_connect(&cli).await,
+            Mode::Ui => unreachable!("--ui разобран выше"),
         }
     })
 }
@@ -478,6 +503,226 @@ async fn connect_interactive(
 }
 
 // ---------------------------------------------------------------------------
+// --ui: интерактивное меню в окне SDL3
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "sdl")]
+fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("tokio runtime (UI)")
+}
+
+/// SDL-цикл UI: события окна → [`InputEvent`] → [`Screen`] → кадр.
+#[cfg(feature = "sdl")]
+fn run_ui(cli: &Cli) -> Result<()> {
+    use max_render::buffer::RgbaBuffer;
+    use max_render::sdl_window::SdlWindow;
+
+    let config = &cli.config;
+    let mut app = App::new(config.clone());
+
+    match app.init_assets() {
+        Ok(report) => {
+            print_assets(Some(&report));
+            println!("UI: ассеты загружены — карта рисуется настоящими цветами");
+        }
+        Err(error) => {
+            tracing::warn!("UI: данные игры не загружены ({error:#}); карта будет упрощённой");
+        }
+    }
+
+    let mut window = SdlWindow::new(
+        "M.A.X. — Rust client (M4.1 UI)",
+        config.screen_width,
+        config.screen_height,
+    )
+    .map_err(|error| anyhow!("{error}"))?;
+    let mut ctx = UiContext::new(
+        Box::new(HorizonMenuClient::new(
+            &config.horizon_host,
+            config.horizon_port,
+        )),
+        config.screen_width,
+        config.screen_height,
+    );
+    let mut screen = Screen::MainMenu;
+    let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
+    let mut runtime: Option<tokio::runtime::Runtime> = None;
+    let mut pending: Option<SessionRequest> = None;
+
+    println!(
+        "UI: окно {}x{}; меню — мышь/стрелки, Enter; Esc — выход",
+        config.screen_width, config.screen_height
+    );
+
+    loop {
+        let (running, events) = window.poll_input();
+
+        if !running {
+            break;
+        }
+
+        for event in events {
+            let input = match event {
+                WindowInput::Key(WindowKey::Escape) => InputEvent::Key(Key::Escape),
+                WindowInput::Key(WindowKey::Enter) => InputEvent::Key(Key::Enter),
+                WindowInput::Key(WindowKey::Tab) => InputEvent::Key(Key::Tab),
+                WindowInput::Key(WindowKey::Backspace) => InputEvent::Key(Key::Backspace),
+                WindowInput::Key(WindowKey::Up) => InputEvent::Key(Key::Up),
+                WindowInput::Key(WindowKey::Down) => InputEvent::Key(Key::Down),
+                WindowInput::Key(WindowKey::Left) => InputEvent::Key(Key::Left),
+                WindowInput::Key(WindowKey::Right) => InputEvent::Key(Key::Right),
+                WindowInput::Key(WindowKey::Char(character)) => InputEvent::Key(Key::Char(character)),
+                WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
+                WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),
+                WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
+            };
+
+            match screen.handle_input(&mut ctx, input) {
+                Transition::None => {}
+                Transition::Quit => return Ok(()),
+                Transition::LeaveSession => {
+                    screen = Screen::MainMenu;
+                    ctx.status = "Left the session".to_string();
+                }
+                Transition::StartSession(request) => {
+                    pending = Some(request);
+                    break;
+                }
+            }
+        }
+
+        if let Some(request) = pending.take() {
+            if runtime.is_none() {
+                runtime = Some(build_ui_runtime()?);
+            }
+            let runtime = runtime.as_mut().expect("runtime создан выше");
+
+            // Кадр «подключение»: пока идут Horizon/лобби, окно не пустое.
+            ctx.status = format!("Connecting to {}…", request.game_id);
+            screen.render(&mut buffer, ctx.view(Some(&app)));
+            let _ = window.present(&buffer);
+
+            let status = match run_ui_session(
+                runtime,
+                &mut app,
+                &mut window,
+                &screen,
+                &request,
+                cli.turns.unwrap_or(0),
+            ) {
+                Ok(report) => {
+                    print_network(&report);
+                    format!(
+                        "Session {} finished: turns={} ticks={}",
+                        report.game_id, report.turns_finished, report.ticks
+                    )
+                }
+                Err(error) => {
+                    eprintln!("max_app: UI session: {error:#}");
+                    format!("Session failed: {error:#}")
+                }
+            };
+
+            screen = Screen::MainMenu;
+            ctx.status = status;
+            continue;
+        }
+
+        screen.render(&mut buffer, ctx.view(Some(&app)));
+        window.present(&buffer).map_err(|error| anyhow!("{error}"))?;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+
+    Ok(())
+}
+
+/// `--ui` без feature `sdl`: понятная ошибка вместо «окна нет».
+#[cfg(not(feature = "sdl"))]
+fn run_ui(_cli: &Cli) -> Result<()> {
+    bail!(
+        "--ui требует сборки с feature sdl: \
+         cargo run -p max_app --features sdl -- --ui"
+    )
+}
+
+#[cfg(feature = "sdl")]
+fn run_ui_session(
+    runtime: &tokio::runtime::Runtime,
+    app: &mut App,
+    window: &mut max_render::SdlWindow,
+    screen: &Screen,
+    request: &SessionRequest,
+    max_turns: u32,
+) -> Result<NetworkReport> {
+    let options = NetworkOptions {
+        game_id: request.game_id.clone(),
+        password: request.password.clone(),
+        max_turns,
+        ..NetworkOptions::default()
+    };
+    let (width, height) = (
+        app.config().screen_width,
+        app.config().screen_height,
+    );
+    let mut sink = UiSessionSink {
+        window,
+        screen: screen.clone(),
+        buffer: max_render::buffer::RgbaBuffer::new(width, height),
+        status: String::new(),
+        game_id: request.game_id.clone(),
+    };
+
+    runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
+}
+
+/// Кадры сессии: карта + статус, Esc завершает сетевой цикл.
+#[cfg(feature = "sdl")]
+struct UiSessionSink<'a> {
+    window: &'a mut max_render::SdlWindow,
+    screen: Screen,
+    buffer: max_render::buffer::RgbaBuffer,
+    status: String,
+    game_id: String,
+}
+
+#[cfg(feature = "sdl")]
+impl max_app::net::FrameSink for UiSessionSink<'_> {
+    fn frame(&mut self, app: &App) -> bool {
+        self.status = format!(
+            "IN SESSION · {} · tick={} turn={} · Esc — leave",
+            self.game_id,
+            app.ticks(),
+            app.state().turn_counter
+        );
+
+        let view = ScreenView {
+            width: self.buffer.width(),
+            height: self.buffer.height(),
+            status: &self.status,
+            mouse: None,
+            focus: 0,
+            app: Some(app),
+        };
+        self.screen.render(&mut self.buffer, view);
+
+        if let Err(error) = self.window.present(&self.buffer) {
+            eprintln!("SDL: {error}");
+            return false;
+        }
+
+        let (running, events) = self.window.poll_input();
+
+        running
+            && !events
+                .iter()
+                .any(|event| matches!(event, WindowInput::Key(WindowKey::Escape)))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Разбор значений
 // ---------------------------------------------------------------------------
 
@@ -544,6 +789,7 @@ max_app — клиент M.A.X. (core + net + assets + render)
     max_app [--demo <save>] [--turns N] [ОПЦИИ]
     max_app --new-game [ОПЦИИ]
     max_app --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
+    max_app --ui [ОПЦИИ]
 
 РЕЖИМЫ:
     --demo <save>        V70-сейв → N тиков → digest (headless)
@@ -551,6 +797,8 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --connect <host>     Horizon gRPC (порт по умолчанию {}) + ENet-сессия
     --join <game_id>     игра для --connect
     --sdl                окно SDL3 для --connect (нужна сборка --features sdl)
+    --ui                 интерактивное меню: создать/выбрать игру и играть
+                         (нужна сборка --features sdl)
 
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
@@ -577,6 +825,7 @@ max_app — клиент M.A.X. (core + net + assets + render)
     cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5
     cargo run -p max_app -- --new-game --world 12 --seed 42 --out frame.ppm
     cargo run -p max_app --features sdl -- --connect 127.0.0.1:8082 --join demo --sdl
+    cargo run -p max_app --features sdl-from-source -- --ui
 ",
         DEFAULT_GRPC_PORT
     );

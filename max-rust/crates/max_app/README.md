@@ -75,6 +75,7 @@ cargo run -p max_app -- --help
 | `--demo <save> [--turns N]` | headless: загрузить V70-сейв, прокрутить N тиков (по умолчанию 5), напечатать digest |
 | `--new-game` | `setup::generate_map` по параметрам P2 (`--seed`, `--raw/--fuel/--gold/--derelicts`, `--world`), печать отчёта и размеров кадра; `--out` пишет PPM |
 | `--connect <host[:port]> --join <game> [--sdl]` | Horizon gRPC (по умолчанию `127.0.0.1:8082`) → ENet → лобби → игровой цикл; без `--sdl` — headless, с `--sdl` — окно |
+| `--ui` | интерактивное меню в окне SDL3: создать игру / выбрать игру из лобби / сессия (нужна сборка `--features sdl`) |
 | `--player/--team/--clan/--password` | параметры лобби |
 | `--data-dir`, `--assets-dir`, `--world-dir`, `--max-res`, `--patches`, `--palette` | где искать данные игры |
 
@@ -100,6 +101,51 @@ cargo run -p max_app --features sdl-from-source -- \
 Управление в окне: Esc или закрытие окна — корректное завершение сессии.
 Кадры рисует библиотека (`render_frame`), окно только выводит `RgbaBuffer`
 через `max_render::SdlWindow`.
+
+## UI (M4.1): меню, список игр, сессия
+
+`--ui` открывает интерактивный клиент: главное меню → создание игры или
+список игр Horizon → сессия. Вся логика переходов — в `max_app::ui`
+(`Screen`, `InputEvent`, `MenuClient`), SDL-цикл — только в `main.rs`.
+Меню не требует данных игры; если `MAX.RES`/`COLOR.PAL` не найдены, карта
+рисуется упрощённо, а загрузка ассетов пишет предупреждение.
+
+```sh
+# системный SDL3 (Linux: libsdl3-dev; Windows: vcpkg)
+cargo run -p max_app --features sdl -- --ui
+
+# SDL3 из исходников (нужен cmake; docker/CI)
+cargo run -p max_app --features sdl-from-source -- --ui \
+    --connect 127.0.0.1:8082 --player rust --team 0
+```
+
+Horizon задаётся `--connect <host[:port]>` (по умолчанию `127.0.0.1:8082`),
+остальные флаги (`--player`, `--team`, `--clan`, `--turns`, `--data-dir`,
+`--assets-dir`, `--width/--height`) работают как в `--connect`.
+
+Экраны и управление:
+
+| Экран | Что делает | Клавиши/мышь |
+|---|---|---|
+| **MainMenu** | Create game / Join game / Quit | Up/Down/Tab + Enter; клик; `C`/`J`/`Q`; Esc — выход |
+| **CreateForm** | имя, планета (`0..=23`), таймеры, число противников, пароль | Tab/Up/Down — поле; ввод; Left/Right — числа; Enter — создать; Esc — назад |
+| **JoinList** | список игр из `ListGames`; выбор и вход | Up/Down + Enter; клик по строке; `R` — обновить; Esc — назад |
+| **InSession** | карта (`map_render`) и строка статуса | Esc — выйти из сессии и вернуться в меню |
+
+Кнопка **Create** вызывает `CreateGame`; при успехе экран сразу переходит в
+**InSession**, и `main.rs` запускает существующий сетевой путь
+(`run_network_with_sink`). **Join** входит в выбранную игру (пароль
+защищённой игры можно задать в форме создания; для готовой игры пароль пока
+не запрашивается). Ошибки Horizon показываются строкой статуса, экран при
+этом остаётся тем же.
+
+Тесты UI не требуют сети и SDL: `MenuClient` подменяется мок-клиентом в
+`max_app/src/ui.rs` (переходы, выбор в списке, отрисовка всех экранов).
+SDL-часть проверяется компиляцией:
+
+```sh
+cargo check -p max_app --features sdl-from-source
+```
 
 ## Тесты
 

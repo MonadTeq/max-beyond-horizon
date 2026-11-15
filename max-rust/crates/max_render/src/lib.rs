@@ -3,9 +3,9 @@
 //! Крейт разделён на две части:
 //!
 //! * **чистая** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
-//!   [`viewport`]: только данные и целочисленная арифметика, никакого SDL и
-//!   файлового I/O (кроме загрузки `COLOR.PAL`). Всё тестируется без окна — это
-//!   основной, всегда собираемый слой.
+//!   [`viewport`], [`text`], [`ui`]: только данные и целочисленная арифметика,
+//!   никакого SDL и файлового I/O (кроме загрузки `COLOR.PAL`). Всё
+//!   тестируется без окна — это основной, всегда собираемый слой.
 //! * **SDL-слой** — [`sdl_window`] под feature `sdl`: окно, вывод
 //!   [`RgbaBuffer`] на экран и очередь событий. Без фичи модуль не собирается
 //!   и зависимость `sdl3` не тянется.
@@ -37,6 +37,8 @@ pub mod buffer;
 pub mod map_render;
 pub mod palette;
 pub mod sprite_atlas;
+pub mod text;
+pub mod ui;
 pub mod viewport;
 
 #[cfg(feature = "sdl")]
@@ -54,12 +56,20 @@ pub use palette::{
     TEAM_GRAY_COLORS, TEAM_GREEN_COLORS, TEAM_RED_COLORS,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
+pub use text::{
+    draw_text, draw_text_line, draw_text_wrapped, glyph, line_width, text_height, wrap_text,
+    TextMetrics, ASCII_CHARS, FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,
+};
+pub use ui::{
+    hit_test, layout, layout_uniform, render_ui, Button, Label, ListBox, Point, Rect, TextBox,
+    UiState, UiTheme, Widget,
+};
 pub use viewport::{
     draw_order, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS, MAX_ZOOM, MIN_ZOOM, ZOOM_STEP,
 };
 
 #[cfg(feature = "sdl")]
-pub use sdl_window::{SdlWindow, WindowError};
+pub use sdl_window::{SdlWindow, WindowError, WindowInput, WindowKey};
 
 #[cfg(test)]
 mod tests {
