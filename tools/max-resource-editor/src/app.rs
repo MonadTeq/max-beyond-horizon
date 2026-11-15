@@ -22,8 +22,18 @@ use sdl3::video::{Window, WindowContext};
 use crate::ui::{EditorState, FRAME_HEIGHT, FRAME_WIDTH, WINDOW_TITLE};
 
 /// Открывает окно и крутит цикл до Esc/закрытия.
-pub fn run(mut state: EditorState, shot: Option<&Path>) -> Result<()> {
+pub fn run(state: EditorState, shot: Option<&Path>) -> Result<()> {
     let sdl = sdl3::init().map_err(|error| anyhow!("SDL_Init: {error}"))?;
+
+    run_with_sdl(sdl, state, shot)
+}
+
+/// То же, что [`run`], но с уже инициализированным SDL.
+///
+/// Нужно при запуске без аргументов: перед окном показывается нативный диалог
+/// выбора `MAX.RES` (см. `dialog.rs` в бинарнике), и тот же `Sdl` переиспользуется
+/// для окна — без повторной инициализации/остановки SDL.
+pub fn run_with_sdl(sdl: sdl3::Sdl, mut state: EditorState, shot: Option<&Path>) -> Result<()> {
     let video = sdl.video().map_err(|error| anyhow!("SDL video: {error}"))?;
     let window = video
         .window(WINDOW_TITLE, FRAME_WIDTH, FRAME_HEIGHT)

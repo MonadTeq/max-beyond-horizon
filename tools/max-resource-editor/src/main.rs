@@ -7,24 +7,35 @@
 //! ```
 //!
 //! Без флагов открывается окно; `--export` работает headless и не требует SDL.
+//!
+//! При запуске UI путь к `MAX.RES` ищется в порядке: аргумент (`--res` или
+//! позиционный) → рядом с `.exe` → `CWD` → вверх по дереву каталогов
+//! (`max-original/MAX.RES`). Если ничего не найдено, показывается нативный
+//! диалог «Укажите файл MAX.RES»; отмена — сообщение и код возврата 1.
+//! `COLOR.PAL` ищется рядом с выбранным `MAX.RES`, его отсутствие — только
+//! предупреждение (превью рисуется заглушкой-палитрой).
+
+#[cfg(feature = "sdl")]
+mod dialog;
 
 use max_resource_editor::export;
 use max_resource_editor::model;
 #[cfg(feature = "sdl")]
+use max_resource_editor::startup;
+#[cfg(feature = "sdl")]
 use max_resource_editor::ui;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[cfg(feature = "sdl")]
+use anyhow::anyhow;
 use anyhow::{bail, Context, Result};
 use max_assets::ResArchive;
 use max_render::palette::Palette;
 
 use crate::export::ExportOptions;
 use crate::model::ClassificationStats;
-
-const DEFAULT_RES: &str = "max-original/MAX.RES";
-const DEFAULT_PAL: &str = "max-original/COLOR.PAL";
 
 fn main() -> ExitCode {
     match run() {
@@ -57,13 +68,17 @@ fn print_help() {
     println!(
         "max-resource-editor — просмотр MAX.RES и экспорт изображений\n\
          \n\
-         UI:\n  max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]\n\
+         UI:\n  max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]\n  max-resource-editor [MAX.RES]\n\
+         \n\
+         Если MAX.RES не указан и не найден рядом с exe / в CWD / вверх по дереву,\n\
+         открывается диалог выбора файла (фильтр *.RES). COLOR.PAL ищется рядом\n\
+         с MAX.RES; если его нет, редактор работает с заглушкой-палитрой.\n\
          \n\
          Экспорт:\n  max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>\n\
          \n\
          Отчёт без записи файлов:\n  max-resource-editor --report <MAX.RES> [COLOR.PAL]\n\
          \n\
-         UI требует сборки с --features sdl (SDL3)."
+         UI требует сборки с --features sdl (SDL3); headless-команды работают без SDL."
     );
 }
 
@@ -122,59 +137,111 @@ fn report_text(stats: &ClassificationStats) -> String {
     out
 }
 
-fn ui_command(args: &[String]) -> Result<ExitCode> {
-    let mut res = PathBuf::from(DEFAULT_RES);
-    let mut pal = PathBuf::from(DEFAULT_PAL);
-    let mut select: Option<String> = None;
-    let mut shot: Option<PathBuf> = None;
-    let mut index = 0usize;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--res" => {
-                index += 1;
-                res = PathBuf::from(args.get(index).context("--res требует путь")?);
-            }
-            "--pal" => {
-                index += 1;
-                pal = PathBuf::from(args.get(index).context("--pal требует путь")?);
-            }
-            "--select" => {
-                index += 1;
-                select = Some(args.get(index).context("--select требует тег")?.clone());
-            }
-            "--shot" => {
-                index += 1;
-                shot = Some(PathBuf::from(
-                    args.get(index).context("--shot требует путь")?,
-                ));
-            }
-            other => bail!("неизвестный аргумент {other:?}; см. --help"),
-        }
-        index += 1;
-    }
-
-    open_ui(&res, &pal, select.as_deref(), shot.as_deref())
+/// Аргументы UI-режима.
+struct UiOptions {
+    /// `--res` или позиционный путь; `None` — искать дефолты/открыть диалог.
+    res: Option<PathBuf>,
+    /// `--pal`; `None` — искать `COLOR.PAL` рядом с `MAX.RES`.
+    pal: Option<PathBuf>,
+    select: Option<String>,
+    shot: Option<PathBuf>,
 }
 
-#[cfg(feature = "sdl")]
-fn open_ui(res: &Path, pal: &Path, select: Option<&str>, shot: Option<&Path>) -> Result<ExitCode> {
-    let archive = ResArchive::open(res).with_context(|| format!("чтение {}", res.display()))?;
-    let palette = Palette::load(pal).with_context(|| format!("чтение {}", pal.display()))?;
-    let state = ui::EditorState::new(archive, palette, select);
+impl UiOptions {
+    fn parse(args: &[String]) -> Result<Self> {
+        let mut options = Self {
+            res: None,
+            pal: None,
+            select: None,
+            shot: None,
+        };
+        let mut index = 0usize;
 
-    max_resource_editor::app::run(state, shot)?;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--res" => {
+                    index += 1;
+                    options.res = Some(PathBuf::from(
+                        args.get(index).context("--res требует путь")?,
+                    ));
+                }
+                "--pal" => {
+                    index += 1;
+                    options.pal = Some(PathBuf::from(
+                        args.get(index).context("--pal требует путь")?,
+                    ));
+                }
+                "--select" => {
+                    index += 1;
+                    options.select = Some(args.get(index).context("--select требует тег")?.clone());
+                }
+                "--shot" => {
+                    index += 1;
+                    options.shot = Some(PathBuf::from(
+                        args.get(index).context("--shot требует путь")?,
+                    ));
+                }
+                other if other.starts_with('-') => {
+                    bail!("неизвестный аргумент {other:?}; см. --help")
+                }
+                other => {
+                    if options.res.is_some() {
+                        bail!("лишний аргумент {other:?}: путь MAX.RES уже задан");
+                    }
+                    options.res = Some(PathBuf::from(other));
+                }
+            }
+            index += 1;
+        }
+
+        Ok(options)
+    }
+}
+
+fn ui_command(args: &[String]) -> Result<ExitCode> {
+    let options = UiOptions::parse(args)?;
+
+    open_ui(&options)
+}
+
+/// Запуск UI: поиск `MAX.RES` (аргумент → дефолты → диалог), палитра, окно.
+#[cfg(feature = "sdl")]
+fn open_ui(options: &UiOptions) -> Result<ExitCode> {
+    let sdl = sdl3::init().map_err(|error| anyhow!("SDL_Init: {error}"))?;
+    let candidates = startup::default_candidates();
+
+    let res = startup::resolve_startup_res(
+        options.res.as_deref(),
+        &candidates,
+        |candidate| candidate.is_file(),
+        || dialog::pick_max_res_file(&sdl),
+    )?;
+
+    let archive = ResArchive::open(&res).with_context(|| format!("чтение {}", res.display()))?;
+    let palette = startup::load_palette(options.pal.as_deref(), &res);
+
+    if let Some(warning) = &palette.warning {
+        eprintln!("warning: {warning}");
+    }
+
+    let mut state = ui::EditorState::new(archive, palette.palette, options.select.as_deref());
+
+    // В окне шрифт только ASCII, поэтому короткая английская строка; подробное
+    // русское предупреждение с путями уже ушло в stderr выше.
+    if palette.warning.is_some() {
+        state.status =
+            "WARN: COLOR.PAL not found near MAX.RES - preview uses grayscale stub palette"
+                .to_string();
+    }
+
+    max_resource_editor::app::run_with_sdl(sdl, state, options.shot.as_deref())?;
 
     Ok(ExitCode::SUCCESS)
 }
 
+/// Без SDL UI недоступно: те же поиск/диалог собрать нельзя.
 #[cfg(not(feature = "sdl"))]
-fn open_ui(
-    _res: &Path,
-    _pal: &Path,
-    _select: Option<&str>,
-    _shot: Option<&Path>,
-) -> Result<ExitCode> {
+fn open_ui(_options: &UiOptions) -> Result<ExitCode> {
     bail!(
         "UI не собрано: нужен SDL3 и feature `sdl`.\n\
          Сборка: cargo build --release --features sdl-vcpkg\n\

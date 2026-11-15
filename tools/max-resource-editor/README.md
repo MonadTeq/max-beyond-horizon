@@ -18,6 +18,9 @@
   отчёт. Работает без SDL.
 * **UI**: список с фильтром и прокруткой, превью кадра/ленты кадров с зумом и
   панорамой, метаданные; для не-изображений — тип, ссылка и hex первых байт.
+* **Старт без аргументов**: поиск `MAX.RES` рядом с exe / в CWD / вверх по
+  дереву, затем нативный диалог с фильтром `*.RES`; `COLOR.PAL` — рядом с
+  архивом или заглушка-палитра с предупреждением.
 * **Экспорт 1069 PNG** из реального `MAX.RES` ≈ 10,1 МБ (см.
   [`max-assets/README.md`](../../max-assets/README.md)).
 * **Тесты** на реальном архиве: 1828/1828, известные теги, размеры PNG,
@@ -69,9 +72,35 @@ cargo build --release --features sdl
 
 ## Запуск
 
+При старте UI `MAX.RES` ищется в таком порядке:
+
+1. аргумент командной строки — `--res PATH` или позиционный `max-resource-editor PATH`;
+2. дефолтные пути:
+   * рядом с `.exe` — `<exe_dir>/MAX.RES`, `<exe_dir>/max-original/MAX.RES`;
+   * вверх по дереву от каталога `.exe` — `<ancestor>/max-original/MAX.RES`
+     (так запуск из `target/release` находит корень репозитория);
+   * в текущем каталоге — `./MAX.RES`, `./max-original/MAX.RES`;
+   * вверх по дереву от текущего каталога — `<ancestor>/max-original/MAX.RES`;
+3. если ничего не найдено — нативный диалог **«Укажите файл MAX.RES»**
+   с фильтром `*.RES` (SDL3). Окно редактора открывается только после выбора:
+   приложение ждёт решения пользователя.
+
+Отмена диалога — не аварийная ситуация, но работать не с чем: печатается
+понятное сообщение и процесс завершается с кодом **1**:
+
+```
+error: выбор MAX.RES отменён — редактор не открыт.
+       Укажите файл аргументом: max-resource-editor --res <MAX.RES>
+```
+
+`COLOR.PAL` ищется рядом с выбранным `MAX.RES`. Если файла нет (или явный
+`--pal PATH` не читается, а соседнего тоже нет), редактор **продолжает
+работать**: в stderr и в статусной строке окна появляется предупреждение, а
+превью рисуется заглушкой-палитрой (256 градаций серого). Это позволяет
+открыть один `MAX.RES` из любого каталога, не копируя палитру.
+
 ```sh
-# UI из корня репозитория; без флагов пути по умолчанию:
-# max-original/MAX.RES и max-original/COLOR.PAL
+# UI из корня репозитория: MAX.RES найдётся в ./max-original/MAX.RES
 ./tools/max-resource-editor/target/release/max-resource-editor
 
 # явные пути + начальный выбор
@@ -79,13 +108,39 @@ cargo run --release --features sdl -- --res ../../max-original/MAX.RES \
                     --pal ../../max-original/COLOR.PAL \
                     --select TANK
 
+# то же позиционным аргументом
+cargo run --release --features sdl -- ../../max-original/MAX.RES --select TANK
+
 # сохранить кадр интерфейса и выйти (headless-проверка отрисовки)
 cargo run --features sdl -- --res ../../max-original/MAX.RES \
   --pal ../../max-original/COLOR.PAL --shot out.png --select FRAMEPIC
 ```
 
+Headless-команды (`--export`, `--report`) работают как раньше: диалог не
+показывается, пути передаются аргументами, `COLOR.PAL` для `--export`
+обязателен.
+
 Без `--features sdl` бинарник всё равно собирается и умеет `--export`/
 `--report`; попытка открыть UI завершается понятной ошибкой.
+
+### Ручная проверка диалога
+
+Автоматически проверяются порядок поиска, ветка отмены (мок диалога) и
+сборка диалогового пути; сам нативный диалог удобно проверить руками:
+
+1. скопировать `max-resource-editor.exe` и `SDL3.dll` в пустой каталог
+   (без `MAX.RES`/`max-original`, и вне репозитория);
+2. запустить `.exe` без аргументов из этого каталога;
+3. убедиться, что открылся диалог с заголовком «Укажите файл MAX.RES» и
+   фильтром `*.RES`, а окно редактора не появилось;
+4. выбрать `MAX.RES` — редактор должен открыться; при отсутствии
+   `COLOR.PAL` рядом появится предупреждение и серое превью;
+5. повторить запуск и нажать «Отмена» — в консоли сообщение об отмене,
+   код возврата 1.
+
+Проверка на Windows без ручного клика: диалог можно закрыть крестиком через
+`WM_CLOSE`; процесс завершается с кодом 1 и тем же сообщением (так проверялся
+этот сценарий).
 
 ## Горячие клавиши
 
@@ -114,10 +169,14 @@ cargo run --features sdl -- --res ../../max-original/MAX.RES \
 
 ```
 max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]
+max-resource-editor [MAX.RES]
 max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>
 max-resource-editor --report <MAX.RES> [COLOR.PAL]
 max-resource-editor --help
 ```
+
+`--res` и позиционный `MAX.RES` эквивалентны; при отсутствии пути работает
+поиск/диалог из раздела «Запуск».
 
 `--export` печатает сводку:
 
@@ -170,8 +229,8 @@ transparent,non_image,ref,file`).
 ## Тесты
 
 ```sh
-cargo test                 # 19 unit + 4 integration on real MAX.RES/PATCHES.RES
-cargo test --features sdl  # то же + сборка SDL-слоя
+cargo test                 # 35 unit + 4 integration on real MAX.RES/PATCHES.RES
+cargo test --features sdl  # то же + сборка SDL-слоя и диалога
 ```
 
 Проверки:
@@ -182,7 +241,10 @@ cargo test --features sdl  # то же + сборка SDL-слоя
   `HANDPTR`, `SNOW_PIC`, `PANELTOP`, `P_TANK`, `I_TANK`, `TANK1`, `SNOW_1`;
 * `font_ttf_in_patches_is_non_image_ttf` — `FONT_1` из `assets/PATCHES.RES`;
 * `export_of_selected_images_has_expected_dimensions_and_is_idempotent` —
-  `TANK`/`FRAMEPIC`/`SNOW_PIC`: размеры ленты/картинок и побайтовый повтор.
+  `TANK`/`FRAMEPIC`/`SNOW_PIC`: размеры ленты/картинок и побайтовый повтор;
+* `startup::tests::*` — порядок поиска `MAX.RES` (аргумент → exe → CWD →
+  вверх по дереву), отмена/ошибка диалога через мок, поиск `COLOR.PAL` рядом
+  с архивом и заглушка-палитра.
 
 ## Устройство
 
@@ -193,8 +255,16 @@ cargo test --features sdl  # то же + сборка SDL-слоя
 | `export.rs` | запись PNG + `manifest.csv` + отчёт |
 | `png.rs` | PNG-кодек (копия `max_app::qa::png`, добавлен RGBA) |
 | `ui.rs` | чистое состояние/отрисовка кадра (без SDL), тестируется headless |
+| `startup.rs` | поиск `MAX.RES`/`COLOR.PAL`, порядок старта, заглушка-палитра |
 | `app.rs` | SDL3-окно, ввод, презентация (feature `sdl`) |
+| `dialog.rs` | нативный диалог выбора `MAX.RES` через SDL3 FFI (feature `sdl`) |
 | `main.rs` | CLI и выбор headless/UI |
 
 `ui.rs` рисует тот же кадр, что уходит в SDL; `--shot`/F12 сохраняют его без
 окна. Реальный скриншот окна снят с запущенного `.exe` (Windows, SDL3).
+
+Диалог использует `SDL_ShowFileDialogWithProperties` из `sdl3-sys` напрямую:
+безопасная обёртка `sdl3::dialog::show_open_file_dialog` (crate 0.22.1) не
+умеет задавать заголовок, а `SDL3.dll` 3.4.20 экспортирует properties-вариант
+(проверено `dumpbin /exports`). `unsafe` изолирован в `dialog.rs` бинарника;
+библиотека по-прежнему собирается с `#![forbid(unsafe_code)]`.
