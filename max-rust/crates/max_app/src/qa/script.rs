@@ -1,6 +1,6 @@
 //! Парсер `.qa`-скриптов (слой 2 QA): строки → [`Command`].
 //!
-//! Формат описан в `max-rust/qa/README.md` и `docs/qa-plan.md`. Строка —
+//! Формат описан в `max-rust-qa/scripts/README.md` и `max-rust-qa/plans/qa-plan.md`. Строка —
 //! одна команда; `#` начинает комментарий (внутри `"…"` — не начинает);
 //! пустые строки игнорируются. Координаты — в пикселях кадра **640×480**
 //! (окно оригинала), поэтому одна и та же точка означает одно и то же на
@@ -351,7 +351,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
             }
         }
         other => Err(format!(
-            "неизвестная команда «{other}» (см. max-rust/qa/README.md)"
+            "неизвестная команда «{other}» (см. max-rust-qa/scripts/README.md)"
         )),
     }
 }

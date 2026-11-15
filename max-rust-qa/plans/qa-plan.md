@@ -4,8 +4,9 @@
 Проблема: ручной UI-тест мышью (Windows) медленный и не воспроизводимый; сборка
 «далека от играбельной» — нужны регресс-барьеры на каждом уровне.
 
-**Статус:** слои 1–4 реализованы, слой 5 — ручной/полуавтоматический (Windows).
-Свидетельства и команды: `max-rust/qa/README.md`, `build/qa-*.log`.
+**Статус:** слои 1–4 и запись сценариев (2.5) реализованы, слой 5 —
+ручной/полуавтоматический (Windows). Свидетельства и команды:
+`max-rust-qa/scripts/README.md`, `build/qa-*.log`.
 
 ## Слои тестирования (пирамида)
 
@@ -13,6 +14,7 @@
 |---|---|---|---|---|
 | 1. Юнит/интеграционные (650 тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
 | 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 4 сценария) |
+| 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max_app --ui --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
 | 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 8 эталонов) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC | live-smoke.sh | релизный гейт | **готово** (ручной запуск) |
 | 5. Реальный оконный прогон мышью (Windows) | SDL/ввод/звук на живом бинаре | ui-test-sp.ps1 и пр. | релизный гейт, вручную/полуавто | по плану |
@@ -41,7 +43,7 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
     `setup done|cancel|random`, `players <slot> human|computer|none`,
     `select X Y` / `select unit N`, `move X Y` / `move grid X Y` / `move near`,
     `end_turn`.
-- Покрытие сценариями (`max-rust/qa/*.qa`, все — PASS):
+- Покрытие сценариями (`max-rust-qa/scripts/*.qa`, все — PASS):
   1. `sp-full.qa` — New Game → Options → Planet → Players (RED человек,
      GREEN компьютер) → выделение юнита, приказ движения, 3 × End Turn с
      ходами ИИ, `assert turn>=3`, `save` (MXLS);
@@ -56,11 +58,39 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
   `tests/qa_driver.rs` (полный прогон `sp-full.qa`, падение ассерта → exit 1,
   `load` V70, PNG/golden round-trip).
 
+## Запись сценария вручную (слой 2.5)
+
+Проблема слоя 2: ручной сценарий приходится писать по координатам из кадров.
+Решение — рекордер в клиенте: QA-инженер играет в окне, а `main.rs` пишет тот
+же `InputEvent`, что уходит в `Screen::handle_input`/`handle_session_input`.
+
+```sh
+cd max-rust
+cargo run -p max_app --features sdl -- \
+  --ui --record ../max-rust-qa/scripts/my-run.qa
+```
+
+- Старт — при запуске (MainMenu), финал — при выходе; файл пишется построчно
+  и не перезаписывается (`run.qa` → `run-1.qa`).
+- В файл попадают `click X Y` / `rclick X Y` (**пиксели кадра 640×480** после
+  обратного пересчёта масштаба окна), `key …`, агрегированный `type "…"`
+  (текстовый ввод в сессии: T/Enter → символы → Enter/Esc) и `wait N` —
+  паузы в кадрах, с cap 120.
+- Движение мыши, клики вне кадра и `Key::Other` не пишутся; Backspace внутри
+  `type` выражается отдельной `key BACKSPACE` (см. ограничения в
+  `drivers/README.md`).
+- Пост-обработка не нужна: файл сразу исполняется `qa_run` с тем же стартовым
+  состоянием. **Ассерты и `shot` добавляет QA-инженер вручную** — типично
+  после каждого экрана (`assert screen=…`, `shot name`) и перед `End Turn`.
+- Тесты: unit-тесты рекордера (строки команд, cap пауз, `type`/Backspace) и
+  round-trip `tests/qa_driver.rs` — записанный поток `InputEvent` → `.qa` →
+  `qa_run` → тот же `AppDigest`.
+
 ## Golden-кадры (слой 3)
 
-- Эталонные кадры экранов — в `max-rust/qa/golden/*.png` (8 файлов, ~865 КиБ;
+- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (8 файлов, ~865 КиБ;
   индексированный PNG при ≤256 цветах), генерируются из `visual-screens.qa`.
-- Сверка: `cargo run -p max_app --example qa_golden_check -- <out> qa/golden` —
+- Сверка: `cargo run -p max_app --example qa_golden_check -- <out> max-rust-qa/golden` —
   попиксельный diff с порогом: пиксель изменён при `max|Δканал| > 30`, кадр
   «дрейфнул» при > 1 % таких пикселей; превышение → exit 1, список файлов и
   `diff-*.png` (белый фон, красные — расхождения). `--update` перезаписывает
@@ -86,8 +116,8 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
 2. Ручной оконный прогон: `powershell -File build/scripts/ui-test-sp.ps1` (реальный
    бинарь, мышь, скриншоты) — перед релизом.
 3. Живой smoke: `bash build/scripts/live-smoke.sh 10`.
-4. Разбор QA-падения: `max-rust/qa-out/<сценарий>/log.txt` + `diff-*.png`;
-   формат и перегенерация эталонов — `max-rust/qa/README.md`.
+4. Разбор QA-падения: `max-rust-qa/out/<сценарий>/log.txt` + `diff-*.png`;
+   формат и перегенерация эталонов — `max-rust-qa/scripts/README.md`.
 
 ## Метрики готовности релиза
 

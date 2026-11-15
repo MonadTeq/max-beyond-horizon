@@ -22,6 +22,8 @@ use max_app::assets::AssetsReport;
 use max_app::audio::AudioPlayer;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
+#[cfg(feature = "sdl")]
+use max_app::qa::{RecordContext, Recorder};
 use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
@@ -75,6 +77,8 @@ struct Cli {
     turn_wait_secs: Option<u32>,
     /// Масштаб окна UI: `0`/нет — подобрать под рабочий стол (пункт F).
     window_scale: Option<u32>,
+    /// Куда писать `.qa`-сценарий ручной игры (`--ui --record`).
+    record: Option<PathBuf>,
 }
 
 impl Cli {
@@ -99,6 +103,7 @@ impl Cli {
             join_retry_timeout_secs: None,
             turn_wait_secs: None,
             window_scale: None,
+            record: None,
         };
         let mut mode_set = false;
         let mut data_dir_set = false;
@@ -161,6 +166,10 @@ impl Cli {
                 }
                 "--scale" => {
                     cli.window_scale = Some(parse_u32(&mut args, "--scale")?);
+                }
+                "--record" => {
+                    cli.record =
+                        Some(PathBuf::from(args.next().context("--record требует путь к .qa")?));
                 }
                 "--seed" => {
                     cli.seed = Some(parse_u32(&mut args, "--seed")?);
@@ -254,6 +263,12 @@ impl Cli {
         }
         if cli.mode == Mode::Connect && cli.game_id.is_none() {
             bail!("--connect требует --join <game_id>");
+        }
+        if cli.record.is_some() && cli.mode != Mode::Ui {
+            bail!(
+                "--record работает только с --ui (запись ручной игры); \
+                 без SDL доступен API max_app::qa::Recorder"
+            );
         }
         if cli.mode == Mode::Ui && !cfg!(feature = "sdl") {
             bail!(
@@ -732,7 +747,28 @@ fn run_ui(cli: &Cli) -> Result<()> {
         window.frame_scale().scale()
     );
 
+    // Слой 2.5 QA: запись ручной игры в `.qa`-сценарий. Пишем тот же
+    // `InputEvent` (уже в пикселях кадра 640×480), который получают экраны;
+    // старт — сразу, с главного меню, финал — при выходе.
+    let mut recorder = match cli.record.as_ref() {
+        Some(path) => {
+            let recorder = Recorder::new(path.as_path())
+                .with_context(|| format!("запись {}", path.display()))?;
+            let actual = recorder
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            println!("RECORD: {actual} (кадр 640x480; ассерты/shot добавить вручную)");
+            Some(recorder)
+        }
+        None => None,
+    };
+
     loop {
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.begin_frame();
+        }
+
         let (running, events) = window.poll_input();
 
         if !running {
@@ -741,6 +777,16 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
         for event in events {
             let input = input_event(event);
+
+            if let Some(recorder) = recorder.as_mut() {
+                recorder.record(
+                    input,
+                    RecordContext {
+                        in_session: matches!(screen, Screen::InSession { .. }),
+                        text_open: app.hud().chat.is_active(),
+                    },
+                );
+            }
 
             if let InputEvent::MouseMove(x, y) = input {
                 mouse = Some((x, y));
@@ -760,7 +806,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
             match transition {
                 Transition::None => {}
-                Transition::Quit => return Ok(()),
+                Transition::Quit => {
+                    finish_recording(&mut recorder)?;
+                    return Ok(());
+                }
                 Transition::LeaveSession => {
                     screen = Screen::MainMenu;
                     app.leave_local_game();
@@ -843,6 +892,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 reconnect,
                 join_retry,
                 Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
+                recorder.as_mut(),
             ) {
                 Ok(report) => {
                     print_network(&report);
@@ -867,6 +917,23 @@ fn run_ui(cli: &Cli) -> Result<()> {
             .present(&buffer)
             .map_err(|error| anyhow!("{error}"))?;
         std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+
+    finish_recording(&mut recorder)?;
+
+    Ok(())
+}
+
+/// Дописывает `.qa`-файл при выходе (хвостовой `type`/`wait`, финальный
+/// комментарий) и печатает итоговый путь. Без `--record` — no-op.
+#[cfg(feature = "sdl")]
+fn finish_recording(recorder: &mut Option<Recorder>) -> Result<()> {
+    let Some(recorder) = recorder.as_mut() else {
+        return Ok(());
+    };
+
+    if let Some(path) = recorder.finish().context("финализация записи")? {
+        println!("RECORD: сохранено {}", path.display());
     }
 
     Ok(())
@@ -934,6 +1001,7 @@ fn run_ui_session(
     reconnect: ReconnectPolicy,
     join_retry: JoinRetryPolicy,
     turn_wait: Duration,
+    recorder: Option<&mut Recorder>,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
         game_id: request.game_id.clone(),
@@ -951,6 +1019,7 @@ fn run_ui_session(
         buffer: max_render::buffer::RgbaBuffer::new(width, height),
         status: String::new(),
         game_id: request.game_id.clone(),
+        recorder,
     };
 
     runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
@@ -969,17 +1038,35 @@ struct UiSessionSink<'a> {
     buffer: max_render::buffer::RgbaBuffer,
     status: String,
     game_id: String,
+    /// Слой 2.5 QA: тот же поток событий, что уходит в HUD.
+    recorder: Option<&'a mut Recorder>,
 }
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn frame(&mut self, app: &mut App) -> bool {
         // 1. Ввод этого кадра → HUD (выделение, приказы, кнопки).
+        if let Some(recorder) = self.recorder.as_deref_mut() {
+            recorder.begin_frame();
+        }
+
         let (running, events) = self.window.poll_input();
         let mut leave = false;
 
         for event in events {
-            match handle_session_input(app, input_event(event), true) {
+            let input = input_event(event);
+
+            if let Some(recorder) = self.recorder.as_deref_mut() {
+                recorder.record(
+                    input,
+                    RecordContext {
+                        in_session: true,
+                        text_open: app.hud().chat.is_active(),
+                    },
+                );
+            }
+
+            match handle_session_input(app, input, true) {
                 Transition::None => {}
                 Transition::LeaveSession | Transition::Quit => leave = true,
                 Transition::StartSession(_) | Transition::StartLocal(_) => {}
@@ -1125,6 +1212,9 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --sdl                окно SDL3 для --connect (нужна сборка --features sdl)
     --ui                 интерактивное меню: создать/выбрать игру и играть
                          (нужна сборка --features sdl)
+    --record <file.qa>   записать ручную игру в QA-сценарий (работает с --ui;
+                         существующий файл не перезаписывается — суффикс -1;
+                         без SDL запись доступна как API max_app::qa::Recorder)
 
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
@@ -1163,6 +1253,7 @@ max_app — клиент M.A.X. (core + net + assets + render)
     cargo run -p max_app -- --new-game --world 12 --seed 42 --out frame.ppm
     cargo run -p max_app --features sdl -- --connect 127.0.0.1:8082 --join demo --sdl
     cargo run -p max_app --features sdl-from-source -- --ui
+    cargo run -p max_app --features sdl -- --ui --record ../max-rust-qa/scripts/my.qa
 ",
         DEFAULT_GRPC_PORT
     );

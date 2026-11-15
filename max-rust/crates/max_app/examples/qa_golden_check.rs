@@ -2,13 +2,13 @@
 //!
 //! ```sh
 //! # сверка после прогона visual-screens.qa
-//! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+//! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 //!
 //! # перегенерация эталонов после осознанного визуального изменения
-//! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden --update
+//! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden --update
 //! ```
 //!
-//! Критерий дрейфа (тот же, что в `docs/qa-plan.md` и `ci.sh`): кадр считается
+//! Критерий дрейфа (тот же, что в `max-rust-qa/plans/qa-plan.md` и `ci.sh`): кадр считается
 //! изменившимся, если больше **1 %** пикселей отличаются хотя бы одним каналом
 //! больше чем на **30**. Для каждого такого кадра пишется `diff-<name>.png`
 //! (белый фон, красные — разошедшиеся пиксели), а код выхода — 1.
@@ -304,7 +304,9 @@ fn compare_dirs(shots: &Path, golden: &Path, diff_dir: &Path, threshold: u8, rat
             );
         }
 
-        eprintln!("qa_golden_check: ВИЗУАЛЬНЫЙ РЕГРЕСС — см. diff-*.png и max-rust/qa/README.md");
+        eprintln!(
+            "qa_golden_check: ВИЗУАЛЬНЫЙ РЕГРЕСС — см. diff-*.png и max-rust-qa/scripts/README.md"
+        );
 
         ExitCode::FAILURE
     }

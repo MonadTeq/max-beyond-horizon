@@ -3,8 +3,9 @@
 //! Проверяется:
 //!
 //! 1. парсер `.qa` понимает **все** команды языка (и отклоняет опечатки);
-//! 2. скрипт `qa/sp-full.qa` проходит целиком теми же обработчиками, что у
-//!    мыши/клавиатуры (экраны настройки → партия → ходы ИИ → сохранение);
+//! 2. скрипт `max-rust-qa/scripts/sp-full.qa` проходит целиком теми же
+//!    обработчиками, что у мыши/клавиатуры (экраны настройки → партия → ходы
+//!    ИИ → сохранение);
 //! 3. упавший `assert` даёт `passed = false` и текст с номером строки —
 //!    именно это превращается в exit 1 у `qa_run` в `ci.sh`;
 //! 4. `load <V70>` поднимает локальную партию из настоящего сейва игры;
@@ -12,9 +13,16 @@
 
 use std::path::{Path, PathBuf};
 
+use max_app::hud;
+use max_app::menu;
 use max_app::qa::{
-    parse_script, png, Assertion, Command, QaConfig, QaRunner, ScreenName, Step,
+    parse_script, png, Assertion, Command, QaConfig, QaMenuClient, QaRunner, RecordContext,
+    Recorder, ScreenName, Step,
 };
+use max_app::setup;
+use max_app::ui::{handle_session_input, InputEvent, Screen, SessionRequest, Transition, UiContext};
+use max_app::{App, AppConfig, AppMode};
+use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -127,7 +135,7 @@ fn sp_full_script_passes_through_the_real_input_path() {
 
     let dir = temp_dir("sp_full");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust/qa/sp-full.qa"));
+    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/sp-full.qa"));
 
     assert!(
         report.passed,
@@ -279,4 +287,293 @@ fn golden_pngs_roundtrip_and_compare_without_drift() {
 
 fn pixel_hash(image: &png::Image) -> u32 {
     png::crc32(&image.rgb)
+}
+
+// ---------------------------------------------------------------------------
+// 6. Слой 2.5: запись ручной игры → .qa → qa_run до того же состояния
+// ---------------------------------------------------------------------------
+
+fn click_rect(rect: max_render::buffer::PixelRect) -> InputEvent {
+    InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
+}
+
+/// Гоняет тот же путь игрока, что `QaRunner`, но с ручным `InputEvent`-потоком,
+/// который одновременно уходит в [`Recorder`].
+struct ManualPlay {
+    app: App,
+    ctx: UiContext,
+    screen: Screen,
+    recorder: Recorder,
+}
+
+impl ManualPlay {
+    fn new(out_dir: &Path) -> Self {
+        let config = AppConfig::default()
+            .with_data_dir(repo_root().join("max-original"))
+            .with_assets_dir(repo_root().join("assets"))
+            .with_mode(AppMode::Ui);
+        let mut app = App::new(config);
+        app.init_assets().expect("ассеты для ручной игры");
+
+        let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
+        ctx.player_name = "Commander".to_string();
+        ctx.world_dir = repo_root().join("max-original");
+
+        let recorder = Recorder::new(out_dir.join("recorded.qa"))
+            .expect("файл записи")
+            .with_pause_cap(40_000);
+
+        Self {
+            app,
+            ctx,
+            screen: Screen::MainMenu,
+            recorder,
+        }
+    }
+
+    fn context(&self) -> RecordContext {
+        RecordContext {
+            in_session: matches!(self.screen, Screen::InSession { .. }),
+            text_open: self.app.hud().chat.is_active(),
+        }
+    }
+
+    /// Ровно `main.rs`: запись → экран/HUD → переход.
+    fn send(&mut self, event: InputEvent) {
+        self.recorder.record(event, self.context());
+
+        if matches!(self.screen, Screen::InSession { .. }) {
+            match handle_session_input(&mut self.app, event, false) {
+                Transition::None => {}
+                Transition::LeaveSession => {
+                    self.screen = Screen::MainMenu;
+                    self.app.leave_local_game();
+                }
+                Transition::Quit => {}
+                Transition::StartLocal(_) | Transition::StartSession(_) => {
+                    panic!("ввод в сессии не меняет режим")
+                }
+            }
+
+            return;
+        }
+
+        match self.screen.handle_input(&mut self.ctx, event) {
+            Transition::None => {}
+            Transition::StartLocal(setup) => {
+                self.app.start_local_game(&setup).expect("локальная партия");
+                self.screen = Screen::InSession {
+                    request: SessionRequest {
+                        game_id: "local".to_string(),
+                        password: None,
+                    },
+                };
+                self.ctx.status = String::new();
+            }
+            Transition::LeaveSession => {
+                self.screen = Screen::MainMenu;
+                self.app.leave_local_game();
+            }
+            Transition::Quit => {}
+            Transition::StartSession(_) => panic!("сеть в тесте записи не поднимается"),
+        }
+    }
+
+    /// Кадр игрового цикла и счётчик рекордера (`main.rs`).
+    fn frame(&mut self) {
+        self.recorder.begin_frame();
+
+        if matches!(self.screen, Screen::InSession { .. }) && self.app.local_active() {
+            let update = self.app.local_update(0.0);
+
+            if update.finished || self.app.local().is_some_and(|local| local.finished()) {
+                self.screen = Screen::GameOver;
+            }
+        }
+
+        if let Screen::LocalSetup(form) = &mut self.screen {
+            let palette = self
+                .app
+                .assets()
+                .and_then(|assets| assets.menu.as_ref())
+                .map(|menu| menu.palette);
+            form.ensure_minimaps(palette.as_ref());
+        }
+    }
+
+    fn ready(&self) -> bool {
+        match self.app.local() {
+            None => true,
+            Some(local) => local.finished() || local.notice.is_some() || !local.input_blocked(),
+        }
+    }
+
+    /// `wait` в языке `.qa`: крутим кадры, пока игра не готова к вводу.
+    fn wait_ready(&mut self) {
+        while !self.ready() {
+            self.frame();
+        }
+    }
+}
+
+fn visible_point(app: &App, grid: Point) -> Option<(i32, i32)> {
+    let (x, y) = hud::tile_center(&app.map_viewport(), grid);
+    let (x, y) = (
+        x + max_render::layout::MAIN_MAP.ulx,
+        y + max_render::layout::MAIN_MAP.uly,
+    );
+
+    max_render::layout::MAIN_MAP
+        .contains(x, y)
+        .then_some((x, y))
+}
+
+/// Юнит игрока, который виден при текущей камере (камеру не двигаем, иначе
+/// записанный клик не совпадёт с реплеем).
+fn visible_player_unit(app: &App) -> Option<((i32, i32), Point)> {
+    let team = app.player_team();
+
+    app.state()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter_map(|id| app.state().unit(id))
+        .filter(|unit| unit.team == team)
+        .find_map(|unit| visible_point(app, unit.grid).map(|point| (point, unit.grid)))
+}
+
+/// Свободная соседняя клетка, видимая в текущей камере (порт `move near`).
+fn visible_neighbor(app: &App, grid: Point) -> Option<(i32, i32)> {
+    for (dx, dy) in [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (1, 1),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+    ] {
+        let target = Point::new(grid.x + dx, grid.y + dy);
+
+        if target.x < 0 || target.y < 0 || target.x >= MAP_WIDTH || target.y >= MAP_HEIGHT {
+            continue;
+        }
+        if !app.state().units_at(target).is_empty() {
+            continue;
+        }
+        if let Some(point) = visible_point(app, target) {
+            return Some(point);
+        }
+    }
+
+    None
+}
+
+#[test]
+fn recorded_manual_session_round_trips_through_qa_run() {
+    if !has_game_data() {
+        return;
+    }
+
+    let dir = temp_dir("record_roundtrip");
+    let mut play = ManualPlay::new(&dir);
+
+    // --- Главное меню → New Game → Options/Planet/Players --------------------
+    play.send(click_rect(menu::MAIN_MENU_BUTTONS[0].rect));
+    assert!(matches!(&play.screen, Screen::LocalSetup(_)));
+
+    // Options: No Limit + Turn Based (те же точки, что в sp-full.qa), Done.
+    play.send(InputEvent::MouseClick(240, 110));
+    play.send(InputEvent::MouseClick(500, 100));
+    play.send(InputEvent::MouseClick(516, 440));
+    assert!(matches!(&play.screen, Screen::LocalSetup(_)));
+
+    // Planet: Done.
+    play.send(InputEvent::MouseClick(516, 440));
+    assert!(matches!(&play.screen, Screen::LocalSetup(_)));
+
+    // Players: RED — человек, GREEN — компьютер, Done → партия.
+    play.send(click_rect(setup::player_type_button_rect(0, 0)));
+    play.send(click_rect(setup::player_type_button_rect(1, 1)));
+    play.send(InputEvent::MouseClick(516, 440));
+    assert!(
+        matches!(&play.screen, Screen::InSession { .. }),
+        "Done на Players должен начать партию: {:?}",
+        play.ctx.status
+    );
+
+    play.wait_ready();
+
+    // --- Партия: select → move → end_turn -----------------------------------
+    let ((select_x, select_y), grid) =
+        visible_player_unit(&play.app).expect("в стартовой камере есть юнит RED");
+    play.send(InputEvent::MouseClick(select_x, select_y));
+    assert!(play.app.hud().selected.is_some(), "клик должен выделить юнита");
+
+    if let Some((move_x, move_y)) = visible_neighbor(&play.app, grid) {
+        play.send(InputEvent::RightClick(move_x, move_y));
+    }
+
+    play.send(click_rect(max_render::layout::END_TURN_BUTTON));
+    // Ход ИИ: ровно те кадры, которые реплей прокрутит командой wait.
+    play.wait_ready();
+
+    let recorded_digest = play.app.digest();
+    let record_path = play
+        .recorder
+        .finish()
+        .expect("финализация записи")
+        .expect("путь записи");
+
+    let script = std::fs::read_to_string(&record_path).expect("запись читается");
+    let parsed = parse_script(&script).expect("записанный скрипт разбирается");
+
+    assert!(
+        parsed.len() >= 9,
+        "слишком короткий сценарий ({} шагов):\n{script}",
+        parsed.len()
+    );
+    assert!(
+        parsed
+            .iter()
+            .any(|step| matches!(step.command, Command::Click(..))),
+        "{script}"
+    );
+    assert!(
+        parsed
+            .iter()
+            .any(|step| matches!(step.command, Command::RightClick(..))),
+        "{script}"
+    );
+    assert!(
+        parsed
+            .iter()
+            .any(|step| matches!(step.command, Command::Wait(_))),
+        "в записи должен быть wait хода ИИ:\n{script}"
+    );
+
+    // --- Реплей тем же qa_run-харнессом -------------------------------------
+    let replay_dir = temp_dir("record_replay");
+    let mut runner =
+        QaRunner::new(QaConfig::new(&replay_dir).with_frame_limit(40_000)).expect("qa_run");
+
+    let report = runner.run_file(&record_path);
+
+    assert!(
+        report.passed,
+        "записанный скрипт упал: {:?}\n{}",
+        report.failures, report.log
+    );
+    assert!(
+        matches!(runner.screen(), Screen::InSession { .. }),
+        "реплей должен остаться в партии"
+    );
+    assert_eq!(
+        runner.app().digest(),
+        recorded_digest,
+        "реплей записанного сценария должен прийти в то же состояние:\n{script}"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+    std::fs::remove_dir_all(replay_dir).ok();
 }
