@@ -36,6 +36,7 @@
 pub mod assets;
 pub mod audio;
 pub mod chrome;
+pub mod cursor;
 pub mod hud;
 pub mod panels;
 pub mod net;
@@ -64,9 +65,10 @@ use max_render::viewport::Viewport;
 
 pub use assets::{
     resolve_color_pal, resolve_patches_res, Assets, AssetsReport, LoadedSprite, SpriteInfo,
-    PATCHES_RES_FALLBACKS, UNIT_SPRITES, WORLD_ASSETS,
+    PATCHES_RES_FALLBACKS, PLANET_GROUP_PICTURES, UNIT_SPRITES, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
+pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hud::{
     build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
     HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
@@ -77,8 +79,10 @@ pub use net::{
 pub use panels::{PanelButton, PanelState, Panels};
 pub use render::{write_ppm, RenderStats};
 pub use ui::{
-    handle_session_input, CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient,
-    Screen, ScreenView, SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD,
+    handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
+    CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
+    SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD, PLANET_COLUMNS,
+    PLANET_COUNT, PLANET_GRID_MIN_HEIGHT, PLANET_NAMES, PLANET_ROWS,
 };
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).

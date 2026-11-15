@@ -20,19 +20,21 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Окно и рамки интерфейса | **1:1** | `MAX.RES`: `FRAMEPIC` (640×480, своя палитра, RLE) | `max_app::chrome`, `max_render::layout` |
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
 | Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (кроме портрета-анимации) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
-| Миникарта | **1:1 по `minimap`-слою `.WRL`** (+ рамка камеры, кнопки `2x`/`TNT`) | `.WRL::minimap()`, палитра `.WRL`; `MIN2X_*`/`MINFL_*` | `max_app::panels::draw_minimap` |
+| Миникарта | **1:1** (FOV-маска, рамка камеры, точки юнитов, `2x`/`TNT`; рамка — из `FRAMEPIC`) | `.WRL::minimap()`, палитра окна + `.WRL` 64…159, `RAWMSK*`/… | `max_app::panels::draw_minimap` |
 | Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
-| Иконки ресурсов/обломков | **цветные точки** | `I_*` (спрайты) | `map_render::render_resources_into` |
-| Курсор мыши | **системный SDL** | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | не подключено |
+| Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
+| Курсор мыши | **1:1 по формату и контексту** (SDL `Cursor::from_surface` за feature `sdl`) | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | `max_assets::cursor`, `max_app::cursor` |
 | Меню (главное, create/join) | **процедурное** | `MNUBTN*U/D`, `FRAMEPIC` | `max_app::ui` |
-| Экран выбора планеты | **нет** | `SNOW_PIC + world/6` (big image 128×128) | — |
+| Экран выбора планеты | **сетка 24 планет** на `SNOW_PIC + world/6` + имена; числовой ввод — fallback | `MAX.RES`: `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` (128×128) | `max_app::ui::{planet_grid_rect,draw_planet_picker}` |
 
 Итог: **в игре** (сессия/`--new-game` при 640×480) окно, карта и панели уже
 выглядят как оригинал: верхние кнопки/счётчики, портрет (статичный кадр
 спрайта), четыре строки статистики, сетка переключателей, зум, координаты,
-описание юнита и миникарта рисуются на координатах и ресурсах C++-порта,
-текст — оригинальными растровыми шрифтами GNW. Остались анимация портрета
-(FLIC), курсоры, иконки ресурсов, меню и масштабирование элементов.
+описание юнита, **миникарта с FOV-маской/точками юнитов/`2x`/`TNT`** и
+**настоящие маркеры ресурсов** рисуются на координатах и ресурсах C++-порта,
+текст — оригинальными растровыми шрифтами GNW, курсоры и сетка выбора планеты
+подключены. Остались анимация портрета (FLIC), меню на `MNUBTN*` (E) и
+масштабирование элементов (F).
 
 ---
 
@@ -123,20 +125,35 @@ RLE по строкам: i16 n;
   (`SPLYTRCK → S_SPLYTR`, `INFANTRY → S_INFANT`).
 - 89 тегов `I_*` — иконки построек (спрайт-листы: `I_DEPOT`, `I_RADAR`,
   `I_POWSTN`…; используются в меню строительства/апгрейдов, см.
-  `max-cpp-port/src/resourcetable.cpp:118-119`).
+  `max-cpp-port/src/resourcetable.cpp:118-119`). **На карте ресурсы рисуются не
+  `I_*`**, а маркерами `RAWMSK*`/`FUELMK*`/`GOLDMK*` (большие 62×62, hotspot
+  31,31) и `SMRWMK*`/`SMFLMK*`/`SMGDMK*` (малые 14×16, hotspot 7,8) —
+  `Survey_RenderMarker` (`survey.cpp:32-82`): при `zoom > 16` кадр
+  `min(amount,16)`, иначе `amount-1`; `I_RAW`/`I_FUEL`/`I_GOLD` — иконки
+  интерфейса и запасной вариант рендера.
 - 70 тегов `P_*` — крупные картинки юнитов/зданий 300×240 (big image),
   применяются в диалогах и информационных панелях (`resourcetable.cpp:223-225`);
   для `CORNER_FLIC` 128×128 в C++ используется отдельная анимация (FLIC), а не
   `P_*` — этот момент требует уточнения при реализации портрета.
 - 30 ресурсов курсоров (`HIDDNPTR`, `HANDPTR`, `ARROW_N/NE/…/NW`, `MAP_PTR`,
-  `MINI_PTR`, `PTR_PATH`, `PTR_HELP`…; `cursor.cpp:55-58`):
+  `MINI_PTR`, `PTR_PATH`, `PTR_HELP`…; `cursor.cpp:55-58`). Вопреки первому
+  предположению, **отдельного `u16 frame_count` в файле нет**: курсор — это
+  обычный `ImageSimpleHeader` (8 байт полей, 9-й байт — первый пиксель и он же
+  прозрачный индекс), а кадры анимации уложены вертикально:
 
   ```
-  Cursor_Descriptor (10 байт): i16 width, height, ulx, uly; u16 frame_count
-  далее u8 data[width*height*frame_count] — индексы палитры
+  i16 width, height, ulx, uly;      // 8 байт, ulx/uly — hotspot
+  u8  pixels[width*height*frame_count]
+  frame_count = 1;                  // C++: если width < height,
+  if (width < height) {             // frame_count = height / width (нацело),
+      frame_count = height / width; // height /= frame_count
+      height /= frame_count;
+  }
   ```
 
-  Например `ARROW_N` — 264 байта, `HANDPTR` — 332, `PTR_PATH` — 5 298 (анимация).
+  Примеры: `ARROW_N` — 264 Б (16×16, hotspot 7,1), `HANDPTR` — 332 Б (18×18,
+  0,1), `ENMY_PTR` — 1 229 Б (37×33, 18,13), `PTR_PATH` — 5 298 Б (10 кадров
+  23×23, hotspot 13,13), `HIDDNPTR` — 9 Б (1×1).
 
 ### 2.4 Раскладка окна (эталон — `window_manager.cpp:51-110`)
 
@@ -174,6 +191,37 @@ RLE по строкам: i16 n;
 (`resource_manager.cpp:1137`, `:1169`) — то есть **весь хром интерфейса уже
 нарисован в `FRAMEPIC`**, а карта выводится в `WINDOW_MAIN_MAP`.
 
+### 2.5 Миникарта, FOV и маркеры (порт `game_manager.cpp`/`access.cpp`/`survey.cpp`)
+
+- **Рамка миникарты — в `FRAMEPIC`**, а не отдельный ресурс. C++
+  `ResourceManager_InitInGameAssets` сохраняет снимок окна `WINDOW_MINIMAP` в
+  `ResourceManager_MinimapBgImage`, а `GameManager_RenderMinimap` кладёт его
+  первым слоем. `RADAR` (60 449 Б) — это **спрайт здания-радара**: 20 кадров
+  64×64 с hotspot (32,32), он рисуется как обычный юнит; к миникарте отношения
+  не имеет. Проверка — тест `alien_derelict_sprites_are_loaded`.
+- **Палитра миникарты** — системная палитра окна (`FRAMEPIC`), в которой
+  индексы 64…159 заменены палитрой `.WRL` (`World::ApplyPaletteAndTints`,
+  `world.cpp:329-334`, палитра `.WRL` делится на 4 и снова растягивается при
+  выводе). Поэтому мини-карта и маркеры `I_*`/`RAWMSK*` используют палитру
+  `FRAMEPIC`, а тайлы карты — палитру `.WRL`; смешивать их нельзя.
+- **FOV** (`Access_UpdateMinimapFogOfWar`, `access.cpp:896-910`): слой
+  `MinimapFov` = копия `Minimap`, затем клетки с `heat_map.cells[i].complete == 0`
+  прогоняются через `ResourceManager_DarkeningColorIndexTable`. Таблица
+  строится из палитры (`world.cpp:493-508`): `max(7, c/4) * 31 / 63`, затем
+  `Color_MapColor` (пропуская индексы 9…31 и 96…127). В Rust heat map уже
+  портирован (`GameState::ai.heat_maps[team].cells()[i].complete`), поэтому
+  маска — точный порт, а не эвристика по юнитам.
+- **Точки юнитов** (`DrawMap_RenderMiniMapUnitList`): только
+  `visible_to_team`, `order != Idle`, `SELECTABLE`; `TNT` дополнительно
+  оставляет юнитов с `HAS_FIRING_SPRITE | FIRES_MISSILES`. Цвета — индексы
+  `1/2/3/0xFF/4` (red/green/blue/white/yellow), точка 2×2, в 2x у не-зданий —
+  1 клетка.
+- **`2x`** (`GameManager_RenderMinimap`): после отрисовки окна и рамки камеры
+  область 56×56 от `offset/2 + GridCenterOffset` растягивается на 112×112
+  (рамка камеры при этом тоже масштабируется); `GameManager_GetMinimapPosition`
+  делит координату клика на 2 и прибавляет смещение. `TNT` — фильтр точек
+  (см. выше), сами пиксели миникарты не меняет.
+
 ---
 
 ## 3. Что реализовано (код)
@@ -181,12 +229,20 @@ RLE по строкам: i16 n;
 | Модуль / файл | Строк | Назначение |
 |---|---|---|
 | `max_assets/src/image.rs` | 394 | `SimpleImage`, `BigImage` (+ RLE с чанками через строку), `ImageError`; 8 unit-тестов |
+| `max_assets/src/cursor.rs` | 360 | `CursorDescriptor`/`CursorSet`: 30 курсоров, кадры из `height/width`, hotspot; 4 теста (включая реальные `MAX.RES`) |
+| `max_assets/src/markers.rs` | 190 | `ResourceMarkers`: 99 маркеров `RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые + fallback `I_*`; 1 тест на реальном `MAX.RES` |
+| `max_app/src/cursor.rs` | 350 | `CursorId` (30), `CursorContext`, `session_cursor`, `cursor_image` (палитра → RGBA/hotspot); 4 теста |
 | `max_render/src/terrain.rs` | 282 | `TerrainAtlas`: палитра `.WRL` (6→8 бит), пиксели тайлов, блит с зумом; 4 теста |
 | `max_render/src/layout.rs` | 125 | константы раскладки 640×480 из `windows[]`; 3 теста (в т.ч. непересечение с картой) |
 | `max_app/src/chrome.rs` | 196 | `Chrome` (`FRAMEPIC` + `PANELTOP/PANELBTM`), `draw`, `blit_map`; 3 теста |
 | `max_render/src/text/gnw.rs` | 788 | `GnwFont`/`GnwFontId`: декодер `.FON` GNW, `draw_text_gnw`, `draw_text_gnw_shadowed`, центрирование; 10 тестов (включая сверку с C++-эталоном) |
 | `max_render/data/gnw_font_{1,2,5}.fnt` | 6932/4399/4868 | оригинальные `FONT1/2/5.FON` (растровые шрифты, вкомпилированы через `include_bytes!`) |
-| `max_app/src/panels.rs` | 1251 | `Panels`: 30+ картинок панелей из `MAX.RES`, 27 кнопок, портрет, статистика, миникарта, зум, координаты; `PanelState` в `HudState`; 10 тестов |
+| `max_app/src/panels.rs` | 1700+ | `Panels`: 30+ картинок панелей из `MAX.RES`, 27 кнопок, портрет, статистика, миникарта (FOV/2x/TNT/точки/рамка), зум, координаты; `PanelState` в `HudState`; 15 тестов |
+| `max_app/src/render.rs` | +60 | режим «окно 1:1»: хром + карта в `MAIN_MAP`; маркеры ресурсов вместо точек, `RenderStats::resource_icons`; `draw_units` вынесен |
+| `max_render/src/map_render.rs` | +170 | `render_resource_icons_into`: большие/малые маркеры, масштаб `zoom/64` и `zoom/16`, fallback `I_*` |
+| `max_render/src/sdl_window.rs` | +80 | `set_cursor_rgba`: кэш `Cursor` по ключу, `Cursor::from_surface`, hotspot |
+| `max_app/src/ui.rs` | +330 | сетка 24 планет (`planet_grid_rect`/`planet_cell_rect`/`planet_cell_at`), `PLANET_NAMES`, отрисовка `SNOW_PIC`-миниатюр, клик по планете; числовой ввод — fallback; 3 теста |
+| `max_app/examples/visual_cd.rs` | 230 | кадры C/D: игра (маркеры/FOV/2x), экран планет, контактный лист курсоров |
 | `max-rust/tools/font_vectors/main.cpp` + `vectors.txt`/`render.txt` | 388 + 34 КБ | эталонный генератор: FreeType-путь C++-порта и `.FON`-декодер, побайтовое сравнение |
 | `max_app/examples/panel_frame.rs` | 80 | кадр 640×480 с выбранным юнитом (доказательство пункта A) |
 | `max_app/src/render.rs` | +82 | режим «окно 1:1»: хром + карта в `MAIN_MAP`; `draw_units` вынесен |
@@ -227,8 +283,25 @@ Panels::load(&ResArchive) -> Option<Panels>
 Panels::draw(&mut RgbaBuffer, &App) -> u32
 panels::panel_button_at(x, y) -> Option<PanelButton>    // клики по хрому
 panels::screen_to_map(x, y) -> Option<(i32, i32)>      // (180,18) → (0,0)
+panels::minimap_grid_at(x, y, w, h, &Viewport, two_x)  // клик → клетка (2x учтён)
+panels::minimap_view(w, h) -> MinimapView              // World::CalculateMinimapScaling
+panels::darkening_table(&PaletteRgba) -> [u8; 256]     // FOV-затемнение
 App::map_viewport() -> Viewport                        // 448×448 для карты
 App::chrome_active() -> bool
+
+// курсоры (формат и контекст)
+CursorSet::load(&ResArchive) -> CursorSet              // 30 ресурсов
+CursorDescriptor::decode(&[u8]) -> Result<...>         // 8-байтный заголовок + кадры
+CursorId::ALL / CursorId::resource_name()
+cursor_for_context(CursorContext) -> CursorId          // меню/панель/карта/приказ
+cursor_image(&CursorSet, &PaletteRgba, CursorId, frame) -> Option<CursorImage>
+window.set_cursor_rgba(key, rgba, w, h, hot_x, hot_y)  // SDL3, feature sdl
+
+// ресурсы и планеты
+ResourceMarkers::load(&ResArchive) -> ResourceMarkers  // 99 маркеров
+map_render::render_resource_icons_into(dst, map, viewport, markers, palette, team, show_all)
+Assets::planet_picture(Planet) -> Option<&BigImage>    // SNOW_PIC + world/6
+ui::planet_cell_rect(w, h, index) / planet_cell_at(w, h, x, y) / planet_name(planet)
 
 // раскладка (max_render::layout)
 WINDOW_WIDTH = 640, WINDOW_HEIGHT = 480, MAIN_MAP = (180,18,448,448)
@@ -240,19 +313,24 @@ TURN_COUNTER = (468,2,61,21), TURN_TIMER, ZOOM_SLIDER, COORDINATES, …
 
 ## 4. Свидетельства проверки
 
-**Тесты:** `539 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`);
+**Тесты:** `559 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`);
 `cargo check --all-targets` — 0 ошибок; `cargo check -p max_app --features
 sdl-from-source` — 0 ошибок (Linux, полный набор X11/ALSA dev-пакетов).
-Из них новые: 10 тестов `max_render::text::gnw` (включая побайтовую сверку с
-C++/FreeType-эталоном), 10 тестов `max_app::panels`, 3 интеграционных теста
-координат мыши и панельных кликов.
+Из них новые (пункты C/D): 4 теста `max_assets::cursor` (включая реальные
+размеры/hotspot/кадры всех 30 курсоров `MAX.RES`), 1 тест
+`max_assets::markers` (99 маркеров), 4 теста `max_app::cursor` (индексы/контекст/
+RGBA/сессия), 9 тестов `max_app::panels` (FOV-таблица, масштаб миникарты, клик 1x/2x,
+точки юнитов/TNT), 1 тест `max_render::map_render` (маркеры из `MAX.RES`),
+3 теста `max_app::ui` (клик по планете, сетка, картинки `SNOW_PIC`) и
+2 теста `max_app::assets` (обломки `ALN*` + `RADAR`, 4 картинки планет).
 
 **Артефакт (Windows UI):** `release/max_app-1.0.0-windows-x86_64-ui/`
-- `max_app.exe` — 5 338 624 Б,
-  sha256 `0000219043a7c34d72fa94b9c499c67599599e27bcb283c9a2427772ed43341e`
-- `zip` — sha256 `0bd9fbd8b2a350937acc0835796fbc149a0f6ce3a3440d10be557486cbdac24b`
+- `max_app.exe` — 5 402 112 Б,
+  sha256 `6d17aeafcb1851e2e8383303016d1ad409f539ee3dcc8aa6e544bbbf6b5827c0`
+- `zip` — 3 054 781 Б,
+  sha256 `021667b6adf59ada1cf1a2c62e635b04f941c3e721c903b2a6796e26bf19f594`
 - `SHA256SUMS` по 5 файлам — `OK`; `max_app.exe --help` и `--new-game
-  --width 640 --height 480` отрабатывают (кадр с панелями — `build/frame-windows-artifact.png`).
+  --width 640 --height 480` отрабатывают (кадр `build/frame-cd-windows.png`).
 
 **Изображения (в `build/`, не коммитятся):**
 
@@ -267,6 +345,12 @@ C++/FreeType-эталоном), 10 тестов `max_app::panels`, 3 интег�
 | `build/frame-newgame-panels.png` | тот же кадр из `--new-game --width 640 --height 480` (выбор первого юнита игрока) |
 | `build/frame-panels-left.png` | левая панель `frame-panels.png` в 2× (детали подписей/статистики) |
 | `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max_app.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
+| `build/frame-cd-game.png` | **пункт C/D:** 640×480: маркеры ресурсов `RAWMSK*`/`GOLDMK*` (не точки), миникарта с FOV-маской, рамкой камеры, точками юнитов, кнопки `2x`/`TNT` |
+| `build/frame-cd-game-2x.png` | тот же кадр в режиме `2x` (миникарта 56×56 → 112×112, кнопка нажата) |
+| `build/frame-cd-game-minimap-4x.png` | кроп миникарты 4× (виден перепад FOV и красная рамка камеры) |
+| `build/frame-cd-planets.png` | **пункт D:** форма создания игры — сетка 24 планет на `SNOW_PIC + world/6`, имя под каждой, красная рамка выбранной, поле `World` как fallback |
+| `build/frame-cd-cursors.png` | все 30 курсоров из `MAX.RES` (контактный лист: hotspot/кадры/палитра) |
+| `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max_app.exe` (Windows UI) |
 | `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + панели |
 | `build/rle-FRAMEPIC.bmp` | независимая (Python) эмуляция RLE — сверка с Rust-декодером |
 
@@ -276,7 +360,7 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
 
 ---
 
-## 5. Пункты плана: статус (A и B сделаны, C частично)
+## 5. Пункты плана: статус (A–D сделаны)
 
 ### Пункт A. Наполнение панелей и верхней строки — **сделано**
 
@@ -352,25 +436,61 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
 **Критерий:** начертание/метрики совпадают с оригиналом — подтверждено
 побайтовой сверкой с C++-путём (FreeType) для ASCII.
 
-### Пункт C. Миникарта — **частично сделано**
+### Пункт C. Миникарта — **сделано**
 
-- [x] `minimap`-слой `.WRL` рисуется в `WINDOW_MINIMAP` (15,356) 112×112
-  (`panels::draw_minimap`), палитра — из `.WRL`; сверху рамка камеры.
-- [x] Кнопки `2x` (136,387) и `TNT` (136,413): картинки `MIN2X_*`/`MINFL_*`,
-  клики переключают локальные флаги `PanelState::minimap_2x/minimap_tnt`.
-- [ ] FOV-маска (`World::GetMinimapFov`) и реальное поведение `2x`/`TNT`
-  (увеличение/подсветка) — не портированы; рамка `RADAR` тоже.
+- [x] `minimap`-слой `.WRL` рисуется в `WINDOW_MINIMAP` (15,356) 112×112,
+  масштаб/смещение — `World::CalculateMinimapScaling`; палитра — системная
+  палитра окна с индексами 64…159 из `.WRL`.
+- [x] **FOV-маска** — точный порт `Access_UpdateMinimapFogOfWar`: неисследованные
+  клетки (`heat_map.cells[i].complete == 0`) затемняются таблицей
+  `DarkeningColorIndexTable` (`max(7, c/4)*31/63` + `Color_MapColor`).
+- [x] **Точки юнитов** (`DrawMap_RenderMiniMapUnitList`): цвет команды, 2×2,
+  `TNT`-фильтр по `HAS_FIRING_SPRITE | FIRES_MISSILES`, в 2x не-здания — 1
+  клетка.
+- [x] **`2x`**: область 56×56 вокруг `GridCenterOffset` растягивается на всё окно,
+  клик переводится через `GameManager_GetMinimapPosition`; рамка камеры
+  масштабируется вместе с областью (как в C++).
+- [x] **Рамка камеры** — красный `draw_box` по видимым клеткам (`.9` на правом/
+  нижнем крае, как в C++).
+- [x] **Рамка/фон миникарты** — из `FRAMEPIC` (`MinimapBgImage`); кнопки
+  `MIN2X_OF/ON`, `MINFL_OF/ON` рисуются поверх. `RADAR` разобран как
+  20-кадровый спрайт 64×64 здания-радара (не рамка миникарты); тест
+  `alien_derelict_sprites_are_loaded` фиксирует это.
+- [x] Клик по миникарте центрирует камеру (в 1x и 2x), тесты
+  `minimap_click_maps_to_grid_and_accounts_for_2x`.
 
-### Пункт D. Иконки, курсоры и мелочи
+**Критерий:** `build/frame-cd-game.png` и `build/frame-cd-game-2x.png`:
+FOV-перепад, красная рамка камеры, точки юнитов, кнопки `2x`/`TNT`;
+`build/frame-cd-game-minimap-4x.png` — кроп 4×.
 
-- Иконки ресурсов/обломков (`I_*`) вместо цветных точек (сейчас
-  `render_resources_into` рисует точки).
-- **Курсоры** — в `MAX.RES` 30 ресурсов (`HANDPTR`, `ARROW_*`, `MAP_PTR`,
-  `MINI_PTR`, `PTR_PATH`…), формат `Cursor_Descriptor` (10 байт + кадры, см.
-  §2.3). Нужен декодер и переключение по контексту (карта/меню/приказ), как
-  `Cursor_SetCursor` в C++ (`cursor.cpp`).
-- Экран выбора планеты: `SNOW_PIC + world/6` (big image 128×128) —
-  `planetselectmenu.cpp:94`.
+### Пункт D. Иконки, курсоры и выбор планеты — **сделано**
+
+- **Иконки ресурсов** — не цветные точки и не `I_*` на карте: `Survey_RenderMarker`
+  использует `RAWMSK*`/`FUELMK*`/`GOLDMK*` (62×62, hotspot 31,31) при
+  `zoom > 16` и `SMRWMK*`/`SMFLMK*`/`SMGDMK*` (14×16) при `zoom ≤ 16`;
+  кадр — `min(amount,16)` / `amount-1`. `I_RAW/I_FUEL/I_GOLD` оставлены
+  fallback'ом, если маркер отсутствует. Видимость — `entry.is_visible_to(team)`
+  или кнопка `SURVEY` (`GameManager_MaxSurvey`). Тест
+  `resource_markers_are_drawn_from_max_res`.
+- **Обломки alien** — это настоящие юниты `ALNTANK/ALNASGUN/ALNPLANE` команды
+  `ALIEN` (derelict LUT), плюс `LRGSLAB`/`BRIDGE` и здания
+  `SHIELDGN`/`SUPRTPLT`/`RECCENTR`; спрайты `ALNASGUN`/`ALNPLANE` добавлены
+  в `UNIT_SPRITES` (43 типа), тест `alien_derelict_sprites_are_loaded`.
+- **Курсоры** — `max_assets::cursor` (декодер `Cursor_Descriptor`: 8-байтный
+  заголовок, `frame_count = height/width`, hotspot), загрузка 30 ресурсов
+  (`HIDDNPTR`…`PTR_HELP`), `max_app::cursor` (индексы `CursorId`, контекст
+  `CursorContext`, `session_cursor`, `cursor_image`). В SDL — `set_cursor_rgba`
+  (`Cursor::from_surface`, кэш по ключу) за feature `sdl`; headless — только
+  логика контекста. Тесты: размеры/hotspot/кадры всех 30 курсоров
+  (`real_max_res_cursors_match_the_cpp_descriptors`), контекст
+  (`context_switches_cursor_like_cursor_setcursor`), RGBA/анимация.
+- **Экран выбора планеты** — в `CreateForm` вместо числового поля сетка 24
+  планет 8×3: картинка `SNOW_PIC + world/6` (128×128, 4 группы), имя планеты под
+  ней (`planetselectmenu.cpp:120-138`), красная рамка выбранной, клик мышью
+  меняет `world`. Числовой ввод в поле `World` сохранён как fallback (Tab →
+  цифры/стрелки). Тесты `planet_click_changes_world_and_keeps_numeric_fallback`,
+  `planet_grid_is_eight_by_three_and_inside_the_form`,
+  `create_form_paints_planet_pictures_from_max_res`.
 
 ### Пункт E. Меню на оригинальных ресурсах
 
@@ -421,8 +541,30 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
    информационных панелей (`resourcetable.cpp:223-225`), а не портрет 128×128
    для `CORNER_FLIC`: там в C++ отдельная FLIC-анимация (`PlayerCorner`), формат
    FLC пока не разобран.
-8. **Курсоры — отдельный формат** (`Cursor_Descriptor`, 10 байт + кадры), не
-   `SimpleImage`/`BigImage`; лежат в `MAX.RES` (30 ресурсов), не в `COLOR.PAL`.
+8. **Курсоры — не `SimpleImage`-семантика в чистом виде**: это
+   `ImageSimpleHeader` + вертикально уложенные кадры, а `frame_count` **не
+   хранится**, а выводится как `height / width` (нацело). У `MINI_PTR` (15×16)
+   это даёт 1 кадр высотой 16, хотя высота не кратна ширине; строгая проверка
+   кратности ломает загрузку 29/30. Лежат в `MAX.RES` (30 ресурсов), палитра —
+   системная палитра окна, не `COLOR.PAL`.
+9. **`RADAR` — не рамка миникарты.** Это спрайт здания-радара: 20 кадров 64×64,
+   hotspot (32,32), 60 449 Б. Рамка миникарты нарисована в `FRAMEPIC`
+   (`ResourceManager_MinimapBgImage` — снимок окна `WINDOW_MINIMAP`). Не
+   подменять рамку спрайтом `RADAR` и не искать отдельный ресурс рамки.
+10. **Палитра миникарты — гибрид.** Индексы 64…159 берутся из `.WRL` (каналы
+    `/4`, затем `*4` при выводе), остальные — из `FRAMEPIC`; индексы точек
+    юнитов (`1/2/3/4/0xFF`) — из `FRAMEPIC`. Если рисовать миникарту целиком
+    палитрой `.WRL`, индексы 6/177…232 (края/неизвестные клетки) и цвета точек
+    станут неверными. Тест — `minimap_view_matches_calculate_minimap_scaling` +
+    `darkening_table_halves_brightness_like_cpp`.
+11. **Кнопки миникарты в `FRAMEPIC` уже нарисованы**, а ресурс `MIN2X_OF`/
+    `MINFL_OF` лежит на 4–5 px ниже: если блитить `*_OF` поверх хрома, видны
+    два «2x»/«TNT». Отжатое состояние берётся из `FRAMEPIC`, `*_ON` рисуется
+    при нажатии; без хрома (headless) рисуется и `*_OF`.
+12. **FOV не эвристика по юнитам.** `World::GetMinimapFov` — лишь стартовый
+    слой; затемнение делает `Access_UpdateMinimapFogOfWar` по
+    `heat_map.cells[i].complete`. В Rust heat map уже есть, поэтому маска — 1:1;
+    попытка вывести «известные клетки» из позиций юнитов даст другой рисунок.
 
 ---
 
@@ -444,12 +586,20 @@ cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL build/wr
 cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm
 powershell -File build/ppm2png.ps1 -Ppm build/frame-panels.ppm -Png build/frame-panels.png
 
+# 4.1) кадры C/D: маркеры/FOV/2x, экран планет, лист курсоров
+cargo run -p max_app --example visual_cd -- ../build/frame-cd
+# → build/frame-cd-{game,game-2x,planets,cursors}.ppm (PPM → PNG любым конвертером)
+
 # 5) эталон шрифтов: FreeType-путь C++-порта против .FON (пункт B)
 docker run --rm -v "D:/dev/max-port-debug:/src" \
     -w /src/max-rust/tools/font_vectors rust:1.94.0-bookworm bash run.sh
 
-# 6) тесты
-cargo check --all-targets && cargo test          # см. §4
+# 6) тесты (ровно релизный гейт)
+docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust \
+    rust:1.94.0-bookworm bash -c \
+    "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"
+
+# 6.1) SDL-сборка (окно/курсоры) — полный X11/ALSA dev-набор, см. release-checklist §2.3
 
 # 7) живая сессия в окне
 docker compose up -d --build                     # Horizon + headless
@@ -461,12 +611,13 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
 
 ## 8. Состояние репозитория
 
-Изменено (не закоммичено): `max-rust/crates/max_app/src/{assets,lib,main,render,ui}.rs`,
-`max_app/src/hud.rs` (`Panels`-состояние), `max_render/src/{lib,layout,text}.rs`,
-`max_assets/src/image.rs` (прозрачный индекс), `docs/{visual-1to1-status,release-checklist}.md`.
+Изменено (не закоммичено): `max-rust/crates/max_app/src/{assets,cursor,lib,main,render,ui}.rs`,
+`max_app/src/hud.rs` (`Panels`-состояние), `max_render/src/{lib,layout,map_render,sdl_window,text}.rs`,
+`max_assets/src/{image,lib}.rs`, `docs/{visual-1to1-status,release-checklist}.md`.
 
-Новые файлы: `max_render/src/text/gnw.rs` (+ `max_render/data/gnw_font_*.fnt`),
-`max_app/src/panels.rs`, `max_app/examples/panel_frame.rs`,
+Новые файлы: `max_assets/src/{cursor,markers}.rs`, `max_app/src/cursor.rs`,
+`max_render/src/text/gnw.rs` (+ `max_render/data/gnw_font_*.fnt`),
+`max_app/src/panels.rs`, `max_app/examples/{panel_frame,visual_cd}.rs`,
 `max-rust/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
 
 Ранее закоммичено: `6295a8e` (Windows-кросс-сборка + `build-windows.sh`),
@@ -485,7 +636,9 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
    порта; 8×8 остался fallback'ом.
 3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено для первого шага:
    статичный кадр спрайта ×2; FLIC-анимация — отдельная задача.
-4. ~~**Приоритет:** панели (A) или меню (E)?~~ Панели A и шрифт B сделаны;
-   следующий визуальный шаг — меню (E) на `MNUBTN*U/D` + `FRAMEPIC`.
-5. **Миникарта:** осталось решить, нужна ли FOV-маска (`GetMinimapFov`) и
-   реальное поведение `2x`/`TNT`, или достаточно `.WRL::minimap()`, как сейчас.
+4. ~~**Приоритет:** панели (A) или меню (E)?~~ Панели A, шрифт B, миникарта/
+   иконки/курсоры/планеты C/D сделаны; следующий визуальный шаг — меню (E) на
+   `MNUBTN*U/D` + `FRAMEPIC` и FLIC-портрет.
+5. ~~**Миникарта:** нужна ли FOV-маска и поведение `2x`/`TNT`?~~ Решено: FOV —
+   точный порт `Access_UpdateMinimapFogOfWar` по heat map, `2x`/`TNT` — как
+   `GameManager_RenderMinimap`/`DrawMap_RenderMiniMapUnitList` (см. §2.5).

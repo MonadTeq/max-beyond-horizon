@@ -46,6 +46,7 @@
 
 use std::fmt;
 
+use max_core::enums::Planet;
 use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
@@ -53,7 +54,7 @@ use max_net::{
     CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
 };
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
-use max_render::text::{draw_text_line, GLYPH_HEIGHT};
+use max_render::text::{draw_text_gnw, draw_text_line, GnwFontId, GLYPH_HEIGHT};
 use max_render::ui::{
     hit_test, layout, render_ui, Button, Label, ListBox, Point, Rect, TextBox, UiState, UiTheme,
     Widget,
@@ -599,6 +600,13 @@ impl Screen {
             Self::CreateForm(form) => {
                 let ui = build_create_form(view.width, view.height, view.status, view.mouse, form);
                 render_ui(buffer, &ui);
+                draw_planet_picker(
+                    buffer,
+                    view.app.and_then(|app| app.assets()),
+                    form,
+                    view.width,
+                    view.height,
+                );
             }
             Self::InSession { .. } => render_session(buffer, view),
         }
@@ -786,24 +794,39 @@ impl Screen {
             InputEvent::MouseMove(..) => {}
             InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
-                let point = Point::new(x, y);
+                // Сетка планет: клик по картинке/имени выбирает планету. Это
+                // делается до `hit_test`, потому что подписи планет — обычные
+                // Label'ы, а числовое поле остаётся fallback'ом по Tab.
+                let planet = (ctx.height >= PLANET_GRID_MIN_HEIGHT)
+                    .then(|| planet_cell_at(ctx.width, ctx.height, x, y))
+                    .flatten();
 
-                match hit_test(&ui, point) {
-                    Some(7) => {
-                        back = true;
-                        clicked = true;
+                if let Some(index) = planet {
+                    if let Self::CreateForm(form) = self {
+                        form.world = index as i64;
+                        form.focus = CreateField::World;
                     }
-                    Some(8) => {
-                        submit = true;
-                        clicked = true;
-                    }
-                    Some(index @ 1..=6) => {
-                        clicked = true;
-                        if let Self::CreateForm(form) = self {
-                            form.focus = CreateField::ALL[index - 1];
+                    clicked = true;
+                } else {
+                    let point = Point::new(x, y);
+
+                    match hit_test(&ui, point) {
+                        Some(7) => {
+                            back = true;
+                            clicked = true;
                         }
+                        Some(8) => {
+                            submit = true;
+                            clicked = true;
+                        }
+                        Some(index @ 1..=6) => {
+                            clicked = true;
+                            if let Self::CreateForm(form) = self {
+                                form.focus = CreateField::ALL[index - 1];
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             InputEvent::Key(key) => {
@@ -1062,16 +1085,23 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
         return session_panel_button(app, button, x, online);
     }
 
-    // Миникарта: 112×112 клеток мира в окне (15,356).
+    // Миникарта: 112×112 клеток мира в окне (15,356). В 2x-режиме клик
+    // переводится через `GameManager_GetMinimapPosition` (область 56×56 вокруг
+    // центра камеры), иначе клик уезжает.
     let minimap = max_render::layout::MINIMAP;
 
     if minimap.contains(x, y) {
-        let grid_x = ((x - minimap.ulx) * i32::from(MAP_WIDTH) / minimap.width)
-            .clamp(0, i32::from(MAP_WIDTH) - 1) as i16;
-        let grid_y = ((y - minimap.uly) * i32::from(MAP_HEIGHT) / minimap.height)
-            .clamp(0, i32::from(MAP_HEIGHT) - 1) as i16;
+        let state = app.state();
+        let map_width = i32::from(state.map.size.width);
+        let map_height = i32::from(state.map.size.height);
+        let two_x = app.hud().panels.minimap_2x;
 
-        app.viewport_mut().center_on_grid(grid_x, grid_y);
+        if let Some((grid_x, grid_y)) =
+            panels::minimap_grid_at(x, y, map_width, map_height, app.viewport(), two_x)
+        {
+            app.viewport_mut().center_on_grid(grid_x, grid_y);
+        }
+
         return Transition::None;
     }
 
@@ -1552,6 +1582,105 @@ fn build_join_list(
     ui
 }
 
+/// Число планет в оригинале (`PlanetSelectMenu` — 24, `PlanetType`).
+pub const PLANET_COUNT: usize = 24;
+/// Колонок в сетке планет.
+pub const PLANET_COLUMNS: i32 = 8;
+/// Строк в сетке планет.
+pub const PLANET_ROWS: i32 = 3;
+/// Минимальная высота окна, при которой показывается сетка планет.
+pub const PLANET_GRID_MIN_HEIGHT: u32 = 320;
+
+/// Имена 24 планет — `_(e43b)`…`_(ba99)` из `planetselectmenu.cpp:120-122`
+/// (`language.json`, en-US).
+pub const PLANET_NAMES: [&str; PLANET_COUNT] = [
+    "Snowcrab",
+    "Frigia",
+    "Ice Berg",
+    "The Cooler",
+    "Ultima Thule",
+    "Long Floes",
+    "Iron Cross",
+    "Splatterscape",
+    "Peak-a-boo",
+    "Valentine's Planet",
+    "Three Rings",
+    "Great divide",
+    "New Luzon",
+    "Middle Sea",
+    "High Impact",
+    "Sanctuary",
+    "Islandia",
+    "Hammerhead",
+    "Freckles",
+    "Sandspit",
+    "Great Circle",
+    "Long Passage",
+    "Flash Point",
+    "Bottleneck",
+];
+
+/// Имя планеты (`planetselectmenu.cpp:138`).
+pub fn planet_name(planet: Planet) -> &'static str {
+    PLANET_NAMES
+        .get(planet as usize)
+        .copied()
+        .unwrap_or("Unknown")
+}
+
+/// Горизонтальные поля формы.
+fn form_content(width: i32) -> (i32, i32) {
+    let margin = horizontal_margin(width);
+    let content = (width - margin * 2).max(60);
+    let x = (width - content) / 2;
+
+    (x, content)
+}
+
+/// Прямоугольник сетки планет внутри формы (24 ячейки 8×3).
+pub fn planet_grid_rect(width: u32, height: u32) -> Rect {
+    let width = width as i32;
+    let height = height as i32;
+    let (x, content) = form_content(width);
+    let cell_height = ((height - 220) / PLANET_ROWS).clamp(30, 56);
+
+    Rect::new(
+        x,
+        24,
+        content,
+        cell_height * PLANET_ROWS,
+    )
+}
+
+/// Прямоугольник одной планеты в сетке.
+pub fn planet_cell_rect(width: u32, height: u32, index: usize) -> Rect {
+    let grid = planet_grid_rect(width, height);
+    let cell_width = (grid.width / PLANET_COLUMNS).max(1);
+    let cell_height = (grid.height / PLANET_ROWS).max(1);
+    let column = index as i32 % PLANET_COLUMNS;
+    let row = index as i32 / PLANET_COLUMNS;
+
+    Rect::new(
+        grid.x + column * cell_width,
+        grid.y + row * cell_height,
+        cell_width,
+        cell_height,
+    )
+}
+
+/// Планета под точкой (`None` — точка вне сетки).
+pub fn planet_cell_at(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
+    for index in 0..PLANET_COUNT {
+        let rect = planet_cell_rect(width, height, index);
+
+        if x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height {
+            return Some(index);
+        }
+    }
+
+    None
+}
+
 fn build_create_form(
     width: u32,
     height: u32,
@@ -1561,12 +1690,16 @@ fn build_create_form(
 ) -> UiState {
     let width = width as i32;
     let height = height as i32;
-    let margin = horizontal_margin(width);
-    let content = (width - margin * 2).max(60);
-    let x = (width - content) / 2;
-    let field_height = ((height - 96) / 8).clamp(14, 22);
+    let (x, content) = form_content(width);
+    let show_planets = height >= PLANET_GRID_MIN_HEIGHT as i32;
+    let grid = planet_grid_rect(width as u32, height as u32);
+    let fields_top = if show_planets {
+        grid.y + grid.height + 6
+    } else {
+        28
+    };
     let field_gap = 4;
-    let fields_top = 28;
+    let field_height = ((height - fields_top - 88) / 6).clamp(12, 22);
     let rects = layout(
         Rect::new(x, fields_top, content, 0),
         &[field_height; 6],
@@ -1587,7 +1720,11 @@ fn build_create_form(
     ];
 
     let mut widgets = vec![Widget::Label(Label::colored(
-        "NEW GAME — settings",
+        if show_planets {
+            "NEW GAME - choose a planet"
+        } else {
+            "NEW GAME - settings"
+        },
         Rect::new(x, 10, content, 12),
         theme.accent,
     ))];
@@ -1595,7 +1732,7 @@ fn build_create_form(
     for (index, (field, max_chars)) in values.into_iter().enumerate() {
         let placeholder = match field {
             CreateField::Name => DEFAULT_GAME_NAME,
-            CreateField::World => "0..23",
+            CreateField::World => "0..23 (click a planet)",
             CreateField::Timer => "seconds",
             CreateField::EndTurn => "seconds",
             CreateField::Opponent => "1..3",
@@ -1614,8 +1751,17 @@ fn build_create_form(
 
     widgets.push(Widget::Button(Button::new("Back", back)));
     widgets.push(Widget::Button(Button::new("Create", create)));
+
+    // Подписи планет рисуются в `draw_planet_picker` шрифтом GNW Font5
+    // (в C++ имена планет — `GNW_TEXT_FONT_5`), а не 8×8 Label'ами: иначе
+    // «Valentine's Planet» обрезается до 8 символов.
+
     widgets.push(Widget::Label(Label::colored(
-        "Tab/Up/Down — field; Left/Right — numbers; Enter — create; Esc — back",
+        if show_planets {
+            "Click a planet; Tab/World - number; Enter - create; Esc - back"
+        } else {
+            "Tab/Up/Down - field; Left/Right - numbers; Enter - create; Esc - back"
+        },
         Rect::new(x, buttons_y + 32, content, 12),
         theme.text_disabled,
     )));
@@ -1629,6 +1775,136 @@ fn build_create_form(
     ui.focus = Some(1 + form.focus.index());
     ui.set_hover(mouse);
     ui
+}
+
+/// Рисует картинки планет в сетку формы (`SNOW_PIC + world/6`).
+///
+/// `render_ui` заливает фон и подписи, поэтому картинки кладутся поверх — в
+/// область над подписью, которую виджеты не занимают. Без ассетов рисуются
+/// рамки-заглушки, чтобы сетка была видна и в headless-тестах.
+fn draw_planet_picker(
+    buffer: &mut RgbaBuffer,
+    assets: Option<&crate::Assets>,
+    form: &CreateForm,
+    width: u32,
+    height: u32,
+) {
+    if height < PLANET_GRID_MIN_HEIGHT {
+        return;
+    }
+
+    let theme = UiTheme::default();
+
+    for index in 0..PLANET_COUNT {
+        let cell = planet_cell_rect(width, height, index);
+        // Квадратная миниатюра: `SNOW_PIC` — 128×128, растягивать её по ширине
+        // ячейки нельзя (планета превращается в блин).
+        let size = (cell.width - 4).min(cell.height - 12).max(1);
+        let image_rect = Rect::new(
+            cell.x + (cell.width - size) / 2,
+            cell.y + 1,
+            size,
+            size,
+        );
+        let planet = Planet::try_from(index as u8).ok();
+        let picture = planet.and_then(|planet| {
+            assets.and_then(|assets| assets.planet_picture(planet))
+        });
+
+        if let Some(picture) = picture {
+            blit_big_image_scaled(buffer, picture, image_rect);
+        } else {
+            buffer.fill_rect(image_rect.into(), theme.panel);
+            draw_text_line(
+                buffer,
+                image_rect.x + 3,
+                image_rect.y + 3,
+                &format!("{index}"),
+                theme.text_disabled,
+            );
+        }
+
+        // Имя планеты — GNW Font5 (как `planetselectmenu.cpp:124-138`),
+        // по центру под миниатюрой; длинное имя обрезается по ширине ячейки.
+        if let Some(planet) = planet {
+            let font = GnwFontId::Font5.font();
+            let max_width = (cell.width - 2).max(1);
+            let mut name = planet_name(planet).to_string();
+
+            while font.text_width(&name) > max_width {
+                if name.pop().is_none() {
+                    break;
+                }
+            }
+
+            let x = cell.x + (cell.width - font.text_width(&name)).max(0) / 2;
+            let y = cell.y + cell.height - font.height();
+
+            draw_text_gnw(buffer, x, y, font, &name, theme.text);
+        }
+
+        let selected = form.world == index as i64;
+        let border = if selected {
+            Rgba::rgb(252, 0, 0)
+        } else {
+            theme.border
+        };
+        let thickness = if selected { 2 } else { 1 };
+
+        draw_rect_border(buffer, cell, border, thickness);
+    }
+}
+
+/// Рамка толщиной `thickness` внутри `rect`.
+fn draw_rect_border(buffer: &mut RgbaBuffer, rect: Rect, color: Rgba, thickness: i32) {
+    let thickness = thickness.max(1);
+
+    for inset in 0..thickness {
+        let x = rect.x + inset;
+        let y = rect.y + inset;
+        let width = rect.width - inset * 2;
+        let height = rect.height - inset * 2;
+
+        if width <= 0 || height <= 0 {
+            break;
+        }
+
+        for dx in 0..width {
+            buffer.set(x + dx, y, color);
+            buffer.set(x + dx, y + height - 1, color);
+        }
+        for dy in 0..height {
+            buffer.set(x, y + dy, color);
+            buffer.set(x + width - 1, y + dy, color);
+        }
+    }
+}
+
+/// Масштабирует big image в `rect` (nearest neighbor), пропуская прозрачный
+/// индекс — картинки планет 128×128 в ячейку 56×40.
+fn blit_big_image_scaled(buffer: &mut RgbaBuffer, image: &max_assets::BigImage, rect: Rect) {
+    if rect.width <= 0 || rect.height <= 0 || image.width <= 0 || image.height <= 0 {
+        return;
+    }
+
+    for y in 0..rect.height {
+        let source_y = (y * i32::from(image.height) / rect.height) as u32;
+
+        for x in 0..rect.width {
+            let source_x = (x * i32::from(image.width) / rect.width) as u32;
+            let Some(index) = image.pixel(source_x, source_y) else {
+                continue;
+            };
+
+            if index == image.transparent {
+                continue;
+            }
+
+            let [r, g, b] = image.color(index);
+
+            buffer.set(rect.x + x, rect.y + y, Rgba::rgb(r, g, b));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1766,6 +2042,121 @@ mod tests {
 
         key(&mut screen, &mut ctx, Key::Escape);
         assert_eq!(screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn planet_click_changes_world_and_keeps_numeric_fallback() {
+        let (mut ctx, _log) = context(Vec::new(), None);
+        let mut screen = Screen::CreateForm(CreateForm::default());
+
+        // Клик по 13-й планете (индекс 12) выбирает её.
+        let cell = planet_cell_rect(ctx.width, ctx.height, 12);
+        let transition = screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(cell.x + cell.width / 2, cell.y + cell.height / 2),
+        );
+
+        assert_eq!(transition, Transition::None);
+        if let Screen::CreateForm(form) = &screen {
+            assert_eq!(form.world, 12);
+            assert_eq!(form.focus, CreateField::World);
+        } else {
+            panic!("ожидалась форма создания");
+        }
+
+        // Числовой fallback: Tab до поля World и цифры по-прежнему работают.
+        if let Screen::CreateForm(form) = &mut screen {
+            form.focus = CreateField::Name;
+            form.world = 0;
+        }
+        key(&mut screen, &mut ctx, Key::Tab);
+        char(&mut screen, &mut ctx, '7');
+
+        if let Screen::CreateForm(form) = &screen {
+            assert_eq!(form.world, 7, "цифровой ввод — fallback");
+        }
+
+        // Клик по имени планеты (низ ячейки) тоже выбирает.
+        let cell = planet_cell_rect(ctx.width, ctx.height, 23);
+        screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(cell.x + 2, cell.y + cell.height - 2),
+        );
+        if let Screen::CreateForm(form) = &screen {
+            assert_eq!(form.world, 23);
+        }
+    }
+
+    #[test]
+    fn planet_grid_is_eight_by_three_and_inside_the_form() {
+        assert_eq!(PLANET_COLUMNS * PLANET_ROWS, PLANET_COUNT as i32);
+
+        for (width, height) in [(512, 384), (640, 480), (320, 240)] {
+            let grid = planet_grid_rect(width, height);
+            assert!(grid.width > 0 && grid.height > 0);
+
+            for index in 0..PLANET_COUNT {
+                let cell = planet_cell_rect(width, height, index);
+                assert!(cell.x >= grid.x && cell.x + cell.width <= grid.x + grid.width);
+                assert!(cell.y >= grid.y && cell.y + cell.height <= grid.y + grid.height);
+                assert_eq!(planet_cell_at(width, height, cell.x, cell.y), Some(index));
+            }
+
+            assert_eq!(planet_cell_at(width, height, 0, 0), None);
+        }
+    }
+
+    #[test]
+    fn create_form_paints_planet_pictures_from_max_res() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let max_res = root.join("max-original/MAX.RES");
+        let color_pal = root.join("max-original/COLOR.PAL");
+        let patches = root.join("assets/PATCHES.RES");
+
+        if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+            return;
+        }
+
+        let config = AppConfig {
+            max_res,
+            color_pal,
+            patches_res: patches,
+            ..Default::default()
+        };
+        let mut app = crate::App::new(config);
+        app.init_assets().expect("ассеты игры загружаются");
+
+        let form = CreateForm {
+            world: 12,
+            ..Default::default()
+        };
+        let mut buffer = RgbaBuffer::filled(640, 480, Rgba::rgb(1, 2, 3));
+        let view = ScreenView {
+            width: 640,
+            height: 480,
+            status: "planets",
+            mouse: None,
+            focus: 0,
+            app: Some(&app),
+        };
+        Screen::CreateForm(form).render(&mut buffer, view);
+
+        let cell = planet_cell_rect(640, 480, 12);
+        let image = Rect::new(cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 16);
+        let mut colors = std::collections::BTreeSet::new();
+
+        for y in image.y..image.y + image.height {
+            for x in image.x..image.x + image.width {
+                if let Some(pixel) = buffer.get(x, y) {
+                    colors.insert([pixel.r, pixel.g, pixel.b]);
+                }
+            }
+        }
+
+        assert!(
+            colors.len() > 8,
+            "картинка планеты должна давать больше 8 цветов, а не заливку: {colors:?}"
+        );
     }
 
     #[test]

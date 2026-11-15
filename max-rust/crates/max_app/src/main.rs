@@ -653,6 +653,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     }
     let mut screen = Screen::MainMenu;
     let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
+    let mut mouse: Option<(i32, i32)> = None;
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
     // M6.1-заготовка: политика реконнекта, общая для `--connect` и `--ui`.
@@ -680,6 +681,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
         for event in events {
             let input = input_event(event);
 
+            if let InputEvent::MouseMove(x, y) = input {
+                mouse = Some((x, y));
+            }
+
             // Внутри сессии ввод идёт в HUD (`handle_session_input`): выделение,
             // приказы 38/08, кнопки End Turn/Menu. В меню — машина экранов.
             let in_session = matches!(screen, Screen::InSession { .. });
@@ -702,6 +707,11 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 }
             }
         }
+
+        // Курсор мыши: меню/панели — HANDPTR, карта — MAP_PTR/приказы/юниты
+        // (`Cursor_SetCursor` + `GameManager_GetWindowCursor`). Без SDL-курсоров
+        // (или без загруженных ресурсов) остаётся системный курсор.
+        update_window_cursor(&mut window, &app, &screen, mouse);
 
         if let Some(request) = pending.take() {
             if runtime.is_none() {
@@ -757,6 +767,48 @@ fn run_ui(_cli: &Cli) -> Result<()> {
         "--ui требует сборки с feature sdl: \
          cargo run -p max_app --features sdl -- --ui"
     )
+}
+
+/// Ставит курсор окна по контексту (`Cursor_SetCursor`).
+///
+/// Меню/форма/список игр — `HANDPTR`; в партии — [`max_app::cursor::session_cursor`]
+/// (карта/панель/юнит/приказ). Ресурсы курсоров грузятся из `MAX.RES`
+/// (`CursorSet`), палитра — системная палитра окна (`FRAMEPIC`).
+#[cfg(feature = "sdl")]
+fn update_window_cursor(
+    window: &mut max_render::sdl_window::SdlWindow,
+    app: &App,
+    screen: &Screen,
+    mouse: Option<(i32, i32)>,
+) {
+    let Some(assets) = app.assets() else {
+        return;
+    };
+    let Some(cursors) = assets.cursors.as_ref() else {
+        return;
+    };
+
+    let (cursor, frame) = if matches!(screen, Screen::InSession { .. }) {
+        max_app::cursor::session_cursor(app, mouse)
+    } else {
+        (max_app::CursorId::Hand, 0)
+    };
+    let palette = max_app::render::window_palette(assets);
+    let Some(image) = max_app::cursor::cursor_image(cursors, &palette, cursor, frame) else {
+        return;
+    };
+    let key = cursor.index() as u32 | ((frame as u32) << 8);
+
+    if let Err(error) = window.set_cursor_rgba(
+        key,
+        &image.rgba,
+        image.width,
+        image.height,
+        image.hot_x,
+        image.hot_y,
+    ) {
+        tracing::debug!("SDL-курсор: {error}");
+    }
 }
 
 #[cfg(feature = "sdl")]

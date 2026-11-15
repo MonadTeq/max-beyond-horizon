@@ -17,7 +17,7 @@
 //!
 //! Всё — чистые функции над [`RgbaBuffer`] и [`Map`]: SDL не требуется.
 
-use max_assets::WrlMap;
+use max_assets::{ResourceMarkers, SimpleImage, WrlMap};
 use max_core::enums::Surface;
 use max_core::map::{Map, ResourceKind, ResourceMap};
 
@@ -321,6 +321,151 @@ pub fn render_resources_into(
     painted
 }
 
+/// Рисует маркеры ресурсов из `MAX.RES` (`Survey_RenderMarker`).
+///
+/// В отличие от [`render_resources_into`] (цветные точки для упрощённого
+/// рендера без данных игры), здесь используются настоящие картинки
+/// `RAWMSK*`/`FUELMK*`/`GOLDMK*` (при `zoom > 16`) или малые
+/// `SMRWMK*`/`SMFLMK*`/`SMGDMK*` (при `zoom <= 16`). Координаты — центр клетки,
+/// hotspot картинки (`ulx/uly`) — как `WindowManager_DecodeSimpleImage`.
+///
+/// `palette` — системная палитра окна (`FRAMEPIC`): маркеры — simple image и
+/// индексируются именно ею, а не палитрой `.WRL`, которой рисуются тайлы.
+/// `team`/`show_all` — маска исследованности (`ResourceManager_CargoMap &
+/// hash_team_id` и `GameManager_MaxSurvey` в C++).
+#[allow(clippy::too_many_arguments)]
+pub fn render_resource_icons_into(
+    dst: &mut RgbaBuffer,
+    map: &Map,
+    viewport: &Viewport,
+    markers: &ResourceMarkers,
+    palette: &crate::terrain::PaletteRgba,
+    team: u8,
+    show_all: bool,
+) -> u32 {
+    let Some(range) = viewport.visible_tiles() else {
+        return 0;
+    };
+    let zoom = viewport.zoom() as i32;
+    let mut painted = 0;
+
+    for (grid_x, grid_y) in range.cells() {
+        if grid_x < 0
+            || grid_y < 0
+            || grid_x >= map.size.width
+            || grid_y >= map.size.height
+        {
+            continue;
+        }
+
+        let entry = map.resource_at(grid_x, grid_y);
+        let Some(kind) = entry.resource_type().filter(|_| entry.amount() > 0) else {
+            continue;
+        };
+
+        if !show_all && !entry.is_visible_to(team) {
+            continue;
+        }
+
+        let rect = viewport.tile_rect(grid_x, grid_y);
+        if rect.width <= 0 || rect.height <= 0 {
+            continue;
+        }
+
+        let centre = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+
+        // C++: `Gfx_ZoomLevel > 16` — большие маркеры, иначе малые.
+        let image = if zoom > 16 {
+            markers.big(kind, entry.amount())
+        } else {
+            markers.small(kind, entry.amount())
+        };
+
+        if let Some(image) = image {
+            // Масштаб оригинала: большой маркер — `zoom/64`, малый — `zoom/16`.
+            let (num, den) = if zoom > 16 { (zoom, 64) } else { (zoom, 16) };
+
+            painted += blit_marker(dst, image, palette, centre, num, den);
+        } else if let Some(icon) = markers.icon(kind) {
+            // Fallback: иконка интерфейса `I_*` по центру клетки (в оригинале не
+            // используется, но лучше цветной точки).
+            let hotspot = (i32::from(icon.width) / 2, i32::from(icon.height) / 2);
+
+            painted += blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1);
+        }
+    }
+
+    painted
+}
+
+/// Блит simple image с hotspot по центру и масштабом `num/den`.
+fn blit_marker(
+    dst: &mut RgbaBuffer,
+    image: &SimpleImage,
+    palette: &crate::terrain::PaletteRgba,
+    centre: (i32, i32),
+    num: i32,
+    den: i32,
+) -> u32 {
+    let hotspot = (
+        scale_round(i32::from(image.ulx), num, den),
+        scale_round(i32::from(image.uly), num, den),
+    );
+
+    blit_marker_at(dst, image, palette, centre, hotspot, num, den)
+}
+
+/// Блит simple image: `top_left = centre - hotspot`, размеры `w*num/den`.
+fn blit_marker_at(
+    dst: &mut RgbaBuffer,
+    image: &SimpleImage,
+    palette: &crate::terrain::PaletteRgba,
+    centre: (i32, i32),
+    hotspot: (i32, i32),
+    num: i32,
+    den: i32,
+) -> u32 {
+    let num = num.max(1);
+    let den = den.max(1);
+    let width = scale_round(i32::from(image.width), num, den).max(1);
+    let height = scale_round(i32::from(image.height), num, den).max(1);
+    let ulx = centre.0 - hotspot.0;
+    let uly = centre.1 - hotspot.1;
+    let mut painted = 0;
+
+    for dy in 0..height {
+        let sy = (dy * den / num) as u32;
+
+        for dx in 0..width {
+            let sx = (dx * den / num) as u32;
+            let Some(index) = image.pixel(sx, sy) else {
+                continue;
+            };
+
+            if index == image.transparent {
+                continue;
+            }
+
+            let [r, g, b, a] = palette[usize::from(index)];
+
+            if dst.set(ulx + dx, uly + dy, Rgba::from_rgba([r, g, b, a])) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// `(value * num / den)` с округлением к ближайшему.
+fn scale_round(value: i32, num: i32, den: i32) -> i32 {
+    if den == 0 {
+        return value;
+    }
+
+    (value * num + den / 2) / den
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +568,72 @@ mod tests {
         assert_eq!(water.get(0, 0), Some(style.water));
         assert_eq!(coast.get(0, 0), Some(style.coast));
         assert_eq!(air.get(0, 0), Some(style.air));
+    }
+
+    #[test]
+    fn resource_markers_are_drawn_from_max_res() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../max-original/MAX.RES");
+
+        if !path.is_file() {
+            return;
+        }
+
+        let archive = max_assets::ResArchive::open(&path).expect("MAX.RES");
+        let markers = max_assets::ResourceMarkers::load(&archive);
+        assert!(markers.is_ready());
+
+        let mut resources = ResourceMap::new();
+        resources.set(
+            52,
+            53,
+            ResourceMapEntry::new(4, Some(ResourceKind::Gold), 0b1),
+        );
+        let map = Map::from_parts(uniform_map(Surface::LAND).surface.clone(), resources);
+        let mut palette = [[0u8, 0, 0, 255]; 256];
+
+        for (index, entry) in palette.iter_mut().enumerate() {
+            *entry = [index as u8, 255 - index as u8, 128, 255];
+        }
+
+        let viewport = Viewport::new(448, 448);
+        let mut buffer = RgbaBuffer::new(448, 448);
+        let painted = render_resource_icons_into(
+            &mut buffer,
+            &map,
+            &viewport,
+            &markers,
+            &palette,
+            0,
+            false,
+        );
+
+        assert!(painted > 0, "маркер золота должен нарисоваться");
+        assert_eq!(
+            render_resource_icons_into(
+                &mut buffer,
+                &map,
+                &viewport,
+                &markers,
+                &palette,
+                0b10,
+                false
+            ),
+            0,
+            "клетка не разведана другой командой"
+        );
+        assert!(
+            render_resource_icons_into(
+                &mut buffer,
+                &map,
+                &viewport,
+                &markers,
+                &palette,
+                0b10,
+                true
+            ) > 0,
+            "SURVEY (show_all) показывает маркеры всех клеток"
+        );
     }
 
     #[test]

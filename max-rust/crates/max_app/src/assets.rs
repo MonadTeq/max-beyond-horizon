@@ -15,7 +15,10 @@
 //! неполном наборе данных.
 
 use anyhow::{Context, Result};
-use max_assets::{decode_shadow, decode_sprite, ResArchive, ShadowSheet, SpriteSheet, WrlMap};
+use max_assets::{
+    decode_shadow, decode_sprite, BigImage, CursorSet, ResArchive, ResourceMarkers, ShadowSheet,
+    SpriteSheet, WrlMap,
+};
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
 
@@ -30,6 +33,10 @@ pub const WORLD_ASSETS: [&str; 24] = [
     "CRATER_4", "CRATER_5", "CRATER_6", "GREEN_1", "GREEN_2", "GREEN_3", "GREEN_4", "GREEN_5",
     "GREEN_6", "DESERT_1", "DESERT_2", "DESERT_3", "DESERT_4", "DESERT_5", "DESERT_6",
 ];
+
+/// Картинки планет по группам из 6 (`SNOW_PIC + world/6`,
+/// `planetselectmenu.cpp:94`, `resourcetable.hpp:1925-1928`).
+pub const PLANET_GROUP_PICTURES: [&str; 4] = ["SNOW_PIC", "CRTR_PIC", "GREN_PIC", "DSRT_PIC"];
 
 /// Имя `.WRL`-ресурса планеты (`settings["world"]`).
 ///
@@ -150,7 +157,7 @@ pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
 /// постройки — это тоже `UnitType` со спрайтом из `MAX.RES` (`HANGAR`,
 /// `DEPOT`, `POWERSTN`, …). Без них карта выглядела пустой: здания рисовались
 /// квадратным маркером команды вместо изометрии 1:1.
-pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 39] = [
+pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 43] = [
     // --- здания (стационарные юниты, `UNIT_START..`) ----------------------
     (UnitType::CommTower, "COMMTWR", Some("S_COMMTW")),
     (UnitType::PowerStation, "POWERSTN", Some("S_POWERS")),
@@ -180,6 +187,9 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 39] = [
     (UnitType::WaterPlatform, "WTRPLTFM", Some("S_WTRPLT")),
     (UnitType::GunTurret, "GUNTURRT", Some("S_GUNTUR")),
     (UnitType::AntiAir, "ANTIAIR", Some("S_ANTIAI")),
+    // --- обломки alien-базы (щит/склад/развлечения, плита и мост) ---------
+    (UnitType::LargeSlab, "LRGSLAB", Some("S_LRGSLA")),
+    (UnitType::Bridge, "BRIDGE", Some("S_BRIDGE")),
     // --- подвижные юниты --------------------------------------------------
     (UnitType::Tank, "TANK", Some("S_TANK")),
     (UnitType::Infantry, "INFANTRY", Some("S_INFANT")),
@@ -192,6 +202,8 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 39] = [
     (UnitType::Surveyor, "SURVEYOR", Some("S_SURVEY")),
     (UnitType::Fighter, "FIGHTER", Some("S_FIGHTE")),
     (UnitType::AlienTank, "ALNTANK", Some("S_ALNTAN")),
+    (UnitType::AlienAssaultGun, "ALNASGUN", Some("S_ALNASG")),
+    (UnitType::AlienPlane, "ALNPLANE", Some("S_ALNPLA")),
 ];
 
 /// Загруженный спрайт одного типа юнита.
@@ -311,6 +323,12 @@ pub struct Assets {
     pub chrome: Option<crate::chrome::Chrome>,
     /// Наполнение панелей поверх `FRAMEPIC` (кнопки, счётчики, сетка, зум).
     pub panels: Option<crate::panels::Panels>,
+    /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
+    pub cursors: Option<CursorSet>,
+    /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
+    pub resource_markers: ResourceMarkers,
+    /// Картинки планет по группам (4 × 128×128 big image, `SNOW_PIC + world/6`).
+    pub planet_pictures: Vec<BigImage>,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
@@ -427,10 +445,50 @@ impl Assets {
             );
         }
 
+        // Курсоры: 30 ресурсов `Cursor_ResourceLut` (`cursor.cpp:55-58`).
+        let cursors = CursorSet::load(&max_res);
+        if cursors.loaded() < max_assets::CURSOR_COUNT {
+            warnings.push(format!(
+                "курсоры: загрузилось {}/{} (нет: {})",
+                cursors.loaded(),
+                max_assets::CURSOR_COUNT,
+                cursors.missing().join(", ")
+            ));
+        }
+
+        // Маркеры ресурсов: настоящие спрайты карты вместо цветных точек.
+        let resource_markers = ResourceMarkers::load(&max_res);
+        if !resource_markers.is_ready() {
+            warnings.push("маркеры ресурсов (RAWMSK*/FUELMK*/GOLDMK*) не загрузились".to_string());
+        }
+
+        // Картинки планет `SNOW_PIC + world/6` — для экрана выбора планеты.
+        let mut planet_pictures = Vec::with_capacity(PLANET_GROUP_PICTURES.len());
+        for name in PLANET_GROUP_PICTURES {
+            match max_res.read(name) {
+                Ok(bytes) => match BigImage::decode(bytes) {
+                    Ok(image) => planet_pictures.push(image),
+                    Err(error) => warnings.push(format!("картинка планеты {name} не разобралась: {error}")),
+                },
+                Err(error) => warnings.push(format!("нет картинки планеты {name}: {error}")),
+            }
+        }
+
+        if planet_pictures.len() != PLANET_GROUP_PICTURES.len() {
+            warnings.push(format!(
+                "картинки планет: загрузилось {}/{}",
+                planet_pictures.len(),
+                PLANET_GROUP_PICTURES.len()
+            ));
+        }
+
         Ok(Self {
             max_res,
             chrome,
             panels,
+            cursors: Some(cursors),
+            resource_markers,
+            planet_pictures,
             patches_res,
             palette,
             brightness,
@@ -449,6 +507,14 @@ impl Assets {
         self.sprites
             .iter()
             .find(|sprite| sprite.unit_type == unit_type)
+    }
+
+    /// Картинка группы планет `SNOW_PIC + world/6` (`planetselectmenu.cpp:94`).
+    ///
+    /// У планет одной группы (6 подряд) общая картинка 128×128; её собственные
+    /// `ulx/uly` (26,98 у `SNOW_PIC`) — позиция на экране выбора.
+    pub fn planet_picture(&self, planet: Planet) -> Option<&BigImage> {
+        self.planet_pictures.get(planet as usize / 6)
     }
 
     /// Все загруженные спрайты в порядке [`UNIT_SPRITES`].
@@ -489,6 +555,80 @@ impl Assets {
 mod tests {
     use super::*;
     use max_core::enums::Planet;
+
+    #[test]
+    fn alien_derelict_sprites_are_loaded() {
+        use max_core::enums::UnitType;
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let max_res = root.join("max-original/MAX.RES");
+        let color_pal = root.join("max-original/COLOR.PAL");
+        let patches = root.join("assets/PATCHES.RES");
+
+        if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+            return;
+        }
+
+        let config = AppConfig {
+            max_res,
+            color_pal,
+            patches_res: patches,
+            ..Default::default()
+        };
+        let assets = Assets::load(&config).expect("ассеты игры");
+
+        // Обломки alien-базы: три юнита (`ALN*`) + плита/мост и здания.
+        for unit_type in [
+            UnitType::AlienTank,
+            UnitType::AlienAssaultGun,
+            UnitType::AlienPlane,
+            UnitType::LargeSlab,
+            UnitType::Bridge,
+            UnitType::ShieldGenerator,
+            UnitType::SupportPlant,
+            UnitType::RecreationCenter,
+        ] {
+            let sprite = assets
+                .sprite(unit_type)
+                .unwrap_or_else(|| panic!("нет спрайта {unit_type:?}"));
+            assert!(!sprite.sheet.is_empty(), "{unit_type:?}: нет кадров");
+        }
+
+        // `RADAR` — это спрайт здания-радара (20 кадров 64×64, 60 449 Б), а не
+        // рамка миникарты: рамка нарисована в `FRAMEPIC`
+        // (`ResourceManager_MinimapBgImage` — снимок окна миникарты).
+        let radar = assets.sprite(UnitType::Radar).expect("RADAR");
+        assert_eq!(radar.sheet.len(), 20);
+        assert_eq!((radar.sheet.frames[0].width, radar.sheet.frames[0].height), (64, 64));
+        assert_eq!((radar.sheet.frames[0].hotx, radar.sheet.frames[0].hoty), (32, 32));
+    }
+
+    #[test]
+    fn planet_pictures_cover_all_four_groups() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let max_res = root.join("max-original/MAX.RES");
+        let color_pal = root.join("max-original/COLOR.PAL");
+        let patches = root.join("assets/PATCHES.RES");
+
+        if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+            return;
+        }
+
+        let assets = Assets::load(&AppConfig {
+            max_res,
+            color_pal,
+            patches_res: patches,
+            ..Default::default()
+        })
+        .expect("ассеты игры");
+
+        assert_eq!(assets.planet_pictures.len(), 4);
+
+        for planet in [Planet::Snowcrab, Planet::IronCross, Planet::NewLuzon, Planet::Bottleneck] {
+            let picture = assets.planet_picture(planet).expect("картинка планеты");
+            assert_eq!((picture.width, picture.height), (128, 128));
+        }
+    }
 
     #[test]
     fn every_planet_maps_to_a_distinct_world_asset() {

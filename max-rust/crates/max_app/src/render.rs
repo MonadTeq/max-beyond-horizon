@@ -20,15 +20,18 @@ use max_render::buffer::{Rgba, RgbaBuffer};
 use max_render::map_render::{render_map_into, TileStyle};
 use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
 use max_render::sprite_atlas::SpriteRenderer;
+use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
+use crate::panels::UiPalette;
 use crate::App;
-
 /// Диагностика одного кадра.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderStats {
     /// Сколько клеток карты нарисовано.
     pub map_tiles: u32,
+    /// Сколько маркеров ресурсов нарисовано.
+    pub resource_icons: u32,
     /// Сколько юнитов нарисовано спрайтами.
     pub units_drawn: usize,
     /// Сколько юнитов нарисовано маркерами (нет спрайта/ассетов).
@@ -88,11 +91,14 @@ impl App {
         match self.assets() {
             Some(assets) if !assets.terrain.is_empty() => {
                 stats.map_tiles = assets.terrain.render_into(&mut frame, self.viewport());
-                max_render::map_render::render_resources_into(
+                stats.resource_icons = render_resources(
                     &mut frame,
+                    assets,
                     &self.state().map,
                     self.viewport(),
                     &style,
+                    self.state().player_team.0,
+                    self.hud().panels.survey,
                 );
             }
             _ => {
@@ -128,11 +134,14 @@ impl App {
         match self.assets() {
             Some(assets) if !assets.terrain.is_empty() => {
                 stats.map_tiles = assets.terrain.render_into(&mut map, &viewport);
-                max_render::map_render::render_resources_into(
+                stats.resource_icons = render_resources(
                     &mut map,
+                    assets,
                     &self.state().map,
                     &viewport,
                     &style,
+                    self.state().player_team.0,
+                    self.hud().panels.survey,
                 );
             }
             _ => {
@@ -223,6 +232,52 @@ impl App {
             }
         }
 
+    }
+}
+
+/// Системная палитра окна для simple image (маркеры ресурсов, курсоры).
+///
+/// В игре это палитра `FRAMEPIC` (её C++ ставит системной при загрузке хрома);
+/// без хрома — `COLOR.PAL` как разумный fallback.
+pub fn window_palette(assets: &crate::assets::Assets) -> PaletteRgba {
+    if let Some(chrome) = assets.chrome.as_ref() {
+        return UiPalette::from_big_image(&chrome.frame).palette_rgba();
+    }
+
+    let mut palette = [[0u8, 0, 0, 255]; 256];
+
+    for (index, entry) in palette.iter_mut().enumerate() {
+        let [r, g, b] = assets.palette.rgb(index as u8);
+
+        *entry = [r, g, b, 255];
+    }
+
+    palette
+}
+
+/// Маркеры ресурсов: настоящие `RAWMSK*`/`FUELMK*`/`GOLDMK*`, иначе точки.
+#[allow(clippy::too_many_arguments)]
+fn render_resources(
+    frame: &mut RgbaBuffer,
+    assets: &crate::assets::Assets,
+    map: &max_core::map::Map,
+    viewport: &max_render::viewport::Viewport,
+    style: &TileStyle,
+    team: u8,
+    show_all: bool,
+) -> u32 {
+    if assets.resource_markers.is_ready() {
+        max_render::map_render::render_resource_icons_into(
+            frame,
+            map,
+            viewport,
+            &assets.resource_markers,
+            &window_palette(assets),
+            team,
+            show_all,
+        )
+    } else {
+        max_render::map_render::render_resources_into(frame, map, viewport, style)
     }
 }
 

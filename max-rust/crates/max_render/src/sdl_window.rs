@@ -21,10 +21,13 @@
 //! Запуск без feature `sdl` даёт ошибку компиляции у вызывающего кода
 //! (модуля просто нет) — это осознанно: SDL не должен протекать в чистые тесты.
 
+use std::collections::HashMap;
+
 use sdl3::keyboard::Keycode;
-use sdl3::mouse::MouseButton;
+use sdl3::mouse::{Cursor, MouseButton};
 use sdl3::pixels::PixelFormat;
 use sdl3::render::{Canvas, TextureCreator};
+use sdl3::surface::Surface;
 use sdl3::video::{Window, WindowContext};
 use sdl3::EventPump;
 
@@ -138,12 +141,17 @@ impl std::error::Error for WindowError {}
 /// клиента это неважно: SDL переиспользует драйверный буфер, а кадр всё равно
 /// перерисовывается целиком.
 pub struct SdlWindow {
-    /// Контекст SDL держим живым на всё время жизни окна.
-    _sdl: sdl3::Sdl,
     canvas: Canvas<Window>,
     creator: TextureCreator<WindowContext>,
     events: EventPump,
     title: String,
+    /// Кэш курсоров: ключ (`CursorId | frame << 8`) → SDL-курсор.
+    cursors: HashMap<u32, Cursor>,
+    /// Какой ключ сейчас установлен (SDL-курсор живёт в этом кэше).
+    active_cursor: Option<u32>,
+    /// Контекст SDL держим последним: поля Rust удаляются в порядке
+    /// объявления, поэтому окно/курсоры уничтожаются **до** `SDL_Quit`.
+    _sdl: sdl3::Sdl,
 }
 
 impl SdlWindow {
@@ -165,11 +173,13 @@ impl SdlWindow {
             .map_err(|error| WindowError::new("event_pump", error))?;
 
         Ok(Self {
-            _sdl: sdl,
             canvas,
             creator,
             events,
             title: title.to_owned(),
+            cursors: HashMap::new(),
+            active_cursor: None,
+            _sdl: sdl,
         })
     }
 
@@ -187,6 +197,72 @@ impl SdlWindow {
     pub fn set_title(&mut self, title: &str) {
         self.title = title.to_owned();
         self.canvas.window_mut().set_title(title).ok();
+    }
+
+    /// Ставит курсор из RGBA8-кадра с hotspot (`SDL_CreateColorCursor`).
+    ///
+    /// `key` — идентификатор кадра (`CursorId | frame << 8`): SDL-курсоры
+    /// кэшируются, повторный вызов с тем же ключом ничего не делает. Так
+    /// анимированный `PTR_PATH` (10 кадров) не пересоздаёт курсор каждый тик.
+    /// Прозрачные пиксели (`alpha == 0`) остаются прозрачными.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_cursor_rgba(
+        &mut self,
+        key: u32,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        hot_x: i32,
+        hot_y: i32,
+    ) -> Result<(), WindowError> {
+        if self.active_cursor == Some(key) {
+            return Ok(());
+        }
+
+        if !self.cursors.contains_key(&key) {
+            if width == 0 || height == 0 {
+                return Err(WindowError::new("cursor", "нулевой размер курсора"));
+            }
+
+            let expected = width as usize * height as usize * 4;
+
+            if rgba.len() < expected {
+                return Err(WindowError::new(
+                    "cursor",
+                    format!("кадр курсора короче: {} < {expected}", rgba.len()),
+                ));
+            }
+
+            let mut surface =
+                Surface::new(width, height, PixelFormat::RGBA32).map_err(|error| {
+                    WindowError::new("cursor_surface", error)
+                })?;
+            let pitch = surface.pitch() as usize;
+            let row_bytes = width as usize * 4;
+
+            surface.with_lock_mut(|pixels: &mut [u8]| {
+                for y in 0..height as usize {
+                    let source = &rgba[y * row_bytes..(y + 1) * row_bytes];
+                    let start = y * pitch;
+
+                    if start + row_bytes <= pixels.len() {
+                        pixels[start..start + row_bytes].copy_from_slice(source);
+                    }
+                }
+            });
+
+            let cursor = Cursor::from_surface(surface, hot_x, hot_y)
+                .map_err(|error| WindowError::new("cursor_create", error))?;
+
+            self.cursors.insert(key, cursor);
+        }
+
+        if let Some(cursor) = self.cursors.get(&key) {
+            cursor.set();
+            self.active_cursor = Some(key);
+        }
+
+        Ok(())
     }
 
     /// Выводит кадр: заливает текстуру и растягивает её на всё окно.

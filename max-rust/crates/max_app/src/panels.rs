@@ -88,6 +88,14 @@ impl UiPalette {
     pub fn rgba(&self, index: u8) -> Rgba {
         Rgba::from_rgb(self.colors[usize::from(index)])
     }
+
+    /// Вся палитра в формате рендера (`[[u8; 4]; 256]`) — для simple image
+    /// (маркеры ресурсов, курсоры), которые индексируются системной палитрой
+    /// окна, а не палитрой `.WRL`/`COLOR.PAL`.
+    pub fn palette_rgba(&self) -> max_render::terrain::PaletteRgba {
+        self.colors
+            .map(|color| [color[0], color[1], color[2], 255])
+    }
 }
 
 /// Переключатель панели или кнопка, обрабатываемая хромом.
@@ -557,21 +565,26 @@ impl Panels {
             self.draw_caption(frame, palette, button);
         }
 
-        // Кнопки миникарты.
-        self.draw_pair(
+        // Кнопки миникарты. В оригинале их отжатое состояние уже нарисовано в
+        // `FRAMEPIC` (как и весь хром), а ресурс `MIN2X_OF`/`MINFL_OF` лежит на
+        // несколько пикселей ниже — при отрисовке поверх получался бы дубль.
+        // Поэтому `*_OF` рисуется только без хрома, `*_ON` — всегда.
+        self.draw_minimap_button(
             frame,
             palette,
             &self.minimap_2x,
             layout::MINIMAP_2X,
             panel.minimap_2x,
+            assets.chrome.is_none(),
             &mut painted,
         );
-        self.draw_pair(
+        self.draw_minimap_button(
             frame,
             palette,
             &self.minimap_tnt,
             layout::MINIMAP_TNT,
             panel.minimap_tnt,
+            assets.chrome.is_none(),
             &mut painted,
         );
 
@@ -596,7 +609,7 @@ impl Panels {
         );
 
         // Миникарта из `minimap`-слоя `.WRL`.
-        painted += draw_minimap(frame, assets, viewport, palette);
+        painted += draw_minimap(frame, app, assets, palette);
 
         // Портрет и статистика.
         painted += self.draw_portrait(frame, app, assets, palette);
@@ -760,6 +773,28 @@ impl Panels {
         active: bool,
         painted: &mut u32,
     ) {
+        let image = if active { &pair.down } else { &pair.up };
+
+        *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
+    }
+
+    /// Кнопка миникарты: `*_ON` всегда, `*_OF` — только если хрома нет
+    /// (в `FRAMEPIC` отжатое состояние уже нарисовано).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_minimap_button(
+        &self,
+        frame: &mut RgbaBuffer,
+        palette: &UiPalette,
+        pair: &ButtonPair,
+        rect: PixelRect,
+        active: bool,
+        draw_up: bool,
+        painted: &mut u32,
+    ) {
+        if !active && !draw_up {
+            return;
+        }
+
         let image = if active { &pair.down } else { &pair.up };
 
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
@@ -990,32 +1025,338 @@ fn draw_stats(
     (layout::STAT_WINDOW.width * layout::STAT_WINDOW.height) as u32
 }
 
+/// Размер окна миникарты (`WINDOW_MINIMAP`, 112×112).
+const MINIMAP_SLOT: i32 = layout::MINIMAP.width;
+
+/// Масштабирование карты в окно миникарты — `World::CalculateMinimapScaling`
+/// (`world.cpp:917`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimapView {
+    /// Смещение нарисованной карты внутри окна (пиксели миникарты).
+    pub offset_x: i32,
+    /// Смещение по y.
+    pub offset_y: i32,
+    /// Ширина нарисованной карты в окне.
+    pub width: i32,
+    /// Высота нарисованной карты в окне.
+    pub height: i32,
+    /// Масштаб карта → окно (`ResourceManager_MinimapWindowScale`).
+    pub scale: f64,
+}
+
+/// Считает масштаб и смещение карты в окне 112×112 (порт
+/// `World::CalculateMinimapScaling`).
+pub fn minimap_view(map_width: i32, map_height: i32) -> MinimapView {
+    let slot = MINIMAP_SLOT;
+    let mut offset_x = 0;
+    let mut offset_y = 0;
+    let mut width = map_width;
+    let mut height = map_height;
+    let mut scale = 1.0;
+
+    if map_width != slot || map_height != slot {
+        if map_width > map_height {
+            if map_width == slot {
+                width = slot;
+                height = map_height;
+                offset_y = (slot - height) / 2;
+            } else {
+                scale = f64::from(slot) / f64::from(map_width);
+                width = slot;
+                height = (f64::from(map_height) * scale) as i32;
+                offset_y = (slot - height) / 2;
+            }
+        } else if map_width == map_height {
+            width = slot;
+            height = slot;
+            scale = f64::from(slot) / f64::from(map_width);
+        } else if map_height == slot {
+            width = map_width;
+            height = slot;
+            offset_x = (slot - width) / 2;
+        } else {
+            scale = f64::from(slot) / f64::from(map_height);
+            width = (f64::from(map_width) * scale) as i32;
+            height = slot;
+            offset_x = (slot - width) / 2;
+        }
+    }
+
+    MinimapView {
+        offset_x,
+        offset_y,
+        width,
+        height,
+        scale,
+    }
+}
+
+/// `GameManager_GridCenterOffset`: левый верхний угол области 2x-миникарты.
+///
+/// В C++ смещение обновляется инкрементально (±4), здесь берётся его предел:
+/// `clamp(view_center - map/4, 0, map/2)`.
+pub fn minimap_center_offset(
+    viewport: &Viewport,
+    map_width: i32,
+    map_height: i32,
+) -> (i32, i32) {
+    let (center_x, center_y) = viewport.center();
+    let grid_x = (center_x / 64).clamp(0, map_width - 1);
+    let grid_y = (center_y / 64).clamp(0, map_height - 1);
+
+    (
+        (grid_x - map_width / 4).clamp(0, map_width / 2),
+        (grid_y - map_height / 4).clamp(0, map_height / 2),
+    )
+}
+
+/// Точка окна → клетка миникарты (`GameManager_GetMinimapPosition`).
+///
+/// Учитывает `2x`-режим: в нём показывается область 56×56 вокруг центра
+/// камеры, поэтому координата делится на 2 и смещается на
+/// [`minimap_center_offset`]. `None` — точка вне окна миникарты.
+pub fn minimap_grid_at(
+    x: i32,
+    y: i32,
+    map_width: i32,
+    map_height: i32,
+    viewport: &Viewport,
+    two_x: bool,
+) -> Option<(i16, i16)> {
+    let area = layout::MINIMAP;
+
+    if !area.contains(x, y) || map_width <= 0 || map_height <= 0 {
+        return None;
+    }
+
+    let view = minimap_view(map_width, map_height);
+    let scale = if view.scale > 0.0 { view.scale } else { 1.0 };
+    let map_scale = f64::from(map_width.max(map_height)) / f64::from(MINIMAP_SLOT);
+    let local_x = f64::from(x - area.ulx - view.offset_x) / scale;
+    let local_y = f64::from(y - area.uly - view.offset_y) / scale;
+    let mut grid_x = (local_x * map_scale) as i32;
+    let mut grid_y = (local_y * map_scale) as i32;
+
+    grid_x = grid_x.clamp(0, map_width - 1);
+    grid_y = grid_y.clamp(0, map_height - 1);
+
+    if two_x {
+        let (offset_x, offset_y) = minimap_center_offset(viewport, map_width, map_height);
+
+        grid_x = (grid_x / 2 + offset_x).clamp(0, map_width - 1);
+        grid_y = (grid_y / 2 + offset_y).clamp(0, map_height - 1);
+    }
+
+    Some((grid_x as i16, grid_y as i16))
+}
+
+/// Палитра индексов миникарты: системная палитра окна, в которой индексы
+/// 64…159 заменены палитрой `.WRL` (`World::ApplyPaletteAndTints`).
+fn minimap_palette(ui: &UiPalette, wrl: &[u8; 768]) -> max_render::terrain::PaletteRgba {
+    let mut palette = ui.palette_rgba();
+    let wrl_palette = max_render::terrain::palette_from_wrl(wrl);
+
+    palette[64..160].copy_from_slice(&wrl_palette[64..160]);
+    palette
+}
+
+/// `ResourceManager_DarkeningColorIndexTable` (`world.cpp:493-508`).
+///
+/// Цвет индекса затемняется вдвое (`max(7, c/4) * 31 / 63`), затем ищется
+/// ближайший индекс палитры (`Color_MapColor`, диапазоны 9..31 и 96..127
+/// пропускаются). Таблица применяется к неисследованным клеткам FOV.
+pub fn darkening_table(palette: &max_render::terrain::PaletteRgba) -> [u8; 256] {
+    let mut palette6 = [[0u8; 3]; 256];
+
+    for (index, entry) in palette6.iter_mut().enumerate() {
+        *entry = [
+            palette[index][0] / 4,
+            palette[index][1] / 4,
+            palette[index][2] / 4,
+        ];
+    }
+
+    let mut table = [0u8; 256];
+
+    for (index, slot) in table.iter_mut().enumerate() {
+        let [r, g, b] = palette6[index];
+        let dark = [
+            ((i32::from(r.max(7)) * 31 / 63) as u8),
+            ((i32::from(g.max(7)) * 31 / 63) as u8),
+            ((i32::from(b.max(7)) * 31 / 63) as u8),
+        ];
+
+        *slot = map_color(&palette6, dark);
+    }
+
+    table
+}
+
+/// `Color_MapColor(..., full_scan = false)` — ближайший цвет палитры.
+fn map_color(palette: &[[u8; 3]; 256], target: [u8; 3]) -> u8 {
+    let mut best = 0u8;
+    let mut best_distance = i32::MAX;
+
+    for (index, color) in palette.iter().enumerate() {
+        // C++ пропускает диапазоны 9..=31 и 96..=127 (в байтовых смещениях —
+        // те же индексы после /3).
+        if (9..=31).contains(&index) || (96..=127).contains(&index) {
+            continue;
+        }
+
+        let dr = i32::from(color[0]) - i32::from(target[0]);
+        let dg = i32::from(color[1]) - i32::from(target[1]);
+        let db = i32::from(color[2]) - i32::from(target[2]);
+        let distance = dr * dr + dg * dg + db * db;
+
+        if distance < best_distance {
+            best_distance = distance;
+            best = index as u8;
+
+            if distance == 0 {
+                break;
+            }
+        }
+    }
+
+    best
+}
+
+/// Индекс цвета точки юнита на миникарте (`DrawMap_RenderMiniMapUnitList`).
+fn minimap_unit_color(team: max_core::TeamId) -> u8 {
+    match team.0 {
+        0 => 0x01, // COLOR_RED
+        1 => 0x02, // COLOR_GREEN
+        2 => 0x03, // COLOR_BLUE
+        3 => 0xFF, // «серый» — белый
+        _ => 0x04, // COLOR_YELLOW (пришельцы/прочее)
+    }
+}
+
 /// Миникарта из `minimap`-слоя `.WRL` (112×112 у стандартных планет).
 fn draw_minimap(
     frame: &mut RgbaBuffer,
+    app: &crate::App,
     assets: &Assets,
-    viewport: &Viewport,
-    _palette: &UiPalette,
+    palette: &UiPalette,
 ) -> u32 {
     let world = &assets.world;
     let minimap = world.minimap();
-    let width = i32::from(world.width());
-    let height = i32::from(world.height());
+    let map_width = i32::from(world.width());
+    let map_height = i32::from(world.height());
 
-    if minimap.len() < (width * height) as usize || width <= 0 || height <= 0 {
+    if minimap.len() < (map_width * map_height) as usize || map_width <= 0 || map_height <= 0 {
         return 0;
     }
 
+    let state = app.state();
+    let panel = &app.hud().panels;
+    let viewport = app.viewport();
+    let combined = minimap_palette(palette, world.palette());
+    let dark = darkening_table(&combined);
+
+    // 1. FOV: `Access_UpdateMinimapFogOfWar` — неисследованные клетки темнее.
+    let all_visible = state.ai.all_visible;
+    let heat = state
+        .ai
+        .heat_maps
+        .get(usize::from(state.player_team.0))
+        .map(|map| map.cells())
+        .unwrap_or(&[]);
+    let mut layer = Vec::with_capacity((map_width * map_height) as usize);
+
+    for (index, &color) in minimap.iter().enumerate() {
+        let explored = heat.get(index).is_some_and(|cell| cell.complete > 0);
+
+        layer.push(if all_visible || explored {
+            color
+        } else {
+            dark[usize::from(color)]
+        });
+    }
+
+    // 2. Точки юнитов (`DrawMap_RenderMiniMapUnitList`).
+    paint_minimap_units(
+        &mut layer,
+        state,
+        map_width,
+        map_height,
+        panel.minimap_tnt,
+        panel.minimap_2x,
+    );
+
+    // 3. Карта в окно 112×112 (`GameManager_RenderMinimap` + `cscale`).
+    let view = minimap_view(map_width, map_height);
+    let mut window = vec![0u8; (MINIMAP_SLOT * MINIMAP_SLOT) as usize];
+    let inner_width = MINIMAP_SLOT - view.offset_x * 2;
+    let inner_height = MINIMAP_SLOT - view.offset_y * 2;
+
+    for y in 0..inner_height {
+        let source_y = y * map_height / inner_height;
+
+        for x in 0..inner_width {
+            let source_x = x * map_width / inner_width;
+            let value = layer[(source_y * map_width + source_x) as usize];
+            let dest = ((y + view.offset_y) * MINIMAP_SLOT + x + view.offset_x) as usize;
+
+            if let Some(slot) = window.get_mut(dest) {
+                *slot = value;
+            }
+        }
+    }
+
+    // 4. Рамка камеры (`draw_box(..., COLOR_RED)`); в 2x-режиме C++ затирает её
+    //    масштабированием, поэтому рисуем до 2x.
+    let map_view = map_viewport(viewport);
+
+    if let Some(range) = map_view.visible_tiles() {
+        let scale = view.scale;
+        let x0 = view.offset_x + (f64::from(range.x0) * scale) as i32;
+        let y0 = view.offset_y + (f64::from(range.y0) * scale) as i32;
+        let x1 = view.offset_x + ((f64::from(range.x1) + 0.9) * scale) as i32;
+        let y1 = view.offset_y + ((f64::from(range.y1) + 0.9) * scale) as i32;
+
+        draw_box_indexed(
+            &mut window,
+            MINIMAP_SLOT,
+            (x0, y0, x1, y1),
+            0x01,
+        );
+    }
+
+    // 5. 2x-режим (`GameManager_RenderMinimap`): область 56×56 вокруг центра
+    //    камеры растягивается на всё окно.
+    if panel.minimap_2x {
+        let (center_x, center_y) = minimap_center_offset(&map_view, map_width, map_height);
+        let start_x = view.offset_x / 2 + (f64::from(center_x) * view.scale) as i32;
+        let start_y = view.offset_y / 2 + (f64::from(center_y) * view.scale) as i32;
+        let mut scaled = vec![0u8; window.len()];
+
+        for y in 0..MINIMAP_SLOT / 2 {
+            for x in 0..MINIMAP_SLOT / 2 {
+                let source_x = (start_x + x).clamp(0, MINIMAP_SLOT - 1);
+                let source_y = (start_y + y).clamp(0, MINIMAP_SLOT - 1);
+                let value = window[(source_y * MINIMAP_SLOT + source_x) as usize];
+
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        scaled[((2 * y + dy) * MINIMAP_SLOT + 2 * x + dx) as usize] = value;
+                    }
+                }
+            }
+        }
+
+        window = scaled;
+    }
+
+    // 6. Индексы → RGBA в окно `WINDOW_MINIMAP`.
     let area = layout::MINIMAP;
-    let wrl_palette = max_render::terrain::palette_from_wrl(world.palette());
     let mut painted = 0u32;
 
-    for y in 0..area.height {
-        for x in 0..area.width {
-            let source_x = x * width / area.width;
-            let source_y = y * height / area.height;
-            let index = minimap[(source_y * width + source_x) as usize];
-            let [r, g, b, a] = wrl_palette[usize::from(index)];
+    for y in 0..MINIMAP_SLOT {
+        for x in 0..MINIMAP_SLOT {
+            let index = window[(y * MINIMAP_SLOT + x) as usize];
+            let [r, g, b, a] = combined[usize::from(index)];
 
             if frame.set(area.ulx + x, area.uly + y, Rgba::from_rgba([r, g, b, a])) {
                 painted += 1;
@@ -1023,27 +1364,84 @@ fn draw_minimap(
         }
     }
 
-    // Рамка камеры (как `GameManager_RenderMinimap`).
-    let map_view = map_viewport(viewport);
+    painted
+}
 
-    if let Some(range) = map_view.visible_tiles() {
-        let x0 = area.ulx + i32::from(range.x0) * area.width / width;
-        let y0 = area.uly + i32::from(range.y0) * area.height / height;
-        let x1 = area.ulx + (i32::from(range.x1) + 1) * area.width / width;
-        let y1 = area.uly + (i32::from(range.y1) + 1) * area.height / height;
-        let color = Rgba::rgb(252, 0, 0);
+/// Точки юнитов на слое миникарты (ровно условия C++).
+fn paint_minimap_units(
+    layer: &mut [u8],
+    state: &GameState,
+    map_width: i32,
+    map_height: i32,
+    tnt: bool,
+    two_x: bool,
+) {
+    use max_core::enums::unit_flags;
+    use max_core::enums::UnitOrder;
 
-        for x in x0..x1.min(area.lrx()) {
-            frame.set(x, y0, color);
-            frame.set(x, y1.min(area.lry() - 1), color);
+    let player_team = state.player_team;
+
+    for id in state.unit_ids_in_order() {
+        let Some(unit) = state.unit(id) else {
+            continue;
+        };
+
+        if !unit.is_visible_to_team(player_team)
+            || unit.orders == UnitOrder::Idle
+            || unit.flags & unit_flags::SELECTABLE == 0
+        {
+            continue;
         }
-        for y in y0..y1.min(area.lry()) {
-            frame.set(x0, y, color);
-            frame.set(x1.min(area.lrx() - 1), y, color);
+
+        if tnt && unit.flags & (unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES) == 0 {
+            continue;
+        }
+
+        let color = minimap_unit_color(unit.team);
+        let grid_x = i32::from(unit.grid.x);
+        let grid_y = i32::from(unit.grid.y);
+
+        if two_x && unit.flags & unit_flags::BUILDING == 0 {
+            if grid_x >= 0 && grid_y >= 0 && grid_x < map_width && grid_y < map_height {
+                layer[(grid_y * map_width + grid_x) as usize] = color;
+            }
+        } else {
+            let grid_x = grid_x.clamp(0, map_width - 2);
+            let grid_y = grid_y.clamp(0, map_height - 2);
+
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                layer[((grid_y + dy) * map_width + grid_x + dx) as usize] = color;
+            }
         }
     }
+}
 
-    painted
+/// `draw_box` по индексированному буферу (рамка камеры).
+fn draw_box_indexed(buffer: &mut [u8], stride: i32, rect: (i32, i32, i32, i32), color: u8) {
+    let (x0, y0, x1, y1) = rect;
+
+    if x1 < x0 || y1 < y0 {
+        return;
+    }
+
+    for x in x0..=x1 {
+        set_indexed(buffer, stride, x, y0, color);
+        set_indexed(buffer, stride, x, y1, color);
+    }
+    for y in y0..=y1 {
+        set_indexed(buffer, stride, x0, y, color);
+        set_indexed(buffer, stride, x1, y, color);
+    }
+}
+
+fn set_indexed(buffer: &mut [u8], stride: i32, x: i32, y: i32, color: u8) {
+    if x < 0 || y < 0 || x >= stride || y >= stride {
+        return;
+    }
+
+    if let Some(slot) = buffer.get_mut((y * stride + x) as usize) {
+        *slot = color;
+    }
 }
 
 /// Рисует строку по центру прямоугольника шрифтом GNW.
@@ -1196,6 +1594,117 @@ mod tests {
     }
 
     /// Панели грузятся из настоящего `MAX.RES`, и каждая зона меняет пиксели.
+    #[test]
+    fn minimap_view_matches_calculate_minimap_scaling() {
+        let view = minimap_view(112, 112);
+        assert_eq!((view.offset_x, view.offset_y), (0, 0));
+        assert_eq!((view.width, view.height), (112, 112));
+        assert_eq!(view.scale, 1.0);
+
+        // Широкая карта 224×112: масштаб 0.5, по y — центрирование.
+        let view = minimap_view(224, 112);
+        assert_eq!(view.scale, 0.5);
+        assert_eq!((view.width, view.height), (112, 56));
+        assert_eq!(view.offset_y, 28);
+
+        // Высокая карта 56×112: по x — центрирование.
+        let view = minimap_view(56, 112);
+        assert_eq!((view.width, view.height), (56, 112));
+        assert_eq!(view.offset_x, 28);
+    }
+
+    #[test]
+    fn minimap_click_maps_to_grid_and_accounts_for_2x() {
+        let viewport = Viewport::new(640, 480);
+
+        assert_eq!(
+            minimap_grid_at(15, 356, 112, 112, &viewport, false),
+            Some((0, 0))
+        );
+        assert_eq!(
+            minimap_grid_at(15 + 56, 356 + 56, 112, 112, &viewport, false),
+            Some((56, 56))
+        );
+        assert_eq!(
+            minimap_grid_at(15 + 111, 356 + 111, 112, 112, &viewport, false),
+            Some((111, 111))
+        );
+
+        // 2x: центр камеры (56,56) → offset 28, левый верхний угол показывает
+        // клетку 28, центр — 56.
+        assert_eq!(
+            minimap_grid_at(15, 356, 112, 112, &viewport, true),
+            Some((28, 28))
+        );
+        assert_eq!(
+            minimap_grid_at(15 + 56, 356 + 56, 112, 112, &viewport, true),
+            Some((56, 56))
+        );
+
+        assert_eq!(minimap_grid_at(14, 356, 112, 112, &viewport, false), None);
+        assert_eq!(minimap_grid_at(15, 468, 112, 112, &viewport, false), None);
+    }
+
+    #[test]
+    fn darkening_table_halves_brightness_like_cpp() {
+        let mut palette = [[0u8, 0, 0, 255]; 256];
+        palette[2] = [100, 100, 100, 255];
+        palette[128] = [48, 48, 48, 255];
+        let table = darkening_table(&palette);
+
+        // `max(7,100/4)*31/63 = 12`; ближайший цвет палитры — индекс 128.
+        assert_eq!(table[2], 128);
+        assert_eq!(table[0], 0, "чёрный остаётся чёрным");
+    }
+
+    #[test]
+    fn minimap_unit_dots_use_team_colors_and_tnt_filter() {
+        use max_core::enums::{unit_flags, UnitOrder, UnitType};
+        use max_core::geo::Point;
+
+        let mut state = GameState::new();
+        let id = state
+            .spawn_unit(
+                UnitType::Tank,
+                max_core::TeamId(0),
+                Point::new(10, 10),
+                unit_flags::SELECTABLE,
+            )
+            .expect("юнит");
+        state.unit_mut(id).expect("юнит").orders = UnitOrder::Move;
+
+        let mut layer = vec![0u8; 112 * 112];
+        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+
+        // Точка юнита 2×2, цвет RED (индекс 1).
+        assert_eq!(layer[10 * 112 + 10], 1);
+        assert_eq!(layer[11 * 112 + 11], 1);
+
+        // TNT-фильтр: у юнита нет стреляющего спрайта — точка пропадает.
+        {
+            let unit = state.unit_mut(id).expect("юнит");
+            unit.flags &= !(unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES);
+        }
+        let mut filtered = vec![0u8; 112 * 112];
+        paint_minimap_units(&mut filtered, &state, 112, 112, true, false);
+        assert_eq!(filtered[10 * 112 + 10], 0);
+
+        // В 2x не-здание рисуется одной клеткой.
+        let mut zoomed = vec![0u8; 112 * 112];
+        paint_minimap_units(&mut zoomed, &state, 112, 112, false, true);
+        assert_eq!(zoomed[10 * 112 + 10], 1);
+        assert_eq!(zoomed[11 * 112 + 11], 0);
+    }
+
+    #[test]
+    fn unit_dot_colors_follow_the_cpp_hash_teams() {
+        assert_eq!(minimap_unit_color(max_core::TeamId(0)), 0x01);
+        assert_eq!(minimap_unit_color(max_core::TeamId(1)), 0x02);
+        assert_eq!(minimap_unit_color(max_core::TeamId(2)), 0x03);
+        assert_eq!(minimap_unit_color(max_core::TeamId(3)), 0xFF);
+        assert_eq!(minimap_unit_color(max_core::TeamId(4)), 0x04);
+    }
+
     #[test]
     fn panels_load_and_paint_every_region() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
