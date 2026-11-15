@@ -4,9 +4,9 @@
 
 | Драйвер | Назначение | Запуск |
 |---|---|---|
-| `qa_run.rs` | исполнение .qa-скриптов через реальные обработчики ввода (без SDL) | `cargo run -p max_app --example qa_run -- <script.qa> <out_dir>` |
-| `qa_golden_check.rs` | сверка кадров с эталонами, `--update` — перегенерация | `cargo run -p max_app --example qa_golden_check -- [--update] <golden_dir> <out_dir>` |
-| `sp_frames.rs` | генерация эталонных кадров экранов | `cargo run -p max_app --example sp_frames -- <data_dir> <out_dir>` |
+| `qa_run.rs` | исполнение .qa-скриптов через реальные обработчики ввода (без SDL) | `cargo run -p max_app --no-default-features --example qa_run -- <script.qa> <out_dir>` |
+| `qa_golden_check.rs` | сверка кадров с эталонами, `--update` — перегенерация | `cargo run -p max_app --no-default-features --example qa_golden_check -- <shots_dir> <golden_dir> [--update]` |
+| `sp_frames.rs` | генерация эталонных кадров экранов | `cargo run -p max_app --no-default-features --example sp_frames -- <data_dir> <out_dir>` |
 
 ## Оконные прогоны (Windows, реальный бинарь + мышь)
 
@@ -57,12 +57,12 @@ exit
 выходе.
 
 ```sh
-# из max-rust/; системный SDL3
-cargo run -p max_app --features sdl -- \
+# из max-rust/; GUI — default: SDL3 3.4.20 собирается из исходников (cmake)
+cargo run -p max_app -- \
   --record ../max-rust-qa/scripts/my-run.qa
 
-# SDL3 из исходников (docker/CI, нужен cmake)
-cargo run -p max_app --features sdl-from-source -- \
+# системный SDL3 вместо сборки из исходников (явные фичи + --no-default-features)
+cargo run -p max_app --no-default-features --features sdl -- \
   --record ../max-rust-qa/scripts/my-run.qa
 ```
 
@@ -160,7 +160,7 @@ shot game-turn2
 2. Прогоните:
    ```sh
    cd max-rust
-   cargo run -p max_app --example qa_run -- \
+   cargo run -p max_app --no-default-features --example qa_run -- \
      ../max-rust-qa/scripts/my-run.qa ../max-rust-qa/out/my-run
    ```
    Упавший `assert` печатает фактическое значение и номер строки (`log.txt`).

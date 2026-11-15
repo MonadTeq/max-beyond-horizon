@@ -11,6 +11,16 @@
 # Запускать из любой оболочки: bash/ Git Bash/ WSL/ Linux.
 set -euo pipefail
 
+# Git Bash (MSYS2/Cygwin) переписывает POSIX-пути в аргументах прямо в
+# Windows-пути: `docker run -w /src/max-rust` превращался в
+# `-w C:/Program Files/Git/src/max-rust` и docker падал с «working directory is
+# invalid». Пути внутри контейнера обязаны остаться POSIX — конверсию отключаем
+# (на Linux/macOS эти переменные игнорируются).
+if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
+    export MSYS_NO_PATHCONV=1
+    export MSYS2_ARG_CONV_EXCL='*'
+fi
+
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Docker Desktop для Windows ждёт путь вида D:/..., а не /d/...
 if command -v cygpath >/dev/null 2>&1; then
@@ -72,14 +82,30 @@ step() {
 
 started=$(date +%s)
 
-step "1/3 max-rust: cargo check + test (+ sound feature)"
+step "1/3 max-rust: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
+# default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
+# через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux
+# CMake собирает SDL3 с теми драйверами, чьи dev-заголовки видит, поэтому ставим
+# полный набор из docs/development/release-checklist.md §2.3: X11
+# (x11/xext/xrender/xcursor/xi/xrandr/xinerama/xss/xtst/xfixes), Wayland
+# (wayland/xkbcommon/libdecor), EGL/GLES/GL, KMSDRM (drm/gbm), ALSA (звук SDL и
+# feature sound), dbus-1 и libudev. Без них SDL3 соберётся с dummy-драйверами —
+# окно на Linux не откроется.
+# libSDL3.so.0 после сборки лежит в target/debug (sdl3-sys копирует её из
+# CMake-каталога) и линкуется динамически — тестовым бинарям нужен
+# LD_LIBRARY_PATH на target/debug (в артефактах это делает run.sh).
+SDL_DEPS='gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev'
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
     -e "CARGO_HOME=/cargo-home" \
     -w /src/max-rust \
     "$RUST_IMAGE" bash -c \
-    'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev >/dev/null && cargo check && cargo test && cargo check --features sound && cargo test --features sound'
+    "apt-get update -qq && apt-get install -y -qq $SDL_DEPS >/dev/null && \
+     export LD_LIBRARY_PATH=/src/max-rust/target/debug\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
+     cargo check && cargo test && \
+     cargo check --features sound && cargo test --features sound && \
+     cargo test --no-default-features"
 
 step "2/3 max-horizon-server: cargo test --workspace"
 docker run --rm \
@@ -90,6 +116,9 @@ docker run --rm \
 
 # Слои 2–3 QA (max-rust-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
 # Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
+# Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
+# нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
+# Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
 step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
@@ -100,11 +129,11 @@ docker run --rm \
     'set -e
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
      rm -rf qa-out
-     cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
-     cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
-     cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
-     cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
-     cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden'
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden'
 
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"

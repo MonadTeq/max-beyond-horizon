@@ -1,0 +1,15 @@
+# Конфигурация сборки workspace `max-rust`.
+#
+# Windows: у главного потока PE-стек по умолчанию 1 МиБ, а debug-сборка
+# headless-режимов (`--demo`, `--new-game`: save → GameState → тики) в него не
+# укладывается — процесс падает с `thread 'main' has overflowed its stack`
+# (release-сборка оптимизатором укладывается, Linux — 8 МиБ по умолчанию).
+# Даём main-потоку те же 8 МиБ: тогда `cargo run -p max_app --no-default-features
+# -- --demo …` работает и в debug, и поведение совпадает с Linux.
+#
+# Флаги заданы только для Windows-целей: на Linux/macOS ничего не меняется.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]

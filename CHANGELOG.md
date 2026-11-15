@@ -81,6 +81,37 @@
 
 ### Изменено
 
+- **GUI — режим по умолчанию: `default = ["sdl-from-source"]` в `max_app`**.
+  `cargo run -p max_app` (и обычная `cargo build`) больше не требуют флагов:
+  SDL3 3.4.20 берётся из vendored `sdl3-src` и собирается через CMake из
+  исходников — системный SDL3 и vcpkg не нужны, нужны только C-компилятор и
+  `cmake`. Раньше `default = []`, и запуск без флагов падал с
+  «GUI-режим … требует сборки с feature sdl». Headless-сборки явно собираются
+  с `--no-default-features` (`build/scripts/build-windows.sh`, `ci.sh`, QA);
+  явные оконные фичи (`sdl`, `sdl-vcpkg`) комбинировать с default нельзя —
+  их тоже нужно включать через `--no-default-features`, иначе добавится
+  `sdl-from-source` (`build/scripts/build-windows-ui.ps1`, `release.sh`).
+  Звук (`sound`) **не** входит в default: rodio/cpal тянет ALSA/WASAPI —
+  включается явно `--features sound`.
+- **CI/Docker: системные зависимости для сборки SDL3 из исходников**.
+  `ci.sh` и `.github/workflows/ci.yml` ставят dev-заголовки X11/Wayland/ALSA/
+  GL/KMSDRM/dbus/udev (набор из `docs/development/release-checklist.md` §2.3);
+  `cargo test` идёт с `LD_LIBRARY_PATH=target/debug` (там `libSDL3.so.0`).
+  QA-примеры (`qa_run`, `qa_golden_check`) собираются с
+  `--no-default-features` — окно им не нужно. Добавлен `cargo test
+  --no-default-features` (headless-путь и cfg-ветки без feature `sdl`) и
+  `cargo build … --no-default-features` в `release.sh` для headless-релиза.
+  Заодно исправлены пути QA-сценариев в
+  `ci.sh`/`ci.yml`/`release-checklist` (`../max-rust-qa/scripts/…`,
+  `../max-rust-qa/golden` — каталога `max-rust/qa/` давно нет, из-за чего
+  стадия 3/3 не находила скрипты) и путь артефактов QA в workflow.
+  `ci.sh`/`release.sh` экспортируют `MSYS_NO_PATHCONV` (иначе в Git Bash
+  `docker run -w /src/max-rust` ломался на `C:/Program Files/Git/...`).
+- **`max-rust/.cargo/config.toml`: 8 МиБ стека для Windows-целей**.
+  У главного потока PE-стек 1 МиБ, а debug-сборка headless-режимов
+  (`--demo`/`--new-game`) в него не влезала — `thread 'main' has overflowed its
+  stack`; release-сборка работала. `-C link-arg=/STACK:8388608` (msvc) и
+  `-Wl,--stack,8388608` (gnu) выравнивают поведение с Linux.
 - **Windows GUI-сборки без консольного окна**: `max_app/src/main.rs` —
   `#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]`; фичи
   `sdl-vcpkg`/`sdl-from-source` включают `sdl`, поэтому все оконные сборки
@@ -100,8 +131,9 @@
   Каталоги артефактов (`max_app-<version>-…`) сохранены.
 - **Запуск без флагов открывает GUI** (меню SDL3): headless-режимы доступны
   только по явным `--demo`, `--new-game`, `--connect`; `--ui` оставлен
-  совместимым alias. В headless-сборке без feature `sdl` запуск без флагов
-  даёт понятную ошибку с подсказкой про `--features sdl` и headless-флаги.
+  совместимым alias. В headless-сборке (`--no-default-features`, без feature
+  `sdl`) запуск без флагов даёт понятную ошибку с подсказкой собрать без
+  `--no-default-features` и headless-флаги.
 - Help-текст, build/release-скрипты и документация переведены на
   `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
 

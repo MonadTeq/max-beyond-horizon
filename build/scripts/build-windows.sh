@@ -107,7 +107,7 @@ BUILD_CMD="cargo build --release --locked --target $TARGET -p max_app --no-defau
 echo "build-windows.sh: M.A.X. Rust client $VERSION → Windows x86_64 (headless)"
 echo "  образ:     $RUST_IMAGE"
 echo "  target:    $TARGET (mingw-w64)"
-echo "  features:  <нет: без sdl*, без sound>"
+echo "  features:  <нет: --no-default-features, без sdl*, без sound>"
 echo "  каталог:   $OUT_HOST/$BUNDLE_NAME"
 echo "  архив:     $OUT_HOST/$BUNDLE_NAME.zip"
 if [ "$DO_WINE" = "1" ]; then
@@ -159,7 +159,9 @@ M.A.X. Rust client ${VERSION} — Windows x86_64 (headless)
   max-rust.exe --connect HOST:8082 --join GAME_ID  # Horizon gRPC + ENet, без окна
 
 Запуск без флагов (GUI) в этой headless-сборке недоступен: клиент скажет,
-что нужна сборка с feature sdl, и предложит headless-флаги выше.
+что нужна сборка с feature sdl (она входит в default-features max_app), и
+предложит headless-флаги выше. Обычная сборка из исходников
+(`cargo run -p max_app` без --no-default-features) GUI открывает.
 
 Данные игры указываются флагами:
   --data-dir <каталог>     MAX.RES и COLOR.PAL
@@ -191,10 +193,12 @@ Windows-машине с Rust 1.94.0 и MSVC:
   C:\\vcpkg\\bootstrap-vcpkg.bat
   C:\\vcpkg\\vcpkg install sdl3:x64-windows
   set VCPKG_ROOT=C:\\vcpkg          # PowerShell: \$env:VCPKG_ROOT = "C:\\vcpkg"
-  # 4. Сборка (vcpkg-фича max_app/max_render)
+  # 4. Сборка (vcpkg-фича max_app/max_render). --no-default-features обязателен:
+  #    иначе к sdl-vcpkg добавится default sdl-from-source (SDL3 через CMake).
   cd max-rust
-  cargo build --release -p max_app --features sdl-vcpkg
-  #    вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC)
+  cargo build --release -p max_app --no-default-features --features sdl-vcpkg
+  #    вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC) —
+  #    он же default, поэтому достаточно `cargo run -p max_app` / `cargo build -p max_app`
   # 5. SDL3.dll рядом с exe (vcpkg: C:\\vcpkg\\installed\\x64-windows\\bin\\SDL3.dll)
   target\\release\\max-rust.exe
 

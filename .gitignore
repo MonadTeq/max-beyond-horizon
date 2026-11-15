@@ -97,7 +97,7 @@ build/game-data-smoke/
 !build/scripts/**
 
 # QA-артефакты слоя 2–3: логи, кадры прогонов, diff-*.png, *.mxs
-# (эталоны лежат в max-rust/qa/golden/ и коммитятся)
+# (эталоны лежат в max-rust-qa/golden/ и коммитятся)
 max-rust/qa-out/
 
 

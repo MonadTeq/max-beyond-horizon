@@ -33,9 +33,10 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
             -p max_app --no-default-features
 ```
 
-`--no-default-features` = headless: фичи `sdl*` (SDL3 из исходников/vcpkg —
-нужен CMake/MSVC и Windows-импорты) и `sound` (rodio/cpal → WASAPI) не
-включаются. Полная SDL-сборка — только на Windows-хосте, инструкция лежит в
+`--no-default-features` = headless: default-фичи `max_app`
+(`sdl-from-source` → SDL3 из исходников через CMake) выключены, поэтому окно
+SDL3 и `sound` (rodio/cpal → WASAPI) не включаются. Полная SDL-сборка — только
+на Windows-хосте, инструкция лежит в
 `release/max_app-<версия>-windows-x86_64/README.txt` и в
 `docs/development/release-checklist.md` §6.
 
@@ -108,8 +109,12 @@ Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), ищет vcpkg с
 (окружение `vcvars64` + `CARGO_TARGET_DIR`), собирает
 
 ```sh
-cargo build --release --locked -p max_app --features sdl-vcpkg,sound
+cargo build --release --locked -p max_app --no-default-features --features sdl-vcpkg,sound
 ```
+
+`--no-default-features` обязателен: `max_app` по умолчанию собирается с
+`sdl-from-source` (SDL3 через CMake), и без этого флага к `sdl-vcpkg`
+добавилась бы ещё и сборка из исходников.
 
 кладёт `SDL3.dll` рядом с exe, проверяет PE-заголовок (`pe-subsystem.ps1`,
 Subsystem=2 = GUI) и `max-rust.exe --help`, затем пакует

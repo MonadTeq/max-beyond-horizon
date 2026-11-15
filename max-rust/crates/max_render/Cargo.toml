@@ -17,8 +17,12 @@ sdl3 = { version = "0.22", optional = true, default-features = false }
 default = []
 # Окно и вывод кадра: требует установленного SDL3 (libsdl3-dev / vcpkg).
 sdl = ["dep:sdl3"]
-# То же, но SDL3 собирается из исходников (нужен cmake); путь для CI/docker,
-# где системного SDL3 нет.
+# То же, но SDL3 собирается из исходников (нужен cmake) — путь для CI/docker и
+# default `max_app`. Самодостаточно: `sdl3-sys` собирает vendored SDL3 3.4.20
+# (`sdl3-src`) через CMake, системный SDL3 и vcpkg не нужны. Крейт `sdl3`
+# тянет sdl3-sys ещё и со своими default-фичами (`use-pkg-config`/`use-vcpkg`),
+# но при включённом `build-from-source` build.rs использует ТОЛЬКО CMake-ветку —
+# pkg-config/vcpkg не вызываются вовсе.
 sdl-from-source = ["sdl", "sdl3/build-from-source"]
 # SDL3 из vcpkg (Windows: vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
 sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]

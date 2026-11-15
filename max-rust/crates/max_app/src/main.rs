@@ -3,7 +3,9 @@
 //! Режимы:
 //!
 //! * без флагов (или `--ui`) — интерактивное меню (создать/выбрать игру) и
-//!   сессия в окне SDL3: это режим по умолчанию, нужна feature `sdl`;
+//!   сессия в окне SDL3: это режим по умолчанию, feature `sdl` входит в
+//!   default (`sdl-from-source`), т.е. `cargo run -p max_app` сразу открывает
+//!   игру;
 //! * `--demo <save> [--turns N]` — headless: V70-сейв → N тиков → digest;
 //! * `--new-game` — локальная партия на карте планеты + кадр в PPM (`--out`);
 //! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet-сессия;
@@ -314,14 +316,17 @@ impl Cli {
         Ok(cli)
     }
 
-    /// GUI (режим по умолчанию, он же `--ui`) требует feature `sdl`.
-    /// Headless-режимы (`--demo`/`--new-game`/`--connect` без `--sdl`) — нет.
+    /// GUI (режим по умолчанию, он же `--ui`) требует feature `sdl` — она в
+    /// default (`sdl-from-source`), поэтому сюда попадаем только у сборки с
+    /// `--no-default-features`. Headless-режимы (`--demo`/`--new-game`/
+    /// `--connect` без `--sdl`) SDL не требуют.
     #[cfg(not(feature = "sdl"))]
     fn ensure_gui_available(&self) -> Result<()> {
         if self.mode == Mode::Ui {
             bail!(
-                "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl: \
-                 cargo run -p max_app --features sdl\n\
+                "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl \
+                 (в default-features), а этот бинарь собран с --no-default-features: \
+                 cargo run -p max_app (без --no-default-features)\n\
                  headless-режимы: --demo <save>, --new-game, --connect <host> --join <game>"
             );
         }
@@ -669,8 +674,8 @@ async fn connect_interactive(
     {
         let _ = (app, options, config, scale);
         bail!(
-            "--sdl требует сборки с feature sdl: \
-             cargo run -p max_app --features sdl -- --connect ... --join ... --sdl"
+            "--sdl требует сборки с feature sdl (входит в default-features): \
+             cargo run -p max_app -- --connect ... --join ... --sdl"
         )
     }
 }
@@ -973,13 +978,14 @@ fn finish_recording(recorder: &mut Option<Recorder>) -> Result<()> {
     Ok(())
 }
 
-/// GUI (запуск без флагов или `--ui`) без feature `sdl`: понятная ошибка
-/// вместо «окна нет».
+/// GUI (запуск без флагов или `--ui`) без feature `sdl` (сборка с
+/// `--no-default-features`): понятная ошибка вместо «окна нет».
 #[cfg(not(feature = "sdl"))]
 fn run_ui(_cli: &Cli) -> Result<()> {
     bail!(
-        "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl: \
-         cargo run -p max_app --features sdl"
+        "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl \
+         (входит в default-features): cargo run -p max_app; \
+         headless-сборка — с --no-default-features"
     )
 }
 
@@ -1243,13 +1249,14 @@ max-rust — клиент M.A.X. (core + net + assets + render)
 
 РЕЖИМЫ:
     (без флагов)         интерактивное меню: создать/выбрать игру и играть
-                         (нужна сборка --features sdl; то же, что --ui)
+                         (GUI по умолчанию, feature sdl в default-features;
+                         то же, что --ui)
     --ui                 совместимый alias для запуска по умолчанию (GUI)
     --demo <save>        V70-сейв → N тиков → digest (headless)
     --new-game           локальная партия (setup::generate_map) + кадр
     --connect <host>     Horizon gRPC (порт по умолчанию {}) + ENet-сессия
     --join <game_id>     игра для --connect
-    --sdl                окно SDL3 для --connect (нужна сборка --features sdl)
+    --sdl                окно SDL3 для --connect (feature sdl — в default)
     --record <file.qa>   записать ручную игру в QA-сценарий (GUI; --ui не нужен;
                          существующий файл не перезаписывается — суффикс -1;
                          без SDL запись доступна как API max_app::qa::Recorder)
@@ -1291,8 +1298,9 @@ max-rust — клиент M.A.X. (core + net + assets + render)
     max-rust.exe --demo max-original\\SAVE1.CAM --turns 5
     max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
     max-rust.exe --connect 127.0.0.1:8082 --join demo --sdl
-    cargo run -p max_app --features sdl              # из max-rust/: то же GUI
-    cargo run -p max_app -- --new-game --world 12    # headless-пример
+    cargo run -p max_app                             # из max-rust/: GUI (default)
+    cargo run -p max_app --features sound            # GUI + звук
+    cargo run -p max_app --no-default-features -- --demo ...   # headless
 ",
         DEFAULT_GRPC_PORT
     );

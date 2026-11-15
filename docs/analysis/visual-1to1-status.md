@@ -787,15 +787,15 @@ cargo run -p max_assets --example ui_images -- ../max-original/MAX.RES build/ui
 cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL build/wrl-snow [cx cy]
 
 # 4) кадр 640×480 с панелями и выбранным юнитом (пункт A)
-cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm
+cargo run -p max_app --no-default-features --example panel_frame -- ../build/frame-panels.ppm
 powershell -File build/ppm2png.ps1 -Ppm build/frame-panels.ppm -Png build/frame-panels.png
 
 # 4.1) кадры C/D: маркеры/FOV/2x, экран планет, лист курсоров
-cargo run -p max_app --example visual_cd -- ../build/frame-cd
+cargo run -p max_app --no-default-features --example visual_cd -- ../build/frame-cd
 # → build/frame-cd-{game,game-2x,planets,cursors}.ppm (PPM → PNG любым конвертером)
 
 # 4.2) кадры E/F: главное меню, форма на PLANETSE, список на MULTGAME, 2×
-cargo run -p max_app --example visual_ef -- ../build/frame-ef
+cargo run -p max_app --no-default-features --example visual_ef -- ../build/frame-ef
 # → build/frame-ef-{main,create,join,main-2x}.ppm
 powershell -File build/ppm2png.ps1 -Ppm build/frame-ef-main.ppm -Png build/frame-ef-main.png
 powershell -File build/ppm2png.ps1 -Ppm build/frame-ef-main-2x.ppm -Png build/frame-ef-main-2x.png
@@ -883,7 +883,7 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 
 **Свидетельства**
 
-* `cargo run -p max_app --example sp_frames -- ../max-original ../build` →
+* `cargo run -p max_app --no-default-features --example sp_frames -- ../max-original ../build` →
   `build/sp-options.png`, `build/sp-planets.png`, `build/sp-players.png`,
   `build/sp-game.png`, `build/sp-victory.png`, `build/sp-defeat.png`;
 * `cargo test -p max_app --test local_sp` — 12 тестов: настройка из UI

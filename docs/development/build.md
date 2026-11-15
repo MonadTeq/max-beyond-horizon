@@ -6,8 +6,8 @@
 | Инструмент | Версия | Зачем |
 |---|---|---|
 | Rust (rustup) | 1.94.0 | сборка max-rust |
-| MSVC (VS Build Tools 2022+/VS 2026) + Windows SDK + CMake | — | Windows-сборка SDL3 |
-| vcpkg + `sdl3:x64-windows` | SDL3 3.4.20 | окно на Windows |
+| MSVC (VS Build Tools 2022+/VS 2026) + Windows SDK + CMake | — | Windows-сборка SDL3 (default `sdl-from-source`: `cargo run -p max_app` собирает SDL3 из исходников через CMake) |
+| vcpkg + `sdl3:x64-windows` | SDL3 3.4.20 | опционально: окно на Windows без CMake-сборки SDL3 (`--features sdl-vcpkg --no-default-features`); нужен для `build-windows-ui.ps1` |
 | Docker (Desktop) | — | Linux-сборки, сервер, CI |
 | Python 3 | — | эталонные парсеры/утилиты |
 | Git | — | репозиторий |
@@ -24,13 +24,28 @@
 
 ### Rust-клиент (все крейты + тесты)
 ```sh
-# в Docker (без локального тулчейна):
+# в Docker (без локального тулчейна): default max_app = ["sdl-from-source"],
+# поэтому ставим dev-заголовки SDL3 (X11/Wayland/ALSA/GL) и собираем SDL3 из
+# исходников через CMake; libSDL3.so.0 кладётся в target/debug, тестам нужен
+# LD_LIBRARY_PATH.
 docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"
+  bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config \
+    libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev \
+    libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev \
+    libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols \
+    libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev \
+    libdbus-1-dev libudev-dev >/dev/null && \
+    export LD_LIBRARY_PATH=/src/max-rust/target/debug && \
+    cargo check && cargo test"
 
-# на хосте (Windows, MSVC):
+# на хосте (Windows, MSVC + CMake в PATH — проще всего из Developer PowerShell
+# VS; см. §«Запуск без флагов» ниже):
 cd max-rust
-cargo build --release -p max_app --features sdl-vcpkg,sound
+cargo build --release -p max_app              # GUI: SDL3 из исходников (default)
+cargo build --release -p max_app --features sound            # + звук
+cargo build --release -p max_app --features sdl-vcpkg,sound --no-default-features
+                                             # Windows: SDL3 из vcpkg вместо сборки
+cargo build --release -p max_app --no-default-features       # headless
 ```
 
 ### Windows UI-бинарь (готовый путь)
@@ -67,7 +82,34 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src max-port-build:latest \
 ## Запуск (как играть)
 
 ### Одиночная игра / hot-seat (окно)
+```sh
+# из исходников: default features — GUI, SDL3 собирается из исходников (cmake)
+cd max-rust
+cargo run -p max_app
+# со звуком:
+cargo run -p max_app --features sound
+```
+`cargo run -p max_app` **без флагов** открывает окно игры: меню → New Game /
+Multiplayer Game → Hot Seat. `--ui` — совместимый alias. Чтобы окно собралось,
+нужен CMake и C-компилятор (на Windows — MSVC/Windows SDK из состава VS
+«Desktop development with C++»; проще запускать из Developer PowerShell, где
+`cl.exe`/`cmake` уже в PATH, либо добавить cmake в PATH):
+
 ```powershell
+# 1. Developer PowerShell for VS — cmake/cl.exe уже в PATH. Либо в обычном
+#    PowerShell добавьте cmake из состава Visual Studio:
+$vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+    -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+    -property installationPath
+$env:Path = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;$env:Path"
+
+# 2. Запуск (сборка SDL3 из исходников идёт один раз, дальше — из кэша)
+cd D:\dev\max-port-debug\max-rust
+cargo run -p max_app
+```
+
+```powershell
+# готовый Windows-артефакт (SDL3 из vcpkg, звук), см. build-windows-ui.ps1:
 cd D:\dev\max-port-debug
 release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 ```
@@ -90,18 +132,44 @@ release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 Автоматический smoke: `bash build/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
 ### Headless-режимы (без окна)
-```cmd
-max-rust.exe --demo max-original\SAVE1.CAM --turns 5
-max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
-max-rust.exe --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
+Headless-бинарь собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
+при сборке, ни в рантайме:
+```sh
+cd max-rust
+cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5
+cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
+cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
+Готовый headless-артефакт (Windows, кросс-сборка): `release\max_app-1.0.0-windows-x86_64\max-rust.exe`
+(`--demo`, `--new-game`, `--connect`; окна в нём нет).
+
+В debug-сборке на Windows главный поток получает 8 МиБ стека через
+`max-rust/.cargo/config.toml` (`/STACK:8388608`): дефолтный 1 МиБ не вмещает
+загрузку V70-сейва (`--demo`/`--new-game` падали бы с `has overflowed its
+stack`). Release-сборки и Linux работали и без этого.
 
 ### Данные игры
 Нужны оригинальные данные: `max-original/` (MAX.RES, COLOR.PAL, *.WRL, *.SPW, сейвы)
 и `assets/PATCHES.RES`. Пути задаются `--data-dir/--assets-dir`, по умолчанию ищутся
 от корня репозитория.
 
+## Фичи `max_app`
+
+| Фича | Что включает | В default |
+|---|---|---|
+| `sdl-from-source` | окно SDL3; SDL3 3.4.20 собирается из vendored `sdl3-src` через CMake (нужны C-компилятор + cmake) | **да** |
+| `sdl` | окно с системным SDL3 (`libsdl3-dev` / vcpkg) — база для остальных sdl-фич | нет (включается ими) |
+| `sdl-vcpkg` | окно с SDL3 из vcpkg | нет |
+| `sound` | звук (rodio/cpal → ALSA на Linux, WASAPI на Windows) | нет |
+| `tls` | TLS для Horizon (https://) | нет |
+
+`default = ["sdl-from-source"]`, поэтому `cargo run -p max_app` открывает игру.
+Явные фичи сочетаются с `--no-default-features`
+(`cargo run -p max_app --no-default-features --features sdl-vcpkg`), иначе к ним
+добавится ещё и `sdl-from-source`. Headless-сборки — `--no-default-features`.
+
 ## Библиотеки (стек)
+
 
 | Слой | Стек |
 |---|---|
@@ -109,7 +177,7 @@ max-rust.exe --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 | Симуляция (max_core) | без внешних зависимостей (собственный RNG Xoshiro128**, детерминизм) |
 | Сеть (max_net) | tonic+prost (gRPC), vendored ENet 1.3.18 (UDP), sha2 |
 | Ассеты (max_assets) | собственные парсеры (RES/WRL/спрайты/WAV) |
-| Рендер (max_render) | чистый софтверный рендер + SDL3 (за фичей sdl/sdl-vcpkg/sdl-from-source), rodio/cpal (звук за фичей sound) |
+| Рендер (max_render) | чистый софтверный рендер + SDL3 (фичи `sdl`/`sdl-vcpkg`/`sdl-from-source`; в `max_app` **default — `sdl-from-source`**, т.е. SDL3 3.4.20 собирается из исходников через CMake), rodio/cpal (звук за фичей `sound`, не в default) |
 | Сервер Horizon | Rust: tokio, tonic, существующий стек Horizon |
 | C++-headless | C++20 (MSVC/GCC), SDL3, ENet — из нашего `src/` |
 

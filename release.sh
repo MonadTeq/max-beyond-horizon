@@ -4,8 +4,10 @@
 #   bash release.sh --dry-run          # показать план, ничего не собирать
 #   bash release.sh                    # собрать + упаковать release/
 #   bash release.sh --tag              # то же + аннотированный тег v<version>
-#   bash release.sh --features sdl     # свой набор features (по умолчанию
-#                                      # sdl-from-source,sound)
+#   bash release.sh --features sdl-vcpkg,sound   # свой набор features (по
+#                                      # умолчанию sdl-from-source,sound;
+#                                      # явные фичи сочетаются с
+#                                      # --no-default-features)
 #   bash release.sh --out /tmp/rel     # другой каталог артефактов
 #
 # Требования: Docker с Linux-контейнерами; сеть для apt-get (cmake,
@@ -22,6 +24,14 @@
 # Тег создаётся только по --tag и только на чистом рабочем дереве; пуш тега —
 # отдельное осознанное действие (см. docs/development/release-checklist.md §8).
 set -euo pipefail
+
+# Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-rust` →
+# `C:/Program Files/Git/src/max-rust`) — конверсию отключаем, как в
+# build/scripts/build-windows.sh.
+if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
+    export MSYS_NO_PATHCONV=1
+    export MSYS2_ARG_CONV_EXCL='*'
+fi
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Docker Desktop для Windows ждёт D:/..., а не /d/...
@@ -123,10 +133,13 @@ for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/docs/development/rel
     }
 done
 
+# default max_app = ["sdl-from-source"], поэтому набор features задаём явно, а
+# default-фичи отключаем: иначе `--features sdl-vcpkg` добавил бы ещё и
+# sdl-from-source, а headless-релиз (`--features ''`) неожиданно получил бы окно.
 if [ -n "$FEATURES" ]; then
-    BUILD_CMD="cargo build --release -p max_app --features $FEATURES"
+    BUILD_CMD="cargo build --release -p max_app --no-default-features --features $FEATURES"
 else
-    BUILD_CMD="cargo build --release -p max_app"
+    BUILD_CMD="cargo build --release -p max_app --no-default-features"
 fi
 INNER="apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && $BUILD_CMD"
 

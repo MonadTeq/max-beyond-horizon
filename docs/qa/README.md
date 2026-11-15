@@ -14,9 +14,15 @@
 
 ```sh
 bash ci.sh                              # все тесты + QA-сценарии + golden
-cargo run -p max_app --example qa_run -- max-rust-qa/scripts/sp-full.qa out
-cargo run -p max_app --example qa_golden_check -- max-rust-qa/golden out
+
+cd max-rust                             # примеры живут в workspace max-rust
+# (сценарий, каталог вывода); эталоны — ../max-rust-qa/golden
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-rust-qa/golden
 ```
+
+`--no-default-features` — у `max_app` default-фичи включают GUI (`sdl-from-source`,
+SDL3 через CMake); QA-драйвер работает без SDL, поэтому собирается без них.
 
 Запись сценария вручную: `max-rust.exe --record my.qa` — GUI открывается без
 флагов, действия пишутся в скрипт (см. `max-rust-qa/drivers/README.md`).

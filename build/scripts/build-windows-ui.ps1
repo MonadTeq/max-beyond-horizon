@@ -29,7 +29,9 @@
   Каталог артефактов. По умолчанию <repo>\release.
 
 .PARAMETER Features
-  Набор features max_app. По умолчанию "sdl-vcpkg,sound".
+  Набор features max_app. По умолчанию "sdl-vcpkg,sound". Скрипт собирает с
+  --no-default-features: иначе к явным фичам добавился бы default
+  `sdl-from-source` (сборка SDL3 через CMake) вместо vcpkg.
 
 .PARAMETER NoPackage
   Только собрать (и проверить --help), не упаковывать.
@@ -129,14 +131,14 @@ $batLines = @(
     "set `"LIB=%LIB%;$sdlLib`"",
     "set `"CARGO_TARGET_DIR=$targetDir`"",
     "cd /d `"$root\max-rust`"",
-    "`"$cargo`" build --release --locked -p max_app --features $Features",
+    "`"$cargo`" build --release --locked -p max_app --no-default-features --features $Features",
     "exit /b %ERRORLEVEL%"
 )
 Set-Content -Path $bat -Value $batLines -Encoding ASCII
 Write-Host "  батник:        $bat"
 
 Write-Host ""
-Write-Host "== cargo build --release -p max_app --features $Features =="
+Write-Host "== cargo build --release -p max_app --no-default-features --features $Features =="
 & cmd.exe /c "`"$bat`""
 $buildRc = $LASTEXITCODE
 if ($buildRc -ne 0) { Fail "cargo build завершился с кодом $buildRc (лог выше)" }
@@ -190,7 +192,7 @@ M.A.X. Rust client $version — Windows x86_64 (UI: SDL3 + звук)
 ==============================================================
 
 Собран на Windows-хосте (MSVC + SDL3 из vcpkg):
-  cargo build --release -p max_app --features $Features
+  cargo build --release -p max_app --no-default-features --features $Features
 Рядом с max-rust.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
 Звук — rodio/cpal (WASAPI), отдельных DLL не требует.
 

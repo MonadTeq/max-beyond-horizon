@@ -6,26 +6,27 @@
 поэтому скрипт нажимает те же кнопки, что игрок мышью, и получает те же кадры.
 
 ```
-qa/
-├── sp-full.qa          # одиночная партия: New Game → Options → Planet → Players → 3 хода с ИИ
-├── hs-2.qa             # hot-seat на двоих: окна «Begin turn», 2+ раунда, чередование команд
-├── visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
-├── victory.qa          # партия до исхода «победа» + экран победы
-├── golden/*.png        # эталоны visual-screens.qa (8 кадров, ~865 КиБ)
-└── README.md
+max-rust-qa/
+├── scripts/sp-full.qa          # одиночная партия: New Game → Options → Planet → Players → 3 хода с ИИ
+├── scripts/hs-2.qa             # hot-seat на двоих: окна «Begin turn», 2+ раунда, чередование команд
+├── scripts/visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
+├── scripts/victory.qa          # партия до исхода «победа» + экран победы
+├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~980 КиБ)
+└── scripts/README.md
 ```
 
 Драйвер живёт в библиотеке (`max-rust/crates/max_app/src/qa/`), а примеры —
-тонкие CLI-обёртки:
+тонкие CLI-обёртки (команды — из `max-rust/`, пути к сценариям/эталонам — через
+`../max-rust-qa/`):
 
 ```sh
 cd max-rust
 
 # слой 2: прогнать сценарий (log.txt + PNG в каталог вывода)
-cargo run -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
 
 # слой 3: сверить кадры с эталонами
-cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 ```
 
 Код выхода `qa_run`: **0** — все шаги выполнились, **1** — упал `assert` или
@@ -113,7 +114,7 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
 
 ## Golden-кадры (слой 3)
 
-Эталоны — `qa/golden/*.png`, ровно те кадры, которые снимает
+Эталоны — `../max-rust-qa/golden/*.png`, ровно те кадры, которые снимает
 `visual-screens.qa` (сравнение по имени файла: `golden/NAME.png` ↔
 `<out>/NAME.png`). Порог дрейфа (как в `docs/qa-plan.md`):
 
@@ -135,17 +136,17 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
 cd max-rust
 
 # 1. снять кадры скриптом
-cargo run -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
 
 # 2. посмотреть, что изменилось (без --update эталоны не трогаются)
-cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 #    → ДРЕЙФ name.png: N пикселей (M %), diff qa-out/visual-screens/diff-name.png
 
 # 3. глазами проверить diff-*.png: изменение ожидаемое?
 
 # 4. зафиксировать новые эталоны и закоммитить их вместе с изменением
-cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden --update
-git add qa/golden && git commit -m "..."
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden --update
+git add ../max-rust-qa/golden && git commit -m "..."
 ```
 
 Правило: эталоны **не** обновляются «чтобы CI стал зелёным». Сначала
@@ -161,11 +162,11 @@ git add qa/golden && git commit -m "..."
 одну и ту же стадию **qa** (`3/3` в `ci.sh`):
 
 ```sh
-cargo run -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
-cargo run -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
-cargo run -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
-cargo run -p max_app --example qa_run -- qa/victory.qa qa-out/victory
-cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 ```
 
 `set -e` + exit 1 у `qa_run`/`qa_golden_check` = красный CI. Каталог `qa-out/`
@@ -180,7 +181,7 @@ cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golde
   CRC/Adler, компаратор;
 * `src/qa/runner.rs` (unit) — конфиг, клиент лобби, имена экранов/фаз;
 * `tests/qa_driver.rs` (integration) — все команды парсера, прогон
-  `qa/sp-full.qa` целиком, падение `assert` → `passed=false` (в CLI → exit 1),
+  `../max-rust-qa/scripts/sp-full.qa` целиком, падение `assert` → `passed=false` (в CLI → exit 1),
   `load` V70-сейва, PNG/golden round-trip.
 
 ```sh
@@ -206,9 +207,9 @@ cd max-rust && cargo test -p max_app --lib qa:: && cargo test -p max_app --test 
 
 ## Как добавить сценарий
 
-1. Создать `qa/NAME.qa` (формат выше), координаты брать из кадров
+1. Создать `../max-rust-qa/scripts/NAME.qa` (формат выше), координаты брать из кадров
    (`shot` + просмотр PNG).
-2. Прогнать локально: `cargo run -p max_app --example qa_run -- qa/NAME.qa qa-out/NAME`.
+2. Прогнать локально: `cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/NAME.qa qa-out/NAME`.
 3. Если сценарий проверяет экран, который должен быть в golden — добавить
    `shot` в `visual-screens.qa` (не в новый файл), перегенерировать эталоны.
 4. Добавить прогон в `ci.sh` (стадия 3/3) и `.github/workflows/ci.yml` (job `qa`).

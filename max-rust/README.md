@@ -35,6 +35,9 @@
 - **Версия 1.0.0** (2026-11-15): workspace собирается, тесты зелёные; клиент
   проходит лобби, играет партию, показывает SDL3-меню/HUD, поддерживает
   реконнект транспорта (M6.1-заготовка) и звук меню (feature `sound`).
+- **GUI — режим по умолчанию**: `default = ["sdl-from-source"]` в `max_app` —
+  `cargo run -p max_app` открывает игру (SDL3 3.4.20 собирается из исходников
+  через CMake), флаги не нужны; headless-сборки идут с `--no-default-features`.
 - Релизный чек-лист (гейты, live-smoke 2×10, человеческий сценарий M4,
   Linux/Windows-бинарники, тег) — `../docs/development/release-checklist.md`; история —
   `../CHANGELOG.md`.
@@ -58,11 +61,14 @@ println!("{} Гц, {} каналов, {} кадров", clip.sample_rate, clip.c
 сборки, тесты и Docker не требуют ALSA/CPAL:
 
 ```sh
-# со звуком (Linux: apt install pkg-config libasound2-dev)
-cargo run -p max_app --features sdl,sound          # без флагов — GUI
+# GUI — default: SDL3 3.4.20 собирается из исходников через CMake
+cargo run -p max_app
 
-# без звука (по умолчанию): окно работает, клики беззвучны
-cargo run -p max_app --features sdl                # --ui — совместимый alias
+# со звуком (Linux: apt install pkg-config libasound2-dev); sound — не default
+cargo run -p max_app --features sound
+
+# headless: SDL не тянется вовсе
+cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5
 ```
 
 `AudioPlayer::play_once("KBUY0")`/`play_loop("TANK1")` принимает тег или имя
@@ -72,13 +78,16 @@ cargo run -p max_app --features sdl                # --ui — совместим
 ## CI и развёртывание
 
 - Локальный CI (M6.3): `bash ci.sh` из корня репозитория — `cargo check` +
-  `cargo test` всего `max-rust` (включая feature `sound`) и
-  `cargo test --workspace` Horizon в `rust:1.94.0-bookworm`; `bash ci.sh --smoke`
-  добавляет живой `build/scripts/live-smoke.sh` (2 клиента × N ходов).
-  GitHub-эквивалент — `../.github/workflows/ci.yml`.
+  `cargo test` всего `max-rust` (default = GUI: SDL3 из исходников через CMake;
+  ставит X11/Wayland/ALSA/GL dev-заголовки, `cargo test` — с
+  `LD_LIBRARY_PATH=target/debug`), `--features sound`, `--no-default-features`
+  (headless) и `cargo test --workspace` Horizon в `rust:1.94.0-bookworm`;
+  `bash ci.sh --smoke` добавляет живой `build/scripts/live-smoke.sh`
+  (2 клиента × N ходов). GitHub-эквивалент — `../.github/workflows/ci.yml`.
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
-  `sdl-from-source,sound`, упаковывает `release/` и готовит тег `v1.0.0`;
-  полный порядок — `../docs/development/release-checklist.md`.
+  `--no-default-features --features sdl-from-source,sound`, упаковывает
+  `release/` и готовит тег `v1.0.0`; полный порядок —
+  `../docs/development/release-checklist.md`.
 - Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
@@ -88,7 +97,7 @@ cargo run -p max_app --features sdl                # --ui — совместим
   остаётся 3, вывод `--demo`/`--new-game`/`--connect` виден в терминале/CI.
 - Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
   Windows-хосте через `powershell -File build\scripts\build-windows-ui.ps1`
-  (`--features sdl-vcpkg,sound`, SDL3 из vcpkg) →
+  (`--no-default-features --features sdl-vcpkg,sound`, SDL3 из vcpkg) →
   `release/max_app-<ver>-windows-x86_64-ui.zip` (`max-rust.exe` + `SDL3.dll`).
   Подсистема — **windows** (Subsystem=2): двойной клик открывает окно SDL3 без
   консоли; `--help`/`--demo` этой сборки видны только при перенаправлении

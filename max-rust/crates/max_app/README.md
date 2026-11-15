@@ -2,9 +2,11 @@
 
 Клиент M.A.X. на Rust: связка **`max_core`** (симуляция) + **`max_net`**
 (Horizon gRPC / ENet) + **`max_assets`** (RES/WRL/спрайты) + **`max_render`**
-(палитра/карта/спрайты) в один игровой цикл. Крейт собран так, чтобы
-**headless-режим был основным**: тесты, CI и demo-прогон не требуют SDL, окна и
-дисплея.
+(палитра/карта/спрайты) в один игровой цикл. **По умолчанию собирается GUI**:
+`cargo run -p max_app` открывает игру (`default = ["sdl-from-source"]`, SDL3
+3.4.20 собирается из исходников через CMake). Headless-режимы (`--demo`,
+`--new-game`, `--connect` без `--sdl`), тесты, QA и CI работают без окна и без
+SDL — они собираются с `--no-default-features`.
 
 ```
 max_app (lib)  ── App::tick / apply / render_frame / digest
@@ -12,7 +14,7 @@ max_app (lib)  ── App::tick / apply / render_frame / digest
    ├── max_net    HorizonClient, SessionHandle, LobbyPacket, BarrierTracker
    ├── max_assets ResArchive, WrlMap, SpriteSheet/ShadowSheet
    └── max_render RgbaBuffer, Viewport, render_map_into, SpriteRenderer
-max_app (bin)  ── CLI + SDL3-окно (только под feature `sdl`)
+max_app (bin)  ── CLI + SDL3-окно (feature `sdl`, в default — `sdl-from-source`)
 ```
 
 ## Библиотека
@@ -59,24 +61,26 @@ ticks=5 turn=1 state=InGame units=312 state_digest=0xC354 state_checksum=0x408A 
 
 ```sh
 # из max-rust/; пути по умолчанию — относительно корня репозитория
-# без флагов (или --ui) — GUI: меню, создать/выбрать игру, партия
-cargo run -p max_app --features sdl
+# без флагов (или --ui) — GUI: меню, создать/выбрать игру, партия.
+# SDL3 входит в default (фича sdl-from-source) — собирается из исходников
+# через CMake, системный SDL3/vcpkg не нужен.
+cargo run -p max_app
 
-# headless: V70-сейв → N тиков → digest
-cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5
+# headless: V70-сейв → N тиков → digest (SDL не тянется вовсе)
+cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5
 
 # локальная партия: карта планеты + генерация ресурсов/обломков + кадр в PPM
-cargo run -p max_app -- --new-game --world 12 --seed 42 --out frame.ppm
+cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 
 # справка
-cargo run -p max_app -- --help
+cargo run -p max_app --no-default-features -- --help
 ```
 
 Режимы:
 
 | Флаг | Поведение |
 |---|---|
-| *(без флагов)* | GUI по умолчанию: интерактивное меню в окне SDL3 — создать игру / выбрать игру из лобби / сессия (нужна сборка `--features sdl`) |
+| *(без флагов)* | GUI по умолчанию: интерактивное меню в окне SDL3 — создать игру / выбрать игру из лобби / сессия. Feature `sdl` входит в `default = ["sdl-from-source"]`, поэтому `cargo run -p max_app` сразу открывает игру |
 | `--demo <save> [--turns N]` | headless: загрузить V70-сейв, прокрутить N тиков (по умолчанию 5), напечатать digest |
 | `--new-game` | `setup::generate_map` по параметрам P2 (`--seed`, `--raw/--fuel/--gold/--derelicts`, `--world`), печать отчёта и размеров кадра; `--out` пишет PPM |
 | `--connect <host[:port]> --join <game> [--sdl]` | Horizon gRPC (по умолчанию `127.0.0.1:8082`) → ENet → лобби → игровой цикл; без `--sdl` — headless, с `--sdl` — окно |
@@ -94,16 +98,34 @@ cargo run -p max_app -- --help
 
 ### Окно SDL3
 
-SDL3 не входит в обязательные зависимости: без feature `sdl` окна нет, а
-`render_frame()` по-прежнему работает.
+**GUI — режим по умолчанию**: `max_app` собирается с
+`default = ["sdl-from-source"]`, то есть `cargo run -p max_app` (и обычная
+`cargo build`) открывают игру: SDL3 3.4.20 берётся из vendored `sdl3-src` и
+собирается CMake'ом из исходников — ни системного SDL3, ни vcpkg не нужно.
+Требуются только C-компилятор и `cmake` (на Windows — MSVC + CMake из состава
+Visual Studio, удобнее из Developer PowerShell).
+
+```sh
+# GUI: SDL3 из исходников (default)
+cargo run -p max_app
+
+# + звук (feature sound — НЕ default: тянет rodio/cpal → ALSA/WASAPI)
+cargo run -p max_app --features sound
+
+# headless: фичи SDL не нужны ни при сборке, ни в рантайме
+cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5
+```
+
+Другие способы получить SDL3 (явные фичи = `--no-default-features`, иначе
+к ним добавится default `sdl-from-source`):
 
 ```sh
 # системный SDL3 (Linux: libsdl3-dev; Windows: vcpkg)
-cargo run -p max_app --features sdl -- \
+cargo run -p max_app --no-default-features --features sdl -- \
   --connect 127.0.0.1:8082 --join <game_id> --sdl
 
-# SDL3 собирается из исходников (нужен cmake; docker/CI) — как в max_render
-cargo run -p max_app --features sdl-from-source -- \
+# SDL3 из vcpkg (Windows)
+cargo run -p max_app --no-default-features --features sdl-vcpkg -- \
   --connect 127.0.0.1:8082 --join <game_id> --sdl
 ```
 
@@ -113,18 +135,19 @@ cargo run -p max_app --features sdl-from-source -- \
 
 #### Windows: без консольного окна
 
-GUI-сборки (`--features sdl`, `sdl-vcpkg`, `sdl-from-source`; последние две
-включают `sdl`) собираются с
+GUI-сборки (`sdl` — он же default `sdl-from-source`, `sdl-vcpkg`; все включают
+`sdl`) собираются с
 `#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]` в `src/main.rs`:
 у `max-rust.exe` подсистема **windows** (PE Subsystem=2), поэтому двойной клик
 открывает только окно SDL3 — окно cmd не появляется. Обратная сторона: у этой
 сборки нет stdout в терминале, `--help`/`--demo` печатают только при
 перенаправлении (`max-rust.exe --help > help.txt`).
 
-Headless-сборка **без** `sdl` остаётся **console** (Subsystem=3): `--demo`,
-`--new-game`, `--connect` печатают в терминал и CI, как раньше. Примеры
-(`qa_run`, `qa_golden_check`) — отдельные console-бинари и подсистемой
-клиента не затрагиваются.
+Headless-сборка (`--no-default-features`, **без** `sdl`) остаётся **console**
+(Subsystem=3): `--demo`, `--new-game`, `--connect` печатают в терминал и CI,
+как раньше. Так собираются `build/scripts/build-windows.sh`, CI и QA-прогоны.
+Примеры (`qa_run`, `qa_golden_check`) — отдельные console-бинари и подсистемой
+клиента не затрагиваются; в CI они идут с `--no-default-features`.
 
 ## UI (M4.1): меню, список игр, сессия
 
@@ -135,11 +158,11 @@ Headless-сборка **без** `sdl` остаётся **console** (Subsystem=3
 рисуется упрощённо, а загрузка ассетов пишет предупреждение.
 
 ```sh
-# системный SDL3 (Linux: libsdl3-dev; Windows: vcpkg)
-cargo run -p max_app --features sdl
+# GUI (default: SDL3 из исходников)
+cargo run -p max_app
 
-# SDL3 из исходников (нужен cmake; docker/CI)
-cargo run -p max_app --features sdl-from-source -- \
+# headless-прогон против Horizon (SDL не нужен)
+cargo run -p max_app --no-default-features -- \
     --connect 127.0.0.1:8082 --player rust --team 0
 ```
 
@@ -188,8 +211,8 @@ max-rust --turn-wait 0           # прежнее поведение (по ум�
 `max-rust-qa/drivers/README.md`, раздел «Запись сценариев вручную»):
 
 ```sh
-# из max-rust/; системный SDL3 или sdl-from-source
-cargo run -p max_app --features sdl -- \
+# из max-rust/; GUI (default): SDL3 из исходников или системный SDL3
+cargo run -p max_app -- \
   --record ../max-rust-qa/scripts/my-run.qa
 ```
 
@@ -245,7 +268,7 @@ End Turn и таймер хода закрывают ход человека, `P
 Кадры-свидетельства:
 
 ```sh
-cargo run -p max_app --example sp_frames -- ../max-original ../build
+cargo run -p max_app --no-default-features --example sp_frames -- ../max-original ../build
 # → build/sp-{options,planets,players,game,victory,defeat}.ppm
 ```
 
@@ -290,7 +313,10 @@ cargo run -p max_app --example sp_frames -- ../max-original ../build
 SDL-часть проверяется компиляцией:
 
 ```sh
-cargo check -p max_app --features sdl-from-source
+# default-фичи включают sdl-from-source (окно) — проверяется компиляцией;
+# headless-сборка (без SDL) — отдельно:
+cargo check -p max_app
+cargo check -p max_app --no-default-features
 ```
 
 ## HUD (M4.2) и приказы мышью (M4.3)
@@ -372,13 +398,23 @@ WARN ... reconnect: транспорт восстановлен ..., но вос
 ## Тесты
 
 ```sh
-# из max-rust/
+# из max-rust/; default = GUI (SDL3 из исходников через CMake) — для Docker
+# нужны dev-заголовки X11/Wayland/ALSA/GL, см. docs/development/release-checklist.md §2.3;
+# libSDL3.so.0 кладётся в target/debug, тестам нужен LD_LIBRARY_PATH.
 docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config \
+   libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev \
+   libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev \
+   libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols \
+   libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev \
+   libdbus-1-dev libudev-dev >/dev/null && \
+   export LD_LIBRARY_PATH=/src/max-rust/target/debug && \
+   cargo check && cargo test"
 
-# только приложение
+# только приложение; headless-сборка (без SDL) — --no-default-features
 cargo test -p max_app
+cargo check -p max_app --no-default-features
 ```
 
 `tests/app.rs`:
@@ -429,7 +465,7 @@ cargo test -p max_app
    автоматически.
 5. Запустить клиента:
    ```sh
-   cargo run -p max_app -- --connect 127.0.0.1:8082 --join <game_id> \
+   cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <game_id> \
        --player rust --team 0 --turns 3
    ```
    Без `--sdl` клиент headless: проходит `28→44→29→30→36→35→32→05→34`,

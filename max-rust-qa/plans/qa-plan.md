@@ -26,7 +26,7 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
 
 ## Скриптовый драйвер (слой 2)
 
-- Пример: `cargo run -p max_app --example qa_run -- <script.qa> <out_dir>`
+- Пример: `cargo run -p max_app --no-default-features --example qa_run -- <script.qa> <out_dir>`
   (`--data-dir`, `--assets-dir`, `--frame-limit` — опции).
 - Реализация: `max_app/src/qa/` — `script.rs` (парсер), `runner.rs`
   (исполнение тем же `Screen::handle_input` / `handle_session_input` /
@@ -71,7 +71,8 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
 
 ```sh
 cd max-rust
-cargo run -p max_app --features sdl -- \
+# GUI — default (SDL3 из исходников через CMake)
+cargo run -p max_app -- \
   --ui --record ../max-rust-qa/scripts/my-run.qa
 ```
 
@@ -93,9 +94,9 @@ cargo run -p max_app --features sdl -- \
 
 ## Golden-кадры (слой 3)
 
-- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (8 файлов, ~865 КиБ;
+- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (10 кадров, ~980 КиБ;
   индексированный PNG при ≤256 цветах), генерируются из `visual-screens.qa`.
-- Сверка: `cargo run -p max_app --example qa_golden_check -- <out> max-rust-qa/golden` —
+- Сверка: `cargo run -p max_app --no-default-features --example qa_golden_check -- <out> ../max-rust-qa/golden` —
   попиксельный diff с порогом: пиксель изменён при `max|Δканал| > 30`, кадр
   «дрейфнул» при > 1 % таких пикселей; превышение → exit 1, список файлов и
   `diff-*.png` (белый фон, красные — расхождения). `--update` перезаписывает

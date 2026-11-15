@@ -28,18 +28,27 @@ thiserror = "2"
 rodio = { version = "0.19", optional = true, default-features = false }
 
 [features]
-default = []
+# GUI по умолчанию: `cargo run -p max_app` (и обычная сборка) открывает игру.
+# `sdl-from-source` самодостаточен — SDL3 3.4.20 собирается из исходников
+# (vendored `sdl3-src`) через CMake, без системного SDL3 и без vcpkg; нужны
+# только C-компилятор и cmake. Headless-сборки (CI, сервер, `--demo`) собираются
+# с `--no-default-features` — тогда SDL не тянется вовсе.
+default = ["sdl-from-source"]
 # Horizon по TLS (https://) — прокидывает `tls` в max_net. Обычные сборки
 # (в т.ч. кросс-сборка Windows) TLS не тянут: Horizon — plaintext http://.
 tls = ["max_net/tls"]
 # Воспроизведение WAV через rodio/cpal. На Linux нужен libasound2-dev при
-# сборке и libasound2 в рантайме; без фичи — тихий no-op backend.
+# сборке и libasound2 в рантайме; без фичи — тихий no-op backend. НЕ входит в
+# default: звук тянет ALSA/WASAPI, а GUI должен собираться и без него.
+# Включается явно: `--features sound`.
 sound = ["dep:rodio"]
-# Окно SDL3 (интерактивный режим): требует системного SDL3 (libsdl3-dev / vcpkg).
+# Окно SDL3 (интерактивный режим) с системным SDL3 (libsdl3-dev / vcpkg).
 sdl = ["max_render/sdl"]
-# То же, но SDL3 собирается из исходников (нужен cmake) — путь для CI/docker.
+# Окно SDL3, собранное из исходников (нужен cmake) — default и путь для CI.
 sdl-from-source = ["sdl", "max_render/sdl-from-source"]
 # Windows: SDL3 из vcpkg (vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
+# С явными features собирать с `--no-default-features`, иначе к vcpkg
+# добавится ещё и default `sdl-from-source`.
 sdl-vcpkg = ["sdl", "max_render/sdl-vcpkg"]
 
 [dev-dependencies]

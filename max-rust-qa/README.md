@@ -39,10 +39,12 @@ max-rust-qa/
 # все qa-скрипты + golden (в docker):
 bash ci.sh
 
-# один скрипт:
-cargo run -p max_app --example qa_run -- max-rust-qa/scripts/sp-full.qa max-rust-qa/out/sp
+cd max-rust   # примеры собираются в workspace max-rust
 
-# golden-сверка / перегенерация:
-cargo run -p max_app --example qa_golden_check -- max-rust-qa/golden max-rust-qa/out/visual
-cargo run -p max_app --example qa_golden_check -- --update max-rust-qa/golden max-rust-qa/out/visual
+# один скрипт (сценарии — в ../max-rust-qa/scripts/, вывод — в qa-out/):
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp
+
+# golden-сверка / перегенерация (<shots_dir> <golden_dir>):
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-rust-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-rust-qa/golden --update
 ```

@@ -68,7 +68,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 `max_app/tests/start_phases.rs` (10) — мобилизация, выбор точки высадки,
 порядок фаз hot-seat, ИИ-точки, детерминизм.
 
-**Кадры**: `cargo run -p max_app --example sp_frames -- ../max-original ../build`
+**Кадры**: `cargo run -p max_app --no-default-features --example sp_frames -- ../max-original ../build`
 → `build/sp-options.png`, `sp-planets.png`, `sp-players.png`, `sp-game.png`,
 `sp-victory.png`, `sp-defeat.png`.
 
@@ -210,7 +210,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 перехода, отрисовка окна (`HELPFRAM` + кнопка `OK` + текст), `Hot Seat Menu` в
 кадре 640×480 и `Multiplayer Menu`.
 
-**Кадры**: `cargo run -p max_app --example sp_frames -- ../max-original ../build`
+**Кадры**: `cargo run -p max_app --no-default-features --example sp_frames -- ../max-original ../build`
 → `build/hs-players.png` (Hot Seat Menu, 2 человека + ИИ),
 `build/hs-turn.png` (окно «Red Team: Begin turn.»), `build/hs-turn2.png`
 (окно GREEN), `build/hs-game.png` (ход второго человека), `build/hs-ai.png`

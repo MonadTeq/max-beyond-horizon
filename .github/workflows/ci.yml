@@ -28,10 +28,20 @@ jobs:
         with:
           toolchain: 1.94.0
 
-      - name: Install build deps (gcc/cmake for vendored ENet/SDL, ALSA for sound)
+      - name: Install build deps (gcc/cmake for vendored SDL3/ENet, X11/Wayland/ALSA/GL for GUI default)
+        # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из
+        # исходников через CMake; dev-заголовки включают настоящие драйверы
+        # (X11, Wayland, KMSDRM, ALSA) — без них SDL3 соберётся с dummy.
+        # Набор — как в docs/development/release-checklist.md §2.3.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc g++ cmake pkg-config libasound2-dev
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ cmake pkg-config libasound2-dev \
+            libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols \
+            libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev \
+            libdbus-1-dev libudev-dev
 
       - name: cargo check
         working-directory: max-rust
@@ -39,13 +49,25 @@ jobs:
 
       - name: cargo test
         working-directory: max-rust
+        # libSDL3.so.0 копируется из CMake-каталога в target/debug; тестовым
+        # бинарям она нужна в LD_LIBRARY_PATH (в артефактах это делает run.sh).
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/max-rust/target/debug
         run: cargo test
 
       - name: cargo check + test (feature sound)
         working-directory: max-rust
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/max-rust/target/debug
         run: |
           cargo check --features sound
           cargo test --features sound
+
+      - name: cargo test (headless, --no-default-features)
+        # Headless-сборка (без SDL) — отдельный cfg-набор: проверяет
+        # `main.rs`-ветки без feature `sdl` (понятная ошибка GUI, --sdl).
+        working-directory: max-rust
+        run: cargo test --no-default-features
 
   horizon:
     name: max-horizon-server (workspace tests)
@@ -89,17 +111,20 @@ jobs:
 
       - name: QA scenarios (sp-full, hs-2, visual-screens, victory)
         working-directory: max-rust
+        # --no-default-features: QA-драйверу окно не нужно, иначе примеры
+        # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
+        # Сценарии/эталоны — в ../max-rust-qa/ (рабочий каталог max-rust).
         run: |
           set -e
           rm -rf qa-out
-          cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
-          cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
-          cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
-          cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
-        run: cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden
+        run: cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 
       - name: Upload log + frames + diff on failure
         if: failure()
@@ -107,7 +132,7 @@ jobs:
         with:
           name: qa-artifacts
           path: |
-            max-rust-qa-out/**/*.png
-            max-rust-qa-out/**/log.txt
+            max-rust/qa-out/**/*.png
+            max-rust/qa-out/**/log.txt
           if-no-files-found: warn
 

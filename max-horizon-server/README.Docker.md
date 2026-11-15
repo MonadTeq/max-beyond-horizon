@@ -66,7 +66,7 @@ docker compose logs -f horizon
 docker run --rm --network container:max-horizon \
   -v "$PWD:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c \
   "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null \
-   && cargo run -q -p max_app --example horizon_probe -- 127.0.0.1 8082 smoke"
+   && cargo run -q -p max_app --no-default-features --example horizon_probe -- 127.0.0.1 8082 smoke"
 ```
 
 Ожидаемые строки:

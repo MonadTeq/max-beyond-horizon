@@ -11,14 +11,14 @@
 //! Точки входа — примеры `max_app`:
 //!
 //! ```sh
-//! # слой 2: прогнать сценарий, получить log.txt + PNG
-//! cargo run -p max_app --example qa_run -- max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+//! # слой 2: прогнать сценарий, получить log.txt + PNG (SDL не нужен)
+//! cargo run -p max_app --no-default-features --example qa_run -- max-rust-qa/scripts/sp-full.qa qa-out/sp-full
 //!
 //! # слой 3: сверить кадры с эталонами (порог 1 % пикселей, Δ > 30)
-//! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden
+//! cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden
 //!
-//! # слой 2.5: записать ручную игру в .qa (из max-rust/)
-//! cargo run -p max_app --features sdl -- --ui --record ../max-rust-qa/scripts/my.qa
+//! # слой 2.5: записать ручную игру в .qa (из max-rust/; GUI — default)
+//! cargo run -p max_app -- --ui --record ../max-rust-qa/scripts/my.qa
 //! ```
 //!
 //! Почему это возможно без окна: экраны и игровой цикл `max_app` — чистые

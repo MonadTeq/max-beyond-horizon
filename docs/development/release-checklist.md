@@ -59,17 +59,23 @@
 Все команды — через Docker, чтобы не зависеть от хостового toolchain:
 
 ```sh
-# 2.1 Базовые тесты max-rust (без SDL/ALSA)
+# 2.1 Базовые тесты max-rust. default max_app = ["sdl-from-source"]: SDL3 3.4.20
+# собирается из исходников через CMake, поэтому нужны dev-заголовки
+# X11/Wayland/ALSA/GL/KMSDRM/dbus/udev, а тестам — LD_LIBRARY_PATH на
+# target/debug (туда sdl3-sys кладёт libSDL3.so.0).
 docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test'
+  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-rust/target/debug && cargo check && cargo test'
 
-# 2.2 Звук: WAV-декодер + rodio за feature sound (нужен libasound2-dev)
+# 2.2 Звук: WAV-декодер + rodio за feature sound (нужен libasound2-dev;
+# default-фичи GUI остаются включены)
 docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev >/dev/null && cargo check --features sound && cargo test --features sound'
+  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-rust/target/debug && cargo check --features sound && cargo test --features sound'
 
-# 2.3 SDL3 из исходников (проверка feature-сборки окна)
+# 2.3 Headless-путь (--no-default-features): SDL не тянется ни при сборке, ни в
+# рантайме — так собираются build-windows.sh, QA и серверные артефакты; этот
+# прогон проверяет и cfg-ветки main.rs без feature sdl.
 docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && cargo check --features sdl-from-source'
+  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config >/dev/null && cargo test --no-default-features'
 
 # 2.4 Horizon + C++-адаптер
 docker run --rm -v "$ROOT/max-horizon-server:/src" -w /src rust:1.94.0-bookworm \
@@ -79,31 +85,39 @@ docker run --rm -v "$ROOT/max-horizon-server:/src" -w /src rust:1.94.0-bookworm 
 bash ci.sh
 
 # 2.6 QA-слои 2–3 вручную (то же, что стадия 3/3 ci.sh; подробности — max-rust-qa/scripts/README.md)
+#     примеры идут с --no-default-features: QA-драйверу окно не нужно;
+#     сценарии/эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust)
 docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
   rm -rf qa-out
-  cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
-  cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
-  cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
-  cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
-  cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden'
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
+  cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden'
 ```
 
-- [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
-  Свидетельство: **705 тестов, 0 failed**, `cargo check` — 0 ошибок и 0
-  предупреждений (2026-11-15, `rust:1.94.0-bookworm`); M-SP 14 в
-  `tests/local_sp.rs`, фазы старта 10 в `tests/start_phases.rs`, M-HS 13 в
-  `tests/hot_seat.rs`, M-NET 7 в `net.rs`.
+- [ ] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed (default-фичи =
+  GUI: SDL3 3.4.20 собирается из исходников через CMake; тесты идут с
+  `LD_LIBRARY_PATH=target/debug`).
+  Свидетельство (прежний прогон, когда SDL был не-default): **705 тестов,
+  0 failed**, `cargo check` — 0 ошибок и 0 предупреждений (2026-11-15,
+  `rust:1.94.0-bookworm`); M-SP 14 в `tests/local_sp.rs`, фазы старта 10 в
+  `tests/start_phases.rs`, M-HS 13 в `tests/hot_seat.rs`, M-NET 7 в `net.rs`.
+  Повторный прогон с default `sdl-from-source`: ______________________
 - [ ] 2.2 `--features sound` — `check` и `test` зелёные. Тест
       `max_assets::wav::tests::parses_real_kbuy0_spw` проходит на реальном
       `KBUY0.SPW`; `all_real_spw_files_are_pcm16_22050_mono` проверяет все 272
       файла (`cargo test -p max_assets wav::`).
   Свидетельство: ______________________
-- [x] 2.3 `--features sdl-from-source` — зелёный `cargo check`.
-  Свидетельство: 0 ошибок (Linux, полный X11/ALSA dev-набор, 2026-11-15,
+- [x] 2.3 Headless-путь (`--no-default-features`) — зелёные `cargo test`
+  (SDL-сборка, теперь default, проверяется в 2.1, окно — §4).
+  Свидетельство: SDL3 3.4.20 собирается из исходников без системного SDL3 и
+  vcpkg — 0 ошибок (Linux, полный X11/ALSA dev-набор, 2026-11-15,
   `max_app` с `frame_scale`/`SdlWindow::new_scaled`/`window_to_frame`);
-  лог `build/cargo-docker-ef-sdl-final.log`.
+  лог `build/cargo-docker-ef-sdl-final.log` (тогда проверялось
+  `--features sdl-from-source` — сейчас это default).
 - [ ] 2.4 Horizon: `cargo test --workspace` — зелёный (известные падения
       `horizon_event_system` должны быть исправлены или явно исключены — M5.1).
   Свидетельство: ______________________
@@ -177,10 +191,10 @@ MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10
 
 ```sh
 docker compose up -d --build          # Horizon + headless
-# клиент из исходников (SDL3 из системы) либо релизный бинарь из §5:
-cargo run -p max_app --features sdl -- --turn-wait 60
+# клиент из исходников: GUI — default (SDL3 из исходников, нужен cmake)
+cargo run -p max_app -- --turn-wait 60
 # со звуком:
-cargo run -p max_app --features sdl,sound -- --turn-wait 60
+cargo run -p max_app --features sound -- --turn-wait 60
 ```
 
 `--turn-wait 60` обязателен для игры руками: без него сетевой цикл закрывает ход
@@ -220,7 +234,7 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
       камеру (в 1x и 2x).
 - [ ] Курсор мыши: над меню/панелью — `HANDPTR`, над картой без выделения —
       `MAP_PTR`, над своим юнитом — `FRND_PTR`, над врагом — `ENMY_PTR`,
-      при приказе — `UNIT_GO`/`UNIT_NGO` (SDL, `--features sdl`).
+      при приказе — `UNIT_GO`/`UNIT_NGO` (SDL; в default-сборке окно включено).
 - [ ] LMB по своему юниту — выделение, панель юнита заполняется.
 - [ ] LMB по врагу при выделенном своём — приказ атаки (пакет 08), в журнале
       `Attack: …`.
@@ -239,7 +253,8 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
 
 ### 4.1. Hot-seat (M-HS) руками, без сети
 
-Локальная партия, сервер не нужен (`cargo run -p max_app --features sdl` — GUI по умолчанию, `--ui` — alias).
+Локальная партия, сервер не нужен (`cargo run -p max_app` — GUI по умолчанию,
+`--ui` — alias).
 
 - [ ] Главное меню → `Multiplayer Game` → экран `Multiplayer Menu` (фон
       `MAINPIC`, заголовок (236,145), пять больших кнопок `BLANK_*` и `Cancel`
@@ -268,9 +283,11 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
 ## 5. Linux-бинарник
 
 `release.sh` собирает в Docker **интерактивный** бинарь с
-`--features sdl-from-source,sound` (решение зафиксировано здесь: релизный
-Linux-клиент — с окном и звуком; headless-сборка для серверов остаётся
-`cargo build --release -p max_app` без фич). Скрипт кладёт всё в
+`--no-default-features --features sdl-from-source,sound` (решение
+зафиксировано здесь: релизный Linux-клиент — с окном и звуком; явные features
+плюс `--no-default-features`, чтобы default не подмешивался; headless-сборка
+для серверов — `bash release.sh --features ''`, то есть
+`cargo build --release -p max_app --no-default-features`). Скрипт кладёт всё в
 `release/max_app-<version>-linux-x86_64/` и `.tar.gz`.
 
 ```sh
@@ -405,7 +422,7 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
 поднимает окружение `vcvars64` и собирает
 
 ```sh
-cargo build --release --locked -p max_app --features sdl-vcpkg,sound
+cargo build --release --locked -p max_app --no-default-features --features sdl-vcpkg,sound
 ```
 
 ```powershell
@@ -419,6 +436,12 @@ powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoP
 `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256`. Сборка идёт в
 `build/win-msvc-target/`, чтобы не смешиваться с Linux/Docker-артефактами
 `max-rust/target/`.
+
+> Примечание: с появлением default `sdl-from-source` скрипт и ручная команда
+> собирают с `--no-default-features` — иначе к `sdl-vcpkg` добавилась бы
+> CMake-сборка SDL3. Записи ниже — исторические (тогда SDL не входил в
+> default), результат артефактов от этого не меняется: в архив идёт
+> `SDL3.dll` из vcpkg.
 
 Тулчейн на этом хосте **уже установлен** (всё, кроме VS, ставится без
 администратора):
