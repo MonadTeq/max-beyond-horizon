@@ -30,16 +30,21 @@
 //!   (`max_core::events::apply_state_sync`), после 45-барьера CRC команды
 //!   сверяются с собственным (`Remote_TeamDataCrc16`).
 //!
-//! # Реконнект (M6.1-заготовка)
+//! # Реконнект
 //!
 //! `SessionEvent::Disconnected` запускает [`ReconnectPolicy`]: клиент заново
-//! делает ENet connect + `TP 00` (с таймаутом и числом попыток из
-//! `--reconnect-attempts`/`--reconnect-timeout`), логируя
-//! `reconnect: retrying — попытка N/M`. В протоколе **нет** SNAP и повторного
-//! входа в идущую партию (`docs/protocol.md` §9: пакет 54 — синхронизация
-//! юнитов команды, а не вход в сессию), поэтому после успешного реконнекта
-//! прогон завершается с `reconnect_pending_state`: восстановление состояния
-//! (лобби/барьеры/54-перезапрос) — задача M6.1-финала.
+//! делает ENet connect + `TP 00` тем же тикетом (с таймаутом и числом попыток
+//! из `--reconnect-attempts`/`--reconnect-timeout`), без повторного лобби.
+//! Локальное lockstep-состояние не сбрасывается: пока клиент был offline,
+//! пиры/сервер ждали его барьер. После `TP 00` [`TurnBarrierFsm::resume_state_sync`]
+//! публикует 54 своей команды (юниты+экономика, последний `sync_index`),
+//! встречные 54 пиров исправляют удалённые команды, затем доигрываются
+//! 52/54/45 и `finish_turn`; `reconnect_pending_state=false`.
+//!
+//! Пределы (`docs/protocol.md` §9): SNAP-пакета нет, 54 покрывает только
+//! юнитов/экономику одной команды, пропущенные приказы других не
+//! replay-ятся, C++-пиры исключают команду через 30 с. Лобби-реконнект не
+//! поддерживается (сервер уже не в `Remote_GameState=1`).
 //!
 //! # Ретрай первого подключения и `data_hash` (M-NET-доводки)
 //!
@@ -101,7 +106,7 @@ pub struct NetworkOptions {
     pub tick_interval: Duration,
     /// Ожидание события сессии за итерацию.
     pub event_wait: Duration,
-    /// Политика переподключения при разрыве ENet-сессии (M6.1-заготовка).
+    /// Политика переподключения при разрыве ENet-сессии.
     pub reconnect: ReconnectPolicy,
     /// Политика ретрая **первого** подключения (Create game → Join → start):
     /// сессия headless греется 10–15 с, и ENet connect в это окно падает.
@@ -142,19 +147,19 @@ impl NetworkOptions {
     }
 }
 
-/// Сколько попыток переподключения делать по умолчанию (M6.1-заготовка).
+/// Сколько попыток переподключения делать по умолчанию.
 pub const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
 /// Таймаут одной попытки: ENet connect + `TP 00`.
 pub const DEFAULT_RECONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Пауза между неудачными попытками.
 pub const DEFAULT_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 
-/// Политика переподключения после разрыва ENet-сессии (M6.1-заготовка).
+/// Политика переподключения после разрыва ENet-сессии.
 ///
-/// `attempts = 0` выключает автоматический реконнект. Восстанавливается
-/// **только транспорт** (ENet connect + `TP 00`): SNAP/повторного входа в
-/// идущую партию в протоколе нет (`docs/protocol.md` §9), поэтому полное
-/// восстановление состояния — M6.1-финал.
+/// `attempts = 0` выключает автоматический реконнект. Транспорт
+/// восстанавливается через ENet connect + `TP 00`; игровое состояние
+/// продолжается с локальной точки lockstep и догоняется resume-54
+/// (`docs/protocol.md` §9). SNAP/полного снимка по-прежнему нет.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconnectPolicy {
     /// Максимальное число попыток (`0` — не переподключаться).
@@ -680,7 +685,7 @@ impl ReconnectTracker {
     }
 }
 
-/// Итог попытки переподключения (M6.1-заготовка).
+/// Итог попытки переподключения.
 pub enum ReconnectOutcome<T> {
     /// Транспорт восстановлен (новая сессия в `value`).
     Restored {
@@ -778,8 +783,9 @@ where
 
 /// Переподключает существующую сессию: ENet connect + `TP 00` заново.
 ///
-/// При успехе заменяет `handle` новой сессией; игровое состояние не
-/// восстанавливается — это M6.1-финал (`docs/protocol.md` §9).
+/// При успехе заменяет `handle` новой сессией. Состояние игры не сбрасывается;
+/// [`pump_events`] после возврата публикует resume-54 и продолжает барьеры
+/// (`docs/protocol.md` §9).
 async fn reconnect_session(
     handle: &mut SessionHandle,
     config: &SessionConfig,
@@ -850,12 +856,13 @@ pub struct NetworkReport {
     pub turns_finished: u32,
     /// Сколько раз барьер не дождался пиров.
     pub barrier_timeouts: u32,
-    /// Сколько раз транспорт восстанавливался после разрыва (M6.1-заготовка).
+    /// Сколько раз транспорт восстанавливался после разрыва.
     pub reconnects: u32,
     /// Сколько попыток переподключения сделано суммарно.
     pub reconnect_attempts: u32,
-    /// Транспорт восстановлен, но состояние партии не восстановлено
-    /// (M6.1-финал): прогон завершён, полный реконнект ещё не реализован.
+    /// Транспорт восстановлен, но продолжить партию не удалось (например,
+    /// исчерпаны попытки/реконнект выключен). `false` после успешного
+    /// resume-54 — прогон продолжился.
     pub reconnect_pending_state: bool,
     /// `data_hash`, с которым сервер принял клиента (hex; 64 символа — сервер
     /// без `PATCHES.RES`, 128 — полный).
@@ -1053,7 +1060,8 @@ async fn run_lobby(
                 match reconnect_session(handle, session_config, options.reconnect).await {
                     ReconnectOutcome::Restored { attempts, .. } => bail!(
                         "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}), \
-                         но повторный вход в лобби — M6.1-финал (docs/protocol.md §9)"
+                         но повторный вход в лобби невозможен: сервер уже не в Remote_GameState=1 \
+                         (docs/protocol.md §9)"
                     ),
                     ReconnectOutcome::Exhausted { attempts } => bail!(
                         "reconnect: не удалось переподключиться за {attempts} попыт(ок) в лобби"
@@ -1138,8 +1146,8 @@ pub async fn run_network_with_sink(
 
     if stats.reconnect_pending_state {
         tracing::warn!(
-            "reconnect: транспорт восстановлен, но состояние партии не восстановлено; \
-             полный реконнект (вход в идущую сессию, SNAP/54-перезапрос) — M6.1-финал"
+            "reconnect: транспорт восстановлен, но партия не продолжена \
+             (попытки исчерпаны/реконнект выключен)"
         );
     }
 
@@ -1322,12 +1330,12 @@ struct GameLoopStats {
     barrier_timeouts: u32,
     /// Разрывов ENet-сессии за прогон.
     disconnects: u32,
-    /// Сделанных попыток переподключения (M6.1-заготовка).
+    /// Сделанных попыток переподключения.
     reconnect_attempts: u32,
-    /// Успешных восстановлений транспорта (пока не более одного: после него
-    /// прогон завершается до M6.1-финала).
+    /// Успешных восстановлений транспорта и продолжений партии.
     reconnects: u32,
-    /// Транспорт восстановлен, но состояние партии — нет (M6.1-финал).
+    /// Транспорт восстановлен, но состояние партии не удалось восстановить
+    /// (сейчас `false` после успешного resume-54; поле оставлено для отчёта).
     reconnect_pending_state: bool,
 }
 
@@ -1497,6 +1505,22 @@ impl TurnBarrierFsm {
             .all(|team| state.state_sync_indices[team] == self.sync_index)
     }
 
+    /// Состояние своей команды для восстановления после реконнекта.
+    ///
+    /// Пакет 54 — единственный «снимок» в протоколе (`docs/protocol.md` §8.5,
+    /// §9): он несёт юнитов, золото, исследования и счётчики id одной
+    /// команды. После разрыва клиент повторно публикует **своё** состояние с
+    /// последним завершённым `sync_index`: сервер и пиры применяют его как
+    /// авторитетное (`Remote_ReceiveNetPacket_54`), а встречные 54 пиров
+    /// корректируют удалённые команды у нас. Полной карты/SNAP в протоколе
+    /// нет — см. §9 protocol.md о пределах.
+    fn resume_state_sync(&self, state: &GameState) -> Vec<Packet> {
+        state_sync_for(state, self.local_team, self.sync_index)
+            .into_iter()
+            .map(Packet::StateSync)
+            .collect()
+    }
+
     /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[own]` → 45.
     fn crc(&mut self, state: &mut GameState) -> Vec<Packet> {
         let slot = self.local_team.0 as usize;
@@ -1614,8 +1638,9 @@ async fn pump_events(
 ) -> Result<bool> {
     loop {
         match handle.next_event_timeout(options.event_wait).await {
-            // M6.1-заготовка: разрыв не завершает прогон молча — сначала
-            // автоматический ENet connect + TP 00 по ReconnectPolicy.
+            // Разрыв не завершает прогон молча: сначала автоматический
+            // ENet connect + TP 00 по ReconnectPolicy, затем resume-54 и
+            // продолжение барьеров.
             Ok(Some(SessionEvent::Disconnected)) => {
                 stats.disconnects = stats.disconnects.saturating_add(1);
                 tracing::warn!("reconnect: сервер разорвал ENet-сессию");
@@ -1625,26 +1650,47 @@ async fn pump_events(
                         stats.reconnect_attempts =
                             stats.reconnect_attempts.saturating_add(attempts);
                         stats.reconnects = stats.reconnects.saturating_add(1);
-                        stats.reconnect_pending_state = true;
+                        stats.reconnect_pending_state = false;
+
+                        // Состояние не сбрасываем: lockstep-барьеры не дают
+                        // партии уйти вперёд без нашей команды, поэтому
+                        // локальный turn/units — точка продолжения. Свой 54
+                        // публикуем заново (сервер и пиры применяют состояние
+                        // владельца), встречные 54 исправят удалённые команды
+                        // на ближайшем SYNC; 53/52/45 догоняются повторами.
+                        let packets = fsm.resume_state_sync(app.state());
+                        send_barrier(handle, &packets)
+                            .await
+                            .context("reconnect: публикация своего 54 после TP00")?;
+
                         tracing::warn!(
-                            "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}), \
-                             но восстановление состояния партии — M6.1-финал \
-                             (docs/protocol.md §9: SNAP/повторного входа в сессию нет)"
+                            "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}); \
+                             партия продолжена, отправлен resume-54 команды {} (index {}, {} пакет(ов))",
+                            fsm.local_team.0,
+                            fsm.sync_index,
+                            packets.len()
                         );
                     }
                     ReconnectOutcome::Exhausted { attempts } => {
                         stats.reconnect_attempts =
                             stats.reconnect_attempts.saturating_add(attempts);
+                        stats.reconnect_pending_state = true;
                         tracing::error!(
                             "reconnect: переподключение не удалось за {attempts} попыт(ок) — \
                              прогон завершён"
                         );
+                        return Ok(false);
                     }
                     ReconnectOutcome::Disabled => {
+                        stats.reconnect_pending_state = true;
                         tracing::warn!("reconnect: автоматическое переподключение выключено");
+                        return Ok(false);
                     }
                 }
-                return Ok(false);
+                // Продолжаем вычерпывать события уже из новой сессии; барьер
+                // в wait_barrier повторит свой пакет, как только истечёт
+                // трёхсекундный интервал (для него время идёт с прошлой
+                // отправки).
             }
             Ok(Some(event)) => {
                 if !handle_session_event(app, event, stats, fsm)? {
@@ -2134,7 +2180,7 @@ impl TicketKindShort for max_net::Ticket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::enums::TeamClan;
+    use max_core::enums::{TeamClan, UnitType};
     use max_core::input::{Packet18Chat, Packet45CrcBarrier};
     use max_core::team::TeamUnits;
 
@@ -2528,6 +2574,290 @@ mod tests {
             Some("GREEN: hello")
         );
         assert_eq!(app.applied_commands(), 1);
+    }
+
+    /// Состояние для трёхклиентного сценария: одинаковый мир, по танку на
+    /// команду. Клиенты получают клон и меняют только `TeamKind`.
+    fn three_team_state() -> (GameState, [max_core::UnitId; 3]) {
+        use max_core::geo::Point;
+
+        let mut state = GameState::new();
+        let teams = [TeamId::RED, TeamId::GREEN, TeamId::BLUE];
+        let mut ids: [max_core::UnitId; 3] = [max_core::UnitId::NO_ID; 3];
+
+        for (index, team) in teams.iter().copied().enumerate() {
+            state.team_units[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+            ids[index] = state
+                .spawn_unit(
+                    UnitType::Tank,
+                    team,
+                    Point::new(20 + index as i16 * 5, 20),
+                    0,
+                )
+                .expect("tank spawns");
+        }
+        state.play_mode = PlayMode::SimultaneousMoves;
+        (state, ids)
+    }
+
+    struct SimClient {
+        app: App,
+        fsm: TurnBarrierFsm,
+    }
+
+    impl SimClient {
+        fn new(base: &GameState, local: TeamId, remotes: &[TeamId]) -> Self {
+            let mut app = App::new(AppConfig::default());
+            *app.state_mut() = base.clone();
+            let state = app.state_mut();
+            for team in 0..PLAYER_TEAM_COUNT {
+                state.teams[team].team_type = TeamKind::None;
+            }
+            state.teams[local.0 as usize].team_type = TeamKind::Player;
+            for team in remotes {
+                state.teams[team.0 as usize].team_type = TeamKind::Remote;
+            }
+            state.player_team = local;
+            Self {
+                app,
+                fsm: TurnBarrierFsm::new(local, PlayMode::SimultaneousMoves),
+            }
+        }
+    }
+
+    /// Релей в «звезде»: пакет отправителя получают все остальные клиенты.
+    fn relay(
+        packets: &[Vec<Packet>],
+        senders: &[usize],
+        clients: &mut [SimClient],
+        stats: &mut [GameLoopStats],
+    ) {
+        for &source in senders {
+            for target in 0..clients.len() {
+                if target == source {
+                    continue;
+                }
+                for packet in &packets[source] {
+                    let client = &mut clients[target];
+                    handle_session_event(
+                        &mut client.app,
+                        relayed(packet),
+                        &mut stats[target],
+                        &mut client.fsm,
+                    )
+                    .expect("релейный пакет");
+                }
+            }
+        }
+    }
+
+    fn send_all(
+        clients: &mut [SimClient],
+        stats: &mut [GameLoopStats],
+        make: impl Fn(&mut SimClient) -> Vec<Packet>,
+    ) -> Vec<Vec<Packet>> {
+        let packets: Vec<Vec<Packet>> = clients.iter_mut().map(make).collect();
+        let senders: Vec<usize> = (0..clients.len()).collect();
+        relay(&packets, &senders, clients, stats);
+        packets
+    }
+
+    /// P5: три клиента, разрыв B, восстановление через 54 и продолжение хода.
+    ///
+    /// Мок-транспорт — детерминированный релей без сети: пока B отключён, его
+    /// пакеты не доставляются; A/C успевают «сходить» и испортить копию юнита
+    /// B (как пропущенный приказ). После реконнекта B публикует свой 54 —
+    /// A/C принимают состояние владельца; встречный 54 A исправляет копию
+    /// юнита A у B. Ход доходит до 45, CRC и turn_counter совпадают.
+    #[test]
+    fn three_clients_survive_disconnect_and_converge_via_state_sync() {
+        let (base, ids) = three_team_state();
+        let mut clients = vec![
+            SimClient::new(&base, TeamId::RED, &[TeamId::GREEN, TeamId::BLUE]),
+            SimClient::new(&base, TeamId::GREEN, &[TeamId::RED, TeamId::BLUE]),
+            SimClient::new(&base, TeamId::BLUE, &[TeamId::RED, TeamId::GREEN]),
+        ];
+        let mut stats = vec![
+            GameLoopStats::default(),
+            GameLoopStats::default(),
+            GameLoopStats::default(),
+        ];
+
+        // 00: все трое.
+        send_all(&mut clients, &mut stats, |client| {
+            client.fsm.begin(client.app.state_mut())
+        });
+        assert!(clients.iter().all(|client| client
+            .fsm
+            .reached(client.app.state())), "00 с 3 участниками");
+
+        // 53: все трое.
+        send_all(&mut clients, &mut stats, |client| {
+            client.fsm.complex(client.app.state())
+        });
+        assert!(clients.iter().all(|client| client
+            .fsm
+            .reached(client.app.state())), "53 с 3 участниками");
+
+        // 06: локальный конец хода, релей остальным.
+        let mut finish_packets = Vec::new();
+        for client in &mut clients {
+            let finish = Command::FinishedTurn(Packet06FinishedTurn {
+                team: client.fsm.local_team,
+            });
+            client.app.apply(finish.clone());
+            client.fsm.mark_local_finished();
+            finish_packets.push(vec![Packet::Command(finish)]);
+        }
+        let senders: Vec<usize> = (0..clients.len()).collect();
+        relay(&finish_packets, &senders, &mut clients, &mut stats);
+
+        // B (GREEN) пропадает: A и C шлют 52, но B не получает их, а его 52
+        // теряется. Без B барьер не закрывается — это и есть lockstep.
+        let mut packets: Vec<Vec<Packet>> = Vec::new();
+        for client in &mut clients {
+            packets.push(client.fsm.end(client.app.state_mut()));
+        }
+        relay(&packets, &[0, 2], &mut clients, &mut stats);
+        assert!(!clients[0].fsm.reached(clients[0].app.state()));
+        assert!(!clients[2].fsm.reached(clients[2].app.state()));
+
+        // Пока B нет, A/C меняют копию танка B (пропущенный приказ атаки).
+        for index in [0usize, 2] {
+            clients[index]
+                .app
+                .state_mut()
+                .unit_mut(ids[1])
+                .expect("tank B")
+                .hits = 1;
+        }
+        // И у B устарела копия танка A.
+        clients[1]
+            .app
+            .state_mut()
+            .unit_mut(ids[0])
+            .expect("tank A")
+            .hits = 2;
+        let b_tank_hits = clients[1]
+            .app
+            .state()
+            .unit(ids[1])
+            .expect("tank B")
+            .hits;
+        let a_tank_hits = clients[0]
+            .app
+            .state()
+            .unit(ids[0])
+            .expect("tank A")
+            .hits;
+
+        // Реконнект: B публикует свой 54 (sync_index ещё 0), A/C применяют.
+        let resume = clients[1].fsm.resume_state_sync(clients[1].app.state());
+        assert!(
+            resume.iter().any(
+                |packet| matches!(packet, Packet::StateSync(sync) if sync.team == TeamId::GREEN)
+            ),
+            "resume-54 отправляет состояние B"
+        );
+        let mut resume_packets = vec![Vec::new(); clients.len()];
+        resume_packets[1] = resume;
+        relay(&resume_packets, &[1], &mut clients, &mut stats);
+        for index in [0usize, 2] {
+            assert_eq!(
+                clients[index]
+                    .app
+                    .state()
+                    .unit(ids[1])
+                    .expect("tank B")
+                    .hits,
+                b_tank_hits,
+                "54 владельца восстановил копию танка B"
+            );
+        }
+
+        // B повторяет свой потерянный 52 (тот же счётчик, без нового
+        // pre-increment); A/C уже ждут именно его.
+        let mut end_packets = vec![Vec::new(); clients.len()];
+        end_packets[1] = packets[1].clone();
+        relay(&end_packets, &[1], &mut clients, &mut stats);
+        assert!(
+            clients.iter().all(|client| client
+                .fsm
+                .reached(client.app.state())),
+            "52 после возврата B: {:?}",
+            clients
+                .iter()
+                .map(|client| (
+                    client.fsm.local_team.0,
+                    client.fsm.end_counter,
+                    client.app.state().turn_indices,
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        // 54 всех команд: B получает актуальное состояние A/C, A/C — B.
+        send_all(&mut clients, &mut stats, |client| {
+            client.fsm.sync(client.app.state())
+        });
+        assert!(clients.iter().all(|client| client
+            .fsm
+            .reached(client.app.state())), "54 с 3 участниками");
+        assert_eq!(
+            clients[1].app.state().unit(ids[0]).expect("tank A").hits,
+            a_tank_hits,
+            "54 A исправил устаревшую копию танка A у B"
+        );
+
+        // 45: CRC каждого клиента сходится со всеми.
+        send_all(&mut clients, &mut stats, |client| {
+            client.fsm.crc(client.app.state_mut())
+        });
+        assert!(clients.iter().all(|client| client
+            .fsm
+            .reached(client.app.state())), "45 с 3 участниками");
+        for client in &clients {
+            assert!(client.fsm.crc_matches(client.app.state()), "CRC 45");
+        }
+
+        let checksums: Vec<u16> = clients
+            .iter()
+            .map(|client| max_core::crc::state_checksum(client.app.state()))
+            .collect();
+        assert_eq!(checksums[0], checksums[1], "CRC A == B");
+        assert_eq!(checksums[0], checksums[2], "CRC A == C");
+
+        for client in &mut clients {
+            client.app.state_mut().game_state = GameStateType::EndTurn;
+            let _ = client.app.state_mut().finish_turn();
+        }
+        let turns: Vec<i32> = clients
+            .iter()
+            .map(|client| client.app.state().turn_counter)
+            .collect();
+        assert_eq!(turns, vec![1, 1, 1], "turn_counter догнал у всех");
+    }
+
+    /// Resume-54 после реконнекта: своя команда, последний sync_index и полный
+    /// набор юнитов команды (включая хвост экономики в last-чанке).
+    #[test]
+    fn resume_state_sync_publishes_the_last_completed_index() {
+        let (base, ids) = three_team_state();
+        let client = SimClient::new(&base, TeamId::GREEN, &[TeamId::RED, TeamId::BLUE]);
+        let mut fsm = TurnBarrierFsm::new(TeamId::GREEN, PlayMode::SimultaneousMoves);
+        fsm.sync_index = 7;
+
+        let packets = fsm.resume_state_sync(client.app.state());
+        assert_eq!(packets.len(), 1, "один юнит — один last-чанк");
+        match &packets[0] {
+            Packet::StateSync(sync) => {
+                assert_eq!(sync.team, TeamId::GREEN);
+                assert_eq!(sync.sync_index, 7, "последний завершённый раунд");
+                assert!(sync.is_last);
+                assert_eq!(sync.units.len(), 1);
+                assert_eq!(sync.units[0].0, ids[1], "только юниты своей команды");
+            }
+            other => panic!("expected 54, got {other:?}"),
+        }
     }
 
     /// Два пира, релейные пакеты приходят от сервера — барьер 00 сходится.

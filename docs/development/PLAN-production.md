@@ -133,11 +133,40 @@
   `release-checklist.md` §2.9, `max-rust-qa/scripts/README.md` §P4.
 
 ### P5 — Сетевая зрелость
-- [ ] 3+ клиента в сессии (релей всем, барьеры по всем командам) — live-smoke с 3 клиентами.
+- [x] 3+ клиента в сессии (релей всем, барьеры по всем командам) — live-smoke с 3 клиентами.
+  `build/scripts/live-smoke-3.sh` (3 Rust-клиента, `--min-players 3` через
+  `horizon_probe ... 3`, BLUE занимает реальный клиент): **PASS 3×10**,
+  `пиров=2`, релей 00 от двух других команд, 00/52/54/45 пройдены у всех,
+  `barrier_timeouts=0`, `state_checksum=0x34D5` у всех. `MAX_LOG` включает
+  debug-логи барьеров (ограничение `tracing-subscriber` без `env-filter`).
 - [ ] Паритет Rust+C++-клиентов в одной сессии (бит-в-бит) — тест с C++-клиентом (headless-пара).
-- [ ] Полный реконнект: восстановление состояния после разрыва (54/CRC) — по barrier-flow.
+  **Частично / блокер:** headless-сборка `src/` умеет только `--server`
+  (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`, ветки `--client`/`--connect`
+  нет); GUI-клиент требует X11 и ручного меню. `build/scripts/live-smoke-mixed.sh`:
+  **PARTIAL PASS** — Rust×2, CRC `0x7035`, C++-сервер (эталонный
+  `state_checksum`/`GameManager_CheckDesync`) не пишет `Desync check failed`,
+  т.е. состояние Rust-клиентов совпало с C++-симуляцией; одновременная сессия
+  Rust+C++ не доказана. Для полного пункта нужен headless client mode
+  (или Xvfb+автоматизация GUI) — это изменение `src/` вне доказанного бага.
+- [x] Полный реконнект: восстановление состояния после разрыва (54/CRC) — по barrier-flow.
+  `ReconnectPolicy` (ENet+TP00 тем же тикетом, без повторного лобби) →
+  продолжение локального lockstep-состояния → resume-54 своей команды
+  (`TurnBarrierFsm::resume_state_sync`) → встречные 54 пиров → 52/54/45 и
+  `finish_turn`. `net.rs::three_clients_survive_disconnect_and_converge_via_state_sync`
+  (3 клиента, мок-релей, B offline, CRC/turn сходятся) +
+  `resume_state_sync_publishes_the_last_completed_index`. **Пределы:** SNAP нет;
+  54 покрывает только юнитов/экономику своей команды; пропущенные приказы
+  других не replay-ятся; C++-пиры исключают команду через 30 с; своя команда
+  авторитетна (возможен откат её состояния). См. `protocol.md` §9.
 - [ ] Спектатор (клиент без команды) — если достижимо без изменения сервера.
+  **Невозможно без сервера:** нет `TEAM_TYPE_SPECTATOR` (`enums.hpp:164-168`),
+  `Remote_SetupPlayers` требует `player_team`, лобби раздаёт 4 командных слота,
+  поздний вход не получает снапшот карты/юнитов. Нужны `team=-1`/spectator-флаг
+  и релей 53/54 наблюдателю. Задокументировано в `protocol.md` §9.2.
 - Критерий: smoke-скрипты 3-клиентов и Rust+C++ зелёные; реконнект переживает разрыв.
+  **Факт:** 3-клиентный smoke зелёный; Rust+C++ — PARTIAL (блокер C++ headless
+  client mode); реконнект проверен в in-process 3-клиентном мок-тесте, живой
+  разрыв в smoke не автоматизирован (нужен pause/proxy-хук).
 
 ### P6 — QA-покрытие и релиз v1.1.0
 - [ ] Перевод 🟡/❌ тест-кейсов suite в зелёные (или осознанное закрытие).

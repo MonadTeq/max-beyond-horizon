@@ -5,6 +5,8 @@
 #                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) и golden
 #                              # + SOAK: soak_headless 120 ходов
 #   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
+#   bash ci.sh --smoke3        # плюс live-smoke-3 (3 клиента × N ходов)
+#   bash ci.sh --smoke-mixed   # плюс live-smoke-mixed (Rust×2 + C++ desync-оракул)
 #   bash ci.sh --smoke --turns 10
 #
 # Требования: Docker с Linux-контейнерами; для --smoke — собранные
@@ -30,15 +32,21 @@ fi
 
 RUST_IMAGE="${RUST_IMAGE:-rust:1.94.0-bookworm}"
 SMOKE=0
+SMOKE3=0
+SMOKE_MIXED=0
 TURNS="${SMOKE_TURNS:-5}"
 
 usage() {
     cat <<'EOF'
-Использование: bash ci.sh [--smoke] [--turns N]
+Использование: bash ci.sh [--smoke] [--smoke3] [--smoke-mixed] [--turns N]
 
-  --smoke       после тестов запустить build/scripts/live-smoke.sh (2 клиента)
-  --turns N     число ходов для --smoke (по умолчанию 5)
-  -h, --help    эта справка
+  --smoke         после тестов запустить build/scripts/live-smoke.sh (2 клиента)
+  --smoke3        после тестов запустить build/scripts/live-smoke-3.sh (3 клиента)
+  --smoke-mixed   после тестов запустить build/scripts/live-smoke-mixed.sh
+                  (Rust×2 + C++ desync-оракул; при отсутствии C++ headless
+                  client mode — PARTIAL PASS)
+  --turns N       число ходов для smoke-скриптов (по умолчанию 5)
+  -h, --help      эта справка
 
 Переменные: RUST_IMAGE (rust:1.94.0-bookworm), SMOKE_TURNS.
 EOF
@@ -48,6 +56,14 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --smoke)
             SMOKE=1
+            shift
+            ;;
+        --smoke3)
+            SMOKE3=1
+            shift
+            ;;
+        --smoke-mixed)
+            SMOKE_MIXED=1
             shift
             ;;
         --turns)
@@ -160,6 +176,16 @@ docker run --rm \
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"
     bash "$ROOT/build/scripts/live-smoke.sh" "$TURNS"
+fi
+
+if [ "$SMOKE3" = "1" ]; then
+    step "SMOKE3: build/scripts/live-smoke-3.sh ($TURNS ходов, 3 клиента)"
+    bash "$ROOT/build/scripts/live-smoke-3.sh" "$TURNS"
+fi
+
+if [ "$SMOKE_MIXED" = "1" ]; then
+    step "SMOKE-MIXED: build/scripts/live-smoke-mixed.sh ($TURNS ходов)"
+    bash "$ROOT/build/scripts/live-smoke-mixed.sh" "$TURNS"
 fi
 
 step "CI OK за $(( $(date +%s) - started )) с"

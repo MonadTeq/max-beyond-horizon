@@ -1,5 +1,7 @@
 // Живой smoke: gRPC-проба Horizon (hello → list → create → join → тикет).
-// Запуск: cargo run -p max_app --example horizon_probe -- <host> <port> [name]
+// Запуск: cargo run -p max_app --example horizon_probe -- <host> <port> [name] [min_players]
+// `min_players` нужен live-smoke-3.sh: третий клиент должен успеть занять BLUE
+// до старта сессии (по умолчанию сервер стартует после двух игроков).
 use std::env;
 
 use max_net::horizon::{CreateGameParams, HorizonClient};
@@ -14,6 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8082);
     let player = args.get(3).cloned().unwrap_or_else(|| "probe".to_string());
     let _player = player; // имя игрока задаётся через create_game/join_game при необходимости
+    // `min_players` по умолчанию оставляем серверу (2). Третьему клиенту нужен
+    // слот: без `--min-players 3` сессия стартует после второго игрока, а
+    // третий уже не успевает занять BLUE до пакета 34.
+    let min_players = args.get(4).and_then(|value| value.parse::<u32>().ok());
 
     let mut client = HorizonClient::connect(&host, port).await?;
     println!("[1] connected to {host}:{port}");
@@ -36,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let created = client
         .create_game(CreateGameParams {
             name: Some(name.clone()),
+            min_players,
             ..Default::default()
         })
         .await?;

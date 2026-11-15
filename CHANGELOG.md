@@ -2,6 +2,40 @@
 
 ### Добавлено
 
+- **P5 — сетевая зрелость** (`docs/development/PLAN-production.md`):
+  - **Три клиента.** `build/scripts/live-smoke-3.sh`: Horizon + C++-headless +
+    3 Rust-клиента (`--min-players 3`, слоты RED/GREEN/BLUE), N ходов.
+    Проверяет `пиров=2`, релей 00 от двух других команд каждому, прохождение
+    00/52/54/45, `barrier_timeouts=0` и совпадение `state_checksum` у всех.
+    Живой прогон 3×10 — **PASS**, CRC `0x34D5` у трёх клиентов.
+    `horizon_probe` получил необязательный `min_players` (4-й аргумент).
+  - **Реконнект без потери партии.** `max_app::net`: `SessionEvent::Disconnected`
+    больше не завершает прогон после успешного ENet+TP00 — сессия продолжается;
+    `TurnBarrierFsm::resume_state_sync` публикует 54 своей команды с последним
+    `sync_index`, встречные 54 исправляют удалённые команды, барьеры 52/54/45
+    доигрываются. `reconnect_pending_state=false` после resume; пределы (нет
+    SNAP, 54 только своя команда/экономика, C++ ELIMINATED через 30 с) —
+    `docs/architecture/protocol.md` §9.
+  - **Тесты:** unit `resume_state_sync_publishes_the_last_completed_index`;
+    in-process 3-клиентный мок-релей
+    `three_clients_survive_disconnect_and_converge_via_state_sync` (B offline,
+    копия его юнита испорчена, после возврата 54 владельца восстанавливает
+    состояние; CRC/turn_counter совпадают у всех).
+  - **C++-паритет — PARTIAL.** `build/scripts/live-smoke-mixed.sh`: Rust×2 + C++
+    сервер как desync-оракул (Rust CRC `0x7035`, `Desync check failed` нет).
+    Полная mixed-сессия заблокирована: headless `src/` умеет только `--server`,
+    `--client`/`--connect` нет, GUI-клиенту нужен X11 и ручной ввод
+    (`src/main.cpp`); блокер зафиксирован скриптом и документацией.
+  - **Спектатор — невозможно без сервера:** нет `TEAM_TYPE_SPECTATOR`,
+    `Remote_SetupPlayers` требует команду, поздний вход не получает снапшот
+    (protocol.md §9.2). **MAX_LOG** (простой уровень/`target=level`) включает
+    debug-логи для smoke без включения `env-filter`.
+  - Документация: `protocol.md` §9/§11/§12, `barrier-flow.md` (P5-статус),
+    `PLAN-production.md` P5, `build/scripts/README.md`,
+    `max-rust-qa/suite/05-network.md`, `release-checklist.md` §3.1.
+  - **Тесты:** 759 passed / 0 failed (`cargo test`, default; + sound и
+    `--no-default-features` — зелёные).
+
 - **P4 — стабильность и производительность клиента** (`docs/development/PLAN-production.md`):
   - **Soak 100+ ходов.** `max-rust-qa/scripts/soak-100.qa`: партия RED
     (человек, `end_turn` + `select`/`move`) против GREEN (Clueless, Duration

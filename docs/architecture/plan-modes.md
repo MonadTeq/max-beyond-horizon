@@ -239,8 +239,8 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 Сессия headless греется 10–15 с, и первый `ENet connect` падал с
 `connect timed out after 10s`. Теперь `max_app/src/net.rs`:
 `JoinRetryPolicy { attempts, timeout, budget }` и `retry_join` — те же
-принципы, что у `ReconnectPolicy` (M6.1-заготовка), но **для первого**
-подключения:
+принципы, что у `ReconnectPolicy` (транспорт + resume-54, см.
+`protocol.md` §9), но **для первого** подключения:
 
 * задержки `1, 2, 3, 5, 8, 11` с (`JOIN_RETRY_BACKOFF`), окно 30 с;
 * таймаут одной попытки — 4 с (ENet connect + `TP 00`), по умолчанию
@@ -292,9 +292,11 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 с 64-символьным хэшем и проходят 10 ходов; скрипт проверяет
 `data_hash=<hex>(64)` и отсутствие `Session failed` в `a.log`/`b.log`.
 
-Открытые вопросы: `min_players`/одиночное лобби Horizon и полный реконнект в
-идущую партию (M6.1-финал) — не в этой задаче; `--handshake-patches` остаётся
-аварийным override'ом.
+Открытые вопросы: spectator (нет `TEAM_TYPE_SPECTATOR`/снапшота) и полный
+SNAP для реконнекта — см. `protocol.md` §9.2/§12. Реконнект в идущую партию
+реализован через ENet+`TP 00`, продолжение lockstep и resume-54 (без SNAP:
+54 покрывает юнитов/экономику своей команды). `--handshake-patches` остаётся
+аварийным override'ом. Три клиента проверены `live-smoke-3.sh`.
 
 ## Порядок
 

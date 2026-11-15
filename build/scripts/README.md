@@ -1,6 +1,6 @@
 # build/scripts — релизные и проверочные скрипты
 
-`build-windows.sh` и `live-smoke.sh` рассчитаны на Git Bash / WSL / Linux и
+`build-windows.sh` и `live-smoke*.sh` рассчитаны на Git Bash / WSL / Linux и
 работают через Docker (`rust:1.94.0-bookworm`) — хостовый Rust-тулчейн им не
 нужен. На Windows их запускать из **Git Bash** (не из `cmd`/PowerShell):
 `cygpath` и `MSYS_NO_PATHCONV` нужны для корректной передачи путей в Docker.
@@ -13,6 +13,39 @@
 | `build-windows-ui.ps1` | **нативная** Windows-сборка `max-rust` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-horizon-server/target/release/horizon` и `build/linux-server-template/max-port` |
+| `live-smoke-3.sh` | P5: живой smoke **3 клиента × N ходов** (RED/GREEN/BLUE): релей всем, 00/52/54/45, `state_checksum` у всех, 0 таймаутов | то же; Docker; `--min-players 3` создаётся автоматически |
+| `live-smoke-mixed.sh` | P5: **Rust×2 + C++-сервер как desync-оракул**; при отсутствии C++ headless client mode печатает `PARTIAL PASS`/блокер | то же; `MIXED_REQUIRE_CPP=1` — падать вместо partial |
+
+## P5 smoke: 3 клиента и Rust+C++
+
+```sh
+bash build/scripts/live-smoke-3.sh 5
+bash build/scripts/live-smoke-mixed.sh 5
+MIXED_REQUIRE_CPP=1 bash build/scripts/live-smoke-mixed.sh 5   # ожидаемо BLOCKED
+```
+
+`live-smoke-3.sh` сам собирает `max-rust` и `horizon_probe`
+(`--no-default-features`) и запускает клиентов из `target/debug` — три
+параллельных `cargo run` не конкурируют за lock. Порты наружу не публикуются:
+probe и клиенты живут в network namespace контейнера Horizon, поэтому занятые
+хостом 8080/8082 не мешают. `MAX_LOG=max_app=debug` включает debug-строки
+прохождения 52/54/45 и релея; `tracing-subscriber` здесь без `env-filter`,
+поэтому одного `RUST_LOG` недостаточно.
+
+`live-smoke-mixed.sh` честно разделяет доказанное и недоказанное:
+
+- **доказано:** два Rust-клиента в одной сессии, CRC совпадает, C++-сервер
+  (эталонный `GameManager_CheckDesync`) не пишет `Desync check failed` —
+  состояние Rust бит-в-бит совпало с C++-симуляцией;
+- **блокер:** headless `src/` собирается только как `--server`
+  (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`), ветки `--client`/`--connect`
+  нет; GUI-клиент требует X11 и ручного прохода меню. Полная mixed-сессия
+  требует изменения `src/` (headless client mode) либо Xvfb+автоматизации —
+  см. `docs/architecture/protocol.md` §9/§12.
+
+Логи и коды выхода: `build/smoke-logs/live3-*.log`, `live3-ai_log.txt`,
+`mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь
+`session_root` — там лежит 58-МБ `max-port`).
 
 ## build-windows.sh
 

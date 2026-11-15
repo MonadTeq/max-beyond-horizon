@@ -73,9 +73,9 @@ struct Cli {
     fuel: Option<u8>,
     gold: Option<u8>,
     derelicts: Option<u8>,
-    /// M6.1-заготовка: попытки переподключения при разрыве (0 — выключить).
+    /// Попытки переподключения при разрыве (0 — выключить).
     reconnect_attempts: Option<u32>,
-    /// M6.1-заготовка: таймаут одной попытки переподключения в секундах.
+    /// Таймаут одной попытки переподключения в секундах.
     reconnect_timeout_secs: Option<u32>,
     /// Сколько попыток первого подключения (Create game → Join → start).
     join_retry_attempts: Option<u32>,
@@ -364,8 +364,32 @@ impl Cli {
     }
 }
 
+/// Уровень логов из `MAX_LOG`/`RUST_LOG`.
+///
+/// `tracing-subscriber` собран без `env-filter`, поэтому `RUST_LOG` сам по
+/// себе не работает. Для smoke-логов (прохождение 52/54/45 и релей)
+/// принимаем простой уровень (`debug`, `trace`, …); `target=level` тоже
+/// принимается, но target игнорируется — уровень применяется глобально.
+fn log_level() -> tracing_subscriber::filter::LevelFilter {
+    for name in ["MAX_LOG", "RUST_LOG"] {
+        let Ok(value) = std::env::var(name) else {
+            continue;
+        };
+        let value = value.trim();
+        if let Ok(level) = value.parse() {
+            return level;
+        }
+        if let Some((_, level)) = value.rsplit_once('=') {
+            if let Ok(level) = level.trim().parse() {
+                return level;
+            }
+        }
+    }
+    tracing_subscriber::filter::LevelFilter::INFO
+}
+
 fn main() -> ExitCode {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt().with_max_level(log_level()).init();
 
     match Cli::parse().and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
@@ -762,7 +786,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
         .or_else(|| config.max_res.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_default();
     let mut last_frame = std::time::Instant::now();
-    // M6.1-заготовка: политика реконнекта, общая для `--connect` и `--ui`.
+    // Политика реконнекта, общая для `--connect` и `--ui`.
     let mut reconnect = ReconnectPolicy::default();
     if let Some(attempts) = cli.reconnect_attempts {
         reconnect.attempts = attempts;
@@ -1303,6 +1327,10 @@ max-rust — клиент M.A.X. (core + net + assets + render)
     cargo run -p max_app                             # из max-rust/: GUI (default)
     cargo run -p max_app --features sound            # GUI + звук
     cargo run -p max_app --no-default-features -- --demo ...   # headless
+
+ОКРУЖЕНИЕ:
+    MAX_LOG=debug|trace           уровень логов (RUST_LOG тоже читается;
+                                  без env-filter — простой глобальный уровень)
 ",
         DEFAULT_GRPC_PORT
     );

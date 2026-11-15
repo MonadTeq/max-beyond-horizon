@@ -210,6 +210,26 @@ MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10
 `handshake=true lobby=true turns=10 barrier_timeouts=0`, fallback data_hash
 подтверждён (`live-smoke: fallback data_hash (MAX.RES-only) подтверждён`).
 
+### 3.1 P5: три клиента и Rust+C++
+
+```sh
+bash build/scripts/live-smoke-3.sh 5
+bash build/scripts/live-smoke-mixed.sh 5
+```
+
+- [x] `live-smoke-3.sh`: 3 Rust-клиента (RED/GREEN/BLUE), `--min-players 3`;
+      `пиров=2`, релей 00 от двух других каждой команде, 00/52/54/45 пройдены,
+      `barrier_timeouts=0`, `state_checksum` совпал у всех.
+      _(2026-11-16: 3×10 — PASS, `0x34D5` у трёх; логи `build/smoke-logs/live3-*.log`)_
+- [x] `live-smoke-mixed.sh`: Rust×2 ×10, CRC `0x7035`, C++-сервер без
+      `Desync check failed`. _(2026-11-16: PARTIAL PASS)_
+- [ ] Полная mixed-сессия Rust-клиент + C++-клиент: **блокер** — headless
+      `src/` имеет только `--server`, GUI-клиенту нужен X11 и ручной ввод
+      (`src/main.cpp`). См. `docs/architecture/protocol.md` §9/§12.
+- [x] Реконнект-состояние: in-process 3-клиентный мок-тест (B offline → resume-54
+      → CRC/turn сходятся); живой pause/proxy smoke не автоматизирован.
+      Пределы — `protocol.md` §9.2.
+
 ## 4. Человеческий сценарий M4 (SDL, мышь)
 
 Выполняется на машине с SDL3 и (для звука) аудиоустройством. Сервер — по
