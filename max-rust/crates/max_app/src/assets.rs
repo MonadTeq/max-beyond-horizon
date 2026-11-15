@@ -19,6 +19,8 @@ use max_assets::{decode_shadow, decode_sprite, ResArchive, ShadowSheet, SpriteSh
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
 
+use std::path::PathBuf;
+
 use crate::AppConfig;
 
 /// Имена ресурсов `MAX.RES` для 24 планет — `SNOW_1 + world_index`
@@ -35,6 +37,103 @@ pub const WORLD_ASSETS: [&str; 24] = [
 /// поэтому это просто индексация таблицы.
 pub fn world_asset_name(planet: Planet) -> &'static str {
     WORLD_ASSETS[planet as usize]
+}
+
+/// Где искать `PATCHES.RES`, если [`AppConfig::patches_res`] не существует.
+///
+/// Пути относительны: корня репозитория, текущего каталога и каталога
+/// [`AppConfig::max_res`]. Первый — шаблон headless-сервера, из которого
+/// запускается живой smoke; второй — обычный `assets/` репозитория.
+pub const PATCHES_RES_FALLBACKS: [&str; 2] = [
+    "build/linux-server-template/PATCHES.RES",
+    "assets/PATCHES.RES",
+];
+
+/// Находит `PATCHES.RES` для **загрузки ассетов** (SC_*/таблицы, спрайты).
+///
+/// Хэндшейк (`data_hash`) этот путь не использует: `net.rs` берёт
+/// [`AppConfig::handshake_patches_path`], поэтому «серверный» пустой
+/// `PATCHES.RES` и реальные ассеты могут расходиться. Возвращает выбранный
+/// путь и предупреждение, если сработал fallback.
+pub fn resolve_patches_res(config: &AppConfig) -> (PathBuf, Option<String>) {
+    let configured = &config.patches_res;
+
+    if configured.is_file() {
+        return (configured.clone(), None);
+    }
+
+    let mut bases: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        bases.push(cwd.clone());
+        if let Some(parent) = cwd.parent() {
+            bases.push(parent.to_path_buf());
+        }
+    }
+    if let Some(dir) = config.max_res.parent() {
+        bases.push(dir.to_path_buf());
+        if let Some(parent) = dir.parent() {
+            bases.push(parent.to_path_buf());
+        }
+    }
+
+    for base in &bases {
+        for relative in PATCHES_RES_FALLBACKS {
+            let candidate = base.join(relative);
+
+            if candidate.is_file() {
+                let warning = format!(
+                    "{} не найден; PATCHES.RES грузится из fallback {} (data_hash хендшейка не меняется)",
+                    configured.display(),
+                    candidate.display()
+                );
+
+                return (candidate, Some(warning));
+            }
+        }
+    }
+
+    (configured.clone(), None)
+}
+
+/// Находит `COLOR.PAL` для **загрузки ассетов**, если путь конфига отсутствует.
+///
+/// Палитра — часть тех же данных, что и `MAX.RES`; `--max-res` без
+/// `--data-dir`/`--palette` (как в живом smoke) оставлял относительный путь
+/// `max-original/COLOR.PAL` нерезолвимым, и мир не генерировался. Хэндшейк
+/// `COLOR.PAL` не использует, поэтому подмена безопасна.
+pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
+    let configured = &config.color_pal;
+
+    if configured.is_file() {
+        return (configured.clone(), None);
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(dir) = config.max_res.parent() {
+        candidates.push(dir.join("COLOR.PAL"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("max-original/COLOR.PAL"));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("max-original/COLOR.PAL"));
+        }
+    }
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            let warning = format!(
+                "{} не найден; COLOR.PAL грузится из fallback {}",
+                configured.display(),
+                candidate.display()
+            );
+
+            return (candidate, Some(warning));
+        }
+    }
+
+    (configured.clone(), None)
 }
 
 /// Какие типы юнитов грузятся из `MAX.RES` в [`Assets`].
@@ -188,10 +287,15 @@ impl Assets {
     pub fn load(config: &AppConfig) -> Result<Self> {
         let max_res = ResArchive::open(&config.max_res)
             .with_context(|| format!("не удалось открыть {}", config.max_res.display()))?;
-        let patches_res = ResArchive::open(&config.patches_res)
-            .with_context(|| format!("не удалось открыть {}", config.patches_res.display()))?;
-        let palette = Palette::load(&config.color_pal)
-            .with_context(|| format!("не удалось прочитать {}", config.color_pal.display()))?;
+        // Ассеты и data_hash разделены: `config.patches_res` может намеренно
+        // отсутствовать (сервер без PATCHES.RES), тогда архив берётся из
+        // fallback, а хэш по-прежнему считается по пути хендшейка.
+        let (patches_path, patches_warning) = resolve_patches_res(config);
+        let patches_res = ResArchive::open(&patches_path)
+            .with_context(|| format!("не удалось открыть {}", patches_path.display()))?;
+        let (palette_path, palette_warning) = resolve_color_pal(config);
+        let palette = Palette::load(&palette_path)
+            .with_context(|| format!("не удалось прочитать {}", palette_path.display()))?;
         let brightness = BrightnessLut::build(&palette);
 
         let world_name = world_asset_name(config.planet);
@@ -224,6 +328,13 @@ impl Assets {
         };
 
         let mut warnings = Vec::new();
+
+        if let Some(warning) = patches_warning {
+            warnings.push(warning);
+        }
+        if let Some(warning) = palette_warning {
+            warnings.push(warning);
+        }
         let mut sprites = Vec::with_capacity(UNIT_SPRITES.len());
 
         for (unit_type, sprite_name, shadow_name) in UNIT_SPRITES {
@@ -351,5 +462,183 @@ mod tests {
         types.sort_unstable();
         types.dedup();
         assert_eq!(types.len(), UNIT_SPRITES.len());
+    }
+
+    /// Уникальный временный каталог теста.
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "max_app_assets_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Путь внутри репозитория (`max-rust/crates/max_app/../../..`).
+    fn repo_path(relative: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .join(relative)
+    }
+
+    #[test]
+    fn configured_patches_res_wins_over_any_fallback() {
+        let dir = temp_dir("direct");
+        let patches = dir.join("PATCHES.RES");
+        std::fs::write(&patches, b"RES0").expect("write PATCHES.RES");
+
+        let config = AppConfig {
+            patches_res: patches.clone(),
+            ..Default::default()
+        };
+
+        let (path, warning) = resolve_patches_res(&config);
+        assert_eq!(path, patches);
+        assert!(warning.is_none(), "без fallback предупреждения нет");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn missing_patches_res_falls_back_to_the_server_template() {
+        let dir = temp_dir("template");
+        let data = dir.join("max-original");
+        std::fs::create_dir_all(&data).expect("data dir");
+        let max_res = data.join("MAX.RES");
+        std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
+
+        let fallback = dir.join("build/linux-server-template/PATCHES.RES");
+        std::fs::create_dir_all(fallback.parent().expect("parent")).expect("template dir");
+        std::fs::write(&fallback, b"RES0fallback").expect("write fallback");
+
+        let missing = dir.join("nowhere/PATCHES.RES");
+        let config = AppConfig {
+            max_res,
+            patches_res: missing.clone(),
+            ..Default::default()
+        };
+
+        let (path, warning) = resolve_patches_res(&config);
+        assert_eq!(path, fallback, "шаблон headless-сервера — первый fallback");
+        assert!(
+            warning.as_deref().unwrap_or("").contains("fallback"),
+            "о подмене нужно предупредить: {warning:?}"
+        );
+        assert_eq!(config.patches_res, missing, "config не меняется (хэш отдельно)");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn missing_patches_res_falls_back_to_the_repository_assets_dir() {
+        let dir = temp_dir("assets");
+        let data = dir.join("max-original");
+        std::fs::create_dir_all(&data).expect("data dir");
+        let max_res = data.join("MAX.RES");
+        std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
+
+        let fallback = dir.join("assets/PATCHES.RES");
+        std::fs::create_dir_all(fallback.parent().expect("parent")).expect("assets dir");
+        std::fs::write(&fallback, b"RES0assets").expect("write fallback");
+
+        let config = AppConfig {
+            max_res,
+            patches_res: dir.join("nowhere/PATCHES.RES"),
+            ..Default::default()
+        };
+
+        let (path, warning) = resolve_patches_res(&config);
+        assert_eq!(path, fallback, "без шаблона берётся assets/PATCHES.RES");
+        assert!(warning.is_some());
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn absent_everywhere_keeps_the_configured_path() {
+        let config = AppConfig {
+            max_res: std::path::PathBuf::from("/definitely/missing/MAX.RES"),
+            patches_res: std::path::PathBuf::from("/definitely/missing/PATCHES.RES"),
+            ..Default::default()
+        };
+
+        let (path, warning) = resolve_patches_res(&config);
+        assert_eq!(path, config.patches_res);
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn missing_color_pal_falls_back_next_to_max_res() {
+        let dir = temp_dir("palette");
+        let data = dir.join("max-original");
+        std::fs::create_dir_all(&data).expect("data dir");
+        let max_res = data.join("MAX.RES");
+        std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
+        let palette = data.join("COLOR.PAL");
+        std::fs::write(&palette, b"palette").expect("write COLOR.PAL");
+
+        let config = AppConfig {
+            max_res,
+            color_pal: dir.join("nowhere/COLOR.PAL"),
+            ..Default::default()
+        };
+
+        let (path, warning) = resolve_color_pal(&config);
+        assert_eq!(path, palette);
+        assert!(warning.as_deref().unwrap_or("").contains("COLOR.PAL"));
+        assert_eq!(config.color_pal, dir.join("nowhere/COLOR.PAL"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Ассеты грузятся из fallback, а `patches_res` остаётся путём хэндшейка.
+    ///
+    /// Пропускается, если данных игры нет рядом с репозиторием (как
+    /// `assets_integration_smoke` в `tests/app.rs`).
+    #[test]
+    fn assets_load_from_fallback_when_configured_patches_res_is_missing() {
+        let max_res = repo_path("max-original/MAX.RES");
+        let color_pal = repo_path("max-original/COLOR.PAL");
+
+        if !max_res.is_file() || !color_pal.is_file() {
+            return;
+        }
+
+        let missing = repo_path("build/does-not-exist/PATCHES.RES");
+        let config = AppConfig {
+            max_res,
+            color_pal: repo_path("max-original/does-not-exist.COLOR.PAL"),
+            patches_res: missing.clone(),
+            ..Default::default()
+        };
+
+        let assets = Assets::load(&config).expect("ассеты из fallback");
+        let report = assets.report();
+
+        assert!(
+            report.patches_res_entries > 0,
+            "PATCHES.RES должен загрузиться из fallback"
+        );
+        assert_eq!(
+            config.patches_res, missing,
+            "путь хэндшейка не подменяется fallback'ом"
+        );
+        assert!(
+            report.warnings.iter().any(|warning| warning.contains("fallback")),
+            "предупреждение о fallback должно попасть в отчёт: {:?}",
+            report.warnings
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("COLOR.PAL")),
+            "палитра тоже должна резолвиться рядом с MAX.RES: {:?}",
+            report.warnings
+        );
     }
 }

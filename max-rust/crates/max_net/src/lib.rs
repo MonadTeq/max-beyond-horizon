@@ -49,8 +49,8 @@ pub use horizon::{
 };
 pub use protocol::{GameListing, JoinRequest, LobbyEvent};
 pub use session::{
-    complex_summary_for, crc_barrier_for, BarrierAction, BarrierTiming, BarrierTracker, Session,
-    SessionCommand, SessionConfig, SessionError, SessionEvent, SessionHandle,
+    complex_summary_for, crc_barrier_for, payload_team, BarrierAction, BarrierTiming, BarrierTracker,
+    Session, SessionCommand, SessionConfig, SessionError, SessionEvent, SessionHandle,
 };
 pub use wire::{
     state_sync_for, GameOptions, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode,

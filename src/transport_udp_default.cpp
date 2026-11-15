@@ -795,6 +795,34 @@ void TransportUdpDefault_ProcessTpPacket(struct TransportUdpDefault_Context* con
  */
 void TransportUdpDefault_RelayApplPacket(struct TransportUdpDefault_Context* const context, ENetPeer* const peer,
                                          ENetPacket* const enet_packet, NetPacket& relay) {
+    /* Релей — только ИГРОВЫЕ пакеты. Лобби-пакеты (05/26/28..37/44/47) идут
+     * строго клиент<->сервер: пересылка лобби-пакета (например 05) другому
+     * клиенту ломает его лобби-автомат (клиент получает «старт игры» от пира
+     * и не шлёт свой 05 -> сервер ждёт барьеров, клиенты ждут 34 — дедлок).
+     * Игровые барьеры/приказы безопасны: команда — в поле team payload'а. */
+    if (enet_packet->dataLength < 1) {
+        return;
+    }
+    switch (enet_packet->data[0]) {
+        case 0x05: /* start game */
+        case 0x1A: /* 26 — lobby */
+        case 0x1C: /* 28 — join request */
+        case 0x1D: /* 29 — lobby */
+        case 0x1E: /* 30 — game settings */
+        case 0x1F: /* 31 */
+        case 0x20: /* 32 — lobby response */
+        case 0x21: /* 33 */
+        case 0x22: /* 34 — planet map */
+        case 0x23: /* 35 — team selection */
+        case 0x24: /* 36 — player name */
+        case 0x25: /* 37 — lobby */
+        case 0x2C: /* 44 — lobby welcome */
+        case 0x2F: /* 47 — player node */
+            return;
+        default:
+            break;
+    }
+
     for (uint32_t i = 0; i < context->Peers.GetCount(); ++i) {
         ENetPeer* const other = *context->Peers[i];
 

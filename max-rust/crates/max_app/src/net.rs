@@ -342,14 +342,18 @@ pub async fn run_network_with_sink(
     mut sink: Option<&mut dyn FrameSink>,
 ) -> Result<NetworkReport> {
     let config = app.config().clone();
-    let data_hash =
-        DataHash::from_files(&config.max_res, &config.patches_res).with_context(|| {
-            format!(
-                "не удалось посчитать SHA256({} + {})",
-                config.max_res.display(),
-                config.patches_res.display()
-            )
-        })?;
+    // Хэндшейк считает PATCHES.RES по своему пути: серверный `game_data` может
+    // не содержать файла, и тогда его часть хэша пуста. Ассеты грузятся
+    // отдельно (`App::init_assets` → `assets::resolve_patches_res`), поэтому
+    // несуществующий `--handshake-patches` не оставляет игру без карты.
+    let handshake_patches = config.handshake_patches_path().to_path_buf();
+    let data_hash = DataHash::from_files(&config.max_res, &handshake_patches).with_context(|| {
+        format!(
+            "не удалось посчитать SHA256({} + {})",
+            config.max_res.display(),
+            handshake_patches.display()
+        )
+    })?;
 
     let joined = connect_horizon(&config, &options.game_id, options.password.as_deref()).await?;
     let session_config = SessionConfig::from_joined(&joined, data_hash).with_player(
@@ -1185,6 +1189,16 @@ fn handle_session_event(
             if let Command::ComplexSummary(summary) = &command {
                 fsm.note_complex(summary.team, summary.turn);
             }
+            // 00 — команда ВСЕГДА из поля `team` payload'а, а не из
+            // ENet-отправителя: релейная копия приходит от сервера, у которого
+            // своей команды нет (`docs/barrier-flow.md` §1, `remote.cpp:2313`).
+            if let Command::TurnBarrier(barrier) = &command {
+                tracing::debug!(
+                    "00: команда {} счётчик {} (team из payload)",
+                    barrier.team.0,
+                    barrier.counter
+                );
+            }
             app.apply(command);
         }
         SessionEvent::Packet(Packet::StateSync(sync)) => {
@@ -1583,6 +1597,80 @@ mod tests {
 
         settings.world_name = max_net::WireName::from("MULTI");
         assert_eq!(planet_from_settings(&settings), None, "неизвестное имя → None");
+    }
+
+    /// Релейная копия приходит от сервера, у которого нет команды: событие
+    /// сессии несёт только payload. Кадр проходит через настоящий wire-кодек.
+    fn relayed(packet: &Packet) -> SessionEvent {
+        let frame = packet.encode().expect("encode barrier");
+        SessionEvent::Packet(Packet::decode(&frame).expect("decode relayed frame"))
+    }
+
+    /// Пакет 00 от сервера с `team = 1` учитывается как команда 1.
+    #[test]
+    fn relayed_00_from_the_server_counts_for_the_payload_team() {
+        let local = TeamId::RED;
+        let mut app = App::new(AppConfig::default());
+        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        let mut fsm = TurnBarrierFsm::new(local, PlayMode::SimultaneousMoves);
+        let mut stats = GameLoopStats::default();
+
+        let packets = fsm.begin(app.state_mut());
+        assert_eq!(barrier_counter(&packets[0]), 1, "счётчики с 1");
+        assert_eq!(app.state().frame_sync_counter[local.0 as usize], 1);
+        assert!(!fsm.reached(app.state()), "пир ещё не ответил");
+
+        let relayed_00 = Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
+            team: TeamId::GREEN,
+            counter: 1,
+        }));
+        handle_session_event(&mut app, relayed(&relayed_00), &mut stats, &mut fsm)
+            .expect("релейный 00");
+
+        assert_eq!(
+            app.state().frame_sync_counter[TeamId::GREEN.0 as usize], 1,
+            "team берётся из payload, а не из ENet-отправителя (сервер)"
+        );
+        assert!(fsm.reached(app.state()), "00-барьер проходит по team=1");
+    }
+
+    /// Два пира, релейные пакеты приходят от сервера — барьер 00 сходится.
+    #[test]
+    fn two_peers_pass_the_relayed_begin_barrier() {
+        let mut apps = [
+            App::new(AppConfig::default()),
+            App::new(AppConfig::default()),
+        ];
+        *apps[0].state_mut() = synthetic_state(TeamId::RED, &[TeamId::GREEN]);
+        *apps[1].state_mut() = synthetic_state(TeamId::GREEN, &[TeamId::RED]);
+
+        let mut fsms = [
+            TurnBarrierFsm::new(TeamId::RED, PlayMode::SimultaneousMoves),
+            TurnBarrierFsm::new(TeamId::GREEN, PlayMode::SimultaneousMoves),
+        ];
+        let mut stats = GameLoopStats::default();
+
+        let red = fsms[0].begin(apps[0].state_mut());
+        let green = fsms[1].begin(apps[1].state_mut());
+        assert_eq!(barrier_counter(&red[0]), 1);
+        assert_eq!(barrier_counter(&green[0]), 1);
+
+        // Сервер релеит 00(RED) пиру GREEN и 00(GREEN) пиру RED.
+        handle_session_event(&mut apps[1], relayed(&red[0]), &mut stats, &mut fsms[1])
+            .expect("00 RED → GREEN");
+        handle_session_event(&mut apps[0], relayed(&green[0]), &mut stats, &mut fsms[0])
+            .expect("00 GREEN → RED");
+
+        assert!(
+            fsms[0].reached(apps[0].state()),
+            "RED ждал FrameSyncCounter[GREEN] == 1"
+        );
+        assert!(
+            fsms[1].reached(apps[1].state()),
+            "GREEN ждал FrameSyncCounter[RED] == 1"
+        );
+        assert_eq!(apps[0].state().frame_sync_counter[TeamId::GREEN.0 as usize], 1);
+        assert_eq!(apps[1].state().frame_sync_counter[TeamId::RED.0 as usize], 1);
     }
 
     fn test_settings() -> LobbyGameSettings {

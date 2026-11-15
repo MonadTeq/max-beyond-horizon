@@ -53,7 +53,10 @@ use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
 
-pub use assets::{Assets, AssetsReport, LoadedSprite, SpriteInfo, UNIT_SPRITES, WORLD_ASSETS};
+pub use assets::{
+    resolve_color_pal, resolve_patches_res, Assets, AssetsReport, LoadedSprite, SpriteInfo,
+    PATCHES_RES_FALLBACKS, UNIT_SPRITES, WORLD_ASSETS,
+};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
@@ -91,6 +94,15 @@ pub struct AppConfig {
     pub max_res: PathBuf,
     /// `PATCHES.RES` (правила миссий, `SC_*`).
     pub patches_res: PathBuf,
+    /// `PATCHES.RES`, из которого считается **только** `data_hash` хендшейка.
+    ///
+    /// `None` — тот же файл, что и [`Self::patches_res`] (старое поведение).
+    /// Отдельный путь нужен, когда серверный `game_data` не содержит
+    /// `PATCHES.RES` (его часть хэша пуста), а клиент должен остаться с
+    /// полноценными ассетами: тогда `--patches` указывает на реальный архив,
+    /// а `--handshake-patches` — на несуществующий файл, повторяя серверную
+    /// семантику (`docs/protocol.md` §7).
+    pub handshake_patches: Option<PathBuf>,
     /// `COLOR.PAL` (256 × RGB).
     pub color_pal: PathBuf,
     /// Каталог `.WRL`-карт; `None` — рядом с [`Self::max_res`].
@@ -124,6 +136,7 @@ impl Default for AppConfig {
         Self {
             max_res: PathBuf::from("max-original/MAX.RES"),
             patches_res: PathBuf::from("assets/PATCHES.RES"),
+            handshake_patches: None,
             color_pal: PathBuf::from("max-original/COLOR.PAL"),
             world_dir: None,
             save: None,
@@ -172,6 +185,26 @@ impl AppConfig {
     pub fn with_assets_dir(mut self, dir: impl AsRef<Path>) -> Self {
         self.patches_res = dir.as_ref().join("PATCHES.RES");
         self
+    }
+
+    /// Отдельный `PATCHES.RES` **только** для `data_hash` хендшейка.
+    ///
+    /// Ассеты продолжают грузиться из [`Self::patches_res`] (или его
+    /// fallback), поэтому путь может не существовать — как у сервера, чей
+    /// `game_data` не содержит `PATCHES.RES` (`docs/protocol.md` §7).
+    pub fn with_handshake_patches(mut self, path: impl Into<PathBuf>) -> Self {
+        self.handshake_patches = Some(path.into());
+        self
+    }
+
+    /// Путь `PATCHES.RES` для `data_hash` (`docs/protocol.md` §7).
+    ///
+    /// `handshake_patches == None` → assets-путь [`Self::patches_res`]
+    /// (поведение до разделения путей).
+    pub fn handshake_patches_path(&self) -> &Path {
+        self.handshake_patches
+            .as_deref()
+            .unwrap_or(&self.patches_res)
     }
 
     /// Размер кадра.
@@ -752,5 +785,94 @@ mod tests {
         assert!(line.contains("state_digest=0x"));
         assert!(line.contains("replay_crc=0x"));
         assert_eq!(digest, AppDigest::capture(&GameState::new(), 0));
+    }
+
+    /// Уникальный временный каталог теста (без внешних крейтов).
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "max_app_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn handshake_patches_default_to_the_assets_path() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.handshake_patches, None);
+        assert_eq!(
+            config.handshake_patches_path(),
+            config.patches_res.as_path(),
+            "None → хэш из assets-пути patches_res, как раньше"
+        );
+    }
+
+    #[test]
+    fn handshake_patches_override_only_the_hash_path() {
+        let config = AppConfig::default().with_handshake_patches("/tmp/nonexistent.res");
+
+        assert_eq!(
+            config.handshake_patches_path(),
+            Path::new("/tmp/nonexistent.res")
+        );
+        assert_eq!(
+            config.patches_res,
+            PathBuf::from("assets/PATCHES.RES"),
+            "ассетный путь не меняется"
+        );
+    }
+
+    #[test]
+    fn data_hash_uses_handshake_patches_and_leaves_the_patches_part_empty_when_missing() {
+        let dir = temp_dir("handshake_hash");
+        let max_res = dir.join("MAX.RES");
+        let patches = dir.join("PATCHES.RES");
+        std::fs::write(&max_res, b"max-res-bytes").expect("write MAX.RES");
+        std::fs::write(&patches, b"patches-bytes").expect("write PATCHES.RES");
+
+        // None → PATCHES-часть хэша считается по assets-пути.
+        let assets_only = AppConfig {
+            max_res: max_res.clone(),
+            patches_res: patches.clone(),
+            ..Default::default()
+        };
+        let hash = max_net::DataHash::from_files(
+            &assets_only.max_res,
+            assets_only.handshake_patches_path(),
+        )
+        .expect("hash files");
+        assert!(hash.max_res.is_some());
+        assert!(
+            hash.patches_res.is_some(),
+            "None → хэш из assets-пути patches_res"
+        );
+
+        // Some(несуществующий путь) → пустая PATCHES-часть, но ассеты остаются.
+        let split = AppConfig {
+            max_res,
+            patches_res: patches,
+            handshake_patches: Some(dir.join("nonexistent.res")),
+            ..Default::default()
+        };
+        let hash =
+            max_net::DataHash::from_files(&split.max_res, split.handshake_patches_path())
+                .expect("hash files");
+        assert!(hash.max_res.is_some());
+        assert!(
+            hash.patches_res.is_none(),
+            "путь хендшейка не существует → хэш без PATCHES-части (семантика сервера)"
+        );
+        assert_eq!(
+            split.handshake_patches_path(),
+            dir.join("nonexistent.res").as_path()
+        );
+
+        std::fs::remove_dir_all(dir).ok();
     }
 }

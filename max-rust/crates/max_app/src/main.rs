@@ -157,6 +157,12 @@ impl Cli {
                         PathBuf::from(args.next().context("--patches требует путь")?);
                     patches_explicit = true;
                 }
+                "--handshake-patches" => {
+                    cli.config.handshake_patches = Some(PathBuf::from(
+                        args.next()
+                            .context("--handshake-patches требует путь")?,
+                    ));
+                }
                 "--palette" => {
                     cli.config.color_pal =
                         PathBuf::from(args.next().context("--palette требует путь")?);
@@ -561,6 +567,9 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --assets-dir <dir>   каталог PATCHES.RES (по умолчанию assets)
     --world-dir <dir>    каталог .WRL-карт (по умолчанию рядом с MAX.RES)
     --max-res/--patches/--palette <path>   отдельные пути
+    --handshake-patches <path>             PATCHES.RES только для data_hash
+                                           (сервер без PATCHES.RES: путь может
+                                           не существовать — хэш без этой части)
     --width/--height N   размер кадра (по умолчанию 512x384)
 
 ПРИМЕРЫ:

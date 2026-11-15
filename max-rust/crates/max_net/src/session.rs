@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use max_core::enums::TeamClan;
 use max_core::input::Command;
+use max_core::team::TeamId;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -177,6 +178,10 @@ pub enum SessionEvent {
     /// TP 00 exchange succeeded; APPL packets are now accepted.
     HandshakeOk,
     /// A decoded game/lobby packet.
+    ///
+    /// The ENet sender is deliberately not part of the event: in the star
+    /// topology relayed copies arrive from the server, so a command's team can
+    /// only come from its payload ([`payload_team`]).
     Packet(Packet),
     /// A tracked barrier is due for retransmission.
     BarrierDue {
@@ -504,9 +509,24 @@ impl Session {
         }
 
         let tick = self.config.service_tick.max(Duration::from_millis(1));
+        // ENet must be serviced even while the application keeps sending.
+        //
+        // A `sleep(tick)` future created inside the `select!` restarts its
+        // deadline on every iteration: during a barrier the game loop queues an
+        // 01 frame barrier (and repeats every 3 s) far more often than `tick`,
+        // so the command arm always won, the socket was never polled and the
+        // relayed 00/52/45 packets sat unread in the ENet queue forever — the
+        // barrier reported "no peers" after 30 s even though the server had
+        // already forwarded every report. [`tokio::time::Interval`] keeps an
+        // absolute deadline and `biased` lets a due tick win over an
+        // always-ready command channel.
+        let mut service = tokio::time::interval(tick);
+        service.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(tick) => {
+                biased;
+                _ = service.tick() => {
                     match self.pump(&events).await {
                         Ok(true) => {}
                         Ok(false) => break,
@@ -657,6 +677,31 @@ fn is_tracked_barrier(packet: &Packet) -> bool {
             Command::TurnBarrier(_) | Command::CrcBarrier(_) | Command::EndTurnBarrier(_)
         )
     )
+}
+
+/// Team that owns a barrier/command packet — **always from the payload**.
+///
+/// In the star topology a relayed packet reaches the client from the server,
+/// so the ENet source address of a packet says nothing about the team that
+/// produced it: `Remote_GetSenderTeam` would report -1. Every barrier handler
+/// (`apply_packet_00/52/45`, `Remote_ReceiveNetPacket_00/52/45`) therefore
+/// reads the `team u16` field of the payload instead. This helper exposes the
+/// same rule for diagnostics and tests.
+///
+/// Returns `None` for packets without a team field (lobby/audit frames,
+/// chat carries a sender rather than an owner, …).
+pub fn payload_team(packet: &Packet) -> Option<TeamId> {
+    match packet {
+        Packet::Command(Command::TurnBarrier(p)) => Some(p.team),
+        Packet::Command(Command::EndTurnBarrier(p)) => Some(p.team),
+        Packet::Command(Command::CrcBarrier(p)) => Some(p.team),
+        Packet::Command(Command::FrameBarrier(p)) => Some(p.team),
+        Packet::Command(Command::FinishedTurn(p)) => Some(p.team),
+        Packet::Command(Command::ComplexSummary(p)) => Some(p.team),
+        Packet::StateSync(p) => Some(p.team),
+        Packet::Desync { team, .. } => Some(*team),
+        _ => None,
+    }
 }
 
 /// Должен ли `Send`/`SendUntracked` зарегистрировать пакет в
@@ -854,7 +899,8 @@ pub const fn ip_addr(ip: Ipv4Addr) -> IpAddr {
 mod tests {
     use super::*;
     use max_core::input::{
-        Packet00TurnBarrier, Packet18Chat, Packet45CrcBarrier, Packet52EndTurnBarrier,
+        Packet00TurnBarrier, Packet01FrameBarrier, Packet18Chat, Packet45CrcBarrier,
+        Packet52EndTurnBarrier,
     };
     use max_core::team::TeamId;
 
@@ -1025,5 +1071,136 @@ mod tests {
         assert_eq!(config.game_version, DEFAULT_GAME_VERSION);
         assert_eq!(parse_ipv4(&config.host), Some(Ipv4Addr::LOCALHOST));
         assert_eq!(ip_addr(Ipv4Addr::LOCALHOST).to_string(), "127.0.0.1");
+    }
+
+    /// Команда барьера берётся из поля `team` payload'а, а не из отправителя.
+    ///
+    /// Релейная копия приходит от сервера (`Remote_GetSenderTeam` → -1 у
+    /// C++-клиента), поэтому единственный источник команды — байты пакета.
+    #[test]
+    fn barrier_team_comes_from_the_payload_team_field() {
+        let frame = [
+            0x50, 0x01, 0x00, 0x01, // 00: team=1, counter=1
+        ];
+        let packet = Packet::decode(&frame).expect("decode 00");
+        assert_eq!(payload_team(&packet), Some(TeamId(1)));
+
+        let frame = [0x84, 0x02, 0x00, 0x05]; // 52: team=2, counter=5
+        let packet = Packet::decode(&frame).expect("decode 52");
+        assert_eq!(payload_team(&packet), Some(TeamId(2)));
+
+        let frame = [0x7D, 0x03, 0x00, 0x04, 0xCD, 0xAB]; // 45: team=3
+        let packet = Packet::decode(&frame).expect("decode 45");
+        assert_eq!(payload_team(&packet), Some(TeamId(3)));
+
+        // У 06 и 53 тоже есть поле team.
+        let frame = [0x56, 0x01, 0x00];
+        let packet = Packet::decode(&frame).expect("decode 06");
+        assert_eq!(payload_team(&packet), Some(TeamId(1)));
+    }
+
+    /// Регрессия: ENet опрашивается, даже когда приложение непрерывно шлёт.
+    ///
+    /// Старый `select!` создавал `sleep(tick)` заново на каждой итерации, и
+    /// поток исходящих 01 (каждые несколько миллисекунд) не давал таймеру
+    /// сработать: `pump` не вызывался, релейные 00/52/45 лежали в сокете до
+    /// 30-секундного таймаута барьера. Тест поднимает настоящий ENet-сервер,
+    /// шлёт релейный 00 и одновременно забивает канал команд.
+    #[test]
+    fn appl_frames_are_pumped_while_outgoing_commands_flood() {
+        let port = {
+            let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe socket");
+            socket.local_addr().expect("probe addr").port()
+        };
+        let data_hash = DataHash::from_bytes(b"max", b"patches");
+
+        let server = std::thread::spawn(move || {
+            let mut host =
+                Host::server(Ipv4Addr::LOCALHOST, port, CHANNEL_COUNT).expect("test ENet server");
+            let hello = Handshake::new(DEFAULT_GAME_VERSION, "", data_hash)
+                .encode()
+                .expect("server handshake");
+            let relayed_00 = Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
+                team: TeamId::GREEN,
+                counter: 1,
+            }))
+            .encode()
+            .expect("encode 00");
+
+            let mut peer = None;
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+            while std::time::Instant::now() < deadline {
+                let Some(event) = host.service(5).expect("server service") else {
+                    continue;
+                };
+
+                match event.kind {
+                    EventKind::Connect => peer = event.peer.or(peer),
+                    EventKind::Receive if event.channel == CHANNEL_TP => {
+                        let Some(peer) = peer.or(event.peer) else {
+                            continue;
+                        };
+
+                        host.send(peer, CHANNEL_TP, &hello).expect("send hello");
+                        host.flush();
+
+                        // Держим канал занятым: клиент в это время забивает
+                        // исходящую очередь 01-кадрами.
+                        let until = std::time::Instant::now() + Duration::from_secs(3);
+                        while std::time::Instant::now() < until {
+                            host.send(peer, CHANNEL_APPL, &relayed_00)
+                                .expect("send relayed 00");
+                            host.flush();
+                            let _ = host.service(10);
+                        }
+
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        runtime.block_on(async move {
+            let config = SessionConfig::new("127.0.0.1", port, "", data_hash);
+            let mut handle = Session::connect(config).await.expect("connect").start();
+            let frame_barrier = Packet::Command(Command::FrameBarrier(Packet01FrameBarrier {
+                team: TeamId::RED,
+                counter: 0,
+            }));
+
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+
+            while tokio::time::Instant::now() < deadline {
+                handle
+                    .send_untracked(frame_barrier.clone())
+                    .await
+                    .expect("send 01");
+
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+                    event = handle.next_event() => {
+                        if let Some(SessionEvent::Packet(Packet::Command(
+                            Command::TurnBarrier(barrier),
+                        ))) = event
+                        {
+                            assert_eq!(barrier.team, TeamId::GREEN, "team из payload");
+                            assert_eq!(barrier.counter, 1);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            panic!("релейный 00 не дошёл: ENet не опрашивается при потоке исходящих команд");
+        });
+
+        server.join().expect("test ENet server thread");
     }
 }
