@@ -92,7 +92,16 @@ fn compile_enet() {
         .file(enet_dir.join("peer.c"))
         .file(enet_dir.join("protocol.c"));
 
-    if cfg!(target_os = "windows") {
+    // The platform backend MUST be chosen by the *target* OS, not by the host:
+    // `cfg!(target_os = ...)` inside a build script expands for the host that
+    // compiles the script, which silently picks `unix.c` when cross-compiling
+    // to Windows (unix.c is wrapped in `#ifndef _WIN32` and win32.c in
+    // `#ifdef _WIN32`, so the wrong choice yields an empty object file and
+    // linker errors: undefined reference to `enet_socket_create` etc.).
+    // `CARGO_CFG_TARGET_OS` is set by Cargo for the crate's target.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+    if target_os == "windows" {
         build.file(enet_dir.join("win32.c"));
         // ENet needs WinSock 2 and the multimedia timer.
         println!("cargo:rustc-link-lib=winmm");

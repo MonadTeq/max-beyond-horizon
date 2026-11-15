@@ -79,6 +79,15 @@ cargo run -p max_app --features sdl -- --ui
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
   `sdl-from-source,sound`, упаковывает `release/` и готовит тег `v1.0.0`;
   полный порядок — `../docs/release-checklist.md`.
+- Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
+  кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
+  Windows-тулчейна на хосте: `cargo build --release --target
+  x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
+  `max_app.exe` + `release/max_app-<ver>-windows-x86_64.zip` и wine-smoke
+  (`--help`, `--demo SAVE1.CAM`). Окно SDL3 и звук кросс-сборкой не
+  собираются (нужны CMake/MSVC/vcpkg и WASAPI) — полная SDL-сборка
+  выполняется на Windows-хосте, см. `../docs/release-checklist.md` §6.1 и
+  `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,

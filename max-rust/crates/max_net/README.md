@@ -52,6 +52,34 @@ UDP/ENet 1.3.18**. Контракты — `docs/protocol-grpc.md`, `docs/protoco
 `ENetHost*` на владельца, `Send` без `Sync`, все вызовы через `&mut self`,
 пакеты копируются и уничтожаются по правилам владения ENet.
 
+### TLS: выключен по умолчанию (фича `tls`)
+
+Horizon — plaintext `http://host:port` (`horizon.rs` собирает `Endpoint` из
+`format!("http://{host}:{port}")`), поэтому TLS-стек крейту не нужен.
+`tonic` подключён с `default-features = false` и явным набором
+`router,transport,codegen`. У tonic 0.14 дефолт и так без TLS, но набор
+зафиксирован явно: rustls/ring/aws-lc (C/asm-зависимости, которые ломают
+лёгкую кросс-сборку) не появятся в собираемом графе при смене дефолтов
+`tonic`.
+
+Если Horizon когда-нибудь переедет на `https://`:
+
+```sh
+cargo build -p max_app --features tls      # max_net/tls → tonic/tls-ring + tls-webpki-roots
+```
+
+### Кросс-компиляция под Windows (`x86_64-pc-windows-gnu`)
+
+`build.rs` выбирает платформенный файл ENet по **`CARGO_CFG_TARGET_OS`**, а не
+по `cfg!(target_os = "windows")`: в build-скрипте этот `cfg!` раскрывается для
+**хоста**, поэтому при кросс-сборке в Windows компилировался `unix.c` (он весь
+под `#ifndef _WIN32` → пустой объект) и линковка падала на
+`undefined reference to enet_socket_create`. Тот же env-переменной управляются
+`winmm`/`ws2_32`.
+
+Сборка: `bash build/scripts/build-windows.sh` (mingw-w64 в Docker, headless:
+`--no-default-features`, без `sdl*`/`sound`), см. `build/scripts/README.md`.
+
 ## Проверка
 
 ```sh

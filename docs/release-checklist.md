@@ -23,8 +23,12 @@
       `max-original/*.SPW`, карты `*.WRL` (или `--world-dir`).
 - [ ] Для live-smoke: собран `max-horizon-server/target/release/horizon` и
       C++-headless `build/linux-server-template/max-port`.
+- [ ] Для Windows-бинаря (кросс-сборка, §6): сеть до apt
+      (`gcc-mingw-w64-x86-64`, `wine`) и crates.io; запуск из Git Bash
+      (`cygpath` + `MSYS_NO_PATHCONV` — иначе Docker получает пути вида
+      `C:/Program Files/Git/src/...`).
 - [ ] Для человеческого сценария: Linux-хост с SDL3 и аудиоустройством либо
-      Windows-хост (см. §6), плюс запущенный Horizon + headless.
+      Windows-хост (см. §6.1), плюс запущенный Horizon + headless.
 - [ ] Нет незакоммиченных изменений в оракулах: `max-cpp-port/`,
       `max-original/`, `max-original-dasm/` (релиз их не меняет).
 
@@ -191,10 +195,90 @@ bash release.sh --tag         # сборка + аннотированный те
 - X11/Wayland — для окна; headless-режимы (`--demo`, `--new-game`,
   `--connect` без `--sdl`) работают без дисплея.
 
-## 6. Windows x64: инструкция сборки (бинарь здесь не собирается)
+## 6. Windows x64: headless-бинарь кросс-сборкой + полный SDL на хосте
 
-В этом окружении нет Windows-Rust-toolchain, поэтому бинарь не приложен;
-сборка выполняется на Windows-машине и проверяется по пунктам ниже.
+Windows-бинарник **собирается здесь** — кросс-компиляцией
+`x86_64-pc-windows-gnu` (mingw-w64) в Linux-контейнере; Windows-тулчейн на
+хосте не нужен. Скрипт: `build/scripts/build-windows.sh`
+(описание и разбор блокеров — `build/scripts/README.md`).
+
+Собирается **headless**-вариант (`--no-default-features`: без `sdl*`, без
+`sound`) — он закрывает `--demo`, `--new-game` и `--connect` (headless-цикл
+Horizon gRPC + ENet). Интерактивное окно SDL3 и звук кросс-сборкой не
+получаются: `sdl3-sys` собирает SDL3 через CMake и линкует Windows-импорты, а
+`rodio`/`cpal` на Windows требуют WASAPI-заголовков, — поэтому **полная
+SDL-сборка остаётся на Windows-хосте** (см. ниже).
+
+```sh
+# из Git Bash / WSL / Linux; Docker + сеть (apt: mingw-w64, wine; crates.io)
+bash build/scripts/build-windows.sh --dry-run   # план: команды, пути, артефакты
+bash build/scripts/build-windows.sh             # сборка + проверки + упаковка
+bash build/scripts/build-windows.sh --no-wine   # без wine-smoke (быстрее)
+```
+
+Внутри контейнера `rust:1.94.0-bookworm`: `gcc/binutils-mingw-w64-x86-64`
+(для vendored ENet 1.3.18), `rustup target add x86_64-pc-windows-gnu` и
+
+```sh
+cargo build --release --locked --target x86_64-pc-windows-gnu \
+            -p max_app --no-default-features
+```
+
+Артефакты:
+
+```
+release/max_app-1.0.0-windows-x86_64/            max_app.exe, README.txt (инструкция
+                                                 SDL-сборки), LICENSE, CHANGELOG.md,
+                                                 SHA256SUMS
+release/max_app-1.0.0-windows-x86_64.zip         архив каталога
+release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
+```
+
+- [x] `bash build/scripts/build-windows.sh --dry-run` — exit 0, печатает команду
+      сборки и пути артефактов. _(2026-11-15)_
+- [x] Сборка `-p max_app --no-default-features` под `x86_64-pc-windows-gnu` —
+      успешна. Понадобились правки **только в сборке** (игровой код не
+      менялся): `max_net/build.rs` выбирает платформенный файл ENet по
+      `CARGO_CFG_TARGET_OS` (а не по `cfg!(target_os)` хоста) и `tonic`
+      подключён без `default-features` с явными `router,transport,codegen`
+      (TLS — opt-in фича `tls`). _(2026-11-15)_
+- [x] PE-заголовок: `file` → `PE32+ executable (console) x86-64`,
+      `objdump -f` → `file format pei-x86-64`, первые байты `MZ`.
+      Размер **8 908 438 байт** (8.5 МиБ), 10 секций,
+      SHA256 `15cd9fa29dbec8cb930819708f0ea85a60b4fc3aff059c26941718bf7e8a2234`.
+      _(2026-11-15; хеш зависит от снапшота `rust:1.94.0-bookworm` — mingw-версии
+      из apt влияют на код ENet)_
+- [x] Импорты только системные: `kernel32`, `msvcrt`, `ntdll`, `ws2_32`,
+      `winmm`, `userenv`, `bcryptprimitives`,
+      `api-ms-win-core-synch-l1-2-0` — нет `libgcc_s_seh-1.dll` и
+      `libwinpthread-1.dll`, то есть mingw-рантайм рядом с exe не нужен.
+      _(2026-11-15)_
+- [x] `max_app.exe --help` и `max_app.exe --demo SAVE1.CAM --turns 1` под
+      **wine 8.0** в контейнере: справка печатается, demo даёт
+      `ticks=1 … units=312`, оба exit 0 (лог:
+      `build/smoke-logs/windows-wine-smoke.log`, вердикт
+      `WINE: ok (…; шим bcryptprimitives: да)`). _(2026-11-15)_
+      Оговорка: `std` Rust импортирует `bcryptprimitives!ProcessPrng`, а в wine
+      8.0 из Debian bookworm этой DLL нет — первый запуск падает на загрузке
+      (exit 53, `Importing dlls failed, status c0000135`). Скрипт сначала
+      пробует exe «как есть», и только если не вышло — подкладывает рядом с
+      копией exe **тестовый** шим `ProcessPrng` → `advapi32!SystemFunction036`.
+      В архив шим не входит: на настоящей Windows `bcryptprimitives.dll`
+      системная (поэтому отдельный пункт ниже — прогон на реальной Windows).
+- [x] `release/max_app-1.0.0-windows-x86_64/` содержит `max_app.exe`,
+      `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`;
+      `release/max_app-1.0.0-windows-x86_64.zip` (3 255 566 байт) и
+      `.zip.sha256` собраны, `sha256sum -c SHA256SUMS` в каталоге — все файлы
+      `OK`. _(2026-11-15; sha256 zip зависит от mtime файлов, актуальный — в
+      `.zip.sha256`)_
+- [ ] `--connect HOST:8082 --join GAME_ID` с этим exe против живого Horizon
+      (headless-цикл gRPC+ENet на Windows-бинаре) — прогон на Windows-хосте
+      или wine с работающим Horizon в docker compose.
+- [ ] Headless-бинарь запущен на **настоящей** Windows 10/11 x64 (`--help`,
+      `--demo`, `--new-game`) — подтверждение, что mingw-сборка не зависит от
+      wine-шимов.
+
+### 6.1. Полная сборка с окном SDL3 и звуком (только Windows-хост)
 
 ```powershell
 # 1. Rust 1.94.0 + MSVC target
@@ -203,7 +287,7 @@ rustup default 1.94.0
 rustup target add x86_64-pc-windows-msvc
 
 # 2. Visual Studio Build Tools 2022: "Desktop development with C++"
-#    (MSVC, Windows SDK, CMake) — обязательны для линковки.
+#    (MSVC, Windows SDK, CMake) — обязательны для линковки SDL3.
 
 # 3. SDL3 через vcpkg
 git clone https://github.com/microsoft/vcpkg C:\vcpkg
@@ -211,9 +295,9 @@ C:\vcpkg\bootstrap-vcpkg.bat
 C:\vcpkg\vcpkg install sdl3:x64-windows
 $env:VCPKG_ROOT = "C:\vcpkg"        # переменная окружения для sdl3-sys
 
-# 4. Сборка (vcpkg-фича max_app/max_render)
+# 4. Сборка (vcpkg-фича max_app/max_render); звук — +,sound
 cd max-rust
-cargo build --release -p max_app --features sdl-vcpkg
+cargo build --release -p max_app --features sdl-vcpkg,sound
 # вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC)
 
 # 5. Рядом с exe положить SDL3.dll (vcpkg: C:\vcpkg\installed\x64-windows\bin\SDL3.dll)
@@ -221,12 +305,13 @@ cargo build --release -p max_app --features sdl-vcpkg
 .\target\release\max_app.exe --ui
 ```
 
-- [ ] `cargo build --release -p max_app --features sdl-vcpkg` — успешно.
+- [ ] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно.
 - [ ] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает.
 - [ ] `--ui` открывает окно, меню и партия играются мышью; звук (если собрано
       с `sound`) слышен без дополнительных DLL (WASAPI).
-- [ ] Бинарь и DLL заархивированы в `release/max_app-1.0.0-windows-x86_64.zip`
-      (собирается на Windows; в git не коммитится).
+- [ ] Бинарь и DLL заархивированы в `release/max_app-1.0.0-windows-x86_64-ui.zip`
+      (собирается на Windows; в git не коммитится) — отдельно от headless-zip
+      из §6, чтобы не путать два разных артефакта.
 
 ## 7. Документация и лицензии
 
@@ -236,7 +321,10 @@ cargo build --release -p max_app --features sdl-vcpkg
 - [ ] `CHANGELOG.md`: 1.0.0, список возможностей и ограничений, ссылка на
       `LICENSE`.
 - [ ] `docs/release-checklist.md` (этот файл) актуален: команды и пути
-      совпадают с `release.sh`/`ci.sh`.
+      совпадают с `release.sh`/`ci.sh`/`build/scripts/build-windows.sh`.
+- [ ] `build/scripts/README.md` описывает релизные скрипты (`build-windows.sh`
+      — Windows-кросс-сборка, `live-smoke.sh`) и обойдённые блокеры
+      (ENet-платформа в `build.rs`, TLS-фича `tonic`).
 - [ ] `LICENSE` (MIT) присутствует в корне и в архиве релиза; в `README.txt`
       архива — копирайт Interplay на данные игры.
 
@@ -256,14 +344,19 @@ git push origin v1.0.0              # публикация тега (по реш
 - [ ] Тег `v1.0.0` аннотированный, указывает на релизный коммит.
 - [ ] `git push origin v1.0.0` выполнен (или релиз готов к пушу).
 - [ ] GitHub Release создан из тега; к нему приложены
-      `max_app-1.0.0-linux-x86_64.tar.gz` и Windows-zip (если собран).
+      `max_app-1.0.0-linux-x86_64.tar.gz`,
+      `max_app-1.0.0-windows-x86_64.zip` (+ `.sha256`) и, если собран на
+      Windows-хосте, `…-windows-x86_64-ui.zip`.
 
 ## 9. Архив артефактов
 
 - [ ] `release/max_app-1.0.0-linux-x86_64.tar.gz` + `SHA256SUMS` сохранены.
-- [ ] Windows-zip (если собран) + его sha256 сохранены.
+- [ ] `release/max_app-1.0.0-windows-x86_64.zip` + `.zip.sha256` сохранены
+      (продукт `build/scripts/build-windows.sh`); headless-каталог
+      `release/max_app-1.0.0-windows-x86_64/` тоже несёт свой `SHA256SUMS`.
 - [ ] Логи гейтов: `max-rust/target/cargo-test.log` (если писали),
-      `build/smoke-logs/*.log`, скриншоты M4 — приложены к релизной записи.
+      `build/smoke-logs/*.log`, `build/smoke-logs/windows-wine-smoke.log`,
+      скриншоты M4 — приложены к релизной записи.
 - [ ] Артефакты **не** закоммичены в git (`release/` в `.gitignore`).
 
 ## 10. После релиза
@@ -280,6 +373,7 @@ git push origin v1.0.0              # публикация тега (по реш
 ```sh
 bash ci.sh                                  # 2.1 + 2.4
 bash build/scripts/live-smoke.sh 10         # §3
+bash build/scripts/build-windows.sh         # §6, Windows headless + zip + wine-smoke
 bash release.sh --dry-run                   # §5, проверка плана
 bash release.sh                             # §5, артефакты
 ```
@@ -288,10 +382,11 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | | | | |
+| Тесты max-rust | 2026-11-15 | `cargo check && cargo test` в `rust:1.94.0-bookworm` после кросс-правок; плюс `cargo check --features sound` и `cargo check -p max_net --features tls` | 500 тестов, 0 failed; check'и OK | `max-rust/target/cargo-test.log` |
 | Тесты Horizon | | | | |
 | Live smoke 2×10 | | | | |
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
-| Windows-бинарь | | | | |
+| Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
+| Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |

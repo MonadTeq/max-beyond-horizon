@@ -21,6 +21,9 @@ rodio = { version = "0.19", optional = true, default-features = false }
 
 [features]
 default = []
+# Horizon по TLS (https://) — прокидывает `tls` в max_net. Обычные сборки
+# (в т.ч. кросс-сборка Windows) TLS не тянут: Horizon — plaintext http://.
+tls = ["max_net/tls"]
 # Воспроизведение WAV через rodio/cpal. На Linux нужен libasound2-dev при
 # сборке и libasound2 в рантайме; без фичи — тихий no-op backend.
 sound = ["dep:rodio"]

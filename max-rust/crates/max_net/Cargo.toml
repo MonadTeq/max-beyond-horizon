@@ -12,7 +12,19 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 # Horizon gRPC (docs/protocol-grpc.md): tonic 0.14 + prost 0.14.
-tonic = "0.14"
+#
+# Features are pinned explicitly instead of relying on tonic's `default`:
+# the Horizon endpoint is plaintext `http://host:port` (horizon.rs), so no
+# TLS stack is needed and none must be dragged in implicitly. Keeping the
+# default set out of the graph is what makes `x86_64-pc-windows-gnu`
+# cross-compilation cheap and free of ring/aws-lc (asm + C toolchain) — and it
+# keeps future tonic default bumps from silently re-introducing them.
+# `tls` is an opt-in feature (see [features] below) for an `https://` Horizon.
+tonic = { version = "0.14", default-features = false, features = [
+    "router",
+    "transport",
+    "codegen",
+] }
 tonic-prost = "0.14"
 prost = "0.14"
 sha2 = "0.10"
@@ -22,10 +34,25 @@ thiserror = "2"
 # Proto codegen. `tonic-prost-build` (not `tonic-build`) owns protobuf
 # compilation in tonic 0.14; it still shells out to `protoc`, which we take
 # from `protoc-bin-vendored` so no apt/choco install is needed.
+# `protoc-bin-vendored` ships a **host** binary, so gRPC codegen runs on the
+# build host and is unaffected by cross-compilation to Windows.
 tonic-prost-build = "0.14"
 protoc-bin-vendored = "3"
 # Vendored ENet 1.3.18 (vendor/enet) is compiled as a static C library.
+# Under `--target x86_64-pc-windows-gnu` `cc` picks `x86_64-w64-mingw32-gcc`
+# (mingw-w64, installed by build/scripts/build-windows.sh).
 cc = "1"
+
+[features]
+default = []
+# TLS для Horizon (`https://`) — только по явному запросу.
+#
+# Зачем фича: Horizon сейчас plaintext (`http://`, см. src/horizon.rs), а
+# rustls/ring/aws-lc — C/asm-зависимости, из-за которых кросс-сборка под
+# Windows-GNU и лёгкие headless-сборки обрастают тулчейном. По умолчанию их
+# нет в графе; `--features tls` (ring + webpki-roots, чистый Rust) включает
+# TLS, если Horizon когда-нибудь переедет на https.
+tls = ["tonic/tls-ring", "tonic/tls-webpki-roots"]
 
 [dev-dependencies]
 # Mock Horizon server: serve a tonic router over a `127.0.0.1:0` listener.

@@ -1,3 +1,8 @@
 * text=auto
 *.ini text eol=crlf
 *.RES binary
+# Shell-скрипты — всегда LF. С core.autocrlf=true (Windows-хост) checkout даёт
+# CRLF, и `bash ci.sh` / `release.sh` / `build/scripts/*.sh` падают на `\r` в
+# шебанге и в конце строк.
+*.sh text eol=lf
+
