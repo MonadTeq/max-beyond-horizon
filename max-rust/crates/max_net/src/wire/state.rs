@@ -9,8 +9,8 @@
 //! or logs them).
 
 use max_core::enums::TeamClan;
-use max_core::team::TeamId;
-use max_core::unit::UnitId;
+use max_core::team::{ResearchTopicInfo, TeamId};
+use max_core::unit::{UnitId, UnitInfo, UnitListKind};
 
 use super::reader::{Reader, WireError, WireResult, Writer, MAX_STRING_LEN, MAX_VECTOR_LEN};
 
@@ -22,6 +22,21 @@ pub const UNIT_END: usize = 93;
 pub const GAME_OPTION_COUNT: usize = 38;
 /// `NetPacket::MaximumArrayCount` used by packet 54 (`count` is `u16`).
 pub const MAX_SYNC_UNITS: usize = MAX_VECTOR_LEN;
+/// Сколько юнитов C++ кладёт в один пакет 54 (`Remote_SendUnitStates`,
+/// `remote.cpp:4334`: `units_per_packet = 32`).
+///
+/// Rust режет чанки мельче: [`super::MAX_PACKET_SIZE`] (1440) жёстко проверяется
+/// кодеком, а 32 юнита — это `7 + 32×47 = 1511` байт без хвоста и `1989` с ним.
+/// C++-отправитель такой пакет отдаёт ENet на фрагментацию; Rust-декодер же
+/// отверг бы его как oversize, поэтому [`state_sync_for`] использует
+/// [`MAX_UNITS_PER_CHUNK`]/[`MAX_UNITS_LAST_CHUNK`]. Формат 54 от размера чанка
+/// не зависит: получатель принимает любой `count <= MAX_SYNC_UNITS`.
+pub const STATE_SYNC_UNITS_PER_PACKET: usize = 32;
+/// Максимум юнитов в неполном чанке: `(1440 - 7) / 47 = 30`.
+const MAX_UNITS_PER_CHUNK: usize = 30;
+/// Максимум юнитов в последнем чанке: хвост — 478 байт,
+/// `(1440 - 7 - 478) / 47 = 20`.
+const MAX_UNITS_LAST_CHUNK: usize = 20;
 
 /// One research topic in packet 09/54: `i32 level, i32 turns, i32 allocation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -441,6 +456,247 @@ pub fn encode_save_request(packet: &SaveRequest, w: &mut Writer) -> WireResult<(
     w.write_smart_string(&packet.title)
 }
 
+// ---------------------------------------------------------------------------
+// Мост в max_core: применение 54 и сборка собственного состояния
+// ---------------------------------------------------------------------------
+
+impl UnitState {
+    /// Собирает `Packet23Data` из авторитетного юнита.
+    ///
+    /// Порядок значений — `Remote_CreateNetPacket_23` (`remote.cpp`), точки
+    /// движения/огня берутся из `OrderData` (`UnitInfo::move_to_grid_*` в C++).
+    pub fn from_unit(state: &max_core::game::GameState, unit: &UnitInfo) -> Self {
+        let order = state.order_data(unit.id);
+
+        Self {
+            orders: unit.orders as u8,
+            state: unit.state as u8,
+            prior_orders: unit.prior_orders as u8,
+            prior_state: unit.prior_state as u8,
+            disabled_reaction_fire: unit.disabled_reaction_fire,
+            parent_unit_id: unit.parent_unit.map(|parent| parent.0).unwrap_or(0),
+            experience: unit.experience,
+            move_to_grid_x: order.move_to.x,
+            move_to_grid_y: order.move_to.y,
+            fire_on_grid_x: order.fire_on.x,
+            fire_on_grid_y: order.fire_on.y,
+            enemy_unit_id: unit.enemy_unit.map(|enemy| enemy.0).unwrap_or(0),
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+            total_mining: unit.total_mining,
+            raw_mining: unit.raw_mining,
+            fuel_mining: unit.fuel_mining,
+            gold_mining: unit.gold_mining,
+            build_time: unit.build_time,
+            build_rate: unit.build_rate,
+            unit_type: unit.unit_type as u16,
+            unit_id: unit.unit_id,
+            grid_x: unit.grid.x,
+            grid_y: unit.grid.y,
+            team: unit.team.0,
+            hits: unit.hits,
+            speed: unit.speed,
+            shots: unit.shots,
+            storage: unit.storage,
+            ammo: unit.ammo,
+        }
+    }
+
+    /// Канонический вид для [`max_core::events::apply_unit_state`].
+    pub fn to_core(&self) -> max_core::events::UnitStatePacket {
+        max_core::events::UnitStatePacket {
+            orders: self.orders,
+            state: self.state,
+            prior_orders: self.prior_orders,
+            prior_state: self.prior_state,
+            disabled_reaction_fire: self.disabled_reaction_fire,
+            parent_unit_id: self.parent_unit_id,
+            experience: self.experience,
+            move_to_grid_x: self.move_to_grid_x,
+            move_to_grid_y: self.move_to_grid_y,
+            fire_on_grid_x: self.fire_on_grid_x,
+            fire_on_grid_y: self.fire_on_grid_y,
+            enemy_unit_id: self.enemy_unit_id,
+            transfer_cargo: self.transfer_cargo,
+            stealth_dice_roll: self.stealth_dice_roll,
+            total_mining: self.total_mining,
+            raw_mining: self.raw_mining,
+            fuel_mining: self.fuel_mining,
+            gold_mining: self.gold_mining,
+            build_time: self.build_time,
+            build_rate: self.build_rate,
+            unit_type: self.unit_type,
+            unit_id: self.unit_id,
+            grid_x: self.grid_x,
+            grid_y: self.grid_y,
+            team: self.team,
+            hits: self.hits,
+            speed: self.speed,
+            shots: self.shots,
+            storage: self.storage,
+            ammo: self.ammo,
+        }
+    }
+}
+
+impl StateSyncTail {
+    /// Канонический вид для [`max_core::events::apply_state_sync`].
+    ///
+    /// `i32` на проводе и `u32` в `max_core` — одни и те же биты (C++ кладёт
+    /// `int32_t` в `uint32_t`/`memcpy`), поэтому конверсия — приведение типа.
+    pub fn to_core(&self) -> max_core::events::TeamStateSyncTail {
+        let mut research = [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT];
+        for (destination, source) in research.iter_mut().zip(self.research.iter()) {
+            *destination = ResearchTopicInfo {
+                research_level: source.research_level as u32,
+                turns_to_complete: source.turns_to_complete as u32,
+                allocation: source.allocation as u32,
+            };
+        }
+
+        let mut unit_counters = [0u32; max_core::unit_values::UNIT_COUNT];
+        for (destination, source) in unit_counters.iter_mut().zip(self.unit_counters.iter()) {
+            *destination = *source;
+        }
+
+        max_core::events::TeamStateSyncTail {
+            gold: self.gold,
+            gold_spent_on_upgrades: self.gold_spent_on_upgrades,
+            research,
+            number_of_objects_created: self.number_of_objects_created,
+            unit_counters,
+        }
+    }
+}
+
+impl StateSync {
+    /// Канонический вид для [`max_core::events::apply_state_sync`].
+    pub fn to_core(&self) -> max_core::events::StateSyncPacket {
+        max_core::events::StateSyncPacket {
+            team: self.team,
+            sync_index: self.sync_index,
+            is_last: self.is_last,
+            units: self
+                .units
+                .iter()
+                .map(|(unit, state)| (*unit, state.to_core()))
+                .collect(),
+            tail: self.tail.as_ref().map(StateSyncTail::to_core),
+        }
+    }
+}
+
+/// Собирает пакеты 54 с авторитетным состоянием юнитов команды.
+///
+/// Порт `Remote_SendUnitStates` (`remote.cpp:4333-4381`): юниты в порядке
+/// четырёх списков (`GroundCover → MobileLandSea → Stationary → MobileAir`),
+/// не более [`STATE_SYNC_UNITS_PER_PACKET`] на пакет, хвост экономики — только
+/// в последнем чанке. Для пустой команды возвращается один пакет с `is_last`.
+pub fn state_sync_for(
+    state: &max_core::game::GameState,
+    team: TeamId,
+    sync_index: u8,
+) -> Vec<StateSync> {
+    let units: Vec<UnitId> = [
+        UnitListKind::GroundCover,
+        UnitListKind::MobileLandSea,
+        UnitListKind::Stationary,
+        UnitListKind::MobileAir,
+    ]
+    .into_iter()
+    .flat_map(|kind| state.unit_list(kind).iter().copied())
+    .filter(|id| {
+        state.unit(*id).is_some_and(|unit| {
+            unit.team == team
+                && !unit.id.is_no_id()
+                && unit.flags & max_core::enums::unit_flags::EXPLODING == 0
+        })
+    })
+    .collect();
+
+    let tail = state_sync_tail(state, team);
+    let sizes = chunk_sizes(units.len());
+    let mut packets = Vec::with_capacity(sizes.len());
+    let mut start = 0;
+
+    for (chunk, size) in sizes.iter().copied().enumerate() {
+        let end = start + size;
+        let is_last = chunk + 1 == sizes.len();
+        let chunk_units = units[start..end]
+            .iter()
+            .filter_map(|id| {
+                state
+                    .unit(*id)
+                    .map(|unit| (*id, UnitState::from_unit(state, unit)))
+            })
+            .collect();
+
+        packets.push(StateSync {
+            team,
+            sync_index,
+            is_last,
+            units: chunk_units,
+            tail: is_last.then(|| tail.clone()),
+        });
+        start = end;
+    }
+
+    packets
+}
+
+/// Разбивает юнитов на чанки 54 с учётом [`super::MAX_PACKET_SIZE`].
+///
+/// Неполный чанк — до 30 юнитов, последний — до 20 (в нём ещё хвост 478 байт).
+/// Если жадная нарезка оставляет последний чанк больше 20, он разделяется на
+/// `(n − 20, 20)`, чтобы ни один кадр не превысил транспортный лимит.
+fn chunk_sizes(total: usize) -> Vec<usize> {
+    if total == 0 {
+        return vec![0];
+    }
+
+    let mut sizes = Vec::new();
+    let mut remaining = total;
+    while remaining > 0 {
+        let take = remaining.min(MAX_UNITS_PER_CHUNK);
+        sizes.push(take);
+        remaining -= take;
+    }
+
+    if let Some(last) = sizes.last_mut() {
+        if *last > MAX_UNITS_LAST_CHUNK {
+            let overflow = *last - MAX_UNITS_LAST_CHUNK;
+            *last = overflow;
+            sizes.push(MAX_UNITS_LAST_CHUNK);
+        }
+    }
+
+    sizes
+}
+
+fn state_sync_tail(state: &max_core::game::GameState, team: TeamId) -> StateSyncTail {
+    let info = &state.teams[team.0 as usize];
+    let team_units = &state.team_units[team.0 as usize];
+    let mut tail = StateSyncTail {
+        gold: team_units.gold,
+        gold_spent_on_upgrades: info.stats_gold_spent_on_upgrades,
+        number_of_objects_created: info.number_of_objects_created,
+        ..StateSyncTail::default()
+    };
+
+    for (destination, source) in tail.research.iter_mut().zip(info.research_topics.iter()) {
+        *destination = ResearchTopicWire {
+            research_level: source.research_level as i32,
+            turns_to_complete: source.turns_to_complete as i32,
+            allocation: source.allocation as i32,
+        };
+    }
+    for (destination, source) in tail.unit_counters.iter_mut().zip(info.unit_counters.iter()) {
+        *destination = *source;
+    }
+
+    tail
+}
+
 /// Encodes the `team,param` control packets (24/39/40/42/49/51).
 pub fn encode_team_param(team: TeamId, param: u8, w: &mut Writer) {
     w.write_u16(u16::from(team.0));
@@ -462,3 +718,157 @@ pub fn decode_clan(raw: u8) -> WireResult<TeamClan> {
 
 /// Maximum accepted `SmartString` length for the save file name.
 pub const MAX_SAVE_FILE_LEN: usize = MAX_STRING_LEN;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use max_core::enums::{TeamClan, UnitOrder, UnitOrderState};
+    use max_core::game::GameState;
+    use max_core::geo::Point;
+    use max_core::team::TeamKind;
+    use max_core::unit_values::UNIT_COUNT;
+
+    fn state_with_green_units(count: usize) -> (GameState, Vec<UnitId>) {
+        let mut state = GameState::new();
+        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
+        state.team_units[TeamId::GREEN.0 as usize] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+
+        let mut ids = Vec::with_capacity(count);
+        for index in 0..count {
+            let id = state
+                .spawn_unit(
+                    max_core::UnitType::Tank,
+                    TeamId::GREEN,
+                    Point::new(10 + (index % 80) as i16, 10 + (index / 80) as i16),
+                    0,
+                )
+                .expect("tank");
+            ids.push(id);
+        }
+        // Юнит другой команды не должен попасть в 54 команды GREEN.
+        state
+            .spawn_unit(max_core::UnitType::Tank, TeamId::RED, Point::new(50, 50), 0)
+            .expect("red tank");
+        (state, ids)
+    }
+
+    #[test]
+    fn state_sync_chunks_fit_transport_and_put_the_tail_last() {
+        let (mut state, ids) = state_with_green_units(40);
+        state.team_units[TeamId::GREEN.0 as usize].gold = 777;
+        state.teams[TeamId::GREEN.0 as usize].stats_gold_spent_on_upgrades = 12;
+        state.teams[TeamId::GREEN.0 as usize].number_of_objects_created = 5;
+        state.teams[TeamId::GREEN.0 as usize].unit_counters[max_core::UnitType::Tank as usize] = 9;
+        state.teams[TeamId::GREEN.0 as usize].research_topics[2] = ResearchTopicInfo {
+            research_level: 4,
+            turns_to_complete: 5,
+            allocation: 6,
+        };
+        state.set_order(ids[39], UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
+
+        let packets = state_sync_for(&state, TeamId::GREEN, 3);
+        assert_eq!(packets.len(), 2, "40 юнитов → 30 + 10");
+        assert_eq!(STATE_SYNC_UNITS_PER_PACKET, 32, "номинал C++");
+
+        let first = &packets[0];
+        assert_eq!(first.team, TeamId::GREEN);
+        assert_eq!(first.sync_index, 3);
+        assert!(!first.is_last);
+        assert_eq!(first.units.len(), 30);
+        assert!(first.tail.is_none());
+        // `MobileLandSea` — `PushFront`, поэтому порядок обратный порядку спавна.
+        assert_eq!(first.units[0].0, ids[39]);
+        assert_eq!(first.units[0].1.orders, UnitOrder::Sentry as u8);
+        assert_eq!(first.units[0].1.team, TeamId::GREEN.0);
+        assert_eq!(first.units[29].0, ids[10]);
+
+        let last = &packets[1];
+        assert!(last.is_last);
+        assert_eq!(last.units.len(), 10);
+        assert_eq!(last.units[0].0, ids[9]);
+        assert_eq!(last.units[9].0, ids[0]);
+        let tail = last.tail.as_ref().expect("tail on last chunk");
+        assert_eq!(tail.gold, 777);
+        assert_eq!(tail.gold_spent_on_upgrades, 12);
+        assert_eq!(tail.number_of_objects_created, 5);
+        assert_eq!(tail.unit_counters[max_core::UnitType::Tank as usize], 9);
+        assert_eq!(
+            tail.research[2],
+            ResearchTopicWire {
+                research_level: 4,
+                turns_to_complete: 5,
+                allocation: 6,
+            }
+        );
+        assert_eq!(tail.unit_counters.len(), UNIT_COUNT);
+    }
+
+    #[test]
+    fn state_sync_for_an_empty_team_is_one_last_chunk() {
+        let mut state = GameState::new();
+        state.teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
+
+        let packets = state_sync_for(&state, TeamId::BLUE, 1);
+        assert_eq!(packets.len(), 1);
+        assert!(packets[0].is_last);
+        assert!(packets[0].units.is_empty());
+        assert!(packets[0].tail.is_some());
+
+        // Round-trip: пустой last-чанк кодируется и декодируется без потерь.
+        let bytes = super::super::Packet::StateSync(packets[0].clone())
+            .encode()
+            .expect("encode empty 54");
+        assert_eq!(
+            super::super::Packet::decode(&bytes).expect("decode empty 54"),
+            super::super::Packet::StateSync(packets[0].clone())
+        );
+    }
+
+    #[test]
+    fn state_sync_packets_fit_the_transport_limit() {
+        // 100 юнитов: неполные чанки по 30, последний — 478-байтный хвост.
+        let (state, _) = state_with_green_units(100);
+        let packets = state_sync_for(&state, TeamId::GREEN, 1);
+
+        assert!(packets.len() >= 4);
+        for packet in packets {
+            let frame = super::super::Packet::StateSync(packet)
+                .encode()
+                .expect("каждый 54 обязан влезать в MAX_PACKET_SIZE");
+            assert!(
+                frame.len() <= super::super::MAX_PACKET_SIZE,
+                "54 длиной {} > {}",
+                frame.len(),
+                super::super::MAX_PACKET_SIZE
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_sizes_keep_the_tail_chunk_small() {
+        assert_eq!(chunk_sizes(0), vec![0]);
+        assert_eq!(chunk_sizes(20), vec![20]);
+        assert_eq!(chunk_sizes(21), vec![1, 20]);
+        assert_eq!(chunk_sizes(25), vec![5, 20]);
+        assert_eq!(chunk_sizes(30), vec![10, 20]);
+        assert_eq!(chunk_sizes(40), vec![30, 10]);
+        assert_eq!(chunk_sizes(55), vec![30, 5, 20]);
+        assert_eq!(chunk_sizes(60), vec![30, 10, 20]);
+        assert_eq!(chunk_sizes(100), vec![30, 30, 30, 10]);
+    }
+
+    #[test]
+    fn wire_unit_state_converts_to_core_packet() {
+        let (state, ids) = state_with_green_units(1);
+        let unit = state.unit(ids[0]).expect("unit");
+        let mut wire = UnitState::from_unit(&state, unit);
+        wire.experience = 17;
+        wire.storage = -3;
+
+        let core = wire.to_core();
+        assert_eq!(core.experience, 17);
+        assert_eq!(core.storage, -3);
+        assert_eq!(core.unit_type, max_core::UnitType::Tank as u16);
+        assert_eq!(core.grid_y, 10);
+    }
+}

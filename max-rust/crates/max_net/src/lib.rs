@@ -49,11 +49,11 @@ pub use horizon::{
 };
 pub use protocol::{GameListing, JoinRequest, LobbyEvent};
 pub use session::{
-    crc_barrier_for, BarrierAction, BarrierTiming, BarrierTracker, Session, SessionConfig,
-    SessionError, SessionEvent, SessionHandle,
+    complex_summary_for, crc_barrier_for, BarrierAction, BarrierTiming, BarrierTracker, Session,
+    SessionCommand, SessionConfig, SessionError, SessionEvent, SessionHandle,
 };
 pub use wire::{
-    GameOptions, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode, Packet, Reader,
-    ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, TeamState, UnitState, WireError,
-    WireName, WireResult, Writer,
+    state_sync_for, GameOptions, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode,
+    Packet, Reader, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, TeamState, UnitState,
+    WireError, WireName, WireResult, Writer, STATE_SYNC_UNITS_PER_PACKET,
 };

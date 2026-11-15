@@ -212,7 +212,18 @@ pub enum SessionEvent {
 #[derive(Debug)]
 pub enum SessionCommand {
     /// Encode and send an APPL packet on channel 1.
+    ///
+    /// Barrier packets (00/45/52) are also registered for retransmission. A
+    /// caller that repeats an already tracked barrier itself must use
+    /// [`SessionCommand::SendUntracked`] instead, otherwise every repeat adds
+    /// another tracker entry (`docs/barrier-flow.md` §6.8).
     Send(Packet),
+    /// Encode and send an APPL packet **without** registering it for
+    /// retransmission.
+    ///
+    /// Used for repeats of a barrier that is already tracked: the tracker keeps
+    /// exactly one entry per barrier instead of one per retransmit.
+    SendUntracked(Packet),
     /// Stop retransmitting tracked barriers (e.g. the turn completed).
     ClearBarriers,
     /// Disconnect and stop the task.
@@ -513,6 +524,11 @@ impl Session {
                                 let _ = events.send(SessionEvent::Error(error)).await;
                             }
                         }
+                        Some(SessionCommand::SendUntracked(packet)) => {
+                            if let Err(error) = self.send_raw(&packet) {
+                                let _ = events.send(SessionEvent::Error(error)).await;
+                            }
+                        }
                         Some(SessionCommand::ClearBarriers) => self.barrier.clear(),
                         Some(SessionCommand::Disconnect) | None => {
                             self.host.disconnect_later(self.peer, 0);
@@ -589,7 +605,7 @@ impl Session {
     /// Sends one encoded APPL packet and tracks barrier retransmission.
     fn send_packet(&mut self, packet: &Packet) -> Result<(), SessionError> {
         self.send_raw(packet)?;
-        if is_tracked_barrier(packet) {
+        if records_barrier(true, packet) {
             self.barrier.track(packet.clone(), Instant::now());
         }
         Ok(())
@@ -643,6 +659,16 @@ fn is_tracked_barrier(packet: &Packet) -> bool {
     )
 }
 
+/// Должен ли `Send`/`SendUntracked` зарегистрировать пакет в
+/// [`BarrierTracker`]?
+///
+/// `SendUntracked` — это `tracked = false`: повтор уже отслеживаемого барьера
+/// не создаёт вторую запись (иначе каждый ретрансмит добавлял бы новую и
+/// число параллельных повторов росло бы неограниченно).
+fn records_barrier(tracked: bool, packet: &Packet) -> bool {
+    tracked && is_tracked_barrier(packet)
+}
+
 /// Builds the packet 45 CRC barrier from the authoritative local state.
 ///
 /// The checksum is exactly what `max_core::crc::state_checksum` gives (the
@@ -658,6 +684,43 @@ pub fn crc_barrier_for(
             team,
             next_turn_index,
             crc16: max_core::crc::state_checksum(state),
+        },
+    ))
+}
+
+/// Builds packet 53 — the owner's complex totals at the start of a turn.
+///
+/// Port of `Remote_SendNetPacket_53` (`remote.cpp:4243-4258`): `turn` is the
+/// C++ `GameManager_TurnCounter` (**1-based**), while `max_core` starts at 0 —
+/// the caller maps it (`state.turn_counter + 1`). Complex order — the
+/// `TeamUnits::complexes()` order (ascending id), values in `Complex::WritePacket`
+/// order.
+pub fn complex_summary_for(
+    state: &max_core::game::GameState,
+    team: max_core::team::TeamId,
+    turn: i32,
+) -> Packet {
+    let complexes = state.team_units[team.0 as usize]
+        .complexes()
+        .iter()
+        .map(|complex| max_core::input::ComplexSummaryEntry {
+            complex_id: complex.id as u16,
+            values: [
+                complex.material,
+                complex.fuel,
+                complex.gold,
+                complex.power,
+                complex.workers,
+                complex.buildings,
+            ],
+        })
+        .collect();
+
+    Packet::Command(Command::ComplexSummary(
+        max_core::input::Packet53ComplexSummary {
+            team,
+            turn,
+            complexes,
         },
     ))
 }
@@ -682,6 +745,19 @@ impl SessionHandle {
         packet.encode()?;
         self.commands
             .send(SessionCommand::Send(packet))
+            .await
+            .map_err(|_| SessionError::Closed)
+    }
+
+    /// Encodes and queues a packet **without** registering it for session
+    /// retransmission.
+    ///
+    /// Это путь для повторов: пакет, уже стоящий в трекере сессии, не должен
+    /// добавлять в него ещё одну запись при каждом ретрансмите.
+    pub async fn send_untracked(&self, packet: Packet) -> Result<(), SessionError> {
+        packet.encode()?;
+        self.commands
+            .send(SessionCommand::SendUntracked(packet))
             .await
             .map_err(|_| SessionError::Closed)
     }
@@ -850,6 +926,66 @@ mod tests {
                 message: "hi".into(),
             }
         ))));
+    }
+
+    /// Повтор барьера через `SendUntracked` не создаёт вторую запись трекера.
+    ///
+    /// Старый путь (`SessionCommand::Send` на каждый ретрансмит) добавлял по
+    /// записи на повтор — число параллельных повторов росло без ограничения.
+    #[test]
+    fn untracked_repeat_keeps_a_single_tracker_entry() {
+        let now = Instant::now();
+        let packet = barrier_packet(1);
+        let mut tracker = BarrierTracker::new(BarrierTiming::default());
+
+        assert!(records_barrier(true, &packet), "первый Send трекается");
+
+        tracker.track(packet.clone(), now);
+        assert_eq!(tracker.len(), 1);
+
+        assert!(
+            !records_barrier(false, &packet),
+            "SendUntracked не должен трекать повтор"
+        );
+
+        // Ровно то, что делает `SessionCommand::SendUntracked`: только отправка.
+        assert_eq!(tracker.len(), 1, "повтор не добавил запись");
+
+        // А повтор через Send добавил бы ещё одну — это и был двойной трекинг.
+        assert!(records_barrier(true, &packet));
+        tracker.track(packet, now);
+        assert_eq!(tracker.len(), 2);
+    }
+
+    #[test]
+    fn complex_summary_for_matches_team_complexes() {
+        use max_core::enums::TeamClan;
+        use max_core::team::TeamUnits;
+
+        let mut state = max_core::game::GameState::new();
+        state.teams[TeamId::RED.0 as usize].team_type = max_core::team::TeamKind::Player;
+        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+        let id = state.team_units[TeamId::RED.0 as usize].create_complex();
+        let complex = state.team_units[TeamId::RED.0 as usize]
+            .get_complex_mut(id)
+            .expect("complex created");
+        complex.material = 10;
+        complex.fuel = 20;
+        complex.gold = 30;
+        complex.power = 40;
+        complex.workers = 50;
+        complex.buildings = 60;
+
+        match complex_summary_for(&state, TeamId::RED, 1) {
+            Packet::Command(Command::ComplexSummary(summary)) => {
+                assert_eq!(summary.team, TeamId::RED);
+                assert_eq!(summary.turn, 1, "turn — C++ GameManager_TurnCounter (1-based)");
+                assert_eq!(summary.complexes.len(), 1);
+                assert_eq!(summary.complexes[0].complex_id, 1);
+                assert_eq!(summary.complexes[0].values, [10, 20, 30, 40, 50, 60]);
+            }
+            other => panic!("expected packet 53, got {other:?}"),
+        }
     }
 
     #[test]

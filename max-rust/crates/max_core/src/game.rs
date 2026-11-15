@@ -203,6 +203,15 @@ pub struct GameState {
     pub frame_sync_counter: [u8; TEAM_SLOTS],
     /// `Remote_FrameSyncCounter2values` (пакет 01).
     pub frame_sync_counter2: [u8; TEAM_SLOTS],
+    /// `Remote_StateSyncIndices` (пакет 54) — индекс последнего **полного**
+    /// (`is_last`) состояния команды, по нему завершается 54-барьер.
+    pub state_sync_indices: [u8; TEAM_SLOTS],
+    /// `Remote_StateSyncReceivingIndices` (пакет 54) — индекс чанка, который
+    /// сейчас принимается (сброс `state_sync_unit_ids` при смене индекса).
+    pub state_sync_receiving_indices: [u8; TEAM_SLOTS],
+    /// `Remote_StateSyncUnitIds` (пакет 54) — id юнитов, присланных владельцем
+    /// в текущем раунде; по ним `Remote_RemoveExtraUnits` чистит лишних.
+    pub state_sync_unit_ids: [Vec<UnitId>; TEAM_SLOTS],
     /// Чат в игре (пакет 18) — чистые данные для UI/логов, не влияет на сим.
     pub chat_log: Vec<(TeamId, String)>,
     /// Снабжение миссии по командам (пакет 12) — входные данные setup'а.
@@ -304,6 +313,9 @@ impl GameState {
             team_data_crc16: [0; TEAM_SLOTS],
             frame_sync_counter: [0; TEAM_SLOTS],
             frame_sync_counter2: [0; TEAM_SLOTS],
+            state_sync_indices: [0; TEAM_SLOTS],
+            state_sync_receiving_indices: [0; TEAM_SLOTS],
+            state_sync_unit_ids: std::array::from_fn(|_| Vec::new()),
             chat_log: Vec::new(),
             mission_supplies: std::array::from_fn(|_| None),
             units_active: [None; TEAM_SLOTS],
@@ -419,6 +431,11 @@ impl GameState {
         self.team_data_crc16 = [0; TEAM_SLOTS];
         self.frame_sync_counter = [0; TEAM_SLOTS];
         self.frame_sync_counter2 = [0; TEAM_SLOTS];
+        self.state_sync_indices = [0; TEAM_SLOTS];
+        self.state_sync_receiving_indices = [0; TEAM_SLOTS];
+        for ids in &mut self.state_sync_unit_ids {
+            ids.clear();
+        }
         self.commands = CommandQueue::new();
 
         // --- команды: TeamInfo × 4 из файла, ALIEN — служебный слот ---
@@ -1646,6 +1663,24 @@ impl GameState {
         self.common_barrier(|state, team| state.turn_indices[team])
     }
 
+    /// Общий счётчик барьера начала хода (пакет 00) — аналог
+    /// [`Self::end_turn_barrier`] по `Remote_FrameSyncCounter`
+    /// (`Remote_WaitBeginTurnAcknowledge`, `remote.cpp:1876-1933`).
+    ///
+    /// `None` — не все играющие команды вошли в раунд с одним счётчиком.
+    pub fn begin_turn_barrier(&self) -> Option<u8> {
+        self.common_barrier(|state, team| state.frame_sync_counter[team])
+    }
+
+    /// `Remote_StateSyncIndices[team]` — последний применённый индекс 54.
+    #[inline]
+    pub fn state_sync_index(&self, team: TeamId) -> u8 {
+        self.state_sync_indices
+            .get(team.0 as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Общий номер следующего хода CRC-барьера (пакет 45): все играющие
     /// команды согласны. `None` — барьер не собран (десинк/ожидание).
     pub fn crc_barrier(&self) -> Option<u8> {
@@ -2511,6 +2546,29 @@ mod tests {
         assert_eq!(state.crc_barrier(), None);
         state.next_turn_indices[1] = 5;
         assert_eq!(state.crc_barrier(), Some(5));
+    }
+
+    #[test]
+    fn begin_turn_barrier_tracks_frame_sync_counter() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.teams[1].team_type = TeamKind::Remote;
+        state.teams[2].team_type = TeamKind::None;
+
+        assert_eq!(state.begin_turn_barrier(), Some(0));
+        state.frame_sync_counter[0] = 1;
+        assert_eq!(
+            state.begin_turn_barrier(),
+            None,
+            "пир ещё не вошёл в раунд"
+        );
+        state.frame_sync_counter[1] = 1;
+        assert_eq!(state.begin_turn_barrier(), Some(1));
+
+        // 54-барьер завершается только по полному (`is_last`) состоянию.
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 0);
+        state.state_sync_indices[1] = 4;
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 4);
     }
 
     #[test]

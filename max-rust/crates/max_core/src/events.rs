@@ -36,8 +36,14 @@
 //! * Пакет **12** (снабжение миссии) сохраняется как данные
 //!   ([`crate::game::GameState::mission_supplies`]) и обновляет
 //!   `stats_gold_spent_on_upgrades` — как приёмник C++.
+//! * Пакет **54** — не [`Command`], а авторитетное состояние команды:
+//!   [`apply_state_sync`] применяет `Packet23Data` каждого юнита, удаляет
+//!   лишних (`Remote_RemoveExtraUnits`) и выравнивает хвост экономики
+//!   (`Remote_ReceiveNetPacket_54`).
 
-use crate::enums::{ResearchTopic, UnitOrder, UnitOrderState, UnitType};
+use crate::enums::{
+    ResearchTopic, UnitOrder, UnitOrderState, UnitType, RESEARCH_TOPIC_COUNT,
+};
 use crate::game::{GameState, OrderData};
 use crate::geo::Point;
 use crate::input::{
@@ -45,13 +51,13 @@ use crate::input::{
     Packet08Order, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
     UPGRADE_VALUE_COUNT,
 };
-use crate::team::TeamId;
-use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitPath};
+use crate::team::{ResearchTopicInfo, TeamId, TeamKind};
+use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
 use crate::unit_order;
 use crate::unit_values::{
     ATTRIB_AGENT_ADJUST, ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_ATTACK_RADIUS,
     ATTRIB_HITS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED,
-    ATTRIB_STORAGE, ATTRIB_TURNS,
+    ATTRIB_STORAGE, ATTRIB_TURNS, UNIT_COUNT,
 };
 
 // ---------------------------------------------------------------------------
@@ -641,6 +647,298 @@ fn apply_packet_53(
 }
 
 // ---------------------------------------------------------------------------
+// 54 — авторитетное состояние команды (P23-запись + хвост экономики)
+// ---------------------------------------------------------------------------
+
+/// Каноническое состояние юнита — `struct Packet23Data` (`docs/protocol.md`
+/// §8.5); используется пакетами 23 и 54.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UnitStatePacket {
+    /// Текущий приказ (`UnitOrderType`, сырой `u8`).
+    pub orders: u8,
+    /// Состояние приказа (`UnitOrderStateType`, сырой `u8`).
+    pub state: u8,
+    /// Отложенный приказ.
+    pub prior_orders: u8,
+    /// Состояние отложенного приказа.
+    pub prior_state: u8,
+    /// Ответный огонь запрещён.
+    pub disabled_reaction_fire: bool,
+    /// Родительский юнит (`0` — нет).
+    pub parent_unit_id: u16,
+    /// Опыт.
+    pub experience: i16,
+    /// Точка движения X.
+    pub move_to_grid_x: i16,
+    /// Точка движения Y.
+    pub move_to_grid_y: i16,
+    /// Цель огня X.
+    pub fire_on_grid_x: i16,
+    /// Цель огня Y.
+    pub fire_on_grid_y: i16,
+    /// Юнит-цель (`0` — нет).
+    pub enemy_unit_id: u16,
+    /// Перегружаемый груз.
+    pub transfer_cargo: i16,
+    /// Бросок маскировки.
+    pub stealth_dice_roll: u8,
+    /// Добыча: всего.
+    pub total_mining: u8,
+    /// Добыча материалов.
+    pub raw_mining: u8,
+    /// Добыча топлива.
+    pub fuel_mining: u8,
+    /// Добыча золота.
+    pub gold_mining: u8,
+    /// Таймер постройки.
+    pub build_time: u8,
+    /// Темп постройки.
+    pub build_rate: u16,
+    /// Тип юнита (`ResourceID`).
+    pub unit_type: u16,
+    /// `UnitInfo::unit_id` (номер в команде, один байт).
+    pub unit_id: u8,
+    /// Клетка X.
+    pub grid_x: i16,
+    /// Клетка Y.
+    pub grid_y: i16,
+    /// Команда.
+    pub team: u8,
+    /// Хиты.
+    pub hits: u16,
+    /// Скорость.
+    pub speed: u16,
+    /// Выстрелы.
+    pub shots: u8,
+    /// Груз в хранилище.
+    pub storage: i16,
+    /// Боезапас.
+    pub ammo: u8,
+}
+
+/// Хвост последнего чанка пакета 54 — экономика команды на момент проверки.
+///
+/// Поля повторяют `Remote_SendUnitStates`/`Remote_ReceiveNetPacket_54`
+/// (`remote.cpp:4368-4373`, `4601-4648`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamStateSyncTail {
+    /// Кредиты команды (`TeamUnits::gold`).
+    pub gold: u32,
+    /// Золото, потраченное на апгрейды.
+    pub gold_spent_on_upgrades: u32,
+    /// Прогресс восьми тем исследований.
+    pub research: [ResearchTopicInfo; RESEARCH_TOPIC_COUNT],
+    /// Счётчик созданных объектов.
+    pub number_of_objects_created: u16,
+    /// Счётчики имён по типам (`uint32_t[UNIT_END]`).
+    pub unit_counters: [u32; UNIT_COUNT],
+}
+
+impl Default for TeamStateSyncTail {
+    fn default() -> Self {
+        Self {
+            gold: 0,
+            gold_spent_on_upgrades: 0,
+            research: [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT],
+            number_of_objects_created: 0,
+            unit_counters: [0; UNIT_COUNT],
+        }
+    }
+}
+
+/// Разобранный пакет 54 в терминах `max_core` (без зависимости от `max_net`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSyncPacket {
+    /// Команда-владелец состояния.
+    pub team: TeamId,
+    /// Номер проверки (отличает раунды).
+    pub sync_index: u8,
+    /// Последний чанк команды (несёт [`TeamStateSyncTail`]).
+    pub is_last: bool,
+    /// Юниты чанка в порядке владельца.
+    pub units: Vec<(UnitId, UnitStatePacket)>,
+    /// Хвост экономики; обязателен при `is_last`.
+    pub tail: Option<TeamStateSyncTail>,
+}
+
+/// Порт `Remote_ApplyUnitState` (`remote.cpp:4383-4512`) для одного юнита.
+///
+/// Принимает только юнита своей команды и типа; несуществующие/взорванные
+/// юниты и приказы вне `ORDER_COUNT_MAX` игнорируются — как в C++.
+pub fn apply_unit_state(
+    state: &mut GameState,
+    team: TeamId,
+    unit_id: UnitId,
+    data: &UnitStatePacket,
+) -> ApplyOutcome {
+    let Some(mut unit) = state.unit(unit_id).cloned() else {
+        // `Remote_ApplyUnitState`: «unit ... does not exist locally».
+        return ApplyOutcome::UnknownUnit;
+    };
+
+    if unit.team != team || unit.unit_type as u16 != data.unit_type {
+        return ApplyOutcome::Ignored;
+    }
+    if unit.flags & crate::enums::unit_flags::EXPLODING != 0 {
+        return ApplyOutcome::Ignored;
+    }
+
+    let (Ok(orders), Ok(order_state), Ok(prior_orders), Ok(prior_state)) = (
+        UnitOrder::try_from(data.orders),
+        UnitOrderState::try_from(data.state),
+        UnitOrder::try_from(data.prior_orders),
+        UnitOrderState::try_from(data.prior_state),
+    ) else {
+        return ApplyOutcome::Malformed;
+    };
+
+    unit.orders = orders;
+    unit.state = order_state;
+    unit.prior_orders = prior_orders;
+    unit.prior_state = prior_state;
+    unit.disabled_reaction_fire = data.disabled_reaction_fire;
+
+    // `SetParent`/`SetEnemy` в C++ берут юнита из `Hash_UnitHash`; отсутствующий
+    // id даёт `nullptr`, поэтому здесь — `None`.
+    unit.parent_unit = if data.parent_unit_id == 0 {
+        None
+    } else {
+        state
+            .unit(UnitId(data.parent_unit_id))
+            .map(|parent| parent.id)
+    };
+    unit.enemy_unit = if data.enemy_unit_id == 0 {
+        None
+    } else {
+        state
+            .unit(UnitId(data.enemy_unit_id))
+            .map(|enemy| enemy.id)
+    };
+
+    unit.experience = data.experience;
+    unit.transfer_cargo = data.transfer_cargo;
+    unit.stealth_dice_roll = data.stealth_dice_roll;
+    unit.total_mining = data.total_mining;
+    unit.raw_mining = data.raw_mining;
+    unit.fuel_mining = data.fuel_mining;
+    unit.gold_mining = data.gold_mining;
+    unit.build_time = data.build_time;
+    unit.build_rate = data.build_rate;
+    unit.unit_id = data.unit_id;
+    unit.hits = data.hits;
+    unit.speed = data.speed;
+    unit.shots = data.shots;
+    unit.storage = data.storage;
+    unit.ammo = data.ammo;
+
+    // Точки движения/огня в Rust живут в `OrderData` (`unit.target_grid`
+    // зеркалит `move_to`, как в пакете 08 P3).
+    let mut order_data = state.order_data(unit_id);
+    order_data.move_to = Point::new(data.move_to_grid_x, data.move_to_grid_y);
+    order_data.fire_on = Point::new(data.fire_on_grid_x, data.fire_on_grid_y);
+    unit.target_grid = order_data.move_to;
+    state.set_order_data(unit_id, order_data);
+
+    // `Remote_RelocateUnit`: у получателя юнит встаёт на клетку владельца;
+    // `write_unit` переносит его в `Hash_MapHash`.
+    unit.grid = Point::new(data.grid_x, data.grid_y);
+
+    state.write_unit(unit_id, unit);
+    ApplyOutcome::Applied
+}
+
+/// Порт `Remote_ReceiveNetPacket_54` (`remote.cpp:4547-4652`).
+///
+/// Применяет авторитетное состояние удалённой команды, удаляет юнитов,
+/// которых нет у владельца (кроме зданий — как `Remote_RemoveExtraUnits`), и
+/// выравнивает счётчики id/золото/исследования на последнем чанке. Индекс
+/// раунда записывается в [`GameState::state_sync_indices`], по нему закрывается
+/// 54-барьер.
+pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    let slot = packet.team.0 as usize;
+    // «only the owner may dictate the state of its units» — своё состояние и
+    // команды без remote-типа не применяются.
+    if state.teams[slot].team_type != TeamKind::Remote {
+        return ApplyOutcome::Ignored;
+    }
+
+    if state.state_sync_receiving_indices[slot] != packet.sync_index {
+        state.state_sync_receiving_indices[slot] = packet.sync_index;
+        state.state_sync_unit_ids[slot].clear();
+    }
+
+    for (unit_id, data) in &packet.units {
+        state.state_sync_unit_ids[slot].push(*unit_id);
+        apply_unit_state(state, packet.team, *unit_id, data);
+    }
+
+    if packet.is_last {
+        let Some(tail) = &packet.tail else {
+            return ApplyOutcome::Malformed;
+        };
+
+        // Счётчики id — до удаления лишних юнитов, как в C++.
+        state.teams[slot].number_of_objects_created = tail.number_of_objects_created;
+        state.teams[slot].unit_counters = tail.unit_counters;
+
+        remove_extra_units(state, packet.team);
+        state.state_sync_unit_ids[slot].clear();
+
+        state.team_units[slot].gold = tail.gold;
+        state.teams[slot].stats_gold_spent_on_upgrades = tail.gold_spent_on_upgrades;
+        state.teams[slot].research_topics = tail.research;
+        state.state_sync_indices[slot] = packet.sync_index;
+    }
+
+    ApplyOutcome::Applied
+}
+
+/// Порт `Remote_RemoveExtraUnits` (`remote.cpp:4517-4545`).
+///
+/// Юниты команды, которых нет у владельца, удаляются; здания/наземное
+/// покрытие (`STATIONARY | GROUND_COVER`) не удаляются — как в C++.
+fn remove_extra_units(state: &mut GameState, team: TeamId) {
+    use crate::enums::unit_flags::{EXPLODING, GROUND_COVER, STATIONARY};
+
+    let mut owner_unit_ids = state.state_sync_unit_ids[team.0 as usize].clone();
+    owner_unit_ids.sort_unstable();
+
+    let mut extra = Vec::new();
+
+    for kind in [
+        UnitListKind::GroundCover,
+        UnitListKind::MobileLandSea,
+        UnitListKind::Stationary,
+        UnitListKind::MobileAir,
+    ] {
+        for &id in state.unit_list(kind) {
+            let Some(unit) = state.unit(id) else {
+                continue;
+            };
+            if unit.team != team
+                || unit.id.is_no_id()
+                || unit.flags & EXPLODING != 0
+                || owner_unit_ids.binary_search(&unit.id).is_ok()
+            {
+                continue;
+            }
+            if unit.flags & (STATIONARY | GROUND_COVER) != 0 {
+                continue;
+            }
+            extra.push(unit.id);
+        }
+    }
+
+    for id in extra {
+        state.destroy_unit(id);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 10 / 20 / 43 / 12 — апгрейды, имя, снабжение
 // ---------------------------------------------------------------------------
 
@@ -1218,5 +1516,179 @@ mod tests {
         assert_eq!(unit_type_from_raw(0xFFFF), None);
         assert_eq!(research_topic_at(0), Some(ResearchTopic::Attack));
         assert_eq!(research_topic_at(8), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 54 — применение авторитетного состояния команды
+    // -----------------------------------------------------------------------
+
+    fn state_with_remote_team() -> (GameState, UnitId, UnitId, UnitId) {
+        let mut state = GameState::new();
+        let green = TeamId::GREEN.0 as usize;
+        state.teams[green].team_type = TeamKind::Remote;
+        state.team_units[green] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+        let tank = state
+            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(5, 5), 0)
+            .expect("tank");
+        let scout = state
+            .spawn_unit(UnitType::Scout, TeamId::GREEN, Point::new(6, 5), 0)
+            .expect("scout");
+        let tower = state
+            .spawn_unit(UnitType::CommTower, TeamId::GREEN, Point::new(8, 8), 0)
+            .expect("tower");
+        (state, tank, scout, tower)
+    }
+
+    fn unit_state_for_tank() -> UnitStatePacket {
+        UnitStatePacket {
+            orders: UnitOrder::Sentry as u8,
+            state: UnitOrderState::ExecutingOrder as u8,
+            prior_orders: UnitOrder::Await as u8,
+            prior_state: UnitOrderState::ExecutingOrder as u8,
+            disabled_reaction_fire: true,
+            parent_unit_id: 0,
+            experience: 11,
+            move_to_grid_x: 50,
+            move_to_grid_y: 51,
+            fire_on_grid_x: 52,
+            fire_on_grid_y: 53,
+            enemy_unit_id: 0,
+            transfer_cargo: -4,
+            stealth_dice_roll: 3,
+            total_mining: 1,
+            raw_mining: 2,
+            fuel_mining: 3,
+            gold_mining: 4,
+            build_time: 5,
+            build_rate: 6,
+            unit_type: UnitType::Tank as u16,
+            unit_id: 7,
+            grid_x: 40,
+            grid_y: 41,
+            team: TeamId::GREEN.0,
+            hits: 77,
+            speed: 8,
+            shots: 2,
+            storage: -9,
+            ammo: 10,
+        }
+    }
+
+    fn tail_for_green() -> TeamStateSyncTail {
+        let mut tail = TeamStateSyncTail::default();
+        tail.gold = 500;
+        tail.gold_spent_on_upgrades = 60;
+        tail.number_of_objects_created = 12;
+        tail.unit_counters[UnitType::Tank as usize] = 13;
+        tail.research[0] = ResearchTopicInfo {
+            research_level: 1,
+            turns_to_complete: 2,
+            allocation: 3,
+        };
+        tail
+    }
+
+    #[test]
+    fn packet_54_applies_state_and_removes_extra_units() {
+        let (mut state, tank, scout, tower) = state_with_remote_team();
+        let packet = StateSyncPacket {
+            team: TeamId::GREEN,
+            sync_index: 1,
+            is_last: true,
+            units: vec![(tank, unit_state_for_tank())],
+            tail: Some(tail_for_green()),
+        };
+
+        assert_eq!(apply_state_sync(&mut state, &packet), ApplyOutcome::Applied);
+
+        let unit = state.unit(tank).expect("tank survives");
+        assert_eq!(unit.orders, UnitOrder::Sentry);
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+        assert!(unit.disabled_reaction_fire);
+        assert_eq!(unit.grid, Point::new(40, 41));
+        assert_eq!(unit.hits, 77);
+        assert_eq!(unit.speed, 8);
+        assert_eq!(unit.shots, 2);
+        assert_eq!(unit.storage, -9);
+        assert_eq!(unit.ammo, 10);
+        assert_eq!(unit.experience, 11);
+        assert_eq!(unit.build_rate, 6);
+        assert_eq!(unit.unit_id, 7);
+        let data = state.order_data(tank);
+        assert_eq!(data.move_to, Point::new(50, 51));
+        assert_eq!(data.fire_on, Point::new(52, 53));
+        assert_eq!(unit.target_grid, Point::new(50, 51));
+
+        // Лишний мобильный юнит удалён, здание — нет (`Remote_RemoveExtraUnits`).
+        assert!(!state.has_unit(scout), "scout отсутствует у владельца — удалён");
+        assert!(state.has_unit(tower), "здание не удаляется");
+
+        // Хвост последнего чанка выровнял экономику и счётчики id.
+        let green = TeamId::GREEN.0 as usize;
+        assert_eq!(state.team_units[green].gold, 500);
+        assert_eq!(state.teams[green].stats_gold_spent_on_upgrades, 60);
+        assert_eq!(state.teams[green].number_of_objects_created, 12);
+        assert_eq!(state.teams[green].unit_counters[UnitType::Tank as usize], 13);
+        assert_eq!(state.teams[green].research_topics[0].research_level, 1);
+        assert_eq!(state.teams[green].research_topics[0].turns_to_complete, 2);
+        assert_eq!(state.teams[green].research_topics[0].allocation, 3);
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 1);
+    }
+
+    #[test]
+    fn packet_54_chunks_only_complete_on_last() {
+        let (mut state, tank, _scout, _tower) = state_with_remote_team();
+        let first = StateSyncPacket {
+            team: TeamId::GREEN,
+            sync_index: 3,
+            is_last: false,
+            units: vec![(tank, unit_state_for_tank())],
+            tail: None,
+        };
+        assert_eq!(apply_state_sync(&mut state, &first), ApplyOutcome::Applied);
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 0, "не последний чанк");
+
+        let last = StateSyncPacket {
+            team: TeamId::GREEN,
+            sync_index: 3,
+            is_last: true,
+            units: Vec::new(),
+            tail: Some(TeamStateSyncTail::default()),
+        };
+        assert_eq!(apply_state_sync(&mut state, &last), ApplyOutcome::Applied);
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 3);
+    }
+
+    #[test]
+    fn packet_54_ignores_non_remote_teams_and_out_of_range_orders() {
+        // Своя (Player) команда: пакет 54 не применяется.
+        let (mut state, tank, _scout, _tower) = state_with_remote_team();
+        state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+        let packet = StateSyncPacket {
+            team: TeamId::RED,
+            sync_index: 1,
+            is_last: true,
+            units: vec![(tank, unit_state_for_tank())],
+            tail: Some(TeamStateSyncTail::default()),
+        };
+        assert_eq!(apply_state_sync(&mut state, &packet), ApplyOutcome::Ignored);
+        assert_eq!(state.state_sync_index(TeamId::RED), 0);
+
+        // Приказ вне ORDER_COUNT_MAX не применяется (`Remote_ApplyUnitState`).
+        let before = state.unit(tank).expect("tank").orders;
+        let mut bad = unit_state_for_tank();
+        bad.orders = crate::enums::ORDER_COUNT_MAX;
+        let packet = StateSyncPacket {
+            team: TeamId::GREEN,
+            sync_index: 4,
+            is_last: true,
+            units: vec![(tank, bad)],
+            tail: Some(TeamStateSyncTail::default()),
+        };
+        assert_eq!(apply_state_sync(&mut state, &packet), ApplyOutcome::Applied);
+        let unit = state.unit(tank).expect("tank");
+        assert_eq!(unit.orders, before, "невалидный приказ не применён");
+        assert_eq!(state.state_sync_index(TeamId::GREEN), 4);
     }
 }

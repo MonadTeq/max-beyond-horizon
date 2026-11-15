@@ -25,8 +25,8 @@ pub use reader::{Reader, WireError, WireName, WireResult, Writer};
 pub use state::{
     decode_audit, decode_game_options, decode_save_request, decode_state_sync, decode_team_state,
     encode_audit, encode_game_options, encode_save_request, encode_state_sync, encode_team_param,
-    encode_team_state, GameOptions, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail,
-    TeamState, UnitState,
+    encode_team_state, state_sync_for, GameOptions, ResearchTopicWire, SaveRequest, StateSync,
+    StateSyncTail, TeamState, UnitState, STATE_SYNC_UNITS_PER_PACKET, UNIT_END,
 };
 
 use max_core::input::Command;
@@ -372,6 +372,168 @@ mod tests {
         let decoded = Packet::decode(&bytes).expect("decode");
         assert_eq!(decoded, packet, "round-trip mismatch for {bytes:02X?}");
         bytes
+    }
+
+    // Reference frames printed by `tools/barrier_vectors/main.cpp`, a copy of
+    // the C++ serializers (Remote_SendNetPacket_53 / Remote_SendUnitStates /
+    // Remote_SendNetPacket_45) built against the real Packet23Data layout.
+    // Blobs are also committed verbatim in `tools/barrier_vectors/vectors.txt`;
+    // `barrier_literals_match_cpp_generated_vectors` keeps the two in sync.
+    const PACKET_53_HEX: &str = "8501000700000001000300ffff02002c01fcff05000600";
+    const PACKET_54_HEX: &str = "860200030102000201020100010100002a000a000b000c000d000000feff0301020304050600330007080009000264000b0002d4fe0904030c011001003412fbff14001500160017002143070008090a0b0c0d0e0001000ffffffeff02c800100011120013d204000038000000000000000a00000014000000010000000b00000015000000020000000c00000016000000030000000d00000017000000040000000e00000018000000050000000f0000001900000006000000100000001a00000007000000110000001b00000007000100000004000000070000000a0000000d000000100000001300000016000000190000001c0000001f0000002200000025000000280000002b0000002e0000003100000034000000370000003a0000003d000000400000004300000046000000490000004c0000004f0000005200000055000000580000005b0000005e0000006100000064000000670000006a0000006d000000700000007300000076000000790000007c0000007f0000008200000085000000880000008b0000008e0000009100000094000000970000009a0000009d000000a0000000a3000000a6000000a9000000ac000000af000000b2000000b5000000b8000000bb000000be000000c1000000c4000000c7000000ca000000cd000000d0000000d3000000d6000000d9000000dc000000df000000e2000000e5000000e8000000eb000000ee000000f1000000f4000000f7000000fa000000fd000000000100000301000006010000090100000c0100000f0100001201000015010000";
+    const PACKET_45_HEX: &str = "7d030004cdab";
+
+    const BARRIER_VECTORS: &str = include_str!("../../../../tools/barrier_vectors/vectors.txt");
+
+    fn barrier_hex_bytes(text: &str) -> Vec<u8> {
+        assert_eq!(text.len() % 2, 0, "odd hex literal length");
+        (0..text.len())
+            .step_by(2)
+            .map(|offset| u8::from_str_radix(&text[offset..offset + 2], 16).expect("hex literal"))
+            .collect()
+    }
+
+    /// The `packet <n> <hex>` line emitted by the C++ barrier generator.
+    fn barrier_vector(number: u8) -> &'static str {
+        for line in BARRIER_VECTORS.lines() {
+            let Some(rest) = line.strip_prefix("packet ") else {
+                continue;
+            };
+            let (candidate, hex) = rest.split_once(' ').expect("packet line");
+            if candidate.parse::<u8>() == Ok(number) {
+                return hex.split_whitespace().next().expect("hex blob");
+            }
+        }
+        panic!("packet {number} vector missing from tools/barrier_vectors/vectors.txt");
+    }
+
+    fn decode_barrier_reference(number: u8, literal: &str) -> (Vec<u8>, Packet) {
+        assert_eq!(
+            literal,
+            barrier_vector(number),
+            "inline literal drifted from the C++ barrier vector file"
+        );
+        let frame = barrier_hex_bytes(literal);
+        let packet = Packet::decode(&frame).expect("reference frame decodes");
+        (frame, packet)
+    }
+
+    #[test]
+    fn barrier_literals_match_cpp_generated_vectors() {
+        assert_eq!(PACKET_53_HEX, barrier_vector(53));
+        assert_eq!(PACKET_54_HEX, barrier_vector(54));
+        assert_eq!(PACKET_45_HEX, barrier_vector(45));
+    }
+
+    #[test]
+    fn packet_53_complex_summary_matches_cpp_bytes() {
+        let (frame, packet) = decode_barrier_reference(53, PACKET_53_HEX);
+        assert_eq!(
+            packet,
+            Packet::Command(Command::ComplexSummary(Packet53ComplexSummary {
+                team: TeamId(1),
+                turn: 7,
+                complexes: vec![ComplexSummaryEntry {
+                    complex_id: 3,
+                    values: [-1, 2, 300, -4, 5, 6],
+                }],
+            }))
+        );
+        assert_eq!(packet.encode().unwrap(), frame);
+    }
+
+    #[test]
+    fn packet_54_state_sync_matches_cpp_bytes() {
+        let (frame, packet) = decode_barrier_reference(54, PACKET_54_HEX);
+        let Packet::StateSync(sync) = &packet else {
+            panic!("packet 54 must decode as StateSync");
+        };
+
+        assert_eq!(sync.team, TeamId(2));
+        assert_eq!(sync.sync_index, 3);
+        assert!(sync.is_last);
+        assert_eq!(sync.units.len(), 2);
+
+        let (unit, first) = &sync.units[0];
+        assert_eq!(*unit, UnitId(0x0102));
+        assert_eq!(first.orders, 2);
+        assert_eq!(first.state, 1);
+        assert_eq!(first.prior_orders, 0);
+        assert_eq!(first.prior_state, 1);
+        assert!(first.disabled_reaction_fire);
+        assert_eq!(first.experience, 42);
+        assert_eq!(first.move_to_grid_x, 10);
+        assert_eq!(first.move_to_grid_y, 11);
+        assert_eq!(first.fire_on_grid_x, 12);
+        assert_eq!(first.fire_on_grid_y, 13);
+        assert_eq!(first.transfer_cargo, -2);
+        assert_eq!(first.stealth_dice_roll, 3);
+        assert_eq!(first.total_mining, 1);
+        assert_eq!(first.raw_mining, 2);
+        assert_eq!(first.fuel_mining, 3);
+        assert_eq!(first.gold_mining, 4);
+        assert_eq!(first.build_time, 5);
+        assert_eq!(first.build_rate, 6);
+        assert_eq!(first.unit_type, 0x33);
+        assert_eq!(first.unit_id, 7);
+        assert_eq!((first.grid_x, first.grid_y), (8, 9));
+        assert_eq!(first.team, 2);
+        assert_eq!(first.hits, 100);
+        assert_eq!(first.speed, 11);
+        assert_eq!(first.shots, 2);
+        assert_eq!(first.storage, -300);
+        assert_eq!(first.ammo, 9);
+
+        let (unit, second) = &sync.units[1];
+        assert_eq!(*unit, UnitId(0x0304));
+        assert_eq!(second.orders, 0x0C);
+        assert_eq!(second.prior_orders, 0x10);
+        assert!(!second.disabled_reaction_fire);
+        assert_eq!(second.parent_unit_id, 0x1234);
+        assert_eq!(second.experience, -5);
+        assert_eq!(second.enemy_unit_id, 0x4321);
+        assert_eq!((second.grid_x, second.grid_y), (-1, -2));
+        assert_eq!(second.hits, 200);
+        assert_eq!(second.ammo, 19);
+
+        let tail = sync.tail.as_ref().expect("54 last chunk carries a tail");
+        assert_eq!(tail.gold, 1234);
+        assert_eq!(tail.gold_spent_on_upgrades, 56);
+        assert_eq!(
+            tail.research[0],
+            ResearchTopicWire {
+                research_level: 0,
+                turns_to_complete: 10,
+                allocation: 20,
+            }
+        );
+        assert_eq!(
+            tail.research[7],
+            ResearchTopicWire {
+                research_level: 7,
+                turns_to_complete: 17,
+                allocation: 27,
+            }
+        );
+        assert_eq!(tail.number_of_objects_created, 7);
+        assert_eq!(tail.unit_counters[0], 1);
+        assert_eq!(tail.unit_counters[92], 92 * 3 + 1);
+
+        assert_eq!(packet.encode().unwrap(), frame);
+    }
+
+    #[test]
+    fn packet_45_crc_barrier_matches_cpp_bytes() {
+        let (frame, packet) = decode_barrier_reference(45, PACKET_45_HEX);
+        assert_eq!(
+            packet,
+            Packet::Command(Command::CrcBarrier(Packet45CrcBarrier {
+                team: TeamId(3),
+                next_turn_index: 4,
+                crc16: 0xABCD,
+            }))
+        );
+        assert_eq!(packet.encode().unwrap(), frame);
     }
 
     fn p1(order: UnitOrder) -> PayloadP1 {

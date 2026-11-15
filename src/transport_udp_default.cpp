@@ -163,6 +163,8 @@ static inline void TransportUdpDefault_ProcessTpPacket(struct TransportUdpDefaul
                                                        ENetPeer* const peer, ENetPacket* const enet_packet);
 static inline void TransportUdpDefault_ProcessApplPacket(struct TransportUdpDefault_Context* const context,
                                                          ENetPeer* const peer, ENetPacket* const enet_packet);
+static void TransportUdpDefault_RelayApplPacket(struct TransportUdpDefault_Context* const context,
+                                                ENetPeer* const peer, ENetPacket* const enet_packet, NetPacket& relay);
 static inline void TransportUdpDefault_TransmitApplPackets(struct TransportUdpDefault_Context* const context);
 static ENetPeer* TransportUdpDefault_FindPeer(struct TransportUdpDefault_Context* const context,
                                               const NetAddress& address) noexcept;
@@ -775,9 +777,66 @@ void TransportUdpDefault_ProcessTpPacket(struct TransportUdpDefault_Context* con
     }
 }
 
+/* Fills the recipient table of the relay copy of an application packet the server has accepted.
+ *
+ * Star topology: a client is connected to the server only, so a game packet a client addressed to
+ * the other players reaches the server alone. Without forwarding the clients never see each
+ * other's barrier reports (00/52/45), turn summaries (53) or unit states (54), and every barrier
+ * sits on its 30 second timeout even though all players reported.
+ *
+ * The sender is skipped: it already applied its own packet locally. The recipients see the server
+ * as the source address of the copy, so Remote_GetSenderTeam() reports no team on their side; the
+ * barrier handlers take the team from the packet payload, which keeps the forwarding transparent.
+ *
+ * The peer array is owned by the transport worker that calls this function, so the table is built
+ * before the queue lock is taken. Repeated addresses are collapsed: a remote host that is
+ * connected through more than one ENet peer receives a single copy. The transport resolves each
+ * entry back to a connected peer and broadcasts when the table comes up empty.
+ */
+void TransportUdpDefault_RelayApplPacket(struct TransportUdpDefault_Context* const context, ENetPeer* const peer,
+                                         ENetPacket* const enet_packet, NetPacket& relay) {
+    for (uint32_t i = 0; i < context->Peers.GetCount(); ++i) {
+        ENetPeer* const other = *context->Peers[i];
+
+        if (other == nullptr || other == peer || !TransportUdpDefault_IsPeerVerified(other) ||
+            other->state != ENET_PEER_STATE_CONNECTED) {
+            continue;
+        }
+
+        NetAddress target;
+        target.host = other->address.host;
+        target.port = other->address.port;
+
+        /* Never hand the copy back to the sender, not even through a second connection that
+         * happens to share its address. */
+        if (target.host == peer->address.host && target.port == peer->address.port) {
+            continue;
+        }
+
+        bool duplicate{false};
+
+        for (uint16_t index = 0; index < relay.GetAddressCount(); ++index) {
+            if (relay.GetAddress(index) == target) {
+                duplicate = true;
+
+                break;
+            }
+        }
+
+        if (!duplicate) {
+            relay.AddAddress(target);
+        }
+    }
+
+    if (relay.GetAddressCount() > 0) {
+        relay.Write(enet_packet->data, enet_packet->dataLength);
+    }
+}
+
 void TransportUdpDefault_ProcessApplPacket(struct TransportUdpDefault_Context* const context, ENetPeer* const peer,
                                            ENetPacket* const enet_packet) {
     NetPacket packet;
+    NetPacket relay;
     NetAddress address;
 
     if (!TransportUdpDefault_IsPeerVerified(peer)) {
@@ -793,7 +852,16 @@ void TransportUdpDefault_ProcessApplPacket(struct TransportUdpDefault_Context* c
     packet.AddAddress(address);
     packet.Write(enet_packet->data, enet_packet->dataLength);
 
+    /* Star topology relay: forward a copy of the accepted payload to every other verified client.
+     * Guarded by the role so the client link keeps its single recipient, the server. */
+    if (context->NetRole == TRANSPORT_SERVER) {
+        TransportUdpDefault_RelayApplPacket(context, peer, enet_packet, relay);
+    }
+
+    const uint16_t relay_targets = relay.GetAddressCount();
+
     bool accepted{false};
+    bool relay_queued{false};
 
     TransportUdpDefault_LockQueue(context);
     {
@@ -808,11 +876,33 @@ void TransportUdpDefault_ProcessApplPacket(struct TransportUdpDefault_Context* c
 
         accepted = true;
 
+        if (relay_targets > 0) {
+            /* A full transmit queue holds game traffic the simulation already committed to, so the
+             * relay copy is dropped rather than evicting an older entry. The barrier protocols
+             * repeat their reports every few seconds, so the next report catches the peers up. */
+            if (context->TxPackets.size() < TransportUdpDefault_MaximumQueuedPackets) {
+                context->TxPackets.push_back(std::move(relay));
+
+                relay_queued = true;
+            }
+        }
+
         TransportUdpDefault_UnlockQueue(context);
     }
 
     if (!accepted) {
         NETLOG(log, "Receive queue is full, packet from {:8X}:{:4X} dropped.", peer->address.host, peer->address.port);
+
+    } else if (relay_targets == 0) {
+        /* Nothing to forward: either the client role, or no other verified peer is connected. */
+
+    } else if (relay_queued) {
+        NETLOG(log, "Relayed {} application bytes from {:8X}:{:4X} to {} peer(s).", enet_packet->dataLength,
+               peer->address.host, peer->address.port, relay_targets);
+
+    } else {
+        NETLOG(log, "Transmit queue is full, relayed copy of {} bytes from {:8X}:{:4X} dropped for {} peer(s).",
+               enet_packet->dataLength, peer->address.host, peer->address.port, relay_targets);
     }
 }
 
@@ -866,7 +956,8 @@ void TransportUdpDefault_TransmitApplPackets(struct TransportUdpDefault_Context*
 
         /* Star topology relay: a client is only ever connected to the server, so every packet
          * it sends - including ones the game addressed to other nodes - goes to the server as a
-         * broadcast; the server relays it to the other clients. */
+         * broadcast. The server forwards the accepted payload to the other clients in
+         * TransportUdpDefault_RelayApplPacket() and never echoes it back to the sender. */
         if (context->NetRole == TRANSPORT_CLIENT) {
             local.ClearAddressTable();
         }
