@@ -123,6 +123,10 @@ pub enum Key {
     Left,
     /// Стрелка вправо.
     Right,
+    /// Page Up (страницы списков, как `GNW_KB_KEY_PAGEUP`).
+    PageUp,
+    /// Page Down (`GNW_KB_KEY_PAGEDOWN`).
+    PageDown,
     /// Печатный символ.
     Char(char),
     /// Прочая клавиша (игнорируется).
@@ -1397,7 +1401,7 @@ impl Screen {
                         Key::Left => form.adjust(-1),
                         Key::Right => form.adjust(1),
                         Key::Char(character) => form.push_char(character),
-                        Key::Other => {}
+                        Key::PageUp | Key::PageDown | Key::Other => {}
                     }
                 }
             }
@@ -1505,6 +1509,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_build_menu_input(app, event, online);
     }
 
+    // Окно сохранения/загрузки V70 (P3) тоже модально: пока оно открыто,
+    // карта/панели/чат приказов не получают (`GameManager_DisableMainMenu`).
+    if app.save_load().is_some() {
+        return session_saveload_input(app, event);
+    }
+
     // Пока ходит компьютер/идёт переход, приказы и выделение невозможны:
     // в C++ карта в это время не перерисовывается (`game_manager.cpp:1179`),
     // а приказы отбрасываются по `GameManager_ActiveTurnTeam`.
@@ -1598,7 +1608,70 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 Transition::LeaveSession
             }
         }
+        // `S` — сохранение партии, `L` — загрузка (C++ `Alt+F`/`Alt+L`,
+        // `GameManager_MenuClickFileButton`). В сети сохранение/загрузка
+        // недоступны (пакет 16 не портирован) — `App::open_*_menu` пишет
+        // объяснение в журнал.
+        InputEvent::Key(Key::Char('s' | 'S')) if !blocked => {
+            app.open_save_menu(online);
+            Transition::None
+        }
+        InputEvent::Key(Key::Char('l' | 'L')) if !blocked => {
+            app.open_load_menu(online);
+            Transition::None
+        }
         InputEvent::Key(_) => Transition::None,
+    }
+}
+
+/// Ввод в открытом окне сохранения/загрузки V70 (модальный экран P3).
+///
+/// Действия окна — [`crate::SaveLoadAction`]: записать слот, загрузить слот или
+/// закрыть. Ошибки файлового I/O остаются в строке статуса окна, чтобы игрок
+/// видел причину, а не молчаливое закрытие.
+fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
+    let Some(menu) = app.save_load_mut() else {
+        return Transition::None;
+    };
+    let action = menu.input(event);
+
+    match action {
+        crate::SaveLoadAction::None => Transition::None,
+        crate::SaveLoadAction::Cancel => {
+            app.close_save_load();
+            app.hud_mut().push_log("Save/Load cancelled");
+            Transition::None
+        }
+        crate::SaveLoadAction::Save { slot, name } => {
+            match app.save_game_to_slot(slot, &name) {
+                Ok(path) => {
+                    app.close_save_load();
+                    app.hud_mut()
+                        .push_log(format!("Saved {}", path.display()));
+                }
+                Err(error) => {
+                    if let Some(menu) = app.save_load_mut() {
+                        menu.status = format!("Save failed: {error}");
+                    }
+                }
+            }
+            Transition::None
+        }
+        crate::SaveLoadAction::Load { slot } => {
+            match app.load_game_slot(slot) {
+                Ok(path) => {
+                    app.close_save_load();
+                    app.hud_mut()
+                        .push_log(format!("Loaded {}", path.display()));
+                }
+                Err(error) => {
+                    if let Some(menu) = app.save_load_mut() {
+                        menu.status = format!("Load failed: {error}");
+                    }
+                }
+            }
+            Transition::None
+        }
     }
 }
 
@@ -1650,7 +1723,8 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
             app.hud_mut().chat.close();
             app.hud_mut().push_log("Chat cancelled");
         }
-        Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Other => {}
+        Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown
+        | Key::Other => {}
     }
 
     Transition::None
@@ -2020,7 +2094,8 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
 
             // Открытый `BuildMenu` — модальный экран поверх кадра: строка
             // статуса партии его не перекрывает (как `GameManager_DisableMainMenu`).
-            if app.build_menu().is_none() {
+            // Окно сохранения/загрузки (P3) — такое же модальное.
+            if app.build_menu().is_none() && app.save_load().is_none() {
                 if let Some(assets) = app.assets() {
                     max_render::text::draw_text_gnw_shadowed(
                         buffer,
@@ -2048,7 +2123,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             status: view.status,
         };
 
-        if app.build_menu().is_none() {
+        if app.build_menu().is_none() && app.save_load().is_none() {
             hud::render_hud(buffer, &hud_view);
         }
         draw_local_notice(buffer, app, view.mouse);

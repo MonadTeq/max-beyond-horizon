@@ -445,6 +445,8 @@ pub struct Assets {
     pub menu: Option<crate::menu::MenuAssets>,
     /// Экран заказа юнитов/зданий (`FACBUILD`/`CONBUILD` + `BLD*`), P2.
     pub build_menu: Option<crate::buildmenu::BuildMenuAssets>,
+    /// Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*` + `MNUBTN*`), P3.
+    pub save_load: Option<crate::saveload::SaveLoadAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -571,6 +573,15 @@ impl Assets {
         let panels = crate::panels::Panels::load(&max_res);
         let menu = crate::menu::MenuAssets::load(&max_res);
         let build_menu = crate::buildmenu::BuildMenuAssets::load(&max_res);
+        // Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*_UP/DN` + кнопки), P3.
+        let save_load = crate::saveload::SaveLoadAssets::load(&max_res);
+
+        if !save_load.is_ready() {
+            warnings.push(
+                "SaveLoad: LOADPIC/FILE*_UP не загрузились — окно сохранения на рамках"
+                    .to_string(),
+            );
+        }
 
         if !build_menu.is_ready() {
             warnings.push(
@@ -638,6 +649,7 @@ impl Assets {
             panels,
             menu,
             build_menu: Some(build_menu),
+            save_load: Some(save_load),
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,

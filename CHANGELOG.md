@@ -2,6 +2,62 @@
 
 ### Добавлено
 
+- **P3 — запись V70-сейвов из живой партии** (`docs/development/PLAN-production.md`):
+  - `max_core::save_write`: `build_save_file(&GameState) -> SaveFile`,
+    `GameState::to_save()`/`to_save_bytes()`, `SaveMeta` — мост
+    `GameState → SaveFile` для **всех** структур V70: `SaveFormatHeader`
+    (тип/имя/планета/миссия/имена и типы команд/клан/seed/таймеры/`PlayMode`),
+    `IniOptions` (12 полей), `IniPreferences`, `SurfaceMap`/`ResourceMap`,
+    `TeamInfo`×4 (+UI-поля `markers`/`screen_locations`/`selected_unit`/зум/
+    камера/кнопки), `GameManagerState`, `TeamUnits`×4 (золото, 93 базовых +
+    93 текущих `UnitValues`, комплексы), пять списков `UnitInfo` со всеми
+    V70-полями (включая упаковку `experience` в `storage` у
+    `COMMANDO`/`REGENERATING_UNIT` и `recoil_delay`), `UnitHash`, `MapHash`,
+    тепловые карты ×4, журналы сообщений ×4, `AiPlayer` компьютерных команд
+    (стратегия, spotted units, `info_map`/`mine_map`, `target_location`).
+  - Объектные номера V70 пересобираются обходом C++-писателя (`TeamUnits` —
+    сначала все базовые значения, затем текущие и комплексы; далее списки
+    юнитов, тело юнита — путь → `base_values` → комплекс → `parent_unit` →
+    `enemy_unit`), identity `UnitValues`/`Complex` — по значениям,
+    `UnitHash`/`MapHash` — порядок из загруженного файла (`SaveMeta`).
+    Чего рантайм не хранит — переносится в `SaveMeta` как V70-поля
+    (`AiPlayer::unused_v70`/`target_team`, сырой
+    `stats_gold_spent_on_upgrades`, наличие `info_map`/`mine_map`), UI-поля
+    получают дефолты `CTInfo::Reset`, тепловые карты пишутся как `i8`
+    (C++ клампит отрицательные при загрузке).
+  - **Побайтовая сверка**: `SAVE1.CAM` и `SAVE2.CAM` → `GameState` →
+    `to_save` → байты **идентичны** исходным файлам
+    (`max_core/tests/save_write.rs`), плюс эквивалентность всех ключевых полей
+    после цикла и стабильность «save → load → save».
+  - `max_app::saveload` — окно сохранения/загрузки 1:1 по
+    `saveloadmenu.cpp`: фон `LOADPIC`, 10 слотов 200×70 (`FILE1_UP`…`FILE9_UP`,
+    `FILE10UP`) в сетке `402*(i/5)+16, 76*(i%5)+44`, страницы по
+    10 (`MNUUAROU`/`MNUDAROU`), кнопки `Save`/`Load`/`Cancel`
+    (`MNUBTN2U`/`MNUBTN4U`/`MNUBTN6U`), превью слота (имя, ход, планета,
+    команды, число юнитов), ввод имени `char[30]`. Имена файлов — как в
+    `SaveLoad_GetSaveFileName` (`save<slot>.dta|cam|hot|…`), каталог —
+    `--save-dir` либо каталог `MAX.RES`.
+  - Автосейв: конец раунда (`local_finish_round` → `App::autosave`), слот 10,
+    имя «(Turn N)», отключается `AppConfig::with_autosave(false)` — как
+    `SETUP.auto_save` + `GameManager_UpdateGui`. Ручные `S`/`L` в локальной
+    партии (C++ `Alt+F`/`Alt+L`); в сети окно не открывается (пакет 16
+    сохранения не портирован, загрузка запрещена и в оригинале).
+  - QA: команда `save_v70 NAME` (настоящий V70, в отличие от контейнера
+    `MXLS` команды `save`), сценарий `max-rust-qa/scripts/save-load.qa`
+    (2 хода → `save_v70` → `load` в свежем состоянии → те же ход/юниты),
+    кадры `save-menu`/`after-load`; прогон в `ci.sh`.
+  - Тесты: `max_core/tests/save_write.rs` (6 тестов, включая побайтовые
+    SAVE1/SAVE2), `max_app/tests/save_load.rs` (4 теста: сейв→загрузка в
+    свежем `App`, автосейв слота 10, окно слотов/страниц/имени, горячие
+    клавиши и запрет в сети), unit-тесты `save_write.rs`/`saveload.rs`.
+  - Артефакты пересобраны: Windows headless (`build-windows.sh --no-wine`) и
+    Linux (`release.sh`, features `sdl-from-source,sound`); актуальные размер и
+    sha256 — в `SHA256SUMS`/`*.zip.sha256`/`*.tar.gz.sha256`. Windows UI
+    (`max_app-*-windows-x86_64-ui`) **не** пересобран: `build-windows-ui.ps1`
+    требует Windows-хост с MSVC, vcpkg `sdl3:x64-windows` и rustup — в этом
+    окружении их нет (кросс-сборка SDL3 из Linux не поддерживается, см.
+    README артефакта).
+
 - **P2 — производство и строительство** (`docs/development/PLAN-production.md`):
   - `max_core::production` — порт `buildmenu.cpp`/`unitinfo.cpp`/`game_manager.cpp`:
     таблица `max_builder_capability_list` из `default.game_rules.lua`

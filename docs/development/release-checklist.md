@@ -408,6 +408,13 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
       `.zip.sha256` собраны, `sha256sum -c SHA256SUMS` в каталоге — все файлы
       `OK`. _(2026-11-15; sha256 zip зависит от mtime файлов, актуальный — в
       `.zip.sha256`)_
+- [x] **P3 (2026-11-16)**: артефакты пересобраны после записи V70-сейвов —
+      Windows headless (`bash build/scripts/build-windows.sh --no-wine`,
+      PE32+ console, mingw-рантайма в импортах нет) и Linux (`bash release.sh`,
+      features `sdl-from-source,sound`). Актуальные размеры/sha256 — в
+      `SHA256SUMS` и `*.zip.sha256`/`*.tar.gz.sha256`. Windows UI-артефакт
+      **не** пересобран: `build-windows-ui.ps1` требует Windows-хост с MSVC,
+      vcpkg и rustup (в окружении P3 их не было); код P3 UI-сборку не меняет.
 - [ ] `--connect HOST:8082 --join GAME_ID` с этим exe против живого Horizon
       (headless-цикл gRPC+ENet на Windows-бинаре) — прогон на Windows-хосте
       или wine с работающим Horizon в docker compose.

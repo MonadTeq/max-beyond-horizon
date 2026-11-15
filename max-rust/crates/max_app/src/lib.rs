@@ -49,6 +49,7 @@ pub mod panels;
 pub mod pregame;
 pub mod qa;
 pub mod render;
+pub mod saveload;
 pub mod setup;
 pub mod ui;
 pub mod winloss;
@@ -97,6 +98,10 @@ pub use net::{
 };
 pub use panels::{PanelButton, PanelState, Panels};
 pub use render::{write_ppm, RenderStats};
+pub use saveload::{
+    save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
+    AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
+};
 pub use ui::{
     handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
     CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
@@ -174,6 +179,11 @@ pub struct AppConfig {
     pub mode: AppMode,
     /// Сколько тиков прокручивать в demo-режиме.
     pub demo_turns: u32,
+    /// Каталог V70-сейвов (`save1.cam`, автосейв `save10.*`). `None` — рядом с
+    /// `MAX.RES` (как `FilePathGameData`/`FilePathGamePref` в C++).
+    pub save_dir: Option<PathBuf>,
+    /// Автосейв в конце хода (`SETUP.auto_save`, по умолчанию включён).
+    pub autosave: bool,
 }
 
 impl Default for AppConfig {
@@ -195,6 +205,8 @@ impl Default for AppConfig {
             screen_height: max_render::layout::WINDOW_HEIGHT as u32,
             mode: AppMode::Demo,
             demo_turns: 5,
+            save_dir: None,
+            autosave: true,
         }
     }
 }
@@ -289,6 +301,18 @@ impl AppConfig {
     /// Число тиков demo-режима.
     pub fn with_demo_turns(mut self, turns: u32) -> Self {
         self.demo_turns = turns;
+        self
+    }
+
+    /// Каталог V70-сейвов (сохранение/загрузка, автосейв).
+    pub fn with_save_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.save_dir = Some(dir.into());
+        self
+    }
+
+    /// Включает/выключает автосейв (`SETUP.auto_save`).
+    pub fn with_autosave(mut self, enabled: bool) -> Self {
+        self.autosave = enabled;
         self
     }
 }
@@ -487,6 +511,8 @@ pub struct App {
     pub(crate) local: Option<local::LocalGame>,
     /// Открытый `BuildMenu` (P2). В снапшот/CRC не входит — это UI.
     build_menu: Option<buildmenu::BuildMenu>,
+    /// Открытое окно сохранения/загрузки V70 (P3). В снапшот/CRC не входит.
+    pub(crate) save_load: Option<saveload::SaveLoadMenu>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
@@ -509,6 +535,7 @@ impl App {
             hud: hud::HudState::new(),
             local: None,
             build_menu: None,
+            save_load: None,
             visual_units: std::collections::HashMap::new(),
         }
     }
@@ -684,6 +711,8 @@ impl App {
         self.applied_commands = 0;
         self.hud.clear();
         self.local = None;
+        self.build_menu = None;
+        self.save_load = None;
         self.visual_units.clear();
         self.focus_player();
 
@@ -902,6 +931,8 @@ impl App {
         self.applied_commands = 0;
         self.hud.clear();
         self.local = None;
+        self.build_menu = None;
+        self.save_load = None;
         self.visual_units.clear();
         self.focus_player();
 

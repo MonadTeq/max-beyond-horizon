@@ -80,6 +80,7 @@ pub mod pathfinding;
 pub mod production;
 pub mod rng;
 pub mod save;
+pub mod save_write;
 pub mod setup;
 pub mod team;
 pub mod unit;
@@ -158,6 +159,7 @@ pub use save::{
     SaveError, SaveFile, SaveFormatHeader, SaveTeamUnits, SaveUnit, SavedComplex, SavedUnitValues,
     SpottedUnit, SAVE_VERSION_V70,
 };
+pub use save_write::{build_save_file, SaveMeta, SAVE_UNIT_HASH_SIZE};
 pub use setup::{
     ai_choose_starting_position, ai_is_safe_starting_position, derive_surface_map, generate_map,
     AlienPlacement, AlienUnitCosts, GameSetup, GenerationSettings, ResourceLevel, SetupOutput,

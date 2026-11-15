@@ -204,7 +204,10 @@ impl QaRunner {
         let app_config = AppConfig::default()
             .with_data_dir(&config.data_dir)
             .with_assets_dir(&config.assets_dir)
-            .with_mode(AppMode::Ui);
+            .with_mode(AppMode::Ui)
+            // P3: сейвы (в т.ч. автосейв) пишутся в каталог вывода QA, а не в
+            // `max-original`: прогон не оставляет мусора в данных игры.
+            .with_save_dir(&config.out_dir);
 
         let mut app = App::new(app_config);
         app.init_assets()
@@ -359,6 +362,7 @@ impl QaRunner {
             Command::Shot(name) => self.shot(name),
             Command::Assert(assertion) => self.check(assertion.clone()),
             Command::Save(name) => self.save(name),
+            Command::SaveV70(name) => self.save_v70(name),
             Command::Load(name) => self.load(name),
             Command::Exit => Ok(Flow::Exit),
             Command::Menu(target) => self.menu(*target),
@@ -1204,8 +1208,27 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    fn load(&mut self, name: &str) -> Result<Flow, String> {
-        let out_path = self.config.out_dir.join(name);
+    /// `save_v70 FILE` — настоящий V70-сейв (P3, `GameState::to_save_bytes`).
+    ///
+    /// В отличие от `save` (контейнер `MXLS` с настройками и снапшотом) это
+    /// файл формата оригинала: его можно загрузить обратно командой `load`
+    /// (и открыть в C++-порте).
+    fn save_v70(&mut self, name: &str) -> Result<Flow, String> {
+        let path = self.config.out_dir.join(name);
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "QA save".to_string());
+        let bytes = self
+            .app
+            .save_v70_to(&path, &name)
+            .map_err(|error| format!("save_v70 {name}: {error}"))?;
+
+        self.detail = Some(format!("{} ({bytes} байт V70)", path.display()));
+        Ok(Flow::Continue)
+    }
+
+    fn load(&mut self, name: &str) -> Result<Flow, String> {        let out_path = self.config.out_dir.join(name);
         let data_path = self.config.data_dir.join(name);
         let path = if out_path.is_file() {
             out_path

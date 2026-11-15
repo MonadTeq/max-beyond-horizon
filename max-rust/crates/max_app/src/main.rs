@@ -611,6 +611,8 @@ fn input_event(input: WindowInput) -> InputEvent {
         WindowInput::Key(WindowKey::Down) => InputEvent::Key(Key::Down),
         WindowInput::Key(WindowKey::Left) => InputEvent::Key(Key::Left),
         WindowInput::Key(WindowKey::Right) => InputEvent::Key(Key::Right),
+        WindowInput::Key(WindowKey::PageUp) => InputEvent::Key(Key::PageUp),
+        WindowInput::Key(WindowKey::PageDown) => InputEvent::Key(Key::PageDown),
         WindowInput::Key(WindowKey::Char(character)) => InputEvent::Key(Key::Char(character)),
         WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
         WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),

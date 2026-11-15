@@ -296,6 +296,9 @@ pub enum Command {
     Assert(Assertion),
     /// `save FILE` — контейнер `MXLS` (`App::write_local_save`).
     Save(String),
+    /// `save_v70 FILE` — настоящий V70-сейв текущей партии
+    /// (`GameState::to_save_bytes`, P3).
+    SaveV70(String),
     /// `load FILE` — локальная партия из V70-сейва (`App::start_local_game_from_save`).
     Load(String),
     /// `exit` — остановить скрипт (успех).
@@ -415,6 +418,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "shot" => Ok(Command::Shot(parse_name(rest, "shot")?)),
         "assert" => Ok(Command::Assert(parse_assertion(rest)?)),
         "save" => Ok(Command::Save(parse_name(rest, "save")?)),
+        "save_v70" | "savev70" => Ok(Command::SaveV70(parse_name(rest, "save_v70")?)),
         "load" => Ok(Command::Load(parse_name(rest, "load")?)),
         "exit" => {
             if rest.is_empty() {
@@ -532,6 +536,8 @@ fn parse_key(rest: &str) -> Result<Key, String> {
         "down" => Key::Down,
         "left" => Key::Left,
         "right" => Key::Right,
+        "pageup" | "page_up" | "pgup" => Key::PageUp,
+        "pagedown" | "page_down" | "pgdn" => Key::PageDown,
         _ => {
             let mut characters = name.chars();
 
@@ -539,7 +545,7 @@ fn parse_key(rest: &str) -> Result<Key, String> {
                 (Some(character), None) if character.is_ascii_graphic() => Key::Char(character),
                 _ => {
                     return Err(format!(
-                        "key: неизвестная клавиша «{name}» (ENTER/ESC/TAB/BACKSPACE/UP/DOWN/LEFT/RIGHT или один символ)"
+                        "key: неизвестная клавиша «{name}» (ENTER/ESC/TAB/BACKSPACE/UP/DOWN/LEFT/RIGHT/PAGEUP/PAGEDOWN или один символ)"
                     ))
                 }
             }

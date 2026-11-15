@@ -682,6 +682,30 @@ pub struct Map {
 | `MessageLogList` (×4) | журнал сообщений (`text`, `unit`, `coordinates`, `is_alert_message`, `resource_id`) | не снапшот; отдельный поток событий (сообщения/алерты) |
 | `AiPlayer` (×4, только `TEAM_TYPE_COMPUTER`) | состояние ИИ: стратегия, карты целей/мин, `info_map`/`mine_map` 112×112 | `—` только сервер |
 
+### 3.12 `SaveMeta` — что переносится ради записи V70 (P3)
+
+`GameState` хранит слои 1–2 (см. §1.1), но в V70 есть поля, которых в
+симуляции нет. Для записи сейва 1:1 они живут в `GameState::save_meta`
+(`max_core::save_write::SaveMeta`); в канонический дайджест
+(`GameState::snapshot_bytes`) **не входят**, потому что не влияют на игру:
+
+| Поле `SaveMeta` | Источник в V70 | Почему не выводится из состояния |
+|---|---|---|
+| `save_game_type`, `save_name`, `world`, `team_names`, `rng_seed`, `opponent`, `turn_timer_time`, `endturn_time` | `SaveFormatHeader` | настройки партии; `Randomizer` хранит только состояние, не seed |
+| `ini_options`, `ini_preferences` | `IniOptions`/`IniPreferences` | 12 + 7 значений INI, часть дублирует заголовок |
+| `team_ui` (×4) | `markers[10]`, `camera_positions[6]`, `selected_unit`, `zoom_level`, `camera_position`, `display_button_*` | UI-состояние (`CTInfo`), у нас — в `hud`/`Viewport`; запись — из снимка на момент save |
+| `team_gold_spent_raw` (×4) | `stats_gold_spent_on_upgrades` (`int16_t`) | C++ клампит ≥ 0 при загрузке; сырое значение нужно для побайтового round-trip |
+| `alien_team_type`, `alien_team_clan` | `team_type[4]`/`team_clan[4]` заголовка | V70 пишет 5-й слот, `CTInfo` его не хранит; `GameState.teams[4]` — служебный ALIEN |
+| `ai_unused_v70`, `ai_target_team_v70` (×4) | `AiPlayer::FileLoad` (V70-поля) | C++ **читает и выбрасывает**; нужны только для байтов |
+| `ai_has_info_map`, `ai_has_mine_map` (×4) | наличие блоков `info_map`/`mine_map` | в эталонных V70-сейвах карт ИИ нет (`item_count = 0`), а рантайм всегда держит 112×112 |
+| `message_logs` (×4) | `MessageLogList` | журнал — UI-поток событий; `max_core` хранит как данные для записи/чтения |
+| `turn_timer` | `GameManagerState::turn_timer` | остаток таймера живёт в `LocalGame`, снимок берётся при save |
+| `unit_hash_size`, `map_hash_size`, `map_hash_x_shift`, `unit_hash_order`, `map_hash_cells` | заголовки и порядок `UnitHash`/`MapHash` | C++ вставляет юнитов в ведро при создании, а `MapHash` при загрузке перехэширует; порядок из состояния не выводится — переносится из файла |
+
+Запись: `GameState::to_save()` → `SaveFile` → `GameState::to_save_bytes()`.
+Для `SAVE1.CAM`/`SAVE2.CAM` цикл «файл → `GameState` → файл» даёт **те же
+байты** (`max_core/tests/save_write.rs`).
+
 ---
 
 ## 4. Unit hash id (битфилд)

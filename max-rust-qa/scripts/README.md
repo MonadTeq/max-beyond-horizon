@@ -12,6 +12,7 @@ max-rust-qa/
 ├── scripts/visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
 ├── scripts/victory.qa          # партия до исхода «победа» + экран победы
 ├── scripts/production.qa       # P2: конструктор → BuildMenu → TRAINHAL за 10 ходов → завод → INFANTRY
+├── scripts/save-load.qa        # P3: 2 хода → save_v70 → load в свежем App → те же ход/юниты
 ├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~980 КиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 └── scripts/README.md
@@ -54,7 +55,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `shot NAME` | PNG кадра 640×480 в `<out_dir>/NAME.png` |
 | `assert …` | проверка состояния (таблица ниже); падение → exit 1 |
 | `save NAME` | контейнер локальной партии `MXLS` (`App::write_local_save`) |
-| `load NAME` | новая локальная партия из **V70**-сейва (`*.CAM`) |
+| `save_v70 NAME` | **настоящий V70-сейв** текущей партии (`GameState::to_save_bytes`, P3): читается `SaveFile::parse`, C++-портом и командой `load` |
+| `load NAME` | новая локальная партия из **V70**-сейва (`*.CAM`/`*.dta` — в т.ч. записанного `save_v70`) |
 | `exit` | остановить скрипт (успех) |
 
 ### Высокоуровневые команды (читаемые сценарии)
@@ -129,6 +131,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `visual-screens.qa` | 10 экранов только с `shot` (main menu, options, planet, players, mobilize, landing, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (45 шагов, 10 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
 | `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL (10 ходов) → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`) |
+| `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -192,6 +195,7 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 ```

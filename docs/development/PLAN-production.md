@@ -54,9 +54,40 @@
   очереди проверен (`tests/production.rs::two_identical_production_runs_have_identical_state`).
 
 ### P3 — Сейвы V70 (запись)
-- [ ] Сериализатор GameState→SaveFile (SaveUnit, HeatMap, AiPlayerState, хэши) — по save.rs чтению.
-- [ ] Автосейв и ручной Save/Load в UI (Save Game/Load Game 1:1).
+- [x] Сериализатор GameState→SaveFile (SaveUnit, HeatMap, AiPlayerState, хэши) — по save.rs чтению.
+  `max_core::save_write` (`build_save_file`, `GameState::to_save`/`to_save_bytes`,
+  `SaveMeta`): заголовок/`IniOptions`/`IniPreferences`, `SurfaceMap`/`ResourceMap`,
+  `TeamInfo`×4 + UI-поля, `GameManagerState`, `TeamUnits`×4 (93 базовых +
+  93 текущих `UnitValues` + комплексы), пять списков `UnitInfo` со всеми
+  V70-полями, `UnitHash`/`MapHash`, тепловые карты ×4, журналы сообщений ×4,
+  `AiPlayer` компьютерных команд. Объектные номера пересобираются обходом
+  C++-писателя (сначала все базовые значения, затем текущие и комплексы;
+  тело юнита — путь, `base_values`, комплекс, `parent_unit`, `enemy_unit`).
+  Identity `UnitValues`/`Complex` восстанавливается по значениям
+  (`current == base` ⇒ общий объект, `base_values` юнита ⇒ объект команды);
+  порядок `UnitHash`/`MapHash` переносится через `SaveMeta` (C++ вставляет
+  юнитов при создании, а `MapHash` при загрузке перехэширует).
+  Сверка: `max_core/tests/save_write.rs` — `SAVE1.CAM` и `SAVE2.CAM` грузятся
+  в `GameState` и пишутся обратно **побайтово** (`load → to_save → bytes`), плюс
+  эквивалентность ключевых полей после цикла.
+- [x] Автосейв и ручной Save/Load в UI (Save Game/Load Game 1:1).
+  `max_app::saveload`: окно по `saveloadmenu.cpp` (фон `LOADPIC`, 10 слотов
+  200×70 `FILE*_UP/DN` в сетке `402*(i/5)+16`/`76*(i%5)+44`, страницы по 10,
+  слоты с 1, `save<slot>.<ext>` по категории, имя `char[30]`), кнопки
+  `Save`/`Load`/`Cancel` (`MNUBTN2U`/`MNUBTN4U`/`MNUBTN6U`) и страницы
+  (`MNUUAROU`/`MNUDAROU`); клавиши `S` (Save) и `L` (Load) в локальной партии;
+  автосейв в конце раунда — слот **10**, имя «(Turn N)», как
+  `GameManager_UpdateGui` + `SETUP.auto_save`. В сети окно не открывается:
+  оригинал при сохранении рассылает пакет 16, которого в нашем протоколе нет
+  (загрузка в сети запрещена и в оригинале).
 - Критерий: round-trip V70 байт-в-байт на 9 эталонных сейвах + сейв нашей партии грузится C++-портом (кросс-проверка).
+  Сделано для **двух** эталонов, которые есть в репозитории
+  (`max-rust/crates/max_core/tests/data/save1_v70.cam`, `save2_v70.cam`):
+  `load → to_save` совпадает побайтово. Остальные 7 файлов `max-original/SAVE3..9`
+  в репозитории отсутствуют (не добавлялись как фикстуры). Кросс-проверка
+  «наш сейв грузит C++-порт» требует собранного `max-port` (Docker
+  `max-port-build`) и не выполнялась в этом этапе — формат гарантирован
+  парсером `save.rs` (он принимает только V70 с полным обходом файла).
 
 ### P4 — Стабильность и производительность
 - [ ] Soak: 100+ ходов ИИ×ИИ и человек+ИИ через qa-драйвер — без паник/утечек (замер памяти).

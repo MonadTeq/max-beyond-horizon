@@ -237,7 +237,8 @@ cargo run -p max_app -- \
 | **LocalSetup** | M-SP / M-HS 1:1: Options (`OPTNFRM`) → Planet (`PLANETSE`) → Players (`CHOSPLYR`) | клик по радиокнопкам/слотам/кнопкам; ввод имени и лимита победы; Enter — дальше; Esc — назад |
 | **CreateForm** | сетевая игра: имя, планета (`0..=23`), таймеры, число противников, пароль (открывается клавишей `C` в списке игр) | Tab/Up/Down — поле; ввод; Left/Right — числа; Enter — создать; Esc — назад |
 | **JoinList** | список игр из `ListGames`; выбор и вход | Up/Down + Enter; клик по строке; `R` — обновить; `C` — создать игру; Esc — назад |
-| **InSession** | карта (`map_render`) + HUD (M4.2); в локальной партии — ходы ИИ, таймер, окно перехода хода (M-HS) | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, `P` — пауза, клик по миникарте — камера, Esc — отмена/выход (в окне перехода — подтверждение) |
+| **InSession** | карта (`map_render`) + HUD (M4.2); в локальной партии — ходы ИИ, таймер, окно перехода хода (M-HS) | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, `P` — пауза, `S` — Save Game, `L` — Load Game, клик по миникарте — камера, Esc — отмена/выход (в окне перехода — подтверждение) |
+| **SaveLoad** (модальное окно P3) | `Save Game`/`Load Game` 1:1 по `saveloadmenu.cpp`: 10 слотов с превью, страницы, ввод имени | клик по слоту/кнопкам; Up/Down/Left/Right; PageUp/PageDown; ввод имени; Enter — Save/Load; Esc — Cancel |
 | **GameOver** | экран победы/поражения 1:1 (`ENDGAME*`, `ENDARM`, `ENDOK`) | Enter/Esc/клик по OK — в меню |
 
 ### M-SP: одиночная игра против ИИ
@@ -259,11 +260,16 @@ cargo run -p max_app -- \
 End Turn и таймер хода закрывают ход человека, `P` — пауза. Победа/поражение —
 экран `max_app/src/winloss.rs` (`menu_draw_game_over_screen` 1:1).
 
-Сохранение: V70 **читается** в локальную партию
-(`App::start_local_game_from_save`); запись `GameState → V70` пока не
-реализована, поэтому быстрое сохранение локальной партии — контейнер `MXLS`
-(`App::local_save_bytes` / `write_local_save` / `read_local_save`: настройки +
-фаза + `snapshot_bytes` + CRC).
+Сохранение (P3): партия пишется **настоящим V70-сейвом**
+(`GameState::to_save()` → `max_core::save_write`, `App::save_v70_to`): окно
+`Save Game`/`Load Game` (клавиши `S`/`L`) — 10 слотов на страницу, файлы
+`save<slot>.<ext>` по категории, автосейв в конце раунда в слот **10**
+(`save10.dta`, `App::autosave`). Загрузка V70 в локальную партию —
+`App::start_local_game_from_save` / `App::load_v70_path`. В сети окно не
+открывается: оригинал при сохранении рассылает пакет 16, которого в нашем
+протоколе нет. Прежний контейнер `MXLS` (`App::local_save_bytes` /
+`write_local_save` / `read_local_save`: настройки + фаза + `snapshot_bytes` +
+CRC) сохранён для быстрых снапшотов QA.
 
 Кадры-свидетельства:
 

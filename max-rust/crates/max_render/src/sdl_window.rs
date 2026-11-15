@@ -54,6 +54,10 @@ pub enum WindowKey {
     Left,
     /// Стрелка вправо.
     Right,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
     /// Печатный ASCII-символ (SDL отдаёт базовую раскладку: `a`, `0`, `.`).
     Char(char),
     /// Любая другая клавиша (модификаторы, F-клавиши, …).
@@ -99,6 +103,8 @@ fn window_key(code: Keycode) -> WindowKey {
         Keycode::Down => WindowKey::Down,
         Keycode::Left => WindowKey::Left,
         Keycode::Right => WindowKey::Right,
+        Keycode::PageUp => WindowKey::PageUp,
+        Keycode::PageDown => WindowKey::PageDown,
         _ => {
             // Базовые ASCII-коды SDL3 совпадают с ASCII (`A = 97`, `_0 = 48`).
             match code as u32 {

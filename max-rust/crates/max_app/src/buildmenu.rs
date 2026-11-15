@@ -710,9 +710,13 @@ impl BuildMenu {
                 self.toggle_repeat();
                 BuildMenuAction::None
             }
-            Key::Backspace | Key::Left | Key::Right | Key::Other | Key::Char(_) => {
-                BuildMenuAction::None
-            }
+            Key::Backspace
+            | Key::Left
+            | Key::Right
+            | Key::PageUp
+            | Key::PageDown
+            | Key::Other
+            | Key::Char(_) => BuildMenuAction::None,
         }
     }
 

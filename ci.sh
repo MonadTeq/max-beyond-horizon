@@ -2,7 +2,7 @@
 # M6.3: локальный CI (то же, что .github/workflows/ci.yml) в Docker.
 #
 #   bash ci.sh                 # cargo check/test max-rust + cargo test --workspace Horizon
-#                              # + QA: qa_run (sp-full/hs-2/visual-screens/victory) и golden
+#                              # + QA: qa_run (sp-full/hs-2/visual-screens/victory/production/save-load) и golden
 #   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
 #   bash ci.sh --smoke --turns 10
 #
@@ -119,7 +119,7 @@ docker run --rm \
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
 # Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
-step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory, production) + golden"
+step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
@@ -134,6 +134,7 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production'
 

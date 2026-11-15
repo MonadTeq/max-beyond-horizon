@@ -291,7 +291,7 @@ impl Recorder {
                 self.push_timed("key ESC".to_string());
                 self.events += 1;
             }
-            Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right => {
+            Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown => {
                 if let Some(line) = key_line(key) {
                     self.flush_text();
                     self.push_timed(line);
@@ -417,6 +417,8 @@ fn key_line(key: Key) -> Option<String> {
         Key::Down => "DOWN",
         Key::Left => "LEFT",
         Key::Right => "RIGHT",
+        Key::PageUp => "PAGEUP",
+        Key::PageDown => "PAGEDOWN",
         Key::Char(character) if character.is_ascii_graphic() => {
             return Some(format!("key {character}"));
         }

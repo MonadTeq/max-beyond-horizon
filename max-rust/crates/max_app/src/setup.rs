@@ -683,9 +683,8 @@ impl GameSetupForm {
                 }
                 SetupTransition::None
             }
-            Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Other => {
-                SetupTransition::None
-            }
+            Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown
+            | Key::Other => SetupTransition::None,
         }
     }
 

@@ -243,6 +243,12 @@ pub struct GameState {
     pub commands: CommandQueue,
     /// Состояние ИИ: игроки, менеджер задач, тепловые карты (P6, `ai.cpp`).
     pub ai: crate::ai::AiState,
+    /// Данные V70, нужные только для записи сейва (P3): настройки партии,
+    /// UI-поля `TeamInfo`, журналы сообщений, V70-поля `AiPlayer`.
+    ///
+    /// В канонический дайджест (`snapshot_bytes`) не входит — это не игровое
+    /// состояние, а «то, что C++ хранит вне `GameState`».
+    pub save_meta: crate::save_write::SaveMeta,
 
     // --- правила партии (setup-константы; P7) ---
     /// `SaveFormatHeader::mission_index` (0 — generic custom game).
@@ -329,6 +335,7 @@ impl GameState {
             real_time: false,
             commands: CommandQueue::new(),
             ai: crate::ai::AiState::new(),
+            save_meta: crate::save_write::SaveMeta::default(),
             // `settings.cpp` defaults: generic custom game, duration, лимит 50.
             mission_index: 0,
             mission_category: crate::victory::MissionCategory::Custom,
@@ -405,6 +412,8 @@ impl GameState {
         self.play_mode = save.header.play_mode;
         self.victory_type = save.ini_options.victory_type;
         self.victory_limit = save.ini_options.victory_limit;
+        // Настройки/UI-поля/журналы и V70-поля ИИ — для записи сейва 1:1 (P3).
+        self.save_meta = crate::save_write::SaveMeta::from_save(save);
 
         // --- глобальное состояние партии ---
         self.game_state = save.game.game_state;

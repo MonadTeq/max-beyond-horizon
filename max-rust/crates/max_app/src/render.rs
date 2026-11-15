@@ -111,6 +111,8 @@ impl App {
 
         // `BuildMenu` в полноэкранном режиме (без `FRAMEPIC`).
         self.draw_build_menu(&mut frame);
+        // Окно сохранения/загрузки (P3) — модальное, как `AbstractMenu` в C++.
+        self.draw_save_load(&mut frame);
 
         (frame, stats)
     }
@@ -164,8 +166,19 @@ impl App {
         // `BuildMenu` — модальный экран поверх кадра (C++ `AbstractMenu`
         // закрывает главное меню: `GameManager_DisableMainMenu`).
         self.draw_build_menu(&mut frame);
+        // Окно сохранения/загрузки (P3).
+        self.draw_save_load(&mut frame);
 
         (frame, stats)
+    }
+
+    /// Рисует открытое окно сохранения/загрузки поверх кадра (P3).
+    pub(crate) fn draw_save_load(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.save_load(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets);
     }
 
     /// Рисует открытый `BuildMenu` поверх кадра (P2).

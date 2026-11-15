@@ -626,6 +626,9 @@ impl App {
         );
 
         self.local = Some(local);
+        // P3: настройки партии для записи V70 (`SaveFormatHeader`/`IniOptions`).
+        let meta = crate::saveload::save_meta_for_local_game(setup);
+        self.state_mut().set_save_meta(meta);
         self.hud.clear();
         if setup.is_hot_seat() {
             self.hud.push_log(format!(
@@ -860,6 +863,9 @@ impl App {
 
         self.hud
             .push_log(format!("Turn {} begins", self.state().turn_counter));
+        // C++ `GameManager_UpdateGui(team, …, enable_autosave = true)` для первой
+        // команды раунда: автосейв (слот 10) при включённом `SETUP.auto_save`.
+        self.autosave();
         self.local_next_team();
     }
 
@@ -1417,6 +1423,24 @@ impl App {
         } else {
             MissionCategory::Custom
         };
+        // P3: если настройки экрана перекрыли режим/победу из файла, приводим
+        // `SaveMeta` к тому же виду — иначе повторный сейв «поехал» бы
+        // относительно только что загруженного.
+        {
+            let state = self.state_mut();
+            let meta = &mut state.save_meta;
+            meta.save_game_type = if state.mission_category == MissionCategory::HotSeat {
+                max_core::enums::FileType::HotSeat
+            } else {
+                max_core::enums::FileType::Custom
+            };
+            meta.ini_options.play_mode = state.play_mode;
+            meta.ini_options.victory_type = state.victory_type;
+            meta.ini_options.victory_limit = state.victory_limit;
+            meta.ini_options.opponent = max_core::enums::Opponent::try_from(setup.opponent)
+                .unwrap_or(max_core::enums::Opponent::Average);
+            meta.opponent = meta.ini_options.opponent;
+        }
 
         let mut local = LocalGame::new(loaded);
         local.phase = LocalPhase::Advancing;

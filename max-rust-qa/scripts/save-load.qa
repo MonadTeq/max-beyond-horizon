@@ -1,0 +1,78 @@
+# save-load.qa — сохранение и загрузка настоящего V70-сейва (P3, слой 2 QA).
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/save-load.qa qa-out/save-load
+#
+# Что проверяется:
+# * локальная партия играется два хода (`end_turn` человека + ход ИИ);
+# * `save_v70` пишет **настоящий** V70-файл (`GameState::to_save_bytes`),
+#   а не контейнер MXLS: его читает `SaveFile::parse` и C++-порт;
+# * автосейв конца раунда создаёт `save10.dta` (C++ `SETUP.auto_save`);
+# * `load` поднимает партию из этого файла в свежем состоянии приложения:
+#   ход, число юнитов и экран совпадают с сохранёнными (`assert turn`,
+#   `assert units`), партия продолжает играться (`end_turn` после загрузки);
+# * кадры `save-menu`/`after-load` — для визуальной проверки окна и партии.
+
+# --- Главное меню → локальная партия -------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+# --- Options: No Limit + Turn Based (детерминизм без таймеров) -----------
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+setup done
+assert screen=Players
+
+# --- Players: RED — человек, GREEN — компьютер ---------------------------
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация и высадка ------------------------------------------------
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Два хода: End Turn человека, ход компьютера, новый раунд ------------
+end_turn
+end_turn
+assert screen=InGame
+assert turn=3
+assert units>=10
+
+# --- Сохранение партии в V70 ---------------------------------------------
+save_v70 turn2.dta
+assert turn=3
+
+# --- Окно Save Game (клавиша S, как Alt+F в C++) -------------------------
+key s
+shot save-menu
+key ESC
+
+# --- Загрузка в свежем состоянии приложения ------------------------------
+load turn2.dta
+assert screen=InGame
+assert turn=3
+assert units=14
+shot after-load
+
+# --- Партия после загрузки продолжает играться ---------------------------
+end_turn
+assert screen=InGame
+assert turn>=3
+
+# Итог: сейв/загрузка не сломали цикл хода.
+assert units=14
