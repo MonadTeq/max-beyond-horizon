@@ -181,7 +181,6 @@ pub const FONT_8X8: [[u8; 8]; ASCII_CHARS] = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // U+007F
 ];
 
-
 /// Строки глифа `ch`; вне ASCII — [`FALLBACK_GLYPH`].
 ///
 /// Бит 0 — левый пиксель строки, бит 7 — правый; строки идут сверху вниз
@@ -303,13 +302,7 @@ fn wrap_line(line: &str, max_chars: usize, out: &mut Vec<String>) {
 ///
 /// Возвращает ширину строки в пикселях (`line_width(text)`), даже если часть
 /// текста не попала в буфер.
-pub fn draw_text_line(
-    buffer: &mut RgbaBuffer,
-    x: i32,
-    y: i32,
-    text: &str,
-    color: Rgba,
-) -> i32 {
+pub fn draw_text_line(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color: Rgba) -> i32 {
     let mut pen_x = x;
 
     for ch in text.chars() {
@@ -368,13 +361,7 @@ pub fn draw_text_wrapped(
 
     for (index, line) in lines.iter().enumerate() {
         width = width.max(line_width(line));
-        draw_text_line(
-            buffer,
-            x,
-            y + index as i32 * GLYPH_HEIGHT,
-            line,
-            color,
-        );
+        draw_text_line(buffer, x, y + index as i32 * GLYPH_HEIGHT, line, color);
     }
 
     TextMetrics {
@@ -389,13 +376,7 @@ pub fn draw_text_wrapped(
 /// Это основной вариант для UI: `max_width` считается как
 /// `buffer.width() - x`, поэтому текст всегда укладывается в кадр, а всё, что
 /// выходит за границы, обрезается.
-pub fn draw_text(
-    buffer: &mut RgbaBuffer,
-    x: i32,
-    y: i32,
-    text: &str,
-    color: Rgba,
-) -> TextMetrics {
+pub fn draw_text(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color: Rgba) -> TextMetrics {
     let max_width = buffer.width() as i32 - x;
 
     draw_text_wrapped(buffer, x, y, max_width.max(0), text, color)
@@ -474,7 +455,11 @@ mod tests {
         // 't' (0x08 = бит 3): ножка слева от центра, а не справа.
         let mut buffer = RgbaBuffer::new(8, 8);
         draw_text_line(&mut buffer, 0, 0, "t", Rgba::WHITE);
-        assert_eq!(buffer.get(3, 0), Some(Rgba::WHITE), "'t': бит 3 → колонка 3");
+        assert_eq!(
+            buffer.get(3, 0),
+            Some(Rgba::WHITE),
+            "'t': бит 3 → колонка 3"
+        );
         assert_ne!(buffer.get(4, 0), Some(Rgba::WHITE), "зеркальный 't' → 'ʇ'");
     }
 
@@ -487,7 +472,10 @@ mod tests {
         draw_text_line(&mut buffer, 4, 4, "M.A.X.", Rgba::WHITE);
         draw_text_wrapped(&mut buffer, 0, 0, -8, "HELLO", Rgba::WHITE);
 
-        assert!(painted_pixels(&buffer) > 0, "частично видимый текст рисуется");
+        assert!(
+            painted_pixels(&buffer) > 0,
+            "частично видимый текст рисуется"
+        );
         assert!(painted_pixels(&buffer) <= buffer.len());
     }
 

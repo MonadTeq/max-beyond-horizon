@@ -69,7 +69,9 @@ pub const ATTACK_DAMAGE_MIN: i32 = 1;
 ///
 /// `attack_potential` — дистанция площадной атаки (`0` для обычного выстрела).
 pub fn get_attack_damage(attacker: &UnitInfo, target: &UnitInfo, attack_potential: i32) -> i32 {
-    let target_armor = target.base_values.get_attribute(crate::unit_values::ATTRIB_ARMOR);
+    let target_armor = target
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ARMOR);
     let mut attacker_attack = attacker.base_values.get_attribute(ATTRIB_ATTACK);
 
     if attack_potential > 1 {
@@ -369,7 +371,9 @@ pub fn get_area_attack_targets(
         let distance = access::approximate_distance_points(location, grid);
 
         for id in ids.iter().copied() {
-            let Some(other) = state.unit(id) else { continue };
+            let Some(other) = state.unit(id) else {
+                continue;
+            };
 
             if other.flags & SELECTABLE == 0
                 || other.orders == UnitOrder::Idle
@@ -614,7 +618,8 @@ pub fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> 
             let team = TeamId(team_index as u8);
             if unit.team != team
                 && state.teams[team_index].team_type != TeamKind::None
-                && state.ai_heat_map_complete(team, i32::from(unit.grid.x), i32::from(unit.grid.y)) > 0
+                && state.ai_heat_map_complete(team, i32::from(unit.grid.x), i32::from(unit.grid.y))
+                    > 0
             {
                 unit.spot_by_team(team);
             }
@@ -685,9 +690,7 @@ pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> b
         return true;
     }
 
-    if state.teams[unit1.team.0 as usize].finished_turn
-        && state.play_mode == PlayMode::Unknown
-    {
+    if state.teams[unit1.team.0 as usize].finished_turn && state.play_mode == PlayMode::Unknown {
         return true;
     }
 
@@ -702,7 +705,9 @@ pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> b
             UnitListKind::Stationary,
         ] {
             for id in state.unit_list(kind) {
-                let Some(other) = state.unit(*id) else { continue };
+                let Some(other) = state.unit(*id) else {
+                    continue;
+                };
                 if other.team == unit1_team
                     && access::squared_distance(unit2.grid, other.grid) <= unit2_distance
                     && access::is_valid_attack_target(state, unit2, other)
@@ -1346,7 +1351,12 @@ mod tests {
         let mut unit = state.unit(launcher).unwrap().clone();
         unit.live_attack = 7;
         prepare_fire(&mut state, &mut unit);
-        assert_eq!(unit.ammo, unit.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) as u8 - 1);
+        assert_eq!(
+            unit.ammo,
+            unit.base_values
+                .get_attribute(crate::unit_values::ATTRIB_AMMO) as u8
+                - 1
+        );
         assert_eq!(unit.state, UnitOrderState::FireInProgress);
         assert_eq!(unit.live_attack, 0);
 
@@ -1400,7 +1410,12 @@ mod tests {
         }
 
         let mut infiltrator = state.unit(commando).unwrap().clone();
-        let chance = get_stealth_chance_percentage(&state, &infiltrator, state.unit(tower).unwrap(), infiltrator.orders);
+        let chance = get_stealth_chance_percentage(
+            &state,
+            &infiltrator,
+            state.unit(tower).unwrap(),
+            infiltrator.orders,
+        );
         assert!(chance > 0);
         let experience = infiltrator.experience;
         assert!(attempt_stealth_action(&mut state, &mut infiltrator));
@@ -1551,7 +1566,10 @@ mod tests {
             for _ in 0..12 {
                 state.tick();
             }
-            (state.snapshot_bytes(), i32::from(state.unit(green).unwrap().hits))
+            (
+                state.snapshot_bytes(),
+                i32::from(state.unit(green).unwrap().hits),
+            )
         }
 
         let first = run();

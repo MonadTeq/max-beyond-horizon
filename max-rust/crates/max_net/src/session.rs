@@ -724,13 +724,11 @@ pub fn crc_barrier_for(
     next_turn_index: u8,
     state: &max_core::game::GameState,
 ) -> Packet {
-    Packet::Command(Command::CrcBarrier(
-        max_core::input::Packet45CrcBarrier {
-            team,
-            next_turn_index,
-            crc16: max_core::crc::state_checksum(state),
-        },
-    ))
+    Packet::Command(Command::CrcBarrier(max_core::input::Packet45CrcBarrier {
+        team,
+        next_turn_index,
+        crc16: max_core::crc::state_checksum(state),
+    }))
 }
 
 /// Builds packet 53 — the owner's complex totals at the start of a turn.
@@ -1025,7 +1023,10 @@ mod tests {
         match complex_summary_for(&state, TeamId::RED, 1) {
             Packet::Command(Command::ComplexSummary(summary)) => {
                 assert_eq!(summary.team, TeamId::RED);
-                assert_eq!(summary.turn, 1, "turn — C++ GameManager_TurnCounter (1-based)");
+                assert_eq!(
+                    summary.turn, 1,
+                    "turn — C++ GameManager_TurnCounter (1-based)"
+                );
                 assert_eq!(summary.complexes.len(), 1);
                 assert_eq!(summary.complexes[0].complex_id, 1);
                 assert_eq!(summary.complexes[0].values, [10, 20, 30, 40, 50, 60]);

@@ -32,8 +32,9 @@ use crate::geo::Point;
 use crate::unit::{UnitId, UnitListKind};
 
 use super::super::task::{
-    task_remove_movement_tasks, task_should_reserve_shot, TaskHeader, TASKMOVE_RESULT_ALREADY_IN_RANGE,
-    TASKMOVE_RESULT_BLOCKED, TASKMOVE_RESULT_CANCELLED, TASKMOVE_RESULT_SUCCESS, TASK_PRIORITY_MOVE,
+    task_remove_movement_tasks, task_should_reserve_shot, TaskHeader,
+    TASKMOVE_RESULT_ALREADY_IN_RANGE, TASKMOVE_RESULT_BLOCKED, TASKMOVE_RESULT_CANCELLED,
+    TASKMOVE_RESULT_SUCCESS, TASK_PRIORITY_MOVE,
 };
 use super::{TaskCtx, TaskKind};
 
@@ -76,7 +77,8 @@ pub(crate) fn move_finished_self(
 
     if let (Some(parent), Some(unit_id)) = (header.parent, unit) {
         if ctx.tm.has_task(parent) {
-            ctx.tm.task_move_finished(ctx.world, parent, unit_id, result);
+            ctx.tm
+                .task_move_finished(ctx.world, parent, unit_id, result);
         }
     }
 
@@ -86,7 +88,12 @@ pub(crate) fn move_finished_self(
 }
 
 /// `TaskMove::Search(mode)` — путь или «уже в радиусе».
-pub(crate) fn move_search(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, _mode: bool) {
+pub(crate) fn move_search(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    _mode: bool,
+) {
     let TaskKind::Move(state) = kind else {
         return;
     };
@@ -175,11 +182,8 @@ pub(crate) fn move_execute(
     }
 
     // Атака по пути (C++ `AiAttack_EvaluateAttack`).
-    let is_computer = ctx
-        .world
-        .teams[info.team.0 as usize]
-        .team_type
-        == crate::team::TeamKind::Computer;
+    let is_computer =
+        ctx.world.teams[info.team.0 as usize].team_type == crate::team::TeamKind::Computer;
 
     if is_computer
         && info.ammo > 0
@@ -203,8 +207,12 @@ pub(crate) fn move_execute(
         let grid = ctx.unit(unit).map(|info| info.grid).unwrap_or(Point::ZERO);
         if let Some(info) = ctx.unit(unit) {
             if task_should_reserve_shot(ctx.world, &info, grid) {
-                let rounds = info.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
-                let unit_speed = info.base_values.get_attribute(crate::unit_values::ATTRIB_SPEED);
+                let rounds = info
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+                let unit_speed = info
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_SPEED);
 
                 if rounds > 0 && i32::from(info.speed) <= (unit_speed + rounds - 1) / rounds {
                     return false;
@@ -253,7 +261,10 @@ fn home_site(ctx: &TaskCtx<'_>, team: crate::team::TeamId, from: Point) -> Optio
         let dy = i32::from(unit.grid.y) - i32::from(from.y);
         let distance = dx * dx + dy * dy;
 
-        if best.map(|(best_distance, _)| distance < best_distance).unwrap_or(true) {
+        if best
+            .map(|(best_distance, _)| distance < best_distance)
+            .unwrap_or(true)
+        {
             best = Some((distance, unit.grid));
         }
     }
@@ -308,21 +319,11 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
             find_path_run(kind, ctx, header);
             true
         }
-        TaskKind::Rendezvous { .. } => {
-            true
-        }
-        TaskKind::AssistMove { .. } => {
-            true
-        }
-        TaskKind::Transport { .. } => {
-            true
-        }
-        TaskKind::Dump { .. } => {
-            true
-        }
-        TaskKind::SearchDestination { .. } => {
-            true
-        }
+        TaskKind::Rendezvous { .. } => true,
+        TaskKind::AssistMove { .. } => true,
+        TaskKind::Transport { .. } => true,
+        TaskKind::Dump { .. } => true,
+        TaskKind::SearchDestination { .. } => true,
         _ => false,
     }
 }
@@ -344,7 +345,11 @@ fn find_path_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader)
     }
 
     if let Some(unit_id) = *unit {
-        if ctx.unit(unit_id).is_some() && ctx.world.is_active_turn(crate::ai::task::team_of(ctx.world, unit_id)) {
+        if ctx.unit(unit_id).is_some()
+            && ctx
+                .world
+                .is_active_turn(crate::ai::task::team_of(ctx.world, unit_id))
+        {
             let mut data = ctx.order_data(unit_id);
             data.move_to = *destination;
             ctx.set_order_data(unit_id, data);
@@ -624,7 +629,12 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `Execute(unit)` для move-классов.
-pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::Move(_) => move_execute(kind, ctx, header, unit),
         TaskKind::MoveHome { .. } => {
@@ -721,7 +731,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` для move-классов.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::Transport { move_tasks, .. } => {
             move_tasks.retain(|task| *task != child);
@@ -768,12 +783,22 @@ pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: Ta
 }
 
 /// `ExchangeOperator` — не переопределён.
-pub fn exchange_operator(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader, _unit: UnitId) -> bool {
+pub fn exchange_operator(
+    _kind: &mut TaskKind,
+    _ctx: &mut TaskCtx<'_>,
+    _header: TaskHeader,
+    _unit: UnitId,
+) -> bool {
     false
 }
 
 /// `EventUnitDestroyed` для move-классов.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::Move(state) => {
             if state.unit == Some(unit) {
@@ -833,7 +858,10 @@ pub fn event_unit_loaded(
     _unit1: UnitId,
     _unit2: UnitId,
 ) -> bool {
-    matches!(kind, TaskKind::AssistMove { .. } | TaskKind::Transport { .. })
+    matches!(
+        kind,
+        TaskKind::AssistMove { .. } | TaskKind::Transport { .. }
+    )
 }
 
 /// `EventUnitUnloaded` — `TaskAssistMove`/`TaskTransport` (структурно).
@@ -844,7 +872,10 @@ pub fn event_unit_unloaded(
     _unit1: UnitId,
     _unit2: UnitId,
 ) -> bool {
-    matches!(kind, TaskKind::AssistMove { .. } | TaskKind::Transport { .. })
+    matches!(
+        kind,
+        TaskKind::AssistMove { .. } | TaskKind::Transport { .. }
+    )
 }
 
 /// `TaskAssistMove::IsUnitUsable` — транспортный юнит команды.

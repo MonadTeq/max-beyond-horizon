@@ -34,6 +34,7 @@
 #![forbid(unsafe_code)]
 
 pub mod buffer;
+pub mod frame_scale;
 pub mod layout;
 pub mod map_render;
 pub mod palette;
@@ -47,6 +48,13 @@ pub mod viewport;
 pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
+pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use layout::{
+    AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,
+    HITS_BUTTON, MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON,
+    SIDE_PANEL_TOP_HEIGHT, SIDE_PANEL_WIDTH, STATUS_BUTTON, STAT_WINDOW, SURVEY_BUTTON,
+    WINDOW_HEIGHT, WINDOW_WIDTH,
+};
 pub use map_render::{
     dot_radius_for, map_from_wrl, pattern_cell_size, render_map_into, render_tile,
     render_tile_into, tile_base_color, tile_pixel_color, TileStyle, PATTERN_CELLS, TILE_PIXELS,
@@ -59,11 +67,6 @@ pub use palette::{
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};
-pub use layout::{
-    AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON, HITS_BUTTON,
-    MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON, SIDE_PANEL_TOP_HEIGHT,
-    SIDE_PANEL_WIDTH, STAT_WINDOW, STATUS_BUTTON, SURVEY_BUTTON, WINDOW_HEIGHT, WINDOW_WIDTH,
-};
 pub use text::{
     draw_text, draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed,
     draw_text_gnw_shadowed, draw_text_line, draw_text_wrapped, glyph, line_width, text_height,

@@ -41,15 +41,12 @@
 //!   лишних (`Remote_RemoveExtraUnits`) и выравнивает хвост экономики
 //!   (`Remote_ReceiveNetPacket_54`).
 
-use crate::enums::{
-    ResearchTopic, UnitOrder, UnitOrderState, UnitType, RESEARCH_TOPIC_COUNT,
-};
+use crate::enums::{ResearchTopic, UnitOrder, UnitOrderState, UnitType, RESEARCH_TOPIC_COUNT};
 use crate::game::{GameState, OrderData};
 use crate::geo::Point;
 use crate::input::{
-    is_valid_order, is_valid_team_index, Command, MovePathData, OrderPayload,
-    Packet08Order, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
-    UPGRADE_VALUE_COUNT,
+    is_valid_order, is_valid_team_index, Command, MovePathData, OrderPayload, Packet08Order,
+    PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
 };
 use crate::team::{ResearchTopicInfo, TeamId, TeamKind};
 use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
@@ -503,19 +500,16 @@ fn apply_packet_41(
     ApplyOutcome::Applied
 }
 
-fn apply_packet_50(
-    state: &mut GameState,
-    packet: &crate::input::Packet50StopUnit,
-) -> ApplyOutcome {
+fn apply_packet_50(state: &mut GameState, packet: &crate::input::Packet50StopUnit) -> ApplyOutcome {
     if !state.has_unit(packet.unit) {
         return ApplyOutcome::UnknownUnit;
     }
 
     // `Remote_ReceiveNetPacket_50`: событие ставится в очередь и выполняется
     // в `UnitsManager_ProcessOrders`.
-    state.unit_events.push(UnitEvent::EmergencyStop {
-        unit: packet.unit,
-    });
+    state
+        .unit_events
+        .push(UnitEvent::EmergencyStop { unit: packet.unit });
     ApplyOutcome::Applied
 }
 
@@ -810,9 +804,7 @@ pub fn apply_unit_state(
     unit.enemy_unit = if data.enemy_unit_id == 0 {
         None
     } else {
-        state
-            .unit(UnitId(data.enemy_unit_id))
-            .map(|enemy| enemy.id)
+        state.unit(UnitId(data.enemy_unit_id)).map(|enemy| enemy.id)
     };
 
     unit.experience = data.experience;
@@ -1013,10 +1005,7 @@ fn apply_packet_20(
     ApplyOutcome::Applied
 }
 
-fn apply_packet_43(
-    state: &mut GameState,
-    packet: &crate::input::Packet43Rename,
-) -> ApplyOutcome {
+fn apply_packet_43(state: &mut GameState, packet: &crate::input::Packet43Rename) -> ApplyOutcome {
     let Some(mut unit) = state.unit(packet.unit).cloned() else {
         return ApplyOutcome::UnknownUnit;
     };
@@ -1138,14 +1127,14 @@ pub fn unit_type_from_raw(raw: u16) -> Option<UnitType> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::TeamClan;
     use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+    use crate::enums::TeamClan;
+    use crate::input::ComplexSummaryEntry;
     use crate::input::{
-        Packet13Seed, Packet41MoveFinished, Packet45CrcBarrier, Packet52EndTurnBarrier,
-        Packet50StopUnit,
+        Packet13Seed, Packet41MoveFinished, Packet45CrcBarrier, Packet50StopUnit,
+        Packet52EndTurnBarrier,
     };
     use crate::team::TeamKind;
-    use crate::input::ComplexSummaryEntry;
     use crate::unit_values::ATTRIB_HITS;
 
     fn state_with_tank() -> (GameState, UnitId) {
@@ -1166,7 +1155,9 @@ mod tests {
     #[test]
     fn command_queue_is_fifo() {
         let (mut state, id) = state_with_tank();
-        state.commands.push(Command::Stop(Packet50StopUnit { unit: id }));
+        state
+            .commands
+            .push(Command::Stop(Packet50StopUnit { unit: id }));
         state.commands.push(Command::Seed(Packet13Seed { seed: 7 }));
         assert_eq!(state.commands.len(), 2);
 
@@ -1332,17 +1323,20 @@ mod tests {
         state.unit_mut(id).unwrap().state = UnitOrderState::InProgress;
 
         assert_eq!(
-            apply_command(
-                &mut state,
-                &Command::Stop(Packet50StopUnit { unit: id })
-            ),
+            apply_command(&mut state, &Command::Stop(Packet50StopUnit { unit: id })),
             ApplyOutcome::Applied
         );
         assert_eq!(state.unit_events.len(), 1);
-        assert!(state.unit(id).unwrap().path.is_some(), "событие ещё не обработано");
+        assert!(
+            state.unit(id).unwrap().path.is_some(),
+            "событие ещё не обработано"
+        );
 
         state.tick();
-        assert!(state.unit_events.is_empty(), "очередь событий очищается за тик");
+        assert!(
+            state.unit_events.is_empty(),
+            "очередь событий очищается за тик"
+        );
         assert!(state.unit(id).unwrap().path.is_none());
     }
 
@@ -1368,10 +1362,7 @@ mod tests {
     #[test]
     fn barriers_are_recorded_not_simulated() {
         let mut state = GameState::new();
-        apply_command(
-            &mut state,
-            &command_end_turn_barrier(TeamId::GREEN, 7),
-        );
+        apply_command(&mut state, &command_end_turn_barrier(TeamId::GREEN, 7));
         assert_eq!(state.turn_indices[1], 7);
         apply_command(
             &mut state,
@@ -1400,7 +1391,14 @@ mod tests {
             &mut state,
             &Command::UpgradeUnit(crate::input::Packet20UpgradeUnit { unit: id, values }),
         );
-        assert_eq!(state.unit(id).unwrap().base_values.get_attribute(ATTRIB_HITS), 99);
+        assert_eq!(
+            state
+                .unit(id)
+                .unwrap()
+                .base_values
+                .get_attribute(ATTRIB_HITS),
+            99
+        );
 
         apply_command(
             &mut state,
@@ -1436,7 +1434,9 @@ mod tests {
                 buildings: 10,
             }),
         );
-        let complex = state.complex(TeamId::RED, complex_id.0 as u16).expect("complex");
+        let complex = state
+            .complex(TeamId::RED, complex_id.0 as u16)
+            .expect("complex");
         assert_eq!(complex.material, 5);
         assert_eq!(complex.buildings, 10);
 
@@ -1451,7 +1451,9 @@ mod tests {
                 }],
             }),
         );
-        let complex = state.complex(TeamId::RED, complex_id.0 as u16).expect("complex");
+        let complex = state
+            .complex(TeamId::RED, complex_id.0 as u16)
+            .expect("complex");
         assert_eq!(complex.material, 1);
         assert_eq!(complex.buildings, 6);
     }
@@ -1621,7 +1623,10 @@ mod tests {
         assert_eq!(unit.target_grid, Point::new(50, 51));
 
         // Лишний мобильный юнит удалён, здание — нет (`Remote_RemoveExtraUnits`).
-        assert!(!state.has_unit(scout), "scout отсутствует у владельца — удалён");
+        assert!(
+            !state.has_unit(scout),
+            "scout отсутствует у владельца — удалён"
+        );
         assert!(state.has_unit(tower), "здание не удаляется");
 
         // Хвост последнего чанка выровнял экономику и счётчики id.
@@ -1629,7 +1634,10 @@ mod tests {
         assert_eq!(state.team_units[green].gold, 500);
         assert_eq!(state.teams[green].stats_gold_spent_on_upgrades, 60);
         assert_eq!(state.teams[green].number_of_objects_created, 12);
-        assert_eq!(state.teams[green].unit_counters[UnitType::Tank as usize], 13);
+        assert_eq!(
+            state.teams[green].unit_counters[UnitType::Tank as usize],
+            13
+        );
         assert_eq!(state.teams[green].research_topics[0].research_level, 1);
         assert_eq!(state.teams[green].research_topics[0].turns_to_complete, 2);
         assert_eq!(state.teams[green].research_topics[0].allocation, 3);
@@ -1647,7 +1655,11 @@ mod tests {
             tail: None,
         };
         assert_eq!(apply_state_sync(&mut state, &first), ApplyOutcome::Applied);
-        assert_eq!(state.state_sync_index(TeamId::GREEN), 0, "не последний чанк");
+        assert_eq!(
+            state.state_sync_index(TeamId::GREEN),
+            0,
+            "не последний чанк"
+        );
 
         let last = StateSyncPacket {
             team: TeamId::GREEN,

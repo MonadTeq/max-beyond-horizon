@@ -255,10 +255,7 @@ pub fn cursor_image(
 
 /// Курсор для точки окна в партии — порт `GameManager_GetWindowCursor` в той
 /// части, которую покрывает клиент.
-pub fn session_cursor(
-    app: &crate::App,
-    mouse: Option<(i32, i32)>,
-) -> (CursorId, usize) {
+pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId, usize) {
     let Some((x, y)) = mouse else {
         return (CursorId::Hand, 0);
     };
@@ -377,8 +374,8 @@ mod tests {
 
     #[test]
     fn cursor_image_converts_palette_indices_and_hotspot() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../max-original/MAX.RES");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
         if !path.is_file() {
             return;

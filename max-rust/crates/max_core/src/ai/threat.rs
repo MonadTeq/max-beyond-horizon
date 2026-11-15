@@ -98,7 +98,8 @@ impl ZoneWalker {
 
         let mut index_x = i32::from(self.start.x) - self.range;
         while index_x <= i32::from(self.start.x) {
-            let distance_x = (index_x - i32::from(self.start.x)) * (index_x - i32::from(self.start.x));
+            let distance_x =
+                (index_x - i32::from(self.start.x)) * (index_x - i32::from(self.start.x));
 
             if distance_x + distance_y <= self.distance {
                 break;
@@ -340,7 +341,9 @@ impl HeatMap {
             cell.stealth_sea -= 1;
         }
 
-        if matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) && cell.stealth_land > 0 {
+        if matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry)
+            && cell.stealth_land > 0
+        {
             cell.stealth_land -= 1;
         }
 
@@ -389,7 +392,12 @@ impl GameState {
     }
 
     /// `Access_IsWithinScanRange` (`access.cpp:353`).
-    pub fn is_within_scan_range(unit: &UnitInfo, grid_x: i32, grid_y: i32, scan_range: i32) -> bool {
+    pub fn is_within_scan_range(
+        unit: &UnitInfo,
+        grid_x: i32,
+        grid_y: i32,
+        scan_range: i32,
+    ) -> bool {
         let scan_area = (scan_range * 64) * (scan_range * 64);
         let radius_x = (grid_x - i32::from(unit.grid.x)) * 64;
         let radius_y = (grid_y - i32::from(unit.grid.y)) * 64;
@@ -404,7 +412,8 @@ impl GameState {
         }
 
         if unit.unit_type == UnitType::PersonnelCarrier {
-            return access::modified_surface_type(self, unit.grid, false) == access::SURFACE_TYPE_WATER;
+            return access::modified_surface_type(self, unit.grid, false)
+                == access::SURFACE_TYPE_WATER;
         }
 
         false
@@ -412,15 +421,16 @@ impl GameState {
 
     /// `Access_GetAttackTargetGroup` для одного юнита (`access.cpp:474`).
     pub fn attack_target_group(unit: &UnitInfo) -> u32 {
-        if unit.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK) == 0
+        if unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_ATTACK)
+            == 0
             || unit.orders == UnitOrder::Disable
         {
             return access::TARGET_CLASS_NONE;
         }
 
-        use crate::access::{
-            TARGET_CLASS_NONE, TARGET_CLASS_SEA_STEALTH, TARGET_CLASS_WATER,
-        };
+        use crate::access::{TARGET_CLASS_NONE, TARGET_CLASS_SEA_STEALTH, TARGET_CLASS_WATER};
 
         match unit.unit_type {
             UnitType::Commando | UnitType::Infantry => {
@@ -579,7 +589,8 @@ impl GameState {
             }
         }
 
-        if land_transition || (matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) && land_was_zero)
+        if land_transition
+            || (matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) && land_was_zero)
         {
             self.reveal_land_stealth(team, grid_x, grid_y);
 
@@ -589,7 +600,9 @@ impl GameState {
                     .to_vec();
                 for other in ids {
                     if let Some(other_unit) = self.unit(other) {
-                        if other_unit.unit_type == UnitType::Commando && unit.team != other_unit.team {
+                        if other_unit.unit_type == UnitType::Commando
+                            && unit.team != other_unit.team
+                        {
                             result |= Self::attack_target_group(other_unit);
                         }
                     }
@@ -682,7 +695,9 @@ impl GameState {
             return;
         }
 
-        let mut scan = unit.base_values.get_attribute(crate::unit_values::ATTRIB_SCAN);
+        let mut scan = unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_SCAN);
         if unit.orders == UnitOrder::Disable {
             scan = 0;
         }
@@ -881,16 +896,26 @@ impl ThreatMap {
 
     /// Значение урона в клетке (`damage_potential_map[x][y]`).
     pub fn damage_at(&self, grid_x: i32, grid_y: i32) -> i32 {
-        if grid_x < 0 || grid_y < 0 || grid_x >= i32::from(MAP_WIDTH) || grid_y >= i32::from(MAP_HEIGHT) {
+        if grid_x < 0
+            || grid_y < 0
+            || grid_x >= i32::from(MAP_WIDTH)
+            || grid_y >= i32::from(MAP_HEIGHT)
+        {
             return 0;
         }
 
-        i32::from(self.damage_potential_map[(grid_y as usize) * MAP_WIDTH as usize + grid_x as usize])
+        i32::from(
+            self.damage_potential_map[(grid_y as usize) * MAP_WIDTH as usize + grid_x as usize],
+        )
     }
 
     /// Значение выстрелов в клетке.
     pub fn shots_at(&self, grid_x: i32, grid_y: i32) -> i32 {
-        if grid_x < 0 || grid_y < 0 || grid_x >= i32::from(MAP_WIDTH) || grid_y >= i32::from(MAP_HEIGHT) {
+        if grid_x < 0
+            || grid_y < 0
+            || grid_x >= i32::from(MAP_WIDTH)
+            || grid_y >= i32::from(MAP_HEIGHT)
+        {
             return 0;
         }
 

@@ -95,7 +95,10 @@ pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
 
     let mut data = state.order_data(id);
     let destination = if unit.orders == UnitOrder::MoveToAttack {
-        match unit.enemy_unit.and_then(|enemy| state.unit(enemy).map(|enemy| enemy.grid)) {
+        match unit
+            .enemy_unit
+            .and_then(|enemy| state.unit(enemy).map(|enemy| enemy.grid))
+        {
             Some(enemy_grid) => {
                 data.move_to = enemy_grid;
                 state.set_order_data(id, data);
@@ -202,7 +205,8 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
     let order_state_accepts = matches!(
         unit.state,
         UnitOrderState::NewOrder | UnitOrderState::MoveGettingPath
-    ) || (order == UnitOrder::MoveToAttack && unit.state == UnitOrderState::ExecutingOrder);
+    ) || (order == UnitOrder::MoveToAttack
+        && unit.state == UnitOrderState::ExecutingOrder);
 
     if unit.hits == 0
         || !matches!(
@@ -316,13 +320,12 @@ pub fn build_access_costs(state: &GameState, unit: &UnitInfo, flags: u32) -> [u8
     }
 
     let land_type = access::unit_type_land_type(unit.unit_type);
-    let water_value = if land_type & access::SURFACE_TYPE_LAND != 0
-        && unit.unit_type != UnitType::Surveyor
-    {
-        8
-    } else {
-        4
-    };
+    let water_value =
+        if land_type & access::SURFACE_TYPE_LAND != 0 && unit.unit_type != UnitType::Surveyor {
+            8
+        } else {
+            4
+        };
 
     for index in 0..MAP_TILES {
         let x = (index % MAP_WIDTH as usize) as i16;
@@ -397,7 +400,9 @@ fn process_ground_cover(
         && unit.laying_state != 1;
 
     for id in state.unit_list(UnitListKind::GroundCover) {
-        let Some(cover) = state.unit(*id) else { continue };
+        let Some(cover) = state.unit(*id) else {
+            continue;
+        };
         if !is_visible_or_detected(cover, team) {
             continue;
         }
@@ -449,7 +454,9 @@ fn process_mobile_land_sea_units(
     let team = unit.team;
 
     for id in state.unit_list(UnitListKind::MobileLandSea) {
-        let Some(other) = state.unit(*id) else { continue };
+        let Some(other) = state.unit(*id) else {
+            continue;
+        };
         if other.orders != UnitOrder::Idle && other.is_visible_to_team(team) {
             if flags & access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS != 0
                 || (flags & access::ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS != 0
@@ -480,7 +487,9 @@ fn process_mobile_air_units(
     let is_air_pathfinder = unit.flags & MOBILE_AIR_UNIT != 0;
 
     for id in state.unit_list(UnitListKind::MobileAir) {
-        let Some(other) = state.unit(*id) else { continue };
+        let Some(other) = state.unit(*id) else {
+            continue;
+        };
 
         if other.orders != UnitOrder::Idle && other.is_visible_to_team(team) {
             if flags & access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS != 0
@@ -523,7 +532,9 @@ fn process_stationary_units(state: &GameState, unit: &UnitInfo, costs: &mut [u8;
     let team = unit.team;
 
     for id in state.unit_list(UnitListKind::Stationary) {
-        let Some(other) = state.unit(*id) else { continue };
+        let Some(other) = state.unit(*id) else {
+            continue;
+        };
         if other.unit_type != UnitType::Connector && is_visible_or_detected(other, team) {
             block_cell(costs, other.grid, 0);
             if other.flags & BUILDING != 0 {
@@ -543,9 +554,7 @@ pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
         return position;
     };
 
-    if unit.orders == UnitOrder::Build
-        || unit.state != UnitOrderState::ExecutingOrder
-        || speed <= 0
+    if unit.orders == UnitOrder::Build || unit.state != UnitOrderState::ExecutingOrder || speed <= 0
     {
         return position;
     }
@@ -557,7 +566,10 @@ pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
             continue;
         }
 
-        let point = Point::new(position.x + i16::from(step.x), position.y + i16::from(step.y));
+        let point = Point::new(
+            position.x + i16::from(step.x),
+            position.y + i16::from(step.y),
+        );
         if point.x < 0 || point.y < 0 || point.x >= MAP_WIDTH || point.y >= MAP_HEIGHT {
             continue;
         }
@@ -601,14 +613,7 @@ pub fn find_ground_path(
     flags: u32,
     minimum_distance: i32,
 ) -> Option<GroundPath> {
-    find_ground_path_inner(
-        state,
-        unit,
-        destination,
-        flags,
-        minimum_distance,
-        false,
-    )
+    find_ground_path_inner(state, unit, destination, flags, minimum_distance, false)
 }
 
 /// То же с флагом посадки в транспорт (`PathRequest::board_transport`): клетка
@@ -652,8 +657,8 @@ fn find_ground_path_inner(
 
     // Тривиальный случай: соседняя клетка (`paths_manager.cpp:415`).
     if access::squared_distance(start, destination) <= 2 {
-        let receiver_reachable = board_transport
-            && access::get_receiver_unit(state, unit, destination).is_some();
+        let receiver_reachable =
+            board_transport && access::get_receiver_unit(state, unit, destination).is_some();
         let viable = receiver_reachable
             || (if flags & access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS != 0 {
                 let mut costs = costs;
@@ -711,7 +716,9 @@ fn find_ground_path_inner(
         for direction in 0..8usize {
             let offset = DIRECTION_OFFSETS[direction];
             let next = Point::new(x + offset.x, y + offset.y);
-            let Some(next_index) = tile_index(next) else { continue };
+            let Some(next_index) = tile_index(next) else {
+                continue;
+            };
             if explored[next_index] {
                 continue;
             }
@@ -842,7 +849,11 @@ pub fn paths_get_air_path(
     let mut end_y = target.y;
 
     if unit.path.is_some() {
-        let (x, y) = unit.path.as_ref().map(UnitPath::end).unwrap_or((end_x, end_y));
+        let (x, y) = unit
+            .path
+            .as_ref()
+            .map(UnitPath::end)
+            .unwrap_or((end_x, end_y));
         end_x = x;
         end_y = y;
         unit.path = None;
@@ -880,11 +891,7 @@ pub fn paths_get_air_path(
         if unit.group_speed != 0 {
             value = i32::from(unit.group_speed) - 1;
         }
-        max_distance = if value != 0 {
-            value * 4
-        } else {
-            SHRT_MAX
-        };
+        max_distance = if value != 0 { value * 4 } else { SHRT_MAX };
     }
 
     if max_distance < distance {
@@ -1073,9 +1080,12 @@ pub fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
         if step.x != 0 || step.y != 0 {
             x += i16::from(step.x);
             y += i16::from(step.y);
-            let mut step_cost =
-                access::is_accessible_unit(state, unit, Point::new(x, y), access::ACCESS_MODIFIER_NONE)
-                    as i32;
+            let mut step_cost = access::is_accessible_unit(
+                state,
+                unit,
+                Point::new(x, y),
+                access::ACCESS_MODIFIER_NONE,
+            ) as i32;
             if step.x != 0 && step.y != 0 {
                 step_cost = (step_cost * 3) / 2;
             }
@@ -1089,9 +1099,7 @@ pub fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
 /// `GroundPath::IsEndStep` (`groundpath.cpp:561`).
 pub fn ground_path_is_end_step(unit: &UnitInfo) -> bool {
     match unit.path.as_ref() {
-        Some(UnitPath::Ground(path)) => {
-            path.step_index as usize + 1 == path.steps.len()
-        }
+        Some(UnitPath::Ground(path)) => path.step_index as usize + 1 == path.steps.len(),
         _ => false,
     }
 }
@@ -1118,7 +1126,10 @@ pub fn pending_request_count(state: &GameState) -> usize {
 
 /// Очередь запросов без изменений (для тестов/дампа).
 pub fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
-    state.path_requests.iter().find(|request| request.unit == unit)
+    state
+        .path_requests
+        .iter()
+        .find(|request| request.unit == unit)
 }
 
 /// `AirPath::GetPosition` (`airpath.cpp:104`) — прогноз клетки воздушного
@@ -1230,7 +1241,10 @@ mod tests {
                 "путь зашёл в воду: {point:?}"
             );
         }
-        assert_eq!(cumulative(&path.steps, unit.grid).last().copied(), Some(Point::new(9, 5)));
+        assert_eq!(
+            cumulative(&path.steps, unit.grid).last().copied(),
+            Some(Point::new(9, 5))
+        );
     }
 
     #[test]
@@ -1297,7 +1311,8 @@ mod tests {
                 UnitType::SeaTransport,
                 TeamId::RED,
                 Point::new(9, 6),
-                crate::enums::unit_flags::MOBILE_SEA_UNIT | crate::enums::unit_flags::MOBILE_LAND_UNIT,
+                crate::enums::unit_flags::MOBILE_SEA_UNIT
+                    | crate::enums::unit_flags::MOBILE_LAND_UNIT,
             )
             .unwrap();
         state.unit_mut(transport).unwrap().orders = UnitOrder::Sentry;

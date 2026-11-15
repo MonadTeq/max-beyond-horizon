@@ -526,7 +526,9 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
     // Кнопки справа: End Turn и Menu столбиком (не шире трети кадра, чтобы не
     // налезать на миникарту на маленьких экранах).
     let button_width = HUD_BUTTON_WIDTH.min((w / 3).max(0)).max(0);
-    let button_height = HUD_BUTTON_HEIGHT.min((side - HUD_BUTTON_GAP).max(0) / 2).max(0);
+    let button_height = HUD_BUTTON_HEIGHT
+        .min((side - HUD_BUTTON_GAP).max(0) / 2)
+        .max(0);
     let buttons_x = (w - margin - button_width).max(0);
     let end_turn = Rect::new(buttons_x, inner_top, button_width, button_height);
     let menu = Rect::new(
@@ -574,9 +576,11 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
 pub fn hud_button_at(width: u32, height: u32, x: i32, y: i32) -> Option<HudButton> {
     let layout = hud_layout(width, height);
 
-    HudButton::ALL
-        .into_iter()
-        .find(|button| layout.button(*button).contains(max_render::ui::Point::new(x, y)))
+    HudButton::ALL.into_iter().find(|button| {
+        layout
+            .button(*button)
+            .contains(max_render::ui::Point::new(x, y))
+    })
 }
 
 /// Клетка миникарты под точкой экрана (клик по миникарте двигает камеру).
@@ -717,10 +721,11 @@ pub fn unit_at_screen(
     let grid = Point::new(grid_x, grid_y);
     let ids = state.units_at(grid);
 
-    let visible = ids
-        .iter()
-        .copied()
-        .find(|id| state.unit(*id).is_some_and(|unit| unit.is_visible_to_team(team)));
+    let visible = ids.iter().copied().find(|id| {
+        state
+            .unit(*id)
+            .is_some_and(|unit| unit.is_visible_to_team(team))
+    });
 
     visible.or_else(|| ids.iter().copied().find(|id| state.unit(*id).is_some()))
 }
@@ -1415,10 +1420,7 @@ mod tests {
 
         for button in HudButton::ALL {
             let rect = layout.button(button);
-            let point = (
-                rect.x + rect.width / 2,
-                rect.y + rect.height / 2,
-            );
+            let point = (rect.x + rect.width / 2, rect.y + rect.height / 2);
 
             assert_eq!(hud_button_at(width, height, point.0, point.1), Some(button));
         }
@@ -1439,7 +1441,12 @@ mod tests {
 
         assert_eq!(transition, Transition::None);
         assert_eq!(app.hud().selected, Some(tank));
-        assert!(app.hud().log.lines().iter().any(|line| line.contains("Selected")));
+        assert!(app
+            .hud()
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("Selected")));
 
         // Клик по врагу при выделенном своём юните — приказ атаки (08).
         let (ex, ey) = screen_of(&app, Point::new(14, 10));
@@ -1470,7 +1477,12 @@ mod tests {
 
         assert_eq!(app.hud().selected, None);
         assert_eq!(app.hud().preview, None);
-        assert!(app.hud().log.lines().iter().any(|line| line.contains("Cancelled")));
+        assert!(app
+            .hud()
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("Cancelled")));
     }
 
     #[test]
@@ -1499,7 +1511,10 @@ mod tests {
             .filter(|pixel| pixel[..3] == PREVIEW_COLOR.to_rgba()[..3])
             .count();
 
-        assert!(painted > 50, "линия маршрута должна быть видна ({painted} px)");
+        assert!(
+            painted > 50,
+            "линия маршрута должна быть видна ({painted} px)"
+        );
     }
 
     #[test]
@@ -1535,7 +1550,9 @@ mod tests {
     fn attack_order_packet_08_matches_the_wire_layout() {
         let (app, tank, enemy) = test_app();
         let command = build_attack_order(app.state(), tank, enemy).expect("attack order");
-        let bytes = Packet::Command(command.clone()).encode().expect("08 encoded");
+        let bytes = Packet::Command(command.clone())
+            .encode()
+            .expect("08 encoded");
 
         let low = tank.0 as u8;
         let high = (tank.0 >> 8) as u8;
@@ -1569,14 +1586,21 @@ mod tests {
         let (mx, my) = screen_of(&app, Point::new(11, 10));
         handle_session_input(&mut app, InputEvent::RightClick(mx, my), true);
 
-        assert_eq!(app.hud().pending.len(), 1, "онлайн-режим копит приказ для сессии");
+        assert_eq!(
+            app.hud().pending.len(),
+            1,
+            "онлайн-режим копит приказ для сессии"
+        );
         assert!(matches!(&app.hud().pending[0], Command::Move(_)));
         assert_eq!(
             app.hud().preview.as_ref().map(|preview| preview.to),
             Some(Point::new(11, 10))
         );
         // Локально приказ ещё не применён — это сделает сетевой цикл.
-        assert_eq!(app.state().unit(tank).expect("tank").orders, UnitOrder::Await);
+        assert_eq!(
+            app.state().unit(tank).expect("tank").orders,
+            UnitOrder::Await
+        );
 
         // Забираем: сессия отправила бы это в `SessionHandle`.
         let outgoing = app.take_outgoing_orders();
@@ -1604,7 +1628,12 @@ mod tests {
         ));
         assert_eq!(unit.target_grid, Point::new(13, 10));
         assert_eq!(app.applied_commands(), 1);
-        assert!(app.hud().log.lines().iter().any(|line| line.contains("Move")));
+        assert!(app
+            .hud()
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("Move")));
     }
 
     #[test]
@@ -1661,21 +1690,13 @@ mod tests {
         assert_eq!(app.hud().selected, Some(tank));
 
         assert_eq!(
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Escape),
-                false
-            ),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
             Transition::None
         );
         assert_eq!(app.hud().selected, None);
         // Повторный Esc — выход из сессии.
         assert_eq!(
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Escape),
-                false
-            ),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
             Transition::LeaveSession
         );
     }
@@ -1732,7 +1753,10 @@ mod tests {
 
         assert!(!rect.is_empty());
         assert!(rect.uly >= 0 && rect.lry() <= 384, "{rect:?}");
-        assert!(rect.uly <= layout.bar.uly, "строка ввода выше нижней панели");
+        assert!(
+            rect.uly <= layout.bar.uly,
+            "строка ввода выше нижней панели"
+        );
 
         let view = HudView {
             state: app.state(),
@@ -1801,7 +1825,11 @@ mod tests {
             vec![(TeamId::RED, "Hello".to_string())]
         );
         assert!(
-            app.hud().log.lines().iter().any(|line| line == "RED: Hello"),
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line == "RED: Hello"),
             "журнал содержит отправленное: {:?}",
             app.hud().log.lines()
         );
@@ -1846,10 +1874,7 @@ mod tests {
             .encode()
             .expect("18 encoded");
 
-        assert_eq!(
-            bytes,
-            [0x62, 0x00, 0x00, 0x03, 0x00, b'g', b'g', 0x00]
-        );
+        assert_eq!(bytes, [0x62, 0x00, 0x00, 0x03, 0x00, b'g', b'g', 0x00]);
     }
 
     #[test]

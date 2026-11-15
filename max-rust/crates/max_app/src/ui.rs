@@ -50,9 +50,7 @@ use max_core::enums::Planet;
 use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
-use max_net::{
-    CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
-};
+use max_net::{CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 use max_render::text::{draw_text_gnw, draw_text_line, GnwFontId, GLYPH_HEIGHT};
 use max_render::ui::{
@@ -63,6 +61,7 @@ use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::hud::{self, HudButton};
+use crate::menu;
 use crate::panels::{self, PanelButton};
 use crate::App;
 
@@ -72,14 +71,28 @@ pub const DEFAULT_GAME_NAME: &str = "M.A.X. Rust game";
 pub const MAX_WORLD: i64 = 23;
 
 /// Уровни/индексы виджетов, на которые опирается обработка мыши.
-const MAIN_CREATE: usize = 2;
-const MAIN_JOIN: usize = 3;
-const MAIN_QUIT: usize = 4;
+///
+/// Порядок как в `menu.cpp::main_menu`: `New Game`, `Load Game`,
+/// `Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit`.
+const MAIN_CREATE: usize = 0;
+const MAIN_JOIN: usize = 2;
+const MAIN_QUIT: usize = 6;
+
+/// Три действия Rust-клиента в порядке фокуса (`ctx.focus`).
+const MAIN_ACTIONS: [usize; 3] = [MAIN_CREATE, MAIN_JOIN, MAIN_QUIT];
 
 const JOIN_LIST: usize = 1;
 const JOIN_BACK: usize = 2;
 const JOIN_REFRESH: usize = 3;
 const JOIN_JOIN: usize = 4;
+const JOIN_HIDE: usize = 5;
+const JOIN_HELP: usize = 6;
+
+/// Кнопки формы создания игры (индексы виджетов).
+const CREATE_BACK: usize = 7;
+const CREATE_SUBMIT: usize = 8;
+const CREATE_RANDOM: usize = 9;
+const CREATE_HELP: usize = 10;
 
 /// Клавиша UI (SDL-слой переводит в неё `WindowKey`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,7 +218,10 @@ impl CreateField {
 
     /// Поле числовое (редактируется цифрами и стрелками).
     pub const fn is_numeric(self) -> bool {
-        matches!(self, Self::World | Self::Timer | Self::EndTurn | Self::Opponent)
+        matches!(
+            self,
+            Self::World | Self::Timer | Self::EndTurn | Self::Opponent
+        )
     }
 }
 
@@ -270,7 +286,10 @@ impl CreateForm {
             }
             field => {
                 if let Some(digit) = ch.to_digit(10) {
-                    let value = self.numeric(field).saturating_mul(10).saturating_add(i64::from(digit));
+                    let value = self
+                        .numeric(field)
+                        .saturating_mul(10)
+                        .saturating_add(i64::from(digit));
                     self.set_numeric(field, value);
                 }
             }
@@ -581,12 +600,33 @@ impl Screen {
     /// Для [`Screen::InSession`] карта берётся из [`crate::App::render_frame`]
     /// (а он рисует `max_render::map_render`), сверху — строка статуса.
     pub fn render(&self, buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
+        // Меню на оригинальных ресурсах (пункт E) — только в кадре 640×480:
+        // все координаты и картинки взяты из C++-порта для окна оригинала.
+        let menu_assets = view
+            .app
+            .and_then(|app| app.assets())
+            .and_then(|assets| assets.menu.as_ref());
+        let native_frame =
+            view.width as i32 == menu::MENU_WIDTH && view.height as i32 == menu::MENU_HEIGHT;
+        let mouse = view.mouse.map(|point| (point.x, point.y));
+
         match self {
             Self::MainMenu => {
-                let ui = build_main_menu(view.width, view.height, view.status, view.mouse, view.focus);
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    menu::draw_main_menu(buffer, menu_assets, view.status, mouse);
+                    return;
+                }
+
+                let ui =
+                    build_main_menu(view.width, view.height, view.status, view.mouse, view.focus);
                 render_ui(buffer, &ui);
             }
             Self::JoinList { games, selected } => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    menu::draw_join_list(buffer, menu_assets, games, *selected, view.status, mouse);
+                    return;
+                }
+
                 let ui = build_join_list(
                     view.width,
                     view.height,
@@ -598,6 +638,18 @@ impl Screen {
                 render_ui(buffer, &ui);
             }
             Self::CreateForm(form) => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    menu::draw_create_form(
+                        buffer,
+                        menu_assets,
+                        view.app.and_then(|app| app.assets()),
+                        form,
+                        view.status,
+                        mouse,
+                    );
+                    return;
+                }
+
                 let ui = build_create_form(view.width, view.height, view.status, view.mouse, form);
                 render_ui(buffer, &ui);
                 draw_planet_picker(
@@ -614,7 +666,7 @@ impl Screen {
 
     fn handle_main_menu(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let ui = build_main_menu(ctx.width, ctx.height, &ctx.status, ctx.mouse, ctx.focus);
-        let mut activate = None;
+        let mut activate: Option<usize> = None;
 
         match event {
             InputEvent::MouseMove(..) => {}
@@ -623,16 +675,22 @@ impl Screen {
                 let point = Point::new(x, y);
 
                 if let Some(index) = hit_test(&ui, point) {
-                    if (MAIN_CREATE..=MAIN_QUIT).contains(&index) {
-                        ctx.focus = index - MAIN_CREATE;
+                    if let Some(action_index) = MAIN_ACTIONS.iter().position(|&item| item == index)
+                    {
+                        ctx.focus = action_index;
                         activate = Some(index);
+                    } else if let Some(button) = menu::MAIN_MENU_BUTTONS.get(index) {
+                        // Кнопки оригинала, которых в Rust-клиенте ещё нет
+                        // (`Load Game`, `Setup`, …): не молчим, а пишем статус.
+                        ctx.status = format!("{}: screen is not ported yet", button.label);
+                        ctx.click();
                     }
                 }
             }
             InputEvent::Key(key) => match key {
                 Key::Up => ctx.focus = (ctx.focus + 2) % 3,
                 Key::Down | Key::Tab => ctx.focus = (ctx.focus + 1) % 3,
-                Key::Enter => activate = Some(MAIN_CREATE + ctx.focus),
+                Key::Enter => activate = Some(MAIN_ACTIONS[ctx.focus.min(2)]),
                 Key::Escape => return Transition::Quit,
                 Key::Char(character) => match character.to_ascii_lowercase() {
                     'c' => activate = Some(MAIN_CREATE),
@@ -667,10 +725,7 @@ impl Screen {
         match ctx.client.list_games() {
             Ok(games) => {
                 let count = games.len();
-                *self = Self::JoinList {
-                    games,
-                    selected: 0,
-                };
+                *self = Self::JoinList { games, selected: 0 };
                 ctx.status = if count == 0 {
                     "No games found — create one or refresh".to_string()
                 } else {
@@ -696,12 +751,15 @@ impl Screen {
             &games,
             selected,
         );
+        let native_frame =
+            ctx.width == menu::MENU_WIDTH as u32 && ctx.height == menu::MENU_HEIGHT as u32;
 
         enum Action {
             Select(usize),
             Back,
             Refresh,
             Join,
+            Help,
         }
 
         let mut action = None;
@@ -710,27 +768,43 @@ impl Screen {
             InputEvent::MouseMove(..) => {}
             InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
-                let point = Point::new(x, y);
+                if native_frame {
+                    if let Some(index) = menu::join_row_at(x, y, games.len(), selected) {
+                        action = Some(Action::Select(index));
+                    } else if let Some(button) = menu::join_button_at(x, y) {
+                        action = Some(match button {
+                            menu::JoinButton::Refresh => Action::Refresh,
+                            menu::JoinButton::Back | menu::JoinButton::Hide => Action::Back,
+                            menu::JoinButton::Help => Action::Help,
+                            menu::JoinButton::Join => Action::Join,
+                        });
+                    }
+                } else {
+                    let point = Point::new(x, y);
 
-                match hit_test(&ui, point) {
-                    Some(JOIN_LIST) => {
-                        if let Some(list) = ui.list_box(JOIN_LIST) {
-                            if let Some(index) = list.row_at(point) {
-                                action = Some(Action::Select(index));
+                    match hit_test(&ui, point) {
+                        Some(JOIN_LIST) => {
+                            if let Some(list) = ui.list_box(JOIN_LIST) {
+                                if let Some(index) = list.row_at(point) {
+                                    action = Some(Action::Select(index));
+                                }
                             }
                         }
+                        Some(JOIN_BACK | JOIN_HIDE) => action = Some(Action::Back),
+                        Some(JOIN_REFRESH) => action = Some(Action::Refresh),
+                        Some(JOIN_JOIN) => action = Some(Action::Join),
+                        Some(JOIN_HELP) => action = Some(Action::Help),
+                        _ => {}
                     }
-                    Some(JOIN_BACK) => action = Some(Action::Back),
-                    Some(JOIN_REFRESH) => action = Some(Action::Refresh),
-                    Some(JOIN_JOIN) => action = Some(Action::Join),
-                    _ => {}
                 }
             }
             InputEvent::Key(Key::Up) => {
                 action = Some(Action::Select(selected.saturating_sub(1)));
             }
             InputEvent::Key(Key::Down) => {
-                action = Some(Action::Select((selected + 1).min(games.len().saturating_sub(1))));
+                action = Some(Action::Select(
+                    (selected + 1).min(games.len().saturating_sub(1)),
+                ));
             }
             InputEvent::Key(Key::Enter) => action = Some(Action::Join),
             InputEvent::Key(Key::Escape) => action = Some(Action::Back),
@@ -756,6 +830,10 @@ impl Screen {
             }
             Some(Action::Refresh) => {
                 self.refresh_games(ctx);
+                Transition::None
+            }
+            Some(Action::Help) => {
+                ctx.status = "Help: screen is not ported yet".to_string();
                 Transition::None
             }
             Some(Action::Join) => {
@@ -785,6 +863,8 @@ impl Screen {
             }
             _ => return Transition::None,
         };
+        let native_frame =
+            ctx.width == menu::MENU_WIDTH as u32 && ctx.height == menu::MENU_HEIGHT as u32;
 
         let mut back = false;
         let mut submit = false;
@@ -807,17 +887,53 @@ impl Screen {
                         form.focus = CreateField::World;
                     }
                     clicked = true;
+                } else if native_frame {
+                    // Оригинальные прямоугольники PLANETSE / кнопок MNUBTN.
+                    if let Some(button) = menu::create_button_at(x, y) {
+                        clicked = true;
+
+                        match button.action {
+                            menu::MenuButtonAction::Cancel => back = true,
+                            menu::MenuButtonAction::Done => submit = true,
+                            menu::MenuButtonAction::Random => {
+                                if let Self::CreateForm(form) = self {
+                                    form.world = random_planet(form.world);
+                                    form.focus = CreateField::World;
+                                }
+                            }
+                            menu::MenuButtonAction::Help => {
+                                ctx.status = "Help: screen is not ported yet".to_string();
+                            }
+                        }
+                    } else if let Some(field) = menu::create_field_at(x, y) {
+                        clicked = true;
+
+                        if let Self::CreateForm(form) = self {
+                            form.focus = field;
+                        }
+                    }
                 } else {
                     let point = Point::new(x, y);
 
                     match hit_test(&ui, point) {
-                        Some(7) => {
+                        Some(CREATE_BACK) => {
                             back = true;
                             clicked = true;
                         }
-                        Some(8) => {
+                        Some(CREATE_SUBMIT) => {
                             submit = true;
                             clicked = true;
+                        }
+                        Some(CREATE_RANDOM) => {
+                            clicked = true;
+                            if let Self::CreateForm(form) = self {
+                                form.world = random_planet(form.world);
+                                form.focus = CreateField::World;
+                            }
+                        }
+                        Some(CREATE_HELP) => {
+                            clicked = true;
+                            ctx.status = "Help: screen is not ported yet".to_string();
                         }
                         Some(index @ 1..=6) => {
                             clicked = true;
@@ -1115,12 +1231,7 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
 }
 
 /// Кнопка панели 1:1: End Turn, переключатели, зум, миникарта, меню.
-fn session_panel_button(
-    app: &mut App,
-    button: PanelButton,
-    x: i32,
-    online: bool,
-) -> Transition {
+fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool) -> Transition {
     match button {
         PanelButton::EndTurn => {
             session_end_turn(app, online);
@@ -1177,10 +1288,8 @@ fn session_panel_button(
         _ if button.is_toggle() => {
             let enabled = app.hud_mut().panels.toggle(button);
             let caption = button.caption().unwrap_or("toggle");
-            app.hud_mut().push_log(format!(
-                "{caption}: {}",
-                if enabled { "on" } else { "off" }
-            ));
+            app.hud_mut()
+                .push_log(format!("{caption}: {}", if enabled { "on" } else { "off" }));
             return Transition::None;
         }
         _ => {}
@@ -1220,7 +1329,8 @@ fn session_map_left_click(
 
     // Враг: атака по выделенному юниту (пакет 08, P3).
     let Some(selected) = app.hud().selected else {
-        app.hud_mut().push_log("Enemy unit — select your unit first");
+        app.hud_mut()
+            .push_log("Enemy unit — select your unit first");
         return Transition::None;
     };
 
@@ -1299,14 +1409,10 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    let can_move = app
-        .state()
-        .unit(selected)
-        .is_some_and(hud::unit_can_move);
+    let can_move = app.state().unit(selected).is_some_and(hud::unit_can_move);
 
     if !can_move {
-        app.hud_mut()
-            .push_log("Unit cannot move (air/stationary)");
+        app.hud_mut().push_log("Unit cannot move (air/stationary)");
         return Transition::None;
     }
 
@@ -1325,10 +1431,8 @@ fn session_map_right_click(
         }
         None => {
             app.hud_mut().preview = None;
-            app.hud_mut().push_log(format!(
-                "No path to ({}, {})",
-                destination.x, destination.y
-            ));
+            app.hud_mut()
+                .push_log(format!("No path to ({}, {})", destination.x, destination.y));
         }
     }
 
@@ -1423,13 +1527,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             PixelRect::new(0, y, view.width as i32, bar_height),
             Rgba::rgb(8, 12, 20),
         );
-        draw_text_line(
-            buffer,
-            4,
-            y + 4,
-            view.status,
-            Rgba::rgb(232, 236, 244),
-        );
+        draw_text_line(buffer, 4, y + 4, view.status, Rgba::rgb(232, 236, 244));
     }
 }
 
@@ -1473,40 +1571,94 @@ fn build_main_menu(
 ) -> UiState {
     let width = width as i32;
     let height = height as i32;
-    let margin = horizontal_margin(width);
-    let content = (width - margin * 2).max(60);
-    let x = (width - content) / 2;
-    let heights = [24, 12, 28, 28, 28, 12];
-    let gap = 8;
-    let total = heights.iter().sum::<i32>() + gap * (heights.len() as i32 - 1);
-    let top = ((height - total) / 2).max(8);
-    let rects = layout(Rect::new(x, top, content, total), &heights, gap);
     let theme = UiTheme::default();
-    let mut widgets = vec![
-        Widget::Label(Label::colored("M.A.X.", rects[0], theme.accent)),
-        Widget::Label(Label::colored(
+    let native_frame = width == menu::MENU_WIDTH && height == menu::MENU_HEIGHT;
+    let mut widgets = Vec::with_capacity(12);
+
+    if native_frame {
+        // Семь кнопок оригинала: индексы 0..=6, из них действия Rust-клиента —
+        // 0 (New Game), 2 (Multiplayer Game), 6 (Exit).
+        for button in &menu::MAIN_MENU_BUTTONS {
+            widgets.push(Widget::Button(Button::new(
+                button.label,
+                Rect::new(
+                    button.rect.ulx,
+                    button.rect.uly,
+                    button.rect.width,
+                    button.rect.height,
+                ),
+            )));
+        }
+
+        widgets.push(Widget::Label(Label::colored(
+            "Main Menu",
+            Rect::new(236, 145, 172, 15),
+            theme.accent,
+        )));
+        widgets.push(Widget::Label(Label::colored(
+            status,
+            Rect::new(10, 452, 370, 12),
+            theme.accent,
+        )));
+        widgets.push(Widget::Label(Label::colored(
+            "Up/Down + Enter or mouse; C/J/Q; Esc — quit",
+            Rect::new(10, 436, 370, 12),
+            theme.text_disabled,
+        )));
+    } else {
+        let margin = horizontal_margin(width);
+        let content = (width - margin * 2).max(60);
+        let x = (width - content) / 2;
+        let heights = [24, 12, 28, 28, 28, 12];
+        let gap = 8;
+        let total = heights.iter().sum::<i32>() + gap * (heights.len() as i32 - 1);
+        let top = ((height - total) / 2).max(8);
+        let rects = layout(Rect::new(x, top, content, total), &heights, gap);
+        let empty = Rect::new(0, 0, 0, 0);
+
+        // Индексы обязаны совпадать с оригинальным порядком (`MAIN_*`):
+        // 0 — Create, 1 — Load, 2 — Join, 3..=5 — не портированы, 6 — Exit.
+        let buttons = [
+            ("New Game", rects[2]),
+            ("Load Game", empty),
+            ("Multiplayer Game", rects[3]),
+            ("Setup", empty),
+            ("Introduction", empty),
+            ("Credits", empty),
+            ("Exit", rects[4]),
+        ];
+
+        for (label, rect) in buttons {
+            let enabled = !rect.is_empty();
+            widgets.push(Widget::Button(
+                Button::new(label, rect).with_enabled(enabled),
+            ));
+        }
+
+        widgets.push(Widget::Label(Label::colored(
+            "M.A.X.",
+            rects[0],
+            theme.accent,
+        )));
+        widgets.push(Widget::Label(Label::colored(
             "Rust client — M4.1 UI",
             rects[1],
             theme.text_disabled,
-        )),
-        Widget::Button(Button::new("Create game", rects[2])),
-        Widget::Button(Button::new("Join game", rects[3])),
-        Widget::Button(Button::new("Quit", rects[4])),
-        Widget::Label(Label::colored(
+        )));
+        widgets.push(Widget::Label(Label::colored(
             "Up/Down + Enter or mouse; C/J/Q; Esc — quit",
             rects[5],
             theme.text_disabled,
-        )),
-    ];
-
-    widgets.push(Widget::Label(Label::colored(
-        status,
-        Rect::new(margin, (height - 18).max(0), content, 12),
-        theme.accent,
-    )));
+        )));
+        widgets.push(Widget::Label(Label::colored(
+            status,
+            Rect::new(margin, (height - 18).max(0), content, 12),
+            theme.accent,
+        )));
+    }
 
     let mut ui = UiState::new(widgets);
-    ui.focus = Some(MAIN_CREATE + focus.min(2));
+    ui.focus = Some(MAIN_ACTIONS[focus.min(2)]);
     ui.set_hover(mouse);
     ui
 }
@@ -1521,15 +1673,9 @@ fn build_join_list(
 ) -> UiState {
     let width = width as i32;
     let height = height as i32;
-    let margin = horizontal_margin(width);
-    let content = (width - margin * 2).max(60);
-    let x = (width - content) / 2;
-    let buttons_y = (height - 72).max(44);
-    let list_top = 30;
-    let list_height = (buttons_y - 6 - list_top).max(20);
     let theme = UiTheme::default();
-
-    let items = games
+    let native_frame = width == menu::MENU_WIDTH && height == menu::MENU_HEIGHT;
+    let items: Vec<String> = games
         .iter()
         .map(|game| {
             let lock = if game.password_protected { " *" } else { "" };
@@ -1543,37 +1689,92 @@ fn build_join_list(
             )
         })
         .collect();
+    let empty = Rect::new(0, 0, 0, 0);
 
-    let mut list = ListBox::with_items(
-        Rect::new(x, list_top, content, list_height),
-        items,
-    );
+    let (list_rect, row_height, back, refresh, join, hide, help) = if native_frame {
+        (
+            Rect::new(
+                menu::JOIN_LIST.ulx,
+                menu::JOIN_LIST.uly,
+                menu::JOIN_LIST.width,
+                menu::JOIN_LIST.height,
+            ),
+            menu::JOIN_ROW_HEIGHT,
+            Rect::new(354, 438, 109, 40),
+            Rect::new(243, 438, 109, 40),
+            Rect::new(514, 438, 109, 40),
+            Rect::new(
+                menu::JOIN_HIDE.ulx,
+                menu::JOIN_HIDE.uly,
+                menu::JOIN_HIDE.width,
+                menu::JOIN_HIDE.height,
+            ),
+            Rect::new(465, 438, 48, 40),
+        )
+    } else {
+        let margin = horizontal_margin(width);
+        let content = (width - margin * 2).max(60);
+        let x = (width - content) / 2;
+        let buttons_y = (height - 72).max(44);
+        let list_height = (buttons_y - 6 - 30).max(20);
+
+        (
+            Rect::new(x, 30, content, list_height),
+            14,
+            Rect::new(x, buttons_y, 100, 26),
+            Rect::new(x + 108, buttons_y, 100, 26),
+            Rect::new(x + content - 100, buttons_y, 100, 26),
+            empty,
+            empty,
+        )
+    };
+
+    let mut list = ListBox::with_items(list_rect, items);
+    list.row_height = row_height;
     list.selected = (!games.is_empty()).then_some(selected.min(games.len().saturating_sub(1)));
+    list.scroll = menu::join_scroll(selected);
     list.ensure_visible();
 
-    let back = Rect::new(x, buttons_y, 100, 26);
-    let refresh = Rect::new(x + 108, buttons_y, 100, 26);
-    let join = Rect::new(x + content - 100, buttons_y, 100, 26);
+    let title = if native_frame {
+        Rect::new(
+            menu::JOIN_TITLE.ulx,
+            menu::JOIN_TITLE.uly,
+            menu::JOIN_TITLE.width,
+            menu::JOIN_TITLE.height,
+        )
+    } else {
+        Rect::new(back.x, 12, back.width.max(100) * 4, 12)
+    };
+    let hint = if native_frame {
+        Rect::new(150, 418, 462, 12)
+    } else {
+        Rect::new(back.x, (height - 38).max(0), back.width.max(100) * 4, 12)
+    };
+    let status_rect = if native_frame {
+        Rect::new(
+            menu::JOIN_STATUS.ulx,
+            menu::JOIN_STATUS.uly,
+            menu::JOIN_STATUS.width,
+            menu::JOIN_STATUS.height,
+        )
+    } else {
+        Rect::new(back.x, (height - 18).max(0), back.width.max(100) * 4, 12)
+    };
+
     let widgets = vec![
-        Widget::Label(Label::colored(
-            "JOIN GAME — select a game and press Enter",
-            Rect::new(x, 12, content, 12),
-            theme.accent,
-        )),
+        Widget::Label(Label::colored("JOIN GAME", title, theme.accent)),
         Widget::ListBox(list),
-        Widget::Button(Button::new("Back", back)),
-        Widget::Button(Button::new("Refresh", refresh)),
-        Widget::Button(Button::new("Join", join).with_enabled(!games.is_empty())),
+        Widget::Button(Button::new("Cancel", back)),
+        Widget::Button(Button::new("Options", refresh)),
+        Widget::Button(Button::new("Ready", join).with_enabled(!games.is_empty())),
+        Widget::Button(Button::new("Hide", hide).with_enabled(!hide.is_empty())),
+        Widget::Button(Button::new("?", help).with_enabled(!help.is_empty())),
         Widget::Label(Label::colored(
             "Up/Down, Enter — join; R — refresh; Esc — back",
-            Rect::new(x, (height - 38).max(0), content, 12),
+            hint,
             theme.text_disabled,
         )),
-        Widget::Label(Label::colored(
-            status,
-            Rect::new(x, (height - 18).max(0), content, 12),
-            theme.accent,
-        )),
+        Widget::Label(Label::colored(status, status_rect, theme.accent)),
     ];
 
     let mut ui = UiState::new(widgets);
@@ -1628,6 +1829,21 @@ pub fn planet_name(planet: Planet) -> &'static str {
         .unwrap_or("Unknown")
 }
 
+/// Планета по индексу сетки `0..24` (`Planet::try_from`).
+pub fn planet_from_index(index: usize) -> Option<Planet> {
+    (index < PLANET_COUNT)
+        .then(|| Planet::try_from(index as u8).ok())
+        .flatten()
+}
+
+/// Следующая «случайная» планета для кнопки `Random`.
+///
+/// Оригинал берёт `Randomizer_Generate(24)`; в Rust-клиенте выбор детерминирован
+/// (без общего ГПСЧ UI), чтобы кадры и тесты были воспроизводимы.
+pub fn random_planet(current: i64) -> i64 {
+    ((current.clamp(0, MAX_WORLD) * 7 + 5) % (MAX_WORLD + 1)).clamp(0, MAX_WORLD)
+}
+
 /// Горизонтальные поля формы.
 fn form_content(width: i32) -> (i32, i32) {
     let margin = horizontal_margin(width);
@@ -1638,18 +1854,29 @@ fn form_content(width: i32) -> (i32, i32) {
 }
 
 /// Прямоугольник сетки планет внутри формы (24 ячейки 8×3).
+///
+/// В кадре 640×480 — точная область 3×2 слотов `PLANETSE` (`192,51 388×249`),
+/// иначе — прежняя адаптивная раскладка для тестов/малых кадров.
 pub fn planet_grid_rect(width: u32, height: u32) -> Rect {
+    if width as i32 == menu::MENU_WIDTH && height as i32 == menu::MENU_HEIGHT {
+        return menu::planet_grid_rect();
+    }
+
     let width = width as i32;
     let height = height as i32;
     let (x, content) = form_content(width);
     let cell_height = ((height - 220) / PLANET_ROWS).clamp(30, 56);
 
-    Rect::new(
-        x,
-        24,
-        content,
-        cell_height * PLANET_ROWS,
-    )
+    Rect::new(x, 24, content, cell_height * PLANET_ROWS)
+}
+
+/// Прямоугольник поля формы (оригинальная раскладка 3×2 в описании PLANETSE).
+pub fn create_field_rect(field: CreateField) -> Rect {
+    menu::CREATE_FIELD_RECTS
+        .iter()
+        .find(|(item, _)| *item == field)
+        .map(|(_, rect)| Rect::new(rect.ulx, rect.uly, rect.width, rect.height))
+        .unwrap_or(Rect::new(0, 0, 0, 0))
 }
 
 /// Прямоугольник одной планеты в сетке.
@@ -1688,27 +1915,12 @@ fn build_create_form(
     mouse: Option<Point>,
     form: &CreateForm,
 ) -> UiState {
-    let width = width as i32;
-    let height = height as i32;
-    let (x, content) = form_content(width);
-    let show_planets = height >= PLANET_GRID_MIN_HEIGHT as i32;
-    let grid = planet_grid_rect(width as u32, height as u32);
-    let fields_top = if show_planets {
-        grid.y + grid.height + 6
-    } else {
-        28
-    };
-    let field_gap = 4;
-    let field_height = ((height - fields_top - 88) / 6).clamp(12, 22);
-    let rects = layout(
-        Rect::new(x, fields_top, content, 0),
-        &[field_height; 6],
-        field_gap,
-    );
-    let buttons_y = fields_top + 6 * (field_height + field_gap) + 2;
-    let back = Rect::new(x, buttons_y, 100, 24);
-    let create = Rect::new(x + content - 100, buttons_y, 100, 24);
+    let width_i = width as i32;
+    let height_i = height as i32;
+    let (x, content) = form_content(width_i);
+    let native_frame = width_i == menu::MENU_WIDTH && height_i == menu::MENU_HEIGHT;
     let theme = UiTheme::default();
+    let empty = Rect::new(0, 0, 0, 0);
 
     let values = [
         (CreateField::Name, 24usize),
@@ -1719,17 +1931,70 @@ fn build_create_form(
         (CreateField::Password, 16),
     ];
 
-    let mut widgets = vec![Widget::Label(Label::colored(
-        if show_planets {
-            "NEW GAME - choose a planet"
+    let (title_text, field_rects, back, create, random, help, hint_rect, status_rect) =
+        if native_frame {
+            (
+                "Planet Select Menu",
+                CreateField::ALL
+                    .iter()
+                    .map(|field| create_field_rect(*field))
+                    .collect::<Vec<_>>(),
+                Rect::new(354, 438, 109, 40),
+                Rect::new(514, 438, 109, 40),
+                Rect::new(243, 438, 109, 40),
+                Rect::new(465, 438, 48, 40),
+                Rect::new(41, 424, 559, 12),
+                Rect::new(
+                    menu::PLANET_STATUS.ulx,
+                    menu::PLANET_STATUS.uly,
+                    menu::PLANET_STATUS.width,
+                    menu::PLANET_STATUS.height,
+                ),
+            )
         } else {
-            "NEW GAME - settings"
+            let show_planets = height_i >= PLANET_GRID_MIN_HEIGHT as i32;
+            let grid = planet_grid_rect(width, height);
+            let fields_top = if show_planets {
+                grid.y + grid.height + 6
+            } else {
+                28
+            };
+            let field_gap = 4;
+            let field_height = ((height_i - fields_top - 88) / 6).clamp(12, 22);
+            let rects = layout(
+                Rect::new(x, fields_top, content, 0),
+                &[field_height; 6],
+                field_gap,
+            );
+            let buttons_y = fields_top + 6 * (field_height + field_gap) + 2;
+
+            (
+                if show_planets {
+                    "NEW GAME - choose a planet"
+                } else {
+                    "NEW GAME - settings"
+                },
+                rects,
+                Rect::new(x, buttons_y, 100, 24),
+                Rect::new(x + content - 100, buttons_y, 100, 24),
+                empty,
+                empty,
+                Rect::new(x, buttons_y + 32, content, 12),
+                Rect::new(x, (height_i - 18).max(0), content, 12),
+            )
+        };
+
+    let mut widgets = vec![Widget::Label(Label::colored(
+        title_text,
+        if native_frame {
+            Rect::new(230, 6, 180, 20)
+        } else {
+            Rect::new(x, 10, content, 12)
         },
-        Rect::new(x, 10, content, 12),
         theme.accent,
     ))];
 
-    for (index, (field, max_chars)) in values.into_iter().enumerate() {
+    for ((field, max_chars), rect) in values.into_iter().zip(field_rects.iter().copied()) {
         let placeholder = match field {
             CreateField::Name => DEFAULT_GAME_NAME,
             CreateField::World => "0..23 (click a planet)",
@@ -1738,36 +2003,39 @@ fn build_create_form(
             CreateField::Opponent => "1..3",
             CreateField::Password => "(open game)",
         };
-        let text_box = TextBox::with_value(
-            field.label(),
-            form.value(field),
-            placeholder,
-            rects[index],
-        )
-        .with_max_chars(max_chars);
+        let text_box = TextBox::with_value(field.label(), form.value(field), placeholder, rect)
+            .with_max_chars(max_chars);
 
         widgets.push(Widget::TextBox(text_box));
     }
 
-    widgets.push(Widget::Button(Button::new("Back", back)));
-    widgets.push(Widget::Button(Button::new("Create", create)));
+    widgets.push(Widget::Button(Button::new("Cancel", back)));
+    widgets.push(Widget::Button(Button::new("Done", create)));
+    widgets.push(Widget::Button(
+        Button::new("Random", random).with_enabled(!random.is_empty()),
+    ));
+    widgets.push(Widget::Button(
+        Button::new("?", help).with_enabled(!help.is_empty()),
+    ));
 
     // Подписи планет рисуются в `draw_planet_picker` шрифтом GNW Font5
     // (в C++ имена планет — `GNW_TEXT_FONT_5`), а не 8×8 Label'ами: иначе
     // «Valentine's Planet» обрезается до 8 символов.
 
     widgets.push(Widget::Label(Label::colored(
-        if show_planets {
+        if native_frame {
+            "Click a planet; Tab/World - number; Enter - create; Esc - back"
+        } else if height_i >= PLANET_GRID_MIN_HEIGHT as i32 {
             "Click a planet; Tab/World - number; Enter - create; Esc - back"
         } else {
             "Tab/Up/Down - field; Left/Right - numbers; Enter - create; Esc - back"
         },
-        Rect::new(x, buttons_y + 32, content, 12),
+        hint_rect,
         theme.text_disabled,
     )));
     widgets.push(Widget::Label(Label::colored(
         status,
-        Rect::new(x, (height - 18).max(0), content, 12),
+        status_rect,
         theme.accent,
     )));
 
@@ -1800,16 +2068,10 @@ fn draw_planet_picker(
         // Квадратная миниатюра: `SNOW_PIC` — 128×128, растягивать её по ширине
         // ячейки нельзя (планета превращается в блин).
         let size = (cell.width - 4).min(cell.height - 12).max(1);
-        let image_rect = Rect::new(
-            cell.x + (cell.width - size) / 2,
-            cell.y + 1,
-            size,
-            size,
-        );
+        let image_rect = Rect::new(cell.x + (cell.width - size) / 2, cell.y + 1, size, size);
         let planet = Planet::try_from(index as u8).ok();
-        let picture = planet.and_then(|planet| {
-            assets.and_then(|assets| assets.planet_picture(planet))
-        });
+        let picture =
+            planet.and_then(|planet| assets.and_then(|assets| assets.planet_picture(planet)));
 
         if let Some(picture) = picture {
             blit_big_image_scaled(buffer, picture, image_rect);
@@ -1934,10 +2196,7 @@ mod tests {
     }
 
     impl MockClient {
-        fn new(
-            games: Vec<GameInfo>,
-            created: Option<GameInfo>,
-        ) -> (Self, Rc<RefCell<MockLog>>) {
+        fn new(games: Vec<GameInfo>, created: Option<GameInfo>) -> (Self, Rc<RefCell<MockLog>>) {
             let log = Rc::new(RefCell::new(MockLog::default()));
             let client = Self {
                 log: Rc::clone(&log),
@@ -2226,10 +2485,7 @@ mod tests {
 
     #[test]
     fn join_list_lists_games_and_selects_with_keyboard() {
-        let (mut ctx, log) = context(
-            vec![game("g1", "Alpha"), game("g2", "Beta")],
-            None,
-        );
+        let (mut ctx, log) = context(vec![game("g1", "Alpha"), game("g2", "Beta")], None);
         let mut screen = Screen::MainMenu;
 
         // MainMenu: Join game.
@@ -2267,10 +2523,7 @@ mod tests {
     fn join_list_mouse_click_selects_a_row() {
         let games = vec![game("g1", "Alpha"), game("g2", "Beta")];
         let (mut ctx, _log) = context(games.clone(), None);
-        let mut screen = Screen::JoinList {
-            games,
-            selected: 0,
-        };
+        let mut screen = Screen::JoinList { games, selected: 0 };
 
         let ui = build_join_list(
             ctx.width,
@@ -2324,6 +2577,138 @@ mod tests {
 
         assert_eq!(screen, Screen::MainMenu);
         assert!(ctx.status.contains("no horizon"));
+    }
+
+    /// Пункт E: в кадре 640×480 меню рисуется из ресурсов `MAX.RES`, а не
+    /// процедурно.
+    #[test]
+    fn native_frame_menus_are_drawn_from_max_res() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let max_res = root.join("max-original/MAX.RES");
+        let color_pal = root.join("max-original/COLOR.PAL");
+        let patches = root.join("assets/PATCHES.RES");
+
+        if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+            return;
+        }
+
+        let mut app = crate::App::new(AppConfig {
+            max_res,
+            color_pal,
+            patches_res: patches,
+            ..Default::default()
+        });
+        app.init_assets().expect("ассеты игры");
+        let menu = app
+            .assets()
+            .and_then(|assets| assets.menu.as_ref())
+            .expect("MenuAssets из MAX.RES");
+
+        let view = ScreenView {
+            width: 640,
+            height: 480,
+            status: "status",
+            mouse: Some(Point::new(390, 180)),
+            focus: 0,
+            app: Some(&app),
+        };
+
+        // Главное меню: фон — MAINPIC.
+        let mut buffer = RgbaBuffer::new(640, 480);
+        Screen::MainMenu.render(&mut buffer, view);
+        assert_eq!(
+            buffer.get(0, 0),
+            menu.mainpic.rgb(0, 0).map(Rgba::from_rgb),
+            "фон главного меню — MAINPIC"
+        );
+
+        // Форма создания: фон — PLANETSE, кнопки MNUBTN внизу.
+        let mut buffer = RgbaBuffer::new(640, 480);
+        Screen::CreateForm(CreateForm::default()).render(&mut buffer, view);
+        assert_eq!(
+            buffer.get(600, 300),
+            menu.planet_background().rgb(600, 300).map(Rgba::from_rgb),
+            "фон формы — PLANETSE"
+        );
+
+        // Список игр: фон — MULTGAME.
+        let mut buffer = RgbaBuffer::new(640, 480);
+        Screen::JoinList {
+            games: vec![game("g1", "Alpha")],
+            selected: 0,
+        }
+        .render(&mut buffer, view);
+        assert_eq!(
+            buffer.get(10, 10),
+            menu.join_background().rgb(10, 10).map(Rgba::from_rgb),
+            "фон списка игр — MULTGAME"
+        );
+    }
+
+    /// Пункт E: клики по кнопкам главного меню попадают в оригинальные
+    /// прямоугольники `menu.cpp` (а не в процедурную раскладку).
+    #[test]
+    fn main_menu_clicks_use_the_cpp_button_rectangles() {
+        let (mut ctx, _log) = context(Vec::new(), None);
+        ctx.width = 640;
+        ctx.height = 480;
+        let mut screen = Screen::MainMenu;
+
+        let create = menu::main_menu_rect(menu::MainMenuAction::Create).expect("New Game");
+        let transition = screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(
+                create.ulx + create.width / 2,
+                create.uly + create.height / 2,
+            ),
+        );
+
+        assert_eq!(transition, Transition::None);
+        assert!(matches!(screen, Screen::CreateForm(_)));
+
+        let mut screen = Screen::MainMenu;
+        let exit = menu::main_menu_rect(menu::MainMenuAction::Quit).expect("Exit");
+        assert_eq!(
+            screen.handle_input(&mut ctx, InputEvent::MouseClick(exit.ulx + 4, exit.uly + 4),),
+            Transition::Quit
+        );
+    }
+
+    /// Пункт F: клик в окне 1280×960 (масштаб 2) переводится в кадр 640×480 и
+    /// попадает в ту же клетку карты, что и клик в кадре.
+    #[test]
+    fn window_click_at_2x_lands_in_the_same_map_cell() {
+        use max_render::frame_scale::FrameScale;
+        use max_render::layout;
+
+        let scale = FrameScale::native(1280, 960);
+        assert_eq!(scale.scale(), 2);
+
+        let viewport = panels::map_viewport(&Viewport::new(640, 480));
+        // Точка в области карты: (180,18) + 3.5 клетки по x и 2.5 по y.
+        let frame_click = (
+            layout::MAIN_MAP.ulx + 3 * 64 + 32,
+            layout::MAIN_MAP.uly + 2 * 64 + 32,
+        );
+        let local = (
+            frame_click.0 - layout::MAIN_MAP.ulx,
+            frame_click.1 - layout::MAIN_MAP.uly,
+        );
+        let expected_grid = viewport.screen_to_grid(local.0, local.1);
+
+        let window_click = scale.frame_to_window(frame_click.0, frame_click.1);
+        let mapped = scale
+            .window_to_frame(window_click.0 + 1, window_click.1 + 1)
+            .expect("клик внутри кадра");
+        let (map_x, map_y) = panels::screen_to_map(mapped.0, mapped.1).expect("точка на карте");
+        let grid = viewport.screen_to_grid(map_x, map_y);
+
+        assert_eq!(grid, expected_grid);
+        assert_eq!(grid, (56, 55), "клетка под точкой (180+224, 18+160)");
+
+        // Клик по чёрному полю окна 1000×700 (letterbox) не приходит в кадр.
+        let letterboxed = FrameScale::native(1000, 700);
+        assert_eq!(letterboxed.window_to_frame(10, 10), None);
     }
 
     #[test]

@@ -63,12 +63,12 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::float_arithmetic)]
 
-pub mod enums;
 pub mod access;
 pub mod ai;
 pub mod combat;
 pub mod crc;
 pub mod deploy;
+pub mod enums;
 pub mod events;
 pub mod game;
 pub mod geo;
@@ -86,26 +86,21 @@ pub mod unit_order;
 pub mod unit_values;
 pub mod victory;
 
-pub use enums::{
-    AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
-    Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
-    TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType, UnitOrderType,
-    UnitType, VictoryType, WinLossState,
-};
 pub use access::{
     get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
     unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
     ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
 };
-pub use ai::{
-    ai_begin_turn, ai_check_end_turn, ai_check_mines, ai_check_reactions, ai_clear_tasks_pending_flags,
-    ai_determine_caution_level, ai_enable_auto_survey, ai_evaluate_attack_targets, ai_init,
-    ai_is_dangerous_location, ai_remove_unit, ai_select_starting_position,
-    ai_set_info_map_point, ai_set_tasks_pending_flag, ai_setup_strategy, ai_unit_hidden,
-    ai_unit_spotted, task_manager_need_to_reserve_raw_materials, AiPlayer, AiReactionState,
-    AiSettings, AiState, Reminder, Task, TaskHeader, TaskKind, TaskManager, ThreatMap, WeightTable,
-};
 pub use ai::HeatMap as AiHeatMap;
+pub use ai::{
+    ai_begin_turn, ai_check_end_turn, ai_check_mines, ai_check_reactions,
+    ai_clear_tasks_pending_flags, ai_determine_caution_level, ai_enable_auto_survey,
+    ai_evaluate_attack_targets, ai_init, ai_is_dangerous_location, ai_remove_unit,
+    ai_select_starting_position, ai_set_info_map_point, ai_set_tasks_pending_flag,
+    ai_setup_strategy, ai_unit_hidden, ai_unit_spotted, task_manager_need_to_reserve_raw_materials,
+    AiPlayer, AiReactionState, AiSettings, AiState, Reminder, Task, TaskHeader, TaskKind,
+    TaskManager, ThreatMap, WeightTable,
+};
 pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
     progress_fire, ATTACK_DAMAGE_MIN,
@@ -120,6 +115,12 @@ pub use deploy::{
     set_initial_mining, start_position_mining_station, starting_position_power_generator,
     survey_resources_in_area, TeamSupply, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
     DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT,
+};
+pub use enums::{
+    AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
+    Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
+    TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType,
+    UnitOrderType, UnitType, VictoryType, WinLossState,
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
@@ -154,12 +155,10 @@ pub use setup::{
     GenerationSettings, ResourceLevel, SetupOutput, TeamStart,
 };
 pub use team::{
-    Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId, TeamInfo, TeamInfoUi,
-    TeamKind, TeamUnits,
+    Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId, TeamInfo,
+    TeamInfoUi, TeamKind, TeamUnits,
 };
-pub use unit::{
-    AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
-};
+pub use unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
 pub use unit_order::{
     blocked_on_path_request, move_finished, restore_orders, set_new_order_int, OrderContext,
     MOVEMENT_WAIT_LIMIT,
@@ -224,7 +223,10 @@ mod tests {
         assert_eq!(crate::UNIT_COUNT, 93);
         let units = crate::TeamUnits::with_clan(crate::TeamClan::Musashi);
         assert_eq!(units.complexes().len(), 0);
-        assert_eq!(crate::SaveFile::parse(SAVE_BYTES).map(|save| save.header.version), Ok(70));
+        assert_eq!(
+            crate::SaveFile::parse(SAVE_BYTES).map(|save| save.header.version),
+            Ok(70)
+        );
         assert_eq!(
             crate::SaveFile::parse(SAVE_BYTES)
                 .expect("fixture parses")

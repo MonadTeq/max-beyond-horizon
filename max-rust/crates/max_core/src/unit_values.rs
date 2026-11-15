@@ -176,7 +176,10 @@ impl UnitValues {
             ATTRIB_ATTACK_RADIUS => i32::from(self.attack_radius),
             ATTRIB_AGENT_ADJUST => i32::from(self.agent_adjust),
             _ => {
-                debug_assert!(false, "UnitValues::get_attribute: invalid index {attribute}");
+                debug_assert!(
+                    false,
+                    "UnitValues::get_attribute: invalid index {attribute}"
+                );
                 0
             }
         }
@@ -200,7 +203,10 @@ impl UnitValues {
             ATTRIB_AMMO => self.ammo = value as u16,
             ATTRIB_ATTACK_RADIUS => self.attack_radius = value as u16,
             ATTRIB_AGENT_ADJUST => self.agent_adjust = value as u16,
-            _ => debug_assert!(false, "UnitValues::set_attribute: invalid index {attribute}"),
+            _ => debug_assert!(
+                false,
+                "UnitValues::set_attribute: invalid index {attribute}"
+            ),
         }
     }
 
@@ -399,7 +405,13 @@ mod tests {
         // SCOUT (`SCOUT`, 50): 3 хода, 16 hp, 12 атаки, 12 скорости, обзор 9.
         let scout = base_unit_values(UnitType::Scout);
         assert_eq!(
-            (scout.turns, scout.hits, scout.attack, scout.speed, scout.scan),
+            (
+                scout.turns,
+                scout.hits,
+                scout.attack,
+                scout.speed,
+                scout.scan
+            ),
             (3, 16, 12, 12, 9)
         );
         // GUNTURRT (34): стационарный, 4 хода, 24 hp, 12 брони, обзор 4.
@@ -481,7 +493,10 @@ mod tests {
         assert_eq!(clan_tradeoff(TeamClan::VonGriffin, scout, ATTRIB_ATTACK), 2);
         assert_eq!(clan_tradeoff(TeamClan::VonGriffin, scout, ATTRIB_SPEED), 2);
         assert_eq!(clan_tradeoff(TeamClan::VonGriffin, scout, ATTRIB_SCAN), 2);
-        assert_eq!(clan_tradeoff(TeamClan::VonGriffin, UnitType::Radar, ATTRIB_SCAN), 6);
+        assert_eq!(
+            clan_tradeoff(TeamClan::VonGriffin, UnitType::Radar, ATTRIB_SCAN),
+            6
+        );
         assert_eq!(clan_tradeoff(TeamClan::Random, scout, ATTRIB_ATTACK), 0);
         // Другой клан того же юнита — другой модификатор.
         assert_eq!(
@@ -496,7 +511,10 @@ mod tests {
         assert_eq!(modified.speed, plain.speed + 2);
         assert_eq!(modified.scan, plain.scan + 2);
         // Остальные типы не меняются.
-        assert_eq!(clan_values[UnitType::Tank as usize], base_unit_values(UnitType::Tank));
+        assert_eq!(
+            clan_values[UnitType::Tank as usize],
+            base_unit_values(UnitType::Tank)
+        );
         // `Random` — таблица без модификаторов.
         assert_eq!(team_base_values(TeamClan::Random), BASE_UNIT_VALUES);
     }
@@ -505,9 +523,22 @@ mod tests {
     #[test]
     fn upgrade_offset_factor_boundaries() {
         let mut values = UnitValues::new();
-        for (base, expected) in [(0, 1), (9, 1), (10, 2), (24, 2), (25, 5), (49, 5), (50, 10), (999, 10)] {
+        for (base, expected) in [
+            (0, 1),
+            (9, 1),
+            (10, 2),
+            (24, 2),
+            (25, 5),
+            (49, 5),
+            (50, 10),
+            (999, 10),
+        ] {
             values.set_attribute(ATTRIB_HITS, base);
-            assert_eq!(upgrade_offset_factor(&values, ATTRIB_HITS), expected, "base {base}");
+            assert_eq!(
+                upgrade_offset_factor(&values, ATTRIB_HITS),
+                expected,
+                "base {base}"
+            );
         }
     }
 

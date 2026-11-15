@@ -35,8 +35,8 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind};
 
 use super::super::attack;
 use super::super::task::{
-    TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_ATTACK_RESERVE_POOL, TASK_PRIORITY_EMERGENCY,
-    TASK_PRIORITY_ESCORT, TASK_PRIORITY_FOLLOW_DEFENSE,
+    TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_ATTACK_RESERVE_POOL,
+    TASK_PRIORITY_EMERGENCY, TASK_PRIORITY_ESCORT, TASK_PRIORITY_FOLLOW_DEFENSE,
 };
 use super::{attack_state, TaskCtx, TaskKind, UnitDamage};
 
@@ -83,7 +83,9 @@ pub fn get_projected_damage(
     attacker: &UnitInfo,
     target: &UnitInfo,
 ) -> i32 {
-    let rounds = attacker.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+    let rounds = attacker
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
     let shots = if i32::from(attacker.shots) > 0 {
         i32::from(attacker.shots)
     } else {
@@ -118,11 +120,7 @@ pub(crate) fn is_unit_suitable(
 }
 
 /// `TaskKillUnit::IsAttackShareLeft` — доля военной силы ещё не исчерпана.
-fn is_attack_share_left(
-    ctx: &TaskCtx<'_>,
-    team: TeamId,
-    state: &super::KillUnitState,
-) -> bool {
+fn is_attack_share_left(ctx: &TaskCtx<'_>, team: TeamId, state: &super::KillUnitState) -> bool {
     let share = ctx.world.ai.players[team.0 as usize].attack_value_share;
     let total = kill_unit_total_projected_damage(state);
 
@@ -131,7 +129,8 @@ fn is_attack_share_left(
 
 /// `TaskKillUnit::UpdateDemand` — пересчитать требуемый урон и вклады юнитов.
 fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut super::KillUnitState) {
-    let Some((target_id, position, target_type)) = spotted_target(ctx, team, state.spotted_unit.unwrap_or(0))
+    let Some((target_id, position, target_type)) =
+        spotted_target(ctx, team, state.spotted_unit.unwrap_or(0))
     else {
         state.required_damage = u16::MAX;
         return;
@@ -150,7 +149,9 @@ fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut supe
     let mut damages = Vec::new();
     let mut total = 0;
     for unit_id in state.units.clone() {
-        let Some(attacker) = ctx.unit(unit_id) else { continue };
+        let Some(attacker) = ctx.unit(unit_id) else {
+            continue;
+        };
         let damage = get_projected_damage(ctx.world, &attacker, &target);
 
         total += damage;
@@ -165,7 +166,11 @@ fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut supe
 }
 
 /// `TaskKillUnit::FindVaildTypes` — типы юнитов, способные добить цель.
-fn kill_unit_find_valid_types(world: &crate::game::GameState, team: TeamId, state: &mut super::KillUnitState) {
+fn kill_unit_find_valid_types(
+    world: &crate::game::GameState,
+    team: TeamId,
+    state: &mut super::KillUnitState,
+) {
     state.weight_table.clear();
     state.weight_table.set_team(team.0);
 
@@ -308,18 +313,30 @@ fn kill_unit_execute(
     let target_position = state.target_position;
     let dx = i32::from(attacker.grid.x) - i32::from(target_position.x);
     let dy = i32::from(attacker.grid.y) - i32::from(target_position.y);
-    let range = attacker.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
+    let range = attacker
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_RANGE);
 
     if dx * dx + dy * dy > range * range {
         let priority = ctx.priority_of(header.id);
-        let move_kind = TaskKind::move_to(unit, target_position, (range * range) as u16, CautionLevel::AvoidNextTurnsFire);
+        let move_kind = TaskKind::move_to(
+            unit,
+            target_position,
+            (range * range) as u16,
+            CautionLevel::AvoidNextTurnsFire,
+        );
         ctx.append_task(attacker.team, Some(header.id), priority, move_kind);
     }
 
     true
 }
 
-fn kill_unit_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+fn kill_unit_add_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
     let TaskKind::KillUnit(state) = kind else {
         return;
     };
@@ -339,7 +356,12 @@ fn kill_unit_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
     kill_unit_update_demand(ctx, header.team, state);
 }
 
-fn kill_unit_remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+fn kill_unit_remove_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
     let TaskKind::KillUnit(state) = kind else {
         return;
     };
@@ -418,12 +440,20 @@ fn kill_unit_event_enemy_spotted(
 // ---------------------------------------------------------------------------
 
 /// `TaskAttack::ChooseFirstTarget` — первый замеченный юнит целевой команды.
-fn attack_choose_first_target(ctx: &mut TaskCtx<'_>, team: TeamId, target_team: TeamId) -> Option<u32> {
+fn attack_choose_first_target(
+    ctx: &mut TaskCtx<'_>,
+    team: TeamId,
+    target_team: TeamId,
+) -> Option<u32> {
     let player = &ctx.world.ai.players[team.0 as usize];
 
     for (index, spotted) in player.spotted_units.iter().enumerate() {
-        let Some(unit_id) = spotted.unit else { continue };
-        let Some(info) = ctx.unit(unit_id) else { continue };
+        let Some(unit_id) = spotted.unit else {
+            continue;
+        };
+        let Some(info) = ctx.unit(unit_id) else {
+            continue;
+        };
 
         if info.team == target_team && info.hits > 0 {
             return Some(index as u32);
@@ -442,9 +472,15 @@ fn attack_determine_leader(ctx: &TaskCtx<'_>, state: &super::AttackState) -> Opt
         if let Some(task) = ctx.tm.task(task_id) {
             if let TaskKind::KillUnit(kill) = &task.kind {
                 for unit_id in &kill.units {
-                    let Some(info) = ctx.unit(*unit_id) else { continue };
-                    let value = info.base_values.get_attribute(crate::unit_values::ATTRIB_HITS)
-                        + info.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK);
+                    let Some(info) = ctx.unit(*unit_id) else {
+                        continue;
+                    };
+                    let value = info
+                        .base_values
+                        .get_attribute(crate::unit_values::ATTRIB_HITS)
+                        + info
+                            .base_values
+                            .get_attribute(crate::unit_values::ATTRIB_ATTACK);
 
                     if leader.map(|(best, _)| value > best).unwrap_or(true) {
                         leader = Some((value, *unit_id));
@@ -534,7 +570,6 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
 
     state.leader = attack_determine_leader(ctx, state);
     state.defenders_fire = 0;
-
 }
 
 /// `TaskAttack::GetPriority` — приоритет родителя или атака по умолчанию.
@@ -592,7 +627,9 @@ pub(crate) fn is_unit_transferable(
 ) -> bool {
     match task.parent {
         Some(parent) => match world.ai.task_manager.task(parent) {
-            Some(parent_task) => parent_task.kind.is_unit_transferable(world, parent_task, unit),
+            Some(parent_task) => parent_task
+                .kind
+                .is_unit_transferable(world, parent_task, unit),
             None => true,
         },
         None => {
@@ -697,7 +734,6 @@ fn frontal_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
             }
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -730,7 +766,6 @@ fn wait_to_attack_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
             return;
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -766,7 +801,9 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
             .chain(ctx.list(UnitListKind::MobileAir))
             .find(|unit_id| {
                 ctx.unit(*unit_id)
-                    .map(|info| info.team == header.team && info.unit_type == *unit_type && info.hits > 0)
+                    .map(|info| {
+                        info.team == header.team && info.unit_type == *unit_type && info.hits > 0
+                    })
                     .unwrap_or(false)
             });
 
@@ -786,7 +823,11 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 
     let Some(escort_id) = *escort else { return };
 
-    if ctx.unit(escort_id).map(|info| info.hits == 0).unwrap_or(true) {
+    if ctx
+        .unit(escort_id)
+        .map(|info| info.hits == 0)
+        .unwrap_or(true)
+    {
         *escort = None;
         return;
     }
@@ -801,7 +842,11 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         ctx.write_unit(escort_id, info);
     }
 
-    ctx.set_new_order(escort_id, UnitOrder::MoveToUnit, UnitOrderState::ExecutingOrder);
+    ctx.set_new_order(
+        escort_id,
+        UnitOrder::MoveToUnit,
+        UnitOrderState::ExecutingOrder,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -813,23 +858,24 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 /// C++ перебирает клетки `ZoneWalker`-подобным циклом с `steps_in_direction`
 /// и `direction`; здесь — тот же обход `ZoneWalker` от текущей позиции,
 /// критерий — карта урона ИИ (`GetDamagePotentialMap`) и проходимость.
-fn retreat_search(ctx: &TaskCtx<'_>, state: &super::RetreatState) -> Option<Point> {    let unit_id = state.unit_to_retreat?;
+fn retreat_search(ctx: &TaskCtx<'_>, state: &super::RetreatState) -> Option<Point> {
+    let unit_id = state.unit_to_retreat?;
     let info = ctx.unit(unit_id)?;
     let caution = state.caution_level;
 
     let map = crate::ai::strategy::get_damage_potential_map(ctx.world, info.team, &info, caution);
 
-    let mut walker = crate::ai::threat::ZoneWalker::new(
-        info.grid,
-        i32::from(state.search_radius.max(1)),
-    );
+    let mut walker =
+        crate::ai::threat::ZoneWalker::new(info.grid, i32::from(state.search_radius.max(1)));
 
     loop {
         let site = walker.current_location();
 
         if site != info.grid && crate::ai::threat::in_bounds(site) {
             let safe = match &map {
-                Some(map) => map.damage_at(i32::from(site.x), i32::from(site.y)) < i32::from(info.hits),
+                Some(map) => {
+                    map.damage_at(i32::from(site.x), i32::from(site.y)) < i32::from(info.hits)
+                }
                 None => true,
             };
 
@@ -912,7 +958,6 @@ fn retreat_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
                 let move_kind = TaskKind::move_to(unit_id, site, 0, CautionLevel::AvoidAllDamage);
                 ctx.append_task(info.team, Some(header.id), priority, move_kind);
             }
-
         }
         None => {
             if let Some(mut info) = ctx.unit(unit_id) {
@@ -932,28 +977,18 @@ fn retreat_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
 /// `Init` для combat-классов.
 pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
-        TaskKind::Attack(_) => {
-            true
-        }
-        TaskKind::KillUnit(_) => {
-            true
-        }
-        TaskKind::FrontalAttack { .. } => {
-            true
-        }
-        TaskKind::WaitToAttack { .. } => {
-            true
-        }
+        TaskKind::Attack(_) => true,
+        TaskKind::KillUnit(_) => true,
+        TaskKind::FrontalAttack { .. } => true,
+        TaskKind::WaitToAttack { .. } => true,
         TaskKind::Retreat { .. } => {
             retreat_run(kind, ctx, header);
             true
         }
-        TaskKind::SupportAttack { .. } => {
-            true
-        }
-        TaskKind::AttackReserve { .. } | TaskKind::DefenseReserve { .. } | TaskKind::Escort { .. } => {
-            true
-        }
+        TaskKind::SupportAttack { .. } => true,
+        TaskKind::AttackReserve { .. }
+        | TaskKind::DefenseReserve { .. }
+        | TaskKind::Escort { .. } => true,
         _ => false,
     }
 }
@@ -1047,9 +1082,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 /// `TaskSupportAttack::BeginTurn` — собрать поддерживающие юниты.
 fn support_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::SupportAttack {
-        units,
-        unit_flags,
-        ..
+        units, unit_flags, ..
     } = kind
     else {
         return;
@@ -1062,7 +1095,9 @@ fn support_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
             continue;
         }
 
-        let Some(info) = ctx.unit(unit_id) else { continue };
+        let Some(info) = ctx.unit(unit_id) else {
+            continue;
+        };
         if info.team != header.team || info.hits == 0 || info.flags & *unit_flags == 0 {
             continue;
         }
@@ -1083,7 +1118,6 @@ fn support_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
         ctx.remove_self(header.id);
         return;
     }
-
 }
 
 /// `TaskAttackReserve::BeginTurn` — резерв следует за атакующими к сайту.
@@ -1100,7 +1134,9 @@ fn attack_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
     }
 
     for unit_id in units.clone() {
-        let Some(info) = ctx.unit(unit_id) else { continue };
+        let Some(info) = ctx.unit(unit_id) else {
+            continue;
+        };
         if info.orders != UnitOrder::Await && info.orders != UnitOrder::Sentry {
             continue;
         }
@@ -1109,12 +1145,13 @@ fn attack_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
         let dy = i32::from(info.grid.y) - i32::from(site.y);
 
         if dx * dx + dy * dy > 4 {
-            let priority = ctx.priority_of(header.id).min(TASK_PRIORITY_ATTACK_RESERVE_POOL);
+            let priority = ctx
+                .priority_of(header.id)
+                .min(TASK_PRIORITY_ATTACK_RESERVE_POOL);
             let move_kind = TaskKind::move_to(unit_id, *site, 4, CautionLevel::AvoidNextTurnsFire);
             ctx.append_task(info.team, Some(header.id), priority, move_kind);
         }
     }
-
 }
 
 /// `TaskDefenseReserve::BeginTurn` — резерв обороны у сайта.
@@ -1150,7 +1187,9 @@ fn defense_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     }
 
     for unit_id in units.clone() {
-        let Some(info) = ctx.unit(unit_id) else { continue };
+        let Some(info) = ctx.unit(unit_id) else {
+            continue;
+        };
         if info.orders != UnitOrder::Await && info.orders != UnitOrder::Sentry {
             continue;
         }
@@ -1164,11 +1203,15 @@ fn defense_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
             ctx.append_task(info.team, Some(header.id), priority, move_kind);
         }
     }
-
 }
 
 /// `Execute(unit)` для combat-классов.
-pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::KillUnit(_) => kill_unit_execute(kind, ctx, header, unit),
         TaskKind::Attack(_) => {
@@ -1266,7 +1309,9 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
                 ctx.remove_self(header.id);
             }
         }
-        TaskKind::Retreat { unit_to_retreat, .. } => {
+        TaskKind::Retreat {
+            unit_to_retreat, ..
+        } => {
             if *unit_to_retreat == Some(unit) {
                 ctx.remove_self(header.id);
             }
@@ -1296,7 +1341,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` для combat-классов.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::Attack(state) => {
             state.primary_targets.retain(|task| *task != child);
@@ -1342,7 +1392,8 @@ pub fn move_finished(
             };
 
             if let Some(kill_task) = kill_task {
-                ctx.tm.task_move_finished(ctx.world, kill_task, unit, result);
+                ctx.tm
+                    .task_move_finished(ctx.world, kill_task, unit, result);
             }
 
             true
@@ -1385,7 +1436,9 @@ pub fn check_reactions(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
             if let Some(unit_id) = attacker {
                 let ready = ctx
                     .unit(unit_id)
-                    .map(|info| info.hits > 0 && info.shots > 0 && !ctx.ready_to_take_orders(unit_id))
+                    .map(|info| {
+                        info.hits > 0 && info.shots > 0 && !ctx.ready_to_take_orders(unit_id)
+                    })
                     .unwrap_or(false);
 
                 if !ready && attack::evaluate_attack(ctx.tm, ctx.world, unit_id, true) {
@@ -1402,7 +1455,12 @@ pub fn check_reactions(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
 }
 
 /// `ExchangeOperator` — `TaskEscort` (обмен сопровождающего).
-pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn exchange_operator(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     let TaskKind::Escort {
         escort, unit_type, ..
     } = kind
@@ -1439,7 +1497,12 @@ pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 }
 
 /// `EventUnitDestroyed(unit)` для combat-классов.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::KillUnit(_) => kill_unit_event_unit_destroyed(kind, ctx, header, unit),
         TaskKind::Attack(_) => false,
@@ -1510,7 +1573,10 @@ pub fn event_unit_loaded(
     _unit1: UnitId,
     _unit2: UnitId,
 ) -> bool {
-    matches!(kind, TaskKind::Escort { .. } | TaskKind::SupportAttack { .. })
+    matches!(
+        kind,
+        TaskKind::Escort { .. } | TaskKind::SupportAttack { .. }
+    )
 }
 
 /// `EventUnitUnloaded` — структурно.
@@ -1521,7 +1587,10 @@ pub fn event_unit_unloaded(
     _unit1: UnitId,
     _unit2: UnitId,
 ) -> bool {
-    matches!(kind, TaskKind::Escort { .. } | TaskKind::SupportAttack { .. })
+    matches!(
+        kind,
+        TaskKind::Escort { .. } | TaskKind::SupportAttack { .. }
+    )
 }
 
 /// `TaskAttack::GetCautionLevel` — в C++ зависит от роли юнита в группе.

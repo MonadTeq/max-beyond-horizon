@@ -80,16 +80,18 @@ bash ci.sh
 ```
 
 - [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
-  Свидетельство: **559 тестов, 0 failed**, `cargo check --all-targets` — 0
-  ошибок (2026-11-15, `rust:1.94.0-bookworm`); лог `build/cargo-final-gate4.log`.
+  Свидетельство: **576 тестов, 0 failed**, `cargo check --all-targets` — 0
+  ошибок (2026-11-15, `rust:1.94.0-bookworm`, пункты E/F и декодер
+  `SNOW_PIC`); лог `build/cargo-docker-ef-final3.log`.
 - [ ] 2.2 `--features sound` — `check` и `test` зелёные. Тест
       `max_assets::wav::tests::parses_real_kbuy0_spw` проходит на реальном
       `KBUY0.SPW`; `all_real_spw_files_are_pcm16_22050_mono` проверяет все 272
       файла (`cargo test -p max_assets wav::`).
   Свидетельство: ______________________
 - [x] 2.3 `--features sdl-from-source` — зелёный `cargo check`.
-  Свидетельство: 0 ошибок (Linux, полный X11/ALSA dev-набор, 2026-11-15);
-  лог `build/cargo-check-sdl-final.log`.
+  Свидетельство: 0 ошибок (Linux, полный X11/ALSA dev-набор, 2026-11-15,
+  `max_app` с `frame_scale`/`SdlWindow::new_scaled`/`window_to_frame`);
+  лог `build/cargo-docker-ef-sdl-final.log`.
 - [ ] 2.4 Horizon: `cargo test --workspace` — зелёный (известные падения
       `horizon_event_system` должны быть исправлены или явно исключены — M5.1).
   Свидетельство: ______________________
@@ -141,12 +143,21 @@ headless/live-smoke. Если каталог данных headless-сервер�
 
 Шаги (все — только мышью, кроме ввода имени игры):
 
-- [ ] Главное меню: видны «Create game», «Join game», «Quit»; клик по кнопке
-      срабатывает (со звуком — слышен клик `KBUY0`, если собрано с `sound`).
-- [ ] Create game: задать имя, **выбрать планету кликом по сетке 8×3** (картинка
-      `SNOW_PIC + world/6` + имя под ней; числовое поле World остаётся
-      fallback'ом), таймер/конец хода, число противников (1–3), пароль
-      (опционально); Enter/кнопка создаёт игру.
+- [ ] Главное меню: видны кнопки оригинала `New Game`, `Load Game`,
+      `Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit` на фоне
+      `MAINPIC` (кнопки `BLANK_*`/`SBLNK_*`, подписи GNW `FONT1`); клик по
+      `New Game`/`Multiplayer Game`/`Exit` срабатывает (со звуком — слышен клик
+      `KBUY0`, если собрано с `sound`); остальные кнопки пишут статус «screen is
+      not ported yet».
+- [ ] Create game: форма на `PLANETSE`, большая картинка выбранной планеты
+      (26,98), **сетка планет 8×3** (картинка `SNOW_PIC + world/6` + имя под
+      ней; числовое поле World остаётся fallback'ом), поля 3×2, кнопки
+      `Random`/`Cancel`/`?`/`Done` (`MNUBTN4/5/6`) в y=438; Enter/`Done`
+      создаёт игру.
+- [ ] Масштаб окна: при `--scale 2` окно 1280×960, картинка целочисленно
+      увеличена (каждый пиксель 2×2, без мыла), клик по `New Game` в окне
+      открывает форму (обратный пересчёт координат); окно можно ресайзить,
+      при некратном размере — чёрные поля.
 - [ ] Игра создалась в Horizon (в логе `Created "<name>" (<id>)`), клиент
       вошёл в сессию; видна карта, HUD, миникарта, ресурсы.
 - [ ] Миникарта: видны **маркеры ресурсов** (`RAWMSK*`/`FUELMK*`/`GOLDMK*`, не
@@ -360,12 +371,21 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC; `max_app.exe` 5 402 112 байт,
-      sha256 `6d17aeafcb1851e2e8383303016d1ad409f539ee3dcc8aa6e544bbbf6b5827c0` —
-      сборка с панелями 1:1, шрифтами GNW, маркерами ресурсов C/D и
-      курсорами). _(2026-11-15)_
+      (MSVC; `max_app.exe` 5 423 616 байт,
+      sha256 `279e472dcc41e1747548a7e38d9c1b98738e861db913b9f1d1228ac858ff23c9` —
+      сборка с меню E на `MAINPIC`/`PLANETSE`/`MULTGAME`, масштабом F
+      (`FrameScale`, ресайз, `--scale`), панелями 1:1, GNW-шрифтами,
+      маркерами C/D и курсорами). _(2026-11-15)_
 - [x] `SDL3.dll` лежит рядом с `max_app.exe`; `max_app.exe --help` работает
-      (rc=0). _(2026-11-15)_
+      (rc=0), в справке есть `--scale N`. _(2026-11-15)_
+- [x] `--ui` открывает окно: при `--scale 1` клиент 640×480, при `--scale 2` —
+      1280×960 (кадр целочисленно увеличен, каждый пиксель 2×2); клик
+      `New Game` в окне 2× открывает форму (обратный пересчёт координат).
+      Живые кадры: `build/frame-ef-main-windows.png`,
+      `build/frame-ef-create-windows.png`,
+      `build/frame-ef-main-windows-2x.png`,
+      `build/frame-ef-create-windows-2x.png`; скрипт `build/capture-ef.ps1`.
+      _(2026-11-15)_
 - [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
       `M.A.X. — Rust client (M4.2 HUD)`, в логе `UI: окно 512x384; меню — …`.
       Звук — `backend=rodio/cpal` (WASAPI, отдельных DLL не нужно), 272 файла
@@ -392,8 +412,9 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `chrome_end_turn_click_is_a_button_not_a_map_click`,
       `chrome_toggle_and_zoom_clicks_work_on_the_panels`. _(2026-11-15)_
 - [x] Бинарь и DLL заархивированы в
-      `release/max_app-1.0.0-windows-x86_64-ui.zip` (sha256 в `.zip.sha256`) —
-      отдельно от headless-zip из §6. _(2026-11-15)_
+      `release/max_app-1.0.0-windows-x86_64-ui.zip` (3 065 885 Б, sha256
+      `d7415687a5d70381d30bf7ccd1bb2f67dc8afcabea993775fe22aca22b91f0d0`,
+      `.zip.sha256`) — отдельно от headless-zip из §6. _(2026-11-15)_
 - [x] **Сетевая партия 2 игрока в окне** (`--ui --turn-wait 45`,
       `docker compose up -d --build` + игра создана `horizon_probe`): два клиента,
       team 0/1, `local_team` и `team_types=[Player, Remote, None, None]`;
@@ -493,17 +514,18 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **559 тестов, 0 failed**; `cargo check` — 0 ошибок; SDL-сборка — 0 ошибок | `build/cargo-final-gate4.log`, `build/cargo-check-sdl-final.log` |
+| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **576 тестов, 0 failed**; `cargo check` — 0 ошибок; SDL-сборка — 0 ошибок | `build/cargo-docker-ef-final3.log`, `build/cargo-docker-ef-sdl-final.log` |
 | Тесты Horizon | | | | |
 | Live smoke 2×10 | | | | |
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 402 112 Б, sha256 `6d17aeaf…`; окно открывается, текст не зеркальный, звук `backend=rodio/cpal`; zip 3 054 781 Б, sha256 `021667b6…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-cd-windows.png` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max_app.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
+| Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max_app.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
 | Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max_app.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
 | Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max_app.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-rust/tools/font_vectors/render.txt` |
 | Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max_app.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
-| Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (559 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |
+| Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (576 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max_app.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |

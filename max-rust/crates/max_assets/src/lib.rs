@@ -35,9 +35,7 @@ pub use cursor::{
     CursorDescriptor, CursorError, CursorSet, CURSOR_COUNT, CURSOR_HEADER, CURSOR_RESOURCES,
 };
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
-pub use markers::{
-    decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT,
-};
+pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,
     RES_SIGNATURE, TAG_LEN,

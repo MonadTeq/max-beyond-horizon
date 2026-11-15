@@ -52,8 +52,8 @@ use crate::enums::{
 use crate::game::{GameState, PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use crate::team::{TeamId, TeamKind};
 use crate::unit::{UnitInfo, UnitListKind};
-use crate::unit_values::{ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE,
-    ATTRIB_TURNS,
+use crate::unit_values::{
+    ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,11 +87,20 @@ pub enum CargoType {
 /// данных юнитов; здесь — const-данные (DESIGN §1.4 п.4).
 pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
     match unit_type {
-        UnitType::Barracks | UnitType::Depot | UnitType::PersonnelCarrier
-        | UnitType::SeaTransport | UnitType::AirTransport => CargoType::Land,
-        UnitType::ADump | UnitType::MiningStation | UnitType::Constructor
-        | UnitType::MineLayer | UnitType::SupplyTruck | UnitType::Engineer
-        | UnitType::Bulldozer | UnitType::RepairUnit | UnitType::SeaMineLayer
+        UnitType::Barracks
+        | UnitType::Depot
+        | UnitType::PersonnelCarrier
+        | UnitType::SeaTransport
+        | UnitType::AirTransport => CargoType::Land,
+        UnitType::ADump
+        | UnitType::MiningStation
+        | UnitType::Constructor
+        | UnitType::MineLayer
+        | UnitType::SupplyTruck
+        | UnitType::Engineer
+        | UnitType::Bulldozer
+        | UnitType::RepairUnit
+        | UnitType::SeaMineLayer
         | UnitType::CargoShip => CargoType::Raw,
         UnitType::FDump | UnitType::FuelTruck => CargoType::Fuel,
         UnitType::GoldSmelter | UnitType::GoldTruck => CargoType::Gold,
@@ -254,21 +263,27 @@ pub fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
 /// инженер + достаточно материалов (38, 8 при наличии шахты, −8 при своей
 /// генерации).
 pub fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool {
-    let has_constructor = state.unit_list(UnitListKind::MobileLandSea).iter().any(|id| {
-        state
-            .unit(*id)
-            .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Constructor)
-    });
+    let has_constructor = state
+        .unit_list(UnitListKind::MobileLandSea)
+        .iter()
+        .any(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Constructor)
+        });
 
     if !has_constructor {
         return false;
     }
 
-    let has_engineer = state.unit_list(UnitListKind::MobileLandSea).iter().any(|id| {
-        state
-            .unit(*id)
-            .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Engineer)
-    });
+    let has_engineer = state
+        .unit_list(UnitListKind::MobileLandSea)
+        .iter()
+        .any(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Engineer)
+        });
 
     if !has_engineer {
         return false;
@@ -1006,8 +1021,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if get_total_units_being_constructed(state, team, UnitType::GunTurret) > 0
-                        {
+                        if get_total_units_being_constructed(state, team, UnitType::GunTurret) > 0 {
                             b = Won;
                         } else {
                             b = Pending;
@@ -1023,11 +1037,8 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if get_total_power_consumption(
-                            state,
-                            team,
-                            UnitType::LightVehiclePlant,
-                        ) + get_total_power_consumption(state, team, UnitType::HeavyVehiclePlant)
+                        if get_total_power_consumption(state, team, UnitType::LightVehiclePlant)
+                            + get_total_power_consumption(state, team, UnitType::HeavyVehiclePlant)
                             > 1
                             && get_total_mining(state, team, CargoType::Fuel)
                                 - get_total_consumption(state, team, CargoType::Fuel)
@@ -1314,8 +1325,7 @@ pub fn mission_win_loss(
                             < 2
                         {
                             b = Lost;
-                        } else if count_ready_units(state, TeamId::RED, UnitType::SupplyTruck) > 1
-                        {
+                        } else if count_ready_units(state, TeamId::RED, UnitType::SupplyTruck) > 1 {
                             b = Won;
                         } else if count_ready_units(state, TeamId::RED, UnitType::Commando) > 0 {
                             b = Pending;
@@ -1419,13 +1429,9 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
             continue;
         }
 
-        status.team_status[team] = mission_win_loss(
-            state,
-            state.mission_category,
-            state.mission_index,
-            team_id,
-        )
-        .unwrap_or(WinLossState::Generic);
+        status.team_status[team] =
+            mission_win_loss(state, state.mission_category, state.mission_index, team_id)
+                .unwrap_or(WinLossState::Generic);
 
         status.teams_total += 1;
 
@@ -1613,13 +1619,7 @@ mod tests {
     #[test]
     fn production_and_construction_infrastructure_keep_team_alive() {
         let mut state = empty_match();
-        spawn(
-            &mut state,
-            UnitType::LightVehiclePlant,
-            TeamId::RED,
-            20,
-            20,
-        );
+        spawn(&mut state, UnitType::LightVehiclePlant, TeamId::RED, 20, 20);
         // Фабрика без топлива/материалов и без шахты — не производство.
         assert!(!has_production_infrastructure(&state, TeamId::RED));
 
@@ -1637,7 +1637,13 @@ mod tests {
         );
 
         let mut construction = empty_match();
-        spawn(&mut construction, UnitType::Constructor, TeamId::RED, 20, 20);
+        spawn(
+            &mut construction,
+            UnitType::Constructor,
+            TeamId::RED,
+            20,
+            20,
+        );
         spawn(&mut construction, UnitType::Engineer, TeamId::RED, 21, 20);
         // 38 материалов (без шахты и без своей генерации) — нет ресурсов.
         // Спавн даёт `storage` из таблицы атрибутов, поэтому обнуляем его явно.
@@ -1667,7 +1673,10 @@ mod tests {
         let status = evaluate_status(&state, state.turn_counter);
         assert_eq!(status.teams_total, 2);
         assert_eq!(status.teams_in_play, 1);
-        assert_eq!(status.team_status[TeamId::RED.0 as usize], WinLossState::Generic);
+        assert_eq!(
+            status.team_status[TeamId::RED.0 as usize],
+            WinLossState::Generic
+        );
         assert_eq!(
             status.team_status[TeamId::GREEN.0 as usize],
             WinLossState::Lost
@@ -1755,7 +1764,10 @@ mod tests {
         state.destroy_unit(research);
 
         let status = evaluate_status(&state, 0);
-        assert_eq!(status.team_status[TeamId::RED.0 as usize], WinLossState::Won);
+        assert_eq!(
+            status.team_status[TeamId::RED.0 as usize],
+            WinLossState::Won
+        );
         assert_eq!(
             status.team_status[TeamId::GREEN.0 as usize],
             WinLossState::Generic
@@ -1877,7 +1889,10 @@ mod tests {
 
         assert_eq!(cargo_power_consumption_rate(UnitType::PowerStation), -6);
         assert_eq!(cargo_power_consumption_rate(UnitType::MiningStation), 1);
-        assert_eq!(cargo_raw_consumption_rate(UnitType::LightVehiclePlant, 2), 12);
+        assert_eq!(
+            cargo_raw_consumption_rate(UnitType::LightVehiclePlant, 2),
+            12
+        );
         assert_eq!(cargo_gold_consumption_rate(UnitType::CommTower), 5);
     }
 
@@ -1900,12 +1915,8 @@ mod tests {
         ] {
             for mission_index in 0..=25u16 {
                 for team in 0..TEAM_SLOTS {
-                    let status = mission_win_loss(
-                        &state,
-                        category,
-                        mission_index,
-                        TeamId(team as u8),
-                    );
+                    let status =
+                        mission_win_loss(&state, category, mission_index, TeamId(team as u8));
                     assert!(status.is_some(), "{category:?}/{mission_index}/{team}");
                 }
             }
@@ -1919,12 +1930,7 @@ mod tests {
 
         // Шахта с включённым питанием: максимумы и факт добычи.
         let mining = state
-            .spawn_unit(
-                UnitType::MiningStation,
-                TeamId::RED,
-                Point::new(20, 20),
-                0,
-            )
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
             .expect("mining station");
         {
             let unit = state.unit_mut(mining).expect("unit");
@@ -2069,13 +2075,21 @@ mod tests {
         let tank_cost = state
             .unit_ids_in_order()
             .into_iter()
-            .find(|id| state.unit(*id).is_some_and(|u| u.unit_type == UnitType::Tank))
+            .find(|id| {
+                state
+                    .unit(*id)
+                    .is_some_and(|u| u.unit_type == UnitType::Tank)
+            })
             .map(|id| get_normal_rate_build_cost(state.unit(id).unwrap()))
             .expect("tank");
         let engineer_cost = state
             .unit_ids_in_order()
             .into_iter()
-            .find(|id| state.unit(*id).is_some_and(|u| u.unit_type == UnitType::Engineer))
+            .find(|id| {
+                state
+                    .unit(*id)
+                    .is_some_and(|u| u.unit_type == UnitType::Engineer)
+            })
             .map(|id| get_normal_rate_build_cost(state.unit(id).unwrap()))
             .expect("engineer");
 

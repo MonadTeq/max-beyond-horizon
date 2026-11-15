@@ -58,12 +58,8 @@ pub const PALETTE_STRIDE: usize = 3;
 /// Байт в палитре: 256 × 3.
 pub const PALETTE_BYTES: usize = PALETTE_COLORS * PALETTE_STRIDE;
 /// Индексы pass-таблицы -> [`Surface`] (`PassData[]` из `world.cpp:382`).
-pub const PASS_TABLE_SURFACES: [Surface; 4] = [
-    Surface::LAND,
-    Surface::WATER,
-    Surface::COAST,
-    Surface::AIR,
-];
+pub const PASS_TABLE_SURFACES: [Surface; 4] =
+    [Surface::LAND, Surface::WATER, Surface::COAST, Surface::AIR];
 /// Штатная ширина карты.
 pub const STANDARD_WIDTH: i16 = 112;
 /// Штатная высота карты.
@@ -680,10 +676,7 @@ mod tests {
 
     #[test]
     fn errors_are_returned_instead_of_panicking() {
-        assert!(matches!(
-            WrlMap::parse(b""),
-            Err(WrlError::TooShort { .. })
-        ));
+        assert!(matches!(WrlMap::parse(b""), Err(WrlError::TooShort { .. })));
         assert!(matches!(
             WrlMap::parse(b"WRL\x01"),
             Err(WrlError::TooShort { .. })
@@ -722,9 +715,6 @@ mod tests {
         let map = WrlMap::parse(&bytes).unwrap();
 
         assert_eq!(map.signature(), DMO_SIGNATURE);
-        assert!(map
-            .warnings()
-            .iter()
-            .any(|warning| warning.contains("DMO")));
+        assert!(map.warnings().iter().any(|warning| warning.contains("DMO")));
     }
 }

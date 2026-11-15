@@ -43,10 +43,9 @@ use crate::unit::{UnitId, UnitListKind};
 
 use super::super::task::{
     TaskHeader, TASK_PRIORITY_BUILDING_CONNECTOR, TASK_PRIORITY_BUILDING_DEFENSE,
-    TASK_PRIORITY_BUILDING_DUMP,
-    TASK_PRIORITY_BUILDING_HABITAT, TASK_PRIORITY_BUILDING_HEAVY_PLANT,
-    TASK_PRIORITY_BUILDING_LIGHT_PLANT, TASK_PRIORITY_BUILDING_LOW,
-    TASK_PRIORITY_BUILDING_MEDIUM, TASK_PRIORITY_BUILDING_POWER,
+    TASK_PRIORITY_BUILDING_DUMP, TASK_PRIORITY_BUILDING_HABITAT,
+    TASK_PRIORITY_BUILDING_HEAVY_PLANT, TASK_PRIORITY_BUILDING_LIGHT_PLANT,
+    TASK_PRIORITY_BUILDING_LOW, TASK_PRIORITY_BUILDING_MEDIUM, TASK_PRIORITY_BUILDING_POWER,
     TASK_PRIORITY_BUILDING_RADAR, TASK_PRIORITY_BUILDING_REPAIR_SHOP,
     TASK_PRIORITY_BUILDING_UPGRADES, TASK_PRIORITY_MANAGE_BUILDINGS,
 };
@@ -62,7 +61,11 @@ pub(crate) fn get_unit_count(ctx: &TaskCtx<'_>, team: TeamId, unit_type: UnitTyp
         .into_iter()
         .filter(|id| {
             ctx.unit(*id)
-                .map(|info| info.team == team && info.unit_type == unit_type && info.orders != UnitOrder::Idle)
+                .map(|info| {
+                    info.team == team
+                        && info.unit_type == unit_type
+                        && info.orders != UnitOrder::Idle
+                })
                 .unwrap_or(false)
         })
         .count() as i32
@@ -208,7 +211,15 @@ fn manage_check_needs(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
     }
 
     if get_unit_count(ctx, team, UnitType::ADump) == 0 && turn >= 8 {
-        if manage_create_building(kind, ctx, header, UnitType::ADump, TASK_PRIORITY_BUILDING_DUMP).is_some() {
+        if manage_create_building(
+            kind,
+            ctx,
+            header,
+            UnitType::ADump,
+            TASK_PRIORITY_BUILDING_DUMP,
+        )
+        .is_some()
+        {
             return;
         }
     }
@@ -217,15 +228,29 @@ fn manage_check_needs(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
         && get_unit_count(ctx, team, UnitType::PowerStation) == 0
         && turn >= 6
     {
-        if manage_create_building(kind, ctx, header, UnitType::PowerGenerator, TASK_PRIORITY_BUILDING_POWER)
-            .is_some()
+        if manage_create_building(
+            kind,
+            ctx,
+            header,
+            UnitType::PowerGenerator,
+            TASK_PRIORITY_BUILDING_POWER,
+        )
+        .is_some()
         {
             return;
         }
     }
 
     if get_unit_count(ctx, team, UnitType::Radar) == 0 && turn >= 12 {
-        if manage_create_building(kind, ctx, header, UnitType::Radar, TASK_PRIORITY_BUILDING_RADAR).is_some() {
+        if manage_create_building(
+            kind,
+            ctx,
+            header,
+            UnitType::Radar,
+            TASK_PRIORITY_BUILDING_RADAR,
+        )
+        .is_some()
+        {
             return;
         }
     }
@@ -253,10 +278,30 @@ fn manage_buildings_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
         let team = header.team;
         let priority = TASK_PRIORITY_MANAGE_BUILDINGS;
 
-        ctx.append_task(team, manager, priority, TaskKind::PowerAssistant { manager });
-        ctx.append_task(team, manager, priority, TaskKind::HabitatAssistant { manager });
-        ctx.append_task(team, manager, priority, TaskKind::RadarAssistant { manager });
-        ctx.append_task(team, manager, priority, TaskKind::ConnectionAssistant { manager });
+        ctx.append_task(
+            team,
+            manager,
+            priority,
+            TaskKind::PowerAssistant { manager },
+        );
+        ctx.append_task(
+            team,
+            manager,
+            priority,
+            TaskKind::HabitatAssistant { manager },
+        );
+        ctx.append_task(
+            team,
+            manager,
+            priority,
+            TaskKind::RadarAssistant { manager },
+        );
+        ctx.append_task(
+            team,
+            manager,
+            priority,
+            TaskKind::ConnectionAssistant { manager },
+        );
         ctx.append_task(
             team,
             manager,
@@ -269,10 +314,14 @@ fn manage_buildings_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
     }
 
     manage_check_needs(kind, ctx, header);
-
 }
 
-fn manage_buildings_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+fn manage_buildings_add_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
     let TaskKind::ManageBuildings { units, .. } = kind else {
         return;
     };
@@ -320,8 +369,7 @@ fn power_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     }
 
     let _ = TASK_PRIORITY_BUILDING_POWER;
-    ctx.tm
-        .task_child_complete(ctx.world, manager_id, header.id);
+    ctx.tm.task_child_complete(ctx.world, manager_id, header.id);
     ctx.remove_self(header.id);
 }
 
@@ -444,9 +492,7 @@ fn update_terrain_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
 /// `Init` для build-классов.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
-        TaskKind::ManageBuildings { .. } => {
-            true
-        }
+        TaskKind::ManageBuildings { .. } => true,
         TaskKind::PowerAssistant { .. }
         | TaskKind::HabitatAssistant { .. }
         | TaskKind::RadarAssistant { .. }
@@ -454,9 +500,7 @@ pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) ->
         | TaskKind::DefenseAssistant { .. }
         | TaskKind::FrontierAssistant { .. }
         | TaskKind::MineAssistant { .. }
-        | TaskKind::UpdateTerrain { .. } => {
-            true
-        }
+        | TaskKind::UpdateTerrain { .. } => true,
         _ => false,
     }
 }
@@ -524,7 +568,12 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `Execute(unit)` — помощники не исполняют приказов.
-pub fn execute(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader, _unit: UnitId) -> bool {
+pub fn execute(
+    _kind: &mut TaskKind,
+    _ctx: &mut TaskCtx<'_>,
+    _header: TaskHeader,
+    _unit: UnitId,
+) -> bool {
     false
 }
 
@@ -576,7 +625,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` — менеджер убирает завершённую задачу.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::ManageBuildings { tasks, .. } => {
             tasks.retain(|task| *task != child);
@@ -624,7 +678,12 @@ pub fn exchange_operator(
 }
 
 /// `EventUnitDestroyed(unit)` — менеджер забывает здание.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::ManageBuildings { units, .. } => {
             units.retain(|id| *id != unit);

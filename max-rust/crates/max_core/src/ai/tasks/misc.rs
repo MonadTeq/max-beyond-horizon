@@ -67,7 +67,10 @@ fn find_closest_unit_of_type(
 
             let distance = distance_squared(info.grid, from);
 
-            if best.map(|(best_distance, _)| distance < best_distance).unwrap_or(true) {
+            if best
+                .map(|(best_distance, _)| distance < best_distance)
+                .unwrap_or(true)
+            {
                 best = Some((distance, id));
             }
         }
@@ -231,7 +234,6 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         );
         ctx.append_task(team, Some(header.id), priority, move_kind);
     }
-
 }
 
 fn get_resource_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
@@ -303,7 +305,10 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         // Цель остаётся в задаче до конца ремонта.
         let finished = match kind {
             TaskKind::Reload { .. } => {
-                target_info.ammo as i32 >= target_info.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS)
+                target_info.ammo as i32
+                    >= target_info
+                        .base_values
+                        .get_attribute(crate::unit_values::ATTRIB_ROUNDS)
             }
             TaskKind::Upgrade { .. } => false,
             _ => !task_is_repair_due(&target_info, false),
@@ -324,7 +329,6 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         let move_kind = TaskKind::move_to(target, shop_info.grid, 2, CautionLevel::AvoidAllDamage);
         ctx.append_task(team, Some(header.id), priority, move_kind);
     }
-
 }
 // ---------------------------------------------------------------------------
 // TaskRemoveRubble / TaskRemoveMines
@@ -398,10 +402,10 @@ fn remove_rubble_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         }
     } else if clearer_info.orders == UnitOrder::Await || clearer_info.orders == UnitOrder::Sentry {
         let priority = ctx.priority_of(header.id);
-        let move_kind = TaskKind::move_to(clearer, target_info.grid, 1, CautionLevel::AvoidAllDamage);
+        let move_kind =
+            TaskKind::move_to(clearer, target_info.grid, 1, CautionLevel::AvoidAllDamage);
         ctx.append_task(team, Some(header.id), priority, move_kind);
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +448,10 @@ fn scavenge_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
     let mut site: Option<Point> = None;
     for id in ctx.list(UnitListKind::Stationary) {
         let Some(info) = ctx.unit(id) else { continue };
-        if matches!(info.unit_type, UnitType::LargeRubble | UnitType::SmallRubble) {
+        if matches!(
+            info.unit_type,
+            UnitType::LargeRubble | UnitType::SmallRubble
+        ) {
             site = Some(info.grid);
             break;
         }
@@ -463,7 +470,6 @@ fn scavenge_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
             ctx.append_task(info.team, Some(header.id), priority, move_kind);
         }
     }
-
 }
 
 /// `TaskScavenge::IsUnitUsable`.
@@ -548,7 +554,6 @@ fn place_mines_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         let move_kind = TaskKind::move_to(unit, site, 1, CautionLevel::AvoidNextTurnsFire);
         ctx.append_task(info.team, Some(header.id), priority, move_kind);
     }
-
 }
 
 /// `TaskPlaceMines::IsUnitUsable`.
@@ -602,22 +607,17 @@ fn clear_zone_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
     *state = clear_zone_state::EXAMINING_ZONES;
 
     let site = zones[0];
-    let occupant = ctx
-        .world
-        .units_at(site)
-        .iter()
-        .copied()
-        .find(|id| {
-            ctx.unit(*id)
-                .map(|info| {
-                    info.team != header.team
-                        || matches!(
-                            info.unit_type,
-                            UnitType::LargeRubble | UnitType::SmallRubble | UnitType::LandMine
-                        )
-                })
-                .unwrap_or(false)
-        });
+    let occupant = ctx.world.units_at(site).iter().copied().find(|id| {
+        ctx.unit(*id)
+            .map(|info| {
+                info.team != header.team
+                    || matches!(
+                        info.unit_type,
+                        UnitType::LargeRubble | UnitType::SmallRubble | UnitType::LandMine
+                    )
+            })
+            .unwrap_or(false)
+    });
 
     match occupant {
         Some(target) => {
@@ -641,7 +641,6 @@ fn clear_zone_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
             zones.remove(0);
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -673,27 +672,13 @@ fn check_assaults_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
 /// `Init` для misc-классов.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
-        TaskKind::GetMaterials { .. } => {
-            true
-        }
-        TaskKind::Repair { .. } | TaskKind::Reload { .. } | TaskKind::Upgrade { .. } => {
-            true
-        }
-        TaskKind::RemoveRubble(_) | TaskKind::RemoveMines { .. } => {
-            true
-        }
-        TaskKind::PlaceMines { .. } => {
-            true
-        }
-        TaskKind::Scavenge { .. } => {
-            true
-        }
-        TaskKind::ClearZone { .. } => {
-            true
-        }
-        TaskKind::CheckAssaults { .. } => {
-            true
-        }
+        TaskKind::GetMaterials { .. } => true,
+        TaskKind::Repair { .. } | TaskKind::Reload { .. } | TaskKind::Upgrade { .. } => true,
+        TaskKind::RemoveRubble(_) | TaskKind::RemoveMines { .. } => true,
+        TaskKind::PlaceMines { .. } => true,
+        TaskKind::Scavenge { .. } => true,
+        TaskKind::ClearZone { .. } => true,
+        TaskKind::CheckAssaults { .. } => true,
         _ => false,
     }
 }
@@ -769,7 +754,12 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `Execute(unit)` для misc-классов.
-pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::GetMaterials { .. } => {
             get_resource_end_turn(kind, ctx, header);
@@ -841,7 +831,9 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
                 resource.supplier = None;
             }
         }
-        TaskKind::Repair { repair } | TaskKind::Reload { repair } | TaskKind::Upgrade { repair } => {
+        TaskKind::Repair { repair }
+        | TaskKind::Reload { repair }
+        | TaskKind::Upgrade { repair } => {
             if repair.target_unit == Some(unit) {
                 ctx.remove_self(header.id);
             } else if repair.operator_unit == Some(unit) {
@@ -898,7 +890,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` для misc-классов.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::GetMaterials { .. }
         | TaskKind::Repair { .. }
@@ -951,9 +948,16 @@ pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: Ta
 }
 
 /// `ExchangeOperator` — `TaskRepair` (обмен цеха).
-pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn exchange_operator(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     let repair = match kind {
-        TaskKind::Repair { repair } | TaskKind::Reload { repair } | TaskKind::Upgrade { repair } => repair,
+        TaskKind::Repair { repair }
+        | TaskKind::Reload { repair }
+        | TaskKind::Upgrade { repair } => repair,
         _ => return false,
     };
 
@@ -980,7 +984,9 @@ pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
         .map(|info| info.grid)
         .unwrap_or(Point::ZERO);
 
-    if distance_squared(candidate.grid, target_grid) >= distance_squared(current_info.grid, target_grid) {
+    if distance_squared(candidate.grid, target_grid)
+        >= distance_squared(current_info.grid, target_grid)
+    {
         return false;
     }
 
@@ -992,7 +998,12 @@ pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 }
 
 /// `EventUnitDestroyed(unit)` для misc-классов.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::GetMaterials { resource, .. } => {
             if resource.requestor == Some(unit) || resource.supplier == Some(unit) {
@@ -1000,7 +1011,9 @@ pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
             }
             true
         }
-        TaskKind::Repair { repair } | TaskKind::Reload { repair } | TaskKind::Upgrade { repair } => {
+        TaskKind::Repair { repair }
+        | TaskKind::Reload { repair }
+        | TaskKind::Upgrade { repair } => {
             if repair.target_unit == Some(unit) || repair.operator_unit == Some(unit) {
                 ctx.remove_self(header.id);
             }
@@ -1051,8 +1064,7 @@ pub fn event_cargo_transfer(
 ) -> bool {
     match kind {
         TaskKind::GetMaterials { resource, .. } => {
-            if resource.supplier == Some(unit) || resource.requestor == Some(unit) {
-            }
+            if resource.supplier == Some(unit) || resource.requestor == Some(unit) {}
             true
         }
         _ => false,

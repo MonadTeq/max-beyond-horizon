@@ -136,11 +136,7 @@ pub fn restore_orders(unit: &mut UnitInfo) {
 ///
 /// Возвращает `true`, если вызывающий должен снять запрос пути
 /// (`ResourceManager_GetPathsManager().RemoveRequest(unit)`).
-pub fn set_new_order_int(
-    unit: &mut UnitInfo,
-    order: UnitOrder,
-    state: UnitOrderState,
-) -> bool {
+pub fn set_new_order_int(unit: &mut UnitInfo, order: UnitOrder, state: UnitOrderState) -> bool {
     if unit.orders == UnitOrder::Explode || unit.state == UnitOrderState::Destroy {
         return false;
     }
@@ -226,9 +222,9 @@ pub fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo) {
 
     if let Some(parent_id) = parent_id {
         if let Some(mut parent) = state.unit(parent_id).cloned() {
-            let storage_limit = parent.base_values.get_attribute(
-                crate::unit_values::ATTRIB_STORAGE,
-            );
+            let storage_limit = parent
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_STORAGE);
             if access::can_receive_units(&parent)
                 && i32::from(parent.storage) < storage_limit
                 && parent.team == unit.team
@@ -926,7 +922,10 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
                 .unwrap_or(0);
             let storable = receiver_unit
                 .as_ref()
-                .map(|unit| unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE))
+                .map(|unit| {
+                    unit.base_values
+                        .get_attribute(crate::unit_values::ATTRIB_STORAGE)
+                })
                 .unwrap_or(0);
 
             if stored >= storable {
@@ -963,7 +962,13 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     if cost != 0 {
         let is_diagonal_step = offset.x != 0 && offset.y != 0;
 
-        if paths_calculate_step(&mut ctx.unit, cost, is_diagonal_step, false, ctx.world.real_time) {
+        if paths_calculate_step(
+            &mut ctx.unit,
+            cost,
+            is_diagonal_step,
+            false,
+            ctx.world.real_time,
+        ) {
             ctx.unit.moved = 0;
             clear_movement_wait(&mut ctx.unit);
             ctx.unit.state = UnitOrderState::InTransition;
@@ -1155,7 +1160,9 @@ fn process_order_await(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
             if ctx.unit.unit_type == UnitType::Bridge && is_bridge_elevated(&ctx.unit) {
-                if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_none() {
+                if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT)
+                    .is_none()
+                {
                     ctx.set_new_order(UnitOrder::Move, UnitOrderState::Lower);
                 }
             }
@@ -1173,7 +1180,8 @@ fn process_order_await(ctx: &mut OrderContext<'_>) {
 
             if ctx.unit.unit_type == UnitType::Bridge
                 && is_bridge_elevated(&ctx.unit)
-                && access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_none()
+                && access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT)
+                    .is_none()
             {
                 ctx.set_new_order(UnitOrder::Move, UnitOrderState::Lower);
             }
@@ -1210,8 +1218,7 @@ fn process_order_transform(ctx: &mut OrderContext<'_>) {
             ctx.unit.orders = UnitOrder::PowerOn;
             ctx.unit.state = UnitOrderState::Init;
 
-            if ctx.world.teams[ctx.unit.team.0 as usize].team_type
-                == crate::team::TeamKind::Player
+            if ctx.world.teams[ctx.unit.team.0 as usize].team_type == crate::team::TeamKind::Player
             {
                 // TODO(P3): GameManager_OptimizeProduction + AutoSelectNext.
             }
@@ -1279,7 +1286,9 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
             }
         }
         UnitOrderState::Lower => {
-            if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT).is_some() {
+            if access::get_active_unit_with_flags(ctx.world, ctx.unit.grid, MOBILE_SEA_UNIT)
+                .is_some()
+            {
                 ctx.set_new_order(UnitOrder::Move, UnitOrderState::Elevate);
             } else if is_bridge_elevated(&ctx.unit) {
                 ctx.unit.image_index = ctx.unit.image_index.wrapping_sub(1);
@@ -1288,7 +1297,8 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
                     ctx.world.add_to_draw_list(ctx.id);
                 }
                 ctx.set_new_order(UnitOrder::Await, UnitOrderState::ExecutingOrder);
-            }        }
+            }
+        }
         UnitOrderState::NewOrder => {
             // C++ ставит `PendingAirGroupLeader` только для члена группового
             // списка (`UnitInfo::GetUnitList() != nullptr`).
@@ -1378,11 +1388,7 @@ fn pursue_enemy(ctx: &mut OrderContext<'_>) -> bool {
         && (!enemy_is_moving || enemy.state == UnitOrderState::ExecutingOrder)
     {
         // `Paths_RequestPath(unit, SameClassBlocks)` — путь к позиции атаки.
-        pathfinding::request_path(
-            ctx.world,
-            ctx.id,
-            access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-        );
+        pathfinding::request_path(ctx.world, ctx.id, access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
         return false;
     }
 
@@ -1474,8 +1480,8 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
         access::group_attack_order(ctx.world, ctx.id, true);
     } else if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.orders != UnitOrder::MoveToAttack {
         let target = ctx.data.move_to;
-        ctx.unit.path = pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target)
-            .map(UnitPath::Air);
+        ctx.unit.path =
+            pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target).map(UnitPath::Air);
     } else if pathfinding::request_path(
         ctx.world,
         ctx.id,
@@ -1510,7 +1516,11 @@ fn store_unit(ctx: &mut OrderContext<'_>) {
         return;
     };
 
-    if parent.storage < parent.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE) as i16 {
+    if parent.storage
+        < parent
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_STORAGE) as i16
+    {
         parent.storage = parent.storage.wrapping_add(1);
         ctx.world.write_unit(parent_id, parent);
     }
@@ -1798,7 +1808,12 @@ fn process_order_unload(ctx: &mut OrderContext<'_>) {
             ctx.unit.state = UnitOrderState::UnloadingInProgress;
 
             if access::is_unload_site_taken(ctx.world, &ctx.unit)
-                || access::paths_is_occupied(ctx.world, ctx.unit.grid, i32::from(ctx.unit.angle), ctx.unit.team)
+                || access::paths_is_occupied(
+                    ctx.world,
+                    ctx.unit.grid,
+                    i32::from(ctx.unit.angle),
+                    ctx.unit.team,
+                )
             {
                 ctx.unit.orders = UnitOrder::Await;
                 ctx.unit.state = UnitOrderState::ExecutingOrder;
@@ -2178,8 +2193,7 @@ fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
                 // тряски 0..15; полный цикл возвращает цель в исходное
                 // состояние, затем диверсант «расширяется».
                 if let Some(mut parent) = ctx.other(parent_id) {
-                    parent.shake_effect_state =
-                        parent.shake_effect_state.wrapping_add(1) & 0x0F;
+                    parent.shake_effect_state = parent.shake_effect_state.wrapping_add(1) & 0x0F;
                     ctx.world.write_unit(parent_id, parent);
                 }
 
@@ -2306,7 +2320,9 @@ fn pick_up_mine(state: &mut GameState, unit: &mut UnitInfo) {
         return;
     }
 
-    let storage_limit = unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE);
+    let storage_limit = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_STORAGE);
     if i32::from(unit.storage) >= storage_limit {
         return;
     }
@@ -2317,16 +2333,12 @@ fn pick_up_mine(state: &mut GameState, unit: &mut UnitInfo) {
         UnitType::LandMine
     };
 
-    let mine = state
-        .units_at(unit.grid)
-        .iter()
-        .copied()
-        .find(|id| {
-            state
-                .unit(*id)
-                .map(|other| other.unit_type == mine_type)
-                .unwrap_or(false)
-        });
+    let mine = state.units_at(unit.grid).iter().copied().find(|id| {
+        state
+            .unit(*id)
+            .map(|other| other.unit_type == mine_type)
+            .unwrap_or(false)
+    });
 
     if let Some(mine) = mine {
         state.destroy_unit(mine);
@@ -2360,8 +2372,7 @@ pub fn process_order(state: &mut GameState, id: UnitId) {
     };
 
     // Шапка `UnitsManager_ProcessOrder`.
-    if ctx.unit.shake_effect_state != 0
-        && !access::is_engaged_by_infiltrator(ctx.world, &ctx.unit)
+    if ctx.unit.shake_effect_state != 0 && !access::is_engaged_by_infiltrator(ctx.world, &ctx.unit)
     {
         // Инфильтратор, тряхнувший юнита, погиб или вышел из стелса.
         ctx.unit.shake_effect_state = 0;
@@ -2484,7 +2495,10 @@ mod tests {
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert!(unit.path.is_none(), "путь снимается на завершении");
         // Танк тратит по 1 единице скорости на клетку: 4 клетки → speed-4.
-        assert_eq!(unit.speed, unit.base_values.get_attribute(ATTRIB_SPEED) as u16 - 4);
+        assert_eq!(
+            unit.speed,
+            unit.base_values.get_attribute(ATTRIB_SPEED) as u16 - 4
+        );
     }
 
     #[test]
@@ -2610,7 +2624,11 @@ mod tests {
 
         // Начало хода возвращает скорость (`UpdateProduction`) — движение
         // продолжается с того же места.
-        let base_speed = state.unit(id).unwrap().base_values.get_attribute(ATTRIB_SPEED) as u16;
+        let base_speed = state
+            .unit(id)
+            .unwrap()
+            .base_values
+            .get_attribute(ATTRIB_SPEED) as u16;
         state.unit_mut(id).unwrap().speed = base_speed;
         state.set_order(id, UnitOrder::Move, UnitOrderState::Init);
         let mut ticks = 0;
@@ -2795,4 +2813,3 @@ mod tests {
         assert_eq!(state.unit(id).unwrap().orders, UnitOrder::Move);
     }
 }
-

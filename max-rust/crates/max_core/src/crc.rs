@@ -191,12 +191,7 @@ pub fn state_checksum(state: &GameState) -> u16 {
                 continue;
             }
 
-            crc_checksum = get_unit_list_checksum(
-                state,
-                kind,
-                TeamId(team as u8),
-                crc_checksum,
-            );
+            crc_checksum = get_unit_list_checksum(state, kind, TeamId(team as u8), crc_checksum);
         }
     }
 
@@ -408,7 +403,8 @@ mod tests {
 
         (0..bytes.len() / 2)
             .map(|index| {
-                let pair = std::str::from_utf8(&bytes[index * 2..index * 2 + 2]).expect("ascii hex");
+                let pair =
+                    std::str::from_utf8(&bytes[index * 2..index * 2 + 2]).expect("ascii hex");
                 u8::from_str_radix(pair, 16).expect("valid hex byte")
             })
             .collect()
@@ -467,18 +463,18 @@ mod tests {
             match parts.next().expect("record key") {
                 "crc_bytes" => {
                     let payload = hex_to_bytes(parts.next().expect("payload"));
-                    let expected = u16::from_str_radix(parts.next().expect("crc"), 16)
-                        .expect("hex crc");
+                    let expected =
+                        u16::from_str_radix(parts.next().expect("crc"), 16).expect("hex crc");
                     assert_eq!(crc16(&payload), expected, "crc_bytes {line}");
                     checked_bytes += 1;
                 }
                 "crc_word" => {
-                    let data = u16::from_str_radix(parts.next().expect("data"), 16)
-                        .expect("hex data");
-                    let state = u16::from_str_radix(parts.next().expect("state"), 16)
-                        .expect("hex state");
-                    let expected = u16::from_str_radix(parts.next().expect("crc"), 16)
-                        .expect("hex crc");
+                    let data =
+                        u16::from_str_radix(parts.next().expect("data"), 16).expect("hex data");
+                    let state =
+                        u16::from_str_radix(parts.next().expect("state"), 16).expect("hex state");
+                    let expected =
+                        u16::from_str_radix(parts.next().expect("crc"), 16).expect("hex crc");
                     assert_eq!(get_crc16_word(data, state), expected, "crc_word {line}");
                     checked_words += 1;
                 }

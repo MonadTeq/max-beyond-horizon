@@ -258,12 +258,8 @@ impl ResArchive {
             let pos = table_start + i * ENTRY_SIZE;
             let tag_raw = &data[pos..pos + TAG_LEN];
             let name = decode_tag(tag_raw);
-            let offset = u32::from_le_bytes([
-                data[pos + 8],
-                data[pos + 9],
-                data[pos + 10],
-                data[pos + 11],
-            ]);
+            let offset =
+                u32::from_le_bytes([data[pos + 8], data[pos + 9], data[pos + 10], data[pos + 11]]);
             let size = u32::from_le_bytes([
                 data[pos + 12],
                 data[pos + 13],
@@ -382,12 +378,9 @@ impl ResArchive {
     /// Тег сравнивается как C-строка (без учёта мусора после NUL), но с учётом
     /// регистра — как в эталонном парсере.
     pub fn read(&self, name: &str) -> Result<&[u8], ResError> {
-        let index = *self
-            .by_name
-            .get(name)
-            .ok_or_else(|| ResError::NotFound {
-                name: name.to_owned(),
-            })?;
+        let index = *self.by_name.get(name).ok_or_else(|| ResError::NotFound {
+            name: name.to_owned(),
+        })?;
 
         self.read_entry(index)
     }
@@ -469,7 +462,10 @@ fn decode_tag(raw: &[u8]) -> String {
 /// `.`, `_`, `-`, без `/`, `\`, `:` и `..`. Всё остальное (спрайт, карта,
 /// битые байты) — [`None`], чтобы вызывающий не принял данные за имя файла.
 pub fn parse_file_ref(bytes: &[u8]) -> Option<&str> {
-    let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(bytes.len());
     let name = &bytes[..end];
 
     if name.is_empty() {
@@ -557,9 +553,15 @@ mod tests {
         with_garbage[table_start + 6] = b'T';
         with_garbage[table_start + 7] = b'M';
 
-        assert_eq!(ResArchive::parse(&bytes).unwrap().read("ABCDEFGH").unwrap(), b"x");
         assert_eq!(
-            ResArchive::parse(&with_garbage).unwrap().read("ILOGO").unwrap(),
+            ResArchive::parse(&bytes).unwrap().read("ABCDEFGH").unwrap(),
+            b"x"
+        );
+        assert_eq!(
+            ResArchive::parse(&with_garbage)
+                .unwrap()
+                .read("ILOGO")
+                .unwrap(),
             b"y"
         );
     }
@@ -645,7 +647,11 @@ mod tests {
         assert_eq!(archive.file_reference("TRAVERSAL"), None);
         assert_eq!(archive.file_reference("ABSOLUTE"), None);
         assert_eq!(archive.file_reference("EMPTY"), None);
-        assert_eq!(archive.file_reference("MISSING"), None, "нет тега — нет ссылки");
+        assert_eq!(
+            archive.file_reference("MISSING"),
+            None,
+            "нет тега — нет ссылки"
+        );
 
         assert_eq!(parse_file_ref(b"tank1.spw\0"), Some("tank1.spw"));
         assert_eq!(parse_file_ref(b""), None);
@@ -658,8 +664,8 @@ mod tests {
     /// `.spw`, 721 всего). Если игровых данных нет, тест пропускается.
     #[test]
     fn real_max_res_exposes_ascii_file_references() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../max-original/MAX.RES");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
         if !path.is_file() {
             return;
@@ -692,6 +698,9 @@ mod tests {
         }
 
         assert!(spw >= 600, "ожидались сотни ссылок .spw, найдено {spw}");
-        assert!(other >= 20, "ссылки .wrl/.flc/.msc/.mve тоже читаются: {other}");
+        assert!(
+            other >= 20,
+            "ссылки .wrl/.flc/.msc/.mve тоже читаются: {other}"
+        );
     }
 }

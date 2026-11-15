@@ -210,10 +210,7 @@ impl UnitPath {
     pub fn end(&self) -> (i16, i16) {
         match self {
             Self::Air(path) => (path.end_x, path.end_y),
-            Self::Builder(path) => (
-                i16::from(path.direction_x),
-                i16::from(path.direction_y),
-            ),
+            Self::Builder(path) => (i16::from(path.direction_x), i16::from(path.direction_y)),
             Self::Ground(path) => (path.end_x, path.end_y),
         }
     }
@@ -222,10 +219,7 @@ impl UnitPath {
     #[inline]
     pub fn remaining_steps(&self) -> usize {
         match self {
-            Self::Ground(path) => path
-                .steps
-                .len()
-                .saturating_sub(path.step_index as usize),
+            Self::Ground(path) => path.steps.len().saturating_sub(path.step_index as usize),
             _ => 0,
         }
     }
@@ -652,7 +646,10 @@ mod tests {
         assert_eq!(unit.live_attack, 0);
         assert!(unit.tasks_enabled);
         assert_eq!(unit.build_rate, 1);
-        assert_eq!(unit.base_values, crate::unit_values::base_unit_values(UnitType::Tank));
+        assert_eq!(
+            unit.base_values,
+            crate::unit_values::base_unit_values(UnitType::Tank)
+        );
         assert!(!unit.has_move_order());
         unit.visible_to_team
             .iter()
@@ -674,7 +671,11 @@ mod tests {
     #[test]
     fn complex_membership_matches_cpp_flags() {
         use crate::enums::unit_flags;
-        let mut unit = UnitInfo::new(UnitType::PowerGenerator, TeamId::RED, UnitId::new(TeamId::RED, 5));
+        let mut unit = UnitInfo::new(
+            UnitType::PowerGenerator,
+            TeamId::RED,
+            UnitId::new(TeamId::RED, 5),
+        );
         unit.flags = unit_flags::BUILDING;
         assert!(unit.is_complex_member());
         unit.flags |= unit_flags::GROUND_COVER;
@@ -717,7 +718,11 @@ mod tests {
             end_x: 10,
             end_y: 12,
             step_index: 1,
-            steps: vec![PathStep::new(1, 1), PathStep::new(2, 2), PathStep::new(3, 3)],
+            steps: vec![
+                PathStep::new(1, 1),
+                PathStep::new(2, 2),
+                PathStep::new(3, 3),
+            ],
         });
         assert_eq!(path.end(), (10, 12));
         assert_eq!(path.remaining_steps(), 2);

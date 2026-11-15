@@ -34,11 +34,11 @@ use crate::geo::Point;
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 
 use super::task::{
-    task_is_adjacent, task_is_unit_doomed_to_destruction, task_is_ready_to_take_orders,
+    task_is_adjacent, task_is_ready_to_take_orders, task_is_unit_doomed_to_destruction,
     task_retreat_if_necessary, TASK_PRIORITY_EMERGENCY,
 };
 use super::task_manager::TaskManager;
-use super::tasks::{TaskKind, TaskCtx};
+use super::tasks::{TaskCtx, TaskKind};
 use super::AiReactionState;
 
 // ---------------------------------------------------------------------------
@@ -47,33 +47,51 @@ use super::AiReactionState;
 
 /// `AiAttack_GetTargetValue` (`aiattack.cpp:46`).
 pub fn get_target_value(unit: &UnitInfo) -> i32 {
-    let attack_range = unit.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
-    let turns_to_build = unit.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
+    let attack_range = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_RANGE);
+    let turns_to_build = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_TURNS);
 
     if turns_to_build > 4 {
         if attack_range >= 10
             || unit.unit_type == UnitType::Commando
             || unit.unit_type == UnitType::Submarine
-            || unit.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS) < 8
+            || unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_TURNS)
+                < 8
         {
             attack_range
         } else {
             10
         }
     } else {
-        unit.base_values.get_attribute(crate::unit_values::ATTRIB_SCAN)
+        unit.base_values
+            .get_attribute(crate::unit_values::ATTRIB_SCAN)
     }
 }
 
 /// `AiAttack_GetReach` (`aiattack.cpp:264`).
 pub fn get_reach(unit: &UnitInfo) -> i32 {
-    let mut result = unit.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
+    let mut result = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_RANGE);
 
-    if unit.base_values.get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE) != 0 {
-        result += unit.base_values.get_attribute(crate::unit_values::ATTRIB_SPEED);
+    if unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE)
+        != 0
+    {
+        result += unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_SPEED);
     }
 
-    let scan = unit.base_values.get_attribute(crate::unit_values::ATTRIB_SCAN);
+    let scan = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_SCAN);
     if scan > result {
         result = scan;
     }
@@ -97,7 +115,10 @@ pub fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::Te
     world.unit_list(UnitListKind::Stationary).iter().any(|id| {
         world
             .unit(*id)
-            .map(|other| other.team == team && crate::access::squared_distance(unit.grid, other.grid) <= distance)
+            .map(|other| {
+                other.team == team
+                    && crate::access::squared_distance(unit.grid, other.grid) <= distance
+            })
             .unwrap_or(false)
     })
 }
@@ -132,7 +153,9 @@ pub fn can_attack(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> 
         }
     }
 
-    let range = attacker.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
+    let range = attacker
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_RANGE);
 
     crate::access::is_valid_attack_target(world, attacker, target)
         && crate::access::is_within_attack_range(world, attacker, target.grid, range)
@@ -168,8 +191,12 @@ pub fn set_attack_target_cooldown(world: &mut GameState, unit: UnitId) {
 
 /// `AiAttack_EstimateAttackValue` (`aiattack.cpp:506`).
 pub fn estimate_attack_value(unit: &UnitInfo, predicted_damage: i32) -> i32 {
-    let hits = unit.base_values.get_attribute(crate::unit_values::ATTRIB_HITS);
-    let turns = unit.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
+    let hits = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_HITS);
+    let turns = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_TURNS);
 
     if hits == 0 {
         return 0;
@@ -195,7 +222,9 @@ pub fn is_attack_profitable_with(
     let mut damage_to_enemy = damage_to_enemy;
 
     if damage_to_friendly > 0 {
-        let turns = friendly_unit.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
+        let turns = friendly_unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_TURNS);
         if turns != 0 {
             damage_to_enemy -= (projected_damage * damage_to_friendly) / turns;
         }
@@ -238,11 +267,7 @@ pub fn is_attack_profitable(
 }
 
 /// `AiAttack_DecideDesperationAttack` (`aiattack.cpp:68`).
-pub fn decide_desperation_attack(
-    world: &mut GameState,
-    attacker: UnitId,
-    target: UnitId,
-) -> bool {
+pub fn decide_desperation_attack(world: &mut GameState, attacker: UnitId, target: UnitId) -> bool {
     let Some(target_info) = world.unit(target).cloned() else {
         return false;
     };
@@ -265,15 +290,24 @@ pub fn decide_desperation_attack(
 
     let mut found = false;
     for id in world.unit_list(UnitListKind::Stationary) {
-        let Some(other) = world.unit(*id) else { continue };
+        let Some(other) = world.unit(*id) else {
+            continue;
+        };
 
         if other.team == attacker_info.team
             && other.is_visible_to_team(target_info.team)
-            && other.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS) > attacker_turns
+            && other
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_TURNS)
+                > attacker_turns
             && crate::access::is_valid_attack_target(world, &target_info, other)
         {
-            let range = target_info.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE)
-                + target_info.base_values.get_attribute(crate::unit_values::ATTRIB_SPEED);
+            let range = target_info
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_RANGE)
+                + target_info
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_SPEED);
 
             if crate::access::is_within_attack_range(world, &target_info, other.grid, range) {
                 found = true;
@@ -295,9 +329,13 @@ pub fn get_target_worth(world: &GameState, attacker: &UnitInfo, target: &UnitInf
         return 0;
     }
 
-    let rounds = attacker.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+    let rounds = attacker
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
     let damage = crate::combat::get_attack_damage(attacker, target, 0);
-    let turns = target.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
+    let turns = target
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_TURNS);
 
     let value = (rounds * damage * turns * 7) / (i32::from(target.hits) * 12);
 
@@ -323,7 +361,9 @@ pub fn get_target_flags(
     team: crate::team::TeamId,
 ) -> u32 {
     let mut result: u32 = 0;
-    let target_attack = target.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK);
+    let target_attack = target
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ATTACK);
 
     if target.ammo > 0 && target.orders != UnitOrder::Disable {
         if target_attack > 35 {
@@ -429,7 +469,13 @@ pub fn select_target_to_attack(
 
         // Цель должна быть в пределах дальности обнаружения/стрельбы.
         let mut target_position = spotted.last_position;
-        if !target.is_visible_to_team(team) && world.ai_heat_map_complete(team, i32::from(target_position.x), i32::from(target_position.y)) > 0 {
+        if !target.is_visible_to_team(team)
+            && world.ai_heat_map_complete(
+                team,
+                i32::from(target_position.x),
+                i32::from(target_position.y),
+            ) > 0
+        {
             target_position = target.grid;
         }
 
@@ -482,10 +528,8 @@ pub fn select_target_to_attack(
         let mut damage_potential = 0;
 
         if let Some(map) = &damage_map {
-            damage_potential = map.damage_at(
-                i32::from(target_position.x),
-                i32::from(target_position.y),
-            );
+            damage_potential =
+                map.damage_at(i32::from(target_position.x), i32::from(target_position.y));
 
             if damage_potential < i32::from(attacker.hits) {
                 damage_potential = 0;
@@ -548,11 +592,19 @@ pub fn process_attack(
         return false;
     }
 
-    if attacker_info.delayed_reaction != 0 || world.ai.reaction_state == AiReactionState::AnimationsActive {
+    if attacker_info.delayed_reaction != 0
+        || world.ai.reaction_state == AiReactionState::AnimationsActive
+    {
         let kind = TaskKind::wait_to_attack(attacker);
         tm.append_task(
             world,
-            super::Task::new(0, attacker_info.team, None, super::task::TASK_PRIORITY_ATTACK_DEFAULT, kind),
+            super::Task::new(
+                0,
+                attacker_info.team,
+                None,
+                super::task::TASK_PRIORITY_ATTACK_DEFAULT,
+                kind,
+            ),
         );
         return true;
     }
@@ -644,8 +696,12 @@ pub fn process_attack(
         };
 
         let order = if order == UnitOrder::AwaitStealUnit
-            && !crate::combat::is_valid_stealth_target(world, &attacker_info, &target_info, UnitOrder::AwaitStealUnit)
-        {
+            && !crate::combat::is_valid_stealth_target(
+                world,
+                &attacker_info,
+                &target_info,
+                UnitOrder::AwaitStealUnit,
+            ) {
             UnitOrder::AwaitDisableUnit
         } else {
             order
@@ -678,7 +734,11 @@ pub fn process_attack(
         world.write_unit(attacker, info);
     }
 
-    world.set_order(attacker, UnitOrder::MoveToAttack, UnitOrderState::ExecutingOrder);
+    world.set_order(
+        attacker,
+        UnitOrder::MoveToAttack,
+        UnitOrderState::ExecutingOrder,
+    );
 
     true
 }
@@ -704,7 +764,9 @@ pub fn find_attack_support(
     let ids: Vec<UnitId> = world.unit_list(kind).to_vec();
 
     for id in ids {
-        let Some(unit) = world.unit(id).cloned() else { continue };
+        let Some(unit) = world.unit(id).cloned() else {
+            continue;
+        };
 
         if unit.team != team || unit.shots == 0 || !task_is_ready_to_take_orders(world, id) {
             continue;
@@ -714,11 +776,14 @@ pub fn find_attack_support(
             continue;
         }
 
-        if target_info.unit_type == UnitType::LandMine || target_info.unit_type == UnitType::SeaMine {
+        if target_info.unit_type == UnitType::LandMine || target_info.unit_type == UnitType::SeaMine
+        {
             let attack_radius = unit
                 .base_values
                 .get_attribute(crate::unit_values::ATTRIB_ATTACK_RADIUS);
-            let turns = unit.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
+            let turns = unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_TURNS);
 
             if !(attack_radius > 0 || turns < 6) {
                 continue;
@@ -752,7 +817,8 @@ pub fn choose_site_for_attacker(
     range: i32,
     _mode: bool,
 ) -> Option<(Point, i32)> {
-    let damage_map = super::strategy::get_damage_potential_map(world, unit.team, unit, caution_level);
+    let damage_map =
+        super::strategy::get_damage_potential_map(world, unit.team, unit, caution_level);
 
     let mut best: Option<(i32, i32, Point)> = None;
     let mut minimum_damage = i16::MAX as i32;
@@ -823,7 +889,8 @@ pub fn choose_site_to_sabotage(
     target: &UnitInfo,
     caution_level: CautionLevel,
 ) -> Option<(Point, i32)> {
-    let damage_map = super::strategy::get_damage_potential_map(world, unit.team, unit, caution_level);
+    let damage_map =
+        super::strategy::get_damage_potential_map(world, unit.team, unit, caution_level);
 
     if task_is_adjacent(target, unit.grid.x, unit.grid.y) {
         let damage = damage_map
@@ -896,7 +963,12 @@ pub fn choose_site_to_sabotage(
 ///
 /// `mode` — «атаковать после движения» (C++ `mode = true`); влияет на ветку
 /// подготовки и резерва.
-pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId, mode: bool) -> bool {
+pub fn evaluate_attack(
+    tm: &mut TaskManager,
+    world: &mut GameState,
+    unit: UnitId,
+    mode: bool,
+) -> bool {
     if world.play_mode == crate::enums::PlayMode::Unknown {
         return false;
     }
@@ -921,7 +993,13 @@ pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId
         let kind = TaskKind::wait_to_attack(unit);
         tm.append_task(
             world,
-            super::Task::new(0, info.team, None, super::task::TASK_PRIORITY_ATTACK_DEFAULT, kind),
+            super::Task::new(
+                0,
+                info.team,
+                None,
+                super::task::TASK_PRIORITY_ATTACK_DEFAULT,
+                kind,
+            ),
         );
 
         return world.ai.reaction_state == AiReactionState::AnimationsActive;
@@ -950,8 +1028,13 @@ pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId
     // Порядок RNG 1:1 с C++: `Randomizer_Generate(2)`.
     let consider_cooldown = world.rng.generate_i32(2) != 0;
 
-    let range = info.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE) + attack_radius;
-    let scan = info.base_values.get_attribute(crate::unit_values::ATTRIB_SCAN);
+    let range = info
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_RANGE)
+        + attack_radius;
+    let scan = info
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_SCAN);
 
     let spotted = select_target_to_attack(
         world,
@@ -966,7 +1049,8 @@ pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId
         return false;
     };
 
-    let Some((target_id, _, _)) = super::tasks::combat::spotted_target_for_ai(world, info.team, spotted_index)
+    let Some((target_id, _, _)) =
+        super::tasks::combat::spotted_target_for_ai(world, info.team, spotted_index)
     else {
         return false;
     };
@@ -986,7 +1070,13 @@ pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId
         let kind = TaskKind::wait_to_attack(unit);
         tm.append_task(
             world,
-            super::Task::new(0, info.team, None, super::task::TASK_PRIORITY_ATTACK_DEFAULT, kind),
+            super::Task::new(
+                0,
+                info.team,
+                None,
+                super::task::TASK_PRIORITY_ATTACK_DEFAULT,
+                kind,
+            ),
         );
         return true;
     }
@@ -1000,9 +1090,10 @@ pub fn evaluate_attack(tm: &mut TaskManager, world: &mut GameState, unit: UnitId
     let target_turns = target
         .base_values
         .get_attribute(crate::unit_values::ATTRIB_TURNS);
-    let unit_turns = info.base_values.get_attribute(crate::unit_values::ATTRIB_TURNS);
-    let shots_damage =
-        i32::from(info.shots) * crate::combat::get_attack_damage(&info, &target, 0);
+    let unit_turns = info
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_TURNS);
+    let shots_damage = i32::from(info.shots) * crate::combat::get_attack_damage(&info, &target, 0);
 
     if mode
         && info.speed > 0

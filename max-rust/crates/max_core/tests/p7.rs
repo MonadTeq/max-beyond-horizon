@@ -173,8 +173,8 @@ fn replay_vector() -> ReplayVector {
             )),
             "replay_ticks" => ticks = parts.next().expect("ticks").parse().expect("ticks"),
             "replay_checksum" => {
-                checksum = u16::from_str_radix(parts.next().expect("checksum"), 16)
-                    .expect("checksum")
+                checksum =
+                    u16::from_str_radix(parts.next().expect("checksum"), 16).expect("checksum")
             }
             "replay_digest" => digest = hex_to_bytes(parts.next().expect("digest")),
             _ => {}
@@ -237,7 +237,12 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
     state.map = output.map;
 
     // Команды: красные и синие — люди, серые/зелёные не играют, ALIEN — компьютер.
-    let kinds = [TeamKind::Player, TeamKind::None, TeamKind::Player, TeamKind::None];
+    let kinds = [
+        TeamKind::Player,
+        TeamKind::None,
+        TeamKind::Player,
+        TeamKind::None,
+    ];
     for (team, kind) in kinds.iter().enumerate() {
         state.teams[team] = TeamInfo::new();
         state.teams[team].team_type = *kind;
@@ -281,7 +286,10 @@ fn mini_replay_matches_cpp_digest_bit_for_bit() {
         digest.len(),
         replay.digest.len()
     );
-    assert_eq!(crc::replay_digest_crc(&state), crc::replay_digest_crc(&state.clone()));
+    assert_eq!(
+        crc::replay_digest_crc(&state),
+        crc::replay_digest_crc(&state.clone())
+    );
 
     // Магия и CRC в конце.
     assert_eq!(&digest[..8], crc::REPLAY_DIGEST_MAGIC);
@@ -297,7 +305,10 @@ fn mini_replay_is_deterministic_over_two_runs() {
     let first = build_replay_state(&replay);
     let second = build_replay_state(&replay);
 
-    assert_eq!(crc::replay_digest_bytes(&first), crc::replay_digest_bytes(&second));
+    assert_eq!(
+        crc::replay_digest_bytes(&first),
+        crc::replay_digest_bytes(&second)
+    );
     assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
     assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
 }
@@ -358,7 +369,10 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     assert_eq!(state.mission_category, MissionCategory::Campaign);
     assert_eq!(state.mission_index, 1);
     assert_eq!(state.player_team, TeamId::RED);
-    assert_eq!(state.teams[TeamId::RED.0 as usize].team_type, TeamKind::Player);
+    assert_eq!(
+        state.teams[TeamId::RED.0 as usize].team_type,
+        TeamKind::Player
+    );
 
     let research = green_count(&state, UnitType::ResearchCenter);
     let greenhouses = green_count(&state, UnitType::Greenhouse);
@@ -413,7 +427,10 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
     assert_eq!(green_count(&state, UnitType::ResearchCenter), 0);
 
     let status = victory::evaluate_status(&state, state.turn_counter);
-    assert_eq!(status.team_status[TeamId::RED.0 as usize], WinLossState::Won);
+    assert_eq!(
+        status.team_status[TeamId::RED.0 as usize],
+        WinLossState::Won
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +482,10 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
     }
 
     assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::replay_digest_bytes(&first), crc::replay_digest_bytes(&second));
+    assert_eq!(
+        crc::replay_digest_bytes(&first),
+        crc::replay_digest_bytes(&second)
+    );
     assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
 }
 

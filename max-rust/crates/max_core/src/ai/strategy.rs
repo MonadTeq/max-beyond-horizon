@@ -42,8 +42,8 @@
 
 use crate::enums::{
     unit_flags, AiStrategy, CautionLevel, Opponent, ResearchTopic, TeamClan, UnitOrder,
-    UnitOrderState, UnitType, AI_STRATEGY_MAX, INFO_MAP_EXPLORED,
-    INFO_MAP_MINE_FIELD, INFO_MAP_NO_INFO,
+    UnitOrderState, UnitType, AI_STRATEGY_MAX, INFO_MAP_EXPLORED, INFO_MAP_MINE_FIELD,
+    INFO_MAP_NO_INFO,
 };
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::{Point, MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
@@ -51,8 +51,8 @@ use crate::team::{TeamId, TeamKind};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 
 use super::task::{
-    TASK_PRIORITY_ASSIST_MOVE, TASK_PRIORITY_ATTACK_DEFAULT,
-    TASK_PRIORITY_ATTACK_MOBILE, TASK_PRIORITY_ATTACK_PRIORITY_TARGET, TASK_PRIORITY_CHECK_ASSAULTS, TASK_PRIORITY_ESCORT,
+    TASK_PRIORITY_ASSIST_MOVE, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_ATTACK_MOBILE,
+    TASK_PRIORITY_ATTACK_PRIORITY_TARGET, TASK_PRIORITY_CHECK_ASSAULTS, TASK_PRIORITY_ESCORT,
     TASK_PRIORITY_EXPLORE, TASK_PRIORITY_FIND_MINES, TASK_PRIORITY_FRONTIER,
     TASK_PRIORITY_MANAGE_BUILDINGS, TASK_PRIORITY_SCAVENGE,
 };
@@ -402,7 +402,12 @@ impl AiPlayer {
                 moving_unit: None,
             };
 
-            let task_id = world.ai_append_task(self.player_team, None, super::task::TASK_PRIORITY_EMERGENCY, kind);
+            let task_id = world.ai_append_task(
+                self.player_team,
+                None,
+                super::task::TASK_PRIORITY_EMERGENCY,
+                kind,
+            );
 
             *slot = Some(task_id);
         }
@@ -480,7 +485,8 @@ impl AiPlayer {
     pub fn remove_unit(&mut self, unit: UnitId) {
         self.air_force.retain(|id| *id != unit);
         self.ground_forces.retain(|id| *id != unit);
-        self.spotted_units.retain(|spotted| spotted.unit != Some(unit));
+        self.spotted_units
+            .retain(|spotted| spotted.unit != Some(unit));
     }
 
     /// `AiPlayer::AddMilitaryUnit` (`aiplayer.cpp:2195`).
@@ -557,7 +563,8 @@ impl AiPlayer {
 
         if self.find_mines_task.is_none() {
             let kind = TaskKind::find_mines(info.grid);
-            let task_id = world.ai_append_task(self.player_team, None, TASK_PRIORITY_FIND_MINES, kind);
+            let task_id =
+                world.ai_append_task(self.player_team, None, TASK_PRIORITY_FIND_MINES, kind);
 
             self.find_mines_task = Some(task_id);
         }
@@ -573,11 +580,16 @@ impl AiPlayer {
 
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
             for id in world.unit_list(kind) {
-                let Some(unit) = world.unit(*id) else { continue };
+                let Some(unit) = world.unit(*id) else {
+                    continue;
+                };
 
                 if unit.team == self.player_team
                     && unit.hits > 0
-                    && unit.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK) > 0
+                    && unit
+                        .base_values
+                        .get_attribute(crate::unit_values::ATTRIB_ATTACK)
+                        > 0
                 {
                     result += normal_rate_build_cost(world, unit.team, unit.unit_type);
                 }
@@ -602,8 +614,7 @@ impl AiPlayer {
             .tasks()
             .iter()
             .filter(|task| {
-                task.team == self.player_team
-                    && task.get_type() == super::task::TASK_TYPE_ATTACK
+                task.team == self.player_team && task.get_type() == super::task::TASK_TYPE_ATTACK
             })
             .map(|task| task.id)
             .collect();
@@ -644,7 +655,12 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::DetermineAttack` (`aiplayer.cpp:194`).
-    pub fn determine_attack(&mut self, world: &mut GameState, spotted_index: u32, mut task_priority: u16) {
+    pub fn determine_attack(
+        &mut self,
+        world: &mut GameState,
+        spotted_index: u32,
+        mut task_priority: u16,
+    ) {
         let already_tasked = self
             .spotted_units
             .get(spotted_index as usize)
@@ -655,11 +671,9 @@ impl AiPlayer {
             return;
         }
 
-        let Some((target_id, position, target_type)) = super::tasks::combat::spotted_target_for_ai(
-            world,
-            self.player_team,
-            spotted_index,
-        ) else {
+        let Some((target_id, position, target_type)) =
+            super::tasks::combat::spotted_target_for_ai(world, self.player_team, spotted_index)
+        else {
             return;
         };
 
@@ -675,9 +689,9 @@ impl AiPlayer {
 
         let target_flags =
             super::attack::get_target_flags(world, &target, &target, self.player_team) as u16;
-        let target_task_priority = target_flags.wrapping_add(task_priority).wrapping_add(
-            super::task::TASK_PRIORITY_OFFSET_CENSUS_SLACK,
-        );
+        let target_task_priority = target_flags
+            .wrapping_add(task_priority)
+            .wrapping_add(super::task::TASK_PRIORITY_OFFSET_CENSUS_SLACK);
 
         let task_limit = self.attack_tasks.len() as i32;
 
@@ -729,7 +743,9 @@ impl AiPlayer {
         let mut result = 0;
 
         for id in world.unit_list(kind) {
-            let Some(other) = world.unit(*id) else { continue };
+            let Some(other) = world.unit(*id) else {
+                continue;
+            };
             if other.team == team {
                 result += get_projected_damage(world, other, unit, caution_level);
             }
@@ -739,9 +755,25 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetPredictedAttack` (`aiplayer.cpp:3307`).
-    pub fn get_predicted_attack(&self, world: &GameState, unit: &UnitInfo, caution: CautionLevel) -> i32 {
-        Self::get_total_projected_damage(world, unit, caution, self.player_team, UnitListKind::MobileLandSea)
-            + Self::get_total_projected_damage(world, unit, caution, self.player_team, UnitListKind::MobileAir)
+    pub fn get_predicted_attack(
+        &self,
+        world: &GameState,
+        unit: &UnitInfo,
+        caution: CautionLevel,
+    ) -> i32 {
+        Self::get_total_projected_damage(
+            world,
+            unit,
+            caution,
+            self.player_team,
+            UnitListKind::MobileLandSea,
+        ) + Self::get_total_projected_damage(
+            world,
+            unit,
+            caution,
+            self.player_team,
+            UnitListKind::MobileAir,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -811,8 +843,12 @@ impl AiPlayer {
             .filter(|continent| continent.viable)
             .collect();
 
-        let isolated_continents = viable.iter().filter(|continent| continent.isolated).count() as i32;
-        let close_proximity = viable.iter().filter(|continent| continent.close_proximity).count() as i32;
+        let isolated_continents =
+            viable.iter().filter(|continent| continent.isolated).count() as i32;
+        let close_proximity = viable
+            .iter()
+            .filter(|continent| continent.close_proximity)
+            .count() as i32;
         let count = viable.len() as i32;
 
         strategy_scores[AiStrategy::Missiles as usize] = count;
@@ -826,11 +862,8 @@ impl AiPlayer {
         {
             strategy_scores[AiStrategy::Defensive as usize] = count;
 
-            strategy_scores[AiStrategy::ScoutHorde as usize] = if isolated_continents > 0 {
-                1
-            } else {
-                count
-            };
+            strategy_scores[AiStrategy::ScoutHorde as usize] =
+                if isolated_continents > 0 { 1 } else { count };
 
             if opponent >= Opponent::Master as u8 {
                 strategy_scores[AiStrategy::ScoutHorde as usize] *= 2;
@@ -854,7 +887,8 @@ impl AiPlayer {
         self.strategy = AiStrategy::Random;
 
         // Команды выбирают разные стратегии (C++ исключает чужие).
-        let mut potential_strategies = strategy_scores.iter().filter(|score| **score > 0).count() as i32;
+        let mut potential_strategies =
+            strategy_scores.iter().filter(|score| **score > 0).count() as i32;
 
         for team in 0..PLAYER_TEAM_COUNT {
             let team_id = TeamId(team as u8);
@@ -1117,7 +1151,9 @@ impl AiPlayer {
         // Питание зданий (структурно, как C++: рудные станции всегда ON).
         let mut fuel_reserves = 0;
         for id in world.unit_list(UnitListKind::Stationary) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
             if unit.team == self.player_team && unit.unit_type == UnitType::FDump {
                 fuel_reserves += i32::from(unit.storage);
             }
@@ -1125,7 +1161,9 @@ impl AiPlayer {
 
         let mut power_on = Vec::new();
         for id in world.unit_list(UnitListKind::Stationary) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
             if unit.team != self.player_team {
                 continue;
             }
@@ -1157,7 +1195,9 @@ impl AiPlayer {
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
             let ids: Vec<UnitId> = world.unit_list(kind).to_vec();
             for id in ids {
-                let Some(unit) = world.unit(id).cloned() else { continue };
+                let Some(unit) = world.unit(id).cloned() else {
+                    continue;
+                };
                 if unit.team != self.player_team {
                     continue;
                 }
@@ -1225,7 +1265,12 @@ impl AiPlayer {
         // Разведка и обследование.
         if position.x != 0 || position.y != 0 {
             let survey_kind = TaskKind::survey(position);
-            world.ai_append_task(team, None, super::task::TASK_PRIORITY_AUTO_SURVEY, survey_kind);
+            world.ai_append_task(
+                team,
+                None,
+                super::task::TASK_PRIORITY_AUTO_SURVEY,
+                survey_kind,
+            );
 
             let explore_kind = TaskKind::explore(position);
             world.ai_append_task(team, None, TASK_PRIORITY_EXPLORE, explore_kind);
@@ -1258,7 +1303,8 @@ impl AiPlayer {
                 units: Vec::new(),
                 site: position,
             };
-            let task_id = world.ai_append_task(team, None, super::task::TASK_PRIORITY_DEFENSE_RESERVE, kind);
+            let task_id =
+                world.ai_append_task(team, None, super::task::TASK_PRIORITY_DEFENSE_RESERVE, kind);
             self.defense_reserve_task = Some(task_id);
         }
 
@@ -1266,7 +1312,9 @@ impl AiPlayer {
         let mut escorts = Vec::new();
         for kind_list in [UnitListKind::MobileAir, UnitListKind::MobileLandSea] {
             for id in world.unit_list(kind_list) {
-                let Some(unit) = world.unit(*id) else { continue };
+                let Some(unit) = world.unit(*id) else {
+                    continue;
+                };
                 if unit.team != team {
                     continue;
                 }
@@ -1282,7 +1330,11 @@ impl AiPlayer {
                     escorts.push((*id, escort_type));
                 }
 
-                if unit.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) > 0 {
+                if unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_AMMO)
+                    > 0
+                {
                     self.add_military_unit(world, *id);
                 }
             }
@@ -1300,8 +1352,15 @@ impl AiPlayer {
 
         // Военные юниты стационарных зданий.
         for id in world.unit_list(UnitListKind::Stationary) {
-            let Some(unit) = world.unit(*id) else { continue };
-            if unit.team == team && unit.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) > 0 {
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
+            if unit.team == team
+                && unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_AMMO)
+                    > 0
+            {
                 self.add_military_unit(world, *id);
             }
         }
@@ -1309,8 +1368,12 @@ impl AiPlayer {
         // Ключевые объекты противника → атака.
         let spotted: Vec<usize> = (0..self.spotted_units.len()).collect();
         for index in spotted {
-            let Some(unit_id) = self.spotted_units[index].unit else { continue };
-            let Some(unit) = world.unit(unit_id) else { continue };
+            let Some(unit_id) = self.spotted_units[index].unit else {
+                continue;
+            };
+            let Some(unit) = world.unit(unit_id) else {
+                continue;
+            };
 
             if Self::is_key_facility(unit.unit_type) && self.is_enemy_team(world, unit.team) {
                 self.determine_attack(world, index as u32, TASK_PRIORITY_ATTACK_DEFAULT);
@@ -1337,7 +1400,9 @@ impl AiPlayer {
 
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
             for id in world.unit_list(kind) {
-                let Some(unit) = world.unit(*id) else { continue };
+                let Some(unit) = world.unit(*id) else {
+                    continue;
+                };
                 if unit.team != self.player_team || unit.hits == 0 {
                     continue;
                 }
@@ -1365,8 +1430,12 @@ impl AiPlayer {
         let mut best: Option<(i32, Point)> = None;
 
         for spotted in &self.spotted_units {
-            let Some(unit_id) = spotted.unit else { continue };
-            let Some(unit) = world.unit(unit_id) else { continue };
+            let Some(unit_id) = spotted.unit else {
+                continue;
+            };
+            let Some(unit) = world.unit(unit_id) else {
+                continue;
+            };
 
             if unit.hits == 0 || !self.is_enemy_team(world, unit.team) {
                 continue;
@@ -1375,7 +1444,10 @@ impl AiPlayer {
             let last_position = spotted.last_position_of(world);
             let distance = crate::access::squared_distance(position, last_position);
 
-            if best.map(|(best_distance, _)| distance < best_distance).unwrap_or(true) {
+            if best
+                .map(|(best_distance, _)| distance < best_distance)
+                .unwrap_or(true)
+            {
                 best = Some((distance, last_position));
             }
         }
@@ -1394,7 +1466,11 @@ impl AiPlayer {
             return true;
         }
 
-        let pending = self.tasks_pending || world.ai.task_manager.has_pending_work(world, self.player_team);
+        let pending = self.tasks_pending
+            || world
+                .ai
+                .task_manager
+                .has_pending_work(world, self.player_team);
 
         if pending {
             self.end_turn_retry_counter = 0;
@@ -1402,7 +1478,10 @@ impl AiPlayer {
         }
 
         if self.end_turn_retry_counter == 0 {
-            world.ai.task_manager.mark_tasks_for_processing(self.player_team);
+            world
+                .ai
+                .task_manager
+                .mark_tasks_for_processing(self.player_team);
         }
 
         self.end_turn_retry_counter = self.end_turn_retry_counter.saturating_add(1);
@@ -1433,8 +1512,8 @@ impl AiPlayer {
             }
         } else {
             world.with_task_manager(|task_manager, world| {
-                        task_manager.end_turn(world, self.player_team);
-                    });
+                task_manager.end_turn(world, self.player_team);
+            });
             true
         }
     }
@@ -1467,7 +1546,9 @@ impl AiPlayer {
         let ids: Vec<UnitId> = world.unit_list(kind).to_vec();
 
         for id in ids {
-            let Some(unit) = world.unit(id).cloned() else { continue };
+            let Some(unit) = world.unit(id).cloned() else {
+                continue;
+            };
             if unit.team != self.player_team || unit.hits == 0 || unit.speed == 0 {
                 continue;
             }
@@ -1519,8 +1600,10 @@ impl AiPlayer {
         let mut tm = std::mem::take(&mut world.ai.task_manager);
         let result = {
             let mut ctx = TaskCtx::new(&mut tm, world);
-            super::tasks::build::manage_create_building(&mut kind, &mut ctx, header, unit_type, priority)
-                .is_some()
+            super::tasks::build::manage_create_building(
+                &mut kind, &mut ctx, header, unit_type, priority,
+            )
+            .is_some()
         };
         world.ai.task_manager = tm;
 
@@ -1540,7 +1623,10 @@ impl AiPlayer {
             if let TaskKind::ManageBuildings { building_site, .. } = &task.kind {
                 let distance = crate::access::squared_distance(*building_site, site);
 
-                if best.map(|(best_distance, _)| distance < best_distance).unwrap_or(true) {
+                if best
+                    .map(|(best_distance, _)| distance < best_distance)
+                    .unwrap_or(true)
+                {
                     best = Some((distance, task.id));
                 }
             }
@@ -1556,11 +1642,17 @@ impl AiPlayer {
             return false;
         }
 
-        let targets = world.team_units[unit.team.0 as usize].current_unit_values(unit.unit_type as u16);
+        let targets =
+            world.team_units[unit.team.0 as usize].current_unit_values(unit.unit_type as u16);
 
-        targets.get_attribute(crate::unit_values::ATTRIB_HITS) > unit.base_values.get_attribute(crate::unit_values::ATTRIB_HITS)
+        targets.get_attribute(crate::unit_values::ATTRIB_HITS)
+            > unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_HITS)
             || targets.get_attribute(crate::unit_values::ATTRIB_ATTACK)
-                > unit.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK)
+                > unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_ATTACK)
     }
 
     /// `AiPlayer::InvalidateThreatMaps` (`aiplayer.cpp:620`).
@@ -1602,7 +1694,9 @@ pub fn calculate_projected_damage(
         return 0;
     }
 
-    let rounds = enemy.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+    let rounds = enemy
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
     let damage = crate::combat::get_attack_damage(enemy, friendly, 0);
 
     rounds * damage
@@ -1621,14 +1715,20 @@ pub fn get_projected_damage(
         return 0;
     }
 
-    let rounds = friendly.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+    let rounds = friendly
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
     let damage = crate::combat::get_attack_damage(friendly, enemy, 0);
 
     rounds * damage
 }
 
 /// `AiPlayer::GetPredictedAttack` для команды.
-pub fn get_predicted_attack(world: &GameState, unit: &UnitInfo, caution_level: CautionLevel) -> i32 {
+pub fn get_predicted_attack(
+    world: &GameState,
+    unit: &UnitInfo,
+    caution_level: CautionLevel,
+) -> i32 {
     AiPlayer::get_total_projected_damage(
         world,
         unit,
@@ -1660,7 +1760,9 @@ pub fn get_damage_potential(
 
     match map {
         Some(map) => {
-            let armor = unit.base_values.get_attribute(crate::unit_values::ATTRIB_ARMOR);
+            let armor = unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_ARMOR);
             map.damage_at(i32::from(site.x), i32::from(site.y))
                 + map.shots_at(i32::from(site.x), i32::from(site.y))
                     * (i32::from(map.armor) - armor)
@@ -1680,7 +1782,10 @@ pub fn get_damage_potential_map(
     let risk_level = ThreatMap::get_risk_level_for_type(unit.unit_type);
     let mut map = build_threat_map(world, team, risk_level, caution_level);
 
-    map.update(unit.base_values.get_attribute(crate::unit_values::ATTRIB_ARMOR));
+    map.update(
+        unit.base_values
+            .get_attribute(crate::unit_values::ATTRIB_ARMOR),
+    );
 
     Some(map)
 }
@@ -1704,7 +1809,12 @@ pub fn build_threat_map(
     let mut air_map = ThreatMap::new();
 
     if caution_level as u8 > CautionLevel::AvoidReactionFire as u8 {
-        determine_defenses(world, team, UnitListKind::MobileAir, &mut air_map.damage_potential_map);
+        determine_defenses(
+            world,
+            team,
+            UnitListKind::MobileAir,
+            &mut air_map.damage_potential_map,
+        );
         determine_defenses(
             world,
             team,
@@ -1725,12 +1835,24 @@ pub fn build_threat_map(
     let player = &world.ai.players[team.0 as usize];
 
     for spotted in &player.spotted_units {
-        let Some(unit_id) = spotted.unit else { continue };
-        let Some(unit) = world.unit(unit_id) else { continue };
+        let Some(unit_id) = spotted.unit else {
+            continue;
+        };
+        let Some(unit) = world.unit(unit_id) else {
+            continue;
+        };
 
         if is_able_to_attack(world, unit, risk_group, team) {
             let position = spotted.last_position_of(world);
-            determine_threats(world, team, unit, position, caution_level, &mut air_map, &mut map);
+            determine_threats(
+                world,
+                team,
+                unit,
+                position,
+                caution_level,
+                &mut air_map,
+                &mut map,
+            );
         }
     }
 
@@ -1760,7 +1882,8 @@ pub fn build_threat_map(
                     6 => heat.get_stealth_sea(i32::from(x), i32::from(y)) > 0,
                     4 | 5 => heat.get_stealth_land(i32::from(x), i32::from(y)) > 0,
                     7 => {
-                        crate::access::surface_type(world, Point::new(x, y)) == crate::access::SURFACE_TYPE_WATER
+                        crate::access::surface_type(world, Point::new(x, y))
+                            == crate::access::SURFACE_TYPE_WATER
                             && heat.get_stealth_sea(i32::from(x), i32::from(y)) == 0
                     }
                     _ => heat.get_complete(i32::from(x), i32::from(y)) > 0,
@@ -1796,13 +1919,21 @@ pub fn build_threat_map(
     if risk_level != 3 {
         let player = &world.ai.players[team.0 as usize];
         for spotted in &player.spotted_units {
-            let Some(unit_id) = spotted.unit else { continue };
-            let Some(unit) = world.unit(unit_id) else { continue };
+            let Some(unit_id) = spotted.unit else {
+                continue;
+            };
+            let Some(unit) = world.unit(unit_id) else {
+                continue;
+            };
 
             if matches!(unit.unit_type, UnitType::LandMine | UnitType::SeaMine) {
                 let index = unit.grid.y as usize * MAP_WIDTH as usize + unit.grid.x as usize;
-                let attack = unit.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK) as i16;
-                map.damage_potential_map[index] = map.damage_potential_map[index].wrapping_add(attack);
+                let attack = unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_ATTACK)
+                    as i16;
+                map.damage_potential_map[index] =
+                    map.damage_potential_map[index].wrapping_add(attack);
                 map.shots_map[index] = map.shots_map[index].wrapping_add(1);
             }
         }
@@ -1812,14 +1943,11 @@ pub fn build_threat_map(
 }
 
 /// `AiPlayer::DetermineDefenses` (`aiplayer.cpp:626`).
-fn determine_defenses(
-    world: &GameState,
-    team: TeamId,
-    kind: UnitListKind,
-    map: &mut [i16],
-) {
+fn determine_defenses(world: &GameState, team: TeamId, kind: UnitListKind, map: &mut [i16]) {
     for id in world.unit_list(kind) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
         if unit.team != team || unit.shots == 0 {
             continue;
         }
@@ -1828,7 +1956,9 @@ fn determine_defenses(
             continue;
         }
 
-        let mut range = unit.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
+        let mut range = unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_RANGE);
 
         if unit
             .base_values
@@ -1839,7 +1969,10 @@ fn determine_defenses(
         }
 
         if range > 0 {
-            let attack = -unit.base_values.get_attribute(crate::unit_values::ATTRIB_ATTACK) * i32::from(unit.shots);
+            let attack = -unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_ATTACK)
+                * i32::from(unit.shots);
             update_map(map, unit.grid, range, attack as i16, false);
         }
     }
@@ -2040,7 +2173,13 @@ fn update_threat_maps(
 }
 
 /// `AiPlayer::UpdateMap` (`aiplayer.cpp:544`) — наложение квадрата урона.
-fn update_map(map: &mut [i16], position: Point, range: i32, damage_potential: i16, normalize: bool) {
+fn update_map(
+    map: &mut [i16],
+    position: Point,
+    range: i32,
+    damage_potential: i16,
+    normalize: bool,
+) {
     let mut walker = super::threat::ZoneWalker::new(position, range);
 
     loop {
@@ -2111,7 +2250,11 @@ fn is_able_to_attack(
 }
 
 /// `AiPlayer::GetFilteredWeightTable` (`aiplayer.cpp:3387`).
-pub fn get_filtered_weight_table(air_table: &WeightTable, ground_table: &WeightTable, flags: u32) -> WeightTable {
+pub fn get_filtered_weight_table(
+    air_table: &WeightTable,
+    ground_table: &WeightTable,
+    flags: u32,
+) -> WeightTable {
     let mut result = WeightTable::new(0);
 
     if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
@@ -2153,7 +2296,8 @@ pub fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
 pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = turns_to_build(world, team, unit_type);
     let flags = crate::access::unit_type_flags(unit_type);
-    let rate = if flags & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
+    let rate = if flags
+        & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
         != 0
     {
         super::tasks::create::raw_consumption_rate(UnitType::HeavyVehiclePlant)
@@ -2202,9 +2346,15 @@ pub fn team_cluster_coordinates(world: &GameState, team: TeamId) -> Point {
     let mut sum_y: i64 = 0;
     let mut count: i64 = 0;
 
-    for kind in [UnitListKind::Stationary, UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
+    for kind in [
+        UnitListKind::Stationary,
+        UnitListKind::MobileLandSea,
+        UnitListKind::MobileAir,
+    ] {
         for id in world.unit_list(kind) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
             if unit.team != team {
                 continue;
             }
@@ -2229,7 +2379,9 @@ pub fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListK
     let mut count: i64 = 0;
 
     for id in world.unit_list(kind) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
         if unit.team != team {
             continue;
         }

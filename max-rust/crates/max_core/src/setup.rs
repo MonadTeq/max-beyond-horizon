@@ -60,12 +60,8 @@ use crate::rng::Randomizer;
 use crate::team::TeamId;
 
 /// `PassData[]` из `world.cpp:382` — индекс pass-таблицы → бит `SurfaceType`.
-pub const PASS_TABLE_SURFACES: [Surface; 4] = [
-    Surface::LAND,
-    Surface::WATER,
-    Surface::COAST,
-    Surface::AIR,
-];
+pub const PASS_TABLE_SURFACES: [Surface; 4] =
+    [Surface::LAND, Surface::WATER, Surface::COAST, Surface::AIR];
 
 /// `GameManager_AlienBuildings[]` (`game_manager.cpp:136`).
 pub const ALIEN_BUILDINGS: [UnitType; 3] = [
@@ -741,10 +737,12 @@ impl ResourceAllocator {
             };
 
             while j < height {
-                let point2_x =
-                    rng.generate_i32(self.concentrate_variance * 2 + 1) - self.concentrate_variance + i;
-                let point2_y =
-                    rng.generate_i32(self.concentrate_variance * 2 + 1) - self.concentrate_variance + j;
+                let point2_x = rng.generate_i32(self.concentrate_variance * 2 + 1)
+                    - self.concentrate_variance
+                    + i;
+                let point2_y = rng.generate_i32(self.concentrate_variance * 2 + 1)
+                    - self.concentrate_variance
+                    + j;
 
                 self.optimize(
                     cargo,
@@ -763,12 +761,7 @@ impl ResourceAllocator {
 
     /// `SeparateResources(ResourceAllocator* allocator)` — размежевание
     /// материалов и топлива.
-    fn separate_resources(
-        &self,
-        allocator: &Self,
-        cargo: &mut ResourceMap,
-        rng: &mut Randomizer,
-    ) {
+    fn separate_resources(&self, allocator: &Self, cargo: &mut ResourceMap, rng: &mut Randomizer) {
         let width = MAP_WIDTH as i32;
         let height = MAP_HEIGHT as i32;
         let point1_x = rng.generate_i32(((self.mixed_resource_seperation * 4) / 5) + 1);
@@ -793,7 +786,12 @@ impl ResourceAllocator {
                 let point2 = Point::new(point2_x as i16, point2_y as i16);
 
                 self.optimize(cargo, point2, rng.generate_i32(5) + 8, self.max_resources);
-                allocator.optimize(cargo, point2, rng.generate_i32(5) + 8, allocator.max_resources);
+                allocator.optimize(
+                    cargo,
+                    point2,
+                    rng.generate_i32(5) + 8,
+                    allocator.max_resources,
+                );
 
                 j += self.mixed_resource_seperation;
             }
@@ -1001,12 +999,7 @@ fn is_inside_bounds(position: Point) -> bool {
 }
 
 /// `GameManager_FindSpot(Point* point)` (`game_manager.cpp:4763`).
-fn find_spot(
-    point: &mut Point,
-    surface: &SurfaceMap,
-    teams: &[TeamStart],
-    bridges: &BridgeCells,
-) {
+fn find_spot(point: &mut Point, surface: &SurfaceMap, teams: &[TeamStart], bridges: &BridgeCells) {
     let width = MAP_WIDTH as i32;
     let height = MAP_HEIGHT as i32;
     let mut range = 2i32;
@@ -1330,7 +1323,8 @@ mod tests {
 
         (0..bytes.len() / 2)
             .map(|index| {
-                let pair = std::str::from_utf8(&bytes[index * 2..index * 2 + 2]).expect("ascii hex");
+                let pair =
+                    std::str::from_utf8(&bytes[index * 2..index * 2 + 2]).expect("ascii hex");
                 u8::from_str_radix(pair, 16).expect("valid hex byte")
             })
             .collect()
@@ -1433,7 +1427,8 @@ mod tests {
                     case.resources = hex_to_u16(parts.next().expect("resources"));
                 }
                 "placement" => {
-                    let unit_type: u16 = parts.next().expect("unit type").parse().expect("unit type");
+                    let unit_type: u16 =
+                        parts.next().expect("unit type").parse().expect("unit type");
                     let x: i16 = parts.next().expect("x").parse().expect("placement x");
                     let y: i16 = parts.next().expect("y").parse().expect("placement y");
 
@@ -1467,9 +1462,7 @@ mod tests {
             teams: case
                 .starts
                 .iter()
-                .map(|(team, x, y)| {
-                    TeamStart::new(TeamId(*team), Point::new(*x, *y))
-                })
+                .map(|(team, x, y)| TeamStart::new(TeamId(*team), Point::new(*x, *y)))
                 .collect(),
             alien_costs: AlienUnitCosts {
                 alien_tank: case.alien_costs[0],
@@ -1483,7 +1476,11 @@ mod tests {
     /// Сверка карты поверхности с диагностикой по первой различающейся клетке
     /// (полный дамп 12 544 байт в сообщении бесполезен).
     fn assert_surface_matches(case: &str, got: &[u8], want: &[u8]) {
-        assert_eq!(got.len(), want.len(), "surface size mismatch in case {case}");
+        assert_eq!(
+            got.len(),
+            want.len(),
+            "surface size mismatch in case {case}"
+        );
 
         for (index, (got, want)) in got.iter().zip(want.iter()).enumerate() {
             assert_eq!(
@@ -1512,7 +1509,12 @@ mod tests {
         let mut placements = 0usize;
 
         for case in &cases {
-            assert_eq!(case.surface.len(), MAP_CELLS, "surface size, case {}", case.name);
+            assert_eq!(
+                case.surface.len(),
+                MAP_CELLS,
+                "surface size, case {}",
+                case.name
+            );
             assert_eq!(
                 case.resources.len(),
                 MAP_CELLS,
@@ -1542,7 +1544,8 @@ mod tests {
                 let got = u16::from_le_bytes([got[0], got[1]]);
 
                 assert_eq!(
-                    got, *want,
+                    got,
+                    *want,
                     "resource map mismatch in case {} at index {} (x={}, y={})",
                     case.name,
                     index,
@@ -1561,7 +1564,8 @@ mod tests {
                 case.name
             );
 
-            for (index, (got, want)) in output.aliens.iter().zip(case.placements.iter()).enumerate() {
+            for (index, (got, want)) in output.aliens.iter().zip(case.placements.iter()).enumerate()
+            {
                 assert_eq!(
                     (got.unit_type as u16, got.position.x, got.position.y),
                     *want,
@@ -1601,7 +1605,10 @@ mod tests {
         let mut second_rng = Randomizer::new(case.seed);
         let second = generate_map(&mut second_setup, &surface, &mut second_rng);
 
-        assert_eq!(first.map.resources.to_le_bytes(), second.map.resources.to_le_bytes());
+        assert_eq!(
+            first.map.resources.to_le_bytes(),
+            second.map.resources.to_le_bytes()
+        );
         assert_eq!(first.aliens, second.aliens);
         assert_eq!(first_rng.state(), second_rng.state());
         assert_eq!(first_setup.teams, second_setup.teams);
@@ -1706,8 +1713,12 @@ mod tests {
     /// дают дефолтные `min_resources = 9`, `max_resources = 20`.
     #[test]
     fn menu_levels_match_cpp_settings() {
-        let settings =
-            GenerationSettings::from_menu_levels(ResourceLevel::NORMAL, ResourceLevel::NORMAL, ResourceLevel::NORMAL, ResourceLevel::LOW);
+        let settings = GenerationSettings::from_menu_levels(
+            ResourceLevel::NORMAL,
+            ResourceLevel::NORMAL,
+            ResourceLevel::NORMAL,
+            ResourceLevel::LOW,
+        );
 
         assert_eq!(settings.max_resources, 20);
         assert_eq!(settings.min_resources, 9);
@@ -1814,8 +1825,7 @@ mod tests {
         };
         let mut rng = Randomizer::new(7);
         let before = rng.state();
-        let placements =
-            populate_map_with_alien_units(&settings, &surface, &[], &costs, &mut rng);
+        let placements = populate_map_with_alien_units(&settings, &surface, &[], &costs, &mut rng);
 
         assert!(placements.is_empty());
         assert_eq!(rng.state(), before);

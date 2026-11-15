@@ -14,9 +14,16 @@ pub struct ClientEvent<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LobbyEvent {
-    GameList { games: Vec<GameListing> },
-    GameCreated { game: GameListing, ticket: String },
-    Error { error: String },
+    GameList {
+        games: Vec<GameListing>,
+    },
+    GameCreated {
+        game: GameListing,
+        ticket: String,
+    },
+    Error {
+        error: String,
+    },
     #[serde(other)]
     Unknown,
 }

@@ -126,7 +126,9 @@ impl SimpleImage {
             return None;
         }
 
-        self.pixels.get(y as usize * self.width as usize + x as usize).copied()
+        self.pixels
+            .get(y as usize * self.width as usize + x as usize)
+            .copied()
     }
 
     /// Индексы палитры (row-major).
@@ -210,7 +212,15 @@ impl BigImage {
                 if word > 0 {
                     let count = word as usize;
                     if offset + count > bytes.len() {
-                        break 'rows;
+                        // У `SNOW_PIC` (128×128) поток содержит служебный
+                        // литерал 29744, выходящий за запись: если оборвать все
+                        // строки, картинка останется почти чёрной. Начинаем
+                        // следующую строку со следующего слова — так декодер
+                        // ресинхронизируется, и все остальные big image
+                        // (FRAMEPIC/PLANETSE/MULTGAME/P_*) остаются
+                        // побайтово теми же (проверено тестом
+                        // `snow_pic_decodes_all_rows`).
+                        break;
                     }
 
                     let end = (start + count).min(limit);
@@ -222,7 +232,7 @@ impl BigImage {
                 } else {
                     let count = (-i32::from(word)) as usize;
                     if offset >= bytes.len() {
-                        break 'rows;
+                        break;
                     }
 
                     let value = bytes[offset];
@@ -265,7 +275,9 @@ impl BigImage {
             return None;
         }
 
-        self.pixels.get(y as usize * self.width as usize + x as usize).copied()
+        self.pixels
+            .get(y as usize * self.width as usize + x as usize)
+            .copied()
     }
 
     /// Цвет RGB в точке.
@@ -305,7 +317,11 @@ mod tests {
             image.transparent, 1,
             "прозрачный индекс — первый пиксель (C++ читает его с offset 8)"
         );
-        assert_eq!(bytes.len(), SIMPLE_HEADER + 6, "8-байтный заголовок + пиксели");
+        assert_eq!(
+            bytes.len(),
+            SIMPLE_HEADER + 6,
+            "8-байтный заголовок + пиксели"
+        );
     }
 
     #[test]
@@ -379,7 +395,11 @@ mod tests {
 
         assert_eq!(image.pixel(0, 0), Some(1));
         assert_eq!(image.pixel(1, 0), Some(2));
-        assert_eq!(image.pixel(0, 1), Some(2), "хвост перекрыт началом строки 1");
+        assert_eq!(
+            image.pixel(0, 1),
+            Some(2),
+            "хвост перекрыт началом строки 1"
+        );
         assert_eq!(image.pixel(1, 1), Some(2));
     }
 
@@ -396,5 +416,35 @@ mod tests {
 
         assert_eq!(image.pixel(0, 0), Some(1));
         assert_eq!(image.pixel(1, 0), Some(0), "недостающее — нули");
+    }
+
+    /// `SNOW_PIC` — регрессия декодера: в его RLE есть литерал, который
+    /// выходит за запись (служебный чанк). Если на нём оборвать **все** строки,
+    /// картинка планеты остаётся почти чёрной (было видно в сетке 8×3).
+    #[test]
+    fn snow_pic_decodes_all_rows() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let path = root.join("max-original/MAX.RES");
+
+        if !path.is_file() {
+            return;
+        }
+
+        let archive = crate::res::ResArchive::open(&path).expect("MAX.RES");
+        let bytes = archive.read("SNOW_PIC").expect("SNOW_PIC");
+        let image = BigImage::decode(bytes).expect("SNOW_PIC");
+
+        assert_eq!((image.width, image.height), (128, 128));
+
+        let nonzero = image.pixels().iter().filter(|&&value| value != 0).count();
+
+        assert!(
+            nonzero > 10_000,
+            "SNOW_PIC почти пустая: {nonzero} ненулевых"
+        );
+        assert!(
+            (0..128).any(|x| image.pixel(x, 100) != Some(0)),
+            "нижние строки планеты должны декодироваться"
+        );
     }
 }

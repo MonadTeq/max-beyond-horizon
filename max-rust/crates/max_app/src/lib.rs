@@ -38,8 +38,9 @@ pub mod audio;
 pub mod chrome;
 pub mod cursor;
 pub mod hud;
-pub mod panels;
+pub mod menu;
 pub mod net;
+pub mod panels;
 pub mod render;
 pub mod ui;
 
@@ -709,12 +710,7 @@ impl App {
         // сам игнорирует `ALIEN` (у команды нет heat-map), поэтому
         // результат тот же — командные слои не трогаются.
         for placement in &output.aliens {
-            let _ = state.spawn_unit(
-                placement.unit_type,
-                TeamId::ALIEN,
-                placement.position,
-                0,
-            );
+            let _ = state.spawn_unit(placement.unit_type, TeamId::ALIEN, placement.position, 0);
         }
 
         // `GameManager_ProcessTeamMissionSupplyUnits` для каждой команды
@@ -952,9 +948,8 @@ mod tests {
             handshake_patches: Some(dir.join("nonexistent.res")),
             ..Default::default()
         };
-        let hash =
-            max_net::DataHash::from_files(&split.max_res, split.handshake_patches_path())
-                .expect("hash files");
+        let hash = max_net::DataHash::from_files(&split.max_res, split.handshake_patches_path())
+            .expect("hash files");
         assert!(hash.max_res.is_some());
         assert!(
             hash.patches_res.is_none(),

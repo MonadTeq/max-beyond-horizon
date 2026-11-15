@@ -392,7 +392,9 @@ pub fn is_accessible(
         }
 
         for id in state.units_at(grid).iter().copied() {
-            let Some(other) = state.unit(id) else { continue };
+            let Some(other) = state.unit(id) else {
+                continue;
+            };
             let other_flags = other.flags;
 
             if !(other.is_visible_to_team(team)
@@ -704,18 +706,16 @@ pub fn is_valid_attack_target_point(
 
 /// `Access_IsValidAttackTarget(attacker, target)` (`access.cpp:1995`).
 #[inline]
-pub fn is_valid_attack_target(
-    state: &GameState,
-    attacker: &UnitInfo,
-    target: &UnitInfo,
-) -> bool {
+pub fn is_valid_attack_target(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
     is_valid_attack_target_point(state, attacker, target, target.grid)
 }
 
 /// `Access_IsUnitBusyAtLocation` (`access.cpp:1949`).
 pub fn is_unit_busy_at_location(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.units_at(unit.grid).iter().copied() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
         if other.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | STATIONARY) != 0
             && other.flags & GROUND_COVER == 0
             && other.orders != UnitOrder::Idle
@@ -736,13 +736,18 @@ pub fn get_attack_target(
     let mut normal_unit = false;
     let mut result = None;
 
-    if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
     {
         return None;
     }
 
     for id in state.units_at(grid).iter().copied() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
 
         if other.team == unit.team {
             if other.flags & crate::enums::unit_flags::MISSILE_UNIT == 0 {
@@ -782,13 +787,18 @@ pub fn get_attack_target(
 /// `Access_GetAttackTarget2` (`access.cpp:2077`) — цель, ещё не видимая
 /// атакующему (обнаружение при выстреле).
 pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
-    if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
     {
         return None;
     }
 
     for id in state.units_at(grid).iter().copied() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
         if other.team != unit.team
             && !other.is_visible_to_team(unit.team)
             && other.orders != UnitOrder::Idle
@@ -802,13 +812,11 @@ pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Op
 }
 
 /// `Access_GetTeamUnit` (`access.cpp:1804`).
-pub fn get_team_unit(
-    state: &GameState,
-    grid: Point,
-    team: TeamId,
-    flags: u32,
-) -> Option<UnitId> {
-    if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -> Option<UnitId> {
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
     {
         return None;
     }
@@ -816,7 +824,9 @@ pub fn get_team_unit(
     let mut result = None;
 
     for id in state.units_at(grid).iter().copied() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
         if other.team == team
             && other.flags & flags != 0
             && other.orders != UnitOrder::Idle
@@ -832,7 +842,9 @@ pub fn get_team_unit(
 
     if result.is_none() {
         for id in state.units_at(grid).iter().copied() {
-            let Some(other) = state.unit(id) else { continue };
+            let Some(other) = state.unit(id) else {
+                continue;
+            };
             if other.team == team
                 && other.flags & flags != 0
                 && other.orders != UnitOrder::Idle
@@ -855,19 +867,20 @@ pub fn get_team_unit(
 }
 
 /// `Access_GetActiveUnitWithFlags` (`access.cpp:1492`).
-pub fn get_active_unit_with_flags(
-    state: &GameState,
-    grid: Point,
-    flags: u32,
-) -> Option<UnitId> {
-    if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+pub fn get_active_unit_with_flags(state: &GameState, grid: Point, flags: u32) -> Option<UnitId> {
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
     {
         return None;
     }
 
     for id in state.units_at(grid).iter().copied() {
         let Some(unit) = state.unit(id) else { continue };
-        if unit.flags & flags != 0 && unit.flags & GROUND_COVER == 0 && unit.orders != UnitOrder::Idle
+        if unit.flags & flags != 0
+            && unit.flags & GROUND_COVER == 0
+            && unit.orders != UnitOrder::Idle
         {
             return Some(id);
         }
@@ -918,7 +931,10 @@ pub fn can_receive_units(receiver: &UnitInfo) -> bool {
 
 /// `Access_GetReceiverUnit` (`access.cpp:2100`).
 pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
-    if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
     {
         return None;
     }
@@ -927,7 +943,9 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
     let flags = unit.flags;
 
     for id in state.units_at(grid).iter().copied() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
         if other.team != team || other.orders == UnitOrder::Idle || !can_receive_units(other) {
             continue;
         }
@@ -974,7 +992,9 @@ pub fn get_stored_unit_count(state: &GameState, receiver: &UnitInfo) -> i32 {
 
     let mut result = 0;
     for id in state.unit_list(list) {
-        let Some(unit) = state.unit(*id) else { continue };
+        let Some(unit) = state.unit(*id) else {
+            continue;
+        };
         if unit.orders == UnitOrder::Idle && unit.parent_unit == Some(receiver.id) {
             result += 1;
         }
@@ -1010,7 +1030,9 @@ pub fn is_stealth_action_in_progress(unit: &UnitInfo) -> bool {
 /// держит цель с момента приказа до разрешения действия.
 pub fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileLandSea) {
-        let Some(other) = state.unit(*id) else { continue };
+        let Some(other) = state.unit(*id) else {
+            continue;
+        };
         if other.unit_type == UnitType::Commando
             && other.parent_unit == Some(unit.id)
             && is_stealth_action_in_progress(other)
@@ -1132,8 +1154,7 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
     }
 
     if unit.orders == UnitOrder::Move
-        && (unit.state == UnitOrderState::InProgress
-            || unit.state == UnitOrderState::InTransition)
+        && (unit.state == UnitOrderState::InProgress || unit.state == UnitOrderState::InTransition)
     {
         return true;
     }
@@ -1157,12 +1178,9 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
         if best_cost == 0 || unit_angle > best_angle {
             let flags = unit.flags;
             state.map_hash_remove(id, unit.grid, flags);
-            let mut step_cost = is_accessible_unit(
-                state,
-                &unit,
-                position,
-                ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-            ) as i32;
+            let mut step_cost =
+                is_accessible_unit(state, &unit, position, ACCESS_MODIFIER_SAME_CLASS_BLOCKS)
+                    as i32;
             state.map_hash_add(id, unit.grid, flags);
 
             if direction & 0x01 != 0 {
@@ -1179,8 +1197,8 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
                 continue;
             }
 
-            let candidate_is_water = is_clntrans
-                && modified_surface_type(state, position, false) == SURFACE_TYPE_WATER;
+            let candidate_is_water =
+                is_clntrans && modified_surface_type(state, position, false) == SURFACE_TYPE_WATER;
 
             let is_better = if is_clntrans {
                 (candidate_is_water && !best_is_water)
@@ -1247,7 +1265,9 @@ pub fn set_unit_destination(
     let mut bridge = None;
 
     for id in state.units_at(to).to_vec() {
-        let Some(other) = state.unit(id) else { continue };
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
         if other.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {
             if other.orders == UnitOrder::Idle {
                 continue;
@@ -1352,7 +1372,8 @@ pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
     for id in group {
         let Some(unit) = state.unit(id) else { continue };
         if unit.state == UnitOrderState::NewOrder {
-            let result = crate::pathfinding::request_path(state, id, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
+            let result =
+                crate::pathfinding::request_path(state, id, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
             if let Some(mut unit) = state.unit(id).cloned() {
                 unit.state = if result {
                     UnitOrderState::MoveGettingPath
@@ -1437,9 +1458,7 @@ pub fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
 
 /// `Access_IsAnyLandPresent` (`access.cpp:1030`) — есть ли земля в 2×2.
 pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
-    let is_land = |x: i16, y: i16| {
-        surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND
-    };
+    let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
     if flags & BUILDING != 0 {
         is_land(grid.x + 1, grid.y)
@@ -1453,9 +1472,7 @@ pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
 
 /// `Access_IsFullyLandCovered` (`access.cpp:1050`).
 pub fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool {
-    let is_land = |x: i16, y: i16| {
-        surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND
-    };
+    let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
     if flags & BUILDING == 0
         || (is_land(grid.x + 1, grid.y)
@@ -1471,10 +1488,17 @@ pub fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool
 /// `UnitInfo::GetAttackRange` (`unitinfo.cpp:3888`) — максимальная дистанция
 /// атаки с учётом оставшегося хода.
 pub fn get_attack_range(unit: &UnitInfo) -> i32 {
-    let rounds = unit.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+    let rounds = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
     if rounds > 0 {
-        if unit.base_values.get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE) != 0 {
-            unit.base_values.get_attribute(ATTRIB_RANGE) + unit.base_values.get_attribute(ATTRIB_SPEED) / 2
+        if unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE)
+            != 0
+        {
+            unit.base_values.get_attribute(ATTRIB_RANGE)
+                + unit.base_values.get_attribute(ATTRIB_SPEED) / 2
         } else {
             ((rounds - 1) * unit.base_values.get_attribute(ATTRIB_SPEED)) / rounds
                 + unit.base_values.get_attribute(ATTRIB_RANGE)
@@ -1500,7 +1524,13 @@ pub fn is_accessible_for_building(
         return false;
     }
 
-    is_accessible(state, unit_type, team, grid, ACCESS_MODIFIER_SAME_CLASS_BLOCKS) != 0
+    is_accessible(
+        state,
+        unit_type,
+        team,
+        grid,
+        ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) != 0
         && is_accessible(
             state,
             unit_type,
@@ -1540,12 +1570,9 @@ pub fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
                 if step.x != 0 || step.y != 0 {
                     x += i16::from(step.x);
                     y += i16::from(step.y);
-                    let mut step_cost = is_accessible_unit(
-                        state,
-                        unit,
-                        Point::new(x, y),
-                        ACCESS_MODIFIER_NONE,
-                    ) as i32;
+                    let mut step_cost =
+                        is_accessible_unit(state, unit, Point::new(x, y), ACCESS_MODIFIER_NONE)
+                            as i32;
                     if step.x != 0 && step.y != 0 {
                         step_cost = (step_cost * 3) / 2;
                     }
@@ -1580,7 +1607,9 @@ pub fn get_repair_shop_client_count(state: &GameState, team: TeamId, unit_type: 
 
     let mut result = 0;
     for id in state.unit_list(list) {
-        let Some(unit) = state.unit(*id) else { continue };
+        let Some(unit) = state.unit(*id) else {
+            continue;
+        };
         let unit_flags =
             unit.flags & (MOBILE_AIR_UNIT | MOBILE_LAND_UNIT | MOBILE_SEA_UNIT | ELECTRONIC_UNIT);
         if unit.team == team && unit_flags == flags && unit.hits > 0 {
@@ -1619,7 +1648,10 @@ pub fn destroy_utilities(
     for id in ids {
         let Some(unit) = state.unit(id) else { continue };
         let destroy = match unit.unit_type {
-            UnitType::SmallTape | UnitType::LargeTape | UnitType::SmallCones | UnitType::LargeCones => true,
+            UnitType::SmallTape
+            | UnitType::LargeTape
+            | UnitType::SmallCones
+            | UnitType::LargeCones => true,
             UnitType::Road => remove_road,
             UnitType::SmallSlab | UnitType::LargeSlab => remove_slabs,
             // `UnitsManager_RemoveConnections` — P3-логика комплексов.
@@ -1651,7 +1683,9 @@ pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
 
     for position in positions.iter().take(count) {
         for id in state.units_at(*position).to_vec() {
-            let Some(other) = state.unit(id) else { continue };
+            let Some(other) = state.unit(id) else {
+                continue;
+            };
             if other.id != unit.id
                 && other.state != UnitOrderState::Destroy
                 && matches!(
@@ -1675,7 +1709,9 @@ pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
 /// вставки.
 pub fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileAir) {
-        let Some(other) = state.unit(*id) else { continue };
+        let Some(other) = state.unit(*id) else {
+            continue;
+        };
         if other.id != unit.id && other.hits > 0 && other.grid == unit.grid {
             let is_suspended = (other.orders == UnitOrder::Disable
                 || other.orders == UnitOrder::Explode)
@@ -1706,8 +1742,7 @@ pub fn disable_turns(infiltrator: &UnitInfo, target: &UnitInfo) -> i32 {
     }
 
     if target_speed != 0 {
-        turns = ((target_speed * (experience + 8))
-            - (target_turns * i32::from(target.speed)))
+        turns = ((target_speed * (experience + 8)) - (target_turns * i32::from(target.speed)))
             / (target_turns * target_speed);
     } else {
         turns = (experience + 8) / target_turns;
@@ -1723,9 +1758,7 @@ pub fn disable_turns(infiltrator: &UnitInfo, target: &UnitInfo) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::unit_flags::{
-        ELECTRONIC_UNIT, GROUND_COVER, MOBILE_LAND_UNIT, SELECTABLE,
-    };
+    use crate::enums::unit_flags::{ELECTRONIC_UNIT, GROUND_COVER, MOBILE_LAND_UNIT, SELECTABLE};
     use crate::enums::{Surface, TeamClan};
     use crate::team::TeamKind;
 
@@ -1745,7 +1778,9 @@ mod tests {
         grid: Point,
         flags: u32,
     ) -> UnitId {
-        state.spawn_unit(unit_type, team, grid, flags).expect("spawn")
+        state
+            .spawn_unit(unit_type, team, grid, flags)
+            .expect("spawn")
     }
 
     #[test]
@@ -1755,9 +1790,18 @@ mod tests {
         assert_eq!(unit_type_land_type(UnitType::CommTower), SURFACE_TYPE_LAND);
         assert_eq!(unit_type_land_type(UnitType::Fighter), SURFACE_TYPE_ALL);
         assert_eq!(unit_type_land_type(UnitType::PersonnelCarrier), 0x7);
-        assert_eq!(unit_type_flags(UnitType::Tank) & MOBILE_LAND_UNIT, MOBILE_LAND_UNIT);
-        assert_eq!(unit_type_flags(UnitType::CommTower) & ELECTRONIC_UNIT, ELECTRONIC_UNIT);
-        assert_eq!(unit_type_flags(UnitType::Rocket) & crate::enums::unit_flags::MISSILE_UNIT, crate::enums::unit_flags::MISSILE_UNIT);
+        assert_eq!(
+            unit_type_flags(UnitType::Tank) & MOBILE_LAND_UNIT,
+            MOBILE_LAND_UNIT
+        );
+        assert_eq!(
+            unit_type_flags(UnitType::CommTower) & ELECTRONIC_UNIT,
+            ELECTRONIC_UNIT
+        );
+        assert_eq!(
+            unit_type_flags(UnitType::Rocket) & crate::enums::unit_flags::MISSILE_UNIT,
+            crate::enums::unit_flags::MISSILE_UNIT
+        );
     }
 
     #[test]
@@ -1766,21 +1810,75 @@ mod tests {
         let same = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 
         // Земля: наземный юнит проходит.
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(5, 5), same), 4);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(5, 5), same),
+            4
+        );
 
         // Вода: танк — нет, surveyor (LAND|WATER|COAST) — да.
         state.map.surface.set(6, 5, Surface::WATER);
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(6, 5), same), 0);
-        assert_eq!(is_accessible(&state, UnitType::Surveyor, TeamId::RED, Point::new(6, 5), same), 4);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(6, 5), same),
+            0
+        );
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::Surveyor,
+                TeamId::RED,
+                Point::new(6, 5),
+                same
+            ),
+            4
+        );
         // Воздушный юнит (land_type = ALL) проходит над водой.
-        assert_eq!(is_accessible(&state, UnitType::Fighter, TeamId::RED, Point::new(6, 5), same), 4);
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::Fighter,
+                TeamId::RED,
+                Point::new(6, 5),
+                same
+            ),
+            4
+        );
         // Корабль на земле — нет, амфибия CLNTRANS (0x7) — да.
-        assert_eq!(is_accessible(&state, UnitType::Corvette, TeamId::RED, Point::new(5, 6), same), 0);
-        assert_eq!(is_accessible(&state, UnitType::PersonnelCarrier, TeamId::RED, Point::new(5, 6), same), 4);
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::Corvette,
+                TeamId::RED,
+                Point::new(5, 6),
+                same
+            ),
+            0
+        );
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::PersonnelCarrier,
+                TeamId::RED,
+                Point::new(5, 6),
+                same
+            ),
+            4
+        );
 
         // Вне карты — 0.
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(-1, 0), same), 0);
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(112, 0), same), 0);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(-1, 0), same),
+            0
+        );
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::Tank,
+                TeamId::RED,
+                Point::new(112, 0),
+                same
+            ),
+            0
+        );
     }
 
     #[test]
@@ -1796,7 +1894,10 @@ mod tests {
             Point::new(7, 5),
             STATIONARY | GROUND_COVER,
         );
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(7, 5), same), 2);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(7, 5), same),
+            2
+        );
         // Дорога: колёсному ходу дешевле, второй дороге — нельзя.
         spawn(
             &mut state,
@@ -1805,8 +1906,14 @@ mod tests {
             Point::new(8, 5),
             STATIONARY | GROUND_COVER,
         );
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(8, 5), same), 2);
-        assert_eq!(is_accessible(&state, UnitType::Road, TeamId::RED, Point::new(8, 5), same), 0);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(8, 5), same),
+            2
+        );
+        assert_eq!(
+            is_accessible(&state, UnitType::Road, TeamId::RED, Point::new(8, 5), same),
+            0
+        );
 
         // Обнаруженная мина врага блокирует клетку.
         let mine = spawn(
@@ -1820,9 +1927,21 @@ mod tests {
             let unit = state.unit_mut(mine).unwrap();
             unit.spot_by_team(TeamId::RED);
         }
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(9, 5), same), 0);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(9, 5), same),
+            0
+        );
         // Своя мина не блокирует.
-        assert_ne!(is_accessible(&state, UnitType::Tank, TeamId::GREEN, Point::new(9, 5), same), 0);
+        assert_ne!(
+            is_accessible(
+                &state,
+                UnitType::Tank,
+                TeamId::GREEN,
+                Point::new(9, 5),
+                same
+            ),
+            0
+        );
     }
 
     #[test]
@@ -1839,13 +1958,25 @@ mod tests {
         );
 
         // Наземный: по мосту (2), поверхность — земля.
-        assert_eq!(is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(10, 5), same), 2);
+        assert_eq!(
+            is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(10, 5), same),
+            2
+        );
         assert_eq!(
             modified_surface_type(&state, Point::new(10, 5), false),
             SURFACE_TYPE_LAND
         );
         // Морской: мост — вода, стоимость 4.
-        assert_eq!(is_accessible(&state, UnitType::Corvette, TeamId::RED, Point::new(10, 5), same), 4);
+        assert_eq!(
+            is_accessible(
+                &state,
+                UnitType::Corvette,
+                TeamId::RED,
+                Point::new(10, 5),
+                same
+            ),
+            4
+        );
         assert_eq!(
             modified_surface_type(&state, Point::new(10, 5), true),
             SURFACE_TYPE_WATER
@@ -1932,7 +2063,10 @@ mod tests {
             )
             .unwrap();
         let tank_unit = state.unit(tank).unwrap().clone();
-        assert_eq!(get_receiver_unit(&state, &tank_unit, Point::new(5, 5)), None);
+        assert_eq!(
+            get_receiver_unit(&state, &tank_unit, Point::new(5, 5)),
+            None
+        );
     }
 
     #[test]

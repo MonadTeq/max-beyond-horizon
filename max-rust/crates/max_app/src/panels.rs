@@ -34,9 +34,7 @@ use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
 use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
 use max_render::sprite_atlas::SpriteRenderer;
-use max_render::text::{
-    draw_text_gnw, draw_text_gnw_shadowed, GnwFont, GnwFontId,
-};
+use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFont, GnwFontId};
 use max_render::viewport::Viewport;
 
 use crate::assets::Assets;
@@ -93,8 +91,7 @@ impl UiPalette {
     /// (маркеры ресурсов, курсоры), которые индексируются системной палитрой
     /// окна, а не палитрой `.WRL`/`COLOR.PAL`.
     pub fn palette_rgba(&self) -> max_render::terrain::PaletteRgba {
-        self.colors
-            .map(|color| [color[0], color[1], color[2], 255])
+        self.colors.map(|color| [color[0], color[1], color[2], 255])
     }
 }
 
@@ -504,7 +501,14 @@ impl Panels {
         let mut painted = 0;
 
         // Верхние кнопки.
-        self.draw_pair(frame, palette, &self.files, layout::FILES_BUTTON, false, &mut painted);
+        self.draw_pair(
+            frame,
+            palette,
+            &self.files,
+            layout::FILES_BUTTON,
+            false,
+            &mut painted,
+        );
         self.draw_caption(frame, palette, PanelButton::Files);
         self.draw_pair(
             frame,
@@ -517,11 +521,25 @@ impl Panels {
         self.draw_caption(frame, palette, PanelButton::Preferences);
 
         // End Turn (заходит на карту — рисуется поверх).
-        painted += self.blit(frame, palette, &self.end_turn, layout::END_TURN_BUTTON.ulx, layout::END_TURN_BUTTON.uly, true);
+        painted += self.blit(
+            frame,
+            palette,
+            &self.end_turn,
+            layout::END_TURN_BUTTON.ulx,
+            layout::END_TURN_BUTTON.uly,
+            true,
+        );
         self.draw_caption(frame, palette, PanelButton::EndTurn);
 
         // Номер хода и таймер.
-        painted += self.blit(frame, palette, &self.turns, layout::TURN_COUNTER.ulx, layout::TURN_COUNTER.uly, true);
+        painted += self.blit(
+            frame,
+            palette,
+            &self.turns,
+            layout::TURN_COUNTER.ulx,
+            layout::TURN_COUNTER.uly,
+            true,
+        );
         draw_centered(
             frame,
             layout::TURN_COUNTER,
@@ -529,7 +547,14 @@ impl Panels {
             &format!("{}", state.turn_counter.max(0)),
             palette.rgba(TEXT),
         );
-        painted += self.blit(frame, palette, &self.timer, layout::TURN_TIMER.ulx, layout::TURN_TIMER.uly, true);
+        painted += self.blit(
+            frame,
+            palette,
+            &self.timer,
+            layout::TURN_TIMER.ulx,
+            layout::TURN_TIMER.uly,
+            true,
+        );
         let timer_color = if panel.timer_seconds <= 20 && panel.timer_seconds > 0 {
             palette.rgba(0x01)
         } else {
@@ -539,7 +564,11 @@ impl Panels {
             frame,
             layout::TURN_TIMER,
             GnwFontId::Font5.font(),
-            &format!("{:02}:{:02}", panel.timer_seconds / 60, panel.timer_seconds % 60),
+            &format!(
+                "{:02}:{:02}",
+                panel.timer_seconds / 60,
+                panel.timer_seconds % 60
+            ),
             timer_color,
         );
 
@@ -713,7 +742,8 @@ impl Panels {
             // Спрайт рисуется в буфер портрета и увеличивается вдвое вокруг
             // центра: статичная замена FLIC-анимации, но заметно крупнее
             // нативной иконки 50×50.
-            let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
+            let mut portrait =
+                RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
             let anchor = (area.width / 2, area.height / 2);
 
             renderer.draw_unit(
@@ -757,7 +787,11 @@ impl Panels {
             area.ulx,
             area.uly + font.height(),
             font,
-            if unit.hits > 0 { "Awaiting" } else { "Destroyed" },
+            if unit.hits > 0 {
+                "Awaiting"
+            } else {
+                "Destroyed"
+            },
             palette.rgba(TEXT),
         );
 
@@ -1095,11 +1129,7 @@ pub fn minimap_view(map_width: i32, map_height: i32) -> MinimapView {
 ///
 /// В C++ смещение обновляется инкрементально (±4), здесь берётся его предел:
 /// `clamp(view_center - map/4, 0, map/2)`.
-pub fn minimap_center_offset(
-    viewport: &Viewport,
-    map_width: i32,
-    map_height: i32,
-) -> (i32, i32) {
+pub fn minimap_center_offset(viewport: &Viewport, map_width: i32, map_height: i32) -> (i32, i32) {
     let (center_x, center_y) = viewport.center();
     let grid_x = (center_x / 64).clamp(0, map_width - 1);
     let grid_y = (center_y / 64).clamp(0, map_height - 1);
@@ -1316,12 +1346,7 @@ fn draw_minimap(
         let x1 = view.offset_x + ((f64::from(range.x1) + 0.9) * scale) as i32;
         let y1 = view.offset_y + ((f64::from(range.y1) + 0.9) * scale) as i32;
 
-        draw_box_indexed(
-            &mut window,
-            MINIMAP_SLOT,
-            (x0, y0, x1, y1),
-            0x01,
-        );
+        draw_box_indexed(&mut window, MINIMAP_SLOT, (x0, y0, x1, y1), 0x01);
     }
 
     // 5. 2x-режим (`GameManager_RenderMinimap`): область 56×56 вокруг центра
@@ -1465,26 +1490,14 @@ mod tests {
 
     #[test]
     fn panel_buttons_have_the_original_window_rects() {
-        assert_eq!(
-            PanelButton::Files.rect(),
-            PixelRect::new(17, 4, 67, 18)
-        );
-        assert_eq!(
-            PanelButton::EndTurn.rect(),
-            PixelRect::new(390, 2, 72, 21)
-        );
+        assert_eq!(PanelButton::Files.rect(), PixelRect::new(17, 4, 67, 18));
+        assert_eq!(PanelButton::EndTurn.rect(), PixelRect::new(390, 2, 72, 21));
         assert_eq!(
             PanelButton::ZoomSlider.rect(),
             PixelRect::new(20, 275, 130, 14)
         );
-        assert_eq!(
-            PanelButton::Survey.rect(),
-            PixelRect::new(4, 298, 55, 16)
-        );
-        assert_eq!(
-            PanelButton::Names.rect(),
-            PixelRect::new(114, 330, 55, 18)
-        );
+        assert_eq!(PanelButton::Survey.rect(), PixelRect::new(4, 298, 55, 16));
+        assert_eq!(PanelButton::Names.rect(), PixelRect::new(114, 330, 55, 18));
     }
 
     #[test]

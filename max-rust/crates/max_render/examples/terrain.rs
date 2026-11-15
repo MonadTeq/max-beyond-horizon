@@ -21,9 +21,9 @@ use max_render::viewport::Viewport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
-    let wrl_path = args.next().unwrap_or_else(|| {
-        "../../max-original/SNOW_1.WRL".to_string()
-    });
+    let wrl_path = args
+        .next()
+        .unwrap_or_else(|| "../../max-original/SNOW_1.WRL".to_string());
     let out_prefix = args.next().unwrap_or_else(|| "terrain".to_string());
 
     let wrl = WrlMap::open(&wrl_path)?;
@@ -41,12 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (w, h) = (atlas.size().0.max(1) as u32, atlas.size().1.max(1) as u32);
     let zoom = 8u32;
     let mut frame = RgbaBuffer::filled(w * zoom, h * zoom, max_render::buffer::Rgba::BLACK);
-    let viewport = Viewport::with_center(
-        w * zoom,
-        h * zoom,
-        (0, 0),
-        zoom,
-    );
+    let viewport = Viewport::with_center(w * zoom, h * zoom, (0, 0), zoom);
     let painted = atlas.render_into(&mut frame, &viewport);
     let overview = PathBuf::from(format!("{out_prefix}-map.bmp"));
     write_bmp(&overview, &frame)?;
@@ -55,10 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Детальный фрагмент 512×384, зум 1:1 (64 px на клетку). Центр — по
     //    желанию (по умолчанию центр карты; у SNOW_1 там вода, земля по краям).
     let center = match (args.next(), args.next()) {
-        (Some(x), Some(y)) => (
-            x.parse::<i32>()?,
-            y.parse::<i32>()?,
-        ),
+        (Some(x), Some(y)) => (x.parse::<i32>()?, y.parse::<i32>()?),
         _ => (0, 0),
     };
     let detail = Viewport::with_center(512, 384, center, 64);
@@ -104,7 +96,9 @@ fn write_bmp(path: &PathBuf, buffer: &RgbaBuffer) -> io::Result<()> {
         let mut row = Vec::with_capacity(stride as usize);
 
         for x in 0..width {
-            let pixel = buffer.get(x as i32, y as i32).unwrap_or(max_render::buffer::Rgba::BLACK);
+            let pixel = buffer
+                .get(x as i32, y as i32)
+                .unwrap_or(max_render::buffer::Rgba::BLACK);
             row.extend_from_slice(&[pixel.b, pixel.g, pixel.r]);
         }
 

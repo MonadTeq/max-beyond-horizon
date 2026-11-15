@@ -323,6 +323,9 @@ pub struct Assets {
     pub chrome: Option<crate::chrome::Chrome>,
     /// Наполнение панелей поверх `FRAMEPIC` (кнопки, счётчики, сетка, зум).
     pub panels: Option<crate::panels::Panels>,
+    /// Меню на оригинальных ресурсах (`MAINPIC`/`PLANETSE`/`MULTGAME` +
+    /// `BLANK_*`/`MNUBTN*`/`BTNHIDE`), пункт E.
+    pub menu: Option<crate::menu::MenuAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -437,6 +440,14 @@ impl Assets {
         // работает в прежнем полноэкранном режиме.
         let chrome = crate::chrome::Chrome::load(&max_res);
         let panels = crate::panels::Panels::load(&max_res);
+        let menu = crate::menu::MenuAssets::load(&max_res);
+
+        if menu.is_none() {
+            warnings.push(
+                "меню на оригинальных ресурсах (MAINPIC/BLANK_*/MNUBTN*/…) не загрузилось"
+                    .to_string(),
+            );
+        }
 
         if chrome.is_some() && panels.is_none() {
             warnings.push(
@@ -468,7 +479,9 @@ impl Assets {
             match max_res.read(name) {
                 Ok(bytes) => match BigImage::decode(bytes) {
                     Ok(image) => planet_pictures.push(image),
-                    Err(error) => warnings.push(format!("картинка планеты {name} не разобралась: {error}")),
+                    Err(error) => {
+                        warnings.push(format!("картинка планеты {name} не разобралась: {error}"))
+                    }
                 },
                 Err(error) => warnings.push(format!("нет картинки планеты {name}: {error}")),
             }
@@ -486,6 +499,7 @@ impl Assets {
             max_res,
             chrome,
             panels,
+            menu,
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,
@@ -599,8 +613,14 @@ mod tests {
         // (`ResourceManager_MinimapBgImage` — снимок окна миникарты).
         let radar = assets.sprite(UnitType::Radar).expect("RADAR");
         assert_eq!(radar.sheet.len(), 20);
-        assert_eq!((radar.sheet.frames[0].width, radar.sheet.frames[0].height), (64, 64));
-        assert_eq!((radar.sheet.frames[0].hotx, radar.sheet.frames[0].hoty), (32, 32));
+        assert_eq!(
+            (radar.sheet.frames[0].width, radar.sheet.frames[0].height),
+            (64, 64)
+        );
+        assert_eq!(
+            (radar.sheet.frames[0].hotx, radar.sheet.frames[0].hoty),
+            (32, 32)
+        );
     }
 
     #[test]
@@ -624,7 +644,12 @@ mod tests {
 
         assert_eq!(assets.planet_pictures.len(), 4);
 
-        for planet in [Planet::Snowcrab, Planet::IronCross, Planet::NewLuzon, Planet::Bottleneck] {
+        for planet in [
+            Planet::Snowcrab,
+            Planet::IronCross,
+            Planet::NewLuzon,
+            Planet::Bottleneck,
+        ] {
             let picture = assets.planet_picture(planet).expect("картинка планеты");
             assert_eq!((picture.width, picture.height), (128, 128));
         }
@@ -723,7 +748,10 @@ mod tests {
             warning.as_deref().unwrap_or("").contains("fallback"),
             "о подмене нужно предупредить: {warning:?}"
         );
-        assert_eq!(config.patches_res, missing, "config не меняется (хэш отдельно)");
+        assert_eq!(
+            config.patches_res, missing,
+            "config не меняется (хэш отдельно)"
+        );
 
         std::fs::remove_dir_all(dir).ok();
     }
@@ -823,7 +851,10 @@ mod tests {
             "путь хэндшейка не подменяется fallback'ом"
         );
         assert!(
-            report.warnings.iter().any(|warning| warning.contains("fallback")),
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("fallback")),
             "предупреждение о fallback должно попасть в отчёт: {:?}",
             report.warnings
         );

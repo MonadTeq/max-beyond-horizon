@@ -23,27 +23,27 @@
 //! (`SmartPointer<Task>`) и исключает заимствование `Self` из-за состояния
 //! партии.
 
+use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::Point;
 use crate::team::{Cargo, TeamId};
-use crate::unit::{UnitId, UnitInfo, UnitListKind, Rect};
+use crate::unit::{Rect, UnitId, UnitInfo, UnitListKind};
 use crate::unit_order;
-use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 
 use super::task::{
     TaskHeader, TASK_PRIORITY_MOVE, TASK_TYPE_ACTIVATE, TASK_TYPE_ASSIST_MOVE, TASK_TYPE_ATTACK,
-    TASK_TYPE_ATTACK_RESERVE, TASK_TYPE_AUTO_SURVEY, TASK_TYPE_CHECK_ASSAULTS, TASK_TYPE_CLEAR_ZONE,
-    TASK_TYPE_CONNECTION_ASSISTANT, TASK_TYPE_CREATE_BUILDING, TASK_TYPE_CREATE_UNIT,
-    TASK_TYPE_DEFENSE_ASSISTANT, TASK_TYPE_DEFENSE_RESERVE, TASK_TYPE_DUMP, TASK_TYPE_ESCORT,
-    TASK_TYPE_EXPLORE, TASK_TYPE_FIND_MINES, TASK_TYPE_FIND_PATH, TASK_TYPE_FRONTIER_ASSISTANT,
-    TASK_TYPE_FRONTAL_ATTACK, TASK_TYPE_GET_MATERIALS, TASK_TYPE_HABITAT_ASSISTANT,
-    TASK_TYPE_KILL_UNIT, TASK_TYPE_MANAGE_BUILDINGS, TASK_TYPE_MINE_ASSISTANT, TASK_TYPE_MOVE,
-    TASK_TYPE_MOVE_HOME, TASK_TYPE_OBTAIN_UNITS, TASK_TYPE_PLACE_MINES,
-    TASK_TYPE_POWER_ASSISTANT, TASK_TYPE_RADAR_ASSISTANT, TASK_TYPE_RELOAD,
+    TASK_TYPE_ATTACK_RESERVE, TASK_TYPE_AUTO_SURVEY, TASK_TYPE_CHECK_ASSAULTS,
+    TASK_TYPE_CLEAR_ZONE, TASK_TYPE_CONNECTION_ASSISTANT, TASK_TYPE_CREATE_BUILDING,
+    TASK_TYPE_CREATE_UNIT, TASK_TYPE_DEFENSE_ASSISTANT, TASK_TYPE_DEFENSE_RESERVE, TASK_TYPE_DUMP,
+    TASK_TYPE_ESCORT, TASK_TYPE_EXPLORE, TASK_TYPE_FIND_MINES, TASK_TYPE_FIND_PATH,
+    TASK_TYPE_FRONTAL_ATTACK, TASK_TYPE_FRONTIER_ASSISTANT, TASK_TYPE_GET_MATERIALS,
+    TASK_TYPE_HABITAT_ASSISTANT, TASK_TYPE_KILL_UNIT, TASK_TYPE_MANAGE_BUILDINGS,
+    TASK_TYPE_MINE_ASSISTANT, TASK_TYPE_MOVE, TASK_TYPE_MOVE_HOME, TASK_TYPE_OBTAIN_UNITS,
+    TASK_TYPE_PLACE_MINES, TASK_TYPE_POWER_ASSISTANT, TASK_TYPE_RADAR_ASSISTANT, TASK_TYPE_RELOAD,
     TASK_TYPE_REMOVE_MINES, TASK_TYPE_REMOVE_RUBBLE, TASK_TYPE_RENDEZVOUS, TASK_TYPE_REPAIR,
-    TASK_TYPE_RETREAT, TASK_TYPE_SCAVENGE, TASK_TYPE_SEARCH_DESTINATION,
-    TASK_TYPE_SUPPORT_ATTACK, TASK_TYPE_SURVEY, TASK_TYPE_TRANSPORT,
-    TASK_TYPE_UPDATE_TERRAIN, TASK_TYPE_UPGRADE, TASK_TYPE_WAIT_TO_ATTACK,
+    TASK_TYPE_RETREAT, TASK_TYPE_SCAVENGE, TASK_TYPE_SEARCH_DESTINATION, TASK_TYPE_SUPPORT_ATTACK,
+    TASK_TYPE_SURVEY, TASK_TYPE_TRANSPORT, TASK_TYPE_UPDATE_TERRAIN, TASK_TYPE_UPGRADE,
+    TASK_TYPE_WAIT_TO_ATTACK,
 };
 use super::task_manager::TaskManager;
 use super::Task;
@@ -1046,7 +1046,8 @@ impl<'a> TaskCtx<'a> {
 
     /// `UnitInfo::RemoveTask` (с напоминанием новой верхней задаче, если `mode`).
     pub fn detach(&mut self, task_id: u32, unit: UnitId, mode: bool) {
-        self.tm.detach_task_from_unit(self.world, task_id, unit, mode);
+        self.tm
+            .detach_task_from_unit(self.world, task_id, unit, mode);
     }
 
     /// `TaskManager::ClearUnitTasksAndRemindAvailable`.
@@ -1103,12 +1104,21 @@ impl<'a> TaskCtx<'a> {
 
     /// Регистрирует юнит как «потерявший задачу» (`RemindAvailable`).
     pub fn remind_available(&mut self, unit: UnitId, priority: bool) {
-        self.tm
-            .append_reminder(self.world, super::reminders::Reminder::Available { unit }, priority);
+        self.tm.append_reminder(
+            self.world,
+            super::reminders::Reminder::Available { unit },
+            priority,
+        );
     }
 
     /// `AiPlayer::CreateBuilding` для команды.
-    pub fn create_building(&mut self, team: TeamId, unit_type: UnitType, site: Point, task: Option<u32>) {
+    pub fn create_building(
+        &mut self,
+        team: TeamId,
+        unit_type: UnitType,
+        site: Point,
+        task: Option<u32>,
+    ) {
         super::strategy::create_building(self.world, team, unit_type, site, task);
     }
 
@@ -1138,7 +1148,13 @@ impl<'a> TaskCtx<'a> {
     }
 
     /// `UnitInfo::BuildOrder` (`unitinfo.cpp:1380`): очередь постройки + `ORDER_BUILD`.
-    pub fn build_order(&mut self, unit_id: UnitId, unit_type: UnitType, site: Point, build_rate: u16) -> bool {
+    pub fn build_order(
+        &mut self,
+        unit_id: UnitId,
+        unit_type: UnitType,
+        site: Point,
+        build_rate: u16,
+    ) -> bool {
         let Some(mut unit) = self.unit(unit_id) else {
             return false;
         };
@@ -1165,7 +1181,11 @@ impl<'a> TaskCtx<'a> {
 
     /// `UnitsManager_SetNewOrder(unit, ORDER_HALT_BUILDING(_2), BUILD_CANCEL)`.
     pub fn halt_building(&mut self, unit_id: UnitId) {
-        self.set_new_order(unit_id, UnitOrder::HaltBuilding, UnitOrderState::BuildCancel);
+        self.set_new_order(
+            unit_id,
+            UnitOrder::HaltBuilding,
+            UnitOrderState::BuildCancel,
+        );
     }
 
     /// Список юнитов команды с флагами (`Task_GetReadyUnitsCount`-фильтр).
@@ -1174,7 +1194,12 @@ impl<'a> TaskCtx<'a> {
             .unit_list(kind)
             .iter()
             .copied()
-            .filter(|id| self.world.unit(*id).map(|unit| unit.team == team).unwrap_or(false))
+            .filter(|id| {
+                self.world
+                    .unit(*id)
+                    .map(|unit| unit.team == team)
+                    .unwrap_or(false)
+            })
             .collect()
     }
 
@@ -1217,12 +1242,7 @@ pub fn task_end_turn(manager: &mut TaskManager, world: &mut GameState, task_id: 
 }
 
 /// `RemindMoveFinished`-обработчик (обёртка для `reminders.rs`).
-pub fn task_execute(
-    manager: &mut TaskManager,
-    world: &mut GameState,
-    task_id: u32,
-    unit: UnitId,
-) {
+pub fn task_execute(manager: &mut TaskManager, world: &mut GameState, task_id: u32, unit: UnitId) {
     manager.task_execute(world, task_id, unit);
 }
 
@@ -1296,7 +1316,8 @@ impl TaskKind {
             // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` без цели).
             Self::KillUnit(state) => {
                 if state.required_damage == u16::MAX {
-                    task.base_priority.wrapping_add(super::task::TASK_PRIORITY_TOLERANCE)
+                    task.base_priority
+                        .wrapping_add(super::task::TASK_PRIORITY_TOLERANCE)
                 } else {
                     task.base_priority
                 }
@@ -1331,8 +1352,13 @@ impl TaskKind {
         let _ = world;
         let _ = header;
         match self {
-            Self::CreateBuilding { site, unit_type, .. } => {
-                let size = if crate::access::unit_type_flags(*unit_type) & crate::enums::unit_flags::BUILDING != 0 {
+            Self::CreateBuilding {
+                site, unit_type, ..
+            } => {
+                let size = if crate::access::unit_type_flags(*unit_type)
+                    & crate::enums::unit_flags::BUILDING
+                    != 0
+                {
                     2
                 } else {
                     1
@@ -1386,12 +1412,20 @@ impl TaskKind {
         match self {
             Self::Attack(_) => combat::attack_is_unit_usable(world, header, unit),
             Self::KillUnit(state) => combat::kill_unit_is_unit_usable(world, header, state, unit),
-            Self::ManageBuildings { .. } => build::manage_buildings_is_unit_usable(world, header, unit),
-            Self::ObtainUnits { .. } => create::obtain_units_is_unit_usable(world, header, self, unit),
-            Self::DefenseReserve { .. } => combat::defense_reserve_is_unit_usable(world, header, unit),
+            Self::ManageBuildings { .. } => {
+                build::manage_buildings_is_unit_usable(world, header, unit)
+            }
+            Self::ObtainUnits { .. } => {
+                create::obtain_units_is_unit_usable(world, header, self, unit)
+            }
+            Self::DefenseReserve { .. } => {
+                combat::defense_reserve_is_unit_usable(world, header, unit)
+            }
             Self::PlaceMines { .. } => misc::place_mines_is_unit_usable(world, header, unit),
             Self::Scavenge { .. } => misc::scavenge_is_unit_usable(world, header, unit),
-            Self::SupportAttack { .. } => combat::support_attack_is_unit_usable(world, header, self, unit),
+            Self::SupportAttack { .. } => {
+                combat::support_attack_is_unit_usable(world, header, self, unit)
+            }
             Self::AssistMove { .. } => move_tasks::assist_move_is_unit_usable(world, header, unit),
             Self::Explore { .. } => search::explore_is_unit_usable(world, header, unit),
             _ => {
@@ -1411,7 +1445,11 @@ impl TaskKind {
             Self::Repair { .. } | Self::Reload { .. } | Self::Upgrade { .. } => false,
             _ => match task.parent {
                 Some(parent) => match world.ai.task_manager.task(parent) {
-                    Some(parent_task) => parent_task.kind.is_unit_transferable(world, parent_task, unit),
+                    Some(parent_task) => {
+                        parent_task
+                            .kind
+                            .is_unit_transferable(world, parent_task, unit)
+                    }
                     None => true,
                 },
                 None => true,
@@ -1455,7 +1493,10 @@ impl TaskKind {
     pub fn is_thinking_kind(&self) -> bool {
         matches!(
             self,
-            Self::CheckAssaults { .. } | Self::ClearZone { .. } | Self::FindPath { .. } | Self::WaitToAttack { .. }
+            Self::CheckAssaults { .. }
+                | Self::ClearZone { .. }
+                | Self::FindPath { .. }
+                | Self::WaitToAttack { .. }
         )
     }
 
@@ -1463,16 +1504,32 @@ impl TaskKind {
     pub fn write_status_log(&self, task: &Task) -> String {
         let name = super::task::task_get_name(self.get_type());
         match self {
-            Self::Move(state) => format!("Move to [{},{}]", state.destination.x + 1, state.destination.y + 1),
-            Self::CreateBuilding { unit_type, site, op_state, .. } => format!(
+            Self::Move(state) => format!(
+                "Move to [{},{}]",
+                state.destination.x + 1,
+                state.destination.y + 1
+            ),
+            Self::CreateBuilding {
+                unit_type,
+                site,
+                op_state,
+                ..
+            } => format!(
                 "Create {:?} at [{},{}] state {}",
                 unit_type,
                 site.x + 1,
                 site.y + 1,
                 op_state
             ),
-            Self::CreateUnit { unit_type, site, .. } => {
-                format!("Create a {:?} at [{},{}]", unit_type, site.x + 1, site.y + 1)
+            Self::CreateUnit {
+                unit_type, site, ..
+            } => {
+                format!(
+                    "Create a {:?} at [{},{}]",
+                    unit_type,
+                    site.x + 1,
+                    site.y + 1
+                )
             }
             Self::Attack(_) => "Attack".to_string(),
             Self::KillUnit(state) => format!(
@@ -1481,7 +1538,11 @@ impl TaskKind {
                 state.target_position.y + 1
             ),
             Self::ManageBuildings { building_site, .. } => {
-                format!("Manage buildings at [{},{}]", building_site.x + 1, building_site.y + 1)
+                format!(
+                    "Manage buildings at [{},{}]",
+                    building_site.x + 1,
+                    building_site.y + 1
+                )
             }
             _ => format!("{} ({})", name, task.base_priority),
         }
@@ -1493,9 +1554,10 @@ impl TaskKind {
     /// `TaskObtainUnits::CountInstancesOfUnitType`.
     pub fn count_instances_of_unit_type(&self, unit_type: UnitType) -> u32 {
         match self {
-            Self::ObtainUnits { units, .. } => {
-                units.iter().filter(|candidate| **candidate == unit_type).count() as u32
-            }
+            Self::ObtainUnits { units, .. } => units
+                .iter()
+                .filter(|candidate| **candidate == unit_type)
+                .count() as u32,
             _ => 0,
         }
     }
@@ -1503,7 +1565,9 @@ impl TaskKind {
     /// `TaskCreate::GetUnitType` — тип создаваемого юнита (для переписи).
     pub fn create_unit_type(&self) -> Option<UnitType> {
         match self {
-            Self::CreateUnit { unit_type, .. } | Self::CreateBuilding { unit_type, .. } => Some(*unit_type),
+            Self::CreateUnit { unit_type, .. } | Self::CreateBuilding { unit_type, .. } => {
+                Some(*unit_type)
+            }
             _ => None,
         }
     }
@@ -1636,7 +1700,13 @@ impl TaskKind {
     }
 
     /// Уведомление о завершении дочернего `TaskMove`.
-    pub fn move_finished(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId, result: i8) {
+    pub fn move_finished(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit: UnitId,
+        result: i8,
+    ) {
         if create::move_finished(self, ctx, header, unit, result)
             || move_tasks::move_finished(self, ctx, header, unit, result)
             || combat::move_finished(self, ctx, header, unit, result)
@@ -1661,7 +1731,12 @@ impl TaskKind {
     }
 
     /// `Task::ExchangeOperator(unit)` — по умолчанию `false`.
-    pub fn exchange_operator(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+    pub fn exchange_operator(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit: UnitId,
+    ) -> bool {
         create::exchange_operator(self, ctx, header, unit)
             || build::exchange_operator(self, ctx, header, unit)
             || move_tasks::exchange_operator(self, ctx, header, unit)
@@ -1671,7 +1746,12 @@ impl TaskKind {
     }
 
     /// `Task::EventUnitDestroyed(unit)`.
-    pub fn event_unit_destroyed(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+    pub fn event_unit_destroyed(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit: UnitId,
+    ) {
         if create::event_unit_destroyed(self, ctx, header, unit)
             || build::event_unit_destroyed(self, ctx, header, unit)
             || move_tasks::event_unit_destroyed(self, ctx, header, unit)
@@ -1686,7 +1766,12 @@ impl TaskKind {
     }
 
     /// `Task::EventEnemyUnitSpotted(unit)`.
-    pub fn event_enemy_unit_spotted(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+    pub fn event_enemy_unit_spotted(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit: UnitId,
+    ) {
         if combat::event_enemy_unit_spotted(self, ctx, header, unit)
             || create::event_enemy_unit_spotted(self, ctx, header, unit)
             || build::event_enemy_unit_spotted(self, ctx, header, unit)
@@ -1701,7 +1786,12 @@ impl TaskKind {
     }
 
     /// `Task::EventCargoTransfer(unit)`.
-    pub fn event_cargo_transfer(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+    pub fn event_cargo_transfer(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit: UnitId,
+    ) {
         if misc::event_cargo_transfer(self, ctx, header, unit)
             || create::event_cargo_transfer(self, ctx, header, unit)
             || combat::event_cargo_transfer(self, ctx, header, unit)
@@ -1716,7 +1806,13 @@ impl TaskKind {
     }
 
     /// `Task::EventUnitLoaded(unit1, unit2)`.
-    pub fn event_unit_loaded(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit1: UnitId, unit2: UnitId) {
+    pub fn event_unit_loaded(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit1: UnitId,
+        unit2: UnitId,
+    ) {
         if move_tasks::event_unit_loaded(self, ctx, header, unit1, unit2)
             || create::event_unit_loaded(self, ctx, header, unit1, unit2)
             || combat::event_unit_loaded(self, ctx, header, unit1, unit2)
@@ -1731,7 +1827,13 @@ impl TaskKind {
     }
 
     /// `Task::EventUnitUnloaded(unit1, unit2)`.
-    pub fn event_unit_unloaded(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit1: UnitId, unit2: UnitId) {
+    pub fn event_unit_unloaded(
+        &mut self,
+        ctx: &mut TaskCtx<'_>,
+        header: TaskHeader,
+        unit1: UnitId,
+        unit2: UnitId,
+    ) {
         if move_tasks::event_unit_unloaded(self, ctx, header, unit1, unit2)
             || create::event_unit_unloaded(self, ctx, header, unit1, unit2)
             || combat::event_unit_unloaded(self, ctx, header, unit1, unit2)

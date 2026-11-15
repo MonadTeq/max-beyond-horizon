@@ -173,7 +173,10 @@ pub fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
     let grid_x = i32::from(position.x);
     let grid_y = i32::from(position.y);
 
-    if grid_x < 1 || grid_y < 1 || (grid_x + 3) > MAP_WIDTH as i32 || (grid_y + 3) > MAP_HEIGHT as i32
+    if grid_x < 1
+        || grid_y < 1
+        || (grid_x + 3) > MAP_WIDTH as i32
+        || (grid_y + 3) > MAP_HEIGHT as i32
     {
         return false;
     }
@@ -312,8 +315,8 @@ pub fn set_initial_mining(state: &mut GameState, id: UnitId, grid: Point) {
         unit.raw_mining = raw_mining.clamp(0, i32::from(u8::MAX)) as u8;
         unit.fuel_mining = (fuel_mining + fuel_extra).clamp(0, i32::from(u8::MAX)) as u8;
         unit.gold_mining = gold_mining.clamp(0, i32::from(u8::MAX)) as u8;
-        unit.total_mining =
-            (raw_mining + fuel_mining + fuel_extra + gold_mining).clamp(0, i32::from(u8::MAX)) as u8;
+        unit.total_mining = (raw_mining + fuel_mining + fuel_extra + gold_mining)
+            .clamp(0, i32::from(u8::MAX)) as u8;
     }
 }
 
@@ -459,12 +462,9 @@ pub fn deploy_team_supplies(
     let mining_station_location =
         start_position_mining_station(state, starting_position, max_resources);
 
-    let Some(mining_station) = state.spawn_unit(
-        UnitType::MiningStation,
-        team,
-        mining_station_location,
-        0,
-    ) else {
+    let Some(mining_station) =
+        state.spawn_unit(UnitType::MiningStation, team, mining_station_location, 0)
+    else {
         state.game_state = previous_state;
 
         return deployed;
@@ -490,12 +490,7 @@ pub fn deploy_team_supplies(
     // `LRGSLAB` поверх шахты с кадром из RNG.
     let large_slab_angle = state.rng.generate_i32(LARGE_SLAB_IMAGE_COUNT) as u8;
 
-    if let Some(id) = state.spawn_unit(
-        UnitType::LargeSlab,
-        team,
-        mining_station_location,
-        0,
-    ) {
+    if let Some(id) = state.spawn_unit(UnitType::LargeSlab, team, mining_station_location, 0) {
         if let Some(unit) = state.unit_mut(id) {
             unit.angle = large_slab_angle;
             unit.storage = 0;
@@ -518,12 +513,9 @@ pub fn deploy_team_supplies(
     let power_generator_location =
         starting_position_power_generator(state, team, mining_station_location);
 
-    let Some(power_generator) = state.spawn_unit(
-        UnitType::PowerGenerator,
-        team,
-        power_generator_location,
-        0,
-    ) else {
+    let Some(power_generator) =
+        state.spawn_unit(UnitType::PowerGenerator, team, power_generator_location, 0)
+    else {
         state.game_state = previous_state;
 
         return deployed;
@@ -542,12 +534,7 @@ pub fn deploy_team_supplies(
     // `SMLSLAB` поверх генератора с кадром из RNG (всегда 0, но вызов обязателен).
     let small_slab_angle = state.rng.generate_i32(SMALL_SLAB_IMAGE_COUNT) as u8;
 
-    if let Some(id) = state.spawn_unit(
-        UnitType::SmallSlab,
-        team,
-        power_generator_location,
-        0,
-    ) {
+    if let Some(id) = state.spawn_unit(UnitType::SmallSlab, team, power_generator_location, 0) {
         if let Some(unit) = state.unit_mut(id) {
             unit.angle = small_slab_angle;
             unit.storage = 0;
@@ -739,7 +726,10 @@ mod tests {
             UnitType::Surveyor,
         ] {
             assert_eq!(
-                types.iter().filter(|&&unit_type| unit_type == expected).count(),
+                types
+                    .iter()
+                    .filter(|&&unit_type| unit_type == expected)
+                    .count(),
                 1,
                 "нет юнита {expected:?} в {types:?}"
             );
@@ -761,9 +751,7 @@ mod tests {
 
         // Загрузка: storage = cargo, приказы как у конструктора C++.
         for (index, supply) in DEFAULT_MISSION_LOADOUT.iter().enumerate() {
-            let unit = state
-                .unit(deployed[4 + index])
-                .expect("юнит загрузки");
+            let unit = state.unit(deployed[4 + index]).expect("юнит загрузки");
             assert_eq!(unit.unit_type, supply.unit_type);
             assert_eq!(unit.storage, supply.cargo as i16);
             assert_eq!(unit.orders, UnitOrder::Await);
@@ -807,11 +795,7 @@ mod tests {
             .collect();
 
         assert_eq!(actual, expected);
-        assert_eq!(
-            rng.state(),
-            state.rng.state(),
-            "поток ГПСЧ должен совпасть"
-        );
+        assert_eq!(rng.state(), state.rng.state(), "поток ГПСЧ должен совпасть");
     }
 
     #[test]

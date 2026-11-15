@@ -116,7 +116,12 @@ impl TerrainAtlas {
     }
 
     /// Рисует одну клетку в прямоугольник `rect` (учитывает зум растяжением).
-    pub fn render_tile_into(&self, dst: &mut RgbaBuffer, grid: (i16, i16), rect: crate::buffer::PixelRect) -> u32 {
+    pub fn render_tile_into(
+        &self,
+        dst: &mut RgbaBuffer,
+        grid: (i16, i16),
+        rect: crate::buffer::PixelRect,
+    ) -> u32 {
         if rect.width <= 0 || rect.height <= 0 || rect.is_empty() {
             return 0;
         }

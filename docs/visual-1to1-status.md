@@ -24,8 +24,9 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
 | Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
 | Курсор мыши | **1:1 по формату и контексту** (SDL `Cursor::from_surface` за feature `sdl`) | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | `max_assets::cursor`, `max_app::cursor` |
-| Меню (главное, create/join) | **процедурное** | `MNUBTN*U/D`, `FRAMEPIC` | `max_app::ui` |
-| Экран выбора планеты | **сетка 24 планет** на `SNOW_PIC + world/6` + имена; числовой ввод — fallback | `MAX.RES`: `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` (128×128) | `max_app::ui::{planet_grid_rect,draw_planet_picker}` |
+| Меню (главное, create/join) | **1:1 (пункт E)** | `MAINPIC`/`PLANETSE`/`MULTGAME`, `BLANK_*`/`SBLNK_*`, `MNUBTN1..6U/D`, `BTNHIDE`, `BGRSCRN*`, `P_*`; подписи — GNW `FONT1/5` | `max_app::menu`, `max_app::ui` |
+| Масштабирование окна | **1:1 (пункт F)** | фиксированный кадр 640×480 → целочисленный nearest-neighbour в окно любого размера + letterbox; обратный пересчёт кликов | `max_render::frame_scale`, `max_render::sdl_window` |
+| Экран выбора планеты | **8×3 в оформлении `PLANETSE`** на `SNOW_PIC + world/6` + имена; числовой ввод — fallback | `MAX.RES`: `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` (128×128) | `max_app::menu::draw_create_form`, `max_app::ui::{planet_grid_rect,draw_planet_picker}` |
 
 Итог: **в игре** (сессия/`--new-game` при 640×480) окно, карта и панели уже
 выглядят как оригинал: верхние кнопки/счётчики, портрет (статичный кадр
@@ -33,8 +34,10 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 описание юнита, **миникарта с FOV-маской/точками юнитов/`2x`/`TNT`** и
 **настоящие маркеры ресурсов** рисуются на координатах и ресурсах C++-порта,
 текст — оригинальными растровыми шрифтами GNW, курсоры и сетка выбора планеты
-подключены. Остались анимация портрета (FLIC), меню на `MNUBTN*` (E) и
-масштабирование элементов (F).
+подключены. **Меню (E)** переведено на `MAINPIC`/`PLANETSE`/`MULTGAME` с
+кнопками `BLANK_*`/`MNUBTN*` и GNW-подписями, **масштабирование (F)** —
+фиксированный кадр 640×480, целочисленный апскейл в окно любого размера и
+обратный пересчёт координат мыши. Осталась анимация портрета (FLIC).
 
 ---
 
@@ -222,6 +225,85 @@ RLE по строкам: i16 n;
   делит координату клика на 2 и прибавляет смещение. `TNT` — фильтр точек
   (см. выше), сами пиксели миникарты не меняет.
 
+### 2.6 Меню: ресурсы, координаты и поведение (эталон — C++-порт)
+
+**Главное меню** (`menu.cpp::main_menu`):
+
+| Элемент | Ресурс | Координаты/размер | Примечание |
+|---|---|---|---|
+| фон | `MAINPIC` | 640×480, своя палитра | логотип M.A.X. уже нарисован; `palette_from_image=true` задаёт системную палитру |
+| заголовок | GNW `FONT5`, `COLOR_GREEN` | (236,145) 172×15 | `draw_menu_title(window, _(35f9))` = «Main Menu» |
+| портрет | `P_*` (`P_TRANSP + Randomizer(67)`) | (16,182) 300×240 | в статичном кадре — `P_TANK`; индексы читаются **палитрой окна**, не своей |
+| рамка портрета | `BGRSCRNL`/`BGRSCRNR` | (6,173)/(166,173), 160×259 | сначала рамки, потом портрет поверх; `has_transparency=false` |
+| кнопки | `BLANK_UP/DN` 200×29 | x=385, y=175+35·i (6 шт.) | ещё `SBLNK_UP/DN` 100×30 для `Exit` в (435,420) |
+| подписи | GNW `FONT1` | по центру кнопки | `Fonts_GoldColor (165,175,199)`, нажатие — `(5,56,199)` |
+| копирайт | GNW `FONT5`, чёрный | (10,469) 620×10 | `draw_copyright_label` |
+
+Порядок/подписи из `language.json` (en-US): `New Game`, `Load Game`,
+`Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit`. В Rust-клиенте
+действия есть у `New Game` → `CreateForm`, `Multiplayer Game` → `JoinList` и
+`Exit` → выход; остальные четыре пишут строку статуса «screen is not ported
+yet».
+
+**Форма создания игры** (`planetselectmenu.cpp` + `gamesetupmenu.cpp`):
+
+- фон `PLANETSE` 640×480 (палитра совпадает с `MAINPIC` побайтово);
+- заголовок `Planet Select Menu` (230,6) 180×20, имя выбранной планеты
+  (16,61) 149×19 — `FONT5`, зелёный;
+- большая картинка планеты `SNOW_PIC + world/6` в (26,98) 128×128
+  (`ulx/uly` из заголовка ресурса);
+- сетка 24 планет 8×3 вписана в область 3×2 слотов `PLANETSE`
+  (192,51) 388×249, ячейка 48×83; подписи — `FONT5`, выбранная — красная
+  рамка 2 px;
+- поля формы (`Name`, `World`, `Timer`, `End Turn`, `Opponents`, `Password`)
+  — 3×2 в описании `PLANETSE` (41,350) 559×59;
+- нижняя строка кнопок `MNUBTN4U` (243,438) 109×40 «Random»,
+  `MNUBTN4U` (354,438) 109×40 «Cancel», `MNUBTN5U` (465,438) 48×40 «?»,
+  `MNUBTN6U` (514,438) 109×40 «Done» — координаты `planetselectmenu.hpp`.
+
+**Список игр** (`networkmenu.cpp::DrawJoinScreen`):
+
+- фон `MULTGAME` 640×480 (палитра = `MAINPIC`);
+- строки хостов — окно `MENU_ITEM_JOIN_TEXT_WINDOW` (359,28) 209×160,
+  по 20 px, текст `FONT5` `COLOR_GREEN`, разделители `draw_line(...,
+  COLOR_GREEN)`; выделенная строка помечена `>` и подчёркиванием;
+- рамка списка — чёрная панель (355,24) 217×168 с обводкой (в оригинале это
+  тёмное окно `MULTGAME`); `BTNHIDE` (38×21) в (528,4) — кнопка «скрыть
+  список»/назад (в C++-порте ресурс не используется: `grep BTNHIDE` пуст);
+- кнопки `MNUBTN3U` (243,438) 109×40 «Options» → обновить,
+  `MNUBTN4U` (354,438) 109×40 «Cancel» → назад, `MNUBTN5U` (465,438)
+  48×40 «?» → помощь, `MNUBTN6U` (514,438) 109×40 «Ready» → войти
+  (`networkmenu.hpp`, y=438).
+
+**Палитра и шрифт.** Все simple image меню (`BLANK_*`, `MNUBTN*`,
+`BGRSCRN*`, `BTNHIDE`) индексируются системной палитрой окна, то есть
+палитрой `MAINPIC`; big image `PLANETSE`/`MULTGAME` имеют ту же палитру.
+У `P_TANK` своя палитра отличается (индекс 19 — маджента), поэтому портрет
+рисуется индексами через `MAINPIC` (как `palette_from_image=false` в C++).
+Заголовки — `GNW_TEXT_FONT_5`, подписи кнопок — `GNW_TEXT_FONT_1`.
+
+### 2.7 Масштабирование окна (пункт F)
+
+Выбран **вариант 1**: приложение всегда рисует кадр 640×480 (все координаты
+UI — константы C++-порта), а в окно он выводится целочисленным
+nearest-neighbour:
+
+```text
+scale    = min(window_w / 640, window_h / 480)   // 1..8
+content  = 640·scale × 480·scale
+offset   = ((window_w - 640·scale) / 2, (window_h - 480·scale) / 2)
+frame_x  = (window_x - offset_x) / scale
+frame_y  = (window_y - offset_y) / scale
+```
+
+При `scale = N` каждый пиксель кадра — ровно блок `N×N` (никакой
+интерполяции), вокруг — чёрные поля; клик по полю не попадает в кадр. Окно
+SDL3 создаётся ресайзимым; `--scale N` задаёт множитель, без флага масштаб
+подбирается под рабочий стол (целый, 1..4). В отличие от C++
+(`WindowManager_GetScale` + по-элементное `WindowManager_ScaleWindow`/
+`RescaleSimpleImage`), это даёт строгий критерий «пиксель-в-пиксель» без
+пересчёта координат элементов.
+
 ---
 
 ## 3. Что реализовано (код)
@@ -242,6 +324,13 @@ RLE по строкам: i16 n;
 | `max_render/src/map_render.rs` | +170 | `render_resource_icons_into`: большие/малые маркеры, масштаб `zoom/64` и `zoom/16`, fallback `I_*` |
 | `max_render/src/sdl_window.rs` | +80 | `set_cursor_rgba`: кэш `Cursor` по ключу, `Cursor::from_surface`, hotspot |
 | `max_app/src/ui.rs` | +330 | сетка 24 планет (`planet_grid_rect`/`planet_cell_rect`/`planet_cell_at`), `PLANET_NAMES`, отрисовка `SNOW_PIC`-миниатюр, клик по планете; числовой ввод — fallback; 3 теста |
+| `max_app/src/menu.rs` | 1400+ | **пункт E:** `MenuAssets` (`MAINPIC`/`PLANETSE`/`MULTGAME`, `BLANK_*`/`SBLNK_*`, `MNUBTN1..6U/D`, `BTNHIDE`, `BGRSCRN*`, `P_TANK`), отрисовка главного меню/формы/списка в координатах `menu.cpp`/`planetselectmenu.hpp`/`networkmenu.hpp`, hit-test кнопок/строк/полей; 7 тестов |
+| `max_render/src/frame_scale.rs` | 390 | **пункт F:** `FrameScale` — целочисленный `fit` 640×480 в окно, `upscale` (блоки `N×N` + поля), `window_to_frame`; 6 тестов |
+| `max_render/src/sdl_window.rs` | +110 | ресайзимое окно, `new_scaled` (авто-масштаб под рабочий стол), `present` nearest-neighbour в `content_rect`, `window_to_frame`, `poll_input` в координатах кадра |
+| `max_app/src/main.rs` | +25 | `--scale N`, окно = кадр × масштаб, логи размера/масштаба |
+| `max_app/src/assets.rs` | +12 | `Assets.menu` (`MenuAssets::load`), предупреждение, если меню не собралось |
+| `max_assets/src/image.rs` | +50 | ресинхронизация RLE при литерале за границей записи (иначе `SNOW_PIC` декодировался на 20 строк); тест `snow_pic_decodes_all_rows` |
+| `max_app/examples/visual_ef.rs` | 190 | кадры E/F: главное меню, форма, список игр, апскейл 2× |
 | `max_app/examples/visual_cd.rs` | 230 | кадры C/D: игра (маркеры/FOV/2x), экран планет, контактный лист курсоров |
 | `max-rust/tools/font_vectors/main.cpp` + `vectors.txt`/`render.txt` | 388 + 34 КБ | эталонный генератор: FreeType-путь C++-порта и `.FON`-декодер, побайтовое сравнение |
 | `max_app/examples/panel_frame.rs` | 80 | кадр 640×480 с выбранным юнитом (доказательство пункта A) |
@@ -313,24 +402,30 @@ TURN_COUNTER = (468,2,61,21), TURN_TIMER, ZOOM_SLIDER, COORDINATES, …
 
 ## 4. Свидетельства проверки
 
-**Тесты:** `559 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`);
-`cargo check --all-targets` — 0 ошибок; `cargo check -p max_app --features
-sdl-from-source` — 0 ошибок (Linux, полный набор X11/ALSA dev-пакетов).
-Из них новые (пункты C/D): 4 теста `max_assets::cursor` (включая реальные
-размеры/hotspot/кадры всех 30 курсоров `MAX.RES`), 1 тест
-`max_assets::markers` (99 маркеров), 4 теста `max_app::cursor` (индексы/контекст/
-RGBA/сессия), 9 тестов `max_app::panels` (FOV-таблица, масштаб миникарты, клик 1x/2x,
-точки юнитов/TNT), 1 тест `max_render::map_render` (маркеры из `MAX.RES`),
-3 теста `max_app::ui` (клик по планете, сетка, картинки `SNOW_PIC`) и
-2 теста `max_app::assets` (обломки `ALN*` + `RADAR`, 4 картинки планет).
+**Тесты:** `576 passed, 0 failed` (`cargo test` в `rust:1.94.0-bookworm`,
+лог `build/cargo-docker-ef-final3.log`); `cargo check --all-targets` — 0
+ошибок; `cargo check -p max_app --features sdl-from-source` — 0 ошибок
+(Linux, полный набор X11/ALSA dev-пакетов).
+Из них новые (пункт E/F): 7 тестов `max_app::menu` (`main_menu_layout`,
+`menu_assets_load`, отрисовка `MAINPIC`/`PLANETSE`/`MULTGAME` + `MNUBTN`,
+hit-test прямоугольников, сетка 8×3), 3 теста `max_app::ui`
+(`native_frame_menus_are_drawn_from_max_res`,
+`main_menu_clicks_use_the_cpp_button_rectangles`,
+`window_click_at_2x_lands_in_the_same_map_cell`), 6 тестов
+`max_render::frame_scale` (2×2-блоки, letterbox, обратный клик 1280×960,
+кроп при окне меньше кадра), 1 тест `max_assets::image`
+(`snow_pic_decodes_all_rows`), плюс `max_app::assets`/`planet`-тесты.
 
 **Артефакт (Windows UI):** `release/max_app-1.0.0-windows-x86_64-ui/`
-- `max_app.exe` — 5 402 112 Б,
-  sha256 `6d17aeafcb1851e2e8383303016d1ad409f539ee3dcc8aa6e544bbbf6b5827c0`
-- `zip` — 3 054 781 Б,
-  sha256 `021667b6adf59ada1cf1a2c62e635b04f941c3e721c903b2a6796e26bf19f594`
-- `SHA256SUMS` по 5 файлам — `OK`; `max_app.exe --help` и `--new-game
-  --width 640 --height 480` отрабатывают (кадр `build/frame-cd-windows.png`).
+- `max_app.exe` — 5 423 616 Б,
+  sha256 `279e472dcc41e1747548a7e38d9c1b98738e861db913b9f1d1228ac858ff23c9`
+- `zip` — 3 065 885 Б,
+  sha256 `d7415687a5d70381d30bf7ccd1bb2f67dc8afcabea993775fe22aca22b91f0d0`
+- `SHA256SUMS` по 5 файлам — `OK`; `max_app.exe --help` работает,
+  `--ui` открывается (окно 640×480 при `--scale 1`, 1280×960 при
+  `--scale 2`), клик `New Game` в окне 2× открывает форму создания
+  (`build/frame-ef-main-windows*.png`,
+  `build/frame-ef-create-windows*.png`).
 
 **Изображения (в `build/`, не коммитятся):**
 
@@ -351,6 +446,12 @@ RGBA/сессия), 9 тестов `max_app::panels` (FOV-таблица, мас
 | `build/frame-cd-planets.png` | **пункт D:** форма создания игры — сетка 24 планет на `SNOW_PIC + world/6`, имя под каждой, красная рамка выбранной, поле `World` как fallback |
 | `build/frame-cd-cursors.png` | все 30 курсоров из `MAX.RES` (контактный лист: hotspot/кадры/палитра) |
 | `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max_app.exe` (Windows UI) |
+| `build/frame-ef-main.png` | **пункт E:** главное меню 640×480 на `MAINPIC`: 6 кнопок `BLANK_*` + `Exit` `SBLNK_*`, портрет `P_TANK` в рамках `BGRSCRN*`, `FONT1`-подписи, наведение на `New Game` |
+| `build/frame-ef-create.png` | **пункт E:** форма создания на `PLANETSE`: большая картинка планеты (26,98), сетка 8×3, поля 3×2, кнопки `MNUBTN4/5/6` в y=438 |
+| `build/frame-ef-join.png` | **пункт E:** список игр на `MULTGAME`: рамка (359,28) 209×160, строки по 20 px, `BTNHIDE`, кнопки `MNUBTN3/4/5/6` |
+| `build/frame-ef-main-2x.png` | **пункт F:** тот же кадр главного меню после `FrameScale` 2× — 1280×960, каждый пиксель блоком 2×2 |
+| `build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png` | те же экраны из живого `max_app.exe --ui --scale 1` (клиент 640×480) |
+| `build/frame-ef-main-windows-2x.png`, `build/frame-ef-create-windows-2x.png` | живое окно `--ui --scale 2` (1280×960); клик в окне 2× открывает форму — обратный пересчёт координат работает |
 | `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + панели |
 | `build/rle-FRAMEPIC.bmp` | независимая (Python) эмуляция RLE — сверка с Rust-декодером |
 
@@ -360,7 +461,7 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
 
 ---
 
-## 5. Пункты плана: статус (A–D сделаны)
+## 5. Пункты плана: статус (A–F сделаны)
 
 ### Пункт A. Наполнение панелей и верхней строки — **сделано**
 
@@ -492,22 +593,79 @@ FOV-перепад, красная рамка камеры, точки юнит�
   `planet_grid_is_eight_by_three_and_inside_the_form`,
   `create_form_paints_planet_pictures_from_max_res`.
 
-### Пункт E. Меню на оригинальных ресурсах
+### Пункт E. Меню на оригинальных ресурсах — **сделано**
 
-- Главное меню/список игр — сейчас процедурные (`max_app::ui::build_main_menu`
-  и `build_join_list` на `max_render::ui`).
-- Заменить на `FRAMEPIC` + `MNUBTN*U/D` + `BTNHIDE`, координаты кнопок брать из
-  C++-порта (`menu.cpp`, `abstractmenu.hpp`).
+Реализация — `max_app::menu` (`MenuAssets::load`, `draw_main_menu`,
+`draw_create_form`, `draw_join_list`, hit-test `main_menu_at`/
+`create_button_at`/`create_field_at`/`join_button_at`/`join_row_at`),
+экраны в `max_app::ui` переключаются на неё при кадре 640×480; без ассетов
+остаётся процедурный fallback (headless-тесты и малые кадры).
 
-### Пункт F. Масштабирование окна (для «настоящего 1:1» на любом мониторе)
+1. **Главное меню** — `MAINPIC`, заголовок `Main Menu` (236,145) `FONT5`
+   зелёным, портрет `P_TANK` 300×240 в (16,182) в рамках `BGRSCRNL/R`
+   (6,173)/(166,173), шесть кнопок `BLANK_UP/DN` 200×29 на x=385 с шагом 35
+   (y=175…350), `Exit` `SBLNK_UP/DN` 100×30 в (435,420), копирайт
+   (10,469) 620×10 `FONT5` чёрным. Подписи — `GNW_TEXT_FONT_1`,
+   `Fonts_GoldColor`; наведение/нажатие — `*_DN` и `Fonts_DarkOrageColor`.
+   Действия Rust-клиента: `New Game`, `Multiplayer Game`, `Exit`; четыре
+   остальные кнопки оригинала пишут «screen is not ported yet».
+2. **Форма создания игры** — `PLANETSE`, заголовок и имя планеты `FONT5`
+   зелёным, большая картинка `SNOW_PIC + world/6` в (26,98) 128×128, сетка
+   8×3 в области (192,51) 388×249 (ячейка 48×83, подписи `FONT5`, выбранная
+   — красная рамка 2 px), поля 3×2 в описании (41,350) 559×59, кнопки
+   `MNUBTN4U`/`MNUBTN4U`/`MNUBTN5U`/`MNUBTN6U` в (243/354/465/514, 438).
+   Клик по кнопке Random выбирает детерминированную «случайную» планету;
+   числовой ввод `World` остаётся fallback'ом.
+3. **Список игр** — `MULTGAME`, чёрная панель (355,24) 217×168 с обводкой,
+   строки (359,28) 209×160 по 20 px (`FONT5`, `COLOR_GREEN`, разделители
+   линиями), выбранная строка — `>` + подчёркивание, `BTNHIDE` в (528,4) =
+   назад, кнопки `MNUBTN3U` (243,438) «Options» → refresh,
+   `MNUBTN4U` (354,438) «Cancel» → back, `MNUBTN5U` (465,438) «?»,
+   `MNUBTN6U` (514,438) «Ready» → join.
+4. **Мышь/клавиатура** сохранены: Up/Down/Tab/Enter, `c`/`j`/`q`, Esc —
+   как раньше; клики в 640×480 идут по оригинальным прямоугольникам,
+   в остальных кадрах — по процедурной раскладке (fallback).
 
-- Сейчас 1:1 работает только при кадре ровно 640×480 (`AppConfig::default`).
-  C++-порт умеет масштабировать: `WindowManager_GetScale()`
-  (`window_manager.cpp:872`), `WindowManager_ScaleWindow` (`:122`),
-  `WindowManager_RescaleSimpleImage`, `WindowManager_ScaleButtonResource`
-  (`:134`), `WindowManager_ScaleWindows` (`:200`).
-- Нужно решить: (1) фиксированные 640×480 с апскейлом всего кадра (простое,
-  пиксель-в-пиксель); (2) масштабирование каждого элемента (как в C++, дороже).
+*Отличия от формулировки плана (сверено с оракулом):* фон главного меню —
+`MAINPIC`, а не `FRAMEPIC`; кнопки главного меню — `BLANK_*`/`SBLNK_*`, а не
+`MNUBTN*`; `MNUBTN*` используются в нижних строках формы/списка ровно как в
+`planetselectmenu.hpp`/`networkmenu.hpp`; `BTNHIDE` в C++-порте не
+используется (`grep` пуст) и здесь применён как кнопка «скрыть список».
+
+**Критерий:** `build/frame-ef-main.png`, `build/frame-ef-create.png`,
+`build/frame-ef-join.png`; те же экраны из живого Windows-артефакта —
+`build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png`.
+
+### Пункт F. Масштабирование окна — **сделано (вариант 1)**
+
+Выбран **вариант 1**: фиксированный кадр 640×480 + целочисленный
+nearest-neighbour апскейл всего кадра; по-элементное масштабирование C++
+(`WindowManager_GetScale`/`ScaleWindows`/`RescaleSimpleImage`) не нужно,
+потому что все координаты UI остаются константами 640×480, а критерий
+«пиксель-в-пиксель» достигается строго: `scale = min(w/640, h/480)`, каждый
+пиксель → блок `N×N`, поля чёрные.
+
+- `max_render::frame_scale::FrameScale` — `fit`/`native`, `upscale` (блоки
+  `N×N` + letterbox), `frame_to_window`, `window_to_frame` (обратный
+  коэффициент, `None` на полях);
+- `SdlWindow` — ресайзимое окно, `new_scaled` (авто-масштаб 1..4 под рабочий
+  стол), `--scale N`, `present` выводит текстуру nearest в
+  `content_rect`, `poll_input` отдаёт координаты **кадра**, а не окна;
+- при `--scale 2` окно 1280×960, клик в нём пересчитывается в кадр 640×480
+  и попадает в ту же клетку карты; клик по чёрному полю игнорируется;
+- окно меньше кадра не уменьшает картинку, а обрезает её по центру
+  (сохраняя 1:1).
+
+**Тесты:** `double_upscale_replicates_every_pixel_as_a_two_by_two_block`
+(640×480 → 1280×960, каждый пиксель 2×2, без промежуточных цветов),
+`clicks_in_a_1280x960_window_map_to_the_same_map_cell` (окно 2× → та же
+клетка (56,55)), `odd_window_letterboxes_and_centres_the_frame`,
+`window_smaller_than_frame_crops_instead_of_shrinking`,
+`window_click_at_2x_lands_in_the_same_map_cell` (`max_app::ui`).
+
+**Критерий:** `build/frame-ef-main-2x.png` (1280×960) и живые окна
+`build/frame-ef-main-windows-2x.png` / `create-windows-2x.png`; клик
+`New Game` в окне 2× открывает форму.
 
 ---
 
@@ -565,6 +723,40 @@ FOV-перепад, красная рамка камеры, точки юнит�
     слой; затемнение делает `Access_UpdateMinimapFogOfWar` по
     `heat_map.cells[i].complete`. В Rust heat map уже есть, поэтому маска — 1:1;
     попытка вывести «известные клетки» из позиций юнитов даст другой рисунок.
+13. **Меню — не `FRAMEPIC`.** В C++ фон главного меню — `MAINPIC`
+    (`palette_from_image=true` задаёт системную палитру), формы — `PLANETSE`,
+    списка игр — `MULTGAME`; `FRAMEPIC` — хром партии. В `MenuAssets` `FRAMEPIC`
+    оставлен только fallback'ом, если какого-то фона нет. Не подменять
+    `MAINPIC` на `FRAMEPIC`: другой рисунок и палитра simple image.
+14. **Кнопки главного меню — `BLANK_*`/`SBLNK_*`, а не `MNUBTN*`.** `MNUBTN1..6`
+    (109×40, `MNUBTN5` 48×40) — нижние строки `planetselectmenu`/
+    `networkmenu`/`gamesetupmenu` (y=438). `BTNHIDE` в C++-порте не
+    используется вовсе (`grep BTNHIDE` пуст), это ресурс оригинала; здесь он
+    стал кнопкой «скрыть список».
+15. **Палитра big image меню.** `PLANETSE`/`MULTGAME`/`SNOW_PIC` совпадают с
+    `MAINPIC` побайтово, но `P_TANK` — нет (индекс 19 в собственной палитре
+    маджента, в `MAINPIC` — голубой). C++ рисует `P_*` с
+    `palette_from_image=false`, то есть системной палитрой; поэтому
+    `draw_big_image_at` использует `menu.palette`, а не `image.color`.
+16. **RLE `SNOW_PIC`.** В его потоке есть литерал 29744 за границей записи;
+    старый декодер обрывал на нём **все** строки, и планета оставалась почти
+    чёрной (это было видно в старой версии `build/frame-cd-planets.png`).
+    Теперь на таком чанке обрывается только текущая строка и следующая
+    начинается со следующего слова (ресинхронизация); для остальных big image
+    результат побайтово тот же, тест `snow_pic_decodes_all_rows`. Не
+    «оптимизировать» обратно.
+17. **GNW-шрифт — Latin-1.** Длинное тире `—`, `…`, `’` рисуются как `?`;
+    `menu::clean_status` заменяет их ASCII-эквивалентами для строк статуса
+    меню. Новые строки статуса писать ASCII или через `clean_status`.
+18. **Масштаб — только целый.** `FrameScale` не интерполирует: при окне не
+    кратном 640×480 остаются чёрные поля; клики по полям не попадают в кадр.
+    Окно меньше кадра обрезается по центру, а не уменьшается. Не менять
+    `scale` на дробный без пересмотра критерия «пиксель-в-пиксель».
+19. **`--scale`/авто-масштаб.** Без флага окно = 640×480×N, где N — максимум
+    целых, влезающих в рабочую область основного монитора (1..4); `--scale 2`
+    форсирует 1280×960. Клики SDL-слой пересчитывает в кадр
+    (`SdlWindow::window_to_frame`), поэтому в `Screen`/HUD координаты всегда
+    640×480.
 
 ---
 
@@ -590,6 +782,16 @@ powershell -File build/ppm2png.ps1 -Ppm build/frame-panels.ppm -Png build/frame-
 cargo run -p max_app --example visual_cd -- ../build/frame-cd
 # → build/frame-cd-{game,game-2x,planets,cursors}.ppm (PPM → PNG любым конвертером)
 
+# 4.2) кадры E/F: главное меню, форма на PLANETSE, список на MULTGAME, 2×
+cargo run -p max_app --example visual_ef -- ../build/frame-ef
+# → build/frame-ef-{main,create,join,main-2x}.ppm
+powershell -File build/ppm2png.ps1 -Ppm build/frame-ef-main.ppm -Png build/frame-ef-main.png
+powershell -File build/ppm2png.ps1 -Ppm build/frame-ef-main-2x.ppm -Png build/frame-ef-main-2x.png
+
+# 4.3) живые кадры Windows-артефакта: --ui --scale 1 и 2, клик New Game
+powershell -File build/capture-ef.ps1
+# → build/frame-ef-{main,create}-windows{,-2x}.png
+
 # 5) эталон шрифтов: FreeType-путь C++-порта против .FON (пункт B)
 docker run --rm -v "D:/dev/max-port-debug:/src" \
     -w /src/max-rust/tools/font_vectors rust:1.94.0-bookworm bash run.sh
@@ -601,9 +803,9 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust \
 
 # 6.1) SDL-сборка (окно/курсоры) — полный X11/ALSA dev-набор, см. release-checklist §2.3
 
-# 7) живая сессия в окне
+# 7) живая сессия в окне (--scale 2 — окно 1280×960; без флага — авто)
 docker compose up -d --build                     # Horizon + headless
-release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
+release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui --scale 2 \
     --handshake-patches build/nonexistent.res --turn-wait 45
 ```
 
@@ -612,10 +814,14 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
 ## 8. Состояние репозитория
 
 Изменено (не закоммичено): `max-rust/crates/max_app/src/{assets,cursor,lib,main,render,ui}.rs`,
-`max_app/src/hud.rs` (`Panels`-состояние), `max_render/src/{lib,layout,map_render,sdl_window,text}.rs`,
-`max_assets/src/{image,lib}.rs`, `docs/{visual-1to1-status,release-checklist}.md`.
+`max_app/src/{hud,menu}.rs`, `max_render/src/{lib,frame_scale,layout,map_render,sdl_window,text}.rs`,
+`max_assets/src/{image,lib}.rs`, `max-rust/README.md`,
+`docs/{visual-1to1-status,release-checklist}.md`.
 
-Новые файлы: `max_assets/src/{cursor,markers}.rs`, `max_app/src/cursor.rs`,
+Новые файлы (эта итерация): `max_render/src/frame_scale.rs`,
+`max_app/src/menu.rs`, `max_app/examples/visual_ef.rs`,
+`build/capture-ef.ps1` (тестовый скрипт, `build/**` в `.gitignore`).
+Ранее добавленные: `max_assets/src/{cursor,markers}.rs`, `max_app/src/cursor.rs`,
 `max_render/src/text/gnw.rs` (+ `max_render/data/gnw_font_*.fnt`),
 `max_app/src/panels.rs`, `max_app/examples/{panel_frame,visual_cd}.rs`,
 `max-rust/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
@@ -628,17 +834,17 @@ release/max_app-1.0.0-windows-x86_64-ui/max_app.exe --ui \
 
 ## 9. Вопросы, которые надо решить перед следующим этапом
 
-1. **Масштаб:** фиксированные 640×480 с апскейлом кадра или масштабирование
-   элементов как в C++ (пункт F)? От этого зависит, где хранить координаты
-   (константы 640×480 или пересчёт).
+1. ~~**Масштаб:** фиксированные 640×480 с апскейлом кадра или масштабирование
+   элементов как в C++?~~ Решено: **вариант 1** — фиксированный кадр 640×480,
+   целочисленный nearest-neighbour в окно любого размера и обратный пересчёт
+   кликов (`max_render::frame_scale`); координаты UI остаются константами.
 2. ~~**Шрифт:** тащить битмапы GNW в репозиторий или рисовать свой?~~ Решено:
    оригинальные `FONT*.FON` вкомпилированы (12 КБ) и сверены с FreeType-путём
    порта; 8×8 остался fallback'ом.
 3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено для первого шага:
    статичный кадр спрайта ×2; FLIC-анимация — отдельная задача.
 4. ~~**Приоритет:** панели (A) или меню (E)?~~ Панели A, шрифт B, миникарта/
-   иконки/курсоры/планеты C/D сделаны; следующий визуальный шаг — меню (E) на
-   `MNUBTN*U/D` + `FRAMEPIC` и FLIC-портрет.
+   иконки/курсоры/планеты C/D, меню E и масштаб F сделаны; остался FLIC-портрет.
 5. ~~**Миникарта:** нужна ли FOV-маска и поведение `2x`/`TNT`?~~ Решено: FOV —
    точный порт `Access_UpdateMinimapFogOfWar` по heat map, `2x`/`TNT` — как
    `GameManager_RenderMinimap`/`DrawMap_RenderMiniMapUnitList` (см. §2.5).

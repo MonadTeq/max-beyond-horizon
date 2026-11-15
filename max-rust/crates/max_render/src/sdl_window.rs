@@ -26,12 +26,14 @@ use std::collections::HashMap;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::{Cursor, MouseButton};
 use sdl3::pixels::PixelFormat;
-use sdl3::render::{Canvas, TextureCreator};
+use sdl3::rect::Rect as SdlRect;
+use sdl3::render::{Canvas, ScaleMode, TextureCreator};
 use sdl3::surface::Surface;
 use sdl3::video::{Window, WindowContext};
 use sdl3::EventPump;
 
 use crate::buffer::RgbaBuffer;
+use crate::frame_scale::FrameScale;
 
 /// Клавиша окна в терминах UI: `max_app` не зависит от типов SDL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +147,10 @@ pub struct SdlWindow {
     creator: TextureCreator<WindowContext>,
     events: EventPump,
     title: String,
+    /// Логический размер кадра (640×480 в UI-режиме).
+    base_size: (u32, u32),
+    /// Текущая раскладка кадра в окно (целочисленный масштаб + поля).
+    frame_scale: FrameScale,
     /// Кэш курсоров: ключ (`CursorId | frame << 8`) → SDL-курсор.
     cursors: HashMap<u32, Cursor>,
     /// Какой ключ сейчас установлен (SDL-курсор живёт в этом кэше).
@@ -157,12 +163,45 @@ pub struct SdlWindow {
 impl SdlWindow {
     /// Создаёт окно `width × height` с заголовком `title`.
     pub fn new(title: &str, width: u32, height: u32) -> Result<Self, WindowError> {
+        Self::new_scaled(title, width, height, Some(1))
+    }
+
+    /// Создаёт окно `width*scale × height*scale`; `scale = None` — подобрать
+    /// целочисленный масштаб под рабочий стол (по умолчанию, пункт F).
+    ///
+    /// Окно ресайзится; [`Self::present`] каждый кадр пересчитывает
+    /// [`FrameScale`] и выводит кадр nearest-neighbour с чёрными полями.
+    pub fn new_scaled(
+        title: &str,
+        width: u32,
+        height: u32,
+        scale: Option<u32>,
+    ) -> Result<Self, WindowError> {
+        let width = width.max(1);
+        let height = height.max(1);
         let sdl = sdl3::init().map_err(|error| WindowError::new("init", error))?;
         let video = sdl
             .video()
             .map_err(|error| WindowError::new("video", error))?;
+        let scale = match scale {
+            Some(scale) => scale.clamp(1, crate::frame_scale::MAX_SCALE),
+            None => {
+                let bounds = video
+                    .get_primary_display()
+                    .ok()
+                    .and_then(|display| display.get_usable_bounds().ok());
+                let auto = bounds
+                    .map(|rect| (rect.width() / width).min(rect.height() / height))
+                    .unwrap_or(1);
+
+                auto.clamp(1, 4)
+            }
+        };
+        let window_width = width * scale;
+        let window_height = height * scale;
         let window = video
-            .window(title, width, height)
+            .window(title, window_width, window_height)
+            .resizable()
             .position_centered()
             .build()
             .map_err(|error| WindowError::new("window", error))?;
@@ -171,12 +210,15 @@ impl SdlWindow {
         let events = sdl
             .event_pump()
             .map_err(|error| WindowError::new("event_pump", error))?;
+        let (actual_width, actual_height) = canvas.window().size();
 
         Ok(Self {
             canvas,
             creator,
             events,
             title: title.to_owned(),
+            base_size: (width, height),
+            frame_scale: FrameScale::fit(actual_width, actual_height, width, height),
             cursors: HashMap::new(),
             active_cursor: None,
             _sdl: sdl,
@@ -186,6 +228,36 @@ impl SdlWindow {
     /// Размер окна в пикселях.
     pub fn size(&self) -> (u32, u32) {
         self.canvas.window().size()
+    }
+
+    /// Логический размер кадра.
+    pub fn base_size(&self) -> (u32, u32) {
+        self.base_size
+    }
+
+    /// Текущий целочисленный масштаб кадра.
+    pub fn frame_scale(&self) -> FrameScale {
+        self.frame_scale
+    }
+
+    /// Пересчитывает раскладку под текущий размер окна и размер кадра.
+    pub fn update_frame_scale(&mut self, frame_width: u32, frame_height: u32) -> FrameScale {
+        let (window_width, window_height) = self.size();
+
+        if (frame_width, frame_height) != self.frame_scale.frame_size()
+            || (window_width, window_height) != self.frame_scale.window_size()
+        {
+            self.base_size = (frame_width, frame_height);
+            self.frame_scale =
+                FrameScale::fit(window_width, window_height, frame_width, frame_height);
+        }
+
+        self.frame_scale
+    }
+
+    /// Точка окна → координаты кадра (для кликов при масштабе ≠ 1).
+    pub fn window_to_frame(&self, x: i32, y: i32) -> Option<(i32, i32)> {
+        self.frame_scale.window_to_frame(x, y)
     }
 
     /// Заголовок окна.
@@ -233,10 +305,8 @@ impl SdlWindow {
                 ));
             }
 
-            let mut surface =
-                Surface::new(width, height, PixelFormat::RGBA32).map_err(|error| {
-                    WindowError::new("cursor_surface", error)
-                })?;
+            let mut surface = Surface::new(width, height, PixelFormat::RGBA32)
+                .map_err(|error| WindowError::new("cursor_surface", error))?;
             let pitch = surface.pitch() as usize;
             let row_bytes = width as usize * 4;
 
@@ -265,26 +335,43 @@ impl SdlWindow {
         Ok(())
     }
 
-    /// Выводит кадр: заливает текстуру и растягивает её на всё окно.
+    /// Выводит кадр: заливает текстуру и выводит её в окно nearest-neighbour.
     ///
-    /// Буфер должен иметь непрозрачную альфу там, где ожидается картинка
-    /// (SDL смешивает RGBA-текстуру с чёрным фоном окна).
+    /// Кадр не растягивается на всё окно: [`FrameScale`] считает целый
+    /// масштаб и центрирует его, а вокруг остаются чёрные поля. Так каждый
+    /// пиксель кадра 640×480 остаётся квадратным блоком `N×N` на любом
+    /// мониторе (пункт F), а мышь переводится обратно через
+    /// [`Self::window_to_frame`].
     pub fn present(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
         if buffer.is_empty() {
             return Ok(());
         }
 
+        let scale = self.update_frame_scale(buffer.width(), buffer.height());
         let mut texture = self
             .creator
             .create_texture_streaming(PixelFormat::RGBA32, buffer.width(), buffer.height())
             .map_err(|error| WindowError::new("texture", error))?;
 
+        texture.set_scale_mode(ScaleMode::Nearest);
         texture
             .update(None, buffer.pixels(), buffer.stride())
             .map_err(|error| WindowError::new("texture_update", error))?;
 
         self.canvas
-            .copy(&texture, None, None)
+            .set_draw_color(sdl3::pixels::Color::RGBA(0, 0, 0, 255));
+        self.canvas.clear();
+
+        let content = scale.content_rect();
+        let destination = SdlRect::new(
+            content.ulx,
+            content.uly,
+            content.width.max(1) as u32,
+            content.height.max(1) as u32,
+        );
+
+        self.canvas
+            .copy(&texture, None, destination)
             .map_err(|error| WindowError::new("copy", error))?;
         let _ = self.canvas.present();
 
@@ -301,12 +388,27 @@ impl SdlWindow {
 
     /// Опрашивает очередь событий и возвращает их UI-слою.
     ///
+    /// Координаты мыши переводятся из окна в логический кадр через
+    /// [`FrameScale`]: при масштабе 2 клик в окне 1280×960 приходит в UI как
+    /// клик в кадре 640×480 (пункт F). Клик по чёрному полю вне кадра даёт
+    /// `(-1, -1)` — UI его игнорирует.
+    ///
     /// `running == false` означает закрытие окна (`Quit`); Esc **не** закрывает
     /// окно на этом уровне — UI решает сам (в меню — выход, в подэкране —
     /// назад). Для старого поведения «Esc закрывает окно» есть [`Self::poll`].
     pub fn poll_input(&mut self) -> (bool, Vec<WindowInput>) {
         let mut running = true;
         let mut inputs = Vec::new();
+        // Окно могли ресайзить с прошлого кадра — обновляем раскладку до
+        // пересчёта координат мыши.
+        let (window_width, window_height) = self.size();
+        self.frame_scale = FrameScale::fit(
+            window_width,
+            window_height,
+            self.base_size.0,
+            self.base_size.1,
+        );
+        let frame_scale = self.frame_scale;
 
         for event in self.events.poll_iter() {
             match event {
@@ -317,29 +419,33 @@ impl SdlWindow {
                     ..
                 } => inputs.push(WindowInput::Key(window_key(code))),
                 sdl3::event::Event::MouseMotion { x, y, .. } => {
-                    inputs.push(WindowInput::MouseMove {
-                        x: x.round() as i32,
-                        y: y.round() as i32,
-                    });
+                    let (x, y) = frame_scale
+                        .window_to_frame(x.round() as i32, y.round() as i32)
+                        .unwrap_or((-1, -1));
+                    inputs.push(WindowInput::MouseMove { x, y });
                 }
                 sdl3::event::Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     x,
                     y,
                     ..
-                } => inputs.push(WindowInput::MouseClick {
-                    x: x.round() as i32,
-                    y: y.round() as i32,
-                }),
+                } => {
+                    let (x, y) = frame_scale
+                        .window_to_frame(x.round() as i32, y.round() as i32)
+                        .unwrap_or((-1, -1));
+                    inputs.push(WindowInput::MouseClick { x, y });
+                }
                 sdl3::event::Event::MouseButtonDown {
                     mouse_btn: MouseButton::Right,
                     x,
                     y,
                     ..
-                } => inputs.push(WindowInput::MouseRightClick {
-                    x: x.round() as i32,
-                    y: y.round() as i32,
-                }),
+                } => {
+                    let (x, y) = frame_scale
+                        .window_to_frame(x.round() as i32, y.round() as i32)
+                        .unwrap_or((-1, -1));
+                    inputs.push(WindowInput::MouseRightClick { x, y });
+                }
                 _ => {}
             }
         }

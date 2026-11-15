@@ -56,7 +56,12 @@ fn computer_state() -> GameState {
     let map = small_land_map();
     let mut state = GameState::with_setup(
         map,
-        [TeamKind::Computer, TeamKind::None, TeamKind::None, TeamKind::None],
+        [
+            TeamKind::Computer,
+            TeamKind::None,
+            TeamKind::None,
+            TeamKind::None,
+        ],
     );
 
     state.teams[0].team_type = TeamKind::Computer;
@@ -220,7 +225,10 @@ fn ai_army_attacks_enemy() {
     // конструктор); одиночный танк обрабатывается реакцией `AiAttack_EvaluateAttack`
     // (напоминание `RemindAttack`), поэтому критерий теста — нанесённый урон.
     assert!(
-        state.unit(defender).map(|unit| unit.hits < hits_before).unwrap_or(true),
+        state
+            .unit(defender)
+            .map(|unit| unit.hits < hits_before)
+            .unwrap_or(true),
         "enemy must stay damaged or be destroyed"
     );
 }
@@ -321,7 +329,12 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(12, 12), 0)
         .expect("alien tank deploys");
     let alien_gun = state
-        .spawn_unit(UnitType::AlienAssaultGun, TeamId::ALIEN, Point::new(13, 12), 0)
+        .spawn_unit(
+            UnitType::AlienAssaultGun,
+            TeamId::ALIEN,
+            Point::new(13, 12),
+            0,
+        )
         .expect("alien assault gun deploys");
     let alien_building = state
         .spawn_unit(UnitType::LargeSlab, TeamId::ALIEN, Point::new(15, 15), 0)
@@ -364,9 +377,18 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     for team in 0..PLAYER_TEAM_COUNT {
         for cell in [Point::new(12, 12), Point::new(13, 12), Point::new(15, 15)] {
             let team = TeamId(team as u8);
-            assert_eq!(state.ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)), 0);
-            assert_eq!(state.ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)), 0);
-            assert_eq!(state.ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)), 0);
+            assert_eq!(
+                state.ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)),
+                0
+            );
+            assert_eq!(
+                state.ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)),
+                0
+            );
+            assert_eq!(
+                state.ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)),
+                0
+            );
         }
     }
 
@@ -389,7 +411,11 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
 
     // Тик, смена приказа и уничтожение alien-юнитов не паникуют.
     state.tick();
-    state.set_order(alien_building, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
+    state.set_order(
+        alien_building,
+        UnitOrder::Sentry,
+        UnitOrderState::ExecutingOrder,
+    );
     state.tick();
 
     // Атака alien-юнита: C++ `UnitInfo::AttackUnit` не заводит трекер
@@ -408,7 +434,10 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     state.tick();
 
     for id in [alien_building, alien_tank, alien_gun, commando] {
-        assert!(state.unit(id).is_none(), "юнит {id:?} должен быть уничтожен");
+        assert!(
+            state.unit(id).is_none(),
+            "юнит {id:?} должен быть уничтожен"
+        );
     }
     // Взрыв уничтоженного alien-танка — законный юнит-эффект его команды
     // (`StartExplosion` спавнит `HITEXPLD` с `team` погибшего), поэтому

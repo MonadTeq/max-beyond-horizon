@@ -69,6 +69,8 @@ struct Cli {
     /// Окно ввода в фазе PLAY сессии, секунды (`0`/нет — headless: ход
     /// закрывается сразу; см. `max_app::net::NetworkOptions::turn_wait`).
     turn_wait_secs: Option<u32>,
+    /// Масштаб окна UI: `0`/нет — подобрать под рабочий стол (пункт F).
+    window_scale: Option<u32>,
 }
 
 impl Cli {
@@ -90,6 +92,7 @@ impl Cli {
             reconnect_attempts: None,
             reconnect_timeout_secs: None,
             turn_wait_secs: None,
+            window_scale: None,
         };
         let mut mode_set = false;
         let mut data_dir_set = false;
@@ -143,6 +146,9 @@ impl Cli {
                 "--turn-wait" => {
                     cli.turn_wait_secs = Some(parse_u32(&mut args, "--turn-wait")?);
                 }
+                "--scale" => {
+                    cli.window_scale = Some(parse_u32(&mut args, "--scale")?);
+                }
                 "--seed" => {
                     cli.seed = Some(parse_u32(&mut args, "--seed")?);
                 }
@@ -195,8 +201,7 @@ impl Cli {
                 }
                 "--handshake-patches" => {
                     cli.config.handshake_patches = Some(PathBuf::from(
-                        args.next()
-                            .context("--handshake-patches требует путь")?,
+                        args.next().context("--handshake-patches требует путь")?,
                     ));
                 }
                 "--palette" => {
@@ -443,7 +448,7 @@ async fn run_connect(cli: &Cli) -> Result<()> {
     };
 
     let report = if cli.sdl {
-        connect_interactive(&mut app, &options, &cli.config).await?
+        connect_interactive(&mut app, &options, &cli.config, cli.window_scale).await?
     } else {
         run_network(&mut app, &options).await?
     };
@@ -556,20 +561,26 @@ async fn connect_interactive(
     app: &mut App,
     options: &NetworkOptions,
     config: &AppConfig,
+    scale: Option<u32>,
 ) -> Result<NetworkReport> {
     #[cfg(feature = "sdl")]
     {
-        let window = max_render::SdlWindow::new(
+        let window = max_render::SdlWindow::new_scaled(
             "M.A.X. — max_app (R2.4)",
             config.screen_width,
             config.screen_height,
+            normalized_window_scale(scale),
         )
         .map_err(|error| anyhow!("{error}"))?;
         let mut sink = WindowSink { window };
 
         println!(
-            "SDL: окно {}x{}; Esc/закрытие — выход",
-            config.screen_width, config.screen_height
+            "SDL: кадр {}x{}, окно {}x{} (масштаб {}); Esc/закрытие — выход",
+            config.screen_width,
+            config.screen_height,
+            sink.window.size().0,
+            sink.window.size().1,
+            sink.window.frame_scale().scale()
         );
 
         run_network_with_sink(app, options, Some(&mut sink)).await
@@ -577,7 +588,7 @@ async fn connect_interactive(
 
     #[cfg(not(feature = "sdl"))]
     {
-        let _ = (app, options, config);
+        let _ = (app, options, config, scale);
         bail!(
             "--sdl требует сборки с feature sdl: \
              cargo run -p max_app --features sdl -- --connect ... --join ... --sdl"
@@ -616,10 +627,11 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
     }
 
-    let mut window = SdlWindow::new(
+    let mut window = SdlWindow::new_scaled(
         "M.A.X. — Rust client (M4.2 HUD)",
         config.screen_width,
         config.screen_height,
+        normalized_window_scale(cli.window_scale),
     )
     .map_err(|error| anyhow!("{error}"))?;
     let mut ctx = UiContext::new(
@@ -666,9 +678,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
     }
 
     println!(
-        "UI: окно {}x{}; меню — мышь/стрелки, Enter; в игре — LMB выбор, \
-         RMB движение, клик по врагу — атака, End Turn; Esc — выход",
-        config.screen_width, config.screen_height
+        "UI: кадр {}x{}, окно {}x{} (масштаб {}); меню — мышь/стрелки, Enter; \
+         в игре — LMB выбор, RMB движение, клик по врагу — атака, End Turn; Esc — выход",
+        config.screen_width,
+        config.screen_height,
+        window.size().0,
+        window.size().1,
+        window.frame_scale().scale()
     );
 
     loop {
@@ -753,7 +769,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
 
         screen.render(&mut buffer, ctx.view(Some(&app)));
-        window.present(&buffer).map_err(|error| anyhow!("{error}"))?;
+        window
+            .present(&buffer)
+            .map_err(|error| anyhow!("{error}"))?;
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 
@@ -830,10 +848,7 @@ fn run_ui_session(
         turn_wait,
         ..NetworkOptions::default()
     };
-    let (width, height) = (
-        app.config().screen_width,
-        app.config().screen_height,
-    );
+    let (width, height) = (app.config().screen_width, app.config().screen_height);
     let mut sink = UiSessionSink {
         window,
         screen: screen.clone(),
@@ -909,6 +924,15 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
 // ---------------------------------------------------------------------------
 // Разбор значений
 // ---------------------------------------------------------------------------
+
+/// `--scale`: `None`/`0` — подобрать под рабочий стол, иначе 1..=8.
+#[cfg(feature = "sdl")]
+fn normalized_window_scale(scale: Option<u32>) -> Option<u32> {
+    match scale {
+        None | Some(0) => None,
+        Some(value) => Some(value.clamp(1, max_render::frame_scale::MAX_SCALE)),
+    }
+}
 
 fn parse_endpoint(value: &str) -> Result<(String, u16)> {
     match value.rsplit_once(':') {
@@ -988,6 +1012,9 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
     --reconnect-attempts N   попыток переподключения при разрыве ENet (3; 0 — выкл.)
     --reconnect-timeout S    таймаут одной попытки переподключения в секундах (10)
+    --turn-wait N        окно ввода в фазе PLAY сессии, секунды (0 — сразу)
+    --scale N            масштаб окна: кадр 640x480 умножается на N (0/нет —
+                         подобрать под рабочий стол, nearest-neighbour)
     --seed N             seed ГПСЧ для --new-game
     --raw/--fuel/--gold/--derelicts N   уровни ресурсов 0..=2 (по умолчанию 1/1/1/0)
     --world N            планета 0..=23 (по умолчанию 0 — Snowcrab)
@@ -1005,7 +1032,8 @@ max_app — клиент M.A.X. (core + net + assets + render)
     --handshake-patches <path>             PATCHES.RES только для data_hash
                                            (сервер без PATCHES.RES: путь может
                                            не существовать — хэш без этой части)
-    --width/--height N   размер кадра (по умолчанию 640x480 — окно оригинала)
+    --width/--height N   размер **кадра** (по умолчанию 640x480 — окно
+                         оригинала); окно = кадр × --scale
 
 ПРИМЕРЫ:
     cargo run -p max_app -- --demo ../max-original/SAVE1.CAM --turns 5

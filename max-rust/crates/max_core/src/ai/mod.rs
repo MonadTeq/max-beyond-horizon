@@ -394,10 +394,8 @@ impl GameState {
 
     /// `AiPlayer::CheckEndTurn` для команды (с изъятием игрока ради `&mut`).
     fn ai_check_player_end_turn(&mut self, team: TeamId) -> bool {
-        let mut player = std::mem::replace(
-            &mut self.ai.players[team.0 as usize],
-            AiPlayer::new(team),
-        );
+        let mut player =
+            std::mem::replace(&mut self.ai.players[team.0 as usize], AiPlayer::new(team));
 
         let result = player.check_end_turn(self);
 
@@ -411,10 +409,8 @@ impl GameState {
             return;
         }
 
-        let mut player = std::mem::replace(
-            &mut self.ai.players[team.0 as usize],
-            AiPlayer::new(team),
-        );
+        let mut player =
+            std::mem::replace(&mut self.ai.players[team.0 as usize], AiPlayer::new(team));
 
         player.begin_turn(self);
 
@@ -445,10 +441,7 @@ pub fn ai_init(world: &mut GameState) {
 /// `Ai_SetupStrategy` (`ai.cpp:116`) — только выбор стратегии, без
 /// перегенерации карты.
 pub fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
-    let mut player = std::mem::replace(
-        &mut world.ai.players[team.0 as usize],
-        AiPlayer::new(team),
-    );
+    let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
     let result = player.select_strategy(world);
 
@@ -533,12 +526,7 @@ impl GameState {
             current_radius: 1,
         };
 
-        self.ai_append_task(
-            info.team,
-            None,
-            task::TASK_PRIORITY_AUTO_SURVEY,
-            kind,
-        );
+        self.ai_append_task(info.team, None, task::TASK_PRIORITY_AUTO_SURVEY, kind);
     }
 }
 
@@ -578,10 +566,14 @@ pub fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
     }
 
     if world.teams[info.team.0 as usize].team_type == TeamKind::Computer
-        && info.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) > 0
+        && info
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_AMMO)
+            > 0
     {
         let team = info.team;
-        let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
+        let mut player =
+            std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
         player.add_military_unit(world, unit);
 
@@ -629,10 +621,8 @@ pub fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId) {
         && world.teams[team.0 as usize].team_type == TeamKind::Computer;
 
     if is_computer && info.flags & crate::enums::unit_flags::SELECTABLE != 0 {
-        let mut player = std::mem::replace(
-            &mut world.ai.players[team.0 as usize],
-            AiPlayer::new(team),
-        );
+        let mut player =
+            std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
         player.unit_spotted(world, unit);
 
@@ -654,7 +644,8 @@ pub fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
         && world.teams[team.0 as usize].team_type == TeamKind::Computer;
 
     if is_computer && info.flags & crate::enums::unit_flags::SELECTABLE != 0 {
-        let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
+        let mut player =
+            std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
         player.unit_hidden(world, unit);
 
@@ -685,10 +676,7 @@ pub fn ai_check_mines(world: &mut GameState, unit: UnitId) {
             && world.teams[team].team_type == TeamKind::Computer
             && info.is_visible_to_team(team_id)
         {
-            let mut player = std::mem::replace(
-                &mut world.ai.players[team],
-                AiPlayer::new(team_id),
-            );
+            let mut player = std::mem::replace(&mut world.ai.players[team], AiPlayer::new(team_id));
 
             player.find_mines(world, unit);
 
@@ -708,12 +696,15 @@ pub fn ai_are_there_active_combat_effects(world: &GameState) -> bool {
 pub fn ai_are_there_moving_units(world: &GameState) -> bool {
     for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
         for id in world.unit_list(kind) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
 
             if unit.orders == UnitOrder::Move
                 && matches!(
                     unit.state,
-                    crate::enums::UnitOrderState::InProgress | crate::enums::UnitOrderState::InTransition
+                    crate::enums::UnitOrderState::InProgress
+                        | crate::enums::UnitOrderState::InTransition
                 )
             {
                 return true;
@@ -754,7 +745,10 @@ pub fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
 
     loop {
         position.x = world.rng.generate_i32(i32::from(crate::geo::MAP_WIDTH) - 6) as i16 + 3;
-        position.y = world.rng.generate_i32(i32::from(crate::geo::MAP_HEIGHT) - 6) as i16 + 3;
+        position.y = world
+            .rng
+            .generate_i32(i32::from(crate::geo::MAP_HEIGHT) - 6) as i16
+            + 3;
 
         attempts += 1;
 

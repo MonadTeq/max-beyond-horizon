@@ -270,8 +270,7 @@ impl TaskManager {
         let should_remind = world
             .unit(unit)
             .map(|info| {
-                info.hits > 0
-                    && world.teams[info.team.0 as usize].team_type == TeamKind::Computer
+                info.hits > 0 && world.teams[info.team.0 as usize].team_type == TeamKind::Computer
             })
             .unwrap_or(false);
 
@@ -633,7 +632,9 @@ impl TaskManager {
             return false;
         };
 
-        world.is_active_turn(info.team) && info.speed > 0 && task_is_ready_to_take_orders(world, unit)
+        world.is_active_turn(info.team)
+            && info.speed > 0
+            && task_is_ready_to_take_orders(world, unit)
     }
 
     /// `TaskManager::CheckComputerReactions` (`task_manager.cpp:143`).
@@ -642,8 +643,8 @@ impl TaskManager {
             return;
         }
 
-        let active_team_computer = world.teams[world.active_turn_team.0 as usize].team_type
-            == TeamKind::Computer;
+        let active_team_computer =
+            world.teams[world.active_turn_team.0 as usize].team_type == TeamKind::Computer;
 
         if world.play_mode != crate::enums::PlayMode::TurnBased || active_team_computer {
             let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
@@ -725,7 +726,11 @@ impl TaskManager {
             return;
         }
 
-        if info.base_values.get_attribute(crate::unit_values::ATTRIB_SPEED) > 0 {
+        if info
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_SPEED)
+            > 0
+        {
             self.append_reminder(world, Reminder::Retreat { unit }, true);
         }
     }
@@ -740,7 +745,9 @@ impl TaskManager {
             return;
         }
 
-        let mut range = attacker.base_values.get_attribute(crate::unit_values::ATTRIB_RANGE);
+        let mut range = attacker
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_RANGE);
         range *= range;
 
         let target_types = crate::access::valid_attack_target_types(attacker.unit_type);
@@ -748,7 +755,9 @@ impl TaskManager {
         if target_types & unit_flags::MOBILE_LAND_UNIT != 0 {
             let ids: Vec<UnitId> = world.unit_list(UnitListKind::MobileLandSea).to_vec();
             for other_id in ids {
-                let Some(other) = world.unit(other_id) else { continue };
+                let Some(other) = world.unit(other_id) else {
+                    continue;
+                };
                 if other.team != attacker.team
                     && other.is_visible_to_team(attacker.team)
                     && world.teams[other.team.0 as usize].team_type == TeamKind::Computer
@@ -762,7 +771,9 @@ impl TaskManager {
         if target_types & unit_flags::MOBILE_AIR_UNIT != 0 {
             let ids: Vec<UnitId> = world.unit_list(UnitListKind::MobileAir).to_vec();
             for other_id in ids {
-                let Some(other) = world.unit(other_id) else { continue };
+                let Some(other) = world.unit(other_id) else {
+                    continue;
+                };
                 if other.team != attacker.team
                     && other.is_visible_to_team(attacker.team)
                     && world.teams[other.team.0 as usize].team_type == TeamKind::Computer
@@ -871,7 +882,9 @@ impl TaskManager {
 
         let mut available_count = 0;
         for id in world.unit_list(list_kind) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
             if unit.team == team && unit.unit_type == unit_type {
                 available_count += 1;
 
@@ -885,7 +898,9 @@ impl TaskManager {
         const CENSUS_SLACK: u16 = TASK_PRIORITY_OFFSET_CENSUS_SLACK;
 
         for request_id in &self.unit_requests {
-            let Some(request) = self.task(*request_id) else { continue };
+            let Some(request) = self.task(*request_id) else {
+                continue;
+            };
             let count = request.kind.count_instances_of_unit_type(unit_type);
 
             if request.team == team
@@ -944,7 +959,10 @@ impl TaskManager {
         }
 
         let station_ok = info.flags & unit_flags::STATIONARY == 0
-            || info.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) != 0
+            || info
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_AMMO)
+                != 0
             || matches!(
                 info.unit_type,
                 UnitType::LightVehiclePlant
@@ -973,21 +991,37 @@ impl TaskManager {
 
         if opponent >= Opponent::Apprentice as u8
             && info.flags & unit_flags::STATIONARY == 0
-            && i32::from(info.hits) != info.base_values.get_attribute(crate::unit_values::ATTRIB_HITS)
+            && i32::from(info.hits)
+                != info
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_HITS)
         {
             let kind = TaskKind::repair(unit);
-            self.append_task(world, Task::new(0, info.team, None, super::task::TASK_PRIORITY_REPAIR, kind));
+            self.append_task(
+                world,
+                Task::new(0, info.team, None, super::task::TASK_PRIORITY_REPAIR, kind),
+            );
             return;
         }
 
-        if i32::from(info.ammo) < info.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS) {
+        if i32::from(info.ammo)
+            < info
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_ROUNDS)
+        {
             let kind = TaskKind::reload(unit);
-            self.append_task(world, Task::new(0, info.team, None, super::task::TASK_PRIORITY_REPAIR, kind));
+            self.append_task(
+                world,
+                Task::new(0, info.team, None, super::task::TASK_PRIORITY_REPAIR, kind),
+            );
             return;
         }
 
         // `ExchangeOperator` — обмен оператора здания/комплекса.
-        if info.flags & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
+        if info.flags
+            & (unit_flags::MOBILE_AIR_UNIT
+                | unit_flags::MOBILE_SEA_UNIT
+                | unit_flags::MOBILE_LAND_UNIT)
             != 0
         {
             let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
@@ -1007,7 +1041,9 @@ impl TaskManager {
         let mut task_priority = u16::MAX;
 
         for request_id in self.unit_requests.clone() {
-            let Some(request) = self.task(request_id) else { continue };
+            let Some(request) = self.task(request_id) else {
+                continue;
+            };
 
             if request.team != info.team {
                 continue;
@@ -1073,10 +1109,7 @@ impl TaskManager {
 
         let mut task = task;
         let result = {
-            let mut ctx = TaskCtx {
-                tm: self,
-                world,
-            };
+            let mut ctx = TaskCtx { tm: self, world };
             f(&mut task.kind, &mut ctx, header)
         };
 
@@ -1091,43 +1124,63 @@ impl TaskManager {
 
     /// `Task::BeginTurn`.
     pub fn task_begin_turn(&mut self, world: &mut GameState, task_id: u32) {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.begin_turn(ctx, header));
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.begin_turn(ctx, header)
+        });
     }
 
     /// `Task::EndTurn`.
     pub fn task_end_turn(&mut self, world: &mut GameState, task_id: u32) {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.end_turn(ctx, header));
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.end_turn(ctx, header)
+        });
     }
 
     /// `Task::Execute(unit)` — возвращает `true`, если задача что-то сделала.
     pub fn task_execute(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) -> bool {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.execute(ctx, header, unit))
-            .unwrap_or(false)
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.execute(ctx, header, unit)
+        })
+        .unwrap_or(false)
     }
 
     /// `Task::AddUnit`.
     pub fn task_add_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.add_unit(ctx, header, unit));
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.add_unit(ctx, header, unit)
+        });
     }
 
     /// `Task::RemoveUnit`.
     pub fn task_remove_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.remove_unit(ctx, header, unit));
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.remove_unit(ctx, header, unit)
+        });
     }
 
     /// `Task::RemoveSelf`.
     pub fn task_remove_self(&mut self, world: &mut GameState, task_id: u32) {
-        let _ = self.with_task_kind(world, task_id, |kind, ctx, header| kind.remove_self(ctx, header));
+        let _ = self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.remove_self(ctx, header)
+        });
         self.remove_task(world, task_id);
     }
 
     /// `Task::ChildComplete`.
     pub fn task_child_complete(&mut self, world: &mut GameState, task_id: u32, child: u32) {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.child_complete(ctx, header, child));
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.child_complete(ctx, header, child)
+        });
     }
 
     /// Уведомление родителя о завершении `TaskMove`.
-    pub fn task_move_finished(&mut self, world: &mut GameState, task_id: u32, unit: UnitId, result: i8) {
+    pub fn task_move_finished(
+        &mut self,
+        world: &mut GameState,
+        task_id: u32,
+        unit: UnitId,
+        result: i8,
+    ) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.move_finished(ctx, header, unit, result)
         });
@@ -1135,12 +1188,19 @@ impl TaskManager {
 
     /// `Task::CheckReactions`.
     pub fn task_check_reactions(&mut self, world: &mut GameState, task_id: u32) -> bool {
-        self.with_task_kind(world, task_id, |kind, ctx, header| kind.check_reactions(ctx, header))
-            .unwrap_or(false)
+        self.with_task_kind(world, task_id, |kind, ctx, header| {
+            kind.check_reactions(ctx, header)
+        })
+        .unwrap_or(false)
     }
 
     /// `Task::ExchangeOperator`.
-    pub fn task_exchange_operator(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) -> bool {
+    pub fn task_exchange_operator(
+        &mut self,
+        world: &mut GameState,
+        task_id: u32,
+        unit: UnitId,
+    ) -> bool {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.exchange_operator(ctx, header, unit)
         })
@@ -1155,7 +1215,12 @@ impl TaskManager {
     }
 
     /// `Task::EventEnemyUnitSpotted`.
-    pub fn task_event_enemy_unit_spotted(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
+    pub fn task_event_enemy_unit_spotted(
+        &mut self,
+        world: &mut GameState,
+        task_id: u32,
+        unit: UnitId,
+    ) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_enemy_unit_spotted(ctx, header, unit)
         });
@@ -1169,14 +1234,26 @@ impl TaskManager {
     }
 
     /// `Task::EventUnitLoaded`.
-    pub fn task_event_unit_loaded(&mut self, world: &mut GameState, task_id: u32, unit1: UnitId, unit2: UnitId) {
+    pub fn task_event_unit_loaded(
+        &mut self,
+        world: &mut GameState,
+        task_id: u32,
+        unit1: UnitId,
+        unit2: UnitId,
+    ) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_unit_loaded(ctx, header, unit1, unit2)
         });
     }
 
     /// `Task::EventUnitUnloaded`.
-    pub fn task_event_unit_unloaded(&mut self, world: &mut GameState, task_id: u32, unit1: UnitId, unit2: UnitId) {
+    pub fn task_event_unit_unloaded(
+        &mut self,
+        world: &mut GameState,
+        task_id: u32,
+        unit1: UnitId,
+        unit2: UnitId,
+    ) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_unit_unloaded(ctx, header, unit1, unit2)
         });

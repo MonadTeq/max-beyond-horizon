@@ -20,7 +20,9 @@ use crate::enums::{CautionLevel, UnitOrder};
 use crate::geo::Point;
 use crate::unit::UnitId;
 
-use super::super::task::{TaskHeader, TASK_PRIORITY_AUTO_SURVEY, TASK_PRIORITY_EXPLORE, TASK_PRIORITY_FIND_MINES};
+use super::super::task::{
+    TaskHeader, TASK_PRIORITY_AUTO_SURVEY, TASK_PRIORITY_EXPLORE, TASK_PRIORITY_FIND_MINES,
+};
 use super::{TaskCtx, TaskKind};
 
 /// Радиус поиска свободной клетки по умолчанию (`FindDestination`).
@@ -77,7 +79,10 @@ fn find_destination(
                 let ddy = i32::from(info.grid.y) - i32::from(site.y);
                 let distance = ddx * ddx + ddy * ddy;
 
-                if best.map(|(best_distance, _)| distance < best_distance).unwrap_or(true) {
+                if best
+                    .map(|(best_distance, _)| distance < best_distance)
+                    .unwrap_or(true)
+                {
                     best = Some((distance, site));
                 }
             }
@@ -104,7 +109,9 @@ pub(crate) fn abstract_search_begin_turn(
         _ => return,
     };
 
-    state.units.retain(|unit| ctx.unit(*unit).map(|info| info.hits > 0).unwrap_or(false));
+    state
+        .units
+        .retain(|unit| ctx.unit(*unit).map(|info| info.hits > 0).unwrap_or(false));
 
     if state.units.is_empty() {
         ctx.remove_self(header.id);
@@ -132,7 +139,6 @@ pub(crate) fn abstract_search_begin_turn(
             ctx.append_task(info.team, Some(header.id), priority, move_kind);
         }
     }
-
 }
 
 /// `TaskAutoSurvey::EndTurn` — круги вокруг центра.
@@ -225,7 +231,6 @@ fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         *location_found = false;
         *current_radius = current_radius.saturating_add(1);
     }
-
 }
 
 /// `TaskFindMines::BeginTurn` — есть ли замеченные мины.
@@ -267,12 +272,8 @@ fn find_mines_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 /// `Init` для search-классов.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
-        TaskKind::Survey { .. } | TaskKind::Explore { .. } | TaskKind::FindMines { .. } => {
-            true
-        }
-        TaskKind::AutoSurvey { .. } => {
-            true
-        }
+        TaskKind::Survey { .. } | TaskKind::Explore { .. } | TaskKind::FindMines { .. } => true,
+        TaskKind::AutoSurvey { .. } => true,
         _ => false,
     }
 }
@@ -316,14 +317,25 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `Execute(unit)` для search-классов — осмотр клетки.
-pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
-        TaskKind::Survey { search } | TaskKind::Explore { search, .. } | TaskKind::FindMines { search } => {
+        TaskKind::Survey { search }
+        | TaskKind::Explore { search, .. }
+        | TaskKind::FindMines { search } => {
             if !search.units.contains(&unit) {
                 return false;
             }
 
-            mark_visited(search, unit, ctx.unit(unit).map(|info| info.grid).unwrap_or(Point::ZERO));
+            mark_visited(
+                search,
+                unit,
+                ctx.unit(unit).map(|info| info.grid).unwrap_or(Point::ZERO),
+            );
             true
         }
         TaskKind::AutoSurvey { .. } => {
@@ -337,7 +349,9 @@ pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, u
 /// `AddUnit(unit)` для search-классов.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
-        TaskKind::Survey { search } | TaskKind::Explore { search, .. } | TaskKind::FindMines { search } => {
+        TaskKind::Survey { search }
+        | TaskKind::Explore { search, .. }
+        | TaskKind::FindMines { search } => {
             if !search.units.contains(&unit) {
                 search.units.push(unit);
                 ctx.attach(header.id, unit);
@@ -356,7 +370,9 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
 /// `RemoveUnit(unit)` для search-классов.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
-        TaskKind::Survey { search } | TaskKind::Explore { search, .. } | TaskKind::FindMines { search } => {
+        TaskKind::Survey { search }
+        | TaskKind::Explore { search, .. }
+        | TaskKind::FindMines { search } => {
             search.units.retain(|id| *id != unit);
 
             if search.units.is_empty() {
@@ -375,7 +391,9 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 /// `RemoveSelf()` для search-классов.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
-        TaskKind::Survey { search } | TaskKind::Explore { search, .. } | TaskKind::FindMines { search } => {
+        TaskKind::Survey { search }
+        | TaskKind::Explore { search, .. }
+        | TaskKind::FindMines { search } => {
             search.units.clear();
             ctx.set_parent(header.id, None);
             ctx.remove_self(header.id);
@@ -391,7 +409,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` для search-классов.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::Survey { .. }
         | TaskKind::Explore { .. }
@@ -441,9 +464,16 @@ pub fn exchange_operator(
 }
 
 /// `EventUnitDestroyed(unit)` — удалить юнита из поиска.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
-        TaskKind::Survey { search } | TaskKind::Explore { search, .. } | TaskKind::FindMines { search } => {
+        TaskKind::Survey { search }
+        | TaskKind::Explore { search, .. }
+        | TaskKind::FindMines { search } => {
             search.units.retain(|id| *id != unit);
 
             if search.units.is_empty() {

@@ -26,7 +26,7 @@ use serde::de::{Error as DeError, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::enums::{Surface, CARGO_FUEL, CARGO_GOLD, CARGO_MATERIALS, CARGO_MASK};
+use crate::enums::{Surface, CARGO_FUEL, CARGO_GOLD, CARGO_MASK, CARGO_MATERIALS};
 use crate::geo::{MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
 
 /// Размеры карты в тайлах — каркасный `map::MapSize` (`Point` в C++).
@@ -211,7 +211,10 @@ impl ResourceMapEntry {
     /// Копия записи с другой разведанностью (биты 10–13).
     #[inline]
     pub const fn with_visibility(self, visibility: u8) -> Self {
-        Self((self.0 & !TEAM_VISIBILITY_MASK) | (((visibility & 0x0F) as u16) << TEAM_VISIBILITY_SHIFT))
+        Self(
+            (self.0 & !TEAM_VISIBILITY_MASK)
+                | (((visibility & 0x0F) as u16) << TEAM_VISIBILITY_SHIFT),
+        )
     }
 }
 

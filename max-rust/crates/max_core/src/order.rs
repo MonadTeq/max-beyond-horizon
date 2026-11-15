@@ -12,7 +12,12 @@ pub enum Order {
     /// Атака юнита/точки.
     Attack { unit: UnitId, target: Target },
     /// Постройка здания в точке.
-    Build { unit: UnitId, building: u8, x: i16, y: i16 },
+    Build {
+        unit: UnitId,
+        building: u8,
+        x: i16,
+        y: i16,
+    },
     /// Смена режима (огонь/патруль/...).
     Mode { unit: UnitId, mode: u8 },
     /// Конец хода.

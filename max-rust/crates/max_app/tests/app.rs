@@ -242,7 +242,11 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
             "партия не должна завершаться на ходу {turn}"
         );
     }
-    assert_eq!(app.digest().units, report.units, "ходы не элиминируют команду");
+    assert_eq!(
+        app.digest().units,
+        report.units,
+        "ходы не элиминируют команду"
+    );
 
     // Уровень обломков 2 даёт непустую расстановку из setup, и все размещения
     // разворачиваются в GameState от имени ALIEN (C++ `DeployUnit`).
@@ -278,7 +282,11 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         let alien_ids: Vec<_> = state
             .unit_ids_in_order()
             .into_iter()
-            .filter(|id| state.unit(*id).is_some_and(|unit| unit.team == TeamId::ALIEN))
+            .filter(|id| {
+                state
+                    .unit(*id)
+                    .is_some_and(|unit| unit.team == TeamId::ALIEN)
+            })
             .collect();
 
         assert_eq!(alien_ids.len(), aliens_report.aliens);
@@ -327,7 +335,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     }
     assert_eq!(app_aliens.digest(), replay_aliens.digest());
     assert_eq!(
-        app_aliens.digest().units, aliens_report.units,
+        app_aliens.digest().units,
+        aliens_report.units,
         "alien-обломки не исчезают за тики"
     );
 
@@ -514,7 +523,8 @@ fn chrome_app() -> Option<App> {
     };
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    app.new_game(&NewGameConfig::p2_reference()).expect("партия");
+    app.new_game(&NewGameConfig::p2_reference())
+        .expect("партия");
 
     Some(app)
 }
@@ -557,10 +567,7 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
     );
 
     assert_eq!(transition, max_app::ui::Transition::None);
-    let selected = app
-        .hud()
-        .selected
-        .expect("клик по карте выбирает юнита");
+    let selected = app.hud().selected.expect("клик по карте выбирает юнита");
     assert_eq!(
         app.state().unit(selected).expect("юнит").grid,
         grid,

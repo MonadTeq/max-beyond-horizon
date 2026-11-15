@@ -19,9 +19,7 @@
 //! окна `±TASK_PRIORITY_TOLERANCE` и внутри окна возвращает разность
 //! динамического `GetPriority()` и аргумента — как в C++ (`task.cpp:444`).
 
-use crate::enums::{
-    unit_flags, CautionLevel, Opponent, UnitOrder, UnitOrderState, UnitType,
-};
+use crate::enums::{unit_flags, CautionLevel, Opponent, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
@@ -177,7 +175,10 @@ pub const TASK_NAMES: [&str; 49] = [
 
 /// `Task_GetName` (`task.cpp:95`).
 pub fn task_get_name(task_type: u8) -> &'static str {
-    TASK_NAMES.get(task_type as usize).copied().unwrap_or("Unknown")
+    TASK_NAMES
+        .get(task_type as usize)
+        .copied()
+        .unwrap_or("Unknown")
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +446,10 @@ impl Task {
 pub fn default_caution_level(world: &GameState, unit: &UnitInfo) -> CautionLevel {
     let opponent = world.ai.settings.opponent;
 
-    if unit.base_values.get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE) != 0
+    if unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE)
+        != 0
         && opponent >= Opponent::Average as u8
     {
         if unit.shots > 0 {
@@ -486,7 +490,9 @@ pub fn task_get_ready_units_count(world: &GameState, team: TeamId, unit_type: Un
     let mut count = 0;
 
     for id in world.unit_list(task_unit_list_kind(unit_type)) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
 
         if unit.team == team
             && unit.unit_type == unit_type
@@ -521,7 +527,9 @@ pub fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool 
     // `Access_GetActiveLoader(unit) == nullptr` — юнит не грузится в транспорт.
     // Только воздушные транспорты держат `ORDER_LOAD`.
     for id in world.unit_list(crate::unit::UnitListKind::MobileAir) {
-        let Some(loader) = world.unit(*id) else { continue };
+        let Some(loader) = world.unit(*id) else {
+            continue;
+        };
         if loader.orders == UnitOrder::Load && loader.parent_unit == Some(unit_id) {
             return false;
         }
@@ -546,10 +554,11 @@ pub fn task_is_adjacent(unit: &UnitInfo, grid_x: i16, grid_y: i16) -> bool {
 
 /// `Task_IsRepairDue` (`task.cpp:325`).
 pub fn task_is_repair_due(unit: &UnitInfo, is_lead_unit: bool) -> bool {
-    let base_hits = unit.base_values.get_attribute(crate::unit_values::ATTRIB_HITS);
+    let base_hits = unit
+        .base_values
+        .get_attribute(crate::unit_values::ATTRIB_HITS);
 
-    i32::from(unit.hits) < base_hits / 4
-        || (is_lead_unit && i32::from(unit.hits) < base_hits / 2)
+    i32::from(unit.hits) < base_hits / 4 || (is_lead_unit && i32::from(unit.hits) < base_hits / 2)
 }
 
 /// `Task_EstimateTurnsTillMissionEnd` (`task.cpp:350`).
@@ -572,7 +581,9 @@ pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
 
         let mut count = 0;
         for id in world.unit_list(crate::unit::UnitListKind::Stationary) {
-            let Some(unit) = world.unit(*id) else { continue };
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
             if unit.team == TeamId(team as u8)
                 && unit.unit_type == UnitType::Greenhouse
                 && unit.orders == UnitOrder::PowerOn
@@ -648,12 +659,10 @@ pub fn task_is_recruitable(
 /// Портирована структура: проверка стелс-карт команд, опасность клетки и
 /// отсутствие угроз с большей дальностью. Цикл по замеченным юнитам идёт в
 /// порядке `AiPlayer::spotted_units` (порядок обнаружения).
-pub fn task_should_reserve_shot(
-    world: &GameState,
-    unit: &UnitInfo,
-    site: Point,
-) -> bool {
-    use crate::unit_values::{ATTRIB_ATTACK_RADIUS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED};
+pub fn task_should_reserve_shot(world: &GameState, unit: &UnitInfo, site: Point) -> bool {
+    use crate::unit_values::{
+        ATTRIB_ATTACK_RADIUS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED,
+    };
 
     if unit.shots == 0 || unit.base_values.get_attribute(ATTRIB_MOVE_AND_FIRE) != 0 {
         return false;
@@ -671,8 +680,10 @@ pub fn task_should_reserve_shot(
 
         let heat = &world.ai.heat_maps[team];
 
-        if matches!(unit.unit_type, UnitType::Submarine | UnitType::PersonnelCarrier)
-            && access_modified_surface_is_water(world, site)
+        if matches!(
+            unit.unit_type,
+            UnitType::Submarine | UnitType::PersonnelCarrier
+        ) && access_modified_surface_is_water(world, site)
             && !unit.is_detected_by_team(team_id)
         {
             relevant_teams[team] = heat.get_stealth_sea(i32::from(site.x), i32::from(site.y)) != 0;
@@ -683,8 +694,8 @@ pub fn task_should_reserve_shot(
         }
     }
 
-    let any_other = (0..PLAYER_TEAM_COUNT)
-        .any(|team| relevant_teams[team] && TeamId(team as u8) != unit.team);
+    let any_other =
+        (0..PLAYER_TEAM_COUNT).any(|team| relevant_teams[team] && TeamId(team as u8) != unit.team);
 
     if !any_other {
         return false;
@@ -697,7 +708,9 @@ pub fn task_should_reserve_shot(
     let player = &world.ai.players[unit.team.0 as usize];
 
     for spotted in &player.spotted_units {
-        let Some(spotted_id) = spotted.unit else { continue };
+        let Some(spotted_id) = spotted.unit else {
+            continue;
+        };
         let Some(spotted_unit) = world.unit(spotted_id) else {
             continue;
         };
@@ -716,10 +729,7 @@ pub fn task_should_reserve_shot(
             )
         {
             let unit_values = spotted_unit.base_values;
-            let unit_distance = crate::access::squared_distance(
-                unit.grid,
-                spotted.last_position,
-            );
+            let unit_distance = crate::access::squared_distance(unit.grid, spotted.last_position);
             let mut attack_distance =
                 spotted_range + unit_values.get_attribute(ATTRIB_ATTACK_RADIUS);
 
@@ -727,7 +737,8 @@ pub fn task_should_reserve_shot(
                 attack_distance += unit_values.get_attribute(ATTRIB_SPEED) / 2;
             } else {
                 let rounds = unit_values.get_attribute(ATTRIB_ROUNDS);
-                attack_distance += ((rounds - 1) * (unit_values.get_attribute(ATTRIB_SPEED) + 1)) / rounds;
+                attack_distance +=
+                    ((rounds - 1) * (unit_values.get_attribute(ATTRIB_SPEED) + 1)) / rounds;
             }
 
             if unit_distance <= attack_distance * attack_distance {
@@ -780,7 +791,9 @@ pub fn task_is_unit_doomed_to_destruction(
 
     let position = unit.grid;
 
-    if super::strategy::get_damage_potential(world, unit.team, &unit, position, caution_level) < unit_hits {
+    if super::strategy::get_damage_potential(world, unit.team, &unit, position, caution_level)
+        < unit_hits
+    {
         return false;
     }
 
@@ -788,7 +801,9 @@ pub fn task_is_unit_doomed_to_destruction(
         return true;
     }
 
-    let Some(map) = super::strategy::get_damage_potential_map(world, unit.team, &unit, caution_level) else {
+    let Some(map) =
+        super::strategy::get_damage_potential_map(world, unit.team, &unit, caution_level)
+    else {
         return false;
     };
 
@@ -845,14 +860,22 @@ pub fn task_retreat_if_necessary(
 
     let mut caution = caution_level;
 
-    if unit.ammo == 0 && unit.base_values.get_attribute(crate::unit_values::ATTRIB_AMMO) > 0 {
+    if unit.ammo == 0
+        && unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_AMMO)
+            > 0
+    {
         caution = CautionLevel::AvoidAllDamage;
     }
 
     let opponent = world.ai.settings.opponent;
 
     if unit.shots == 0
-        && unit.base_values.get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE) != 0
+        && unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE)
+            != 0
         && opponent >= Opponent::Average as u8
     {
         caution = CautionLevel::AvoidAllDamage;
@@ -865,17 +888,18 @@ pub fn task_retreat_if_necessary(
         unit_hits = 1;
     }
 
-    let damage =
-        super::strategy::get_damage_potential(world, unit.team, &unit, position, caution);
+    let damage = super::strategy::get_damage_potential(world, unit.team, &unit, position, caution);
 
     if damage >= unit_hits {
-        let rounds = unit.base_values.get_attribute(crate::unit_values::ATTRIB_ROUNDS);
-        let move_and_fire = unit.base_values.get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE);
+        let rounds = unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+        let move_and_fire = unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_MOVE_AND_FIRE);
 
         if rounds > 0
-            && (unit.shots > 0
-                || move_and_fire == 0
-                || opponent < Opponent::Average as u8)
+            && (unit.shots > 0 || move_and_fire == 0 || opponent < Opponent::Average as u8)
             && task_is_unit_doomed_to_destruction(world, unit_id, caution)
         {
             if let Some(mut unit) = world.unit(unit_id).cloned() {
@@ -887,7 +911,14 @@ pub fn task_retreat_if_necessary(
         }
 
         let retreat = super::tasks::TaskKind::retreat(unit_id, task, caution);
-        super::tasks::append_task(manager, world, team_of(world, unit_id), None, TASK_PRIORITY_EMERGENCY, retreat);
+        super::tasks::append_task(
+            manager,
+            world,
+            team_of(world, unit_id),
+            None,
+            TASK_PRIORITY_EMERGENCY,
+            retreat,
+        );
 
         return true;
     }
@@ -916,7 +947,9 @@ pub fn task_retreat_from_danger(
         .map(|task| task.needs_processing)
         .unwrap_or(false);
 
-    if needs_processing && task_retreat_if_necessary(manager, world, Some(task_id), unit_id, caution_level) {
+    if needs_processing
+        && task_retreat_if_necessary(manager, world, Some(task_id), unit_id, caution_level)
+    {
         if let Some(task) = manager.task_mut(task_id) {
             task.needs_processing = false;
         }
@@ -1002,7 +1035,10 @@ mod tests {
         );
 
         // Внутри окна возвращается разность динамического приоритета.
-        assert_eq!(task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS), 0);
+        assert_eq!(
+            task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS),
+            0
+        );
         // Срочнее аргумента — отрицательное значение.
         assert!(task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS + 0x40) < 0);
         // Меньше приоритетом (больше число) — положительное.
@@ -1022,7 +1058,9 @@ mod tests {
         unit.flags = unit_flags::BUILDING;
         assert!(task_is_adjacent(&unit, 7, 7));
 
-        let base_hits = unit.base_values.get_attribute(crate::unit_values::ATTRIB_HITS) as u16;
+        let base_hits = unit
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_HITS) as u16;
         // `hits < base_hits / 4` — строго меньше.
         unit.hits = base_hits / 4;
         assert!(!task_is_repair_due(&unit, false));

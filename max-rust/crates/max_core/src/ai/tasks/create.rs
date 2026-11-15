@@ -65,10 +65,7 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
         UnitType::AirUnitsPlant
     } else if flags & unit_flags::MOBILE_SEA_UNIT != 0 {
         UnitType::Shipyard
-    } else if matches!(
-        unit_type,
-        UnitType::Infantry | UnitType::Commando
-    ) {
+    } else if matches!(unit_type, UnitType::Infantry | UnitType::Commando) {
         UnitType::TrainingHall
     } else if flags & unit_flags::MOBILE_LAND_UNIT != 0 {
         UnitType::HeavyVehiclePlant
@@ -92,7 +89,12 @@ pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i3
         return None;
     }
 
-    Some(complexes.iter().map(|complex| i32::from(complex.material)).sum())
+    Some(
+        complexes
+            .iter()
+            .map(|complex| i32::from(complex.material))
+            .sum(),
+    )
 }
 
 /// `TaskCreateBuilding::CheckMaterials` — хватает ли материалов на постройку.
@@ -116,7 +118,9 @@ pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamI
     let mut raw_materials: i32 = -10;
 
     for id in world.unit_list(crate::unit::UnitListKind::MobileLandSea) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
         if unit.team != team {
             continue;
         }
@@ -136,7 +140,9 @@ pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamI
     }
 
     for id in world.unit_list(crate::unit::UnitListKind::Stationary) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
         if unit.team != team {
             continue;
         }
@@ -146,7 +152,9 @@ pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamI
         if cargo_type_of(unit.unit_type) == Some(CargoType::Raw) {
             raw_materials += i32::from(unit.storage);
 
-            let storage_max = unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE);
+            let storage_max = unit
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_STORAGE);
             if i32::from(unit.storage) == storage_max {
                 return false;
             }
@@ -210,7 +218,12 @@ pub fn raw_consumption_rate(unit_type: UnitType) -> i32 {
 // ---------------------------------------------------------------------------
 
 /// Площадка под здание валидна: 2×2 доступны и свободны от юнитов.
-fn is_valid_building_site(world: &crate::game::GameState, team: TeamId, unit_type: UnitType, site: Point) -> bool {
+fn is_valid_building_site(
+    world: &crate::game::GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    site: Point,
+) -> bool {
     let building = crate::access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0;
     let size = if building { 2 } else { 1 };
 
@@ -273,10 +286,7 @@ pub fn find_build_site(
         while x <= origin.x + RADIUS {
             let site = Point::new(x, y);
 
-            if x >= 0
-                && y >= 0
-                && is_valid_building_site(world, team, unit_type, site)
-            {
+            if x >= 0 && y >= 0 && is_valid_building_site(world, team, unit_type, site) {
                 let score = if unit_type == UnitType::MiningStation {
                     let mut ore = 0;
                     for dy in -1..=2 {
@@ -317,7 +327,10 @@ pub fn find_build_site(
 
 /// `TaskObtainUnits::CountInstancesOfUnitType`.
 pub(crate) fn count_instances(units: &[UnitType], unit_type: UnitType) -> u32 {
-    units.iter().filter(|candidate| **candidate == unit_type).count() as u32
+    units
+        .iter()
+        .filter(|candidate| **candidate == unit_type)
+        .count() as u32
 }
 
 /// `TaskObtainUnits::IsValidCandidate`.
@@ -357,10 +370,7 @@ pub(crate) fn is_valid_candidate(
 
             if mode {
                 false
-            } else if !task
-                .kind
-                .is_unit_transferable(world, task, unit)
-            {
+            } else if !task.kind.is_unit_transferable(world, task, unit) {
                 false
             } else {
                 // `task->ComparePriority(GetPriority()) > 0` — приоритет запроса
@@ -388,17 +398,24 @@ pub(crate) fn find_unit(
     let mut is_unit_available = false;
 
     for id in world.unit_list(kind) {
-        let Some(unit) = world.unit(*id) else { continue };
+        let Some(unit) = world.unit(*id) else {
+            continue;
+        };
         if unit.unit_type != unit_type {
             continue;
         }
 
         if unit.orders == UnitOrder::Build
-            && unit.flags & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
+            && unit.flags
+                & (unit_flags::MOBILE_AIR_UNIT
+                    | unit_flags::MOBILE_SEA_UNIT
+                    | unit_flags::MOBILE_LAND_UNIT)
                 != 0
         {
             let speed = i32::from(unit.build_time)
-                * unit.base_values.get_attribute(crate::unit_values::ATTRIB_SPEED)
+                * unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_SPEED)
                 + crate::access::approximate_distance(
                     i32::from(point.x) - i32::from(unit.grid.x),
                     i32::from(point.y) - i32::from(unit.grid.y),
@@ -446,10 +463,7 @@ pub(crate) fn obtain_units_end_turn(
     header: TaskHeader,
 ) {
     let TaskKind::ObtainUnits {
-        units,
-        point,
-        init,
-        ..
+        units, point, init, ..
     } = kind
     else {
         return;
@@ -511,7 +525,8 @@ pub(crate) fn obtain_units_end_turn(
     if *init {
         let mut requested = Vec::new();
         for unit_type in units.iter() {
-            let stationary = crate::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+            let stationary =
+                crate::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
 
             if stationary {
                 ctx.tm
@@ -700,7 +715,11 @@ fn create_unit_wait_for_materials(
 }
 
 /// `TaskCreateUnit::IsUnitStillNeeded`.
-fn create_unit_is_still_needed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
+fn create_unit_is_still_needed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+) -> bool {
     let TaskKind::CreateUnit {
         unit_type,
         op_state,
@@ -768,7 +787,12 @@ fn create_unit_is_still_needed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
     false
 }
 
-fn create_unit_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+fn create_unit_add_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
     let TaskKind::CreateUnit {
         unit_type,
         op_state,
@@ -783,13 +807,21 @@ fn create_unit_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         return;
     };
 
-    if *op_state == create_unit_state::OBTAINING_BUILDER && unit_info.flags & unit_flags::STATIONARY != 0 {
+    if *op_state == create_unit_state::OBTAINING_BUILDER
+        && unit_info.flags & unit_flags::STATIONARY != 0
+    {
         *op_state = create_unit_state::WAITING_FOR_MATERIALS;
         *builder = Some(unit);
 
         if create_unit_is_still_needed(kind, ctx, header) {
             ctx.attach(header.id, unit);
-            if let TaskKind::CreateUnit { op_state, builder: Some(builder_id), unit_type, .. } = kind {
+            if let TaskKind::CreateUnit {
+                op_state,
+                builder: Some(builder_id),
+                unit_type,
+                ..
+            } = kind
+            {
                 let builder_id = *builder_id;
                 let unit_type = *unit_type;
                 create_unit_wait_for_materials(ctx, header, unit_type, builder_id, op_state);
@@ -820,7 +852,10 @@ fn create_unit_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
 
 fn create_unit_remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, unit: UnitId) {
     let _ = ctx;
-    let TaskKind::CreateUnit { op_state, builder, .. } = kind else {
+    let TaskKind::CreateUnit {
+        op_state, builder, ..
+    } = kind
+    else {
         return;
     };
 
@@ -869,7 +904,14 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
             manager,
             site,
             ..
-        } => (*unit_type, *op_state, *builder, *manager, *site, tasks.is_empty()),
+        } => (
+            *unit_type,
+            *op_state,
+            *builder,
+            *manager,
+            *site,
+            tasks.is_empty(),
+        ),
         _ => return,
     };
 
@@ -907,7 +949,10 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
                 let await_order = ctx
                     .world
                     .unit(builder_id)
-                    .map(|unit| unit.orders == UnitOrder::Await && ctx.tm.unit_task(builder_id) == Some(header.id))
+                    .map(|unit| {
+                        unit.orders == UnitOrder::Await
+                            && ctx.tm.unit_task(builder_id) == Some(header.id)
+                    })
                     .unwrap_or(false);
 
                 if await_order {
@@ -954,7 +999,10 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
                 let await_order = ctx
                     .world
                     .unit(builder_id)
-                    .map(|unit| unit.orders == UnitOrder::Await && ctx.tm.unit_task(builder_id) == Some(header.id))
+                    .map(|unit| {
+                        unit.orders == UnitOrder::Await
+                            && ctx.tm.unit_task(builder_id) == Some(header.id)
+                    })
                     .unwrap_or(false);
 
                 if await_order {
@@ -1090,13 +1138,21 @@ fn create_building_execute(
                 return true;
             }
 
-            let unit_grid = ctx.world.unit(unit).map(|unit| unit.grid).unwrap_or(Point::ZERO);
+            let unit_grid = ctx
+                .world
+                .unit(unit)
+                .map(|unit| unit.grid)
+                .unwrap_or(Point::ZERO);
 
             if unit_grid == *site {
                 create_building_begin(kind, ctx, header, unit);
             } else {
                 let is_connector = *unit_type == UnitType::Connector;
-                let minimum_distance = if !tasks.is_empty() && !is_connector { 8u16 } else { 0 };
+                let minimum_distance = if !tasks.is_empty() && !is_connector {
+                    8u16
+                } else {
+                    0
+                };
 
                 *op_state = create_building_state::MOVING_TO_SITE;
 
@@ -1105,7 +1161,12 @@ fn create_building_execute(
 
                 if dx * dx + dy * dy > i32::from(minimum_distance) {
                     let priority = ctx.priority_of(header.id);
-                    let kind_move = TaskKind::move_to(unit, *site, minimum_distance, CautionLevel::AvoidAllDamage);
+                    let kind_move = TaskKind::move_to(
+                        unit,
+                        *site,
+                        minimum_distance,
+                        CautionLevel::AvoidAllDamage,
+                    );
                     ctx.append_task(header.team, Some(header.id), priority, kind_move);
                 }
             }
@@ -1146,7 +1207,12 @@ fn create_building_execute(
 }
 
 /// `TaskCreateBuilding::BeginBuilding`.
-fn create_building_begin(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
+fn create_building_begin(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
     let TaskKind::CreateBuilding {
         unit_type,
         site,
@@ -1186,7 +1252,12 @@ fn create_building_begin(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 
     let parent_needed = header
         .parent
-        .map(|parent| ctx.tm.task(parent).map(|task| task.is_needed(ctx.tm)).unwrap_or(false))
+        .map(|parent| {
+            ctx.tm
+                .task(parent)
+                .map(|task| task.is_needed(ctx.tm))
+                .unwrap_or(false)
+        })
         .unwrap_or(true);
 
     if !parent_needed {
@@ -1202,12 +1273,23 @@ fn create_building_begin(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
     let dangerous = ctx
         .unit(unit)
         .map(|info| {
-            crate::ai::ai_is_dangerous_location(ctx.world, &info, *site, CautionLevel::AvoidNextTurnsFire)
+            crate::ai::ai_is_dangerous_location(
+                ctx.world,
+                &info,
+                *site,
+                CautionLevel::AvoidNextTurnsFire,
+            )
         })
         .unwrap_or(false);
 
     if dangerous {
-        task_retreat_from_danger(ctx.tm, ctx.world, header.id, unit, CautionLevel::AvoidNextTurnsFire);
+        task_retreat_from_danger(
+            ctx.tm,
+            ctx.world,
+            header.id,
+            unit,
+            CautionLevel::AvoidNextTurnsFire,
+        );
         *op_state = create_building_state::MOVING_TO_SITE;
         return;
     }
@@ -1226,7 +1308,9 @@ fn create_building_begin(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
                 .world
                 .unit(unit)
                 .map(|info| {
-                    let storage = info.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE);
+                    let storage = info
+                        .base_values
+                        .get_attribute(crate::unit_values::ATTRIB_STORAGE);
                     i32::from(info.storage) >= storage - 2
                 })
                 .unwrap_or(false)
@@ -1238,7 +1322,6 @@ fn create_building_begin(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
     };
 
     ctx.build_order(unit, *unit_type, *site, build_rate);
-
 
     let _ = (manager, builder);
 }
@@ -1337,17 +1420,12 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
 
     // `UnitsManager_BuildNext`: родитель-завод готовит юнит; в упрощении
     // здание активируется сразу.
-    let building_id = ctx
-        .world
-        .units_at(*site)
-        .iter()
-        .copied()
-        .find(|id| {
-            ctx.world
-                .unit(*id)
-                .map(|unit| unit.unit_type == *unit_type && unit.team == header.team)
-                .unwrap_or(false)
-        });
+    let building_id = ctx.world.units_at(*site).iter().copied().find(|id| {
+        ctx.world
+            .unit(*id)
+            .map(|unit| unit.unit_type == *unit_type && unit.team == header.team)
+            .unwrap_or(false)
+    });
 
     let _ = building_id;
 
@@ -1407,7 +1485,11 @@ fn activate_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `TaskActivate_IsComplete` (`taskactivate.cpp`): груз выгружен на карту.
-pub fn task_activate_is_complete(world: &crate::game::GameState, payload: UnitId, container: UnitId) -> bool {
+pub fn task_activate_is_complete(
+    world: &crate::game::GameState,
+    payload: UnitId,
+    container: UnitId,
+) -> bool {
     let Some(payload_info) = world.unit(payload) else {
         return true;
     };
@@ -1460,7 +1542,12 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
         }
         TaskKind::ObtainUnits { .. } => {
             // `TaskObtainUnits::Init`: `RemindTurnEnd(true)` один раз.
-            if let TaskKind::ObtainUnits { reinit, init: init_flag, .. } = kind {
+            if let TaskKind::ObtainUnits {
+                reinit,
+                init: init_flag,
+                ..
+            } = kind
+            {
                 if *reinit {
                     ctx.remind_turn_end(header.id, true);
                     *init_flag = true;
@@ -1502,7 +1589,12 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
 
             let parent_needed = header
                 .parent
-                .map(|parent| ctx.tm.task(parent).map(|task| task.is_needed(ctx.tm)).unwrap_or(true))
+                .map(|parent| {
+                    ctx.tm
+                        .task(parent)
+                        .map(|task| task.is_needed(ctx.tm))
+                        .unwrap_or(true)
+                })
                 .unwrap_or(true);
 
             if *op_state < create_building_state::BUILDING && !parent_needed {
@@ -1524,7 +1616,9 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
             activate_run(kind, ctx, header);
             true
         }
-        TaskKind::Escort { .. } | TaskKind::DefenseAssistant { .. } | TaskKind::PowerAssistant { .. } => false,
+        TaskKind::Escort { .. }
+        | TaskKind::DefenseAssistant { .. }
+        | TaskKind::PowerAssistant { .. } => false,
         _ => false,
     }
 }
@@ -1553,7 +1647,12 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `Execute(unit)` для create-классов.
-pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::CreateUnit { .. } => {
             let is_target_unit = ctx
@@ -1584,7 +1683,9 @@ pub fn execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, u
                 false
             }
         }
-        TaskKind::Activate { unit_to_activate, .. } => {
+        TaskKind::Activate {
+            unit_to_activate, ..
+        } => {
             if *unit_to_activate == Some(unit) {
                 activate_run(kind, ctx, header);
             }
@@ -1605,7 +1706,10 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
             };
 
             if count_instances(units, unit_info.unit_type) > 0 {
-                if let Some(index) = units.iter().position(|candidate| *candidate == unit_info.unit_type) {
+                if let Some(index) = units
+                    .iter()
+                    .position(|candidate| *candidate == unit_info.unit_type)
+                {
                     units.remove(index);
                 }
 
@@ -1623,7 +1727,11 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
                 }
             }
         }
-        TaskKind::Activate { unit_to_activate, unit_parent, .. } => {
+        TaskKind::Activate {
+            unit_to_activate,
+            unit_parent,
+            ..
+        } => {
             if *unit_to_activate == Some(unit) || *unit_parent == Some(unit) {
                 activate_run(kind, ctx, header);
             }
@@ -1689,7 +1797,12 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 }
 
 /// `ChildComplete(task)` для create-классов.
-pub fn child_complete(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, child: u32) -> bool {
+pub fn child_complete(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    child: u32,
+) -> bool {
     match kind {
         TaskKind::CreateBuilding { tasks, .. } => {
             tasks.retain(|task| *task != child);
@@ -1734,7 +1847,12 @@ pub fn move_finished(
 }
 
 /// `ExchangeOperator` для create-классов.
-pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn exchange_operator(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     let TaskKind::CreateBuilding {
         builder,
         op_state,
@@ -1756,7 +1874,8 @@ pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
         return false;
     };
 
-    if builder_info.unit_type != candidate.unit_type || *op_state >= create_building_state::BUILDING {
+    if builder_info.unit_type != candidate.unit_type || *op_state >= create_building_state::BUILDING
+    {
         return false;
     }
 
@@ -1777,7 +1896,12 @@ pub fn exchange_operator(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 }
 
 /// `EventUnitDestroyed` для create-классов.
-pub fn event_unit_destroyed(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
+pub fn event_unit_destroyed(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
     match kind {
         TaskKind::CreateBuilding { builder, .. } => {
             if *builder == Some(unit) {
@@ -1845,7 +1969,9 @@ pub fn is_needed(world: &crate::game::GameState, header: TaskHeader) -> bool {
 /// `TaskCreateUnit::GetUnitType` (`TaskCreate::GetUnitType`) — для переписи.
 pub fn create_kind_type(kind: &TaskKind) -> Option<UnitType> {
     match kind {
-        TaskKind::CreateUnit { unit_type, .. } | TaskKind::CreateBuilding { unit_type, .. } => Some(*unit_type),
+        TaskKind::CreateUnit { unit_type, .. } | TaskKind::CreateBuilding { unit_type, .. } => {
+            Some(*unit_type)
+        }
         _ => None,
     }
 }

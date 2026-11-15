@@ -43,8 +43,8 @@
 use std::fmt;
 
 use crate::enums::{
-    FileType, GameStateType, Opponent, Planet, PlayMode, TeamClan, UnitOrder, UnitType, VictoryType,
-    UNIT_END,
+    FileType, GameStateType, Opponent, Planet, PlayMode, TeamClan, UnitOrder, UnitType,
+    VictoryType, UNIT_END,
 };
 use crate::geo::{Point, MAP_TILES};
 use crate::hash::{MapHash, MapHashObject, UnitHash};
@@ -52,7 +52,9 @@ use crate::team::{
     Complex, ComplexId, ResearchTopicInfo, ScreenLocation, TeamId, TeamInfo, TeamInfoUi, TeamKind,
     TeamUnits,
 };
-use crate::unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
+use crate::unit::{
+    AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
+};
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
 /// Версия формата V70 (`SmartFileFormat::V70`).
@@ -428,11 +430,7 @@ impl SaveTeamUnits {
         for (index, slot) in self.current_values.iter().enumerate() {
             units.current_values[index] = slot.values;
         }
-        units.complexes = self
-            .complexes
-            .iter()
-            .map(|slot| slot.complex)
-            .collect();
+        units.complexes = self.complexes.iter().map(|slot| slot.complex).collect();
         units
     }
 }
@@ -661,7 +659,10 @@ impl SaveFile {
 }
 
 fn fixed_bytes_to_string(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
@@ -743,9 +744,7 @@ impl<'a> Reader<'a> {
 
     fn u32(&mut self) -> Result<u32> {
         let bytes = self.take(4)?;
-        Ok(u32::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-        ]))
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     fn i32(&mut self) -> Result<i32> {
@@ -1536,9 +1535,7 @@ impl<'a> Reader<'a> {
             turn_timer: self.i32()?,
             endturn: self.i32()?,
             start_gold: self.i32()?,
-            play_mode: self.enum_i32("PlayMode", |value| {
-                PlayMode::try_from(value as u8).ok()
-            })?,
+            play_mode: self.enum_i32("PlayMode", |value| PlayMode::try_from(value as u8).ok())?,
             victory_type: self.enum_i32("VictoryType", |value| {
                 VictoryType::try_from(value as u8).ok()
             })?,
@@ -1595,18 +1592,19 @@ impl<'a> Reader<'a> {
             enemy_halt: self.i32()?,
         };
 
-        let mut team_units: [SaveTeamUnits; SAVE_TEAM_COUNT] = std::array::from_fn(|_| SaveTeamUnits {
-            gold: 0,
-            base_values: std::array::from_fn(|_| SavedUnitValues {
-                object_index: 0,
-                values: UnitValues::new(),
-            }),
-            current_values: std::array::from_fn(|_| SavedUnitValues {
-                object_index: 0,
-                values: UnitValues::new(),
-            }),
-            complexes: Vec::new(),
-        });
+        let mut team_units: [SaveTeamUnits; SAVE_TEAM_COUNT] =
+            std::array::from_fn(|_| SaveTeamUnits {
+                gold: 0,
+                base_values: std::array::from_fn(|_| SavedUnitValues {
+                    object_index: 0,
+                    values: UnitValues::new(),
+                }),
+                current_values: std::array::from_fn(|_| SavedUnitValues {
+                    object_index: 0,
+                    values: UnitValues::new(),
+                }),
+                complexes: Vec::new(),
+            });
         for slot in team_units.iter_mut() {
             *slot = self.read_team_units()?;
         }
@@ -1873,12 +1871,7 @@ impl Writer {
         Ok(())
     }
     /// Пишет `UnitInfo`: заголовок объекта (если новый) и тело.
-    fn write_unit_body(
-        &mut self,
-        unit: &SaveUnit,
-        all: &[&SaveUnit],
-        depth: usize,
-    ) -> Result<()> {
+    fn write_unit_body(&mut self, unit: &SaveUnit, all: &[&SaveUnit], depth: usize) -> Result<()> {
         if depth > MAX_UNIT_DEPTH {
             return Err(SaveError::InvalidLength {
                 what: "UnitInfo nesting depth",
@@ -1954,13 +1947,12 @@ impl Writer {
         self.u8(info.targeting_mode);
         self.u8(info.enter_mode);
         self.u8(info.cursor);
-        let recoil_delay = if info.orders == UnitOrder::Disable
-            || info.prior_orders == UnitOrder::Disable
-        {
-            info.disabled_turns_remaining
-        } else {
-            info.firing_recoil_frames
-        };
+        let recoil_delay =
+            if info.orders == UnitOrder::Disable || info.prior_orders == UnitOrder::Disable {
+                info.disabled_turns_remaining
+            } else {
+                info.firing_recoil_frames
+            };
         self.u8(recoil_delay);
         self.u8(info.delayed_reaction);
         self.bool(info.damaged_this_turn);
@@ -2011,12 +2003,7 @@ impl Writer {
     }
 
     /// Пишет ссылку на юнита; если объект новый — его тело (рекурсивно).
-    fn write_unit_ref(
-        &mut self,
-        stored: u16,
-        all: &[&SaveUnit],
-        depth: usize,
-    ) -> Result<()> {
+    fn write_unit_ref(&mut self, stored: u16, all: &[&SaveUnit], depth: usize) -> Result<()> {
         if self.object_ref(stored, ObjectKind::UnitInfo)? {
             let position = all
                 .binary_search_by_key(&stored, |unit| unit.object_index)
@@ -2467,9 +2454,10 @@ mod tests {
             }
             if let Some(complex) = unit.info.complex {
                 assert!(
-                    save.team_units
+                    save.team_units.iter().any(|team| team
+                        .complexes
                         .iter()
-                        .any(|team| team.complexes.iter().any(|slot| slot.complex.id == complex.0)),
+                        .any(|slot| slot.complex.id == complex.0)),
                     "complex {complex:?}"
                 );
             }
@@ -2498,16 +2486,10 @@ mod tests {
     fn rejects_other_versions_and_trailing_bytes() {
         let mut bytes = SAVE_FIXTURE.to_vec();
         bytes[0] = 71;
-        assert_eq!(
-            SaveFile::parse(&bytes),
-            Err(SaveError::UnknownVersion(71))
-        );
+        assert_eq!(SaveFile::parse(&bytes), Err(SaveError::UnknownVersion(71)));
         let mut bytes = SAVE_FIXTURE.to_vec();
         bytes.push(0);
-        assert_eq!(
-            SaveFile::parse(&bytes),
-            Err(SaveError::TrailingBytes(1))
-        );
+        assert_eq!(SaveFile::parse(&bytes), Err(SaveError::TrailingBytes(1)));
         assert!(SaveFile::parse(&SAVE_FIXTURE[..100]).is_err());
     }
 

@@ -342,8 +342,7 @@ impl GameState {
             state.team_units[index] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
         }
         state.teams[PLAYER_TEAM_COUNT].team_type = TeamKind::Computer;
-        state.team_units[PLAYER_TEAM_COUNT] =
-            TeamUnits::with_clan(crate::enums::TeamClan::Random);
+        state.team_units[PLAYER_TEAM_COUNT] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
         state
     }
 
@@ -468,8 +467,7 @@ impl GameState {
 
             // `UnitInfo::FileLoad` (V70-ветка) + нормализации.
             unit.movement_wait_count = 0;
-            unit.ai_state_bits &=
-                !(AI_STATE_MOVE_FINISHED_REMINDER | AI_STATE_RETREAT_REMINDER);
+            unit.ai_state_bits &= !(AI_STATE_MOVE_FINISHED_REMINDER | AI_STATE_RETREAT_REMINDER);
             if unit.build_rate == 0 {
                 unit.build_rate = 1;
             }
@@ -507,7 +505,9 @@ impl GameState {
         };
 
         for (index, saved) in save.units.iter().enumerate() {
-            let Some(entry) = self.units.get_mut(index) else { continue };
+            let Some(entry) = self.units.get_mut(index) else {
+                continue;
+            };
             let Some(unit) = entry.as_mut() else { continue };
 
             unit.parent_unit = if saved.parent_object_index == 0 {
@@ -549,13 +549,13 @@ impl GameState {
                     }
                 }
                 if !units.is_empty() {
-                    self.map_hash.bucket_mut(object.x, object.y).push(
-                        crate::hash::MapHashObject {
+                    self.map_hash
+                        .bucket_mut(object.x, object.y)
+                        .push(crate::hash::MapHashObject {
                             x: object.x,
                             y: object.y,
                             units,
-                        },
-                    );
+                        });
                 }
             }
         }
@@ -573,7 +573,9 @@ impl GameState {
 
         // --- тепловые карты: `HeatMap::LoadV70` с клампом отрицательных ---
         for team in 0..PLAYER_TEAM_COUNT {
-            let Some(saved) = save.heat_maps[team].as_deref() else { continue };
+            let Some(saved) = save.heat_maps[team].as_deref() else {
+                continue;
+            };
             self.ai.heat_maps[team].load_v70(
                 &saved.complete,
                 &saved.stealth_sea,
@@ -683,7 +685,11 @@ impl GameState {
     /// `Hash_MapHash.Remove/Add` в `UnitInfo::Move`/`UpdateGridPosition`.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
         if let Some(slot) = self.lookup(id) {
-            let previous = self.units.get(slot).and_then(|entry| entry.as_ref()).cloned();
+            let previous = self
+                .units
+                .get(slot)
+                .and_then(|entry| entry.as_ref())
+                .cloned();
 
             if let Some(previous) = &previous {
                 if previous.grid != unit.grid {
@@ -693,8 +699,13 @@ impl GameState {
                         previous.grid.y as u16,
                         previous.flags,
                     );
-                    self.map_hash
-                        .add(id, unit.grid.x as u16, unit.grid.y as u16, unit.flags, false);
+                    self.map_hash.add(
+                        id,
+                        unit.grid.x as u16,
+                        unit.grid.y as u16,
+                        unit.flags,
+                        false,
+                    );
 
                     // `Access_UpdateMapStatus` — покрытие сканирования
                     // переезжает вместе с юнитом (P6).
@@ -710,7 +721,8 @@ impl GameState {
                 if previous.grid != unit.grid {
                     self.update_map_status(id, true);
                 }
-            }        }
+            }
+        }
     }
 
     /// `Hash_MapHash[Point]` — юниты клетки в порядке вставки.
@@ -722,7 +734,10 @@ impl GameState {
     /// `Hash_MapHash[Point]`: `None`, если клетка пуста или вне карты.
     #[inline]
     pub fn units_at_opt(&self, grid: Point) -> Option<&Vec<UnitId>> {
-        if grid.x < 0 || grid.y < 0 || grid.x >= crate::geo::MAP_WIDTH || grid.y >= crate::geo::MAP_HEIGHT
+        if grid.x < 0
+            || grid.y < 0
+            || grid.x >= crate::geo::MAP_WIDTH
+            || grid.y >= crate::geo::MAP_HEIGHT
         {
             return None;
         }
@@ -1088,7 +1103,11 @@ impl GameState {
         unit.ammo = base.get_attribute(ATTRIB_AMMO) as u8;
         unit.storage = base.get_attribute(ATTRIB_STORAGE) as i16;
         unit.engine = 2;
-        unit.weapon = if base.get_attribute(ATTRIB_ATTACK) != 0 { 2 } else { 0 };
+        unit.weapon = if base.get_attribute(ATTRIB_ATTACK) != 0 {
+            2
+        } else {
+            0
+        };
 
         // `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`): мины, коммандос
         // и подлодки невидимы всем, остальные — видны.
@@ -1282,7 +1301,11 @@ impl GameState {
         if attack == 0 {
             return;
         }
-        if let Some(position) = self.live_attacks.iter().position(|entry| entry.id == attack) {
+        if let Some(position) = self
+            .live_attacks
+            .iter()
+            .position(|entry| entry.id == attack)
+        {
             let targets = self.live_attacks.remove(position).targets;
             for target in targets {
                 if let Some(target_unit) = self.unit_mut(target) {
@@ -1319,11 +1342,10 @@ impl GameState {
             .get_attribute(crate::unit_values::ATTRIB_ATTACK_RADIUS)
             != 0
         {
-            let targets: Vec<UnitId> =
-                crate::combat::get_area_attack_targets(self, &unit, fire_on)
-                    .into_iter()
-                    .map(|(target, _)| target)
-                    .collect();
+            let targets: Vec<UnitId> = crate::combat::get_area_attack_targets(self, &unit, fire_on)
+                .into_iter()
+                .map(|(target, _)| target)
+                .collect();
             targets
         } else {
             crate::access::get_attack_target(self, &unit, fire_on, false)
@@ -2146,7 +2168,10 @@ mod tests {
         );
         let unit = state.unit(first).expect("unit");
         assert_eq!(unit.unit_list, UnitListKind::MobileLandSea);
-        assert_eq!(unit.hits, unit.base_values.get_attribute(ATTRIB_HITS) as u16);
+        assert_eq!(
+            unit.hits,
+            unit.base_values.get_attribute(ATTRIB_HITS) as u16
+        );
         // `CTInfo::Reset` стартует счётчики имён с 1 (`ctinfo.hpp:49-51`).
         assert_eq!(unit.unit_id, 1);
         assert_eq!(state.teams[0].unit_counter(UnitType::Tank as u16), 2);
@@ -2158,7 +2183,9 @@ mod tests {
         state.destroy_unit(first);
         assert!(!state.has_unit(first));
         assert_eq!(state.unit_count(), 1);
-        assert!(!state.unit_list(UnitListKind::MobileLandSea).contains(&first));
+        assert!(!state
+            .unit_list(UnitListKind::MobileLandSea)
+            .contains(&first));
         assert_eq!(state.unit_ids_in_order().len(), 1);
     }
 
@@ -2169,13 +2196,28 @@ mod tests {
         state.team_units[0] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
         let flags = unit_flags::STATIONARY | unit_flags::BUILDING;
         let high = state
-            .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(5, 30), flags)
+            .spawn_unit(
+                UnitType::PowerGenerator,
+                TeamId::RED,
+                Point::new(5, 30),
+                flags,
+            )
             .unwrap();
         let low = state
-            .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(6, 10), flags)
+            .spawn_unit(
+                UnitType::PowerGenerator,
+                TeamId::RED,
+                Point::new(6, 10),
+                flags,
+            )
             .unwrap();
         let middle = state
-            .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(7, 20), flags)
+            .spawn_unit(
+                UnitType::PowerGenerator,
+                TeamId::RED,
+                Point::new(7, 20),
+                flags,
+            )
             .unwrap();
         assert_eq!(
             state.unit_list(UnitListKind::Stationary),
@@ -2380,7 +2422,9 @@ mod tests {
                 for _ in 0..8 {
                     state.tick();
                 }
-                if !state.has_unit(green) || state.unit(green).map(|unit| unit.hits).unwrap_or(0) == 0 {
+                if !state.has_unit(green)
+                    || state.unit(green).map(|unit| unit.hits).unwrap_or(0) == 0
+                {
                     break;
                 }
             }
@@ -2391,7 +2435,12 @@ mod tests {
             let green_hits = state.unit(green).map(|unit| unit.hits).unwrap_or(0);
             let red_ammo = state.unit(red).map(|unit| unit.ammo).unwrap_or(0);
             let red_shots = state.unit(red).map(|unit| unit.shots).unwrap_or(0);
-            (state.snapshot_bytes(), green_hits, u16::from(red_ammo), red_shots)
+            (
+                state.snapshot_bytes(),
+                green_hits,
+                u16::from(red_ammo),
+                red_shots,
+            )
         }
 
         let first = run();
@@ -2434,7 +2483,9 @@ mod tests {
 
             // 13: seed; 08: приказ с целями (payload P3); 38: готовый путь;
             // 50: аварийный стоп; 41: завершение движения; 06/52: конец хода.
-            state.enqueue(Command::Seed(crate::input::Packet13Seed { seed: 0xDEAD_BEEF }));
+            state.enqueue(Command::Seed(crate::input::Packet13Seed {
+                seed: 0xDEAD_BEEF,
+            }));
             state.enqueue(Command::Order(crate::input::Packet08Order {
                 unit: red,
                 payload: crate::input::OrderPayload::P3(crate::input::PayloadP3 {
@@ -2473,7 +2524,9 @@ mod tests {
                 UnitOrder::Move,
                 UnitOrderState::InProgress,
             ));
-            state.enqueue(Command::Stop(crate::input::Packet50StopUnit { unit: green }));
+            state.enqueue(Command::Stop(crate::input::Packet50StopUnit {
+                unit: green,
+            }));
             state.enqueue(Command::MoveFinished(
                 crate::input::Packet41MoveFinished::port_form(red, true),
             ));
@@ -2534,7 +2587,11 @@ mod tests {
         assert_eq!(state.end_turn_barrier(), Some(0));
 
         state.turn_indices[0] = 3;
-        assert_eq!(state.end_turn_barrier(), None, "команды разошлись по счётчику");
+        assert_eq!(
+            state.end_turn_barrier(),
+            None,
+            "команды разошлись по счётчику"
+        );
         state.turn_indices[1] = 3;
         assert_eq!(state.end_turn_barrier(), Some(3));
         // ALIEN/пустые слоты в барьере не участвуют.
@@ -2557,11 +2614,7 @@ mod tests {
 
         assert_eq!(state.begin_turn_barrier(), Some(0));
         state.frame_sync_counter[0] = 1;
-        assert_eq!(
-            state.begin_turn_barrier(),
-            None,
-            "пир ещё не вошёл в раунд"
-        );
+        assert_eq!(state.begin_turn_barrier(), None, "пир ещё не вошёл в раунд");
         state.frame_sync_counter[1] = 1;
         assert_eq!(state.begin_turn_barrier(), Some(1));
 
@@ -2580,8 +2633,12 @@ mod tests {
         let mut first_run = state.clone();
         let mut second_run = state.clone();
         for _ in 0..5 {
-            first_run.enqueue(Command::Stop(crate::input::Packet50StopUnit { unit: first }));
-            second_run.enqueue(Command::Stop(crate::input::Packet50StopUnit { unit: first }));
+            first_run.enqueue(Command::Stop(crate::input::Packet50StopUnit {
+                unit: first,
+            }));
+            second_run.enqueue(Command::Stop(crate::input::Packet50StopUnit {
+                unit: first,
+            }));
             first_run.tick();
             second_run.tick();
         }
@@ -2589,11 +2646,7 @@ mod tests {
 
         // Изменение приказа меняет дайджест.
         let before = first_run.snapshot_bytes();
-        first_run.set_order(
-            first,
-            UnitOrder::Sentry,
-            UnitOrderState::ExecutingOrder,
-        );
+        first_run.set_order(first, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
         assert_ne!(before, first_run.snapshot_bytes());
     }
 

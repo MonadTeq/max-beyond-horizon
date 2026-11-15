@@ -282,11 +282,7 @@ pub fn render_resources_into(
     let mut painted = 0;
 
     for (grid_x, grid_y) in range.cells() {
-        if grid_x < 0
-            || grid_y < 0
-            || grid_x >= map.size.width
-            || grid_y >= map.size.height
-        {
+        if grid_x < 0 || grid_y < 0 || grid_x >= map.size.width || grid_y >= map.size.height {
             continue;
         }
 
@@ -350,11 +346,7 @@ pub fn render_resource_icons_into(
     let mut painted = 0;
 
     for (grid_x, grid_y) in range.cells() {
-        if grid_x < 0
-            || grid_y < 0
-            || grid_x >= map.size.width
-            || grid_y >= map.size.height
-        {
+        if grid_x < 0 || grid_y < 0 || grid_x >= map.size.width || grid_y >= map.size.height {
             continue;
         }
 
@@ -572,8 +564,8 @@ mod tests {
 
     #[test]
     fn resource_markers_are_drawn_from_max_res() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../max-original/MAX.RES");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
         if !path.is_file() {
             return;
@@ -598,15 +590,8 @@ mod tests {
 
         let viewport = Viewport::new(448, 448);
         let mut buffer = RgbaBuffer::new(448, 448);
-        let painted = render_resource_icons_into(
-            &mut buffer,
-            &map,
-            &viewport,
-            &markers,
-            &palette,
-            0,
-            false,
-        );
+        let painted =
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 0, false);
 
         assert!(painted > 0, "маркер золота должен нарисоваться");
         assert_eq!(
