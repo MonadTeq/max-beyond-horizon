@@ -43,6 +43,7 @@ pub mod local;
 pub mod menu;
 pub mod net;
 pub mod panels;
+pub mod qa;
 pub mod render;
 pub mod setup;
 pub mod ui;

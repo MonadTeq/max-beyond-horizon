@@ -2,6 +2,7 @@
 # M6.3: локальный CI (то же, что .github/workflows/ci.yml) в Docker.
 #
 #   bash ci.sh                 # cargo check/test max-rust + cargo test --workspace Horizon
+#                              # + QA: qa_run (sp-full/hs-2/visual-screens/victory) и golden
 #   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
 #   bash ci.sh --smoke --turns 10
 #
@@ -71,7 +72,7 @@ step() {
 
 started=$(date +%s)
 
-step "1/2 max-rust: cargo check + test (+ sound feature)"
+step "1/3 max-rust: cargo check + test (+ sound feature)"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
@@ -80,12 +81,30 @@ docker run --rm \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev >/dev/null && cargo check && cargo test && cargo check --features sound && cargo test --features sound'
 
-step "2/2 max-horizon-server: cargo test --workspace"
+step "2/3 max-horizon-server: cargo test --workspace"
 docker run --rm \
     -v "$ROOT/max-horizon-server:/src/max-horizon-server" \
     -w /src/max-horizon-server \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
+
+# Слои 2–3 QA (docs/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
+# Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
+step "3/3 QA: qa_run (sp-full, hs-2, visual-screens, victory) + golden"
+docker run --rm \
+    -v "$ROOT:/src" \
+    -v "$ROOT/build/cargo-home:/cargo-home" \
+    -e "CARGO_HOME=/cargo-home" \
+    -w /src/max-rust \
+    "$RUST_IMAGE" bash -c \
+    'set -e
+     apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
+     rm -rf qa-out
+     cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
+     cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
+     cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
+     cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
+     cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden'
 
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"

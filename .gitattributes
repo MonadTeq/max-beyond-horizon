@@ -1,6 +1,10 @@
 * text=auto
 *.ini text eol=crlf
 *.RES binary
+# Golden-кадры QA (слой 3): бинарные PNG, никакой нормализации переводов строк.
+*.png binary
+# QA-скрипты (слой 2) — всегда LF, чтобы читались одинаково на Windows и в CI.
+*.qa text eol=lf
 # Shell-скрипты — всегда LF. С core.autocrlf=true (Windows-хост) checkout даёт
 # CRLF, и `bash ci.sh` / `release.sh` / `build/scripts/*.sh` падают на `\r` в
 # шебанге и в конце строк.

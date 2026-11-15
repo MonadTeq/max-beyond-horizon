@@ -1,0 +1,51 @@
+# victory.qa — партия до исхода «победа» (слой 2 QA).
+#
+#   cargo run -p max_app --example qa_run -- qa/victory.qa qa-out/victory
+#
+# Сценарий: одиночная партия RED (человек) против GREEN (компьютер), условие
+# победы Duration = 1 ход. Первый же закрытый раунд — `GameManager_CheckEndGame`
+# (`victory::check_end_game_conditions`: `victory_limit <= turn_counter`) —
+# заканчивает партию; `WinLoss_EvaluateStatus` расставляет команды по очкам и
+# RED получает 1-е место, то есть `LocalOutcome::victory == true`
+# (как `menu_wrap_up_game` в C++). Дальше проверяется экран победы.
+#
+# PENDING (осознанно): элиминация ИИ в бою скриптом недостижима — в языке .qa
+# нет команды «уничтожить юнит», а честный бой занимает много ходов и зависит
+# от решений ИИ. Победа здесь честная, но по условию партии (Duration), а НЕ
+# по элиминации. Путь «элиминация ИИ → победа» покрыт юнит-тестом
+# `crates/max_app/tests/local_sp.rs::eliminating_the_ai_wins_and_the_game_over_screen_renders`
+# и остаётся в силе для слоя 1; слой 2 закроет его, когда в .qa появится
+# команда разрушения/урона (см. max-rust/qa/README.md, «Ограничения»).
+
+shot main-menu
+menu new_game
+assert screen=Options
+
+# Условие победы: Duration = 1 ход (поле «turns»).
+click 460 378
+key BACKSPACE
+key BACKSPACE
+key BACKSPACE
+type "1"
+key ENTER
+shot victory-options
+setup done
+setup done
+assert screen=Players
+
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=InGame
+assert turn=1
+
+# Один ход: RED закрывает ход, компьютер ходит сам, раунд закрывается и
+# лимит ходов заканчивает партию.
+tick 5
+end_turn
+assert screen=GameOver
+shot victory-screen
+assert victory
+assert phase=Finished

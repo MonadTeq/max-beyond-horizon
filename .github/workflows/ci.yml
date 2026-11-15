@@ -1,8 +1,10 @@
 name: CI
 
 # M6.3: то же, что ./ci.sh, но на GitHub-hosted ubuntu.
-# Живой live-smoke здесь не запускается: ему нужны MAX.RES (лицензионные
-# данные, в репозитории их нет) и собранный C++-headless. Локально:
+# Стадии: max-rust (check/test), horizon (workspace-тесты), qa (слои 2–3:
+# qa_run-сценарии + golden-кадры, см. docs/qa-plan.md).
+# Живой live-smoke здесь не запускается: ему нужен собранный C++-headless.
+# Локально:
 #   ./ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
 
 on:
@@ -65,3 +67,47 @@ jobs:
       - name: cargo test --workspace
         working-directory: max-horizon-server
         run: cargo test --workspace
+
+  # Слои 2–3 QA (docs/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
+  # Те же команды, что в ci.sh (стадия 3/3): один сценарий = один процесс
+  # qa_run, падение любого assert → exit 1 → красный CI.
+  qa:
+    name: qa (scripts + golden frames)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - name: Install build deps (gcc/cmake)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc g++ cmake
+
+      - name: QA scenarios (sp-full, hs-2, visual-screens, victory)
+        working-directory: max-rust
+        run: |
+          set -e
+          rm -rf qa-out
+          cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
+          cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
+          cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
+          cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
+
+      - name: Golden frames (1 % pixels, Δ > 30)
+        working-directory: max-rust
+        run: cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+
+      - name: Upload log + frames + diff on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-artifacts
+          path: |
+            max-rust/qa-out/**/*.png
+            max-rust/qa-out/**/log.txt
+          if-no-files-found: warn
+

@@ -1,0 +1,65 @@
+# visual-screens.qa — проход по всем экранам клиента (слой 3: golden-кадры).
+#
+# Каждый ключевой экран снимается в PNG. Набор кадров этого скрипта —
+# эталоны `qa/golden/*.png`; сверка:
+#
+#   cargo run -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
+#   cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden
+#
+# Партия заканчивается честно: в Options лимит ходов Duration = 1, поэтому
+# первый же закрытый раунд даёт экран победы/поражения (`winloss`) — без
+# «телепортации» в конец игры.
+
+# --- Меню -----------------------------------------------------------------
+shot main-menu
+assert screen=MainMenu
+
+menu new_game
+shot options
+assert screen=Options
+
+# Лимит победы по ходам = 1: клик по полю «turns» открывает редактирование
+# (в буфере стоит текущее значение 50), поэтому сначала чистим поле.
+click 460 378
+key BACKSPACE
+key BACKSPACE
+key BACKSPACE
+type "1"
+key ENTER
+setup done
+
+# --- Планета и команды ----------------------------------------------------
+shot planet
+assert screen=Planet
+setup done
+
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+shot players
+assert screen=Players
+setup done
+assert screen=InGame
+
+# --- Партия ---------------------------------------------------------------
+assert turn=1
+tick 10
+shot game
+
+# Первый же закрытый раунд заканчивает партию по лимиту ходов.
+end_turn
+assert screen=GameOver
+shot winloss
+
+# --- Сетевые экраны меню (клиент лобби — заглушка QA) ---------------------
+key ENTER                 # OK экрана победы → MainMenu
+assert screen=MainMenu
+
+menu multiplayer
+shot multiplayer
+assert screen=MultiplayerMenu
+
+menu join
+shot join-list
+assert screen=JoinList

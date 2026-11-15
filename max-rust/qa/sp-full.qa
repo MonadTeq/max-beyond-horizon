@@ -1,0 +1,71 @@
+# sp-full.qa — одиночная партия против компьютера (слой 2 QA).
+#
+# Путь игрока целиком: главное меню → Options → Planet → Players (RED — человек,
+# GREEN — компьютер) → партия: выделение юнита, приказ движения, три хода с
+# ходами ИИ. Координаты — пиксели кадра 640×480 (окно оригинала).
+#
+#   cargo run -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
+#
+# Что проверяется: экраны настройки, старт партии (turn=1, RED), выделение
+# юнита и приказ движения через HUD, ходы ИИ между ходами человека,
+# turn_counter растёт (>= 3), сохранение локальной партии (MXLS).
+
+# --- Главное меню ---------------------------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+# --- Options --------------------------------------------------------------
+# Путь игрока: сначала настройки. Таймер выключаем (No Limit), режим —
+# Turn Based, чтобы ходы были воспроизводимы без настенных часов.
+shot options
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+shot planet
+setup done
+assert screen=Players
+
+# --- Players --------------------------------------------------------------
+# RED — человек, GREEN — компьютер, BLUE/GRAY — пусто.
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+shot players
+setup done
+assert screen=InGame
+
+# --- Партия ---------------------------------------------------------------
+assert turn=1
+assert team=0
+tick 10
+shot game-start
+
+# Выделяем первый подвижный юнит RED и отдаём приказ в соседнюю клетку —
+# ровно те же клики, что делает игрок мышью.
+select unit 0
+assert selected
+shot game-selected
+move near
+tick 5
+shot game-moved
+
+# Ход 1 → ход ИИ GREEN → снова RED.
+end_turn
+assert turn=2
+assert team=0
+shot game-turn2
+
+# Ещё два хода (каждый с ходом компьютера).
+end_turn
+end_turn
+assert turn>=3
+shot game-turn4
+
+# Локальное сохранение: контейнер MXLS рядом с кадрами.
+save sp-full.mxs

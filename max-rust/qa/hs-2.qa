@@ -1,0 +1,70 @@
+# hs-2.qa — hot-seat на двоих (слой 2 QA).
+#
+# Два человека за одним ПК: RED и GREEN. Проверяется окно перехода хода
+# («<Team> Team: Begin turn.» — `DialogMenu`, HELPFRAM), поочерёдность команд
+# в раунде и рост счётчика ходов. Координаты — пиксели кадра 640×480.
+#
+#   cargo run -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
+
+# --- Главное меню → Multiplayer Menu → Hot Seat Game ----------------------
+shot main-menu
+menu hot_seat
+assert screen=Options
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+
+# RED и GREEN — люди, BLUE/GRAY — пусто (стартовые значения Hot Seat Game).
+players 0 human
+players 1 human
+players 2 none
+players 3 none
+shot hs-players
+setup done
+assert screen=InGame
+
+# --- Раунд 1 --------------------------------------------------------------
+# Первому человеку окно показывается тоже (C++: PlayerTeam = ALIEN до хода).
+assert notice=RED
+assert team=0
+shot hs-begin-turn-red
+key ENTER                 # OK в окне «Red Team: Begin turn.»
+assert notice=none
+tick 5
+shot hs-red-turn
+
+end_turn                  # RED закрывает ход → окно GREEN
+assert notice=GREEN
+assert team=1
+shot hs-begin-turn-green
+key ENTER
+tick 5
+shot hs-green-turn
+
+# --- Раунд 2 --------------------------------------------------------------
+end_turn                  # GREEN закрывает ход → раунд 1 отыгран
+assert turn=2
+assert team=0
+assert notice=RED
+shot hs-round2-red-notice
+key ENTER
+assert notice=none
+tick 5
+assert team=0
+shot hs-round2-red-turn
+
+end_turn
+assert notice=GREEN
+assert team=1
+key ENTER
+tick 5
+assert team=1
+shot hs-round2-green-turn
+
+# --- Раунд 3 (проверка устойчивости переключения) -------------------------
+end_turn
+assert turn=3
+assert team=0
+assert notice=RED
+shot hs-round3-red-notice

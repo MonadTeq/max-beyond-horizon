@@ -75,8 +75,19 @@ docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
 docker run --rm -v "$ROOT/max-horizon-server:/src" -w /src rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
-# 2.5 Полный локальный CI (2.1 + 2.4; с --smoke добавляет §3)
+# 2.5 Полный локальный CI (2.1 + 2.4 + QA-сценарии/эталоны; с --smoke добавляет §3)
 bash ci.sh
+
+# 2.6 QA-слои 2–3 вручную (то же, что стадия 3/3 ci.sh; подробности — max-rust/qa/README.md)
+docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
+  set -e
+  apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
+  rm -rf qa-out
+  cargo run -q -p max_app --example qa_run -- qa/sp-full.qa qa-out/sp-full
+  cargo run -q -p max_app --example qa_run -- qa/hs-2.qa qa-out/hs-2
+  cargo run -q -p max_app --example qa_run -- qa/visual-screens.qa qa-out/visual-screens
+  cargo run -q -p max_app --example qa_run -- qa/victory.qa qa-out/victory
+  cargo run -q -p max_app --example qa_golden_check -- qa-out/visual-screens qa/golden'
 ```
 
 - [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
@@ -97,6 +108,16 @@ bash ci.sh
       `horizon_event_system` должны быть исправлены или явно исключены — M5.1).
   Свидетельство: ______________________
 - [ ] 2.5 `bash ci.sh` — `CI OK` за разумное время.
+  Свидетельство: ______________________
+- [x] 2.6 QA-слои 2–3 (`max-rust/qa/`): сценарии `sp-full`, `hs-2`,
+      `visual-screens`, `victory` — PASS, golden-кадры без дрейфа (порог:
+      1 % пикселей с Δ>30). Свидетельство: 2026-11-15,
+      `rust:1.94.0-bookworm`; `qa-out/*/log.txt` (`RESULT: PASS`),
+      `qa_golden_check: сверено 8 кадров (865 КиБ эталонов)` — 0 дрейфа;
+      повторный прогон `visual-screens.qa` даёт 0 отличающихся пикселей;
+      `cargo test -p max_app --test qa_driver` — 7 тестов, 0 failed.
+- [ ] 2.7 Golden-эталоны проверены глазами (каждый `diff-*.png` после
+      осознанного изменения рендера объяснён и закоммичен вместе с ним).
   Свидетельство: ______________________
 
 ## 3. Живой smoke: 2 клиента × 10 ходов
