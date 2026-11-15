@@ -37,3 +37,16 @@
   `max-original-dasm/formats/res.md`), WS-лобби + UDP-сессия (`max_net`, по
   `docs/protocol.md`), рендер мира из снапшота (`max_render`).
 - Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M5).
+
+## CI и развёртывание
+
+- Локальный CI (M6.3): `bash ci.sh` из корня репозитория — `cargo check` +
+  `cargo test` всего `max-rust` и `cargo test --workspace` Horizon в
+  `rust:1.94.0-bookworm`; `bash ci.sh --smoke` добавляет живой
+  `build/scripts/live-smoke.sh` (2 клиента × N ходов). GitHub-эквивалент —
+  `../.github/workflows/ci.yml`.
+- Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
+  подробности — `../max-horizon-server/README.Docker.md`.
+- Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
+  восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
+  M6.1-финал, см. `crates/max_app/README.md` и `docs/protocol.md` §9.

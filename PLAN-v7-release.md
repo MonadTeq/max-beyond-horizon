@@ -9,6 +9,13 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 экран победы/поражения) против headless с AI-противниками; **два и более клиента
 без расхождений** (CRC-барьеры); реконнект после обрыва; релизный чек-лист выполнен.
 
+## Статус на 2026-11-15
+
+- [x] **M5.3** — compose-развёртывание Horizon+headless, healthcheck, README.
+- [x] **M6.3** — `ci.sh` + GitHub Actions, смоук-стадия за флагом `--smoke`.
+- [~] **M6.1 — заготовка**: транспортный реконнект (ENet+`TP 00`, настраиваемые
+  попытки/таймаут), полное восстановление состояния — в M6.1-финале.
+
 ## M3 — Игровой цикл и сетевой геймплей (headless-first)
 
 Текущее: лобби проходит (28→…→34, «Main game loop start» у headless), барьеры
@@ -42,15 +49,35 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   horizon_event_system (или осознанный exclude).
 - **5.2 Headless**: обход/фикс падения при PATCHES.RES в game_data (патч в нашем
   `src/` или репорт автору); задокументировать.
-- **5.3 Развёртывание**: docker-compose Horizon+headless, README, health.
+- **5.3 Развёртывание — готово (M5.3)**: `docker-compose.yml` (Horizon +
+  C++-headless), образ `ubuntu:24.04` + готовый Linux-бинарь
+  `max-horizon-server/target/release/horizon` volume-маунтом (плюс optional
+  `--profile build`), порты 8080/8082 + UDP 32000-32100, конфиг из
+  `smoke_config.toml` через `deploy/horizon.toml.template` + `entrypoint.sh`
+  (`HORIZON_ANNOUNCE_HOST`, пути, секреты), healthcheck по LISTEN-сокетам.
+  Проверено: `docker compose config` валиден, `up` → `healthy`, gRPC-проба
+  `horizon_probe` (hello/list/create/join/ping) проходит; документация —
+  `max-horizon-server/README.Docker.md`.
 - **Критерий**: `docker compose up` → два клиента играют по инструкции.
 
 ## M6 — Полировка и релиз
 
-- **6.1 Реконнект/спектатор** в объёме lockstep (переподключение + запрос состояния
-  пакетом 54/CRC; спектатор — клиент без команды).
+- **6.1 Реконнект/спектатор — заготовка (M6.1-заготовка)**: в
+  `max_app/net.rs` `SessionEvent::Disconnected` запускает `ReconnectPolicy` —
+  повторный ENet connect + `TP 00` с настраиваемыми попытками/таймаутом
+  (`--reconnect-attempts`, `--reconnect-timeout`), лог `reconnect: retrying`.
+  Восстанавливается только транспорт: SNAP/повторного входа в идущую сессию в
+  протоколе нет (`docs/protocol.md` §9, пакет 54 — синхронизация своей команды,
+  а не снапшот), поэтому после успеха прогон завершается с
+  `reconnect_pending_state`. **Осталось в M6.1-финале**: восстановление
+  состояния (вход в партию, перезапрос 54/SNAP, барьеры), спектатор. Тесты
+  retry-логики на мок-сессии, без паник.
 - **6.2 Звук** (WAV-*.SPW) и FLC-ролики — не блокеры релиза (feature-флаги).
-- **6.3 CI**: сборка+тесты в docker (скрипт `ci.sh`), смоук-стадия.
+- **6.3 CI — готово (M6.3)**: `ci.sh` (локальный CI в Docker: `cargo
+  check`+`cargo test` max-rust, `cargo test --workspace` Horizon, optional
+  `--smoke` → `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml`
+  (push/PR); использование описано в `README.md`,
+  `max-horizon-server/README.Docker.md`, `max-rust/README.md`.
 - **6.4 Релиз**: версия, бинарники Windows x64 + Linux, README, чек-лист, git tag
   `v1.0.0`.
 

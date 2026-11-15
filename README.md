@@ -21,3 +21,16 @@ INTERPLAY PRODUCTIONS IS THE EXCLUSIVE LICENSEE AND DISTRIBUTOR.
 ### How to play M.A.X. Port
 
 Visit the [Installation Guideline](https://klei1984.github.io/max/install/) article found on the home page.
+
+### Rust-клиент, dedicated server и CI
+
+- `max-rust/` — Rust-клиент M.A.X. (gRPC → ENet → лобби → игра).
+- `docker-compose.yml` — Horizon + C++-headless одной командой
+  (`docker compose up --build`), порты 8080/tcp, 8082/tcp, 32000-32100/udp.
+  Инструкция: [max-horizon-server/README.Docker.md](max-horizon-server/README.Docker.md).
+- `bash ci.sh` — локальный CI (M6.3): тесты `max-rust` и `max-horizon-server` в
+  Docker; `bash ci.sh --smoke` добавляет живой smoke на 2 клиента. GitHub-версия —
+  [.github/workflows/ci.yml](.github/workflows/ci.yml).
+- Реконнект (M6.1-заготовка): `--reconnect-attempts` / `--reconnect-timeout` в
+  `max_app`; восстановление транспорта ENet+`TP 00`, полное восстановление партии
+  — M6.1-финал (`docs/protocol.md` §9).

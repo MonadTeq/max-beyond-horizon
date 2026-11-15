@@ -29,14 +29,25 @@
 //! * входящий 54 применяется к [`max_core::game::GameState`]
 //!   (`max_core::events::apply_state_sync`), после 45-барьера CRC команды
 //!   сверяются с собственным (`Remote_TeamDataCrc16`).
+//!
+//! # Реконнект (M6.1-заготовка)
+//!
+//! `SessionEvent::Disconnected` запускает [`ReconnectPolicy`]: клиент заново
+//! делает ENet connect + `TP 00` (с таймаутом и числом попыток из
+//! `--reconnect-attempts`/`--reconnect-timeout`), логируя
+//! `reconnect: retrying — попытка N/M`. В протоколе **нет** SNAP и повторного
+//! входа в идущую партию (`docs/protocol.md` §9: пакет 54 — синхронизация
+//! юнитов команды, а не вход в сессию), поэтому после успешного реконнекта
+//! прогон завершается с `reconnect_pending_state`: восстановление состояния
+//! (лобби/барьеры/54-перезапрос) — задача M6.1-финала.
 
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use max_core::enums::{GameStateType, PlayMode, Planet, VictoryType};
+use max_core::enums::{GameStateType, Planet, PlayMode, VictoryType};
 use max_core::events::apply_state_sync;
-use max_core::geo::Point;
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
+use max_core::geo::Point;
 use max_core::input::{
     Command, Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn,
     Packet52EndTurnBarrier,
@@ -47,8 +58,8 @@ use max_net::handshake::DataHash;
 use max_net::session::{DEFAULT_BARRIER_REPEAT, DEFAULT_BARRIER_TIMEOUT};
 use max_net::{
     complex_summary_for, crc_barrier_for, state_sync_for, GameJoined, HorizonClient,
-    LobbyGameSettings, LobbyPacket, Packet, SessionConfig, SessionError, SessionEvent, SessionHandle,
-    CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
+    LobbyGameSettings, LobbyPacket, Packet, SessionConfig, SessionError, SessionEvent,
+    SessionHandle, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
 };
 use tokio::time::Instant;
 
@@ -76,6 +87,8 @@ pub struct NetworkOptions {
     pub tick_interval: Duration,
     /// Ожидание события сессии за итерацию.
     pub event_wait: Duration,
+    /// Политика переподключения при разрыве ENet-сессии (M6.1-заготовка).
+    pub reconnect: ReconnectPolicy,
 }
 
 impl Default for NetworkOptions {
@@ -87,6 +100,7 @@ impl Default for NetworkOptions {
             lobby_timeout: DEFAULT_LOBBY_TIMEOUT,
             tick_interval: DEFAULT_TICK_INTERVAL,
             event_wait: DEFAULT_EVENT_WAIT,
+            reconnect: ReconnectPolicy::default(),
         }
     }
 }
@@ -98,6 +112,230 @@ impl NetworkOptions {
             game_id: game_id.into(),
             ..Self::default()
         }
+    }
+}
+
+/// Сколько попыток переподключения делать по умолчанию (M6.1-заготовка).
+pub const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
+/// Таймаут одной попытки: ENet connect + `TP 00`.
+pub const DEFAULT_RECONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Пауза между неудачными попытками.
+pub const DEFAULT_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Политика переподключения после разрыва ENet-сессии (M6.1-заготовка).
+///
+/// `attempts = 0` выключает автоматический реконнект. Восстанавливается
+/// **только транспорт** (ENet connect + `TP 00`): SNAP/повторного входа в
+/// идущую партию в протоколе нет (`docs/protocol.md` §9), поэтому полное
+/// восстановление состояния — M6.1-финал.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReconnectPolicy {
+    /// Максимальное число попыток (`0` — не переподключаться).
+    pub attempts: u32,
+    /// Таймаут одной попытки (ENet connect + `TP 00`).
+    pub timeout: Duration,
+    /// Пауза между неудачными попытками.
+    pub backoff: Duration,
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: DEFAULT_RECONNECT_ATTEMPTS,
+            timeout: DEFAULT_RECONNECT_TIMEOUT,
+            backoff: DEFAULT_RECONNECT_BACKOFF,
+        }
+    }
+}
+
+/// Учёт попыток переподключения — чистая логика без сети.
+///
+/// Отделяет «сколько и как долго пытаться» от [`SessionHandle::start`], чтобы
+/// retry-политику можно было покрыть тестами с мок-коннектором.
+#[derive(Debug, Clone)]
+pub struct ReconnectTracker {
+    policy: ReconnectPolicy,
+    attempts: u32,
+    last_error: Option<String>,
+}
+
+impl ReconnectTracker {
+    /// Новый трекер (до разрыва — `attempts == 0`).
+    pub fn new(policy: ReconnectPolicy) -> Self {
+        Self {
+            policy,
+            attempts: 0,
+            last_error: None,
+        }
+    }
+
+    /// Политика, с которой создан трекер.
+    pub fn policy(&self) -> ReconnectPolicy {
+        self.policy
+    }
+
+    /// Сколько попыток уже сделано.
+    pub fn attempts(&self) -> u32 {
+        self.attempts
+    }
+
+    /// Сколько попыток ещё осталось.
+    pub fn remaining(&self) -> u32 {
+        self.policy.attempts.saturating_sub(self.attempts)
+    }
+
+    /// Текст последней ошибки (для итогового репорта).
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// Начинает раунд после [`SessionEvent::Disconnected`].
+    ///
+    /// Сбрасывает счётчик прошлого раунда и последнюю ошибку.
+    pub fn note_disconnect(&mut self) {
+        self.attempts = 0;
+        self.last_error = None;
+    }
+
+    /// Номер следующей попытки или `None`, когда попытки исчерпаны/выключены.
+    pub fn next_attempt(&mut self) -> Option<u32> {
+        if self.attempts >= self.policy.attempts {
+            return None;
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        Some(self.attempts)
+    }
+
+    /// Запоминает причину неудачи текущей попытки.
+    pub fn record_failure(&mut self, error: impl std::fmt::Display) {
+        self.last_error = Some(error.to_string());
+    }
+}
+
+/// Итог попытки переподключения (M6.1-заготовка).
+pub enum ReconnectOutcome<T> {
+    /// Транспорт восстановлен (новая сессия в `value`).
+    Restored {
+        /// Новая ENet-сессия (для трекера — `()`).
+        value: T,
+        /// Номер успешной попытки.
+        attempts: u32,
+    },
+    /// Все попытки неудачны; `attempts` — сколько сделано.
+    Exhausted {
+        /// Число сделанных попыток.
+        attempts: u32,
+    },
+    /// `ReconnectPolicy::attempts == 0`.
+    Disabled,
+}
+
+/// Выполняет попытки переподключения через произвольный `connect`.
+///
+/// Функция не знает про сеть: тесты передают мок-коннектор, боевой код —
+/// [`SessionHandle::start`]. Каждая попытка ограничена
+/// [`ReconnectPolicy::timeout`], между неудачами — [`ReconnectPolicy::backoff`].
+async fn reconnect_with<T, F, Fut>(
+    tracker: &mut ReconnectTracker,
+    mut connect: F,
+) -> ReconnectOutcome<T>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<T, SessionError>>,
+{
+    let policy = tracker.policy();
+
+    if policy.attempts == 0 {
+        tracing::warn!("reconnect: автоматическое переподключение выключено (0 попыток)");
+        return ReconnectOutcome::Disabled;
+    }
+
+    loop {
+        let Some(attempt) = tracker.next_attempt() else {
+            let last = tracker.last_error().unwrap_or("нет данных");
+            tracing::error!(
+                "reconnect: попытки исчерпаны ({}/{}), последняя ошибка: {last}",
+                tracker.attempts(),
+                policy.attempts
+            );
+            return ReconnectOutcome::Exhausted {
+                attempts: tracker.attempts(),
+            };
+        };
+
+        tracing::warn!(
+            "reconnect: retrying — попытка {attempt}/{} (таймаут {:?})",
+            policy.attempts,
+            policy.timeout
+        );
+
+        let attempt_timeout = policy.timeout.max(Duration::from_millis(1));
+        match tokio::time::timeout(attempt_timeout, connect(attempt)).await {
+            Ok(Ok(value)) => {
+                tracing::info!(
+                    "reconnect: ENet+TP00 восстановлены (попытка {attempt}/{})",
+                    policy.attempts
+                );
+                return ReconnectOutcome::Restored {
+                    value,
+                    attempts: attempt,
+                };
+            }
+            Ok(Err(error)) => {
+                tracker.record_failure(&error);
+                tracing::warn!(
+                    "reconnect: попытка {attempt}/{} не удалась: {error}",
+                    policy.attempts
+                );
+            }
+            Err(_) => {
+                tracker.record_failure(format!("таймаут {:?}", policy.timeout));
+                tracing::warn!(
+                    "reconnect: попытка {attempt}/{} — таймаут {:?}",
+                    policy.attempts,
+                    policy.timeout
+                );
+            }
+        }
+
+        if tracker.remaining() > 0 && !policy.backoff.is_zero() {
+            tracing::debug!(
+                "reconnect: пауза {:?} перед следующей попыткой",
+                policy.backoff
+            );
+            tokio::time::sleep(policy.backoff).await;
+        }
+    }
+}
+
+/// Переподключает существующую сессию: ENet connect + `TP 00` заново.
+///
+/// При успехе заменяет `handle` новой сессией; игровое состояние не
+/// восстанавливается — это M6.1-финал (`docs/protocol.md` §9).
+async fn reconnect_session(
+    handle: &mut SessionHandle,
+    config: &SessionConfig,
+    policy: ReconnectPolicy,
+) -> ReconnectOutcome<()> {
+    let mut tracker = ReconnectTracker::new(policy);
+    tracker.note_disconnect();
+
+    let outcome = reconnect_with(&mut tracker, |_attempt| {
+        let config = config.clone();
+        async move { SessionHandle::start(config).await }
+    })
+    .await;
+
+    match outcome {
+        ReconnectOutcome::Restored { value, attempts } => {
+            *handle = value;
+            ReconnectOutcome::Restored {
+                value: (),
+                attempts,
+            }
+        }
+        ReconnectOutcome::Exhausted { attempts } => ReconnectOutcome::Exhausted { attempts },
+        ReconnectOutcome::Disabled => ReconnectOutcome::Disabled,
     }
 }
 
@@ -135,6 +373,13 @@ pub struct NetworkReport {
     pub turns_finished: u32,
     /// Сколько раз барьер не дождался пиров.
     pub barrier_timeouts: u32,
+    /// Сколько раз транспорт восстанавливался после разрыва (M6.1-заготовка).
+    pub reconnects: u32,
+    /// Сколько попыток переподключения сделано суммарно.
+    pub reconnect_attempts: u32,
+    /// Транспорт восстановлен, но состояние партии не восстановлено
+    /// (M6.1-финал): прогон завершён, полный реконнект ещё не реализован.
+    pub reconnect_pending_state: bool,
     /// Дайджест итогового состояния.
     pub digest: AppDigest,
 }
@@ -195,6 +440,7 @@ struct LobbyInfo {
 async fn run_lobby(
     app: &mut App,
     handle: &mut SessionHandle,
+    session_config: &SessionConfig,
     config: &AppConfig,
     options: &NetworkOptions,
 ) -> Result<LobbyInfo> {
@@ -319,7 +565,21 @@ async fn run_lobby(
                 reason,
                 reason_text,
             }) => bail!("хендшейк отклонён: {:?} ({reason_text})", reason),
-            Some(SessionEvent::Disconnected) => bail!("сервер отключил клиента в лобби"),
+            Some(SessionEvent::Disconnected) => {
+                tracing::warn!("reconnect: сервер разорвал ENet-сессию в лобби");
+                match reconnect_session(handle, session_config, options.reconnect).await {
+                    ReconnectOutcome::Restored { attempts, .. } => bail!(
+                        "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}), \
+                         но повторный вход в лобби — M6.1-финал (docs/protocol.md §9)"
+                    ),
+                    ReconnectOutcome::Exhausted { attempts } => bail!(
+                        "reconnect: не удалось переподключиться за {attempts} попыт(ок) в лобби"
+                    ),
+                    ReconnectOutcome::Disabled => {
+                        bail!("сервер отключил клиента в лобби (reconnect выключен)")
+                    }
+                }
+            }
             Some(SessionEvent::Error(error)) => {
                 return Err(error).context("ошибка сессии в лобби");
             }
@@ -352,13 +612,14 @@ pub async fn run_network_with_sink(
     // отдельно (`App::init_assets` → `assets::resolve_patches_res`), поэтому
     // несуществующий `--handshake-patches` не оставляет игру без карты.
     let handshake_patches = config.handshake_patches_path().to_path_buf();
-    let data_hash = DataHash::from_files(&config.max_res, &handshake_patches).with_context(|| {
-        format!(
-            "не удалось посчитать SHA256({} + {})",
-            config.max_res.display(),
-            handshake_patches.display()
-        )
-    })?;
+    let data_hash =
+        DataHash::from_files(&config.max_res, &handshake_patches).with_context(|| {
+            format!(
+                "не удалось посчитать SHA256({} + {})",
+                config.max_res.display(),
+                handshake_patches.display()
+            )
+        })?;
 
     let joined = connect_horizon(&config, &options.game_id, options.password.as_deref()).await?;
     let session_config = SessionConfig::from_joined(&joined, data_hash).with_player(
@@ -366,11 +627,13 @@ pub async fn run_network_with_sink(
         config.team_slot.min(3),
         config.clan,
     );
-    let mut handle = SessionHandle::start(session_config)
+    // Конфиг нужен и после старта: по нему выполняется повторный ENet
+    // connect + TP 00 при разрыве (M6.1-заготовка).
+    let mut handle = SessionHandle::start(session_config.clone())
         .await
         .context("ENet-сессия: connect + TP 00")?;
 
-    let lobby = run_lobby(app, &mut handle, &config, options).await?;
+    let lobby = run_lobby(app, &mut handle, &session_config, &config, options).await?;
 
     // Локальная команда: слот, который в `Welcome.team_nodes` занят нашей нодой
     // (обычно `--team`), иначе — запрошенный слот.
@@ -393,8 +656,23 @@ pub async fn run_network_with_sink(
             .map(|settings| settings.world_name.clone())
     );
 
-    let stats = run_game_loop(app, &mut handle, local_team, options, &mut sink).await?;
+    let stats = run_game_loop(
+        app,
+        &mut handle,
+        &session_config,
+        local_team,
+        options,
+        &mut sink,
+    )
+    .await?;
     handle.shutdown().await;
+
+    if stats.reconnect_pending_state {
+        tracing::warn!(
+            "reconnect: транспорт восстановлен, но состояние партии не восстановлено; \
+             полный реконнект (вход в идущую сессию, SNAP/54-перезапрос) — M6.1-финал"
+        );
+    }
 
     Ok(NetworkReport {
         game_id: joined.game_id,
@@ -405,6 +683,9 @@ pub async fn run_network_with_sink(
         commands_applied: app.applied_commands(),
         turns_finished: stats.turns_finished,
         barrier_timeouts: stats.barrier_timeouts,
+        reconnects: stats.reconnects,
+        reconnect_attempts: stats.reconnect_attempts,
+        reconnect_pending_state: stats.reconnect_pending_state,
         digest: app.digest(),
     })
 }
@@ -432,9 +713,8 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     }
 
     let planet = planet_from_settings(settings).unwrap_or(app.config().planet);
-    let level = |raw: i32| {
-        ResourceLevel::new(raw.clamp(0, 2) as u8).unwrap_or(ResourceLevel::NORMAL)
-    };
+    let level =
+        |raw: i32| ResourceLevel::new(raw.clamp(0, 2) as u8).unwrap_or(ResourceLevel::NORMAL);
 
     // Команды, пришедшие в лобби (12 — снабжение миссии), относятся к «старому»
     // состоянию; после генерации мира их нужно вернуть, иначе позиции команд
@@ -519,10 +799,7 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
 /// `team_nodes[team] > 4` — слот занят клиентом; своя нода → `Player`, чужая →
 /// `Remote`. Незанятый слот остаётся `None` (AI-команды сервера клиент не
 /// симулирует и в барьерах не ждёт).
-fn team_kinds_from_nodes(
-    player_node: u16,
-    team_nodes: &[u16; 4],
-) -> [TeamKind; PLAYER_TEAM_COUNT] {
+fn team_kinds_from_nodes(player_node: u16, team_nodes: &[u16; 4]) -> [TeamKind; PLAYER_TEAM_COUNT] {
     std::array::from_fn(|team| {
         let node = team_nodes.get(team).copied().unwrap_or(0);
         if node > 4 {
@@ -568,6 +845,15 @@ fn default_team_start(team: usize) -> Point {
 struct GameLoopStats {
     turns_finished: u32,
     barrier_timeouts: u32,
+    /// Разрывов ENet-сессии за прогон.
+    disconnects: u32,
+    /// Сделанных попыток переподключения (M6.1-заготовка).
+    reconnect_attempts: u32,
+    /// Успешных восстановлений транспорта (пока не более одного: после него
+    /// прогон завершается до M6.1-финала).
+    reconnects: u32,
+    /// Транспорт восстановлен, но состояние партии — нет (M6.1-финал).
+    reconnect_pending_state: bool,
 }
 
 /// Повтор барьера (`REMOTE_PING_TIME_PERIOD`).
@@ -652,12 +938,8 @@ impl TurnBarrierFsm {
     }
 
     /// Команды-пиры: те, чьи барьеры нужно ждать (`TEAM_TYPE_REMOTE`).
-    fn remote_teams<'a>(
-        &'a self,
-        state: &'a GameState,
-    ) -> impl Iterator<Item = usize> + 'a {
-        (0..PLAYER_TEAM_COUNT)
-            .filter(move |&team| state.teams[team].team_type == TeamKind::Remote)
+    fn remote_teams<'a>(&'a self, state: &'a GameState) -> impl Iterator<Item = usize> + 'a {
+        (0..PLAYER_TEAM_COUNT).filter(move |&team| state.teams[team].team_type == TeamKind::Remote)
     }
 
     /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[own]` → 00.
@@ -850,12 +1132,45 @@ enum BarrierPoll {
 async fn pump_events(
     app: &mut App,
     handle: &mut SessionHandle,
+    session_config: &SessionConfig,
     stats: &mut GameLoopStats,
     fsm: &mut TurnBarrierFsm,
     options: &NetworkOptions,
 ) -> Result<bool> {
     loop {
         match handle.next_event_timeout(options.event_wait).await {
+            // M6.1-заготовка: разрыв не завершает прогон молча — сначала
+            // автоматический ENet connect + TP 00 по ReconnectPolicy.
+            Ok(Some(SessionEvent::Disconnected)) => {
+                stats.disconnects = stats.disconnects.saturating_add(1);
+                tracing::warn!("reconnect: сервер разорвал ENet-сессию");
+                let outcome = reconnect_session(handle, session_config, options.reconnect).await;
+                match outcome {
+                    ReconnectOutcome::Restored { attempts, .. } => {
+                        stats.reconnect_attempts =
+                            stats.reconnect_attempts.saturating_add(attempts);
+                        stats.reconnects = stats.reconnects.saturating_add(1);
+                        stats.reconnect_pending_state = true;
+                        tracing::warn!(
+                            "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}), \
+                             но восстановление состояния партии — M6.1-финал \
+                             (docs/protocol.md §9: SNAP/повторного входа в сессию нет)"
+                        );
+                    }
+                    ReconnectOutcome::Exhausted { attempts } => {
+                        stats.reconnect_attempts =
+                            stats.reconnect_attempts.saturating_add(attempts);
+                        tracing::error!(
+                            "reconnect: переподключение не удалось за {attempts} попыт(ок) — \
+                             прогон завершён"
+                        );
+                    }
+                    ReconnectOutcome::Disabled => {
+                        tracing::warn!("reconnect: автоматическое переподключение выключено");
+                    }
+                }
+                return Ok(false);
+            }
             Ok(Some(event)) => {
                 if !handle_session_event(app, event, stats, fsm)? {
                     return Ok(false);
@@ -933,6 +1248,7 @@ async fn send_frame_barrier(
 async fn wait_barrier(
     app: &mut App,
     handle: &mut SessionHandle,
+    session_config: &SessionConfig,
     stats: &mut GameLoopStats,
     fsm: &mut TurnBarrierFsm,
     frame_counter: &mut u8,
@@ -943,7 +1259,7 @@ async fn wait_barrier(
     let mut pending = BarrierPending::new(packets, Instant::now());
 
     loop {
-        if !pump_events(app, handle, stats, fsm, options).await? {
+        if !pump_events(app, handle, session_config, stats, fsm, options).await? {
             return Ok(WaitOutcome::Stopped);
         }
         if fsm.reached(app.state()) {
@@ -980,6 +1296,7 @@ async fn wait_barrier(
 async fn run_game_loop(
     app: &mut App,
     handle: &mut SessionHandle,
+    session_config: &SessionConfig,
     local_team: TeamId,
     options: &NetworkOptions,
     sink: &mut Option<&mut dyn FrameSink>,
@@ -1003,6 +1320,7 @@ async fn run_game_loop(
     if wait_barrier(
         app,
         handle,
+        session_config,
         &mut stats,
         &mut fsm,
         &mut frame_counter,
@@ -1025,6 +1343,7 @@ async fn run_game_loop(
         if wait_barrier(
             app,
             handle,
+            session_config,
             &mut stats,
             &mut fsm,
             &mut frame_counter,
@@ -1038,15 +1357,12 @@ async fn run_game_loop(
             return Ok(stats);
         }
         handle.clear_barriers().await?;
-        tracing::debug!(
-            "барьер 53 (итоги баз) пройден: turn={}",
-            fsm.complex_turn
-        );
+        tracing::debug!("барьер 53 (итоги баз) пройден: turn={}", fsm.complex_turn);
 
         // Тики хода: у headless-клиента нет локального ввода, поэтому ход
         // закрывается сразу после обработки очереди пришедших команд
         // (`Access_AreTaskEventsPending` == false).
-        if !pump_events(app, handle, &mut stats, &mut fsm, options).await? {
+        if !pump_events(app, handle, session_config, &mut stats, &mut fsm, options).await? {
             return Ok(stats);
         }
         app.tick();
@@ -1086,6 +1402,7 @@ async fn run_game_loop(
         if wait_barrier(
             app,
             handle,
+            session_config,
             &mut stats,
             &mut fsm,
             &mut frame_counter,
@@ -1107,6 +1424,7 @@ async fn run_game_loop(
         if wait_barrier(
             app,
             handle,
+            session_config,
             &mut stats,
             &mut fsm,
             &mut frame_counter,
@@ -1128,6 +1446,7 @@ async fn run_game_loop(
         if wait_barrier(
             app,
             handle,
+            session_config,
             &mut stats,
             &mut fsm,
             &mut frame_counter,
@@ -1186,6 +1505,7 @@ async fn run_game_loop(
             if wait_barrier(
                 app,
                 handle,
+                session_config,
                 &mut stats,
                 &mut fsm,
                 &mut frame_counter,
@@ -1266,7 +1586,11 @@ fn handle_session_event(
             );
         }
         SessionEvent::Packet(Packet::Desync { team, param }) => {
-            tracing::warn!("сервер сообщил о десинке: команда {} param {}", team.0, param);
+            tracing::warn!(
+                "сервер сообщил о десинке: команда {} param {}",
+                team.0,
+                param
+            );
         }
         SessionEvent::Packet(Packet::Lobby(lobby)) => {
             tracing::debug!("игровой канал: лобби {lobby:?}");
@@ -1645,7 +1969,11 @@ mod tests {
         assert_eq!(planet_from_settings(&settings), Some(Planet::Bottleneck));
 
         settings.world_name = max_net::WireName::from("MULTI");
-        assert_eq!(planet_from_settings(&settings), None, "неизвестное имя → None");
+        assert_eq!(
+            planet_from_settings(&settings),
+            None,
+            "неизвестное имя → None"
+        );
     }
 
     /// Релейная копия приходит от сервера, у которого нет команды: событие
@@ -1677,7 +2005,8 @@ mod tests {
             .expect("релейный 00");
 
         assert_eq!(
-            app.state().frame_sync_counter[TeamId::GREEN.0 as usize], 1,
+            app.state().frame_sync_counter[TeamId::GREEN.0 as usize],
+            1,
             "team берётся из payload, а не из ENet-отправителя (сервер)"
         );
         assert!(fsm.reached(app.state()), "00-барьер проходит по team=1");
@@ -1747,8 +2076,161 @@ mod tests {
             fsms[1].reached(apps[1].state()),
             "GREEN ждал FrameSyncCounter[RED] == 1"
         );
-        assert_eq!(apps[0].state().frame_sync_counter[TeamId::GREEN.0 as usize], 1);
-        assert_eq!(apps[1].state().frame_sync_counter[TeamId::RED.0 as usize], 1);
+        assert_eq!(
+            apps[0].state().frame_sync_counter[TeamId::GREEN.0 as usize],
+            1
+        );
+        assert_eq!(
+            apps[1].state().frame_sync_counter[TeamId::RED.0 as usize],
+            1
+        );
+    }
+
+    /// Разрыв в обработчике событий сам по себе не паникует и завершает
+    /// прогон (retry выполняет `pump_events`, здесь проверяется fallback).
+    #[test]
+    fn disconnect_event_stops_the_handler_without_panicking() {
+        let local = TeamId::RED;
+        let mut app = App::new(AppConfig::default());
+        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
+        let mut stats = GameLoopStats::default();
+
+        let keep_going =
+            handle_session_event(&mut app, SessionEvent::Disconnected, &mut stats, &mut fsm)
+                .expect("разрыв — не ошибка обработчика");
+
+        assert!(!keep_going, "Disconnected завершает обработку");
+    }
+
+    #[test]
+    fn reconnect_tracker_starts_a_new_round_after_disconnect() {
+        let mut tracker = ReconnectTracker::new(ReconnectPolicy {
+            attempts: 2,
+            timeout: Duration::from_secs(1),
+            backoff: Duration::ZERO,
+        });
+        assert_eq!(tracker.next_attempt(), Some(1));
+        assert_eq!(tracker.next_attempt(), Some(2));
+        assert_eq!(tracker.next_attempt(), None, "лимит попыток");
+        tracker.record_failure("boom");
+
+        // Новый разрыв — новый раунд, ошибка прошлого не тащится.
+        tracker.note_disconnect();
+        assert_eq!(tracker.attempts(), 0);
+        assert!(tracker.last_error().is_none());
+        assert_eq!(tracker.next_attempt(), Some(1));
+    }
+
+    /// Мок-сессия: первая попытка падает, вторая проходит — retry-логика
+    /// восстанавливает транспорт и сообщает номер успешной попытки.
+    #[tokio::test]
+    async fn disconnect_retry_reconnects_on_the_second_attempt() {
+        let mut tracker = ReconnectTracker::new(ReconnectPolicy {
+            attempts: 3,
+            timeout: Duration::from_secs(1),
+            backoff: Duration::ZERO,
+        });
+        tracker.note_disconnect();
+
+        let mut calls = 0u32;
+        let outcome = reconnect_with(&mut tracker, |attempt| {
+            calls += 1;
+            let result = if attempt == 1 {
+                Err(SessionError::Closed)
+            } else {
+                Ok(())
+            };
+            async move { result }
+        })
+        .await;
+
+        assert!(
+            matches!(
+                outcome,
+                ReconnectOutcome::Restored {
+                    value: (),
+                    attempts: 2
+                }
+            ),
+            "успех на второй попытке"
+        );
+        assert_eq!(calls, 2);
+        assert_eq!(tracker.attempts(), 2);
+    }
+
+    /// Все попытки неудачны: `Exhausted` с числом попыток, без паник.
+    #[tokio::test]
+    async fn disconnect_retry_reports_exhaustion_without_panicking() {
+        let mut tracker = ReconnectTracker::new(ReconnectPolicy {
+            attempts: 2,
+            timeout: Duration::from_secs(1),
+            backoff: Duration::ZERO,
+        });
+        tracker.note_disconnect();
+
+        let mut calls = 0u32;
+        let outcome = reconnect_with(&mut tracker, |_attempt| {
+            calls += 1;
+            async { Err::<(), SessionError>(SessionError::Closed) }
+        })
+        .await;
+
+        assert!(matches!(
+            outcome,
+            ReconnectOutcome::Exhausted { attempts: 2 }
+        ));
+        assert_eq!(calls, 2);
+        assert_eq!(tracker.last_error(), Some("session channel is closed"));
+    }
+
+    /// `attempts = 0` — реконнект выключен, коннектор не вызывается.
+    #[tokio::test]
+    async fn reconnect_zero_attempts_is_disabled_without_connecting() {
+        let mut tracker = ReconnectTracker::new(ReconnectPolicy {
+            attempts: 0,
+            timeout: Duration::from_secs(1),
+            backoff: Duration::ZERO,
+        });
+        tracker.note_disconnect();
+
+        let mut calls = 0u32;
+        let outcome = reconnect_with(&mut tracker, |_attempt| {
+            calls += 1;
+            async { Ok::<(), SessionError>(()) }
+        })
+        .await;
+
+        assert!(matches!(outcome, ReconnectOutcome::Disabled));
+        assert_eq!(calls, 0);
+        assert_eq!(tracker.attempts(), 0);
+    }
+
+    /// Таймаут попытки не вешает прогон и попадает в `last_error`.
+    #[tokio::test]
+    async fn reconnect_attempt_timeout_is_reported() {
+        let mut tracker = ReconnectTracker::new(ReconnectPolicy {
+            attempts: 1,
+            timeout: Duration::from_millis(5),
+            backoff: Duration::ZERO,
+        });
+        tracker.note_disconnect();
+
+        let outcome = reconnect_with(&mut tracker, |_attempt| async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<(), SessionError>(())
+        })
+        .await;
+
+        assert!(matches!(
+            outcome,
+            ReconnectOutcome::Exhausted { attempts: 1 }
+        ));
+        assert!(
+            tracker.last_error().unwrap_or_default().contains("таймаут"),
+            "last_error: {:?}",
+            tracker.last_error()
+        );
     }
 
     fn test_settings() -> LobbyGameSettings {

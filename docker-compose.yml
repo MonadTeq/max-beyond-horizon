@@ -1,0 +1,85 @@
+# M5.3: Horizon (gRPC + WS) + C++-headless max-port одной командой.
+#
+#   docker compose up --build -d
+#   docker compose ps                 # horizon healthy?
+#   docker compose logs -f horizon
+#   docker compose down
+#
+# Прагматичный вариант развёртывания (выбран из двух): Horizon не собирается
+# внутри compose-образа — монтируется готовый Linux-бинарь
+# ./max-horizon-server/target/release/horizon. Образ `deploy/Dockerfile.runtime`
+# — это ubuntu:24.04 с рантайм-зависимостями. Если бинаря нет:
+#
+#   docker compose --profile build run --rm builder
+#
+# (или см. README.Docker.md, команда `cargo build --release -p horizon`).
+#
+# Порты:
+#   8080/tcp  — WS-листенер Horizon;
+#   8082/tcp  — gRPC horizon.v1.Horizon (его использует Rust-клиент);
+#   32000-32100/udp — диапазон ENet-сессий headless (max_session).
+#
+# Для игры не с localhost задайте HORIZON_ANNOUNCE_HOST=<публичный адрес>
+# (JoinGame отдаёт этот host клиенту) и пробросьте те же порты в firewall.
+name: max-horizon
+
+services:
+  horizon:
+    build:
+      context: ./deploy
+      dockerfile: Dockerfile.runtime
+    image: max-horizon-runtime:24.04
+    container_name: max-horizon
+    restart: unless-stopped
+    working_dir: /opt/horizon
+    entrypoint: ["/bin/sh", "/opt/horizon/entrypoint.sh"]
+    environment:
+      HORIZON_ANNOUNCE_HOST: "${HORIZON_ANNOUNCE_HOST:-127.0.0.1}"
+      HORIZON_WS_BIND: "0.0.0.0:8080"
+      HORIZON_GRPC_BIND: "0.0.0.0:8082"
+      MAX_EXECUTABLE: "/opt/max/template/max-port"
+      MAX_TEMPLATE_DIR: "/opt/max/template"
+      MAX_SESSION_ROOT: "/var/lib/horizon/sessions"
+      MAX_GAME_DATA: "/opt/max/game-data"
+      MAX_PORT_START: "32000"
+      MAX_PORT_END: "32100"
+      MAX_RESTARTS: "0"
+      MAX_SESSION_SECRET: "${HORIZON_SESSION_SECRET:-smoke-secret}"
+      MAX_ADMIN_SECRET: "${HORIZON_ADMIN_SECRET:-smoke-admin}"
+    volumes:
+      # Готовый Linux-бинарь Horizon (см. `--profile build` ниже).
+      - ./max-horizon-server/target/release/horizon:/opt/horizon/horizon:ro
+      - ./deploy/entrypoint.sh:/opt/horizon/entrypoint.sh:ro
+      - ./deploy/horizon.toml.template:/opt/horizon/horizon.toml.template:ro
+      # C++ headless: max-port + .so + PATCHES.RES.
+      - ${HORIZON_TEMPLATE_DIR:-./build/linux-server-template}:/opt/max/template:ro
+      # MAX.RES; PATCHES.RES здесь быть НЕ должно (обход падения headless, M5.2).
+      - ${HORIZON_GAME_DATA_DIR:-./max-original}:/opt/max/game-data:ro
+      # Логи и рабочие каталоги сессий остаются на хосте.
+      - ./build/docker-sessions:/var/lib/horizon/sessions
+    ports:
+      - "${HORIZON_WS_PORT:-8080}:8080"
+      - "${HORIZON_GRPC_PORT:-8082}:8082"
+      - "32000-32100:32000-32100/udp"
+    stop_grace_period: 10s
+    # healthcheck унаследован из deploy/Dockerfile.runtime (проверка LISTEN
+    # 8080/8082 через /proc/net/tcp, без TCP-connect и лишних ошибок WS).
+
+  # Опциональный сборщик (profile `build`). Кладёт Linux-бинарь в
+  # ./max-horizon-server/target/release/horizon, который монтирует horizon.
+  # Запуск: docker compose --profile build run --rm builder
+  builder:
+    profiles: ["build"]
+    image: rust:1.94.0-bookworm
+    working_dir: /app
+    volumes:
+      - ./max-horizon-server:/app
+      - horizon-cargo-registry:/usr/local/cargo/registry
+    command: >
+      bash -lc "apt-get update -qq
+      && apt-get install -y -qq pkg-config libssl-dev >/dev/null
+      && cargo build --release -p horizon
+      && ls -lh target/release/horizon"
+
+volumes:
+  horizon-cargo-registry:

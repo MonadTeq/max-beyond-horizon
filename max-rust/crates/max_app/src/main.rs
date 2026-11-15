@@ -14,12 +14,13 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use max_app::assets::AssetsReport;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
-use max_app::net::{run_network, NetworkOptions, NetworkReport};
+use max_app::net::{run_network, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
@@ -59,6 +60,10 @@ struct Cli {
     fuel: Option<u8>,
     gold: Option<u8>,
     derelicts: Option<u8>,
+    /// M6.1-заготовка: попытки переподключения при разрыве (0 — выключить).
+    reconnect_attempts: Option<u32>,
+    /// M6.1-заготовка: таймаут одной попытки переподключения в секундах.
+    reconnect_timeout_secs: Option<u32>,
 }
 
 impl Cli {
@@ -77,6 +82,8 @@ impl Cli {
             fuel: None,
             gold: None,
             derelicts: None,
+            reconnect_attempts: None,
+            reconnect_timeout_secs: None,
         };
         let mut mode_set = false;
         let mut data_dir_set = false;
@@ -120,6 +127,12 @@ impl Cli {
                 }
                 "--turns" => {
                     cli.turns = Some(parse_u32(&mut args, "--turns")?);
+                }
+                "--reconnect-attempts" => {
+                    cli.reconnect_attempts = Some(parse_u32(&mut args, "--reconnect-attempts")?);
+                }
+                "--reconnect-timeout" => {
+                    cli.reconnect_timeout_secs = Some(parse_u32(&mut args, "--reconnect-timeout")?);
                 }
                 "--seed" => {
                     cli.seed = Some(parse_u32(&mut args, "--seed")?);
@@ -201,6 +214,11 @@ impl Cli {
 
         if cli.sdl && cli.mode != Mode::Connect {
             bail!("--sdl имеет смысл только с --connect <horizon> --join <game>");
+        }
+        if (cli.reconnect_attempts.is_some() || cli.reconnect_timeout_secs.is_some())
+            && !matches!(cli.mode, Mode::Connect | Mode::Ui)
+        {
+            bail!("--reconnect-* имеет смысл только с --connect/--ui");
         }
         if cli.mode == Mode::Connect && cli.game_id.is_none() {
             bail!("--connect требует --join <game_id>");
@@ -378,10 +396,18 @@ fn run_new_game(cli: &Cli) -> Result<()> {
 /// `--connect <horizon> --join <game> [--sdl]`.
 async fn run_connect(cli: &Cli) -> Result<()> {
     let mut app = App::new(cli.config.clone());
+    let mut reconnect = ReconnectPolicy::default();
+    if let Some(attempts) = cli.reconnect_attempts {
+        reconnect.attempts = attempts;
+    }
+    if let Some(seconds) = cli.reconnect_timeout_secs {
+        reconnect.timeout = Duration::from_secs(u64::from(seconds));
+    }
     let options = NetworkOptions {
         game_id: cli.game_id.clone().expect("validated by CLI"),
         password: cli.password.clone(),
         max_turns: cli.turns.unwrap_or(0),
+        reconnect,
         ..NetworkOptions::default()
     };
 
@@ -436,7 +462,7 @@ fn print_new_game(report: &NewGameReport) {
 
 fn print_network(report: &NetworkReport) {
     println!(
-        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={}",
+        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={} reconnects={} reconnect_attempts={} reconnect_pending_state={}",
         report.game_id,
         report.handshake,
         report.lobby_complete,
@@ -444,7 +470,10 @@ fn print_network(report: &NetworkReport) {
         report.ticks,
         report.commands_applied,
         report.turns_finished,
-        report.barrier_timeouts
+        report.barrier_timeouts,
+        report.reconnects,
+        report.reconnect_attempts,
+        report.reconnect_pending_state
     );
     println!("digest: {}", report.digest);
 }
@@ -574,6 +603,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
+    // M6.1-заготовка: политика реконнекта, общая для `--connect` и `--ui`.
+    let mut reconnect = ReconnectPolicy::default();
+    if let Some(attempts) = cli.reconnect_attempts {
+        reconnect.attempts = attempts;
+    }
+    if let Some(seconds) = cli.reconnect_timeout_secs {
+        reconnect.timeout = Duration::from_secs(u64::from(seconds));
+    }
 
     println!(
         "UI: окно {}x{}; меню — мышь/стрелки, Enter; в игре — LMB выбор, \
@@ -632,6 +669,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 &screen,
                 &request,
                 cli.turns.unwrap_or(0),
+                reconnect,
             ) {
                 Ok(report) => {
                     print_network(&report);
@@ -676,11 +714,13 @@ fn run_ui_session(
     screen: &Screen,
     request: &SessionRequest,
     max_turns: u32,
+    reconnect: ReconnectPolicy,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
         game_id: request.game_id.clone(),
         password: request.password.clone(),
         max_turns,
+        reconnect,
         ..NetworkOptions::default()
     };
     let (width, height) = (
@@ -839,6 +879,8 @@ max_app — клиент M.A.X. (core + net + assets + render)
 
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
+    --reconnect-attempts N   попыток переподключения при разрыве ENet (3; 0 — выкл.)
+    --reconnect-timeout S    таймаут одной попытки переподключения в секундах (10)
     --seed N             seed ГПСЧ для --new-game
     --raw/--fuel/--gold/--derelicts N   уровни ресурсов 0..=2 (по умолчанию 1/1/1/0)
     --world N            планета 0..=23 (по умолчанию 0 — Snowcrab)

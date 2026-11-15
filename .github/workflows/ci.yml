@@ -1,0 +1,61 @@
+name: CI
+
+# M6.3: то же, что ./ci.sh, но на GitHub-hosted ubuntu.
+# Живой live-smoke здесь не запускается: ему нужны MAX.RES (лицензионные
+# данные, в репозитории их нет) и собранный C++-headless. Локально:
+#   ./ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  max-rust:
+    name: max-rust (check + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - name: Install build deps (gcc/cmake for vendored ENet/SDL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc g++ cmake
+
+      - name: cargo check
+        working-directory: max-rust
+        run: cargo check
+
+      - name: cargo test
+        working-directory: max-rust
+        run: cargo test
+
+  horizon:
+    name: max-horizon-server (workspace tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - name: Install build deps (gcc/cmake/pkg-config/libssl-dev)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ cmake pkg-config libssl-dev
+
+      - name: cargo test --workspace
+        working-directory: max-horizon-server
+        run: cargo test --workspace

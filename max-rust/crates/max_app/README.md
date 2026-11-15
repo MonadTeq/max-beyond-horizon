@@ -77,6 +77,8 @@ cargo run -p max_app -- --help
 | `--connect <host[:port]> --join <game> [--sdl]` | Horizon gRPC (по умолчанию `127.0.0.1:8082`) → ENet → лобби → игровой цикл; без `--sdl` — headless, с `--sdl` — окно |
 | `--ui` | интерактивное меню в окне SDL3: создать игру / выбрать игру из лобби / сессия (нужна сборка `--features sdl`) |
 | `--player/--team/--clan/--password` | параметры лобби |
+| `--reconnect-attempts N` | M6.1-заготовка: сколько раз переподключаться при разрыве ENet (по умолчанию 3; `0` — выключить) |
+| `--reconnect-timeout S` | таймаут одной попытки переподключения (ENet connect + `TP 00`) в секундах, по умолчанию 10 |
 | `--data-dir`, `--assets-dir`, `--world-dir`, `--max-res`, `--patches`, `--palette` | где искать данные игры |
 
 По умолчанию `MAX.RES`/`COLOR.PAL` берутся из `max-original/`, `PATCHES.RES` —
@@ -185,6 +187,43 @@ cargo check -p max_app --features sdl-from-source
 Выделение, журнал и предпросмотр живут в `App` (`hud::HudState`) и **не
 входят** в `GameState::snapshot_bytes`/`AppDigest`: детерминизм тика и
 CRC-барьер 45 от них не зависят.
+
+## Реконнект (M6.1-заготовка)
+
+`SessionEvent::Disconnected` больше не завершает сетевой прогон молча: клиент
+запускает `ReconnectPolicy` из `max_app::net` — заново делает **ENet connect +
+`TP 00`** с таймаутом на попытку и паузой между попытками.
+
+```sh
+# 5 попыток по 5 секунд; 0 попыток — выключить автоматический реконнект
+cargo run -p max_app -- --connect 127.0.0.1:8082 --join <game_id> \
+    --reconnect-attempts 5 --reconnect-timeout 5
+```
+
+В логах:
+
+```
+WARN ... reconnect: сервер разорвал ENet-сессию
+WARN ... reconnect: retrying — попытка 1/5 (таймаут 5s)
+...
+INFO ... reconnect: ENet+TP00 восстановлены (попытка 2/5)
+WARN ... reconnect: транспорт восстановлен ..., но восстановление состояния партии — M6.1-финал
+```
+
+Что **не** делает заготовка (это M6.1-финал): вход в идущую партию и
+восстановление состояния. В протоколе нет SNAP/повторного входа в сессию
+(`docs/protocol.md` §9); пакет **54** — синхронизация состояния *своей команды*
+на CRC-проверке, а не запрос снапшота. Поэтому после успешного транспортного
+реконнекта прогон завершается, а `NetworkReport` несёт
+`reconnects`/`reconnect_attempts`/`reconnect_pending_state = true` (их печатает
+`--connect`). Разрыв в лобби тоже пытается восстановить транспорт, но пере-
+вход в лобби не выполняется.
+
+Тесты retry-логики не требуют сети: `ReconnectTracker` + `reconnect_with`
+прогоняются с мок-коннектором (`net::tests::disconnect_retry_*`,
+`reconnect_zero_attempts_is_disabled_without_connecting`,
+`reconnect_attempt_timeout_is_reported`); отдельно проверяется, что
+`Disconnected` в обработчике событий не паникует и корректно завершает цикл.
 
 ## Тесты
 

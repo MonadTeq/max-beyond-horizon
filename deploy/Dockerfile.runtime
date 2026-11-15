@@ -1,0 +1,43 @@
+# M5.3: runtime-образ для Horizon.
+#
+# Прагматичный вариант: Horizon НЕ собирается внутри этого образа — готовый
+# Linux-бинарь монтируется из `max-horizon-server/target/release/horizon`
+# (см. docker-compose.yml). Образ содержит только то, что нужно бинарю в
+# рантайме: glibc/OpenSSL из Ubuntu 24.04 и bash для healthcheck.
+#
+# Сборка (если бинаря нет):
+#   docker run --rm -v "$PWD/max-horizon-server:/src" -w /src \
+#     rust:1.94.0-bookworm bash -c \
+#     "apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null \
+#      && cargo build --release -p horizon"
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# libssl3t64 — SONAME libssl.so.3 на noble; ca-certificates нужны, если в
+# конфиге включат TLS/внешние HTTPS-вызовы.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        libssl3t64 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/horizon
+
+# Каталог сессий headless: docker-compose монтирует сюда bind-каталог
+# `build/docker-sessions`, чтобы логи сессий оставались на хосте.
+RUN mkdir -p /var/lib/horizon/sessions
+
+# Бинарь, entrypoint и шаблон конфига приходят volume-маунтами (read-only),
+# поэтому `docker compose up` не требует пересборки после `cargo build`.
+COPY healthcheck.sh /usr/local/bin/horizon-healthcheck
+RUN chmod +x /usr/local/bin/horizon-healthcheck
+
+EXPOSE 8080 8082 32000-32100/udp
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=10s \
+    CMD ["/bin/bash", "/usr/local/bin/horizon-healthcheck"]
+
+ENTRYPOINT ["/bin/sh", "/opt/horizon/entrypoint.sh"]
