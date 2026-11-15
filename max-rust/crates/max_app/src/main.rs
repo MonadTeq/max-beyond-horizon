@@ -707,6 +707,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
             if let InputEvent::MouseMove(x, y) = input {
                 mouse = Some((x, y));
+                // Позиция нужна и отрисовке (подсветка кнопок меню и окна
+                // перехода хода M-HS), а не только вводу.
+                ctx.mouse = Some(max_render::ui::Point::new(x, y));
             }
 
             // Внутри сессии ввод идёт в HUD (`handle_session_input`): выделение,

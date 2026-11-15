@@ -120,6 +120,7 @@ fn setup_vs_one_ai() -> LocalSetup {
             TeamKind::None,
             TeamKind::None,
         ],
+        hot_seat: false,
         seed: 7,
     }
 }

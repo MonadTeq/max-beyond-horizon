@@ -170,6 +170,91 @@ pub const COPYRIGHT: PixelRect = PixelRect::new(10, 469, 620, 10);
 /// Строка статуса Rust-клиента (в оригинале её нет).
 pub const MAIN_STATUS: PixelRect = PixelRect::new(10, 452, 370, 12);
 
+// ---------------------------------------------------------------------------
+// Multiplayer Menu (`menu_multiplayer_menu_loop`, `menu.cpp:2361`)
+// ---------------------------------------------------------------------------
+
+/// Кнопка `Multiplayer Menu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiplayerAction {
+    /// `Host Network Game` (`_(c7a9)`).
+    Host,
+    /// `Join Network Game` (`_(7064)`).
+    Join,
+    /// `Hot Seat Game` (`_(f731)`) — M-HS.
+    HotSeat,
+    /// `Hot Seat Scenarios` (`_(bf00)`).
+    HotSeatScenarios,
+    /// `Load Hot Seat Game` (`_(847e)`).
+    LoadHotSeat,
+    /// `Cancel` (`_(e13e)`).
+    Cancel,
+}
+
+/// Кнопка `Multiplayer Menu` в координатах C++.
+#[derive(Debug, Clone, Copy)]
+pub struct MultiplayerButton {
+    /// Прямоугольник (200×29 `BLANK_UP`, либо 100×30 `SBLNK_UP` для `Cancel`).
+    pub rect: PixelRect,
+    /// Подпись (`language.json`, en-US).
+    pub label: &'static str,
+    /// Действие.
+    pub action: MultiplayerAction,
+    /// Большая кнопка (`BLANK_*`) или маленькая (`SBLNK_*`).
+    pub big: bool,
+}
+
+/// Заголовок `Multiplayer Menu` (`draw_menu_title(window, _(f2b3))`).
+pub const MULTIPLAYER_TITLE: PixelRect = PixelRect::new(236, 145, 172, 15);
+
+/// Шесть кнопок `network_game_menu_buttons` (`menu.cpp:2372`).
+pub const MULTIPLAYER_BUTTONS: [MultiplayerButton; 6] = [
+    MultiplayerButton {
+        rect: PixelRect::new(385, 175, 200, 29),
+        label: "Host Network Game",
+        action: MultiplayerAction::Host,
+        big: true,
+    },
+    MultiplayerButton {
+        rect: PixelRect::new(385, 210, 200, 29),
+        label: "Join Network Game",
+        action: MultiplayerAction::Join,
+        big: true,
+    },
+    MultiplayerButton {
+        rect: PixelRect::new(385, 280, 200, 29),
+        label: "Hot Seat Game",
+        action: MultiplayerAction::HotSeat,
+        big: true,
+    },
+    MultiplayerButton {
+        rect: PixelRect::new(385, 315, 200, 29),
+        label: "Hot Seat Scenarios",
+        action: MultiplayerAction::HotSeatScenarios,
+        big: true,
+    },
+    MultiplayerButton {
+        rect: PixelRect::new(385, 350, 200, 29),
+        label: "Load Hot Seat Game",
+        action: MultiplayerAction::LoadHotSeat,
+        big: true,
+    },
+    MultiplayerButton {
+        rect: PixelRect::new(435, 420, 100, 30),
+        label: "Cancel",
+        action: MultiplayerAction::Cancel,
+        big: false,
+    },
+];
+
+/// Кнопка `Multiplayer Menu` под точкой `(x, y)`.
+pub fn multiplayer_button_at(x: i32, y: i32) -> Option<MultiplayerAction> {
+    MULTIPLAYER_BUTTONS
+        .iter()
+        .find(|button| button.rect.contains(x, y))
+        .map(|button| button.action)
+}
+
 /// Кнопка нижней строки меню настройки/планет.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButtonAction {
@@ -367,6 +452,10 @@ pub struct MenuAssets {
     pub endarm: Option<SimpleImage>,
     /// Кнопка `OK` экрана победы (`ENDOK_U/D`).
     pub endok: Option<MenuButtonPair>,
+    /// `HELPFRAM` — фон окна `DialogMenu` 301×231 (экран перехода хода M-HS).
+    pub helpfram: Option<BigImage>,
+    /// Кнопка `OK` окна `DialogMenu` (`HELPOK_U/D`, 65×24).
+    pub helpok: Option<MenuButtonPair>,
     /// «Портрет» главного меню (`P_TANK` 300×240).
     pub portrait: Option<BigImage>,
     /// Большие кнопки `BLANK_UP/DN` 200×29.
@@ -471,6 +560,8 @@ impl MenuAssets {
             .collect(),
             endarm: read_simple("ENDARM"),
             endok: pair("ENDOK_U", "ENDOK_D"),
+            helpfram: read_big("HELPFRAM"),
+            helpok: pair("HELPOK_U", "HELPOK_D"),
             portrait,
             blank: pair("BLANK_UP", "BLANK_DN")?,
             small_blank: pair("SBLNK_UP", "SBLNK_DN")?,
@@ -559,6 +650,39 @@ pub fn blit_simple(
     painted
 }
 
+/// Перенос текста по словам шириной GNW-шрифта `FONT5` (`Text_SplitText`).
+///
+/// Используется экранами настройки (`GameConfigMenu`/`PlanetSelectMenu`) и
+/// окном перехода хода M-HS (`DialogMenu::DrawText`): обещанная ширина — в
+/// пикселях, перенос — по пробелам, `\n` — жёсткий перевод строки.
+pub fn wrap_gnw_text(text: &str, width: i32) -> Vec<String> {
+    let font = GnwFontId::Font5.font();
+    let mut lines = Vec::new();
+
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+
+        for word in paragraph.split_whitespace() {
+            let candidate = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+
+            if font.text_width(&candidate) > width && !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+                line = word.to_string();
+            } else {
+                line = candidate;
+            }
+        }
+
+        lines.push(line);
+    }
+
+    lines
+}
+
 /// Заменяет типографские символы, которых нет в GNW-шрифтах (`—`, `…`), на
 /// ASCII: иначе `draw_text_gnw` рисует вместо них `?`.
 pub fn clean_status(text: &str) -> String {
@@ -625,17 +749,11 @@ pub fn draw_image_button(
     painted
 }
 
-/// Рисует главное меню (`menu.cpp::main_menu`).
-pub fn draw_main_menu(
-    frame: &mut RgbaBuffer,
-    menu: &MenuAssets,
-    status: &str,
-    mouse: Option<(i32, i32)>,
-) -> u32 {
+/// «Портрет» с рамками `BGRSCRNL`/`BGRSCRNR` — общий для главного меню и
+/// `Multiplayer Menu` (`menu_draw_menu_portrait`).
+fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
     let palette = &menu.palette;
-    let mut painted = draw_big_image(frame, &menu.mainpic);
-
-    draw_title(frame, palette, MAIN_TITLE, "Main Menu");
+    let mut painted = 0;
 
     if let Some(ref frame_left) = menu.portrait_frame_left {
         painted += blit_simple(
@@ -666,6 +784,70 @@ pub fn draw_main_menu(
             MAIN_PORTRAIT,
         );
     }
+
+    painted
+}
+
+/// Рисует `Multiplayer Menu` (`menu_multiplayer_menu_loop`): `MAINPIC`, заголовок
+/// `_(f2b3)`, портрет и шесть кнопок (`Host/Join/Hot Seat/…/Cancel`).
+pub fn draw_multiplayer_menu(
+    frame: &mut RgbaBuffer,
+    menu: &MenuAssets,
+    status: &str,
+    mouse: Option<(i32, i32)>,
+) -> u32 {
+    let palette = &menu.palette;
+    let mut painted = draw_big_image(frame, &menu.mainpic);
+
+    draw_title(frame, palette, MULTIPLAYER_TITLE, "Multiplayer Menu");
+    painted += draw_menu_portrait(frame, menu);
+
+    for button in &MULTIPLAYER_BUTTONS {
+        let pair = if button.big {
+            &menu.blank
+        } else {
+            &menu.small_blank
+        };
+        let hovered = mouse.is_some_and(|(x, y)| button.rect.contains(x, y));
+
+        painted += draw_image_button(
+            frame,
+            palette,
+            pair.image(false),
+            pair.image(true),
+            button.rect,
+            button.label,
+            hovered,
+        );
+    }
+
+    if !status.is_empty() {
+        let status = clean_status(status);
+        draw_text_gnw(
+            frame,
+            MAIN_STATUS.ulx,
+            MAIN_STATUS.uly,
+            GnwFontId::Font5.font(),
+            &status,
+            palette.rgba(BLACK),
+        );
+    }
+
+    painted
+}
+
+/// Рисует главное меню (`menu.cpp::main_menu`).
+pub fn draw_main_menu(
+    frame: &mut RgbaBuffer,
+    menu: &MenuAssets,
+    status: &str,
+    mouse: Option<(i32, i32)>,
+) -> u32 {
+    let palette = &menu.palette;
+    let mut painted = draw_big_image(frame, &menu.mainpic);
+
+    draw_title(frame, palette, MAIN_TITLE, "Main Menu");
+    painted += draw_menu_portrait(frame, menu);
 
     draw_text_gnw_centered(
         frame,
@@ -1075,7 +1257,12 @@ fn draw_border(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: 
 /// системную палитру: индексы `P_*` интерпретируются палитрой `MAINPIC`. У
 /// `P_TANK` собственная палитра отличается (индекс 19 — маджента), поэтому
 /// рисовать портрет его палитрой нельзя.
-fn draw_big_image_at(
+/// Рисует big image палитрой окна в точку `origin` (с обрезкой по `clip`).
+///
+/// Так C++ рисует картинки без собственной палитры: `palette_from_image =
+/// false` → индексы берутся из палитры окна (`WindowManager_LoadBigImage`).
+/// Нужно и меню (`PLANETSE`, портрет), и окну перехода хода M-HS (`HELPFRAM`).
+pub fn draw_big_image_at(
     frame: &mut RgbaBuffer,
     image: &BigImage,
     palette: &UiPalette,

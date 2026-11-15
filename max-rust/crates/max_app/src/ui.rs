@@ -391,7 +391,9 @@ pub enum Screen {
     },
     /// Форма создания игры.
     CreateForm(CreateForm),
-    /// Настройка локальной партии (M-SP): Options → Planet → Players.
+    /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): хост/join/hot-seat.
+    MultiplayerMenu,
+    /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
     LocalSetup(GameSetupForm),
     /// Экран победы/поражения локальной партии.
     GameOver,
@@ -603,6 +605,9 @@ impl Screen {
         if matches!(self, Self::CreateForm(_)) {
             return self.handle_create_form(ctx, event);
         }
+        if matches!(self, Self::MultiplayerMenu) {
+            return self.handle_multiplayer_menu(ctx, event);
+        }
         if matches!(self, Self::LocalSetup(_)) {
             return self.handle_local_setup(ctx, event);
         }
@@ -631,11 +636,92 @@ impl Screen {
         match form.handle_input(event, ctx.width, ctx.height) {
             SetupTransition::None => Transition::None,
             SetupTransition::Back => {
-                *self = Self::MainMenu;
+                // Esc/Cancel возвращает туда, откуда пришли: в `Multiplayer
+                // Menu` для hot-seat (как `menu_custom_game_menu`), иначе в
+                // главное меню.
+                let back = if form.hot_seat {
+                    Self::MultiplayerMenu
+                } else {
+                    Self::MainMenu
+                };
+                *self = back;
                 ctx.status = "New game cancelled".to_string();
                 Transition::None
             }
             SetupTransition::Start(setup) => Transition::StartLocal(setup),
+        }
+    }
+
+    /// Ввод `Multiplayer Menu` (`menu_multiplayer_menu_loop`).
+    ///
+    /// Работают: `Join Network Game` (список игр Horizon), `Hot Seat Game`
+    /// (M-HS — те же три экрана настройки, но `is_single_player = false`) и
+    /// `Cancel`. `Host Network Game`, `Hot Seat Scenarios` и
+    /// `Load Hot Seat Game` пока не портированы — пишут строку статуса.
+    fn handle_multiplayer_menu(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let mut action = None;
+
+        match event {
+            InputEvent::MouseMove(..) => {}
+            InputEvent::RightClick(..) => {}
+            InputEvent::MouseClick(x, y) => {
+                action = menu::multiplayer_button_at(x, y);
+            }
+            InputEvent::Key(Key::Escape) => action = Some(menu::MultiplayerAction::Cancel),
+            // Горячие клавиши оригинала (`menu_multiplayer_menu_loop`):
+            // Shift+H/J/O/T/L/C — хост, join, hot seat, сценарии, загрузка, отмена.
+            InputEvent::Key(Key::Char('h' | 'H')) => action = Some(menu::MultiplayerAction::Host),
+            InputEvent::Key(Key::Char('j' | 'J')) => action = Some(menu::MultiplayerAction::Join),
+            InputEvent::Key(Key::Char('o' | 'O')) => action = Some(menu::MultiplayerAction::HotSeat),
+            InputEvent::Key(Key::Char('t' | 'T')) => {
+                action = Some(menu::MultiplayerAction::HotSeatScenarios)
+            }
+            InputEvent::Key(Key::Char('l' | 'L')) => {
+                action = Some(menu::MultiplayerAction::LoadHotSeat)
+            }
+            InputEvent::Key(Key::Char('c' | 'C')) => action = Some(menu::MultiplayerAction::Cancel),
+            _ => {}
+        }
+
+        if action.is_some() {
+            ctx.click();
+        }
+
+        match action {
+            Some(menu::MultiplayerAction::Host) => {
+                // Создание игры в Horizon (в оригинале — `Host Network Game`
+                // через `Remote_Lobby`).
+                *self = Self::CreateForm(CreateForm::default());
+                ctx.status = "Create a network game (Enter creates, Esc back)".to_string();
+                Transition::None
+            }
+            Some(menu::MultiplayerAction::Join) => {
+                self.refresh_games(ctx);
+                Transition::None
+            }
+            Some(menu::MultiplayerAction::HotSeat) => {
+                let mut form = GameSetupForm::hot_seat();
+                form.setup.player_name = ctx.player_name.clone();
+                form.world_dir = ctx.world_dir.clone();
+                *self = Self::LocalSetup(form);
+                ctx.status =
+                    "Hot seat: 2-4 humans, Options -> Planet -> Players".to_string();
+                Transition::None
+            }
+            Some(menu::MultiplayerAction::HotSeatScenarios) => {
+                ctx.status = "Hot Seat Scenarios: screen is not ported yet".to_string();
+                Transition::None
+            }
+            Some(menu::MultiplayerAction::LoadHotSeat) => {
+                ctx.status = "Load Hot Seat Game: screen is not ported yet".to_string();
+                Transition::None
+            }
+            Some(menu::MultiplayerAction::Cancel) => {
+                *self = Self::MainMenu;
+                ctx.status.clear();
+                Transition::None
+            }
+            _ => Transition::None,
         }
     }
 
@@ -702,6 +788,21 @@ impl Screen {
                     form,
                     view.width,
                     view.height,
+                );
+            }
+            Self::MultiplayerMenu => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    menu::draw_multiplayer_menu(buffer, menu_assets, view.status, mouse);
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Multiplayer Menu uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
                 );
             }
             Self::LocalSetup(form) => {
@@ -790,7 +891,10 @@ impl Screen {
                 Transition::None
             }
             Some(MAIN_JOIN) => {
-                self.refresh_games(ctx);
+                // `Multiplayer Game` → `Multiplayer Menu` (`menu.cpp:2361`):
+                // Host/Join/Hot Seat Game/Hot Seat Scenarios/Load Hot Seat/Cancel.
+                *self = Self::MultiplayerMenu;
+                ctx.status = "Multiplayer: Host, Join or Hot Seat Game".to_string();
                 Transition::None
             }
             Some(MAIN_QUIT) => Transition::Quit,
@@ -1127,6 +1231,28 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     let (width, height) = app.viewport().screen();
     let chrome = app.chrome_active();
 
+    // M-HS: окно перехода хода модально — как `DialogMenu::Run()` в C++, оно
+    // принимает только подтверждение (клик по `OK`, Enter, Esc). Мышь двигается
+    // (подсветка кнопки), всё остальное игнорируется, включая чат и приказы.
+    if app.local_notice().is_some() {
+        return match event {
+            InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Escape) => {
+                app.local_acknowledge_turn();
+                Transition::None
+            }
+            InputEvent::MouseClick(x, y) if crate::hotseat::ok_at(x, y) => {
+                app.local_acknowledge_turn();
+                Transition::None
+            }
+            _ => Transition::None,
+        };
+    }
+
+    // Пока ходит компьютер/идёт переход, приказы и выделение невозможны:
+    // в C++ карта в это время не перерисовывается (`game_manager.cpp:1179`),
+    // а приказы отбрасываются по `GameManager_ActiveTurnTeam`.
+    let blocked = app.local_active() && app.local_input_blocked();
+
     // Пока открыта строка чата (M4.4), клавиатура принадлежит ей: печатные
     // ASCII-символы идут в буфер, Backspace/Enter/Esc управляют вводом. Мышь
     // игнорируется, чтобы клик во время набора не отдал приказ.
@@ -1160,12 +1286,22 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::MouseClick(x, y) => {
             if chrome {
+                // Панели/миникарта — только просмотр, когда ход не наш; карта
+                // (выделение/атака) заблокирована.
+                if blocked && panels::panel_button_at(x, y).is_none() {
+                    return Transition::None;
+                }
                 session_chrome_left_click(app, x, y, online)
+            } else if blocked {
+                Transition::None
             } else {
                 session_left_click(app, width, height, x, y, online)
             }
         }
         InputEvent::RightClick(x, y) => {
+            if blocked {
+                return Transition::None;
+            }
             if chrome {
                 session_chrome_right_click(app, x, y, online)
             } else {
@@ -1177,7 +1313,7 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             app.local_toggle_pause();
             Transition::None
         }
-        InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) => {
+        InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) if !blocked => {
             app.hud_mut().chat.open();
             app.hud_mut()
                 .push_log("Chat: type a message, Enter sends, Esc cancels");
@@ -1600,6 +1736,9 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
                     assets.palette.rgba(0x3F),
                 );
             }
+
+            // M-HS: окно перехода хода поверх кадра — модальное, как `DialogMenu`.
+            draw_local_notice(buffer, app, view.mouse);
             return;
         }
 
@@ -1612,6 +1751,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
         };
 
         hud::render_hud(buffer, &hud_view);
+        draw_local_notice(buffer, app, view.mouse);
         return;
     }
 
@@ -1629,9 +1769,35 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
     }
 }
 
+/// Окно перехода хода M-HS поверх кадра сессии (`DialogMenu`).
+///
+/// Рисуется только когда открыт `LocalGame::notice` — то есть в hot-seat на
+/// смене человеческой команды (`GameManager_UpdateGuiControl`).
+fn draw_local_notice(buffer: &mut RgbaBuffer, app: &App, mouse: Option<Point>) {
+    let Some(notice) = app.local_notice() else {
+        return;
+    };
+    let Some(assets) = app.assets() else {
+        return;
+    };
+    let Some(menu) = assets.menu.as_ref() else {
+        return;
+    };
+    let Some(palette) = crate::panels::UiPalette::from_assets(assets) else {
+        return;
+    };
+
+    crate::hotseat::draw_turn_notice(
+        buffer,
+        menu,
+        &palette,
+        notice,
+        mouse.map(|point| (point.x, point.y)),
+    );
+}
+
 /// Копирует кадр `src` в `dst` с обрезкой по меньшему размеру.
-fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {
-    let width = dst.width().min(src.width()) as usize;
+fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {    let width = dst.width().min(src.width()) as usize;
     let height = dst.height().min(src.height()) as usize;
 
     if width == 0 || height == 0 {
@@ -2404,6 +2570,50 @@ mod tests {
     }
 
     #[test]
+    fn multiplayer_menu_opens_the_hot_seat_setup() {
+        let (mut ctx, _log) = context(Vec::new(), None);
+        let mut screen = Screen::MainMenu;
+
+        // Главное меню → «Multiplayer Game» (`menu.cpp:2361`).
+        char(&mut screen, &mut ctx, 'j');
+        assert_eq!(screen, Screen::MultiplayerMenu);
+
+        // Кнопка `Hot Seat Game` (385,280) 200×29.
+        let button = menu::MULTIPLAYER_BUTTONS[2];
+        let transition = screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(
+                button.rect.ulx + button.rect.width / 2,
+                button.rect.uly + button.rect.height / 2,
+            ),
+        );
+
+        assert_eq!(transition, Transition::None);
+        match &screen {
+            Screen::LocalSetup(form) => {
+                assert!(form.hot_seat);
+                assert_eq!(form.players_title(), "Hot Seat Menu");
+                assert_eq!(form.setup.human_count(), 2);
+                assert_eq!(form.screen, crate::setup::SetupScreen::Options);
+            }
+            other => panic!("ожидалась настройка hot-seat, получено {other:?}"),
+        }
+
+        // Esc с первого экрана возвращает в `Multiplayer Menu`, а не в главное.
+        key(&mut screen, &mut ctx, Key::Escape);
+        assert_eq!(screen, Screen::MultiplayerMenu);
+
+        // Горячая клавиша оригинала `Shift+O` (`GNW_KB_KEY_SHIFT_O`).
+        char(&mut screen, &mut ctx, 'o');
+        assert!(matches!(screen, Screen::LocalSetup(_)));
+
+        // `Cancel` (`Shift+C`) возвращает в главное меню.
+        key(&mut screen, &mut ctx, Key::Escape);
+        key(&mut screen, &mut ctx, Key::Escape);
+        assert_eq!(screen, Screen::MainMenu);
+    }
+
+    #[test]
     fn planet_click_changes_world_and_keeps_numeric_fallback() {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::CreateForm(CreateForm::default());
@@ -2524,8 +2734,9 @@ mod tests {
         let (mut ctx, log) = context(Vec::new(), Some(created.clone()));
         let mut screen = Screen::MainMenu;
 
-        // Сетевая форма доступна со списка игр (клавиша C): «New Game» заняла
-        // настройка M-SP.
+        // Сетевая форма доступна из `Multiplayer Menu`: «Multiplayer Game» →
+        // `Join Network Game` (список игр) → `c` (создать игру).
+        char(&mut screen, &mut ctx, 'j');
         char(&mut screen, &mut ctx, 'j');
         char(&mut screen, &mut ctx, 'c');
         for c in "Duel".chars() {
@@ -2590,9 +2801,13 @@ mod tests {
         let (mut ctx, log) = context(vec![game("g1", "Alpha"), game("g2", "Beta")], None);
         let mut screen = Screen::MainMenu;
 
-        // MainMenu: Join game.
+        // MainMenu: «Multiplayer Game» открывает `Multiplayer Menu` (`menu.cpp:2361`).
         key(&mut screen, &mut ctx, Key::Down);
         key(&mut screen, &mut ctx, Key::Enter);
+        assert_eq!(screen, Screen::MultiplayerMenu);
+
+        // `Join Network Game` — список игр Horizon.
+        char(&mut screen, &mut ctx, 'j');
 
         assert_eq!(
             screen,
@@ -2676,8 +2891,11 @@ mod tests {
 
         key(&mut screen, &mut ctx, Key::Down);
         key(&mut screen, &mut ctx, Key::Enter);
+        char(&mut screen, &mut ctx, 'j');
 
-        assert_eq!(screen, Screen::MainMenu);
+        // Ошибка сети не уводит из меню: остаёмся в `Multiplayer Menu` со
+        // строкой статуса (список игр тоже доступен по повторному `j`).
+        assert_eq!(screen, Screen::MultiplayerMenu);
         assert!(ctx.status.contains("no horizon"));
     }
 
@@ -2828,6 +3046,7 @@ mod tests {
                 selected: 0,
             },
             Screen::CreateForm(CreateForm::default()),
+            Screen::MultiplayerMenu,
             Screen::InSession {
                 request: SessionRequest {
                     game_id: "g1".to_string(),

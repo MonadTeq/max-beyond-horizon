@@ -30,9 +30,11 @@ use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_shadowed, GnwFontId};
 
 use crate::assets::WORLD_ASSETS;
+use crate::hotseat::{MSG_TWO_HUMANS, TITLE_HOT_SEAT, TITLE_SINGLE};
 use crate::local::{LocalSetup, LOCAL_TEAM_COUNT};
 use crate::menu::{
-    blit_simple, clean_status, draw_big_image, draw_image_button, truncate_to_width, MenuAssets,
+    blit_simple, clean_status, draw_big_image, draw_image_button, truncate_to_width, wrap_gnw_text,
+    MenuAssets,
 };
 
 /// Цвет текста (в палитре окна) — `COLOR_GREEN`.
@@ -324,7 +326,11 @@ pub const PLAYER_BUTTONS: [(PixelRect, &str, usize); 3] = [
 ];
 
 /// Сообщения `ChoosePlayerMenu::EventDone`.
-pub const MSG_TWO_PLAYERS: &str = "There must be at least two players to begin a new game.";
+///
+/// `_(bc94)` — нужно два участника; `_(06ec)` — hot-seat требует двух людей.
+pub const MSG_TWO_PLAYERS: &str = crate::hotseat::MSG_TWO_PLAYERS;
+/// Сообщение hot-seat: нужно минимум два человека (`_(06ec)`).
+pub const MSG_HOT_SEAT_TWO_HUMANS: &str = MSG_TWO_HUMANS;
 
 /// Экран настройки.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,6 +341,17 @@ pub enum SetupScreen {
     Planet,
     /// `ChoosePlayerMenu`.
     Players,
+}
+
+/// Стартовые типы команд hot-seat (`menu_choose_player_menu_loop`, `menu.cpp:1883`):
+/// `menu_custom_game_menu(false)` ставит RED и GREEN людьми, BLUE/GRAY — пустыми.
+pub fn hot_seat_default_teams() -> [TeamKind; LOCAL_TEAM_COUNT] {
+    [
+        TeamKind::Player,
+        TeamKind::Player,
+        TeamKind::None,
+        TeamKind::None,
+    ]
 }
 
 /// Переход из формы настройки.
@@ -355,6 +372,8 @@ pub struct GameSetupForm {
     pub screen: SetupScreen,
     /// Настройки партии (таймер, планета, типы команд…).
     pub setup: LocalSetup,
+    /// M-HS: форма открыта пунктом `Hot Seat Game` (`is_single_player = false`).
+    pub hot_seat: bool,
     /// Идёт редактирование имени.
     pub editing_name: bool,
     /// Редактируется поле условия победы (какой тип: `Duration`/`Score`).
@@ -374,6 +393,7 @@ impl Default for GameSetupForm {
         Self {
             screen: SetupScreen::Options,
             setup: LocalSetup::default(),
+            hot_seat: false,
             editing_name: false,
             editing_victory: None,
             victory_text: String::new(),
@@ -390,6 +410,35 @@ impl GameSetupForm {
         Self {
             world_dir: world_dir.into(),
             ..Self::default()
+        }
+    }
+
+    /// Форма **hot-seat** (`menu_custom_game_menu(false)`).
+    ///
+    /// Стартовые значения `menu_choose_player_menu_loop` (`menu.cpp:1883`):
+    /// RED — человек, GREEN — человек, BLUE/GRAY — пусто.
+    pub fn hot_seat() -> Self {
+        let mut form = Self {
+            hot_seat: true,
+            ..Self::default()
+        };
+
+        form.setup.hot_seat = true;
+        form.setup.team_types = hot_seat_default_teams();
+        form
+    }
+
+    /// Экраны какого режима настраиваются (`ChoosePlayerMenu::is_single_player`).
+    pub fn is_single_player(&self) -> bool {
+        !self.hot_seat
+    }
+
+    /// Заголовок экрана команд: `_(5512)` / `_(55c8)`.
+    pub fn players_title(&self) -> &'static str {
+        if self.hot_seat {
+            TITLE_HOT_SEAT
+        } else {
+            TITLE_SINGLE
         }
     }
 
@@ -578,6 +627,9 @@ impl GameSetupForm {
 
     /// `ChoosePlayerMenu::EventDone` + запуск партии.
     fn done(&mut self) -> SetupTransition {
+        // Режим — часть настроек партии (`MISSION_CATEGORY_HOT_SEAT`).
+        self.setup.hot_seat = self.hot_seat || self.setup.human_count() > 1;
+
         if let Err(error) = self.setup.validate() {
             return self.fail(&error);
         }
@@ -837,8 +889,11 @@ impl GameSetupForm {
 
     /// `ChoosePlayerMenu::EventSelectHuman` для одиночной игры: «Human» на
     /// другом слоте переносит флаг, прежний человек получает тип нового слота.
-    fn select_team_type(&mut self, row: usize, kind: TeamKind) {
-        if kind == TeamKind::Player {
+    ///
+    /// В hot-seat (`is_single_player = false`) переноса нет: людей можно
+    /// выбрать сколько угодно (`chooseplayermenu.cpp:79`).
+    pub fn select_team_type(&mut self, row: usize, kind: TeamKind) {
+        if kind == TeamKind::Player && self.is_single_player() {
             let previous = self
                 .setup
                 .team_types
@@ -1364,7 +1419,7 @@ fn draw_players(
         frame,
         PLAYERS_TITLE,
         font,
-        "Custom Game Menu",
+        form.players_title(),
         palette.rgba(GREEN),
     );
 
@@ -1528,33 +1583,10 @@ fn blit_minimap(frame: &mut RgbaBuffer, rect: PixelRect, rgba: &[u8]) -> u32 {
     painted
 }
 
-/// Разбивает текст по ширине (по словам) — `Text_SplitText`.
+/// Разбивает текст по ширине (по словам) — `Text_SplitText`
+/// (общий с окном перехода хода, см. [`crate::menu::wrap_gnw_text`]).
 fn wrap_text(text: &str, width: i32) -> Vec<String> {
-    let font = GnwFontId::Font5.font();
-    let mut lines = Vec::new();
-
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-
-        for word in paragraph.split_whitespace() {
-            let candidate = if line.is_empty() {
-                word.to_string()
-            } else {
-                format!("{line} {word}")
-            };
-
-            if font.text_width(&candidate) > width && !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-                line = word.to_string();
-            } else {
-                line = candidate;
-            }
-        }
-
-        lines.push(line);
-    }
-
-    lines
+    wrap_gnw_text(text, width)
 }
 
 /// Загружает мини-карту планеты из `.WRL` так же, как

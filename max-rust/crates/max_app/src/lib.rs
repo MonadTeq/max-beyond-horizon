@@ -37,6 +37,7 @@ pub mod assets;
 pub mod audio;
 pub mod chrome;
 pub mod cursor;
+pub mod hotseat;
 pub mod hud;
 pub mod local;
 pub mod menu;
@@ -77,6 +78,7 @@ pub use hud::{
     build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
     HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
+pub use hotseat::TurnNotice;
 pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,

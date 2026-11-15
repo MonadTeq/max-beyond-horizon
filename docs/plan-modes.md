@@ -1,6 +1,6 @@
 # План: три режима игры с визуальным паритетом 1:1 (v1)
 
-Версия: 1.1 · 2026-11-15 · Цель: `goal-094b619d`.
+Версия: 1.2 · 2026-11-15 · Цель: `goal-094b619d`.
 
 ## Принцип
 
@@ -85,15 +85,113 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   `ResearchMenu_NewTurn`) в max_core всё ещё P3/TODO — ИИ строит через задачи,
   но очередь производства юнитов из `ProductionManager` не спавнится.
 
-### M-HS — Hot-seat (2–4 игрока на одном ПК)
-Локальная партия: 2–4 человеческие команды, ходы по очереди.
-- Настройка: выбор числа игроков/команд (те же экраны, что M-SP);
-  `ChoosePlayerMenu` уже поддерживает несколько `Player`-слотов (сейчас
-  `LocalSetup::validate` ограничивает M-SP одним человеком — снять).
-- Цикл: активная команда управляется, при передаче хода — экран перехода
-  (как в оригинале: сообщение «Ход игрока N»? — сверить с C++ hotseat-логикой),
-  ввод переключается на следующего игрока.
-- Критерий: партия 2 человек hot-seat до победы; визуал 1:1.
+### M-HS — Hot-seat (2–4 игрока на одном ПК) — **сделано (v1.2)**
+
+Локальная партия: 2–4 человеческие команды, ходы по очереди. В C++ это **не
+отдельный режим симуляции**, а следствие того, что людей больше одного:
+
+* `GameManager_UpdateHumanPlayerCount` (`game_manager.cpp:3267`) считает команды
+  `TEAM_TYPE_PLAYER`; при `> 1` принудительно ставит
+  `GameManager_PlayMode = PLAY_MODE_TURN_BASED` (в одиночной игре счётчик
+  обнуляется);
+* `GameManager_TeamTurnTurnBased` (`:451`) идёт по командам RED → GREEN → BLUE →
+  GRAY и на каждую вызывает `GameManager_UpdateGui(team, ...)`;
+* в ветке `TEAM_TYPE_PLAYER` (`:2437`) при смене команды
+  (`GameManager_PlayerTeam != team`) вызывается `GameManager_UpdateGuiControl(team)`
+  (`:2262`), который показывает **модальное сообщение**
+  `MessageManager_DrawMessage(sprintf(_(c2eb), menu_team_names[team]), INFO, MODAL, true)`,
+  то есть `DialogMenu dialog("Red Team:\nBegin turn.", true); dialog.Run()`.
+  `GameManager_UpdateTurnTimer` включается **после** возврата из диалога (`:2490`),
+  поэтому таймер хода начинает идти только после подтверждения;
+* после подтверждения `GameManager_PlayerTeam = team`,
+  `Access_UpdateMinimapFogOfWar(team, …)`, `GameManager_UpdatePanelButtons(team)` —
+  ввод, туман войны и панели переключаются на нового игрока;
+* первым окно видит и RED: `GameManager_InitGame` ставит
+  `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN` (или первую компьютерную команду,
+  `:3076`), поэтому на первом ходу `PlayerTeam != team` тоже;
+* имена команд в hot-seat — `Red Team`/`Green Team`/`Blue Team`/`Gray Team`
+  (`menu.cpp:1941`: `player_name` подставляется только в одиночной игре).
+
+**Экран перехода — 1:1** (`max_app/src/hotseat.rs`):
+
+| Элемент | Оракул | Реализация |
+|---|---|---|
+| фон окна | `Window(HELPFRM, GameManager_GetDialogWindowCenterMode())`, ресурс `HELPFRAM` 301×231, `dialog_center_mode = 0` → центр `WINDOW_MAIN_MAP` (180,18) 448×448 | `DIALOG_RECT = (253,126,301,231)`, `HELPFRAM` палитрой окна (`palette_from_image = false`, как в C++) |
+| текст | `DialogMenu::DrawText`: `GNW_TEXT_FONT_5`, `GNW_TEXT_OUTLINE \| 0xFF`, область `(20,14)` 265×175, строки по центру, блок по центру по вертикали, шаг 10 px | `TEXT_RECT`, `hotseat::turn_message()` = `"<Команда>:\nBegin turn."` (`_(c2eb)` + `_(f394/a8a6/a3ee/319d)`) |
+| кнопка | `Button(HELPOK_U, HELPOK_D, 120, 193)` 65×24, подпись `_(ae0b)` = `OK` (`Fonts_GoldColor`) | `OK_RECT`/`ok_rect_frame()`, `HELPOK_U/D` |
+| закрытие | `ProcessKey`: `GNW_KB_KEY_RETURN`, `GNW_KB_KEY_ESCAPE`, клик по `OK` | Enter/Esc/клик по `OK` (`hotseat::ok_at`) |
+
+Отличие: нет прокрутки `BLDUP`/`BLDDWN` (`row_count > 17`) — сообщение две
+строки.
+
+**Точка входа** — `Multiplayer Menu` (`menu_multiplayer_menu_loop`, `:2361`):
+«Multiplayer Game» главного меню → `Host Network Game` / `Join Network Game` /
+**`Hot Seat Game`** / `Hot Seat Scenarios` / `Load Hot Seat Game` / `Cancel`
+(новый экран `Screen::MultiplayerMenu` в `max_app/src/ui.rs`, раскладка
+1:1: `MAINPIC`, заголовок `Multiplayer Menu` в (236,145), кнопки `BLANK_*` 200×29
+в x=385 y=175/210/280/315/350 и `Cancel` `SBLNK_*` 100×30 в (435,420)).
+`Host Network Game` открывает существующую форму создания игры Horizon,
+`Join Network Game` — список игр; сценарии и загрузка hot-seat ещё не
+портированы (кнопки пишут статус).
+
+**Настройка** (`max_app/src/setup.rs`) — те же три экрана, но
+`is_single_player = false` (`GameSetupForm::hot_seat()`):
+
+* заголовок экрана команд — `Hot Seat Menu` (`_(55c8)`), а не `Custom Game Menu`;
+* «Human» на другом слоте **не** переносит флаг человека
+  (`ChoosePlayerMenu::EventSelectHuman`, `:79`) — людей можно выбрать 2–4;
+* стартовые значения `menu_choose_player_menu_loop` (`:1883`): RED — человек,
+  GREEN — человек, BLUE/GRAY — пусто;
+* `EventDone` требует двух людей: `There must be at least two human players to
+  begin a hot seat game.` (`_(06ec)`); компьютеры в смеси допустимы.
+
+**Цикл и ввод** (`max_app/src/local.rs`):
+
+* `State.player_team` переключается на активного человека в начале его хода —
+  выделение, приказы, панели, туман и курсор смотрят на него (`GameManager_PlayerTeam`);
+  в начале хода выделение сбрасывается (`hud.clear_interaction`);
+* при смене человеческой команды открывается `LocalGame::notice`
+  (`hotseat::TurnNotice`); пока он открыт, `local_update` **не тикает и не
+  крутит таймер**, а `handle_session_input` принимает только подтверждение
+  (клик по `OK`/Enter/Esc) — как цикл, стоящий в `DialogMenu::Run()`;
+* ход ИИ (если он есть между людьми) идёт сам, без окна: во время него приказы
+  и выделение заблокированы (`LocalGame::input_blocked`), панели/миникарта
+  остаются только просмотром;
+* `End Turn` и таймер `settings["timer"]` работают **на каждую человеческую
+  команду** отдельно (`timer_left` переинициализируется в начале хода команды);
+* hot-seat всегда turn-based (`LocalSetup::effective_play_mode`), как
+  `GameManager_UpdateHumanPlayerCount`;
+* `mission_category = MISSION_CATEGORY_HOT_SEAT` (`HotSeat` в max_core),
+  имена команд — `LocalSetup::display_name` (в hot-seat всегда `* Team`);
+* `player_team` на старте партии — `PLAYER_TEAM_ALIEN`, чтобы окно увидела и
+  первая команда; итог партии (`LocalOutcome::team`) — команда, на чьём ходу
+  закрылся раунд, как `GameManager_PlayerTeam` в C++;
+* сохранение `MXLS` — версия **2** (добавлен флаг `hot_seat`), файлы версии 1
+  отклоняются.
+
+**Тесты**: `max_app/tests/hot_seat.rs` (13) — форма hot-seat (флаг человека не
+переезжает, заголовок, `_(06ec)`), принудительный turn-based, окно перехода у
+первого и последующих игроков, чередование RED ↔ GREEN, ходы всех четырёх
+человек по порядку, ИИ между людьми, «окно морозит таймер», «управление только
+своими юнитами» (чужой не выделяется, приказы чужой команды не меняются, при
+смене игрока выделение сброшено), блокировка ввода на ходу ИИ и на окне
+перехода, отрисовка окна (`HELPFRAM` + кнопка `OK` + текст), `Hot Seat Menu` в
+кадре 640×480 и `Multiplayer Menu`.
+
+**Кадры**: `cargo run -p max_app --example sp_frames -- ../max-original ../build`
+→ `build/hs-players.png` (Hot Seat Menu, 2 человека + ИИ),
+`build/hs-turn.png` (окно «Red Team: Begin turn.»), `build/hs-turn2.png`
+(окно GREEN), `build/hs-game.png` (ход второго человека), `build/hs-ai.png`
+(окно RED после хода компьютера).
+
+**Открытые вопросы M-HS**
+
+* Экран `Hot Seat Scenarios` (`MISSION_CATEGORY_MULTI_PLAYER_SCENARIO`) и
+  `Load Hot Seat Game` (`SaveLoadMenu_MenuLoop(MISSION_CATEGORY_HOT_SEAT)`) не
+  портированы — кнопки пишут статус.
+* Кланы (`ClanSelectMenu`) не портированы: флаг команды рисуется с `CLN0LOGO`,
+  как при `player_clan = 0`.
+* Полная запись V70 для hot-seat не появилась (общий пункт M-SP).
 
 ### M-NET — Сетевая игра (Horizon)
 Уже работает (2 клиента × 10 ходов, UI-партия 6 ходов). Доводки:
@@ -105,7 +203,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 
 ## Порядок
 
-M-SP ✅ → M-HS → M-NET-доводки. Каждый этап: коммит + тесты +
+M-SP ✅ → M-HS ✅ → M-NET-доводки. Каждый этап: коммит + тесты +
 скриншот-свидетельство.
 
 ## Общее для всех режимов

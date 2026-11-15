@@ -161,11 +161,12 @@ max_app --ui --turn-wait 0           # прежнее поведение (по �
 
 | Экран | Что делает | Клавиши/мышь |
 |---|---|---|
-| **MainMenu** | New game (M-SP) / Join game / Quit | Up/Down/Tab + Enter; клик; `C`/`J`/`Q`; Esc — выход |
-| **LocalSetup** | M-SP 1:1: Options (`OPTNFRM`) → Planet (`PLANETSE`) → Players (`CHOSPLYR`) | клик по радиокнопкам/слотам/кнопкам; ввод имени и лимита победы; Enter — дальше; Esc — назад |
+| **MainMenu** | New game (M-SP) / Multiplayer / Quit | Up/Down/Tab + Enter; клик; `C`/`J`/`Q`; Esc — выход |
+| **MultiplayerMenu** | `menu_multiplayer_menu_loop`: Host / Join / Hot Seat / Hot Seat Scenarios / Load Hot Seat / Cancel | клик; `H`/`J`/`O`/`T`/`L`/`C` (Shift-хоткеи оригинала); Esc — назад |
+| **LocalSetup** | M-SP / M-HS 1:1: Options (`OPTNFRM`) → Planet (`PLANETSE`) → Players (`CHOSPLYR`) | клик по радиокнопкам/слотам/кнопкам; ввод имени и лимита победы; Enter — дальше; Esc — назад |
 | **CreateForm** | сетевая игра: имя, планета (`0..=23`), таймеры, число противников, пароль (открывается клавишей `C` в списке игр) | Tab/Up/Down — поле; ввод; Left/Right — числа; Enter — создать; Esc — назад |
 | **JoinList** | список игр из `ListGames`; выбор и вход | Up/Down + Enter; клик по строке; `R` — обновить; `C` — создать игру; Esc — назад |
-| **InSession** | карта (`map_render`) + HUD (M4.2); в локальной партии — ходы ИИ и таймер | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, `P` — пауза (M-SP), клик по миникарте — камера, Esc — отмена/выход |
+| **InSession** | карта (`map_render`) + HUD (M4.2); в локальной партии — ходы ИИ, таймер, окно перехода хода (M-HS) | LMB — выбрать юнита, RMB — приказ движения, клик по врагу — атака, End Turn/Menu, `P` — пауза, клик по миникарте — камера, Esc — отмена/выход (в окне перехода — подтверждение) |
 | **GameOver** | экран победы/поражения 1:1 (`ENDGAME*`, `ENDARM`, `ENDOK`) | Enter/Esc/клик по OK — в меню |
 
 ### M-SP: одиночная игра против ИИ
@@ -201,6 +202,33 @@ cargo run -p max_app --example sp_frames -- ../max-original ../build
 ```
 
 Тесты: `cargo test -p max_app --test local_sp` (12).
+
+### M-HS: hot-seat (2–4 человека на одном ПК)
+
+Вход — **Multiplayer Game** → **Hot Seat Game** (`menu_multiplayer_menu_loop`).
+В C++ это не отдельный режим симуляции: `GameManager_UpdateHumanPlayerCount`
+при `> 1` человека принудительно включает turn-based, а
+`GameManager_UpdateGuiControl` на смене человеческой команды показывает
+модальный `DialogMenu` с текстом `_(c2eb)` = `"%s:\nBegin turn."` и именем
+команды (`Red Team`, `Green Team`, …). Экран настройки тот же, но
+`ChoosePlayerMenu` работает с `is_single_player = false`: заголовок
+`Hot Seat Menu` (`_(55c8)`), «Human» на другом слоте не переносит флаг,
+`Done` требует двух людей (`_(06ec)`).
+
+Окно перехода (`max_app/src/hotseat.rs`) — 1:1 `DialogMenu`: фон `HELPFRAM`
+301×231 в (253,126) (центр области карты), текст `GNW_TEXT_FONT_5` цветом
+`GNW_TEXT_OUTLINE | 0xFF` в (20,14) 265×175, кнопка `HELPOK_U/D` 65×24 в
+(120,193) с подписью `OK`; закрывается кликом по `OK`, Enter или Esc. Пока окно
+открыто, `local_update` не тикает и не крутит таймер хода (в C++ цикл стоит в
+`DialogMenu::Run()`), а ввод принимает только подтверждение.
+
+Ввод: `state.player_team` переключается на активного человека, выделение
+сбрасывается при передаче хода, чужой юнит не выделяется и приказов не
+получает; во время хода компьютера приказы заблокированы. `End Turn` и таймер
+действуют на каждую человеческую команду.
+
+Кадры: `build/hs-{players,turn,turn2,game,ai}.png`; тесты —
+`cargo test -p max_app --test hot_seat` (13).
 
 Кнопка **Create** вызывает `CreateGame`; при успехе экран сразу переходит в
 **InSession**, и `main.rs` запускает существующий сетевой путь

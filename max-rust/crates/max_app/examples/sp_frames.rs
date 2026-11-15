@@ -1,4 +1,4 @@
-//! Кадры-доказательства M-SP: настройка (три экрана), партия с ИИ, победа.
+//! Кадры-доказательства M-SP и M-HS: настройка, партия с ИИ, победа, hot-seat.
 //!
 //! ```sh
 //! cargo run -p max_app --example sp_frames -- ../max-original ../build
@@ -11,7 +11,13 @@
 //! * `sp-players.ppm` — `ChoosePlayerMenu` (фон `CHOSPLYR`, 4 команды);
 //! * `sp-game.ppm` — партия после хода ИИ (карта + хром 1:1);
 //! * `sp-victory.ppm` — экран победы (`ENDGAME*` + статистика);
-//! * `sp-defeat.ppm` — экран поражения.
+//! * `sp-defeat.ppm` — экран поражения;
+//! * `hs-players.ppm` — `Hot Seat Menu` (2 человека + 1 компьютер);
+//! * `hs-turn.ppm` — окно перехода хода `DialogMenu` (`HELPFRAM`, «Red Team:
+//!   Begin turn.»);
+//! * `hs-game.ppm` — ход второго человека (GREEN) после подтверждения: камера,
+//!   туман и панели уже его команды;
+//! * `hs-ai.ppm` — окно перехода к RED после хода компьютера (ИИ между людьми).
 
 use std::path::PathBuf;
 
@@ -112,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TeamKind::Computer,
             TeamKind::None,
         ],
+        hot_seat: false,
         seed: 11,
     };
 
@@ -237,6 +244,129 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Проверка команд партии (не печатаем «Alien»).
     let _ = TeamId::RED;
+
+    // --- 7. M-HS: экран команд Hot Seat ------------------------------------
+    let mut hs_form = GameSetupForm::hot_seat();
+    hs_form.setup.player_name = "Commander".to_string();
+    hs_form.screen = SetupScreen::Players;
+    hs_form.setup.hot_seat = true;
+    hs_form.setup.team_types = [
+        TeamKind::Player,
+        TeamKind::Player,
+        TeamKind::Computer,
+        TeamKind::None,
+    ];
+    hs_form.status = "2 humans + 1 computer - Done starts".to_string();
+
+    let screen = Screen::LocalSetup(hs_form.clone());
+    screen.render(&mut buffer, ctx.view(Some(&app)));
+    let path = out_dir.join("hs-players.ppm");
+    write_ppm(&path, &buffer)?;
+    println!("{}: Hot Seat Menu (2 человека + ИИ)", path.display());
+
+    // --- 8. M-HS: партия, окно перехода хода --------------------------------
+    let hs_setup = LocalSetup {
+        player_name: "Commander".to_string(),
+        world: 4,
+        opponent: 2,
+        timer: 0,
+        endturn: 0,
+        play_mode: PlayMode::TurnBased,
+        start_gold: 150,
+        raw: 1,
+        fuel: 1,
+        gold: 1,
+        derelicts: 0,
+        victory_type: VictoryType::Duration,
+        victory_limit: 50,
+        team_types: [
+            TeamKind::Player,
+            TeamKind::Player,
+            TeamKind::Computer,
+            TeamKind::None,
+        ],
+        hot_seat: true,
+        seed: 21,
+    };
+
+    app.start_local_game(&hs_setup)?;
+
+    let session = Screen::InSession {
+        request: max_app::SessionRequest {
+            game_id: "local".to_string(),
+            password: None,
+        },
+    };
+
+    if let Some(local) = app.local() {
+        ctx.status = local.status_line(app.state().turn_counter);
+    }
+    session.render(&mut buffer, ctx.view(Some(&app)));
+    let path = out_dir.join("hs-turn.ppm");
+    write_ppm(&path, &buffer)?;
+    println!(
+        "{}: окно перехода хода ({:?})",
+        path.display(),
+        app.local_notice().map(|notice| notice.team)
+    );
+
+    // Подтверждаем «Begin turn» и закрываем ход RED — ход переходит к GREEN.
+    app.local_acknowledge_turn();
+    app.local_end_turn();
+
+    if let Some(local) = app.local() {
+        ctx.status = local.status_line(app.state().turn_counter);
+    }
+    session.render(&mut buffer, ctx.view(Some(&app)));
+    let path = out_dir.join("hs-turn2.ppm");
+    write_ppm(&path, &buffer)?;
+    println!(
+        "{}: окно перехода хода GREEN ({:?})",
+        path.display(),
+        app.local_notice().map(|notice| notice.team)
+    );
+
+    // Второй человек подтверждает ход — играем несколько тиков его команды.
+    app.local_acknowledge_turn();
+    for _ in 0..6 {
+        app.local_update(0.0);
+    }
+
+    if let Some(local) = app.local() {
+        ctx.status = local.status_line(app.state().turn_counter);
+    }
+    session.render(&mut buffer, ctx.view(Some(&app)));
+    let path = out_dir.join("hs-game.ppm");
+    write_ppm(&path, &buffer)?;
+    println!(
+        "{}: ход второго человека (team {:?}, turn {})",
+        path.display(),
+        app.state().player_team,
+        app.state().turn_counter
+    );
+
+    // GREEN заканчивает ход → компьютер BLUE ходит сам → снова RED.
+    app.local_end_turn();
+    for _ in 0..60_000 {
+        if app.local_notice().is_some() || app.local().is_none_or(|local| local.finished()) {
+            break;
+        }
+        app.local_update(0.0);
+    }
+
+    if let Some(local) = app.local() {
+        ctx.status = local.status_line(app.state().turn_counter);
+    }
+    session.render(&mut buffer, ctx.view(Some(&app)));
+    let path = out_dir.join("hs-ai.ppm");
+    write_ppm(&path, &buffer)?;
+    println!(
+        "{}: переход после хода ИИ ({:?}, turn {})",
+        path.display(),
+        app.local_notice().map(|notice| notice.team),
+        app.state().turn_counter
+    );
+
     Ok(())
 }
 

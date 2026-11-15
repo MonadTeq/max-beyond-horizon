@@ -80,9 +80,10 @@ bash ci.sh
 ```
 
 - [x] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed.
-  Свидетельство: **576 тестов, 0 failed**, `cargo check --all-targets` — 0
-  ошибок (2026-11-15, `rust:1.94.0-bookworm`, пункты E/F и декодер
-  `SNOW_PIC`); лог `build/cargo-docker-ef-final3.log`.
+  Свидетельство: **615 тестов, 0 failed**, `cargo check` — 0 ошибок и 0
+  предупреждений (2026-11-15, `rust:1.94.0-bookworm`, M-SP 12 +
+  M-HS 13 в `tests/hot_seat.rs` + 5 модульных в `hotseat.rs`); лог
+  `build/cargo-docker-hotseat-final.log`.
 - [ ] 2.2 `--features sound` — `check` и `test` зелёные. Тест
       `max_assets::wav::tests::parses_real_kbuy0_spw` проходит на реальном
       `KBUY0.SPW`; `all_real_spw_files_are_pcm16_22050_mono` проверяет все 272
@@ -183,6 +184,34 @@ headless/live-smoke. Если каталог данных headless-сервер�
 - [ ] Окно закрывается/Esc — корректное завершение процесса (exit 0).
 
 Свидетельство (скриншоты/лог, дата, ОС): ______________________
+
+### 4.1. Hot-seat (M-HS) руками, без сети
+
+Локальная партия, сервер не нужен (`cargo run -p max_app --features sdl -- --ui`).
+
+- [ ] Главное меню → `Multiplayer Game` → экран `Multiplayer Menu` (фон
+      `MAINPIC`, заголовок (236,145), пять больших кнопок `BLANK_*` и `Cancel`
+      `SBLNK_*`); кнопка `Hot Seat Game` открывает настройку.
+- [ ] Экран команд озаглавлен `Hot Seat Menu`; по умолчанию RED — `Human`,
+      GREEN — `Human`, BLUE/GRAY — `None`; клик `Human` на BLUE добавляет
+      третьего человека (флаг у RED **не** снимается).
+- [ ] `Done` при одном человеке — сообщение `There must be at least two human
+      players to begin a hot seat game.`; при двух и более — партия стартует.
+- [ ] Первый кадр партии — поверх карты модальное окно `HELPFRAM` с текстом
+      `Red Team:` / `Begin turn.` и кнопкой `OK` (позиция (253,126), кнопка
+      (373,319)); клик по карте/панелям игнорируется, таймер хода стоит.
+- [ ] Enter / Esc / клик по `OK` закрывает окно; таймер хода пошёл.
+- [ ] Ввод работает только для активной команды: клик по чужому юниту его не
+      выделяет, приказ чужому не уходит; `End Turn` передаёт ход следующему
+      человеку и снова показывает окно (`Green Team:` и т.д.).
+- [ ] Если в смеси есть компьютер, его ход проходит сам (без окна), после него
+      окно показывается следующему человеку.
+- [ ] Таймер `Turn Limit` действует на каждую человеческую команду отдельно и
+      закрывает ход сам.
+- [ ] Партия доходит до экрана победы/поражения без падений.
+
+Свидетельство: `build/hs-players.png`, `build/hs-turn.png`, `build/hs-game.png`,
+`build/hs-ai.png`; дата/ОС: ______________________
 
 ## 5. Linux-бинарник
 
@@ -415,6 +444,18 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `release/max_app-1.0.0-windows-x86_64-ui.zip` (3 065 885 Б, sha256
       `d7415687a5d70381d30bf7ccd1bb2f67dc8afcabea993775fe22aca22b91f0d0`,
       `.zip.sha256`) — отдельно от headless-zip из §6. _(2026-11-15)_
+- [x] **M-HS: пересборка Windows UI с hot-seat** (окно `DialogMenu` на
+      `HELPFRAM`, `Hot Seat Menu`, `Multiplayer Menu`):
+      `cargo build --release -p max_app --features sdl-vcpkg,sound` —
+      `max_app.exe` 5 572 096 Б, sha256
+      `7af62ac1175886ee775b77e0417736b51acaa36f3ca60ae8703e7467ef11bc42`;
+      zip `release/max_app-1.0.0-windows-x86_64-ui.zip` sha256
+      `9ce01c0a03eeb49557055882baca8e27b49129bb1c4c92844dd2ac362a6a2c0e`
+      (меняется от mtime упаковки; exe-хеш стабилен);
+      `max_app.exe --help` — rc=0; в бинаре есть строки `Hot Seat Game`,
+      `Hot Seat Menu`, `Begin turn.`, `HELPFRAM`, `HELPOK_U` (проверка
+      `build/exe_hs_probe.py`). Лог `build/win-ui-hotseat-final.log`.
+      _(2026-11-15)_
 - [x] **Сетевая партия 2 игрока в окне** (`--ui --turn-wait 45`,
       `docker compose up -d --build` + игра создана `horizon_probe`): два клиента,
       team 0/1, `local_team` и `team_types=[Player, Remote, None, None]`;
@@ -514,7 +555,8 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **576 тестов, 0 failed**; `cargo check` — 0 ошибок; SDL-сборка — 0 ошибок | `build/cargo-docker-ef-final3.log`, `build/cargo-docker-ef-sdl-final.log` |
+| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **615 тестов, 0 failed**; `cargo check` — 0 ошибок; SDL-сборка — 0 ошибок | `build/cargo-docker-hotseat-final.log`, `build/cargo-docker-ef-sdl-final.log` |
+| M-HS (hot-seat) | 2026-11-15 | та же команда Docker; `cargo test -p max_app --test hot_seat`; `cargo run -p max_app --example sp_frames -- ../max-original ../build`; `build\scripts\build-windows-ui.ps1` | 13 тестов hot-seat (2 и 4 человека, ИИ между людьми, окно `DialogMenu` 1:1, таймер до подтверждения, только свои юниты); 5 кадров; Windows UI exe 5 572 096 Б sha256 `7af62ac1…` | `build/hs-{players,turn,turn2,game,ai}.png`, `build/cargo-docker-hotseat-final.log`, `release/max_app-1.0.0-windows-x86_64-ui.zip` |
 | Тесты Horizon | | | | |
 | Live smoke 2×10 | | | | |
 | M4 вручную | | | | |
@@ -538,3 +580,30 @@ bash release.sh                             # §5, артефакты
 | Локальный цикл | `cargo test -p max_app --test local_sp` | 12 тестов | — |
 | Windows UI | `build\scripts\build-windows-ui.ps1` | zip + sha256 | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
 | Декодер big image | `cargo test -p max_assets` | RLE с 776 | — |
+
+## Приложение D. M-HS (hot-seat, 2–4 человека на одном ПК)
+
+Оракул: `GameManager_UpdateHumanPlayerCount` (`game_manager.cpp:3267`) — при
+`> 1` человека игра принудительно turn-based; `GameManager_UpdateGui` (`:2437`)
+на смене человеческой команды показывает модальный `DialogMenu`
+(`GameManager_UpdateGuiControl`, `:2262`): текст `_(c2eb)` = `"%s:\nBegin turn."`
+с именем команды `_(f394)`…, фон `HELPFRAM` (301×231, центр `WINDOW_MAIN_MAP` →
+(253,126)), шрифт `GNW_TEXT_FONT_5` цвет `GNW_TEXT_OUTLINE | 0xFF`, кнопка
+`HELPOK_U/D` 65×24 в (120,193) с подписью `OK`; закрытие — клик по `OK`,
+Enter или Esc. **Другого экрана перехода в оригинале нет.**
+
+| Гейт | Команда | Результат | Ссылка |
+|---|---|---|---|
+| Окно перехода 1:1 | `cargo test -p max_app --test hot_seat` | 13 тестов: форма `Hot Seat Menu`, `_(06ec)`, окно у первого игрока и на каждой смене, таймер стоит до подтверждения | `build/cargo-docker-hotseat-final.log` |
+| Ходы 2 человек | там же (`two_humans_alternate_with_the_begin_turn_dialog`) | RED → GREEN, `turn_counter` 1 → 2, `player_team` переключается | — |
+| Ходы 4 человек | там же (`four_humans_all_play_in_team_order`) | RED → GREEN → BLUE → GRAY | — |
+| ИИ между людьми | там же (`ai_plays_between_two_humans`, `input_is_ignored_during_the_ai_turn`) | ход компьютера идёт сам, без окна; ввод заблокирован | — |
+| Управление только своей командой | там же (`only_the_active_human_controls_their_units`) | чужой юнит не выделяется, приказы чужой команды не меняются, выделение сбрасывается при передаче хода | — |
+| Кадры | `cargo run -p max_app --example sp_frames -- ../max-original ../build` | `Hot Seat Menu`, окно «Red Team: Begin turn.», окно GREEN, ход GREEN, окно RED после хода ИИ | `build/hs-players.png`, `build/hs-turn.png`, `build/hs-turn2.png`, `build/hs-game.png`, `build/hs-ai.png` |
+| Windows UI | `build\scripts\build-windows-ui.ps1` | zip + sha256 | `release/max_app-1.0.0-windows-x86_64-ui.zip` |
+| Вход в режим | `Screen::MultiplayerMenu` (`menu.cpp:2361`) | «Multiplayer Game» → `Hot Seat Game` → Options → Planet → Players | `build/hs-players.png` |
+
+Ограничения M-HS: `Hot Seat Scenarios` и `Load Hot Seat Game` не портированы
+(кнопки пишут статус), кланы — `CLN0LOGO`; запись V70 отсутствует (общий пункт
+M-SP), контейнер `MXLS` — версия 2 с флагом `hot_seat`.
+

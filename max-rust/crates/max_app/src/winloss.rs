@@ -65,18 +65,12 @@ pub const OK_RECT: PixelRect = PixelRect::new(293, 458, 72, 19);
 pub const ARM_POSITION: (i32, i32) = (273, 458);
 
 /// Имя команды для экрана: у человека — имя из настроек, у ИИ — `*_team_name`.
+///
+/// В hot-seat имя игрока одно на всех, поэтому там все команды — `Red Team`,
+/// `Green Team`, … (`menu.cpp:1941`: `player_name` подставляется только в
+/// одиночной игре).
 pub fn display_name(local: &LocalGame, team: TeamId) -> String {
-    if Some(team) == local.setup.human_team() {
-        local.setup.player_name.clone()
-    } else {
-        match team.0 {
-            0 => "Red Team".to_string(),
-            1 => "Green Team".to_string(),
-            2 => "Blue Team".to_string(),
-            3 => "Gray Team".to_string(),
-            _ => String::new(),
-        }
-    }
+    local.setup.display_name(team)
 }
 
 /// Индекс фона `ENDGAME1..9`.
@@ -92,9 +86,10 @@ pub fn background_index(local: &LocalGame) -> usize {
         .unwrap_or(0)
         .max(0) as usize;
     let team = local
-        .setup
-        .human_team()
-        .map(|team| team.0 as usize)
+        .outcome
+        .as_ref()
+        .map(|outcome| outcome.team.0 as usize)
+        .or_else(|| local.setup.human_team().map(|team| team.0 as usize))
         .unwrap_or(0);
 
     (turn + team) % 9
@@ -201,7 +196,12 @@ pub fn draw_game_over(
 
     // C++ передаёт в `menu_draw_game_over_screen` статус **команды игрока**
     // (`status.team_status[GameManager_PlayerTeam]`), а не каждой команды.
-    let player_team = local.setup.human_team().unwrap_or(TeamId::RED);
+    let player_team = local
+        .outcome
+        .as_ref()
+        .map(|outcome| outcome.team)
+        .or_else(|| local.setup.human_team())
+        .unwrap_or(TeamId::RED);
     let generic = outcome.status.team_status[player_team.0 as usize] == WinLossState::Generic;
 
     // Колонки команд: только `team_type != NONE`.
@@ -376,6 +376,7 @@ mod tests {
         let mut local = LocalGame::new(crate::local::LocalSetup::default());
         local.outcome = Some(crate::local::LocalOutcome {
             victory: true,
+            team: TeamId::RED,
             status: max_core::victory::evaluate_status(&GameState::new(), 0),
             turn_counter: 17,
             player_name: "Tester".to_string(),
