@@ -14,6 +14,7 @@
 //! | миникарта 112×112 → маленький буфер | [`SurfaceMap`], юниты своей команды | [`draw_minimap`] |
 //! | панель юнита (имя/тип, HP, ammo, приказ) | [`UnitInfo`] + `base_values` | [`unit_panel_lines`] |
 //! | журнал сообщений (кольцевой буфер) | [`MessageLog`] | [`draw_log`] |
+//! | строка ввода чата (пакет 18) | [`ChatInput`] | [`draw_chat_input`] |
 //! | полоса ресурсов команды | [`TeamUnits`] (gold + комплексы) | [`resources_line`] |
 //! | кнопки End Turn / Menu | `max_render::ui::Button` | [`hud_ui`] |
 //! | предпросмотр пути | [`PathPreview`] (линия по клеткам) | [`draw_path_preview`] |
@@ -175,6 +176,113 @@ impl MessageLog {
 }
 
 // ---------------------------------------------------------------------------
+// Чат (пакет 18)
+// ---------------------------------------------------------------------------
+
+/// Максимальная длина сообщения чата в символах.
+///
+/// В C++ буфер строки ввода — `char chat_input_buffer[150]`
+/// (`networkmenu.hpp:171`), поэтому 149 символов + NUL всегда помещаются в
+/// `SmartString` пакета 18 (`remote.cpp:2656-2685`).
+pub const CHAT_MAX_CHARS: usize = 149;
+
+/// Имена команд по умолчанию (порядок оригинала: `RED, GREEN, BLUE, GRAY`).
+pub const TEAM_NAMES: [&str; 5] = ["RED", "GREEN", "BLUE", "GRAY", "ALIEN"];
+
+/// Имя команды для журнала/чата (`Remote_ReceiveNetPacket_18` берёт имя из
+/// настроек игры; в Rust-состоянии имён нет, поэтому используются имена слотов
+/// по умолчанию).
+pub fn team_name(team: TeamId) -> &'static str {
+    TEAM_NAMES
+        .get(usize::from(team.0))
+        .copied()
+        .unwrap_or(TEAM_NAMES[TEAM_NAMES.len() - 1])
+}
+
+/// Строка журнала для сообщения чата: `<имя команды>: <текст>`.
+///
+/// Ровно тот формат, что собирает `Remote_ReceiveNetPacket_18`:
+/// `message = team_name; message += ": "; message += text`.
+pub fn chat_line(sender: TeamId, message: &str) -> String {
+    format!("{}: {message}", team_name(sender))
+}
+
+/// Состояние строки ввода чата (M4.4).
+///
+/// Живёт в [`HudState`] и, как весь HUD, **не входит** в снапшот/CRC: набор
+/// текста не должен менять детерминизм симуляции. Пока [`Self::is_active`],
+/// `ui::handle_session_input` отдаёт клавиатуру чату, а не приказам.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatInput {
+    /// Строка ввода открыта (Enter/T в сессии).
+    active: bool,
+    /// Набранный ASCII-текст (до [`CHAT_MAX_CHARS`] символов).
+    buffer: String,
+}
+
+impl ChatInput {
+    /// Закрытая пустая строка ввода.
+    pub const fn new() -> Self {
+        Self {
+            active: false,
+            buffer: String::new(),
+        }
+    }
+
+    /// Открывает ввод с пустым буфером (Enter/T).
+    pub fn open(&mut self) {
+        self.active = true;
+        self.buffer.clear();
+    }
+
+    /// Закрывает ввод, отбрасывая набранное (Esc/отправка).
+    pub fn close(&mut self) {
+        self.active = false;
+        self.buffer.clear();
+    }
+
+    /// Строка ввода открыта.
+    pub const fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Набранный текст.
+    pub fn message(&self) -> &str {
+        &self.buffer
+    }
+
+    /// Добавляет печатный ASCII-символ; `false` — символ отклонён
+    /// (не ASCII/буфер полон/ввод закрыт).
+    pub fn push_char(&mut self, ch: char) -> bool {
+        if !self.active
+            || self.buffer.chars().count() >= CHAT_MAX_CHARS
+            || !(ch.is_ascii_graphic() || ch == ' ')
+        {
+            return false;
+        }
+
+        self.buffer.push(ch);
+        true
+    }
+
+    /// Удаляет последний символ (Backspace); `false` — удалять нечего.
+    pub fn backspace(&mut self) -> bool {
+        self.active && self.buffer.pop().is_some()
+    }
+
+    /// Забирает сообщение и закрывает ввод.
+    ///
+    /// `None` — буфер пуст: C++ `Remote_SendNetPacket_18` такие сообщения не
+    /// отправляет, поэтому Enter по пустой строке просто закрывает ввод.
+    pub fn take_message(&mut self) -> Option<String> {
+        self.active = false;
+        let message = std::mem::take(&mut self.buffer);
+
+        (!message.is_empty()).then_some(message)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Предпросмотр пути
 // ---------------------------------------------------------------------------
 
@@ -279,7 +387,9 @@ pub struct HudState {
     pub preview: Option<PathPreview>,
     /// Журнал сообщений (кольцевой буфер).
     pub log: MessageLog,
-    /// Приказы, ещё не переданные сети/симуляции (38/08 из ввода).
+    /// Строка ввода чата (пакет 18): активна, пока игрок набирает сообщение.
+    pub chat: ChatInput,
+    /// Приказы, ещё не переданные сети/симуляции (38/08/18 из ввода).
     pub pending: Vec<Command>,
     /// Кнопка HUD под курсором.
     pub hover_button: Option<HudButton>,
@@ -300,6 +410,7 @@ impl HudState {
             selected: None,
             preview: None,
             log: MessageLog::new(),
+            chat: ChatInput::new(),
             pending: Vec::new(),
             hover_button: None,
             end_turn_requested: false,
@@ -784,6 +895,52 @@ pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
     }
 
     render_ui(buffer, &hud_ui(&layout, view.hud));
+    draw_chat_input(buffer, &layout, view.hud);
+}
+
+/// Прямоугольник строки ввода чата: полоса над нижней панелью HUD.
+///
+/// Отдельная функция, чтобы тесты и отрисовка видели один и тот же rect.
+pub fn chat_input_rect(width: u32, height: u32, layout: &HudLayout) -> PixelRect {
+    let bar_width = width.max(1) as i32;
+    let bar_height = height.max(1) as i32;
+    let rect_height = (GLYPH_HEIGHT + 8).max(0);
+    let rect_width = (bar_width - HUD_MARGIN * 2).clamp(0, 420);
+    let above_bar = layout.bar.uly - rect_height - HUD_MARGIN;
+    let max_y = (bar_height - rect_height).max(0);
+    let y = above_bar.clamp(0, max_y);
+
+    PixelRect::new(HUD_MARGIN, y, rect_width, rect_height)
+}
+
+/// Строка ввода чата поверх HUD: `Say: <текст>_`.
+///
+/// Рисуется последней, поэтому не перекрывается журналом/кнопками; пока ввод
+/// закрыт, не занимает ни одного пикселя.
+fn draw_chat_input(buffer: &mut RgbaBuffer, layout: &HudLayout, hud: &HudState) {
+    if !hud.chat.is_active() {
+        return;
+    }
+
+    let rect = chat_input_rect(buffer.width(), buffer.height(), layout);
+
+    if rect.is_empty() {
+        return;
+    }
+
+    buffer.fill_rect(rect, HUD_PANEL);
+    stroke(buffer, rect, HUD_BORDER);
+
+    let line = format!("Say: {}_", hud.chat.message());
+
+    draw_line_limited(
+        buffer,
+        rect.ulx + 4,
+        rect.uly + 4,
+        rect.width - 8,
+        &line,
+        HUD_TEXT,
+    );
 }
 
 /// UI-состояние кнопок HUD (End Turn / Menu) для [`render_ui`].
@@ -1102,6 +1259,7 @@ mod tests {
     use super::*;
 
     use max_core::enums::{TeamClan, UnitType};
+    use max_core::input::Packet18Chat;
     use max_core::team::{TeamKind, TeamUnits};
     use max_net::Packet;
 
@@ -1526,5 +1684,199 @@ mod tests {
         app.hud_mut().hover_button = Some(HudButton::EndTurn);
 
         assert_eq!(app.snapshot(), before, "HUD не входит в снапшот/CRC");
+    }
+
+    #[test]
+    fn chat_input_is_ascii_only_with_backspace_and_a_limit() {
+        let mut chat = ChatInput::new();
+
+        assert!(!chat.push_char('A'), "закрытый ввод не принимает символы");
+        chat.open();
+        assert!(chat.is_active());
+        assert!(chat.push_char('H'));
+        assert!(chat.push_char('i'));
+        assert!(chat.push_char(' '));
+        assert!(!chat.push_char('Ж'), "только ASCII");
+        assert!(!chat.push_char('\n'), "служебные символы не печатаются");
+        assert_eq!(chat.message(), "Hi ");
+
+        assert!(chat.backspace());
+        assert_eq!(chat.message(), "Hi");
+
+        for _ in 0..(CHAT_MAX_CHARS + 10) {
+            chat.push_char('x');
+        }
+        assert_eq!(chat.message().chars().count(), CHAT_MAX_CHARS);
+
+        chat.close();
+        assert!(!chat.is_active());
+        assert_eq!(chat.message(), "");
+
+        // Пустой Enter закрывает ввод и ничего не возвращает.
+        chat.open();
+        assert_eq!(chat.take_message(), None);
+        assert!(!chat.is_active());
+    }
+
+    #[test]
+    fn chat_overlay_draws_the_prompt_above_the_hud_bar() {
+        let (mut app, _tank, _enemy) = test_app();
+        let layout = hud_layout(512, 384);
+        let rect = chat_input_rect(512, 384, &layout);
+
+        assert!(!rect.is_empty());
+        assert!(rect.uly >= 0 && rect.lry() <= 384, "{rect:?}");
+        assert!(rect.uly <= layout.bar.uly, "строка ввода выше нижней панели");
+
+        let view = HudView {
+            state: app.state(),
+            hud: app.hud(),
+            viewport: app.viewport(),
+            team: app.player_team(),
+            status: "",
+        };
+        let mut closed = RgbaBuffer::new(512, 384);
+        render_hud(&mut closed, &view);
+        let before = closed.get(rect.ulx + 2, rect.uly + 2).expect("pixel");
+
+        app.hud_mut().chat.open();
+        app.hud_mut().chat.push_char('h');
+        let view = HudView {
+            state: app.state(),
+            hud: app.hud(),
+            viewport: app.viewport(),
+            team: app.player_team(),
+            status: "",
+        };
+        let mut open = RgbaBuffer::new(512, 384);
+        render_hud(&mut open, &view);
+        let after = open.get(rect.ulx + 2, rect.uly + 2).expect("pixel");
+
+        assert_eq!(after, HUD_PANEL, "панель ввода залита цветом HUD");
+        assert_ne!(before, after, "активный ввод виден поверх HUD");
+    }
+
+    #[test]
+    fn typing_a_chat_message_logs_and_applies_it_in_demo_mode() {
+        let (mut app, _tank, _enemy) = test_app();
+
+        // Enter открывает строку ввода.
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
+            Transition::None
+        );
+        assert!(app.hud().chat.is_active());
+
+        for character in "Helo".chars() {
+            handle_session_input(
+                &mut app,
+                InputEvent::Key(crate::ui::Key::Char(character)),
+                false,
+            );
+        }
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Backspace), false);
+        for character in "lo".chars() {
+            handle_session_input(
+                &mut app,
+                InputEvent::Key(crate::ui::Key::Char(character)),
+                false,
+            );
+        }
+        assert_eq!(app.hud().chat.message(), "Hello");
+
+        // Enter отправляет: в демо-режиме — сразу через apply_command.
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
+            Transition::None
+        );
+        assert!(!app.hud().chat.is_active());
+        assert_eq!(
+            app.state().chat_log,
+            vec![(TeamId::RED, "Hello".to_string())]
+        );
+        assert!(
+            app.hud().log.lines().iter().any(|line| line == "RED: Hello"),
+            "журнал содержит отправленное: {:?}",
+            app.hud().log.lines()
+        );
+        assert_eq!(app.applied_commands(), 1);
+        assert!(app.hud().pending.is_empty(), "демо-режим не копит очередь");
+    }
+
+    #[test]
+    fn online_chat_is_queued_as_packet_18_for_the_session() {
+        let (mut app, _tank, _enemy) = test_app();
+
+        // T тоже открывает строку ввода.
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('T')), true);
+        assert!(app.hud().chat.is_active());
+
+        for character in "gg".chars() {
+            handle_session_input(
+                &mut app,
+                InputEvent::Key(crate::ui::Key::Char(character)),
+                true,
+            );
+        }
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), true);
+
+        assert!(
+            app.state().chat_log.is_empty(),
+            "локальное применение делает net::flush_hud_orders"
+        );
+
+        let outgoing = app.take_outgoing_orders();
+
+        assert_eq!(
+            outgoing,
+            vec![Command::Chat(Packet18Chat {
+                sender: TeamId::RED,
+                message: "gg".to_string(),
+            })]
+        );
+
+        // Очередь — это ровно пакет 18 на проводе.
+        let bytes = Packet::Command(outgoing[0].clone())
+            .encode()
+            .expect("18 encoded");
+
+        assert_eq!(
+            bytes,
+            [0x62, 0x00, 0x00, 0x03, 0x00, b'g', b'g', 0x00]
+        );
+    }
+
+    #[test]
+    fn escape_cancels_chat_without_leaving_the_session() {
+        let (mut app, _tank, _enemy) = test_app();
+
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('t')), false);
+        for character in "no".chars() {
+            handle_session_input(
+                &mut app,
+                InputEvent::Key(crate::ui::Key::Char(character)),
+                false,
+            );
+        }
+
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            Transition::None,
+            "Esc в чате не выходит из сессии"
+        );
+        assert!(!app.hud().chat.is_active());
+        assert!(app.state().chat_log.is_empty());
+        assert!(app
+            .hud()
+            .log
+            .lines()
+            .iter()
+            .any(|line| line == "Chat cancelled"));
+
+        // Следующий Esc — уже обычное поведение сессии.
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            Transition::LeaveSession
+        );
     }
 }

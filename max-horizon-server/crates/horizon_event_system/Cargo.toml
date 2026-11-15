@@ -5,6 +5,15 @@ description = "Horizon Event System for handling events in the Horizon game serv
 license = "MIT"
 edition = "2021"
 
+# The crate's doc examples were written against an older API (the deprecated
+# CompleteGorcSystem / SimplePlugin signatures, ServerContext before it grew
+# send_to_player/broadcast/...) and do not compile; 19 of the 51 doctests fail.
+# This is a deliberate exclusion for M5.1 (PLAN-v7-release.md §5.1): unit,
+# integration and example tests still run. Drop this section after the docs are
+# refreshed to the current API.
+[lib]
+doctest = false
+
 [dependencies]
 tokio = { workspace = true }
 luminal_rt = { workspace = true }

@@ -159,12 +159,14 @@ and the same admin token scheme.
 [server.grpc]
 enabled = true
 bind_address = "0.0.0.0:8082"   # default
+# announce_host = "127.0.0.1"   # what JoinGame returns; set to the public host
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | start the gRPC listener |
 | `bind_address` | `"0.0.0.0:8082"` | address the listener binds |
+| `announce_host` | `"127.0.0.1"` | host `JoinGame` advertises to clients (the ENet address); set it to the server's public address |
 
 Add the section to the server's `config.toml` to run both transports; the sample
 config in this checkout enables it (WS stays on 8081, gRPC on 8082). Set
@@ -197,6 +199,9 @@ report failures *inline* keep `ok:false` + `horizon.v1.Error` for tooling parity
 Tickets (`Ticket.value`, `Ticket.kind`, parsed `session_id`/`player_id`/
 `expires_at_unix`) and `host`/`port` are exactly the values the WS protocol
 returns, so a session obtained over one transport works over the other.
+`JoinGame.host` comes from `[server.grpc].announce_host`; its default
+(`127.0.0.1`) preserves the WS value, while a public deployment can advertise
+its real address without changing `bind_address`.
 
 ### Trying it out
 

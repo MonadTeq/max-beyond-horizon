@@ -857,6 +857,50 @@ mod tests {
     }
 
     #[test]
+    fn packet_18_decodes_a_cpp_smart_string_frame() {
+        // Байтовый литерал собран вручную по C++:
+        //   `Remote_SendNetPacket_18` (remote.cpp:2675-2684) пишет
+        //   `uint8_t 0x12`, `uint16_t sender_team`, затем `SmartString`;
+        //   `operator<<(NetPacket&, const SmartString&)` (net_packet.cpp:179-184)
+        //   пишет `u16 length = strlen + 1` и `length` байт, включая NUL.
+        // APPL-тип на проводе — `0x50 + 0x12 = 0x62`.
+        let frame = [
+            0x62, // APPL 18
+            0x01, 0x00, // sender_team = 1 (GREEN)
+            0x06, 0x00, // SmartString length = 6 (5 символов + NUL)
+            b'H', b'e', b'l', b'l', b'o', 0x00,
+        ];
+        let decoded = Packet::decode(&frame).expect("C++ frame decodes");
+
+        assert_eq!(
+            decoded,
+            Packet::Command(Command::Chat(Packet18Chat {
+                sender: TeamId::GREEN,
+                message: "Hello".into(),
+            }))
+        );
+        assert_eq!(decoded.encode().unwrap(), frame);
+    }
+
+    #[test]
+    fn packet_18_empty_message_is_one_nul_byte() {
+        // C++ `Remote_SendNetPacket_18` не отправляет пустые сообщения, но
+        // `SmartString("")` на проводе — `len = 1` + NUL; декодер обязан
+        // принять такой кадр без ошибки.
+        let frame = [0x62, 0x00, 0x00, 0x01, 0x00, 0x00];
+        let decoded = Packet::decode(&frame).expect("empty chat decodes");
+
+        assert_eq!(
+            decoded,
+            Packet::Command(Command::Chat(Packet18Chat {
+                sender: TeamId::RED,
+                message: String::new(),
+            }))
+        );
+        assert_eq!(decoded.encode().unwrap(), frame);
+    }
+
+    #[test]
     fn packet_12_mission_supply_matches_documented_layout() {
         let bytes = round_trip(Packet::Command(Command::MissionSupply(
             Packet12MissionSupply {

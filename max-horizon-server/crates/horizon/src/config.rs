@@ -634,6 +634,8 @@ mod tests {
         // The gRPC lobby/admin listener is opt-in and defaults to port 8082.
         assert!(!config.server.grpc.enabled);
         assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
+        // JoinGame advertises the legacy WS host unless configured otherwise.
+        assert_eq!(config.server.grpc.announce_host, "127.0.0.1");
         
         // Test region settings
         assert_eq!(config.server.region.min_x, -1000.0);
@@ -972,6 +974,7 @@ json_format = false
         // A config without [server.grpc] keeps the listener disabled.
         assert!(!config.server.grpc.enabled);
         assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
+        assert_eq!(config.server.grpc.announce_host, "127.0.0.1");
     }
 
     #[test]
@@ -991,6 +994,7 @@ max_z = 100.0
 [server.grpc]
 enabled = true
 bind_address = "0.0.0.0:8082"
+announce_host = "max.example.com"
 
 [plugins]
 directory = "plugins"
@@ -1005,6 +1009,8 @@ json_format = false
         let config: AppConfig = toml::from_str(toml_content).unwrap();
         assert!(config.server.grpc.enabled);
         assert_eq!(config.server.grpc.bind_address, "0.0.0.0:8082");
+        // The published JoinGame host is configured independently of the bind address.
+        assert_eq!(config.server.grpc.announce_host, "max.example.com");
         assert_eq!(
             config.server.grpc.socket_addr().unwrap().to_string(),
             "0.0.0.0:8082"

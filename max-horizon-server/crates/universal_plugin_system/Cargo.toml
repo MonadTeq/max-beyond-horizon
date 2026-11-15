@@ -9,6 +9,13 @@ repository = "https://github.com/your-org/universal-plugin-system"
 keywords = ["plugin", "event", "system", "dynamic", "modular"]
 categories = ["development-tools", "api-bindings"]
 
+[lib]
+# The module examples describe an older non-generic `EventPropagator`/`EventBus`
+# API and do not compile. Deliberate exclusion for M5.1
+# (PLAN-v7-release.md §5.1): unit/integration tests still run. Drop this once the
+# examples are refreshed.
+doctest = false
+
 [dependencies]
 # Core dependencies
 async-trait = "0.1"

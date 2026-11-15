@@ -18,7 +18,9 @@
 //!   text, plus the inline `horizon.v1.Error` of the three admin `ok:false`
 //!   responses (`docs/protocol-grpc.md` §6);
 //! * the listener is configured by `[server.grpc]` in `config.toml`, defaults to
-//!   `0.0.0.0:8082`, and is disabled unless `enabled = true`.
+//!   `0.0.0.0:8082`, and is disabled unless `enabled = true`;
+//! * `JoinGameResponse.host` is `[server.grpc].announce_host` — the address
+//!   clients should connect to — defaulting to `127.0.0.1` (the legacy WS value).
 //!
 //! ## Layout
 //!
@@ -41,6 +43,8 @@
 //! let settings = GrpcSettings {
 //!     enabled: true,
 //!     bind_address: "0.0.0.0:8082".to_string(),
+//!     // Advertised to clients in `JoinGameResponse.host` (default 127.0.0.1).
+//!     announce_host: "max.example.com".to_string(),
 //! };
 //!
 //! // Resolves when the listener shuts down (e.g. on Ctrl+C).
@@ -73,6 +77,7 @@ pub use backend::{
 };
 pub use error::{classify_ws_error, code_for_legacy_close, ServiceError};
 pub use server::{
-    serve, serve_with_backend, serve_with_listener, GrpcSettings, DEFAULT_GRPC_BIND_ADDRESS,
+    serve, serve_with_backend, serve_with_listener, GrpcSettings, DEFAULT_ANNOUNCE_HOST,
+    DEFAULT_GRPC_BIND_ADDRESS,
 };
 pub use service::{HorizonService, PROTOCOL_VERSION};

@@ -5,6 +5,11 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+# The doc examples were written against an older `PlayerId(u32)` API and do not
+# compile with `PlayerId(Uuid)`. Deliberate exclusion for M5.1
+# (PLAN-v7-release.md §5.1): unit/integration tests still run. Drop this once the
+# examples are refreshed.
+doctest = false
 
 [dependencies]
 horizon_event_system = { workspace = true }

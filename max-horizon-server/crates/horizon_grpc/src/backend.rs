@@ -153,7 +153,8 @@ pub struct CreatedGame {
 pub struct JoinedGame {
     /// Session UUID (echo of the request).
     pub game_id: Uuid,
-    /// Host the ENet client connects to (`127.0.0.1`, WS parity).
+    /// Host the ENet client connects to (`[server.grpc].announce_host`, default
+    /// `127.0.0.1`, WS parity).
     pub host: String,
     /// UDP port of the headless process.
     pub port: u16,
@@ -452,7 +453,8 @@ pub struct MaxBackend {
     admin_secret: Option<String>,
     /// Inclusive UDP port range sessions are allocated from (`[max] port_range_*`).
     port_range: RangeInclusive<u16>,
-    /// Advertised host of `JoinGameResponse.host`; WS parity is `127.0.0.1`
+    /// Advertised host of `JoinGameResponse.host`; comes from
+    /// `[server.grpc].announce_host`, defaulting to `127.0.0.1` (WS parity)
     /// (`docs/protocol-grpc.md` §4.6 keeps the field for exactly this).
     host: String,
 }
@@ -546,8 +548,10 @@ impl MaxBackend {
         Self::new(sessions, session_secret, admin_secret, port_range)
     }
 
-    /// Overrides the advertised host of `JoinGameResponse.host` (default
-    /// `127.0.0.1`, the WS value).
+    /// Overrides the advertised host of `JoinGameResponse.host`.
+    ///
+    /// `serve` applies `[server.grpc].announce_host` here; the default is
+    /// `127.0.0.1`, the legacy WS value.
     pub fn with_host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
         self
@@ -1175,6 +1179,28 @@ mod tests {
 
         // The joiner is now a lobby player.
         assert_eq!(backend.list_games().await.unwrap()[0].players, 2);
+    }
+
+    #[tokio::test]
+    async fn join_game_advertises_the_configured_host() {
+        // `[server.grpc].announce_host` reaches `JoinGameResponse.host`; it is
+        // independent of the listener's bind address.
+        let sessions = MockSessions::new();
+        let backend = backend(Arc::clone(&sessions), None).with_host("max.example.com");
+        let created = backend
+            .create_game(Uuid::new_v4(), params(2))
+            .await
+            .unwrap();
+        sessions
+            .set_status(created.game.id, SessionStatus::Running);
+
+        let joined = backend
+            .join_game(Uuid::new_v4(), &created.game.id.to_string(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(joined.host, "max.example.com");
+        assert_eq!(joined.port, created.game.port);
     }
 
     #[tokio::test]

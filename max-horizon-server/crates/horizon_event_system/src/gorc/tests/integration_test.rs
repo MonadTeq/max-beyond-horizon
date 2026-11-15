@@ -216,6 +216,12 @@ impl IntegrationTestScenario {
     
     /// Test channel 0 (critical) event emission - should reach players within 50m
     pub async fn test_channel_0_emission(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Scenario setup already delivered one zone-enter frame per channel each player
+        // was subscribed to (players at 75m+ received channels 1-3, etc.). This test
+        // asserts on channel 0 deliveries only, so drop those setup frames first, as
+        // every other channel test does.
+        self.clear_messages();
+        
         let move_event = TestMoveEvent {
             new_position: Vec3::new(5.0, 0.0, 0.0),
             timestamp: crate::utils::current_timestamp(),

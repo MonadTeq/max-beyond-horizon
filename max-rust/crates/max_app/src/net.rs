@@ -109,7 +109,7 @@ impl NetworkOptions {
 ///
 /// Кадр получает `&mut App`, потому что интерактивный клиент (`--ui`) здесь же
 /// обрабатывает мышь: выделение юнита и приказы живут в
-/// [`crate::hud::HudState`] (вне `GameState`), а собранные пакеты `38`/`08`
+/// [`crate::hud::HudState`] (вне `GameState`), а собранные пакеты `38`/`08`/`18`
 /// забирает и отправляет [`flush_hud_orders`].
 pub trait FrameSink {
     /// Показать кадр текущего состояния; `false` — выйти из цикла.
@@ -880,16 +880,16 @@ async fn send_barrier(handle: &SessionHandle, packets: &[Packet]) -> Result<()> 
     Ok(())
 }
 
-/// Отправляет приказы, собранные вводом HUD (M4.3), в сессию.
+/// Отправляет приказы/чат, собранные вводом HUD (M4.3/M4.4), в сессию.
 ///
 /// Порядок как в C++: сначала локальное применение (`Remote_ReceiveNetPacket_*`
 /// для собственной команды), затем multicast — `Packet::Command` через
-/// [`SessionHandle::send`]. Пакеты 38/08 барьерами не являются, поэтому трекер
-/// повторов сессии их не регистрирует (там только 00/45/52).
+/// [`SessionHandle::send`]. Пакеты 38/08/18 барьерами не являются, поэтому
+/// трекер повторов сессии их не регистрирует (там только 00/45/52).
 ///
-/// Источник приказов — [`crate::hud::HudState::pending`]: их собирает
+/// Источник — [`crate::hud::HudState::pending`]: их собирает
 /// [`crate::ui::handle_session_input`] из кликов (38 — движение с путём,
-/// 08 — атака).
+/// 08 — атака) и из строки ввода чата (18 — `Command::Chat`).
 async fn flush_hud_orders(app: &mut App, handle: &SessionHandle) -> Result<()> {
     for command in app.take_outgoing_orders() {
         let kind = format!("{:?}", command.kind());
@@ -1231,6 +1231,13 @@ fn handle_session_event(
             if let Command::ComplexSummary(summary) = &command {
                 fsm.note_complex(summary.team, summary.turn);
             }
+            // 18 — чат: `apply_command` пишет в `GameState::chat_log`, но
+            // игрок видит журнал HUD, поэтому дублируем строку туда же в
+            // формате C++ (`Remote_ReceiveNetPacket_18`: `<team>: <text>`).
+            if let Command::Chat(chat) = &command {
+                let line = crate::hud::chat_line(chat.sender, &chat.message);
+                app.hud_mut().push_log(line);
+            }
             // 00 — команда ВСЕГДА из поля `team` payload'а, а не из
             // ENet-отправителя: релейная копия приходит от сервера, у которого
             // своей команды нет (`docs/barrier-flow.md` §1, `remote.cpp:2313`).
@@ -1315,7 +1322,7 @@ impl TicketKindShort for max_net::Ticket {
 mod tests {
     use super::*;
     use max_core::enums::TeamClan;
-    use max_core::input::Packet45CrcBarrier;
+    use max_core::input::{Packet18Chat, Packet45CrcBarrier};
     use max_core::team::TeamUnits;
 
     /// Синтетический мир: local RED (Player), пиры GREEN/BLUE (Remote).
@@ -1674,6 +1681,35 @@ mod tests {
             "team берётся из payload, а не из ENet-отправителя (сервер)"
         );
         assert!(fsm.reached(app.state()), "00-барьер проходит по team=1");
+    }
+
+    /// Входящий 18 применяется (`GameState::chat_log`) и попадает в журнал
+    /// HUD в формате C++ (`Remote_ReceiveNetPacket_18`).
+    #[test]
+    fn incoming_18_chat_goes_to_the_simulation_and_hud_logs() {
+        let local = TeamId::RED;
+        let mut app = App::new(AppConfig::default());
+        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
+        let mut stats = GameLoopStats::default();
+
+        let incoming = Packet::Command(Command::Chat(Packet18Chat {
+            sender: TeamId::GREEN,
+            message: "hello".to_string(),
+        }));
+
+        handle_session_event(&mut app, relayed(&incoming), &mut stats, &mut fsm)
+            .expect("входящий 18");
+
+        assert_eq!(
+            app.state().chat_log,
+            vec![(TeamId::GREEN, "hello".to_string())]
+        );
+        assert_eq!(
+            app.hud().log.lines().last().map(String::as_str),
+            Some("GREEN: hello")
+        );
+        assert_eq!(app.applied_commands(), 1);
     }
 
     /// Два пира, релейные пакеты приходят от сервера — барьер 00 сходится.

@@ -27,8 +27,8 @@ use tracing::info;
 /// 
 /// # Example
 /// 
-/// ```rust
-/// use horizon::signals::setup_signal_handlers;
+/// ```rust,no_run
+/// use lib_horizon::signals::setup_signal_handlers;
 /// 
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {

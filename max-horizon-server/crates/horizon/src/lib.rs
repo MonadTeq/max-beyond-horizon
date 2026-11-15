@@ -44,7 +44,7 @@ mod app;
 mod cli;
 mod config;
 mod logging;
-mod signals;
+pub mod signals;
 
 use app::Application;
 use cli::CliArgs;

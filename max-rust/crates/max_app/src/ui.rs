@@ -31,7 +31,7 @@
 //! | MainMenu | Up/Down/Tab, Enter, мышь; `c`/`j`/`q`; Esc — выход |
 //! | JoinList | Up/Down, Enter — войти, `r` — обновить, Esc — назад, мышь |
 //! | CreateForm | Tab/Up/Down — поле, ввод, Left/Right — числа, Enter — создать, Esc — назад |
-//! | InSession | LMB — выбрать юнита, RMB — приказ движения, LMB по врагу — атака, End Turn/Menu, Esc — отмена (дважды — выход) |
+//! | InSession | LMB — выбрать юнита, RMB — приказ движения, LMB по врагу — атака, Enter/T — чат (пакет 18), End Turn/Menu, Esc — отмена (дважды — выход) |
 //!
 //! # Ввод в сессии (M4.3)
 //!
@@ -47,6 +47,7 @@
 use std::fmt;
 
 use max_core::geo::Point as GridPoint;
+use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
 use max_net::{
     CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
@@ -852,11 +853,28 @@ impl Screen {
 /// * **End Turn** — тот же путь, что и таймер (`06` + `52`/`finish_turn`);
 /// * **Menu** — выход в главное меню.
 ///
-/// `online = true` — приказы копятся в `App::hud().pending` и уходят в сессию
-/// (`net::flush_hud_orders`); `false` — демо-режим, приказы применяются сразу
-/// через `max_core::events::apply_command` ([`App::flush_orders`]).
+/// # Чат (M4.4)
+///
+/// **Enter** или **T** открывают строку ввода (`ChatInput`): печатные ASCII-
+/// символы идут в буфер, **Backspace** удаляет последний, **Enter** отправляет
+/// `Command::Chat` (пакет **18**), **Esc** закрывает ввод без отправки. Пока
+/// строка открыта, мышь и остальные клавиши игнорируются.
+///
+/// `online = true` — приказы и чат копятся в `App::hud().pending` и уходят в
+/// сессию (`net::flush_hud_orders`); `false` — демо-режим, команды применяются
+/// сразу через `max_core::events::apply_command` ([`App::flush_orders`]).
 pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let (width, height) = app.viewport().screen();
+
+    // Пока открыта строка чата (M4.4), клавиатура принадлежит ей: печатные
+    // ASCII-символы идут в буфер, Backspace/Enter/Esc управляют вводом. Мышь
+    // игнорируется, чтобы клик во время набора не отдал приказ.
+    if app.hud().chat.is_active() {
+        return match event {
+            InputEvent::Key(key) => session_chat_key(app, key, online),
+            _ => Transition::None,
+        };
+    }
 
     match event {
         InputEvent::MouseMove(x, y) => {
@@ -865,6 +883,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::MouseClick(x, y) => session_left_click(app, width, height, x, y, online),
         InputEvent::RightClick(x, y) => session_right_click(app, x, y, online),
+        InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) => {
+            app.hud_mut().chat.open();
+            app.hud_mut()
+                .push_log("Chat: type a message, Enter sends, Esc cancels");
+            Transition::None
+        }
         InputEvent::Key(Key::Escape) => {
             if app.hud().selected.is_some() || app.hud().preview.is_some() {
                 app.hud_mut().clear_interaction();
@@ -876,6 +900,60 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::Key(_) => Transition::None,
     }
+}
+
+/// Клавиша в открытой строке ввода чата.
+///
+/// * печатный ASCII (включая пробел) — в буфер (до [`hud::CHAT_MAX_CHARS`]);
+/// * Backspace — удалить последний символ;
+/// * Enter — отправить [`Packet18Chat`] (`Command::Chat`): в сети — в очередь
+///   `App::hud().pending` (её отправляет `net::flush_hud_orders`), в демо —
+///   сразу в `apply_command`; строка журнала пишется в обоих режимах;
+/// * Esc — закрыть ввод без отправки.
+///
+/// Остальные клавиши (стрелки/Tab) в чате игнорируются, чтобы случайно не
+/// открыть меню/приказ.
+fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
+    match key {
+        Key::Char(character) => {
+            app.hud_mut().chat.push_char(character);
+        }
+        Key::Backspace => {
+            app.hud_mut().chat.backspace();
+        }
+        Key::Enter => return submit_chat(app, online),
+        Key::Escape => {
+            app.hud_mut().chat.close();
+            app.hud_mut().push_log("Chat cancelled");
+        }
+        Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Other => {}
+    }
+
+    Transition::None
+}
+
+/// Отправка строки чата: журнал + [`Command::Chat`] (пакет **18**).
+///
+/// Пустая строка не отправляется (как `Remote_SendNetPacket_18`, который
+/// возвращается на `message[0] == '\0'`), ввод просто закрывается.
+fn submit_chat(app: &mut App, online: bool) -> Transition {
+    let Some(message) = app.hud_mut().chat.take_message() else {
+        return Transition::None;
+    };
+
+    let sender = app.player_team();
+    let line = hud::chat_line(sender, &message);
+    let command = Command::Chat(Packet18Chat { sender, message });
+
+    app.hud_mut().push_log(line);
+
+    if online {
+        app.hud_mut().pending.push(command);
+    } else {
+        app.apply(command);
+    }
+
+    Transition::None
 }
 
 /// Левая кнопка: кнопки HUD → миникарта → выделение/атака на карте.
