@@ -103,3 +103,9 @@ max-rust/qa-out/
 
 # QA work outputs
 max-rust-qa/out/
+
+# max-resource-editor: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
+max-assets/images/
+tools/max-resource-editor/target/
+tools/max-resource-editor/*.png
+!tools/max-resource-editor/screenshot.png

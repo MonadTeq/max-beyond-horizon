@@ -1,0 +1,23 @@
+[package]
+name = "max-resource-editor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "M.A.X. MAX.RES viewer/classifier and PNG batch exporter"
+
+# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-rust.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+max_assets = { path = "../../max-rust/crates/max_assets" }
+max_render = { path = "../../max-rust/crates/max_render" }
+sdl3 = { version = "0.22", optional = true, default-features = false }
+
+[features]
+default = []
+# SDL3-окно. Системный SDL3 (libsdl3-dev / vcpkg) ищется линковщиком через
+# LIB/PATH (Windows) или pkg-config (Linux). Для vcpkg: --features sdl-vcpkg.
+sdl = ["dep:sdl3", "sdl3/use-pkg-config"]
+sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]
+sdl-from-source = ["sdl", "sdl3/build-from-source"]
