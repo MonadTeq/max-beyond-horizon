@@ -226,6 +226,47 @@ impl<'a> SpriteRenderer<'a> {
         stats.merge(self.draw_frame_scaled(dst, frame, anchor, zoom))
     }
 
+    /// Рисует башню/пушку поверх корпуса — `UnitInfo::RenderWithConnectors`:
+    /// тень и спрайт башни со сдвигом `offset` (`angle_offsets[angle]`) от
+    /// якоря корпуса.
+    ///
+    /// `offset` задан в пикселях исходного спрайта и масштабируется вместе с
+    /// `zoom` (64 — 1:1), как в C++ (`Gfx_MapScalingFactor`). Тень башни
+    /// смещается на тот же `shadow_offset`, что и тень корпуса.
+    pub fn draw_turret_scaled(
+        &self,
+        dst: &mut RgbaBuffer,
+        frame: &SpriteFrame,
+        shadow: Option<&ShadowFrame>,
+        anchor: (i32, i32),
+        shadow_offset: (i32, i32),
+        offset: (i32, i32),
+        zoom: u32,
+    ) -> DrawStats {
+        let mut stats = DrawStats::default();
+        let zoom = zoom.max(1);
+        let scaled_offset = (scale_pixels(offset.0, zoom), scale_pixels(offset.1, zoom));
+        let turret_anchor = (anchor.0 + scaled_offset.0, anchor.1 + scaled_offset.1);
+
+        if let Some(shadow) = shadow {
+            let scaled_shadow_offset = (
+                scale_pixels(shadow_offset.0, zoom),
+                scale_pixels(shadow_offset.1, zoom),
+            );
+            stats = stats.merge(self.draw_shadow_scaled(
+                dst,
+                shadow,
+                (
+                    turret_anchor.0 + scaled_shadow_offset.0,
+                    turret_anchor.1 + scaled_shadow_offset.1,
+                ),
+                zoom,
+            ));
+        }
+
+        stats.merge(self.draw_frame_scaled(dst, frame, turret_anchor, zoom))
+    }
+
     /// Кадр с масштабом `zoom` (64 — 1:1), ближайший сосед.
     pub fn draw_frame_scaled(
         &self,

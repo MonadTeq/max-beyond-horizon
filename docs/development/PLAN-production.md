@@ -218,6 +218,18 @@
   327/348,240).
 - [x] Изображения: иконки `I_*` (71 тип) в обеих строках списков, масштаб
   как C++ (1:2 мобильные / 1:4 стационарные), командная перекраска.
+- [x] Башня/пушка отдельным кадром (доведено после первого прохода P7):
+  - `D_*` (`Unit::GetFrameInfo()`) разбирается в `FrameInfo`
+    (`max_assets::sprite`): база/число кадров корпуса, башни, выстрела,
+    коннектора и `angle_offsets[8]`;
+  - иконки списков `I_*` — два кадра: корпус (0) + башня (1) со сдвигом
+    `angle_offsets[2] >> divisor` (divisor 1/2), как
+    `ReportStats_DrawListItemIcon`;
+  - карта (`render.rs`), портрет HUD (`panels.rs`), меню апгрейдов и
+    `BuildMenu` — башня кадром `turret_image_base + turret_angle` со сдвигом
+    `angle_offsets[body_angle]` (`SpriteRenderer::draw_turret_scaled`), как
+    `UnitInfo::RenderWithConnectors`; у танка/мобильной зенитки/эскорта
+    башня больше не пропадает.
 - [x] Портрет/описание/статистика 1:1 (доведено после первого прохода P7):
   - портрет — big image `P_*` 300×240 (`Unit::GetPortrait()`,
     `WindowManager_LoadBigImage(..., palette_from_image=false)`) в (11,13) с

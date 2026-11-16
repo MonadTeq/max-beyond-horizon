@@ -62,9 +62,11 @@
 //!
 //! # Осознанные отличия
 //!
-//! * Иконки списков — ресурсы `I_*` (спрайт-формат), но без второго кадра
-//!   турелей: в C++ он смещается `angle_offsets[2]` из `.SPW`-заголовка,
-//!   которого нет в разобранном [`max_assets::sprite::SpriteSheet`].
+//! * Иконки списков — ресурсы `I_*` (спрайт-формат): корпус (кадр 0) и
+//!   отдельный кадр башни/пушки (кадр 1) для `TURRET_SPRITE`/
+//!   `SPINNING_TURRET`, как `ReportStats_DrawListItemIcon`. Сдвиг башни —
+//!   `angle_offsets[2]` из `D_*` (`Unit::GetFrameInfo()`), делённый на
+//!   `divisor` (1 у мобильных, 2 у стационарных).
 //! * Портрет — big image `P_*` 300×240 1:1, как `WindowManager_LoadBigImage`
 //!   (`palette_from_image=false`, `ulx/uly` из ресурса = 0): индексы читаются
 //!   палитрой окна `CARGOPIC`. C++-порт пишет 300 px в буфер диалога **без
@@ -1645,6 +1647,28 @@ pub fn clan_summary(clan: TeamClan) -> String {
 // Ресурсы экрана
 // ---------------------------------------------------------------------------
 
+/// Иконка типа в списках (`I_*`): корпус и отдельный кадр башни/пушки.
+///
+/// В C++ `ReportStats_DrawListItemIcon` рисует кадр 0, а для
+/// `TURRET_SPRITE`/`SPINNING_TURRET` — ещё кадр 1 со сдвигом
+/// `angle_offsets[2] >> divisor` (`divisor` = 1 у мобильных, 2 у стационарных).
+#[derive(Debug, Clone)]
+pub struct UnitIcon {
+    /// Корпус — кадр 0 ресурса `I_*`.
+    pub body: SpriteFrame,
+    /// Башня/пушка — кадр 1 (у турельных типов).
+    pub turret: Option<SpriteFrame>,
+    /// `angle_offsets[2]` из `D_*` — сдвиг башни до масштабирования.
+    pub turret_offset: (i32, i32),
+}
+
+impl UnitIcon {
+    /// Есть ли отдельный кадр башни.
+    pub fn has_turret(&self) -> bool {
+        self.turret.is_some()
+    }
+}
+
 /// Ресурсы `CargoMenu` из `MAX.RES`.
 #[derive(Debug, Clone)]
 pub struct CargoMenuAssets {
@@ -1692,8 +1716,8 @@ pub struct CargoMenuAssets {
     pub filters: [Option<MenuButtonPair>; 5],
     /// Полосы `VERTRAW`/`VERTFUEL`/`VERTGOLD` (индекс — [`CargoBarKind`]).
     pub bars: [Option<SimpleImage>; 3],
-    /// Иконки типов (`I_*`, первый кадр спрайта).
-    pub icons: Vec<(UnitType, SpriteFrame)>,
+    /// Иконки типов (`I_*`): корпус (кадр 0) и башня (кадр 1).
+    pub icons: Vec<(UnitType, UnitIcon)>,
     /// Иконки строк статистики (`I_*` simple images, `UnitStats_DrawStats`).
     pub stat_icons: Vec<(&'static str, SimpleImage)>,
     /// Кэш портретов `P_*` (`Unit::GetPortrait`, big image 300×240).
@@ -1712,10 +1736,26 @@ impl CargoMenuAssets {
         let pair = |up: &str, down: &str| -> Option<MenuButtonPair> {
             Some(MenuButtonPair::new(simple(up)?, simple(down)?))
         };
-        let icon = |unit: UnitType, name: &str| -> Option<(UnitType, SpriteFrame)> {
+        let icon = |unit: UnitType, name: &str| -> Option<(UnitType, UnitIcon)> {
             let bytes = archive.read(name).ok()?;
             let sheet = decode_sprite(bytes).ok()?;
-            Some((unit, sheet.frame(0)?.clone()))
+            let body = sheet.frame(0)?.clone();
+            let turret = sheet.frame(1).cloned();
+            // `ReportStats_DrawListItemIcon`: сдвиг башни — `angle_offsets[2]`.
+            let turret_offset = cargo_unit_data::unit_frame_data(unit)
+                .and_then(|data| archive.read(data).ok())
+                .and_then(|bytes| max_assets::sprite::FrameInfo::decode(&bytes))
+                .map(|info| info.turret_offset(2))
+                .unwrap_or((0, 0));
+
+            Some((
+                unit,
+                UnitIcon {
+                    body,
+                    turret,
+                    turret_offset,
+                },
+            ))
         };
 
         let mut icons = Vec::new();
@@ -1771,11 +1811,11 @@ impl CargoMenuAssets {
     }
 
     /// Иконка типа (`I_*`, кадр 0).
-    pub fn icon(&self, unit: UnitType) -> Option<&SpriteFrame> {
+    pub fn icon(&self, unit: UnitType) -> Option<&UnitIcon> {
         self.icons
             .iter()
             .find(|(candidate, _)| *candidate == unit)
-            .map(|(_, frame)| frame)
+            .map(|(_, icon)| icon)
     }
 
     /// Иконка строки статистики (`I_*` simple image).
@@ -2224,6 +2264,7 @@ impl Mobilization {
                 painted += draw_icon(
                     frame,
                     palette,
+                    unit,
                     icon,
                     (AVAILABLE_AREA.ulx + 16, y + 16),
                     zoom,
@@ -2309,6 +2350,7 @@ impl Mobilization {
                 painted += draw_icon(
                     frame,
                     palette,
+                    supply.unit_type,
                     icon,
                     (PURCHASED_AREA.ulx + 16, y + 16),
                     zoom,
@@ -3090,6 +3132,46 @@ fn draw_vertical_bar(
 /// Иконка юнита (`ReportStats_DrawListItemIcon`): кадр с горячей точкой в
 /// центре, масштаб `zoom` (64 — 1:1), перекраска командных слотов.
 fn draw_icon(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    unit: UnitType,
+    icon: &UnitIcon,
+    anchor: (i32, i32),
+    zoom: u32,
+    lut: &ColorLut,
+) -> u32 {
+    let mut painted = draw_icon_frame(frame, palette, &icon.body, anchor, zoom, lut);
+
+    // `ReportStats_DrawListItemIcon`: для турельных типов — второй кадр
+    // `I_*` со сдвигом `angle_offsets[2] >> divisor`.
+    if unit_type_flags(unit) & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+        if let Some(turret) = icon.turret.as_ref() {
+            let divisor = if unit_type_flags(unit) & unit_flags::STATIONARY != 0 {
+                2
+            } else {
+                1
+            };
+            let offset = (
+                icon.turret_offset.0 >> divisor,
+                icon.turret_offset.1 >> divisor,
+            );
+
+            painted += draw_icon_frame(
+                frame,
+                palette,
+                turret,
+                (anchor.0 + offset.0, anchor.1 + offset.1),
+                zoom,
+                lut,
+            );
+        }
+    }
+
+    painted
+}
+
+/// Один кадр иконки `I_*` с масштабом `zoom` (64 — 1:1) и перекраской команд.
+fn draw_icon_frame(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
     icon: &SpriteFrame,

@@ -407,6 +407,87 @@ impl SpriteSheet {
     }
 }
 
+/// Заголовок кадров юнита — ресурс `D_*` (`Unit::GetFrameInfo`,
+/// `max-cpp-port/src/unit.cpp:51-76`).
+///
+/// Это **не** спрайт, а 8-байтовый (или 24-байтовый для турелей) блок
+/// метаданных: базы и количества кадров корпуса, башни, выстрела и коннектора.
+/// Для юнитов с `TURRET_SPRITE`/`SPINNING_TURRET` далее идут 8 пар
+/// `(dx, dy): i8` — `angle_offsets[body_angle]`, на сколько пикселей сдвинуть
+/// башню относительно якоря корпуса.
+///
+/// C++ читает счётчики как `int8_t` (`D_INFANT[1] = 0xC8` → -56); здесь
+/// счётчики `u8`, потому что отрицательных количеств кадров не бывает и
+/// значение используется только для выбора кадра (200 у пехоты).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameInfo {
+    /// База кадров корпуса (`image_base`).
+    pub image_base: u8,
+    /// Число кадров корпуса (`image_count`).
+    pub image_count: u8,
+    /// База кадров башни (`turret_image_base`).
+    pub turret_image_base: u8,
+    /// Число кадров башни (`turret_image_count`).
+    pub turret_image_count: u8,
+    /// База кадров выстрела (`firing_image_base`).
+    pub firing_image_base: u8,
+    /// Число кадров выстрела (`firing_image_count`).
+    pub firing_image_count: u8,
+    /// База кадров коннектора (`connector_image_base`).
+    pub connector_image_base: u8,
+    /// Число кадров коннектора (`connector_image_count`).
+    pub connector_image_count: u8,
+    /// Смещение башни для каждого из 8 углов корпуса; нули, если блок короче.
+    pub angle_offsets: [(i8, i8); 8],
+}
+
+impl FrameInfo {
+    /// Размер минимального блока (8 счётчиков).
+    pub const HEADER_SIZE: usize = 8;
+    /// Размер блока с `angle_offsets` (8 счётчиков + 8 пар).
+    pub const TURRET_SIZE: usize = 24;
+
+    /// Разбирает ресурс `D_*`; `None`, если он короче 8 байт.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < Self::HEADER_SIZE {
+            return None;
+        }
+
+        let mut angle_offsets = [(0i8, 0i8); 8];
+
+        if bytes.len() >= Self::TURRET_SIZE {
+            for (index, offset) in angle_offsets.iter_mut().enumerate() {
+                offset.0 = bytes[Self::HEADER_SIZE + index * 2] as i8;
+                offset.1 = bytes[Self::HEADER_SIZE + index * 2 + 1] as i8;
+            }
+        }
+
+        Some(Self {
+            image_base: bytes[0],
+            image_count: bytes[1],
+            turret_image_base: bytes[2],
+            turret_image_count: bytes[3],
+            firing_image_base: bytes[4],
+            firing_image_count: bytes[5],
+            connector_image_base: bytes[6],
+            connector_image_count: bytes[7],
+            angle_offsets,
+        })
+    }
+
+    /// `angle_offsets[body_angle]` — куда рисовать башню (`angle` 0..7).
+    pub fn turret_offset(&self, body_angle: u8) -> (i32, i32) {
+        let (x, y) = self.angle_offsets[usize::from(body_angle & 7)];
+
+        (i32::from(x), i32::from(y))
+    }
+
+    /// Индекс кадра башни: `turret_image_base + turret_angle` (0..7).
+    pub fn turret_frame_index(&self, turret_angle: u8) -> usize {
+        usize::from(self.turret_image_base) + usize::from(turret_angle & 7)
+    }
+}
+
 /// Кадр тени: маска затемнения вместо пикселей (§4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowFrame {
@@ -1135,5 +1216,45 @@ mod tests {
             decode_sprite(&bytes),
             Err(SpriteError::PixelPayloadTruncated { .. })
         ));
+    }
+
+    /// `D_TANK` из `MAX.RES` — 24 байта: корпус 0..7, башня 8..15,
+    /// выстрел 16..23 и `angle_offsets` (те же числа, что читает C++).
+    #[test]
+    fn frame_info_decodes_tank_data() {
+        let bytes = [
+            0u8, 8, 8, 8, 16, 8, 0, 0, // счётчики
+            0, 7, 0xFF, 7, 0xF8, 0, 0xF8, 0xF9, // (0,7) (-7,7) (-8,0) (-8,-7)
+            0, 0xF8, 6, 0xF8, 7, 0, 7, 6, // (0,-8) (6,-8) (7,0) (7,6)
+        ];
+        let info = FrameInfo::decode(&bytes).expect("D_TANK");
+
+        assert_eq!(info.image_base, 0);
+        assert_eq!(info.image_count, 8);
+        assert_eq!(info.turret_image_base, 8);
+        assert_eq!(info.turret_image_count, 8);
+        assert_eq!(info.firing_image_base, 16);
+        assert_eq!(info.firing_image_count, 8);
+        assert_eq!(info.turret_frame_index(0), 8);
+        assert_eq!(info.turret_frame_index(7), 15);
+        assert_eq!(info.turret_offset(0), (0, 7));
+        assert_eq!(info.turret_offset(2), (-8, 0));
+        assert_eq!(info.turret_offset(7), (7, 6));
+        // `angle` маскируется в 0..7, как в C++ (`image_index & 0x07`).
+        assert_eq!(info.turret_offset(10), (-8, 0));
+    }
+
+    /// 8-байтовый ресурс (`D_FIRING`) — без башни/смещений (`angle_offsets` = 0).
+    #[test]
+    fn frame_info_without_offsets_is_valid() {
+        let info = FrameInfo::decode(&[0, 16, 0, 0, 16, 16, 0, 0]).expect("D_FIRING");
+
+        assert_eq!(info.image_count, 16);
+        assert_eq!(info.turret_image_count, 0);
+        assert_eq!(info.angle_offsets, [(0, 0); 8]);
+        assert_eq!(info.turret_offset(2), (0, 0));
+        // Пехота: `image_count` = 200 (0xC8), C++ читает int8 → -56.
+        assert_eq!(FrameInfo::decode(&[0, 200, 0, 0, 0, 0, 0, 0]).unwrap().image_count, 200);
+        assert_eq!(FrameInfo::decode(&[0, 1, 2]), None, "короче заголовка");
     }
 }

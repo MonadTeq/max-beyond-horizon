@@ -40,6 +40,7 @@
     golden `golden/cargo/cargo-description.png`, переснятые
     `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` и `golden/mobilize.png`
     (0 дрейфа).
+
 - **P7 — предвысадочный экран мобилизации доведён до паритета с `CargoMenu`**
   (`docs/development/PLAN-production.md`, `max_app/src/mobilize.rs`):
   - **Изображения юнитов в списках.** Строки `Available`/`Purchased` рисуют
@@ -79,6 +80,24 @@
     `assert cargo-mode/cargo-types/cargo-credits`; golden-кадры
     `golden/cargo/{cargo-buy,cargo-upgrade,cargo-upgraded}.png` и обновлённый
     `golden/mobilize.png`; `ci.sh`/GitHub CI прогоняют `cargo-full` и его golden.
+
+### Исправлено
+
+- **Мобилизация: у танка, мобильной зенитки и эскорта на иконках списков
+  пропадала башня** (`max_app/src/mobilize.rs`, `max_app/src/assets.rs`,
+  `max_assets/src/sprite.rs`). В C++ `ReportStats_DrawListItemIcon` для
+  `TURRET_SPRITE`/`SPINNING_TURRET` рисует **второй кадр** `I_*` со сдвигом
+  `angle_offsets[2] >> divisor` (divisor 1 — мобильные, 2 — стационарные).
+  Теперь `D_*` (`Unit::GetFrameInfo()`) разбирается в `FrameInfo`, иконка
+  хранит корпус (кадр 0) и башню (кадр 1), `draw_icon` накладывает её.
+  Тот же `FrameInfo` подключён к карте (`render.rs`), портрету HUD
+  (`panels.rs`), меню апгрейдов и `BuildMenu`: башня рисуется отдельным кадром
+  `turret_image_base + turret_angle` со сдвигом `angle_offsets[body_angle]`
+  (`SpriteRenderer::draw_turret_scaled`) — как `UnitInfo::RenderWithConnectors`.
+  Тесты: `FrameInfo::decode` (D_TANK/D_FIRING), `turret_icons_carry_*`,
+  `turret_is_painted_over_the_tank_icon_in_the_list`,
+  `sprite_renderer_draws_the_tank_turret_as_a_separate_frame`; golden
+  `cargo-*`/`mobilize` пересняты (0 дрейфа).
 
 ## [1.1.0] — 2026-11-16
 

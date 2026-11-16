@@ -11,13 +11,15 @@ use std::path::{Path, PathBuf};
 
 use max_app::assets::Assets;
 use max_app::mobilize::{
-    upgrade_types, Mobilization, CARGO_BAR, DESCRIPTION, GOLD_BAR, LIST_UP, PURCHASE_UNITS, STATS,
-    STAT_ICON_X, TOGGLE_BUTTON, UPGRADE_COST_LIMIT,
+    upgrade_types, Mobilization, AVAILABLE_AREA, CARGO_BAR, DESCRIPTION, GOLD_BAR, LIST_UP,
+    PURCHASE_UNITS, STATS, STAT_ICON_X, TOGGLE_BUTTON, UPGRADE_COST_LIMIT,
 };
 use max_app::AppConfig;
 use max_core::enums::{TeamClan, UnitType};
 use max_core::team::TeamId;
 use max_render::buffer::{PixelRect, RgbaBuffer};
+use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
+use max_render::sprite_atlas::SpriteRenderer;
 use max_render::text::GnwFontId;
 
 fn root() -> PathBuf {
@@ -105,6 +107,105 @@ fn cargo_assets_carry_icons_for_every_purchase_type() {
 }
 
 #[test]
+fn turret_icons_carry_the_second_frame_and_d2_offset() {
+    let Some(assets) = assets() else {
+        return;
+    };
+    let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
+
+    // `ReportStats_DrawListItemIcon`: кадр 0 — корпус, кадр 1 — башня,
+    // сдвиг — `angle_offsets[2]` ресурса `D_*` (см. `units.cpp`).
+    let tank = cargo.icon(UnitType::Tank).expect("I_TANK");
+    assert!(tank.has_turret(), "танк: отдельный кадр башни");
+    assert_eq!(tank.turret_offset, (-8, 0), "D_TANK angle_offsets[2]");
+    let turret = tank.turret.as_ref().unwrap();
+    assert_eq!((turret.width, turret.height), (38, 24));
+
+    let flak = cargo.icon(UnitType::MobileAntiAir).expect("I_AA");
+    assert!(flak.has_turret(), "мобильная зенитка");
+    assert_eq!(flak.turret_offset, (11, -1), "D_SP_FLK angle_offsets[2]");
+
+    let escort = cargo.icon(UnitType::FastBoat).expect("I_ESCORT");
+    assert!(escort.has_turret(), "эскорт");
+    assert_eq!(escort.turret_offset, (4, 0), "D_ESCORT angle_offsets[2]");
+
+    // Без башни: у Constructor в `I_CONTRC` один кадр.
+    assert!(!cargo.icon(UnitType::Constructor).unwrap().has_turret());
+    // Стационарная турель тоже двухкадровая (`I_GUNTUR`).
+    assert!(cargo.icon(UnitType::GunTurret).unwrap().has_turret());
+}
+
+#[test]
+fn turret_is_painted_over_the_tank_icon_in_the_list() {
+    let Some(assets) = assets() else {
+        return;
+    };
+    let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
+
+    // Тот же кадр, но у иконки танка убран второй кадр: разница в строке
+    // Tank — это ровно башня.
+    let mut without_turret = assets.clone();
+    if let Some(cargo) = without_turret.cargo.as_mut() {
+        for (unit, icon) in cargo.icons.iter_mut() {
+            if *unit == UnitType::Tank {
+                icon.turret = None;
+            }
+        }
+    }
+
+    let (_, with) = draw(&mobilization, &assets);
+    let (_, without) = draw(&mobilization, &without_turret);
+
+    // `CargoMenu::unit_types1`: Tank — 6-я строка (индекс 5).
+    let tank_row = PixelRect::new(482, 80 + 5 * 32, 32, 32);
+    let turret_pixels = changed(&without, &with, tank_row);
+    assert!(turret_pixels > 20, "башня танка в списке: {turret_pixels} px");
+
+    // Соседняя строка не меняется — рисуется только вторая иконка.
+    let constructor_row = PixelRect::new(482, 80, 32, 32);
+    assert_eq!(changed(&without, &with, constructor_row), 0);
+}
+
+#[test]
+fn sprite_renderer_draws_the_tank_turret_as_a_separate_frame() {
+    let Some(assets) = assets() else {
+        return;
+    };
+    let sprite = assets.sprite(UnitType::Tank).expect("TANK");
+    let body = sprite.frame_for(0, 0).expect("корпус");
+    let turret = sprite.turret_frame(0).expect("башня");
+    let colors = TeamColors::ALL[TeamId::RED.0 as usize];
+    let renderer = SpriteRenderer::new(
+        &assets.palette,
+        &assets.brightness,
+        ColorLut::for_team(colors),
+        FULL_BRIGHTNESS_LEVEL,
+    );
+
+    let mut with = RgbaBuffer::new(160, 160);
+    let mut without = RgbaBuffer::new(160, 160);
+    renderer.draw_unit(&mut with, body, None, (80, 80), (0, 0));
+    renderer.draw_unit(&mut without, body, None, (80, 80), (0, 0));
+    renderer.draw_turret_scaled(
+        &mut with,
+        turret,
+        None,
+        (80, 80),
+        (0, 0),
+        sprite.turret_offset(0),
+        64,
+    );
+
+    // `angle_offsets[0]` у `D_TANK` = (0, 7): башня смещается вниз и добавляет
+    // непрозрачные пиксели поверх корпуса.
+    assert_eq!(sprite.turret_offset(0), (0, 7));
+    assert!(
+        changed(&without, &with, PixelRect::new(0, 0, 160, 160)) > 100,
+        "кадр башни рисуется отдельно"
+    );
+}
+
+#[test]
 fn purchase_screen_draws_icons_bars_and_buttons() {
     let Some(assets) = assets() else {
         return;
@@ -165,16 +266,16 @@ fn upgrade_screen_shows_more_of_the_frame() {
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
     mobilization.select_type(5); // Tank — 4 военных апгрейда
     let (background, buy_frame) = draw(&mobilization, &assets);
-    let buy_changed = changed(&background, &buy_frame, PixelRect::new(0, 0, 640, 480));
 
     mobilization.toggle_mode();
     assert!(mobilization.types.len() > PURCHASE_UNITS.len());
     let (_, upgrade_frame) = draw(&mobilization, &assets);
-    let upgrade_changed = changed(&background, &upgrade_frame, PixelRect::new(0, 0, 640, 480));
 
+    // Список модернизации — другой набор строк (62 типа против 15), а не
+    // просто «больше пикселей»: иконки обеих страниц теперь с башнями.
     assert!(
-        upgrade_changed > buy_changed,
-        "список модернизации плотнее: {upgrade_changed} vs {buy_changed}"
+        changed(&buy_frame, &upgrade_frame, AVAILABLE_AREA) > 1_000,
+        "список модернизации отличается от списка покупки"
     );
 
     // Фильтры домена в режиме модернизации рисуются активными (`_D`).

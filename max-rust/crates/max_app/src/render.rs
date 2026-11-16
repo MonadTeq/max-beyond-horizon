@@ -23,6 +23,8 @@ use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
+use max_core::enums::unit_flags;
+
 use crate::panels::UiPalette;
 use crate::App;
 /// Диагностика одного кадра.
@@ -268,17 +270,35 @@ impl App {
                     level,
                 );
 
+                let shadow_offset = (
+                    i32::from(unit.shadow_offset.x),
+                    i32::from(unit.shadow_offset.y),
+                );
+
                 renderer.draw_unit_scaled(
                     frame,
                     sprite_frame,
                     shadow,
                     anchor,
-                    (
-                        i32::from(unit.shadow_offset.x),
-                        i32::from(unit.shadow_offset.y),
-                    ),
+                    shadow_offset,
                     viewport.zoom(),
                 );
+
+                // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
+                // `angle_offsets[angle]` (`UnitInfo::RenderWithConnectors`).
+                if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+                    if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
+                        renderer.draw_turret_scaled(
+                            frame,
+                            turret,
+                            sprite.turret_shadow(unit.turret_angle),
+                            anchor,
+                            shadow_offset,
+                            sprite.turret_offset(unit.angle),
+                            viewport.zoom(),
+                        );
+                    }
+                }
 
                 Some(())
             });

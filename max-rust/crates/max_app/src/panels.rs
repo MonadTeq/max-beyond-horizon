@@ -27,6 +27,7 @@
 //! проверяет панели (включая End Turn, который намеренно заходит на карту).
 
 use max_assets::image::SimpleImage;
+use max_core::enums::unit_flags;
 use max_core::game::GameState;
 use max_core::unit::UnitInfo;
 use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED};
@@ -790,6 +791,25 @@ impl Panels {
                     i32::from(unit.shadow_offset.y),
                 ),
             );
+
+            // Башня/пушка отдельным кадром поверх корпуса
+            // (`UnitInfo::RenderWithConnectors`); масштаб 64 — 1:1, как у корпуса.
+            if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+                if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
+                    renderer.draw_turret_scaled(
+                        &mut portrait,
+                        turret,
+                        sprite.turret_shadow(unit.turret_angle),
+                        anchor,
+                        (
+                            i32::from(unit.shadow_offset.x),
+                            i32::from(unit.shadow_offset.y),
+                        ),
+                        sprite.turret_offset(unit.angle),
+                        64,
+                    );
+                }
+            }
 
             let center_x = area.width / 2;
             let center_y = area.height / 2;

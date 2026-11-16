@@ -28,7 +28,7 @@ use serde::Deserialize;
 /// JSON-ресурс с 93 записями (сгенерирован из `SC_UNITS` + `language.json`).
 pub const CARGO_UNIT_DATA_JSON: &str = include_str!("../data/cargo_unit_data.json");
 
-/// Одна запись `SC_UNITS`: токен C++, портрет и описание (en-US).
+/// Одна запись `SC_UNITS`: токен C++, портрет, кадры башни и описание (en-US).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CargoUnitData {
     /// C++-токен ресурса (`TANK`, `LANDPLT`, …) — для сверки порядка.
@@ -37,6 +37,9 @@ pub struct CargoUnitData {
     pub portrait: Option<String>,
     /// Текст описания (`Unit::GetDescription`); пусто, если в оригинале нет.
     pub description: String,
+    /// Ресурс `D_*` — `Unit::GetFrameInfo()`: базы кадров корпуса/башни,
+    /// число кадров и `angle_offsets` для наложения башни.
+    pub data: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +81,12 @@ pub fn unit_description(unit: UnitType) -> &'static str {
 /// `Unit::GetPortrait()` — имя ресурса `P_*` (big image 300×240).
 pub fn unit_portrait(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.portrait.as_deref())
+}
+
+/// `Unit::GetFrameInfo()` — имя ресурса `D_*` (кадры корпуса/башни,
+/// `angle_offsets`); `None` — `INVALID_ID`.
+pub fn unit_frame_data(unit: UnitType) -> Option<&'static str> {
+    unit_data(unit).and_then(|data| data.data.as_deref())
 }
 
 /// Разобрались ли все [`UNIT_END`] записей (диагностика/тесты).
@@ -166,11 +175,29 @@ mod tests {
         }
     }
 
+    /// `Unit::GetFrameInfo()`: у всех 93 типов есть ресурс `D_*`; у танка,
+    /// мобильной зенитки и эскорта — отдельная башня.
+    #[test]
+    fn frame_data_covers_all_units() {
+        let with_data = (0..UNIT_END)
+            .map(|index| UnitType::try_from(index).unwrap())
+            .filter(|unit| unit_frame_data(*unit).is_some())
+            .count();
+        assert_eq!(with_data, 93, "SC_UNITS: 93 ресурса D_*");
+
+        assert_eq!(unit_frame_data(UnitType::Tank), Some("D_TANK"));
+        assert_eq!(unit_frame_data(UnitType::MobileAntiAir), Some("D_SP_FLK"));
+        assert_eq!(unit_frame_data(UnitType::FastBoat), Some("D_ESCORT"));
+        assert_eq!(unit_frame_data(UnitType::GunTurret), Some("D_FIXED"));
+        assert_eq!(unit_frame_data(UnitType::Scanner), Some("D_SCANNR"));
+    }
+
     /// Таблица непустая даже при сбое JSON — но тогда `is_loaded()` ложен.
     #[test]
     fn json_resource_is_the_generated_file() {
         assert!(CARGO_UNIT_DATA_JSON.contains("\"COMMTWR\""));
         assert!(CARGO_UNIT_DATA_JSON.contains("\"P_CONTRC\""));
+        assert!(CARGO_UNIT_DATA_JSON.contains("\"D_TANK\""));
         assert!(CARGO_UNIT_DATA_JSON.len() > 15_000);
     }
 }

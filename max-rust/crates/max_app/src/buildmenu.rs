@@ -876,6 +876,20 @@ impl BuildMenu {
                     (0, 0),
                     128,
                 );
+
+                // Башня/пушка отдельным кадром (как на карте): C++
+                // `GetPortrait()` — big image, где техника уже с башней.
+                if let Some(turret) = sprite.turret_frame(0) {
+                    renderer.draw_turret_scaled(
+                        frame,
+                        turret,
+                        None,
+                        (11 + 150, 13 + 120),
+                        (0, 0),
+                        sprite.turret_offset(0),
+                        128,
+                    );
+                }
                 painted += 1;
             }
         }

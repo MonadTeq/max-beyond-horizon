@@ -19,6 +19,7 @@ use max_assets::{
     decode_shadow, decode_sprite, BigImage, CursorSet, ResArchive, ResourceMarkers, ShadowSheet,
     SpriteSheet, WrlMap,
 };
+use max_assets::sprite::{FrameInfo, ShadowFrame, SpriteFrame};
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
 
@@ -336,6 +337,9 @@ pub struct LoadedSprite {
     pub sheet: SpriteSheet,
     /// Кадры тени (затемнение уже нарисованной карты).
     pub shadow: Option<ShadowSheet>,
+    /// `Unit::GetFrameInfo()` из ресурса `D_*`: база кадров башни и
+    /// `angle_offsets` для её наложения (`None` — ресурса нет/не разобрался).
+    pub frame_info: Option<FrameInfo>,
 }
 
 impl LoadedSprite {
@@ -371,6 +375,44 @@ impl LoadedSprite {
         let index = base.saturating_add(usize::from(angle % 8)).min(last);
 
         shadow.frame(index).or_else(|| shadow.frame(0))
+    }
+
+    /// Кадр башни/пушки — `turret_image_base + turret_angle`
+    /// (`Unit::GetFrameInfo()`; `UnitInfo::RenderWithConnectors`).
+    ///
+    /// `None`, если у типа нет `D_*` или кадров башни.
+    pub fn turret_frame(&self, turret_angle: u8) -> Option<&SpriteFrame> {
+        let info = self.frame_info?;
+
+        if info.turret_image_count == 0 {
+            return None;
+        }
+
+        let index = info.turret_frame_index(turret_angle);
+
+        self.sheet.frame(index)
+    }
+
+    /// Кадр тени башни (`ShadowSheet`, тот же индекс, что у спрайта).
+    pub fn turret_shadow(&self, turret_angle: u8) -> Option<&ShadowFrame> {
+        let info = self.frame_info?;
+        let shadow = self.shadow.as_ref()?;
+
+        if info.turret_image_count == 0 {
+            return None;
+        }
+
+        let index = info.turret_frame_index(turret_angle);
+        let last = shadow.len().checked_sub(1)?;
+
+        shadow.frame(index.min(last))
+    }
+
+    /// Куда рисовать башню относительно якоря корпуса:
+    /// `angle_offsets[body_angle]` (`UnitInfo::UpdateTurretAngle`).
+    pub fn turret_offset(&self, body_angle: u8) -> (i32, i32) {
+        self.frame_info
+            .map_or((0, 0), |info| info.turret_offset(body_angle))
     }
 }
 
@@ -562,12 +604,17 @@ impl Assets {
                 }
             }
 
+            let frame_info = crate::cargo_unit_data::unit_frame_data(unit_type)
+                .and_then(|name| max_res.read(name).ok())
+                .and_then(|bytes| FrameInfo::decode(&bytes));
+
             sprites.push(LoadedSprite {
                 unit_type,
                 sprite_name: sprite_name.to_string(),
                 shadow_name: loaded_shadow_name,
                 sheet,
                 shadow,
+                frame_info,
             });
         }
 
