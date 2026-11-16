@@ -20,6 +20,10 @@ anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Данные `CargoMenu` (93 описания/портрета, `data/cargo_unit_data.json`):
+# читаются `include_str!` + serde_json (как ресурс, а не код).
+serde.workspace = true
+serde_json.workspace = true
 # M-NET-доводки: JoinAttemptError (ретрай первого подключения).
 thiserror = "2"
 

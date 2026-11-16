@@ -206,6 +206,15 @@ pub enum Assertion {
     CargoTypes(Cmp, u32),
     /// `assert cargo-credits>=N`: остаток кредитов в `CargoMenu`.
     CargoCredits(Cmp, u32),
+    /// `assert cargo-description>=N`: длина описания выбранного типа
+    /// (`Unit::GetDescription()`, символы).
+    CargoDescription(Cmp, u32),
+    /// `assert cargo-stat-icons>=N`: число pips-иконок в таблице статистики
+    /// выбранного типа (`UnitStats_DrawStats`).
+    CargoStatIcons(Cmp, u32),
+    /// `assert cargo-portrait=yes|no`: есть ли у выбранного типа big image
+    /// портрета `P_*` (`Unit::GetPortrait()`).
+    CargoPortrait(bool),
 }
 
 /// Куда идти высокоуровневой командой `menu`.
@@ -796,6 +805,21 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             operator,
             parse_u32(value, "assert cargo-credits")?,
         )),
+        "cargo-description" => Ok(Assertion::CargoDescription(
+            operator,
+            parse_u32(value, "assert cargo-description")?,
+        )),
+        "cargo-stat-icons" => Ok(Assertion::CargoStatIcons(
+            operator,
+            parse_u32(value, "assert cargo-stat-icons")?,
+        )),
+        "cargo-portrait" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "1" => Ok(Assertion::CargoPortrait(true)),
+            "no" | "false" | "0" => Ok(Assertion::CargoPortrait(false)),
+            other => Err(format!(
+                "assert cargo-portrait: ожидалось yes|no, получено «{other}»"
+            )),
+        },
         "digest" => {
             let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
@@ -1349,7 +1373,10 @@ mod tests {
              mobilize delete\n\
              assert cargo-mode=upgrade\n\
              assert cargo-types=15\n\
-             assert cargo-credits>=100\n",
+             assert cargo-credits>=100\n\
+             assert cargo-description>=100\n\
+             assert cargo-stat-icons>=10\n\
+             assert cargo-portrait=yes\n",
         )
         .expect("P7-команды разбираются");
 
@@ -1415,10 +1442,23 @@ mod tests {
             steps[13].command,
             Command::Assert(Assertion::CargoCredits(Cmp::Ge, 100))
         );
+        assert_eq!(
+            steps[14].command,
+            Command::Assert(Assertion::CargoDescription(Cmp::Ge, 100))
+        );
+        assert_eq!(
+            steps[15].command,
+            Command::Assert(Assertion::CargoStatIcons(Cmp::Ge, 10))
+        );
+        assert_eq!(
+            steps[16].command,
+            Command::Assert(Assertion::CargoPortrait(true))
+        );
 
         assert!(parse_script("mobilize filter water\n").is_err());
         assert!(parse_script("mobilize mode neither\n").is_err());
         assert!(parse_script("assert cargo-mode=neither\n").is_err());
+        assert!(parse_script("assert cargo-portrait=maybe\n").is_err());
     }
 
     #[test]

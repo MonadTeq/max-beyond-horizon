@@ -217,8 +217,28 @@
   `Help` 420,452, `CRGTOG` 542,446, `BLDDES` 292,264, стрелки 471/491,387 и
   327/348,240).
 - [x] Изображения: иконки `I_*` (71 тип) в обеих строках списков, масштаб
-  как C++ (1:2 мобильные / 1:4 стационарные), командная перекраска;
-  портрет — спрайт 2× (как `BuildMenu`/`UpgradeMenu`).
+  как C++ (1:2 мобильные / 1:4 стационарные), командная перекраска.
+- [x] Портрет/описание/статистика 1:1 (доведено после первого прохода P7):
+  - портрет — big image `P_*` 300×240 (`Unit::GetPortrait()`,
+    `WindowManager_LoadBigImage(..., palette_from_image=false)`) в (11,13) с
+    палитрой окна `CARGOPIC`; окно `unit_portrait_window` 280×240 обрезает
+    правые 20 px (C++-порт пишет 300 px в буфер без клипа — отличие
+    задокументировано); 71 ресурс, ленивый кэш `CargoMenuAssets::portraits`;
+  - описание — `Unit::GetDescription()`: `SC_UNITS.description` (hex) →
+    `language.json` en-US; генератор `tools/gen_cargo_unit_data.py` →
+    `max_app/data/cargo_unit_data.json` (93 записи; 69 с текстом, 24 служебных
+    типа без описания в оригинале и недостижимы в `CargoMenu`). Рисуется
+    `Text_TextBox(16,17,280,230, GNW_TEXT_OUTLINE|0xA2)` поверх портрета,
+    шрифт 5, перенос `Text_SplitText`;
+  - статистика — `UnitStats_DrawStats` с сеткой pips: `UnitStats_DrawText`
+    (шаг 19 px, число справа x=24, подпись x=28/клип 49 px, `language.json`:
+    `Attack`/`Shots`/`Range`/`Ammo`/`Cargo`/`Prod.`/`Uses`/`Armor`/`Hits`/
+    `Scan`/`Speed`/`Cost`), `UnitStats_DrawIcons` (`I_HRDATK`/`I_SHOTS`/
+    `I_RANGE`/`I_AMMO`/`I_RAW`/`I_FUEL`/`I_GOLD`/`I_POWER`/`I_LIFE`/`I_ARMOR`/
+    `I_HITS`/`I_SCAN`/`I_SPEED`), дельта апгрейда — пустые иконки той же
+    строки (у `Cost` — `I_GOLDE`) за красной чертой, линии `COLOR_RED`.
+    Условия строк — по базовым значениям, числа — по текущим; `Cost` —
+    `Cargo_GetRawConsumptionRate(Builder_GetBuilderType, 1) * turns`.
 - [x] Индикаторы: полоса золота `VERTGOLD` + число кредитов; cargo-слайдер
   `VERTRAW/FUEL/GOLD` + счётчик `5·N`; 1 кредит за 5 единиц, ёмкость
   `storage/5`, `GOLDTRCK` — 0, бесплатный cargo не снимается.
@@ -234,9 +254,13 @@
 - [x] QA: `cargo-full.qa` (покупка из конца полного списка, cargo,
   модернизация, фильтры, апгрейд, `Done`), новые команды
   `mobilize mode|filter|select|loadout|row|cargo` и проверки
-  `assert cargo-mode/cargo-types/cargo-credits`; golden
-  `golden/cargo/{cargo-buy,cargo-upgrade,cargo-upgraded}.png` +
-  обновлённый `golden/mobilize.png`; `ci.sh`/GitHub CI — новые стадии.
+  `assert cargo-mode/cargo-types/cargo-credits/cargo-description/
+  cargo-stat-icons/cargo-portrait` (Tank — второй кадр с описанием/портретом/
+  статами); golden `golden/cargo/{cargo-buy,cargo-description,cargo-upgrade,
+  cargo-upgraded}.png` + обновлённый `golden/mobilize.png`; `ci.sh`/GitHub CI —
+  новые стадии. Портрет/описание/иконки — frame-тесты
+  `tests/cargo_render.rs` (портрет, описание вкл/выкл, pips, линии, смена
+  типа) и UNIT-тесты `mobilize`/`cargo_unit_data`.
 - [x] Артефакты и документация: Windows UI (MSVC+vcpkg) и headless (mingw)
   пересобраны; `CHANGELOG.md`, `docs/analysis/visual-1to1-status.md`,
   `suite/03-single-player.md` (TC-0324…0328), `suite/09-visual-1to1.md`

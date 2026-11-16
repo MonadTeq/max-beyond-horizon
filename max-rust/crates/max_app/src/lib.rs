@@ -39,6 +39,7 @@
 pub mod assets;
 pub mod audio;
 pub mod buildmenu;
+pub mod cargo_unit_data;
 pub mod chrome;
 pub mod cursor;
 pub mod hotseat;

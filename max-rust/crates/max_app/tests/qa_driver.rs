@@ -205,6 +205,7 @@ fn cargo_full_script_passes_through_the_real_input_path() {
 
     for name in [
         "cargo-buy",
+        "cargo-description",
         "cargo-upgrade",
         "cargo-upgraded",
     ] {

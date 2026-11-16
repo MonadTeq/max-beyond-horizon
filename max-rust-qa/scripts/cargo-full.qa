@@ -9,6 +9,9 @@
 #   прокрутка стрелкой `BLDDWN`);
 # * покупка юнита из конца списка (Gold Truck, 14-я строка) и из середины
 #   (Mine Layer, 9-я): кредиты списываются, «Purchased» растёт;
+# * описание (`GetDescription()`), портрет `P_*` и сетка иконок статистики
+#   (`UnitStats_DrawStats`): `assert cargo-description/cargo-portrait/
+#   cargo-stat-icons`, смена типа (Tank) перерисовывает всё это;
 # * cargo-слайдер (1 кредит за 5 единиц): `mobilize cargo 4` грузит 20 единиц в
 #   купленный Constructor;
 # * переключатель `CRGTOG` → режим модернизации: полный отфильтрованный список
@@ -18,9 +21,9 @@
 #   стартового, а у высаженного конструктора броня +1 (проверяется UNIT-тестом
 #   `start_phases::mobilization_upgrades_reach_the_deployed_units`).
 #
-# Кадры `cargo-buy` (покупка), `cargo-upgrade` (модернизация),
-# `cargo-upgraded` (после апгрейда и загрузки cargo) — golden-эталоны
-# (`max-rust-qa/golden/cargo`).
+# Кадры `cargo-buy` (покупка), `cargo-description` (описание/портрет/статы
+# Tank), `cargo-upgrade` (модернизация), `cargo-upgraded` (после апгрейда и
+# загрузки cargo) — golden-эталоны (`max-rust-qa/golden/cargo`).
 
 # --- Главное меню ---------------------------------------------------------
 shot main-menu
@@ -50,6 +53,20 @@ assert cargo-mode=buy
 assert cargo-types=15
 assert cargo-credits=150
 shot cargo-buy
+
+# --- Описание, портрет и иконки статистики (как C++ DrawUnitInfo/DrawUnitStats)
+# Constructor: `GetDescription()` из language.json, big image `P_CONTRC`,
+# pips строк Cargo/Uses/Armor/Hits/Scan/Speed/Cost (UnitStats_DrawStats).
+assert cargo-description>=100
+assert cargo-portrait=yes
+assert cargo-stat-icons>=20
+# Второй тип с другим портретом и военными строками (Tank, `P_TANK`):
+# описание и сетка иконок обязаны перерисоваться вместе с выбором.
+mobilize select 5
+assert cargo-description>=100
+assert cargo-portrait=yes
+assert cargo-stat-icons>=20
+shot cargo-description
 
 # Gold Truck — 14-я строка списка: скрипт прокручивает список вниз, как игрок,
 # и покупает (3 * 4 = 12 кредитов).

@@ -1767,6 +1767,45 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::CargoDescription(cmp, expected) => {
+                let actual = self
+                    .mobilization()
+                    .map(|m| m.description().chars().count() as i64);
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(actual, i64::from(expected))),
+                    format!("cargo-description{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("cargo-description={actual}"),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
+            Assertion::CargoStatIcons(cmp, expected) => {
+                let actual = self.mobilization().map(|m| m.stats_icon_count() as i64);
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(actual, i64::from(expected))),
+                    format!("cargo-stat-icons{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("cargo-stat-icons={actual}"),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
+            Assertion::CargoPortrait(expected) => {
+                let actual = self.mobilization().map(|m| m.has_portrait());
+
+                self.expect(
+                    actual == Some(expected),
+                    format!("cargo-portrait={}", if expected { "yes" } else { "no" }),
+                    match actual {
+                        Some(true) => "cargo-portrait=yes".to_string(),
+                        Some(false) => "cargo-portrait=no".to_string(),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
         }
     }
 

@@ -2,6 +2,44 @@
 
 ### Добавлено
 
+- **P7 — мобилизация: портрет `P_*` 1:1, описания юнитов и сетка иконок
+  статистики** (`max_app/src/mobilize.rs`, `max_app/src/cargo_unit_data.rs`,
+  `docs/development/PLAN-production.md`):
+  - **Описания.** Источник — `SC_UNITS` (`description` → hex-ключ) +
+    `assets/language.json` (en-US), как `Unit::GetDescription()`. Генератор
+    `max-rust/tools/gen_cargo_unit_data.py` расшифровывает XOR-ресурс и
+    складывает 93 записи в `max_app/data/cargo_unit_data.json` (читается
+    `include_str!` + serde_json). Текстов 69: у 24 служебных типов (обломки,
+    взрывы, снаряды, `HARVSTER`, `WALDO`) описания в оригинале нет, но они и
+    не достижимы в `CargoMenu` (`IsUnitFiltered`). Рисуется как
+    `AbstractUpgradeMenu::DrawUnitInfo`: `Text_TextBox(16,17,280,230,
+    GNW_TEXT_OUTLINE | 0xA2)` поверх портрета, шрифт 5, перенос
+    `Text_SplitText` (ширина 280, 20 строк, интервал 11 px, чёрная обводка
+    `Text_BlitTTF`).
+  - **Портрет.** C++ рисует `Unit::GetPortrait()` — big image `P_*` 300×240,
+    `WindowManager_LoadBigImage(..., palette_from_image=false)` 1:1 в (11,13);
+    у нас палитра окна `CARGOPIC`, обрезка окном `unit_portrait_window`
+    280×240 (C++-порт пишет 300 px без клипа — 20 правых пикселей залезают на
+    фон). 71 ресурс `P_*`, ленивый кэш `CargoMenuAssets::portraits`.
+  - **Иконки статистики.** `UnitStats_DrawStats` 1:1: строки 19 px, число по
+    правому краю x=24 (`ReportStats_DrawNumber`), подпись x=28 (клип 49 px) из
+    `language.json` (`Attack`, `Shots`, `Range`, `Ammo`, `Cargo`, `Prod.`,
+    `Uses`, `Armor`, `Hits`, `Scan`, `Speed`, `Cost`), pips
+    `UnitStats_DrawIcons` из `I_HRDATK`/`I_SHOTS`/`I_RANGE`/`I_AMMO`/`I_RAW`/
+    `I_FUEL`/`I_GOLD`/`I_POWER`/`I_LIFE`/`I_ARMOR`/`I_HITS`/`I_SCAN`/`I_SPEED`,
+    дельта апгрейда — пустые иконки той же строки (у `Cost` — `I_GOLDE`) за
+    красной чертой, красные линии под строками. Строка `Cost` — ставка
+    строителя (`Builder_GetBuilderType`) × ходы, а не цена покупки.
+  - **Тесты.** 4 UNIT-теста `cargo_unit_data` (93 записи, 71 портрет, 69
+    описаний, все открываемые типы описаны), 6 UNIT-тестов `mobilize`
+    (Cargo/Uses/`Prod.`, `min(ROUNDS, AMMO)`, ставка строителя, дельта pips),
+    frame-тесты `tests/cargo_render.rs` (портрет, описание вкл/выкл, pips,
+    линии, смена типа), `qa_driver` — кадр `cargo-description`.
+  - **QA.** `assert cargo-description/cargo-stat-icons/cargo-portrait`;
+    `cargo-full.qa` открывает Tank и проверяет описание/портрет/иконки; новый
+    golden `golden/cargo/cargo-description.png`, переснятые
+    `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` и `golden/mobilize.png`
+    (0 дрейфа).
 - **P7 — предвысадочный экран мобилизации доведён до паритета с `CargoMenu`**
   (`docs/development/PLAN-production.md`, `max_app/src/mobilize.rs`):
   - **Изображения юнитов в списках.** Строки `Available`/`Purchased` рисуют
@@ -33,8 +71,8 @@
     C++-генератором `tools/cargo_vectors` (через `tools/gen_cargo_data.py`):
     15 цен покупки, 93 цены списка, 7 наборов списка модернизации (фильтры),
     строки и первые стоимости апгрейдов всех 93 типов; `tests/cargo_render.rs` —
-    отрисовка (иконки, бары, стрелки, `CRGTOG`, прокрутка); 19 UNIT-тестов
-    `mobilize`; `start_phases::mobilization_upgrades_reach_the_deployed_units`.
+    отрисовка (иконки, бары, стрелки, `CRGTOG`, прокрутка); 25 UNIT-тестов
+    `mobilize` + 4 `cargo_unit_data`; `start_phases::mobilization_upgrades_reach_the_deployed_units`.
   - **QA.** Новый сценарий `cargo-full.qa` (покупка из конца полного списка,
     cargo, переключение в модернизацию, фильтры, апгрейд, `Done`), команды
     `mobilize mode|filter|select|loadout|row|cargo`, проверки

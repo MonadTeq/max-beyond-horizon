@@ -746,6 +746,8 @@ dependencies = [
  "max_net",
  "max_render",
  "rodio",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

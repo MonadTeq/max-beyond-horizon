@@ -24,6 +24,7 @@
 //! | Область | Координаты | Источник |
 //! |---|---|---|
 //! | Портрет | (11,13) 280×240 | `unit_portrait_window` |
+//! | Описание | (11+16,13+17) 280×230 | `Text_TextBox` поверх портрета |
 //! | Иконка лота / список `Purchased` | (337,45) 118×185, строки 32 px (5) | `wininfo2` |
 //! | Список `Available` | (482,80) 123×290, строки 32 px (9) | `wininfo1` |
 //! | Колонка цен списка | x 610..625, по правому краю 625 | `PurchaseTypeSelector` |
@@ -64,12 +65,23 @@
 //! * Иконки списков — ресурсы `I_*` (спрайт-формат), но без второго кадра
 //!   турелей: в C++ он смещается `angle_offsets[2]` из `.SPW`-заголовка,
 //!   которого нет в разобранном [`max_assets::sprite::SpriteSheet`].
-//! * «Портрет» — спрайт юнита 2× (как `BuildMenu`/`UpgradeMenu`), а не big
-//!   image `P_*` и не FLIC: описания юнитов (`_(57a6)`) в клиенте нет, кнопка
-//!   `BLDDES` переключает флаг, но текста не рисует.
-//! * `UnitStats_DrawStats` (сетка иконок/полос) заменён текстовой таблицей тех
-//!   же строк в том же порядке/шаге 19 px: значения и условия блоков C++,
-//!   картинка — нет.
+//! * Портрет — big image `P_*` 300×240 1:1, как `WindowManager_LoadBigImage`
+//!   (`palette_from_image=false`, `ulx/uly` из ресурса = 0): индексы читаются
+//!   палитрой окна `CARGOPIC`. C++-порт пишет 300 px в буфер диалога **без
+//!   клипа**, поэтому его 20 правых пикселей залезают на фон; здесь портрет
+//!   обрезается окном `unit_portrait_window` (280×240) — как окно оригинала.
+//! * Описание — `Unit::GetDescription()`: тексты `language.json` (en-US) по
+//!   hex-ключу из `SC_UNITS`, 93 записи в `data/cargo_unit_data.json`
+//!   ([`crate::cargo_unit_data`]). Рисуется поверх портрета
+//!   (`Text_TextBox(16,17,280,230, GNW_TEXT_OUTLINE|0xA2)`, шрифт 5, перенос
+//!   `Text_SplitText`). У 24 служебных типов (обломки, взрывы, снаряды,
+//!   `HARVSTER`, `WALDO`) описания в оригинале нет, но они и не достижимы в
+//!   `CargoMenu` (нет `UPGRADABLE`/не строятся).
+//! * `UnitStats_DrawStats` — 1:1: сетка иконок `I_*` (`I_HRDATK`, `I_SHOTS`,
+//!   `I_RANGE`, `I_AMMO`, `I_RAW`/`I_FUEL`/`I_GOLD`, `I_POWER`, `I_LIFE`,
+//!   `I_ARMOR`, `I_HITS`, `I_SCAN`, `I_SPEED`, `I_GOLD`/`I_GOLDE`), шаг pips
+//!   `UnitStats_DrawIcons`, красные линии строк, числа/подписи
+//!   `ReportStats_DrawNumber`/`Text_Blit` (x=24/28, клип 49 px).
 //! * Числа `Cost`/`Credit`/`Cargo` под списками: в C++-порте нарисованы только
 //!   подписи (числа потеряны при портировании), здесь значения выводятся над
 //!   подписями (как в оригинальной игре).
@@ -78,11 +90,16 @@
 //! * ИИ по-прежнему получает стандартную загрузку `SC_L0001`
 //!   (`RollTeamMissionSupplies` не портирован) — это не менялось.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use max_assets::image::{BigImage, SimpleImage};
+use max_assets::res::ResArchive;
 use max_assets::sprite::{decode_sprite, SpriteFrame};
 use max_core::access::unit_type_flags;
 use max_core::deploy::{TeamSupply, DEFAULT_MISSION_LOADOUT};
 use max_core::enums::{unit_flags, TeamClan, UnitType, UNIT_END};
+use max_core::production::builder_type;
 use max_core::research::UpgradeQuote;
 use max_core::team::TeamId;
 use max_core::unit_values::{
@@ -91,15 +108,19 @@ use max_core::unit_values::{
     ATTRIB_TURNS,
 };
 use max_core::victory::{
-    cargo_fuel_consumption_rate, cargo_life_consumption_rate, cargo_power_consumption_rate,
-    cargo_raw_consumption_rate,
+    cargo_fuel_consumption_rate, cargo_gold_consumption_rate, cargo_life_consumption_rate,
+    cargo_power_consumption_rate, cargo_raw_consumption_rate,
 };
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
-use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
+use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFont, GnwFontId};
 use max_render::{ColorLut, TeamColors};
 
 use crate::assets::Assets;
-use crate::menu::{blit_simple, draw_big_image, draw_image_button, wrap_gnw_text, MenuButtonPair};
+use crate::cargo_unit_data;
+use crate::menu::{
+    blit_simple, draw_big_image, draw_big_image_at, draw_image_button, wrap_gnw_text,
+    MenuButtonPair,
+};
 use crate::panels::UiPalette;
 use crate::ui::Key;
 use crate::upgrademenu::{is_better_unit, is_buildable, UpgradeFilter};
@@ -143,6 +164,52 @@ pub const TITLE: PixelRect = PixelRect::new(473, 7, 158, 18);
 
 /// Блок статистики (`stats_background` 11,293,250,174).
 pub const STATS: PixelRect = PixelRect::new(11, 293, 250, 174);
+/// Строка статистики: `UnitStats_DrawText` — 19 px, число/подпись по центру.
+pub const STAT_ROW: i32 = 19;
+/// Где начинаются pips (`UnitStats_DrawStats`: `&buffer[76]`).
+pub const STAT_ICON_X: i32 = 76;
+/// Сколько пикселей отводится под подпись (`Text_Blit(..., 49, ...)`).
+pub const STAT_LABEL_WIDTH: i32 = 49;
+/// Область описания: `Text_TextBox(unit_portrait_window.buffer, ..., 16, 17,
+/// 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)` — от (11,13).
+pub const DESCRIPTION: PixelRect = PixelRect::new(PORTRAIT.ulx + 16, PORTRAIT.uly + 17, 280, 230);
+/// `ReportStats_DrawNumber`/`Text_Blit` в строке статистики: `COLOR_YELLOW`.
+pub const STAT_COLOR_NUMBER: u8 = 0x04;
+/// `UnitStats_DrawText(..., 0xA2)` — цвет подписи и числа описания.
+pub const STAT_COLOR_LABEL: u8 = 0xA2;
+/// `COLOR_RED` — линии-разделители строк и дельта апгрейда.
+pub const STAT_COLOR_LINE: u8 = 0x01;
+/// `COLOR_BLACK` — обводка описания (`GNW_TEXT_OUTLINE` → `Color_RGB2Color(0)`).
+pub const STAT_COLOR_OUTLINE: u8 = 0x00;
+
+/// Подписи строк статистики — `language.json` en-US, как `_(...)` в
+/// `unitstats.cpp` (`Attack` `_(98a8)`, `Shots` `_(5e40)`, `Range` `_(2540)`,
+/// `Ammo` `_(d510)`, `Cargo` `_(054b)`, `Prod.` `_(527f)`/`_(3641)`,
+/// `Uses` `_(9e61)`, `Armor` `_(49d1)`, `Hits` `_(6e4e)`, `Scan` `_(d10e)`,
+/// `Speed` `_(6136)`, `Cost` `_(7dfb)`).
+pub const STAT_ATTACK: &str = "Attack";
+/// `_(5e40)`.
+pub const STAT_SHOTS: &str = "Shots";
+/// `_(2540)`.
+pub const STAT_RANGE: &str = "Range";
+/// `_(d510)`.
+pub const STAT_AMMO: &str = "Ammo";
+/// `_(054b)`.
+pub const STAT_CARGO: &str = "Cargo";
+/// `_(527f)` (выработка) и `_(3641)` (жизнеобеспечение).
+pub const STAT_PROD: &str = "Prod.";
+/// `_(9e61)` — расход ресурсов.
+pub const STAT_USES: &str = "Uses";
+/// `_(49d1)`.
+pub const STAT_ARMOR: &str = "Armor";
+/// `_(6e4e)`.
+pub const STAT_HITS: &str = "Hits";
+/// `_(d10e)`.
+pub const STAT_SCAN: &str = "Scan";
+/// `_(6136)`.
+pub const STAT_SPEED: &str = "Speed";
+/// `_(7dfb)`.
+pub const STAT_COST: &str = "Cost";
 /// Колонка цен апгрейдов (`cost_background` 321,293,40,174).
 pub const COST: PixelRect = PixelRect::new(321, 293, 40, 174);
 /// Колонка стрелок апгрейдов (`button_background` 283,293,38,174).
@@ -248,15 +315,58 @@ pub enum CargoAction {
     Done,
 }
 
-/// Строка таблицы статистики (порт `UnitStats_DrawStats` текстом).
+/// Группа иконок (pips) строки статистики — порт `UnitStats_DrawIcons`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatIcon {
+    /// Ресурс `I_*` (simple image), которым рисуются «заполненные» pips.
+    pub resource: &'static str,
+    /// Ресурс «пустых» pips (`I_*E`); у всех строк кроме `Cost` — тот же.
+    pub empty_resource: &'static str,
+    /// `current` в `UnitStats_DrawIcons` — сколько pips рисуется `resource`.
+    pub current: i32,
+    /// `original` — сколько всего; `original - current` рисуется
+    /// `empty_resource` за красной чертой (дельта апгрейда).
+    pub original: i32,
+}
+
+impl StatIcon {
+    /// Пара одинаковых иконок (`UnitStats_DrawIcons(id, id, ...)`).
+    pub const fn same(resource: &'static str, current: i32, original: i32) -> Self {
+        Self {
+            resource,
+            empty_resource: resource,
+            current,
+            original,
+        }
+    }
+
+    /// Сколько всего pips нарисует группа (`max(0, current) + max(0, delta)`).
+    pub fn count(&self) -> usize {
+        self.current.max(0) as usize + (self.original - self.current).max(0) as usize
+    }
+}
+
+/// Строка таблицы статистики — порт `UnitStats_DrawText` + `UnitStats_DrawIcons`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatRow {
     /// `y` строки (тот же шаг 19 px, что у колонки апгрейдов).
     pub y: i32,
-    /// Подпись (`Attack`, `Armor`, `Storage`, ...).
-    pub label: String,
-    /// Значение/значения (`16`, `40/60`, ...).
-    pub value: String,
+    /// Подпись из `language.json` (`_(98a8)` → `Attack`, …).
+    pub label: &'static str,
+    /// Число (`ReportStats_DrawNumber`); `None` — строке число не нужно
+    /// (`_(9e61)`: `resource_count == 0`).
+    pub value: Option<i32>,
+    /// Группы иконок после числа; смещаются на `STAT_ICON_X` и дальше.
+    pub icons: Vec<StatIcon>,
+    /// Красная линия под строкой (`draw_line(2,18 — 248,18)`); у `Cost` — нет.
+    pub separator: bool,
+}
+
+impl StatRow {
+    /// Сколько pips в строке (для QA/тестов).
+    pub fn icon_count(&self) -> usize {
+        self.icons.iter().map(StatIcon::count).sum()
+    }
 }
 
 /// Состояние экрана мобилизации одной команды.
@@ -892,7 +1002,51 @@ impl Mobilization {
         ))
     }
 
+    /// Ресурс иконки строки `Cargo` — switch `UnitStats_DrawCargo`.
+    ///
+    /// Для остальных типов C++ не рисует строку вовсе (`default: return
+    /// buffer`), даже если `ATTRIB_STORAGE` > 0 (казармы, док, ремонт, …).
+    fn storage_icon(unit: UnitType) -> Option<&'static str> {
+        match unit {
+            UnitType::ADump
+            | UnitType::CargoShip
+            | UnitType::SupplyTruck
+            | UnitType::Engineer
+            | UnitType::Constructor => Some("I_RAW"),
+            UnitType::FuelTruck | UnitType::FDump => Some("I_FUEL"),
+            UnitType::GoldSmelter | UnitType::GoldTruck => Some("I_GOLD"),
+            _ => None,
+        }
+    }
+
+    /// `Cargo_GetRawConsumptionRate(Builder_GetBuilderType(team, unit), 1)` —
+    /// ставка строки `Cost` (`UnitStats_DrawCost`). У мин и нестроящихся
+    /// `Builder_GetBuilderType` = `INVALID_ID`, ставка 0 (как default в C++).
+    pub fn build_rate(&self, unit: UnitType) -> i32 {
+        builder_type(unit).map_or(0, |builder| cargo_raw_consumption_rate(builder, 1))
+    }
+
+    /// `Unit::GetDescription()` выбранного типа (`""` — описания нет).
+    pub fn description(&self) -> &'static str {
+        self.info.map_or("", cargo_unit_data::unit_description)
+    }
+
+    /// Есть ли у выбранного типа портрет `P_*` (`Unit::GetPortrait()`).
+    pub fn has_portrait(&self) -> bool {
+        self.info.and_then(cargo_unit_data::unit_portrait).is_some()
+    }
+
+    /// Сколько pips-иконок в таблице статистики (для QA-проверок).
+    pub fn stats_icon_count(&self) -> usize {
+        self.stats_rows().iter().map(StatRow::icon_count).sum()
+    }
+
     /// Строки таблицы статистики — порт блоков `UnitStats_DrawStats`.
+    ///
+    /// Порядок ровно как в C++: military (`Attack`/`Shots`/`Range`/`Ammo`),
+    /// cargo (`Cargo`), расход (`Prod.`/`Uses`), общие (`Armor`/`Hits`/`Scan`),
+    /// `Speed`, `Cost`. Условия показа — по **базовым** значениям
+    /// (`unit_values2 = team_units->GetBaseUnitValues`), числа — по текущим.
     pub fn stats_rows(&self) -> Vec<StatRow> {
         let Some(unit) = self.info else {
             return Vec::new();
@@ -900,77 +1054,226 @@ impl Mobilization {
         let base = self.base[unit as usize];
         let actual = self.actual[unit as usize];
         let mut rows = Vec::new();
-        let mut y = COST.uly;
+        let mut y = STATS.uly;
 
-        let push = |rows: &mut Vec<StatRow>, y: &mut i32, label: &str, value: String| {
+        #[allow(clippy::too_many_arguments)]
+        let push = |rows: &mut Vec<StatRow>,
+                    y: &mut i32,
+                    label: &'static str,
+                    value: Option<i32>,
+                    icons: Vec<StatIcon>,
+                    separator: bool| {
             rows.push(StatRow {
                 y: *y,
-                label: label.to_string(),
+                label,
                 value,
+                icons,
+                separator,
             });
-            *y += CONTROL_ROW;
+            *y += STAT_ROW;
         };
 
-        if base.get_attribute(ATTRIB_ATTACK) > 0 {
-            push(&mut rows, &mut y, "Attack", actual.get_attribute(ATTRIB_ATTACK).to_string());
-            if base.get_attribute(ATTRIB_ROUNDS) > 0 {
-                push(&mut rows, &mut y, "Rounds", actual.get_attribute(ATTRIB_ROUNDS).to_string());
-            }
-            if base.get_attribute(ATTRIB_RANGE) > 0 {
-                push(&mut rows, &mut y, "Range", actual.get_attribute(ATTRIB_RANGE).to_string());
-            }
-            if base.get_attribute(ATTRIB_AMMO) > 0 {
-                push(&mut rows, &mut y, "Ammo", actual.get_attribute(ATTRIB_AMMO).to_string());
-            }
-        }
+        let base_attack = base.get_attribute(ATTRIB_ATTACK);
+        let actual_attack = actual.get_attribute(ATTRIB_ATTACK);
 
-        if base.get_attribute(ATTRIB_STORAGE) > 0 {
+        if base_attack > 0 {
             push(
                 &mut rows,
                 &mut y,
-                "Storage",
-                format!(
-                    "{}/{}",
-                    actual.get_attribute(ATTRIB_STORAGE),
-                    base.get_attribute(ATTRIB_STORAGE)
-                ),
+                STAT_ATTACK,
+                Some(actual_attack),
+                vec![StatIcon::same("I_HRDATK", base_attack, actual_attack)],
+                true,
             );
+
+            if base.get_attribute(ATTRIB_ROUNDS) > 0 {
+                // Число выстрелов ограничено боезапасом (`std::min(ROUNDS, AMMO)`).
+                let shots = actual
+                    .get_attribute(ATTRIB_ROUNDS)
+                    .min(actual.get_attribute(ATTRIB_AMMO));
+
+                push(
+                    &mut rows,
+                    &mut y,
+                    STAT_SHOTS,
+                    Some(shots),
+                    vec![StatIcon::same(
+                        "I_SHOTS",
+                        base.get_attribute(ATTRIB_ROUNDS),
+                        shots,
+                    )],
+                    true,
+                );
+            }
+            if base.get_attribute(ATTRIB_RANGE) > 0 {
+                push(
+                    &mut rows,
+                    &mut y,
+                    STAT_RANGE,
+                    Some(actual.get_attribute(ATTRIB_RANGE)),
+                    vec![StatIcon::same(
+                        "I_RANGE",
+                        base.get_attribute(ATTRIB_RANGE),
+                        actual.get_attribute(ATTRIB_RANGE),
+                    )],
+                    true,
+                );
+            }
+            if base.get_attribute(ATTRIB_AMMO) > 0 {
+                push(
+                    &mut rows,
+                    &mut y,
+                    STAT_AMMO,
+                    Some(actual.get_attribute(ATTRIB_AMMO)),
+                    vec![StatIcon::same(
+                        "I_AMMO",
+                        base.get_attribute(ATTRIB_AMMO),
+                        actual.get_attribute(ATTRIB_AMMO),
+                    )],
+                    true,
+                );
+            }
+        }
+
+        let base_storage = base.get_attribute(ATTRIB_STORAGE);
+        let actual_storage = actual.get_attribute(ATTRIB_STORAGE);
+
+        if base_storage > 0 {
+            if let Some(icon) = Self::storage_icon(unit) {
+                push(
+                    &mut rows,
+                    &mut y,
+                    STAT_CARGO,
+                    Some(actual_storage),
+                    vec![StatIcon::same(icon, base_storage / 10, actual_storage / 10)],
+                    true,
+                );
+            }
         }
 
         let raw = cargo_raw_consumption_rate(unit, 1);
         let fuel = cargo_fuel_consumption_rate(unit);
         let power = cargo_power_consumption_rate(unit);
         let life = cargo_life_consumption_rate(unit);
+        let gold = cargo_gold_consumption_rate(unit);
 
         if power < 0 {
-            push(&mut rows, &mut y, "Power", format!("+{}", -power));
-        }
-        if life < 0 {
-            push(&mut rows, &mut y, "Workers", format!("+{}", -life));
-        }
-        if raw > 0 || fuel > 0 || power > 0 || life > 0 {
             push(
                 &mut rows,
                 &mut y,
-                "Upkeep",
-                format!("{raw}/{fuel}/{power}/{life}"),
+                STAT_PROD,
+                Some(-power),
+                vec![StatIcon::same("I_POWER", -power, -power)],
+                true,
+            );
+        }
+        if life < 0 {
+            push(
+                &mut rows,
+                &mut y,
+                STAT_PROD,
+                Some(-life),
+                vec![StatIcon::same("I_LIFE", -life, -life)],
+                true,
             );
         }
 
+        if raw > 0 || fuel > 0 || power > 0 || life > 0 {
+            // `UnitStats_DrawUsage`: число не рисуется (resource_count = 0),
+            // иконки расходов идут подряд в одной строке.
+            let mut icons = Vec::new();
+
+            for (resource, value) in [
+                ("I_RAW", raw),
+                ("I_FUEL", fuel),
+                ("I_POWER", power),
+                ("I_LIFE", life),
+                ("I_GOLD", gold),
+            ] {
+                if value > 0 {
+                    icons.push(StatIcon::same(resource, value, value));
+                }
+            }
+
+            push(&mut rows, &mut y, STAT_USES, None, icons, true);
+        }
+
         if base.get_attribute(ATTRIB_ARMOR) > 0 {
-            push(&mut rows, &mut y, "Armor", actual.get_attribute(ATTRIB_ARMOR).to_string());
+            push(
+                &mut rows,
+                &mut y,
+                STAT_ARMOR,
+                Some(actual.get_attribute(ATTRIB_ARMOR)),
+                vec![StatIcon::same(
+                    "I_ARMOR",
+                    base.get_attribute(ATTRIB_ARMOR),
+                    actual.get_attribute(ATTRIB_ARMOR),
+                )],
+                true,
+            );
         }
         if base.get_attribute(ATTRIB_HITS) > 0 {
-            push(&mut rows, &mut y, "Hits", actual.get_attribute(ATTRIB_HITS).to_string());
+            push(
+                &mut rows,
+                &mut y,
+                STAT_HITS,
+                Some(actual.get_attribute(ATTRIB_HITS)),
+                vec![StatIcon::same(
+                    "I_HITS",
+                    base.get_attribute(ATTRIB_HITS),
+                    actual.get_attribute(ATTRIB_HITS),
+                )],
+                true,
+            );
         }
         if base.get_attribute(ATTRIB_SCAN) > 0 {
-            push(&mut rows, &mut y, "Scan", actual.get_attribute(ATTRIB_SCAN).to_string());
+            push(
+                &mut rows,
+                &mut y,
+                STAT_SCAN,
+                Some(actual.get_attribute(ATTRIB_SCAN)),
+                vec![StatIcon::same(
+                    "I_SCAN",
+                    base.get_attribute(ATTRIB_SCAN),
+                    actual.get_attribute(ATTRIB_SCAN),
+                )],
+                true,
+            );
         }
         if base.get_attribute(ATTRIB_SPEED) > 0 {
-            push(&mut rows, &mut y, "Speed", actual.get_attribute(ATTRIB_SPEED).to_string());
+            push(
+                &mut rows,
+                &mut y,
+                STAT_SPEED,
+                Some(actual.get_attribute(ATTRIB_SPEED)),
+                vec![StatIcon::same(
+                    "I_SPEED",
+                    base.get_attribute(ATTRIB_SPEED),
+                    actual.get_attribute(ATTRIB_SPEED),
+                )],
+                true,
+            );
         }
         if base.get_attribute(ATTRIB_TURNS) > 0 {
-            push(&mut rows, &mut y, "Turns", actual.get_attribute(ATTRIB_TURNS).to_string());
+            // `UnitStats_DrawCost`: уровень = ставка строителя * ходы, минимум 1;
+            // заполнены текущие ходы, «пустые» — базовые (дельта апгрейда).
+            let rate = self.build_rate(unit);
+            let base_level = (rate * base.get_attribute(ATTRIB_TURNS)).max(1);
+            let actual_level = (rate * actual.get_attribute(ATTRIB_TURNS)).max(1);
+
+            push(
+                &mut rows,
+                &mut y,
+                STAT_COST,
+                Some(actual_level),
+                vec![StatIcon {
+                    resource: "I_GOLD",
+                    empty_resource: "I_GOLDE",
+                    current: actual_level,
+                    original: base_level,
+                }],
+                false,
+            );
         }
 
         rows
@@ -1391,6 +1694,13 @@ pub struct CargoMenuAssets {
     pub bars: [Option<SimpleImage>; 3],
     /// Иконки типов (`I_*`, первый кадр спрайта).
     pub icons: Vec<(UnitType, SpriteFrame)>,
+    /// Иконки строк статистики (`I_*` simple images, `UnitStats_DrawStats`).
+    pub stat_icons: Vec<(&'static str, SimpleImage)>,
+    /// Кэш портретов `P_*` (`Unit::GetPortrait`, big image 300×240).
+    ///
+    /// Грузится лениво при выборе типа: 71 big image в старте не нужен.
+    /// `Arc<Mutex<…>>` — `CargoMenuAssets` остаётся `Clone`/`Sync`.
+    pub portraits: Arc<Mutex<HashMap<UnitType, Option<Arc<BigImage>>>>>,
 }
 
 impl CargoMenuAssets {
@@ -1412,6 +1722,13 @@ impl CargoMenuAssets {
         for (unit, name) in UNIT_ICONS {
             if let Some(entry) = icon(unit, name) {
                 icons.push(entry);
+            }
+        }
+
+        let mut stat_icons = Vec::new();
+        for name in STAT_ICONS {
+            if let Some(image) = simple(name) {
+                stat_icons.push((name, image));
             }
         }
 
@@ -1446,12 +1763,10 @@ impl CargoMenuAssets {
                 pair("SELBLD_U", "SELBLD_D"),
                 pair("SELCBT_U", "SELCBT_D"),
             ],
-            bars: [
-                simple("VERTRAW"),
-                simple("VERTFUEL"),
-                simple("VERTGOLD"),
-            ],
+            bars: [simple("VERTRAW"), simple("VERTFUEL"), simple("VERTGOLD")],
             icons,
+            stat_icons,
+            portraits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1463,11 +1778,50 @@ impl CargoMenuAssets {
             .map(|(_, frame)| frame)
     }
 
+    /// Иконка строки статистики (`I_*` simple image).
+    pub fn stat_icon(&self, resource: &str) -> Option<&SimpleImage> {
+        self.stat_icons
+            .iter()
+            .find(|(name, _)| *name == resource)
+            .map(|(_, image)| image)
+    }
+
+    /// Портрет типа (`Unit::GetPortrait()` → big image `P_*` 300×240).
+    ///
+    /// Лениво читает и декодирует ресурс, кэширует результат (включая
+    /// отсутствие ресурса). Возвращает `Arc`, чтобы не копировать 72 КиБ кадра
+    /// на каждый вызов отрисовки.
+    pub fn portrait(&self, archive: &ResArchive, unit: UnitType) -> Option<Arc<BigImage>> {
+        let mut cache = self
+            .portraits
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if let Some(entry) = cache.get(&unit) {
+            return entry.clone();
+        }
+
+        let image = cargo_unit_data::unit_portrait(unit)
+            .and_then(|name| archive.read(name).ok())
+            .and_then(|bytes| BigImage::decode(bytes).ok())
+            .map(Arc::new);
+
+        cache.insert(unit, image.clone());
+        image
+    }
+
     /// Есть ли фон и ключевые кнопки.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.done.is_some() && self.cancel.is_some()
     }
 }
+
+/// Иконки строк `UnitStats_DrawStats`: атака/выстрелы/дальность/боезапас,
+/// груз, расход, броня/прочность/обзор/скорость и золото цены.
+pub const STAT_ICONS: [&str; 14] = [
+    "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_FUEL", "I_GOLD", "I_GOLDE", "I_POWER",
+    "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
+];
 
 /// `Unit::GetIcon()` — ресурсы `I_*` из `SC_UNITS` (units.json), в порядке
 /// [`UnitType`]; типы без иконки (`INVALID_ID`) пропущены.
@@ -1599,14 +1953,8 @@ impl Mobilization {
         );
         draw_hline(frame, palette.rgba(0x05), 482, 625, AVAILABLE_LINE_Y);
 
-        painted += draw_text_gnw_centered(
-            frame,
-            PURCHASED_HEADER,
-            font,
-            "Purchased",
-            text,
-        )
-        .max(0) as u32;
+        painted +=
+            draw_text_gnw_centered(frame, PURCHASED_HEADER, font, "Purchased", text).max(0) as u32;
         draw_hline(frame, chrome, 337, 455, PURCHASED_LINE_Y);
 
         painted += draw_text_gnw(
@@ -1721,7 +2069,15 @@ impl Mobilization {
         .into_iter()
         .enumerate()
         {
-            painted += draw_filter(frame, cargo, &palette, filter, index, self.filters[index], self.mode);
+            painted += draw_filter(
+                frame,
+                cargo,
+                &palette,
+                filter,
+                index,
+                self.filters[index],
+                self.mode,
+            );
         }
 
         // Стрелки списков.
@@ -1764,15 +2120,7 @@ impl Mobilization {
 
         // Клановые бонусы (наше дополнение) и строка статуса.
         let clan_line = clan_summary(self.clan);
-        painted += draw_text_gnw(
-            frame,
-            11,
-            466,
-            font,
-            &clan_line,
-            green,
-        )
-        .max(0) as u32;
+        painted += draw_text_gnw(frame, 11, 466, font, &clan_line, green).max(0) as u32;
 
         let line = if status.is_empty() {
             self.status.as_str()
@@ -1792,12 +2140,12 @@ impl Mobilization {
         painted
     }
 
-    /// Портрет + таблица статистики.
+    /// Портрет + описание + таблица статистики (`AbstractUpgradeMenu::DrawUnitInfo`).
     fn draw_info(
         &self,
         frame: &mut RgbaBuffer,
         assets: &Assets,
-        _cargo: &CargoMenuAssets,
+        cargo: &CargoMenuAssets,
         palette: &UiPalette,
     ) -> u32 {
         let Some(unit) = self.info else {
@@ -1805,68 +2153,28 @@ impl Mobilization {
         };
         let mut painted = 0;
 
-        // Портрет: спрайт юнита 2× (C++ — big image `P_*`/FLIC).
-        if let Some(sprite) = assets.sprite(unit) {
-            if let Some(sprite_frame) = sprite.frame_for(0, 0) {
-                let colors = TeamColors::ALL
-                    .get(self.team.0 as usize)
-                    .copied()
-                    .unwrap_or(TeamColors::Derelict);
-                let renderer = max_render::SpriteRenderer::new(
-                    &assets.palette,
-                    &assets.brightness,
-                    ColorLut::for_team(colors),
-                    max_render::FULL_BRIGHTNESS_LEVEL,
-                );
-                renderer.draw_unit_scaled(
-                    frame,
-                    sprite_frame,
-                    None,
-                    (PORTRAIT.ulx + 140, PORTRAIT.uly + 120),
-                    (0, 0),
-                    128,
-                );
-                painted += 1;
-            }
-        }
-
-        let font = GnwFontId::Font5.font();
-        let green = palette.rgba(crate::setup::GREEN);
-        let text = palette.rgba(crate::setup::TEXT);
-        let yellow = palette.rgba(0x04);
-
-        // Имя типа — в области портрета (в C++ там начинается описание
-        // `GetDescription()`; текстов в данных клиента нет).
-        painted += draw_text_gnw(
-            frame,
-            PORTRAIT.ulx + 5,
-            PORTRAIT.uly + 4,
-            font,
-            unit_label(unit),
-            green,
-        )
-        .max(0) as u32;
-
-        for row in self.stats_rows() {
-            let label = fit_label(&row.label, 60, font);
-            painted += draw_text_gnw(
+        // Портрет: `WindowManager_LoadBigImage(GetPortrait(), ...)` — big image
+        // `P_*` 300×240, `ulx/uly` = 0, масштаб 1:1, палитра окна (`CARGOPIC`).
+        // Окно `unit_portrait_window` 280×240 обрезает правые 20 px.
+        if let Some(portrait) = cargo.portrait(&assets.max_res, unit) {
+            painted += draw_big_image_at(
                 frame,
-                STATS.ulx + 3,
-                row.y + 4,
-                font,
-                &label,
-                text,
-            )
-            .max(0) as u32;
-            painted += draw_text_right(
-                frame,
-                STATS.ulx + 120,
-                row.y + 4,
-                font,
-                &row.value,
-                yellow,
+                &portrait,
+                palette,
+                (PORTRAIT.ulx, PORTRAIT.uly),
+                PORTRAIT,
             );
+        } else {
+            // C++ `buf_fill(unit_portrait_window.buffer, 300, 240, width, 0)`.
+            frame.fill_rect(PORTRAIT, palette.rgba(STAT_COLOR_OUTLINE));
         }
+
+        // Описание — поверх портрета, `button_description_rest_state`.
+        if self.description {
+            painted += draw_description(frame, palette, unit);
+        }
+
+        painted += draw_stats(frame, cargo, palette, &self.stats_rows());
 
         painted
     }
@@ -1924,7 +2232,15 @@ impl Mobilization {
             }
 
             if index == self.type_selected {
-                painted += draw_selection(frame, white, AVAILABLE_AREA.ulx, y, AVAILABLE_AREA.width, LIST_ROW, 1);
+                painted += draw_selection(
+                    frame,
+                    white,
+                    AVAILABLE_AREA.ulx,
+                    y,
+                    AVAILABLE_AREA.width,
+                    LIST_ROW,
+                    1,
+                );
             }
         }
 
@@ -1975,7 +2291,12 @@ impl Mobilization {
 
             painted += draw_wrapped(
                 frame,
-                PixelRect::new(PURCHASED_AREA.ulx + 32, y, PURCHASED_AREA.width - 32, LIST_ROW),
+                PixelRect::new(
+                    PURCHASED_AREA.ulx + 32,
+                    y,
+                    PURCHASED_AREA.width - 32,
+                    LIST_ROW,
+                ),
                 font,
                 &label,
                 text,
@@ -1985,7 +2306,14 @@ impl Mobilization {
             if let Some(icon) = cargo.icon(supply.unit_type) {
                 let stationary = unit_type_flags(supply.unit_type) & unit_flags::STATIONARY != 0;
                 let zoom = if stationary { 16 } else { 32 };
-                painted += draw_icon(frame, palette, icon, (PURCHASED_AREA.ulx + 16, y + 16), zoom, &lut);
+                painted += draw_icon(
+                    frame,
+                    palette,
+                    icon,
+                    (PURCHASED_AREA.ulx + 16, y + 16),
+                    zoom,
+                    &lut,
+                );
             }
 
             if index == self.loadout_selected {
@@ -2242,6 +2570,296 @@ fn draw_text_right(
     draw_text_gnw(frame, right - width, y, font, text, color).max(0) as u32
 }
 
+/// Обрезает строку по ширине как `Text_Blit` (`swidth`): глиф рисуется, пока
+/// его конец не вышел за границу.
+fn clip_gnw_text<'a>(text: &'a str, max_width: i32, font: &GnwFont) -> &'a str {
+    let mut width = 0;
+
+    for (index, character) in text.char_indices() {
+        width += font.char_width(character);
+
+        if width > max_width {
+            return &text[..index];
+        }
+    }
+
+    text
+}
+
+/// `ReportStats_DrawNumber`: `> 1e6` → `%.1fM`, `> 1000` → `%.1fk`, иначе
+/// целое (`%lld`).
+fn report_stats_number(value: i32) -> String {
+    let number = i64::from(value);
+
+    if number > 1_000_000 {
+        format!("{:.1}M", number as f64 / 1_000_000.0)
+    } else if number > 1_000 {
+        format!("{:.1}k", number as f64 / 1_000.0)
+    } else {
+        number.to_string()
+    }
+}
+
+/// Описание юнита поверх портрета.
+///
+/// `Text_TextBox(unit_portrait_window.buffer, dialog_window.width, description,
+/// 16, 17, 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)`:
+/// шрифт 5, межстрочный интервал `Text_GetHeight + 1` (обводка), 20 строк,
+/// чёрная копия в `(x+1, y+1)` (`Text_BlitTTF` + `GNW_TEXT_OUTLINE`).
+fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit: UnitType) -> u32 {
+    let text = cargo_unit_data::unit_description(unit);
+
+    if text.is_empty() {
+        return 0;
+    }
+
+    let font = GnwFontId::Font5.font();
+    let color = palette.rgba(STAT_COLOR_LABEL);
+    let outline = palette.rgba(STAT_COLOR_OUTLINE);
+    let line_height = font.height() + 1;
+    let max_rows = (DESCRIPTION.height / line_height).max(0) as usize;
+    let lines = wrap_gnw_text(text, DESCRIPTION.width);
+    let mut painted = 0;
+
+    for (row, line) in lines.iter().take(max_rows).enumerate() {
+        let y = DESCRIPTION.uly + row as i32 * line_height;
+
+        painted +=
+            draw_text_gnw(frame, DESCRIPTION.ulx + 1, y + 1, font, line, outline).max(0) as u32;
+        painted += draw_text_gnw(frame, DESCRIPTION.ulx, y, font, line, color).max(0) as u32;
+    }
+
+    painted
+}
+
+/// Таблица статистики (`UnitStats_DrawStats`): строки по 19 px, число справа
+/// от x=24, подпись с x=28 (клип 49 px), pips с x=76, красная линия под строкой.
+fn draw_stats(
+    frame: &mut RgbaBuffer,
+    cargo: &CargoMenuAssets,
+    palette: &UiPalette,
+    rows: &[StatRow],
+) -> u32 {
+    let font = GnwFontId::Font5.font();
+    let number_color = palette.rgba(STAT_COLOR_NUMBER);
+    let label_color = palette.rgba(STAT_COLOR_LABEL);
+    let line_color = palette.rgba(STAT_COLOR_LINE);
+    let mut painted = 0;
+
+    for row in rows {
+        // `UnitStats_DrawText`: `((19 - Text_GetHeight()) / 2)`.
+        let text_y = row.y + (STAT_ROW - font.height()).max(0) / 2;
+
+        if let Some(value) = row.value {
+            let text = report_stats_number(value);
+            painted += draw_text_right(frame, STATS.ulx + 24, text_y, font, &text, number_color);
+        }
+
+        let label = clip_gnw_text(row.label, STAT_LABEL_WIDTH, font);
+        painted +=
+            draw_text_gnw(frame, STATS.ulx + 28, text_y, font, label, label_color).max(0) as u32;
+
+        // `draw_line(buffer, sw, 2, 18, line_length - 2, 18, COLOR_RED)`.
+        if row.separator {
+            draw_hline(
+                frame,
+                line_color,
+                STATS.ulx + 2,
+                STATS.ulx + STATS.width - 2,
+                row.y + 18,
+            );
+        }
+
+        let mut offset = STAT_ICON_X;
+        for icons in &row.icons {
+            offset += draw_stat_icons(
+                frame,
+                palette,
+                cargo,
+                STATS.ulx + offset,
+                row.y,
+                STATS.width - offset,
+                icons,
+            );
+        }
+    }
+
+    painted
+}
+
+/// Одна группа pips — `UnitStats_DrawIcons`: масштаб шага под ширину, дельта
+/// апгрейда (`original - current`) рисуется пустыми иконками за красной чертой.
+#[allow(clippy::too_many_arguments)]
+fn draw_stat_icons(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    cargo: &CargoMenuAssets,
+    base_x: i32,
+    row_y: i32,
+    max_width: i32,
+    icons: &StatIcon,
+) -> i32 {
+    let Some(normal) = cargo.stat_icon(icons.resource) else {
+        return 0;
+    };
+    let empty = cargo.stat_icon(icons.empty_resource).unwrap_or(normal);
+
+    // `original -= current` — дельта апгрейда (может быть отрицательной).
+    let original = icons.original - icons.current;
+    let mut max_width = max_width;
+
+    if original != 0 {
+        max_width -= 5;
+    }
+
+    let image_width = i32::from(normal.width);
+    let image_height = i32::from(normal.height);
+    let row_step = if icons.current >= 6 {
+        (18 - image_height) / 4
+    } else {
+        0
+    };
+    // `address = &buffer[(((18 - (height * 4)) - image_height) / 2) * sw]`.
+    let top = row_y + ((18 - row_step * 4) - image_height) / 2;
+
+    let current_scaled = (icons.current + 4) / 5;
+    let current_offset = icons.current - (current_scaled - 1) * 5;
+    let original_scaled = (original + 4) / 5;
+    let original_offset = original - (original_scaled - 1) * 5;
+    let mut full_scaled = current_scaled + original_scaled;
+
+    max_width -= image_width * full_scaled;
+
+    // `var_2C` — суммарная ширина шагов, которая осталась бы при полном
+    // масштабе иконки.
+    let mut full_step_width = full_scaled * 4 - (5 - current_offset);
+
+    if original_scaled != 0 {
+        full_step_width -= 5 - original_offset;
+    }
+
+    let (spacing, shrink) = if full_step_width != 0 {
+        if max_width < full_step_width {
+            if original_scaled != 0 {
+                full_scaled -= 1;
+            }
+
+            let denominator = full_scaled - 1;
+            let shrink = if denominator > 0 {
+                (full_scaled + (full_step_width - max_width) - 2) / denominator
+            } else {
+                0
+            };
+
+            (1, shrink.max(0))
+        } else {
+            ((max_width / full_step_width).min(image_width), 0)
+        }
+    } else {
+        (image_width, 0)
+    };
+
+    let stride = spacing * 4 + image_width - shrink;
+    let mut advance = draw_stat_pips(
+        frame,
+        palette,
+        base_x,
+        top,
+        normal,
+        icons.current,
+        spacing,
+        stride,
+        row_step,
+    );
+
+    if original != 0 {
+        // `draw_line(&buffer[var_24 + 2], sw, 0, 2, 0, 16, COLOR_RED)` —
+        // вертикальная черта на всю высоту строки.
+        let x = base_x + advance + 2;
+
+        for y in (row_y + 2)..=(row_y + 16) {
+            frame.set(x, y, palette.rgba(STAT_COLOR_LINE));
+        }
+
+        advance += 5;
+        advance += draw_stat_pips(
+            frame,
+            palette,
+            base_x + advance,
+            top,
+            empty,
+            original,
+            spacing,
+            stride,
+            row_step,
+        );
+    }
+
+    advance
+}
+
+/// `UnitStats_DrawIcon`: до `count` иконок блоками по 5, со сдвигом
+/// `reminder * row_step` по вертикали.
+#[allow(clippy::too_many_arguments)]
+fn draw_stat_pips(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    base_x: i32,
+    base_y: i32,
+    image: &SimpleImage,
+    count: i32,
+    spacing: i32,
+    stride: i32,
+    row_step: i32,
+) -> i32 {
+    let mut offset = 0;
+
+    for index in 0..count.max(0) {
+        let reminder = index % 5;
+        offset = stride * (index / 5) + spacing * reminder;
+
+        draw_stat_image(
+            frame,
+            palette,
+            image,
+            base_x + offset,
+            base_y + reminder * row_step,
+        );
+    }
+
+    i32::from(image.width) + offset
+}
+
+/// `UnitStats_DrawImage`: копирует пиксели `SimpleImage`, пропуская
+/// прозрачный индекс (первый пиксель ресурса).
+fn draw_stat_image(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    image: &SimpleImage,
+    x: i32,
+    y: i32,
+) -> u32 {
+    let mut painted = 0;
+
+    for py in 0..image.height as u32 {
+        for px in 0..image.width as u32 {
+            let Some(index) = image.pixel(px, py) else {
+                continue;
+            };
+
+            if index == image.transparent {
+                continue;
+            }
+
+            if frame.set(x + px as i32, y + py as i32, palette.rgba(index)) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
 /// Текст по центру прямоугольника с переносом и вертикальным центрированием
 /// (`Text_TextBox`), не больше `max_rows` строк.
 fn draw_wrapped(
@@ -2372,14 +2990,7 @@ fn draw_filter(
     }
 
     match cargo.filters.get(index).and_then(|pair| pair.as_ref()) {
-        Some(pair) => blit_simple(
-            frame,
-            palette,
-            pair.image(active),
-            rect.ulx,
-            rect.uly,
-            true,
-        ),
+        Some(pair) => blit_simple(frame, palette, pair.image(active), rect.ulx, rect.uly, true),
         None => 0,
     }
 }
@@ -2895,17 +3506,235 @@ mod tests {
     #[test]
     fn stats_rows_follow_the_cpp_blocks() {
         let mut mobilization = mobilization();
-        mobilization.select_loadout(0);
+        mobilization.select_loadout(0); // Constructor
 
         let rows = mobilization.stats_rows();
-        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
         assert_eq!(
             labels,
-            vec!["Storage", "Upkeep", "Armor", "Hits", "Scan", "Speed", "Turns"]
+            vec!["Cargo", "Uses", "Armor", "Hits", "Scan", "Speed", "Cost"],
+            "UnitStats_DrawStats: cargo, usage, common, speed, cost"
         );
-        // Шаг тот же, что у колонки апгрейдов.
+        // Шаг тот же, что у колонки апгрейдов (`UnitStats_DrawText` — 19 px).
         for (index, row) in rows.iter().enumerate() {
-            assert_eq!(row.y, COST.uly + CONTROL_ROW * index as i32);
+            assert_eq!(row.y, STATS.uly + STAT_ROW * index as i32);
+        }
+
+        // `Cargo`: число — текущая вместимость, pips — `storage / 10`.
+        assert_eq!(rows[0].value, Some(60));
+        assert_eq!(rows[0].icons, vec![StatIcon::same("I_RAW", 6, 6)]);
+        // `Uses`: числа нет (`resource_count == 0`), raw-расход 2 — два pips.
+        assert_eq!(rows[1].value, None);
+        assert_eq!(rows[1].icons, vec![StatIcon::same("I_RAW", 2, 2)]);
+        // `Armor`/`Hits`/`Scan`/`Speed` — 6/24/3/6.
+        assert_eq!(rows[2].value, Some(6));
+        assert_eq!(rows[3].value, Some(24));
+        assert_eq!(rows[3].icons[0], StatIcon::same("I_HITS", 24, 24));
+        assert_eq!(rows[4].value, Some(3));
+        assert_eq!(rows[5].value, Some(6));
+        // `Cost`: `Cargo_GetRawConsumptionRate(LANDPLT,1) * turns = 3 * 8 = 24`,
+        // иконки — `I_GOLD`/`I_GOLDE` (`interface_icon_full/empty`), без линии.
+        assert_eq!(rows[6].value, Some(24));
+        assert_eq!(
+            rows[6].icons,
+            vec![StatIcon {
+                resource: "I_GOLD",
+                empty_resource: "I_GOLDE",
+                current: 24,
+                original: 24,
+            }]
+        );
+        assert!(!rows[6].separator, "Cost — единственная строка без линии");
+        assert!(rows[..6].iter().all(|row| row.separator));
+
+        assert!(mobilization.stats_icon_count() >= 6 + 2 + 6 + 24 + 3 + 6 + 24);
+    }
+
+    #[test]
+    fn military_rows_follow_min_rounds_ammo_and_base_values() {
+        let mut mobilization = mobilization();
+        mobilization.info = Some(UnitType::Tank);
+
+        let rows = mobilization.stats_rows();
+        let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
+        assert_eq!(
+            labels,
+            vec!["Attack", "Shots", "Range", "Ammo", "Armor", "Hits", "Scan", "Speed", "Cost"]
+        );
+        assert_eq!(rows[0].value, Some(16));
+        assert_eq!(rows[0].icons[0], StatIcon::same("I_HRDATK", 16, 16));
+        // `std::min(ROUNDS, AMMO)` = min(2, 14).
+        assert_eq!(rows[1].value, Some(2));
+        assert_eq!(rows[2].value, Some(4));
+        assert_eq!(rows[3].value, Some(14));
+        // Военных строк у Constructora нет (ATTACK = 0).
+        mobilization.info = Some(UnitType::Constructor);
+        assert!(mobilization
+            .stats_rows()
+            .iter()
+            .all(|row| !matches!(row.label, "Attack" | "Shots" | "Range" | "Ammo")));
+    }
+
+    #[test]
+    fn usage_and_storage_rows_follow_unit_stats_switches() {
+        let mut mobilization = mobilization();
+
+        // `POWGEN`: выработка -1 (`Prod.` + `I_POWER`), `Cost` 2 * 4.
+        mobilization.info = Some(UnitType::PowerGenerator);
+        let rows = mobilization.stats_rows();
+        assert_eq!(rows[0].label, "Prod.");
+        assert_eq!(rows[0].value, Some(1));
+        assert_eq!(rows[0].icons, vec![StatIcon::same("I_POWER", 1, 1)]);
+        assert_eq!(rows.last().unwrap().label, "Cost");
+        assert_eq!(rows.last().unwrap().value, Some(8), "CONSTRCT 2 * 4 turns");
+
+        // `HABITAT`: жизнеобеспечение -3 (`Prod.` + `I_LIFE`); выработки нет —
+        // `Cargo_GetPowerConsumptionRate` для HABITAT = 0.
+        mobilization.info = Some(UnitType::Habitat);
+        let rows = mobilization.stats_rows();
+        assert_eq!(rows[0].label, "Prod.");
+        assert_eq!(rows[0].icons, vec![StatIcon::same("I_LIFE", 3, 3)]);
+
+        // `MINELAYR`: storage 16, но `UnitStats_DrawCargo` его не рисует
+        // (default switch) — строки `Cargo` нет; ставка LIGHTPLT 3 * 3.
+        mobilization.info = Some(UnitType::MineLayer);
+        let rows = mobilization.stats_rows();
+        assert!(rows.iter().all(|row| row.label != "Cargo"));
+        assert_eq!(rows.last().unwrap().value, Some(9));
+        assert_eq!(rows.last().unwrap().icons[0].resource, "I_GOLD");
+
+        // `LANDMINE`: `Builder_GetBuilderType` = INVALID_ID → ставка 0,
+        // уровень зажимается в 1 (`UnitStats_DrawCost`).
+        mobilization.info = Some(UnitType::LandMine);
+        let rows = mobilization.stats_rows();
+        assert_eq!(rows.last().unwrap().value, Some(1));
+        assert_eq!(rows.last().unwrap().icons[0].current, 1);
+        assert_eq!(mobilization.build_rate(UnitType::LandMine), 0);
+    }
+
+    #[test]
+    fn upgraded_values_show_delta_pips() {
+        let mut mobilization = mobilization();
+        mobilization.info = Some(UnitType::Tank);
+        let base_rows = mobilization.stats_rows();
+
+        mobilization.actual[UnitType::Tank as usize].attack = 20;
+        let rows = mobilization.stats_rows();
+        let attack = &rows[0];
+
+        // `UnitStats_DrawIcons(current = base, original = actual)`: 4 пустых
+        // pips дельты (`original - current`) за красной чертой.
+        assert_eq!(attack.value, Some(20), "число — текущее значение");
+        assert_eq!(attack.icons[0].current, 16);
+        assert_eq!(attack.icons[0].original, 20);
+        assert_eq!(attack.icons[0].count(), 20);
+        assert_eq!(attack.icon_count(), 20);
+        assert_eq!(base_rows[0].icon_count(), 16);
+
+        // Уменьшение turns: текущая цена ниже базовой — `original > current`,
+        // поэтому 3 «пустых» pips показывают базовую стоимость.
+        mobilization.actual[UnitType::Tank as usize].turns = 3;
+        let rows = mobilization.stats_rows();
+        let cost = rows.last().unwrap();
+        assert_eq!(cost.value, Some(9), "LANDPLT 3 * 3");
+        assert_eq!(cost.icons[0].current, 9);
+        assert_eq!(cost.icons[0].original, 12);
+        assert_eq!(cost.icons[0].count(), 12, "9 заполненных + 3 пустых");
+
+        // Увеличение turns: `original < current` — пустых pips нет.
+        mobilization.actual[UnitType::Tank as usize].turns = 5;
+        let rows = mobilization.stats_rows();
+        let cost = rows.last().unwrap();
+        assert_eq!(cost.value, Some(15));
+        assert_eq!(cost.icons[0].current, 15);
+        assert_eq!(cost.icons[0].original, 12);
+        assert_eq!(cost.icons[0].count(), 15);
+    }
+
+    #[test]
+    fn description_and_portrait_come_from_the_generated_resource() {
+        assert!(cargo_unit_data::is_loaded());
+
+        let mobilization = mobilization();
+        assert_eq!(mobilization.info, Some(UnitType::Constructor));
+        assert!(mobilization
+            .description()
+            .starts_with("Large construction vehicle"));
+        assert!(mobilization.has_portrait());
+
+        // Каждый тип списка покупки и режима модернизации описан и имеет
+        // портрет — у каждого открываемого в `CargoMenu` типа.
+        let mut all = PURCHASE_UNITS.to_vec();
+        all.extend(upgrade_types(&[true, true, true, true, false]));
+        all.sort_by_key(|unit| *unit as u16);
+        all.dedup();
+
+        assert!(all.len() >= 60, "типов в `CargoMenu`: {}", all.len());
+
+        for unit in all {
+            assert!(
+                !cargo_unit_data::unit_description(unit).is_empty(),
+                "{unit:?}: описание в `language.json`"
+            );
+            assert!(
+                cargo_unit_data::unit_portrait(unit).is_some(),
+                "{unit:?}: `P_*` портрет"
+            );
+        }
+    }
+
+    #[test]
+    fn only_unreachable_types_have_no_description() {
+        let mut reachable = PURCHASE_UNITS.to_vec();
+        reachable.extend(upgrade_types(&[true, true, true, true, false]));
+
+        for index in 0..UNIT_END {
+            let unit = UnitType::try_from(index).expect("UnitType 0..92");
+
+            if cargo_unit_data::unit_description(unit).is_empty() {
+                // 24 служебных типа (обломки, взрывы, снаряды, HARVSTER,
+                // WALDO) — без описания и в оригинале; в `CargoMenu` их не
+                // открыть, поэтому `assert cargo-description` всегда видит текст.
+                assert!(
+                    !reachable.contains(&unit),
+                    "{unit:?}: без описания, но достижим в CargoMenu"
+                );
+            } else {
+                assert!(
+                    cargo_unit_data::unit_portrait(unit).is_some(),
+                    "{unit:?}: описание есть, портрета нет"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stat_icon_resource_names_match_unitstats_resources() {
+        // `UnitStats_DrawStats`: ровно те `I_*`, что читает C++.
+        for name in [
+            "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_FUEL", "I_GOLD", "I_POWER",
+            "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
+        ] {
+            assert!(STAT_ICONS.contains(&name), "{name}");
+        }
+        // `CargoMenu` передаёт `interface_icon_full/empty = I_GOLD/I_GOLDE`.
+        assert!(STAT_ICONS.contains(&"I_GOLDE"));
+
+        let mut mobilization = mobilization();
+        for unit in upgrade_types(&[true, true, true, true, false]) {
+            mobilization.info = Some(unit);
+            let rows = mobilization.stats_rows();
+            assert!(!rows.is_empty(), "{unit:?}: строки статистики");
+            for row in &rows {
+                for icon in &row.icons {
+                    assert!(STAT_ICONS.contains(&icon.resource), "{}", icon.resource);
+                    assert!(
+                        STAT_ICONS.contains(&icon.empty_resource),
+                        "{}",
+                        icon.empty_resource
+                    );
+                }
+            }
         }
     }
 
@@ -2932,10 +3761,7 @@ mod tests {
         // Выбор строк бесплатной загрузки — информация следует за списком.
         mobilization.handle_click(PURCHASED_AREA.ulx + 4, PURCHASED_AREA.uly + 4);
         assert_eq!(mobilization.info, Some(UnitType::Constructor));
-        mobilization.handle_click(
-            PURCHASED_AREA.ulx + 4,
-            PURCHASED_AREA.uly + LIST_ROW + 4,
-        );
+        mobilization.handle_click(PURCHASED_AREA.ulx + 4, PURCHASED_AREA.uly + LIST_ROW + 4);
         assert_eq!(mobilization.info, Some(UnitType::Engineer));
 
         // Кнопки Done/Cancel.
