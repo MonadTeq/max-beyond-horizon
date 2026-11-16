@@ -1691,7 +1691,10 @@ fn process_order_power_on(ctx: &mut OrderContext<'_>) {
         power_up(&mut ctx.unit, -1);
 
         if ctx.unit.unit_type == UnitType::ResearchCenter {
-            // TODO(риск 1): ResearchMenu_UpdateResearchProgress(team, topic, 1).
+            // `ResearchMenu_UpdateResearchProgress(team, topic, +1)`
+            // (`units_manager.cpp:2956`).
+            ctx.world
+                .update_research_progress(ctx.unit.team, ctx.unit.research_topic, 1);
         }
     }
 
@@ -1702,6 +1705,12 @@ fn process_order_power_on(ctx: &mut OrderContext<'_>) {
 fn process_order_power_off(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
         power_down(&mut ctx.unit);
+
+        if ctx.unit.unit_type == UnitType::ResearchCenter {
+            // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
+            ctx.world
+                .update_research_progress(ctx.unit.team, ctx.unit.research_topic, -1);
+        }
     }
 
     animate(&ctx.unit);

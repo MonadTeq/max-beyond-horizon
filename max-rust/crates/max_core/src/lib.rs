@@ -78,6 +78,7 @@ pub mod map;
 pub mod order;
 pub mod pathfinding;
 pub mod production;
+pub mod research;
 pub mod rng;
 pub mod save;
 pub mod save_write;
@@ -152,6 +153,14 @@ pub use production::{
     is_builder, is_factory, is_mobile_builder, max_possible_build_rate, progress_build_state,
     total_cost, turns_to_build as production_turns_to_build, BuildError, BuildReport,
     ProductionEvent, ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
+};
+pub use research::{
+    apply_research_upgrades, research_attribute_values, research_factor, research_new_turn,
+    research_turns_to_complete, team_upgrade_cost, team_upgrade_cost_step, update_research_progress,
+    upgrade_amount,
+    upgrade_amount_for_base, upgrade_control_cost, upgrade_cost_step, upgrade_packet_values,
+    ResearchEvent, UpgradeQuote, RESEARCH_TOPIC_FACTORS, UPGRADE_CONTROL_COUNT,
+    UPGRADE_CONTROL_FACTORS, UPGRADE_COST_LIMIT, UPGRADE_PACKET_ATTRIBUTES,
 };
 pub use rng::{GenerateValue, Randomizer};
 pub use save::{

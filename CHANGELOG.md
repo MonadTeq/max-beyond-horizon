@@ -1,6 +1,48 @@
 ## [Unreleased]
 
+## [1.1.0] — 2026-11-16
+
 ### Добавлено
+
+- **P6 — исследования/апгрейды, финальный QA-свип и релиз v1.1.0**
+  (`docs/development/PLAN-production.md`):
+  - **Исследования и покупные апгрейды (последний геймплейный пробел).**
+    `max_core::research` — порт `researchmenu.cpp`/`upgradecontrol.cpp`/
+    `teamunits.cpp`: `ResearchMenu_CalculateFactor`, ходы исследования
+    `pow(base+0.1,7.5)…`, дельты `ResearchMenu_ApplyUpgrades` для всех 93 типов,
+    `UpgradeControl_CalculateCost`/`TeamUnits_UpgradeCost`. `pow(x,7.5)`
+    считается **целочисленно** (Q48 + целочисленный `sqrt`), без `f64`;
+    эталонные векторы `tools/upgrade_vectors` (C++ `std::pow`) сгенерированы для
+    135 452 строк и сверяются бит-в-бит в `max_core/tests/research.rs`
+    (58 086 стоимостей, 656 ходов, 61k дельт).
+  - **Ход исследований в симуляции:** `GameState::advance_research` вызывается
+    из `finish_turn` перед производством (как `ResearchMenu_NewTurn` в
+    `GameManager_ProgressBuildState`); питание `RESEARCH`-центра
+    (`Power On`, пакет 08/P1) делает `UpdateResearchProgress(+1)`, выключение и
+    диверсант — `-1`. `manage_economy` инициализирует `turns_to_complete`
+    нового уровня.
+  - **Экран Upgrade 1:1:** `max_app::upgrademenu` — фон `UPGRADE` 640×480,
+    портрет (11,13), статистика (11,293), цены (321,293), золото (361,276),
+    стрелки `UPGLFT/UPGRGT` (283/301, шаг 19), список типов 482,80 (9×32),
+    фильтры `SELGRD/AIR/SEA/BLD/CBT`, `Done/Help/Cancel`; клавиша `U`;
+    модальный ввод; `Done` фиксирует `TeamUnits.current_values` и списывает
+    золото, `Cancel` откатывает; в сети изменённые типы уходят пакетом **10**
+    (пакета 09 в Rust-протоколе нет — ограничение задокументировано).
+  - **Питание юнитов:** клавиша `O` — попап `Power On/Off` (пакет 08/P1),
+    включает исследовательский центр.
+  - **QA:** новые сценарии `upgrade.qa` (золото 150→142, значения типа,
+    `Cancel` не меняет золото) и `research.qa` (Research Center за 12 ходов →
+    питание → 16 ходов → `Attack` уровень 1); golden-кадры
+    `golden/upgrade/`, `golden/research/`; QA-команды `upgrade …`,
+    `assert upgrade=`, `assert gold`, `assert research <тема>=`.
+  - **Финальный QA-свип:** все 🟡/❌ `suite/*.md` закрыты — 161 ✅, 0 🟡,
+    18 ⏭ not planned с причинами (спектатор, mixed Rust+C++, FLIC, ручной
+    WINDOW, сквозной урон); матрица покрытия в `max-rust-qa/suite/README.md`.
+  - **Релиз:** workspace `max-rust` → **1.1.0**; пересобраны артефакты Windows
+    UI/headless и Linux, обновлены `SHA256SUMS`/`release-checklist.md`.
+  - **Тесты:** +16 `max_core/tests/research.rs`, +5
+    `max_app/tests/upgrade.rs` (всего 780, 0 failed); полный `ci.sh`
+    (тесты + QA + golden + soak) зелёный.
 
 - **P5 — сетевая зрелость** (`docs/development/PLAN-production.md`):
   - **Три клиента.** `build/scripts/live-smoke-3.sh`: Horizon + C++-headless +
@@ -333,6 +375,27 @@
   `--no-default-features` и headless-флаги.
 - Help-текст, build/release-скрипты и документация переведены на
   `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
+
+### Состав релиза 1.1.0 (всё с v1.0.0)
+
+- **Режимы:** одиночная партия (человек + 1–3 ИИ), hot-seat 2–4 человека,
+  сетевая игра через Horizon (2 и 3 клиента, реконнект), мобилизация,
+  выбор точки высадки, победа/поражение (generic + миссии).
+- **Визуал 1:1:** MAINPIC-меню, Options/Planet/Players/Clan, хром `FRAMEPIC`,
+  тайлы `.WRL`, спрайты/тени, миникарта, курсоры, шрифты GNW, BuildMenu,
+  Save/Load, UpgradeMenu, Game Over, golden-кадры в CI.
+- **Геймплей:** приказы/движение/бой/реактивный огонь, экономика и
+  производство (очереди заводов, `SpawnNewUnit`, ставки C++), исследования и
+  покупные апгрейды (P6), ИИ (задачи/стратегия/флот).
+- **Сейвы:** V70 чтение/запись байт-в-байт (SAVE1/SAVE2), автосейв, окно
+  Save/Load 1:1, V70-сейв нашей партии грузится обратно.
+- **Сеть:** лобби Horizon, TP00/03, релей 00/52/54/45, CRC-барьеры, 3 клиента,
+  реконнект через 54; C++ mixed — PARTIAL (блокер headless client).
+- **QA/стабильность:** 100-ходовый soak, бюджет 60 Гц, память, edge-кейсы,
+  golden-дрейф, полный `ci.sh`; детерминизм RNG/карт/симуляции.
+- **Сборка/поставка:** rename проекта в **max-rust**; GUI-сборка по умолчанию
+  (`cargo run -p max_app` открывает игру, bundled SDL3); Windows UI/headless и
+  Linux-артефакты, `SHA256SUMS`, `release-checklist.md`.
 
 ## [1.0.1] — 2026-11-15
 

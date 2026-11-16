@@ -37,5 +37,5 @@ pub use recorder::{RecordContext, Recorder, DEFAULT_PAUSE_CAP};
 pub use runner::{QaConfig, QaMenuClient, QaReport, QaRunner};
 pub use script::{
     parse_script, Assertion, Cmp, Command, MenuTarget, PhaseName, ScreenName, SetupAction, Step,
-    FRAME_HEIGHT, FRAME_WIDTH,
+    UpgradeCommand, FRAME_HEIGHT, FRAME_WIDTH,
 };

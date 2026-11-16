@@ -32,9 +32,10 @@
 
 ## Статус
 
-- **Версия 1.0.0** (2026-11-15): workspace собирается, тесты зелёные; клиент
-  проходит лобби, играет партию, показывает SDL3-меню/HUD, поддерживает
-  реконнект транспорта (M6.1-заготовка) и звук меню (feature `sound`).
+- **Версия 1.1.0** (2026-11-16): production-ready клиент — три режима (одиночная,
+  hot-seat, сеть Horizon), производство/строительство, исследования и покупные
+  апгрейды (`U`/`O`), V70-сейвы с автосейвом, визуал 1:1, QA-фабрика (179 TC,
+  golden, soak) и зелёный `ci.sh`.
 - **GUI — режим по умолчанию**: `default = ["sdl-from-source"]` в `max_app` —
   `cargo run -p max_app` открывает игру (SDL3 3.4.20 собирается из исходников
   через CMake), флаги не нужны; headless-сборки идут с `--no-default-features`.
@@ -86,7 +87,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   (2 клиента × N ходов). GitHub-эквивалент — `../.github/workflows/ci.yml`.
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
   `--no-default-features --features sdl-from-source,sound`, упаковывает
-  `release/` и готовит тег `v1.0.0`; полный порядок —
+  `release/` и готовит тег `v1.1.0`; полный порядок —
   `../docs/development/release-checklist.md`.
 - Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без

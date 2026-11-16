@@ -738,7 +738,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "max_app"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "max_assets",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "max_assets"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "max_core",
@@ -763,14 +763,14 @@ dependencies = [
 
 [[package]]
 name = "max_core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "max_net"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -791,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "max_render"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "max_assets",
  "max_core",

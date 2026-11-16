@@ -189,6 +189,12 @@ pub enum Assertion {
     Selected,
     /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
     BuildOpen(bool),
+    /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
+    UpgradeOpen(bool),
+    /// `assert gold>=N`: золото локальной команды.
+    Gold(Cmp, u32),
+    /// `assert research attack>=1`: уровень темы исследований (P6).
+    ResearchLevel(max_core::enums::ResearchTopic, Cmp, u32),
     /// `assert unit=NAME`: у игрока есть юнит с таким именем (P2: юнит/здание
     /// появились после ходов производства).
     UnitType(String),
@@ -259,6 +265,21 @@ pub enum BuildCommand {
     /// `done` — `Done`/Enter: заказ (`Build()`).
     Done,
     /// `cancel` — `Cancel`/Esc: закрыть без заказа.
+    Cancel,
+}
+
+/// Действие экрана апгрейдов (P6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeCommand {
+    /// `open` — открыть для выделенного юнита (клавиша `U`).
+    Open,
+    /// `select N` — выбрать строку списка типов.
+    Select(u32),
+    /// `row N up|down` — нажать стрелку апгрейда строки N.
+    Adjust { row: u32, increase: bool },
+    /// `done` — `CommitUpgradeChanges`.
+    Done,
+    /// `cancel` — закрыть без изменений.
     Cancel,
 }
 
@@ -341,6 +362,8 @@ pub enum Command {
     Landing(LandingCommand),
     /// `build open|select N|add|delete|rate N|repeat|step N|queue step N|done|cancel`.
     Build(BuildCommand),
+    /// `upgrade open|select N|row N up|down|done|cancel`.
+    Upgrade(UpgradeCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -444,6 +467,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "mobilize" | "cargo" => parse_mobilize(rest),
         "landing" => parse_landing(rest),
         "build" => parse_build(rest),
+        "upgrade" => parse_upgrade(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -687,12 +711,45 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert build: ожидалось open|closed, получено «{other}»"
             )),
         },
+        "upgrade" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::UpgradeOpen(true)),
+            "closed" | "none" => Ok(Assertion::UpgradeOpen(false)),
+            other => Err(format!(
+                "assert upgrade: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "gold" => Ok(Assertion::Gold(
+            operator,
+            parse_u32(value, "assert gold")?,
+        )),
         "unit" => Ok(Assertion::UnitType(value.to_string())),
         "digest" => {
             let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
                 .map_err(|_| format!("assert digest: ожидалось hex16, получено «{value}»"))?;
             Ok(Assertion::Digest(digest))
+        }
+        other if other.starts_with("research ") => {
+            let topic = match other["research ".len()..].trim() {
+                "attack" => max_core::enums::ResearchTopic::Attack,
+                "shots" => max_core::enums::ResearchTopic::Shots,
+                "range" => max_core::enums::ResearchTopic::Range,
+                "armor" => max_core::enums::ResearchTopic::Armor,
+                "hits" => max_core::enums::ResearchTopic::Hits,
+                "speed" => max_core::enums::ResearchTopic::Speed,
+                "scan" => max_core::enums::ResearchTopic::Scan,
+                "cost" => max_core::enums::ResearchTopic::Cost,
+                other => {
+                    return Err(format!(
+                        "assert research: неизвестная тема «{other}» (attack|shots|range|armor|hits|speed|scan|cost)"
+                    ))
+                }
+            };
+            Ok(Assertion::ResearchLevel(
+                topic,
+                operator,
+                parse_u32(value, "assert research")?,
+            ))
         }
         other => Err(format!(
             "assert: неизвестная проверка «{other}» (turn|team|units|screen|phase|notice|digest|victory|defeat|selected)"
@@ -860,8 +917,43 @@ fn parse_build(rest: &str) -> Result<Command, String> {
     Ok(Command::Build(command))
 }
 
-fn parse_select(rest: &str) -> Result<Command, String> {
+fn parse_upgrade(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err(
+            "upgrade: ожидалось действие (open|select N|row N up|down|done|cancel)".to_string(),
+        );
+    };
+
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("open", [_]) => UpgradeCommand::Open,
+        ("select", [_, index]) => UpgradeCommand::Select(parse_u32(index, "upgrade select")?),
+        ("row", [_, row, direction]) => {
+            let row = parse_u32(row, "upgrade row")?;
+            let increase = match direction.to_ascii_lowercase().as_str() {
+                "up" | "inc" | "increase" => true,
+                "down" | "dec" | "decrease" => false,
+                other => {
+                    return Err(format!(
+                        "upgrade row: ожидалось up|down, получено «{other}»"
+                    ))
+                }
+            };
+            UpgradeCommand::Adjust { row, increase }
+        }
+        ("done", [_]) => UpgradeCommand::Done,
+        ("cancel", [_]) => UpgradeCommand::Cancel,
+        _ => {
+            return Err(format!(
+                "upgrade: неизвестное действие «{rest}» (open|select N|row N up|down|done|cancel)"
+            ))
+        }
+    };
+
+    Ok(Command::Upgrade(command))
+}
+
+fn parse_select(rest: &str) -> Result<Command, String> {    let parts: Vec<&str> = rest.split_whitespace().collect();
 
     if parts.first().is_some_and(|part| part.eq_ignore_ascii_case("unit")) {
         if parts.len() != 2 {
@@ -1056,6 +1148,55 @@ mod tests {
         assert_eq!(one("move grid 24 25"), Command::MoveGrid(24, 25));
         assert_eq!(one("move near"), Command::MoveNear);
         assert_eq!(one("end_turn"), Command::EndTurn);
+    }
+
+    #[test]
+    fn upgrade_and_research_commands_parse() {
+        let steps = parse_script(
+            "upgrade open\n\
+             upgrade select 3\n\
+             upgrade row 0 up\n\
+             upgrade row 1 down\n\
+             upgrade done\n\
+             upgrade cancel\n\
+             assert upgrade=open\n\
+             assert gold<150\n\
+             assert research attack>=1\n",
+        )
+        .expect("P6-команды разбираются");
+
+        assert_eq!(steps[0].command, Command::Upgrade(UpgradeCommand::Open));
+        assert_eq!(
+            steps[1].command,
+            Command::Upgrade(UpgradeCommand::Select(3))
+        );
+        assert_eq!(
+            steps[2].command,
+            Command::Upgrade(UpgradeCommand::Adjust {
+                row: 0,
+                increase: true
+            })
+        );
+        assert_eq!(
+            steps[3].command,
+            Command::Upgrade(UpgradeCommand::Adjust {
+                row: 1,
+                increase: false
+            })
+        );
+        assert_eq!(steps[6].command, Command::Assert(Assertion::UpgradeOpen(true)));
+        assert_eq!(
+            steps[7].command,
+            Command::Assert(Assertion::Gold(Cmp::Lt, 150))
+        );
+        assert_eq!(
+            steps[8].command,
+            Command::Assert(Assertion::ResearchLevel(
+                max_core::enums::ResearchTopic::Attack,
+                Cmp::Ge,
+                1
+            ))
+        );
     }
 
     #[test]

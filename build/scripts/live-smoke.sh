@@ -29,7 +29,7 @@ sleep 8
 # 2. Создать игру (gRPC-проба), забрать id
 docker run --rm --network=container:horizon-live -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app --example horizon_probe -- 127.0.0.1 8082 smoke 2>/dev/null | grep create_game | sed 's/.*id=//;s/ name=.*//'" \
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo run -q --no-default-features --manifest-path $WS/max-rust/Cargo.toml -p max_app --example horizon_probe -- 127.0.0.1 8082 smoke 2>/dev/null | grep create_game | sed 's/.*id=//;s/ name=.*//'" \
   > "$LOGS/game_id.txt" || true
 GAME_ID="$(cat "$LOGS/game_id.txt")"
 if [ -z "$GAME_ID" ]; then
@@ -44,10 +44,10 @@ echo "GAME_ID=$GAME_ID"
 #    только MAX.RES — как считает сервер без PATCHES.RES в game_data.
 docker run -d --rm --name client-a --network=container:horizon-live -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustA --team 0 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/a.log 2>&1"
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && timeout 900 cargo run -q --no-default-features --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustA --team 0 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/a.log 2>&1"
 docker run -d --rm --name client-b --network=container:horizon-live -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
-  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && sleep 8 && timeout 900 cargo run -q --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustB --team 1 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/b.log 2>&1"
+  "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && sleep 8 && timeout 900 cargo run -q --no-default-features --manifest-path $WS/max-rust/Cargo.toml -p max_app -- --connect 127.0.0.1:8082 --join $GAME_ID --password '' --player rustB --team 1 --data-dir $WS/max-original --assets-dir $WS/assets --turns $TURNS > $WS/build/smoke-logs/b.log 2>&1"
 
 # 4. Ждать завершения клиентов (max ~16 мин)
 for i in $(seq 1 96); do

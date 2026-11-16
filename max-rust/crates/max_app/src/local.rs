@@ -832,6 +832,15 @@ impl App {
                     }
                 }
             }
+
+            // `ResearchMenu_NewTurn`: завершённые темы (P6).
+            let research = self.state_mut().take_research_events();
+            for event in research.iter().filter(|event| event.team == player) {
+                self.hud.push_log(format!(
+                    "Research complete: {:?} level {}",
+                    event.topic, event.level
+                ));
+            }
         }
 
         if over {

@@ -1145,6 +1145,15 @@ pub fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
                     UnitOrderState::ExecutingOrder,
                 );
                 unit_order::power_down(&mut parent);
+
+                if parent.unit_type == UnitType::ResearchCenter {
+                    // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
+                    state.update_research_progress(
+                        parent.team,
+                        parent.research_topic,
+                        -1,
+                    );
+                }
             }
             _ => {}
         }

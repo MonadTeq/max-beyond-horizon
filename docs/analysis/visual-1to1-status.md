@@ -956,11 +956,12 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 ### 11.4. Упрощения (честно)
 
-* Мобилизация — не весь `CargoMenu`: нет покупки апгрейдов атрибутов
-  (`UpgradeControl_CalculateCost` с исследовательскими множителями
-  `ResearchMenu_CalculateFactor` не портированы), нет загрузки cargo в юниты и
-  полос прокрутки. Клановые бонусы применяются автоматически
-  (`unit_values::team_base_values`), кредиты кланов `SC_CLANS` у всех кланов = 0.
+* Мобилизация — не весь `CargoMenu`: покупные апгрейды атрибутов вынесены в
+  отдельный экран `UpgradeMenu` (P6, `max_app::upgrademenu`, клавиша `U`;
+  формулы `UpgradeControl_CalculateCost`/`ResearchMenu_CalculateFactor`
+  сверены с C++-векторами), нет загрузки cargo в юниты и полос прокрутки.
+  Клановые бонусы применяются автоматически (`unit_values::team_base_values`),
+  кредиты кланов `SC_CLANS` у всех кланов = 0.
 * Состав ИИ — стандартная загрузка `SC_L0001` (как человек, ничего не купивший);
   `AiPlayer::RollTeamMissionSupplies` не портирован.
 * Экран высадки рисует **поверхностную** карту цветами `TileStyle`, а не

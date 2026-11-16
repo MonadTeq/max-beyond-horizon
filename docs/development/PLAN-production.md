@@ -1,6 +1,6 @@
 # План Production-ready Rust-клиента (v1)
 
-Версия: 1.0 · 2026-11-15 · Цель: `goal-f7008432`.
+Версия: 1.1 · 2026-11-16 · Цель: `goal-f7008432`.
 
 ## Определение «production-ready»
 
@@ -36,11 +36,12 @@
   `max-rust/crates/max_app/src/buildmenu.rs`: `FACBUILD`/`CONBUILD` + `BLD*`
   (фон 640×480, списки 483,60 / 337,60, кнопки по координатам C++), клавиша
   `B`, модальный ввод, заказ — `Command::Order` с `PayloadP4` (пакет 08).
-- [ ] Исследования/апгрейды: ResearchMenu-факторы (float-формулы → build-time таблицы по DESIGN).
-  **Помечено как необъятное для P2**: `researchmenu.cpp` + `abstractupgrademenu.cpp`
-  (~27 КБ, `pow`-формулы `ResearchMenu_CalculateFactor`) требуют
-  build-time-таблиц; текущий `manage_economy` только сбрасывает прогресс тем
-  (`TODO(риск 1)`). Вынести в отдельный этап (после P3).
+- [x] Исследования/апгрейды: ResearchMenu-факторы (float-формулы → build-time таблицы по DESIGN).
+  **Закрыто в P6** (было отложено из P2): `max_core::research` — `pow(x,7.5)`
+  целочисленно (Q48 + целочисленный sqrt), 135 452 эталонные строки
+  `tools/upgrade_vectors` сверяются бит-в-бит (58 086 стоимостей, 656 ходов,
+  61k дельт); `advance_research` в `finish_turn`, питание Research Center,
+  экран `UpgradeMenu` 1:1 (`U`), QA `research.qa`/`upgrade.qa`.
 - [x] Интеграция с ИИ (ИИ строит через ProductionManager, как C++).
   ИИ уже выдаёт `ORDER_BUILD` с очередью (`TaskCreateBuilding`/`TaskCreateUnit`
   → `TaskCtx::build_order`); теперь очередь реально тикает и выпускает юнитов
@@ -169,11 +170,34 @@
   разрыв в smoke не автоматизирован (нужен pause/proxy-хук).
 
 ### P6 — QA-покрытие и релиз v1.1.0
-- [ ] Перевод 🟡/❌ тест-кейсов suite в зелёные (или осознанное закрытие).
-- [ ] Новые .qa-сценарии: производство, сейвы, долгая партия, 3-клиента.
-- [ ] Golden-кадры новых экранов (BuildMenu и пр.).
-- [ ] Релиз: версия 1.1.0, CHANGELOG, чек-лист, артефакты (UI/headless Windows + Linux), тег v1.1.0.
+- [x] Перевод 🟡/❌ тест-кейсов suite в зелёные (или осознанное закрытие).
+  `suite/*.md`: **161 ✅ / 0 🟡 / 18 ⏭ not planned** (причины в строках и
+  `suite/README.md`): закрыты клавиатурная навигация, Esc, Name, chat,
+  invalid order; `not planned` — спектатор (нет серверной поддержки),
+  mixed Rust+C++ (нет headless client mode), FLIC, ручной WINDOW, сквозной
+  урон/поражение, MXLS, десинк-хук, hot-seat-сценарии.
+- [x] Новые .qa-сценарии: производство, сейвы, долгая партия, 3-клиента.
+  `production.qa`, `save-load.qa`, `soak-100.qa` (+`soak_headless`),
+  `live-smoke-3.sh`; в P6 добавлены `upgrade.qa` (золото/значения/`Cancel`) и
+  `research.qa` (Research Center → питание → 16 ходов → Attack 1).
+- [x] Golden-кадры новых экранов (BuildMenu и пр.).
+  `golden/production/buildmenu*.png`; в P6 — `golden/upgrade/upgrade-menu.png`,
+  `upgrade-done.png`, `golden/research/research-done.png`; `ci.sh` сверяет
+  три набора.
+- [x] Релиз: версия 1.1.0, CHANGELOG, чек-лист, артефакты (UI/headless Windows + Linux), тег v1.1.0.
+  `max-rust` workspace = **1.1.0** (Cargo.lock обновлён); `CHANGELOG.md`
+  `[1.1.0] — 2026-11-16`; пересобраны
+  `release/max_app-1.1.0-windows-x86_64-ui` (MSVC+vcpkg, SDL3+sound),
+  `release/max_app-1.1.0-windows-x86_64` (mingw, headless, wine-smoke) и
+  `release/max_app-1.1.0-linux-x86_64.tar.gz`; SHA256SUMS внутри бандлов;
+  `release-checklist.md` — раздел v1.1.0 со свидетельствами. **Тег не создан**
+  (по указанию: сделает хозяин), команда подготовлена:
+  `bash release.sh --tag`.
 - Критерий: ci.sh (все стадии) + live-smoke зелёные; чек-лист полностью заполнен.
+  `ci.sh` (стадии 1–4) — **PASS**; QA `sp-full/hs-2/visual-screens/victory/
+  production/save-load/upgrade/research/edge-cases` — **PASS**; golden — 0
+  дрейфа; `cargo test` — 0 failed; live-smoke 2×10 и 3×10 — **PASS**
+  (Docker); soak 100 ходов — PASS.
 
 ## Порядок
 

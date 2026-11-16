@@ -51,18 +51,18 @@ cargo build --release -p max_app --no-default-features       # headless
 ### Windows UI-бинарь (готовый путь)
 ```powershell
 powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
-# артефакт: release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe (+SDL3.dll)
+# артефакт: release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe (+SDL3.dll)
 ```
 
 ### Windows headless-бинарь (кросс-сборка, без MSVC)
 ```sh
 bash build/scripts/build-windows.sh
-# артефакт: release\max_app-1.0.0-windows-x86_64\max-rust.exe
+# артефакт: release\max_app-1.1.0-windows-x86_64\max-rust.exe
 ```
 
 ### Linux-бинарь + архив
 ```sh
-bash release.sh          # release/max_app-1.0.0-linux-x86_64.tar.gz
+bash release.sh          # release/max_app-1.1.0-linux-x86_64.tar.gz
 ```
 
 ### Horizon (сервер)
@@ -111,7 +111,7 @@ cargo run -p max_app
 ```powershell
 # готовый Windows-артефакт (SDL3 из vcpkg, звук), см. build-windows-ui.ps1:
 cd D:\dev\max-port-debug
-release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
+release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
 ```
 По умолчанию (без флагов) клиент открывает GUI; `--ui` — совместимый alias.
 В меню: **New Game** (одиночная: Options → Planet → Players, «Human/Computer» →
@@ -120,7 +120,9 @@ release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 проходит каждый человек по очереди).
 Управление: LMB — выбрать юнит; RMB — приказ движения (зелёный предпросмотр);
 клик по врагу — атака; **T**+Enter — чат; **End Turn** — конец хода; клик по
-миникарте — камера; **P** — пауза; **S** — Save Game, **L** — Load Game.
+миникарте — камера; **P** — пауза; **S** — Save Game, **L** — Load Game;
+**B** — BuildMenu; **U** — экран покупных апгрейдов; **O** — питание юнита
+(у Research Center включает исследование темы Attack).
 
 ### Сохранения (V70, P3)
 Локальная партия пишется **настоящим V70-сейвом** (`GameState::to_save_bytes`,
@@ -142,7 +144,7 @@ release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
 # 1. сервер:
 docker compose up -d --build
 # 2. клиенты (в меню: Multiplayer Game → Host/Join Network Game):
-release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe
+release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
 ```
 Автоматический smoke: `bash build/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
@@ -155,7 +157,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
-Готовый headless-артефакт (Windows, кросс-сборка): `release\max_app-1.0.0-windows-x86_64\max-rust.exe`
+Готовый headless-артефакт (Windows, кросс-сборка): `release\max_app-1.1.0-windows-x86_64\max-rust.exe`
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через

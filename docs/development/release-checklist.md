@@ -1,11 +1,48 @@
 # Чек-лист релиза Rust-клиента M.A.X.
 
-Версия: **1.0.0** · дата среза: **2026-11-15** · тег: **v1.0.0**
+Версия: **1.1.0** · дата среза: **2026-11-16** · тег: **v1.1.0** (не создан —
+сделает хозяин; команда подготовлена в §v1.1.0 ниже).
 
 Документ — исполняемая последовательность: каждый пункт либо команда с
 ожидаемым результатом, либо ручная проверка с местом для свидетельства.
 Релиз считается выпущенным, когда отмечены **все** пункты разделов 1–9 и
 артефакты раздела 10 опубликованы.
+
+> **Историческая часть.** Разделы 0–10 и приложения A–D описывают релиз
+> **1.0.0** (2026-11-15) и остаются как свидетельства предыдущего среза.
+> Для **1.1.0** актуальны раздел «v1.1.0 — итоговый чек-лист» (ниже) и
+> артефакты `release/max_app-1.1.0-*`.
+
+## v1.1.0 — итоговый чек-лист (2026-11-16)
+
+| # | Пункт | Команда/свидетельство | Результат |
+|---|---|---|---|
+| 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-rust/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | ✅ `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
+| 2 | CHANGELOG | `CHANGELOG.md` | ✅ `[1.1.0] — 2026-11-16` + состав с v1.0.0 (режимы, визуал, производство, сейвы, сеть, QA, rename, GUI-default) |
+| 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | ✅ `CI OK за 935 с` (`build/ci-p6-final.log`): тесты 0 failed, QA/golden/soak PASS, smoke 2×10 `0x7035` и 3×10 `0x34D5` PASS |
+| 4 | Тесты max-rust | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **780 тестов + 3 doc-tests, 0 failed** (debug/release; 198 max_app lib, 220 max_core lib, 16 research, 5 upgrade, …) |
+| 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases | ✅ все PASS; golden-дрейф 0 |
+| 6 | Golden новых экранов | `golden/upgrade/upgrade-menu.png`, `upgrade-done.png`; `golden/research/research-done.png` | ✅ 0 пикселей отличий |
+| 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
+| 8 | Live smoke 2×10 | `build/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
+| 9 | Live smoke 3×10 | `build/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
+| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/`: `max-rust.exe` 5 876 224 Б, sha256 `07c8f8c4…`; zip 3 276 731 Б, sha256 `87a174fc…`; PE Subsystem=2 (GUI), MSVC 14.51 + vcpkg SDL3 3.4.20, sound |
+| 11 | Windows headless | `bash build/scripts/build-windows.sh` (mingw, wine-8.0) | ✅ `release/max_app-1.1.0-windows-x86_64/`: `max-rust.exe` 9 915 523 Б, sha256 `6a2918a5…`; zip 3 682 911 Б, sha256 `68929356…`; wine `--help` + `--demo` exit 0 |
+| 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ✅ `release/max_app-1.1.0-linux-x86_64/` + `.tar.gz` 4 432 299 Б, sha256 `9530a91c…`; внутри `SHA256SUMS` (бинарник/run.sh/README/CHANGELOG/LICENSE/libSDL3.so.0) |
+| 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ пересобраны; сводка — `release/SHA256SUMS-1.1.0.txt` |
+| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `PLAN-production.md` P6, `max-rust-qa/suite/README.md` | ✅ версия 1.1.0, новые экраны/клавиши, матрица QA 161 ✅ / 18 ⏭ |
+| 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
+| 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
+
+**Остаточные ограничения 1.1.0** (не блокируют релиз, отражены в QA как
+`⏭ not planned`): спектатор (нужна серверная поддержка `TEAM_TYPE_SPECTATOR`),
+полная mixed-сессия Rust+C++ (headless `src/` умеет только `--server`),
+FLIC-анимация портретов, живой alt-tab/авто-масштаб (WINDOW-проверки), сквозной
+бой/поражение в QA (нет команды урона), MXLS-загрузка (полный путь — V70),
+пакет 09 (золото команды) в сети — апгрейды идут пакетом 10.
+
+---
+
 
 Обозначения:
 

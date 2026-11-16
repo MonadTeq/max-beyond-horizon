@@ -9,8 +9,8 @@ max-rust-qa/
   README.md               этот файл
   plans/                  планы QA и стратегия (qa-plan.md и пр.)
   suite/                  каталог тест-кейсов (по одному файлу на область, TC-IDs)
-  scripts/                .qa-сценарии драйвера (sp-full.qa, hs-2.qa, …)
-  golden/                 эталонные кадры экранов (для сверки на дрейф)
+  scripts/                .qa-сценарии драйвера (sp-full.qa, hs-2.qa, upgrade.qa, research.qa, …)
+  golden/                 эталонные кадры экранов (для сверки на дрейф; production/, upgrade/, research/)
   drivers/                тестовые драйверы и инструкции (qa_run, qa_golden_check, ui-тесты)
   tools/                  утилиты (генераторы векторов, компараторы)
   out/                    рабочие результаты прогонов (gitignored)
@@ -26,6 +26,10 @@ max-rust-qa/
 2. **Скрипты** лежат в `scripts/`; каждый скрипт покрывает один или несколько TC из `suite/`.
 3. **Golden** в `golden/` — эталоны кадров; дрейф ловится `qa_golden_check` (порог 1 %).
 4. **CI**: `ci.sh` гоняет все скрипты + golden; падение = красный билд.
+5. **P6 (v1.1.0)**: `scripts/upgrade.qa` — экран `UpgradeMenu` (`U`),
+   `scripts/research.qa` — питание Research Center (`O`) и уровень темы;
+   golden — `golden/upgrade/`, `golden/research/`. Итоговая матрица —
+   `suite/README.md` (**161 ✅, 0 🟡, 18 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

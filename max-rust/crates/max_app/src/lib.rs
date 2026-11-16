@@ -58,6 +58,7 @@ pub mod saveload;
 pub mod setup;
 pub mod soak;
 pub mod ui;
+pub mod upgrademenu;
 pub mod winloss;
 
 use std::fmt;
@@ -91,8 +92,8 @@ pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hud::{
-    build_attack_order, build_move_order, hud_layout, render_hud, team_color, unit_at_screen,
-    HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
+    build_attack_order, build_move_order, build_power_order, hud_layout, render_hud, team_color,
+    unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
 pub use hotseat::TurnNotice;
 pub use landing::{LandingAction, LandingScreen};
@@ -111,6 +112,7 @@ pub use saveload::{
     save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
     AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
+pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
 pub use ui::{
     handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
     CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
@@ -522,6 +524,8 @@ pub struct App {
     build_menu: Option<buildmenu::BuildMenu>,
     /// Открытое окно сохранения/загрузки V70 (P3). В снапшот/CRC не входит.
     pub(crate) save_load: Option<saveload::SaveLoadMenu>,
+    /// Открытый экран покупных апгрейдов (P6). В снапшот/CRC не входит.
+    upgrade_menu: Option<upgrademenu::UpgradeMenu>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
@@ -545,6 +549,7 @@ impl App {
             local: None,
             build_menu: None,
             save_load: None,
+            upgrade_menu: None,
             visual_units: std::collections::HashMap::new(),
         }
     }
@@ -603,6 +608,122 @@ impl App {
     /// Закрывает `BuildMenu` (Esc/`Cancel`/после заказа).
     pub fn close_build_menu(&mut self) {
         self.build_menu = None;
+    }
+
+    /// Открытый экран апгрейдов (P6); `None` — закрыт.
+    pub fn upgrade_menu(&self) -> Option<&upgrademenu::UpgradeMenu> {
+        self.upgrade_menu.as_ref()
+    }
+
+    /// Открытый экран апгрейдов для ввода.
+    pub fn upgrade_menu_mut(&mut self) -> Option<&mut upgrademenu::UpgradeMenu> {
+        self.upgrade_menu.as_mut()
+    }
+
+    /// Открывает экран апгрейдов — C++ `UpgradeMenu(team, complex).Run()`
+    /// (попап «Buy Upgrade» у `GOLDREF`, `units_manager.cpp:956`).
+    ///
+    /// В нашем UI попап-меню юнита нет, поэтому экран открывается клавишей `U`
+    /// для выделенного юнита своей команды.
+    pub fn open_upgrade_menu(&mut self) -> bool {
+        let Some(team) = self.hud.selected.and_then(|id| self.state.unit(id)) else {
+            return false;
+        };
+        let team = team.team;
+        if team != self.state.player_team {
+            return false;
+        }
+        let Some(menu) = upgrademenu::UpgradeMenu::new(&self.state, team) else {
+            return false;
+        };
+        self.upgrade_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает экран апгрейдов без фиксации.
+    pub fn close_upgrade_menu(&mut self) {
+        self.upgrade_menu = None;
+    }
+
+    /// Фиксирует изменения (`CommitUpgradeChanges`) и закрывает экран.
+    ///
+    /// В локальной игре изменения уже применены к `TeamUnits`; в сети каждый
+    /// изменённый тип уходит пакетом **10** (`Command::UpgradeUnitType`).
+    /// Пакет 09 (золото команды) в Rust-протоколе отсутствует — ограничение
+    /// задокументировано в `upgrademenu` (шапка модуля).
+    pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
+        let mut menu = self.upgrade_menu.take()?;
+        let changed = menu.commit(&mut self.state);
+
+        if online {
+            for (unit_type, values) in &changed {
+                self.hud.pending.push(Command::UpgradeUnitType(
+                    max_core::Packet10UpgradeUnitType {
+                        team: menu.team,
+                        unit_type: *unit_type,
+                        values: *values,
+                    },
+                ));
+            }
+        }
+
+        let gold = self
+            .state
+            .team_units
+            .get(menu.team.0 as usize)
+            .map(|units| units.gold)
+            .unwrap_or(0);
+
+        Some(if changed.is_empty() {
+            format!("Upgrades: no changes (gold {gold})")
+        } else {
+            format!(
+                "Upgrades: {} unit type(s) changed (gold {gold})",
+                changed.len()
+            )
+        })
+    }
+
+    /// Ввод в открытом экране апгрейдов — как `AbstractUpgradeMenu::ProcessKey`.
+    pub fn upgrade_menu_input(&mut self, event: InputEvent) -> Option<upgrademenu::UpgradeAction> {
+        let Some(mut menu) = self.upgrade_menu.take() else {
+            return None;
+        };
+        let action = match event {
+            InputEvent::MouseClick(x, y) => menu.click(&self.state, x, y),
+            InputEvent::Key(key) => menu.key(&self.state, key),
+            _ => upgrademenu::UpgradeAction::None,
+        };
+        self.upgrade_menu = Some(menu);
+        Some(action)
+    }
+
+    /// Выбор строки списка типов в открытом экране апгрейдов (QA/клавиатура).
+    pub fn upgrade_menu_select(&mut self, index: usize) -> bool {
+        let Some(mut menu) = self.upgrade_menu.take() else {
+            return false;
+        };
+        if index >= menu.unit_types.len() {
+            self.upgrade_menu = Some(menu);
+            return false;
+        }
+        menu.selected = index;
+        menu.page_min = menu
+            .page_min
+            .min(menu.unit_types.len().saturating_sub(crate::upgrademenu::LIST_ROWS as usize));
+        menu.rebuild_controls(&self.state);
+        self.upgrade_menu = Some(menu);
+        true
+    }
+
+    /// Стрелка апгрейда строки `row` в открытом экране (QA).
+    pub fn upgrade_menu_adjust(&mut self, row: usize, increase: bool) -> bool {
+        let Some(mut menu) = self.upgrade_menu.take() else {
+            return false;
+        };
+        let changed = menu.adjust(&self.state, row, increase);
+        self.upgrade_menu = Some(menu);
+        changed
     }
 
     /// Ассеты игры (`None` до [`App::init_assets`]).
@@ -722,6 +843,7 @@ impl App {
         self.local = None;
         self.build_menu = None;
         self.save_load = None;
+        self.upgrade_menu = None;
         self.visual_units.clear();
         self.focus_player();
 
@@ -942,6 +1064,7 @@ impl App {
         self.local = None;
         self.build_menu = None;
         self.save_load = None;
+        self.upgrade_menu = None;
         self.visual_units.clear();
         self.focus_player();
 

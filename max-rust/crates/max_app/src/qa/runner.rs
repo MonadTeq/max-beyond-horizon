@@ -35,7 +35,7 @@ use crate::mobilize::{
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
     self, Assertion, BuildCommand, Command, LandingCommand, MenuTarget, MobilizeAction, PhaseName,
-    ScreenName, SetupAction, Step,
+    ScreenName, SetupAction, Step, UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -402,13 +402,13 @@ impl QaRunner {
             Command::Mobilize(action) => self.mobilize(*action),
             Command::Landing(action) => self.landing(*action),
             Command::Build(action) => self.build(*action),
+            Command::Upgrade(action) => self.upgrade(*action),
         }
     }
 
     /// `build …`: экран `BuildMenu` (P2) — те же действия, что у игрока
     /// (клавиша `B`, клики по строкам списка, кнопки Build/Delete/Done).
-    fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {
-        let app = &mut self.app;
+    fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {        let app = &mut self.app;
 
         let detail = match action {
             BuildCommand::Open => {
@@ -517,6 +517,72 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
+    /// `upgrade …`: экран покупных апгрейдов (P6).
+    fn upgrade(&mut self, action: UpgradeCommand) -> Result<Flow, String> {
+        let app = &mut self.app;
+
+        let detail = match action {
+            UpgradeCommand::Open => {
+                if !app.open_upgrade_menu() {
+                    return Err(
+                        "upgrade open: нужен выделенный юнит своей команды (select type …)"
+                            .to_string(),
+                    );
+                }
+                let count = app
+                    .upgrade_menu()
+                    .map(|menu| menu.unit_types.len())
+                    .unwrap_or(0);
+                format!("меню открыто, типов {count}")
+            }
+            UpgradeCommand::Select(index) => {
+                let Some(menu) = app.upgrade_menu() else {
+                    return Err("upgrade select: меню не открыто".to_string());
+                };
+                if index as usize >= menu.unit_types.len() {
+                    return Err(format!(
+                        "upgrade select {index}: в списке {} типов",
+                        menu.unit_types.len()
+                    ));
+                }
+                let name = menu
+                    .unit_types
+                    .get(index as usize)
+                    .copied()
+                    .map(crate::buildmenu::unit_name)
+                    .unwrap_or("unit");
+                app.upgrade_menu_select(index as usize);
+                format!("выбран {name}")
+            }
+            UpgradeCommand::Adjust { row, increase } => {
+                if app.upgrade_menu().is_none() {
+                    return Err("upgrade row: меню не открыто".to_string());
+                }
+                if !app.upgrade_menu_adjust(row as usize, increase) {
+                    return Err(format!("upgrade row {row}: изменение невозможно"));
+                }
+                format!("строка {row} {}", if increase { "up" } else { "down" })
+            }
+            UpgradeCommand::Done => {
+                if app.upgrade_menu().is_none() {
+                    return Err("upgrade done: меню не открыто".to_string());
+                }
+                app.commit_upgrade_menu(false)
+                    .unwrap_or_else(|| "изменения зафиксированы".to_string())
+            }
+            UpgradeCommand::Cancel => {
+                if app.upgrade_menu().is_none() {
+                    return Err("upgrade cancel: меню не открыто".to_string());
+                }
+                app.close_upgrade_menu();
+                "меню закрыто".to_string()
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
+    }
     /// `mobilize …`: действия на экране `CargoMenu` через те же клики, что у
     /// игрока (строки списков, кнопки Buy/Delete/Done/Cancel).
     fn mobilize(&mut self, action: MobilizeAction) -> Result<Flow, String> {
@@ -1392,6 +1458,55 @@ impl QaRunner {
                     actual == expected,
                     format!("build={}", if expected { "open" } else { "closed" }),
                     format!("build={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::UpgradeOpen(expected) => {
+                let actual = self.app.upgrade_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("upgrade={}", if expected { "open" } else { "closed" }),
+                    format!("upgrade={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::Gold(cmp, expected) => {
+                let actual = self
+                    .app
+                    .state()
+                    .team_units
+                    .get(self.app.player_team().0 as usize)
+                    .map(|units| units.gold)
+                    .unwrap_or(0);
+                let ok = match cmp {
+                    crate::qa::script::Cmp::Eq => actual == expected,
+                    crate::qa::script::Cmp::Ge => actual >= expected,
+                    crate::qa::script::Cmp::Le => actual <= expected,
+                    crate::qa::script::Cmp::Gt => actual > expected,
+                    crate::qa::script::Cmp::Lt => actual < expected,
+                };
+
+                self.expect(
+                    ok,
+                    format!("gold {:?} {expected}", cmp),
+                    format!("gold {actual}"),
+                )
+            }
+            Assertion::ResearchLevel(topic, cmp, expected) => {
+                let actual = self.app.state().teams[self.app.player_team().0 as usize]
+                    .research_topics[topic as usize]
+                    .research_level;
+                let ok = match cmp {
+                    crate::qa::script::Cmp::Eq => actual == expected,
+                    crate::qa::script::Cmp::Ge => actual >= expected,
+                    crate::qa::script::Cmp::Le => actual <= expected,
+                    crate::qa::script::Cmp::Gt => actual > expected,
+                    crate::qa::script::Cmp::Lt => actual < expected,
+                };
+
+                self.expect(
+                    ok,
+                    format!("research {topic:?} {:?} {expected}", cmp),
+                    format!("research {topic:?} {actual}"),
                 )
             }
             Assertion::UnitType(name) => {

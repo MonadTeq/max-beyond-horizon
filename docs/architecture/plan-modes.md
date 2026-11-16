@@ -84,9 +84,10 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 * Кланы (`ClanSelectMenu`) и экраны Help (`PLANET_SETUP`,
   `NEW_GAME_SETUP`, `OPTIONS_SETUP`) не портированы — кнопки `?`/флаг команды
   пишут статус.
-* Производство (`ProgressBuildState`: `SpawnNewUnits`,
-  `ResearchMenu_NewTurn`) в max_core всё ещё P3/TODO — ИИ строит через задачи,
-  но очередь производства юнитов из `ProductionManager` не спавнится.
+* Производство (`ProgressBuildState`: `SpawnNewUnits`, `ResearchMenu_NewTurn`)
+  портировано: P2 — очередь `ProductionManager`/спавн, P6 — исследования
+  (`max_core::research`, питание Research Center) и покупные апгрейды
+  (`UpgradeMenu`).
 
 ### M-SP+: фазы старта — мобилизация и выбор точки высадки — **сделано (v1.4, 2026-11-15)**
 

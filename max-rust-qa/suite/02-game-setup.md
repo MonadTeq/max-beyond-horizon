@@ -18,9 +18,9 @@
 | TC-0212 | Players — смена Human | Human на другом слоте | флаг переносится с прежнего человека (одиночная) | ✅ UNIT |
 | TC-0213 | Players — hot-seat флаги | hot-seat: два Human | флаг НЕ переносится; Done требует 2 человек | ✅ UNIT; QA hs-2.qa |
 | TC-0214 | Players — Cancel/Дone | Cancel и Done | как C++ | ✅ UNIT |
-| TC-0215 | Настройка: Name | ввести имя | имя игрока сохраняется | 🟡 |
+| TC-0215 | Настройка: Name | ввести имя | имя игрока сохраняется | ✅ UNIT: поле имени LocalSetup (`GameSetupForm::push_char/backspace`, лимит 24), `player_name` уходит в `LocalSetup`/V70 `SaveMeta`; тест `app.rs::non_ascii_player_name_renders_with_the_fallback_glyph` |
 | TC-0216 | Кнопка `?` нижней строки | сравнить кадр Players/Options с C++ | знак `?` по центру кнопки 48×40: `x = ulx + (48 − (Text_GetWidth+1))/2`, `y = uly + (40 − 16)/2` (`Text_TextLine`/`Button::SetCaption`) | ✅ golden players.png / options.png; UNIT `menu::draw_image_button` |
 | TC-0217 | Эмблемы кланов на флагах | Players с выбранным кланом | `CLNnLOGO` рисуется с якорем (41,40) внутри флага 93×89: `ulx/uly` ресурса вычитаются (`WindowManager_DecodeSimpleImage`) | ✅ golden players.png; UNIT setup |
 | TC-0218 | Экран выбора клана | клик по флагу команды | CLANSEL, 8 карточек 91×86, логотипы по центру (якорь 41,40), выбранная карточка — down-состояние, имя зелёным | ✅ QA sp-full (кадр `clan.png`); UNIT setup (clan screen) |
 
-Итог: 18 TC, ✅ 16, 🟡 2.
+Итог: 18 TC, ✅ 18, 🟡 0.

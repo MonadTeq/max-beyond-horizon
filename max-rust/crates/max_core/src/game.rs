@@ -56,7 +56,8 @@
 //!    производные от клетки: `x = grid*64 + 32` (+31 для зданий).
 
 use crate::enums::{
-    unit_flags, GameStateType, PlayMode, Surface, UnitOrder, UnitOrderState, UnitType, VictoryType,
+    unit_flags, GameStateType, PlayMode, ResearchTopic, Surface, UnitOrder, UnitOrderState,
+    UnitType, VictoryType, RESEARCH_TOPIC_COUNT,
 };
 use crate::events::CommandQueue;
 use crate::geo::Point;
@@ -195,6 +196,9 @@ pub struct GameState {
     /// События последнего хода производства (`GameManager_ProgressBuildState`):
     /// что выпущено/прервано. Не входит в дайджест — это отчёт для UI/QA.
     pub production_events: Vec<crate::production::ProductionEvent>,
+    /// События последнего хода исследований (`ResearchMenu_NewTurn`):
+    /// завершённые уровни тем. Не входит в дайджест — отчёт для UI/QA.
+    pub research_events: Vec<crate::research::ResearchEvent>,
     /// `UnitsManager_TeamInfo[*].finished_turn` дублируется в `teams`; здесь —
     /// счётчики барьеров, чтобы состояние было самодостаточным.
     pub turn_indices: [u8; TEAM_SLOTS],
@@ -318,6 +322,7 @@ impl GameState {
             live_attacks: Vec::new(),
             delayed_reactions_pending: false,
             production_events: Vec::new(),
+        research_events: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -1574,14 +1579,131 @@ impl GameState {
         }
 
         if let Some(team_info) = self.teams.get_mut(team.0 as usize) {
-            for index in 0..crate::enums::RESEARCH_TOPIC_COUNT {
-                let topic = &team_info.research_topics[index];
+            for index in 0..RESEARCH_TOPIC_COUNT {
+                let topic = team_info.research_topics[index];
                 if topic.allocation != 0 && topic.turns_to_complete == 0 {
-                    // TODO(риск 1): ResearchMenu_UpdateResearchProgress —
-                    // формула с `std::pow` заменяется build-time-таблицей.
+                    // `ResearchMenu_UpdateResearchProgress(team, i, 0)`:
+                    // посчитать ходы для нового уровня (C++ `manage_economy`).
+                    crate::research::update_research_progress(
+                        &mut team_info.research_topics[index],
+                        crate::research::RESEARCH_TOPIC_FACTORS[index],
+                        0,
+                    );
                 }
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Исследования (P6: `researchmenu.cpp` / `upgradecontrol.cpp`)
+    // -----------------------------------------------------------------------
+
+    /// `ResearchMenu_UpdateResearchProgress(team, topic, allocation)` —
+    /// изменить число исследовательских центров темы и пересчитать прогресс.
+    pub fn update_research_progress(&mut self, team: TeamId, topic: ResearchTopic, allocation: i32) {
+        let index = topic as usize;
+        if index >= RESEARCH_TOPIC_COUNT {
+            return;
+        }
+        let Some(team_info) = self.teams.get_mut(team.0 as usize) else {
+            return;
+        };
+        crate::research::update_research_progress(
+            &mut team_info.research_topics[index],
+            crate::research::RESEARCH_TOPIC_FACTORS[index],
+            allocation,
+        );
+    }
+
+    /// Текущее распределение исследовательских центров по темам (C++
+    /// `TeamInfo::research_topics[i].allocation`).
+    pub fn research_allocation(&self, team: TeamId) -> [u32; RESEARCH_TOPIC_COUNT] {
+        let mut result = [0u32; RESEARCH_TOPIC_COUNT];
+        if let Some(info) = self.teams.get(team.0 as usize) {
+            for (index, topic) in info.research_topics.iter().enumerate() {
+                result[index] = topic.allocation;
+            }
+        }
+        result
+    }
+
+    /// `ResearchMenu_OnClick_Done` (`researchmenu.cpp:518`): применить новое
+    /// распределение центров по темам.
+    ///
+    /// Для каждого включённого `RESEARCH`-центра: если в целевом распределении
+    /// для его темы есть место — оставить; иначе перевести на первую тему с
+    /// местом (обновив allocation `-1/+1`), а если мест нет — выключить
+    /// (`ORDER_POWER_OFF`/`INIT`, как C++).
+    ///
+    /// Возвращает фактическое распределение (C++ не гарантирует сумму = числу
+    /// центров, если цель больше числа центров).
+    pub fn set_research_allocation(
+        &mut self,
+        team: TeamId,
+        target: [u32; RESEARCH_TOPIC_COUNT],
+    ) -> [u32; RESEARCH_TOPIC_COUNT] {
+        let mut remaining = target;
+        let ids = self.lists[UnitListKind::Stationary.index()].clone();
+
+        for id in ids {
+            let Some(unit) = self.unit(id).cloned() else {
+                continue;
+            };
+            if unit.team != team
+                || unit.unit_type != UnitType::ResearchCenter
+                || unit.orders != UnitOrder::PowerOn
+            {
+                continue;
+            }
+
+            let old_index = unit.research_topic as usize;
+            if old_index < RESEARCH_TOPIC_COUNT && remaining[old_index] > 0 {
+                remaining[old_index] -= 1;
+                continue;
+            }
+
+            let Some(new_index) = remaining.iter().position(|count| *count > 0) else {
+                let mut unit = unit;
+                unit_order::set_new_order_int(
+                    &mut unit,
+                    UnitOrder::PowerOff,
+                    UnitOrderState::Init,
+                );
+                self.write_unit(id, unit);
+                continue;
+            };
+
+            let mut unit = unit;
+            if old_index < RESEARCH_TOPIC_COUNT {
+                self.update_research_progress(team, unit.research_topic, -1);
+            }
+            let Some(new_topic) = ResearchTopic::try_from(new_index as u8).ok() else {
+                continue;
+            };
+            unit.research_topic = new_topic;
+            self.update_research_progress(team, new_topic, 1);
+            remaining[new_index] -= 1;
+            self.write_unit(id, unit);
+        }
+
+        self.research_allocation(team)
+    }
+
+    /// `ResearchMenu_NewTurn(team)` — ход исследований команды: списать
+    /// allocation, завершить уровни, применить апгрейды к текущим значениям.
+    pub fn advance_research(&mut self, team: TeamId) -> Vec<crate::research::ResearchEvent> {
+        let index = team.0 as usize;
+        if index >= TEAM_SLOTS {
+            return Vec::new();
+        }
+        let teams = &mut self.teams;
+        let team_units = &mut self.team_units;
+        crate::research::research_new_turn(&mut team_units[index], &mut teams[index], team)
+    }
+
+    /// Забирает события исследований последнего хода (для HUD-лога).
+    pub fn take_research_events(&mut self) -> Vec<crate::research::ResearchEvent> {
+        std::mem::take(&mut self.research_events)
     }
 
     /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — сброс скоростей,
@@ -1784,12 +1906,18 @@ impl GameState {
         // Порядок вызовов 1:1: списание стоимости хода → `SpawnNewUnits`
         // (`GroundCover → MobileLandSea → Stationary → MobileAir`).
         self.production_events.clear();
+        self.research_events.clear();
 
         for team in 0..PLAYER_TEAM_COUNT {
             let kind = self.teams[team].team_type;
             if kind == TeamKind::None || kind == TeamKind::Eliminated {
                 continue;
             }
+
+            // `GameManager_ProgressBuildState`: сначала `ResearchMenu_NewTurn`
+            // (P6), затем `SpawnNewUnits` — порядок C++.
+            let research = self.advance_research(TeamId(team as u8));
+            self.research_events.extend(research);
 
             let events = crate::production::progress_build_state(self, TeamId(team as u8));
             self.production_events.extend(events);

@@ -447,6 +447,8 @@ pub struct Assets {
     pub build_menu: Option<crate::buildmenu::BuildMenuAssets>,
     /// Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*` + `MNUBTN*`), P3.
     pub save_load: Option<crate::saveload::SaveLoadAssets>,
+    /// Экран покупных апгрейдов (`UPGRADE` + `UPG*`/`BLD*`/`SEL*`), P6.
+    pub upgrade: Option<crate::upgrademenu::UpgradeMenuAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -575,6 +577,14 @@ impl Assets {
         let build_menu = crate::buildmenu::BuildMenuAssets::load(&max_res);
         // Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*_UP/DN` + кнопки), P3.
         let save_load = crate::saveload::SaveLoadAssets::load(&max_res);
+        // Экран апгрейдов (`UPGRADE` + `UPG*` + `BLD*` + `SEL*`), P6.
+        let upgrade = crate::upgrademenu::UpgradeMenuAssets::load(&max_res);
+
+        if !upgrade.is_ready() {
+            warnings.push(
+                "UpgradeMenu: UPGRADE/BLDONE/BLDCAN не загрузились — экран на рамках".to_string(),
+            );
+        }
 
         if !save_load.is_ready() {
             warnings.push(
@@ -650,6 +660,7 @@ impl Assets {
             menu,
             build_menu: Some(build_menu),
             save_load: Some(save_load),
+            upgrade: Some(upgrade),
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,

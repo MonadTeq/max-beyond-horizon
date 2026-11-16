@@ -1509,6 +1509,11 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_build_menu_input(app, event, online);
     }
 
+    // Экран покупных апгрейдов (P6) — модальный, как `UpgradeMenu::Run`.
+    if app.upgrade_menu().is_some() {
+        return session_upgrade_menu_input(app, event, online);
+    }
+
     // Окно сохранения/загрузки V70 (P3) тоже модально: пока оно открыто,
     // карта/панели/чат приказов не получают (`GameManager_DisableMainMenu`).
     if app.save_load().is_some() {
@@ -1590,6 +1595,37 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().push_log(
                     "Build: select a constructor, engineer or factory first",
                 );
+            }
+            Transition::None
+        }
+        // `O` — питание выделенного юнита (попап `Power On`/`Power Off` в C++;
+        // для `RESEARCH` включается исследование темы по умолчанию).
+        InputEvent::Key(Key::Char('o' | 'O')) if !blocked => {
+            let Some(id) = app.hud().selected else {
+                app.hud_mut().push_log("Power: select a unit first");
+                return Transition::None;
+            };
+            let Some(command) = hud::build_power_order(app.state(), id) else {
+                app.hud_mut().push_log("Power: unit cannot be powered");
+                return Transition::None;
+            };
+            let label = "Power toggled";
+            app.hud_mut().pending.push(command);
+            app.hud_mut().push_log(label);
+            if !online {
+                apply_pending_orders(app);
+            }
+            Transition::None
+        }
+        // `U` — экран апгрейдов (`UpgradeMenu`, попап «Buy Upgrade» у золотого
+        // завода в C++; у нас попап не портирован, поэтому клавиша).
+        InputEvent::Key(Key::Char('u' | 'U')) if !blocked => {
+            if app.open_upgrade_menu() {
+                app.hud_mut().mouse_position = None;
+                app.hud_mut().push_log("Upgrade menu");
+            } else {
+                app.hud_mut()
+                    .push_log("Upgrade: select your unit (or gold refinery) first");
             }
             Transition::None
         }
@@ -1692,6 +1728,30 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
         Some(crate::buildmenu::BuildMenuAction::Close) => {
             app.close_build_menu();
             app.hud_mut().push_log("Build cancelled");
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
+/// Ввод в открытом экране апгрейдов (модальный экран P6).
+///
+/// `Done`/Enter — `CommitUpgradeChanges`: изменённые типы пишутся в
+/// `TeamUnits` (пакеты 10 в сети), золото списывается. `Cancel`/Esc — закрыть
+/// без изменений (C++ `UpgradeMenu::Run` возвращает `false`).
+fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let action = app.upgrade_menu_input(event);
+
+    match action {
+        Some(crate::upgrademenu::UpgradeAction::Commit) => {
+            if let Some(line) = app.commit_upgrade_menu(online) {
+                app.hud_mut().push_log(line);
+            }
+        }
+        Some(crate::upgrademenu::UpgradeAction::Cancel) => {
+            app.close_upgrade_menu();
+            app.hud_mut().push_log("Upgrades cancelled");
         }
         _ => {}
     }

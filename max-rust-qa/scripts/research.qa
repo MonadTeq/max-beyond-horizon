@@ -1,0 +1,92 @@
+# research.qa — исследования (P6, слой 2 QA).
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/research.qa qa-out/research
+#
+# Что проверяется:
+# * исследовательский центр строится конструктором (`BuildMenu`, 10 ходов);
+# * `O` включает питание (`Power On` → пакет 08/P1, как popup C++); для
+#   `RESEARCH` это `ResearchMenu_UpdateResearchProgress(team, topic, +1)` и
+#   расчёт `turns_to_complete` по формуле `researchmenu.cpp:109`;
+# * за 16 ходов (level 0, attack_factor=16) тема Attack завершает уровень 1;
+# * `ResearchMenu_ApplyUpgrades` меняет `current_values` всех 93 типов —
+#   проверяется UNIT-тестами `max_core/tests/research.rs` (бит-в-бит против
+#   векторов C++), здесь — уровень темы.
+
+# --- Главное меню → локальная партия --------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Строим исследовательский центр --------------------------------------
+select type Constructor
+assert selected
+build open
+assert build=open
+# CONSTRCT: ResearchCenter — 12-я строка списка (индекс 11).
+build select 11
+build done
+assert build=closed
+
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert unit=Research Center
+
+# --- Включаем питание: тема Attack по умолчанию ----------------------------
+select type Research Center
+key o
+tick 10
+
+# Пока уровень 0: прогресс идёт в allocation, но тема не завершена.
+assert research attack=0
+
+# --- 16 ходов исследования (level 0, factor 16) ---------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert research attack>=1
+shot research-done
+assert screen=InGame

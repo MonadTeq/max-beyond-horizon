@@ -704,6 +704,36 @@ pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Opti
     }))
 }
 
+/// Строит приказ включения/выключения питания (попап `Power On`/`Power Off`
+/// в C++, пакет **08**, процессор `P1`).
+///
+/// Для `RESEARCH` включение питания запускает исследование темы по умолчанию
+/// (C++ `ResearchMenu_UpdateResearchProgress(team, topic, +1)` в
+/// `UnitsManager_ProcessOrderPowerOn`).
+pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
+    let unit = state.unit(id)?;
+    if unit.hits == 0 {
+        return None;
+    }
+
+    let order = if unit.orders == UnitOrder::PowerOn {
+        UnitOrder::PowerOff
+    } else {
+        UnitOrder::PowerOn
+    };
+
+    Some(Command::Order(Packet08Order {
+        unit: id,
+        payload: OrderPayload::P1(PayloadP1 {
+            order,
+            state: UnitOrderState::Init,
+            prior_order: unit.orders,
+            prior_state: unit.state,
+            disabled_reaction_fire: unit.disabled_reaction_fire,
+        }),
+    }))
+}
+
 /// Юнит под точкой экрана: `viewport.screen_to_grid` + `GameState::units_at`.
 ///
 /// Предпочитает юнита, видимого команде `team` (туман войны), иначе — любого

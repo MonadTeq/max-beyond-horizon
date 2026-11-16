@@ -113,6 +113,8 @@ impl App {
         self.draw_build_menu(&mut frame);
         // Окно сохранения/загрузки (P3) — модальное, как `AbstractMenu` в C++.
         self.draw_save_load(&mut frame);
+        // Экран апгрейдов (P6).
+        self.draw_upgrade_menu(&mut frame);
 
         (frame, stats)
     }
@@ -168,8 +170,19 @@ impl App {
         self.draw_build_menu(&mut frame);
         // Окно сохранения/загрузки (P3).
         self.draw_save_load(&mut frame);
+        // Экран апгрейдов (P6).
+        self.draw_upgrade_menu(&mut frame);
 
         (frame, stats)
+    }
+
+    /// Рисует открытый экран апгрейдов поверх кадра (P6).
+    pub(crate) fn draw_upgrade_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.upgrade_menu(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets, self.state());
     }
 
     /// Рисует открытое окно сохранения/загрузки поверх кадра (P3).

@@ -1,0 +1,76 @@
+# upgrade.qa — покупные апгрейды (P6, слой 2 QA).
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/upgrade.qa qa-out/upgrade
+#
+# Что проверяется:
+# * экран `UpgradeMenu` открывается клавишей `U` для выделенного юнита своей
+#   команды (`AbstractUpgradeMenu`/`UpgradeMenu` C++);
+# * строка апгрейда (armor конструктора) увеличивается, золото списывается
+#   только по `Done` (`CommitUpgradeChanges`), `Cancel` откатывает;
+# * после `Done` текущие значения `TeamUnits.current_values` типа изменены —
+#   это то, по чему создаются новые юниты (проверяется UNIT-тестами
+#   `max_app/tests/upgrade.rs` и `max_core/tests/research.rs`);
+# * кадры `upgrade-menu`/`upgrade-done` — golden-эталон экрана.
+
+# --- Главное меню ---------------------------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+# --- Options: No Limit + Turn Based --------------------------------------
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+setup done
+assert screen=Players
+
+# --- Players: RED — человек, GREEN — компьютер ---------------------------
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация и высадка ------------------------------------------------
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Экран апгрейдов -----------------------------------------------------
+# Конструктор выделяется по имени (порядок стартовых юнитов зависит от
+# развёртывания базы).
+select type Constructor
+assert selected
+upgrade open
+assert upgrade=open
+shot upgrade-menu
+
+# Строка 0 — первый контрол выбранного типа (у конструктора armor/hits/scan).
+# До `Done` золото команды не меняется: цена живёт в меню (`team_gold`).
+upgrade row 0 up
+upgrade done
+assert upgrade=closed
+assert gold<150
+shot upgrade-done
+
+# --- Cancel не меняет золото ---------------------------------------------
+upgrade open
+assert upgrade=open
+upgrade row 0 up
+upgrade cancel
+assert upgrade=closed
+assert gold<150
+assert screen=InGame
+
+# Партия продолжается: экран апгрейдов не сломал цикл хода.
+assert turn=1
