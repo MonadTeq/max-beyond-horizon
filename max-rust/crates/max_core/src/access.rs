@@ -2086,6 +2086,8 @@ mod tests {
             Point::new(5, 6),
             MOBILE_LAND_UNIT | SELECTABLE,
         );
+        // Цель видна атакующему (в игре — после сканирования/разведки).
+        state.update_visibility_status(false);
         {
             let unit = state.unit_mut(defender).unwrap();
             unit.orders = UnitOrder::Sentry;

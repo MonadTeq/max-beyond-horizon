@@ -317,6 +317,12 @@ impl App {
             if !unit.is_visible_to_team(self.state().player_team) {
                 continue;
             }
+            // `UnitInfoGroup::IsRelevant` (`unitinfogroup.cpp:59`): idle-юниты
+            // не рисуются (кроме QuickBuild-превью, которого у нас нет).
+            if unit.orders == max_core::enums::UnitOrder::Idle {
+                stats.units_skipped += 1;
+                continue;
+            }
             positions.push((unit.grid.x, unit.grid.y));
             visible.push(id);
         }
@@ -450,6 +456,52 @@ mod tests {
         assert!(stats.map_tiles > 0, "карта должна рисоваться без ассетов");
         assert_eq!(stats.units(), stats.units_drawn + stats.units_marker);
         assert!(frame.pixels().chunks_exact(4).all(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn enemy_units_are_rendered_only_when_visible() {
+        use max_core::enums::UnitType;
+        use max_core::geo::Point;
+        use max_core::team::TeamId;
+
+        let mut app = App::new(AppConfig::default());
+        *app.state_mut() = max_core::game::GameState::new();
+
+        let own = app
+            .state_mut()
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
+            .expect("свой танк");
+        let enemy = app
+            .state_mut()
+            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
+            .expect("чужой танк");
+
+        assert!(app.state().unit(own).unwrap().is_visible_to_team(TeamId::RED));
+        assert!(
+            !app.state()
+                .unit(enemy)
+                .unwrap()
+                .is_visible_to_team(TeamId::RED),
+            "чужой юнит вне FOV не виден"
+        );
+
+        // Без ассетов юниты рисуются маркерами: свой — один.
+        let (frame, stats) = app.render_frame_with_stats();
+        assert_eq!(stats.units_marker, 1, "виден только свой юнит");
+        assert_eq!(stats.units_drawn, 0);
+        assert_eq!(
+            frame.get(55 * 64 + 32 - app.viewport().origin().0, 55 * 64 + 32 - app.viewport().origin().1),
+            Some(MARKER_COLORS[0]),
+            "свой маркер на карте"
+        );
+
+        // Появился в FOV (разведка/радар) — рисуется и чужой.
+        app.state_mut()
+            .unit_mut(enemy)
+            .unwrap()
+            .set_visible_to_team(TeamId::RED, true);
+        let (_, stats) = app.render_frame_with_stats();
+        assert_eq!(stats.units_marker, 2, "видимый чужой юнит рисуется");
     }
 
     #[test]

@@ -737,6 +737,39 @@ impl GameState {
         }
     }
 
+    /// `Access_UpdateVisibilityStatus` (`access.cpp:880`) — полный пересчёт
+    /// видимости: (опционально) `InitStealthStatus` всех юнитов, очистка
+    /// тепловых карт и повторное покрытие сканированием каждого юнита.
+    ///
+    /// Вызывается после высадки армий — ровно как C++ после
+    /// `GameManager_ProcessTeamMissionSupplyUnits` (`game_manager.cpp:1965`):
+    /// иначе юниты, высаженные раньше, «не видят» высаженных позже (их скан
+    /// считался до появления соседей).
+    pub fn update_visibility_status(&mut self, reset_visibility: bool) {
+        let ids: Vec<UnitId> = self.unit_ids_in_order();
+        let all_visible = self.ai.all_visible;
+
+        if reset_visibility {
+            for id in &ids {
+                if let Some(mut unit) = self.unit(*id).cloned() {
+                    crate::combat::init_stealth_status(&mut unit, all_visible);
+                    self.write_unit(*id, unit);
+                }
+            }
+        }
+
+        // `Access_InitStealthMaps`: тепловые карты очищаются всегда.
+        for map in &mut self.ai.heat_maps {
+            map.clear();
+        }
+
+        if !all_visible {
+            for id in ids {
+                self.update_map_status(id, true);
+            }
+        }
+    }
+
     /// `Access_IsVisibleOnHeatMap` (`access.cpp:538`).
     ///
     /// C++: `heat_map && heat_map->IsVisible(unit)`; у `ALIEN` карты нет —

@@ -23,7 +23,7 @@ use crate::viewport::Viewport;
 pub type PaletteRgba = [[u8; 4]; PALETTE_COLORS];
 
 /// Тайлы поверхности планеты: палитра + пиксели тайлов + карта `tile_id`.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct TerrainAtlas {
     palette: PaletteRgba,
     /// `tile_count × TILE_PIXELS` индексов палитры (по 1 байту на пиксель).
@@ -167,6 +167,86 @@ impl TerrainAtlas {
 
         painted
     }
+
+    /// Рисует клетку выборкой **ровно как `Gfx_DecodeMapTile`** оригинала
+    /// (`gfx.cpp:125-210`) — это нужно для экрана высадки (зум 4), где C++
+    /// сводит 64×64 тайл к 4×4 пикселям.
+    ///
+    /// Отличие от [`TerrainAtlas::render_tile_into`]: там каждый экранный
+    /// пиксель берёт начало равного блока (`x * 64 / width`), а оригинал
+    /// растягивает тайл по краям:
+    ///
+    /// ```text
+    /// factor = ((64 - 1) << 16) / (size - 1) + 8;
+    /// source = (i * factor) >> 16;          // size = 4 -> 0, 21, 42, 63
+    /// ```
+    ///
+    /// При `size == 64` обе формулы дают тождественную выборку.
+    pub fn render_tile_cpp_into(
+        &self,
+        dst: &mut RgbaBuffer,
+        grid: (i16, i16),
+        rect: crate::buffer::PixelRect,
+    ) -> u32 {
+        if rect.width <= 0 || rect.height <= 0 || rect.is_empty() {
+            return 0;
+        }
+
+        let Some(tile_id) = self.tile_id_at(grid.0, grid.1) else {
+            return 0;
+        };
+
+        if tile_id >= self.tile_count {
+            return 0;
+        }
+
+        let base = tile_id as usize * TILE_PIXELS;
+        let Some(pixels) = self.tiles.get(base..base + TILE_PIXELS) else {
+            return 0;
+        };
+
+        let columns = cpp_tile_sample_offsets(rect.width);
+        let rows: Vec<usize> = cpp_tile_sample_offsets(rect.height)
+            .into_iter()
+            .map(|row| row * TILE_SIZE)
+            .collect();
+        let mut painted = 0;
+
+        for (local_y, row) in rows.iter().enumerate() {
+            for (local_x, column) in columns.iter().enumerate() {
+                let color_index = pixels[row + column] as usize;
+                let entry = self.palette[color_index];
+
+                if dst.set(
+                    rect.ulx + local_x as i32,
+                    rect.uly + local_y as i32,
+                    Rgba::rgb(entry[0], entry[1], entry[2]),
+                ) {
+                    painted += 1;
+                }
+            }
+        }
+
+        painted
+    }
+}
+
+/// Смещения исходных пикселей тайла для `size` экранных пикселей —
+/// дословно `map_tile_zoom_factor` из `Gfx_DecodeMapTile` (`gfx.cpp:128`).
+///
+/// `size == 1` — единственный пиксель тайла (C++ делил бы на ноль).
+pub fn cpp_tile_sample_offsets(size: i32) -> Vec<usize> {
+    let size = size.max(1) as usize;
+
+    if size == 1 {
+        return vec![0];
+    }
+
+    let factor = (((TILE_SIZE as i32 - 1) << 16) / (size as i32 - 1) + 8) as u32;
+
+    (0..size)
+        .map(|index| ((index as u32 * factor) >> 16) as usize)
+        .collect()
 }
 
 impl std::fmt::Debug for TerrainAtlas {
@@ -266,6 +346,48 @@ mod tests {
         assert_eq!(atlas.tile_pixel(0, 1, 0), Some(Rgba::rgb(0, 0, 0)));
         assert_eq!(atlas.tile_pixel(1, 0, 0), None, "нет такого тайла");
         assert_eq!(atlas.tile_pixel(0, 64, 0), None, "за пределами тайла");
+    }
+
+    #[test]
+    fn cpp_sampling_matches_gfx_decode_map_tile() {
+        // `map_tile_zoom_factor = ((64-1)<<16)/(size-1) + 8`;
+        // источник = `(i*factor)>>16` (`gfx.cpp:128,196`).
+        assert_eq!(cpp_tile_sample_offsets(4), vec![0, 21, 42, 63]);
+        assert_eq!(
+            cpp_tile_sample_offsets(8),
+            vec![0, 9, 18, 27, 36, 45, 54, 63]
+        );
+        assert_eq!(
+            cpp_tile_sample_offsets(64),
+            (0..64).collect::<Vec<_>>(),
+            "зум 1:1 — тождественная выборка"
+        );
+        assert_eq!(cpp_tile_sample_offsets(1), vec![0]);
+    }
+
+    #[test]
+    fn cpp_tile_render_samples_tile_corners() {
+        let mut palette = [[0u8, 0, 0, 255]; PALETTE_COLORS];
+        palette[1] = [10, 20, 30, 255];
+        palette[2] = [40, 50, 60, 255];
+
+        let mut tiles = vec![0u8; TILE_PIXELS];
+        tiles[0] = 1; // (0,0)
+        tiles[TILE_SIZE * TILE_SIZE - 1] = 2; // (63,63)
+
+        let atlas = atlas_with_one_tile(tiles, palette);
+        let mut frame = RgbaBuffer::new(4, 4);
+
+        assert_eq!(
+            atlas.render_tile_cpp_into(
+                &mut frame,
+                (0, 0),
+                crate::buffer::PixelRect::new(0, 0, 4, 4)
+            ),
+            16
+        );
+        assert_eq!(frame.get(0, 0), Some(Rgba::rgb(10, 20, 30)));
+        assert_eq!(frame.get(3, 3), Some(Rgba::rgb(40, 50, 60)));
     }
 
     #[test]

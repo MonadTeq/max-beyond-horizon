@@ -970,11 +970,17 @@ impl Screen {
                             }
                         }
                         PreGameStage::Landing(landing) => {
-                            let chrome = view
-                                .app
-                                .and_then(|app| app.assets())
-                                .and_then(|assets| assets.chrome.as_ref());
-                            landing.draw(buffer, menu_assets, chrome, view.status, mouse);
+                            let assets = view.app.and_then(|app| app.assets());
+                            let chrome = assets.and_then(|assets| assets.chrome.as_ref());
+                            let cursors = assets.and_then(|assets| assets.cursors.as_ref());
+                            landing.draw(
+                                buffer,
+                                menu_assets,
+                                cursors,
+                                chrome,
+                                view.status,
+                                mouse,
+                            );
                             return;
                         }
                         PreGameStage::Finished => {

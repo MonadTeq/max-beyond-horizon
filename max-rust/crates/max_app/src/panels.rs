@@ -72,6 +72,22 @@ impl UiPalette {
         Self { colors }
     }
 
+    /// Палитра из готовых цветов (для тестов и синтетических кадров).
+    pub const fn from_colors(colors: [[u8; 3]; 256]) -> Self {
+        Self { colors }
+    }
+
+    /// Системная палитра окна после загрузки мира: индексы 64…159 берутся из
+    /// `.WRL` (`World::Load` → `WindowManager_ColorPalette[i] = palette[i]/4`
+    /// в C++; здесь — уже 8-битные цвета `TerrainAtlas`).
+    pub fn with_wrl_palette(mut self, wrl: &max_render::terrain::PaletteRgba) -> Self {
+        for (index, color) in wrl.iter().enumerate().skip(64).take(96) {
+            self.colors[index] = [color[0], color[1], color[2]];
+        }
+
+        self
+    }
+
     /// Палитра из загруженного хрома; `None`, если `FRAMEPIC` не загружен.
     pub fn from_assets(assets: &Assets) -> Option<Self> {
         assets
@@ -1554,6 +1570,45 @@ mod tests {
         assert!(panel.get(PanelButton::Grid));
         assert!(!panel.toggle(PanelButton::Grid));
         assert!(!panel.toggle(PanelButton::EndTurn), "не переключатель");
+    }
+
+    #[test]
+    fn minimap_unit_dots_respect_fov() {
+        use max_core::enums::UnitType;
+        use max_core::geo::{Point, MAP_TILES};
+        use max_core::team::TeamId;
+
+        let mut state = GameState::new();
+        let own = state
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
+            .unwrap();
+        let enemy = state
+            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(20, 20), 0)
+            .unwrap();
+        let mut layer = vec![0u8; MAP_TILES];
+
+        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+        assert_eq!(
+            layer[10 * 112 + 10],
+            minimap_unit_color(TeamId::RED),
+            "свой юнит виден"
+        );
+        assert_eq!(layer[20 * 112 + 20], 0, "чужой вне FOV не рисуется");
+
+        // Разведан (попал в FOV/радар) — точка появляется.
+        state
+            .unit_mut(enemy)
+            .unwrap()
+            .set_visible_to_team(TeamId::RED, true);
+        layer.fill(0);
+        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+        assert_eq!(
+            layer[20 * 112 + 20],
+            minimap_unit_color(TeamId::GREEN),
+            "видимый чужой юнит появляется на миникарте"
+        );
+        assert_eq!(layer[10 * 112 + 10], minimap_unit_color(TeamId::RED));
+        let _ = own;
     }
 
     #[test]

@@ -1034,10 +1034,21 @@ fn update_window_cursor(
         return;
     };
 
-    let (cursor, frame) = if matches!(screen, Screen::InSession { .. }) {
-        max_app::cursor::session_cursor(app, mouse)
-    } else {
-        (max_app::CursorId::Hand, 0)
+    let (cursor, frame) = match screen {
+        Screen::InSession { .. } => max_app::cursor::session_cursor(app, mouse),
+        // `GameManager_GetWindowCursor` на экране высадки: UNIT_GO над
+        // валидной клеткой, UNIT_NO_GO над невалидной, HANDPTR вне карты.
+        Screen::PreGame(flow) => match &flow.stage {
+            max_app::PreGameStage::Landing(landing) => match mouse {
+                Some((x, y)) => match max_app::landing::cursor_for_screen_point(landing, x, y) {
+                    Some(cursor) => (cursor, 0),
+                    None => (max_app::CursorId::Hand, 0),
+                },
+                None => (max_app::CursorId::Hand, 0),
+            },
+            _ => (max_app::CursorId::Hand, 0),
+        },
+        _ => (max_app::CursorId::Hand, 0),
     };
     let palette = max_app::render::window_palette(assets);
     let Some(image) = max_app::cursor::cursor_image(cursors, &palette, cursor, frame) else {

@@ -1128,14 +1128,11 @@ impl GameState {
         };
 
         // `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`): мины, коммандос
-        // и подлодки невидимы всем, остальные — видны.
-        let stealth = matches!(
-            unit_type,
-            UnitType::LandMine | UnitType::SeaMine | UnitType::Commando | UnitType::Submarine
-        );
-        for index in 0..TEAM_SLOTS {
-            unit.visible_to_team[index] = !stealth;
-        }
+        // и подлодки невидимы всем; остальные видны только при
+        // `GameManager_AllVisible`, а своя команда видит всегда. Раньше здесь
+        // все обычные юниты помечались видимыми **всем** командам — из-за
+        // этого на карте и миникарте были видны чужие базы без разведки.
+        crate::combat::init_stealth_status(&mut unit, self.ai.all_visible);
 
         // `UnitsManager_DeployUnit`: счётчик имён типа в команде.
         if let Some(team_info) = self.teams.get_mut(team_index) {

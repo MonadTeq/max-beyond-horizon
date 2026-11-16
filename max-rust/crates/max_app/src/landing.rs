@@ -10,29 +10,61 @@
 //! 4×4 клетки вокруг (`x-1 … x+2`) были **ровно сушей**. Esc отменяет старт
 //! (`GAME_STATE_14_EXIT_SITE_SELECT`).
 //!
+//! # Что рисуется на карте (C++)
+//!
+//! * `GameManager_RenderMap` (`game_manager.cpp:1096`) при
+//!   `GAME_STATE_7_SITE_SELECT`: `DrawMap_RenderMapTiles` → настоящие тайлы
+//!   `.WRL` через `Gfx_DecodeMapTile` (`gfx.cpp:125`) — 64×64 пикселя тайла
+//!   сводятся к 4×4 экранным (зум 4). Сетка по умолчанию выключена
+//!   (`GameManager_DisplayButtonGrid = false`), поэтому линий клеток нет.
+//! * `DrawMap_RenderUnits` рисует только **видимых** юнитов
+//!   (`UnitInfoGroup::IsRelevant`: `IsVisibleToTeam(PlayerTeam)`). На этой
+//!   фазе армий ещё нет: они высаживаются после выбора всех точек
+//!   (`GameManager_ProcessTeamMissionSupplyUnits`), а временный `MASTER`
+//!   спавнится лишь в ветке проверки близости — не в интерактивном цикле.
+//! * `GameManager_DrawUnitSelector`/`GameManager_RenderScanRangeIndicators`/
+//!   `DrawMap_RenderBuildMarker` **в обычном выборе не рисуются**: `MASTER`
+//!   спавнится только в ветке `GameManager_SelectSite` для проверки
+//!   близости (`proximity_alert_ack` 1/2/3), а интерактивный цикл
+//!   `GameManager_ProgressTurn` идёт до него. Поэтому у `MASTER` нет ни
+//!   маркера 3×3, ни жёлтого круга обзора, ни `BLDMRK*`; выделение точки —
+//!   только курсор мыши. (Кадр-оракул `build/tmp/oracle-MAX0002.png` C++-порта
+//!   это подтверждает: на карте только зелёный `CURSOR_UNIT_GO`.)
+//! * Сообщение — `MessageManager_DrawMessage` (`_(dfe1)` =
+//!   "Select starting location."): окно в левом верхнем углу области карты
+//!   (`+0,+10`), фон — затемнение пикселей карты по палитре
+//!   (`ResourceManager_DarkeningColorIndexTable`), одна строка `Font5` с
+//!   обводкой.
+//! * Валидность точки передаётся **курсором мыши**
+//!   (`GameManager_GetWindowCursor`): `CURSOR_UNIT_GO` над валидной клеткой,
+//!   `CURSOR_UNIT_NO_GO` над невалидной, `CURSOR_HAND` вне карты. Отдельной
+//!   зелёной/красной рамки в оригинале нет.
+//!
 //! # Что портировано
 //!
-//! * Карта 112×112 в области [`max_render::layout::MAIN_MAP`] с клеткой 4 px —
-//!   те же координаты, что у C++ на зуме 4.
+//! * Настоящие тайлы `.WRL` ([`max_render::terrain::TerrainAtlas`]) с точной
+//!   выборкой `Gfx_DecodeMapTile` ([`TerrainAtlas::render_tile_cpp_into`]).
+//! * Окно сообщения C++ (одна строка, затемнение по палитре).
+//! * Курсор `CURSOR_UNIT_GO`/`NO_GO`/`HAND` — и в SDL-слое (`main.rs`), и в
+//!   кадре (для headless QA-снимков, как `Cursor_RenderToBuffer` в
+//!   `screendump.cpp`).
 //! * Проверка точки — [`max_core::setup::is_valid_starting_position`]
 //!   (`GameManager_IsValidStartingPosition`): 4×4 вокруг выбранной клетки.
 //! * `Enter`/`Done` — подтверждение, `Esc`/`Cancel` — отмена.
-//! * Стрелки двигают курсор на клетку.
+//! * Стрелки двигают точку на клетку.
 //!
-//! # Упрощения
+//! # Отличия от C++ (осознанные)
 //!
-//! * Рисуется **поверхностная** карта (суша/вода/берег/воздух), а не
-//!   изометрические тайлы `.WRL` из `TerrainAtlas`: на зуме C++ 4 px на клетку
-//!   разница всё равно сводится к цвету клетки, а ассеты нужны не всегда.
-//!   Цвета берутся из [`max_core::enums::Surface`] через
-//!   [`max_render::map_render::TileStyle`].
-//! * В C++ курсор — юнит `MASTER` с зоной обзора; здесь — рамка 4×4 клетки и
-//!   маркер в центре.
-//! * В C++ клик по валидной клетке сразу подтверждает выбор; здесь клик только
-//!   двигает курсор, а подтверждают `Done`/`Enter` (удобнее и проверяемо в QA).
-//! * Зоны близости чужих высадок (`GameManager_CheckLandingZones`) и
-//!   `GameManager_HandleProximityOverlaps` пока не портированы.
+//! * Клик по валидной клетке сразу подтверждает выбор (как C++), но в QA
+//!   драйвере `landing grid` двигает точку без клика, чтобы снять кадр.
+//! * Кнопки `Cancel`/`Done` нижней строки убраны — их нет в C++.
+//! * `GameManager_HandleProximityOverlaps`/`GameManager_CheckLandingZones` не
+//!   портированы (вместе с ними не нужны `MASTER`-маркер, круг обзора и
+//!   `BLDMRK*`).
+//! * Если данных `.WRL` нет (headless-тесты), карта рисуется упрощённо
+//!   цветами [`TileStyle`] — единственный оставшийся fallback.
 
+use max_assets::CursorSet;
 use max_core::enums::Surface;
 use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::map::SurfaceMap;
@@ -41,7 +73,8 @@ use max_core::team::TeamId;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout::{MAIN_MAP, WINDOW_HEIGHT, WINDOW_WIDTH};
 use max_render::map_render::TileStyle;
-use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
+use max_render::terrain::TerrainAtlas;
+use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFontId};
 
 use crate::menu::MenuAssets;
 
@@ -52,16 +85,22 @@ pub const LANDING_CELL: i32 = 4;
 /// Область карты на экране: 112 × 4 = 448 — ровно `MAIN_MAP`.
 pub const LANDING_AREA: PixelRect = MAIN_MAP;
 
-/// Кнопка `Cancel` нижней строки (как на экранах настройки).
-pub const CANCEL_BUTTON: PixelRect = PixelRect::new(354, 438, 109, 40);
-/// Кнопка `Done` нижней строки.
-pub const DONE_BUTTON: PixelRect = PixelRect::new(514, 438, 109, 40);
+/// Вертикальный отступ окна сообщения от верха области карты (`offset_y = 10`
+/// в `MessageManager_DrawMessage`).
+pub const MESSAGE_TOP_OFFSET: i32 = 10;
+/// Горизонтальный отступ текста в окне сообщения (10).
+pub const MESSAGE_TEXT_LEFT: i32 = 10;
+/// Вертикальный отступ текста в окне сообщения (10).
+pub const MESSAGE_TEXT_TOP: i32 = 10;
+/// Высота строки `Text_GetHeight()` для `Font5` (10).
+pub const MESSAGE_LINE_HEIGHT: i32 = 10;
+/// Начальная высота окна сообщения (`MessageManager_MessageBox_Height = 20`).
+pub const MESSAGE_BASE_HEIGHT: i32 = 20;
+/// Цвет текста окна сообщения (`GNW_TEXT_OUTLINE | 0xFF`).
+pub const MESSAGE_TEXT_COLOR: u8 = 0xFF;
 
-/// Рамка сообщения «Select starting location.» (`MessageManager_DrawMessage`).
-///
-/// В C++ рамка уже (190 px) и содержит одну строку; здесь в неё добавлена
-/// вторая строка с подсказкой управления, поэтому она шире.
-pub const MESSAGE_BOX: PixelRect = PixelRect::new(73, 30, 300, 36);
+/// Текст сообщения C++ (`_(dfe1)` в `GameManager_SelectSite`).
+pub const MESSAGE_TEXT: &str = "Select starting location.";
 
 /// Итог ввода на экране высадки.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +122,8 @@ pub struct LandingScreen {
     pub world: i64,
     /// Поверхность карты.
     pub surface: SurfaceMap,
+    /// Настоящие тайлы `.WRL` (если данные планеты загружены).
+    pub terrain: Option<TerrainAtlas>,
     /// Текущая точка под курсором (`starting_position`).
     pub cursor: Point,
     /// Строка статуса.
@@ -95,6 +136,16 @@ impl LandingScreen {
     /// Если точка невалидна, [`find_valid_starting_position`] двигает её по
     /// спирали — ровно как C++ при инициализации миссии.
     pub fn new(team: TeamId, world: i64, surface: SurfaceMap) -> Self {
+        Self::new_with_terrain(team, world, surface, None)
+    }
+
+    /// То же, но с готовым атласом тайлов `.WRL` для настоящего рендера.
+    pub fn new_with_terrain(
+        team: TeamId,
+        world: i64,
+        surface: SurfaceMap,
+        terrain: Option<TerrainAtlas>,
+    ) -> Self {
         let mut cursor = crate::local::START_POSITIONS[usize::from(team.0) % 4];
         find_valid_starting_position(&surface, &mut cursor);
 
@@ -102,9 +153,19 @@ impl LandingScreen {
             team,
             world,
             surface,
+            terrain,
             cursor,
             status: String::new(),
         }
+    }
+
+    /// Путь к `.WRL` планеты (`None` — имени/файла нет).
+    fn world_path(world: i64, world_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+        let index = usize::try_from(world.clamp(0, 23)).ok()?;
+        let name = crate::assets::WORLD_ASSETS.get(index)?;
+        let path = world_dir.join(format!("{name}.WRL"));
+
+        path.is_file().then_some(path)
     }
 
     /// Загружает поверхность планеты из `world_dir` (`*.WRL`).
@@ -112,29 +173,52 @@ impl LandingScreen {
     /// `None` — данных планеты нет; UI тогда пропускает фазу выбора точки и
     /// оставляет стандартную стартовую позицию.
     pub fn load_surface(world: i64, world_dir: &std::path::Path) -> Option<SurfaceMap> {
-        let index = usize::try_from(world.clamp(0, 23)).ok()?;
-        let name = crate::assets::WORLD_ASSETS.get(index)?;
-        let path = world_dir.join(format!("{name}.WRL"));
-
-        if !path.is_file() {
-            return None;
-        }
-
-        let map = max_assets::wrl::WrlMap::open(&path).ok()?;
+        let path = Self::world_path(world, world_dir)?;
+        let map = max_assets::wrl::WrlMap::open(path).ok()?;
 
         Some(map.surface_map())
     }
 
-    /// Загружает поверхность планеты из `world_dir` (`*.WRL`) и создаёт экран.
+    /// Загружает настоящие тайлы планеты (`WRL` → [`TerrainAtlas`]).
+    pub fn load_terrain(world: i64, world_dir: &std::path::Path) -> Option<TerrainAtlas> {
+        let path = Self::world_path(world, world_dir)?;
+        let map = max_assets::wrl::WrlMap::open(path).ok()?;
+
+        Some(TerrainAtlas::from_wrl(&map))
+    }
+
+    /// Загружает поверхность и настоящие тайлы из одного разбора `*.WRL`.
+    pub fn load_parts(
+        world: i64,
+        world_dir: &std::path::Path,
+    ) -> Option<(SurfaceMap, TerrainAtlas)> {
+        let path = Self::world_path(world, world_dir)?;
+        let map = max_assets::wrl::WrlMap::open(path).ok()?;
+
+        Some((map.surface_map(), TerrainAtlas::from_wrl(&map)))
+    }
+
+    /// Загружает поверхность и тайлы из одного разбора `*.WRL` и создаёт экран.
     ///
     /// `None` — данных планеты нет; UI тогда показывает честную ошибку.
     pub fn load(team: TeamId, world: i64, world_dir: &std::path::Path) -> Option<Self> {
-        Some(Self::new(team, world, Self::load_surface(world, world_dir)?))
+        let (surface, terrain) = Self::load_parts(world, world_dir)?;
+
+        Some(Self::new_with_terrain(team, world, surface, Some(terrain)))
     }
 
     /// Валидна ли текущая точка (`GameManager_IsValidStartingPosition`).
     pub fn cursor_valid(&self) -> bool {
-        is_valid_starting_position(&self.surface, i32::from(self.cursor.x), i32::from(self.cursor.y))
+        is_valid_starting_position(
+            &self.surface,
+            i32::from(self.cursor.x),
+            i32::from(self.cursor.y),
+        )
+    }
+
+    /// Валидна ли произвольная клетка.
+    pub fn is_valid_at(&self, grid: Point) -> bool {
+        is_valid_starting_position(&self.surface, i32::from(grid.x), i32::from(grid.y))
     }
 
     /// Двигает курсор (с клампом по карте).
@@ -156,25 +240,26 @@ impl LandingScreen {
         ))
     }
 
-    /// Обработка клика: кнопки, затем карта.
+    /// Обработка клика по карте.
+    ///
+    /// Как C++ (`game_manager.cpp:6718-6727`): клик по валидной клетке сразу
+    /// подтверждает выбор (`CURSOR_UNIT_GO`), клик по невалидной только
+    /// двигает точку и пишет статус (`CURSOR_UNIT_NO_GO`). Клики вне области
+    /// карты игнорируются.
     pub fn click(&mut self, x: i32, y: i32) -> LandingAction {
-        if DONE_BUTTON.contains(x, y) {
-            return self.confirm();
-        }
-        if CANCEL_BUTTON.contains(x, y) {
-            return LandingAction::Cancel;
-        }
+        let Some(point) = Self::screen_to_grid(x, y) else {
+            return LandingAction::None;
+        };
 
-        if let Some(point) = Self::screen_to_grid(x, y) {
-            self.cursor = point;
-            self.status = if self.cursor_valid() {
-                format!("Landing site: {},{}", self.cursor.x + 1, self.cursor.y + 1)
-            } else {
-                "Invalid landing site: need 4x4 land".to_string()
-            };
-        }
+        self.cursor = point;
 
-        LandingAction::None
+        if self.cursor_valid() {
+            self.status = format!("Landing site: {},{}", self.cursor.x + 1, self.cursor.y + 1);
+            LandingAction::Confirm
+        } else {
+            self.status = "Invalid landing site: need 4x4 land".to_string();
+            LandingAction::None
+        }
     }
 
     /// Подтверждение текущей точки (`Enter`/`Done`).
@@ -188,17 +273,25 @@ impl LandingScreen {
         }
     }
 
-    /// Отрисовка: карта 4 px/клетка, рамка сообщения, курсор, кнопки.
+    /// Отрисовка кадра: тайлы `.WRL`, маркеры C++, окно сообщения.
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
         menu: &MenuAssets,
+        cursors: Option<&CursorSet>,
         chrome: Option<&crate::chrome::Chrome>,
         status: &str,
         mouse: Option<(i32, i32)>,
     ) -> u32 {
-        let palette = &menu.palette;
-        let style = TileStyle::default();
+        // Системная палитра окна: 64…159 приходят из `.WRL`
+        // (`World::Load`), остальные — из палитры меню (`MAINPIC`).
+        let palette = match &self.terrain {
+            Some(terrain) if !terrain.is_empty() => {
+                menu.palette.with_wrl_palette(terrain.palette())
+            }
+            _ => menu.palette,
+        };
+        let palette = &palette;
         let mut painted = 0;
 
         frame.fill_rect(
@@ -210,66 +303,20 @@ impl LandingScreen {
             painted += chrome.draw(frame);
         }
 
-        // Карта: 112 × 4 = 448 px ровно в область MAIN_MAP.
-        for grid_y in 0..MAP_HEIGHT {
-            for grid_x in 0..MAP_WIDTH {
-                let surface = self.surface.get(grid_x, grid_y);
-                let color = if surface == Surface::NONE {
-                    style.unknown
-                } else {
-                    style.base_color(surface)
-                };
-                let rect = PixelRect::new(
-                    LANDING_AREA.ulx + i32::from(grid_x) * LANDING_CELL,
-                    LANDING_AREA.uly + i32::from(grid_y) * LANDING_CELL,
-                    LANDING_CELL,
-                    LANDING_CELL,
-                );
+        painted += self.draw_map(frame);
 
-                frame.fill_rect(rect, color);
-            }
+        // `MessageManager_DrawMessage` — единственный элемент поверх карты в
+        // обычном выборе точки (MASTER/маркеры появляются только в ветке
+        // проверки близости, которую мы не портировали).
+        painted += self.draw_message(frame, palette);
+
+        // Курсор C++ (`Cursor_RenderToBuffer` в `screendump.cpp`): в live-UI его
+        // ставит SDL-слой, а в кадр он попадает для headless QA-снимков.
+        if let (Some(cursors), Some((x, y))) = (cursors, mouse) {
+            painted += self.draw_cursor(frame, cursors, palette, x, y);
         }
 
-        // Курсор: рамка 4×4 клетки (след юнита MASTER в C++) + маркер центра.
-        let valid = self.cursor_valid();
-        let color = if valid {
-            Rgba::rgb(64, 232, 96)
-        } else {
-            Rgba::rgb(232, 64, 64)
-        };
-        let cursor = PixelRect::new(
-            LANDING_AREA.ulx + i32::from(self.cursor.x) * LANDING_CELL,
-            LANDING_AREA.uly + i32::from(self.cursor.y) * LANDING_CELL,
-            LANDING_CELL * 4,
-            LANDING_CELL * 4,
-        );
-
-        draw_box(frame, cursor, color, 1);
-        let marker = PixelRect::new(cursor.ulx + 6, cursor.uly + 6, 4, 4);
-        frame.fill_rect(marker, color);
-
-        // Рамка сообщения и текст — как `MessageManager_DrawMessage`. Вторая
-        // строка — подсказка по управлению (в C++ её нет: там только текст
-        // «Select starting location.»).
-        frame.fill_rect(MESSAGE_BOX, Rgba::rgb(0, 0, 0));
-        draw_box(frame, MESSAGE_BOX, Rgba::rgb(240, 240, 240), 1);
-        draw_text_gnw(
-            frame,
-            MESSAGE_BOX.ulx + 4,
-            MESSAGE_BOX.uly + 4,
-            GnwFontId::Font5.font(),
-            "Select starting location.",
-            Rgba::rgb(240, 240, 240),
-        );
-        draw_text_gnw(
-            frame,
-            MESSAGE_BOX.ulx + 4,
-            MESSAGE_BOX.uly + 16,
-            GnwFontId::Font5.font(),
-            "Click = move, Enter/Done = confirm, Esc = cancel",
-            Rgba::rgb(180, 200, 180),
-        );
-
+        // Строка статуса в нижней панели (наш chrome; в C++ — координаты/лог).
         let team = crate::hotseat::team_display_name(self.team);
         let line = if status.is_empty() {
             self.status.as_str()
@@ -291,32 +338,142 @@ impl LandingScreen {
             palette.rgba(crate::setup::GREEN),
         );
 
-        // Confirm/Cancel: те же кнопки MNUBTN, что на экранах настройки.
-        for (rect, label, resource) in [
-            (CANCEL_BUTTON, "Cancel", 4usize),
-            (DONE_BUTTON, "Done", 6usize),
-        ] {
-            if let Some(pair) = menu.mnubtn_pair(resource) {
-                let hovered = mouse.is_some_and(|(x, y)| rect.contains(x, y));
-                painted += crate::menu::draw_image_button(
-                    frame,
-                    palette,
-                    pair.image(false),
-                    pair.image(true),
-                    rect,
-                    label,
-                    hovered,
+        painted
+    }
+
+    /// Карта: настоящие тайлы `.WRL` либо (без данных) `TileStyle`.
+    fn draw_map(&self, frame: &mut RgbaBuffer) -> u32 {
+        match &self.terrain {
+            Some(terrain) if !terrain.is_empty() => draw_terrain(frame, terrain),
+            _ => self.draw_flat_map(frame),
+        }
+    }
+
+    /// Упрощённая карта цветами поверхности — только без данных `.WRL`.
+    fn draw_flat_map(&self, frame: &mut RgbaBuffer) -> u32 {
+        let style = TileStyle::default();
+        let mut painted = 0;
+
+        for grid_y in 0..MAP_HEIGHT {
+            for grid_x in 0..MAP_WIDTH {
+                let surface = self.surface.get(grid_x, grid_y);
+                let color = if surface == Surface::NONE {
+                    style.unknown
+                } else {
+                    style.base_color(surface)
+                };
+
+                painted += frame.fill_rect(
+                    PixelRect::new(
+                        LANDING_AREA.ulx + i32::from(grid_x) * LANDING_CELL,
+                        LANDING_AREA.uly + i32::from(grid_y) * LANDING_CELL,
+                        LANDING_CELL,
+                        LANDING_CELL,
+                    ),
+                    color,
                 );
-            } else {
-                frame.fill_rect(rect, palette.rgba(crate::setup::TEXT));
-                draw_text_gnw_centered(
-                    frame,
-                    rect,
-                    GnwFontId::Font1.font(),
-                    label,
-                    palette.rgba(crate::setup::GREEN),
-                );
-                painted += 1;
+            }
+        }
+
+        painted
+    }
+
+    /// Окно сообщения `MessageManager_DrawMessage`: затемнение карты по
+    /// палитре и одна строка `Select starting location.`
+    fn draw_message(&self, frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let width = font.text_width(MESSAGE_TEXT) + MESSAGE_TEXT_LEFT * 2;
+        let height = MESSAGE_BASE_HEIGHT + MESSAGE_LINE_HEIGHT;
+        let rect = PixelRect::new(
+            LANDING_AREA.ulx,
+            LANDING_AREA.uly + MESSAGE_TOP_OFFSET,
+            width,
+            height,
+        );
+        let mut painted = 0;
+
+        // `ResourceManager_DarkeningColorIndexTable`: `max(7, c/4)*31/63`
+        // и ближайший цвет палитры (`Color_MapColor`) — как в C++, где карта
+        // хранится индексами, а не RGB. Кэш по исходному цвету: в области окна
+        // всего несколько десятков цветов палитры, а `map_color` — перебор 256.
+        let mut cache: std::collections::HashMap<[u8; 3], Rgba> = std::collections::HashMap::new();
+
+        for y in rect.uly..rect.lry() {
+            for x in rect.ulx..rect.lrx() {
+                let Some(color) = frame.get(x, y) else {
+                    continue;
+                };
+                let key = [color.r, color.g, color.b];
+                let mapped = match cache.get(&key) {
+                    Some(mapped) => *mapped,
+                    None => {
+                        let dark = color.darken(1);
+                        let mapped = palette.map_color([dark.r, dark.g, dark.b]);
+                        cache.insert(key, mapped);
+                        mapped
+                    }
+                };
+
+                if frame.set(x, y, mapped) {
+                    painted += 1;
+                }
+            }
+        }
+
+        let drawn = draw_text_gnw_shadowed(
+            frame,
+            rect.ulx + MESSAGE_TEXT_LEFT,
+            rect.uly + MESSAGE_TEXT_TOP,
+            font,
+            MESSAGE_TEXT,
+            palette.rgba(MESSAGE_TEXT_COLOR),
+            Rgba::BLACK,
+            Rgba::BLACK,
+        );
+
+        painted + drawn.max(0) as u32
+    }
+
+    /// Курсор `GameManager_GetWindowCursor` в кадре (`Cursor_RenderToBuffer`).
+    fn draw_cursor(
+        &self,
+        frame: &mut RgbaBuffer,
+        cursors: &CursorSet,
+        palette: &crate::panels::UiPalette,
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        let (id, frame_index) = match Self::screen_to_grid(x, y) {
+            Some(grid) if self.is_valid_at(grid) => (crate::cursor::CursorId::UnitGo, 0),
+            Some(_) => (crate::cursor::CursorId::UnitNoGo, 0),
+            None => (crate::cursor::CursorId::Hand, 0),
+        };
+        let Some(image) =
+            crate::cursor::cursor_image(cursors, &palette.palette_rgba(), id, frame_index)
+        else {
+            return 0;
+        };
+        let left = x - image.hot_x;
+        let top = y - image.hot_y;
+        let mut painted = 0;
+
+        for py in 0..image.height {
+            for px in 0..image.width {
+                let Some([r, g, b, a]) = image.pixel(px, py) else {
+                    continue;
+                };
+
+                if a == 0 {
+                    continue;
+                }
+
+                if frame.set(
+                    left + px as i32,
+                    top + py as i32,
+                    Rgba::from_rgba([r, g, b, a]),
+                ) {
+                    painted += 1;
+                }
             }
         }
 
@@ -324,27 +481,46 @@ impl LandingScreen {
     }
 }
 
-/// Рамка `thickness` внутри прямоугольника (как в `setup.rs`).
-fn draw_box(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: i32) {
-    for inset in 0..thickness.max(1) {
-        let x = rect.ulx + inset;
-        let y = rect.uly + inset;
-        let width = rect.width - inset * 2;
-        let height = rect.height - inset * 2;
+/// Тайлы `.WRL` на карте высадки — выборка `Gfx_DecodeMapTile`
+/// (зум 4: 64×64 → 4×4).
+pub fn draw_terrain(frame: &mut RgbaBuffer, terrain: &TerrainAtlas) -> u32 {
+    let (width, height) = terrain.size();
+    let mut painted = 0;
 
-        if width <= 0 || height <= 0 {
-            break;
-        }
+    for grid_y in 0..height {
+        for grid_x in 0..width {
+            let rect = PixelRect::new(
+                LANDING_AREA.ulx + i32::from(grid_x) * LANDING_CELL,
+                LANDING_AREA.uly + i32::from(grid_y) * LANDING_CELL,
+                LANDING_CELL,
+                LANDING_CELL,
+            );
 
-        for dx in 0..width {
-            frame.set(x + dx, y, color);
-            frame.set(x + dx, y + height - 1, color);
-        }
-        for dy in 0..height {
-            frame.set(x, y + dy, color);
-            frame.set(x + width - 1, y + dy, color);
+            painted += terrain.render_tile_cpp_into(frame, (grid_x, grid_y), rect);
         }
     }
+
+    painted
+}
+
+/// Курсор окна для точки кадра на экране высадки —
+/// `GameManager_GetWindowCursor` (`game_manager.cpp:4263`).
+///
+/// * вне области карты — `HANDPTR`;
+/// * валидная клетка — `CURSOR_UNIT_GO`;
+/// * невалидная — `CURSOR_UNIT_NO_GO`.
+pub fn cursor_for_screen_point(
+    landing: &LandingScreen,
+    x: i32,
+    y: i32,
+) -> Option<crate::cursor::CursorId> {
+    let grid = LandingScreen::screen_to_grid(x, y)?;
+
+    Some(if landing.is_valid_at(grid) {
+        crate::cursor::CursorId::UnitGo
+    } else {
+        crate::cursor::CursorId::UnitNoGo
+    })
 }
 
 #[cfg(test)]
@@ -362,8 +538,10 @@ mod tests {
                 } else {
                     Surface::LAND
                 };
-                *surface.tiles_mut().get_mut(y as usize * MAP_WIDTH as usize + x as usize).unwrap() =
-                    tile;
+                *surface
+                    .tiles_mut()
+                    .get_mut(y as usize * MAP_WIDTH as usize + x as usize)
+                    .unwrap() = tile;
             }
         }
 
@@ -391,28 +569,32 @@ mod tests {
             Some(Point::new(0, 0))
         );
         assert_eq!(
-            LandingScreen::screen_to_grid(
-                LANDING_AREA.ulx + 4 * 10,
-                LANDING_AREA.uly + 4 * 20
-            ),
+            LandingScreen::screen_to_grid(LANDING_AREA.ulx + 4 * 10, LANDING_AREA.uly + 4 * 20),
             Some(Point::new(10, 20))
         );
         assert_eq!(LandingScreen::screen_to_grid(0, 0), None, "вне карты");
     }
 
     #[test]
-    fn buttons_confirm_and_cancel() {
+    fn valid_click_confirms_and_invalid_click_only_moves() {
         let mut landing = LandingScreen::new(TeamId::RED, 0, surface());
-        landing.cursor = Point::new(30, 30);
 
-        assert_eq!(
-            landing.click(DONE_BUTTON.ulx + 2, DONE_BUTTON.uly + 2),
-            LandingAction::Confirm
-        );
-        assert_eq!(
-            landing.click(CANCEL_BUTTON.ulx + 2, CANCEL_BUTTON.uly + 2),
-            LandingAction::Cancel
-        );
+        let x = LANDING_AREA.ulx + 30 * LANDING_CELL + 2;
+        let y = LANDING_AREA.uly + 22 * LANDING_CELL + 2;
+
+        // Валидная клетка — C++ подтверждает выбор сразу.
+        assert_eq!(landing.click(x, y), LandingAction::Confirm);
+        assert_eq!(landing.cursor, Point::new(30, 22));
+
+        // Невалидная — только двигает точку.
+        let water_x = LANDING_AREA.ulx + 51 * LANDING_CELL + 2;
+        assert_eq!(landing.click(water_x, y), LandingAction::None);
+        assert_eq!(landing.cursor, Point::new(51, 22));
+        assert!(landing.status.contains("Invalid"));
+
+        // Вне области карты — игнор.
+        assert_eq!(landing.click(0, 0), LandingAction::None);
+        assert_eq!(landing.cursor, Point::new(51, 22));
     }
 
     #[test]
@@ -434,6 +616,69 @@ mod tests {
         assert!(
             landing.cursor_valid(),
             "find_valid_starting_position обязан дать валидную точку"
+        );
+    }
+
+    #[test]
+    fn cursor_id_matches_the_cpp_validity_check() {
+        let landing = LandingScreen::new(TeamId::RED, 0, surface());
+        let center = |grid: Point| {
+            (
+                LANDING_AREA.ulx + i32::from(grid.x) * LANDING_CELL + LANDING_CELL / 2,
+                LANDING_AREA.uly + i32::from(grid.y) * LANDING_CELL + LANDING_CELL / 2,
+            )
+        };
+
+        let (x, y) = center(Point::new(30, 22));
+        assert_eq!(
+            cursor_for_screen_point(&landing, x, y),
+            Some(crate::cursor::CursorId::UnitGo),
+            "CURSOR_UNIT_GO над валидной клеткой"
+        );
+
+        let (x, y) = center(Point::new(51, 22));
+        assert_eq!(
+            cursor_for_screen_point(&landing, x, y),
+            Some(crate::cursor::CursorId::UnitNoGo),
+            "CURSOR_UNIT_NO_GO над невалидной клеткой"
+        );
+
+        assert_eq!(
+            cursor_for_screen_point(&landing, 0, 0),
+            None,
+            "вне карты — HANDPTR (SDL-слой)"
+        );
+    }
+
+    #[test]
+    fn message_box_is_one_line_and_darkens_the_map() {
+        let landing = LandingScreen::new(TeamId::RED, 0, surface());
+        let mut colors = [[0u8, 0, 0]; 256];
+        colors[usize::from(MESSAGE_TEXT_COLOR)] = [255, 255, 255];
+        colors[1] = [52, 60, 72];
+        let palette = crate::panels::UiPalette::from_colors(colors);
+        let water = Rgba::rgb(80, 128, 164);
+        let mut frame = RgbaBuffer::filled(640, 480, water);
+
+        let painted = landing.draw_message(&mut frame, &palette);
+
+        assert!(painted > 0);
+        // Высота ровно одна строка: `20 + 10` (`MessageManager_MessageBox_Height`).
+        let rect = PixelRect::new(
+            LANDING_AREA.ulx,
+            LANDING_AREA.uly + MESSAGE_TOP_OFFSET,
+            GnwFontId::Font5.font().text_width(MESSAGE_TEXT) + MESSAGE_TEXT_LEFT * 2,
+            MESSAGE_BASE_HEIGHT + MESSAGE_LINE_HEIGHT,
+        );
+        assert_ne!(
+            frame.get(rect.ulx, rect.uly),
+            Some(water),
+            "фон окна затемнён по палитре"
+        );
+        assert_eq!(
+            frame.get(rect.ulx - 1, rect.uly),
+            Some(water),
+            "за окном карта не тронута"
         );
     }
 }

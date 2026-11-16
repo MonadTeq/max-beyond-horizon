@@ -1185,15 +1185,16 @@ pub fn get_attack_range(unit: &UnitInfo) -> i32 {
 }
 
 /// `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`) — мины, диверсанты и
-/// подлодки невидимы всем, остальные видны; своя команда видит всегда.
-pub fn init_stealth_status(unit: &mut UnitInfo) {
+/// подлодки невидимы всем, остальные видны только если включён
+/// `GameManager_AllVisible`; своя команда видит всегда.
+pub fn init_stealth_status(unit: &mut UnitInfo, all_visible: bool) {
     let stealth = matches!(
         unit.unit_type,
         UnitType::LandMine | UnitType::SeaMine | UnitType::Commando | UnitType::Submarine
     );
 
     for index in 0..TEAM_SLOTS {
-        unit.visible_to_team[index] = !stealth;
+        unit.visible_to_team[index] = !stealth && all_visible;
         unit.spotted_by_team[index] = false;
     }
 
@@ -1262,6 +1263,8 @@ mod tests {
         let mut state = state();
         let red = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
         let green = spawn_tank(&mut state, TeamId::GREEN, Point::new(6, 5));
+        // Цель видна атакующему (в игре — после сканирования/разведки).
+        state.update_visibility_status(false);
 
         // Пин живой атаки: цель получает pin_count.
         let mut data = state.order_data(red);
@@ -1444,6 +1447,7 @@ mod tests {
         state.play_mode = PlayMode::TurnBased;
         let red = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
         let green = spawn_tank(&mut state, TeamId::GREEN, Point::new(7, 5));
+        state.update_visibility_status(false);
         {
             let unit = state.unit_mut(red).unwrap();
             unit.orders = UnitOrder::Sentry;

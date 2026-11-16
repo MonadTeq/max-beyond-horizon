@@ -1,5 +1,79 @@
 ## [Unreleased]
 
+### Исправлено
+
+- **Туман войны: чужие юниты больше не видны без разведки**
+  (`max_core/src/game.rs`, `max_core/src/combat.rs`, `max_core/src/ai/threat.rs`,
+  `max_app/src/render.rs`):
+  - **Корень бага.** `GameState::spawn_unit` повторял `UnitInfo::InitStealthStatus`
+    неточно: все обычные (не стелс) юниты помечались `visible_to_team = true`
+    **всем** командам. Из-за этого на карте и миникарте были видны чужие базы и
+    юниты вне FOV. Теперь как в C++ (`unitinfo.cpp:2796`): невидимые типы
+    (`LANDMINE`/`SEAMINE`/`COMMANDO`/`SUBMARNE`) скрыты, остальные видны только
+    при `GameManager_AllVisible`, а своя команда видит всегда.
+  - **Пересчёт после высадки.** Добавлен
+    `GameState::update_visibility_status` — порт `Access_UpdateVisibilityStatus`
+    (`access.cpp:880`): `InitStealthStatus`, очистка тепловых карт и повторное
+    покрытие сканированием каждого юнита. Вызывается после
+    `deploy_starting_units*` (как `game_manager.cpp:1965`), поэтому видимость не
+    зависит от порядка высадки команд.
+  - **Отрисовка.** `App::draw_units` дополнительно требует
+    `orders != ORDER_IDLE` (`UnitInfoGroup::IsRelevant`, `unitinfogroup.cpp:59`);
+    чужие юниты по-прежнему рисуются только при `is_visible_to_team`
+    (`DrawMap_RenderUnits`). Миникарта (`panels::paint_minimap_units`) уже
+    фильтровала по видимости — теперь фильтр получает корректные флаги.
+  - **Тесты.** `max_core/tests/fog_of_war.rs` (4): спавн виден только своей
+    команде; скан открывает врага в FOV и не открывает вне; `AllVisible`;
+    стелс-юнит вне FOV скрыт. `render::tests` — чужой юнит не рисуется на
+    карте, пока не виден, и появляется после `set_visible_to_team`;
+    `panels::tests` — то же для точек миникарты.
+  - **QA.** `sp-full`/`hs-2` PASS; в кадрах `game-start`/`hs-green-turn`
+    миникарта показывает только свои точки. Golden `game.png`,
+    `upgrade-done.png`, `research-done.png` пересняты (0 дрейфа).
+
+### Изменено
+
+- **Экран высадки — 1:1 с C++: настоящие тайлы `.WRL`, маркер/круг/маркеры
+  строительства, без плоских цветов** (`max_app/src/landing.rs`,
+  `max_render/src/terrain.rs`, `max_app/src/pregame.rs`, `max_app/src/menu.rs`):
+  - **Тайлы.** Вместо заливки `TileStyle` рисуется `TerrainAtlas` (настоящие
+    пиксели `.WRL`) с точной выборкой `Gfx_DecodeMapTile` (`gfx.cpp:125-210`):
+    `factor = ((64-1)<<16)/(size-1)+8`, источник `(i*factor)>>16` — на зуме 4
+    это `0, 21, 42, 63`, а не `0,16,32,48`. Добавлен
+    `TerrainAtlas::render_tile_cpp_into` + `cpp_tile_sample_offsets`; палитра
+    окна дополняется цветами `.WRL` для индексов 64…159
+    (`UiPalette::with_wrl_palette`, как `World::Load`). `landing::load` читает
+    `WRL` один раз (`load_parts`), `PreGameFlow` хранит атлас.
+  - **Курсор/выделение.** В обычном выборе C++ `MASTER` ещё не существует:
+    `GameManager_SelectSite` запускает интерактивный `GameManager_ProgressTurn`
+    до спавна `MASTER` (он нужен только ветке проверки близости), поэтому на
+    карте нет ни рамки 4×4, ни `DrawUnitSelector`, ни круга обзора
+    `DrawCircle`, ни `BLDMRK*` — это подтверждает кадр C++-порта
+    `build/tmp/oracle-MAX0002.png`. Выделение точки — курсор мыши
+    (`GameManager_GetWindowCursor`): `CURSOR_UNIT_GO` над валидной клеткой,
+    `CURSOR_UNIT_NO_GO` над невалидной, `HANDPTR` вне карты. Он ставится в
+    SDL-слое (`main.rs`) и рисуется в кадр для headless QA
+    (`Cursor_RenderToBuffer`, как в `screendump.cpp`).
+  - **Сообщение.** `MessageManager_DrawMessage` (`_(dfe1)`):
+    `"Select starting location."` одной строкой (`Font5`, обводка) в левом
+    верхнем углу области карты (`+0,+10`), фон — затемнение пикселей карты
+    через палитру (`ResourceManager_DarkeningColorIndexTable` +
+    `Color_MapColor`), высота `20 + 10`. Лишняя подсказка и кнопки
+    `Cancel`/`Done` убраны (в C++ их нет). Клик по валидной клетке сразу
+    подтверждает выбор (`game_manager.cpp:6718-6727`); Esc/Enter сохранены.
+  - **Тесты.** `max_app/tests/landing_wrl.rs` — кадр содержит >40 цветов и
+    пиксели клеток совпадают с сырым `WRL` (независимо от рендера), курсор
+    `UNIT_GO` рисуется в кадре; fallback без `.WRL` не падает.
+    `terrain::tests` — формула выборки `Gfx_DecodeMapTile`.
+  - **QA/артефакты.** `sp-full`/`hs-2`/`visual-screens` и остальные 10
+    сценариев PASS; golden `landing.png` переснят (реальные тайлы вместо
+    плоских цветов), `game.png`/`upgrade-done.png`/`research-done.png` — после
+    исправления тумана войны; `qa_golden_check` — 0 дрейфа. Пересобраны
+    Windows-артефакты `release/max_app-1.1.0-windows-x86_64-ui` (MSVC/SDL3,
+    живой кадр — `build/landing-ui.png`) и
+    `release/max_app-1.1.0-windows-x86_64` (mingw, headless); `bash ci.sh` —
+    CI OK (496 с).
+
 ### Добавлено
 
 - **Спрайты всех 93 типов юнитов на карте и в HUD** (`max_app/src/assets.rs`,

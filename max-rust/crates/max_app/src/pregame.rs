@@ -79,6 +79,8 @@ pub struct PreGameFlow {
     pub stage: PreGameStage,
     /// Поверхность планеты (одна на все фазы выбора точки).
     pub surface: Option<SurfaceMap>,
+    /// Настоящие тайлы `.WRL` для рендера экрана высадки.
+    pub terrain: Option<max_render::terrain::TerrainAtlas>,
     /// Строка статуса между экранами.
     pub status: String,
 }
@@ -106,7 +108,9 @@ impl PreGameFlow {
         setup: LocalSetup,
         world_dir: &Path,
     ) -> Self {
-        let surface = LandingScreen::load_surface(setup.world, world_dir);
+        let parts = LandingScreen::load_parts(setup.world, world_dir);
+        let surface = parts.as_ref().map(|(surface, _)| surface.clone());
+        let terrain = parts.map(|(_, terrain)| terrain);
         let pending = phase_plan(&setup);
 
         let mut flow = Self {
@@ -115,6 +119,7 @@ impl PreGameFlow {
             pending,
             stage: PreGameStage::Finished,
             surface,
+            terrain,
             status: String::new(),
         };
 
@@ -146,8 +151,12 @@ impl PreGameFlow {
 
                     match self.surface.clone() {
                         Some(surface) => {
-                            self.stage =
-                                PreGameStage::Landing(LandingScreen::new(team, self.setup.world, surface));
+                            self.stage = PreGameStage::Landing(LandingScreen::new_with_terrain(
+                                team,
+                                self.setup.world,
+                                surface,
+                                self.terrain.clone(),
+                            ));
                             self.status = format!(
                                 "{}: select landing site",
                                 crate::hotseat::team_display_name(team)

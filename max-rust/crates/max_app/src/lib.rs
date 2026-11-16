@@ -1057,6 +1057,14 @@ impl App {
             )
         };
 
+        // `Access_UpdateVisibilityStatus` после высадки (`game_manager.cpp:1965`):
+        // сбрасывает видимость юнитов по `InitStealthStatus` и заново строит
+        // покрытие сканирования/тепловые карты. Без этого порядок высадки
+        // оставлял «одностороннюю» видимость (кто высажен позже — видит
+        // ранее высаженных, но не наоборот), а `visible_to_team` от спавна
+        // делал чужие базы видимыми всем без разведки.
+        state.update_visibility_status(true);
+
         let report = NewGameReport {
             planet: config.planet,
             seed: config.seed,

@@ -26,8 +26,8 @@
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
 | 8 | Live smoke 2×10 | `build/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
 | 9 | Live smoke 3×10 | `build/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/`: `max-rust.exe` 5 886 976 Б, sha256 `0e64aa15…`; zip 3 283 692 Б, sha256 `0547b54f…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound |
-| 11 | Windows headless | `bash build/scripts/build-windows.sh` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/`: `max-rust.exe` 9 909 158 Б, sha256 `c0b6d708…`; zip 3 679 301 Б, sha256 `1138649a…`; PE Subsystem=3 (console) |
+| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/`: `max-rust.exe` 6 033 408 Б, sha256 `d621a748…`; zip 3 351 852 Б, sha256 `5e4ed8eb…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; живой кадр экрана высадки — `build/landing-ui.png` |
+| 11 | Windows headless | `bash build/scripts/build-windows.sh` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/`: `max-rust.exe` 10 156 271 Б, sha256 `c8113aae…`; zip 3 777 964 Б, sha256 `4ea7af0f…`; PE Subsystem=3 (console) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ✅ `release/max_app-1.1.0-linux-x86_64/` + `.tar.gz` 4 432 299 Б, sha256 `9530a91c…`; внутри `SHA256SUMS` (бинарник/run.sh/README/CHANGELOG/LICENSE/libSDL3.so.0) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ пересобраны; сводка — `release/SHA256SUMS-1.1.0.txt` |
 | 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `PLAN-production.md` P6+P7, `max-rust-qa/suite/README.md` | ✅ версия 1.1.0, новые экраны/клавиши, матрица QA 168 ✅ / 18 ⏭ |

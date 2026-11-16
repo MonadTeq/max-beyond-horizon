@@ -133,6 +133,19 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   12 544 клетки; снимки — `build/wrl-snow-map.png`, `build/wrl-snow-detail.png`.
   Карта партии берётся из того же `WRL` (`App::new_game` →
   `assets.world.surface_map()`), поэтому проходимость и картинка согласованы.
+- **Экран высадки — те же тайлы.** `landing::LandingScreen` рисует `.WRL`
+  через `TerrainAtlas::render_tile_cpp_into` (точная выборка
+  `Gfx_DecodeMapTile`, зум 4: 64×64 → 4×4), окно `MessageManager`
+  (`"Select starting location."`, затемнение по палитре) и курсор
+  `CURSOR_UNIT_GO`/`NO_GO` (`GameManager_GetWindowCursor`). `MASTER`-маркер,
+  круг обзора и `BLDMRK*` в обычном выборе C++ не рисует — спавн `MASTER`
+  есть только в ветке проверки близости. Плоский `TileStyle` остался только
+  fallback'ом без `WRL`.
+- **Туман войны.** `visible_to_team` инициализируется как
+  `UnitInfo::InitStealthStatus` (своя команда + `AllVisible`), после высадки
+  вызывается `GameState::update_visibility_status`
+  (`Access_UpdateVisibilityStatus`), а карта/миникарта рисуют чужие юниты
+  только при `is_visible_to_team`.
 - **Спрайты всех 93 типов юнитов.** `UNIT_SPRITES` — построчный порт
   `SC_UNITS`: все постройки (`HANGAR`, `DEPOT`, `POWERSTN`, `RADAR`…), техника,
   пехота, флот, авиация, пришельцы, мины, взрывы и снаряды грузятся из

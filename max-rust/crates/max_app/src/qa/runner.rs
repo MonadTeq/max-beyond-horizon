@@ -25,7 +25,6 @@ use max_render::buffer::RgbaBuffer;
 use max_render::layout;
 
 use crate::hud;
-use crate::landing::{LANDING_AREA, LANDING_CELL};
 use crate::local::{LocalPhase, LocalSetup};
 use crate::menu;
 use crate::mobilize::{
@@ -813,10 +812,28 @@ impl QaRunner {
         match action {
             LandingCommand::Click(x, y) => self.send(InputEvent::MouseClick(x, y)),
             LandingCommand::Grid(grid_x, grid_y) => {
-                let x = LANDING_AREA.ulx + i32::from(grid_x) * LANDING_CELL + LANDING_CELL / 2;
-                let y = LANDING_AREA.uly + i32::from(grid_y) * LANDING_CELL + LANDING_CELL / 2;
+                // Детерминированно ставим точку без клика: в C++ клик по
+                // валидной клетке сразу подтверждает выбор, а сценарию нужно
+                // снять кадр с курсором до подтверждения.
+                if let Screen::PreGame(flow) = &mut self.screen {
+                    if let crate::pregame::PreGameStage::Landing(landing) = &mut flow.stage {
+                        landing.cursor = max_core::geo::Point::new(grid_x, grid_y);
+                        landing.status.clear();
+                    }
+                }
 
-                self.send(InputEvent::MouseClick(x, y))
+                // Курсор C++ (`Cursor_RenderToBuffer`) попадает в кадр: ставим
+                // его в центр выбранной клетки, как реальная мышь.
+                self.ctx.mouse = Some(max_render::ui::Point::new(
+                    crate::landing::LANDING_AREA.ulx
+                        + i32::from(grid_x) * crate::landing::LANDING_CELL
+                        + crate::landing::LANDING_CELL / 2,
+                    crate::landing::LANDING_AREA.uly
+                        + i32::from(grid_y) * crate::landing::LANDING_CELL
+                        + crate::landing::LANDING_CELL / 2,
+                ));
+
+                Ok(Flow::Continue)
             }
             LandingCommand::Done => self.send(InputEvent::Key(Key::Enter)),
             LandingCommand::Cancel => self.send(InputEvent::Key(Key::Escape)),

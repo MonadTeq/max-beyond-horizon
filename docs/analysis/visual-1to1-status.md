@@ -944,7 +944,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 | Экран | Ресурсы/раскладка | Код |
 |---|---|---|
 | Мобилизация | `CARGOPIC` 640×480; списки Available (482,80,123,290, строки 32 px ×9) / Purchased (337,45,118,185, ×5) с иконками `I_*` (1:2 мобильные, 1:4 здания); портрет `P_*` 300×240 в (11,13) 1:1 (окно 280×240) с описанием `GetDescription()` (16,17 280×230, шрифт 5 + обводка) и таблицей `UnitStats_DrawStats` (11,293,250,174, строки 19 px, pips `I_*`, красные линии); цены списка — колонка 610..625; колонка апгрейдов (283,293) и цен (321,293) с `I_GOLD`; полоса золота (361,276,40,140, `VERTGOLD`); cargo-слайдер (421,301,20,115 `VERTRAW/FUEL/GOLD`) и счётчик (421,276,20,10); `Cost`/`Credit`/`Cargo` (320/358/409,283,48×16); `Buy` (590,386,41,22), `Delete` (412,240,53,23), `Cancel` (357,452,62,23), `Done` (447,452,54,23), `Help` (420,452,26,23), `CRGTOG` (542,446,81,32), `BLDDES` (292,264,17,17), стрелки 471/491,387 и 327/348,240 | `max_app/src/mobilize.rs`, `max_app/src/cargo_unit_data.rs` |
-| Выбор точки | область карты `MAIN_MAP` (180,18,448,448) = 112 × 4 px; курсор 4×4; рамка «Select starting location.»; `Cancel`/`Done` нижней строки | `max_app/src/landing.rs` |
+| Выбор точки | область карты `MAIN_MAP` (180,18,448,448) = 112 × 4 px; **настоящие тайлы `.WRL`** (`Gfx_DecodeMapTile`, выборка 0/21/42/63); окно `"Select starting location."` (одна строка, затемнение карты по палитре, `Font5`); выделение точки — **курсор** `UNIT_GO`/`UNIT_NO_GO`/`HAND` (`GameManager_GetWindowCursor`), а не нарисованная рамка. `MASTER`-маркер/круг обзора/`BLDMRK*` в обычном выборе не рисуются: C++ спавнит `MASTER` только в ветке `GameManager_CheckLandingZones` | `max_app/src/landing.rs`, `max_render/src/terrain.rs` |
 | Очередь фаз | люди в порядке C++ (убывание слота), мобилизация → высадка на каждого; `start_gold = 0` пропускает мобилизацию | `max_app/src/pregame.rs` |
 
 Формулы (байт-совместимы с C++):
@@ -1001,9 +1001,14 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
   (`unit_values::team_base_values`), кредиты кланов `SC_CLANS` у всех = 0.
 * Состав ИИ — стандартная загрузка `SC_L0001` (как человек, ничего не купивший);
   `AiPlayer::RollTeamMissionSupplies` не портирован.
-* Экран высадки рисует **поверхностную** карту цветами `TileStyle`, а не
-  изометрические тайлы `.WRL`; зоны близости (`CheckLandingZones`) и
-  `HandleProximityOverlaps` не портированы.
+* Экран высадки — **1:1** по карте, сообщению и курсору (настоящие тайлы
+  `.WRL`, `MessageManager_DrawMessage`, `GameManager_GetWindowCursor`).
+  Остались отличия: ветка проверки близости (`CheckLandingZones`/
+  `HandleProximityOverlaps`) не портирована — вместе с ней нет спавна `MASTER`,
+  его маркера `DrawUnitSelector`, круга обзора `DrawCircle` и `BLDMRK*`
+  (в обычном выборе C++ их тоже нет, см. кадр C++-порта
+  `build/tmp/oracle-MAX0002.png`); `Cancel`/`Done` убраны — клик по валидной
+  клетке подтверждает выбор, `Enter`/`Esc` сохранены.
 * `Cancel` фаз возвращает на экран `Players` (в C++ отмена прерывает старт и
   уводит в главное меню).
 
@@ -1030,6 +1035,41 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 * `cargo test -p max_app --test cargo_render` — отрисовка иконок (оба списка),
   полосы золота/cargo, стрелок, `CRGTOG`, фильтров и прокрутки по
   изменившимся пикселям кадра.
+* `cargo test -p max_app --test landing_wrl` — кадр высадки содержит настоящие
+  тайлы: >40 цветов в области карты, пиксели клеток сверены с сырым
+  `SNOW_1.WRL` (формула `Gfx_DecodeMapTile`), курсор `UNIT_GO` рисуется в
+  кадре; fallback без `.WRL` не падает.
+* `cargo test -p max_core --test fog_of_war` — юнит виден только своей команде;
+  скан открывает врага в FOV и не открывает вне; `AllVisible`; стелс вне FOV.
+* Windows UI (`release/max_app-1.1.0-windows-x86_64-ui`, MSVC + vcpkg SDL3):
+  реальный кадр `build/landing-ui.png` — настоящие тайлы `.WRL`, окно
+  `"Select starting location."`, `CURSOR_UNIT_GO`; сборка пересобрана.
+
+### 11.6. Туман войны на карте и миникарте — исправлено
+
+До фикса `GameState::spawn_unit` повторял `UnitInfo::InitStealthStatus`
+(`unitinfo.cpp:2796`) неточно: все не-стелс юниты получали
+`visible_to_team = true` **для всех команд**. Поэтому на карте
+(`DrawMap_RenderUnits`) и миникарте (`DrawMap_RenderMiniMapUnitList`) были
+видны чужие базы и юниты без разведки/радара.
+
+Теперь:
+
+* `combat::init_stealth_status(unit, all_visible)` — точный порт: мины,
+  диверсанты и подлодки невидимы всем, остальные — только при
+  `GameManager_AllVisible`, своя команда видит всегда;
+* `GameState::update_visibility_status(reset)` — порт
+  `Access_UpdateVisibilityStatus` (`access.cpp:880`): `InitStealthStatus`,
+  очистка тепловых карт и повторное покрытие сканированием всех юнитов;
+  вызывается после высадки армий (`game_manager.cpp:1965`);
+* `App::draw_units` дополнительно скрывает `ORDER_IDLE`
+  (`UnitInfoGroup::IsRelevant`), чужие юниты — только при `is_visible_to_team`;
+* миникарта использует те же флаги (`panels::paint_minimap_units`).
+
+Проверки: `max_core/tests/fog_of_war.rs` (4 теста), тесты рендера карты и
+миникарты; QA `sp-full`/`hs-2` PASS, в `game-start.png` и
+`hs-green-turn.png` на миникарте остаются только свои точки; golden
+`game.png`, `upgrade-done.png`, `research-done.png` пересняты (0 дрейфа).
 
 ---
 
