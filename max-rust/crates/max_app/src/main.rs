@@ -839,6 +839,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
         for event in events {
             let input = input_event(event);
 
+            if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
+                eprintln!("[in] screen={screen:?} event={input:?}");
+            }
+
             if let Some(recorder) = recorder.as_mut() {
                 recorder.record(
                     input,
