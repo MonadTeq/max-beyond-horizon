@@ -187,6 +187,14 @@ pub enum Assertion {
     Defeat,
     /// `assert selected`: выделен подвижный юнит игрока.
     Selected,
+    /// `assert preview`: у выделенного юнита есть непустой предпросмотр пути
+    /// (зелёный маршрут HUD после RMB).
+    Preview,
+    /// `assert log=ТЕКСТ`: в журнале HUD есть строка с `ТЕКСТ` (например,
+    /// `assert log=Move:` после RMB-приказа).
+    Log(String),
+    /// `assert unit-pos=X,Y`: выделенный юнит стоит в клетке `(X, Y)`.
+    UnitPos(i16, i16),
     /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
     BuildOpen(bool),
     /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
@@ -566,6 +574,41 @@ fn parse_u32(text: &str, what: &str) -> Result<u32, String> {
         .map_err(|_| format!("{what}: ожидалось неотрицательное число, получено «{text}»"))
 }
 
+/// Пара клеток карты `X,Y` / `X Y` (для `assert unit-pos`).
+fn parse_grid_pair(text: &str, what: &str) -> Result<(i16, i16), String> {
+    let parts: Vec<&str> = text
+        .split(|character: char| character == ',' || character == ':' || character.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect();
+
+    if parts.len() != 2 {
+        return Err(format!(
+            "{what}: ожидалось «X,Y» (две координаты клетки), получено «{text}»"
+        ));
+    }
+
+    let x = parts[0]
+        .parse::<i16>()
+        .map_err(|_| format!("{what}: X не число: «{}»", parts[0]))?;
+    let y = parts[1]
+        .parse::<i16>()
+        .map_err(|_| format!("{what}: Y не число: «{}»", parts[1]))?;
+
+    if x < 0
+        || y < 0
+        || x >= max_core::geo::MAP_WIDTH
+        || y >= max_core::geo::MAP_HEIGHT
+    {
+        return Err(format!(
+            "{what}: клетка ({x}, {y}) вне карты {}×{}",
+            max_core::geo::MAP_WIDTH,
+            max_core::geo::MAP_HEIGHT
+        ));
+    }
+
+    Ok((x, y))
+}
+
 /// Пара координат кадра 640×480.
 fn parse_point(rest: &str) -> Result<(i32, i32), String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
@@ -720,6 +763,7 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         "victory" | "win" => return Ok(Assertion::Victory),
         "defeat" | "lose" => return Ok(Assertion::Defeat),
         "selected" => return Ok(Assertion::Selected),
+        "preview" => return Ok(Assertion::Preview),
         _ => {}
     }
 
@@ -790,6 +834,11 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             parse_u32(value, "assert gold")?,
         )),
         "unit" => Ok(Assertion::UnitType(value.to_string())),
+        "unit-pos" => {
+            let (x, y) = parse_grid_pair(value, "assert unit-pos")?;
+            Ok(Assertion::UnitPos(x, y))
+        }
+        "log" => Ok(Assertion::Log(value.to_string())),
         "cargo-mode" => match value.to_ascii_lowercase().as_str() {
             "buy" | "purchase" => Ok(Assertion::CargoMode(true)),
             "upgrade" | "upgrades" => Ok(Assertion::CargoMode(false)),

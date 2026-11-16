@@ -1,0 +1,81 @@
+# move-input.qa — сквозной путь игрока мышью (регресс «юнит не двигается»).
+#
+# Меню → Options → Planet → Players (RED человек, GREEN компьютер) →
+# мобилизация (Done) → высадка (Enter подтверждает точку по умолчанию) → партия:
+# клик по своему юниту (assert selected/unit-pos), RMB на соседнюю клетку
+# (assert preview + лог «Move: N steps»), End Turn → позиция юнита изменилась.
+#
+# Координаты — пиксели кадра 640×480. После старта камера центрирована на шахте
+# (`GameManager_GetFirstRelevantUnit` → `Access_GetFirstMiningStation`):
+# шахта (22,22) → (404,242), Surveyor (23,21) → (468,178),
+# соседняя клетка (24,21) → (532,178). Именно эта привязка — суть регресса:
+# до фикса камера вставала на первую плиту (`GROUND_COVER` в каноническом
+# обходе юнитов, клетка (21,23)), поэтому рассчитанные от базы клики попадали
+# на клетку вниз-влево и выделяли стационарную шахту — RMB отвечал
+# «Unit cannot move (air/stationary)», предпросмотра не было, ход не двигал юнита.
+#
+# Все переходы — те же клики, что у реальной мыши: `menu`/`setup`/`players`/
+# `mobilize done` жмут настоящие кнопки, высадка — Enter, выделение/приказ —
+# click/rclick по кадру.
+
+# --- Меню → настройка -----------------------------------------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+
+# --- Options → Planet → Players ------------------------------------------
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+
+# --- Мобилизация ----------------------------------------------------------
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+
+# --- Высадка: Enter подтверждает точку по умолчанию ----------------------
+key ENTER
+assert screen=InGame
+assert turn=1
+assert team=0
+# Стартовые 7 юнитов RED (шахта, генератор, 2 плиты, 3 мобильных) в партии.
+assert units>=7
+tick 5
+# Golden: камера на шахте, стартовые юниты видны спрайтами (не пустая карта).
+shot game-start
+
+# --- Выделение своего юнита кликом ---------------------------------------
+click 468 178
+assert selected
+assert unit-pos=23,21
+assert log=Selected
+shot game-selected
+
+# --- RMB на соседнюю клетку: зелёный маршрут + журнал --------------------
+rclick 532 178
+assert preview
+assert log=Move:
+shot move-preview
+
+# --- End Turn: приказ исполняется, юнит в новой клетке -------------------
+tick 8
+end_turn
+assert turn>=2
+assert team=0
+# C++ `GameManager_UpdateGuiControl` сбрасывает выделение на смене хода,
+# поэтому юнит в новой клетке выделяется заново — тем же кликом мыши.
+shot game-turn2
+click 532 178
+assert selected
+assert unit-pos=24,21
+shot game-after
+
+# --- TC-0604: RMB по своему юниту отменяет приказ и выделение ------------
+rclick 532 178
+assert log=Cancelled

@@ -223,6 +223,59 @@ fn cargo_full_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Сквозной путь игрока мышью (TC-0601/0603/0604): камера на базе, выделение
+/// своего юнита кликом, RMB-приказ с предпросмотром, `End Turn` и фактическое
+/// перемещение юнита в новую клетку.
+#[test]
+fn move_input_script_passes_through_the_real_input_path() {
+    if !has_game_data() {
+        return;
+    }
+
+    let dir = temp_dir("move_input");
+    let mut runner = runner(&dir);
+    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/move-input.qa"));
+
+    assert!(
+        report.passed,
+        "move-input.qa упал: {:?}\n{}",
+        report.failures, report.log
+    );
+
+    for name in [
+        "game-start",
+        "game-selected",
+        "move-preview",
+        "game-turn2",
+        "game-after",
+    ] {
+        let path = dir.join(format!("{name}.png"));
+        assert!(path.is_file(), "нет кадра {name}: {}", path.display());
+    }
+
+    // Surveyor высажен в (23,21); после RMB и End Turn'а он в (24,21) —
+    // приказ реально исполнен симуляцией, а не только записан в журнал.
+    let surveyor = runner
+        .app()
+        .state()
+        .unit_list(max_core::unit::UnitListKind::MobileLandSea)
+        .iter()
+        .filter_map(|id| runner.app().state().unit(*id))
+        .find(|unit| {
+            unit.team == max_core::team::TeamId::RED
+                && unit.unit_type == max_core::enums::UnitType::Surveyor
+        })
+        .expect("Surveyor в партии");
+
+    assert_eq!(
+        (surveyor.grid.x, surveyor.grid.y),
+        (24, 21),
+        "юнит должен стоять в соседней клетке после End Turn'а"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
 // ---------------------------------------------------------------------------
 // 3. Упавший ассерт — это провал прогона (в CLI → exit 1)
 // ---------------------------------------------------------------------------

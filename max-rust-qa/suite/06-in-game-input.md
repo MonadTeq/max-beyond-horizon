@@ -4,10 +4,10 @@
 
 | ID | Название | Шаги | Ожидание | Автоматизация |
 |---|---|---|---|---|
-| TC-0601 | Выделение юнита | LMB по своему юниту | панель юнита: имя/тип, HP, AMMO, ORDER, клетка, команда; портрет | ✅ UNIT hud; WINDOW (ручной прогон был) |
+| TC-0601 | Выделение юнита | LMB по своему юниту | панель юнита: имя/тип, HP, AMMO, ORDER, клетка, команда; портрет | ✅ QA `move-input.qa` (`click 468 178` → `assert selected`, `assert unit-pos=23,21`, golden `move-input/game-selected.png`); UNIT `max_app/tests/move_input.rs` (клик по клетке юнита → `hud.selected`; камера на шахте); UNIT hud/panels |
 | TC-0602 | Снятие выделения | LMB по пустой клетке / Esc | выделение снято | ✅ UNIT |
-| TC-0603 | Приказ движения | RMB по свободной клетке | маршрут + зелёный предпросмотр, панель «PATH N steps», пакет 38 | ✅ UNIT (байты 38); QA sp-full (move near) |
-| TC-0604 | Отмена движения | RMB по юниту / второй Esc | маршрут отменён | ✅ UNIT |
+| TC-0603 | Приказ движения | RMB по свободной клетке | маршрут + зелёный предпросмотр, панель «PATH N steps», пакет 38 | ✅ QA `move-input.qa` (`rclick` → `assert preview`, `assert log=Move:`, golden `move-input/move-preview.png`; после `end_turn` — `assert unit-pos=24,21`, т.е. юнит реально сдвинулся); UNIT (байты 38, `tests/move_input.rs::move_order_moves_the_unit_on_following_ticks`); QA sp-full (move near) |
+| TC-0604 | Отмена движения | RMB по юниту / второй Esc | маршрут отменён | ✅ QA `move-input.qa` (`rclick` по своему юниту → `assert log=Cancelled`); UNIT |
 | TC-0605 | Атака врага | клик по вражескому юниту | пакет 08 (P3: MOVE_TO_ATTACK + enemy) | ✅ UNIT (байты 08); сквозной урон в QA — not planned (нет команды урона) |
 | TC-0606 | Недопустимый приказ | приказ на недостижимую клетку | корректный отказ/без паники | ✅ UNIT pathfinding (`Paths_RequestPath`/`find_ground_path` → `None` без паники); клик по пустой/недостижимой клетке — `None` |
 | TC-0607 | Миникарта — вид | в игре | WRL-миникарта + FOV-маска + рамка камеры + точки юнитов | ✅ UNIT panels; golden |

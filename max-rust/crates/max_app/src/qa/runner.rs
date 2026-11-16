@@ -1738,6 +1738,70 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::Preview => {
+                let preview = self.app.hud().preview.as_ref();
+                let steps = preview.map(|preview| preview.len()).unwrap_or(0);
+
+                self.expect(
+                    steps > 0,
+                    "preview".to_string(),
+                    match preview {
+                        Some(preview) => format!(
+                            "предпросмотр: {} шагов {:?} → {:?}",
+                            preview.len(),
+                            preview.from,
+                            preview.to
+                        ),
+                        None => "предпросмотра нет".to_string(),
+                    },
+                )
+            }
+            Assertion::Log(text) => {
+                let found = self
+                    .app
+                    .hud()
+                    .log
+                    .lines()
+                    .iter()
+                    .find(|line| line.contains(&text))
+                    .cloned();
+                let last = self
+                    .app
+                    .hud()
+                    .log
+                    .lines()
+                    .last()
+                    .cloned()
+                    .unwrap_or_default();
+
+                self.expect(
+                    found.is_some(),
+                    format!("log={text}"),
+                    match found {
+                        Some(line) => format!("найдено в журнале: «{line}»"),
+                        None => format!("в журнале нет «{text}»; последняя строка: «{last}»"),
+                    },
+                )
+            }
+            Assertion::UnitPos(x, y) => {
+                let selected = self
+                    .app
+                    .hud()
+                    .selected
+                    .and_then(|id| self.app.state().unit(id));
+
+                self.expect(
+                    selected.is_some_and(|unit| unit.grid == max_core::geo::Point::new(x, y)),
+                    format!("unit-pos={x},{y}"),
+                    match selected {
+                        Some(unit) => format!(
+                            "выделенный {:?} в ({}, {})",
+                            unit.unit_type, unit.grid.x, unit.grid.y
+                        ),
+                        None => "выделения нет".to_string(),
+                    },
+                )
+            }
             Assertion::Digest(expected) => {
                 let actual = self.app.digest().state_digest;
 

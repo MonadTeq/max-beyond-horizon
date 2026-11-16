@@ -1222,17 +1222,55 @@ impl App {
         Ok(self.digest())
     }
 
-    /// Центрирует камеру на первом юните локального игрока (или на карте).
+    /// Центрирует камеру на первом значимом юните локального игрока.
+    ///
+    /// Это `GameManager_GetFirstRelevantUnit` (`game_manager.cpp:3140`), а не
+    /// «первый юнит в списке»: C++ ищет **шахту** (`Access_GetFirstMiningStation`),
+    /// затем первый активный наземный/морской, воздушный и, наконец,
+    /// стационарный юнит. Раньше камера вставала на первый юнит канонического
+    /// обхода — а это `GROUND_COVER` (`SMLSLAB`/`LRGSLAB`), клетка на одну
+    /// вниз-влево от базы. Из-за сдвига клики, рассчитанные от базы, попадали
+    /// на соседнюю клетку со стационарной шахтой: выделялась она, RMB отвечал
+    /// «Unit cannot move (air/stationary)», и юнит не двигался.
     pub fn focus_player(&mut self) {
-        let unit = self
-            .state
-            .unit_ids_in_order()
-            .into_iter()
-            .filter_map(|id| self.state.unit(id))
-            .find(|unit| unit.team == self.state.player_team)
-            .map(|unit| unit.grid);
+        let team = self.state.player_team;
+        let mut grid = None;
 
-        if let Some(grid) = unit {
+        // 1. `Access_GetFirstMiningStation`: шахта команды в `StationaryUnits`.
+        for id in self.state.unit_list(max_core::unit::UnitListKind::Stationary) {
+            if let Some(unit) = self.state.unit(*id) {
+                if unit.team == team && unit.unit_type == UnitType::MiningStation {
+                    grid = Some(unit.grid);
+                    break;
+                }
+            }
+        }
+
+        // 2. `Access_GetFirstActiveUnit` по трём спискам в порядке C++.
+        if grid.is_none() {
+            for kind in [
+                max_core::unit::UnitListKind::MobileLandSea,
+                max_core::unit::UnitListKind::MobileAir,
+                max_core::unit::UnitListKind::Stationary,
+            ] {
+                for id in self.state.unit_list(kind) {
+                    if let Some(unit) = self.state.unit(*id) {
+                        if unit.team == team
+                            && unit.orders != max_core::enums::UnitOrder::Idle
+                        {
+                            grid = Some(unit.grid);
+                            break;
+                        }
+                    }
+                }
+
+                if grid.is_some() {
+                    break;
+                }
+            }
+        }
+
+        if let Some(grid) = grid {
             self.viewport.center_on_grid(grid.x, grid.y);
         }
     }

@@ -18,11 +18,13 @@ max-rust-qa/
 ├── scripts/cargo-full.qa       # P7: полная мобилизация (15 типов, cargo, модернизация, апгрейд)
 ├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
+├── scripts/move-input.qa       # TC-0601/0603/0604: выделение кликом → RMB-приказ → End Turn → юнит сдвинулся
 ├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~985 КиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
 ├── golden/research/*.png       # эталон партии после исследования (research.qa)
 ├── golden/cargo/*.png          # эталоны CargoMenu: покупка/модернизация/после апгрейда
+├── golden/move-input/*.png     # эталоны старта партии/выделения/предпросмотра/хода 2 (move-input.qa)
 └── scripts/README.md
 ```
 
@@ -135,6 +137,9 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
 | `assert selected` | выделен подвижный юнит игрока |
+| `assert preview` | у выделенного юнита есть непустой предпросмотр пути (зелёный маршрут после RMB) |
+| `assert unit-pos=X,Y` | выделенный юнит стоит в клетке `(X, Y)` |
+| `assert log=ТЕКСТ` | в журнале HUD есть строка с `ТЕКСТ` («Move: N steps to (X, Y)») |
 | `assert digest=0xBEEF` | CRC16 снапшота состояния (`App::digest`) |
 | `assert build=open` / `build=closed` | открыт ли `BuildMenu` (P2) |
 | `assert upgrade=open` / `upgrade=closed` | открыт ли экран апгрейдов (P6) |
@@ -163,6 +168,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `soak-100.qa` | P4 soak: Options (Clueless, No Limit, Turn Based, Duration 200) → мобилизация без покупок → высадка → `select unit 0`/`move near` в начале и на 41-м ходу → 100 × `end_turn` (ходы ИИ) → `assert turn=21/41/61/81/101`, `assert screen=InGame`, `shot` и `mem` каждые 20 ходов, `save_v70 soak-turn100.dta`; в `log.txt` — `# mem start/end` и (при `MAX_TICK_PROFILE=1`) строка `PROFILE` | **PASS** (100 ходов, 12 208 кадров, 7 PNG; V70-сейв 157 921 Б; RSS 54 696 → 60 944 КиБ) |
 | `edge-cases.qa` | P4 TC-1106/1111/1112: 50 кликов по пустым областям главного меню + 50 по карте (без паник), не-ASCII `type` в чате и в поле имени, выход из партии → New Game → Cancel → полный второй старт до `turn=2`; кадры `edge-menu-spam`/`edge-game-spam`/`edge-unicode-*`/`edge-repeat-start`/`edge-second-game` | **PASS** |
 | `cargo-full.qa` | P7: мобилизация целиком — `assert cargo-types=15`, покупка Gold Truck (14-я строка, прокрутка списка), Mine Layer и Constructor, cargo-слайдер (+20 единиц), `CRGTOG` → список модернизации (62 типа), фильтры домена, апгрейд armor Constructor'а, `Done` → `assert gold<150`; кадры `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` | **PASS** (golden `cargo/`) |
+| `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`); кадры `game-start`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 5 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -291,8 +297,10 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100

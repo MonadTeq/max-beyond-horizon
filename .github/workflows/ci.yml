@@ -127,6 +127,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research.qa qa-out/research
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
@@ -137,6 +138,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-rust-qa/golden/upgrade
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-rust-qa/golden/research
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-rust-qa/golden/cargo
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
 
       - name: Upload log + frames + diff on failure
         if: failure()

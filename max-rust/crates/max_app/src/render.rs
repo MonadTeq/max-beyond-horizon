@@ -240,6 +240,13 @@ impl App {
         }
 
         self.draw_units(&mut map, &viewport, &mut stats);
+        // Предпросмотр маршрута (зелёная линия RMB) — поверх юнитов, как
+        // `GameManager_DrawMapView`: в оконном режиме `render_hud` не
+        // вызывается (панели рисует `FRAMEPIC`), поэтому без этой строки
+        // предпросмотр был виден только в полноэкранном fallback.
+        if let Some(preview) = &self.hud.preview {
+            crate::hud::draw_path_preview(&mut map, &viewport, preview);
+        }
         crate::chrome::blit_map(&mut frame, &map);
 
         // Панели поверх карты: кнопки, портрет, статистика, сетка, зум,

@@ -1146,3 +1146,35 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 `release/max_app-1.1.0-windows-x86_64-ui/` (MSVC + SDL3.dll) и
 `release/max_app-1.1.0-linux-x86_64/` (SDL3 из исходников).
 
+---
+
+## 13. Камера после высадки центрируется на шахте — **сделано** (2026-11-16)
+
+До этого среза `App::focus_player` центрировал карту на **первом юните
+канонического обхода** — `GROUND_COVER` (`SMLSLAB`/`LRGSLAB`), клетка на одну
+вниз-влево от шахты. Визуально это давало сдвиг всей карты на 64 px
+(центр `MAIN_MAP` приходился на плиту, а не на базу), а в игре — «юнит не
+двигается»: клики, рассчитанные от базы, попадали на соседнюю клетку, где
+стоит стационарная шахта; RMB отвечал «Unit cannot move (air/stationary)»,
+предпросмотра не было.
+
+Теперь `focus_player` — построчный порт `GameManager_GetFirstRelevantUnit`
+(`game_manager.cpp:3140`): `Access_GetFirstMiningStation` (шахта своей команды
+из `StationaryUnits`), затем первый не-`ORDER_IDLE` юнит в
+`MobileLandSea` → `MobileAir` → `Stationary`. Центрирование —
+`GameManager_CenterMainMapView`: центр клетки (`grid*64+32`) в центр области
+карты, т.е. `MAIN_MAP` (180,18,448×448) → (404,242).
+
+| Что | Значение |
+|---|---|
+| Кадр старта партии | шахта (22,22) в (404,242), `Surveyor` (23,21) в (468,178) |
+| Юниты на старте | 7 спрайтов RED: `MININGST`, `POWGEN`, `SMLSLAB`, `LRGSLAB`, `SURVEYOR`, `ENGINEER`, `CONSTRCT` (`units_drawn=7`, `units_skipped=0`) |
+| Предпросмотр пути | зелёная линия `PREVIEW_COLOR` (120,255,152) в буфере карты и при хроме (66 px на 1 шаг) |
+
+**Свидетельства.** `max_app/tests/move_input.rs` (6 тестов), новый сценарий
+`max-rust-qa/scripts/move-input.qa` (полный путь кликами, `assert selected`/
+`unit-pos`/`preview`/`log=Move:`/`log=Cancelled`), эталоны
+`golden/move-input/*` (5 кадров) и переснятые `golden/game.png` +
+`golden/research/research-done.png`; `qa_golden_check` — 0 дрейфа.
+
+

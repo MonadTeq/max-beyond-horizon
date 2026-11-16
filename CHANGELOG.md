@@ -2,6 +2,52 @@
 
 ### Исправлено
 
+- **«Юнит не двигается»: камера после высадки вставала не на базу**
+  (`max_app/src/lib.rs` — `App::focus_player`, `max_app/src/render.rs` —
+  `render_with_chrome`):
+  - **Корень.** После высадки камера центрировалась на первом юните
+    канонического обхода — а это `GROUND_COVER` (`SMLSLAB`/`LRGSLAB`), клетка
+    на одну вниз-влево от шахты. В C++ вид ставит
+    `GameManager_GetFirstRelevantUnit` (`game_manager.cpp:3140`):
+    `Access_GetFirstMiningStation` → первый активный наземный/морской →
+    воздушный → стационарный. Из-за сдвига на клетку клики, рассчитанные «от
+    базы», попадали на соседнюю клетку: вместо `Surveyor`'а выделялась
+    стационарная шахта (`sel-6` в прогоне `move-debug` — портрет Mining
+    Station), RMB отвечал «Unit cannot move (air/stationary)», зелёного
+    предпросмотра не было, и ход ничего не двигал. **Юниты при этом рисовались**
+    — FOW/`ORDER_IDLE`-фильтр (`UnitInfoGroup::IsRelevant`) ни при чём.
+  - **Камера.** `App::focus_player` повторяет `GameManager_GetFirstRelevantUnit`
+    1:1: шахта своей команды из `StationaryUnits`, иначе первый не-`IDLE` юнит
+    в `MobileLandSea` → `MobileAir` → `Stationary`.
+    `Viewport::center_on_grid` ставит центр клетки (`grid*64+32`) в центр
+    `MAIN_MAP`, как `GameManager_CenterMainMapView`.
+  - **Предпросмотр маршрута в оконном режиме.** `render_with_chrome` рисует
+    зелёную линию RMB поверх юнитов в буфере карты: при хроме `render_hud` не
+    вызывается (панели приходят из `FRAMEPIC`), поэтому раньше предпросмотр
+    был виден только в полноэкранном fallback (0.04 % зелёных пикселей в
+    `move-1` против целой линии теперь).
+  - **Enter на экране высадки работает** (проверено новым сценарием:
+    `key ENTER` → `assert screen=InGame`). «Enter не подтверждает посадку» в
+    прогоне `move-debug` — артефакт самого сценария: клик `501 472` промахивался
+    мимо `Done` мобилизации на 1 px (`DONE_BUTTON` = 447,452,54×23,
+    `contains` — правая граница исключающая), `Enter` уходил в `CargoMenu`
+    (`Key::Enter` = Done) и переводил на экран высадки — поэтому
+    `game-before`/`sel-1`/`sel-2` были ещё экраном высадки.
+  - **Тесты.** `max_app/tests/move_input.rs` (6): камера на шахте (центр кадра);
+    `Enter` подтверждает точку (`Transition::StartLocal` + `start_positions`);
+    стартовые юниты рисуются спрайтами (`units_drawn >= 7`, `units_skipped = 0`);
+    координата сценария `(468,178)` попадает в клетку `Surveyor`'а;
+    клик выделяет (`hud.selected`), RMB даёт предпросмотр + «Move: N steps» +
+    зелёные пиксели в кадре; после тиков юнит стоит в целевой клетке.
+  - **QA.** Новый `max-rust-qa/scripts/move-input.qa` — весь путь **кликами**
+    (меню → мобилизация → высадка `Enter` → клик по своему `Surveyor`'у →
+    RMB → `End Turn` → позиция изменилась) с ассертами `selected`/`unit-pos`/
+    `preview`/`log=Move:`/`log=Cancelled`; добавлен в `ci.sh` (стадия 3/4).
+    Отладочные `move-debug.qa`/`tmp-probe.qa` удалены. Golden: новые
+    `golden/move-input/*` (5 кадров: старт с юнитами, выделение, предпросмотр,
+    ход 2, ход после движения), пересняты `golden/game.png` и
+    `golden/research/research-done.png` (камера на базе вместо плиты);
+    `qa_golden_check` — 0 дрейфа по всем наборам.
 - **Туман войны: чужие юниты больше не видны без разведки**
   (`max_core/src/game.rs`, `max_core/src/combat.rs`, `max_core/src/ai/threat.rs`,
   `max_app/src/render.rs`):
