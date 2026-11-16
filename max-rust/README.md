@@ -133,11 +133,15 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   12 544 клетки; снимки — `build/wrl-snow-map.png`, `build/wrl-snow-detail.png`.
   Карта партии берётся из того же `WRL` (`App::new_game` →
   `assets.world.surface_map()`), поэтому проходимость и картинка согласованы.
-- **Здания.** `UNIT_SPRITES` расширен с 12 до **39** типов: все постройки
-  (`HANGAR`, `DEPOT`, `POWERSTN`, `RADAR`, `BARRACKS`, `AIRPLT`, `LIGHTPLT`,
-  `GUNTURRT`… ) грузятся из `MAX.RES` вместе с тенями `S_*`, а не рисуются
-  квадратным маркером команды. В кадре `--new-game` это видно по счётчику:
-  было `sprite=3 marker=4`, стало `sprite=4 marker=3` (шахта — настоящий спрайт).
+- **Спрайты всех 93 типов юнитов.** `UNIT_SPRITES` — построчный порт
+  `SC_UNITS`: все постройки (`HANGAR`, `DEPOT`, `POWERSTN`, `RADAR`…), техника,
+  пехота, флот, авиация, пришельцы, мины, взрывы и снаряды грузятся из
+  `MAX.RES` вместе с тенями `S_*`, а корпус, тень и отдельная башня `D_*`
+  (`TURRET_SPRITE`/`SPINNING_TURRET`, сдвиг `angle_offsets`) рисуются на карте
+  тем же кодом, что и HUD-портрет. Маркером команды остаётся только `MASTER`:
+  его ресурса нет ни в `MAX.RES`, ни в `PATCHES.RES` (у `SUBMARNE` так же нет
+  тени `S_SUBMAR`). В кадре `--new-game` счётчик спрайтов виден в
+  `render_frame_with_stats` (`units_drawn`/`units_marker`).
 - **Ресурсы** остаются точками, но рисуются поверх настоящих тайлов
   (`map_render::render_resources_into`), а не поверх заглушки.
 - **Окно 1:1 из `FRAMEPIC` + раскладка оригинала.** `max_assets::image`

@@ -27,14 +27,11 @@
 //! проверяет панели (включая End Turn, который намеренно заходит на карту).
 
 use max_assets::image::SimpleImage;
-use max_core::enums::unit_flags;
 use max_core::game::GameState;
 use max_core::unit::UnitInfo;
 use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
-use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
-use max_render::sprite_atlas::SpriteRenderer;
 use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFont, GnwFontId};
 use max_render::viewport::Viewport;
 
@@ -758,70 +755,27 @@ impl Panels {
             return painted;
         };
 
-        if let Some(sprite) = assets.sprite(unit.unit_type) {
-            let Some(sprite_frame) = sprite.frame_for(unit.image_base, unit.angle) else {
-                return painted;
-            };
-            let shadow = sprite.shadow_for(unit.image_base, unit.angle);
-            let colors = TeamColors::ALL
-                .get(unit.team.0 as usize)
-                .copied()
-                .unwrap_or(TeamColors::Derelict);
-            let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
-            let renderer = SpriteRenderer::new(
-                &assets.palette,
-                &assets.brightness,
-                ColorLut::for_team(colors),
-                level,
-            );
-            // Спрайт рисуется в буфер портрета и увеличивается вдвое вокруг
-            // центра: статичная замена FLIC-анимации, но заметно крупнее
-            // нативной иконки 50×50.
-            let mut portrait =
-                RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
-            let anchor = (area.width / 2, area.height / 2);
+        // Спрайт рисуется в буфер портрета тем же кодом, что и на карте
+        // (`render::draw_unit_sprites`: тень → корпус → башня со сдвигом
+        // `angle_offsets`), и увеличивается вдвое вокруг центра: статичная
+        // замена FLIC-анимации, но заметно крупнее нативной иконки 50×50.
+        let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
+        let anchor = (area.width / 2, area.height / 2);
 
-            renderer.draw_unit(
-                &mut portrait,
-                sprite_frame,
-                shadow,
-                anchor,
-                (
-                    i32::from(unit.shadow_offset.x),
-                    i32::from(unit.shadow_offset.y),
-                ),
-            );
+        if crate::render::draw_unit_sprites(assets, unit, &mut portrait, anchor, 64).is_none() {
+            return painted;
+        }
 
-            // Башня/пушка отдельным кадром поверх корпуса
-            // (`UnitInfo::RenderWithConnectors`); масштаб 64 — 1:1, как у корпуса.
-            if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
-                if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
-                    renderer.draw_turret_scaled(
-                        &mut portrait,
-                        turret,
-                        sprite.turret_shadow(unit.turret_angle),
-                        anchor,
-                        (
-                            i32::from(unit.shadow_offset.x),
-                            i32::from(unit.shadow_offset.y),
-                        ),
-                        sprite.turret_offset(unit.angle),
-                        64,
-                    );
-                }
-            }
+        let center_x = area.width / 2;
+        let center_y = area.height / 2;
 
-            let center_x = area.width / 2;
-            let center_y = area.height / 2;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let source_x = center_x + (x - center_x) / 2;
+                let source_y = center_y + (y - center_y) / 2;
 
-            for y in 0..area.height {
-                for x in 0..area.width {
-                    let source_x = center_x + (x - center_x) / 2;
-                    let source_y = center_y + (y - center_y) / 2;
-
-                    if let Some(color) = portrait.get(source_x, source_y) {
-                        frame.set(area.ulx + x, area.uly + y, color);
-                    }
+                if let Some(color) = portrait.get(source_x, source_y) {
+                    frame.set(area.ulx + x, area.uly + y, color);
                 }
             }
         }

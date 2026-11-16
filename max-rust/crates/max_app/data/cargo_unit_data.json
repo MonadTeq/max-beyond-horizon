@@ -3,558 +3,744 @@
  "units": [
   {
    "token": "COMMTWR",
+   "sprite": "COMMTWR",
+   "shadow": "S_COMMTW",
    "portrait": "P_TRANSP",
    "description": "Refinery for converting gold into credits.  Credits are required to purchase unit improvements.  To run, a gold refinery needs a source of power and a source of gold ore.  A mining station can produce gold ore if one of its four squares covers a square with underground gold.",
    "data": "D_LRGBLD"
   },
   {
    "token": "POWERSTN",
+   "sprite": "POWERSTN",
+   "shadow": "S_POWERS",
    "portrait": "P_POWSTN",
    "description": "A power station consumes six fuel each turn, and provides enough power for six factories or mining stations.\n",
    "data": "D_LRGBLD"
   },
   {
    "token": "POWGEN",
+   "sprite": "POWGEN",
+   "shadow": "S_POWGEN",
    "portrait": "P_POWGEN",
    "description": "A power generator consumes two fuel each turn, and provides enough power for one mining station or factory.  The power generator must be connected to the fuel source (usually a mining station) and the building that needs the power.",
    "data": "D_SMLBLD"
   },
   {
    "token": "BARRACKS",
+   "sprite": "BARRACKS",
+   "shadow": "S_BARRAC",
    "portrait": "P_BARRCK",
    "description": "A barracks holds infiltrators and infantry units.  Inside the barracks is a machine shop for repairing and improving powered suits, and for manufacturing ammunition.  The barracks needs raw materials to repair, upgrade, or resupply, so it should be connected to a storage unit or a mining station.",
    "data": "D_LRGBLD"
   },
   {
    "token": "SHIELDGN",
+   "sprite": "SHIELDGN",
+   "shadow": "S_SHIELD",
    "portrait": "P_SHIELD",
    "description": "Specialized mining station for extracting magnetic monopoles.",
    "data": "D_LRGBLD"
   },
   {
    "token": "RADAR",
+   "sprite": "RADAR",
+   "shadow": "S_RADAR",
    "portrait": "P_RADAR",
    "description": "Stationary, long-range radar.  Longer-range units like missile launchers and artillery cannot fire on what they cannot see, so it's important to have a scanner or radar nearby.",
    "data": "D_RADAR"
   },
   {
    "token": "ADUMP",
+   "sprite": "ADUMP",
+   "shadow": "S_ADUMP",
    "portrait": "P_SMSTOR",
    "description": "Holds raw materials.  Mining stations produce raw materials every turn.  To save extra raw materials, a mining station must be connected to a storage unit.",
    "data": "D_SMLBLD"
   },
   {
    "token": "FDUMP",
+   "sprite": "FDUMP",
+   "shadow": "S_FDUMP",
    "portrait": "P_SMFUEL",
    "description": "Holds fuel reserves.  Mining stations produce fuel every turn.  To save extra fuel, a mining station must be connected to a fuel tank.",
    "data": "D_SMLBLD"
   },
   {
    "token": "GOLDSM",
+   "sprite": "GOLDSM",
+   "shadow": "S_GOLDSM",
    "portrait": "P_SMVLT",
    "description": "Holds unrefined gold ore.  Mining stations produce gold every turn, if they have gold ore underneath them.  To store the ore, a mining station must be connected to a gold vault.",
    "data": "D_SMLBLD"
   },
   {
    "token": "DEPOT",
+   "sprite": "DEPOT",
+   "shadow": "S_DEPOT",
    "portrait": "P_DEPOT",
    "description": "A depot can repair damage, manufacture ammunition, and refit ground units with the newest technology.  All of these operations require raw materials, so depots should be connected to stored materials.",
    "data": "D_LRGBLD"
   },
   {
    "token": "HANGAR",
+   "sprite": "HANGAR",
+   "shadow": "S_HANGAR",
    "portrait": "P_HANGAR",
    "description": "A hangar can repair damage, manufacture ammunition, and refit planes with the newest technology.  All of these operations require raw materials, so hangars should be connected to stored materials.",
    "data": "D_LRGBLD"
   },
   {
    "token": "DOCK",
+   "sprite": "DOCK",
+   "shadow": "S_DOCK",
    "portrait": "P_DOCK",
    "description": "A dock can repair damage, manufacture ammunition, and refit ships with the newest technology.  All of these operations require raw materials, so docks should be connected to stored materials.",
    "data": "D_LRGBLD"
   },
   {
    "token": "CNCT_4W",
+   "sprite": "CNCT_4W",
+   "shadow": "S_CNCT4W",
    "portrait": "P_CONNEC",
    "description": "Buildings must be connected to share power, fuel, raw materials, and gold.  You can connect buildings by placing them next to each other, or by building connectors from one building to the other.",
    "data": "D_SMLBLD"
   },
   {
    "token": "LRGRUBLE",
+   "sprite": "LRGRUBLE",
+   "shadow": "S_LRGRBL",
    "portrait": null,
    "description": "",
    "data": "D_LRGRBL"
   },
   {
    "token": "SMLRUBLE",
+   "sprite": "SMLRUBLE",
+   "shadow": "S_SMLRBL",
    "portrait": null,
    "description": "",
    "data": "D_SMLRBL"
   },
   {
    "token": "LRGTAPE",
+   "sprite": "LRGTAPE",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_LRGRBL"
   },
   {
    "token": "SMLTAPE",
+   "sprite": "SMLTAPE",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_LRGRBL"
   },
   {
    "token": "LRGSLAB",
+   "sprite": "LRGSLAB",
+   "shadow": "S_LRGSLA",
    "portrait": null,
    "description": "",
    "data": "D_LRGSLA"
   },
   {
    "token": "SMLSLAB",
+   "sprite": "SMLSLAB",
+   "shadow": "S_SMLSLA",
    "portrait": null,
    "description": "",
    "data": "D_DEFALT"
   },
   {
    "token": "LRGCONES",
+   "sprite": "LRGCONES",
+   "shadow": "S_LRGCON",
    "portrait": null,
    "description": "",
    "data": "D_DEFALT"
   },
   {
    "token": "SMLCONES",
+   "sprite": "SMLCONES",
+   "shadow": "S_SMLCON",
    "portrait": null,
    "description": "",
    "data": "D_DEFALT"
   },
   {
    "token": "ROAD",
+   "sprite": "ROAD",
+   "shadow": "S_ROAD",
    "portrait": "P_ROAD",
    "description": "Units move twice as fast over road squares.",
    "data": "D_DEFALT"
   },
   {
    "token": "LANDPAD",
+   "sprite": "LANDPAD",
+   "shadow": "S_LANDPA",
    "portrait": "P_LANDPD",
    "description": "Landing facility for planes.  Does not repair, resupply, or refuel planes.  To resupply a plane on a landing pad, use a nearby truck or storage unit.",
    "data": "D_DEFALT"
   },
   {
    "token": "SHIPYARD",
+   "sprite": "SHIPYARD",
+   "shadow": "S_SHIPYA",
    "portrait": "P_SHIPYD",
    "description": "Shipyards manufacture ships, such as submarines, sea transports, and missile cruisers.  A shipyard requires three raw materials a turn to operate, and power from a power generator or power station.",
    "data": "D_LRGBLD"
   },
   {
    "token": "LIGHTPLT",
+   "sprite": "LIGHTPLT",
+   "shadow": "S_LIGHTP",
    "portrait": "P_LGHTPL",
    "description": "Builds light vehicles: engineers, trucks, mobile repair units, scouts, and mobile anti aircraft units.  A light vehicle plant requires three raw materials a turn to operate, and power from a power generator or power station.",
    "data": "D_LRGBLD"
   },
   {
    "token": "LANDPLT",
+   "sprite": "LANDPLT",
+   "shadow": "S_LANDPL",
    "portrait": "P_HVYPLT",
    "description": "Builds constructors, mobile scanners, and the heavy fighting units: tanks, assault guns, rocket launchers, and missile crawlers.  A heavy factory needs three raw materials a turn to operate, and power from a power generator or power station.",
    "data": "D_LRGBLD"
   },
   {
    "token": "SUPRTPLT",
+   "sprite": "SUPRTPLT",
+   "shadow": "S_SUPRTP",
    "portrait": "P_LIFESP",
    "description": "",
    "data": "D_LRGBLD"
   },
   {
    "token": "AIRPLT",
+   "sprite": "AIRPLT",
+   "shadow": "S_AIRPLT",
    "portrait": "P_AIRPLT",
    "description": "Builds fighters, ground attack planes, and air transports.  A heavy factory needs three raw materials a turn to operate, and power from a power generator or power station.",
    "data": "D_LRGBLD"
   },
   {
    "token": "HABITAT",
+   "sprite": "HABITAT",
+   "shadow": "S_HABITA",
    "portrait": "P_HABITA",
    "description": "Habitats house colonists.  Each habitat houses enough colonists to operate three research centers, training halls, or eco-spheres.  The colonist buildings must be connected to the habitat before they can operate.",
    "data": "D_LRGBLD"
   },
   {
    "token": "RESEARCH",
+   "sprite": "RESEARCH",
+   "shadow": "S_RESEAR",
    "portrait": "P_RESEAR",
    "description": "Research centers investigate ways to improve your units.  Unlike upgrades purchased with refined gold, research takes time, and the improvements are small.  However, research affects all of your units instead of just one type, and doesn't require a source of gold ore.  A research center requires colonists from a Habitat to operate, and power.",
    "data": "D_LRGBLD"
   },
   {
    "token": "GREENHSE",
+   "sprite": "GREENHSE",
+   "shadow": "S_GREENH",
    "portrait": "P_GREENH",
    "description": "Domed building containing an earthlike environment.  Your ultimate goal is to provide as many of these for your colonists as possible.  Every turn an ecosphere operates, it increases your colony rating.  If its destroyed, you lose all of the improvements the ecosphere made to your rating.  Ecospheres require colonists from a Habitat and power to operate.",
    "data": "D_LRGBLD"
   },
   {
    "token": "RECCENTR",
+   "sprite": "RECCENTR",
+   "shadow": "S_RECCEN",
    "portrait": "P_RECCTR",
    "description": "",
    "data": "D_LRGBLD"
   },
   {
    "token": "TRAINHAL",
+   "sprite": "TRAINHAL",
+   "shadow": "S_TRAINH",
    "portrait": "P_TRNHLL",
    "description": "Trains infiltrators who can disable or capture enemy units, and infantry to guard against infiltrators.  Only infantry and other infiltrators can detect infiltrators.  A training hall requires colonists from a Habitat and power to operate.",
    "data": "D_LRGBLD"
   },
   {
    "token": "WTRPLTFM",
+   "sprite": "WTRPLTFM",
+   "shadow": "S_WTRPLT",
    "portrait": "P_WATER",
    "description": "Provides a surface over water on which to construct other buildings.  Engineers can build water platforms over shore as well as open water.  Water platforms are particularly important on island maps, or when a valuable material deposit is under water.",
    "data": "D_DEFALT"
   },
   {
    "token": "GUNTURRT",
+   "sprite": "GUNTURRT",
+   "shadow": "S_GUNTUR",
    "portrait": "P_GUNTUR",
    "description": "Heavily armored stationary gun turret.  Gun turrets have good firepower, heavy armor, and moderate range.  Because they take little time to build, they are a good choice when you need defense in a hurry.",
    "data": "D_FIXED"
   },
   {
    "token": "ANTIAIR",
+   "sprite": "ANTIAIR",
+   "shadow": "S_ANTIAI",
    "portrait": "P_FXAA",
    "description": "Low caliber, high speed anti aircraft cannon.   Anti aircraft make short work of planes, but cannot attack ground units.",
    "data": "D_ANTIAI"
   },
   {
    "token": "ARTYTRRT",
+   "sprite": "ARTYTRRT",
+   "shadow": "S_ARTYTR",
    "portrait": "P_ARTYTR",
    "description": "High powered stationary gun.  Artillery is a compromise between the cheap, rugged gun turret and the expensive, long-range missile turret.",
    "data": "D_FIXED"
   },
   {
    "token": "ANTIMSSL",
+   "sprite": "ANTIMSSL",
+   "shadow": "S_ANTIMS",
    "portrait": "P_FXROCK",
    "description": "Long-range missile launcher on a fixed mount. Excellent range and firepower, but only slightly more armor than the mobile version.  Best surrounded by gun turrets and anti aircraft.",
    "data": "D_FIXED"
   },
   {
    "token": "BLOCK",
+   "sprite": "BLOCK",
+   "shadow": "S_BLOCK",
    "portrait": "P_BLOCK",
    "description": "Hardened, armored block for blocking enemy movement.",
    "data": "D_SMLBLD"
   },
   {
    "token": "BRIDGE",
+   "sprite": "BRIDGE",
+   "shadow": "S_BRIDGE",
    "portrait": "P_BRIDGE",
    "description": "Pontoon bridge for crossing water.  Bridges, unlike water platforms, do not block the movement of ships.",
    "data": "D_BRIDGE"
   },
   {
    "token": "MININGST",
+   "sprite": "MININGST",
+   "shadow": "S_MINING",
    "portrait": "P_MINING",
    "description": "Extracts raw materials, fuel, and gold from the ground every turn.  Buildings must be connected to a mine to use the resources a mine produces.  If there are no storage buildings, fuel tanks, or gold vaults to store extra material, fuel, or gold, it will be lost.",
    "data": "D_MINING"
   },
   {
    "token": "LANDMINE",
+   "sprite": "LANDMINE",
+   "shadow": "S_LANDMI",
    "portrait": "P_LANDMN",
    "description": "Small, hard to detect explosive device.  Only surveyors, minelayers, and infiltrators can spot mines.  Once spotted, almost any damage will destroy it.",
    "data": "D_DEFALT"
   },
   {
    "token": "SEAMINE",
+   "sprite": "SEAMINE",
+   "shadow": null,
    "portrait": "P_SEAMIN",
    "description": "Small, hard to detect explosive device.  Only surveyors, minelayers, and infiltrators can spot mines.  Once spotted, almost any damage will destroy it.",
    "data": "D_DEFALT"
   },
   {
    "token": "LNDEXPLD",
+   "sprite": "LNDEXPLD",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_UEXPLD"
   },
   {
    "token": "AIREXPLD",
+   "sprite": "AIREXPLD",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_UEXPLD"
   },
   {
    "token": "SEAEXPLD",
+   "sprite": "SEAEXPLD",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_UEXPLD"
   },
   {
    "token": "BLDEXPLD",
+   "sprite": "BLDEXPLD",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_BEXPLD"
   },
   {
    "token": "HITEXPLD",
+   "sprite": "HITEXPLD",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_SEXPLD"
   },
   {
    "token": "MASTER",
+   "sprite": "MASTER",
+   "shadow": "S_MASTER",
    "portrait": "P_MASTER",
    "description": "Specialized vehicle which transforms to become a new mining station.",
    "data": "D_MOBILE"
   },
   {
    "token": "CONSTRCT",
+   "sprite": "CONSTRCT",
+   "shadow": "S_CONSTR",
    "portrait": "P_CONTRC",
    "description": "Large construction vehicle for creating large buildings, such as mines and factories.  A constructor consumes two material per turn while operating.",
    "data": "D_AMPHIB"
   },
   {
    "token": "SCOUT",
+   "sprite": "SCOUT",
+   "shadow": "S_SCOUT",
    "portrait": "P_SCOUT",
    "description": "High speed scouting vehicle for exploration and spotting enemy units.  Can cross water without a bridge, but is faster on land.\n\nVery fast and good scan range, but much weaker than most combat units.",
    "data": "D_AMPHIB"
   },
   {
    "token": "TANK",
+   "sprite": "TANK",
+   "shadow": "S_TANK",
    "portrait": "P_TANK",
    "description": "Heavily armored fighting vehicle.  Best used in the front line to prevent enemy units from reaching lightly-armored support units such as assault guns and rocket launchers.",
    "data": "D_TANK"
   },
   {
    "token": "ARTILLRY",
+   "sprite": "ARTILLRY",
+   "shadow": "S_ARTILL",
    "portrait": "P_ARTY",
    "description": "Lightly armored vehicle with a long range gun firing high-explosive shells.  Fast and effective on the attack, but fragile.",
    "data": "D_FIRING"
   },
   {
    "token": "ROCKTLCH",
+   "sprite": "ROCKTLCH",
+   "shadow": "S_ROCKTL",
    "portrait": "P_ROCKET",
    "description": "Lightly armored vehicle firing medium-range rockets which affect all units within 2 squares of the target.  Most effective against groups of enemy units.",
    "data": "D_FIRING"
   },
   {
    "token": "MISSLLCH",
+   "sprite": "MISSLLCH",
+   "shadow": "S_MISSLL",
    "portrait": "P_MISSIL",
    "description": "Missile launcher on a lightly armored chassis.  This mobile launcher is slightly less sturdy than the stationary version, and requires more material to build.  However, the ability to move makes it much more flexible.",
    "data": "D_FIRING"
   },
   {
    "token": "SP_FLAK",
+   "sprite": "SP_FLAK",
+   "shadow": "S_FLAK",
    "portrait": "P_AA",
    "description": "Light, fast vehicle with a rapid fire cannon for shooting down enemy planes.  Mobile anti aircraft are generally defensive units, because they aren't as fast as planes, and can't move while firing.  Use them to protect an area once your fighters have chased away enemy ground attack planes.",
    "data": "D_SP_FLK"
   },
   {
    "token": "MINELAYR",
+   "sprite": "MINELAYR",
+   "shadow": "S_MINELA",
    "portrait": "P_MNELAY",
    "description": "Minelayers are specialized construction vehicles which place, detect, and remove mines.  Minelayers convert onboard raw materials into mines.  They can also remove those mines later and convert them back into materials.  They cannot remove enemy minefields - those must be exploded with gunfire and rockets.",
    "data": "D_MOBILE"
   },
   {
    "token": "SURVEYOR",
+   "sprite": "SURVEYOR",
+   "shadow": "S_SURVEY",
    "portrait": "P_SURVEY",
    "description": "Light, amphibious vehicle with sophisticated sensors for detecting underground minerals and enemy mines.  Unlike most amphibious units, surveyors are just as fast on water as on land.",
    "data": "D_AMPHIB"
   },
   {
    "token": "SCANNER",
+   "sprite": "SCANNER",
+   "shadow": "S_SCANNE",
    "portrait": "P_SCANNR",
    "description": "Mobile radar platform.  Slower and more expensive than a scout, but with a better scan range.  A scanner is an excellent way to spot targets for very long ranged units like missile crawlers.",
    "data": "D_SCANNR"
   },
   {
    "token": "SPLYTRCK",
+   "sprite": "SPLYTRCK",
+   "shadow": "S_SPLYTR",
    "portrait": "P_SPLYTR",
    "description": "Truck for hauling raw material.  Useful for resupplying engineers and constructors, and for supplying combat units with new ammunition.",
    "data": "D_MOBILE"
   },
   {
    "token": "GOLDTRCK",
+   "sprite": "GOLDTRCK",
+   "shadow": "S_GOLDTR",
    "portrait": "P_GOLDTR",
    "description": "Unit for moving gold ore from one location to another.",
    "data": "D_MOBILE"
   },
   {
    "token": "ENGINEER",
+   "sprite": "ENGINEER",
+   "shadow": "S_ENGINE",
    "portrait": "P_ENGINR",
    "description": "Small construction vehicle for creating small buildings and stationary weapons.",
    "data": "D_AMPHIB"
   },
   {
    "token": "BULLDOZR",
+   "sprite": "BULLDOZR",
+   "shadow": "S_BULLDO",
    "portrait": "P_BULLDZ",
    "description": "Vehicle for clearing rubble and demolishing buildings. Bulldozers can scavenge material from debris.",
    "data": "D_MOBILE"
   },
   {
    "token": "REPAIR",
+   "sprite": "REPAIR",
+   "shadow": "S_REPAIR",
    "portrait": "P_REPAIR",
    "description": "Light vehicle which can rapidly repair ground units and buildings.  Repairs require materials.  The more extensive the damage, the more materials the repair requires.  Depots, docks, hangars, and barracks can also repair units.",
    "data": "D_MOBILE"
   },
   {
    "token": "FUELTRCK",
+   "sprite": "FUELTRCK",
+   "shadow": "S_FUELTR",
    "portrait": "P_FUELTR",
    "description": "Truck for moving fuel.",
    "data": "D_MOBILE"
   },
   {
    "token": "CLNTRANS",
+   "sprite": "CLNTRANS",
+   "shadow": "S_CLNTRA",
    "portrait": "P_COLNST",
    "description": "Fast armored to transport infantry and infiltrators.  The APC can move slowly underwater as well as on land.  Only enemy corvettes can detect an APC moving underwater.",
    "data": "D_MOBILE"
   },
   {
    "token": "COMMANDO",
+   "sprite": "COMMANDO",
+   "shadow": "S_COMMAN",
    "portrait": "P_COMMAN",
    "description": "Commando trained in the arts of stealth and electronic warfare.  Infiltrators can disable or capture enemy units. Infiltrators are normally invisible until they make a mistake trying to capture enemy units, or until spotted by infantry or infiltrators.",
    "data": "D_COMMAN"
   },
   {
    "token": "INFANTRY",
+   "sprite": "INFANTRY",
+   "shadow": "S_INFANT",
    "portrait": "P_INFANT",
    "description": "Human soldiers equipped with light anti-tank shoulder weapons.  Infantry can spot enemy infiltrators.",
    "data": "D_INFANT"
   },
   {
    "token": "FASTBOAT",
+   "sprite": "FASTBOAT",
+   "shadow": "S_FASTBO",
    "portrait": "P_ESCORT",
    "description": "High speed boat with good radar and rapid fire anti aircraft cannon.  Escorts are the eyes of a fleet, and a fleet's protection from planes.",
    "data": "D_ESCORT"
   },
   {
    "token": "CORVETTE",
+   "sprite": "CORVETTE",
+   "shadow": "S_CORVET",
    "portrait": "P_CORVET",
    "description": "High speed boat with torpedo tubes and sonar.  Corvettes can attack any sea unit, but their real strength is their ability to spot and attack submarines.",
    "data": "D_FIRING"
   },
   {
    "token": "BATTLSHP",
+   "sprite": "BATTLSHP",
+   "shadow": "S_BATTLS",
    "portrait": "P_GUNBT",
    "description": "Heavily armored ship with a high caliber, medium range cannon.  Excellent at destroying other ships and bombarding shore targets.",
    "data": "D_BATTLS"
   },
   {
    "token": "SUBMARNE",
+   "sprite": "SUBMARNE",
+   "shadow": "S_SUBMAR",
    "portrait": "P_SUB",
    "description": "Lurking beneath the surface, submarines must sneak close to the enemy to fire their powerful torpedoes.  Submarines do not carry active sonar, which might reveal their positions.  Only corvettes can spot a submarine before it fires.  Only submarines, corvettes, and ground attack planes can attack them.",
    "data": "D_SUB"
   },
   {
    "token": "SEATRANS",
+   "sprite": "SEATRANS",
+   "shadow": "S_SEATRA",
    "portrait": "P_SEATRN",
    "description": "Heavily armored ship with space to carry up to six land units.  Sea transports are much slower than air transports, but also much more likely to survive an enemy attack.",
    "data": "D_MOBILE"
   },
   {
    "token": "MSSLBOAT",
+   "sprite": "MSSLBOAT",
+   "shadow": "S_MSSLBO",
    "portrait": "P_MSLCR",
    "description": "Ship mounted missile launcher.  Excellent range, high attack strength, and medium armor makes this a powerful unit.",
    "data": "D_FIRING"
   },
   {
    "token": "SEAMNLYR",
+   "sprite": "SEAMNLYR",
+   "shadow": "S_SEAMNL",
    "portrait": "P_SEAMNL",
    "description": "Seaborne version of the minelayer.  Like its land based counterpart, the sea minelayer can manufacture mines, detect them, and convert them back into raw material.",
    "data": "D_MOBILE"
   },
   {
    "token": "CARGOSHP",
+   "sprite": "CARGOSHP",
+   "shadow": "S_CARGOS",
    "portrait": "P_CARGOS",
    "description": "Ships for hauling raw material.  Useful for resupplying engineers and sea combat units with new ammunition.",
    "data": "D_MOBILE"
   },
   {
    "token": "FIGHTER",
+   "sprite": "FIGHTER",
+   "shadow": "S_FIGHTE",
    "portrait": "P_FIGHTR",
    "description": "Fast but fragile aircraft carrying a limited number of air-to-air missiles.  Fighters are the best way to drive enemy planes out of an area, and to defend a moving force.  Ground based anti aircraft is a better choice for defending a fixed area.",
    "data": "D_FIRING"
   },
   {
    "token": "BOMBER",
+   "sprite": "BOMBER",
+   "shadow": "S_BOMBER",
    "portrait": "P_BOMBER",
    "description": "A heavier plane carrying a full load of air to ground missiles.  Ground Attack Planes are expensive, but the advantages are worth the cost.  Their great speed lets them reach any trouble spot quickly, and once they arrive only fighters and anti aircraft can defend against them.",
    "data": "D_FIRING"
   },
   {
    "token": "AIRTRANS",
+   "sprite": "AIRTRANS",
+   "shadow": "S_AIRTRA",
    "portrait": "P_AIRTRN",
    "description": "Heavy aircraft capable of holding up to three ground units.",
    "data": "D_MOBILE"
   },
   {
    "token": "AWAC",
+   "sprite": "AWAC",
+   "shadow": "S_AWAC",
    "portrait": "P_AWAC",
    "description": "Airborne Warning And Control plane.  Basically a flying radar dish, an AWAC is essential to spot enemy anti aircraft before your planes fly into firing range.",
    "data": "D_AWAC"
   },
   {
    "token": "JUGGRNT",
+   "sprite": "JUGGRNT",
+   "shadow": "S_JUGGRN",
    "portrait": "P_JUGGER",
    "description": "Heavily armored and armed warship of alien design.  Like the human gunboat, the alien gunboat excels at destroying other ships and land targets near the shore.  All alien units repair themselves, and improve their abilities with experience.",
    "data": "D_FIRING"
   },
   {
    "token": "ALNTANK",
+   "sprite": "ALNTANK",
+   "shadow": "S_ALNTAN",
    "portrait": "P_ALNTAN",
    "description": "Heavily armored tank of alien design.  Alien tanks are best used at the front of an attack to soak up enemy fire.  All alien units repair themselves, and improve their abilities with experience.",
    "data": "D_ALTANK"
   },
   {
    "token": "ALNASGUN",
+   "sprite": "ALNASGUN",
+   "shadow": "S_ALNASG",
    "portrait": "P_ALNASG",
    "description": "Powerful plasma weapon mounted on a fast, medium-armored chassis.  While not as fragile as human assault guns, the alien assault gun should still avoid enemy fire whenever possible.  All alien units repair themselves, and improve their abilities with experience.",
    "data": "D_FIRING"
   },
   {
    "token": "ALNPLANE",
+   "sprite": "ALNPLANE",
+   "shadow": "S_ALNPLA",
    "portrait": "P_ALNPLA",
    "description": "Alien fighter-bomber.  While the alien attack plane is primarily designed to attack ground targets, it can also fire its missiles at other planes.  Though powerful, the alien attack plane is still vulnerable to anti aircraft fire.  Like other alien units, alien attack planes repair themselves, and improve their abilities with experience.",
    "data": "D_FIRING"
   },
   {
    "token": "ROCKET",
+   "sprite": "ROCKET",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_TORPDO"
   },
   {
    "token": "TORPEDO",
+   "sprite": "TORPEDO",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_TORPDO"
   },
   {
    "token": "ALNMISSL",
+   "sprite": "ALNMISSL",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_ALNMSL"
   },
   {
    "token": "ALNTBALL",
+   "sprite": "ALNTBALL",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_ALNPBL"
   },
   {
    "token": "ALNABALL",
+   "sprite": "ALNABALL",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_ALNPBL"
   },
   {
    "token": "RKTSMOKE",
+   "sprite": "RKTSMOKE",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_SMOKE"
   },
   {
    "token": "TRPBUBLE",
+   "sprite": "TRPBUBLE",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_BUBBLE"
   },
   {
    "token": "HARVSTER",
+   "sprite": "HARVSTER",
+   "shadow": "S_HARVST",
    "portrait": null,
    "description": "",
    "data": "D_DEFALT"
   },
   {
    "token": "WALDO",
+   "sprite": "WALDO",
+   "shadow": null,
    "portrait": null,
    "description": "",
    "data": "D_DEFALT"

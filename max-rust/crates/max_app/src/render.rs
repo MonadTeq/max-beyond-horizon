@@ -7,10 +7,15 @@
 //! `src/main.rs` под feature `sdl`, поэтому приложение и его тесты рисуют кадры
 //! без окна и без дисплея.
 //!
-//! Если ассеты не загружены ([`App::init_assets`] не вызывался) или спрайта
+//! Если ассеты не загружены ([`App::init_assets`] не вызывался) или ресурса
 //! типа нет в [`crate::assets::UNIT_SPRITES`], юнит рисуется квадратным
-//! маркером командного цвета. Карта при этом всегда рисуется настоящими
-//! цветами поверхности/ресурсов из [`TileStyle`].
+//! маркером командного цвета. В данных игры такой тип ровно один — `MASTER`
+//! (`UNIT_TYPES_WITHOUT_SPRITE_DATA`); карта при этом всегда рисуется
+//! настоящими цветами поверхности/ресурсов из [`TileStyle`].
+//!
+//! Общая точка отрисовки юнита — [`draw_unit_sprites`]: её используют и карта
+//! (`App::draw_units`), и HUD-портрет (`panels::draw_portrait`), поэтому все
+//! 93 типа рисуются одинаково (корпус, тень, башня со сдвигом).
 
 use std::fs;
 use std::io::{self, Write};
@@ -47,6 +52,82 @@ impl RenderStats {
     pub fn units(self) -> usize {
         self.units_drawn + self.units_marker
     }
+}
+
+/// Что нарисовано для одного юнита (диагностика и тесты покрытия типов).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnitSpriteStats {
+    /// Пиксели корпуса (вместе с тенью — она только затемняет уже
+    /// нарисованное, поэтому на пустом кадре это ровно корпус).
+    pub unit: u32,
+    /// Пиксели башни/пушки; 0 — у типа нет башни или флага.
+    pub turret: u32,
+}
+
+/// Рисует юнит спрайтами: тень → корпус → башня/пушка.
+///
+/// Повторяет `UnitInfo::RenderWithConnectors`/`Render` C++: корпус с
+/// `zoom/64`, тень со сдвигом `shadow_offset`, башня отдельным кадром
+/// `turret_image_base + turret_angle` со сдвигом `angle_offsets[angle]`.
+///
+/// Возвращает `None`, если для типа нет загруженного спрайта/кадра — тогда
+/// вызывающий рисует маркер команды (единственный такой тип в данных игры —
+/// `MASTER`, см. [`crate::assets::UNIT_TYPES_WITHOUT_SPRITE_DATA`]).
+///
+/// Это общая точка карты ([`App::draw_units`]), HUD-портрета
+/// (`panels::draw_portrait`) и тестов, которые гоняют рендер по всем 93
+/// типам юнитов.
+pub fn draw_unit_sprites(
+    assets: &crate::assets::Assets,
+    unit: &max_core::unit::UnitInfo,
+    frame: &mut RgbaBuffer,
+    anchor: (i32, i32),
+    zoom: u32,
+) -> Option<UnitSpriteStats> {
+    let sprite = assets.sprite(unit.unit_type)?;
+    let sprite_frame = sprite.frame_for(unit.image_base, unit.angle)?;
+    let shadow = sprite.shadow_for(unit.image_base, unit.angle);
+    let colors = TeamColors::ALL
+        .get(unit.team.0 as usize)
+        .copied()
+        .unwrap_or(TeamColors::Derelict);
+    let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
+    let renderer = SpriteRenderer::new(
+        &assets.palette,
+        &assets.brightness,
+        ColorLut::for_team(colors),
+        level,
+    );
+
+    let shadow_offset = (
+        i32::from(unit.shadow_offset.x),
+        i32::from(unit.shadow_offset.y),
+    );
+    let mut stats = UnitSpriteStats::default();
+
+    stats.unit = renderer
+        .draw_unit_scaled(frame, sprite_frame, shadow, anchor, shadow_offset, zoom)
+        .drawn;
+
+    // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
+    // `angle_offsets[angle]` (`UnitInfo::RenderWithConnectors`).
+    if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+        if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
+            stats.turret = renderer
+                .draw_turret_scaled(
+                    frame,
+                    turret,
+                    sprite.turret_shadow(unit.turret_angle),
+                    anchor,
+                    shadow_offset,
+                    sprite.turret_offset(unit.angle),
+                    zoom,
+                )
+                .drawn;
+        }
+    }
+
+    Some(stats)
 }
 
 /// Цвета маркеров команд (запасной вариант без спрайтов): порядок команд
@@ -255,56 +336,11 @@ impl App {
             let anchor = viewport.world_to_screen(world_x, world_y);
 
             let drawn = self.assets().and_then(|assets| {
-                let sprite = assets.sprite(unit.unit_type)?;
-                let sprite_frame = sprite.frame_for(unit.image_base, unit.angle)?;
-                let shadow = sprite.shadow_for(unit.image_base, unit.angle);
-                let colors = TeamColors::ALL
-                    .get(unit.team.0 as usize)
-                    .copied()
-                    .unwrap_or(TeamColors::Derelict);
-                let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
-                let renderer = SpriteRenderer::new(
-                    &assets.palette,
-                    &assets.brightness,
-                    ColorLut::for_team(colors),
-                    level,
-                );
-
-                let shadow_offset = (
-                    i32::from(unit.shadow_offset.x),
-                    i32::from(unit.shadow_offset.y),
-                );
-
-                renderer.draw_unit_scaled(
-                    frame,
-                    sprite_frame,
-                    shadow,
-                    anchor,
-                    shadow_offset,
-                    viewport.zoom(),
-                );
-
-                // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
-                // `angle_offsets[angle]` (`UnitInfo::RenderWithConnectors`).
-                if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
-                    if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
-                        renderer.draw_turret_scaled(
-                            frame,
-                            turret,
-                            sprite.turret_shadow(unit.turret_angle),
-                            anchor,
-                            shadow_offset,
-                            sprite.turret_offset(unit.angle),
-                            viewport.zoom(),
-                        );
-                    }
-                }
-
-                Some(())
+                draw_unit_sprites(assets, unit, frame, anchor, viewport.zoom())
             });
 
             match drawn {
-                Some(()) => stats.units_drawn += 1,
+                Some(_) => stats.units_drawn += 1,
                 None => {
                     draw_marker(frame, anchor, unit.team.0, viewport.zoom());
                     stats.units_marker += 1;

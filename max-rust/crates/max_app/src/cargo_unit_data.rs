@@ -28,11 +28,18 @@ use serde::Deserialize;
 /// JSON-ресурс с 93 записями (сгенерирован из `SC_UNITS` + `language.json`).
 pub const CARGO_UNIT_DATA_JSON: &str = include_str!("../data/cargo_unit_data.json");
 
-/// Одна запись `SC_UNITS`: токен C++, портрет, кадры башни и описание (en-US).
+/// Одна запись `SC_UNITS`: токен C++, спрайт/тень, портрет, кадры башни и
+/// описание (en-US).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CargoUnitData {
     /// C++-токен ресурса (`TANK`, `LANDPLT`, …) — для сверки порядка.
     pub token: String,
+    /// Ресурс корпуса — `Unit::GetSprite()` (`TANK`, `GUNTURRT`, …);
+    /// `None` — `INVALID_ID` (в оригинале у всех 93 типов задан).
+    pub sprite: Option<String>,
+    /// Ресурс тени `S_*` — `Unit::GetShadow()`; `None` — `INVALID_ID`
+    /// (у ракет, взрывов, плёнок и `WALDO` тени нет).
+    pub shadow: Option<String>,
     /// Ресурс портрета `P_*` (`Unit::GetPortrait`); `None` — `INVALID_ID`.
     pub portrait: Option<String>,
     /// Текст описания (`Unit::GetDescription`); пусто, если в оригинале нет.
@@ -68,6 +75,19 @@ pub fn unit_data(unit: UnitType) -> Option<&'static CargoUnitData> {
 /// C++-токен типа (`TANK`, …); `""`, если данных нет.
 pub fn unit_token(unit: UnitType) -> &'static str {
     unit_data(unit).map_or("", |data| data.token.as_str())
+}
+
+/// `Unit::GetSprite()` — имя ресурса корпуса (`TANK`, `GUNTURRT`, …).
+///
+/// Источник — `SC_UNITS`, а не догадка: `UNIT_SPRITES` сверяется с этой
+/// функцией тестом. `None` — `INVALID_ID` в оригинале.
+pub fn unit_sprite(unit: UnitType) -> Option<&'static str> {
+    unit_data(unit).and_then(|data| data.sprite.as_deref())
+}
+
+/// `Unit::GetShadow()` — имя ресурса тени `S_*`; `None` — тени нет.
+pub fn unit_shadow(unit: UnitType) -> Option<&'static str> {
+    unit_data(unit).and_then(|data| data.shadow.as_deref())
 }
 
 /// `Unit::GetDescription()` для `CargoMenu`; `""` — описания нет.
@@ -172,6 +192,44 @@ mod tests {
             UnitType::RecreationCenter,
         ] {
             assert_eq!(unit_description(unit), "", "{unit:?}");
+        }
+    }
+
+    /// `Unit::GetSprite()`/`GetShadow()`: у всех 93 типов задан корпус,
+    /// тень — у 77 (у ракет/взрывов/плёнок/`WALDO` в `SC_UNITS` `INVALID_ID`).
+    #[test]
+    fn sprite_and_shadow_follow_sc_units() {
+        let sprites = (0..UNIT_END)
+            .map(|index| UnitType::try_from(index).unwrap())
+            .filter(|unit| unit_sprite(*unit).is_some())
+            .count();
+        let shadows = (0..UNIT_END)
+            .map(|index| UnitType::try_from(index).unwrap())
+            .filter(|unit| unit_shadow(*unit).is_some())
+            .count();
+
+        assert_eq!(sprites, 93, "SC_UNITS: sprite у всех 93 типов");
+        assert_eq!(shadows, 77, "SC_UNITS: shadow у 77 типов");
+
+        assert_eq!(unit_sprite(UnitType::Tank), Some("TANK"));
+        assert_eq!(unit_shadow(UnitType::Tank), Some("S_TANK"));
+        assert_eq!(unit_sprite(UnitType::GunTurret), Some("GUNTURRT"));
+        assert_eq!(unit_shadow(UnitType::GunTurret), Some("S_GUNTUR"));
+        assert_eq!(unit_sprite(UnitType::MasterBuilder), Some("MASTER"));
+        assert_eq!(unit_shadow(UnitType::MasterBuilder), Some("S_MASTER"));
+        // Субмарина: `SC_UNITS` ссылается на `S_SUBMAR`, которого нет в
+        // MAX.RES/PATCHES.RES — ресурс проверяет загрузчик ассетов.
+        assert_eq!(unit_shadow(UnitType::Submarine), Some("S_SUBMAR"));
+        // Плёнки/ракеты/взрывы и `WALDO` — без тени в оригинале.
+        for unit in [
+            UnitType::LargeTape,
+            UnitType::SmallTape,
+            UnitType::SeaMine,
+            UnitType::Rocket,
+            UnitType::AlienMissile,
+            UnitType::DeadWaldo,
+        ] {
+            assert_eq!(unit_shadow(unit), None, "{unit:?}");
         }
     }
 

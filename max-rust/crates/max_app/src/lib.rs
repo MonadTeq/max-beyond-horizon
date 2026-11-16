@@ -87,7 +87,8 @@ use max_render::viewport::Viewport;
 pub use assets::{
     data_search_roots, resolve_color_pal, resolve_max_res, resolve_patches_res, Assets,
     AssetsReport, LoadedSprite, SpriteInfo, COLOR_PAL_NAME, DATA_DIR_NAME, MAX_RES_NAME,
-    PATCHES_RES_FALLBACKS, PLANET_GROUP_PICTURES, UNIT_SPRITES, WORLD_ASSETS,
+    PATCHES_RES_FALLBACKS, PLANET_GROUP_PICTURES, UNIT_SPRITES, UNIT_TYPES_WITHOUT_SHADOW_DATA,
+    UNIT_TYPES_WITHOUT_SPRITE_DATA, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
@@ -108,7 +109,7 @@ pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
 pub use panels::{PanelButton, PanelState, Panels};
-pub use render::{write_ppm, RenderStats};
+pub use render::{draw_unit_sprites, write_ppm, RenderStats, UnitSpriteStats};
 pub use saveload::{
     save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
     AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,

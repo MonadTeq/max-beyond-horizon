@@ -263,20 +263,30 @@ fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Opti
 
 /// Какие типы юнитов грузятся из `MAX.RES` в [`Assets`].
 ///
-/// Таблица покрывает юниты, которые чаще всего встречаются в сейвах и на
-/// стартовой карте (техника, пехота, инженеры, воздух, здание-башня), плюс
-/// пришельцы. Остальные типы рендерятся маркером команды (см.
-/// [`crate::App::render_frame`]) — это осознанное упрощение R2.4.
+/// Это построчный порт `SC_UNITS` (`assets/PATCHES.RES`,
+/// `Units::LoadResource`): поле `sprite` (`Unit::GetSprite()`) и `shadow`
+/// (`Unit::GetShadow()`; `None` — `INVALID_ID`). Порядок — [`UnitType`]
+/// (0x00–0x5C, все 93 типа `UNIT_END`), поэтому **каждый** юнит оригинала
+/// рисуется на карте спрайтом: корпус + тень + отдельная башня из `D_*`
+/// (`Unit::GetFrameInfo()`), а не маркером команды. HUD-портрет
+/// (`panels::draw_portrait`), `BuildMenu` и `UpgradeMenu` берут те же записи
+/// через [`Assets::sprite`].
 ///
 /// Формат: `(тип, имя спрайта, имя тени)`. Тени в оригинале обрезаны до 8
 /// символов (`S_` + первые 6 букв имени), поэтому имена заданы явно.
 ///
-/// Список покрывает не только подвижные юниты, но и **здания**: в M.A.X.
-/// постройки — это тоже `UnitType` со спрайтом из `MAX.RES` (`HANGAR`,
-/// `DEPOT`, `POWERSTN`, …). Без них карта выглядела пустой: здания рисовались
-/// квадратным маркером команды вместо изометрии 1:1.
-pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 43] = [
-    // --- здания (стационарные юниты, `UNIT_START..`) ----------------------
+/// Список покрывает не только подвижные юниты, но и **здания**, обломки,
+/// мины, взрывы и снаряды: в M.A.X. это тоже `UnitType` со спрайтом из
+/// `MAX.RES`.
+///
+/// Два расхождения самих данных игры (не таблицы) — см.
+/// [`UNIT_TYPES_WITHOUT_SPRITE_DATA`] и [`UNIT_TYPES_WITHOUT_SHADOW_DATA`]:
+/// у `MASTER` нет ресурса корпуса ни в `MAX.RES`, ни в `PATCHES.RES`, у
+/// `SUBMARNE` — тени `S_SUBMAR`. Оригинал в этих случаях просто ничего не
+/// рисует (`UnitInfo::RenderSprite`/`RenderShadow` проверяют указатель на
+/// данные); Rust-клиент для `MASTER` оставляет маркер команды.
+pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
+    // --- здания и стационарные объекты -----------------------------------
     (UnitType::CommTower, "COMMTWR", Some("S_COMMTW")),
     (UnitType::PowerStation, "POWERSTN", Some("S_POWERS")),
     (UnitType::PowerGenerator, "POWGEN", Some("S_POWGEN")),
@@ -290,6 +300,15 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 43] = [
     (UnitType::Hangar, "HANGAR", Some("S_HANGAR")),
     (UnitType::Dock, "DOCK", Some("S_DOCK")),
     (UnitType::Connector, "CNCT_4W", Some("S_CNCT4W")),
+    (UnitType::LargeRubble, "LRGRUBLE", Some("S_LRGRBL")),
+    (UnitType::SmallRubble, "SMLRUBLE", Some("S_SMLRBL")),
+    // Плёнки — плоские декали, тени в SC_UNITS нет (`INVALID_ID`).
+    (UnitType::LargeTape, "LRGTAPE", None),
+    (UnitType::SmallTape, "SMLTAPE", None),
+    (UnitType::LargeSlab, "LRGSLAB", Some("S_LRGSLA")),
+    (UnitType::SmallSlab, "SMLSLAB", Some("S_SMLSLA")),
+    (UnitType::LargeCones, "LRGCONES", Some("S_LRGCON")),
+    (UnitType::SmallCones, "SMLCONES", Some("S_SMLCON")),
     (UnitType::Road, "ROAD", Some("S_ROAD")),
     (UnitType::LandingPad, "LANDPAD", Some("S_LANDPA")),
     (UnitType::Shipyard, "SHIPYARD", Some("S_SHIPYA")),
@@ -303,26 +322,92 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 43] = [
     (UnitType::RecreationCenter, "RECCENTR", Some("S_RECCEN")),
     (UnitType::TrainingHall, "TRAINHAL", Some("S_TRAINH")),
     (UnitType::WaterPlatform, "WTRPLTFM", Some("S_WTRPLT")),
+    // --- оборонительные турели, мины, взрывы -----------------------------
     (UnitType::GunTurret, "GUNTURRT", Some("S_GUNTUR")),
     (UnitType::AntiAir, "ANTIAIR", Some("S_ANTIAI")),
-    // --- обломки alien-базы (щит/склад/развлечения, плита и мост) ---------
-    (UnitType::LargeSlab, "LRGSLAB", Some("S_LRGSLA")),
+    (UnitType::ArtilleryTurret, "ARTYTRRT", Some("S_ARTYTR")),
+    (UnitType::AntiMissile, "ANTIMSSL", Some("S_ANTIMS")),
+    (UnitType::Block, "BLOCK", Some("S_BLOCK")),
     (UnitType::Bridge, "BRIDGE", Some("S_BRIDGE")),
-    // --- подвижные юниты --------------------------------------------------
-    (UnitType::Tank, "TANK", Some("S_TANK")),
-    (UnitType::Infantry, "INFANTRY", Some("S_INFANT")),
-    (UnitType::Scout, "SCOUT", Some("S_SCOUT")),
-    (UnitType::Engineer, "ENGINEER", Some("S_ENGINE")),
+    (UnitType::MiningStation, "MININGST", Some("S_MINING")),
+    (UnitType::LandMine, "LANDMINE", Some("S_LANDMI")),
+    // Мина/взрывы — без тени в SC_UNITS (`INVALID_ID`).
+    (UnitType::SeaMine, "SEAMINE", None),
+    (UnitType::LandExplosion, "LNDEXPLD", None),
+    (UnitType::AirExplosion, "AIREXPLD", None),
+    (UnitType::SeaExplosion, "SEAEXPLD", None),
+    (UnitType::BuildingExplosion, "BLDEXPLD", None),
+    (UnitType::HitExplosion, "HITEXPLD", None),
+    // --- наземная техника и пехота ---------------------------------------
+    // `MASTER` — единственный тип без ресурса корпуса (см. ниже).
+    (UnitType::MasterBuilder, "MASTER", Some("S_MASTER")),
     (UnitType::Constructor, "CONSTRCT", Some("S_CONSTR")),
-    (UnitType::Bulldozer, "BULLDOZR", Some("S_BULLDO")),
+    (UnitType::Scout, "SCOUT", Some("S_SCOUT")),
+    (UnitType::Tank, "TANK", Some("S_TANK")),
+    (UnitType::AssaultGun, "ARTILLRY", Some("S_ARTILL")),
+    (UnitType::RocketLauncher, "ROCKTLCH", Some("S_ROCKTL")),
+    (UnitType::MissileCrawler, "MISSLLCH", Some("S_MISSLL")),
+    (UnitType::MobileAntiAir, "SP_FLAK", Some("S_FLAK")),
+    (UnitType::MineLayer, "MINELAYR", Some("S_MINELA")),
+    (UnitType::Surveyor, "SURVEYOR", Some("S_SURVEY")),
+    (UnitType::Scanner, "SCANNER", Some("S_SCANNE")),
     (UnitType::SupplyTruck, "SPLYTRCK", Some("S_SPLYTR")),
     (UnitType::GoldTruck, "GOLDTRCK", Some("S_GOLDTR")),
-    (UnitType::Surveyor, "SURVEYOR", Some("S_SURVEY")),
+    (UnitType::Engineer, "ENGINEER", Some("S_ENGINE")),
+    (UnitType::Bulldozer, "BULLDOZR", Some("S_BULLDO")),
+    (UnitType::RepairUnit, "REPAIR", Some("S_REPAIR")),
+    (UnitType::FuelTruck, "FUELTRCK", Some("S_FUELTR")),
+    (UnitType::PersonnelCarrier, "CLNTRANS", Some("S_CLNTRA")),
+    (UnitType::Commando, "COMMANDO", Some("S_COMMAN")),
+    (UnitType::Infantry, "INFANTRY", Some("S_INFANT")),
+    // --- флот -------------------------------------------------------------
+    (UnitType::FastBoat, "FASTBOAT", Some("S_FASTBO")),
+    (UnitType::Corvette, "CORVETTE", Some("S_CORVET")),
+    (UnitType::Battleship, "BATTLSHP", Some("S_BATTLS")),
+    // `S_SUBMAR` объявлена в SC_UNITS, но ресурса нет в данных игры.
+    (UnitType::Submarine, "SUBMARNE", Some("S_SUBMAR")),
+    (UnitType::SeaTransport, "SEATRANS", Some("S_SEATRA")),
+    (UnitType::MissileBoat, "MSSLBOAT", Some("S_MSSLBO")),
+    (UnitType::SeaMineLayer, "SEAMNLYR", Some("S_SEAMNL")),
+    (UnitType::CargoShip, "CARGOSHP", Some("S_CARGOS")),
+    // --- авиация ----------------------------------------------------------
     (UnitType::Fighter, "FIGHTER", Some("S_FIGHTE")),
+    (UnitType::Bomber, "BOMBER", Some("S_BOMBER")),
+    (UnitType::AirTransport, "AIRTRANS", Some("S_AIRTRA")),
+    (UnitType::Awac, "AWAC", Some("S_AWAC")),
+    // --- пришельцы --------------------------------------------------------
+    (UnitType::Juggernaut, "JUGGRNT", Some("S_JUGGRN")),
     (UnitType::AlienTank, "ALNTANK", Some("S_ALNTAN")),
     (UnitType::AlienAssaultGun, "ALNASGUN", Some("S_ALNASG")),
     (UnitType::AlienPlane, "ALNPLANE", Some("S_ALNPLA")),
+    // --- снаряды и следы (юниты `MISSILE_UNIT`, без теней) ---------------
+    (UnitType::Rocket, "ROCKET", None),
+    (UnitType::Torpedo, "TORPEDO", None),
+    (UnitType::AlienMissile, "ALNMISSL", None),
+    (UnitType::AlienTankBall, "ALNTBALL", None),
+    (UnitType::AlienArtilleryBall, "ALNABALL", None),
+    (UnitType::RocketSmoke, "RKTSMOKE", None),
+    (UnitType::TorpedoBubble, "TRPBUBLE", None),
+    // --- добыча и декор ---------------------------------------------------
+    (UnitType::Harvester, "HARVSTER", Some("S_HARVST")),
+    (UnitType::DeadWaldo, "WALDO", None),
 ];
+
+/// Типы, для которых `SC_UNITS` задаёт спрайт, но ресурса нет в данных игры.
+///
+/// `MASTER` (Master Builder): в `MAX.RES` и `PATCHES.RES` нет ни `MASTER`, ни
+/// `S_MASTER` (в каталоге игры лежит осиротевший `MASTR17.SPW`, но ссылки на
+/// него в архивах нет). C++ `UnitInfo::RenderSprite` проверяет
+/// `sprite_data != null` и в этом случае не рисует ничего; Rust-клиент
+/// оставляет маркер команды — это **единственный** тип на карте без спрайта.
+pub const UNIT_TYPES_WITHOUT_SPRITE_DATA: [UnitType; 1] = [UnitType::MasterBuilder];
+
+/// Типы, у которых `SC_UNITS` ссылается на тень `S_*`, отсутствующую в данных
+/// игры (нет ни в `MAX.RES`, ни в `PATCHES.RES`).
+///
+/// `SUBMARNE` → `S_SUBMAR`: оригинал рисует подлодку без тени, порт — тоже
+/// (`LoadedSprite::shadow` остаётся `None`).
+pub const UNIT_TYPES_WITHOUT_SHADOW_DATA: [UnitType; 1] = [UnitType::Submarine];
 
 /// Загруженный спрайт одного типа юнита.
 #[derive(Debug, Clone)]
@@ -788,7 +873,29 @@ impl Assets {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::enums::Planet;
+    use max_core::enums::{unit_flags, Planet, UnitType, UNIT_END};
+
+    /// Ассеты игры из репозитория; `None`, если данных рядом нет.
+    fn real_assets() -> Option<Assets> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let max_res = root.join("max-original/MAX.RES");
+        let color_pal = root.join("max-original/COLOR.PAL");
+        let patches = root.join("assets/PATCHES.RES");
+
+        if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+            return None;
+        }
+
+        Some(
+            Assets::load(&AppConfig {
+                max_res,
+                color_pal,
+                patches_res: patches,
+                ..Default::default()
+            })
+            .expect("ассеты игры"),
+        )
+    }
 
     #[test]
     fn alien_derelict_sprites_are_loaded() {
@@ -902,6 +1009,201 @@ mod tests {
         types.sort_unstable();
         types.dedup();
         assert_eq!(types.len(), UNIT_SPRITES.len());
+        assert_eq!(UNIT_SPRITES.len(), UNIT_END as usize);
+    }
+
+    /// Таблица — построчный порт `SC_UNITS`: тип, спрайт и тень каждого из
+    /// 93 типов совпадают с `cargo_unit_data` (генератор из `SC_UNITS`).
+    #[test]
+    fn unit_sprite_table_mirrors_sc_units() {
+        assert_eq!(UNIT_SPRITES.len(), UNIT_END as usize);
+
+        for (index, &(unit_type, sprite, shadow)) in UNIT_SPRITES.iter().enumerate() {
+            let expected = UnitType::try_from(index as u16).expect("тип 0..92");
+            assert_eq!(unit_type, expected, "порядок UNIT_SPRITES ≠ UnitType");
+            assert_eq!(
+                Some(sprite),
+                crate::cargo_unit_data::unit_sprite(expected),
+                "{expected:?}: спрайт не совпал с SC_UNITS"
+            );
+            assert_eq!(
+                shadow,
+                crate::cargo_unit_data::unit_shadow(expected),
+                "{expected:?}: тень не совпала с SC_UNITS"
+            );
+        }
+
+        // Документированные дыры данных игры (не таблицы).
+        assert_eq!(
+            UNIT_TYPES_WITHOUT_SPRITE_DATA,
+            [UnitType::MasterBuilder],
+            "SC_UNITS ссылается на MASTER, но ресурса нет в архивах"
+        );
+        assert_eq!(
+            UNIT_TYPES_WITHOUT_SHADOW_DATA,
+            [UnitType::Submarine],
+            "SC_UNITS ссылается на S_SUBMAR, но ресурса нет в архивах"
+        );
+    }
+
+    /// Все 92 типа с данными грузятся: корпус, 8 углов, тень (если в
+    /// `SC_UNITS`), и `MASTER` — единственный маркер.
+    #[test]
+    fn every_unit_type_loads_its_body_and_shadow() {
+        let Some(assets) = real_assets() else {
+            return;
+        };
+
+        let mut loaded = 0usize;
+        let mut shadows = 0usize;
+
+        for (unit_type, sprite_name, shadow_name) in UNIT_SPRITES {
+            if UNIT_TYPES_WITHOUT_SPRITE_DATA.contains(&unit_type) {
+                assert!(
+                    assets.sprite(unit_type).is_none(),
+                    "{unit_type:?}: ресурс {sprite_name} появился — обновите таблицу"
+                );
+                assert!(
+                    assets
+                        .warnings()
+                        .iter()
+                        .any(|warning| warning.contains(sprite_name)),
+                    "{unit_type:?}: ожидалось предупреждение о {sprite_name}: {:?}",
+                    assets.warnings()
+                );
+                continue;
+            }
+
+            let sprite = assets
+                .sprite(unit_type)
+                .unwrap_or_else(|| panic!("{unit_type:?}: не загрузился {sprite_name}"));
+            assert!(!sprite.sheet.is_empty(), "{unit_type:?}: нет кадров");
+
+            for angle in 0..8u8 {
+                assert!(
+                    sprite.frame_for(0, angle).is_some(),
+                    "{unit_type:?}: нет кадра корпуса для угла {angle}"
+                );
+            }
+
+            match shadow_name {
+                Some(name) if UNIT_TYPES_WITHOUT_SHADOW_DATA.contains(&unit_type) => {
+                    assert!(
+                        sprite.shadow.is_none(),
+                        "{unit_type:?}: тень {name} вдруг загрузилась"
+                    );
+                    assert!(
+                        assets.warnings().iter().any(|warning| warning.contains(name)),
+                        "{unit_type:?}: ожидалось предупреждение о тени {name}: {:?}",
+                        assets.warnings()
+                    );
+                }
+                Some(name) => {
+                    assert!(
+                        sprite.shadow.is_some(),
+                        "{unit_type:?}: не загрузилась тень {name}"
+                    );
+                    for angle in 0..8u8 {
+                        assert!(
+                            sprite.shadow_for(0, angle).is_some(),
+                            "{unit_type:?}: нет кадра тени для угла {angle}"
+                        );
+                    }
+
+                    shadows += 1;
+                }
+                None => assert!(
+                    sprite.shadow.is_none(),
+                    "{unit_type:?}: в SC_UNITS тени нет, а она загрузилась"
+                ),
+            }
+
+            loaded += 1;
+        }
+
+        assert_eq!(
+            loaded,
+            UNIT_SPRITES.len() - UNIT_TYPES_WITHOUT_SPRITE_DATA.len()
+        );
+        assert_eq!(loaded, 92, "ожидались спрайты 92 типов из 93");
+        assert_eq!(
+            shadows, 75,
+            "SC_UNITS объявляет 77 теней, S_MASTER/S_SUBMAR в архивах отсутствуют"
+        );
+    }
+
+    /// Башня есть ровно у типов с `TURRET_SPRITE`/`SPINNING_TURRET` в
+    /// `SC_UNITS` (11 типов), кадры `D_*` покрывают все 8 углов, а сдвиг
+    /// совпадает с `angle_offsets`.
+    #[test]
+    fn turret_frames_cover_every_flagged_type() {
+        let Some(assets) = real_assets() else {
+            return;
+        };
+
+        let mut flagged = Vec::new();
+
+        for index in 0..UNIT_END {
+            let unit_type = UnitType::try_from(index).expect("тип");
+            let needs_turret = access_flags_for_tests(unit_type)
+                & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET)
+                != 0;
+            let Some(sprite) = assets.sprite(unit_type) else {
+                continue;
+            };
+
+            if !needs_turret {
+                assert!(
+                    sprite.turret_frame(0).is_none() || sprite.frame_info.is_none(),
+                    "{unit_type:?}: башня без флага TURRET_SPRITE"
+                );
+                continue;
+            }
+
+            let info = sprite
+                .frame_info
+                .unwrap_or_else(|| panic!("{unit_type:?}: нет D_* для башни"));
+            assert!(
+                info.turret_image_count > 0,
+                "{unit_type:?}: turret_image_count = 0"
+            );
+
+            for angle in 0..8u8 {
+                assert!(
+                    sprite.turret_frame(angle).is_some(),
+                    "{unit_type:?}: нет кадра башни для угла {angle}"
+                );
+                assert_eq!(
+                    sprite.turret_offset(angle),
+                    info.turret_offset(angle),
+                    "{unit_type:?}: сдвиг башни для угла {angle}"
+                );
+            }
+
+            flagged.push(unit_type);
+        }
+
+        assert_eq!(flagged.len(), 11, "TURRET_SPRITE/SPINNING_TURRET: {flagged:?}");
+        for required in [
+            UnitType::GunTurret,
+            UnitType::AntiAir,
+            UnitType::ArtilleryTurret,
+            UnitType::AntiMissile,
+            UnitType::Tank,
+            UnitType::MobileAntiAir,
+            UnitType::FastBoat,
+            UnitType::Battleship,
+            UnitType::AlienTank,
+            UnitType::Scanner,
+            UnitType::Awac,
+        ] {
+            assert!(flagged.contains(&required), "{required:?}");
+        }
+    }
+
+    /// Флаги типа из `SC_UNITS` (`access::unit_type_flags`).
+    fn access_flags_for_tests(unit_type: UnitType) -> u32 {
+        max_core::access::unit_type_flags(unit_type)
     }
 
     /// Уникальный временный каталог теста.

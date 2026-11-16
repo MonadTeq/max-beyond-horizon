@@ -36,7 +36,7 @@ println!("{}x{}", frame.width(), frame.height());
 | Метод | Что делает |
 |---|---|
 | `App::new(AppConfig)` | приложение без файлов игры (ассеты подгружаются явно) |
-| `init_assets()` | `ResArchive` для `MAX.RES`/`PATCHES.RES`, `COLOR.PAL`, `.WRL` планеты (`SNOW_1`…`DESERT_6`), `SpriteSheet`/`ShadowSheet` из `assets::UNIT_SPRITES` |
+| `init_assets()` | `ResArchive` для `MAX.RES`/`PATCHES.RES`, `COLOR.PAL`, `.WRL` планеты (`SNOW_1`…`DESERT_6`), `SpriteSheet`/`ShadowSheet` для всех 93 типов `assets::UNIT_SPRITES` (+ `D_*` для башни) |
 | `load_game()` / `load_save(path)` / `load_save_bytes(&[u8])` | V70-сейв → `GameState::from_save`; счётчики тиков обнуляются |
 | `new_game(&NewGameConfig)` | `setup::generate_map` + `GameState::with_setup` на карте планеты |
 | `new_game_on_surface(&cfg, &SurfaceMap)` | то же на готовой поверхности (тесты без файлов игры) |
@@ -490,9 +490,13 @@ cargo check -p max_app --no-default-features
   из `setup::generate_map` (`NewGameReport::aliens`), а состояние остаётся без
   юнитов. Это ограничение ядра, а не приложения; рендер карты/ресурсов и
   demo-прогон на сейвах от него не зависят.
-* Спрайты грузятся для типов из `assets::UNIT_SPRITES` (12 типов: техника,
-  пехота, инженеры, воздух, башня, пришельцы). Остальные типы рисуются
-  маркерами командного цвета — осознанное упрощение, расширяется таблицей.
+* Спрайты грузятся для всех 93 типов `assets::UNIT_SPRITES` (порт `SC_UNITS`):
+  здания, наземная техника, пехота, флот, авиация, пришельцы, мины, взрывы и
+  снаряды — корпус + тень `S_*` + отдельная башня `D_*` там, где есть
+  `TURRET_SPRITE`/`SPINNING_TURRET`. Маркером команды остаётся только `MASTER`:
+  в `MAX.RES`/`PATCHES.RES` нет ресурса `MASTER` (оригинал для него тоже ничего
+  не рисует); у `SUBMARNE` отсутствует объявленная в `SC_UNITS` тень
+  `S_SUBMAR` — подлодка рисуется без тени, как в C++.
 * Сетевой клиент реализует клиентскую половину протокола: лобби, применение
   команд, барьеры и закрытие хода. Полный реконнект/SNAP (`protocol.md` §9) и
   ретрансляция «сервер → остальные клиенты» (§12.1) остаются вне R2.4.

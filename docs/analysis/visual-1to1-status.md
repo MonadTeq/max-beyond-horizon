@@ -1,6 +1,7 @@
 # Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
 
-**Дата среза:** 2026-11-15 · **Версия workspace:** 1.0.0 · **Задача:** довести визуал
+**Дата среза:** 2026-11-16 · **Версия workspace:** 1.1.0 (разделы §1–§11 —
+срез 2026-11-15/1.0.0, §12 — полное покрытие спрайтов) · **Задача:** довести визуал
 Rust-клиента до 1:1 с оригинальной M.A.X. (эталон — C++-порт в этой же рабочей
 области).
 
@@ -15,8 +16,8 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Элемент визуала | Состояние | Источник данных | Где в коде |
 |---|---|---|---|
 | Поверхность карты (тайлы 64×64) | **1:1** | `.WRL`: `tile_ids`, `tile_count`, пиксели тайлов, палитра | `max_render::terrain::TerrainAtlas` |
-| Здания (спрайты) | **1:1** (спрайты грузятся и рисуются) | `MAX.RES`: `HANGAR`, `DEPOT`, `POWERSTN`, … + тени `S_*` | `max_app::assets::UNIT_SPRITES` (39 типов) |
-| Юниты (спрайты, тени, командные цвета) | **1:1** | `MAX.RES`: `TANK`, `INFANTRY`, … + `S_*` | `max_render::sprite_atlas`, `max_assets::sprite` |
+| Здания (спрайты) | **1:1** (34 типа: все постройки и обломки) | `MAX.RES`: `HANGAR`, `DEPOT`, `POWERSTN`, … + тени `S_*` | `max_app::assets::UNIT_SPRITES` (все 93 типа `SC_UNITS`) |
+| Юниты (спрайты, тени, командные цвета) | **1:1** (92 типа спрайтами; маркер — только `MASTER`) | `MAX.RES`: `TANK`, `INFANTRY`, … + `S_*` + `D_*` (башня, `angle_offsets`) | `max_render::sprite_atlas`, `max_assets::sprite`, `max_app::render::draw_unit_sprites` |
 | Окно и рамки интерфейса | **1:1** | `MAX.RES`: `FRAMEPIC` (640×480, своя палитра, RLE) | `max_app::chrome`, `max_render::layout` |
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
 | Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (кроме портрета-анимации) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
@@ -137,6 +138,23 @@ RLE по строкам: i16 n;
   `S_*` (78 тегов).
 - Правило имён теней: `S_` + первые 6 символов имени спрайта
   (`SPLYTRCK → S_SPLYTR`, `INFANTRY → S_INFANT`).
+- **Полное покрытие типов (2026-11-16).** `max_app::assets::UNIT_SPRITES` —
+  построчный порт `SC_UNITS` (`assets/PATCHES.RES`, `Units::LoadResource`):
+  93 записи «тип → `sprite`/`shadow`» в порядке `UnitType`. Загружаются 92
+  корпуса из `MAX.RES` (все, кроме `MASTER`) и 75 теней (`SC_UNITS` объявляет
+  77, но `S_MASTER`/`S_SUBMAR` в архивах отсутствуют); `D_*`
+  (`Unit::GetFrameInfo()`) даёт базы/число кадров башни и `angle_offsets`
+  для 11 типов с `TURRET_SPRITE`/`SPINNING_TURRET`. Общая отрисовка —
+  `max_app::render::draw_unit_sprites`: тень → корпус → башня со сдвигом
+  `angle_offsets[angle]`, масштаб `zoom/64`; её же использует HUD-портрет,
+  поэтому панели автоматически показывают все типы.
+- **Дыры самих данных игры.** `MASTER` (`Master Builder`) объявлен в
+  `SC_UNITS`, но ресурса `MASTER`/`S_MASTER` нет ни в `MAX.RES`, ни в
+  `PATCHES.RES` (в каталоге игры лежит осиротевший `MASTR17.SPW`, ссылки на
+  него в архивах нет): C++ `UnitInfo::RenderSprite` проверяет
+  `sprite_data != null` и не рисует ничего, Rust-клиент оставляет маркер
+  команды — единственный такой тип. У `SUBMARNE` так же отсутствует
+  объявленная `S_SUBMAR` — подлодка рисуется без тени, как в оригинале.
 - 89 тегов `I_*` — иконки построек (спрайт-листы: `I_DEPOT`, `I_RADAR`,
   `I_POWSTN`…; используются в меню строительства/апгрейдов, см.
   `max-cpp-port/src/resourcetable.cpp:118-119`). **На карте ресурсы рисуются не
@@ -586,8 +604,8 @@ FOV-перепад, красная рамка камеры, точки юнит�
   `resource_markers_are_drawn_from_max_res`.
 - **Обломки alien** — это настоящие юниты `ALNTANK/ALNASGUN/ALNPLANE` команды
   `ALIEN` (derelict LUT), плюс `LRGSLAB`/`BRIDGE` и здания
-  `SHIELDGN`/`SUPRTPLT`/`RECCENTR`; спрайты `ALNASGUN`/`ALNPLANE` добавлены
-  в `UNIT_SPRITES` (43 типа), тест `alien_derelict_sprites_are_loaded`.
+  `SHIELDGN`/`SUPRTPLT`/`RECCENTR`; спрайты всех типов теперь в
+  `UNIT_SPRITES` (93 типа), тест `alien_derelict_sprites_are_loaded`.
 - **Курсоры** — `max_assets::cursor` (декодер `Cursor_Descriptor`: 8-байтный
   заголовок, `frame_count = height/width`, hotspot), загрузка 30 ресурсов
   (`HIDDNPTR`…`PTR_HELP`), `max_app::cursor` (индексы `CursorId`, контекст
@@ -1012,4 +1030,79 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 * `cargo test -p max_app --test cargo_render` — отрисовка иконок (оба списка),
   полосы золота/cargo, стрелок, `CRGTOG`, фильтров и прокрутки по
   изменившимся пикселям кадра.
+
+---
+
+## 12. Полное покрытие спрайтов юнитов — **сделано** (2026-11-16)
+
+`UNIT_SPRITES` расширен с 43 до **93** записей — построчный порт `SC_UNITS`
+(`assets/PATCHES.RES`, `Units::LoadResource`): поля `sprite`
+(`Unit::GetSprite()`) и `shadow` (`Unit::GetShadow()`) в порядке `UnitType`.
+Спрайтами на карте рисуются все здания, техника, пехота, флот, авиация,
+пришельцы, мины, взрывы и снаряды; маркер команды остался только у `MASTER`.
+
+| Что | Значение |
+|---|---|
+| Записей в таблице | **93** (все `UnitType` 0x00–0x5C, `UNIT_END`) |
+| Корпусов загружено | **92** (`MASTER` — нет ресурса) |
+| Теней загружено | **75** (`SC_UNITS` объявляет 77; у 16 типов `INVALID_ID`, `S_MASTER` и `S_SUBMAR` отсутствуют в архивах) |
+| Башня `D_*` | **11** типов с `TURRET_SPRITE`/`SPINNING_TURRET`: `GUNTURRT`, `ANTIAIR`, `ARTYTRRT`, `ANTIMSSL`, `TANK`, `SP_FLAK`, `FASTBOAT`, `BATTLSHP`, `ALNTANK`, `SCANNER`, `AWAC` |
+| Маркер | **1**: `MASTER` (`UNIT_TYPES_WITHOUT_SPRITE_DATA`) |
+
+Добавлены 50 типов, которых не было в старой таблице:
+
+* стационарные/обломки: `LRGRUBLE`, `SMLRUBLE`, `LRGTAPE`, `SMLTAPE`,
+  `SMLSLAB`, `LRGCONES`, `SMLCONES`, `BLOCK`, `MININGST`, `LANDMINE`,
+  `SEAMINE`, `LNDEXPLD`, `AIREXPLD`, `SEAEXPLD`, `BLDEXPLD`, `HITEXPLD`,
+  `ARTYTRRT`, `ANTIMSSL`, `MASTER`;
+* наземные: `ARTILLRY`, `ROCKTLCH`, `MISSLLCH`, `SP_FLAK`, `MINELAYR`,
+  `SCANNER`, `REPAIR`, `FUELTRCK`, `CLNTRANS`, `COMMANDO`;
+* флот: `FASTBOAT`, `CORVETTE`, `BATTLSHP`, `SUBMARNE`, `SEATRANS`,
+  `MSSLBOAT`, `SEAMNLYR`, `CARGOSHP`;
+* авиация/пришельцы: `BOMBER`, `AIRTRANS`, `AWAC`, `JUGGRNT`;
+* снаряды/следы: `ROCKET`, `TORPEDO`, `ALNMISSL`, `ALNTBALL`, `ALNABALL`,
+  `RKTSMOKE`, `TRPBUBLE`;
+* `HARVSTER`, `WALDO`.
+
+**Что осталось маркером и почему.** Только `MASTER` (`Master Builder`): в
+`SC_UNITS` у него `sprite = "MASTER"`, `shadow = "S_MASTER"`, но ни одного из
+этих ресурсов нет ни в `MAX.RES`, ни в `PATCHES.RES` (в каталоге игры лежит
+осиротевший `MASTR17.SPW`, ссылки из архивов на него нет). C++
+`UnitInfo::RenderSprite`/`RenderShadow` проверяют `sprite_data`/`shadow_data`
+на `null` и для такого типа не рисуют ничего; Rust-клиент по своим правилам
+показывает маркер команды. У `SUBMARNE` отсутствует объявленная `S_SUBMAR` —
+подлодка рисуется без тени, как в оригинале (оба случая вынесены в
+`UNIT_TYPES_WITHOUT_SPRITE_DATA`/`UNIT_TYPES_WITHOUT_SHADOW_DATA`).
+
+**Код и тесты.**
+
+* `max_app/src/assets.rs` — таблица 93 записей + `UNIT_TYPES_WITHOUT_*`;
+  `assets::tests::unit_sprite_table_mirrors_sc_units` сверяет таблицу с
+  `cargo_unit_data` (JSON генерируется из `SC_UNITS`),
+  `every_unit_type_loads_its_body_and_shadow` — загрузка 92 корпусов и 75
+  теней (77 объявлено, `S_MASTER`/`S_SUBMAR` отсутствуют),
+  `turret_frames_cover_every_flagged_type` — 11 типов с башней и
+  `angle_offsets`.
+* `max_app/src/render.rs` — `draw_unit_sprites` (тень → корпус → башня,
+  `zoom/64`); карта и HUD-портрет (`panels.rs`) используют один код.
+* `max_app/tests/unit_sprites.rs` — 3 теста: непустой кадр у каждого типа
+  (на zoom 32/64/128), башня ровно у флаговых типов, кадр карты 640×640 с
+  юнитами всех 93 типов (`units_drawn=92`, `units_marker=1`), портрет HUD для
+  всех типов.
+
+**QA.** `qa_run` — все 10 сценариев PASS. Golden переснят после осознанного
+визуального изменения: `golden/game.png`, `golden/upgrade/upgrade-done.png`,
+`golden/research/research-done.png` (в кадре вместо маркеров появились
+`MININGST`/`POWGEN` и другие типы); повторная сверка — **0 дрейфа**, остальные
+кадры не изменились (`join-list`/`landing`/`main-menu`/`mobilize`/
+`multiplayer`/`options`/`planet`/`players`/`winloss`, `production/*`,
+`cargo/*` — 0 пикселей). `soak-100.qa` и `soak_headless --turns 120` — PASS.
+
+**Полный гейт и артефакты.** `bash ci.sh` (Docker, `rust:1.94.0-bookworm`) —
+**CI OK за 577 с**: `cargo check/test` default + `sound` + `--no-default-features`,
+`max-horizon-server` (108 тестов), все 10 QA-сценариев PASS, golden без дрейфа,
+soak PASS (RSS +172 КиБ). Пересобраны артефакты
+`release/max_app-1.1.0-windows-x86_64/` (headless, mingw),
+`release/max_app-1.1.0-windows-x86_64-ui/` (MSVC + SDL3.dll) и
+`release/max_app-1.1.0-linux-x86_64/` (SDL3 из исходников).
 

@@ -2,6 +2,44 @@
 
 ### Добавлено
 
+- **Спрайты всех 93 типов юнитов на карте и в HUD** (`max_app/src/assets.rs`,
+  `max_app/src/render.rs`, `max_app/src/panels.rs`, `max_app/src/cargo_unit_data.rs`,
+  `max-rust/tools/gen_cargo_unit_data.py`):
+  - **Таблица.** `UNIT_SPRITES` расширен с 43 до **93** записей — построчный
+    порт `SC_UNITS` (`assets/PATCHES.RES`, `Units::LoadResource`): `sprite`
+    (`Unit::GetSprite()`) и `shadow` (`Unit::GetShadow()`), порядок `UnitType`.
+    Генератор `gen_cargo_unit_data.py` теперь кладёт в
+    `data/cargo_unit_data.json` ещё `sprite`/`shadow`; тест
+    `assets::tests::unit_sprite_table_mirrors_sc_units` сверяет таблицу
+    построчно с оракулом. Грузятся 92 корпуса и 75 теней (в `SC_UNITS`
+    объявлено 77, но `S_MASTER`/`S_SUBMAR` в архивах отсутствуют); у 11 типов с
+    `TURRET_SPRITE`/`SPINNING_TURRET` из `D_*` берутся `turret_image_base`,
+    `turret_image_count` и `angle_offsets`.
+  - **Рендер.** `render::draw_unit_sprites` — единая точка «тень → корпус →
+    башня со сдвигом `angle_offsets`» с масштабом `zoom/64`. Её используют
+    карта (`App::draw_units`), HUD-портрет (`panels::draw_portrait`, тот же
+    путь вместо копии кода), а через `assets.sprite()` — `BuildMenu`/
+    `UpgradeMenu`. Маркером команды остаётся только `MASTER`: ресурса
+    `MASTER`/`S_MASTER` нет ни в `MAX.RES`, ни в `PATCHES.RES` (C++
+    `UnitInfo::RenderSprite` для него тоже ничего не рисует; в каталоге игры
+    лежит осиротевший `MASTR17.SPW` без ссылки из архивов). У `SUBMARNE`
+    отсутствует объявленная в `SC_UNITS` тень `S_SUBMAR` — подлодка без тени,
+    как в оригинале.
+  - **Тесты.** Новый `tests/unit_sprites.rs`: у каждого из 93 типов кадр
+    отрисовки не пуст (92 спрайта + маркер `MASTER`), башня — ровно у 11
+    флаговых типов, кадр карты 640×640 с юнитами всех 93 типов
+    (`units_drawn=92`, `units_marker=1`), HUD-портрет для всех типов;
+    `assets::tests` проверяют загрузку всех корпусов/теней и башенных кадров
+    `D_*`.
+  - **QA/артефакты.** `qa_run` — все 10 сценариев PASS; golden пересняты:
+    `golden/game.png`, `golden/upgrade/upgrade-done.png`,
+    `golden/research/research-done.png` (0 дрейфа после пересъёмки);
+    `soak-100.qa` и `soak_headless --turns 120` PASS. `bash ci.sh` — CI OK
+    (577 с): cargo check/test default + sound + no-default, Horizon, все QA,
+    golden 0 дрейфа, soak. Пересобраны артефакты Windows headless
+    (`max_app-1.1.0-windows-x86_64`), Windows UI (`…-windows-x86_64-ui`) и
+    Linux (`max_app-1.1.0-linux-x86_64`).
+
 - **P7 — мобилизация: портрет `P_*` 1:1, описания юнитов и сетка иконок
   статистики** (`max_app/src/mobilize.rs`, `max_app/src/cargo_unit_data.rs`,
   `docs/development/PLAN-production.md`):
