@@ -29,8 +29,8 @@ use crate::landing::{LANDING_AREA, LANDING_CELL};
 use crate::local::{LocalPhase, LocalSetup};
 use crate::menu;
 use crate::mobilize::{
-    AVAILABLE_AREA, AVAILABLE_ROW, BUY_BUTTON, CANCEL_BUTTON as MOBILIZE_CANCEL, DELETE_BUTTON,
-    DONE_BUTTON as MOBILIZE_DONE, PURCHASE_UNITS,
+    AVAILABLE_AREA, BUY_BUTTON, CANCEL_BUTTON as MOBILIZE_CANCEL, CARGO_BAR, DELETE_BUTTON,
+    DONE_BUTTON as MOBILIZE_DONE, LIST_ROW, PURCHASED_AREA, PURCHASE_UNITS, TOGGLE_BUTTON,
 };
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
@@ -41,6 +41,7 @@ use crate::setup::{self, SetupScreen};
 use crate::ui::{
     handle_session_input, InputEvent, Key, MenuClient, Screen, SessionRequest, Transition, UiContext,
 };
+use crate::upgrademenu::UpgradeFilter;
 use crate::{App, AppConfig, AppMode};
 
 /// Корень репозитория (от `crates/max_app` три уровня вверх).
@@ -584,7 +585,8 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
     /// `mobilize …`: действия на экране `CargoMenu` через те же клики, что у
-    /// игрока (строки списков, кнопки Buy/Delete/Done/Cancel).
+    /// игрока (строки списков, кнопки Buy/Delete/Done/Cancel/CRGTOG, стрелки
+    /// апгрейдов, cargo-слайдер).
     fn mobilize(&mut self, action: MobilizeAction) -> Result<Flow, String> {
         match action {
             MobilizeAction::Buy => {
@@ -603,10 +605,12 @@ impl QaRunner {
                     ));
                 }
 
-                self.send(InputEvent::MouseClick(
-                    AVAILABLE_AREA.ulx + 4,
-                    AVAILABLE_AREA.uly + AVAILABLE_ROW * index as i32 + 4,
-                ))?;
+                // Повторный клик по выбранной строке в C++ — `BuyUnit`, поэтому
+                // если строка уже выбрана, сразу жмём `Buy` (иначе купили бы
+                // дважды).
+                if !self.type_row_selected(index) {
+                    self.click_type_row(index)?;
+                }
 
                 self.send(InputEvent::MouseClick(
                     BUY_BUTTON.ulx + BUY_BUTTON.width / 2,
@@ -626,6 +630,85 @@ impl QaRunner {
 
                 Ok(Flow::Continue)
             }
+            MobilizeAction::Mode(buy) => {
+                let current = self
+                    .mobilization()
+                    .map(|m| m.mode == crate::mobilize::CargoMode::Buy);
+
+                if current == Some(buy) {
+                    return Ok(Flow::Continue);
+                }
+
+                self.send(InputEvent::MouseClick(
+                    TOGGLE_BUTTON.ulx + TOGGLE_BUTTON.width / 2,
+                    TOGGLE_BUTTON.uly + TOGGLE_BUTTON.height / 2,
+                ))
+            }
+            MobilizeAction::Filter(name) => {
+                let filter = match name {
+                    script::FilterName::Ground => UpgradeFilter::Ground,
+                    script::FilterName::Air => UpgradeFilter::Air,
+                    script::FilterName::Sea => UpgradeFilter::Sea,
+                    script::FilterName::Building => UpgradeFilter::Building,
+                    script::FilterName::Combat => UpgradeFilter::Combat,
+                };
+                let rect = filter.rect();
+
+                self.send(InputEvent::MouseClick(
+                    rect.ulx + rect.width / 2,
+                    rect.uly + rect.height / 2,
+                ))
+            }
+            MobilizeAction::Select(index) => {
+                if self.type_row_selected(index as usize) {
+                    Ok(Flow::Continue)
+                } else {
+                    self.click_type_row(index as usize)
+                }
+            }
+            MobilizeAction::Loadout(index) => {
+                if self.loadout_row_selected(index as usize) {
+                    Ok(Flow::Continue)
+                } else {
+                    self.click_loadout_row(index as usize)
+                }
+            }
+            MobilizeAction::Adjust { row, increase } => {
+                let point = self
+                    .mobilization()
+                    .and_then(|mobilization| mobilization.control_arrows(row as usize))
+                    .ok_or_else(|| format!("mobilize row {row}: нет такой строки апгрейда"))?;
+                let rect = if increase { point.1 } else { point.0 };
+
+                self.send(InputEvent::MouseClick(
+                    rect.ulx + rect.width / 2,
+                    rect.uly + rect.height / 2,
+                ))
+            }
+            MobilizeAction::Cargo(value) => {
+                let mobilization = self
+                    .mobilization()
+                    .ok_or_else(|| "mobilize cargo: экрана мобилизации нет".to_string())?;
+                let capacity = mobilization.cargo_capacity();
+                if capacity <= 0 {
+                    return Err("mobilize cargo: у выбранного юнита нет ёмкости".to_string());
+                }
+                let value = value as i32;
+                let mut point = None;
+                for y in CARGO_BAR.uly..CARGO_BAR.lry() {
+                    let from_bottom = CARGO_BAR.lry() - y;
+                    let slider = (CARGO_BAR.height / 2 + capacity * from_bottom) / CARGO_BAR.height;
+                    if slider == value {
+                        point = Some(y);
+                        break;
+                    }
+                }
+                let y = point.ok_or_else(|| {
+                    format!("mobilize cargo {value}: значение вне диапазона слайдера")
+                })?;
+
+                self.send(InputEvent::MouseClick(CARGO_BAR.ulx + 2, y))
+            }
             MobilizeAction::Done => self.send(InputEvent::MouseClick(
                 MOBILIZE_DONE.ulx + MOBILIZE_DONE.width / 2,
                 MOBILIZE_DONE.uly + MOBILIZE_DONE.height / 2,
@@ -635,6 +718,94 @@ impl QaRunner {
                 MOBILIZE_CANCEL.uly + MOBILIZE_CANCEL.height / 2,
             )),
         }
+    }
+
+    /// Клик по строке `index` списка типов (с учётом прокрутки: если строка не
+    /// видна, скрипт нажимает стрелки списка, как игрок).
+    fn click_type_row(&mut self, index: usize) -> Result<Flow, String> {
+        let mut guard = 0;
+        loop {
+            let page = self
+                .mobilization()
+                .ok_or_else(|| "mobilize: экрана мобилизации нет".to_string())?
+                .type_page;
+            let rows = crate::mobilize::AVAILABLE_ROWS;
+
+            if index < page {
+                self.send(InputEvent::MouseClick(
+                    crate::mobilize::LIST_UP.ulx + 4,
+                    crate::mobilize::LIST_UP.uly + 4,
+                ))?;
+            } else if index >= page + rows {
+                self.send(InputEvent::MouseClick(
+                    crate::mobilize::LIST_DOWN.ulx + 4,
+                    crate::mobilize::LIST_DOWN.uly + 4,
+                ))?;
+            } else {
+                let row = index - page;
+                return self.send(InputEvent::MouseClick(
+                    AVAILABLE_AREA.ulx + 4,
+                    AVAILABLE_AREA.uly + LIST_ROW * row as i32 + 4,
+                ));
+            }
+
+            guard += 1;
+            if guard > 64 {
+                return Err(format!("mobilize select {index}: список не прокрутился"));
+            }
+        }
+    }
+
+    /// Клик по строке `index` списка «Purchased».
+    fn click_loadout_row(&mut self, index: usize) -> Result<Flow, String> {
+        let mut guard = 0;
+        loop {
+            let page = self
+                .mobilization()
+                .ok_or_else(|| "mobilize: экрана мобилизации нет".to_string())?
+                .loadout_page;
+            let rows = crate::mobilize::PURCHASED_ROWS;
+
+            if index < page {
+                self.send(InputEvent::MouseClick(
+                    crate::mobilize::PURCHASE_UP.ulx + 4,
+                    crate::mobilize::PURCHASE_UP.uly + 4,
+                ))?;
+            } else if index >= page + rows {
+                self.send(InputEvent::MouseClick(
+                    crate::mobilize::PURCHASE_DOWN.ulx + 4,
+                    crate::mobilize::PURCHASE_DOWN.uly + 4,
+                ))?;
+            } else {
+                let row = index - page;
+                return self.send(InputEvent::MouseClick(
+                    PURCHASED_AREA.ulx + 4,
+                    PURCHASED_AREA.uly + LIST_ROW * row as i32 + 4,
+                ));
+            }
+
+            guard += 1;
+            if guard > 64 {
+                return Err(format!("mobilize loadout {index}: список не прокрутился"));
+            }
+        }
+    }
+
+    /// Выбрана ли строка `index` списка типов и совпадает ли с панелью информации.
+    fn type_row_selected(&self, index: usize) -> bool {
+        self.mobilization().is_some_and(|mobilization| {
+            mobilization.type_selected == index
+                && mobilization.info == mobilization.types.get(index).copied()
+        })
+    }
+
+    /// Выбрана ли строка `index` списка «Purchased».
+    fn loadout_row_selected(&self, index: usize) -> bool {
+        self.mobilization().is_some_and(|mobilization| {
+            mobilization.loadout_selected == index
+                && mobilization.info
+                    == mobilization.loadout_row(index).map(|supply| supply.unit_type)
+        })
     }
 
     /// `landing …`: выбор точки высадки через клики по кадру и `Enter`/`Esc`.
@@ -1559,6 +1730,54 @@ impl QaRunner {
                     format!("digest=0x{actual:04X}"),
                 )
             }
+            Assertion::CargoMode(expected) => {
+                let actual = self.mobilization().map(|m| m.mode == crate::mobilize::CargoMode::Buy);
+
+                self.expect(
+                    actual == Some(expected),
+                    format!("cargo-mode={}", if expected { "buy" } else { "upgrade" }),
+                    match actual {
+                        Some(true) => "cargo-mode=buy".to_string(),
+                        Some(false) => "cargo-mode=upgrade".to_string(),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
+            Assertion::CargoTypes(cmp, expected) => {
+                let actual = self.mobilization().map(|m| m.types.len() as i64);
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(actual, i64::from(expected))),
+                    format!("cargo-types{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("cargo-types={actual}"),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
+            Assertion::CargoCredits(cmp, expected) => {
+                let actual = self.mobilization().map(|m| i64::from(m.credits));
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(actual, i64::from(expected))),
+                    format!("cargo-credits{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("cargo-credits={actual}"),
+                        None => "экрана мобилизации нет".to_string(),
+                    },
+                )
+            }
+        }
+    }
+
+    /// Состояние экрана мобилизации, если он сейчас открыт.
+    fn mobilization(&self) -> Option<&crate::mobilize::Mobilization> {
+        match &self.screen {
+            Screen::PreGame(flow) => match &flow.stage {
+                crate::pregame::PreGameStage::Mobilize(mobilization) => Some(mobilization),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

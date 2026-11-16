@@ -136,7 +136,7 @@ docker run --rm \
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
 # Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
-step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases) + golden"
+step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
@@ -155,10 +155,12 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/upgrade.qa qa-out/upgrade
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research.qa qa-out/research
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-rust-qa/golden/upgrade
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-rust-qa/golden/research'
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-rust-qa/golden/research
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-rust-qa/golden/cargo'
 
 # P4: soak — отдельная стадия (не быстрая QA): 100 ходов UI-партии с ходами ИИ
 # + 120 ходов headless ИИ×ИИ с профилем тика (MAX_TICK_PROFILE=1) и RSS.

@@ -88,6 +88,8 @@ fn hot_seat_setup(team_types: [TeamKind; 4]) -> LocalSetup {
         start_positions: [None; 4],
         team_loadouts: std::array::from_fn(|_| None),
         team_gold: [None; 4],
+        team_upgrades: std::array::from_fn(|_| None),
+        team_gold_spent: [None; 4],
     }
 }
 

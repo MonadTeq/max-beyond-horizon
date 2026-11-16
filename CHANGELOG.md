@@ -1,5 +1,47 @@
 ## [Unreleased]
 
+### Добавлено
+
+- **P7 — предвысадочный экран мобилизации доведён до паритета с `CargoMenu`**
+  (`docs/development/PLAN-production.md`, `max_app/src/mobilize.rs`):
+  - **Изображения юнитов в списках.** Строки `Available`/`Purchased` рисуют
+    ресурсы `I_*` (`Unit::GetIcon()`): 32×32, горячая точка в центре строки,
+    масштаб как `ReportStats_DrawListItemIcon` (мобильные — 1:2, стационарные —
+    1:4), перекраска командных слотов `ColorLut`. Загружаются из `MAX.RES`
+    вместе с ассетами (`CargoMenuAssets::icons`, 71 тип).
+  - **Индикаторы.** Полоса золота `gold_background` (361,276 40×140) с
+    `VERTGOLD` снизу и числом кредитов сверху (`AbstractUpgradeMenu::DrawUnitStats`),
+    cargo-слайдер `LimitedScrollbar` (421,301 20×115) с `VERTRAW`/`VERTFUEL`/
+    `VERTGOLD` и счётчиком `5·N` (421,276 20×10); 1 кредит за 5 единиц cargo,
+    ёмкость `storage/5` (у `GOLDTRCK` — 0), бесплатный cargo `SC_L0001` не
+    снимается.
+  - **Полный список покупки.** `CargoMenu::unit_types1` — 15 типов, 9 видимых
+    строк по 32 px, прокрутка `BLDUP__`/`BLDDWN`, цена строки — ставка
+    `CONSTRCT`/`TRAINHAL`/`LANDPLT` × `turns` (`PurchaseTypeSelector::Draw`),
+    цена покупки — `3 × turns` текущих значений (`BuyUnit`), возврат при продаже
+    — та же цена + `cargo/5`.
+  - **Режим модернизации.** Переключатель `CRGTOG` (542,446; подписи
+    `Buy Units`/`Upgrades` цветами `Fonts_DarkOrageColor`/`Fonts_GoldColor`),
+    полный список `IsUnitFiltered`/`IsBetterUnit` (62 типа по умолчанию),
+    фильтры `SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT` (в покупке — `CRGSELDX`),
+    колонка апгрейдов `UPGLFT`/`UPGRGT` со степенями `UpgradeControl`
+    (`Attack/Rounds/Range/Ammo/Armor/Hits/Scan/Speed`, шаг 1/2/5/10, лимит 800)
+    и ценами `UpgradeControl_CalculateCost`; `Done` списывает кредиты и
+    фиксирует `UnitValues` всех юнитов типа **до высадки** (`TeamDeployment::upgrades`
+    → `TeamUnits.current_values` → `stats_gold_spent_on_upgrades`).
+  - **Тесты.** `max_app/tests/cargo_vectors.rs` — бит-в-бит сверка с новым
+    C++-генератором `tools/cargo_vectors` (через `tools/gen_cargo_data.py`):
+    15 цен покупки, 93 цены списка, 7 наборов списка модернизации (фильтры),
+    строки и первые стоимости апгрейдов всех 93 типов; `tests/cargo_render.rs` —
+    отрисовка (иконки, бары, стрелки, `CRGTOG`, прокрутка); 19 UNIT-тестов
+    `mobilize`; `start_phases::mobilization_upgrades_reach_the_deployed_units`.
+  - **QA.** Новый сценарий `cargo-full.qa` (покупка из конца полного списка,
+    cargo, переключение в модернизацию, фильтры, апгрейд, `Done`), команды
+    `mobilize mode|filter|select|loadout|row|cargo`, проверки
+    `assert cargo-mode/cargo-types/cargo-credits`; golden-кадры
+    `golden/cargo/{cargo-buy,cargo-upgrade,cargo-upgraded}.png` и обновлённый
+    `golden/mobilize.png`; `ci.sh`/GitHub CI прогоняют `cargo-full` и его golden.
+
 ## [1.1.0] — 2026-11-16
 
 ### Добавлено

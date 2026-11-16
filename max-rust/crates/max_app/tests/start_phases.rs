@@ -286,3 +286,64 @@ fn default_config_keeps_the_old_behavior() {
         config.start_gold
     );
 }
+
+/// `CargoMenu` модернизация: апгрейд атрибута до высадки меняет
+/// `TeamUnits.current_values`, поэтому стартовые юниты типа получают новые
+/// `UnitValues` (`GameManager_CargoSelection` → `CommitUpgradeChanges`).
+#[test]
+fn mobilization_upgrades_reach_the_deployed_units() {
+    let mut setup = single_human();
+    setup.start_positions[0] = Some(Point::new(40, 40));
+
+    let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, setup.start_gold);
+    mobilization.select_loadout(0); // бесплатный Constructor — строка 0
+    assert!(mobilization.buy(0), "второй Constructor — проверяем оба");
+
+    let base_armor = mobilization.base[UnitType::Constructor as usize].armor;
+    assert!(mobilization.adjust_upgrade(0, true), "armor +1");
+    assert_eq!(
+        mobilization.actual[UnitType::Constructor as usize].armor,
+        base_armor + 1
+    );
+
+    let upgrades = mobilization.changed_upgrades();
+    assert_eq!(upgrades.len(), 1);
+    assert_eq!(upgrades[0].0, UnitType::Constructor);
+
+    setup.team_gold[0] = Some(mobilization.credits);
+    setup.team_loadouts[0] = Some(mobilization.loadout());
+    setup.team_upgrades[0] = Some(upgrades);
+    setup.team_gold_spent[0] = Some(mobilization.gold_spent_on_upgrades());
+
+    let config = setup.new_game_config();
+    assert_eq!(config.deployments[0].upgrades.len(), 1);
+    assert!(config.deployments[0].gold_spent_on_upgrades > 0);
+
+    let mut app = app();
+    app.new_game_on_surface(&config, &land_surface());
+
+    let constructors: Vec<_> = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter(|id| {
+            app.state()
+                .unit(*id)
+                .is_some_and(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::Constructor)
+        })
+        .collect();
+
+    assert_eq!(constructors.len(), 2, "бесплатный + купленный Constructor");
+    for id in constructors {
+        let values = app.state().unit(id).unwrap().base_values;
+        assert_eq!(
+            values.armor,
+            base_armor + 1,
+            "апгрейд применяется ко всем юнитам типа"
+        );
+    }
+    assert_eq!(
+        app.state().teams[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades,
+        config.deployments[0].gold_spent_on_upgrades
+    );
+}

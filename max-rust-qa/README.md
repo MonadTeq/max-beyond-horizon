@@ -28,8 +28,11 @@ max-rust-qa/
 4. **CI**: `ci.sh` гоняет все скрипты + golden; падение = красный билд.
 5. **P6 (v1.1.0)**: `scripts/upgrade.qa` — экран `UpgradeMenu` (`U`),
    `scripts/research.qa` — питание Research Center (`O`) и уровень темы;
-   golden — `golden/upgrade/`, `golden/research/`. Итоговая матрица —
-   `suite/README.md` (**161 ✅, 0 🟡, 18 ⏭ not planned**).
+   golden — `golden/upgrade/`, `golden/research/`. **P7**: `scripts/cargo-full.qa`
+   — полный `CargoMenu` (15 типов покупки, cargo-слайдер, режим модернизации,
+   апгрейд до высадки), golden — `golden/cargo/`; C++-векторы —
+   `max-rust/tools/cargo_vectors`. Итоговая матрица —
+   `suite/README.md` (**168 ✅, 0 🟡, 18 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

@@ -999,6 +999,26 @@ impl App {
             state.team_units[index].base_values = values;
             state.team_units[index].current_values = values;
         }
+
+        // `CargoMenu::CommitUpgradeChanges`: купленные до высадки апгрейды
+        // (`unitvalues_actual`) заменяют текущие значения команды до
+        // `GameManager_ProcessTeamMissionSupplyUnits`, поэтому высаженные юниты
+        // получают уже улучшенные атрибуты.
+        for deployment in &deployments {
+            let index = deployment.team.0 as usize;
+
+            if index >= PLAYER_TEAM_COUNT {
+                continue;
+            }
+
+            for (unit_type, values) in &deployment.upgrades {
+                let slot = *unit_type as usize;
+                if slot < state.team_units[index].current_values.len() {
+                    state.team_units[index].current_values[slot] = *values;
+                }
+            }
+            state.teams[index].stats_gold_spent_on_upgrades = deployment.gold_spent_on_upgrades;
+        }
         // Поток ГПСЧ продолжается после генерации — как в оригинале.
         state.rng = rng;
 

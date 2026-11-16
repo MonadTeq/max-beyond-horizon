@@ -199,7 +199,52 @@
   дрейфа; `cargo test` — 0 failed; live-smoke 2×10 и 3×10 — **PASS**
   (Docker); soak 100 ходов — PASS.
 
+### P7 — Предвысадочный `CargoMenu` 1:1 (мобилизация)
+- [x] Изучить оракул досконально: `cargomenu.cpp`, `abstractupgrademenu.cpp`,
+  `purchasetypeselector.cpp`, `cargoselector.cpp`, `unittypeselector.cpp`,
+  `scrollbar.cpp` (`LoadVerticalBar`), `reportstats.cpp`
+  (`ReportStats_DrawListItemIcon`/`DrawNumber`), `upgradecontrol.cpp`.
+  Зафиксировано: `unit_types1` — **15 типов**; список модернизации —
+  `IsUnitFiltered` по всем 93 (по умолчанию **62**, `IsBetterUnit`-порядок);
+  строки апгрейда — до 8 атрибутов (attack/rounds/range/ammo/armor/hits/
+  scan/speed); `ATTRIB_TURNS` контролом не добавляется (`UPGRADE_CONTROL_9`
+  не используется, `CargoMenu::UpdateTeamGold` — мёртвый код).
+- [x] Переписать `max_app/src/mobilize.rs`: полный layout `CARGOPIC`
+  (портрет 11,13 280×240; `Available` 482,80 123×290 ×9 строк; `Purchased`
+  337,45 118×185 ×5 строк; статистика 11,293; апгрейды 283/321; золото
+  361,276; cargo 421,301; заголовки 473,7 / 482,57 / 610,57; кнопки
+  `Buy` 590,386, `Delete` 412,240, `Cancel` 357,452, `Done` 447,452,
+  `Help` 420,452, `CRGTOG` 542,446, `BLDDES` 292,264, стрелки 471/491,387 и
+  327/348,240).
+- [x] Изображения: иконки `I_*` (71 тип) в обеих строках списков, масштаб
+  как C++ (1:2 мобильные / 1:4 стационарные), командная перекраска;
+  портрет — спрайт 2× (как `BuildMenu`/`UpgradeMenu`).
+- [x] Индикаторы: полоса золота `VERTGOLD` + число кредитов; cargo-слайдер
+  `VERTRAW/FUEL/GOLD` + счётчик `5·N`; 1 кредит за 5 единиц, ёмкость
+  `storage/5`, `GOLDTRCK` — 0, бесплатный cargo не снимается.
+- [x] Режим модернизации: переключатель `CRGTOG`, фильтры домена, стрелки
+  `UPGLFT/UPGRGT`, цены `UpgradeControl_CalculateCost` (целочисленный
+  `max_core::research`), `Done` фиксирует `UnitValues` до высадки; продажа
+  возвращает цену + `cargo/5`.
+- [x] C++-вектор-генератор: `max-rust/tools/cargo_vectors` (`main.cpp` +
+  `data.inc` от `tools/gen_cargo_data.py`), векторы `vectors.txt`; тесты
+  `max_app/tests/cargo_vectors.rs` сверяют бит-в-бит 15 цен покупки, 93 цены
+  списка, 7 наборов списка модернизации, строки и первые стоимости
+  апгрейдов всех 93 типов. 0 расхождений.
+- [x] QA: `cargo-full.qa` (покупка из конца полного списка, cargo,
+  модернизация, фильтры, апгрейд, `Done`), новые команды
+  `mobilize mode|filter|select|loadout|row|cargo` и проверки
+  `assert cargo-mode/cargo-types/cargo-credits`; golden
+  `golden/cargo/{cargo-buy,cargo-upgrade,cargo-upgraded}.png` +
+  обновлённый `golden/mobilize.png`; `ci.sh`/GitHub CI — новые стадии.
+- [x] Артефакты и документация: Windows UI (MSVC+vcpkg) и headless (mingw)
+  пересобраны; `CHANGELOG.md`, `docs/analysis/visual-1to1-status.md`,
+  `suite/03-single-player.md` (TC-0324…0328), `suite/09-visual-1to1.md`
+  (TC-0922/0927), `tools/cargo_vectors/README.md`.
+- Критерий: `cargo check/test` — зелено; все qa-сценарии PASS; golden —
+  0 дрейфа; `cargo test --all-targets` (в т.ч. новые 24 теста) — 0 failed.
+
 ## Порядок
 
-P1 → P2 → P3 → P4 → P5 → P6 (P1 сразу; P2/P3 параллелятся с P4 частично).
+P1 → P2 → P3 → P4 → P5 → P6 → P7 (P1 сразу; P2/P3 параллелятся с P4 частично).
 Каждый этап: коммит + тесты + свидетельства (логи/скриншоты/qa-out).

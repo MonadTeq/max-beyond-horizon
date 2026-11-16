@@ -185,6 +185,43 @@ fn sp_full_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Полный `CargoMenu` (P7) проходит реальный путь ввода: полный список
+/// покупки, cargo-слайдер, режим модернизации, фильтры, апгрейд, `Done`.
+#[test]
+fn cargo_full_script_passes_through_the_real_input_path() {
+    if !has_game_data() {
+        return;
+    }
+
+    let dir = temp_dir("cargo_full");
+    let mut runner = runner(&dir);
+    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/cargo-full.qa"));
+
+    assert!(
+        report.passed,
+        "cargo-full.qa упал: {:?}\n{}",
+        report.failures, report.log
+    );
+
+    for name in [
+        "cargo-buy",
+        "cargo-upgrade",
+        "cargo-upgraded",
+    ] {
+        let path = dir.join(format!("{name}.png"));
+        assert!(path.is_file(), "нет кадра {name}: {}", path.display());
+    }
+
+    // Партия началась после Done, кредиты потрачены на покупки/cargo/апгрейд.
+    assert!(runner.app().state().turn_counter >= 1);
+    assert!(
+        runner.app().state().team_units[max_core::team::TeamId::RED.0 as usize].gold < 150,
+        "золото команды после мобилизации"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
 // ---------------------------------------------------------------------------
 // 3. Упавший ассерт — это провал прогона (в CLI → exit 1)
 // ---------------------------------------------------------------------------

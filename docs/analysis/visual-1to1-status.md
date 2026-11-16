@@ -925,7 +925,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 | Экран | Ресурсы/раскладка | Код |
 |---|---|---|
-| Мобилизация | `CARGOPIC` 640×480; списки Available (482,80,123,290) / Purchased (337,45,118,185), ряды 15 px; `Cost`/`Credit`/`Cargo` (320/358/409, 283, 48×16); `Buy` (590,386,41,22), `Delete` (412,240,53,23), `Cancel` (357,452,62,23), `Done` (447,452,54,23) | `max_app/src/mobilize.rs` |
+| Мобилизация | `CARGOPIC` 640×480; списки Available (482,80,123,290, строки 32 px ×9) / Purchased (337,45,118,185, ×5) с иконками `I_*` (1:2 мобильные, 1:4 здания); цены списка — колонка 610..625; статистика (11,293,250,174, шаг 19); колонка апгрейдов (283,293) и цен (321,293) с `I_GOLD`; полоса золота (361,276,40,140, `VERTGOLD`); cargo-слайдер (421,301,20,115 `VERTRAW/FUEL/GOLD`) и счётчик (421,276,20,10); `Cost`/`Credit`/`Cargo` (320/358/409,283,48×16); `Buy` (590,386,41,22), `Delete` (412,240,53,23), `Cancel` (357,452,62,23), `Done` (447,452,54,23), `Help` (420,452,26,23), `CRGTOG` (542,446,81,32), `BLDDES` (292,264,17,17), стрелки 471/491,387 и 327/348,240 | `max_app/src/mobilize.rs` |
 | Выбор точки | область карты `MAIN_MAP` (180,18,448,448) = 112 × 4 px; курсор 4×4; рамка «Select starting location.»; `Cancel`/`Done` нижней строки | `max_app/src/landing.rs` |
 | Очередь фаз | люди в порядке C++ (убывание слота), мобилизация → высадка на каждого; `start_gold = 0` пропускает мобилизацию | `max_app/src/pregame.rs` |
 
@@ -933,10 +933,18 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 * цена юнита — `Cargo_GetRawConsumptionRate(LANDPLT, 1)` (для `LANDPLT` = 3,
   `cargo.cpp:168`) × `ATTRIB_TURNS` **текущих** значений команды
   (`Clans`-модификаторы учтены, `unit_values::team_base_values`);
+* цена строки списка — ставка `CONSTRCT` (2) для `STATIONARY`, `TRAINHAL` (1)
+  для `COMMANDO`/`INFANTRY`, иначе `LANDPLT` (3) × `turns`
+  (`purchasetypeselector.cpp:40`);
+* cargo — 1 кредит за 5 единиц, ёмкость `storage/5` (у `GOLDTRCK` — 0),
+  `xfer_take_max` бесплатной загрузки = её cargo/5 (`CargoMenu::Select`);
+* цена апгрейда — `UpgradeControl_CalculateCost` (`upgradecontrol.cpp:214`,
+  целочисленный `pow(x,7.5)`; сверено с C++-векторами `tools/upgrade_vectors`
+  и `tools/cargo_vectors`), шаг 1/2/5/10, лимит показа 800;
 * валидность точки — `GameManager_IsValidStartingPosition`: 4×4 клетки
   `x-1…x+2`, `y-1…y+2` — ровно `LAND`;
-* высадка — `deploy_starting_units_with` (позиция/кредиты/загрузка на команду)
-  с тем же порядком ГПСЧ (две плиты на команду).
+* высадка — `deploy_starting_units_with` (позиция/кредиты/загрузка/апгрейды на
+  команду) с тем же порядком ГПСЧ (две плиты на команду).
 
 ### 11.3. Визуальные исправления (задача A)
 
@@ -956,12 +964,17 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 ### 11.4. Упрощения (честно)
 
-* Мобилизация — не весь `CargoMenu`: покупные апгрейды атрибутов вынесены в
-  отдельный экран `UpgradeMenu` (P6, `max_app::upgrademenu`, клавиша `U`;
-  формулы `UpgradeControl_CalculateCost`/`ResearchMenu_CalculateFactor`
-  сверены с C++-векторами), нет загрузки cargo в юниты и полос прокрутки.
-  Клановые бонусы применяются автоматически (`unit_values::team_base_values`),
-  кредиты кланов `SC_CLANS` у всех кланов = 0.
+* Мобилизация — полный `CargoMenu` (P7): списки, иконки, cargo-слайдер, полоса
+  золота, апгрейды и режим модернизации. Отличия от оригинала:
+  иконки турелей без второго кадра (`angle_offsets[2]` из `.SPW` не разобран);
+  «портрет» — спрайт юнита 2× вместо big image `P_*`/FLIC; описания юнитов
+  (`GetDescription()`) в данных клиента нет — кнопка `BLDDES` переключает
+  флаг без текста; `UnitStats_DrawStats` — текстовая таблица тех же строк
+  вместо сетки иконок/полос; числа `Cost`/`Credit`/`Cargo` в C++-порте не
+  рисуются (остались подписи), счётчики — на полосе золота и над слайдером;
+  `Help` пишет строку статуса (экран `CARGO_SETUP` не портирован); звуки не
+  проигрываются. Клановые бонусы применяются автоматически
+  (`unit_values::team_base_values`), кредиты кланов `SC_CLANS` у всех = 0.
 * Состав ИИ — стандартная загрузка `SC_L0001` (как человек, ничего не купивший);
   `AiPlayer::RollTeamMissionSupplies` не портирован.
 * Экран высадки рисует **поверхностную** карту цветами `TileStyle`, а не
@@ -972,14 +985,25 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 ### 11.5. Свидетельства
 
+* `qa_run cargo-full.qa` → кадры `cargo-buy.png` (покупка: иконки, полосы,
+  цены), `cargo-upgrade.png` (режим модернизации: 62 типа, фильтры, стрелки и
+  цены апгрейдов), `cargo-upgraded.png` (после armor +1 и загрузки cargo);
+  `assert cargo-mode/cargo-types/cargo-credits`; эталоны —
+  `max-rust-qa/golden/cargo/*.png`.
 * `qa_run sp-full.qa` → кадры `clan.png` (логотипы 8 кланов по центру
   карточек), `mobilize.png`, `mobilize-bought.png`, `landing.png`,
   `landing-cursor.png`; база в `game-start.png` стоит у выбранной клетки
   (30,22), а не в стартовой четверти; `hs-2.qa` — фазы для GREEN и RED по
-  очереди; `victory.qa`/`visual-screens.qa` обновлены.
+  очереди; `victory.qa`/`visual-screens.qa` обновлены (`golden/mobilize.png`
+  переснят с иконками и полосами).
 * `cargo test -p max_app --test start_phases` — точка применяется (база у
-  выбранной клетки), мобилизация меняет состав/кредиты, порядок фаз hot-seat,
-  ИИ-точки, старый путь без фаз не изменился.
-* `cargo test -p max_app start_phases` и `cargo test -p max_core` — формулы цен
-  и валидности.
+  выбранной клетки), мобилизация меняет состав/кредиты/апгрейды (высаженный
+  конструктор получает `armor + 1`), порядок фаз hot-seat, ИИ-точки, старый
+  путь без фаз не изменился.
+* `cargo test -p max_app --test cargo_vectors` — бит-в-бит с C++-векторами
+  (`tools/cargo_vectors`): 15 цен покупки, 93 цены списка, 7 наборов списка
+  модернизации, строки и стоимости апгрейдов всех 93 типов; 0 расхождений.
+* `cargo test -p max_app --test cargo_render` — отрисовка иконок (оба списка),
+  полосы золота/cargo, стрелок, `CRGTOG`, фильтров и прокрутки по
+  изменившимся пикселям кадра.
 

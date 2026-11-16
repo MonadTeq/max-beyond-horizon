@@ -120,6 +120,12 @@ pub struct LocalSetup {
     /// Остаток кредитов после мобилизации (`TeamMissionSupplies::team_gold`).
     /// `None` — `start_gold`.
     pub team_gold: [Option<u32>; LOCAL_TEAM_COUNT],
+    /// Апгрейды атрибутов, купленные в `CargoMenu`
+    /// (`unitvalues_actual` → `TeamUnits.current_values` до высадки).
+    pub team_upgrades: [Option<Vec<(max_core::enums::UnitType, max_core::unit_values::UnitValues)>>;
+        LOCAL_TEAM_COUNT],
+    /// `stats_gold_spent_on_upgrades` команды (`CargoMenu::CommitUpgradeChanges`).
+    pub team_gold_spent: [Option<u32>; LOCAL_TEAM_COUNT],
 }
 
 impl Default for LocalSetup {
@@ -152,6 +158,8 @@ impl Default for LocalSetup {
             start_positions: [None; LOCAL_TEAM_COUNT],
             team_loadouts: std::array::from_fn(|_| None),
             team_gold: [None; LOCAL_TEAM_COUNT],
+            team_upgrades: std::array::from_fn(|_| None),
+            team_gold_spent: [None; LOCAL_TEAM_COUNT],
         }
     }
 }
@@ -297,7 +305,8 @@ impl LocalSetup {
         let human = self.human_team().unwrap_or(TeamId::RED);
         let phases_ran = self.start_positions.iter().any(Option::is_some)
             || self.team_loadouts.iter().any(Option::is_some)
-            || self.team_gold.iter().any(Option::is_some);
+            || self.team_gold.iter().any(Option::is_some)
+            || self.team_upgrades.iter().any(Option::is_some);
         let teams: Vec<TeamStart> = self
             .playing_teams()
             .into_iter()
@@ -323,6 +332,8 @@ impl LocalSetup {
                         supplies: self.team_loadouts[index]
                             .clone()
                             .unwrap_or_else(|| max_core::deploy::DEFAULT_MISSION_LOADOUT.to_vec()),
+                        upgrades: self.team_upgrades[index].clone().unwrap_or_default(),
+                        gold_spent_on_upgrades: self.team_gold_spent[index].unwrap_or(0),
                     }
                 })
                 .collect()
@@ -1309,6 +1320,8 @@ impl LocalSave {
                 start_positions: [None; LOCAL_TEAM_COUNT],
                 team_loadouts: std::array::from_fn(|_| None),
                 team_gold: [None; LOCAL_TEAM_COUNT],
+                team_upgrades: std::array::from_fn(|_| None),
+                team_gold_spent: [None; LOCAL_TEAM_COUNT],
             },
             phase,
             active_team,

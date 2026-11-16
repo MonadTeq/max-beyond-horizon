@@ -201,3 +201,22 @@ stack`). Release-сборки и Linux работали и без этого.
 ## QA
 
 `bash ci.sh` — тесты + QA-сценарии + golden. Детали: `max-rust-qa/README.md`.
+
+### C++-векторы (эталоны формул)
+
+`max-rust/tools/*_vectors` — самостоятельные C++-программы, повторяющие
+формулы оракула; компилируются в образе `max-port-build:latest` (`g++`) и
+пишут закоммиченные `vectors.txt`, которые Rust-тесты сверяют бит-в-бит:
+
+```sh
+# стоимости апгрейдов/исследований (P6)
+docker run --rm -v "D:/dev/max-port-debug:/src" \
+    -w /src/max-rust/tools/upgrade_vectors max-port-build:latest \
+    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-rust/tools/upgrade_vectors/vectors.txt'
+
+# экран мобилизации (P7): сначала данные из PATCHES.RES, затем векторы
+python max-rust/tools/gen_cargo_data.py
+docker run --rm -v "D:/dev/max-port-debug:/src" \
+    -w /src/max-rust/tools/cargo_vectors max-port-build:latest \
+    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-rust/tools/cargo_vectors/vectors.txt'
+```

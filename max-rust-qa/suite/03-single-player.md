@@ -27,5 +27,10 @@
 | TC-0320 | Кредиты после мобилизации | купить юнитов и закрыть Done | `TeamUnits::SetGold` = остаток; состав = `SC_L0001` + покупки | ✅ UNIT start_phases |
 | TC-0321 | BuildMenu завода (очередь) | завод → `B` → список → `Build` (в очередь) → `Done` | очередь `FACBUILD` (337,60 116×220), `Delete`/`Repeat`, заказ уходит `PayloadP4` и повторяется при `Repeat` | ✅ QA production.qa; UNIT buildmenu |
 | TC-0322 | Отмена постройки | заказ → `Cancel`/исчерпание золота | `CancelBuilding`: очередь очищается, `build_time = 0`; при нехватке золота постройка встаёт на паузу, заказ не теряется | ✅ UNIT production (`cancel_stops_the_construction`, `missing_gold_pauses…`) |
+| TC-0324 | Мобилизация: изображения и индикаторы | экран мобилизации, любой список | иконки `I_*` 32×32 в строках (мобильные 1:2, здания 1:4), полоса золота `VERTGOLD` (361,276 40×140), cargo-слайдер `VERTRAW/FUEL/GOLD` (421,301 20×115), счётчик cargo (421,276) | ✅ QA `cargo-full.qa` + golden `golden/cargo/cargo-buy.png`; UNIT `cargo_render` |
+| TC-0325 | Мобилизация: полный список покупки | список Available | 15 типов `CargoMenu::unit_types1`, 9 видимых строк, прокрутка `BLDUP__/BLDDWN`, цены `3·turns` | ✅ C++-векторы `tools/cargo_vectors` (бит-в-бит); QA `cargo-full.qa` (`cargo-types=15`) |
+| TC-0326 | Мобилизация: режим модернизации | переключатель `CRGTOG` (542,446) | полный список `IsUnitFiltered` (62 типа по умолчанию), фильтры `SELGRD/SELAIR/SELSEA/SELBLD/SELCBT`, строки `UPGLFT/UPGRGT` с ценами `UpgradeControl_CalculateCost` | ✅ C++-векторы (списки/строки/цены); QA `cargo-full.qa` + golden `cargo-upgrade.png` |
+| TC-0327 | Мобилизация: апгрейд до высадки | ряд апгрейда → `Done` | кредиты списаны, `UnitValues` типа изменены, высаженные юниты получают новые значения | ✅ UNIT `start_phases::mobilization_upgrades_reach_the_deployed_units`; QA `cargo-full.qa` (`gold<150`) |
+| TC-0328 | Мобилизация: cargo в юниты | выбрать строку «Purchased», слайдер cargo | 1 кредит за 5 единиц, ёмкость `storage/5` (GOLDTRCK — 0), бесплатный cargo миссии не снимается, продажа возвращает `cargo/5` | ✅ UNIT `mobilize::tests`; QA `cargo-full.qa` |
 
-Итог: 23 TC, ✅ 21, 🟡 0, ⏭ 2 (TC-0309 сквозной бой, TC-0314 сквозное поражение).
+Итог: 28 TC, ✅ 26, 🟡 0, ⏭ 2 (TC-0309 сквозной бой, TC-0314 сквозное поражение).

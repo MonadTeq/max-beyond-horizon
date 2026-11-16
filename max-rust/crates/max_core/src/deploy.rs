@@ -67,6 +67,7 @@ use crate::geo::{Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_WIDTH};
 use crate::setup::TeamStart;
 use crate::team::{TeamId, TeamKind};
 use crate::unit::UnitId;
+use crate::unit_values::UnitValues;
 use crate::victory::cargo_fuel_consumption_rate;
 
 /// `start_gold` по умолчанию — `settings.cpp:118` (150).
@@ -604,6 +605,11 @@ pub struct TeamDeployment {
     pub gold: u32,
     /// Загрузка: бесплатный mission-loadout плюс купленные юниты.
     pub supplies: Vec<TeamSupply>,
+    /// Купленные в `CargoMenu` апгрейды атрибутов
+    /// (`TeamUnits::SetCurrentUnitValues` до высадки).
+    pub upgrades: Vec<(UnitType, UnitValues)>,
+    /// `stats_gold_spent_on_upgrades` команды (`CargoMenu::CommitUpgradeChanges`).
+    pub gold_spent_on_upgrades: u32,
 }
 
 impl TeamDeployment {
@@ -614,6 +620,8 @@ impl TeamDeployment {
             position,
             gold,
             supplies: DEFAULT_MISSION_LOADOUT.to_vec(),
+            upgrades: Vec::new(),
+            gold_spent_on_upgrades: 0,
         }
     }
 }

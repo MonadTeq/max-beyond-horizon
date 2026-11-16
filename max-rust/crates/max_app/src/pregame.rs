@@ -182,13 +182,16 @@ impl PreGameFlow {
         }
     }
 
-    /// Завершает мобилизацию: кредиты и загрузка уходят в настройки партии.
+    /// Завершает мобилизацию: кредиты, загрузка и купленные апгрейды уходят в
+    /// настройки партии (`CargoMenu::CommitUpgradeChanges`).
     pub fn commit_mobilization(&mut self) {
         if let PreGameStage::Mobilize(mobilization) = &self.stage {
             let index = usize::from(mobilization.team.0) % 4;
 
             self.setup.team_gold[index] = Some(mobilization.credits);
             self.setup.team_loadouts[index] = Some(mobilization.loadout());
+            self.setup.team_upgrades[index] = Some(mobilization.changed_upgrades());
+            self.setup.team_gold_spent[index] = Some(mobilization.gold_spent_on_upgrades());
         }
 
         self.advance();

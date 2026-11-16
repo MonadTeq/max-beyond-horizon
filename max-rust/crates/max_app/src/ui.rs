@@ -64,11 +64,7 @@ use crate::hud::{self, HudButton};
 use crate::landing::LandingAction;
 use crate::local::LocalSetup;
 use crate::menu;
-use crate::mobilize::{
-    Mobilization, AVAILABLE_AREA, AVAILABLE_ROW, BUY_BUTTON, CANCEL_BUTTON as MOBILIZE_CANCEL,
-    DELETE_BUTTON, DONE_BUTTON as MOBILIZE_DONE, PURCHASED_LEFT, PURCHASED_ROW, PURCHASED_TOP,
-    PURCHASE_UNITS,
-};
+use crate::mobilize::CargoAction;
 use crate::panels::{self, PanelButton};
 use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::setup::{self, GameSetupForm, SetupTransition};
@@ -606,53 +602,16 @@ enum PreGameInput {
     None,
     /// Отмена всей цепочки (назад на `Players`).
     Cancel,
-    /// Купить выбранный юнит.
-    MobilizeBuy,
-    /// Продать выбранный купленный юнит.
-    MobilizeDelete,
-    /// Стрелка по списку «доступно».
-    MobilizeStep(i32),
-    /// Выбрать строку списка «доступно».
-    MobilizeSelect(usize),
-    /// Выбрать строку списка «куплено».
-    MobilizeSelectBought(usize),
-    /// Кнопка `Done` мобилизации.
-    MobilizeDone,
+    /// Клик на экране мобилизации (`CargoMenu`).
+    MobilizeClick(i32, i32),
+    /// Клавиша на экране мобилизации.
+    MobilizeKey(Key),
     /// Подтвердить точку высадки.
     LandingConfirm,
     /// Сдвинуть курсор высадки.
     LandingStep(i32, i32),
     /// Клик по экрану высадки.
     LandingClick(i32, i32),
-}
-
-/// Строка списка «доступно» под точкой кадра (`CargoMenu::unit_types1`).
-fn mobilization_row(x: i32, y: i32) -> Option<usize> {
-    if !AVAILABLE_AREA.contains(x, y) {
-        return None;
-    }
-
-    let row = (y - AVAILABLE_AREA.uly) / AVAILABLE_ROW;
-
-    ((0..PURCHASE_UNITS.len() as i32).contains(&row)).then_some(row as usize)
-}
-
-/// Строка списка «куплено» под точкой кадра; индекс — среди купленных.
-fn purchased_row(x: i32, y: i32, mobilization: &Mobilization) -> Option<usize> {
-    let area = PixelRect::new(PURCHASED_LEFT, PURCHASED_TOP, 118, 230 - PURCHASED_TOP);
-
-    if !area.contains(x, y) {
-        return None;
-    }
-
-    let row = (y - PURCHASED_TOP) / PURCHASED_ROW;
-    let total = mobilization.free.len() + mobilization.bought.len();
-
-    if row < 0 || row as usize >= total || (row as usize) < mobilization.free.len() {
-        return None;
-    }
-
-    Some(row as usize - mobilization.free.len())
 }
 
 impl Screen {
@@ -748,35 +707,10 @@ impl Screen {
 
         // Действие считается по текущему экрану, применяется уже без borrow.
         let action = match &mut flow.stage {
-            PreGameStage::Mobilize(mobilization) => match event {
+            PreGameStage::Mobilize(_) => match event {
                 InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
-                InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
-                InputEvent::Key(Key::Enter) => PreGameInput::MobilizeDone,
-                InputEvent::Key(Key::Up) => PreGameInput::MobilizeStep(-1),
-                InputEvent::Key(Key::Down) => PreGameInput::MobilizeStep(1),
-                InputEvent::Key(Key::Char(character)) => match character.to_ascii_lowercase() {
-                    'b' => PreGameInput::MobilizeBuy,
-                    'd' => PreGameInput::MobilizeDelete,
-                    _ => PreGameInput::None,
-                },
-                InputEvent::Key(_) => PreGameInput::None,
-                InputEvent::MouseClick(x, y) => {
-                    if MOBILIZE_DONE.contains(x, y) {
-                        PreGameInput::MobilizeDone
-                    } else if MOBILIZE_CANCEL.contains(x, y) {
-                        PreGameInput::Cancel
-                    } else if BUY_BUTTON.contains(x, y) {
-                        PreGameInput::MobilizeBuy
-                    } else if DELETE_BUTTON.contains(x, y) {
-                        PreGameInput::MobilizeDelete
-                    } else if let Some(row) = mobilization_row(x, y) {
-                        PreGameInput::MobilizeSelect(row)
-                    } else if let Some(row) = purchased_row(x, y, mobilization) {
-                        PreGameInput::MobilizeSelectBought(row)
-                    } else {
-                        PreGameInput::None
-                    }
-                }
+                InputEvent::MouseClick(x, y) => PreGameInput::MobilizeClick(x, y),
+                InputEvent::Key(key) => PreGameInput::MobilizeKey(key),
             },
             PreGameStage::Landing(_) => match event {
                 InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
@@ -798,35 +732,28 @@ impl Screen {
         match action {
             PreGameInput::None => {}
             PreGameInput::Cancel => back_to_form = true,
-            PreGameInput::MobilizeDone => {
-                flow.commit_mobilization();
-                confirmed = true;
-            }
-            PreGameInput::MobilizeBuy => {
+            PreGameInput::MobilizeClick(x, y) => {
                 if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
-                    mobilization.buy_selected();
+                    match mobilization.handle_click(x, y) {
+                        CargoAction::None => {}
+                        CargoAction::Cancel => back_to_form = true,
+                        CargoAction::Done => {
+                            flow.commit_mobilization();
+                            confirmed = true;
+                        }
+                    }
                 }
             }
-            PreGameInput::MobilizeDelete => {
+            PreGameInput::MobilizeKey(key) => {
                 if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
-                    mobilization.delete_selected();
-                }
-            }
-            PreGameInput::MobilizeStep(delta) => {
-                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
-                    mobilization.step(delta);
-                }
-            }
-            PreGameInput::MobilizeSelect(row) => {
-                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
-                    mobilization.selected = row;
-                    mobilization.status.clear();
-                }
-            }
-            PreGameInput::MobilizeSelectBought(row) => {
-                if let PreGameStage::Mobilize(mobilization) = &mut flow.stage {
-                    mobilization.selected_bought = Some(row);
-                    mobilization.status.clear();
+                    match mobilization.handle_key(key) {
+                        CargoAction::None => {}
+                        CargoAction::Cancel => back_to_form = true,
+                        CargoAction::Done => {
+                            flow.commit_mobilization();
+                            confirmed = true;
+                        }
+                    }
                 }
             }
             PreGameInput::LandingConfirm => {
@@ -1035,7 +962,12 @@ impl Screen {
                 if let (Some(menu_assets), true) = (menu_assets, native_frame) {
                     match &flow.stage {
                         PreGameStage::Mobilize(mobilization) => {
-                            mobilization.draw(buffer, menu_assets, view.status, mouse);
+                            // `CargoMenu` рисует иконки `I_*` и полосы — нужен
+                            // полный набор ассетов, а не только меню.
+                            if let Some(assets) = view.app.and_then(|app| app.assets()) {
+                                mobilization.draw(buffer, assets, view.status, mouse);
+                                return;
+                            }
                         }
                         PreGameStage::Landing(landing) => {
                             let chrome = view
@@ -1043,6 +975,7 @@ impl Screen {
                                 .and_then(|app| app.assets())
                                 .and_then(|assets| assets.chrome.as_ref());
                             landing.draw(buffer, menu_assets, chrome, view.status, mouse);
+                            return;
                         }
                         PreGameStage::Finished => {
                             buffer.fill(Rgba::rgb(12, 14, 18));

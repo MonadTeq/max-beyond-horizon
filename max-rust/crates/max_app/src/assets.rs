@@ -449,6 +449,8 @@ pub struct Assets {
     pub save_load: Option<crate::saveload::SaveLoadAssets>,
     /// Экран покупных апгрейдов (`UPGRADE` + `UPG*`/`BLD*`/`SEL*`), P6.
     pub upgrade: Option<crate::upgrademenu::UpgradeMenuAssets>,
+    /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
+    pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -579,6 +581,15 @@ impl Assets {
         let save_load = crate::saveload::SaveLoadAssets::load(&max_res);
         // Экран апгрейдов (`UPGRADE` + `UPG*` + `BLD*` + `SEL*`), P6.
         let upgrade = crate::upgrademenu::UpgradeMenuAssets::load(&max_res);
+        // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
+        let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
+
+        if !cargo.is_ready() {
+            warnings.push(
+                "CargoMenu: CARGOPIC/BLDONE/BLDCAN не загрузились — мобилизация на рамках"
+                    .to_string(),
+            );
+        }
 
         if !upgrade.is_ready() {
             warnings.push(
@@ -661,6 +672,7 @@ impl Assets {
             build_menu: Some(build_menu),
             save_load: Some(save_load),
             upgrade: Some(upgrade),
+            cargo: Some(cargo),
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,

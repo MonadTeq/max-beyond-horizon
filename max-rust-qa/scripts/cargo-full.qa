@@ -1,0 +1,105 @@
+# cargo-full.qa — полный экран мобилизации `CargoMenu` (P7).
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
+#
+# Что проверяется (всё — теми же кликами/клавишами, что у игрока):
+# * список покупки — полный `CargoMenu::unit_types1` (15 типов, `assert
+#   cargo-types=15`), в том числе строки за первой страницей (9 видимых строк,
+#   прокрутка стрелкой `BLDDWN`);
+# * покупка юнита из конца списка (Gold Truck, 14-я строка) и из середины
+#   (Mine Layer, 9-я): кредиты списываются, «Purchased» растёт;
+# * cargo-слайдер (1 кредит за 5 единиц): `mobilize cargo 4` грузит 20 единиц в
+#   купленный Constructor;
+# * переключатель `CRGTOG` → режим модернизации: полный отфильтрованный список
+#   (`IsUnitFiltered`, 62 типа по умолчанию), фильтры домена `SELGRD`/`SELBLD`;
+# * строка апгрейда (`UPGLFT`/`UPGRGT`) — armor Constructor'а: `Done` фиксирует
+#   изменения (`CommitUpgradeChanges`), золото команды в партии меньше
+#   стартового, а у высаженного конструктора броня +1 (проверяется UNIT-тестом
+#   `start_phases::mobilization_upgrades_reach_the_deployed_units`).
+#
+# Кадры `cargo-buy` (покупка), `cargo-upgrade` (модернизация),
+# `cargo-upgraded` (после апгрейда и загрузки cargo) — golden-эталоны
+# (`max-rust-qa/golden/cargo`).
+
+# --- Главное меню ---------------------------------------------------------
+shot main-menu
+menu new_game
+
+# --- Options: No Limit + Turn Based --------------------------------------
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+setup done
+assert screen=Players
+
+# --- Players: RED — человек, GREEN — компьютер ---------------------------
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация: список покупки полный (15 типов) ------------------------
+assert screen=Mobilize
+assert cargo-mode=buy
+assert cargo-types=15
+assert cargo-credits=150
+shot cargo-buy
+
+# Gold Truck — 14-я строка списка: скрипт прокручивает список вниз, как игрок,
+# и покупает (3 * 4 = 12 кредитов).
+mobilize buy 14
+assert cargo-credits=138
+
+# Mine Layer — 9-я строка: страница уже прокручена, покупка без прокрутки.
+mobilize buy 9
+assert cargo-credits=129
+
+# Constructor — первая строка; после трёх покупок список «Purchased» вырос до 6
+# строк (5 видимых), поэтому скрипт листает его стрелками.
+mobilize buy 0
+assert cargo-credits=105
+
+# --- Cargo-слайдер: 1 кредит за 5 единиц ---------------------------------
+# Выбираем только что купленный Constructor (строка 5 «Purchased»: 3 бесплатных
+# + 3 купленных) и грузим 4 блока = 20 единиц.
+mobilize loadout 5
+mobilize cargo 4
+assert cargo-credits=101
+
+# --- Режим модернизации (переключатель CRGTOG) ---------------------------
+mobilize mode upgrade
+assert cargo-mode=upgrade
+assert cargo-types>=60
+shot cargo-upgrade
+
+# Фильтр «только здания»: `SELBLD` остаётся единственным доменом, `SELGRD`
+# снимается — список становится короче.
+mobilize filter ground
+assert cargo-types<60
+mobilize filter ground
+
+# --- Апгрейд Constructor'а: armor +1 ------------------------------------
+# Возвращаемся в список покупки (там первый Constructor), выбираем его строку
+# «Purchased» и жмём правую стрелку первой строки апгрейда (armor).
+mobilize mode buy
+mobilize loadout 0
+mobilize row 0 up
+assert cargo-credits<101
+shot cargo-upgraded
+
+# --- Done: изменения уходят в партию ------------------------------------
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+assert gold<150
+tick 5
+assert screen=InGame

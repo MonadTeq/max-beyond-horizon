@@ -200,6 +200,12 @@ pub enum Assertion {
     UnitType(String),
     /// `assert digest=HEX`: CRC16 снапшота состояния (`App::digest`).
     Digest(u16),
+    /// `assert cargo-mode=buy|upgrade`: режим списка `CargoMenu`.
+    CargoMode(bool),
+    /// `assert cargo-types=N`: длина списка типов (15 в покупке).
+    CargoTypes(Cmp, u32),
+    /// `assert cargo-credits>=N`: остаток кредитов в `CargoMenu`.
+    CargoCredits(Cmp, u32),
 }
 
 /// Куда идти высокоуровневой командой `menu`.
@@ -237,10 +243,62 @@ pub enum MobilizeAction {
     Delete,
     /// `step N` — сдвинуть выбор по списку (может быть отрицательным).
     Step(i32),
+    /// `mode buy|upgrade` — переключатель `CRGTOG`.
+    Mode(bool),
+    /// `filter ground|air|sea|building|combat` — кнопка `SEL*`.
+    Filter(FilterName),
+    /// `select N` — строка N списка типов.
+    Select(u32),
+    /// `loadout N` — строка N списка «Purchased».
+    Loadout(u32),
+    /// `row N up|down` — стрелка апгрейда строки N.
+    Adjust { row: u32, increase: bool },
+    /// `cargo N` — поставить слайдер cargo в N блоков (5·N единиц).
+    Cargo(u32),
     /// `done` — `Done` (закрыть мобилизацию).
     Done,
     /// `cancel` — `Cancel`.
     Cancel,
+}
+
+/// Фильтр домена списка модернизации.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterName {
+    /// Наземные (`SELGRD`).
+    Ground,
+    /// Воздушные (`SELAIR`).
+    Air,
+    /// Морские (`SELSEA`).
+    Sea,
+    /// Здания (`SELBLD`).
+    Building,
+    /// Только боевые (`SELCBT`).
+    Combat,
+}
+
+impl FilterName {
+    /// Индекс в `Mobilization::filters`.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Ground => 0,
+            Self::Air => 1,
+            Self::Sea => 2,
+            Self::Building => 3,
+            Self::Combat => 4,
+        }
+    }
+
+    /// Разбор имени (регистр не важен).
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "ground" | "grd" | "land" => Some(Self::Ground),
+            "air" => Some(Self::Air),
+            "sea" | "naval" => Some(Self::Sea),
+            "building" | "build" | "bld" => Some(Self::Building),
+            "combat" | "cbt" => Some(Self::Combat),
+            _ => None,
+        }
+    }
 }
 
 /// Действие экрана `BuildMenu` (P2).
@@ -723,6 +781,21 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             parse_u32(value, "assert gold")?,
         )),
         "unit" => Ok(Assertion::UnitType(value.to_string())),
+        "cargo-mode" => match value.to_ascii_lowercase().as_str() {
+            "buy" | "purchase" => Ok(Assertion::CargoMode(true)),
+            "upgrade" | "upgrades" => Ok(Assertion::CargoMode(false)),
+            other => Err(format!(
+                "assert cargo-mode: ожидалось buy|upgrade, получено «{other}»"
+            )),
+        },
+        "cargo-types" => Ok(Assertion::CargoTypes(
+            operator,
+            parse_u32(value, "assert cargo-types")?,
+        )),
+        "cargo-credits" => Ok(Assertion::CargoCredits(
+            operator,
+            parse_u32(value, "assert cargo-credits")?,
+        )),
         "digest" => {
             let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
@@ -803,31 +876,92 @@ fn parse_players(rest: &str) -> Result<Command, String> {
 fn parse_mobilize(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
-    let action = match parts.first().map(|part| part.to_ascii_lowercase()) {
-        Some(word) if word == "buy" => match parts.get(1) {
-            Some(index) => MobilizeAction::BuyIndex(parse_u32(index, "mobilize buy")?),
+    if parts.is_empty() {
+        return Err("mobilize: требуется действие".to_string());
+    }
+
+    let action = match parts[0].to_ascii_lowercase().as_str() {
+        "buy" => match parts.get(1) {
+            Some(index) => {
+                if parts.len() > 2 {
+                    return Err(format!("mobilize buy: лишние аргументы «{rest}»"));
+                }
+                MobilizeAction::BuyIndex(parse_u32(index, "mobilize buy")?)
+            }
             None => MobilizeAction::Buy,
         },
-        Some(word) if word == "delete" => MobilizeAction::Delete,
-        Some(word) if word == "done" => MobilizeAction::Done,
-        Some(word) if word == "cancel" => MobilizeAction::Cancel,
-        Some(word) if word == "step" => {
+        "delete" => MobilizeAction::Delete,
+        "done" => MobilizeAction::Done,
+        "cancel" => MobilizeAction::Cancel,
+        "step" => {
             let value = parts
                 .get(1)
                 .ok_or_else(|| "mobilize step: требуется число".to_string())?;
 
             MobilizeAction::Step(parse_i32(value, "mobilize step")?)
         }
-        _ => {
+        "mode" => match parts.get(1).map(|part| part.to_ascii_lowercase()) {
+            Some(word) if word == "buy" || word == "purchase" => MobilizeAction::Mode(true),
+            Some(word) if word == "upgrade" || word == "upgrades" => MobilizeAction::Mode(false),
+            _ => {
+                return Err(format!(
+                    "mobilize mode: ожидалось buy|upgrade, получено «{rest}»"
+                ))
+            }
+        },
+        "filter" => {
+            let name = parts
+                .get(1)
+                .and_then(|part| FilterName::parse(part))
+                .ok_or_else(|| {
+                    format!(
+                        "mobilize filter: ожидалось ground|air|sea|building|combat, получено «{rest}»"
+                    )
+                })?;
+            MobilizeAction::Filter(name)
+        }
+        "select" => MobilizeAction::Select(parse_u32(
+            parts
+                .get(1)
+                .ok_or_else(|| "mobilize select: требуется индекс".to_string())?,
+            "mobilize select",
+        )?),
+        "loadout" => MobilizeAction::Loadout(parse_u32(
+            parts
+                .get(1)
+                .ok_or_else(|| "mobilize loadout: требуется индекс".to_string())?,
+            "mobilize loadout",
+        )?),
+        "row" => {
+            if parts.len() != 3 {
+                return Err(format!(
+                    "mobilize row: ожидалось «mobilize row N up|down», получено «{rest}»"
+                ));
+            }
+            let row = parse_u32(parts[1], "mobilize row")?;
+            let increase = match parts[2].to_ascii_lowercase().as_str() {
+                "up" | "increase" | "+" => true,
+                "down" | "decrease" | "-" => false,
+                other => {
+                    return Err(format!(
+                        "mobilize row: ожидалось up|down, получено «{other}»"
+                    ))
+                }
+            };
+            MobilizeAction::Adjust { row, increase }
+        }
+        "cargo" => MobilizeAction::Cargo(parse_u32(
+            parts
+                .get(1)
+                .ok_or_else(|| "mobilize cargo: требуется число блоков".to_string())?,
+            "mobilize cargo",
+        )?),
+        other => {
             return Err(format!(
-                "mobilize: ожидалось buy [N]|delete|step N|done|cancel, получено «{rest}»"
+                "mobilize: ожидалось buy [N]|delete|step N|mode buy|upgrade|filter NAME|select N|loadout N|row N up|down|cargo N|done|cancel, получено «{other}»"
             ))
         }
     };
-
-    if parts.len() > 2 {
-        return Err(format!("mobilize: лишние аргументы «{rest}»"));
-    }
 
     Ok(Command::Mobilize(action))
 }
@@ -1197,6 +1331,94 @@ mod tests {
                 1
             ))
         );
+    }
+
+    #[test]
+    fn cargo_menu_commands_and_assertions_parse() {
+        let steps = parse_script(
+            "mobilize mode upgrade\n\
+             mobilize mode buy\n\
+             mobilize filter ground\n\
+             mobilize filter combat\n\
+             mobilize select 3\n\
+             mobilize loadout 0\n\
+             mobilize row 0 up\n\
+             mobilize row 1 down\n\
+             mobilize cargo 4\n\
+             mobilize buy 14\n\
+             mobilize delete\n\
+             assert cargo-mode=upgrade\n\
+             assert cargo-types=15\n\
+             assert cargo-credits>=100\n",
+        )
+        .expect("P7-команды разбираются");
+
+        assert_eq!(
+            steps[0].command,
+            Command::Mobilize(MobilizeAction::Mode(false))
+        );
+        assert_eq!(
+            steps[1].command,
+            Command::Mobilize(MobilizeAction::Mode(true))
+        );
+        assert_eq!(
+            steps[2].command,
+            Command::Mobilize(MobilizeAction::Filter(FilterName::Ground))
+        );
+        assert_eq!(
+            steps[3].command,
+            Command::Mobilize(MobilizeAction::Filter(FilterName::Combat))
+        );
+        assert_eq!(
+            steps[4].command,
+            Command::Mobilize(MobilizeAction::Select(3))
+        );
+        assert_eq!(
+            steps[5].command,
+            Command::Mobilize(MobilizeAction::Loadout(0))
+        );
+        assert_eq!(
+            steps[6].command,
+            Command::Mobilize(MobilizeAction::Adjust {
+                row: 0,
+                increase: true
+            })
+        );
+        assert_eq!(
+            steps[7].command,
+            Command::Mobilize(MobilizeAction::Adjust {
+                row: 1,
+                increase: false
+            })
+        );
+        assert_eq!(
+            steps[8].command,
+            Command::Mobilize(MobilizeAction::Cargo(4))
+        );
+        assert_eq!(
+            steps[9].command,
+            Command::Mobilize(MobilizeAction::BuyIndex(14))
+        );
+        assert_eq!(
+            steps[10].command,
+            Command::Mobilize(MobilizeAction::Delete)
+        );
+        assert_eq!(
+            steps[11].command,
+            Command::Assert(Assertion::CargoMode(false))
+        );
+        assert_eq!(
+            steps[12].command,
+            Command::Assert(Assertion::CargoTypes(Cmp::Eq, 15))
+        );
+        assert_eq!(
+            steps[13].command,
+            Command::Assert(Assertion::CargoCredits(Cmp::Ge, 100))
+        );
+
+        assert!(parse_script("mobilize filter water\n").is_err());
+        assert!(parse_script("mobilize mode neither\n").is_err());
+        assert!(parse_script("assert cargo-mode=neither\n").is_err());
     }
 
     #[test]

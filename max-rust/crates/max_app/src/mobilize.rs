@@ -1,56 +1,197 @@
-//! Фаза мобилизации перед высадкой — минимальный порт `CargoMenu`.
+//! Предвысадочный экран мобилизации — полный порт `CargoMenu`.
 //!
-//! # Что это за фаза
+//! # Оракул
 //!
-//! В C++ `GameManager_PlayerMissionSetup` (`game_manager.cpp:1237`) для каждой
-//! человеческой команды сначала считает бюджет
-//! `team_gold = start_gold + Clans::GetCredits(clan)`, и если он не ноль —
-//! открывает `CargoMenu` (`cargomenu.cpp`, фон `CARGOPIC`): покупка стартовых
-//! юнитов за кредиты. Только после этого — выбор точки высадки
-//! (`GameManager_SelectSite`) и, в самом конце `GameManager_InitGame`, высадка
-//! (`GameManager_ProcessTeamMissionSupplyUnits`).
+//! * `cargomenu.cpp` — `CargoMenu` (фон `CARGOPIC`): списки «Available» и
+//!   «Purchased», загрузка cargo слайдером, покупка/продажа, полоса золота,
+//!   переключатель `CRGTOG` (покупка ↔ модернизация), фильтры
+//!   `SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`, кнопки `CRGBUY`, `CRGDEL`,
+//!   `BLDONE`, `BLDCAN`, `BLDHLP`, `BLDDES`, стрелки списков;
+//! * `abstractupgrademenu.cpp` — колонка апгрейдов (`UpgradeControl`),
+//!   `IsUnitFiltered`/`IsBetterUnit`, `DrawUnitStats` (полоса золота
+//!   `VERTGOLD`), `CommitUpgradeChanges`;
+//! * `purchaseTypeSelector.cpp` — цены в списке типов
+//!   (`Cargo_GetRawConsumptionRate(CONSTRCT|TRAINHAL|LANDPLT, 1) * turns`);
+//! * `cargoselector.cpp` — строки «Purchased» (иконка `I_*`, «Имя N (Full)»);
+//! * `unittypeselector.cpp`/`scrollbar.cpp` — строки по 32 px, `max_item_count`,
+//!   `LoadVerticalBar` (полосы `VERTRAW`/`VERTFUEL`/`VERTGOLD`);
+//! * `reportstats.cpp` — `ReportStats_DrawListItemIcon` (иконка 32×32, масштаб
+//!   1/2 у мобильных и 1/4 у стационарных), `DrawNumber`/`DrawText` (число
+//!   выравнивается по правому краю колонки).
 //!
-//! # Что портировано точно
+//! # Раскладка (координаты `cargomenu.cpp`)
 //!
-//! * Цена юнита — дословно `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1)`
-//!   (`cargo.cpp:140`, для `LANDPLT` = 3) умножить на `ATTRIB_TURNS`
-//!   (`UnitValues::GetAttribute`). Возврат при удалении — та же цена
-//!   (`CargoMenu::DeleteUnit`).
-//! * Бесплатная загрузка `SC_L0001` (`CONSTRCT` 40, `ENGINEER` 20, `SURVEYOR` 0)
-//!   остаётся в списке, но её нельзя удалить (`DeleteUnit` в C++ запрещён для
-//!   `index < unit_count`).
-//! * `start_gold = 0` → фазы нет (C++ уходит в `GetMissionLoadout` без меню).
-//! * Список доступного — ровно `CargoMenu::unit_types1` (15 типов).
+//! | Область | Координаты | Источник |
+//! |---|---|---|
+//! | Портрет | (11,13) 280×240 | `unit_portrait_window` |
+//! | Иконка лота / список `Purchased` | (337,45) 118×185, строки 32 px (5) | `wininfo2` |
+//! | Список `Available` | (482,80) 123×290, строки 32 px (9) | `wininfo1` |
+//! | Колонка цен списка | x 610..625, по правому краю 625 | `PurchaseTypeSelector` |
+//! | Статистика | (11,293) 250×174 | `stats_background` |
+//! | Колонка апгрейдов | (283,293) 38×174, ряд 19 px | `button_background` |
+//! | Колонка цен апгрейдов | (321,293) 40×174, число + `I_GOLD` | `cost_background` |
+//! | Полоса золота | (361,276) 40×140, заливка `VERTGOLD` снизу | `gold_background` |
+//! | Cargo-слайдер | (421,301) 20×115, значение 5·N | `LimitedScrollbar` |
+//! | Счётчик cargo | (421,276) 20×10 | `xfer_amount_background` |
+//! | Заголовок | (473,7) 158×18 | `_(eb71)` «Purchase Menu» |
+//! | `Buy` / `Delete` / `Cancel` / `Done` / `Help` / `Description` / `CRGTOG` | (590,386) 41×22; (412,240) 53×23; (357,452) 62×23; (447,452) 54×23; (420,452) 26×23; (292,264) 17×17; (542,446) 81×32 |
 //!
-//! # Что упрощено (честно)
+//! # Поведение
 //!
-//! * Полный `CargoMenu` — это `AbstractUpgradeMenu` с покупкой апгрейдов
-//!   атрибутов, загрузкой cargo в юниты и полосами прокрутки. Здесь — только
-//!   список покупки/удаления юнитов, кредиты и итоговая загрузка. Апгрейды
-//!   атрибутов не покупаются (в C++ их цена — `UpgradeControl_CalculateCost`,
-//!   `pow(...)` с исследовательскими множителями `ResearchMenu_CalculateFactor`,
-//!   которые в Rust ещё не портированы).
-//! * Клановые бонусы (Clans::GetCredits == 0 для всех кланов `SC_CLANS`) уже
-//!   применяются к атрибутам команд в `App::new_game_on_surface`
-//!   (`unit_values::team_base_values`), поэтому отдельного шага им не нужно.
-//! * Кадр — `CARGOPIC` + списки и кнопки по координатам C++ (`cargomenu.cpp`):
-//!   `Buy` (590,386,41,22), `Delete` (412,240,53,23), `Cancel` (357,452,62,23),
-//!   `Done` (447,452,54,23). Строки списков рисуются текстом.
+//! * `CargoMenu::unit_types1` — 15 покупаемых типов (список покупки); режим
+//!   модернизации показывает **полный** отфильтрованный список
+//!   (`IsUnitFiltered`: `UPGRADABLE`, строится командой, домен включён,
+//!   опционально «только боевые»), отсортированный `IsBetterUnit`.
+//! * Цена покупки — `3 * ATTRIB_TURNS` **текущих** значений
+//!   (`unitvalues_actual`, после апгрейдов), возврат при продаже — та же цена
+//!   плюс `cargo / 5`.
+//! * Cargo: 1 кредит за 5 единиц, ёмкость `ATTRIB_STORAGE / 5` (у `GOLDTRCK`
+//!   ёмкость 0 — как `Select` в C++); бесплатный cargo миссии (`SC_L0001`)
+//!   нельзя уменьшить ниже стартового (`xfer_take_max`).
+//! * Апгрейды (`UpgradeControl`): `ATTRIB_ATTACK`, `ROUNDS`, `RANGE`, `AMMO`
+//!   (только если базовая атака), `ARMOR`, `HITS`, `SCAN`, `SPEED`; цена —
+//!   [`max_core::research::UpgradeQuote`] (целочисленный
+//!   `UpgradeControl_CalculateCost`, сверен с C++-векторами), шаг — 1/2/5/10,
+//!   лимит показа — `UPGRADECONTROL_UPGRADE_COST_LIMIT` (800). `ATTRIB_TURNS`
+//!   в C++-порте контролом не добавляется (`UPGRADE_CONTROL_9` не
+//!   используется) — `CargoMenu::UpdateTeamGold` там мёртвый код.
+//! * `Done` фиксирует кредиты/загрузку/изменённые `UnitValues`
+//!   (`CommitUpgradeChanges`): они уходят в `LocalSetup` и применяются к
+//!   `TeamUnits.current_values` до высадки.
+//!
+//! # Осознанные отличия
+//!
+//! * Иконки списков — ресурсы `I_*` (спрайт-формат), но без второго кадра
+//!   турелей: в C++ он смещается `angle_offsets[2]` из `.SPW`-заголовка,
+//!   которого нет в разобранном [`max_assets::sprite::SpriteSheet`].
+//! * «Портрет» — спрайт юнита 2× (как `BuildMenu`/`UpgradeMenu`), а не big
+//!   image `P_*` и не FLIC: описания юнитов (`_(57a6)`) в клиенте нет, кнопка
+//!   `BLDDES` переключает флаг, но текста не рисует.
+//! * `UnitStats_DrawStats` (сетка иконок/полос) заменён текстовой таблицей тех
+//!   же строк в том же порядке/шаге 19 px: значения и условия блоков C++,
+//!   картинка — нет.
+//! * Числа `Cost`/`Credit`/`Cargo` под списками: в C++-порте нарисованы только
+//!   подписи (числа потеряны при портировании), здесь значения выводятся над
+//!   подписями (как в оригинальной игре).
+//! * `Help` (`BLDHLP`) пишет строку статуса — экран `CARGO_SETUP` не портирован.
+//! * Звуки (`KCARG0`/`NDONE0`/…) не проигрываются (аудио-слой отдельный).
+//! * ИИ по-прежнему получает стандартную загрузку `SC_L0001`
+//!   (`RollTeamMissionSupplies` не портирован) — это не менялось.
 
+use max_assets::image::{BigImage, SimpleImage};
+use max_assets::sprite::{decode_sprite, SpriteFrame};
+use max_core::access::unit_type_flags;
 use max_core::deploy::{TeamSupply, DEFAULT_MISSION_LOADOUT};
-use max_core::enums::{TeamClan, UnitType};
+use max_core::enums::{unit_flags, TeamClan, UnitType, UNIT_END};
+use max_core::research::UpgradeQuote;
 use max_core::team::TeamId;
-use max_core::unit_values::{clan_tradeoff, ATTRIB_TURNS};
-use max_render::buffer::{PixelRect, RgbaBuffer};
+use max_core::unit_values::{
+    base_unit_values, team_base_values, UnitValues, ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK,
+    ATTRIB_HITS, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED, ATTRIB_STORAGE,
+    ATTRIB_TURNS,
+};
+use max_core::victory::{
+    cargo_fuel_consumption_rate, cargo_life_consumption_rate, cargo_power_consumption_rate,
+    cargo_raw_consumption_rate,
+};
+use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
+use max_render::{ColorLut, TeamColors};
 
-use crate::menu::MenuAssets;
+use crate::assets::Assets;
+use crate::menu::{blit_simple, draw_big_image, draw_image_button, wrap_gnw_text, MenuButtonPair};
+use crate::panels::UiPalette;
+use crate::ui::Key;
+use crate::upgrademenu::{is_better_unit, is_buildable, UpgradeFilter};
 
-/// `Cargo_GetRawConsumptionRate(LANDPLT, 1)` (`cargo.cpp:168`).
-pub const LANDPLT_RAW_CONSUMPTION: u32 = 3;
+// ---------------------------------------------------------------------------
+// Раскладка CargoMenu (cargomenu.cpp)
+// ---------------------------------------------------------------------------
 
-/// Список покупки — `CargoMenu::unit_types1` (`cargomenu.cpp:176`), тот же
-/// порядок (он же порядок строк списка в C++).
+/// Ширина кадра оригинала.
+pub const SCREEN_WIDTH: i32 = 640;
+/// Высота кадра оригинала.
+pub const SCREEN_HEIGHT: i32 = 480;
+
+/// Портрет (`unit_portrait_window`, 11,13 + 280×240).
+pub const PORTRAIT: PixelRect = PixelRect::new(11, 13, 280, 240);
+/// Список «Available» (`wininfo1` 482,80 — 605,370).
+pub const AVAILABLE_AREA: PixelRect = PixelRect::new(482, 80, 123, 290);
+/// Высота строки списков (`unittypeselector.cpp:64`, `* 32`).
+pub const LIST_ROW: i32 = 32;
+/// Строк в «Available»: `(370 - 80) / 32`.
+pub const AVAILABLE_ROWS: usize = 9;
+/// Колонка цен списка «Available» (`PurchaseTypeSelector`, x = 482 + 128, 15 px,
+/// число выровнено по правому краю 625).
+pub const PRICE_COLUMN: PixelRect = PixelRect::new(610, 80, 15, 288);
+/// Список «Purchased» (`wininfo2` 337,45 — 455,230).
+pub const PURCHASED_AREA: PixelRect = PixelRect::new(337, 45, 118, 185);
+/// Строк в «Purchased»: `(230 - 45) / 32`.
+pub const PURCHASED_ROWS: usize = 5;
+/// Заголовок «Purchased» (`Text_TextBox(337,22,118,10)`).
+pub const PURCHASED_HEADER: PixelRect = PixelRect::new(337, 22, 118, 10);
+/// Разделитель под «Purchased» (`draw_line(337,34 — 455,34)`).
+pub const PURCHASED_LINE_Y: i32 = 34;
+/// Заголовок «Available» (`Text_TextBox(482,57,143,10)`).
+pub const AVAILABLE_HEADER: PixelRect = PixelRect::new(482, 57, 143, 10);
+/// Разделитель под «Available» (`draw_line(482,69 — 625,69)`).
+pub const AVAILABLE_LINE_Y: i32 = 69;
+/// Заголовок «Cost» над колонкой цен (`Text_TextBox(625 - w, 57, w, 10)`).
+pub const COST_HEADER: PixelRect = PixelRect::new(610, 57, 15, 10);
+/// Заголовок окна (`Text_TextBox(473,7,158,18, COLOR_GREEN)`).
+pub const TITLE: PixelRect = PixelRect::new(473, 7, 158, 18);
+
+/// Блок статистики (`stats_background` 11,293,250,174).
+pub const STATS: PixelRect = PixelRect::new(11, 293, 250, 174);
+/// Колонка цен апгрейдов (`cost_background` 321,293,40,174).
+pub const COST: PixelRect = PixelRect::new(321, 293, 40, 174);
+/// Колонка стрелок апгрейдов (`button_background` 283,293,38,174).
+pub const CONTROL_BUTTONS: PixelRect = PixelRect::new(283, 293, 38, 174);
+/// Шаг строки апгрейда (`upgrade_control_next_uly += 19`).
+pub const CONTROL_ROW: i32 = 19;
+/// Полоса золота (`gold_background` 361,276,40,140).
+pub const GOLD_BAR: PixelRect = PixelRect::new(361, 276, 40, 140);
+/// Cargo-слайдер (`Scrollbar` 421,301 — 441,416).
+pub const CARGO_BAR: PixelRect = PixelRect::new(421, 301, 20, 115);
+/// Счётчик cargo над слайдером (`xfer_amount_bounds` 421,276 — 441,286).
+pub const CARGO_AMOUNT: PixelRect = PixelRect::new(421, 276, 20, 10);
+
+/// Подпись «Description» (`Text_TextBox(209,264,80,17)`).
+pub const DESCRIPTION_LABEL: PixelRect = PixelRect::new(209, 264, 80, 17);
+/// Подпись «Cost» (`Text_TextBox(320,283,48,16)`).
+pub const COST_LABEL: PixelRect = PixelRect::new(320, 283, 48, 16);
+/// Подпись «Credit» (`Text_TextBox(358,283,48,16)`).
+pub const CREDIT_LABEL: PixelRect = PixelRect::new(358, 283, 48, 16);
+/// Подпись «Cargo» (`Text_TextBox(409,283,48,16)`).
+pub const CARGO_LABEL: PixelRect = PixelRect::new(409, 283, 48, 16);
+
+/// Кнопка `Buy` (`CRGBUY_U`, 41×22).
+pub const BUY_BUTTON: PixelRect = PixelRect::new(590, 386, 41, 22);
+/// Кнопка `Delete` (`CRGDEL_U`, 53×23).
+pub const DELETE_BUTTON: PixelRect = PixelRect::new(412, 240, 53, 23);
+/// Кнопка `Cancel` (`BLDCAN_U`, 62×23).
+pub const CANCEL_BUTTON: PixelRect = PixelRect::new(357, 452, 62, 23);
+/// Кнопка `Done` (`BLDONE_U`, 54×23).
+pub const DONE_BUTTON: PixelRect = PixelRect::new(447, 452, 54, 23);
+/// Кнопка `Help` (`BLDHLP_U`, 26×23).
+pub const HELP_BUTTON: PixelRect = PixelRect::new(420, 452, 26, 23);
+/// Кнопка описания (`BLDDES_U`, 17×17).
+pub const DESCRIPTION_BUTTON: PixelRect = PixelRect::new(292, 264, 17, 17);
+/// Переключатель «Buy Units»/«Upgrades» (`CRGTOG_U`, 81×32).
+pub const TOGGLE_BUTTON: PixelRect = PixelRect::new(542, 446, 81, 32);
+/// Скролл списка «Available» вверх (`BLDUP__U`, 18×17).
+pub const LIST_UP: PixelRect = PixelRect::new(471, 387, 18, 17);
+/// Скролл списка «Available» вниз (`BLDDWN_U`).
+pub const LIST_DOWN: PixelRect = PixelRect::new(491, 387, 18, 17);
+/// Скролл списка «Purchased» вверх (`BLDUP__U`).
+pub const PURCHASE_UP: PixelRect = PixelRect::new(327, 240, 18, 17);
+/// Скролл списка «Purchased» вниз (`BLDDWN_U`).
+pub const PURCHASE_DOWN: PixelRect = PixelRect::new(348, 240, 18, 17);
+/// Размер иконки строки (`ReportStats_DrawListItemIcon`, 32×32).
+pub const ICON_BOX: i32 = 32;
+
+/// `CargoMenu::unit_types1` (`cargomenu.cpp:176`) — список покупки, порядок
+/// строк списка.
 pub const PURCHASE_UNITS: [UnitType; 15] = [
     UnitType::Constructor,
     UnitType::Engineer,
@@ -69,63 +210,1095 @@ pub const PURCHASE_UNITS: [UnitType; 15] = [
     UnitType::GoldTruck,
 ];
 
-/// Английские имена из `ResourceManager_GetUnit(...).GetSingularName()`.
-pub const PURCHASE_NAMES: [&str; 15] = [
-    "Constructor",
-    "Engineer",
-    "Surveyor",
-    "Scout",
-    "Scanner",
-    "Tank",
-    "Assault Gun",
-    "Rocket Launcher",
-    "Missile Crawler",
-    "Mine Layer",
-    "Repair Unit",
-    "Supply Truck",
-    "Fuel Truck",
-    "Mobile AA",
-    "Gold Truck",
-];
+/// `Cargo_GetRawConsumptionRate(LANDPLT, 1)` (`cargo.cpp:168`).
+pub const LANDPLT_RAW_CONSUMPTION: u32 = 3;
+/// Верхняя граница показываемой стоимости (`UPGRADECONTROL_UPGRADE_COST_LIMIT`).
+pub const UPGRADE_COST_LIMIT: i32 = 800;
 
-/// Строки списков (координаты C++ `cargomenu.cpp`).
-pub const AVAILABLE_AREA: PixelRect = PixelRect::new(482, 80, 123, 290);
-/// Строка списка «доступно».
-pub const AVAILABLE_ROW: i32 = 15;
-/// Строка списка «куплено».
-pub const PURCHASED_ROW: i32 = 15;
-/// Верх списка «куплено».
-pub const PURCHASED_TOP: i32 = 45;
-/// Левая граница списка «куплено».
-pub const PURCHASED_LEFT: i32 = 337;
-/// Кнопка `Buy` (`CRGBUY_U` 41×22).
-pub const BUY_BUTTON: PixelRect = PixelRect::new(590, 386, 41, 22);
-/// Кнопка `Delete` (`CRGDEL_U` 53×23).
-pub const DELETE_BUTTON: PixelRect = PixelRect::new(412, 240, 53, 23);
-/// Кнопка `Cancel` (`BLDCAN_U` 62×23).
-pub const CANCEL_BUTTON: PixelRect = PixelRect::new(357, 452, 62, 23);
-/// Кнопка `Done` (`BLDONE_U` 54×23).
-pub const DONE_BUTTON: PixelRect = PixelRect::new(447, 452, 54, 23);
+// ---------------------------------------------------------------------------
+// Состояние экрана
+// ---------------------------------------------------------------------------
 
-/// Цена юнита в кредитах — `CargoMenu::BuyUnit`.
-///
-/// C++ берёт `unitvalues_actual[unit]`, то есть **текущие** значения команды:
-/// к базовым уже применены клановые trade-off'ы (`GetCurrentUnitValues`).
-pub fn unit_cost(unit: UnitType, clan: TeamClan) -> u32 {
-    let turns = max_core::unit_values::team_base_values(clan)[unit as usize]
+/// Режим списка типов (переключатель `CRGTOG`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CargoMode {
+    /// Список покупки — `CargoMenu::unit_types1`.
+    Buy,
+    /// Полный список модернизации (`AbstractUpgradeMenu::PopulateTeamUnitsList`).
+    Upgrade,
+}
+
+/// Какой список принимает стрелки/PageUp/PageDown (`active_selector`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveList {
+    /// «Available» (типы).
+    Types,
+    /// «Purchased» (купленные и бесплатная загрузка).
+    Loadout,
+}
+
+/// Действие экрана после клика/клавиши.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CargoAction {
+    /// Экран остаётся открытым.
+    None,
+    /// `Cancel`/`Esc` — отмена старта.
+    Cancel,
+    /// `Done`/`Enter` — зафиксировать и продолжить.
+    Done,
+}
+
+/// Строка таблицы статистики (порт `UnitStats_DrawStats` текстом).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatRow {
+    /// `y` строки (тот же шаг 19 px, что у колонки апгрейдов).
+    pub y: i32,
+    /// Подпись (`Attack`, `Armor`, `Storage`, ...).
+    pub label: String,
+    /// Значение/значения (`16`, `40/60`, ...).
+    pub value: String,
+}
+
+/// Состояние экрана мобилизации одной команды.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mobilization {
+    /// Чья мобилизация.
+    pub team: TeamId,
+    /// Клан команды (значения и цены).
+    pub clan: TeamClan,
+    /// Кредиты на входе (`CargoMenu::start_gold`).
+    pub credits_start: u32,
+    /// Остаток кредитов (`CargoMenu::team_gold`).
+    pub credits: u32,
+    /// Бесплатная загрузка миссии (`SC_L0001`), удалять/уменьшать нельзя.
+    pub free: Vec<TeamSupply>,
+    /// Купленные юниты (в порядке покупки).
+    pub bought: Vec<TeamSupply>,
+    /// Режим списка типов.
+    pub mode: CargoMode,
+    /// Типы в списке «Available» (в режиме `Buy` — 15).
+    pub types: Vec<UnitType>,
+    /// Выбранная строка списка типов (`page_max_index`).
+    pub type_selected: usize,
+    /// Первая видимая строка списка типов (`page_min_index`).
+    pub type_page: usize,
+    /// Выбранная строка списка «Purchased» (0..free+bought).
+    pub loadout_selected: usize,
+    /// Первая видимая строка «Purchased».
+    pub loadout_page: usize,
+    /// Какой список активен для стрелок.
+    pub active: ActiveList,
+    /// Тип, чей портрет/статистика/апгрейды показаны (`unit_type`).
+    pub info: Option<UnitType>,
+    /// Базовые значения на момент открытия (`unitvalues_base`).
+    pub base: [UnitValues; UNIT_END as usize],
+    /// Редактируемые значения (`unitvalues_actual`).
+    pub actual: [UnitValues; UNIT_END as usize],
+    /// Строки апгрейдов выбранного типа: `(ATTRIB_*, uly)`.
+    pub controls: Vec<(u8, i32)>,
+    /// Фильтры домена (`button_*_rest_state`): ground, air, sea, building, combat.
+    pub filters: [bool; 5],
+    /// Показывать описание (`button_description_rest_state`); текста в данных нет.
+    pub description: bool,
+    /// Строка статуса.
+    pub status: String,
+}
+
+impl Mobilization {
+    /// `CargoMenu::CargoMenu(team)`: `start_gold + Clans::GetCredits(clan)`
+    /// (у всех кланов `SC_CLANS` кредиты 0), базовые значения команды и
+    /// бесплатная загрузка миссии.
+    pub fn new(team: TeamId, clan: TeamClan, start_gold: u32) -> Self {
+        let base = team_base_values(clan);
+        let free = DEFAULT_MISSION_LOADOUT.to_vec();
+        let info = free.first().map(|supply| supply.unit_type);
+
+        let mut mobilization = Self {
+            team,
+            clan,
+            credits_start: start_gold,
+            credits: start_gold,
+            free,
+            bought: Vec::new(),
+            mode: CargoMode::Buy,
+            types: PURCHASE_UNITS.to_vec(),
+            type_selected: 0,
+            type_page: 0,
+            loadout_selected: 0,
+            loadout_page: 0,
+            active: ActiveList::Types,
+            info,
+            base,
+            actual: base,
+            controls: Vec::new(),
+            filters: [true, true, true, true, false],
+            description: true,
+            status: String::new(),
+        };
+
+        mobilization.rebuild_controls();
+        mobilization
+    }
+
+    /// Нужна ли фаза: в C++ `CargoMenu` не открывается при нулевом бюджете
+    /// (`if (team_gold)` в `GameManager_PlayerMissionSetup`).
+    pub fn needed(start_gold: u32) -> bool {
+        start_gold > 0
+    }
+
+    /// Итоговая загрузка `TeamMissionSupplies::units` (бесплатная + купленная).
+    pub fn loadout(&self) -> Vec<TeamSupply> {
+        let mut loadout = self.free.clone();
+        loadout.extend(self.bought.iter().copied());
+        loadout
+    }
+
+    /// Все строки списка «Purchased» (`unit_types2`).
+    pub fn loadout_rows(&self) -> Vec<TeamSupply> {
+        self.loadout()
+    }
+
+    /// `CargoMenu::DrawUnitInfo`: цена текущих значений, `3 * turns`.
+    pub fn price(&self, unit: UnitType) -> u32 {
+        unit_price(&self.actual, unit)
+    }
+
+    /// Цена строки списка типов (`PurchaseTypeSelector::Draw`):
+    /// `STATIONARY` → `CONSTRCT`-ставка (2), `COMMANDO`/`INFANTRY` →
+    /// `TRAINHAL`-ставка (1), иначе `LANDPLT` (3); умножить на `turns`.
+    pub fn list_price(&self, unit: UnitType) -> u32 {
+        list_price(&self.actual, unit)
+    }
+
+    /// Цена выбранной строки списка типов (для подписи `Cost`).
+    pub fn selected_cost(&self) -> u32 {
+        self.types
+            .get(self.type_selected)
+            .map(|unit| self.price(*unit))
+            .unwrap_or(0)
+    }
+
+    /// Выбранный тип списка «Available».
+    pub fn selected_type(&self) -> Option<UnitType> {
+        self.types.get(self.type_selected).copied()
+    }
+
+    /// Строка «Purchased» по индексу.
+    pub fn loadout_row(&self, index: usize) -> Option<TeamSupply> {
+        if index < self.free.len() {
+            self.free.get(index).copied()
+        } else {
+            self.bought.get(index - self.free.len()).copied()
+        }
+    }
+
+    /// Сколько единиц cargo в строке `index`.
+    pub fn cargo(&self, index: usize) -> u16 {
+        self.loadout_row(index).map_or(0, |supply| supply.cargo)
+    }
+
+    /// Строка, которой можно управлять слайдером (выбранная в «Purchased»).
+    fn cargo_row(&self) -> usize {
+        self.loadout_selected
+    }
+
+    /// Ёмкость cargo в блоках по 5 (`Select`: `ATTRIB_STORAGE / 5`, у
+    /// `GOLDTRCK` — 0).
+    pub fn cargo_capacity(&self) -> i32 {
+        let Some(supply) = self.loadout_row(self.cargo_row()) else {
+            return 0;
+        };
+        cargo_capacity(&self.actual, supply.unit_type)
+    }
+
+    /// Значение слайдера (`cargos[index] / 5`).
+    pub fn cargo_value(&self) -> i32 {
+        i32::from(self.cargo(self.cargo_row())) / 5
+    }
+
+    /// `xfer_take_max`: бесплатный cargo миссии нельзя уменьшить, у купленных —
+    /// можно до нуля.
+    fn cargo_take_max(&self) -> i32 {
+        let index = self.cargo_row();
+        if index < self.free.len() {
+            i32::from(self.cargo(index)) / 5
+        } else {
+            0
+        }
+    }
+
+    /// `xfer_give_max`: `cargos[page] / 5 + team_gold` (`DrawUnitStats`).
+    fn cargo_give_max(&self) -> i32 {
+        self.cargo_value() + self.credits as i32
+    }
+
+    /// Материал полосы cargo (`VERTFUEL`/`VERTGOLD`/`VERTRAW`).
+    pub fn cargo_bar_kind(&self) -> CargoBarKind {
+        match self.loadout_row(self.cargo_row()).map(|supply| supply.unit_type) {
+            Some(UnitType::FuelTruck) => CargoBarKind::Fuel,
+            Some(UnitType::GoldTruck) => CargoBarKind::Gold,
+            _ => CargoBarKind::Raw,
+        }
+    }
+
+    /// Может ли `Delete` продать выбранную строку (`index >= unit_count`).
+    pub fn can_delete(&self) -> bool {
+        self.loadout_selected >= self.free.len() && self.loadout_selected < self.loadout_rows().len()
+    }
+
+    /// Может ли `Buy` купить выбранный тип (`DrawUnitInfo`).
+    pub fn can_buy(&self) -> bool {
+        self.selected_type()
+            .is_some_and(|unit| PURCHASE_UNITS.contains(&unit) && self.price(unit) <= self.credits)
+    }
+
+    // -----------------------------------------------------------------------
+    // Списки
+    // -----------------------------------------------------------------------
+
+    /// `CargoMenu::PopulateTeamUnitsList`: режим `Buy` — `unit_types1`, режим
+    /// `Upgrade` — отфильтрованный полный список `IsBetterUnit`-порядка.
+    pub fn rebuild_types(&mut self) {
+        let previous = self.selected_type();
+        self.types = match self.mode {
+            CargoMode::Buy => PURCHASE_UNITS.to_vec(),
+            CargoMode::Upgrade => upgrade_types(&self.filters),
+        };
+
+        self.type_selected = previous
+            .and_then(|unit| self.types.iter().position(|candidate| *candidate == unit))
+            .unwrap_or(0);
+        self.ensure_type_visible();
+
+        if previous.is_some() && self.selected_type() != previous {
+            // C++ `AddItems`: `if (GetLast() != unit_type) Select(0)` →
+            // `DrawUnitInfo(unit_type)`.
+            self.info = self.selected_type();
+            self.rebuild_controls();
+        }
+    }
+
+    /// `UnitTypeSelector::ScrollTo` для списка типов.
+    fn ensure_type_visible(&mut self) {
+        let count = self.types.len() as i64;
+        let visible = AVAILABLE_ROWS as i64;
+        let mut page = self.type_page as i64;
+        let selected = self.type_selected as i64;
+
+        if selected < page {
+            page = selected;
+        }
+        if page + visible <= selected {
+            page = selected - visible + 1;
+        }
+        if page + visible > count {
+            page = count - visible;
+        }
+        if page < 0 {
+            page = 0;
+        }
+
+        self.type_page = page.max(0) as usize;
+    }
+
+    /// То же для списка «Purchased».
+    fn ensure_loadout_visible(&mut self) {
+        let count = self.loadout_rows().len() as i64;
+        let visible = PURCHASED_ROWS as i64;
+        let mut page = self.loadout_page as i64;
+        let selected = self.loadout_selected as i64;
+
+        if selected < page {
+            page = selected;
+        }
+        if page + visible <= selected {
+            page = selected - visible + 1;
+        }
+        if page + visible > count {
+            page = count - visible;
+        }
+        if page < 0 {
+            page = 0;
+        }
+
+        self.loadout_page = page.max(0) as usize;
+    }
+
+    /// `PopulateTeamUnitsList` по переключателю (`1100`/`1101`).
+    pub fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            CargoMode::Buy => CargoMode::Upgrade,
+            CargoMode::Upgrade => CargoMode::Buy,
+        };
+        self.rebuild_types();
+        self.status = match self.mode {
+            CargoMode::Buy => "Buy units".to_string(),
+            CargoMode::Upgrade => "Upgrade units".to_string(),
+        };
+    }
+
+    /// Переключает фильтр домена (`1003`…`1012`); в режиме покупки кнопки
+    /// выключены (C++ `Disable`).
+    pub fn toggle_filter(&mut self, index: usize) {
+        if self.mode != CargoMode::Upgrade || index >= self.filters.len() {
+            return;
+        }
+        self.filters[index] = !self.filters[index];
+        let previous = self.selected_type();
+        self.types = upgrade_types(&self.filters);
+        self.type_selected = previous
+            .and_then(|unit| self.types.iter().position(|candidate| *candidate == unit))
+            .unwrap_or(0);
+        self.ensure_type_visible();
+        if self.selected_type() != previous {
+            self.info = self.selected_type();
+            self.rebuild_controls();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Выбор и загрузка
+    // -----------------------------------------------------------------------
+
+    /// `CargoMenu::Select(index)` для списка «Purchased».
+    pub fn select_loadout(&mut self, index: usize) {
+        let count = self.loadout_rows().len();
+        if index >= count {
+            return;
+        }
+
+        self.loadout_selected = index;
+        self.ensure_loadout_visible();
+
+        if let Some(supply) = self.loadout_row(index) {
+            self.info = Some(supply.unit_type);
+            self.rebuild_controls();
+        }
+    }
+
+    /// Выбор строки списка «Available» (клик по ней).
+    pub fn select_type(&mut self, index: usize) {
+        if index >= self.types.len() {
+            return;
+        }
+
+        self.type_selected = index;
+        self.active = ActiveList::Types;
+        self.ensure_type_visible();
+        self.info = self.selected_type();
+        self.rebuild_controls();
+    }
+
+    /// Стрелка/PageUp/PageDown по активному списку.
+    pub fn step(&mut self, delta: i32) {
+        match self.active {
+            ActiveList::Types => {
+                if self.types.is_empty() {
+                    return;
+                }
+                let last = self.types.len() as i32 - 1;
+                self.type_selected = (self.type_selected as i32 + delta).clamp(0, last) as usize;
+                self.ensure_type_visible();
+                self.info = self.selected_type();
+                self.rebuild_controls();
+            }
+            ActiveList::Loadout => {
+                let count = self.loadout_rows().len();
+                if count == 0 {
+                    return;
+                }
+                let last = count as i32 - 1;
+                self.loadout_selected =
+                    (self.loadout_selected as i32 + delta).clamp(0, last) as usize;
+                self.ensure_loadout_visible();
+                if let Some(supply) = self.loadout_row(self.loadout_selected) {
+                    self.info = Some(supply.unit_type);
+                    self.rebuild_controls();
+                }
+            }
+        }
+    }
+
+    /// Страница списка (по `max_item_count` строк).
+    pub fn page(&mut self, delta: i32) {
+        let rows = match self.active {
+            ActiveList::Types => AVAILABLE_ROWS as i32,
+            ActiveList::Loadout => PURCHASED_ROWS as i32,
+        };
+        self.step(delta * rows);
+    }
+
+    /// Прокрутка списка без смены выбора (стрелки `BLDUP__`/`BLDDWN`).
+    pub fn scroll(&mut self, list: ActiveList, delta: i32) {
+        match list {
+            ActiveList::Types => {
+                let rows = self.types.len().saturating_sub(AVAILABLE_ROWS);
+                self.type_page = (self.type_page as i32 + delta).clamp(0, rows as i32) as usize;
+            }
+            ActiveList::Loadout => {
+                let rows = self.loadout_rows().len().saturating_sub(PURCHASED_ROWS);
+                self.loadout_page = (self.loadout_page as i32 + delta).clamp(0, rows as i32) as usize;
+            }
+        }
+    }
+
+    /// `CargoMenu::BuyUnit`: купить выбранный тип.
+    pub fn buy_selected(&mut self) -> bool {
+        self.buy(self.type_selected)
+    }
+
+    /// Покупка по индексу списка «Available».
+    pub fn buy(&mut self, index: usize) -> bool {
+        let Some(&unit) = self.types.get(index) else {
+            return false;
+        };
+
+        if !PURCHASE_UNITS.contains(&unit) {
+            self.status = format!("{} is not for sale", unit_label(unit));
+            return false;
+        }
+
+        let cost = self.price(unit);
+        if cost > self.credits {
+            self.status = format!("Not enough credits: {} costs {cost}", unit_label(unit));
+            return false;
+        }
+
+        self.credits -= cost;
+        self.bought.push(TeamSupply {
+            unit_type: unit,
+            cargo: 0,
+        });
+        self.loadout_selected = self.loadout_rows().len() - 1;
+        self.ensure_loadout_visible();
+        self.info = Some(unit);
+        self.rebuild_controls();
+        self.status = format!("Bought {} for {cost} credits", unit_label(unit));
+        true
+    }
+
+    /// `CargoMenu::DeleteUnit`: продать выбранную строку «Purchased» (кроме
+    /// бесплатной загрузки миссии).
+    pub fn delete_selected(&mut self) -> bool {
+        if !self.can_delete() {
+            self.status = if self.loadout_selected < self.free.len() {
+                "The free mission loadout cannot be sold".to_string()
+            } else {
+                "Select a purchased unit to delete".to_string()
+            };
+            return false;
+        }
+
+        let index = self.loadout_selected - self.free.len();
+        let supply = self.bought.remove(index);
+        let refund = self.price(supply.unit_type) + u32::from(supply.cargo) / 5;
+
+        self.credits = self.credits.saturating_add(refund);
+        self.loadout_selected = self.loadout_selected.min(self.loadout_rows().len() - 1);
+        self.ensure_loadout_visible();
+        if let Some(supply) = self.loadout_row(self.loadout_selected) {
+            self.info = Some(supply.unit_type);
+        }
+        self.rebuild_controls();
+        self.status = format!("Sold {} for {refund} credits", unit_label(supply.unit_type));
+        true
+    }
+
+    /// Клик по слайдеру cargo (`Scrollbar::ProcessKey`, `pcode 1106`).
+    pub fn click_cargo(&mut self, x: i32, y: i32) -> bool {
+        if !CARGO_BAR.contains(x, y) {
+            return false;
+        }
+
+        let capacity = self.cargo_capacity();
+        if capacity <= 0 {
+            return false;
+        }
+
+        let from_bottom = CARGO_BAR.lry() - y;
+        let value = (CARGO_BAR.height / 2 + capacity * from_bottom) / CARGO_BAR.height;
+        let value = value.max(self.cargo_take_max()).min(capacity).min(self.cargo_give_max());
+        self.set_cargo_value(value);
+        true
+    }
+
+    /// Ставит значение слайдера (`cargos[index] = value * 5`), списывая
+    /// `new - old` кредитов (1 кредит за 5 единиц).
+    pub fn set_cargo_value(&mut self, value: i32) {
+        let capacity = self.cargo_capacity();
+        if capacity < 0 {
+            return;
+        }
+        let value = value
+            .max(self.cargo_take_max())
+            .min(capacity)
+            .min(self.cargo_give_max())
+            .max(0);
+        let old = self.cargo_value();
+        let delta = value - old;
+
+        if delta > 0 {
+            self.credits = self.credits.saturating_sub(delta as u32);
+        } else {
+            self.credits = self.credits.saturating_add((-delta) as u32);
+        }
+
+        let cargo = (value * 5) as u16;
+        let index = self.cargo_row();
+        if index < self.free.len() {
+            self.free[index].cargo = cargo;
+        } else if let Some(supply) = self.bought.get_mut(index - self.free.len()) {
+            supply.cargo = cargo;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Апгрейды
+    // -----------------------------------------------------------------------
+
+    /// `AbstractUpgradeMenu::DrawUnitInfo` → `AddUpgradeMilitary`,
+    /// `AdjustRowStorage`, `AdjustRowConsumptions`, `AddUpgradeGeneric`,
+    /// `AddUpgradeMobile`. `ATTRIB_TURNS` контролом не добавляется (в C++-порте
+    /// `UPGRADE_CONTROL_9` нигде не используется).
+    pub fn rebuild_controls(&mut self) {
+        self.controls.clear();
+        let Some(unit) = self.info else {
+            return;
+        };
+        let true_base = self.base[unit as usize];
+        let actual = self.actual[unit as usize];
+        let mut y = COST.uly;
+        let mut rows: Vec<(u8, i32)> = Vec::new();
+
+        let push = |rows: &mut Vec<(u8, i32)>, y: &mut i32, attribute: u8| {
+            rows.push((attribute, *y));
+            *y += CONTROL_ROW;
+        };
+
+        if true_base.get_attribute(ATTRIB_ATTACK) > 0 {
+            push(&mut rows, &mut y, ATTRIB_ATTACK);
+            if true_base.get_attribute(ATTRIB_ROUNDS) > 0 {
+                push(&mut rows, &mut y, ATTRIB_ROUNDS);
+            }
+            if true_base.get_attribute(ATTRIB_RANGE) > 0 {
+                push(&mut rows, &mut y, ATTRIB_RANGE);
+            }
+            if true_base.get_attribute(ATTRIB_AMMO) > 0 {
+                push(&mut rows, &mut y, ATTRIB_AMMO);
+            }
+        }
+
+        if actual.get_attribute(ATTRIB_STORAGE) != 0
+            && matches!(
+                unit,
+                UnitType::ADump
+                    | UnitType::FDump
+                    | UnitType::GoldSmelter
+                    | UnitType::Engineer
+                    | UnitType::Constructor
+                    | UnitType::CargoShip
+                    | UnitType::SupplyTruck
+                    | UnitType::FuelTruck
+                    | UnitType::GoldTruck
+            )
+        {
+            y += CONTROL_ROW;
+        }
+
+        let raw = cargo_raw_consumption_rate(unit, 1);
+        let fuel = cargo_fuel_consumption_rate(unit);
+        let power = cargo_power_consumption_rate(unit);
+        let life = cargo_life_consumption_rate(unit);
+        if power < 0 {
+            y += CONTROL_ROW;
+        }
+        if life < 0 {
+            y += CONTROL_ROW;
+        }
+        if raw > 0 || fuel > 0 || power > 0 || life > 0 {
+            y += CONTROL_ROW;
+        }
+
+        if true_base.get_attribute(ATTRIB_ARMOR) > 0 {
+            push(&mut rows, &mut y, ATTRIB_ARMOR);
+        }
+        if true_base.get_attribute(ATTRIB_HITS) > 0 {
+            push(&mut rows, &mut y, ATTRIB_HITS);
+        }
+        if true_base.get_attribute(ATTRIB_SCAN) > 0 {
+            push(&mut rows, &mut y, ATTRIB_SCAN);
+        }
+        if true_base.get_attribute(ATTRIB_SPEED) > 0 {
+            push(&mut rows, &mut y, ATTRIB_SPEED);
+        }
+
+        self.controls = rows;
+    }
+
+    /// Контрол строки (порт `UpgradeControl::Init`): `team_base_value` —
+    /// базовое значение типа, `control_base_value` — значение на входе в меню,
+    /// вклад исследований до старта партии нулевой
+    /// (`ResearchMenu_CalculateFactor` при level 0).
+    pub fn quote(&self, row: usize) -> Option<UpgradeQuote> {
+        let (attribute, _) = *self.controls.get(row)?;
+        let unit = self.info?;
+        let base_value = self.base[unit as usize].get_attribute(attribute) as u16;
+
+        let mut quote = UpgradeQuote::new(attribute, base_value, base_value, 0);
+        quote.actual = self.actual[unit as usize].get_attribute(attribute) as u16;
+        Some(quote)
+    }
+
+    /// `UpgradeControl::Increase`/`Decrease`; `true`, если значение изменилось.
+    pub fn adjust_upgrade(&mut self, row: usize, increase: bool) -> bool {
+        let Some(mut quote) = self.quote(row) else {
+            return false;
+        };
+        let Some(unit) = self.info else {
+            return false;
+        };
+
+        let changed = if increase {
+            quote.increase(&mut self.credits)
+        } else {
+            quote.decrease(&mut self.credits)
+        };
+
+        if changed {
+            self.actual[unit as usize].set_attribute(quote.attribute, i32::from(quote.actual));
+            self.status = format!(
+                "{} {} = {}",
+                unit_label(unit),
+                attribute_name(quote.attribute),
+                quote.actual
+            );
+        } else {
+            self.status = if increase {
+                "Cannot upgrade: credits, base or limit".to_string()
+            } else {
+                "Already at the base value".to_string()
+            };
+        }
+
+        changed
+    }
+
+    /// Прямоугольники стрелок строки `row` (левая/правая).
+    pub fn control_arrows(&self, row: usize) -> Option<(PixelRect, PixelRect)> {
+        let (_, y) = *self.controls.get(row)?;
+        Some((
+            PixelRect::new(CONTROL_BUTTONS.ulx, y, 18, 17),
+            PixelRect::new(CONTROL_BUTTONS.ulx + 18, y, 18, 17),
+        ))
+    }
+
+    /// Строки таблицы статистики — порт блоков `UnitStats_DrawStats`.
+    pub fn stats_rows(&self) -> Vec<StatRow> {
+        let Some(unit) = self.info else {
+            return Vec::new();
+        };
+        let base = self.base[unit as usize];
+        let actual = self.actual[unit as usize];
+        let mut rows = Vec::new();
+        let mut y = COST.uly;
+
+        let push = |rows: &mut Vec<StatRow>, y: &mut i32, label: &str, value: String| {
+            rows.push(StatRow {
+                y: *y,
+                label: label.to_string(),
+                value,
+            });
+            *y += CONTROL_ROW;
+        };
+
+        if base.get_attribute(ATTRIB_ATTACK) > 0 {
+            push(&mut rows, &mut y, "Attack", actual.get_attribute(ATTRIB_ATTACK).to_string());
+            if base.get_attribute(ATTRIB_ROUNDS) > 0 {
+                push(&mut rows, &mut y, "Rounds", actual.get_attribute(ATTRIB_ROUNDS).to_string());
+            }
+            if base.get_attribute(ATTRIB_RANGE) > 0 {
+                push(&mut rows, &mut y, "Range", actual.get_attribute(ATTRIB_RANGE).to_string());
+            }
+            if base.get_attribute(ATTRIB_AMMO) > 0 {
+                push(&mut rows, &mut y, "Ammo", actual.get_attribute(ATTRIB_AMMO).to_string());
+            }
+        }
+
+        if base.get_attribute(ATTRIB_STORAGE) > 0 {
+            push(
+                &mut rows,
+                &mut y,
+                "Storage",
+                format!(
+                    "{}/{}",
+                    actual.get_attribute(ATTRIB_STORAGE),
+                    base.get_attribute(ATTRIB_STORAGE)
+                ),
+            );
+        }
+
+        let raw = cargo_raw_consumption_rate(unit, 1);
+        let fuel = cargo_fuel_consumption_rate(unit);
+        let power = cargo_power_consumption_rate(unit);
+        let life = cargo_life_consumption_rate(unit);
+
+        if power < 0 {
+            push(&mut rows, &mut y, "Power", format!("+{}", -power));
+        }
+        if life < 0 {
+            push(&mut rows, &mut y, "Workers", format!("+{}", -life));
+        }
+        if raw > 0 || fuel > 0 || power > 0 || life > 0 {
+            push(
+                &mut rows,
+                &mut y,
+                "Upkeep",
+                format!("{raw}/{fuel}/{power}/{life}"),
+            );
+        }
+
+        if base.get_attribute(ATTRIB_ARMOR) > 0 {
+            push(&mut rows, &mut y, "Armor", actual.get_attribute(ATTRIB_ARMOR).to_string());
+        }
+        if base.get_attribute(ATTRIB_HITS) > 0 {
+            push(&mut rows, &mut y, "Hits", actual.get_attribute(ATTRIB_HITS).to_string());
+        }
+        if base.get_attribute(ATTRIB_SCAN) > 0 {
+            push(&mut rows, &mut y, "Scan", actual.get_attribute(ATTRIB_SCAN).to_string());
+        }
+        if base.get_attribute(ATTRIB_SPEED) > 0 {
+            push(&mut rows, &mut y, "Speed", actual.get_attribute(ATTRIB_SPEED).to_string());
+        }
+        if base.get_attribute(ATTRIB_TURNS) > 0 {
+            push(&mut rows, &mut y, "Turns", actual.get_attribute(ATTRIB_TURNS).to_string());
+        }
+
+        rows
+    }
+
+    // -----------------------------------------------------------------------
+    // Фиксация (CommitUpgradeChanges + CommitUpgradeChanges override)
+    // -----------------------------------------------------------------------
+
+    /// Изменённые `UnitValues` (`*unitvalues_actual != *unitvalues_base`).
+    pub fn changed_upgrades(&self) -> Vec<(UnitType, UnitValues)> {
+        let mut changed = Vec::new();
+
+        for index in 0..UNIT_END as usize {
+            if self.actual[index] == self.base[index] {
+                continue;
+            }
+            let Ok(unit) = UnitType::try_from(index as u16) else {
+                continue;
+            };
+            let mut values = self.actual[index];
+            values.update_version();
+            values.mark_as_not_in_use();
+            changed.push((unit, values));
+        }
+
+        changed
+    }
+
+    /// `units_built`/`stats_gold_spent_on_upgrades`: `(start_gold - team_gold)`
+    /// минус текущие цены купленных юнитов и платного cargo
+    /// (`CargoMenu::CommitUpgradeChanges`).
+    pub fn gold_spent_on_upgrades(&self) -> u32 {
+        let mut spent = self
+            .credits_start
+            .wrapping_sub(self.credits);
+
+        for supply in &self.bought {
+            spent = spent.wrapping_sub(self.price(supply.unit_type));
+        }
+
+        let total: u32 = self.loadout().iter().map(|supply| u32::from(supply.cargo)).sum();
+        let free: u32 = self.free.iter().map(|supply| u32::from(supply.cargo)).sum();
+        spent.wrapping_sub((total.saturating_sub(free)) / 5)
+    }
+
+    // -----------------------------------------------------------------------
+    // Ввод
+    // -----------------------------------------------------------------------
+
+    /// Клик по экрану (те же прямоугольники, что у кнопок C++).
+    pub fn handle_click(&mut self, x: i32, y: i32) -> CargoAction {
+        self.status.clear();
+
+        if DONE_BUTTON.contains(x, y) {
+            return CargoAction::Done;
+        }
+        if CANCEL_BUTTON.contains(x, y) {
+            return CargoAction::Cancel;
+        }
+        if BUY_BUTTON.contains(x, y) {
+            self.buy_selected();
+            return CargoAction::None;
+        }
+        if DELETE_BUTTON.contains(x, y) {
+            self.delete_selected();
+            return CargoAction::None;
+        }
+        if HELP_BUTTON.contains(x, y) {
+            self.status = "Help: buy units, load cargo, upgrade attributes, Done pays".to_string();
+            return CargoAction::None;
+        }
+        if DESCRIPTION_BUTTON.contains(x, y) {
+            self.description = !self.description;
+            return CargoAction::None;
+        }
+        if TOGGLE_BUTTON.contains(x, y) {
+            self.toggle_mode();
+            return CargoAction::None;
+        }
+        for (index, filter) in [
+            UpgradeFilter::Ground,
+            UpgradeFilter::Air,
+            UpgradeFilter::Sea,
+            UpgradeFilter::Building,
+            UpgradeFilter::Combat,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if filter.rect().contains(x, y) {
+                self.toggle_filter(index);
+                return CargoAction::None;
+            }
+        }
+        if LIST_UP.contains(x, y) {
+            self.scroll(ActiveList::Types, -1);
+            return CargoAction::None;
+        }
+        if LIST_DOWN.contains(x, y) {
+            self.scroll(ActiveList::Types, 1);
+            return CargoAction::None;
+        }
+        if PURCHASE_UP.contains(x, y) {
+            self.scroll(ActiveList::Loadout, -1);
+            return CargoAction::None;
+        }
+        if PURCHASE_DOWN.contains(x, y) {
+            self.scroll(ActiveList::Loadout, 1);
+            return CargoAction::None;
+        }
+
+        if let Some((row, increase)) = self.control_at(x, y) {
+            self.adjust_upgrade(row, increase);
+            return CargoAction::None;
+        }
+        if self.click_cargo(x, y) {
+            return CargoAction::None;
+        }
+
+        if AVAILABLE_AREA.contains(x, y) {
+            let row = ((y - AVAILABLE_AREA.uly) / LIST_ROW) as usize;
+            let index = self.type_page + row;
+            if index < self.types.len() {
+                // Повторный клик по выбранной строке — `Select(1)` →
+                // `OnUnitTypeConfirmed` → `BuyUnit`.
+                if index == self.type_selected && self.info == self.selected_type() {
+                    self.buy(index);
+                } else {
+                    self.select_type(index);
+                }
+                return CargoAction::None;
+            }
+        }
+
+        if PURCHASED_AREA.contains(x, y) {
+            let row = ((y - PURCHASED_AREA.uly) / LIST_ROW) as usize;
+            let index = self.loadout_page + row;
+            if index < self.loadout_rows().len() {
+                if index == self.loadout_selected
+                    && self.info == self.loadout_row(index).map(|supply| supply.unit_type)
+                {
+                    self.delete_selected();
+                } else {
+                    self.select_loadout(index);
+                }
+                return CargoAction::None;
+            }
+        }
+
+        CargoAction::None
+    }
+
+    /// Клавиатура (`CargoMenu::ProcessKey`/`AbstractUpgradeMenu::ProcessKey`).
+    pub fn handle_key(&mut self, key: Key) -> CargoAction {
+        match key {
+            Key::Escape => CargoAction::Cancel,
+            Key::Enter => CargoAction::Done,
+            Key::Up => {
+                self.step(-1);
+                CargoAction::None
+            }
+            Key::Down => {
+                self.step(1);
+                CargoAction::None
+            }
+            Key::PageUp => {
+                self.page(-1);
+                CargoAction::None
+            }
+            Key::PageDown => {
+                self.page(1);
+                CargoAction::None
+            }
+            Key::Char(character) => {
+                match character.to_ascii_lowercase() {
+                    'b' => {
+                        self.buy_selected();
+                    }
+                    'd' => {
+                        self.delete_selected();
+                    }
+                    'u' => self.toggle_mode(),
+                    _ => {}
+                }
+                CargoAction::None
+            }
+            _ => CargoAction::None,
+        }
+    }
+
+    /// Строка апгрейда под точкой (`(row, increase)`).
+    pub fn control_at(&self, x: i32, y: i32) -> Option<(usize, bool)> {
+        for row in 0..self.controls.len() {
+            let (left, right) = self.control_arrows(row)?;
+            if left.contains(x, y) {
+                return Some((row, false));
+            }
+            if right.contains(x, y) {
+                return Some((row, true));
+            }
+        }
+        None
+    }
+}
+
+/// Материал полосы cargo (`Select`: `SetMaterialBar(vbar)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CargoBarKind {
+    /// `VERTRAW`.
+    Raw,
+    /// `VERTFUEL`.
+    Fuel,
+    /// `VERTGOLD`.
+    Gold,
+}
+
+// ---------------------------------------------------------------------------
+// Формулы (сверены с C++-векторами, tools/cargo_vectors)
+// ---------------------------------------------------------------------------
+
+/// Цена юнита — `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1)`
+/// (3) × `ATTRIB_TURNS` **текущих** значений.
+pub fn unit_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
+    let turns = values[unit as usize]
         .get_attribute(ATTRIB_TURNS)
         .max(0) as u32;
 
     LANDPLT_RAW_CONSUMPTION * turns
 }
 
-/// Имя юнита для списка.
+/// Цена строки списка типов (`PurchaseTypeSelector::Draw`, скобки `if`).
+pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
+    let turns = values[unit as usize]
+        .get_attribute(ATTRIB_TURNS)
+        .max(0) as u32;
+    let flags = unit_type_flags(unit);
+    let rate = if flags & unit_flags::STATIONARY != 0 {
+        cargo_raw_consumption_rate(UnitType::Constructor, 1) as u32
+    } else if unit == UnitType::Commando || unit == UnitType::Infantry {
+        cargo_raw_consumption_rate(UnitType::TrainingHall, 1) as u32
+    } else {
+        LANDPLT_RAW_CONSUMPTION
+    };
+
+    rate * turns
+}
+
+/// Ёмкость cargo в блоках по 5 (`CargoMenu::Select`): `storage / 5`, у
+/// `GOLDTRCK` — 0.
+pub fn cargo_capacity(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> i32 {
+    if unit == UnitType::GoldTruck {
+        return 0;
+    }
+    values[unit as usize].get_attribute(ATTRIB_STORAGE) / 5
+}
+
+/// Цена покупки для исходных (неапгрейженных) значений — обёртка для тестов и
+/// `CargoMenu` без состояния.
+pub fn unit_cost(unit: UnitType, clan: TeamClan) -> u32 {
+    unit_price(&team_base_values(clan), unit)
+}
+
+/// Имя юнита (`ResourceManager_GetUnit(...).GetSingularName()`).
 pub fn unit_label(unit: UnitType) -> &'static str {
-    PURCHASE_UNITS
-        .iter()
-        .position(|candidate| *candidate == unit)
-        .map(|index| PURCHASE_NAMES[index])
-        .unwrap_or("?")
+    crate::buildmenu::unit_name(unit)
+}
+
+/// Имя атрибута `ATTRIB_*` (для статуса).
+pub fn attribute_name(attribute: u8) -> &'static str {
+    match attribute {
+        ATTRIB_ATTACK => "attack",
+        ATTRIB_ROUNDS => "rounds",
+        ATTRIB_RANGE => "range",
+        ATTRIB_AMMO => "ammo",
+        ATTRIB_ARMOR => "armor",
+        ATTRIB_HITS => "hits",
+        ATTRIB_SCAN => "scan",
+        ATTRIB_SPEED => "speed",
+        ATTRIB_TURNS => "turns",
+        ATTRIB_STORAGE => "storage",
+        _ => "attribute",
+    }
+}
+
+/// Полный список модернизации: `AbstractUpgradeMenu::PopulateTeamUnitsList` —
+/// `IsUnitFiltered` по всем 93 типам и сортировка `IsBetterUnit`.
+pub fn upgrade_types(filters: &[bool; 5]) -> Vec<UnitType> {
+    let mut types: Vec<UnitType> = (0..UNIT_END)
+        .filter_map(|index| UnitType::try_from(index).ok())
+        .filter(|unit| is_unit_filtered(*unit, filters))
+        .collect();
+
+    if types.len() > 1 {
+        for i in 0..types.len() - 1 {
+            for j in i + 1..types.len() {
+                if is_better_unit(types[i], types[j]) {
+                    types.swap(i, j);
+                }
+            }
+        }
+    }
+
+    types
+}
+
+/// `AbstractUpgradeMenu::IsUnitFiltered` (`abstractupgrademenu.cpp:699`).
+pub fn is_unit_filtered(unit: UnitType, filters: &[bool; 5]) -> bool {
+    let flags = unit_type_flags(unit);
+
+    if flags & unit_flags::UPGRADABLE == 0 || !is_buildable(unit) {
+        return false;
+    }
+
+    let class_matches = (flags & unit_flags::MOBILE_LAND_UNIT != 0 && filters[0])
+        || (flags & unit_flags::MOBILE_AIR_UNIT != 0 && filters[1])
+        || (flags & unit_flags::MOBILE_SEA_UNIT != 0 && filters[2])
+        || (flags & unit_flags::STATIONARY != 0 && filters[3]);
+    if !class_matches {
+        return false;
+    }
+
+    if filters[4] {
+        // C++: `UnitsManager_TeamInfo[0].team_units->GetBaseUnitValues(...)`.
+        base_unit_values(unit).get_attribute(ATTRIB_ATTACK) > 0
+    } else {
+        true
+    }
 }
 
 /// Строка кланового бонуса (для подсказки на экране мобилизации).
@@ -143,9 +1316,9 @@ pub fn clan_summary(clan: TeamClan) -> String {
         UnitType::Constructor,
         UnitType::Engineer,
     ] {
-        let attack = clan_tradeoff(clan, unit, max_core::unit_values::ATTRIB_ATTACK);
-        let speed = clan_tradeoff(clan, unit, max_core::unit_values::ATTRIB_SPEED);
-        let turns = clan_tradeoff(clan, unit, ATTRIB_TURNS);
+        let attack = max_core::unit_values::clan_tradeoff(clan, unit, ATTRIB_ATTACK);
+        let speed = max_core::unit_values::clan_tradeoff(clan, unit, ATTRIB_SPEED);
+        let turns = max_core::unit_values::clan_tradeoff(clan, unit, ATTRIB_TURNS);
 
         if attack != 0 {
             bonuses.push(format!("{} {:+} atk", unit_label(unit), attack));
@@ -165,244 +1338,431 @@ pub fn clan_summary(clan: TeamClan) -> String {
     }
 }
 
-/// Состояние экрана мобилизации одной команды.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mobilization {
-    /// Чья мобилизация.
-    pub team: TeamId,
-    /// Клан команды (для строки бонусов).
-    pub clan: TeamClan,
-    /// Кредиты на входе (`start_gold`).
-    pub credits_start: u32,
-    /// Остаток кредитов (`team_gold`).
-    pub credits: u32,
-    /// Купленные юниты (в порядке покупки).
-    pub bought: Vec<TeamSupply>,
-    /// Бесплатная загрузка миссии (`SC_L0001`), удалять нельзя.
-    pub free: Vec<TeamSupply>,
-    /// Выбранная строка списка «доступно».
-    pub selected: usize,
-    /// Выбранная строка списка «куплено» (для Delete).
-    pub selected_bought: Option<usize>,
-    /// Строка статуса.
-    pub status: String,
+// ---------------------------------------------------------------------------
+// Ресурсы экрана
+// ---------------------------------------------------------------------------
+
+/// Ресурсы `CargoMenu` из `MAX.RES`.
+#[derive(Debug, Clone)]
+pub struct CargoMenuAssets {
+    /// Фон `CARGOPIC` 640×480.
+    pub background: Option<BigImage>,
+    /// `Buy` (`CRGBUY_U/D`).
+    pub buy: Option<MenuButtonPair>,
+    /// `CRGBUY_X` — недоступна.
+    pub buy_disabled: Option<SimpleImage>,
+    /// `Delete` (`CRGDEL_U/D`).
+    pub delete: Option<MenuButtonPair>,
+    /// `CRGDEL_X`.
+    pub delete_disabled: Option<SimpleImage>,
+    /// `Cancel` (`BLDCAN_U/D`).
+    pub cancel: Option<MenuButtonPair>,
+    /// `Done` (`BLDONE_U/D`).
+    pub done: Option<MenuButtonPair>,
+    /// `Help` (`BLDHLP_U/D`).
+    pub help: Option<MenuButtonPair>,
+    /// Переключатель (`CRGTOG_U/D`).
+    pub toggle: Option<MenuButtonPair>,
+    /// Описание (`BLDDES_U/D`).
+    pub description: Option<MenuButtonPair>,
+    /// Скролл вверх (`BLDUP__U/D`).
+    pub scroll_up: Option<MenuButtonPair>,
+    /// `BLDUP__X`.
+    pub scroll_up_disabled: Option<SimpleImage>,
+    /// Скролл вниз (`BLDDWN_U/D`).
+    pub scroll_down: Option<MenuButtonPair>,
+    /// `BLDDWN_X`.
+    pub scroll_down_disabled: Option<SimpleImage>,
+    /// Стрелка апгрейда влево (`UPGLFT_U/D`).
+    pub left: Option<SimpleImage>,
+    /// `UPGLFT_X`.
+    pub left_disabled: Option<SimpleImage>,
+    /// Стрелка апгрейда вправо (`UPGRGT_U/D`).
+    pub right: Option<SimpleImage>,
+    /// `UPGRGT_X`.
+    pub right_disabled: Option<SimpleImage>,
+    /// Иконка золота `I_GOLD` (колонка цен апгрейдов).
+    pub gold_icon: Option<SimpleImage>,
+    /// Недоступный фильтр (`CRGSELDX`).
+    pub filter_disabled: Option<SimpleImage>,
+    /// Фильтры домена (`SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`).
+    pub filters: [Option<MenuButtonPair>; 5],
+    /// Полосы `VERTRAW`/`VERTFUEL`/`VERTGOLD` (индекс — [`CargoBarKind`]).
+    pub bars: [Option<SimpleImage>; 3],
+    /// Иконки типов (`I_*`, первый кадр спрайта).
+    pub icons: Vec<(UnitType, SpriteFrame)>,
 }
 
-impl Mobilization {
-    /// Мобилизация команды: `team_gold = start_gold + clan credits` (0 у всех
-    /// кланов `SC_CLANS`).
-    pub fn new(team: TeamId, clan: TeamClan, start_gold: u32) -> Self {
+impl CargoMenuAssets {
+    /// Грузит ресурсы; отсутствие части — не ошибка (кнопка рисуется рамкой).
+    pub fn load(archive: &max_assets::res::ResArchive) -> Self {
+        let simple = |name: &str| -> Option<SimpleImage> {
+            archive.read(name).ok().and_then(|bytes| SimpleImage::decode(bytes).ok())
+        };
+        let pair = |up: &str, down: &str| -> Option<MenuButtonPair> {
+            Some(MenuButtonPair::new(simple(up)?, simple(down)?))
+        };
+        let icon = |unit: UnitType, name: &str| -> Option<(UnitType, SpriteFrame)> {
+            let bytes = archive.read(name).ok()?;
+            let sheet = decode_sprite(bytes).ok()?;
+            Some((unit, sheet.frame(0)?.clone()))
+        };
+
+        let mut icons = Vec::new();
+        for (unit, name) in UNIT_ICONS {
+            if let Some(entry) = icon(unit, name) {
+                icons.push(entry);
+            }
+        }
+
         Self {
-            team,
-            clan,
-            credits_start: start_gold,
-            credits: start_gold,
-            bought: Vec::new(),
-            free: DEFAULT_MISSION_LOADOUT.to_vec(),
-            selected: 0,
-            selected_bought: None,
-            status: String::new(),
+            background: archive
+                .read("CARGOPIC")
+                .ok()
+                .and_then(|bytes| BigImage::decode(bytes).ok()),
+            buy: pair("CRGBUY_U", "CRGBUY_D"),
+            buy_disabled: simple("CRGBUY_X"),
+            delete: pair("CRGDEL_U", "CRGDEL_D"),
+            delete_disabled: simple("CRGDEL_X"),
+            cancel: pair("BLDCAN_U", "BLDCAN_D"),
+            done: pair("BLDONE_U", "BLDONE_D"),
+            help: pair("BLDHLP_U", "BLDHLP_D"),
+            toggle: pair("CRGTOG_U", "CRGTOG_D"),
+            description: pair("BLDDES_U", "BLDDES_D"),
+            scroll_up: pair("BLDUP__U", "BLDUP__D"),
+            scroll_up_disabled: simple("BLDUP__X"),
+            scroll_down: pair("BLDDWN_U", "BLDDWN_D"),
+            scroll_down_disabled: simple("BLDDWN_X"),
+            left: simple("UPGLFT_U"),
+            left_disabled: simple("UPGLFT_X"),
+            right: simple("UPGRGT_U"),
+            right_disabled: simple("UPGRGT_X"),
+            gold_icon: simple("I_GOLD"),
+            filter_disabled: simple("CRGSELDX"),
+            filters: [
+                pair("SELGRD_U", "SELGRD_D"),
+                pair("SELAIR_U", "SELAIR_D"),
+                pair("SELSEA_U", "SELSEA_D"),
+                pair("SELBLD_U", "SELBLD_D"),
+                pair("SELCBT_U", "SELCBT_D"),
+            ],
+            bars: [
+                simple("VERTRAW"),
+                simple("VERTFUEL"),
+                simple("VERTGOLD"),
+            ],
+            icons,
         }
     }
 
-    /// Нужна ли фаза вообще: в C++ `CargoMenu` не открывается при нулевом
-    /// бюджете (`if (team_gold)` в `GameManager_PlayerMissionSetup`).
-    pub fn needed(start_gold: u32) -> bool {
-        start_gold > 0
+    /// Иконка типа (`I_*`, кадр 0).
+    pub fn icon(&self, unit: UnitType) -> Option<&SpriteFrame> {
+        self.icons
+            .iter()
+            .find(|(candidate, _)| *candidate == unit)
+            .map(|(_, frame)| frame)
     }
 
-    /// Итоговая загрузка: `TeamMissionSupplies::units` (бесплатная + купленная).
-    pub fn loadout(&self) -> Vec<TeamSupply> {
-        let mut loadout = self.free.clone();
-        loadout.extend(self.bought.iter().copied());
-        loadout
+    /// Есть ли фон и ключевые кнопки.
+    pub fn is_ready(&self) -> bool {
+        self.background.is_some() && self.done.is_some() && self.cancel.is_some()
     }
+}
 
-    /// Цена текущей строки списка «доступно».
-    pub fn selected_cost(&self) -> u32 {
-        unit_cost(
-            PURCHASE_UNITS[self.selected.min(PURCHASE_UNITS.len() - 1)],
-            self.clan,
-        )
-    }
+/// `Unit::GetIcon()` — ресурсы `I_*` из `SC_UNITS` (units.json), в порядке
+/// [`UnitType`]; типы без иконки (`INVALID_ID`) пропущены.
+pub const UNIT_ICONS: [(UnitType, &str); 71] = [
+    (UnitType::CommTower, "I_TRANSP"),
+    (UnitType::PowerStation, "I_POWSTN"),
+    (UnitType::PowerGenerator, "I_POWGEN"),
+    (UnitType::Barracks, "I_BARRCK"),
+    (UnitType::ShieldGenerator, "I_SHIELD"),
+    (UnitType::Radar, "I_RADAR"),
+    (UnitType::ADump, "I_SMSTOR"),
+    (UnitType::FDump, "I_SMFUEL"),
+    (UnitType::GoldSmelter, "I_SMVLT"),
+    (UnitType::Depot, "I_DEPOT"),
+    (UnitType::Hangar, "I_HANGAR"),
+    (UnitType::Dock, "I_DOCK"),
+    (UnitType::Connector, "I_CONNEC"),
+    (UnitType::Road, "I_ROAD"),
+    (UnitType::LandingPad, "I_LANDPD"),
+    (UnitType::Shipyard, "I_SHIPYD"),
+    (UnitType::LightVehiclePlant, "I_LGHTPL"),
+    (UnitType::HeavyVehiclePlant, "I_HVYPLT"),
+    (UnitType::SupportPlant, "I_LIFESP"),
+    (UnitType::AirUnitsPlant, "I_AIRPLT"),
+    (UnitType::Habitat, "I_HABITA"),
+    (UnitType::ResearchCenter, "I_RESEAR"),
+    (UnitType::Greenhouse, "I_GREENH"),
+    (UnitType::RecreationCenter, "I_RECCTR"),
+    (UnitType::TrainingHall, "I_TRNHLL"),
+    (UnitType::WaterPlatform, "I_WATER"),
+    (UnitType::GunTurret, "I_GUNTUR"),
+    (UnitType::AntiAir, "I_FXAA"),
+    (UnitType::ArtilleryTurret, "I_ARTYTR"),
+    (UnitType::AntiMissile, "I_FXROCK"),
+    (UnitType::Block, "I_BLOCK"),
+    (UnitType::Bridge, "I_BRIDGE"),
+    (UnitType::MiningStation, "I_MINING"),
+    (UnitType::LandMine, "I_LANDMN"),
+    (UnitType::SeaMine, "I_SEAMIN"),
+    (UnitType::MasterBuilder, "I_MASTER"),
+    (UnitType::Constructor, "I_CONTRC"),
+    (UnitType::Scout, "I_SCOUT"),
+    (UnitType::Tank, "I_TANK"),
+    (UnitType::AssaultGun, "I_ARTY"),
+    (UnitType::RocketLauncher, "I_ROCKET"),
+    (UnitType::MissileCrawler, "I_MISSIL"),
+    (UnitType::MobileAntiAir, "I_AA"),
+    (UnitType::MineLayer, "I_MNELAY"),
+    (UnitType::Surveyor, "I_SURVEY"),
+    (UnitType::Scanner, "I_SCANNR"),
+    (UnitType::SupplyTruck, "I_SPLYTR"),
+    (UnitType::GoldTruck, "I_GOLDTR"),
+    (UnitType::Engineer, "I_ENGINR"),
+    (UnitType::Bulldozer, "I_BULLDZ"),
+    (UnitType::RepairUnit, "I_REPAIR"),
+    (UnitType::FuelTruck, "I_FUELTR"),
+    (UnitType::PersonnelCarrier, "I_COLNST"),
+    (UnitType::Commando, "I_COMMAN"),
+    (UnitType::Infantry, "I_INFANT"),
+    (UnitType::FastBoat, "I_ESCORT"),
+    (UnitType::Corvette, "I_CORVET"),
+    (UnitType::Battleship, "I_GUNBT"),
+    (UnitType::Submarine, "I_SUB"),
+    (UnitType::SeaTransport, "I_SEATRN"),
+    (UnitType::MissileBoat, "I_MSLCR"),
+    (UnitType::SeaMineLayer, "I_SEAMNL"),
+    (UnitType::CargoShip, "I_CARGOS"),
+    (UnitType::Fighter, "I_FIGHTR"),
+    (UnitType::Bomber, "I_BOMBER"),
+    (UnitType::AirTransport, "I_AIRTRN"),
+    (UnitType::Awac, "I_AWAC"),
+    (UnitType::Juggernaut, "I_JUGGER"),
+    (UnitType::AlienTank, "I_ALNTAN"),
+    (UnitType::AlienAssaultGun, "I_ALNASG"),
+    (UnitType::AlienPlane, "I_ALNPLA"),
+];
 
-    /// `CargoMenu::BuyUnit`: купить выбранный юнит, если хватает кредитов.
-    pub fn buy_selected(&mut self) -> bool {
-        self.buy(self.selected)
-    }
+// ---------------------------------------------------------------------------
+// Отрисовка
+// ---------------------------------------------------------------------------
 
-    /// Покупка юнита по индексу списка `PURCHASE_UNITS`.
-    pub fn buy(&mut self, index: usize) -> bool {
-        let Some(&unit) = PURCHASE_UNITS.get(index) else {
-            return false;
-        };
-        let cost = unit_cost(unit, self.clan);
-
-        if cost > self.credits {
-            self.status = format!("Not enough credits: {} costs {cost}", unit_label(unit));
-            return false;
-        }
-
-        self.credits -= cost;
-        self.bought.push(TeamSupply {
-            unit_type: unit,
-            cargo: 0,
-        });
-        self.selected_bought = Some(self.bought.len() - 1);
-        self.status = format!("Bought {} for {cost} credits", unit_label(unit));
-        true
-    }
-
-    /// `CargoMenu::DeleteUnit`: продать последний купленный юнит.
-    ///
-    /// В C++ удалять можно только строки после бесплатной загрузки
-    /// (`index >= unit_count`), поэтому `free` не трогается никогда.
-    pub fn delete_selected(&mut self) -> bool {
-        let Some(index) = self.selected_bought else {
-            self.status = "Select a purchased unit to delete".to_string();
-            return false;
-        };
-
-        if index >= self.bought.len() {
-            return false;
-        }
-
-        let supply = self.bought.remove(index);
-        let refund = unit_cost(supply.unit_type, self.clan);
-
-        self.credits = self.credits.saturating_add(refund);
-        self.selected_bought = if self.bought.is_empty() {
-            None
-        } else {
-            Some(index.min(self.bought.len() - 1))
-        };
-        self.status = format!("Sold {} for {refund} credits", unit_label(supply.unit_type));
-        true
-    }
-
-    /// Стрелка вверх/вниз по списку «доступно».
-    pub fn step(&mut self, delta: i32) {
-        let count = PURCHASE_UNITS.len() as i32;
-        let next = (self.selected as i32 + delta).rem_euclid(count);
-
-        self.selected = next as usize;
-    }
-
-    /// Отрисовка экрана (1:1 координаты `cargomenu.cpp`).
+impl Mobilization {
+    /// Рисует экран (1:1 координаты `cargomenu.cpp`) в кадр 640×480.
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
-        menu: &MenuAssets,
+        assets: &Assets,
         status: &str,
         mouse: Option<(i32, i32)>,
     ) -> u32 {
-        let palette = &menu.palette;
-        let mut painted = match menu.cargopic.as_ref() {
-            Some(background) => crate::menu::draw_big_image(frame, background),
-            None => {
-                frame.fill_rect(
-                    PixelRect::new(0, 0, 640, 480),
-                    palette.rgba(crate::setup::TEXT),
-                );
-                0
-            }
+        if frame.width() != SCREEN_WIDTH as u32 || frame.height() != SCREEN_HEIGHT as u32 {
+            return 0;
+        }
+        let Some(cargo) = assets.cargo.as_ref() else {
+            return 0;
         };
-        let font = GnwFontId::Font5.font();
-        let header = palette.rgba(crate::setup::GREEN);
+        let Some(background) = cargo.background.as_ref() else {
+            return 0;
+        };
 
-        // Заголовок — по центру чёрной плашки CARGOPIC (C++ `Text_TextBox(…, 473,
-        // 7, 158, 18, COLOR_GREEN, true)`).
-        painted += draw_text_gnw_centered(
+        let palette = UiPalette::from_big_image(background);
+        let mut painted = draw_big_image(frame, background);
+
+        let font = GnwFontId::Font5.font();
+        let green = palette.rgba(crate::setup::GREEN);
+        let text = palette.rgba(crate::setup::TEXT);
+        let yellow = palette.rgba(0x04);
+        let chrome = palette.rgba(0x05);
+        let gold_font = palette.rgba(165);
+
+        // Заголовки и подписи.
+        painted += draw_text_gnw_centered(frame, TITLE, font, "Purchase Menu", green).max(0) as u32;
+        painted += draw_text_gnw(
             frame,
-            PixelRect::new(473, 7, 158, 18),
+            AVAILABLE_HEADER.ulx,
+            center_y(AVAILABLE_HEADER, font),
             font,
-            "Purchase Menu",
-            header,
+            "Available",
+            text,
         )
         .max(0) as u32;
+        painted += draw_text_right(
+            frame,
+            PRICE_COLUMN.lrx(),
+            center_y(AVAILABLE_HEADER, font),
+            font,
+            "Cost",
+            yellow,
+        );
+        draw_hline(frame, palette.rgba(0x05), 482, 625, AVAILABLE_LINE_Y);
+
         painted += draw_text_gnw_centered(
             frame,
-            PixelRect::new(PURCHASED_LEFT, 22, 118, 10),
+            PURCHASED_HEADER,
             font,
             "Purchased",
-            header,
+            text,
         )
         .max(0) as u32;
-        painted += draw_text_gnw(frame, 482, 57, font, "Available", header).max(0) as u32;
+        draw_hline(frame, chrome, 337, 455, PURCHASED_LINE_Y);
 
-        // Список «куплено»: бесплатная загрузка, затем покупки.
-        for (row, supply) in self.free.iter().chain(self.bought.iter()).enumerate() {
-            let y = PURCHASED_TOP + row as i32 * PURCHASED_ROW;
-
-            if y + PURCHASED_ROW > 230 {
-                break;
-            }
-
-            let selected = self
-                .selected_bought
-                .is_some_and(|index| index + self.free.len() == row);
-            let color = if selected {
-                palette.rgba(crate::setup::GREEN)
-            } else {
-                palette.rgba(crate::setup::TEXT)
-            };
-            let label = format!("{} ({})", unit_label(supply.unit_type), supply.cargo);
-
-            painted += draw_text_gnw(frame, PURCHASED_LEFT + 4, y, font, &label, color).max(0) as u32;
-        }
-
-        // Список «доступно»: 15 строк по 15 px. Цена — сразу за именем
-        // (`ReportStats_DrawNumber` в C++ рисует её у правого края строки, но
-        // окно списка 123 px, поэтому длинные имена упираются в цену).
-        for (row, unit) in PURCHASE_UNITS.iter().enumerate() {
-            let y = AVAILABLE_AREA.uly + row as i32 * AVAILABLE_ROW;
-            let color = if row == self.selected {
-                palette.rgba(crate::setup::GREEN)
-            } else {
-                palette.rgba(crate::setup::TEXT)
-            };
-            let price = unit_cost(*unit, self.clan).to_string();
-            let price_width = font.text_width(&price);
-            let max_label = (AVAILABLE_AREA.width - price_width - 8).max(12);
-            let label = fit_label(unit_label(*unit), max_label, font);
-            let name_width = font.text_width(&label);
-
-            painted +=
-                draw_text_gnw(frame, AVAILABLE_AREA.ulx, y, font, &label, color).max(0) as u32;
-
-            let price_x = AVAILABLE_AREA.ulx + name_width + 6;
-
-            painted +=
-                draw_text_gnw(frame, price_x, y, font, &price, palette.rgba(crate::setup::YELLOW.0))
-                    .max(0) as u32;
-        }
-
-        // Сводка под списками — координаты C++ (`_(ab7e)` Cost, `_(3201)` Credit,
-        // `_(fc09)` Cargo: 320/358/409, 283, ширина 48, центрирование).
-        let cargo: u16 = self.loadout().iter().map(|supply| supply.cargo).sum();
-        for (x, label, value) in [
-            (320, "Cost", self.selected_cost()),
-            (358, "Credit", self.credits),
-            (409, "Cargo", u32::from(cargo)),
+        painted += draw_text_gnw(
+            frame,
+            DESCRIPTION_LABEL.ulx + 1,
+            center_y(DESCRIPTION_LABEL, font),
+            font,
+            "Description",
+            gold_font,
+        )
+        .max(0) as u32;
+        for (rect, label) in [
+            (COST_LABEL, "Cost"),
+            (CREDIT_LABEL, "Credit"),
+            (CARGO_LABEL, "Cargo"),
         ] {
-            painted += draw_text_gnw_centered(
-                frame,
-                PixelRect::new(x, 283, 48, 16),
-                font,
-                label,
-                palette.rgba(crate::setup::TEXT),
-            )
-            .max(0) as u32;
-            painted += draw_text_gnw_centered(
-                frame,
-                PixelRect::new(x, 267, 48, 14),
-                font,
-                &value.to_string(),
-                palette.rgba(crate::setup::YELLOW.0),
-            )
-            .max(0) as u32;
+            painted +=
+                draw_text_gnw_centered(frame, rect, font, label, gold_font).max(0) as u32;
         }
 
+        // Значения Cost/Credit/Cargo в C++-порте не рисуются (остались только
+        // подписи); счётчик кредитов — число на полосе золота (`gold_background`),
+        // счётчик cargo — над слайдером. Добавлять числа над подписями нельзя:
+        // они попадают на полосу золота (361,276) и счётчик cargo (421,276).
+
+        // Портрет/статистика выбранного типа.
+        painted += self.draw_info(frame, assets, cargo, &palette);
+
+        // Списки.
+        painted += self.draw_type_list(frame, cargo, &palette);
+        painted += self.draw_loadout_list(frame, cargo, &palette);
+
+        // Колонка апгрейдов: стрелки + цены.
+        painted += self.draw_controls(frame, cargo, &palette);
+
+        // Cargo-слайдер и полоса золота.
+        painted += self.draw_gold_bar(frame, cargo, &palette);
+        painted += self.draw_cargo_bar(frame, cargo, &palette);
+
+        // Кнопки.
+        painted += draw_button(
+            frame,
+            &palette,
+            cargo.buy.as_ref(),
+            cargo.buy_disabled.as_ref(),
+            BUY_BUTTON,
+            "Buy",
+            mouse,
+            self.can_buy(),
+        );
+        painted += draw_button(
+            frame,
+            &palette,
+            cargo.delete.as_ref(),
+            cargo.delete_disabled.as_ref(),
+            DELETE_BUTTON,
+            "Delete",
+            mouse,
+            self.can_delete(),
+        );
+        painted += draw_button(
+            frame,
+            &palette,
+            cargo.cancel.as_ref(),
+            None,
+            CANCEL_BUTTON,
+            "Cancel",
+            mouse,
+            true,
+        );
+        painted += draw_button(
+            frame,
+            &palette,
+            cargo.done.as_ref(),
+            None,
+            DONE_BUTTON,
+            "Done",
+            mouse,
+            true,
+        );
+        painted += draw_button(
+            frame,
+            &palette,
+            cargo.help.as_ref(),
+            None,
+            HELP_BUTTON,
+            "",
+            mouse,
+            true,
+        );
+        painted += draw_filter_button(
+            frame,
+            cargo.description.as_ref(),
+            &palette,
+            DESCRIPTION_BUTTON,
+            self.description,
+        );
+
+        // Переключатель режима: обе подписи, цвет зависит от состояния
+        // (`SetCaption(834a, 20,0,80,15, DarkOrange, Gold)` и
+        // `SetCaption(e02a, 20,15,80,31)`).
+        painted += self.draw_toggle(frame, cargo, &palette);
+
+        // Фильтры домена.
+        for (index, filter) in [
+            UpgradeFilter::Ground,
+            UpgradeFilter::Air,
+            UpgradeFilter::Sea,
+            UpgradeFilter::Building,
+            UpgradeFilter::Combat,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            painted += draw_filter(frame, cargo, &palette, filter, index, self.filters[index], self.mode);
+        }
+
+        // Стрелки списков.
+        painted += draw_scroll(
+            frame,
+            cargo.scroll_up.as_ref(),
+            cargo.scroll_up_disabled.as_ref(),
+            &palette,
+            LIST_UP,
+            self.type_page > 0,
+            mouse,
+        );
+        painted += draw_scroll(
+            frame,
+            cargo.scroll_down.as_ref(),
+            cargo.scroll_down_disabled.as_ref(),
+            &palette,
+            LIST_DOWN,
+            self.type_page + AVAILABLE_ROWS < self.types.len(),
+            mouse,
+        );
+        painted += draw_scroll(
+            frame,
+            cargo.scroll_up.as_ref(),
+            cargo.scroll_up_disabled.as_ref(),
+            &palette,
+            PURCHASE_UP,
+            self.loadout_page > 0,
+            mouse,
+        );
+        painted += draw_scroll(
+            frame,
+            cargo.scroll_down.as_ref(),
+            cargo.scroll_down_disabled.as_ref(),
+            &palette,
+            PURCHASE_DOWN,
+            self.loadout_page + PURCHASED_ROWS < self.loadout_rows().len(),
+            mouse,
+        );
+
+        // Клановые бонусы (наше дополнение) и строка статуса.
         let clan_line = clan_summary(self.clan);
         painted += draw_text_gnw(
             frame,
@@ -410,7 +1770,7 @@ impl Mobilization {
             466,
             font,
             &clan_line,
-            palette.rgba(crate::setup::GREEN),
+            green,
         )
         .max(0) as u32;
 
@@ -425,57 +1785,746 @@ impl Mobilization {
             451,
             font,
             &line.chars().take(44).collect::<String>(),
-            palette.rgba(crate::setup::TEXT),
+            text,
         )
         .max(0) as u32;
 
-        // Кнопки: Buy/Delete/Cancel/Done (картинки C++).
-        for (pair, rect, label) in [
-            (menu.cargo_buy.as_ref(), BUY_BUTTON, "Buy"),
-            (menu.cargo_delete.as_ref(), DELETE_BUTTON, "Delete"),
-            (menu.cargo_cancel.as_ref(), CANCEL_BUTTON, "Cancel"),
-            (menu.cargo_done.as_ref(), DONE_BUTTON, "Done"),
-        ] {
-            if let Some(pair) = pair {
-                let hovered = mouse.is_some_and(|(x, y)| rect.contains(x, y));
-                painted += crate::menu::draw_image_button(
-                    frame,
-                    palette,
-                    pair.image(false),
-                    pair.image(true),
-                    rect,
-                    label,
-                    hovered,
+        painted
+    }
+
+    /// Портрет + таблица статистики.
+    fn draw_info(
+        &self,
+        frame: &mut RgbaBuffer,
+        assets: &Assets,
+        _cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let Some(unit) = self.info else {
+            return 0;
+        };
+        let mut painted = 0;
+
+        // Портрет: спрайт юнита 2× (C++ — big image `P_*`/FLIC).
+        if let Some(sprite) = assets.sprite(unit) {
+            if let Some(sprite_frame) = sprite.frame_for(0, 0) {
+                let colors = TeamColors::ALL
+                    .get(self.team.0 as usize)
+                    .copied()
+                    .unwrap_or(TeamColors::Derelict);
+                let renderer = max_render::SpriteRenderer::new(
+                    &assets.palette,
+                    &assets.brightness,
+                    ColorLut::for_team(colors),
+                    max_render::FULL_BRIGHTNESS_LEVEL,
                 );
-            } else {
-                // Без ресурса — честная рамка с подписью.
-                frame.fill_rect(rect, palette.rgba(crate::setup::TEXT));
-                draw_text_gnw_centered(
+                renderer.draw_unit_scaled(
                     frame,
-                    rect,
-                    GnwFontId::Font1.font(),
-                    label,
-                    palette.rgba(crate::setup::GREEN),
+                    sprite_frame,
+                    None,
+                    (PORTRAIT.ulx + 140, PORTRAIT.uly + 120),
+                    (0, 0),
+                    128,
                 );
                 painted += 1;
             }
         }
 
+        let font = GnwFontId::Font5.font();
+        let green = palette.rgba(crate::setup::GREEN);
+        let text = palette.rgba(crate::setup::TEXT);
+        let yellow = palette.rgba(0x04);
+
+        // Имя типа — в области портрета (в C++ там начинается описание
+        // `GetDescription()`; текстов в данных клиента нет).
+        painted += draw_text_gnw(
+            frame,
+            PORTRAIT.ulx + 5,
+            PORTRAIT.uly + 4,
+            font,
+            unit_label(unit),
+            green,
+        )
+        .max(0) as u32;
+
+        for row in self.stats_rows() {
+            let label = fit_label(&row.label, 60, font);
+            painted += draw_text_gnw(
+                frame,
+                STATS.ulx + 3,
+                row.y + 4,
+                font,
+                &label,
+                text,
+            )
+            .max(0) as u32;
+            painted += draw_text_right(
+                frame,
+                STATS.ulx + 120,
+                row.y + 4,
+                font,
+                &row.value,
+                yellow,
+            );
+        }
+
+        painted
+    }
+
+    /// Список «Available» с иконками и ценами.
+    fn draw_type_list(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let text = palette.rgba(crate::setup::TEXT);
+        let yellow = palette.rgba(0x04);
+        let white = palette.rgba(0xFF);
+        let lut = team_lut(self.team);
+        let mut painted = 0;
+
+        for row in 0..AVAILABLE_ROWS {
+            let index = self.type_page + row;
+            let Some(&unit) = self.types.get(index) else {
+                break;
+            };
+            let y = AVAILABLE_AREA.uly + row as i32 * LIST_ROW;
+
+            painted += draw_text_gnw(
+                frame,
+                AVAILABLE_AREA.ulx + 35,
+                center_y(PixelRect::new(0, y, 0, LIST_ROW), font),
+                font,
+                &fit_label(unit_label(unit), 88, font),
+                text,
+            )
+            .max(0) as u32;
+            painted += draw_text_right(
+                frame,
+                PRICE_COLUMN.lrx(),
+                center_y(PixelRect::new(0, y, 0, LIST_ROW), font),
+                font,
+                &self.list_price(unit).to_string(),
+                yellow,
+            );
+
+            if let Some(icon) = cargo.icon(unit) {
+                let stationary = unit_type_flags(unit) & unit_flags::STATIONARY != 0;
+                let zoom = if stationary { 16 } else { 32 };
+                painted += draw_icon(
+                    frame,
+                    palette,
+                    icon,
+                    (AVAILABLE_AREA.ulx + 16, y + 16),
+                    zoom,
+                    &lut,
+                );
+            }
+
+            if index == self.type_selected {
+                painted += draw_selection(frame, white, AVAILABLE_AREA.ulx, y, AVAILABLE_AREA.width, LIST_ROW, 1);
+            }
+        }
+
+        painted
+    }
+
+    /// Список «Purchased» (`CargoSelector::Draw`).
+    fn draw_loadout_list(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let text = palette.rgba(crate::setup::TEXT);
+        let white = palette.rgba(0xFF);
+        let lut = team_lut(self.team);
+        let rows = self.loadout_rows();
+        let mut painted = 0;
+
+        for row in 0..PURCHASED_ROWS {
+            let index = self.loadout_page + row;
+            let Some(supply) = rows.get(index).copied() else {
+                break;
+            };
+            let y = PURCHASED_AREA.uly + row as i32 * LIST_ROW;
+            let mut count = 1;
+            for earlier in rows.iter().take(index) {
+                if earlier.unit_type == supply.unit_type {
+                    count += 1;
+                }
+            }
+            let mut label = format!("{} {count}", unit_label(supply.unit_type));
+            let storage = self.actual[supply.unit_type as usize].get_attribute(ATTRIB_STORAGE);
+            if storage > 0 {
+                if supply.cargo == 0 {
+                    label.push_str(" (Empty)");
+                } else if i32::from(supply.cargo) < storage {
+                    label.push_str(&match supply.unit_type {
+                        UnitType::FuelTruck => format!(" ({} Fuel)", supply.cargo),
+                        UnitType::GoldTruck => format!(" ({} Gold)", supply.cargo),
+                        _ => format!(" ({} Mat.)", supply.cargo),
+                    });
+                } else {
+                    label.push_str(" (Full)");
+                }
+            }
+
+            painted += draw_wrapped(
+                frame,
+                PixelRect::new(PURCHASED_AREA.ulx + 32, y, PURCHASED_AREA.width - 32, LIST_ROW),
+                font,
+                &label,
+                text,
+                3,
+            );
+
+            if let Some(icon) = cargo.icon(supply.unit_type) {
+                let stationary = unit_type_flags(supply.unit_type) & unit_flags::STATIONARY != 0;
+                let zoom = if stationary { 16 } else { 32 };
+                painted += draw_icon(frame, palette, icon, (PURCHASED_AREA.ulx + 16, y + 16), zoom, &lut);
+            }
+
+            if index == self.loadout_selected {
+                painted += draw_selection(
+                    frame,
+                    white,
+                    PURCHASED_AREA.ulx,
+                    y,
+                    PURCHASED_AREA.width,
+                    LIST_ROW,
+                    2,
+                );
+            }
+        }
+
+        painted
+    }
+
+    /// Колонка апгрейдов: стрелки и цены (`AbstractUpgradeMenu::DrawUnitStats`).
+    fn draw_controls(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let chrome = palette.rgba(0x05);
+        let mut painted = 0;
+
+        for row in 0..self.controls.len() {
+            let (left, right) = match self.control_arrows(row) {
+                Some(rects) => rects,
+                None => break,
+            };
+            let quote = self.quote(row);
+            let can_up = quote
+                .as_ref()
+                .is_some_and(|quote| quote.can_increase(self.credits));
+            let can_down = quote.as_ref().is_some_and(UpgradeQuote::can_decrease);
+
+            painted += draw_upgrade_arrow(
+                frame,
+                palette,
+                cargo.left.as_ref(),
+                cargo.left_disabled.as_ref(),
+                left,
+                can_down,
+            );
+            painted += draw_upgrade_arrow(
+                frame,
+                palette,
+                cargo.right.as_ref(),
+                cargo.right_disabled.as_ref(),
+                right,
+                can_up,
+            );
+
+            if let Some(quote) = quote {
+                let cost = quote.cost();
+                if cost > 0 && cost < UPGRADE_COST_LIMIT {
+                    // `ReportStats_DrawNumber` в `cost_background`: число
+                    // выровнено по правому краю x=345, иконка — x=346.
+                    painted += draw_text_right(
+                        frame,
+                        COST.ulx + 24,
+                        left.uly + 5,
+                        font,
+                        &cost.to_string(),
+                        chrome,
+                    );
+                    if let Some(icon) = cargo.gold_icon.as_ref() {
+                        painted += blit_simple(frame, palette, icon, COST.ulx + 25, left.uly + 3, true);
+                    }
+                }
+            }
+        }
+
+        painted
+    }
+
+    /// Полоса золота (`gold_background` + `VERTGOLD`).
+    fn draw_gold_bar(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let mut painted = 0;
+        let inner = GOLD_BAR.height - 25;
+        let fill = if self.credits_start > 0 {
+            ((i64::from(inner) * i64::from(self.credits)) / i64::from(self.credits_start))
+                .clamp(0, i64::from(inner)) as i32
+        } else {
+            0
+        };
+
+        if let Some(bar) = cargo.bars[2].as_ref() {
+            painted += draw_vertical_bar(
+                frame,
+                palette,
+                bar,
+                GOLD_BAR.ulx,
+                GOLD_BAR.uly + 25,
+                GOLD_BAR.width,
+                inner,
+                fill,
+            );
+        }
+
+        painted += draw_text_gnw_centered(
+            frame,
+            PixelRect::new(GOLD_BAR.ulx, GOLD_BAR.uly, GOLD_BAR.width, font.height()),
+            font,
+            &self.credits.to_string(),
+            palette.rgba(0x05),
+        )
+        .max(0) as u32;
+
+        painted
+    }
+
+    /// Cargo-слайдер (`LimitedScrollbar::RefreshScreen`).
+    fn draw_cargo_bar(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let capacity = self.cargo_capacity();
+        let value = self.cargo_value();
+        let fill = if capacity != 0 {
+            (value * CARGO_BAR.height) / capacity
+        } else {
+            0
+        }
+        .clamp(0, CARGO_BAR.height);
+        let kind = self.cargo_bar_kind();
+        let mut painted = 0;
+
+        if let Some(bar) = cargo.bars[kind as usize].as_ref() {
+            painted += draw_vertical_bar(
+                frame,
+                palette,
+                bar,
+                CARGO_BAR.ulx,
+                CARGO_BAR.uly,
+                CARGO_BAR.width,
+                CARGO_BAR.height,
+                fill,
+            );
+        }
+
+        painted += draw_text_gnw_centered(
+            frame,
+            CARGO_AMOUNT,
+            font,
+            &(value * 5).to_string(),
+            palette.rgba(0xFF),
+        )
+        .max(0) as u32;
+
+        painted
+    }
+
+    /// Переключатель `CRGTOG`: обе подписи, цвета — как `SetCaption` C++.
+    fn draw_toggle(
+        &self,
+        frame: &mut RgbaBuffer,
+        cargo: &CargoMenuAssets,
+        palette: &UiPalette,
+    ) -> u32 {
+        let font = GnwFontId::Font5.font();
+        let down = self.mode == CargoMode::Upgrade;
+        let mut painted = 0;
+
+        if let Some(pair) = cargo.toggle.as_ref() {
+            painted += blit_simple(
+                frame,
+                palette,
+                pair.image(down),
+                TOGGLE_BUTTON.ulx,
+                TOGGLE_BUTTON.uly,
+                true,
+            );
+        }
+
+        // up: Buy Units — DarkOrange (5), Upgrades — Gold (165);
+        // down: наоборот.
+        let (buy_color, upgrade_color) = if down {
+            (palette.rgba(165), palette.rgba(0x05))
+        } else {
+            (palette.rgba(0x05), palette.rgba(165))
+        };
+        painted += draw_text_gnw_centered(
+            frame,
+            PixelRect::new(TOGGLE_BUTTON.ulx + 20, TOGGLE_BUTTON.uly, 80, 15),
+            font,
+            "Buy Units",
+            buy_color,
+        )
+        .max(0) as u32;
+        painted += draw_text_gnw_centered(
+            frame,
+            PixelRect::new(TOGGLE_BUTTON.ulx + 20, TOGGLE_BUTTON.uly + 15, 80, 16),
+            font,
+            "Upgrades",
+            upgrade_color,
+        )
+        .max(0) as u32;
+
         painted
     }
 }
 
-/// Обрезает имя по ширине, добавляя `..` (чтобы «Rocket Launcher» не выглядел
-/// как «Rocket Launch», а честно читался как сокращение).
+// ---------------------------------------------------------------------------
+// Помощники отрисовки
+// ---------------------------------------------------------------------------
+
+/// Цвет команды (LUT перекраски командных слотов).
+fn team_lut(team: TeamId) -> ColorLut {
+    ColorLut::for_team(
+        TeamColors::ALL
+            .get(team.0 as usize)
+            .copied()
+            .unwrap_or(TeamColors::Derelict),
+    )
+}
+
+/// Вертикальная координата однострочного текста по центру прямоугольника
+/// (`Text_TextBox`: `((height + 1) - font_height) / 2`).
+fn center_y(rect: PixelRect, font: &max_render::text::GnwFont) -> i32 {
+    rect.uly + ((rect.height + 1) - font.height()).max(0) / 2
+}
+
+/// Горизонтальная линия (C++ `draw_line`).
+fn draw_hline(frame: &mut RgbaBuffer, color: Rgba, x1: i32, x2: i32, y: i32) {
+    for x in x1..=x2 {
+        frame.set(x, y, color);
+    }
+}
+
+/// Текст, выровненный по правому краю `right` (`ReportStats_DrawText`).
+fn draw_text_right(
+    frame: &mut RgbaBuffer,
+    right: i32,
+    y: i32,
+    font: &max_render::text::GnwFont,
+    text: &str,
+    color: Rgba,
+) -> u32 {
+    let width = font.text_width(text);
+    draw_text_gnw(frame, right - width, y, font, text, color).max(0) as u32
+}
+
+/// Текст по центру прямоугольника с переносом и вертикальным центрированием
+/// (`Text_TextBox`), не больше `max_rows` строк.
+fn draw_wrapped(
+    frame: &mut RgbaBuffer,
+    rect: PixelRect,
+    font: &max_render::text::GnwFont,
+    text: &str,
+    color: Rgba,
+    max_rows: usize,
+) -> u32 {
+    let mut lines = wrap_gnw_text(text, rect.width);
+    if lines.len() > max_rows {
+        lines.truncate(max_rows);
+        if let Some(last) = lines.last_mut() {
+            last.push_str("..");
+        }
+    }
+    let rows = lines.len() as i32;
+    let mut y = rect.uly + ((rect.height + 1) - font.height() * rows).max(0) / 2;
+    let mut painted = 0;
+
+    for line in &lines {
+        painted += draw_text_gnw(frame, rect.ulx, y, font, line, color).max(0) as u32;
+        y += font.height();
+    }
+
+    painted
+}
+
+/// Рамка выбранной строки (порт `GameManager_DrawUnitSelector`: 1 px, цвет
+/// 0xFF; у списка «Purchased» — двойная).
+fn draw_selection(
+    frame: &mut RgbaBuffer,
+    color: Rgba,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    thickness: i32,
+) -> u32 {
+    let mut painted = 0;
+
+    for step in 0..thickness {
+        let left = x + step;
+        let top = y + step;
+        let right = x + width - 1 - step;
+        let bottom = y + height - 1 - step;
+
+        for px in left..=right {
+            if frame.set(px, top, color) {
+                painted += 1;
+            }
+            if frame.set(px, bottom, color) {
+                painted += 1;
+            }
+        }
+        for py in top..=bottom {
+            if frame.set(left, py, color) {
+                painted += 1;
+            }
+            if frame.set(right, py, color) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// Кнопка: картинка (или честная рамка), при недоступности — `_X`.
+#[allow(clippy::too_many_arguments)]
+fn draw_button(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    pair: Option<&MenuButtonPair>,
+    disabled: Option<&SimpleImage>,
+    rect: PixelRect,
+    label: &str,
+    _mouse: Option<(i32, i32)>,
+    enabled: bool,
+) -> u32 {
+    let image = if enabled {
+        pair.map(|pair| pair.image(false))
+    } else {
+        disabled.or_else(|| pair.map(|pair| pair.image(false)))
+    };
+
+    match image {
+        Some(image) => {
+            let down = pair.map(|pair| pair.image(true));
+            let down = down.unwrap_or(image);
+            draw_image_button(frame, palette, image, down, rect, label, false)
+        }
+        None => {
+            let mut painted = frame.fill_rect(rect, palette.rgba(crate::setup::TEXT));
+            if !label.is_empty() {
+                painted += draw_text_gnw_centered(
+                    frame,
+                    rect,
+                    GnwFontId::Font1.font(),
+                    label,
+                    palette.rgba(crate::setup::GREEN),
+                )
+                .max(0) as u32;
+            }
+            painted
+        }
+    }
+}
+
+/// Фильтр домена: `_D` (нажат) для активного, `CRGSELDX` в режиме покупки.
+fn draw_filter(
+    frame: &mut RgbaBuffer,
+    cargo: &CargoMenuAssets,
+    palette: &UiPalette,
+    filter: UpgradeFilter,
+    index: usize,
+    active: bool,
+    mode: CargoMode,
+) -> u32 {
+    let rect = filter.rect();
+
+    if mode == CargoMode::Buy {
+        if let Some(disabled) = cargo.filter_disabled.as_ref() {
+            return blit_simple(frame, palette, disabled, rect.ulx, rect.uly, true);
+        }
+        return 0;
+    }
+
+    match cargo.filters.get(index).and_then(|pair| pair.as_ref()) {
+        Some(pair) => blit_simple(
+            frame,
+            palette,
+            pair.image(active),
+            rect.ulx,
+            rect.uly,
+            true,
+        ),
+        None => 0,
+    }
+}
+
+/// Кнопка-переключатель (`BLDDES`): `_D`, когда описание включено.
+fn draw_filter_button(
+    frame: &mut RgbaBuffer,
+    pair: Option<&MenuButtonPair>,
+    palette: &UiPalette,
+    rect: PixelRect,
+    active: bool,
+) -> u32 {
+    match pair {
+        Some(pair) => blit_simple(frame, palette, pair.image(active), rect.ulx, rect.uly, true),
+        None => 0,
+    }
+}
+
+/// Стрелка скролла списка с `_X`-вариантом.
+fn draw_scroll(
+    frame: &mut RgbaBuffer,
+    pair: Option<&MenuButtonPair>,
+    disabled: Option<&SimpleImage>,
+    palette: &UiPalette,
+    rect: PixelRect,
+    enabled: bool,
+    _mouse: Option<(i32, i32)>,
+) -> u32 {
+    if enabled {
+        match pair {
+            Some(pair) => blit_simple(frame, palette, pair.image(false), rect.ulx, rect.uly, true),
+            None => 0,
+        }
+    } else if let Some(disabled) = disabled {
+        blit_simple(frame, palette, disabled, rect.ulx, rect.uly, true)
+    } else {
+        0
+    }
+}
+
+/// Стрелка апгрейда (`UPGLFT`/`UPGRGT`, недоступная — `*_X`).
+fn draw_upgrade_arrow(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    image: Option<&SimpleImage>,
+    disabled: Option<&SimpleImage>,
+    rect: PixelRect,
+    enabled: bool,
+) -> u32 {
+    let chosen = if enabled { image } else { disabled.or(image) };
+    match chosen {
+        Some(chosen) => blit_simple(frame, palette, chosen, rect.ulx, rect.uly, true),
+        None => 0,
+    }
+}
+
+/// Полоса (`LoadVerticalBar`): 20-пиксельная текстура снизу вверх.
+#[allow(clippy::too_many_arguments)]
+fn draw_vertical_bar(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    bar: &SimpleImage,
+    x: i32,
+    y: i32,
+    width: i32,
+    capacity: i32,
+    fill: i32,
+) -> u32 {
+    if fill <= 0 || capacity <= 0 {
+        return 0;
+    }
+
+    let sprite_width = bar.width as i32;
+    let sprite_height = bar.height as i32;
+    let fill = fill.min(sprite_height).min(capacity);
+    let offset = (width - sprite_width).max(0) / 2;
+    let mut painted = 0;
+
+    for row in 0..fill {
+        let target_y = y + capacity - fill + row;
+        for column in 0..sprite_width {
+            let Some(index) = bar.pixel(column as u32, row as u32) else {
+                continue;
+            };
+            if index == bar.transparent {
+                continue;
+            }
+            if frame.set(x + offset + column, target_y, palette.rgba(index)) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// Иконка юнита (`ReportStats_DrawListItemIcon`): кадр с горячей точкой в
+/// центре, масштаб `zoom` (64 — 1:1), перекраска командных слотов.
+fn draw_icon(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    icon: &SpriteFrame,
+    anchor: (i32, i32),
+    zoom: u32,
+    lut: &ColorLut,
+) -> u32 {
+    let zoom = zoom.max(1);
+    let width = ((u32::from(icon.width) * zoom) / 64).max(1) as i32;
+    let height = ((u32::from(icon.height) * zoom) / 64).max(1) as i32;
+    let ulx = anchor.0 - ((i32::from(icon.hotx) * zoom as i32) / 64);
+    let uly = anchor.1 - ((i32::from(icon.hoty) * zoom as i32) / 64);
+    let mut painted = 0;
+
+    for y in 0..height {
+        let source_y = ((y as i64 * 64) / i64::from(zoom)) as u32;
+        let source_y = source_y.min(u32::from(icon.height).saturating_sub(1));
+        for x in 0..width {
+            let source_x = ((x as i64 * 64) / i64::from(zoom)) as u32;
+            let source_x = source_x.min(u32::from(icon.width).saturating_sub(1));
+            let Some(index) = icon.pixel(source_x, source_y) else {
+                continue;
+            };
+            if frame.set(ulx + x, uly + y, palette.rgba(lut.map(index))) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// Обрезка имени по ширине (как `Text_Blit` с `swidth`).
 fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
     }
 
-    let mut out = text.to_string();
-
-    while !out.is_empty() && font.text_width(&format!("{out}..")) > max_width {
-        out.pop();
+    let mut out = String::new();
+    for character in text.chars() {
+        let mut candidate = out.clone();
+        candidate.push(character);
+        if font.text_width(&format!("{candidate}..")) > max_width {
+            break;
+        }
+        out = candidate;
     }
 
     format!("{out}..")
@@ -485,29 +2534,84 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 mod tests {
     use super::*;
 
+    fn mobilization() -> Mobilization {
+        Mobilization::new(TeamId::RED, TeamClan::Random, 150)
+    }
+
     #[test]
-    fn purchase_costs_match_the_cpp_formula() {
-        // `CargoMenu::BuyUnit`: 3 * ATTRIB_TURNS (`cargo.cpp:168`), таблица
-        // `SC_ATTRI`: CONSTRCT 8, ENGINEER 6, TANK 4, SURVEYOR 3.
+    fn purchase_list_matches_cargo_menu_unit_types1() {
+        assert_eq!(PURCHASE_UNITS.len(), 15, "CargoMenu::unit_types1");
+        assert_eq!(
+            PURCHASE_UNITS,
+            [
+                UnitType::Constructor,
+                UnitType::Engineer,
+                UnitType::Surveyor,
+                UnitType::Scout,
+                UnitType::Scanner,
+                UnitType::Tank,
+                UnitType::AssaultGun,
+                UnitType::RocketLauncher,
+                UnitType::MissileCrawler,
+                UnitType::MineLayer,
+                UnitType::RepairUnit,
+                UnitType::SupplyTruck,
+                UnitType::FuelTruck,
+                UnitType::MobileAntiAir,
+                UnitType::GoldTruck,
+            ]
+        );
+        assert_eq!(mobilization().types, PURCHASE_UNITS.to_vec());
+    }
+
+    #[test]
+    fn purchase_prices_are_three_times_turns() {
+        // `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1) * turns`
+        // (`SC_ATTRI`: CONSTRCT 8, ENGINEER 6, TANK 4, SURVEYOR 3).
         assert_eq!(unit_cost(UnitType::Constructor, TeamClan::Random), 24);
         assert_eq!(unit_cost(UnitType::Engineer, TeamClan::Random), 18);
         assert_eq!(unit_cost(UnitType::Tank, TeamClan::Random), 12);
         assert_eq!(unit_cost(UnitType::Surveyor, TeamClan::Random), 9);
-        assert_eq!(PURCHASE_UNITS.len(), 15, "CargoMenu::unit_types1");
         assert_eq!(LANDPLT_RAW_CONSUMPTION, 3);
+
+        let mobilization = mobilization();
+        for unit in PURCHASE_UNITS {
+            assert_eq!(
+                mobilization.price(unit),
+                LANDPLT_RAW_CONSUMPTION
+                    * base_unit_values(unit).get_attribute(ATTRIB_TURNS).max(0) as u32,
+                "{unit:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_prices_follow_unit_flags() {
+        let mobilization = mobilization();
+
+        // Мобильные — ставка LANDPLT (3), здания — CONSTRCT (2), пехота —
+        // TRAINHAL (1).
+        assert_eq!(mobilization.list_price(UnitType::Tank), 12);
+        assert_eq!(mobilization.list_price(UnitType::Commando), 9);
+        assert_eq!(mobilization.list_price(UnitType::Infantry), 2);
+        assert_eq!(mobilization.list_price(UnitType::MineLayer), 9);
+        assert_eq!(
+            mobilization.list_price(UnitType::PowerGenerator),
+            8,
+            "4 хода * 2"
+        );
+        assert_eq!(mobilization.list_price(UnitType::CommTower), 24);
     }
 
     #[test]
     fn clan_tradeoffs_change_the_price() {
-        // Musashi: TANK «Turns to build» −? — цена считается по текущим
-        // значениям команды, поэтому обязана совпадать с `team_base_values`.
         let base = unit_cost(UnitType::Tank, TeamClan::Random);
         let musashi = unit_cost(UnitType::Tank, TeamClan::Musashi);
 
         assert_eq!(
             musashi,
             LANDPLT_RAW_CONSUMPTION
-                * max_core::unit_values::team_base_values(TeamClan::Musashi)[UnitType::Tank as usize]
+                * team_base_values(TeamClan::Musashi)[UnitType::Tank as usize]
                     .get_attribute(ATTRIB_TURNS)
                     .max(0) as u32
         );
@@ -515,14 +2619,92 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_list_is_the_full_filtered_set() {
+        let mobilization = mobilization();
+        let mut upgrade = mobilization.clone();
+        upgrade.toggle_mode();
+
+        assert_eq!(upgrade.mode, CargoMode::Upgrade);
+        assert!(
+            upgrade.types.len() > PURCHASE_UNITS.len(),
+            "список модернизации шире списка покупки: {}",
+            upgrade.types.len()
+        );
+        // Строится командой и апгрейдится.
+        for unit in [
+            UnitType::Constructor,
+            UnitType::Tank,
+            UnitType::PowerGenerator,
+            UnitType::Shipyard,
+            UnitType::Fighter,
+            UnitType::LandMine,
+            UnitType::SeaMine,
+            UnitType::Commando,
+            UnitType::Infantry,
+        ] {
+            assert!(upgrade.types.contains(&unit), "{unit:?}");
+        }
+        // Road не UPGRADABLE, мины — через постановщика (уже включены), а
+        // ракеты/взрывы/обломки не строятся.
+        for unit in [
+            UnitType::Road,
+            UnitType::Rocket,
+            UnitType::Torpedo,
+            UnitType::LargeRubble,
+            UnitType::LandExplosion,
+            UnitType::DeadWaldo,
+        ] {
+            assert!(!upgrade.types.contains(&unit), "{unit:?}");
+        }
+        assert_eq!(upgrade.types.len(), upgrade_types(&mobilization.filters).len());
+    }
+
+    #[test]
+    fn upgrade_filters_switch_the_list() {
+        let mut mobilization = mobilization();
+        mobilization.toggle_mode();
+        let all = mobilization.types.len();
+
+        // Только наземные.
+        mobilization.filters = [true, false, false, false, false];
+        mobilization.rebuild_types();
+        let ground = mobilization.types.len();
+        assert!(ground > 0 && ground < all, "ground {ground} из {all}");
+
+        // Только боевые (с атакой).
+        mobilization.filters = [true, true, true, true, true];
+        mobilization.rebuild_types();
+        assert!(mobilization.types.iter().all(|unit| {
+            base_unit_values(*unit).get_attribute(ATTRIB_ATTACK) > 0
+        }));
+        assert!(mobilization.types.len() < all);
+
+        // Все домены выключены — пусто (C++: class_matches ложно).
+        mobilization.filters = [false, false, false, false, true];
+        mobilization.rebuild_types();
+        assert!(mobilization.types.is_empty());
+    }
+
+    #[test]
     fn buying_and_selling_conserves_credits() {
-        let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
+        let mut mobilization = mobilization();
 
         assert!(mobilization.buy(0), "Constructor за 24 кредита");
         assert_eq!(mobilization.credits, 126);
         assert_eq!(mobilization.bought.len(), 1);
+        assert_eq!(mobilization.loadout_selected, 3);
+        assert_eq!(mobilization.info, Some(UnitType::Constructor));
+
+        // Cargo покупается по 1 кредиту за 5 единиц: Constructor (storage 60)
+        // может взять 12 блоков.
+        let cargo_row = mobilization.loadout_selected;
+        assert_eq!(mobilization.cargo(cargo_row), 0);
+        mobilization.set_cargo_value(4);
+        assert_eq!(mobilization.cargo(cargo_row), 20);
+        assert_eq!(mobilization.credits, 122);
 
         assert!(mobilization.delete_selected());
+        // Возврат: цена (24) + cargo/5 (4).
         assert_eq!(mobilization.credits, 150);
         assert!(mobilization.bought.is_empty());
         assert_eq!(
@@ -543,12 +2725,148 @@ mod tests {
     }
 
     #[test]
-    fn delete_never_removes_the_free_loadout() {
-        let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
+    fn free_loadout_cannot_be_sold_or_unloaded() {
+        let mut mobilization = mobilization();
 
-        mobilization.selected_bought = Some(0);
-        assert!(!mobilization.delete_selected(), "удалять нечего");
+        mobilization.select_loadout(0);
+        assert!(!mobilization.delete_selected(), "бесплатная загрузка");
         assert_eq!(mobilization.loadout(), DEFAULT_MISSION_LOADOUT.to_vec());
+        assert_eq!(mobilization.cargo_capacity(), 12, "60 / 5");
+        mobilization.set_cargo_value(0);
+        assert_eq!(
+            mobilization.cargo(0),
+            40,
+            "xfer_take_max не даёт снять бесплатный cargo"
+        );
+    }
+
+    #[test]
+    fn gold_truck_has_no_cargo_slider() {
+        let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
+        let index = PURCHASE_UNITS
+            .iter()
+            .position(|unit| *unit == UnitType::GoldTruck)
+            .unwrap();
+        assert!(mobilization.buy(index));
+        assert_eq!(mobilization.cargo_capacity(), 0, "GOLDTRCK: free_capacity 0");
+        mobilization.set_cargo_value(8);
+        assert_eq!(mobilization.cargo(mobilization.loadout_selected), 0);
+    }
+
+    #[test]
+    fn cargo_slider_material_depends_on_type() {
+        let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
+
+        assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Raw, "Constructor");
+        mobilization.select_loadout(1);
+        assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Raw, "Engineer");
+
+        let fuel = PURCHASE_UNITS
+            .iter()
+            .position(|unit| *unit == UnitType::FuelTruck)
+            .unwrap();
+        assert!(mobilization.buy(fuel));
+        assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Fuel);
+
+        let gold = PURCHASE_UNITS
+            .iter()
+            .position(|unit| *unit == UnitType::GoldTruck)
+            .unwrap();
+        assert!(mobilization.buy(gold));
+        assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Gold);
+    }
+
+    #[test]
+    fn cargo_slider_click_matches_scrollbar_formula() {
+        let mut mobilization = mobilization();
+        mobilization.select_loadout(0); // Constructor, cargo 40/60 (8/12 блоков)
+
+        // Клик у самого низа — 0 блоков, но бесплатный cargo не снимается.
+        assert!(mobilization.click_cargo(CARGO_BAR.ulx + 2, CARGO_BAR.lry() - 1));
+        assert_eq!(mobilization.cargo(0), 40);
+
+        // Клик у самого верха — ёмкость (12 блоков).
+        assert!(mobilization.click_cargo(CARGO_BAR.ulx + 2, CARGO_BAR.uly));
+        assert_eq!(mobilization.cargo(0), 60);
+        assert_eq!(mobilization.credits, 150 - 4, "4 блока * 1 кредит");
+    }
+
+    #[test]
+    fn upgrades_change_all_units_of_the_type() {
+        let mut mobilization = mobilization();
+        mobilization.select_loadout(0); // Constructor
+
+        // Конструктор: armor, hits, scan, speed (после пропусков storage и
+        // расхода).
+        let rows: Vec<u8> = mobilization.controls.iter().map(|(attribute, _)| *attribute).collect();
+        assert_eq!(
+            rows,
+            vec![ATTRIB_ARMOR, ATTRIB_HITS, ATTRIB_SCAN, ATTRIB_SPEED]
+        );
+        // Две пропущенные строки до блока Common: storage (Constructor в
+        // списке `AdjustRowStorage`) и расход (`AdjustRowConsumptions`).
+        assert_eq!(mobilization.controls[0].1, COST.uly + 2 * CONTROL_ROW);
+        assert_eq!(mobilization.controls[1].1, COST.uly + 3 * CONTROL_ROW);
+
+        let before = mobilization.credits;
+        let armor_base = mobilization.base[UnitType::Constructor as usize].armor;
+
+        assert!(mobilization.adjust_upgrade(0, true));
+        assert!(mobilization.credits < before, "апгрейд списывает кредиты");
+        assert_eq!(
+            mobilization.actual[UnitType::Constructor as usize].armor,
+            armor_base + 1,
+            "шаг 1 при базе < 10"
+        );
+
+        // Возврат — обратное изменение.
+        assert!(mobilization.adjust_upgrade(0, false));
+        assert_eq!(mobilization.credits, before);
+        assert_eq!(
+            mobilization.actual[UnitType::Constructor as usize].armor,
+            armor_base
+        );
+
+        // Апгрейд, затем покупка: цена берётся из текущих turns.
+        mobilization.adjust_upgrade(1, true); // hits (+2 при базе 24)
+        let changed = mobilization.changed_upgrades();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].0, UnitType::Constructor);
+        assert_eq!(changed[0].1.hits, armor_base_hits() + 2);
+    }
+
+    fn armor_base_hits() -> u16 {
+        base_unit_values(UnitType::Constructor).hits
+    }
+
+    #[test]
+    fn upgrade_cost_is_deterministic() {
+        let run = || {
+            let mut mobilization = mobilization();
+            mobilization.select_loadout(0);
+            let mut log = Vec::new();
+            for row in 0..mobilization.controls.len() {
+                for _ in 0..3 {
+                    let credits = mobilization.credits;
+                    mobilization.adjust_upgrade(row, true);
+                    log.push((row, credits, mobilization.credits));
+                }
+            }
+            (log, mobilization.changed_upgrades())
+        };
+
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn upgrades_raise_purchase_prices_of_the_type() {
+        let mut mobilization = mobilization();
+        // Апгрейд «ходов» в CargoMenu недоступен, но цена покупки зависит от
+        // текущих turns: проверим через прямое изменение actual (как это делает
+        // апгрейд атрибута turns в других меню).
+        assert_eq!(mobilization.price(UnitType::Tank), 12);
+        mobilization.actual[UnitType::Tank as usize].turns = 8;
+        assert_eq!(mobilization.price(UnitType::Tank), 24, "3 * turns");
     }
 
     #[test]
@@ -567,7 +2885,92 @@ mod tests {
         assert!(short.ends_with(".."), "{short}");
         assert!(font.text_width(&short) <= 80, "{short}");
 
-        let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
-        assert_eq!(mobilization.selected_cost(), unit_cost(UnitType::Constructor, TeamClan::Random));
+        let mobilization = mobilization();
+        assert_eq!(
+            mobilization.selected_cost(),
+            unit_cost(UnitType::Constructor, TeamClan::Random)
+        );
+    }
+
+    #[test]
+    fn stats_rows_follow_the_cpp_blocks() {
+        let mut mobilization = mobilization();
+        mobilization.select_loadout(0);
+
+        let rows = mobilization.stats_rows();
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["Storage", "Upkeep", "Armor", "Hits", "Scan", "Speed", "Turns"]
+        );
+        // Шаг тот же, что у колонки апгрейдов.
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.y, COST.uly + CONTROL_ROW * index as i32);
+        }
+    }
+
+    #[test]
+    fn clicks_follow_cargo_menu_buttons_and_double_click() {
+        let mut mobilization = mobilization();
+
+        // Клик по уже выбранной строке списка — `Select(1)` → `BuyUnit`.
+        assert_eq!(
+            mobilization.handle_click(AVAILABLE_AREA.ulx + 4, AVAILABLE_AREA.uly + 4),
+            CargoAction::None
+        );
+        assert_eq!(mobilization.bought.len(), 1, "двойной клик покупает");
+        assert_eq!(mobilization.credits, 126);
+
+        // Клик по строке купленного юнита: после `BuyUnit` она уже выбрана
+        // (`PushBack` → `Select`), поэтому повторный клик — продажа.
+        let bought_row = mobilization.free.len();
+        let y = PURCHASED_AREA.uly + bought_row as i32 * LIST_ROW + 4;
+        mobilization.handle_click(PURCHASED_AREA.ulx + 4, y);
+        assert!(mobilization.bought.is_empty(), "повторный клик продаёт");
+        assert_eq!(mobilization.credits, 150);
+
+        // Выбор строк бесплатной загрузки — информация следует за списком.
+        mobilization.handle_click(PURCHASED_AREA.ulx + 4, PURCHASED_AREA.uly + 4);
+        assert_eq!(mobilization.info, Some(UnitType::Constructor));
+        mobilization.handle_click(
+            PURCHASED_AREA.ulx + 4,
+            PURCHASED_AREA.uly + LIST_ROW + 4,
+        );
+        assert_eq!(mobilization.info, Some(UnitType::Engineer));
+
+        // Кнопки Done/Cancel.
+        assert_eq!(
+            mobilization.handle_click(
+                DONE_BUTTON.ulx + 2,
+                DONE_BUTTON.uly + 2
+            ),
+            CargoAction::Done
+        );
+        assert_eq!(
+            mobilization.handle_click(
+                CANCEL_BUTTON.ulx + 2,
+                CANCEL_BUTTON.uly + 2
+            ),
+            CargoAction::Cancel
+        );
+
+        // Переключатель режима и стрелка апгрейда.
+        assert_eq!(
+            mobilization.handle_click(TOGGLE_BUTTON.ulx + 2, TOGGLE_BUTTON.uly + 2),
+            CargoAction::None
+        );
+        assert_eq!(mobilization.mode, CargoMode::Upgrade);
+        let (_, right) = mobilization.control_arrows(0).expect("строка");
+        let before = mobilization.credits;
+        mobilization.handle_click(right.ulx + 2, right.uly + 2);
+        assert!(mobilization.credits < before, "правая стрелка — Increase");
+
+        // Клавиши.
+        assert_eq!(mobilization.handle_key(Key::Enter), CargoAction::Done);
+        assert_eq!(mobilization.handle_key(Key::Escape), CargoAction::Cancel);
+        mobilization.handle_key(Key::Char('u'));
+        assert_eq!(mobilization.mode, CargoMode::Buy);
+        mobilization.handle_key(Key::Char('b'));
+        assert_eq!(mobilization.bought.len(), 1, "b — BuyUnit");
     }
 }

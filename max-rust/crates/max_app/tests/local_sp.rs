@@ -126,6 +126,8 @@ fn setup_vs_one_ai() -> LocalSetup {
         start_positions: [None; 4],
         team_loadouts: std::array::from_fn(|_| None),
         team_gold: [None; 4],
+        team_upgrades: std::array::from_fn(|_| None),
+        team_gold_spent: [None; 4],
     }
 }
 
