@@ -566,14 +566,15 @@ fn print_assets(report: Option<&AssetsReport>) {
     let Some(report) = report else { return };
 
     println!(
-        "assets: MAX.RES={} PATCHES.RES={} world={} ({}; {}x{}) sprites={}",
+        "assets: MAX.RES={} PATCHES.RES={} world={} ({}; {}x{}) sprites={} flics={}",
         report.max_res_entries,
         report.patches_res_entries,
         report.world,
         report.world_source,
         report.world_size.0,
         report.world_size.1,
-        report.sprite_count()
+        report.sprite_count(),
+        report.flics
     );
     for sprite in &report.sprites {
         println!(
@@ -912,6 +913,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // M-SP: тик локальной партии, таймер хода и ходы ИИ.
         let frame_dt = last_frame.elapsed().as_secs_f32().clamp(0.0, 0.25);
         last_frame = std::time::Instant::now();
+
+        // Анимация экранов меню (`Credits`): прокрутка титров идёт с реальным
+        // `dt`, а когда доходит до верха области — экран закрывается сам
+        // (`menu_credits_menu_loop`).
+        if screen.advance(frame_dt) {
+            screen = Screen::MainMenu;
+            ctx.status = "Credits ended".to_string();
+        }
 
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {
             let update = app.local_update(frame_dt);

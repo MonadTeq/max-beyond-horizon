@@ -15,6 +15,7 @@
 //! неполном наборе данных.
 
 use anyhow::{Context, Result};
+use max_assets::flic::Flic;
 use max_assets::{
     decode_shadow, decode_sprite, BigImage, CursorSet, ResArchive, ResourceMarkers, ShadowSheet,
     SpriteSheet, WrlMap,
@@ -23,7 +24,9 @@ use max_assets::sprite::{FrameInfo, ShadowFrame, SpriteFrame};
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::AppConfig;
 
@@ -259,6 +262,38 @@ fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Opti
     }
 
     (configured.clone(), None)
+}
+
+/// Индекс `*.FLC` в каталоге данных: имя в нижнем регистре → путь.
+///
+/// Регистр не важен: в репозитории файлы в верхнем (`AGT.FLC`), а ссылки в
+/// `MAX.RES` — в нижнем (`agt.flc`); на Linux файловая система регистр
+/// различает, поэтому ищем по индексу, а не по прямому пути.
+fn flc_index(dir: &Path) -> BTreeMap<String, PathBuf> {
+    let mut index = BTreeMap::new();
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return index;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if name.ends_with(".flc") {
+            index.insert(name, path);
+        }
+    }
+
+    index
 }
 
 /// Какие типы юнитов грузятся из `MAX.RES` в [`Assets`].
@@ -531,6 +566,8 @@ pub struct AssetsReport {
     pub world_size: (i16, i16),
     /// Загруженные спрайты.
     pub sprites: Vec<SpriteInfo>,
+    /// Сколько FLC-анимаций портретов загрузилось (эталон — 71).
+    pub flics: usize,
     /// Некритичные проблемы (нет спрайта, битая тень, …).
     pub warnings: Vec<String>,
 }
@@ -584,6 +621,12 @@ pub struct Assets {
     pub resource_markers: ResourceMarkers,
     /// Картинки планет по группам (4 × 128×128 big image, `SNOW_PIC + world/6`).
     pub planet_pictures: Vec<BigImage>,
+    /// FLC-анимации портретов: тег ресурса `F_*` → разобранный файл
+    /// (`Unit::GetFlicsAnimation`, `GameManager_MenuCreateFlic`).
+    ///
+    /// Файлов 71 (столько `flc-ref` записей в `MAX.RES`); `Arc`, чтобы
+    /// [`Assets::clone`] не копировал ~13 МБ сырых байтов FLC.
+    flics: BTreeMap<String, Arc<Flic>>,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
@@ -796,6 +839,54 @@ impl Assets {
             ));
         }
 
+        // FLC-анимации портретов (`WINDOW_CORNER_FLIC`, 128×128). В `MAX.RES`
+        // 71 запись `F_*`, тело которой — ASCIIZ-имя `*.FLC` рядом с архивом
+        // (как `*.SPW`-ссылки): файл грузим с диска, кадры декодирует
+        // `max_assets::flic`.
+        let flic_dir = max_res_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let flc_files = flc_index(&flic_dir);
+        let mut flics: BTreeMap<String, Arc<Flic>> = BTreeMap::new();
+        let mut missing_flics: Vec<String> = Vec::new();
+
+        for (unit_type, ..) in UNIT_SPRITES {
+            let Some(tag) = crate::cargo_unit_data::unit_flic(unit_type) else {
+                continue;
+            };
+
+            if flics.contains_key(tag) {
+                continue;
+            }
+
+            let Some(file_name) = max_res.file_reference(tag) else {
+                missing_flics.push(format!("{tag}: нет записи-ссылки в MAX.RES"));
+                continue;
+            };
+
+            let Some(path) = flc_files.get(&file_name.to_ascii_lowercase()) else {
+                missing_flics.push(format!("{tag}: нет файла {file_name} рядом с MAX.RES"));
+                continue;
+            };
+
+            match Flic::open(path) {
+                Ok(flic) => {
+                    flics.insert(tag.to_string(), Arc::new(flic));
+                }
+                Err(error) => missing_flics.push(format!("{tag} ({file_name}): {error}")),
+            }
+        }
+
+        if !missing_flics.is_empty() {
+            warnings.push(format!(
+                "FLC-анимации портретов: загрузилось {}/{} ({})",
+                flics.len(),
+                flics.len() + missing_flics.len(),
+                missing_flics.join("; ")
+            ));
+        }
+
         Ok(Self {
             max_res,
             chrome,
@@ -808,6 +899,7 @@ impl Assets {
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,
+            flics,
             patches_res,
             palette,
             brightness,
@@ -826,6 +918,22 @@ impl Assets {
         self.sprites
             .iter()
             .find(|sprite| sprite.unit_type == unit_type)
+    }
+
+    /// FLC-анимация портрета типа юнита (`Unit::GetFlicsAnimation`).
+    ///
+    /// `None` — у типа нет `F_*`-ресурса (22 типа: обломки, взрывы, ракеты,
+    /// `HARVSTER`, `WALDO`) или файл не загрузился; тогда `panels::draw_portrait`
+    /// рисует статичный спрайт (fallback).
+    pub fn flic(&self, unit_type: UnitType) -> Option<&Arc<Flic>> {
+        let tag = crate::cargo_unit_data::unit_flic(unit_type)?;
+
+        self.flics.get(tag)
+    }
+
+    /// Сколько FLC-анимаций загрузилось (эталон — 71).
+    pub fn flic_count(&self) -> usize {
+        self.flics.len()
     }
 
     /// Картинка группы планет `SNOW_PIC + world/6` (`planetselectmenu.cpp:94`).
@@ -865,6 +973,7 @@ impl Assets {
                     shadow_frames: sprite.shadow.as_ref().map_or(0, ShadowSheet::len),
                 })
                 .collect(),
+            flics: self.flics.len(),
             warnings: self.warnings.clone(),
         }
     }

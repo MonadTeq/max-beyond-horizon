@@ -6,7 +6,9 @@
 //!
 //! * верх: `FILES_OF/ON` (17,4) 67×18, `PREF_OFF/ON` (86,4) 67×18,
 //!   `ENDTRN_U` (390,2) 72×21, `TURNS` (468,2) 61×21, `TIMER` (534,2) 61×21;
-//! * портрет `CORNER_FLIC` (10,29) 128×128 — статичный кадр спрайта юнита;
+//! * портрет `CORNER_FLIC` (10,29) 128×128 — FLC-анимация юнита
+//!   (`max_assets::flic`, 15 FPS, см. [`crate::portrait`]); без FLC/выделения —
+//!   чёрный фон (или статичный спрайт ×2 как fallback);
 //! * статистика `STAT_WINDOW` (10,173) 153×48 — четыре строки `Hits/Ammo/
 //!   Speed/Shots` шрифтом `GNW_TEXT_FONT_2`;
 //! * сетка переключателей `SURV_OFF/ON`…`NAMES_UP/DN` (9 кнопок 55×16/18);
@@ -39,6 +41,9 @@ use crate::assets::Assets;
 
 /// Цвет обычного текста панелей (`0xA2`).
 pub const TEXT: u8 = 0xA2;
+/// `COLOR_GREEN` (`0x02`) — имя юнита в портрете
+/// (`GameManager_MenuUnitSelect`: `win_print(..., COLOR_GREEN)`).
+pub const GREEN: u8 = 0x02;
 /// Обводка подписей кнопок (`0xA7`).
 pub const CAPTION_OUTLINE: u8 = 0xA7;
 /// Тень подписей кнопок и текста (`0xE6`).
@@ -771,32 +776,56 @@ impl Panels {
             return painted;
         };
 
-        // Спрайт рисуется в буфер портрета тем же кодом, что и на карте
-        // (`render::draw_unit_sprites`: тень → корпус → башня со сдвигом
-        // `angle_offsets`), и увеличивается вдвое вокруг центра: статичная
-        // замена FLIC-анимации, но заметно крупнее нативной иконки 50×50.
-        let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
-        let anchor = (area.width / 2, area.height / 2);
+        // Основной путь — FLC-анимация (`GameManager_MenuCreateFlic` +
+        // `AdvanceFlic`): кадр 1:1 в окно 128×128, индексы — палитрой окна
+        // (`FRAMEPIC`), как C++ (`load_flic_palette = 0`).
+        let animation = app
+            .portrait()
+            .filter(|portrait| portrait.unit() == unit.id && !portrait.frames().is_empty());
 
-        if crate::render::draw_unit_sprites(assets, unit, &mut portrait, anchor, 64).is_none() {
-            return painted;
-        }
+        if let Some(animation) = animation {
+            let frame_pixels = animation.frame();
+            let width = frame_pixels.width.min(area.width as usize);
+            let height = frame_pixels.height.min(area.height as usize);
 
-        let center_x = area.width / 2;
-        let center_y = area.height / 2;
+            for y in 0..height {
+                for x in 0..width {
+                    let index = frame_pixels.pixels[y * frame_pixels.width + x];
 
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let source_x = center_x + (x - center_x) / 2;
-                let source_y = center_y + (y - center_y) / 2;
+                    frame.set(area.ulx + x as i32, area.uly + y as i32, palette.rgba(index));
+                }
+            }
 
-                if let Some(color) = portrait.get(source_x, source_y) {
-                    frame.set(area.ulx + x, area.uly + y, color);
+            painted += (width * height) as u32;
+        } else {
+            // Fallback: FLC нет (22 типа) или файл не загрузился — спрайт ×2.
+            let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
+            let anchor = (area.width / 2, area.height / 2);
+
+            if crate::render::draw_unit_sprites(assets, unit, &mut portrait, anchor, 64).is_none() {
+                return painted;
+            }
+
+            let center_x = area.width / 2;
+            let center_y = area.height / 2;
+
+            for y in 0..area.height {
+                for x in 0..area.width {
+                    let source_x = center_x + (x - center_x) / 2;
+                    let source_y = center_y + (y - center_y) / 2;
+
+                    if let Some(color) = portrait.get(source_x, source_y) {
+                        frame.set(area.ulx + x, area.uly + y, color);
+                    }
                 }
             }
         }
 
-        // Имя и статус в верхней части портрета (`GameManager_UpdateInfoDisplay`).
+        // Имя и статус в верхней части портрета (`GameManager_MenuUnitSelect`:
+        // `win_print` именем `COLOR_GREEN`, затем `GameManager_UpdateInfoDisplay`
+        // — статус `0xA2` строкой ниже). Оригинал рисует их поверх кадра FLC и
+        // при анимации перерисовывает только строки ниже `text_height` — у нас
+        // панель рисуется целиком, поэтому текст просто наносится последним.
         let font = GnwFontId::Font2.font();
         draw_text_gnw(
             frame,
@@ -804,7 +833,7 @@ impl Panels {
             area.uly,
             font,
             &unit_name(unit),
-            palette.rgba(TEXT),
+            palette.rgba(GREEN),
         );
         draw_text_gnw(
             frame,

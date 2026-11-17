@@ -20,7 +20,7 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Юниты (спрайты, тени, командные цвета) | **1:1** (92 типа спрайтами; маркер — только `MASTER`) | `MAX.RES`: `TANK`, `INFANTRY`, … + `S_*` + `D_*` (башня, `angle_offsets`) | `max_render::sprite_atlas`, `max_assets::sprite`, `max_app::render::draw_unit_sprites` |
 | Окно и рамки интерфейса | **1:1** | `MAX.RES`: `FRAMEPIC` (640×480, своя палитра, RLE) | `max_app::chrome`, `max_render::layout` |
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
-| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (кроме портрета-анимации) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
+| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (портрет — FLC-анимация 15 FPS) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
 | Миникарта | **1:1** (FOV-маска, рамка камеры, точки юнитов, `2x`/`TNT`; рамка — из `FRAMEPIC`) | `.WRL::minimap()`, палитра окна + `.WRL` 64…159, `RAWMSK*`/… | `max_app::panels::draw_minimap` |
 | Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
 | Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
@@ -30,15 +30,16 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Экран выбора планеты | **8×3 в оформлении `PLANETSE`** на `SNOW_PIC + world/6` + имена; числовой ввод — fallback | `MAX.RES`: `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` (128×128) | `max_app::menu::draw_create_form`, `max_app::ui::{planet_grid_rect,draw_planet_picker}` |
 
 Итог: **в игре** (сессия/`--new-game` при 640×480) окно, карта и панели уже
-выглядят как оригинал: верхние кнопки/счётчики, портрет (статичный кадр
-спрайта), четыре строки статистики, сетка переключателей, зум, координаты,
+выглядят как оригинал: верхние кнопки/счётчики, портрет (FLC-анимация
+юнита, 15 FPS, кадр 0 в headless), четыре строки статистики, сетка переключателей, зум, координаты,
 описание юнита, **миникарта с FOV-маской/точками юнитов/`2x`/`TNT`** и
 **настоящие маркеры ресурсов** рисуются на координатах и ресурсах C++-порта,
 текст — оригинальными растровыми шрифтами GNW, курсоры и сетка выбора планеты
 подключены. **Меню (E)** переведено на `MAINPIC`/`PLANETSE`/`MULTGAME` с
 кнопками `BLANK_*`/`MNUBTN*` и GNW-подписями, **масштабирование (F)** —
 фиксированный кадр 640×480, целочисленный апскейл в окно любого размера и
-обратный пересчёт координат мыши. Осталась анимация портрета (FLIC).
+обратный пересчёт координат мыши, анимация портрета (FLC), а также экраны
+`Introduction` (заглушка MVE) и `Credits` (прокрутка титров) — см. §11.
 
 ---
 
@@ -506,10 +507,15 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
    *Уточнение против плана:* `Files`/`Preferences` — это `FILES_OF/ON` и
    `PREF_OFF/ON` (67×18, ровно окно), а не `MENU_ON/OFF`; `UNTBTN_U/D` (42×21)
    и `BTNHIDE` (38×21) в C++-порте для End Turn не используются.
-2. **Портрет** `CORNER_FLIC` (10,29) 128×128: чёрный фон, кадр спрайта
-   выбранного юнита (`Assets::sprite` → `frame_for` + тень), увеличенный ×2;
-   сверху — имя и статус (`GNW_TEXT_FONT_2`). FLIC-анимация (`PlayerCorner`)
-   остаётся неразобранной.
+2. **Портрет** `CORNER_FLIC` (10,29) 128×128: чёрный фон и FLC-анимация
+   выделенного юнита (`Unit::GetFlicsAnimation` → тег `F_*` → `*.FLC` рядом с
+   `MAX.RES`), кадр 1:1 без масштабирования, индексы — палитрой окна
+   (`FRAMEPIC`), как C++ (`load_flic_palette = 0`); смена кадра раз в 1/15 с
+   (`GameManager_AdvanceFlic`), зацикливание (`animate = 2`), в headless/QA
+   `dt = 0` — кадр 0. Снятие выделения — `MenuDeleteFlic` + чёрное окно; у 22
+   типов без `F_*` (обломки, взрывы, ракеты, `HARVSTER`, `WALDO`) и у `MASTER`
+   (нет `F_MASTER`) — fallback: спрайт ×2. Сверху — имя и статус
+   (`GNW_TEXT_FONT_2`), как `MenuUnitSelect`/`UpdateInfoDisplay`.
 3. **Статистика** `STAT_WINDOW` (10,173) 153×48: четыре строки по 12 px
    (`WINDOW_STAT_ROW_1..4`), значения `Hits/Ammo/Speed/Shots` из `UnitInfo`
    (`ATTRIB_HITS/AMMO/SPEED/ROUNDS`), цвета — как
@@ -727,8 +733,8 @@ nearest-neighbour апскейл всего кадра; по-элементно�
    — пурпурный, в `FRAMEPIC` — зелёный (цвет полоски Hits), `0xA2` — текст.
 7. **`P_*` 300×240** — крупные картинки юнитов/зданий для диалогов и
    информационных панелей (`resourcetable.cpp:223-225`), а не портрет 128×128
-   для `CORNER_FLIC`: там в C++ отдельная FLIC-анимация (`PlayerCorner`), формат
-   FLC пока не разобран.
+   для `CORNER_FLIC`: там в C++ отдельная FLIC-анимация (`flicsmgr`), формат
+   разобран в `max_assets::flic` (см. §11).
 8. **Курсоры — не `SimpleImage`-семантика в чистом виде**: это
    `ImageSimpleHeader` + вертикально уложенные кадры, а `frame_count` **не
    хранится**, а выводится как `height / width` (нацело). У `MINI_PTR` (15×16)
@@ -871,8 +877,9 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 2. ~~**Шрифт:** тащить битмапы GNW в репозиторий или рисовать свой?~~ Решено:
    оригинальные `FONT*.FON` вкомпилированы (12 КБ) и сверены с FreeType-путём
    порта; 8×8 остался fallback'ом.
-3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено для первого шага:
-   статичный кадр спрайта ×2; FLIC-анимация — отдельная задача.
+3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено: **FLIC**
+   (`PlayerCorner`/`flicsmgr`); реализовано — см. §11. Спрайт ×2 остался
+   fallback'ом для типов без `F_*`.
 4. ~~**Приоритет:** панели (A) или меню (E)?~~ Панели A, шрифт B, миникарта/
    иконки/курсоры/планеты C/D, меню E и масштаб F сделаны; остался FLIC-портрет.
 5. ~~**Миникарта:** нужна ли FOV-маска и поведение `2x`/`TNT`?~~ Решено: FOV —
@@ -1177,4 +1184,85 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 `golden/move-input/*` (5 кадров) и переснятые `golden/game.png` +
 `golden/research/research-done.png`; `qa_golden_check` — 0 дрейфа.
 
+---
 
+## 11. Пункт H. FLIC-портрет, `Introduction` и `Credits` — **сделано** (2026-11-17)
+
+Закрыты последние визуальные пробелы: анимация портрета юнита и экраны
+`Introduction`/`Credits` главного меню.
+
+### 11.1 FLC-декодер (`max_assets::flic`)
+
+Формат — Autodesk FLIC (публичная спека): 128-байтный заголовок
+(`type = 0xAF12`, `frames`, `width/height`, `speed`, `oframe1/oframe2`), кадры по
+16-байтному заголовку (`0xF1FA`, число чанков), чанки `COLOR_256` (4),
+`DELTA_FLC`/`SS2` (7, дельта по словам), `COLOR_64` (11), `BLACK` (13),
+`BYTE_RUN` (15), `LITERAL` (16); `PSTAMP` (18) пропускается, `DELTA_FLI` (12)
+реализован для полноты (в ресурсах не встречается). Оракул —
+`max-cpp-port/src/flicsmgr.cpp`.
+
+* Ресурсы: 71 запись `F_*` в `MAX.RES` — не изображения, а ASCIIZ-имена файлов
+  (`fxagun.flc`, `tank03.flc`, …); сами `.FLC` лежат рядом с архивом. Декодер
+  читает файлы по индексу каталога без учёта регистра.
+* Кадры дельта-кодированы → `Flic::decode_frame(n)` раскладывает `0..=n`,
+  `FlicPlayer` листает инкрементально (как `flicsmgr_advance_animation`,
+  включая возврат на кадр 1 после последнего при `animate = 2`).
+* Палитровые чанки копятся, но в портрете не применяются (C++
+  `load_flic_palette = 0` → индексы идут через палитру окна `FRAMEPIC`).
+  Байты палитры FLIC в этих файлах 8-битные (C++ сдвигает их на 2).
+* Ошибки — значениями (`FlicError`), паник на битых данных нет.
+
+**Проверка.** `max_assets/tests/flic_assets.rs`: все 71 `flc-ref` записи
+`MAX.RES` (имена/смещения сверены с `max-assets/images/manifest.csv`), каждый
+файл разобран и декодирован целиком — 1115 кадров, из них 36 анимированных
+(30 кадров), 35 статичных; размеры 128×128 (кроме `SAVELOAD.FLC` 128×256),
+`speed` 67/71, число кадров 1/30. `max_assets/tests/flic_vectors.rs` сверяет
+**каждый кадр каждого файла** с C++ (`tools/flic_vectors`, FNV-1a-32) и 6
+полных кадров бит-в-бит.
+
+### 11.2 Портрет (`max_app::portrait`, `panels::draw_portrait`)
+
+* Маппинг тип → FLC — из `SC_UNITS` (`flics_animation`, 71 тип) через
+  `cargo_unit_data::unit_flic`; `Assets::load` грузит 70 FLC (у `MASTER` нет
+  `F_MASTER`, как и спрайта — известный пробел данных).
+* Анимация: `floor(elapsed · 15) % frames` (15 FPS как
+  `TIMER_FPS_TO_MS(15)`), зацикливание; `dt = 0` в headless/QA — кадр 0
+  (`golden` детерминированы), GUI идёт с `dt = 1/60`.
+* Смена выделения пересоздаёт анимацию с кадра 0; снятие выделения — чёрное
+  окно; fallback — старый спрайт ×2.
+* Кадр рисуется 1:1 (128×128) палитрой `FRAMEPIC`; имя/статус — поверх, как
+  `MenuUnitSelect` + `UpdateInfoDisplay`.
+
+### 11.3 `Credits` (`max_app::credits`)
+
+Построчный порт `menu_credits_menu_loop`: фон `CREDITS` 640×480 со своей
+палитрой, область 450×230 в (95,125), буфер прокрутки 230+18 строк, строка
+появляется каждые 20 шагов в строке 231 и уезжает вверх на 1 пиксель за шаг,
+шаг — `1000/speed` мс (по умолчанию 10 мс, 100 шагов/с), скорость меняется на
+±9 (клавиши `-`/`+`, в оригинале `KP-`/`KP+`), Esc/любая клавиша — выход,
+автозакрытие когда `height_offset <= 125`. Таблица — 171 строка из `menu.cpp`
+(65 заголовков `0xFF` + 106 имён `0x04`, 58 пустых разделителей), тексты
+заголовков — `language.json` en-US; генератор `tools/gen_credits_data.py` →
+`crates/max_app/data/credits.json`. Состояние — чистая функция от числа шагов,
+поэтому QA-кадр детерминирован.
+
+### 11.4 `Introduction` (`max_app::intro`)
+
+В C++ это MVE-видео: `Movie_PlayIntro` → `movie_run(INTROFLC, track, INTROSUB)`,
+а `INTROFLC` — ASCIIZ-ссылка на `maxint.mve`; играет `mvelib32.c` (Interplay
+MVE, свои видеокодек и звуковые дорожки). Декодер MVE в Rust-клиенте **не
+портирован** (отдельная задача, как MSC-музыка) — экран честно показывает
+заглушку: фон `MLOGO` 640×480 (big image из `MAX.RES`), заголовок `Introduction`,
+текст о том, что вместо видео и почему, и «Press Esc to return to the main
+menu». Любая клавиша/клик — назад в меню (как `mve_cb_ctl`).
+
+### 11.5 QA и артефакты
+
+* `visual-screens.qa`: `menu intro` → `shot intro`, `menu credits` → `tick 100`
+  → `shot credits`, клик по своему Surveyor'у → `shot portrait` (13 кадров,
+  эталоны `golden/intro.png`, `golden/credits.png`, `golden/portrait.png`).
+* Перебазированы только кадры с выделенным юнитом: `move-input/game-selected`,
+  `move-input/move-preview`, `move-input/game-after`,
+  `upgrade/upgrade-done` (портрет вместо спрайта); остальные 0 дрейфа.
+* `cargo test -p max_assets` (7 UNIT `flic`, 3 `flic_assets`, 2 `flic_vectors`),
+  `cargo test -p max_app` (`portrait` 6, `credits` 7).

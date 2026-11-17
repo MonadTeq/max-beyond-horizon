@@ -19,7 +19,7 @@ max-rust-qa/
 ├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
 ├── scripts/move-input.qa       # TC-0601/0603/0604: выделение кликом → RMB-приказ → End Turn → юнит сдвинулся
-├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~985 КиБ)
+├── golden/*.png                # эталоны visual-screens.qa (13 кадров, ~1.4 МиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
 ├── golden/research/*.png       # эталон партии после исследования (research.qa)
@@ -78,6 +78,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `menu multiplayer` | `Multiplayer Game` → `Multiplayer Menu` |
 | `menu hot_seat` | `Multiplayer Menu` → `Hot Seat Game` → настройка hot-seat |
 | `menu join` | `Multiplayer Menu` → `Join Network Game` → список игр (клиент лобби — заглушка QA, 2 детерминированные игры) |
+| `menu intro` | `Introduction` главного меню → экран-заглушка MVE (TC-0108) |
+| `menu credits` | `Credits` главного меню → прокрутка титров `CREDITS` (TC-0108) |
 | `setup done` | кнопка `Done` текущего экрана настройки (Options → Planet → Players → открыть фазы старта) |
 | `setup cancel` | кнопка `Cancel` |
 | `setup random` | кнопка `Random` на экране планет |
@@ -132,7 +134,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert turn=3`, `turn>=3`, `turn<=3`, `turn>3`, `turn<3` | `GameState::turn_counter` |
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
-| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
+| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
 | `assert phase=PlayerTurn` | фаза локальной партии: `PlayerTurn`, `AiTurn`, `Advancing`, `Finished` |
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
@@ -159,7 +161,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 |---|---|---|
 | `sp-full.qa` | главное меню → Options (No Limit, Turn Based) → Planet → Players (`RED` человек, `GREEN` компьютер) → экран клана (`clan`) → мобилизация (`mobilize buy` ×2 + Done) → выбор точки высадки (`landing grid 30 22`, не совпадает со стартовой четвертью, + Done) → партия: `select unit`, `move near`, 3 × `end_turn` с ходами ИИ, `assert turn>=3`, сохранение `MXLS` | **PASS** (55 шагов, 14 кадров, ~380 кадров цикла) |
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → фазы старта для GREEN и RED по очереди (мобилизация + высадка) → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (64 шага, 14 кадров) |
-| `visual-screens.qa` | 10 экранов только с `shot` (main menu, options, planet, players, mobilize, landing, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (45 шагов, 10 кадров = эталоны) |
+| `visual-screens.qa` | 13 экранов только с `shot` (main menu, introduction, credits, options, planet, players, mobilize, landing, game, portrait, winloss, multiplayer, join list); Introduction — заглушка MVE, Credits — прокрутка после `tick 100`, portrait — FLC выделенного Surveyor'а (TC-0919); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (232 кадра, 13 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
 | `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL (10 ходов) → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`) |
 | `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |

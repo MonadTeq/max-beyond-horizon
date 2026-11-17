@@ -896,6 +896,15 @@ impl QaRunner {
 
     /// Один кадр игрового цикла — как блок `main.rs` после обработки ввода.
     fn frame(&mut self) {
+        // Анимация экранов меню (`Credits`): фиксированный `dt = 1/60`, поэтому
+        // кадр — чистая функция от числа шагов сценария. Когда прокрутка
+        // доходит до верха области, оригинал выходит из цикла — возвращаемся
+        // в главное меню.
+        if self.screen.advance(1.0 / 60.0) {
+            self.screen = Screen::MainMenu;
+            self.ctx.status = "Credits ended".to_string();
+        }
+
         if matches!(self.screen, Screen::InSession { .. }) && self.app.local_active() {
             let update = self.app.local_update(0.0);
 
@@ -915,6 +924,10 @@ impl QaRunner {
 
     /// Подготовка кадра к отрисовке (мини-карты планет грузятся один раз).
     fn prepare(&mut self) {
+        // Портрет `CORNER_FLIC`: синхронизация с выделением без продвижения
+        // анимации (`dt = 0`) — кадр `shot` не зависит от числа кадров до него.
+        self.app.update_portrait(0.0);
+
         let palette = self
             .app
             .assets()
@@ -1049,7 +1062,38 @@ impl QaRunner {
                 ))?;
                 self.require_screen(ScreenName::JoinList, "menu join")
             }
+            MenuTarget::Introduction => {
+                self.click_main_menu_button(4, "menu intro")?;
+                self.require_screen(ScreenName::Introduction, "menu intro")
+            }
+            MenuTarget::Credits => {
+                self.click_main_menu_button(5, "menu credits")?;
+                self.require_screen(ScreenName::Credits, "menu credits")
+            }
         }
+    }
+
+    /// Клик по кнопке главного меню `index` (0..=6) с проверкой, что экран
+    /// действительно сменился (для `menu intro`/`menu credits`).
+    fn click_main_menu_button(&mut self, index: usize, what: &str) -> Result<(), String> {
+        if !matches!(self.screen, Screen::MainMenu) {
+            return Err(format!(
+                "{what}: нужен MainMenu, сейчас {}",
+                self.screen_label()
+            ));
+        }
+
+        let Some(button) = menu::MAIN_MENU_BUTTONS.get(index) else {
+            return Err(format!("{what}: нет кнопки {index}"));
+        };
+        let rect = button.rect;
+
+        self.send(InputEvent::MouseClick(
+            rect.ulx + rect.width / 2,
+            rect.uly + rect.height / 2,
+        ))?;
+
+        Ok(())
     }
 
     fn enter_multiplayer_menu(&mut self) -> Result<(), String> {
@@ -1940,6 +1984,8 @@ impl QaRunner {
             (Screen::JoinList { .. }, ScreenName::JoinList) => true,
             (Screen::CreateForm(_), ScreenName::CreateForm) => true,
             (Screen::MultiplayerMenu, ScreenName::MultiplayerMenu) => true,
+            (Screen::Introduction, ScreenName::Introduction) => true,
+            (Screen::Credits(_), ScreenName::Credits) => true,
             (Screen::GameOver, ScreenName::GameOver) => true,
             (Screen::InSession { .. }, ScreenName::InGame) => true,
             (Screen::LocalSetup(_), ScreenName::LocalSetup) => true,
@@ -1963,6 +2009,8 @@ impl QaRunner {
             Screen::JoinList { .. } => "JoinList",
             Screen::CreateForm(_) => "CreateForm",
             Screen::MultiplayerMenu => "MultiplayerMenu",
+            Screen::Introduction => "Introduction",
+            Screen::Credits(_) => "Credits",
             Screen::GameOver => "GameOver",
             Screen::InSession { .. } => "InGame",
             Screen::LocalSetup(form) => match form.screen {

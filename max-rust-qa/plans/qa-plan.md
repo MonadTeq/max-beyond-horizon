@@ -15,7 +15,7 @@
 | 1. Юнит/интеграционные (780+ тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
 | 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 11 сценариев) |
 | 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max-rust --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
-| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 24 эталона: visual 10 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5) |
+| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 27 эталонов: visual 13 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC (и 3 клиента) | live-smoke.sh / live-smoke-3.sh | релизный гейт | **готово** (P5: 2×10, 3×10 PASS) |
 | 5. Реальный оконный прогон мышью (Windows) | SDL/ввод/звук на живом бинаре | ui-test-sp.ps1 и пр. | релизный гейт, вручную/полуавто | по плану |
 
@@ -113,7 +113,7 @@ cargo run -p max_app -- \
 
 ## Golden-кадры (слой 3)
 
-- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (10 кадров, ~980 КиБ;
+- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (13 кадров, ~1.4 МиБ;
   индексированный PNG при ≤256 цветах), генерируются из `visual-screens.qa`.
 - Сверка: `cargo run -p max_app --no-default-features --example qa_golden_check -- <out> ../max-rust-qa/golden` —
   попиксельный diff с порогом: пиксель изменён при `max|Δканал| > 30`, кадр

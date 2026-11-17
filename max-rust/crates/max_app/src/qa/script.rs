@@ -69,6 +69,10 @@ pub enum ScreenName {
     CreateForm,
     /// `Screen::MultiplayerMenu`.
     MultiplayerMenu,
+    /// `Screen::Introduction` (заглушка MVE-видео).
+    Introduction,
+    /// `Screen::Credits` (прокрутка титров).
+    Credits,
     /// `Screen::LocalSetup` на экране Options.
     Options,
     /// `Screen::LocalSetup` на экране Planet.
@@ -97,6 +101,8 @@ impl ScreenName {
             "joinlist" | "join_list" | "join" => Some(Self::JoinList),
             "createform" | "create_form" | "create" => Some(Self::CreateForm),
             "multiplayermenu" | "multiplayer_menu" | "multiplayer" => Some(Self::MultiplayerMenu),
+            "introduction" | "intro" => Some(Self::Introduction),
+            "credits" | "titres" => Some(Self::Credits),
             "options" => Some(Self::Options),
             "planet" | "planets" => Some(Self::Planet),
             "players" => Some(Self::Players),
@@ -117,6 +123,8 @@ impl ScreenName {
             Self::JoinList => "JoinList",
             Self::CreateForm => "CreateForm",
             Self::MultiplayerMenu => "MultiplayerMenu",
+            Self::Introduction => "Introduction",
+            Self::Credits => "Credits",
             Self::Options => "Options",
             Self::Planet => "Planet",
             Self::Players => "Players",
@@ -236,6 +244,10 @@ pub enum MenuTarget {
     HotSeat,
     /// `Join Network Game` → список игр лобби.
     Join,
+    /// `Introduction` главного меню (MVE-заглушка).
+    Introduction,
+    /// `Credits` главного меню (прокрутка титров).
+    Credits,
 }
 
 /// Действие на экране настройки (`setup`).
@@ -909,8 +921,10 @@ fn parse_menu(rest: &str) -> Result<MenuTarget, String> {
         "multiplayer" | "multi" => Ok(MenuTarget::Multiplayer),
         "hot_seat" | "hotseat" | "hot" => Ok(MenuTarget::HotSeat),
         "join" => Ok(MenuTarget::Join),
+        "introduction" | "intro" => Ok(MenuTarget::Introduction),
+        "credits" => Ok(MenuTarget::Credits),
         other => Err(format!(
-            "menu: неизвестный пункт «{other}» (new_game|multiplayer|hot_seat|join)"
+            "menu: неизвестный пункт «{other}» (new_game|multiplayer|hot_seat|join|intro|credits)"
         )),
     }
 }
@@ -1325,6 +1339,14 @@ mod tests {
         assert_eq!(one("menu multiplayer"), Command::Menu(MenuTarget::Multiplayer));
         assert_eq!(one("menu hot_seat"), Command::Menu(MenuTarget::HotSeat));
         assert_eq!(one("menu join"), Command::Menu(MenuTarget::Join));
+        assert_eq!(
+            one("menu credits"),
+            Command::Menu(MenuTarget::Credits)
+        );
+        assert_eq!(
+            one("menu intro"),
+            Command::Menu(MenuTarget::Introduction)
+        );
         assert_eq!(one("setup done"), Command::Setup(SetupAction::Done));
         assert_eq!(one("setup cancel"), Command::Setup(SetupAction::Cancel));
         assert_eq!(one("setup random"), Command::Setup(SetupAction::Random));

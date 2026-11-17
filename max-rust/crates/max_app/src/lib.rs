@@ -41,9 +41,11 @@ pub mod audio;
 pub mod buildmenu;
 pub mod cargo_unit_data;
 pub mod chrome;
+pub mod credits;
 pub mod cursor;
 pub mod hotseat;
 pub mod hud;
+pub mod intro;
 pub mod landing;
 pub mod local;
 pub mod mem;
@@ -51,6 +53,7 @@ pub mod menu;
 pub mod mobilize;
 pub mod net;
 pub mod panels;
+pub mod portrait;
 pub mod pregame;
 pub mod profile;
 pub mod qa;
@@ -533,6 +536,12 @@ pub struct App {
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
     /// догоняет её плавно; в CRC/снапшот эти значения не входят.
     visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
+    /// FLC-анимация портрета выделенного юнита (`WINDOW_CORNER_FLIC`).
+    ///
+    /// UI-состояние: в снапшот/CRC не входит. `None` — юнит не выбран, у типа
+    /// нет `F_*`-ресурса или FLC не загрузился (тогда портрет — спрайт ×2,
+    /// см. `panels::draw_portrait`).
+    portrait: Option<portrait::PortraitAnim>,
 }
 
 impl App {
@@ -553,6 +562,7 @@ impl App {
             save_load: None,
             upgrade_menu: None,
             visual_units: std::collections::HashMap::new(),
+            portrait: None,
         }
     }
 
@@ -1140,6 +1150,9 @@ impl App {
     /// ячеек на каждом кадре 60 Гц; значения/порядок обхода не используются
     /// ни симуляцией, ни CRC (визуальные позиции — только для кадра).
     pub fn update_visual_units(&mut self, dt: f32) {
+        // Портрет идёт теми же кадрами, что и карта: `dt = 0` (QA) его не двигает.
+        self.update_portrait(dt);
+
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
         // Скорость догоняния: клетка примерно за 1/12 секунды.

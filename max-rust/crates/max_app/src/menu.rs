@@ -101,6 +101,10 @@ pub enum MainMenuAction {
     Join,
     /// Выход (`Exit`).
     Quit,
+    /// Экран титров (`Credits` → `menu_credits_menu_loop`).
+    Credits,
+    /// Вступление (`Introduction` → `Movie_PlayIntro`, MVE-заглушка).
+    Introduction,
     /// Экран, который ещё не портирован.
     Unported(&'static str),
 }
@@ -147,13 +151,13 @@ pub const MAIN_MENU_BUTTONS: [MainMenuButton; 7] = [
     MainMenuButton {
         rect: PixelRect::new(385, 315, 200, 29),
         label: "Introduction",
-        action: MainMenuAction::Unported("Introduction"),
+        action: MainMenuAction::Introduction,
         big: true,
     },
     MainMenuButton {
         rect: PixelRect::new(385, 350, 200, 29),
         label: "Credits",
-        action: MainMenuAction::Unported("Credits"),
+        action: MainMenuAction::Credits,
         big: true,
     },
     MainMenuButton {
@@ -493,6 +497,11 @@ pub struct MenuAssets {
     pub portrait_frame_left: Option<SimpleImage>,
     /// Правая рамка портрета `BGRSCRNR` 160×259.
     pub portrait_frame_right: Option<SimpleImage>,
+    /// Фон экрана титров `CREDITS` 640×480 (big image со своей палитрой,
+    /// `menu_credits_menu_loop`).
+    pub credits: Option<BigImage>,
+    /// Фон заглушки `Introduction`: `MLOGO` 640×480 (big image), если есть.
+    pub mlogo: Option<BigImage>,
     /// Системная палитра окна (из `MAINPIC`).
     pub palette: UiPalette,
 }
@@ -605,6 +614,8 @@ impl MenuAssets {
             btnhide: read_simple("BTNHIDE"),
             portrait_frame_left: read_simple("BGRSCRNL"),
             portrait_frame_right: read_simple("BGRSCRNR"),
+            credits: read_big("CREDITS"),
+            mlogo: read_big("MLOGO"),
             palette,
         })
     }

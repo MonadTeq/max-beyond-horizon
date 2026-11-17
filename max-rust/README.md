@@ -196,8 +196,16 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   поля), а `SdlWindow::window_to_frame` переводит клики обратно; окно
   ресайзится, `--scale N` задаёт множитель (по умолчанию — под рабочий стол).
 
-Осталось: **анимация портрета** — `CORNER_FLIC` сейчас статичный кадр
-спрайта, в оригинале — FLIC (`FLC`/`PlayerCorner`).
+Портрет `CORNER_FLIC` — **FLC-анимация** (`max_assets::flic`): 71 ресурс `F_*`
+в `MAX.RES` — это ASCIIZ-имена `*.FLC` рядом с архивом; кадр 1:1 палитрой окна,
+смена кадра 15 FPS (`GameManager_AdvanceFlic`), зацикливание, в headless/QA
+`dt = 0` — кадр 0. Декодер сверен с C++ бит-в-бит на всех 1115 кадрах 71 файла.
+
+Экраны главного меню: `Introduction` — честная заглушка MVE-видео (`INTROFLC`
+→ `maxint.mve`, декодер MVE не портирован), `Credits` — построчный порт
+`menu_credits_menu_loop` (фон `CREDITS`, 171 строка, прокрутка 10 мс/пиксель).
+Осталось: `Load Game`/`Setup` главного меню (статус «screen is not ported
+yet»; загрузка партии доступна в игре — `L`, V70).
 
 Раскладка ресурсов снята в `build/res_list.txt` (1828 тегов, offset/size) — по
 нему видно, что для 1:1 данных хватает: графика лежит в `MAX.RES`, карта — в

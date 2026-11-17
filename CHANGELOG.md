@@ -1,5 +1,46 @@
 ## [Unreleased]
 
+### Добавлено
+
+- **FLIC-анимация портрета юнита (`WINDOW_CORNER_FLIC`, TC-0919).**
+  `max_assets::flic` — декодер Autodesk FLIC по публичной спеке (заголовок
+  128 байт, кадры `0xF1FA`, чанки `COLOR_256`/`DELTA_FLC`(SS2)/`COLOR_64`/
+  `BLACK`/`BYTE_RUN`/`LITERAL`, `PSTAMP` пропускается, `DELTA_FLI` для полноты;
+  ошибки — значениями, без паник). В `MAX.RES` 71 запись `F_*` — не картинки, а
+  ASCIIZ-имена `*.FLC` рядом с архивом; все 71 файл (1115 кадров, 36
+  анимированных × 30 кадров, 35 статичных; 128×128, `SAVELOAD.FLC` 128×256)
+  разобраны и сверены с C++ (`tools/flic_vectors`): 6 полных кадров бит-в-бит +
+  FNV-1a-32 **каждого** кадра. `max_app::portrait`: маппинг тип → `F_*` из
+  `SC_UNITS` (`flics_animation`, 71 тип), анимация 15 FPS
+  (`GameManager_AdvanceFlic`), зацикливание (`animate = 2`), кадр 1:1 палитрой
+  окна (`FRAMEPIC`, `load_flic_palette = 0` как в C++), `dt = 0` в headless/QA —
+  кадр 0 (детерминизм golden), снятие выделения — чёрное окно, fallback —
+  спрайт ×2 (22 типа без `F_*` и `MASTER` без `F_MASTER`).
+  Тесты: `max_assets` (`flic` 7, `flic_assets` 3 — все 71 записи MAX.RES и
+  сверка с `manifest.csv`, `flic_vectors` 2), `max_app/tests/portrait.rs` (6).
+
+- **Экраны `Introduction` и `Credits` главного меню (TC-0108).**
+  `Credits` — построчный порт `menu_credits_menu_loop`: фон `CREDITS` 640×480 со
+  своей палитрой, область 450×230 в (95,125), прокрутка 1 px за шаг по 10 мс
+  (`1000/speed`), новая строка каждые 20 шагов, `-`/`+` меняют скорость на 9,
+  Esc/любая клавиша — в меню, автозакрытие по концу прокрутки; таблица — 171
+  строка из `menu.cpp` (65 заголовков + 106 имён), тексты заголовков из
+  `language.json` (`tools/gen_credits_data.py` → `data/credits.json`).
+  `Introduction` — заглушка: в оригинале MVE-видео `INTROFLC` → `maxint.mve`
+  (`mvelib32.c`), декодер MVE не портирован; экран показывает фон `MLOGO`
+  640×480 и текст, почему вместо видео, Esc — выход.
+
+### Изменено
+
+- Портрет `CORNER_FLIC` рисует FLC-кадр вместо статичного спрайта ×2; экраны
+  меню: новые пункты в фокусе клавиатуры (`Introduction`, `Credits`), горячие
+  клавиши `I`/`R`, в QA — команды `menu intro`/`menu credits` и экраны
+  `assert screen=Introduction|Credits`.
+- Перебазированы golden-кадры только там, где виден портрет выделенного юнита:
+  `golden/portrait.png`, `golden/intro.png`, `golden/credits.png` (новые),
+  `golden/move-input/{game-selected,move-preview,game-after}.png`,
+  `golden/upgrade/upgrade-done.png`; остальные эталоны — 0 дрейфа.
+
 ### Исправлено
 
 - **«Юнит не двигается»: камера после высадки вставала не на базу**

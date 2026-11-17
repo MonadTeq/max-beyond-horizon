@@ -14,16 +14,19 @@
 //! - маркеры ресурсов на карте — `RAWMSK*`/`FUELMK*`/`GOLDMK*` — модуль
 //!   [`markers`];
 //! - звуки — RIFF/WAVE `*.SPW` (PCM16) рядом с `MAX.RES` — модуль [`wav`];
-//! - SCE/MPS — миссии; FLC — анимации; FON — шрифты;
+//! - FLC — анимации Autodesk FLIC (`F_*`-ресурсы MAX.RES — ссылки на
+//!   `*.FLC`-файлы рядом с архивом) — модуль [`flic`];
+//! - SCE/MPS — миссии; FON — шрифты;
 //!   MSC/MVE — музыка/видео (пока не разбираются).
 //!
 //! Крейт парсит байты в структурированные данные; рендер-специфику не содержит.
 //! Ошибки формата возвращаются значениями ([`ResError`], [`WrlError`],
-//! [`SpriteError`]), паники на битых данных нет.
+//! [`SpriteError`], [`FlicError`]), паники на битых данных нет.
 
 #![forbid(unsafe_code)]
 
 pub mod cursor;
+pub mod flic;
 pub mod image;
 pub mod markers;
 pub mod res;
@@ -33,6 +36,11 @@ pub mod wrl;
 
 pub use cursor::{
     CursorDescriptor, CursorError, CursorSet, CURSOR_COUNT, CURSOR_HEADER, CURSOR_RESOURCES,
+};
+pub use flic::{
+    Flic, FlicError, FlicFrame, FlicHeader, FlicPalette, FlicPlayer, FrameError,
+    FLIC_CHUNK_HEADER_SIZE, FLIC_FRAME_HEADER_SIZE, FLIC_HEADER_SIZE, FLIC_PALETTE_SIZE, FLC_MAGIC,
+    FLI_MAGIC, FRAME_MAGIC,
 };
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
 pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};

@@ -28,7 +28,7 @@
 //!
 //! | Экран | Управление |
 //! |---|---|
-//! | MainMenu | Up/Down/Tab, Enter, мышь; `c`/`j`/`q`; Esc — выход |
+//! | MainMenu | Up/Down/Tab, Enter, мышь; `c`/`j`/`i`/`r`/`q`; Esc — выход |
 //! | JoinList | Up/Down, Enter — войти, `r` — обновить, Esc — назад, мышь |
 //! | CreateForm | Tab/Up/Down — поле, ввод, Left/Right — числа, Enter — создать, Esc — назад |
 //! | InSession | LMB — выбрать юнита, RMB — приказ движения, LMB по врагу — атака, Enter/T — чат (пакет 18), End Turn/Menu, Esc — отмена (дважды — выход) |
@@ -60,7 +60,9 @@ use max_render::ui::{
 use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
+use crate::credits;
 use crate::hud::{self, HudButton};
+use crate::intro;
 use crate::landing::LandingAction;
 use crate::local::LocalSetup;
 use crate::menu;
@@ -82,10 +84,15 @@ pub const MAX_WORLD: i64 = 23;
 /// `Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit`.
 const MAIN_CREATE: usize = 0;
 const MAIN_JOIN: usize = 2;
+const MAIN_INTRO: usize = 4;
+const MAIN_CREDITS: usize = 5;
 const MAIN_QUIT: usize = 6;
 
-/// Три действия Rust-клиента в порядке фокуса (`ctx.focus`).
-const MAIN_ACTIONS: [usize; 3] = [MAIN_CREATE, MAIN_JOIN, MAIN_QUIT];
+/// Действия Rust-клиента в порядке фокуса (`ctx.focus`).
+///
+/// `Load Game` и `Setup` остаются непортированными (`Unported`), поэтому в
+/// фокусе их нет: экраны `Introduction` (MVE-заглушка) и `Credits` — есть.
+const MAIN_ACTIONS: [usize; 5] = [MAIN_CREATE, MAIN_JOIN, MAIN_INTRO, MAIN_CREDITS, MAIN_QUIT];
 
 const JOIN_LIST: usize = 1;
 const JOIN_BACK: usize = 2;
@@ -400,6 +407,10 @@ pub enum Screen {
     CreateForm(CreateForm),
     /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): хост/join/hot-seat.
     MultiplayerMenu,
+    /// `Introduction` (`Movie_PlayIntro`): MVE-видео `INTROFLC` — заглушка.
+    Introduction,
+    /// `Credits` (`menu_credits_menu_loop`): прокрутка титров по `CREDITS`.
+    Credits(credits::CreditsScreen),
     /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
     LocalSetup(GameSetupForm),
     /// Фазы старта после `Players`: мобилизация (`CargoMenu`) и выбор точки
@@ -652,11 +663,64 @@ impl Screen {
                 _ => Transition::None,
             };
         }
+        if matches!(self, Self::Introduction) {
+            // Заглушка MVE: как `mve_cb_ctl` в оригинале — любая клавиша/клик
+            // прерывает и возвращает в главное меню.
+            return match event {
+                InputEvent::MouseMove(..) => Transition::None,
+                _ => {
+                    *self = Self::MainMenu;
+                    ctx.status = "Introduction closed".to_string();
+                    Transition::None
+                }
+            };
+        }
+        if matches!(self, Self::Credits(_)) {
+            return self.handle_credits(ctx, event);
+        }
 
         match event {
             InputEvent::Key(Key::Escape) => Transition::LeaveSession,
             _ => Transition::None,
         }
+    }
+
+    /// Один шаг анимации экрана (`dt` секунд; `dt <= 0` — экран стоит).
+    ///
+    /// Анимируется только [`Screen::Credits`] (прокрутка титров). Возвращает
+    /// `true`, если показ закончился и экран должен вернуться в главное меню
+    /// (в C++ `menu_credits_menu_loop` выходит по `height_offset <= bounds.uly`).
+    pub fn advance(&mut self, dt: f32) -> bool {
+        if let Self::Credits(screen) = self {
+            screen.advance(dt);
+
+            return screen.finished();
+        }
+
+        false
+    }
+
+    /// Ввод на экране титров: `KP-`/`KP+` меняют скорость (в клиенте — `-`/`+`),
+    /// любая другая клавиша или клик закрывает экран (`menu_credits_menu_loop`).
+    fn handle_credits(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {        let Self::Credits(screen) = self else {
+            return Transition::None;
+        };
+        let mut close = false;
+
+        match event {
+            InputEvent::MouseMove(..) => {}
+            InputEvent::Key(Key::Char('+')) | InputEvent::Key(Key::Char('=')) => screen.faster(),
+            InputEvent::Key(Key::Char('-')) | InputEvent::Key(Key::Char('_')) => screen.slower(),
+            _ => close = true,
+        }
+
+        if close {
+            // Возврат в главное меню (в C++ цикл титров просто завершается).
+            ctx.status = "Credits closed".to_string();
+            *self = Self::MainMenu;
+        }
+
+        Transition::None
     }
 
     /// Ввод на экране настройки M-SP (`Options` → `Planet` → `Players`).
@@ -948,13 +1012,44 @@ impl Screen {
                     menu::draw_multiplayer_menu(buffer, menu_assets, view.status, mouse);
                     return;
                 }
-
                 buffer.fill(Rgba::rgb(12, 14, 18));
                 draw_text_line(
                     buffer,
                     12,
                     12,
                     "Multiplayer Menu uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
+            Self::Introduction => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    intro::draw(buffer, menu_assets);
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Introduction uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
+            Self::Credits(screen) => {
+                let background = menu_assets.and_then(|menu| menu.credits.as_ref());
+
+                if let (Some(background), true) = (background, native_frame) {
+                    screen.draw(buffer, background);
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Credits need the original 640x480 frame and the CREDITS image",
                     Rgba::rgb(232, 236, 244),
                 );
             }
@@ -1055,13 +1150,20 @@ impl Screen {
                 }
             }
             InputEvent::Key(key) => match key {
-                Key::Up => ctx.focus = (ctx.focus + 2) % 3,
-                Key::Down | Key::Tab => ctx.focus = (ctx.focus + 1) % 3,
-                Key::Enter => activate = Some(MAIN_ACTIONS[ctx.focus.min(2)]),
+                Key::Up => {
+                    let count = MAIN_ACTIONS.len();
+                    ctx.focus = (ctx.focus + count - 1) % count;
+                }
+                Key::Down | Key::Tab => ctx.focus = (ctx.focus + 1) % MAIN_ACTIONS.len(),
+                Key::Enter => {
+                    activate = Some(MAIN_ACTIONS[ctx.focus.min(MAIN_ACTIONS.len() - 1)]);
+                }
                 Key::Escape => return Transition::Quit,
                 Key::Char(character) => match character.to_ascii_lowercase() {
                     'c' => activate = Some(MAIN_CREATE),
                     'j' => activate = Some(MAIN_JOIN),
+                    'i' => activate = Some(MAIN_INTRO),
+                    'r' => activate = Some(MAIN_CREDITS),
                     'q' => return Transition::Quit,
                     _ => {}
                 },
@@ -1089,6 +1191,20 @@ impl Screen {
                 // Host/Join/Hot Seat Game/Hot Seat Scenarios/Load Hot Seat/Cancel.
                 *self = Self::MultiplayerMenu;
                 ctx.status = "Multiplayer: Host, Join or Hot Seat Game".to_string();
+                Transition::None
+            }
+            Some(MAIN_INTRO) => {
+                // `Movie_PlayIntro` (`menu.cpp:2666`): MVE-видео `INTROFLC`
+                // (файл `maxint.mve`) — декодер не портирован, экран-заглушка.
+                *self = Self::Introduction;
+                ctx.status = "Introduction: MVE movie is not ported yet — Esc returns".to_string();
+                Transition::None
+            }
+            Some(MAIN_CREDITS) => {
+                // `menu_credits_menu_loop` (`menu.cpp:1332`) — прокрутка титров
+                // по `CREDITS` 640×480; Esc/любая клавиша закрывает экран.
+                *self = Self::Credits(credits::CreditsScreen::new());
+                ctx.status = "Credits: Esc returns to the menu".to_string();
                 Transition::None
             }
             Some(MAIN_QUIT) => Transition::Quit,
@@ -2239,7 +2355,7 @@ fn build_main_menu(
             theme.accent,
         )));
         widgets.push(Widget::Label(Label::colored(
-            "Up/Down + Enter or mouse; C/J/Q; Esc — quit",
+            "Up/Down + Enter or mouse; C/J/I/R/Q; Esc — quit",
             Rect::new(10, 436, 370, 12),
             theme.text_disabled,
         )));
@@ -2284,7 +2400,7 @@ fn build_main_menu(
             theme.text_disabled,
         )));
         widgets.push(Widget::Label(Label::colored(
-            "Up/Down + Enter or mouse; C/J/Q; Esc — quit",
+            "Up/Down + Enter or mouse; C/J/I/R/Q; Esc — quit",
             rects[5],
             theme.text_disabled,
         )));

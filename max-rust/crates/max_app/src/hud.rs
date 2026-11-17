@@ -801,6 +801,9 @@ impl App {
     /// Выделяет юнита (устаревший id игнорируется при чтении).
     pub fn select_unit(&mut self, id: Option<UnitId>) {
         self.hud.select(id);
+        // Портрет `WINDOW_CORNER_FLIC`: у нового юнита сразу кадр 0 его FLC
+        // (`GameManager_MenuUnitSelect` → `MenuCreateFlic`).
+        self.refresh_portrait();
     }
 
     /// Забирает накопленные HUD-приказы для отправки в сессию.

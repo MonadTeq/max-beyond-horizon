@@ -47,6 +47,9 @@ pub struct CargoUnitData {
     /// Ресурс `D_*` — `Unit::GetFrameInfo()`: базы кадров корпуса/башни,
     /// число кадров и `angle_offsets` для наложения башни.
     pub data: Option<String>,
+    /// Ресурс `F_*` — `Unit::GetFlicsAnimation()`: FLC-анимация портрета
+    /// `WINDOW_CORNER_FLIC` (`GameManager_MenuCreateFlic`); `None` — `INVALID_ID`.
+    pub flics: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +110,15 @@ pub fn unit_portrait(unit: UnitType) -> Option<&'static str> {
 /// `angle_offsets`); `None` — `INVALID_ID`.
 pub fn unit_frame_data(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.data.as_deref())
+}
+
+/// `Unit::GetFlicsAnimation()` — тег ресурса `F_*` с FLC-анимацией портрета
+/// (`WINDOW_CORNER_FLIC`, 128×128); `None` — у типа нет анимации (`INVALID_ID`).
+///
+/// Сам ресурс — ASCIIZ-имя `*.FLC` рядом с `MAX.RES`: файл грузит
+/// [`crate::assets::Assets`], кадры декодирует `max_assets::flic`.
+pub fn unit_flic(unit: UnitType) -> Option<&'static str> {
+    unit_data(unit).and_then(|data| data.flics.as_deref())
 }
 
 /// Разобрались ли все [`UNIT_END`] записей (диагностика/тесты).

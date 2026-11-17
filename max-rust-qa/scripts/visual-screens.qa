@@ -14,6 +14,22 @@
 shot main-menu
 assert screen=MainMenu
 
+# TC-0108: Introduction (MVE-заглушка) и Credits (прокрутка титров).
+# Экран титров снимается не пустым: 100 кадров по 1/60 с — ~166 шагов
+# прокрутки (10 мс на шаг, шаг = 1 пиксель), уже видны первые строки.
+menu intro
+assert screen=Introduction
+shot intro
+key ESC
+assert screen=MainMenu
+
+menu credits
+assert screen=Credits
+tick 100
+shot credits
+key ESC
+assert screen=MainMenu
+
 menu new_game
 shot options
 assert screen=Options
@@ -55,6 +71,14 @@ assert screen=InGame
 assert turn=1
 tick 10
 shot game
+
+# TC-0919: портрет CORNER_FLIC — FLC-анимация выделенного юнита. Камера стоит
+# на шахте (22,22) → (404,242); Surveyor (23,21) → (468,178), как в move-input.qa.
+# В QA `dt = 0`, поэтому кадр портрета — первый кадр FLC (`SURVEYOR.FLC`),
+# детерминизм golden.
+click 468 178
+assert selected
+shot portrait
 
 # Первый же закрытый раунд заканчивает партию по лимиту ходов.
 end_turn
