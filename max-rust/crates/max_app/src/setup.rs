@@ -430,6 +430,8 @@ pub enum SetupTransition {
     None,
     /// Назад в меню/на предыдущий экран.
     Back,
+    /// Открыть окно помощи (`HelpMenu`) поверх экрана настройки.
+    Help(crate::helpmenu::HelpSection),
     /// Начать партию с этими настройками.
     Start(Box<LocalSetup>),
 }
@@ -683,7 +685,13 @@ impl GameSetupForm {
                 }
                 SetupTransition::None
             }
-            Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown
+            Key::Tab
+            | Key::Up
+            | Key::Down
+            | Key::Left
+            | Key::Right
+            | Key::PageUp
+            | Key::PageDown
             | Key::Other => SetupTransition::None,
         }
     }
@@ -876,8 +884,8 @@ impl GameSetupForm {
             return SetupTransition::Back;
         }
         if Self::inside(PixelRect::new(465, 438, 48, 40), x, y) {
-            self.status = "Options help is not ported yet".to_string();
-            return SetupTransition::None;
+            // `GameConfigMenu::EventHelp` → `HelpMenu_Menu("OPTIONS_SETUP")`.
+            return SetupTransition::Help(crate::helpmenu::HelpSection::Options);
         }
         if Self::inside(PixelRect::new(514, 438, 109, 40), x, y) {
             self.screen = SetupScreen::Planet;
@@ -950,8 +958,8 @@ impl GameSetupForm {
                     SetupTransition::None
                 }
                 _ => {
-                    self.status = "Planet help is not ported yet".to_string();
-                    SetupTransition::None
+                    // `PlanetSelectMenu::EventHelp` → `PLANET_SETUP`.
+                    SetupTransition::Help(crate::helpmenu::HelpSection::Planet)
                 }
             };
         }
@@ -996,8 +1004,13 @@ impl GameSetupForm {
                 }
                 "Done" => self.done(),
                 _ => {
-                    self.status = "Setup help is not ported yet".to_string();
-                    SetupTransition::None
+                    // `ChoosePlayerMenu::EventHelp`: `NEW_GAME_SETUP` в одиночной
+                    // игре и `HOT_SEAT_SETUP` в hot-seat.
+                    SetupTransition::Help(if self.hot_seat {
+                        crate::helpmenu::HelpSection::HotSeat
+                    } else {
+                        crate::helpmenu::HelpSection::NewGame
+                    })
                 }
             };
         }
@@ -1028,8 +1041,8 @@ impl GameSetupForm {
                 }
                 "Done" => self.apply_clan(),
                 _ => {
-                    self.status = "Clan help is not ported yet".to_string();
-                    SetupTransition::None
+                    // `ClanSelectMenu::EventHelp` → `CLAN_SETUP`.
+                    SetupTransition::Help(crate::helpmenu::HelpSection::Clan)
                 }
             };
         }
@@ -1602,14 +1615,7 @@ fn draw_players(
         // Флаг команды (`CH_TM1_U`…): клик — выбор клана.
         let rect = player_banner_rect(row);
         if let Some(pair) = menu.team_banners[row].as_ref() {
-            painted += blit_simple(
-                frame,
-                palette,
-                pair.image(false),
-                rect.ulx,
-                rect.uly,
-                true,
-            );
+            painted += blit_simple(frame, palette, pair.image(false), rect.ulx, rect.uly, true);
         }
 
         // Эмблема выбранного клана на флаге команды: C++ `Copy(clan_logo_id,
@@ -1622,14 +1628,8 @@ fn draw_players(
             .and_then(Option::as_ref)
             .or(menu.clan_logo.as_ref());
         if let Some(logo) = logo {
-            painted += blit_simple_anchored(
-                frame,
-                palette,
-                logo,
-                rect.ulx + 41,
-                rect.uly + 40,
-                true,
-            );
+            painted +=
+                blit_simple_anchored(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
         }
     }
 
@@ -1699,14 +1699,8 @@ fn draw_clan(
         if let Some(logo) = menu.clan_logos[index + 1].as_ref() {
             // `ClanSelectMenu::ButtonInit`: `Copy(CLN1LOGO + index, 41, 40)` —
             // якорь (41,40) внутри карточки 91×86.
-            painted += blit_simple_anchored(
-                frame,
-                palette,
-                logo,
-                rect.ulx + 41,
-                rect.uly + 40,
-                true,
-            );
+            painted +=
+                blit_simple_anchored(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
         }
 
         // Наведение: подсветка рамкой (в C++ hover не рисуется, но клик по
@@ -2006,7 +2000,10 @@ mod tests {
         form.screen = SetupScreen::Players;
         let banner = player_banner_rect(1);
         form.handle_input(
-            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            InputEvent::MouseClick(
+                banner.ulx + banner.width / 2,
+                banner.uly + banner.height / 2,
+            ),
             640,
             480,
         );
@@ -2059,7 +2056,10 @@ mod tests {
         form.screen = SetupScreen::Players;
         let banner = player_banner_rect(0);
         form.handle_input(
-            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            InputEvent::MouseClick(
+                banner.ulx + banner.width / 2,
+                banner.uly + banner.height / 2,
+            ),
             640,
             480,
         );
@@ -2071,7 +2071,10 @@ mod tests {
         );
         let cancel = CLAN_BUTTONS[1].0;
         form.handle_input(
-            InputEvent::MouseClick(cancel.ulx + cancel.width / 2, cancel.uly + cancel.height / 2),
+            InputEvent::MouseClick(
+                cancel.ulx + cancel.width / 2,
+                cancel.uly + cancel.height / 2,
+            ),
             640,
             480,
         );
@@ -2083,13 +2086,19 @@ mod tests {
 
         let banner = player_banner_rect(0);
         form.handle_input(
-            InputEvent::MouseClick(banner.ulx + banner.width / 2, banner.uly + banner.height / 2),
+            InputEvent::MouseClick(
+                banner.ulx + banner.width / 2,
+                banner.uly + banner.height / 2,
+            ),
             640,
             480,
         );
         let random = CLAN_BUTTONS[0].0;
         form.handle_input(
-            InputEvent::MouseClick(random.ulx + random.width / 2, random.uly + random.height / 2),
+            InputEvent::MouseClick(
+                random.ulx + random.width / 2,
+                random.uly + random.height / 2,
+            ),
             640,
             480,
         );

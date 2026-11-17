@@ -684,6 +684,8 @@ impl App {
     pub fn leave_local_game(&mut self) {
         self.local = None;
         self.close_build_menu();
+        self.close_research_menu();
+        self.close_help();
         self.hud.clear();
     }
 

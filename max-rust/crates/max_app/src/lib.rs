@@ -43,6 +43,7 @@ pub mod cargo_unit_data;
 pub mod chrome;
 pub mod credits;
 pub mod cursor;
+pub mod helpmenu;
 pub mod hotseat;
 pub mod hud;
 pub mod intro;
@@ -58,6 +59,7 @@ pub mod pregame;
 pub mod profile;
 pub mod qa;
 pub mod render;
+pub mod researchmenu;
 pub mod saveload;
 pub mod setup;
 pub mod soak;
@@ -96,34 +98,34 @@ pub use assets::{
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
+pub use hotseat::TurnNotice;
 pub use hud::{
     build_attack_order, build_move_order, build_power_order, hud_layout, render_hud, team_color,
     unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
-pub use hotseat::TurnNotice;
 pub use landing::{LandingAction, LandingScreen};
 pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
 pub use mem::{memory_line, process_memory, ProcessMemory};
 pub use mobilize::Mobilization;
-pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
-pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
-pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
 pub use panels::{PanelButton, PanelState, Panels};
+pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
+pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
 pub use render::{draw_unit_sprites, write_ppm, RenderStats, UnitSpriteStats};
 pub use saveload::{
     save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
     AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
-pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
+pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use ui::{
     handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
     CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
     SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD, PLANET_COLUMNS,
     PLANET_COUNT, PLANET_GRID_MIN_HEIGHT, PLANET_NAMES, PLANET_ROWS,
 };
+pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -531,6 +533,10 @@ pub struct App {
     pub(crate) save_load: Option<saveload::SaveLoadMenu>,
     /// Открытый экран покупных апгрейдов (P6). В снапшот/CRC не входит.
     upgrade_menu: Option<upgrademenu::UpgradeMenu>,
+    /// Открытый экран исследований (P7, `ResearchMenu`). В снапшот/CRC не входит.
+    research_menu: Option<researchmenu::ResearchMenu>,
+    /// Открытое окно помощи поверх игры (P7, `HelpMenu`). В снапшот/CRC не входит.
+    help: Option<helpmenu::HelpScreen>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
@@ -561,6 +567,8 @@ impl App {
             build_menu: None,
             save_load: None,
             upgrade_menu: None,
+            research_menu: None,
+            help: None,
             visual_units: std::collections::HashMap::new(),
             portrait: None,
         }
@@ -720,9 +728,11 @@ impl App {
             return false;
         }
         menu.selected = index;
-        menu.page_min = menu
-            .page_min
-            .min(menu.unit_types.len().saturating_sub(crate::upgrademenu::LIST_ROWS as usize));
+        menu.page_min = menu.page_min.min(
+            menu.unit_types
+                .len()
+                .saturating_sub(crate::upgrademenu::LIST_ROWS as usize),
+        );
         menu.rebuild_controls(&self.state);
         self.upgrade_menu = Some(menu);
         true
@@ -736,6 +746,137 @@ impl App {
         let changed = menu.adjust(&self.state, row, increase);
         self.upgrade_menu = Some(menu);
         changed
+    }
+
+    // -----------------------------------------------------------------------
+    // Экран исследований (`ResearchMenu`, P7)
+    // -----------------------------------------------------------------------
+
+    /// Открытый экран исследований; `None` — закрыт.
+    pub fn research_menu(&self) -> Option<&researchmenu::ResearchMenu> {
+        self.research_menu.as_ref()
+    }
+
+    /// Открытый экран исследований для ввода.
+    pub fn research_menu_mut(&mut self) -> Option<&mut researchmenu::ResearchMenu> {
+        self.research_menu.as_mut()
+    }
+
+    /// Открывает экран исследований для выделенного включённого
+    /// `RESEARCH`-центра своей команды — C++ popup `Research`
+    /// (`UnitsManager_Popup_OnClick_Research`). В Rust-клиенте popup'а нет,
+    /// поэтому путь — клавиша `R`/API.
+    pub fn open_research_menu(&mut self) -> bool {
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+        let Some(unit) = self.state.unit(id) else {
+            return false;
+        };
+        if unit.team != self.state.player_team
+            || unit.unit_type != UnitType::ResearchCenter
+            || unit.orders != max_core::enums::UnitOrder::PowerOn
+        {
+            return false;
+        }
+        let Some(menu) = researchmenu::ResearchMenu::new(&self.state, unit.team) else {
+            return false;
+        };
+
+        self.research_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает экран исследований без применения распределения.
+    pub fn close_research_menu(&mut self) {
+        self.research_menu = None;
+    }
+
+    /// `ResearchMenu_OnClick_Done`: применить распределение центров к
+    /// `GameState` (`set_research_allocation`) и закрыть экран.
+    pub fn commit_research_menu(&mut self) -> Option<String> {
+        let mut menu = self.research_menu.take()?;
+        let actual = menu.commit(&mut self.state);
+        let total: u32 = actual.iter().sum();
+
+        Some(format!("Research: {} center(s) assigned (Done)", total))
+    }
+
+    /// Ввод в открытом экране исследований — как `ResearchMenu::Run`.
+    pub fn research_menu_input(
+        &mut self,
+        event: InputEvent,
+    ) -> Option<researchmenu::ResearchAction> {
+        let Some(mut menu) = self.research_menu.take() else {
+            return None;
+        };
+        let action = menu.input(event);
+        self.research_menu = Some(menu);
+        Some(action)
+    }
+
+    /// Выбор темы (клавиатура/QA).
+    pub fn research_menu_select(&mut self, index: usize) -> bool {
+        let Some(menu) = self.research_menu.as_mut() else {
+            return false;
+        };
+        if index >= max_core::enums::RESEARCH_TOPIC_COUNT {
+            return false;
+        }
+        menu.selected = index;
+        true
+    }
+
+    /// Стрелка темы `row` (QA): `+1`/`−1` центр, как клик по `UPGRGT`/`UPGLFT`.
+    pub fn research_menu_adjust(&mut self, row: usize, increase: bool) -> bool {
+        let Some(menu) = self.research_menu.as_mut() else {
+            return false;
+        };
+        menu.adjust(row, increase)
+    }
+
+    // -----------------------------------------------------------------------
+    // Окно помощи (`HelpMenu`, P7)
+    // -----------------------------------------------------------------------
+
+    /// Открытое окно помощи поверх игры.
+    pub fn help_screen(&self) -> Option<&helpmenu::HelpScreen> {
+        self.help.as_ref()
+    }
+
+    /// Открытое окно помощи для ввода.
+    pub fn help_screen_mut(&mut self) -> Option<&mut helpmenu::HelpScreen> {
+        self.help.as_mut()
+    }
+
+    /// Открывает окно помощи поверх игры (`HelpMenu` в `WINDOW_MAIN_MAP`).
+    pub fn open_help(&mut self, section: helpmenu::HelpSection) -> bool {
+        self.open_help_with(section, helpmenu::HelpPlacement::Game)
+    }
+
+    /// Открывает окно помощи с явной позицией.
+    pub fn open_help_with(
+        &mut self,
+        section: helpmenu::HelpSection,
+        placement: helpmenu::HelpPlacement,
+    ) -> bool {
+        self.help = Some(helpmenu::HelpScreen::new(section, placement));
+        true
+    }
+
+    /// Закрывает окно помощи (как `Done`/`Enter`/`Esc`).
+    pub fn close_help(&mut self) {
+        self.help = None;
+    }
+
+    /// Ввод в окне помощи; возвращает действие (закрыть/нет).
+    pub fn help_input(&mut self, event: InputEvent) -> Option<helpmenu::HelpAction> {
+        let Some(mut help) = self.help.take() else {
+            return None;
+        };
+        let action = help.input(event);
+        self.help = Some(help);
+        Some(action)
     }
 
     /// Ассеты игры (`None` до [`App::init_assets`]).
@@ -856,6 +997,8 @@ impl App {
         self.build_menu = None;
         self.save_load = None;
         self.upgrade_menu = None;
+        self.research_menu = None;
+        self.help = None;
         self.visual_units.clear();
         self.focus_player();
 
@@ -978,7 +1121,11 @@ impl App {
                 continue;
             }
 
-            if let Some(start) = setup.teams.iter().find(|start| start.team == deployment.team) {
+            if let Some(start) = setup
+                .teams
+                .iter()
+                .find(|start| start.team == deployment.team)
+            {
                 deployment.position = start.position;
             }
         }
@@ -1001,11 +1148,7 @@ impl App {
         // Кланы из настроек — до высадки юнитов: `deploy_starting_units`
         // берёт атрибуты из `team_units` (`ResourceManager_InitClanUnitValues`).
         for index in 0..PLAYER_TEAM_COUNT {
-            let clan = config
-                .clans
-                .get(index)
-                .copied()
-                .unwrap_or(TeamClan::Random);
+            let clan = config.clans.get(index).copied().unwrap_or(TeamClan::Random);
             state.teams[index].team_clan = clan;
             let values = max_core::unit_values::team_base_values(clan);
             state.team_units[index].base_values = values;
@@ -1105,6 +1248,8 @@ impl App {
         self.build_menu = None;
         self.save_load = None;
         self.upgrade_menu = None;
+        self.research_menu = None;
+        self.help = None;
         self.visual_units.clear();
         self.focus_player();
 
@@ -1250,7 +1395,10 @@ impl App {
         let mut grid = None;
 
         // 1. `Access_GetFirstMiningStation`: шахта команды в `StationaryUnits`.
-        for id in self.state.unit_list(max_core::unit::UnitListKind::Stationary) {
+        for id in self
+            .state
+            .unit_list(max_core::unit::UnitListKind::Stationary)
+        {
             if let Some(unit) = self.state.unit(*id) {
                 if unit.team == team && unit.unit_type == UnitType::MiningStation {
                     grid = Some(unit.grid);
@@ -1268,9 +1416,7 @@ impl App {
             ] {
                 for id in self.state.unit_list(kind) {
                     if let Some(unit) = self.state.unit(*id) {
-                        if unit.team == team
-                            && unit.orders != max_core::enums::UnitOrder::Idle
-                        {
+                        if unit.team == team && unit.orders != max_core::enums::UnitOrder::Idle {
                             grid = Some(unit.grid);
                             break;
                         }

@@ -280,6 +280,40 @@
 - Критерий: `cargo check/test` — зелено; все qa-сценарии PASS; golden —
   0 дрейфа; `cargo test --all-targets` (в т.ч. новые 24 теста) — 0 failed.
 
+### P8 — ResearchMenu и Help-экраны 1:1 (2026-11-17)
+
+- [x] Изучить оракул: `researchmenu.cpp` (`RSRCHPIC`), `helpmenu.cpp` +
+  `assets/help.json`, точки вызова `HelpMenu_Menu` в `cargomenu.cpp`,
+  `planetselectmenu.cpp`, `gameconfigmenu.cpp`, `chooseplayermenu.cpp`,
+  `researchmenu.cpp`, `upgrademenu.cpp`, `game_manager.cpp` (`HELP_OF`).
+- [x] `max_app/src/researchmenu.rs`: окно `RSRCHPIC` 360×331 в (223,76),
+  заголовок/подписи, 8 тем (Attack/Shots/Range/Armor/Hits/Speed/Scan/Cost),
+  счётчики центров, ходы до завершения (`(centers+turns−1)/centers` через
+  `research_turns_to_complete` на копии темы), `+N%`, `UPGLFT/UPGRGT` с
+  disabled `_X`, `PRFSLIDE` + клик по слоту, `DPTBAY/DPTHP`;
+  `free_capacity` как в C++ (старт 0, уменьшение темы освобождает центры);
+  `Done` → `GameState::set_research_allocation` (порт
+  `ResearchMenu_OnClick_Done`), `Cancel`/`Esc`, `Help` → `RESEARCH_SETUP`.
+  Экран открывается клавишей `R` для включённого Research Center (popup
+  «Research» в C++; popup не портирован). `cancel`/`done` не шлют пакет 09 —
+  ограничение протокола.
+- [x] Help: `max_app/src/helpmenu.rs` — окно `HELPFRAM` 301×231
+  ((169,124) в меню / (253,126) в игре), текст `FONT5` + обводка, 16 строк
+  на страницу и центровка короткого текста, `PageUp/PageDown` + `BLDUP__/
+  BLDDWN`, `Done`/`Enter`/`Esc`, `Keys` у `GAME_SCREEN_SETUP`; тексты —
+  `tools/gen_help_data.py` → `data/help.json` (32 секции, 661 запись из
+  `help.json` + `language.json`). Подключены кнопки `?` Options/Planet/
+  Players/Clan, `Help` CargoMenu/ResearchMenu/UpgradeMenu, панель `HELP_OF`
+  и `?` в игре. Отличие: показывается весь текст секции, а не абзац под
+  курсором (в C++ help-режим с кликом по элементу).
+- [x] QA: `research-help.qa` (Help-экраны, `ResearchMenu`, распределение
+  Attack→Shots, `Done`, 16 ходов; 9 golden-кадров), команды
+  `research open/select/row/done/cancel`, `help SECTION/page/up/down/keys/
+  done/close`, проверки `research-menu`, `research-alloc`, `help`,
+  `help-section`, `help-row`; `ci.sh`/GitHub CI — новая стадия.
+- [x] Артефакты/документация: Windows UI + headless пересобраны; CHANGELOG,
+  `visual-1to1-status.md` §13, suite TC-0220/TC-0329/0330/TC-0929/0930.
+
 ## Порядок
 
 P1 → P2 → P3 → P4 → P5 → P6 → P7 (P1 сразу; P2/P3 параллелятся с P4 частично).

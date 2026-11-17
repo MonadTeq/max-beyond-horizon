@@ -161,7 +161,7 @@ M.A.X. Rust client ${VERSION} — Windows x86_64 (headless)
 Запуск без флагов (GUI) в этой headless-сборке недоступен: клиент скажет,
 что нужна сборка с feature sdl (она входит в default-features max_app), и
 предложит headless-флаги выше. Обычная сборка из исходников
-(`cargo run -p max_app` без --no-default-features) GUI открывает.
+(\`cargo run -p max_app\` без --no-default-features) GUI открывает.
 
 Данные игры указываются флагами:
   --data-dir <каталог>     MAX.RES и COLOR.PAL
@@ -198,7 +198,7 @@ Windows-машине с Rust 1.94.0 и MSVC:
   cd max-rust
   cargo build --release -p max_app --no-default-features --features sdl-vcpkg
   #    вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC) —
-  #    он же default, поэтому достаточно `cargo run -p max_app` / `cargo build -p max_app`
+  #    он же default, поэтому достаточно \`cargo run -p max_app\` / \`cargo build -p max_app\`
   # 5. SDL3.dll рядом с exe (vcpkg: C:\\vcpkg\\installed\\x64-windows\\bin\\SDL3.dll)
   target\\release\\max-rust.exe
 

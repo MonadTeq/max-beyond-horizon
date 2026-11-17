@@ -91,6 +91,8 @@ pub enum ScreenName {
     GameOver,
     /// `Screen::InSession` (идёт партия).
     InGame,
+    /// `Screen::Help` — модальное окно помощи.
+    Help,
 }
 
 impl ScreenName {
@@ -112,6 +114,7 @@ impl ScreenName {
             "landing" | "siteselect" | "site_select" => Some(Self::Landing),
             "gameover" | "game_over" | "winloss" => Some(Self::GameOver),
             "ingame" | "in_game" | "session" => Some(Self::InGame),
+            "help" | "helpmode" | "help_mode" => Some(Self::Help),
             _ => None,
         }
     }
@@ -134,6 +137,7 @@ impl ScreenName {
             Self::Landing => "Landing",
             Self::GameOver => "GameOver",
             Self::InGame => "InGame",
+            Self::Help => "Help",
         }
     }
 }
@@ -207,6 +211,16 @@ pub enum Assertion {
     BuildOpen(bool),
     /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
     UpgradeOpen(bool),
+    /// `assert research-menu=open|closed`: открыт ли экран исследований (P7).
+    ResearchMenuOpen(bool),
+    /// `assert research-alloc attack=N`: сколько центров закреплено за темой.
+    ResearchAlloc(max_core::enums::ResearchTopic, Cmp, u32),
+    /// `assert help=open|closed`: открыто ли окно помощи (P7).
+    HelpOpen(bool),
+    /// `assert help-section=cargo|planet|newgame|options|…`: секция окна.
+    HelpSection(crate::helpmenu::HelpSection),
+    /// `assert help-row>=N`: первая видимая строка окна помощи.
+    HelpRow(Cmp, u32),
     /// `assert gold>=N`: золото локальной команды.
     Gold(Cmp, u32),
     /// `assert research attack>=1`: уровень темы исследований (P6).
@@ -370,6 +384,42 @@ pub enum UpgradeCommand {
     Cancel,
 }
 
+/// Действие экрана исследований (P7, `ResearchMenu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResearchCommand {
+    /// `open` — открыть для выделенного включённого `RESEARCH`-центра.
+    Open,
+    /// `select N` — выбрать тему (клавиатура).
+    Select(u32),
+    /// `row N up|down` — стрелка `UPGRGT`/`UPGLFT` строки N.
+    Row { row: u32, increase: bool },
+    /// `done` — `ResearchMenu_OnClick_Done` (распределение применяется).
+    Done,
+    /// `cancel` — закрыть без изменений.
+    Cancel,
+}
+
+/// Действие окна помощи (`HelpMenu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpCommand {
+    /// `open SECTION` — открыть кнопкой `?`/`Help` текущего экрана.
+    Open(crate::helpmenu::HelpSection),
+    /// `page up|down` — `PageUp`/`PageDown`.
+    PageUp,
+    /// `page down`.
+    PageDown,
+    /// `up`/`down` — одна строка.
+    Up,
+    /// `down` — одна строка.
+    Down,
+    /// `keys` — кнопка `Keys` (`GAME_SCREEN_SETUP`).
+    Keys,
+    /// `done`/`close` — `Done`/`Enter`.
+    Done,
+    /// `close` — `Esc`.
+    Close,
+}
+
 /// Действие на экране выбора точки высадки (`GameManager_SelectSite`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LandingCommand {
@@ -451,6 +501,10 @@ pub enum Command {
     Build(BuildCommand),
     /// `upgrade open|select N|row N up|down|done|cancel`.
     Upgrade(UpgradeCommand),
+    /// `research open|select N|row N up|down|done|cancel`.
+    Research(ResearchCommand),
+    /// `help SECTION|page up|page down|up|down|keys|done|close`.
+    Help(HelpCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -555,6 +609,8 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "landing" => parse_landing(rest),
         "build" => parse_build(rest),
         "upgrade" => parse_upgrade(rest),
+        "research" => parse_research(rest),
+        "help" => parse_help(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -606,11 +662,7 @@ fn parse_grid_pair(text: &str, what: &str) -> Result<(i16, i16), String> {
         .parse::<i16>()
         .map_err(|_| format!("{what}: Y не число: «{}»", parts[1]))?;
 
-    if x < 0
-        || y < 0
-        || x >= max_core::geo::MAP_WIDTH
-        || y >= max_core::geo::MAP_HEIGHT
-    {
+    if x < 0 || y < 0 || x >= max_core::geo::MAP_WIDTH || y >= max_core::geo::MAP_HEIGHT {
         return Err(format!(
             "{what}: клетка ({x}, {y}) вне карты {}×{}",
             max_core::geo::MAP_WIDTH,
@@ -762,6 +814,22 @@ fn parse_team_kind(text: &str) -> Result<TeamKind, String> {
     }
 }
 
+fn parse_research_topic(text: &str) -> Result<max_core::enums::ResearchTopic, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "attack" => Ok(max_core::enums::ResearchTopic::Attack),
+        "shots" => Ok(max_core::enums::ResearchTopic::Shots),
+        "range" => Ok(max_core::enums::ResearchTopic::Range),
+        "armor" => Ok(max_core::enums::ResearchTopic::Armor),
+        "hits" => Ok(max_core::enums::ResearchTopic::Hits),
+        "speed" => Ok(max_core::enums::ResearchTopic::Speed),
+        "scan" => Ok(max_core::enums::ResearchTopic::Scan),
+        "cost" => Ok(max_core::enums::ResearchTopic::Cost),
+        other => Err(format!(
+            "assert research: неизвестная тема «{other}» (attack|shots|range|armor|hits|speed|scan|cost)"
+        )),
+    }
+}
+
 fn parse_assertion(rest: &str) -> Result<Assertion, String> {
     let rest = rest.trim();
 
@@ -841,6 +909,38 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert upgrade: ожидалось open|closed, получено «{other}»"
             )),
         },
+        "research-menu" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::ResearchMenuOpen(true)),
+            "closed" | "none" => Ok(Assertion::ResearchMenuOpen(false)),
+            other => Err(format!(
+                "assert research-menu: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "help" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::HelpOpen(true)),
+            "closed" | "none" => Ok(Assertion::HelpOpen(false)),
+            other => Err(format!(
+                "assert help: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "help-section" => {
+            let section = crate::helpmenu::HelpSection::parse(value).ok_or_else(|| {
+                format!("assert help-section: неизвестная секция «{value}»")
+            })?;
+            Ok(Assertion::HelpSection(section))
+        }
+        "help-row" => Ok(Assertion::HelpRow(
+            operator,
+            parse_u32(value, "assert help-row")?,
+        )),
+        other if other.starts_with("research-alloc ") => {
+            let topic = parse_research_topic(other["research-alloc ".len()..].trim())?;
+            Ok(Assertion::ResearchAlloc(
+                topic,
+                operator,
+                parse_u32(value, "assert research-alloc")?,
+            ))
+        }
         "gold" => Ok(Assertion::Gold(
             operator,
             parse_u32(value, "assert gold")?,
@@ -1174,9 +1274,86 @@ fn parse_upgrade(rest: &str) -> Result<Command, String> {
     Ok(Command::Upgrade(command))
 }
 
-fn parse_select(rest: &str) -> Result<Command, String> {    let parts: Vec<&str> = rest.split_whitespace().collect();
+fn parse_research(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err(
+            "research: ожидалось действие (open|select N|row N up|down|done|cancel)".to_string(),
+        );
+    };
 
-    if parts.first().is_some_and(|part| part.eq_ignore_ascii_case("unit")) {
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("open", [_]) => ResearchCommand::Open,
+        ("select", [_, index]) => ResearchCommand::Select(parse_u32(index, "research select")?),
+        ("row", [_, row, direction]) => {
+            let row = parse_u32(row, "research row")?;
+            let increase = match direction.to_ascii_lowercase().as_str() {
+                "up" | "inc" | "increase" | "+" => true,
+                "down" | "dec" | "decrease" | "-" => false,
+                other => {
+                    return Err(format!(
+                        "research row: ожидалось up|down, получено «{other}»"
+                    ))
+                }
+            };
+            ResearchCommand::Row { row, increase }
+        }
+        ("done", [_]) => ResearchCommand::Done,
+        ("cancel", [_]) => ResearchCommand::Cancel,
+        _ => {
+            return Err(format!(
+                "research: неизвестное действие «{rest}» (open|select N|row N up|down|done|cancel)"
+            ))
+        }
+    };
+
+    Ok(Command::Research(command))
+}
+
+fn parse_help(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err(
+            "help: ожидалось «help cargo|planet|newgame|options|research|upgrades|game» или page up|down|up|down|keys|done"
+                .to_string(),
+        );
+    };
+
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("page", [_, direction]) if direction.eq_ignore_ascii_case("up") => HelpCommand::PageUp,
+        ("page", [_, direction]) if direction.eq_ignore_ascii_case("down") => HelpCommand::PageDown,
+        ("row", [_, direction]) if direction.eq_ignore_ascii_case("up") => HelpCommand::Up,
+        ("row", [_, direction]) if direction.eq_ignore_ascii_case("down") => HelpCommand::Down,
+        ("up", [_]) => HelpCommand::Up,
+        ("down", [_]) => HelpCommand::Down,
+        ("keys", [_]) => HelpCommand::Keys,
+        ("done", [_]) | ("ok", [_]) => HelpCommand::Done,
+        ("close", [_]) | ("cancel", [_]) => HelpCommand::Close,
+        (section, [_]) => {
+            let section = crate::helpmenu::HelpSection::parse(section).ok_or_else(|| {
+                format!(
+                    "help: неизвестная секция «{section}» (cargo|planet|newgame|options|research|upgrades|game|hotseat|clan)"
+                )
+            })?;
+            HelpCommand::Open(section)
+        }
+        _ => {
+            return Err(format!(
+                "help: неизвестное действие «{rest}» (SECTION|page up|page down|up|down|keys|done|close)"
+            ))
+        }
+    };
+
+    Ok(Command::Help(command))
+}
+
+fn parse_select(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    if parts
+        .first()
+        .is_some_and(|part| part.eq_ignore_ascii_case("unit"))
+    {
         if parts.len() != 2 {
             return Err(format!(
                 "select unit: ожидалось «select unit N», получено «{rest}»"
@@ -1186,7 +1363,10 @@ fn parse_select(rest: &str) -> Result<Command, String> {    let parts: Vec<&str>
         return Ok(Command::SelectUnit(parse_u32(parts[1], "select unit")?));
     }
 
-    if parts.first().is_some_and(|part| part.eq_ignore_ascii_case("last")) {
+    if parts
+        .first()
+        .is_some_and(|part| part.eq_ignore_ascii_case("last"))
+    {
         if parts.len() != 1 {
             return Err(format!("select last: лишние аргументы «{rest}»"));
         }
@@ -1273,7 +1453,10 @@ mod tests {
         assert_eq!(one("wait 40"), Command::Wait(40));
         assert_eq!(one("tick 3"), Command::Tick(3));
         assert_eq!(one("mem"), Command::Mem);
-        assert_eq!(one("shot main-menu"), Command::Shot("main-menu".to_string()));
+        assert_eq!(
+            one("shot main-menu"),
+            Command::Shot("main-menu".to_string())
+        );
         assert_eq!(one("save sp.mxs"), Command::Save("sp.mxs".to_string()));
         assert_eq!(
             one("load SAVE1.CAM"),
@@ -1300,14 +1483,8 @@ mod tests {
             one("assert units>4"),
             Command::Assert(Assertion::Units(Cmp::Gt, 4))
         );
-        assert_eq!(
-            one("assert team=1"),
-            Command::Assert(Assertion::Team(1))
-        );
-        assert_eq!(
-            one("assert team=RED"),
-            Command::Assert(Assertion::Team(0))
-        );
+        assert_eq!(one("assert team=1"), Command::Assert(Assertion::Team(1)));
+        assert_eq!(one("assert team=RED"), Command::Assert(Assertion::Team(0)));
         assert_eq!(
             one("assert screen=InGame"),
             Command::Assert(Assertion::Screen(ScreenName::InGame))
@@ -1336,17 +1513,14 @@ mod tests {
     #[test]
     fn high_level_commands_are_parsed() {
         assert_eq!(one("menu new_game"), Command::Menu(MenuTarget::NewGame));
-        assert_eq!(one("menu multiplayer"), Command::Menu(MenuTarget::Multiplayer));
+        assert_eq!(
+            one("menu multiplayer"),
+            Command::Menu(MenuTarget::Multiplayer)
+        );
         assert_eq!(one("menu hot_seat"), Command::Menu(MenuTarget::HotSeat));
         assert_eq!(one("menu join"), Command::Menu(MenuTarget::Join));
-        assert_eq!(
-            one("menu credits"),
-            Command::Menu(MenuTarget::Credits)
-        );
-        assert_eq!(
-            one("menu intro"),
-            Command::Menu(MenuTarget::Introduction)
-        );
+        assert_eq!(one("menu credits"), Command::Menu(MenuTarget::Credits));
+        assert_eq!(one("menu intro"), Command::Menu(MenuTarget::Introduction));
         assert_eq!(one("setup done"), Command::Setup(SetupAction::Done));
         assert_eq!(one("setup cancel"), Command::Setup(SetupAction::Cancel));
         assert_eq!(one("setup random"), Command::Setup(SetupAction::Random));
@@ -1413,7 +1587,10 @@ mod tests {
                 increase: false
             })
         );
-        assert_eq!(steps[6].command, Command::Assert(Assertion::UpgradeOpen(true)));
+        assert_eq!(
+            steps[6].command,
+            Command::Assert(Assertion::UpgradeOpen(true))
+        );
         assert_eq!(
             steps[7].command,
             Command::Assert(Assertion::Gold(Cmp::Lt, 150))
@@ -1497,10 +1674,7 @@ mod tests {
             steps[9].command,
             Command::Mobilize(MobilizeAction::BuyIndex(14))
         );
-        assert_eq!(
-            steps[10].command,
-            Command::Mobilize(MobilizeAction::Delete)
-        );
+        assert_eq!(steps[10].command, Command::Mobilize(MobilizeAction::Delete));
         assert_eq!(
             steps[11].command,
             Command::Assert(Assertion::CargoMode(false))
@@ -1606,6 +1780,93 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "move near extra",
             "end_turn now",
             "exit now",
+        ] {
+            assert!(
+                parse_script(&format!("{source}\n")).is_err(),
+                "должно быть отклонено: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn research_menu_and_help_commands_parse() {
+        assert_eq!(
+            one("research open"),
+            Command::Research(ResearchCommand::Open)
+        );
+        assert_eq!(
+            one("research row 0 down"),
+            Command::Research(ResearchCommand::Row {
+                row: 0,
+                increase: false
+            })
+        );
+        assert_eq!(
+            one("research row 1 up"),
+            Command::Research(ResearchCommand::Row {
+                row: 1,
+                increase: true
+            })
+        );
+        assert_eq!(
+            one("research select 7"),
+            Command::Research(ResearchCommand::Select(7))
+        );
+        assert_eq!(
+            one("research done"),
+            Command::Research(ResearchCommand::Done)
+        );
+        assert_eq!(
+            one("research cancel"),
+            Command::Research(ResearchCommand::Cancel)
+        );
+        assert_eq!(
+            one("assert research-menu=open"),
+            Command::Assert(Assertion::ResearchMenuOpen(true))
+        );
+        assert_eq!(
+            one("assert research-alloc attack=0"),
+            Command::Assert(Assertion::ResearchAlloc(
+                max_core::enums::ResearchTopic::Attack,
+                Cmp::Eq,
+                0
+            ))
+        );
+
+        assert_eq!(
+            one("help cargo"),
+            Command::Help(HelpCommand::Open(crate::helpmenu::HelpSection::Cargo))
+        );
+        assert_eq!(
+            one("help newgame"),
+            Command::Help(HelpCommand::Open(crate::helpmenu::HelpSection::NewGame))
+        );
+        assert_eq!(one("help page down"), Command::Help(HelpCommand::PageDown));
+        assert_eq!(one("help page up"), Command::Help(HelpCommand::PageUp));
+        assert_eq!(one("help keys"), Command::Help(HelpCommand::Keys));
+        assert_eq!(one("help done"), Command::Help(HelpCommand::Done));
+        assert_eq!(one("help close"), Command::Help(HelpCommand::Close));
+        assert_eq!(
+            one("assert help=open"),
+            Command::Assert(Assertion::HelpOpen(true))
+        );
+        assert_eq!(
+            one("assert help-section=CARGO_SETUP"),
+            Command::Assert(Assertion::HelpSection(crate::helpmenu::HelpSection::Cargo))
+        );
+        assert_eq!(
+            one("assert help-row>=16"),
+            Command::Assert(Assertion::HelpRow(Cmp::Ge, 16))
+        );
+
+        // Опечатки падают с номером строки, а не «молча».
+        for source in [
+            "research nope",
+            "research row 0 sideways",
+            "help nope",
+            "help page sideways",
+            "assert help-section=nope",
+            "assert research-alloc nope=1",
         ] {
             assert!(
                 parse_script(&format!("{source}\n")).is_err(),

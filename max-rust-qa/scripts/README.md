@@ -15,6 +15,7 @@ max-rust-qa/
 ├── scripts/save-load.qa        # P3: 2 хода → save_v70 → load в свежем App → те же ход/юниты
 ├── scripts/upgrade.qa          # P6: экран апгрейдов (U) → покупка → Done/Cancel, золото
 ├── scripts/research.qa         # P6: Research Center → O (питание) → 16 ходов → уровень 1
+├── scripts/research-help.qa    # P7: ResearchMenu (распределение центров) + 4 Help-экрана
 ├── scripts/cargo-full.qa       # P7: полная мобилизация (15 типов, cargo, модернизация, апгрейд)
 ├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
@@ -23,6 +24,7 @@ max-rust-qa/
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
 ├── golden/research/*.png       # эталон партии после исследования (research.qa)
+├── golden/research-help/*.png  # эталоны ResearchMenu + Help-экранов (research-help.qa)
 ├── golden/cargo/*.png          # эталоны CargoMenu: покупка/модернизация/после апгрейда
 ├── golden/move-input/*.png     # эталоны старта партии/выделения/предпросмотра/хода 2 (move-input.qa)
 └── scripts/README.md
@@ -111,6 +113,16 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `upgrade row N up\|down` | нажать стрелку `UPGRGT`/`UPGLFT` строки N (цена/шаг — C++) |
 | `upgrade done` | `Done`/Enter — `CommitUpgradeChanges` (золото списывается) |
 | `upgrade cancel` | `Cancel`/Esc — закрыть без изменений |
+| `research open` | открыть `ResearchMenu` (P7, клавиша `R`) для выделенного **включённого** `RESEARCH`-центра |
+| `research select N` | выбрать тему (0 Attack … 7 Cost) |
+| `research row N up\|down` | стрелка `UPGRGT`/`UPGLFT` темы N: `+1`/`−1` центр (свободные центры — `free_capacity`) |
+| `research done` | `Done`/Enter — `ResearchMenu_OnClick_Done`: распределение пишется в `GameState` |
+| `research cancel` | `Cancel`/Esc — закрыть без изменений |
+| `help cargo\|planet\|newgame\|options\|research\|upgrades\|game\|hotseat\|clan` | открыть окно `HELPFRAM` (**CARGO/PLANET/NEW_GAME/OPTIONS_SETUP**, `RESEARCH_SETUP`, `UPGRADES_SETUP`, `GAME_SCREEN_SETUP`) кнопкой `?`/`Help` текущего экрана |
+| `help page up\|down` | `PageUp`/`PageDown` — страница текста (16 строк) |
+| `help up\|down` | одна строка вверх/вниз |
+| `help keys` | кнопка `Keys` (`GAME_SCREEN_SETUP`): подсказка `_(ceb6)` |
+| `help done` / `help close` | `Done`/Enter или `Esc` — закрыть окно, вернуть экран под ним |
 | `mobilize mode buy\|upgrade` | переключатель `CRGTOG` (542,446) — список покупки/модернизации |
 | `mobilize filter ground\|air\|sea\|building\|combat` | фильтр домена `SELGRD/SELAIR/SELSEA/SELBLD/SELCBT` |
 | `mobilize select N` | строка N списка Available (прокручивает список стрелками, как игрок) |
@@ -145,6 +157,11 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert digest=0xBEEF` | CRC16 снапшота состояния (`App::digest`) |
 | `assert build=open` / `build=closed` | открыт ли `BuildMenu` (P2) |
 | `assert upgrade=open` / `upgrade=closed` | открыт ли экран апгрейдов (P6) |
+| `assert research-menu=open` / `research-menu=closed` | открыт ли `ResearchMenu` (P7) |
+| `assert research-alloc attack=N` (и `>=`, `<=`, `>`, `<`) | сколько центров закреплено за темой (`attack\|shots\|range\|armor\|hits\|speed\|scan\|cost`) |
+| `assert help=open` / `help=closed` | открыто ли окно помощи (P7) |
+| `assert help-section=CARGO_SETUP` (короткие `cargo\|planet\|newgame\|options\|research\|upgrades\|game`) | секция открытого окна |
+| `assert help-row>=N` | первая видимая строка окна помощи (проверка прокрутки) |
 | `assert gold>=N` (и `=`, `<=`, `>`, `<`) | золото локальной команды |
 | `assert research attack>=1` | уровень темы исследований (`attack|shots|range|armor|hits|speed|scan|cost`) |
 | `assert cargo-mode=buy\|upgrade` | режим списка `CargoMenu` (P7) |
@@ -167,6 +184,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |
 | `upgrade.qa` | P6: локальная партия → `select type Constructor` → `upgrade open` (клавиша `U`) → `upgrade row 0 up` → `Done`: золото 150 → 142, `current_values` типа изменены; повтор с `Cancel` не меняет золото; кадры `upgrade-menu`/`upgrade-done` | **PASS** (golden `upgrade/`) |
 | `research.qa` | P6: конструктор строит Research Center (12 ходов) → `select type` + `key o` (питание, пакет 08/P1) → 16 × `end_turn` → `assert research attack>=1`; кадр `research-done` | **PASS** (golden `research/`) |
+| `research-help.qa` | P8: `?` на Options/Planet/Players + `Help` мобилизации → окна `OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP` (PageDown/PageUp/Done); `R` → `ResearchMenu` (`RSRCHPIC`, 8 тем, центры, `+N%`, ходы), `Help` экрана → `RESEARCH_SETUP`, панель `HELP_OF` → `GAME_SCREEN_SETUP` + `Keys`; `UPGLFT` Attack → `free_capacity` → `UPGRGT` Shots → `Done`; за 16 ходов Shots=1, Attack=0 | **PASS** (3430 кадров, 9 PNG; golden `research-help/`) |
 | `soak-100.qa` | P4 soak: Options (Clueless, No Limit, Turn Based, Duration 200) → мобилизация без покупок → высадка → `select unit 0`/`move near` в начале и на 41-м ходу → 100 × `end_turn` (ходы ИИ) → `assert turn=21/41/61/81/101`, `assert screen=InGame`, `shot` и `mem` каждые 20 ходов, `save_v70 soak-turn100.dta`; в `log.txt` — `# mem start/end` и (при `MAX_TICK_PROFILE=1`) строка `PROFILE` | **PASS** (100 ходов, 12 208 кадров, 7 PNG; V70-сейв 157 921 Б; RSS 54 696 → 60 944 КиБ) |
 | `edge-cases.qa` | P4 TC-1106/1111/1112: 50 кликов по пустым областям главного меню + 50 по карте (без паник), не-ASCII `type` в чате и в поле имени, выход из партии → New Game → Cancel → полный второй старт до `turn=2`; кадры `edge-menu-spam`/`edge-game-spam`/`edge-unicode-*`/`edge-repeat-start`/`edge-second-game` | **PASS** |
 | `cargo-full.qa` | P7: мобилизация целиком — `assert cargo-types=15`, покупка Gold Truck (14-я строка, прокрутка списка), Mine Layer и Constructor, cargo-слайдер (+20 единиц), `CRGTOG` → список модернизации (62 типа), фильтры домена, апгрейд armor Constructor'а, `Done` → `assert gold<150`; кадры `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` | **PASS** (golden `cargo/`) |

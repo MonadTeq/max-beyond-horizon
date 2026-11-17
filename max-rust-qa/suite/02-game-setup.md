@@ -23,5 +23,6 @@
 | TC-0217 | Эмблемы кланов на флагах | Players с выбранным кланом | `CLNnLOGO` рисуется с якорем (41,40) внутри флага 93×89: `ulx/uly` ресурса вычитаются (`WindowManager_DecodeSimpleImage`) | ✅ golden players.png; UNIT setup |
 | TC-0218 | Экран выбора клана | клик по флагу команды | CLANSEL, 8 карточек 91×86, логотипы по центру (якорь 41,40), выбранная карточка — down-состояние, имя зелёным | ✅ QA sp-full (кадр `clan.png`); UNIT setup (clan screen) |
 | TC-0219 | Options → Credits управляет мобилизацией | Options: «Credits» ≠ 0 → Players Done | после Players открывается `CargoMenu` (`start_gold + Clans::GetCredits`); при 0 — фазы нет, сразу точка высадки (`GameManager_PlayerMissionSetup`) | ✅ QA cargo-full (`assert screen=Mobilize`); UNIT `start_phases::zero_start_gold_skips_mobilization` |
+| TC-0220 | Help-экраны настройки | кнопка `?` (465,438 48×40) на Options/Planet/Players | окно `HELPFRAM` 301×231 по центру окна `(169,124)`, текст секций `OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP` (в hot-seat — `HOT_SEAT_SETUP`), прокрутка `PageUp`/`PageDown`/стрелки, `Done`/`Enter`/`Esc` закрывает и возвращает экран | ✅ QA `research-help.qa` (`help options/planet/newgame`, `assert help-section`, `help-row`); golden `golden/research-help/help-{options,planet,newgame}.png` |
 
-Итог: 19 TC, ✅ 19, 🟡 0.
+Итог: 20 TC, ✅ 20, 🟡 0.

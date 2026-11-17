@@ -87,7 +87,8 @@
 //! * Числа `Cost`/`Credit`/`Cargo` под списками: в C++-порте нарисованы только
 //!   подписи (числа потеряны при портировании), здесь значения выводятся над
 //!   подписями (как в оригинальной игре).
-//! * `Help` (`BLDHLP`) пишет строку статуса — экран `CARGO_SETUP` не портирован.
+//! * `Help` (`BLDHLP`) открывает окно `CARGO_SETUP` (`HelpMenu_Menu`,
+//!   `HELPFRAM`, P8) поверх `CARGOPIC`; `?` делает то же.
 //! * Звуки (`KCARG0`/`NDONE0`/…) не проигрываются (аудио-слой отдельный).
 //! * ИИ по-прежнему получает стандартную загрузку `SC_L0001`
 //!   (`RollTeamMissionSupplies` не портирован) — это не менялось.
@@ -315,6 +316,8 @@ pub enum CargoAction {
     Cancel,
     /// `Done`/`Enter` — зафиксировать и продолжить.
     Done,
+    /// `Help`/`?` — открыть окно `CARGO_SETUP` (`HelpMenu_Menu`).
+    Help,
 }
 
 /// Группа иконок (pips) строки статистики — порт `UnitStats_DrawIcons`.
@@ -546,7 +549,10 @@ impl Mobilization {
 
     /// Материал полосы cargo (`VERTFUEL`/`VERTGOLD`/`VERTRAW`).
     pub fn cargo_bar_kind(&self) -> CargoBarKind {
-        match self.loadout_row(self.cargo_row()).map(|supply| supply.unit_type) {
+        match self
+            .loadout_row(self.cargo_row())
+            .map(|supply| supply.unit_type)
+        {
             Some(UnitType::FuelTruck) => CargoBarKind::Fuel,
             Some(UnitType::GoldTruck) => CargoBarKind::Gold,
             _ => CargoBarKind::Raw,
@@ -555,7 +561,8 @@ impl Mobilization {
 
     /// Может ли `Delete` продать выбранную строку (`index >= unit_count`).
     pub fn can_delete(&self) -> bool {
-        self.loadout_selected >= self.free.len() && self.loadout_selected < self.loadout_rows().len()
+        self.loadout_selected >= self.free.len()
+            && self.loadout_selected < self.loadout_rows().len()
     }
 
     /// Может ли `Buy` купить выбранный тип (`DrawUnitInfo`).
@@ -749,7 +756,8 @@ impl Mobilization {
             }
             ActiveList::Loadout => {
                 let rows = self.loadout_rows().len().saturating_sub(PURCHASED_ROWS);
-                self.loadout_page = (self.loadout_page as i32 + delta).clamp(0, rows as i32) as usize;
+                self.loadout_page =
+                    (self.loadout_page as i32 + delta).clamp(0, rows as i32) as usize;
             }
         }
     }
@@ -829,7 +837,10 @@ impl Mobilization {
 
         let from_bottom = CARGO_BAR.lry() - y;
         let value = (CARGO_BAR.height / 2 + capacity * from_bottom) / CARGO_BAR.height;
-        let value = value.max(self.cargo_take_max()).min(capacity).min(self.cargo_give_max());
+        let value = value
+            .max(self.cargo_take_max())
+            .min(capacity)
+            .min(self.cargo_give_max());
         self.set_cargo_value(value);
         true
     }
@@ -1309,15 +1320,17 @@ impl Mobilization {
     /// минус текущие цены купленных юнитов и платного cargo
     /// (`CargoMenu::CommitUpgradeChanges`).
     pub fn gold_spent_on_upgrades(&self) -> u32 {
-        let mut spent = self
-            .credits_start
-            .wrapping_sub(self.credits);
+        let mut spent = self.credits_start.wrapping_sub(self.credits);
 
         for supply in &self.bought {
             spent = spent.wrapping_sub(self.price(supply.unit_type));
         }
 
-        let total: u32 = self.loadout().iter().map(|supply| u32::from(supply.cargo)).sum();
+        let total: u32 = self
+            .loadout()
+            .iter()
+            .map(|supply| u32::from(supply.cargo))
+            .sum();
         let free: u32 = self.free.iter().map(|supply| u32::from(supply.cargo)).sum();
         spent.wrapping_sub((total.saturating_sub(free)) / 5)
     }
@@ -1345,8 +1358,7 @@ impl Mobilization {
             return CargoAction::None;
         }
         if HELP_BUTTON.contains(x, y) {
-            self.status = "Help: buy units, load cargo, upgrade attributes, Done pays".to_string();
-            return CargoAction::None;
+            return CargoAction::Help;
         }
         if DESCRIPTION_BUTTON.contains(x, y) {
             self.description = !self.description;
@@ -1459,6 +1471,9 @@ impl Mobilization {
                         self.delete_selected();
                     }
                     'u' => self.toggle_mode(),
+                    // `CargoMenu::ProcessKey`: `GNW_KB_KEY_SHIFT_DIVIDE` (`?`)
+                    // и код кнопки Help (1001) открывают `CARGO_SETUP`.
+                    '?' => return CargoAction::Help,
                     _ => {}
                 }
                 CargoAction::None
@@ -1500,18 +1515,14 @@ pub enum CargoBarKind {
 /// Цена юнита — `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1)`
 /// (3) × `ATTRIB_TURNS` **текущих** значений.
 pub fn unit_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
-    let turns = values[unit as usize]
-        .get_attribute(ATTRIB_TURNS)
-        .max(0) as u32;
+    let turns = values[unit as usize].get_attribute(ATTRIB_TURNS).max(0) as u32;
 
     LANDPLT_RAW_CONSUMPTION * turns
 }
 
 /// Цена строки списка типов (`PurchaseTypeSelector::Draw`, скобки `if`).
 pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
-    let turns = values[unit as usize]
-        .get_attribute(ATTRIB_TURNS)
-        .max(0) as u32;
+    let turns = values[unit as usize].get_attribute(ATTRIB_TURNS).max(0) as u32;
     let flags = unit_type_flags(unit);
     let rate = if flags & unit_flags::STATIONARY != 0 {
         cargo_raw_consumption_rate(UnitType::Constructor, 1) as u32
@@ -1639,7 +1650,11 @@ pub fn clan_summary(clan: TeamClan) -> String {
     if bonuses.is_empty() {
         format!("Clan: {}", crate::setup::clan_name(clan))
     } else {
-        format!("Clan {}: {}", crate::setup::clan_name(clan), bonuses.join(", "))
+        format!(
+            "Clan {}: {}",
+            crate::setup::clan_name(clan),
+            bonuses.join(", ")
+        )
     }
 }
 
@@ -1731,7 +1746,10 @@ impl CargoMenuAssets {
     /// Грузит ресурсы; отсутствие части — не ошибка (кнопка рисуется рамкой).
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
-            archive.read(name).ok().and_then(|bytes| SimpleImage::decode(bytes).ok())
+            archive
+                .read(name)
+                .ok()
+                .and_then(|bytes| SimpleImage::decode(bytes).ok())
         };
         let pair = |up: &str, down: &str| -> Option<MenuButtonPair> {
             Some(MenuButtonPair::new(simple(up)?, simple(down)?))
@@ -2011,8 +2029,7 @@ impl Mobilization {
             (CREDIT_LABEL, "Credit"),
             (CARGO_LABEL, "Cargo"),
         ] {
-            painted +=
-                draw_text_gnw_centered(frame, rect, font, label, gold_font).max(0) as u32;
+            painted += draw_text_gnw_centered(frame, rect, font, label, gold_font).max(0) as u32;
         }
 
         // Значения Cost/Credit/Cargo в C++-порте не рисуются (остались только
@@ -2427,7 +2444,8 @@ impl Mobilization {
                         chrome,
                     );
                     if let Some(icon) = cargo.gold_icon.as_ref() {
-                        painted += blit_simple(frame, palette, icon, COST.ulx + 25, left.uly + 3, true);
+                        painted +=
+                            blit_simple(frame, palette, icon, COST.ulx + 25, left.uly + 3, true);
                     }
                 }
             }
@@ -3349,7 +3367,10 @@ mod tests {
         ] {
             assert!(!upgrade.types.contains(&unit), "{unit:?}");
         }
-        assert_eq!(upgrade.types.len(), upgrade_types(&mobilization.filters).len());
+        assert_eq!(
+            upgrade.types.len(),
+            upgrade_types(&mobilization.filters).len()
+        );
     }
 
     #[test]
@@ -3367,9 +3388,10 @@ mod tests {
         // Только боевые (с атакой).
         mobilization.filters = [true, true, true, true, true];
         mobilization.rebuild_types();
-        assert!(mobilization.types.iter().all(|unit| {
-            base_unit_values(*unit).get_attribute(ATTRIB_ATTACK) > 0
-        }));
+        assert!(mobilization
+            .types
+            .iter()
+            .all(|unit| { base_unit_values(*unit).get_attribute(ATTRIB_ATTACK) > 0 }));
         assert!(mobilization.types.len() < all);
 
         // Все домены выключены — пусто (C++: class_matches ложно).
@@ -3441,7 +3463,11 @@ mod tests {
             .position(|unit| *unit == UnitType::GoldTruck)
             .unwrap();
         assert!(mobilization.buy(index));
-        assert_eq!(mobilization.cargo_capacity(), 0, "GOLDTRCK: free_capacity 0");
+        assert_eq!(
+            mobilization.cargo_capacity(),
+            0,
+            "GOLDTRCK: free_capacity 0"
+        );
         mobilization.set_cargo_value(8);
         assert_eq!(mobilization.cargo(mobilization.loadout_selected), 0);
     }
@@ -3450,7 +3476,11 @@ mod tests {
     fn cargo_slider_material_depends_on_type() {
         let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
 
-        assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Raw, "Constructor");
+        assert_eq!(
+            mobilization.cargo_bar_kind(),
+            CargoBarKind::Raw,
+            "Constructor"
+        );
         mobilization.select_loadout(1);
         assert_eq!(mobilization.cargo_bar_kind(), CargoBarKind::Raw, "Engineer");
 
@@ -3491,7 +3521,11 @@ mod tests {
 
         // Конструктор: armor, hits, scan, speed (после пропусков storage и
         // расхода).
-        let rows: Vec<u8> = mobilization.controls.iter().map(|(attribute, _)| *attribute).collect();
+        let rows: Vec<u8> = mobilization
+            .controls
+            .iter()
+            .map(|(attribute, _)| *attribute)
+            .collect();
         assert_eq!(
             rows,
             vec![ATTRIB_ARMOR, ATTRIB_HITS, ATTRIB_SCAN, ATTRIB_SPEED]
@@ -3848,17 +3882,11 @@ mod tests {
 
         // Кнопки Done/Cancel.
         assert_eq!(
-            mobilization.handle_click(
-                DONE_BUTTON.ulx + 2,
-                DONE_BUTTON.uly + 2
-            ),
+            mobilization.handle_click(DONE_BUTTON.ulx + 2, DONE_BUTTON.uly + 2),
             CargoAction::Done
         );
         assert_eq!(
-            mobilization.handle_click(
-                CANCEL_BUTTON.ulx + 2,
-                CANCEL_BUTTON.uly + 2
-            ),
+            mobilization.handle_click(CANCEL_BUTTON.ulx + 2, CANCEL_BUTTON.uly + 2),
             CargoAction::Cancel
         );
 

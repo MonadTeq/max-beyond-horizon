@@ -79,7 +79,10 @@ release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
 #   переключатель Buy Units/Upgrades) → выбор точки высадки.
 #   LMB — выбрать юнит; RMB — движение; клик по врагу — атака; T — чат; End Turn.
 #   U — покупные апгрейды (форма, золото); O — питание юнита (Research Center
-#   включает исследование темы Attack); B — BuildMenu.
+#   включает исследование темы); R — ResearchMenu (распределение центров по
+#   темам); ? — помощь (GAME_SCREEN_SETUP); B — BuildMenu.
+#   Кнопки ?/Help в меню и мобилизации открывают окна помощи (OPTIONS_SETUP,
+#   PLANET_SETUP, NEW_GAME_SETUP, CARGO_SETUP).
 
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```

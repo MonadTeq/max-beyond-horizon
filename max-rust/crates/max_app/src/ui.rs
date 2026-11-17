@@ -61,6 +61,7 @@ use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::credits;
+use crate::helpmenu::{self, HelpAction, HelpPlacement, HelpSection};
 use crate::hud::{self, HudButton};
 use crate::intro;
 use crate::landing::LandingAction;
@@ -69,6 +70,7 @@ use crate::menu;
 use crate::mobilize::CargoAction;
 use crate::panels::{self, PanelButton};
 use crate::pregame::{PreGameFlow, PreGameStage};
+use crate::researchmenu::ResearchAction;
 use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::winloss;
 use crate::App;
@@ -418,6 +420,17 @@ pub enum Screen {
     PreGame(PreGameFlow),
     /// Экран победы/поражения локальной партии.
     GameOver,
+    /// Модальное окно помощи поверх предыдущего экрана (`HelpMenu`).
+    ///
+    /// В C++ `HelpMenu` тоже модально: оно рисуется поверх меню/`CargoMenu`, а
+    /// после закрытия управление возвращается прежнему экрану. Вложенный
+    /// `screen` хранит именно его.
+    Help {
+        /// Экран под окном помощи.
+        screen: Box<Screen>,
+        /// Открытое окно помощи.
+        help: helpmenu::HelpScreen,
+    },
     /// Игра идёт: карта + статус; сетевой цикл запускает `main.rs`.
     InSession {
         /// Куда подключаться.
@@ -636,6 +649,23 @@ impl Screen {
             ctx.mouse = Some(Point::new(x, y));
         }
 
+        // Модальное окно помощи (`HelpMenu`): пока открыто, ввод получает
+        // только оно; закрытие возвращает вложенный экран как есть.
+        if matches!(self, Self::Help { .. }) {
+            let close = match self {
+                Self::Help { help, .. } => help.input(event) == HelpAction::Close,
+                _ => false,
+            };
+
+            if close {
+                if let Self::Help { screen, .. } = std::mem::replace(self, Self::MainMenu) {
+                    *self = *screen;
+                }
+            }
+
+            return Transition::None;
+        }
+
         if matches!(self, Self::MainMenu) {
             return self.handle_main_menu(ctx, event);
         }
@@ -702,7 +732,8 @@ impl Screen {
 
     /// Ввод на экране титров: `KP-`/`KP+` меняют скорость (в клиенте — `-`/`+`),
     /// любая другая клавиша или клик закрывает экран (`menu_credits_menu_loop`).
-    fn handle_credits(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {        let Self::Credits(screen) = self else {
+    fn handle_credits(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let Self::Credits(screen) = self else {
             return Transition::None;
         };
         let mut close = false;
@@ -729,13 +760,16 @@ impl Screen {
             return Transition::None;
         };
 
-        match form.handle_input(event, ctx.width, ctx.height) {
+        let transition = form.handle_input(event, ctx.width, ctx.height);
+        let hot_seat = form.hot_seat;
+
+        match transition {
             SetupTransition::None => Transition::None,
             SetupTransition::Back => {
                 // Esc/Cancel возвращает туда, откуда пришли: в `Multiplayer
                 // Menu` для hot-seat (как `menu_custom_game_menu`), иначе в
                 // главное меню.
-                let back = if form.hot_seat {
+                let back = if hot_seat {
                     Self::MultiplayerMenu
                 } else {
                     Self::MainMenu
@@ -759,6 +793,17 @@ impl Screen {
                 } else {
                     Transition::None
                 }
+            }
+            SetupTransition::Help(section) => {
+                // Кнопка `?` меню настройки: окно `HELPFRAM` поверх экрана
+                // (`HelpMenu_Menu`); позиция — центр окна 640×480.
+                let inner = std::mem::replace(self, Self::MainMenu);
+                *self = Self::Help {
+                    screen: Box::new(inner),
+                    help: helpmenu::HelpScreen::new(section, HelpPlacement::Menu),
+                };
+                ctx.click();
+                Transition::None
             }
         }
     }
@@ -792,6 +837,7 @@ impl Screen {
 
         let mut back_to_form = false;
         let mut confirmed = false;
+        let mut open_help = false;
 
         match action {
             PreGameInput::None => {}
@@ -805,6 +851,7 @@ impl Screen {
                             flow.commit_mobilization();
                             confirmed = true;
                         }
+                        CargoAction::Help => open_help = true,
                     }
                 }
             }
@@ -817,6 +864,7 @@ impl Screen {
                             flow.commit_mobilization();
                             confirmed = true;
                         }
+                        CargoAction::Help => open_help = true,
                     }
                 }
             }
@@ -866,6 +914,18 @@ impl Screen {
             return Transition::StartLocal(Box::new(flow.setup.clone()));
         }
 
+        if open_help {
+            // `CargoMenu` фазы старта — состояние `GAME_STATE_6_GAME_SETUP`:
+            // `GameManager_GetDialogWindowCenterMode()` даёт `WINDOW_MAIN_MAP`,
+            // поэтому окно стоит в (253,126), как `HelpMenu` в игре.
+            let inner = std::mem::replace(self, Self::MainMenu);
+            *self = Self::Help {
+                screen: Box::new(inner),
+                help: helpmenu::HelpScreen::new(HelpSection::Cargo, HelpPlacement::Game),
+            };
+            ctx.click();
+        }
+
         Transition::None
     }
 
@@ -889,7 +949,9 @@ impl Screen {
             // Shift+H/J/O/T/L/C — хост, join, hot seat, сценарии, загрузка, отмена.
             InputEvent::Key(Key::Char('h' | 'H')) => action = Some(menu::MultiplayerAction::Host),
             InputEvent::Key(Key::Char('j' | 'J')) => action = Some(menu::MultiplayerAction::Join),
-            InputEvent::Key(Key::Char('o' | 'O')) => action = Some(menu::MultiplayerAction::HotSeat),
+            InputEvent::Key(Key::Char('o' | 'O')) => {
+                action = Some(menu::MultiplayerAction::HotSeat)
+            }
             InputEvent::Key(Key::Char('t' | 'T')) => {
                 action = Some(menu::MultiplayerAction::HotSeatScenarios)
             }
@@ -921,8 +983,7 @@ impl Screen {
                 form.setup.player_name = ctx.player_name.clone();
                 form.world_dir = ctx.world_dir.clone();
                 *self = Self::LocalSetup(form);
-                ctx.status =
-                    "Hot seat: 2-4 humans, Options -> Planet -> Players".to_string();
+                ctx.status = "Hot seat: 2-4 humans, Options -> Planet -> Players".to_string();
                 Transition::None
             }
             Some(menu::MultiplayerAction::HotSeatScenarios) => {
@@ -958,6 +1019,25 @@ impl Screen {
         let mouse = view.mouse.map(|point| (point.x, point.y));
 
         match self {
+            Self::Help { screen, help } => {
+                // Окно помощи модально: сначала экран под ним, затем `HELPFRAM`.
+                screen.render(buffer, view);
+
+                let assets = view.app.and_then(|app| app.assets());
+                let fallback = assets.and_then(|assets| {
+                    assets
+                        .menu
+                        .as_ref()
+                        .map(|menu| menu.palette)
+                        .or_else(|| panels::UiPalette::from_assets(assets))
+                });
+
+                help.draw(
+                    buffer,
+                    assets.and_then(|assets| assets.help.as_ref()),
+                    fallback,
+                );
+            }
             Self::MainMenu => {
                 if let (Some(menu_assets), true) = (menu_assets, native_frame) {
                     menu::draw_main_menu(buffer, menu_assets, view.status, mouse);
@@ -1068,14 +1148,7 @@ impl Screen {
                             let assets = view.app.and_then(|app| app.assets());
                             let chrome = assets.and_then(|assets| assets.chrome.as_ref());
                             let cursors = assets.and_then(|assets| assets.cursors.as_ref());
-                            landing.draw(
-                                buffer,
-                                menu_assets,
-                                cursors,
-                                chrome,
-                                view.status,
-                                mouse,
-                            );
+                            landing.draw(buffer, menu_assets, cursors, chrome, view.status, mouse);
                             return;
                         }
                         PreGameStage::Finished => {
@@ -1558,8 +1631,18 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         };
     }
 
-    // Пока открыт `BuildMenu` (P2), он модален: как `AbstractBuildMenu::Run` в
-    // C++ (`GameManager_DisableMainMenu`), карта/панели/чат приказов не видят.
+    // Модальные окна: помощь (`HelpMenu`) — самое верхнее, затем экран
+    // исследований, затем `BuildMenu` (как `GameManager_DisableMainMenu` в C++):
+    // карта/панели/чат приказов не получают ввод, пока они открыты.
+    if app.help_screen().is_some() {
+        return session_help_input(app, event);
+    }
+
+    // Экран исследований (P7) — модальный, как `ResearchMenu::Run`.
+    if app.research_menu().is_some() {
+        return session_research_menu_input(app, event);
+    }
+
     if app.build_menu().is_some() {
         return session_build_menu_input(app, event, online);
     }
@@ -1647,9 +1730,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().mouse_position = None;
                 app.hud_mut().push_log("Build menu");
             } else {
-                app.hud_mut().push_log(
-                    "Build: select a constructor, engineer or factory first",
-                );
+                app.hud_mut()
+                    .push_log("Build: select a constructor, engineer or factory first");
             }
             Transition::None
         }
@@ -1682,6 +1764,27 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut()
                     .push_log("Upgrade: select your unit (or gold refinery) first");
             }
+            Transition::None
+        }
+        // `R` — экран исследований (`ResearchMenu`, попап `Research` у
+        // включённого `RESEARCH`-центра в C++; попап не портирован, поэтому
+        // клавиша — как `U` для апгрейдов).
+        InputEvent::Key(Key::Char('r' | 'R')) if !blocked => {
+            if app.open_research_menu() {
+                app.hud_mut().mouse_position = None;
+                app.hud_mut().push_log("Research menu");
+            } else {
+                app.hud_mut().push_log(
+                    "Research: select a powered Research Center of your team (O to power)",
+                );
+            }
+            Transition::None
+        }
+        // `?` — режим помощи C++ (`GNW_KB_KEY_SHIFT_DIVIDE`): окно
+        // `GAME_SCREEN_SETUP` поверх игры (панель `HELP_OF` делает то же).
+        InputEvent::Key(Key::Char('?')) if !blocked => {
+            app.open_help(HelpSection::GameScreen);
+            app.hud_mut().push_log("Help: game screen");
             Transition::None
         }
         InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Char('t' | 'T')) if !blocked => {
@@ -1737,8 +1840,7 @@ fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
             match app.save_game_to_slot(slot, &name) {
                 Ok(path) => {
                     app.close_save_load();
-                    app.hud_mut()
-                        .push_log(format!("Saved {}", path.display()));
+                    app.hud_mut().push_log(format!("Saved {}", path.display()));
                 }
                 Err(error) => {
                     if let Some(menu) = app.save_load_mut() {
@@ -1752,8 +1854,7 @@ fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
             match app.load_game_slot(slot) {
                 Ok(path) => {
                     app.close_save_load();
-                    app.hud_mut()
-                        .push_log(format!("Loaded {}", path.display()));
+                    app.hud_mut().push_log(format!("Loaded {}", path.display()));
                 }
                 Err(error) => {
                     if let Some(menu) = app.save_load_mut() {
@@ -1794,7 +1895,8 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
 ///
 /// `Done`/Enter — `CommitUpgradeChanges`: изменённые типы пишутся в
 /// `TeamUnits` (пакеты 10 в сети), золото списывается. `Cancel`/Esc — закрыть
-/// без изменений (C++ `UpgradeMenu::Run` возвращает `false`).
+/// без изменений (C++ `UpgradeMenu::Run` возвращает `false`). `Help` —
+/// `UPGRADES_SETUP` поверх экрана (`HelpMenu_Menu`).
 fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let action = app.upgrade_menu_input(event);
 
@@ -1807,6 +1909,53 @@ fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) ->
         Some(crate::upgrademenu::UpgradeAction::Cancel) => {
             app.close_upgrade_menu();
             app.hud_mut().push_log("Upgrades cancelled");
+        }
+        Some(crate::upgrademenu::UpgradeAction::Help) => {
+            app.open_help(HelpSection::Upgrades);
+            app.hud_mut().push_log("Upgrades help");
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
+/// Ввод в окне помощи поверх игры (`HelpMenu`).
+///
+/// Окно модально; `Done`/`Enter`/`Esc` закрывают его (`event_click_cancel`), а
+/// экран под ним (игра/`ResearchMenu`/`UpgradeMenu`) продолжает работать с тем
+/// же состоянием.
+fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
+    if app.help_input(event) == Some(HelpAction::Close) {
+        app.close_help();
+        app.hud_mut().push_log("Help closed");
+    }
+
+    Transition::None
+}
+
+/// Ввод в открытом экране исследований (модальный экран P7).
+///
+/// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: распределение центров пишется
+/// в `GameState` ([`max_core::game::GameState::set_research_allocation`]) и
+/// подхватывается `finish_turn` (`ResearchMenu_NewTurn`). `Cancel`/`Esc` —
+/// закрыть без изменений. `Help` — `RESEARCH_SETUP`.
+fn session_research_menu_input(app: &mut App, event: InputEvent) -> Transition {
+    let action = app.research_menu_input(event);
+
+    match action {
+        Some(ResearchAction::Done) => {
+            if let Some(line) = app.commit_research_menu() {
+                app.hud_mut().push_log(line);
+            }
+        }
+        Some(ResearchAction::Cancel) => {
+            app.close_research_menu();
+            app.hud_mut().push_log("Research cancelled");
+        }
+        Some(ResearchAction::Help) => {
+            app.open_help(HelpSection::Research);
+            app.hud_mut().push_log("Research help");
         }
         _ => {}
     }
@@ -1838,7 +1987,13 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
             app.hud_mut().chat.close();
             app.hud_mut().push_log("Chat cancelled");
         }
-        Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown
+        Key::Tab
+        | Key::Up
+        | Key::Down
+        | Key::Left
+        | Key::Right
+        | Key::PageUp
+        | Key::PageDown
         | Key::Other => {}
     }
 
@@ -1984,6 +2139,13 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
             app.local_toggle_pause();
             return Transition::None;
         }
+        PanelButton::Help => {
+            // `GameManager_MenuClickHelpButton` → `HelpMenu_Menu("GAME_SCREEN_SETUP")`
+            // (`WINDOW_MAIN_MAP`); `?`/Shift+/ в игре делает то же самое.
+            app.open_help(HelpSection::GameScreen);
+            app.hud_mut().push_log("Help: game screen");
+            return Transition::None;
+        }
         PanelButton::Files
         | PanelButton::Preferences
         | PanelButton::Play
@@ -1992,7 +2154,6 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
         | PanelButton::Prev
         | PanelButton::Done
         | PanelButton::Next
-        | PanelButton::Help
         | PanelButton::Reports
         | PanelButton::Chat => {
             // Экраны этих кнопок ещё не портированы (пункты C/E плана).
@@ -2287,7 +2448,8 @@ fn draw_local_notice(buffer: &mut RgbaBuffer, app: &App, mouse: Option<Point>) {
 }
 
 /// Копирует кадр `src` в `dst` с обрезкой по меньшему размеру.
-fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {    let width = dst.width().min(src.width()) as usize;
+fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {
+    let width = dst.width().min(src.width()) as usize;
     let height = dst.height().min(src.height()) as usize;
 
     if width == 0 || height == 0 {
@@ -3534,6 +3696,114 @@ mod tests {
     }
 
     #[test]
+    fn setup_help_button_opens_and_closes_the_help_window() {
+        let (mut ctx, _log) = context(Vec::new(), None);
+        let mut screen = Screen::MainMenu;
+
+        key(&mut screen, &mut ctx, Key::Enter);
+        assert!(matches!(screen, Screen::LocalSetup(_)));
+
+        // Кнопка `?` (465,438 48×40) на экране Options.
+        let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(489, 458));
+        assert_eq!(transition, Transition::None);
+
+        match &screen {
+            Screen::Help { screen, help } => {
+                assert_eq!(help.section(), HelpSection::Options);
+                assert_eq!(help.placement(), HelpPlacement::Menu);
+                assert!(matches!(
+                    screen.as_ref(),
+                    Screen::LocalSetup(form) if form.screen == crate::setup::SetupScreen::Options
+                ));
+            }
+            other => panic!("ожидалось окно помощи, получено {other:?}"),
+        }
+
+        // `PageDown` прокручивает, `Escape` закрывает и возвращает Options.
+        screen.handle_input(&mut ctx, InputEvent::Key(Key::PageDown));
+        if let Screen::Help { help, .. } = &screen {
+            assert_eq!(help.row_index(), crate::helpmenu::ROWS_PER_PAGE);
+        }
+
+        screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape));
+        assert!(matches!(
+            screen,
+            Screen::LocalSetup(form) if form.screen == crate::setup::SetupScreen::Options
+        ));
+    }
+
+    #[test]
+    fn research_menu_opens_for_a_powered_center_and_commits() {
+        use max_core::enums::{ResearchTopic, UnitOrder, UnitType};
+        use max_core::geo::Point;
+        use max_core::team::TeamId;
+
+        let (_ctx, _log) = context(Vec::new(), None);
+        let mut app = App::new(AppConfig::default());
+        let id = app
+            .state_mut()
+            .spawn_unit(UnitType::ResearchCenter, TeamId::RED, Point::new(20, 20), 0)
+            .expect("center");
+        let mut unit = app.state().unit(id).cloned().expect("unit");
+        unit.orders = UnitOrder::PowerOn;
+        unit.research_topic = ResearchTopic::Attack;
+        app.state_mut().write_unit(id, unit);
+        app.state_mut()
+            .update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
+        app.hud_mut().select(Some(id));
+
+        assert!(app.open_research_menu(), "меню открывается для центра");
+        assert_eq!(app.research_menu().map(|menu| menu.active_centers), Some(1));
+
+        // Клавишей `R` меню не открывается повторно (уже открыто).
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(Key::Char('r')), false),
+            Transition::None
+        );
+
+        // `←`/`→` и `Done` через тот же путь ввода, что у игрока.
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(Key::Down), false),
+            Transition::None
+        );
+        handle_session_input(&mut app, InputEvent::Key(Key::Left), false);
+        handle_session_input(&mut app, InputEvent::Key(Key::Right), false);
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::Key(Key::Enter), false),
+            Transition::None
+        );
+        assert!(app.research_menu().is_none());
+        assert_eq!(
+            app.state().research_allocation(TeamId::RED)[ResearchTopic::Attack as usize],
+            1
+        );
+    }
+
+    #[test]
+    fn panel_help_opens_game_screen_help_and_escape_closes_it() {
+        use max_core::enums::{UnitOrder, UnitType};
+        use max_core::geo::Point;
+        use max_core::team::TeamId;
+
+        let mut app = App::new(AppConfig::default());
+        let id = app
+            .state_mut()
+            .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+            .expect("unit");
+        let mut unit = app.state().unit(id).cloned().expect("unit");
+        unit.orders = UnitOrder::Await;
+        app.state_mut().write_unit(id, unit);
+
+        assert!(app.open_help(HelpSection::GameScreen));
+        assert_eq!(
+            app.help_screen().map(|help| help.section()),
+            Some(HelpSection::GameScreen)
+        );
+        handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+        assert!(app.help_screen().is_none());
+    }
+
+    #[test]
     fn all_screens_render_without_panics() {
         let app = crate::App::new(AppConfig::default().with_screen(320, 240));
         let mut buffer = RgbaBuffer::new(320, 240);
@@ -3546,6 +3816,10 @@ mod tests {
             },
             Screen::CreateForm(CreateForm::default()),
             Screen::MultiplayerMenu,
+            Screen::Help {
+                screen: Box::new(Screen::LocalSetup(GameSetupForm::default())),
+                help: helpmenu::HelpScreen::new(HelpSection::Options, HelpPlacement::Menu),
+            },
             Screen::InSession {
                 request: SessionRequest {
                     game_id: "g1".to_string(),

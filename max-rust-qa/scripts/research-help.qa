@@ -1,0 +1,177 @@
+# research-help.qa — ResearchMenu (P7) + четыре Help-экрана.
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/research-help.qa qa-out/research-help
+#
+# Что проверяется:
+# * кнопки `?` экранов настройки открывают окно `HELPFRAM`
+#   (`OPTIONS_SETUP`, `PLANET_SETUP`, `NEW_GAME_SETUP`), кнопка `Help`
+#   мобилизации — `CARGO_SETUP`; окно прокручивается (`PageDown`/`PageUp`),
+#   `Done`/`Enter` закрывает его и возвращает экран под ним;
+# * экран исследований открывается клавишей `R` для включённого Research
+#   Center (`ResearchMenu`, popup `Research` в C++): `RSRCHPIC`, 8 тем, центры
+#   по темам, `+N%`, ходы до завершения;
+# * распределение центров: `UPGLFT` Attack освобождает центр (`free_capacity`),
+#   `UPGRGT` Shots закрепляет его; `Done` (`ResearchMenu_OnClick_Done`) пишет
+#   новое распределение в `GameState`;
+# * после 16 ходов уровень Shots растёт (`ResearchMenu_NewTurn` из
+#   `finish_turn`), а Attack остаётся 0 — то есть экран реально влияет на тик;
+# * кадры `help-options/planet/newgame/cargo`, `research-menu`, `research-plan` —
+#   эталоны golden/research-help/.
+
+# --- Главное меню ---------------------------------------------------------
+assert screen=MainMenu
+menu new_game
+
+# --- Help: OPTIONS_SETUP (кнопка ?) --------------------------------------
+assert screen=Options
+help options
+assert help=open
+assert help-section=OPTIONS_SETUP
+assert help-row=0
+shot help-options
+help page down
+assert help-row>=16
+help page up
+assert help-row=0
+help done
+assert help=closed
+assert screen=Options
+setup done
+
+# --- Help: PLANET_SETUP ---------------------------------------------------
+assert screen=Planet
+help planet
+assert help-section=PLANET_SETUP
+shot help-planet
+help page down
+assert help-row>=16
+help done
+assert screen=Planet
+setup done
+
+# --- Help: NEW_GAME_SETUP (Players) --------------------------------------
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+help newgame
+assert help-section=NEW_GAME_SETUP
+shot help-newgame
+help page down
+assert help-row>=16
+help done
+assert screen=Players
+setup done
+
+# --- Help: CARGO_SETUP (CargoMenu) ---------------------------------------
+assert screen=Mobilize
+help cargo
+assert help-section=CARGO_SETUP
+shot help-cargo
+help page down
+help page down
+assert help-row>=32
+help page up
+assert help-row>=16
+help done
+assert help=closed
+assert screen=Mobilize
+
+# --- Мобилизация и старт партии ------------------------------------------
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Строим Research Center (как research.qa) ----------------------------
+select type Constructor
+assert selected
+build open
+build select 11
+build done
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert unit=Research Center
+
+# --- Включаем питание ----------------------------------------------------
+select type Research Center
+key o
+tick 10
+
+# --- ResearchMenu: раскладка и распределение -----------------------------
+research open
+assert research-menu=open
+assert research-alloc attack=1
+shot research-menu
+
+# --- Help: RESEARCH_SETUP (кнопка Help экрана исследований) --------------
+help research
+assert help=open
+assert help-section=RESEARCH_SETUP
+shot help-research
+help page down
+assert help-row>=16
+help done
+assert help=closed
+assert research-menu=open
+
+# Attack -> 0 (освобождает центр), Shots -> 1 (закрепляет его).
+research row 0 down
+assert research-alloc attack=1
+research row 1 up
+assert research-alloc attack=1
+research done
+assert research-menu=closed
+assert research-alloc attack=0
+assert research-alloc shots=1
+shot research-plan
+
+# --- Help: GAME_SCREEN_SETUP (панель HELP_OF) + Keys ---------------------
+help game
+assert help=open
+assert help-section=GAME_SCREEN_SETUP
+shot help-game
+help page down
+assert help-row>=16
+help keys
+assert help-row=0
+shot help-game-keys
+help done
+assert help=closed
+assert screen=InGame
+
+# --- Тик исследований: Shots растёт, Attack стоит ------------------------
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+end_turn
+assert research attack=0
+assert research shots>=1
+assert screen=InGame

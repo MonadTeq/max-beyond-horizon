@@ -10,7 +10,7 @@ max-rust-qa/
   plans/                  планы QA и стратегия (qa-plan.md и пр.)
   suite/                  каталог тест-кейсов (по одному файлу на область, TC-IDs)
   scripts/                .qa-сценарии драйвера (sp-full.qa, hs-2.qa, upgrade.qa, research.qa, …)
-  golden/                 эталонные кадры экранов (для сверки на дрейф; production/, upgrade/, research/)
+  golden/                 эталонные кадры экранов (для сверки на дрейф; production/, upgrade/, research/, cargo/, research-help/)
   drivers/                тестовые драйверы и инструкции (qa_run, qa_golden_check, ui-тесты)
   tools/                  утилиты (генераторы векторов, компараторы)
   out/                    рабочие результаты прогонов (gitignored)
@@ -31,8 +31,11 @@ max-rust-qa/
    golden — `golden/upgrade/`, `golden/research/`. **P7**: `scripts/cargo-full.qa`
    — полный `CargoMenu` (15 типов покупки, cargo-слайдер, режим модернизации,
    апгрейд до высадки), golden — `golden/cargo/`; C++-векторы —
-   `max-rust/tools/cargo_vectors`. Итоговая матрица —
-   `suite/README.md` (**168 ✅, 0 🟡, 18 ⏭ not planned**).
+   `max-rust/tools/cargo_vectors`. **P8**: `scripts/research-help.qa` —
+   `ResearchMenu` (`R`, распределение центров Attack→Shots и `Done`) и окна
+   `HELPFRAM` (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`/
+   `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`), golden — `golden/research-help/`.
+   Итоговая матрица — `suite/README.md` (**175 ✅, 1 🟡, 16 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

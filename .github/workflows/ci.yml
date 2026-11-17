@@ -109,7 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
-      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full)
+      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help)
         working-directory: max-rust
         # --no-default-features: QA-драйверу окно не нужно, иначе примеры
         # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
@@ -128,6 +128,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research-help.qa qa-out/research-help
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
@@ -139,6 +140,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-rust-qa/golden/research
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-rust-qa/golden/cargo
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-rust-qa/golden/research-help
 
       - name: Upload log + frames + diff on failure
         if: failure()

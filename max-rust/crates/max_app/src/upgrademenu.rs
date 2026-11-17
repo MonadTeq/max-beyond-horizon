@@ -138,6 +138,8 @@ pub enum UpgradeAction {
     Cancel,
     /// `Done`/Enter — изменения зафиксированы.
     Commit,
+    /// `Help`/`?` — открыть `UPGRADES_SETUP` (`HelpMenu_Menu`).
+    Help,
 }
 
 /// Состояние открытого меню апгрейдов.
@@ -389,8 +391,9 @@ impl UpgradeMenu {
             0
         } else {
             match ResearchTopic::try_from(attribute).ok() {
-                Some(topic) => state.teams[self.team.0 as usize].research_topics[topic as usize]
-                    .research_level,
+                Some(topic) => {
+                    state.teams[self.team.0 as usize].research_topics[topic as usize].research_level
+                }
                 None => 0,
             }
         };
@@ -452,8 +455,7 @@ impl UpgradeMenu {
             return UpgradeAction::Cancel;
         }
         if HELP.contains(x, y) {
-            self.status = "Help: upgrades raise unit attributes; Done pays gold".to_string();
-            return UpgradeAction::None;
+            return UpgradeAction::Help;
         }
         if SCROLL_UP.contains(x, y) {
             self.step(-1, state);
@@ -532,6 +534,9 @@ impl UpgradeMenu {
                 self.page(1, state);
                 UpgradeAction::None
             }
+            // `UpgradeMenu::ProcessKey`: `GNW_KB_KEY_SHIFT_DIVIDE` (`?`) и код
+            // кнопки Help (1001) открывают `UPGRADES_SETUP`.
+            Key::Char('?') => UpgradeAction::Help,
             _ => UpgradeAction::None,
         }
     }
@@ -678,15 +683,8 @@ impl UpgradeMenu {
                 painted += draw_text_gnw(frame, STATS.ulx + 2, y, font, label, text).max(0) as u32;
                 let value = values.get_attribute(*attribute).to_string();
                 let width = font.text_width(&value);
-                painted += draw_text_gnw(
-                    frame,
-                    STATS.ulx + 120 - width,
-                    y,
-                    font,
-                    &value,
-                    yellow,
-                )
-                .max(0) as u32;
+                painted += draw_text_gnw(frame, STATS.ulx + 120 - width, y, font, &value, yellow)
+                    .max(0) as u32;
             }
         }
 
@@ -696,7 +694,9 @@ impl UpgradeMenu {
             let left_rect = PixelRect::new(CONTROL_BUTTONS.ulx, *uly, 18, 17);
             let right_rect = PixelRect::new(CONTROL_BUTTONS.ulx + 18, *uly, 18, 17);
 
-            let can_up = quote.as_ref().is_some_and(|quote| quote.can_increase(self.gold));
+            let can_up = quote
+                .as_ref()
+                .is_some_and(|quote| quote.can_increase(self.gold));
             let can_down = quote.as_ref().is_some_and(UpgradeQuote::can_decrease);
 
             painted += draw_upgrade_arrow(
@@ -734,15 +734,8 @@ impl UpgradeMenu {
                     )
                     .max(0) as u32;
                 } else if cost >= UPGRADE_COST_LIMIT {
-                    painted += draw_text_gnw(
-                        frame,
-                        COST.ulx + 2,
-                        *uly + 4,
-                        font,
-                        "max",
-                        dim,
-                    )
-                    .max(0) as u32;
+                    painted += draw_text_gnw(frame, COST.ulx + 2, *uly + 4, font, "max", dim).max(0)
+                        as u32;
                 }
             }
 
@@ -759,15 +752,8 @@ impl UpgradeMenu {
                 ATTRIB_SPEED => "SPD",
                 _ => "",
             };
-            painted += draw_text_gnw(
-                frame,
-                STATS.ulx + 140,
-                *uly + 4,
-                font,
-                label,
-                dim,
-            )
-            .max(0) as u32;
+            painted +=
+                draw_text_gnw(frame, STATS.ulx + 140, *uly + 4, font, label, dim).max(0) as u32;
         }
 
         // Список типов команды.
@@ -788,7 +774,10 @@ impl UpgradeMenu {
             (UpgradeFilter::Ground, menu_assets.filter_ground.as_ref()),
             (UpgradeFilter::Air, menu_assets.filter_air.as_ref()),
             (UpgradeFilter::Sea, menu_assets.filter_sea.as_ref()),
-            (UpgradeFilter::Building, menu_assets.filter_building.as_ref()),
+            (
+                UpgradeFilter::Building,
+                menu_assets.filter_building.as_ref(),
+            ),
             (UpgradeFilter::Combat, menu_assets.filter_combat.as_ref()),
         ] {
             let active = self.filters[filter as usize];
@@ -926,11 +915,7 @@ fn draw_upgrade_arrow(
     rect: PixelRect,
     enabled: bool,
 ) -> u32 {
-    let chosen = if enabled {
-        image
-    } else {
-        disabled.or(image)
-    };
+    let chosen = if enabled { image } else { disabled.or(image) };
     match chosen {
         Some(chosen) => blit_simple(frame, palette, chosen, rect.ulx, rect.uly, true),
         None => 0,

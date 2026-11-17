@@ -2,6 +2,35 @@
 
 ### Добавлено
 
+- **Экран исследований `ResearchMenu` (`RSRCHPIC`) и Help-экраны
+  (`HELPFRAM`).** `max_app::researchmenu` — порт `researchmenu.cpp`: окно
+  `RSRCHPIC` 360×331 в (223,76), заголовок `Research Topics`, подписи
+  `Labs/Topics/Turns`, 8 тем (Attack/Shots/Range/Armor/Hits/Speed/Scan/Cost) с
+  иконками `I_*`, счётчики центров, «ходов до завершения»
+  (`(centers+turns−1)/centers`), `+N%`, стрелки `UPGLFT/UPGRGT` (disabled
+  `_X`), слайдер `PRFSLIDE` с кликом по слоту, `Cancel/Help/Done`
+  (`DPTBAY/DPTHP`). Распределение — как C++: `free_capacity` стартует с 0,
+  уменьшение темы освобождает центры, `Done` (`set_research_allocation`)
+  переназначает/выключает центры; `ResearchMenu_NewTurn` в `finish_turn` уже
+  тикает те же `research_topics`. Экран открывается клавишей `R` для
+  выделенного включённого Research Center (popup «Research» в C++; попап не
+  портирован). `max_app::helpmenu` — окно `HELPFRAM` 301×231 ((169,124) в
+  меню, (253,126) в игре), шрифт 5 + обводка, 16 строк на страницу,
+  `PageUp/PageDown` + `BLDUP__/BLDDWN`, `Done`/`Enter`/`Esc`, `Keys` у
+  `GAME_SCREEN_SETUP`. Тексты — генератор `tools/gen_help_data.py` →
+  `data/help.json` (32 секции, 661 запись из `help.json` + `language.json`).
+  Подключены `?` на Options/Planet/Players/Clan, `Help` CargoMenu/
+  ResearchMenu/UpgradeMenu, панель `HELP_OF` и `?` в игре. Тесты:
+  `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1.
+- **QA `research-help.qa`** — окна `OPTIONS_SETUP`/`PLANET_SETUP`/
+  `NEW_GAME_SETUP`/`CARGO_SETUP` (прокрутка, `Done`), `ResearchMenu`,
+  `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`+`Keys`, распределение Attack→Shots и
+  проверка через 16 ходов (Shots=1, Attack=0); новые команды
+  `research open/select/row/done/cancel`, `help SECTION/page/up/down/keys/
+  done/close` и проверки `research-menu`, `research-alloc`, `help`,
+  `help-section`, `help-row`; 9 golden-кадров `golden/research-help/` в
+  `ci.sh`/GitHub CI.
+
 - **FLIC-анимация портрета юнита (`WINDOW_CORNER_FLIC`, TC-0919).**
   `max_assets::flic` — декодер Autodesk FLIC по публичной спеке (заголовок
   128 байт, кадры `0xF1FA`, чанки `COLOR_256`/`DELTA_FLC`(SS2)/`COLOR_64`/
@@ -32,6 +61,10 @@
 
 ### Изменено
 
+- Кнопки `Help`/`?` больше не пишут «экран не портирован»: открывают окно
+  `HELPFRAM` (`Screen::Help` для меню/мобилизации, `App::help_screen` в игре);
+  `R` в партии открывает `ResearchMenu`, `?` — `GAME_SCREEN_SETUP`; в
+  `ResearchMenu`/`UpgradeMenu` `Help` открывает соответствующие секции.
 - Портрет `CORNER_FLIC` рисует FLC-кадр вместо статичного спрайта ×2; экраны
   меню: новые пункты в фокусе клавиатуры (`Introduction`, `Credits`), горячие
   клавиши `I`/`R`, в QA — команды `menu intro`/`menu credits` и экраны
@@ -40,6 +73,9 @@
   `golden/portrait.png`, `golden/intro.png`, `golden/credits.png` (новые),
   `golden/move-input/{game-selected,move-preview,game-after}.png`,
   `golden/upgrade/upgrade-done.png`; остальные эталоны — 0 дрейфа.
+- Новые golden-кадры P8 — `golden/research-help/` (9 PNG: Help-окна,
+  `research-menu`, `research-plan`); существующие наборы не переснимались
+  (0 дрейфа).
 
 ### Исправлено
 

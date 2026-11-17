@@ -198,6 +198,9 @@ impl App {
         self.draw_save_load(&mut frame);
         // Экран апгрейдов (P6).
         self.draw_upgrade_menu(&mut frame);
+        // Экран исследований (P7) и окно помощи поверх него.
+        self.draw_research_menu(&mut frame);
+        self.draw_help(&mut frame);
 
         (frame, stats)
     }
@@ -262,6 +265,9 @@ impl App {
         self.draw_save_load(&mut frame);
         // Экран апгрейдов (P6).
         self.draw_upgrade_menu(&mut frame);
+        // Экран исследований (P7) и окно помощи поверх него.
+        self.draw_research_menu(&mut frame);
+        self.draw_help(&mut frame);
 
         (frame, stats)
     }
@@ -273,6 +279,29 @@ impl App {
         };
 
         menu.draw(frame, assets, self.state());
+    }
+
+    /// Рисует открытый экран исследований поверх кадра (P7).
+    pub(crate) fn draw_research_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.research_menu(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets, self.state());
+    }
+
+    /// Рисует открытое окно помощи поверх кадра (P7).
+    ///
+    /// Палитра — палитра окна (`FRAMEPIC`), как у остальных модальных окон;
+    /// если хрома нет — палитра меню.
+    pub(crate) fn draw_help(&self, frame: &mut RgbaBuffer) {
+        let (Some(help), Some(assets)) = (self.help_screen(), self.assets()) else {
+            return;
+        };
+        let fallback = UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+
+        help.draw(frame, assets.help.as_ref(), fallback);
     }
 
     /// Рисует открытое окно сохранения/загрузки поверх кадра (P3).
@@ -348,9 +377,9 @@ impl App {
             let world_y = (grid_y * 64.0 + 32.0).round() as i32;
             let anchor = viewport.world_to_screen(world_x, world_y);
 
-            let drawn = self.assets().and_then(|assets| {
-                draw_unit_sprites(assets, unit, frame, anchor, viewport.zoom())
-            });
+            let drawn = self
+                .assets()
+                .and_then(|assets| draw_unit_sprites(assets, unit, frame, anchor, viewport.zoom()));
 
             match drawn {
                 Some(_) => stats.units_drawn += 1,
@@ -360,7 +389,6 @@ impl App {
                 }
             }
         }
-
     }
 }
 
@@ -483,7 +511,11 @@ mod tests {
             .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
             .expect("чужой танк");
 
-        assert!(app.state().unit(own).unwrap().is_visible_to_team(TeamId::RED));
+        assert!(app
+            .state()
+            .unit(own)
+            .unwrap()
+            .is_visible_to_team(TeamId::RED));
         assert!(
             !app.state()
                 .unit(enemy)
@@ -497,7 +529,10 @@ mod tests {
         assert_eq!(stats.units_marker, 1, "виден только свой юнит");
         assert_eq!(stats.units_drawn, 0);
         assert_eq!(
-            frame.get(55 * 64 + 32 - app.viewport().origin().0, 55 * 64 + 32 - app.viewport().origin().1),
+            frame.get(
+                55 * 64 + 32 - app.viewport().origin().0,
+                55 * 64 + 32 - app.viewport().origin().1
+            ),
             Some(MARKER_COLORS[0]),
             "свой маркер на карте"
         );

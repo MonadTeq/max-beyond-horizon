@@ -16,11 +16,11 @@
 
 use anyhow::{Context, Result};
 use max_assets::flic::Flic;
+use max_assets::sprite::{FrameInfo, ShadowFrame, SpriteFrame};
 use max_assets::{
     decode_shadow, decode_sprite, BigImage, CursorSet, ResArchive, ResourceMarkers, ShadowSheet,
     SpriteSheet, WrlMap,
 };
-use max_assets::sprite::{FrameInfo, ShadowFrame, SpriteFrame};
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
 
@@ -613,6 +613,10 @@ pub struct Assets {
     pub save_load: Option<crate::saveload::SaveLoadAssets>,
     /// Экран покупных апгрейдов (`UPGRADE` + `UPG*`/`BLD*`/`SEL*`), P6.
     pub upgrade: Option<crate::upgrademenu::UpgradeMenuAssets>,
+    /// Экран исследований (`RSRCHPIC` + `I_*` + `UPG*` + `PRFSLIDE`), P7.
+    pub research: Option<crate::researchmenu::ResearchMenuAssets>,
+    /// Окно помощи (`HELPFRAM` + `HELPOK` + `BLDUP__`/`BLDDWN`).
+    pub help: Option<crate::helpmenu::HelpMenuAssets>,
     /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
@@ -756,6 +760,10 @@ impl Assets {
         let save_load = crate::saveload::SaveLoadAssets::load(&max_res);
         // Экран апгрейдов (`UPGRADE` + `UPG*` + `BLD*` + `SEL*`), P6.
         let upgrade = crate::upgrademenu::UpgradeMenuAssets::load(&max_res);
+        // Экран исследований (`RSRCHPIC` + иконки `I_*` + стрелки + слайдер).
+        let research = crate::researchmenu::ResearchMenuAssets::load(&max_res);
+        // Окно помощи (`HELPFRAM` + `HELPOK` + прокрутка) — все Help-экраны.
+        let help = crate::helpmenu::HelpMenuAssets::load(&max_res);
         // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
@@ -772,10 +780,22 @@ impl Assets {
             );
         }
 
+        if !research.is_ready() {
+            warnings.push(
+                "ResearchMenu: RSRCHPIC/DPTBAY/PRFSLIDE не загрузились — экран на рамках"
+                    .to_string(),
+            );
+        }
+
+        if !help.is_ready() {
+            warnings.push(
+                "HelpMenu: HELPFRAM/HELPOK не загрузились — окно помощи на рамках".to_string(),
+            );
+        }
+
         if !save_load.is_ready() {
             warnings.push(
-                "SaveLoad: LOADPIC/FILE*_UP не загрузились — окно сохранения на рамках"
-                    .to_string(),
+                "SaveLoad: LOADPIC/FILE*_UP не загрузились — окно сохранения на рамках".to_string(),
             );
         }
 
@@ -895,6 +915,8 @@ impl Assets {
             build_menu: Some(build_menu),
             save_load: Some(save_load),
             upgrade: Some(upgrade),
+            research: Some(research),
+            help: Some(help),
             cargo: Some(cargo),
             cursors: Some(cursors),
             resource_markers,
@@ -1202,7 +1224,10 @@ mod tests {
                         "{unit_type:?}: тень {name} вдруг загрузилась"
                     );
                     assert!(
-                        assets.warnings().iter().any(|warning| warning.contains(name)),
+                        assets
+                            .warnings()
+                            .iter()
+                            .any(|warning| warning.contains(name)),
                         "{unit_type:?}: ожидалось предупреждение о тени {name}: {:?}",
                         assets.warnings()
                     );
@@ -1292,7 +1317,11 @@ mod tests {
             flagged.push(unit_type);
         }
 
-        assert_eq!(flagged.len(), 11, "TURRET_SPRITE/SPINNING_TURRET: {flagged:?}");
+        assert_eq!(
+            flagged.len(),
+            11,
+            "TURRET_SPRITE/SPINNING_TURRET: {flagged:?}"
+        );
         for required in [
             UnitType::GunTurret,
             UnitType::AntiAir,
@@ -1504,11 +1533,7 @@ mod tests {
         let exe = bin.join("max_app.exe");
         let roots = exe_search_roots(&exe);
 
-        assert_eq!(
-            roots.first(),
-            Some(&bin),
-            "первый корень — сам каталог exe"
-        );
+        assert_eq!(roots.first(), Some(&bin), "первый корень — сам каталог exe");
         assert!(
             roots.iter().any(|candidate| *candidate == root),
             "корень с max-original должен войти в поиск: {roots:?}"

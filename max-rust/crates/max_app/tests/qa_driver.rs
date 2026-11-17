@@ -20,7 +20,9 @@ use max_app::qa::{
     Recorder, ScreenName, Step,
 };
 use max_app::setup;
-use max_app::ui::{handle_session_input, InputEvent, Screen, SessionRequest, Transition, UiContext};
+use max_app::ui::{
+    handle_session_input, InputEvent, Screen, SessionRequest, Transition, UiContext,
+};
 use max_app::{App, AppConfig, AppMode};
 use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 
@@ -103,22 +105,32 @@ move 468 306
 move grid 24 25
 move near
 end_turn
+build open
+upgrade open
+research open
+help cargo
+assert help=open
+assert help-section=CARGO_SETUP
+assert help-row>=16
+assert research-menu=open
+assert research-alloc attack=0
 exit
 ";
 
     let parsed = steps(script);
 
-    assert_eq!(parsed.len(), 42, "все строки-команды разобраны");
+    assert_eq!(parsed.len(), 51, "все строки-команды разобраны");
     assert_eq!(parsed[0].command, Command::Click(10, 20));
     assert_eq!(parsed[1].command, Command::RightClick(30, 40));
     assert!(parsed
         .iter()
         .any(|step| step.command == Command::Assert(Assertion::Screen(ScreenName::InGame))));
-    assert!(parsed
-        .iter()
-        .any(|step| step.command == Command::MoveNear));
+    assert!(parsed.iter().any(|step| step.command == Command::MoveNear));
     assert!(parsed.iter().any(|step| step.command == Command::EndTurn));
-    assert_eq!(parsed.last().map(|step| step.command.clone()), Some(Command::Exit));
+    assert_eq!(
+        parsed.last().map(|step| step.command.clone()),
+        Some(Command::Exit)
+    );
 }
 
 #[test]
@@ -276,10 +288,57 @@ fn move_input_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// P7: ResearchMenu + четыре Help-экрана (`research-help.qa`) — открытие
+/// кнопками `?`/`Help`, прокрутка, `Done`; распределение центров меняет
+/// allocation и скорость темы на тике.
+#[test]
+fn research_help_script_passes_through_the_real_input_path() {
+    if !has_game_data() {
+        return;
+    }
+
+    let dir = temp_dir("research_help");
+    let mut runner = runner(&dir);
+    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/research-help.qa"));
+
+    assert!(
+        report.passed,
+        "research-help.qa упал: {:?}\n{}",
+        report.failures, report.log
+    );
+
+    for name in [
+        "help-options",
+        "help-planet",
+        "help-newgame",
+        "help-cargo",
+        "help-research",
+        "research-menu",
+        "research-plan",
+        "help-game",
+        "help-game-keys",
+    ] {
+        let path = dir.join(format!("{name}.png"));
+        assert!(path.is_file(), "нет кадра {name}: {}", path.display());
+    }
+
+    // Центры перераспределены с Attack на Shots, и за 16 ходов тик поднял
+    // уровень Shots (Attack остался 0) — экран действительно влияет на
+    // `finish_turn`.
+    let team = runner.app().player_team();
+    let topics = &runner.app().state().teams[team.0 as usize].research_topics;
+    assert_eq!(
+        topics[max_core::enums::ResearchTopic::Attack as usize].research_level,
+        0
+    );
+    assert!(topics[max_core::enums::ResearchTopic::Shots as usize].research_level >= 1);
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
 // ---------------------------------------------------------------------------
 // 3. Упавший ассерт — это провал прогона (в CLI → exit 1)
 // ---------------------------------------------------------------------------
-
 #[test]
 fn failing_assert_fails_the_run_and_names_the_line() {
     let dir = temp_dir("assert_fail");
@@ -320,7 +379,11 @@ fn unknown_command_is_a_script_error_not_a_panic() {
     let report = runner.run_file(&script);
 
     assert!(!report.passed);
-    assert!(report.failures[0].contains("bogus"), "{:?}", report.failures);
+    assert!(
+        report.failures[0].contains("bogus"),
+        "{:?}",
+        report.failures
+    );
     assert!(report.log.contains("bogus"), "{}", report.log);
 
     std::fs::remove_dir_all(dir).ok();
@@ -620,7 +683,10 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     let ((select_x, select_y), grid) =
         visible_player_unit(&play.app).expect("в стартовой камере есть юнит RED");
     play.send(InputEvent::MouseClick(select_x, select_y));
-    assert!(play.app.hud().selected.is_some(), "клик должен выделить юнита");
+    assert!(
+        play.app.hud().selected.is_some(),
+        "клик должен выделить юнита"
+    );
 
     if let Some((move_x, move_y)) = visible_neighbor(&play.app, grid) {
         play.send(InputEvent::RightClick(move_x, move_y));

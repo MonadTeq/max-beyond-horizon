@@ -919,8 +919,9 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
   776** (см. §2.2) — исправило хром `FRAMEPIC` и фоны `ENDGAME*`.
 
 **Ограничения**: Simultaneous Moves идёт последовательными ходами команд;
-кланы (`ClanSelectMenu`) и Help-экраны не портированы; `GameState → V70`
-(запись) отсутствует — локальный сейв это контейнер `MXLS`.
+`GameState → V70` (запись) отсутствует — локальный сейв это контейнер `MXLS`.
+Кланы (`ClanSelectMenu`) не портированы; Help-экраны и `ResearchMenu`
+портированы в P8 (§13).
 
 ## 11. Пункт H. Фазы старта M-SP и выравнивание логотипов/`?` — **сделано** (2026-11-15)
 
@@ -1003,7 +1004,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
   `HARVSTER`, `WALDO`) описания нет и в оригинале, но они не достижимы в
   `CargoMenu`; числа `Cost`/`Credit`/`Cargo` в C++-порте не
   рисуются (остались подписи), счётчики — на полосе золота и над слайдером;
-  `Help` пишет строку статуса (экран `CARGO_SETUP` не портирован); звуки не
+  `Help` открывает `CARGO_SETUP` (P8, §13.2); звуки не
   проигрываются. Клановые бонусы применяются автоматически
   (`unit_values::team_base_values`), кредиты кланов `SC_CLANS` у всех = 0.
 * Состав ИИ — стандартная загрузка `SC_L0001` (как человек, ничего не купивший);
@@ -1266,3 +1267,127 @@ menu». Любая клавиша/клик — назад в меню (как `m
   `upgrade/upgrade-done` (портрет вместо спрайта); остальные 0 дрейфа.
 * `cargo test -p max_assets` (7 UNIT `flic`, 3 `flic_assets`, 2 `flic_vectors`),
   `cargo test -p max_app` (`portrait` 6, `credits` 7).
+
+---
+
+## 13. ResearchMenu и Help-экраны — **сделано** (2026-11-17)
+
+Закрыты два последних визуальных пробела клиента: экран исследований
+(`RSRCHPIC`) и окно помощи `HELPFRAM` для секций `CARGO_SETUP`,
+`PLANET_SETUP`, `NEW_GAME_SETUP`, `OPTIONS_SETUP` (а также `RESEARCH_SETUP`,
+`UPGRADES_SETUP`, `GAME_SCREEN_SETUP`).
+
+### 13.1 Экран исследований (`max_app::researchmenu`)
+
+Оракул — `researchmenu.cpp`. Окно `RSRCHPIC` 360×331 отцентровано в
+`WINDOW_MAIN_MAP`: `ulx = 180 + (447−360)/2 = 223`, `uly = 18 + (447−331)/2 = 76`
+(`Window(RSRCHPIC, GameManager_GetDialogWindowCenterMode())`).
+
+| Элемент | Координаты (окно) | Как в C++ |
+|---|---|---|
+| Заголовок `Research Topics` | (95,19) 170×13, центр, `COLOR_GREEN` | `Text_TextBox(buffer, width, …, 95,19,170,13, COLOR_GREEN, true)` (vertical_align → +2) |
+| Подписи `Labs`/`Topics`/`Turns` | (23,52)/(184,52)/(282,52), ширины 125/90/60 | `Text_TextLine` (FONT1 в C++, здесь FONT5 — см. отличия) |
+| 8 тем | `uly = i·28 + 70` | `ResearchMenu_TopicLabels`/`TopicIcons`: Attack, Shots, Range, Armor, Hits, Speed, Scan, Cost |
+| Стрелки | `UPGLFT_U/D` (72,uly), `UPGRGT_U/D` (143,uly) 18×17 | disabled — `UPGLFT_X`/`UPGRGT_X`; правая только при `free_capacity > 0`, левая при `centers > 0` |
+| Счётчик центров | окно (28,uly+3) 32×10, число справа | `ReportStats_DrawNumber(topic_value, 32, …)` |
+| Ходы до завершения | окно (293,uly+3) 40×10 | `(centers + turns_to_complete − 1) / centers`; `turns` считается временным `UpdateResearchProgress(+1)` **на копии** темы, состояние не трогается |
+| Слайдер | слот (91,uly) 48×17, `PRFSLIDE` 14×17 | `offset = 34·centers/active`; клик: `((x−91)·active + 24)/48` |
+| Иконка/подпись/`+N%` | (170,uly+7) центр; (185,uly) 49×15; справа у x=278 | `+N%` = `research_level·10`; `Text_Blit` цветом `0xA2` |
+| `Cancel`/`Help`/`Done` | (92,294)/(167,294)/(194,294) | `DPTBAYUP/DN` 75×25, `DPTHP_UP/DN` 31×26 |
+
+**Распределение.** В C++ `free_capacity` стартует с 0: все включённые центры
+уже закреплены за темами. Уменьшение темы освобождает центры
+(`free_capacity += old − new`), увеличение — тратит. `Done`
+(`ResearchMenu_OnClick_Done`) собирает желаемое число центров по темам и для
+каждого включённого `RESEARCH`-центра: оставляет его, если в цели для его темы
+есть место; иначе переводит на первую тему с местом (`allocation −1/+1`), а
+если мест нет — `ORDER_POWER_OFF`. Порт — `GameState::set_research_allocation`
+(работает и для локальной, и для сетевой партии). Выключение центра списывает
+allocation не в момент `Done`, а на следующем тике
+(`process_order_power_off` → `ResearchMenu_UpdateResearchProgress(-1)`) — как
+в C++. `ResearchMenu_NewTurn` уже вызывается из `GameState::finish_turn`
+(`advance_research`), поэтому экран и тик используют одни и те же
+`research_topics`.
+
+**Открытие.** В C++ путь — popup исследовательского центра
+(`UnitsManager_Popup_OnClick_Research`, при `ORDER_POWER_ON`). Popup-меню юнита
+в Rust-клиенте нет, поэтому экран открывается клавишей **`R`** для выделенного
+включённого центра своей команды (как `U` для апгрейдов). `Help` экрана
+открывает `RESEARCH_SETUP` поверх `RSRCHPIC`.
+
+### 13.2 Help-экраны (`max_app::helpmenu`)
+
+Оракул — `helpmenu.cpp`, данные — `assets/help.json` (`Help::LoadFile`) и
+`language.json` (`_(ceb6)` для кнопки `Keys`).
+
+* Окно `HELPFRAM` 301×231: в меню настройки — `(169,124)`
+  (`((639−301)/2, (479−231)/2)`), в игре/`CargoMenu` — `(253,126)`
+  (центр `WINDOW_MAIN_MAP`); это `GameManager_GetDialogWindowCenterMode()`.
+* Текст: `FONT5` (10 px), `GNW_TEXT_OUTLINE | 0xFF` (белый + чёрная обводка),
+  область `(20,20)` 265×160 → 16 строк на страницу; если текст короче
+  страницы, блок центрируется по вертикали (`DrawText`).
+* Прокрутка: `PageUp`/`PageDown` шагом 16 строк и кнопки `BLDUP__U`/`BLDDWN_U`
+  18×17 в (20,197)/(40,197); кнопки есть только при `rows > 16`.
+* `Done` — `HELPOK_U/D` 65×24 в (120,193), подпись `_(4bfa)`, закрывают
+  `Enter`/`Esc`; в секции `GAME_SCREEN_SETUP` `Done` сдвинут в (85,193), а
+  `Keys` (`_(f0d6)`) в (155,193) переключает текст на подсказку `_(ceb6)`.
+* Тексты: генератор `max-rust/tools/gen_help_data.py` читает
+  `max-cpp-port/assets/help.json` + `language.json` и пишет
+  `max-rust/crates/max_app/data/help.json` — **32 секции, 661 запись**
+  (en-US, ASCII). Rust-клиент грузит его `include_str!` (как `credits.json`).
+* Кнопки, которые открывают окно (сверено с C++): `?` на `Options`/`Planet`/
+  `Players`/`Clan` (`GameConfigMenu::EventHelp`, `PlanetSelectMenu::EventHelp`,
+  `ChoosePlayerMenu::EventHelp`, `ClanSelectMenu::EventHelp`), `Help` в
+  `CargoMenu` (`_(CARGO_SETUP)`), `Help` в `ResearchMenu` (`RESEARCH_SETUP`),
+  `Help` в `UpgradeMenu` (`UPGRADES_SETUP`), панель `HELP_OF`
+  (`GameManager_MenuClickHelpButton` → `GAME_SCREEN_SETUP`) и клавиша `?` в
+  игре. Окно модально: `Screen::Help` хранит экран под ним, в игре —
+  `App::help_screen` поверх игры/`ResearchMenu`/`UpgradeMenu`.
+
+### 13.3 Отличия (осознанные)
+
+* **Текст секции целиком, а не абзац под курсором.** В C++ `HelpMenu_Menu`
+  включает «режим помощи»: игрок кликает по элементу экрана, и окно показывает
+  один абзац, привязанный к координатам (`help.json::coordinates`). В
+  Rust-клиенте кнопка `?`/`Help` сразу открывает окно, поэтому показывается
+  **весь текст секции** в порядке файла (абзацы через пустую строку). Это
+  сохраняет все тексты и делает длинные секции (`CARGO_SETUP` — 99 строк,
+  `OPTIONS_SETUP` — 62) прокручиваемыми; координаты записей сохранены в
+  `data/help.json` для будущего режима.
+* Палитра окна — собственная палитра `HELPFRAM` (как у остальных big image
+  Rust-клиента); C++ рисует `HELPFRAM` системной палитрой, но индексы
+  UI-цветов в ней те же.
+* Клавиши: в C++ у окна только `PageUp`/`PageDown`/`Enter`/`Esc`; здесь
+  добавлены `↑`/`↓` (одна строка), `K` = `Keys`, `?` = закрыть. У
+  `ResearchMenu` добавлены `↑/↓` (выбор темы), `←/→`, `−/+`,
+  `PageUp/PageDown`, `Enter`/`Esc`, `H`/`?` — иначе headless-QA и
+  клавиатурный игрок не могут распределить центры.
+* `ResearchMenu` не отправляет пакет 09 (как и `UpgradeMenu`): в Rust-протоколе
+  его нет; распределение меняет локальное состояние команды. Звуки
+  `V_M093`/`NDONE0`/`KCARG0` не проигрываются (аудио-слой отдельный).
+* Попап-меню юнита не портировано: `R`/`U` заменяют пункты «Research»/
+  «Buy Upgrade».
+
+### 13.4 Свидетельства
+
+* `qa_run research-help.qa` → **PASS**: 131 шаг, 3430 кадров; кадры
+  `help-options`, `help-planet`, `help-newgame`, `help-cargo`,
+  `help-research`, `help-game`, `help-game-keys`, `research-menu`,
+  `research-plan` — эталоны `golden/research-help/` (9 PNG), `qa_golden_check`
+  — 0 дрейфа. Сценарий проверяет: `assert help=open/help-section/help-row`,
+  прокрутку (`help-row=16/32`), закрытие и возврат экрана; открытие
+  `ResearchMenu`, `research-alloc attack=1` → `row 0 down` (free) →
+  `row 1 up` → `Done` → `attack=0`, `shots=1`; через 16 ходов
+  `assert research shots>=1`, `attack=0`.
+* `cargo test -p max_app`: `researchmenu` (10 UNIT: раскладка, порядок тем,
+  подсчёт центров, `free_capacity`, слайдер, `Done`/PowerOff, turns,
+  детерминизм, клавиши/клики), `helpmenu` (9 UNIT: тексты четырёх секций,
+  прокрутка, центровка, позиции окон, `Keys`, клики), `ui` (+3: `?` в
+  настройке → `Screen::Help` → Esc, `R` + распределение в сессии, панель
+  `HELP_OF` → `GAME_SCREEN_SETUP`); `tests/qa_driver.rs` — сквозной прогон
+  `research-help.qa`.
+* `ci.sh`/GitHub CI: сценарий `research-help.qa` и golden
+  `golden/research-help` добавлены в стадию QA.
+
+**Остаточные отличия**: текст секции целиком (см. выше), звуки, пакет 09,
+`Research Complete`-оверлей на центрах (как и в C++-порте — статичный кадр).

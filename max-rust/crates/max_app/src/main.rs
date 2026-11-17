@@ -31,9 +31,9 @@ use max_app::assets::AssetsReport;
 use max_app::audio::AudioPlayer;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
+use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
-use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
@@ -185,8 +185,9 @@ impl Cli {
                     cli.window_scale = Some(parse_u32(&mut args, "--scale")?);
                 }
                 "--record" => {
-                    cli.record =
-                        Some(PathBuf::from(args.next().context("--record требует путь к .qa")?));
+                    cli.record = Some(PathBuf::from(
+                        args.next().context("--record требует путь к .qa")?,
+                    ));
                 }
                 "--seed" => {
                     cli.seed = Some(parse_u32(&mut args, "--seed")?);
@@ -936,7 +937,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
 
         // Мини-карты планет для экрана настройки (`.WRL` грузятся один раз).
-        if let Screen::LocalSetup(form) = &mut screen {
+        // Окно помощи может быть открыто поверх экрана настройки.
+        let setup_screen = match &mut screen {
+            Screen::Help { screen, .. } => screen.as_mut(),
+            other => other,
+        };
+
+        if let Screen::LocalSetup(form) = setup_screen {
             let palette = app
                 .assets()
                 .and_then(|assets| assets.menu.as_ref())
@@ -1047,21 +1054,33 @@ fn update_window_cursor(
         return;
     };
 
-    let (cursor, frame) = match screen {
-        Screen::InSession { .. } => max_app::cursor::session_cursor(app, mouse),
-        // `GameManager_GetWindowCursor` на экране высадки: UNIT_GO над
-        // валидной клеткой, UNIT_NO_GO над невалидной, HANDPTR вне карты.
-        Screen::PreGame(flow) => match &flow.stage {
-            max_app::PreGameStage::Landing(landing) => match mouse {
-                Some((x, y)) => match max_app::landing::cursor_for_screen_point(landing, x, y) {
-                    Some(cursor) => (cursor, 0),
+    let (cursor, frame) = if app.help_screen().is_some() {
+        // `Cursor_SetCursor(CURSOR_HELP)` в `HelpMenu_Menu`.
+        (max_app::CursorId::Help, 0)
+    } else if app.research_menu().is_some() {
+        // `ResearchMenu::ResearchMenu`: `Cursor_SetCursor(CURSOR_HAND)`.
+        (max_app::CursorId::Hand, 0)
+    } else {
+        match screen {
+            Screen::InSession { .. } => max_app::cursor::session_cursor(app, mouse),
+            // `Cursor_SetCursor(CURSOR_HELP)` в `HelpMenu_Menu`.
+            Screen::Help { .. } => (max_app::CursorId::Help, 0),
+            // `GameManager_GetWindowCursor` на экране высадки: UNIT_GO над
+            // валидной клеткой, UNIT_NO_GO над невалидной, HANDPTR вне карты.
+            Screen::PreGame(flow) => match &flow.stage {
+                max_app::PreGameStage::Landing(landing) => match mouse {
+                    Some((x, y)) => {
+                        match max_app::landing::cursor_for_screen_point(landing, x, y) {
+                            Some(cursor) => (cursor, 0),
+                            None => (max_app::CursorId::Hand, 0),
+                        }
+                    }
                     None => (max_app::CursorId::Hand, 0),
                 },
-                None => (max_app::CursorId::Hand, 0),
+                _ => (max_app::CursorId::Hand, 0),
             },
             _ => (max_app::CursorId::Hand, 0),
-        },
-        _ => (max_app::CursorId::Hand, 0),
+        }
     };
     let palette = max_app::render::window_palette(assets);
     let Some(image) = max_app::cursor::cursor_image(cursors, &palette, cursor, frame) else {

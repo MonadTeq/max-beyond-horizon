@@ -19,25 +19,25 @@
 |---|---|---|---|
 | 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-rust/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | ✅ `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
 | 2 | CHANGELOG | `CHANGELOG.md` | ✅ `[1.1.0] — 2026-11-16` + состав с v1.0.0 (режимы, визуал, производство, сейвы, сеть, QA, rename, GUI-default) |
-| 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | ✅ `CI OK за 935 с` (`build/ci-p6-final.log`): тесты 0 failed, QA/golden/soak PASS, smoke 2×10 `0x7035` и 3×10 `0x34D5` PASS |
-| 4 | Тесты max-rust | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **0 failed** (debug/release; `max_app` lib 211, `max_core` 220, интеграционные; в P7 добавлено 24 теста: `cargo_vectors` 4, `cargo_render` 5, `mobilize` +12, `start_phases` +1, `qa_driver` +1, `qa::script` +1) |
-| 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases, **cargo-full** | ✅ все PASS; golden-дрейф 0 |
-| 6 | Golden новых экранов | `golden/cargo/{cargo-buy,cargo-upgrade,cargo-upgraded}.png`, обновлённый `golden/mobilize.png`; `golden/upgrade/`, `golden/research/` | ✅ 0 пикселей отличий |
+| 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | ✅ P8: `CI OK за 566 с` (`build/ci-p8.log`): тесты 0 failed, QA/golden/soak PASS |
+| 4 | Тесты max-rust | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **0 failed**; в P8 добавлено: `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1 (264 lib-теста `max_app`, 14 `qa_driver`, 220 `max_core`, 86 `max_net`, 79 `max_render`) |
+| 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases, **cargo-full**, **research-help** | ✅ все PASS; golden-дрейф 0 |
+| 6 | Golden новых экранов | `golden/cargo/`, `golden/upgrade/`, `golden/research/`, `golden/research-help/` (9: Help-окна + `research-menu`) | ✅ 0 пикселей отличий |
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
 | 8 | Live smoke 2×10 | `build/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
 | 9 | Live smoke 3×10 | `build/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/`: `max-rust.exe` 6 033 408 Б, sha256 `d621a748…`; zip 3 351 852 Б, sha256 `5e4ed8eb…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; живой кадр экрана высадки — `build/landing-ui.png` |
-| 11 | Windows headless | `bash build/scripts/build-windows.sh` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/`: `max-rust.exe` 10 156 271 Б, sha256 `c8113aae…`; zip 3 777 964 Б, sha256 `4ea7af0f…`; PE Subsystem=3 (console) |
-| 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ✅ `release/max_app-1.1.0-linux-x86_64/` + `.tar.gz` 4 432 299 Б, sha256 `9530a91c…`; внутри `SHA256SUMS` (бинарник/run.sh/README/CHANGELOG/LICENSE/libSDL3.so.0) |
-| 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ пересобраны; сводка — `release/SHA256SUMS-1.1.0.txt` |
-| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `PLAN-production.md` P6+P7, `max-rust-qa/suite/README.md` | ✅ версия 1.1.0, новые экраны/клавиши, матрица QA 168 ✅ / 18 ⏭ |
+| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/` (P8, 2026-11-17): `max-rust.exe` 6 267 392 Б, sha256 `f5ed5d3d…`; zip sha256 `bbcf5f72…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound |
+| 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (P8, 2026-11-17): `max-rust.exe` 10 415 368 Б, sha256 `5a4cc9da…`; zip 3 845 111 Б, sha256 `c060b8d7…`; PE Subsystem=3 (console), `--help`/`--demo` без wine-smoke (флаг `--no-wine`) |
+| 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ по задаче P8 пересобраны Windows UI/headless; Linux-бандл 1.1.0 от 2026-11-16 остаётся прежним (код P8 в него не входит) |
+| 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны в P8 (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
+| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `PLAN-production.md` P6+P7+P8, `max-rust-qa/suite/README.md` | ✅ версия 1.1.0, новые экраны/клавиши, матрица QA 175 ✅ / 16 ⏭ |
 | 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
 | 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
 
 **Остаточные ограничения 1.1.0** (не блокируют релиз, отражены в QA как
 `⏭ not planned`): спектатор (нужна серверная поддержка `TEAM_TYPE_SPECTATOR`),
 полная mixed-сессия Rust+C++ (headless `src/` умеет только `--server`),
-FLIC-анимация портретов, живой alt-tab/авто-масштаб (WINDOW-проверки), сквозной
+живой alt-tab/авто-масштаб (WINDOW-проверки), сквозной
 бой/поражение в QA (нет команды урона), MXLS-загрузка (полный путь — V70),
 пакет 09 (золото команды) в сети — апгрейды идут пакетом 10.
 
@@ -51,9 +51,19 @@ FLIC-анимация портретов, живой alt-tab/авто-масшт
 `data/cargo_unit_data.json`), таблица `UnitStats_DrawStats` с сеткой `I_*`
 pips, дельтой апгрейда и красными линиями; второй кадр башни/пушки иконок
 (`D_*` → `angle_offsets[2] >> divisor`) и её отдельный кадр на карте/HUD/
-в меню апгрейдов. Остаточные отличия CargoMenu: экран `CARGO_SETUP` не
-портирован, у 24 служебных типов описания нет и в оригинале (в `CargoMenu`
-недостижимы).
+в меню апгрейдов. Остаточные отличия CargoMenu: у 24 служебных типов описания
+нет и в оригинале (в `CargoMenu` недостижимы); `Help` открывает окно
+`CARGO_SETUP` (`HELPFRAM`), как и остальные `?`/`Help`-кнопки (P8).
+
+**P8 (ResearchMenu + Help-экраны)** закрыл последние визуальные пробелы:
+`ResearchMenu` (`RSRCHPIC`, 8 тем, распределение центров, `R`) и окно
+`HELPFRAM` для `OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`
+(+`RESEARCH_SETUP`/`UPGRADES_SETUP`/`GAME_SCREEN_SETUP`+`Keys`); тексты —
+`data/help.json` (32 секции, 661 запись). QA `research-help.qa`, 9 golden
+`golden/research-help/`, команды `research …`/`help …` и проверки
+`research-menu`/`research-alloc`/`help-section`/`help-row`. Отличие: окно
+показывает текст секции целиком, а не абзац под курсором (C++ help-режим);
+пакет 09 не шлётся, звуки не проигрываются.
 
 ---
 

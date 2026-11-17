@@ -33,12 +33,13 @@ use crate::mobilize::{
 };
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
-    self, Assertion, BuildCommand, Command, LandingCommand, MenuTarget, MobilizeAction, PhaseName,
-    ScreenName, SetupAction, Step, UpgradeCommand,
+    self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, MenuTarget,
+    MobilizeAction, PhaseName, ResearchCommand, ScreenName, SetupAction, Step, UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
-    handle_session_input, InputEvent, Key, MenuClient, Screen, SessionRequest, Transition, UiContext,
+    handle_session_input, InputEvent, Key, MenuClient, Screen, SessionRequest, Transition,
+    UiContext,
 };
 use crate::upgrademenu::UpgradeFilter;
 use crate::{App, AppConfig, AppMode};
@@ -403,12 +404,15 @@ impl QaRunner {
             Command::Landing(action) => self.landing(*action),
             Command::Build(action) => self.build(*action),
             Command::Upgrade(action) => self.upgrade(*action),
+            Command::Research(action) => self.research(*action),
+            Command::Help(action) => self.help(*action),
         }
     }
 
     /// `build …`: экран `BuildMenu` (P2) — те же действия, что у игрока
     /// (клавиша `B`, клики по строкам списка, кнопки Build/Delete/Done).
-    fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {        let app = &mut self.app;
+    fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {
+        let app = &mut self.app;
 
         let detail = match action {
             BuildCommand::Open => {
@@ -583,17 +587,308 @@ impl QaRunner {
 
         Ok(Flow::Continue)
     }
-    /// `mobilize …`: действия на экране `CargoMenu` через те же клики, что у
-    /// игрока (строки списков, кнопки Buy/Delete/Done/Cancel/CRGTOG, стрелки
-    /// апгрейдов, cargo-слайдер).
+
+    /// `research …`: экран исследований (P7, `ResearchMenu`).
+    fn research(&mut self, action: ResearchCommand) -> Result<Flow, String> {
+        let app = &mut self.app;
+
+        let detail = match action {
+            ResearchCommand::Open => {
+                if !app.open_research_menu() {
+                    return Err(
+                        "research open: нужен выделенный включённый Research Center своей команды (select type …, key O)"
+                            .to_string(),
+                    );
+                }
+                let (centers, free) = app
+                    .research_menu()
+                    .map(|menu| (menu.active_centers, menu.free_capacity))
+                    .unwrap_or((0, 0));
+                format!("меню открыто, центров {centers}, свободно {free}")
+            }
+            ResearchCommand::Select(index) => {
+                let Some(_menu) = app.research_menu() else {
+                    return Err("research select: меню не открыто".to_string());
+                };
+                if index as usize >= max_core::enums::RESEARCH_TOPIC_COUNT {
+                    return Err(format!(
+                        "research select {index}: тем всего {}",
+                        max_core::enums::RESEARCH_TOPIC_COUNT
+                    ));
+                }
+                app.research_menu_select(index as usize);
+                format!(
+                    "выбрана тема {}",
+                    crate::researchmenu::TOPIC_LABELS[index as usize]
+                )
+            }
+            ResearchCommand::Row { row, increase } => {
+                if app.research_menu().is_none() {
+                    return Err("research row: меню не открыто".to_string());
+                }
+                if row as usize >= max_core::enums::RESEARCH_TOPIC_COUNT {
+                    return Err(format!(
+                        "research row {row}: тем всего {}",
+                        max_core::enums::RESEARCH_TOPIC_COUNT
+                    ));
+                }
+                if !app.research_menu_adjust(row as usize, increase) {
+                    return Err(format!(
+                        "research row {row}: {} центров (свободно {}) — изменение невозможно",
+                        app.research_menu()
+                            .map(|menu| menu.value(row as usize))
+                            .unwrap_or(0),
+                        app.research_menu()
+                            .map(|menu| menu.free_capacity)
+                            .unwrap_or(0)
+                    ));
+                }
+                let menu = app.research_menu().expect("menu");
+                format!(
+                    "{}: {} центров, свободно {}",
+                    crate::researchmenu::TOPIC_LABELS[row as usize],
+                    menu.value(row as usize),
+                    menu.free_capacity
+                )
+            }
+            ResearchCommand::Done => {
+                if app.research_menu().is_none() {
+                    return Err("research done: меню не открыто".to_string());
+                }
+                app.commit_research_menu()
+                    .unwrap_or_else(|| "распределение применено".to_string())
+            }
+            ResearchCommand::Cancel => {
+                if app.research_menu().is_none() {
+                    return Err("research cancel: меню не открыто".to_string());
+                }
+                app.close_research_menu();
+                "меню закрыто без изменений".to_string()
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
+    }
+
+    /// `help …`: окно помощи (`HelpMenu`) — четыре экрана меню/мобилизации,
+    /// `GAME_SCREEN_SETUP`, `RESEARCH_SETUP`, `UPGRADES_SETUP`.
+    fn help(&mut self, action: HelpCommand) -> Result<Flow, String> {
+        let detail = match action {
+            HelpCommand::Open(section) => {
+                if self.current_help_section().is_some() {
+                    return Err(format!(
+                        "help {}: окно уже открыто ({:?})",
+                        section.as_str(),
+                        self.current_help_section()
+                    ));
+                }
+
+                if matches!(self.screen, Screen::InSession { .. }) {
+                    match section {
+                        crate::helpmenu::HelpSection::Research => {
+                            if self.app.research_menu().is_none() {
+                                return Err("help research: сначала research open".to_string());
+                            }
+                            let rect = crate::researchmenu::HELP_RECT;
+                            self.send(InputEvent::MouseClick(
+                                crate::researchmenu::WINDOW_RECT.ulx + rect.ulx + rect.width / 2,
+                                crate::researchmenu::WINDOW_RECT.uly + rect.uly + rect.height / 2,
+                            ))?;
+                        }
+                        crate::helpmenu::HelpSection::Upgrades => {
+                            if self.app.upgrade_menu().is_none() {
+                                return Err("help upgrades: сначала upgrade open".to_string());
+                            }
+                            let rect = crate::upgrademenu::HELP;
+                            self.send(InputEvent::MouseClick(
+                                rect.ulx + rect.width / 2,
+                                rect.uly + rect.height / 2,
+                            ))?;
+                        }
+                        crate::helpmenu::HelpSection::GameScreen => {
+                            // Панель `HELP_OF` (`GameManager_MenuClickHelpButton`).
+                            // Без хрома панели нет — открываем как `?`.
+                            if self.app.chrome_active() {
+                                let rect = max_render::layout::HELP_BUTTON;
+                                self.send(InputEvent::MouseClick(
+                                    rect.ulx + rect.width / 2,
+                                    rect.uly + rect.height / 2,
+                                ))?;
+                            } else {
+                                self.app.open_help(section);
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "help {}: секция доступна только в меню/мобилизации",
+                                section.as_str()
+                            ))
+                        }
+                    }
+                } else {
+                    match &self.screen {
+                        Screen::LocalSetup(form) => {
+                            let expected = match form.screen {
+                                SetupScreen::Options => crate::helpmenu::HelpSection::Options,
+                                SetupScreen::Planet => crate::helpmenu::HelpSection::Planet,
+                                SetupScreen::Players if form.hot_seat => {
+                                    crate::helpmenu::HelpSection::HotSeat
+                                }
+                                SetupScreen::Players => crate::helpmenu::HelpSection::NewGame,
+                                SetupScreen::Clan => crate::helpmenu::HelpSection::Clan,
+                            };
+                            if expected != section {
+                                return Err(format!(
+                                    "help {}: текущий экран — {:?} ({expected:?})",
+                                    section.as_str(),
+                                    form.screen
+                                ));
+                            }
+                            // `?` в нижней строке всех экранов настройки.
+                            self.send(InputEvent::MouseClick(489, 458))?;
+                        }
+                        Screen::PreGame(flow) => {
+                            if !matches!(flow.stage, crate::pregame::PreGameStage::Mobilize(_))
+                                || section != crate::helpmenu::HelpSection::Cargo
+                            {
+                                return Err(format!(
+                                    "help {}: доступно только на мобилизации (CargoMenu)",
+                                    section.as_str()
+                                ));
+                            }
+                            let rect = crate::mobilize::HELP_BUTTON;
+                            self.send(InputEvent::MouseClick(
+                                rect.ulx + rect.width / 2,
+                                rect.uly + rect.height / 2,
+                            ))?;
+                        }
+                        _ => {
+                            return Err(format!(
+                                "help {}: текущий экран {} не открывает помощь",
+                                section.as_str(),
+                                self.screen_label()
+                            ))
+                        }
+                    }
+                }
+
+                if self.current_help_section() != Some(section) {
+                    return Err(format!(
+                        "help {}: окно не открылось (сейчас {:?})",
+                        section.as_str(),
+                        self.current_help_section()
+                    ));
+                }
+
+                format!(
+                    "{}: строк {}, страница {}",
+                    section.as_str(),
+                    self.current_help_lines(),
+                    crate::helpmenu::ROWS_PER_PAGE
+                )
+            }
+            HelpCommand::PageUp => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::PageUp))?;
+                format!("help row {}", self.current_help_row())
+            }
+            HelpCommand::PageDown => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::PageDown))?;
+                format!("help row {}", self.current_help_row())
+            }
+            HelpCommand::Up => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::Up))?;
+                format!("help row {}", self.current_help_row())
+            }
+            HelpCommand::Down => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::Down))?;
+                format!("help row {}", self.current_help_row())
+            }
+            HelpCommand::Keys => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::Char('k')))?;
+                let mode = self
+                    .app
+                    .help_screen()
+                    .map(|help| help.keys_mode())
+                    .unwrap_or(false);
+                format!("keys mode {}", if mode { "on" } else { "off" })
+            }
+            HelpCommand::Done => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::Enter))?;
+                if self.current_help_section().is_some() {
+                    return Err("help done: окно не закрылось".to_string());
+                }
+                "окно закрыто".to_string()
+            }
+            HelpCommand::Close => {
+                self.require_help()?;
+                self.send(InputEvent::Key(Key::Escape))?;
+                if self.current_help_section().is_some() {
+                    return Err("help close: окно не закрылось".to_string());
+                }
+                "окно закрыто".to_string()
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
+    }
+
+    /// Секция открытого окна помощи (в игре — `App::help_screen`, в меню —
+    /// `Screen::Help`).
+    fn current_help_section(&self) -> Option<crate::helpmenu::HelpSection> {
+        if let Some(help) = self.app.help_screen() {
+            return Some(help.section());
+        }
+        match &self.screen {
+            Screen::Help { help, .. } => Some(help.section()),
+            _ => None,
+        }
+    }
+
+    fn current_help_row(&self) -> usize {
+        self.app
+            .help_screen()
+            .map(|help| help.row_index())
+            .or_else(|| match &self.screen {
+                Screen::Help { help, .. } => Some(help.row_index()),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    fn current_help_lines(&self) -> usize {
+        self.app
+            .help_screen()
+            .map(|help| help.line_count())
+            .or_else(|| match &self.screen {
+                Screen::Help { help, .. } => Some(help.line_count()),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    fn require_help(&self) -> Result<(), String> {
+        if self.current_help_section().is_some() {
+            Ok(())
+        } else {
+            Err("help: окно не открыто".to_string())
+        }
+    }
     fn mobilize(&mut self, action: MobilizeAction) -> Result<Flow, String> {
         match action {
-            MobilizeAction::Buy => {
-                self.send(InputEvent::MouseClick(
-                    BUY_BUTTON.ulx + BUY_BUTTON.width / 2,
-                    BUY_BUTTON.uly + BUY_BUTTON.height / 2,
-                ))
-            }
+            MobilizeAction::Buy => self.send(InputEvent::MouseClick(
+                BUY_BUTTON.ulx + BUY_BUTTON.width / 2,
+                BUY_BUTTON.uly + BUY_BUTTON.height / 2,
+            )),
             MobilizeAction::BuyIndex(index) => {
                 let index = index as usize;
 
@@ -803,7 +1098,9 @@ impl QaRunner {
         self.mobilization().is_some_and(|mobilization| {
             mobilization.loadout_selected == index
                 && mobilization.info
-                    == mobilization.loadout_row(index).map(|supply| supply.unit_type)
+                    == mobilization
+                        .loadout_row(index)
+                        .map(|supply| supply.unit_type)
         })
     }
 
@@ -934,7 +1231,14 @@ impl QaRunner {
             .and_then(|assets| assets.menu.as_ref())
             .map(|menu| menu.palette);
 
-        if let Screen::LocalSetup(form) = &mut self.screen {
+        // Окно помощи может быть открыто поверх экрана настройки: мини-карты
+        // планет всё равно должны быть готовы к кадру.
+        let screen = match &mut self.screen {
+            Screen::Help { screen, .. } => screen.as_mut(),
+            screen => screen,
+        };
+
+        if let Screen::LocalSetup(form) = screen {
             form.ensure_minimaps(palette.as_ref());
         }
     }
@@ -943,9 +1247,7 @@ impl QaRunner {
     fn ready(&self) -> bool {
         match self.app.local() {
             None => true,
-            Some(local) => {
-                local.finished() || local.notice.is_some() || !local.input_blocked()
-            }
+            Some(local) => local.finished() || local.notice.is_some() || !local.input_blocked(),
         }
     }
 
@@ -1317,7 +1619,8 @@ impl QaRunner {
         self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
     }
 
-    fn require_selection(&mut self, what: &str) -> Result<Flow, String> {        let team = self.app.player_team();
+    fn require_selection(&mut self, what: &str) -> Result<Flow, String> {
+        let team = self.app.player_team();
         let selected = self.app.hud().selected;
 
         match selected.and_then(|id| self.app.state().unit(id)) {
@@ -1370,9 +1673,7 @@ impl QaRunner {
 
         self.send(InputEvent::RightClick(x, y))?;
 
-        if matches!(self.screen, Screen::InSession { .. })
-            && self.app.hud().selected != Some(id)
-        {
+        if matches!(self.screen, Screen::InSession { .. }) && self.app.hud().selected != Some(id) {
             return Err(format!(
                 "{what}: правый клик снял выделение вместо приказа ({})",
                 self.last_log_line()
@@ -1389,14 +1690,21 @@ impl QaRunner {
             ));
         }
 
-        self.detail = Some(format!("шагов {}, {}", self.path_steps(), after.map(|o| format!("{:?}", o.0)).unwrap_or_default()));
+        self.detail = Some(format!(
+            "шагов {}, {}",
+            self.path_steps(),
+            after.map(|o| format!("{:?}", o.0)).unwrap_or_default()
+        ));
         Ok(Flow::Continue)
     }
 
     fn move_grid(&mut self, x: i16, y: i16) -> Result<Flow, String> {
         let target = Point::new(x, y);
         let (screen_x, screen_y) = hud::tile_center(&self.app.map_viewport(), target);
-        let (frame_x, frame_y) = (screen_x + layout::MAIN_MAP.ulx, screen_y + layout::MAIN_MAP.uly);
+        let (frame_x, frame_y) = (
+            screen_x + layout::MAIN_MAP.ulx,
+            screen_y + layout::MAIN_MAP.uly,
+        );
 
         if !layout::MAIN_MAP.contains(frame_x, frame_y) {
             return Err(format!(
@@ -1428,7 +1736,16 @@ impl QaRunner {
 
         let mut rejections = Vec::new();
 
-        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
+        for (dx, dy) in [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ] {
             let target = Point::new(grid.x + dx, grid.y + dy);
 
             if target.x < 0
@@ -1463,7 +1780,12 @@ impl QaRunner {
                 return Ok(Flow::Continue);
             }
 
-            rejections.push(format!("({}, {}): {}", target.x, target.y, self.last_log_line()));
+            rejections.push(format!(
+                "({}, {}): {}",
+                target.x,
+                target.y,
+                self.last_log_line()
+            ));
         }
 
         Err(format!(
@@ -1556,7 +1878,8 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    fn load(&mut self, name: &str) -> Result<Flow, String> {        let out_path = self.config.out_dir.join(name);
+    fn load(&mut self, name: &str) -> Result<Flow, String> {
+        let out_path = self.config.out_dir.join(name);
         let data_path = self.config.data_dir.join(name);
         let path = if out_path.is_file() {
             out_path
@@ -1569,8 +1892,8 @@ impl QaRunner {
             ));
         };
 
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("load {}: {error}", path.display()))?;
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("load {}: {error}", path.display()))?;
 
         let setup = match &self.screen {
             Screen::LocalSetup(form) => form.setup.clone(),
@@ -1646,10 +1969,7 @@ impl QaRunner {
                 )
             }
             Assertion::Notice(expected) => {
-                let actual = self
-                    .app
-                    .local_notice()
-                    .map(|notice| notice.team.0);
+                let actual = self.app.local_notice().map(|notice| notice.team.0);
 
                 self.expect(
                     actual == expected,
@@ -1670,7 +1990,11 @@ impl QaRunner {
                         if want_victory { "victory" } else { "defeat" }.to_string(),
                         format!(
                             "исход: {} (ход {}, команда {})",
-                            if outcome.victory { "победа" } else { "поражение" },
+                            if outcome.victory {
+                                "победа"
+                            } else {
+                                "поражение"
+                            },
                             outcome.turn_counter,
                             outcome.team.0
                         ),
@@ -1699,6 +2023,55 @@ impl QaRunner {
                     actual == expected,
                     format!("upgrade={}", if expected { "open" } else { "closed" }),
                     format!("upgrade={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::ResearchMenuOpen(expected) => {
+                let actual = self.app.research_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("research-menu={}", if expected { "open" } else { "closed" }),
+                    format!("research-menu={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::ResearchAlloc(topic, cmp, expected) => {
+                let actual =
+                    self.app.state().research_allocation(self.app.player_team())[topic as usize];
+
+                self.expect(
+                    cmp.test(i64::from(actual), i64::from(expected)),
+                    format!("research-alloc {topic:?} {}{expected}", cmp.as_str()),
+                    format!("research-alloc {topic:?}={actual}"),
+                )
+            }
+            Assertion::HelpOpen(expected) => {
+                let actual = self.current_help_section().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("help={}", if expected { "open" } else { "closed" }),
+                    format!("help={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::HelpSection(section) => {
+                let actual = self.current_help_section();
+
+                self.expect(
+                    actual == Some(section),
+                    format!("help-section={}", section.as_str()),
+                    match actual {
+                        Some(actual) => format!("help-section={}", actual.as_str()),
+                        None => "окно помощи не открыто".to_string(),
+                    },
+                )
+            }
+            Assertion::HelpRow(cmp, expected) => {
+                let actual = self.current_help_row();
+
+                self.expect(
+                    cmp.test(actual as i64, i64::from(expected)),
+                    format!("help-row{}{expected}", cmp.as_str()),
+                    format!("help-row={actual}"),
                 )
             }
             Assertion::Gold(cmp, expected) => {
@@ -1762,7 +2135,8 @@ impl QaRunner {
                     ),
                 )
             }
-            Assertion::Selected => {                let team = self.app.player_team();
+            Assertion::Selected => {
+                let team = self.app.player_team();
                 let selected = self
                     .app
                     .hud()
@@ -1775,7 +2149,11 @@ impl QaRunner {
                     "selected".to_string(),
                     match selected {
                         Some(unit) if unit.team == team => {
-                            format!("выделен {:?}, подвижный: {}", unit.unit_type, hud::unit_can_move(unit))
+                            format!(
+                                "выделен {:?}, подвижный: {}",
+                                unit.unit_type,
+                                hud::unit_can_move(unit)
+                            )
                         }
                         Some(unit) => format!("выделен чужой {:?}", unit.team),
                         None => "выделения нет".to_string(),
@@ -1856,7 +2234,9 @@ impl QaRunner {
                 )
             }
             Assertion::CargoMode(expected) => {
-                let actual = self.mobilization().map(|m| m.mode == crate::mobilize::CargoMode::Buy);
+                let actual = self
+                    .mobilization()
+                    .map(|m| m.mode == crate::mobilize::CargoMode::Buy);
 
                 self.expect(
                     actual == Some(expected),
@@ -1999,6 +2379,27 @@ impl QaRunner {
             (Screen::PreGame(flow), ScreenName::Landing) => {
                 matches!(flow.stage, crate::pregame::PreGameStage::Landing(_))
             }
+            (Screen::Help { .. }, ScreenName::Help) => true,
+            (Screen::Help { screen, .. }, _) => match screen.as_ref() {
+                Screen::LocalSetup(form) => match expected {
+                    ScreenName::LocalSetup => true,
+                    ScreenName::Options => form.screen == SetupScreen::Options,
+                    ScreenName::Planet => form.screen == SetupScreen::Planet,
+                    ScreenName::Players => form.screen == SetupScreen::Players,
+                    ScreenName::Clan => form.screen == SetupScreen::Clan,
+                    _ => false,
+                },
+                Screen::PreGame(flow) => match expected {
+                    ScreenName::Mobilize => {
+                        matches!(flow.stage, crate::pregame::PreGameStage::Mobilize(_))
+                    }
+                    ScreenName::Landing => {
+                        matches!(flow.stage, crate::pregame::PreGameStage::Landing(_))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -2013,6 +2414,7 @@ impl QaRunner {
             Screen::Credits(_) => "Credits",
             Screen::GameOver => "GameOver",
             Screen::InSession { .. } => "InGame",
+            Screen::Help { .. } => "Help",
             Screen::LocalSetup(form) => match form.screen {
                 SetupScreen::Options => "Options",
                 SetupScreen::Planet => "Planet",

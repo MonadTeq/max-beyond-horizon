@@ -5,7 +5,7 @@
 | Раздел | Где |
 |---|---|
 | Стратегия QA и формат .qa-скриптов | `max-rust-qa/plans/qa-plan.md` |
-| Тест-кейсы (153 TC по 11 областям) | `max-rust-qa/suite/` |
+| Тест-кейсы (192 TC по 11 областям) | `max-rust-qa/suite/` |
 | .qa-сценарии | `max-rust-qa/scripts/` |
 | Golden-кадры (дрейф-гейт) | `max-rust-qa/golden/` |
 | Драйверы (qa_run, qa_golden_check, запись вручную) | `max-rust-qa/drivers/README.md` |

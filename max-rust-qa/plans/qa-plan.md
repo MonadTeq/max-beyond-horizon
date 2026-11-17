@@ -13,9 +13,9 @@
 | Слой | Что проверяет | Где | Частота | Статус |
 |---|---|---|---|---|
 | 1. Юнит/интеграционные (780+ тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
-| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 11 сценариев) |
+| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 12 сценариев) |
 | 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max-rust --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
-| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 27 эталонов: visual 13 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5) |
+| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 36 эталонов: visual 13 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5 + research-help 9) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC (и 3 клиента) | live-smoke.sh / live-smoke-3.sh | релизный гейт | **готово** (P5: 2×10, 3×10 PASS) |
 | 5. Реальный оконный прогон мышью (Windows) | SDL/ввод/звук на живом бинаре | ui-test-sp.ps1 и пр. | релизный гейт, вручную/полуавто | по плану |
 
@@ -75,7 +75,13 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
       (`assert selected`, `assert unit-pos=23,21`) → RMB (`assert preview`,
       `assert log=Move:`) → `End Turn` → повторный клик (`assert unit-pos=24,21`),
       затем RMB по юниту (`assert log=Cancelled`). Камера после высадки — на
-      шахте (регресс «юнит не двигается»).
+      шахте (регресс «юнит не двигается»);
+  12. `research-help.qa` — P8: `?` на Options/Planet/Players и `Help`
+      мобилизации (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/
+      `CARGO_SETUP`, `PageDown`/`PageUp`/`Done`), `ResearchMenu` (`R`,
+      `RSRCHPIC`), `Help` экрана (`RESEARCH_SETUP`) и панели
+      (`GAME_SCREEN_SETUP` + `Keys`), распределение Attack→Shots и `Done`;
+      за 16 ходов Shots=1, Attack=0.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;
   ассерт-фейл → exit 1 с текстом (`строка N: assert …: фактически …`).
 - Тесты драйвера: `src/qa/script.rs` (все команды парсера),
@@ -130,8 +136,8 @@ cargo run -p max_app -- \
 - `ci.sh`: стадия **3/4** после `cargo test` и тестов Horizon — прогон
   `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa`, `production.qa`,
   `save-load.qa`, `upgrade.qa`, `research.qa`, `edge-cases.qa`, `cargo-full.qa`,
-  `move-input.qa` и golden-сверка (visual, production, upgrade, research,
-  cargo, move-input); стадия **4/4** — soak
+  `move-input.qa`, `research-help.qa` и golden-сверка (visual, production,
+  upgrade, research, cargo, move-input, research-help); стадия **4/4** — soak
   (`soak-100.qa` с `MAX_TICK_PROFILE=1` + `soak_headless --turns 120`);
   `--smoke` дополнительно запускает `live-smoke.sh`.
 - `.github/workflows/ci.yml`: job `qa` с теми же командами и job `soak`

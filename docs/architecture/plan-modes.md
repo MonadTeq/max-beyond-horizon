@@ -81,9 +81,9 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   последовательно, а не одновременно); для 1–3 ИИ поведение совпадает, но
   конкурентный `GameManager_TeamTurnConcurrent` (общий `GameState_9_END_TURN`
   и барьеры) не портирован 1:1.
-* Кланы (`ClanSelectMenu`) и экраны Help (`PLANET_SETUP`,
-  `NEW_GAME_SETUP`, `OPTIONS_SETUP`) не портированы — кнопки `?`/флаг команды
-  пишут статус.
+* Кланы (`ClanSelectMenu`) не портированы; экраны Help (`PLANET_SETUP`,
+  `NEW_GAME_SETUP`, `OPTIONS_SETUP`, `CARGO_SETUP`) и `ResearchMenu` закрыты в
+  P8 (см. `docs/analysis/visual-1to1-status.md` §13).
 * Производство (`ProgressBuildState`: `SpawnNewUnits`, `ResearchMenu_NewTurn`)
   портировано: P2 — очередь `ProductionManager`/спавн, P6 — исследования
   (`max_core::research`, питание Research Center) и покупные апгрейды
