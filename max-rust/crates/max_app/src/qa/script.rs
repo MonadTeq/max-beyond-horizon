@@ -213,6 +213,16 @@ pub enum Assertion {
     UpgradeOpen(bool),
     /// `assert research-menu=open|closed`: открыт ли экран исследований (P7).
     ResearchMenuOpen(bool),
+    /// `assert unit-menu=open|closed`: открыто ли меню команд юнита (C++
+    /// `GameManager_PopupButtons`).
+    UnitMenuOpen(bool),
+    /// `assert unit-menu-item=NAME`: пункт есть в меню и включён.
+    UnitMenuItem(String),
+    /// `assert unit-menu-disabled=NAME`: пункт есть, но отключён (механика не
+    /// портирована).
+    UnitMenuDisabled(String),
+    /// `assert unit-order=NAME`: приказ выделенного юнита (`ORDER_*`).
+    UnitOrder(max_core::enums::UnitOrder),
     /// `assert research-alloc attack=N`: сколько центров закреплено за темой.
     ResearchAlloc(max_core::enums::ResearchTopic, Cmp, u32),
     /// `assert help=open|closed`: открыто ли окно помощи (P7).
@@ -420,6 +430,19 @@ pub enum HelpCommand {
     Close,
 }
 
+/// Действие меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnitMenuCommand {
+    /// `open` — повторный клик по выделенному юниту (реальный триггер).
+    Open,
+    /// `item NAME` — клик по кнопке пункта (подпись или символ позиции).
+    Item(String),
+    /// `key CHAR` — горячая клавиша пункта (`GameManager_ProcessPopupMenuInput`).
+    Key(char),
+    /// `close` — `Esc`.
+    Close,
+}
+
 /// Действие на экране выбора точки высадки (`GameManager_SelectSite`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LandingCommand {
@@ -505,6 +528,8 @@ pub enum Command {
     Research(ResearchCommand),
     /// `help SECTION|page up|page down|up|down|keys|done|close`.
     Help(HelpCommand),
+    /// `unit-menu open|item NAME|key CHAR|close` — меню команд юнита.
+    UnitMenu(UnitMenuCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -611,6 +636,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "upgrade" => parse_upgrade(rest),
         "research" => parse_research(rest),
         "help" => parse_help(rest),
+        "unit-menu" | "unit_menu" => parse_unit_menu(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -916,6 +942,16 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert research-menu: ожидалось open|closed, получено «{other}»"
             )),
         },
+        "unit-menu" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::UnitMenuOpen(true)),
+            "closed" | "none" => Ok(Assertion::UnitMenuOpen(false)),
+            other => Err(format!(
+                "assert unit-menu: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "unit-menu-item" => Ok(Assertion::UnitMenuItem(value.to_string())),
+        "unit-menu-disabled" => Ok(Assertion::UnitMenuDisabled(value.to_string())),
+        "unit-order" => Ok(Assertion::UnitOrder(parse_unit_order(value)?)),
         "help" => match value.to_ascii_lowercase().as_str() {
             "open" | "opened" => Ok(Assertion::HelpOpen(true)),
             "closed" | "none" => Ok(Assertion::HelpOpen(false)),
@@ -1345,6 +1381,96 @@ fn parse_help(rest: &str) -> Result<Command, String> {
     };
 
     Ok(Command::Help(command))
+}
+
+fn parse_unit_menu(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err(
+            "unit-menu: ожидалось «unit-menu open|item NAME|key CHAR|close»".to_string(),
+        );
+    };
+
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("open", [_]) => UnitMenuCommand::Open,
+        ("close", [_]) | ("cancel", [_]) => UnitMenuCommand::Close,
+        ("key", [_, character]) => {
+            let mut chars = character.chars();
+            match (chars.next(), chars.next()) {
+                (Some(character), None) => UnitMenuCommand::Key(character),
+                _ => {
+                    return Err(format!(
+                        "unit-menu key: ожидался один символ, получено «{character}»"
+                    ))
+                }
+            }
+        }
+        ("item", [_, ..]) => {
+            let name = rest
+                .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+                .trim();
+
+            if name.is_empty() {
+                return Err("unit-menu item: нужна подпись пункта".to_string());
+            }
+
+            UnitMenuCommand::Item(name.to_string())
+        }
+        _ => {
+            return Err(format!(
+                "unit-menu: неизвестное действие «{rest}» (open|item NAME|key CHAR|close)"
+            ))
+        }
+    };
+
+    Ok(Command::UnitMenu(command))
+}
+
+/// Имя приказа (`ORDER_SENTRY`, `Sentry`, `sentry`) → [`max_core::enums::UnitOrder`].
+fn parse_unit_order(text: &str) -> Result<max_core::enums::UnitOrder, String> {
+    use max_core::enums::UnitOrder;
+
+    let name = text
+        .trim()
+        .trim_start_matches("ORDER_")
+        .trim_start_matches("order_")
+        .to_ascii_lowercase();
+
+    let order = match name.as_str() {
+        "await" | "awaiting" => UnitOrder::Await,
+        "transform" | "transforming" => UnitOrder::Transform,
+        "move" | "moving" => UnitOrder::Move,
+        "fire" | "firing" | "attack" | "attacking" => UnitOrder::Fire,
+        "build" | "building" => UnitOrder::Build,
+        "activate" => UnitOrder::Activate,
+        "newallocate" | "allocate" => UnitOrder::NewAllocate,
+        "poweron" => UnitOrder::PowerOn,
+        "poweroff" => UnitOrder::PowerOff,
+        "explode" | "exploding" => UnitOrder::Explode,
+        "unload" | "unloading" => UnitOrder::Unload,
+        "clear" | "clearing" => UnitOrder::Clear,
+        "sentry" => UnitOrder::Sentry,
+        "land" | "landing" => UnitOrder::Land,
+        "takeoff" => UnitOrder::TakeOff,
+        "load" | "loading" => UnitOrder::Load,
+        "idle" => UnitOrder::Idle,
+        "repair" | "repairing" => UnitOrder::Repair,
+        "reload" | "reloading" => UnitOrder::Reload,
+        "transfer" | "transferring" => UnitOrder::Transfer,
+        "haltbuilding" => UnitOrder::HaltBuilding,
+        "movetounit" => UnitOrder::MoveToUnit,
+        "upgrade" | "upgrading" => UnitOrder::Upgrade,
+        "laymine" => UnitOrder::LayMine,
+        "movetoattack" => UnitOrder::MoveToAttack,
+        "disable" | "disabled" => UnitOrder::Disable,
+        other => {
+            return Err(format!(
+                "assert unit-order: неизвестный приказ «{other}» (await|move|fire|build|sentry|poweron|…)"
+            ))
+        }
+    };
+
+    Ok(order)
 }
 
 fn parse_select(rest: &str) -> Result<Command, String> {

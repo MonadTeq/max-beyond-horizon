@@ -641,6 +641,7 @@ impl App {
         let meta = crate::saveload::save_meta_for_local_game(setup);
         self.state_mut().set_save_meta(meta);
         self.hud.clear();
+        self.close_unit_menu();
         if setup.is_hot_seat() {
             self.hud.push_log(format!(
                 "Hot seat: {} human players, {} computer(s)",
@@ -685,6 +686,7 @@ impl App {
         self.local = None;
         self.close_build_menu();
         self.close_research_menu();
+        self.close_unit_menu();
         self.close_help();
         self.hud.clear();
     }
@@ -772,6 +774,9 @@ impl App {
                 // Выделение не переезжает между игроками: иначе новый игрок
                 // приказал бы чужому юниту (`GameManager_UpdateGuiControl`).
                 self.hud.clear_interaction();
+                // Попап команд принадлежит прежнему выделению
+                // (`GameManager_DeinitPopupButtons` на смене хода).
+                self.close_unit_menu();
                 self.focus_player();
 
                 if let Some(notice) = notice {

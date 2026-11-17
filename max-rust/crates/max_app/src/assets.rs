@@ -666,6 +666,9 @@ pub struct Assets {
     pub research: Option<crate::researchmenu::ResearchMenuAssets>,
     /// Окно помощи (`HELPFRAM` + `HELPOK` + `BLDUP__`/`BLDDWN`).
     pub help: Option<crate::helpmenu::HelpMenuAssets>,
+    /// Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21) — попап
+    /// `GameManager_PopupButtons`.
+    pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
     /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Видео интро: путь к `maxint.mve` (ресурс `INTROFLC` — ASCIIZ-ссылка).
@@ -818,6 +821,8 @@ impl Assets {
         let research = crate::researchmenu::ResearchMenuAssets::load(&max_res);
         // Окно помощи (`HELPFRAM` + `HELPOK` + прокрутка) — все Help-экраны.
         let help = crate::helpmenu::HelpMenuAssets::load(&max_res);
+        // Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21).
+        let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
         // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
@@ -844,6 +849,13 @@ impl Assets {
         if !help.is_ready() {
             warnings.push(
                 "HelpMenu: HELPFRAM/HELPOK не загрузились — окно помощи на рамках".to_string(),
+            );
+        }
+
+        if !unit_menu.is_ready() {
+            warnings.push(
+                "UnitMenu: UNTBTN_U/UNTBTN_D не загрузились — меню команд не рисуется"
+                    .to_string(),
             );
         }
 
@@ -982,6 +994,7 @@ impl Assets {
             upgrade: Some(upgrade),
             research: Some(research),
             help: Some(help),
+            unit_menu: Some(unit_menu),
             cargo: Some(cargo),
             intro_mve,
             cursors: Some(cursors),

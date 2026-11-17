@@ -114,12 +114,20 @@ assert help-section=CARGO_SETUP
 assert help-row>=16
 assert research-menu=open
 assert research-alloc attack=0
+unit-menu open
+unit-menu item sentry
+unit-menu key 8
+unit-menu close
+assert unit-menu=open
+assert unit-menu-item=sentry
+assert unit-menu-disabled=attack
+assert unit-order=sentry
 exit
 ";
 
     let parsed = steps(script);
 
-    assert_eq!(parsed.len(), 51, "все строки-команды разобраны");
+    assert_eq!(parsed.len(), 59, "все строки-команды разобраны");
     assert_eq!(parsed[0].command, Command::Click(10, 20));
     assert_eq!(parsed[1].command, Command::RightClick(30, 40));
     assert!(parsed
@@ -127,6 +135,12 @@ exit
         .any(|step| step.command == Command::Assert(Assertion::Screen(ScreenName::InGame))));
     assert!(parsed.iter().any(|step| step.command == Command::MoveNear));
     assert!(parsed.iter().any(|step| step.command == Command::EndTurn));
+    assert!(parsed.iter().any(|step| step.command
+        == Command::UnitMenu(max_app::qa::script::UnitMenuCommand::Open)));
+    assert!(parsed.iter().any(|step| step.command
+        == Command::UnitMenu(max_app::qa::script::UnitMenuCommand::Item(
+            "sentry".to_string()
+        ))));
     assert_eq!(
         parsed.last().map(|step| step.command.clone()),
         Some(Command::Exit)

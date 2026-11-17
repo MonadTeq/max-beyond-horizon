@@ -1,0 +1,112 @@
+# unit-menu.qa — меню команд юнита (C++ `GameManager_PopupButtons`).
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
+#
+# Что проверяется (всё — теми же кликами/клавишами, что у игрока):
+# * триггер 1:1 из C++: меню открывается **повторным кликом** по уже
+#   выделенному своему юниту (`GameManager_ClickUnit` → `InitPopupButtons`),
+#   первый клик только выделяет;
+# * состав пунктов по типу юнита: у танка — `attack/x-fer/enter/stop/sentry/Done`,
+#   у строителя — `Build` первым; `x-fer`/`attack` есть, но отключены (механика
+#   не портирована — `unit-menu-disabled`);
+# * модальность: пока меню открыто, карта приказ не получает (клик по другому
+#   юниту закрывает меню, выделение не меняется);
+# * `Esc` закрывает меню и не выходит из партии;
+# * выбор пункта вызывает **существующий** обработчик: `sentry` → приказ
+#   `ORDER_SENTRY` (пакет 08, процессор P1), `Build` у строителя открывает
+#   `BuildMenu`.
+#
+# Кадры `unit-menu-tank` и `unit-menu-builder` — golden-эталоны
+# (`max-rust-qa/golden/unit-menu`).
+
+# --- Главное меню → партия ------------------------------------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация: танк (строка 5) и строитель (строка 0) ------------------
+assert screen=Mobilize
+mobilize buy 5
+mobilize buy 0
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Танк: первый клик выделяет, второй открывает меню -------------------
+select type Tank
+assert selected
+assert unit-menu=closed
+shot unit-menu-tank-selected
+
+# Повторный клик по тому же юниту — меню (C++ `GameManager_ClickUnit`).
+unit-menu open
+assert unit-menu=open
+assert unit-menu-item=sentry
+assert unit-menu-item=enter
+assert unit-menu-item=Done
+assert unit-menu-disabled=attack
+# `x-fer` у танка нет вовсе: у него `CARGO_TYPE_NONE`.
+assert unit-menu=open
+shot unit-menu-tank
+
+# --- Sentry: пункт вызывает приказ (пакет 08, P1) ------------------------
+assert unit-order=await
+unit-menu item sentry
+assert unit-menu=closed
+assert unit-order=sentry
+assert log=sentry
+
+# Повторное открытие: пункт нажат (`state[i]` в C++), горячая клавиша `8`
+# снимает sentry (`ORDER_AWAIT`).
+unit-menu open
+assert unit-menu-item=sentry
+shot unit-menu-sentry-on
+key 8
+assert unit-menu=closed
+assert unit-order=await
+
+# --- Esc закрывает меню, партия продолжается ------------------------------
+unit-menu open
+assert unit-menu=open
+key ESC
+assert unit-menu=closed
+assert screen=InGame
+assert selected
+
+# --- Модальность: клик по карте закрывает меню и не меняет выделение ----
+unit-menu open
+assert unit-menu=open
+# Клик по соседней клетке (не по юниту): меню модально — приказа нет.
+click 500 300
+assert unit-menu=closed
+assert selected
+
+# --- Строитель: меню → Build открывает BuildMenu -------------------------
+select type Constructor
+assert selected
+unit-menu open
+assert unit-menu=open
+assert unit-menu-item=Build
+shot unit-menu-builder
+unit-menu item Build
+assert unit-menu=closed
+assert build=open
+key ESC
+assert build=closed
+assert screen=InGame

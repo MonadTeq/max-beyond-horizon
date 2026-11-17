@@ -401,6 +401,15 @@ pub struct HudState {
     pub end_turn_requested: bool,
     /// Позиция курсора в пикселях кадра (модальные экраны: `BuildMenu`).
     pub mouse_position: Option<(i32, i32)>,
+    /// Курсорный режим выделенного юнита — C++ `UnitInfo::cursor` (`3` x-fer,
+    /// `4` repair, `6` reload, `7` load, `8` steal, `9` disable). `0` — нет.
+    ///
+    /// UI-состояние: в снапшот/CRC не входит (в C++ поле живёт в `UnitInfo`,
+    /// но у нас — чтобы переключение режима не меняло дайджест). Сбрасывается
+    /// при смене выделения, как `GameManager_MenuUnitSelect` в C++.
+    pub cursor_mode: u8,
+    /// Режим «войти в транспорт» — C++ `UnitInfo::enter_mode`; UI-состояние.
+    pub enter_mode: bool,
 }
 
 impl Default for HudState {
@@ -423,6 +432,8 @@ impl HudState {
             panels: crate::panels::PanelState::default(),
             end_turn_requested: false,
             mouse_position: None,
+            cursor_mode: 0,
+            enter_mode: false,
         }
     }
 
@@ -432,7 +443,15 @@ impl HudState {
     }
 
     /// Выделяет юнита (`None` — снять выделение).
+    ///
+    /// Как `GameManager_MenuUnitSelect` в C++: у вновь выделенного юнита
+    /// `targeting_mode`/`enter_mode`/`cursor` сбрасываются, поэтому здесь
+    /// сбрасываются и наши UI-режимы.
     pub fn select(&mut self, id: Option<UnitId>) {
+        if self.selected != id {
+            self.cursor_mode = 0;
+            self.enter_mode = false;
+        }
         self.selected = id;
     }
 
@@ -445,6 +464,8 @@ impl HudState {
     pub fn clear_interaction(&mut self) {
         self.selected = None;
         self.preview = None;
+        self.cursor_mode = 0;
+        self.enter_mode = false;
     }
 
     /// Просит закрыть ход (кнопка End Turn в сетевой сессии).

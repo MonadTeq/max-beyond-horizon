@@ -1673,6 +1673,13 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_saveload_input(app, event);
     }
 
+    // Меню команд выделенного юнита (C++ `GameManager_PopupButtons`) — модально:
+    // пока оно открыто, карта/панели/чат приказ не получают, а клик вне меню
+    // или Esc его закрывают (как `GameManager_DeinitPopupButtons`).
+    if app.unit_menu().is_some() {
+        return session_unit_menu_input(app, event, online);
+    }
+
     // Пока ходит компьютер/идёт переход, приказы и выделение невозможны:
     // в C++ карта в это время не перерисовывается (`game_manager.cpp:1179`),
     // а приказы отбрасываются по `GameManager_ActiveTurnTeam`.
@@ -1769,8 +1776,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `U` — экран апгрейдов (`UpgradeMenu`, попап «Buy Upgrade» у золотого
-        // завода в C++; у нас попап не портирован, поэтому клавиша).
+        // `U` — экран апгрейдов (`UpgradeMenu`): пункт `buy upg` меню команд
+        // (C++ `UnitsManager_Popup_OnClick_BuyUpgrade`); клавиша — быстрый путь.
         InputEvent::Key(Key::Char('u' | 'U')) if !blocked => {
             if app.open_upgrade_menu() {
                 app.hud_mut().mouse_position = None;
@@ -1781,9 +1788,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `R` — экран исследований (`ResearchMenu`, попап `Research` у
-        // включённого `RESEARCH`-центра в C++; попап не портирован, поэтому
-        // клавиша — как `U` для апгрейдов).
+        // `R` — экран исследований (`ResearchMenu`): пункт `resrch` меню команд
+        // (C++ `UnitsManager_Popup_OnClick_Research`); клавиша — быстрый путь.
         InputEvent::Key(Key::Char('r' | 'R')) if !blocked => {
             if app.open_research_menu() {
                 app.hud_mut().mouse_position = None;
@@ -1831,6 +1837,38 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::Key(_) => Transition::None,
     }
+}
+
+/// Ввод в открытом меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
+///
+/// Меню модально: `Esc`/клик вне/правый клик закрывают его
+/// (`GameManager_DeinitPopupButtons`), клик по пункту и его горячая клавиша
+/// (`GameManager_ProcessPopupMenuInput`) вызывают обработчик пункта
+/// (`App::activate_unit_menu_item`). Стрелки и Enter в меню C++ не работают —
+/// здесь тоже (они уходят в `MenuEvent::None`).
+fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let Some(outcome) = app.unit_menu_input(event) else {
+        return Transition::None;
+    };
+
+    match outcome {
+        crate::unitmenu::MenuEvent::None | crate::unitmenu::MenuEvent::Hover(_) => {}
+        crate::unitmenu::MenuEvent::Close => {
+            app.close_unit_menu();
+            app.hud_mut().push_log("Unit menu closed");
+        }
+        crate::unitmenu::MenuEvent::Item(index) => {
+            if let Some(line) = app.activate_unit_menu_item(index) {
+                app.hud_mut().push_log(line);
+
+                if !online {
+                    apply_pending_orders(app);
+                }
+            }
+        }
+    }
+
+    Transition::None
 }
 
 /// Ввод в открытом окне сохранения/загрузки V70 (модальный экран P3).
@@ -2232,6 +2270,70 @@ fn session_map_left_click(
     };
 
     if unit_team == team {
+        let selected = app.hud().selected;
+
+        // Курсорный режим выделенного юнита (C++ `UnitInfo::cursor` 4/6, меню
+        // команд): клик по своему юниту отдаёт `ORDER_REPAIR`/`ORDER_RELOAD`
+        // (`GameManager_RepairUnit`/`GameManager_ReloadUnit`).
+        let cursor = app.hud().cursor_mode;
+        if cursor != 0 {
+            if let Some(selected) = selected.filter(|selected| *selected != id) {
+                match crate::unitmenu::cursor_mode_click(app.state(), selected, id, cursor) {
+                    Ok(Some(command)) => {
+                        app.hud_mut().pending.push(command);
+                        let label = match cursor {
+                            crate::unitmenu::CURSOR_REPAIR => "Repair",
+                            _ => "Reload",
+                        };
+                        app.hud_mut().push_log(format!("{label}: приказ отдан"));
+                        if !online {
+                            apply_pending_orders(app);
+                        }
+                        return Transition::None;
+                    }
+                    Ok(None) => {}
+                    Err(message) => {
+                        app.hud_mut().push_log(message);
+                        return Transition::None;
+                    }
+                }
+            }
+        }
+
+        // `enter_mode` (C++ `UnitsManager_Popup_OnClick_Enter`): клик по своему
+        // юниту — `ORDER_MOVE_TO_UNIT` в его клетку (посадка в транспорт).
+        if app.hud().enter_mode {
+            if let Some(selected) = selected.filter(|selected| *selected != id) {
+                if let Some(command) = crate::unitmenu::enter_mode_click(app.state(), selected, id)
+                {
+                    app.hud_mut().pending.push(command);
+                    app.hud_mut().enter_mode = false;
+                    app.hud_mut().push_log(format!("Enter: move to unit ({label})"));
+                    if !online {
+                        apply_pending_orders(app);
+                    }
+                    return Transition::None;
+                }
+            }
+            app.hud_mut().enter_mode = false;
+        }
+
+        // Повторный клик по уже выделенному юниту открывает меню команд —
+        // C++ `GameManager_ClickUnit` (`unit1 == unit2` → `InitPopupButtons`).
+        if selected == Some(id) {
+            app.hud_mut().preview = None;
+
+            let line = if app.open_unit_menu() {
+                let items = app.unit_menu().map_or(0, |menu| menu.items.len());
+                format!("Unit menu: {label} ({items})")
+            } else {
+                format!("Unit menu: no commands for {label}")
+            };
+            app.hud_mut().push_log(line);
+
+            return Transition::None;
+        }
+
         app.hud_mut().select(Some(id));
         app.hud_mut().preview = None;
         app.hud_mut().push_log(format!("Selected {label}"));

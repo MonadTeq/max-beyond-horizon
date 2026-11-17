@@ -34,7 +34,8 @@ use crate::mobilize::{
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
     self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, MenuTarget,
-    MobilizeAction, PhaseName, ResearchCommand, ScreenName, SetupAction, Step, UpgradeCommand,
+    MobilizeAction, PhaseName, ResearchCommand, ScreenName, SetupAction, Step, UnitMenuCommand,
+    UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -407,6 +408,88 @@ impl QaRunner {
             Command::Upgrade(action) => self.upgrade(*action),
             Command::Research(action) => self.research(*action),
             Command::Help(action) => self.help(*action),
+            Command::UnitMenu(action) => self.unit_menu(action.clone()),
+        }
+    }
+
+    /// `unit-menu …` — меню команд выделенного юнита (C++
+    /// `GameManager_PopupButtons`): открытие тем же повторным кликом, выбор
+    /// пункта кликом по его кнопке или горячей клавишей, закрытие `Esc`.
+    fn unit_menu(&mut self, action: UnitMenuCommand) -> Result<Flow, String> {
+        match action {
+            UnitMenuCommand::Open => {
+                let Some(id) = self.app.hud().selected else {
+                    return Err("unit-menu open: сначала выделите своего юнита".to_string());
+                };
+                let grid = self
+                    .app
+                    .state()
+                    .unit(id)
+                    .map(|unit| unit.grid)
+                    .ok_or_else(|| "unit-menu open: юнит исчез".to_string())?;
+
+                // Триггер — повторный клик по уже выделенному юниту
+                // (`GameManager_ClickUnit`).
+                self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+                let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
+                self.send(InputEvent::MouseClick(
+                    x + layout::MAIN_MAP.ulx,
+                    y + layout::MAIN_MAP.uly,
+                ))?;
+
+                let Some(menu) = self.app.unit_menu() else {
+                    return Err(format!(
+                        "unit-menu open: меню не открылось (юнит {:?} в ({}, {}))",
+                        self.app.state().unit(id).map(|unit| unit.unit_type),
+                        grid.x,
+                        grid.y
+                    ));
+                };
+
+                self.detail = Some(format!(
+                    "пунктов: {} — {}",
+                    menu.items.len(),
+                    menu.items
+                        .iter()
+                        .map(|item| item.caption.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                Ok(Flow::Continue)
+            }
+            UnitMenuCommand::Item(name) => {
+                let Some(menu) = self.app.unit_menu() else {
+                    return Err(format!("unit-menu item {name}: меню не открыто"));
+                };
+
+                let index = menu.index_by_text(&name).ok_or_else(|| {
+                    format!(
+                        "unit-menu item {name}: нет такого пункта (есть: {})",
+                        menu.items
+                            .iter()
+                            .map(|item| item.caption.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+                let item = menu.items[index].clone();
+
+                if !item.enabled {
+                    return Err(format!(
+                        "unit-menu item {name}: пункт отключён — {}",
+                        item.note
+                    ));
+                }
+
+                let rect = menu.button_rect(index);
+                let point = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+                self.detail = Some(format!("{} в ({}, {})", item.caption, point.0, point.1));
+                self.send(InputEvent::MouseClick(point.0, point.1))
+            }
+            UnitMenuCommand::Key(character) => {
+                self.send(InputEvent::Key(Key::Char(character)))
+            }
+            UnitMenuCommand::Close => self.send(InputEvent::Key(Key::Escape)),
         }
     }
 
@@ -2039,6 +2122,74 @@ impl QaRunner {
                     actual == expected,
                     format!("research-menu={}", if expected { "open" } else { "closed" }),
                     format!("research-menu={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::UnitMenuOpen(expected) => {
+                let actual = self.app.unit_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("unit-menu={}", if expected { "open" } else { "closed" }),
+                    format!("unit-menu={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::UnitMenuItem(name) => {
+                let actual = self
+                    .app
+                    .unit_menu()
+                    .and_then(|menu| crate::unitmenu::item_enabled(menu, &name));
+
+                self.expect(
+                    actual == Some(true),
+                    format!("unit-menu-item={name} (включён)"),
+                    match actual {
+                        Some(true) => format!("{name}: включён"),
+                        Some(false) => format!("{name}: отключён"),
+                        None => match self.app.unit_menu() {
+                            Some(menu) => format!(
+                                "нет пункта {name} (есть: {})",
+                                menu.items
+                                    .iter()
+                                    .map(|item| item.caption.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                            None => "меню не открыто".to_string(),
+                        },
+                    },
+                )
+            }
+            Assertion::UnitMenuDisabled(name) => {
+                let actual = self
+                    .app
+                    .unit_menu()
+                    .and_then(|menu| crate::unitmenu::item_enabled(menu, &name));
+
+                self.expect(
+                    actual == Some(false),
+                    format!("unit-menu-disabled={name}"),
+                    match actual {
+                        Some(false) => format!("{name}: отключён"),
+                        Some(true) => format!("{name}: включён"),
+                        None => "нет такого пункта".to_string(),
+                    },
+                )
+            }
+            Assertion::UnitOrder(expected) => {
+                let actual = self
+                    .app
+                    .hud()
+                    .selected
+                    .and_then(|id| self.app.state().unit(id))
+                    .map(|unit| unit.orders);
+
+                self.expect(
+                    actual == Some(expected),
+                    format!("unit-order={expected:?}"),
+                    match actual {
+                        Some(actual) => format!("unit-order={actual:?}"),
+                        None => "выделения нет".to_string(),
+                    },
                 )
             }
             Assertion::ResearchAlloc(topic, cmp, expected) => {

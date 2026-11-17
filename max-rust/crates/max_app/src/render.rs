@@ -287,6 +287,8 @@ impl App {
         self.draw_upgrade_menu(&mut frame);
         // Экран исследований (P7) и окно помощи поверх него.
         self.draw_research_menu(&mut frame);
+        // Меню команд выделенного юнита (`GameManager_PopupButtons`).
+        self.draw_unit_menu(&mut frame);
         self.draw_help(&mut frame);
 
         (frame, stats)
@@ -354,9 +356,28 @@ impl App {
         self.draw_upgrade_menu(&mut frame);
         // Экран исследований (P7) и окно помощи поверх него.
         self.draw_research_menu(&mut frame);
+        // Меню команд выделенного юнита — над картой и панелями.
+        self.draw_unit_menu(&mut frame);
         self.draw_help(&mut frame);
 
         (frame, stats)
+    }
+
+    /// Рисует меню команд юнита поверх кадра (C++ `GameManager_InitPopupButtons`).
+    ///
+    /// Кнопки — те же `UNTBTN_U`/`UNTBTN_D`, что в C++; фон не закрашивается:
+    /// в оригинале попап рисуется прямо над картой (окно `WINDOW_POPUP_BUTTONS`
+    /// только ограничивает область перерисовки).
+    pub(crate) fn draw_unit_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.unit_menu(), self.assets()) else {
+            return;
+        };
+        let palette = UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+
+        if let Some(palette) = palette {
+            menu.draw(frame, assets, &palette);
+        }
     }
 
     /// Рисует открытый экран апгрейдов поверх кадра (P6).

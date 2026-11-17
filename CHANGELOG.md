@@ -2,6 +2,50 @@
 
 ### Добавлено
 
+- **Меню команд выделенного юнита (`GameManager_PopupButtons`, TC-0622–0626).**
+  `max_app::unitmenu` — порт `GameManager_InitPopupButtons`/`DeinitPopupButtons`/
+  `ProcessPopupMenuInput` (`game_manager.cpp:3568/3664/2607`) и
+  `UnitsManager_Popup_Init*` (`units_manager.cpp:543-1352`): попап открывается
+  **повторным кликом** по уже выделенному своему юниту (`GameManager_ClickUnit`,
+  `unit1 == unit2`; первый клик только выделяет), закрывается `Esc`, повторным
+  кликом по юниту, кликом вне меню и правой кнопкой; пока меню открыто, карта
+  приказов не получает (как `GameManager_DisableMainMenu` в C++). Раскладка —
+  по C++: вертикальный список кнопок `UNTBTN_U`/`UNTBTN_D` (42×21) с шагом
+  `height + 3`, окно `image.width + 6` × `height * count + (count+1) * 3`,
+  якорь `ulx = unit->x + 32` (правый край клетки), `uly = unit->y - height/2`
+  (центр клетки), сдвиг влево на `width + Gfx_ZoomLevel` у правого края карты;
+  подпись — `GNW_TEXT_FONT_2` цветом `COLOR_GREEN` по центру кнопки, нажатый
+  пункт рисуется `UNTBTN_D`; порядок пунктов — как `UnitsManager_RegisterButton`
+  (устойчивая сортировка по символу позиции, `'0'` → `':'`). Состав пунктов —
+  таблица `UnitInfo::Init` (`unitinfo.cpp:454-582`): танк
+  `attack/enter/sentry/Done` (+ `x-fer` при грузе, `stop` при маршруте),
+  строитель `Build`, завод
+  `Build/start/stop`, транспорт `activate/load`, шахта `allocate/stop`, генератор
+  `start/stop`, исследовательский центр `resrch/stop`, золотой завод
+  `start|stop + buy upg`, и т.д. Клавиатура: символ позиции или первая буква
+  подписи (`GameManager_ProcessPopupMenuInput`); стрелки/`Enter` в C++ попапе не
+  работают — здесь тоже. Пункты вызывают существующие обработчики: `Build` →
+  `BuildMenu`, `buy upg` → `UpgradeMenu`, `resrch` → `ResearchMenu`, `start/stop`
+  → `build_power_order`, `sentry` → `ORDER_SENTRY`/`ORDER_AWAIT` (пакет 08, P1),
+  `stop` → `ORDER_AWAIT`+`CLEAR_PATH` (P3), `upgrade` → `ORDER_UPGRADE` (P2),
+  `place`/`remove` мины → `ORDER_LAY_MINE` (P1), `enter` → `enter_mode` +
+  `ORDER_MOVE_TO_UNIT` (P3), `repair`/`reload` → курсорный режим (`cursor` 4/6) +
+  `ORDER_REPAIR`/`ORDER_RELOAD` с родителем (P2), `Auto` → `auto_survey`,
+  `Done` → `UnitsManager_PerformAction` (в объёме стека: `Await`+`STATIONARY` →
+  `READY_TO_EXECUTE_ORDER`, снятие выделения). Честно **отключены** (серый пункт,
+  причина в `UnitMenuItem::note` и `docs/analysis/visual-1to1-status.md`):
+  `x-fer` (`TransferMenu_Menu`/`ProcessOrderTransfer` — TODO P3, хотя приказ
+  `Transfer` в протоколе есть), `attack` (`targeting_mode`; атака — кликом по
+  врагу), `load` (погрузка в транспорт: `Land` — P1 и не несёт родителя),
+  `activate` (`RepairShopMenu`), `allocate` (`AllocMenu`), `start` завода
+  (`BuildOrder`), `stop` стройки (`GameManager_SelectBuildSite`), `remove` здания
+  (`UnitsManager_SelfDestructMenu`), бульдозер (`Access_GetRemovableRubble`),
+  `Upg. All` (комплексы/материалы), мастер-строитель (проверка площадки), а также
+  `disable`/`steal` диверсанта. Тесты: 13 unit (`unitmenu`), 12 кадровых
+  (`tests/unit_menu.rs`), QA `unit-menu.qa` (+golden `unit-menu-*`). Расхождение
+  с C++ (осознанное): у стационарного юнита меню не открывается уже при
+  выделении — иначе менялись бы существующие эталоны (`mine-selected`).
+
 - **Панель статистики по типу юнита (`WINDOW_STAT_WINDOW`, TC-0601).**
   `max_app::panels::rows_for` — порт `GameManager_UpdateInfoDisplay` +
   `GameManager_DrawInfoDisplayRow`/`DrawInfoDisplayType1/2/3` из

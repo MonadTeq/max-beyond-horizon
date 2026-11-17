@@ -64,6 +64,7 @@ pub mod saveload;
 pub mod setup;
 pub mod soak;
 pub mod ui;
+pub mod unitmenu;
 pub mod upgrademenu;
 pub mod winloss;
 
@@ -126,6 +127,10 @@ pub use ui::{
     PLANET_COUNT, PLANET_GRID_MIN_HEIGHT, PLANET_NAMES, PLANET_ROWS,
 };
 pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
+pub use unitmenu::{
+    MenuEvent, UnitMenu, UnitMenuAssets, UnitMenuItem, CURSOR_LOAD, CURSOR_RELOAD, CURSOR_REPAIR,
+    CURSOR_TRANSFER,
+};
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,6 +540,9 @@ pub struct App {
     upgrade_menu: Option<upgrademenu::UpgradeMenu>,
     /// Открытый экран исследований (P7, `ResearchMenu`). В снапшот/CRC не входит.
     research_menu: Option<researchmenu::ResearchMenu>,
+    /// Открытое меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
+    /// В снапшот/CRC не входит — это UI.
+    unit_menu: Option<unitmenu::UnitMenu>,
     /// Открытое окно помощи поверх игры (P7, `HelpMenu`). В снапшот/CRC не входит.
     help: Option<helpmenu::HelpScreen>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
@@ -590,6 +598,7 @@ impl App {
             save_load: None,
             upgrade_menu: None,
             research_menu: None,
+            unit_menu: None,
             help: None,
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
@@ -665,10 +674,10 @@ impl App {
     }
 
     /// Открывает экран апгрейдов — C++ `UpgradeMenu(team, complex).Run()`
-    /// (попап «Buy Upgrade» у `GOLDREF`, `units_manager.cpp:956`).
+    /// (пункт `buy upg` меню команд, `units_manager.cpp:956`).
     ///
-    /// В нашем UI попап-меню юнита нет, поэтому экран открывается клавишей `U`
-    /// для выделенного юнита своей команды.
+    /// Вызывается пунктом `buy upg` попапа ([`unitmenu::ItemId::BuyUpgrade`]) и
+    /// клавишей `U` (быстрый путь) — для выделенного юнита своей команды.
     pub fn open_upgrade_menu(&mut self) -> bool {
         let Some(team) = self.hud.selected.and_then(|id| self.state.unit(id)) else {
             return false;
@@ -788,8 +797,8 @@ impl App {
 
     /// Открывает экран исследований для выделенного включённого
     /// `RESEARCH`-центра своей команды — C++ popup `Research`
-    /// (`UnitsManager_Popup_OnClick_Research`). В Rust-клиенте popup'а нет,
-    /// поэтому путь — клавиша `R`/API.
+    /// (`UnitsManager_Popup_OnClick_Research`, пункт `resrch` меню команд);
+    /// вызывается пунктом попапа и клавишей `R` (быстрый путь).
     pub fn open_research_menu(&mut self) -> bool {
         let Some(id) = self.hud.selected else {
             return false;
@@ -857,6 +866,333 @@ impl App {
             return false;
         };
         menu.adjust(row, increase)
+    }
+
+    // -----------------------------------------------------------------------
+    // Меню команд выделенного юнита (C++ `GameManager_PopupButtons`)
+    // -----------------------------------------------------------------------
+
+    /// Открытое меню команд юнита; `None` — закрыто.
+    pub fn unit_menu(&self) -> Option<&unitmenu::UnitMenu> {
+        self.unit_menu.as_ref()
+    }
+
+    /// Открытое меню команд для ввода.
+    pub fn unit_menu_mut(&mut self) -> Option<&mut unitmenu::UnitMenu> {
+        self.unit_menu.as_mut()
+    }
+
+    /// Открывает меню команд выделенного юнита — C++ `GameManager_InitPopupButtons`.
+    ///
+    /// `false`, если юнита нет, он чужой или пунктов не набралось (C++
+    /// `popup_count == 0`, `unit->GetOrder() == ORDER_DISABLE`, `UNIT_READY`
+    /// у наземного юнита — см. [`unitmenu::can_open`]).
+    pub fn open_unit_menu(&mut self) -> bool {
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+        let Some(unit) = self.state.unit(id).cloned() else {
+            return false;
+        };
+
+        if unit.team != self.state.player_team {
+            return false;
+        }
+
+        if unit.team != self.state.active_turn_team {
+            return false;
+        }
+
+        let area = if self.chrome_active() {
+            max_render::layout::MAIN_MAP
+        } else {
+            let (width, height) = self.viewport.screen();
+            max_render::buffer::PixelRect::new(0, 0, width as i32, height as i32)
+        };
+
+        // Якорь попапа — ровно как C++ `GameManager_InitPopupButtons`:
+        // `ulx = (unit->x + 32)`, `uly = unit->y - height / 2`, где `unit->x/y`
+        // — центр клетки (`UnitInfo::SetPosition`: `grid*64 + 32`), то есть
+        // меню встаёт справа от клетки юнита и по центру её высоты.
+        let viewport = self.map_viewport();
+        let (center_x, center_y) = crate::hud::tile_center(&viewport, unit.grid);
+        let zoom = viewport.zoom();
+        let anchor = (
+            center_x + zoom as i32 / 2 + area.ulx,
+            center_y + area.uly,
+        );
+
+        let Some(menu) = unitmenu::UnitMenu::new(&self.state, &unit, anchor, area, zoom) else {
+            return false;
+        };
+
+        self.unit_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает меню команд (`GameManager_DeinitPopupButtons`).
+    pub fn close_unit_menu(&mut self) {
+        self.unit_menu = None;
+    }
+
+    /// Ввод в открытом меню команд — [`unitmenu::menu_event`].
+    pub fn unit_menu_input(&mut self, event: InputEvent) -> Option<unitmenu::MenuEvent> {
+        let Some(mut menu) = self.unit_menu.take() else {
+            return None;
+        };
+        let outcome = unitmenu::menu_event(&menu, event);
+        menu.hover = match outcome {
+            unitmenu::MenuEvent::Hover(index) => index,
+            _ => menu.hover,
+        };
+        self.unit_menu = Some(menu);
+        Some(outcome)
+    }
+
+    /// Активирует пункт меню — C++ `GameManager_PopupButtons.r_func[i]`.
+    ///
+    /// Меню закрывается (как `GameManager_DeinitPopupButtons(true)` в каждом
+    /// обработчике C++). Приказ, если пункт его выдаёт, кладётся в
+    /// [`hud::HudState::pending`] — дальше [`App::flush_orders`] (офлайн) или
+    /// сетевой слой. Возвращает строку журнала.
+    ///
+    /// `None` — пункта нет/он отключён (механика не портирована, см.
+    /// [`unitmenu::UnitMenuItem::note`]).
+    pub fn activate_unit_menu_item(&mut self, index: usize) -> Option<String> {
+        let menu = self.unit_menu.take()?;
+        let item = menu.items.get(index)?.clone();
+        let unit_id = menu.unit;
+
+        if !item.enabled {
+            // Отключённый пункт остаётся в меню (как в C++ кнопка без обработчика).
+            self.unit_menu = Some(menu);
+            return Some(unitmenu::disabled_line(&item));
+        }
+
+        let line = match item.id {
+            unitmenu::ItemId::Build => {
+                if self.open_build_menu() {
+                    format!("{} — BuildMenu", item.caption)
+                } else {
+                    format!("{}: юнит не умеет строить", item.caption)
+                }
+            }
+            unitmenu::ItemId::BuyUpgrade => {
+                if self.open_upgrade_menu() {
+                    "buy upg — UpgradeMenu".to_string()
+                } else {
+                    "buy upg: экран апгрейдов недоступен".to_string()
+                }
+            }
+            unitmenu::ItemId::Research => {
+                if self.open_research_menu() {
+                    "resrch — ResearchMenu".to_string()
+                } else {
+                    "resrch: экран исследований недоступен".to_string()
+                }
+            }
+            unitmenu::ItemId::PowerOn | unitmenu::ItemId::PowerOff => {
+                match crate::hud::build_power_order(self.state(), unit_id) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("{} — {}", item.caption, "Power toggled")
+                    }
+                    None => format!("{}: питание недоступно", item.caption),
+                }
+            }
+            unitmenu::ItemId::Sentry => {
+                let sentry = self
+                    .state
+                    .unit(unit_id)
+                    .is_some_and(|unit| unit.orders == max_core::enums::UnitOrder::Sentry);
+
+                let (order, order_state) = if sentry {
+                    (
+                        max_core::enums::UnitOrder::Await,
+                        max_core::enums::UnitOrderState::ExecutingOrder,
+                    )
+                } else {
+                    (
+                        max_core::enums::UnitOrder::Sentry,
+                        max_core::enums::UnitOrderState::ExecutingOrder,
+                    )
+                };
+
+                match unitmenu::p1_order(self.state(), unit_id, order, order_state) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        if sentry {
+                            "sentry off — Await".to_string()
+                        } else {
+                            "sentry — ORDER_SENTRY".to_string()
+                        }
+                    }
+                    None => "sentry: юнит исчез".to_string(),
+                }
+            }
+            unitmenu::ItemId::Stop => {
+                let move_to = self
+                    .state
+                    .unit(unit_id)
+                    .map(|unit| unit.target_grid)
+                    .unwrap_or(Point::ZERO);
+
+                match unitmenu::p3_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Await,
+                    max_core::enums::UnitOrderState::ClearPath,
+                    move_to,
+                    None,
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        "stop — ORDER_AWAIT/CLEAR_PATH".to_string()
+                    }
+                    None => "stop: юнит исчез".to_string(),
+                }
+            }
+            unitmenu::ItemId::Upgrade => {
+                match unitmenu::p2_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Upgrade,
+                    max_core::enums::UnitOrderState::Init,
+                    Some(unit_id),
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        "upgrade — ORDER_UPGRADE".to_string()
+                    }
+                    None => "upgrade: юнит исчез".to_string(),
+                }
+            }
+            unitmenu::ItemId::Done => {
+                // `UnitsManager_PerformAction` в объёме, который есть в нашем
+                // стеке: `Await` + `STATIONARY` → `READY_TO_EXECUTE_ORDER`
+                // (приказом, чтобы состояние ушло и в сеть), затем выделение
+                // снимается (`auto_select` в C++).
+                let ready = self.state.unit(unit_id).is_some_and(|unit| {
+                    unit.orders == max_core::enums::UnitOrder::Await
+                        && unit.flags & max_core::enums::unit_flags::STATIONARY != 0
+                        && unit.state != max_core::enums::UnitOrderState::ReadyToExecuteOrder
+                });
+
+                if ready {
+                    if let Some(command) = unitmenu::p3_order(
+                        self.state(),
+                        unit_id,
+                        max_core::enums::UnitOrder::Await,
+                        max_core::enums::UnitOrderState::ReadyToExecuteOrder,
+                        self.state
+                            .unit(unit_id)
+                            .map(|unit| unit.target_grid)
+                            .unwrap_or(Point::ZERO),
+                        None,
+                    ) {
+                        self.hud.pending.push(command);
+                    }
+                }
+
+                self.hud.clear_interaction();
+                "Done".to_string()
+            }
+            unitmenu::ItemId::Manual => {
+                let unit = self.state.unit(unit_id).cloned()?;
+                let order = unit.orders;
+                let order_state = if order == max_core::enums::UnitOrder::Sentry {
+                    max_core::enums::UnitOrderState::ExecutingOrder
+                } else {
+                    unit.state
+                };
+
+                // P1 несёт `disabled_reaction_fire` — тем же путём, что сеть.
+                let command = unitmenu::p1_order(self.state(), unit_id, order, order_state)?;
+                if let Command::Order(packet) = command {
+                    let mut packet = packet;
+                    if let max_core::input::OrderPayload::P1(p1) = &mut packet.payload {
+                        p1.disabled_reaction_fire = !unit.disabled_reaction_fire;
+                    }
+                    self.hud.pending.push(Command::Order(packet));
+                }
+
+                if unit.disabled_reaction_fire {
+                    "Manual: ответный огонь включён".to_string()
+                } else {
+                    "Manual: ответный огонь выключен".to_string()
+                }
+            }
+            unitmenu::ItemId::Auto => {
+                let Some(unit) = self.state.unit_mut(unit_id) else {
+                    return Some("Auto: юнит исчез".to_string());
+                };
+                unit.auto_survey = !unit.auto_survey;
+                let enabled = unit.auto_survey;
+
+                if enabled {
+                    "Auto: авто-разведка включена".to_string()
+                } else {
+                    "Auto: авто-разведка выключена".to_string()
+                }
+            }
+            unitmenu::ItemId::Enter => {
+                // C++ `UnitsManager_Popup_OnClick_Enter`: тумблер `enter_mode`.
+                self.hud.enter_mode = !self.hud.enter_mode;
+                if self.hud.enter_mode {
+                    "enter: клик по своему транспорту — посадка".to_string()
+                } else {
+                    "enter: выключено".to_string()
+                }
+            }
+            unitmenu::ItemId::Transfer
+            | unitmenu::ItemId::Reload
+            | unitmenu::ItemId::Repair
+            | unitmenu::ItemId::Load => {
+                // Курсорные режимы C++ (`unit->cursor = 3/6/4/7`).
+                let (cursor, label) = match item.id {
+                    unitmenu::ItemId::Transfer => (unitmenu::CURSOR_TRANSFER, "x-fer"),
+                    unitmenu::ItemId::Reload => (unitmenu::CURSOR_RELOAD, "reload"),
+                    unitmenu::ItemId::Repair => (unitmenu::CURSOR_REPAIR, "repair"),
+                    _ => (unitmenu::CURSOR_LOAD, "load"),
+                };
+
+                self.hud.cursor_mode = if self.hud.cursor_mode == cursor {
+                    0
+                } else {
+                    cursor
+                };
+
+                if self.hud.cursor_mode == cursor {
+                    format!("{label}: выберите цель кликом")
+                } else {
+                    format!("{label}: режим выключен")
+                }
+            }
+            unitmenu::ItemId::PlaceMine | unitmenu::ItemId::RemoveMine => {
+                let state_order = if item.id == unitmenu::ItemId::PlaceMine {
+                    max_core::enums::UnitOrderState::PlacingMines
+                } else {
+                    max_core::enums::UnitOrderState::RemovingMines
+                };
+
+                match unitmenu::p1_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::LayMine,
+                    state_order,
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("{} — ORDER_LAY_MINE", item.caption)
+                    }
+                    None => format!("{}: юнит исчез", item.caption),
+                }
+            }
+            // Остальные пункты отключены при построении списка.
+            _ => unitmenu::disabled_line(&item),
+        };
+
+        Some(line)
     }
 
     // -----------------------------------------------------------------------
@@ -1022,6 +1358,7 @@ impl App {
         self.save_load = None;
         self.upgrade_menu = None;
         self.research_menu = None;
+        self.unit_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();
@@ -1280,6 +1617,7 @@ impl App {
         self.save_load = None;
         self.upgrade_menu = None;
         self.research_menu = None;
+        self.unit_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();

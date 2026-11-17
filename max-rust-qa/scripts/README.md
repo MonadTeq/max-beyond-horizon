@@ -20,6 +20,7 @@ max-rust-qa/
 ├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
 ├── scripts/move-input.qa       # TC-0601/0603/0604: выделение кликом → RMB-приказ → End Turn → юнит сдвинулся
+├── scripts/unit-menu.qa        # TC-0622–0626: меню команд юнита (повторный клик), Sentry, Esc, модальность, Build
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -27,6 +28,7 @@ max-rust-qa/
 ├── golden/research-help/*.png  # эталоны ResearchMenu + Help-экранов (research-help.qa)
 ├── golden/cargo/*.png          # эталоны CargoMenu: покупка/модернизация/после апгрейда
 ├── golden/move-input/*.png     # эталоны старта/выделения шахты/выделения Surveyor'а/предпросмотра/хода 2 (6)
+├── golden/unit-menu/*.png      # эталоны меню команд юнита: танк/нажатый sentry/строитель/выделение (4)
 └── scripts/README.md
 ```
 
@@ -123,6 +125,10 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `help up\|down` | одна строка вверх/вниз |
 | `help keys` | кнопка `Keys` (`GAME_SCREEN_SETUP`): подсказка `_(ceb6)` |
 | `help done` / `help close` | `Done`/Enter или `Esc` — закрыть окно, вернуть экран под ним |
+| `unit-menu open` | повторный клик по выделенному своему юниту — меню команд (`GameManager_ClickUnit` → `InitPopupButtons`); проверяет, что меню открылось |
+| `unit-menu item NAME` | клик по кнопке пункта (подпись `sentry`, `Build`, `x-fer`, … или символ позиции); отключённый пункт — ошибка с причиной |
+| `unit-menu key C` | горячая клавиша пункта (`GameManager_ProcessPopupMenuInput`) |
+| `unit-menu close` | `Esc` — закрыть меню |
 | `mobilize mode buy\|upgrade` | переключатель `CRGTOG` (542,446) — список покупки/модернизации |
 | `mobilize filter ground\|air\|sea\|building\|combat` | фильтр домена `SELGRD/SELAIR/SELSEA/SELBLD/SELCBT` |
 | `mobilize select N` | строка N списка Available (прокручивает список стрелками, как игрок) |
@@ -168,6 +174,10 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert cargo-types>=N` | длина списка типов (15 в покупке, 62 в модернизации по умолчанию) |
 | `assert cargo-credits>=N` | остаток кредитов в `CargoMenu` |
 | `assert unit=NAME` | у игрока есть юнит с именем из `BuildMenu` («Training Hall», «Infantry», …) |
+| `assert unit-menu=open` / `unit-menu=closed` | открыто ли меню команд юнита |
+| `assert unit-menu-item=NAME` | пункт есть в меню и **включён** |
+| `assert unit-menu-disabled=NAME` | пункт есть, но отключён (механика не портирована — см. `unitmenu::UnitMenuItem::note`) |
+| `assert unit-order=sentry` (и любое `ORDER_*`) | текущий приказ выделенного юнита (`await`, `move`, `sentry`, `poweron`, …) |
 
 При падении в `log.txt` пишется строка шага и **фактическое** значение
 (`assert turn=3: фактически turn=1`), прогон останавливается, `qa_run` → exit 1.
@@ -189,6 +199,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `edge-cases.qa` | P4 TC-1106/1111/1112: 50 кликов по пустым областям главного меню + 50 по карте (без паник), не-ASCII `type` в чате и в поле имени, выход из партии → New Game → Cancel → полный второй старт до `turn=2`; кадры `edge-menu-spam`/`edge-game-spam`/`edge-unicode-*`/`edge-repeat-start`/`edge-second-game` | **PASS** |
 | `cargo-full.qa` | P7: мобилизация целиком — `assert cargo-types=15`, покупка Gold Truck (14-я строка, прокрутка списка), Mine Layer и Constructor, cargo-слайдер (+20 единиц), `CRGTOG` → список модернизации (62 типа), фильтры домена, апгрейд armor Constructor'а, `Done` → `assert gold<150`; кадры `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` | **PASS** (golden `cargo/`) |
 | `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по шахте (`assert unit-pos=22,22`, панель Hits/Cargo/Total) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`); кадры `game-start`/`mine-selected`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 6 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
+| `unit-menu.qa` | TC-0622–0626: меню команд юнита — покупка танка и строителя → высадка → `select type Tank` → `unit-menu open` (повторный клик, `assert unit-menu=open`) → пункты танка (`sentry`/`enter`/`Done` включены, `attack` отключён) → `unit-menu item sentry` (`assert unit-order=sentry`) → повторное открытие (пункт нажат) → `key 8` (снять) → `Esc` (`assert unit-menu=closed`, `assert screen=InGame`) → модальность (клик по карте закрывает меню, выделение не меняется) → меню строителя → `Build` открывает `BuildMenu`; кадры `unit-menu-tank-selected`/`unit-menu-tank`/`unit-menu-sentry-on`/`unit-menu-builder` | **PASS** (golden `unit-menu/`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -318,9 +329,11 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100

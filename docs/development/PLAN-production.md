@@ -294,9 +294,9 @@
   `free_capacity` как в C++ (старт 0, уменьшение темы освобождает центры);
   `Done` → `GameState::set_research_allocation` (порт
   `ResearchMenu_OnClick_Done`), `Cancel`/`Esc`, `Help` → `RESEARCH_SETUP`.
-  Экран открывается клавишей `R` для включённого Research Center (popup
-  «Research» в C++; popup не портирован). `cancel`/`done` не шлют пакет 09 —
-  ограничение протокола.
+  Экран открывается пунктом `resrch` меню команд юнита (popup «Research» в C++)
+  или клавишей `R` для включённого Research Center. `cancel`/`done` не шлют
+  пакет 09 — ограничение протокола.
 - [x] Help: `max_app/src/helpmenu.rs` — окно `HELPFRAM` 301×231
   ((169,124) в меню / (253,126) в игре), текст `FONT5` + обводка, 16 строк
   на страницу и центровка короткого текста, `PageUp/PageDown` + `BLDUP__/

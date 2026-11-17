@@ -38,6 +38,12 @@
   апгрейды (`U`), V70-сейвы с автосейвом, визуал 1:1 (включая Help-экраны
   `HELPFRAM`: `OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`),
   QA-фабрика (192 TC, golden, soak) и зелёный `ci.sh`.
+- **Меню команд юнита** (C++ `GameManager_PopupButtons`) — повторный клик по
+  выделенному своему юниту: вертикальный список `UNTBTN_U/D` с пунктами по типу
+  (`Build`, `sentry`, `stop`, `enter`, `repair`, `reload`, питание, `buy upg`,
+  `resrch`, мины, `Done`…). Пункты, механика которых не портирована
+  (`x-fer`, `attack`, `load`, `activate`, `allocate`, …), видны, но отключены —
+  см. `../docs/analysis/visual-1to1-status.md` §18.
 - **GUI — режим по умолчанию**: `default = ["sdl-from-source"]` в `max_app` —
   `cargo run -p max_app` открывает игру (SDL3 3.4.20 собирается из исходников
   через CMake), флаги не нужны; headless-сборки идут с `--no-default-features`.
@@ -202,6 +208,20 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 в `MAX.RES` — это ASCIIZ-имена `*.FLC` рядом с архивом; кадр 1:1 палитрой окна,
 смена кадра 15 FPS (`GameManager_AdvanceFlic`), зацикливание, в headless/QA
 `dt = 0` — кадр 0. Декодер сверен с C++ бит-в-бит на всех 1115 кадрах 71 файла.
+
+Меню команд юнита — **попап `UNTBTN_U/D`** (`max_app::unitmenu`): открывается
+повторным кликом по уже выделенному своему юниту (C++ `GameManager_ClickUnit`),
+вертикальный список 42×21 с шагом 24, якорь `unit->x + 32`/центр клетки, подписи
+`FONT2` цветом `COLOR_GREEN`, нажатый пункт — `UNTBTN_D`; состав пунктов — по
+таблице `UnitInfo::Init` (`units_manager.cpp:454-582`), навигация мышью и
+горячими клавишами (символ позиции или первая буква подписи), `Esc`/клик вне —
+закрыть, карта при этом приказов не получает. Пункты вызывают существующие
+экраны/приказы (`Build` → `BuildMenu`, `sentry` → `ORDER_SENTRY`, `stop` →
+`ORDER_AWAIT/CLEAR_PATH`, `enter` → `MOVE_TO_UNIT`, `repair`/`reload` →
+курсорные режимы + `ORDER_REPAIR/RELOAD`, питание, `buy upg`, `resrch`, мины,
+`Done`); то, что не портировано (`x-fer`, `attack`, `load`, `activate`,
+`allocate`, самоуничтожение, `Upg. All`), показано серым с причиной. Подробности
+и таблица «реализовано/отключено» — `../docs/analysis/visual-1to1-status.md` §18.
 
 Экраны главного меню: `Introduction` — **MVE-видео** (`INTROFLC` →
 `maxint.mve`, `max_assets::mve`: 432×320, 4391 кадр, 15 FPS, letterbox

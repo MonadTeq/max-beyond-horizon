@@ -81,7 +81,16 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
       `CARGO_SETUP`, `PageDown`/`PageUp`/`Done`), `ResearchMenu` (`R`,
       `RSRCHPIC`), `Help` экрана (`RESEARCH_SETUP`) и панели
       (`GAME_SCREEN_SETUP` + `Keys`), распределение Attack→Shots и `Done`;
-      за 16 ходов Shots=1, Attack=0.
+      за 16 ходов Shots=1, Attack=0;
+  13. `unit-menu.qa` — TC-0622–0626: меню команд юнита (C++
+      `GameManager_PopupButtons`). Покупка танка и строителя → высадка →
+      `select type Tank` → `unit-menu open` (повторный клик по выделенному
+      юниту) → пункты танка (`sentry`/`enter`/`Done` включены, `attack` —
+      отключён) → `unit-menu item sentry` (`assert unit-order=sentry`) →
+      повторное открытие (пункт нажат) → `key 8` (снять → `assert
+      unit-order=await`) → `Esc` (`assert unit-menu=closed`,
+      `assert screen=InGame`) → модальность (клик по карте закрывает меню, не
+      меняя выделение) → меню строителя → `Build` открывает `BuildMenu`.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;
   ассерт-фейл → exit 1 с текстом (`строка N: assert …: фактически …`).
 - Тесты драйвера: `src/qa/script.rs` (все команды парсера),
@@ -136,10 +145,11 @@ cargo run -p max_app -- \
 - `ci.sh`: стадия **3/4** после `cargo test` и тестов Horizon — прогон
   `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa`, `production.qa`,
   `save-load.qa`, `upgrade.qa`, `research.qa`, `edge-cases.qa`, `cargo-full.qa`,
-  `move-input.qa`, `research-help.qa` и golden-сверка (visual, production,
-  upgrade, research, cargo, move-input, research-help); стадия **4/4** — soak
-  (`soak-100.qa` с `MAX_TICK_PROFILE=1` + `soak_headless --turns 120`);
-  `--smoke` дополнительно запускает `live-smoke.sh`.
+  `move-input.qa`, `research-help.qa`, `unit-menu.qa` и golden-сверка (visual,
+  production, upgrade, research, cargo, move-input, research-help, unit-menu);
+  стадия **4/4** — soak (`soak-100.qa` с `MAX_TICK_PROFILE=1` +
+  `soak_headless --turns 120`); `--smoke` дополнительно запускает
+  `live-smoke.sh`.
 - `.github/workflows/ci.yml`: job `qa` с теми же командами и job `soak`
   (`timeout-minutes: 45`); при падении логи и кадры уходят артефактом
   `qa-artifacts`.

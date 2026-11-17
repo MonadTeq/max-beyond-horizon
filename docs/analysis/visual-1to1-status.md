@@ -22,6 +22,7 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
 | Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (портрет — FLC-анимация 15 FPS; 4 строки статистики — по типу юнита, §17) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
 | Миникарта | **1:1** (FOV-маска, рамка камеры, точки юнитов, `2x`/`TNT`; рамка — из `FRAMEPIC`) | `.WRL::minimap()`, палитра окна + `.WRL` 64…159, `RAWMSK*`/… | `max_app::panels::draw_minimap` |
+| Меню команд юнита (попап) | **1:1** (кнопки `UNTBTN_U/D`, раскладка/подписи/горячие клавиши; часть пунктов отключена — механика не портирована, §18) | `MAX.RES`: `UNTBTN_U`, `UNTBTN_D`; подписи — `language.json` | `max_app::unitmenu` |
 | Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
 | Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
 | Курсор мыши | **1:1 по формату и контексту** (SDL `Cursor::from_surface` за feature `sdl`) | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | `max_assets::cursor`, `max_app::cursor` |
@@ -1776,5 +1777,171 @@ Total, `c54a` points).
   (Surveyor: Hits 16/16, Speed 7/7, пустые строки 2/4) — golden обновлён;
   `production.qa`/`cargo-full.qa` не изменились (BuildMenu/CargoMenu
   закрывают панель/уже условны).
+
+---
+
+## 18. Меню команд выделенного юнита — **сделано** (2026-11-17)
+
+Попап `UNTBTN_U`/`UNTBTN_D` поверх карты: C++
+`GameManager_InitPopupButtons`/`DeinitPopupButtons`/`ProcessPopupMenuInput`
+(`game_manager.cpp:3568/3664/2607`) + `UnitsManager_Popup_Init*`
+(`units_manager.cpp:543-1352`) + таблица `UnitInfo::Init`
+(`unitinfo.cpp:454-582`). Код — `max_app::unitmenu`, ввод — `ui.rs`
+(`session_map_left_click`, `session_unit_menu_input`), отрисовка —
+`render::draw_unit_menu`.
+
+### 18.1 Триггер открытия (точный, из C++)
+
+Меню открывается **повторным кликом по уже выделенному своему юниту**
+(`GameManager_ClickUnit`: `unit1 == unit2` → `InitPopupButtons`). Первый клик
+только выделяет. Правая кнопка меню не открывает (по выделенному — статистика
+`UnitStats_Menu`, по другому — выделение). Условия `InitPopupButtons`: приказ не
+`ORDER_DISABLE`, юнит в видимой части карты, для `MOBILE_LAND_UNIT` состояние не
+`ORDER_STATE_UNIT_READY`, и `popup->init` зарегистрировал ≥ 1 пункт. Открытие
+закрывает выделение-предпросмотр и перерисовывает портрет/статистику
+(`GameManager_MenuUnitSelect` — у нас панель и так следует за выделением).
+
+Закрытие — всё то, что в C++ вызывает `DeinitPopupButtons`: `Esc`
+(`game_manager.cpp:5469`), повторный клик по юниту (`GameManager_ClickUnit`),
+клик вне меню, правая кнопка по карте, смена хода
+(`GameManager_UpdateGuiControl` → `hud.clear_interaction` + `close_unit_menu`).
+
+**Осознанное расхождение:** C++ открывает попап уже при *выделении*
+стационарного юнита (`GameManager_UnitSelect` → `InitPopupButtons`). У нас меню
+открывается только повторным кликом — иначе менялись бы существующие
+golden-кадры (`mine-selected` в `move-input.qa`/`visual-screens.qa`), где
+здание выделено без попапа.
+
+### 18.2 Раскладка (по C++, без «на глаз»)
+
+| Элемент | C++ | Значение |
+|---|---|---|
+| картинка кнопки | `UNTBTN_U`/`UNTBTN_D` | 42×21 (`MAX.RES`) |
+| ширина окна | `image->width + 6` | 48 |
+| высота окна | `height * count + (count + 1) * 3` | `21n + 3(n+1)` |
+| левый край | `ulx = (unit->x + 32)` | правый край клетки юнита |
+| верх | `uly = unit->y - height/2` | центр клетки по Y |
+| сдвиг у правого края | `ulx -= width + Gfx_ZoomLevel` | на ширину меню + одну клетку |
+| шаг кнопок | `uly += image->height + 3` | 24 px |
+| подпись | `SetCaption(caption, -1, 2)` | `GNW_TEXT_FONT_2`, `COLOR_GREEN` (0x02), по центру |
+| нажатый пункт | `state[i]` → `image_up = UNTBTN_D` | `sentry` при `ORDER_SENTRY`, `repair`/`reload` в курсорном режиме, `Auto`, `Manual`, мины (`laying_state`) |
+
+Фон окна не закрашивается: в C++ попап рисуется прямо над картой (окно
+`WINDOW_POPUP_BUTTONS` ограничивает только область перерисовки), кнопки —
+`42×21` картинки поверх карты. Подпись — та же, что в оригинале (en-US из
+`language.json`: `_(b0b9)` Manual, `_(886b)` x-fer, `_(e08d)` enter,
+`_(6c45)` stop, `_(7fef)` upgrade, `_(97a2)` Upg. All, `_(0cf6)`/`_(524e)`
+sentry, `_(2b7d)` Done, `_(7e56)` remove, `_(0286)` Auto, `_(e183)` attack,
+`_(9d39)` reload, `_(81df)` place, `_(a1a1)` repair, `_(b3ef)`/`_(7b6d)` Build,
+`_(cced)` start, `_(7a07)`/`_(3f13)`/… stop, `_(2e00)` resrch, `_(1da0)` buy upg,
+`_(33b7)` allocate, `_(200c)` activate, `_(8452)` load, `_(6d6a)` disable,
+`_(a0fd)` steal).
+
+Порядок пунктов — `UnitsManager_RegisterButton`: устойчивая вставка по
+возрастанию символа позиции, `'0'` → `':'` (поэтому «remove»/«place» последние);
+при равных позициях сохраняется порядок регистрации (`'5'`: enter, затем
+upgrade).
+
+### 18.3 Состав пунктов по типу (таблица `UnitInfo::Init`)
+
+| Тип (примеры) | Пункты (кроме общих) |
+|---|---|
+| танк, турели, пехота, корабли, самолёты (`TANK`, `GUNTURRT`, `INFANTRY`, …) | `attack`, `sentry`, `Done` |
+| строители (`CONSTRCT`, `ENGINEER`) | `Build` (или `stop`, если `ORDER_BUILD` в процессе) |
+| заводы (`LIGHTPLT`, `LANDPLT`, `AIRPLT`, `SHIPYARD`, `TRAINHAL`) | `Build`, `start` (при `ORDER_HALT_BUILDING`) / `stop` |
+| `SURVEYOR` | `Auto` |
+| `SPLYTRCK`, `CARGOSHP` | `reload` |
+| `MINELAYR`, `SEAMNLYR` | `place`, `remove` (мины) |
+| `REPAIR` | `repair` |
+| `CLNTRANS`, `SEATRANS`, `AIRTRANS`, `BARRACKS`, `DEPOT`, `HANGAR`, `DOCK` | `activate`, `load` |
+| `MININGST` | `allocate`+`stop` (или `start` при выключенном питании) |
+| `POWERSTN`, `POWGEN` | `start`/`stop` (питание) |
+| `RESEARCH` | `resrch`+`stop` (или `start`) |
+| `GOLDSM`, `COMMTWR` | `start`/`stop` + `buy upg` |
+| `GREENHSE` | `start`/`stop` |
+| `RECCENTR` | `start` (при `ORDER_POWER_OFF`) |
+| `BULLDOZR` | `remove`/`stop` (расчистка) |
+| `MASTER` | (пункта `start` нет: площадка мастера не проверяется) |
+| `ADUMP`, `FDUMP`, `FUELTRCK` | — |
+| `COMMANDO` | `disable`, `steal`, `attack` |
+
+Общие (`UnitsManager_Popup_InitCommons`): `Manual` (только simultaneous moves,
+ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/`BUILD`),
+`enter` (подвижные), `stop` (есть маршрут), `upgrade`+`Upg. All`
+(`STATIONARY` + есть что улучшать: сравнение `base_values` с
+`TeamUnits::current_values`), `sentry` (флаг `SENTRY_UNIT`, не диверсант),
+`Done` (`SENTRY_UNIT`), `remove` (`STATIONARY`).
+
+### 18.4 Что делает каждый пункт: реализовано / отключено
+
+| Пункт | C++ | У нас |
+|---|---|---|
+| `Build` | `BuildMenu_Menu(unit)` | **реализовано**: `App::open_build_menu` |
+| `start`/`stop` питания | `ORDER_POWER_ON`/`ORDER_POWER_OFF` (P1) | **реализовано**: `hud::build_power_order` |
+| `buy upg` | `UpgradeMenu(team, complex)` | **реализовано**: `App::open_upgrade_menu` |
+| `resrch` | `ResearchMenu_Menu(unit)` | **реализовано**: `App::open_research_menu` |
+| `sentry` | `ORDER_SENTRY` → иначе `ORDER_AWAIT` (P1) | **реализовано**: пакет 08 P1 |
+| `stop` | `ORDER_AWAIT` + `ORDER_STATE_CLEAR_PATH` (P3) | **реализовано** |
+| `upgrade` | `SetParent(self)` + `ORDER_UPGRADE`/`INIT` (P2) | **реализовано** (процессор в ядре — TODO P3, как и `UnitInfo::UpgradeInt` в C++-порте) |
+| `place`/`remove` мины | `ORDER_LAY_MINE` + `PLACING_MINES`/`REMOVING_MINES` (P1) | **реализовано** |
+| `enter` | `enter_mode` + `ORDER_MOVE_TO_UNIT` (P3) | **реализовано** (режим в `HudState.enter_mode`, сбрасывается после клика, как C++) |
+| `repair` | курсор `cursor = 4`, клик по своему → `ORDER_REPAIR` (P2) с родителем | **реализовано** (нужен `storage`, цель не `ORDER_DISABLE`) |
+| `reload` | курсор `cursor = 6`, клик → `ORDER_RELOAD` (P2) | **реализовано** |
+| `Auto` | тумблер `auto_survey` (+ `Ai_EnableAutoSurvey`) | **реализовано** (поле `UnitInfo::auto_survey`, как C++, локально) |
+| `Manual` | тумблер `disabled_reaction_fire` | **реализовано** (идёт в P1-поле `disabled_reaction_fire`; в C++ настройка есть только в simultaneous moves — наш UI такой режим не предлагает, поэтому пункт практически не появляется) |
+| `Done` | `UnitsManager_PerformAction` | **реализовано в объёме стека**: `Await`+`STATIONARY` → `ORDER_STATE_READY_TO_EXECUTE_ORDER`, снятие выделения (`auto_select`); «подтверждения хода» нет — приказы в нашем стеке исполняются сразу |
+| `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **отключено**: `TransferMenu_Menu` (диалог количества) не портирован, а `ProcessOrderTransfer` в ядре — TODO P3 (`unit_order.rs:2120`). Приказ `Transfer` в протоколе есть (`P3.transfer_cargo`), поэтому пункт оставлен видимым (серым) |
+| `attack` | тумблер `targeting_mode` | **отключено**: режим наведения не портирован, атака — кликом по врагу |
+| `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **отключено**: `ORDER_LAND` — процессор P1 и не несёт `parent_unit`, поэтому посадка не доедет до сети/получателя; вся цепочка `GameManager_ProcessMouse` (CURSOR_LOAD) не портирована |
+| `activate` | `RepairShopMenu_Menu` | **отключено**: меню ремонтного цеха не портировано |
+| `allocate` | `AllocMenu_Menu` | **отключено**: меню распределения шахты не портировано |
+| `start` завод | `UnitInfo::BuildOrder` | **отключено**: продолжение стройки не портировано |
+| `stop` стройки / бульдозер | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **отключено**: выбор площадки/расчистка из попапа не портированы |
+| `remove` здания | `UnitsManager_SelfDestructMenu` (диалог Arm/Cancel) | **отключено**: диалог не портирован |
+| `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (комплексы/материалы) | **отключено**: учёт материалов комплекса не портирован |
+| `disable`/`steal` | курсоры 8/9 диверсанта | **отключено**: стелс-режимы не портированы |
+| мастер-строитель `start` | `FindValidPowerGeneratorPosition` | **отключено** (пункт не регистрируется, как при `is_placeable == false`) |
+
+Отключённый пункт **остаётся в списке** (как в C++ кнопка без обработчика),
+рисуется серым (`0xA2`) и не срабатывает; причина — в
+`UnitMenuItem::note` и в журнале HUD при попытке активации (QA-команда).
+
+### 18.5 Ввод
+
+* мышь: клик по кнопке пункта; клик вне меню/правый клик — закрыть;
+* клавиатура: `toupper(символ позиции)` или `toupper(первая буква подписи)` —
+  `GameManager_ProcessPopupMenuInput`; **стрелки и `Enter` в C++ попапе не
+  работают** (нет выбора/подсветки), поэтому здесь тоже молча игнорируются;
+* `Esc` — закрыть (не выходить из партии);
+* пока меню открыто — модально: карта, панели и чат ввод не получают.
+
+### 18.6 Код, тесты, QA
+
+* `max_app::unitmenu` — `ItemId`/`UnitMenuItem`/`UnitMenu`,
+  `items_for` (порт `InitCommons` + `Init*` + сортировка
+  `UnitsManager_RegisterButton`), `layout`/`button_rect`/`item_at`/`key`/
+  `menu_event`/`draw`, приказы `p1_order`/`p2_order`/`p3_order`,
+  `cursor_mode_click`/`enter_mode_click`.
+* `Assets::unit_menu` грузит `UNTBTN_U`/`UNTBTN_D`; отсутствие — предупреждение
+  в отчёте ассетов (меню не рисуется).
+* 13 unit-тестов (`unitmenu::tests`): порядок/состав пунктов для танка,
+  строителя, транспорта; `stop` только с маршрутом; нажатый `sentry`; геометрия
+  раскладки и шаг кнопок; горячие клавиши; отключённый пункт не срабатывает;
+  `p1`/`p2`/`p3` приказы и их применение; `repair`/`enter` клики; завод с
+  готовым юнитом меню не открывает.
+* 12 кадровых тестов (`tests/unit_menu.rs`): повторный клик открывает меню,
+  пункты по типу, `Esc` закрывает (и не выходит из партии), модальность
+  (клик по другому юниту закрывает меню и не меняет выделение), клик по пункту
+  `sentry` даёт `ORDER_SENTRY`, горячая клавиша снимает его, `Build` открывает
+  `BuildMenu`, отключённый пункт не срабатывает, меню заметно меняет кадр,
+  уровни процессоров приказов (`P1/P2/P3`), курсорный `repair` и `enter`.
+* QA `max-rust-qa/scripts/unit-menu.qa`: покупка танка и строителя в
+  мобилизации → высадка → `select type Tank` → `unit-menu open` (повторный
+  клик) → проверки пунктов → `unit-menu item sentry` (`assert unit-order=sentry`)
+  → повторное открытие (нажатый пункт) → `key 8` (снять) → `Esc` → модальность →
+  меню строителя → `Build` открывает `BuildMenu`. Кадры
+  `unit-menu-tank-selected`, `unit-menu-tank`, `unit-menu-sentry-on`,
+  `unit-menu-builder` — golden `max-rust-qa/golden/unit-menu` (0 дрейфа).
+
 
 
