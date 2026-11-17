@@ -8,10 +8,12 @@
 //! `UnitsManager_FinishUnitScaling`), `unitinfo.cpp` (`UnitInfo::RestoreOrders`,
 //! `ExecuteMove`, `Move`, `MoveFinished`, `BlockedOnPathRequest`, `StopMove`,
 //! `StopMovement`, `Land`, `Take`, `ProcessLanding`, `ProcessLoading`,
-//! `ProcessUnloading`, `PositionInTape`, `StartBuilding`, `CancelBuilding`,
+//! `ProcessUnloading`, `PositionInTape`, `UpdateAngle`, `StartBuilding`,
+//! `CancelBuilding`,
 //! `PowerUp`, `PowerDown`, `Reload`, `Repair`, `Transfer`, `Upgrade`,
 //! `CheckIfDestroyed`), `groundpath.cpp` (`GroundPath::Execute`,
-//! `CancelMovement`), `paths.cpp` (`Paths_GetAngle`, `Paths_UpdateAngle`,
+//! `GroundPath::UpdateUnitAngle`, `CancelMovement`), `paths.cpp`
+//! (`Paths_GetAngle`, `Paths_UpdateAngle`,
 //! `Paths_CalculateStep`), DESIGN.md §5.2.
 //!
 //! Отдельного файла `unitorder.cpp` в C++-порте нет: машина приказов живёт в
@@ -557,8 +559,14 @@ pub fn paths_get_angle(x: i32, y: i32) -> i32 {
     }
 }
 
-/// `Paths_UpdateAngle` (`paths.cpp`): один шаг поворота к `angle`;
+/// `Paths_UpdateAngle` (`paths.cpp:258`): один шаг поворота к `angle`;
 /// `true`, если юнит ещё поворачивается (движение в этот тик не начинается).
+///
+/// Копирует `UnitInfo::UpdateAngle` (`unitinfo.cpp:1161`) в части, влияющей на
+/// симуляцию: у юнита с `TURRET_SPRITE` башня поворачивается вместе с корпусом
+/// (`turret_angle = (turret_angle + image_diff) & 7`, где `image_diff` — тот же
+/// шаг в 45°). Кэш кадров (`image_index`/`turret_image_index`/draw zones) — UI,
+/// в max_core не хранится.
 pub fn paths_update_angle(unit: &mut UnitInfo, angle: i32) -> bool {
     if i32::from(unit.angle) == angle {
         return false;
@@ -577,7 +585,33 @@ pub fn paths_update_angle(unit: &mut UnitInfo, angle: i32) -> bool {
     let direction = if delta_a >= delta_b { -1 } else { 1 };
 
     unit.angle = ((i32::from(unit.angle) + direction) & 7) as u8;
+
+    if unit.flags & TURRET_SPRITE != 0 {
+        unit.turret_angle = ((i32::from(unit.turret_angle) + direction) & 7) as u8;
+    }
+
     true
+}
+
+/// `GroundPath::UpdateUnitAngle` (`groundpath.cpp:430`).
+///
+/// C++ вызывает это из `UnitInfo::Move` при завершении клетки
+/// (`moved == GFX_MAP_TILE_SIZE`): корпус делает **один** шаг в 45° в сторону
+/// следующего шага маршрута (если он есть), а не разворачивается мгновенно.
+/// Следующий `GroundPath::Execute` доразворачивает юнита и только потом
+/// начинает движение — поэтому поворот и движение всегда согласованы.
+///
+/// Функция вынесена для тестов: в [`unit_move`] тот же шаг выполняется по
+/// снимку `PathStep`, чтобы не держать заимствование `unit.path` во время
+/// изменения `unit.angle`.
+pub fn ground_path_update_unit_angle(unit: &mut UnitInfo, path: &GroundPath) -> bool {
+    let next = path.step_index as usize + 1;
+
+    if let Some(step) = path.steps.get(next) {
+        paths_update_angle(unit, paths_get_angle(i32::from(step.x), i32::from(step.y)))
+    } else {
+        false
+    }
 }
 
 /// `Paths_CalculateStep` (`paths.cpp`) — списание стоимости шага из `speed`.
@@ -1102,6 +1136,19 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
         if let Some(step) = path.steps.get_mut(path.step_index as usize) {
             step.x = step.x.wrapping_sub(offset.x as i8);
             step.y = step.y.wrapping_sub(offset.y as i8);
+        }
+    }
+
+    // C++ `UnitInfo::Move` (`unitinfo.cpp:1835`): на завершении клетки
+    // `path->UpdateUnitAngle(this)` делает один шаг поворота к следующему шагу
+    // маршрута. Нужен временный снимок шага, чтобы не держать заимствование
+    // `ctx.unit.path` одновременно с `&mut ctx.unit`.
+    if let Some(UnitPath::Ground(path)) = ctx.unit.path.as_ref() {
+        if let Some(next) = path.steps.get(path.step_index as usize + 1).copied() {
+            paths_update_angle(
+                &mut ctx.unit,
+                paths_get_angle(i32::from(next.x), i32::from(next.y)),
+            );
         }
     }
 
@@ -2726,6 +2773,258 @@ mod tests {
             assert!(calls < 8);
         }
         assert_eq!(unit.angle, 4);
+    }
+
+    /// Угол 0..7 → (dx, dy) шага (`DIRECTION_OFFSETS`, `path.hpp`).
+    fn step_for_angle(angle: i32) -> PathStep {
+        let offset = DIRECTION_OFFSETS[(angle & 7) as usize];
+        PathStep::new(offset.x as i8, offset.y as i8)
+    }
+
+    /// Танк с вручную заданным наземным путём и приказом `Move/IN_PROGRESS`.
+    fn state_with_path(angle: u8, steps: Vec<PathStep>) -> (GameState, UnitId) {
+        let (mut state, id) = state_with_tank();
+        state.unit_mut(id).unwrap().angle = angle;
+        state.set_order_data(
+            id,
+            OrderData {
+                move_to: Point::new(10, 10),
+                fire_on: Point::ZERO,
+            },
+        );
+        state.unit_mut(id).unwrap().path = Some(UnitPath::Ground(GroundPath {
+            end_x: 10,
+            end_y: 10,
+            step_index: 0,
+            steps,
+        }));
+        state.set_order(id, UnitOrder::Move, UnitOrderState::InProgress);
+        (state, id)
+    }
+
+    /// Круговая разница углов `a - b` в диапазоне −4..=3.
+    fn angle_delta(a: u8, b: u8) -> i32 {
+        ((i32::from(a) - i32::from(b) + 12) & 7) - 4
+    }
+
+    /// C++ `GroundPath::UpdateUnitAngle`: на завершении клетки — ровно один
+    /// шаг 45° к следующему шагу маршрута; без следующего шага угол стоит.
+    #[test]
+    fn ground_path_update_unit_angle_matches_cpp() {
+        let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        unit.angle = 2;
+
+        let path = GroundPath {
+            end_x: 0,
+            end_y: 0,
+            step_index: 0,
+            steps: vec![PathStep::new(1, 0), PathStep::new(0, -1)],
+        };
+        assert!(ground_path_update_unit_angle(&mut unit, &path));
+        assert_eq!(unit.angle, 1, "E → NE: один шаг к следующему шагу (N)");
+
+        // Следующего шага нет — поворот не начинается (последняя клетка).
+        let last = GroundPath {
+            end_x: 0,
+            end_y: 0,
+            step_index: 1,
+            steps: vec![PathStep::new(1, 0), PathStep::new(0, -1)],
+        };
+        let before = unit.angle;
+        assert!(!ground_path_update_unit_angle(&mut unit, &last));
+        assert_eq!(unit.angle, before);
+    }
+
+    /// `UnitInfo::UpdateAngle`: башня поворачивается вместе с корпусом.
+    #[test]
+    fn body_turn_rotates_turret_like_cpp_update_angle() {
+        let mut turreted = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        turreted.flags |= TURRET_SPRITE;
+        turreted.angle = 2;
+        turreted.turret_angle = 0;
+
+        assert!(paths_update_angle(&mut turreted, 3));
+        assert_eq!(turreted.angle, 3);
+        assert_eq!(turreted.turret_angle, 1);
+
+        // Без флага турели второе поле не трогается.
+        let mut plain = UnitInfo::new(UnitType::Scout, TeamId::RED, UnitId(2));
+        plain.angle = 2;
+        plain.turret_angle = 6;
+        assert!(paths_update_angle(&mut plain, 3));
+        assert_eq!(plain.angle, 3);
+        assert_eq!(plain.turret_angle, 6);
+    }
+
+    /// Прямой ход по всем 8 направлениям: юнит поворачивается к направлению
+    /// шага, движется только «лицом» по ходу и сохраняет последний угол.
+    #[test]
+    fn all_eight_directions_move_facing_the_step() {
+        for direction in 0..8i32 {
+            let step = step_for_angle(direction);
+            let start_angle = ((direction + 4) & 7) as u8;
+            let (mut state, id) = state_with_path(start_angle, vec![step; 3]);
+
+            let mut previous = state.unit(id).unwrap().grid;
+            let mut moves = 0;
+            let mut last_angle = start_angle;
+
+            for _ in 0..40 {
+                state.tick();
+                let unit = state.unit(id).unwrap();
+                let changed = unit.grid != previous;
+
+                if changed {
+                    let dx = unit.grid.x - previous.x;
+                    let dy = unit.grid.y - previous.y;
+                    assert_eq!(
+                        paths_get_angle(i32::from(dx), i32::from(dy)),
+                        direction,
+                        "шаг {direction} ушёл не в ту сторону: {previous:?} → {:?}",
+                        unit.grid
+                    );
+                    // На прямой следующий шаг совпадает — угол обязан быть
+                    // направлением движения сразу после шага.
+                    assert_eq!(
+                        i32::from(unit.angle),
+                        direction,
+                        "прямой ход {direction}: угол не совпал с шагом"
+                    );
+                    moves += 1;
+                    previous = unit.grid;
+                }
+
+                // Поворот — не более одного шага 45° за тик.
+                let delta = angle_delta(unit.angle, last_angle);
+                assert!(
+                    (-1..=1).contains(&delta),
+                    "поворот {direction}: скачок угла {last_angle} → {} за тик",
+                    unit.angle
+                );
+                last_angle = unit.angle;
+
+                if moves == 3 {
+                    break;
+                }
+            }
+
+            assert_eq!(moves, 3, "направление {direction}: пройдено не 3 клетки");
+            let unit = state.unit(id).unwrap();
+            assert_eq!(
+                i32::from(unit.angle),
+                direction,
+                "после остановки угол — последнее направление {direction}"
+            );
+
+            // После остановки угол не меняется.
+            for _ in 0..8 {
+                state.tick();
+                assert_eq!(i32::from(state.unit(id).unwrap().angle), direction);
+            }
+        }
+    }
+
+    /// L-маршрут: на завершении текущей клетки корпус делает один шаг к
+    /// следующей (`GroundPath::UpdateUnitAngle`), затем доразворачивается в
+    /// `Execute` и только после этого двигается. Движение всегда по ходу.
+    #[test]
+    fn turn_at_cell_boundary_precedes_the_next_step() {
+        let (mut state, id) = state_with_path(
+            2,
+            vec![
+                PathStep::new(1, 0),
+                PathStep::new(1, 0),
+                PathStep::new(0, -1),
+                PathStep::new(0, -1),
+            ],
+        );
+
+        // Тик 1: угол уже на восток — шаг на (11,10); следующий шаг ещё на
+        // восток, поэтому на границе клетки поворота нет.
+        state.tick();
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.grid, Point::new(11, 10));
+        assert_eq!(unit.angle, 2);
+
+        // Тик 2: шаг на (12,10); на границе начинается поворот к следующему
+        // шагу (север): E → NE.
+        state.tick();
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.grid, Point::new(12, 10));
+        assert_eq!(unit.angle, 1, "на границе клетки — один шаг 45° к северу");
+
+        // Тик 3: доразворот NE → N без движения (как `GroundPath::Execute`).
+        state.tick();
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.grid, Point::new(12, 10));
+        assert_eq!(unit.angle, 0);
+
+        // Тик 4: движение на север.
+        state.tick();
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.grid, Point::new(12, 9));
+        assert_eq!(unit.angle, 0);
+
+        // На каждом движущемся тике угол совпадает с направлением перехода
+        // (допуск ±1 — только начатый на границе поворот к следующему шагу).
+        let mut previous = unit.grid;
+        for _ in 0..40 {
+            state.tick();
+            let unit = state.unit(id).unwrap();
+            if unit.grid != previous {
+                let dx = i32::from(unit.grid.x) - i32::from(previous.x);
+                let dy = i32::from(unit.grid.y) - i32::from(previous.y);
+                let moved_angle = paths_get_angle(dx, dy) as u8;
+                assert!(
+                    angle_delta(unit.angle, moved_angle).abs() <= 1,
+                    "кадр/сим повернулся на 45°+ против движения: {:?} → {:?}, angle {}",
+                    previous,
+                    unit.grid,
+                    unit.angle
+                );
+                previous = unit.grid;
+            }
+            if !unit.has_move_order() {
+                break;
+            }
+        }
+
+        assert_eq!(state.unit(id).unwrap().grid, Point::new(12, 8));
+        assert_eq!(state.unit(id).unwrap().angle, 0);
+    }
+
+    /// Два одинаковых прогона L-маршрута дают побайтово одинаковые снапшоты на
+    /// каждом тике: `angle` — часть состояния и меняется детерминированно.
+    #[test]
+    fn angle_updates_deterministically_in_snapshot() {
+        let steps = vec![
+            PathStep::new(1, 0),
+            PathStep::new(1, -1),
+            PathStep::new(0, -1),
+            PathStep::new(0, -1),
+        ];
+        let (mut first, first_id) = state_with_path(7, steps.clone());
+        let (mut second, second_id) = state_with_path(7, steps);
+        assert_eq!(first_id, second_id);
+
+        let mut angle_changed = false;
+        for tick in 0..24 {
+            first.tick();
+            second.tick();
+            assert_eq!(
+                first.snapshot_bytes(),
+                second.snapshot_bytes(),
+                "снапшот разошёлся на тике {tick}"
+            );
+            angle_changed |= first.unit(first_id).unwrap().angle != 7;
+        }
+
+        assert!(angle_changed, "тест обязан пройти через смену угла");
+
+        // `angle` входит в снапшот (CRC состояния).
+        let before = first.snapshot_bytes();
+        first.unit_mut(first_id).unwrap().angle ^= 1;
+        assert_ne!(before, first.snapshot_bytes());
     }
 
     #[test]

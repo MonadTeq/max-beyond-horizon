@@ -400,6 +400,113 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
 }
 
 #[test]
+fn visual_angle_stays_on_the_segment_being_animated() {
+    use max_core::enums::{unit_flags, UnitType};
+    use max_core::geo::PathStep;
+    use max_core::unit::{GroundPath, UnitPath};
+    use max_core::unit_order::paths_get_angle;
+
+    let mut app = App::new(AppConfig::default());
+    app.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
+    app.state_mut().team_units[0] =
+        max_core::team::TeamUnits::with_clan(max_core::TeamClan::Random);
+    let id = app
+        .state_mut()
+        .spawn_unit(
+            UnitType::Tank,
+            TeamId::RED,
+            Point::new(10, 10),
+            unit_flags::MOBILE_LAND_UNIT | unit_flags::SELECTABLE,
+        )
+        .expect("танк");
+
+    // L-маршрут: 2 клетки на восток, затем 2 на север.
+    let mut unit = app.state().unit(id).expect("танк").clone();
+    unit.angle = 2;
+    unit.orders = UnitOrder::Move;
+    unit.state = UnitOrderState::InProgress;
+    unit.path = Some(UnitPath::Ground(GroundPath {
+        end_x: 12,
+        end_y: 8,
+        step_index: 0,
+        steps: vec![
+            PathStep::new(1, 0),
+            PathStep::new(1, 0),
+            PathStep::new(0, -1),
+            PathStep::new(0, -1),
+        ],
+    }));
+    app.state_mut().write_unit(id, unit);
+    app.update_visual_units(0.0);
+    assert_eq!(app.visual_angle(id), Some(2));
+
+    // Первый тик: шаг на восток; следующий шаг тоже на восток — спрайт и
+    // симуляция смотрят на восток.
+    app.tick();
+    assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(11, 10));
+    app.update_visual_units(1.0 / 60.0);
+    assert_eq!(app.visual_angle(id), Some(2));
+
+    // Второй тик: шаг на (12,10); на границе клетки симуляция уже начала
+    // поворот к северу (`GroundPath::UpdateUnitAngle`: E → NE), но спрайт
+    // ещё идёт по восточному отрезку и обязан смотреть на восток.
+    app.tick();
+    assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(12, 10));
+    assert_eq!(app.state().unit(id).expect("танк").angle, 1);
+    app.update_visual_units(1.0 / 60.0);
+    assert_eq!(
+        app.visual_angle(id),
+        Some(2),
+        "спрайт движется на восток — кадр обязан смотреть на восток, а не NE"
+    );
+
+    // Сим и кадр идут вместе: пока спрайт смещается по оси, его угол равен
+    // направлению смещения (осевые отрезки этого маршрута).
+    let mut previous = app.visual_position(id).expect("танк");
+    for frame in 0..40 {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+        let now = app.visual_position(id).expect("танк");
+        let dx = now.0 - previous.0;
+        let dy = now.1 - previous.1;
+        let step_x = i32::from(dx > 1e-4) - i32::from(dx < -1e-4);
+        let step_y = i32::from(dy > 1e-4) - i32::from(dy < -1e-4);
+
+        // Кадр не может пересечь угол маршрута; если это случилось (диагональ
+        // интерполяции/переход), направление смещения неоднозначно — пропуск.
+        if step_x != 0 && step_y != 0 {
+            previous = now;
+            continue;
+        }
+        if step_x != 0 || step_y != 0 {
+            let angle = paths_get_angle(step_x, step_y) as u8;
+            assert_eq!(
+                app.visual_angle(id),
+                Some(angle),
+                "кадр {frame} смотрит не по ходу: смещение ({dx}, {dy}), позиция {now:?}"
+            );
+        }
+        previous = now;
+    }
+
+    // Доигрываем кадр без тиков симуляции: спрайт доходит до последней клетки,
+    // после чего угол снова берётся из симуляции (последнее направление).
+    for _ in 0..300 {
+        app.update_visual_units(1.0 / 60.0);
+    }
+
+    let unit = app.state().unit(id).expect("танк");
+    assert_eq!(unit.grid, Point::new(12, 8));
+    assert_eq!(unit.angle, 0);
+    assert_eq!(
+        app.visual_position(id),
+        Some((12.0, 8.0)),
+        "по завершении маршрута визуальная позиция совпадает с клеткой"
+    );
+    assert_eq!(app.visual_angle(id), Some(0));
+}
+
+#[test]
 fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
     let mut app = App::new(AppConfig::default());
     app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");

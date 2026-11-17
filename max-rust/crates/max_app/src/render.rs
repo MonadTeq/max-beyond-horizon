@@ -73,9 +73,24 @@ pub fn unit_frame_index(
     image_base: i16,
     image_count: usize,
 ) -> usize {
+    unit_frame_index_for_angle(unit, image_base, image_count, unit.angle)
+}
+
+/// [`unit_frame_index`] с явным углом корпуса.
+///
+/// Спрайт юнита — `image_base + angle` (8 направлений), поэтому кадр обязан
+/// выбираться по тому углу, с которым спрайт реально движется по карте
+/// (`App::visual_angle`), а не только по симуляционному: визуальный маршрут
+/// отстаёт от симуляции, и иначе кадр поворачивался бы раньше клетки поворота.
+pub fn unit_frame_index_for_angle(
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    image_count: usize,
+    angle: u8,
+) -> usize {
     let last = image_count.saturating_sub(1);
     let base = usize::try_from(image_base.max(0)).unwrap_or(0);
-    let mut index = base.saturating_add(usize::from(unit.angle % 8));
+    let mut index = base.saturating_add(usize::from(angle % 8));
 
     if unit.orders == UnitOrder::PowerOn && index < last {
         index += 1;
@@ -170,8 +185,28 @@ pub fn draw_unit_sprites_with_base(
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
+    draw_unit_sprites_with_angle(assets, unit, image_base, unit.angle, frame, anchor, zoom)
+}
+
+/// [`draw_unit_sprites_with_base`] с явным углом корпуса для кадра.
+///
+/// `body_angle` — направление, с которым спрайт **сейчас** движется по карте
+/// (в оконном цикле это `App::visual_angle`). Корпус берёт кадр
+/// `image_base + body_angle`, а башня — свой `turret_image_base +
+/// turret_angle` со сдвигом `angle_offsets[body_angle]`, как в
+/// `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:4838`). Остальные
+/// вызывающие (HUD-портрет, тесты) передают `unit.angle`.
+pub fn draw_unit_sprites_with_angle(
+    assets: &crate::assets::Assets,
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    body_angle: u8,
+    frame: &mut RgbaBuffer,
+    anchor: (i32, i32),
+    zoom: u32,
+) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
-    let image_index = unit_frame_index(unit, image_base, sprite.sheet.len());
+    let image_index = unit_frame_index_for_angle(unit, image_base, sprite.sheet.len(), body_angle);
     let sprite_frame = sprite.frame_at(image_index)?;
     let shadow = sprite.shadow_at(image_index);
     let colors = TeamColors::ALL
@@ -197,7 +232,7 @@ pub fn draw_unit_sprites_with_base(
         .drawn;
 
     // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
-    // `angle_offsets[angle]` (`UnitInfo::RenderWithConnectors`).
+    // `angle_offsets[body_angle]` (`UnitInfo::RenderWithConnectors`).
     if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
         if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
             stats.turret = renderer
@@ -207,7 +242,7 @@ pub fn draw_unit_sprites_with_base(
                     sprite.turret_shadow(unit.turret_angle),
                     anchor,
                     shadow_offset,
-                    sprite.turret_offset(unit.angle),
+                    sprite.turret_offset(body_angle),
                     zoom,
                 )
                 .drawn;
@@ -500,8 +535,21 @@ impl App {
                     .get(unit.team.0 as usize)
                     .map(|team| team.team_clan),
             );
+            // Угол корпуса — текущего визуального отрезка (`visual_angle`):
+            // симуляция поворачивает юнита на клетке маршрута, а спрайт идёт по
+            // ней с реальной скоростью; иначе кадр «забегал» бы вперёд и юнит
+            // смотрел бы вбок, двигаясь прямо.
+            let body_angle = self.visual_angle(visible[index]).unwrap_or(unit.angle);
             let drawn = self.assets().and_then(|assets| {
-                draw_unit_sprites_with_base(assets, unit, image_base, frame, anchor, viewport.zoom())
+                draw_unit_sprites_with_angle(
+                    assets,
+                    unit,
+                    image_base,
+                    body_angle,
+                    frame,
+                    anchor,
+                    viewport.zoom(),
+                )
             });
 
             match drawn {
@@ -602,6 +650,31 @@ pub fn write_ppm(path: impl AsRef<Path>, buffer: &RgbaBuffer) -> io::Result<()> 
 mod tests {
     use super::*;
     use crate::AppConfig;
+
+    #[test]
+    fn frame_index_uses_the_given_body_angle_and_power_on_offset() {
+        use max_core::enums::UnitType;
+        use max_core::team::TeamId;
+        use max_core::unit::{UnitId, UnitInfo};
+
+        let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        unit.angle = 7;
+
+        for angle in 0..8u8 {
+            assert_eq!(
+                unit_frame_index_for_angle(&unit, 10, 100, angle),
+                10 + usize::from(angle),
+                "кадр корпуса = image_base + angle"
+            );
+        }
+        assert_eq!(unit_frame_index(&unit, 10, 100), 17);
+
+        // `ORDER_POWER_ON` — следующий кадр включённого здания.
+        unit.orders = UnitOrder::PowerOn;
+        assert_eq!(unit_frame_index_for_angle(&unit, 0, 100, 2), 3);
+        // Последний кадр не переполняется.
+        assert_eq!(unit_frame_index_for_angle(&unit, 0, 3, 2), 2);
+    }
 
     #[test]
     fn frame_without_assets_has_screen_size_and_is_opaque() {

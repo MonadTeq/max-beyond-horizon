@@ -207,6 +207,12 @@ pub enum Assertion {
     Log(String),
     /// `assert unit-pos=X,Y`: выделенный юнит стоит в клетке `(X, Y)`.
     UnitPos(i16, i16),
+    /// `assert angle=N`: угол корпуса выделенного юнита (0..7, 0 = север).
+    ///
+    /// Это симуляционное поле (`UnitInfo::angle`): при движении оно меняется
+    /// на шагах маршрута по `Paths_GetAngle` (см. `GroundPath::Execute` /
+    /// `GroundPath::UpdateUnitAngle`).
+    Angle(u8),
     /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
     BuildOpen(bool),
     /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
@@ -986,6 +992,15 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             let (x, y) = parse_grid_pair(value, "assert unit-pos")?;
             Ok(Assertion::UnitPos(x, y))
         }
+        "angle" => {
+            let angle = parse_u32(value, "assert angle")?;
+            if angle > 7 {
+                return Err(format!(
+                    "assert angle: угол 0..7 (0 = север), получено «{value}»"
+                ));
+            }
+            Ok(Assertion::Angle(angle as u8))
+        }
         "log" => Ok(Assertion::Log(value.to_string())),
         "cargo-mode" => match value.to_ascii_lowercase().as_str() {
             "buy" | "purchase" => Ok(Assertion::CargoMode(true)),
@@ -1634,6 +1649,9 @@ mod tests {
             one("assert digest=0xBEEF"),
             Command::Assert(Assertion::Digest(0xBEEF))
         );
+        assert_eq!(one("assert angle=2"), Command::Assert(Assertion::Angle(2)));
+        assert!(parse_script("assert angle=8\n").is_err(), "угол 0..7");
+        assert!(parse_script("assert angle=восток\n").is_err());
     }
 
     #[test]

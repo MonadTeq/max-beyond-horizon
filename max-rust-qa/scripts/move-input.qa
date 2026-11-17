@@ -82,6 +82,9 @@ shot game-turn2
 click 532 178
 assert selected
 assert unit-pos=24,21
+# Угол — по ходу движения (TC-0933): шаг на восток → angle=2 (`Paths_GetAngle`),
+# а не 0/45° «по инерции» от предыдущего положения.
+assert angle=2
 shot game-after
 
 # --- TC-0604: RMB по своему юниту отменяет приказ и выделение ------------

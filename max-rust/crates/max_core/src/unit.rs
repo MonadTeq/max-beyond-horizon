@@ -260,7 +260,9 @@ pub struct UnitInfo {
     pub unit_id: u8,
     /// Яркость (UI/V70: визуал повреждения).
     pub brightness: u8,
-    /// Угол поворота 0..7 (UI/V70; в симуляции — `Direction`).
+    /// Угол корпуса 0..7 (0 = север, по часовой). **Симуляционное поле**:
+    /// `UnitInfo::Move` шагает в `DIRECTION_OFFSETS[angle]`, угол меняется
+    /// `Paths_UpdateAngle`/`GroundPath::UpdateUnitAngle` 1:1 с C++.
     pub angle: u8,
     /// Видимость для каждой из 5 команд (туман войны).
     pub visible_to_team: [bool; 5],

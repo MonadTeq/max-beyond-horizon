@@ -1943,5 +1943,81 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   `unit-menu-tank-selected`, `unit-menu-tank`, `unit-menu-sentry-on`,
   `unit-menu-builder` — golden `max-rust-qa/golden/unit-menu` (0 дрейфа).
 
+## 19. Угол юнита по ходу движения — **сделано** (2026-11-17)
 
+Симптом: спрайт подвижного юнита мог смотреть на 45° (или 90°) в сторону от
+направления, в котором он ехал. Причина была не в кадре спрайта, а в двух
+местах: (1) угол на клетке поворота начинал меняться позже, чем в C++; (2)
+визуальная очередь кадра отстаёт от симуляции, а кадр читал **симуляционный**
+угол — к моменту, когда спрайт ещё ехал по старому отрезку, симуляция уже
+повернула к следующей клетке.
 
+### 19.1 Как это устроено в C++ (оракул)
+
+| Шаг | Код | Что делает |
+|---|---|---|
+| таблица направлений | `path.hpp:51` `DIRECTION_OFFSETS` | N, NE, E, SE, S, SW, W, NW = `(0,-1) (1,-1) (1,0) (1,1) (0,1) (-1,1) (-1,0) (-1,-1)` — индексы угла 0..7 |
+| `(dx,dy) → angle` | `Paths_GetAngle` (`paths.cpp:219`) | 8 направлений по знакам `x`/`y`; диагонали — когда оба ненулевые |
+| поворот | `Paths_UpdateAngle` (`paths.cpp:258`) | сравнивает с текущим, выбирает короткую сторону (`delta_a >= delta_b` → −1), делает **ровно один шаг 45°** и возвращает `true` |
+| перед шагом | `GroundPath::Execute` (`groundpath.cpp:236/260`) | угол = направление текущего `PathStep`; если `Paths_UpdateAngle` вернул `true` — движение в этот тик **не начинается** (юнит доворачивает на месте) |
+| на завершении клетки | `UnitInfo::Move` (`unitinfo.cpp:1835`) → `GroundPath::UpdateUnitAngle` (`groundpath.cpp:430`) | после `moved == GFX_MAP_TILE_SIZE`: если есть следующий шаг, `Paths_UpdateAngle` к его направлению — один шаг 45° начинается **на границе клетки** |
+| движение | `UnitInfo::Move` (`unitinfo.cpp:1781`) | `step_x/y = DIRECTION_OFFSETS[angle]` — юнит физически едет только туда, куда смотрит |
+| башня | `UnitInfo::UpdateAngle` (`unitinfo.cpp:1161`) | при повороте корпуса на `image_diff` у `TURRET_SPRITE` башня поворачивается на тот же шаг: `turret_angle = (turret_angle + image_diff) & 7` |
+| кадр | `RenderWithConnectors` (`unitinfo.cpp:4838`) | корпус `image_base + angle`; башня `turret_image_base + turret_angle` со сдвигом `angle_offsets[angle]` |
+
+Пример на 8 клетках: юнит смотрит на север (0), маршрут на восток (2):
+`0 → 1 → 2`, затем шаг; после остановки угол остаётся 2 (последнее
+направление). На L-маршруте (восток ×2, затем север) после второй восточной
+клетки корпус уже `E → NE`, следующий `Execute` доводит `NE → N` и только потом
+начинает шаг на север.
+
+### 19.2 Что портировано
+
+* `max_core::unit_order::paths_update_angle` — `Paths_UpdateAngle` 1:1 плюс
+  связка башни из `UnitInfo::UpdateAngle` (`TURRET_SPRITE`).
+* `max_core::unit_order::ground_path_update_unit_angle` — `GroundPath::UpdateUnitAngle`
+  (один шаг к следующему шагу маршрута); вызывается из `unit_move` после
+  списания текущего `PathStep` — как `path->UpdateUnitAngle(this)` в C++.
+* `ground_path_execute` уже повторял `GroundPath::Execute`: сначала
+  `paths_update_angle`, при повороте — `return false` без движения.
+* `max_app::App::visual_angle` + `VisualStep.angle`: визуальная очередь хранит
+  направление **отрезка** (из фактического смещения клеток, `Paths_GetAngle`),
+  а не читает симуляционный угол в момент кадра. Пока спрайт идёт по отрезку,
+  кадр берёт его угол; когда очередь пуста — текущий `UnitInfo.angle`.
+* `max_app::render::draw_unit_sprites_with_angle` /
+  `unit_frame_index_for_angle`: карта рисует корпус `image_base + visual_angle` и
+  башню со сдвигом `angle_offsets[visual_angle]`; HUD-портрет и тесты — по
+  `unit.angle` (поведение старых вызовов сохранено).
+* Детерминизм: `angle` входит в `GameState::snapshot_bytes` (CRC состояния), но
+  **не** входит в сетевой CRC пакета 45 — ровно как `GameManager_GetUnitListChecksum`
+  в C++; снапшоты двух прогонов совпадают побайтово, сторона поворота и число
+  шагов детерминированы.
+
+### 19.3 Тесты и QA
+
+* `max_core::unit_order::tests`: `paths_angle_and_turn_match_cpp`,
+  `ground_path_update_unit_angle_matches_cpp`,
+  `body_turn_rotates_turret_like_cpp_update_angle`,
+  `all_eight_directions_move_facing_the_step` (8 направлений: поворот, шаг
+  только «по ходу», после остановки — последнее направление),
+  `turn_at_cell_boundary_precedes_the_next_step` (L-маршрут и граница клетки),
+  `angle_updates_deterministically_in_snapshot` (2 прогона, снапшот каждого тика
+  совпадает; изменение `angle` меняет снапшот).
+* `max_app::tests`: `visual_angle_stays_on_the_segment_being_animated` (пока
+  спрайт смещается по оси, `visual_angle` равен направлению смещения; на
+  повороте симуляция уже `NE`, а спрайт ещё смотрит `E`);
+  `unit_sprites::explicit_body_angle_selects_the_corresponding_sprite_frame`
+  (явный угол = кадр `unit.angle`, разные углы — разные кадры);
+  `render::tests::frame_index_uses_the_given_body_angle_and_power_on_offset`.
+* QA: `move-input.qa` после перехода на восток проверяет `assert angle=2`
+  (новая команда драйвера `assert angle=N`, 0..7); golden `move-input/*` —
+  **0 дрейфа** (сценарии с `dt = 0` кадр не интерполируют, поэтому эталоны не
+  переснимались).
+* Windows UI: `build/scripts/ui-test-move2.ps1` (живое окно, SendInput,
+  скриншоты `build/ui-test-move2/*.png`) — прогон движения после сборки
+  `build/scripts/build-windows-ui.ps1`; headless-кадры — `qa-out/move-input/*`.
+* Headless-артефакт: `max_app --example angle_demo -- qa-out/angle` снимает
+  `01-east-with-sim-ne.png` (симуляция уже NE, спрайт ещё едет на восток и
+  смотрит E), `02-turn.png` (поворот на клетке) и `03-stopped-north.png`
+  (остановка, угол 0); пример сам проверяет «угол = направлению смещения» и
+  завершается кодом 1 при расхождении.

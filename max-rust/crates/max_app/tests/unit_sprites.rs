@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use max_app::assets::{UNIT_SPRITES, UNIT_TYPES_WITHOUT_SPRITE_DATA};
-use max_app::{draw_unit_sprites, App, AppConfig, Assets};
+use max_app::{draw_unit_sprites, draw_unit_sprites_with_angle, App, AppConfig, Assets};
 use max_core::access::unit_type_flags;
 use max_core::enums::{unit_flags, UnitType, UNIT_END};
 use max_core::geo::Point;
@@ -240,4 +240,55 @@ fn hud_portrait_draws_every_unit_type() {
             );
         }
     }
+}
+
+/// Кадр корпуса выбирается по переданному углу (`image_base + angle`): явный
+/// угол даёт ровно тот же кадр, что и `unit.angle`, а разные углы — разные
+/// кадры. Это контракт `App::visual_angle` → `draw_unit_sprites_with_angle`.
+#[test]
+fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
+    // Scout — без башни: сравнивается только кадр корпуса.
+    let mut unit = unit_of(UnitType::Scout, 0);
+    unit.angle = 0;
+
+    let render = |body_angle: u8, unit: &UnitInfo| {
+        let mut frame = RgbaBuffer::new(256, 256);
+        let stats = draw_unit_sprites_with_angle(
+            &assets,
+            unit,
+            unit.image_base,
+            body_angle,
+            &mut frame,
+            (128, 128),
+            64,
+        )
+        .expect("спрайт Scout");
+        assert!(stats.unit > 0);
+        frame.pixels().to_vec()
+    };
+
+    let angle_zero = render(0, &unit);
+    let angle_three = render(3, &unit);
+    assert_ne!(
+        angle_zero, angle_three,
+        "кадры 0 и 3 (восток) должны различаться"
+    );
+
+    // Явный угол эквивалентен `unit.angle` — рендер карты и HUD используют
+    // один и тот же селектор кадра.
+    let mut turned = unit.clone();
+    turned.angle = 3;
+    let via_unit_angle = {
+        let mut frame = RgbaBuffer::new(256, 256);
+        draw_unit_sprites(&assets, &turned, &mut frame, (128, 128), 64).expect("спрайт Scout");
+        frame.pixels().to_vec()
+    };
+    assert_eq!(
+        angle_three, via_unit_angle,
+        "draw_unit_sprites_with_angle(3) = draw_unit_sprites(unit.angle=3)"
+    );
 }

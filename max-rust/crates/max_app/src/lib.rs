@@ -114,7 +114,10 @@ pub use net::{
 pub use panels::{PanelButton, PanelState, Panels};
 pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
 pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
-pub use render::{draw_unit_sprites, write_ppm, RenderStats, UnitSpriteStats};
+pub use render::{
+    draw_unit_sprites, draw_unit_sprites_with_angle, draw_unit_sprites_with_base,
+    unit_frame_index, unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
+};
 pub use saveload::{
     save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
     AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
@@ -557,7 +560,10 @@ pub struct App {
     /// Очередь клеток маршрута, которые кадр ещё должен пройти. Симуляция
     /// исполняет приказ за тики (быстро), а кадр проходит те же клетки с
     /// реальной скоростью оригинала (`UnitInfo::Move`: 8 px/тик ~ 3.75 клетки/с).
-    visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<(f32, f32)>>,
+    /// В каждой точке — направление движения к ней (`VisualStep.angle`),
+    /// чтобы спрайт поворачивался на клетке поворота, а не раньше.
+    visual_paths:
+        std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
     /// FLC-анимация портрета выделенного юнита (`WINDOW_CORNER_FLIC`).
     ///
     /// UI-состояние: в снапшот/CRC не входит. `None` — юнит не выбран, у типа
@@ -579,6 +585,25 @@ pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 /// Скачок больше этого числа клеток — не маршрут, а телепорт/синхронизация
 /// состояния: визуальная позиция ставится в цель без анимации.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
+
+/// Один шаг визуального маршрута юнита: точка в клетках и направление движения
+/// к ней (`Paths_GetAngle`, 0..7).
+///
+/// Угол запоминается **на отрезке**, а не читается из `UnitInfo::angle` в
+/// момент кадра. Симуляция исполняет маршрут быстро (клетка за тик) и уже
+/// повернула к следующей клетке — или прошла несколько клеток вперёд, — пока
+/// спрайт по-прежнему идёт по этому отрезку с реальной скоростью. Без снимка
+/// угла кадр показывал бы поворот на 45–90° раньше, чем спрайт дошёл до клетки
+/// поворота: юнит «смотрел бы» вбок, двигаясь прямо.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VisualStep {
+    /// Координата клетки (дробная — на промежуточных точках скачка).
+    x: f32,
+    /// Координата клетки (дробная).
+    y: f32,
+    /// Направление движения к этой точке: `Paths_GetAngle(dx, dy)`.
+    angle: u8,
+}
 
 impl App {
     /// Пустое приложение (без ассетов; состояние — пустая партия `GameState::new`).
@@ -1664,6 +1689,25 @@ impl App {
         )
     }
 
+    /// Угол корпуса для кадра: направление текущего визуального отрезка.
+    ///
+    /// Пока спрайт идёт по маршруту, это направление отрезка, на котором он
+    /// находится (поле `angle` шага очереди); когда очередь пуста (юнит стоит
+    /// или кадр догнал симуляцию) — текущий `UnitInfo::angle`. Так кадр
+    /// поворачивает юнита ровно на клетке поворота и не забегает вперёд
+    /// симуляции.
+    ///
+    /// Значение — только для отрисовки: в снапшот/CRC не входит и симуляцию не
+    /// меняет.
+    pub fn visual_angle(&self, id: UnitId) -> Option<u8> {
+        let unit = self.state.unit(id)?;
+
+        Some(match self.visual_paths.get(&id).and_then(|queue| queue.front()) {
+            Some(step) => step.angle,
+            None => unit.angle,
+        })
+    }
+
     /// Подтягивает визуальные позиции к симуляционным.
     ///
     /// Симуляция двигает юнита на целую клетку за тик; кадр проходит **ту же
@@ -1736,12 +1780,29 @@ impl App {
                     *current = target;
                 } else {
                     let divisor = distance.max(1);
+                    let mut previous = *goal;
 
                     for step in 1..=divisor {
                         let x = goal.0 + (dx * step / divisor) as i16;
                         let y = goal.1 + (dy * step / divisor) as i16;
+                        let step_dx = i32::from(x) - i32::from(previous.0);
+                        let step_dy = i32::from(y) - i32::from(previous.1);
+                        // Направление отрезка — из фактического смещения клеток,
+                        // а не из текущего `unit.angle`: к моменту кадра
+                        // симуляция уже могла повернуться к следующему шагу
+                        // (`GroundPath::UpdateUnitAngle`) или уйти дальше.
+                        let angle = if step_dx == 0 && step_dy == 0 {
+                            unit.angle
+                        } else {
+                            max_core::unit_order::paths_get_angle(step_dx, step_dy) as u8
+                        };
 
-                        queue.push_back((f32::from(x), f32::from(y)));
+                        queue.push_back(VisualStep {
+                            x: f32::from(x),
+                            y: f32::from(y),
+                            angle,
+                        });
+                        previous = (x, y);
                     }
                 }
 
@@ -1753,15 +1814,15 @@ impl App {
             let mut left = budget;
 
             while left > 0.0 {
-                let Some(&(way_x, way_y)) = queue.front() else {
+                let Some(&waypoint) = queue.front() else {
                     break;
                 };
-                let dx = way_x - current.0;
-                let dy = way_y - current.1;
+                let dx = waypoint.x - current.0;
+                let dy = waypoint.y - current.1;
                 let distance = dx.abs().max(dy.abs());
 
                 if distance <= left {
-                    *current = (way_x, way_y);
+                    *current = (waypoint.x, waypoint.y);
                     queue.pop_front();
                     left -= distance;
                 } else {

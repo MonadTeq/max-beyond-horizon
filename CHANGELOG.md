@@ -167,6 +167,45 @@
 
 ### Исправлено
 
+- **Угол юнита всегда по ходу движения (TC-0933, 2026-11-17).**
+  Спрайт подвижного юнита мог смотреть на 45°/90° в сторону от фактического
+  движения: угол на клетке поворота менялся позже C++-оракула, а кадр читал
+  симуляционный `angle`, хотя визуальная очередь ещё доигрывала предыдущий
+  отрезок.
+  - **Оракул.** `Paths_GetAngle` (`paths.cpp:219`, `DIRECTION_OFFSETS` из
+    `path.hpp:51` — N/NE/E/SE/S/SW/W/NW → 0..7), `Paths_UpdateAngle`
+    (`paths.cpp:258`, один шаг 45° за вызов), `GroundPath::Execute`
+    (`groundpath.cpp:236/260`: сначала доворот, движение только при совпадении),
+    `GroundPath::UpdateUnitAngle` (`groundpath.cpp:430`: на завершении клетки —
+    один шаг к следующему шагу), `UnitInfo::UpdateAngle`
+    (`unitinfo.cpp:1161`: башня поворачивается вместе с корпусом),
+    `UnitInfo::Move` (`unitinfo.cpp:1781`), `RenderWithConnectors`
+    (`unitinfo.cpp:4838`).
+  - **Порт.** `max_core::unit_order::paths_update_angle` дополнен связкой
+    `turret_angle` (`TURRET_SPRITE`); добавлен
+    `ground_path_update_unit_angle`; `unit_move` вызывает его после списания
+    `PathStep` — как `path->UpdateUnitAngle(this)`. Порядок «сначала поворот,
+    потом шаг» сохранён, после остановки `angle` = последнему направлению.
+  - **Кадр.** Визуальная очередь (`App::update_visual_units`) хранит
+    `VisualStep.angle` — направление отрезка из фактического смещения клеток
+    (`Paths_GetAngle`); `App::visual_angle` отдаёт угол текущего отрезка (или
+    `unit.angle`, когда очередь пуста). `render::draw_unit_sprites_with_angle` /
+    `unit_frame_index_for_angle` рисуют корпус `image_base + angle` и башню со
+    сдвигом `angle_offsets[angle]`; HUD-портрет/тесты используют `unit.angle`.
+  - **Детерминизм.** `angle` входит в `GameState::snapshot_bytes` (CRC
+    состояния), но не в сетевой CRC пакета 45 — как в C++
+    (`GameManager_GetUnitListChecksum`); два одинаковых прогона дают побайтово
+    одинаковые снапшоты на каждом тике.
+  - **Тесты.** `max_core::unit_order::tests` — 8 направлений, L-поворот,
+    граница клетки, башня, детерминизм; `max_app` —
+    `visual_angle_stays_on_the_segment_being_animated`,
+    `explicit_body_angle_selects_the_corresponding_sprite_frame`,
+    `frame_index_uses_the_given_body_angle_and_power_on_offset`. QA
+    `move-input.qa` — `assert angle=2` (новая команда `assert angle=N`);
+    golden `move-input/*` — 0 дрейфа. Windows UI — `ui-test-move2.ps1`
+    (`build/ui-test-move2/*.png`), headless — `qa-out/move-input/*` и
+    `--example angle_demo` (`qa-out/angle/{01-east-with-sim-ne,02-turn,03-stopped-north}.png`).
+
 - **Видимое движение юнитов, наложение генератора на шахту, кадры питания
   зданий (2026-11-17).**
   - **Движение.** `App::update_visual_units` больше не «догоняет» симуляцию с

@@ -569,7 +569,7 @@ V70-раскладка: save.md `struct __attribute__((packed)) UnitInfo`; runti
 | `team` | `TeamIndex` (u8) | `TeamId` | команда-владелец (в т.ч. «пришельцы» = 4) | `S` |
 | `unit_id` | `unsigned char` | `u8` | порядковый номер типа в команде (для имён) | `S` (необязательно клиенту) |
 | `brightness` | `unsigned char` | `u8` | яркость (визуал повреждения) | `UI` |
-| `angle` | `unsigned char` | `u8` | угол поворота (8 направлений) | `UI` |
+| `angle` | `unsigned char` | `u8` | угол корпуса 0..7 — **направление шага** (`UnitInfo::Move`: `DIRECTION_OFFSETS[angle]`); меняется `Paths_UpdateAngle`/`GroundPath::UpdateUnitAngle` | `S` (снапшот; в сетевой CRC не входит — как C++ `GameManager_GetUnitListChecksum`) |
 | `visible_to_team[5]` | `unsigned char[5]` | `[bool; 5]` | видимость для каждой команды (туман войны) | `S` (см. 7.5) |
 | `spotted_by_team[5]` | `unsigned char[5]` | `[bool; 5]` | обнаружен командами (не только виден) | `S` (см. 7.5) |
 | `max_velocity` | `unsigned char` | `u8` | максимальная скорость анимации | `UI` |
@@ -844,8 +844,9 @@ pub struct Map {
   `disabled_reaction_fire`, `auto_survey`, `laying_state`), структура
   (`flags`, `connectors`, `complex`→id, `parent_unit`→id, `enemy_unit`→id,
   `build_list`), путь (`path` → `Vec<Point>`), видимость (`visible_to_team`,
-  `spotted_by_team`), атрибуты юнита (`base_values`).
-- **`UI` (не слать)**: всё спрайтово-анимационное (`pixel_position`, `angle`,
+  `spotted_by_team`), атрибуты юнита (`base_values`), угол корпуса (`angle`:
+  от него зависит направление шага в `UnitInfo::Move`, а не только кадр).
+- **`UI` (не слать)**: всё спрайтово-анимационное (`pixel_position`,
   `velocity`, `max_velocity`, `brightness`, `scaler_adjust`, `sprite_bounds`,
   `shadow_bounds`, `shadow_offset`, `turret_*`, `image_*`, `bobbed`,
   `shake_effect_state`, `engine`, `weapon`, `cursor`, `move_fraction`). Всё это

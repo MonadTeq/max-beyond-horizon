@@ -2382,6 +2382,30 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::Angle(expected) => {
+                let selected = self
+                    .app
+                    .hud()
+                    .selected
+                    .and_then(|id| self.app.state().unit(id));
+                let names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+                self.expect(
+                    selected.is_some_and(|unit| unit.angle == expected),
+                    format!(
+                        "angle={expected} ({})",
+                        names.get(usize::from(expected)).copied().unwrap_or("?")
+                    ),
+                    match selected {
+                        Some(unit) => format!(
+                            "angle={} ({})",
+                            unit.angle,
+                            names.get(usize::from(unit.angle)).copied().unwrap_or("?")
+                        ),
+                        None => "выделения нет".to_string(),
+                    },
+                )
+            }
             Assertion::Digest(expected) => {
                 let actual = self.app.digest().state_digest;
 
