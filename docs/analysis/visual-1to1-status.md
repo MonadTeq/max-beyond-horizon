@@ -1576,3 +1576,115 @@ golden-кадры детерминированы, а `snapshot_bytes`/CRC не �
   help-game-keys,help-research,research-menu,research-plan}.png` — `qa_golden_check`
   **0 дрейфа**. Остальные кадры (меню/карго/загрузка) не изменились.
 
+---
+
+## 16. Живая диагностика ввода/движения и интерактивная высадка — **проверено** (2026-11-17)
+
+Разбор жалобы «юниты не двигаются» по трассе **живого окна**
+(`MAX_DEBUG_INPUT=1`, `eprintln` в `main.rs`/`ui.rs`) и живому прогону
+`build/scripts/ui-test-move2.ps1` (`SendInput`, проверка фокуса). Оракул
+`max-cpp-port` не менялся.
+
+### 16.1 «Генератор стоит на клетке шахты» — это плита, а не генератор
+
+Трасса печатала тип юнита (`unit_type as u8`), а не id, и в ней на клетке
+высадки стояли `17@(22,22)` и `40@(22,22)`. Это **`LRGSLAB` (0x11) и
+`MININGST` (0x28)**: C++ `GameManager_ProcessTeamMissionSupplyUnits`
+(`game_manager.cpp:4996`) вызывает
+`UnitsManager_DeployUnit(LRGSLAB, …, mining_station_location)`, т.е. плита
+обязана делить клетку с шахтой. Генератор `POWGEN` (`2`) стоит отдельно:
+`GameManager_GetStartingPositionPowerGenerator` (`game_manager.cpp:1833`) —
+`point.x -= 1; point.y += 2`, затем первый доступный кандидат на север.
+
+Живые значения (совпадают с `deploy.rs`/C++):
+
+| Прогон | шахта `MININGST` | плита `LRGSLAB` | генератор `POWGEN` | Surveyor |
+|---|---|---|---|---|
+| `move-input` (QA/live, точка по умолчанию) | `40@(22,22)` | `17@(22,22)` | `2@(21,23)` | `57@(23,21)` |
+| ручная партия из предыдущей сессии | `40@(72,40)` | `17@(72,40)` | `2@(71,41)` | `57@(73,39)` |
+
+Поэтому «два юнита на клетке высадки» — это шахта + её плита (норма C++);
+регресс-тест теперь проверяет и состав клетки, а не только `assert_ne!` клеток
+генератора и шахты.
+
+### 16.2 Интерактивный поток высадки
+
+`App::new_game_on_surface` строит `TeamDeployment` из фазы высадки
+(`start_positions` → `new_game_config`) и вызывает
+`deploy_starting_units_with`. В C++ точка высадки перед высадкой проходит
+`GameManager_PopulateMapWithResources` (`game_manager.cpp:4747`):
+`FindValidStartingPosition` + `Optimize` материалов/топлива — для **каждой**
+играющей команды, включая человека. Раньше Rust синхронизировал итоговую
+позицию только для точек, добавленных ИИ; теперь — для всех `TeamDeployment`.
+В обычном потоке точка из `LandingScreen` уже валидна (`GameManager_IsValidStartingPosition`),
+поэтому раскладка и golden не изменились, но поток больше не расходится с C++
+при любой будущей правке `Optimize`.
+
+### 16.3 Почему «RMB не доходит» оказалось ложной тревогой
+
+Путь `SDL MouseButtonDown(Right) → WindowInput::MouseRightClick →
+InputEvent::RightClick → handle_session_input → session_chrome_right_click →
+session_map_right_click` корректен. В живом прогоне событие было
+(`[in] screen=InSession event=RightClick(532,178)`), но предыдущий сценарий
+подтверждал высадку **кликом по карте** (`468,178`), а не `Enter`: точка
+оказывалась в `(72,40)`, камера центрировалась там, и рассчитанные от
+`(22,22)` пиксели попадали на шахту/инженера. RMB по своему юниту — это
+**отмена** (`Cancelled`), поэтому приказ не появлялся.
+
+Что добавлено/исправлено:
+
+* `MAX_DEBUG_INPUT` теперь печатает реальные тики: локальный цикл
+  (`local_update`) инкрементирует `App::ticks`, как `App::tick`; раньше
+  трасса всегда показывала `tick 0` и не могла подтвердить движение.
+* `[tick N]` содержит `turn`, `phase`, `sel`, `preview=N` и для каждого юнита
+  `type@(grid)v(visual)`; `[rclick]` — `map/grid/viewport_origin/selected` и
+  результат (`move` со `steps`, `cancel`, `cannot-move`, `no-path`, …).
+  Без `MAX_DEBUG_INPUT` вывод не появляется.
+* `session_map_right_click` не менял поведение: только диагностика.
+
+### 16.4 Живой прогон `ui-test-move2.ps1` (SendInput)
+
+Сценарий: меню → Options/Planet/Players → мобилизация `Done` → высадка
+**`Enter`** (как `key ENTER` в `move-input.qa`) → LMB по Surveyor'у → RMB на
+клетку в 2 клетках → End Turn → LMB по целевой клетке. Перед каждым кликом
+проверяется `GetForegroundWindow() == hwnd`; кнопки — `SendInput`
+(`MOUSEEVENTF_LEFTDOWN/UP`, `RIGHTDOWN/UP`).
+
+Практические грабли (в скрипте учтены):
+
+* В `INPUT` union начинается со смещения **8** (выравнивание `ULONG_PTR`), а не
+  4: при `FieldOffset(4)` `SendInput` возвращает 2/`ERROR_SUCCESS`, но SDL3 не
+  получает ни одного `MouseButton` (тип/флаги попадают не туда). При
+  `FieldOffset(8)` (или `type, pad, MOUSEINPUT`) клики доходят.
+* Трассу дочернего процесса нельзя читать `File.ReadAllText` (файл занят
+  редиректом); нужен `FileStream` с `FileShare.ReadWrite`.
+* `^\[tick` в `-match` не работает без `RegexOptions.Multiline`; в ожидании
+  использовать `(?m)^\[tick`.
+
+Результат последнего прогона (`build/ui-test-move2/`):
+
+```
+A: mining=40@(22,22)  generator=2@(21,23)  large-slab=17@(22,22)  surveyor=57@(23,21)
+A: units at mining cell: 17,40
+B: [in] … RightClick; [rclick] result=move selected=7 steps=2 to=(25,21)
+B: green preview pixels in map area: 152
+C: 57@(23,21) -> (25,21); vis 23,21 -> 23.8,21 -> 24.7,21 -> 25,21
+PASS (трасса build/ui-test-move2/trace.log, кадры 01…11)
+```
+
+### 16.5 Свидетельства
+
+* `tests/move_input.rs::interactive_landing_keeps_the_generator_off_the_mining_station_cell`
+  — `PreGameFlow::commit_landing` → `start_positions` → `TeamDeployment` →
+  `deploy_starting_units_with`: шахта `(20,20)`, генератор `(19,21)`, плиты по
+  своим зданиям; на клетке шахты ровно `{MININGST, LRGSLAB}` (без `POWGEN`).
+* `tests/move_input.rs::rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop`
+  — реальные `handle_session_input` LMB/RMB в локальной партии
+  (`start_local_game`), зелёный предпросмотр в chrome-кадре, `local_update(dt)`
+  проходит промежуточные позиции и заканчивается в цели, End Turn кнопкой
+  `END_TURN_BUTTON` не теряет приказ, после хода ИИ — `grid`/`vis` в цели и
+  повторное выделение кликом.
+* `build/scripts/ui-test-move2.ps1` — живой прогон с `SendInput`; PASS.
+* QA: `move-input.qa` PASS; `golden/move-input/*` — 0 дрейфа (раскладка не
+  менялась, менялись только диагностика и синхронизация точки высадки).
+

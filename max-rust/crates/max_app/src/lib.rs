@@ -1114,7 +1114,6 @@ impl App {
         // выбор ИИ идёт отдельным потоком от того же seed, а генерация карты —
         // уже с чистого seed (как и раньше).
         let mut deployments = config.deployments.clone();
-        let mut ai_added: Vec<TeamId> = Vec::new();
 
         if !deployments.is_empty() {
             let mut choice_rng = Randomizer::new(config.seed);
@@ -1130,7 +1129,6 @@ impl App {
 
                 start.position = position;
                 taken.push(position);
-                ai_added.push(start.team);
                 deployments.push(TeamDeployment::default_loadout(
                     start.team,
                     position,
@@ -1141,13 +1139,19 @@ impl App {
 
         let output = generate_map(&mut setup, surface, &mut rng);
 
-        // `FindValidStartingPosition` мог сдвинуть выбранную ИИ точку —
-        // высадка обязана идти по итоговой позиции генерации.
+        // `GameManager_PopulateMapWithResources` (`game_manager.cpp:4730`) перед
+        // высадкой двигает `TeamMissionSupplies[team].starting_position`
+        // **каждой** играющей команды: `FindValidStartingPosition`, затем
+        // `Optimize` материалов/топлива. Поэтому `ProcessTeamMissionSupplyUnits`
+        // (и `GetStartPositionMiningStation`) видит уже итоговую точку — и для
+        // ИИ, и для человека, выбравшего точку в фазе site select.
+        //
+        // Раньше синхронизировались только точки, добавленные здесь для ИИ;
+        // интерактивный поток (`start_positions` из фазы высадки) уходил в
+        // `deploy_starting_units_with` со своим исходным значением. Пока точка
+        // валидна (её проверяет `LandingScreen`), результат совпадает, но при
+        // любой будущей правке `Optimize` раскладка разъехалась бы с C++.
         for deployment in deployments.iter_mut() {
-            if !ai_added.contains(&deployment.team) {
-                continue;
-            }
-
             if let Some(start) = setup
                 .teams
                 .iter()

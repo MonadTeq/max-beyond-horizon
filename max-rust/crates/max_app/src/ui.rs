@@ -2189,6 +2189,14 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
     Transition::None
 }
 
+/// `MAX_DEBUG_INPUT=1` — трассировать ввод сессии в stderr (диагностика).
+///
+/// Без переменной окружения ни одна ветка ничего не печатает: вывод не
+/// попадает ни в обычный запуск, ни в QA/golden.
+fn debug_input() -> bool {
+    std::env::var_os("MAX_DEBUG_INPUT").is_some()
+}
+
 /// Выделение/атака по точке **камеры карты** (448×448 при хроме).
 fn session_map_left_click(
     app: &mut App,
@@ -2198,6 +2206,18 @@ fn session_map_left_click(
     online: bool,
 ) -> Transition {
     let team = app.player_team();
+    let grid = viewport.screen_to_grid(x, y);
+    if debug_input() {
+        let at = app
+            .state()
+            .units_at(max_core::geo::Point::new(grid.0, grid.1))
+            .len();
+        let origin = viewport.origin();
+        eprintln!(
+            "[click] map=({x},{y}) grid=({},{}) units_at={at} viewport_origin=({},{})",
+            grid.0, grid.1, origin.0, origin.1
+        );
+    }
     let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
         if app.hud().selected.is_some() {
             app.hud_mut().clear_interaction();
@@ -2269,6 +2289,18 @@ fn session_map_right_click(
     online: bool,
 ) -> Transition {
     let team = app.player_team();
+    let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
+    let debug = debug_input();
+
+    if debug {
+        let origin = viewport.origin();
+        eprintln!(
+            "[rclick] map=({x},{y}) grid=({grid_x},{grid_y}) viewport_origin=({},{}) selected={:?}",
+            origin.0,
+            origin.1,
+            app.hud().selected
+        );
+    }
 
     // «Отмена — Esc/правый клик по юниту».
     if let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) {
@@ -2278,17 +2310,23 @@ fn session_map_right_click(
             .map(unit_label)
             .unwrap_or_else(|| "unit".to_string());
 
+        if debug {
+            eprintln!("[rclick] result=cancel unit={} ({label})", id.0);
+        }
+
         app.hud_mut().clear_interaction();
         app.hud_mut().push_log(format!("Cancelled ({label})"));
         return Transition::None;
     }
 
     let Some(selected) = app.hud().selected else {
+        if debug {
+            eprintln!("[rclick] result=no-selection");
+        }
         app.hud_mut().push_log("No unit selected — LMB selects");
         return Transition::None;
     };
 
-    let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
     let destination = GridPoint::new(grid_x, grid_y);
 
     if grid_x < 0
@@ -2296,6 +2334,9 @@ fn session_map_right_click(
         || grid_x >= max_core::geo::MAP_WIDTH
         || grid_y >= max_core::geo::MAP_HEIGHT
     {
+        if debug {
+            eprintln!("[rclick] result=outside-map grid=({grid_x},{grid_y})");
+        }
         app.hud_mut().push_log("Outside the map");
         return Transition::None;
     }
@@ -2303,6 +2344,9 @@ fn session_map_right_click(
     let can_move = app.state().unit(selected).is_some_and(hud::unit_can_move);
 
     if !can_move {
+        if debug {
+            eprintln!("[rclick] result=cannot-move selected={}", selected.0);
+        }
         app.hud_mut().push_log("Unit cannot move (air/stationary)");
         return Transition::None;
     }
@@ -2316,11 +2360,25 @@ fn session_map_right_click(
                 "Move: {steps} steps to ({}, {})",
                 destination.x, destination.y
             ));
+
+            if debug {
+                eprintln!(
+                    "[rclick] result=move selected={} steps={steps} to=({},{})",
+                    selected.0, destination.x, destination.y
+                );
+            }
+
             if !online {
                 apply_pending_orders(app);
             }
         }
         None => {
+            if debug {
+                eprintln!(
+                    "[rclick] result=no-path selected={} to=({},{})",
+                    selected.0, destination.x, destination.y
+                );
+            }
             app.hud_mut().preview = None;
             app.hud_mut()
                 .push_log(format!("No path to ({}, {})", destination.x, destination.y));

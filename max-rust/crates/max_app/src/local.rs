@@ -1004,6 +1004,10 @@ impl App {
         match phase {
             LocalPhase::PlayerTurn => {
                 self.state.tick();
+                // `App::tick` считает тики для диагностики/дайджеста; локальный
+                // цикл тикает здесь же, поэтому счётчик обязан расти и в окне,
+                // иначе трасса `MAX_DEBUG_INPUT` показывает вечный `tick 0`.
+                self.ticks += 1;
                 self.update_visual_units(dt);
                 update.ticked = true;
 
@@ -1027,6 +1031,7 @@ impl App {
             }
             LocalPhase::AiTurn(team) => {
                 self.state.tick();
+                self.ticks += 1;
                 self.update_visual_units(dt);
                 update.ticked = true;
 

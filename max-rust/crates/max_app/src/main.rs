@@ -844,7 +844,17 @@ fn run_ui(cli: &Cli) -> Result<()> {
             let input = input_event(event);
 
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
-                eprintln!("[in] screen={screen:?} event={input:?}");
+                let name = match &screen {
+                    Screen::MainMenu => "MainMenu",
+                    Screen::LocalSetup(_) => "LocalSetup",
+                    Screen::InSession { .. } => "InSession",
+                    Screen::GameOver => "GameOver",
+                    Screen::Introduction(_) => "Introduction",
+                    Screen::Credits(_) => "Credits",
+                    Screen::Help { .. } => "Help",
+                    _ => "Other",
+                };
+                eprintln!("[in] screen={name} event={input:?}");
             }
 
             if let Some(recorder) = recorder.as_mut() {
@@ -933,6 +943,53 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {
             let update = app.local_update(frame_dt);
+
+            if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
+                let tick = app.ticks();
+                if tick % 10 == 0 || tick <= 3 {
+                    let player = app.state().player_team;
+                    let mut units: Vec<String> = app
+                        .state()
+                        .unit_ids_in_order()
+                        .iter()
+                        .filter_map(|id| app.state().unit(*id))
+                        .filter(|u| u.team == player)
+                        .take(12)
+                        .map(|u| {
+                            // `vX.Y` — визуальная позиция спрайта: при `dt > 0`
+                            // она догоняет `grid` по фактическому маршруту.
+                            let (vx, vy) = app
+                                .visual_position(u.id)
+                                .unwrap_or((f32::from(u.grid.x), f32::from(u.grid.y)));
+                            format!(
+                                "{}@({},{})v{:.1},{:.1}",
+                                u.unit_type as u8, u.grid.x, u.grid.y, vx, vy
+                            )
+                        })
+                        .collect();
+                    units.sort();
+                    let phase = app
+                        .local()
+                        .map(|local| local.phase_caption())
+                        .unwrap_or_default();
+                    let selected = app
+                        .hud()
+                        .selected
+                        .map(|id| format!("sel={}", id.0))
+                        .unwrap_or_else(|| "sel=-".to_string());
+                    let preview = app
+                        .hud()
+                        .preview
+                        .as_ref()
+                        .map(|preview| preview.len())
+                        .unwrap_or(0);
+                    eprintln!(
+                        "[tick {tick}] turn={} phase={phase} {selected} preview={preview} units={}",
+                        app.state().turn_counter,
+                        units.join(" ")
+                    );
+                }
+            }
 
             if let Some(local) = app.local() {
                 ctx.status = local.status_line(app.state().turn_counter);

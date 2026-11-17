@@ -206,6 +206,40 @@
   - **QA.** `sp-full`/`hs-2` PASS; в кадрах `game-start`/`hs-green-turn`
     миникарта показывает только свои точки. Golden `game.png`,
     `upgrade-done.png`, `research-done.png` пересняты (0 дрейфа).
+- **Живая диагностика «юниты не двигаются» и интерактивная высадка
+  (2026-11-17).** Оракулы (`max-cpp-port`) не менялись.
+  - **«Генератор на клетке шахты» — ошибка чтения трассы.** `[tick]` печатал
+    `unit_type as u8`, а не id: `17@(22,22)` — это `LRGSLAB`, `40@(22,22)` —
+    `MININGST`; плита ставится в клетку шахты по C++
+    (`UnitsManager_DeployUnit(LRGSLAB, …, mining_station_location)`), а генератор
+    `2@(21,23)` — отдельная клетка (`GameManager_GetStartingPositionPowerGenerator`).
+    В живом прогоне на клетке высадки ровно `17,40`, генератора там нет.
+  - **Интерактивный поток.** После `generate_map` (порт
+    `GameManager_PopulateMapWithResources`: `FindValidStartingPosition` +
+    `Optimize`) позиция синхронизируется для **всех** `TeamDeployment`, а не
+    только для добавленных ИИ: высадка идёт по итоговой
+    `TeamMissionSupplies[team].starting_position`, как в C++. Golden не
+    изменились (точка из фазы высадки валидна, поэтому сдвига нет).
+  - **Трасса `MAX_DEBUG_INPUT`.** Локальный цикл теперь инкрементирует
+    `App::ticks` (раньше трасса вечно показывала `tick 0`), `[tick]` печатает
+    `grid` и визуальную `vX.Y` каждого юнита + `preview=N`; добавлен
+    `[rclick]` с grid/selected/результатом (`move`/`cancel`/`no-path`/…).
+    Без переменной окружения ничего не печатается.
+  - **Живой тест.** `build/scripts/ui-test-move2.ps1` — `SendInput`
+    (`MOUSEEVENTF_*`; union `INPUT` — на смещении 8, как в Win32), проверка
+    фокуса перед каждым кликом, `Enter` на высадке, координаты берутся из
+    трассы. Проверяет `[in] … RightClick`, `[rclick] result=move`,
+    `preview`, зелёные пиксели chrome-кадра (**152 px**) и после End Turn
+    `grid=25,21` с визуальным проходом `23,21 → 23.8,21 → 24.7,21 → 25,21`.
+  - **Тесты.** `tests/move_input.rs`:
+    `interactive_landing_keeps_the_generator_off_the_mining_station_cell`
+    (`PreGameFlow` → `TeamDeployment` → разные клетки; на клетке шахты только
+    `MININGST` + `LRGSLAB`) и
+    `rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop`
+    (реальные LMB/RMB → `local_update(dt)` → End Turn кнопкой панели →
+    `grid`/`vis` в цели, повторное выделение на новом ходу).
+  - **QA.** `move-input.qa` PASS, `golden/move-input/*` — **0 дрейфа**
+    (раскладка не менялась).
 
 ### Изменено
 
