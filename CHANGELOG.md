@@ -2,6 +2,29 @@
 
 ### Добавлено
 
+- **Панель статистики по типу юнита (`WINDOW_STAT_WINDOW`, TC-0601).**
+  `max_app::panels::rows_for` — порт `GameManager_UpdateInfoDisplay` +
+  `GameManager_DrawInfoDisplayRow`/`DrawInfoDisplayType1/2/3` из
+  `game_manager.cpp`: четыре строки выбираются по атрибутам и типу, а не
+  фиксированным набором `Hits/Ammo/Speed/Shots`. Мобильные наземные/морские/
+  воздушные: `Hits`, `Ammo` (при `ATTRIB_ATTACK != 0`), `Speed`, `Shots`;
+  турели: `Hits/Ammo/Shots` (Speed = 0 — строки нет); шахта и склады:
+  `Hits`, `Cargo` (`ATTRIB_STORAGE`), `Total` (запас комплекса, `_(d28b)`);
+  заводы: `Hits`, `Usage`, `Total` рабочих (`DrawInfoDisplayType1`); электро-
+  станции/генераторы: `Hits`, `Power`, `Total`, `Usage` (`Type2`); жилой блок:
+  `Hits`, `Teams`, `Total`; теплица игрока: `points`, `Total` (`Type3`).
+  Строку с нулевой базой или нулевым factor C++ не рисует вовсе
+  (`if (base_value && factor)`) — поэтому у шахты больше нет `Speed`/`Shots`,
+  а строки без данных остаются фоном окна. Цвета порогов сохранены
+  (`COLOR_RED` ≤ 1/4, `COLOR_YELLOW` ≤ 1/2, `COLOR_GREEN` иначе), подписи —
+  значения `en-US` из `language.json` (`Hits/Ammo/Cargo/Speed/Shots/Usage/
+  Power/Teams/Total/points`). `CargoMenu` (`UnitStats_DrawStats`) и нижняя
+  панель юнита уже были условными — добавлены регресс-тесты «у здания нет
+  Speed». Тесты: 10 unit в `panels` (шахта/танк/турель/разведчик/завод/
+  электростанция/жилой блок/чужой юнит/цвета + все 93 типа), 2 кадровых
+  `tests/stat_panel.rs`, +1 `hud`, +1 `mobilize`; QA `visual-screens.qa` и
+  `move-input.qa` снимают `mine-selected` (шахта без Speed), golden обновлён.
+
 - **MVE-интро (`Introduction`, `INTROFLC` → `maxint.mve`, TC-0108).**
   `max_assets::mve` — декодер видео Interplay MVE: контейнер (подпись,
   записи `u16 size/type`, опкоды), `CREATE_TIMER` (15 FPS), `SET_PALETTE`

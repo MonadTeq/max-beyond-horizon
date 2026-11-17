@@ -20,7 +20,7 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Юниты (спрайты, тени, командные цвета) | **1:1** (92 типа спрайтами; маркер — только `MASTER`) | `MAX.RES`: `TANK`, `INFANTRY`, … + `S_*` + `D_*` (башня, `angle_offsets`) | `max_render::sprite_atlas`, `max_assets::sprite`, `max_app::render::draw_unit_sprites` |
 | Окно и рамки интерфейса | **1:1** | `MAX.RES`: `FRAMEPIC` (640×480, своя палитра, RLE) | `max_app::chrome`, `max_render::layout` |
 | Раскладка элементов (карта/миникарта/кнопки) | **1:1** по координатам C++-порта | `window_manager.cpp` `windows[]` | `max_render::layout` |
-| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (портрет — FLC-анимация 15 FPS) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
+| Содержимое панелей (портрет, статистика, кнопки, таймеры) | **1:1** (портрет — FLC-анимация 15 FPS; 4 строки статистики — по типу юнита, §17) | `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`, `UNITNAME`, `SURV_*`, `STAT_*`, `COLOR_*`, `HITS_*`, `AMMO_*`, `RANG_*`, `VISN_*`, `GRID_*`, `NAMES_*`, `ZOOMPNL1`, `ZOOMPTR`, `FIND_OFF`, `PREV_OF`, `UDONE_OF`, `NEXT_OF`, `HELP_OF`, `REPT_OFF`, `CHAT_OFF`, `MIN2X_OF`, `MINFL_OF` | `max_app::panels` |
 | Миникарта | **1:1** (FOV-маска, рамка камеры, точки юнитов, `2x`/`TNT`; рамка — из `FRAMEPIC`) | `.WRL::minimap()`, палитра окна + `.WRL` 64…159, `RAWMSK*`/… | `max_app::panels::draw_minimap` |
 | Шрифт | **1:1 (растровые GNW)** | `FONT1.FON`, `FONT2.FON`, `FONT5.FON` (копии — `max_render/data/`), сверены с FreeType-путём порта | `max_render::text::gnw` |
 | Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
@@ -1687,4 +1687,94 @@ PASS (трасса build/ui-test-move2/trace.log, кадры 01…11)
 * `build/scripts/ui-test-move2.ps1` — живой прогон с `SendInput`; PASS.
 * QA: `move-input.qa` PASS; `golden/move-input/*` — 0 дрейфа (раскладка не
   менялась, менялись только диагностика и синхронизация точки высадки).
+
+## 17. Строки статистики по типу юнита — **сделано** (2026-11-17)
+
+Жалоба: у шахты в панели статистики (`WINDOW_STAT_WINDOW` (10,173) 153×48,
+строки `WINDOW_STAT_ROW_1..4`) показывался `Speed` — бессмыслица для
+стационарного здания. В Rust панель всегда рисовала фиксированные
+`Hits/Ammo/Speed/Shots` из `UnitInfo`; оракул `max-cpp-port` не менялся.
+
+### 17.1 Как это устроено в C++ (`game_manager.cpp`)
+
+`GameManager_UpdateInfoDisplay` (`game_manager.cpp:7667`) **не** переключается
+по классу юнита — строки выбираются по атрибутам `UnitInfo::base_values`, а
+`GameManager_DrawInfoDisplayRow` (`:7370`) рисует строку только при
+`base_value && factor`. Поэтому у шахты `ATTRIB_SPEED == 0` — строки `Speed`
+просто нет (фон окна), а не «0/0».
+
+Базовые строки (`:7682-7731`):
+
+| Строка | Условие | Значение | База | factor |
+|---|---|---|---|---|
+| 1 | всегда | `unit->hits` | `ATTRIB_HITS` | 4 |
+| 2 | `ATTRIB_ATTACK != 0` | `unit->ammo` | `ATTRIB_AMMO` (чужой — 0) | 1 |
+| 2 | иначе | `unit->storage` | `ATTRIB_STORAGE` (чужой — factor 0) | 1/2/3, для `RAW/FUEL/GOLD` — 10 |
+| 3 | — | `unit->speed` | `ATTRIB_SPEED` | 1 |
+| 4 | — | `unit->shots` | `min(ATTRIB_ROUNDS, ATTRIB_AMMO)` | 1 |
+
+Затем наложения (только своя команда):
+
+* `DrawInfoDisplayType2` (`:7437`, при `ATTRIB_STORAGE == 0`): `Usage`/`Power`
+  (строка 2), `Total`/`Usage` по потреблению и выработке комплекса (строки 3/4);
+* `DrawInfoDisplayType3` (`:7581`, `GREENHSE`): `points` + `Total` очков партии;
+* `DrawInfoDisplayType1` (`:7509`, иначе): `Usage`/`Teams` рабочих + `Total`/
+  `Usage` по комплексу;
+* запас комплекса (`:7744`: свой, `STATIONARY`, `RAW/FUEL/GOLD`, storage > 0):
+  `Total` (сумма `storage` / сумма `ATTRIB_STORAGE` зданий комплекса) поверх
+  строки 3.
+
+Цвет значения (`:7388-7407`): красный `≤ base/4`, жёлтый `≤ base/2`, зелёный
+иначе (сохранено в [`StatRow::color`]); подписи — `language.json`
+(`c02c` Hits, `5027` Ammo, `1274` Cargo, `c372` Speed, `2bce` Shots, `8d59/
+3aea/81c5/160c` Usage, `848e` Power, `1e1a` Teams, `d28b/c9b3/d4ca/7be8/5f25`
+Total, `c54a` points).
+
+Осознанные ограничения порта: отладочный `GameManager_MaxSpy` (показ панели
+чужих юнитов) не портирован — наложения рисуются только при
+`unit.team == player_team`; в циклах `Type1/Type2` C++ на время считает
+производство юнита в `ORDER_UPGRADE` по предыдущему приказу
+(`SetOrder(prior)`/`SetPriorOrder`), здесь то же делается на клоне юнита без
+мутации состояния.
+
+### 17.2 Что показывает панель по классам (порт `panels::rows_for`)
+
+| Класс (примеры) | Строка 1 | Строка 2 | Строка 3 | Строка 4 |
+|---|---|---|---|---|
+| Мобильные наземные/морские с атакой (`TANK`, `SCOUT`, `INFANTRY`, `ARTILLRY`) | Hits | **Ammo** | **Speed** | **Shots** |
+| Мобильные без атаки (`SURVEYOR`, `SCANNER`, `MASTER`) | Hits | — (storage 0) | Speed | — |
+| Строители/транспорт (`CONSTRCT`, `ENGINEER`, `BULLDOZR`, `SPLYTRCK`, `CARGOSHP`) | Hits | **Cargo** | Speed | — |
+| Воздушные (`FIGHTER`, `BOMBER`, `AWAC`; `AIRTRANS` с грузом 3) | Hits | — / **Cargo** | Speed | Shots / — |
+| Турели (`GUNTURRT`, `ANTIAIR`, `ARTYTRRT`, `ANTIMSSL`) | Hits | **Ammo** | — (speed 0) | **Shots** |
+| Мины (`LANDMINE`, `SEAMINE`) | Hits | — (ammo 0) | — | — |
+| Шахта, склады (`MININGST`, `ADUMP`, `FDUMP`, `GOLDSM`) | Hits | **Cargo** (`ATTRIB_STORAGE`) | **Total** (запас комплекса) | — |
+| Казармы/доки (`BARRACKS`, `DEPOT`, `HANGAR`, `DOCK`) | Hits | **Cargo** (хранят юнитов) | — | — |
+| Заводы «рабочие» (`TRAINHAL`, `RESEARCH`; `Type1`) | Hits | **Usage** (рабочие) | **Total** (рабочие) | — |
+| Заводы «энергия» (`LIGHT/HEAVYPLT`, `AIRPLT`, `SHIPYARD`; `Type2`) | Hits | **Usage** (энергия) | **Total** (потребление) | — |
+| Электростанции (`POWERSTN`, `POWGEN`) | Hits | **Power** (выработка) | **Total** (выработка) | **Usage** (потребление) |
+| Потребители энергии (`COMMTWR`) | Hits | **Usage** (энергия) | **Total** (потребление) | — |
+| Жилой блок (`HABITAT`) | Hits | **Teams** (рабочие) | **Total** (рабочие) | — |
+| Теплица игрока (`GREENHSE`) | Hits | **points** | **Total** (очки партии) | — |
+| Чужой юнит (любой) | Hits | — (`Ammo` с базой 0 / `Cargo` с factor 0) | Speed (если > 0) | Shots (если > 0) |
+
+«—» — строка не рисуется (нулевая база/`factor`), как в C++. Строка 3 у
+шахты — `Total` запаса комплекса, поэтому `Speed` у здания отсутствует.
+
+### 17.3 Код и тесты
+
+* `max_app::panels::rows_for` + `StatRow`/`StatLabel` (`crates/max_app/src/panels.rs`)
+  — публичный порт выбора строк; `draw_stats` рисует только `Some(..)`,
+  `StatRow::color` — пороги C++.
+* 10 unit-тестов `panels::tests` (шахта/танк/турель/разведчик/завод/
+  электростанция/жилой блок/чужой юнит/цвета + «Speed только при
+  `ATTRIB_SPEED > 0`» на всех 93 типах), 2 кадровых
+  `tests/stat_panel.rs` (шахта: 3 строки, танк: 4; завод: `Usage`/`Total`),
+  регресс в `hud` (нижняя панель без Speed) и `mobilize` (`CargoMenu`:
+  `UnitStats_DrawStats` не рисует Speed у зданий).
+* QA: `visual-screens.qa` и `move-input.qa` — новый кадр `mine-selected`
+  (Hits 56/56, Cargo 0/25, Total 0/25, строка 4 пустая), `portrait`
+  (Surveyor: Hits 16/16, Speed 7/7, пустые строки 2/4) — golden обновлён;
+  `production.qa`/`cargo-full.qa` не изменились (BuildMenu/CargoMenu
+  закрывают панель/уже условны).
+
 

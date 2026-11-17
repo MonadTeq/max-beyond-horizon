@@ -1717,6 +1717,28 @@ mod tests {
         assert!(lines[4].contains("GRID 10,10"), "{lines:?}");
     }
 
+    /// Панель юнита (нижние строки, не `STAT_WINDOW`) не показывает Speed —
+    /// ни у танка, ни у здания (в C++ `Speed` вообще нет в этой панели).
+    #[test]
+    fn unit_panel_lines_never_show_speed() {
+        let (mut app, tank, _enemy) = test_app();
+        let mine = app
+            .state_mut()
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(16, 10), 0)
+            .expect("шахта создана");
+
+        for (id, what) in [(tank, "танк"), (mine, "шахта")] {
+            let lines = unit_panel_lines(app.state(), id);
+
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| !line.contains("SPEED") && !line.contains("Speed")),
+                "{what}: {lines:?}"
+            );
+        }
+    }
+
     #[test]
     fn escape_cancels_then_leaves_the_session() {
         let (mut app, tank, _enemy) = test_app();

@@ -78,6 +78,13 @@ assert turn=1
 tick 10
 shot game
 
+# TC-0601: панель статистики здания. Шахта (22,22) → (404,242) — стационарная:
+# C++ `GameManager_UpdateInfoDisplay` рисует Hits, Cargo (ATTRIB_STORAGE 25) и
+# запас комплекса (строка 3, `_(d28b)`), а Speed/Shots с нулевой базой не рисует.
+click 404 242
+assert unit-pos=22,22
+shot mine-selected
+
 # TC-0919: портрет CORNER_FLIC — FLC-анимация выделенного юнита. Камера стоит
 # на шахте (22,22) → (404,242); Surveyor (23,21) → (468,178), как в move-input.qa.
 # В QA `dt = 0`, поэтому кадр портрета — первый кадр FLC (`SURVEYOR.FLC`),

@@ -3728,6 +3728,38 @@ mod tests {
         assert_eq!(mobilization.build_rate(UnitType::LandMine), 0);
     }
 
+    /// `UnitStats_DrawStats`: `Speed` — только при `ATTRIB_SPEED > 0`
+    /// (`if (unit_values2->GetAttribute(ATTRIB_SPEED))`), поэтому здания
+    /// (шахта/завод/турель) в `CargoMenu` строку `Speed` не показывают.
+    #[test]
+    fn cargo_menu_buildings_never_show_speed() {
+        let mut mobilization = mobilization();
+
+        for unit_type in [
+            UnitType::MiningStation,
+            UnitType::TrainingHall,
+            UnitType::GunTurret,
+        ] {
+            mobilization.info = Some(unit_type);
+            let rows = mobilization.stats_rows();
+
+            assert!(
+                rows.iter().all(|row| row.label != "Speed"),
+                "{unit_type:?}: {:?}",
+                rows.iter().map(|row| row.label).collect::<Vec<_>>()
+            );
+        }
+
+        mobilization.info = Some(UnitType::Tank);
+        assert!(
+            mobilization
+                .stats_rows()
+                .iter()
+                .any(|row| row.label == "Speed"),
+            "у танка Speed должен остаться"
+        );
+    }
+
     #[test]
     fn upgraded_values_show_delta_pips() {
         let mut mobilization = mobilization();

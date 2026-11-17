@@ -20,13 +20,13 @@ max-rust-qa/
 ├── scripts/soak-100.qa         # P4: soak-партия 100 ходов (человек + компьютер), mem/кадры/ассерты
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
 ├── scripts/move-input.qa       # TC-0601/0603/0604: выделение кликом → RMB-приказ → End Turn → юнит сдвинулся
-├── golden/*.png                # эталоны visual-screens.qa (13 кадров, ~1.4 МиБ)
+├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
 ├── golden/research/*.png       # эталон партии после исследования (research.qa)
 ├── golden/research-help/*.png  # эталоны ResearchMenu + Help-экранов (research-help.qa)
 ├── golden/cargo/*.png          # эталоны CargoMenu: покупка/модернизация/после апгрейда
-├── golden/move-input/*.png     # эталоны старта партии/выделения/предпросмотра/хода 2 (move-input.qa)
+├── golden/move-input/*.png     # эталоны старта/выделения шахты/выделения Surveyor'а/предпросмотра/хода 2 (6)
 └── scripts/README.md
 ```
 
@@ -178,7 +178,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 |---|---|---|
 | `sp-full.qa` | главное меню → Options (No Limit, Turn Based) → Planet → Players (`RED` человек, `GREEN` компьютер) → экран клана (`clan`) → мобилизация (`mobilize buy` ×2 + Done) → выбор точки высадки (`landing grid 30 22`, не совпадает со стартовой четвертью, + Done) → партия: `select unit`, `move near`, 3 × `end_turn` с ходами ИИ, `assert turn>=3`, сохранение `MXLS` | **PASS** (55 шагов, 14 кадров, ~380 кадров цикла) |
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → фазы старта для GREEN и RED по очереди (мобилизация + высадка) → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (64 шага, 14 кадров) |
-| `visual-screens.qa` | 13 экранов только с `shot` (main menu, introduction, credits, options, planet, players, mobilize, landing, game, portrait, winloss, multiplayer, join list); Introduction — заглушка MVE, Credits — прокрутка после `tick 100`, portrait — FLC выделенного Surveyor'а (TC-0919); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (232 кадра, 13 кадров = эталоны) |
+| `visual-screens.qa` | 15 кадров только с `shot` (main menu, introduction, credits, options, planet, players, mobilize, landing, game, mine-selected, portrait, winloss, multiplayer, join list); Introduction — заглушка MVE, Credits — прокрутка после `tick 100`, `mine-selected` — панель статистики шахты (Hits/Cargo/Total, без Speed), portrait — FLC выделенного Surveyor'а (TC-0919); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (442 кадра, 15 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
 | `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL (10 ходов) → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`) |
 | `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |
@@ -188,7 +188,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `soak-100.qa` | P4 soak: Options (Clueless, No Limit, Turn Based, Duration 200) → мобилизация без покупок → высадка → `select unit 0`/`move near` в начале и на 41-м ходу → 100 × `end_turn` (ходы ИИ) → `assert turn=21/41/61/81/101`, `assert screen=InGame`, `shot` и `mem` каждые 20 ходов, `save_v70 soak-turn100.dta`; в `log.txt` — `# mem start/end` и (при `MAX_TICK_PROFILE=1`) строка `PROFILE` | **PASS** (100 ходов, 12 208 кадров, 7 PNG; V70-сейв 157 921 Б; RSS 54 696 → 60 944 КиБ) |
 | `edge-cases.qa` | P4 TC-1106/1111/1112: 50 кликов по пустым областям главного меню + 50 по карте (без паник), не-ASCII `type` в чате и в поле имени, выход из партии → New Game → Cancel → полный второй старт до `turn=2`; кадры `edge-menu-spam`/`edge-game-spam`/`edge-unicode-*`/`edge-repeat-start`/`edge-second-game` | **PASS** |
 | `cargo-full.qa` | P7: мобилизация целиком — `assert cargo-types=15`, покупка Gold Truck (14-я строка, прокрутка списка), Mine Layer и Constructor, cargo-слайдер (+20 единиц), `CRGTOG` → список модернизации (62 типа), фильтры домена, апгрейд armor Constructor'а, `Done` → `assert gold<150`; кадры `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` | **PASS** (golden `cargo/`) |
-| `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`); кадры `game-start`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 5 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
+| `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по шахте (`assert unit-pos=22,22`, панель Hits/Cargo/Total) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`); кадры `game-start`/`mine-selected`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 6 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому

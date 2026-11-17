@@ -9,8 +9,11 @@
 //! * портрет `CORNER_FLIC` (10,29) 128×128 — FLC-анимация юнита
 //!   (`max_assets::flic`, 15 FPS, см. [`crate::portrait`]); без FLC/выделения —
 //!   чёрный фон (или статичный спрайт ×2 как fallback);
-//! * статистика `STAT_WINDOW` (10,173) 153×48 — четыре строки `Hits/Ammo/
-//!   Speed/Shots` шрифтом `GNW_TEXT_FONT_2`;
+//! * статистика `STAT_WINDOW` (10,173) 153×48 — четыре строки шрифтом
+//!   `GNW_TEXT_FONT_2`, состав зависит от юнита ([`rows_for`], порт
+//!   `GameManager_UpdateInfoDisplay`): у мобильных — `Hits/Ammo/Speed/Shots`,
+//!   у зданий — `Hits/Cargo` и строки `Usage`/`Power`/`Total` экономики
+//!   комплекса (никакого `Speed` у шахты);
 //! * сетка переключателей `SURV_OFF/ON`…`NAMES_UP/DN` (9 кнопок 55×16/18);
 //! * зум `ZOOMPNL1` + `ZOOMPTR` в (20,275) 130×19;
 //! * низ: `XYPOS` (242,456) 90×21 и `UNITNAME` (338,456) 222×21;
@@ -29,9 +32,17 @@
 //! проверяет панели (включая End Turn, который намеренно заходит на карту).
 
 use max_assets::image::SimpleImage;
-use max_core::game::GameState;
-use max_core::unit::UnitInfo;
-use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED};
+use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType, VictoryType};
+use max_core::game::{GameState, PLAYER_TEAM_COUNT};
+use max_core::team::{TeamId, TeamKind};
+use max_core::unit::{UnitInfo, UnitListKind};
+use max_core::unit_values::{
+    ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE,
+};
+use max_core::victory::{
+    cargo_get_net_production, cargo_life_consumption_rate, cargo_power_consumption_rate,
+    cargo_type_of, CargoType, NetProduction,
+};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
 use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFont, GnwFontId};
@@ -44,6 +55,10 @@ pub const TEXT: u8 = 0xA2;
 /// `COLOR_GREEN` (`0x02`) — имя юнита в портрете
 /// (`GameManager_MenuUnitSelect`: `win_print(..., COLOR_GREEN)`).
 pub const GREEN: u8 = 0x02;
+/// `COLOR_RED` (`0x01`) — значение ≤ 1/4 базы (`GameManager_DrawInfoDisplayRow`).
+pub const RED: u8 = 0x01;
+/// `COLOR_YELLOW` (`0x04`) — значение ≤ 1/2 базы.
+pub const YELLOW: u8 = 0x04;
 /// Обводка подписей кнопок (`0xA7`).
 pub const CAPTION_OUTLINE: u8 = 0xA7;
 /// Тень подписей кнопок и текста (`0xE6`).
@@ -1038,93 +1053,526 @@ pub fn unit_name(unit: &UnitInfo) -> String {
     }
 }
 
-/// Одна строка статистики (`GameManager_DrawInfoDisplayRow`).
-fn draw_stat_row(
-    frame: &mut RgbaBuffer,
-    row: PixelRect,
-    label: &str,
-    current: i32,
-    base: i32,
-    palette: &UiPalette,
-) {
-    let base_value = base.max(0);
-    let current_value = current.clamp(0, base_value.max(0));
-    let color = if base_value > 0 {
-        if current_value <= base_value / 4 {
-            0x01
-        } else if current_value <= base_value / 2 {
-            0x04
-        } else {
-            0x02
+/// Подпись строки статистики — `_(id)` из `game_manager.cpp` (`language.json`).
+///
+/// Идентификаторы C++ → строки en-US: `c02c` Hits, `5027` Ammo, `1274` Cargo,
+/// `c372` Speed, `2bce` Shots, `8d59`/`3aea`/`81c5`/`160c` Usage, `848e` Power,
+/// `1e1a` Teams, `d28b`/`c9b3`/`d4ca`/`7be8`/`5f25` Total, `c54a` points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatLabel {
+    /// Строка 1 — `_(c02c)`.
+    Hits,
+    /// Строка 2 у вооружённых — `_(5027)`.
+    Ammo,
+    /// Строка 2 у складов/транспорта — `_(1274)`.
+    Cargo,
+    /// Строка 3 у мобильных — `_(c372)`.
+    Speed,
+    /// Строка 4 — `_(2bce)`.
+    Shots,
+    /// `DrawInfoDisplayType1/2` — `_(8d59)`/`_(3aea)`/`_(81c5)`/`_(160c)`.
+    Usage,
+    /// `DrawInfoDisplayType2` у генератора — `_(848e)`.
+    Power,
+    /// `DrawInfoDisplayType1` у генератора рабочих — `_(1e1a)`.
+    Teams,
+    /// `DrawInfoDisplayType1/2/3` и запас комплекса — `_(d28b)`/`_(c9b3)`/
+    /// `_(d4ca)`/`_(7be8)`/`_(5f25)`.
+    Total,
+    /// `DrawInfoDisplayType3` (теплица) — `_(c54a)`.
+    Points,
+}
+
+impl StatLabel {
+    /// Подпись строки (значение `en-US` из `language.json` — как в игре).
+    pub const fn caption(self) -> &'static str {
+        match self {
+            Self::Hits => "Hits",
+            Self::Ammo => "Ammo",
+            Self::Cargo => "Cargo",
+            Self::Speed => "Speed",
+            Self::Shots => "Shots",
+            Self::Usage => "Usage",
+            Self::Power => "Power",
+            Self::Teams => "Teams",
+            Self::Total => "Total",
+            Self::Points => "points",
         }
+    }
+}
+
+/// Одна нарисованная строка статистики (`GameManager_DrawInfoDisplayRow`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatRow {
+    /// Подпись (левый бокс 45…75 px).
+    pub label: StatLabel,
+    /// Текущее значение (`current_value` после `std::min(current, base)`).
+    pub current: i32,
+    /// База (`base_value`); строка рисуется только при `base != 0`.
+    pub base: i32,
+    /// Шаг pips-иконок C++ (`factor`); `0` — C++ не рисует строку вовсе.
+    pub factor: i32,
+}
+
+impl StatRow {
+    /// Текст значения: `sprintf(text, "%i/%i", current_value, base_value)`.
+    pub fn text(&self) -> String {
+        format!("{}/{}", self.current, self.base)
+    }
+
+    /// Цвет значения — `GameManager_DrawInfoDisplayRow`:
+    /// красный `≤ base/4`, жёлтый `≤ base/2`, иначе зелёный.
+    pub fn color(&self) -> u8 {
+        if self.base <= 0 {
+            return TEXT;
+        }
+        if self.current <= self.base / 4 {
+            RED
+        } else if self.current <= self.base / 2 {
+            YELLOW
+        } else {
+            GREEN
+        }
+    }
+}
+
+/// Строка C++: `if (base_value && factor)` — иначе `DrawInfoDisplayRow`
+/// не рисует ничего, и строка остаётся пустой (фон `FRAMEPIC`).
+fn make_row(label: StatLabel, current: i32, base: i32, factor: i32) -> Option<StatRow> {
+    if base == 0 || factor == 0 {
+        return None;
+    }
+
+    Some(StatRow {
+        label,
+        current: current.min(base),
+        base,
+        factor,
+    })
+}
+
+/// Наложение строки поверх уже нарисованной (C++ рисует поверх буфера
+/// `WINDOW_STAT_ROW_N`; пропущенный вызов оставляет прежнее содержимое).
+fn assign_row(rows: &mut [Option<StatRow>; 4], index: usize, row: Option<StatRow>) {
+    if let Some(row) = row {
+        rows[index] = Some(row);
+    }
+}
+
+/// `Cargo_GetNetProduction(unit)` в цикле `DrawInfoDisplayType1/2`: у юнита в
+/// `ORDER_UPGRADE` C++ считает производство по **предыдущему** приказу
+/// (временно `SetOrder(prior)`), поэтому клонируем с `prior_orders`.
+fn net_production_of(state: &GameState, unit: &UnitInfo) -> NetProduction {
+    if unit.orders == UnitOrder::Upgrade && unit.state == UnitOrderState::ExecutingOrder {
+        let mut simulated = unit.clone();
+
+        simulated.orders = unit.prior_orders;
+
+        cargo_get_net_production(state, &simulated, false)
     } else {
-        TEXT
+        cargo_get_net_production(state, unit, false)
+    }
+}
+
+/// `GameManager_DrawInfoDisplayType2` — энергия: строка 2 `Usage`/`Power`,
+/// строки 3/4 — `Total`/`Usage` по комплексу (только свои юниты).
+fn power_rows(
+    state: &GameState,
+    unit: &UnitInfo,
+    player_team: TeamId,
+    rows: &mut [Option<StatRow>; 4],
+) {
+    let power_need = cargo_power_consumption_rate(unit.unit_type);
+
+    if power_need == 0
+        || unit.team != player_team
+        || cargo_life_consumption_rate(unit.unit_type) != 0
+    {
+        return;
+    }
+
+    let cargo = cargo_get_net_production(state, unit, false);
+    let current_power_need = cargo.power;
+
+    if power_need >= 0 {
+        // `_(8d59)` «Usage»: сколько энергии юнит потребит.
+        assign_row(
+            rows,
+            1,
+            make_row(StatLabel::Usage, -current_power_need, power_need, 1),
+        );
+    } else {
+        // `_(848e)` «Power»: сколько энергии юнит даёт.
+        assign_row(
+            rows,
+            1,
+            make_row(StatLabel::Power, current_power_need, -power_need, 1),
+        );
+    }
+
+    let mut power_need_total = 0;
+    let mut current_power_need = 0;
+    let mut current_value = 0;
+    let mut base_value = 0;
+
+    for &id in state.unit_list(UnitListKind::Stationary) {
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
+
+        if other.complex != unit.complex {
+            continue;
+        }
+
+        let rate = cargo_power_consumption_rate(other.unit_type);
+
+        if rate >= 0 {
+            base_value += rate;
+        } else {
+            power_need_total -= rate;
+        }
+
+        let cargo = net_production_of(state, other);
+
+        if cargo.power >= 0 {
+            current_power_need += cargo.power;
+        } else {
+            current_value -= cargo.power;
+        }
+    }
+
+    if cargo_power_consumption_rate(unit.unit_type) > 0 {
+        assign_row(
+            rows,
+            2,
+            make_row(StatLabel::Total, current_value, base_value, 1),
+        );
+    } else {
+        assign_row(
+            rows,
+            2,
+            make_row(StatLabel::Total, current_power_need, power_need_total, 1),
+        );
+        assign_row(
+            rows,
+            3,
+            make_row(StatLabel::Usage, current_value, base_value, 1),
+        );
+    }
+}
+
+/// `GameManager_DrawInfoDisplayType1` — рабочие: строка 2 `Usage`/`Teams`,
+/// строки 3/4 — `Total`/`Usage` по комплексу (только свои юниты).
+fn life_rows(
+    state: &GameState,
+    unit: &UnitInfo,
+    player_team: TeamId,
+    rows: &mut [Option<StatRow>; 4],
+) {
+    let life_need = cargo_life_consumption_rate(unit.unit_type);
+
+    if life_need == 0 || unit.team != player_team {
+        return;
+    }
+
+    let cargo = cargo_get_net_production(state, unit, false);
+    let current_life_need = cargo.life;
+
+    if life_need >= 0 {
+        assign_row(
+            rows,
+            1,
+            make_row(StatLabel::Usage, -current_life_need, life_need, 1),
+        );
+    } else {
+        assign_row(
+            rows,
+            1,
+            make_row(StatLabel::Teams, current_life_need, -life_need, 1),
+        );
+    }
+
+    let mut life_need_total = 0;
+    let mut current_life_need = 0;
+    let mut current_value = 0;
+    let mut base_value = 0;
+
+    for &id in state.unit_list(UnitListKind::Stationary) {
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
+
+        if other.complex != unit.complex {
+            continue;
+        }
+
+        let rate = cargo_life_consumption_rate(other.unit_type);
+
+        if rate >= 0 {
+            base_value += rate;
+        } else {
+            life_need_total -= rate;
+        }
+
+        let cargo = net_production_of(state, other);
+
+        if cargo.life >= 0 {
+            current_life_need += cargo.life;
+        } else {
+            current_value -= cargo.life;
+        }
+    }
+
+    if cargo_life_consumption_rate(unit.unit_type) > 0 {
+        assign_row(
+            rows,
+            2,
+            make_row(StatLabel::Total, current_value, base_value, 1),
+        );
+    } else {
+        assign_row(
+            rows,
+            2,
+            make_row(StatLabel::Total, current_life_need, life_need_total, 1),
+        );
+        assign_row(
+            rows,
+            3,
+            make_row(StatLabel::Usage, current_value, base_value, 1),
+        );
+    }
+}
+
+/// `GameManager_DrawInfoDisplayType3` — теплица игрока: очки партии.
+fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRow>; 4]) {
+    let mut current_value = if state.victory_type == VictoryType::Score {
+        state.victory_limit
+    } else {
+        let mut value = 0;
+
+        for team in 0..PLAYER_TEAM_COUNT {
+            let info = &state.teams[team];
+
+            if info.team_type != TeamKind::None && info.team_type != TeamKind::Eliminated {
+                value = value.max(state.teams[unit.team.0 as usize].team_points as i32);
+            }
+        }
+
+        value
     };
+
+    if current_value < 1 {
+        current_value = 10;
+    }
+
+    let value_limit = (current_value + 14) / 15;
+    let storage = i32::from(unit.storage);
+
+    assign_row(
+        rows,
+        1,
+        make_row(StatLabel::Points, storage, storage, value_limit),
+    );
+    assign_row(
+        rows,
+        2,
+        make_row(
+            StatLabel::Total,
+            state.teams[unit.team.0 as usize].team_points as i32,
+            current_value,
+            value_limit,
+        ),
+    );
+}
+
+/// Запас комплекса — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
+/// `Cargo_GetCargoCapacity`: сумма `storage` и `ATTRIB_STORAGE` стационарных
+/// юнитов того же комплекса с тем же типом груза (строка `_(d28b)` «Total»).
+fn complex_cargo(state: &GameState, unit: &UnitInfo, cargo_type: CargoType) -> (i32, i32) {
+    let mut value = 0;
+    let mut capacity = 0;
+
+    for &id in state.unit_list(UnitListKind::Stationary) {
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
+
+        if other.complex != unit.complex || cargo_type_of(other.unit_type) != cargo_type {
+            continue;
+        }
+
+        value += i32::from(other.storage);
+        capacity += other.base_values.get_attribute(ATTRIB_STORAGE);
+    }
+
+    (value, capacity)
+}
+
+/// Четыре строки статистики выбранного юнита — порт `GameManager_UpdateInfoDisplay`
+/// (`game_manager.cpp:7667`), порядок вызовов сохранён:
+///
+/// 1. строка 1 — `Hits` (`unit->hits` / `ATTRIB_HITS`, factor 4);
+/// 2. строка 2 — `Ammo` при `ATTRIB_ATTACK != 0` (база `ATTRIB_AMMO` только
+///    для своей команды), иначе `Cargo` (`unit->storage` / `ATTRIB_STORAGE` с
+///    масштабом по типу груза; чужому юниту — factor 0, строка не рисуется);
+/// 3. строка 3 — `Speed` (`unit->speed` / `ATTRIB_SPEED`);
+/// 4. строка 4 — `Shots` (`unit->shots` / `min(ROUNDS, AMMO)`).
+///
+/// Затем поверх (как C++, только для `player_team`):
+/// [`power_rows`] при `ATTRIB_STORAGE == 0`, [`greenhouse_rows`] для `GREENHSE`
+/// либо [`life_rows`], и строка запаса комплекса [`complex_cargo`] для своих
+/// стационарных складов (`RAW`/`FUEL`/`GOLD`).
+///
+/// Строка с нулевой базой или нулевым factor остаётся пустой — ровно как
+/// `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`).
+pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Option<StatRow>; 4] {
+    let values = &unit.base_values;
+    let own = unit.team == player_team;
+    let mut rows: [Option<StatRow>; 4] = [None; 4];
+
+    // Строка 1: `Hits` — при ненулевой базе (factor 4).
+    rows[0] = make_row(
+        StatLabel::Hits,
+        i32::from(unit.hits),
+        values.get_attribute(ATTRIB_HITS),
+        4,
+    );
+
+    // Строка 2: `Ammo` у вооружённых / `Cargo` у остальных.
+    let storage_value = values.get_attribute(ATTRIB_STORAGE);
+    let cargo_type = cargo_type_of(unit.unit_type);
+    let mut scaling_factor = 0;
+
+    if values.get_attribute(ATTRIB_ATTACK) != 0 {
+        // Врагу боезапас не показываем (`ammo = 0` в C++).
+        let ammo = if own {
+            values.get_attribute(ATTRIB_AMMO)
+        } else {
+            0
+        };
+
+        rows[1] = make_row(StatLabel::Ammo, i32::from(unit.ammo), ammo, 1);
+    } else {
+        scaling_factor = if storage_value <= 4 {
+            1
+        } else if storage_value <= 8 {
+            2
+        } else {
+            3
+        };
+
+        if (cargo_type as u8) < (CargoType::Land as u8) {
+            scaling_factor = 10;
+        }
+
+        if !own {
+            scaling_factor = 0;
+        }
+
+        rows[1] = make_row(
+            StatLabel::Cargo,
+            i32::from(unit.storage),
+            storage_value,
+            scaling_factor,
+        );
+    }
+
+    // Строка 3: `Speed`, строка 4: `Shots` (`min(ROUNDS, AMMO)`).
+    rows[2] = make_row(
+        StatLabel::Speed,
+        i32::from(unit.speed),
+        values.get_attribute(ATTRIB_SPEED),
+        1,
+    );
+    rows[3] = make_row(
+        StatLabel::Shots,
+        i32::from(unit.shots),
+        values
+            .get_attribute(ATTRIB_ROUNDS)
+            .min(values.get_attribute(ATTRIB_AMMO)),
+        1,
+    );
+
+    // `GameManager_DrawInfoDisplayType2` — только если `ATTRIB_STORAGE == 0`.
+    if storage_value == 0 {
+        power_rows(state, unit, player_team, &mut rows);
+    }
+
+    // Теплица игрока — Type3 вместо Type1.
+    if unit.unit_type == UnitType::Greenhouse && own {
+        greenhouse_rows(state, unit, &mut rows);
+    } else {
+        life_rows(state, unit, player_team, &mut rows);
+    }
+
+    // Запас комплекса — `_(d28b)` поверх строки 3.
+    if own
+        && storage_value > 0
+        && unit.flags & unit_flags::STATIONARY != 0
+        && (cargo_type as u8) >= (CargoType::Raw as u8)
+        && (cargo_type as u8) <= (CargoType::Gold as u8)
+    {
+        let (value, capacity) = complex_cargo(state, unit, cargo_type);
+
+        assign_row(
+            &mut rows,
+            2,
+            make_row(StatLabel::Total, value, capacity, scaling_factor),
+        );
+    }
+
+    rows
+}
+
+/// Одна нарисованная строка (`GameManager_DrawInfoDisplayRow`): значение
+/// `current/base` цветом порога и подпись `0xA2`, шрифт `GNW_TEXT_FONT_2`.
+fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette: &UiPalette) {
     let font = GnwFontId::Font2.font();
-    let value = format!("{current_value}/{base_value}");
     let value_rect = PixelRect::new(row.ulx, row.uly, 45, row.height);
 
-    draw_centered(frame, value_rect, font, &value, palette.rgba(color));
+    draw_centered(
+        frame,
+        value_rect,
+        font,
+        &stat.text(),
+        palette.rgba(stat.color()),
+    );
     draw_text_gnw(
         frame,
         row.ulx + 45,
         row.uly + ((row.height + 1) - font.height()).max(0) / 2,
         font,
-        label,
+        stat.label.caption(),
         palette.rgba(TEXT),
     );
 }
 
-/// Четыре строки статистики выбранного юнита.
+/// Четыре строки статистики выбранного юнита ([`rows_for`]).
+///
+/// Строки, которые C++ не рисует, остаются фоном окна — [``None``].
 fn draw_stats(
     frame: &mut RgbaBuffer,
-    _state: &GameState,
+    state: &GameState,
     selected: Option<&UnitInfo>,
     palette: &UiPalette,
 ) -> u32 {
     let Some(unit) = selected else {
         return 0;
     };
-    let values = &unit.base_values;
-    let max_hits = values.get_attribute(ATTRIB_HITS);
-    let max_ammo = values.get_attribute(ATTRIB_AMMO);
-    let max_speed = values.get_attribute(ATTRIB_SPEED);
-    let max_shots = values
-        .get_attribute(ATTRIB_ROUNDS)
-        .min(values.get_attribute(ATTRIB_AMMO));
 
-    draw_stat_row(
-        frame,
+    let rows = rows_for(state, unit, state.player_team);
+    let rects = [
         layout::STAT_ROW_1,
-        "Hits",
-        i32::from(unit.hits),
-        max_hits,
-        palette,
-    );
-    draw_stat_row(
-        frame,
         layout::STAT_ROW_2,
-        "Ammo",
-        i32::from(unit.ammo),
-        max_ammo,
-        palette,
-    );
-    draw_stat_row(
-        frame,
         layout::STAT_ROW_3,
-        "Speed",
-        i32::from(unit.speed),
-        max_speed,
-        palette,
-    );
-    draw_stat_row(
-        frame,
         layout::STAT_ROW_4,
-        "Shots",
-        i32::from(unit.shots),
-        max_shots,
-        palette,
-    );
+    ];
+
+    for (rect, row) in rects.iter().zip(rows.iter()) {
+        if let Some(row) = row {
+            draw_stat_row(frame, *rect, row, palette);
+        }
+    }
 
     (layout::STAT_WINDOW.width * layout::STAT_WINDOW.height) as u32
 }
@@ -1878,6 +2326,241 @@ mod tests {
                 })),
                 "зона {rect:?} не закрашена"
             );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Строки статистики (`GameManager_UpdateInfoDisplay`)
+    // -----------------------------------------------------------------------
+
+    /// Партия с настоящими атрибутами команды (`TeamUnits::with_clan(Random)`).
+    fn stats_state() -> GameState {
+        use max_core::enums::TeamClan;
+        use max_core::team::TeamUnits;
+
+        let mut state = GameState::new();
+        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+        state.player_team = TeamId::RED;
+
+        state
+    }
+
+    /// Юнит в партии: `spawn_unit` + `DeployUnit` (у нового юнита `storage = 0`).
+    fn deployed(state: &mut GameState, unit_type: UnitType) -> UnitInfo {
+        let id = state
+            .spawn_unit(unit_type, TeamId::RED, max_core::geo::Point::new(20, 20), 0)
+            .expect("юнит создан");
+
+        state.unit_mut(id).expect("юнит в состоянии").storage = 0;
+
+        state.unit(id).expect("юнит").clone()
+    }
+
+    fn labels(rows: &[Option<StatRow>; 4]) -> [Option<&'static str>; 4] {
+        rows.map(|row| row.map(|row| row.label.caption()))
+    }
+
+    /// Шахта (свой стационарный склад `RAW`): `Hits/Cargo/Total`, без `Speed`.
+    #[test]
+    fn mining_station_panel_shows_hits_cargo_total_without_speed() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::MiningStation);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Cargo"), Some("Total"), None],
+            "C++: Hits, Cargo (ATTRIB_STORAGE 25), запас комплекса (d28b); Speed 0 — пропущен"
+        );
+        assert!(
+            rows.iter()
+                .flatten()
+                .all(|row| row.label != StatLabel::Speed),
+            "у шахты не должно быть Speed: {rows:?}"
+        );
+        // `MiningStation`: 56 hits, storage 25, cargo type RAW.
+        assert_eq!(rows[0].expect("Hits").text(), "56/56");
+        assert_eq!(rows[1].expect("Cargo").text(), "0/25");
+        assert_eq!(rows[2].expect("Total").text(), "0/25");
+        assert_eq!(rows[0].expect("Hits").color(), GREEN);
+        assert_eq!(rows[1].expect("Cargo").color(), RED);
+        assert_eq!(rows[2].expect("Total").color(), RED);
+        // Строка 4 (Shots) пустая: `min(ROUNDS, AMMO) == 0`.
+        assert_eq!(rows[3], None);
+    }
+
+    /// Танк (мобильный наземный с атакой): `Hits/Ammo/Speed/Shots`.
+    #[test]
+    fn tank_panel_keeps_speed_ammo_and_shots() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::Tank);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Ammo"), Some("Speed"), Some("Shots")]
+        );
+        assert_eq!(rows[0].expect("Hits").text(), "24/24");
+        assert_eq!(rows[1].expect("Ammo").text(), "14/14");
+        assert_eq!(rows[2].expect("Speed").text(), "6/6");
+        assert_eq!(rows[3].expect("Shots").text(), "2/2");
+        assert!(rows.iter().flatten().all(|row| row.color() == GREEN));
+    }
+
+    /// Турель (стационарная, с атакой): `Hits/Ammo/Shots`, `Speed` нет.
+    #[test]
+    fn turret_panel_shows_ammo_and_shots_without_speed() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::GunTurret);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Ammo"), None, Some("Shots")]
+        );
+        assert!(rows
+            .iter()
+            .flatten()
+            .all(|row| row.label != StatLabel::Speed));
+        assert_eq!(rows[3].expect("Shots").text(), "2/2");
+    }
+
+    /// Разведчик: `Hits/Speed`, пустые `Ammo` и `Shots` (ATTACK = 0, ROUNDS = 0).
+    #[test]
+    fn surveyor_panel_skips_empty_attribute_rows() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::Surveyor);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), None, Some("Speed"), None],
+            "C++: ATTRIB_STORAGE 0 → Cargo нет, ATTACK 0 → Ammo нет"
+        );
+        assert_eq!(rows[0].expect("Hits").text(), "16/16");
+        assert_eq!(rows[2].expect("Speed").text(), "7/7");
+    }
+
+    /// Завод: `Hits/Usage/Total` рабочих (`DrawInfoDisplayType1`), без `Speed`.
+    #[test]
+    fn training_hall_panel_shows_worker_usage_and_total() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::TrainingHall);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Usage"), Some("Total"), None],
+            "C++: ATTRIB_STORAGE 0 → Type1 (life 1), Speed 0 — пропущен"
+        );
+        assert!(rows
+            .iter()
+            .flatten()
+            .all(|row| row.label != StatLabel::Speed));
+        // `Cargo_GetNetProduction` без приказа = 0; база life_need = 1.
+        assert_eq!(rows[1].expect("Usage").text(), "0/1");
+        assert_eq!(rows[1].expect("Usage").color(), RED);
+        assert_eq!(rows[2].expect("Total").text(), "0/1");
+    }
+
+    /// Электростанция: `Hits/Power/Total` (`DrawInfoDisplayType2`).
+    #[test]
+    fn power_station_panel_shows_power_and_total() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::PowerStation);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Power"), Some("Total"), None],
+            "POWERSTN: `Cargo_GetPowerConsumptionRate = -6`, приказ POWER_OFF"
+        );
+        assert_eq!(rows[1].expect("Power").text(), "0/6");
+        assert_eq!(rows[2].expect("Total").text(), "0/6");
+        assert_eq!(rows[3], None, "Usage: база (потребление) 0 — строка пустая");
+    }
+
+    /// Жилой блок: `Hits/Teams/Total` рабочих (`life = -3`).
+    #[test]
+    fn habitat_panel_shows_teams_and_total() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::Habitat);
+        let rows = rows_for(&state, &unit, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), Some("Teams"), Some("Total"), None]
+        );
+        assert_eq!(rows[1].expect("Teams").text(), "3/3");
+        assert_eq!(rows[2].expect("Total").text(), "3/3");
+        assert_eq!(rows[1].expect("Teams").color(), GREEN);
+    }
+
+    /// Чужой юнит: `Ammo`/`Cargo` не рисуются (`factor == 0` в C++).
+    #[test]
+    fn enemy_unit_hides_ammo_and_cargo_rows() {
+        let mut state = stats_state();
+        let unit = deployed(&mut state, UnitType::Tank);
+        let mut enemy = unit;
+        enemy.team = TeamId::GREEN;
+
+        let rows = rows_for(&state, &enemy, TeamId::RED);
+
+        assert_eq!(
+            labels(&rows),
+            [Some("Hits"), None, Some("Speed"), Some("Shots")]
+        );
+    }
+
+    /// Цвета — пороги `GameManager_DrawInfoDisplayRow` (1/4 и 1/2 базы).
+    #[test]
+    fn stat_row_colors_follow_the_cpp_thresholds() {
+        let row = |current, base, factor| StatRow {
+            label: StatLabel::Hits,
+            current,
+            base,
+            factor,
+        };
+
+        assert_eq!(row(1, 4, 1).color(), RED);
+        assert_eq!(row(2, 4, 1).color(), YELLOW);
+        assert_eq!(row(3, 4, 1).color(), GREEN);
+        assert_eq!(row(0, 1, 1).color(), RED);
+        assert_eq!(row(1, 1, 1).color(), GREEN);
+        assert_eq!(row(0, 0, 1).color(), TEXT);
+        // `%i/%i` и `std::min(current, base)` как в C++.
+        assert_eq!(
+            make_row(StatLabel::Hits, 99, 56, 4).expect("строка").text(),
+            "56/56"
+        );
+        assert_eq!(make_row(StatLabel::Hits, 0, 0, 4), None);
+        assert_eq!(make_row(StatLabel::Cargo, 0, 25, 0), None);
+    }
+
+    /// `Speed`-строка есть ровно у типов с `ATTRIB_SPEED > 0` (все 93 типа).
+    #[test]
+    fn speed_row_appears_only_with_a_speed_attribute() {
+        use max_core::unit_values::base_unit_values;
+
+        let state = stats_state();
+
+        for &unit_type in UnitType::ALL {
+            let base = base_unit_values(unit_type);
+            let mut unit = UnitInfo::new(unit_type, TeamId::RED, max_core::UnitId(1));
+            unit.base_values = base;
+            unit.hits = base.hits;
+            unit.speed = base.speed;
+            unit.shots = base.rounds as u8;
+            unit.ammo = base.ammo as u8;
+            unit.storage = 0;
+
+            let rows = rows_for(&state, &unit, TeamId::RED);
+            let has_speed = rows
+                .iter()
+                .flatten()
+                .any(|row| row.label == StatLabel::Speed);
+
+            assert_eq!(has_speed, base.speed > 0, "{unit_type:?}");
         }
     }
 }
