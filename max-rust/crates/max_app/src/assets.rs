@@ -269,6 +269,34 @@ fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Opti
 /// Регистр не важен: в репозитории файлы в верхнем (`AGT.FLC`), а ссылки в
 /// `MAX.RES` — в нижнем (`agt.flc`); на Linux файловая система регистр
 /// различает, поэтому ищем по индексу, а не по прямому пути.
+/// Индекс `*.MVE`-файлов рядом с `MAX.RES` (имена в нижнем регистре).
+fn mve_index(dir: &Path) -> BTreeMap<String, PathBuf> {
+    let mut index = BTreeMap::new();
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return index;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if name.ends_with(".mve") {
+            index.insert(name, path);
+        }
+    }
+
+    index
+}
+
 fn flc_index(dir: &Path) -> BTreeMap<String, PathBuf> {
     let mut index = BTreeMap::new();
 
@@ -619,6 +647,11 @@ pub struct Assets {
     pub help: Option<crate::helpmenu::HelpMenuAssets>,
     /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
+    /// Видео интро: путь к `maxint.mve` (ресурс `INTROFLC` — ASCIIZ-ссылка).
+    ///
+    /// Сам 71-МБ файл здесь не читается: `max_app::intro` открывает его при
+    /// входе в `Introduction`, чтобы не платить за это на старте и в QA.
+    pub intro_mve: Option<std::path::PathBuf>,
     /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
@@ -907,6 +940,17 @@ impl Assets {
             ));
         }
 
+        // Видео интро: `INTROFLC` — ссылка на `maxint.mve` рядом с MAX.RES.
+        // Файл не читаем здесь (71 МБ); экран `Introduction` откроет его сам.
+        let mve_files = mve_index(&flic_dir);
+        let intro_mve = max_res
+            .file_reference("INTROFLC")
+            .and_then(|file_name| mve_files.get(&file_name.to_ascii_lowercase()).cloned());
+
+        if intro_mve.is_none() && max_res.file_reference("INTROFLC").is_some() {
+            warnings.push("Intro: INTROFLC есть в MAX.RES, но файла *.mve рядом нет".to_string());
+        }
+
         Ok(Self {
             max_res,
             chrome,
@@ -918,6 +962,7 @@ impl Assets {
             research: Some(research),
             help: Some(help),
             cargo: Some(cargo),
+            intro_mve,
             cursors: Some(cursors),
             resource_markers,
             planet_pictures,

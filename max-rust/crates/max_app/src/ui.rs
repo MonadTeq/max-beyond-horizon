@@ -93,7 +93,7 @@ const MAIN_QUIT: usize = 6;
 /// Действия Rust-клиента в порядке фокуса (`ctx.focus`).
 ///
 /// `Load Game` и `Setup` остаются непортированными (`Unported`), поэтому в
-/// фокусе их нет: экраны `Introduction` (MVE-заглушка) и `Credits` — есть.
+/// фокусе их нет: экраны `Introduction` (MVE-видео) и `Credits` — есть.
 const MAIN_ACTIONS: [usize; 5] = [MAIN_CREATE, MAIN_JOIN, MAIN_INTRO, MAIN_CREDITS, MAIN_QUIT];
 
 const JOIN_LIST: usize = 1;
@@ -409,8 +409,8 @@ pub enum Screen {
     CreateForm(CreateForm),
     /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): хост/join/hot-seat.
     MultiplayerMenu,
-    /// `Introduction` (`Movie_PlayIntro`): MVE-видео `INTROFLC` — заглушка.
-    Introduction,
+    /// `Introduction` (`Movie_PlayIntro`): MVE-видео `INTROFLC` (`maxint.mve`).
+    Introduction(intro::IntroScreen),
     /// `Credits` (`menu_credits_menu_loop`): прокрутка титров по `CREDITS`.
     Credits(credits::CreditsScreen),
     /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
@@ -537,6 +537,8 @@ pub struct UiContext {
     pub world_dir: std::path::PathBuf,
     /// Звук (M6.2): клики меню. Без feature `sound` — тихий no-op.
     pub audio: AudioPlayer,
+    /// Путь к видео интро (`INTROFLC` → `maxint.mve`); `None` — заглушка.
+    pub intro_mve_path: Option<std::path::PathBuf>,
 }
 
 impl UiContext {
@@ -552,6 +554,7 @@ impl UiContext {
             player_name: "Player".to_string(),
             world_dir: std::path::PathBuf::from("max-original"),
             audio: AudioPlayer::new(),
+            intro_mve_path: None,
         }
     }
 
@@ -693,8 +696,8 @@ impl Screen {
                 _ => Transition::None,
             };
         }
-        if matches!(self, Self::Introduction) {
-            // Заглушка MVE: как `mve_cb_ctl` в оригинале — любая клавиша/клик
+        if matches!(self, Self::Introduction(_)) {
+            // MVE: как `mve_cb_ctl` в оригинале — любая клавиша/клик
             // прерывает и возвращает в главное меню.
             return match event {
                 InputEvent::MouseMove(..) => Transition::None,
@@ -725,6 +728,10 @@ impl Screen {
             screen.advance(dt);
 
             return screen.finished();
+        }
+
+        if let Self::Introduction(screen) = self {
+            return screen.advance(dt);
         }
 
         false
@@ -1101,9 +1108,9 @@ impl Screen {
                     Rgba::rgb(232, 236, 244),
                 );
             }
-            Self::Introduction => {
+            Self::Introduction(screen) => {
                 if let (Some(menu_assets), true) = (menu_assets, native_frame) {
-                    intro::draw(buffer, menu_assets);
+                    screen.draw(buffer, menu_assets);
                     return;
                 }
 
@@ -1268,9 +1275,17 @@ impl Screen {
             }
             Some(MAIN_INTRO) => {
                 // `Movie_PlayIntro` (`menu.cpp:2666`): MVE-видео `INTROFLC`
-                // (файл `maxint.mve`) — декодер не портирован, экран-заглушка.
-                *self = Self::Introduction;
-                ctx.status = "Introduction: MVE movie is not ported yet — Esc returns".to_string();
+                // (файл `maxint.mve`). Кадр 0 декодируется сразу, чтобы
+                // `shot`/`dt = 0` были детерминированы; Esc/клик — в меню.
+                let screen = intro::IntroScreen::new(ctx.intro_mve_path.clone());
+                ctx.status = if screen.is_loaded() {
+                    format!("Introduction: maxint.mve — кадр {} (Esc)", screen.frame_index())
+                } else if let Some(error) = screen.error() {
+                    format!("Introduction: {error} — Esc returns")
+                } else {
+                    "Introduction: maxint.mve не найден — Esc returns".to_string()
+                };
+                *self = Self::Introduction(screen);
                 Transition::None
             }
             Some(MAIN_CREDITS) => {

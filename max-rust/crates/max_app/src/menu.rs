@@ -103,7 +103,7 @@ pub enum MainMenuAction {
     Quit,
     /// Экран титров (`Credits` → `menu_credits_menu_loop`).
     Credits,
-    /// Вступление (`Introduction` → `Movie_PlayIntro`, MVE-заглушка).
+    /// Вступление (`Introduction` → `Movie_PlayIntro`, MVE `maxint.mve`).
     Introduction,
     /// Экран, который ещё не портирован.
     Unported(&'static str),

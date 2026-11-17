@@ -203,8 +203,9 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 смена кадра 15 FPS (`GameManager_AdvanceFlic`), зацикливание, в headless/QA
 `dt = 0` — кадр 0. Декодер сверен с C++ бит-в-бит на всех 1115 кадрах 71 файла.
 
-Экраны главного меню: `Introduction` — честная заглушка MVE-видео (`INTROFLC`
-→ `maxint.mve`, декодер MVE не портирован), `Credits` — построчный порт
+Экраны главного меню: `Introduction` — **MVE-видео** (`INTROFLC` →
+`maxint.mve`, `max_assets::mve`: 432×320, 4391 кадр, 15 FPS, letterbox
+640×474, кадр 0 при входе), `Credits` — построчный порт
 `menu_credits_menu_loop` (фон `CREDITS`, 171 строка, прокрутка 10 мс/пиксель).
 Осталось: `Load Game`/`Setup` главного меню (статус «screen is not ported
 yet»; загрузка партии доступна в игре — `L`, V70).

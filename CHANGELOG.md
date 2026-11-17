@@ -2,6 +2,27 @@
 
 ### Добавлено
 
+- **MVE-интро (`Introduction`, `INTROFLC` → `maxint.mve`, TC-0108).**
+  `max_assets::mve` — декодер видео Interplay MVE: контейнер (подпись,
+  записи `u16 size/type`, опкоды), `CREATE_TIMER` (15 FPS), `SET_PALETTE`
+  (6-бит → 8-бит), `SET_DECODING_MAP` (ниббл на блок 8×8) и `VIDEO_DATA_11`;
+  видеокодек — точный порт `nfPkDecomp` (копии кадров/векторы движения/
+  шаблоны 2–64 цветов, таблицы `nf_pk_lut_4/5/6`, ветка `0xA` построчно).
+  `maxint.mve`: 432×320, **4391 кадр**, 13 обновлений палитры; FNV-1a кадров
+  0/50/100 совпадает с C-обвязкой над `nfPkDecomp` (`74CDBDC5`/`22EB1E36`/
+  `158D8E0D`), полный проход 4391 кадра — в тесте. `max_app::intro` декодирует
+  кадр 0 при входе (детерминированный `dt = 0`), крутит 15 FPS, масштабирует
+  432×320 → 640×474 с letterbox (`cscale`), Esc/клик/конец видео — в меню.
+  Аудио и субтитры `INTROSUB` не портированы (честное ограничение).
+  QA: `shot intro` (dt = 0) + `tick 210` → `shot intro-logo` (логотип
+  Interplay), эталоны `golden/intro.png`/`golden/intro-logo.png`.
+- **Второй кадр иконок турелей — проверено и покрыто тестами.** `angle_offsets`
+  лежат не в `.SPW` (это WAV-звуки), а в 24-байтном ресурсе `D_*`
+  (`Unit::GetFrameInfo`: 8 счётчиков + 8 пар `(dx,dy)`); кадр башни — кадр 1
+  ресурса `I_*`. `CargoMenu`/`UpgradeMenu` рисуют корпус + башню со сдвигом
+  `angle_offsets[2] >> divisor`; тест расширен на все **11** турельных типов
+  (кадр 1 есть, сдвиг совпадает с `D_*`) плюс пиксельная проверка «башня
+  танка в списке».
 - **Экран исследований `ResearchMenu` (`RSRCHPIC`) и Help-экраны
   (`HELPFRAM`).** `max_app::researchmenu` — порт `researchmenu.cpp`: окно
   `RSRCHPIC` 360×331 в (223,76), заголовок `Research Topics`, подписи
@@ -55,9 +76,9 @@
   Esc/любая клавиша — в меню, автозакрытие по концу прокрутки; таблица — 171
   строка из `menu.cpp` (65 заголовков + 106 имён), тексты заголовков из
   `language.json` (`tools/gen_credits_data.py` → `data/credits.json`).
-  `Introduction` — заглушка: в оригинале MVE-видео `INTROFLC` → `maxint.mve`
-  (`mvelib32.c`), декодер MVE не портирован; экран показывает фон `MLOGO`
-  640×480 и текст, почему вместо видео, Esc — выход.
+  `Introduction` — MVE-видео `INTROFLC` → `maxint.mve` через
+  `max_assets::mve` (см. выше); если файла нет — заглушка с фоном `MLOGO`
+  640×480 и текстом, Esc — выход.
 
 ### Изменено
 

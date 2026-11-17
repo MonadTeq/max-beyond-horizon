@@ -14,12 +14,18 @@
 shot main-menu
 assert screen=MainMenu
 
-# TC-0108: Introduction (MVE-заглушка) и Credits (прокрутка титров).
-# Экран титров снимается не пустым: 100 кадров по 1/60 с — ~166 шагов
-# прокрутки (10 мс на шаг, шаг = 1 пиксель), уже видны первые строки.
+# TC-0108: Introduction (MVE-видео INTROFLC → maxint.mve) и Credits
+# (прокрутка титров). Экран титров снимается не пустым: 100 кадров по 1/60 с —
+# ~166 шагов прокрутки (10 мс на шаг, шаг = 1 пиксель), видны первые строки.
 menu intro
 assert screen=Introduction
+# dt = 0: первый кадр MVE — детерминированный стоп-кадр (тёмный фон).
 shot intro
+# 3.5 с видео (15 FPS): к кадру ~52 на экране логотип Interplay — вторая
+# golden-точка доказывает, что кадры декодируются и меняются со временем.
+tick 210
+assert screen=Introduction
+shot intro-logo
 key ESC
 assert screen=MainMenu
 

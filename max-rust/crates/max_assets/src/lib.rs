@@ -16,8 +16,8 @@
 //! - звуки — RIFF/WAVE `*.SPW` (PCM16) рядом с `MAX.RES` — модуль [`wav`];
 //! - FLC — анимации Autodesk FLIC (`F_*`-ресурсы MAX.RES — ссылки на
 //!   `*.FLC`-файлы рядом с архивом) — модуль [`flic`];
-//! - SCE/MPS — миссии; FON — шрифты;
-//!   MSC/MVE — музыка/видео (пока не разбираются).
+//! - MVE — видео Interplay (`INTROFLC` → `maxint.mve`) — модуль [`mve`];
+//! - SCE/MPS — миссии; FON — шрифты; MSC — музыка (пока не разбирается).
 //!
 //! Крейт парсит байты в структурированные данные; рендер-специфику не содержит.
 //! Ошибки формата возвращаются значениями ([`ResError`], [`WrlError`],
@@ -29,6 +29,7 @@ pub mod cursor;
 pub mod flic;
 pub mod image;
 pub mod markers;
+pub mod mve;
 pub mod res;
 pub mod sprite;
 pub mod wav;
@@ -44,6 +45,10 @@ pub use flic::{
 };
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
 pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};
+pub use mve::{
+    Mve, MveDecoder, MveError, MveInfo, DEFAULT_FRAME_DELAY_US, FILE_HEADER_SIZE, MVE_SIGNATURE,
+    OPCODE_HEADER_SIZE, PALETTE_SIZE as MVE_PALETTE_SIZE, VIDEO_HEADER_SIZE,
+};
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,
     RES_SIGNATURE, TAG_LEN,

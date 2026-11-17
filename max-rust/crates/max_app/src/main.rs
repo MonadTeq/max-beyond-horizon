@@ -754,6 +754,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
         config.screen_width,
         config.screen_height,
     );
+    // `Introduction`: INTROFLC → maxint.mve рядом с MAX.RES (см. Assets::load).
+    ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
     // M6.2: звук меню. `with_default_backend` за feature `sound` поднимает
     // rodio/cpal; без фичи (или без устройства) — тихий no-op. Ссылки на
     // файлы берутся из MAX.RES, сами файлы — рядом с MAX.RES.
@@ -919,8 +921,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // `dt`, а когда доходит до верха области — экран закрывается сам
         // (`menu_credits_menu_loop`).
         if screen.advance(frame_dt) {
+            let was_intro = matches!(screen, Screen::Introduction(_));
+
             screen = Screen::MainMenu;
-            ctx.status = "Credits ended".to_string();
+            ctx.status = if was_intro {
+                "Introduction ended".to_string()
+            } else {
+                "Credits ended".to_string()
+            };
         }
 
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {

@@ -129,10 +129,46 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
     assert!(escort.has_turret(), "эскорт");
     assert_eq!(escort.turret_offset, (4, 0), "D_ESCORT angle_offsets[2]");
 
+    // Все 11 типов с `TURRET_SPRITE`/`SPINNING_TURRET` (`SC_UNITS`): у каждого
+    // в `I_*` есть второй кадр, а в `D_*` — сдвиг башни для angle 2.
+    for unit in [
+        UnitType::GunTurret,
+        UnitType::AntiAir,
+        UnitType::ArtilleryTurret,
+        UnitType::AntiMissile,
+        UnitType::Tank,
+        UnitType::MobileAntiAir,
+        UnitType::FastBoat,
+        UnitType::Battleship,
+        UnitType::AlienTank,
+        UnitType::Scanner,
+        UnitType::Awac,
+    ] {
+        let icon = cargo.icon(unit).unwrap_or_else(|| panic!("{unit:?}: I_*"));
+        assert!(
+            max_core::access::unit_type_flags(unit)
+                & (max_core::enums::unit_flags::TURRET_SPRITE
+                    | max_core::enums::unit_flags::SPINNING_TURRET)
+                != 0,
+            "{unit:?}: флаг турели"
+        );
+        assert!(icon.has_turret(), "{unit:?}: второй кадр башни");
+        let turret = icon.turret.as_ref().unwrap();
+        assert!(turret.width > 0 && turret.height > 0, "{unit:?}");
+        // Сдвиг `angle_offsets[2]` берётся из `D_*`, а не из спрайта `.SPW`.
+        let frame_data = max_app::cargo_unit_data::unit_frame_data(unit)
+            .and_then(|data| assets.max_res.read(data).ok())
+            .and_then(|bytes| max_assets::sprite::FrameInfo::decode(&bytes))
+            .unwrap_or_else(|| panic!("{unit:?}: D_*"));
+        assert_eq!(
+            frame_data.turret_offset(2),
+            icon.turret_offset,
+            "{unit:?}: сдвиг angle 2"
+        );
+    }
+
     // Без башни: у Constructor в `I_CONTRC` один кадр.
     assert!(!cargo.icon(UnitType::Constructor).unwrap().has_turret());
-    // Стационарная турель тоже двухкадровая (`I_GUNTUR`).
-    assert!(cargo.icon(UnitType::GunTurret).unwrap().has_turret());
 }
 
 #[test]

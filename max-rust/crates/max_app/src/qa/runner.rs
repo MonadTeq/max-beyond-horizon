@@ -217,6 +217,7 @@ impl QaRunner {
         let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
         ctx.player_name = "Commander".to_string();
         ctx.world_dir = config.data_dir.clone();
+        ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
         ctx.status = String::new();
 
         Ok(Self {
@@ -1198,8 +1199,14 @@ impl QaRunner {
         // доходит до верха области, оригинал выходит из цикла — возвращаемся
         // в главное меню.
         if self.screen.advance(1.0 / 60.0) {
+            let was_intro = matches!(self.screen, Screen::Introduction(_));
+
             self.screen = Screen::MainMenu;
-            self.ctx.status = "Credits ended".to_string();
+            self.ctx.status = if was_intro {
+                "Introduction ended".to_string()
+            } else {
+                "Credits ended".to_string()
+            };
         }
 
         if matches!(self.screen, Screen::InSession { .. }) && self.app.local_active() {
@@ -2364,7 +2371,7 @@ impl QaRunner {
             (Screen::JoinList { .. }, ScreenName::JoinList) => true,
             (Screen::CreateForm(_), ScreenName::CreateForm) => true,
             (Screen::MultiplayerMenu, ScreenName::MultiplayerMenu) => true,
-            (Screen::Introduction, ScreenName::Introduction) => true,
+            (Screen::Introduction(_), ScreenName::Introduction) => true,
             (Screen::Credits(_), ScreenName::Credits) => true,
             (Screen::GameOver, ScreenName::GameOver) => true,
             (Screen::InSession { .. }, ScreenName::InGame) => true,
@@ -2410,7 +2417,7 @@ impl QaRunner {
             Screen::JoinList { .. } => "JoinList",
             Screen::CreateForm(_) => "CreateForm",
             Screen::MultiplayerMenu => "MultiplayerMenu",
-            Screen::Introduction => "Introduction",
+            Screen::Introduction(_) => "Introduction",
             Screen::Credits(_) => "Credits",
             Screen::GameOver => "GameOver",
             Screen::InSession { .. } => "InGame",

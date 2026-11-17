@@ -39,7 +39,7 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 кнопками `BLANK_*`/`MNUBTN*` и GNW-подписями, **масштабирование (F)** —
 фиксированный кадр 640×480, целочисленный апскейл в окно любого размера и
 обратный пересчёт координат мыши, анимация портрета (FLC), а также экраны
-`Introduction` (заглушка MVE) и `Credits` (прокрутка титров) — см. §11.
+`Introduction` (MVE-видео `maxint.mve`) и `Credits` (прокрутка титров) — см. §11 и §14.
 
 ---
 
@@ -1247,21 +1247,24 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 `crates/max_app/data/credits.json`. Состояние — чистая функция от числа шагов,
 поэтому QA-кадр детерминирован.
 
-### 11.4 `Introduction` (`max_app::intro`)
+### 11.4 `Introduction` (`max_app::intro`) — MVE-видео
 
 В C++ это MVE-видео: `Movie_PlayIntro` → `movie_run(INTROFLC, track, INTROSUB)`,
 а `INTROFLC` — ASCIIZ-ссылка на `maxint.mve`; играет `mvelib32.c` (Interplay
-MVE, свои видеокодек и звуковые дорожки). Декодер MVE в Rust-клиенте **не
-портирован** (отдельная задача, как MSC-музыка) — экран честно показывает
-заглушку: фон `MLOGO` 640×480 (big image из `MAX.RES`), заголовок `Introduction`,
-текст о том, что вместо видео и почему, и «Press Esc to return to the main
-menu». Любая клавиша/клик — назад в меню (как `mve_cb_ctl`).
+MVE, свои видеокодек и звуковые дорожки). Декодер MVE портирован в
+`max_assets::mve` (см. §14): экран декодирует кадр 0 при входе, крутит 15 FPS
+по `dt`, масштабирует 432×320 в 640×474 с letterbox (как `movie_cb_show_frame`
++ `cscale`) и возвращается в меню по концу видео или Esc/клику (`mve_cb_ctl`).
+Если `maxint.mve` рядом с `MAX.RES` нет, остаётся прежняя заглушка с фоном
+`MLOGO`/`MAINPIC` и текстом — так юнит-тесты без данных не падают.
 
 ### 11.5 QA и артефакты
 
-* `visual-screens.qa`: `menu intro` → `shot intro`, `menu credits` → `tick 100`
-  → `shot credits`, клик по своему Surveyor'у → `shot portrait` (13 кадров,
-  эталоны `golden/intro.png`, `golden/credits.png`, `golden/portrait.png`).
+* `visual-screens.qa`: `menu intro` → `shot intro` (dt = 0, первый кадр MVE) →
+  `tick 210` → `shot intro-logo` (логотип Interplay, ~кадр 52), `menu credits`
+  → `tick 100` → `shot credits`, клик по своему Surveyor'у → `shot portrait`
+  (14 кадров, эталоны `golden/intro.png`, `golden/intro-logo.png`,
+  `golden/credits.png`, `golden/portrait.png`).
 * Перебазированы только кадры с выделенным юнитом: `move-input/game-selected`,
   `move-input/move-preview`, `move-input/game-after`,
   `upgrade/upgrade-done` (портрет вместо спрайта); остальные 0 дрейфа.
@@ -1391,3 +1394,86 @@ allocation не в момент `Done`, а на следующем тике
 
 **Остаточные отличия**: текст секции целиком (см. выше), звуки, пакет 09,
 `Research Complete`-оверлей на центрах (как и в C++-порте — статичный кадр).
+
+---
+
+## 14. MVE-интро и второй кадр турелей — **сделано** (2026-11-17)
+
+Закрыты два последних визуальных пункта: настоящее видео `Introduction`
+(`INTROFLC` → `maxint.mve`) и подтверждён второй кадр иконок турелей в
+`CargoMenu`/`UpgradeMenu`.
+
+### 14.1 Откуда берутся `angle_offsets` (не из `.SPW`)
+
+Проверка оракула (`unit.cpp`, `reportstats.cpp`) и ресурсов:
+
+* `angle_offsets[8]` — это **не** часть `.SPW`-файла и не часть спрайта
+  `I_*`/`TANK`. Они лежат в конце ресурса `D_*` (`Unit::GetFrameInfo()`):
+  8 счётчиков (`image_base/count`, `turret_*`, `firing_*`, `connector_*`) +
+  8 пар `(dx, dy): i8` = 24 байта. У 11 типов с `TURRET_SPRITE`/
+  `SPINNING_TURRET`; у остальных ресурс короче (8 байт).
+* `.SPW` в каталоге игры — **RIFF/WAVE-звуки**, а не спрайты
+  (`max-original-dasm/formats/spw.md` §1); таблицы кадров спрайта лежат в
+  самом `MAX.RES` (`u16 image_count` + `u32 frame_offset[]`).
+* Второй кадр иконки — это кадр 1 ресурса `I_*` (не `D_*`). C++
+  `ReportStats_DrawListItemIcon` рисует кадр 0, затем для турельных типов —
+  кадр 1 со сдвигом `angle_offsets[2] >> divisor` (`divisor` 1 у мобильных,
+  2 у стационарных).
+
+Rust-клиент делает то же: `mobilize::CargoMenuAssets` грузит `body = frame(0)`,
+`turret = frame(1)` и `turret_offset = FrameInfo::turret_offset(2)` из `D_*`;
+`mobilize::draw_icon` рисует обе иконки. В этом срезе путь уже был (коммит
+`41d2d91`); добавлено покрытие **всех 11** турельных типов в
+`tests/cargo_render.rs` (наличие кадра 1 и совпадение сдвига с `D_*`), плюс
+существующий пиксельный тест «башня танка в списке» (`>20 px`).
+
+### 14.2 Декодер MVE (`max_assets::mve`)
+
+Формат (Interplay MVE, оракул `mvelib32.c` + публичная спека FFmpeg):
+
+```text
+файл: 20-байтная подпись "Interplay MVE File\x1A\0",
+      u16 magic 0x001A, u16 version 0x0100, u16 checksum;
+записи: u16 size, u16 type (0 init_audio, 1 audio_only, 2 init_video,
+      3 video, 4 shutdown, 5 end);
+внутри записи: u16 size, u8 opcode, u8 version, data.
+```
+
+Реализованы нужные интро опкоды: `CREATE_TIMER` (2, 15 FPS:
+`rate*divider = 66 664 мкс`), `INIT_VIDEO_BUFFERS` (5, 432×320),
+`SET_PALETTE` (12, 6-бит → `*4`), `SET_DECODING_MAP` (15, ниббл на блок),
+`VIDEO_DATA_11` (17). `maxint.mve` — **4391 кадр**, 432×320, 8-бит
+индексированные, 13 обновлений палитры по ходу фильма. Аудио-опкоды
+читаются и пропускаются; субтитры `INTROSUB` не накладываются (честное
+ограничение, отдельный слой `moviesubtitle.cpp`).
+
+Видеокодек — точный порт `nfPkDecomp`: блоки 8×8, карта из нибблов
+(младший — левый блок), коды 0x0…0xF: копия прошлого/позапрошлого кадра,
+векторы движения, шаблоны 2/4/16/64 цветов. Таблицы `nf_pk_lut_4/5/6`
+перенесены дословно; ветка `0xA` повторена построчно (в ней важен порядок
+записи правой половины), поэтому кадры совпадают с C-обвязкой над
+`nfPkDecomp` **бит-в-бит**. `flags & 1` переключает двойной буфер, как
+`nfAdvance`; оба буфера стартуют нулями (детерминизм).
+
+### 14.3 Экран `Introduction`
+
+`IntroScreen::new(path)` открывает `maxint.mve` и сразу декодирует кадр 0 —
+поэтому `shot intro` детерминирован, а `dt = 0` даёт стоп-кадр. В GUI
+`advance(dt)` идёт с 15 FPS; кадр масштабируется как `movie_cb_show_frame` +
+`cscale` (432×320 → 640×474, letterbox 3 px, nearest-neighbor). Esc/клик и
+конец видео возвращают в главное меню. Если файла нет — прежняя заглушка
+`MLOGO`/`MAINPIC`, чтобы тесты без данных работали.
+
+### 14.4 Свидетельства
+
+* `max_assets::mve` (3 UNIT + пример `mve_hashes`): метаданные 432×320/
+  4391/15 FPS; FNV-1a кадров 0/50/100 = `74CDBDC5`/`22EB1E36`/`158D8E0D`
+  (эталон снят C-обвязкой над `nfPkDecomp` оракула); полный проход 4391
+  кадра; палитра первых кадров `[4,0,4]`, финальная `[0,4,44]`.
+* `tests/intro.rs` (3): `INTROFLC` → `maxint.mve`, кадр 0 + letterbox,
+  детерминированный повторный рендер, `advance` (15 FPS) и Esc → `MainMenu`.
+* `visual-screens.qa`: `shot intro` (dt = 0) + `tick 210` → `shot intro-logo`
+  (логотип Interplay); эталоны `golden/intro.png`, `golden/intro-logo.png`,
+  `qa_golden_check` — 0 дрейфа (14 кадров).
+* `cargo test -p max_app --test cargo_render` — иконки всех 11 турельных
+  типов: кадр башни + сдвиг `angle_offsets[2]` из `D_*`.
