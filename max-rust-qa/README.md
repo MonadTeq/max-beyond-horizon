@@ -35,7 +35,11 @@ max-rust-qa/
    `ResearchMenu` (`R`, распределение центров Attack→Shots и `Done`) и окна
    `HELPFRAM` (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`/
    `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`), golden — `golden/research-help/`.
-   Итоговая матрица — `suite/README.md` (**177 ✅, 1 🟡, 16 ⏭ not planned**).
+   **P9**: `scripts/unit-menu.qa` — меню команд юнита (`GameManager_PopupButtons`),
+   `scripts/allocate.qa` — распределение добычи шахты (`AllocMenu`, `ALLOCFRM`,
+   `Done` → `ORDER_NEW_ALLOCATE` 08/P5 → доход комплекса), golden —
+   `golden/unit-menu/`, `golden/allocate/`.
+   Итоговая матрица — `suite/README.md` (**186 ✅, 1 🟡, 16 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

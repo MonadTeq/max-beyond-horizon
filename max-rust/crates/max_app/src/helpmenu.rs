@@ -98,6 +98,8 @@ pub enum HelpSection {
     Upgrades,
     /// `GAME_SCREEN_SETUP` (панель `HELP_OF`, `GameManager_MenuClickHelpButton`).
     GameScreen,
+    /// `ALLOCATE_SETUP` (`AllocMenu::Run`, кнопка `?`/`Shift-/`).
+    Allocate,
 }
 
 impl HelpSection {
@@ -113,6 +115,7 @@ impl HelpSection {
             Self::Research => "RESEARCH_SETUP",
             Self::Upgrades => "UPGRADES_SETUP",
             Self::GameScreen => "GAME_SCREEN_SETUP",
+            Self::Allocate => "ALLOCATE_SETUP",
         }
     }
 
@@ -128,6 +131,7 @@ impl HelpSection {
             "research" | "research_setup" => Some(Self::Research),
             "upgrades" | "upgrades_setup" => Some(Self::Upgrades),
             "game" | "game_screen" | "game_screen_setup" => Some(Self::GameScreen),
+            "allocate" | "allocate_setup" => Some(Self::Allocate),
             _ => None,
         }
     }

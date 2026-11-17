@@ -1894,7 +1894,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `attack` | тумблер `targeting_mode` | **отключено**: режим наведения не портирован, атака — кликом по врагу |
 | `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **отключено**: `ORDER_LAND` — процессор P1 и не несёт `parent_unit`, поэтому посадка не доедет до сети/получателя; вся цепочка `GameManager_ProcessMouse` (CURSOR_LOAD) не портирована |
 | `activate` | `RepairShopMenu_Menu` | **отключено**: меню ремонтного цеха не портировано |
-| `allocate` | `AllocMenu_Menu` | **отключено**: меню распределения шахты не портировано |
+| `allocate` | `AllocMenu_Menu` (окно `ALLOCFRM`) | **реализовано**: `App::open_alloc_menu` → `max_app::allocmenu` (см. §20) |
 | `start` завод | `UnitInfo::BuildOrder` | **отключено**: продолжение стройки не портировано |
 | `stop` стройки / бульдозер | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **отключено**: выбор площадки/расчистка из попапа не портированы |
 | `remove` здания | `UnitsManager_SelfDestructMenu` (диалог Arm/Cancel) | **отключено**: диалог не портирован |
@@ -2021,3 +2021,112 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   смотрит E), `02-turn.png` (поворот на клетке) и `03-stopped-north.png`
   (остановка, угол 0); пример сам проверяет «угол = направлению смещения» и
   завершается кодом 1 при расхождении.
+
+## 20. Распределение добычи шахты (`Allocate`) — **сделано** (2026-11-18)
+
+Пункт `allocate` меню команд `MININGST` раньше был серым («`AllocMenu_Menu` не
+портирован»). Теперь он открывает диалог распределения добычи — порт
+`allocmenu.cpp` 1:1.
+
+### 20.1 Как это устроено в C++ (оракул)
+
+| Что | Код | Значение |
+|---|---|---|
+| окно | `AllocMenu::AllocMenu` (`allocmenu.cpp:153`) | `ALLOCFRM` 640×480, `Window(ALLOCFRM, GetDialogWindowCenterMode())`; при `dialog_center_mode = 0` это центр `WINDOW_MAIN_MAP`, а `win_move` (`gnw.c:663`) прижимает окно 640×480 к `(0,0)` — диалог занимает весь экран |
+| заголовок | `_(c771)` | `Allocation Menu`, `Text_TextBox(230, 6, 180, 20)`, `FONT5`, `COLOR_GREEN`, по центру |
+| подписи | `_(8481)`, `_(1e19)`, `_(5ae6)`, `_(a80f)`, `_(5432)`, `_(04dd)`, `_(dff1)`, `_(e187)`, `_(89a3)` | `Raw`/`Usage`/`Reserve`, `Fuel`/`Usage`/`Reserve`, `Gold`/`Usage`/`Reserve` — по 78×19 в x = 42, `FONT5`, `COLOR_GREEN` |
+| секции | `MENU_CONTROL_DEF(…, 70/190/310, …)` | три секции (сырьё/топливо/золото), шаг полос 37 px |
+| полосы | `CargoBar::Draw`/`CargoBarData::Draw` (`:234-359`) | в секции три полосы 240×30 в (174, y): **добыча** (заливка `BARRAW`/`BARFUEL`/`BARGOLD` на `production·240/capacity` px + `BARTAPE` справа на `(capacity − balance)·240/capacity`), **потребление** (`usage`, подпись `%i (%+i / turn)`), **запас комплекса** (`complex_materials`, подпись `%i`); подпись — `FONT1`, цвет `0xFF`, обводка `0x00`, подложка перекрашена `Color_GenerateIntensityTable1(0, 0, 25, 1, 1)` (`Color_RecolorPixels`) |
+| стрелки | `LFARO_OF`/`RTARO_OF` 28×29 в (139, y)/(421, y) | `−1`/`+1` единица (case `1002`/`1001`, `1005`/`1004`, `1008`/`1007`) |
+| клик по полосе | `AllocMenu::OnClick*Bar` + `GetHorizontalBarClickValue` (`:592`) | `target = (capacity · (mouse_x − 174) + 120) / 240`; `materials = target − production`, обрезается `production.free_capacity`; `< 0` → `ReduceProduction`, `> 0` → `Optimize` |
+| кнопки | `MNUBTN5U/D` 48×40 в (465,438) и `MNUBTN6U/D` 109×40 в (514,438) | `?` → `HelpMenu_Menu("ALLOCATE_SETUP")`, `Done` (`GNW_KB_KEY_RETURN`) и `Esc`/`KP_Enter` — закрыть; **`Cancel` нет** |
+| модальность | `GameManager_DisableMainMenu`/`EnableMainMenu` вокруг `AllocMenu::Run` | карта приказов не получает |
+
+**Где хранится значение.** Не в `TeamUnits` и не в процентах: у каждого юнита
+`MININGST` три счётчика `uint8_t` — `raw_mining`, `fuel_mining`, `gold_mining`
+и их сумма `total_mining` (лимит `16` единиц), плюс максимумы клетки
+`raw/fuel/gold_mining_max` (`unitinfo.hpp:434-440`). Диалог меняет их **живо**
+(`UpdateRawAllocation`: `production += material; complex->material += material`),
+`Done`/`Esc` только закрывают окно. На выходе `AllocMenu::Run` в сети вызывает
+`Remote_SendNetPacket_11` (`remote.cpp:2195`), который каждой шахте комплекса
+ставит `ORDER_NEW_ALLOCATE` (пакет **08**, процессор **P5** — четыре поля
+добычи) и рассылает состояние комплекса.
+
+**Экономика.** `Cargo_GetNetProduction(MININGST)` (`cargo.cpp:105-126`) при
+`ORDER_POWER_ON`/`ORDER_NEW_ALLOCATE` даёт `raw += raw_mining`,
+`fuel += fuel_mining`, `gold += gold_mining` (у компьютера — `×5/4`/`×6/4` по
+сложности). `Access_UpdateResourcesTotal` (`access.cpp:912`) суммирует это по
+зданиям комплекса в `Complex::{material,fuel,gold,power,workers}`, а
+`GameManager_ManageEconomy` (`game_manager.cpp:2058`) вызывает пересчёт каждый
+ход через `TeamUnits::OptimizeComplexes`. Поэтому доля шахты = добыча
+комплекса за ход.
+
+### 20.2 Что портировано
+
+* `max_core::alloc` — `AllocMenu_Optimize`/`AllocMenu_ReduceProduction`/
+  `AllocMenu::Balance` (`Allocator` с маской `cargo_material_type`),
+  `Complex::GetCargoMining`/`GetCargoMinable`/`GetCargoInfo`,
+  `Cargo_GetInventory`/`Cargo_GetCargoCapacity`, `Access_UpdateResourcesTotal`,
+  `Survey_GetResourcesInArea(…, radius 1, limit 16)` (`mining_survey`).
+  Замер клетки — как в C++: сумма 4 клеток, лимит **16** (а не 255).
+* `GameState::manage_economy` — `OptimizeComplexes` в объёме экономики:
+  `update_complex_resources(team)` → `Access_UpdateResourcesTotal` для каждого
+  комплекса команды (раньше в этом месте был TODO, и `Complex::material`
+  оставался нулём).
+* `GameState::spawn_unit` — `UnitInfo::UnitInfo` (`unitinfo.cpp:316`): здание
+  сразу получает **свой** комплекс (`AttachComplex(CreateComplex(team))`,
+  `Complex::Grow`); `destroy_unit` — `DetachComplex` (`Complex::Shrink`,
+  пустой комплекс удаляется). Без этого у шахты не было `unit->GetComplex()`,
+  и `allocate` не мог открыться.
+* `max_app::allocmenu` — диалог: раскладка/полосы/стрелки/кнопки, клики,
+  клавиши (Rust-расширение: `↑/↓` — секция, `←/→`, `−/+`, `H`/`?`), `Done`/
+  `Esc`; `App::open_alloc_menu`/`close_alloc_menu`/`alloc_menu_set`/
+  `alloc_menu_adjust`/`queue_alloc_orders`.
+* Пункт `allocate` меню команд включён (`UnitMenuItem::enabled = true`).
+* Модальность: пока диалог открыт, карта/панели приказов не получают; строка
+  статуса партии не рисуется поверх полноэкранного `ALLOCFRM`.
+* `Done`/`Esc` кладут в очередь `ORDER_NEW_ALLOCATE` (**08/P5**) на каждую
+  шахту комплекса — как `Remote_SendNetPacket_11`; офлайн они применяются сразу
+  (`App::flush_orders`), в сети уходят пакетом.
+* Детерминизм: значение живёт в полях юнита, а они уже входят в
+  `GameState::snapshot_bytes`/CRC (`crc.rs`) и в V70-сейв — отдельного поля в
+  снапшоте не появилось, два прогона дают одинаковый CRC.
+
+**Осознанные расхождения.** (1) Коннекторы зданий не моделируются, поэтому
+комплекс в Rust = одно здание; в C++ шахта, генератор и плиты слились бы в один
+комплекс, и `Total`/`Usage` считались бы по ним всем. (2) `Balance` (вторая
+«лента» полосы) вызывается при открытии и после каждого изменения, а не на
+каждой перерисовке окна — суммарная добыча от этого не меняется (C++ тоже не
+меняет итог, только раскладывает единицы по шахтам). (3) Звук `KCARG0` на
+клике стрелки не проигрывается (в headless-стеке звука нет).
+
+### 20.3 Тесты и QA
+
+* `max_core::alloc::tests` (9): биты `CARGO_*` и имена, лимит замера 16,
+  `Optimize` до максимума клетки и до 16 единиц, `ReduceProduction` держит
+  `total_mining` в синхроне, `Cargo_GetNetProduction` учитывает добычу только у
+  включённой шахты, `UpdateResourcesTotal` кладёт добычу в комплекс, смена доли
+  меняет доход (сырьё ↔ золото), коэффициент сложности `×5/4`/`×6/4`.
+* `max_app::allocmenu::tests` (12): раскладка/подписи из `language.json`,
+  условия открытия (только активная шахта с комплексом), `±1` и абсолютный
+  уровень, формула `GetHorizontalBarClickValue`, попадание кликов в `?`/`Done`/
+  стрелки/полосу, клавиши, формат подписей (`%i (%+i / turn)`), геометрия
+  полос, детерминизм двух одинаковых диалогов (включая `state_checksum` и
+  `snapshot_bytes`).
+* `tests/alloc_menu.rs` (9 кадровых): пункт включён, диалог открывается из меню
+  и совпадает с раскладкой C++, значения меняются и переживают закрытие,
+  стрелки `±1`, модальность, влияние на доход комплекса на следующем ходу,
+  детерминизм двух прогонов, полноэкранный кадр, `ORDER_NEW_ALLOCATE` → P5.
+* QA `max-rust-qa/scripts/allocate.qa` (128 кадров): шахта → меню → `allocate`
+  → `allocate set`/`row` → `Done` → `ORDER_NEW_ALLOCATE` → тик возвращает
+  `POWER_ON` → `end_turn` → `assert complex-raw>=4` → повторное открытие
+  помнит значения. Кадры `allocate-selected`, `allocate-menu`, `allocate-set` —
+  golden `max-rust-qa/golden/allocate` (0 дрейфа).
+* Windows UI (живое окно): `build/scripts/ui-test-allocate.ps1` — меню → партия,
+  клик по шахте ×2 (выделение + меню), пункт `allocate` (`alloc=open` в трассе
+  `MAX_DEBUG_INPUT`), полноэкранный диалог (зелёный заголовок в кадре окна),
+  модальность (клик по карте), `RTARO_OF` (`+1`), `Done` (`alloc=closed`);
+  скриншоты `build/ui-test-allocate/*.png`. Сборка клиента —
+  `build/scripts/build-windows-ui.ps1 -NoPackage`.
+* Существующие golden (visual-screens/production/upgrade/research/cargo/
+  move-input/unit-menu/research-help) — **0 дрейфа**.

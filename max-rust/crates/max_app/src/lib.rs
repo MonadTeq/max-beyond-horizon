@@ -37,6 +37,7 @@
 #![deny(unsafe_code)]
 
 pub mod assets;
+pub mod allocmenu;
 pub mod audio;
 pub mod buildmenu;
 pub mod cargo_unit_data;
@@ -97,6 +98,7 @@ pub use assets::{
     UNIT_TYPES_WITHOUT_SPRITE_DATA, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
+pub use allocmenu::{AllocAction, AllocMenu, AllocMenuAssets};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hotseat::TurnNotice;
@@ -546,6 +548,10 @@ pub struct App {
     /// Открытое меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
     /// В снапшот/CRC не входит — это UI.
     unit_menu: Option<unitmenu::UnitMenu>,
+    /// Открытый диалог распределения добычи шахты (C++ `AllocMenu`, окно
+    /// `ALLOCFRM`). В снапшот/CRC не входит — это UI; значения живут в полях
+    /// юнитов (`raw_mining`/`fuel_mining`/`gold_mining`).
+    alloc_menu: Option<allocmenu::AllocMenu>,
     /// Открытое окно помощи поверх игры (P7, `HelpMenu`). В снапшот/CRC не входит.
     help: Option<helpmenu::HelpScreen>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
@@ -624,6 +630,7 @@ impl App {
             upgrade_menu: None,
             research_menu: None,
             unit_menu: None,
+            alloc_menu: None,
             help: None,
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
@@ -974,6 +981,197 @@ impl App {
         Some(outcome)
     }
 
+    // -----------------------------------------------------------------------
+    // Распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`)
+    // -----------------------------------------------------------------------
+
+    /// Открытый диалог распределения добычи; `None` — закрыт.
+    pub fn alloc_menu(&self) -> Option<&allocmenu::AllocMenu> {
+        self.alloc_menu.as_ref()
+    }
+
+    /// Комплекс выделенного юнита (`unit->GetComplex()`), для QA/журнала.
+    pub fn selected_complex(&self) -> Option<u16> {
+        let id = self.hud.selected?;
+
+        Some(self.state.unit(id)?.complex?.0 as u16)
+    }
+
+    /// Комплекс для экономических проверок QA: выделенного юнита, а если у него
+    /// комплекса нет (или ничего не выделено) — первый комплекс команды игрока
+    /// (наименьший id, как `TeamUnits::complexes[0]` в C++-списке).
+    pub fn economy_complex(&self) -> Option<u16> {
+        if let Some(complex) = self.selected_complex() {
+            return Some(complex);
+        }
+
+        self.state
+            .team_units
+            .get(self.state.player_team.0 as usize)
+            .and_then(|units| units.complexes().first())
+            .map(|complex| complex.id as u16)
+    }
+
+    /// Открытый диалог распределения для ввода/QA.
+    pub fn alloc_menu_mut(&mut self) -> Option<&mut allocmenu::AllocMenu> {
+        self.alloc_menu.as_mut()
+    }
+
+    /// Открывает диалог для выделенной шахты — C++ `AllocMenu_Menu(unit)`.
+    ///
+    /// Пункт `allocate` меню команд (`UnitsManager_Popup_OnClick_Allocate`)
+    /// вызывает это. `false` — юнит не шахта, не своя команда, выключена или
+    /// без комплекса.
+    pub fn open_alloc_menu(&mut self) -> bool {
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+        let Some(unit) = self.state.unit(id) else {
+            return false;
+        };
+        if unit.team != self.state.player_team {
+            return false;
+        }
+
+        let Some(menu) = allocmenu::AllocMenu::new(&mut self.state, id) else {
+            return false;
+        };
+
+        self.unit_menu = None;
+        self.alloc_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает диалог (`AllocMenu::Run` → `GameManager_EnableMainMenu`).
+    ///
+    /// Значения уже применены кликами (как в C++): `Done`/`Esc` только
+    /// закрывают окно. Возвращает строку журнала.
+    pub fn close_alloc_menu(&mut self) -> Option<String> {
+        let menu = self.alloc_menu.take()?;
+        let [raw, fuel, gold] = allocmenu::totals(&menu);
+
+        Some(format!("allocate: raw {raw}, fuel {fuel}, gold {gold}"))
+    }
+
+    /// Ввод в открытом диалоге — [`allocmenu::AllocMenu::input`].
+    pub fn alloc_menu_input(
+        &mut self,
+        event: InputEvent,
+    ) -> Option<allocmenu::AllocAction> {
+        let Some(mut menu) = self.alloc_menu.take() else {
+            return None;
+        };
+        let action = menu.input(&mut self.state, event);
+        self.alloc_menu = Some(menu);
+        Some(action)
+    }
+
+    /// `allocate set N`/QA: уровень добычи ресурса в комплексе.
+    pub fn alloc_menu_set(&mut self, kind: max_core::alloc::MiningKind, target: i32) -> bool {
+        let Some(mut menu) = self.alloc_menu.take() else {
+            return false;
+        };
+        menu.set_level(&mut self.state, kind, target);
+        self.alloc_menu = Some(menu);
+        true
+    }
+
+    /// `allocate row …`/QA: `+1`/`−1` единица ресурса.
+    pub fn alloc_menu_adjust(
+        &mut self,
+        kind: max_core::alloc::MiningKind,
+        increase: bool,
+    ) -> bool {
+        let Some(mut menu) = self.alloc_menu.take() else {
+            return false;
+        };
+        let changed = if increase {
+            menu.increase(&mut self.state, kind)
+        } else {
+            menu.decrease(&mut self.state, kind)
+        };
+        self.alloc_menu = Some(menu);
+        changed
+    }
+
+    /// Команды `ORDER_NEW_ALLOCATE` (пакет 08, **P5**) для всех шахт комплекса —
+    /// `Remote_SendNetPacket_11` (`remote.cpp:2195`) в конце `AllocMenu::Run`.
+    ///
+    /// C++ отсылает их только в сети; здесь приказы всегда кладутся в
+    /// [`hud::HudState::pending`] — офлайн их применяет
+    /// [`App::flush_orders`] (поля уже выставлены диалогом, приказ лишь
+    /// транзиентный `ORDER_NEW_ALLOCATE`, как в C++), в сети они уходят
+    /// пакетом 08/P5 и доносят добычу до остальных клиентов. Возвращает число
+    /// приказов.
+    ///
+    /// Вызывать **до** [`Self::close_alloc_menu`] — комплекс берётся из
+    /// открытого диалога.
+    pub fn queue_alloc_orders(&mut self) -> usize {
+        let Some(menu) = self.alloc_menu.as_ref() else {
+            return 0;
+        };
+        let complex_id = menu.complex.0;
+        let team = menu.team;
+        let ids = self
+            .state
+            .unit_list(max_core::unit::UnitListKind::Stationary)
+            .to_vec();
+        let mut packets = Vec::new();
+
+        for id in ids {
+            let Some(unit) = self.state.unit(id) else {
+                continue;
+            };
+            if unit.team != team
+                || unit.complex.map(|complex| complex.0) != Some(complex_id)
+                || !max_core::alloc::is_active_mine(unit)
+            {
+                continue;
+            }
+            // `UnitsManager_SetNewOrderInt` не трогает `prior_order`, если
+            // текущий приказ уже `ORDER_NEW_ALLOCATE`.
+            let (prior_order, prior_state) =
+                if unit.orders == max_core::enums::UnitOrder::NewAllocate {
+                    (unit.prior_orders, unit.prior_state)
+                } else {
+                    (unit.orders, unit.state)
+                };
+            let fire_on = self.state.order_data(id).fire_on;
+
+            packets.push(max_core::input::Command::Order(max_core::input::Packet08Order {
+                unit: id,
+                payload: max_core::input::OrderPayload::P5(max_core::input::PayloadP5 {
+                    p3: max_core::input::PayloadP3 {
+                        p2: max_core::input::PayloadP2 {
+                            p1: max_core::input::PayloadP1 {
+                                order: max_core::enums::UnitOrder::NewAllocate,
+                                state: max_core::enums::UnitOrderState::Init,
+                                prior_order,
+                                prior_state,
+                                disabled_reaction_fire: unit.disabled_reaction_fire,
+                            },
+                            parent_unit: unit.parent_unit,
+                            experience: unit.experience,
+                        },
+                        move_to: unit.target_grid,
+                        fire_on,
+                        enemy_unit: None,
+                        transfer_cargo: unit.transfer_cargo,
+                        stealth_dice_roll: unit.stealth_dice_roll,
+                    },
+                    total_mining: unit.total_mining,
+                    raw_mining: unit.raw_mining,
+                    fuel_mining: unit.fuel_mining,
+                    gold_mining: unit.gold_mining,
+                }),
+            }));
+        }
+
+        let count = packets.len();
+        self.hud.pending.extend(packets);
+        count
+    }
+
     /// Активирует пункт меню — C++ `GameManager_PopupButtons.r_func[i]`.
     ///
     /// Меню закрывается (как `GameManager_DeinitPopupButtons(true)` в каждом
@@ -1167,6 +1365,14 @@ impl App {
                     "enter: клик по своему транспорту — посадка".to_string()
                 } else {
                     "enter: выключено".to_string()
+                }
+            }
+            unitmenu::ItemId::Allocate => {
+                // C++ `UnitsManager_Popup_OnClick_Allocate` → `AllocMenu_Menu(unit)`.
+                if self.open_alloc_menu() {
+                    "allocate — Allocation Menu".to_string()
+                } else {
+                    "allocate: нужна включённая шахта с комплексом".to_string()
                 }
             }
             unitmenu::ItemId::Transfer
@@ -1384,6 +1590,7 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.unit_menu = None;
+        self.alloc_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();
@@ -1643,6 +1850,7 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.unit_menu = None;
+        self.alloc_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();

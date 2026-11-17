@@ -21,6 +21,7 @@ max-rust-qa/
 ├── scripts/edge-cases.qa       # P4: TC-1106/1111/1112 — спам кликов, юникод, повторный старт
 ├── scripts/move-input.qa       # TC-0601/0603/0604: выделение кликом → RMB-приказ → End Turn → юнит сдвинулся
 ├── scripts/unit-menu.qa        # TC-0622–0626: меню команд юнита (повторный клик), Sentry, Esc, модальность, Build
+├── scripts/allocate.qa         # TC-0627–0629: пункт allocate → диалог ALLOCFRM → set/row → Done (08/P5) → доход комплекса
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталон BuildMenu (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -29,6 +30,7 @@ max-rust-qa/
 ├── golden/cargo/*.png          # эталоны CargoMenu: покупка/модернизация/после апгрейда
 ├── golden/move-input/*.png     # эталоны старта/выделения шахты/выделения Surveyor'а/предпросмотра/хода 2 (6)
 ├── golden/unit-menu/*.png      # эталоны меню команд юнита: танк/нажатый sentry/строитель/выделение (4)
+├── golden/allocate/*.png       # эталоны диалога распределения добычи: выделение шахты/диалог/значения (3)
 └── scripts/README.md
 ```
 
@@ -129,6 +131,11 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `unit-menu item NAME` | клик по кнопке пункта (подпись `sentry`, `Build`, `x-fer`, … или символ позиции); отключённый пункт — ошибка с причиной |
 | `unit-menu key C` | горячая клавиша пункта (`GameManager_ProcessPopupMenuInput`) |
 | `unit-menu close` | `Esc` — закрыть меню |
+| `allocate open` | открыть диалог распределения добычи (`AllocMenu`, `ALLOCFRM`) для выделенной включённой шахты (`MININGST` с комплексом) |
+| `allocate select raw\|fuel\|gold` | выбрать секцию (клавиатура Rust-клиента, как `↑/↓`) |
+| `allocate set N` / `allocate set raw\|fuel\|gold N` | абсолютный уровень добычи (клик по полосе, `OnClick*Bar`; `N` обрезается по ёмкости шахты — 16 единиц) |
+| `allocate row [raw\|fuel\|gold] up\|down` | стрелка `RTARO_OF`/`LFARO_OF`: `+1`/`−1` единица |
+| `allocate done` / `allocate cancel` | `Done`/`Enter` или `Esc`: закрыть и разослать `ORDER_NEW_ALLOCATE` (пакет **08/P5**) шахтам комплекса (в C++ `Esc` и `KP_Enter` — один и тот же выход) |
 | `mobilize mode buy\|upgrade` | переключатель `CRGTOG` (542,446) — список покупки/модернизации |
 | `mobilize filter ground\|air\|sea\|building\|combat` | фильтр домена `SELGRD/SELAIR/SELSEA/SELBLD/SELCBT` |
 | `mobilize select N` | строка N списка Available (прокручивает список стрелками, как игрок) |
@@ -175,6 +182,10 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert cargo-types>=N` | длина списка типов (15 в покупке, 62 в модернизации по умолчанию) |
 | `assert cargo-credits>=N` | остаток кредитов в `CargoMenu` |
 | `assert unit=NAME` | у игрока есть юнит с именем из `BuildMenu` («Training Hall», «Infantry», …) |
+| `assert alloc=open` / `alloc=closed` | открыт ли диалог распределения добычи (C++ `AllocMenu`) |
+| `assert alloc-raw=N` (и `>=`, `<=`, `>`, `<`) | добыча сырья в комплексе шахты (`production.raw`, сумма `raw_mining`); так же `alloc-fuel`, `alloc-gold` |
+| `assert alloc-free=N` | свободные единицы добычи комплекса (`Σ(16 − total_mining)`) |
+| `assert complex-raw=N` | запас сырья комплекса (`Complex::material`, после `manage_economy`); так же `complex-fuel`, `complex-gold` — комплекс выделенного юнита, иначе первый комплекс команды |
 | `assert unit-menu=open` / `unit-menu=closed` | открыто ли меню команд юнита |
 | `assert unit-menu-item=NAME` | пункт есть в меню и **включён** |
 | `assert unit-menu-disabled=NAME` | пункт есть, но отключён (механика не портирована — см. `unitmenu::UnitMenuItem::note`) |
@@ -201,6 +212,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `cargo-full.qa` | P7: мобилизация целиком — `assert cargo-types=15`, покупка Gold Truck (14-я строка, прокрутка списка), Mine Layer и Constructor, cargo-слайдер (+20 единиц), `CRGTOG` → список модернизации (62 типа), фильтры домена, апгрейд armor Constructor'а, `Done` → `assert gold<150`; кадры `cargo-buy`/`cargo-upgrade`/`cargo-upgraded` | **PASS** (golden `cargo/`) |
 | `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по шахте (`assert unit-pos=22,22`, панель Hits/Cargo/Total) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`, `assert angle=2` — угол по ходу движения, TC-0933); кадры `game-start`/`mine-selected`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 6 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
 | `unit-menu.qa` | TC-0622–0626: меню команд юнита — покупка танка и строителя → высадка → `select type Tank` → `unit-menu open` (повторный клик, `assert unit-menu=open`) → пункты танка (`sentry`/`enter`/`Done` включены, `attack` отключён) → `unit-menu item sentry` (`assert unit-order=sentry`) → повторное открытие (пункт нажат) → `key 8` (снять) → `Esc` (`assert unit-menu=closed`, `assert screen=InGame`) → модальность (клик по карте закрывает меню, выделение не меняется) → меню строителя → `Build` открывает `BuildMenu`; кадры `unit-menu-tank-selected`/`unit-menu-tank`/`unit-menu-sentry-on`/`unit-menu-builder` | **PASS** (golden `unit-menu/`) |
+| `allocate.qa` | TC-0627–0629: распределение добычи шахты — `select type MiningStation` → `unit-menu open` → `unit-menu item allocate` (`assert alloc=open`, пункт **включён**) → значения из комплекса (`alloc-raw=12`, `alloc-fuel=4`, `alloc-gold=0`, `alloc-free=0`) → `allocate select raw` → `allocate set 4` (`assert alloc-raw=4`) → `row raw up`/`down` (`5`/`4`) → `set fuel 2`, `set gold 1` (`assert alloc-free=9`) → `set raw 20` упирается в 16 → `set raw 4` → модальность (клик по карте) → `allocate done` (`assert unit-order=newallocate`, `tick 1` → `poweron`) → `end_turn` → `assert complex-raw>=4` (добыча стала запасом комплекса) → повторное открытие помнит `raw=4` → `cancel`; кадры `allocate-selected`/`allocate-menu`/`allocate-set` | **PASS** (128 кадров; golden `allocate/`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -331,10 +343,12 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100

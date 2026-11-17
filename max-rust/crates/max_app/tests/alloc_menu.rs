@@ -1,0 +1,404 @@
+//! Диалог распределения добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`):
+//! открытие из меню юнита, изменение значения, сохранение в полях юнита,
+//! влияние на экономику комплекса, детерминизм и кадр.
+//!
+//! Тесты с настоящими кадрами (`Assets`/`.WRL`) пропускаются, если данных игры
+//! нет рядом с репозиторием — как `move_input.rs` и `unit_menu.rs`.
+
+use std::path::{Path, PathBuf};
+
+use max_app::local::LocalSetup;
+use max_app::pregame::{PreGameFlow, PreGameStage};
+use max_app::setup::GameSetupForm;
+use max_app::ui::Key;
+use max_app::unitmenu::ItemId;
+use max_app::{handle_session_input, App, AppConfig, InputEvent, Transition};
+use max_core::alloc::MiningKind;
+use max_core::enums::{UnitOrder, UnitType};
+use max_core::team::{TeamId, TeamKind};
+use max_core::unit::UnitId;
+use max_render::layout::MAIN_MAP;
+
+fn repo_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join(relative)
+}
+
+/// Одна человеческая команда RED, остальное — ИИ/пусто.
+fn single_human() -> LocalSetup {
+    let mut setup = LocalSetup::default();
+    setup.world = 0;
+    setup.team_types = [
+        TeamKind::Player,
+        TeamKind::Computer,
+        TeamKind::None,
+        TeamKind::None,
+    ];
+    setup
+}
+
+fn app_with_assets() -> Option<App> {
+    let max_res = repo_path("max-original/MAX.RES");
+    let color_pal = repo_path("max-original/COLOR.PAL");
+    let patches = repo_path("assets/PATCHES.RES");
+
+    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+        eprintln!("alloc_menu: пропуск — нет данных игры рядом с репозиторием");
+        return None;
+    }
+
+    let config = AppConfig::default()
+        .with_data_dir(repo_path("max-original"))
+        .with_assets_dir(repo_path("assets"));
+    let mut app = App::new(config);
+    app.init_assets().expect("ассеты игры");
+
+    Some(app)
+}
+
+/// Партия через настоящие фазы старта: мобилизация → высадка → `InGame`.
+fn game_app() -> Option<App> {
+    let world_dir = repo_path("max-original");
+
+    if !world_dir.join("SNOW_1.WRL").is_file() {
+        eprintln!("alloc_menu: пропуск — нет SNOW_1.WRL");
+        return None;
+    }
+
+    let mut flow = PreGameFlow::start(GameSetupForm::default(), single_human(), &world_dir);
+    assert!(matches!(flow.stage, PreGameStage::Mobilize(_)));
+    flow.commit_mobilization();
+    assert!(matches!(flow.stage, PreGameStage::Landing(_)));
+    flow.commit_landing();
+
+    let config = flow.setup.new_game_config();
+    let surface =
+        max_app::landing::LandingScreen::load_surface(0, &world_dir).expect("WRL-поверхность");
+
+    let mut app = app_with_assets()?;
+    app.new_game_on_surface(&config, &surface);
+    app.tick();
+
+    Some(app)
+}
+
+/// Шахта RED (единственная на старте).
+fn mining_station(app: &App) -> UnitId {
+    app.state()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            app.state()
+                .unit(*id)
+                .is_some_and(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation)
+        })
+        .expect("на старте есть шахта RED")
+}
+
+fn click(app: &mut App, point: (i32, i32)) -> Transition {
+    handle_session_input(app, InputEvent::MouseClick(point.0, point.1), false)
+}
+
+fn key(app: &mut App, key: Key) -> Transition {
+    handle_session_input(app, InputEvent::Key(key), false)
+}
+
+/// Выделяет шахту и открывает меню команд повторным кликом.
+fn select_mine(app: &mut App) -> UnitId {
+    let id = mining_station(app);
+    let grid = app.state().unit(id).expect("шахта").grid;
+
+    app.viewport_mut().center_on_grid(grid.x, grid.y);
+    let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
+    let point = (x + MAIN_MAP.ulx, y + MAIN_MAP.uly);
+
+    // Снять прежнее выделение, чтобы первый клик только выделял.
+    app.close_unit_menu();
+    app.hud_mut().select(None);
+    let _ = click(app, point);
+    assert_eq!(app.hud().selected, Some(id), "первый клик выделяет шахту");
+
+    let _ = click(app, point);
+    assert!(app.unit_menu().is_some(), "повторный клик открывает меню");
+
+    id
+}
+
+/// Открывает диалог через пункт `allocate` меню команд (как игрок).
+fn open_alloc(app: &mut App) -> UnitId {
+    let id = select_mine(app);
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(ItemId::Allocate))
+        .expect("пункт allocate есть у шахты");
+    let rect = app.unit_menu().expect("меню").button_rect(index);
+
+    let _ = click(app, (rect.ulx + rect.width / 2, rect.uly + rect.height / 2));
+    assert!(app.alloc_menu().is_some(), "allocate открывает диалог");
+    assert!(app.unit_menu().is_none(), "меню команд закрылось");
+
+    id
+}
+
+#[test]
+fn allocation_item_is_enabled_for_a_mining_station() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    select_mine(&mut app);
+
+    let menu = app.unit_menu().expect("меню шахты");
+    let allocate = menu
+        .index_of(ItemId::Allocate)
+        .map(|index| &menu.items[index])
+        .expect("allocate в меню");
+
+    assert!(allocate.enabled, "пункт allocate больше не отключён");
+    assert!(allocate.note.is_empty(), "у включённого пункта нет причины");
+    assert_eq!(allocate.hotkey, '1');
+}
+
+#[test]
+fn allocate_opens_the_dialog_and_matches_the_cpp_layout() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    open_alloc(&mut app);
+
+    let menu = app.alloc_menu().expect("диалог");
+    assert_eq!(
+        max_app::allocmenu::WINDOW_RECT,
+        max_render::buffer::PixelRect::new(0, 0, 640, 480)
+    );
+    // Добыча комплекса = `raw_mining`/`fuel_mining`/`gold_mining` шахты.
+    let unit = app.state().unit(menu.unit).expect("шахта");
+    assert_eq!(menu.production.raw, i32::from(unit.raw_mining));
+    assert_eq!(menu.production.fuel, i32::from(unit.fuel_mining));
+    assert_eq!(menu.production.gold, i32::from(unit.gold_mining));
+    assert!(menu.free_capacity() >= 0);
+}
+
+#[test]
+fn values_change_and_survive_closing_the_dialog() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let id = open_alloc(&mut app);
+
+    if app.alloc_menu().expect("диалог").free_capacity() == 0 {
+        // Шахта стартует с полной загрузкой (16 единиц) — освобождаем сырьё.
+        app.alloc_menu_set(MiningKind::Raw, 0);
+    }
+
+    app.alloc_menu_set(MiningKind::Raw, 3);
+    assert_eq!(
+        app.alloc_menu().map(|menu| menu.production_of(MiningKind::Raw)),
+        Some(3)
+    );
+    assert_eq!(app.state().unit(id).expect("шахта").raw_mining, 3);
+
+    // Второй ресурс — тот, который вообще есть в клетке шахты.
+    let other = MiningKind::ALL
+        .into_iter()
+        .find(|kind| {
+            *kind != MiningKind::Raw
+                && app
+                    .alloc_menu()
+                    .is_some_and(|menu| menu.capacity_of(*kind) > 0)
+        })
+        .unwrap_or(MiningKind::Fuel);
+    app.alloc_menu_set(other, 1);
+    assert_eq!(app.alloc_menu().map(|menu| menu.production_of(other)), Some(1));
+
+    // `Done`: закрыть + `ORDER_NEW_ALLOCATE` (08/P5).
+    let _ = key(&mut app, Key::Enter);
+    app.flush_orders();
+    assert!(app.alloc_menu().is_none(), "Enter закрывает диалог");
+    assert_eq!(
+        app.state().unit(id).expect("шахта").orders,
+        UnitOrder::NewAllocate,
+        "C++ рассылает `ORDER_NEW_ALLOCATE` шахтам комплекса"
+    );
+
+    // Поля юнита остались: задача `allocate` — менять добычу, а не приказ.
+    assert_eq!(app.state().unit(id).expect("шахта").raw_mining, 3);
+    let total = app.state().unit(id).expect("шахта").total_mining;
+    assert!(total <= 16, "сумма добычи не больше 16: {total}");
+
+    // Повторное открытие показывает сохранённые значения.
+    app.hud_mut().select(None);
+    open_alloc(&mut app);
+    assert_eq!(
+        app.alloc_menu().map(|menu| menu.production_of(MiningKind::Raw)),
+        Some(3)
+    );
+}
+
+#[test]
+fn arrows_bump_one_unit_like_the_cpp_buttons() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let id = open_alloc(&mut app);
+
+    if app.alloc_menu().expect("диалог").free_capacity() == 0 {
+        app.alloc_menu_set(MiningKind::Raw, 0);
+    }
+
+    let before = app.state().unit(id).expect("шахта").raw_mining;
+    let rect = max_app::allocmenu::RIGHT_ARROW_X;
+    let y = max_app::allocmenu::SECTION_TOP[0] + 2;
+    let _ = click(&mut app, (rect + 2, y));
+
+    assert_eq!(
+        app.state().unit(id).expect("шахта").raw_mining,
+        before + 1,
+        "правая стрелка `RTARO_OF` добавляет единицу"
+    );
+
+    let _ = click(&mut app, (max_app::allocmenu::LEFT_ARROW_X + 2, y));
+    assert_eq!(
+        app.state().unit(id).expect("шахта").raw_mining,
+        before,
+        "левая стрелка `LFARO_OF` снимает единицу"
+    );
+}
+
+#[test]
+fn dialog_is_modal_for_the_map() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    open_alloc(&mut app);
+    let pending = app.hud().pending.len();
+
+    // Клик по карте вне диалога: приказа нет, диалог открыт.
+    let _ = click(&mut app, (500, 300));
+
+    assert!(app.alloc_menu().is_some(), "клик по карте не закрывает диалог");
+    assert_eq!(app.hud().pending.len(), pending, "приказов не появилось");
+}
+
+#[test]
+fn allocation_changes_the_complex_income_next_turn() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let id = open_alloc(&mut app);
+    let _ = id;
+
+    // Переключить всю добычу с сырья на другой ресурс клетки (топливо/золото).
+    let other = MiningKind::ALL
+        .into_iter()
+        .find(|kind| {
+            *kind != MiningKind::Raw
+                && app
+                    .alloc_menu()
+                    .is_some_and(|menu| menu.capacity_of(*kind) > 0)
+        })
+        .expect("в клетке шахты есть ещё один ресурс");
+
+    let target = app.alloc_menu().expect("диалог").capacity_of(other).min(5);
+    app.alloc_menu_set(MiningKind::Raw, 0);
+    app.alloc_menu_set(other, target);
+    assert_eq!(
+        app.state().unit(id).expect("шахта").raw_mining,
+        0,
+        "сырьё больше не добывается"
+    );
+
+    let _ = key(&mut app, Key::Escape);
+    app.flush_orders();
+
+    // `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`.
+    app.state_mut().manage_economy(TeamId::RED);
+
+    let complex = app
+        .economy_complex()
+        .and_then(|id| app.state().complex(TeamId::RED, id))
+        .expect("комплекс шахты");
+
+    assert_eq!(complex.material, 0, "доля сырья 0 — добычи сырья нет");
+    let income = match other {
+        MiningKind::Fuel => complex.fuel,
+        MiningKind::Gold => complex.gold,
+        MiningKind::Raw => unreachable!(),
+    };
+    assert!(
+        i32::from(income) >= target,
+        "добыча {other:?} попала в запас комплекса: {income} (ждали {target})"
+    );
+}
+
+#[test]
+fn two_identical_dialogs_stay_deterministic() {
+    let Some(mut a) = game_app() else {
+        return;
+    };
+    let Some(mut b) = game_app() else {
+        return;
+    };
+
+    for app in [&mut a, &mut b] {
+        open_alloc(app);
+        app.alloc_menu_set(MiningKind::Raw, 2);
+        app.alloc_menu_set(MiningKind::Fuel, 1);
+        let _ = key(app, Key::Enter);
+        app.flush_orders();
+    }
+
+    assert_eq!(
+        a.digest().state_checksum,
+        b.digest().state_checksum,
+        "CRC пакета 45 совпадает: добыча входит в снапшот полями юнита"
+    );
+    assert_eq!(a.state().snapshot_bytes(), b.state().snapshot_bytes());
+    assert_eq!(a.digest().state_digest, b.digest().state_digest);
+}
+
+#[test]
+fn frame_shows_the_full_screen_dialog() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let before = app.render_frame();
+    open_alloc(&mut app);
+    let after = app.render_frame();
+
+    // `ALLOCFRM` — 640×480: кадр меняется почти целиком (полоса карты,
+    // панели и юниты перекрыты диалогом).
+    let mut changed = 0;
+
+    for y in 0..480 {
+        for x in 0..640 {
+            if before.get(x, y) != after.get(x, y) {
+                changed += 1;
+            }
+        }
+    }
+
+    assert!(
+        changed > 640 * 480 / 2,
+        "диалог занимает весь кадр (изменилось {changed} пикселей)"
+    );
+}
+
+#[test]
+fn allocate_is_an_ordered_p5_packet() {
+    use max_core::enums::UnitOrder;
+    use max_core::input::PayloadLevel;
+
+    // `Remote_Init`: `ORDER_NEW_ALLOCATE` → процессор P5 (несёт уровни добычи).
+    assert_eq!(
+        PayloadLevel::for_order(UnitOrder::NewAllocate),
+        PayloadLevel::P5
+    );
+}

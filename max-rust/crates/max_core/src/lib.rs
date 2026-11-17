@@ -65,6 +65,7 @@
 
 pub mod access;
 pub mod ai;
+pub mod alloc;
 pub mod combat;
 pub mod crc;
 pub mod deploy;
@@ -93,6 +94,14 @@ pub use access::{
     get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
     unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
     ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
+};
+pub use alloc::{
+    balance as alloc_balance, cargo_get_cargo_capacity, cargo_get_inventory,
+    get_cargo_info as complex_get_cargo_info, get_cargo_minable as complex_get_cargo_minable,
+    get_cargo_mining as complex_get_cargo_mining, is_active_mine, mining_survey,
+    optimize as alloc_optimize, optimize_masked as alloc_optimize_masked, reduce_production,
+    total_mining as complex_total_mining, update_resources_total, unit_complex, MiningKind,
+    MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
 };
 pub use ai::HeatMap as AiHeatMap;
 pub use ai::{

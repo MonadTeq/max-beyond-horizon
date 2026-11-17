@@ -261,6 +261,24 @@ pub enum Assertion {
     /// `assert cargo-portrait=yes|no`: есть ли у выбранного типа big image
     /// портрета `P_*` (`Unit::GetPortrait()`).
     CargoPortrait(bool),
+    /// `assert alloc=open|closed`: открыт ли диалог распределения добычи
+    /// (C++ `AllocMenu`).
+    AllocOpen(bool),
+    /// `assert alloc-raw=N`: добыча сырья в комплексе шахты (`production.raw`).
+    AllocRaw(Cmp, i32),
+    /// `assert alloc-fuel=N`.
+    AllocFuel(Cmp, i32),
+    /// `assert alloc-gold=N`.
+    AllocGold(Cmp, i32),
+    /// `assert alloc-free=N`: свободные единицы добычи
+    /// (`production.free_capacity`).
+    AllocFree(Cmp, i32),
+    /// `assert complex-raw=N`: запас сырья комплекса (`Complex::material`).
+    ComplexRaw(Cmp, i32),
+    /// `assert complex-fuel=N`: запас топлива комплекса.
+    ComplexFuel(Cmp, i32),
+    /// `assert complex-gold=N`: запас золота комплекса.
+    ComplexGold(Cmp, i32),
 }
 
 /// Куда идти высокоуровневой командой `menu`.
@@ -436,6 +454,37 @@ pub enum HelpCommand {
     Close,
 }
 
+/// Действие диалога распределения добычи шахты (C++ `AllocMenu`, `ALLOCFRM`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocateCommand {
+    /// `open` — открыть диалог для выделенной шахты (пункт `allocate` меню).
+    Open,
+    /// `select raw|fuel|gold` — выбрать секцию (клавиатура Rust-клиента).
+    Select(max_core::alloc::MiningKind),
+    /// `set N` / `set raw|fuel|gold N` — абсолютный уровень добычи (клик по
+    /// полосе, `OnClick*Bar`).
+    Set {
+        /// Ресурс; `None` — выбранный в диалоге.
+        kind: Option<max_core::alloc::MiningKind>,
+        /// Целевое число единиц добычи в комплексе.
+        level: i32,
+    },
+    /// `row raw|fuel|gold up|down` (или `up`/`down` для выбранной секции) —
+    /// стрелки `LFARO_OF`/`RTARO_OF`.
+    Adjust {
+        /// Ресурс; `None` — выбранный в диалоге.
+        kind: Option<max_core::alloc::MiningKind>,
+        /// `+1` (стрелка вправо) или `−1` (влево).
+        increase: bool,
+    },
+    /// `done` — `Done`/`Enter`: закрыть (значения уже применены) и разослать
+    /// `ORDER_NEW_ALLOCATE` (08/P5).
+    Done,
+    /// `cancel`/`close` — `Esc`: то же, что `done` (в C++ отдельного `Cancel`
+    /// нет, `Esc` и `KP_Enter` — один и тот же выход `AllocMenu::Run`).
+    Cancel,
+}
+
 /// Действие меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnitMenuCommand {
@@ -536,6 +585,9 @@ pub enum Command {
     Help(HelpCommand),
     /// `unit-menu open|item NAME|key CHAR|close` — меню команд юнита.
     UnitMenu(UnitMenuCommand),
+    /// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
+    /// распределения добычи шахты (C++ `AllocMenu`).
+    Allocate(AllocateCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -643,6 +695,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "research" => parse_research(rest),
         "help" => parse_help(rest),
         "unit-menu" | "unit_menu" => parse_unit_menu(rest),
+        "allocate" | "alloc" => parse_allocate(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -1032,8 +1085,42 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert cargo-portrait: ожидалось yes|no, получено «{other}»"
             )),
         },
-        "digest" => {
-            let digits = value.trim_start_matches("0x").trim_start_matches("0X");
+        "alloc" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::AllocOpen(true)),
+            "closed" | "none" => Ok(Assertion::AllocOpen(false)),
+            other => Err(format!(
+                "assert alloc: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "alloc-raw" => Ok(Assertion::AllocRaw(
+            operator,
+            parse_i32(value, "assert alloc-raw")?,
+        )),
+        "alloc-fuel" => Ok(Assertion::AllocFuel(
+            operator,
+            parse_i32(value, "assert alloc-fuel")?,
+        )),
+        "alloc-gold" => Ok(Assertion::AllocGold(
+            operator,
+            parse_i32(value, "assert alloc-gold")?,
+        )),
+        "alloc-free" => Ok(Assertion::AllocFree(
+            operator,
+            parse_i32(value, "assert alloc-free")?,
+        )),
+        "complex-raw" => Ok(Assertion::ComplexRaw(
+            operator,
+            parse_i32(value, "assert complex-raw")?,
+        )),
+        "complex-fuel" => Ok(Assertion::ComplexFuel(
+            operator,
+            parse_i32(value, "assert complex-fuel")?,
+        )),
+        "complex-gold" => Ok(Assertion::ComplexGold(
+            operator,
+            parse_i32(value, "assert complex-gold")?,
+        )),
+        "digest" => {            let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
                 .map_err(|_| format!("assert digest: ожидалось hex16, получено «{value}»"))?;
             Ok(Assertion::Digest(digest))
@@ -1439,6 +1526,76 @@ fn parse_unit_menu(rest: &str) -> Result<Command, String> {
     };
 
     Ok(Command::UnitMenu(command))
+}
+
+/// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
+/// распределения добычи (C++ `AllocMenu`).
+fn parse_allocate(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
+        return Err(
+            "allocate: ожидалось «allocate open|select R|set [R] N|row R up|down|done|cancel»"
+                .to_string(),
+        );
+    };
+
+    let mining = |text: &str| -> Result<max_core::alloc::MiningKind, String> {
+        max_core::alloc::MiningKind::parse(text).ok_or_else(|| {
+            format!("allocate: ожидался ресурс raw|fuel|gold, получено «{text}»")
+        })
+    };
+
+    let command = match (first.as_str(), parts.as_slice()) {
+        ("open", [_]) => AllocateCommand::Open,
+        ("done", [_]) => AllocateCommand::Done,
+        ("cancel", [_]) | ("close", [_]) => AllocateCommand::Cancel,
+        ("select", [_, kind]) => AllocateCommand::Select(mining(kind)?),
+        // `allocate set N` — выбранный ресурс; `allocate set raw N` — явный.
+        ("set", [_, level]) => AllocateCommand::Set {
+            kind: None,
+            level: parse_i32(level, "allocate set")?.clamp(0, 16),
+        },
+        ("set", [_, kind, level]) => AllocateCommand::Set {
+            kind: Some(mining(kind)?),
+            level: parse_i32(level, "allocate set")?.clamp(0, 16),
+        },
+        ("row", [_, direction]) => {
+            let increase = parse_direction(direction)?;
+            AllocateCommand::Adjust {
+                kind: None,
+                increase,
+            }
+        }
+        ("row", [_, kind, direction]) => AllocateCommand::Adjust {
+            kind: Some(mining(kind)?),
+            increase: parse_direction(direction)?,
+        },
+        ("up", [_]) => AllocateCommand::Adjust {
+            kind: None,
+            increase: true,
+        },
+        ("down", [_]) => AllocateCommand::Adjust {
+            kind: None,
+            increase: false,
+        },
+        _ => {
+            return Err(format!(
+                "allocate: неизвестное действие «{rest}» (open|select R|set [R] N|row [R] up|down|done|cancel)"
+            ))
+        }
+    };
+
+    Ok(Command::Allocate(command))
+}
+
+fn parse_direction(text: &str) -> Result<bool, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "up" | "right" | "increase" | "+" | "inc" => Ok(true),
+        "down" | "left" | "decrease" | "-" | "dec" => Ok(false),
+        other => Err(format!(
+            "allocate: ожидалось up|down (или right|left), получено «{other}»"
+        )),
+    }
 }
 
 /// Имя приказа (`ORDER_SENTRY`, `Sentry`, `sentry`) → [`max_core::enums::UnitOrder`].
@@ -2011,6 +2168,101 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "help page sideways",
             "assert help-section=nope",
             "assert research-alloc nope=1",
+        ] {
+            assert!(
+                parse_script(&format!("{source}\n")).is_err(),
+                "должно быть отклонено: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn allocate_commands_parse() {
+        use max_core::alloc::MiningKind;
+
+        assert_eq!(
+            one("allocate open"),
+            Command::Allocate(AllocateCommand::Open)
+        );
+        assert_eq!(
+            one("allocate select gold"),
+            Command::Allocate(AllocateCommand::Select(MiningKind::Gold))
+        );
+        // `set N` — выбранный ресурс; `set raw N` — явный.
+        assert_eq!(
+            one("allocate set 4"),
+            Command::Allocate(AllocateCommand::Set {
+                kind: None,
+                level: 4
+            })
+        );
+        assert_eq!(
+            one("allocate set fuel 2"),
+            Command::Allocate(AllocateCommand::Set {
+                kind: Some(MiningKind::Fuel),
+                level: 2
+            })
+        );
+        // Уровень обрезается по ёмкости шахты (16 единиц).
+        assert_eq!(
+            one("allocate set raw 99"),
+            Command::Allocate(AllocateCommand::Set {
+                kind: Some(MiningKind::Raw),
+                level: 16
+            })
+        );
+        assert_eq!(
+            one("allocate row raw up"),
+            Command::Allocate(AllocateCommand::Adjust {
+                kind: Some(MiningKind::Raw),
+                increase: true
+            })
+        );
+        assert_eq!(
+            one("allocate row down"),
+            Command::Allocate(AllocateCommand::Adjust {
+                kind: None,
+                increase: false
+            })
+        );
+        assert_eq!(
+            one("allocate done"),
+            Command::Allocate(AllocateCommand::Done)
+        );
+        assert_eq!(
+            one("allocate cancel"),
+            Command::Allocate(AllocateCommand::Cancel)
+        );
+
+        assert_eq!(
+            one("assert alloc=open"),
+            Command::Assert(Assertion::AllocOpen(true))
+        );
+        assert_eq!(
+            one("assert alloc-raw=4"),
+            Command::Assert(Assertion::AllocRaw(Cmp::Eq, 4))
+        );
+        assert_eq!(
+            one("assert alloc-free>=0"),
+            Command::Assert(Assertion::AllocFree(Cmp::Ge, 0))
+        );
+        assert_eq!(
+            one("assert complex-raw>=4"),
+            Command::Assert(Assertion::ComplexRaw(Cmp::Ge, 4))
+        );
+        assert_eq!(
+            one("assert complex-gold=1"),
+            Command::Assert(Assertion::ComplexGold(Cmp::Eq, 1))
+        );
+
+        for source in [
+            "allocate nope",
+            "allocate select nope",
+            "allocate set",
+            "allocate set raw nope",
+            "allocate row sideways",
+            "assert alloc=nope",
+            "assert alloc-raw=nope",
         ] {
             assert!(
                 parse_script(&format!("{source}\n")).is_err(),

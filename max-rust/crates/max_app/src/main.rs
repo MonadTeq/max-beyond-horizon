@@ -854,7 +854,15 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     Screen::Help { .. } => "Help",
                     _ => "Other",
                 };
-                eprintln!("[in] screen={name} event={input:?}");
+                // Модальные окна партии: по этим полям живой UI-тест
+                // (`build/scripts/ui-test-allocate.ps1`) понимает, что диалог
+                // распределения добычи открылся/закрылся.
+                let alloc = if app.alloc_menu().is_some() {
+                    "alloc=open"
+                } else {
+                    "alloc=closed"
+                };
+                eprintln!("[in] screen={name} event={input:?} {alloc}");
             }
 
             if let Some(recorder) = recorder.as_mut() {

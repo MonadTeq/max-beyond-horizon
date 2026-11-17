@@ -669,6 +669,10 @@ pub struct Assets {
     /// Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21) — попап
     /// `GameManager_PopupButtons`.
     pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
+    /// Диалог распределения добычи шахты (`ALLOCFRM` + `BARRAW`/`BARFUEL`/
+    /// `BARGOLD` + `BARTAPE` + `LFARO_OF`/`RTARO_OF` + `MNUBTN*`), C++
+    /// `AllocMenu`.
+    pub alloc: Option<crate::allocmenu::AllocMenuAssets>,
     /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Видео интро: путь к `maxint.mve` (ресурс `INTROFLC` — ASCIIZ-ссылка).
@@ -823,6 +827,8 @@ impl Assets {
         let help = crate::helpmenu::HelpMenuAssets::load(&max_res);
         // Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21).
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
+        // Диалог распределения добычи шахты (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
+        let alloc = crate::allocmenu::AllocMenuAssets::load(&max_res);
         // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
@@ -855,6 +861,13 @@ impl Assets {
         if !unit_menu.is_ready() {
             warnings.push(
                 "UnitMenu: UNTBTN_U/UNTBTN_D не загрузились — меню команд не рисуется"
+                    .to_string(),
+            );
+        }
+
+        if !alloc.is_ready() {
+            warnings.push(
+                "AllocMenu: ALLOCFRM/BARRAW/BARTAPE не загрузились — распределение шахты не рисуется"
                     .to_string(),
             );
         }
@@ -995,6 +1008,7 @@ impl Assets {
             research: Some(research),
             help: Some(help),
             unit_menu: Some(unit_menu),
+            alloc: Some(alloc),
             cargo: Some(cargo),
             intro_mve,
             cursors: Some(cursors),

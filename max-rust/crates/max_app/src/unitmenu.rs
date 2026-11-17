@@ -607,10 +607,7 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             if unit.orders == UnitOrder::PowerOff {
                 items.push(UnitMenuItem::new(ItemId::PowerOn, "start", '2', false));
             } else {
-                items.push(
-                    UnitMenuItem::new(ItemId::Allocate, "allocate", '1', false)
-                        .disabled("AllocMenu_Menu (распределение шахты) не портирован"),
-                );
+                items.push(UnitMenuItem::new(ItemId::Allocate, "allocate", '1', false));
                 items.push(UnitMenuItem::new(ItemId::PowerOff, "stop", '7', false));
             }
         }

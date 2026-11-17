@@ -1196,6 +1196,17 @@ impl GameState {
             unit.y = unit.y.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
         }
 
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:316`): здание сразу получает
+        // **свой** комплекс — `AttachComplex(CreateComplex(team))`, а
+        // `Complex::Grow` ставит `buildings = 1`. Без этого у шахты не было
+        // `unit->GetComplex()`, и диалог `allocate` (`AllocMenu`) не открывался,
+        // а `Access_UpdateResourcesTotal` не видел добычу комплекса.
+        // Слияние комплексов по коннекторам (`TestConnections`) не портировано
+        // (соединители в модели пока не считаются).
+        if unit.is_complex_member() {
+            unit.complex = self.attach_new_complex(team);
+        }
+
         // Слот: свободный (LIFO, как переиспользование `SmartObjectArray`) или новый.
         let slot = match self.free_slots.pop() {
             Some(slot) => {
@@ -1233,6 +1244,36 @@ impl GameState {
         Some(id)
     }
 
+    /// `UnitInfo::AttachComplex` (`unitinfo.cpp:1978`) в объёме модели:
+    /// новый комплекс команды (`TeamUnits::CreateComplex`) + `Complex::Grow`.
+    ///
+    /// Возвращает id комплекса; `None`, если у команды нет слота.
+    fn attach_new_complex(&mut self, team: TeamId) -> Option<crate::team::ComplexId> {
+        let team_units = self.team_units.get_mut(team.0 as usize)?;
+        let id = team_units.create_complex();
+        let complex = team_units.get_complex_mut(id)?;
+        complex.grow();
+        Some(id)
+    }
+
+    /// `UnitInfo::DetachComplex` (`unitinfo.cpp:2275`) в объёме модели:
+    /// `Complex::Shrink`, при нуле зданий комплекс удаляется
+    /// (`Complex::Shrink` → `TeamUnits::RemoveComplex`).
+    ///
+    /// Разделение связанных комплексов по коннекторам не портировано.
+    fn detach_complex(&mut self, team: TeamId, complex: crate::team::ComplexId) {
+        let Some(team_units) = self.team_units.get_mut(team.0 as usize) else {
+            return;
+        };
+        let Some(target) = team_units.get_complex_mut(complex) else {
+            return;
+        };
+
+        if target.shrink() {
+            team_units.remove_complex(complex);
+        }
+    }
+
     /// Уничтожение юнита — подмножество `UnitsManager_DestroyUnit`
     /// (`units_manager.cpp`), достаточное циклу P4: снятие со списков, из
     /// хэшей, из атак и событий, покрытия сканирования и задач ИИ.
@@ -1250,6 +1291,17 @@ impl GameState {
         // `Access_UpdateMapStatus(unit, false)` и `Ai_RemoveUnit` (P6).
         self.update_map_status(id, false);
         crate::ai::ai_remove_unit(self, id);
+
+        // `UnitsManager_RemoveConnections` → `DetachComplex` (`units_manager.cpp:1569`):
+        // здание покидает комплекс, пустой комплекс удаляется.
+        if let Some(unit) = self.unit(id) {
+            if unit.is_complex_member() {
+                if let Some(complex) = unit.complex {
+                    let team = unit.team;
+                    self.detach_complex(team, complex);
+                }
+            }
+        }
 
         self.clear_group_member(id);
         self.remove_unit_from_unit_lists(id);
@@ -1538,8 +1590,13 @@ impl GameState {
     /// `GameManager_ManageEconomy` — обновление производства, снабжения и
     /// исследований команды на начало её хода.
     pub fn manage_economy(&mut self, team: TeamId) {
-        // `team_units->OptimizeComplexes(team)` — P3 комплексы.
-        // TODO(P3): Access_UpdateResourcesTotal + ProductionManager_OptimizeProduction.
+        // `team_units->OptimizeComplexes(team)` (`teamunits.cpp:170`):
+        // `Access_UpdateResourcesTotal(complex)` — запасы комплекса (включая
+        // добычу шахт по их `raw/fuel/gold_mining`) пересчитываются на начало
+        // хода; затем `ProductionManager_OptimizeProduction` (в нашем стеке —
+        // только `UpdateProduction`, см. ниже: выключение зданий при
+        // отрицательном балансе остаётся TODO P3).
+        self.update_complex_resources(team);
 
         for kind in [
             UnitListKind::MobileLandSea,
@@ -2288,6 +2345,33 @@ impl GameState {
             .complexes
             .iter_mut()
             .find(|complex| complex.id == complex_id as i16)
+    }
+
+    /// `TeamUnits::OptimizeComplexes(team)` (`teamunits.cpp:170`) в объёме
+    /// экономики: для каждого комплекса команды — `Access_UpdateResourcesTotal`
+    /// (`access.cpp:912`), то есть пересчёт `material/fuel/gold/power/workers`
+    /// из зданий (`Cargo_GetNetProduction + Cargo_GetInventory`).
+    ///
+    /// Добыча шахты попадает сюда через `raw_mining`/`fuel_mining`/
+    /// `gold_mining` (см. [`crate::alloc`]), поэтому распределение из диалога
+    /// `allocate` напрямую меняет доход комплекса за ход.
+    ///
+    /// Порядок комплексов — порядок `TeamUnits::complexes` (тот же, что в
+    /// C++-списке: по возрастанию id).
+    pub fn update_complex_resources(&mut self, team: TeamId) {
+        let Some(ids) = self
+            .team_units
+            .get(team.0 as usize)
+            .map(|units| units.complexes.iter().map(|complex| complex.id).collect::<Vec<_>>())
+        else {
+            return;
+        };
+
+        for id in ids {
+            // `UpdateResourcesTotal` затрагивает только поля комплекса, состав
+            // зданий и их приказы не меняет — цикл по снимку id безопасен.
+            crate::alloc::update_resources_total(self, team, crate::team::ComplexId(id));
+        }
     }
 }
 

@@ -1,0 +1,126 @@
+# allocate.qa — распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`).
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/allocate.qa qa-out/allocate
+#
+# Что проверяется (всё — теми же кликами/клавишами, что у игрока):
+# * пункт `allocate` меню команд шахты включён и открывает диалог
+#   (`UnitsManager_Popup_OnClick_Allocate` → `AllocMenu_Menu`);
+# * диалог модален: пока он открыт, карта приказ не получает;
+# * значения меняются и сохраняются в полях юнита (`raw_mining`/`fuel_mining`/
+#   `gold_mining`, сумма ≤ 16) — `allocate set`, стрелки `up`/`down`;
+# * `Done`/`Esc` закрывают окно и рассылают `ORDER_NEW_ALLOCATE` (пакет 08,
+#   процессор **P5**), затем шахта возвращается к своему приказу;
+# * распределение реально влияет на экономику: запас комплекса
+#   (`Complex::material`, `Access_UpdateResourcesTotal` в `manage_economy`)
+#   растёт на добычу сырья за ход.
+#
+# Кадры `allocate-selected`, `allocate-menu`, `allocate-set` —
+# golden-эталоны (`max-rust-qa/golden/allocate`).
+
+# --- Главное меню → партия ------------------------------------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация: стартовый набор (шахта в нём есть) -----------------------
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Шахта: выделение и меню команд (повторный клик) -----------------------
+select type MiningStation
+assert unit-order=poweron
+assert unit-menu=closed
+shot allocate-selected
+
+unit-menu open
+assert unit-menu=open
+assert unit-menu-item=allocate
+assert unit-menu-item=stop
+# Пункт `allocate` больше не отключён: `assert unit-menu-item` требует
+# включённости (`UnitMenuItem::enabled`).
+unit-menu item allocate
+assert alloc=open
+assert unit-menu=closed
+
+# --- Раскладка: три секции, значения из комплекса -------------------------
+assert alloc-raw>=0
+assert alloc-fuel>=0
+assert alloc-gold>=0
+assert alloc-free<=16
+shot allocate-menu
+
+# --- Значение: абсолютный уровень, как клик по полосе ---------------------
+allocate select raw
+allocate set 4
+assert alloc-raw=4
+allocate row raw up
+assert alloc-raw=5
+allocate row raw down
+assert alloc-raw=4
+allocate set fuel 2
+assert alloc-fuel=2
+allocate set gold 1
+assert alloc-gold=1
+assert alloc-free=9
+# Сумма не превышает 16 единиц шахты (`16 - total_mining`).
+allocate set raw 20
+assert alloc-raw<=16
+assert alloc-free>=0
+allocate set raw 4
+assert alloc-raw=4
+shot allocate-set
+
+# --- Модальность: клик по карте не даёт приказа ---------------------------
+click 500 300
+assert alloc=open
+assert alloc-raw=4
+
+# --- Done: закрыть, разослать 08/P5, шахта вернулась к POWER_ON -----------
+allocate done
+assert alloc=closed
+assert screen=InGame
+# C++ `Remote_SendNetPacket_11` ставит `ORDER_NEW_ALLOCATE` каждой шахте
+# комплекса (пакет 08/P5), а `UnitsManager_ProcessOrderNewAllocate`
+# возвращает прежний приказ на следующем тике (`RestoreOrders`).
+assert unit-order=newallocate
+tick 1
+assert unit-order=poweron
+assert unit-menu=closed
+
+# --- Экономика: распределение стало добычей комплекса ---------------------
+# `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`
+# пересчитывает запасы комплекса, включая `raw_mining` шахты.
+end_turn
+assert screen=InGame
+assert complex-raw>=4
+
+# --- Повторное открытие помнит распределение ------------------------------
+# После смены хода выделение снято: первый клик выделяет шахту, второй
+# (`unit-menu open`) открывает меню команд.
+select type MiningStation
+unit-menu open
+assert unit-menu-item=allocate
+unit-menu item allocate
+assert alloc=open
+assert alloc-raw=4
+allocate cancel
+assert alloc=closed
+assert screen=InGame

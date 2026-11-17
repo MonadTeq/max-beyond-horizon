@@ -409,7 +409,93 @@ impl QaRunner {
             Command::Research(action) => self.research(*action),
             Command::Help(action) => self.help(*action),
             Command::UnitMenu(action) => self.unit_menu(action.clone()),
+            Command::Allocate(action) => self.allocate(action.clone()),
         }
+    }
+
+    /// `allocate …` — диалог распределения добычи шахты (C++ `AllocMenu`,
+    /// окно `ALLOCFRM`).
+    fn allocate(&mut self, action: crate::qa::script::AllocateCommand) -> Result<Flow, String> {
+        use crate::qa::script::AllocateCommand;
+
+        let app = &mut self.app;
+
+        let detail = match action {
+            AllocateCommand::Open => {
+                // Диалог открывается тем же путём, что у игрока
+                // (`App::open_alloc_menu` — обработчик пункта `allocate`).
+                if app.open_alloc_menu() {
+                    let (complex, free) = app
+                        .alloc_menu()
+                        .map(|menu| (menu.complex.0, menu.free_capacity()))
+                        .unwrap_or((0, 0));
+
+                    format!("меню открыто (комплекс {complex}, свободно {free})")
+                } else {
+                    return Err(
+                        "allocate open: нужна выделенная включённая шахта (select type MiningStation)"
+                            .to_string(),
+                    );
+                }
+            }
+            AllocateCommand::Select(kind) => {
+                let Some(menu) = app.alloc_menu_mut() else {
+                    return Err("allocate select: меню не открыто".to_string());
+                };
+                menu.selected = kind;
+                format!("выбран ресурс {}", kind.name())
+            }
+            AllocateCommand::Set { kind, level } => {
+                let Some(menu) = app.alloc_menu() else {
+                    return Err("allocate set: меню не открыто".to_string());
+                };
+                let kind = kind.unwrap_or(menu.selected);
+                app.alloc_menu_set(kind, level);
+                let Some(menu) = app.alloc_menu() else {
+                    return Err("allocate set: меню закрылось".to_string());
+                };
+                format!(
+                    "{} = {} (свободно {})",
+                    kind.name(),
+                    menu.production_of(kind),
+                    menu.free_capacity()
+                )
+            }
+            AllocateCommand::Adjust { kind, increase } => {
+                let Some(menu) = app.alloc_menu() else {
+                    return Err("allocate row: меню не открыто".to_string());
+                };
+                let kind = kind.unwrap_or(menu.selected);
+                app.alloc_menu_adjust(kind, increase);
+                let Some(menu) = app.alloc_menu() else {
+                    return Err("allocate row: меню закрылось".to_string());
+                };
+                format!(
+                    "{} {}= {} (свободно {})",
+                    kind.name(),
+                    if increase { "+1" } else { "-1" },
+                    menu.production_of(kind),
+                    menu.free_capacity()
+                )
+            }
+            AllocateCommand::Done | AllocateCommand::Cancel => {
+                if app.alloc_menu().is_none() {
+                    return Err("allocate done: меню не открыто".to_string());
+                }
+                // `Remote_SendNetPacket_11`: `ORDER_NEW_ALLOCATE` (08/P5) на
+                // каждую шахту комплекса, затем закрытие.
+                let queued = app.queue_alloc_orders();
+                app.flush_orders();
+                let line = app
+                    .close_alloc_menu()
+                    .unwrap_or_else(|| "меню закрыто".to_string());
+                format!("{line}; приказов 08/P5: {queued}")
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
     }
 
     /// `unit-menu …` — меню команд выделенного юнита (C++
@@ -2202,6 +2288,48 @@ impl QaRunner {
                     format!("research-alloc {topic:?}={actual}"),
                 )
             }
+            Assertion::AllocOpen(expected) => {
+                let actual = self.app.alloc_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("alloc={}", if expected { "open" } else { "closed" }),
+                    format!("alloc={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::AllocRaw(cmp, expected) => {
+                self.check_alloc_value("alloc-raw", cmp, expected, |menu| {
+                    menu.production_of(max_core::alloc::MiningKind::Raw)
+                })
+            }
+            Assertion::AllocFuel(cmp, expected) => {
+                self.check_alloc_value("alloc-fuel", cmp, expected, |menu| {
+                    menu.production_of(max_core::alloc::MiningKind::Fuel)
+                })
+            }
+            Assertion::AllocGold(cmp, expected) => {
+                self.check_alloc_value("alloc-gold", cmp, expected, |menu| {
+                    menu.production_of(max_core::alloc::MiningKind::Gold)
+                })
+            }
+            Assertion::AllocFree(cmp, expected) => {
+                self.check_alloc_value("alloc-free", cmp, expected, |menu| menu.free_capacity())
+            }
+            Assertion::ComplexRaw(cmp, expected) => {
+                self.check_complex_value("complex-raw", cmp, expected, |complex| {
+                    i32::from(complex.material)
+                })
+            }
+            Assertion::ComplexFuel(cmp, expected) => {
+                self.check_complex_value("complex-fuel", cmp, expected, |complex| {
+                    i32::from(complex.fuel)
+                })
+            }
+            Assertion::ComplexGold(cmp, expected) => {
+                self.check_complex_value("complex-gold", cmp, expected, |complex| {
+                    i32::from(complex.gold)
+                })
+            }
             Assertion::HelpOpen(expected) => {
                 let actual = self.current_help_section().is_some();
 
@@ -2513,6 +2641,59 @@ impl QaRunner {
             Ok(Flow::Continue)
         } else {
             Err(format!("assert {description}: фактически {actual}"))
+        }
+    }
+
+    /// Проверка числа из открытого диалога распределения добычи.
+    fn check_alloc_value(
+        &mut self,
+        label: &str,
+        cmp: crate::qa::script::Cmp,
+        expected: i32,
+        value: impl Fn(&crate::allocmenu::AllocMenu) -> i32,
+    ) -> Result<Flow, String> {
+        let actual = self.app.alloc_menu().map(|menu| value(menu));
+
+        match actual {
+            Some(actual) => self.expect(
+                cmp.test(i64::from(actual), i64::from(expected)),
+                format!("{label}{}{expected}", cmp.as_str()),
+                format!("{label}={actual}"),
+            ),
+            None => Err(format!("assert {label}: диалог распределения не открыт")),
+        }
+    }
+
+    /// Проверка запаса комплекса (`Complex::material/...`).
+    ///
+    /// Комплекс — выделенного юнита, иначе первый комплекс команды игрока
+    /// ([`crate::App::economy_complex`]): после смены хода выделение снимается,
+    /// а запас комплекса шахты всё равно нужно проверить.
+    fn check_complex_value(
+        &mut self,
+        label: &str,
+        cmp: crate::qa::script::Cmp,
+        expected: i32,
+        value: impl Fn(&max_core::team::Complex) -> i32,
+    ) -> Result<Flow, String> {
+        let team = self.app.player_team();
+        let complex = self
+            .app
+            .economy_complex()
+            .and_then(|id| self.app.state().complex(team, id));
+
+        match complex {
+            Some(complex) => {
+                let actual = value(complex);
+                self.expect(
+                    cmp.test(i64::from(actual), i64::from(expected)),
+                    format!("{label}{}{expected}", cmp.as_str()),
+                    format!("{label}={actual}"),
+                )
+            }
+            None => Err(format!(
+                "assert {label}: у команды {team:?} нет комплексов"
+            )),
         }
     }
 

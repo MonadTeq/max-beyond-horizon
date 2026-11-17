@@ -1658,6 +1658,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_research_menu_input(app, event);
     }
 
+    // Распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`) —
+    // модальный диалог: карта/панели ввода не получают.
+    if app.alloc_menu().is_some() {
+        return session_alloc_menu_input(app, event, online);
+    }
+
     if app.build_menu().is_some() {
         return session_build_menu_input(app, event, online);
     }
@@ -1864,6 +1870,39 @@ fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Tr
                 if !online {
                     apply_pending_orders(app);
                 }
+            }
+        }
+    }
+
+    Transition::None
+}
+
+/// Ввод в открытом диалоге распределения добычи шахты (C++ `AllocMenu`).
+///
+/// Диалог модальный (C++ `GameManager_DisableMainMenu` вокруг `AllocMenu::Run`):
+/// клики по карте/панелям приказов не дают. `Done`/`Esc`/`KP_Enter` закрывают
+/// окно — значения уже применены кликами (`UpdateRawAllocation`), а на выходе
+/// C++ рассылает `Remote_SendNetPacket_11` → `ORDER_NEW_ALLOCATE` (08/P5) на
+/// каждую шахту комплекса ([`App::queue_alloc_orders`]).
+fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let Some(action) = app.alloc_menu_input(event) else {
+        return Transition::None;
+    };
+
+    match action {
+        crate::allocmenu::AllocAction::None => {}
+        crate::allocmenu::AllocAction::Help => {
+            app.open_help(HelpSection::Allocate);
+            app.hud_mut().push_log("Allocate help");
+        }
+        crate::allocmenu::AllocAction::Close => {
+            let queued = app.queue_alloc_orders();
+
+            if let Some(line) = app.close_alloc_menu() {
+                app.hud_mut().push_log(line);
+            }
+            if queued > 0 && !online {
+                apply_pending_orders(app);
             }
         }
     }
@@ -2546,7 +2585,13 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             // Открытый `BuildMenu` — модальный экран поверх кадра: строка
             // статуса партии его не перекрывает (как `GameManager_DisableMainMenu`).
             // Окно сохранения/загрузки (P3) — такое же модальное.
-            if app.build_menu().is_none() && app.save_load().is_none() {
+            // Диалог распределения добычи (`AllocMenu`) занимает весь кадр
+            // 640×480 (`ALLOCFRM`), поэтому строка статуса не рисуется поверх
+            // него — как модальное окно C++.
+            if app.build_menu().is_none()
+                && app.save_load().is_none()
+                && app.alloc_menu().is_none()
+            {
                 if let Some(assets) = app.assets() {
                     max_render::text::draw_text_gnw_shadowed(
                         buffer,

@@ -2,6 +2,49 @@
 
 ### Добавлено
 
+- **Распределение добычи шахты (`Allocate`, `AllocMenu`, TC-0627–0629).**
+  Пункт `allocate` меню команд `MININGST` больше не серый: `max_app::allocmenu`
+  — порт `allocmenu.cpp` 1:1. Окно `ALLOCFRM` 640×480 (`Window(ALLOCFRM,
+  GetDialogWindowCenterMode())`, `win_move` прижимает его к `(0,0)`), заголовок
+  `Allocation Menu` (`_(c771)`, `FONT5`, `COLOR_GREEN`), три секции
+  `Raw`/`Fuel`/`Gold` с подписями `Usage`/`Reserve` (`_(8481)`, `_(1e19)`,
+  `_(5ae6)`, `_(a80f)`, `_(5432)`, `_(04dd)`, `_(dff1)`, `_(e187)`, `_(89a3)`),
+  по три полосы 240×30 на секцию: добыча (`BARRAW`/`BARFUEL`/`BARGOLD` +
+  «лента» `BARTAPE`), потребление (`%i (%+i / turn)`), запас комплекса;
+  подпись — `FONT1`, цвет `0xFF`, обводка `0x00`, подложка перекрашена
+  `Color_GenerateIntensityTable1(0, 0, 25, 1, 1)`. Стрелки `LFARO_OF`/
+  `RTARO_OF` — `±1` единица (`case 1001/1002/1004/1005/1007/1008`), клик по
+  полосе — абсолютный уровень `(capacity·(x−174)+120)/240` (`OnClick*Bar`),
+  `?` → `ALLOCATE_SETUP`, `Done`/`Esc`/`KP_Enter` — закрыть (отдельного
+  `Cancel` в C++ нет: значения применяются в момент клика). Клавиатура
+  Rust-клиента (задокументированное отличие): `↑/↓`/`Tab` — секция, `←/→` и
+  `−/+` — изменение, `H`/`?` — помощь. Диалог модален (`GameManager_
+  DisableMainMenu`), полноэкранный `ALLOCFRM` не перекрывается строкой статуса.
+  Значение — **не** поле `TeamUnits`, а три счётчика каждого `MININGST`
+  (`raw_mining`/`fuel_mining`/`gold_mining`, сумма ≤ 16, `total_mining`) — как
+  в C++ (`unitinfo.hpp:434-440`); они уже в снапшоте/CRC и в V70-сейве.
+  `Done`/`Esc` ставят каждой шахте комплекса `ORDER_NEW_ALLOCATE` — пакет **08**,
+  процессор **P5** (`payload P5` в `docs/architecture/protocol.md`), как
+  `Remote_SendNetPacket_11` (`remote.cpp:2195`).
+  Экономика: `max_core::alloc` — `AllocMenu_Optimize`/`AllocMenu_
+  ReduceProduction`/`Balance` (`Allocator` с маской `cargo_material_type`),
+  `Complex::GetCargoMining`/`GetCargoMinable`/`GetCargoInfo`,
+  `Cargo_GetInventory`/`Cargo_GetCargoCapacity`, `Access_UpdateResourcesTotal`;
+  `GameState::manage_economy` теперь вызывает `update_complex_resources`
+  (раньше был TODO и `Complex::material` оставался нулём), поэтому доля шахты
+  становится добычей комплекса за ход (`raw += raw_mining` и т.д. — формулы
+  `cargo.cpp:105-126`, с коэффициентом сложности `×5/4`/`×6/4`).
+  `GameState::spawn_unit` — `UnitInfo::UnitInfo` (`unitinfo.cpp:316`): здание
+  сразу получает свой комплекс (`AttachComplex(CreateComplex(team))`),
+  `destroy_unit` — `DetachComplex`/`Complex::Shrink`; без этого у шахты не было
+  `GetComplex()` и `allocate` не открывался. Тесты: 9 `max_core::alloc`,
+  12 `max_app::allocmenu`, 9 кадровых `tests/alloc_menu.rs`, QA
+  `allocate.qa` (128 кадров) + golden `golden/allocate` (0 дрейфа; остальные
+  эталоны — тоже 0 дрейфа), живой Windows-прогон
+  `build/scripts/ui-test-allocate.ps1` (скриншоты `build/ui-test-allocate/`).
+  Осознанное расхождение: коннекторы зданий не
+  моделируются, поэтому комплекс = одно здание.
+
 - **Меню команд выделенного юнита (`GameManager_PopupButtons`, TC-0622–0626).**
   `max_app::unitmenu` — порт `GameManager_InitPopupButtons`/`DeinitPopupButtons`/
   `ProcessPopupMenuInput` (`game_manager.cpp:3568/3664/2607`) и
@@ -37,7 +80,7 @@
   `x-fer` (`TransferMenu_Menu`/`ProcessOrderTransfer` — TODO P3, хотя приказ
   `Transfer` в протоколе есть), `attack` (`targeting_mode`; атака — кликом по
   врагу), `load` (погрузка в транспорт: `Land` — P1 и не несёт родителя),
-  `activate` (`RepairShopMenu`), `allocate` (`AllocMenu`), `start` завода
+  `activate` (`RepairShopMenu`), `start` завода
   (`BuildOrder`), `stop` стройки (`GameManager_SelectBuildSite`), `remove` здания
   (`UnitsManager_SelfDestructMenu`), бульдозер (`Access_GetRemovableRubble`),
   `Upg. All` (комплексы/материалы), мастер-строитель (проверка площадки), а также
@@ -45,6 +88,7 @@
   (`tests/unit_menu.rs`), QA `unit-menu.qa` (+golden `unit-menu-*`). Расхождение
   с C++ (осознанное): у стационарного юнита меню не открывается уже при
   выделении — иначе менялись бы существующие эталоны (`mine-selected`).
+  Пункт `allocate` (`AllocMenu`) с этого среза **включён** — см. запись выше.
 
 - **Панель статистики по типу юнита (`WINDOW_STAT_WINDOW`, TC-0601).**
   `max_app::panels::rows_for` — порт `GameManager_UpdateInfoDisplay` +

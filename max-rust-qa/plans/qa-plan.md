@@ -90,7 +90,16 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
       повторное открытие (пункт нажат) → `key 8` (снять → `assert
       unit-order=await`) → `Esc` (`assert unit-menu=closed`,
       `assert screen=InGame`) → модальность (клик по карте закрывает меню, не
-      меняя выделение) → меню строителя → `Build` открывает `BuildMenu`.
+      меняя выделение) → меню строителя → `Build` открывает `BuildMenu`;
+  14. `allocate.qa` — TC-0627–0629: распределение добычи шахты (C++
+      `AllocMenu`, окно `ALLOCFRM`). `select type MiningStation` → `unit-menu
+      open` → `unit-menu item allocate` (`assert alloc=open`; пункт больше не
+      серый) → значения комплекса (`alloc-raw`/`alloc-fuel`/`alloc-gold`/
+      `alloc-free`) → `allocate set 4` / `row raw up|down` / `set fuel 2` /
+      `set gold 1` → предел 16 единиц → модальность (клик по карте) →
+      `allocate done` (`ORDER_NEW_ALLOCATE`, 08/**P5**; тик возвращает
+      `POWER_ON`) → `end_turn` → `assert complex-raw>=4` (доля стала добычей
+      комплекса) → повторное открытие помнит значения → `cancel`.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;
   ассерт-фейл → exit 1 с текстом (`строка N: assert …: фактически …`).
 - Тесты драйвера: `src/qa/script.rs` (все команды парсера),

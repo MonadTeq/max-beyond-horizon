@@ -161,6 +161,78 @@ impl UiPalette {
     pub fn color_rgb(&self, index: u8) -> [u8; 3] {
         self.colors[usize::from(index)]
     }
+
+    /// Индекс палитры по точному цвету кадра (`None`, если цвета нет —
+    /// например, пиксель пришёл не из этой палитры).
+    ///
+    /// Нужен `Color_RecolorPixels`: перекраска подложки идёт по **индексам**
+    /// палитры, а кадр хранит уже RGB.
+    pub fn index_of(&self, color: Rgba) -> Option<u8> {
+        self.colors
+            .iter()
+            .position(|candidate| {
+                candidate[0] == color.r && candidate[1] == color.g && candidate[2] == color.b
+            })
+            .map(|index| index as u8)
+    }
+
+    /// `Color_GenerateIntensityTable1(red, green, blue, factor1, factor2, table)`
+    /// (`color.cpp:132`): таблица «приглушения» палитры — каждый цвет палитры
+    /// смешивается с уровнем и заменяется ближайшим цветом палитры
+    /// (`Color_MapColor` с полным перебором, первый минимальный выигрывает).
+    ///
+    /// Диалог распределения шахты (`AllocMenu`) строит такую таблицу
+    /// `(0, 0, 25, 1, 1)` и ею перекрашивает подложку под числом на полосе
+    /// (`Color_RecolorPixels`).
+    pub fn intensity_table(
+        &self,
+        red_level: i32,
+        green_level: i32,
+        blue_level: i32,
+        factor1: i32,
+        factor2: i32,
+    ) -> [u8; 256] {
+        let factor_sum = (factor1 + factor2).max(1);
+        let mut table = [0u8; 256];
+
+        for (index, slot) in table.iter_mut().enumerate() {
+            let color = self.colors[index];
+            let target = [
+                (i32::from(color[0]) * factor2 + red_level * factor1) / factor_sum,
+                (i32::from(color[1]) * factor2 + green_level * factor1) / factor_sum,
+                (i32::from(color[2]) * factor2 + blue_level * factor1) / factor_sum,
+            ];
+
+            // `Color_GetColorDistance` до собственного цвета; при нулевом
+            // расстоянии C++ цикл поиска не выполняется вовсе.
+            let mut best = index;
+            let mut best_distance = palette_distance(self.colors[index], target);
+
+            if best_distance > 0 {
+                for (candidate, value) in self.colors.iter().enumerate() {
+                    let distance = palette_distance(*value, target);
+
+                    if distance < best_distance {
+                        best_distance = distance;
+                        best = candidate;
+                    }
+                }
+            }
+
+            *slot = best as u8;
+        }
+
+        table
+    }
+}
+
+/// `Color_GetColorDistance` (`color.cpp:120`) — сумма квадратов разностей.
+fn palette_distance(color: [u8; 3], target: [i32; 3]) -> i32 {
+    let red = i32::from(color[0]) - target[0];
+    let green = i32::from(color[1]) - target[1];
+    let blue = i32::from(color[2]) - target[2];
+
+    red * red + green * green + blue * blue
 }
 
 /// Переключатель панели или кнопка, обрабатываемая хромом.

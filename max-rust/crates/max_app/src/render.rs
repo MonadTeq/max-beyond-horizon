@@ -322,6 +322,8 @@ impl App {
         self.draw_upgrade_menu(&mut frame);
         // Экран исследований (P7) и окно помощи поверх него.
         self.draw_research_menu(&mut frame);
+        // Диалог распределения добычи шахты (`AllocMenu`, `ALLOCFRM`).
+        self.draw_alloc_menu(&mut frame);
         // Меню команд выделенного юнита (`GameManager_PopupButtons`).
         self.draw_unit_menu(&mut frame);
         self.draw_help(&mut frame);
@@ -391,6 +393,8 @@ impl App {
         self.draw_upgrade_menu(&mut frame);
         // Экран исследований (P7) и окно помощи поверх него.
         self.draw_research_menu(&mut frame);
+        // Диалог распределения добычи шахты — полноэкранный `ALLOCFRM`.
+        self.draw_alloc_menu(&mut frame);
         // Меню команд выделенного юнита — над картой и панелями.
         self.draw_unit_menu(&mut frame);
         self.draw_help(&mut frame);
@@ -431,6 +435,15 @@ impl App {
         };
 
         menu.draw(frame, assets, self.state());
+    }
+
+    /// Рисует открытый диалог распределения добычи шахты (C++ `AllocMenu`).
+    pub(crate) fn draw_alloc_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.alloc_menu(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets);
     }
 
     /// Рисует открытое окно помощи поверх кадра (P7).
