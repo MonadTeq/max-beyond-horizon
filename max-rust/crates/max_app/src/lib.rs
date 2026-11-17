@@ -539,9 +539,17 @@ pub struct App {
     help: Option<helpmenu::HelpScreen>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
-    /// Симуляция по-прежнему двигает юнита на целую клетку за тик, а кадр
-    /// догоняет её плавно; в CRC/снапшот эти значения не входят.
+    /// Симуляция по-прежнему двигает юнита на целую клетку за тик; кадр идёт
+    /// по фактическому маршруту клетка за клеткой с реальным временем
+    /// ([`App::update_visual_units`]). В CRC/снапшот эти значения не входят.
     visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
+    /// Последняя известная симуляционная клетка юнита: по её изменениям
+    /// строится визуальный маршрут. UI-состояние, в снапшот не входит.
+    visual_goals: std::collections::HashMap<UnitId, (i16, i16)>,
+    /// Очередь клеток маршрута, которые кадр ещё должен пройти. Симуляция
+    /// исполняет приказ за тики (быстро), а кадр проходит те же клетки с
+    /// реальной скоростью оригинала (`UnitInfo::Move`: 8 px/тик ~ 3.75 клетки/с).
+    visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<(f32, f32)>>,
     /// FLC-анимация портрета выделенного юнита (`WINDOW_CORNER_FLIC`).
     ///
     /// UI-состояние: в снапшот/CRC не входит. `None` — юнит не выбран, у типа
@@ -549,6 +557,20 @@ pub struct App {
     /// см. `panels::draw_portrait`).
     portrait: Option<portrait::PortraitAnim>,
 }
+
+/// Скорость видимого движения юнитов по карте — клеток в секунду.
+///
+/// Оригинал: `UnitInfo::Move` (`unitinfo.cpp:1730`) двигает юнита на `velocity`
+/// пикселей за тик, а `Paths_CalculateStep` (`paths.cpp:292`) ограничивает
+/// `max_velocity` восемью пикселями; тик — примерно 30 Гц (`TickTimer`,
+/// `timer_get`). Одна клетка — `GFX_MAP_TILE_SIZE = 64` px: 8 × 30 / 64 ≈
+/// **3.75 клетки/с**. Берём 4 — так кадр проходит маршрут за то же время, что
+/// и пиксельное движение в C++.
+pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
+
+/// Скачок больше этого числа клеток — не маршрут, а телепорт/синхронизация
+/// состояния: визуальная позиция ставится в цель без анимации.
+pub const VISUAL_TELEPORT_CELLS: i32 = 6;
 
 impl App {
     /// Пустое приложение (без ассетов; состояние — пустая партия `GameState::new`).
@@ -570,6 +592,8 @@ impl App {
             research_menu: None,
             help: None,
             visual_units: std::collections::HashMap::new(),
+            visual_goals: std::collections::HashMap::new(),
+            visual_paths: std::collections::HashMap::new(),
             portrait: None,
         }
     }
@@ -999,8 +1023,11 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.help = None;
-        self.visual_units.clear();
+        self.reset_visual_state();
         self.focus_player();
+        // Стартовый снимок: первый тик с `dt > 0` увидит, из какой клетки
+        // юнит начал движение, иначе первый шаг маршрута «телепортировался».
+        self.update_visual_units(0.0);
 
         Ok(())
     }
@@ -1250,8 +1277,10 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.help = None;
-        self.visual_units.clear();
+        self.reset_visual_state();
         self.focus_player();
+        // Стартовый снимок визуальных позиций (см. `load_game`).
+        self.update_visual_units(0.0);
 
         report
     }
@@ -1267,6 +1296,16 @@ impl App {
             game_state: self.state.game_state,
             units: self.state.unit_count(),
         }
+    }
+
+    /// Сбрасывает визуальное состояние (позиции, цели и маршруты юнитов).
+    ///
+    /// Вызывается при загрузке сейва и старте новой партии: иначе кадр мог бы
+    /// анимировать «переезд» юнитов из старой партии в новую.
+    fn reset_visual_state(&mut self) {
+        self.visual_units.clear();
+        self.visual_goals.clear();
+        self.visual_paths.clear();
     }
 
     /// Визуальная позиция юнита в клетках (дробная) для кадра.
@@ -1285,8 +1324,12 @@ impl App {
 
     /// Подтягивает визуальные позиции к симуляционным.
     ///
-    /// Симуляция перемещает юнита на целую клетку за тик; кадр догоняет её
-    /// плавно (как пиксельное движение `UnitInfo::Move` в оригинале).
+    /// Симуляция двигает юнита на целую клетку за тик; кадр проходит **ту же
+    /// последовательность клеток** с реальной скоростью оригинала
+    /// ([`VISUAL_CELLS_PER_SECOND`]). Это и есть видимое движение «клетка за
+    /// клеткой»: при `dt > 0` позиция спрайта между кадрами меняется, а после
+    /// прохода маршрута совпадает с целевой клеткой.
+    ///
     /// `dt <= 0` — снимок без интерполяции: headless/QA-кадры остаются
     /// детерминированными и совпадают с эталонами.
     ///
@@ -1300,38 +1343,92 @@ impl App {
 
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
-        // Скорость догоняния: клетка примерно за 1/12 секунды.
-        let max_step = dt * 12.0;
 
         // Раздельные заимствования полей: `retain` читает состояние.
         let state = &self.state;
         let visual = &mut self.visual_units;
+        let goals = &mut self.visual_goals;
+        let paths = &mut self.visual_paths;
+
         visual.retain(|id, _| state.unit(*id).is_some());
+        goals.retain(|id, _| state.unit(*id).is_some());
+        paths.retain(|id, _| state.unit(*id).is_some());
+
+        // `dt = 0` (headless/QA): снимок — кадр читает ровно симуляционную
+        // клетку. Очередь маршрута сбрасывается, поэтому golden не дрейфуют.
+        if dt <= 0.0 {
+            for id in ids {
+                let Some(unit) = state.unit(id) else {
+                    continue;
+                };
+                let target = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+                visual.insert(id, target);
+                goals.insert(id, (unit.grid.x, unit.grid.y));
+                paths.remove(&id);
+            }
+            return;
+        }
+
+        let budget = VISUAL_CELLS_PER_SECOND * dt;
 
         for id in ids {
             let Some(unit) = state.unit(id) else {
                 continue;
             };
-            let target = (f32::from(unit.grid.x), f32::from(unit.grid.y));
-            let current = visual.get(&id).copied().unwrap_or(target);
-            let dx = target.0 - current.0;
-            let dy = target.1 - current.1;
-            let distance = dx.abs().max(dy.abs());
+            let grid = (unit.grid.x, unit.grid.y);
+            let target = (f32::from(grid.0), f32::from(grid.1));
+            let current = visual.entry(id).or_insert(target);
+            let goal = goals.entry(id).or_insert(grid);
+            let queue = paths.entry(id).or_default();
 
-            let position = if dt <= 0.0 || distance <= f32::EPSILON {
-                target
-            } else if distance > 2.5 {
-                // Телепорт/синхронизация состояния — не растягиваем через карту.
-                target
-            } else {
-                let step = max_step.min(distance);
-                (
-                    current.0 + dx * (step / distance),
-                    current.1 + dy * (step / distance),
-                )
-            };
+            // Симуляция сдвинула юнита (обычно на одну клетку за тик).
+            // Дописываем клетки фактического маршрута, чтобы кадр шёл по ним,
+            // а не срезал путь по прямой; большой скачок — телепорт/синк.
+            if *goal != grid {
+                let dx = i32::from(grid.0) - i32::from(goal.0);
+                let dy = i32::from(grid.1) - i32::from(goal.1);
+                let distance = dx.abs().max(dy.abs());
 
-            visual.insert(id, position);
+                if distance > VISUAL_TELEPORT_CELLS {
+                    queue.clear();
+                    *current = target;
+                } else {
+                    let divisor = distance.max(1);
+
+                    for step in 1..=divisor {
+                        let x = goal.0 + (dx * step / divisor) as i16;
+                        let y = goal.1 + (dy * step / divisor) as i16;
+
+                        queue.push_back((f32::from(x), f32::from(y)));
+                    }
+                }
+
+                *goal = grid;
+            }
+
+            // Проходим не больше `budget` клеток за кадр; остаток бюджета
+            // переносится на следующие точки маршрута — скорость постоянна.
+            let mut left = budget;
+
+            while left > 0.0 {
+                let Some(&(way_x, way_y)) = queue.front() else {
+                    break;
+                };
+                let dx = way_x - current.0;
+                let dy = way_y - current.1;
+                let distance = dx.abs().max(dy.abs());
+
+                if distance <= left {
+                    *current = (way_x, way_y);
+                    queue.pop_front();
+                    left -= distance;
+                } else {
+                    let factor = left / distance;
+                    current.0 += dx * factor;
+                    current.1 += dy * factor;
+                    left = 0.0;
+                }
+            }
         }
     }
 

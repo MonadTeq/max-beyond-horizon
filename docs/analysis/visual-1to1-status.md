@@ -1477,3 +1477,102 @@ Rust-клиент делает то же: `mobilize::CargoMenuAssets` грузи
   `qa_golden_check` — 0 дрейфа (14 кадров).
 * `cargo test -p max_app --test cargo_render` — иконки всех 11 турельных
   типов: кадр башни + сдвиг `angle_offsets[2]` из `D_*`.
+
+---
+
+## 15. Видимое движение, якорь зданий и кадры питания — **сделано** (2026-11-17)
+
+Четыре регресса из ручной игры: юниты «не двигались» визуально, генератор
+накладывался на шахту, у включённых генератора и шахты не было кадра
+питания. Оракул — C++-порт (не менялся).
+
+### 15.1 Почему движение не было видно
+
+* Симуляция `max_core` по-прежнему делает **одну клетку за тик**
+  (`unit_order::unit_move` — задокументированное расхождение с пиксельным
+  `UnitInfo::Move`). В интерактивном локальном цикле тик идёт **каждый кадр**
+  (`local_update` → `state.tick`), т.е. до 60 клеток/с.
+* Старая `App::update_visual_units` подтягивала позицию к симуляционной
+  максимум на 12 клеток/с и при расхождении > 2.5 клетки **снапала** к цели.
+  Симуляция убегала на клетку за кадр, поэтому спрайт сначала стоял, а потом
+  прыгал: визуально движения не было.
+* В C++ скорость задаёт `Paths_CalculateStep` (`max_velocity = 8` px/тик) и
+  тик ~30 Гц (`TickTimer`): 8 × 30 / 64 ≈ **3.75 клетки/с**; одна клетка
+  проходится ~8 тиков, а не один.
+
+Исправление (`max_app/src/lib.rs`): вместо «догоняния» кадр ведёт
+**очередь фактического маршрута**. `update_visual_units` запоминает последнюю
+симуляционную клетку (`visual_goals`), при её изменении дописывает пройденные
+клетки в `visual_paths` и проходит их со скоростью
+`VISUAL_CELLS_PER_SECOND` = 4 клетки/с с постоянным бюджетом `dt`.
+Скачок > `VISUAL_TELEPORT_CELLS` (6) — телепорт/синхронизация: снап.
+`dt = 0` (headless/QA) — снимок ровно по `grid` и сброс очереди, поэтому
+golden-кадры детерминированы, а `snapshot_bytes`/CRC не меняются.
+Визуальное состояние по-прежнему не входит в симуляцию.
+
+`local_update` двигает визуал и в фазе `Advancing` и при открытом окне
+перехода хода (симуляция стоит, маршрут доигрывается); на паузе — стоит.
+
+### 15.2 Генератор и шахта
+
+Раскладка `deploy.rs` **совпадает с C++**:
+`GameManager_GetStartPositionMiningStation` → шахта, затем
+`GameManager_GetStartingPositionPowerGenerator` (`point.x -= 1; point.y += 2`,
+первый доступный кандидат на север). На стартовой карте `move-input` это
+шахта `(22,22)` и генератор `(21,23)` — **разные клетки**; `SMLSLAB` стоит в
+клетке генератора, `LRGSLAB` — в клетке шахты (как `DeployUnit`). Порядок
+`spawn_unit`/RNG не менялся, `snapshot_bytes` раскладки тот же.
+
+Наложение было **ошибкой отрисовки**: C++ `UnitInfo::SetPosition`
+(`unitinfo.cpp:1301`) для `flags & BUILDING` сдвигает `x/y` на
+`GFX_MAP_TILE_SIZE / 2 - 1 = +31` px от центра клетки — здание 2×2
+(`MININGST`, `LRGSLAB`) рисуется в своём 2×2-прямоугольнике. Rust рисовал всё
+от центра клетки, поэтому 116×108-спрайт шахты уезжал на полклетки вверх-влево
+и заходил на клетку генератора. Теперь якорь — `render::unit_anchor_world`
+(+31 для `BUILDING`), как `unit.x/y` в C++; спрайты шахты и генератора больше
+не пересекаются (регресс-тест).
+
+### 15.3 Кадры включённых зданий (генератор/шахта)
+
+Оракул `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) и
+`UnitInfo::PowerDown` (`unitinfo.cpp:5123`):
+
+* при `ORDER_POWER_ON` — `DrawSpriteFrame(image_base + 1)`;
+* при выключении — `DrawSpriteFrame(image_base)`;
+* у шахты `UnitInfo::UnitInfo` (`unitinfo.cpp:281`) задаёт
+  `image_base = (team_clan - 1) * sizeof(uint16_t)` — 8 клановых пар кадров
+  (в `MININGST` 24 кадра: 16 «клан × выкл/вкл» + 8 коннекторов), у `POWGEN`
+  6 кадров: 0/1 — выкл/вкл, 2…5 — коннекторы.
+
+Покадровой анимации по времени у зданий в C++ **нет**: `UnitInfo::Animate`
+добавляет только draw bounds, `ProcessOrderPowerOn` вызывает
+`DrawSpriteFrame` один раз. Поэтому «анимация» включённого генератора/шахты —
+это **второй кадр состояния** (индикатор питания), который Rust раньше не
+выбирал. `render::unit_frame_index` теперь: `image_base + angle`, а при
+`orders == PowerOn` — `+1`; `render::image_base_for` берёт клановый вариант
+шахты (консервативно: `Random`/нулевая база → клан 1). Сама симуляция не
+меняется — `image_base` остаётся полем сейва, выбор кадра только на рендере.
+
+### 15.4 Свидетельства
+
+* `tests/app.rs::movement_is_visible_between_frames_and_finishes_on_the_target_cell`
+  — после тика два кадра с `dt = 1/60` различаются и визуальной позицией, и
+  пикселями кадра; в конце маршрута позиция равна целевой клетке;
+  `snapshot_bytes` между кадрами не меняется.
+* `tests/local_sp.rs::local_update_with_real_dt_animates_move_orders` — тот же
+  путь через интерактивный `local_update(dt)`: маршрут проходит промежуточные
+  позиции и заканчивается в цели.
+* `tests/move_input.rs::generator_and_mining_station_are_on_different_cells_without_sprite_overlap`
+  — клетки разные, якорь шахты `+31` (`unit.x` в C++), спрайты не
+  пересекаются, у обоих включённых зданий кадр `image_base + 1`.
+* `max_core::deploy::tests::power_generator_starts_next_to_the_mining_station_but_not_on_it`
+  — координаты генератора/плиты ровно по C++.
+* `tests/building_frames.rs` (3) — `POWGEN`: вкл/выкл = кадры 1/0, пиксели
+  различаются; `MININGST`: клан 7 → база 12, вкл = 13; `Random` → клан 1;
+  включённый кадр не меняется от времени (оракул: нет покадровой анимации).
+* QA: `move-input.qa` PASS; пересняты `golden/move-input/*`,
+  `golden/visual-screens/{game,portrait}.png`, `golden/upgrade/upgrade-done.png`,
+  `golden/research/research-done.png`, `golden/research-help/{help-game,
+  help-game-keys,help-research,research-menu,research-plan}.png` — `qa_golden_check`
+  **0 дрейфа**. Остальные кадры (меню/карго/загрузка) не изменились.
+

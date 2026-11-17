@@ -973,25 +973,33 @@ impl App {
 
     /// Один кадр локальной партии: тик симуляции, таймер, ходы ИИ.
     ///
-    /// `dt` — секунды с прошлого кадра (таймер хода). Детерминизм симуляции от
-    /// `dt` не зависит: тики идут по одному за кадр, как в
-    /// `GameManager_ProcessTick`.
+    /// `dt` — секунды с прошлого кадра (таймер хода и видимое движение юнитов).
+    /// Детерминизм симуляции от `dt` не зависит: тики идут по одному за кадр,
+    /// как в `GameManager_ProcessTick`.
     ///
-    /// Пока открыто окно перехода хода (M-HS), кадр ничего не делает: в C++
-    /// цикл стоит в `DialogMenu::Run()`, таймер хода ещё не включён.
+    /// Пока открыто окно перехода хода (M-HS), симуляция не тикает (в C++ цикл
+    /// стоит в `DialogMenu::Run()`), но визуальный маршрут уже сдвинутых юнитов
+    /// доигрывается — иначе движение обрывалось бы на смене хода.
     pub fn local_update(&mut self, dt: f32) -> LocalUpdate {
         let mut update = LocalUpdate::default();
 
         let Some(local) = self.local.as_ref() else {
             return update;
         };
-        if local.paused || local.phase == LocalPhase::Finished || local.notice.is_some() {
+        let paused = local.paused;
+        let phase = local.phase;
+        let notice_open = local.notice.is_some();
+
+        if paused {
+            return update;
+        }
+        if phase == LocalPhase::Finished || notice_open {
+            self.update_visual_units(dt);
             return update;
         }
         // P4: время кадра локальной партии (`MAX_TICK_PROFILE=1`). `dt` не
         // влияет на симуляцию — тик по-прежнему один за кадр.
         let _profile = crate::profile::local_update_scope();
-        let phase = local.phase;
 
         match phase {
             LocalPhase::PlayerTurn => {
@@ -1074,6 +1082,9 @@ impl App {
                 }
             }
             LocalPhase::Advancing => {
+                // Визуальный маршрут проходит и в фазе перехода между
+                // командами, пока не открыто окно перехода хода.
+                self.update_visual_units(dt);
                 self.local_next_team();
                 update.ai_started = matches!(
                     self.local.as_ref().map(|local| local.phase),

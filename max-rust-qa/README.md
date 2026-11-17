@@ -35,7 +35,7 @@ max-rust-qa/
    `ResearchMenu` (`R`, распределение центров Attack→Shots и `Done`) и окна
    `HELPFRAM` (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`/
    `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`), golden — `golden/research-help/`.
-   Итоговая матрица — `suite/README.md` (**175 ✅, 1 🟡, 16 ⏭ not planned**).
+   Итоговая матрица — `suite/README.md` (**177 ✅, 1 🟡, 16 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

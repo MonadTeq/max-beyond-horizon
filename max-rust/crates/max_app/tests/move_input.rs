@@ -113,6 +113,115 @@ fn screen_point(app: &App, grid: Point) -> (i32, i32) {
     (x + MAIN_MAP.ulx, y + MAIN_MAP.uly)
 }
 
+/// `GameManager_ProcessTeamMissionSupplyUnits`: генератор стоит в отдельной
+/// клетке от шахты, а спрайты зданий не накладываются друг на друга.
+///
+/// Это регресс «генератор пересекается с шахтой»: координаты в `deploy.rs`
+/// совпадают с C++ (шахта — `start_position_mining_station`, генератор —
+/// `starting_position_power_generator`), но C++ `UnitInfo::SetPosition`
+/// сдвигает якорь здания (`flags & BUILDING`) на +31 px от центра клетки.
+/// Без этого сдвига 2×2-спрайт шахты рисовался на полклетки вверх-влево и
+/// заходил на клетку генератора.
+#[test]
+fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() {
+    let Some((app, _surveyor)) = phased_app() else {
+        return;
+    };
+
+    let assets = app.assets().expect("ассеты");
+    let find = |unit_type| {
+        app.state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| app.state().unit(id))
+            .find(|unit| unit.team == TeamId::RED && unit.unit_type == unit_type)
+            .unwrap_or_else(|| panic!("{unit_type:?} не высажен"))
+    };
+
+    let mining_station = find(UnitType::MiningStation);
+    let generator = find(UnitType::PowerGenerator);
+
+    assert_ne!(
+        mining_station.grid, generator.grid,
+        "генератор ({:?}) наложен на шахту ({:?})",
+        generator.grid, mining_station.grid
+    );
+
+    let sprite_bounds = |unit: &max_core::unit::UnitInfo| {
+        let sprite = assets.sprite(unit.unit_type).expect("спрайт");
+        let base = max_app::render::image_base_for(
+            unit,
+            app.state()
+                .teams
+                .get(unit.team.0 as usize)
+                .map(|team| team.team_clan),
+        );
+        let index = max_app::render::unit_frame_index(unit, base, sprite.sheet.len());
+        let frame = sprite.sheet.frame(index).expect("кадр");
+        let visual = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+        let anchor = max_app::render::unit_anchor_world(unit, visual);
+
+        frame.bounds_for_anchor(anchor.0, anchor.1)
+    };
+
+    let mine = sprite_bounds(mining_station);
+    let power = sprite_bounds(generator);
+
+    assert!(
+        !(mine.0 < power.2 && power.0 < mine.2 && mine.1 < power.3 && power.1 < mine.3),
+        "спрайты шахты {mine:?} и генератора {power:?} пересекаются"
+    );
+
+    // Шахта — `BUILDING` 2×2: якорь на +31 px от центра клетки, как `unit.x/y`
+    // в `UnitInfo::SetPosition`; генератор — 1×1, якорь в центре клетки.
+    assert_ne!(
+        u32::from(mining_station.flags) & max_core::enums::unit_flags::BUILDING,
+        0,
+        "MININGST должен иметь флаг BUILDING"
+    );
+    assert_eq!(
+        max_app::render::unit_anchor_world(
+            mining_station,
+            (f32::from(mining_station.grid.x), f32::from(mining_station.grid.y))
+        ),
+        (
+            i32::from(mining_station.grid.x) * 64 + 32 + 31,
+            i32::from(mining_station.grid.y) * 64 + 32 + 31
+        ),
+        "якорь здания — +31 px (C++ UnitInfo::SetPosition)"
+    );
+    assert_eq!(
+        u32::from(mining_station.x),
+        (i32::from(mining_station.grid.x) * 64 + 63) as u32,
+        "unit.x шахты уже содержит сдвиг здания"
+    );
+
+    // У обоих зданий приказ PowerOn: рисуется второй кадр пары (включено).
+    for (unit, label) in [(mining_station, "шахта"), (generator, "генератор")] {
+        assert_eq!(unit.orders, max_core::enums::UnitOrder::PowerOn, "{label}");
+        let sprite = assets.sprite(unit.unit_type).expect("спрайт");
+        let base = max_app::render::image_base_for(
+            unit,
+            app.state()
+                .teams
+                .get(unit.team.0 as usize)
+                .map(|team| team.team_clan),
+        );
+        let index = max_app::render::unit_frame_index(unit, base, sprite.sheet.len());
+
+        assert_eq!(
+            index,
+            usize::try_from(base.max(0)).unwrap() + 1,
+            "{label}: включённое здание обязано рисовать кадр image_base + 1"
+        );
+        assert_ne!(
+            sprite.sheet.frame(index),
+            sprite.sheet.frame(base as usize),
+            "{label}: кадры «включено» и «выключено» должны различаться"
+        );
+    }
+}
+
 #[test]
 fn camera_centers_on_the_mining_station_like_cpp() {
     let config = single_human().new_game_config();

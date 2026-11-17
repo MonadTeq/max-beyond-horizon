@@ -100,6 +100,38 @@
 
 ### Исправлено
 
+- **Видимое движение юнитов, наложение генератора на шахту, кадры питания
+  зданий (2026-11-17).**
+  - **Движение.** `App::update_visual_units` больше не «догоняет» симуляцию с
+    потолком 12 клеток/с и снапом при расхождении > 2.5. Кадр ведёт очередь
+    фактического маршрута (`visual_goals`/`visual_paths`) и проходит её
+    клетка за клеткой со скоростью оригинала: `UnitInfo::Move` 8 px/тик ×
+    ~30 Гц / 64 px ≈ 4 клетки/с. В интерактивном окне юнит с `Move` теперь
+    визуально едет после End Turn; `dt = 0` (headless/QA) — снимок по `grid`,
+    `snapshot_bytes`/CRC не меняются. `local_update` доигрывает маршрут в
+    фазе `Advancing`/при окне перехода хода.
+  - **Раскладка.** `deploy.rs` сверен с
+    `GameManager_GetStartingPositionPowerGenerator`: шахта `(22,22)`,
+    генератор `(21,23)` — **разные клетки** (RNG/порядок `spawn_unit` не
+    трогали). Наложение было ошибкой рендера: C++ `UnitInfo::SetPosition` для
+    `flags & BUILDING` сдвигает якорь на `+31` px (`MININGST`, `LRGSLAB` —
+    2×2). Добавлен `render::unit_anchor_world`; спрайт шахты больше не заходит
+    на клетку генератора.
+  - **Кадры зданий.** `render::unit_frame_index` выбирает `image_base + 1`
+    при `ORDER_POWER_ON` и `image_base` при выключении (C++
+    `ProcessOrderPowerOn`/`PowerDown`); `image_base_for` даёт клановый вариант
+    шахты `(team_clan - 1) * 2`. Покадровой анимации по времени у зданий в
+    оракуле нет — «анимация» включённой шахты/генератора это второй кадр
+    состояния (индикатор питания), который раньше не рисовался.
+  - **Тесты.** `tests/app.rs::movement_is_visible_between_frames_and_finishes_on_the_target_cell`,
+    `tests/local_sp.rs::local_update_with_real_dt_animates_move_orders`,
+    `tests/move_input.rs::generator_and_mining_station_are_on_different_cells_without_sprite_overlap`,
+    `max_core::deploy::tests::power_generator_starts_next_to_the_mining_station_but_not_on_it`,
+    `tests/building_frames.rs` (3). Пересняты golden `move-input/*`,
+    `visual-screens/{game,portrait}`, `upgrade/upgrade-done`,
+    `research/research-done`, `research-help/*` (help-game/help-game-keys/
+    help-research/research-menu/research-plan); `qa_golden_check` — 0 дрейфа.
+
 - **«Юнит не двигается»: камера после высадки вставала не на базу**
   (`max_app/src/lib.rs` — `App::focus_player`, `max_app/src/render.rs` —
   `render_with_chrome`):

@@ -802,7 +802,24 @@ impl Panels {
             let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
             let anchor = (area.width / 2, area.height / 2);
 
-            if crate::render::draw_unit_sprites(assets, unit, &mut portrait, anchor, 64).is_none() {
+            let image_base = crate::render::image_base_for(
+                unit,
+                app.state()
+                    .teams
+                    .get(unit.team.0 as usize)
+                    .map(|team| team.team_clan),
+            );
+
+            if crate::render::draw_unit_sprites_with_base(
+                assets,
+                unit,
+                image_base,
+                &mut portrait,
+                anchor,
+                64,
+            )
+            .is_none()
+            {
                 return painted;
             }
 

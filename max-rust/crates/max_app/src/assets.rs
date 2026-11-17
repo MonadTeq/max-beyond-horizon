@@ -491,6 +491,27 @@ pub struct LoadedSprite {
 }
 
 impl LoadedSprite {
+    /// Кадр корпуса по явному индексу (`GetSpriteFrame`).
+    ///
+    /// Нужен, когда индекс кадра выбирает вызывающий слой (например,
+    /// включённое здание рисует `image_base + 1`, см.
+    /// `render::unit_frame_index`). Если индекс за пределами спрайта,
+    /// возвращается кадр 0 — как fallback [`Self::frame_for`].
+    pub fn frame_at(&self, index: usize) -> Option<&max_assets::sprite::SpriteFrame> {
+        self.sheet.frame(index).or_else(|| self.sheet.frame(0))
+    }
+
+    /// Кадр тени по тому же индексу, что и [`Self::frame_at`].
+    ///
+    /// У тени может быть меньше кадров, чем у корпуса (или её нет вовсе) —
+    /// тогда берётся последний доступный/кадр 0.
+    pub fn shadow_at(&self, index: usize) -> Option<&max_assets::sprite::ShadowFrame> {
+        let shadow = self.shadow.as_ref()?;
+        let last = shadow.len().checked_sub(1)?;
+
+        shadow.frame(index.min(last)).or_else(|| shadow.frame(0))
+    }
+
     /// Кадр для юнита: `image_base + angle` с обёрткой в `frame(0)`.
     ///
     /// Раскладка оригинала — «фаза × 8 + угол» (`docs/formats/spw.md` §5.3), а

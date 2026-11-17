@@ -28,10 +28,79 @@ use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
-use max_core::enums::unit_flags;
+use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitType};
 
 use crate::panels::UiPalette;
 use crate::App;
+
+/// Сдвиг якоря зданий (`flags & BUILDING`) от центра клетки.
+///
+/// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`): `x = grid*64 + 32`, затем
+/// для `flags & BUILDING` — `x += (GFX_MAP_TILE_SIZE / 2) - 1`, т.е. **+31**.
+/// Здание 2×2 с hot spot `(58,55)` (`MININGST`) рисуется в своём 2×2-
+/// прямоугольнике, а не на полклетки вверх-влево. Без этого шахта «съезжала»
+/// на клетку генератора и их спрайты накладывались.
+pub const BUILDING_ANCHOR_OFFSET: i32 = (64 / 2) - 1;
+
+/// База кадров корпуса с учётом клана.
+///
+/// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:281`): у шахты
+/// `image_base = (team_clan - 1) * sizeof(uint16_t)` — 8 клановых вариантов по
+/// 2 кадра (выкл/вкл). Остальные типы берут базу из `D_*` (`unit.image_base`).
+/// `TeamClan::Random` (0) в max_core не разрешается в конкретный клан, поэтому
+/// для него и для сейвов с нулевой базой используется клан 1 (база 0) — как
+/// рисовалось раньше.
+pub fn image_base_for(unit: &max_core::unit::UnitInfo, team_clan: Option<TeamClan>) -> i16 {
+    if unit.unit_type == UnitType::MiningStation && unit.image_base <= 0 {
+        let clan = team_clan.map(|clan| clan as i16).unwrap_or(0);
+        let clan = if (1..=8).contains(&clan) { clan } else { 1 };
+
+        (clan - 1) * 2
+    } else {
+        unit.image_base
+    }
+}
+
+/// Индекс кадра корпуса: `image_base + angle`, а для включённого здания — +1.
+///
+/// C++ `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) при
+/// `ORDER_POWER_ON` рисует `DrawSpriteFrame(image_base + 1)`, `PowerDown` —
+/// `DrawSpriteFrame(image_base)` (`unitinfo.cpp:5132`). Это не покадровая
+/// анимация по времени: у зданий ровно два кадра состояния (выключено/
+/// включено), остальные кадры — коннекторы/направления.
+pub fn unit_frame_index(
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    image_count: usize,
+) -> usize {
+    let last = image_count.saturating_sub(1);
+    let base = usize::try_from(image_base.max(0)).unwrap_or(0);
+    let mut index = base.saturating_add(usize::from(unit.angle % 8));
+
+    if unit.orders == UnitOrder::PowerOn && index < last {
+        index += 1;
+    }
+
+    index.min(last)
+}
+
+/// Мировая точка якоря спрайта: центр визуальной клетки, для зданий — +31.
+///
+/// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`) и `Render`
+/// (`unitinfo.cpp:3138`) рисуют по `unit.x/unit.y`; у `BUILDING` это центр
+/// 2×2-прямоугольника, у остальных — центр клетки.
+pub fn unit_anchor_world(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) -> (i32, i32) {
+    let mut x = (visual.0 * 64.0 + 32.0).round() as i32;
+    let mut y = (visual.1 * 64.0 + 32.0).round() as i32;
+
+    if unit.flags & unit_flags::BUILDING != 0 {
+        x += BUILDING_ANCHOR_OFFSET;
+        y += BUILDING_ANCHOR_OFFSET;
+    }
+
+    (x, y)
+}
+
 /// Диагностика одного кадра.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderStats {
@@ -70,6 +139,10 @@ pub struct UnitSpriteStats {
 /// `zoom/64`, тень со сдвигом `shadow_offset`, башня отдельным кадром
 /// `turret_image_base + turret_angle` со сдвигом `angle_offsets[angle]`.
 ///
+/// База кадров — `unit.image_base` (без кланового варианта шахты). Карта и HUD
+/// вызывают [`draw_unit_sprites_with_base`] с
+/// `image_base_for(unit, clan)`, чтобы шахта показывала свой клан.
+///
 /// Возвращает `None`, если для типа нет загруженного спрайта/кадра — тогда
 /// вызывающий рисует маркер команды (единственный такой тип в данных игры —
 /// `MASTER`, см. [`crate::assets::UNIT_TYPES_WITHOUT_SPRITE_DATA`]).
@@ -84,9 +157,23 @@ pub fn draw_unit_sprites(
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
+    draw_unit_sprites_with_base(assets, unit, unit.image_base, frame, anchor, zoom)
+}
+
+/// [`draw_unit_sprites`] с явной базой кадров корпуса (клан/сейв/степень
+/// включённости здания). Кадр выбирает [`unit_frame_index`].
+pub fn draw_unit_sprites_with_base(
+    assets: &crate::assets::Assets,
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    frame: &mut RgbaBuffer,
+    anchor: (i32, i32),
+    zoom: u32,
+) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
-    let sprite_frame = sprite.frame_for(unit.image_base, unit.angle)?;
-    let shadow = sprite.shadow_for(unit.image_base, unit.angle);
+    let image_index = unit_frame_index(unit, image_base, sprite.sheet.len());
+    let sprite_frame = sprite.frame_at(image_index)?;
+    let shadow = sprite.shadow_at(image_index);
     let colors = TeamColors::ALL
         .get(unit.team.0 as usize)
         .copied()
@@ -341,11 +428,19 @@ impl App {
                 stats.units_skipped += 1;
                 continue;
             };
+            // Видимость и порядок отрисовки — по визуальной позиции: пока
+            // спрайт идёт по маршруту, симуляционная клетка уже может быть
+            // впереди (`update_visual_units`).
+            let (visual_x, visual_y) = self
+                .visual_position(id)
+                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+            let tile_x = visual_x.round() as i16;
+            let tile_y = visual_y.round() as i16;
             let in_range = range.is_some_and(|range| {
-                unit.grid.x >= range.x0 - margin
-                    && unit.grid.y >= range.y0 - margin
-                    && unit.grid.x <= range.x1 + margin
-                    && unit.grid.y <= range.y1 + margin
+                tile_x >= range.x0 - margin
+                    && tile_y >= range.y0 - margin
+                    && tile_x <= range.x1 + margin
+                    && tile_y <= range.y1 + margin
             });
             if !in_range {
                 continue;
@@ -359,7 +454,7 @@ impl App {
                 stats.units_skipped += 1;
                 continue;
             }
-            positions.push((unit.grid.x, unit.grid.y));
+            positions.push((tile_x, tile_y));
             visible.push(id);
         }
 
@@ -367,19 +462,26 @@ impl App {
             let Some(unit) = self.state().unit(visible[index]) else {
                 continue;
             };
-            // Визуальная позиция — дробная клетка, догоняющая симуляцию
+            // Визуальная позиция — дробная клетка, идущая по маршруту
             // (см. `App::update_visual_units`). Якорь — центр клетки в мировых
-            // пикселях, затем камера переводит его в экранные.
+            // пикселях (у зданий `BUILDING` — +31, как `UnitInfo::SetPosition`),
+            // затем камера переводит его в экранные.
             let (grid_x, grid_y) = self
                 .visual_position(visible[index])
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
-            let world_x = (grid_x * 64.0 + 32.0).round() as i32;
-            let world_y = (grid_y * 64.0 + 32.0).round() as i32;
+            let (world_x, world_y) = unit_anchor_world(unit, (grid_x, grid_y));
             let anchor = viewport.world_to_screen(world_x, world_y);
 
-            let drawn = self
-                .assets()
-                .and_then(|assets| draw_unit_sprites(assets, unit, frame, anchor, viewport.zoom()));
+            let image_base = image_base_for(
+                unit,
+                self.state()
+                    .teams
+                    .get(unit.team.0 as usize)
+                    .map(|team| team.team_clan),
+            );
+            let drawn = self.assets().and_then(|assets| {
+                draw_unit_sprites_with_base(assets, unit, image_base, frame, anchor, viewport.zoom())
+            });
 
             match drawn {
                 Some(_) => stats.units_drawn += 1,

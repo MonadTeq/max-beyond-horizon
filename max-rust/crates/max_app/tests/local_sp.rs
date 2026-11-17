@@ -14,11 +14,12 @@
 
 use std::path::{Path, PathBuf};
 
+use max_app::hud::build_move_order;
 use max_app::local::{LocalPhase, LocalSave, LocalSetup};
 use max_app::setup::{GameSetupForm, SetupScreen, SetupTransition};
 use max_app::ui::{InputEvent, Key, MenuClient, Screen, Transition, UiContext};
 use max_app::{App, AppConfig};
-use max_core::enums::{PlayMode, VictoryType};
+use max_core::enums::{PlayMode, UnitType, VictoryType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
 use max_core::team::TeamKind;
@@ -129,6 +130,86 @@ fn setup_vs_one_ai() -> LocalSetup {
         team_upgrades: std::array::from_fn(|_| None),
         team_gold_spent: [None; 4],
     }
+}
+
+// ---------------------------------------------------------------------------
+// Интерактивный цикл: видимое движение при реальном dt
+// ---------------------------------------------------------------------------
+
+/// `local_update(dt > 0)` — тот же путь, что в окне: тик симуляции + кадр
+/// визуального маршрута. Юнит с приказом `Move` обязан проходить маршрут
+/// клетка за клеткой (позиции кадров различаются), а не телепортироваться.
+#[test]
+fn local_update_with_real_dt_animates_move_orders() {
+    let Some(mut app) = local_app() else {
+        return;
+    };
+
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия");
+    assert!(
+        run_until_player_turn(&mut app, 600),
+        "не дошли до хода человека"
+    );
+
+    let surveyor = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            app.state().unit(*id).is_some_and(|unit| {
+                unit.team == TeamId::RED && unit.unit_type == UnitType::Surveyor
+            })
+        })
+        .expect("Surveyor высажен");
+
+    let from = app.state().unit(surveyor).expect("Surveyor").grid;
+    let mut chosen = None;
+
+    'search: for dy in [-1i16, 0, 1] {
+        for dx in [-1i16, 0, 1] {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+
+            let destination = Point::new(from.x + dx, from.y + dy);
+
+            if let Some(order) = build_move_order(app.state(), surveyor, destination) {
+                chosen = Some((destination, order));
+                break 'search;
+            }
+        }
+    }
+
+    let (destination, order) = chosen.expect("рядом есть проходимая клетка");
+    app.apply(order.command);
+
+    app.update_visual_units(0.0);
+    let start = app.visual_position(surveyor).expect("Surveyor жив");
+    assert_eq!(start, (f32::from(from.x), f32::from(from.y)));
+
+    let mut seen: Vec<(f32, f32)> = vec![start];
+
+    for _ in 0..180 {
+        app.local_update(1.0 / 60.0);
+
+        let position = app.visual_position(surveyor).expect("Surveyor жив");
+
+        if seen.last() != Some(&position) {
+            seen.push(position);
+        }
+    }
+
+    assert!(
+        seen.len() >= 3,
+        "кадр должен пройти хотя бы одну промежуточную позицию, а не \
+         телепортироваться: {seen:?}"
+    );
+    assert_eq!(
+        seen.last(),
+        Some(&(f32::from(destination.x), f32::from(destination.y))),
+        "в конце маршрута визуальная позиция — целевая клетка: {seen:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

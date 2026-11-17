@@ -400,6 +400,95 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
 }
 
 #[test]
+fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
+    let mut app = App::new(AppConfig::default());
+    app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
+
+    let id = app
+        .state()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            app.state().unit(*id).is_some_and(|unit| {
+                unit.team == TeamId::RED && unit.unit_list == UnitListKind::MobileLandSea
+            })
+        })
+        .expect("мобильный юнит RED");
+
+    let from = app.state().unit(id).expect("юнит").grid;
+    let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
+    app.apply(command_move_linear(
+        id,
+        from,
+        to,
+        UnitOrder::Move,
+        UnitOrderState::Init,
+    ));
+
+    // `dt = 0` — стартовый снимок (ровно симуляционная клетка).
+    app.update_visual_units(0.0);
+    let start = app.visual_position(id).expect("юнит жив");
+    assert_eq!(start, (f32::from(from.x), f32::from(from.y)));
+
+    // Ждём тик, на котором симуляция делает первый шаг маршрута: приказ
+    // `Init` может сначала запросить путь (`NEW_ORDER`/`ISSUING_PATH`).
+    let mut ticks = 0;
+    while app.state().unit(id).map(|unit| unit.grid) == Some(from) && ticks < 120 {
+        app.tick();
+        ticks += 1;
+    }
+    assert_ne!(
+        app.state().unit(id).map(|unit| unit.grid),
+        Some(from),
+        "юнит не сдвинулся за {ticks} тиков"
+    );
+
+    // Кадр с реальным `dt` идёт по маршруту: два последовательных кадра
+    // различаются позицией спрайта (видимое движение, а не телепорт).
+    app.update_visual_units(1.0 / 60.0);
+    let first = app.visual_position(id).expect("юнит жив");
+    assert_ne!(first, start, "после шага кадр обязан сдвинуться: {first:?}");
+
+    // Пиксельная проверка: два кадра подряд различаются (маркер/спрайт
+    // сдвинулся), без тика симуляции между ними.
+    app.viewport_mut().center_on_grid(from.x, from.y);
+    let first_frame = app.render_frame();
+
+    app.update_visual_units(1.0 / 60.0);
+    let second = app.visual_position(id).expect("юнит жив");
+    let second_frame = app.render_frame();
+    assert_ne!(second, first, "два кадра с dt>0 должны различаться позицией");
+    assert!(second.0 > first.0, "спрайт плавно идёт вправо: {second:?}");
+    assert_ne!(
+        first_frame.pixels(),
+        second_frame.pixels(),
+        "кадр карты должен измениться: спрайт юнита сместился"
+    );
+
+    // Визуальное состояние — только кадр: CRC/снапшот не меняются.
+    let snapshot = app.snapshot();
+    app.update_visual_units(1.0 / 60.0);
+    assert_eq!(
+        app.snapshot(),
+        snapshot,
+        "update_visual_units не должен менять симуляцию"
+    );
+
+    // Доводим маршрут: 2 клетки при 4 клетках/с — ~30 кадров, берём запас.
+    for _ in 0..300 {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+    }
+
+    let target = app.state().unit(id).expect("юнит жив").grid;
+    assert_eq!(
+        app.visual_position(id),
+        Some((f32::from(target.x), f32::from(target.y))),
+        "по завершении маршрута визуальная позиция совпадает с целевой клеткой"
+    );
+}
+
+#[test]
 fn move_command_replays_through_app() {    fn run() -> AppDigest {
         let mut app = App::new(AppConfig::default());
         app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");

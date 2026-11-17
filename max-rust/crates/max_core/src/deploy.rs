@@ -266,6 +266,12 @@ pub fn start_position_mining_station(
 }
 
 /// `GameManager_GetStartingPositionPowerGenerator` (`game_manager.cpp:1833`).
+///
+/// Клетки возвращаются ровно как в C++ (RNG здесь не используется, порядок
+/// вызовов `spawn_unit` не меняется). Генератор может стоять **рядом** с
+/// шахтой — это нормальная раскладка базы; визуальное «наложение» спрайтов
+/// лечится в рендере: у зданий с флагом `BUILDING` якорь сдвинут на +31 px
+/// (`max_app::render::BUILDING_ANCHOR_OFFSET`, C++ `UnitInfo::SetPosition`).
 pub fn starting_position_power_generator(
     state: &GameState,
     team: TeamId,
@@ -819,6 +825,56 @@ mod tests {
         assert_eq!(info.stats_units_built, DEFAULT_MISSION_LOADOUT.len() as i16);
         assert_eq!(info.stats_mines_built, 1);
         assert_eq!(info.stats_buildings_built, 1);
+    }
+
+    /// `GameManager_GetStartingPositionPowerGenerator` (`game_manager.cpp:1833`):
+    /// генератор — в отдельной клетке от шахты.
+    ///
+    /// Точка старта `(20,20)` валидна на этой карте, поэтому шахта остаётся в
+    /// ней. Поиск генератора начинается с `(mining.x - 1, mining.y + 2)` и
+    /// идёт на север (`DIRECTION_OFFSETS[0]`), первый доступный кандидат —
+    /// `(19,21)`. Здесь же стоит `SMLSLAB` (плита под генератором) — по той же
+    /// клетке, как в C++. Регресс «генератор наложен на шахту» ловится
+    /// сравнением клеток.
+    #[test]
+    fn power_generator_starts_next_to_the_mining_station_but_not_on_it() {
+        let mut state = land_state(&[TeamId::RED]);
+        let deployed = deploy_team_supplies(
+            &mut state,
+            TeamId::RED,
+            200,
+            &DEFAULT_MISSION_LOADOUT,
+            Point::new(20, 20),
+            MAX_RESOURCES,
+        );
+
+        assert_eq!(deployed.len(), 4 + DEFAULT_MISSION_LOADOUT.len());
+
+        let mining_station = state.unit(deployed[0]).expect("шахта").grid;
+        let power_generator = state.unit(deployed[2]).expect("генератор").grid;
+        let small_slab = state.unit(deployed[3]).expect("плита").grid;
+
+        assert_eq!(mining_station, Point::new(20, 20));
+        assert_eq!(
+            power_generator,
+            Point::new(mining_station.x - 1, mining_station.y + 1),
+            "C++ GetStartingPositionPowerGenerator: point.x -= 1; point.y += 2; \
+             первый шаг на север"
+        );
+        assert_ne!(
+            power_generator, mining_station,
+            "генератор не должен занимать клетку шахты"
+        );
+        assert_eq!(
+            small_slab, power_generator,
+            "SMLSLAB ставится в клетку генератора (как C++ DeployUnit)"
+        );
+
+        // Клетки не совпадают и по 2×2-габариту здания `BUILDING` (шахта).
+        assert!(
+            power_generator.x < mining_station.x && power_generator.y > mining_station.y,
+            "генератор слева-снизу от шахты: {power_generator:?} vs {mining_station:?}"
+        );
     }
 
     #[test]
