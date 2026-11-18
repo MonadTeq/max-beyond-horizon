@@ -424,10 +424,13 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         "якорь 2×2 всегда накрывает клетку строителя (C++ GetBuilderUnitCursor)"
     );
 
-    // `PositionInTape` + `OffsetDrawZones`: после 4 тиков спрайт стоит в центре
-    // ленты 2×2 — 32 px (половина клетки) от центра своей клетки. Первый тик
-    // после подтверждения — `StartBuilding` (`AWAIT_TAPE_POSITIONING`/`INIT`),
-    // затем `INIT → ENTER` и четыре шага `moved`.
+    // `PositionInTape` + `OffsetDrawZones`: сначала строитель доворачивается к
+    // ленте (`Paths_UpdateAngle`), затем четыре шага по 8 px ставят спрайт в
+    // центр ленты 2×2 — 32 px (половина клетки) от центра своей клетки. Первый
+    // тик после подтверждения — `StartBuilding`
+    // (`AWAIT_TAPE_POSITIONING`/`INIT`), затем `INIT → ENTER`, доворот и четыре
+    // шага `moved`; на следующем тике `moved >= 4` → `RestoreOrders`.
+    app.tick();
     app.tick();
     app.tick();
     app.tick();
@@ -477,6 +480,126 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     assert!(
         (cx - bx).abs() <= 8 && (cy - by).abs() <= 8,
         "центр спрайта строителя ({bx},{by}) должен быть в центре ленты ({cx},{cy})"
+    );
+}
+
+/// Центр (x,y) пикселей спрайта строителя в кадре: кадр с юнитом против кадра
+/// с выключенной видимостью. Так измеряется именно спрайт, без разметки ленты.
+fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
+    let with_builder = app.render_frame();
+    app.state_mut()
+        .unit_mut(builder)
+        .expect("строитель")
+        .set_visible_to_team(TeamId::RED, false);
+    let without_builder = app.render_frame();
+    app.state_mut()
+        .unit_mut(builder)
+        .expect("строитель")
+        .set_visible_to_team(TeamId::RED, true);
+
+    let (x0, y0, x1, y1) = changed_bounds(&with_builder, &without_builder, MAIN_MAP)
+        .expect("строитель нарисован на карте");
+
+    ((x0 + x1) / 2, (y0 + y1) / 2)
+}
+
+/// Скольжение под углом: C++ перед въездом в ленту доворачивает строителя
+/// (`Paths_UpdateAngle` в `PositionInTape`), и `OffsetDrawZones` двигает спрайт
+/// по `DIRECTION_OFFSETS[angle] * 8` — по диагонали/направлению его взгляда, а
+/// не «прямо». Кадры «до/после»: угол и bbox спрайта на каждом тике.
+#[test]
+fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+    let (builder, builder_grid) = spawn_builder(&mut app);
+
+    // Якорь ленты — на клетку левее/выше строителя: он стоит в SE-углу 2×2,
+    // `GetTargetUnitAngle` даёт NW(7), доворот 0 → 7 за один тик (8 направлений).
+    let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
+    order_site_selection(&mut app, builder);
+    let _ = move_cursor(&mut app, chosen);
+    let _ = click_cell(&mut app, chosen);
+    app.tick(); // `StartBuilding`: площадка и `AWAIT_TAPE_POSITIONING`/`INIT`
+
+    let initial_angle = app.state().unit(builder).expect("строитель").angle;
+    assert_eq!(initial_angle, 0, "конструктор смотрит на север");
+
+    // Тик доворота: `Paths_UpdateAngle` поворачивает на месте, `moved` = 0.
+    app.tick();
+    let unit = app.state().unit(builder).expect("строитель").clone();
+    assert_eq!(
+        unit.state,
+        max_core::enums::UnitOrderState::TapePositioningEnter
+    );
+    assert_eq!(unit.angle, 7, "строитель повернулся к центру ленты (NW)");
+    assert_eq!(unit.moved, 0, "до доворота спрайт не сдвигается");
+    assert_eq!(
+        max_app::buildsite::tape_center_offset(app.state(), &unit),
+        (0, 0)
+    );
+
+    let turn_center = builder_pixel_center(&mut app, builder);
+    let cell_center = screen_point(&app, builder_grid);
+
+    // От поворота на месте bbox спрайта остаётся в своей клетке (допуск на
+    // асимметрию спрайта/тени).
+    assert!(
+        (turn_center.0 - cell_center.0).abs() <= 16 && (turn_center.1 - cell_center.1).abs() <= 16,
+        "после доворота спрайт ещё в своей клетке: {turn_center:?} vs {cell_center:?}"
+    );
+
+    // Четыре тика скольжения: ровно `DIRECTION_OFFSETS[NW] * 8 * step`.
+    let mut centers = vec![turn_center];
+    for step in 1..=4u8 {
+        app.tick();
+
+        let unit = app.state().unit(builder).expect("строитель").clone();
+        let offset = max_app::buildsite::tape_center_offset(app.state(), &unit);
+        assert_eq!(
+            offset,
+            (-8 * i32::from(step), -8 * i32::from(step)),
+            "шаг {step}: сдвиг по диагонали NW"
+        );
+        assert_eq!(unit.grid, builder_grid, "сетка строителя не меняется");
+        assert_eq!(unit.angle, 7, "на скольжении угол не меняется");
+
+        centers.push(builder_pixel_center(&mut app, builder));
+    }
+
+    // Центр спрайта идёт ровно по диагонали: каждый тик −8 px по обеим осям
+    // (спрайт не поворачивается, поэтому bbox смещается целиком).
+    for pair in centers.windows(2) {
+        let (dx, dy) = (pair[1].0 - pair[0].0, pair[1].1 - pair[0].1);
+
+        assert!(
+            (dx + 8).abs() <= 1 && (dy + 8).abs() <= 1,
+            "спрайт должен ехать по диагонали NW (−8,−8) за тик, а не прямо: {dx},{dy}"
+        );
+    }
+
+    // Кадр с завершённым позиционированием: спрайт в центре ленты 2×2.
+    let site_center = max_app::buildsite::site_center_world(UnitType::TrainingHall, chosen);
+    let viewport = app.map_viewport();
+    let (sx, sy) = viewport.world_to_screen(site_center.0, site_center.1);
+    let (sx, sy) = (sx + MAIN_MAP.ulx, sy + MAIN_MAP.uly);
+    let (bx, by) = builder_pixel_center(&mut app, builder);
+
+    assert!(
+        (sx - bx).abs() <= 8 && (sy - by).abs() <= 8,
+        "после четырёх шагов спрайт в центре ленты: ({bx},{by}) vs ({sx},{sy})"
+    );
+
+    // Следующий тик — `RestoreOrders` и доворот `(angle + 1) & 7`: NW(7) → N(0),
+    // сдвиг остаётся полным (рабочая поза в центре ленты).
+    app.tick();
+    let unit = app.state().unit(builder).expect("строитель").clone();
+    assert_eq!(unit.orders, UnitOrder::Build);
+    assert_eq!(unit.state, max_core::enums::UnitOrderState::BuildInProgress);
+    assert_eq!(unit.angle, 0, "C++: Paths_UpdateAngle((angle + 1) & 7)");
+    assert_eq!(
+        max_app::buildsite::tape_center_offset(app.state(), &unit),
+        (-32, -32)
     );
 }
 

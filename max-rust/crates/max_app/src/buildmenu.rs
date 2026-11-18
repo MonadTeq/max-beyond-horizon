@@ -41,16 +41,29 @@
 //! `build_rate`, `build_count × unit_type`) — локально применяется
 //! `apply_command`, в сети отправляется пакетом 08.
 //!
+//! # Иконки и портрет
+//!
+//! * строки списка/очереди — иконки `I_*` (`ReportStats_DrawListItemIcon`):
+//!   здания 1:4 (`divisor = 2`), турельные типы — второй кадр со сдвигом
+//!   `angle_offsets[2] >> divisor`, перекраска командных слотов; имя с x=+35,
+//!   ходы справа (`0xA2`/`COLOR_RED`), выделение — белые уголки
+//!   `GameManager_DrawUnitSelector`. Рисуется тем же `mobilize::draw_icon`, что
+//!   и списки `CargoMenu` (`I_*` из `CargoMenuAssets`).
+//! * портрет — big image `P_*` 300×240 в (11,13) (`AbstractBuildMenu::Draw`,
+//!   `buildmenu.cpp:509-529`), палитра окна, для выбранной строки (у завода —
+//!   активного селектора: список или очередь). Кэш `P_*` —
+//!   `CargoMenuAssets::portrait`.
+//!
 //! # Осознанные упрощения
 //!
-//! * портрет и фон рисуются из `FACBUILD`/`CONBUILD` + спрайт юнита (портреты
-//!   `P_*` в 300×240 не грузятся отдельно);
+//! * область статистики под портретом — краткий текст (имя/боевые параметры
+//!   строителя), а не `UnitStats_DrawStats` выбранного типа, как в C++;
 //! * подсказка `Help` (`BLDHLP_U`) и кнопка `Build path` инженера
 //!   (`BLDPTH_U`) не портированы (путь-строительство — задача P5);
 //! * звуки кнопок не проигрываются (аудио-слой — `audio.rs`).
 
 use max_assets::image::{BigImage, SimpleImage};
-use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
@@ -60,10 +73,11 @@ use max_core::production::{
 };
 use max_core::team::TeamId;
 use max_core::unit::UnitId;
-use max_render::buffer::{PixelRect, RgbaBuffer};
+use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
 
 use crate::menu::MenuButtonPair;
+use crate::mobilize::{center_y, draw_icon, draw_text_right, team_lut};
 use crate::panels::UiPalette;
 use crate::Assets;
 
@@ -120,6 +134,21 @@ pub const FACTORY_RATES: [PixelRect; 3] = [
 pub const HEADER: PixelRect = PixelRect::new(327, 7, 158, 18);
 /// Подпись «Unit» (`209,264,80,17`).
 pub const UNIT_LABEL: PixelRect = PixelRect::new(209, 264, 80, 17);
+
+/// Окно портрета `BuildMenu` (`AbstractBuildMenu::Draw`,
+/// `buildmenu.cpp:522-529`): `local_window.buffer = &window.buffer[11 + 640*13]`
+/// — big image `P_*` 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`),
+/// **без** обрезки 280×240, как в `CargoMenu` (там своё окно портрета).
+pub const PORTRAIT: PixelRect = PixelRect::new(11, 13, 300, 240);
+
+/// Центр иконки строки списка: `ReportStats_DrawListItem(..., ulx, uly)` рисует
+/// `ReportStats_DrawListItemIcon(..., ulx + 16, uly + 16)`.
+pub const LIST_ICON: i32 = 16;
+/// X текста строки: `Text_TextBox(..., ulx + 35, uly, full - 35, 32, ...)`.
+pub const LIST_TEXT_X: i32 = 35;
+/// Правая граница цифр ходов: `ReportStats_DrawNumber(buffer + 135, turns, 20)`
+/// в буфере списка, начатом в `LIST_AREA.ulx` (483 + 135 = 618).
+pub const LIST_TURNS_RIGHT: i32 = 618;
 
 /// Доступные скорости (кнопки 1×/2×/4×).
 pub const BUILD_RATES: [u16; 3] = [1, 2, 4];
@@ -924,84 +953,155 @@ impl BuildMenu {
         )
         .max(0) as u32;
 
-        // Портрет (C++ — `base_unit.GetPortrait()` в (11,13)): спрайт юнита 2×.
-        if let Some(sprite) = assets.sprite(self.builder_type) {
-            if let Some(sprite_frame) = sprite.frame_for(0, 0) {
-                let colors = max_render::TeamColors::ALL
-                    .get(self.team.0 as usize)
-                    .copied()
-                    .unwrap_or(max_render::TeamColors::Derelict);
-                let renderer = max_render::SpriteRenderer::new(
-                    &assets.palette,
-                    &assets.brightness,
-                    max_render::ColorLut::for_team(colors),
-                    max_render::FULL_BRIGHTNESS_LEVEL,
-                );
-                renderer.draw_unit_scaled(
-                    frame,
-                    sprite_frame,
-                    None,
-                    (11 + 150, 13 + 120),
-                    (0, 0),
-                    128,
-                );
+        // Портрет выбранного типа (`AbstractBuildMenu::Draw(unit_type)`,
+        // `buildmenu.cpp:509-529`): `base_unit.GetPortrait()` — big image `P_*`
+        // 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`). C++ берёт
+        // `selector->GetLast()` — выбранную строку списка (у завода — активного
+        // селектора: список или очередь).
+        let portrait_type = if self.queue_active {
+            self.queue_type()
+        } else {
+            self.selected_type()
+        };
 
-                // Башня/пушка отдельным кадром (как на карте): C++
-                // `GetPortrait()` — big image, где техника уже с башней.
-                if let Some(turret) = sprite.turret_frame(0) {
-                    renderer.draw_turret_scaled(
-                        frame,
-                        turret,
-                        None,
-                        (11 + 150, 13 + 120),
-                        (0, 0),
-                        sprite.turret_offset(0),
-                        128,
-                    );
+        if let Some(unit_type) = portrait_type {
+            if let Some(cargo) = assets.cargo.as_ref() {
+                match cargo.portrait(&assets.max_res, unit_type) {
+                    Some(portrait) => {
+                        painted += crate::menu::draw_big_image_at(
+                            frame,
+                            &portrait,
+                            &palette,
+                            (PORTRAIT.ulx, PORTRAIT.uly),
+                            PORTRAIT,
+                        );
+                    }
+                    None => {
+                        // C++ `buf_fill(local_window.buffer, 300, 240, width, COLOR_BLACK)`.
+                        frame.fill_rect(PORTRAIT, palette.rgba(0));
+                    }
                 }
-                painted += 1;
             }
         }
 
-        // Список доступного: имя строки + ходы (`BuildUnitTypeSelector::Draw`).
+        // Список доступного (`BuildUnitTypeSelector::Draw` /
+        // `UnitTypeSelector::Draw`): иконка `I_*` в центре (16,16) строки,
+        // имя с x=35 (ширина 80), ходы справа (`ReportStats_DrawNumber`).
+        let builder_unit = state.unit(self.unit);
+        let builder_stationary = builder_unit
+            .map(|unit| unit.flags & unit_flags::STATIONARY != 0)
+            .unwrap_or(self.factory);
+        let builder_storage = builder_unit.map(|unit| unit.storage).unwrap_or(0);
+        let consumption_rate = cost_per_turn(self.builder_type, 1);
+        let lut = team_lut(self.team);
+        let cargo = assets.cargo.as_ref();
+        let white = palette.rgba(0xFF);
+
         for row in 0..LIST_ROWS {
             let index = self.page_min + row;
             let Some(unit_type) = self.unit_types.get(index) else {
                 break;
             };
-            let y = LIST_AREA.uly + row as i32 * LIST_ROW + 8;
-            let selected = index == self.selected && !self.queue_active;
-            let color = if selected { green } else { text };
-            let name = fit_label(unit_name(*unit_type), 82, font);
+            let y = LIST_AREA.uly + row as i32 * LIST_ROW;
+            let text_y = center_y(
+                PixelRect::new(LIST_AREA.ulx, y, LIST_AREA.width, LIST_ROW),
+                font,
+            );
 
-            painted += draw_text_gnw(frame, LIST_AREA.ulx + 2, y, font, &name, color).max(0) as u32;
+            // `ReportStats_DrawListItemIcon`: здания — 1:4 (`divisor = 2`),
+            // мобильные — 1:2; перекраска командных слотов как в CargoMenu.
+            if let Some(icon) = cargo.and_then(|cargo| cargo.icon(*unit_type)) {
+                let stationary =
+                    max_core::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+                let zoom = if stationary { 16 } else { 32 };
 
-            let turns = self.turns_for(state, *unit_type);
+                painted += draw_icon(
+                    frame,
+                    &palette,
+                    *unit_type,
+                    icon,
+                    (LIST_AREA.ulx + LIST_ICON, y + LIST_ICON),
+                    zoom,
+                    &lut,
+                );
+            }
+
+            let name = fit_label(unit_name(*unit_type), LIST_AREA.width - LIST_TEXT_X, font);
             painted += draw_text_gnw(
                 frame,
-                LIST_AREA.ulx + 96,
-                y,
+                LIST_AREA.ulx + LIST_TEXT_X,
+                text_y,
                 font,
-                &turns.to_string(),
-                if selected { green } else { yellow },
+                &name,
+                text,
             )
             .max(0) as u32;
+
+            // Цвет ходов — `0xA2`, если строитель стационарный или ему хватает
+            // склада (`unit->storage >= turns * consumption_rate`), иначе
+            // `COLOR_RED` (C++ `BuildUnitTypeSelector::Draw`).
+            let turns = self.turns_for(state, *unit_type);
+            let affordable =
+                builder_stationary || i32::from(builder_storage) >= turns * consumption_rate;
+            painted += draw_text_right(
+                frame,
+                LIST_TURNS_RIGHT,
+                text_y,
+                font,
+                &turns.to_string(),
+                if affordable { text } else { palette.rgba(0x01) },
+            );
+
+            if index == self.selected {
+                // `GameManager_DrawUnitSelector`: белые уголки 8 px вокруг
+                // иконки выбранной строки (не заливка и не цвет текста).
+                draw_item_selector(frame, white, LIST_AREA.ulx, y);
+            }
         }
 
-        // Очередь завода.
+        // Очередь завода — тот же `UnitTypeSelector::Draw`: иконка + имя.
         if self.factory {
             for row in 0..QUEUE_ROWS {
                 let index = self.queue_page + row;
                 let Some(unit_type) = self.queue.get(index) else {
                     break;
                 };
-                let y = QUEUE_AREA.uly + row as i32 * LIST_ROW + 8;
-                let selected = index == self.queue_selected && self.queue_active;
-                let color = if selected { green } else { text };
-                let name = fit_label(unit_name(*unit_type), 96, font);
+                let y = QUEUE_AREA.uly + row as i32 * LIST_ROW;
+                let text_y = center_y(
+                    PixelRect::new(QUEUE_AREA.ulx, y, QUEUE_AREA.width, LIST_ROW),
+                    font,
+                );
 
-                painted +=
-                    draw_text_gnw(frame, QUEUE_AREA.ulx + 2, y, font, &name, color).max(0) as u32;
+                if let Some(icon) = cargo.and_then(|cargo| cargo.icon(*unit_type)) {
+                    let stationary =
+                        max_core::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+                    let zoom = if stationary { 16 } else { 32 };
+
+                    painted += draw_icon(
+                        frame,
+                        &palette,
+                        *unit_type,
+                        icon,
+                        (QUEUE_AREA.ulx + LIST_ICON, y + LIST_ICON),
+                        zoom,
+                        &lut,
+                    );
+                }
+
+                let name = fit_label(unit_name(*unit_type), QUEUE_AREA.width - LIST_TEXT_X, font);
+                painted += draw_text_gnw(
+                    frame,
+                    QUEUE_AREA.ulx + LIST_TEXT_X,
+                    text_y,
+                    font,
+                    &name,
+                    text,
+                )
+                .max(0) as u32;
+
+                if index == self.queue_selected {
+                    draw_item_selector(frame, white, QUEUE_AREA.ulx, y);
+                }
             }
         }
 
@@ -1178,6 +1278,28 @@ impl BuildMenu {
         );
 
         painted
+    }
+}
+
+/// Маркер выбранной строки — `GameManager_DrawUnitSelector`
+/// (`game_manager.cpp`): белые уголки длиной 8 px вокруг 32×32-иконки. В C++
+/// `offsetx = 0`, `item_height = 32`, `scaled_size2 = 30`, поэтому уголки
+/// стоят по x/y 0..8 и 22..30, а не по всей строке.
+fn draw_item_selector(frame: &mut RgbaBuffer, color: Rgba, x: i32, y: i32) {
+    const SIZE: i32 = 8;
+    const EDGE: i32 = 30;
+
+    for offset in 0..SIZE {
+        // Верхний левый и верхний правый.
+        frame.set(x + offset, y, color);
+        frame.set(x, y + offset, color);
+        frame.set(x + EDGE - offset, y, color);
+        frame.set(x + EDGE, y + offset, color);
+        // Нижний левый и нижний правый.
+        frame.set(x + offset, y + EDGE, color);
+        frame.set(x, y + EDGE - offset, color);
+        frame.set(x + EDGE - offset, y + EDGE, color);
+        frame.set(x + EDGE, y + EDGE - offset, color);
     }
 }
 

@@ -24,10 +24,14 @@
 //!    лента уничтожается, `BuildList` очищается, приказы восстанавливаются.
 //!    Так работают RMB и (в C++) клик по невалидной клетке.
 //! 5. После `StartBuilding` конструктор проходит `ORDER_AWAIT_TAPE_POSITIONING`
-//!    (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414`): `GetTargetUnitAngle`
-//!    даёт диагональ к центру 2×2, и четыре тика `OffsetDrawZones` по 8 px
-//!    сдвигают **спрайт** строителя на 32 px (половину клетки) — в центр ленты.
-//!    Сетка (`grid_x/grid_y`) при этом не меняется.
+//!    (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414`). Сначала
+//!    `Paths_UpdateAngle` доворачивает его к `GetTargetUnitAngle` (для 2×2 —
+//!    диагональ к центру, `unitinfo.cpp:4147`); пока поворот не закончен,
+//!    `moved` не растёт. Затем четыре тика `OffsetDrawZones` по 8 px двигают
+//!    **спрайт** строителя по `DIRECTION_OFFSETS[angle]` на 32 px (половину
+//!    клетки) — в центр ленты, лицом по ходу. На завершении C++ доворачивает
+//!    юнита на шаг `(angle + 1) & 7` под рабочую позу. Сетка (`grid_x/grid_y`)
+//!    при этом не меняется.
 //!
 //! # Что портировано
 //!
@@ -42,8 +46,10 @@
 //! * LMB — заказ 08/P4 с `move_to` = якорь призрака; площадку ставит
 //!   `unit_order::start_building` на следующем тике, как C++ `StartBuilding`.
 //! * RMB/Esc — отмена без заказа (приказ не уходит).
-//! * Сдвиг в центр ленты — [`tape_center_offset`] (8 px × 4 тика = 32 px,
-//!   `OffsetDrawZones`), применяется рендером к якорю спрайта.
+//! * Сдвиг в центр ленты — [`tape_center_offset`]: доворот к ленте
+//!   (`unit_order::position_in_tape`), затем 8 px × 4 тика = 32 px по
+//!   `DIRECTION_OFFSETS[unit.angle]` (`OffsetDrawZones`), применяется рендером
+//!   к якорю спрайта.
 //!
 //! # Осознанные отличия
 //!
@@ -61,7 +67,7 @@
 use max_core::access;
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
-use max_core::geo::Point;
+use max_core::geo::{Point, DIRECTION_OFFSETS};
 use max_core::production;
 use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo};
@@ -246,14 +252,21 @@ impl BuildSiteSelect {
 /// (`unitinfo.cpp:4414`) + `OffsetDrawZones`.
 ///
 /// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_{INIT,ENTER}` — `8 px` за тик
-///   (`moved` 0..4, как счётчик C++);
+///   (`moved` 0..4, как счётчик C++), **по текущему углу корпуса**
+///   (`DIRECTION_OFFSETS[angle]`): C++ сначала доворачивает строителя к ленте
+///   (`Paths_UpdateAngle`), поэтому спрайт скользит туда, куда смотрит;
 /// * `ORDER_BUILD`/`BUILD_IN_PROGRESS` после восстановления приказов —
-///   полные `32 px` (рабочая поза уже в центре ленты);
+///   полные `32 px` в том же направлении (рабочая поза уже в центре ленты);
+///   C++ при завершении позиционирования доворачивает юнита ещё на один шаг
+///   (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`), поэтому направление
+///   скольжения — `angle - 1`;
 /// * остальные состояния (достройка, `CancelBuilding`, уход) — `0`: спрайт
 ///   возвращается в центр своей клетки, как `UnitInfo::Redraw`.
 ///
-/// Направление — `GetTargetUnitAngle` (`unitinfo.cpp:4147`): по каждой оси
-/// знак от клетки строителя к якорю ленты. Сетка строителя не меняется.
+/// Направление — угол юнита (`DIRECTION_OFFSETS[unit.angle]`), а не
+/// фиксированная диагональ: у 2×2-ленты `GetTargetUnitAngle` даёт один из
+/// четырёх диагональных углов, к которому строитель и доворачивается. Сетка
+/// строителя не меняется.
 pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
     if unit.unit_type != UnitType::Constructor || unit.flags & unit_flags::STATIONARY != 0 {
         return (0, 0);
@@ -283,23 +296,27 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
         return (0, 0);
     }
 
-    let tape_grid = tape.grid;
-
-    let steps = match (unit.orders, unit.state) {
+    let (steps, angle) = match (unit.orders, unit.state) {
         (
             UnitOrder::AwaitTapePositioning,
             UnitOrderState::TapePositioningInit | UnitOrderState::TapePositioningEnter,
-        ) => i32::from(unit.moved.min(TAPE_STEPS)),
-        (UnitOrder::Build, UnitOrderState::BuildInProgress) => i32::from(TAPE_STEPS),
-        _ => 0,
+        ) => (i32::from(unit.moved.min(TAPE_STEPS)), unit.angle),
+        (UnitOrder::Build, UnitOrderState::BuildInProgress) => (
+            i32::from(TAPE_STEPS),
+            // C++ `Paths_UpdateAngle(this, (angle + 1) & 0x07)` при завершении
+            // позиционирования: сдвиг остаётся в направлении въезда.
+            unit.angle.wrapping_sub(1) & 0x07,
+        ),
+        _ => (0, 0),
     };
 
     if steps == 0 {
         return (0, 0);
     }
 
-    let direction_x = if unit.grid.x == tape_grid.x { 1 } else { -1 };
-    let direction_y = if unit.grid.y == tape_grid.y { 1 } else { -1 };
+    let direction = DIRECTION_OFFSETS[usize::from(angle & 0x07)];
+    let direction_x = i32::from(direction.x);
+    let direction_y = i32::from(direction.y);
 
     (
         direction_x * TAPE_STEP_PIXELS * steps,
@@ -617,12 +634,14 @@ mod tests {
     fn tape_center_offset_moves_the_builder_to_the_tape_center() {
         let (mut state, builder) = land_state();
         // Строитель в правом нижнем углу 2×2, якорь на клетку левее/выше:
-        // смещение должно быть NW (−32, −32) — в центр ленты.
+        // въезд идёт на NW (−32, −32) — в центр ленты.
         let anchor = Point::new(29, 19);
         state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
         state.unit_mut(builder).unwrap().orders = UnitOrder::Build;
         state.unit_mut(builder).unwrap().state = UnitOrderState::BuildInProgress;
         state.unit_mut(builder).unwrap().moved = 0;
+        // C++ при завершении позиционирования доворачивает NW(7) на шаг → N(0).
+        state.unit_mut(builder).unwrap().angle = 0;
 
         let tape = max_core::production::deploy_construction_site(
             &mut state,
@@ -647,14 +666,181 @@ mod tests {
             "спрайт строителя встаёт ровно в центр ленты 2×2"
         );
 
-        // Пока идёт позиционирование — сдвиг растёт по 8 px за тик.
+        // Пока идёт позиционирование — сдвиг растёт по 8 px за тик вдоль угла
+        // строителя. Угол уже довёрнут к ленте (`Paths_UpdateAngle`), NW = 7.
         state.unit_mut(builder).unwrap().orders = UnitOrder::AwaitTapePositioning;
         state.unit_mut(builder).unwrap().state = UnitOrderState::TapePositioningEnter;
+        state.unit_mut(builder).unwrap().angle = 7;
         for moved in 0..=4u8 {
             state.unit_mut(builder).unwrap().moved = moved;
             let unit = state.unit(builder).unwrap();
             let offset = tape_center_offset(&state, unit);
             assert_eq!(offset, (-8 * i32::from(moved), -8 * i32::from(moved)));
         }
+    }
+
+    #[test]
+    fn tape_center_offset_follows_the_unit_angle_not_a_fixed_diagonal() {
+        let (mut state, builder) = land_state();
+        let anchor = Point::new(29, 19);
+        state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
+        state.unit_mut(builder).unwrap().orders = UnitOrder::AwaitTapePositioning;
+        state.unit_mut(builder).unwrap().state = UnitOrderState::TapePositioningEnter;
+        state.unit_mut(builder).unwrap().moved = 1;
+
+        max_core::production::deploy_construction_site(
+            &mut state,
+            builder,
+            UnitType::TrainingHall,
+            anchor,
+        )
+        .expect("площадка поставлена");
+
+        // Строитель западнее центра, смотрит на восток — сдвиг строго (1,0)*8.
+        state.unit_mut(builder).unwrap().angle = 2;
+        let unit = state.unit(builder).unwrap();
+        assert_eq!(tape_center_offset(&state, unit), (8, 0));
+
+        // Диагональный случай: смотрит NW — (1,1)-диагональ.
+        state.unit_mut(builder).unwrap().angle = 7;
+        let unit = state.unit(builder).unwrap();
+        assert_eq!(tape_center_offset(&state, unit), (-8, -8));
+
+        // Остальные направления — ровно `DIRECTION_OFFSETS[angle] * 8`.
+        for angle in 0..8u8 {
+            state.unit_mut(builder).unwrap().angle = angle;
+            let unit = state.unit(builder).unwrap();
+            let offset = tape_center_offset(&state, unit);
+            let step = DIRECTION_OFFSETS[usize::from(angle)];
+
+            assert_eq!(
+                offset,
+                (i32::from(step.x) * 8, i32::from(step.y) * 8),
+                "угол {angle}: сдвиг по DIRECTION_OFFSETS"
+            );
+        }
+    }
+
+    #[test]
+    fn target_unit_angle_points_from_each_corner_to_the_tape_center() {
+        let (mut state, builder) = land_state();
+        let anchor = Point::new(29, 19);
+        state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
+        max_core::production::deploy_construction_site(
+            &mut state,
+            builder,
+            UnitType::TrainingHall,
+            anchor,
+        )
+        .expect("площадка поставлена");
+
+        // `GetTargetUnitAngle`/`TAPE_POSITIONING_ENTER`: четыре угла 2×2 дают
+        // четыре диагонали (SE/NE/SW/NW); сетка строителя не меняется.
+        let cases = [
+            (Point::new(29, 19), 3, (1, 1)),   // NW-угол ленты → SE
+            (Point::new(30, 19), 5, (-1, 1)),  // NE-угол → SW
+            (Point::new(29, 20), 1, (1, -1)),  // SW-угол → NE
+            (Point::new(30, 20), 7, (-1, -1)), // SE-угол → NW
+        ];
+
+        for (grid, angle, step) in cases {
+            let mut unit = state.unit(builder).unwrap().clone();
+            unit.grid = grid;
+            unit.state = UnitOrderState::TapePositioningEnter;
+
+            assert_eq!(
+                max_core::unit_order::get_target_unit_angle(&state, &unit),
+                angle,
+                "клетка {grid:?}: C++ GetTargetUnitAngle"
+            );
+
+            // `DIRECTION_OFFSETS[angle] * 32` из центра клетки — центр ленты.
+            let offset = (step.0 * 32, step.1 * 32);
+            let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
+
+            assert_eq!(
+                (
+                    i32::from(grid.x) * 64 + 32 + offset.0,
+                    i32::from(grid.y) * 64 + 32 + offset.1
+                ),
+                (center_x, center_y),
+                "клетка {grid:?}: диагональ ведёт ровно в центр ленты"
+            );
+        }
+    }
+
+    #[test]
+    fn position_in_tape_turns_to_the_tape_before_the_four_slide_ticks() {
+        let (mut state, builder) = land_state();
+        let anchor = Point::new(29, 19);
+        state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
+        max_core::production::deploy_construction_site(
+            &mut state,
+            builder,
+            UnitType::TrainingHall,
+            anchor,
+        )
+        .expect("площадка поставлена");
+
+        let mut unit = state.unit(builder).unwrap().clone();
+        unit.orders = UnitOrder::AwaitTapePositioning;
+        unit.state = UnitOrderState::TapePositioningInit;
+        unit.prior_orders = UnitOrder::Build;
+        unit.prior_state = UnitOrderState::BuildInProgress;
+        unit.moved = 0;
+        unit.angle = 0; // смотрит на север, лента — на северо-запад
+
+        // Тик 1: INIT → ENTER и первый (единственный) шаг поворота 0 → NW(7).
+        // C++: `if (moved || !Paths_UpdateAngle(...))` — пока поворот не
+        // закончен, `moved` не растёт и спрайт не сдвигается.
+        max_core::unit_order::position_in_tape(&state, &mut unit);
+        assert_eq!(unit.state, UnitOrderState::TapePositioningEnter);
+        assert_eq!(unit.angle, 7, "строитель довернулся к ленте (NW)");
+        assert_eq!(unit.moved, 0, "до доворота сдвига нет");
+        state.write_unit(builder, unit.clone());
+        assert_eq!(tape_center_offset(&state, &unit), (0, 0));
+
+        // Тик 2: угол уже целевой — первый шаг скольжения (−8,−8).
+        max_core::unit_order::position_in_tape(&state, &mut unit);
+        assert_eq!(unit.moved, 1);
+        state.write_unit(builder, unit.clone());
+        assert_eq!(tape_center_offset(&state, &unit), (-8, -8));
+
+        // Тики 3–5: ещё три шага по 8 px — ровно в центр ленты.
+        for step in 2..=4u8 {
+            max_core::unit_order::position_in_tape(&state, &mut unit);
+            assert_eq!(unit.moved, step);
+            state.write_unit(builder, unit.clone());
+            assert_eq!(
+                tape_center_offset(&state, &unit),
+                (-8 * i32::from(step), -8 * i32::from(step)),
+                "шаг {step}: скольжение по диагонали NW"
+            );
+        }
+
+        let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
+        let offset = tape_center_offset(&state, &unit);
+        assert_eq!(
+            (
+                i32::from(unit.grid.x) * 64 + 32 + offset.0,
+                i32::from(unit.grid.y) * 64 + 32 + offset.1
+            ),
+            (center_x, center_y),
+            "четыре шага по 8 px ставят спрайт в центр ленты"
+        );
+
+        // Тик 6: `moved >= 4` — `RestoreOrders` в ORDER_BUILD и доворот на шаг
+        // (`Paths_UpdateAngle(this, (angle + 1) & 7)`): NW(7) → N(0).
+        max_core::unit_order::position_in_tape(&state, &mut unit);
+        assert_eq!(unit.orders, UnitOrder::Build);
+        assert_eq!(unit.state, UnitOrderState::BuildInProgress);
+        assert_eq!(unit.angle, 0, "C++ доворачивает на (angle + 1) & 7");
+        assert_eq!(unit.moved, 0);
+        state.write_unit(builder, unit.clone());
+        assert_eq!(
+            tape_center_offset(&state, &unit),
+            (-32, -32),
+            "рабочая поза остаётся в центре ленты"
+        );
     }
 }

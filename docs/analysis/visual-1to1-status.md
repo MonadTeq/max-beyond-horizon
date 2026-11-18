@@ -998,12 +998,15 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
   (`TURRET_SPRITE`/`SPINNING_TURRET`) рисуются двумя кадрами `I_*` со сдвигом
   `angle_offsets[2]` из `D_*` (`Unit::GetFrameInfo()`), как
   `ReportStats_DrawListItemIcon`; та же башня отдельным кадром
-  (`SpriteRenderer::draw_turret_scaled`) на карте, в портрете HUD, меню
-  апгрейдов и `BuildMenu`. Отличия от оригинала:
-  портрет обрезан окном 280×240 (C++-порт пишет 300 px без клипа — 20 правых
-  пикселей уходят на фон); у 24 служебных типов (обломки, взрывы, снаряды,
-  `HARVSTER`, `WALDO`) описания нет и в оригинале, но они не достижимы в
-  `CargoMenu`; числа `Cost`/`Credit`/`Cargo` в C++-порте не
+  (`SpriteRenderer::draw_turret_scaled`) на карте, в портрете HUD и меню
+  апгрейдов. `BuildMenu` использует тот же `draw_icon`/`team_lut` для строк
+  списка, а его портрет — big image `P_*` 300×240 в (11,13) без обрезки
+  (§24). Отличия от оригинала:
+  в `CargoMenu` портрет обрезан окном 280×240 (C++-порт `CargoMenu` пишет
+  300 px без клипа — 20 правых пикселей уходят на фон; `BuildMenu` рисует все
+  300 px, как его `local_window`); у 24 служебных типов (обломки, взрывы,
+  снаряды, `HARVSTER`, `WALDO`) описания нет и в оригинале, но они не
+  достижимы в `CargoMenu`; числа `Cost`/`Credit`/`Cargo` в C++-порте не
   рисуются (остались подписи), счётчики — на полосе золота и над слайдером;
   `Help` открывает `CARGO_SETUP` (P8, §13.2); звуки не
   проигрываются. Клановые бонусы применяются автоматически
@@ -2315,7 +2318,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 | курсор/валидность | `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`) | Конструктор: якорь по каждой оси — курсор правее → `builder.x`, левее → `builder.x-1`, ровно на линии → прежний якорь (по `y` так же). Валидно (`CURSOR_MAP2`), если `UnitsManager_MoveUnitAndParent` дал проходимость `UnitsManager_IsAccessible` (2×2, `AccessModifier_SameClassBlocks`, строитель и лента вынуты из хэша) **и** 2×2 накрывает клетку курсора; иначе `CURSOR_UNIT_NO_GO` |
 | подтверждение | `GameManager_PathBuild` (`game_manager.cpp:4566`) | LMB по `CURSOR_MAP2`: `move_to = TempTape->grid`, лента уничтожается, `UnitsManager_StartBuild` → `BuildOrder` (`ORDER_BUILD`/`INIT`); на следующем тике `UnitInfo::StartBuilding` ставит `LRGTAPE`+`LRGCONES`+`LRGSLAB` в `move_to` |
 | отмена | `GameManager_ManagePlayerAction` → `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | RMB по карте и LMB по невалидной клетке: лента уничтожается, `BuildList` очищается, `SetOrder(prior)`/`SetOrderState(prior)` — заказа нет |
-| центр ленты | `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`), `GetTargetUnitAngle` (`4147`) | После `StartBuilding` конструктор идёт `ORDER_AWAIT_TAPE_POSITIONING`/`INIT → ENTER`: `moved` 0..4, на каждом шаге `OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)` — спрайт сдвигается на 8 px к центру 2×2 (всего 32 px = половина клетки); затем `PrepareConstructionSite`, `DrawSpriteFrame(image_index + 16)` и `RestoreOrders` в `ORDER_BUILD`/`BUILD_IN_PROGRESS`. Сетка строителя (`grid_x/grid_y`) не меняется |
+| центр ленты | `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`), `GetTargetUnitAngle` (`4147`), `Paths_UpdateAngle` (`paths.cpp:258`) | После `StartBuilding` конструктор идёт `ORDER_AWAIT_TAPE_POSITIONING`/`INIT → ENTER`: на каждом тике `GetTargetUnitAngle` даёт диагональ к центру 2×2 (по клетке ленты: обе оси совпали — `SE`, только `x` — `NE`, только `y` — `SW`, иначе `NW`). Пока `moved == 0`, `Paths_UpdateAngle` крутит юнита на месте (до 4 шагов по 45°); как только угол совпал, `moved` 1..4 и на каждом шаге `OffsetDrawZones(DIRECTION_OFFSETS[target_angle] * 8)` — спрайт едет **по направлению своего угла** на 8 px за тик (всего 32 px = половина клетки) в центр 2×2. На завершении: `RestoreOrders` в `ORDER_BUILD`/`BUILD_IN_PROGRESS`, `Paths_UpdateAngle(this, (angle + 1) & 7)` — доворот на 45° под рабочую позу, `DrawSpriteFrame(image_index + 16)`. Сетка строителя (`grid_x/grid_y`) не меняется |
 
 Клавиши: RMB и LMB по невалидной клетке — отмена (как выше); Esc в C++ открывает
 меню выхода (`OKCancelMenu`), а не отменяет выбор.
@@ -2332,10 +2335,18 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   пропускает его id в цикле, не меняя состояние.
 * `max_app::buildsite` — `BuildSiteSelect` (строитель, тип, скорость, якорь,
   курсор), `valid`/`cursor_id`/`status_line`, призрак `draw_ghost` (та же декаль
-  `LRGTAPE`/`SMLTAPE`, кадр 0), `tape_center_offset` (8 px × `moved` до 4, после
-  `RestoreOrders` — полные 32 px), `App::{open_build_site, confirm_build_site,
-  cancel_build_site}`; заказ идёт общим `buildmenu::build_order_command`
-  (пакет 08/P4 с `move_to` = якорь).
+  `LRGTAPE`/`SMLTAPE`, кадр 0), `tape_center_offset` (8 px × `moved` до 4,
+  направление — **угол юнита** `DIRECTION_OFFSETS[unit.angle]`, после
+  `RestoreOrders` — полные 32 px по углу въезда с поправкой на C++-доворот
+  `+1`), `App::{open_build_site, confirm_build_site, cancel_build_site}`; заказ
+  идёт общим `buildmenu::build_order_command` (пакет 08/P4 с `move_to` = якорь).
+* `max_core::unit_order::get_target_unit_angle` — точный порт
+  `UnitInfo::GetTargetUnitAngle`: для `TAPE_POSITIONING_ENTER` ищет ленту в
+  клетке строителя (`production::construction_utility`) и возвращает SE/NE/SW/NW
+  по якорю 2×2; иначе — направление к центру `target_grid`. `position_in_tape`
+  повторяет C++-цикл `if (moved || !Paths_UpdateAngle(this, target_angle))`:
+  доворот без сдвига, затем четыре шага `moved`, на завершении — доворот
+  `(angle + 1) & 7` (рабочая поза).
 * `BuildMenu::site_selection_target` + `commit_build_menu`: для здания у
   мобильного строителя `Done` открывает режим (статус «choose a site»), при
   отсутствии проходимого якоря меню остаётся открытым с `NoSite` (C++ —
@@ -2354,35 +2365,45 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 
 ### 23.3 Тесты и QA
 
-* `max_app/src/buildsite.rs` (unit, 6): якорь 2×2 всегда накрывает строителя и
+* `max_app/src/buildsite.rs` (unit, 9): якорь 2×2 всегда накрывает строителя и
   курсор; якорь вдали от строителя **невалиден** (нельзя строить дистанционно);
   начальный якорь — первый кандидат `IssueBuildOrder`; курсор/валидность
   (вода → `CURSOR_UNIT_NO_GO`); `tape_center_offset` = (−32,−32) для правого
-  нижнего угла и ровно центр ленты, рост 8 px за тик; лента, не накрывающая
-  строителя, не даёт сдвига.
-* `max_app/tests/build_site.rs` (7): призрак двигается за мышью и меняет
+  нижнего угла и ровно центр ленты; направление сдвига — **угол юнита**
+  (`DIRECTION_OFFSETS[angle]` для всех 8 углов, включая (1,0)*8 при взгляде на
+  восток), а не фиксированная диагональ; четыре угла 2×2 дают SE/NE/SW/NW и
+  `DIRECTION_OFFSETS[angle] * 32` ровно в центр; `position_in_tape` сначала
+  доворачивает (moved = 0, сдвига нет), затем 4 шага по 8 px и `NW→N` на
+  завершении; лента, не накрывающая строителя, не даёт сдвига.
+* `max_app/tests/build_site.rs` (8): призрак двигается за мышью и меняет
   валидность; призрак **нарисован** в кадре после **обоих** путей открытия
   `BuildMenu` (клавиша `B` и пункт `Build` попапа); Esc отменяет без приказа и
   без площадки; LMB ставит площадку **в указанной клетке** (`site-pos`),
   строитель работает в центре ленты — кадровый тест по bbox спрайта; то же для
-  попапа; та же последовательность → тот же digest и та же площадка.
+  попапа; та же последовательность → тот же digest и та же площадка;
+  `builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick` —
+  кадры позиционирования: после доворота `angle=7`, bbox спрайта каждый тик
+  смещается ровно (−8,−8), после четырёх шагов центр ленты, затем `angle=0` и
+  рабочая поза.
 * `unit_menu::builder_stop_cancels_the_build_and_build_returns` — заказ через
   подтверждение клетки (здание у конструктора).
 * QA `production.qa`: `build done` → `assert build-site=open/valid` →
   `shot build-site-select` → `build cursor 30 21` → `assert build-site=invalid` →
   `shot build-site-invalid` → `key ESC` (отмена) → заказ → `build place 28 20` →
-  `tick 1` → `assert site=large` + `assert site-pos=28,20` → отмена `stop` →
-  повторный заказ через `build place near` → `assert site=drawn` →
-  `assert build-center=yes` (строитель в центре ленты) → `anim`/`shot`
-  `build-work-a`/`build-work-b`. `research.qa`/`research-help.qa` добавлен
-  `build place near`.
+  `tick 1` → `assert site=large` + `assert site-pos=28,20` → покадровое
+  позиционирование: `build-slide-turn` (`assert angle=7`,
+  `build-center=no`), `build-slide-1..4` (сдвиг −8/−16/−24/−32,
+  `build-center=no/yes`) → отмена `stop` → повторный заказ через
+  `build place near` → `assert site=drawn` → `assert build-center=yes` →
+  `anim`/`shot` `build-work-a`/`build-work-b`. `research.qa`/`research-help.qa`
+  добавлен `build place near`.
 * Новые команды QA: `build place X Y|near`, `build cursor X Y`; проверки
   `build-site=open|closed|valid|invalid`, `build-center=yes|no`,
-  `site-pos=X,Y` (`max-rust-qa/scripts/README.md`).
-* Golden: `production/` переснят — 10 кадров (`build-site-select`,
-  `build-site-invalid`, `build-ordered`, обновлённые `build-site*`/`build-work-*`),
-  0 дрейфа; `research/` (1 кадр) и `research-help/` (5 кадров) пересняты из-за
-  нового места постройки — 0 дрейфа.
+  `site-pos=X,Y`, `angle=N` (`max-rust-qa/scripts/README.md`).
+* Golden: `production/` — 15 кадров, из них новые `build-slide-turn` +
+  `build-slide-1..4` и переснятые `buildmenu`/`buildmenu-factory` (иконки и
+  `P_*`), 0 дрейфа; игровые `build-ordered`/`build-site*`/`build-work-*` не
+  изменились. `research/` (1 кадр) и `research-help/` (9 кадров) — 0 дрейфа.
 * Живой Windows-прогон: `build/scripts/ui-test-construction.ps1` по умолчанию
   проверяет **упакованный** exe (`release/max_app-*-windows-x86_64-ui/max-rust.exe`),
   `-OpenVia key|popup` — оба пути открытия `BuildMenu`. Проверки: `site=open`
@@ -2390,7 +2411,9 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   (15) / `LRGCONES` (19), после LMB площадка накрывает строителя, `05-builder-centered`
   — bbox-проверка: центр спрайта строителя против центра жёлто-чёрной ленты
   (допуск 10 px; на прогонах ≤1.5 px). Кадры — `build/ui-test-construction/`
-  (key) и `build/ui-test-construction-popup/` (popup), призрак — `03-site-select`.
+  (key) и `build/ui-test-construction-popup/` (popup), призрак — `03-site-select`,
+  скольжение под углом — `03-slide-a..d`, BuildMenu с иконками/портретом —
+  `02-buildmenu`.
 
 ### 23.4 Осознанные расхождения
 
@@ -2431,3 +2454,69 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   накрытие строителя после LMB и bbox-центр спрайта;
 * упакованный Windows UI пересобран (`build-windows-ui.ps1`), прогоны
   `key`/`popup` на нём — PASS.
+
+### 23.6 Скольжение под углом (2026-11-18)
+
+Симптом: конструктор «въезжал» в центр площадки прямым/вертикальным сдвигом,
+глядя не туда, куда ехал. Причина — в порте `PositionInTape` наращивал `moved`
+сразу, без `Paths_UpdateAngle`, а `tape_center_offset` считал направление по
+разнице клеток, не поворачивая спрайт. C++ (`unitinfo.cpp:4472-4482`) сначала
+доворачивает строителя к `GetTargetUnitAngle`, и только потом
+`OffsetDrawZones(DIRECTION_OFFSETS[target_angle] * 8)` двигает спрайт по его
+углу. Теперь `position_in_tape` повторяет эту последовательность, а
+`tape_center_offset` берёт `DIRECTION_OFFSETS[unit.angle]`; на завершении
+портирован доворот `(angle + 1) & 7`. Штатно у 2×2-ленты `GetTargetUnitAngle`
+даёт диагональ (строитель всегда внутри ленты), поэтому кадрово это (−8,−8) за
+тик; функция `tape_center_offset` при этом честно следует любому углу — тест
+проверяет и (1,0)*8 для взгляда на восток. Golden: `build-slide-turn` (после
+доворота, сдвиг 0), `build-slide-1..4` (−8/−16/−24/−32) — 0 дрейфа.
+
+## 24. `BuildMenu`: иконки списка и портрет здания — **сделано** (2026-11-18)
+
+### 24.1 Как в C++ (оракул)
+
+| Что | Код | Поведение |
+|---|---|---|
+| строки списка | `UnitTypeSelector::Draw` (`unittypeselector.cpp:269`), `BuildUnitTypeSelector::Draw` (`buildmenu.cpp:165`) | `ReportStats_DrawListItem(buffer, width, type, 0, i*32, width, 0xA2)`: иконка `I_*` с горячей точкой в (16,16) строки, имя `Text_TextBox(ulx + 35, uly, full - 35, 32)` по центру по вертикали; ходы — `ReportStats_DrawNumber(... + 135, turns, 20)`, т.е. правая граница 618 |
+| иконка | `ReportStats_DrawListItemIcon` (`reportstats.cpp`) | `data.divisor = 2` для `STATIONARY` (здания — `1 << 2 = 1:4`), иначе 1 (`1:2`); кадр 0 `GetIcon()` (`I_*`); для `TURRET_SPRITE`/`SPINNING_TURRET` — кадр 1 со сдвигом `angle_offsets[2] >> divisor`; перекраска `color_index_table` команды |
+| цвет ходов | `BuildUnitTypeSelector::Draw` | `0xA2`, если строитель `STATIONARY` или `storage >= turns * Cargo_GetRawConsumptionRate(builder, 1)`, иначе `COLOR_RED` |
+| выделение | `GameManager_DrawUnitSelector` (`game_manager.cpp`) | белые уголки 8 px в 32×32-ячейке (offsetx=0, `scaled_size2 = 30`); не заливка и не цвет текста |
+| портрет | `AbstractBuildMenu::Draw` (`buildmenu.cpp:509-529`) | `WindowManager_LoadBigImage(base_unit.GetPortrait(), &local_window, window.width, false, true, -1, -1, false)`; `local_window.buffer = &window.buffer[11 + width*13]`, big image `P_*` 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`), **без** обрезки 280×240 (в `CargoMenu` — своё окно `unit_portrait_window` 280×240); при отсутствии — `buf_fill` 300×240 чёрным |
+| выбор портрета | `AbstractBuildMenu::Select` / `FactoryBuildMenu::Select` | `Draw(selector->GetLast())` — выбранная строка списка; у завода — активного селектора (список или очередь `cargo_selector`) |
+
+### 24.2 Что сделано
+
+* `max_app::buildmenu` переиспользует `CargoMenu`-паттерн:
+  `mobilize::{draw_icon, team_lut, center_y, draw_text_right}` (`draw_icon`
+  рисует кадр 0 + кадр башни со сдвигом и LUT команды — ровно
+  `ReportStats_DrawListItemIcon`), `CargoMenuAssets::icons` (71 `I_*`) и
+  `CargoMenuAssets::portrait` (ленивый кэш `P_*` 300×240).
+* Строка списка: иконка 1:4 у зданий в (483+16, 60+i*32+16), имя с x=518
+  (ширина 80, по центру строки), ходы справа (`LIST_TURNS_RIGHT = 618`,
+  `0xA2`/`COLOR_RED`), белые уголки на выбранной строке. Очередь завода — те же
+  иконка+имя и уголки (`UnitTypeSelector::Draw`).
+* Портрет — `P_*` 300×240 в (11,13) (`PORTRAIT`), палитра `CONBUILD`/`FACBUILD`,
+  без обрезки; тип — выбранная строка (у завода — активный список/очередь).
+  Спрайт строителя 2×, который рисовался раньше, убран.
+
+### 24.3 Тесты и QA
+
+* `max_app/tests/build_menu_render.rs` (4): иконка в каждой видимой строке
+  (diff от чистого `CONBUILD` > 20 px, в т.ч. выбранная строка с уголками);
+  RED/GREEN перекраска иконок (diff > 50 px — командные слоты как в
+  `CargoMenu`); портрет попиксельно совпадает с `P_MINING` (>80 % пикселей,
+  пропущенных через палитру окна) и отличается от фона; смена выбранной
+  строки/выбранного элемента очереди меняет портрет.
+* QA `production.qa`: `shot buildmenu` (конструктор, `Mining Station` — иконки
+  всех 15 строк + `P_MINING`) и `shot buildmenu-factory` (завод, `Infiltrator` —
+  `P_COMMAN`, список `TRAINHAL`); golden `production/buildmenu*.png` пересняты,
+  0 дрейфа.
+
+### 24.4 Осознанные расхождения
+
+* Область статистики (`stats_background`, `UnitStats_DrawStats` выбранного
+  типа в C++) в порте по-прежнему показывает краткий текст строителя (имя,
+  Hits/Armor, Build rate, Order) — таблица `UnitStats` для `BuildMenu` не
+  портирована (в `CargoMenu` она есть). Портрет и иконки — 1:1.
+* Фон и кнопки — `CONBUILD`/`FACBUILD`; `Help`/`Build path` инженера не
+  портированы (как и раньше).

@@ -498,12 +498,73 @@ pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
     unit.build_list.clear();
 }
 
+/// `UnitInfo::GetTargetUnitAngle` (`unitinfo.cpp:4147`) — направление, в
+/// котором строитель въезжает в центр ленты.
+///
+/// * `TAPE_POSITIONING_ENTER` — по клеткам: лента находится в клетке строителя
+///   (`Access_GetConstructionUtility(team, grid_x, grid_y)`), её `grid` — якорь
+///   2×2. Сравнение `grid_x/grid_y` с якорем даёт ровно один из четырёх
+///   диагональных углов: совпали обе оси — `SE`, только `x` — `NE`, только
+///   `y` — `SW`, иначе `NW`. Строитель 2×2 всегда стоит в одной из четырёх
+///   клеток ленты, поэтому штатно угол всегда диагональный (45°).
+/// * остальные состояния (`LEAVE`) — к центру `move_to` (`target_grid`): знак
+///   разницы по каждой оси независимо; пиксельная позиция строителя — центр
+///   его клетки (`UnitInfo::SetPosition`; в порте `x/y` не пересчитываются при
+///   ходьбе, поэтому берётся клетка).
+pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo) -> i32 {
+    const UNIT_ANGLE_NE: i32 = 1;
+    const UNIT_ANGLE_SE: i32 = 3;
+    const UNIT_ANGLE_SW: i32 = 5;
+    const UNIT_ANGLE_NW: i32 = 7;
+
+    if unit.state == UnitOrderState::TapePositioningEnter {
+        // `Access_GetConstructionUtility(team, grid_x, grid_y)`: у здания
+        // лента зарегистрирована в хэше во всех четырёх клетках 2×2, но её
+        // `grid` — якорь (верхний левый угол).
+        let tape_grid = production::construction_utility(state, unit.team, unit.grid)
+            .and_then(|id| state.unit(id))
+            .map(|tape| tape.grid)
+            .unwrap_or(unit.target_grid);
+
+        if unit.grid.x == tape_grid.x {
+            if unit.grid.y == tape_grid.y {
+                UNIT_ANGLE_SE
+            } else {
+                UNIT_ANGLE_NE
+            }
+        } else if unit.grid.y == tape_grid.y {
+            UNIT_ANGLE_SW
+        } else {
+            UNIT_ANGLE_NW
+        }
+    } else {
+        let target_x = i32::from(unit.target_grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        let target_y = i32::from(unit.target_grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        let x = i32::from(unit.grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        let y = i32::from(unit.grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+
+        if target_x > x {
+            if target_y > y {
+                UNIT_ANGLE_SE
+            } else {
+                UNIT_ANGLE_NE
+            }
+        } else if target_y > y {
+            UNIT_ANGLE_SW
+        } else {
+            UNIT_ANGLE_NW
+        }
+    }
+}
+
 /// `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`).
 ///
 /// Портирован цикл позиционирования: `INIT → ENTER`, `DEINIT → LEAVE`,
-/// `moved` до 4, затем `RestoreOrders`. Точное позиционирование/углы —
-/// P5 (`Paths_UpdateAngle`, `PrepareConstructionSite`).
-pub fn position_in_tape(unit: &mut UnitInfo) {
+/// доворот `Paths_UpdateAngle` к [`get_target_unit_angle`], `moved` до 4, затем
+/// `RestoreOrders`. Как в C++, пока строитель не довернулся к центру, `moved`
+/// **не растёт** — сначала поворот на месте, потом скольжение (четыре шага
+/// `OffsetDrawZones` по 8 px).
+pub fn position_in_tape(state: &GameState, unit: &mut UnitInfo) {
     ai_task_flag("Positioning in tape");
 
     if unit.state == UnitOrderState::TapePositioningInit {
@@ -531,9 +592,12 @@ pub fn position_in_tape(unit: &mut UnitInfo) {
         {
             // `PrepareConstructionSite` уже выполнен `StartBuilding`-ом
             // (площадка ставится сразу при заказе, см.
-            // `production::deploy_construction_site`); здесь C++ ещё рисует
-            // `DrawSpriteFrame(image_index + 16)` — рабочую позу. Кадр
+            // `production::deploy_construction_site`). C++ ещё раз доворачивает
+            // строителя на 45° (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`) и
+            // рисует рабочую позу `DrawSpriteFrame(image_index + 16)`; кадр
             // выбирается рендером по `ORDER_BUILD`/`BUILD_IN_PROGRESS`.
+            let target_angle = (i32::from(unit.angle) + 1) & 0x07;
+            let _ = paths_update_angle(unit, target_angle);
         } else if old_state != UnitOrderState::TapePositioningEnter {
             // `UpdateGridPosition`/`Access_UpdateMapStatus` — P5.
             if unit.orders == UnitOrder::Build {
@@ -541,9 +605,20 @@ pub fn position_in_tape(unit: &mut UnitInfo) {
             }
         }
     } else {
-        // `GetTargetUnitAngle` + `Paths_UpdateAngle` — P5 (поворот на месте);
-        // без модуля путей считаем, что угол уже верный, и идёт счётчик.
-        unit.moved = unit.moved.wrapping_add(1);
+        // C++: `if (moved || !Paths_UpdateAngle(this, target_angle))`.
+        // Пока `moved == 0`, каждый тик — один шаг поворота; сдвиг и счётчик
+        // начинаются только после того, как угол совпал с целевым.
+        let step = if unit.moved != 0 {
+            true
+        } else {
+            let target_angle = get_target_unit_angle(state, unit);
+            !paths_update_angle(unit, target_angle)
+        };
+
+        if step {
+            unit.moved = unit.moved.wrapping_add(1);
+            refresh_screen(unit);
+        }
     }
 }
 
@@ -2241,7 +2316,7 @@ fn process_order_await_scaling(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderAwaitTapePositioning` (`units_manager.cpp:3187`).
 fn process_order_await_tape_positioning(ctx: &mut OrderContext<'_>) {
-    position_in_tape(&mut ctx.unit);
+    position_in_tape(ctx.world, &mut ctx.unit);
 }
 
 /// `UnitsManager_ProcessOrderAwaitDisableStealUnit`

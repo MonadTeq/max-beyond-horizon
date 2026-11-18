@@ -2,6 +2,55 @@
 
 ### Исправлено
 
+- **Строитель въезжает в центр ленты под своим углом: сначала доворот, потом
+  скольжение по `DIRECTION_OFFSETS[angle]`.** В C++
+  (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414-4482`) цикл такой:
+  `if (moved || !Paths_UpdateAngle(this, target_angle))` — пока строитель не
+  довернулся к `GetTargetUnitAngle` (`unitinfo.cpp:4147`), `moved` **не растёт**
+  и `OffsetDrawZones` не вызывается; затем четыре тика спрайт едет на
+  `DIRECTION_OFFSETS[target_angle] * 8` (32 px — в центр 2×2), а на завершении
+  C++ доворачивает юнита ещё на шаг (`(angle + 1) & 0x07`) под рабочую позу.
+  В порте доворота не было: спрайт ехал по диагонали, глядя в третью сторону
+  (обычно на север), из-за чего движение читалось как прямой/вертикальный сдвиг.
+  Теперь `max_core::unit_order::get_target_unit_angle` портирует C++
+  (SE/NE/SW/NW по клетке ленты; для `LEAVE` — к `target_grid`),
+  `position_in_tape` сначала крутит на месте и только после совпадения угла
+  наращивает `moved`, а `max_app::buildsite::tape_center_offset` берёт
+  направление из **угла юнита** (`DIRECTION_OFFSETS[unit.angle]`), а не из
+  фиксированной диагонали; на `BUILD_IN_PROGRESS` — угол въезда
+  (`(angle - 1) & 7`, т.к. C++ довернул на шаг). Тесты: unit `buildsite` 9 (+3:
+  направление = угол, включая (1,0)*8 для взгляда на восток; четыре угла 2×2 →
+  SE/NE/SW/NW и центр ленты; тик поворота + четыре шага ровно по 8 px и доворот
+  `NW→N`), кадровый `tests/build_site.rs::
+  builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick`
+  (bbox спрайта смещается ровно (−8,−8) за тик). QA `production.qa`: новые
+  кадры `build-slide-turn`/`build-slide-1..4` + `assert angle=7`, `angle=0`,
+  `build-center=no/yes`; golden `production/*` — 0 дрейфа (игровые кадры
+  `build-ordered`/`build-site*`/`build-work-*` не изменились).
+
+- **`BuildMenu`: иконки `I_*` в строках списка и портрет выбранного здания
+  (`P_*`).** В C++ строки рисует `ReportStats_DrawListItem` →
+  `ReportStats_DrawListItemIcon` (иконка `I_*` с горячей точкой в (16,16)
+  строки; здания — масштаб 1:4, `divisor = 2`; для
+  `TURRET_SPRITE`/`SPINNING_TURRET` — второй кадр со сдвигом
+  `angle_offsets[2] >> divisor`; перекраска командных слотов
+  `color_index_table`), имя — `Text_TextBox(ulx + 35, uly, 80, 32)`, ходы —
+  `ReportStats_DrawNumber` справа (483 + 135 + 20 = 618; `0xA2`, красные, если
+  склада строителя не хватает), выделение — белые уголки
+  `GameManager_DrawUnitSelector`; портрет — `AbstractBuildMenu::Draw`
+  (`buildmenu.cpp:509-529`): `GetPortrait()` big image `P_*` 300×240 в (11,13),
+  палитра окна, **без** обрезки 280×240 (в `CargoMenu` своё окно). В порте
+  рисовался спрайт **строителя** 2× и не было иконок. Теперь `buildmenu`
+  переиспользует `mobilize::{draw_icon, team_lut, center_y, draw_text_right}`
+  (`CargoMenu`-паттерн), `CargoMenuAssets::portrait` (ленивый кэш `P_*`), рисует
+  иконку/имя/ходы/уголки в строках списка и очереди завода, а портрет — для
+  выбранной строки (у завода — активного селектора: список или очередь).
+  Тесты: `tests/build_menu_render.rs` (4): иконка в каждой видимой строке
+  (diff от фона > 20 px), RED/GREEN перекраска иконок, портрет совпадает с
+  `P_MINING` попиксельно (>80 %) в окне (11,13) 300×240, смена строки/очереди
+  меняет портрет. QA `production.qa`: `buildmenu`/`buildmenu-factory` пересняты
+  с иконками и `P_*`; golden — 0 дрейфа.
+
 - **Призрак выбора места и центр ленты доходили до игрока: упакованный Windows
   UI был старым; оба пути `Build` теперь проверяются живым тестом.** Прошлый
   `ui-test-construction.ps1` брал `build/win-msvc-target/release/max-rust.exe`,

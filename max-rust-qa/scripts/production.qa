@@ -111,15 +111,42 @@ assert site=large
 assert site-pos=28,20
 shot build-ordered
 
+# --- Скольжение в центр ленты под углом (`PositionInTape`) -----------------
+# C++ (`unitinfo.cpp:4414-4482`): пока строитель не довернулся
+# (`Paths_UpdateAngle` к `GetTargetUnitAngle`), `moved` не растёт — сначала
+# поворот на месте. Затем четыре тика `OffsetDrawZones(DIRECTION_OFFSETS[angle]
+# * 8)` двигают спрайт по диагонали к центру 2×2; на следующем тике
+# `RestoreOrders` и доворот `(angle + 1) & 7` на рабочую позу.
+# Строитель стоит в SE-углу ленты (29,21), якорь (28,20) → угол NW(7).
+tick 1
+assert angle=7
+assert build-center=no
+shot build-slide-turn
+tick 1
+assert build-center=no
+shot build-slide-1
+tick 1
+assert build-center=no
+shot build-slide-2
+tick 1
+assert build-center=no
+shot build-slide-3
+tick 1
+assert build-center=yes
+shot build-slide-4
+
 # --- Отмена стройки и повторный заказ (строитель не «застревает») ---------
 # C++ `UnitsManager_Popup_InitBuilders`: во время `ORDER_BUILD` пункт `Build`
 # заменён на `stop` (`GameManager_SelectBuildSite` → `ORDER_STATE_BUILD_CANCEL`,
 # `UnitInfo::CancelBuilding` у мобильного строителя очищает очередь).
-# Позиционирование в ленте (`AWAIT_TAPE_POSITIONING`) занимает 4 тика; после
-# него конструктор в `ORDER_BUILD`/`BUILD_IN_PROGRESS` и меню снова показывает
-# `stop`. Открываем меню повторным кликом (`unit-menu open`).
-tick 6
+# Позиционирование в ленте (`AWAIT_TAPE_POSITIONING`) занимает 4 тика движения
+# плюс доворот перед въездом; после него конструктор в
+# `ORDER_BUILD`/`BUILD_IN_PROGRESS`, угол довёрнут на `(angle + 1) & 7` (N), и
+# меню снова показывает `stop`. Открываем меню повторным кликом (`unit-menu
+# open`).
+tick 1
 assert unit-order=build
+assert angle=0
 unit-menu open
 assert unit-menu=open
 unit-menu item stop

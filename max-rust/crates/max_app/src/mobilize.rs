@@ -2595,7 +2595,7 @@ impl Mobilization {
 // ---------------------------------------------------------------------------
 
 /// Цвет команды (LUT перекраски командных слотов).
-fn team_lut(team: TeamId) -> ColorLut {
+pub(crate) fn team_lut(team: TeamId) -> ColorLut {
     ColorLut::for_team(
         TeamColors::ALL
             .get(team.0 as usize)
@@ -2606,7 +2606,7 @@ fn team_lut(team: TeamId) -> ColorLut {
 
 /// Вертикальная координата однострочного текста по центру прямоугольника
 /// (`Text_TextBox`: `((height + 1) - font_height) / 2`).
-fn center_y(rect: PixelRect, font: &max_render::text::GnwFont) -> i32 {
+pub(crate) fn center_y(rect: PixelRect, font: &max_render::text::GnwFont) -> i32 {
     rect.uly + ((rect.height + 1) - font.height()).max(0) / 2
 }
 
@@ -2618,7 +2618,7 @@ fn draw_hline(frame: &mut RgbaBuffer, color: Rgba, x1: i32, x2: i32, y: i32) {
 }
 
 /// Текст, выровненный по правому краю `right` (`ReportStats_DrawText`).
-fn draw_text_right(
+pub(crate) fn draw_text_right(
     frame: &mut RgbaBuffer,
     right: i32,
     y: i32,
@@ -3149,7 +3149,7 @@ fn draw_vertical_bar(
 
 /// Иконка юнита (`ReportStats_DrawListItemIcon`): кадр с горячей точкой в
 /// центре, масштаб `zoom` (64 — 1:1), перекраска командных слотов.
-fn draw_icon(
+pub(crate) fn draw_icon(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
     unit: UnitType,
