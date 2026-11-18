@@ -479,6 +479,124 @@ pub fn footprint(unit_type: UnitType) -> i16 {
     }
 }
 
+/// `UnitsManager_IsAccessible` (`units_manager.cpp:4982`): проходим ли весь
+/// footprint типа в клетке `site` (2×2 у зданий, 1×1 у остальных).
+///
+/// В отличие от [`find_build_site`] (поиск ИИ/запасной путь) здесь **нет**
+/// требования «в клетке нет юнитов»: C++ проверяет только
+/// `Access_IsAccessible(..., AccessModifier_SameClassBlocks)`, поэтому стройку
+/// можно разметить поверх своих мобильных юнитов — их C++ не считает
+/// препятствием зданию (ветка `flags & STATIONARY` в `Access_IsAccessible`).
+pub fn is_site_accessible(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    site: Point,
+) -> bool {
+    is_site_accessible_ignoring(state, team, unit_type, site, &[])
+}
+
+/// [`is_site_accessible`] с юнитами, которых C++ вынул из хэша на время
+/// проверки (`UnitsManager_MoveUnitAndParent`/`IssueBuildOrder` убирают
+/// строителя и временную ленту, иначе 2×2 «занята» самим строителем).
+pub fn is_site_accessible_ignoring(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    site: Point,
+    ignored: &[UnitId],
+) -> bool {
+    let size = footprint(unit_type);
+
+    for dy in 0..size {
+        for dx in 0..size {
+            let cell = Point::new(site.x + dx, site.y + dy);
+
+            if state.map.index(cell.x, cell.y).is_none() {
+                return false;
+            }
+
+            if crate::access::is_accessible_ignoring(
+                state,
+                unit_type,
+                team,
+                cell,
+                crate::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                ignored,
+            ) == 0
+            {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// `UnitsManager_IssueBuildOrder` (`units_manager.cpp:4998`): стартовая клетка
+/// «ленты» площадки при заказе здания в `BuildMenu`.
+///
+/// C++ перебирает ровно четыре якоря 2×2, все они содержат клетку строителя
+/// (сдвиг не больше одной клетки по каждой оси):
+/// `(x, y)`, `(x, y-1)`, `(x-1, y-1)`, `(x-1, y)` — порядок важен, потому что
+/// первый проходимый якорь становится стартовым положением призрака.
+pub fn initial_build_site(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    builder_grid: Point,
+    ignored: &[UnitId],
+) -> Option<Point> {
+    if footprint(unit_type) == 1 {
+        // C++ для не-зданий проверяет только собственную клетку строителя.
+        return is_site_accessible_ignoring(state, team, unit_type, builder_grid, ignored)
+            .then_some(builder_grid);
+    }
+
+    let x = builder_grid.x;
+    let y = builder_grid.y;
+
+    [(x, y), (x, y - 1), (x - 1, y - 1), (x - 1, y)]
+        .into_iter()
+        .map(|(x, y)| Point::new(x, y))
+        .find(|site| is_site_accessible_ignoring(state, team, unit_type, *site, ignored))
+}
+
+/// Якорь площадки для курсора в режиме выбора места — порт курсорной части
+/// `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5845`) для
+/// конструктора.
+///
+/// C++ привязывает 2×2 к строителю: курсор правее строителя — якорь
+/// `builder.x`, левее — `builder.x - 1`; ровно на колонке строителя якорь
+/// сохраняется прежним (поэтому передаётся `previous`). По каждой оси
+/// независимо; стройплощадка всегда накрывает клетку строителя.
+pub fn site_anchor_for_cursor(builder_grid: Point, cursor: Point, previous: Point) -> Point {
+    let anchor_x = if cursor.x < builder_grid.x {
+        builder_grid.x - 1
+    } else if cursor.x > builder_grid.x {
+        builder_grid.x
+    } else {
+        previous.x
+    };
+    let anchor_y = if cursor.y < builder_grid.y {
+        builder_grid.y - 1
+    } else if cursor.y > builder_grid.y {
+        builder_grid.y
+    } else {
+        previous.y
+    };
+
+    Point::new(anchor_x, anchor_y)
+}
+
+/// Накрывает ли площадка типа `unit_type` с якорем `anchor` клетку `cursor`
+/// (`UnitsManager_MoveUnitAndParent` + проверка попадания в `GameManager_GetBuilderUnitCursor`).
+pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
+    let size = footprint(unit_type);
+
+    cursor.x >= anchor.x && cursor.x < anchor.x + size && cursor.y >= anchor.y && cursor.y < anchor.y + size
+}
+
 /// `TaskCreateBuilding::FindBuildSite` — ближайшая свободная площадка.
 ///
 /// Порядок обхода детерминированный: по возрастанию расстояния, затем `y`,

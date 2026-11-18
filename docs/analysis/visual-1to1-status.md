@@ -2185,6 +2185,13 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 (2) `Alt-P`/звуки попапа не портированы. Стройплощадка (`PrepareConstructionSite`
 / `DeployConstructionSiteUtilities`) портирована отдельным этапом — см. §22.
 
+> **Обновление (2026-11-18, §23).** Пункт (1) закрыт: после `Done` для здания у
+> мобильного строителя включается режим выбора места (`ORDER_STATE_SELECT_SITE`),
+> призрак-лента `GameManager_TempTape` двигается за курсором, LMB ставит
+> площадку в выбранную клетку, Esc/RMB отменяют; после подтверждения строитель
+> через `PositionInTape` встаёт в центр ленты. `find_build_site` остался
+> запасным путём для ИИ/тестов (`BuildMenu::command` без явной клетки).
+
 ## 22. Стройплощадка: площадка стоит на карте до готового здания — **сделано** (2026-11-18)
 
 ### 22.1 Как в C++ (оракул)
@@ -2282,7 +2289,9 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * Площадка ставится в `ProductionManager::commit`/`start_building`, а не
   отдельным тиком `TAPE_POSITIONING`; для конструктора плита появляется сразу
   (в C++ — после 4 кадров позиционирования). Типы, клетки, углы и RNG-порядок
-  совпадают.
+  совпадают. У игрока заказ здания теперь идёт через выбор места (§23):
+  `BuildMenu::commit` площадку не ставит, её ставит `start_building` на тике
+  после LMB — как C++ `PathBuild` → `ORDER_BUILD`/`INIT` → `StartBuilding`.
 * «Вырастание»: C++ уменьшает `scaler_adjust` на 1 за тик обработки приказов
   (5 шагов, ~5 кадров), порт берёт **начальный** масштаб `2^-scaler_adjust` из
   состояния и доводит его до 1 по реальному `dt` за `GROWTH_ANIM_SECONDS`
@@ -2294,3 +2303,99 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   кадров и формула заворота (`+8`, при `image_index + 8 >= 40` — `-16`) точные;
   `dt = 0` — рабочий кадр `+16`. Анимация не зависит от настройки `effects`
   (она в порте не моделируется как UI-опция).
+
+## 23. Выбор места стройки (`SELECT_SITE`): призрак, LMB и центр ленты — **сделано** (2026-11-18)
+
+### 23.1 Как в C++ (оракул)
+
+| Что | Код | Поведение |
+|---|---|---|
+| заказ здания | `MobileBuildMenu::Build` (`buildmenu.cpp:872`) | `Builder_IsBuildable` + `UnitsManager_IssueBuildOrder(unit, &x, &y, type)`: четыре якоря 2×2 вокруг строителя — `(x,y)`, `(x,y-1)`, `(x-1,y-1)`, `(x-1,y)` (все накрывают его клетку); если здание (`base_unit.GetFlags() & BUILDING`) или `event_click_path_build` — `UnitsManager_SetNewOrderInt(unit, ORDER_BUILD, ORDER_STATE_SELECT_SITE)`, `GameManager_TempTape = UnitsManager_SpawnUnit(LRGTAPE или SMLTAPE, team, grid_x, grid_y, unit)` и сообщение `_(06cb)`; иначе — сразу `BuildOrder` в клетке строителя |
+| призрак | то же | Временная **лента стройплощадки** (`LRGTAPE`/`SMLTAPE`) — настоящий юнит в мире, родитель — строитель; спавнится в текущем якоре и двигается `UnitsManager_MoveUnit` при движении мыши. Призрака здания, рамки или `BLDMRK*` нет |
+| курсор/валидность | `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`) | Конструктор: якорь по каждой оси — курсор правее → `builder.x`, левее → `builder.x-1`, ровно на линии → прежний якорь (по `y` так же). Валидно (`CURSOR_MAP2`), если `UnitsManager_MoveUnitAndParent` дал проходимость `UnitsManager_IsAccessible` (2×2, `AccessModifier_SameClassBlocks`, строитель и лента вынуты из хэша) **и** 2×2 накрывает клетку курсора; иначе `CURSOR_UNIT_NO_GO` |
+| подтверждение | `GameManager_PathBuild` (`game_manager.cpp:4566`) | LMB по `CURSOR_MAP2`: `move_to = TempTape->grid`, лента уничтожается, `UnitsManager_StartBuild` → `BuildOrder` (`ORDER_BUILD`/`INIT`); на следующем тике `UnitInfo::StartBuilding` ставит `LRGTAPE`+`LRGCONES`+`LRGSLAB` в `move_to` |
+| отмена | `GameManager_ManagePlayerAction` → `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | RMB по карте и LMB по невалидной клетке: лента уничтожается, `BuildList` очищается, `SetOrder(prior)`/`SetOrderState(prior)` — заказа нет |
+| центр ленты | `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`), `GetTargetUnitAngle` (`4147`) | После `StartBuilding` конструктор идёт `ORDER_AWAIT_TAPE_POSITIONING`/`INIT → ENTER`: `moved` 0..4, на каждом шаге `OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)` — спрайт сдвигается на 8 px к центру 2×2 (всего 32 px = половина клетки); затем `PrepareConstructionSite`, `DrawSpriteFrame(image_index + 16)` и `RestoreOrders` в `ORDER_BUILD`/`BUILD_IN_PROGRESS`. Сетка строителя (`grid_x/grid_y`) не меняется |
+
+Клавиши: RMB и LMB по невалидной клетке — отмена (как выше); Esc в C++ открывает
+меню выхода (`OKCancelMenu`), а не отменяет выбор.
+
+### 23.2 Что сделано
+
+* `max_core::production` — `is_site_accessible[_ignoring]` (порт
+  `UnitsManager_IsAccessible`, 2×2/1×1, без требования «клетка пуста»:
+  C++ проверяет только `Access_IsAccessible`), `initial_build_site`
+  (четыре якоря `IssueBuildOrder` в том же порядке), `site_anchor_for_cursor`
+  (привязка к строителю с сохранением оси), `site_covers`.
+* `max_core::access::is_accessible_ignoring` — C++ на время проверки вынимает
+  строителя из `Hash_MapHash` (`MoveUnitAndParent`/`IssueBuildOrder`); порт
+  пропускает его id в цикле, не меняя состояние.
+* `max_app::buildsite` — `BuildSiteSelect` (строитель, тип, скорость, якорь,
+  курсор), `valid`/`cursor_id`/`status_line`, призрак `draw_ghost` (та же декаль
+  `LRGTAPE`/`SMLTAPE`, кадр 0), `tape_center_offset` (8 px × `moved` до 4, после
+  `RestoreOrders` — полные 32 px), `App::{open_build_site, confirm_build_site,
+  cancel_build_site}`; заказ идёт общим `buildmenu::build_order_command`
+  (пакет 08/P4 с `move_to` = якорь).
+* `BuildMenu::site_selection_target` + `commit_build_menu`: для здания у
+  мобильного строителя `Done` открывает режим (статус «choose a site»), при
+  отсутствии проходимого якоря меню остаётся открытым с `NoSite` (C++ —
+  «Invalid square»); `BuildMenu::command_at` принимает явную клетку, без неё —
+  прежний `find_build_site` (ИИ/тесты).
+* Ввод: `handle_session_input` → `session_build_site_input` — MouseMove двигает
+  призрак (`GetBuilderUnitCursor`), LMB по карте подтверждает (по невалидной —
+  отменяет, как C++), RMB/Esc отменяют; клики по панелям уходят обычным путём
+  (C++ не выключает главное меню). Курсор окна — `CursorContext::BuildSite`
+  (`CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`).
+* Кадр: `App::draw_build_site_ghost` (после юнитов, в обеих ветках рендера) и
+  сдвиг спрайта строителя в `draw_units` — `tape_center_offset` добавляется к
+  мировому якорю до камеры, поэтому масштаб/зум учитываются как у спрайта.
+* Режим — UI-состояние (`App::build_site`): в снапшот/CRC/сейв не входит, при
+  выходе из партии/загрузке сбрасывается.
+
+### 23.3 Тесты и QA
+
+* `max_app/src/buildsite.rs` (unit, 4): якорь 2×2 всегда накрывает строителя и
+  курсор; начальный якорь — первый кандидат `IssueBuildOrder`; курсор/валидность
+  (вода → `CURSOR_UNIT_NO_GO`); `tape_center_offset` = (−32,−32) для правого
+  нижнего угла и ровно центр ленты, рост 8 px за тик.
+* `max_app/tests/build_site.rs` (5): призрак двигается за мышью и меняет
+  валидность; призрак **нарисован** в кадре (сравнение кадров с режимом и без);
+  Esc отменяет без приказа и без площадки; LMB ставит площадку **в указанной
+  клетке** (`site-pos`), строитель работает в центре ленты — кадровый тест по
+  bbox спрайта; та же последовательность → тот же digest и та же площадка.
+* `unit_menu::builder_stop_cancels_the_build_and_build_returns` — заказ через
+  подтверждение клетки (здание у конструктора).
+* QA `production.qa`: `build done` → `assert build-site=open/valid` →
+  `shot build-site-select` → `build cursor 30 21` → `assert build-site=invalid` →
+  `shot build-site-invalid` → `key ESC` (отмена) → заказ → `build place 28 20` →
+  `tick 1` → `assert site=large` + `assert site-pos=28,20` → отмена `stop` →
+  повторный заказ через `build place near` → `assert site=drawn` →
+  `assert build-center=yes` (строитель в центре ленты) → `anim`/`shot`
+  `build-work-a`/`build-work-b`. `research.qa`/`research-help.qa` добавлен
+  `build place near`.
+* Новые команды QA: `build place X Y|near`, `build cursor X Y`; проверки
+  `build-site=open|closed|valid|invalid`, `build-center=yes|no`,
+  `site-pos=X,Y` (`max-rust-qa/scripts/README.md`).
+* Golden: `production/` переснят — 10 кадров (`build-site-select`,
+  `build-site-invalid`, `build-ordered`, обновлённые `build-site*`/`build-work-*`),
+  0 дрейфа; `research/` (1 кадр) и `research-help/` (5 кадров) пересняты из-за
+  нового места постройки — 0 дрейфа.
+* Живой Windows-прогон: `build/scripts/ui-test-construction.ps1` — `B` →
+  Training Hall → `Done` → призрак 2×2 → клик по клетке → `03-construction-site`
+  (площадка) и `04-construction-grown` (рост), плюс `05-builder-centered`
+  (строитель в центре ленты).
+
+### 23.4 Осознанные расхождения
+
+* C++ спавнит временную ленту в мире (`GameManager_TempTape`); порт рисует её
+  как UI-призрак — счётчик юнитов, CRC, сейв и ИИ не видят выбор до LMB.
+* Esc отменяет выбор (в C++ Esc открывает `OKCancelMenu`); RMB и LMB по
+  невалидной клетке отменяют как в C++.
+* `GameManager_GetBuilderUnitCursor` для `ENGINEER` (лента 1×1, выравнивание по
+  строке/столбцу, линейный путь) не портирован: инженер ставит 1×1-постройки
+  сразу в своей клетке, как ветка C++ без `SELECT_SITE`.
+* `GameManager_AutoSelectNext` после подтверждения не вызывается (как и в
+  остальных приказах порта); звуки `V_M049`/`SFX` в режиме не проигрываются.
+* После достройки здания C++ оставляет сдвинутый `OffsetDrawZones`, пока
+  строитель не сдвинется с места (`Redraw`/`UpdateGridPosition`); порт
+  сбрасывает сдвиг сразу, когда приказ перестаёт быть `ORDER_BUILD`.

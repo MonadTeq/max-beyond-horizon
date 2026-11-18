@@ -1701,6 +1701,17 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         };
     }
 
+    // Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`) — порт
+    // `GameManager_GetBuilderUnitCursor`/`PathBuild`/`ManagePlayerAction`:
+    // LMB ставит площадку в клетку под курсором, Esc/RMB отменяют. Панели C++
+    // в это время остаются включёнными, поэтому клики мимо карты уходят
+    // обычным путём (`None`). Модальные экраны и чат выше важнее.
+    if app.build_site().is_some() && !blocked {
+        if let Some(transition) = session_build_site_input(app, event, online, chrome) {
+            return transition;
+        }
+    }
+
     match event {
         InputEvent::MouseMove(x, y) => {
             if chrome {
@@ -1981,6 +1992,106 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
     }
 
     Transition::None
+}
+
+/// Ввод в режиме выбора места стройки (`ORDER_STATE_SELECT_SITE`).
+///
+/// Повторяет C++:
+/// * **движение мыши** — `GameManager_GetBuilderUnitCursor`: призрак-лента
+///   переставляется под курсор (якорь 2×2 привязан к строителю), курсор окна
+///   становится `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`;
+/// * **LMB по карте** — `GameManager_PathBuild`: приказ `ORDER_BUILD` с
+///   клеткой площадки; по невалидной клетке C++ (`CURSOR_UNIT_NO_GO` →
+///   `ManagePlayerAction`) отменяет выбор;
+/// * **RMB по карте / Esc** — отмена (`GameManager_SelectBuildSite`): приказ не
+///   уходит, очередь строителя не меняется.
+///
+/// `None` — событие не наше (клик по панели/клавиша не Esc): вызывающий
+/// обработает его обычным путём, как C++ с включённым главным меню.
+fn session_build_site_input(
+    app: &mut App,
+    event: InputEvent,
+    online: bool,
+    chrome: bool,
+) -> Option<Transition> {
+    // Клетка карты под точкой кадра — та же проекция, что у обычных кликов
+    // (`session_map_left_click`: `screen_to_map` при хроме).
+    let grid_at = |app: &App, x: i32, y: i32| -> Option<max_core::geo::Point> {
+        let (gx, gy) = if chrome {
+            let (map_x, map_y) = panels::screen_to_map(x, y)?;
+            app.map_viewport().screen_to_grid(map_x, map_y)
+        } else {
+            app.viewport().screen_to_grid(x, y)
+        };
+
+        Some(max_core::geo::Point::new(gx as i16, gy as i16))
+    };
+
+    match event {
+        InputEvent::MouseMove(x, y) => {
+            app.hud_mut().mouse_position = Some((x, y));
+
+            if let Some(grid) = grid_at(app, x, y) {
+                if let Some(mut site) = app.build_site.take() {
+                    site.update_cursor(app.state(), grid);
+                    app.build_site = Some(site);
+                }
+            }
+
+            // Дальше обычная обработка движения (подпись панели, координаты).
+            None
+        }
+        InputEvent::MouseClick(x, y) => {
+            let Some(grid) = grid_at(app, x, y) else {
+                return None;
+            };
+            let valid = match app.build_site.take() {
+                Some(mut site) => {
+                    site.update_cursor(app.state(), grid);
+                    let valid = site.valid(app.state());
+                    app.build_site = Some(site);
+                    valid
+                }
+                None => false,
+            };
+
+            let line = if valid {
+                app.confirm_build_site(online)
+            } else {
+                // C++: `CURSOR_UNIT_NO_GO` → `GameManager_ManagePlayerAction` —
+                // выбор отменяется целиком.
+                app.cancel_build_site()
+                    .map(|line| format!("{line} (invalid cell {},{} )", grid.x, grid.y))
+            };
+
+            if let Some(line) = line {
+                app.hud_mut().push_log(line);
+            }
+            if !online {
+                apply_pending_orders(app);
+            }
+
+            Some(Transition::None)
+        }
+        InputEvent::RightClick(x, y) => {
+            // RMB по карте отменяет выбор; по панели — обычная обработка.
+            grid_at(app, x, y)?;
+
+            if let Some(line) = app.cancel_build_site() {
+                app.hud_mut().push_log(line);
+            }
+
+            Some(Transition::None)
+        }
+        InputEvent::Key(Key::Escape) => {
+            if let Some(line) = app.cancel_build_site() {
+                app.hud_mut().push_log(line);
+            }
+
+            Some(Transition::None)
+        }
+        _ => None,
+    }
 }
 
 /// Ввод в открытом экране апгрейдов (модальный экран P6).

@@ -47,6 +47,12 @@ assert build=open
 build select 11
 build done
 assert build=closed
+# `MobileBuildMenu::Build` для здания: `Done` открывает выбор места
+# (`ORDER_STATE_SELECT_SITE`), призрак 2×2 привязан к строителю. LMB по его
+# клетке подтверждает площадку (`GameManager_PathBuild`).
+assert build-site=open
+build place near
+assert build-site=closed
 
 end_turn
 end_turn

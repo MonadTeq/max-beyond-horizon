@@ -25,6 +25,47 @@
 
 ### Добавлено
 
+- **Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`) и строитель в центре
+  ленты (`PositionInTape`).** Раньше заказ здания у мобильного строителя сразу
+  ставил площадку в автоматически найденную клетку (`find_build_site`, радиус 8),
+  а конструктор оставался на своей клетке — игрок не мог выбрать место, как в
+  оригинале. Теперь после `Done` в `BuildMenu` для здания (`MobileBuildMenu::Build`,
+  `buildmenu.cpp:921`: `(base_unit.GetFlags() & BUILDING)`) заказ **не уходит**:
+  `UnitsManager_SetNewOrderInt(unit, ORDER_BUILD, ORDER_STATE_SELECT_SITE)` и
+  призрак-лента `GameManager_TempTape` (`LRGTAPE`/`SMLTAPE`) двигаются за
+  курсором — `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`)
+  привязывает 2×2 к строителю и возвращает `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`
+  по проходимости (`UnitsManager_MoveUnitAndParent`/`IsAccessible`) и попаданию
+  курсора в 2×2. LMB — `GameManager_PathBuild` (`game_manager.cpp:4566`):
+  `move_to = TempTape->grid`, приказ `ORDER_BUILD`/`INIT` через пакет 08/P4,
+  площадка (`LRGTAPE`+`LRGCONES`+`LRGSLAB`) встаёт в выбранную клетку на
+  следующем тике (`UnitInfo::StartBuilding`). RMB/Esc (и LMB по невалидной
+  клетке, как `ManagePlayerAction`) отменяют выбор без заказа. После
+  `StartBuilding` конструктор проходит `ORDER_AWAIT_TAPE_POSITIONING`:
+  `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`) четыре тика двигает спрайт на
+  8 px (`OffsetDrawZones`) — 32 px, половина клетки, ровно в центр 2×2;
+  сетка строителя не меняется. Ядро: `production::is_site_accessible[_ignoring]`,
+  `initial_build_site`, `site_anchor_for_cursor`, `site_covers`,
+  `access::is_accessible_ignoring` (C++ временно вынимает строителя из хэша);
+  UI: `max_app::buildsite` (режим, призрак, `tape_center_offset`), курсор
+  `CursorContext::BuildSite`, `BuildMenu::command_at`/`build_order_command`.
+  Завод — как раньше, сразу в очередь. Тесты: unit `buildsite` (4: якорь/валидность/
+  смещение центра), `max_app/tests/build_site.rs` (5: курсор+валидность, призрак в
+  кадре, LMB ставит площадку в указанной клетке и строитель работает в центре,
+  LMB по невалидной клетке отменяет, детерминизм digest),
+  `unit_menu::builder_stop_cancels_the_build_and_build_returns`
+  (заказ через подтверждение клетки). QA `production.qa` продлён: `build done` →
+  `assert build-site=open/valid` → `build cursor 30 21` (`invalid`) → `key ESC`
+  (отмена) → `build place 28 20` → `assert site-pos=28,20` → … →
+  `assert build-center=yes`; новые проверки `build-site=…`, `build-center`,
+  `site-pos=X,Y` и команды `build place X Y|near`, `build cursor X Y`.
+  `research.qa`/`research-help.qa` обновлены (`build place near`). Golden
+  `production/` переснят (10 кадров: `build-site-select`, `build-site-invalid`,
+  `build-ordered` + обновлённые `build-site*`/`build-work-*`), `research/` и
+  `research-help/` пересняты из-за нового места постройки — 0 дрейфа.
+  Живой Windows-прогон — `build/scripts/ui-test-construction.ps1` (призрак,
+  выбор клетки, строитель в центре).
+
 - **Анимация стройки: кадры конструктора и «вырастание» постройки.** C++
   `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`) во время
   `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS` переключает кадр конструктора

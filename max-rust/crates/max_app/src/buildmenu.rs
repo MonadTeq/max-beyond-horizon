@@ -266,6 +266,59 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Пакет заказа
+// ---------------------------------------------------------------------------
+
+/// `Command::Order` с `PayloadP4` — тот же пакет 08, что уходит в сеть.
+///
+/// Общий путь `BuildMenu::Build` и подтверждения места стройки
+/// (`GameManager_PathBuild`): C++ в обоих случаях заканчивает
+/// `UnitInfo::BuildOrder` → `ORDER_BUILD`/`ORDER_STATE_INIT` с клеткой в
+/// `move_to`. `build_list` — очередь (у мобильного строителя ровно один тип,
+/// у завода — вся очередь), `build_time` считается по голове.
+pub fn build_order_command(
+    state: &GameState,
+    unit_id: UnitId,
+    site: Point,
+    build_list: &[UnitType],
+    repeat_build: bool,
+    build_rate: u16,
+) -> Option<Command> {
+    let unit = state.unit(unit_id)?;
+    let head = build_list.first().copied()?;
+    let turns = production_turns_to_build(state, unit.team, head).max(1);
+    let build_rate = build_rate.max(1);
+
+    Some(Command::Order(Packet08Order {
+        unit: unit_id,
+        payload: OrderPayload::P4(PayloadP4 {
+            p3: PayloadP3 {
+                p2: PayloadP2 {
+                    p1: PayloadP1 {
+                        order: UnitOrder::Build,
+                        state: UnitOrderState::Init,
+                        prior_order: unit.orders,
+                        prior_state: unit.state,
+                        disabled_reaction_fire: unit.disabled_reaction_fire,
+                    },
+                    parent_unit: unit.parent_unit,
+                    experience: unit.experience,
+                },
+                move_to: site,
+                fire_on: Point::ZERO,
+                enemy_unit: unit.enemy_unit,
+                transfer_cargo: unit.transfer_cargo,
+                stealth_dice_roll: unit.stealth_dice_roll,
+            },
+            repeat_build,
+            build_time: turns.min(i32::from(u8::MAX)) as u8,
+            build_rate,
+            build_list: build_list.to_vec(),
+        }),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Состояние экрана
 // ---------------------------------------------------------------------------
 
@@ -725,16 +778,23 @@ impl BuildMenu {
     /// Возвращает `None` при пустой очереди/отсутствии площадки (текст в
     /// [`Self::status`]).
     pub fn command(&mut self, state: &GameState) -> Option<Command> {
+        self.command_at(state, None)
+    }
+
+    /// То же, но с явной клеткой площадки (режим выбора места, `PathBuild`).
+    ///
+    /// `site == None` — запасной путь ИИ/тестов: площадка ищется
+    /// [`find_build_site`] (C++ `TaskCreateBuilding::FindBuildSite`); для
+    /// мобильного строителя **не-здания** — его собственная клетка
+    /// (`UnitsManager_IssueBuildOrder`).
+    pub fn command_at(&mut self, state: &GameState, site: Option<Point>) -> Option<Command> {
         let unit = state.unit(self.unit)?;
         // Завод строит из очереди; мобильный строитель — ровно выбранный тип
         // (`MobileBuildMenu::Build`: `selector->GetLast()`).
         let head = if self.factory {
             self.queue.first().copied()
         } else {
-            self.queue
-                .first()
-                .copied()
-                .or_else(|| self.selected_type())
+            self.queue.first().copied().or_else(|| self.selected_type())
         };
         let Some(head) = head else {
             self.status = BuildError::EmptyQueue.message().to_string();
@@ -749,53 +809,62 @@ impl BuildMenu {
         let site = if self.factory {
             unit.grid
         } else {
-            match find_build_site(state, self.team, head, unit.grid) {
+            match site {
                 Some(site) => site,
-                None => {
-                    self.status = BuildError::NoSite.message().to_string();
-                    return None;
-                }
+                None if max_core::production::footprint(head) == 1 => unit.grid,
+                None => match find_build_site(state, self.team, head, unit.grid) {
+                    Some(site) => site,
+                    None => {
+                        self.status = BuildError::NoSite.message().to_string();
+                        return None;
+                    }
+                },
             }
         };
 
-        let turns = production_turns_to_build(state, self.team, head).max(1);
-        let build_rate = self
-            .build_rate
-            .max(1)
-            .min(self.max_rate(state).max(1));
+        let build_rate = self.build_rate.max(1).min(self.max_rate(state).max(1));
         let build_list = if self.factory {
             self.queue.clone()
         } else {
             vec![head]
         };
 
-        Some(Command::Order(Packet08Order {
-            unit: self.unit,
-            payload: OrderPayload::P4(PayloadP4 {
-                p3: PayloadP3 {
-                    p2: PayloadP2 {
-                        p1: PayloadP1 {
-                            order: UnitOrder::Build,
-                            state: UnitOrderState::Init,
-                            prior_order: unit.orders,
-                            prior_state: unit.state,
-                            disabled_reaction_fire: unit.disabled_reaction_fire,
-                        },
-                        parent_unit: unit.parent_unit,
-                        experience: unit.experience,
-                    },
-                    move_to: site,
-                    fire_on: Point::ZERO,
-                    enemy_unit: unit.enemy_unit,
-                    transfer_cargo: unit.transfer_cargo,
-                    stealth_dice_roll: unit.stealth_dice_roll,
-                },
-                repeat_build: self.factory && self.repeat,
-                build_time: turns.min(i32::from(u8::MAX)) as u8,
-                build_rate,
-                build_list,
-            }),
-        }))
+        build_order_command(
+            state,
+            self.unit,
+            site,
+            &build_list,
+            self.factory && self.repeat,
+            build_rate,
+        )
+    }
+
+    /// Нужен ли режим выбора места (`MobileBuildMenu::Build`, C++
+    /// `(base_unit.GetFlags() & BUILDING)`) — мобильный строитель ставит здание.
+    ///
+    /// Возвращает голову очереди (что строим) и скорость постройки.
+    pub fn site_selection_target(&self, state: &GameState) -> Option<(UnitType, u16)> {
+        if self.factory {
+            return None;
+        }
+
+        let head = self
+            .queue
+            .first()
+            .copied()
+            .or_else(|| self.selected_type())?;
+
+        if !can_build(self.builder_type, head) {
+            return None;
+        }
+
+        if max_core::access::unit_type_flags(head) & max_core::enums::unit_flags::BUILDING == 0 {
+            return None;
+        }
+
+        let build_rate = self.build_rate.max(1).min(self.max_rate(state).max(1));
+
+        Some((head, build_rate))
     }
 
     /// Рисует экран поверх кадра 640×480.
@@ -1202,11 +1271,42 @@ impl crate::App {
     /// `Build()` — зафиксировать заказ (`Done`/Enter).
     ///
     /// Возвращает строку для журнала HUD: что построить или почему нельзя.
+    ///
+    /// Мобильный строитель и здание (`MobileBuildMenu::Build`, C++
+    /// `(base_unit.GetFlags() & BUILDING)`) — заказ **ещё не уходит**:
+    /// открывается режим выбора места (`ORDER_STATE_SELECT_SITE`), площадку
+    /// ставит [`crate::App::confirm_build_site`] по LMB. Завод (и не-здания
+    /// инженера) идут прежним путём — сразу в очередь.
     pub fn commit_build_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.build_menu.take()?;
+
+        // `UnitsManager_IssueBuildOrder`: рядом со строителем должен быть
+        // проходимый якорь 2×2, иначе `BuildMenu` остаётся открытым с
+        // сообщением «Invalid square» (`_(1031)`).
+        if let Some((unit_type, build_rate)) = menu.site_selection_target(&self.state) {
+            self.build_menu = Some(menu);
+
+            if self.open_build_site(unit_type, build_rate) {
+                let site = self.build_site.as_ref().map(|site| site.anchor);
+                let (x, y) = site.map_or((0, 0), |site| (site.x, site.y));
+
+                return Some(format!(
+                    "Build: {} — choose a site (ghost at {x},{y}; LMB places, Esc/RMB cancels)",
+                    unit_name(unit_type)
+                ));
+            }
+
+            let Some(menu) = self.build_menu.as_mut() else {
+                return Some(BuildError::NoSite.message().to_string());
+            };
+            menu.status = format!("{} ({} — no free 2x2 site)", BuildError::NoSite.message(), unit_name(unit_type));
+
+            return Some(menu.status.clone());
+        }
+
         let command = menu.command(&self.state);
         let status = menu.status.clone();
-        let head = menu.queue.first().copied();
+        let head = menu.queue.first().copied().or_else(|| menu.selected_type());
         let build_rate = menu.build_rate;
         let queue_len = menu.queue.len();
         self.build_menu = Some(menu);

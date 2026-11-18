@@ -165,6 +165,12 @@ pub enum CursorContext {
         /// Можно ли выполнить приказ.
         valid: bool,
     },
+    /// Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`):
+    /// `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO` (`GameManager_GetBuilderUnitCursor`).
+    BuildSite {
+        /// Попадает ли курсор в 2×2 и проходима ли площадка.
+        valid: bool,
+    },
     /// Справка (`CURSOR_HELP`).
     Help,
 }
@@ -179,6 +185,8 @@ pub const fn cursor_for_context(context: CursorContext) -> CursorId {
         CursorContext::MapSelected(CursorHover::Empty) => CursorId::UnitGo,
         CursorContext::Order { valid: true } => CursorId::UnitGo,
         CursorContext::Order { valid: false } => CursorId::UnitNoGo,
+        CursorContext::BuildSite { valid: true } => CursorId::Map2,
+        CursorContext::BuildSite { valid: false } => CursorId::UnitNoGo,
         CursorContext::Help => CursorId::Help,
     }
 }
@@ -271,6 +279,17 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
 
     let viewport = crate::panels::map_viewport(app.viewport());
     let (grid_x, grid_y) = viewport.screen_to_grid(map_x, map_y);
+
+    // Режим выбора места стройки важнее наведения на юнитов:
+    // `GameManager_GetBuilderUnitCursor` возвращает `CURSOR_MAP2`/`UNIT_NO_GO`.
+    if let Some(site) = app.build_site() {
+        let hovered = max_core::geo::Point::new(grid_x, grid_y);
+        let anchor = site.anchor_at(app.state(), hovered);
+        let valid = site.is_valid_at(app.state(), anchor, hovered);
+
+        return (cursor_for_context(CursorContext::BuildSite { valid }), 0);
+    }
+
     let player_team = app.state().player_team;
     let selected = app.selected_unit().is_some();
     let mut hover = None;

@@ -121,6 +121,42 @@ fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
     id
 }
 
+/// Юнит RED в клетке, вокруг которой свободен 2×2 (для заказа здания:
+/// площадка привязана к строителю, `UnitsManager_IssueBuildOrder`).
+fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
+    let land = max_core::enums::Surface::LAND.bits();
+    let free = |app: &App, cell: Point| {
+        app.state().units_at(cell).is_empty()
+            && app.state().map.surface_at(cell.x, cell.y).bits() & land != 0
+    };
+    let mut spot = Point::new(30, 30);
+
+    'search: for radius in 1..12 {
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let grid = Point::new(22 + dx, 22 + dy);
+                let clear = (0..2).all(|y| {
+                    (0..2).all(|x| free(app, Point::new(grid.x + x, grid.y + y)))
+                });
+
+                if clear {
+                    spot = grid;
+                    break 'search;
+                }
+            }
+        }
+    }
+
+    let flags = max_core::access::unit_type_flags(unit_type);
+    let id = app
+        .state_mut()
+        .spawn_unit(unit_type, TeamId::RED, spot, flags)
+        .expect("юнит появился");
+
+    app.viewport_mut().center_on_grid(spot.x, spot.y);
+    id
+}
+
 /// Экранная точка центра клетки (кадр 640×480 с хромом).
 fn screen_point(app: &App, grid: Point) -> (i32, i32) {
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
@@ -346,7 +382,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
         return;
     };
 
-    let builder = spawn(&mut app, UnitType::Constructor);
+    let builder = spawn_with_free_2x2(&mut app, UnitType::Constructor);
 
     // Заказ постройки: меню команд → Build → `BuildMenu` → Done (как игрок).
     open_menu(&mut app, builder);
@@ -359,8 +395,19 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     assert!(app.build_menu().is_some(), "BuildMenu открылся");
 
     let ordered = app.build_menu_select(0) && app.commit_build_menu(false).is_some();
-    app.flush_orders();
     assert!(ordered, "заказ постройки применён");
+    // Здание у мобильного строителя (`MobileBuildMenu::Build`): `Done`
+    // открывает выбор места (`ORDER_STATE_SELECT_SITE`), приказ уходит только
+    // по подтверждению клетки (`GameManager_PathBuild`).
+    assert!(
+        app.build_site().is_some(),
+        "после Done открыт режим выбора места"
+    );
+    assert!(
+        app.confirm_build_site(false).is_some(),
+        "клетка строителя подтверждена"
+    );
+    app.flush_orders();
     assert_eq!(
         app.state().unit(builder).expect("строитель").orders,
         UnitOrder::Build,

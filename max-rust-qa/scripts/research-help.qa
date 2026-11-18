@@ -94,6 +94,11 @@ assert selected
 build open
 build select 11
 build done
+# Здание у мобильного строителя: место выбирается на карте (`SELECT_SITE`),
+# LMB по клетке строителя подтверждает площадку (`GameManager_PathBuild`).
+assert build-site=open
+build place near
+assert build-site=closed
 end_turn
 end_turn
 end_turn

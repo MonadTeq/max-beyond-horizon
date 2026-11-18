@@ -59,7 +59,7 @@ assert screen=InGame
 assert turn=1
 tick 5
 
-# --- BuildMenu конструктора ---------------------------------------------
+# --- BuildMenu конструктора: заказ здания и ВЫБОР МЕСТА --------------------
 # Конструктор из загрузки SC_L0001 (порядок в списке юнитов зависит от
 # развёртывания базы, поэтому выбираем по имени).
 select type Constructor
@@ -71,14 +71,55 @@ shot buildmenu
 build select 13
 build done
 assert build=closed
+# C++ `MobileBuildMenu::Build` для здания (`base_unit.GetFlags() & BUILDING`):
+# заказ ЕЩЁ НЕ отдан — `UnitsManager_SetNewOrderInt(unit, ORDER_BUILD,
+# ORDER_STATE_SELECT_SITE)` и временная лента `LRGTAPE` (призрак 2×2,
+# `GameManager_TempTape`). Ни приказа, ни площадки в мире пока нет.
+assert build-site=open
+assert build-site=valid
+assert unit-order=await
+assert site=none
+shot build-site-select
+
+# Невалидная клетка: курсор правее строителя уводит 2×2 на занятую клетку —
+# `CURSOR_UNIT_NO_GO`; в кадре виден призрак, но LMB по такой клетке в C++
+# отменяет выбор целиком (`GameManager_ManagePlayerAction`).
+build cursor 30 21
+assert build-site=invalid
+shot build-site-invalid
+key ESC
+assert build-site=closed
+assert unit-order=await
+assert site=none
+
+# Подтверждение: заказ → выбор клетки → LMB. Площадка ставится ТУДА, куда
+# указал игрок: клик по (28,20) → якорь 2×2 в (28,20) (`PathBuild`:
+# `move_to = TempTape->grid`), лента-призрак исчезает.
+build open
+build select 13
+build done
+assert build-site=open
+build place 28 20
+assert build-site=closed
+assert unit-order=build
+# Площадка появляется на кадре обработки `ORDER_BUILD`/`INIT`, как C++
+# `UnitsManager_ProcessOrderBuild` → `UnitInfo::StartBuilding`:
+# `DeployConstructionSiteUtilities` (LRGTAPE+LRGCONES) + `PrepareConstructionSite`
+# (LRGSLAB, кадр из RNG).
+tick 1
+assert site=large
+assert site-pos=28,20
 shot build-ordered
 
 # --- Отмена стройки и повторный заказ (строитель не «застревает») ---------
 # C++ `UnitsManager_Popup_InitBuilders`: во время `ORDER_BUILD` пункт `Build`
 # заменён на `stop` (`GameManager_SelectBuildSite` → `ORDER_STATE_BUILD_CANCEL`,
 # `UnitInfo::CancelBuilding` у мобильного строителя очищает очередь).
-# Конструктор остался выделенным после `build done` — открываем меню повторным
-# кликом (`unit-menu open`).
+# Позиционирование в ленте (`AWAIT_TAPE_POSITIONING`) занимает 4 тика; после
+# него конструктор в `ORDER_BUILD`/`BUILD_IN_PROGRESS` и меню снова показывает
+# `stop`. Открываем меню повторным кликом (`unit-menu open`).
+tick 6
+assert unit-order=build
 unit-menu open
 assert unit-menu=open
 unit-menu item stop
@@ -97,13 +138,15 @@ assert build=open
 build select 13
 build done
 assert build=closed
+# Повторный заказ снова идёт через выбор места; `place near` подтверждает
+# клетку самого строителя (якорь 2×2 — накрывающий её; здесь (28,20)).
+assert build-site=open
+build place near
+assert build-site=closed
 assert unit-order=build
-# Площадка появляется на кадре обработки `ORDER_BUILD`/`INIT`, как C++
-# `UnitsManager_ProcessOrderBuild` → `UnitInfo::StartBuilding`:
-# `DeployConstructionSiteUtilities` (LRGTAPE+LRGCONES) + `PrepareConstructionSite`
-# (LRGSLAB, кадр из RNG).
 tick 1
 assert site=large
+assert site-pos=28,20
 # `assert site=drawn` — декали не просто есть в состоянии, а **нарисованы**:
 # каждая (лента, конусы, плита) даёт свои пиксели в кадре. В C++
 # `UnitInfoGroup::IsRelevant` рисует только не-`ORDER_IDLE` юнитов, поэтому
@@ -126,6 +169,11 @@ shot build-site-grown
 # возвращается в `ORDER_BUILD`/`BUILD_IN_PROGRESS` и начинает работу.
 tick 6
 assert unit-order=build
+# `UnitInfo::PositionInTape` + `OffsetDrawZones`: спрайт строителя сдвинут на
+# 8 px × 4 тика = 32 px (половина клетки) к центру ленты 2×2 — рабочая поза
+# стоит ровно в центре площадки, сетка строителя не меняется.
+assert build-center=yes
+assert unit-pos=29,21
 shot build-work-a
 anim 150
 shot build-work-b

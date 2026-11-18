@@ -40,6 +40,7 @@ pub mod assets;
 pub mod allocmenu;
 pub mod audio;
 pub mod buildmenu;
+pub mod buildsite;
 pub mod cargo_unit_data;
 pub mod chrome;
 pub mod credits;
@@ -539,6 +540,10 @@ pub struct App {
     pub(crate) local: Option<local::LocalGame>,
     /// Открытый `BuildMenu` (P2). В снапшот/CRC не входит — это UI.
     build_menu: Option<buildmenu::BuildMenu>,
+    /// Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`, C++
+    /// `GameManager_TempTape` + `GameManager_GetBuilderUnitCursor`). В
+    /// снапшот/CRC не входит — до подтверждения приказ не отдан.
+    pub(crate) build_site: Option<buildsite::BuildSiteSelect>,
     /// Открытое окно сохранения/загрузки V70 (P3). В снапшот/CRC не входит.
     pub(crate) save_load: Option<saveload::SaveLoadMenu>,
     /// Открытый экран покупных апгрейдов (P6). В снапшот/CRC не входит.
@@ -671,6 +676,7 @@ impl App {
             hud: hud::HudState::new(),
             local: None,
             build_menu: None,
+            build_site: None,
             save_load: None,
             upgrade_menu: None,
             research_menu: None,
@@ -1967,6 +1973,9 @@ impl App {
         self.visual_paths.clear();
         self.build_anims.clear();
         self.growth_anims.clear();
+        // Режим выбора места относится к прежней партии: призрак не должен
+        // переехать в новую.
+        self.build_site = None;
     }
 
     /// Визуальная позиция юнита в клетках (дробная) для кадра.

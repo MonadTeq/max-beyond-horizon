@@ -678,12 +678,26 @@ impl QaRunner {
                 line.unwrap_or_else(|| "заказ принят".to_string())
             }
             BuildCommand::Cancel => {
-                if app.build_menu().is_none() {
+                if app.build_menu().is_none() && app.build_site().is_none() {
                     return Err("build cancel: меню не открыто".to_string());
                 }
 
-                app.close_build_menu();
-                "меню закрыто".to_string()
+                if app.build_menu().is_some() {
+                    app.close_build_menu();
+                    "меню закрыто".to_string()
+                } else {
+                    app.cancel_build_site()
+                        .unwrap_or_else(|| "выбор места отменён".to_string())
+                }
+            }
+            BuildCommand::Place(x, y) => {
+                return self.build_place(Some(Point::new(x, y)));
+            }
+            BuildCommand::PlaceNear => {
+                return self.build_place(None);
+            }
+            BuildCommand::Cursor(x, y) => {
+                return self.build_cursor(Point::new(x, y));
             }
         };
 
@@ -692,6 +706,124 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
+    /// `build cursor X Y` — навести мышь на клетку без клика: призрак-лента
+    /// переезжает (`GameManager_GetBuilderUnitCursor`), заказ не отдаётся.
+    fn build_cursor(&mut self, grid: Point) -> Result<Flow, String> {
+        if self.app.build_site().is_none() {
+            return Err("build cursor: режим выбора места не открыт".to_string());
+        }
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let (screen_x, screen_y) = hud::tile_center(&self.app.map_viewport(), grid);
+        let (frame_x, frame_y) = (
+            screen_x + layout::MAIN_MAP.ulx,
+            screen_y + layout::MAIN_MAP.uly,
+        );
+
+        if !layout::MAIN_MAP.contains(frame_x, frame_y) {
+            return Err(format!(
+                "build cursor {},{}: клетка вне видимой области карты",
+                grid.x, grid.y
+            ));
+        }
+
+        self.send(InputEvent::MouseMove(frame_x, frame_y))?;
+
+        let (anchor, valid) = self
+            .app
+            .build_site()
+            .map(|site| (site.anchor, site.valid(self.app.state())))
+            .ok_or_else(|| "build cursor: режим закрылся".to_string())?;
+
+        self.detail = Some(format!(
+            "призрак ({}, {}), {}",
+            anchor.x,
+            anchor.y,
+            if valid {
+                "валидно"
+            } else {
+                "невалидно"
+            }
+        ));
+
+        Ok(Flow::Continue)
+    }
+
+    /// `build place X Y|near` — подтверждение места стройки левым кликом по
+    /// карте (C++ `GameManager_PathBuild`).
+    ///
+    /// Клик идёт тем же путём, что у игрока: камера наводится на клетку, затем
+    /// `MouseClick` в её центр, поэтому проверяется и попадание клика в клетку,
+    /// и весь путь ввода.
+    fn build_place(&mut self, target: Option<Point>) -> Result<Flow, String> {
+        let app = &mut self.app;
+
+        let Some(site) = app.build_site() else {
+            return Err(
+                "build place: режим выбора места не открыт (здание у мобильного строителя: build done)"
+                    .to_string(),
+            );
+        };
+        let builder = site.builder;
+
+        let target = match target {
+            Some(target) => target,
+            None => app
+                .state()
+                .unit(builder)
+                .map(|unit| unit.grid)
+                .ok_or_else(|| "build place near: строитель исчез".to_string())?,
+        };
+
+        app.viewport_mut().center_on_grid(target.x, target.y);
+
+        let (screen_x, screen_y) = hud::tile_center(&app.map_viewport(), target);
+        let (frame_x, frame_y) = (
+            screen_x + layout::MAIN_MAP.ulx,
+            screen_y + layout::MAIN_MAP.uly,
+        );
+
+        if !layout::MAIN_MAP.contains(frame_x, frame_y) {
+            return Err(format!(
+                "build place {},{}: клетка вне видимой области карты",
+                target.x, target.y
+            ));
+        }
+
+        self.send(InputEvent::MouseClick(frame_x, frame_y))?;
+
+        if self.app.build_site().is_some() {
+            return Err(format!(
+                "build place {},{}: клик не подтвердил площадку",
+                target.x, target.y
+            ));
+        }
+
+        let tape = self
+            .app
+            .state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| self.app.state().unit(id))
+            .filter(|unit| {
+                unit.team == self.app.state().player_team
+                    && matches!(
+                        unit.unit_type,
+                        max_core::enums::UnitType::LargeTape | max_core::enums::UnitType::SmallTape
+                    )
+                    && unit.parent_unit == Some(builder)
+            })
+            .map(|unit| unit.grid)
+            .next();
+
+        self.detail = Some(match tape {
+            Some(site) => format!("площадка ({}, {})", site.x, site.y),
+            None => "площадка ещё не поставлена (тик симуляции?)".to_string(),
+        });
+
+        Ok(Flow::Continue)
+    }
     /// `upgrade …`: экран покупных апгрейдов (P6).
     fn upgrade(&mut self, action: UpgradeCommand) -> Result<Flow, String> {
         let app = &mut self.app;
@@ -2212,6 +2344,139 @@ impl QaRunner {
                     actual == expected,
                     format!("build={}", if expected { "open" } else { "closed" }),
                     format!("build={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::BuildSiteOpen(expected) => {
+                let actual = self.app.build_site().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("build-site={}", if expected { "open" } else { "closed" }),
+                    match self.app.build_site() {
+                        Some(site) => format!(
+                            "build-site=open, призрак {} в ({}, {})",
+                            crate::buildmenu::unit_name(site.unit_type),
+                            site.anchor.x,
+                            site.anchor.y
+                        ),
+                        None => "build-site=closed".to_string(),
+                    },
+                )
+            }
+            Assertion::BuildSiteValid(expected) => {
+                let actual = self
+                    .app
+                    .build_site()
+                    .map(|site| site.valid(self.app.state()));
+
+                self.expect(
+                    actual == Some(expected),
+                    format!("build-site={}", if expected { "valid" } else { "invalid" }),
+                    match self.app.build_site() {
+                        Some(site) => format!(
+                            "build-site={} (якорь {},{}; курсор {},{}), статус «{}»",
+                            if site.valid(self.app.state()) {
+                                "valid"
+                            } else {
+                                "invalid"
+                            },
+                            site.anchor.x,
+                            site.anchor.y,
+                            site.cursor.x,
+                            site.cursor.y,
+                            site.status_line(self.app.state())
+                        ),
+                        None => "build-site=closed (режим не открыт)".to_string(),
+                    },
+                )
+            }
+            Assertion::BuildCenter(expected) => {
+                let builder = self
+                    .app
+                    .build_site()
+                    .map(|site| site.builder)
+                    .or_else(|| self.app.hud().selected);
+                let Some(unit) = builder.and_then(|id| self.app.state().unit(id)) else {
+                    return self.expect(
+                        false,
+                        "build-center=yes".to_string(),
+                        "нет строителя".to_string(),
+                    );
+                };
+                let offset = crate::buildsite::tape_center_offset(self.app.state(), unit);
+                let tape = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .filter_map(|id| self.app.state().unit(id))
+                    .find(|candidate| {
+                        candidate.parent_unit == Some(unit.id)
+                            && matches!(
+                                candidate.unit_type,
+                                max_core::enums::UnitType::LargeTape
+                                    | max_core::enums::UnitType::SmallTape
+                            )
+                    });
+                let centered = match tape {
+                    Some(tape) => {
+                        // Центр ленты: половина её габарита (2×2 — 64 px,
+                        // 1×1 — 32 px) от якоря.
+                        let half = if tape.unit_type == max_core::enums::UnitType::LargeTape {
+                            64
+                        } else {
+                            32
+                        };
+                        let (center_x, center_y) = (
+                            i32::from(tape.grid.x) * 64 + half,
+                            i32::from(tape.grid.y) * 64 + half,
+                        );
+                        let (anchor_x, anchor_y) = (
+                            i32::from(unit.grid.x) * 64 + 32 + offset.0,
+                            i32::from(unit.grid.y) * 64 + 32 + offset.1,
+                        );
+
+                        (anchor_x - center_x).abs() <= 1 && (anchor_y - center_y).abs() <= 1
+                    }
+                    None => false,
+                };
+                let actual = if centered { "centered" } else { "not centered" };
+
+                self.expect(
+                    centered == expected,
+                    format!("build-center={}", if expected { "yes" } else { "no" }),
+                    format!(
+                        "build-center={actual} (сдвиг {},{}; клетка строителя {},{}",
+                        offset.0, offset.1, unit.grid.x, unit.grid.y
+                    ),
+                )
+            }
+            Assertion::SitePos(x, y) => {
+                let team = self.app.player_team();
+                let tape = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .filter_map(|id| self.app.state().unit(id))
+                    .filter(|unit| {
+                        unit.team == team
+                            && matches!(
+                                unit.unit_type,
+                                max_core::enums::UnitType::LargeTape
+                                    | max_core::enums::UnitType::SmallTape
+                            )
+                    })
+                    .map(|unit| unit.grid)
+                    .next();
+
+                self.expect(
+                    tape == Some(Point::new(x, y)),
+                    format!("site-pos={x},{y}"),
+                    match tape {
+                        Some(site) => format!("site-pos={},{}", site.x, site.y),
+                        None => "площадки нет".to_string(),
+                    },
                 )
             }
             Assertion::UpgradeOpen(expected) => {

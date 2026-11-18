@@ -368,6 +368,23 @@ pub fn is_accessible(
     grid: Point,
     flags: u32,
 ) -> u32 {
+    is_accessible_ignoring(state, unit_type, team, grid, flags, &[])
+}
+
+/// [`is_accessible`] с юнитами, которых **нет** в хэше на время проверки.
+///
+/// C++ `UnitsManager_MoveUnitAndParent`/`UnitsManager_IssueBuildOrder` временно
+/// вынимают юнита (и родителя-строителя) из `Hash_MapHash`, иначе собственный
+/// мобильный юнит блокирует 2×2 будущего здания. Здесь тот же приём без
+/// изменения состояния: перечисленные id пропускаются в цикле по клетке.
+pub fn is_accessible_ignoring(
+    state: &GameState,
+    unit_type: UnitType,
+    team: TeamId,
+    grid: Point,
+    flags: u32,
+    ignored: &[crate::unit::UnitId],
+) -> u32 {
     let props = unit_type_properties(unit_type);
     let unit_flags = props.flags;
 
@@ -392,6 +409,9 @@ pub fn is_accessible(
         }
 
         for id in state.units_at(grid).iter().copied() {
+            if ignored.contains(&id) {
+                continue;
+            }
             let Some(other) = state.unit(id) else {
                 continue;
             };

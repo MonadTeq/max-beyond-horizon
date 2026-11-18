@@ -435,6 +435,8 @@ impl App {
         }
 
         self.draw_units(&mut frame, self.viewport(), &mut stats);
+        // Призрак стройплощадки (`ORDER_STATE_SELECT_SITE`) — поверх юнитов.
+        self.draw_build_site_ghost(&mut frame, self.viewport(), &mut stats);
 
         // `BuildMenu` в полноэкранном режиме (без `FRAMEPIC`).
         self.draw_build_menu(&mut frame);
@@ -491,6 +493,9 @@ impl App {
         }
 
         self.draw_units(&mut map, &viewport, &mut stats);
+        // Призрак стройплощадки — в область карты, как `GameManager_TempTape`
+        // (`ORDER_STATE_SELECT_SITE`), до подтверждения клетки.
+        self.draw_build_site_ghost(&mut map, &viewport, &mut stats);
         // Предпросмотр маршрута (зелёная линия RMB) — поверх юнитов, как
         // `GameManager_DrawMapView`: в оконном режиме `render_hud` не
         // вызывается (панели рисует `FRAMEPIC`), поэтому без этой строки
@@ -664,7 +669,13 @@ impl App {
                 .visual_position(visible[index])
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
             let (world_x, world_y) = unit_anchor_world(unit, (grid_x, grid_y));
-            let anchor = viewport.world_to_screen(world_x, world_y);
+            // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
+            // конструктор сдвигается на 8 px за тик к центру 2×2-ленты, всего
+            // на 32 px (половину клетки) — в центр стройплощадки. Это кадровый
+            // сдвиг спрайта, сетка строителя не меняется.
+            let (tape_offset_x, tape_offset_y) =
+                crate::buildsite::tape_center_offset(self.state(), unit);
+            let anchor = viewport.world_to_screen(world_x + tape_offset_x, world_y + tape_offset_y);
 
             let image_base = image_base_for(
                 unit,
@@ -697,6 +708,27 @@ impl App {
                     stats.units_marker += 1;
                 }
             }
+        }
+    }
+
+    /// Призрак стройплощадки (`GameManager_TempTape`) в буфер карты.
+    ///
+    /// C++ на время `ORDER_STATE_SELECT_SITE` спавнит настоящую ленту
+    /// `LRGTAPE`/`SMLTAPE` и двигает её за курсором; порт рисует **тот же
+    /// спрайт** без записи в состояние партии — до LMB приказ не отдан, а
+    /// счётчик юнитов/CRC/сейв не меняются.
+    fn draw_build_site_ghost(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        let (Some(site), Some(assets)) = (self.build_site(), self.assets()) else {
+            return;
+        };
+
+        if site.draw_ghost(frame, assets, viewport).is_some() {
+            stats.units_drawn += 1;
         }
     }
 }

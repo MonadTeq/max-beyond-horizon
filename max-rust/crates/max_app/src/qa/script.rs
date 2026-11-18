@@ -215,6 +215,17 @@ pub enum Assertion {
     Angle(u8),
     /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
     BuildOpen(bool),
+    /// `assert build-site=open|closed`: идёт ли выбор места стройки
+    /// (`ORDER_STATE_SELECT_SITE`).
+    BuildSiteOpen(bool),
+    /// `assert build-site=valid|invalid`: валидна ли клетка под курсором в
+    /// режиме выбора места (`CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`).
+    BuildSiteValid(bool),
+    /// `assert build-center=yes|no`: стоит ли спрайт строителя ровно в центре
+    /// ленты 2×2 (`PositionInTape` + `OffsetDrawZones`, 32 px).
+    BuildCenter(bool),
+    /// `assert site-pos=X,Y`: клетка ленты стройплощадки (`LRG/SMLTAPE`).
+    SitePos(i16, i16),
     /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
     UpgradeOpen(bool),
     /// `assert research-menu=open|closed`: открыт ли экран исследований (P7).
@@ -409,6 +420,14 @@ pub enum BuildCommand {
     Done,
     /// `cancel` — `Cancel`/Esc: закрыть без заказа.
     Cancel,
+    /// `place X Y` — подтвердить место стройки в клетке `X,Y` левым кликом по
+    /// карте (`GameManager_PathBuild`); `X Y` — клетка, куда указывает игрок.
+    Place(i16, i16),
+    /// `place near` — подтвердить место в клетке выделенного строителя.
+    PlaceNear,
+    /// `cursor X Y` — навести мышь на клетку без клика: призрак переезжает,
+    /// заказ не отдаётся (`GameManager_GetBuilderUnitCursor`).
+    Cursor(i16, i16),
 }
 
 /// Действие экрана апгрейдов (P6).
@@ -1001,6 +1020,26 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert build: ожидалось open|closed, получено «{other}»"
             )),
         },
+        "build-site" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" | "selecting" => Ok(Assertion::BuildSiteOpen(true)),
+            "closed" | "none" => Ok(Assertion::BuildSiteOpen(false)),
+            "valid" => Ok(Assertion::BuildSiteValid(true)),
+            "invalid" => Ok(Assertion::BuildSiteValid(false)),
+            other => Err(format!(
+                "assert build-site: ожидалось open|closed|valid|invalid, получено «{other}»"
+            )),
+        },
+        "build-center" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" => Ok(Assertion::BuildCenter(true)),
+            "no" | "false" | "off" => Ok(Assertion::BuildCenter(false)),
+            other => Err(format!(
+                "assert build-center: ожидалось yes|no, получено «{other}»"
+            )),
+        },
+        "site-pos" => {
+            let (x, y) = parse_grid_pair(value, "assert site-pos")?;
+            Ok(Assertion::SitePos(x, y))
+        }
         "upgrade" => match value.to_ascii_lowercase().as_str() {
             "open" | "opened" => Ok(Assertion::UpgradeOpen(true)),
             "closed" | "none" => Ok(Assertion::UpgradeOpen(false)),
@@ -1389,9 +1428,22 @@ fn parse_build(rest: &str) -> Result<Command, String> {
         }
         ("done", [_]) => BuildCommand::Done,
         ("cancel", [_]) => BuildCommand::Cancel,
+        ("place", [_, "near"]) => BuildCommand::PlaceNear,
+        ("place", [_, x, y]) => BuildCommand::Place(
+            x.parse::<i16>()
+                .map_err(|_| format!("build place: X не число: «{x}»"))?,
+            y.parse::<i16>()
+                .map_err(|_| format!("build place: Y не число: «{y}»"))?,
+        ),
+        ("cursor", [_, x, y]) => BuildCommand::Cursor(
+            x.parse::<i16>()
+                .map_err(|_| format!("build cursor: X не число: «{x}»"))?,
+            y.parse::<i16>()
+                .map_err(|_| format!("build cursor: Y не число: «{y}»"))?,
+        ),
         _ => {
             return Err(format!(
-                "build: неизвестное действие «{rest}» (open|select N|add|delete|rate N|repeat|step N|queue step N|done|cancel)"
+                "build: неизвестное действие «{rest}» (open|select N|add|delete|rate N|repeat|step N|queue step N|done|place X Y|place near|cursor X Y|cancel)"
             ))
         }
     };

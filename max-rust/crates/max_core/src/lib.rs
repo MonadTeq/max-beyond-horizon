@@ -159,9 +159,11 @@ pub use pathfinding::{
 };
 pub use production::{
     builder_type, buildable_units, can_afford_turn, can_build, cost_per_turn, find_build_site,
-    is_builder, is_factory, is_mobile_builder, max_possible_build_rate, progress_build_state,
-    total_cost, turns_to_build as production_turns_to_build, BuildError, BuildReport,
-    ProductionEvent, ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
+    initial_build_site, is_builder, is_factory, is_mobile_builder, is_site_accessible,
+    is_site_accessible_ignoring,
+    max_possible_build_rate, progress_build_state, site_anchor_for_cursor, site_covers, total_cost,
+    turns_to_build as production_turns_to_build, BuildError, BuildReport, ProductionEvent,
+    ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
 };
 pub use research::{
     apply_research_upgrades, research_attribute_values, research_factor, research_new_turn,
