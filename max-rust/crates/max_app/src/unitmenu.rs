@@ -566,10 +566,12 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
                 && unit.state != UnitOrderState::BuildCancel
                 && unit.state != UnitOrderState::BuildAbort
             {
-                items.push(
-                    UnitMenuItem::new(ItemId::StopBuild, "stop", '7', false)
-                        .disabled("GameManager_SelectBuildSite не портирован"),
-                );
+                // C++ `UnitsManager_Popup_OnClick_SelectBuildSite` →
+                // `GameManager_SelectBuildSite`: отмена текущей стройки —
+                // `ORDER_BUILD` + `ORDER_STATE_BUILD_CANCEL`
+                // (`UnitInfo::CancelBuilding` у мобильного строителя очищает
+                // `build_list`/`build_time` и возвращает `ORDER_AWAIT`).
+                items.push(UnitMenuItem::new(ItemId::StopBuild, "stop", '7', false));
             } else {
                 items.push(UnitMenuItem::new(ItemId::Build, "Build", '1', false));
             }
@@ -584,18 +586,15 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             items.push(UnitMenuItem::new(ItemId::Build, "Build", '1', false));
 
             if unit.orders == UnitOrder::HaltBuilding || unit.orders == UnitOrder::HaltBuilding2 {
-                items.push(
-                    UnitMenuItem::new(ItemId::StartBuild, "start", '2', false)
-                        .disabled("UnitInfo::BuildOrder (продолжение стройки) не портирован"),
-                );
+                // C++ `UnitsManager_Popup_OnClick_BuildOrder` → `UnitInfo::BuildOrder`:
+                // `ORDER_BUILD` + `ORDER_STATE_INIT` (очередь и `build_time`
+                // сохранены остановкой), затем `StartBuilding`.
+                items.push(UnitMenuItem::new(ItemId::StartBuild, "start", '2', false));
             } else if unit.orders == UnitOrder::Build
                 && unit.state != UnitOrderState::BuildCancel
                 && unit.state != UnitOrderState::BuildAbort
             {
-                items.push(
-                    UnitMenuItem::new(ItemId::StopBuild, "stop", '7', false)
-                        .disabled("GameManager_SelectBuildSite не портирован"),
-                );
+                items.push(UnitMenuItem::new(ItemId::StopBuild, "stop", '7', false));
             }
         }
         InitKind::RecreationCenter => {
@@ -1169,6 +1168,59 @@ mod tests {
         assert!(items_for(&state, &unit)
             .iter()
             .any(|item| item.id == ItemId::Stop && item.enabled));
+    }
+
+    #[test]
+    fn builder_mid_build_offers_enabled_stop_instead_of_build() {
+        let mut state = test_state();
+        let id = spawn(&mut state, UnitType::Constructor);
+        let mut unit = state.unit(id).expect("строитель").clone();
+
+        // C++ `UnitsManager_Popup_InitBuilders`: во время `ORDER_BUILD` пункт
+        // `Build` заменяется на `stop` (`GameManager_SelectBuildSite`).
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::BuildInProgress;
+        unit.build_list = vec![UnitType::TrainingHall];
+        unit.build_time = 10;
+        state.write_unit(id, unit.clone());
+
+        let items = items_for(&state, &unit);
+        assert!(
+            !items.iter().any(|item| item.id == ItemId::Build),
+            "во время стройки `Build` заменяется на `stop` (как C++)"
+        );
+        let stop = items
+            .iter()
+            .find(|item| item.id == ItemId::StopBuild)
+            .expect("stop во время стройки");
+        assert!(
+            stop.enabled,
+            "stop отменяет стройку (GameManager_SelectBuildSite) — не серый"
+        );
+        assert!(stop.note.is_empty());
+        assert_eq!(stop.hotkey, '7');
+    }
+
+    #[test]
+    fn halted_factory_offers_enabled_start() {
+        let mut state = test_state();
+        let id = spawn(&mut state, UnitType::TrainingHall);
+        let mut unit = state.unit(id).expect("завод").clone();
+        unit.orders = UnitOrder::HaltBuilding2;
+        unit.state = UnitOrderState::ExecutingOrder;
+        unit.build_list = vec![UnitType::Infantry];
+        unit.build_time = 2;
+        state.write_unit(id, unit.clone());
+
+        let start = items_for(&state, &unit)
+            .into_iter()
+            .find(|item| item.id == ItemId::StartBuild)
+            .expect("start у остановленного завода");
+        assert!(
+            start.enabled,
+            "start продолжает стройку (UnitInfo::BuildOrder) — не серый"
+        );
+        assert!(start.note.is_empty());
     }
 
     #[test]

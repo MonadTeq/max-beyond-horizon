@@ -73,6 +73,29 @@ build done
 assert build=closed
 shot build-ordered
 
+# --- Отмена стройки и повторный заказ (строитель не «застревает») ---------
+# C++ `UnitsManager_Popup_InitBuilders`: во время `ORDER_BUILD` пункт `Build`
+# заменён на `stop` (`GameManager_SelectBuildSite` → `ORDER_STATE_BUILD_CANCEL`,
+# `UnitInfo::CancelBuilding` у мобильного строителя очищает очередь).
+# Конструктор остался выделенным после `build done` — открываем меню повторным
+# кликом (`unit-menu open`).
+unit-menu open
+assert unit-menu=open
+unit-menu item stop
+assert unit-menu=closed
+# `CancelBuilding` исполняется процессором приказа на следующем тике.
+tick 1
+assert unit-order=await
+# Строитель снова готов строить: `Build` вернулся в меню.
+unit-menu open
+assert unit-menu-item=Build
+unit-menu item Build
+assert build=open
+build select 13
+build done
+assert build=closed
+assert unit-order=build
+
 # --- 10 ходов постройки (ATTRIB_TURNS TRAINHAL) --------------------------
 end_turn
 end_turn

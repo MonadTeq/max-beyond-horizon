@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Исправлено
+
+- **Строитель больше не «застревает»: `stop` отменяет стройку, `start` её
+  продолжает (TC-0630).** В C++ пункт `stop` попапа строителя (`_(bf85)`,
+  позиция `7`) — это `UnitsManager_Popup_OnClick_BuildStop` →
+  `GameManager_SelectBuildSite` (`game_manager.cpp:3529`): `ORDER_BUILD` +
+  `ORDER_STATE_BUILD_CANCEL`, затем `UnitInfo::CancelBuilding` (у мобильного
+  строителя очищает `build_list`/`build_time` и возвращает `ORDER_AWAIT`).
+  У нас пункт был **серым** («`GameManager_SelectBuildSite` не портирован»),
+  поэтому инженер/конструктор, начав стройку, оставался с попапом `stop`+`Done`
+  без возможности что-либо строить: `Build` в C++ во время `ORDER_BUILD`
+  заменяется на `stop` (`UnitsManager_Popup_InitBuilders:716`).
+  Теперь `stop` включён и отменяет постройку (`max_app::App::
+  activate_unit_menu_item` → P1 `ORDER_BUILD`/`BUILD_CANCEL`), а у
+  остановленного завода включён `start` — `UnitInfo::BuildOrder`
+  (`ORDER_BUILD`/`INIT`, очередь и `build_time` сохранены остановкой).
+  Тесты: 2 unit (`unitmenu::tests::{builder_mid_build_offers_enabled_stop_
+  instead_of_build, halted_factory_offers_enabled_start}`), кадровый
+  `tests/unit_menu.rs::builder_stop_cancels_the_build_and_build_returns`,
+  QA `production.qa` (заказ → `stop` → `assert unit-order=await` → `Build`
+  снова в меню → повторный заказ → постройка доходит до конца; golden
+  `production/*` — 0 дрейфа).
+
 ### Добавлено
 
 - **Распределение добычи шахты (`Allocate`, `AllocMenu`, TC-0627–0629).**

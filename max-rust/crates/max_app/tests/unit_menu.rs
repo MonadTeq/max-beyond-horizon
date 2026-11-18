@@ -341,6 +341,75 @@ fn disabled_item_does_not_act() {
 }
 
 #[test]
+fn builder_stop_cancels_the_build_and_build_returns() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let builder = spawn(&mut app, UnitType::Constructor);
+
+    // Заказ постройки: меню команд → Build → `BuildMenu` → Done (как игрок).
+    open_menu(&mut app, builder);
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(ItemId::Build))
+        .expect("Build в меню");
+    let rect = app.unit_menu().expect("меню").button_rect(index);
+    let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
+    assert!(app.build_menu().is_some(), "BuildMenu открылся");
+
+    let ordered = app.build_menu_select(0) && app.commit_build_menu(false).is_some();
+    app.flush_orders();
+    assert!(ordered, "заказ постройки применён");
+    assert_eq!(
+        app.state().unit(builder).expect("строитель").orders,
+        UnitOrder::Build,
+        "строитель в приказе Build"
+    );
+
+    // Во время стройки в меню только `stop` (как C++).
+    open_menu(&mut app, builder);
+    assert!(
+        app.unit_menu()
+            .and_then(|menu| menu.index_of(ItemId::Build))
+            .is_none(),
+        "во время стройки пункт Build заменён на stop"
+    );
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(ItemId::StopBuild))
+        .expect("stop во время стройки");
+    assert!(
+        app.unit_menu().expect("меню").items[index].enabled,
+        "stop включён — иначе строитель навсегда остаётся без действий"
+    );
+    let rect = app.unit_menu().expect("меню").button_rect(index);
+    let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
+    app.flush_orders();
+    // `CancelBuilding` исполняется процессором приказа на следующем тике
+    // (`UnitsManager_ProcessOrderBuild` → `ORDER_STATE_BUILD_CANCEL`).
+    app.tick();
+
+    let unit = app.state().unit(builder).expect("строитель");
+    assert_eq!(
+        unit.orders,
+        UnitOrder::Await,
+        "CancelBuilding вернул строителя в Await"
+    );
+    assert!(unit.build_list.is_empty(), "очередь постройки очищена");
+    assert_eq!(unit.build_time, 0, "срок постройки сброшен");
+
+    // Строитель снова может строить: `Build` вернулся в меню и включён.
+    open_menu(&mut app, builder);
+    let build = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(ItemId::Build))
+        .map(|index| app.unit_menu().expect("меню").items[index].clone())
+        .expect("Build снова в меню");
+    assert!(build.enabled, "Build снова включён");
+}
+
+#[test]
 fn frame_shows_menu_over_map() {
     let Some(mut app) = game_app() else {
         return;

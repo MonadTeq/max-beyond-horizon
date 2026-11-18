@@ -1895,8 +1895,9 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **отключено**: `ORDER_LAND` — процессор P1 и не несёт `parent_unit`, поэтому посадка не доедет до сети/получателя; вся цепочка `GameManager_ProcessMouse` (CURSOR_LOAD) не портирована |
 | `activate` | `RepairShopMenu_Menu` | **отключено**: меню ремонтного цеха не портировано |
 | `allocate` | `AllocMenu_Menu` (окно `ALLOCFRM`) | **реализовано**: `App::open_alloc_menu` → `max_app::allocmenu` (см. §20) |
-| `start` завод | `UnitInfo::BuildOrder` | **отключено**: продолжение стройки не портировано |
-| `stop` стройки / бульдозер | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **отключено**: выбор площадки/расчистка из попапа не портированы |
+| `start` завод | `UnitInfo::BuildOrder` | **реализовано**: P1 `ORDER_BUILD`/`INIT` (очередь и `build_time` сохранены остановкой), см. §21 |
+| `stop` стройки | `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | **реализовано**: P1 `ORDER_BUILD`/`BUILD_CANCEL` → `CancelBuilding` (мобильный строитель — `AWAIT` и чистая очередь; завод — `HaltBuilding`), см. §21 |
+| бульдозер (`stop` расчистки) | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **отключено**: выбор площадки/расчистка из попапа не портированы |
 | `remove` здания | `UnitsManager_SelfDestructMenu` (диалог Arm/Cancel) | **отключено**: диалог не портирован |
 | `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (комплексы/материалы) | **отключено**: учёт материалов комплекса не портирован |
 | `disable`/`steal` | курсоры 8/9 диверсанта | **отключено**: стелс-режимы не портированы |
@@ -2130,3 +2131,59 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   `build/scripts/build-windows-ui.ps1 -NoPackage`.
 * Существующие golden (visual-screens/production/upgrade/research/cargo/
   move-input/unit-menu/research-help) — **0 дрейфа**.
+
+## 21. Строительство: `stop` отменяет стройку, `start` продолжает — **сделано** (2026-11-18)
+
+### 21.1 Как в C++ (оракул)
+
+| Что | Код | Поведение |
+|---|---|---|
+| состав попапа строителя | `UnitsManager_Popup_InitBuilders` (`units_manager.cpp:716`) | если `ORDER_BUILD` и состояние не `BUILD_CANCEL`/`BUILD_ABORT` — регистрируется **только** `stop` (`_(bf85)`, позиция `7`); иначе — `Build` (`_(b3ef)`, позиция `1`). Оба пункта вызывают один обработчик `UnitsManager_Popup_OnClick_BuildStop` |
+| `Build` | `BuildMenu_Menu(unit)` | экран заказа |
+| `stop` | `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | если юнит в `ORDER_STATE_SELECT_SITE` — снять «ленту» площадки, очистить очередь, вернуть прежний приказ; иначе `move_to = grid` и `UnitsManager_SetNewOrder(unit, ORDER_BUILD, ORDER_STATE_BUILD_CANCEL)` |
+| отмена | `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`) | мобильный строитель: `build_list.Clear()`, `build_time = 0`, путь снят, `ORDER_AWAIT`/`EXECUTING_ORDER`; завод: `HaltBuilding`/`HaltBuilding2` + `EXECUTING_ORDER` (очередь и `build_time` сохранены) |
+| `start` завода | `UnitsManager_Popup_OnClick_BuildOrder` → `UnitInfo::BuildOrder` | `ORDER_BUILD` + `ORDER_STATE_INIT` + `StartBuilding` — продолжение остановленной стройки |
+
+### 21.2 Что было сломано у нас
+
+Пункты `stop` (у строителя и завода) и `start` (у завода) были **серыми**
+(`.disabled("GameManager_SelectBuildSite не портирован")` /
+`("UnitInfo::BuildOrder ... не портирован")`). Сам приказ постройки при этом
+работал — но по C++-логике `Build` во время `ORDER_BUILD` из попапа исчезает и
+остаётся только `stop`: серый пункт ⇒ у инженера/конструктора после **первого
+же** заказа попап навсегда превращался в `stop` + `Done`, и построить что-то
+ещё (или отменить заказ) было нельзя. Симптом игрока — «инженер и конструктор
+не могут ничего построить».
+
+### 21.3 Что сделано
+
+* `unitmenu.rs`: у строителя и завода `stop`/`start` теперь **включены**
+  (состав и подписи — как в C++).
+* `App::activate_unit_menu_item`: `stop` → P1 `ORDER_BUILD` +
+  `ORDER_STATE_BUILD_CANCEL`; `start` → P1 `ORDER_BUILD` + `ORDER_STATE_INIT`
+  (приказ идёт тем же путём пакета 08, что и остальные пункты).
+* Ядро уже умело: `cancel_building` (`UnitInfo::CancelBuilding`) и
+  `start_building` (`UnitInfo::StartBuilding`) — новых функций не понадобилось.
+* Тесты: 2 unit (`unitmenu::tests`), кадровый
+  `tests/unit_menu.rs::builder_stop_cancels_the_build_and_build_returns`
+  (заказ → `stop` → `AWAIT`, очередь пуста, `Build` вернулся и включён).
+* QA `production.qa` дополнен циклом «заказ → `stop` → `AWAIT` → `Build` →
+  повторный заказ → постройка доходит до конца»; golden `production/*` —
+  **0 дрейфа**.
+
+### 21.4 Что проверено и что осталось
+
+Проверено headless (QA `production.qa` + probe-сценарии, затем полный
+docker-гейт): строительство работает у **конструктора** (пункт `Build` из
+попапа и клавиша `B`, высадка `(30,22)`, `(23,45)` и позиция по умолчанию,
+Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDER_BUILD`
+применяется, здание появляется через `ATTRIB_TURNS` ходов, `stop` его отменяет,
+`Build` возвращается.
+
+Осознанные расхождения, которые могут выглядеть как «ничего не строится»:
+(1) площадка постройки выбирается автоматически (`find_build_site`, радиус 8) —
+клик по карте площадку не задаёт; (2) здание появляется сразу **готовым** в
+конце стройки: «стройплощадка» C++ (`PrepareConstructionSite` /
+`DeployConstructionSiteUtilities`) не портирована, поэтому первые N ходов на
+карте ничего не видно — прогресс виден в журнале (`Build order: …`,
+`<имя> built`); (3) `Alt-P`/звуки попапа не портированы.

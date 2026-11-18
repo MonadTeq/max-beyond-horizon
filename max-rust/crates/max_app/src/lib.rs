@@ -1399,6 +1399,43 @@ impl App {
                     format!("{label}: режим выключен")
                 }
             }
+            unitmenu::ItemId::StartBuild => {
+                // C++ `UnitsManager_Popup_OnClick_BuildOrder` →
+                // `UnitInfo::BuildOrder`: очередь и `build_time` остались от
+                // `CancelBuilding` (завод), поэтому достаточно `ORDER_BUILD` +
+                // `ORDER_STATE_INIT` — `start_building` возобновит постройку.
+                match unitmenu::p1_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Build,
+                    max_core::enums::UnitOrderState::Init,
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("{} — ORDER_BUILD/INIT (продолжение)", item.caption)
+                    }
+                    None => format!("{}: юнит исчез", item.caption),
+                }
+            }
+            unitmenu::ItemId::StopBuild => {
+                // C++ `GameManager_SelectBuildSite` (`game_manager.cpp:3529`):
+                // `ORDER_BUILD` + `ORDER_STATE_BUILD_CANCEL` — `CancelBuilding`
+                // у мобильного строителя очищает очередь и возвращает
+                // `ORDER_AWAIT`, у завода — `HaltBuilding` (стройку можно
+                // продолжить пунктом `start`).
+                match unitmenu::p1_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Build,
+                    max_core::enums::UnitOrderState::BuildCancel,
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("{} — ORDER_BUILD/BUILD_CANCEL", item.caption)
+                    }
+                    None => format!("{}: юнит исчез", item.caption),
+                }
+            }
             unitmenu::ItemId::PlaceMine | unitmenu::ItemId::RemoveMine => {
                 let state_order = if item.id == unitmenu::ItemId::PlaceMine {
                     max_core::enums::UnitOrderState::PlacingMines

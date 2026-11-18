@@ -862,7 +862,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 } else {
                     "alloc=closed"
                 };
-                eprintln!("[in] screen={name} event={input:?} {alloc}");
+                // `BuildMenu` (`buildmenu`): по нему живой тест строительства
+                // (`build/scripts/ui-probe-build.ps1`) видит, что экран открылся.
+                let build = if app.build_menu().is_some() {
+                    "build=open"
+                } else {
+                    "build=closed"
+                };
+                eprintln!("[in] screen={name} event={input:?} {alloc} {build}");
             }
 
             if let Some(recorder) = recorder.as_mut() {
