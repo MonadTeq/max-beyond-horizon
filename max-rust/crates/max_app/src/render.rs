@@ -62,6 +62,29 @@ pub const BUILDER_WORK_FRAME_STEP: usize = 8;
 /// Сколько разных кадров в рабочем цикле конструктора (`+16`, `+24`, `+32`).
 pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 
+/// Кадровые часы юнита (только для отрисовки, в снапшот/CRC не входят).
+///
+/// Три независимых счётчика повторяют три разных механизма C++:
+///
+/// * `builder_step` — `UnitsManager_ProcessOrderBuild` (`+8`, `-16` при
+///   `image_index + 8 >= 40`), 0 — кадр `+16` из `StartBuilding`;
+/// * `sentry_step` — `UnitsManager_ProcessOrderSentry` у юнитов с флагом
+///   `ANIMATED`: каждый тик `image_index + 1`, после последнего —
+///   `image_index = image_base`;
+/// * `activity_step` — индикатор работы включённых зданий: порт чередует два
+///   кадра состояния (`image_base`/`image_base + 1`), пока здание активно.
+///   C++ такого цикла не делает (у шахт/заводов нет покадровой анимации),
+///   поэтому это **только визуальное** дополнение; `0` — статичный кадр C++.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameAnimation {
+    /// Номер кадра рабочего цикла строителя (`0..BUILDER_WORK_FRAME_STEPS`).
+    pub builder_step: u8,
+    /// Номер тика `ProcessOrderSentry` (ANIMATED).
+    pub sentry_step: u32,
+    /// Полупериод индикатора работы включённого здания (`0`/`1`).
+    pub activity_step: u32,
+}
+
 /// Активна ли покадровая анимация строителя (`ProcessOrderBuild`).
 ///
 /// C++ листает кадры только у `CONSTRCT` в `ORDER_BUILD` /
@@ -72,6 +95,45 @@ pub fn builder_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.unit_type == UnitType::Constructor
         && unit.orders == UnitOrder::Build
         && unit.state == UnitOrderState::BuildInProgress
+}
+
+/// Активна ли покадровая анимация `UnitsManager_ProcessOrderSentry`.
+///
+/// C++ (`units_manager.cpp:3029-3041`) листает кадры **только** у юнитов с
+/// флагом `ANIMATED` и только в приказе `ORDER_SENTRY`:
+///
+/// ```text
+/// if (image_index + 1 <= image_index_max) image_index += 1;
+/// else                                   image_index = image_base;
+/// ```
+///
+/// Из зданий этот флаг есть у `RADAR` (`SC_UNITS`: `ANIMATED`), у шахт и
+/// заводов его нет — их C++ по времени не анимирует.
+pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
+    unit.flags & unit_flags::ANIMATED != 0 && unit.orders == UnitOrder::Sentry
+}
+
+/// Активно ли здание, у которого порт показывает индикатор работы.
+///
+/// C++ не перелистывает кадры шахт/заводов: у них только два кадра состояния
+/// (`image_base` — выключено, `image_base + 1` — включено), которые
+/// выставляются при `POWER_ON`/`POWER_DOWN`. Чтобы работающие здания не
+/// выглядели полностью статичными, порт **только на кадре** чередует эти два
+/// кадра, пока здание действительно работает:
+///
+/// * шахта — `ORDER_POWER_ON` (C++ `PowerUp` оставляет этот приказ);
+/// * завод — `ORDER_BUILD` с непустой очередью (`build_list`).
+///
+/// Состояние симуляции/CRC от этого не меняется; `activity_step = 0` даёт
+/// ровно статичный кадр C++ (поэтому `dt = 0` не двигает golden-кадры).
+pub fn working_building_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
+    if unit.unit_type == UnitType::MiningStation && unit.orders == UnitOrder::PowerOn {
+        return true;
+    }
+
+    max_core::production::is_factory(unit.unit_type)
+        && unit.orders == UnitOrder::Build
+        && !unit.build_list.is_empty()
 }
 
 /// Масштаб «вырастания» из `scaler_adjust`: `2^-scaler` (`UnitInfo::RenderSprite`).
@@ -181,16 +243,83 @@ pub fn unit_frame_index_for_animation(
     angle: u8,
     build_step: u8,
 ) -> usize {
+    unit_frame_index_with_animation(
+        unit,
+        image_base,
+        image_count,
+        image_count,
+        angle,
+        FrameAnimation {
+            builder_step: build_step,
+            ..FrameAnimation::default()
+        },
+        true,
+    )
+}
+
+/// Кадр юнита со всеми покадровыми анимациями C++ и индикатором работы.
+///
+/// `image_count` — число кадров спрайта корпуса (граница индекса);
+/// `sentry_frames` — `Unit::GetFrameInfo().image_count` (`D_*`), то есть
+/// сколько кадров занимает анимация `ANIMATED`-юнита. У `RADAR` в спрайте 20
+/// кадров, но `D_RADAR.image_count = 16` (последние 4 — коннекторы), и C++
+/// `image_index_max` считает именно по `FrameInfo` — поэтому анимация обязана
+/// зацикливаться на 16, а не на 20.
+///
+/// Порядок как в C++:
+///
+/// 1. статичный кадр [`unit_frame_index_for_angle`] (`image_base + angle`,
+///    `+1` при `POWER_ON`, `+16` рабочая поза строителя);
+/// 2. цикл конструктора `+8` / `-16` ([`builder_animation_active`]);
+/// 3. `ProcessOrderSentry` для `ANIMATED` (`sentry_step`, сброс на
+///    `image_base` после последнего кадра);
+/// 4. визуальный индикатор работы шахты/завода (`activity_step`, только
+///    `dt > 0`, см. [`working_building_animation_active`]).
+///
+/// `effects = false` отключает п. 3–4, как `settings["effects"]` в C++.
+#[allow(clippy::too_many_arguments)]
+pub fn unit_frame_index_with_animation(
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    image_count: usize,
+    sentry_frames: usize,
+    angle: u8,
+    animation: FrameAnimation,
+    effects: bool,
+) -> usize {
     let last = image_count.saturating_sub(1);
     let mut index = unit_frame_index_for_angle(unit, image_base, image_count, angle);
 
     if builder_animation_active(unit) {
-        for _ in 0..build_step % BUILDER_WORK_FRAME_STEPS {
+        for _ in 0..animation.builder_step % BUILDER_WORK_FRAME_STEPS {
             index = if index + BUILDER_WORK_FRAME_STEP >= image_count {
                 index.saturating_sub(BUILDER_WORK_FRAME_OFFSET)
             } else {
                 index + BUILDER_WORK_FRAME_STEP
             };
+        }
+    }
+
+    if effects && sentry_animation_active(unit) {
+        let base = usize::try_from(image_base.max(0)).unwrap_or(0);
+        let frames = sentry_frames.max(1);
+
+        // C++: `image_index = image_base` после последнего кадра, т.е. цикл
+        // идёт по блоку `image_base .. image_base + image_count - 1`.
+        index = base + (animation.sentry_step as usize % frames);
+    } else if effects && working_building_animation_active(unit) {
+        // `activity_step` чётный — статичный кадр C++; нечётный — второй кадр
+        // пары состояния (выкл/вкл).
+        if animation.activity_step % 2 == 1 {
+            let alternate = if index % 2 == 0 {
+                index.saturating_add(1)
+            } else {
+                index.saturating_sub(1)
+            };
+
+            if alternate < image_count {
+                index = alternate;
+            }
         }
     }
 
@@ -303,31 +432,56 @@ pub fn draw_unit_sprites_with_angle(
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
-    draw_unit_sprites_with_animation(assets, unit, image_base, body_angle, 0, frame, anchor, zoom)
+    draw_unit_sprites_with_animation(
+        assets,
+        unit,
+        image_base,
+        body_angle,
+        FrameAnimation::default(),
+        true,
+        frame,
+        anchor,
+        zoom,
+    )
 }
 
-/// [`draw_unit_sprites_with_angle`] с номером кадра рабочего цикла строителя.
+/// [`draw_unit_sprites_with_angle`] с кадровыми часами юнита.
 ///
-/// `build_step` — [`BUILDER_WORK_FRAME_STEPS`]-цикл из
-/// [`crate::App::build_animation_step`]; карта передаёт его каждый кадр, HUD и
-/// тесты — `0` (кадр начала стройки `+16`, как в C++ при `StartBuilding`).
+/// `animation` — [`FrameAnimation`] из [`crate::App::unit_animation`]:
+/// строитель (`+16 → +24 → +32`), `ANIMATED`-здание (`ProcessOrderSentry`) и
+/// индикатор работы включённых шахт/заводов. HUD и тесты передают
+/// [`FrameAnimation::default()`] (статичный кадр C++, как при `dt = 0`).
+///
+/// `effects` — `settings["effects"]`; `false` отключает покадровые анимации,
+/// как C++.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_unit_sprites_with_animation(
     assets: &crate::assets::Assets,
     unit: &max_core::unit::UnitInfo,
     image_base: i16,
     body_angle: u8,
-    build_step: u8,
+    animation: FrameAnimation,
+    effects: bool,
     frame: &mut RgbaBuffer,
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
-    let image_index = unit_frame_index_for_animation(
+    // `FrameInfo` (`D_*`) задаёт длину блока кадров анимации; у RADAR это 16,
+    // хотя в спрайте 20 кадров (последние 4 — коннекторы).
+    let sentry_frames = sprite
+        .frame_info
+        .map(|info| usize::from(info.image_count))
+        .filter(|frames| *frames > 0)
+        .unwrap_or(sprite.sheet.len());
+    let image_index = unit_frame_index_with_animation(
         unit,
         image_base,
         sprite.sheet.len(),
+        sentry_frames,
         body_angle,
-        build_step,
+        animation,
+        effects,
     );
     let sprite_frame = sprite.frame_at(image_index)?;
     let shadow = sprite.shadow_at(image_index);
@@ -689,15 +843,21 @@ impl App {
             // ней с реальной скоростью; иначе кадр «забегал» бы вперёд и юнит
             // смотрел бы вбок, двигаясь прямо.
             let body_angle = self.visual_angle(visible[index]).unwrap_or(unit.angle);
-            // Покадровая анимация строителя и «вырастание» только что
-            // поставленного юнита — визуальные часы `App` (реальный `dt`), в
-            // снапшот/CRC они не входят. `dt = 0` (QA/headless) даёт рабочую
-            // позу `+16` и полный размер — кадр остаётся детерминированным.
-            let build_step = self.build_animation_step(visible[index]);
+            // Покадровая анимация строителя, `ANIMATED`-зданий и индикатор
+            // работы шахт/заводов — визуальные часы `App` (реальный `dt`), в
+            // снапшот/CRC они не входят. `dt = 0` (QA/headless) даёт статичный
+            // кадр C++ (`+16` для строителя, базовый/включённый кадр здания) —
+            // поэтому golden не дрейфуют.
+            let animation = self.unit_animation(visible[index]);
+            // C++ `settings["effects"]` по умолчанию 1 (`settings.cpp`); в
+            // Rust-порте поле `settings_effects` — симуляционное и по умолчанию
+            // `false`, поэтому визуальные эффекты считаем включёнными (как
+            // исходные настройки оригинала). Симуляция/CRC от этого не зависят.
+            let effects = true;
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
             let drawn = self.assets().and_then(|assets| {
                 draw_unit_sprites_with_animation(
-                    assets, unit, image_base, body_angle, build_step, frame, anchor, zoom,
+                    assets, unit, image_base, body_angle, animation, effects, frame, anchor, zoom,
                 )
             });
 

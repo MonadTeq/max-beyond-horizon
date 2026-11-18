@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 use max_app::assets::Assets;
 use max_app::render::{
-    draw_unit_sprites_with_base, image_base_for, unit_frame_index, BUILDER_WORK_FRAME_OFFSET,
+    draw_unit_sprites_with_base, image_base_for, sentry_animation_active, unit_frame_index,
+    unit_frame_index_with_animation, working_building_animation_active, FrameAnimation,
+    BUILDER_WORK_FRAME_OFFSET,
 };
 use max_app::AppConfig;
 use max_core::access::unit_type_flags;
@@ -174,6 +176,114 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, None), 0);
     assert_eq!(image_base_for(&unit, Some(TeamClan::Random)), 0);
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
+}
+
+/// Работающая шахта чередует два кадра состояния (`image_base`/`image_base+1`)
+/// по визуальным часам, выключенная — статична. C++ сам кадры шахты не
+/// перелистывает (только `POWER_ON` → `+1`), поэтому шаг `0` обязан совпадать
+/// со статичным кадром C++ — на нём и стоят golden (`dt = 0`).
+#[test]
+fn working_mine_alternates_state_frames_and_powered_off_mine_is_static() {
+    let mut mine = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
+    let static_frame = FrameAnimation::default();
+    let alternate = FrameAnimation {
+        activity_step: 1,
+        ..FrameAnimation::default()
+    };
+
+    assert!(working_building_animation_active(&mine));
+
+    let on = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, static_frame, true);
+    let off = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, true);
+
+    assert_eq!(on, 1, "POWER_ON: включённый кадр C++ (image_base + 1)");
+    assert_eq!(off, 0, "индикатор работы: второй кадр пары");
+    assert_ne!(on, off, "работающая шахта обязана менять кадр");
+
+    mine.orders = UnitOrder::PowerOff;
+    assert!(!working_building_animation_active(&mine));
+
+    let off_0 = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, static_frame, true);
+    let off_1 = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, true);
+
+    assert_eq!(off_0, 0);
+    assert_eq!(off_1, 0, "выключенная шахта не анимируется");
+
+    // Без effects индикатор тоже выключен (C++ `settings["effects"]`).
+    mine.orders = UnitOrder::PowerOn;
+    assert_eq!(
+        unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, false),
+        on,
+        "effects=off: статичный кадр C++"
+    );
+}
+
+/// Завод с непустой очередью рисует индикатор работы (два кадра состояния),
+/// без очереди — статичный кадр C++.
+#[test]
+fn factory_with_a_queue_animates_and_an_idle_factory_is_static() {
+    let mut factory = unit_of(UnitType::TrainingHall, UnitOrder::Build, 0);
+    factory.state = UnitOrderState::BuildInProgress;
+    factory.build_list.push(UnitType::Infantry);
+
+    assert!(working_building_animation_active(&factory));
+
+    let static_frame = FrameAnimation::default();
+    let alternate = FrameAnimation {
+        activity_step: 1,
+        ..FrameAnimation::default()
+    };
+    let idle = unit_frame_index_with_animation(&factory, 0, 10, 10, 0, static_frame, true);
+    let working = unit_frame_index_with_animation(&factory, 0, 10, 10, 0, alternate, true);
+
+    assert_eq!(idle, 0, "TRAINHAL: базовый кадр C++");
+    assert_eq!(working, 1, "работающий завод: включённый кадр");
+    assert_ne!(idle, working, "завод с очередью обязан менять кадр");
+
+    factory.build_list.clear();
+    factory.orders = UnitOrder::Await;
+    assert!(!working_building_animation_active(&factory));
+    assert_eq!(
+        unit_frame_index_with_animation(&factory, 0, 10, 10, 0, alternate, true),
+        0,
+        "без очереди завод статичен"
+    );
+}
+
+/// `RADAR` — единственное здание с флагом `ANIMATED`: C++
+/// `UnitsManager_ProcessOrderSentry` каждый тик делает `image_index + 1` и после
+/// последнего кадра возвращается к `image_base`. `D_RADAR.image_count = 16`,
+/// хотя в спрайте 20 кадров (4 коннектора), поэтому цикл — ровно 16.
+#[test]
+fn radar_sentry_animation_cycles_its_cpp_frame_block() {
+    let radar = unit_of(UnitType::Radar, UnitOrder::Sentry, 0);
+
+    assert!(sentry_animation_active(&radar));
+
+    let frame = |step: u32| {
+        unit_frame_index_with_animation(
+            &radar,
+            0,
+            20,
+            16,
+            0,
+            FrameAnimation {
+                sentry_step: step,
+                ..FrameAnimation::default()
+            },
+            true,
+        )
+    };
+
+    assert_eq!(frame(0), 0);
+    assert_eq!(frame(1), 1);
+    assert_eq!(frame(15), 15);
+    assert_eq!(frame(16), 0, "после последнего кадра — image_base");
+    assert_eq!(frame(20), 4);
+
+    // Не-ANIMATED здание не получает sentry-цикл.
+    let gen = unit_of(UnitType::PowerGenerator, UnitOrder::Sentry, 0);
+    assert!(!sentry_animation_active(&gen));
 }
 
 /// Во время стройки C++ рисует рабочую позу строителя — `image_index + 16`

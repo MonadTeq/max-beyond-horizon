@@ -26,7 +26,7 @@
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
 | 8 | Live smoke 2×10 | `build/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
 | 9 | Live smoke 3×10 | `build/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/` (P8, 2026-11-17): `max-rust.exe` 6 267 392 Б, sha256 `f5ed5d3d…`; zip sha256 `bbcf5f72…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound |
+| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-18, покадровая анимация): `max-rust.exe` 6 443 520 Б, sha256 `acc20de0…`; zip sha256 `3e133bea…`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--new-game --width 640 --height 480` → `build/frame-windows-anim.png` |
 | 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (P8, 2026-11-17): `max-rust.exe` 10 415 368 Б, sha256 `5a4cc9da…`; zip 3 845 111 Б, sha256 `c060b8d7…`; PE Subsystem=3 (console), `--help`/`--demo` без wine-smoke (флаг `--no-wine`) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ по задаче P8 пересобраны Windows UI/headless; Linux-бандл 1.1.0 от 2026-11-16 остаётся прежним (код P8 в него не входит) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны в P8 (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |

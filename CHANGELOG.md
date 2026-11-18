@@ -2,6 +2,27 @@
 
 ### Исправлено
 
+- **Покадровая анимация работающих зданий и строителей.** В C++ есть ровно один
+  потиковый цикл кадров зданий — `UnitsManager_ProcessOrderSentry`
+  (`units_manager.cpp:3029-3041`): у юнитов с флагом `ANIMATED` каждый тик
+  `image_index + 1`, после последнего кадра — `image_index = image_base`.
+  Из зданий `ANIMATED` есть только у `RADAR` (16 кадров из `D_RADAR`, хотя в
+  спрайте 20 — последние 4 коннекторы). У шахт/заводов покадровой анимации в
+  C++ **нет**: есть два кадра состояния (`image_base`/`image_base + 1`),
+  выставляемые `ProcessOrderPowerOn`/`PowerDown`; `UnitInfo::Animate` только
+  добавляет draw bounds. Rust-рендер вообще не читал `image_index` и всегда
+  рисовал `image_base + angle`, поэтому `RADAR` стоял. Теперь
+  `render::FrameAnimation` (строитель `+8`/`-16`, `sentry_step` для
+  `ANIMATED`) обновляется `App::update_unit_animations(dt)`; включённые шахта
+  (`ORDER_POWER_ON`) и завод с непустой очередью (`ORDER_BUILD`) дополнительно
+  чередуют два кадра состояния (0.5 с) — визуальный индикатор работы, которого
+  в C++ нет. `dt = 0` (QA/headless) даёт статичный кадр C++, часы не входят в
+  снапшот/CRC/сейв. Тесты: `tests/building_animation.rs` (4, на данных игры),
+  `tests/building_frames.rs` (8, +4: шахта/завод/`RADAR`), 3 прежних
+  `construction_animation`; QA `production.qa` — `factory-work-a/b`,
+  `allocate.qa` — `mine-work-a/b`, golden `production/`/`allocate/` — 0 дрейфа;
+  `bash ci.sh` — **754 с, все стадии PASS**.
+
 - **`BuildMenu`: характеристики выбранного здания с иконками.** В C++
   `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`) после портрета пишет
   `stats_background` (11,293,250,174) и вызывает `UnitStats_DrawStats` для

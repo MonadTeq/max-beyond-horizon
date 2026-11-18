@@ -575,12 +575,15 @@ pub struct App {
     /// чтобы спрайт поворачивался на клетке поворота, а не раньше.
     visual_paths:
         std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
-    /// Кадр рабочего цикла строителя (`UnitsManager_ProcessOrderBuild`).
+    /// Визуальные кадровые часы юнитов (`FrameAnimation`).
     ///
-    /// Визуальное время (`dt`), в снапшот/CRC не входит: симуляция не хранит
-    /// «номер кадра» — она хранит только `moved`, который C++ использует как
-    /// счётчик цикла. `dt = 0` (QA/headless) — кадр `+16`, детерминированно.
-    build_anims: std::collections::HashMap<UnitId, BuildAnim>,
+    /// Три механизма C++: цикл строителя (`ProcessOrderBuild`), анимация
+    /// `ANIMATED`-зданий (`ProcessOrderSentry`, например RADAR) и индикатор
+    /// работы включённых шахт/заводов. В снапшот/CRC не входят: симуляция не
+    /// хранит «номер кадра» — она хранит только `moved`/`image_index`, которые
+    /// C++ использует как счётчик. `dt = 0` (QA/headless) — статичный кадр C++,
+    /// детерминированно.
+    frame_anims: std::collections::HashMap<UnitId, FrameAnim>,
     /// «Вырастание» только что поставленного юнита (`UnitsManager_ScaleUnit`).
     ///
     /// `scaler_adjust` — **симуляционное** поле (`UnitInfo::RenderSprite`:
@@ -595,13 +598,27 @@ pub struct App {
     portrait: Option<portrait::PortraitAnim>,
 }
 
-/// Кадр рабочего цикла строителя: накопленное визуальное время и шаг `0..3`.
+/// Визуальные кадровые часы одного юнита.
+///
+/// Каждый счётчик живёт независимо: строитель листает кадры на 10 Гц
+/// ([`BUILDER_ANIM_FRAME_SECONDS`]), `ANIMATED`-здание — на каждом тике C++
+/// ([`SENTRY_ANIM_FRAME_SECONDS`]), индикатор работы — раз в
+/// [`WORKING_BUILDING_ANIM_FRAME_SECONDS`]. Все они — только для кадра и в
+/// снапшот/CRC не входят.
 #[derive(Debug, Clone, Copy, Default)]
-struct BuildAnim {
-    /// Секунды с прошлого сдвига кадра.
-    elapsed: f32,
+struct FrameAnim {
+    /// Секунды с прошлого сдвига кадра строителя.
+    builder_elapsed: f32,
     /// `0` — `+16` (начало стройки), `1` — `+24`, `2` — `+32` (C++ `+8`).
-    step: u8,
+    builder_step: u8,
+    /// Секунды с прошлого тика `ProcessOrderSentry`.
+    sentry_elapsed: f32,
+    /// Номер тика `ProcessOrderSentry` (ANIMATED-здание).
+    sentry_step: u32,
+    /// Секунды с прошлого полупериода индикатора работы.
+    activity_elapsed: f32,
+    /// `0` — статичный кадр C++, `1` — второй кадр пары состояния.
+    activity_step: u32,
 }
 
 /// Визуальный переход «вырастания» от `scaler_adjust` к полному размеру.
@@ -619,6 +636,22 @@ struct GrowthAnim {
 /// (`moved & 1`), а тик оригинала — ~30 Гц; здесь кадры идут по реальному
 /// времени интерфейса, 10 кадров/с — цикл `+16 → +24 → +32` за 0.3 с.
 pub const BUILDER_ANIM_FRAME_SECONDS: f32 = 0.1;
+
+/// Секунд на один кадр `ProcessOrderSentry` (`ANIMATED`-здание, RADAR).
+///
+/// C++ листает кадр на каждом тике обработки приказов (`UnitsManager_ProcessTick`
+/// → `UnitsManager_ProcessOrders` → `UnitsManager_ProcessOrderSentry`), а тик —
+/// ~30 Гц (`TickTimer`, `timer_get`). В интерактиве эти часы идут по реальному
+/// `dt`: 1/30 с на кадр, 16 кадров RADAR — оборот за ~0.53 с.
+pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
+
+/// Секунд на полупериод индикатора работы включённого здания.
+///
+/// C++ не анимирует шахты/заводы по времени: у них есть только кадры
+/// `image_base` (выкл) и `image_base + 1` (вкл), которые выставляются один раз.
+/// Порт чередует их, пока здание работает, чтобы оно не выглядело мёртвым:
+/// 0.5 с — спокойный «пульс» индикатора, `dt = 0` — статичный кадр C++.
+pub const WORKING_BUILDING_ANIM_FRAME_SECONDS: f32 = 0.5;
 
 /// Длительность визуального «вырастания» юнита, секунды.
 ///
@@ -686,7 +719,7 @@ impl App {
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
-            build_anims: std::collections::HashMap::new(),
+            frame_anims: std::collections::HashMap::new(),
             growth_anims: std::collections::HashMap::new(),
             portrait: None,
         }
@@ -1971,7 +2004,7 @@ impl App {
         self.visual_units.clear();
         self.visual_goals.clear();
         self.visual_paths.clear();
-        self.build_anims.clear();
+        self.frame_anims.clear();
         self.growth_anims.clear();
         // Режим выбора места относится к прежней партии: призрак не должен
         // переехать в новую.
@@ -2019,7 +2052,27 @@ impl App {
     /// [`App::update_unit_animations`] по реальному `dt`; `dt = 0` оставляет
     /// `0`, поэтому QA-кадры детерминированы.
     pub fn build_animation_step(&self, id: UnitId) -> u8 {
-        self.build_anims.get(&id).map(|anim| anim.step).unwrap_or(0)
+        self.frame_anims
+            .get(&id)
+            .map(|anim| anim.builder_step)
+            .unwrap_or(0)
+    }
+
+    /// Кадровые часы юнита для отрисовки ([`render::FrameAnimation`]).
+    ///
+    /// Содержит цикл строителя, тик `ProcessOrderSentry` (ANIMATED-здания) и
+    /// индикатор работы шахт/заводов. Значение двигает
+    /// [`App::update_unit_animations`] по реальному `dt`; `dt = 0` — все
+    /// счётчики нулевые, то есть статичный кадр C++ (golden не дрейфуют).
+    pub fn unit_animation(&self, id: UnitId) -> crate::render::FrameAnimation {
+        self.frame_anims
+            .get(&id)
+            .map(|anim| crate::render::FrameAnimation {
+                builder_step: anim.builder_step,
+                sentry_step: anim.sentry_step,
+                activity_step: anim.activity_step,
+            })
+            .unwrap_or_default()
     }
 
     /// Визуальный масштаб юнита (`1.0` — полный размер).
@@ -2048,45 +2101,83 @@ impl App {
         ((zoom as f32) * scale).round().max(1.0) as u32
     }
 
-    /// Визуальные часы анимаций кадра: цикл строителя и «вырастание».
+    /// Визуальные часы анимаций кадра: строитель, `ANIMATED`-здания,
+    /// индикатор работы шахт/заводов и «вырастание».
     ///
-    /// Как и [`App::update_visual_units`], это **только кадр**: `build_anims`/
+    /// Как и [`App::update_visual_units`], это **только кадр**: `frame_anims`/
     /// `growth_anims` не входят в снапшот/CRC и не влияют на симуляцию.
-    /// `dt <= 0` (QA/headless) сбрасывает их: строитель — поза `+16`, любая
-    /// «вырастающая» постройка — полный размер, кадр детерминирован.
+    /// `dt <= 0` (QA/headless) сбрасывает их: строитель — поза `+16`, здание —
+    /// статичный кадр C++, любая «вырастающая» постройка — полный размер,
+    /// поэтому golden-кадры детерминированы.
     fn update_unit_animations(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.1);
 
         if !(dt > 0.0) {
-            self.build_anims.clear();
+            self.frame_anims.clear();
             self.growth_anims.clear();
             return;
         }
 
         let ids = self.state.unit_ids_in_order();
+        // C++ `settings["effects"]` default = 1; Rust-поле `settings_effects`
+        // симуляционное и по умолчанию false, поэтому кадровые часы идут как в
+        // исходных настройках оригинала и на снапшот/CRC не влияют.
+        let effects = true;
+        let state = &self.state;
 
-        // Строитель: рабочая поза и цикл кадров, пока идёт ORDER_BUILD.
-        self.build_anims.retain(|id, _| {
-            self.state
-                .unit(*id)
-                .is_some_and(crate::render::builder_animation_active)
-        });
+        self.frame_anims.retain(|id, _| state.unit(*id).is_some());
 
         for id in &ids {
-            let Some(unit) = self.state.unit(*id) else {
+            let Some(unit) = state.unit(*id) else {
                 continue;
             };
 
-            if !crate::render::builder_animation_active(unit) {
+            let builder = crate::render::builder_animation_active(unit);
+            let sentry = effects && crate::render::sentry_animation_active(unit);
+            let working = effects && crate::render::working_building_animation_active(unit);
+
+            if !(builder || sentry || working) {
+                self.frame_anims.remove(id);
                 continue;
             }
 
-            let anim = self.build_anims.entry(*id).or_default();
-            anim.elapsed += dt;
+            let anim = self.frame_anims.entry(*id).or_default();
 
-            while anim.elapsed >= BUILDER_ANIM_FRAME_SECONDS {
-                anim.elapsed -= BUILDER_ANIM_FRAME_SECONDS;
-                anim.step = (anim.step + 1) % crate::render::BUILDER_WORK_FRAME_STEPS;
+            if builder {
+                anim.builder_elapsed += dt;
+
+                while anim.builder_elapsed >= BUILDER_ANIM_FRAME_SECONDS {
+                    anim.builder_elapsed -= BUILDER_ANIM_FRAME_SECONDS;
+                    anim.builder_step =
+                        (anim.builder_step + 1) % crate::render::BUILDER_WORK_FRAME_STEPS;
+                }
+            } else {
+                anim.builder_elapsed = 0.0;
+                anim.builder_step = 0;
+            }
+
+            if sentry {
+                anim.sentry_elapsed += dt;
+
+                while anim.sentry_elapsed >= SENTRY_ANIM_FRAME_SECONDS {
+                    anim.sentry_elapsed -= SENTRY_ANIM_FRAME_SECONDS;
+                    anim.sentry_step = anim.sentry_step.wrapping_add(1);
+                }
+            } else {
+                anim.sentry_elapsed = 0.0;
+                anim.sentry_step = 0;
+            }
+
+            if working {
+                anim.activity_elapsed += dt;
+
+                while anim.activity_elapsed >= WORKING_BUILDING_ANIM_FRAME_SECONDS {
+                    anim.activity_elapsed -= WORKING_BUILDING_ANIM_FRAME_SECONDS;
+                    anim.activity_step = (anim.activity_step + 1) & 1;
+                }
+            } else {
+                anim.activity_elapsed = 0.0;
+                anim.activity_step = 0;
             }
         }
 

@@ -235,6 +235,13 @@ build add
 build done
 assert build=closed
 
+# Завод с очередью: C++ не анимирует его кадры (только состояние POWER_ON),
+# порт чередует два кадра состояния по визуальным часам; без очереди — статичен.
+anim 600
+shot factory-work-a
+anim 600
+shot factory-work-b
+
 # --- 2 хода постройки (ATTRIB_TURNS INFANTRY) ----------------------------
 end_turn
 end_turn

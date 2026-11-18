@@ -1548,14 +1548,20 @@ golden-кадры детерминированы, а `snapshot_bytes`/CRC не �
   (в `MININGST` 24 кадра: 16 «клан × выкл/вкл» + 8 коннекторов), у `POWGEN`
   6 кадров: 0/1 — выкл/вкл, 2…5 — коннекторы.
 
-Покадровой анимации по времени у зданий в C++ **нет**: `UnitInfo::Animate`
-добавляет только draw bounds, `ProcessOrderPowerOn` вызывает
-`DrawSpriteFrame` один раз. Поэтому «анимация» включённого генератора/шахты —
-это **второй кадр состояния** (индикатор питания), который Rust раньше не
-выбирал. `render::unit_frame_index` теперь: `image_base + angle`, а при
-`orders == PowerOn` — `+1`; `render::image_base_for` берёт клановый вариант
-шахты (консервативно: `Random`/нулевая база → клан 1). Сама симуляция не
-меняется — `image_base` остаётся полем сейва, выбор кадра только на рендере.
+Покадровой анимации по времени у **шахт и заводов** в C++ **нет**:
+`UnitInfo::Animate` добавляет только draw bounds, `ProcessOrderPowerOn`
+вызывает `DrawSpriteFrame` один раз. Поэтому «анимация» включённого
+генератора/шахты — это **второй кадр состояния** (индикатор питания), который
+Rust раньше не выбирал. `render::unit_frame_index` теперь: `image_base + angle`,
+а при `orders == PowerOn` — `+1`; `render::image_base_for` берёт клановый
+вариант шахты (консервативно: `Random`/нулевая база → клан 1). Сама симуляция
+не меняется — `image_base` остаётся полем сейва, выбор кадра только на рендере.
+
+При этом у **`RADAR`** (единственное здание с флагом `ANIMATED`) покадровая
+анимация в C++ есть: `UnitsManager_ProcessOrderSentry` каждый тик делает
+`image_index + 1` и после последнего кадра возвращается к `image_base`
+(16 кадров из `D_RADAR`). Она портирована в §25 вместе с визуальным
+индикатором работы шахт/заводов; `dt = 0` по-прежнему даёт статичный кадр C++.
 
 ### 15.4 Свидетельства
 
@@ -1571,9 +1577,10 @@ golden-кадры детерминированы, а `snapshot_bytes`/CRC не �
   пересекаются, у обоих включённых зданий кадр `image_base + 1`.
 * `max_core::deploy::tests::power_generator_starts_next_to_the_mining_station_but_not_on_it`
   — координаты генератора/плиты ровно по C++.
-* `tests/building_frames.rs` (3) — `POWGEN`: вкл/выкл = кадры 1/0, пиксели
+* `tests/building_frames.rs` (8) — `POWGEN`: вкл/выкл = кадры 1/0, пиксели
   различаются; `MININGST`: клан 7 → база 12, вкл = 13; `Random` → клан 1;
-  включённый кадр не меняется от времени (оракул: нет покадровой анимации).
+  работающая шахта чередует кадры, выключенная статична; завод с очередью
+  анимирован, без — нет; `RADAR` циклит 16 кадров `D_RADAR` (см. §25).
 * QA: `move-input.qa` PASS; пересняты `golden/move-input/*`,
   `golden/visual-screens/{game,portrait}.png`, `golden/upgrade/upgrade-done.png`,
   `golden/research/research-done.png`, `golden/research-help/{help-game,
@@ -2554,3 +2561,89 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   (`UpdateProduction` не списывает склад) не моделируется.
 * Фон и кнопки — `CONBUILD`/`FACBUILD`; `Help`/`Build path` инженера не
   портированы (как и раньше).
+
+---
+
+## 25. Покадровая анимация зданий и строителей — **сделано** (2026-11-18)
+
+Разбор жалобы «работающие шахты, заводы и строители выглядят статично».
+Оракул `max-cpp-port` не менялся; ниже — что в нём действительно есть.
+
+### 25.1 Что C++ анимирует по времени
+
+| Механизм | Оракул | Формула / интервал | Условие |
+|---|---|---|---|
+| `ANIMATED`-здание (`RADAR`) | `UnitsManager_ProcessOrderSentry` (`units_manager.cpp:3029-3041`), вызов из `UnitsManager_ProcessOrder` (`3323`) | каждый тик: `if (image_index + 1 <= image_index_max) image_index += 1; else image_index = image_base;` — один кадр на тик `UnitsManager_ProcessOrders` (~30 Гц), блок `image_base .. image_base + image_count - 1` | `flags & ANIMATED` **и** `settings["effects"]` (по умолчанию 1), приказ `ORDER_SENTRY` |
+| конструктор | `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856-2868`) | на каждом **втором** тике (`moved & 1`): `+8`; если `image_index + 8 >= 40`, вместо этого `-16`. Старт — `DrawSpriteFrame(image_index + 16)` из `StartBuilding` (`unitinfo.cpp:2789` / `PositionInTape` `4451`), цикл `+16 → +24 → +32 → +16` | `CONSTRCT`, `ORDER_BUILD` / `ORDER_STATE_BUILD_IN_PROGRESS`, `effects` |
+| инженер | `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) | постоянная рабочая поза `image_index + 16`; цикла нет | `ENGINEER`, `BUILD_IN_PROGRESS` |
+| пехота/коммандос в движении | `UnitInfo::Move` (`unitinfo.cpp:1826-1833`) | `+8` за тик, затем `image_base + angle` | `COMMANDO`/`INFANTRY` |
+
+Ключевой вывод: **у шахт и заводов покадровой анимации в C++ нет**. В
+`MININGST` 24 кадра = 8 кланов × 2 состояния (`выкл`/`вкл`) + 8 коннекторов;
+у `HANGAR`/`DEPOT`/`DOCK`/`TRAINHAL` — 2 больших кадра состояния + 8
+коннекторов. `ProcessOrderPowerOn` (`units_manager.cpp:2945`) один раз рисует
+`image_base + 1`, `PowerDown` — `image_base`; `UnitInfo::Animate`
+(`unitinfo.cpp:5056`) только добавляет draw bounds для shake-эффектов.
+`ANIMATED` из 93 типов есть только у `RADAR`, взрывов и ракетного дыма.
+
+### 25.2 Что портировано
+
+* **`RADAR`** — точный потиковый цикл `ProcessOrderSentry`: 16 кадров
+  (`D_RADAR.image_count`, а не 20 кадров спрайта — последние 4 коннекторы).
+  Раньше Rust-рендер вообще не читал `image_index` и всегда рисовал
+  `image_base + angle`, поэтому анимация терялась.
+* **Индикатор работы шахты/завода** — визуальное дополнение порта: C++ не
+  листает кадры этих зданий, но у них есть два кадра состояния. Пока здание
+  работает (`MININGST` — `ORDER_POWER_ON`; завод — `ORDER_BUILD` с непустой
+  `build_list`), `render::FrameAnimation::activity_step` чередует
+  `image_base` ↔ `image_base + 1` раз в
+  `WORKING_BUILDING_ANIM_FRAME_SECONDS = 0.5` с. Это **только кадр**, не
+  симуляция.
+* **Строитель** — прежний цикл `+8`/`-16` (`BUILDER_ANIM_FRAME_SECONDS`),
+  инженер держит `+16`. Теперь он часть общего `FrameAnimation` и не
+  сбрасывается при появлении других анимаций.
+* Кадровые часы живут в `App::frame_anims` (`HashMap<UnitId, FrameAnim>`),
+  обновляются в `App::update_unit_animations(dt)`; `dt` клампится до 0.1 с,
+  `dt = 0` очищает часы. `snapshot_bytes`/CRC/сейв не содержат ни одного поля
+  часов; `tests/building_animation.rs::animation_clock_does_not_change_the_snapshot`
+  это фиксирует.
+* `settings['effects']` в Rust-порте — симуляционное поле и по умолчанию
+  `false`; визуальные часы считают эффекты включёнными (как дефолт оригинала
+  `effects=1`), чтобы анимация шла и в QA/headless.
+* `dt = 0` (QA/headless) даёт ровно статичный кадр C++: включённая шахта —
+  `+1`, завод с очередью — базовый кадр, `RADAR` — `image_base`, строитель —
+  `+16`. Поэтому golden не дрейфуют без пересъёмки.
+
+### 25.3 Тесты и QA
+
+* `max_app/tests/building_frames.rs` (8; +4): работающая шахта чередует
+  кадры, выключенная статична; завод с очередью анимирован, без — статичен;
+  `RADAR` циклит ровно 16 кадров `D_RADAR`; `effects=false` возвращает
+  статичный кадр.
+* `max_app/tests/building_animation.rs` (новый, 4, на данных игры): два кадра
+  с `dt > 0` различаются для включённой шахты и завода с очередью, а для
+  выключенной шахты/завода без очереди — совпадают; `RADAR` меняет кадр за
+  1/30 с; `snapshot_bytes` до/после `dt` идентичны.
+* `max_app/tests/construction_animation.rs` (3) — прежний цикл конструктора
+  и «вырастание» постройки остаются зелёными.
+* QA `production.qa`: новые кадры `factory-work-a`/`factory-work-b` (завод с
+  очередью); QA `allocate.qa`: `mine-work-a`/`mine-work-b` (включённая шахта).
+  Golden — `golden/production/factory-work-*.png`,
+  `golden/allocate/mine-work-*.png`; `qa_golden_check` — **0 пикселей
+  дрейфа** на всех старых и новых эталонах.
+* Артефакты: headless-кадры — `max-rust/qa-out/production/`,
+  `max-rust/qa-out/allocate/` (CI-прогон); Windows UI
+  `max_app-1.1.0-windows-x86_64-ui` пересобран: `max-rust.exe`
+  6 443 520 Б, sha256 `acc20de0…`, zip sha256 `3e133bea…` (PE Subsystem=2,
+  SDL3 + sound, `--new-game` отрисовал кадр).
+
+### 25.4 Осознанные расхождения
+
+* C++ не анимирует шахты/заводы по времени; их «пульс» — решение порта по
+  запросу пользователя. Он использует только существующие кадры состояния
+  (никаких выдуманных спрайтов), выключен при `dt = 0` и не влияет на
+  симуляцию/CRC.
+* Визуальные часы идут по `dt`, а не по номеру симуляционного тика: в
+  интерактиве `local_update` тикает каждый кадр, поэтому темп совпадает с
+  C++ (~30 Гц для `ProcessOrderSentry`), а QA-команда `anim` может крутить
+  только кадр, не трогая состояние партии.
