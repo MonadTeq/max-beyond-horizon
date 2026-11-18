@@ -385,6 +385,7 @@ impl QaRunner {
                 Ok(Flow::Continue)
             }
             Command::Mem => self.mem(),
+            Command::Anim(millis) => self.anim(*millis),
             Command::Shot(name) => self.shot(name),
             Command::Assert(assertion) => self.check(assertion.clone()),
             Command::Save(name) => self.save(name),
@@ -1455,6 +1456,27 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
+    /// `anim N`: прокрутить визуальные часы на `N` мс реального `dt`.
+    ///
+    /// Симуляция не тикает (`GameState::tick` не вызывается), поэтому кадры
+    /// анимации детерминированы: `anim` идёт фиксированными шагами 1/60 с
+    /// ровно как `main.rs` в интерактиве. `dt = 0` у `tick`/`wait` наоборот
+    /// даёт статичный кадр (рабочая поза `+16`, полный размер постройки).
+    fn anim(&mut self, millis: u32) -> Result<Flow, String> {
+        let total = f64::from(millis) / 1000.0;
+        let step = 1.0f64 / 60.0;
+        let mut elapsed = 0.0f64;
+
+        while elapsed + f64::EPSILON < total {
+            let dt = step.min(total - elapsed).max(f64::EPSILON) as f32;
+            self.app.update_visual_units(dt);
+            elapsed += f64::from(dt);
+        }
+
+        self.detail = Some(format!("{millis} мс визуального времени"));
+        Ok(Flow::Continue)
+    }
+
     // -----------------------------------------------------------------------
     // Кадры
     // -----------------------------------------------------------------------
@@ -2498,6 +2520,86 @@ impl QaRunner {
                 };
 
                 self.expect(ok, format!("site={label}"), actual)
+            }
+            Assertion::ConstructionSiteDrawn => {
+                let team = self.app.player_team();
+                let site_types = [
+                    max_core::enums::UnitType::LargeTape,
+                    max_core::enums::UnitType::LargeCones,
+                    max_core::enums::UnitType::LargeSlab,
+                    max_core::enums::UnitType::SmallTape,
+                    max_core::enums::UnitType::SmallCones,
+                    max_core::enums::UnitType::SmallSlab,
+                ];
+                // Только декали **стройплощадки**: клетка ленты (`LRG/SMLTAPE`)
+                // и всё, что в ней лежит. Постоянные плиты-фундаменты базы под
+                // это не попадают.
+                let mut decals: Vec<(max_core::unit::UnitId, max_core::enums::UnitType)> =
+                    Vec::new();
+
+                for id in self.app.state().unit_ids_in_order() {
+                    let Some(tape) = self.app.state().unit(id) else {
+                        continue;
+                    };
+                    if tape.team != team
+                        || !matches!(
+                            tape.unit_type,
+                            max_core::enums::UnitType::LargeTape
+                                | max_core::enums::UnitType::SmallTape
+                        )
+                    {
+                        continue;
+                    }
+
+                    for other in self.app.state().units_at(tape.grid) {
+                        let Some(unit) = self.app.state().unit(*other) else {
+                            continue;
+                        };
+                        if unit.team == team && site_types.contains(&unit.unit_type) {
+                            decals.push((*other, unit.unit_type));
+                        }
+                    }
+                }
+
+                if decals.is_empty() {
+                    return self.expect(
+                        false,
+                        "site=drawn".to_string(),
+                        "площадок нет".to_string(),
+                    );
+                }
+
+                // Кадр со всеми декалями против кадра без одной: если декаль
+                // реально нарисована, её пиксели исчезнут (`IsRelevant`:
+                // `ORDER_IDLE` не рисуется).
+                let full = self.app.render_frame();
+                let mut ok = true;
+                let mut parts = Vec::new();
+
+                for (id, unit_type) in &decals {
+                    if let Some(unit) = self.app.state_mut().unit_mut(*id) {
+                        unit.set_visible_to_team(team, false);
+                    }
+                    let hidden = self.app.render_frame();
+                    if let Some(unit) = self.app.state_mut().unit_mut(*id) {
+                        unit.set_visible_to_team(team, true);
+                    }
+
+                    let own = full
+                        .pixels()
+                        .chunks_exact(4)
+                        .zip(hidden.pixels().chunks_exact(4))
+                        .filter(|(left, right)| left != right)
+                        .count();
+
+                    if own < 40 {
+                        ok = false;
+                    }
+
+                    parts.push(format!("{unit_type:?}: {own} px"));
+                }
+
+                self.expect(ok, "site=drawn".to_string(), parts.join(", "))
             }
             Assertion::Selected => {
                 let team = self.app.player_team();

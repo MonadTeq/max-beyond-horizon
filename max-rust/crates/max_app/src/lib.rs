@@ -570,6 +570,18 @@ pub struct App {
     /// чтобы спрайт поворачивался на клетке поворота, а не раньше.
     visual_paths:
         std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
+    /// Кадр рабочего цикла строителя (`UnitsManager_ProcessOrderBuild`).
+    ///
+    /// Визуальное время (`dt`), в снапшот/CRC не входит: симуляция не хранит
+    /// «номер кадра» — она хранит только `moved`, который C++ использует как
+    /// счётчик цикла. `dt = 0` (QA/headless) — кадр `+16`, детерминированно.
+    build_anims: std::collections::HashMap<UnitId, BuildAnim>,
+    /// «Вырастание» только что поставленного юнита (`UnitsManager_ScaleUnit`).
+    ///
+    /// `scaler_adjust` — **симуляционное** поле (`UnitInfo::RenderSprite`:
+    /// масштаб `2^-scaler`); здесь — только визуальный переход к полному
+    /// размеру по реальному `dt`. `dt = 0` (QA/headless) — полный размер.
+    growth_anims: std::collections::HashMap<UnitId, GrowthAnim>,
     /// FLC-анимация портрета выделенного юнита (`WINDOW_CORNER_FLIC`).
     ///
     /// UI-состояние: в снапшот/CRC не входит. `None` — юнит не выбран, у типа
@@ -577,6 +589,39 @@ pub struct App {
     /// см. `panels::draw_portrait`).
     portrait: Option<portrait::PortraitAnim>,
 }
+
+/// Кадр рабочего цикла строителя: накопленное визуальное время и шаг `0..3`.
+#[derive(Debug, Clone, Copy, Default)]
+struct BuildAnim {
+    /// Секунды с прошлого сдвига кадра.
+    elapsed: f32,
+    /// `0` — `+16` (начало стройки), `1` — `+24`, `2` — `+32` (C++ `+8`).
+    step: u8,
+}
+
+/// Визуальный переход «вырастания» от `scaler_adjust` к полному размеру.
+#[derive(Debug, Clone, Copy)]
+struct GrowthAnim {
+    /// Масштаб в момент первого кадра (`render::scaler_scale`), 1/16..1/2.
+    start: f32,
+    /// Секунды анимации; после [`GROWTH_ANIM_SECONDS`] — полный размер.
+    elapsed: f32,
+}
+
+/// Секунд на один кадр рабочего цикла строителя.
+///
+/// C++ `UnitsManager_ProcessOrderBuild` листает кадр на каждом втором тике
+/// (`moved & 1`), а тик оригинала — ~30 Гц; здесь кадры идут по реальному
+/// времени интерфейса, 10 кадров/с — цикл `+16 → +24 → +32` за 0.3 с.
+pub const BUILDER_ANIM_FRAME_SECONDS: f32 = 0.1;
+
+/// Длительность визуального «вырастания» юнита, секунды.
+///
+/// C++ `UnitsManager_ProcessOrderAwaitScaling` уменьшает `scaler_adjust` на 1
+/// за тик обработки приказов (5 шагов: 1/16 → 1). В интерактиве шаги
+/// сглаживаются по реальному времени; `dt = 0` (QA/headless) сразу даёт
+/// полный размер, чтобы кадры оставались детерминированными.
+pub const GROWTH_ANIM_SECONDS: f32 = 1.0;
 
 /// Скорость видимого движения юнитов по карте — клеток в секунду.
 ///
@@ -635,6 +680,8 @@ impl App {
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
+            build_anims: std::collections::HashMap::new(),
+            growth_anims: std::collections::HashMap::new(),
             portrait: None,
         }
     }
@@ -1918,6 +1965,8 @@ impl App {
         self.visual_units.clear();
         self.visual_goals.clear();
         self.visual_paths.clear();
+        self.build_anims.clear();
+        self.growth_anims.clear();
     }
 
     /// Визуальная позиция юнита в клетках (дробная) для кадра.
@@ -1953,6 +2002,112 @@ impl App {
         })
     }
 
+    /// Номер кадра рабочего цикла строителя для отрисовки (`0..3`).
+    ///
+    /// `0` — кадр `+16` (`DrawSpriteFrame(image_index + 16)` в C++
+    /// `StartBuilding`); дальше `+24`, `+32` — цикл `UnitsManager_ProcessOrderBuild`
+    /// (`+8`, а при `image_index + 8 >= 40` — `-16`). Значение двигает
+    /// [`App::update_unit_animations`] по реальному `dt`; `dt = 0` оставляет
+    /// `0`, поэтому QA-кадры детерминированы.
+    pub fn build_animation_step(&self, id: UnitId) -> u8 {
+        self.build_anims.get(&id).map(|anim| anim.step).unwrap_or(0)
+    }
+
+    /// Визуальный масштаб юнита (`1.0` — полный размер).
+    ///
+    /// C++ `UnitInfo::RenderSprite` рисует «вырастающего» юнита с
+    /// `2^-scaler_adjust`: `1/16 … 1` по мере `UnitsManager_ProcessOrderAwaitScaling`.
+    /// В интерактиве переход сглаживается по реальному `dt`
+    /// ([`GROWTH_ANIM_SECONDS`]); `dt = 0` и юниты без `scaler_adjust` — `1.0`.
+    pub fn unit_growth_scale(&self, id: UnitId) -> f32 {
+        self.growth_anims.get(&id).map_or(1.0, |anim| {
+            let progress = (anim.elapsed / GROWTH_ANIM_SECONDS).clamp(0.0, 1.0);
+            anim.start + (1.0 - anim.start) * progress
+        })
+    }
+
+    /// Масштаб камеры для отрисовки юнита с учётом «вырастания».
+    ///
+    /// `UnitInfo::RenderSprite` не меняет `Gfx_ZoomLevel`: он делит размер
+    /// кадра на `2^scaler_adjust`. В порте то же самое выражается уменьшенным
+    /// `zoom` спрайта (1:1 — `64`), тень/башня масштабируются тем же кодом.
+    pub fn unit_render_zoom(&self, id: UnitId, zoom: u32) -> u32 {
+        let scale = self.unit_growth_scale(id);
+        if scale >= 1.0 {
+            return zoom.max(1);
+        }
+        ((zoom as f32) * scale).round().max(1.0) as u32
+    }
+
+    /// Визуальные часы анимаций кадра: цикл строителя и «вырастание».
+    ///
+    /// Как и [`App::update_visual_units`], это **только кадр**: `build_anims`/
+    /// `growth_anims` не входят в снапшот/CRC и не влияют на симуляцию.
+    /// `dt <= 0` (QA/headless) сбрасывает их: строитель — поза `+16`, любая
+    /// «вырастающая» постройка — полный размер, кадр детерминирован.
+    fn update_unit_animations(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.1);
+
+        if !(dt > 0.0) {
+            self.build_anims.clear();
+            self.growth_anims.clear();
+            return;
+        }
+
+        let ids = self.state.unit_ids_in_order();
+
+        // Строитель: рабочая поза и цикл кадров, пока идёт ORDER_BUILD.
+        self.build_anims.retain(|id, _| {
+            self.state
+                .unit(*id)
+                .is_some_and(crate::render::builder_animation_active)
+        });
+
+        for id in &ids {
+            let Some(unit) = self.state.unit(*id) else {
+                continue;
+            };
+
+            if !crate::render::builder_animation_active(unit) {
+                continue;
+            }
+
+            let anim = self.build_anims.entry(*id).or_default();
+            anim.elapsed += dt;
+
+            while anim.elapsed >= BUILDER_ANIM_FRAME_SECONDS {
+                anim.elapsed -= BUILDER_ANIM_FRAME_SECONDS;
+                anim.step = (anim.step + 1) % crate::render::BUILDER_WORK_FRAME_STEPS;
+            }
+        }
+
+        // «Вырастание»: старт от симуляционного `scaler_adjust` (C++ 2^-n).
+        for id in &ids {
+            let Some(unit) = self.state.unit(*id) else {
+                continue;
+            };
+
+            if unit.scaler_adjust == 0 {
+                continue;
+            }
+
+            self.growth_anims.entry(*id).or_insert(GrowthAnim {
+                start: crate::render::scaler_scale(unit.scaler_adjust),
+                elapsed: 0.0,
+            });
+        }
+
+        for anim in self.growth_anims.values_mut() {
+            anim.elapsed = (anim.elapsed + dt).min(GROWTH_ANIM_SECONDS);
+        }
+
+        // Готовые анимации живут до удаления юнита: иначе юнит с ещё не
+        // сброшенным `scaler_adjust` (в QA симуляция между кадрами не тикает)
+        // начинал бы «вырастать» заново на каждом кадре.
+        self.growth_anims
+            .retain(|id, _| self.state.unit(*id).is_some());
+    }
+
     /// Подтягивает визуальные позиции к симуляционным.
     ///
     /// Симуляция двигает юнита на целую клетку за тик; кадр проходит **ту же
@@ -1962,7 +2117,9 @@ impl App {
     /// прохода маршрута совпадает с целевой клеткой.
     ///
     /// `dt <= 0` — снимок без интерполяции: headless/QA-кадры остаются
-    /// детерминированными и совпадают с эталонами.
+    /// детерминированными и совпадают с эталонами. То же правило для
+    /// визуальных часов анимаций: строитель показывает рабочую позу `+16`, а
+    /// «вырастающий» юнит — полный размер.
     ///
     /// P4: карта обновляется на месте (`retain` + `insert`), а не собирается
     /// заново каждый кадр. Это убирает аллокацию `HashMap` с `ids.len()`
@@ -1971,6 +2128,8 @@ impl App {
     pub fn update_visual_units(&mut self, dt: f32) {
         // Портрет идёт теми же кадрами, что и карта: `dt = 0` (QA) его не двигает.
         self.update_portrait(dt);
+        // Покадровая анимация строителя и «вырастание» — тоже по реальному dt.
+        self.update_unit_animations(dt);
 
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);

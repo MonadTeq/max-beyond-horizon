@@ -2212,10 +2212,27 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * `max_app::render::unit_frame_index` — рабочая поза строителя
   (`+16`, `ORDER_BUILD`/`BUILD_IN_PROGRESS`) и возврат к базовому кадру после
   достройки.
+* `max_app::render::unit_frame_index_for_animation` +
+  `App::build_animation_step` — покадровый цикл конструктора
+  (`UnitsManager_ProcessOrderBuild`): `index + 8`, а при `index + 8 >= 40` —
+  `index - 16`, то есть `+16 → +24 → +32 → +16`. Кадр листается **реальным
+  `dt`** (100 мс/кадр, [`max_app::BUILDER_ANIM_FRAME_SECONDS`]; C++ переключает
+  на каждом втором тике); `dt = 0` (QA/headless) — кадр начала стройки `+16`,
+  поэтому golden-кадры детерминированы. У инженера цикл не листается: он держит
+  `+16`, как `StartBuilding`.
+* `App::unit_growth_scale`/`App::unit_render_zoom` — «вырастание» постройки
+  (`UnitsManager_ProcessOrderAwaitScaling` + `UnitInfo::RenderSprite`): масштаб
+  `2^-scaler_adjust` (1/16 … 1) применяется к спрайту, тени и башне через
+  уменьшенный `zoom` (в C++ — делитель `Gfx_DecodeSpriteSetup`). Начальный
+  масштаб берётся из **симуляционного** `scaler_adjust`; переход к полному
+  размеру сглаживается по реальному `dt` (`GROWTH_ANIM_SECONDS = 1 с`),
+  `dt = 0` — полный размер.
 * `max_app::hud::unit_at_screen` — плита под зданием (`GROUND_COVER`) не
   забирает клик: сначала ищется не-`GROUND_COVER`, как `Access_GetTeamUnit`.
 * Отрисовка площадки — общий цикл спрайтов: декали `ORDER_AWAIT` (не
   `ORDER_IDLE`) и рисуются настоящими `LRGTAPE`/`LRGSLAB`/`LRGCONES`.
+  `App::draw_units` повторяет `IsRelevant` (`unitinfogroup.cpp:59`) полностью:
+  `ORDER_IDLE` не рисуется, а `GROUND_COVER` — не рисуется на `zoom < 8`.
 
 ### 22.3 Тесты и QA
 
@@ -2224,24 +2241,40 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   вода/побережье без конусов и с углом ленты 1, завершение (лента/конусы
   удалены, плита и здание на месте, `EXPAND`), отмена (вся площадка удалена),
   детерминизм раскладки и снапшота.
+* `max_app/src/render.rs` (unit): цикл `unit_frame_index_for_animation`
+  (`+16 → +24 → +32 → +16`, заворот `+8 >= 40` → `-16`, у инженера
+  постоянный `+16`) и `scaler_scale` (`2^-n`).
+* `max_app/tests/construction_animation.rs` (3, на данных игры): два кадра с
+  `dt > 0` различаются кадром спрайта конструктора, а `dt = 0` даёт ту же
+  рабочую позу `+16`; плита с `scaler_adjust = 4` в первом кадре `dt > 0`
+  меньше полной (`< 1/2` пикселей), через `GROWTH_ANIM_SECONDS` совпадает с
+  полной, `dt = 0` — сразу полная; юнит без `scaler_adjust` не масштабируется.
 * `max_app/tests/building_frames.rs` (+2): `ENGINEER`/`CONSTRCT` рисуют
   `image_base + angle + 16` в `BUILD_IN_PROGRESS` и базовый кадр после;
   все шесть декалей (`LRG/SML` × `TAPE/SLAB/CONES`) имеют непустой спрайт.
 * `max_app/tests/construction_site.rs`: кадр 640×640 до/после заказа —
   площадка добавляет ровно 3 нарисованных юнита и >500 изменённых пикселей;
-  после достройки ленты/конусов нет, кадр меняется снова.
+  **каждая** декаль проверяется отдельно (скрыть → кадр меняется: лента,
+  конусы и плита дают свои пиксели); после достройки ленты/конусов нет, кадр
+  меняется снова.
 * QA `production.qa`: `tick 1` после повторного заказа → `assert site=large`
-  (лента+конусы+плита в одной клетке) → `shot build-site`; `stop` →
-  `assert site=none`; после 10 ходов → `assert unit=Training Hall` +
-  `assert site=none`. Golden `production/build-site.png` добавлен,
-  `research/research-done.png` переснят (плита-фундамент под Research Center),
-  `research-help/research-plan.png` — тоже (здание на плите); остальные
-  эталоны — 0 дрейфа.
+  (лента+конусы+плита в одной клетке) → `assert site=drawn` (декали реально
+  нарисованы: `LargeCones ~564 px`, `LargeTape ~1790 px`, `LargeSlab ~14043 px`)
+  → `shot build-site`; затем `anim 60` → `shot build-site-grow` (плита
+  стартует с `2^-4`) и `anim 1000` → `shot build-site-grown` (полный размер);
+  `tick 6` → `assert unit-order=build` → `shot build-work-a`, `anim 150` →
+  `shot build-work-b` (рабочая поза конструктора `+16` против `+24`).
+  `stop` → `assert site=none`; после 10 ходов → `assert unit=Training Hall` +
+  `assert site=none`. Golden `production/`: 7 кадров (`build-site`,
+  `build-site-grow`, `build-site-grown`, `build-work-a`, `build-work-b`,
+  `buildmenu`, `buildmenu-factory`) — 0 дрейфа; остальные эталоны тоже
+  0 дрейфа (font/golden `research*` не тронуты).
 * Windows UI (живое окно): `build/scripts/ui-test-construction.ps1` —
   меню → партия → конструктор найден по трассе `MAX_DEBUG_INPUT` (тип `49`) →
   камера кликом по миникарте → `B` → Training Hall стрелками списка → `Done`;
   в трассе появились `15@` (LRGTAPE), `17@` (LRGSLAB), `19@` (LRGCONES),
-  скриншот `03-construction-site.png` (площадка 2×2 с лентой и плитой).
+  скриншоты `03-construction-site.png` (площадка 2×2 с лентой и плитой) и
+  `04-construction-grown.png` (после роста плиты; кадры различаются).
   Сборка клиента — `build/scripts/build-windows-ui.ps1 -NoPackage`.
 
 ### 22.4 Осознанные расхождения
@@ -2250,8 +2283,14 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   отдельным тиком `TAPE_POSITIONING`; для конструктора плита появляется сразу
   (в C++ — после 4 кадров позиционирования). Типы, клетки, углы и RNG-порядок
   совпадают.
-* Анимация «вырастания» плиты/здания пишется в поля (`scaler_adjust`,
-  `AwaitScaling`), но рендер пока рисует кадр в полном размере (как и раньше
-  для зданий).
-* Анимация конструктора `+8` каждые 2 кадра упрощена до постоянной рабочей
-  позы `+16`; инженер совпадает с C++ покадрово.
+* «Вырастание»: C++ уменьшает `scaler_adjust` на 1 за тик обработки приказов
+  (5 шагов, ~5 кадров), порт берёт **начальный** масштаб `2^-scaler_adjust` из
+  состояния и доводит его до 1 по реальному `dt` за `GROWTH_ANIM_SECONDS`
+  (1 с) — визуально это то же вырастание, но сглаженное по времени интерфейса.
+  `dt = 0` (QA/headless) сразу рисует полный размер, поэтому golden-кадры не
+  зависят от числа тиков до `shot`.
+* Покадровая анимация конструктора: C++ переключает кадр на каждом втором
+  тике (`moved & 1`), порт — по реальному `dt` (10 кадров/с). Последовательность
+  кадров и формула заворота (`+8`, при `image_index + 8 >= 40` — `-16`) точные;
+  `dt = 0` — рабочий кадр `+16`. Анимация не зависит от настройки `effects`
+  (она в порте не моделируется как UI-опция).

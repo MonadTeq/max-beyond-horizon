@@ -50,6 +50,41 @@ pub const BUILDING_ANCHOR_OFFSET: i32 = (64 / 2) - 1;
 /// попадает в блок рабочей анимации.
 pub const BUILDER_WORK_FRAME_OFFSET: usize = 16;
 
+/// Шаг рабочего цикла конструктора (`DrawSpriteFrame(image_index + 8)`).
+///
+/// C++ `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`): пока приказ
+/// `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS`, у конструктора на каждом
+/// втором тике кадр сдвигается на `+8`; если `image_index + 8 >= 40`, вместо
+/// этого берётся `image_index - 16` — то есть кадры идут по кругу
+/// `+16 → +24 → +32 → +16`. У инженера цикл не листается: он держит `+16`.
+pub const BUILDER_WORK_FRAME_STEP: usize = 8;
+
+/// Сколько разных кадров в рабочем цикле конструктора (`+16`, `+24`, `+32`).
+pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
+
+/// Активна ли покадровая анимация строителя (`ProcessOrderBuild`).
+///
+/// C++ листает кадры только у `CONSTRCT` в `ORDER_BUILD` /
+/// `ORDER_STATE_BUILD_IN_PROGRESS` и только при включённых эффектах
+/// (`ResourceManager_GetSettings()->GetNumericValue("effects")`). Инженер в это
+/// время держит рабочую позу `+16` без цикла.
+pub fn builder_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
+    unit.unit_type == UnitType::Constructor
+        && unit.orders == UnitOrder::Build
+        && unit.state == UnitOrderState::BuildInProgress
+}
+
+/// Масштаб «вырастания» из `scaler_adjust`: `2^-scaler` (`UnitInfo::RenderSprite`).
+///
+/// C++ `UnitInfo::RenderSprite`/`RenderShadow` (`unitinfo.cpp:3085/3050`)
+/// делят размер кадра на `scaling_factor = 1 << (scaler_adjust + 1)`, то есть
+/// относительно обычного кадра (`scaler_adjust = 0`, делитель 2) — `1 / 2^n`:
+/// `4 → 1/16`, `3 → 1/8`, `2 → 1/4`, `1 → 1/2`, `0 → 1`. `0` — полный размер.
+pub fn scaler_scale(scaler_adjust: u8) -> f32 {
+    let scaler = scaler_adjust.min(4);
+    1.0 / f32::from(1u16 << scaler)
+}
+
 /// База кадров корпуса с учётом клана.
 ///
 /// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:281`): у шахты
@@ -118,6 +153,45 @@ pub fn unit_frame_index_for_angle(
         && unit.state == UnitOrderState::BuildInProgress
     {
         index = index.saturating_add(BUILDER_WORK_FRAME_OFFSET);
+    }
+
+    index.min(last)
+}
+
+/// Кадр юнита с учётом покадровой анимации строителя (`build_step`).
+///
+/// `build_step` — номер кадра рабочего цикла конструктора (0, 1, 2) из
+/// [`crate::App::build_animation_step`]; `0` — кадр начала стройки `+16`, как
+/// `DrawSpriteFrame(image_index + 16)` в C++. Дальше повторяется цикл C++
+/// `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`):
+///
+/// ```text
+/// index = index + 8;                    // DrawSpriteFrame(image_index + 8)
+/// if index + 8 >= 40 { index -= 16; }   // кадры 40+ не влезают в CONSTRCT
+/// ```
+///
+/// Точная формула C++ применяется к текущему индексу (а не к `angle+16+8n`),
+/// поэтому последовательность заворачивается ровно как в оригинале:
+/// `16 → 24 → 32 → 16` (для угла 0). У `ENGINEER` цикла нет — кадр `+16`
+/// постоянный, как `DrawSpriteFrame(image_index + 16)` в `StartBuilding`.
+pub fn unit_frame_index_for_animation(
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    image_count: usize,
+    angle: u8,
+    build_step: u8,
+) -> usize {
+    let last = image_count.saturating_sub(1);
+    let mut index = unit_frame_index_for_angle(unit, image_base, image_count, angle);
+
+    if builder_animation_active(unit) {
+        for _ in 0..build_step % BUILDER_WORK_FRAME_STEPS {
+            index = if index + BUILDER_WORK_FRAME_STEP >= image_count {
+                index.saturating_sub(BUILDER_WORK_FRAME_OFFSET)
+            } else {
+                index + BUILDER_WORK_FRAME_STEP
+            };
+        }
     }
 
     index.min(last)
@@ -229,8 +303,32 @@ pub fn draw_unit_sprites_with_angle(
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
+    draw_unit_sprites_with_animation(assets, unit, image_base, body_angle, 0, frame, anchor, zoom)
+}
+
+/// [`draw_unit_sprites_with_angle`] с номером кадра рабочего цикла строителя.
+///
+/// `build_step` — [`BUILDER_WORK_FRAME_STEPS`]-цикл из
+/// [`crate::App::build_animation_step`]; карта передаёт его каждый кадр, HUD и
+/// тесты — `0` (кадр начала стройки `+16`, как в C++ при `StartBuilding`).
+pub fn draw_unit_sprites_with_animation(
+    assets: &crate::assets::Assets,
+    unit: &max_core::unit::UnitInfo,
+    image_base: i16,
+    body_angle: u8,
+    build_step: u8,
+    frame: &mut RgbaBuffer,
+    anchor: (i32, i32),
+    zoom: u32,
+) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
-    let image_index = unit_frame_index_for_angle(unit, image_base, sprite.sheet.len(), body_angle);
+    let image_index = unit_frame_index_for_animation(
+        unit,
+        image_base,
+        sprite.sheet.len(),
+        body_angle,
+        build_step,
+    );
     let sprite_frame = sprite.frame_at(image_index)?;
     let shadow = sprite.shadow_at(image_index);
     let colors = TeamColors::ALL
@@ -542,8 +640,11 @@ impl App {
                 continue;
             }
             // `UnitInfoGroup::IsRelevant` (`unitinfogroup.cpp:59`): idle-юниты
-            // не рисуются (кроме QuickBuild-превью, которого у нас нет).
-            if unit.orders == max_core::enums::UnitOrder::Idle {
+            // не рисуются (кроме QuickBuild-превью, которого у нас нет), а на
+            // мелком масштабе (`Gfx_ZoomLevel < 8`) не рисуется и `GROUND_COVER`.
+            if unit.orders == max_core::enums::UnitOrder::Idle
+                || (unit.flags & unit_flags::GROUND_COVER != 0 && viewport.zoom() < 8)
+            {
                 stats.units_skipped += 1;
                 continue;
             }
@@ -577,15 +678,15 @@ impl App {
             // ней с реальной скоростью; иначе кадр «забегал» бы вперёд и юнит
             // смотрел бы вбок, двигаясь прямо.
             let body_angle = self.visual_angle(visible[index]).unwrap_or(unit.angle);
+            // Покадровая анимация строителя и «вырастание» только что
+            // поставленного юнита — визуальные часы `App` (реальный `dt`), в
+            // снапшот/CRC они не входят. `dt = 0` (QA/headless) даёт рабочую
+            // позу `+16` и полный размер — кадр остаётся детерминированным.
+            let build_step = self.build_animation_step(visible[index]);
+            let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
             let drawn = self.assets().and_then(|assets| {
-                draw_unit_sprites_with_angle(
-                    assets,
-                    unit,
-                    image_base,
-                    body_angle,
-                    frame,
-                    anchor,
-                    viewport.zoom(),
+                draw_unit_sprites_with_animation(
+                    assets, unit, image_base, body_angle, build_step, frame, anchor, zoom,
                 )
             });
 
@@ -711,6 +812,63 @@ mod tests {
         assert_eq!(unit_frame_index_for_angle(&unit, 0, 100, 2), 3);
         // Последний кадр не переполняется.
         assert_eq!(unit_frame_index_for_angle(&unit, 0, 3, 2), 2);
+    }
+
+    #[test]
+    fn builder_work_cycle_matches_the_cpp_plus_eight_minus_sixteen_loop() {
+        use max_core::enums::UnitType;
+        use max_core::team::TeamId;
+        use max_core::unit::{UnitId, UnitInfo};
+
+        let mut builder = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId(1));
+        builder.orders = UnitOrder::Build;
+        builder.state = UnitOrderState::BuildInProgress;
+
+        // CONSTRCT: 40 кадров, угол 3 → image_index = 3 + 16 = 19.
+        // C++ ProcessOrderBuild: +8, +8, затем 35 + 8 >= 40 → 35 - 16 = 19.
+        let cycle: Vec<usize> = (0..7)
+            .map(|step| unit_frame_index_for_animation(&builder, 0, 40, 3, step % 3))
+            .collect();
+        assert_eq!(cycle, vec![19, 27, 35, 19, 27, 35, 19]);
+
+        // Угол 0: кадры начала стройки +16 = 16, далее 24 и 32.
+        let cycle: Vec<usize> = (0..3)
+            .map(|step| unit_frame_index_for_animation(&builder, 0, 40, 0, step))
+            .collect();
+        assert_eq!(cycle, vec![16, 24, 32]);
+
+        // У инженера цикла нет: рабочая поза +16 постоянна (StartBuilding).
+        let engineer = {
+            let mut unit = UnitInfo::new(UnitType::Engineer, TeamId::RED, UnitId(2));
+            unit.orders = UnitOrder::Build;
+            unit.state = UnitOrderState::BuildInProgress;
+            unit
+        };
+        for step in 0..3 {
+            assert_eq!(
+                unit_frame_index_for_animation(&engineer, 0, 32, 3, step),
+                19,
+                "ENGINEER держит DrawSpriteFrame(image_index + 16)"
+            );
+        }
+
+        // После стройки кадр возвращается к базовому независимо от шага.
+        builder.orders = UnitOrder::Await;
+        builder.state = UnitOrderState::ExecutingOrder;
+        for step in 0..3 {
+            assert_eq!(unit_frame_index_for_animation(&builder, 0, 40, 3, step), 3);
+        }
+    }
+
+    #[test]
+    fn scaler_scale_matches_the_cpp_divisor() {
+        assert_eq!(scaler_scale(0), 1.0);
+        assert_eq!(scaler_scale(1), 0.5);
+        assert_eq!(scaler_scale(2), 0.25);
+        assert_eq!(scaler_scale(3), 0.125);
+        assert_eq!(scaler_scale(4), 0.0625);
+        // `scaler_adjust` в C++ — uint8_t, но реально 0..4; климпим.
+        assert_eq!(scaler_scale(9), 0.0625);
     }
 
     #[test]

@@ -58,8 +58,10 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
   4. `victory.qa` — партия до победы (лимит ходов 1) + `assert victory`;
      элиминация ИИ скриптом недостижима — pending, покрыта тестом слоя 1;
   5. `production.qa` — P2: конструктор → BuildMenu → TRAINHAL за 10 ходов
-     (`assert site=large` — стройплощадка LRGTAPE/LRGCONES/LRGSLAB на карте,
-     `assert site=none` после достройки) → завод → INFANTRY за 2 хода;
+     (`assert site=large` + `assert site=drawn` — стройплощадка
+     LRGTAPE/LRGCONES/LRGSLAB на карте и каждая декаль даёт пиксели;
+     `anim`-кадры роста плиты и цикла кадров строителя; `assert site=none`
+     после достройки) → завод → INFANTRY за 2 хода;
   6. `save-load.qa` — P3: два хода → `save_v70` (настоящий V70) → окно
      `Save Game` (`key s`, кадр `save-menu`) → `load` в свежем состоянии →
      `assert turn=3`, `assert units=14` → `end_turn` после загрузки;

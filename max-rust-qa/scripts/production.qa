@@ -104,7 +104,31 @@ assert unit-order=build
 # (LRGSLAB, кадр из RNG).
 tick 1
 assert site=large
+# `assert site=drawn` — декали не просто есть в состоянии, а **нарисованы**:
+# каждая (лента, конусы, плита) даёт свои пиксели в кадре. В C++
+# `UnitInfoGroup::IsRelevant` рисует только не-`ORDER_IDLE` юнитов, поэтому
+# декали обязаны быть `ORDER_AWAIT`, как `UnitInfo::UnitInfo`.
+assert site=drawn
 shot build-site
+
+# «Вырастание» постройки (C++ `UnitsManager_ProcessOrderAwaitScaling` +
+# `UnitInfo::RenderSprite`: масштаб `2^-scaler_adjust`). `tick`/`shot` идут с
+# `dt = 0` — детерминированный полный размер; `anim` прокручивает только
+# визуальные часы, поэтому кадры роста воспроизводимы.
+anim 60
+shot build-site-grow
+anim 1000
+shot build-site-grown
+
+# Покадровая анимация строителя (C++ `UnitsManager_ProcessOrderBuild`:
+# конструктор листает `+8`, при `image_index + 8 >= 40` — `-16`, то есть
+# `+16 → +24 → +32`). После 4 кадров `AWAIT_TAPE_POSITIONING` конструктор
+# возвращается в `ORDER_BUILD`/`BUILD_IN_PROGRESS` и начинает работу.
+tick 6
+assert unit-order=build
+shot build-work-a
+anim 150
+shot build-work-b
 
 # --- 10 ходов постройки (ATTRIB_TURNS TRAINHAL) --------------------------
 end_turn

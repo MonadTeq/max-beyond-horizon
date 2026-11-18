@@ -25,6 +25,37 @@
 
 ### Добавлено
 
+- **Анимация стройки: кадры конструктора и «вырастание» постройки.** C++
+  `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`) во время
+  `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS` переключает кадр конструктора
+  на каждом втором тике: `DrawSpriteFrame(image_index + 8)`, а при
+  `image_index + 8 >= 40` — `image_index - 16`, то есть цикл
+  `+16 → +24 → +32 → +16`; инженер держит постоянную рабочую позу `+16`
+  (`UnitInfo::StartBuilding`, `unitinfo.cpp:2789`). Раньше порт рисовал только
+  постоянную позу. Теперь `max_app::render::unit_frame_index_for_animation` +
+  `App::build_animation_step` листают кадры по **реальному `dt`**
+  (`BUILDER_ANIM_FRAME_SECONDS = 100 мс`; C++ переключает каждые 2 тика), а
+  `dt = 0` (QA/headless) даёт детерминированный кадр начала стройки `+16`.
+  «Вырастание» (`UnitsManager_ProcessOrderAwaitScaling` +
+  `UnitInfo::RenderSprite`/`RenderShadow`): масштаб `2^-scaler_adjust`
+  (1/16 … 1) берётся из симуляционного `scaler_adjust` и доводится до полного
+  по `dt` за `GROWTH_ANIM_SECONDS = 1 с`; `dt = 0` — сразу полный размер.
+  Оба визуальных часа применяет `App::draw_units` (спрайт, тень и башня
+  масштабируются одним уменьшенным `zoom`, как делитель
+  `Gfx_DecodeSpriteSetup`), а `IsRelevant` теперь повторён полностью:
+  `GROUND_COVER` не рисуется на `zoom < 8`. Тесты:
+  `max_app/tests/construction_animation.rs` (3: два кадра с `dt > 0`
+  различаются кадром строителя, `dt = 0` — поза `+16`; плита растёт от 1/16
+  до полной; юнит без `scaler_adjust` не масштабируется), unit-тесты
+  `render.rs` (цикл `+16→+24→+32` и `scaler_scale`), per-decal проверка
+  пикселей в `tests/construction_site.rs`. QA `production.qa`:
+  `assert site=drawn` (лента/конусы/плита дают свои пиксели) + `anim 60`/
+  `anim 1000` (`shot build-site-grow`/`build-site-grown`) и
+  `tick 6`/`anim 150` (`shot build-work-a`/`build-work-b`); golden
+  `production/` — 7 кадров, 0 дрейфа. Живой Windows-прогон
+  `build/scripts/ui-test-construction.ps1` пишет `03-construction-site` и
+  `04-construction-grown` (кадры различаются).
+
 - **Стройплощадка на карте (`PrepareConstructionSite` /
   `DeployConstructionSiteUtilities`).** Раньше после заказа стройки на карте не
   было ничего, а в конце ходов появлялось сразу готовое здание. C++ ставит

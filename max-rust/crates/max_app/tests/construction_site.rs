@@ -45,6 +45,18 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
+/// Сколько пикселей отличается между двумя кадрами (RGBA, точное сравнение).
+fn changed_pixels(
+    left: &max_render::buffer::RgbaBuffer,
+    right: &max_render::buffer::RgbaBuffer,
+) -> usize {
+    left.pixels()
+        .chunks_exact(4)
+        .zip(right.pixels().chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count()
+}
+
 /// Кадр «до заказа» против кадра «после заказа»: площадка обязана появиться на
 /// карте (а не только в состоянии), а после достройки — исчезнуть вместе с
 /// лентой/конусами, оставив плиту и готовое здание.
@@ -97,6 +109,54 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         changed > 500,
         "площадка должна быть видна в кадре: изменено {changed} пикселей"
     );
+
+    // Каждая декаль обязана давать **свои** пиксели: если лента, конусы или
+    // плита не рисуются (например, декаль осталась `ORDER_IDLE` или её нет в
+    // кадре), кадр без неё не изменится. Проверяем по очереди, как `IsRelevant`
+    // для каждого юнита (`unitinfogroup.cpp:59`).
+    let site_units = app.state().units_at(site);
+    let find_site_unit = |unit_type: UnitType| {
+        site_units.iter().copied().find(|id| {
+            app.state()
+                .unit(*id)
+                .is_some_and(|unit| unit.unit_type == unit_type)
+        })
+    };
+
+    for (label, decal) in [
+        ("лента LRGTAPE", find_site_unit(UnitType::LargeTape)),
+        ("конусы LRGCONES", find_site_unit(UnitType::LargeCones)),
+        ("плита LRGSLAB", find_site_unit(UnitType::LargeSlab)),
+    ] {
+        let Some(decal) = decal else {
+            panic!("{label} нет в клетке площадки");
+        };
+
+        let order = app
+            .state()
+            .unit(decal)
+            .map(|unit| (unit.orders, unit.state))
+            .expect("декаль на площадке");
+
+        app.state_mut()
+            .unit_mut(decal)
+            .expect("декаль на площадке")
+            .set_visible_to_team(TeamId::RED, false);
+        let without = app.render_frame();
+        app.state_mut()
+            .unit_mut(decal)
+            .expect("декаль на площадке")
+            .set_visible_to_team(TeamId::RED, true);
+
+        let own = changed_pixels(&with_site, &without);
+
+        assert!(
+            own > 100,
+            "{label} не даёт пикселей в кадре (своих: {own}; orders={:?}/{:?})",
+            order.0,
+            order.1
+        );
+    }
 
     // Достройка: лента и конусы убираются, плита и здание остаются.
     for _ in 0..report.turns {
