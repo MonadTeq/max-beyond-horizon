@@ -244,6 +244,10 @@ pub enum Assertion {
     /// `assert unit=NAME`: у игрока есть юнит с таким именем (P2: юнит/здание
     /// появились после ходов производства).
     UnitType(String),
+    /// `assert site=large|small|none`: стройплощадка в мире — лента+конусы
+    /// (+плита) в одной клетке; `none` — ни ленты, ни конусов у команды
+    /// игрока (после достройки плита под зданием остаётся и не мешает).
+    ConstructionSite(Option<bool>),
     /// `assert digest=HEX`: CRC16 снапшота состояния (`App::digest`).
     Digest(u16),
     /// `assert cargo-mode=buy|upgrade`: режим списка `CargoMenu`.
@@ -1041,6 +1045,14 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             parse_u32(value, "assert gold")?,
         )),
         "unit" => Ok(Assertion::UnitType(value.to_string())),
+        "site" => match value.to_ascii_lowercase().as_str() {
+            "large" | "big" => Ok(Assertion::ConstructionSite(Some(true))),
+            "small" => Ok(Assertion::ConstructionSite(Some(false))),
+            "none" | "closed" | "absent" => Ok(Assertion::ConstructionSite(None)),
+            other => Err(format!(
+                "assert site: ожидалось large|small|none, получено «{other}»"
+            )),
+        },
         "unit-pos" => {
             let (x, y) = parse_grid_pair(value, "assert unit-pos")?;
             Ok(Assertion::UnitPos(x, y))
@@ -1809,6 +1821,19 @@ mod tests {
         assert_eq!(one("assert angle=2"), Command::Assert(Assertion::Angle(2)));
         assert!(parse_script("assert angle=8\n").is_err(), "угол 0..7");
         assert!(parse_script("assert angle=восток\n").is_err());
+        assert_eq!(
+            one("assert site=large"),
+            Command::Assert(Assertion::ConstructionSite(Some(true)))
+        );
+        assert_eq!(
+            one("assert site=small"),
+            Command::Assert(Assertion::ConstructionSite(Some(false)))
+        );
+        assert_eq!(
+            one("assert site=none"),
+            Command::Assert(Assertion::ConstructionSite(None))
+        );
+        assert!(parse_script("assert site=huge\n").is_err());
     }
 
     #[test]

@@ -759,6 +759,12 @@ pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
 ///
 /// Предпочитает юнита, видимого команде `team` (туман войны), иначе — любого
 /// в клетке (сначала свои). Точка вне карты — `None`.
+///
+/// Как `Access_GetTeamUnit` (`access.cpp:1804`): первым ищется **не**
+/// `GROUND_COVER` (плита `LRGSLAB`/`SMLSLAB` лежит под каждым зданием и в
+/// C++ не забирает клик), а декаль — только если в клетке больше никого нет
+/// (стройплощадка `LRGTAPE` тоже `GROUND_COVER`, но `SELECTABLE` и не
+/// `ORDER_IDLE`).
 pub fn unit_at_screen(
     state: &GameState,
     viewport: &Viewport,
@@ -774,14 +780,23 @@ pub fn unit_at_screen(
 
     let grid = Point::new(grid_x, grid_y);
     let ids = state.units_at(grid);
-
-    let visible = ids.iter().copied().find(|id| {
+    let is_ground_cover = |id: &UnitId| {
+        state
+            .unit(*id)
+            .is_some_and(|unit| unit.flags & unit_flags::GROUND_COVER != 0)
+    };
+    let visible = |id: &UnitId| {
         state
             .unit(*id)
             .is_some_and(|unit| unit.is_visible_to_team(team))
-    });
+    };
 
-    visible.or_else(|| ids.iter().copied().find(|id| state.unit(*id).is_some()))
+    ids.iter()
+        .copied()
+        .find(|id| visible(id) && !is_ground_cover(id))
+        .or_else(|| ids.iter().copied().find(visible))
+        .or_else(|| ids.iter().copied().find(|id| !is_ground_cover(id)))
+        .or_else(|| ids.iter().copied().find(|id| state.unit(*id).is_some()))
 }
 
 /// Может ли юнит получить приказ движения от HUD.
@@ -1389,6 +1404,32 @@ mod tests {
         one.push("a");
         one.push("b");
         assert_eq!(one.lines(), ["b"]);
+    }
+
+    #[test]
+    fn ground_cover_slab_under_a_building_does_not_steal_the_click() {
+        // C++ `Access_GetTeamUnit` (`access.cpp:1804`) первым ищет
+        // `SELECTABLE` и не `GROUND_COVER`; плита `LRGSLAB` лежит под каждым
+        // зданием, но клик должен достаться зданию. Порт раньше брал первый
+        // юнит в `Hash_MapHash`, а после стройки плита вставлена раньше
+        // здания — выделялся `LargeSlab`.
+        let (mut app, _tank, _enemy) = test_app();
+        let grid = Point::new(11, 10);
+
+        let slab = app
+            .state_mut()
+            .spawn_unit(UnitType::LargeSlab, TeamId::RED, grid, 0)
+            .expect("slab");
+        let building = app
+            .state_mut()
+            .spawn_unit(UnitType::TrainingHall, TeamId::RED, grid, 0)
+            .expect("building");
+
+        let (x, y) = screen_of(&app, grid);
+        let picked = unit_at_screen(app.state(), app.viewport(), TeamId::RED, x, y);
+
+        assert_eq!(picked, Some(building), "клик должен выбрать здание, не плиту");
+        assert_ne!(picked, Some(slab));
     }
 
     #[test]

@@ -86,6 +86,9 @@ assert unit-menu=closed
 # `CancelBuilding` исполняется процессором приказа на следующем тике.
 tick 1
 assert unit-order=await
+# `CancelBuilding` мобильного строителя: `Access_DestroyUtilities(... true ...)`
+# — площадка снимается целиком (лента, конусы, плита).
+assert site=none
 # Строитель снова готов строить: `Build` вернулся в меню.
 unit-menu open
 assert unit-menu-item=Build
@@ -95,6 +98,13 @@ build select 13
 build done
 assert build=closed
 assert unit-order=build
+# Площадка появляется на кадре обработки `ORDER_BUILD`/`INIT`, как C++
+# `UnitsManager_ProcessOrderBuild` → `UnitInfo::StartBuilding`:
+# `DeployConstructionSiteUtilities` (LRGTAPE+LRGCONES) + `PrepareConstructionSite`
+# (LRGSLAB, кадр из RNG).
+tick 1
+assert site=large
+shot build-site
 
 # --- 10 ходов постройки (ATTRIB_TURNS TRAINHAL) --------------------------
 end_turn
@@ -109,6 +119,9 @@ end_turn
 end_turn
 assert unit=Training Hall
 assert build=closed
+# По завершении (`SpawnNewUnit` + `UnitsManager_BuildingReady`) лента и конусы
+# убраны, плита осталась фундаментом, здание стоит в клетке площадки.
+assert site=none
 
 # --- BuildMenu завода: очередь и заказ пехоты ----------------------------
 # Завод — стационарный юнит: `select unit` его не видит, выбираем по имени.

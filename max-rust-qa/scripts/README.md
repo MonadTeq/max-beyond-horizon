@@ -23,7 +23,7 @@ max-rust-qa/
 ├── scripts/unit-menu.qa        # TC-0622–0626: меню команд юнита (повторный клик), Sentry, Esc, модальность, Build
 ├── scripts/allocate.qa         # TC-0627–0629: пункт allocate → диалог ALLOCFRM → set/row → Done (08/P5) → доход комплекса
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
-├── golden/production/*.png     # эталон BuildMenu (production.qa)
+├── golden/production/*.png     # эталоны BuildMenu и стройплощадки (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
 ├── golden/research/*.png       # эталон партии после исследования (research.qa)
 ├── golden/research-help/*.png  # эталоны ResearchMenu + Help-экранов (research-help.qa)
@@ -182,6 +182,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert cargo-types>=N` | длина списка типов (15 в покупке, 62 в модернизации по умолчанию) |
 | `assert cargo-credits>=N` | остаток кредитов в `CargoMenu` |
 | `assert unit=NAME` | у игрока есть юнит с именем из `BuildMenu` («Training Hall», «Infantry», …) |
+| `assert site=large\|small\|none` | стройплощадка в мире: `LRG/SML-TAPE`+`CONES` (+`SLAB`) в одной клетке; `none` — ни ленты, ни конусов у команды игрока (плита под готовым зданием остаётся и не мешает) |
 | `assert alloc=open` / `alloc=closed` | открыт ли диалог распределения добычи (C++ `AllocMenu`) |
 | `assert alloc-raw=N` (и `>=`, `<=`, `>`, `<`) | добыча сырья в комплексе шахты (`production.raw`, сумма `raw_mining`); так же `alloc-fuel`, `alloc-gold` |
 | `assert alloc-free=N` | свободные единицы добычи комплекса (`Σ(16 − total_mining)`) |
@@ -202,7 +203,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → фазы старта для GREEN и RED по очереди (мобилизация + высадка) → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (64 шага, 14 кадров) |
 | `visual-screens.qa` | 15 кадров только с `shot` (main menu, introduction, credits, options, planet, players, mobilize, landing, game, mine-selected, portrait, winloss, multiplayer, join list); Introduction — заглушка MVE, Credits — прокрутка после `tick 100`, `mine-selected` — панель статистики шахты (Hits/Cargo/Total, без Speed), portrait — FLC выделенного Surveyor'а (TC-0919); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (442 кадра, 15 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → фазы старта → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (29 шагов, 3 кадра) |
-| `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL → **цикл отмены (TC-0630):** `unit-menu open` (во время стройки в попапе только `stop`) → `unit-menu item stop` → `tick 1` → `assert unit-order=await` → `assert unit-menu-item=Build` (снова включён) → повторный заказ TRAINHAL → 10 ходов → здание появилось (`assert unit=Training Hall`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`buildmenu-factory` | **PASS** (golden `production/buildmenu.png`, 0 дрейфа) |
+| `production.qa` | P2: главное меню → Options → Planet → Players (`RED` человек, `GREEN` компьютер) → мобилизация без покупок → высадка → `select unit 0` (конструктор) → `B`/`build open` → TRAINHAL → **цикл отмены (TC-0630):** `unit-menu open` (во время стройки в попапе только `stop`) → `unit-menu item stop` → `tick 1` → `assert unit-order=await` → `assert unit-menu-item=Build` (снова включён) → повторный заказ TRAINHAL → `tick 1` → `assert site=large` (`LRGTAPE`+`LRGCONES`+`LRGSLAB` в клетке) → 10 ходов → здание появилось (`assert unit=Training Hall`, `assert site=none`) → `select type Training Hall` → `build open` завода → INFANTRY (2 хода) → `assert unit=Infantry`; кадры `buildmenu`/`build-site`/`buildmenu-factory` | **PASS** (golden `production/build-site.png` + `buildmenu*.png`, 0 дрейфа) |
 | `save-load.qa` | P3: локальная партия → два `end_turn` (ход ИИ и новый раунд) → `save_v70 turn2.dta` (настоящий V70) → `load turn2.dta` в свежем состоянии → `assert turn=3`, `assert units>=10` → `end_turn` после загрузки; кадры `save-menu`/`after-load` | **PASS** |
 | `upgrade.qa` | P6: локальная партия → `select type Constructor` → `upgrade open` (клавиша `U`) → `upgrade row 0 up` → `Done`: золото 150 → 142, `current_values` типа изменены; повтор с `Cancel` не меняет золото; кадры `upgrade-menu`/`upgrade-done` | **PASS** (golden `upgrade/`) |
 | `research.qa` | P6: конструктор строит Research Center (12 ходов) → `select type` + `key o` (питание, пакет 08/P1) → 16 × `end_turn` → `assert research attack>=1`; кадр `research-done` | **PASS** (golden `research/`) |

@@ -9,8 +9,9 @@
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::production::{
-    builder_type, buildable_units, can_build, cost_per_turn, is_builder, is_factory,
-    max_possible_build_rate, total_cost, BuildError, ProductionEventKind, ProductionManager,
+    builder_type, buildable_units, can_build, construction_slab_type, construction_utility,
+    construction_utility_types, cost_per_turn, is_builder, is_factory, max_possible_build_rate,
+    total_cost, BuildError, ProductionEventKind, ProductionManager,
 };
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
@@ -348,6 +349,316 @@ fn two_speed_build_costs_the_cpp_rate() {
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Tank), 1);
     assert_eq!(state.team_units[0].gold(), 176);
+}
+
+// ---------------------------------------------------------------------------
+// Стройплощадка (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
+// ---------------------------------------------------------------------------
+
+/// Все юниты команды в клетке `site` (C++ `Hash_MapHash[Point]`).
+fn units_at(state: &GameState, site: Point) -> Vec<&max_core::unit::UnitInfo> {
+    state
+        .units_at(site)
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .collect()
+}
+
+fn find_at<'a>(
+    state: &'a GameState,
+    site: Point,
+    unit_type: UnitType,
+) -> Option<&'a max_core::unit::UnitInfo> {
+    units_at(state, site)
+        .into_iter()
+        .find(|unit| unit.unit_type == unit_type)
+}
+
+/// C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`: заказ
+/// конструктора ставит **большую** площадку `LRGTAPE`/`LRGCONES`/`LRGSLAB`
+/// ровно в клетке постройки, все — `AWAIT`/`EXECUTING_ORDER`, лента с
+/// родителем-строителем, плита — случайный кадр `0..5`.
+#[test]
+fn constructor_order_deploys_the_large_construction_site() {
+    let mut state = state_with_gold(100);
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager
+        .enqueue(constructor, UnitType::TrainingHall)
+        .expect("queue");
+    let report = manager.commit(constructor).expect("build order");
+    let site = report.site;
+
+    // Раскладка C++: конусы и лента — в клетке площадки, большие декали.
+    assert_eq!(
+        construction_utility_types(UnitType::TrainingHall),
+        (UnitType::LargeTape, UnitType::LargeCones)
+    );
+    assert_eq!(
+        construction_slab_type(UnitType::TrainingHall),
+        UnitType::LargeSlab
+    );
+    assert_eq!(
+        construction_utility(&state, TeamId::RED, site),
+        state
+            .units_at(site)
+            .iter()
+            .copied()
+            .find(|id| state.unit(*id).is_some_and(|u| u.unit_type == UnitType::LargeTape))
+    );
+
+    let tape = find_at(&state, site, UnitType::LargeTape).expect("LRGTAPE на площадке");
+    assert_eq!(tape.angle, 0, "на земле C++ ставит ленту углом 0");
+    assert_eq!(
+        tape.parent_unit,
+        Some(constructor),
+        "лента привязана к строителю"
+    );
+    assert_eq!(tape.orders, UnitOrder::Await);
+    assert_eq!(tape.state, UnitOrderState::ExecutingOrder);
+
+    let cones = find_at(&state, site, UnitType::LargeCones).expect("LRGCONES на площадке");
+    assert_eq!(cones.angle, 0);
+    assert_eq!(cones.orders, UnitOrder::Await);
+    assert_eq!(cones.state, UnitOrderState::ExecutingOrder);
+
+    let slab = find_at(&state, site, UnitType::LargeSlab).expect("LRGSLAB на площадке");
+    assert!(
+        (0..5).contains(&slab.angle),
+        "кадр плиты — Randomizer_Generate(image_count = 5), получено {}",
+        slab.angle
+    );
+    assert_eq!(
+        slab.scaler_adjust, 4,
+        "C++ PrepareConstructionSite: scaler_adjust = 4"
+    );
+    assert_eq!(
+        slab.orders,
+        UnitOrder::AwaitScaling,
+        "C++ ScaleUnit(slab, ORDER_STATE_EXPAND)"
+    );
+
+    // Ровно один комплект: повторный вызов (как из start_building/машины
+    // приказов) не плодит вторую площадку и не жжёт RNG.
+    let mut duplicate_state = state.clone();
+    let rng_before = duplicate_state.rng;
+    let duplicate = max_core::production::deploy_construction_site(
+        &mut duplicate_state,
+        constructor,
+        UnitType::TrainingHall,
+        site,
+    );
+    assert!(
+        duplicate.is_none(),
+        "площадка уже стоит — повторный спавн запрещён"
+    );
+    assert_eq!(duplicate_state.rng, rng_before, "RNG не сдвинут");
+}
+
+/// Инженер строит малый объект (`ROAD`): `SMLTAPE`/`SMLCONES`, плиты нет
+/// (`REQUIRES_SLAB` у дороги не выставлен).
+#[test]
+fn engineer_order_deploys_the_small_construction_site_without_a_slab() {
+    let mut state = state_with_gold(100);
+    let engineer = state
+        .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(20, 20), 0)
+        .expect("engineer");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(engineer, UnitType::Road).expect("queue");
+    let report = manager.commit(engineer).expect("build order");
+    let site = report.site;
+
+    assert_eq!(
+        construction_utility_types(UnitType::Road),
+        (UnitType::SmallTape, UnitType::SmallCones)
+    );
+    assert!(
+        find_at(&state, site, UnitType::SmallTape).is_some(),
+        "SMLTAPE"
+    );
+    assert!(
+        find_at(&state, site, UnitType::SmallCones).is_some(),
+        "SMLCONES"
+    );
+    assert!(
+        find_at(&state, site, UnitType::SmallSlab).is_none(),
+        "ROAD не требует плиты"
+    );
+    assert!(
+        find_at(&state, site, UnitType::LargeTape).is_none(),
+        "у малого объекта нет большой ленты"
+    );
+}
+
+/// Вода/побережье: C++ `DeployConstructionSiteUtilities` не ставит конусы, а
+/// лента получает угол 1; плита (`REQUIRES_SLAB` у здания) всё равно ставится.
+#[test]
+fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
+    let mut state = state_with_gold(100);
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+    let site = Point::new(30, 30);
+    assert!(state.map.surface.set(site.x, site.y, max_core::enums::Surface::WATER));
+
+    let deployed = max_core::production::deploy_construction_site(
+        &mut state,
+        constructor,
+        UnitType::LightVehiclePlant,
+        site,
+    )
+    .expect("площадка на воде");
+
+    assert_eq!(deployed.cones, None, "на воде конусы не ставятся");
+    let tape = state.unit(deployed.tape).expect("лента");
+    assert_eq!(tape.angle, 1, "C++: на воде/побережье unit_angle = 1");
+    assert!(
+        find_at(&state, site, UnitType::LargeSlab).is_some(),
+        "плита здания ставится и на воде"
+    );
+}
+
+/// Стартовая площадка живёт до конца стройки: по завершении `SpawnNewUnit` +
+/// `UnitsManager_BuildingReady` лента и конусы удаляются, плита остаётся
+/// фундаментом, а готовое здание встаёт в ту же клетку (и «вырастает»).
+#[test]
+fn completion_replaces_the_site_with_the_finished_building() {
+    let mut state = state_with_gold(100);
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager
+        .enqueue(constructor, UnitType::TrainingHall)
+        .expect("queue");
+    let report = manager.commit(constructor).expect("site");
+    let site = report.site;
+
+    let tape = construction_utility(&state, TeamId::RED, site).expect("лента до стройки");
+
+    for _ in 0..report.turns {
+        production_turn(&mut state);
+    }
+
+    assert!(
+        state.unit(tape).is_none(),
+        "C++ BuildingReady: лента снимается после постройки"
+    );
+    assert!(
+        find_at(&state, site, UnitType::LargeCones).is_none(),
+        "конусы снимаются вместе с лентой"
+    );
+    assert!(
+        find_at(&state, site, UnitType::LargeSlab).is_some(),
+        "плита остаётся под зданием (remove_slabs = false)"
+    );
+
+    let building = find_at(&state, site, UnitType::TrainingHall).expect("готовое здание");
+    assert_eq!(
+        building.orders, UnitOrder::AwaitScaling,
+        "C++ BuildingReady: ScaleUnit(building, ORDER_STATE_EXPAND)"
+    );
+    assert_eq!(building.scaler_adjust, 4);
+    assert_eq!(building.parent_unit, None);
+    assert_eq!(count_type(&state, UnitType::TrainingHall), 1);
+
+    let builder = state.unit(constructor).expect("constructor alive");
+    assert_eq!(builder.orders, UnitOrder::Await);
+    assert_eq!(builder.state, UnitOrderState::ExecutingOrder);
+    assert!(builder.build_list.is_empty());
+}
+
+/// `stop` мобильного строителя (`CancelBuilding` → `BuildCancel`) убирает
+/// площадку из клетки заказа: лента, конусы и плита не остаются на карте.
+#[test]
+fn cancelling_the_build_removes_the_site() {
+    let mut state = state_with_gold(100);
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager
+        .enqueue(constructor, UnitType::TrainingHall)
+        .expect("queue");
+    let report = manager.commit(constructor).expect("site");
+    let site = report.site;
+    drop(manager);
+    assert!(construction_utility(&state, TeamId::RED, site).is_some());
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    assert!(manager.cancel(constructor));
+    drop(manager);
+
+    // `CancelBuilding` исполняется процессором приказа на следующем тике.
+    state.process_orders();
+
+    assert_eq!(count_type(&state, UnitType::LargeTape), 0);
+    assert_eq!(count_type(&state, UnitType::LargeCones), 0);
+    assert_eq!(count_type(&state, UnitType::LargeSlab), 0);
+    assert_eq!(count_type(&state, UnitType::TrainingHall), 0);
+    assert_eq!(
+        state.unit(constructor).map(|unit| unit.orders),
+        Some(UnitOrder::Await)
+    );
+}
+
+/// Раскладка площадки и порядок RNG детерминированы: два одинаковых заказа
+/// дают одинаковые типы/клетки/кадры и одинаковый снапшот.
+#[test]
+fn construction_site_layout_is_deterministic() {
+    fn run() -> (Vec<u8>, Point, Vec<(UnitType, Point, u8)>) {
+        let mut state = state_with_gold(100);
+        let constructor = state
+            .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(30, 30), 0)
+            .expect("constructor");
+
+        let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+        manager
+            .enqueue(constructor, UnitType::TrainingHall)
+            .expect("queue");
+        let report = manager.commit(constructor).expect("site");
+
+        let mut layout: Vec<(UnitType, Point, u8)> = state
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| state.unit(id))
+            .filter(|unit| {
+                unit.team == TeamId::RED
+                    && matches!(
+                        unit.unit_type,
+                        UnitType::LargeTape | UnitType::LargeCones | UnitType::LargeSlab
+                    )
+            })
+            .map(|unit| (unit.unit_type, unit.grid, unit.angle))
+            .collect();
+        layout.sort_unstable_by_key(|(unit_type, point, angle)| {
+            (*unit_type as u16, point.y, point.x, *angle)
+        });
+
+        (state.snapshot_bytes(), report.site, layout)
+    }
+
+    let (bytes_a, site_a, layout_a) = run();
+    let (bytes_b, site_b, layout_b) = run();
+
+    assert_eq!(layout_a, layout_b, "раскладка площадки совпадает");
+    assert_eq!(site_a, site_b, "клетка площадки совпадает");
+    assert_eq!(layout_a.len(), 3, "лента + конусы + плита");
+    assert_eq!(
+        layout_a
+            .iter()
+            .filter(|(unit_type, _, _)| *unit_type == UnitType::LargeSlab)
+            .count(),
+        1,
+        "плита ровно одна"
+    );
+    assert_eq!(bytes_a, bytes_b, "снапшот состояния совпадает байт-в-байт");
 }
 
 // ---------------------------------------------------------------------------

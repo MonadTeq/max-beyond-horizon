@@ -2180,10 +2180,78 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 применяется, здание появляется через `ATTRIB_TURNS` ходов, `stop` его отменяет,
 `Build` возвращается.
 
-Осознанные расхождения, которые могут выглядеть как «ничего не строится»:
-(1) площадка постройки выбирается автоматически (`find_build_site`, радиус 8) —
-клик по карте площадку не задаёт; (2) здание появляется сразу **готовым** в
-конце стройки: «стройплощадка» C++ (`PrepareConstructionSite` /
-`DeployConstructionSiteUtilities`) не портирована, поэтому первые N ходов на
-карте ничего не видно — прогресс виден в журнале (`Build order: …`,
-`<имя> built`); (3) `Alt-P`/звуки попапа не портированы.
+Осознанные расхождения, которые остаются: (1) площадка постройки выбирается
+автоматически (`find_build_site`, радиус 8) — клик по карте площадку не задаёт;
+(2) `Alt-P`/звуки попапа не портированы. Стройплощадка (`PrepareConstructionSite`
+/ `DeployConstructionSiteUtilities`) портирована отдельным этапом — см. §22.
+
+## 22. Стройплощадка: площадка стоит на карте до готового здания — **сделано** (2026-11-18)
+
+### 22.1 Как в C++ (оракул)
+
+| Что | Код | Поведение |
+|---|---|---|
+| площадка | `UnitInfo::StartBuilding` (`unitinfo.cpp:2751`) | мобильный строитель: `DeployConstructionSiteUtilities(unit_to_build)`; конструктор затем `ORDER_AWAIT_TAPE_POSITIONING`, инженер — `ORDER_STATE_BUILD_IN_PROGRESS` + `DrawSpriteFrame(image_index + 16)` |
+| типы/раскладка утилит | `UnitInfo::DeployConstructionSiteUtilities` (`unitinfo.cpp:3802`) | здание (`flags & BUILDING`) → `LRGTAPE`+`LRGCONES`, иначе `SMLTAPE`+`SMLCONES`; конусы и лента в клетке `move_to`, угол 0; на `SURFACE_TYPE_WATER|COAST` конусы **не** ставятся, лента получает угол 1; `tape->SetParent(builder)` |
+| плита | `UnitInfo::PrepareConstructionSite` (`unitinfo.cpp:4122`) | если `flags & REQUIRES_SLAB`: `LRGSLAB` (здание) / `SMLSLAB`, кадр `Randomizer_Generate(image_count)` (5/1), `scaler_adjust = 4`, `UnitsManager_ScaleUnit(EXPAND)`; заодно убирает с площадки `COMMANDO`/`SUBMARNE`/`CLNTRS` |
+| рост | `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`) | у конструктора `+8` каждые 2 кадра (`image_index + 8`, `>= 40` → `-16`), у инженера рабочая поза постоянна; отдельного кадра «процент постройки» у здания **нет** — прогресс виден только по площадке и позе строителя |
+| завершение | `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520`) + `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) | здание `DeployUnit(GetConstructedUnitType(), …, utility_unit->x/y)`; `ORDER_IDLE`/`BUILDING_READY`; лента/конусы снимаются `Access_DestroyUtilities(..., remove_slabs = false, …)` — **плита остаётся**; здание `ScaleUnit(EXPAND)`, родитель-строитель отвязывается |
+| отмена | `UnitInfo::CancelBuilding` (`unitinfo.cpp:4269`) | `Access_DestroyUtilities(grid, true, …)` — лента, конусы и плита удаляются |
+
+### 22.2 Что сделано
+
+* `max_core::production` — `deploy_construction_site` (порт обеих функций):
+  большие/малые декали, вода/побережье, родитель ленты, кадр плиты из RNG,
+  `scaler_adjust = 4` + `ScaleUnit(EXPAND)`. Заказ ставит площадку синхронно
+  (`ProductionManager::commit`), `start_building` (машина приказов, путь P4/ИИ)
+  зовёт её же; повторный вызов идемпотентен и не двигает RNG.
+* `ProductionManager::spawn_new_unit` — завершение: здание в клетке площадки,
+  `scale_unit(EXPAND)`, `access::destroy_utilities(..., remove_slabs = false)`;
+  лента/конусы исчезают, плита остаётся. Отмена (`BuildCancel`/`HaltBuilding`)
+  убирает всю площадку из `target_grid` (порт не двигает строителя на клетку).
+* `max_app::render::unit_frame_index` — рабочая поза строителя
+  (`+16`, `ORDER_BUILD`/`BUILD_IN_PROGRESS`) и возврат к базовому кадру после
+  достройки.
+* `max_app::hud::unit_at_screen` — плита под зданием (`GROUND_COVER`) не
+  забирает клик: сначала ищется не-`GROUND_COVER`, как `Access_GetTeamUnit`.
+* Отрисовка площадки — общий цикл спрайтов: декали `ORDER_AWAIT` (не
+  `ORDER_IDLE`) и рисуются настоящими `LRGTAPE`/`LRGSLAB`/`LRGCONES`.
+
+### 22.3 Тесты и QA
+
+* `max_core/tests/production.rs` (6): большая площадка конструктора (типы,
+  клетка, углы, родитель, `scaler_adjust`, RNG), малая у инженера без плиты,
+  вода/побережье без конусов и с углом ленты 1, завершение (лента/конусы
+  удалены, плита и здание на месте, `EXPAND`), отмена (вся площадка удалена),
+  детерминизм раскладки и снапшота.
+* `max_app/tests/building_frames.rs` (+2): `ENGINEER`/`CONSTRCT` рисуют
+  `image_base + angle + 16` в `BUILD_IN_PROGRESS` и базовый кадр после;
+  все шесть декалей (`LRG/SML` × `TAPE/SLAB/CONES`) имеют непустой спрайт.
+* `max_app/tests/construction_site.rs`: кадр 640×640 до/после заказа —
+  площадка добавляет ровно 3 нарисованных юнита и >500 изменённых пикселей;
+  после достройки ленты/конусов нет, кадр меняется снова.
+* QA `production.qa`: `tick 1` после повторного заказа → `assert site=large`
+  (лента+конусы+плита в одной клетке) → `shot build-site`; `stop` →
+  `assert site=none`; после 10 ходов → `assert unit=Training Hall` +
+  `assert site=none`. Golden `production/build-site.png` добавлен,
+  `research/research-done.png` переснят (плита-фундамент под Research Center),
+  `research-help/research-plan.png` — тоже (здание на плите); остальные
+  эталоны — 0 дрейфа.
+* Windows UI (живое окно): `build/scripts/ui-test-construction.ps1` —
+  меню → партия → конструктор найден по трассе `MAX_DEBUG_INPUT` (тип `49`) →
+  камера кликом по миникарте → `B` → Training Hall стрелками списка → `Done`;
+  в трассе появились `15@` (LRGTAPE), `17@` (LRGSLAB), `19@` (LRGCONES),
+  скриншот `03-construction-site.png` (площадка 2×2 с лентой и плитой).
+  Сборка клиента — `build/scripts/build-windows-ui.ps1 -NoPackage`.
+
+### 22.4 Осознанные расхождения
+
+* Площадка ставится в `ProductionManager::commit`/`start_building`, а не
+  отдельным тиком `TAPE_POSITIONING`; для конструктора плита появляется сразу
+  (в C++ — после 4 кадров позиционирования). Типы, клетки, углы и RNG-порядок
+  совпадают.
+* Анимация «вырастания» плиты/здания пишется в поля (`scaler_adjust`,
+  `AwaitScaling`), но рендер пока рисует кадр в полном размере (как и раньше
+  для зданий).
+* Анимация конструктора `+8` каждые 2 кадра упрощена до постоянной рабочей
+  позы `+16`; инженер совпадает с C++ покадрово.

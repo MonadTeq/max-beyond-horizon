@@ -56,8 +56,13 @@
 //!   внутри и не «выезжает» по `AWAIT_TAPE_POSITIONING`;
 //! * `quick_build` (настройка обучающих миссий) не моделируется;
 //! * мобильный строитель ставит здание на `target_grid` без анимации
-//!   переезда/`StartBuilding`-телепорта (только площадка по C++-правилам).
+//!   переезда/`StartBuilding`-телепорта; стройплощадка (лента, конусы, плита)
+//!   появляется сразу при заказе, а не после 4 кадров `TAPE_POSITIONING`;
+//! * анимация «вырастания» плиты/здания (`scaler_adjust`/`AwaitScaling`) идёт
+//!   в симуляции, но кадр рендера её пока не масштабирует.
 
+use crate::access;
+use crate::deploy::{LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT};
 use crate::enums::unit_flags;
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
@@ -517,6 +522,165 @@ pub fn find_build_site(
     None
 }
 
+// ---------------------------------------------------------------------------
+// Стройплощадка (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
+// ---------------------------------------------------------------------------
+
+/// `DeployConstructionSiteUtilities` (`unitinfo.cpp:3802`): пара «лента+конусы».
+///
+/// Здание (флаг `BUILDING`) получает большие декали `LRGTAPE`/`LRGCONES`
+/// (2×2), всё остальное — малые `SMLTAPE`/`SMLCONES` (1×1).
+pub fn construction_utility_types(unit_type: UnitType) -> (UnitType, UnitType) {
+    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+        (UnitType::LargeTape, UnitType::LargeCones)
+    } else {
+        (UnitType::SmallTape, UnitType::SmallCones)
+    }
+}
+
+/// `PrepareConstructionSite` (`unitinfo.cpp:4122`): плита под постройкой.
+///
+/// `LRGSLAB` для зданий, `SMLSLAB` для остальных типов; создаётся только при
+/// флаге `REQUIRES_SLAB`.
+pub fn construction_slab_type(unit_type: UnitType) -> UnitType {
+    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+        UnitType::LargeSlab
+    } else {
+        UnitType::SmallSlab
+    }
+}
+
+/// `image_count` плиты — второй байт `D_LRGSLA`/`D_DEFALT` (`MAX.RES`).
+fn slab_image_count(unit_type: UnitType) -> i32 {
+    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+        LARGE_SLAB_IMAGE_COUNT
+    } else {
+        SMALL_SLAB_IMAGE_COUNT
+    }
+}
+
+/// Что поставила стройплощадка (для тестов/QA; id позволяют проверить уборку).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConstructionSite {
+    /// Клетка-источник площадки (`DeployConstructionSiteUtilities`).
+    pub site: Point,
+    /// `LRGTAPE`/`SMLTAPE` — родитель-строитель, стоит до конца стройки.
+    pub tape: UnitId,
+    /// `LRGCONES`/`SMLCONES`; `None` на воде/побережье (C++ не ставит конусы).
+    pub cones: Option<UnitId>,
+    /// `LRGSLAB`/`SMLSLAB` — плита; `None`, если тип не `REQUIRES_SLAB`.
+    pub slab: Option<UnitId>,
+}
+
+/// Лента площадки команды в клетке (`Access_GetConstructionUtility`,
+/// `access.cpp:1773`).
+pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Option<UnitId> {
+    state.units_at(site).iter().copied().find(|id| {
+        state.unit(*id).is_some_and(|unit| {
+            unit.team == team
+                && matches!(
+                    unit.unit_type,
+                    UnitType::LargeTape | UnitType::SmallTape
+                )
+        })
+    })
+}
+
+/// Поставить стройплощадку — порт `DeployConstructionSiteUtilities` +
+/// `PrepareConstructionSite` в точке `site`.
+///
+/// Раскладка C++ (`unitinfo.cpp:3802/4122`):
+/// * конусы `LRGCONES`/`SMLCONES` — в клетке площадки, угол `0`; на
+///   воде/побережье (`SURFACE_TYPE_WATER|COAST`) **не ставятся**;
+/// * лента `LRGTAPE`/`SMLTAPE` — там же, угол `0` на земле и `1` на воде,
+///   родитель — строитель;
+/// * плита `LRGSLAB`/`SMLSLAB` (если `REQUIRES_SLAB`) — там же, кадр
+///   `Randomizer_Generate(image_count)` (5 у большой, 1 у малой), затем
+///   `scaler_adjust = 4` + `ScaleUnit(EXPAND)` — анимация роста.
+///
+/// Функция идемпотентна по клетке: `StartBuilding` в C++ вызывается один раз,
+/// но порт зовёт её ещё из `ProductionManager::commit` (заказ применяется сразу,
+/// а не на следующем кадре) и из машины приказов — вторая площадка не нужна.
+pub fn deploy_construction_site(
+    state: &mut GameState,
+    builder: UnitId,
+    unit_type: UnitType,
+    site: Point,
+) -> Option<ConstructionSite> {
+    let Some(builder_unit) = state.unit(builder) else {
+        return None;
+    };
+    let team = builder_unit.team;
+
+    if construction_utility(state, team, site).is_some() {
+        return None;
+    }
+
+    let (tape_type, cones_type) = construction_utility_types(unit_type);
+    let surface = access::modified_surface_type(state, site, false);
+    let on_water = surface == access::SURFACE_TYPE_WATER || surface == access::SURFACE_TYPE_COAST;
+    let mut cones = None;
+
+    if !on_water {
+        cones = state.spawn_unit(cones_type, team, site, 0);
+        if let Some(id) = cones {
+            set_site_unit_orders(state, id, None);
+        }
+    }
+
+    let tape = state.spawn_unit(tape_type, team, site, 0)?;
+    if let Some(unit) = state.unit_mut(tape) {
+        unit.angle = if on_water { 1 } else { 0 };
+        unit.storage = 0;
+    }
+    set_site_unit_orders(state, tape, Some(builder));
+
+    let slab = if access::unit_type_flags(unit_type) & unit_flags::REQUIRES_SLAB != 0 {
+        let slab_type = construction_slab_type(unit_type);
+        let angle = state.rng.generate_i32(slab_image_count(unit_type)) as u8;
+        let id = state.spawn_unit(slab_type, team, site, 0);
+
+        if let Some(id) = id {
+            if let Some(unit) = state.unit_mut(id) {
+                unit.angle = angle;
+                unit.storage = 0;
+            }
+            set_site_unit_orders(state, id, None);
+
+            // C++ `PrepareConstructionSite`: `scaler_adjust = 4` и
+            // `UnitsManager_ScaleUnit(unit, ORDER_STATE_EXPAND)`.
+            if let Some(unit) = state.unit_mut(id) {
+                unit.scaler_adjust = 4;
+            }
+            state.scale_unit(id, UnitOrderState::Expand);
+        }
+
+        id
+    } else {
+        None
+    };
+
+    Some(ConstructionSite {
+        site,
+        tape,
+        cones,
+        slab,
+    })
+}
+
+/// Новые декали площадки — `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, как
+/// `UnitInfo::UnitInfo` (`unitinfo.cpp:174`); иначе `App::draw_units` пропустит
+/// их как `ORDER_IDLE` и площадка будет невидима.
+fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId>) {
+    if let Some(unit) = state.unit_mut(id) {
+        unit.orders = UnitOrder::Await;
+        unit.state = UnitOrderState::ExecutingOrder;
+        unit.prior_orders = UnitOrder::Await;
+        unit.prior_state = UnitOrderState::ExecutingOrder;
+        unit.parent_unit = parent;
+    }
+}
+
 /// Свободная клетка рядом с заводом под выпущенный юнит.
 fn find_spawn_cell(
     state: &GameState,
@@ -761,6 +925,14 @@ impl<'a> ProductionManager<'a> {
         let mut data = self.state.order_data(unit_id);
         data.move_to = site;
         self.state.set_order_data(unit_id, data);
+
+        // `UnitInfo::StartBuilding` в C++ зовётся синхронно из `Build`:
+        // `DeployConstructionSiteUtilities` + `PrepareConstructionSite`.
+        // Ставим площадку сразу, чтобы она была видна уже на кадре заказа, а
+        // машина приказов (`start_building`) повторно её не дублирует.
+        if is_mobile_builder(builder_type) {
+            let _ = deploy_construction_site(self.state, unit_id, unit_type, site);
+        }
 
         Ok(BuildReport {
             unit_type,
@@ -1022,6 +1194,19 @@ impl<'a> ProductionManager<'a> {
                 builder.state = UnitOrderState::Init;
             }
         } else {
+            // `UnitInfo::SpawnNewUnit` + `UnitsManager_BuildingReady`: готовое
+            // здание встаёт на клетку ленты, лента/конусы снимаются, плита
+            // остаётся фундаментом (`Access_DestroyUtilities(..., remove_slabs =
+            // false, ...)`), здание «вырастает» (`ScaleUnit(EXPAND)`).
+            if let Some(unit) = self.state.unit_mut(spawned) {
+                unit.parent_unit = None;
+                unit.scaler_adjust = 4;
+            }
+            self.state.scale_unit(spawned, UnitOrderState::Expand);
+
+            let remove_road = unit_type != UnitType::Road;
+            access::destroy_utilities(self.state, cell, false, false, true, remove_road);
+
             // Мобильный строитель достроил здание и ждёт приказов
             // (`SpawnNewUnit`: `orders = ORDER_AWAIT`; `!path` очищает список).
             builder.orders = UnitOrder::Await;

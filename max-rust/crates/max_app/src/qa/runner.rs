@@ -2421,6 +2421,84 @@ impl QaRunner {
                     ),
                 )
             }
+            Assertion::ConstructionSite(large) => {
+                let team = self.app.player_team();
+                let mut matching = Vec::new();
+                let mut any_site = Vec::new();
+
+                for id in self.app.state().unit_ids_in_order() {
+                    let Some(tape) = self.app.state().unit(id) else {
+                        continue;
+                    };
+                    let (is_large, cones_type, slab_type) = match tape.unit_type {
+                        max_core::enums::UnitType::LargeTape => (
+                            true,
+                            max_core::enums::UnitType::LargeCones,
+                            max_core::enums::UnitType::LargeSlab,
+                        ),
+                        max_core::enums::UnitType::SmallTape => (
+                            false,
+                            max_core::enums::UnitType::SmallCones,
+                            max_core::enums::UnitType::SmallSlab,
+                        ),
+                        _ => continue,
+                    };
+                    if tape.team != team {
+                        continue;
+                    }
+
+                    let site = tape.grid;
+                    let units = self.app.state().units_at(site);
+                    let has_cones = units.iter().any(|other| {
+                        self.app
+                            .state()
+                            .unit(*other)
+                            .is_some_and(|unit| unit.unit_type == cones_type)
+                    });
+                    let has_slab = units.iter().any(|other| {
+                        self.app
+                            .state()
+                            .unit(*other)
+                            .is_some_and(|unit| unit.unit_type == slab_type)
+                    });
+
+                    any_site.push((site, is_large, has_cones, has_slab));
+
+                    if large == Some(is_large) && has_cones && has_slab {
+                        matching.push(site);
+                    }
+                }
+
+                let ok = match large {
+                    Some(_) => !matching.is_empty(),
+                    None => any_site.is_empty(),
+                };
+                let label = match large {
+                    Some(true) => "large",
+                    Some(false) => "small",
+                    None => "none",
+                };
+                let actual = if any_site.is_empty() {
+                    "площадок нет".to_string()
+                } else {
+                    any_site
+                        .iter()
+                        .map(|(site, is_large, has_cones, has_slab)| {
+                            format!(
+                                "{} ({},{}): cones={}, slab={}",
+                                if *is_large { "large" } else { "small" },
+                                site.x,
+                                site.y,
+                                has_cones,
+                                has_slab
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                };
+
+                self.expect(ok, format!("site={label}"), actual)
+            }
             Assertion::Selected => {
                 let team = self.app.player_team();
                 let selected = self

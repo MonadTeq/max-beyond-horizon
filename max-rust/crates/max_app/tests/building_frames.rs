@@ -18,10 +18,12 @@
 use std::path::{Path, PathBuf};
 
 use max_app::assets::Assets;
-use max_app::render::{draw_unit_sprites_with_base, image_base_for, unit_frame_index};
+use max_app::render::{
+    draw_unit_sprites_with_base, image_base_for, unit_frame_index, BUILDER_WORK_FRAME_OFFSET,
+};
 use max_app::AppConfig;
 use max_core::access::unit_type_flags;
-use max_core::enums::{TeamClan, UnitOrder, UnitType};
+use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo};
 use max_render::buffer::RgbaBuffer;
@@ -172,4 +174,77 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, None), 0);
     assert_eq!(image_base_for(&unit, Some(TeamClan::Random)), 0);
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
+}
+
+/// Во время стройки C++ рисует рабочую позу строителя — `image_index + 16`
+/// (`unitinfo.cpp:2789` для `ENGINEER`, `4451` для `CONSTRCT`). Кадр обязан
+/// возвращаться к базовому после `ORDER_AWAIT` (C++ `SpawnNewUnit`:
+/// `DrawSpriteFrame(image_index - 16)`).
+#[test]
+fn working_builder_uses_the_plus_sixteen_frame() {
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
+    for (unit_type, expected_frames) in [
+        (UnitType::Engineer, 32usize),
+        (UnitType::Constructor, 40usize),
+    ] {
+        let sprite = assets.sprite(unit_type).expect("спрайт строителя");
+        assert_eq!(sprite.sheet.len(), expected_frames, "{unit_type:?}: кадры");
+
+        let mut unit = unit_of(unit_type, UnitOrder::Build, 3);
+        unit.state = UnitOrderState::BuildInProgress;
+        let base = image_base_for(&unit, None);
+
+        assert_eq!(
+            unit_frame_index(&unit, base, sprite.sheet.len()),
+            3 + BUILDER_WORK_FRAME_OFFSET,
+            "{unit_type:?}: C++ DrawSpriteFrame(image_index + 16)"
+        );
+        let work_frame = render(&assets, &unit, base);
+
+        unit.orders = UnitOrder::Await;
+        unit.state = UnitOrderState::ExecutingOrder;
+        assert_eq!(
+            unit_frame_index(&unit, base, sprite.sheet.len()),
+            3,
+            "{unit_type:?}: после стройки — базовый кадр"
+        );
+        let idle_frame = render(&assets, &unit, base);
+
+        assert!(painted(&work_frame) > 0, "{unit_type:?}: рабочая поза не нарисована");
+        assert!(
+            work_frame.pixels() != idle_frame.pixels(),
+            "{unit_type:?}: рабочая поза обязана отличаться от обычной"
+        );
+    }
+}
+
+/// Декали стройплощадки — настоящие спрайты C++ (`LRGTAPE` 127×127,
+/// `LRGSLAB` 127×127, `LRGCONES` 117×117): каждая рисуется на карте, а не
+/// маркером. `SMLTAPE`/`SMLCONES`/`SMLSLAB` — малые версии 1×1.
+#[test]
+fn construction_site_decals_have_sprites() {
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
+    for unit_type in [
+        UnitType::LargeTape,
+        UnitType::LargeSlab,
+        UnitType::LargeCones,
+        UnitType::SmallTape,
+        UnitType::SmallSlab,
+        UnitType::SmallCones,
+    ] {
+        let sprite = assets.sprite(unit_type).expect("спрайт площадки");
+        assert!(!sprite.sheet.is_empty(), "{unit_type:?}: нет кадров");
+
+        let mut unit = unit_of(unit_type, UnitOrder::Await, 0);
+        unit.state = UnitOrderState::ExecutingOrder;
+        let frame = render(&assets, &unit, 0);
+
+        assert!(painted(&frame) > 0, "{unit_type:?}: пустой кадр площадки");
+    }
 }

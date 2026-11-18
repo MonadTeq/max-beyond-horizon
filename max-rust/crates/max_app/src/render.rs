@@ -28,7 +28,7 @@ use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
-use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitType};
+use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 
 use crate::panels::UiPalette;
 use crate::App;
@@ -41,6 +41,14 @@ use crate::App;
 /// прямоугольнике, а не на полклетки вверх-влево. Без этого шахта «съезжала»
 /// на клетку генератора и их спрайты накладывались.
 pub const BUILDING_ANCHOR_OFFSET: i32 = (64 / 2) - 1;
+
+/// Сдвиг кадра строителя в рабочую позу (`DrawSpriteFrame(image_index + 16)`).
+///
+/// C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) для инженера и
+/// `UnitInfo::PositionInTape` (`unitinfo.cpp:4451`) для конструктора. В
+/// спрайтах `ENGINEER` 32 кадра, `CONSTRCT` — 40, поэтому `angle + 16` всегда
+/// попадает в блок рабочей анимации.
+pub const BUILDER_WORK_FRAME_OFFSET: usize = 16;
 
 /// База кадров корпуса с учётом клана.
 ///
@@ -82,6 +90,15 @@ pub fn unit_frame_index(
 /// выбираться по тому углу, с которым спрайт реально движется по карте
 /// (`App::visual_angle`), а не только по симуляционному: визуальный маршрут
 /// отстаёт от симуляции, и иначе кадр поворачивался бы раньше клетки поворота.
+///
+/// Во время стройки C++ рисует рабочую позу строителя:
+/// `DrawSpriteFrame(image_index + 16)` (`unitinfo.cpp:2789` для инженера и
+/// `4451` для конструктора), а `UnitsManager_ProcessOrderBuild` у конструктора
+/// дополнительно перелистывает `+8` (`units_manager.cpp:2856-2868`). Спрайты
+/// `ENGINEER` (32 кадра) и `CONSTRCT` (40) содержат эти кадры, поэтому здесь
+/// добавляется ровно `+16`, пока приказ — `ORDER_BUILD`, состояние —
+/// `ORDER_STATE_BUILD_IN_PROGRESS`. После достройки (`ORDER_AWAIT`) кадр снова
+/// базовый: C++ возвращает `DrawSpriteFrame(image_index - 16)`.
 pub fn unit_frame_index_for_angle(
     unit: &max_core::unit::UnitInfo,
     image_base: i16,
@@ -94,6 +111,13 @@ pub fn unit_frame_index_for_angle(
 
     if unit.orders == UnitOrder::PowerOn && index < last {
         index += 1;
+    }
+
+    if matches!(unit.unit_type, UnitType::Engineer | UnitType::Constructor)
+        && unit.orders == UnitOrder::Build
+        && unit.state == UnitOrderState::BuildInProgress
+    {
+        index = index.saturating_add(BUILDER_WORK_FRAME_OFFSET);
     }
 
     index.min(last)

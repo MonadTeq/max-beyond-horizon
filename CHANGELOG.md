@@ -25,6 +25,40 @@
 
 ### Добавлено
 
+- **Стройплощадка на карте (`PrepareConstructionSite` /
+  `DeployConstructionSiteUtilities`).** Раньше после заказа стройки на карте не
+  было ничего, а в конце ходов появлялось сразу готовое здание. C++ ставит
+  площадку из **настоящих юнитов-декалей** (`DeployConstructionSiteUtilities`,
+  `unitinfo.cpp:3802`, и `PrepareConstructionSite`, `unitinfo.cpp:4122`):
+  конусы `LRGCONES`/`SMLCONES` и лента `LRGTAPE`/`SMLTAPE` — в клетке заказа
+  (угол 0 на земле; на воде/побережье конусы не ставятся, лента — угол 1),
+  лента с родителем-строителем; если у типа `REQUIRES_SLAB` — плита
+  `LRGSLAB`/`SMLSLAB` с кадром `Randomizer_Generate(image_count)` (5/1),
+  `scaler_adjust = 4` и `ScaleUnit(EXPAND)`. Порт:
+  `max_core::production::{deploy_construction_site, construction_utility,
+  construction_utility_types, construction_slab_type}` (идемпотентно: заказ
+  ставит площадку сразу, `start_building` повторно её не дублирует и не жжёт
+  RNG); `ProductionManager::spawn_new_unit` по завершении повторяет
+  `SpawnNewUnit` + `UnitsManager_BuildingReady`: лента/конусы удаляются, плита
+  остаётся фундаментом, здание встаёт в ту же клетку и «вырастает». Рендер
+  рабочих кадров — `max_app::render::unit_frame_index`: во время
+  `ORDER_BUILD`/`BUILD_IN_PROGRESS` у `ENGINEER`/`CONSTRCT` кадр
+  `image_base + angle + 16` (C++ `DrawSpriteFrame(image_index + 16)`), после
+  достройки — снова базовый. Клик по готовому зданию больше не забирает плита
+  (`hud::unit_at_screen` предпочитает не-`GROUND_COVER`, как
+  `Access_GetTeamUnit`). Тесты: `max_core/tests/production.rs` (6: большая/
+  малая площадка, вода без конусов, уборка при завершении и отмене,
+  детерминизм/снапшот), `max_app/tests/building_frames.rs` (+2: кадр `+16`
+  и спрайты всех декалей), `max_app/tests/construction_site.rs` (площадка
+  видна в кадре до/после стройки), QA `production.qa`
+  (`assert site=large|none`, `shot build-site`, golden
+  `golden/production/build-site.png`), `research.qa` golden переснят (у
+  Research Center теперь плита-фундамент, как в C++),
+  `research-help/research-plan.png` — тоже (здание на плите), живой
+  Windows-прогон `build/scripts/ui-test-construction.ps1` (скриншоты
+  `build/ui-test-construction/`, `03-construction-site.png` — площадка в окне).
+  Полный docker-гейт — зелёный, golden — 0 дрейфа.
+
 - **Распределение добычи шахты (`Allocate`, `AllocMenu`, TC-0627–0629).**
   Пункт `allocate` меню команд `MININGST` больше не серый: `max_app::allocmenu`
   — порт `allocmenu.cpp` 1:1. Окно `ALLOCFRM` 640×480 (`Window(ALLOCFRM,

@@ -69,6 +69,7 @@ use crate::enums::{unit_flags::*, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, OrderData};
 use crate::geo::{PathStep, Point, DIRECTION_OFFSETS};
 use crate::pathfinding;
+use crate::production;
 use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
 use crate::unit_values::{ATTRIB_AMMO, ATTRIB_MOVE_AND_FIRE, ATTRIB_ROUNDS, ATTRIB_SPEED};
 
@@ -406,9 +407,15 @@ pub fn power_down(unit: &mut UnitInfo) {
 }
 
 /// `UnitInfo::StartBuilding` (`unitinfo.cpp:2751`).
-pub fn start_building(unit: &mut UnitInfo) {
+///
+/// Мобильному строителю ставит стройплощадку — [`crate::production::
+/// deploy_construction_site`] (`DeployConstructionSiteUtilities` +
+/// `PrepareConstructionSite`): лента/конусы/плита в клетке `target_grid`.
+/// Функция идемпотентна: `ProductionManager::commit` уже мог поставить площадку
+/// синхронно при заказе (как C++ `Build` → `StartBuilding`).
+pub fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
     // `SDL_assert(build_list.GetCount() > 0)`: первый тип в очереди.
-    let Some(_unit_to_build) = unit.build_list.first().copied() else {
+    let Some(unit_to_build) = unit.build_list.first().copied() else {
         return;
     };
 
@@ -418,7 +425,15 @@ pub fn start_building(unit: &mut UnitInfo) {
         // `Cargo_GetLifeConsumptionRate`).
         unit.state = UnitOrderState::ExecutingOrder;
     } else {
-        // `DeployConstructionSiteUtilities(unit_to_build)` — P3/P5.
+        // `DeployConstructionSiteUtilities(unit_to_build)` +
+        // `PrepareConstructionSite`: площадка в клетке `move_to`/`target_grid`.
+        let _ = production::deploy_construction_site(
+            state,
+            unit.id,
+            unit_to_build,
+            unit.target_grid,
+        );
+
         unit.moved = 0;
         unit.state = UnitOrderState::BuildInProgress;
 
@@ -429,7 +444,9 @@ pub fn start_building(unit: &mut UnitInfo) {
                 UnitOrderState::TapePositioningInit,
             );
         } else {
-            // `PrepareConstructionSite` / `DrawSpriteFrame` — P3/P5.
+            // `DrawSpriteFrame(image_index + 16)` — рабочая поза инженера;
+            // кадр выбирает `max_app::render::unit_frame_index` по
+            // `ORDER_BUILD`/`BUILD_IN_PROGRESS`.
         }
 
         // `ClearUnitList()` — снятие группового приказа (P5 access).
@@ -512,7 +529,11 @@ pub fn position_in_tape(unit: &mut UnitInfo) {
         } else if unit.unit_type == UnitType::Constructor
             && old_state == UnitOrderState::TapePositioningEnter
         {
-            // `PrepareConstructionSite` + `Paths_UpdateAngle` — P5.
+            // `PrepareConstructionSite` уже выполнен `StartBuilding`-ом
+            // (площадка ставится сразу при заказе, см.
+            // `production::deploy_construction_site`); здесь C++ ещё рисует
+            // `DrawSpriteFrame(image_index + 16)` — рабочую позу. Кадр
+            // выбирается рендером по `ORDER_BUILD`/`BUILD_IN_PROGRESS`.
         } else if old_state != UnitOrderState::TapePositioningEnter {
             // `UpdateGridPosition`/`Access_UpdateMapStatus` — P5.
             if unit.orders == UnitOrder::Build {
@@ -1631,7 +1652,7 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::Init => {
             ai_task_flag("Build start");
-            start_building(&mut ctx.unit);
+            start_building(ctx.world, &mut ctx.unit);
         }
         UnitOrderState::InProgress => {
             if execute_move(ctx) {
@@ -1653,7 +1674,9 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
             ai_task_flag("Build cancel");
             cancel_building(&mut ctx.unit);
             // `Access_DestroyUtilities(grid, …)` (`units_manager.cpp:2880`).
-            access::destroy_utilities(ctx.world, ctx.unit.grid, true, true, true, true);
+            // В C++ строитель уже стоит на площадке; в порте он остаётся на
+            // исходной клетке, поэтому убираем площадку из `target_grid`.
+            access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, true, true, true);
         }
         UnitOrderState::SelectSite => {
             animate(&ctx.unit);
@@ -2178,7 +2201,9 @@ fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::BuildCancel {
         ai_task_flag("Build halting");
         cancel_building(&mut ctx.unit);
-        access::destroy_utilities(ctx.world, ctx.unit.grid, true, true, true, true);
+        // См. `ProcessOrderBuild`: порт не двигает строителя на площадку,
+        // поэтому утилиты снимаются из `target_grid`, а не из `grid`.
+        access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, true, true, true);
     }
 }
 
