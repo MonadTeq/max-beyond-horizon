@@ -4,23 +4,26 @@
 //! * `UnitsManager_ProcessOrderSentry` (`units_manager.cpp:3029-3041`) — у
 //!   юнитов с флагом `ANIMATED` (из зданий это `RADAR`) каждый тик
 //!   `image_index + 1`, после последнего кадра — `image_index = image_base`;
-//! * у шахт/заводов покадровой анимации в C++ **нет**: есть только два кадра
-//!   состояния, `image_base` (выключено) и `image_base + 1` (включено),
-//!   которые выставляются при `POWER_ON`/`POWER_DOWN`;
+//! * у шахт/заводов покадровой анимации в C++ **нет**: есть кадры состояния,
+//!   `image_base` (выключено) и `image_base + 1` (включено), которые
+//!   выставляются при `POWER_ON`/`POWER_DOWN`;
+//! * `image_index_max = image_count + image_index - 1` (`UnitInfo::UnitInfo`);
 //! * у конструктора `UnitsManager_ProcessOrderBuild` (`+8`, при
 //!   `image_index + 8 >= 40` — `-16`), инженер держит `+16`
 //!   (`UnitInfo::StartBuilding`).
 //!
-//! Порт оживляет включённые шахты/заводы **только на кадре**: пока здание
-//! работает (`POWER_ON` у шахты, непустая очередь у завода), два кадра
-//! состояния чередуются по `dt`; `dt = 0` даёт статичный кадр C++, поэтому
+//! Порт оживляет включённые шахты/заводы **только на кадре**
+//! (промежуточное правило до DOS-съёмки): пока здание работает (`POWER_ON`
+//! у шахты, непустая очередь у завода), блок
+//! `image_base + angle .. image_index_max` листается по кругу со скоростью
+//! `RADAR` (1 кадр за 1/30 с); `dt = 0` даёт статичный кадр C++, поэтому
 //! golden-кадры не дрейфуют. Симуляция и CRC не меняются.
 //!
 //! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
 
 use std::path::{Path, PathBuf};
 
-use max_app::{App, AppConfig};
+use max_app::{App, AppConfig, WORKING_BUILDING_ANIM_FRAME_SECONDS};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
@@ -64,10 +67,11 @@ fn changed_pixels(left: &RgbaBuffer, right: &RgbaBuffer) -> usize {
         .count()
 }
 
-/// Включённая шахта (`ORDER_POWER_ON`) меняет кадр с реальным `dt`; выключенная
-/// (`ORDER_POWER_OFF`) — нет. `dt = 0` возвращает ровно статичный кадр C++.
+/// Включённая шахта (`ORDER_POWER_ON`) листает полный блок кадров C++
+/// (`D_MINING.image_count = 16`) со скоростью `RADAR`; выключенная
+/// (`ORDER_POWER_OFF`) — статична. `dt = 0` возвращает ровно статичный кадр.
 #[test]
-fn powered_mining_station_animates_and_powered_off_mine_does_not() {
+fn powered_mining_station_cycles_its_frame_block_and_powered_off_mine_does_not() {
     let Some(mut app) = app_with_assets() else {
         return;
     };
@@ -85,25 +89,42 @@ fn powered_mining_station_animates_and_powered_off_mine_does_not() {
 
     // `dt = 0` — статичный кадр C++ (`image_base + 1`), как в golden.
     let statically_powered = app.render_frame();
-    assert_eq!(app.unit_animation(mine).activity_step, 0);
+    assert_eq!(app.unit_animation(mine).work_step, 0);
 
-    // > 0.5 с (WORKING_BUILDING_ANIM_FRAME_SECONDS) — второй кадр пары.
-    // `update_visual_units` клампит шаг до 0.1 с, поэтому идём кадрами по 0.1.
-    for _ in 0..7 {
-        app.update_visual_units(0.1);
-    }
-    assert_eq!(app.unit_animation(mine).activity_step, 1);
-    let animated = app.render_frame();
+    // Каждый тик 1/30 с — следующий кадр блока.
+    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
+    assert_eq!(app.unit_animation(mine).work_step, 1);
+    let next = app.render_frame();
     assert!(
-        changed_pixels(&statically_powered, &animated) > 0,
+        changed_pixels(&statically_powered, &next) > 0,
         "включённая шахта обязана менять кадр по dt"
+    );
+
+    // Ещё один тик — ещё один кадр (2 × 1/30 с).
+    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
+    assert_eq!(app.unit_animation(mine).work_step, 2);
+    let next2 = app.render_frame();
+    assert!(
+        changed_pixels(&next, &next2) > 0,
+        "кадр шахты обязан меняться каждый тик"
+    );
+
+    // Полный оборот блока (16 кадров) — снова статичный кадр C++.
+    for _ in 0..14 {
+        app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
+    }
+    assert_eq!(app.unit_animation(mine).work_step, 16);
+    assert_eq!(
+        changed_pixels(&statically_powered, &app.render_frame()),
+        0,
+        "полный оборот возвращает кадр C++"
     );
 
     // `dt = 0` снова — в точности исходный статичный кадр.
     app.update_visual_units(0.0);
-    let reset = app.render_frame();
+    assert_eq!(app.unit_animation(mine).work_step, 0);
     assert_eq!(
-        changed_pixels(&statically_powered, &reset),
+        changed_pixels(&statically_powered, &app.render_frame()),
         0,
         "dt = 0 — детерминированный статичный кадр C++"
     );
@@ -121,7 +142,7 @@ fn powered_mining_station_animates_and_powered_off_mine_does_not() {
         for _ in 0..7 {
             app.update_visual_units(0.1);
         }
-        assert_eq!(app.unit_animation(mine).activity_step, 0);
+        assert_eq!(app.unit_animation(mine).work_step, 0);
         assert_eq!(
             changed_pixels(&powered_off, &app.render_frame()),
             0,
@@ -130,8 +151,8 @@ fn powered_mining_station_animates_and_powered_off_mine_does_not() {
     }
 }
 
-/// Завод с непустой очередью (`ORDER_BUILD`, `build_list`) анимирован; тот же
-/// завод без очереди — статичен.
+/// Завод с непустой очередью (`ORDER_BUILD`, `build_list`) листает свой блок
+/// (`D_LRGBLD.image_count` = 2), тот же завод без очереди — статичен.
 #[test]
 fn factory_with_a_production_queue_animates_and_without_it_is_static() {
     let Some(mut app) = app_with_assets() else {
@@ -151,19 +172,26 @@ fn factory_with_a_production_queue_animates_and_without_it_is_static() {
     }
 
     let static_queue = app.render_frame();
-    assert_eq!(app.unit_animation(factory).activity_step, 0);
+    assert_eq!(app.unit_animation(factory).work_step, 0);
 
-    for _ in 0..7 {
-        app.update_visual_units(0.1);
-    }
-    assert_eq!(app.unit_animation(factory).activity_step, 1);
+    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
+    assert_eq!(app.unit_animation(factory).work_step, 1);
     let animated = app.render_frame();
     assert!(
         changed_pixels(&static_queue, &animated) > 0,
         "завод с очередью обязан менять кадр по dt"
     );
 
-    // Очередь опустела — индикатор работы выключается.
+    // Блок завода — два кадра: второй тик возвращает статичный кадр C++.
+    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
+    assert_eq!(app.unit_animation(factory).work_step, 2);
+    assert_eq!(
+        changed_pixels(&static_queue, &app.render_frame()),
+        0,
+        "по кругу: блок завода из двух кадров"
+    );
+
+    // Очередь опустела — цикл выключается.
     {
         let unit = app.state_mut().unit_mut(factory).expect("factory");
         unit.build_list.clear();
@@ -177,7 +205,7 @@ fn factory_with_a_production_queue_animates_and_without_it_is_static() {
         for _ in 0..7 {
             app.update_visual_units(0.1);
         }
-        assert_eq!(app.unit_animation(factory).activity_step, 0);
+        assert_eq!(app.unit_animation(factory).work_step, 0);
         assert_eq!(
             changed_pixels(&idle, &app.render_frame()),
             0,
@@ -256,9 +284,9 @@ fn animation_clock_does_not_change_the_snapshot() {
     let after = app.state().snapshot_bytes();
 
     assert_eq!(before, after, "визуальная анимация не меняет состояние");
-    assert_eq!(
-        app.unit_animation(mine).activity_step,
-        0,
-        "0.6 + 0.6 = 1.2 с → чётный шаг"
+    // 12 × 0.1 с = 1.2 с → ~36 кадров цикла (1/30 с), состояние — то же.
+    assert!(
+        app.unit_animation(mine).work_step > 0,
+        "часы идут, но в снапшот не входят"
     );
 }

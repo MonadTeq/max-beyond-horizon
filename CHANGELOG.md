@@ -2,6 +2,31 @@
 
 ### Исправлено
 
+- **Полный цикл кадров работающих зданий вместо «пульса» (промежуточное
+  правило до DOS-съёмки).** Прежний индикатор работы (`activity_step`: два
+  кадра состояния `image_base` ↔ `image_base + 1` раз в 0.5 с) заменён полным
+  циклом кадров C++: у включённой шахты (`ORDER_POWER_ON`) и завода с непустой
+  очередью (`ORDER_BUILD` + `build_list`) кадр листается по блоку
+  `image_base + angle .. image_index_max`, где
+  `image_index_max = image_count + image_index - 1` (`unitinfo.cpp:293`), по
+  кругу со скоростью `RADAR`/`ProcessOrderSentry` — 1 кадр за 1/30 с
+  (`render::WORKING_BUILDING_ANIM_FRAME_SECONDS`). Блок считает
+  `render::working_building_frame_block`; он не выходит за кадры корпуса `D_*`
+  (у `MININGST` 24-кадровая лента: 16 кадров корпуса + 8 частиц бурения, у
+  заводов 2 кадра состояния + 8 коннекторов). `render::FrameAnimation::
+  work_step` — номер кадра; шаг 0 даёт ровно статичный кадр C++ (`POWER_ON` →
+  `+1`, завод → `image_base`), поэтому `dt = 0` (QA/golden) не дрейфует.
+  Включение/скорость — одна строка: `WORKING_BUILDING_ANIMATION_ENABLED` /
+  `WORKING_BUILDING_ANIM_FRAME_SECONDS`; `effects = false` тоже возвращает
+  статичный кадр. Цикл строителя (`+16/+24/+32`) и `RADAR` (16 кадров
+  `D_RADAR`) не менялись; симуляция/CRC/сейв не затронуты. Тесты:
+  `tests/building_frames.rs` (8: 16-кадровый цикл шахты, 2-кадровый завод,
+  `RADAR`, строитель), `tests/building_animation.rs` (4, на данных игры:
+  тик 1/30 с, полный оборот, `dt = 0`, снапшот), `construction_animation` (3);
+  QA `allocate.qa`/`production.qa` — `mine-work-a/b`, `factory-work-a/b`,
+  `qa_golden_check` — **0 дрейфа** (правки ниже порога 1 %, пересъёмка не
+  понадобилась); Windows UI пересобран.
+
 - **Покадровая анимация работающих зданий и строителей.** В C++ есть ровно один
   потиковый цикл кадров зданий — `UnitsManager_ProcessOrderSentry`
   (`units_manager.cpp:3029-3041`): у юнитов с флагом `ANIMATED` каждый тик

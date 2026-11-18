@@ -13,6 +13,12 @@
 //!   только добавляет draw bounds, а `ProcessOrderPowerOn` вызывает
 //!   `DrawSpriteFrame` один раз при включении.
 //!
+//! Поверх этого порт **только на кадре** листает полный блок кадров
+//! работающих шахт/заводов (промежуточное правило до DOS-съёмки,
+//! `max-original-dasm/formats/unit-animation.md`): `image_base + angle ..
+//! image_index_max` по кругу, 1 кадр за 1/30 с; `work_step = 0` — статичный
+//! кадр C++, поэтому golden не дрейфуют.
+//!
 //! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
 
 use std::path::{Path, PathBuf};
@@ -20,8 +26,8 @@ use std::path::{Path, PathBuf};
 use max_app::assets::Assets;
 use max_app::render::{
     draw_unit_sprites_with_base, image_base_for, sentry_animation_active, unit_frame_index,
-    unit_frame_index_with_animation, working_building_animation_active, FrameAnimation,
-    BUILDER_WORK_FRAME_OFFSET,
+    unit_frame_index_with_animation, working_building_animation_active,
+    working_building_frame_block, FrameAnimation, BUILDER_WORK_FRAME_OFFSET,
 };
 use max_app::AppConfig;
 use max_core::access::unit_type_flags;
@@ -178,76 +184,125 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
 }
 
-/// Работающая шахта чередует два кадра состояния (`image_base`/`image_base+1`)
-/// по визуальным часам, выключенная — статична. C++ сам кадры шахты не
-/// перелистывает (только `POWER_ON` → `+1`), поэтому шаг `0` обязан совпадать
-/// со статичным кадром C++ — на нём и стоят golden (`dt = 0`).
+/// Работающая шахта листает **полный блок кадров C++** по кругу, выключенная —
+/// статична. Блок — `image_base + angle .. image_index_max`, где
+/// `image_index_max = image_count + image_index - 1` (`D_MINING.image_count` = 16
+/// кадров корпуса; в ленте 24 кадра — ещё 8 мелких частиц бурения).
+/// `work_step = 0` — статичный кадр C++ (`POWER_ON` → `image_base + 1`), поэтому
+/// `dt = 0` не двигает golden-кадры.
 #[test]
-fn working_mine_alternates_state_frames_and_powered_off_mine_is_static() {
+fn working_mine_cycles_its_frame_block_and_powered_off_mine_is_static() {
     let mut mine = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
-    let static_frame = FrameAnimation::default();
-    let alternate = FrameAnimation {
-        activity_step: 1,
+    let animated = |step: u32| FrameAnimation {
+        work_step: step,
         ..FrameAnimation::default()
     };
 
     assert!(working_building_animation_active(&mine));
+    assert_eq!(
+        working_building_frame_block(0, 24, 16, 0),
+        (0, 16),
+        "C++: image_index_max = image_count + image_index - 1"
+    );
 
-    let on = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, static_frame, true);
-    let off = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, true);
+    // `work_step = 0` — статичный кадр C++ (POWER_ON: `image_base + 1`).
+    let statically_powered =
+        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, FrameAnimation::default(), true);
+    assert_eq!(statically_powered, 1);
 
-    assert_eq!(on, 1, "POWER_ON: включённый кадр C++ (image_base + 1)");
-    assert_eq!(off, 0, "индикатор работы: второй кадр пары");
-    assert_ne!(on, off, "работающая шахта обязана менять кадр");
+    // Каждый следующий кадр цикла — следующий кадр блока: 1, 2, …, 15.
+    for step in 1..15u32 {
+        assert_eq!(
+            unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
+            1 + step as usize,
+            "шаг {step}: следующий кадр блока"
+        );
+    }
 
+    // По кругу: последний кадр блока (image_base + angle), затем снова
+    // статичный кадр C++ после полного оборота 16 кадров.
+    assert_eq!(
+        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(15), true),
+        0,
+        "16-й кадр блока — его первый кадр (image_base + angle)"
+    );
+    assert_eq!(
+        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(16), true),
+        statically_powered,
+        "полный оборот возвращает статичный кадр C++"
+    );
+
+    // Клановый сдвиг: блок не выходит за кадры корпуса `D_MINING` (16) и тем
+    // более за 24-кадровую ленту; у старших кланов он укорачивается.
+    assert_eq!(working_building_frame_block(12, 24, 16, 0), (12, 4));
+    assert_eq!(working_building_frame_block(14, 24, 16, 0), (14, 2));
+
+    // Выключенная шахта не анимируется.
     mine.orders = UnitOrder::PowerOff;
     assert!(!working_building_animation_active(&mine));
+    for step in [0, 1, 2, 15, 16] {
+        assert_eq!(
+            unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
+            0,
+            "выключенная шахта статична"
+        );
+    }
 
-    let off_0 = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, static_frame, true);
-    let off_1 = unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, true);
-
-    assert_eq!(off_0, 0);
-    assert_eq!(off_1, 0, "выключенная шахта не анимируется");
-
-    // Без effects индикатор тоже выключен (C++ `settings["effects"]`).
+    // Без effects цикл тоже выключен (C++ `settings["effects"]`).
     mine.orders = UnitOrder::PowerOn;
     assert_eq!(
-        unit_frame_index_with_animation(&mine, 0, 24, 24, 0, alternate, false),
-        on,
+        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(5), false),
+        statically_powered,
         "effects=off: статичный кадр C++"
     );
 }
 
-/// Завод с непустой очередью рисует индикатор работы (два кадра состояния),
-/// без очереди — статичный кадр C++.
+/// Завод с непустой очередью листает свой блок кадров (`D_LRGBLD.image_count` = 2:
+/// выключено/включено; остальные 8 кадров ленты — коннекторы), без очереди —
+/// статичный кадр C++.
 #[test]
-fn factory_with_a_queue_animates_and_an_idle_factory_is_static() {
+fn factory_with_a_queue_cycles_frames_and_an_idle_factory_is_static() {
     let mut factory = unit_of(UnitType::TrainingHall, UnitOrder::Build, 0);
     factory.state = UnitOrderState::BuildInProgress;
     factory.build_list.push(UnitType::Infantry);
-
-    assert!(working_building_animation_active(&factory));
-
-    let static_frame = FrameAnimation::default();
-    let alternate = FrameAnimation {
-        activity_step: 1,
+    let animated = |step: u32| FrameAnimation {
+        work_step: step,
         ..FrameAnimation::default()
     };
-    let idle = unit_frame_index_with_animation(&factory, 0, 10, 10, 0, static_frame, true);
-    let working = unit_frame_index_with_animation(&factory, 0, 10, 10, 0, alternate, true);
 
-    assert_eq!(idle, 0, "TRAINHAL: базовый кадр C++");
-    assert_eq!(working, 1, "работающий завод: включённый кадр");
-    assert_ne!(idle, working, "завод с очередью обязан менять кадр");
+    assert!(working_building_animation_active(&factory));
+    assert_eq!(
+        working_building_frame_block(0, 10, 2, 0),
+        (0, 2),
+        "блок завода — только кадры состояния, коннекторы не входят"
+    );
+
+    assert_eq!(
+        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, FrameAnimation::default(), true),
+        0,
+        "TRAINHAL: базовый кадр C++"
+    );
+    assert_eq!(
+        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(1), true),
+        1,
+        "работающий завод: второй кадр блока"
+    );
+    assert_eq!(
+        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(2), true),
+        0,
+        "по кругу: блок из двух кадров"
+    );
 
     factory.build_list.clear();
     factory.orders = UnitOrder::Await;
     assert!(!working_building_animation_active(&factory));
-    assert_eq!(
-        unit_frame_index_with_animation(&factory, 0, 10, 10, 0, alternate, true),
-        0,
-        "без очереди завод статичен"
-    );
+    for step in [0, 1, 2, 15] {
+        assert_eq!(
+            unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(step), true),
+            0,
+            "без очереди завод статичен"
+        );
+    }
 }
 
 /// `RADAR` — единственное здание с флагом `ANIMATED`: C++

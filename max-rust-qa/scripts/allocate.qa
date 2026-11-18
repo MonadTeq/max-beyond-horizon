@@ -50,9 +50,11 @@ assert unit-order=poweron
 assert unit-menu=closed
 shot allocate-selected
 
-# Работающая шахта: C++ не листает её кадры по времени (только POWER_ON -> +1),
-# порт чередует два кадра состояния по визуальным часам (dt > 0), dt = 0 —
-# статичный кадр C++ (golden не дрейфуют).
+# Работающая шахта (промежуточное правило до DOS-съёмки): C++ не листает её
+# кадры по времени (только POWER_ON -> +1), порт листает полный блок C++
+# `image_base + angle .. image_index_max` по кругу со скоростью RADAR
+# (1 кадр за 1/30 с, как ProcessOrderSentry). dt = 0 — статичный кадр C++
+# (golden не дрейфуют).
 anim 600
 shot mine-work-a
 anim 600
