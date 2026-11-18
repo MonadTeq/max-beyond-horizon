@@ -64,21 +64,30 @@ pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 
 /// Сколько секунд показывается один кадр полного цикла работающего здания.
 ///
-/// **ПРОМЕЖУТОЧНОЕ правило** (до результатов DOS-съёмки,
-/// `max-original-dasm/formats/unit-animation.md`): та же скорость, что у
+/// **ПРОМЕЖУТОЧНОЕ правило** для заводов (DOS-съёмка шахту уже уточнила, см.
+/// [`MINING_DRILL_FRAMES_ENABLED`]): та же скорость, что у
 /// `RADAR`/`ProcessOrderSentry` — 1 кадр за 1/30 с (один тик обработки
-/// приказов C++). Точная последовательность и частота анимации работающих
-/// зданий в DOS-оригинале ещё не замерены (см. §3/§7 документа); менять
-/// скорость нужно здесь и только здесь.
+/// приказов C++). Для шахты цикл больше не применяется: в idle корпус
+/// статичен (кадр `image_base + 1` при `POWER_ON`), а видимое «мигание» дают
+/// палитровые циклы ([`max_render::palette::ColorCycles`]).
 pub const WORKING_BUILDING_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 
-/// Включён ли полный цикл кадров у работающих зданий (ПРОМЕЖУТОЧНОЕ правило).
+/// Включено ли листание кадров корпуса работающего завода (ПРОМЕЖУТОЧНОЕ).
 ///
-/// `false` возвращает прежний статичный кадр C++: включённая шахта —
-/// `image_base + 1` (`ProcessOrderPowerOn`), завод с очередью — `image_base`.
-/// Выключатель нужен, чтобы сравнить промежуточную анимацию с оригиналом и
-/// откатиться одной строкой, пока DOS-съёмка не уточнила правило.
+/// `false` возвращает статичный кадр C++: завод с очередью — `image_base`.
+/// У шахты листания нет вообще (см. [`MINING_DRILL_FRAMES_ENABLED`]).
 pub const WORKING_BUILDING_ANIMATION_ENABLED: bool = true;
+
+/// Включено ли листание кадров дрели шахты (кадры `1..15`).
+///
+/// **Выключено сознательно:** DOS-съёмка (`max-original-dasm/formats/
+/// unit-animation.md` §7.2) показала, что в idle корпус шахты всегда кадр 0
+/// (включённая — `image_base + 1`), ни одного перехода `0 → 1 → … → 15` за
+/// ~118 с игрового времени не было. Кадры 1..15 (положения дрели) играют,
+/// вероятно, только при активной добыче (§7.4) — это требует отдельной
+/// съёмки активной добычи/обработки хода. Включать их можно только после
+/// такой съёмки: константа — единственная ручка правила.
+pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 
 /// Кадровые часы юнита (только для отрисовки, в снапшот/CRC не входят).
 ///
@@ -89,13 +98,14 @@ pub const WORKING_BUILDING_ANIMATION_ENABLED: bool = true;
 /// * `sentry_step` — `UnitsManager_ProcessOrderSentry` у юнитов с флагом
 ///   `ANIMATED`: каждый тик `image_index + 1`, после последнего —
 ///   `image_index = image_base`;
-/// * `work_step` — **промежуточный** полный цикл кадров работающего здания:
-///   шахта/завод листают блок `image_base + angle .. image_index_max`
+/// * `work_step` — **промежуточный** цикл кадров работающего завода:
+///   завод листает блок `image_base + angle .. image_index_max`
 ///   (`image_index_max = image_count + image_index - 1`, как в C++
 ///   `UnitInfo::UnitInfo`) с той же скоростью, что `ProcessOrderSentry`.
-///   C++ сам шахты/заводы по времени не анимирует, поэтому это **только
+///   C++ сам заводы по времени не анимирует, поэтому это **только
 ///   визуальное** дополнение; `0` — статичный кадр C++ (поэтому `dt = 0` не
-///   двигает golden-кадры). Точное правило ждём из DOS-съёмки.
+///   двигает golden-кадры). Шахта этот цикл больше не использует: DOS-съёмка
+///   показала статичный корпус в idle ([`MINING_DRILL_FRAMES_ENABLED`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameAnimation {
     /// Номер кадра рабочего цикла строителя (`0..BUILDER_WORK_FRAME_STEPS`).
@@ -134,24 +144,21 @@ pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.flags & unit_flags::ANIMATED != 0 && unit.orders == UnitOrder::Sentry
 }
 
-/// Работает ли здание, у которого порт листает кадры (промежуточное правило).
+/// Работает ли здание, у которого порт листает кадры корпуса.
 ///
 /// C++ не перелистывает кадры шахт/заводов по времени: у них есть кадры
 /// состояния (`image_base` — выключено, `image_base + 1` — включено), которые
-/// выставляются при `POWER_ON`/`POWER_DOWN`. Чтобы работающие здания не
-/// выглядели статичными, порт **только на кадре** листает блок
-/// `image_base + angle .. image_index_max` по кругу ([`FrameAnimation::work_step`],
-/// [`WORKING_BUILDING_ANIM_FRAME_SECONDS`]), пока здание действительно
-/// работает:
-///
-/// * шахта — `ORDER_POWER_ON` (C++ `PowerUp` оставляет этот приказ);
-/// * завод — `ORDER_BUILD` с непустой очередью (`build_list`).
-///
-/// Состояние симуляции/CRC от этого не меняется; `work_step = 0` даёт ровно
-/// статичный кадр C++ (поэтому `dt = 0` не двигает golden-кадры).
+/// выставляются при `POWER_ON`/`POWER_DOWN`. DOS-съёмка подтвердила это и для
+/// шахты (корпус в idle статичен, §7.2 `unit-animation.md`), поэтому цикл
+/// остаётся только у **завода** с непустой очередью (`build_list`) —
+/// промежуточное правило до съёмки работающего завода
+/// ([`WORKING_BUILDING_ANIMATION_ENABLED`]).
 pub fn working_building_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
-    if unit.unit_type == UnitType::MiningStation && unit.orders == UnitOrder::PowerOn {
-        return true;
+    // Шахта в idle не листает корпус: DOS-съёмка (§7.2) опровергла цикл
+    // 0..15. Кадры дрели 1..15 включаются только константой
+    // [`MINING_DRILL_FRAMES_ENABLED`] после съёмки активной добычи.
+    if unit.unit_type == UnitType::MiningStation {
+        return MINING_DRILL_FRAMES_ENABLED && unit.orders == UnitOrder::PowerOn;
     }
 
     max_core::production::is_factory(unit.unit_type)
@@ -159,17 +166,19 @@ pub fn working_building_animation_active(unit: &max_core::unit::UnitInfo) -> boo
         && !unit.build_list.is_empty()
 }
 
-/// Блок кадров работающего здания: `image_base + angle .. image_index_max`.
+/// Блок кадров работающего **завода**: `image_base + angle .. image_index_max`.
 ///
 /// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:293`) задаёт
 /// `image_index_max = image_count + image_index - 1`, где
 /// `image_index = image_base + angle`. [`draw_unit_sprites_with_animation`]
 /// передаёт сюда `frame_info.image_count` (`sentry_frames`) — это и есть
-/// `image_count` C++ (`D_MINING` = 16, `D_LRGBLD` = 2, `D_RADAR` = 16), а
-/// `image_count` — длина ленты спрайта (у `MININGST` 24 кадра: 16 кадров
-/// корпуса + 8 мелких частиц). Блок никогда не выходит за кадры корпуса
-/// `D_*`: у шахты/завода кадры после `image_count` — частицы/коннекторы, их
-/// нельзя рисовать на месте корпуса.
+/// `image_count` C++ (`D_LRGBLD` = 2, `D_RADAR` = 16), а `image_count` —
+/// длина ленты спрайта (`TRAINHAL` — 10 кадров: 2 кадра состояния + 8
+/// коннекторов). Блок никогда не выходит за кадры корпуса `D_*`: кадры после
+/// `image_count` — коннекторы, их нельзя рисовать на месте корпуса.
+///
+/// У шахты блока нет: DOS-съёмка показала статичный корпус в idle
+/// ([`MINING_DRILL_FRAMES_ENABLED`]).
 ///
 /// Возвращает `(start, len)`: первый кадр блока и длину блока (`len >= 1`).
 pub fn working_building_frame_block(
@@ -192,6 +201,168 @@ pub fn working_building_frame_block(
         .min(body_last);
 
     (start, end - start + 1)
+}
+
+// ---------------------------------------------------------------------------
+// Коннекторы зданий (`UnitInfo::RenderWithConnectors`)
+// ---------------------------------------------------------------------------
+
+/// Кадры коннекторов: бит `CONNECTOR_*` → смещение от `connector_image_base`.
+///
+/// Дословный порядок `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:3151`):
+/// сначала север/юг (по два коннектора у 2×2-здания), затем восток/запад.
+/// Смещения те же, что в C++: `CONNECTOR_NORTH_LEFT → +0`,
+/// `NORTH_RIGHT → +4`, `SOUTH_LEFT → +2`, `SOUTH_RIGHT → +6`,
+/// `EAST_TOP → +1`, `EAST_BOTTOM → +5`, `WEST_TOP → +3`, `WEST_BOTTOM → +7`.
+///
+/// Именно эти кадры DOS-съёмка приняла за «8 частиц бурения» шахты
+/// (`unit-animation.md` §7.1): `D_MINING.connector_image_base = 16`,
+/// `connector_image_count = 8`, и в плотной базе у шахты были выставлены все
+/// восемь битов. У `POWGEN` (`D_SMLBLD`: база 2, 4 коннектора) — четыре
+/// «дымовых клуба», на самом деле трубы N/E/S/W.
+pub const CONNECTOR_FRAMES: [(u16, usize); 8] = [
+    (max_core::enums::CONNECTOR_NORTH_LEFT, 0),
+    (max_core::enums::CONNECTOR_NORTH_RIGHT, 4),
+    (max_core::enums::CONNECTOR_SOUTH_LEFT, 2),
+    (max_core::enums::CONNECTOR_SOUTH_RIGHT, 6),
+    (max_core::enums::CONNECTOR_EAST_TOP, 1),
+    (max_core::enums::CONNECTOR_EAST_BOTTOM, 5),
+    (max_core::enums::CONNECTOR_WEST_TOP, 3),
+    (max_core::enums::CONNECTOR_WEST_BOTTOM, 7),
+];
+
+/// Индексы кадров коннекторов для маски `connectors` в порядке отрисовки C++.
+///
+/// Пусто, если маска нулевая, у типа нет `connector_image_base`/`count` или
+/// кадр выходит за длину ленты.
+pub fn connector_frame_indices(sprite: &crate::assets::LoadedSprite, mask: u16) -> Vec<usize> {
+    let Some(info) = sprite.frame_info else {
+        return Vec::new();
+    };
+
+    if mask == 0 || info.connector_image_count == 0 {
+        return Vec::new();
+    }
+
+    let base = usize::try_from(info.connector_image_base.max(0)).unwrap_or(0);
+    let count = usize::from(info.connector_image_count);
+    let mut frames = Vec::new();
+
+    for (bit, offset) in CONNECTOR_FRAMES {
+        if mask & bit == 0 || offset >= count {
+            continue;
+        }
+
+        let index = base + offset;
+
+        if sprite.sheet.frame(index).is_some() {
+            frames.push(index);
+        }
+    }
+
+    frames
+}
+
+/// Здание команды в клетке — `Access_GetTeamBuilding` (`access.cpp:2157`).
+///
+/// C++ ищет первый юнит клетки с той же командой, не `ORDER_IDLE` и
+/// `IsComplexMember()`; `Hash_MapHash` у зданий 2×2 регистрирует все четыре
+/// клетки, поэтому запрос по любой из них находит здание.
+fn team_building_at(
+    state: &max_core::game::GameState,
+    team: max_core::team::TeamId,
+    x: i16,
+    y: i16,
+) -> Option<&max_core::unit::UnitInfo> {
+    state
+        .units_at(max_core::geo::Point::new(x, y))
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .find(|unit| unit.team == team && unit.orders != UnitOrder::Idle && unit.is_complex_member())
+}
+
+/// Маска коннекторов здания — порт своей части `UnitsManager_UpdateConnectors`
+/// (`units_manager.cpp:2051`).
+///
+/// C++ считает биты при постройке/перестройке комплекса и хранит их в
+/// `UnitInfo::connectors` (у порта это **симуляционное** поле, сохраняемое в
+/// V70 и CRC). Порт ещё не выполняет `UnitsManager_UpdateConnectors`
+/// (`max_core::unit_order::update_connectors` — заглушка), поэтому у новых
+/// партий маска нулевая и коннекторы не рисовались бы вовсе. Здесь та же
+/// формула повторяется **только для кадра**: она не пишет в состояние и не
+/// влияет на снапшот/CRC, а у зданий из сейва реальная маска всё равно
+/// объединяется с вычисленной (`unit.connectors | …`).
+///
+/// Правила (ровно как в C++): сосед сверху `(gx, gy-1)` даёт `NORTH_LEFT`,
+/// сверху-справа `(gx+1, gy-1)` — `NORTH_RIGHT`; снизу `(gx, gy+size)` —
+/// `SOUTH_LEFT`, снизу-справа `(gx+1, gy+size)` — `SOUTH_RIGHT`; справа
+/// `(gx+size, gy)` — `EAST_TOP`, справа-снизу `(gx+size, gy+1)` —
+/// `EAST_BOTTOM`; слева `(gx-1, gy)` — `WEST_TOP`, слева-снизу
+/// `(gx-1, gy+1)` — `WEST_BOTTOM`. У 1×1-зданий (`POWGEN`) есть только
+/// `NORTH_LEFT`/`SOUTH_LEFT`/`EAST_TOP`/`WEST_TOP`.
+pub fn connector_mask_for(
+    state: &max_core::game::GameState,
+    unit: &max_core::unit::UnitInfo,
+) -> u16 {
+    use max_core::enums::{
+        CONNECTOR_EAST_BOTTOM, CONNECTOR_EAST_TOP, CONNECTOR_NORTH_LEFT, CONNECTOR_NORTH_RIGHT,
+        CONNECTOR_SOUTH_LEFT, CONNECTOR_SOUTH_RIGHT, CONNECTOR_WEST_BOTTOM, CONNECTOR_WEST_TOP,
+    };
+
+    if !unit.is_complex_member() {
+        return 0;
+    }
+
+    let size: i16 = if unit.flags & unit_flags::BUILDING != 0 {
+        2
+    } else {
+        1
+    };
+    let (gx, gy) = (unit.grid.x, unit.grid.y);
+    let team = unit.team;
+    let has = |x: i16, y: i16| team_building_at(state, team, x, y).is_some();
+    let mut mask = 0u16;
+
+    if has(gx, gy - 1) {
+        mask |= CONNECTOR_NORTH_LEFT;
+    }
+    if has(gx, gy + size) {
+        mask |= CONNECTOR_SOUTH_LEFT;
+    }
+    if size == 2 {
+        if has(gx + 1, gy - 1) {
+            mask |= CONNECTOR_NORTH_RIGHT;
+        }
+        if has(gx + 1, gy + size) {
+            mask |= CONNECTOR_SOUTH_RIGHT;
+        }
+    }
+    if has(gx + size, gy) {
+        mask |= CONNECTOR_EAST_TOP;
+    }
+    if size == 2 && has(gx + size, gy + 1) {
+        mask |= CONNECTOR_EAST_BOTTOM;
+    }
+    if has(gx - 1, gy) {
+        mask |= CONNECTOR_WEST_TOP;
+    }
+    if size == 2 && has(gx - 1, gy + 1) {
+        mask |= CONNECTOR_WEST_BOTTOM;
+    }
+
+    mask
+}
+
+/// Маска, которой реально рисуются коннекторы: сохранённая ∪ вычисленная.
+///
+/// Сохранённая маска — из V70-сейва/симуляции (`UnitInfo::connectors`);
+/// вычисленная — [`connector_mask_for`] (пока `UnitsManager_UpdateConnectors`
+/// не портирован в симуляцию).
+pub fn drawn_connector_mask(
+    state: &max_core::game::GameState,
+    unit: &max_core::unit::UnitInfo,
+) -> u16 {
+    unit.connectors | connector_mask_for(state, unit)
 }
 
 /// Масштаб «вырастания» из `scaler_adjust`: `2^-scaler` (`UnitInfo::RenderSprite`).
@@ -331,17 +502,18 @@ pub fn unit_frame_index_for_animation(
 /// 2. цикл конструктора `+8` / `-16` ([`builder_animation_active`]);
 /// 3. `ProcessOrderSentry` для `ANIMATED` (`sentry_step`, сброс на
 ///    `image_base` после последнего кадра);
-/// 4. **промежуточный** полный цикл работающей шахты/завода (`work_step`, см.
+/// 4. **промежуточный** цикл кадров работающего **завода** (`work_step`, см.
 ///    [`working_building_frame_block`] и
 ///    [`WORKING_BUILDING_ANIMATION_ENABLED`]).
 ///
 /// `effects = false` отключает п. 3–4, как `settings["effects"]` в C++.
 ///
-/// Пункт 4 — **временное** правило до DOS-съёмки
-/// (`max-original-dasm/formats/unit-animation.md`): блок C++
+/// Пункт 4 — **временное** правило до съёмки работающего завода: блок C++
 /// `image_base + angle .. image_index_max` листается по кругу со скоростью
-/// `RADAR` (1 кадр за 1/30 с). `work_step = 0` возвращает статичный кадр C++
-/// (включённая шахта — `+1`), поэтому `dt = 0` не двигает golden-кадры.
+/// `RADAR` (1 кадр за 1/30 с). Шахта его не использует: DOS-съёмка показала
+/// статичный корпус в idle ([`MINING_DRILL_FRAMES_ENABLED`]).
+/// `work_step = 0` возвращает статичный кадр C++ (включённая шахта — `+1`),
+/// поэтому `dt = 0` не двигает golden-кадры.
 #[allow(clippy::too_many_arguments)]
 pub fn unit_frame_index_with_animation(
     unit: &max_core::unit::UnitInfo,
@@ -435,12 +607,17 @@ pub struct UnitSpriteStats {
     pub unit: u32,
     /// Пиксели башни/пушки; 0 — у типа нет башни или флага.
     pub turret: u32,
+    /// Пиксели коннекторов (`UnitInfo::RenderWithConnectors`): у шахты — 8
+    /// кадров `D_MINING.connector_image_base = 16`, у `POWGEN` — 4 трубы
+    /// `D_SMLBLD.connector_image_base = 2`. 0 — коннекторов нет/нет соседей.
+    pub connectors: u32,
 }
 
-/// Рисует юнит спрайтами: тень → корпус → башня/пушка.
+/// Рисует юнит спрайтами: тень → корпус → коннекторы → башня/пушка.
 ///
 /// Повторяет `UnitInfo::RenderWithConnectors`/`Render` C++: корпус с
-/// `zoom/64`, тень со сдвигом `shadow_offset`, башня отдельным кадром
+/// `zoom/64`, тень со сдвигом `shadow_offset`, коннекторы комплекса отдельными
+/// кадрами `connector_image_base + n`, башня отдельным кадром
 /// `turret_image_base + turret_angle` со сдвигом `angle_offsets[angle]`.
 ///
 /// База кадров — `unit.image_base` (без кланового варианта шахты). Карта и HUD
@@ -496,11 +673,13 @@ pub fn draw_unit_sprites_with_angle(
 ) -> Option<UnitSpriteStats> {
     draw_unit_sprites_with_animation(
         assets,
+        &assets.system_palette,
         unit,
         image_base,
         body_angle,
         FrameAnimation::default(),
         true,
+        unit.connectors,
         frame,
         anchor,
         zoom,
@@ -511,19 +690,26 @@ pub fn draw_unit_sprites_with_angle(
 ///
 /// `animation` — [`FrameAnimation`] из [`crate::App::unit_animation`]:
 /// строитель (`+16 → +24 → +32`), `ANIMATED`-здание (`ProcessOrderSentry`) и
-/// **промежуточный** полный цикл кадров работающих шахт/заводов. HUD и тесты
-/// передают [`FrameAnimation::default()`] (статичный кадр C++, как при `dt = 0`).
+/// **промежуточный** цикл кадров работающего завода. HUD и тесты передают
+/// [`FrameAnimation::default()`] (статичный кадр C++, как при `dt = 0`).
 ///
 /// `effects` — `settings["effects"]`; `false` отключает покадровые анимации,
 /// как C++.
+///
+/// Палитра — системная палитра игры (`Assets::system_palette`); карта
+/// передаёт сюда снимок с палитровыми циклами (`App::animated_palette`),
+/// чтобы маяки зданий мигали. Коннекторы рисуются по маске `connectors`
+/// (см. [`connector_frame_indices`]).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_unit_sprites_with_animation(
     assets: &crate::assets::Assets,
+    palette: &max_render::palette::Palette,
     unit: &max_core::unit::UnitInfo,
     image_base: i16,
     body_angle: u8,
     animation: FrameAnimation,
     effects: bool,
+    connectors: u16,
     frame: &mut RgbaBuffer,
     anchor: (i32, i32),
     zoom: u32,
@@ -552,12 +738,7 @@ pub fn draw_unit_sprites_with_animation(
         .copied()
         .unwrap_or(TeamColors::Derelict);
     let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
-    let renderer = SpriteRenderer::new(
-        &assets.palette,
-        &assets.brightness,
-        ColorLut::for_team(colors),
-        level,
-    );
+    let renderer = SpriteRenderer::new(palette, &assets.brightness, ColorLut::for_team(colors), level);
 
     let shadow_offset = (
         i32::from(unit.shadow_offset.x),
@@ -568,6 +749,27 @@ pub fn draw_unit_sprites_with_animation(
     stats.unit = renderer
         .draw_unit_scaled(frame, sprite_frame, shadow, anchor, shadow_offset, zoom)
         .drawn;
+
+    // Коннекторы комплекса — `UnitInfo::RenderWithConnectors`
+    // (`unitinfo.cpp:3157`): у каждого свой кадр `connector_image_base + n`,
+    // рисуется в том же якоре, что и корпус (горячая точка кадра задаёт
+    // сторону), тень — из того же `S_*`, что и корпус.
+    stats.connectors = 0;
+
+    for index in connector_frame_indices(sprite, connectors) {
+        if let Some(connector) = sprite.sheet.frame(index) {
+            stats.connectors += renderer
+                .draw_unit_scaled(
+                    frame,
+                    connector,
+                    sprite.shadow_at(index),
+                    anchor,
+                    shadow_offset,
+                    zoom,
+                )
+                .drawn;
+        }
+    }
 
     // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
     // `angle_offsets[body_angle]` (`UnitInfo::RenderWithConnectors`).
@@ -911,6 +1113,9 @@ impl App {
             // (QA/headless) даёт статичный кадр C++ (`+16` для строителя,
             // базовый/включённый кадр здания) — поэтому golden не дрейфуют.
             let animation = self.unit_animation(visible[index]);
+            // Коннекторы комплекса (`UnitInfo::RenderWithConnectors`): сохранённая
+            // маска из сейва ∪ вычисленная по соседям (см. [`drawn_connector_mask`]).
+            let connectors = drawn_connector_mask(self.state(), unit);
             // C++ `settings["effects"]` по умолчанию 1 (`settings.cpp`); в
             // Rust-порте поле `settings_effects` — симуляционное и по умолчанию
             // `false`, поэтому визуальные эффекты считаем включёнными (как
@@ -918,8 +1123,12 @@ impl App {
             let effects = true;
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
             let drawn = self.assets().and_then(|assets| {
+                // Палитра кадра: снимок с палитровыми циклами или исходная
+                // системная палитра (`dt = 0` — без изменений).
+                let palette = self.animated_palette().unwrap_or(&assets.system_palette);
                 draw_unit_sprites_with_animation(
-                    assets, unit, image_base, body_angle, animation, effects, frame, anchor, zoom,
+                    assets, palette, unit, image_base, body_angle, animation, effects, connectors,
+                    frame, anchor, zoom,
                 )
             });
 

@@ -579,12 +579,24 @@ pub struct App {
     ///
     /// Три механизма: цикл строителя (`ProcessOrderBuild`), анимация
     /// `ANIMATED`-зданий (`ProcessOrderSentry`, например RADAR) и
-    /// **промежуточный** полный цикл кадров работающих шахт/заводов
+    /// **промежуточный** цикл кадров работающих заводов
     /// ([`WORKING_BUILDING_ANIM_FRAME_SECONDS`]). В снапшот/CRC не входят:
     /// симуляция не хранит «номер кадра» — она хранит только
     /// `moved`/`image_index`, которые C++ использует как счётчик. `dt = 0`
     /// (QA/headless) — статичный кадр C++, детерминированно.
     frame_anims: std::collections::HashMap<UnitId, FrameAnim>,
+    /// Часы палитровых циклов (`World::InitColorCycles` +
+    /// `World::UpdateColorAnimations`): 11 диапазонов слотов DAC, которые
+    /// вращаются с частотой 2/6/8/9/10 fps. Именно они дают мигание маяков
+    /// зданий и индикатора дрели — кадры спрайта при этом не листаются
+    /// (`max-original-dasm/formats/unit-animation.md` §7.3). В снапшот/CRC не
+    /// входят; `dt = 0` (QA/headless) оставляет палитру исходной.
+    color_cycles: max_render::palette::ColorCycles,
+    /// Снимок системной палитры с повёрнутыми диапазонами (кэш на кадр).
+    ///
+    /// `None` — циклы ещё не шагнули (или `dt = 0`): рисуется
+    /// `Assets::system_palette` без изменений.
+    cycle_palette: Option<max_render::palette::Palette>,
     /// «Вырастание» только что поставленного юнита (`UnitsManager_ScaleUnit`).
     ///
     /// `scaler_adjust` — **симуляционное** поле (`UnitInfo::RenderSprite`:
@@ -646,16 +658,18 @@ pub const BUILDER_ANIM_FRAME_SECONDS: f32 = 0.1;
 /// `dt`: 1/30 с на кадр, 16 кадров RADAR — оборот за ~0.53 с.
 pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 
-/// Скорость и включение промежуточного цикла кадров работающих зданий.
+/// Скорость и включение промежуточного цикла кадров работающих заводов.
 ///
-/// **ПРОМЕЖУТОЧНОЕ правило** до DOS-съёмки
-/// (`max-original-dasm/formats/unit-animation.md`): работающая шахта/завод
-/// листают блок `image_base + angle .. image_index_max` по кругу с той же
-/// скоростью, что `RADAR` (1 кадр за 1/30 с). Обе ручки — «одна строка на
-/// откат»: скорость в [`render::WORKING_BUILDING_ANIM_FRAME_SECONDS`],
-/// включение — в [`render::WORKING_BUILDING_ANIMATION_ENABLED`].
+/// **ПРОМЕЖУТОЧНОЕ правило** до съёмки работающего завода: завод листает блок
+/// `image_base + angle .. image_index_max` по кругу с той же скоростью, что
+/// `RADAR` (1 кадр за 1/30 с). Обе ручки — «одна строка на откат»: скорость в
+/// [`render::WORKING_BUILDING_ANIM_FRAME_SECONDS`], включение — в
+/// [`render::WORKING_BUILDING_ANIMATION_ENABLED`]. У шахты цикла нет:
+/// DOS-съёмка показала статичный корпус в idle — кадры дрели включаются
+/// отдельной константой [`render::MINING_DRILL_FRAMES_ENABLED`].
 pub use crate::render::{
-    WORKING_BUILDING_ANIM_FRAME_SECONDS, WORKING_BUILDING_ANIMATION_ENABLED,
+    MINING_DRILL_FRAMES_ENABLED, WORKING_BUILDING_ANIM_FRAME_SECONDS,
+    WORKING_BUILDING_ANIMATION_ENABLED,
 };
 
 /// Длительность визуального «вырастания» юнита, секунды.
@@ -725,6 +739,8 @@ impl App {
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
             frame_anims: std::collections::HashMap::new(),
+            color_cycles: max_render::palette::ColorCycles::new(),
+            cycle_palette: None,
             growth_anims: std::collections::HashMap::new(),
             portrait: None,
         }
@@ -2080,9 +2096,49 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Визуальный масштаб юнита (`1.0` — полный размер).
+    /// Снимок системной палитры с палитровыми циклами (`None` — без изменений).
     ///
-    /// C++ `UnitInfo::RenderSprite` рисует «вырастающего» юнита с
+    /// `Some` только после того, как часы [`App::color_cycles`] шагнули хотя бы
+    /// раз (то есть при `dt > 0`). Отрисовка юнитов берёт этот снимок, иначе —
+    /// `Assets::system_palette`. Палитра — только кадр: в снапшот/CRC не входит.
+    pub fn animated_palette(&self) -> Option<&max_render::palette::Palette> {
+        self.cycle_palette.as_ref()
+    }
+
+    /// Часы палитровых циклов (для тестов/диагностики).
+    pub fn color_cycles(&self) -> &max_render::palette::ColorCycles {
+        &self.color_cycles
+    }
+
+    /// Двигает палитровые циклы по реальному `dt` и обновляет снимок палитры.
+    ///
+    /// Порт `World::UpdateColorAnimations` (`world.cpp:190`): каждый цикл
+    /// вращает свой диапазон слотов, когда накопилось `time_limit` мс. `dt <= 0`
+    /// (QA/headless) сбрасывает часы — палитра снова исходная, golden-кадры
+    /// детерминированы.
+    fn update_color_cycles(&mut self, dt: f32) {
+        // Клампим до 0.5 с: реальный кадр ~16 мс, а большой скачок (пауза окна)
+        // не должен прокручивать палитру на сотни шагов.
+        let dt = dt.clamp(0.0, 0.5);
+
+        if !(dt > 0.0) {
+            self.color_cycles.reset();
+            self.cycle_palette = None;
+            return;
+        }
+
+        if !self.color_cycles.advance(dt) {
+            return;
+        }
+
+        let palette = self.assets.as_ref().map(|assets| {
+            max_render::palette::rotate_palette(&assets.system_palette, &self.color_cycles)
+        });
+
+        self.cycle_palette = palette;
+    }
+
+    /// Визуальный масштаб юнита (`1.0` — полный размер).
     /// `2^-scaler_adjust`: `1/16 … 1` по мере `UnitsManager_ProcessOrderAwaitScaling`.
     /// В интерактиве переход сглаживается по реальному `dt`
     /// ([`GROWTH_ANIM_SECONDS`]); `dt = 0` и юниты без `scaler_adjust` — `1.0`.
@@ -2107,7 +2163,7 @@ impl App {
     }
 
     /// Визуальные часы анимаций кадра: строитель, `ANIMATED`-здания,
-    /// промежуточный цикл работающих шахт/заводов и «вырастание».
+    /// промежуточный цикл работающих заводов и «вырастание».
     ///
     /// Как и [`App::update_visual_units`], это **только кадр**: `frame_anims`/
     /// `growth_anims` не входят в снапшот/CRC и не влияют на симуляцию.
@@ -2240,6 +2296,8 @@ impl App {
         self.update_portrait(dt);
         // Покадровая анимация строителя и «вырастание» — тоже по реальному dt.
         self.update_unit_animations(dt);
+        // Палитровые циклы (маяки зданий, индикатор дрели) — тоже только кадр.
+        self.update_color_cycles(dt);
 
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);

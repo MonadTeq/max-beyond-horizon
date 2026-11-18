@@ -16,6 +16,15 @@
 //!   (§6.3): `rgb' = rgb * (level * 32) / 224`, индекс 31 принудительно равен 31,
 //!   подбор цвета — [`map_color`] (`Color_MapColor`, поиск ближайшего в RGB).
 //!   Уровень 5 — затемнение тени (`Gfx_DecodeShadow`).
+//! * **Палитровые циклы** — `World::InitColorCycles` (`world.cpp:542`) +
+//!   `World::UpdateColorAnimations` (`world.cpp:190`): 11 диапазонов слотов,
+//!   которые вращаются с частотой 2/6/8/9/10 fps. Это и есть «мигание» маяков
+//!   зданий и индикатора дрели в оригинале
+//!   (`max-original-dasm/formats/unit-animation.md` §7.3): кадры спрайта не
+//!   листаются, меняются только цвета слотов DAC. Реализация — [`ColorCycles`]
+//!   (часы) + [`rotate_palette`] (снимок палитры на кадр), см. [`COLOR_CYCLES`].
+//!   `dt = 0` не двигает часы, поэтому палитра остаётся исходной (golden не
+//!   дрейфуют).
 
 use std::fmt;
 use std::fs;
@@ -215,6 +224,304 @@ impl Palette {
     pub fn rgb555_table(bytes: &[u8]) -> Option<&[u8]> {
         bytes.get(PALETTE_BYTES..PALETTE_BYTES + (1 << 15))
     }
+
+    /// Палитра из **8-битных** компонент (системная палитра игры).
+    ///
+    /// Оригинал держит DAC 6-битным: `Color_SetSystemPaletteEntry` получает
+    /// уже поделённые на 4 значения (`world.cpp:330`), а SDL-порт при записи
+    /// умножает их на 4. Поэтому здесь компоненты усекаются до 6 бит
+    /// (`rgb & 0xFC`), как и в остальном порте: `raw = rgb / 4`.
+    pub fn from_rgb8(bytes: &[u8]) -> Result<Self, PaletteError> {
+        if bytes.len() < PALETTE_BYTES {
+            return Err(PaletteError::TooShort {
+                len: bytes.len(),
+                needed: PALETTE_BYTES,
+            });
+        }
+
+        let mut raw = [[0u8; 3]; PALETTE_SIZE];
+        let mut rgb = [[0u8; 3]; PALETTE_SIZE];
+
+        for index in 0..PALETTE_SIZE {
+            let offset = index * PALETTE_STRIDE;
+            let entry = [bytes[offset], bytes[offset + 1], bytes[offset + 2]];
+            let raw_entry = [
+                entry[0] / SIX_BIT_SCALE,
+                entry[1] / SIX_BIT_SCALE,
+                entry[2] / SIX_BIT_SCALE,
+            ];
+
+            raw[index] = raw_entry;
+            rgb[index] = [
+                raw_entry[0].saturating_mul(SIX_BIT_SCALE),
+                raw_entry[1].saturating_mul(SIX_BIT_SCALE),
+                raw_entry[2].saturating_mul(SIX_BIT_SCALE),
+            ];
+        }
+
+        Ok(Self { raw, rgb })
+    }
+
+    /// Снимок палитры с применёнными палитровыми циклами ([`rotate_palette`]).
+    pub fn rotated(&self, cycles: &ColorCycles) -> Self {
+        rotate_palette(self, cycles)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Палитровые циклы (`World::InitColorCycles`)
+// ---------------------------------------------------------------------------
+
+/// Направление вращения диапазона палитры (`ColorCycleData::rotate_direction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotateDirection {
+    /// `0` — «влево»: слот `start` переезжает в `end`, остальные сдвигаются
+    /// на один к началу (`memmove(&start[3], start, …)` в C++).
+    Left,
+    /// `1` — «вправо»: слот `end` переезжает в `start`.
+    Right,
+}
+
+/// Один палитровый цикл — дословный порт `ColorCycleData` (`world.hpp:44`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColorCycle {
+    /// Первый слот диапазона (включительно).
+    pub start_index: u8,
+    /// Последний слот диапазона (включительно).
+    pub end_index: u8,
+    /// Направление вращения.
+    pub direction: RotateDirection,
+    /// Миллисекунд между шагами (`TIMER_FPS_TO_MS(fps) = 1000 / fps`).
+    pub step_ms: u32,
+}
+
+impl ColorCycle {
+    /// Сколько слотов в диапазоне (`end - start + 1`).
+    pub const fn len(self) -> usize {
+        self.end_index as usize - self.start_index as usize + 1
+    }
+
+    /// Одиночный слот (`end == start`): C++ крутит у него только зелёный канал.
+    pub const fn is_single_slot(self) -> bool {
+        self.start_index == self.end_index
+    }
+}
+
+/// Циклы оригинала — построчный порт `World::InitColorCycles`
+/// (`max-cpp-port/src/world.cpp:542-557`).
+///
+/// `TIMER_FPS_TO_MS(fps) = 1000 / fps`: 9 fps → 111 мс, 6 fps → 166 мс,
+/// 2 fps → 500 мс, 8 fps → 125 мс, 10 fps → 100 мс. Маяки шахты используют
+/// диапазон 13–16 @6 fps (жёлтый → оранжевый → красный → оранжевый,
+/// полный цикл 4 × 166.7 = 666.7 мс), индикатор дрели — 21–24 @6 fps
+/// (`unit-animation.md` §7.3).
+pub const COLOR_CYCLES: [ColorCycle; 11] = [
+    ColorCycle {
+        start_index: 9,
+        end_index: 12,
+        direction: RotateDirection::Left,
+        step_ms: 1000 / 9,
+    },
+    ColorCycle {
+        start_index: 13,
+        end_index: 16,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 6,
+    },
+    ColorCycle {
+        start_index: 17,
+        end_index: 20,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 9,
+    },
+    ColorCycle {
+        start_index: 21,
+        end_index: 24,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 6,
+    },
+    ColorCycle {
+        start_index: 25,
+        end_index: 30,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 2,
+    },
+    ColorCycle {
+        start_index: 31,
+        end_index: 31,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 6,
+    },
+    ColorCycle {
+        start_index: 96,
+        end_index: 102,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 8,
+    },
+    ColorCycle {
+        start_index: 103,
+        end_index: 109,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 8,
+    },
+    ColorCycle {
+        start_index: 110,
+        end_index: 116,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 10,
+    },
+    ColorCycle {
+        start_index: 117,
+        end_index: 122,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 6,
+    },
+    ColorCycle {
+        start_index: 123,
+        end_index: 127,
+        direction: RotateDirection::Right,
+        step_ms: 1000 / 6,
+    },
+];
+
+/// Первое значение зелёного канала одиночного слота 31 (`m_color_cycle_step`).
+pub const SINGLE_SLOT_START: u8 = 63;
+
+/// Значение зелёного канала слота 31 после `steps` шагов.
+///
+/// C++ (`world.cpp:222-231`): `if (step <= 7) step = 63; else step /= 2;`
+/// начиная с `m_color_cycle_step = 63` (конструктор `World`). Ряд:
+/// `63 → 31 → 15 → 7 → 63 → …`.
+pub fn single_slot_value(steps: u64) -> u8 {
+    let mut value = SINGLE_SLOT_START;
+
+    for _ in 0..(steps % 4) {
+        value = if value <= 7 { SINGLE_SLOT_START } else { value / 2 };
+    }
+
+    value
+}
+
+/// Часы палитровых циклов (только отрисовка; в снапшот/CRC не входят).
+///
+/// C++ хранит по `time_stamp` на цикл и вращает диапазон, когда
+/// `current_time - time_stamp >= time_limit` (`world.cpp:195-239`). Здесь
+/// накапливается `dt` на цикл и выполняется столько шагов, сколько периодов
+/// уложилось в накопленное время, — тот же темп без накопления ошибки
+/// округления. `dt = 0` (QA/headless) часы не двигает: [`ColorCycles::step_counts`]
+/// остаются нулевыми, палитра — исходной.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorCycles {
+    elapsed_ms: [f64; COLOR_CYCLES.len()],
+    steps: [u64; COLOR_CYCLES.len()],
+}
+
+impl Default for ColorCycles {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ColorCycles {
+    /// Часы в исходном состоянии (все счётчики нулевые).
+    pub fn new() -> Self {
+        Self {
+            elapsed_ms: [0.0; COLOR_CYCLES.len()],
+            steps: [0; COLOR_CYCLES.len()],
+        }
+    }
+
+    /// Сбрасывает часы (`dt = 0`): палитра снова исходная.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Продвигает часы на `dt_seconds`; `true`, если хотя бы один цикл шагнул.
+    pub fn advance(&mut self, dt_seconds: f32) -> bool {
+        let milliseconds = f64::from(dt_seconds.max(0.0)) * 1000.0;
+
+        if !(milliseconds > 0.0) {
+            return false;
+        }
+
+        let mut advanced = false;
+
+        for (index, cycle) in COLOR_CYCLES.iter().enumerate() {
+            self.elapsed_ms[index] += milliseconds;
+
+            while self.elapsed_ms[index] >= f64::from(cycle.step_ms) {
+                self.elapsed_ms[index] -= f64::from(cycle.step_ms);
+                self.steps[index] = self.steps[index].wrapping_add(1);
+                advanced = true;
+            }
+        }
+
+        advanced
+    }
+
+    /// Сколько шагов сделал каждый цикл (индекс — [`COLOR_CYCLES`]).
+    pub fn step_counts(&self) -> &[u64; COLOR_CYCLES.len()] {
+        &self.steps
+    }
+
+    /// Ни один цикл не двигался (палитра равна исходной).
+    pub fn is_static(&self) -> bool {
+        self.steps.iter().all(|&steps| steps == 0)
+    }
+}
+
+/// Снимок палитры с повёрнутыми диапазонами — порт `UpdateColorAnimations`.
+///
+/// Вращается 6-битная палитра (`WindowManager_ColorPalette`), 8-битные
+/// компоненты пересчитываются как `raw * 4` (`Color_SetSystemPaletteEntry`).
+pub fn rotate_palette(palette: &Palette, cycles: &ColorCycles) -> Palette {
+    let mut raw = palette.raw;
+
+    for (index, cycle) in COLOR_CYCLES.iter().enumerate() {
+        let steps = cycles.steps[index];
+
+        if steps == 0 {
+            continue;
+        }
+
+        let start = usize::from(cycle.start_index);
+        let end = usize::from(cycle.end_index);
+
+        if cycle.is_single_slot() {
+            raw[start][1] = single_slot_value(steps);
+            continue;
+        }
+
+        let len = cycle.len();
+        let shift = (steps % len as u64) as usize;
+
+        if shift == 0 {
+            continue;
+        }
+
+        let mut range: Vec<[u8; 3]> = raw[start..=end].to_vec();
+
+        match cycle.direction {
+            // Вправо: слот `end` переезжает в `start`.
+            RotateDirection::Right => range.rotate_right(shift),
+            // Влево: слот `start` переезжает в `end`.
+            RotateDirection::Left => range.rotate_left(shift),
+        }
+
+        raw[start..=end].copy_from_slice(&range);
+    }
+
+    let mut rgb = [[0u8; 3]; PALETTE_SIZE];
+
+    for (index, entry) in raw.iter().enumerate() {
+        rgb[index] = [
+            entry[0].saturating_mul(SIX_BIT_SCALE),
+            entry[1].saturating_mul(SIX_BIT_SCALE),
+            entry[2].saturating_mul(SIX_BIT_SCALE),
+        ];
+    }
+
+    Palette { raw, rgb }
 }
 
 // ---------------------------------------------------------------------------
@@ -656,5 +963,190 @@ mod tests {
 
         // Уровни клампятся.
         assert_eq!(brightness.level(200), brightness.level(7));
+    }
+
+    /// Палитра, у которой каждый слот раскрашен по номеру: `(i, 2i, 4i)`.
+    fn indexed_palette() -> Palette {
+        let mut bytes = vec![0u8; PALETTE_BYTES];
+
+        for index in 0..PALETTE_SIZE {
+            bytes[index * 3] = index as u8;
+            bytes[index * 3 + 1] = (index * 2 % 64) as u8;
+            bytes[index * 3 + 2] = (index * 4 % 64) as u8;
+        }
+
+        Palette::from_color_pal(&bytes).unwrap()
+    }
+
+    #[test]
+    fn color_cycle_table_matches_the_cpp_init_color_cycles() {
+        // Порядок и тайминги — построчно `World::InitColorCycles`
+        // (`world.cpp:542-557`); `TIMER_FPS_TO_MS(fps) = 1000 / fps`.
+        let table: Vec<(u8, u8, RotateDirection, u32)> = COLOR_CYCLES
+            .iter()
+            .map(|cycle| {
+                (
+                    cycle.start_index,
+                    cycle.end_index,
+                    cycle.direction,
+                    cycle.step_ms,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            table,
+            vec![
+                (9, 12, RotateDirection::Left, 111),
+                (13, 16, RotateDirection::Right, 166),
+                (17, 20, RotateDirection::Right, 111),
+                (21, 24, RotateDirection::Right, 166),
+                (25, 30, RotateDirection::Right, 500),
+                (31, 31, RotateDirection::Right, 166),
+                (96, 102, RotateDirection::Right, 125),
+                (103, 109, RotateDirection::Right, 125),
+                (110, 116, RotateDirection::Right, 100),
+                (117, 122, RotateDirection::Right, 166),
+                (123, 127, RotateDirection::Right, 166),
+            ]
+        );
+
+        // Маяки шахты — 6 fps на четырёх слотах: полный цикл 666.7 мс.
+        let beacons = COLOR_CYCLES[1];
+
+        assert_eq!((beacons.start_index, beacons.end_index), (13, 16));
+        assert_eq!(beacons.len(), 4);
+        assert_eq!(beacons.step_ms * beacons.len() as u32, 664);
+    }
+
+    #[test]
+    fn zero_dt_keeps_the_palette_identical() {
+        let palette = indexed_palette();
+        let mut cycles = ColorCycles::new();
+
+        assert!(cycles.is_static());
+        assert!(!cycles.advance(0.0));
+        assert_eq!(rotate_palette(&palette, &cycles), palette);
+        assert_eq!(cycles.step_counts(), &[0; COLOR_CYCLES.len()]);
+    }
+
+    #[test]
+    fn beacon_range_rotates_one_slot_per_sixth_of_a_second() {
+        let palette = indexed_palette();
+        let mut cycles = ColorCycles::new();
+
+        // Меньше самого короткого периода (10 fps = 100 мс) — ни одного шага.
+        assert!(!cycles.advance(0.09));
+        assert_eq!(rotate_palette(&palette, &cycles), palette);
+
+        // 170 мс — ровно один шаг 6 fps (166 мс): 13..16 сдвигается вправо.
+        assert!(cycles.advance(0.08));
+        assert_eq!(cycles.step_counts()[1], 1);
+        let once = rotate_palette(&palette, &cycles);
+
+        assert_eq!(once.raw(13), palette.raw(16), "start <- end (вправо)");
+        assert_eq!(once.raw(14), palette.raw(13));
+        assert_eq!(once.raw(15), palette.raw(14));
+        assert_eq!(once.raw(16), palette.raw(15));
+        // Соседние с 13..16 слоты не тронуты (9..12 и 17..20 вращаются своими
+        // циклами 9 fps, 13..16 от них не зависит).
+        assert_eq!(once.raw(8), palette.raw(8));
+        assert_eq!(once.raw(32), palette.raw(32));
+        // 8-битные компоненты пересчитаны как raw * 4.
+        assert_eq!(once.rgb(13), [once.raw(13)[0] * 4, once.raw(13)[1] * 4, once.raw(13)[2] * 4]);
+
+        // Полный цикл (4 шага по 1/6 с) возвращает слоты 13..16 на место
+        // (остальные диапазоны живут своим темпом и тоже двигаются).
+        for _ in 0..3 {
+            cycles.advance(1.0 / 6.0);
+        }
+        assert_eq!(cycles.step_counts()[1], 4);
+        let full = rotate_palette(&palette, &cycles);
+
+        for index in 13..=16 {
+            assert_eq!(full.raw(index), palette.raw(index), "слот {index}");
+        }
+
+        // 5-й шаг = 4 (круг) + 1: слоты 13..16 как после одного шага.
+        cycles.advance(1.0 / 6.0);
+        assert_eq!(cycles.step_counts()[1], 5);
+        let after_five = rotate_palette(&palette, &cycles);
+
+        for index in 13..=16 {
+            assert_eq!(after_five.raw(index), once.raw(index), "слот {index}");
+        }
+    }
+
+    #[test]
+    fn each_cycle_uses_its_own_rate_and_direction() {
+        let palette = indexed_palette();
+        let mut cycles = ColorCycles::new();
+
+        // 0.5 с: 9..12 @9 fps (4 шага = полный круг), 25..30 @2 fps (1 шаг),
+        // 110..116 @10 fps (5 шагов = полный круг).
+        cycles.advance(0.5);
+        let steps = *cycles.step_counts();
+
+        assert_eq!(steps[0], 4, "9 fps: 111 мс × 4 = 444 мс");
+        assert_eq!(steps[4], 1, "2 fps: 500 мс");
+        assert_eq!(steps[8], 5, "10 fps: 100 мс × 5");
+        assert_eq!(steps[1], 3, "6 fps: 166 мс × 3");
+        assert_eq!(steps[5], 3, "одиночный слот 31 — тот же 6 fps");
+
+        let rotated = rotate_palette(&palette, &cycles);
+
+        // 9..12 — единственный диапазон с вращением влево; 4 шага = круг.
+        for index in 9..=12 {
+            assert_eq!(rotated.raw(index), palette.raw(index));
+        }
+        // 25..30 @2 fps сдвинулся на один вправо.
+        assert_eq!(rotated.raw(25), palette.raw(30));
+        assert_eq!(rotated.raw(26), palette.raw(25));
+
+        // Другой шаг: 9..12 влево на один слот.
+        let mut left = ColorCycles::new();
+        left.advance(1.0 / 9.0);
+        let rotated = rotate_palette(&palette, &left);
+
+        assert_eq!(rotated.raw(9), palette.raw(10), "влево: start <- next");
+        assert_eq!(rotated.raw(12), palette.raw(9), "влево: end <- start");
+    }
+
+    #[test]
+    fn single_slot_31_walks_the_green_component() {
+        assert_eq!(single_slot_value(0), 63);
+        assert_eq!(single_slot_value(1), 31);
+        assert_eq!(single_slot_value(2), 15);
+        assert_eq!(single_slot_value(3), 7);
+        assert_eq!(single_slot_value(4), 63);
+        assert_eq!(single_slot_value(9), 31);
+
+        let palette = indexed_palette();
+        let mut cycles = ColorCycles::new();
+
+        cycles.advance(1.0 / 6.0);
+        let rotated = rotate_palette(&palette, &cycles);
+
+        assert_eq!(rotated.raw(31)[1], 31, "зелёный канал 63 -> 31");
+        assert_eq!(rotated.raw(31)[0], palette.raw(31)[0], "красный не меняется");
+        assert_eq!(rotated.raw(31)[2], palette.raw(31)[2], "синий не меняется");
+    }
+
+    #[test]
+    fn from_rgb8_truncates_to_six_bit_and_roundtrips() {
+        let mut bytes = vec![0u8; PALETTE_BYTES];
+
+        bytes[0..3].copy_from_slice(&[255, 243, 159]);
+        bytes[3..6].copy_from_slice(&[0, 64, 128]);
+
+        let palette = Palette::from_rgb8(&bytes).unwrap();
+
+        assert_eq!(palette.raw(0), [63, 60, 39]);
+        assert_eq!(palette.rgb(0), [252, 240, 156]);
+        assert_eq!(palette.raw(1), [0, 16, 32]);
+        assert!(matches!(
+            Palette::from_rgb8(&bytes[..PALETTE_BYTES - 1]),
+            Err(PaletteError::TooShort { .. })
+        ));
     }
 }

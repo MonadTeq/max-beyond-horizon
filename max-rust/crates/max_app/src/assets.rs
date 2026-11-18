@@ -637,6 +637,10 @@ pub struct Assets {
     pub patches_res: ResArchive,
     /// Палитра `COLOR.PAL`.
     pub palette: Palette,
+    /// Системная палитра игры, которой рисуются спрайты и которую вращают
+    /// палитровые циклы (`World::InitColorCycles`): `FRAMEPIC` для слотов
+    /// 0..63/160..255 + палитра `.WRL` для 64..159.
+    pub system_palette: Palette,
     /// Таблицы яркости, построенные из палитры.
     pub brightness: BrightnessLut,
     /// Планета, для которой загружена карта.
@@ -814,6 +818,44 @@ impl Assets {
         // Хром окна 1:1 (`FRAMEPIC` + панели) — необязателен: без него рендер
         // работает в прежнем полноэкранном режиме.
         let chrome = crate::chrome::Chrome::load(&max_res);
+
+        // Системная палитра игры: слоты 0..63 и 160..255 — палитра окна
+        // (`FRAMEPIC`; C++ `WindowManager_LoadBigImage(..., palette_from_image=true)`),
+        // слоты 64..159 — палитра мира (`World::ApplyPaletteAndTints`,
+        // `world.cpp:329`: компоненты `.WRL` делятся на 4, то есть остаются
+        // 6-битными). Именно эти слоты вращают палитровые циклы
+        // (`World::InitColorCycles`), поэтому спрайты рисуются системной
+        // палитрой, а `COLOR.PAL` остаётся источником таблиц яркости.
+        // Без `FRAMEPIC` (например, синтетические тесты) берётся `COLOR.PAL`.
+        let system_palette = {
+            let ui_palette = chrome
+                .as_ref()
+                .map(|chrome| chrome.frame.palette)
+                .or_else(|| {
+                    max_res
+                        .read("FRAMEPIC")
+                        .ok()
+                        .and_then(|bytes| BigImage::decode(bytes).ok().map(|image| image.palette))
+                });
+            let fallback = palette.to_rgb_bytes();
+            let mut bytes = ui_palette
+                .as_ref()
+                .map(|entries| entries.to_vec())
+                .filter(|entries| entries.len() >= max_render::palette::PALETTE_BYTES)
+                .unwrap_or(fallback);
+
+            let world_palette = world.palette();
+
+            for index in 64..160 {
+                let source = (index - 64) * 3;
+
+                bytes[index * 3..index * 3 + 3]
+                    .copy_from_slice(&world_palette[source..source + 3]);
+            }
+
+            Palette::from_rgb8(&bytes).unwrap_or_else(|_| palette.clone())
+        };
+
         let panels = crate::panels::Panels::load(&max_res);
         let menu = crate::menu::MenuAssets::load(&max_res);
         let build_menu = crate::buildmenu::BuildMenuAssets::load(&max_res);
@@ -1017,6 +1059,7 @@ impl Assets {
             flics,
             patches_res,
             palette,
+            system_palette,
             brightness,
             planet: config.planet,
             world_name: world_name.to_string(),

@@ -1,23 +1,27 @@
-//! Кадры включённых зданий и клановые варианты шахты.
+//! Кадры включённых зданий, их коннекторы и клановые варианты шахты.
 //!
 //! Оракул — C++ `UnitInfo::Render` (`unitinfo.cpp:3138`),
-//! `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) и
-//! `UnitInfo::PowerDown` (`unitinfo.cpp:5123`):
+//! `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`),
+//! `UnitInfo::PowerDown` (`unitinfo.cpp:5123`) и
+//! `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:3151`):
 //!
 //! * у зданий в спрайте ровно два кадра состояния — `image_base`
 //!   (выключено) и `image_base + 1` (включено);
 //! * `ORDER_POWER_ON` рисует `image_base + 1`, `PowerDown` — `image_base`;
 //! * у шахты `image_base = (team_clan - 1) * sizeof(uint16_t)` — восемь
 //!   клановых пар кадров;
+//! * кадры после корпуса — **коннекторы комплекса**, а не анимация:
+//!   `D_MINING.connector_image_base = 16 / count = 8`, `D_SMLBLD` (POWGEN)
+//!   `base = 2 / count = 4`; рисуются по маске `UnitInfo::connectors`
+//!   (DOS-съёмка приняла их за «8 частиц»/«4 дымовых клуба»,
+//!   `max-original-dasm/formats/unit-animation.md` §7.1/§7.3);
 //! * покадровой анимации по времени у зданий в C++ нет: `UnitInfo::Animate`
-//!   только добавляет draw bounds, а `ProcessOrderPowerOn` вызывает
-//!   `DrawSpriteFrame` один раз при включении.
+//!   только добавляет draw bounds; шахта в idle статична (DOS §7.2).
 //!
-//! Поверх этого порт **только на кадре** листает полный блок кадров
-//! работающих шахт/заводов (промежуточное правило до DOS-съёмки,
-//! `max-original-dasm/formats/unit-animation.md`): `image_base + angle ..
-//! image_index_max` по кругу, 1 кадр за 1/30 с; `work_step = 0` — статичный
-//! кадр C++, поэтому golden не дрейфуют.
+//! Порт листает кадры **только у завода с очередью** (промежуточное правило
+//! до съёмки работающего завода); `work_step = 0` — статичный кадр C++,
+//! поэтому golden не дрейфуют. Мигание маяков — палитровые циклы
+//! (`max_render::palette::ColorCycles`).
 //!
 //! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
 
@@ -184,62 +188,39 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
 }
 
-/// Работающая шахта листает **полный блок кадров C++** по кругу, выключенная —
-/// статична. Блок — `image_base + angle .. image_index_max`, где
-/// `image_index_max = image_count + image_index - 1` (`D_MINING.image_count` = 16
-/// кадров корпуса; в ленте 24 кадра — ещё 8 мелких частиц бурения).
-/// `work_step = 0` — статичный кадр C++ (`POWER_ON` → `image_base + 1`), поэтому
-/// `dt = 0` не двигает golden-кадры.
+/// Шахта в idle **не листает кадры** — DOS-съёмка §7.2
+/// (`max-original-dasm/formats/unit-animation.md`): включённая стоит на
+/// `image_base + 1`, выключенная — на `image_base`, при любом `work_step`.
+/// Восемь кадров `16..23` — не «частицы бурения», а коннекторы
+/// (`D_MINING.connector_image_base = 16`, `connector_image_count = 8`):
+/// рисуются по маске `connectors`, в плотной базе — все восемь сразу
+/// (это и засняла DOS-съёмка, §7.1).
 #[test]
-fn working_mine_cycles_its_frame_block_and_powered_off_mine_is_static() {
+fn mining_station_body_is_static_and_connectors_are_mask_driven() {
+    use max_app::render::{connector_frame_indices, working_building_animation_active};
+
     let mut mine = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
     let animated = |step: u32| FrameAnimation {
         work_step: step,
         ..FrameAnimation::default()
     };
 
-    assert!(working_building_animation_active(&mine));
-    assert_eq!(
-        working_building_frame_block(0, 24, 16, 0),
-        (0, 16),
-        "C++: image_index_max = image_count + image_index - 1"
+    assert!(
+        !working_building_animation_active(&mine),
+        "шахта в idle статична (DOS-съёмка §7.2)"
     );
 
-    // `work_step = 0` — статичный кадр C++ (POWER_ON: `image_base + 1`).
-    let statically_powered =
-        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, FrameAnimation::default(), true);
-    assert_eq!(statically_powered, 1);
-
-    // Каждый следующий кадр цикла — следующий кадр блока: 1, 2, …, 15.
-    for step in 1..15u32 {
+    // `work_step` не влияет на кадр корпуса: включённая шахта — всегда `+1`.
+    for step in [0, 1, 2, 15, 16, 99] {
         assert_eq!(
             unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
-            1 + step as usize,
-            "шаг {step}: следующий кадр блока"
+            1,
+            "шаг {step}: корпус включённой шахты статичен"
         );
     }
 
-    // По кругу: последний кадр блока (image_base + angle), затем снова
-    // статичный кадр C++ после полного оборота 16 кадров.
-    assert_eq!(
-        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(15), true),
-        0,
-        "16-й кадр блока — его первый кадр (image_base + angle)"
-    );
-    assert_eq!(
-        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(16), true),
-        statically_powered,
-        "полный оборот возвращает статичный кадр C++"
-    );
-
-    // Клановый сдвиг: блок не выходит за кадры корпуса `D_MINING` (16) и тем
-    // более за 24-кадровую ленту; у старших кланов он укорачивается.
-    assert_eq!(working_building_frame_block(12, 24, 16, 0), (12, 4));
-    assert_eq!(working_building_frame_block(14, 24, 16, 0), (14, 2));
-
-    // Выключенная шахта не анимируется.
+    // Выключенная — кадр 0, тоже при любом шаге.
     mine.orders = UnitOrder::PowerOff;
-    assert!(!working_building_animation_active(&mine));
     for step in [0, 1, 2, 15, 16] {
         assert_eq!(
             unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
@@ -247,13 +228,82 @@ fn working_mine_cycles_its_frame_block_and_powered_off_mine_is_static() {
             "выключенная шахта статична"
         );
     }
-
-    // Без effects цикл тоже выключен (C++ `settings["effects"]`).
+    // Клановый сдвиг сохраняется (кадры состояния клана: 12/13, 14/15).
     mine.orders = UnitOrder::PowerOn;
     assert_eq!(
-        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(5), false),
-        statically_powered,
-        "effects=off: статичный кадр C++"
+        unit_frame_index_with_animation(&mine, 12, 24, 16, 0, animated(7), true),
+        13,
+        "клан 7: включённый кадр = 12 + 1"
+    );
+
+    // Коннекторы: все восемь битов — кадры 16..23 в порядке C++.
+    let Some(assets) = game_assets() else {
+        return;
+    };
+    let sprite = assets.sprite(UnitType::MiningStation).expect("MININGST");
+    let full = max_core::enums::CONNECTOR_NORTH_LEFT
+        | max_core::enums::CONNECTOR_NORTH_RIGHT
+        | max_core::enums::CONNECTOR_EAST_TOP
+        | max_core::enums::CONNECTOR_EAST_BOTTOM
+        | max_core::enums::CONNECTOR_SOUTH_LEFT
+        | max_core::enums::CONNECTOR_SOUTH_RIGHT
+        | max_core::enums::CONNECTOR_WEST_TOP
+        | max_core::enums::CONNECTOR_WEST_BOTTOM;
+
+    assert_eq!(
+        connector_frame_indices(sprite, full),
+        vec![16, 20, 18, 22, 17, 21, 19, 23],
+        "D_MINING: N_L, N_R, S_L, S_R, E_T, E_B, W_T, W_B"
+    );
+    assert!(
+        connector_frame_indices(sprite, 0).is_empty(),
+        "нет соседей — нет кадров"
+    );
+    assert_eq!(
+        connector_frame_indices(sprite, max_core::enums::CONNECTOR_NORTH_LEFT),
+        vec![16],
+        "один северный коннектор"
+    );
+}
+
+/// `POWGEN` (`D_SMLBLD`: база 2, 4 коннектора) — четыре «дымовых клуба» из
+/// DOS-съёмки (§7.3), на самом деле трубы N/E/S/W; корпус статичен (0/1).
+#[test]
+fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
+    use max_app::render::connector_frame_indices;
+
+    let Some(assets) = game_assets() else {
+        return;
+    };
+    let sprite = assets.sprite(UnitType::PowerGenerator).expect("POWGEN");
+    let base = image_base_for(
+        &unit_of(UnitType::PowerGenerator, UnitOrder::PowerOn, 0),
+        None,
+    );
+
+    assert_eq!(base, 0);
+    assert_eq!(
+        unit_frame_index(&unit_of(UnitType::PowerGenerator, UnitOrder::PowerOn, 0), base, 6),
+        1,
+        "включённый POWGEN — кадр 1"
+    );
+    assert_eq!(
+        unit_frame_index(&unit_of(UnitType::PowerGenerator, UnitOrder::PowerOff, 0), base, 6),
+        0,
+        "выключенный POWGEN — кадр 0"
+    );
+    // Покадровой анимации по времени у корпуса нет — ни одного лишнего кадра.
+    assert_eq!(sprite.sheet.len(), 6, "2 корпуса + 4 трубы");
+
+    let full = max_core::enums::CONNECTOR_NORTH_LEFT
+        | max_core::enums::CONNECTOR_EAST_TOP
+        | max_core::enums::CONNECTOR_SOUTH_LEFT
+        | max_core::enums::CONNECTOR_WEST_TOP;
+
+    assert_eq!(
+        connector_frame_indices(sprite, full),
+        vec![2, 4, 3, 5],
+        "кадры 2..5 = трубы N/S/E/W (3 и 5 — одна и та же картинка зеркально)"
     );
 }
 
