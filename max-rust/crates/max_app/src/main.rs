@@ -738,6 +738,11 @@ fn run_ui(cli: &Cli) -> Result<()> {
             tracing::warn!("UI: данные игры не загружены ({error:#}); карта будет упрощённой");
         }
     }
+    // `settings.json` C++ (`FilePathGamePref`): настройки игрока переживают
+    // перезапуск. QA-драйвер файл не читает — там значения по умолчанию.
+    if app.load_preferences_from_disk() {
+        println!("UI: настройки загружены из {}", app.preferences_path().display());
+    }
 
     let mut window = SdlWindow::new_scaled(
         "M.A.X. — Rust client (M4.2 HUD)",
@@ -756,6 +761,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     );
     // `Introduction`: INTROFLC → maxint.mve рядом с MAX.RES (см. Assets::load).
     ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
+    ctx.preferences = app.preferences().clone();
     // M6.2: звук меню. `with_default_backend` за feature `sound` поднимает
     // rodio/cpal; без фичи (или без устройства) — тихий no-op. Ссылки на
     // файлы берутся из MAX.RES, сами файлы — рядом с MAX.RES.
@@ -846,6 +852,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
                 let name = match &screen {
                     Screen::MainMenu => "MainMenu",
+                    Screen::Preferences(_) => "Preferences",
                     Screen::LocalSetup(_) => "LocalSetup",
                     Screen::InSession { .. } => "InSession",
                     Screen::GameOver => "GameOver",
@@ -883,7 +890,21 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     ),
                     None => "site=closed".to_string(),
                 };
-                eprintln!("[in] screen={name} event={input:?} {alloc} {build} {site}");
+                // `Preferences`/`Setup` (`OptionsMenu`): живой тест
+                // (`build/scripts/ui-test-prefs.ps1`) проверяет открытие/закрытие.
+                let preferences = if app.preferences_dialog().is_some()
+                    || matches!(screen, Screen::Preferences(_))
+                {
+                    "prefs=open"
+                } else {
+                    "prefs=closed"
+                };
+                eprintln!(
+                    "[in] screen={name} event={input:?} {alloc} {build} {site} {preferences} \
+                     effects={} sound={}",
+                    u8::from(app.effects_enabled()),
+                    u8::from(app.sound_enabled())
+                );
             }
 
             if let Some(recorder) = recorder.as_mut() {
@@ -922,6 +943,15 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     screen = Screen::MainMenu;
                     app.leave_local_game();
                     ctx.status = "Left the session".to_string();
+                }
+                Transition::ApplyPreferences(preferences) => {
+                    // `OptionsMenu` `Done`: значения уже сохранены в
+                    // `preferences.ini`; применяем к приложению и аудио-слою.
+                    app.set_preferences(*preferences);
+                    app.persist_preferences();
+                    ctx.preferences = app.preferences().clone();
+                    ctx.audio.set_enabled(app.sound_enabled());
+                    ctx.audio.set_volume(app.preferences().sound_volume());
                 }
                 Transition::StartLocal(setup) => {
                     // M-SP: старт локальной партии (Options → Planet → Players).
@@ -1050,6 +1080,11 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // (или без загруженных ресурсов) остаётся системный курсор.
         update_window_cursor(&mut window, &app, &screen, mouse);
 
+        // `settings["disable_fx"]`/`fx_sound_level` C++: флаг доходит до
+        // аудио-слоя в том же кадре, в котором его изменили в Preferences.
+        ctx.audio.set_enabled(app.sound_enabled());
+        ctx.audio.set_volume(app.preferences().sound_volume());
+
         if let Some(request) = pending.take() {
             if runtime.is_none() {
                 runtime = Some(build_ui_runtime()?);
@@ -1153,6 +1188,9 @@ fn update_window_cursor(
         (max_app::CursorId::Help, 0)
     } else if app.research_menu().is_some() {
         // `ResearchMenu::ResearchMenu`: `Cursor_SetCursor(CURSOR_HAND)`.
+        (max_app::CursorId::Hand, 0)
+    } else if app.preferences_dialog().is_some() {
+        // `OptionsMenu::OptionsMenu`: `Cursor_SetCursor(CURSOR_HAND)`.
         (max_app::CursorId::Hand, 0)
     } else {
         match screen {
@@ -1275,6 +1313,10 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             match handle_session_input(app, input, true) {
                 Transition::None => {}
                 Transition::LeaveSession | Transition::Quit => leave = true,
+                Transition::ApplyPreferences(preferences) => {
+                    app.set_preferences(*preferences);
+                    app.persist_preferences();
+                }
                 Transition::StartSession(_) | Transition::StartLocal(_) => {}
             }
         }

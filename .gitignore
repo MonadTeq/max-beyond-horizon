@@ -104,6 +104,9 @@ max-rust/qa-out/
 # QA work outputs
 max-rust-qa/out/
 
+# Пользовательские настройки (C++ settings.json): пишутся рядом с сейвами
+max-original/preferences.ini
+
 # max-resource-editor: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
 max-assets/images/
 tools/max-resource-editor/target/

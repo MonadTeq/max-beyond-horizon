@@ -11,6 +11,7 @@
 |---|---|---|
 | `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-rust` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
 | `build-windows-ui.ps1` | **нативная** Windows-сборка `max-rust` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранный UI-клиент |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-horizon-server/target/release/horizon` и `build/linux-server-template/max-port` |
 | `live-smoke-3.sh` | P5: живой smoke **3 клиента × N ходов** (RED/GREEN/BLUE): релей всем, 00/52/54/45, `state_checksum` у всех, 0 таймаутов | то же; Docker; `--min-players 3` создаётся автоматически |

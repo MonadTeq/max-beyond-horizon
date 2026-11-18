@@ -57,6 +57,7 @@ pub mod mobilize;
 pub mod net;
 pub mod panels;
 pub mod portrait;
+pub mod preferences;
 pub mod pregame;
 pub mod profile;
 pub mod qa;
@@ -115,6 +116,10 @@ pub use net::{
     connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
 };
 pub use panels::{PanelButton, PanelState, Panels};
+pub use preferences::{
+    Preferences, PreferencesAction, PreferencesAssets, PreferencesDialog, PreferencesInfo,
+    PreferencesVariant, PrefKey,
+};
 pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
 pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
 pub use render::{
@@ -122,8 +127,8 @@ pub use render::{
     unit_frame_index, unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
 };
 pub use saveload::{
-    save_meta_for_local_game, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
-    AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
+    save_meta_for_local_game, save_meta_for_local_game_with, SaveLoadAction, SaveLoadAssets,
+    SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use ui::{
@@ -609,6 +614,13 @@ pub struct App {
     /// нет `F_*`-ресурса или FLC не загрузился (тогда портрет — спрайт ×2,
     /// см. `panels::draw_portrait`).
     portrait: Option<portrait::PortraitAnim>,
+    /// Пользовательские настройки (`SETUP`/`PREFERENCES`/`OPTIONS` из
+    /// `settings.cpp`). В снапшот/CRC не входят: на симуляцию влияет только
+    /// `effects` (кадры) и звук.
+    pub(crate) preferences: Preferences,
+    /// Открытый диалог `Preferences` (кнопка панели, C++ `OptionsMenu`).
+    /// В снапшот/CRC не входит — это UI.
+    pub(crate) preferences_dialog: Option<PreferencesDialog>,
 }
 
 /// Визуальные кадровые часы одного юнита.
@@ -743,6 +755,8 @@ impl App {
             cycle_palette: None,
             growth_anims: std::collections::HashMap::new(),
             portrait: None,
+            preferences: Preferences::default(),
+            preferences_dialog: None,
         }
     }
 
@@ -2180,10 +2194,11 @@ impl App {
         }
 
         let ids = self.state.unit_ids_in_order();
-        // C++ `settings["effects"]` default = 1; Rust-поле `settings_effects`
-        // симуляционное и по умолчанию false, поэтому кадровые часы идут как в
-        // исходных настройках оригинала и на снапшот/CRC не влияют.
-        let effects = true;
+        // C++ `settings["effects"]` (`settings.cpp:128`): при выключенных
+        // эффектах `UnitsManager_ProcessOrderBuild`/`ProcessOrderSentry`
+        // (`units_manager.cpp:2857/3030`) не листают кадры, поэтому и наши
+        // кадровые часы не идут — кадр остаётся статичным.
+        let effects = self.preferences.effects;
         let state = &self.state;
 
         self.frame_anims.retain(|id, _| state.unit(*id).is_some());

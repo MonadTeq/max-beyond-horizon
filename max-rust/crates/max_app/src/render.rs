@@ -868,6 +868,8 @@ impl App {
         self.draw_alloc_menu(&mut frame);
         // Меню команд выделенного юнита (`GameManager_PopupButtons`).
         self.draw_unit_menu(&mut frame);
+        // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
+        self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
 
         (frame, stats)
@@ -942,6 +944,8 @@ impl App {
         self.draw_alloc_menu(&mut frame);
         // Меню команд выделенного юнита — над картой и панелями.
         self.draw_unit_menu(&mut frame);
+        // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
+        self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
 
         (frame, stats)
@@ -989,6 +993,15 @@ impl App {
         };
 
         menu.draw(frame, assets);
+    }
+
+    /// Рисует открытый диалог `Preferences`/`Setup` (C++ `OptionsMenu`).
+    pub(crate) fn draw_preferences(&self, frame: &mut RgbaBuffer) {
+        let (Some(dialog), Some(assets)) = (self.preferences_dialog(), self.assets()) else {
+            return;
+        };
+
+        dialog.draw(frame, assets);
     }
 
     /// Рисует открытое окно помощи поверх кадра (P7).
@@ -1116,11 +1129,10 @@ impl App {
             // Коннекторы комплекса (`UnitInfo::RenderWithConnectors`): сохранённая
             // маска из сейва ∪ вычисленная по соседям (см. [`drawn_connector_mask`]).
             let connectors = drawn_connector_mask(self.state(), unit);
-            // C++ `settings["effects"]` по умолчанию 1 (`settings.cpp`); в
-            // Rust-порте поле `settings_effects` — симуляционное и по умолчанию
-            // `false`, поэтому визуальные эффекты считаем включёнными (как
-            // исходные настройки оригинала). Симуляция/CRC от этого не зависят.
-            let effects = true;
+            // C++ `settings["effects"]` (`settings.cpp:128`): `effects = false`
+            // отключает покадровые анимации спрайтов (`UnitInfo::Animate`,
+            // `units_manager.cpp:2857/3030`) — кадр статичен.
+            let effects = self.preferences.effects;
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
             let drawn = self.assets().and_then(|assets| {
                 // Палитра кадра: снимок с палитровыми циклами или исходная

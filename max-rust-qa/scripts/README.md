@@ -87,6 +87,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `menu join` | `Multiplayer Menu` → `Join Network Game` → список игр (клиент лобби — заглушка QA, 2 детерминированные игры) |
 | `menu intro` | `Introduction` главного меню → экран-заглушка MVE (TC-0108) |
 | `menu credits` | `Credits` главного меню → прокрутка титров `CREDITS` (TC-0108) |
+| `menu setup` | `Setup` главного меню → диалог `OptionsMenu(SETUPPIC)` (`screen=Preferences`, TC-0935) |
 | `setup done` | кнопка `Done` текущего экрана настройки (Options → Planet → Players → открыть фазы старта) |
 | `setup cancel` | кнопка `Cancel` |
 | `setup random` | кнопка `Random` на экране планет |
@@ -126,7 +127,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `research row N up\|down` | стрелка `UPGRGT`/`UPGLFT` темы N: `+1`/`−1` центр (свободные центры — `free_capacity`) |
 | `research done` | `Done`/Enter — `ResearchMenu_OnClick_Done`: распределение пишется в `GameState` |
 | `research cancel` | `Cancel`/Esc — закрыть без изменений |
-| `help cargo\|planet\|newgame\|options\|research\|upgrades\|game\|hotseat\|clan` | открыть окно `HELPFRAM` (**CARGO/PLANET/NEW_GAME/OPTIONS_SETUP**, `RESEARCH_SETUP`, `UPGRADES_SETUP`, `GAME_SCREEN_SETUP`) кнопкой `?`/`Help` текущего экрана |
+| `help cargo\|planet\|newgame\|options\|research\|upgrades\|game\|hotseat\|clan\|preferences\|setup_menu` | открыть окно `HELPFRAM` (**CARGO/PLANET/NEW_GAME/OPTIONS_SETUP**, `RESEARCH_SETUP`, `UPGRADES_SETUP`, `GAME_SCREEN_SETUP`, `PREFS_MENU_SETUP`/`SETUP_MENU_SETUP`) кнопкой `?`/`Help` текущего экрана |
 | `help page up\|down` | `PageUp`/`PageDown` — страница текста (16 строк) |
 | `help up\|down` | одна строка вверх/вниз |
 | `help keys` | кнопка `Keys` (`GAME_SCREEN_SETUP`): подсказка `_(ceb6)` |
@@ -140,6 +141,11 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `allocate set N` / `allocate set raw\|fuel\|gold N` | абсолютный уровень добычи (клик по полосе, `OnClick*Bar`; `N` обрезается по ёмкости шахты — 16 единиц) |
 | `allocate row [raw\|fuel\|gold] up\|down` | стрелка `RTARO_OF`/`LFARO_OF`: `+1`/`−1` единица |
 | `allocate done` / `allocate cancel` | `Done`/`Enter` или `Esc`: закрыть и разослать `ORDER_NEW_ALLOCATE` (пакет **08/P5**) шахтам комплекса (в C++ `Esc` и `KP_Enter` — один и тот же выход) |
+| `prefs open` | открыть диалог `Preferences`: в игре — кликом по кнопке `PREF_OFF` панели (`GameManager_MenuClickPreferencesButton`), в главном меню — пунктом `Setup` (`menu_setup_window`) |
+| `prefs toggle NAME` | клик по чекбоксу диалога: `effects`, `click_scroll`, `fast_movement`, `follow_unit`, `enemy_halt`, `auto_select`, `disable_music`, `disable_fx` (алиас `sound`), `disable_voice`, `disable_movie`, `auto_save`, `enhanced_graphics` |
+| `prefs set NAME N` | клик по слайдеру в позицию значения (квантование 57 px как `UpdateSlider`): `music_level`, `fx_sound_level`, `voice_level`, `movie_level`, `quick_scroll` |
+| `prefs done` / `prefs cancel` | `Done` (сохраняет в `preferences.ini`/`IniPreferences`) или `Cancel` (возвращает снимок открытия) |
+| `prefs help` | кнопка `Help`/`?` диалога: `PREFS_MENU_SETUP`/`SETUP_MENU_SETUP` |
 | `mobilize mode buy\|upgrade` | переключатель `CRGTOG` (542,446) — список покупки/модернизации |
 | `mobilize filter ground\|air\|sea\|building\|combat` | фильтр домена `SELGRD/SELAIR/SELSEA/SELBLD/SELCBT` |
 | `mobilize select N` | строка N списка Available (прокручивает список стрелками, как игрок) |
@@ -163,7 +169,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert turn=3`, `turn>=3`, `turn<=3`, `turn>3`, `turn<3` | `GameState::turn_counter` |
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
-| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
+| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Preferences`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
 | `assert phase=PlayerTurn` | фаза локальной партии: `PlayerTurn`, `AiTurn`, `Advancing`, `Finished` |
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
@@ -178,7 +184,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert research-menu=open` / `research-menu=closed` | открыт ли `ResearchMenu` (P7) |
 | `assert research-alloc attack=N` (и `>=`, `<=`, `>`, `<`) | сколько центров закреплено за темой (`attack\|shots\|range\|armor\|hits\|speed\|scan\|cost`) |
 | `assert help=open` / `help=closed` | открыто ли окно помощи (P7) |
-| `assert help-section=CARGO_SETUP` (короткие `cargo\|planet\|newgame\|options\|research\|upgrades\|game`) | секция открытого окна |
+| `assert help-section=CARGO_SETUP` (короткие `cargo\|planet\|newgame\|options\|research\|upgrades\|game\|preferences\|setup_menu`) | секция открытого окна |
 | `assert help-row>=N` | первая видимая строка окна помощи (проверка прокрутки) |
 | `assert gold>=N` (и `=`, `<=`, `>`, `<`) | золото локальной команды |
 | `assert research attack>=1` | уровень темы исследований (`attack|shots|range|armor|hits|speed|scan|cost`) |
@@ -200,6 +206,11 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert unit-menu-item=NAME` | пункт есть в меню и **включён** |
 | `assert unit-menu-disabled=NAME` | пункт есть, но отключён (механика не портирована — см. `unitmenu::UnitMenuItem::note`) |
 | `assert unit-order=sentry` (и любое `ORDER_*`) | текущий приказ выделенного юнита (`await`, `move`, `sentry`, `poweron`, …) |
+| `assert prefs=open` / `prefs=closed` | открыт ли диалог `Preferences`/`Setup` (в меню — `Screen::Preferences`, в игре — модальное окно `App::preferences_dialog`) |
+| `assert prefs-value NAME=N` | значение опции в открытом диалоге (чекбокс — `0/1`; `effects`, `disable_fx`, `quick_scroll`, `timer`, …) |
+| `assert prefs-effects=on\|off` | `settings["effects"]` (пока диалог открыт — его черновик) |
+| `assert prefs-sound=on\|off` | флаг звука `!disable_fx` |
+| `assert prefs-audio=on\|off` | фактическое состояние аудио-слоя (`AudioPlayer::enabled`) — флаг дошёл до аудио |
 
 При падении в `log.txt` пишется строка шага и **фактическое** значение
 (`assert turn=3: фактически turn=1`), прогон останавливается, `qa_run` → exit 1.
@@ -223,6 +234,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `move-input.qa` | TC-0601/0603/0604 сквозь весь путь **кликами мыши**: меню → Options → Planet → Players → мобилизация (`mobilize done`) → высадка (`key ENTER`, `assert screen=InGame`) → `assert units>=7` (стартовые юниты в партии) → клик по шахте (`assert unit-pos=22,22`, панель Hits/Cargo/Total) → клик по своему Surveyor'у (`assert selected`, `assert unit-pos=23,21`) → RMB на соседнюю клетку (`assert preview`, `assert log=Move:`) → `end_turn` → повторный клик по новой клетке (`assert unit-pos=24,21`, `assert angle=2` — угол по ходу движения, TC-0933); кадры `game-start`/`mine-selected`/`game-selected`/`move-preview`/`game-turn2`/`game-after` | **PASS** (134 кадра, 6 PNG = эталоны `move-input/`; регресс «юнит не двигается» — камера на шахте, а не на плите) |
 | `unit-menu.qa` | TC-0622–0626: меню команд юнита — покупка танка и строителя → высадка → `select type Tank` → `unit-menu open` (повторный клик, `assert unit-menu=open`) → пункты танка (`sentry`/`enter`/`Done` включены, `attack` отключён) → `unit-menu item sentry` (`assert unit-order=sentry`) → повторное открытие (пункт нажат) → `key 8` (снять) → `Esc` (`assert unit-menu=closed`, `assert screen=InGame`) → модальность (клик по карте закрывает меню, выделение не меняется) → меню строителя → `Build` открывает `BuildMenu`; кадры `unit-menu-tank-selected`/`unit-menu-tank`/`unit-menu-sentry-on`/`unit-menu-builder` | **PASS** (golden `unit-menu/`) |
 | `allocate.qa` | TC-0627–0629: распределение добычи шахты — `select type MiningStation` → `unit-menu open` → `unit-menu item allocate` (`assert alloc=open`, пункт **включён**) → значения из комплекса (`alloc-raw=12`, `alloc-fuel=4`, `alloc-gold=0`, `alloc-free=0`) → `allocate select raw` → `allocate set 4` (`assert alloc-raw=4`) → `row raw up`/`down` (`5`/`4`) → `set fuel 2`, `set gold 1` (`assert alloc-free=9`) → `set raw 20` упирается в 16 → `set raw 4` → модальность (клик по карте) → `allocate done` (`assert unit-order=newallocate`, `tick 1` → `poweron`) → `end_turn` → `assert complex-raw>=4` (добыча стала запасом комплекса) → повторное открытие помнит `raw=4` → `cancel`; кадры `allocate-selected`/`allocate-menu`/`allocate-set` | **PASS** (128 кадров; golden `allocate/`) |
+| `preferences.qa` | TC-0935: `menu setup` → `SETUPPIC` (`setup-dialog`, `prefs-value disable_fx=0`, toggle → `prefs-sound=off`, Cancel не применяет, Done применяет); партия → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`, все секции, `quick_scroll=16`, `timer=180`), `prefs set quick_scroll 36` → 35, `prefs toggle effects` → `effects=off`, `anim 200` → `prefs-effects-off`, Done, значение помнится, `save_v70 prefs-ini`; звук `prefs-audio=off/on`; Cancel возвращает снимок; `Help` → `help-section=preferences`; 4 golden-кадра | **PASS** (1 кадр цикла, 0 дрейфа) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -354,11 +366,13 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100

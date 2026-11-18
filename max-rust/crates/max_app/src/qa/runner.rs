@@ -34,8 +34,8 @@ use crate::mobilize::{
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
     self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, MenuTarget,
-    MobilizeAction, PhaseName, ResearchCommand, ScreenName, SetupAction, Step, UnitMenuCommand,
-    UpgradeCommand,
+    MobilizeAction, PhaseName, PrefsCommand, ResearchCommand, ScreenName, SetupAction, Step,
+    UnitMenuCommand, UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -365,6 +365,11 @@ impl QaRunner {
     }
 
     fn execute(&mut self, command: &Command) -> Result<Flow, String> {
+        // `main.rs` каждый кадр проводит `settings["disable_fx"]`/громкость в
+        // аудио-слой; QA-драйвер делает то же перед каждой командой, чтобы
+        // `assert prefs-audio` видел эффект `prefs toggle disable_fx`.
+        self.sync_audio();
+
         match command {
             Command::Click(x, y) => self.send(InputEvent::MouseClick(*x, *y)),
             Command::RightClick(x, y) => self.send(InputEvent::RightClick(*x, *y)),
@@ -411,6 +416,7 @@ impl QaRunner {
             Command::Help(action) => self.help(*action),
             Command::UnitMenu(action) => self.unit_menu(action.clone()),
             Command::Allocate(action) => self.allocate(action.clone()),
+            Command::Prefs(action) => self.prefs(action.clone()),
         }
     }
 
@@ -496,6 +502,175 @@ impl QaRunner {
 
         self.detail = Some(detail);
 
+        Ok(Flow::Continue)
+    }
+
+    /// `settings["disable_fx"]`/`fx_sound_level` → `AudioPlayer`.
+    fn sync_audio(&mut self) {
+        self.ctx.audio.set_enabled(self.app.sound_enabled());
+        self.ctx
+            .audio
+            .set_volume(self.app.preferences().sound_volume());
+    }
+
+    /// Текущий диалог `Preferences` (в меню — `Screen::Preferences`, в игре —
+    /// модальное окно `App::preferences_dialog`).
+    fn prefs_dialog(&self) -> Option<&crate::preferences::PreferencesDialog> {
+        match &self.screen {
+            Screen::Preferences(dialog) => Some(dialog),
+            Screen::InSession { .. } => self.app.preferences_dialog(),
+            _ => None,
+        }
+    }
+
+    fn require_prefs(&self, what: &str) -> Result<(), String> {
+        if self.prefs_dialog().is_some() {
+            Ok(())
+        } else {
+            Err(format!(
+                "prefs {what}: диалог не открыт (сейчас {})",
+                self.screen_label()
+            ))
+        }
+    }
+
+    /// `prefs …` — диалог `Preferences`/`Setup` (C++ `OptionsMenu`).
+    fn prefs(&mut self, action: PrefsCommand) -> Result<Flow, String> {
+        use crate::preferences::{PrefKey, DONE_BUTTON, CANCEL_BUTTON, HELP_BUTTON, WINDOW_ULX, WINDOW_ULY};
+
+        let detail = match action {
+            PrefsCommand::Open => {
+                if self.prefs_dialog().is_some() {
+                    return Err("prefs open: диалог уже открыт".to_string());
+                }
+
+                match &self.screen {
+                    Screen::InSession { .. } => {
+                        let rect = crate::panels::PanelButton::Preferences.rect();
+                        self.send(InputEvent::MouseClick(
+                            rect.ulx + rect.width / 2,
+                            rect.uly + rect.height / 2,
+                        ))?;
+
+                        if self.app.preferences_dialog().is_none() {
+                            return Err(
+                                "prefs open: кнопка Preferences панели не открыла диалог".to_string(),
+                            );
+                        }
+                        "Preferences (PREFSPIC)".to_string()
+                    }
+                    Screen::MainMenu => {
+                        self.click_main_menu_button(3, "prefs open")?;
+                        if !matches!(self.screen, Screen::Preferences(_)) {
+                            return Err(format!(
+                                "prefs open: Setup открыл {} вместо диалога",
+                                self.screen_label()
+                            ));
+                        }
+                        "Setup (SETUPPIC)".to_string()
+                    }
+                    _ => {
+                        return Err(format!(
+                            "prefs open: нужен MainMenu или InGame, сейчас {}",
+                            self.screen_label()
+                        ))
+                    }
+                }
+            }
+            PrefsCommand::Toggle(name) => {
+                self.require_prefs("toggle")?;
+                let key = PrefKey::parse(&name)
+                    .ok_or_else(|| format!("prefs toggle: неизвестная опция «{name}»"))?;
+                let dialog = self.prefs_dialog().expect("prefs открыт");
+                let rect = dialog
+                    .screen_rect(key)
+                    .ok_or_else(|| format!("prefs toggle {name}: контрол не виден в этом варианте"))?;
+                let before = dialog.value(key);
+                let (x, y) = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                let dialog = self.prefs_dialog().expect("prefs остаётся открытым");
+                let after = dialog.value(key);
+                if before == after {
+                    return Err(format!(
+                        "prefs toggle {name}: значение не изменилось ({before:?})"
+                    ));
+                }
+                format!("{name} = {after:?}")
+            }
+            PrefsCommand::Set { name, value } => {
+                self.require_prefs("set")?;
+                let key = PrefKey::parse(&name)
+                    .ok_or_else(|| format!("prefs set: неизвестная опция «{name}»"))?;
+                let dialog = self.prefs_dialog().expect("prefs открыт");
+                let x = dialog.slider_screen_x(key, value).ok_or_else(|| {
+                    format!("prefs set {name}: контрол не виден в этом варианте")
+                })?;
+                let expected = dialog
+                    .slider_value_at(key, x)
+                    .ok_or_else(|| format!("prefs set {name}: нет жёлоба слайдера"))?;
+                let rect = dialog
+                    .screen_rect(key)
+                    .ok_or_else(|| format!("prefs set {name}: нет области клика"))?;
+                let y = rect.uly + rect.height / 2;
+                let (min, max) = key.range();
+                let target = value.clamp(min, max);
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                let dialog = self.prefs_dialog().expect("prefs остаётся открытым");
+                let actual = dialog.value(key);
+                if actual != Some(expected) {
+                    return Err(format!(
+                        "prefs set {name}: клик в {x} дал {actual:?}, ожидалось {expected}"
+                    ));
+                }
+                if (actual.unwrap_or(min) - target).abs() > 1 {
+                    return Err(format!(
+                        "prefs set {name}: значение {target} недостижимо кликом (дали {actual:?})"
+                    ));
+                }
+                format!("{name} = {}", actual.unwrap_or(target))
+            }
+            action @ (PrefsCommand::Done | PrefsCommand::Cancel) => {
+                self.require_prefs("done")?;
+                let dialog = self.prefs_dialog().expect("prefs открыт");
+                let variant = dialog.variant();
+                let rect = if matches!(action, PrefsCommand::Done) {
+                    DONE_BUTTON
+                } else {
+                    CANCEL_BUTTON
+                };
+                let (x, y) = (
+                    WINDOW_ULX + rect.ulx + rect.width / 2,
+                    WINDOW_ULY + rect.uly + rect.height / 2,
+                );
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                if self.prefs_dialog().is_some() {
+                    return Err("prefs done/cancel: диалог не закрылся".to_string());
+                }
+                format!("{:?} ({variant:?})", action)
+            }
+            PrefsCommand::Help => {
+                self.require_prefs("help")?;
+                let (x, y) = (
+                    WINDOW_ULX + HELP_BUTTON.ulx + HELP_BUTTON.width / 2,
+                    WINDOW_ULY + HELP_BUTTON.uly + HELP_BUTTON.height / 2,
+                );
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                if !matches!(self.screen, Screen::Help { .. }) && self.app.help_screen().is_none() {
+                    return Err("prefs help: окно помощи не открылось".to_string());
+                }
+                "Help".to_string()
+            }
+        };
+
+        self.detail = Some(detail);
         Ok(Flow::Continue)
     }
 
@@ -1456,6 +1631,12 @@ impl QaRunner {
                     Ok(Flow::Continue)
                 }
                 Transition::Quit => Ok(Flow::Exit),
+                Transition::ApplyPreferences(preferences) => {
+                    self.app.set_preferences(*preferences);
+                    self.app.persist_preferences();
+                    self.ctx.preferences = self.app.preferences().clone();
+                    Ok(Flow::Continue)
+                }
                 Transition::StartLocal(_) => {
                     Err("ввод в сессии не может начать локальную партию".to_string())
                 }
@@ -1487,6 +1668,12 @@ impl QaRunner {
                 Ok(Flow::Continue)
             }
             Transition::Quit => Ok(Flow::Exit),
+            Transition::ApplyPreferences(preferences) => {
+                self.app.set_preferences(*preferences);
+                self.app.persist_preferences();
+                self.ctx.preferences = self.app.preferences().clone();
+                Ok(Flow::Continue)
+            }
             Transition::StartSession(request) => Err(format!(
                 "сетевая сессия «{}» в QA-драйвере не поддерживается",
                 request.game_id
@@ -1701,6 +1888,10 @@ impl QaRunner {
             MenuTarget::Credits => {
                 self.click_main_menu_button(5, "menu credits")?;
                 self.require_screen(ScreenName::Credits, "menu credits")
+            }
+            MenuTarget::Setup => {
+                self.click_main_menu_button(3, "menu setup")?;
+                self.require_screen(ScreenName::Preferences, "menu setup")
             }
         }
     }
@@ -2866,6 +3057,61 @@ impl QaRunner {
 
                 self.expect(ok, "site=drawn".to_string(), parts.join(", "))
             }
+            Assertion::PrefsOpen(open) => {
+                let actual = self.prefs_dialog().is_some();
+                self.expect(
+                    actual == open,
+                    format!("prefs={}", if open { "open" } else { "closed" }),
+                    format!("prefs={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::PrefsValue(key, cmp, expected) => {
+                let dialog = self.prefs_dialog();
+                let actual = dialog.and_then(|dialog| dialog.value(key));
+                let ok = actual.is_some_and(|actual| cmp.test(i64::from(actual), i64::from(expected)));
+
+                self.expect(
+                    ok,
+                    format!("prefs-value {}={expected}", key.name()),
+                    match actual {
+                        Some(actual) => format!("{}={actual}", key.name()),
+                        None => "диалог не открыт/контрол скрыт".to_string(),
+                    },
+                )
+            }
+            Assertion::PrefsEffects(on) => {
+                // Пока диалог открыт, действует его черновик (как
+                // `settings->SetNumericValue` в C++ применяет клик сразу).
+                let actual = self
+                    .prefs_dialog()
+                    .map(|dialog| dialog.draft.effects)
+                    .unwrap_or_else(|| self.app.effects_enabled());
+                self.expect(
+                    actual == on,
+                    format!("prefs-effects={}", if on { "on" } else { "off" }),
+                    format!("prefs-effects={}", if actual { "on" } else { "off" }),
+                )
+            }
+            Assertion::PrefsSound(on) => {
+                let actual = self
+                    .prefs_dialog()
+                    .map(|dialog| dialog.draft.sound_enabled())
+                    .unwrap_or_else(|| self.app.sound_enabled());
+                self.expect(
+                    actual == on,
+                    format!("prefs-sound={}", if on { "on" } else { "off" }),
+                    format!("prefs-sound={}", if actual { "on" } else { "off" }),
+                )
+            }
+            Assertion::PrefsAudio(on) => {
+                // Флаг `disable_fx` доходит до аудио-слоя (`AudioPlayer::enabled`).
+                let actual = self.ctx.audio.enabled();
+                self.expect(
+                    actual == on,
+                    format!("prefs-audio={}", if on { "on" } else { "off" }),
+                    format!("prefs-audio={}", if actual { "on" } else { "off" }),
+                )
+            }
             Assertion::Selected => {
                 let team = self.app.player_team();
                 let selected = self
@@ -3188,6 +3434,7 @@ impl QaRunner {
                 matches!(flow.stage, crate::pregame::PreGameStage::Landing(_))
             }
             (Screen::Help { .. }, ScreenName::Help) => true,
+            (Screen::Preferences(_), ScreenName::Preferences) => true,
             (Screen::Help { screen, .. }, _) => match screen.as_ref() {
                 Screen::LocalSetup(form) => match expected {
                     ScreenName::LocalSetup => true,
@@ -3197,6 +3444,7 @@ impl QaRunner {
                     ScreenName::Clan => form.screen == SetupScreen::Clan,
                     _ => false,
                 },
+                Screen::Preferences(_) => expected == ScreenName::Preferences,
                 Screen::PreGame(flow) => match expected {
                     ScreenName::Mobilize => {
                         matches!(flow.stage, crate::pregame::PreGameStage::Mobilize(_))
@@ -3223,6 +3471,7 @@ impl QaRunner {
             Screen::GameOver => "GameOver",
             Screen::InSession { .. } => "InGame",
             Screen::Help { .. } => "Help",
+            Screen::Preferences(_) => "Preferences",
             Screen::LocalSetup(form) => match form.screen {
                 SetupScreen::Options => "Options",
                 SetupScreen::Planet => "Planet",

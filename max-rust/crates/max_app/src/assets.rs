@@ -670,6 +670,9 @@ pub struct Assets {
     pub research: Option<crate::researchmenu::ResearchMenuAssets>,
     /// Окно помощи (`HELPFRAM` + `HELPOK` + `BLDUP__`/`BLDDWN`).
     pub help: Option<crate::helpmenu::HelpMenuAssets>,
+    /// Диалог `Preferences`/`Setup` (`PREFSPIC` + `PRF*` + `UNCHKED`/`CHECKED`
+    /// + `PREFEDIT`/`PREFNAME`), C++ `OptionsMenu`.
+    pub preferences: Option<crate::preferences::PreferencesAssets>,
     /// Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21) — попап
     /// `GameManager_PopupButtons`.
     pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
@@ -867,6 +870,8 @@ impl Assets {
         let research = crate::researchmenu::ResearchMenuAssets::load(&max_res);
         // Окно помощи (`HELPFRAM` + `HELPOK` + прокрутка) — все Help-экраны.
         let help = crate::helpmenu::HelpMenuAssets::load(&max_res);
+        // Диалог `Preferences`/`Setup` (`PREFSPIC` + `PRF*` + чекбоксы + поля).
+        let preferences = crate::preferences::PreferencesAssets::load(&max_res);
         // Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21).
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
         // Диалог распределения добычи шахты (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
@@ -897,6 +902,13 @@ impl Assets {
         if !help.is_ready() {
             warnings.push(
                 "HelpMenu: HELPFRAM/HELPOK не загрузились — окно помощи на рамках".to_string(),
+            );
+        }
+
+        if !preferences.is_ready() {
+            warnings.push(
+                "Preferences: PREFSPIC/PRFSLIT/PRFSLIDE/UNCHKED/CHECKED/PRF* не загрузились — диалог на рамках"
+                    .to_string(),
             );
         }
 
@@ -1049,6 +1061,7 @@ impl Assets {
             upgrade: Some(upgrade),
             research: Some(research),
             help: Some(help),
+            preferences: Some(preferences),
             unit_menu: Some(unit_menu),
             alloc: Some(alloc),
             cargo: Some(cargo),

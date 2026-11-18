@@ -1,6 +1,6 @@
 # Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
 
-**Дата среза:** 2026-11-19 (§26) · **Версия workspace:** 1.1.0 (разделы §1–§11 —
+**Дата среза:** 2026-11-19 (§27) · **Версия workspace:** 1.1.0 (разделы §1–§11 —
 срез 2026-11-15/1.0.0, §12 — полное покрытие спрайтов) · **Задача:** довести визуал
 Rust-клиента до 1:1 с оригинальной M.A.X. (эталон — C++-порт в этой же рабочей
 области).
@@ -28,6 +28,7 @@ Rust-клиента до 1:1 с оригинальной M.A.X. (эталон �
 | Иконки ресурсов/обломков | **1:1** (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые при `zoom ≤ 16`; `I_*` — fallback) | `MAX.RES`: 99 маркеров; обломки — спрайты `ALNTANK/ALNASGUN/ALNPLANE` + плита/мост/здания | `max_assets::markers`, `max_render::map_render::render_resource_icons_into` |
 | Курсор мыши | **1:1 по формату и контексту** (SDL `Cursor::from_surface` за feature `sdl`) | `MAX.RES`: 30 курсоров (`HANDPTR`, `ARROW_*`, `PTR_PATH`…) | `max_assets::cursor`, `max_app::cursor` |
 | Меню (главное, create/join) | **1:1 (пункт E)** | `MAINPIC`/`PLANETSE`/`MULTGAME`, `BLANK_*`/`SBLNK_*`, `MNUBTN1..6U/D`, `BTNHIDE`, `BGRSCRN*`, `P_*`; подписи — GNW `FONT1/5` | `max_app::menu`, `max_app::ui` |
+| Диалог Preferences/Setup | **1:1 (пункт P8)** — панель `PREFSPIC` 400×422 в (120,29), заголовок, кнопки `PRFDNE/PRFCAN/PRFHLP`, слайдеры `PRFSLIT/PRFSLIDE`, чекбоксы `UNCHKED/CHECKED`, поля `PREFEDIT/PREFNAME`; открытие из `Setup` меню и кнопки `Preferences` панели; `Done/Cancel/Help`, модальность | `optionsmenu.cpp/.hpp` (`window_uly`-раскладка, 36 опций), `settings.cpp` defaults, `menu.cpp:2325/2331`, `saveload.cpp:547/920` (`IniPreferences`) | `max_app::preferences`, `max_app::ui`, `max_app::render::draw_preferences` |
 | Масштабирование окна | **1:1 (пункт F)** | фиксированный кадр 640×480 → целочисленный nearest-neighbour в окно любого размера + letterbox; обратный пересчёт кликов | `max_render::frame_scale`, `max_render::sdl_window` |
 | Экран выбора планеты | **8×3 в оформлении `PLANETSE`** на `SNOW_PIC + world/6` + имена; числовой ввод — fallback | `MAX.RES`: `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` (128×128) | `max_app::menu::draw_create_form`, `max_app::ui::{planet_grid_rect,draw_planet_picker}` |
 
@@ -2796,3 +2797,111 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   (PE32+ console, Subsystem=3, без mingw-рантайма); zip —
   sha256 `855ea275ef4f38d109be73fb3a63190b7e0656dc922008638ee9e4ab89066038`.
   Сводные хеши — `release/SHA256SUMS-1.1.0.txt`.
+
+## 27. Диалог Preferences/Setup (`OptionsMenu`) — **сделано** (2026-11-19)
+
+**Оракул.** `max-cpp-port/src/menu.cpp:2325` `menu_preferences_window(team)` →
+`OptionsMenu(team, PREFSPIC).Run()` (кнопка `Preferences` панели,
+`GameManager_MenuClickPreferencesButton`, `game_manager.cpp:3918`);
+`menu.cpp:2331` `menu_setup_window()` → `OptionsMenu(PLAYER_TEAM_RED, SETUPPIC)`
+(пункт `Setup` главного меню). Раскладка и поведение — `optionsmenu.hpp/.cpp`,
+значения по умолчанию — `settings.cpp` (секции `SETUP`/`PREFERENCES`/`OPTIONS`),
+`IniPreferences` — `save.md` и `saveload.cpp:547/920`.
+
+**Окно.** Обе версии рисуются одной панелью `PREFSPIC` 400×422; `Window(id)` в
+C++ центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2 = 29`.
+Заголовок — `GNW_TEXT_FONT_5` в (108,12) 184×17 зелёным (`COLOR_GREEN`), текст
+`Setup` (`_(7013)`) или `Preferences` (`_(f70f)`). Кнопки в нижней строке:
+`Done` — `PRFDNE_U/D` 62×23 в (215,383), `Cancel` — `PRFCAN_U/D` в (125,383),
+`Help` — `PRFHLP_U/D` 25×23 в (188,383); подписи — `FONT5`,
+`Fonts_GoldColor (165,175,199)` (в конструкторе `Text_SetFont(FONT5)` стоит до
+создания кнопок). В игре диалог модален (`OptionsMenu::Run` блокирует цикл),
+поэтому `App::local_update` не тикает, а карта/панели ввод не получают.
+
+**Раскладка** — дословно `OptionsMenu::Init`: `window_uly` стартует с 20,
+секция даёт `+20`, каждая опция с `ulx = 25` — `+20`, `LABEL` после отрисовки
+отнимает `20 − (Text_GetHeight() + 3) = 7` (`FONT5` — 10 px); скрытые контролы
+строку не занимают. `SETUPPIC` выходит на секции `preferences`, поэтому в меню
+только setup-часть; `PREFSPIC` показывает setup + preferences + options
+(debug-секция `invalid` не портирована). Контролы: подпись `Text_TextBox`
+(`ulx`, `uly`, 185×20), жёлоб `PRFSLIT` 57×3 в
+`x = ulx + Text_GetWidth(caption) + 10`, `y = uly + 8`, ползунок `PRFSLIDE`
+14×17 в `x = track + value·57/max − 7`; чекбокс `UNCHKED`/`CHECKED` 18×17 в
+`(ulx, uly)`, подпись в `(ulx+25, uly−2) 155×24`; поле `PREFEDIT` 60×19
+(`PREFNAME` 187×17 для имени) в `(ulx + width(caption) + 10, uly + (20−h)/2)`,
+значение по центру цветом `0xA2`.
+
+**Опции (все из оригинала).** `setup`: `Volume:`, `Enhanced graphics
+(requires 16MB)` (только Setup), `Music`/`Disable Music`,
+`FX`/`FX Disabled`, `Voice`/`Voice Disabled`, `Video`/`Disable Video`,
+`Auto-Save Enabled`, `Host Address:`/`Host Port:` (только Setup),
+`Player Name:`. `preferences`: `Animate Effects`, `Click to Scroll`,
+`Double Unit Steps`, `Track Selected Unit`,
+`Halt movement when enemy is detected`, `Auto-Select Next Unit`,
+`Scroll Speed`. `options`: `Turn Time:`/`End Turn Time:` (edit int),
+`Play Mode: %s`, `Computer Player(s): %s`, `Game ends at %i %s.` (read-only).
+Подписи — `language.json` (en-US), значения по умолчанию — `settings.cpp`.
+
+**Что реально действует.**
+* `effects` («Animate Effects») — `App::update_unit_animations` не листает
+  кадры строителя, `ANIMATED`-зданий (`RADAR`) и работающих заводов;
+  `render::unit_frame_index_with_animation` получает `effects = false`, кадр
+  статичен — как `units_manager.cpp:2857/3030` и `unitinfo.cpp:5057`. Палитровые
+  циклы (маяки) в C++ не гейтятся `effects` и продолжают идти (проверено
+  `World::UpdateColorAnimations`, `game_manager.cpp:5161`).
+* `disable_fx` («FX Disabled») — звук SFX вкл/выкл: `AudioPlayer::set_enabled`
+  (в C++ `HaltSfxPlayback`); `fx_sound_level` — громкость
+  (`AudioPlayer::set_volume`, `AUDIO_TYPE_SFX2`).
+* `auto_save` — `App::autosave` (слот 10).
+**Что только хранится** (честно помечено, в игру не идёт): `click_scroll`,
+`quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`
+(управление камерой/выделением ещё не портировано), `disable_music`,
+`disable_voice`, `disable_movie` и уровни Music/Voice/Video (музыки/голоса/видео
+в звуковом слое нет), `enhanced_graphics` (рендер всегда «enhanced»),
+`host_address`/`host_port` (сеть задаётся CLI), `Turn Time`/`End Turn Time`
+(таймеры берутся с экрана настройки), `Player Name` (в C++ `PREFSPIC` правит
+имя команды; у нас — общее имя игрока для следующей партии).
+
+**Сохранение.** `IniPreferences` (7 × `signed int`: `effects`, `click_scroll`,
+`quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`)
+пишется в `SaveMeta::ini_preferences` при создании партии
+(`save_meta_for_local_game_with`) и при каждом сохранении/автосейве
+(`App::sync_save_meta`, как `SaveLoad_Save`); при загрузке V70 применяется
+обратно (`SaveLoad_Load`, `saveload.cpp:920-934`). Полный набор — в
+`preferences.ini` рядом с сейвами (`<save_dir>/preferences.ini`, аналог
+`settings.json` в `FilePathGamePref`); интерактивный клиент читает его на
+старте, QA — нет (детерминизм).
+
+**Отличие от C++ в `Cancel`.** `OptionsMenu::ProcessKeyPress` при `Esc`
+откатывает только громкости и `disable_music/fx/voice/movie` (`last_rest_state`),
+а остальные чекбоксы уже записаны в `settings` и остаются до перезапуска (но не
+сохраняются, пока не нажат `Done`). Здесь `Cancel` возвращает **весь** снимок
+открытия — предсказуемее для игрока и совпадает с тем, что видит пользователь;
+`Done` — единственный путь записи `preferences.ini`/`IniPreferences`.
+
+**Проверка.** QA `preferences.qa`: `menu setup` → `SETUPPIC`, `prefs
+open/toggle/set/done/cancel/help`, `assert prefs=…`, `prefs-value NAME=N`,
+`prefs-effects/sound/audio`, `save_v70`; golden `golden/preferences`
+(`main-menu`, `setup-dialog`, `prefs-dialog`, `prefs-effects-off`) — 0 дрейфа.
+Unit/integration: `max_app::preferences` (9 тестов: раскладка `PREFSPIC`/
+`SETUPPIC`, клики/клавиатура, `IniPreferences`, файл) и
+`tests/preferences.rs` (6: открытие из меню и из игры, модальность,
+`effects=off` → статичные кадры `RADAR`, флаг звука → `AudioPlayer`,
+`IniPreferences` в V70 round-trip, Cancel).
+
+**Артефакты (2026-11-19).**
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui.zip` —
+  sha256 `42f7be834946cf9dbecfea8e7f5557db4d402936d930f56debbfe664cfb68f15`;
+  `max-rust.exe` 6 597 120 Б, sha256
+  `edcda45d00d0a99093e2367eeddf630d135eff046e9a2865748aeb3845caef57`
+  (PE32+ x64, Subsystem=2, `--help` OK).
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64.zip` —
+  sha256 `bee54053dbc1230eb5e6bb9e282f1b9e03e57e5bcac1ab911007e65200dbc2d7`;
+  `max-rust.exe` 10 867 626 Б, sha256
+  `54a8fefe4199d1ad4343f26fdc0eb048edc5c233693780dfe51735331103f0a5`
+  (PE32+ console, Subsystem=3).
+* Живой тест `build/scripts/ui-test-prefs.ps1` (нужен интерактивный рабочий
+  стол; в headless-сессии агента скриншот `CopyFromScreen` чёрный — не
+  считается свидетельством).
+
+

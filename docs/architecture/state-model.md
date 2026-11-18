@@ -423,6 +423,13 @@ save.md: `IniPreferences` — 7 × `signed int` (`effects`, `click_scroll`, `qui
 `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`). Это **пользовательские
 предпочтения клиента**, они не влияют на симуляцию и в снапшот не входят (`—`).
 В `max_core` их хранить не нужно (конфигурация клиента, не модели).
+С P8 (`docs/analysis/visual-1to1-status.md` §27) клиент держит полный набор
+настроек (`max_app::preferences::Preferences`): `IniPreferences` пишутся в
+`SaveMeta::ini_preferences` при сохранении и читаются при загрузке
+(`SaveLoad_Load`, `saveload.cpp:920-934`); `effects` управляет только кадровыми
+анимациями (`App::update_unit_animations`), звук — `AudioPlayer`. Ни `effects`,
+ни звук не входят в CRC/снапшот: два клиента с разными настройками остаются
+детерминированными.
 
 ### 3.4 TeamInfo (состояние команды)
 

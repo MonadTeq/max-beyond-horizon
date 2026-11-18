@@ -69,6 +69,9 @@ use crate::local::LocalSetup;
 use crate::menu;
 use crate::mobilize::CargoAction;
 use crate::panels::{self, PanelButton};
+use crate::preferences::{
+    self, Preferences, PreferencesDialog, PreferencesVariant,
+};
 use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::researchmenu::ResearchAction;
 use crate::setup::{self, GameSetupForm, SetupTransition};
@@ -86,15 +89,23 @@ pub const MAX_WORLD: i64 = 23;
 /// `Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit`.
 const MAIN_CREATE: usize = 0;
 const MAIN_JOIN: usize = 2;
+const MAIN_SETUP: usize = 3;
 const MAIN_INTRO: usize = 4;
 const MAIN_CREDITS: usize = 5;
 const MAIN_QUIT: usize = 6;
 
 /// Действия Rust-клиента в порядке фокуса (`ctx.focus`).
 ///
-/// `Load Game` и `Setup` остаются непортированными (`Unported`), поэтому в
-/// фокусе их нет: экраны `Introduction` (MVE-видео) и `Credits` — есть.
-const MAIN_ACTIONS: [usize; 5] = [MAIN_CREATE, MAIN_JOIN, MAIN_INTRO, MAIN_CREDITS, MAIN_QUIT];
+/// `Load Game` остаётся непортированным (`Unported`); `Setup` открывает диалог
+/// `OptionsMenu(SETUPPIC)`, остальные действия — как в C++.
+const MAIN_ACTIONS: [usize; 6] = [
+    MAIN_CREATE,
+    MAIN_JOIN,
+    MAIN_SETUP,
+    MAIN_INTRO,
+    MAIN_CREDITS,
+    MAIN_QUIT,
+];
 
 const JOIN_LIST: usize = 1;
 const JOIN_BACK: usize = 2;
@@ -171,6 +182,8 @@ pub enum Transition {
     StartLocal(Box<LocalSetup>),
     /// Выйти из сессии (Esc в SDL-цикле).
     LeaveSession,
+    /// Применить настройки из диалога `Preferences`/`Setup` (главное меню).
+    ApplyPreferences(Box<Preferences>),
     /// Закрыть приложение.
     Quit,
 }
@@ -415,6 +428,11 @@ pub enum Screen {
     Credits(credits::CreditsScreen),
     /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
     LocalSetup(GameSetupForm),
+    /// Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`/`SETUPPIC`).
+    ///
+    /// Модален, как `OptionsMenu::Run` в C++: пока открыт, остальные экраны
+    /// ввод не получают. Закрытие (`Done`/`Cancel`) возвращает в главное меню.
+    Preferences(Box<PreferencesDialog>),
     /// Фазы старта после `Players`: мобилизация (`CargoMenu`) и выбор точки
     /// высадки (`GameManager_SelectSite`).
     PreGame(PreGameFlow),
@@ -539,6 +557,8 @@ pub struct UiContext {
     pub audio: AudioPlayer,
     /// Путь к видео интро (`INTROFLC` → `maxint.mve`); `None` — заглушка.
     pub intro_mve_path: Option<std::path::PathBuf>,
+    /// Текущие пользовательские настройки (для диалога `Setup`).
+    pub preferences: Preferences,
 }
 
 impl UiContext {
@@ -555,6 +575,7 @@ impl UiContext {
             world_dir: std::path::PathBuf::from("max-original"),
             audio: AudioPlayer::new(),
             intro_mve_path: None,
+            preferences: Preferences::default(),
         }
     }
 
@@ -671,6 +692,9 @@ impl Screen {
 
         if matches!(self, Self::MainMenu) {
             return self.handle_main_menu(ctx, event);
+        }
+        if matches!(self, Self::Preferences(_)) {
+            return self.handle_preferences(ctx, event);
         }
         if matches!(self, Self::JoinList { .. }) {
             return self.handle_join_list(ctx, event);
@@ -1191,6 +1215,27 @@ impl Screen {
                     Rgba::rgb(232, 236, 244),
                 );
             }
+            Self::Preferences(dialog) => {
+                // `OptionsMenu` — отдельное окно поверх главного меню: в C++
+                // фон меню остаётся видимым вокруг `PREFSPIC`.
+                if let (Some(menu_assets), Some(app), true) = (menu_assets, view.app, native_frame) {
+                    menu::draw_main_menu(buffer, menu_assets, view.status, mouse);
+
+                    if let Some(assets) = app.assets() {
+                        dialog.draw(buffer, assets);
+                        return;
+                    }
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Preferences use the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
             Self::GameOver => {
                 if let (Some(menu_assets), Some(app)) = (menu_assets, view.app) {
                     if let Some(local) = app.local() {
@@ -1242,6 +1287,7 @@ impl Screen {
                 Key::Char(character) => match character.to_ascii_lowercase() {
                     'c' => activate = Some(MAIN_CREATE),
                     'j' => activate = Some(MAIN_JOIN),
+                    's' => activate = Some(MAIN_SETUP),
                     'i' => activate = Some(MAIN_INTRO),
                     'r' => activate = Some(MAIN_CREDITS),
                     'q' => return Transition::Quit,
@@ -1273,6 +1319,19 @@ impl Screen {
                 ctx.status = "Multiplayer: Host, Join or Hot Seat Game".to_string();
                 Transition::None
             }
+            Some(MAIN_SETUP) => {
+                // `menu_setup_window()` (`menu.cpp:2331`) → `OptionsMenu(SETUPPIC)`:
+                // только секция `setup` (звук/видео/автосейв/сеть/имя), поверх
+                // главного меню, как отдельное окно `PREFSPIC`.
+                let dialog = PreferencesDialog::new(
+                    PreferencesVariant::Setup,
+                    ctx.preferences.clone(),
+                    preferences::PreferencesInfo::default(),
+                );
+                *self = Self::Preferences(Box::new(dialog));
+                ctx.status = "Setup: Done saves, Cancel reverts".to_string();
+                Transition::None
+            }
             Some(MAIN_INTRO) => {
                 // `Movie_PlayIntro` (`menu.cpp:2666`): MVE-видео `INTROFLC`
                 // (файл `maxint.mve`). Кадр 0 декодируется сразу, чтобы
@@ -1297,6 +1356,49 @@ impl Screen {
             }
             Some(MAIN_QUIT) => Transition::Quit,
             _ => Transition::None,
+        }
+    }
+
+    /// Ввод в диалоге `Preferences`/`Setup` (`OptionsMenu`).
+    ///
+    /// `Done` сохраняет значения и возвращает в главное меню; `Cancel` их
+    /// отбрасывает; `?` открывает окно помощи `SETUP_MENU_SETUP` поверх диалога
+    /// (`HelpMenu_Menu` в `OptionsMenu::ProcessKeyPress`).
+    fn handle_preferences(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let Self::Preferences(dialog) = self else {
+            return Transition::None;
+        };
+
+        match dialog.input(event) {
+            preferences::PreferencesAction::None => Transition::None,
+            preferences::PreferencesAction::Changed => {
+                ctx.preferences = dialog.draft.clone();
+                Transition::None
+            }
+            preferences::PreferencesAction::Help => {
+                let section = dialog.variant().help_section();
+                let inner = std::mem::replace(self, Self::MainMenu);
+                *self = Self::Help {
+                    screen: Box::new(inner),
+                    help: helpmenu::HelpScreen::new(section, HelpPlacement::Menu),
+                };
+                ctx.click();
+                Transition::None
+            }
+            preferences::PreferencesAction::Done => {
+                let prefs = dialog.draft.clone();
+                ctx.preferences = prefs.clone();
+                ctx.status = "Preferences saved".to_string();
+                *self = Self::MainMenu;
+                ctx.click();
+                Transition::ApplyPreferences(Box::new(prefs))
+            }
+            preferences::PreferencesAction::Cancel => {
+                ctx.preferences = dialog.initial.clone();
+                ctx.status = "Preferences cancelled".to_string();
+                *self = Self::MainMenu;
+                Transition::None
+            }
         }
     }
 
@@ -1651,6 +1753,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     // карта/панели/чат приказов не получают ввод, пока они открыты.
     if app.help_screen().is_some() {
         return session_help_input(app, event);
+    }
+
+    // `Preferences` (`OptionsMenu::Run`, `PREFSPIC`) — модальный диалог: карта и
+    // панели ввода не получают (`GameManager_DisableMainMenu`).
+    if app.preferences_dialog().is_some() {
+        return session_preferences_input(app, event);
     }
 
     // Экран исследований (P7) — модальный, как `ResearchMenu::Run`.
@@ -2137,6 +2245,34 @@ fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
+/// Ввод в диалоге `Preferences` поверх игры (C++ `OptionsMenu::Run`, `PREFSPIC`).
+///
+/// `Done`/`Enter` применяют и сохраняют настройки, `Esc` возвращает снимок
+/// открытия, `?` открывает окно помощи `PREFS_MENU_SETUP`. Пока диалог открыт,
+/// `App::local_update` не тикает (C++ цикл стоит в `Run`).
+fn session_preferences_input(app: &mut App, event: InputEvent) -> Transition {
+    match app.preferences_input(event) {
+        Some(preferences::PreferencesAction::Done) => {
+            // Значения уже в `App::preferences`; для следующего кадра кадровые
+            // часы читают новый `effects`.
+        }
+        Some(preferences::PreferencesAction::Cancel) => {
+            app.hud_mut().push_log("Preferences cancelled");
+        }
+        Some(preferences::PreferencesAction::Help) => {
+            let section = app
+                .preferences_dialog()
+                .map(|dialog| dialog.variant().help_section())
+                .unwrap_or(HelpSection::Preferences);
+            app.open_help(section);
+            app.hud_mut().push_log("Preferences help");
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
 /// Ввод в открытом экране исследований (модальный экран P7).
 ///
 /// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: распределение центров пишется
@@ -2349,9 +2485,23 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
             app.hud_mut().push_log("Help: game screen");
             return Transition::None;
         }
-        PanelButton::Files
-        | PanelButton::Preferences
-        | PanelButton::Play
+        PanelButton::Preferences => {
+            // `GameManager_MenuClickPreferencesButton` (`game_manager.cpp:3918`)
+            // → `menu_preferences_window` (`OptionsMenu`, `PREFSPIC`).
+            if app.open_preferences() {
+                app.hud_mut().push_log("Preferences");
+            } else {
+                app.hud_mut()
+                    .push_log("Preferences: close the open dialog first");
+            }
+            return Transition::None;
+        }
+        PanelButton::Files => {
+            // `GameManager_MenuClickFileButton` (`Alt+F`) — окно V70.
+            app.open_save_menu(online);
+            return Transition::None;
+        }
+        PanelButton::Play
         | PanelButton::Pause
         | PanelButton::Lock
         | PanelButton::Prev
@@ -2905,7 +3055,7 @@ fn build_main_menu(
     }
 
     let mut ui = UiState::new(widgets);
-    ui.focus = Some(MAIN_ACTIONS[focus.min(2)]);
+    ui.focus = Some(MAIN_ACTIONS[focus.min(MAIN_ACTIONS.len() - 1)]);
     ui.set_hover(mouse);
     ui
 }

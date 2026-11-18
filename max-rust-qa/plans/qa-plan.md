@@ -13,7 +13,7 @@
 | Слой | Что проверяет | Где | Частота | Статус |
 |---|---|---|---|---|
 | 1. Юнит/интеграционные (780+ тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
-| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 12 сценариев) |
+| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 15 сценариев) |
 | 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max-rust --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
 | 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 36 эталонов: visual 13 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5 + research-help 9) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC (и 3 клиента) | live-smoke.sh / live-smoke-3.sh | релизный гейт | **готово** (P5: 2×10, 3×10 PASS) |
@@ -102,7 +102,17 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
       `set gold 1` → предел 16 единиц → модальность (клик по карте) →
       `allocate done` (`ORDER_NEW_ALLOCATE`, 08/**P5**; тик возвращает
       `POWER_ON`) → `end_turn` → `assert complex-raw>=4` (доля стала добычей
-      комплекса) → повторное открытие помнит значения → `cancel`.
+      комплекса) → повторное открытие помнит значения → `cancel`;
+  15. `preferences.qa` — P9/TC-0935: диалог `Preferences`/`Setup` (C++
+      `OptionsMenu`). `menu setup` → `SETUPPIC` (`setup-dialog`,
+      `prefs-value disable_fx=0`) → toggle → `prefs-sound=off` → `cancel`
+      (не применяет) → `menu setup`/toggle/`done` (`ApplyPreferences`); партия
+      → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`) →
+      `prefs set quick_scroll 36` (35) → `prefs toggle effects` →
+      `prefs-effects=off` → `anim 200` → `prefs-effects-off` → `done` →
+      значение помнится → `save_v70 prefs-ini`; `prefs-audio=off/on` (флаг
+      дошёл до `AudioPlayer`), `cancel` возвращает снимок, `help` →
+      `help-section=preferences`; 4 golden-кадра.
 - Драйвер пишет `out/log.txt` (шаги, фактические значения, итог) и `out/*.png`;
   ассерт-фейл → exit 1 с текстом (`строка N: assert …: фактически …`).
 - Тесты драйвера: `src/qa/script.rs` (все команды парсера),
@@ -157,7 +167,8 @@ cargo run -p max_app -- \
 - `ci.sh`: стадия **3/4** после `cargo test` и тестов Horizon — прогон
   `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa`, `production.qa`,
   `save-load.qa`, `upgrade.qa`, `research.qa`, `edge-cases.qa`, `cargo-full.qa`,
-  `move-input.qa`, `research-help.qa`, `unit-menu.qa` и golden-сверка (visual,
+  `move-input.qa`, `research-help.qa`, `unit-menu.qa`, `allocate.qa`,
+`preferences.qa` и golden-сверка (visual,
   production, upgrade, research, cargo, move-input, research-help, unit-menu);
   стадия **4/4** — soak (`soak-100.qa` с `MAX_TICK_PROFILE=1` +
   `soak_headless --turns 120`); `--smoke` дополнительно запускает

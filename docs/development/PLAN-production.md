@@ -314,7 +314,40 @@
 - [x] Артефакты/документация: Windows UI + headless пересобраны; CHANGELOG,
   `visual-1to1-status.md` §13, suite TC-0220/TC-0329/0330/TC-0929/0930.
 
+### P9 — Диалог Preferences/Setup 1:1 + реальные effects/sound (2026-11-19)
+
+- [x] Изучить оракул: `menu.cpp:2325/2331` (`menu_preferences_window`/
+  `menu_setup_window`), `optionsmenu.cpp/.hpp` (таблица 36 опций, `Init`-
+  раскладка, `Done`/`Cancel`/`ProcessTextEditKeyPress`), `settings.cpp`
+  (defaults и секции), `saveload.cpp:547/920` (`IniPreferences`),
+  `units_manager.cpp:2857/3030` и `unitinfo.cpp:5057` (`effects`).
+- [x] `max_app/src/preferences.rs`: `Preferences` (все настройки), раскладка
+  `PREFSPIC`/`SETUPPIC` по C++, отрисовка `PREFSPIC`/`PRFDNE/PRFCAN/PRFHLP`/
+  `PRFSLIT`/`PRFSLIDE`/`UNCHKED`/`CHECKED`/`PREFEDIT`/`PREFNAME`, мышь +
+  клавиатура (Enter/Esc/Tab/Space/Left/Right, text edit), `Done`/`Cancel`/
+  `Help`, модальность; открытие из `Setup` главного меню (`Screen::Preferences`)
+  и кнопки `Preferences` панели (`App::preferences_dialog`).
+- [x] Реальное действие: `effects` → `App::update_unit_animations` и
+  `render::unit_frame_index_with_animation` (кадры статичны), `disable_fx` →
+  `AudioPlayer::set_enabled`, `fx_sound_level` → `set_volume`, `auto_save` →
+  `App::autosave`. Остальные опции сохраняются и помечены «не действуют» в
+  `visual-1to1-status.md` §27.
+- [x] Сохранение: `SaveMeta::ini_preferences` (`save_meta_for_local_game_with`,
+  `sync_save_meta`), чтение при загрузке V70 (`SaveLoad_Load`),
+  `preferences.ini` рядом с сейвами; `Files` панели заодно открывает
+  существующее окно сохранения/загрузки.
+- [x] QA: `prefs open|toggle NAME|set NAME N|done|cancel|help`, `assert prefs=…`,
+  `prefs-value NAME=N`, `prefs-effects/sound/audio`; `preferences.qa` и golden
+  `golden/preferences`; `ci.sh` — новая QA+golden-стадия.
+- [x] Тесты: `preferences` (9, раскладка/клики/ini/файл), `tests/preferences.rs`
+  (6: меню/игра, модальность, статичные кадры при effects=off, звук→AudioPlayer,
+  V70 round-trip, Cancel); живой `build/scripts/ui-test-prefs.ps1`.
+- [x] Артефакты/документация: Windows UI + headless пересобраны; CHANGELOG,
+  `visual-1to1-status.md` §27, `state-model.md` §3.3, suite TC-0108/TC-0935,
+  `scripts/README.md`, `qa-plan.md`.
+
 ## Порядок
 
 P1 → P2 → P3 → P4 → P5 → P6 → P7 (P1 сразу; P2/P3 параллелятся с P4 частично).
+P8 → P9 (Help/Research, затем Preferences/Setup и реальные effects/sound).
 Каждый этап: коммит + тесты + свидетельства (логи/скриншоты/qa-out).

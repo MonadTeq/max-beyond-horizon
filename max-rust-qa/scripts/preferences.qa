@@ -1,0 +1,144 @@
+# preferences.qa — диалог Preferences/Setup (C++ `OptionsMenu`, P8).
+#
+# Проверяет то, что нельзя проверить unit-тестом одного модуля:
+#   1. главное меню -> `Setup` открывает `OptionsMenu(SETUPPIC)` поверх меню;
+#   2. `Done` применяет настройки (`ApplyPreferences`), `Cancel` — откатывает;
+#   3. в игре кнопка `Preferences` панели открывает `OptionsMenu(PREFSPIC)`
+#      (все секции: setup + preferences + options);
+#   4. `Animate Effects` выключает кадровые анимации (`effects=0`);
+#   5. `FX Disabled` глушит звук: `assert prefs-audio=off` — флаг дошёл до
+#      `AudioPlayer`;
+#   6. значение запоминается между открытиями (`prefs-value`) и пишется в
+#      `IniPreferences` V70-сейва (`save_v70`).
+#
+# Кнопки диалога (окно `PREFSPIC` 400x422 в (120,29)): Done (215,383),
+# Help (188,383), Cancel (125,383) — локальные координаты панели; драйвер
+# кликает их сам, поэтому сценарий не зависит от пикселей.
+#
+# Данные игры: max-original/MAX.RES; запуск — см. README слоя 2.
+
+# --- 1. Главное меню: Setup (SETUPPIC) -------------------------------------
+shot main-menu
+assert screen=MainMenu
+
+menu setup
+assert screen=Preferences
+assert prefs=open
+# SETUPPIC заканчивается на секции `preferences`: есть только setup-часть.
+# `FX Disabled` по умолчанию выключен (`settings.cpp`: disable_fx = 0).
+assert prefs-value disable_fx=0
+shot setup-dialog
+
+# Переключение чекбокса меняет черновик сразу (как `SetNumericValue` в C++).
+prefs toggle disable_fx
+assert prefs-value disable_fx=1
+assert prefs-sound=off
+
+# Cancel возвращает в главное меню и НЕ применяет значение к приложению.
+prefs cancel
+assert screen=MainMenu
+assert prefs=closed
+
+# 2. Done применяет значение (`ApplyPreferences` -> `App::preferences`).
+menu setup
+assert screen=Preferences
+prefs toggle disable_fx
+prefs done
+assert screen=MainMenu
+assert prefs=closed
+assert prefs-sound=off
+
+# --- 2. Игра: кнопка Preferences панели (PREFSPIC) -------------------------
+menu new_game
+assert screen=Options
+setup done
+assert screen=Planet
+setup done
+players 0 human
+players 1 computer
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 22 22
+landing done
+assert screen=InGame
+
+# Один кадр: дальше симуляция стоит, пока открыт диалог (C++ `OptionsMenu::Run`).
+tick 1
+
+# Кнопка `Preferences` панели (`GameManager_MenuClickPreferencesButton`).
+prefs open
+assert prefs=open
+shot prefs-dialog
+
+# `PREFSPIC` показывает все секции; `enhanced_graphics` — только SETUPPIC.
+assert prefs-value effects=1
+assert prefs-value quick_scroll=16
+assert prefs-value timer=180
+assert prefs-value endturn=45
+
+# Слайдер: клик по жёлобу ставит значение (квантование 57 px, C++ 1:1).
+# 36 запрошено -> 35 достижимо (x = 16, 16·128/57 = 35).
+prefs set quick_scroll 36
+assert prefs-value quick_scroll=35
+
+# Animate Effects: выключение сразу отражается на `App` и кадрах.
+prefs toggle effects
+assert prefs-effects=off
+assert prefs-value effects=0
+
+# `anim` двигает только визуальные часы: при effects=0 кадры зданий статичны
+# (равенство кадров проверяет unit-тест
+# `effects_off_freezes_building_animation_frames`).
+anim 200
+shot prefs-effects-off
+
+prefs done
+assert prefs=closed
+assert prefs-effects=off
+
+# 3. Значение запомнилось между открытиями и пишется в V70 (`IniPreferences`).
+prefs open
+assert prefs=open
+assert prefs-value effects=0
+assert prefs-sound=off
+prefs done
+assert prefs=closed
+save_v70 prefs-ini
+
+# 4. Звук: FX Disabled -> аудио-слой (в игре применяется сразу).
+prefs open
+assert prefs=open
+assert prefs-sound=off
+assert prefs-audio=off
+prefs toggle disable_fx
+assert prefs-value disable_fx=0
+assert prefs-sound=on
+assert prefs-audio=on
+prefs done
+assert prefs=closed
+assert prefs-audio=on
+
+# 5. Cancel возвращает снимок открытия (`last_rest_state` в C++).
+prefs open
+assert prefs=open
+prefs toggle effects
+assert prefs-effects=on
+prefs cancel
+assert prefs=closed
+assert prefs-effects=off
+
+# 6. Help на диалоге: `PREFS_MENU_SETUP` поверх игры (`?`).
+prefs open
+assert prefs=open
+prefs help
+assert help=open
+assert help-section=preferences
+key ESC
+assert help=closed
+assert prefs=open
+prefs done
+assert prefs=closed
+
+exit

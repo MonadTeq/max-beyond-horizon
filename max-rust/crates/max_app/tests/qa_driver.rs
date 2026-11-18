@@ -523,6 +523,9 @@ impl ManualPlay {
                     self.app.leave_local_game();
                 }
                 Transition::Quit => {}
+                Transition::ApplyPreferences(preferences) => {
+                    self.app.set_preferences(*preferences);
+                }
                 Transition::StartLocal(_) | Transition::StartSession(_) => {
                     panic!("ввод в сессии не меняет режим")
                 }
@@ -548,6 +551,10 @@ impl ManualPlay {
                 self.app.leave_local_game();
             }
             Transition::Quit => {}
+            Transition::ApplyPreferences(preferences) => {
+                self.app.set_preferences(*preferences);
+                self.ctx.preferences = self.app.preferences().clone();
+            }
             Transition::StartSession(_) => panic!("сеть в тесте записи не поднимается"),
         }
     }

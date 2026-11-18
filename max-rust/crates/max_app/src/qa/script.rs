@@ -89,6 +89,8 @@ pub enum ScreenName {
     Landing,
     /// `Screen::GameOver`.
     GameOver,
+    /// `Screen::Preferences` — диалог `OptionsMenu` в меню (`Setup`).
+    Preferences,
     /// `Screen::InSession` (идёт партия).
     InGame,
     /// `Screen::Help` — модальное окно помощи.
@@ -113,6 +115,7 @@ impl ScreenName {
             "mobilize" | "mobilization" | "cargo" => Some(Self::Mobilize),
             "landing" | "siteselect" | "site_select" => Some(Self::Landing),
             "gameover" | "game_over" | "winloss" => Some(Self::GameOver),
+            "preferences" | "prefs" => Some(Self::Preferences),
             "ingame" | "in_game" | "session" => Some(Self::InGame),
             "help" | "helpmode" | "help_mode" => Some(Self::Help),
             _ => None,
@@ -136,6 +139,7 @@ impl ScreenName {
             Self::Mobilize => "Mobilize",
             Self::Landing => "Landing",
             Self::GameOver => "GameOver",
+            Self::Preferences => "Preferences",
             Self::InGame => "InGame",
             Self::Help => "Help",
         }
@@ -298,6 +302,18 @@ pub enum Assertion {
     ComplexFuel(Cmp, i32),
     /// `assert complex-gold=N`: запас золота комплекса.
     ComplexGold(Cmp, i32),
+    /// `assert prefs=open|closed`: диалог `Preferences`/`Setup` открыт (в меню —
+    /// `Screen::Preferences`, в игре — модальное окно `App::preferences_dialog`).
+    PrefsOpen(bool),
+    /// `assert prefs-value NAME=N`: значение опции в открытом диалоге.
+    PrefsValue(crate::preferences::PrefKey, Cmp, i32),
+    /// `assert prefs-effects=on|off`: `settings["effects"]` приложения.
+    PrefsEffects(bool),
+    /// `assert prefs-sound=on|off`: флаг звука (`!disable_fx`).
+    PrefsSound(bool),
+    /// `assert prefs-audio=on|off`: фактическое состояние аудио-слоя
+    /// (`AudioPlayer::enabled`), то есть флаг дошёл до аудио.
+    PrefsAudio(bool),
 }
 
 /// Куда идти высокоуровневой командой `menu`.
@@ -315,6 +331,8 @@ pub enum MenuTarget {
     Introduction,
     /// `Credits` главного меню (прокрутка титров).
     Credits,
+    /// `Setup` главного меню (`OptionsMenu`, `SETUPPIC`).
+    Setup,
 }
 
 /// Действие на экране настройки (`setup`).
@@ -458,6 +476,29 @@ pub enum ResearchCommand {
     Done,
     /// `cancel` — закрыть без изменений.
     Cancel,
+}
+
+/// Действие диалога `Preferences`/`Setup` (`OptionsMenu`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrefsCommand {
+    /// `open` — открыть диалог как игрок: в игре кликом по кнопке `Preferences`
+    /// панели, в главном меню — пунктом `Setup`.
+    Open,
+    /// `toggle NAME` — клик по чекбоксу (`effects`, `disable_fx`, …).
+    Toggle(String),
+    /// `set NAME VALUE` — клик по слайдеру в позицию значения.
+    Set {
+        /// Имя опции (`music_level`, `quick_scroll`, …).
+        name: String,
+        /// Значение.
+        value: i32,
+    },
+    /// `done` — кнопка `Done` (сохраняет).
+    Done,
+    /// `cancel` — кнопка `Cancel` (возвращает снимок).
+    Cancel,
+    /// `help` — кнопка `Help` (`?`).
+    Help,
 }
 
 /// Действие окна помощи (`HelpMenu`).
@@ -620,6 +661,9 @@ pub enum Command {
     /// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
     /// распределения добычи шахты (C++ `AllocMenu`).
     Allocate(AllocateCommand),
+    /// `prefs open|toggle NAME|set NAME N|done|cancel|help` — диалог
+    /// `Preferences`/`Setup` (C++ `OptionsMenu`).
+    Prefs(PrefsCommand),
 }
 
 /// Строка скрипта с разобранной командой.
@@ -729,6 +773,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "help" => parse_help(rest),
         "unit-menu" | "unit_menu" => parse_unit_menu(rest),
         "allocate" | "alloc" => parse_allocate(rest),
+        "prefs" | "preferences" => parse_prefs(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -963,6 +1008,22 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         "selected" => return Ok(Assertion::Selected),
         "preview" => return Ok(Assertion::Preview),
         _ => {}
+    }
+
+    // `prefs-value NAME=N` содержит собственный `=`; иначе общий разбор
+    // оператора принял бы «prefs-value NAME» за имя проверки.
+    if let Some(body) = lowered.strip_prefix("prefs-value ") {
+        let (name, expected) = body
+            .split_once('=')
+            .ok_or_else(|| format!("assert prefs-value: ожидалось NAME=N, получено «{rest}»"))?;
+        let key = crate::preferences::PrefKey::parse(name.trim())
+            .ok_or_else(|| format!("assert prefs-value: неизвестная опция «{}»", name.trim()))?;
+
+        return Ok(Assertion::PrefsValue(
+            key,
+            Cmp::Eq,
+            parse_i32(expected.trim(), "assert prefs-value")?,
+        ));
     }
 
     // Оператор ищем от самого длинного, иначе «>=» распадётся на «>» и «=».
@@ -1209,9 +1270,40 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 parse_u32(value, "assert research")?,
             ))
         }
+        "prefs" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::PrefsOpen(true)),
+            "closed" | "none" => Ok(Assertion::PrefsOpen(false)),
+            other => Err(format!(
+                "assert prefs: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "prefs-effects" => parse_on_off(value, "assert prefs-effects").map(Assertion::PrefsEffects),
+        "prefs-sound" => parse_on_off(value, "assert prefs-sound").map(Assertion::PrefsSound),
+        "prefs-audio" => parse_on_off(value, "assert prefs-audio").map(Assertion::PrefsAudio),
+        "prefs-value" => {
+            let (name, expected) = value
+                .split_once('=')
+                .ok_or_else(|| format!("assert prefs-value: ожидалось NAME=N, получено «{value}»"))?;
+            let key = crate::preferences::PrefKey::parse(name).ok_or_else(|| {
+                format!("assert prefs-value: неизвестная опция «{name}»")
+            })?;
+            Ok(Assertion::PrefsValue(
+                key,
+                operator,
+                parse_i32(expected, "assert prefs-value")?,
+            ))
+        }
         other => Err(format!(
             "assert: неизвестная проверка «{other}» (turn|team|units|screen|phase|notice|digest|victory|defeat|selected)"
         )),
+    }
+}
+
+fn parse_on_off(value: &str, what: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" | "enabled" => Ok(true),
+        "off" | "false" | "0" | "no" | "disabled" => Ok(false),
+        other => Err(format!("{what}: ожидалось on|off, получено «{other}»")),
     }
 }
 
@@ -1223,8 +1315,9 @@ fn parse_menu(rest: &str) -> Result<MenuTarget, String> {
         "join" => Ok(MenuTarget::Join),
         "introduction" | "intro" => Ok(MenuTarget::Introduction),
         "credits" => Ok(MenuTarget::Credits),
+        "setup" => Ok(MenuTarget::Setup),
         other => Err(format!(
-            "menu: неизвестный пункт «{other}» (new_game|multiplayer|hot_seat|join|intro|credits)"
+            "menu: неизвестный пункт «{other}» (new_game|multiplayer|hot_seat|join|intro|credits|setup)"
         )),
     }
 }
@@ -1521,6 +1614,78 @@ fn parse_research(rest: &str) -> Result<Command, String> {
     };
 
     Ok(Command::Research(command))
+}
+
+fn parse_prefs(rest: &str) -> Result<Command, String> {
+    let (action, args) = split_word(rest.trim());
+    let action = action.to_ascii_lowercase();
+    let args = args.trim();
+
+    match action.as_str() {
+        "open" => {
+            if !args.is_empty() {
+                return Err(format!("prefs open не принимает аргументов: «{args}»"));
+            }
+            Ok(Command::Prefs(PrefsCommand::Open))
+        }
+        "done" | "ok" => {
+            if !args.is_empty() {
+                return Err(format!("prefs done не принимает аргументов: «{args}»"));
+            }
+            Ok(Command::Prefs(PrefsCommand::Done))
+        }
+        "cancel" | "close" => {
+            if !args.is_empty() {
+                return Err(format!("prefs cancel не принимает аргументов: «{args}»"));
+            }
+            Ok(Command::Prefs(PrefsCommand::Cancel))
+        }
+        "help" => {
+            if !args.is_empty() {
+                return Err(format!("prefs help не принимает аргументов: «{args}»"));
+            }
+            Ok(Command::Prefs(PrefsCommand::Help))
+        }
+        "toggle" => {
+            let name = args.trim();
+            if name.is_empty() || name.split_whitespace().count() != 1 {
+                return Err(format!(
+                    "prefs toggle: требуется имя опции (effects|disable_fx|click_scroll|…), получено «{args}»"
+                ));
+            }
+            let key = crate::preferences::PrefKey::parse(name)
+                .ok_or_else(|| format!("prefs toggle: неизвестная опция «{name}»"))?;
+            if !key.is_checkbox() {
+                return Err(format!(
+                    "prefs toggle: «{name}» не чекбокс (для слайдера — prefs set NAME N)"
+                ));
+            }
+            Ok(Command::Prefs(PrefsCommand::Toggle(name.to_string())))
+        }
+        "set" => {
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            if parts.len() != 2 {
+                return Err(format!(
+                    "prefs set: ожидалось «NAME VALUE», получено «{args}»"
+                ));
+            }
+            let key = crate::preferences::PrefKey::parse(parts[0])
+                .ok_or_else(|| format!("prefs set: неизвестная опция «{}»", parts[0]))?;
+            if !key.is_slider() {
+                return Err(format!(
+                    "prefs set: «{}» не слайдер (для чекбокса — prefs toggle NAME)",
+                    parts[0]
+                ));
+            }
+            Ok(Command::Prefs(PrefsCommand::Set {
+                name: parts[0].to_string(),
+                value: parse_i32(parts[1], "prefs set: значение")?,
+            }))
+        }
+        other => Err(format!(
+            "prefs: неизвестное действие «{other}» (open|toggle NAME|set NAME N|done|cancel|help)"
+        )),
+    }
 }
 
 fn parse_help(rest: &str) -> Result<Command, String> {
@@ -1909,6 +2074,46 @@ mod tests {
             Command::Assert(Assertion::ConstructionSiteDrawn)
         );
         assert!(parse_script("assert site=huge\n").is_err());
+        // P9: диалог Preferences/Setup.
+        assert_eq!(
+            one("assert prefs=open"),
+            Command::Assert(Assertion::PrefsOpen(true))
+        );
+        assert_eq!(
+            one("assert prefs=closed"),
+            Command::Assert(Assertion::PrefsOpen(false))
+        );
+        assert_eq!(
+            one("assert prefs-value effects=0"),
+            Command::Assert(Assertion::PrefsValue(
+                crate::preferences::PrefKey::Effects,
+                Cmp::Eq,
+                0
+            ))
+        );
+        assert_eq!(
+            one("assert prefs-value quick_scroll=35"),
+            Command::Assert(Assertion::PrefsValue(
+                crate::preferences::PrefKey::QuickScroll,
+                Cmp::Eq,
+                35
+            ))
+        );
+        assert_eq!(
+            one("assert prefs-effects=off"),
+            Command::Assert(Assertion::PrefsEffects(false))
+        );
+        assert_eq!(
+            one("assert prefs-sound=on"),
+            Command::Assert(Assertion::PrefsSound(true))
+        );
+        assert_eq!(
+            one("assert prefs-audio=off"),
+            Command::Assert(Assertion::PrefsAudio(false))
+        );
+        assert!(parse_script("assert prefs-value bogus=1\n").is_err());
+        assert!(parse_script("assert prefs-value effects\n").is_err());
+        assert!(parse_script("assert prefs-effects=maybe\n").is_err());
     }
 
     #[test]
@@ -1922,6 +2127,7 @@ mod tests {
         assert_eq!(one("menu join"), Command::Menu(MenuTarget::Join));
         assert_eq!(one("menu credits"), Command::Menu(MenuTarget::Credits));
         assert_eq!(one("menu intro"), Command::Menu(MenuTarget::Introduction));
+        assert_eq!(one("menu setup"), Command::Menu(MenuTarget::Setup));
         assert_eq!(one("setup done"), Command::Setup(SetupAction::Done));
         assert_eq!(one("setup cancel"), Command::Setup(SetupAction::Cancel));
         assert_eq!(one("setup random"), Command::Setup(SetupAction::Random));
@@ -2363,6 +2569,44 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "allocate row sideways",
             "assert alloc=nope",
             "assert alloc-raw=nope",
+        ] {
+            assert!(
+                parse_script(&format!("{source}\n")).is_err(),
+                "должно быть отклонено: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefs_commands_are_parsed() {
+        assert_eq!(one("prefs open"), Command::Prefs(PrefsCommand::Open));
+        assert_eq!(
+            one("prefs toggle effects"),
+            Command::Prefs(PrefsCommand::Toggle("effects".to_string()))
+        );
+        assert_eq!(
+            one("prefs toggle sound"),
+            Command::Prefs(PrefsCommand::Toggle("sound".to_string()))
+        );
+        assert_eq!(
+            one("prefs set quick_scroll 36"),
+            Command::Prefs(PrefsCommand::Set {
+                name: "quick_scroll".to_string(),
+                value: 36
+            })
+        );
+        assert_eq!(one("prefs done"), Command::Prefs(PrefsCommand::Done));
+        assert_eq!(one("prefs cancel"), Command::Prefs(PrefsCommand::Cancel));
+        assert_eq!(one("prefs help"), Command::Prefs(PrefsCommand::Help));
+
+        for source in [
+            "prefs",
+            "prefs nope",
+            "prefs toggle",
+            "prefs toggle bogus",
+            "prefs toggle quick_scroll", // слайдер, не чекбокс
+            "prefs set effects 1",       // чекбокс, не слайдер
+            "prefs set quick_scroll nope",
         ] {
             assert!(
                 parse_script(&format!("{source}\n")).is_err(),

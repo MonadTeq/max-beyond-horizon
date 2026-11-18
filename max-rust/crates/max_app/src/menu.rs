@@ -105,6 +105,8 @@ pub enum MainMenuAction {
     Credits,
     /// Вступление (`Introduction` → `Movie_PlayIntro`, MVE `maxint.mve`).
     Introduction,
+    /// Экран настроек (`menu_setup_window` → `OptionsMenu(SETUPPIC)`).
+    Setup,
     /// Экран, который ещё не портирован.
     Unported(&'static str),
 }
@@ -145,7 +147,7 @@ pub const MAIN_MENU_BUTTONS: [MainMenuButton; 7] = [
     MainMenuButton {
         rect: PixelRect::new(385, 280, 200, 29),
         label: "Setup",
-        action: MainMenuAction::Unported("Setup"),
+        action: MainMenuAction::Setup,
         big: true,
     },
     MainMenuButton {

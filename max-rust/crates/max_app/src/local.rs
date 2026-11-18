@@ -637,8 +637,12 @@ impl App {
         );
 
         self.local = Some(local);
-        // P3: настройки партии для записи V70 (`SaveFormatHeader`/`IniOptions`).
-        let meta = crate::saveload::save_meta_for_local_game(setup);
+        // P3: настройки партии для записи V70 (`SaveFormatHeader`/`IniOptions`),
+        // плюс текущие `IniPreferences` игрока (7 × `signed int`).
+        let meta = crate::saveload::save_meta_for_local_game_with(
+            setup,
+            &self.preferences.to_ini(),
+        );
         self.state_mut().set_save_meta(meta);
         self.hud.clear();
         self.close_unit_menu();
@@ -992,6 +996,11 @@ impl App {
         let Some(local) = self.local.as_ref() else {
             return update;
         };
+        // `OptionsMenu::Run` в C++ блокирует игровой цикл: пока диалог
+        // `Preferences` открыт, симуляция и таймер хода стоят.
+        if self.preferences_dialog.is_some() {
+            return update;
+        }
         let paused = local.paused;
         let phase = local.phase;
         let notice_open = local.notice.is_some();
@@ -1432,6 +1441,11 @@ impl App {
     ) -> Result<(), String> {
         self.load_save_bytes(bytes)
             .map_err(|error| format!("V70 load: {error:#}"))?;
+
+        // `SaveLoad_Load` (`saveload.cpp:920-934`): `IniPreferences` файла
+        // применяются к настройкам игрока — `effects` снова управляет кадрами.
+        let saved_preferences = self.state().save_meta.ini_preferences;
+        self.preferences.apply_ini(saved_preferences);
 
         let state = self.state_mut();
         state.network_game = false;

@@ -916,9 +916,13 @@ impl crate::App {
         let existing = self.state().save_meta.message_logs[team].len();
         let zoom_level = zoom.min(u32::from(u16::MAX)) as u16;
 
+        let preferences = self.preferences().to_ini();
         let meta = &mut self.state_mut().save_meta;
         SaveMeta::set_name(&mut meta.save_name, save_name);
         meta.turn_timer = timer_left;
+        // `IniPreferences` (7 × `signed int`): текущие настройки игрока, как
+        // `SaveLoad_Save` (`saveload.cpp:547` — `settings->GetNumericValue`).
+        meta.ini_preferences = preferences;
         // Камера/зум игрока — как `GameManager_GuiSwitchTeam` + `CTInfo`.
         meta.team_ui[team].camera_position = max_core::geo::Point::new(camera_x, camera_y);
         meta.team_ui[team].zoom_level = zoom_level;
@@ -942,7 +946,7 @@ impl crate::App {
     /// C++ пишет его при входе в `GameManager_UpdateGui` первой команды раунда
     /// (`game_manager.cpp:2500`) — см. `local::local_finish_round`.
     pub fn autosave(&mut self) -> Option<PathBuf> {
-        if !self.config().autosave || !self.local_active() {
+        if !self.config().autosave || !self.preferences().auto_save || !self.local_active() {
             return None;
         }
         let name = format!("(Turn {})", self.state().turn_counter);
@@ -993,6 +997,27 @@ impl crate::App {
 /// Дефолты `IniPreferences` — из `SETUP` (как в `SAVE1.CAM`: effects=1,
 /// quick_scroll=40, fast_movement=1, enemy_halt=1).
 pub fn save_meta_for_local_game(setup: &crate::local::LocalSetup) -> SaveMeta {
+    save_meta_for_local_game_with(
+        setup,
+        &max_core::save::IniPreferences {
+            effects: 1,
+            click_scroll: 0,
+            quick_scroll: 40,
+            fast_movement: 1,
+            follow_unit: 0,
+            auto_select: 0,
+            enemy_halt: 1,
+        },
+    )
+}
+
+/// То же, но с текущими настройками игрока (`Preferences::to_ini`): именно они
+/// попадают в `SaveMeta::ini_preferences` новой партии, как `SaveLoad_Save`
+/// (`saveload.cpp:547`).
+pub fn save_meta_for_local_game_with(
+    setup: &crate::local::LocalSetup,
+    preferences: &max_core::save::IniPreferences,
+) -> SaveMeta {
     let category = if setup.is_hot_seat() {
         MissionCategory::HotSeat
     } else {
@@ -1026,15 +1051,7 @@ pub fn save_meta_for_local_game(setup: &crate::local::LocalSetup) -> SaveMeta {
             gold_resource: i32::from(setup.gold),
             alien_derelicts: i32::from(setup.derelicts),
         },
-        ini_preferences: max_core::save::IniPreferences {
-            effects: 1,
-            click_scroll: 0,
-            quick_scroll: 40,
-            fast_movement: 1,
-            follow_unit: 0,
-            auto_select: 0,
-            enemy_halt: 1,
-        },
+        ini_preferences: *preferences,
         ..SaveMeta::default()
     };
 

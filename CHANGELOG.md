@@ -1,6 +1,41 @@
 ## [Unreleased]
 
+### Добавлено
+
+- **Диалог Preferences/Setup 1:1 (C++ `OptionsMenu`, P8).** Порт `optionsmenu.cpp`:
+  панель `PREFSPIC` 400×422 в (120,29), заголовок `Setup`/`Preferences`
+  (`FONT5`, `COLOR_GREEN`), кнопки `PRFDNE/PRFCAN/PRFHLP` (Done/Cancel/Help),
+  раскладка `window_uly` (секция +20, `ulx=25` +20, label −7), слайдеры
+  `PRFSLIT`/`PRFSLIDE`, чекбоксы `UNCHKED`/`CHECKED`, поля `PREFEDIT`/`PREFNAME`.
+  Открытие: пункт `Setup` главного меню (`menu_setup_window`, `SETUPPIC`) и
+  кнопка `Preferences` игровой панели (`GameManager_MenuClickPreferencesButton`,
+  `PREFSPIC`); диалог модален, `Done` сохраняет, `Cancel` возвращает снимок,
+  `?`/`Help` — `PREFS_MENU_SETUP`/`SETUP_MENU_SETUP`.
+  Реально действуют: `effects` (кадры строителя/`ANIMATED`/работающих заводов
+  статичны), `disable_fx` (звук SFX вкл/выкл — `AudioPlayer`), `fx_sound_level`
+  (громкость), `auto_save` (автосейв слота 10). Остальные опции
+  (`click_scroll`, `quick_scroll`, `fast_movement`, `follow_unit`,
+  `auto_select`, `enemy_halt`, `disable_music/voice/movie`, уровни
+  Music/Voice/Video, `enhanced_graphics`, `host_address/port`,
+  `Turn Time`/`End Turn Time`, `Player Name`) сохраняются, но в игру пока не
+  идут — помечено в `docs/analysis/visual-1to1-status.md` §27.
+  Сохранение: `IniPreferences` (7 × `signed int`) в V70-сейв
+  (`SaveMeta::ini_preferences`, как `SaveLoad_Save`), чтение при загрузке
+  (`SaveLoad_Load`), плюс `preferences.ini` рядом с сейвами. QA:
+  `prefs open|toggle NAME|set NAME N|done|cancel|help`, `assert prefs=…`,
+  `assert prefs-value NAME=N`, `prefs-effects/sound/audio`, сценарий
+  `preferences.qa`, golden `golden/preferences`; unit/integration
+  `preferences.rs` (9) и `tests/preferences.rs` (6).
+
 ### Исправлено
+
+- **Golden: три устаревших кадра `visual-screens` (0.25 % дрейфа).**
+  `golden/game.png`, `golden/mine-selected.png` и `golden/portrait.png` были сняты
+  до палитрового фикса `FRAMEPIC+WRL` (commit 04237e9) и не попали в его
+  пересъёмку: у `POWGEN` оставались magenta-пиксели hot-point/палитры. Дрейф
+  771 px (0.251 %) проходил порог 1 %, поэтому CI был зелёным; кадры пересняты
+  текущим детерминированным выводом (два прогона `visual-screens.qa` совпадают
+  побитово) — `qa_golden_check` даёт **0 пикселей на всех 15 кадрах**.
 
 - **Палитровые циклы WRL (маяки зданий) и коннекторы комплексов — по DOS-съёмке.**
   DOS-съёмка (`max-original-dasm/formats/unit-animation.md` §7.3) показала, что

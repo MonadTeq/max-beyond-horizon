@@ -15,6 +15,8 @@
 
 В P8 (2026-11-17) закрыты `ResearchMenu` (`RSRCHPIC`) и Help-экраны: TC-0220, TC-0329/0330, TC-0929/0930; QA `research-help.qa`, golden `golden/research-help`, тексты — `data/help.json` (32 секции, 661 запись из `help.json` + `language.json`).
 
+В P9 (2026-11-19) закрыт диалог `Preferences`/`Setup` (C++ `OptionsMenu`): TC-0108 (Setup больше не заглушка — остался только `Load Game`) и TC-0935; QA `preferences.qa`, golden `golden/preferences`, `effects`/`disable_fx`/`auto_save` реально действуют, `IniPreferences` пишутся в V70 (`docs/analysis/visual-1to1-status.md` §27).
+
 ## Области и файлы
 
 | # | Область | Файл | TC |
@@ -43,12 +45,12 @@
 | 06 Ввод | 30 | 29 | 0 | 1 | 0 |
 | 07 Сейвы | 12 | 11 | 0 | 1 | 0 |
 | 08 Победа | 9 | 7 | 0 | 2 | 0 |
-| 09 Визуал | 33 | 32 | 0 | 1 | 0 |
+| 09 Визуал | 34 | 33 | 0 | 1 | 0 |
 | 10 Детерминизм | 14 | 12 | 0 | 2 | 0 |
 | 11 Edge | 14 | 13 | 0 | 1 | 0 |
-| **Итого** | **204** | **187** | **1** | **16** | **0** |
+| **Итого** | **205** | **188** | **1** | **16** | **0** |
 
-`⏭ not planned` (16): TC-0108 (меню Load Game/Setup — заглушки; Introduction/Credits портированы, см. 🟡),
+`⏭ not planned` (16): TC-0108 (меню Load Game — заглушка; Setup/Introduction/Credits портированы, см. 🟡),
 TC-0114 (авто-масштаб — WINDOW), TC-0309/TC-0314 (сквозной бой/поражение —
 нужна QA-команда урона), TC-0411/TC-0412 (hot-seat до конца / Load Hot Seat),
 TC-0511 (хук десинка), TC-0514 (спектатор — блокер сервера), TC-0515 (живой
