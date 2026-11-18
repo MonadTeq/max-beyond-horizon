@@ -2,6 +2,28 @@
 
 ### Исправлено
 
+- **Призрак выбора места и центр ленты доходили до игрока: упакованный Windows
+  UI был старым; оба пути `Build` теперь проверяются живым тестом.** Прошлый
+  `ui-test-construction.ps1` брал `build/win-msvc-target/release/max-rust.exe`,
+  а в `release/max_app-1.1.0-windows-x86_64-ui/` лежал exe, собранный **до**
+  `SELECT_SITE`: он сразу ставил площадку в автоматически найденную клетку
+  (`find_build_site`), поэтому игрок не видел призрака, площадка не накрывала
+  строителя, а `PositionInTape` не центрировал его. Теперь скрипт по умолчанию
+  проверяет **упакованный** exe (build-target — fallback), `-OpenVia key|popup`
+  прогоняет оба пути открытия `BuildMenu` (клавиша `B` и пункт `Build` попапа —
+  оба идут через один `open_build_menu`), в трассу добавлено `site=open@x,y
+  cursor=x,y valid=…`. Живой тест проверяет: призрак нарисован, до LMB в мире нет
+  `LRGTAPE`/`LRGCONES`, якорь 2×2 накрывает строителя, после LMB площадка его
+  накрывает, а bbox-проверка пикселей кадра даёт центр спрайта строителя в центре
+  жёлто-чёрной ленты (допуск 10 px; прогоны key/popup — ≤1.5 px). В коде
+  инвариант закреплён: `BuildSiteSelect::is_valid_at` отвергает якорь, не
+  накрывающий строителя, а `tape_center_offset` не сдвигает спрайт к ленте,
+  которая его не накрывает. Тесты: `buildsite` unit 6 (+2), `tests/build_site.rs`
+  7 (+2: попап-путь и призрак после обоих путей). Упакованный Windows UI
+  пересобран; QA `production.qa` PASS, golden `production/` — 0 дрейфа. Живые
+  кадры: `build/ui-test-construction/` (key) и
+  `build/ui-test-construction-popup/` (popup).
+
 - **Строитель больше не «застревает»: `stop` отменяет стройку, `start` её
   продолжает (TC-0630).** В C++ пункт `stop` попапа строителя (`_(bf85)`,
   позиция `7`) — это `UnitsManager_Popup_OnClick_BuildStop` →

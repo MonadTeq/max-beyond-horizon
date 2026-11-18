@@ -869,7 +869,21 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 } else {
                     "build=closed"
                 };
-                eprintln!("[in] screen={name} event={input:?} {alloc} {build}");
+                // Режим выбора места (`ORDER_STATE_SELECT_SITE`): живой тест
+                // проверяет по этой строке, что якорь призрака всегда накрывает
+                // клетку строителя (C++ `GameManager_GetBuilderUnitCursor`).
+                let site = match app.build_site() {
+                    Some(site) => format!(
+                        "site=open@{},{} cursor={},{} valid={}",
+                        site.anchor.x,
+                        site.anchor.y,
+                        site.cursor.x,
+                        site.cursor.y,
+                        u8::from(site.valid(app.state()))
+                    ),
+                    None => "site=closed".to_string(),
+                };
+                eprintln!("[in] screen={name} event={input:?} {alloc} {build} {site}");
             }
 
             if let Some(recorder) = recorder.as_mut() {

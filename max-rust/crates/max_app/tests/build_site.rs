@@ -174,6 +174,78 @@ fn click_cell(app: &mut App, grid: Point) -> Transition {
     handle_session_input(app, InputEvent::MouseClick(x, y), false)
 }
 
+/// Открывает `BuildMenu` клавишей `B` — быстрый путь (`ui.rs`).
+fn open_build_menu_via_key(app: &mut App, builder: UnitId) {
+    app.hud_mut().select(Some(builder));
+
+    handle_session_input(app, InputEvent::Key(max_app::ui::Key::Char('b')), false);
+
+    assert!(app.build_menu().is_some(), "B открывает BuildMenu");
+    assert!(app.unit_menu().is_none(), "попап не открывался");
+}
+
+/// Открывает `BuildMenu` через попап юнита — путь игрока
+/// (`GameManager_ClickUnit` → `GameManager_InitPopupButtons` → пункт `Build`).
+///
+/// Клик по уже выделенному юниту открывает попап, затем клик по кнопке
+/// `Build` (`unitmenu::ItemId::Build`) — `open_build_menu`.
+fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
+    app.hud_mut().select(Some(builder));
+    let grid = app.state().unit(builder).expect("строитель").grid;
+    let (x, y) = screen_point(app, grid);
+
+    let _ = handle_session_input(app, InputEvent::MouseMove(x, y), false);
+    let _ = handle_session_input(app, InputEvent::MouseClick(x, y), false);
+
+    assert!(app.unit_menu().is_some(), "попап юнита открыт");
+
+    let rect = {
+        let menu = app.unit_menu().expect("попап");
+        let index = menu
+            .index_of(max_app::unitmenu::ItemId::Build)
+            .expect("пункт Build в попапе строителя");
+
+        menu.button_rect(index)
+    };
+
+    let _ = handle_session_input(
+        app,
+        InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2),
+        false,
+    );
+
+    assert!(app.unit_menu().is_none(), "попап закрылся после Build");
+    assert!(
+        app.build_menu().is_some(),
+        "Build в попапе открывает BuildMenu"
+    );
+}
+
+/// Выбор места через указанный путь открытия `BuildMenu`.
+///
+/// `popup == false` — клавиша `B`; `popup == true` — пункт `Build` попапа.
+fn order_site_selection_via(app: &mut App, builder: UnitId, popup: bool) -> Point {
+    if popup {
+        open_build_menu_via_popup(app, builder);
+    } else {
+        open_build_menu_via_key(app, builder);
+    }
+
+    assert!(
+        app.build_menu_select(training_hall_index()),
+        "выбран Training Hall"
+    );
+
+    let line = app.commit_build_menu(false).expect("Done обработан");
+    assert!(app.build_site().is_some(), "выбор места открыт ({line})");
+    assert!(
+        app.state().unit(builder).expect("строитель").orders == UnitOrder::Await,
+        "до подтверждения клетки приказ не отдан"
+    );
+
+    app.build_site().expect("режим выбора").anchor
+}
+
 #[test]
 fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
     let Some(mut app) = game_app() else {
@@ -266,15 +338,60 @@ fn lmb_places_the_site_in_the_chosen_cell_and_the_builder_works_at_its_center() 
     };
     let (builder, builder_grid) = spawn_builder(&mut app);
 
-    order_site_selection(&mut app, builder);
+    place_and_assert_centered(&mut app, builder, builder_grid, false);
+}
+
+/// Тот же сценарий, но `BuildMenu` открыт пользовательским путём — пунктом
+/// `Build` попапа юнита (`unitmenu`), а не клавишей `B`.
+#[test]
+fn popup_build_places_the_site_and_centers_the_builder() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+    let (builder, builder_grid) = spawn_builder(&mut app);
+
+    place_and_assert_centered(&mut app, builder, builder_grid, true);
+}
+
+/// Призрак нарисован в кадре после `Done` независимо от пути открытия
+/// `BuildMenu` (клавиша `B` или попап юнита).
+#[test]
+fn ghost_is_drawn_after_both_build_menu_paths() {
+    for popup in [false, true] {
+        let Some(mut app) = game_app() else {
+            return;
+        };
+        // Кадр 640×480 с загруженным `FRAMEPIC` идёт через
+        // `render_with_chrome` — призрак обязан рисоваться именно там.
+        assert!(app.chrome_active(), "кадр идёт через render_with_chrome");
+        let (builder, _builder_grid) = spawn_builder(&mut app);
+        let before = app.render_frame();
+
+        let anchor = order_site_selection_via(&mut app, builder, popup);
+        let after = app.render_frame();
+
+        let (cx, cy) = screen_point(&app, anchor);
+        let changed = count_changed_in_rect(&before, &after, cx - 64, cy - 64, 128, 128);
+
+        assert!(
+            changed > 100,
+            "призрак площадки нарисован в кадре (путь {}, {changed} px)",
+            if popup { "попап" } else { "B" }
+        );
+    }
+}
+
+/// Общий сценарий: выбор места → LMB → 5 тиков → строитель в центре ленты.
+fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point, popup: bool) {
+    order_site_selection_via(app, builder, popup);
 
     // Игрок указывает на клетку левее/выше строителя: площадка ставится
     // ТУДА (2×2, накрывающий эту клетку), а не в автоматически найденное место.
     let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
-    let _ = move_cursor(&mut app, chosen);
+    let _ = move_cursor(app, chosen);
     assert_eq!(app.build_site().expect("режим").anchor, chosen);
 
-    let _ = click_cell(&mut app, chosen);
+    let _ = click_cell(app, chosen);
 
     assert!(app.build_site().is_none(), "LMB подтвердил клетку");
     assert_eq!(
@@ -297,6 +414,14 @@ fn lmb_places_the_site_in_the_chosen_cell_and_the_builder_works_at_its_center() 
         app.state().unit(builder).expect("строитель").grid,
         builder_grid,
         "сетка строителя не меняется (`PositionInTape` двигает только спрайт)"
+    );
+    assert!(
+        max_core::production::site_covers(
+            UnitType::TrainingHall,
+            chosen,
+            app.state().unit(builder).expect("строитель").grid
+        ),
+        "якорь 2×2 всегда накрывает клетку строителя (C++ GetBuilderUnitCursor)"
     );
 
     // `PositionInTape` + `OffsetDrawZones`: после 4 тиков спрайт стоит в центре

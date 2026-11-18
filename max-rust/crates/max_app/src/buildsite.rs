@@ -162,6 +162,14 @@ impl BuildSiteSelect {
             return false;
         }
 
+        // C++ `GetBuilderUnitCursor` привязывает 2×2 к строителю: якорь всегда
+        // один из четырёх, накрывающих его клетку. Проверка не даёт поставить
+        // площадку «вдали» и строить дистанционно, даже если состояние режима
+        // пришло из другого места.
+        if !production::site_covers(self.unit_type, anchor, unit.grid) {
+            return false;
+        }
+
         production::site_covers(self.unit_type, anchor, cursor)
             && production::is_site_accessible_ignoring(
                 state,
@@ -253,7 +261,7 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
 
     // Лента площадки — та, чей родитель этот строитель
     // (`DeployConstructionSiteUtilities`: `tape->SetParent(this)`).
-    let tape_grid = state
+    let tape = state
         .unit_ids_in_order()
         .into_iter()
         .filter_map(|id| state.unit(id))
@@ -263,12 +271,19 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
                     candidate.unit_type,
                     UnitType::LargeTape | UnitType::SmallTape
                 )
-        })
-        .map(|tape| tape.grid);
+        });
 
-    let Some(tape_grid) = tape_grid else {
+    let Some(tape) = tape else {
         return (0, 0);
     };
+
+    // Центр ленты — только если строитель стоит внутри её 2×2. Иначе сдвиг
+    // увёл бы спрайт от центра площадки (старый/повреждённый якорь).
+    if !production::site_covers(tape.unit_type, tape.grid, unit.grid) {
+        return (0, 0);
+    }
+
+    let tape_grid = tape.grid;
 
     let steps = match (unit.orders, unit.state) {
         (
@@ -550,6 +565,52 @@ mod tests {
         }
         assert!(!select.valid(&state));
         assert_eq!(select.cursor_id(&state), CursorId::UnitNoGo);
+    }
+
+    #[test]
+    fn anchor_far_from_the_builder_is_never_valid() {
+        let (state, builder) = land_state();
+        let builder_grid = state.unit(builder).unwrap().grid;
+        // Якорь в трёх клетках от строителя — такого не бывает у
+        // `GetBuilderUnitCursor`; подтверждение обязано быть невалидным.
+        let far = Point::new(builder_grid.x + 3, builder_grid.y);
+        let select = BuildSiteSelect::new(
+            builder,
+            TeamId::RED,
+            UnitType::Constructor,
+            UnitType::TrainingHall,
+            1,
+            builder_grid,
+            far,
+        );
+
+        assert!(!select.is_valid_at(&state, far, far));
+        assert!(!select.valid(&state));
+        assert_eq!(select.cursor_id(&state), CursorId::UnitNoGo);
+    }
+
+    #[test]
+    fn builder_does_not_center_on_a_tape_that_does_not_cover_him() {
+        let (mut state, builder) = land_state();
+        let builder_grid = state.unit(builder).unwrap().grid;
+        let far = Point::new(builder_grid.x + 3, builder_grid.y + 3);
+        let unit = state.unit_mut(builder).unwrap();
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::BuildInProgress;
+
+        let _ = max_core::production::deploy_construction_site(
+            &mut state,
+            builder,
+            UnitType::TrainingHall,
+            far,
+        );
+
+        let unit = state.unit(builder).unwrap();
+        assert_eq!(
+            tape_center_offset(&state, unit),
+            (0, 0),
+            "сдвиг к центру только для ленты, накрывающей строителя"
+        );
     }
 
     #[test]
