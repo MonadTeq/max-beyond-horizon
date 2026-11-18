@@ -41,6 +41,12 @@
 //! * итог за постройку при `rate = 1`: `cargo_raw_consumption_rate(builder, 1) * turns` —
 //!   ровно `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
 //!
+//! Дополнительно у мобильного строителя на каждом ходу уменьшается `storage`
+//! на ту же ставку, как C++ `UnitInfo::UpdateProduction`: от склада зависит
+//! `BuildMenu_GetMaxPossibleBuildRate`, поэтому при нехватке сырья скорость
+//! падает (2× → 1×), а фактические ходы и полная цена совпадают с колонками
+//! `Turns`/`Cost` (`turns_and_consumption`, `UnitInfo::GetTurnsToBuild`).
+//!
 //! Нехватка золота **ставит постройку на паузу** (не отменяет): заказ остаётся
 //! в очереди, в этом ходу не списывается и не двигается —
 //! [`ProductionEventKind::PausedNoGold`]. C++ в этой ситуации прерывает
@@ -68,7 +74,8 @@ use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
-use crate::unit::{UnitId, UnitListKind};
+use crate::unit::{UnitId, UnitInfo, UnitListKind};
+use crate::unit_values::ATTRIB_TURNS;
 use crate::victory::cargo_raw_consumption_rate;
 
 /// Таблица `max_builder_capability_list` (`default.game_rules.lua`) — 1:1.
@@ -294,6 +301,64 @@ pub fn cost_per_turn(builder: UnitType, build_rate: i32) -> i32 {
 /// `GetNormalRateBuildCost` для юнита, который строит `builder`.
 pub fn total_cost(builder: UnitType, turns: i32) -> i32 {
     cost_per_turn(builder, 1) * turns.max(0)
+}
+
+/// `UnitInfo::GetTurnsToBuild` (`unitinfo.cpp:3393`) — сколько ходов займёт
+/// постройка и сколько всего сырья она спишет при скорости
+/// `build_speed_multiplier` (`1/2/4`).
+///
+/// Возвращает `(ходов, полный расход)` — ровно то, что C++
+/// `AbstractBuildMenu::Draw` печатает в колонках `Turns`/`Cost`.
+///
+/// * база — `build_time`, если строитель уже строит этот тип (голова очереди,
+///   `build_time > 0`), иначе текущее `ATTRIB_TURNS` типа (в нём уже учтены
+///   клановые модификаторы `SC_CLANS` и исследования — C++
+///   `UnitsManager_GetCurrentUnitValues`);
+/// * на каждом ходу скорость ограничивается
+///   [`max_possible_build_rate`] по **оставшимся** ходам и складу строителя
+///   (`INT16_MAX` у стационарных): `min(build_speed_multiplier, limit)`;
+/// * расход — `Cargo_GetRawConsumptionRate(builder, effective_rate)`, склад
+///   уменьшается на него (у мобильного строителя, как C++ `storage -= ...`).
+pub fn turns_and_consumption(
+    state: &GameState,
+    builder: &UnitInfo,
+    unit_type: UnitType,
+    build_speed_multiplier: i32,
+) -> (i32, i32) {
+    let mut turns = if builder.build_time > 0
+        && builder.build_list.first().copied() == Some(unit_type)
+    {
+        i32::from(builder.build_time)
+    } else {
+        state
+            .team_units
+            .get(builder.team.0 as usize)
+            .map(|units| units.current_unit_values(unit_type as u16).get_attribute(ATTRIB_TURNS))
+            .unwrap_or(0)
+    };
+
+    let mut local_storage = if builder.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+        i32::from(builder.storage)
+    } else {
+        i32::from(i16::MAX)
+    };
+
+    let mut multiplier = build_speed_multiplier.max(1);
+    let mut turns_to_build = 0;
+    let mut consumption = 0;
+
+    while turns > 0 {
+        let limit = max_possible_build_rate(builder.unit_type, turns, local_storage);
+        multiplier = multiplier.min(limit);
+
+        let cost = cargo_raw_consumption_rate(builder.unit_type, multiplier);
+        consumption += cost;
+        turns_to_build += 1;
+        local_storage -= cost;
+        turns -= multiplier;
+    }
+
+    (turns_to_build, consumption)
 }
 
 /// `BuildMenu_GetMaxPossibleBuildRate(unit_type, build_time, storage)`
@@ -1170,9 +1235,27 @@ impl<'a> ProductionManager<'a> {
                     self.state.team_units[slot].set_gold(gold - cost as u32);
                 }
 
+                // C++ `UnitInfo::UpdateProduction`: у мобильного строителя
+                // `storage -= Cargo_GetRawConsumptionRate(...)` (сырьё в cargo).
+                // Порт платит золотом (см. шапку), но склад всё равно
+                // уменьшается — от него зависит `max_possible_build_rate` на
+                // следующих ходах, т.е. фактические ходы/цена совпадают с
+                // колонками `Turns`/`Cost` и `GetTurnsToBuild`.
+                let mobile_land = unit.flags & unit_flags::MOBILE_LAND_UNIT != 0;
+                let mut unit = unit;
+                let mut changed = false;
+
+                if mobile_land {
+                    unit.storage = unit.storage.wrapping_sub(cost as i16);
+                    changed = true;
+                }
+
                 if rate != unit.build_rate {
-                    let mut unit = unit;
                     unit.build_rate = rate;
+                    changed = true;
+                }
+
+                if changed {
                     self.state.write_unit(id, unit);
                 }
             }

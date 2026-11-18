@@ -1,20 +1,23 @@
 //! Отрисовка `BuildMenu`: иконки `I_*` в строках списка (1:4 у зданий, как
-//! `ReportStats_DrawListItemIcon`) и портрет выбранного здания — big image
-//! `P_*` 300×240 в (11,13) (`AbstractBuildMenu::Draw`, `buildmenu.cpp:509-529`).
+//! `ReportStats_DrawListItemIcon`), портрет выбранного здания — big image
+//! `P_*` 300×240 в (11,13) и таблица характеристик `UnitStats_DrawStats` с
+//! иконками (оба — `AbstractBuildMenu::Draw`, `buildmenu.cpp:509-536`).
 //!
 //! Тест грузит настоящий `MAX.RES`/`PATCHES.RES` (если данных нет — пропуск) и
 //! сравнивает кадр меню с чистым фоном `CONBUILD`/`FACBUILD` в прямоугольниках
-//! C++: иконка строки 32×32 при `LIST_AREA`, окно портрета `PORTRAIT`.
+//! C++: иконка строки 32×32 при `LIST_AREA`, окно портрета `PORTRAIT`, таблица
+//! `STATS` (11,293,250,174).
 
 use std::path::{Path, PathBuf};
 
 use max_app::assets::Assets;
 use max_app::buildmenu::{BuildMenu, LIST_AREA, PORTRAIT};
+use max_app::mobilize::{Mobilization, STATS};
 use max_app::AppConfig;
-use max_core::enums::UnitType;
+use max_core::enums::{TeamClan, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
-use max_core::team::TeamId;
+use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_render::buffer::{PixelRect, RgbaBuffer};
 
 fn root() -> PathBuf {
@@ -45,6 +48,10 @@ fn assets() -> Option<Assets> {
 /// Партия с одним конструктором RED — владельцем `BuildMenu`.
 fn build_state() -> (GameState, max_core::unit::UnitId) {
     let mut state = GameState::new();
+    state.teams[0].team_type = TeamKind::Player;
+    // Атрибуты из `SC_ATTRI` (как в реальной партии): без них `ATTRIB_TURNS`
+    // = 0, и таблица характеристик/ходы пусты.
+    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     let flags = max_core::access::unit_type_flags(UnitType::Constructor);
     let builder = state
         .spawn_unit(
@@ -260,5 +267,51 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
     assert!(
         changed(&first, &queued, PORTRAIT) > 10_000,
         "портрет показывает выбранную строку очереди"
+    );
+}
+
+#[test]
+fn stats_table_shows_the_building_characteristics_with_icons() {
+    let Some(assets) = assets() else {
+        return;
+    };
+    let (state, builder) = build_state();
+    let mut menu = BuildMenu::new(&state, builder).expect("меню конструктора");
+    let training_hall = menu
+        .unit_types
+        .iter()
+        .position(|unit| *unit == UnitType::TrainingHall)
+        .expect("TRAINHAL in CONSTRCT list");
+    menu.select(training_hall);
+
+    let background = background(&assets, false);
+    let mut frame = RgbaBuffer::new(640, 480);
+    menu.draw(&mut frame, &assets, &state, None);
+
+    // C++ `AbstractBuildMenu::Draw`: `stats_background->Write(&window)` +
+    // `UnitStats_DrawStats(...)` в (11,293,250,174); иконки I_* — те же, что
+    // в CargoMenu (pips `I_HITS`, `I_ARMOR`, `I_GOLD`).
+    let diff = changed(&background, &frame, STATS);
+    assert!(diff > 1_000, "таблица характеристик нарисована (diff={diff})");
+
+    let team_units = &state.team_units[0];
+    let rows = Mobilization::stats_rows_for(
+        &team_units.base_values,
+        &team_units.current_values,
+        UnitType::TrainingHall,
+    );
+    let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
+    for needed in ["Hits", "Armor", "Cost"] {
+        assert!(labels.contains(&needed), "нет строки {needed}: {labels:?}");
+    }
+
+    // Строка `Cost` (последняя) реально видна в кадре: её полоса отличается от
+    // фона, и это ровно `UnitStats_DrawCost` — 2 × 10 ходов = 20.
+    let cost = rows.last().expect("cost row");
+    assert_eq!(cost.value, Some(20));
+    let cost_rect = PixelRect::new(STATS.ulx, cost.y, STATS.width, 19);
+    assert!(
+        changed(&background, &frame, cost_rect) > 50,
+        "строка Cost с иконками I_GOLD нарисована"
     );
 }

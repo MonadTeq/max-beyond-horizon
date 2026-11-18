@@ -1036,7 +1036,7 @@ impl Mobilization {
     /// ставка строки `Cost` (`UnitStats_DrawCost`). У мин и нестроящихся
     /// `Builder_GetBuilderType` = `INVALID_ID`, ставка 0 (как default в C++).
     pub fn build_rate(&self, unit: UnitType) -> i32 {
-        builder_type(unit).map_or(0, |builder| cargo_raw_consumption_rate(builder, 1))
+        build_rate_for(unit)
     }
 
     /// `Unit::GetDescription()` выбранного типа (`""` — описания нет).
@@ -1064,8 +1064,21 @@ impl Mobilization {
         let Some(unit) = self.info else {
             return Vec::new();
         };
-        let base = self.base[unit as usize];
-        let actual = self.actual[unit as usize];
+
+        Self::stats_rows_for(&self.base, &self.actual, unit)
+    }
+
+    /// [`Self::stats_rows`] по явным наборам значений — нужен `BuildMenu`:
+    /// C++ `AbstractBuildMenu::Draw` зовёт `UnitStats_DrawStats` с
+    /// `team_units->GetCurrentUnitValues(team, unit_type)` и теми же
+    /// `base_values` (клановые модификаторы и апгрейды уже внутри).
+    pub fn stats_rows_for(
+        base_values: &[UnitValues],
+        current_values: &[UnitValues],
+        unit: UnitType,
+    ) -> Vec<StatRow> {
+        let base = base_values[unit as usize];
+        let actual = current_values[unit as usize];
         let mut rows = Vec::new();
         let mut y = STATS.uly;
 
@@ -1270,7 +1283,7 @@ impl Mobilization {
         if base.get_attribute(ATTRIB_TURNS) > 0 {
             // `UnitStats_DrawCost`: уровень = ставка строителя * ходы, минимум 1;
             // заполнены текущие ходы, «пустые» — базовые (дельта апгрейда).
-            let rate = self.build_rate(unit);
+            let rate = build_rate_for(unit);
             let base_level = (rate * base.get_attribute(ATTRIB_TURNS)).max(1);
             let actual_level = (rate * actual.get_attribute(ATTRIB_TURNS)).max(1);
 
@@ -2604,6 +2617,12 @@ pub(crate) fn team_lut(team: TeamId) -> ColorLut {
     )
 }
 
+/// `Cargo_GetRawConsumptionRate(Builder_GetBuilderType(team, unit), 1)` —
+/// ставка строки `Cost` (`UnitStats_DrawCost`); см. [`Mobilization::build_rate`].
+pub(crate) fn build_rate_for(unit: UnitType) -> i32 {
+    builder_type(unit).map_or(0, |builder| cargo_raw_consumption_rate(builder, 1))
+}
+
 /// Вертикальная координата однострочного текста по центру прямоугольника
 /// (`Text_TextBox`: `((height + 1) - font_height) / 2`).
 pub(crate) fn center_y(rect: PixelRect, font: &max_render::text::GnwFont) -> i32 {
@@ -2666,7 +2685,7 @@ fn report_stats_number(value: i32) -> String {
 /// 16, 17, 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)`:
 /// шрифт 5, межстрочный интервал `Text_GetHeight + 1` (обводка), 20 строк,
 /// чёрная копия в `(x+1, y+1)` (`Text_BlitTTF` + `GNW_TEXT_OUTLINE`).
-fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit: UnitType) -> u32 {
+pub(crate) fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit: UnitType) -> u32 {
     let text = cargo_unit_data::unit_description(unit);
 
     if text.is_empty() {
@@ -2694,7 +2713,7 @@ fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit: UnitType)
 
 /// Таблица статистики (`UnitStats_DrawStats`): строки по 19 px, число справа
 /// от x=24, подпись с x=28 (клип 49 px), pips с x=76, красная линия под строкой.
-fn draw_stats(
+pub(crate) fn draw_stats(
     frame: &mut RgbaBuffer,
     cargo: &CargoMenuAssets,
     palette: &UiPalette,

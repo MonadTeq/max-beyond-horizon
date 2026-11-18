@@ -11,7 +11,7 @@ use max_core::geo::Point;
 use max_core::production::{
     builder_type, buildable_units, can_build, construction_slab_type, construction_utility,
     construction_utility_types, cost_per_turn, is_builder, is_factory, max_possible_build_rate,
-    total_cost, BuildError, ProductionEventKind, ProductionManager,
+    total_cost, turns_and_consumption, BuildError, ProductionEventKind, ProductionManager,
 };
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
@@ -138,6 +138,101 @@ fn max_build_rate_matches_the_cpp_algorithm() {
     );
     // Мобильный строитель ограничен складом: при малом складе остаётся 1×.
     assert_eq!(max_possible_build_rate(UnitType::Constructor, 10, 0), 1);
+}
+
+#[test]
+fn turns_and_consumption_matches_the_cpp_loop() {
+    let mut state = state_with_gold(100);
+    let heavy = state
+        .spawn_unit(UnitType::HeavyVehiclePlant, TeamId::RED, Point::new(10, 10), 0)
+        .expect("heavy vehicle plant");
+    let heavy = state.unit(heavy).expect("factory").clone();
+
+    // `UnitInfo::GetTurnsToBuild`: TANK = 4 хода, завод — 3/ход на 1×, 12 на 2×,
+    // 36 на 4×. 4×: 4 хода делятся на 4 → (1,36); 2×: (2,24).
+    assert_eq!(
+        turns_and_consumption(&state, &heavy, UnitType::Tank, 1),
+        (4, 12)
+    );
+    assert_eq!(
+        turns_and_consumption(&state, &heavy, UnitType::Tank, 2),
+        (2, 24)
+    );
+    assert_eq!(
+        turns_and_consumption(&state, &heavy, UnitType::Tank, 4),
+        (1, 36)
+    );
+
+    // Если строитель уже строит тип (`build_time`), берётся остаток, а не
+    // `ATTRIB_TURNS`: 3 хода на 2× → 12 + 3 = 15, два хода.
+    let mut active = heavy.clone();
+    active.build_time = 3;
+    active.build_list = vec![UnitType::Tank];
+    assert_eq!(
+        turns_and_consumption(&state, &active, UnitType::Tank, 2),
+        (2, 15)
+    );
+
+    // У Training Hall 2×/4× в C++ отключены, но функция считает так же, как
+    // `UnitInfo::GetTurnsToBuild`: INFANTRY = 2 хода, ставка 1/ход.
+    let hall = state
+        .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
+        .expect("training hall");
+    let hall = state.unit(hall).expect("factory").clone();
+    assert_eq!(
+        turns_and_consumption(&state, &hall, UnitType::Infantry, 1),
+        (2, 2)
+    );
+    assert_eq!(
+        turns_and_consumption(&state, &hall, UnitType::Infantry, 2),
+        (1, 4)
+    );
+
+    // Мобильный строитель с пустым складом: скорость всегда 1×, полная
+    // стоимость = ходы × 2 (MININGST = 12 → 24), даже если запросили 2×/4×.
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(30, 30), 0)
+        .expect("constructor");
+    let mut constructor = state.unit(constructor).expect("builder").clone();
+    constructor.storage = 0;
+    for rate in [1, 2, 4] {
+        assert_eq!(
+            turns_and_consumption(&state, &constructor, UnitType::MiningStation, rate),
+            (12, 24),
+            "ставка {rate}× ограничена пустым складом"
+        );
+    }
+}
+
+#[test]
+fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
+    // `CLAN_TRADEOFFS`: CrimsonPath (2) даёт SHIPYARD (0x17) `ATTRIB_TURNS -5`
+    // (20 → 15). C++ `BuildMenu_GetTurnsToBuild` читает current values, значит
+    // и 1×-цена у конструктора падает 40 → 30.
+    let mut random = state_with_gold(100);
+    let builder = random
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+    let mut builder = random.unit(builder).expect("builder").clone();
+    builder.storage = 0;
+    assert_eq!(
+        turns_and_consumption(&random, &builder, UnitType::Shipyard, 1),
+        (20, 40)
+    );
+
+    let mut crimson = GameState::new();
+    crimson.teams[0].team_type = TeamKind::Player;
+    crimson.team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
+    let builder = crimson
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+    let mut builder = crimson.unit(builder).expect("builder").clone();
+    builder.storage = 0;
+    assert_eq!(
+        turns_and_consumption(&crimson, &builder, UnitType::Shipyard, 1),
+        (15, 30),
+        "клан сокращает SHIPYARD на 5 ходов"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +444,50 @@ fn two_speed_build_costs_the_cpp_rate() {
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Tank), 1);
     assert_eq!(state.team_units[0].gold(), 176);
+}
+
+#[test]
+fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
+    // Реальный сценарий игрока: у конструктора 40 сырья в cargo (как
+    // `deploy_starting_units`), заказ 2×. C++ `UnitInfo::UpdateProduction`
+    // каждый ход уменьшает `storage`; когда его не хватает на 2×, скорость
+    // падает до 1×. Итог — ровно (8 ходов, 40 золота), как в колонке `Cost`
+    // `BuildMenu` (`turns_and_consumption`).
+    let mut state = state_with_gold(1000);
+    let constructor = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+        .expect("constructor");
+    state.unit_mut(constructor).expect("builder").storage = 40;
+
+    let before = state.unit(constructor).expect("builder").clone();
+    let expected = turns_and_consumption(&state, &before, UnitType::MiningStation, 2);
+    assert_eq!(expected, (8, 40));
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager
+        .enqueue(constructor, UnitType::MiningStation)
+        .expect("constructor builds mining stations");
+    manager.set_build_rate(constructor, 2);
+    let report = manager.commit(constructor).expect("site found");
+    assert_eq!(report.build_rate, 2);
+
+    let mut turns = 0;
+    while count_type(&state, UnitType::MiningStation) == 0 && turns < 20 {
+        production_turn(&mut state);
+        turns += 1;
+    }
+
+    assert_eq!(turns, 8, "2× держится 4 хода, затем 1× ещё 4");
+    assert_eq!(
+        state.team_units[0].gold(),
+        1000 - 40,
+        "полная стоимость = ходы × ставка (4×8 + 4×2)"
+    );
+    assert_eq!(
+        state.unit(constructor).expect("builder").storage,
+        0,
+        "C++ `storage -= Cargo_GetRawConsumptionRate(...)`"
+    );
 }
 
 // ---------------------------------------------------------------------------

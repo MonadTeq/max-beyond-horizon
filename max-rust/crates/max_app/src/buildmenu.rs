@@ -53,11 +53,18 @@
 //!   `buildmenu.cpp:509-529`), палитра окна, для выбранной строки (у завода —
 //!   активного селектора: список или очередь). Кэш `P_*` —
 //!   `CargoMenuAssets::portrait`.
+//! * характеристики — `UnitStats_DrawStats` в `stats_background`
+//!   (11,293,250,174) с иконками `I_*` и строкой `Cost` (`I_GOLD`/`I_GOLDE`):
+//!   тот же `mobilize::{stats_rows_for, draw_stats}`, что в `CargoMenu`;
+//!   база/текущие значения команды (клановые модификаторы и апгрейды уже внутри).
+//! * `Turns`/`Cost` — `UnitInfo::GetTurnsToBuild` (`turns_and_consumption`):
+//!   для 2×/4× это не «ставка за ход», а полная сумма с учётом падения
+//!   скорости при нехватке склада; 1× — `turns` и `turns * rate1`. У Training
+//!   Hall 2×/4× выключены, у мобильного строителя скрыты, если `max_rate`
+//!   меньше.
 //!
 //! # Осознанные упрощения
 //!
-//! * область статистики под портретом — краткий текст (имя/боевые параметры
-//!   строителя), а не `UnitStats_DrawStats` выбранного типа, как в C++;
 //! * подсказка `Help` (`BLDHLP_U`) и кнопка `Build path` инженера
 //!   (`BLDPTH_U`) не портированы (путь-строительство — задача P5);
 //! * звуки кнопок не проигрываются (аудио-слой — `audio.rs`).
@@ -69,7 +76,8 @@ use max_core::geo::Point;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
 use max_core::production::{
     buildable_units, can_build, cost_per_turn, find_build_site, is_factory,
-    max_possible_build_rate, turns_to_build as production_turns_to_build, BuildError,
+    max_possible_build_rate, turns_and_consumption, turns_to_build as production_turns_to_build,
+    BuildError,
 };
 use max_core::team::TeamId;
 use max_core::unit::UnitId;
@@ -414,7 +422,7 @@ impl BuildMenu {
             Vec::new()
         };
 
-        Some(Self {
+        let mut menu = Self {
             team: unit.team,
             unit: unit_id,
             builder_type: unit.unit_type,
@@ -430,7 +438,13 @@ impl BuildMenu {
             repeat: unit.repeat_build,
             show_description: false,
             status: String::new(),
-        })
+        };
+
+        // `AbstractBuildMenu::Draw` клампит `build_rate` по
+        // `BuildMenu_GetMaxPossibleBuildRate`; для Training Hall скорость 1×.
+        menu.build_rate = menu.build_rate.min(menu.max_rate(state).max(1));
+
+        Some(menu)
     }
 
     /// Тип в выбранной строке списка.
@@ -441,6 +455,19 @@ impl BuildMenu {
     /// Тип в выбранной строке очереди.
     pub fn queue_type(&self) -> Option<UnitType> {
         self.queue.get(self.queue_selected).copied()
+    }
+
+    /// Тип активного селектора — `selector->GetLast()` в C++
+    /// (`AbstractBuildMenu::Select`/`FactoryBuildMenu::Select`): у завода это
+    /// либо выбранная строка списка, либо выбранная строка очереди (если
+    /// очередь активна). От него зависят портрет, характеристики и колонки
+    /// `Turns`/`Cost`.
+    pub fn active_type(&self) -> Option<UnitType> {
+        if self.queue_active {
+            self.queue_type()
+        } else {
+            self.selected_type()
+        }
     }
 
     /// Сколько строк списка видно.
@@ -463,12 +490,16 @@ impl BuildMenu {
         let Some(unit) = state.unit(self.unit) else {
             return 1;
         };
-        let head = self
-            .queue
-            .first()
-            .copied()
-            .or_else(|| self.selected_type())
-            .unwrap_or(unit.unit_type);
+
+        // C++ `AbstractBuildMenu::Draw`: у Training Hall кнопки 2×/4×
+        // безусловно выключены (`unit->GetUnitType() == TRAINHAL`), поэтому
+        // скорость ограничена 1×, хотя `BuildMenu_GetMaxPossibleBuildRate`
+        // формально вернул бы 4.
+        if unit.unit_type == UnitType::TrainingHall {
+            return 1;
+        }
+
+        let head = self.active_type().unwrap_or(unit.unit_type);
         let turns = production_turns_to_build(state, self.team, head).max(1);
         let storage = if self.factory {
             i32::from(i16::MAX)
@@ -479,26 +510,31 @@ impl BuildMenu {
         max_possible_build_rate(unit.unit_type, turns, storage).max(1) as u16
     }
 
-    /// Ход/цена за ход для выбранной скорости (цифры C++ `Draw`).
+    /// Ходы и **полная** стоимость для скорости `rate` — C++
+    /// `UnitInfo::GetTurnsToBuild(unit_type, rate, &turns)`
+    /// (`unitinfo.cpp:3393`) и `AbstractBuildMenu::Draw` (`buildmenu.cpp:545-660`).
+    ///
+    /// `unit_type` — активная строка (`selector->GetLast()`): список у мобильного
+    /// строителя, активный список/очередь у завода.
+    ///
+    /// Для 1× C++ печатает `GetTurnsToBuild(unit_type)` и
+    /// `turns * Cargo_GetRawConsumptionRate(builder, 1)`; для 2×/4× — результат
+    /// [`turns_and_consumption`]: на каждом ходу скорость ограничивается
+    /// `BuildMenu_GetMaxPossibleBuildRate` по остатку и складу, поэтому цена —
+    /// не «ставка за ход», а сумма всех ходов (и ходы могут не делиться на
+    /// скорость). В `ATTRIB_TURNS` уже входят клановые модификаторы и
+    /// исследования (`current_unit_values`).
     pub fn rate_numbers(&self, state: &GameState, rate: u16) -> (i32, i32) {
         let Some(unit) = state.unit(self.unit) else {
             return (0, 0);
         };
-        // Голова очереди, иначе выбранный тип (у завода до `Build` очередь
-        // пуста — цифры относятся к строке списка, как в `AbstractBuildMenu::Draw`).
-        let head = self
-            .queue
-            .first()
-            .copied()
-            .or_else(|| self.selected_type())
-            .unwrap_or(unit.unit_type);
-        let turns = production_turns_to_build(state, self.team, head).max(0);
-        let cost = cost_per_turn(unit.unit_type, i32::from(rate.max(1)));
+        // `Draw(selector->GetLast())`: активная строка, а не обязательно голова
+        // очереди завода.
+        let Some(unit_type) = self.active_type() else {
+            return (0, 0);
+        };
 
-        (
-            (turns + i32::from(rate) - 1) / i32::from(rate.max(1)),
-            cost,
-        )
+        turns_and_consumption(state, unit, unit_type, i32::from(rate.max(1)))
     }
 
     /// `AddSelection` — добавить выбранный тип в очередь (завод).
@@ -563,7 +599,13 @@ impl BuildMenu {
         let max_rate = self.max_rate(state);
 
         if rate > max_rate {
-            self.status = format!("{rate}x needs more storage; max {max_rate}x");
+            // C++ `AbstractBuildMenu::Draw`: у Training Hall кнопки 2×/4×
+            // выключены, а у мобильного строителя скорость ограничена складом.
+            self.status = if self.builder_type == UnitType::TrainingHall {
+                format!("{rate}x is not available for Training Hall")
+            } else {
+                format!("{rate}x needs more storage; max {max_rate}x")
+            };
             return false;
         }
 
@@ -958,11 +1000,7 @@ impl BuildMenu {
         // 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`). C++ берёт
         // `selector->GetLast()` — выбранную строку списка (у завода — активного
         // селектора: список или очередь).
-        let portrait_type = if self.queue_active {
-            self.queue_type()
-        } else {
-            self.selected_type()
-        };
+        let portrait_type = self.active_type();
 
         if let Some(unit_type) = portrait_type {
             if let Some(cargo) = assets.cargo.as_ref() {
@@ -1105,18 +1143,53 @@ impl BuildMenu {
             }
         }
 
+        // Характеристики выбранного типа с иконками — `UnitStats_DrawStats`
+        // в `stats_background` (11,293,250,174), как в
+        // `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`): база/текущие
+        // значения команды (клановые модификаторы и апгрейды уже внутри),
+        // `I_RAW`/`I_RAWE` для строки `Cost`. Это тот же код, что в CargoMenu.
+        if let Some(unit_type) = portrait_type {
+            if let (Some(cargo), Some(team_units)) = (
+                assets.cargo.as_ref(),
+                state.team_units.get(self.team.0 as usize),
+            ) {
+                let rows = crate::mobilize::Mobilization::stats_rows_for(
+                    &team_units.base_values,
+                    &team_units.current_values,
+                    unit_type,
+                );
+                painted += crate::mobilize::draw_stats(frame, cargo, &palette, &rows);
+            }
+        }
+
+        // Описание выбранного типа — поверх портрета (`Text_TextBox` 16,17,
+        // 290×230, `button_description_rest_state`).
+        if self.show_description {
+            if let Some(unit_type) = portrait_type {
+                painted += crate::mobilize::draw_description(frame, &palette, unit_type);
+            }
+        }
+
         // Цифры ходов/цены под списком (C++ `turns_background_*`).
         let labels_y = if self.factory { 357 } else { 330 };
         let first_y = if self.factory { 376 } else { 349 };
-        let head = self.queue.first().copied().or_else(|| self.selected_type());
+        let max_rate = self.max_rate(state);
+        let build_rate = self.build_rate.min(max_rate.max(1));
 
         painted += draw_text_gnw(frame, 374, labels_y - 2, font, "Turns", dim).max(0) as u32;
         painted += draw_text_gnw(frame, 410, labels_y - 2, font, "Cost", dim).max(0) as u32;
 
         for (index, rate) in BUILD_RATES.iter().enumerate() {
+            // C++ `AbstractBuildMenu::Draw`: строки 2×/4× не рисуются, если
+            // скорость недоступна (`max_build_rate < rate`) или это Training
+            // Hall (кнопки выключены безусловно).
+            if *rate > 1 && (self.builder_type == UnitType::TrainingHall || *rate > max_rate) {
+                continue;
+            }
+
             let y = first_y + index as i32 * 25;
             let (turns, cost) = self.rate_numbers(state, *rate);
-            let active = self.build_rate == *rate;
+            let active = build_rate == *rate;
             let color = if active { green } else { yellow };
 
             painted += draw_text_gnw(frame, 378, y, font, &turns.to_string(), color).max(0) as u32;
@@ -1134,50 +1207,6 @@ impl BuildMenu {
                 if self.repeat { green } else { text },
             )
             .max(0) as u32;
-        }
-
-        // Описание/имя юнита в области статистики (`stats_background` 11,293).
-        let builder = state.unit(self.unit);
-        let lines = [
-            unit_name(self.builder_type).to_string(),
-            format!(
-                "Hits {}  Armor {}",
-                builder.map(|unit| unit.base_values.get_attribute(max_core::ATTRIB_HITS)).unwrap_or(0),
-                builder
-                    .map(|unit| unit.base_values.get_attribute(max_core::ATTRIB_ARMOR))
-                    .unwrap_or(0)
-            ),
-            format!("Build rate {}x", self.build_rate),
-            match head {
-                Some(unit_type) => format!("Order: {}", unit_name(unit_type)),
-                None => "Order: -".to_string(),
-            },
-        ];
-
-        for (index, line) in lines.iter().enumerate() {
-            painted += draw_text_gnw(
-                frame,
-                15,
-                296 + index as i32 * 11,
-                font,
-                &line.chars().take(34).collect::<String>(),
-                if index == 3 { green } else { text },
-            )
-            .max(0) as u32;
-        }
-
-        if self.show_description {
-            if let Some(unit_type) = head {
-                painted += draw_text_gnw(
-                    frame,
-                    15,
-                    345,
-                    font,
-                    &format!("Building: {}", unit_name(unit_type)),
-                    green,
-                )
-                .max(0) as u32;
-            }
         }
 
         // Статус/ошибка — нижняя строка (до кнопок `Cancel`, x=307).
@@ -1218,7 +1247,7 @@ impl BuildMenu {
                 rect,
                 label,
                 mouse,
-                self.build_rate == BUILD_RATES[index],
+                build_rate == BUILD_RATES[index],
             );
         }
 
@@ -1682,5 +1711,145 @@ mod tests {
             .expect("tank");
 
         assert!(BuildMenu::new(&state, tank).is_none());
+    }
+
+    #[test]
+    fn rate_numbers_are_turns_and_total_cost_like_get_turns_to_build() {
+        let mut state = state();
+        let factory = state
+            .spawn_unit(
+                UnitType::HeavyVehiclePlant,
+                TeamId::RED,
+                Point::new(10, 10),
+                0,
+            )
+            .expect("factory");
+        let mut menu = BuildMenu::new(&state, factory).expect("factory menu");
+        let tank = menu
+            .unit_types
+            .iter()
+            .position(|unit| *unit == UnitType::Tank)
+            .expect("TANK in HVP list");
+        menu.select(tank);
+
+        // TANK = 4 хода; завод 3/ход на 1×, 12 на 2×, 36 на 4×. Второе число —
+        // полная стоимость (сумма ходов), а не ставка за ход.
+        assert_eq!(menu.max_rate(&state), 4);
+        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
+        assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
+        assert_eq!(menu.rate_numbers(&state, 4), (1, 36));
+    }
+
+    #[test]
+    fn training_hall_is_locked_to_1x_like_the_cpp_buttons() {
+        let mut state = state();
+        let hall = state
+            .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
+            .expect("training hall");
+        let mut menu = BuildMenu::new(&state, hall).expect("factory menu");
+        let infantry = menu
+            .unit_types
+            .iter()
+            .position(|unit| *unit == UnitType::Infantry)
+            .expect("INFANTRY in TRAINHAL list");
+        menu.select(infantry);
+
+        // C++ `AbstractBuildMenu::Draw`: `build_rate_x2/x4->Enable(false)`.
+        assert_eq!(menu.max_rate(&state), 1);
+        // INFANTRY = 2 хода, ставка TRAINHAL 1/ход.
+        assert_eq!(menu.rate_numbers(&state, 1), (2, 2));
+    }
+
+    #[test]
+    fn clan_turns_change_the_build_menu_cost() {
+        let mut random = state();
+        let builder = random
+            .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
+            .expect("constructor");
+        // В реальной партии `deploy_starting_units` ставит `storage = cargo`.
+        random.unit_mut(builder).unwrap().storage = 0;
+        let mut menu = BuildMenu::new(&random, builder).expect("menu");
+        let shipyard = menu
+            .unit_types
+            .iter()
+            .position(|unit| *unit == UnitType::Shipyard)
+            .expect("SHIPYARD in CONSTRCT list");
+        menu.select(shipyard);
+        assert_eq!(menu.max_rate(&random), 1);
+        assert_eq!(menu.rate_numbers(&random, 1), (20, 40));
+
+        // CrimsonPath: SHIPYARD -5 ходов (`CLAN_TRADEOFFS`), цена 15 × 2.
+        random.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
+        random.unit_mut(builder).unwrap().storage = 0;
+        let mut menu = BuildMenu::new(&random, builder).expect("menu");
+        menu.select(shipyard);
+        assert_eq!(menu.rate_numbers(&random, 1), (15, 30));
+    }
+
+    #[test]
+    fn factory_rate_numbers_follow_the_active_selection_not_the_queue_head() {
+        let mut state = state();
+        let factory = state
+            .spawn_unit(
+                UnitType::HeavyVehiclePlant,
+                TeamId::RED,
+                Point::new(10, 10),
+                0,
+            )
+            .expect("factory");
+        let mut menu = BuildMenu::new(&state, factory).expect("factory menu");
+        let tank = menu
+            .unit_types
+            .iter()
+            .position(|unit| *unit == UnitType::Tank)
+            .expect("TANK in HVP list");
+        let launcher = menu
+            .unit_types
+            .iter()
+            .position(|unit| *unit == UnitType::RocketLauncher)
+            .expect("ROCKET in HVP list");
+
+        // В очереди TANK, но выбран ROCKET: C++ `Draw(selector->GetLast())`
+        // показывает цифры выбранной строки (4 хода TANK — только когда
+        // активна очередь).
+        menu.queue.push(UnitType::Tank);
+        menu.select(launcher);
+        let turns = menu.turns_for(&state, UnitType::RocketLauncher);
+        assert_eq!(menu.rate_numbers(&state, 1), (turns, turns * 3));
+
+        menu.queue_selected = 0;
+        menu.queue_active = true;
+        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
+        assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
+        assert_eq!(menu.rate_numbers(&state, 4), (1, 36));
+
+        // Возврат к списку — снова выбранная строка.
+        menu.queue_active = false;
+        menu.select(tank);
+        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
+    }
+
+    #[test]
+    fn stats_rows_for_a_building_carry_icons_and_the_cpp_cost() {
+        let state = state();
+        let team_units = &state.team_units[0];
+        let rows = crate::mobilize::Mobilization::stats_rows_for(
+            &team_units.base_values,
+            &team_units.current_values,
+            UnitType::TrainingHall,
+        );
+        let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
+
+        assert!(labels.contains(&"Hits"), "характеристики: {labels:?}");
+        assert!(labels.contains(&"Armor"), "характеристики: {labels:?}");
+        assert_eq!(labels.last(), Some(&"Cost"), "строка Cost последняя");
+
+        // `UnitStats_DrawCost`: ставка строителя CONSTRCT (2) × ATTRIB_TURNS (10).
+        let cost = rows.last().expect("cost row");
+        assert_eq!(cost.value, Some(20));
+        assert_eq!(cost.icons.len(), 1);
+        assert_eq!(cost.icons[0].resource, "I_GOLD");
+        assert_eq!(cost.icons[0].empty_resource, "I_GOLDE");
+        assert_eq!(cost.icons[0].current, 20);
     }
 }

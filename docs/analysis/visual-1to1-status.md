@@ -2471,7 +2471,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 проверяет и (1,0)*8 для взгляда на восток. Golden: `build-slide-turn` (после
 доворота, сдвиг 0), `build-slide-1..4` (−8/−16/−24/−32) — 0 дрейфа.
 
-## 24. `BuildMenu`: иконки списка и портрет здания — **сделано** (2026-11-18)
+## 24. `BuildMenu`: иконки, портрет, характеристики и цена — **сделано** (2026-11-18)
 
 ### 24.1 Как в C++ (оракул)
 
@@ -2482,7 +2482,9 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 | цвет ходов | `BuildUnitTypeSelector::Draw` | `0xA2`, если строитель `STATIONARY` или `storage >= turns * Cargo_GetRawConsumptionRate(builder, 1)`, иначе `COLOR_RED` |
 | выделение | `GameManager_DrawUnitSelector` (`game_manager.cpp`) | белые уголки 8 px в 32×32-ячейке (offsetx=0, `scaled_size2 = 30`); не заливка и не цвет текста |
 | портрет | `AbstractBuildMenu::Draw` (`buildmenu.cpp:509-529`) | `WindowManager_LoadBigImage(base_unit.GetPortrait(), &local_window, window.width, false, true, -1, -1, false)`; `local_window.buffer = &window.buffer[11 + width*13]`, big image `P_*` 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`), **без** обрезки 280×240 (в `CargoMenu` — своё окно `unit_portrait_window` 280×240); при отсутствии — `buf_fill` 300×240 чёрным |
-| выбор портрета | `AbstractBuildMenu::Select` / `FactoryBuildMenu::Select` | `Draw(selector->GetLast())` — выбранная строка списка; у завода — активного селектора (список или очередь `cargo_selector`) |
+| характеристики | `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`), `UnitStats_DrawStats` (`unitstats.cpp:98`) | `stats_background` 11,293,250,174: `UnitStats_DrawStats(buffer, width, unit_type, unit->team, *UnitsManager_GetCurrentUnitValues(team, unit_type), 250, I_RAW, I_RAWE)` — военные строки, `Cargo`, `Prod./Uses`, `Armor/Hits/Scan`, `Speed`, `Cost`; условия по базовым значениям, числа/дельты — по текущим; иконки — `I_*` (pips), `Cost` — `I_GOLD`/`I_GOLDE` |
+| ходы/цена | `AbstractBuildMenu::Draw` (`buildmenu.cpp:545-660`), `UnitInfo::GetTurnsToBuild` (`unitinfo.cpp:3393`) | 1×: `turns = GetTurnsToBuild(unit_type)`, `cost = turns * Cargo_GetRawConsumptionRate(builder, 1)`; 2×/4×: `unit->GetTurnsToBuild(unit_type, rate, &turns)` — на каждом ходу `min(rate, BuildMenu_GetMaxPossibleBuildRate(builder, remaining, storage))`, сумма ставок и число ходов; `ATTRIB_TURNS` — **текущие** значения (клановые `CLAN_TRADEOFFS` и исследования). У `TRAINHAL` кнопки 2×/4× выключены, строки не рисуются; у мобильного строителя строки скрыты, если `max_rate < rate` |
+| выбор портрета/статистики | `AbstractBuildMenu::Select` / `FactoryBuildMenu::Select` | `Draw(selector->GetLast())` — выбранная строка списка; у завода — активного селектора (список или очередь `cargo_selector`) |
 
 ### 24.2 Что сделано
 
@@ -2498,25 +2500,57 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * Портрет — `P_*` 300×240 в (11,13) (`PORTRAIT`), палитра `CONBUILD`/`FACBUILD`,
   без обрезки; тип — выбранная строка (у завода — активный список/очередь).
   Спрайт строителя 2×, который рисовался раньше, убран.
+* Характеристики — `Mobilization::stats_rows_for(&base, &current, unit_type)` +
+  `mobilize::draw_stats` в `STATS` (11,293,250,174): ровно
+  `UnitStats_DrawStats` с иконками `I_*` и строкой `Cost`
+  (`I_GOLD`/`I_GOLDE`). Это тот же код, что рисует `CargoMenu`; база/текущие
+  значения берутся из `state.team_units[team]`, поэтому клановые модификаторы
+  и исследования уже учтены.
+* `Turns`/`Cost` — `max_core::production::turns_and_consumption` (точный порт
+  `UnitInfo::GetTurnsToBuild`): 1× — ходы и `turns * rate1`, 2×/4× — сумма
+  ставок с падением скорости при нехватке склада; `build_time` активной
+  постройки используется как остаток. `BuildMenu::max_rate` для `TRAINHAL`
+  = 1, недоступные строки 2×/4× не рисуются.
+* `charge_units` теперь уменьшает `storage` мобильного строителя на ставку
+  (C++ `UpdateProduction`), поэтому реальные ходы/цена совпадают с колонками:
+  пример из QA — 40 сырья, MININGST 2×: 4 хода по 8 + 4 хода по 2 = (8, 40).
 
 ### 24.3 Тесты и QA
 
-* `max_app/tests/build_menu_render.rs` (4): иконка в каждой видимой строке
+* `max_app/tests/build_menu_render.rs` (5): иконка в каждой видимой строке
   (diff от чистого `CONBUILD` > 20 px, в т.ч. выбранная строка с уголками);
   RED/GREEN перекраска иконок (diff > 50 px — командные слоты как в
   `CargoMenu`); портрет попиксельно совпадает с `P_MINING` (>80 % пикселей,
   пропущенных через палитру окна) и отличается от фона; смена выбранной
-  строки/выбранного элемента очереди меняет портрет.
+  строки/выбранного элемента очереди меняет портрет; таблица
+  `STATS` (11,293,250,174) нарисована, содержит `Hits`/`Armor`/`Cost`,
+  `Cost = 2 × 10 = 20` с `I_GOLD`/`I_GOLDE`.
+* `max_app::buildmenu` unit (10, +5): `rate_numbers` = `(4,12)/(2,24)/(1,36)`
+  для HVP→TANK; `TRAINHAL` `max_rate=1`; CrimsonPath сокращает SHIPYARD
+  20→15 ходов и цену 40→30; цифры — активного селектора завода (выбранная очередь/список), а не всегда головы очереди; `stats_rows_for` для здания — `Hits`/`Armor`/
+  `Cost`, иконки `I_GOLD`/`I_GOLDE`.
+* `max_core/tests/production.rs` (22, +2): `turns_and_consumption` для
+  1×/2×/4×, остаток `build_time`, Training Hall, мобильный строитель с пустым
+  складом; клановый модификатор SHIPYARD; реальный прогон 2× с 40 сырья —
+  8 ходов, 40 золота, `storage=0`.
 * QA `production.qa`: `shot buildmenu` (конструктор, `Mining Station` — иконки
-  всех 15 строк + `P_MINING`) и `shot buildmenu-factory` (завод, `Infiltrator` —
-  `P_COMMAN`, список `TRAINHAL`); golden `production/buildmenu*.png` пересняты,
-  0 дрейфа.
+  всех 15 строк, `P_MINING`, характеристики, 12/24, 8/40) и
+  `shot buildmenu-factory` (завод, `Infiltrator` — `P_COMMAN`, характеристики
+  6/1/4/12/2/8/4/5/9, 9/9, 2×/4× пусты); golden
+  `production/buildmenu*.png` пересняты, 0 дрейфа. `research/`/`research-help/`
+  — 0 дрейфа.
 
 ### 24.4 Осознанные расхождения
 
-* Область статистики (`stats_background`, `UnitStats_DrawStats` выбранного
-  типа в C++) в порте по-прежнему показывает краткий текст строителя (имя,
-  Hits/Armor, Build rate, Order) — таблица `UnitStats` для `BuildMenu` не
-  портирована (в `CargoMenu` она есть). Портрет и иконки — 1:1.
+* Описание (`BLDDES`) по умолчанию выключено (`show_description=false`), в
+  C++ статический `button_description_rest_state` = `true`; оверлей описания
+  поверх портрета реализован (`mobilize::draw_description`, 16,17,290×230).
+* Недоступные кнопки 2×/4× рисуются обычной картинкой (`BLD2X_U`/`BLD4X_U`):
+  отдельного disabled-ресурса (`BLD2X_X`/`BLD4X_X`) в `BuildMenuAssets` нет;
+  числа/строки при этом скрыты, клик/клавиша не срабатывают.
+* Экономика — золото вместо сырья комплекса (см. `max_core::production`):
+  дополнительно склад мобильного строителя уменьшается, как в C++, чтобы
+  скорость и ходы совпадали; C++-ветка «компьютер и `opponent >= MASTER`»
+  (`UpdateProduction` не списывает склад) не моделируется.
 * Фон и кнопки — `CONBUILD`/`FACBUILD`; `Help`/`Build path` инженера не
   портированы (как и раньше).

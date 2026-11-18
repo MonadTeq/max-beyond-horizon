@@ -2,6 +2,49 @@
 
 ### Исправлено
 
+- **`BuildMenu`: характеристики выбранного здания с иконками.** В C++
+  `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`) после портрета пишет
+  `stats_background` (11,293,250,174) и вызывает `UnitStats_DrawStats` для
+  **выбранной** строки (у завода — активного списка/очереди): военные строки,
+  `Cargo`, `Prod./Uses`, `Armor/Hits/Scan`, `Speed`, `Cost`; числа и дельты
+  апгрейдов — по текущим значениям команды, условия показа — по базовым;
+  иконки — pips `I_*`, `Cost` — `I_GOLD`/`I_GOLDE`. В порте там был краткий
+  текст строителя («Constructor / Hits / Armor / Build rate / Order»).
+  Теперь `BuildMenu` переиспользует `CargoMenu`-код:
+  `Mobilization::stats_rows_for(&team_units.base_values,
+  &team_units.current_values, unit_type)` + `mobilize::draw_stats` в тех же
+  координатах; клановые модификаторы и апгрейды уже внутри `current_values`.
+  Тесты: `tests/build_menu_render.rs` (5, +1: таблица `STATS` нарисована,
+  `Hits`/`Armor`/`Cost`, `Cost = 2 × 10 = 20` с `I_GOLD`/`I_GOLDE`), unit
+  `buildmenu::stats_rows_for_a_building_carry_icons_and_the_cpp_cost`; QA
+  `production.qa` — кадры `buildmenu`/`buildmenu-factory` с характеристиками.
+
+- **Стоимость постройки по скорости — как `UnitInfo::GetTurnsToBuild`, с
+  клановыми модификаторами и складом.** В C++ (`buildmenu.cpp:545-660`,
+  `unitinfo.cpp:3393`) колонки `Turns`/`Cost` считаются так: 1× —
+  `turns = GetTurnsToBuild(unit_type)` и `turns * Cargo_GetRawConsumptionRate(
+  builder, 1)`; 2×/4× — цикл `while (turns > 0)`: `min(rate,
+  BuildMenu_GetMaxPossibleBuildRate(builder, turns, storage))`, сумма ставок,
+  `storage -= cost`, `turns -= rate`. То есть `Cost` — **полная** цена, а не
+  ставка за ход, и ходы могут не делиться на скорость (при исчерпании склада
+  скорость падает 2× → 1×). `ATTRIB_TURNS` берётся из
+  `UnitsManager_GetCurrentUnitValues`, поэтому клановые `CLAN_TRADEOFFS`
+  (например, CrimsonPath: SHIPYARD −5 ходов) сразу меняют и ходы, и цену.
+  В порте `rate_numbers` показывал ставку за ход и `ceil(turns/rate)`, а
+  `charge_units` не уменьшал `storage`, из-за чего фактические ходы/цена
+  расходились с меню. Теперь `max_core::production::turns_and_consumption` —
+  точный порт `GetTurnsToBuild`; `charge_units` уменьшает `storage` мобильного
+  строителя на ставку (C++ `UpdateProduction`), поэтому реальная постройка
+  совпадает с колонками (пример: 40 сырья, MININGST 2× → 4×8 + 4×2 = 40
+  золота за 8 ходов). `BuildMenu::max_rate`: у `TRAINHAL` 2×/4× выключены
+  (C++), у мобильного строителя строки 2×/4× скрываются при нехватке склада.
+  Тесты: `max_core/tests/production.rs` 22 (+2: `turns_and_consumption` для
+  1×/2×/4×, остаток `build_time`, Training Hall, клан SHIPYARD; реальный 2×
+  с 40 сырья — 8 ходов/40 золота/`storage=0`), unit `buildmenu` 10 (+5:
+  `(4,12)/(2,24)/(1,36)`, `TRAINHAL` 1×, CrimsonPath 40→30, `Cost`-строка, цифры активного селектора завода).
+  QA `production.qa`/golden `production/*` — 0 дрейфа (игровые кадры не
+  изменились; пересняты только `buildmenu*.png`).
+
 - **Строитель въезжает в центр ленты под своим углом: сначала доворот, потом
   скольжение по `DIRECTION_OFFSETS[angle]`.** В C++
   (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414-4482`) цикл такой:
