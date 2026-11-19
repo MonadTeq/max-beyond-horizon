@@ -2557,6 +2557,9 @@ fn session_map_left_click(
         );
     }
     let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
+        // `GameManager_ProcessPlayerInput`: клик по карте закрывает окно
+        // сообщения (`MessageManager_ClearMessageBox`).
+        app.hud_mut().clear_hint();
         if app.hud().selected.is_some() {
             app.hud_mut().clear_interaction();
             app.hud_mut().push_log("Deselected");
@@ -2622,6 +2625,7 @@ fn session_map_left_click(
         // C++ `GameManager_ClickUnit` (`unit1 == unit2` → `InitPopupButtons`).
         if selected == Some(id) {
             app.hud_mut().preview = None;
+            session_show_unit_status(app, id);
 
             let line = if app.open_unit_menu() {
                 let items = app.unit_menu().map_or(0, |menu| menu.items.len());
@@ -2637,6 +2641,9 @@ fn session_map_left_click(
         app.hud_mut().select(Some(id));
         app.hud_mut().preview = None;
         app.hud_mut().push_log(format!("Selected {label}"));
+        // `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage`:
+        // подсказка сверху карты о текущей стройке выделенного строителя.
+        session_show_unit_status(app, id);
         return Transition::None;
     }
 
@@ -2660,6 +2667,25 @@ fn session_map_left_click(
     }
 
     Transition::None
+}
+
+/// `GameManager_DrawUnitStatusMessage` (`game_manager.cpp:8038`): подсказка
+/// сверху карты для выделенного строителя.
+///
+/// Для строящего (`ORDER_BUILD`) — «Currently building: X. / Turns to
+/// completion: N.» (`ee24`), для достроившего (`ORDER_STATE_UNIT_READY`) —
+/// «Finished building X. …» (`276c`). Для остальных юнитов окно сообщения
+/// закрывается, как `MessageManager_ClearMessageBox` в `GameManager_UnitSelect`.
+fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
+    let message = app
+        .state()
+        .unit(id)
+        .and_then(|unit| crate::panels::builder_status_message(app.state(), unit));
+
+    match message {
+        Some(text) => app.hud_mut().set_hint(text),
+        None => app.hud_mut().clear_hint(),
+    }
 }
 
 /// Правая кнопка без хрома.

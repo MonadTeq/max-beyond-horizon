@@ -126,22 +126,33 @@ fn ai_constructor_builds_mining_station() {
     let mut saw_move = false;
     let mut max_op_state = 0u8;
 
+    // Наблюдение — покадрово: `TaskMove` живёт всего несколько тиков (ИИ
+    // заканчивает ход, как только юниты перестали работать), поэтому проверка
+    // на границе хода его пропускала.
     for _ in 0..12 {
-        play_turn(&mut state, 24);
+        state.manage_economy(TeamId::RED);
+        state.ai_begin_turn(TeamId::RED);
 
-        if !tasks_of_type(&state, TeamId::RED, TASK_TYPE_CREATE_BUILDING).is_empty() {
-            saw_create_building = true;
-        }
+        for _ in 0..24 {
+            state.tick();
 
-        if !tasks_of_type(&state, TeamId::RED, TASK_TYPE_MOVE).is_empty() {
-            saw_move = true;
-        }
+            if !tasks_of_type(&state, TeamId::RED, TASK_TYPE_CREATE_BUILDING).is_empty() {
+                saw_create_building = true;
+            }
 
-        for task in state.ai.task_manager.tasks() {
-            if let TaskKind::CreateBuilding { op_state, .. } = &task.kind {
-                max_op_state = max_op_state.max(*op_state);
+            if !tasks_of_type(&state, TeamId::RED, TASK_TYPE_MOVE).is_empty() {
+                saw_move = true;
+            }
+
+            for task in state.ai.task_manager.tasks() {
+                if let TaskKind::CreateBuilding { op_state, .. } = &task.kind {
+                    max_op_state = max_op_state.max(*op_state);
+                }
             }
         }
+
+        state.game_state = GameStateType::EndTurn;
+        let _ = state.finish_turn();
 
         let building = state
             .unit(constructor)

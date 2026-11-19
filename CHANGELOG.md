@@ -2,6 +2,21 @@
 
 ### Добавлено
 
+- **Подсказка строящего строителя сверху карты (C++ `MessageManager_DrawMessage`).**
+  Клик по строителю в `ORDER_BUILD` показывает окно `MESSAGE_BOX_INFO` над картой
+  (`GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage` →
+  `GameManager_DrawBuilderUnitStatusMessage`, `game_manager.cpp:7893/8038`):
+  «Currently building: X.» / «Turns to completion: N.» (`_(ee24)`; ходы —
+  `UnitInfo::GetTurnsToBuild`), «Was building X, with N turns …» (`_(cdf8)`) для
+  остановленной стройки, «Finished building X. To move the Y out of the
+  construction site, …» (`_(276c)`) для `ORDER_STATE_UNIT_READY`, «Number of turns
+  to clear site: N.» (`_(af4a)`) для бульдозера. Фон — таблица затемнения
+  `MESSAGE_BOX_INFO`, текст `FONT5` с обводкой, перенос по словам
+  (`MessageManager_WrapText`), прямоугольник `(map.ulx, map.uly+10)`, высота
+  `20 + 10·строк`; закрывается кликом по карте/сменой выделения
+  (`MessageManager_ClearMessageBox`). QA: `assert hint=TEXT|none`, кадр
+  `build-hint`.
+
 - **Диалог Preferences/Setup 1:1 (C++ `OptionsMenu`, P8).** Порт `optionsmenu.cpp`:
   панель `PREFSPIC` 400×422 в (120,29), заголовок `Setup`/`Preferences`
   (`FONT5`, `COLOR_GREEN`), кнопки `PRFDNE/PRFCAN/PRFHLP` (Done/Cancel/Help),
@@ -28,6 +43,55 @@
   `preferences.rs` (9) и `tests/preferences.rs` (6).
 
 ### Исправлено
+
+- **Достройка 1:1: строитель сначала УХОДИТ с площадки, потом появляется здание.**
+  Раньше `ProductionManager::spawn_new_unit` сразу ставил готовое здание и
+  снимал ленту — строитель оставался стоять внутри и был перекрыт зданием.
+  Теперь порядок C++: `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3440`) ставит
+  здание на клетку ленты в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`
+  (не рисуется — `UnitInfoGroup::IsRelevant`) и переводит строителя в
+  `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (взаимный `SetParent`); строитель
+  сходит с площадки (`TaskActivate`/`TaskCreateBuilding::Activate` →
+  `ORDER_ACTIVATE`/`IN_TRANSITION` → `PositionInTape` DEINIT/LEAVE: доворот и
+  4 × 8 px, клетка пересчитывается от пиксельной позиции `x / 64` →
+  `ActivateEngineer` → `ORDER_MOVE` к свободной клетке вокруг здания), и только
+  после этого `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) снимает
+  ленту/конусы (`remove_slabs = false` — плита остаётся), восстанавливает
+  приказы и раскрывает здание `ScaleUnit(EXPAND)`. Добавлены
+  `production::builder_exit_cell` (поиск клетки схода как `TaskActivate`),
+  `production::unit_bounds_contains` (`GetBounds` 2×2/1×1),
+  `unit_order::building_ready`/`return_to_construction_site`/`start_leaving_site`;
+  `tape_center_offset` показывает и съезд с ленты. Тесты:
+  `max_core/tests/production.rs::completion_waits_for_the_builder_to_leave_before_the_building_appears`,
+  `completion_sequence_is_deterministic`; QA `production.qa` — кадры до/после.
+
+- **Плита стройплощадки появляется мгновенно при подтверждении места.**
+  `ProductionManager::commit` ставил площадку сразу, а путь «клик по карте»
+  (`build place` → пакет 08/P4) ждал следующего тика (`ORDER_BUILD`/`INIT` →
+  `StartBuilding`). Теперь `events::apply_command` ставит площадку
+  (`DeployConstructionSiteUtilities` + `PrepareConstructionSite`) в момент
+  применения заказа: `LRGTAPE`+`LRGCONES`+`LRGSLAB` видны на кадре
+  подтверждения; `start_building` на следующем тике идемпотентен.
+
+- **Зависание игры на 8-м ходу (ход ИИ не заканчивался 12 000 кадров).**
+  Причина: `AiPlayer::CheckEndTurn` считал «есть работа» по статической
+  проверке `TaskManager::has_pending_work` («есть незавершённые задачи»).
+  Задача `CreateBuilding` ждала юнита, у которого кончилась скорость хода,
+  поэтому флаг не сбрасывался никогда и ход ИИ не закрывался (QA
+  `production.qa`: `end_turn` на 8-м ходу крутил 12 000 кадров). Теперь
+  используется тот же флаг, что в C++ — `tasks_pending`
+  (`Ai_SetTasksPendingFlag` из `UnitsManager_ProcessOrder*`/`ExecuteMove`/
+  `PositionInTape`, сброс в `UnitsManager_ProcessOrders`): юнит, который не
+  может ничего сделать в этом ходу, флаг не выставляет, и ход закрывается
+  (`AiPlayer::CheckEndTurn`, `aiplayer.cpp:2828`). QA `production.qa` проходит
+  ход 8 за 516 кадров, soak-100 (100 ходов) и soak_headless (120 ходов) — PASS.
+
+- **Здание, ждущее ухода строителя, больше не выбирается кликом.**
+  `ORDER_IDLE`-юнит не рисуется (`IsRelevant`), поэтому и `unit_at_screen` его
+  пропускает: иначе игрок мог отдать приказ «недостроенному» зданию и навсегда
+  оставить строителя в `ORDER_STATE_UNIT_READY` (так падал `research.qa`:
+  подсказка «Finished building» и `tick` до раскрытия здания добавлены в
+  сценарий).
 
 - **Golden: три устаревших кадра `visual-screens` (0.25 % дрейфа).**
   `golden/game.png`, `golden/mine-selected.png` и `golden/portrait.png` были сняты

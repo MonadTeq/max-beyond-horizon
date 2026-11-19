@@ -1208,6 +1208,171 @@ impl StatRow {
     }
 }
 
+/// Строка «Finished building …» — `language.json` `1200`/`276c` (три варианта
+/// по роду здания; в оригинале все три совпадают по тексту).
+const FINISHED_CONSTRUCTION: &str =
+    "Finished building {building}.  To move the {builder} out of the construction site, click on a square with a symbol in it.";
+/// `FinishedBuilding` (`1200`/`74d3`/`8c62`) — завод: юнит выходит из завода.
+const FINISHED_FACTORY: &str =
+    "Finished building {building}.  To move the {building} out of the factory, click on a square with a symbol in it.";
+
+/// Текст подсказки выделенного юнита — `GameManager_DrawUnitStatusMessage` +
+/// `GameManager_DrawBuilderUnitStatusMessage` (`game_manager.cpp:7893/8038`).
+///
+/// Возвращает `None`, если для юнита подсказки нет (C++ рисует сообщение
+/// только для `ORDER_BUILD`/`CLEAR`/`HALT_BUILDING`/`HALT_BUILDING_2`).
+pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<String> {
+    if !matches!(
+        unit.orders,
+        UnitOrder::Build | UnitOrder::Clear | UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
+    ) {
+        return None;
+    }
+
+    if unit.unit_type == UnitType::Bulldozer {
+        return Some(format!(
+            "Number of turns to clear site: {}.",
+            unit.build_time
+        ));
+    }
+
+    if unit.state == UnitOrderState::UnitReady {
+        let building = unit
+            .parent_unit
+            .and_then(|id| state.unit(id))
+            .map(|building| crate::buildmenu::unit_name(building.unit_type))
+            .unwrap_or_default();
+        let builder = crate::buildmenu::unit_name(unit.unit_type);
+
+        return Some(if unit.flags & unit_flags::STATIONARY != 0 {
+            FINISHED_FACTORY
+                .replace("{building}", &building)
+                .replace("{builder}", &builder)
+        } else {
+            FINISHED_CONSTRUCTION
+                .replace("{building}", &building)
+                .replace("{builder}", &builder)
+        });
+    }
+
+    let &unit_type = unit.build_list.first()?;
+    let name = crate::buildmenu::unit_name(unit_type);
+    let build_rate = i32::from(unit.build_rate.max(1));
+
+    if matches!(unit.orders, UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2) {
+        return Some(format!(
+            "Was building {name}, with {} turns to completion.",
+            unit.build_time
+        ));
+    }
+
+    let (turns, _) = max_core::production::turns_and_consumption(state, unit, unit_type, build_rate);
+
+    Some(format!(
+        "Currently building: {name}.\nTurns to completion: {turns}."
+    ))
+}
+
+/// Окно сообщения над картой — `MessageManager_DrawMessage` +
+/// `MessageManager_DrawMessageBox` (`message_manager.cpp:144/206`).
+///
+/// Фон — таблица затемнения `MESSAGE_BOX_INFO` (`ResourceManager_
+/// DarkeningColorIndexTable`: `max(7, c/4)*31/63` и ближайший цвет палитры),
+/// текст — `Font5` цветом `0xFF` с обводкой/тенью. Прямоугольник: `(area.ulx,
+/// area.uly + 10)`, ширина = самая длинная строка + 20, высота = `20 + 10 *
+/// строк`.
+pub fn draw_status_message(
+    frame: &mut RgbaBuffer,
+    area: PixelRect,
+    palette: &UiPalette,
+    text: &str,
+) -> u32 {
+    if text.is_empty() || area.width <= 0 {
+        return 0;
+    }
+
+    let font = GnwFontId::Font5.font();
+    // `MessageManager_WrapText(text, width - 20)`: строки переносятся по словам.
+    let max_line = (area.width - 20).max(20);
+    let mut lines: Vec<String> = Vec::new();
+
+    for line in text.split('\n') {
+        let mut current = String::new();
+
+        for word in line.split(' ') {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{current} {word}")
+            };
+
+            if font.text_width(&candidate) > max_line && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+            } else {
+                current = candidate;
+            }
+        }
+
+        lines.push(current);
+    }
+
+    let width = (lines
+        .iter()
+        .map(|line| font.text_width(line))
+        .max()
+        .unwrap_or(0)
+        + 20)
+        .min(area.width);
+    let height = 20 + 10 * lines.len() as i32;
+    let rect = PixelRect::new(area.ulx, area.uly + 10, width, height);
+    let mut painted = 0;
+
+    let mut cache: std::collections::HashMap<[u8; 3], Rgba> = std::collections::HashMap::new();
+
+    for y in rect.uly..rect.lry() {
+        for x in rect.ulx..rect.lrx() {
+            let Some(color) = frame.get(x, y) else {
+                continue;
+            };
+            let key = [color.r, color.g, color.b];
+            let mapped = match cache.get(&key) {
+                Some(mapped) => *mapped,
+                None => {
+                    let dark = color.darken(1);
+                    let mapped = palette.map_color([dark.r, dark.g, dark.b]);
+                    cache.insert(key, mapped);
+                    mapped
+                }
+            };
+
+            if frame.set(x, y, mapped) {
+                painted += 1;
+            }
+        }
+    }
+
+    for (index, line) in lines.iter().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+
+        let drawn = draw_text_gnw_shadowed(
+            frame,
+            rect.ulx + 10,
+            rect.uly + 10 + 10 * index as i32,
+            font,
+            line,
+            palette.rgba(0xFF),
+            Rgba::BLACK,
+            Rgba::BLACK,
+        );
+
+        painted += drawn.max(0) as u32;
+    }
+    painted
+}
+
 /// Строка C++: `if (base_value && factor)` — иначе `DrawInfoDisplayRow`
 /// не рисует ничего, и строка остаётся пустой (фон `FRAMEPIC`).
 fn make_row(label: StatLabel, current: i32, base: i32, factor: i32) -> Option<StatRow> {

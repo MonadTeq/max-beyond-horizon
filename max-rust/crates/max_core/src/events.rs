@@ -280,6 +280,31 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
     };
 
     state.write_unit(packet.unit, unit);
+
+    // Порт ставит площадку в момент заказа (`DeployConstructionSiteUtilities` +
+    // `PrepareConstructionSite`): C++ `StartBuilding` идёт на следующем тике
+    // (`UnitsManager_ProcessOrderBuild`/`INIT`), но порт применяет P4 сразу и
+    // плита (`LRGSLAB`/`SMLSLAB`) обязана появиться на кадре подтверждения
+    // места — без задержки в тик. `deploy_construction_site` идемпотентна,
+    // поэтому `start_building` на следующем тике вторую площадку не ставит.
+    if let Some(unit) = state.unit(packet.unit) {
+        if unit.orders == UnitOrder::Build
+            && unit.state == UnitOrderState::Init
+            && unit.build_time > 0
+            && crate::production::is_mobile_builder(unit.unit_type)
+        {
+            if let Some(head) = unit.build_list.first().copied() {
+                let site = unit.target_grid;
+                let _ = crate::production::deploy_construction_site(
+                    state,
+                    packet.unit,
+                    head,
+                    site,
+                );
+            }
+        }
+    }
+
     result
 }
 

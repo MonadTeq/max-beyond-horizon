@@ -67,6 +67,14 @@ end_turn
 end_turn
 end_turn
 assert unit=Research Center
+# Достройка 1:1 (`SpawnNewUnit` + `UnitsManager_BuildingReady`): здание
+# появляется только после ухода строителя с площадки — даём тики (уход:
+# `ORDER_ACTIVATE` → `PositionInTape` DEINIT/LEAVE → `ActivateEngineer` →
+# `ORDER_MOVE` + раскрытие `ScaleUnit(EXPAND)`).
+tick 30
+assert build-ready=no
+assert builder=outside
+assert site=none
 
 # --- Включаем питание: тема Attack по умолчанию ----------------------------
 select type Research Center

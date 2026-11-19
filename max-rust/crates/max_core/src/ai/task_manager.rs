@@ -598,9 +598,13 @@ impl TaskManager {
             .any(|task| task.team == team && task.is_thinking(world))
     }
 
-    /// Есть ли у команды незавершённая работа (замена `tasks_pending`-флага
-    /// `Ai_SetTasksPendingFlag`, который в C++ выставляется вызовами из
-    /// `units_manager`, а в max_core вычисляется по состоянию очередей).
+    /// Есть ли у команды незавершённая работа — **диагностика** (QA/логи), не
+    /// решение о конце хода.
+    ///
+    /// `AiPlayer::CheckEndTurn` использует не это, а флаг `tasks_pending`
+    /// (`Ai_SetTasksPendingFlag`/`Ai_ClearTasksPendingFlags`): статическая
+    /// проверка «есть незавершённые задачи» держала ход ИИ вечно, если юнит
+    /// израсходовал скорость, а задача ждала следующего хода.
     pub fn has_pending_work(&self, world: &GameState, team: TeamId) -> bool {
         if !self.normal_reminders.is_empty()
             || !self.priority_reminders.is_empty()

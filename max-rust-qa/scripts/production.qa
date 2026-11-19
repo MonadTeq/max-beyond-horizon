@@ -102,10 +102,16 @@ assert build-site=open
 build place 28 20
 assert build-site=closed
 assert unit-order=build
-# Площадка появляется на кадре обработки `ORDER_BUILD`/`INIT`, как C++
-# `UnitsManager_ProcessOrderBuild` → `UnitInfo::StartBuilding`:
-# `DeployConstructionSiteUtilities` (LRGTAPE+LRGCONES) + `PrepareConstructionSite`
-# (LRGSLAB, кадр из RNG).
+# Плита появляется МГНОВЕННО при подтверждении места — до первого тика: заказ
+# применяется сразу (`DeployConstructionSiteUtilities` + `PrepareConstructionSite`
+# — `LRGTAPE`+`LRGCONES`+`LRGSLAB`, кадр плиты из RNG), а не на кадре обработки
+# `ORDER_BUILD`/`INIT`. Поэтому и `assert site=large`, и `site=drawn` проходят
+# без `tick`.
+assert site=large
+assert site-pos=28,20
+assert site=drawn
+shot build-placed
+
 tick 1
 assert site=large
 assert site-pos=28,20
@@ -205,7 +211,19 @@ shot build-work-a
 anim 150
 shot build-work-b
 
-# --- 10 ходов постройки (ATTRIB_TURNS TRAINHAL) --------------------------
+# --- Подсказка строящего юнита (сверху карты) ----------------------------
+# C++ `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage` →
+# `GameManager_DrawBuilderUnitStatusMessage` (`_(ee24)`): «Currently building:
+# X.» + «Turns to completion: N.» в окне `MESSAGE_BOX_INFO` над картой.
+# Смена хода сбрасывает выделение (`GameManager_UpdateGuiControl`), поэтому
+# клик по строителю на ходе 2 снова показывает подсказку.
+end_turn
+select type Constructor
+assert hint=Currently building: Training Hall
+assert hint=Turns to completion: 9
+shot build-hint
+
+# --- Оставшиеся 9 ходов постройки (ATTRIB_TURNS TRAINHAL) ----------------
 end_turn
 end_turn
 end_turn
@@ -215,12 +233,39 @@ end_turn
 end_turn
 end_turn
 end_turn
-end_turn
+
+# --- Достройка 1:1: сначала строитель УХОДИТ, потом появляется здание ------
+# C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3440`): здание встаёт на клетку
+# ленты в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (не рисуется —
+# `UnitInfoGroup::IsRelevant`), а строитель получает `ORDER_BUILD`/
+# `ORDER_STATE_UNIT_READY` и остаётся на площадке. Лента и конусы ещё на месте.
 assert unit=Training Hall
 assert build=closed
-# По завершении (`SpawnNewUnit` + `UnitsManager_BuildingReady`) лента и конусы
-# убраны, плита осталась фундаментом, здание стоит в клетке площадки.
+assert build-ready=yes
+assert site=large
+assert builder=inside
+# Выделение сброшено началом хода — клик по строителю даёт «Finished building».
+select type Constructor
+assert hint=Finished building Training Hall
+shot build-done-waiting
+
+# Строитель сходит с площадки: `TaskActivate`/`ORDER_ACTIVATE` →
+# `PositionInTape` DEINIT/LEAVE (доворот + четыре тика по 8 px) →
+# `ActivateEngineer` (лента/конусы снимаются) → `ORDER_MOVE` к свободной
+# клетке вокруг здания.
+tick 1
+assert unit-order=activate
+tick 3
+shot build-done-leaving
+
+# `UnitsManager_BuildingReady`: строитель вне габаритов 2×2 → утилиты сняты
+# (`remove_slabs = false`, плита осталась фундаментом), здание раскрывается
+# `ScaleUnit(EXPAND)`.
+tick 16
+assert builder=outside
 assert site=none
+assert build-ready=no
+shot build-done
 
 # --- BuildMenu завода: очередь и заказ пехоты ----------------------------
 # Завод — стационарный юнит: `select unit` его не видит, выбираем по имени.

@@ -1144,7 +1144,7 @@ pub fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
                     UnitOrder::PowerOff,
                     UnitOrderState::ExecutingOrder,
                 );
-                unit_order::power_down(&mut parent);
+                unit_order::power_down(state, &mut parent);
 
                 if parent.unit_type == UnitType::ResearchCenter {
                     // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).

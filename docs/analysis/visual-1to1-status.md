@@ -2904,4 +2904,135 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
   стол; в headless-сессии агента скриншот `CopyFromScreen` чёрный — не
   считается свидетельством).
 
+## 28. Достройка 1:1, мгновенная плита и подсказка строителя — **сделано** (2026-11-19)
 
+**Оракул.** `max-cpp-port/src/unitinfo.cpp:3440` `UnitInfo::SpawnNewUnit`,
+`:4122` `PrepareConstructionSite`, `:4414` `PositionInTape`, `:4488`
+`ReturnToConstructionSite`; `units_manager.cpp:4183` `UnitsManager_BuildingReady`,
+`:2908` `ProcessOrderActivate`, `:3407` `ActivateEngineer`, `:1945`
+`SetNewOrderInt`; `taskcreatebuilding.cpp:912` `Activate`, `taskactivate.cpp:104`
+`TaskActivate::Activate`; `game_manager.cpp:7893/8038`
+`DrawBuilderUnitStatusMessage`/`DrawUnitStatusMessage`;
+`message_manager.cpp:144/206` `DrawMessage`/`DrawMessageBox`;
+`unitinfogroup.cpp:59` `IsRelevant`; `aiplayer.cpp:2828` `CheckEndTurn`;
+тексты — `language.json` (`ee24`, `cdf8`, `af4a`, `276c`, `1200`, `74d3`, `8c62`).
+
+**Порядок завершения стройки (было → стало).** Было: `spawn_new_unit` сразу
+раскрывал здание (`ScaleUnit(EXPAND)`), снимал ленту и ставил строителя в
+`ORDER_AWAIT` — строитель оставался стоять в 2×2 и был перекрыт зданием.
+Стало — дословно C++:
+
+1. `SpawnNewUnit` (`unitinfo.cpp:3520-3550`): здание
+   `UnitsManager_DeployUnit(constructed, team, nullptr, tape.grid)`; затем
+   `utility_unit->SetParent(this)` + `this->SetParent(utility_unit)` (взаимные
+   родители), `SetOrderState(building, ORDER_STATE_BUILDING_READY)` через
+   `SetNewOrderInt(building, ORDER_IDLE, …)`. В порте: здание получает
+   `orders = Idle`, `state = BuildingReady`, `prior_orders = Await`,
+   `parent_unit = builder`; строитель — `orders = Build`, `state = UnitReady`,
+   `build_time = 0`, `build_list.Clear()` (`if (!path)`). Здание **не рисуется**
+   (`IsRelevant` пропускает `ORDER_IDLE`), лента/конусы/плита на месте.
+2. `TaskCreateBuilding::Activate` → `TaskActivate`: `move_to` = первая
+   проходимая клетка вокруг здания (`position = (grid_x − 1, grid_y + unit_size)`
+   и обход `DIRECTION_OFFSETS[0,2,4,6]` по `unit_size + 1` шагов), затем
+   `SetNewOrder(builder, ORDER_ACTIVATE, ORDER_STATE_IN_TRANSITION)`. В порте это
+   делает `unit_order::start_leaving_site` из ветки
+   `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (C++ для игрока ждёт клика в
+   подсвеченную клетку, `DrawMap_RenderBuildMarker`, но окно — один тик; порт
+   активирует сразу, чтобы поведение не зависело от внимательности игрока).
+3. `ProcessOrderActivate`/`IN_TRANSITION` для `CONSTRCT` →
+   `ORDER_AWAIT_TAPE_POSITIONING`/`ORDER_STATE_TAPE_POSITIONING_DEINIT`;
+   `PositionInTape`: доворот `Paths_UpdateAngle` к `GetTargetUnitAngle` (для
+   `DEINIT`/`LEAVE` — по `move_to`, четыре диагональных угла), затем четыре тика
+   по 8 px (`OffsetDrawZones`); на завершении `RestoreOrders` и
+   `grid_x = x / GFX_MAP_TILE_SIZE` — клетка пересчитывается от пиксельной
+   позиции (въезд `32 px` + съезд `32 px`), поэтому строитель остаётся в клетке
+   ленты, но ближе к цели.
+4. `ActivateEngineer`: `Access_DestroyUtilities(builder.grid, …)` (лента/конусы),
+   приказы `prior = AWAIT` и `ORDER_MOVE`/`INIT` к клетке схода; путь кладёт
+   `Paths_RequestPath`, дальше обычный `UnitInfo::Move`.
+5. `UnitsManager_BuildingReady` (каждый тик для здания в
+   `ORDER_IDLE`/`BUILDING_READY`): если строитель вне габаритов здания (2×2,
+   `GetBounds`) — `Access_DestroyUtilities` по четырём клеткам
+   (`remove_slabs = false` ⇒ плита остаётся), `RestoreOrders`,
+   `scaler_adjust = 4`, `SetParent(nullptr)`, `ScaleUnit(EXPAND)` — здание
+   «вырастает» за 4 тика, `Access_UpdateMapStatus`. Пока строитель идёт
+   (`ORDER_MOVE` не в `EXECUTING_ORDER`) — здание ждёт. Порт повторяет это в
+   `unit_order::building_ready`, включая `ReturnToConstructionSite` для
+   строителя, вернувшегося в габариты (без скорости не повторяет — иначе
+   live-lock), и уничтожение здания, если строитель погиб на площадке.
+
+**Плита мгновенно.** `PrepareConstructionSite` ставит `LRGSLAB` в момент
+заказа; в C++ `StartBuilding` идёт на следующем тике (`GameManager_PathBuild` →
+`BuildOrder` → `ORDER_BUILD`/`INIT`), поэтому окно в один тик незаметно. В
+порте путь «клик по карте» (`build place` → пакет 08/P4) применяется сразу
+(`events::apply_command`), поэтому площадка ставится там же: `LRGTAPE` +
+`LRGCONES` + `LRGSLAB` (кадр плиты из `Randomizer_Generate(image_count)`) видны
+на кадре подтверждения, без `tick`. `start_building` на следующем тике
+идемпотентен (`deploy_construction_site` проверяет ленту в клетке).
+
+**Подсказка строителя.** `GameManager_UnitSelect`/`ClickUnit` →
+`GameManager_DrawUnitStatusMessage` → для `ORDER_BUILD`/`CLEAR`/
+`HALT_BUILDING*` → `GameManager_DrawBuilderUnitStatusMessage` →
+`MessageManager_DrawMessage(MESSAGE_BOX_INFO, MESSAGE_BOX_MODELESS)`:
+* `ORDER_STATE_UNIT_READY`, мобильный — «Finished building %s.  To move the %s
+  out of the construction site, click on a square with a symbol in it.»
+  (`_(276c)`), завод — `_(1200)`/`_(74d3)`/`_(8c62)` (по роду здания);
+* `ORDER_HALT_BUILDING*` — «Was building %s, with %i turns to completion.»
+  (`_(cdf8)`);
+* иначе — «Currently building: %s.
+Turns to completion: %i.» (`_(ee24)`), где
+  ходы считает `UnitInfo::GetTurnsToBuild` (порт —
+  `production::turns_and_consumption`);
+* `BULLDOZR` — «Number of turns to clear site: %i.» (`_(af4a)`).
+
+Окно — в начале области карты: `(map.ulx, map.uly + 10)`, ширина = самая
+длинная строка + 20, высота `20 + 10·строк`, перенос по словам
+(`MessageManager_WrapText(text, width − 20)`); фон — таблица затемнения
+`MESSAGE_BOX_INFO` (`max(7, c/4)·31/63` и ближайший цвет палитры), текст —
+`GNW_TEXT_FONT_5` с обводкой/тенью. Живёт до клика по карте/смены выделения
+(`MessageManager_ClearMessageBox`), как в C++.
+
+**Зависание на 8-м ходу.** Причина — не стройка, а конец хода ИИ:
+`AiPlayer::CheckEndTurn` использовал статическую проверку
+`TaskManager::has_pending_work` («есть незавершённые задачи»), а задача
+`CreateBuilding` ждала строителя, у которого кончилась скорость хода, поэтому
+ход ИИ не закрывался (QA крутил 12 000 кадров на `end_turn` 8-го хода). Теперь
+`tasks_pending` — тот же флаг, что в C++: `Ai_SetTasksPendingFlag` из
+`UnitsManager_ProcessOrder*`, `UnitInfo::ExecuteMove`, `PositionInTape`; сброс —
+`Ai_ClearTasksPendingFlags` в начале `UnitsManager_ProcessOrders`. Порте-специфичные
+вызовы флага («build: delayed tasks», «Building ready») убраны — в C++ их нет.
+
+**Проверка.** QA `production.qa`: `assert site=large`/`site=drawn` сразу после
+`build place` (плита мгновенно, `shot build-placed`), `assert hint=Currently
+building: Training Hall` + `assert hint=Turns to completion: 9` (`shot
+build-hint`), после 10 ходов — `assert build-ready=yes` + `assert
+builder=inside` + `assert site=large` (`shot build-done-waiting`), `tick 1` →
+`assert unit-order=activate` (`shot build-done-leaving`), `tick 16` →
+`assert builder=outside` + `assert site=none` + `assert build-ready=no` (`shot
+build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12 000. Golden
+`production/` переснят (22 кадра, включая пять новых), 0 дрейфа; `research.qa` и
+`research-help.qa` получили `tick 30` + `assert build-ready=no`/`builder=outside`
+перед выделением достроенного центра, их golden переснят. UNIT:
+`max_core/tests/production.rs` (`completion_waits_for_the_builder_to_leave_before_the_building_appears`,
+`completion_sequence_is_deterministic`) и `max_app::buildsite`
+(`tape_center_offset` для DEINIT/LEAVE). SOAK: `soak-100.qa` (100 ходов,
+17 123 кадра) и `soak_headless --turns 120` — PASS.
+
+**Артефакты (2026-11-19).**
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui.zip` —
+  sha256 `1980087878ff65440f429217c3de5d22365e36a9d9daa5f4f997a6a2891dcf70`;
+  `max-rust.exe` 6 628 864 Б, sha256
+  `32fb612c08f173ffe2631c4a76181d05f1dc8bdce89de53fb7f96b4d5e8820a9`
+  (PE32+ x64, Subsystem=2 GUI, SDL3.dll рядом; сборка
+  `build/scripts/build-windows-ui.ps1`, MSVC+vcpkg, `--help` OK).
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64.zip` —
+  sha256 `451bab19510943621cfe987731563b9659c9bffe1ae8bc9a507fe986ed562b63`;
+  `max-rust.exe` 10 861 522 Б, sha256
+  `743364ffeff523f986cc81c7de25ac2e95111bd7b7213fb068cb7b2e2b38e1f3`
+  (PE32+ x64, Subsystem=3 console; сборка `build/scripts/build-windows.sh
+  --no-wine`).
+* CI-гейт `bash ci.sh` — **зелёный** (799 с): шаги 1/4 (cargo check+test:
+  default/sound/no-default), 2/4 (Horizon), 3/4 (15 QA-скриптов + 9 golden-сверок),
+  4/4 (soak-100 + soak_headless). Живой интерактивный прогон окна в этой сессии не
+  выполнялся (headless-сессия агента: `CopyFromScreen` даёт чёрный кадр — не
+  свидетельство); визуальная часть подтверждена кадрами QA/golden.

@@ -28,7 +28,12 @@
 //! 4. `build_time <= build_rate` → [`ProductionManager::spawn_new_unit`]:
 //!    завод выпускает юнит в соседнюю клетку и получает
 //!    `ORDER_STATE_UNIT_READY` (как `UnitInfo::SpawnNewUnit`), мобильный
-//!    строитель достраивает здание на площадке.
+//!    строитель достраивает здание на площадке: здание встаёт на клетку ленты
+//!    в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (не рисуется), строитель —
+//!    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`; раскрытие (`ScaleUnit(EXPAND)`,
+//!    снятие ленты, плита остаётся) делает
+//!    [`crate::unit_order::process_orders`]-ветка `BuildingReady` только после
+//!    ухода строителя с площадки (`UnitsManager_BuildingReady`).
 //!
 //! # Экономика (осознанное решение)
 //!
@@ -63,7 +68,9 @@
 //! * `quick_build` (настройка обучающих миссий) не моделируется;
 //! * мобильный строитель ставит здание на `target_grid` без анимации
 //!   переезда/`StartBuilding`-телепорта; стройплощадка (лента, конусы, плита)
-//!   появляется сразу при заказе, а не после 4 кадров `TAPE_POSITIONING`;
+//!   появляется сразу при заказе (`PrepareConstructionSite` в момент
+//!   применения пакета 08/P4, `events::apply_command`), а не после 4 кадров
+//!   `TAPE_POSITIONING`;
 //! * анимация «вырастания» плиты/здания (`scaler_adjust`/`AwaitScaling`) идёт
 //!   в симуляции, но кадр рендера её пока не масштабирует.
 
@@ -72,7 +79,7 @@ use crate::deploy::{LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT};
 use crate::enums::unit_flags;
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
-use crate::geo::Point;
+use crate::geo::{Point, DIRECTION_OFFSETS};
 use crate::team::{TeamId, TeamKind};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::unit_values::ATTRIB_TURNS;
@@ -864,6 +871,74 @@ fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId
     }
 }
 
+/// Клетка, куда строитель уходит с достроенной площадки — порт поиска
+/// `TaskActivate::Activate` (`taskactivate.cpp:104-167`).
+///
+/// C++ перебирает клетки вокруг родителя-здания (2×2): старт в
+/// `(grid_x - 1, grid_y + unit_size)`, затем четыре направления
+/// (`N, E, S, W` — `direction += 2`) по `unit_size + 1` шагов, накопительно —
+/// первая проходимая клетка становится целью. В нашем порте эту роль выполняет
+/// завершение стройки: строитель обязан сойти с площадки (`ORDER_ACTIVATE`),
+/// иначе `UnitsManager_BuildingReady` никогда не раскроет здание.
+pub fn builder_exit_cell(
+    state: &GameState,
+    builder: &UnitInfo,
+    building: &UnitInfo,
+) -> Option<Point> {
+    let unit_size: i16 = if building.flags & unit_flags::BUILDING != 0 {
+        2
+    } else {
+        1
+    };
+
+    let mut position = Point::new(
+        building.grid.x.wrapping_sub(1),
+        building.grid.y.wrapping_add(unit_size),
+    );
+
+    for direction in (0..8).step_by(2) {
+        for _ in 0..=unit_size {
+            let step = DIRECTION_OFFSETS[direction as usize];
+            position = Point::new(
+                position.x.wrapping_add(step.x),
+                position.y.wrapping_add(step.y),
+            );
+
+            if position == builder.grid {
+                continue;
+            }
+
+            if access::is_accessible(
+                state,
+                builder.unit_type,
+                builder.team,
+                position,
+                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+            {
+                return Some(position);
+            }
+        }
+    }
+
+    None
+}
+
+/// Прямоугольник 2×2 (здание) или 1×1 в клетках — `UnitInfo::GetBounds` +
+/// `Access_IsInsideBounds` (`access.cpp`).
+pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
+    let size: i16 = if unit.flags & unit_flags::BUILDING != 0 {
+        2
+    } else {
+        1
+    };
+
+    grid.x >= unit.grid.x
+        && grid.y >= unit.grid.y
+        && grid.x < unit.grid.x.wrapping_add(size)
+        && grid.y < unit.grid.y.wrapping_add(size)
+}
+
 /// Свободная клетка рядом с заводом под выпущенный юнит.
 fn find_spawn_cell(
     state: &GameState,
@@ -1395,23 +1470,33 @@ impl<'a> ProductionManager<'a> {
                 builder.state = UnitOrderState::Init;
             }
         } else {
-            // `UnitInfo::SpawnNewUnit` + `UnitsManager_BuildingReady`: готовое
-            // здание встаёт на клетку ленты, лента/конусы снимаются, плита
-            // остаётся фундаментом (`Access_DestroyUtilities(..., remove_slabs =
-            // false, ...)`), здание «вырастает» (`ScaleUnit(EXPAND)`).
+            // `UnitInfo::SpawnNewUnit` (мобильный строитель) — порядок C++:
+            //  1. здание встаёт на клетку ленты, но остаётся
+            //     `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` и **не рисуется**
+            //     (`UnitInfoGroup::IsRelevant`), пока строитель на площадке;
+            //  2. строитель получает `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`
+            //     (`this->SetParent(&*utility_unit)` — взаимный родитель);
+            //  3. строитель сходит с площадки (`ORDER_ACTIVATE` →
+            //     `PositionInTape` DEINIT/LEAVE → `ActivateEngineer` →
+            //     `ORDER_MOVE`, см. `unit_order::process_order_build`);
+            //  4. `UnitsManager_BuildingReady` снимает ленту и конусы, плита
+            //     (`*SLAB`) остаётся фундаментом, здание раскрывается
+            //     (`ScaleUnit(EXPAND)`) — только после ухода строителя.
             if let Some(unit) = self.state.unit_mut(spawned) {
-                unit.parent_unit = None;
-                unit.scaler_adjust = 4;
+                unit.parent_unit = Some(id);
+                unit.prior_orders = UnitOrder::Await;
+                unit.prior_state = UnitOrderState::ExecutingOrder;
+                unit.orders = UnitOrder::Idle;
+                unit.state = UnitOrderState::BuildingReady;
             }
-            self.state.scale_unit(spawned, UnitOrderState::Expand);
 
-            let remove_road = unit_type != UnitType::Road;
-            access::destroy_utilities(self.state, cell, false, false, true, remove_road);
-
-            // Мобильный строитель достроил здание и ждёт приказов
-            // (`SpawnNewUnit`: `orders = ORDER_AWAIT`; `!path` очищает список).
-            builder.orders = UnitOrder::Await;
-            builder.state = UnitOrderState::ExecutingOrder;
+            // `this->SetParent(&*utility_unit)`: строитель «внутри» здания до
+            // ухода с площадки; `if (!path) build_list.Clear()` — порте строитель
+            // к площадке не идёт (`PositionInTape` двигает только спрайт),
+            // пути нет, поэтому очередь очищается.
+            builder.parent_unit = Some(spawned);
+            builder.orders = UnitOrder::Build;
+            builder.state = UnitOrderState::UnitReady;
             builder.build_time = 0;
             builder.build_list.clear();
         }

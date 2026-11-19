@@ -410,6 +410,15 @@ pub struct HudState {
     pub cursor_mode: u8,
     /// Режим «войти в транспорт» — C++ `UnitInfo::enter_mode`; UI-состояние.
     pub enter_mode: bool,
+    /// Подсказка сверху карты — C++ `MessageManager_DrawMessage`
+    /// (`MESSAGE_BOX_INFO`, `MESSAGE_BOX_MODELESS`) из
+    /// `GameManager_DrawUnitStatusMessage`. Для строящего юнита:
+    /// «Currently building: X. / Turns to completion: N.», для готового —
+    /// «Finished building X.  To move the Y out of the construction site, …».
+    ///
+    /// UI-состояние: в снапшот/CRC не входит. Живёт до клика по карте/смены
+    /// выделения, как `MessageManager_ClearMessageBox` в C++.
+    pub hint: Option<String>,
 }
 
 impl Default for HudState {
@@ -434,6 +443,7 @@ impl HudState {
             mouse_position: None,
             cursor_mode: 0,
             enter_mode: false,
+            hint: None,
         }
     }
 
@@ -466,6 +476,17 @@ impl HudState {
         self.preview = None;
         self.cursor_mode = 0;
         self.enter_mode = false;
+        self.hint = None;
+    }
+
+    /// Показывает подсказку сверху карты (`MessageManager_DrawMessage`).
+    pub fn set_hint(&mut self, text: impl Into<String>) {
+        self.hint = Some(text.into());
+    }
+
+    /// `MessageManager_ClearMessageBox`: убирает подсказку.
+    pub fn clear_hint(&mut self) {
+        self.hint = None;
     }
 
     /// Просит закрыть ход (кнопка End Turn в сетевой сессии).
@@ -790,13 +811,27 @@ pub fn unit_at_screen(
             .unit(*id)
             .is_some_and(|unit| unit.is_visible_to_team(team))
     };
+    // `ORDER_IDLE` юнита на карте не видно (`UnitInfoGroup::IsRelevant`,
+    // см. `App::draw_units`), поэтому и клик его не берёт: достроенное здание
+    // ждёт ухода строителя (`UnitsManager_BuildingReady`) именно в этом
+    // состоянии — иначе игрок мог бы отдать ему приказ и «потерять» стройку.
+    let is_idle = |id: &UnitId| {
+        state
+            .unit(*id)
+            .is_some_and(|unit| unit.orders == max_core::enums::UnitOrder::Idle)
+    };
 
-    ids.iter()
-        .copied()
-        .find(|id| visible(id) && !is_ground_cover(id))
-        .or_else(|| ids.iter().copied().find(visible))
-        .or_else(|| ids.iter().copied().find(|id| !is_ground_cover(id)))
-        .or_else(|| ids.iter().copied().find(|id| state.unit(*id).is_some()))
+    let pick = |predicate: &dyn Fn(&UnitId) -> bool| {
+        ids.iter()
+            .copied()
+            .filter(|id| !is_idle(id))
+            .find(predicate)
+    };
+
+    pick(&|id| visible(id) && !is_ground_cover(id))
+        .or_else(|| pick(&|id| visible(id)))
+        .or_else(|| pick(&|id| !is_ground_cover(id)))
+        .or_else(|| pick(&|_| true))
 }
 
 /// Может ли юнит получить приказ движения от HUD.

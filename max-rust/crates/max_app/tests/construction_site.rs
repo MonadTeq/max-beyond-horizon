@@ -158,25 +158,50 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         );
     }
 
-    // Достройка: лента и конусы убираются, плита и здание остаются.
+    // Достройка (`UnitInfo::SpawnNewUnit`): здание встаёт на площадку в
+    // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`, поэтому его **не видно**
+    // (`IsRelevant`), а лента/конусы и строитель — на месте.
     for _ in 0..report.turns {
         max_core::production::progress_build_state(app.state_mut(), TeamId::RED);
     }
 
+    let (waiting, waiting_stats) = app.render_frame_with_stats();
+    let tapes = |app: &App| {
+        app.state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| app.state().unit(id))
+            .filter(|unit| {
+                matches!(
+                    unit.unit_type,
+                    UnitType::LargeTape
+                        | UnitType::SmallTape
+                        | UnitType::LargeCones
+                        | UnitType::SmallCones
+                )
+            })
+            .count()
+    };
+
+    assert_eq!(tapes(&app), 2, "лента и конусы ещё на площадке");
+    assert_eq!(
+        waiting_stats.units_drawn, site_stats.units_drawn,
+        "ждущее здание не рисуется (`ORDER_IDLE`), кадр не меняется по составу"
+    );
+    assert_eq!(
+        waiting.pixels(),
+        with_site.pixels(),
+        "кадр не должен меняться, пока строитель не ушёл с площадки"
+    );
+
+    // Уход строителя + `UnitsManager_BuildingReady`: здание раскрывается, и
+    // только теперь лента/конусы снимаются, а плита остаётся фундаментом.
+    for _ in 0..40 {
+        app.tick();
+    }
+
     let (after, after_stats) = app.render_frame_with_stats();
-    let tapes = app
-        .state()
-        .unit_ids_in_order()
-        .into_iter()
-        .filter_map(|id| app.state().unit(id))
-        .filter(|unit| {
-            matches!(
-                unit.unit_type,
-                UnitType::LargeTape | UnitType::SmallTape | UnitType::LargeCones | UnitType::SmallCones
-            )
-        })
-        .count();
-    assert_eq!(tapes, 0, "лента/конусы снимаются после стройки");
+    assert_eq!(tapes(&app), 0, "лента/конусы снимаются после ухода строителя");
     assert_eq!(
         after_stats.units_drawn,
         site_stats.units_drawn - 1,
@@ -185,5 +210,13 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
     assert!(
         after.pixels() != with_site.pixels(),
         "кадр после достройки обязан отличаться от площадки"
+    );
+    assert!(
+        app.state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| app.state().unit(id))
+            .any(|unit| unit.unit_type == UnitType::LargeSlab),
+        "плита остаётся под зданием (`remove_slabs = false`)"
     );
 }

@@ -92,13 +92,18 @@ fn refresh_screen(_unit: &UnitInfo) {}
 /// `UnitsManager_UpdateConnectors` (`units_manager.cpp:2051`) — P3 комплексы.
 fn update_connectors(_unit: &mut UnitInfo) {}
 
-/// `Ai_SetTasksPendingFlag(name)` (`ai.cpp:140`) — P6: в C++ выставляет флаг
-/// «у команды есть несделанная работа» для планировщика задач.
+/// `Ai_SetTasksPendingFlag(name)` (`ai.cpp:140`).
 ///
-/// В max_core флаг не нужен: `AiPlayer::CheckEndTurn` сам проверяет очередь
-/// напоминаний и незавершённые приказы (`TaskManager::has_pending_work`), а
-/// вызовы этой функции разбросаны по чистым операциям без доступа к партии.
-fn ai_task_flag(_name: &str) {}
+/// C++ выставляет флаг «у компьютерной команды есть работа» на каждом тике,
+/// в котором юнит реально что-то делает (`UnitsManager_ProcessOrder*` и
+/// `UnitInfo::ExecuteMove`/`PositionInTape`); `Ai_ClearTasksPendingFlags`
+/// сбрасывает его в начале `UnitsManager_ProcessOrders`. Именно этот флаг, а
+/// не «есть ли незавершённые задачи», решает, может ли ИИ закончить ход
+/// (`AiPlayer::CheckEndTurn`): юнит, у которого кончилась скорость, флаг не
+/// выставляет, и ход закрывается.
+fn ai_task_flag(state: &mut GameState, _name: &str) {
+    crate::ai::ai_set_tasks_pending_flag(state);
+}
 
 /// `UnitInfo::ScheduleDelayedTasks` — P6: напоминание верхней задаче юнита
 /// о завершении перегона (C++ `Task_RemindMoveFinished`).
@@ -397,8 +402,8 @@ pub fn power_up(unit: &mut UnitInfo, _factor: i32) {
 }
 
 /// `UnitInfo::PowerDown` (`unitinfo.cpp:5123`).
-pub fn power_down(unit: &mut UnitInfo) {
-    ai_task_flag("Power Down");
+pub fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
+    ai_task_flag(state, "Power Down");
     power_up(unit, 1);
 
     if unit.unit_type == UnitType::ResearchCenter {
@@ -411,8 +416,10 @@ pub fn power_down(unit: &mut UnitInfo) {
 /// Мобильному строителю ставит стройплощадку — [`crate::production::
 /// deploy_construction_site`] (`DeployConstructionSiteUtilities` +
 /// `PrepareConstructionSite`): лента/конусы/плита в клетке `target_grid`.
-/// Функция идемпотентна: `ProductionManager::commit` уже мог поставить площадку
-/// синхронно при заказе (как C++ `Build` → `StartBuilding`).
+/// Функция идемпотентна: `ProductionManager::commit` (нажатие `Done` в
+/// `BuildMenu`) и `events::apply_command` (пакет 08/P4 после клика по карте)
+/// уже ставят площадку синхронно, поэтому здесь на следующем тике повторного
+/// спавна нет — только `ORDER_STATE_BUILD_IN_PROGRESS` и `PositionInTape`.
 pub fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
     // `SDL_assert(build_list.GetCount() > 0)`: первый тип в очереди.
     let Some(unit_to_build) = unit.build_list.first().copied() else {
@@ -499,7 +506,7 @@ pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
 }
 
 /// `UnitInfo::GetTargetUnitAngle` (`unitinfo.cpp:4147`) — направление, в
-/// котором строитель въезжает в центр ленты.
+/// котором строитель въезжает в центр ленты и съезжает с неё.
 ///
 /// * `TAPE_POSITIONING_ENTER` — по клеткам: лента находится в клетке строителя
 ///   (`Access_GetConstructionUtility(team, grid_x, grid_y)`), её `grid` — якорь
@@ -507,11 +514,12 @@ pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
 ///   диагональных углов: совпали обе оси — `SE`, только `x` — `NE`, только
 ///   `y` — `SW`, иначе `NW`. Строитель 2×2 всегда стоит в одной из четырёх
 ///   клеток ленты, поэтому штатно угол всегда диагональный (45°).
-/// * остальные состояния (`LEAVE`) — к центру `move_to` (`target_grid`): знак
+/// * остальные состояния (`LEAVE`) — к `move_to` (C++
+///   `move_to_grid_x/move_to_grid_y`, в порте — `OrderData::move_to`): знак
 ///   разницы по каждой оси независимо; пиксельная позиция строителя — центр
 ///   его клетки (`UnitInfo::SetPosition`; в порте `x/y` не пересчитываются при
 ///   ходьбе, поэтому берётся клетка).
-pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo) -> i32 {
+pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to: Point) -> i32 {
     const UNIT_ANGLE_NE: i32 = 1;
     const UNIT_ANGLE_SE: i32 = 3;
     const UNIT_ANGLE_SW: i32 = 5;
@@ -538,8 +546,8 @@ pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo) -> i32 {
             UNIT_ANGLE_NW
         }
     } else {
-        let target_x = i32::from(unit.target_grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
-        let target_y = i32::from(unit.target_grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        let target_x = i32::from(move_to.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        let target_y = i32::from(move_to.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
         let x = i32::from(unit.grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
         let y = i32::from(unit.grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
 
@@ -557,6 +565,46 @@ pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo) -> i32 {
     }
 }
 
+/// Знак «въезда» строителя в ленту по каждой оси — сколько пикселей он уже
+/// проехал от центра своей клетки к центру площадки
+/// (`OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)`, `TAPE_STEPS` тиков).
+///
+/// Для 2×2-ленты строитель стоит в одной из четырёх её клеток, поэтому въезд
+/// всегда диагональный: `−1` с той стороны, где якорь совпал с его клеткой.
+/// Для 1×1-ленты (инженер) строитель ровно в её клетке — въезда нет.
+fn tape_enter_direction(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
+    let Some(tape) = production::construction_utility(state, unit.team, unit.grid)
+        .and_then(|id| state.unit(id))
+    else {
+        return (0, 0);
+    };
+
+    if tape.unit_type != UnitType::LargeTape || !production::site_covers(tape.unit_type, tape.grid, unit.grid)
+    {
+        return (0, 0);
+    }
+
+    (
+        if unit.grid.x == tape.grid.x { 1 } else { -1 },
+        if unit.grid.y == tape.grid.y { 1 } else { -1 },
+    )
+}
+
+/// Куда сдвигается клетка строителя после четырёх шагов по 8 px
+/// (`PositionInTape`: `grid_x = x / GFX_MAP_TILE_SIZE`).
+///
+/// Пиксель строителя — центр его клетки плюс `32 * enter` (въезд в ленту) плюс
+/// `32 * leave` (съезд). `x / 64` от такой суммы даёт сдвиг клетки:
+/// `enter + leave >= 1` → `+1`, `<= -2` → `-1`, иначе клетка не меняется.
+fn tape_leave_shift(enter: i32, leave: i32) -> i16 {
+    match enter + leave {
+        sum if sum >= 1 => 1,
+        sum if sum <= -2 => -1,
+        _ => 0,
+    }
+}
+
+
 /// `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`).
 ///
 /// Портирован цикл позиционирования: `INIT → ENTER`, `DEINIT → LEAVE`,
@@ -564,8 +612,13 @@ pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo) -> i32 {
 /// `RestoreOrders`. Как в C++, пока строитель не довернулся к центру, `moved`
 /// **не растёт** — сначала поворот на месте, потом скольжение (четыре шага
 /// `OffsetDrawZones` по 8 px).
-pub fn position_in_tape(state: &GameState, unit: &mut UnitInfo) {
-    ai_task_flag("Positioning in tape");
+///
+/// `move_to` — цель съезда (C++ `move_to_grid_x/move_to_grid_y`): на завершении
+/// LEAVE C++ пересчитывает клетку от пиксельной позиции
+/// (`grid_x = x / GFX_MAP_TILE_SIZE`) — строитель оказывается в клетке ленты,
+/// ближайшей к цели, и дальше идёт пешком (`ActivateEngineer` → `ORDER_MOVE`).
+pub fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_to: Point) {
+    ai_task_flag(state, "Positioning in tape");
 
     if unit.state == UnitOrderState::TapePositioningInit {
         unit.moved = 0;
@@ -599,9 +652,27 @@ pub fn position_in_tape(state: &GameState, unit: &mut UnitInfo) {
             let target_angle = (i32::from(unit.angle) + 1) & 0x07;
             let _ = paths_update_angle(unit, target_angle);
         } else if old_state != UnitOrderState::TapePositioningEnter {
-            // `UpdateGridPosition`/`Access_UpdateMapStatus` — P5.
+            // `Hash_MapHash.Remove(this)` → `grid_x = x / GFX_MAP_TILE_SIZE` →
+            // `Hash_MapHash.Add(this)`: клетка пересчитывается от пиксельной
+            // позиции после четырёх сдвигов по 8 px.
+            let angle = get_target_unit_angle(state, unit, move_to);
+            let leave = DIRECTION_OFFSETS[usize::from((angle & 0x07) as u8)];
+            let (enter_x, enter_y) = tape_enter_direction(state, unit);
+
+            unit.grid = Point::new(
+                unit.grid
+                    .x
+                    .wrapping_add(tape_leave_shift(enter_x, i32::from(leave.x))),
+                unit.grid
+                    .y
+                    .wrapping_add(tape_leave_shift(enter_y, i32::from(leave.y))),
+            );
+            refresh_screen(unit);
+
+            // back in the middle of its site after a failed way off, the builder
+            // is ready to leave again (`ScheduleDelayedTasks(true)`).
             if unit.orders == UnitOrder::Build {
-                ai_task_flag("build: delayed tasks");
+                schedule_delayed_tasks(state, unit.id, true);
             }
         }
     } else {
@@ -611,7 +682,7 @@ pub fn position_in_tape(state: &GameState, unit: &mut UnitInfo) {
         let step = if unit.moved != 0 {
             true
         } else {
-            let target_angle = get_target_unit_angle(state, unit);
+            let target_angle = get_target_unit_angle(state, unit, move_to);
             !paths_update_angle(unit, target_angle)
         };
 
@@ -931,11 +1002,11 @@ fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
     if ctx.unit.path.is_some() {
         if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.flags & HOVERING == 0 {
             ctx.set_new_order(UnitOrder::TakeOff, UnitOrderState::Init);
-            ai_task_flag("plane takeoff");
+            ai_task_flag(ctx.world, "plane takeoff");
             false
         } else {
             if ctx.unit.speed != 0 {
-                ai_task_flag("moving");
+                ai_task_flag(ctx.world, "moving");
             }
             path_execute(ctx)
         }
@@ -1338,7 +1409,7 @@ fn process_order_await(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderTransform` (`units_manager.cpp:2646`).
 fn process_order_transform(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Transform");
+    ai_task_flag(ctx.world, "Transform");
     refresh_screen(&ctx.unit);
 
     match ctx.unit.state {
@@ -1384,17 +1455,17 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
             }
         }
         UnitOrderState::Store => {
-            ai_task_flag("Storing");
+            ai_task_flag(ctx.world, "Storing");
             store_unit(ctx);
         }
         UnitOrderState::InProgress => {
             if execute_move(ctx) {
-                ai_task_flag("Moving");
+                ai_task_flag(ctx.world, "Moving");
                 unit_move(ctx);
             }
         }
         UnitOrderState::InTransition => {
-            ai_task_flag("Moving");
+            ai_task_flag(ctx.world, "Moving");
             unit_move(ctx);
         }
         UnitOrderState::PathRequestCancel => {
@@ -1403,7 +1474,7 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
         }
         UnitOrderState::Init | UnitOrderState::MoveInit => {
             if init_unit_move(ctx) && execute_move(ctx) {
-                ai_task_flag("Moving");
+                ai_task_flag(ctx.world, "Moving");
                 unit_move(ctx);
             }
         }
@@ -1675,7 +1746,7 @@ fn store_unit(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderFire` (`units_manager.cpp:2781`).
 fn process_order_fire(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Firing");
+    ai_task_flag(ctx.world, "Firing");
     ctx.world.combat_effects_active = true;
 
     match ctx.unit.state {
@@ -1726,17 +1797,17 @@ fn process_order_fire(ctx: &mut OrderContext<'_>) {
 fn process_order_build(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::Init => {
-            ai_task_flag("Build start");
+            ai_task_flag(ctx.world, "Build start");
             start_building(ctx.world, &mut ctx.unit);
         }
         UnitOrderState::InProgress => {
             if execute_move(ctx) {
-                ai_task_flag("Moving");
+                ai_task_flag(ctx.world, "Moving");
                 unit_move(ctx);
             }
         }
         UnitOrderState::InTransition => {
-            ai_task_flag("Moving");
+            ai_task_flag(ctx.world, "Moving");
             unit_move(ctx);
         }
         UnitOrderState::BuildInProgress => {
@@ -1746,7 +1817,7 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
             }
         }
         UnitOrderState::BuildCancel | UnitOrderState::BuildAbort => {
-            ai_task_flag("Build cancel");
+            ai_task_flag(ctx.world, "Build cancel");
             cancel_building(&mut ctx.unit);
             // `Access_DestroyUtilities(grid, …)` (`units_manager.cpp:2880`).
             // В C++ строитель уже стоит на площадке; в порте он остаётся на
@@ -1757,11 +1828,23 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
             animate(&ctx.unit);
         }
         UnitOrderState::BuildClearing => {
-            ai_task_flag("Build clearing");
+            ai_task_flag(ctx.world, "Build clearing");
             // TODO(P3/P5): UnitsManager_BuildClearing — разрушение
             // застройки, обломки, утилиты, возврат юнитов.
         }
         UnitOrderState::UnitReady => {
+            // C++ `TaskCreateBuilding::Activate` + `TaskActivate`
+            // (`taskcreatebuilding.cpp:912`, `taskactivate.cpp:104`):
+            // достроенное здание ждёт в `ORDER_IDLE`/`BUILDING_READY`, а
+            // строитель обязан сойти с площадки — `ORDER_ACTIVATE`/
+            // `IN_TRANSITION` к свободной клетке вокруг здания. Пока он стоит
+            // на площадке, `UnitsManager_BuildingReady` не раскрывает здание
+            // (оно не рисуется), поэтому без ухода стройка «зависает»
+            // визуально: строитель перекрыт невидимым зданием.
+            if start_leaving_site(ctx) {
+                return;
+            }
+
             if ctx.unit.path.is_some() {
                 // TODO(P3): UnitsManager_BuildNext — проверка склада/материалов.
                 clear_build_list_and_path(&mut ctx.unit);
@@ -1775,7 +1858,7 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderActivate` (`units_manager.cpp:2908`).
 fn process_order_activate(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Activation");
+    ai_task_flag(ctx.world, "Activation");
 
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
@@ -1823,16 +1906,185 @@ fn activate_engineer(ctx: &mut OrderContext<'_>) {
     }
 }
 
+/// Строитель уходит с достроенной площадки — `TaskActivate::Activate`
+/// (`taskactivate.cpp:104-167`).
+///
+/// `true` — приказ `ORDER_ACTIVATE`/`IN_TRANSITION` выставлен; C++ делает это
+/// из задачи ИИ (`TaskCreateBuilding::Activate` вешает `TaskActivate`), а для
+/// игрока — по клику в подсвеченную клетку (`DrawMap_RenderBuildMarker` →
+/// `CURSOR_UNIT_GO`). Порт выполняет ту же активацию автоматически: иначе
+/// здание не раскроется (`UnitsManager_BuildingReady` ждёт ухода строителя).
+fn start_leaving_site(ctx: &mut OrderContext<'_>) -> bool {
+    let Some(parent_id) = ctx.unit.parent_unit else {
+        return false;
+    };
+    let Some(building) = ctx.other(parent_id) else {
+        return false;
+    };
+
+    // Ждёт только достроенное здание (`SpawnNewUnit`:
+    // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`); у завода-родителя или
+    // транспорта такого состояния нет.
+    if building.orders != UnitOrder::Idle || building.state != UnitOrderState::BuildingReady {
+        return false;
+    }
+
+    let Some(exit) = production::builder_exit_cell(ctx.world, &ctx.unit, &building) else {
+        return false;
+    };
+
+    // `unit_to_activate->move_to_grid = position;`
+    // `UnitsManager_SetNewOrder(unit_to_activate, ORDER_ACTIVATE,
+    // ORDER_STATE_IN_TRANSITION);`
+    ctx.data.move_to = exit;
+    ctx.unit.target_grid = exit;
+    ctx.set_new_order(UnitOrder::Activate, UnitOrderState::InTransition);
+
+    true
+}
+
+/// `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) —
+/// `UnitsManager_ProcessOrderIdle` для достроенного здания.
+///
+/// Здание стоит на площадке в `ORDER_IDLE`/`BUILDING_READY` (и не рисуется)
+/// до тех пор, пока его родитель-строитель не покинет габариты здания. Тогда
+/// лента и конусы снимаются (плита `remove_slabs = false` остаётся
+/// фундаментом), приказы восстанавливаются, `scaler_adjust = 4`, и здание
+/// раскрывается `ScaleUnit(EXPAND)` — ровно порядок C++.
+fn building_ready(ctx: &mut OrderContext<'_>) {
+    let parent = ctx.unit.parent_unit.and_then(|id| ctx.other(id));
+    let is_found;
+
+    match parent {
+        Some(parent) if parent.orders != UnitOrder::Idle => {
+            if parent.hits > 0 {
+                if parent.orders == UnitOrder::Move
+                    && parent.state != UnitOrderState::ExecutingOrder
+                {
+                    // Строитель ещё идёт — здание ждёт.
+                    is_found = false;
+                } else {
+                    is_found = !production::unit_bounds_contains(&ctx.unit, parent.grid);
+
+                    // Строитель вернулся в габариты 2×2 (путь не вывел его с
+                    // площадки): C++ `ReturnToConstructionSite` возвращает его
+                    // в центр, чтобы он ушёл снова.
+                    if !is_found
+                        && ctx.unit.flags & BUILDING != 0
+                        && parent.orders == UnitOrder::Await
+                        && parent.state == UnitOrderState::ExecutingOrder
+                    {
+                        return_to_construction_site(ctx, parent);
+                        return;
+                    }
+                }
+            } else {
+                is_found = !production::unit_bounds_contains(&ctx.unit, parent.grid);
+
+                if !is_found {
+                    // Строитель погиб на площадке: утилиты и здание снимаются
+                    // (`Access_DestroyUtilities(grid, true, ...)`, затем
+                    // `UnitsManager_DestroyUnit`).
+                    access::destroy_utilities(ctx.world, ctx.unit.grid, true, false, false, false);
+                    ctx.world.destroy_unit(ctx.id);
+                    return;
+                }
+            }
+        }
+        _ => {
+            is_found = true;
+        }
+    }
+
+    if !is_found {
+        return;
+    }
+
+    if ctx.unit.unit_type != UnitType::Connector {
+        let remove_road = ctx.unit.unit_type != UnitType::Road;
+
+        access::destroy_utilities(ctx.world, ctx.unit.grid, false, false, true, remove_road);
+
+        if ctx.unit.flags & BUILDING != 0 {
+            let other_cells = [
+                Point::new(ctx.unit.grid.x.wrapping_add(1), ctx.unit.grid.y),
+                Point::new(ctx.unit.grid.x, ctx.unit.grid.y.wrapping_add(1)),
+                Point::new(
+                    ctx.unit.grid.x.wrapping_add(1),
+                    ctx.unit.grid.y.wrapping_add(1),
+                ),
+            ];
+
+            for cell in other_cells {
+                access::destroy_utilities(ctx.world, cell, false, false, true, remove_road);
+            }
+        }
+    }
+
+    ctx.restore_orders();
+    ctx.unit.scaler_adjust = 4;
+    ctx.unit.parent_unit = None;
+    ctx.unit.target_grid = ctx.unit.grid;
+    ctx.set_new_order(UnitOrder::AwaitScaling, UnitOrderState::Expand);
+
+    // `Access_UpdateMapStatus(unit, true)` — покрытие пересчитывается
+    // `GameState::write_unit` при смене приказа/клетки; отдельного вызова в
+    // порте не требуется.
+}
+
+/// `UnitInfo::ReturnToConstructionSite` (`unitinfo.cpp:4488`).
+fn return_to_construction_site(ctx: &mut OrderContext<'_>, builder: UnitInfo) {
+    // Строитель без скорости не сдвинется с места: оставить здание ждать
+    // (иначе повторы «вернуть в центр → уйти» крутятся без прогресса и не
+    // дают ИИ закончить ход).
+    if builder.speed == 0 {
+        return;
+    }
+
+    let building_grid = ctx.unit.grid;
+    let mut builder_unit = builder;
+
+    builder_unit.target_grid = Point::new(
+        if builder_unit.grid.x == building_grid.x {
+            building_grid.x.wrapping_add(1)
+        } else {
+            building_grid.x
+        },
+        if builder_unit.grid.y == building_grid.y {
+            building_grid.y.wrapping_add(1)
+        } else {
+            building_grid.y
+        },
+    );
+
+    builder_unit.parent_unit = Some(ctx.id);
+    builder_unit.orders = UnitOrder::Build;
+    builder_unit.state = UnitOrderState::UnitReady;
+    ctx.world.write_unit(builder_unit.id, builder_unit.clone());
+
+    let mut data = ctx.world.order_data(builder_unit.id);
+    data.move_to = builder_unit.target_grid;
+    ctx.world.set_order_data(builder_unit.id, data);
+
+    // `UnitsManager_SetNewOrderInt(this, ORDER_AWAIT_TAPE_POSITIONING,
+    // ORDER_STATE_TAPE_POSITIONING_DEINIT)`.
+    ctx.world.set_order(
+        builder_unit.id,
+        UnitOrder::AwaitTapePositioning,
+        UnitOrderState::TapePositioningDeinit,
+    );
+}
+
 /// `UnitsManager_ProcessOrderNewAllocate` (`units_manager.cpp:2935`).
 fn process_order_new_allocate(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("New allocation");
+    ai_task_flag(ctx.world, "New allocation");
     ctx.restore_orders();
 }
 
 /// `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`).
 fn process_order_power_on(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
-        ai_task_flag("Power up");
+        ai_task_flag(ctx.world, "Power up");
         power_up(&mut ctx.unit, -1);
 
         if ctx.unit.unit_type == UnitType::ResearchCenter {
@@ -1849,7 +2101,7 @@ fn process_order_power_on(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderPowerOff` (`units_manager.cpp:2964`).
 fn process_order_power_off(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
-        power_down(&mut ctx.unit);
+        power_down(ctx.world, &mut ctx.unit);
 
         if ctx.unit.unit_type == UnitType::ResearchCenter {
             // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
@@ -1863,7 +2115,7 @@ fn process_order_power_off(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderExplode` (`units_manager.cpp:2972`).
 fn process_order_explode(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Exploding");
+    ai_task_flag(ctx.world, "Exploding");
 
     match ctx.unit.state {
         UnitOrderState::Init => start_explosion(ctx),
@@ -1954,7 +2206,7 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderUnload` (`units_manager.cpp:2994`).
 fn process_order_unload(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Unloading");
+    ai_task_flag(ctx.world, "Unloading");
 
     match ctx.unit.state {
         UnitOrderState::Init => {
@@ -2025,7 +2277,7 @@ fn process_unloading(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderClear` (`units_manager.cpp:3021`).
 fn process_order_clear(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
-        ai_task_flag("Clear start");
+        ai_task_flag(ctx.world, "Clear start");
         // `UnitsManager_StartClearing`: спавн конусов/ленты, `ClearUnitList`,
         // state = IN_PROGRESS, для LRGTAPE — AWAIT_TAPE_POSITIONING.
         // TODO(P3/P5): DeployUnit(LRGCONES/LRGTAPE/SMLCONES/SMLTAPE).
@@ -2060,7 +2312,7 @@ fn process_order_sentry(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderLand` (`units_manager.cpp:3043`).
 fn process_order_land(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Landing");
+    ai_task_flag(ctx.world, "Landing");
 
     // Занятый самолёт не снижается в ангар; посадочная площадка держит его на
     // карте.
@@ -2100,7 +2352,7 @@ fn process_landing(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderTakeOff` (`units_manager.cpp:3065`).
 fn process_order_take_off(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Taking off");
+    ai_task_flag(ctx.world, "Taking off");
 
     match ctx.unit.state {
         UnitOrderState::Init => {
@@ -2128,7 +2380,7 @@ fn process_order_take_off(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderLoad` (`units_manager.cpp:3092`).
 fn process_order_load(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Loading");
+    ai_task_flag(ctx.world, "Loading");
 
     match ctx.unit.state {
         UnitOrderState::Init => {
@@ -2212,16 +2464,14 @@ fn process_loading(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderIdle` (`units_manager.cpp:3118`).
 fn process_order_idle(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::BuildingReady {
-        ai_task_flag("Building ready");
-        // TODO(P3/P5): UnitsManager_BuildingReady — родитель покидает площадку
-        // или уничтожается, если площадка занята.
+        building_ready(ctx);
     }
 }
 
 /// `UnitsManager_ProcessOrderRepair` (`units_manager.cpp:3124`) +
 /// `UnitInfo::ProcessRepair` (`unitinfo.cpp:5258`).
 fn process_order_repair(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Repairing");
+    ai_task_flag(ctx.world, "Repairing");
 
     if ctx.unit.complex.is_some() {
         // TODO(P3): ремонт за материалы комплекса (`Complex::GetCargoInfo`,
@@ -2237,7 +2487,7 @@ fn process_order_repair(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderReload` (`units_manager.cpp:3130`) +
 /// `UnitInfo::Reload` (`unitinfo.cpp:4301`).
 fn process_order_reload(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Reloading");
+    ai_task_flag(ctx.world, "Reloading");
 
     let mut need_action = false;
 
@@ -2263,7 +2513,7 @@ fn process_order_reload(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderTransfer` (`units_manager.cpp:3136`) +
 /// `UnitInfo::ProcessTransfer` (`unitinfo.cpp:5294`).
 fn process_order_transfer(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Tranferring");
+    ai_task_flag(ctx.world, "Tranferring");
 
     // TODO(P3): перенос груза между юнитом и родителем
     // (`TransferRaw/TransferFuel/TransferGold`, комплекс).
@@ -2274,7 +2524,7 @@ fn process_order_transfer(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderHaltBuilding` (`units_manager.cpp:3142`).
 fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::BuildCancel {
-        ai_task_flag("Build halting");
+        ai_task_flag(ctx.world, "Build halting");
         cancel_building(&mut ctx.unit);
         // См. `ProcessOrderBuild`: порт не двигает строителя на площадку,
         // поэтому утилиты снимаются из `target_grid`, а не из `grid`.
@@ -2284,7 +2534,7 @@ fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderAwaitScaling` (`units_manager.cpp:3150`).
 fn process_order_await_scaling(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Scaling");
+    ai_task_flag(ctx.world, "Scaling");
     refresh_screen(&ctx.unit);
 
     if ctx.unit.prior_orders == UnitOrder::AwaitDisableUnit
@@ -2316,14 +2566,15 @@ fn process_order_await_scaling(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderAwaitTapePositioning` (`units_manager.cpp:3187`).
 fn process_order_await_tape_positioning(ctx: &mut OrderContext<'_>) {
-    position_in_tape(ctx.world, &mut ctx.unit);
+    let move_to = ctx.data.move_to;
+    position_in_tape(ctx.world, &mut ctx.unit, move_to);
 }
 
 /// `UnitsManager_ProcessOrderAwaitDisableStealUnit`
 /// (`units_manager.cpp:3189`).
 fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
     ctx.world.combat_effects_active = true;
-    ai_task_flag("Disable/Steal");
+    ai_task_flag(ctx.world, "Disable/Steal");
 
     match ctx.unit.state {
         UnitOrderState::Init => {
@@ -2387,7 +2638,7 @@ fn process_order_disable(ctx: &mut OrderContext<'_>) {
 /// `UnitsManager_ProcessOrderUpgrade` (`units_manager.cpp:3228`) +
 /// `UnitInfo::Upgrade` (`unitinfo.cpp:4339`).
 fn process_order_upgrade(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("Upgrading");
+    ai_task_flag(ctx.world, "Upgrading");
 
     // TODO(P3): проверка версии атрибутов и материалов комплекса
     // (`GetUpgradeCost`, `UpgradeInt`).
@@ -2397,7 +2648,7 @@ fn process_order_upgrade(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProcessOrderLayMine` (`units_manager.cpp:3234`).
 fn process_order_lay_mine(ctx: &mut OrderContext<'_>) {
-    ai_task_flag("lay mines");
+    ai_task_flag(ctx.world, "lay mines");
 
     match ctx.unit.state {
         UnitOrderState::Inactive => {

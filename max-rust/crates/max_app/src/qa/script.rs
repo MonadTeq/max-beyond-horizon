@@ -230,6 +230,18 @@ pub enum Assertion {
     BuildCenter(bool),
     /// `assert site-pos=X,Y`: клетка ленты стройплощадки (`LRG/SMLTAPE`).
     SitePos(i16, i16),
+    /// `assert builder=inside|outside`: стоит ли строитель (его клетка) внутри
+    /// габаритов своего родителя-здания. `inside` — площадка ещё занята
+    /// строителем, `outside` — он сошёл с неё (`PositionInTape` LEAVE +
+    /// `ActivateEngineer` → `ORDER_MOVE`).
+    BuilderInside(bool),
+    /// `assert build-ready=yes|no`: есть ли у игрока достроенное здание,
+    /// ждущее ухода строителя (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`).
+    BuildReady(bool),
+    /// `assert hint=TEXT|none`: подсказка сверху карты
+    /// (`MessageManager_DrawMessage` для выделенного строителя); сравнение —
+    /// подстрока без учёта регистра.
+    Hint(Option<String>),
     /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
     UpgradeOpen(bool),
     /// `assert research-menu=open|closed`: открыт ли экран исследований (P7).
@@ -1100,6 +1112,27 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         "site-pos" => {
             let (x, y) = parse_grid_pair(value, "assert site-pos")?;
             Ok(Assertion::SitePos(x, y))
+        }
+        "builder" => match value.to_ascii_lowercase().as_str() {
+            "inside" | "on-site" | "on_site" => Ok(Assertion::BuilderInside(true)),
+            "outside" | "off-site" | "off_site" => Ok(Assertion::BuilderInside(false)),
+            other => Err(format!(
+                "assert builder: ожидалось inside|outside, получено «{other}»"
+            )),
+        },
+        "build-ready" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" | "waiting" => Ok(Assertion::BuildReady(true)),
+            "no" | "false" | "off" | "ready" => Ok(Assertion::BuildReady(false)),
+            other => Err(format!(
+                "assert build-ready: ожидалось yes|no, получено «{other}»"
+            )),
+        },
+        "hint" => {
+            if value.eq_ignore_ascii_case("none") {
+                Ok(Assertion::Hint(None))
+            } else {
+                Ok(Assertion::Hint(Some(value.to_string())))
+            }
         }
         "upgrade" => match value.to_ascii_lowercase().as_str() {
             "open" | "opened" => Ok(Assertion::UpgradeOpen(true)),

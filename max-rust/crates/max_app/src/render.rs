@@ -21,7 +21,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use max_render::buffer::{Rgba, RgbaBuffer};
+use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::map_render::{render_map_into, TileStyle};
 use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
 use max_render::sprite_atlas::SpriteRenderer;
@@ -872,7 +872,31 @@ impl App {
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
 
+        if self.hud().hint.is_some() {
+            let whole = PixelRect::new(0, 0, frame.width() as i32, frame.height() as i32);
+            self.draw_status_message(&mut frame, whole);
+        }
+
         (frame, stats)
+    }
+
+    /// Окно сообщения `MESSAGE_BOX_INFO` над картой — `MessageManager_
+    /// DrawMessage` (`message_manager.cpp:144`): подсказка выделенного юнита
+    /// (`GameManager_DrawUnitStatusMessage`).
+    fn draw_status_message(&self, frame: &mut RgbaBuffer, area: PixelRect) {
+        let Some(hint) = self.hud().hint.as_deref() else {
+            return;
+        };
+        let Some(assets) = self.assets() else {
+            return;
+        };
+        let palette = crate::panels::UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+        let Some(palette) = palette else {
+            return;
+        };
+
+        crate::panels::draw_status_message(frame, area, &palette, hint);
     }
 
     /// Кадр в окне 1:1: `FRAMEPIC` + карта в области карты.
@@ -930,6 +954,10 @@ impl App {
         if let Some(panels) = self.assets().and_then(|assets| assets.panels.as_ref()) {
             panels.draw(&mut frame, self);
         }
+
+        // Подсказка выделенного строителя — окно сообщения `MESSAGE_BOX_INFO`
+        // в начале области карты (`MessageManager_DrawMessage`).
+        self.draw_status_message(&mut frame, area);
 
         // `BuildMenu` — модальный экран поверх кадра (C++ `AbstractMenu`
         // закрывает главное меню: `GameManager_DisableMainMenu`).

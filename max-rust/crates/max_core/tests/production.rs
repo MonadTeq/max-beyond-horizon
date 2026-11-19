@@ -9,7 +9,7 @@
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::production::{
-    builder_type, buildable_units, can_build, construction_slab_type, construction_utility,
+    self, builder_type, buildable_units, can_build, construction_slab_type, construction_utility,
     construction_utility_types, cost_per_turn, is_builder, is_factory, max_possible_build_rate,
     total_cost, turns_and_consumption, BuildError, ProductionEventKind, ProductionManager,
 };
@@ -330,8 +330,13 @@ fn constructor_builds_a_building_on_a_site() {
     );
     assert_eq!(state.team_units[0].gold(), 100 - 20, "2 золота × 10 ходов");
 
+    // C++ `SpawnNewUnit`: строитель достроил и ждёт ухода с площадки
+    // (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), очередь очищена (!path).
     let builder = state.unit(constructor).expect("constructor alive");
-    assert_eq!(builder.orders, UnitOrder::Await);
+    assert_eq!(
+        (builder.orders, builder.state),
+        (UnitOrder::Build, UnitOrderState::UnitReady)
+    );
     assert!(builder.build_list.is_empty(), "очередь очищена");
 }
 
@@ -661,12 +666,19 @@ fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
     );
 }
 
-/// Стартовая площадка живёт до конца стройки: по завершении `SpawnNewUnit` +
-/// `UnitsManager_BuildingReady` лента и конусы удаляются, плита остаётся
-/// фундаментом, а готовое здание встаёт в ту же клетку (и «вырастает»).
-#[test]
-fn completion_replaces_the_site_with_the_finished_building() {
+/// Готовит партию с достроенным зданием: заказ конструктора + `turns` ходов
+/// производства. Возвращает id строителя и клетку площадки.
+fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, Point) {
     let mut state = state_with_gold(100);
+    // Суша: `Access_IsAccessible` иначе не находит клетку схода с площадки.
+    for y in 0..max_core::geo::MAP_HEIGHT {
+        for x in 0..max_core::geo::MAP_WIDTH {
+            let _ = state
+                .map
+                .surface
+                .set(x, y, max_core::enums::Surface::LAND);
+        }
+    }
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
@@ -676,17 +688,155 @@ fn completion_replaces_the_site_with_the_finished_building() {
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("queue");
     let report = manager.commit(constructor).expect("site");
-    let site = report.site;
+    drop(manager);
 
-    let tape = construction_utility(&state, TeamId::RED, site).expect("лента до стройки");
+    // В партии строитель стоит на площадке (C++ `PositionInTape` въезжает в
+    // центр ленты); здесь ставим его в клетку якоря, чтобы завершение шло по
+    // ветке «строитель внутри габаритов 2×2».
+    if let Some(mut unit) = state.unit(constructor).cloned() {
+        unit.grid = report.site;
+        state.write_unit(constructor, unit);
+    }
 
-    for _ in 0..report.turns {
+    for _ in 0..turns {
         production_turn(&mut state);
     }
 
+    (state, constructor, report.site)
+}
+
+/// Один тик симуляции — `GameState::tick` (`GameManager_ProcessTick`): пути
+/// (`PollResults`) + машина приказов. `process_orders` отдельно недостаточно:
+/// `ORDER_MOVE`/`NEW_ORDER` ждёт результата запроса пути, который применяется
+/// именно в тике.
+fn tick_orders(state: &mut GameState) {
+    state.tick();
+}
+
+/// Достройка 1:1 C++. `SpawnNewUnit` (`unitinfo.cpp:3440`) ставит здание на
+/// площадку в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (оно не рисуется —
+/// `UnitInfoGroup::IsRelevant`) и оставляет строителя на площадке в
+/// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. Лента и конусы снимаются, а здание
+/// раскрывается (`ScaleUnit(EXPAND)`) только после того, как строитель сошёл с
+/// площадки — `UnitsManager_BuildingReady` (`units_manager.cpp:4183`).
+#[test]
+fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
+    let (mut state, constructor, site) = state_with_finished_building(10);
+
+    // Кадр сразу после `SpawnNewUnit`: здание создано, но ждёт строителя.
+    assert_eq!(count_type(&state, UnitType::TrainingHall), 1);
+    let (building_id, building_grid) = {
+        let building = find_at(&state, site, UnitType::TrainingHall).expect("здание создано");
+        (building.id, building.grid)
+    };
+    {
+        let building = state.unit(building_id).expect("здание");
+        assert_eq!(
+            (building.orders, building.state),
+            (UnitOrder::Idle, UnitOrderState::BuildingReady),
+            "C++ SpawnNewUnit: здание ждёт в ORDER_IDLE/ORDER_STATE_BUILDING_READY"
+        );
+        assert_eq!(
+            building.parent_unit,
+            Some(constructor),
+            "C++ SpawnNewUnit: utility_unit->SetParent(this)"
+        );
+    }
+
+    {
+        let builder = state.unit(constructor).expect("constructor alive");
+        assert_eq!(
+            (builder.orders, builder.state),
+            (UnitOrder::Build, UnitOrderState::UnitReady),
+            "C++ SpawnNewUnit: строитель достроил и ждёт ухода"
+        );
+        assert_eq!(builder.parent_unit, Some(building_id), "взаимный родитель");
+        assert!(builder.build_list.is_empty(), "!path → build_list.Clear()");
+    }
+
+    // Пока строитель стоит на площадке, лента и конусы на месте, а здание не
+    // раскрыто (нет `ORDER_AWAIT_SCALING`).
     assert!(
-        state.unit(tape).is_none(),
-        "C++ BuildingReady: лента снимается после постройки"
+        construction_utility(&state, TeamId::RED, site).is_some(),
+        "лента ещё на площадке: здание не раскрыто"
+    );
+    assert!(
+        find_at(&state, site, UnitType::LargeCones).is_some(),
+        "конусы ещё на площадке"
+    );
+    {
+        let builder = state.unit(constructor).expect("constructor alive");
+        let building = state.unit(building_id).expect("здание");
+        assert!(
+            production::unit_bounds_contains(building, builder.grid),
+            "строитель стоит в габаритах здания"
+        );
+    }
+
+    // Первый тик: `TaskActivate`/`ORDER_ACTIVATE` — строитель начинает уход.
+    tick_orders(&mut state);
+    {
+        let builder = state.unit(constructor).expect("constructor alive");
+        assert_eq!(
+            (builder.orders, builder.state),
+            (UnitOrder::Activate, UnitOrderState::InTransition),
+            "C++ TaskActivate: ORDER_ACTIVATE/ORDER_STATE_IN_TRANSITION"
+        );
+        assert_eq!(
+            state.unit(building_id).map(|unit| unit.orders),
+            Some(UnitOrder::Idle),
+            "здание всё ещё ждёт ухода строителя"
+        );
+    }
+
+    // Второй тик: `PositionInTape` DEINIT/LEAVE — доворот и съезд с ленты.
+    tick_orders(&mut state);
+    {
+        let builder = state.unit(constructor).expect("constructor alive");
+        assert_eq!(
+            (builder.orders, builder.state),
+            (
+                UnitOrder::AwaitTapePositioning,
+                UnitOrderState::TapePositioningDeinit
+            ),
+            "C++ ProcessOrderActivate/IN_TRANSITION → AWAIT_TAPE_POSITIONING/DEINIT"
+        );
+    }
+
+    // Уход: доворот + четыре шага по 8 px (PositionInTape), затем
+    // `ActivateEngineer` → ORDER_MOVE к свободной клетке вокруг здания.
+    let mut left_site = false;
+    for _ in 0..20 {
+        tick_orders(&mut state);
+        let builder_grid = state.unit(constructor).map(|unit| unit.grid);
+        let building = state.unit(building_id).expect("здание");
+        if let Some(grid) = builder_grid {
+            left_site = !production::unit_bounds_contains(building, grid);
+        }
+        if left_site {
+            break;
+        }
+    }
+    assert!(left_site, "строитель обязан сойти с площадки");
+
+    // Строитель вне габаритов → `UnitsManager_BuildingReady`: утилиты сняты,
+    // плита осталась, здание раскрывается.
+    let mut expanded = false;
+    for _ in 0..12 {
+        tick_orders(&mut state);
+        if state
+            .unit(building_id)
+            .is_some_and(|unit| unit.orders == UnitOrder::AwaitScaling)
+        {
+            expanded = true;
+            break;
+        }
+    }
+    assert!(expanded, "C++ BuildingReady: ScaleUnit(building, EXPAND)");
+
+    assert!(
+        construction_utility(&state, TeamId::RED, site).is_none(),
+        "лента снимается после ухода строителя"
     );
     assert!(
         find_at(&state, site, UnitType::LargeCones).is_none(),
@@ -697,19 +847,59 @@ fn completion_replaces_the_site_with_the_finished_building() {
         "плита остаётся под зданием (remove_slabs = false)"
     );
 
-    let building = find_at(&state, site, UnitType::TrainingHall).expect("готовое здание");
-    assert_eq!(
-        building.orders, UnitOrder::AwaitScaling,
-        "C++ BuildingReady: ScaleUnit(building, ORDER_STATE_EXPAND)"
-    );
-    assert_eq!(building.scaler_adjust, 4);
-    assert_eq!(building.parent_unit, None);
+    {
+        let building = state.unit(building_id).expect("здание");
+        assert_eq!(building.scaler_adjust, 4);
+        assert_eq!(building.parent_unit, None);
+        assert_eq!(
+            building.grid, building_grid,
+            "здание стоит в клетке площадки"
+        );
+    }
     assert_eq!(count_type(&state, UnitType::TrainingHall), 1);
 
-    let builder = state.unit(constructor).expect("constructor alive");
-    assert_eq!(builder.orders, UnitOrder::Await);
-    assert_eq!(builder.state, UnitOrderState::ExecutingOrder);
-    assert!(builder.build_list.is_empty());
+    // После раскрытия здание возвращается в `ORDER_AWAIT`, а строитель идёт к
+    // клетке схода (`ORDER_MOVE`) и по прибытии — в `ORDER_AWAIT`.
+    for _ in 0..40 {
+        tick_orders(&mut state);
+    }
+    let builder_grid = {
+        let building = state.unit(building_id).expect("здание");
+        assert_eq!(
+            (building.orders, building.state),
+            (UnitOrder::Await, UnitOrderState::ExecutingOrder),
+            "после EXPAND здание в ORDER_AWAIT/EXECUTING_ORDER"
+        );
+        let builder = state.unit(constructor).expect("constructor alive");
+        assert_eq!(builder.orders, UnitOrder::Await);
+        assert_eq!(builder.state, UnitOrderState::ExecutingOrder);
+        assert!(
+            !production::unit_bounds_contains(building, builder.grid),
+            "строитель остаётся вне площадки"
+        );
+        builder.grid
+    };
+    assert_ne!(builder_grid, building_grid, "строитель сошёл с площадки");
+}
+
+/// Достройка детерминирована: два одинаковых прогона дают один снапшот на
+/// каждом кадре (порядок «уход строителя → раскрытие здания» не зависит от
+/// итерации по хешам).
+#[test]
+fn completion_sequence_is_deterministic() {
+    fn run() -> Vec<Vec<u8>> {
+        let (mut state, _, _) = state_with_finished_building(10);
+        let mut frames = vec![state.snapshot_bytes()];
+
+        for _ in 0..30 {
+            tick_orders(&mut state);
+            frames.push(state.snapshot_bytes());
+        }
+
+        frames
+    }
+
+    assert_eq!(run(), run());
 }
 
 /// `stop` мобильного строителя (`CancelBuilding` → `BuildCancel`) убирает

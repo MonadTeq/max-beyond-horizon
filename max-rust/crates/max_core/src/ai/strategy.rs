@@ -1457,22 +1457,18 @@ impl AiPlayer {
 
     /// `AiPlayer::CheckEndTurn` (`aiplayer.cpp:2828`).
     ///
-    /// `tasks_pending` в C++ выставляется `Ai_SetTasksPendingFlag` (вызовы из
-    /// `units_manager`); в max_core флаг заменён проверкой «есть ли работа у
-    /// задач» — см. `TaskManager::has_pending_work`.
+    /// `tasks_pending` — тот же флаг, что в C++: `Ai_SetTasksPendingFlag`
+    /// выставляется из `UnitsManager_ProcessOrder*`/`UnitInfo::ExecuteMove` на
+    /// каждом тике, в котором юнит реально что-то делает, и сбрасывается в
+    /// начале `UnitsManager_ProcessOrders` (`Ai_ClearTasksPendingFlags`).
+    /// Поэтому юнит, у которого кончилась скорость, ход не держит.
     pub fn check_end_turn(&mut self, world: &mut GameState) -> bool {
         if self.need_init {
             self.begin_turn(world);
             return true;
         }
 
-        let pending = self.tasks_pending
-            || world
-                .ai
-                .task_manager
-                .has_pending_work(world, self.player_team);
-
-        if pending {
+        if self.tasks_pending {
             self.end_turn_retry_counter = 0;
             return false;
         }

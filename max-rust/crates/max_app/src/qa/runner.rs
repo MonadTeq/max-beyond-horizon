@@ -700,11 +700,14 @@ impl QaRunner {
                 ))?;
 
                 let Some(menu) = self.app.unit_menu() else {
+                    let unit = self.app.state().unit(id);
                     return Err(format!(
-                        "unit-menu open: меню не открылось (юнит {:?} в ({}, {}))",
-                        self.app.state().unit(id).map(|unit| unit.unit_type),
+                        "unit-menu open: меню не открылось (юнит {:?} в ({}, {}), orders={:?}/{:?})",
+                        unit.map(|unit| unit.unit_type),
                         grid.x,
-                        grid.y
+                        grid.y,
+                        unit.map(|unit| unit.orders),
+                        unit.map(|unit| unit.state)
                     ));
                 };
 
@@ -2159,9 +2162,19 @@ impl QaRunner {
                 "{what}: выделен чужой юнит команды {:?}",
                 unit.team
             )),
-            None => Err(format!(
-                "{what}: в этой точке нет юнита команды {team:?} (выделение пустое)"
-            )),
+            None => {
+                let phase = self.app.local().map(|local| local.phase);
+                let blocked = self.app.local_input_blocked();
+                let frame = self
+                    .app
+                    .hud()
+                    .mouse_position
+                    .map(|(x, y)| format!("{x},{y}"))
+                    .unwrap_or_default();
+                Err(format!(
+                    "{what}: в этой точке нет юнита команды {team:?} (выделение пустое; phase={phase:?} blocked={blocked} mouse={frame})"
+                ))
+            }
         }
     }
 
@@ -2667,6 +2680,119 @@ impl QaRunner {
                     match tape {
                         Some(site) => format!("site-pos={},{}", site.x, site.y),
                         None => "площадки нет".to_string(),
+                    },
+                )
+            }
+            Assertion::BuilderInside(inside) => {
+                let team = self.app.player_team();
+                let builder = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .filter_map(|id| self.app.state().unit(id))
+                    .filter(|unit| {
+                        unit.team == team && unit.unit_type == max_core::enums::UnitType::Constructor
+                    })
+                    .next_back();
+                let Some(builder) = builder else {
+                    return self.expect(
+                        false,
+                        format!("builder={}", if inside { "inside" } else { "outside" }),
+                        "строителя нет".to_string(),
+                    );
+                };
+                // Здание — ближайшее своё `BUILDING` (достроенное или ещё
+                // ждущее ухода строителя: `SpawnNewUnit` уже поставил его на
+                // площадку). Родитель строителя после `ActivateEngineer`
+                // сбрасывается, поэтому опора — габариты здания.
+                let building = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .filter_map(|id| self.app.state().unit(id))
+                    .filter(|unit| {
+                        unit.team == team
+                            && unit.flags & max_core::enums::unit_flags::BUILDING != 0
+                    })
+                    .min_by_key(|unit| {
+                        let size: i16 = 2;
+                        let dx = (i16::from(unit.grid.x) - i16::from(builder.grid.x)).abs()
+                            - (size - 1).max(0);
+                        let dy = (i16::from(unit.grid.y) - i16::from(builder.grid.y)).abs()
+                            - (size - 1).max(0);
+                        (dx.max(0) + dy.max(0), u16::MAX - unit.id.0)
+                    });
+                let Some(building) = building else {
+                    return self.expect(
+                        false,
+                        format!("builder={}", if inside { "inside" } else { "outside" }),
+                        "у команды нет зданий".to_string(),
+                    );
+                };
+                let actual_inside =
+                    max_core::production::unit_bounds_contains(building, builder.grid);
+
+                self.expect(
+                    actual_inside == inside,
+                    format!("builder={}", if inside { "inside" } else { "outside" }),
+                    format!(
+                        "строитель в ({},{}), здание {:?} в ({},{}) 2×2 — {}",
+                        builder.grid.x,
+                        builder.grid.y,
+                        building.id,
+                        building.grid.x,
+                        building.grid.y,
+                        if actual_inside { "внутри" } else { "снаружи" }
+                    ),
+                )
+            }
+            Assertion::BuildReady(waiting) => {
+                let team = self.app.player_team();
+                let found = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .filter_map(|id| self.app.state().unit(id))
+                    .find(|unit| {
+                        unit.team == team
+                            && unit.orders == max_core::enums::UnitOrder::Idle
+                            && unit.state == max_core::enums::UnitOrderState::BuildingReady
+                    });
+
+                self.expect(
+                    found.is_some() == waiting,
+                    format!("build-ready={}", if waiting { "yes" } else { "no" }),
+                    match found {
+                        Some(unit) => format!(
+                            "ждущее здание {:?} в ({},{})",
+                            unit.id, unit.grid.x, unit.grid.y
+                        ),
+                        None => "ждущих зданий нет".to_string(),
+                    },
+                )
+            }
+            Assertion::Hint(expected) => {
+                let actual = self.app.hud().hint.clone();
+                let ok = match (&expected, &actual) {
+                    (None, None) => true,
+                    (Some(expected), Some(actual)) => actual
+                        .to_ascii_lowercase()
+                        .contains(&expected.to_ascii_lowercase()),
+                    _ => false,
+                };
+
+                self.expect(
+                    ok,
+                    match &expected {
+                        Some(expected) => format!("hint={expected}"),
+                        None => "hint=none".to_string(),
+                    },
+                    match actual {
+                        Some(text) => format!("hint={}", text.replace('\n', " / ")),
+                        None => "hint=none".to_string(),
                     },
                 )
             }
