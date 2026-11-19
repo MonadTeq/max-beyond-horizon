@@ -7,9 +7,9 @@
 # * триггер 1:1 из C++: меню открывается **повторным кликом** по уже
 #   выделенному своему юниту (`GameManager_ClickUnit` → `InitPopupButtons`),
 #   первый клик только выделяет;
-# * состав пунктов по типу юнита: у танка — `attack/x-fer/enter/stop/sentry/Done`,
-#   у строителя — `Build` первым; `x-fer`/`attack` есть, но отключены (механика
-#   не портирована — `unit-menu-disabled`);
+# * состав пунктов по типу юнита: у танка — `attack/enter/stop/sentry/Done`
+#   (x-fer у танка нет: груз `NONE`), у строителя — `Build` первым и **включённый**
+#   `x-fer` (груз `RAW`; `attack` по-прежнему отключён — `unit-menu-disabled`);
 # * модальность: пока меню открыто, карта приказ не получает (клик по другому
 #   юниту закрывает меню, выделение не меняется);
 # * `Esc` закрывает меню и не выходит из партии;
@@ -103,6 +103,7 @@ assert selected
 unit-menu open
 assert unit-menu=open
 assert unit-menu-item=Build
+assert unit-menu-item=x-fer
 shot unit-menu-builder
 unit-menu item Build
 assert unit-menu=closed

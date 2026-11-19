@@ -71,7 +71,10 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPath};
 use crate::unit_order;
 use crate::unit_values::{
     ATTRIB_AGENT_ADJUST, ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_MOVE_AND_FIRE,
-    ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE,
+    ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
+};
+use crate::victory::{
+    cargo_gold_consumption_rate, cargo_raw_consumption_rate, cargo_type_of, CargoType,
 };
 
 /// `PLAYER_TEAM_MAX`: четыре игровые команды (`RED..GRAY`) + `ALIEN`.
@@ -1761,13 +1764,80 @@ impl GameState {
     }
 
     /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — сброс скоростей,
-    /// выстрелов и снабжения на начало хода.
+    /// выстрелов, снабжения и **разбор запаса комплекса по складам зданий** на
+    /// начало хода.
     ///
-    /// Порт без таблиц потребления грузов (`Cargo_GetRawConsumptionRate` —
-    /// P3-данные): ветки производства/золота/энергии отмечены TODO.
+    /// Точный порядок C++:
+    /// 1. мобильный строитель в `ORDER_BUILD` платит сырьём
+    ///    (`Cargo_GetRawConsumptionRate`), предварительно урезав `build_rate` до
+    ///    `BuildMenu_GetMaxPossibleBuildRate`;
+    /// 2. `COMMTWR` в `ORDER_POWER_ON` добавляет команде золото
+    ///    (`Cargo_GetGoldConsumptionRate` = 5);
+    /// 3. `GREENHSE` в `ORDER_POWER_ON` — `++storage` и `++team_points`;
+    /// 4. выстрелы/скорость/отключение;
+    /// 5. если у юнита есть комплекс — `storage = min(complex.<field>,
+    ///    ATTRIB_STORAGE)`, `complex.<field> -= storage`.
+    ///
+    /// Шаг 5 и есть «добыча шахты → хранилища»: `Access_UpdateResourcesTotal`
+    /// (см. [`Self::update_complex_resources`]) кладёт добычу в поле комплекса,
+    /// а здесь она раскладывается по складам (`ADUMP`/`FDUMP`/`GOLDSM` и т.д.).
+    /// Остаток сверх суммы `ATTRIB_STORAGE` остаётся в поле комплекса и теряется
+    /// на следующем пересчёте — как в C++.
     pub fn update_production(&mut self, unit: &mut UnitInfo) {
-        // TODO(P3): build_rate = min(build_rate, BuildMenu_GetMaxPossibleBuildRate)
-        // и `storage -= Cargo_GetRawConsumptionRate` для ORDER_BUILD.
+        let team_index = unit.team.0 as usize;
+
+        if unit.orders == UnitOrder::Build
+            && unit.state != UnitOrderState::UnitReady
+            && unit.flags & unit_flags::MOBILE_LAND_UNIT != 0
+        {
+            let max_rate = crate::production::max_possible_build_rate(
+                unit.unit_type,
+                i32::from(unit.build_time),
+                i32::from(unit.storage),
+            );
+
+            if max_rate >= 0 {
+                unit.build_rate = unit.build_rate.min(max_rate as u16);
+            }
+
+            let target_turns = unit
+                .build_list
+                .first()
+                .and_then(|unit_type| {
+                    self.team_units
+                        .get(team_index)
+                        .map(|units| units.current_unit_values(*unit_type as u16).get_attribute(ATTRIB_TURNS))
+                })
+                .unwrap_or(0);
+
+            let skip_for_ai = self
+                .teams
+                .get(team_index)
+                .is_some_and(|info| info.team_type == TeamKind::Computer)
+                && self.ai.settings.opponent >= crate::enums::Opponent::Master as u8
+                && target_turns <= 1;
+
+            if !skip_for_ai {
+                let cost = cargo_raw_consumption_rate(unit.unit_type, i32::from(unit.build_rate));
+                unit.storage = unit.storage.wrapping_sub(cost as i16);
+            }
+        }
+
+        if unit.unit_type == UnitType::CommTower && unit.orders == UnitOrder::PowerOn {
+            if let Some(team_units) = self.team_units.get_mut(team_index) {
+                let reserves = team_units.gold();
+                let income = cargo_gold_consumption_rate(UnitType::CommTower).max(0) as u32;
+                team_units.set_gold(reserves.wrapping_add(income));
+            }
+        }
+
+        if unit.unit_type == UnitType::Greenhouse && unit.orders == UnitOrder::PowerOn {
+            unit.storage = unit.storage.wrapping_add(1);
+
+            if let Some(info) = self.teams.get_mut(team_index) {
+                info.team_points = info.team_points.wrapping_add(1);
+            }
+        }
 
         let base = unit.base_values;
         let rounds = base.get_attribute(ATTRIB_ROUNDS);
@@ -1822,20 +1892,40 @@ impl GameState {
             unit.state = UnitOrderState::ExecutingOrder;
         }
 
-        // TODO(P3): перенос груза из комплекса в `storage`
-        // (`ResourceManager_GetUnit(unit_type).GetCargoType()` + `complex`).
+        // `if (complex) { storage = min(complex-><field>, ATTRIB_STORAGE);
+        // complex-><field> -= storage; }` (`unitinfo.cpp:3004`).
+        if let Some(complex) = unit.complex {
+            let capacity = unit.base_values.get_attribute(ATTRIB_STORAGE);
+            let cargo = cargo_type_of(unit.unit_type);
+
+            let pulled = state_complex_pull(self, unit.team, complex, cargo, capacity);
+
+            if let Some(value) = pulled {
+                unit.storage = value as i16;
+            }
+        }
     }
 
     /// `UnitInfo::Resupply` (`unitinfo.cpp:2885`) — пополнение боезапаса из
-    /// комплекса и регенерация.
+    /// запаса комплекса (`Complex::GetCargoInfo` + `Complex::Transfer(-1,0,0)`)
+    /// и регенерация.
     ///
-    /// TODO(P3/P5): обмен с комплексом (`Cargo`) и `Regenerate()`.
+    /// `Regenerate()` (зелёные юниты пришельцев) в модели отсутствует —
+    /// TODO, как и в остальном порте.
     pub fn resupply(&mut self, unit: &mut UnitInfo) {
         if unit.is_complex_member()
             && unit.base_values.get_attribute(ATTRIB_ATTACK) > 0
             && unit.base_values.get_attribute(ATTRIB_ROUNDS) > i32::from(unit.ammo)
         {
-            // TODO(P3): materials.raw > 0 → ammo = ATTRIB_AMMO, комплекс -1.
+            let Some(complex) = unit.complex else {
+                return;
+            };
+            let (materials, _) = crate::alloc::get_cargo_info(self, unit.team, complex);
+
+            if materials.raw > 0 {
+                unit.ammo = unit.base_values.get_attribute(ATTRIB_AMMO) as u8;
+                crate::transfer::complex_transfer(self, unit.team, complex, -1, 0, 0);
+            }
         }
     }
 
@@ -2322,6 +2412,43 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
 
 fn put_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// `UnitInfo::UpdateProduction`, шаг 5: забрать из комплекса до `capacity`
+/// единиц ресурса в склад здания (`storage = min(complex->field, ATTRIB_STORAGE)`,
+/// `complex->field -= storage`). Возвращает новое значение `storage`.
+///
+/// Поля комплекса — `int16_t` (C++), поэтому присваивание усекается
+/// (`wrapping_*`), даже если `capacity` больше.
+fn state_complex_pull(
+    state: &mut GameState,
+    team: TeamId,
+    complex: crate::team::ComplexId,
+    cargo: CargoType,
+    capacity: i32,
+) -> Option<i32> {
+    let target = state.complex_mut(team, complex.0 as u16)?;
+
+    let value = match cargo {
+        CargoType::Raw => {
+            let value = i32::from(target.material).min(capacity);
+            target.material = target.material.wrapping_sub(value as i16);
+            value
+        }
+        CargoType::Fuel => {
+            let value = i32::from(target.fuel).min(capacity);
+            target.fuel = target.fuel.wrapping_sub(value as i16);
+            value
+        }
+        CargoType::Gold => {
+            let value = i32::from(target.gold).min(capacity);
+            target.gold = target.gold.wrapping_sub(value as i16);
+            value
+        }
+        _ => return None,
+    };
+
+    Some(value)
 }
 
 // ---------------------------------------------------------------------------

@@ -66,6 +66,7 @@ pub mod researchmenu;
 pub mod saveload;
 pub mod setup;
 pub mod soak;
+pub mod transfermenu;
 pub mod ui;
 pub mod unitmenu;
 pub mod upgrademenu;
@@ -101,6 +102,7 @@ pub use assets::{
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use allocmenu::{AllocAction, AllocMenu, AllocMenuAssets};
+pub use transfermenu::{TransferAction, TransferMenu, TransferMenuAssets};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hotseat::TurnNotice;
@@ -562,6 +564,9 @@ pub struct App {
     /// `ALLOCFRM`). В снапшот/CRC не входит — это UI; значения живут в полях
     /// юнитов (`raw_mining`/`fuel_mining`/`gold_mining`).
     alloc_menu: Option<allocmenu::AllocMenu>,
+    /// Открытое окно X-FER (C++ `TransferMenu`, `XFERPIC`). В снапшот/CRC не
+    /// входит: количество уходит приказом **08/P3** (`transfer_cargo`).
+    transfer_menu: Option<transfermenu::TransferMenu>,
     /// Открытое окно помощи поверх игры (P7, `HelpMenu`). В снапшот/CRC не входит.
     help: Option<helpmenu::HelpScreen>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
@@ -746,6 +751,7 @@ impl App {
             research_menu: None,
             unit_menu: None,
             alloc_menu: None,
+            transfer_menu: None,
             help: None,
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
@@ -1075,9 +1081,24 @@ impl App {
             center_y + area.uly,
         );
 
-        let Some(menu) = unitmenu::UnitMenu::new(&self.state, &unit, anchor, area, zoom) else {
+        let Some(mut menu) = unitmenu::UnitMenu::new(&self.state, &unit, anchor, area, zoom) else {
             return false;
         };
+
+        // C++ `state[i]`: пункт нажат, если включён его режим
+        // (`unit->cursor == 3/4/6/7`, `unit->enter_mode`).
+        for item in &mut menu.items {
+            item.pressed = match item.id {
+                unitmenu::ItemId::Transfer => {
+                    self.hud.cursor_mode == unitmenu::CURSOR_TRANSFER
+                }
+                unitmenu::ItemId::Repair => self.hud.cursor_mode == unitmenu::CURSOR_REPAIR,
+                unitmenu::ItemId::Reload => self.hud.cursor_mode == unitmenu::CURSOR_RELOAD,
+                unitmenu::ItemId::Load => self.hud.cursor_mode == unitmenu::CURSOR_LOAD,
+                unitmenu::ItemId::Enter => self.hud.enter_mode,
+                _ => item.pressed,
+            };
+        }
 
         self.unit_menu = Some(menu);
         true
@@ -1291,6 +1312,123 @@ impl App {
         let count = packets.len();
         self.hud.pending.extend(packets);
         count
+    }
+
+    // -----------------------------------------------------------------------
+    // X-FER (C++ `TransferMenu`, окно `XFERPIC`)
+    // -----------------------------------------------------------------------
+
+    /// Открытое окно X-FER; `None` — закрыто.
+    pub fn transfer_menu(&self) -> Option<&transfermenu::TransferMenu> {
+        self.transfer_menu.as_ref()
+    }
+
+    /// Окно X-FER для ввода/QA.
+    pub fn transfer_menu_mut(&mut self) -> Option<&mut transfermenu::TransferMenu> {
+        self.transfer_menu.as_mut()
+    }
+
+    /// Открывает окно X-FER между `source` и `target` —
+    /// `GameManager_TransferCargo` (`game_manager.cpp:4634`).
+    ///
+    /// C++ сначала делает `unit1->SetParent(unit2)`; это поле едет в пакете
+    /// 08/P3, поэтому выставляется сразу (как и в оригинале — отмена диалога
+    /// родителя не восстанавливает). `false` — окно не открылось (нет
+    /// комплекса/типа груза).
+    pub fn open_transfer_menu(&mut self, source: UnitId, target: UnitId) -> bool {
+        let Some(menu) = transfermenu::TransferMenu::new(&self.state, source, target) else {
+            return false;
+        };
+
+        if let Some(unit) = self.state.unit_mut(source) {
+            unit.parent_unit = Some(target);
+        }
+
+        self.unit_menu = None;
+        self.transfer_menu = Some(menu);
+        true
+    }
+
+    /// Закрывает окно X-FER без приказа (C++ `Esc`/`Cancel`).
+    pub fn cancel_transfer(&mut self) -> Option<String> {
+        let menu = self.transfer_menu.take()?;
+        // `TransferMenu::~TransferMenu` → `GameManager_EnableMainMenu(&*SelectedUnit)`
+        // → `GameManager_MenuUnitSelect` сбрасывает `cursor`/`enter_mode`.
+        self.hud.cursor_mode = 0;
+        self.hud.enter_mode = false;
+
+        Some(format!(
+            "x-fer: отменено (было {})",
+            transfermenu::amount_to_transfer(&menu)
+        ))
+    }
+
+    /// `Done`/`Enter` — `unit1->transfer_cargo = cargo_transferred;
+    /// ORDER_TRANSFER` (пакет 08/**P3**).
+    ///
+    /// Нулевое количество, как в C++, приказа не даёт (меню просто
+    /// закрывается). Возвращает строку журнала и признак «приказ поставлен в
+    /// [`hud::HudState::pending`]».
+    pub fn confirm_transfer(&mut self) -> Option<(String, bool)> {
+        let menu = self.transfer_menu.take()?;
+        // Как и в `~TransferMenu`: `EnableMainMenu` → `MenuUnitSelect` сбрасывает
+        // курсорный режим выделенного юнита.
+        self.hud.cursor_mode = 0;
+        self.hud.enter_mode = false;
+        let amount = transfermenu::amount_to_transfer(&menu);
+
+        if amount == 0 {
+            return Some(("x-fer: 0 — приказ не отдан".to_string(), false));
+        }
+
+        // `unit1->transfer_cargo = cargo_transferred` до `SendNetPacket_08`.
+        if let Some(unit) = self.state.unit_mut(menu.unit) {
+            unit.transfer_cargo = amount;
+            unit.parent_unit = Some(menu.target);
+        }
+
+        let Some(command) =
+            transfermenu::transfer_order(self.state(), menu.unit, menu.target, amount)
+        else {
+            return Some(("x-fer: юнит исчез".to_string(), false));
+        };
+
+        self.hud.pending.push(command);
+
+        Some((
+            format!("x-fer: {amount} ({:?} → {:?})", menu.cargo, menu.target),
+            true,
+        ))
+    }
+
+    /// `transfer amount N`/QA: значение полосы с обрезкой (как клик по полосе).
+    pub fn transfer_set_amount(&mut self, amount: i32) -> bool {
+        let Some(menu) = self.transfer_menu.as_mut() else {
+            return false;
+        };
+        menu.set_amount(amount);
+        true
+    }
+
+    /// `transfer right|left`/QA: один шаг полосы.
+    pub fn transfer_adjust(&mut self, increase: bool) -> bool {
+        let Some(menu) = self.transfer_menu.as_mut() else {
+            return false;
+        };
+        menu.adjust(increase)
+    }
+
+    /// Ввод в открытом окне X-FER — [`transfermenu::TransferMenu::input`].
+    pub fn transfer_menu_input(
+        &mut self,
+        event: InputEvent,
+    ) -> Option<transfermenu::TransferAction> {
+        let Some(mut menu) = self.transfer_menu.take() else {
+            return None;
+        };
+        let action = menu.input(event);
+        self.transfer_menu = Some(menu);
+        Some(action)
     }
 
     /// Активирует пункт меню — C++ `GameManager_PopupButtons.r_func[i]`.
@@ -1749,6 +1887,7 @@ impl App {
         self.research_menu = None;
         self.unit_menu = None;
         self.alloc_menu = None;
+        self.transfer_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();
@@ -2009,6 +2148,7 @@ impl App {
         self.research_menu = None;
         self.unit_menu = None;
         self.alloc_menu = None;
+        self.transfer_menu = None;
         self.help = None;
         self.reset_visual_state();
         self.focus_player();

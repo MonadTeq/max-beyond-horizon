@@ -314,6 +314,13 @@ pub enum Assertion {
     ComplexFuel(Cmp, i32),
     /// `assert complex-gold=N`: запас золота комплекса.
     ComplexGold(Cmp, i32),
+    /// `assert transfer=open|closed`: открыто ли окно X-FER (`TransferMenu`).
+    TransferOpen(bool),
+    /// `assert transfer-amount=N`: текущее значение полосы (знаковое; плюс —
+    /// из юнита в комплекс, минус — обратно).
+    TransferAmount(Cmp, i32),
+    /// `assert unit-storage=N`: `storage` выделенного юнита (груз по его типу).
+    UnitStorage(Cmp, i32),
     /// `assert prefs=open|closed`: диалог `Preferences`/`Setup` открыт (в меню —
     /// `Screen::Preferences`, в игре — модальное окно `App::preferences_dialog`).
     PrefsOpen(bool),
@@ -565,6 +572,23 @@ pub enum AllocateCommand {
     Cancel,
 }
 
+/// Действие окна X-FER (C++ `TransferMenu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferCommand {
+    /// `amount N` — установить значение полосы (как клик по полосе).
+    Amount(i32),
+    /// `right`/`inc` — `+1` (кнопка `XFRRGT`).
+    Right,
+    /// `left`/`dec` — `−1` (кнопка `XFRLFT`).
+    Left,
+    /// `done` — `Done`/`Enter` (приказ 08/P3 `ORDER_TRANSFER`).
+    Done,
+    /// `cancel` — `Esc` (без приказа).
+    Cancel,
+    /// `help` — `?`/`Shift+/` (`TRANSFER_SETUP`).
+    Help,
+}
+
 /// Действие меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnitMenuCommand {
@@ -596,6 +620,9 @@ pub enum LandingCommand {
 pub enum Command {
     /// `click X Y` — левая кнопка в пикселях кадра.
     Click(i32, i32),
+    /// `click unit NAME` — левый клик по юниту игрока с таким именем **без**
+    /// проверки выделения (курсорные режимы x-fer/repair/reload).
+    ClickUnit(String),
     /// `rclick X Y` — правая кнопка (приказ движения/отмена).
     RightClick(i32, i32),
     /// `key NAME` — клавиша (`ENTER`, `ESC`, `T`, …).
@@ -673,6 +700,9 @@ pub enum Command {
     /// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
     /// распределения добычи шахты (C++ `AllocMenu`).
     Allocate(AllocateCommand),
+    /// `transfer amount N|right|left|done|cancel|help` — окно X-FER
+    /// (C++ `TransferMenu`).
+    Transfer(TransferCommand),
     /// `prefs open|toggle NAME|set NAME N|done|cancel|help` — диалог
     /// `Preferences`/`Setup` (C++ `OptionsMenu`).
     Prefs(PrefsCommand),
@@ -741,6 +771,21 @@ fn parse_command(source: &str) -> Result<Command, String> {
 
     match name.as_str() {
         "click" => {
+            // `click unit NAME` — клик по конкретному юниту (курсорные режимы).
+            if let Some(name) = rest
+                .strip_prefix("unit ")
+                .or_else(|| rest.strip_prefix("UNIT "))
+            {
+                let name = name.trim();
+
+                if name.is_empty() {
+                    return Err(format!(
+                        "click unit: ожидалось «click unit NAME», получено «{rest}»"
+                    ));
+                }
+
+                return Ok(Command::ClickUnit(name.to_string()));
+            }
             let (x, y) = parse_point(rest)?;
             Ok(Command::Click(x, y))
         }
@@ -785,6 +830,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "help" => parse_help(rest),
         "unit-menu" | "unit_menu" => parse_unit_menu(rest),
         "allocate" | "alloc" => parse_allocate(rest),
+        "transfer" | "xfer" => parse_transfer(rest),
         "prefs" | "preferences" => parse_prefs(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
@@ -1275,6 +1321,21 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         "complex-gold" => Ok(Assertion::ComplexGold(
             operator,
             parse_i32(value, "assert complex-gold")?,
+        )),
+        "transfer" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::TransferOpen(true)),
+            "closed" | "none" => Ok(Assertion::TransferOpen(false)),
+            other => Err(format!(
+                "assert transfer: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "transfer-amount" => Ok(Assertion::TransferAmount(
+            operator,
+            parse_i32(value, "assert transfer-amount")?,
+        )),
+        "unit-storage" => Ok(Assertion::UnitStorage(
+            operator,
+            parse_i32(value, "assert unit-storage")?,
         )),
         "digest" => {            let digits = value.trim_start_matches("0x").trim_start_matches("0X");
             let digest = u16::from_str_radix(digits, 16)
@@ -1859,6 +1920,38 @@ fn parse_allocate(rest: &str) -> Result<Command, String> {
     };
 
     Ok(Command::Allocate(command))
+}
+
+/// `transfer amount N|right|left|done|cancel|help` — окно X-FER.
+fn parse_transfer(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    let command = match parts.as_slice() {
+        ["amount", value] | ["set", value] => {
+            TransferCommand::Amount(parse_i32(value, "transfer amount")?)
+        }
+        ["amount"] | ["set"] => {
+            return Err("transfer amount: требуется число".to_string());
+        }
+        ["right"] | ["inc"] | ["+"] => TransferCommand::Right,
+        ["left"] | ["dec"] | ["-"] => TransferCommand::Left,
+        ["done"] | ["confirm"] => TransferCommand::Done,
+        ["cancel"] | ["close"] => TransferCommand::Cancel,
+        ["help"] | ["?"] => TransferCommand::Help,
+        [] => {
+            return Err(
+                "transfer: требуется действие (amount N|right|left|done|cancel|help)"
+                    .to_string(),
+            );
+        }
+        _ => {
+            return Err(format!(
+                "transfer: неизвестное действие «{rest}» (amount N|right|left|done|cancel|help)"
+            ));
+        }
+    };
+
+    Ok(Command::Transfer(command))
 }
 
 fn parse_direction(text: &str) -> Result<bool, String> {

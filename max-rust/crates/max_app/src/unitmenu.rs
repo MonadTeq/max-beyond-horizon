@@ -443,10 +443,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         && order != UnitOrder::Clear
         && order != UnitOrder::Build
     {
-        items.push(
-            UnitMenuItem::new(ItemId::Transfer, "x-fer", '3', false)
-                .disabled("TransferMenu_Menu/ProcessOrderTransfer не портированы (TODO P3)"),
-        );
+        items.push(UnitMenuItem::new(ItemId::Transfer, "x-fer", '3', false));
     }
 
     // `enter`: у подвижных, кроме `CLEAR`/`BUILD`.
@@ -1011,7 +1008,10 @@ pub fn p3_order(
 /// выделенного (`unit1->storage`), цель не `ORDER_DISABLE`; родителем
 /// становится цель, приказ — `ORDER_REPAIR`/`ORDER_RELOAD`, состояние `INIT`.
 ///
-/// `load`/`x-fer`/`steal`/`disable` — не портированы (см. шапку модуля).
+/// `x-fer` (`cursor = 3`) обрабатывается в UI окном
+/// [`crate::transfermenu`] (`GameManager_TransferCargo` → `TransferMenu_Menu`):
+/// здесь он не превращается в приказ. `load`/`steal`/`disable` — не
+/// портированы (см. шапку модуля).
 pub fn cursor_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1141,12 +1141,14 @@ mod tests {
 
         assert_eq!(items[0].id, ItemId::Build);
         assert!(items[0].enabled, "Build открывает BuildMenu");
-        // Строитель — `RAW`-груз, значит x-fer в списке (но отключён).
-        assert!(items.iter().any(|item| item.id == ItemId::Transfer));
-        assert!(items
+        // Строитель — `RAW`-груз, значит x-fer в списке и включён
+        // (`TransferMenu_Menu` + `ProcessOrderTransfer` портированы).
+        let transfer = items
             .iter()
             .find(|item| item.id == ItemId::Transfer)
-            .is_some_and(|item| !item.enabled));
+            .expect("x-fer у строителя");
+        assert!(transfer.enabled, "x-fer открывает TransferMenu");
+        assert!(transfer.note.is_empty());
     }
 
     #[test]

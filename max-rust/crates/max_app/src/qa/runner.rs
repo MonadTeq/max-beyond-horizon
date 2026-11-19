@@ -35,7 +35,7 @@ use crate::qa::png::{self, Image};
 use crate::qa::script::{
     self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, MenuTarget,
     MobilizeAction, PhaseName, PrefsCommand, ResearchCommand, ScreenName, SetupAction, Step,
-    UnitMenuCommand, UpgradeCommand,
+    TransferCommand, UnitMenuCommand, UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
 use crate::ui::{
@@ -372,6 +372,7 @@ impl QaRunner {
 
         match command {
             Command::Click(x, y) => self.send(InputEvent::MouseClick(*x, *y)),
+            Command::ClickUnit(name) => self.click_unit(name),
             Command::RightClick(x, y) => self.send(InputEvent::RightClick(*x, *y)),
             Command::Key(key) => self.send(InputEvent::Key(*key)),
             Command::Type(text) => {
@@ -416,6 +417,7 @@ impl QaRunner {
             Command::Help(action) => self.help(*action),
             Command::UnitMenu(action) => self.unit_menu(action.clone()),
             Command::Allocate(action) => self.allocate(action.clone()),
+            Command::Transfer(action) => self.transfer(*action),
             Command::Prefs(action) => self.prefs(action.clone()),
         }
     }
@@ -755,6 +757,105 @@ impl QaRunner {
                 self.send(InputEvent::Key(Key::Char(character)))
             }
             UnitMenuCommand::Close => self.send(InputEvent::Key(Key::Escape)),
+        }
+    }
+
+    /// `click unit NAME` — левый клик по юниту команды игрока без проверки
+    /// выделения (курсорные режимы: x-fer/repair/reload). Камера
+    /// центрируется, поэтому клик всегда попадает в клетку юнита.
+    fn click_unit(&mut self, name: &str) -> Result<Flow, String> {
+        let team = self.app.player_team();
+        let wanted = name.trim().to_ascii_lowercase();
+        let id = self
+            .app
+            .state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|id| {
+                self.app.state().unit(*id).is_some_and(|unit| {
+                    unit.team == team
+                        && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
+                            == wanted
+                            || format!("{:?}", unit.unit_type).to_ascii_lowercase() == wanted)
+                })
+            })
+            .next_back()
+            .ok_or_else(|| format!("click unit {name}: у команды {team:?} нет такого юнита"))?;
+
+        let grid = self
+            .app
+            .state()
+            .unit(id)
+            .map(|unit| unit.grid)
+            .ok_or_else(|| "click unit: юнит исчез".to_string())?;
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
+        self.detail = Some(format!("клик по {name} в ({x}, {y})"));
+        self.send(InputEvent::MouseClick(
+            x + layout::MAIN_MAP.ulx,
+            y + layout::MAIN_MAP.uly,
+        ))
+    }
+
+    /// `transfer …` — окно X-FER (C++ `TransferMenu`): значение полосы,
+    /// кнопки `±1`, `Done` (Enter → 08/P3 `ORDER_TRANSFER`) и `Esc`.
+    fn transfer(&mut self, action: TransferCommand) -> Result<Flow, String> {
+        if self.app.transfer_menu().is_none() {
+            return Err("transfer: окно X-FER не открыто".to_string());
+        }
+
+        match action {
+            TransferCommand::Amount(value) => {
+                self.app.transfer_set_amount(value);
+                let actual = self
+                    .app
+                    .transfer_menu()
+                    .map(|menu| menu.amount)
+                    .unwrap_or(0);
+                self.detail = Some(format!("amount={actual}"));
+                Ok(Flow::Continue)
+            }
+            TransferCommand::Right => {
+                let changed = self.app.transfer_adjust(true);
+                let actual = self
+                    .app
+                    .transfer_menu()
+                    .map(|menu| menu.amount)
+                    .unwrap_or(0);
+                self.detail = Some(format!("+1 -> {actual} (изменение: {changed})"));
+                Ok(Flow::Continue)
+            }
+            TransferCommand::Left => {
+                let changed = self.app.transfer_adjust(false);
+                let actual = self
+                    .app
+                    .transfer_menu()
+                    .map(|menu| menu.amount)
+                    .unwrap_or(0);
+                self.detail = Some(format!("-1 -> {actual} (изменение: {changed})"));
+                Ok(Flow::Continue)
+            }
+            TransferCommand::Done => {
+                let amount = self
+                    .app
+                    .transfer_menu()
+                    .map(|menu| menu.amount)
+                    .unwrap_or(0);
+                self.detail = Some(format!("Done: {amount}"));
+                // Через ввод — тот же путь, что Enter у игрока (и офлайн
+                // приказ сразу применяется).
+                self.send(InputEvent::Key(Key::Enter))
+            }
+            TransferCommand::Cancel => {
+                self.detail = Some("Cancel".to_string());
+                self.send(InputEvent::Key(Key::Escape))
+            }
+            TransferCommand::Help => {
+                self.detail = Some("Help".to_string());
+                self.send(InputEvent::Key(Key::Char('?')))
+            }
         }
     }
 
@@ -2933,6 +3034,44 @@ impl QaRunner {
                 self.check_complex_value("complex-gold", cmp, expected, |complex| {
                     i32::from(complex.gold)
                 })
+            }
+            Assertion::TransferOpen(expected) => {
+                let actual = self.app.transfer_menu().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("transfer={}", if expected { "open" } else { "closed" }),
+                    format!("transfer={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::TransferAmount(cmp, expected) => {
+                let actual = self.app.transfer_menu().map(|menu| menu.amount);
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(i64::from(actual), i64::from(expected))),
+                    format!("transfer-amount{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("transfer-amount={actual}"),
+                        None => "окно X-FER не открыто".to_string(),
+                    },
+                )
+            }
+            Assertion::UnitStorage(cmp, expected) => {
+                let actual = self
+                    .app
+                    .hud()
+                    .selected
+                    .and_then(|id| self.app.state().unit(id))
+                    .map(|unit| i32::from(unit.storage));
+
+                self.expect(
+                    actual.is_some_and(|actual| cmp.test(i64::from(actual), i64::from(expected))),
+                    format!("unit-storage{}{expected}", cmp.as_str()),
+                    match actual {
+                        Some(actual) => format!("unit-storage={actual}"),
+                        None => "юнит не выделен".to_string(),
+                    },
+                )
             }
             Assertion::HelpOpen(expected) => {
                 let actual = self.current_help_section().is_some();

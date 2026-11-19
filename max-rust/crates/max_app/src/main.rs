@@ -869,6 +869,12 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 } else {
                     "alloc=closed"
                 };
+                // X-FER (`TransferMenu`, `XFERPIC`) — для живого UI-теста.
+                let transfer = if app.transfer_menu().is_some() {
+                    "xfer=open"
+                } else {
+                    "xfer=closed"
+                };
                 // `BuildMenu` (`buildmenu`): по нему живой тест строительства
                 // (`build/scripts/ui-probe-build.ps1`) видит, что экран открылся.
                 let build = if app.build_menu().is_some() {
@@ -900,7 +906,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     "prefs=closed"
                 };
                 eprintln!(
-                    "[in] screen={name} event={input:?} {alloc} {build} {site} {preferences} \
+                    "[in] screen={name} event={input:?} {alloc} {transfer} {build} {site} {preferences} \
                      effects={} sound={}",
                     u8::from(app.effects_enabled()),
                     u8::from(app.sound_enabled())

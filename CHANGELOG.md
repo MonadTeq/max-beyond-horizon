@@ -2,6 +2,34 @@
 
 ### Добавлено
 
+- **X-FER 1:1: `TransferMenu` + `ProcessOrderTransfer`.** Пункт `x-fer` меню
+  юнита больше не серый: у юнитов с грузом `RAW..GOLD` (приказ ≠ `CLEAR`/`BUILD`)
+  он включает `cursor = 3` (`UnitsManager_Popup_OnClick_Transfer`), а клик по
+  своему юниту идёт в `GameManager_TransferCargo` — с подменой цели на здание
+  комплекса с нужным складом (`GameManager_GetUnitWithCargoType`) и `SetParent`.
+  Окно `XFERPIC` 308×162 в области карты (249,160) — 1:1 по `transfermenu.cpp`:
+  иконки/имена юнитов, запас источника и цели (`Complex::GetCargoInfo` для чужого
+  комплекса, иначе `storage`/`ATTRIB_STORAGE`), `LimitedScrollbar`
+  (`SMBRRAW/FUEL/GOLD`, `give_max/take_max`, клик по полосе и `±1`), стрелка
+  направления, `Cancel`/`?`/`Done`, `Transfer_SETUP` по `?`. `Done`/`Enter`
+  отдаёт **08/P3** (`parent_unit`, `transfer_cargo`), `ProcessTransfer` переносит
+  материалы/топливо/золото в обе стороны: `TransferRaw/Fuel/Gold`,
+  `Complex::Transfer` при нехватке `storage`, `RestoreOrders`. `Esc`/нулевое
+  количество запасы не меняют; после закрытия снимается курсорный режим (как
+  `~TransferMenu` → `MenuUnitSelect`). QA `xfer.qa` (1332 кадра) + golden
+  `golden/xfer`; `unit-menu-builder.png` переснят (x-fer зелёный).
+- **Учёт хранилищ комплекса 1:1 (`ADUMP`/`FDUMP`/`GOLDSM`).** `UnitInfo::UpdateProduction`
+  теперь разбирает запас комплекса по складам: `storage = min(complex.material,
+  ATTRIB_STORAGE)` и `complex.material -= storage` (так же fuel/gold), поэтому
+  добыча шахт (`Access_UpdateResourcesTotal`) попадает в `ADUMP` (50), `FDUMP`
+  (50), `GOLDSM` (50) и склад самой шахты (25), а не остаётся кэшем комплекса.
+  Излишек сверх суммы ёмкостей теряется на следующем пересчёте — как C++; без
+  склада топливо/золото сохранить негде. Также 1:1: `COMMTWR` (+5 золота),
+  `GREENHSE` (`++storage`/`++team_points`), сырьё мобильного строителя
+  (`Cargo_GetRawConsumptionRate`), `Resupply`/`Reload` через
+  `Complex::Transfer(-1,0,0)`. Тесты `max_core/tests/transfer.rs` (12 с/без
+  хранилища, лимит, переполнение, детерминизм) + `xfer.qa`/`allocate.qa`.
+
 - **Подсказка строящего строителя сверху карты (C++ `MessageManager_DrawMessage`).**
   Клик по строителю в `ORDER_BUILD` показывает окно `MESSAGE_BOX_INFO` над картой
   (`GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage` →
@@ -43,6 +71,17 @@
   `preferences.rs` (9) и `tests/preferences.rs` (6).
 
 ### Исправлено
+
+- **Пункт `x-fer` больше не disabled; добыча шахт учитывается в лимите хранилищ.**
+  Раньше `unitmenu` строил пункт с `.disabled("… не портированы (TODO P3)")`, а
+  `GameState::update_production`/`resupply` были заглушками: запас комплекса
+  (`Complex::material/fuel/gold`) не раскладывался по `storage` зданий, поэтому
+  `ADUMP`/`FDUMP`/`GOLDSM` оставались пустыми, а добыча шахт «висела» в кэше
+  комплекса без лимита. Теперь пункт включён (см. выше), а `update_production`
+  выполняет шаг 5 C++ (`storage = min(complex.field, ATTRIB_STORAGE)`) — запас
+  ограничен ёмкостями складов, излишек теряется на следующем
+  `Access_UpdateResourcesTotal`, как в оригинале. `Reload` больше не TODO:
+  боезапас берётся из комплекса через `Complex::Transfer(-1,0,0)`.
 
 - **Достройка 1:1: строитель сначала УХОДИТ с площадки, потом появляется здание.**
   Раньше `ProductionManager::spawn_new_unit` сразу ставил готовое здание и

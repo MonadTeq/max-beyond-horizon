@@ -1288,8 +1288,17 @@ impl<'a> ProductionManager<'a> {
                 };
                 let max_rate =
                     max_possible_build_rate(unit.unit_type, i32::from(unit.build_time), storage);
-                let build_rate = i32::from(unit.build_rate.max(1)).min(max_rate.max(1)).max(1);
-                let rate = build_rate as u16;
+                // У мобильного строителя `UnitInfo::UpdateProduction` уже в этом
+                // ходу урезал `build_rate` по складу **и** списал сырьё именно
+                // по нему; повторный пересчёт по уменьшившемуся `storage` срезал
+                // бы скорость второй раз, и «золото» порта перестало бы
+                // соответствовать израсходованному сырью (колонка `Cost`).
+                let mobile_land = unit.flags & unit_flags::MOBILE_LAND_UNIT != 0;
+                let build_rate = if mobile_land {
+                    i32::from(unit.build_rate.max(1))
+                } else {
+                    i32::from(unit.build_rate.max(1)).min(max_rate.max(1)).max(1)
+                };
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
                 if cost > 0 {
@@ -1310,29 +1319,11 @@ impl<'a> ProductionManager<'a> {
                     self.state.team_units[slot].set_gold(gold - cost as u32);
                 }
 
-                // C++ `UnitInfo::UpdateProduction`: у мобильного строителя
-                // `storage -= Cargo_GetRawConsumptionRate(...)` (сырьё в cargo).
-                // Порт платит золотом (см. шапку), но склад всё равно
-                // уменьшается — от него зависит `max_possible_build_rate` на
-                // следующих ходах, т.е. фактические ходы/цена совпадают с
-                // колонками `Turns`/`Cost` и `GetTurnsToBuild`.
-                let mobile_land = unit.flags & unit_flags::MOBILE_LAND_UNIT != 0;
-                let mut unit = unit;
-                let mut changed = false;
-
-                if mobile_land {
-                    unit.storage = unit.storage.wrapping_sub(cost as i16);
-                    changed = true;
-                }
-
-                if rate != unit.build_rate {
-                    unit.build_rate = rate;
-                    changed = true;
-                }
-
-                if changed {
-                    self.state.write_unit(id, unit);
-                }
+                // Расход сырья со склада строителя списывает
+                // `UnitInfo::UpdateProduction` в начале хода команды
+                // (`storage -= Cargo_GetRawConsumptionRate(...)`), а не
+                // `ProgressBuildState`; здесь платится только «золото» команды
+                // (абстракция порта). Двойного списания быть не должно.
             }
         }
 

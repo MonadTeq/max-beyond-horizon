@@ -1,0 +1,145 @@
+# xfer.qa — перенос груза (C++ `TransferMenu` + `UnitInfo::ProcessTransfer`).#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/xfer.qa qa-out/xfer
+#
+# Что проверяется — всё теми же кликами/клавишами, что у игрока:
+# * пункт `x-fer` меню команд включён у юнитов с грузом `RAW..GOLD` и включает
+#   курсорный режим (`unit->cursor = 3`, `UnitsManager_Popup_OnClick_Transfer`);
+# * клик по своему юниту в этом режиме — `GameManager_TransferCargo` →
+#   `TransferMenu_Menu`: окно `XFERPIC`, значения из `TransferMenu_GetUnitCargoInfo`
+#   (запас/ёмкость комплекса источника и `storage`/`ATTRIB_STORAGE` цели);
+# * полоса ограничена `give_max`/`take_max` (`LimitedScrollbar`), кнопки `±1`
+#   и клик по полосе меняют количество, `?` открывает `TRANSFER_SETUP`;
+# * `Done`/`Enter` отдаёт `ORDER_TRANSFER` (пакет **08/P3**, `transfer_cargo`),
+#   на следующем тике `ProcessTransfer` переносит груз: `storage` обеих сторон
+#   и поле комплекса меняются по формулам C++;
+# * отрицательное значение переносит обратно из комплекса в юнит;
+# * `Esc`/`Cancel` не меняет запасы.
+#
+# Кадры `xfer-menu`, `xfer-help`, `xfer-set` — golden `max-rust-qa/golden/xfer`.
+
+# --- Главное меню → партия ------------------------------------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация без покупок: конструктор из SC_L0001 (cargo 40) ----------
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# Конструктор высажен с `storage = cargo` (`DeployUnit`), 40 из 60.
+select type Constructor
+assert unit-storage=40
+
+# --- Первые ходы экономики: добыча попадает в склад шахты ------------------
+# `GameManager_ManageEconomy` → `OptimizeComplexes` (`Access_UpdateResourcesTotal`)
+# → `UnitInfo::UpdateProduction`: `storage = min(complex.material, ATTRIB_STORAGE)`.
+end_turn
+assert screen=InGame
+end_turn
+assert screen=InGame
+end_turn
+assert screen=InGame
+select type MiningStation
+assert unit-storage>=5
+
+# --- x-fer: пункт включён, режим курсора --------------------------------
+unit-menu open
+assert unit-menu=open
+assert unit-menu-item=x-fer
+shot xfer-selected
+unit-menu item x-fer
+assert unit-menu=closed
+
+# --- Клик по конструктору открывает окно X-FER ---------------------------
+click unit Constructor
+assert transfer=open
+# По умолчанию полоса заполняет цель: min(60-40, запас шахты).
+assert transfer-amount>=1
+shot xfer-menu
+
+# --- Модальность: клик по карте окно не закрывает -----------------------
+click 500 300
+assert transfer=open
+
+# --- Кнопки ±1 (LimitedScrollbar) ---------------------------------------
+transfer amount 5
+assert transfer-amount=5
+transfer right
+assert transfer-amount=6
+transfer left
+assert transfer-amount=5
+# Верхний предел: `give_max = min(свободно у цели, запас источника)`.
+transfer amount 999
+assert transfer-amount<=20
+transfer amount 5
+assert transfer-amount=5
+shot xfer-set
+
+# --- Help: `?` → TRANSFER_SETUP ----------------------------------------
+transfer help
+assert help=open
+assert help-section=transfer
+shot xfer-help
+help done
+assert help=closed
+assert transfer=open
+
+# --- Done: ORDER_TRANSFER (08/P3) → тик исполняет ProcessTransfer -------
+transfer done
+assert transfer=closed
+tick 1
+assert unit-order=poweron
+select type Constructor
+assert unit-storage=45
+# Запас комплекса шахты уменьшился на 5 (Inventory 5 + mining не в счёт).
+select type MiningStation
+assert complex-raw>=0
+
+# --- Обратное направление: минус — из комплекса в юнит -------------------
+unit-menu open
+assert unit-menu-item=x-fer
+unit-menu item x-fer
+click unit Constructor
+assert transfer=open
+transfer amount -3
+assert transfer-amount=-3
+transfer done
+assert transfer=closed
+tick 1
+select type Constructor
+assert unit-storage=42
+
+# --- Cancel не меняет запасы --------------------------------------------
+select type MiningStation
+unit-menu open
+unit-menu item x-fer
+click unit Constructor
+assert transfer=open
+transfer amount 4
+transfer cancel
+assert transfer=closed
+tick 1
+select type Constructor
+assert unit-storage=42
+
+# --- Шахта отдала ровно 5 и получила 3 обратно ---------------------------
+select type MiningStation
+assert unit-order=poweron

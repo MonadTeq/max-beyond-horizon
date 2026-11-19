@@ -680,6 +680,8 @@ pub struct Assets {
     /// `BARGOLD` + `BARTAPE` + `LFARO_OF`/`RTARO_OF` + `MNUBTN*`), C++
     /// `AllocMenu`.
     pub alloc: Option<crate::allocmenu::AllocMenuAssets>,
+    /// Окно X-FER (`XFERPIC` + `XFR*` + `SMBRRAW/FUEL/GOLD`), C++ `TransferMenu`.
+    pub transfer: Option<crate::transfermenu::TransferMenuAssets>,
     /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Видео интро: путь к `maxint.mve` (ресурс `INTROFLC` — ASCIIZ-ссылка).
@@ -876,6 +878,8 @@ impl Assets {
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
         // Диалог распределения добычи шахты (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
         let alloc = crate::allocmenu::AllocMenuAssets::load(&max_res);
+        // Окно X-FER (`XFERPIC` + `XFR*` + `SMBR*`), C++ `TransferMenu`.
+        let transfer = crate::transfermenu::TransferMenuAssets::load(&max_res);
         // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
@@ -922,6 +926,13 @@ impl Assets {
         if !alloc.is_ready() {
             warnings.push(
                 "AllocMenu: ALLOCFRM/BARRAW/BARTAPE не загрузились — распределение шахты не рисуется"
+                    .to_string(),
+            );
+        }
+
+        if !transfer.is_ready() {
+            warnings.push(
+                "TransferMenu: XFERPIC/XFR*/SMBRRAW не загрузились — окно x-fer не рисуется"
                     .to_string(),
             );
         }
@@ -1064,6 +1075,7 @@ impl Assets {
             preferences: Some(preferences),
             unit_menu: Some(unit_menu),
             alloc: Some(alloc),
+            transfer: Some(transfer),
             cargo: Some(cargo),
             intro_mve,
             cursors: Some(cursors),

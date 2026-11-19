@@ -1904,7 +1904,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `Auto` | тумблер `auto_survey` (+ `Ai_EnableAutoSurvey`) | **реализовано** (поле `UnitInfo::auto_survey`, как C++, локально) |
 | `Manual` | тумблер `disabled_reaction_fire` | **реализовано** (идёт в P1-поле `disabled_reaction_fire`; в C++ настройка есть только в simultaneous moves — наш UI такой режим не предлагает, поэтому пункт практически не появляется) |
 | `Done` | `UnitsManager_PerformAction` | **реализовано в объёме стека**: `Await`+`STATIONARY` → `ORDER_STATE_READY_TO_EXECUTE_ORDER`, снятие выделения (`auto_select`); «подтверждения хода» нет — приказы в нашем стеке исполняются сразу |
-| `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **отключено**: `TransferMenu_Menu` (диалог количества) не портирован, а `ProcessOrderTransfer` в ядре — TODO P3 (`unit_order.rs:2120`). Приказ `Transfer` в протоколе есть (`P3.transfer_cargo`), поэтому пункт оставлен видимым (серым) |
+| `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **реализовано**: `App::open_transfer_menu` → `max_app::transfermenu` (окно `XFERPIC`), `GameManager_GetUnitWithCargoType`, `ProcessOrderTransfer`/`ProcessTransfer` в ядре; см. §29 |
 | `attack` | тумблер `targeting_mode` | **отключено**: режим наведения не портирован, атака — кликом по врагу |
 | `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **отключено**: `ORDER_LAND` — процессор P1 и не несёт `parent_unit`, поэтому посадка не доедет до сети/получателя; вся цепочка `GameManager_ProcessMouse` (CURSOR_LOAD) не портирована |
 | `activate` | `RepairShopMenu_Menu` | **отключено**: меню ремонтного цеха не портировано |
@@ -3036,3 +3036,101 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
   4/4 (soak-100 + soak_headless). Живой интерактивный прогон окна в этой сессии не
   выполнялся (headless-сессия агента: `CopyFromScreen` даёт чёрный кадр — не
   свидетельство); визуальная часть подтверждена кадрами QA/golden.
+
+## 29. X-FER (`TransferMenu` + `ProcessOrderTransfer`) — **сделано** (2026-11-19)
+
+Пункт `x-fer` меню команд был серым: механики не было ни в UI, ни в ядре.
+Теперь порт 1:1.
+
+| Что | C++ | У нас |
+|---|---|---|
+| пункт меню | `UnitsManager_Popup_InitCommons` (`units_manager.cpp:550`): груз `RAW..GOLD`, приказ ≠ `CLEAR`/`BUILD`, `pressed = cursor == 3` | `unitmenu::init_commons` — без `.disabled`; нажатие выставляется в `App::open_unit_menu` из `HudState.cursor_mode` |
+| обработчик | `UnitsManager_Popup_OnClick_Transfer` (`:518`): тумблер `cursor = 3`, `targeting_mode/enter_mode = 0` | `activate_unit_menu_item` — то же (поле в `HudState`) |
+| выбор цели | `GameManager_TransferCargo` (`game_manager.cpp:4634`): цель не `ORDER_DISABLE`; при равном грузе — сама цель, иначе `GetUnitWithCargoType(complex, cargo)` для стационарного здания комплекса; `SetParent` | `transfermenu::resolve_target` + `App::open_transfer_menu` (parent выставляется сразу, как C++) |
+| окно | `TransferMenu` (`transfermenu.cpp:148`): `XFERPIC` 308×162 в центре `WINDOW_MAIN_MAP` (249,160) | `max_app::transfermenu`, те же координаты (включающие границы C++: `(448−1−w)/2`) |
+| числа/полосы | `TransferMenu_GetUnitCargoInfo`: комплекс (`Complex::GetCargoInfo`) для чужого комплекса, иначе `storage`/`ATTRIB_STORAGE`; `total = min(target_free, source)`; `source_free = min(source_free, target_materials)` | `TransferMenu::new`, `transfer_menu_cargo_info` (ядро) |
+| полоса | `LimitedScrollbar` (`scrollbar.cpp:298`): `zero_offset = −target_materials`, `give_max = total`, `take_max = −source_free`; клик `(w/2 + capacity·x)/w + zero_offset`, обрезка `[zero_offset, free_capacity]` и `[take_max, give_max]`; заливка `LoadHorizontalBar` (правые `fill` px `SMBR*`) | `click_value`/`set_amount`/`adjust`/`bar_fill`/`draw_horizontal_bar` |
+| кнопки | `XFRCAN/XFRHLP/XFRDNE` (82/147/174,125), `XFRLFT/XFRRGT` (17/278,89), стрелка `XFRLFARO`/`XFRRTARO` (141,43; `rest_state = total >= 0`) | те же прямоугольники/ресурсы |
+| помощь | `Shift+/` → `HelpMenu_Menu("TRANSFER_SETUP")` | `HelpSection::Transfer`, `?`/`Shift+/`, после закрытия окно X-FER остаётся |
+| выход | `Done`/`Enter`/`KP_Enter` → значение, `Esc`/`Cancel` → 0 | `TransferAction::{Confirm,Cancel}`; `Enter`/`Esc`, кнопки |
+| приказ | `unit1->transfer_cargo = amount; SetNewOrder(ORDER_TRANSFER, INIT)` — пакет **08/P3** | `transfermenu::transfer_order` → `PayloadP3 { parent_unit, transfer_cargo }`, `App::confirm_transfer` |
+| исполнение | `UnitsManager_ProcessOrderTransfer` → `UnitInfo::ProcessTransfer` (`unitinfo.cpp:5294`): знак задаёт направление, `TransferRaw/Fuel/Gold`, при нехватке `storage` — `Complex::Transfer`, затем `RestoreOrders` | `max_core::transfer::{process_transfer, transfer_cargo_kind, complex_transfer, transfer_cargo}`; `unit_order::process_order_transfer` перечитывает юнита после процессора |
+| закрытие | `~TransferMenu` → `EnableMainMenu(SelectedUnit)` → `MenuUnitSelect` снимает `cursor/enter_mode` | `cancel_transfer`/`confirm_transfer` сбрасывают `HudState.cursor_mode`/`enter_mode` |
+
+Порт `GameManager_GetUnitWithCargoType` — `max_core::transfer::find_unit_with_cargo_type`
+(порядок `UnitsManager_StationaryUnits`); направление «из комплекса» —
+`Complex::Transfer` раскладывает списание по зданиям в том же порядке, поэтому
+результат детерминирован.
+
+**Тесты.** `max_core::transfer::tests` (8: `TransferCargo` заливка/слив/лимит,
+`Complex::Transfer` в порядке списка и с переливом, `ProcessTransfer` в обе
+стороны + `RestoreOrders`, `TransferMenu_GetUnitCargoInfo`); `max_core/tests/transfer.rs`
+(12: сквозной перенос через `process_order`, ёмкости `ADUMP/FDUMP/GOLDSM`=50,
+добыча → шахта → склад, потеря излишка, топливо/золото без склада, детерминизм);
+`max_app::transfermenu::tests` (10: формулы чисел/полосы/кликов/клавиш, layout,
+`resolve_target` с подменой цели, P3-приказ); `max_app/tests/transfer.rs` (5:
+пункт включён, окно открывается кликом по цели и переносит 5/3, отмена, help,
+кадр окна).
+
+**QA.** `max-rust-qa/scripts/xfer.qa` (1332 кадра): меню шахты → `x-fer` →
+клик по конструктору → значения/полоса/`±1`/лимит → модальность → `TRANSFER_SETUP`
+→ `Done` (08/P3) → `tick 1` → `storage` 45 → обратный `−3` → 42 → `Cancel` без
+изменений. Golden `max-rust-qa/golden/xfer/` — `xfer-menu.png`, `xfer-set.png`,
+`xfer-help.png`; `unit-menu-builder.png` переснят (x-fer стал зелёным).
+
+## 30. Запас комплекса и хранилища — **сделано** (2026-11-19)
+
+`UnitInfo::UpdateProduction` в порте не разбирал запас комплекса по складам
+(`// TODO(P3): перенос груза из комплекса в storage`), а `Resupply`/`Reload`
+были заглушками. Из-за этого добыча шахт не попадала в `ADUMP`/`FDUMP`/`GOLDSM`
+и лимит ёмкости не действовал.
+
+| Что | C++ | У нас |
+|---|---|---|
+| ёмкости | `ATTRIB_STORAGE` из `SC_ATTRI`: `ADUMP`/`FDUMP`/`GOLDSM` = **50**, `MININGST` = **25**, `CONSTRCT` = 60, `SPLYTRCK`/`FUELTRCK`/`GOLDTRIK` = 50 | таблица `BASE_UNIT_VALUES` (уже была верной; закреплено тестом `dump_capacities_match_cpp_attribute_storage`) |
+| добыча | `Access_UpdateResourcesTotal` (`access.cpp:912`): `Σ (Cargo_GetNetProduction(unit,false) + Cargo_GetInventory(unit))` по зданиям комплекса | `max_core::alloc::update_resources_total` — без изменений |
+| разбор по складам | `UnitInfo::UpdateProduction` (`unitinfo.cpp:3004`): `storage = min(complex.material, ATTRIB_STORAGE); complex.material -= storage` (и fuel/gold) | `GameState::update_production` — новый шаг 5 |
+| порядок | `ManageEconomy`: `OptimizeComplexes` (пересчёт) → `UpdateProductions` (разбор) → `Resupply` | `GameState::manage_economy` — тот же порядок |
+| переполнение | остаток сверх суммы `ATTRIB_STORAGE` остаётся в поле комплекса и теряется на следующем `Access_UpdateResourcesTotal` (кэш на один ход) | то же; тест `mining_overflow_is_lost_when_complex_capacity_is_exhausted` |
+| без склада | `raw` ограничен складом самой шахты (25), `fuel`/`gold` некуда положить — теряются | то же; тест `fuel_and_gold_income_need_their_own_storage_buildings` |
+| прочее в `UpdateProduction` | `COMMTWR` +5 золота команды за ход, `GREENHSE` `++storage`/`++team_points`, мобильный строитель платит сырьём (`Cargo_GetRawConsumptionRate`) | реализовано 1:1 (с условием C++ про сложность ИИ `opponent >= MASTER` и `turns <= 1`) |
+| снабжение | `UnitInfo::Resupply`: `materials.raw > 0` → `ammo = ATTRIB_AMMO`, `Complex::Transfer(-1,0,0)`; `Reload` — то же | `GameState::resupply`, `process_order_reload` (через `complex_transfer`) |
+
+**Тесты.** `max_core/tests/transfer.rs::{dump_capacities_match_cpp_attribute_storage,
+mining_income_is_pulled_into_the_mine_and_then_the_dump,
+mining_overflow_is_lost_when_complex_capacity_is_exhausted,
+fuel_and_gold_income_need_their_own_storage_buildings, storage_economy_is_deterministic,
+transfer_cargo_kind_never_exceeds_storage_capacity}`; `max_core::transfer::tests::transfer_cargo_kind_distributes_overflow_across_members`.
+QA: `xfer.qa` ассертит `unit-storage` до/после переноса; `allocate.qa` —
+что добыча за ход оказывается в `storage` шахты (`UnitInfo::UpdateProduction`),
+а не остаётся в кэше комплекса.
+
+**Осознанные ограничения.** Слияние зданий в комплекс по коннекторам
+(`TestConnections`) в порте по-прежнему не считается (см. §20): в QA и тестах
+комплекс собирается явно. `ProductionManager_OptimizeProduction` (отключение
+зданий при отрицательном балансе) остаётся TODO — `update_complex_resources`
+пересчитывает запасы, но не управляет приказами; это не влияет на лимиты
+хранилищ, которые и были предметом задачи.
+
+**Артефакты и гейты (2026-11-19, X-FER + хранилища).**
+* CI-гейт `bash ci.sh` — **зелёный** (889 с): шаги 1/4 (`cargo check`+`test`
+  default/sound/no-default; 343 UNIT-теста `max_app`, 243 `max_core`), 2/4
+  (Horizon), 3/4 (16 QA-скриптов, включая `xfer.qa` — PASS 1332 кадра; 11
+  golden-сверок, включая `golden/xfer` — 0 дрейфа), 4/4 (`soak-100` +
+  `soak_headless --turns 120`: PASS, RSS стабилен).
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/` —
+  `max-rust.exe` 6 612 480 Б, sha256
+  `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`;
+  `max_app-1.1.0-windows-x86_64-ui.zip` sha256
+  `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`
+  (PE32+ x64, Subsystem=2 GUI, SDL3.dll рядом; `build-windows-ui.ps1`,
+  MSVC+vcpkg, `--help` OK).
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/` —
+  `max-rust.exe` 10 928 081 Б, sha256
+  `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`;
+  `max_app-1.1.0-windows-x86_64.zip` (4 082 276 Б) sha256
+  `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`
+  (PE32+ x64, Subsystem=3 console; `build-windows.sh --no-wine`).
+* Оракулы (`max-cpp-port`, `max-original`, `max-original-dasm`) не изменялись;
+  `max-original/save10.*`, которые QA-сейв-сценарии пишут в каталог данных,
+  возвращены в исходное состояние.

@@ -85,6 +85,7 @@ pub mod save;
 pub mod save_write;
 pub mod setup;
 pub mod team;
+pub mod transfer;
 pub mod unit;
 pub mod unit_order;
 pub mod unit_values;
@@ -190,6 +191,11 @@ pub use team::{
     TeamInfoUi, TeamKind, TeamUnits,
 };
 pub use unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
+pub use transfer::{
+    complex_free_capacity, complex_income, complex_stored, complex_transfer,
+    find_unit_with_cargo_type, process_transfer, transfer_cargo, transfer_cargo_kind,
+    transfer_menu_cargo_info, unit_cargo,
+};
 pub use unit_order::{
     blocked_on_path_request, move_finished, restore_orders, set_new_order_int, OrderContext,
     MOVEMENT_WAIT_LIMIT,

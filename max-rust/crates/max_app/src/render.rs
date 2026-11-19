@@ -866,6 +866,8 @@ impl App {
         self.draw_research_menu(&mut frame);
         // Диалог распределения добычи шахты (`AllocMenu`, `ALLOCFRM`).
         self.draw_alloc_menu(&mut frame);
+        // Окно X-FER (`TransferMenu`, `XFERPIC`) — поверх карты.
+        self.draw_transfer_menu(&mut frame);
         // Меню команд выделенного юнита (`GameManager_PopupButtons`).
         self.draw_unit_menu(&mut frame);
         // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
@@ -970,6 +972,8 @@ impl App {
         self.draw_research_menu(&mut frame);
         // Диалог распределения добычи шахты — полноэкранный `ALLOCFRM`.
         self.draw_alloc_menu(&mut frame);
+        // Окно X-FER (`XFERPIC`) — над картой и панелями.
+        self.draw_transfer_menu(&mut frame);
         // Меню команд выделенного юнита — над картой и панелями.
         self.draw_unit_menu(&mut frame);
         // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
@@ -1021,6 +1025,15 @@ impl App {
         };
 
         menu.draw(frame, assets);
+    }
+
+    /// Рисует открытое окно X-FER (C++ `TransferMenu`, `XFERPIC`).
+    pub(crate) fn draw_transfer_menu(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.transfer_menu(), self.assets()) else {
+            return;
+        };
+
+        menu.draw(frame, assets, self.state());
     }
 
     /// Рисует открытый диалог `Preferences`/`Setup` (C++ `OptionsMenu`).

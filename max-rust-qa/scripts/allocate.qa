@@ -116,17 +116,18 @@ tick 1
 assert unit-order=poweron
 assert unit-menu=closed
 
-# --- Экономика: распределение стало добычей комплекса ---------------------
-# `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`
-# пересчитывает запасы комплекса, включая `raw_mining` шахты.
+# --- Экономика: распределение стало добычей и запасом шахты ---------------
+# `manage_economy` → `OptimizeComplexes` (`Access_UpdateResourcesTotal`) кладёт
+# добычу в `Complex::material`, затем `UnitInfo::UpdateProduction` разбирает её
+# по складам: `storage = min(complex.material, ATTRIB_STORAGE)` (у шахты 25).
 end_turn
 assert screen=InGame
-assert complex-raw>=4
+# После смены хода выделение снято: клик выделяет шахту.
+select type MiningStation
+assert unit-storage>=4
 
 # --- Повторное открытие помнит распределение ------------------------------
-# После смены хода выделение снято: первый клик выделяет шахту, второй
-# (`unit-menu open`) открывает меню команд.
-select type MiningStation
+# Шахта уже выделена: повторный клик (`unit-menu open`) открывает меню команд.
 unit-menu open
 assert unit-menu-item=allocate
 unit-menu item allocate

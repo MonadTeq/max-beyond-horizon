@@ -30,6 +30,9 @@ fn state_with_gold(gold: u32) -> GameState {
 
 /// Один «ход производства» — как `GameState::finish_turn` для одной команды.
 fn production_turn(state: &mut GameState) -> Vec<max_core::ProductionEvent> {
+    // Начало хода команды: `GameManager_ManageEconomy` → `UpdateProduction`
+    // (списание сырья со склада строителя), затем `ProgressBuildState`.
+    state.manage_economy(TeamId::RED);
     max_core::production::progress_build_state(state, TeamId::RED)
 }
 

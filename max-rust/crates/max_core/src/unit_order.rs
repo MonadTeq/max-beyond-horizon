@@ -2491,8 +2491,13 @@ fn process_order_reload(ctx: &mut OrderContext<'_>) {
 
     let mut need_action = false;
 
-    if ctx.unit.complex.is_some() {
-        // TODO(P3): `complex->GetCargoInfo` → `Transfer(-1, 0, 0)`.
+    if let Some(complex) = ctx.unit.complex {
+        let (materials, _) = crate::alloc::get_cargo_info(ctx.world, ctx.unit.team, complex);
+
+        if materials.raw > 0 {
+            need_action = true;
+            crate::transfer::complex_transfer(ctx.world, ctx.unit.team, complex, -1, 0, 0);
+        }
     } else if ctx.unit.storage > 0 {
         need_action = true;
         ctx.unit.storage -= 1;
@@ -2515,10 +2520,16 @@ fn process_order_reload(ctx: &mut OrderContext<'_>) {
 fn process_order_transfer(ctx: &mut OrderContext<'_>) {
     ai_task_flag(ctx.world, "Tranferring");
 
-    // TODO(P3): перенос груза между юнитом и родителем
-    // (`TransferRaw/TransferFuel/TransferGold`, комплекс).
+    // Перенос материалов/топлива/золота между юнитом и родителем: знак
+    // `transfer_cargo` задаёт направление, `ProcessTransfer` сам вызывает
+    // `RestoreOrders`. `ctx.commit()` в конце пишет снимок `ctx.unit`, поэтому
+    // перечитываем юнита после процессора — иначе правки `storage`/приказов
+    // затрёт устаревшая копия.
+    crate::transfer::process_transfer(ctx.world, ctx.id);
 
-    ctx.restore_orders();
+    if let Some(unit) = ctx.world.unit(ctx.id) {
+        ctx.unit = unit.clone();
+    }
 }
 
 /// `UnitsManager_ProcessOrderHaltBuilding` (`units_manager.cpp:3142`).

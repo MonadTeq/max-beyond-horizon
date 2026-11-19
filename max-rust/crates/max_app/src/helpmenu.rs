@@ -100,6 +100,8 @@ pub enum HelpSection {
     GameScreen,
     /// `ALLOCATE_SETUP` (`AllocMenu::Run`, кнопка `?`/`Shift-/`).
     Allocate,
+    /// `TRANSFER_SETUP` (`TransferMenu::ProcessKey`, `Shift-/`).
+    Transfer,
     /// `PREFS_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, вариант `PREFSPIC`).
     Preferences,
     /// `SETUP_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, вариант `SETUPPIC`).
@@ -120,6 +122,7 @@ impl HelpSection {
             Self::Upgrades => "UPGRADES_SETUP",
             Self::GameScreen => "GAME_SCREEN_SETUP",
             Self::Allocate => "ALLOCATE_SETUP",
+            Self::Transfer => "TRANSFER_SETUP",
             Self::Preferences => "PREFS_MENU_SETUP",
             Self::Setup => "SETUP_MENU_SETUP",
         }
@@ -138,6 +141,7 @@ impl HelpSection {
             "upgrades" | "upgrades_setup" => Some(Self::Upgrades),
             "game" | "game_screen" | "game_screen_setup" => Some(Self::GameScreen),
             "allocate" | "allocate_setup" => Some(Self::Allocate),
+            "transfer" | "transfer_setup" | "xfer" => Some(Self::Transfer),
             "preferences" | "prefs" | "prefs_menu_setup" => Some(Self::Preferences),
             "setup_menu" | "setup_menu_setup" | "setuphelp" => Some(Self::Setup),
             _ => None,

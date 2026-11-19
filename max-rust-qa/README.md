@@ -37,9 +37,11 @@ max-rust-qa/
    `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`), golden — `golden/research-help/`.
    **P9**: `scripts/unit-menu.qa` — меню команд юнита (`GameManager_PopupButtons`),
    `scripts/allocate.qa` — распределение добычи шахты (`AllocMenu`, `ALLOCFRM`,
-   `Done` → `ORDER_NEW_ALLOCATE` 08/P5 → доход комплекса), golden —
-   `golden/unit-menu/`, `golden/allocate/`.
-   Итоговая матрица — `suite/README.md` (**186 ✅, 1 🟡, 16 ⏭ not planned**).
+   `Done` → `ORDER_NEW_ALLOCATE` 08/P5 → доход комплекса),
+   `scripts/xfer.qa` — X-FER (`TransferMenu` + `ProcessOrderTransfer`: перенос
+   материалов/топлива/золота, `Done` → `ORDER_TRANSFER` 08/P3), golden —
+   `golden/unit-menu/`, `golden/allocate/`, `golden/xfer/`.
+   Итоговая матрица — `suite/README.md` (**193 ✅, 1 🟡, 16 ⏭ not planned**).
 
 ## Соответствие «Test Case → автоматизация»
 

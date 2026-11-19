@@ -527,7 +527,7 @@ fn unit_menu_actions_are_orders_on_the_wire() {
     assert_eq!(
         PayloadLevel::for_order(UnitOrder::Transfer),
         PayloadLevel::P3,
-        "x-fer в протоколе есть (P3.transfer_cargo), но UI переноса не портирован"
+        "x-fer: ORDER_TRANSFER — пакет 08/P3 (parent_unit, transfer_cargo)"
     );
     let _ = UnitOrderState::Init;
 }

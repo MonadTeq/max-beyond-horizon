@@ -1772,6 +1772,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_alloc_menu_input(app, event, online);
     }
 
+    // X-FER (C++ `TransferMenu`, окно `XFERPIC`) — модальное окно количества:
+    // `GameManager_DisableMainMenu` вокруг `TransferMenu::Run`.
+    if app.transfer_menu().is_some() {
+        return session_transfer_menu_input(app, event, online);
+    }
+
     if app.build_menu().is_some() {
         return session_build_menu_input(app, event, online);
     }
@@ -2029,7 +2035,43 @@ fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
     Transition::None
 }
 
-/// Ввод в открытом окне сохранения/загрузки V70 (модальный экран P3).
+/// Ввод в открытом окне X-FER (C++ `TransferMenu::Run`).
+///
+/// Окно модально (`GameManager_DisableMainMenu`): карта приказ не получает.
+/// `Done`/`Enter` отдаёт `ORDER_TRANSFER` (08/**P3**, `transfer_cargo`),
+/// `Esc`/`Cancel` закрывает без приказа, `?` открывает `TRANSFER_SETUP`
+/// поверх окна (в C++ `HelpMenu_Menu` возвращается в `TransferMenu`).
+fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+    let Some(action) = app.transfer_menu_input(event) else {
+        return Transition::None;
+    };
+
+    match action {
+        crate::transfermenu::TransferAction::None => {}
+        crate::transfermenu::TransferAction::Help => {
+            app.open_help(HelpSection::Transfer);
+            app.hud_mut().push_log("Transfer help");
+        }
+        crate::transfermenu::TransferAction::Cancel => {
+            if let Some(line) = app.cancel_transfer() {
+                app.hud_mut().push_log(line);
+            }
+        }
+        crate::transfermenu::TransferAction::Confirm => {
+            if let Some((line, queued)) = app.confirm_transfer() {
+                app.hud_mut().push_log(line);
+
+                // Офлайн приказ исполняется сразу (как остальные приказы из
+                // меню); в сети он уходит пакетом 08/P3.
+                if queued && !online {
+                    apply_pending_orders(app);
+                }
+            }
+        }
+    }
+
+    Transition::None
+}
 ///
 /// Действия окна — [`crate::SaveLoadAction`]: записать слот, загрузить слот или
 /// закрыть. Ошибки файлового I/O остаются в строке статуса окна, чтобы игрок
@@ -2581,6 +2623,32 @@ fn session_map_left_click(
         let cursor = app.hud().cursor_mode;
         if cursor != 0 {
             if let Some(selected) = selected.filter(|selected| *selected != id) {
+                // X-FER: `GameManager_ProcessMouse` → CURSOR_TRANSFER →
+                // `GameManager_TransferCargo` → `TransferMenu_Menu`.
+                if cursor == crate::unitmenu::CURSOR_TRANSFER {
+                    match crate::transfermenu::resolve_target(app.state(), selected, id) {
+                        Ok(Some(target)) => {
+                            if app.open_transfer_menu(selected, target) {
+                                let label = app
+                                    .state()
+                                    .unit(target)
+                                    .map(unit_label)
+                                    .unwrap_or_else(|| format!("unit {target:?}"));
+                                app.hud_mut()
+                                    .push_log(format!("x-fer: цель {label} — выберите количество"));
+                            } else {
+                                app.hud_mut().push_log("x-fer: окно не открылось");
+                            }
+                        }
+                        Ok(None) => {
+                            // C++ молча ничего не делает: у цели нет
+                            // совместимого склада/типа груза.
+                        }
+                        Err(message) => app.hud_mut().push_log(message),
+                    }
+                    return Transition::None;
+                }
+
                 match crate::unitmenu::cursor_mode_click(app.state(), selected, id, cursor) {
                     Ok(Some(command)) => {
                         app.hud_mut().pending.push(command);
