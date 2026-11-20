@@ -238,6 +238,13 @@ pub enum Assertion {
     /// `assert build-ready=yes|no`: есть ли у игрока достроенное здание,
     /// ждущее ухода строителя (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`).
     BuildReady(bool),
+    /// `assert endturn=pressed|normal`: вид кнопки End Turn.
+    ///
+    /// C++ `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) зовёт
+    /// `GameManager_MenuClickEndTurnButton(rest_state)` по типу активной команды:
+    /// `TEAM_TYPE_PLAYER` → отжата, `TEAM_TYPE_COMPUTER` → нажата
+    /// (`SetRestState(true)`) до конца ходов оппонентов.
+    EndTurnPressed(bool),
     /// `assert hint=TEXT|none`: подсказка сверху карты
     /// (`MessageManager_DrawMessage` для выделенного строителя); сравнение —
     /// подстрока без учёта регистра.
@@ -1171,6 +1178,13 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             "no" | "false" | "off" | "ready" => Ok(Assertion::BuildReady(false)),
             other => Err(format!(
                 "assert build-ready: ожидалось yes|no, получено «{other}»"
+            )),
+        },
+        "endturn" | "end-turn" => match value.to_ascii_lowercase().as_str() {
+            "pressed" | "down" | "on" => Ok(Assertion::EndTurnPressed(true)),
+            "normal" | "up" | "released" | "off" => Ok(Assertion::EndTurnPressed(false)),
+            other => Err(format!(
+                "assert endturn: ожидалось pressed|normal, получено «{other}»"
             )),
         },
         "hint" => {
@@ -2179,6 +2193,14 @@ mod tests {
         assert_eq!(one("assert angle=2"), Command::Assert(Assertion::Angle(2)));
         assert!(parse_script("assert angle=8\n").is_err(), "угол 0..7");
         assert!(parse_script("assert angle=восток\n").is_err());
+        assert_eq!(
+            one("assert endturn=pressed"),
+            Command::Assert(Assertion::EndTurnPressed(true))
+        );
+        assert_eq!(
+            one("assert endturn=normal"),
+            Command::Assert(Assertion::EndTurnPressed(false))
+        );
         assert_eq!(
             one("assert site=large"),
             Command::Assert(Assertion::ConstructionSite(Some(true)))

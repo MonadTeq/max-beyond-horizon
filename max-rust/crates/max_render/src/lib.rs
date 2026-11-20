@@ -56,8 +56,9 @@ pub use layout::{
     WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 pub use map_render::{
-    dot_radius_for, map_from_wrl, pattern_cell_size, render_map_into, render_tile,
-    render_tile_into, tile_base_color, tile_pixel_color, TileStyle, PATTERN_CELLS, TILE_PIXELS,
+    blit_simple_image, dot_radius_for, map_from_wrl, pattern_cell_size, render_map_into,
+    render_tile, render_tile_into, tile_base_color, tile_pixel_color, TileStyle, PATTERN_CELLS,
+    TILE_PIXELS,
 };
 pub use palette::{
     command_slots, map_color, BrightnessLut, ColorLut, Palette, PaletteError, TeamColors,

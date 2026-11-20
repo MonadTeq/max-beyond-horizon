@@ -719,7 +719,10 @@ fn tick_orders(state: &mut GameState) {
 /// Достройка 1:1 C++. `SpawnNewUnit` (`unitinfo.cpp:3440`) ставит здание на
 /// площадку в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (оно не рисуется —
 /// `UnitInfoGroup::IsRelevant`) и оставляет строителя на площадке в
-/// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. Лента и конусы снимаются, а здание
+/// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. **Автоматического** ухода нет
+/// (`UnitsManager_ProcessOrderBuild`/`UNIT_READY`: `if (path) BuildNext else
+/// Animate`): приказ даёт игрок кликом по клетке (`game_manager.cpp:6879-6890`)
+/// или ИИ задачей `TaskActivate`. Лента и конусы снимаются, а здание
 /// раскрывается (`ScaleUnit(EXPAND)`) только после того, как строитель сошёл с
 /// площадки — `UnitsManager_BuildingReady` (`units_manager.cpp:4183`).
 #[test]
@@ -775,24 +778,52 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
             "строитель стоит в габаритах здания"
         );
     }
+    assert_eq!(
+        production::builder_awaiting_exit(&state, constructor),
+        Some(building_id),
+        "C++: строитель в ORDER_BUILD/UNIT_READY у достроенного здания"
+    );
 
-    // Первый тик: `TaskActivate`/`ORDER_ACTIVATE` — строитель начинает уход.
-    tick_orders(&mut state);
+    // Игрок **не** отдавал приказ: за 30 тиков ничего не происходит — ни
+    // `ORDER_ACTIVATE`, ни снятия площадки, ни раскрытия здания.
+    for _ in 0..30 {
+        tick_orders(&mut state);
+    }
+    {
+        let builder = state.unit(constructor).expect("constructor alive");
+        assert_eq!(
+            (builder.orders, builder.state),
+            (UnitOrder::Build, UnitOrderState::UnitReady),
+            "C++ ProcessOrderBuild/UNIT_READY: строитель только анимируется"
+        );
+        assert_eq!(builder.grid, site, "строитель остаётся на площадке");
+    }
+    assert!(
+        state
+            .unit(building_id)
+            .is_some_and(|unit| unit.orders == UnitOrder::Idle),
+        "здание не раскрывается без ухода строителя"
+    );
+    assert!(construction_utility(&state, TeamId::RED, site).is_some());
+
+    // Приказ игрока (`game_manager.cpp:6879-6890`): `ORDER_ACTIVATE`/
+    // `ORDER_STATE_IN_TRANSITION` с `move_to` = клетка клика. В порте это
+    // `unit_order::issue_builder_exit` (путь ИИ) или пакет 08/P3 от UI; цель —
+    // первая проходимая клетка вокруг здания.
+    assert!(
+        max_core::unit_order::issue_builder_exit(&mut state, constructor),
+        "приказ на уход выставлен"
+    );
     {
         let builder = state.unit(constructor).expect("constructor alive");
         assert_eq!(
             (builder.orders, builder.state),
             (UnitOrder::Activate, UnitOrderState::InTransition),
-            "C++ TaskActivate: ORDER_ACTIVATE/ORDER_STATE_IN_TRANSITION"
-        );
-        assert_eq!(
-            state.unit(building_id).map(|unit| unit.orders),
-            Some(UnitOrder::Idle),
-            "здание всё ещё ждёт ухода строителя"
+            "C++ порядок игрока: ORDER_ACTIVATE/ORDER_STATE_IN_TRANSITION"
         );
     }
 
-    // Второй тик: `PositionInTape` DEINIT/LEAVE — доворот и съезд с ленты.
+    // Следующий тик: `PositionInTape` DEINIT/LEAVE — доворот и съезд с ленты.
     tick_orders(&mut state);
     {
         let builder = state.unit(constructor).expect("constructor alive");
@@ -891,8 +922,14 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
 #[test]
 fn completion_sequence_is_deterministic() {
     fn run() -> Vec<Vec<u8>> {
-        let (mut state, _, _) = state_with_finished_building(10);
+        let (mut state, constructor, _) = state_with_finished_building(10);
         let mut frames = vec![state.snapshot_bytes()];
+
+        // Приказ игрока на уход (`ORDER_ACTIVATE`), затем тики до раскрытия.
+        assert!(max_core::unit_order::issue_builder_exit(
+            &mut state,
+            constructor
+        ));
 
         for _ in 0..30 {
             tick_orders(&mut state);

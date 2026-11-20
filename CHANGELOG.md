@@ -2,6 +2,56 @@
 
 ### Добавлено
 
+- **A1: строитель уходит с достроенной площадки только по приказу игрока.** Убран
+  «автовыход» (`TaskActivate`/`ActivateEngineer`, который порт вызывал сам в
+  `UnitsManager_ProcessOrderBuild`/`UNIT_READY`). Теперь ровно как
+  `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3440-3592`): здание встаёт на клетку
+  ленты в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` и не рисуется
+  (`UnitInfoGroup::IsRelevant`), строитель остаётся в `ORDER_BUILD`/
+  `ORDER_STATE_UNIT_READY` на площадке (`ProcessOrderBuild`/`UNIT_READY` только
+  анимирует), лента/конусы/плита на месте. Уход заказывает **игрок** кликом по
+  клетке — `game_manager.cpp:6879-6890`: `move_to_grid` = клетка клика,
+  `UnitsManager_SetNewOrder(ORDER_ACTIVATE, ORDER_STATE_IN_TRANSITION)` (пакет
+  08/P3, `hud::build_builder_exit_order`); дальше `PositionInTape` DEINIT/LEAVE
+  (доворот + 4×8 px), `ActivateEngineer` (лента/конусы снимаются), `ORDER_MOVE`;
+  `UnitsManager_BuildingReady` раскрывает здание (`ScaleUnit(EXPAND)`), когда
+  строитель вышел из габаритов 2×2 — плита (`remove_slabs = false`) остаётся
+  фундаментом. ИИ делает то же задачей `TaskCreateBuilding::Activate` →
+  `TaskActivate` (`taskactivate.cpp:104`, `unit_order::issue_builder_exit`), поэтому
+  соло-ИИ не зависает. Бонус: мигающие маркеры `BLDMRK1..5`
+  (`DrawMap_RenderBuildMarker`/`DrawMap_RedrawUnit`) вокруг площадки — та самая
+  «клетка с символом» из подсказки `_(276c)`. QA `production.qa` (шаги:
+  достройка → строитель ждёт → `move near` игроком → `assert unit-order=activate`
+  → уход → здание), `research.qa`/`research-help.qa`; тесты
+  `max_core/tests/production.rs` (30 тиков без приказа ничего не раскрывают),
+  `max_core/tests/ai_p6.rs` (ИИ отдаёт `ORDER_ACTIVATE` и здание появляется),
+  `max_app/tests/app.rs` (кадр с маркерами).
+- **A2: таймер хода 1:1 (`GameManager_DrawTurnTimer`).** Панель показывает
+  **остаток времени хода** в окне `WINDOW_TURN_TIMER_DISPLAY` (534,2…594,22,
+  ресурс `TIMER` 61×21), `FONT5`, формат `"%2.2i:%2.2i"` (минуты:секунды с
+  нулями слева), по центру по обеим осям (`Text_TextBox` с
+  `horizontal_align`/`vertical_align = true`), цвет `0xA2`, а при `turn_time <= 20`
+  — `COLOR_RED` (`0x01`); ноль (таймер выключен) тоже красный. Геометрия цифр
+  сверена с кадром DOS-оригинала: «01:41» занимает x 551…575, y 9…15 — совпадает
+  пиксель в пиксель. Значение раньше не приходило в панель вообще
+  (`PanelState::timer_seconds` был мёртвым полем, всегда «00:00»); теперь
+  `App::turn_timer_seconds()` отдаёт `GameManager_TurnTimerValue` локальной
+  партии (`ceil`), а ход компьютера стартует с `settings["endturn"]`, но не
+  меньше 45 с (`game_manager.cpp:2426-2475`) и тоже тикает. Тесты
+  `panels::tests` (формат/цвет/геометрия), `app.rs`
+  (`chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors`).
+- **A3: кнопка End Turn — нажатый вид и цвет активной команды.** Как
+  `GameManager_MenuClickEndTurnButton` (`game_manager.cpp:3977`) +
+  `GameManager_UpdateGui`: на ходу человека (`TEAM_TYPE_PLAYER`) кнопка отжата
+  (`ENDTRN_U`) с подписью `FontColor(0xA0, 0xA2, 0xE6)`; на ходу компьютера
+  (`TEAM_TYPE_COMPUTER`) — нажата (`SetRestState(true)`) ресурсом
+  `R_ENDT_D/G_ENDT_D/B_ENDT_D/W_ENDT_D` (`CopyDown(R_ENDT_D + team)`) и подписью
+  «End Turn» цветом команды `FontColor(team + 1, team + 1, 0x3F)`
+  (`game_manager.cpp:7860-7883`, у GRAY `0xFF`). В hot-seat у обоих людей кнопка
+  отжата. QA `ai-turn.qa` (мой ход → ход ИИ → возврат; `assert endturn=normal|pressed`),
+  golden `golden/ai-turn`; тесты `panels::tests` и `app.rs`
+  (`chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn`, три фазы).
+
 - **X-FER 1:1: `TransferMenu` + `ProcessOrderTransfer`.** Пункт `x-fer` меню
   юнита больше не серый: у юнитов с грузом `RAW..GOLD` (приказ ≠ `CLEAR`/`BUILD`)
   он включает `cursor = 3` (`UnitsManager_Popup_OnClick_Transfer`), а клик по

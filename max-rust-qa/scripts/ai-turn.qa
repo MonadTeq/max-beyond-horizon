@@ -1,0 +1,80 @@
+# ai-turn.qa — конец хода человека, ход компьютера и возврат управления (A3).
+#
+# Путь игрока: главное меню → Options (No Limit + Turn Based) → Planet →
+# Players (RED — человек, GREEN — компьютер) → мобилизация без покупок →
+# высадка → **клик по End Turn** → кадры хода компьютера → возврат хода.
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/ai-turn.qa qa-out/ai-turn
+#
+# Что проверяется (C++ `GameManager_UpdateGui`, `game_manager.cpp:2437-2492`):
+# * на ходу человека кнопка End Turn **отжата** (`TEAM_TYPE_PLAYER` →
+#   `GameManager_MenuClickEndTurnButton(true)` → `SetRestState(false)`) и
+#   подпись обычная (`FontColor(0xA0, 0xA2, 0xE6)`, `game_manager.cpp:7838`);
+# * на ходу компьютера кнопка **нажата** (`TEAM_TYPE_COMPUTER` →
+#   `MenuClickEndTurnButton(0)` → `SetRestState(true)`) — ресурс
+#   `R_ENDT_D + team` (`R_ENDT_D/G_ENDT_D/B_ENDT_D/W_ENDT_D`) с подписью
+#   «End Turn» цветом активной команды (`FontColor(team + 1, team + 1, 0x3F)`,
+#   `game_manager.cpp:7860-7883`);
+# * таймер хода на ходе компьютера стартует с `settings["endturn"]`, но не
+#   меньше 45 с (`game_manager.cpp:2471-2475`) — в кадре «00:45», на ходе
+#   человека при No Limit — «00:00» цветом `COLOR_RED` (`turn_time <= 20`);
+# * после ходов оппонента кнопка снова отжата, ход возвращается человеку.
+
+# --- Главное меню ---------------------------------------------------------
+assert screen=MainMenu
+menu new_game
+
+# --- Options --------------------------------------------------------------
+# No Limit (таймер хода человека выключен) + Turn Based.
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+
+# --- Planet ---------------------------------------------------------------
+setup done
+assert screen=Players
+
+# --- Players --------------------------------------------------------------
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация и высадка ------------------------------------------------
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Ход человека: кнопка отжата -----------------------------------------
+assert endturn=normal
+assert team=RED
+shot ai-turn-human-normal
+
+# --- Клик по End Turn: начинается ход компьютера -------------------------
+# Кнопка End Turn — (390,2) 72×21 (`WINDOW_ENDTURN_BUTTON`), центр (426,12).
+click 426 12
+# Один кадр: `GameManager_UpdateGui` для `TEAM_TYPE_COMPUTER` уже выставил
+# нажатый вид, а таймер — 45 с.
+tick 1
+assert team=GREEN
+assert endturn=pressed
+shot ai-turn-ai-pressed
+
+# Ход компьютера идёт несколько сотен кадров (`AiPlayer::CheckEndTurn`);
+# `wait` крутит кадры до возврата управления человеку.
+wait 2000
+assert endturn=normal
+assert team=RED
+shot ai-turn-human-again
+
+# Партия продолжается, ход счётчик вырос.
+assert turn>=2
+assert screen=InGame

@@ -805,6 +805,12 @@ impl App {
             local.phase = LocalPhase::AiTurn(team);
             local.active_team = team;
             local.ai_ticks = 0;
+            // `GameManager_UpdateGui` для `TEAM_TYPE_COMPUTER`:
+            // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` —
+            // таймер хода ИИ стартует с этого значения (панель показывает его
+            // тем же `GameManager_DrawTurnTimer`), поэтому он виден и на ходе
+            // компьютера (в QA — 00:45).
+            local.timer_left = local.setup.endturn.max(45) as f32;
             self.local = Some(local);
             self.hud.push_log(format!(
                 "Turn {}: {} (computer)",
@@ -1069,6 +1075,12 @@ impl App {
 
                 if let Some(local) = self.local.as_mut() {
                     local.ai_ticks += 1;
+                    // `GameManager_SyncTurnTimer` тикает и на ходе ИИ —
+                    // `GameManager_TurnTimerValue` уменьшается на секунды
+                    // (`game_manager.cpp:5033-5063`). Истечение таймера ход ИИ
+                    // не закрывает: его закрывает `AiPlayer::CheckEndTurn`
+                    // (`GameManager_RefreshOrders`).
+                    local.timer_left = (local.timer_left - dt.max(0.0)).max(0.0);
                 }
 
                 if timed_out {

@@ -2875,6 +2875,33 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::EndTurnPressed(pressed) => {
+                // Та же функция, что рисует кнопку (`panels::end_turn_pressed`):
+                // ход компьютера — нажата, ход человека — отжата.
+                let active = self.app.state().active_turn_team;
+                let kind = self
+                    .app
+                    .state()
+                    .teams
+                    .get(usize::from(active.0))
+                    .map(|team| team.team_type)
+                    .unwrap_or(max_core::team::TeamKind::None);
+                let actual = crate::panels::end_turn_pressed(kind);
+
+                self.expect(
+                    actual == pressed,
+                    format!(
+                        "endturn={}",
+                        if pressed { "pressed" } else { "normal" }
+                    ),
+                    format!(
+                        "endturn={} (команда {:?}, тип {:?})",
+                        if actual { "pressed" } else { "normal" },
+                        active,
+                        kind
+                    ),
+                )
+            }
             Assertion::Hint(expected) => {
                 let actual = self.app.hud().hint.clone();
                 let ok = match (&expected, &actual) {

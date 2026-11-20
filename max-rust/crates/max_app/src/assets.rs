@@ -19,7 +19,7 @@ use max_assets::flic::Flic;
 use max_assets::sprite::{FrameInfo, ShadowFrame, SpriteFrame};
 use max_assets::{
     decode_shadow, decode_sprite, BigImage, CursorSet, ResArchive, ResourceMarkers, ShadowSheet,
-    SpriteSheet, WrlMap,
+    SimpleImage, SpriteSheet, WrlMap,
 };
 use max_core::enums::{Planet, UnitType};
 use max_render::palette::{BrightnessLut, Palette};
@@ -693,6 +693,10 @@ pub struct Assets {
     pub cursors: Option<CursorSet>,
     /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
     pub resource_markers: ResourceMarkers,
+    /// Мигающие маркеры стройки `BLDMRK1..5` (`DrawMap_BuildMarkImages`,
+    /// `drawmap.cpp:49`) — подсказка игроку, куда увести строителя с площадки
+    /// (`_(276c)`: «click on a square with a symbol in it»).
+    pub build_markers: Vec<SimpleImage>,
     /// Картинки планет по группам (4 × 128×128 big image, `SNOW_PIC + world/6`).
     pub planet_pictures: Vec<BigImage>,
     /// FLC-анимации портретов: тег ресурса `F_*` → разобранный файл
@@ -981,6 +985,22 @@ impl Assets {
             warnings.push("маркеры ресурсов (RAWMSK*/FUELMK*/GOLDMK*) не загрузились".to_string());
         }
 
+        // Маркеры стройки `BLDMRK1..5` (`DrawMap_BuildMarkImages`): 62×62,
+        // рисуются в центре клетки (hotspot `ulx/uly` из заголовка ресурса).
+        let mut build_markers = Vec::with_capacity(5);
+        for index in 1..=5 {
+            let name = format!("BLDMRK{index}");
+
+            match max_res
+                .read(&name)
+                .ok()
+                .and_then(|bytes| SimpleImage::decode(bytes).ok())
+            {
+                Some(image) => build_markers.push(image),
+                None => warnings.push(format!("маркер стройки {name} не загрузился")),
+            }
+        }
+
         // Картинки планет `SNOW_PIC + world/6` — для экрана выбора планеты.
         let mut planet_pictures = Vec::with_capacity(PLANET_GROUP_PICTURES.len());
         for name in PLANET_GROUP_PICTURES {
@@ -1080,6 +1100,7 @@ impl Assets {
             intro_mve,
             cursors: Some(cursors),
             resource_markers,
+            build_markers,
             planet_pictures,
             flics,
             patches_res,

@@ -244,9 +244,133 @@ fn ai_army_attacks_enemy() {
     );
 }
 
+/// ИИ уводит строителя с достроенной площадки сам — задачей
+/// `TaskCreateBuilding::Activate`/`TaskActivate`, а не «автовыходом» в
+/// `UnitsManager_ProcessOrderBuild`.
+///
+/// C++ (`taskcreatebuilding.cpp:670`, `taskactivate.cpp:104`): `EndTurn` задачи в
+/// `CREATE_BUILDING_STATE_BUILDING` при `builder->GetOrderState() ==
+/// ORDER_STATE_UNIT_READY` зовёт `Activate()` → `TaskActivate`, тот ищет
+/// проходимую клетку вокруг здания и отдаёт `ORDER_ACTIVATE`/
+/// `ORDER_STATE_IN_TRANSITION`. Дальше `PositionInTape` DEINIT →
+/// `ActivateEngineer` → `ORDER_MOVE`, а `UnitsManager_BuildingReady` раскрывает
+/// здание, когда строитель вышел из габаритов 2×2. Если бы ИИ ждал «игрока»,
+/// его стройка зависла бы навсегда (достроенное здание не рисуется).
 #[test]
-fn ai_two_runs_have_identical_digest() {
-    fn run() -> Vec<u8> {
+fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
+    let mut state = computer_state();
+    let site = Point::new(10, 10);
+
+    let builder = state
+        .spawn_unit(UnitType::Constructor, TeamId::RED, site, 0)
+        .expect("constructor");
+    let building = state
+        .spawn_unit(UnitType::TrainingHall, TeamId::RED, site, 0)
+        .expect("training hall");
+
+    // Площадка: лента/конусы/плита — как после `StartBuilding`.
+    max_core::production::deploy_construction_site(&mut state, builder, UnitType::TrainingHall, site)
+        .expect("construction site");
+
+    // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520-3592`): взаимные родители,
+    // здание `ORDER_IDLE`/`BUILDING_READY`, строитель `ORDER_BUILD`/`UNIT_READY`.
+    let mut builder_unit = state.unit(builder).expect("builder").clone();
+    builder_unit.grid = site;
+    builder_unit.parent_unit = Some(building);
+    builder_unit.orders = UnitOrder::Build;
+    builder_unit.state = UnitOrderState::UnitReady;
+    builder_unit.build_list.clear();
+    state.write_unit(builder, builder_unit);
+
+    let mut building_unit = state.unit(building).expect("building").clone();
+    building_unit.parent_unit = Some(builder);
+    building_unit.orders = UnitOrder::Idle;
+    building_unit.state = UnitOrderState::BuildingReady;
+    state.write_unit(building, building_unit);
+
+    assert_eq!(
+        max_core::production::builder_awaiting_exit(&state, builder),
+        Some(building)
+    );
+
+    // Задача ИИ в состоянии `BUILDING` (как после `BeginBuilding`).
+    let task = state.ai_append_task(
+        TeamId::RED,
+        None,
+        0,
+        TaskKind::CreateBuilding {
+            unit_type: UnitType::TrainingHall,
+            site,
+            op_state: max_core::ai::tasks::create_building_state::BUILDING,
+            builder: Some(builder),
+            building: None,
+            manager: None,
+            needs_water_platforms: false,
+            tasks: Vec::new(),
+        },
+    );
+    state
+        .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(builder, task));
+
+    // `TaskCreateBuilding::EndTurn` на ходу команды: `Activate()` → `TaskActivate`.
+    state.manage_economy(TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
+
+    let activated = state
+        .unit(builder)
+        .map(|unit| (unit.orders, unit.state))
+        .expect("builder alive");
+    assert!(
+        matches!(
+            activated,
+            (
+                UnitOrder::Activate,
+                UnitOrderState::InTransition
+                    | UnitOrderState::BuildInProgress
+                    | UnitOrderState::TapePositioningDeinit
+            ) | (UnitOrder::AwaitTapePositioning, _)
+        ),
+        "ИИ обязан отдать ORDER_ACTIVATE строителю, получено {activated:?}"
+    );
+
+    // Строитель уходит, здание раскрывается (автовыхода нет — уход идёт
+    // приказом задачи, как у игрока кликом).
+    let mut expanded = false;
+
+    for _ in 0..200 {
+        state.tick();
+
+        if state
+            .unit(building)
+            .is_some_and(|unit| unit.orders != UnitOrder::Idle)
+        {
+            expanded = true;
+
+            break;
+        }
+    }
+
+    assert!(
+        expanded,
+        "здание обязано раскрыться после ухода строителя (соло-ИИ не зависает)"
+    );
+    assert!(
+        max_core::production::construction_utility(&state, TeamId::RED, site).is_none(),
+        "лента и конусы снимаются `UnitsManager_BuildingReady`"
+    );
+    assert!(
+        state
+            .unit(builder)
+            .is_some_and(|unit| !max_core::production::unit_bounds_contains(
+                state.unit(building).expect("building"),
+                unit.grid
+            )),
+        "строитель вне габаритов 2×2"
+    );
+}
+
+#[test]
+fn ai_two_runs_have_identical_digest() {    fn run() -> Vec<u8> {
         let mut state = computer_state();
         put_ore(&mut state, Point::new(12, 11), 20);
 

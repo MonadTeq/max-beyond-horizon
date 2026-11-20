@@ -48,6 +48,9 @@ assert team=0
 shot hs-begin-turn-red
 key ENTER                 # OK в окне «Red Team: Begin turn.»
 assert notice=none
+# Hot-seat: активная команда — человек (TEAM_TYPE_PLAYER), кнопка End Turn
+# отжата (GameManager_UpdateGui → MenuClickEndTurnButton(true)).
+assert endturn=normal
 tick 5
 shot hs-red-turn
 
@@ -56,6 +59,7 @@ assert notice=GREEN
 assert team=1
 shot hs-begin-turn-green
 key ENTER
+assert endturn=normal
 tick 5
 shot hs-green-turn
 

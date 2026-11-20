@@ -1833,18 +1833,14 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
             // застройки, обломки, утилиты, возврат юнитов.
         }
         UnitOrderState::UnitReady => {
-            // C++ `TaskCreateBuilding::Activate` + `TaskActivate`
-            // (`taskcreatebuilding.cpp:912`, `taskactivate.cpp:104`):
-            // достроенное здание ждёт в `ORDER_IDLE`/`BUILDING_READY`, а
-            // строитель обязан сойти с площадки — `ORDER_ACTIVATE`/
-            // `IN_TRANSITION` к свободной клетке вокруг здания. Пока он стоит
-            // на площадке, `UnitsManager_BuildingReady` не раскрывает здание
-            // (оно не рисуется), поэтому без ухода стройка «зависает»
-            // визуально: строитель перекрыт невидимым зданием.
-            if start_leaving_site(ctx) {
-                return;
-            }
-
+            // C++ `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2891`):
+            // `if (unit->path) UnitsManager_BuildNext(unit); else unit->Animate();`
+            // — строитель, достроивший здание, просто стоит и анимируется;
+            // никакого автоматического ухода нет. Приказ на уход отдаёт
+            // **игрок** кликом по клетке (`game_manager.cpp:6879-6890`:
+            // `ORDER_STATE_UNIT_READY` → `ORDER_ACTIVATE`/`IN_TRANSITION`,
+            // сюда приходит уже `ORDER_ACTIVATE`), у ИИ — задача
+            // `TaskActivate` (`crate::unit_order::issue_builder_exit`).
             if ctx.unit.path.is_some() {
                 // TODO(P3): UnitsManager_BuildNext — проверка склада/материалов.
                 clear_build_list_and_path(&mut ctx.unit);
@@ -1907,38 +1903,47 @@ fn activate_engineer(ctx: &mut OrderContext<'_>) {
 }
 
 /// Строитель уходит с достроенной площадки — `TaskActivate::Activate`
-/// (`taskactivate.cpp:104-167`).
+/// (`taskactivate.cpp:104-167`), путь **ИИ**.
 ///
-/// `true` — приказ `ORDER_ACTIVATE`/`IN_TRANSITION` выставлен; C++ делает это
-/// из задачи ИИ (`TaskCreateBuilding::Activate` вешает `TaskActivate`), а для
-/// игрока — по клику в подсвеченную клетку (`DrawMap_RenderBuildMarker` →
-/// `CURSOR_UNIT_GO`). Порт выполняет ту же активацию автоматически: иначе
-/// здание не раскроется (`UnitsManager_BuildingReady` ждёт ухода строителя).
-fn start_leaving_site(ctx: &mut OrderContext<'_>) -> bool {
-    let Some(parent_id) = ctx.unit.parent_unit else {
+/// C++ у игрока приказ на уход рождается в обработчике клика
+/// (`game_manager.cpp:6879-6890`): `move_to_grid` = клетка под курсором и
+/// `UnitsManager_SetNewOrder(selected, ORDER_ACTIVATE, ORDER_STATE_IN_TRANSITION)`;
+/// порт отправляет то же самое пакетом 08/P3 (`hud::build_builder_exit_order`).
+/// У ИИ клика нет: `TaskCreateBuilding::Activate` вешает `TaskActivate`, и тот
+/// ищет первую проходимую клетку вокруг здания (`builder_exit_cell`) и отдаёт
+/// тот же приказ. `true` — приказ выставлен.
+pub fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
+    let Some(builder) = state.unit(builder_id).cloned() else {
         return false;
     };
-    let Some(building) = ctx.other(parent_id) else {
+    let Some(building_id) = production::builder_awaiting_exit(state, builder_id) else {
+        return false;
+    };
+    let Some(building) = state.unit(building_id).cloned() else {
+        return false;
+    };
+    let Some(exit) = production::builder_exit_cell(state, &builder, &building) else {
         return false;
     };
 
-    // Ждёт только достроенное здание (`SpawnNewUnit`:
-    // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`); у завода-родителя или
-    // транспорта такого состояния нет.
-    if building.orders != UnitOrder::Idle || building.state != UnitOrderState::BuildingReady {
-        return false;
+    let mut data = state.order_data(builder_id);
+    data.move_to = exit;
+    data.fire_on = Point::ZERO;
+    state.set_order_data(builder_id, data);
+
+    // `unit_to_activate->move_to_grid_x/y = position;`
+    if let Some(mut unit) = state.unit(builder_id).cloned() {
+        unit.target_grid = exit;
+        state.write_unit(builder_id, unit);
     }
 
-    let Some(exit) = production::builder_exit_cell(ctx.world, &ctx.unit, &building) else {
-        return false;
-    };
-
-    // `unit_to_activate->move_to_grid = position;`
-    // `UnitsManager_SetNewOrder(unit_to_activate, ORDER_ACTIVATE,
-    // ORDER_STATE_IN_TRANSITION);`
-    ctx.data.move_to = exit;
-    ctx.unit.target_grid = exit;
-    ctx.set_new_order(UnitOrder::Activate, UnitOrderState::InTransition);
+    // `UnitsManager_SetNewOrder(unit_to_activate.Get(), ORDER_ACTIVATE,
+    //  ORDER_STATE_IN_TRANSITION);` — `prior` = `ORDER_BUILD`/`UNIT_READY`.
+    state.set_order(
+        builder_id,
+        UnitOrder::Activate,
+        UnitOrderState::InTransition,
+    );
 
     true
 }

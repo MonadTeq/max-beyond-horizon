@@ -109,7 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
-      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help)
+      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn)
         working-directory: max-rust
         # --no-default-features: QA-драйверу окно не нужно, иначе примеры
         # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
@@ -131,6 +131,9 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research-help.qa qa-out/research-help
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
+          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/ai-turn.qa qa-out/ai-turn
 
       - name: Golden frames (1 % pixels, Δ > 30)
         working-directory: max-rust
@@ -145,6 +148,9 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-rust-qa/golden/research-help
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
+          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/ai-turn ../max-rust-qa/golden/ai-turn
 
       - name: Upload log + frames + diff on failure
         if: failure()

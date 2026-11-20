@@ -746,6 +746,52 @@ pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Opti
     }))
 }
 
+/// Приказ на уход строителя с достроенной площадки — пакет **08**, процессор
+/// `P3` (`ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`).
+///
+/// Дословный C++-путь игрока (`game_manager.cpp:6879-6890`): выделенный юнит в
+/// `ORDER_STATE_UNIT_READY` получает `move_to_grid` = клетка под курсором, затем
+/// `UnitsManager_SetNewOrder(selected, ORDER_ACTIVATE,
+/// ORDER_STATE_IN_TRANSITION)` (в сети — `Remote_SendNetPacket_08`). Путь при
+/// этом **не строится**: `PositionInTape` DEINIT отвозит строителя на край ленты
+/// по направлению на `move_to`, `ActivateEngineer` снимает ленту и конусы и
+/// отдаёт `ORDER_MOVE` (путь запросит симуляция), а здание раскрывается
+/// `UnitsManager_BuildingReady`, когда строитель выйдет из габаритов 2×2.
+///
+/// `None` — юнит не «достроивший строитель» (нет родителя-здания в
+/// `ORDER_IDLE`/`BUILDING_READY`): клик остаётся обычным приказом движения.
+pub fn build_builder_exit_order(
+    state: &GameState,
+    id: UnitId,
+    destination: Point,
+) -> Option<Command> {
+    max_core::production::builder_awaiting_exit(state, id)?;
+
+    let unit = state.unit(id)?;
+
+    Some(Command::Order(Packet08Order {
+        unit: id,
+        payload: OrderPayload::P3(PayloadP3 {
+            p2: PayloadP2 {
+                p1: PayloadP1 {
+                    order: UnitOrder::Activate,
+                    state: UnitOrderState::InTransition,
+                    prior_order: unit.orders,
+                    prior_state: unit.state,
+                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                },
+                parent_unit: unit.parent_unit,
+                experience: unit.experience,
+            },
+            move_to: destination,
+            fire_on: Point::ZERO,
+            enemy_unit: unit.enemy_unit,
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+        }),
+    }))
+}
+
 /// Строит приказ включения/выключения питания (попап `Power On`/`Power Off`
 /// в C++, пакет **08**, процессор `P1`).
 ///
@@ -862,6 +908,28 @@ impl App {
     /// Команда локального игрока (`player_team` партии).
     pub fn player_team(&self) -> TeamId {
         self.state().player_team
+    }
+
+    /// Остаток таймера хода в секундах — `GameManager_TurnTimerValue`.
+    ///
+    /// C++ хранит его целым числом секунд и уменьшает на 1 в секунду
+    /// (`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`); панель показывает
+    /// `"%2.2i:%2.2i"` от этого значения (`GameManager_DrawTurnTimer`). В порте
+    /// локальная партия считает `f32`-секунды ([`crate::local::LocalGame`]),
+    /// поэтому здесь берётся `ceil` — ровно то число, которое C++ показал бы в
+    /// текущую секунду (`180.0 → «03:00»`, `179.4 → «03:00»`, `178.9 → «02:59»`).
+    ///
+    /// Сетевые партии таймер хода не моделируют (в C++ он живёт в
+    /// `Remote_UpdatePauseTimer`): там остаётся значение панели, по умолчанию 0 —
+    /// `GameManager_DrawTurnTimer(0)` → «00:00» цветом `COLOR_RED`.
+    pub fn turn_timer_seconds(&self) -> u32 {
+        if let Some(local) = self.local() {
+            let seconds = local.timer_left.ceil();
+
+            return seconds.clamp(0.0, 3599.0) as u32;
+        }
+
+        self.hud().panels.timer_seconds
     }
 
     /// Выбранный юнит, если он ещё существует.

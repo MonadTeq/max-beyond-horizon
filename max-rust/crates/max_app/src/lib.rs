@@ -626,6 +626,15 @@ pub struct App {
     /// Открытый диалог `Preferences` (кнопка панели, C++ `OptionsMenu`).
     /// В снапшот/CRC не входит — это UI.
     pub(crate) preferences_dialog: Option<PreferencesDialog>,
+    /// Номер кадра мигания маркеров стройки `BLDMRK1..5`
+    /// (`DrawMap_BuildMarkImageIndex`) и секунды до следующего.
+    ///
+    /// C++ меняет кадр каждые три отрисовки карты
+    /// (`DrawMap_BuildMMarkDelayCounter`), порт — по визуальным часам
+    /// ([`BUILD_MARKER_FRAME_SECONDS`], 10 кадров/с, как цикл строителя); при
+    /// `dt = 0` (QA/headless) кадр статичен и golden детерминированны.
+    pub(crate) build_marker_step: u8,
+    pub(crate) build_marker_elapsed: f32,
 }
 
 /// Визуальные кадровые часы одного юнита.
@@ -666,6 +675,17 @@ struct GrowthAnim {
 /// (`moved & 1`), а тик оригинала — ~30 Гц; здесь кадры идут по реальному
 /// времени интерфейса, 10 кадров/с — цикл `+16 → +24 → +32` за 0.3 с.
 pub const BUILDER_ANIM_FRAME_SECONDS: f32 = 0.1;
+
+/// Кадров в цикле маркеров стройки — `BLDMRK1..5`
+/// (`DrawMap_BuildMarkImages`, `drawmap.cpp:49`).
+pub const BUILD_MARKER_FRAMES: usize = 5;
+
+/// Секунд на кадр мигания маркеров стройки.
+///
+/// C++ меняет кадр каждые три отрисовки карты (`DrawMap_BuildMMarkDelayCounter`
+/// = 3), а карта рисуется ~30 раз в секунду → ~10 кадров/с. Порт берёт ту же
+/// частоту через визуальные часы, потому что его частота кадров не равна 30 Гц.
+pub const BUILD_MARKER_FRAME_SECONDS: f32 = 0.1;
 
 /// Секунд на один кадр `ProcessOrderSentry` (`ANIMATED`-здание, RADAR).
 ///
@@ -763,6 +783,8 @@ impl App {
             portrait: None,
             preferences: Preferences::default(),
             preferences_dialog: None,
+            build_marker_step: 0,
+            build_marker_elapsed: 0.0,
         }
     }
 
@@ -2324,6 +2346,28 @@ impl App {
     /// `dt <= 0` (QA/headless) сбрасывает их: строитель — поза `+16`, здание —
     /// статичный кадр C++, любая «вырастающая» постройка — полный размер,
     /// поэтому golden-кадры детерминированы.
+    /// Часы мигания маркеров стройки (`DrawMap_BuildMMarkDelayCounter`,
+    /// `drawmap.cpp:47`): кадр `BLDMRK1..5` меняется каждые три отрисовки
+    /// карты. Порт считает по визуальному времени: `dt = 0` (QA/headless) —
+    /// кадр 0, детерминированно.
+    fn update_build_marker(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.1);
+
+        if !(dt > 0.0) {
+            self.build_marker_step = 0;
+            self.build_marker_elapsed = 0.0;
+            return;
+        }
+
+        self.build_marker_elapsed += dt;
+
+        while self.build_marker_elapsed >= BUILD_MARKER_FRAME_SECONDS {
+            self.build_marker_elapsed -= BUILD_MARKER_FRAME_SECONDS;
+            self.build_marker_step =
+                (self.build_marker_step + 1) % BUILD_MARKER_FRAMES as u8;
+        }
+    }
+
     fn update_unit_animations(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.1);
 
@@ -2451,6 +2495,8 @@ impl App {
         self.update_portrait(dt);
         // Покадровая анимация строителя и «вырастание» — тоже по реальному dt.
         self.update_unit_animations(dt);
+        // Мигание маркеров стройки (`DrawMap_RenderBuildMarker`).
+        self.update_build_marker(dt);
         // Палитровые циклы (маяки зданий, индикатор дрели) — тоже только кадр.
         self.update_color_cycles(dt);
 

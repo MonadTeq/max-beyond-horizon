@@ -23,6 +23,8 @@ max-rust-qa/
 ├── scripts/unit-menu.qa        # TC-0622–0626: меню команд юнита (повторный клик), Sentry, Esc, модальность, Build
 ├── scripts/allocate.qa         # TC-0627–0629: пункт allocate → диалог ALLOCFRM → set/row → Done (08/P5) → доход комплекса
 ├── scripts/xfer.qa             # TC-0632–0635: X-FER (TransferMenu) → Done (08/P3) → ProcessTransfer ↔ комплекс
+├── scripts/preferences.qa      # TC-0935: диалог Preferences/Setup (PREFSPIC/SETUPPIC), 4 golden
+├── scripts/ai-turn.qa          # A2/A3: мой ход → ход ИИ (End Turn нажат, таймер 00:45) → возврат хода
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталоны BuildMenu, стройплощадки, её роста и кадров строителя (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -33,6 +35,8 @@ max-rust-qa/
 ├── golden/unit-menu/*.png      # эталоны меню команд юнита: танк/нажатый sentry/строитель/выделение (4)
 ├── golden/allocate/*.png       # эталоны диалога распределения добычи: выделение шахты/диалог/значения (3)
 ├── golden/xfer/*.png           # эталоны окна X-FER: меню/значение/помощь TRANSFER_SETUP (3)
+├── golden/preferences/*.png    # эталоны диалога Preferences/Setup (4)
+├── golden/ai-turn/*.png        # эталоны фаз End Turn: мой ход / ход ИИ / возврат (3)
 └── scripts/README.md
 ```
 
@@ -249,6 +253,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `allocate.qa` | TC-0627–0629: распределение добычи шахты — `select type MiningStation` → `unit-menu open` → `unit-menu item allocate` (`assert alloc=open`, пункт **включён**) → значения из комплекса (`alloc-raw=12`, `alloc-fuel=4`, `alloc-gold=0`, `alloc-free=0`) → `allocate select raw` → `allocate set 4` (`assert alloc-raw=4`) → `row raw up`/`down` (`5`/`4`) → `set fuel 2`, `set gold 1` (`assert alloc-free=9`) → `set raw 20` упирается в 16 → `set raw 4` → модальность (клик по карте) → `allocate done` (`assert unit-order=newallocate`, `tick 1` → `poweron`) → `end_turn` → `assert complex-raw>=4` (добыча стала запасом комплекса) → повторное открытие помнит `raw=4` → `cancel`; кадры `allocate-selected`/`allocate-menu`/`allocate-set` | **PASS** (128 кадров; golden `allocate/`) |
 | `xfer.qa` | TC-0632–0635: X-FER — конструктор `storage=40` + 3 хода экономики (шахта накопила ≥5) → `select type MiningStation` → `unit-menu open` → `unit-menu-item=x-fer` (пункт **включён**) → `unit-menu item x-fer` (курсор 3) → `click unit Constructor` (`assert transfer=open`) → `assert transfer-amount>=1` (по умолчанию цель заполняется) → `transfer amount`/`right`/`left`/`999` (лимит `give_max`) → модальность (клик по карте) → `transfer help` (`assert help=open`, `help-section=transfer`) → `help done` → `transfer done` → `tick 1` (`assert unit-order=poweron`) → `select type Constructor`/`assert unit-storage=45` → обратный перенос `transfer amount -3` → `assert unit-storage=42` → `transfer cancel` → запасы не меняются; кадры `xfer-selected`/`xfer-menu`/`xfer-set`/`xfer-help` | **PASS** (1332 кадра; golden `xfer/`) |
 | `preferences.qa` | TC-0935: `menu setup` → `SETUPPIC` (`setup-dialog`, `prefs-value disable_fx=0`, toggle → `prefs-sound=off`, Cancel не применяет, Done применяет); партия → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`, все секции, `quick_scroll=16`, `timer=180`), `prefs set quick_scroll 36` → 35, `prefs toggle effects` → `effects=off`, `anim 200` → `prefs-effects-off`, Done, значение помнится, `save_v70 prefs-ini`; звук `prefs-audio=off/on`; Cancel возвращает снимок; `Help` → `help-section=preferences`; 4 golden-кадра | **PASS** (1 кадр цикла, 0 дрейфа) |
+| `ai-turn.qa` | A2/A3: конец хода человека и ход компьютера — Options (No Limit + Turn Based) → мобилизация → высадка → `assert endturn=normal` (мой ход: кнопка отжата, таймер 00:00 красным) → `click 426 12` (End Turn) → `tick 1` (`assert team=GREEN`, `assert endturn=pressed`: нажатый `G_ENDT_D` с подписью цветом команды, таймер 00:45) → `wait 2000` (`assert endturn=normal`, `assert team=RED`, `turn>=2`); кадры `ai-turn-human-normal`/`ai-turn-ai-pressed`/`ai-turn-human-again` | **PASS** (298 кадров; golden `ai-turn/`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому

@@ -407,6 +407,23 @@ fn blit_marker(
     blit_marker_at(dst, image, palette, centre, hotspot, num, den)
 }
 
+/// Блит simple image с hotspot из заголовка ресурса
+/// (`WindowManager_DecodeSimpleImage`: `top_left = centre - ulx/uly`),
+/// масштабированный `num/den`.
+///
+/// Используется и маркерами ресурсов, и маркерами стройки `BLDMRK1..5`
+/// (`DrawMap_Callback2`, `drawmap.cpp:339`).
+pub fn blit_simple_image(
+    dst: &mut RgbaBuffer,
+    image: &SimpleImage,
+    palette: &crate::terrain::PaletteRgba,
+    centre: (i32, i32),
+    num: i32,
+    den: i32,
+) -> u32 {
+    blit_marker(dst, image, palette, centre, num, den)
+}
+
 /// Блит simple image: `top_left = centre - hotspot`, размеры `w*num/den`.
 fn blit_marker_at(
     dst: &mut RgbaBuffer,

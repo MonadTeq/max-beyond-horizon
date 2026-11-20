@@ -13,9 +13,9 @@
 | Слой | Что проверяет | Где | Частота | Статус |
 |---|---|---|---|---|
 | 1. Юнит/интеграционные (780+ тестов) | логика core/net/render/assets + парсер/драйвер QA | cargo test | каждый коммит | **готово** |
-| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 15 сценариев) |
+| 2. **Скриптовый UI-драйвер (in-process)** | полный путь игрока: меню → настройка → партия → приказы → ходы → победа, ассерты состояния | `qa_run` без SDL | каждый коммит | **готово** (`max_app/src/qa/`, 18 сценариев) |
 | 2.5. **Запись ручной игры (recorder)** | окно → `.qa`-сценарий для слоя 2 (`click/rclick/key/type/wait`) | `max-rust --record` | при ручном прогоне | **готово** (`max_app/src/qa/recorder.rs`) |
-| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 36 эталонов: visual 13 + production 2 + upgrade 2 + research 1 + cargo 4 + move-input 5 + research-help 9) |
+| 3. **Golden-кадры экранов** | визуальный 1:1 (дрейф пикселей) | qa-скрипт + diff | каждый коммит | **готово** (`qa_golden_check`, 87 эталонов: visual 15 + production 27 + upgrade 3 + research 2 + cargo 5 + move-input 6 + research-help 9 + unit-menu 4 + allocate 5 + preferences 4 + xfer 4 + ai-turn 3) |
 | 4. Живой сетевой smoke | 2 клиента × 10 ходов CRC (и 3 клиента) | live-smoke.sh / live-smoke-3.sh | релизный гейт | **готово** (P5: 2×10, 3×10 PASS) |
 | 5. Реальный оконный прогон мышью (Windows) | SDL/ввод/звук на живом бинаре | ui-test-sp.ps1 и пр. | релизный гейт, вручную/полуавто | по плану |
 
@@ -168,11 +168,11 @@ cargo run -p max_app -- \
   `sp-full.qa`, `hs-2.qa`, `visual-screens.qa`, `victory.qa`, `production.qa`,
   `save-load.qa`, `upgrade.qa`, `research.qa`, `edge-cases.qa`, `cargo-full.qa`,
   `move-input.qa`, `research-help.qa`, `unit-menu.qa`, `allocate.qa`,
-`preferences.qa` и golden-сверка (visual,
-  production, upgrade, research, cargo, move-input, research-help, unit-menu);
-  стадия **4/4** — soak (`soak-100.qa` с `MAX_TICK_PROFILE=1` +
-  `soak_headless --turns 120`); `--smoke` дополнительно запускает
-  `live-smoke.sh`.
+  `preferences.qa`, `xfer.qa`, `ai-turn.qa` и golden-сверка (visual,
+  production, upgrade, research, cargo, move-input, research-help, unit-menu,
+  allocate, preferences, xfer, ai-turn); стадия **4/4** — soak (`soak-100.qa`
+  с `MAX_TICK_PROFILE=1` + `soak_headless --turns 120`); `--smoke` дополнительно
+  запускает `live-smoke.sh`.
 - `.github/workflows/ci.yml`: job `qa` с теми же командами и job `soak`
   (`timeout-minutes: 45`); при падении логи и кадры уходят артефактом
   `qa-artifacts`.

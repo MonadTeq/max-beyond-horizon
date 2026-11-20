@@ -67,6 +67,12 @@ pub const SHADOW: u8 = 0xE6;
 pub const END_TURN_TEXT: u8 = 0xA0;
 /// Кнопка End Turn нажата (не используется в статичном кадре).
 pub const END_TURN_OUTLINE: u8 = 0xA2;
+/// Тень подписи нажатой кнопки End Turn (`FontColor(color, color, 0x3F)`,
+/// `game_manager.cpp:7882`).
+pub const TEAM_TEXT_SHADOW: u8 = 0x3F;
+/// Индекс палитры серой команды в запечённой подписи (`game_manager.cpp:7876`:
+/// `if (i == PLAYER_TEAM_GRAY) color = 0xFF;`).
+pub const GRAY_TEAM_TEXT: u8 = 0xFF;
 
 /// Палитра окна игры.
 ///
@@ -539,12 +545,61 @@ pub struct ButtonPair {
     down: SimpleImage,
 }
 
+/// Цвет текста таймера — `GameManager_DrawTurnTimer`
+/// (`game_manager.cpp:2197-2213`): `turn_time <= 20` → `COLOR_RED` (`0x01`),
+/// иначе `0xA2`. Ноль тоже красный: при выключенном таймере C++ рисует «00:00»
+/// красным.
+pub fn timer_color_index(seconds: u32) -> u8 {
+    if seconds <= 20 {
+        RED
+    } else {
+        TEXT
+    }
+}
+
+/// Нажата ли кнопка End Turn на этом ходу.
+///
+/// `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) зовёт
+/// `GameManager_MenuClickEndTurnButton(rest_state)` по типу команды:
+/// `TEAM_TYPE_PLAYER` → `true` (кнопка отжата), `TEAM_TYPE_COMPUTER` → `0`
+/// (кнопка нажата, `SetRestState(true)`), `TEAM_TYPE_REMOTE` — не зовёт вовсе
+/// (состояние остаётся от предыдущей команды; в порте ход удалённой команды
+/// показывается отжатой, как после своего хода).
+pub fn end_turn_pressed(active_team_kind: TeamKind) -> bool {
+    active_team_kind == TeamKind::Computer
+}
+
+/// Индекс палитры подписи нажатой кнопки End Turn — `FontColor(color, color,
+/// 0x3F)` из `GameManager_MenuInitButtons` (`game_manager.cpp:7860-7883`):
+/// `color = team + 1`, для серой команды `0xFF`.
+pub fn end_turn_caption_color(team: TeamId) -> u8 {
+    if team.0 == 3 {
+        GRAY_TEAM_TEXT
+    } else {
+        team.0 + 1
+    }
+}
+
+/// Текст таймера хода — `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
+/// (`GameManager_DrawTurnTimer`, `game_manager.cpp:2215`).
+///
+/// `%2.2i` — ширина 2 и **точность** 2, то есть минимум две цифры с нулём слева
+/// (`1 → "01"`, `0 → "00"`); `{:02}` в Rust даёт ту же строку для любого
+/// значения. Показывается **остаток времени хода** в минутах:секундах, не ходы.
+pub fn timer_text(seconds: u32) -> String {
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+
 /// Загруженные картинки панелей.
 #[derive(Debug, Clone)]
 pub struct Panels {
     files: ButtonPair,
     preferences: ButtonPair,
     end_turn: SimpleImage,
+    /// Нажатая кнопка End Turn для команды `RED/GREEN/BLUE/GRAY` —
+    /// `R_ENDT_D`/`G_ENDT_D`/`B_ENDT_D`/`W_ENDT_D`
+    /// (`GameManager_MenuClickEndTurnButton`: `CopyDown(R_ENDT_D + team)`).
+    end_turn_down: [SimpleImage; 4],
     turns: SimpleImage,
     timer: SimpleImage,
     coordinates: SimpleImage,
@@ -610,6 +665,12 @@ impl Panels {
             files: pair("FILES_OF", "FILES_ON")?,
             preferences: pair("PREF_OFF", "PREF_ON")?,
             end_turn: simple("ENDTRN_U")?,
+            end_turn_down: [
+                simple("R_ENDT_D")?,
+                simple("G_ENDT_D")?,
+                simple("B_ENDT_D")?,
+                simple("W_ENDT_D")?,
+            ],
             turns: simple("TURNS")?,
             timer: simple("TIMER")?,
             coordinates: simple("XYPOS")?,
@@ -661,15 +722,55 @@ impl Panels {
         self.draw_caption(frame, palette, PanelButton::Preferences);
 
         // End Turn (заходит на карту — рисуется поверх).
-        painted += self.blit(
-            frame,
-            palette,
-            &self.end_turn,
-            layout::END_TURN_BUTTON.ulx,
-            layout::END_TURN_BUTTON.uly,
-            true,
-        );
-        self.draw_caption(frame, palette, PanelButton::EndTurn);
+        //
+        // `GameManager_MenuClickEndTurnButton` (`game_manager.cpp:3977`):
+        // `CopyDown(R_ENDT_D + ActiveTurnTeam)` + `SetRestState(!rest_state)`,
+        // а `GameManager_UpdateGui` зовёт её с `rest_state = true` для
+        // `TEAM_TYPE_PLAYER` (кнопка отжата) и `rest_state = 0` для
+        // `TEAM_TYPE_COMPUTER` (кнопка нажата до конца ходов оппонентов).
+        // Подпись нажатой кнопки — `_(aeb0)` «End Turn», запечённая в ресурс
+        // цветом команды: `FontColor(team + 1, team + 1, 0x3F)`
+        // (`game_manager.cpp:7860-7883`; у GRAY — `0xFF`).
+        let active_team = state.active_turn_team;
+        let active_kind = state
+            .teams
+            .get(usize::from(active_team.0))
+            .map(|team| team.team_type)
+            .unwrap_or(TeamKind::None);
+        let pressed = end_turn_pressed(active_kind);
+
+        if pressed {
+            let slot = usize::from(active_team.0).min(self.end_turn_down.len() - 1);
+            let image = &self.end_turn_down[slot];
+
+            painted += self.blit(
+                frame,
+                palette,
+                image,
+                layout::END_TURN_BUTTON.ulx,
+                layout::END_TURN_BUTTON.uly,
+                true,
+            );
+            let color = end_turn_caption_color(active_team);
+            self.draw_caption_colored(
+                frame,
+                palette,
+                PanelButton::EndTurn,
+                color,
+                color,
+                TEAM_TEXT_SHADOW,
+            );
+        } else {
+            painted += self.blit(
+                frame,
+                palette,
+                &self.end_turn,
+                layout::END_TURN_BUTTON.ulx,
+                layout::END_TURN_BUTTON.uly,
+                true,
+            );
+            self.draw_caption(frame, palette, PanelButton::EndTurn);
+        }
 
         // Номер хода и таймер.
         painted += self.blit(
@@ -695,20 +796,19 @@ impl Panels {
             layout::TURN_TIMER.uly,
             true,
         );
-        let timer_color = if panel.timer_seconds <= 20 && panel.timer_seconds > 0 {
-            palette.rgba(0x01)
-        } else {
-            palette.rgba(TEXT)
-        };
+        // `GameManager_DrawTurnTimer` (`game_manager.cpp:2193`):
+        // `color = (turn_time <= 20) ? COLOR_RED : 0xA2;`
+        // `sprintf(text, "%2.2i:%2.2i", turn_time / 60, turn_time % 60);`
+        // `%2.2i` — точность 2 цифры (нули слева: `1 → «01»`, `0 → «00»`),
+        // поэтому `{:02}` в Rust даёт ровно ту же строку. Красный включается и
+        // при `turn_time == 0` (таймер выключен), как в C++.
+        let timer_seconds = app.turn_timer_seconds();
+        let timer_color = palette.rgba(timer_color_index(timer_seconds));
         draw_centered(
             frame,
             layout::TURN_TIMER,
             GnwFontId::Font5.font(),
-            &format!(
-                "{:02}:{:02}",
-                panel.timer_seconds / 60,
-                panel.timer_seconds % 60
-            ),
+            &timer_text(timer_seconds),
             timer_color,
         );
 
@@ -992,6 +1092,33 @@ impl Panels {
     }
 
     fn draw_caption(&self, frame: &mut RgbaBuffer, palette: &UiPalette, button: PanelButton) {
+        let (base, outline, shadow) = if button == PanelButton::EndTurn {
+            (END_TURN_TEXT, END_TURN_OUTLINE, SHADOW)
+        } else {
+            (TEXT, CAPTION_OUTLINE, SHADOW)
+        };
+
+        self.draw_caption_colored(frame, palette, button, base, outline, shadow);
+    }
+
+    /// Подпись кнопки заданными индексами палитры — `Button::SetCaption`
+    /// (`button.cpp:419`: `Text_TextLine`, центр по `horizontal_align`) и
+    /// запечённая в ресурс подпись End Turn (`Text_TextBox(..., 0, 0, w, h,
+    /// true, true, FontColor(...))`).
+    ///
+    /// Позиция одна и та же в обоих случаях: `x = (width - (Text_GetWidth + 1)) /
+    /// 2`, `y = (height - Text_GetHeight()) / 2` (`SetCaption`) — при `height =
+    /// 21` и высоте `FONT5` 10 это `y = 5`, как и `Text_TextBox` с
+    /// `vertical_align = true` (`((21 + 1) - 11) / 2 = 5`).
+    fn draw_caption_colored(
+        &self,
+        frame: &mut RgbaBuffer,
+        palette: &UiPalette,
+        button: PanelButton,
+        base: u8,
+        outline: u8,
+        shadow: u8,
+    ) {
         let Some(caption) = button.caption() else {
             return;
         };
@@ -1000,11 +1127,6 @@ impl Panels {
         let width = font.text_width(caption) + 1;
         let x = rect.ulx + (rect.width - width).max(0) / 2;
         let y = rect.uly + (rect.height - font.height()) / 2 + button.caption_offset_y();
-        let (base, outline, shadow) = if button == PanelButton::EndTurn {
-            (END_TURN_TEXT, END_TURN_OUTLINE, SHADOW)
-        } else {
-            (TEXT, CAPTION_OUTLINE, SHADOW)
-        };
 
         draw_text_gnw_shadowed(
             frame,
@@ -2242,6 +2364,113 @@ fn draw_centered(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Палитра, в которой текст (`0xA2`) и красный (`0x01`) отличимы от фона.
+    fn test_palette() -> UiPalette {
+        let mut colors = [[0u8, 0, 0]; 256];
+        colors[usize::from(TEXT)] = [252, 248, 244];
+        colors[usize::from(RED)] = [252, 0, 0];
+        colors[usize::from(END_TURN_TEXT)] = [252, 248, 244];
+        colors[2usize] = [0, 252, 0];
+        colors[usize::from(TEAM_TEXT_SHADOW)] = [36, 12, 4];
+
+        UiPalette::from_colors(colors)
+    }
+
+    /// Границы «чернил» цвета `color` внутри прямоугольника (включительно).
+    fn ink_bounds(frame: &RgbaBuffer, rect: PixelRect, color: Rgba) -> Option<(i32, i32, i32, i32)> {
+        let mut bounds: Option<(i32, i32, i32, i32)> = None;
+
+        for y in rect.uly..rect.lry() {
+            for x in rect.ulx..rect.lrx() {
+                if frame.get(x, y) != Some(color) {
+                    continue;
+                }
+
+                bounds = Some(match bounds {
+                    Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                    None => (x, y, x, y),
+                });
+            }
+        }
+
+        bounds
+    }
+
+    /// `GameManager_DrawTurnTimer`: `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
+    /// — нули слева, минуты:секунды (`%2.2i` = ширина 2, точность 2).
+    #[test]
+    fn timer_text_matches_cpp_printf() {
+        assert_eq!(timer_text(0), "00:00");
+        assert_eq!(timer_text(1), "00:01");
+        assert_eq!(timer_text(20), "00:20");
+        assert_eq!(timer_text(21), "00:21");
+        assert_eq!(timer_text(45), "00:45");
+        assert_eq!(timer_text(101), "01:41");
+        assert_eq!(timer_text(180), "03:00");
+        assert_eq!(timer_text(600), "10:00");
+        assert_eq!(timer_text(3599), "59:59");
+    }
+
+    /// Цвет таймера: `turn_time <= 20` → `COLOR_RED`, иначе `0xA2`
+    /// (`game_manager.cpp:2197-2213`). Ноль — тоже красный.
+    #[test]
+    fn timer_is_red_at_twenty_seconds_or_less() {
+        assert_eq!(timer_color_index(0), RED);
+        assert_eq!(timer_color_index(1), RED);
+        assert_eq!(timer_color_index(20), RED);
+        assert_eq!(timer_color_index(21), TEXT);
+        assert_eq!(timer_color_index(45), TEXT);
+        assert_eq!(timer_color_index(180), TEXT);
+    }
+
+    /// Геометрия текста таймера в окне `WINDOW_TURN_TIMER_DISPLAY`
+    /// (`windows[]`: 534,2…594,22) — сверено с кадром DOS-оригинала
+    /// (`build/anim-dos/avicap/f1/f_0001.png`, таймер «01:41»): чернила
+    /// занимают x 551…575, y 9…15.
+    #[test]
+    fn timer_text_geometry_matches_the_dos_frame() {
+        let palette = test_palette();
+        let mut frame = RgbaBuffer::filled(640, 480, Rgba::from_rgb([0, 0, 0]));
+        let font = GnwFontId::Font5.font();
+
+        draw_centered(
+            &mut frame,
+            layout::TURN_TIMER,
+            font,
+            &timer_text(101),
+            palette.rgba(TEXT),
+        );
+
+        let bounds = ink_bounds(&frame, layout::TURN_TIMER, palette.rgba(TEXT))
+            .expect("текст «01:41» нарисован");
+
+        assert_eq!(
+            bounds,
+            (551, 9, 575, 15),
+            "таймер «01:41» обязан стоять как в оригинале"
+        );
+    }
+
+    /// Кнопка End Turn нажата только на ходу компьютера.
+    #[test]
+    fn end_turn_is_pressed_only_on_a_computer_turn() {
+        assert!(end_turn_pressed(TeamKind::Computer));
+        assert!(!end_turn_pressed(TeamKind::Player));
+        assert!(!end_turn_pressed(TeamKind::Remote));
+        assert!(!end_turn_pressed(TeamKind::None));
+        assert!(!end_turn_pressed(TeamKind::Eliminated));
+    }
+
+    /// Цвет подписи нажатой кнопки — `FontColor(team + 1, team + 1, 0x3F)`,
+    /// у серой команды `0xFF` (`game_manager.cpp:7876-7882`).
+    #[test]
+    fn end_turn_caption_uses_the_active_team_color() {
+        assert_eq!(end_turn_caption_color(TeamId::RED), 1);
+        assert_eq!(end_turn_caption_color(TeamId::GREEN), 2);
+        assert_eq!(end_turn_caption_color(TeamId::BLUE), 3);
+        assert_eq!(end_turn_caption_color(TeamId::GRAY), GRAY_TEAM_TEXT);
+    }
 
     #[test]
     fn panel_buttons_have_the_original_window_rects() {

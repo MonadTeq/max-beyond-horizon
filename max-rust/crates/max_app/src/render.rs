@@ -588,6 +588,8 @@ pub struct RenderStats {
     pub units_drawn: usize,
     /// Сколько юнитов нарисовано маркерами (нет спрайта/ассетов).
     pub units_marker: usize,
+    /// Сколько маркеров стройки `BLDMRK*` нарисовано (`DrawMap_RenderBuildMarker`).
+    pub build_markers: usize,
     /// Сколько юнитов пропущено (нет в списках/невидимы камере).
     pub units_skipped: usize,
 }
@@ -939,6 +941,9 @@ impl App {
         }
 
         self.draw_units(&mut map, &viewport, &mut stats);
+        // Маркеры стройки — вокруг выделенного строителя/здания
+        // (`DrawMap_RenderBuildMarker`), поверх юнитов и под призраком площадки.
+        self.draw_build_markers(&mut map, &viewport, &mut stats);
         // Призрак стройплощадки — в область карты, как `GameManager_TempTape`
         // (`ORDER_STATE_SELECT_SITE`), до подтверждения клетки.
         self.draw_build_site_ghost(&mut map, &viewport, &mut stats);
@@ -1215,6 +1220,130 @@ impl App {
             stats.units_drawn += 1;
         }
     }
+
+    /// Мигающие маркеры стройки `BLDMRK1..5` — `DrawMap_RenderBuildMarker`
+    /// (`drawmap.cpp:353`) + `DrawMap_RedrawUnit` (`drawmap.cpp:304`).
+    ///
+    /// Рисуются, когда выделен юнит своей команды в `ORDER_IDLE` (достроенное
+    /// здание ждёт менеджера) или мобильный строитель в
+    /// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (достроил и ждёт приказа уйти с
+    /// площадки): символы ставятся на клетки вокруг **родителя** выделенного
+    /// юнита (`Access_IsAccessible` фильтрует занятые), и клик по такой клетке —
+    /// обычный приказ движения, который в этом состоянии отдаёт
+    /// `ORDER_ACTIVATE` (`game_manager.cpp:6879`). Подсказка `_(276c)` прямо
+    /// отсылает к этим символам.
+    fn draw_build_markers(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        let Some(selected) = self.hud().selected else {
+            return;
+        };
+        let Some(unit) = self.state().unit(selected) else {
+            return;
+        };
+        let Some(assets) = self.assets() else {
+            return;
+        };
+
+        let cells = build_marker_cells(self.state(), unit);
+
+        if cells.is_empty() {
+            return;
+        }
+
+        let Some(image) = assets
+            .build_markers
+            .get(usize::from(self.build_marker_step))
+            else {
+            return;
+        };
+        let palette = window_palette(assets);
+        let zoom = viewport.zoom() as i32;
+
+        for cell in cells {
+            let rect = viewport.tile_rect(cell.x, cell.y);
+
+            if rect.width <= 0 || rect.height <= 0 {
+                continue;
+            }
+
+            let centre = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+
+            // `WindowManager_RescaleSimpleImage(image, Gfx_MapScalingFactor)`:
+            // 62×62 — полный кадр клетки 64 px, масштаб `zoom/64`.
+            if max_render::map_render::blit_simple_image(
+                frame, image, &palette, centre, zoom, 64,
+            ) > 0
+            {
+                stats.build_markers += 1;
+            }
+        }
+    }
+}
+
+/// Клетки, на которых `DrawMap_RedrawUnit` (`drawmap.cpp:304`) рисует маркеры
+/// стройки: вокруг **родителя** выделенного юнита.
+///
+/// Условие C++: `unit->team == PlayerTeam` и `(order == ORDER_IDLE ||
+/// (order == ORDER_BUILD && state == ORDER_STATE_UNIT_READY && !(flags &
+/// STATIONARY)))`, родитель есть и это не `AIRTRANS`. Старт —
+/// `(parent.x - 1, parent.y + 1)`, для здания `(+1 по y, limit = 3)`, затем
+/// четыре направления (`N, E, S, W` — `direction += 2`) по `limit` шагов,
+/// накопительно; в список попадают только проходимые клетки
+/// (`Access_IsAccessible(... AccessModifier_SameClassBlocks)`).
+pub fn build_marker_cells(state: &max_core::game::GameState, unit: &max_core::unit::UnitInfo) -> Vec<max_core::geo::Point> {
+    if unit.team != state.player_team {
+        return Vec::new();
+    }
+
+    let eligible = unit.orders == UnitOrder::Idle
+        || (unit.orders == UnitOrder::Build
+            && unit.state == UnitOrderState::UnitReady
+            && unit.flags & unit_flags::STATIONARY == 0);
+
+    if !eligible {
+        return Vec::new();
+    }
+
+    let Some(parent) = unit.parent_unit.and_then(|id| state.unit(id)) else {
+        return Vec::new();
+    };
+
+    if parent.unit_type == UnitType::AirTransport {
+        return Vec::new();
+    }
+
+    let building = parent.flags & unit_flags::BUILDING != 0;
+    let mut position = max_core::geo::Point::new(parent.grid.x - 1, parent.grid.y + 1);
+    let limit = if building {
+        position.y += 1;
+        3
+    } else {
+        2
+    };
+    let mut cells = Vec::new();
+
+    for direction in (0..8).step_by(2) {
+        for _ in 0..limit {
+            position += max_core::geo::DIRECTION_OFFSETS[direction];
+
+            if max_core::access::is_accessible(
+                state,
+                unit.unit_type,
+                state.player_team,
+                position,
+                max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+            {
+                cells.push(position);
+            }
+        }
+    }
+
+    cells
 }
 
 /// Системная палитра окна для simple image (маркеры ресурсов, курсоры).

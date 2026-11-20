@@ -846,9 +846,220 @@ fn chrome_end_turn_click_is_a_button_not_a_map_click() {
     assert_eq!(app.hud().selected, None, "клик не ушёл в карту");
 }
 
+// ---------------------------------------------------------------------------
+// 4b. A2/A3: таймер хода и кнопка End Turn на настоящем кадре
+// ---------------------------------------------------------------------------
+
+/// Цвет «чернил» внутри прямоугольника (пиксели ровно этого RGBA).
+fn count_color(
+    frame: &max_render::buffer::RgbaBuffer,
+    rect: max_render::buffer::PixelRect,
+    color: max_render::buffer::Rgba,
+) -> usize {
+    let mut count = 0;
+
+    for y in rect.uly..rect.lry() {
+        for x in rect.ulx..rect.lrx() {
+            if frame.get(x, y) == Some(color) {
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+/// Прямоугольник кнопки End Turn из `windows[]` (`WINDOW_ENDTURN_BUTTON`).
+const END_TURN_RECT: max_render::buffer::PixelRect =
+    max_render::buffer::PixelRect::new(390, 2, 72, 21);
+
+/// A2: таймер показывает `GameManager_TurnTimerValue` в окне
+/// `WINDOW_TURN_TIMER_DISPLAY` (534,2…594,22), `FONT5`, `"%2.2i:%2.2i"`,
+/// цвет `COLOR_RED` при `<= 20` и `0xA2` иначе (`GameManager_DrawTurnTimer`).
 #[test]
-fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
+fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     let Some(mut app) = chrome_app() else {
+        return;
+    };
+
+    let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
+        .expect("палитра FRAMEPIC");
+
+    // Внутренняя часть окна таймера, без бевела: в ней только цифры.
+    let inner = max_render::buffer::PixelRect::new(536, 5, 54, 14);
+    let tan_color = palette.rgba(max_app::panels::TEXT);
+    let red_color = palette.rgba(max_app::panels::RED);
+
+    // 01:41 — ровно как в кадре DOS-оригинала.
+    app.hud_mut().panels.timer_seconds = 101;
+    let (frame, _) = app.render_frame_with_stats();
+    let tan_101 = count_color(&frame, inner, tan_color);
+    let red_101 = count_color(&frame, inner, red_color);
+
+    assert!(tan_101 > 50, "текст таймера рисуется цветом 0xA2: {tan_101}");
+    assert_eq!(red_101, 0, "101 с — не красный");
+
+    // 15 с — красный (`turn_time <= 20`).
+    app.hud_mut().panels.timer_seconds = 15;
+    let (frame, _) = app.render_frame_with_stats();
+    let tan_15 = count_color(&frame, inner, tan_color);
+    let red_15 = count_color(&frame, inner, red_color);
+
+    assert!(red_15 > 50, "15 с — COLOR_RED: {red_15}");
+    assert_eq!(tan_15, 0, "меньше 20 с — только красный");
+
+    // Таймер выключен: C++ рисует «00:00» **красным** (`DrawTurnTimer(0)`).
+    app.hud_mut().panels.timer_seconds = 0;
+    let (frame, _) = app.render_frame_with_stats();
+
+    assert!(
+        count_color(&frame, inner, red_color) > 50,
+        "0 с (таймер выключен) — тоже красный"
+    );
+}
+
+/// A3: на ходу компьютера кнопка End Turn нажата и подписана цветом активной
+/// команды; на ходу человека — отжата с обычной подписью
+/// (`GameManager_UpdateGui` → `MenuClickEndTurnButton`).
+#[test]
+fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+
+    let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
+        .expect("палитра FRAMEPIC");
+    let tan = palette.rgba(max_app::panels::END_TURN_TEXT);
+
+    // Мой ход (RED, человек): отжатая кнопка, обычная подпись.
+    app.state_mut().active_turn_team = max_core::TeamId::RED;
+    app.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
+    let (human, _) = app.render_frame_with_stats();
+
+    assert!(
+        count_color(&human, END_TURN_RECT, tan) > 0,
+        "на ходу человека подпись обычная (0xA0)"
+    );
+
+    // Ход компьютера GREEN: кнопка нажата, подпись — цвет команды (индекс 2).
+    app.state_mut().active_turn_team = max_core::TeamId::GREEN;
+    app.state_mut().teams[1].team_type = max_core::team::TeamKind::Computer;
+    let (ai, _) = app.render_frame_with_stats();
+    let green = palette.rgba(2);
+
+    assert!(
+        count_color(&ai, END_TURN_RECT, green) > 0,
+        "на ходу компьютера подпись цветом команды (FontColor(team+1, …))"
+    );
+    assert_eq!(
+        count_color(&ai, END_TURN_RECT, tan),
+        0,
+        "обычной подписи на нажатой кнопке нет"
+    );
+
+    // Бевл нажатой кнопки — ресурс `R_ENDT_D + team`, а не `ENDTRN_U`:
+    // кадры различаются внутри кнопки.
+    let mut changed = 0;
+
+    for y in END_TURN_RECT.uly..END_TURN_RECT.lry() {
+        for x in END_TURN_RECT.ulx..END_TURN_RECT.lrx() {
+            if human.get(x, y) != ai.get(x, y) {
+                changed += 1;
+            }
+        }
+    }
+
+    assert!(
+        changed > 100,
+        "нажатая кнопка отличается от отжатой (пикселей: {changed})"
+    );
+
+    // HOT-SEAT: второй человек ходит — кнопка снова отжата.
+    app.state_mut().active_turn_team = max_core::TeamId::GREEN;
+    app.state_mut().teams[1].team_type = max_core::team::TeamKind::Player;
+    let (hotseat, _) = app.render_frame_with_stats();
+
+    assert!(
+        count_color(&hotseat, END_TURN_RECT, tan) > 0,
+        "hot-seat: ход второго человека — кнопка отжата"
+    );
+    assert_eq!(
+        count_color(&hotseat, END_TURN_RECT, green),
+        0,
+        "hot-seat: цветного текста на отжатой кнопке нет"
+    );
+}
+
+/// A1: маркеры стройки `BLDMRK1..5` рисуются вокруг достроенной площадки, пока
+/// строитель ждёт приказа игрока (`DrawMap_RenderBuildMarker`).
+#[test]
+fn chrome_build_markers_are_drawn_around_the_finished_site() {
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+    use max_core::geo::Point;
+
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+
+    let site = Point::new(30, 20);
+    let team = app.player_team();
+    let builder = app
+        .state_mut()
+        .spawn_unit(UnitType::Constructor, team, site, 0)
+        .expect("constructor");
+    let building = app
+        .state_mut()
+        .spawn_unit(UnitType::TrainingHall, team, site, 0)
+        .expect("training hall");
+
+    max_core::production::deploy_construction_site(
+        app.state_mut(),
+        builder,
+        UnitType::TrainingHall,
+        site,
+    )
+    .expect("site deployed");
+
+    let mut builder_unit = app.state().unit(builder).expect("builder").clone();
+    builder_unit.grid = site;
+    builder_unit.parent_unit = Some(building);
+    builder_unit.orders = UnitOrder::Build;
+    builder_unit.state = UnitOrderState::UnitReady;
+    app.state_mut().write_unit(builder, builder_unit);
+
+    let mut building_unit = app.state().unit(building).expect("building").clone();
+    building_unit.parent_unit = Some(builder);
+    building_unit.orders = UnitOrder::Idle;
+    building_unit.state = UnitOrderState::BuildingReady;
+    app.state_mut().write_unit(building, building_unit);
+
+    app.hud_mut().select(Some(builder));
+    app.viewport_mut().center_on_grid(site.x, site.y);
+
+    let cells = max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
+    assert!(
+        cells.len() >= 8,
+        "вокруг площадки 2×2 обязаны быть проходимые клетки: {cells:?}"
+    );
+
+    let (frame, stats) = app.render_frame_with_stats();
+    assert!(
+        stats.build_markers >= cells.len(),
+        "маркеры нарисованы: {} (ожидалось {})",
+        stats.build_markers,
+        cells.len()
+    );
+
+    // Снимаем выделение — маркеры исчезают.
+    app.hud_mut().select(None);
+    let (_, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.build_markers, 0, "без выделения маркеров нет");
+
+    let _ = frame;
+}
+
+#[test]
+fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {    let Some(mut app) = chrome_app() else {
         return;
     };
     let click = |app: &mut App, rect: max_render::buffer::PixelRect| {

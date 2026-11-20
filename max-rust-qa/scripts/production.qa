@@ -57,6 +57,8 @@ landing grid 30 22
 landing done
 assert screen=InGame
 assert turn=1
+# Ход человека (TEAM_TYPE_PLAYER): кнопка End Turn отжата (A3).
+assert endturn=normal
 tick 5
 
 # --- BuildMenu конструктора: заказ здания и ВЫБОР МЕСТА --------------------
@@ -234,11 +236,12 @@ end_turn
 end_turn
 end_turn
 
-# --- Достройка 1:1: сначала строитель УХОДИТ, потом появляется здание ------
+# --- Достройка 1:1: строитель ЖДЁТ приказа игрока -------------------------
 # C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3440`): здание встаёт на клетку
 # ленты в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (не рисуется —
 # `UnitInfoGroup::IsRelevant`), а строитель получает `ORDER_BUILD`/
-# `ORDER_STATE_UNIT_READY` и остаётся на площадке. Лента и конусы ещё на месте.
+# `ORDER_STATE_UNIT_READY` и остаётся на площадке. Лента и конусы ещё на месте,
+# ухода НЕТ: его инициирует игрок (`game_manager.cpp:6879-6890`).
 assert unit=Training Hall
 assert build=closed
 assert build-ready=yes
@@ -247,17 +250,28 @@ assert builder=inside
 # Выделение сброшено началом хода — клик по строителю даёт «Finished building».
 select type Constructor
 assert hint=Finished building Training Hall
+# Кадр «строитель ждёт»: лента/конусы/плита на месте, вокруг строителя —
+# мигающие маркеры `BLDMRK1..5` (`DrawMap_RenderBuildMarker`), здание скрыто.
 shot build-done-waiting
+assert unit-order=build
+assert builder=inside
+assert build-ready=yes
 
-# Строитель сходит с площадки: `TaskActivate`/`ORDER_ACTIVATE` →
-# `PositionInTape` DEINIT/LEAVE (доворот + четыре тика по 8 px) →
-# `ActivateEngineer` (лента/конусы снимаются) → `ORDER_MOVE` к свободной
-# клетке вокруг здания.
-tick 1
+# Приказ движения ИГРОКОМ (RMB по клетке рядом):
+# `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` с `move_to` = клетка клика.
+move near
 assert unit-order=activate
-tick 3
+assert builder=inside
 shot build-done-leaving
-
+# `PositionInTape` DEINIT/LEAVE: доворот к `move_to` и четыре шага по 8 px —
+# после них клетка строителя пересчитывается от пиксельной позиции
+# (`grid_x = x / GFX_MAP_TILE_SIZE`), он оказывается за габаритом 2×2.
+tick 6
+assert builder=inside
+# `tick 12` — доворот (до 4 шагов) + четыре шага по 8 px + выход на клетку
+# клика: строитель покидает габарит 2×2.
+tick 12
+assert builder=outside
 # `UnitsManager_BuildingReady`: строитель вне габаритов 2×2 → утилиты сняты
 # (`remove_slabs = false`, плита осталась фундаментом), здание раскрывается
 # `ScaleUnit(EXPAND)`.

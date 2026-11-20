@@ -1407,11 +1407,22 @@ fn create_building_abort(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
     ctx.remove_self(header.id);
 }
 
-/// `TaskCreateBuilding::Activate` — передать готовое здание менеджеру.
+/// `TaskCreateBuilding::Activate` (`taskcreatebuilding.cpp:912`) —
+/// **уход строителя с площадки** через `TaskActivate` (`taskactivate.cpp:104`).
+///
+/// C++: `Activate` ставит `op_state = CREATE_BUILDING_STATE_MOVING_OFF_SITE` и
+/// вешает `TaskActivate(builder, this, building)`; сама `TaskActivate::Activate`
+/// ищет первую проходимую клетку вокруг здания (`Access_IsAccessible`) и отдаёт
+/// строителю `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` (у игрока то же самое
+/// делает клик, `game_manager.cpp:6879`). Задача завершается позже — в
+/// `EndTurn`/`Execute` при `builder->GetOrder() == ORDER_AWAIT`
+/// (`taskcreatebuilding.cpp:847-854`), то есть после того, как здание раскрылось
+/// (`UnitsManager_BuildingReady` ждёт ухода строителя).
 fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::CreateBuilding {
         unit_type,
         site,
+        op_state,
         builder,
         manager,
         ..
@@ -1424,8 +1435,23 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
         return;
     };
 
-    // `UnitsManager_BuildNext`: родитель-завод готовит юнит; в упрощении
-    // здание активируется сразу.
+    // Строитель ещё на площадке (`ORDER_BUILD`/`UNIT_READY`, здание
+    // `ORDER_IDLE`/`BUILDING_READY`) — отдаём приказ на уход один раз; дальше
+    // ждём, пока он сойдёт с габаритов 2×2 (`TaskActivate_IsComplete`).
+    if crate::production::builder_awaiting_exit(ctx.world, builder_id).is_some() {
+        *op_state = create_building_state::MOVING_OFF_SITE;
+
+        if crate::unit_order::issue_builder_exit(ctx.world, builder_id) {
+            return;
+        }
+
+        // C++ просит очистить зону (`TaskActivate`: `AiPlayer_Teams[...].ClearZone`)
+        // и повторяет попытку на следующем ходу — в порте зон нет (P5/P7).
+        ctx.remind_turn_end(header.id, true);
+
+        return;
+    }
+
     let building_id = ctx.world.units_at(*site).iter().copied().find(|id| {
         ctx.world
             .unit(*id)

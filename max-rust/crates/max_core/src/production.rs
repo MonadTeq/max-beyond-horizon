@@ -30,8 +30,11 @@
 //!    `ORDER_STATE_UNIT_READY` (как `UnitInfo::SpawnNewUnit`), мобильный
 //!    строитель достраивает здание на площадке: здание встаёт на клетку ленты
 //!    в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (не рисуется), строитель —
-//!    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`; раскрытие (`ScaleUnit(EXPAND)`,
-//!    снятие ленты, плита остаётся) делает
+//!    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` и **остаётся на площадке**
+//!    ([`builder_awaiting_exit`]). Уход инициирует игрок кликом по клетке
+//!    (`ORDER_ACTIVATE`/`IN_TRANSITION`, `game_manager.cpp:6879`) или ИИ задачей
+//!    `TaskActivate` ([`crate::unit_order::issue_builder_exit`]); раскрытие
+//!    (`ScaleUnit(EXPAND)`, снятие ленты, плита остаётся) делает
 //!    [`crate::unit_order::process_orders`]-ветка `BuildingReady` только после
 //!    ухода строителя с площадки (`UnitsManager_BuildingReady`).
 //!
@@ -871,15 +874,44 @@ fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId
     }
 }
 
+/// Строитель достроил здание и **ждёт приказа уйти с площадки**.
+///
+/// C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3536-3592`, не стационарный
+/// строитель): здание ставится на клетку ленты в `ORDER_IDLE`/
+/// `ORDER_STATE_BUILDING_READY` и не рисуется (`UnitInfoGroup::IsRelevant`),
+/// строитель получает `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` и остаётся на
+/// площадке; взаимные родители (`this->SetParent(&*utility_unit)` +
+/// `utility_unit->SetParent(this)`). Уход инициирует **игрок** — клик по клетке
+/// (`game_manager.cpp:6879-6890`: у выделенного строителя состояние
+/// `ORDER_STATE_UNIT_READY` → `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`), у
+/// ИИ — `TaskCreateBuilding::Activate`/`TaskActivate` (`taskactivate.cpp:104`).
+///
+/// Возвращает id здания-родителя, пока строитель стоит на площадке.
+pub fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<UnitId> {
+    let builder = state.unit(builder_id)?;
+
+    if builder.orders != UnitOrder::Build || builder.state != UnitOrderState::UnitReady {
+        return None;
+    }
+
+    let building = state.unit(builder.parent_unit?)?;
+
+    if building.orders == UnitOrder::Idle && building.state == UnitOrderState::BuildingReady {
+        Some(building.id)
+    } else {
+        None
+    }
+}
+
 /// Клетка, куда строитель уходит с достроенной площадки — порт поиска
 /// `TaskActivate::Activate` (`taskactivate.cpp:104-167`).
 ///
 /// C++ перебирает клетки вокруг родителя-здания (2×2): старт в
 /// `(grid_x - 1, grid_y + unit_size)`, затем четыре направления
 /// (`N, E, S, W` — `direction += 2`) по `unit_size + 1` шагов, накопительно —
-/// первая проходимая клетка становится целью. В нашем порте эту роль выполняет
-/// завершение стройки: строитель обязан сойти с площадки (`ORDER_ACTIVATE`),
-/// иначе `UnitsManager_BuildingReady` никогда не раскроет здание.
+/// первая проходимая клетка становится целью. Это цель **ИИ** (`TaskActivate`);
+/// игрок кликом задаёт любую клетку (`move_to` = клик), поэтому у него
+/// `builder_exit_cell` не используется.
 pub fn builder_exit_cell(
     state: &GameState,
     builder: &UnitInfo,
@@ -1466,10 +1498,13 @@ impl<'a> ProductionManager<'a> {
             //     `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` и **не рисуется**
             //     (`UnitInfoGroup::IsRelevant`), пока строитель на площадке;
             //  2. строитель получает `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`
-            //     (`this->SetParent(&*utility_unit)` — взаимный родитель);
-            //  3. строитель сходит с площадки (`ORDER_ACTIVATE` →
+            //     (`this->SetParent(&*utility_unit)` — взаимный родитель) и
+            //     продолжает стоять (`ProcessOrderBuild`/`UNIT_READY` только
+            //     анимирует) — **никакого автовыхода**;
+            //  3. уход заказывает игрок кликом (`ORDER_ACTIVATE` →
             //     `PositionInTape` DEINIT/LEAVE → `ActivateEngineer` →
-            //     `ORDER_MOVE`, см. `unit_order::process_order_build`);
+            //     `ORDER_MOVE`, см. `hud::build_builder_exit_order`) или ИИ
+            //     (`TaskActivate` → `unit_order::issue_builder_exit`);
             //  4. `UnitsManager_BuildingReady` снимает ленту и конусы, плита
             //     (`*SLAB`) остаётся фундаментом, здание раскрывается
             //     (`ScaleUnit(EXPAND)`) — только после ухода строителя.

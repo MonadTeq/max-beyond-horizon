@@ -3134,3 +3134,177 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 * Оракулы (`max-cpp-port`, `max-original`, `max-original-dasm`) не изменялись;
   `max-original/save10.*`, которые QA-сейв-сценарии пишут в каталог данных,
   возвращены в исходное состояние.
+
+## 31. A1–A3: уход строителя по приказу игрока, таймер хода, кнопка End Turn — **сделано** (2026-11-20)
+
+**Оракул.** `max-cpp-port/src/unitinfo.cpp:3440` `UnitInfo::SpawnNewUnit`
+(:3520-3592 — мобильный строитель), `:4414` `PositionInTape`, `:4488`
+`ReturnToConstructionSite`; `units_manager.cpp:2834` `ProcessOrderBuild`
+(`:2891` `UNIT_READY`), `:2908` `ProcessOrderActivate`, `:3407`
+`ActivateEngineer`, `:4183` `UnitsManager_BuildingReady`, `:1945`
+`SetNewOrderInt`; `game_manager.cpp:6879-6890` (клик игрока → `ORDER_ACTIVATE`),
+`:3977` `MenuClickEndTurnButton`, `:2407-2492` `GameManager_UpdateGui`,
+`:7834-7883` подписи кнопок, `:7860-7883` запечённая подпись End Turn,
+`:2133-2223` `DrawTurnCounter`/`DrawTimer`/`DrawTurnTimer`, `:2241`
+`DrawDisplayPanel`; `window_manager.cpp:104-105` (`WINDOW_TURN_COUNTER_DISPLAY`
+468,2…528,22 и `WINDOW_TURN_TIMER_DISPLAY` 534,2…594,22), `:54`
+`WINDOW_ENDTURN_BUTTON` 390,2…461,22; `button.cpp:392/419` `SetRestState`/
+`SetCaption`; `drawmap.cpp:47-49/304-351/353-389` маркеры стройки
+(`BLDMRK1..5`, `DrawMap_RenderBuildMarker`, `DrawMap_RedrawUnit`);
+`taskcreatebuilding.cpp:670/912` (`Activate`), `taskactivate.cpp:34-201`
+(`TaskActivate_IsComplete`/`Activate`); `resourcetable.hpp:300-304`
+(`ENDTRN_U`, `R_ENDT_D`, `G_ENDT_D`, `B_ENDT_D`, `W_ENDT_D`), `:260` `TIMER`;
+`color.h:36-39` (`COLOR_RED` = 1, `COLOR_GREEN` = 2, `COLOR_BLUE` = 3);
+`text.cpp:700-808` (`Text_TextBox` с `vertical_align = true`, `Text_TextLine`);
+`fonts.cpp`/`TEXT_FONT_META` (`GNW_TEXT_FONT_5` = 10 px).
+
+**A1. Уход строителя — только по приказу игрока.** В C++ `SpawnNewUnit`
+(мобильный строитель) ставит здание на клетку ленты в `ORDER_IDLE`/
+`ORDER_STATE_BUILDING_READY` (здание **не рисуется**: `UnitInfoGroup::IsRelevant`
+пропускает `ORDER_IDLE`) и оставляет строителя в `ORDER_BUILD`/
+`ORDER_STATE_UNIT_READY`; взаимные родители — `this->SetParent(&*utility_unit)`
+и `utility_unit->SetParent(this)`. `UnitsManager_ProcessOrderBuild`/`UNIT_READY`
+делает только `if (unit->path) BuildNext else Animate` — **никакого выхода**.
+Уход инициирует игрок: `game_manager.cpp:6879-6890` — у выделенного юнита в
+`ORDER_STATE_UNIT_READY` клик по клетке ставит `move_to_grid` = клетка клика и
+`UnitsManager_SetNewOrder(ORDER_ACTIVATE, ORDER_STATE_IN_TRANSITION)`; у ИИ то же
+делает `TaskCreateBuilding::Activate` → `TaskActivate`
+(`taskactivate.cpp:104-167`: первая проходимая клетка вокруг здания,
+`Access_IsAccessible(..., AccessModifier_SameClassBlocks)`). Дальше
+`ProcessOrderActivate`/`IN_TRANSITION` → `AWAIT_TAPE_POSITIONING`/
+`TAPE_POSITIONING_DEINIT` → `PositionInTape` (доворот к `move_to`, четыре шага по
+8 px, пересчёт клетки `grid_x = x / GFX_MAP_TILE_SIZE`) → `ActivateEngineer`
+(`Access_DestroyUtilities(grid, false, false, false, false)` — лента и конусы,
+`ORDER_MOVE`/`INIT`) → `ORDER_MOVE`; `UnitsManager_BuildingReady` при выходе
+строителя из габаритов 2×2 снимает утилиты по четырём клеткам
+(`remove_slabs = false` — плита остаётся), `RestoreOrders`, `scaler_adjust = 4`,
+`ScaleUnit(EXPAND)`.
+
+Порт раньше активировал строителя сам (ветка `ORDER_BUILD`/`UNIT_READY` звала
+`start_leaving_site`) — по словам пользователя это не оригинал. Теперь:
+
+1. `unit_order::process_order_build`/`UnitReady` — как C++: только `path`/
+   анимация, без приказа (30 тиков в тесте не раскрывают здание и не снимают
+   площадку).
+2. `production::builder_awaiting_exit` — «строитель ждёт» (`ORDER_BUILD`/
+   `UNIT_READY` + родитель-здание `ORDER_IDLE`/`BUILDING_READY`).
+3. Игрок: `hud::build_builder_exit_order` (08/**P3**, `order = ACTIVATE`,
+   `state = IN_TRANSITION`, `move_to` = клетка клика, `parent_unit` = здание) из
+   `ui::session_map_right_click` — до `build_move_order`, путь не строится
+   (C++ его тоже не строит). `App` показывает маркеры (`DrawMap_RenderBuildMarker`).
+4. ИИ: `ai::tasks::create::create_building_activate` ставит
+   `op_state = MOVING_OFF_SITE` и зовёт `unit_order::issue_builder_exit`
+   (`TaskActivate`-эквивалент, цель — `production::builder_exit_cell`); задача
+   завершается, когда строитель ушёл (как `taskcreatebuilding.cpp:847-854`).
+   Без этого соло-ИИ ждал бы «игрока» вечно — тест
+   `ai_builder_leaves_the_finished_site_and_the_building_appears`.
+5. Маркеры `BLDMRK1..5` (`render::build_marker_cells` +
+   `render::draw_build_markers`): клетки вокруг **родителя** выделенного юнита,
+   только проходимые; кадр меняется по визуальным часам
+   (`BUILD_MARKER_FRAME_SECONDS` = 0.1 с; C++ — каждые 3 отрисовки карты,
+   `dt = 0` в QA — статичный кадр 0).
+
+**A2. Таймер хода.** C++ рисует его через `GameManager_DrawTurnTimer`
+(`mode = false` по умолчанию в `game_manager.hpp:60`) → `GameManager_DrawDisplayPanel`
+(`MENU_DISPLAY_CONTROL_TURN_TIMER`): окно `WINDOW_TURN_TIMER_DISPLAY`
+(534,2…594,22, 61×21), ресурс `TIMER` 61×21, `Text_SetFont(GNW_TEXT_FONT_5)`,
+`Text_TextBox(..., ulx = 0, uly = 0, width = 61, height = 21, color, true)`
+(`horizontal_align = true`, `vertical_align = true` по умолчанию,
+`text.hpp:34-35`), текст `sprintf("%2.2i:%2.2i", turn_time / 60, turn_time % 60)`
+— **остаток времени хода** в минутах:секундах с нулями слева (`%2.2i` —
+точность 2), цвет `0xA2`, при `turn_time <= 20` — `COLOR_RED` (`0x01`), включая
+ноль (таймер выключен). Значение — `GameManager_TurnTimerValue`
+(`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`: целые секунды, раз в
+секунду); ход компьютера стартует с `settings["endturn"]`, но не меньше 45 с
+(`game_manager.cpp:2426-2475`). Геометрия сверена с кадром DOS-оригинала
+(`build/anim-dos/avicap/f1/f_0001.png`, «01:41»): чернила x 551…575, y 9…15 —
+совпадает с портом пиксель в пиксель (тест
+`panels::tests::timer_text_geometry_matches_the_dos_frame`). Раньше
+`PanelState::timer_seconds` никто не заполнял — панель всегда показывала «00:00»
+не тем цветом; теперь `App::turn_timer_seconds()` отдаёт живое значение
+(`ceil`), включая ход ИИ.
+
+**A3. End Turn нажата и подписана цветом команды.** `GameManager_UpdateGui`
+(`game_manager.cpp:2437-2481`) на ходу человека зовёт
+`GameManager_MenuClickEndTurnButton(true)`, на ходу компьютера —
+`MenuClickEndTurnButton(0)`; функция (`:3977`) делает
+`CopyDown(R_ENDT_D + GameManager_ActiveTurnTeam)`, `Disable/Enable` и
+`SetRestState(!rest_state)`, то есть: **ход человека** — отжатая `ENDTRN_U` с
+подписью `FontColor(0xA0, 0xA2, 0xE6)` (`:7836-7839`), **ход компьютера** —
+нажатая `R_ENDT_D/G_ENDT_D/B_ENDT_D/W_ENDT_D` (у серой команды `0xFF`) с
+запечённой подписью «End Turn» `FontColor(team + 1, team + 1, 0x3F)`
+(`:7860-7883`). В hot-seat у обоих людей кнопка отжата; `TEAM_TYPE_REMOTE`
+состояние не меняет (в порте показывается отжатой — см. ограничения).
+Реализация: `panels::end_turn_pressed`/`end_turn_caption_color`,
+`Panels::end_turn_down` (`R_ENDT_D..W_ENDT_D`), `draw_caption_colored`
+(позиция подписи `x = (72 - (Text_GetWidth + 1)) / 2`, `y = (21 - 10) / 2` —
+как `Button::SetCaption` и `Text_TextBox` с центровкой).
+
+**Проверка.** QA: `production.qa` — достройка → `assert build-ready=yes` +
+`builder=inside` + `site=large` (кадр `build-done-waiting` с маркерами) →
+`move near` (приказ **игрока**) → `assert unit-order=activate` (кадр
+`build-done-leaving`) → `tick 12` → `assert builder=outside` → `tick 16` →
+`assert site=none` + `build-ready=no` (кадр `build-done`); `research.qa` и
+`research-help.qa` получили `select type Constructor` + `move near` перед
+тиками; `ai-turn.qa` (новый, был объявлен в `ci.sh`, но отсутствовал) —
+`assert endturn=normal` (мой ход) → `click 426 12` → `tick 1` →
+`assert team=GREEN` + `assert endturn=pressed` + `wait 2000` →
+`assert endturn=normal`/`team=RED`/`turn>=2`, кадры
+`ai-turn-human-normal`/`ai-turn-ai-pressed`/`ai-turn-human-again` (в кадре хода
+ИИ: нажатая кнопка с **зелёной** подписью и таймер **00:45**). Новый ассерт
+`assert endturn=pressed|normal` (`panels::end_turn_pressed` — та же функция, что
+рисует кнопку). UNIT: `max_core/tests/production.rs`
+(`completion_waits_for_the_builder_to_leave_before_the_building_appears` —
+30 тиков ожидания без приказа, затем `issue_builder_exit` и раскрытие;
+`completion_sequence_is_deterministic`), `max_core/tests/ai_p6.rs` (ИИ уводит
+строителя и здание появляется), `max_app/src/panels.rs` tests
+(формат/цвет/геометрия таймера, `end_turn_*`), `max_app/tests/app.rs`
+(`chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors`,
+`chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn` — три фазы,
+`chrome_build_markers_are_drawn_around_the_finished_site`). Golden переснят
+(`--update`) для всех наборов: 87 эталонов, включая новый `golden/ai-turn`;
+повторный прогон — 0 дрейфа.
+
+**Осознанные ограничения.** `TEAM_TYPE_REMOTE` в C++ не трогает кнопку
+(остаётся вид предыдущей команды); порт показывает её отжатой, потому что
+состояния кнопки между кадрами не хранит — в сетевой партии ход оппонента идёт
+как `Remote`, а «нажатый» вид остаётся только за компьютером. Таймер хода в
+сетевой партии порт не моделирует (в C++ он живёт в
+`Remote_UpdatePauseTimer`/`Remote_PauseTimeStamp`): панель показывает «00:00»
+цветом `COLOR_RED` — ровно то, что C++ рисует при `GameManager_TurnTimerValue = 0`.
+Маркеры стройки мигают по визуальным часам (10 кадров/с), а не по счётчику
+отрисовок C++: частота кадров порта не равна 30 Гц, при `dt = 0` кадр статичен
+(golden детерминированны).
+
+**Артефакты и гейты (2026-11-20, A1–A3).**
+* CI-гейт `bash ci.sh` — **зелёный** (1625 с; холодный кэш cargo: заново скачаны
+  крейты и собран SDL3 из исходников): шаг 1/4 (`cargo check`+`test`
+  default/sound/no-default), 2/4 (Horizon `cargo test --workspace`), 3/4 —
+  **17 QA-скриптов** (`sp-full`, `hs-2`, `visual-screens`, `victory`,
+  `production`, `save-load`, `upgrade`, `research`, `edge-cases`, `cargo-full`,
+  `move-input`, `research-help`, `unit-menu`, `allocate`, `preferences`, `xfer`,
+  `ai-turn` — все PASS; `production.qa` 5835 кадров, `ai-turn.qa` 298) и
+  **12 golden-сверок, 87 эталонов, 0 дрейфа** (visual 15, production 27,
+  upgrade 3, research 2, cargo 5, move-input 6, research-help 9, unit-menu 4,
+  allocate 5, preferences 4, xfer 4, ai-turn 3), 4/4 (`soak-100` — 49 484 кадра,
+  `soak_headless --turns 120` — 119 297 кадров, RSS стабилен, PASS).
+  Попутно исправлен `ci.sh`: он ссылался на `ai-turn.qa`, которого в дереве не
+  было (шаг 3/4 падал бы), и файл лежал в рабочем каталоге с CRLF (WSL/Git Bash
+  `set -o pipefail` → «invalid option name»); теперь сценарий есть, а `*.sh`
+  снова LF (как требует `.gitattributes`).
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/` — `max-rust.exe`
+  6 646 272 Б, sha256
+  `d67e1e21f5b8e22aef950ed226e94bbe0ea865ae21e2c5d5e072fabb93c197fb`;
+  `max_app-1.1.0-windows-x86_64-ui.zip` 3 596 564 Б, sha256
+  `c6c165cbae2455d2fc1583d2d2e04e12e0cc36789c1f71d6719be3af6eff6c5d`
+  (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом; `build-windows-ui.ps1`,
+  MSVC+vcpkg, `--help` OK).
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/` — `max-rust.exe`
+  10 913 045 Б, sha256
+  `b78405a01ceef7fafc4ad72c5d0fd804b88d30886f0044e979159736a80aee5e`;
+  `max_app-1.1.0-windows-x86_64.zip` 4 078 385 Б, sha256
+  `a0771d65682436a231002427a6ceac4da57d04188bdb3d07c976ce584cd92092`
+  (PE32+ x64, Subsystem=3 console; `build-windows.sh --no-wine`).
+* Оракулы (`max-cpp-port`, `max-original`, `max-original-dasm`) не изменялись;
+  `max-original/save10.*`, которые QA-сейв-сценарии пишут в каталог данных,
+  возвращены в исходное состояние.

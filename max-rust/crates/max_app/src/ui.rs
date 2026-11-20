@@ -2847,6 +2847,33 @@ fn session_map_right_click(
         return Transition::None;
     }
 
+    // Достроивший строитель стоит на площадке (`ORDER_BUILD`/`UNIT_READY`,
+    // здание `ORDER_IDLE`/`BUILDING_READY`): клик отдаёт `ORDER_ACTIVATE`/
+    // `IN_TRANSITION` — ровно `game_manager.cpp:6879-6890`. Путь не строится
+    // (C++ ставит только `move_to`), поэтому `build_move_order` здесь не
+    // вызывается.
+    if let Some(command) = hud::build_builder_exit_order(app.state(), selected, destination) {
+        app.hud_mut().preview = None;
+        app.hud_mut().pending.push(command);
+        app.hud_mut().push_log(format!(
+            "Leave construction site: click ({}, {})",
+            destination.x, destination.y
+        ));
+
+        if debug {
+            eprintln!(
+                "[rclick] result=leave-site selected={} to=({},{})",
+                selected.0, destination.x, destination.y
+            );
+        }
+
+        if !online {
+            apply_pending_orders(app);
+        }
+
+        return Transition::None;
+    }
+
     match hud::build_move_order(app.state(), selected, destination) {
         Some(order) => {
             let steps = order.preview.len();

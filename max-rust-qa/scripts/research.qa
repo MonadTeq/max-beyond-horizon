@@ -68,9 +68,15 @@ end_turn
 end_turn
 assert unit=Research Center
 # Достройка 1:1 (`SpawnNewUnit` + `UnitsManager_BuildingReady`): здание
-# появляется только после ухода строителя с площадки — даём тики (уход:
-# `ORDER_ACTIVATE` → `PositionInTape` DEINIT/LEAVE → `ActivateEngineer` →
-# `ORDER_MOVE` + раскрытие `ScaleUnit(EXPAND)`).
+# появляется только после ухода строителя с площадки, а уход инициирует
+# **игрок** (`game_manager.cpp:6879-6890`: у выделенного строителя в
+# `ORDER_STATE_UNIT_READY` клик по клетке даёт `ORDER_ACTIVATE`/
+# `ORDER_STATE_IN_TRANSITION`); дальше `PositionInTape` DEINIT/LEAVE →
+# `ActivateEngineer` → `ORDER_MOVE` + раскрытие `ScaleUnit(EXPAND)`.
+select type Constructor
+assert hint=Finished building Research Center
+move near
+assert unit-order=activate
 tick 30
 assert build-ready=no
 assert builder=outside
