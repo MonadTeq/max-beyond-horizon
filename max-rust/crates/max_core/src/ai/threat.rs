@@ -545,6 +545,60 @@ impl GameState {
         }
     }
 
+    /// `Survey_SurveyArea` (`survey.cpp:84-121`) — знание ресурсов команды.
+    ///
+    /// Вызывается из [`GameState::update_map_status_unit`] ровно как C++
+    /// (`access.cpp:762-768`: `Access_UpdateMapStatus` → `Survey_SurveyArea`).
+    ///
+    /// * только для `SURVEYOR`/`MINELAYR`/`SEAMNLYR`/`COMMANDO` и только при
+    ///   добавлении покрытия (`mode = true`);
+    /// * обход квадрата `grid ± 1` (радиус **1**, т.е. 3×3);
+    /// * клетки с модифицированной поверхностью `AIR` пропускаются;
+    /// * **помечает** клетки только `SURVEYOR` (`survey.cpp:108-117`): в
+    ///   `ResourceManager_CargoMap` ставится `hash_team_id` команды — у порта
+    ///   бит [`crate::map::team_visibility_bit`] в
+    ///   [`crate::map::ResourceMapEntry::visibility`]. Знание **накопительное**
+    ///   (`|=`): уход разведчика его не снимает, поэтому `mode = false` ничего
+    ///   не откатывает — как в C++.
+    ///
+    /// Клетки мин (`Access_GetEnemyMineOnSentry`/`Ai_MarkMineMapPoint`) в
+    /// порте обрабатываются отдельно (`SpotByTeam` при обнаружении мины).
+    pub fn survey_area(&mut self, unit: &UnitInfo) {
+        if !matches!(
+            unit.unit_type,
+            UnitType::Surveyor | UnitType::MineLayer | UnitType::SeaMineLayer | UnitType::Commando
+        ) {
+            return;
+        }
+
+        let radius = 1;
+        let grid_x = i32::from(unit.grid.x);
+        let grid_y = i32::from(unit.grid.y);
+        let ulx = (grid_x - radius).max(0);
+        let uly = (grid_y - radius).max(0);
+        let lrx = (grid_x + radius).min(i32::from(MAP_WIDTH) - 1);
+        let lry = (grid_y + radius).min(i32::from(MAP_HEIGHT) - 1);
+
+        for y in uly..=lry {
+            for x in ulx..=lrx {
+                let point = Point::new(x as i16, y as i16);
+
+                if access::modified_surface_type(self, point, false) == access::SURFACE_TYPE_AIR {
+                    continue;
+                }
+
+                if unit.unit_type == UnitType::Surveyor {
+                    let entry = self.map.resources.get(point.x, point.y);
+                    let known = entry.with_team_visible(unit.team.0);
+
+                    if known != entry {
+                        self.map.resources.set(point.x, point.y, known);
+                    }
+                }
+            }
+        }
+    }
+
     /// `Access_UpdateMapStatusAddUnit` (`access.cpp:637`).
     ///
     /// Добавляет вклад сканирующего юнита во все три слоя карты и вызывает
@@ -661,6 +715,14 @@ impl GameState {
 
         if unit.orders == UnitOrder::Disable {
             return;
+        }
+
+        // `Access_UpdateMapStatus` (`access.cpp:762-768`): знание ресурсов
+        // обновляется **до** всех проверок покрытия (`heat_map`, `ORDER_IDLE`,
+        // `SELECTABLE`) и только на добавлении (`mode`). Разведчик помечает
+        // клетки, даже когда стоит `ORDER_IDLE`.
+        if mode {
+            self.survey_area(unit);
         }
 
         let visible_team = unit.team;

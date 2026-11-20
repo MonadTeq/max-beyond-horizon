@@ -278,7 +278,9 @@ fn team_building_at(
         .units_at(max_core::geo::Point::new(x, y))
         .iter()
         .filter_map(|id| state.unit(*id))
-        .find(|unit| unit.team == team && unit.orders != UnitOrder::Idle && unit.is_complex_member())
+        .find(|unit| {
+            unit.team == team && unit.orders != UnitOrder::Idle && unit.is_complex_member()
+        })
 }
 
 /// Маска коннекторов здания — порт своей части `UnitsManager_UpdateConnectors`
@@ -541,9 +543,14 @@ pub fn unit_frame_index_with_animation(
         let base = usize::try_from(image_base.max(0)).unwrap_or(0);
         let frames = sentry_frames.max(1);
 
-        // C++: `image_index = image_base` после последнего кадра, т.е. цикл
-        // идёт по блоку `image_base .. image_base + image_count - 1`.
-        index = base + (animation.sentry_step as usize % frames);
+        // C++ `ProcessOrderSentry` (`units_manager.cpp:3029-3041`): старт —
+        // `image_base + angle` (из конструктора `UnitInfo`), дальше `+1` до
+        // `image_index_max`, после последнего кадра — снова `image_base`
+        // (не `image_base + angle`). Это ровно
+        // `base + ((angle + step) % image_count)`; для `RADAR` (angle = 0,
+        // `D_RADAR.image_count = 16`) — 16 кадров оборота.
+        let phase = (usize::from(angle % 8) + animation.sentry_step as usize) % frames;
+        index = base + phase;
     } else if effects
         && WORKING_BUILDING_ANIMATION_ENABLED
         && working_building_animation_active(unit)
@@ -582,14 +589,20 @@ pub fn unit_anchor_world(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) ->
 pub struct RenderStats {
     /// Сколько клеток карты нарисовано.
     pub map_tiles: u32,
-    /// Сколько маркеров ресурсов нарисовано.
+    /// Сколько пикселей маркеров ресурсов нарисовано ([`Self::resource_icon_cells`]
+    /// — сколько клеток).
     pub resource_icons: u32,
+    /// Сколько **клеток** с иконкой ресурса нарисовано (`Survey_RenderMarkers`,
+    /// `survey.cpp:123`): иконки видны только на разведанных клетках.
+    pub resource_icon_cells: u32,
     /// Сколько юнитов нарисовано спрайтами.
     pub units_drawn: usize,
     /// Сколько юнитов нарисовано маркерами (нет спрайта/ассетов).
     pub units_marker: usize,
     /// Сколько маркеров стройки `BLDMRK*` нарисовано (`DrawMap_RenderBuildMarker`).
     pub build_markers: usize,
+    /// Сколько индикаторов выделения нарисовано (`GameManager_DrawUnitSelector`).
+    pub selector_units: usize,
     /// Сколько юнитов пропущено (нет в списках/невидимы камере).
     pub units_skipped: usize,
 }
@@ -740,7 +753,12 @@ pub fn draw_unit_sprites_with_animation(
         .copied()
         .unwrap_or(TeamColors::Derelict);
     let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
-    let renderer = SpriteRenderer::new(palette, &assets.brightness, ColorLut::for_team(colors), level);
+    let renderer = SpriteRenderer::new(
+        palette,
+        &assets.brightness,
+        ColorLut::for_team(colors),
+        level,
+    );
 
     let shadow_offset = (
         i32::from(unit.shadow_offset.x),
@@ -796,13 +814,126 @@ pub fn draw_unit_sprites_with_animation(
 
 /// Цвета маркеров команд (запасной вариант без спрайтов): порядок команд
 /// оригинала — `RED, GREEN, BLUE, GRAY, ALIEN`.
-const MARKER_COLORS: [Rgba; 5] = [
+pub const MARKER_COLORS: [Rgba; 5] = [
     Rgba::rgb(224, 48, 48),
     Rgba::rgb(48, 192, 72),
     Rgba::rgb(64, 112, 224),
     Rgba::rgb(192, 192, 192),
     Rgba::rgb(212, 168, 64),
 ];
+
+/// Период мигания индикатора выделения (`GameManager_MarkerColor`).
+///
+/// C++ (`game_manager.cpp:1189-1192`): `GameManager_MarkerColor ^= 0xFF` каждые
+/// `TIMER_FPS_TO_MS(24) * 5` = 42 мс × 5 = **210 мс**. Цвет — палитровый индекс
+/// `0xFF` (белый) или `0x00` (чёрный); `DrawUnitSelector` рисует три вложенные
+/// рамки с чередованием (`color ^= 0xFF` после каждой).
+pub const UNIT_SELECTOR_BLINK_SECONDS: f32 = 0.210;
+
+/// Палитра для маркеров выделения/стройки без ассетов: индекс `0xFF` — белый,
+/// `0x00` — чёрный.
+fn fallback_selector_palette() -> PaletteRgba {
+    let mut palette = [[0u8, 0, 0, 255]; 256];
+    palette[0xFF] = [255, 255, 255, 255];
+    palette
+}
+
+/// Отрезок по пикселям с клипом по буферу (только горизонтальный или
+/// вертикальный — других `draw_line` в `GameManager_DrawUnitSelector` нет).
+fn selector_line(frame: &mut RgbaBuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba) -> u32 {
+    let mut painted = 0;
+
+    if y0 == y1 {
+        let y = y0;
+        for x in x0.min(x1)..=x0.max(x1) {
+            if frame.set(x, y, color) {
+                painted += 1;
+            }
+        }
+    } else if x0 == x1 {
+        let x = x0;
+        for y in y0.min(y1)..=y0.max(y1) {
+            if frame.set(x, y, color) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// Индикатор выделенного юнита — `GameManager_DrawUnitSelector`
+/// (`game_manager.cpp:744-836`), вызов из `DrawMap_RenderUnit`
+/// (`drawmap.cpp:813-833`).
+///
+/// `anchor` — экранный центр спрайта (`UnitInfo::x/y`, то есть центр клетки,
+/// для `BUILDING` — `+31`, для строителя — со сдвигом ленты). `is_building`
+/// выбирает длину уголков: C++ `size1` = 32 у здания и 16 у остальных, шаг
+/// рамки `size2` = 128/64, «полуразмер» якоря — 64/32; всё переводится в
+/// экранные пиксели как `value * 64 / Gfx_MapScalingFactor` =
+/// `value * zoom / 64`.
+///
+/// Карта всегда передаёт `double_marker = true`, поэтому рисуются **три**
+/// вложенные рамки: цвет `marker_color`, `marker_color ^ 0xFF`,
+/// `marker_color` (внутренняя рамка на 1 px ближе и на 2 px короче).
+/// Возвращает число нарисованных пикселей.
+pub fn draw_unit_selector(
+    frame: &mut RgbaBuffer,
+    palette: &PaletteRgba,
+    anchor: (i32, i32),
+    is_building: bool,
+    zoom: u32,
+    marker_color: u8,
+) -> u32 {
+    let zoom = zoom.max(1) as i32;
+    let (size1_world, size2_world, half_world) = if is_building {
+        (32, 128, 64)
+    } else {
+        (16, 64, 32)
+    };
+
+    let mut size1 = size1_world * zoom / 64;
+    let mut size2 = size2_world * zoom / 64 - 2;
+    let half = half_world * zoom / 64;
+    let mut offsetx = anchor.0 - half + 1;
+    let mut offsety = anchor.1 - half + 1;
+    let mut color = marker_color;
+    let mut painted = 0;
+
+    for _ in 0..3 {
+        let rgba = Rgba::from_rgba(palette[usize::from(color)]);
+        let x0 = offsetx;
+        let y0 = offsety;
+
+        // Верх-лево.
+        painted += selector_line(frame, x0, y0, x0 + size1, y0, rgba);
+        painted += selector_line(frame, x0, y0, x0, y0 + size1, rgba);
+
+        let x1 = x0 + size2;
+
+        // Верх-право.
+        painted += selector_line(frame, x1 - size1, y0, x1, y0, rgba);
+        painted += selector_line(frame, x1, y0, x1, y0 + size1, rgba);
+
+        let y1 = y0 + size2;
+
+        // Низ-право.
+        painted += selector_line(frame, x1 - size1, y1, x1, y1, rgba);
+        painted += selector_line(frame, x1, y1, x1, y1 - size1, rgba);
+
+        // Низ-лево.
+        painted += selector_line(frame, x0, y1, x0 + size1, y1, rgba);
+        painted += selector_line(frame, x0, y1, x0, y1 - size1, rgba);
+
+        size2 -= 2;
+        offsetx += 1;
+        offsety += 1;
+        size1 -= 1;
+        color ^= 0xFF;
+    }
+
+    painted
+}
 
 impl App {
     /// Рисует кадр текущего состояния в буфер `screen_width × screen_height`.
@@ -838,15 +969,6 @@ impl App {
         match self.assets() {
             Some(assets) if !assets.terrain.is_empty() => {
                 stats.map_tiles = assets.terrain.render_into(&mut frame, self.viewport());
-                stats.resource_icons = render_resources(
-                    &mut frame,
-                    assets,
-                    &self.state().map,
-                    self.viewport(),
-                    &style,
-                    self.state().player_team.0,
-                    self.hud().panels.survey,
-                );
             }
             _ => {
                 stats.map_tiles =
@@ -855,6 +977,10 @@ impl App {
         }
 
         self.draw_units(&mut frame, self.viewport(), &mut stats);
+        // Иконки ресурсов — поверх юнитов/зданий (`GameManager_RenderSurveyIndicator`).
+        self.draw_resource_icons(&mut frame, self.viewport(), &mut stats);
+        // Маркеры стройки — последними, как `DrawMap_RedrawDirtyZones`.
+        self.draw_build_markers(&mut frame, self.viewport(), &mut stats);
         // Призрак стройплощадки (`ORDER_STATE_SELECT_SITE`) — поверх юнитов.
         self.draw_build_site_ghost(&mut frame, self.viewport(), &mut stats);
 
@@ -925,15 +1051,6 @@ impl App {
         match self.assets() {
             Some(assets) if !assets.terrain.is_empty() => {
                 stats.map_tiles = assets.terrain.render_into(&mut map, &viewport);
-                stats.resource_icons = render_resources(
-                    &mut map,
-                    assets,
-                    &self.state().map,
-                    &viewport,
-                    &style,
-                    self.state().player_team.0,
-                    self.hud().panels.survey,
-                );
             }
             _ => {
                 stats.map_tiles = render_map_into(&mut map, &self.state().map, &viewport, &style);
@@ -941,8 +1058,12 @@ impl App {
         }
 
         self.draw_units(&mut map, &viewport, &mut stats);
+        // `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991-995`) —
+        // **после** юнитов, поэтому иконки ресурсов ложатся поверх зданий.
+        self.draw_resource_icons(&mut map, &viewport, &mut stats);
         // Маркеры стройки — вокруг выделенного строителя/здания
-        // (`DrawMap_RenderBuildMarker`), поверх юнитов и под призраком площадки.
+        // (`DrawMap_RenderBuildMarker`); C++ рисует их в
+        // `DrawMap_RedrawDirtyZones` последними, поверх иконок ресурсов.
         self.draw_build_markers(&mut map, &viewport, &mut stats);
         // Призрак стройплощадки — в область карты, как `GameManager_TempTape`
         // (`ORDER_STATE_SELECT_SITE`), до подтверждения клетки.
@@ -1134,6 +1255,13 @@ impl App {
             visible.push(id);
         }
 
+        // Палитра индикатора выделения: индексы `0xFF`/`0x00` окна игры
+        // (`GameManager_MarkerColor`). Без ассетов — белый/чёрный.
+        let selector_palette = match self.assets() {
+            Some(assets) => window_palette(assets),
+            None => fallback_selector_palette(),
+        };
+
         for index in draw_order(&positions) {
             let Some(unit) = self.state().unit(visible[index]) else {
                 continue;
@@ -1197,6 +1325,23 @@ impl App {
                     stats.units_marker += 1;
                 }
             }
+
+            // `GameManager_DrawUnitSelector` (`game_manager.cpp:744`) из
+            // `DrawMap_RenderUnit` (`drawmap.cpp:813-833`): у выделенного юнита —
+            // три вложенные рамки-уголка с мигающим цветом `GameManager_MarkerColor`.
+            if self.hud().selected == Some(visible[index]) {
+                if draw_unit_selector(
+                    frame,
+                    &selector_palette,
+                    anchor,
+                    unit.flags & unit_flags::BUILDING != 0,
+                    viewport.zoom(),
+                    self.marker_color_index(),
+                ) > 0
+                {
+                    stats.selector_units += 1;
+                }
+            }
         }
     }
 
@@ -1219,6 +1364,88 @@ impl App {
         if site.draw_ghost(frame, assets, viewport).is_some() {
             stats.units_drawn += 1;
         }
+    }
+
+    /// `Access_IsSurveyorOverlayActive` (`access.cpp:341-351`): у выделенного
+    /// юнита — своя команда, тип `SURVEYOR` и приказ **не** `ORDER_IDLE`.
+    ///
+    /// В C++ это кэшируется в `GameManager_IsSurveyorSelected` при выборе юнита
+    /// (`GameManager_MenuUnitSelect`, `game_manager.cpp:7165`); порт считает
+    /// значение по текущему состоянию — то же самое, но без «залипшего» флага,
+    /// если разведчик успел стать `ORDER_IDLE` уже будучи выделенным.
+    pub fn selected_surveyor_active(&self) -> bool {
+        self.hud()
+            .selected
+            .and_then(|id| self.state().unit(id))
+            .is_some_and(|unit| {
+                unit.team == self.state().player_team
+                    && unit.unit_type == UnitType::Surveyor
+                    && unit.orders != UnitOrder::Idle
+            })
+    }
+
+    /// `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991`):
+    /// `GameManager_DisplayButtonSurvey || GameManager_IsSurveyorSelected`.
+    ///
+    /// Кнопка SURVEY (`hud.panels.survey` — `GameManager_DisplayButtonSurvey`,
+    /// `game_manager.cpp:3985`) и выделенный разведчик включают показ иконок
+    /// ресурсов; без них иконки не рисуются вовсе.
+    pub fn survey_overlay_active(&self) -> bool {
+        self.hud().panels.survey || self.selected_surveyor_active()
+    }
+
+    /// Текущий цвет индикатора выделения — `GameManager_MarkerColor`
+    /// (`game_manager.cpp:222/1191`): `0xFF` (белый) или `0x00` (чёрный),
+    /// переключается каждые [`UNIT_SELECTOR_BLINK_SECONDS`] (210 мс).
+    pub fn marker_color_index(&self) -> u8 {
+        self.marker_color_index
+    }
+
+    /// Иконки ресурсов — `DrawMap_RenderSurveyDisplay` (`drawmap.cpp:1065`) +
+    /// `Survey_RenderMarkers` (`survey.cpp:123`).
+    ///
+    /// C++ (`game_manager.cpp:991-995`): `GameManager_RenderSurveyIndicator`
+    /// вызывает отрисовку, только если `GameManager_DisplayButtonSurvey`
+    /// (кнопка **SURVEY** панели) или `GameManager_IsSurveyorSelected`
+    /// (`Access_IsSurveyorOverlayActive`, `access.cpp:341`: выделенный
+    /// `SURVEYOR` своей команды не в `ORDER_IDLE`). Внутри
+    /// `Survey_RenderMarkers` маска — `hash_team_id` команды (чит `MAXSURVEY`
+    /// даёт `0xFFFF` и в порте не включён), поэтому иконка появляется только на
+    /// **разведанной** клетке (`Survey_SurveyArea` ставит бит, когда разведчик
+    /// проходит мимо).
+    fn draw_resource_icons(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        if !self.survey_overlay_active() {
+            return;
+        }
+
+        let Some(assets) = self.assets() else {
+            return;
+        };
+
+        if assets.terrain.is_empty() {
+            return;
+        }
+
+        let style = TileStyle::default();
+        let (pixels, cells) = render_resources(
+            frame,
+            assets,
+            &self.state().map,
+            viewport,
+            &style,
+            self.state().player_team.0,
+            // `GameManager_MaxSurvey` — чит (`CHEAT_CODE_MAXSURVEY`), в порте
+            // не реализован: показываем только разведанные клетки.
+            false,
+        );
+
+        stats.resource_icons += pixels;
+        stats.resource_icon_cells += cells;
     }
 
     /// Мигающие маркеры стройки `BLDMRK1..5` — `DrawMap_RenderBuildMarker`
@@ -1257,7 +1484,7 @@ impl App {
         let Some(image) = assets
             .build_markers
             .get(usize::from(self.build_marker_step))
-            else {
+        else {
             return;
         };
         let palette = window_palette(assets);
@@ -1274,9 +1501,8 @@ impl App {
 
             // `WindowManager_RescaleSimpleImage(image, Gfx_MapScalingFactor)`:
             // 62×62 — полный кадр клетки 64 px, масштаб `zoom/64`.
-            if max_render::map_render::blit_simple_image(
-                frame, image, &palette, centre, zoom, 64,
-            ) > 0
+            if max_render::map_render::blit_simple_image(frame, image, &palette, centre, zoom, 64)
+                > 0
             {
                 stats.build_markers += 1;
             }
@@ -1294,7 +1520,10 @@ impl App {
 /// четыре направления (`N, E, S, W` — `direction += 2`) по `limit` шагов,
 /// накопительно; в список попадают только проходимые клетки
 /// (`Access_IsAccessible(... AccessModifier_SameClassBlocks)`).
-pub fn build_marker_cells(state: &max_core::game::GameState, unit: &max_core::unit::UnitInfo) -> Vec<max_core::geo::Point> {
+pub fn build_marker_cells(
+    state: &max_core::game::GameState,
+    unit: &max_core::unit::UnitInfo,
+) -> Vec<max_core::geo::Point> {
     if unit.team != state.player_team {
         return Vec::new();
     }
@@ -1367,6 +1596,8 @@ pub fn window_palette(assets: &crate::assets::Assets) -> PaletteRgba {
 }
 
 /// Маркеры ресурсов: настоящие `RAWMSK*`/`FUELMK*`/`GOLDMK*`, иначе точки.
+///
+/// Возвращает `(пикселей, клеток)`.
 #[allow(clippy::too_many_arguments)]
 fn render_resources(
     frame: &mut RgbaBuffer,
@@ -1375,8 +1606,8 @@ fn render_resources(
     viewport: &max_render::viewport::Viewport,
     style: &TileStyle,
     team: u8,
-    show_all: bool,
-) -> u32 {
+    max_survey: bool,
+) -> (u32, u32) {
     if assets.resource_markers.is_ready() {
         max_render::map_render::render_resource_icons_into(
             frame,
@@ -1385,10 +1616,15 @@ fn render_resources(
             &assets.resource_markers,
             &window_palette(assets),
             team,
-            show_all,
+            max_survey,
         )
     } else {
-        max_render::map_render::render_resources_into(frame, map, viewport, style)
+        // Упрощённый рендер (без данных `MAX.RES`): точки ресурсов рисуются
+        // всегда — это отладочная карта, а не игровой кадр.
+        (
+            max_render::map_render::render_resources_into(frame, map, viewport, style),
+            0,
+        )
     }
 }
 

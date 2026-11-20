@@ -1531,7 +1531,11 @@ mod tests {
         let (x, y) = screen_of(&app, grid);
         let picked = unit_at_screen(app.state(), app.viewport(), TeamId::RED, x, y);
 
-        assert_eq!(picked, Some(building), "клик должен выбрать здание, не плиту");
+        assert_eq!(
+            picked,
+            Some(building),
+            "клик должен выбрать здание, не плиту"
+        );
         assert_ne!(picked, Some(slab));
     }
 
@@ -1761,7 +1765,11 @@ mod tests {
         let enemy_high = (enemy.0 >> 8) as u8;
         let expected = [
             0x58, low, high, // type 0x08|APPL, unit_id
-            0x1E, 0x00, 0x00, 0x00, 0x00, // MoveToAttack, Init, prior Await/Init, no disabled
+            // MoveToAttack/Init; prior — `Await`/`ExecutingOrder`: новый юнит
+            // рождается в `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`
+            // (`unitinfo.cpp:201-204`), а `SetNewOrderInt` сохраняет его в prior
+            // (`units_manager.cpp:1970-1971`).
+            0x1E, 0x00, 0x00, 0x01, 0x00, // no disabled
             0x00, 0x00, 0x00, 0x00, // parent_unit, experience
             0x0E, 0x00, 0x0A, 0x00, // move_to (14,10) — клетка врага
             0x0E, 0x00, 0x0A, 0x00, // fire_on (14,10)

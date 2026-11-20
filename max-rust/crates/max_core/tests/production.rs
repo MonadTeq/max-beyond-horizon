@@ -6,10 +6,10 @@
 //! (`BuildMenu_GetTurnsToBuild`, `BuildMenu_GetMaxPossibleBuildRate`),
 //! таблица `default.game_rules.lua` (`max_builder_capability_list`).
 
-use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
-use max_core::geo::Point;
+use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
+use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::production::{
-    self, builder_type, buildable_units, can_build, construction_slab_type, construction_utility,
+    self, buildable_units, builder_type, can_build, construction_slab_type, construction_utility,
     construction_utility_types, cost_per_turn, is_builder, is_factory, max_possible_build_rate,
     total_cost, turns_and_consumption, BuildError, ProductionEventKind, ProductionManager,
 };
@@ -74,17 +74,32 @@ fn builder_tables_match_the_game_rules_script() {
         Some(&UnitType::Scout)
     );
 
-    assert!(can_build(UnitType::Constructor, UnitType::LightVehiclePlant));
+    assert!(can_build(
+        UnitType::Constructor,
+        UnitType::LightVehiclePlant
+    ));
     assert!(can_build(UnitType::Engineer, UnitType::PowerGenerator));
     assert!(!can_build(UnitType::Constructor, UnitType::PowerGenerator));
     assert!(!can_build(UnitType::Tank, UnitType::Scout));
     assert!(!can_build(UnitType::TrainingHall, UnitType::Tank));
 
     // `Builder_GetBuilderType`.
-    assert_eq!(builder_type(UnitType::Tank), Some(UnitType::HeavyVehiclePlant));
-    assert_eq!(builder_type(UnitType::Scout), Some(UnitType::LightVehiclePlant));
-    assert_eq!(builder_type(UnitType::Infantry), Some(UnitType::TrainingHall));
-    assert_eq!(builder_type(UnitType::Fighter), Some(UnitType::AirUnitsPlant));
+    assert_eq!(
+        builder_type(UnitType::Tank),
+        Some(UnitType::HeavyVehiclePlant)
+    );
+    assert_eq!(
+        builder_type(UnitType::Scout),
+        Some(UnitType::LightVehiclePlant)
+    );
+    assert_eq!(
+        builder_type(UnitType::Infantry),
+        Some(UnitType::TrainingHall)
+    );
+    assert_eq!(
+        builder_type(UnitType::Fighter),
+        Some(UnitType::AirUnitsPlant)
+    );
     assert_eq!(builder_type(UnitType::Battleship), Some(UnitType::Shipyard));
     assert_eq!(
         builder_type(UnitType::MiningStation),
@@ -147,7 +162,12 @@ fn max_build_rate_matches_the_cpp_algorithm() {
 fn turns_and_consumption_matches_the_cpp_loop() {
     let mut state = state_with_gold(100);
     let heavy = state
-        .spawn_unit(UnitType::HeavyVehiclePlant, TeamId::RED, Point::new(10, 10), 0)
+        .spawn_unit(
+            UnitType::HeavyVehiclePlant,
+            TeamId::RED,
+            Point::new(10, 10),
+            0,
+        )
         .expect("heavy vehicle plant");
     let heavy = state.unit(heavy).expect("factory").clone();
 
@@ -320,7 +340,11 @@ fn constructor_builds_a_building_on_a_site() {
     let report = manager.commit(constructor).expect("site found");
 
     assert_eq!(report.turns, 10, "TRAINHAL: ATTRIB_TURNS = 10");
-    assert_ne!(report.site, Point::new(10, 10), "площадка не под строителем");
+    assert_ne!(
+        report.site,
+        Point::new(10, 10),
+        "площадка не под строителем"
+    );
 
     for _ in 0..10 {
         production_turn(&mut state);
@@ -369,7 +393,11 @@ fn cancel_stops_the_construction() {
     }
 
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
-    assert_eq!(state.team_units[0].gold(), 99, "после отмены не списывается");
+    assert_eq!(
+        state.team_units[0].gold(),
+        99,
+        "после отмены не списывается"
+    );
 }
 
 #[test]
@@ -434,7 +462,12 @@ fn missing_gold_pauses_the_build_without_losing_the_queue() {
 fn two_speed_build_costs_the_cpp_rate() {
     let mut state = state_with_gold(200);
     let factory = state
-        .spawn_unit(UnitType::HeavyVehiclePlant, TeamId::RED, Point::new(10, 10), 0)
+        .spawn_unit(
+            UnitType::HeavyVehiclePlant,
+            TeamId::RED,
+            Point::new(10, 10),
+            0,
+        )
         .expect("heavy vehicle plant");
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
@@ -550,11 +583,9 @@ fn constructor_order_deploys_the_large_construction_site() {
     );
     assert_eq!(
         construction_utility(&state, TeamId::RED, site),
-        state
-            .units_at(site)
-            .iter()
-            .copied()
-            .find(|id| state.unit(*id).is_some_and(|u| u.unit_type == UnitType::LargeTape))
+        state.units_at(site).iter().copied().find(|id| state
+            .unit(*id)
+            .is_some_and(|u| u.unit_type == UnitType::LargeTape))
     );
 
     let tape = find_at(&state, site, UnitType::LargeTape).expect("LRGTAPE на площадке");
@@ -650,7 +681,10 @@ fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
     let site = Point::new(30, 30);
-    assert!(state.map.surface.set(site.x, site.y, max_core::enums::Surface::WATER));
+    assert!(state
+        .map
+        .surface
+        .set(site.x, site.y, max_core::enums::Surface::WATER));
 
     let deployed = max_core::production::deploy_construction_site(
         &mut state,
@@ -676,10 +710,7 @@ fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, P
     // Суша: `Access_IsAccessible` иначе не находит клетку схода с площадки.
     for y in 0..max_core::geo::MAP_HEIGHT {
         for x in 0..max_core::geo::MAP_WIDTH {
-            let _ = state
-                .map
-                .surface
-                .set(x, y, max_core::enums::Surface::LAND);
+            let _ = state.map.surface.set(x, y, max_core::enums::Surface::LAND);
         }
     }
     let constructor = state
@@ -902,7 +933,11 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         assert_eq!(
             (building.orders, building.state),
             (UnitOrder::Await, UnitOrderState::ExecutingOrder),
-            "после EXPAND здание в ORDER_AWAIT/EXECUTING_ORDER"
+            "после EXPAND здание в ORDER_AWAIT/EXECUTING_ORDER (сейчас {:?}/{:?}, prior {:?}/{:?})",
+            building.orders,
+            building.state,
+            building.prior_orders,
+            building.prior_state
         );
         let builder = state.unit(constructor).expect("constructor alive");
         assert_eq!(builder.orders, UnitOrder::Await);
@@ -914,6 +949,119 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         builder.grid
     };
     assert_ne!(builder_grid, building_grid, "строитель сошёл с площадки");
+}
+
+/// `RADAR` после достройки обязан вернуться в `ORDER_SENTRY`.
+///
+/// C++: `UnitsManager_DeployUnit` (`units_manager.cpp:2412-2421`) ставит
+/// `RADAR` (как турели и мины) в `ORDER_SENTRY`; `SpawnNewUnit`
+/// (`unitinfo.cpp:3581`) переводит здание в `ORDER_IDLE`/
+/// `ORDER_STATE_BUILDING_READY` через **`SetNewOrderInt`**, который сохраняет
+/// текущий приказ в `prior_orders` (`units_manager.cpp:1969-1975`). После ухода
+/// строителя `UnitsManager_BuildingReady` (`units_manager.cpp:4240`) делает
+/// `RestoreOrders` (`unitinfo.cpp:3783`) → снова `ORDER_SENTRY`, и
+/// `ProcessOrderSentry` листает 16 кадров `D_RADAR` (`ANIMATED`). Порт раньше
+/// жёстко писал `prior = AWAIT`, поэтому радар замирал в `ORDER_AWAIT`.
+#[test]
+fn a_built_radar_restores_its_sentry_order() {
+    let mut state = state_with_gold(400);
+
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            let _ = state.map.surface.set(x, y, Surface::LAND);
+        }
+    }
+
+    // `RADAR` строит **инженер** (`builder_type(Radar) == Engineer`), но ветка
+    // `SpawnNewUnit` для мобильного строителя — та же, что у конструктора.
+    let constructor = state
+        .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(10, 10), 0)
+        .expect("engineer");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager
+        .enqueue(constructor, UnitType::Radar)
+        .expect("queue");
+    let report = manager.commit(constructor).expect("site");
+    drop(manager);
+
+    if let Some(mut unit) = state.unit(constructor).cloned() {
+        unit.grid = report.site;
+        state.write_unit(constructor, unit);
+    }
+
+    let mut radar_id = None;
+    for _ in 0..80 {
+        production_turn(&mut state);
+
+        if let Some(unit) = units_at(&state, report.site)
+            .into_iter()
+            .find(|unit| unit.unit_type == UnitType::Radar)
+        {
+            radar_id = Some(unit.id);
+            break;
+        }
+    }
+
+    let radar_id = radar_id.unwrap_or_else(|| {
+        let builder = state.unit(constructor).expect("builder");
+        panic!(
+            "RADAR достроен: builder={:?}/{:?} build_time={} site={:?} radar_count={}",
+            builder.orders,
+            builder.state,
+            builder.build_time,
+            report.site,
+            count_type(&state, UnitType::Radar)
+        )
+    });
+
+    {
+        let radar = state.unit(radar_id).expect("radar");
+        assert_eq!(
+            (radar.orders, radar.state),
+            (UnitOrder::Idle, UnitOrderState::BuildingReady),
+            "SpawnNewUnit: здание ждёт строителя"
+        );
+        assert_eq!(
+            (radar.prior_orders, radar.prior_state),
+            (UnitOrder::Sentry, UnitOrderState::ExecutingOrder),
+            "SetNewOrderInt сохранил ORDER_SENTRY в prior"
+        );
+    }
+
+    // Приказ на уход даёт игрок/ИИ (`issue_builder_exit`) — см. A1.
+    assert!(max_core::unit_order::issue_builder_exit(
+        &mut state,
+        constructor
+    ));
+
+    let mut restored = false;
+    for _ in 0..60 {
+        tick_orders(&mut state);
+
+        if state
+            .unit(radar_id)
+            .is_some_and(|unit| unit.orders == UnitOrder::Sentry)
+        {
+            restored = true;
+            break;
+        }
+    }
+
+    assert!(
+        restored,
+        "после достройки RADAR обязан вернуться в ORDER_SENTRY"
+    );
+    let radar = state.unit(radar_id).expect("radar");
+    assert_eq!(
+        (radar.orders, radar.state),
+        (UnitOrder::Sentry, UnitOrderState::ExecutingOrder),
+        "RestoreOrders вернул ORDER_SENTRY/EXECUTING_ORDER"
+    );
+    assert!(
+        radar.flags & unit_flags::ANIMATED != 0,
+        "RADAR — ANIMATED: кадры листает ProcessOrderSentry"
+    );
 }
 
 /// Достройка детерминирована: два одинаковых прогона дают один снапшот на
@@ -1061,7 +1209,11 @@ fn two_identical_production_runs_have_identical_state() {
         state.snapshot_bytes()
     }
 
-    assert_eq!(run(), run(), "два прогона производства совпадают байт-в-байт");
+    assert_eq!(
+        run(),
+        run(),
+        "два прогона производства совпадают байт-в-байт"
+    );
 }
 
 // ---------------------------------------------------------------------------

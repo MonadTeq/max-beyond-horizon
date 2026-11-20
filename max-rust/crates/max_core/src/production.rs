@@ -283,7 +283,11 @@ pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i
     let turns = state
         .team_units
         .get(team.0 as usize)
-        .map(|units| units.current_unit_values(unit_type as u16).get_attribute(crate::unit_values::ATTRIB_TURNS))
+        .map(|units| {
+            units
+                .current_unit_values(unit_type as u16)
+                .get_attribute(crate::unit_values::ATTRIB_TURNS)
+        })
         .unwrap_or(0);
 
     if state.teams.get(team.0 as usize).map(|info| info.team_type) != Some(TeamKind::Computer) {
@@ -335,17 +339,20 @@ pub fn turns_and_consumption(
     unit_type: UnitType,
     build_speed_multiplier: i32,
 ) -> (i32, i32) {
-    let mut turns = if builder.build_time > 0
-        && builder.build_list.first().copied() == Some(unit_type)
-    {
-        i32::from(builder.build_time)
-    } else {
-        state
-            .team_units
-            .get(builder.team.0 as usize)
-            .map(|units| units.current_unit_values(unit_type as u16).get_attribute(ATTRIB_TURNS))
-            .unwrap_or(0)
-    };
+    let mut turns =
+        if builder.build_time > 0 && builder.build_list.first().copied() == Some(unit_type) {
+            i32::from(builder.build_time)
+        } else {
+            state
+                .team_units
+                .get(builder.team.0 as usize)
+                .map(|units| {
+                    units
+                        .current_unit_values(unit_type as u16)
+                        .get_attribute(ATTRIB_TURNS)
+                })
+                .unwrap_or(0)
+        };
 
     let mut local_storage = if builder.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
         i32::from(builder.storage)
@@ -385,7 +392,11 @@ pub fn max_possible_build_rate(unit_type: UnitType, build_time: i32, storage: i3
         return RATE_1X;
     }
 
-    let mut build_speed_multiplier = if build_time > RATE_2X { RATE_4X } else { RATE_2X };
+    let mut build_speed_multiplier = if build_time > RATE_2X {
+        RATE_4X
+    } else {
+        RATE_2X
+    };
 
     if crate::access::unit_type_flags(unit_type) & unit_flags::MOBILE_LAND_UNIT != 0 {
         let cost_1x = cargo_raw_consumption_rate(unit_type, 1);
@@ -516,7 +527,13 @@ pub struct ProductionEvent {
 // ---------------------------------------------------------------------------
 
 /// Площадка под здание/юнит: все клетки внутри карты, свободны и проходимы.
-fn site_is_free(state: &GameState, team: TeamId, unit_type: UnitType, site: Point, size: i16) -> bool {
+fn site_is_free(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    site: Point,
+    size: i16,
+) -> bool {
     for dy in 0..size {
         for dx in 0..size {
             let cell = Point::new(site.x + dx, site.y + dy);
@@ -669,7 +686,10 @@ pub fn site_anchor_for_cursor(builder_grid: Point, cursor: Point, previous: Poin
 pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
     let size = footprint(unit_type);
 
-    cursor.x >= anchor.x && cursor.x < anchor.x + size && cursor.y >= anchor.y && cursor.y < anchor.y + size
+    cursor.x >= anchor.x
+        && cursor.x < anchor.x + size
+        && cursor.y >= anchor.y
+        && cursor.y < anchor.y + size
 }
 
 /// `TaskCreateBuilding::FindBuildSite` — ближайшая свободная площадка.
@@ -770,11 +790,7 @@ pub struct ConstructionSite {
 pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Option<UnitId> {
     state.units_at(site).iter().copied().find(|id| {
         state.unit(*id).is_some_and(|unit| {
-            unit.team == team
-                && matches!(
-                    unit.unit_type,
-                    UnitType::LargeTape | UnitType::SmallTape
-                )
+            unit.team == team && matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape)
         })
     })
 }
@@ -1329,7 +1345,9 @@ impl<'a> ProductionManager<'a> {
                 let build_rate = if mobile_land {
                     i32::from(unit.build_rate.max(1))
                 } else {
-                    i32::from(unit.build_rate.max(1)).min(max_rate.max(1)).max(1)
+                    i32::from(unit.build_rate.max(1))
+                        .min(max_rate.max(1))
+                        .max(1)
                 };
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
@@ -1386,7 +1404,10 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 }
 
-                if matches!(unit.orders, UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2) {
+                if matches!(
+                    unit.orders,
+                    UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
+                ) {
                     continue;
                 }
 
@@ -1394,9 +1415,7 @@ impl<'a> ProductionManager<'a> {
                     events.push(self.spawn_new_unit(id));
                 } else {
                     let mut unit = unit;
-                    unit.build_time = unit
-                        .build_time
-                        .saturating_sub(unit.build_rate.max(1) as u8);
+                    unit.build_time = unit.build_time.saturating_sub(unit.build_rate.max(1) as u8);
                     self.state.write_unit(id, unit);
                 }
             }
@@ -1508,12 +1527,24 @@ impl<'a> ProductionManager<'a> {
             //  4. `UnitsManager_BuildingReady` снимает ленту и конусы, плита
             //     (`*SLAB`) остаётся фундаментом, здание раскрывается
             //     (`ScaleUnit(EXPAND)`) — только после ухода строителя.
-            if let Some(unit) = self.state.unit_mut(spawned) {
+            if let Some(mut unit) = self.state.unit(spawned).cloned() {
                 unit.parent_unit = Some(id);
-                unit.prior_orders = UnitOrder::Await;
-                unit.prior_state = UnitOrderState::ExecutingOrder;
-                unit.orders = UnitOrder::Idle;
-                unit.state = UnitOrderState::BuildingReady;
+                // `UnitsManager_SetNewOrderInt(&*utility_unit, ORDER_IDLE,
+                // ORDER_STATE_BUILDING_READY)` (`unitinfo.cpp:3581`): в отличие
+                // от `SetOrder`, `SetNewOrderInt` сохраняет **prior**
+                // (`units_manager.cpp:1970-1971`). Это важно для юнитов,
+                // которые `UnitsManager_DeployUnit` ставит в особый приказ:
+                // `RADAR`, турели и мины рождаются в `ORDER_SENTRY`
+                // (`units_manager.cpp:2412-2421`), и `RestoreOrders`
+                // (`unitinfo.cpp:3783`) после достройки возвращает именно
+                // `ORDER_SENTRY` — иначе ANIMATED-радар (`ProcessOrderSentry`)
+                // замирал бы в `ORDER_AWAIT` и не листал 16 кадров.
+                crate::unit_order::set_new_order_int(
+                    &mut unit,
+                    UnitOrder::Idle,
+                    UnitOrderState::BuildingReady,
+                );
+                self.state.write_unit(spawned, unit);
             }
 
             // `this->SetParent(&*utility_unit)`: строитель «внутри» здания до

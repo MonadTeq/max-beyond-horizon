@@ -250,6 +250,13 @@ assert builder=inside
 # Выделение сброшено началом хода — клик по строителю даёт «Finished building».
 select type Constructor
 assert hint=Finished building Training Hall
+# A4: строитель остаётся в ЦЕНТРЕ ленты до приказа игрока — C++
+# `SpawnNewUnit` не двигает его `x`/`y`, сдвиг `PositionInTape` (+32 px) снимается
+# только в `TAPE_POSITIONING_DEINIT`/`LEAVE` (`unitinfo.cpp:4414-4482`).
+assert build-center=yes
+# A8: индикатор выделения вокруг строителя — `GameManager_DrawUnitSelector`
+# (`game_manager.cpp:744`), три вложенные рамки с мигающим `MarkerColor`.
+assert unit-selector=yes
 # Кадр «строитель ждёт»: лента/конусы/плита на месте, вокруг строителя —
 # мигающие маркеры `BLDMRK1..5` (`DrawMap_RenderBuildMarker`), здание скрыто.
 shot build-done-waiting

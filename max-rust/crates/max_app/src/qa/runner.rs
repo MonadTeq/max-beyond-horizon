@@ -538,7 +538,9 @@ impl QaRunner {
 
     /// `prefs …` — диалог `Preferences`/`Setup` (C++ `OptionsMenu`).
     fn prefs(&mut self, action: PrefsCommand) -> Result<Flow, String> {
-        use crate::preferences::{PrefKey, DONE_BUTTON, CANCEL_BUTTON, HELP_BUTTON, WINDOW_ULX, WINDOW_ULY};
+        use crate::preferences::{
+            PrefKey, CANCEL_BUTTON, DONE_BUTTON, HELP_BUTTON, WINDOW_ULX, WINDOW_ULY,
+        };
 
         let detail = match action {
             PrefsCommand::Open => {
@@ -555,9 +557,8 @@ impl QaRunner {
                         ))?;
 
                         if self.app.preferences_dialog().is_none() {
-                            return Err(
-                                "prefs open: кнопка Preferences панели не открыла диалог".to_string(),
-                            );
+                            return Err("prefs open: кнопка Preferences панели не открыла диалог"
+                                .to_string());
                         }
                         "Preferences (PREFSPIC)".to_string()
                     }
@@ -584,9 +585,9 @@ impl QaRunner {
                 let key = PrefKey::parse(&name)
                     .ok_or_else(|| format!("prefs toggle: неизвестная опция «{name}»"))?;
                 let dialog = self.prefs_dialog().expect("prefs открыт");
-                let rect = dialog
-                    .screen_rect(key)
-                    .ok_or_else(|| format!("prefs toggle {name}: контрол не виден в этом варианте"))?;
+                let rect = dialog.screen_rect(key).ok_or_else(|| {
+                    format!("prefs toggle {name}: контрол не виден в этом варианте")
+                })?;
                 let before = dialog.value(key);
                 let (x, y) = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
@@ -606,9 +607,9 @@ impl QaRunner {
                 let key = PrefKey::parse(&name)
                     .ok_or_else(|| format!("prefs set: неизвестная опция «{name}»"))?;
                 let dialog = self.prefs_dialog().expect("prefs открыт");
-                let x = dialog.slider_screen_x(key, value).ok_or_else(|| {
-                    format!("prefs set {name}: контрол не виден в этом варианте")
-                })?;
+                let x = dialog
+                    .slider_screen_x(key, value)
+                    .ok_or_else(|| format!("prefs set {name}: контрол не виден в этом варианте"))?;
                 let expected = dialog
                     .slider_value_at(key, x)
                     .ok_or_else(|| format!("prefs set {name}: нет жёлоба слайдера"))?;
@@ -753,9 +754,7 @@ impl QaRunner {
                 self.detail = Some(format!("{} в ({}, {})", item.caption, point.0, point.1));
                 self.send(InputEvent::MouseClick(point.0, point.1))
             }
-            UnitMenuCommand::Key(character) => {
-                self.send(InputEvent::Key(Key::Char(character)))
-            }
+            UnitMenuCommand::Key(character) => self.send(InputEvent::Key(Key::Char(character))),
             UnitMenuCommand::Close => self.send(InputEvent::Key(Key::Escape)),
         }
     }
@@ -2793,7 +2792,8 @@ impl QaRunner {
                     .into_iter()
                     .filter_map(|id| self.app.state().unit(id))
                     .filter(|unit| {
-                        unit.team == team && unit.unit_type == max_core::enums::UnitType::Constructor
+                        unit.team == team
+                            && unit.unit_type == max_core::enums::UnitType::Constructor
                     })
                     .next_back();
                 let Some(builder) = builder else {
@@ -2814,8 +2814,7 @@ impl QaRunner {
                     .into_iter()
                     .filter_map(|id| self.app.state().unit(id))
                     .filter(|unit| {
-                        unit.team == team
-                            && unit.flags & max_core::enums::unit_flags::BUILDING != 0
+                        unit.team == team && unit.flags & max_core::enums::unit_flags::BUILDING != 0
                     })
                     .min_by_key(|unit| {
                         let size: i16 = 2;
@@ -2845,7 +2844,11 @@ impl QaRunner {
                         building.id,
                         building.grid.x,
                         building.grid.y,
-                        if actual_inside { "внутри" } else { "снаружи" }
+                        if actual_inside {
+                            "внутри"
+                        } else {
+                            "снаружи"
+                        }
                     ),
                 )
             }
@@ -2890,10 +2893,7 @@ impl QaRunner {
 
                 self.expect(
                     actual == pressed,
-                    format!(
-                        "endturn={}",
-                        if pressed { "pressed" } else { "normal" }
-                    ),
+                    format!("endturn={}", if pressed { "pressed" } else { "normal" }),
                     format!(
                         "endturn={} (команда {:?}, тип {:?})",
                         if actual { "pressed" } else { "normal" },
@@ -3360,7 +3360,8 @@ impl QaRunner {
             Assertion::PrefsValue(key, cmp, expected) => {
                 let dialog = self.prefs_dialog();
                 let actual = dialog.and_then(|dialog| dialog.value(key));
-                let ok = actual.is_some_and(|actual| cmp.test(i64::from(actual), i64::from(expected)));
+                let ok =
+                    actual.is_some_and(|actual| cmp.test(i64::from(actual), i64::from(expected)));
 
                 self.expect(
                     ok,
@@ -3526,6 +3527,49 @@ impl QaRunner {
                     format!("digest=0x{actual:04X}"),
                 )
             }
+            Assertion::ResourceIcons(cmp, expected) => {
+                // Кадровый счётчик: сколько клеток с иконкой ресурса нарисовано
+                // (`Survey_RenderMarkers`) — только разведанные клетки.
+                let (_, stats) = self.app.render_frame_with_stats();
+                let actual = i64::from(stats.resource_icon_cells);
+                let expected = i64::from(expected);
+                let ok = match cmp {
+                    crate::qa::script::Cmp::Eq => actual == expected,
+                    crate::qa::script::Cmp::Ge => actual >= expected,
+                    crate::qa::script::Cmp::Le => actual <= expected,
+                    crate::qa::script::Cmp::Gt => actual > expected,
+                    crate::qa::script::Cmp::Lt => actual < expected,
+                };
+
+                self.expect(
+                    ok,
+                    format!("resource-icons {:?} {expected}", cmp),
+                    format!("resource-icons {actual}"),
+                )
+            }
+            Assertion::SurveyOverlay(expected) => {
+                let actual = self.app.survey_overlay_active();
+
+                self.expect(
+                    actual == expected,
+                    format!("survey-overlay={}", if expected { "yes" } else { "no" }),
+                    format!("survey-overlay={}", if actual { "yes" } else { "no" }),
+                )
+            }
+            Assertion::UnitSelector(expected) => {
+                let (_, stats) = self.app.render_frame_with_stats();
+                let actual = stats.selector_units > 0;
+
+                self.expect(
+                    actual == expected,
+                    format!("unit-selector={}", if expected { "yes" } else { "no" }),
+                    format!(
+                        "unit-selector={} (селекторов: {})",
+                        if actual { "yes" } else { "no" },
+                        stats.selector_units
+                    ),
+                )
+            }
             Assertion::CargoMode(expected) => {
                 let actual = self
                     .mobilization()
@@ -3674,9 +3718,7 @@ impl QaRunner {
                     format!("{label}={actual}"),
                 )
             }
-            None => Err(format!(
-                "assert {label}: у команды {team:?} нет комплексов"
-            )),
+            None => Err(format!("assert {label}: у команды {team:?} нет комплексов")),
         }
     }
 

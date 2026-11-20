@@ -564,7 +564,10 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
     app.update_visual_units(1.0 / 60.0);
     let second = app.visual_position(id).expect("юнит жив");
     let second_frame = app.render_frame();
-    assert_ne!(second, first, "два кадра с dt>0 должны различаться позицией");
+    assert_ne!(
+        second, first,
+        "два кадра с dt>0 должны различаться позицией"
+    );
     assert!(second.0 > first.0, "спрайт плавно идёт вправо: {second:?}");
     assert_ne!(
         first_frame.pixels(),
@@ -596,7 +599,8 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
 }
 
 #[test]
-fn move_command_replays_through_app() {    fn run() -> AppDigest {
+fn move_command_replays_through_app() {
+    fn run() -> AppDigest {
         let mut app = App::new(AppConfig::default());
         app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
 
@@ -896,7 +900,10 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     let tan_101 = count_color(&frame, inner, tan_color);
     let red_101 = count_color(&frame, inner, red_color);
 
-    assert!(tan_101 > 50, "текст таймера рисуется цветом 0xA2: {tan_101}");
+    assert!(
+        tan_101 > 50,
+        "текст таймера рисуется цветом 0xA2: {tan_101}"
+    );
     assert_eq!(red_101, 0, "101 с — не красный");
 
     // 15 с — красный (`turn_time <= 20`).
@@ -1036,7 +1043,8 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     app.hud_mut().select(Some(builder));
     app.viewport_mut().center_on_grid(site.x, site.y);
 
-    let cells = max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
+    let cells =
+        max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
     assert!(
         cells.len() >= 8,
         "вокруг площадки 2×2 обязаны быть проходимые клетки: {cells:?}"
@@ -1059,7 +1067,8 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
 }
 
 #[test]
-fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {    let Some(mut app) = chrome_app() else {
+fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
+    let Some(mut app) = chrome_app() else {
         return;
     };
     let click = |app: &mut App, rect: max_render::buffer::PixelRect| {
@@ -1217,3 +1226,572 @@ fn non_ascii_player_name_renders_with_the_fallback_glyph() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// A4–A9: центр ленты, маркеры стройки, знание ресурсов, селектор, радар
+// ---------------------------------------------------------------------------
+
+/// Пустая суша без ресурсов и юнитов: RED — человек с золотом.
+///
+/// Готовит управляемую карту для кадровых тестов: без чужих юнитов, знания
+/// ресурсов и палитровых «маяков», которые могли бы изменить пиксели.
+fn empty_land_state() -> max_core::GameState {
+    let mut state = max_core::GameState::new();
+
+    for y in 0..max_core::geo::MAP_HEIGHT {
+        for x in 0..max_core::geo::MAP_WIDTH {
+            let _ = state.map.surface.set(x, y, max_core::enums::Surface::LAND);
+        }
+    }
+
+    state.teams[0].team_type = max_core::team::TeamKind::Player;
+    state.team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.team_units[0].set_gold(2000);
+    state
+}
+
+/// `App` с ассетами игры и пустой сушей (без `new_game`).
+fn assets_app_with_land() -> Option<App> {
+    let max_res = repo_path("max-original/MAX.RES");
+    let color_pal = repo_path("max-original/COLOR.PAL");
+    let patches = repo_path("assets/PATCHES.RES");
+
+    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
+        return None;
+    }
+
+    let config = AppConfig {
+        max_res,
+        color_pal,
+        patches_res: patches,
+        ..Default::default()
+    };
+    let mut app = App::new(config);
+    app.init_assets().expect("ассеты игры");
+    *app.state_mut() = empty_land_state();
+    app.viewport_mut().center_on_grid(40, 40);
+
+    Some(app)
+}
+
+/// Сколько пикселей клетки `cell` изменилось между кадрами (в оконном режиме
+/// карта сдвинута на `MAIN_MAP.ulx/uly`).
+fn changed_pixels_in_cell(
+    before: &max_render::buffer::RgbaBuffer,
+    after: &max_render::buffer::RgbaBuffer,
+    app: &App,
+    cell: Point,
+) -> usize {
+    let area = max_render::layout::MAIN_MAP;
+    let viewport = app.map_viewport();
+    let rect = viewport.tile_rect(cell.x, cell.y);
+    let mut changed = 0;
+
+    for y in rect.uly..rect.lry() {
+        for x in rect.ulx..rect.lrx() {
+            let (sx, sy) = (area.ulx + x, area.uly + y);
+
+            if before.get(sx, sy) != after.get(sx, sy) {
+                changed += 1;
+            }
+        }
+    }
+
+    changed
+}
+
+/// A4: строитель остаётся в **центре ленты** и после достройки
+/// (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), пока игрок не прикажет уйти.
+///
+/// C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) не двигает `x`/`y` строителя:
+/// пиксель остаётся там, куда его свёл `PositionInTape` (32 px к центру 2×2), а
+/// сдвиг снимается только в `TAPE_POSITIONING_DEINIT`/`LEAVE`. Порт раньше
+/// обнулял сдвиг на `UNIT_READY` и «выталкивал» спрайт в угол площадки.
+#[test]
+fn the_builder_stays_in_the_tape_centre_after_completion() {
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+
+    let mut app = App::new(AppConfig::default());
+    *app.state_mut() = empty_land_state();
+
+    let site = Point::new(40, 40);
+    let team = app.player_team();
+    let building = app
+        .state_mut()
+        .spawn_unit(UnitType::TrainingHall, team, site, 0)
+        .expect("training hall");
+    let builder = app
+        .state_mut()
+        .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
+        .expect("constructor");
+
+    let tape = app
+        .state_mut()
+        .spawn_unit(UnitType::LargeTape, team, site, 0)
+        .expect("large tape");
+    {
+        // Только лента (без конусов/плиты): в кадре должен быть ровно один
+        // маркер — строитель, иначе центроид смешается с декалями площадки.
+        let mut t = app.state().unit(tape).expect("tape").clone();
+        t.parent_unit = Some(builder);
+        t.orders = UnitOrder::Await;
+        t.state = UnitOrderState::ExecutingOrder;
+        app.state_mut().write_unit(tape, t);
+    }
+
+    {
+        let mut unit = app.state().unit(builder).expect("builder").clone();
+        unit.grid = Point::new(41, 41);
+        unit.parent_unit = Some(building);
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::UnitReady;
+        app.state_mut().write_unit(builder, unit);
+    }
+    {
+        let mut unit = app.state().unit(building).expect("building").clone();
+        unit.parent_unit = Some(builder);
+        unit.orders = UnitOrder::Idle;
+        unit.state = UnitOrderState::BuildingReady;
+        app.state_mut().write_unit(building, unit);
+    }
+
+    app.viewport_mut().center_on_grid(site.x, site.y);
+
+    // Без ассетов строитель рисуется маркером команды 6×6 в своём якоре.
+    let (frame, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.units_marker, 2, "строитель и лента — маркеры");
+
+    let colour = max_app::render::MARKER_COLORS[0];
+    let pixels_near = |cx: i32, cy: i32| {
+        let mut count = 0;
+        for y in (cy - 4)..=(cy + 4) {
+            for x in (cx - 4)..=(cx + 4) {
+                if frame.get(x, y) == Some(colour) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    // Центр ленты 2×2 — `grid*64 + 64` (C++ `OffsetDrawZones` ×4 по 8 px).
+    let (ex, ey) = app
+        .viewport()
+        .world_to_screen(site.x as i32 * 64 + 64, site.y as i32 * 64 + 64);
+    // Угол ленты, где строитель стоял бы **без** сдвига (старое поведение):
+    // центр его клетки (41,41) — `grid*64 + 32`.
+    let (corner_x, corner_y) = app.viewport().world_to_screen(41 * 64 + 32, 41 * 64 + 32);
+
+    assert!(
+        pixels_near(ex, ey) > 0,
+        "маркер строителя в центре ленты ({ex},{ey})"
+    );
+    assert_eq!(
+        pixels_near(corner_x, corner_y),
+        0,
+        "строитель не «вытолкнут» в угол площадки ({corner_x},{corner_y})"
+    );
+
+    // Приказ игрока уйти — единственное, что снимает центрирование: после
+    // `TAPE_POSITIONING_DEINIT`/`LEAVE` сдвиг включает шаги съезда.
+    let mut unit = app.state().unit(builder).expect("builder").clone();
+    unit.orders = UnitOrder::AwaitTapePositioning;
+    unit.state = UnitOrderState::TapePositioningLeave;
+    unit.moved = 2;
+
+    let offset = max_app::buildsite::tape_center_offset(app.state(), &unit);
+    assert_ne!(
+        offset,
+        (-32, -32),
+        "на съезде сдвиг меняется (8 px × moved), а не остаётся центром"
+    );
+}
+
+/// A5: клетки маркеров стройки — ровно кольцо `DrawMap_RedrawUnit`
+/// (`drawmap.cpp:304-337`): 12 клеток вокруг 2×2-площадки, **не** её клетки.
+#[test]
+fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+
+    let Some(mut app) = chrome_app() else {
+        return;
+    };
+
+    let site = Point::new(30, 20);
+    let team = app.player_team();
+    let builder = app
+        .state_mut()
+        .spawn_unit(UnitType::Constructor, team, site, 0)
+        .expect("constructor");
+    let building = app
+        .state_mut()
+        .spawn_unit(UnitType::TrainingHall, team, site, 0)
+        .expect("training hall");
+    max_core::production::deploy_construction_site(
+        app.state_mut(),
+        builder,
+        UnitType::TrainingHall,
+        site,
+    )
+    .expect("site");
+
+    let mut builder_unit = app.state().unit(builder).expect("builder").clone();
+    builder_unit.grid = site;
+    builder_unit.parent_unit = Some(building);
+    builder_unit.orders = UnitOrder::Build;
+    builder_unit.state = UnitOrderState::UnitReady;
+    app.state_mut().write_unit(builder, builder_unit);
+
+    let cells =
+        max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
+
+    // C++: старт `(parent.x - 1, parent.y + 1)`, для здания `+1` по y, затем
+    // N/E/S/W по три шага накопительно; фильтр `Access_IsAccessible`.
+    let expected: Vec<Point> = [
+        (29, 21),
+        (29, 20),
+        (29, 19),
+        (30, 19),
+        (31, 19),
+        (32, 19),
+        (32, 20),
+        (32, 21),
+        (32, 22),
+        (31, 22),
+        (30, 22),
+        (29, 22),
+    ]
+    .into_iter()
+    .map(|(x, y)| Point::new(x, y))
+    .collect();
+
+    assert!(!cells.is_empty(), "маркеры обязаны найтись");
+    for cell in &cells {
+        assert!(
+            expected.contains(cell),
+            "клетка {cell:?} не из кольца C++: {cells:?}"
+        );
+    }
+    for site_cell in [
+        Point::new(30, 20),
+        Point::new(31, 20),
+        Point::new(30, 21),
+        Point::new(31, 21),
+    ] {
+        assert!(
+            !cells.contains(&site_cell),
+            "маркер не ставится на клетку самой площадки {site_cell:?}"
+        );
+    }
+
+    // Кадр: каждый marker — картинка 62×62 по центру своей клетки
+    // (`DrawMap_Callback2`: `ulx * 64 + 32`), поэтому число маркеров совпадает
+    // с числом клеток кольца.
+    app.hud_mut().select(Some(builder));
+    app.viewport_mut().center_on_grid(site.x, site.y);
+    let (_, stats) = app.render_frame_with_stats();
+    assert_eq!(
+        stats.build_markers,
+        cells.len(),
+        "нарисован маркер на каждой клетке кольца"
+    );
+}
+
+/// A6/A7: иконки ресурсов — только на разведанных клетках, только при
+/// SURVEY/выделенном разведчике и **поверх** зданий.
+#[test]
+fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+    use max_core::map::{ResourceKind, ResourceMapEntry};
+
+    let Some(mut app) = assets_app_with_land() else {
+        return;
+    };
+
+    let known_cell = Point::new(40, 40);
+    let unknown_cell = Point::new(42, 40);
+
+    // RED разведал золото в `known_cell`, вторая клетка не разведана.
+    app.state_mut().map.resources.set(
+        known_cell.x,
+        known_cell.y,
+        ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0b1000),
+    );
+    app.state_mut().map.resources.set(
+        unknown_cell.x,
+        unknown_cell.y,
+        ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0),
+    );
+
+    let building = app
+        .state_mut()
+        .spawn_unit(UnitType::PowerGenerator, TeamId::RED, known_cell, 0)
+        .expect("power generator");
+    {
+        let mut unit = app.state().unit(building).expect("generator").clone();
+        unit.orders = UnitOrder::PowerOn;
+        unit.state = UnitOrderState::ExecutingOrder;
+        app.state_mut().write_unit(building, unit);
+    }
+
+    let surveyor = app
+        .state_mut()
+        .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(30, 30), 0)
+        .expect("surveyor");
+
+    app.viewport_mut().center_on_grid(40, 40);
+
+    // 1. Ни SURVEY, ни разведчик не выбраны — иконок нет вовсе.
+    app.hud_mut().select(None);
+    let (base, stats) = app.render_frame_with_stats();
+    assert!(!app.survey_overlay_active(), "оверлей SURVEY выключен");
+    assert_eq!(stats.resource_icon_cells, 0, "без оверлея иконок нет");
+
+    // 2. Выделен разведчик (приказ не IDLE) → иконка только на разведанной.
+    app.hud_mut().select(Some(surveyor));
+    let (surveyor_frame, stats) = app.render_frame_with_stats();
+    assert!(app.survey_overlay_active(), "разведчик включает оверлей");
+    assert_eq!(
+        stats.resource_icon_cells, 1,
+        "иконка только на клетке с битом RED"
+    );
+    assert!(
+        changed_pixels_in_cell(&base, &surveyor_frame, &app, known_cell) > 0,
+        "иконка нарисована поверх здания (пиксели клетки изменились)"
+    );
+    assert_eq!(
+        changed_pixels_in_cell(&base, &surveyor_frame, &app, unknown_cell),
+        0,
+        "неразведанная клетка остаётся без иконки"
+    );
+
+    // 3. Кнопка SURVEY — та же маска знания, а не «весь мир».
+    app.hud_mut().select(None);
+    app.hud_mut().panels.survey = true;
+    let (button_frame, stats) = app.render_frame_with_stats();
+    assert_eq!(
+        stats.resource_icon_cells, 1,
+        "SURVEY показывает только разведанные клетки"
+    );
+    assert_eq!(
+        changed_pixels_in_cell(&surveyor_frame, &button_frame, &app, known_cell),
+        0,
+        "кадр кнопки SURVEY совпадает с кадром выбранного разведчика"
+    );
+}
+
+/// A8: `GameManager_DrawUnitSelector` (`game_manager.cpp:744`) — три вложенные
+/// рамки-уголка вокруг выделенного юнита с мигающим `GameManager_MarkerColor`.
+#[test]
+fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
+    use max_core::enums::UnitType;
+
+    let mut app = App::new(AppConfig::default());
+    *app.state_mut() = empty_land_state();
+
+    let cell = Point::new(40, 40);
+    let tank = app
+        .state_mut()
+        .spawn_unit(UnitType::Tank, TeamId::RED, cell, 0)
+        .expect("tank");
+    app.viewport_mut().center_on_grid(cell.x, cell.y);
+
+    // Без выделения рамки нет.
+    let (base, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.selector_units, 0, "без выделения селектора нет");
+
+    app.hud_mut().select(Some(tank));
+    let (selected, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.selector_units, 1, "у выделенного юнита есть селектор");
+
+    // Геометрия `DrawUnitSelector` при 1:1 и `double_marker = true`:
+    // `size1 = 16`, `size2 = 64*64/64 - 2 = 62`, полуразмер 32.
+    let (ax, ay) = app
+        .viewport()
+        .world_to_screen(cell.x as i32 * 64 + 32, cell.y as i32 * 64 + 32);
+    let (ox, oy) = (ax - 32 + 1, ay - 32 + 1);
+    let white = max_render::buffer::Rgba::rgb(255, 255, 255);
+    let black = max_render::buffer::Rgba::rgb(0, 0, 0);
+
+    assert_eq!(
+        selected.get(ox, oy),
+        Some(white),
+        "внешняя рамка — цвет GameManager_MarkerColor (0xFF)"
+    );
+    assert_eq!(
+        selected.get(ox + 1, oy + 1),
+        Some(black),
+        "средняя рамка — цвет ^ 0xFF (0x00)"
+    );
+    assert_ne!(
+        base.get(ox, oy),
+        Some(white),
+        "до выделения в этом пикселе рамки не было"
+    );
+
+    // Мигание: `GameManager_MarkerColor ^= 0xFF` каждые 210 мс. Часы кадра
+    // клампят один шаг до 0.1 с (реальный кадр ~16 мс), поэтому идём тремя.
+    for _ in 0..3 {
+        app.update_visual_units(0.07);
+    }
+    assert_eq!(app.marker_color_index(), 0x00, "цвет переключился");
+    let (blinked, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.selector_units, 1);
+    assert_eq!(
+        blinked.get(ox, oy),
+        Some(black),
+        "после 210 мс внешняя рамка чёрная"
+    );
+    assert_eq!(
+        blinked.get(ox + 1, oy + 1),
+        Some(white),
+        "средняя рамка стала белой (цвет ^ 0xFF)"
+    );
+
+    // `dt = 0` (QA/headless) — снова белая рамка, кадры детерминированы.
+    app.update_visual_units(0.0);
+    assert_eq!(app.marker_color_index(), 0xFF);
+
+    // Снятие выделения убирает рамку.
+    app.hud_mut().select(None);
+    let (_, stats) = app.render_frame_with_stats();
+    assert_eq!(stats.selector_units, 0);
+}
+
+/// A9: построенный `RADAR` возвращается в `ORDER_SENTRY` и его кадры снова
+/// листаются `ProcessOrderSentry` (16 кадров `D_RADAR`).
+///
+/// Раньше `SpawnNewUnit` терял `prior_orders`: радар оставался в `ORDER_AWAIT`,
+/// и `ANIMATED`-цикл не запускался — «анимация радара сломана».
+#[test]
+fn a_built_radar_keeps_rotating_its_sixteen_frames() {
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+    use max_core::production::ProductionManager;
+
+    let Some(mut app) = assets_app_with_land() else {
+        return;
+    };
+
+    let mut site = Point::new(40, 40);
+    let engineer = app
+        .state_mut()
+        .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(30, 30), 0)
+        .expect("engineer");
+
+    {
+        let state = app.state_mut();
+        let mut manager = ProductionManager::new(state, TeamId::RED);
+        manager.enqueue(engineer, UnitType::Radar).expect("queue");
+        let report = manager.commit(engineer).expect("site");
+        drop(manager);
+
+        // `commit` выбирает якорь площадки сам (`PathBuild`): дальше ищем
+        // здание именно в нём, а не в исходной клетке инженера.
+        site = report.site;
+
+        let mut unit = state.unit(engineer).expect("engineer").clone();
+        unit.grid = report.site;
+        state.write_unit(engineer, unit);
+    }
+
+    let mut radar = None;
+    for _ in 0..80 {
+        let state = app.state_mut();
+        state.manage_economy(TeamId::RED);
+        max_core::production::progress_build_state(state, TeamId::RED);
+
+        if let Some(unit) = state
+            .units_at(site)
+            .iter()
+            .filter_map(|id| state.unit(*id))
+            .find(|unit| unit.unit_type == UnitType::Radar)
+        {
+            radar = Some(unit.id);
+            break;
+        }
+    }
+
+    let radar = radar.unwrap_or_else(|| {
+        let state = app.state();
+        let e = state.unit(engineer).expect("engineer");
+        panic!(
+            "RADAR построен: engineer={:?}/{:?} build_time={} build_list={:?} site={site:?}",
+            e.orders, e.state, e.build_time, e.build_list
+        )
+    });
+
+    {
+        let unit = app.state().unit(radar).expect("radar");
+        assert_eq!(
+            (unit.orders, unit.state),
+            (UnitOrder::Idle, UnitOrderState::BuildingReady),
+            "здание ждёт ухода строителя"
+        );
+        assert_eq!(
+            unit.prior_orders,
+            UnitOrder::Sentry,
+            "SetNewOrderInt сохранил ORDER_SENTRY в prior"
+        );
+    }
+
+    // Уход строителя по приказу (A1) → `BuildingReady`/`RestoreOrders`.
+    assert!(max_core::unit_order::issue_builder_exit(
+        app.state_mut(),
+        engineer
+    ));
+    for _ in 0..60 {
+        app.state_mut().tick();
+        if app
+            .state()
+            .unit(radar)
+            .is_some_and(|unit| unit.orders == UnitOrder::Sentry)
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        app.state().unit(radar).expect("radar").orders,
+        UnitOrder::Sentry,
+        "RADAR снова в ORDER_SENTRY"
+    );
+
+    app.viewport_mut().center_on_grid(site.x, site.y);
+    app.update_visual_units(0.0);
+    assert_eq!(app.unit_animation(radar).sentry_step, 0);
+    let static_frame = app.render_frame();
+
+    // Один тик C++ (~1/30 с) — следующий кадр блока; 16 кадров — оборот.
+    app.update_visual_units(max_app::SENTRY_ANIM_FRAME_SECONDS + 0.0005);
+    assert_eq!(app.unit_animation(radar).sentry_step, 1);
+    let rotated = app.render_frame();
+    assert!(
+        changed_pixels(&static_frame, &rotated) > 0,
+        "ANIMATED-радар обязан менять кадр после достройки"
+    );
+
+    for _ in 0..15 {
+        app.update_visual_units(max_app::SENTRY_ANIM_FRAME_SECONDS + 0.0001);
+    }
+    assert_eq!(
+        app.unit_animation(radar).sentry_step,
+        16,
+        "16-кадровый цикл ProcessOrderSentry"
+    );
+    app.update_visual_units(0.0);
+    assert_eq!(
+        changed_pixels(&static_frame, &app.render_frame()),
+        0,
+        "dt = 0 возвращает кадр image_base — golden детерминированы"
+    );
+}
+
+/// Число различающихся пикселей двух кадров.
+fn changed_pixels(
+    left: &max_render::buffer::RgbaBuffer,
+    right: &max_render::buffer::RgbaBuffer,
+) -> usize {
+    left.pixels()
+        .chunks_exact(4)
+        .zip(right.pixels().chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count()
+}

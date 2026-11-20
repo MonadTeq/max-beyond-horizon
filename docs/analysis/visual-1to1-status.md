@@ -3308,3 +3308,100 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 * Оракулы (`max-cpp-port`, `max-original`, `max-original-dasm`) не изменялись;
   `max-original/save10.*`, которые QA-сейв-сценарии пишут в каталог данных,
   возвращены в исходное состояние.
+
+## 32. A4–A9: конструктор в центре ленты, маркеры стройки, знание ресурсов, RADAR, селектор — **сделано** (2026-11-20)
+
+**Оракул.** `unitinfo.cpp:281-294` (`image_base`/`image_index`/`image_index_max`
+конструктора), `:1301` `SetPosition`, `:3440-3592` `SpawnNewUnit`, `:3536-3592`
+мобильный строитель, `:3783-3794` `RestoreOrders`, `:4414-4483`
+`PositionInTape`, `:4488` `ReturnToConstructionSite`, `:5056-5092` `Animate`;
+`units_manager.cpp:1945-1975` `SetNewOrderInt`, `:2412-2421` стартовые приказы
+(`RADAR` → `ORDER_SENTRY`), `:3029-3041` `ProcessOrderSentry`, `:3120`
+`ProcessOrderIdle` → `:4183-4252` `BuildingReady`; `drawmap.cpp:47-49`
+`DrawMap_BuildMMarkDelayCounter`/`DrawMap_BuildMarkImages`, `:293-302`
+`DrawMap_Callback1`, `:304-337` `DrawMap_RedrawUnit`, `:339-351`
+`DrawMap_Callback2`, `:353-390` `DrawMap_RenderBuildMarker`, `:781-834`
+`DrawMap_RenderUnit` (+ `GameManager_DrawUnitSelector`), `:1065-1096`
+`DrawMap_RenderSurveyDisplay`, `:1098-1170` `DrawMap_RedrawDirtyZones`;
+`game_manager.cpp:222`/`:1189-1192` `GameManager_MarkerColor`,
+`:744-836` `GameManager_DrawUnitSelector`, `:991-995`
+`GameManager_RenderSurveyIndicator`, `:3985-3990` `MenuClickSurveyButton`,
+`:7165` `GameManager_IsSurveyorSelected`; `access.cpp:341-351`
+`Access_IsSurveyorOverlayActive`, `:762-768` `Access_UpdateMapStatus`,
+`:950-984` `Access_GetModifiedSurfaceType`; `survey.cpp:32-82`
+`Survey_RenderMarker`, `:84-121` `Survey_SurveyArea`, `:123-155`
+`Survey_RenderMarkers`; `enums.hpp:40-43` `HASH_TEAM_*`, `:105-145`
+`ORDER_STATE_*`; `unitinfogroup.cpp:59-71` `IsRelevant`; ресурсы `BLDMRK1..5`
+(62×62, hotspot 31,31), `RAWMSK*`/`FUELMK*`/`GOLDMK*` (38×38, hotspot 19,19),
+`D_RADAR` (`image_base = 0`, `image_count = 16`, коннекторы 16..19).
+
+**A4. Строитель в центре ленты.** C++ `PositionInTape` двигает `x`/`y` строителя
+на 8 px × 4 тика к центру 2×2 и **не возвращает** их: `SpawnNewUnit` переводит
+его в `ORDER_BUILD`/`UNIT_READY`, но пиксель остаётся в центре; первый сброс —
+`TAPE_POSITIONING_DEINIT`/`LEAVE` по приказу игрока (клик, A1). Порт
+`buildsite::tape_center_offset` для `UNIT_READY` возвращал `0`, спрайт
+«прыгал» в угол площадки (кадр `build-done-waiting` до правки). Теперь
+`BUILD_IN_PROGRESS`, `UNIT_READY` и `ACTIVATE`/`IN_TRANSITION` держат
+`(±32, ±32)`, а `ACTIVATE`/`BUILD_IN_PROGRESS` (состояние уже после съезда) —
+`0`.
+
+**A5. Маркеры `BLDMRK1..5`.** Сверка: C++ рисует 12 клеток **вокруг** 2×2-площадки
+(старт `(parent.x − 1, parent.y + 1)`, для здания `+1` по `y`, N/E/S/W по 3 шага
+накопительно, только проходимые), картинку 62×62 с hotspot (31,31) в центре
+клетки, кадр меняется каждые 3 отрисовки карты (5 кадров). Порт совпадал по
+клеткам; добавлен точный тест набора клеток и гарантия, что клетки самой
+площадки не помечаются. `build-done-waiting` после A4/A8 показывает кольцо
+вокруг площадки, а в её центре — строителя с рамкой выделения.
+
+**A6. Знание ресурсов.** `Survey_SurveyArea` вызывается из
+`Access_UpdateMapStatus` для `SURVEYOR`/`MINELAYR`/`SEAMNLYR`/`COMMANDO` при
+добавлении покрытия. Обход `grid ± 1`, `AIR` пропускается, **только
+`SURVEYOR`** ставит `CargoMap |= hash_team_id` (`|=` — знание не снимается).
+Порт: `GameState::survey_area` (в `update_map_status_unit`, до проверок
+`ORDER_IDLE`/`SELECTABLE`), `ResourceMapEntry::with_team_visible`; исправлен
+порядок битов (`RED = 0x2000` = бит 13, `GRAY = 0x0400` = бит 10 — как
+`HASH_TEAM_*`), раньше он был обратным. Отрисовка (`draw_resource_icons`) —
+только при `panels.survey` (кнопка) **или** выделенном разведчике
+(`selected_surveyor_active`), маска — бит команды, чит `MAXSURVEY` (`0xFFFF`) в
+порте не включён. Иконки рисуются **после** `draw_units` — поверх зданий (порядок
+`RenderMapTiles → RenderUnits → RenderSurveyIndicator`), а маркеры стройки —
+последними (`RedrawDirtyZones`).
+
+**A7. RADAR.** `UnitsManager_DeployUnit` ставит `RADAR` в `ORDER_SENTRY`;
+`SpawnNewUnit` переводит здание в `IDLE`/`BUILDING_READY` через `SetNewOrderInt`
+(prior = `SENTRY`), после ухода строителя `RestoreOrders` возвращает `SENTRY`, и
+`ProcessOrderSentry` листает 16 кадров. Порт писал `prior_orders = AWAIT`
+жёстко → построенный радар замирал. Теперь prior сохраняется
+(`unit_order::set_new_order_int`), кадр считается `image_base + (angle + step) %
+image_count`. `dt = 0` возвращает `image_base`.
+
+**A8. Селектор юнита.** Порт `GameManager_DrawUnitSelector` (три вложенные
+рамки-уголка, `double_marker = true`, `size1` 32/16, `size2` 128/64, «полуразмер»
+64/32, обрезка по области карты), цвет — `GameManager_MarkerColor` (`0xFF` или
+`0x00`) с чередованием `^= 0xFF` и миганием 210 мс (`TIMER_FPS_TO_MS(24) * 5`).
+Рисуется для выделенного юнита в проходе юнитов, как в `DrawMap_RenderUnit`, и
+в оконном, и в полноэкранном fallback-кадре; у зданий уголки вдвое длиннее.
+При `dt = 0` цвет `0xFF` — golden детерминированны.
+
+**Общие правки.** `UnitInfo::new` теперь стартует в `ORDER_AWAIT`/
+`ORDER_STATE_EXECUTING_ORDER`, как конструктор C++ (`unitinfo.cpp:201-204`);
+раньше было `AWAIT`/`INIT`, из-за чего `RestoreOrders` возвращал здание в
+`AWAIT`/`INIT`. Векторы `tools/sim_vectors` перегенерированы (`state`/`prior_state`
+= `0x01`) — единственная изменённая строка `replay_digest`. `NewGameReport::
+resources_crc` берётся сразу после генерации карты (до высадки разведчиков),
+поэтому P2-вектор генерации не смешивается с накопленным знанием.
+
+**Проверка.** QA: `production.qa` — `assert build-center=yes` и
+`assert unit-selector=yes` на кадре «строитель ждёт»; `visual-screens.qa` —
+`assert survey-overlay=no/yes` (кнопка SURVEY), `assert resource-icons>=1`,
+`assert unit-selector=yes` (выделенный разведчик), новые кадры `survey` и
+`survey-button`. UNIT/кадровые тесты: `max_core/tests/survey.rs` (5),
+`max_core/tests/production.rs::a_built_radar_restores_its_sentry_order`,
+`max_app/tests/app.rs` (5: центр ленты, кольцо маркеров, иконки поверх зданий,
+селектор и мигание, вращение радара), `buildsite::tests` (UNIT_READY и
+IN_TRANSITION). Golden переснят осознанно: изменились кадры с выделенным юнитом
+(селектор; `portrait`, `mine-selected`, `move-input/game-*`, `move-preview`,
+`production/build-*`, `unit-menu/*`, `xfer/*`, `upgrade-done`,
+`allocate/*`, `research-plan`) и `build-done-waiting` (строитель в центре);
+добавлены `golden/survey.png`, `golden/survey-button.png`. Повторная сверка —
+0 дрейфа.

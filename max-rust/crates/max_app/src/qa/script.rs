@@ -288,6 +288,16 @@ pub enum Assertion {
     ConstructionSiteDrawn,
     /// `assert digest=HEX`: CRC16 снапшота состояния (`App::digest`).
     Digest(u16),
+    /// `assert resource-icons=N`: сколько клеток с иконкой ресурса нарисовано
+    /// (`Survey_RenderMarkers`): только разведанные клетки.
+    ResourceIcons(Cmp, u32),
+    /// `assert survey-overlay=yes|no`: включён ли показ иконок ресурсов
+    /// (`GameManager_RenderSurveyIndicator`: кнопка SURVEY или выделенный
+    /// разведчик).
+    SurveyOverlay(bool),
+    /// `assert unit-selector=yes|no`: нарисован ли индикатор выделенного юнита
+    /// (`GameManager_DrawUnitSelector`).
+    UnitSelector(bool),
     /// `assert cargo-mode=buy|upgrade`: режим списка `CargoMenu`.
     CargoMode(bool),
     /// `assert cargo-types=N`: длина списка типов (15 в покупке).
@@ -1180,6 +1190,24 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert build-ready: ожидалось yes|no, получено «{other}»"
             )),
         },
+        "resource-icons" => Ok(Assertion::ResourceIcons(
+            operator,
+            parse_u32(value, "assert resource-icons")?,
+        )),
+        "survey-overlay" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" => Ok(Assertion::SurveyOverlay(true)),
+            "no" | "false" | "off" => Ok(Assertion::SurveyOverlay(false)),
+            other => Err(format!(
+                "assert survey-overlay: ожидалось yes|no, получено «{other}»"
+            )),
+        },
+        "unit-selector" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" => Ok(Assertion::UnitSelector(true)),
+            "no" | "false" | "off" => Ok(Assertion::UnitSelector(false)),
+            other => Err(format!(
+                "assert unit-selector: ожидалось yes|no, получено «{other}»"
+            )),
+        },
         "endturn" | "end-turn" => match value.to_ascii_lowercase().as_str() {
             "pressed" | "down" | "on" => Ok(Assertion::EndTurnPressed(true)),
             "normal" | "up" | "released" | "off" => Ok(Assertion::EndTurnPressed(false)),
@@ -1836,9 +1864,7 @@ fn parse_help(rest: &str) -> Result<Command, String> {
 fn parse_unit_menu(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
     let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
-        return Err(
-            "unit-menu: ожидалось «unit-menu open|item NAME|key CHAR|close»".to_string(),
-        );
+        return Err("unit-menu: ожидалось «unit-menu open|item NAME|key CHAR|close»".to_string());
     };
 
     let command = match (first.as_str(), parts.as_slice()) {
@@ -1888,9 +1914,8 @@ fn parse_allocate(rest: &str) -> Result<Command, String> {
     };
 
     let mining = |text: &str| -> Result<max_core::alloc::MiningKind, String> {
-        max_core::alloc::MiningKind::parse(text).ok_or_else(|| {
-            format!("allocate: ожидался ресурс raw|fuel|gold, получено «{text}»")
-        })
+        max_core::alloc::MiningKind::parse(text)
+            .ok_or_else(|| format!("allocate: ожидался ресурс raw|fuel|gold, получено «{text}»"))
     };
 
     let command = match (first.as_str(), parts.as_slice()) {
@@ -1954,8 +1979,7 @@ fn parse_transfer(rest: &str) -> Result<Command, String> {
         ["help"] | ["?"] => TransferCommand::Help,
         [] => {
             return Err(
-                "transfer: требуется действие (amount N|right|left|done|cancel|help)"
-                    .to_string(),
+                "transfer: требуется действие (amount N|right|left|done|cancel|help)".to_string(),
             );
         }
         _ => {
@@ -2222,6 +2246,32 @@ mod tests {
             Command::Assert(Assertion::ConstructionSiteDrawn)
         );
         assert!(parse_script("assert site=huge\n").is_err());
+        // A4–A9: кадровые проверки оверлея SURVEY и селектора.
+        assert_eq!(
+            one("assert resource-icons>=1"),
+            Command::Assert(Assertion::ResourceIcons(Cmp::Ge, 1))
+        );
+        assert_eq!(
+            one("assert resource-icons=0"),
+            Command::Assert(Assertion::ResourceIcons(Cmp::Eq, 0))
+        );
+        assert_eq!(
+            one("assert survey-overlay=yes"),
+            Command::Assert(Assertion::SurveyOverlay(true))
+        );
+        assert_eq!(
+            one("assert survey-overlay=no"),
+            Command::Assert(Assertion::SurveyOverlay(false))
+        );
+        assert_eq!(
+            one("assert unit-selector=yes"),
+            Command::Assert(Assertion::UnitSelector(true))
+        );
+        assert_eq!(
+            one("assert unit-selector=no"),
+            Command::Assert(Assertion::UnitSelector(false))
+        );
+        assert!(parse_script("assert survey-overlay=maybe\n").is_err());
         // P9: диалог Preferences/Setup.
         assert_eq!(
             one("assert prefs=open"),

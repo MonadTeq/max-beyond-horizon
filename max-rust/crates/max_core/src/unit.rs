@@ -474,10 +474,15 @@ impl UnitInfo {
             image_index: 0,
             turret_image_index: 0,
             image_index_max: 0,
+            // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): новый юнит рождается
+            // в `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, и `prior` — тот же
+            // (`Await`/`ExecutingOrder`). Раньше порт ставил `Init`, из-за чего
+            // `RestoreOrders` после достройки возвращал здание в
+            // `Await`/`Init` вместо `Await`/`ExecutingOrder`.
             orders: UnitOrder::Await,
-            state: UnitOrderState::Init,
+            state: UnitOrderState::ExecutingOrder,
             prior_orders: UnitOrder::Await,
-            prior_state: UnitOrderState::Init,
+            prior_state: UnitOrderState::ExecutingOrder,
             laying_state: 0,
             target_grid: Point::ZERO,
             build_time: 0,
@@ -641,7 +646,11 @@ mod tests {
     fn unit_info_defaults_match_cpp() {
         let unit = UnitInfo::new(UnitType::Tank, TeamId::GREEN, UnitId::new(TeamId::GREEN, 1));
         assert_eq!(unit.orders, UnitOrder::Await);
-        assert_eq!(unit.state, UnitOrderState::Init);
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): `ORDER_AWAIT`/
+        // `ORDER_STATE_EXECUTING_ORDER`, prior — тот же.
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+        assert_eq!(unit.prior_orders, UnitOrder::Await);
+        assert_eq!(unit.prior_state, UnitOrderState::ExecutingOrder);
         assert_eq!(unit.brightness, u8::MAX);
         assert_eq!(unit.grid, Point::new(-1, -1));
         assert_eq!(unit.group_speed, 0);

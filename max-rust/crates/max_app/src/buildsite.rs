@@ -262,6 +262,10 @@ impl BuildSiteSelect {
 ///   (`Paths_UpdateAngle`), поэтому спрайт скользит туда, куда смотрит;
 /// * `ORDER_BUILD`/`BUILD_IN_PROGRESS` после восстановления приказов —
 ///   полные `32 px` к центру ленты (рабочая поза уже в центре);
+/// * `ORDER_BUILD`/`UNIT_READY` (здание достроено, строитель **ждёт приказа
+///   игрока**) — те же `32 px`: C++ не двигает `x`/`y` при смене приказа, поэтому
+///   конструктор остаётся в центре площадки, пока его не отправят (`TAPE_
+///   POSITIONING_DEINIT` — первый сдвиг);
 /// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT` — строитель ещё в
 ///   центре ленты (`32 px` въезда), `TAPE_POSITIONING_LEAVE` — те же `32 px`
 ///   плюс `8 px × moved` в сторону `move_to` (`move_to_grid_*`): так C++
@@ -313,10 +317,7 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
     } else {
         (0, 0)
     };
-    let (enter_px_x, enter_px_y) = (
-        enter_x * TAPE_CENTER_PIXELS,
-        enter_y * TAPE_CENTER_PIXELS,
-    );
+    let (enter_px_x, enter_px_y) = (enter_x * TAPE_CENTER_PIXELS, enter_y * TAPE_CENTER_PIXELS);
 
     match (unit.orders, unit.state) {
         (
@@ -346,6 +347,16 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
             )
         }
         (UnitOrder::Build, UnitOrderState::BuildInProgress) => (enter_px_x, enter_px_y),
+        // Достройка: C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) переводит
+        // строителя в `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, но его пиксель
+        // (`x`/`y`) остаётся там, куда его свёл `PositionInTape` — в центре
+        // ленты. Сдвиг не снимается до приказа игрока: первый сброс происходит
+        // только в `TAPE_POSITIONING_DEINIT`/`LEAVE`. Раньше здесь был `0`, и
+        // спрайт «выталкивало» в угол площадки сразу после достройки.
+        (UnitOrder::Build, UnitOrderState::UnitReady) => (enter_px_x, enter_px_y),
+        // Клик игрока по клетке: C++ ставит `ORDER_ACTIVATE`/
+        // `ORDER_STATE_IN_TRANSITION`, но пиксель строителя ещё в центре ленты.
+        (UnitOrder::Activate, UnitOrderState::InTransition) => (enter_px_x, enter_px_y),
         _ => (0, 0),
     }
 }
@@ -837,6 +848,36 @@ mod tests {
         unit.moved = 0;
         assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
 
+        // `ORDER_BUILD`/`BUILD_IN_PROGRESS`: рабочая поза в центре ленты.
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::BuildInProgress;
+        assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
+
+        // `ORDER_BUILD`/`UNIT_READY`: здание достроено, строитель ждёт приказа
+        // игрока — C++ не двигает его `x`/`y`, значит спрайт остаётся в центре.
+        unit.state = UnitOrderState::UnitReady;
+        assert_eq!(
+            tape_center_offset(&state, &unit),
+            (-32, -32),
+            "после достройки строитель остаётся в центре ленты"
+        );
+
+        // `ORDER_ACTIVATE`/`IN_TRANSITION` — приказ игрока начать уход: C++ ещё
+        // не двигал `x`/`y`, поэтому кадр между кликом и тиком обработки остаётся
+        // в центре (сдвиг снимается только в `TAPE_POSITIONING_LEAVE`).
+        unit.orders = UnitOrder::Activate;
+        unit.state = UnitOrderState::InTransition;
+        assert_eq!(
+            tape_center_offset(&state, &unit),
+            (-32, -32),
+            "кадр после клика игрока не «прыгает» в угол площадки"
+        );
+
+        // `ORDER_ACTIVATE`/`BUILD_IN_PROGRESS` — состояние **после** съезда:
+        // `PositionInTape` пересчитал клетку, спрайт снова в центре своей клетки.
+        unit.state = UnitOrderState::BuildInProgress;
+        assert_eq!(tape_center_offset(&state, &unit), (0, 0));
+
         // `TAPE_POSITIONING_LEAVE`: те же 32 px плюс 8 px за тик в сторону
         // `move_to` (C++ `move_to_grid_*`): цель западнее-севернее — NW.
         state.set_order_data(
@@ -847,6 +888,7 @@ mod tests {
             },
         );
         unit.state = UnitOrderState::TapePositioningLeave;
+        unit.orders = UnitOrder::AwaitTapePositioning;
         for moved in 0..=4u8 {
             unit.moved = moved;
             let step = i32::from(moved);

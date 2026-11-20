@@ -36,8 +36,8 @@
 // `#[allow(unsafe_code)]` точечно; остальной крейт по-прежнему без unsafe.
 #![deny(unsafe_code)]
 
-pub mod assets;
 pub mod allocmenu;
+pub mod assets;
 pub mod audio;
 pub mod buildmenu;
 pub mod buildsite;
@@ -94,6 +94,7 @@ use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
 
+pub use allocmenu::{AllocAction, AllocMenu, AllocMenuAssets};
 pub use assets::{
     data_search_roots, resolve_color_pal, resolve_max_res, resolve_patches_res, Assets,
     AssetsReport, LoadedSprite, SpriteInfo, COLOR_PAL_NAME, DATA_DIR_NAME, MAX_RES_NAME,
@@ -101,8 +102,6 @@ pub use assets::{
     UNIT_TYPES_WITHOUT_SPRITE_DATA, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
-pub use allocmenu::{AllocAction, AllocMenu, AllocMenuAssets};
-pub use transfermenu::{TransferAction, TransferMenu, TransferMenuAssets};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
 pub use hotseat::TurnNotice;
@@ -119,31 +118,32 @@ pub use net::{
 };
 pub use panels::{PanelButton, PanelState, Panels};
 pub use preferences::{
-    Preferences, PreferencesAction, PreferencesAssets, PreferencesDialog, PreferencesInfo,
-    PreferencesVariant, PrefKey,
+    PrefKey, Preferences, PreferencesAction, PreferencesAssets, PreferencesDialog, PreferencesInfo,
+    PreferencesVariant,
 };
 pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
 pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
 pub use render::{
-    draw_unit_sprites, draw_unit_sprites_with_angle, draw_unit_sprites_with_base,
-    unit_frame_index, unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
+    draw_unit_sprites, draw_unit_sprites_with_angle, draw_unit_sprites_with_base, unit_frame_index,
+    unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
 };
 pub use saveload::{
     save_meta_for_local_game, save_meta_for_local_game_with, SaveLoadAction, SaveLoadAssets,
     SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
+pub use transfermenu::{TransferAction, TransferMenu, TransferMenuAssets};
 pub use ui::{
     handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
     CreateField, CreateForm, HorizonMenuClient, InputEvent, Key, MenuClient, Screen, ScreenView,
     SessionRequest, Transition, UiContext, DEFAULT_GAME_NAME, MAX_WORLD, PLANET_COLUMNS,
     PLANET_COUNT, PLANET_GRID_MIN_HEIGHT, PLANET_NAMES, PLANET_ROWS,
 };
-pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
 pub use unitmenu::{
     MenuEvent, UnitMenu, UnitMenuAssets, UnitMenuItem, CURSOR_LOAD, CURSOR_RELOAD, CURSOR_REPAIR,
     CURSOR_TRANSFER,
 };
+pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
 
 /// Режим работы приложения (влияет только на CLI и диагностику, не на симуляцию).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -583,8 +583,7 @@ pub struct App {
     /// реальной скоростью оригинала (`UnitInfo::Move`: 8 px/тик ~ 3.75 клетки/с).
     /// В каждой точке — направление движения к ней (`VisualStep.angle`),
     /// чтобы спрайт поворачивался на клетке поворота, а не раньше.
-    visual_paths:
-        std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
+    visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
     /// Визуальные кадровые часы юнитов (`FrameAnimation`).
     ///
     /// Три механизма: цикл строителя (`ProcessOrderBuild`), анимация
@@ -635,6 +634,12 @@ pub struct App {
     /// `dt = 0` (QA/headless) кадр статичен и golden детерминированны.
     pub(crate) build_marker_step: u8,
     pub(crate) build_marker_elapsed: f32,
+    /// Цвет индикатора выделения — `GameManager_MarkerColor`
+    /// (`game_manager.cpp:222`): `0xFF` (белый) или `0x00` (чёрный).
+    /// Переключается каждые [`render::UNIT_SELECTOR_BLINK_SECONDS`] (210 мс,
+    /// `game_manager.cpp:1189-1192`); при `dt = 0` (QA/headless) — `0xFF`.
+    pub(crate) marker_color_index: u8,
+    pub(crate) marker_color_elapsed: f32,
 }
 
 /// Визуальные кадровые часы одного юнита.
@@ -705,8 +710,8 @@ pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 /// DOS-съёмка показала статичный корпус в idle — кадры дрели включаются
 /// отдельной константой [`render::MINING_DRILL_FRAMES_ENABLED`].
 pub use crate::render::{
-    MINING_DRILL_FRAMES_ENABLED, WORKING_BUILDING_ANIM_FRAME_SECONDS,
-    WORKING_BUILDING_ANIMATION_ENABLED,
+    MINING_DRILL_FRAMES_ENABLED, WORKING_BUILDING_ANIMATION_ENABLED,
+    WORKING_BUILDING_ANIM_FRAME_SECONDS,
 };
 
 /// Длительность визуального «вырастания» юнита, секунды.
@@ -785,6 +790,8 @@ impl App {
             preferences_dialog: None,
             build_marker_step: 0,
             build_marker_elapsed: 0.0,
+            marker_color_index: 0xFF,
+            marker_color_elapsed: 0.0,
         }
     }
 
@@ -1098,10 +1105,7 @@ impl App {
         let viewport = self.map_viewport();
         let (center_x, center_y) = crate::hud::tile_center(&viewport, unit.grid);
         let zoom = viewport.zoom();
-        let anchor = (
-            center_x + zoom as i32 / 2 + area.ulx,
-            center_y + area.uly,
-        );
+        let anchor = (center_x + zoom as i32 / 2 + area.ulx, center_y + area.uly);
 
         let Some(mut menu) = unitmenu::UnitMenu::new(&self.state, &unit, anchor, area, zoom) else {
             return false;
@@ -1111,9 +1115,7 @@ impl App {
         // (`unit->cursor == 3/4/6/7`, `unit->enter_mode`).
         for item in &mut menu.items {
             item.pressed = match item.id {
-                unitmenu::ItemId::Transfer => {
-                    self.hud.cursor_mode == unitmenu::CURSOR_TRANSFER
-                }
+                unitmenu::ItemId::Transfer => self.hud.cursor_mode == unitmenu::CURSOR_TRANSFER,
                 unitmenu::ItemId::Repair => self.hud.cursor_mode == unitmenu::CURSOR_REPAIR,
                 unitmenu::ItemId::Reload => self.hud.cursor_mode == unitmenu::CURSOR_RELOAD,
                 unitmenu::ItemId::Load => self.hud.cursor_mode == unitmenu::CURSOR_LOAD,
@@ -1218,10 +1220,7 @@ impl App {
     }
 
     /// Ввод в открытом диалоге — [`allocmenu::AllocMenu::input`].
-    pub fn alloc_menu_input(
-        &mut self,
-        event: InputEvent,
-    ) -> Option<allocmenu::AllocAction> {
+    pub fn alloc_menu_input(&mut self, event: InputEvent) -> Option<allocmenu::AllocAction> {
         let Some(mut menu) = self.alloc_menu.take() else {
             return None;
         };
@@ -1241,11 +1240,7 @@ impl App {
     }
 
     /// `allocate row …`/QA: `+1`/`−1` единица ресурса.
-    pub fn alloc_menu_adjust(
-        &mut self,
-        kind: max_core::alloc::MiningKind,
-        increase: bool,
-    ) -> bool {
+    pub fn alloc_menu_adjust(&mut self, kind: max_core::alloc::MiningKind, increase: bool) -> bool {
         let Some(mut menu) = self.alloc_menu.take() else {
             return false;
         };
@@ -1302,33 +1297,35 @@ impl App {
                 };
             let fire_on = self.state.order_data(id).fire_on;
 
-            packets.push(max_core::input::Command::Order(max_core::input::Packet08Order {
-                unit: id,
-                payload: max_core::input::OrderPayload::P5(max_core::input::PayloadP5 {
-                    p3: max_core::input::PayloadP3 {
-                        p2: max_core::input::PayloadP2 {
-                            p1: max_core::input::PayloadP1 {
-                                order: max_core::enums::UnitOrder::NewAllocate,
-                                state: max_core::enums::UnitOrderState::Init,
-                                prior_order,
-                                prior_state,
-                                disabled_reaction_fire: unit.disabled_reaction_fire,
+            packets.push(max_core::input::Command::Order(
+                max_core::input::Packet08Order {
+                    unit: id,
+                    payload: max_core::input::OrderPayload::P5(max_core::input::PayloadP5 {
+                        p3: max_core::input::PayloadP3 {
+                            p2: max_core::input::PayloadP2 {
+                                p1: max_core::input::PayloadP1 {
+                                    order: max_core::enums::UnitOrder::NewAllocate,
+                                    state: max_core::enums::UnitOrderState::Init,
+                                    prior_order,
+                                    prior_state,
+                                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                                },
+                                parent_unit: unit.parent_unit,
+                                experience: unit.experience,
                             },
-                            parent_unit: unit.parent_unit,
-                            experience: unit.experience,
+                            move_to: unit.target_grid,
+                            fire_on,
+                            enemy_unit: None,
+                            transfer_cargo: unit.transfer_cargo,
+                            stealth_dice_roll: unit.stealth_dice_roll,
                         },
-                        move_to: unit.target_grid,
-                        fire_on,
-                        enemy_unit: None,
-                        transfer_cargo: unit.transfer_cargo,
-                        stealth_dice_roll: unit.stealth_dice_roll,
-                    },
-                    total_mining: unit.total_mining,
-                    raw_mining: unit.raw_mining,
-                    fuel_mining: unit.fuel_mining,
-                    gold_mining: unit.gold_mining,
-                }),
-            }));
+                        total_mining: unit.total_mining,
+                        raw_mining: unit.raw_mining,
+                        fuel_mining: unit.fuel_mining,
+                        gold_mining: unit.gold_mining,
+                    }),
+                },
+            ));
         }
 
         let count = packets.len();
@@ -2026,6 +2023,12 @@ impl App {
         }
 
         let output = generate_map(&mut setup, surface, &mut rng);
+        // Снимок карты ресурсов **сразу после генерации**
+        // (`GameManager_PopulateMapWithResources`, `game_manager.cpp:4730`):
+        // `NewGameReport::resources_crc` сверяется с P2-вектором генерации и не
+        // должен содержать командную разведку, которую накапливают высаженные
+        // разведчики (`Survey_SurveyArea` → `CargoMap |= hash_team_id`).
+        let generated_resources_crc = crc::crc16(&output.map.resources.to_le_bytes());
 
         // `GameManager_PopulateMapWithResources` (`game_manager.cpp:4730`) перед
         // высадкой двигает `TeamMissionSupplies[team].starting_position`
@@ -2145,7 +2148,7 @@ impl App {
             start_units,
             units: state.unit_count(),
             surface_crc: crc::crc16(&state.map.surface.to_bytes()),
-            resources_crc: crc::crc16(&state.map.resources.to_le_bytes()),
+            resources_crc: generated_resources_crc,
         };
 
         tracing::info!(
@@ -2235,10 +2238,12 @@ impl App {
     pub fn visual_angle(&self, id: UnitId) -> Option<u8> {
         let unit = self.state.unit(id)?;
 
-        Some(match self.visual_paths.get(&id).and_then(|queue| queue.front()) {
-            Some(step) => step.angle,
-            None => unit.angle,
-        })
+        Some(
+            match self.visual_paths.get(&id).and_then(|queue| queue.front()) {
+                Some(step) => step.angle,
+                None => unit.angle,
+            },
+        )
     }
 
     /// Номер кадра рабочего цикла строителя для отрисовки (`0..3`).
@@ -2363,8 +2368,28 @@ impl App {
 
         while self.build_marker_elapsed >= BUILD_MARKER_FRAME_SECONDS {
             self.build_marker_elapsed -= BUILD_MARKER_FRAME_SECONDS;
-            self.build_marker_step =
-                (self.build_marker_step + 1) % BUILD_MARKER_FRAMES as u8;
+            self.build_marker_step = (self.build_marker_step + 1) % BUILD_MARKER_FRAMES as u8;
+        }
+    }
+
+    /// Цвет индикатора выделения (`GameManager_MarkerColor`,
+    /// `game_manager.cpp:1189-1192`): `0xFF ^= 0xFF` каждые
+    /// [`render::UNIT_SELECTOR_BLINK_SECONDS`] = 210 мс (`TIMER_FPS_TO_MS(24) * 5`).
+    /// `dt = 0` (QA/headless) возвращает `0xFF` — golden детерминированы.
+    fn update_marker_color(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.1);
+
+        if !(dt > 0.0) {
+            self.marker_color_index = 0xFF;
+            self.marker_color_elapsed = 0.0;
+            return;
+        }
+
+        self.marker_color_elapsed += dt;
+
+        while self.marker_color_elapsed >= crate::render::UNIT_SELECTOR_BLINK_SECONDS {
+            self.marker_color_elapsed -= crate::render::UNIT_SELECTOR_BLINK_SECONDS;
+            self.marker_color_index ^= 0xFF;
         }
     }
 
@@ -2497,6 +2522,8 @@ impl App {
         self.update_unit_animations(dt);
         // Мигание маркеров стройки (`DrawMap_RenderBuildMarker`).
         self.update_build_marker(dt);
+        // Мигание индикатора выделения (`GameManager_MarkerColor`).
+        self.update_marker_color(dt);
         // Палитровые циклы (маяки зданий, индикатор дрели) — тоже только кадр.
         self.update_color_cycles(dt);
 

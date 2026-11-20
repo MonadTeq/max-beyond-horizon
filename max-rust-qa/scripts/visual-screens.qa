@@ -85,6 +85,15 @@ click 404 242
 assert unit-pos=22,22
 shot mine-selected
 
+# A6: кнопка SURVEY (`GameManager_DisplayButtonSurvey`) включает оверлей иконок
+# ресурсов (`GameManager_RenderSurveyIndicator`), даже без выделенного разведчика.
+assert survey-overlay=no
+click 31 306
+assert survey-overlay=yes
+shot survey-button
+click 31 306
+assert survey-overlay=no
+
 # TC-0919: портрет CORNER_FLIC — FLC-анимация выделенного юнита. Камера стоит
 # на шахте (22,22) → (404,242); Surveyor (23,21) → (468,178), как в move-input.qa.
 # В QA `dt = 0`, поэтому кадр портрета — первый кадр FLC (`SURVEYOR.FLC`),
@@ -92,6 +101,16 @@ shot mine-selected
 click 468 178
 assert selected
 shot portrait
+
+# A6: выделенный разведчик включает тот же оверлей
+# (`GameManager_IsSurveyorSelected`, `Access_IsSurveyorOverlayActive`), а вокруг
+# выделенного юнита появляется индикатор `GameManager_DrawUnitSelector`.
+assert survey-overlay=yes
+assert unit-selector=yes
+# Иконки ресурсов рисуются `Survey_RenderMarkers` только на **разведанных**
+# клетках и **после** юнитов (`GameManager_RenderSurveyIndicator`).
+assert resource-icons>=1
+shot survey
 
 # Первый же закрытый раунд заканчивает партию по лимиту ходов.
 end_turn

@@ -263,9 +263,11 @@ void write_state_digest(DigestWriter& out, const uint16_t* cargo_map) {
         out.i16(unit->grid_x);
         out.i16(unit->grid_y);
         out.u8(0);  // orders: AWAIT
-        out.u8(0);  // state: INIT
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): новый юнит рождается в
+        // ORDER_AWAIT / ORDER_STATE_EXECUTING_ORDER = 0x01 (и prior — тот же).
+        out.u8(1);  // state: EXECUTING_ORDER
         out.u8(0);  // prior_orders: AWAIT
-        out.u8(0);  // prior_state: INIT
+        out.u8(1);  // prior_state: EXECUTING_ORDER
         out.u16(unit->hits);
         out.u16(unit->speed);
         out.u16(0);  // group_speed

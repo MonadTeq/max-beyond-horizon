@@ -346,6 +346,30 @@
   `visual-1to1-status.md` §27, `state-model.md` §3.3, suite TC-0108/TC-0935,
   `scripts/README.md`, `qa-plan.md`.
 
+### P10 — Ревью A4–A9: центр ленты, маркеры, знание ресурсов, RADAR, селектор (2026-11-20)
+
+- [x] Сверить с оракулом каждый пункт и зафиксировать ссылки на функции/строки.
+  A4 `unitinfo.cpp:4414-4483` (`PositionInTape` не возвращает `x`/`y`; сдвиг
+  снимается в `TAPE_POSITIONING_DEINIT`/`LEAVE`), A5 `drawmap.cpp:304-390`
+  (кольцо 12 клеток вокруг 2×2, `BLDMRK*` 62×62 hotspot 31,31, 5 кадров по 3
+  отрисовки), A6 `survey.cpp:84-155` + `access.cpp:762-768` (бит `hash_team_id`
+  в `CargoMap`, `GameManager_MaxSurvey` — только чит), A7
+  `units_manager.cpp:2412-2421`/`:3029-3041` + `unitinfo.cpp:3581`/`:3783`
+  (RADAR `SENTRY` → prior → `SENTRY`, 16 кадров), A8 `game_manager.cpp:744-836`
+  + `drawmap.cpp:813-833` (три рамки, `MarkerColor`, 210 мс).
+- [x] Исправить порт в этих точках: `buildsite::tape_center_offset` (UNIT_READY и
+  IN_TRANSITION держат центр), `production::spawn_unit`‑ветка `SpawnNewUnit`
+  (prior через `set_new_order_int`), `GameState::survey_area` (знание ресурсов —
+  часть состояния), `ResourceMapEntry` (порядок битов `HASH_TEAM_*`),
+  `render::draw_resource_icons`/`draw_unit_selector` (+ порядок отрисовки
+  «юниты → иконки → маркеры стройки»), `UnitInfo::new` (`EXECUTING_ORDER`).
+- [x] Тесты: `max_core/tests/survey.rs` (5), `production.rs` (RADAR),
+  `max_app/tests/app.rs` (5 кадровых), `buildsite::tests`; QA-проверки
+  `assert resource-icons`, `assert survey-overlay`, `assert unit-selector`,
+  `assert build-center=yes`; golden переснят (0 дрейфа после повторной сверки).
+- [x] Документация: CHANGELOG, `visual-1to1-status.md` §32, этот план,
+  `max-rust-qa/scripts/README.md` (новые assert-проверки).
+
 ## Порядок
 
 P1 → P2 → P3 → P4 → P5 → P6 → P7 (P1 сразу; P2/P3 параллелятся с P4 частично).

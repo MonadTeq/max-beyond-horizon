@@ -80,6 +80,25 @@ pub const TEAM_VISIBILITY_MASK_SAVE: u16 = 0x1C00;
 /// Количество играбельных команд, у которых есть бит разведанности.
 pub const VISIBILITY_TEAM_COUNT: u8 = 4;
 
+/// Бит команды в разведанности ресурсов — `hash_team_id` C++
+/// (`enums.hpp:40-43`): `HASH_TEAM_RED = 0x2000` (бит 13),
+/// `GREEN = 0x1000` (12), `BLUE = 0x0800` (11), `GRAY = 0x0400` (10).
+///
+/// Порядок **обратный** номеру команды: в `ResourceManager_CargoMap` красные
+/// помечают старшим битом маски `0x3C00`. Именно так `Survey_SurveyArea`
+/// (`survey.cpp:116`) пишет `CargoMap |= team_units->hash_team_id`, а
+/// `Survey_RenderMarkers` (`survey.cpp:143-150`) читает `CargoMap & mask`.
+/// Возвращает маску **внутри** 4-битного поля [`visibility`]
+/// ([`ResourceMapEntry::visibility`]).
+#[inline]
+pub const fn team_visibility_bit(team: u8) -> u8 {
+    if team < VISIBILITY_TEAM_COUNT {
+        1 << (VISIBILITY_TEAM_COUNT - 1 - team)
+    } else {
+        0
+    }
+}
+
 /// Тип ресурса — биты 5–7 `GridResourceMapEntry` (`CARGO_*` в `enums.hpp`).
 ///
 /// Порядок вариантов сохранён из каркаса (`Raw`, `Fuel`, `Gold`); значения —
@@ -173,7 +192,8 @@ impl ResourceMapEntry {
         ResourceKind::from_cargo_bits(self.0)
     }
 
-    /// Разведанность: бит `i` — команда `i` (`RED=0 .. GRAY=3`), биты 10–13.
+    /// Разведанность: биты 10–13, порядок — как `HASH_TEAM_*` C++ (см.
+    /// [`team_visibility_bit`]): RED — старший бит (13), GRAY — младший (10).
     #[inline]
     pub const fn visibility(self) -> u8 {
         ((self.0 & TEAM_VISIBILITY_MASK) >> TEAM_VISIBILITY_SHIFT) as u8
@@ -182,7 +202,18 @@ impl ResourceMapEntry {
     /// Установлена ли разведанность команды `team` (0..=3).
     #[inline]
     pub const fn is_visible_to(self, team: u8) -> bool {
-        team < VISIBILITY_TEAM_COUNT && (self.visibility() & (1 << team)) != 0
+        team < VISIBILITY_TEAM_COUNT && (self.visibility() & team_visibility_bit(team)) != 0
+    }
+
+    /// Копия записи с добавленным знанием команды `team` (порт
+    /// `ResourceManager_CargoMap[...] |= hash_team_id`, `survey.cpp:116`).
+    #[inline]
+    pub const fn with_team_visible(self, team: u8) -> Self {
+        if team >= VISIBILITY_TEAM_COUNT {
+            return self;
+        }
+
+        Self(self.0 | ((team_visibility_bit(team) as u16) << TEAM_VISIBILITY_SHIFT))
     }
 
     /// Пустой тайл (ни типа, ни количества, ни разведанности).
@@ -661,15 +692,17 @@ mod tests {
     #[test]
     fn resource_entry_layout_matches_save_example() {
         // Пример из state-model.md §3.10 / save.md: 0x208C = 12 материалов,
-        // разведано только красными (бит 13).
+        // разведано только красными. Красные — `HASH_TEAM_RED = 0x2000`
+        // (бит 13), т.е. `visibility() == 0b1000` — так пишет
+        // `Survey_SurveyArea` (`survey.cpp:116`).
         let entry = ResourceMapEntry::new(12, Some(ResourceKind::Raw), 0b1000);
 
         assert_eq!(entry.bits(), 0x208C);
         assert_eq!(entry.amount(), 12);
         assert_eq!(entry.resource_type(), Some(ResourceKind::Raw));
         assert_eq!(entry.visibility(), 0b1000);
-        assert!(entry.is_visible_to(3));
-        assert!(!entry.is_visible_to(0));
+        assert!(entry.is_visible_to(0), "0x2000 — бит красных (команда 0)");
+        assert!(!entry.is_visible_to(3));
 
         let decoded = ResourceMapEntry::from_bits(0x208C);
         assert_eq!(decoded, entry);
@@ -699,11 +732,39 @@ mod tests {
         assert_eq!(invalid.resource_type(), None);
 
         for team in 0..=3u8 {
-            let entry = ResourceMapEntry::from_bits(1 << (10 + team));
-            assert_eq!(entry.visibility(), 1 << team);
+            let entry = ResourceMapEntry::from_bits(
+                (team_visibility_bit(team) as u16) << TEAM_VISIBILITY_SHIFT,
+            );
+            assert_eq!(entry.visibility(), team_visibility_bit(team));
             assert_eq!(entry.resource_type(), None);
             assert!(entry.is_visible_to(team));
+
+            // `hash_team_id` C++: красные — старший бит поля (13), серые —
+            // младший (10).
+            assert_eq!(
+                entry.bits(),
+                match team {
+                    0 => 0x2000,
+                    1 => 0x1000,
+                    2 => 0x0800,
+                    _ => 0x0400,
+                },
+                "бит команды {team} — HASH_TEAM_* из enums.hpp:40-43"
+            );
         }
+
+        // Знание добавляется без потери количества/типа и без дублей.
+        let entry = ResourceMapEntry::new(7, Some(ResourceKind::Gold), 0).with_team_visible(0);
+        assert_eq!(entry.amount(), 7);
+        assert_eq!(entry.resource_type(), Some(ResourceKind::Gold));
+        assert!(entry.is_visible_to(0));
+        assert!(!entry.is_visible_to(1));
+        assert_eq!(
+            entry.with_team_visible(0),
+            entry,
+            "повторная отметка идемпотентна"
+        );
+        assert!(entry.with_team_visible(1).is_visible_to(1));
 
         // Бит 14/15 в маску видимости не входят.
         assert_eq!(ResourceMapEntry::from_bits(0xC000).visibility(), 0);

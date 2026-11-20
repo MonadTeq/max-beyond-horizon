@@ -327,8 +327,15 @@ pub fn render_resources_into(
 ///
 /// `palette` — системная палитра окна (`FRAMEPIC`): маркеры — simple image и
 /// индексируются именно ею, а не палитрой `.WRL`, которой рисуются тайлы.
-/// `team`/`show_all` — маска исследованности (`ResourceManager_CargoMap &
-/// hash_team_id` и `GameManager_MaxSurvey` в C++).
+///
+/// `team`/`max_survey` — маска исследованности (`Survey_RenderMarkers`,
+/// `survey.cpp:137-151`): `mask = GameManager_MaxSurvey ? 0xFFFF : 0` плюс
+/// `hash_team_id` команды. Иконка рисуется только там, где
+/// `ResourceManager_CargoMap & mask`, то есть **разведано** этой командой
+/// (или включён чит `MAXSURVEY`). Плюс C++ требует
+/// `Access_GetModifiedSurfaceType(i, j) != SURFACE_TYPE_AIR`.
+///
+/// Возвращает `(пикселей нарисовано, клеток с иконкой)`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_resource_icons_into(
     dst: &mut RgbaBuffer,
@@ -337,16 +344,22 @@ pub fn render_resource_icons_into(
     markers: &ResourceMarkers,
     palette: &crate::terrain::PaletteRgba,
     team: u8,
-    show_all: bool,
-) -> u32 {
+    max_survey: bool,
+) -> (u32, u32) {
     let Some(range) = viewport.visible_tiles() else {
-        return 0;
+        return (0, 0);
     };
     let zoom = viewport.zoom() as i32;
     let mut painted = 0;
+    let mut cells = 0;
 
     for (grid_x, grid_y) in range.cells() {
         if grid_x < 0 || grid_y < 0 || grid_x >= map.size.width || grid_y >= map.size.height {
+            continue;
+        }
+
+        if map.surface_at(grid_x, grid_y) == Surface::AIR {
+            // `Access_GetModifiedSurfaceType(i, j) != SURFACE_TYPE_AIR`.
             continue;
         }
 
@@ -355,7 +368,8 @@ pub fn render_resource_icons_into(
             continue;
         };
 
-        if !show_all && !entry.is_visible_to(team) {
+        // `CargoMap & mask`: бит команды (или 0xFFFF при чите MAXSURVEY).
+        if !max_survey && !entry.is_visible_to(team) {
             continue;
         }
 
@@ -376,18 +390,26 @@ pub fn render_resource_icons_into(
         if let Some(image) = image {
             // Масштаб оригинала: большой маркер — `zoom/64`, малый — `zoom/16`.
             let (num, den) = if zoom > 16 { (zoom, 64) } else { (zoom, 16) };
+            let drawn = blit_marker(dst, image, palette, centre, num, den);
 
-            painted += blit_marker(dst, image, palette, centre, num, den);
+            if drawn > 0 {
+                painted += drawn;
+                cells += 1;
+            }
         } else if let Some(icon) = markers.icon(kind) {
             // Fallback: иконка интерфейса `I_*` по центру клетки (в оригинале не
             // используется, но лучше цветной точки).
             let hotspot = (i32::from(icon.width) / 2, i32::from(icon.height) / 2);
+            let drawn = blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1);
 
-            painted += blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1);
+            if drawn > 0 {
+                painted += drawn;
+                cells += 1;
+            }
         }
     }
 
-    painted
+    (painted, cells)
 }
 
 /// Блит simple image с hotspot по центру и масштабом `num/den`.
@@ -596,7 +618,8 @@ mod tests {
         resources.set(
             52,
             53,
-            ResourceMapEntry::new(4, Some(ResourceKind::Gold), 0b1),
+            // `HASH_TEAM_RED = 0x2000` (бит 13) — разведано красными.
+            ResourceMapEntry::new(4, Some(ResourceKind::Gold), 0b1000),
         );
         let map = Map::from_parts(uniform_map(Surface::LAND).surface.clone(), resources);
         let mut palette = [[0u8, 0, 0, 255]; 256];
@@ -607,34 +630,20 @@ mod tests {
 
         let viewport = Viewport::new(448, 448);
         let mut buffer = RgbaBuffer::new(448, 448);
-        let painted =
+        let (painted, cells) =
             render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 0, false);
 
         assert!(painted > 0, "маркер золота должен нарисоваться");
+        assert_eq!(cells, 1, "одна разведанная клетка — одна иконка");
         assert_eq!(
-            render_resource_icons_into(
-                &mut buffer,
-                &map,
-                &viewport,
-                &markers,
-                &palette,
-                0b10,
-                false
-            ),
-            0,
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 1, false),
+            (0, 0),
             "клетка не разведана другой командой"
         );
-        assert!(
-            render_resource_icons_into(
-                &mut buffer,
-                &map,
-                &viewport,
-                &markers,
-                &palette,
-                0b10,
-                true
-            ) > 0,
-            "SURVEY (show_all) показывает маркеры всех клеток"
+        assert_eq!(
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 1, true).1,
+            1,
+            "чит MAXSURVEY (max_survey) показывает маркеры всех клеток"
         );
     }
 
