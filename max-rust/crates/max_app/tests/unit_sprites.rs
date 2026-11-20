@@ -292,3 +292,57 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
         "draw_unit_sprites_with_angle(3) = draw_unit_sprites(unit.angle=3)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Кадровые данные симуляции (`Unit::GetFrameInfo` → `image_index_max`)
+// ---------------------------------------------------------------------------
+
+/// Таблица `max_core::frames` — те же байты `D_*`, что читает C++
+/// (`Unit::FileLoad`, `unit.cpp:51-64`). Значения не подбирались: сверяем все
+/// загруженные типы с декодером реальных ресурсов. `MASTER` пропускается —
+/// у него в архивах нет спрайта корпуса (`D_MOBILE` читается отдельно и
+/// зафиксирован в `frames.rs`).
+#[test]
+fn frame_info_table_matches_game_data() {
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
+    for index in 0..UNIT_END {
+        let unit_type = UnitType::try_from(index).expect("UnitType 0..92");
+
+        if UNIT_TYPES_WITHOUT_SPRITE_DATA.contains(&unit_type) {
+            continue;
+        }
+
+        let sprite = assets
+            .sprite(unit_type)
+            .unwrap_or_else(|| panic!("{unit_type:?}: нет загруженного спрайта"));
+        let info = sprite
+            .frame_info
+            .unwrap_or_else(|| panic!("{unit_type:?}: нет D_* (FrameInfo)"));
+        let table = max_core::frames::frame_info(unit_type);
+
+        assert_eq!(
+            table.image_base,
+            i16::from(info.image_base),
+            "{unit_type:?}: image_base"
+        );
+        assert_eq!(
+            table.image_count,
+            i16::from(info.image_count),
+            "{unit_type:?}: image_count"
+        );
+        assert_eq!(
+            table.turret_image_base,
+            i16::from(info.turret_image_base),
+            "{unit_type:?}: turret_image_base"
+        );
+        assert_eq!(
+            table.turret_image_count,
+            i16::from(info.turret_image_count),
+            "{unit_type:?}: turret_image_count"
+        );
+    }
+}
+

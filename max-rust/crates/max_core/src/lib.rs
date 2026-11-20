@@ -46,6 +46,9 @@
 //!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) как чистые данные;
 //! * [`events`] — очередь команд, события юнитов и применение пакетов к
 //!   `GameState` в порядке получения (P4/P5);
+//! * [`frames`] — кадровые данные типов (`Unit::GetFrameInfo` из `D_*`):
+//!   `image_index_max` взрывов/башен/пехоты для `ProgressExplosion`,
+//!   `ProcessOrderSentry` и `ORDER_STATE_ELEVATE`;
 //! * [`ai`] — ИИ: `AiPlayer` (стратегия, карты угроз, приоритеты атак),
 //!   `TaskManager` (очереди напоминаний `priority→normal→deferred`),
 //!   49 классов задач `task*.cpp`, `HeatMap`/`ThreatMap`, `WeightTable`,
@@ -71,6 +74,7 @@ pub mod crc;
 pub mod deploy;
 pub mod enums;
 pub mod events;
+pub mod frames;
 pub mod game;
 pub mod geo;
 pub mod hash;

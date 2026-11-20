@@ -245,6 +245,10 @@ pub enum Assertion {
     /// `TEAM_TYPE_PLAYER` → отжата, `TEAM_TYPE_COMPUTER` → нажата
     /// (`SetRestState(true)`) до конца ходов оппонентов.
     EndTurnPressed(bool),
+    /// `assert endturn-frames<N`: сколько кадров занял последний `end_turn`
+    /// (переход хода + ходы ИИ). Зависший ход ИИ упирается в
+    /// `LOCAL_AI_TICK_LIMIT` (12 000) — порог ловит такой регресс.
+    EndTurnFrames(Cmp, u32),
     /// `assert hint=TEXT|none`: подсказка сверху карты
     /// (`MessageManager_DrawMessage` для выделенного строителя); сравнение —
     /// подстрока без учёта регистра.
@@ -679,6 +683,9 @@ pub enum Command {
     /// `click unit NAME` — левый клик по юниту игрока с таким именем **без**
     /// проверки выделения (курсорные режимы x-fer/repair/reload).
     ClickUnit(String),
+    /// `click enemy NAME` — левый клик по чужому юниту с таким именем: при
+    /// выделенном своём юните это приказ атаки (`GameManager_ClickUnit`).
+    ClickEnemy(String),
     /// `rclick X Y` — правая кнопка (приказ движения/отмена).
     RightClick(i32, i32),
     /// `key NAME` — клавиша (`ENTER`, `ESC`, `T`, …).
@@ -866,6 +873,21 @@ fn parse_command(source: &str) -> Result<Command, String> {
                 }
 
                 return Ok(Command::ClickUnit(name.to_string()));
+            }
+            // `click enemy NAME` — клик по чужому юниту (приказ атаки).
+            if let Some(name) = rest
+                .strip_prefix("enemy ")
+                .or_else(|| rest.strip_prefix("ENEMY "))
+            {
+                let name = name.trim();
+
+                if name.is_empty() {
+                    return Err(format!(
+                        "click enemy: ожидалось «click enemy NAME», получено «{rest}»"
+                    ));
+                }
+
+                return Ok(Command::ClickEnemy(name.to_string()));
             }
             let (x, y) = parse_point(rest)?;
             Ok(Command::Click(x, y))
@@ -1228,6 +1250,9 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
 
     match key.as_str() {
         "turn" => Ok(Assertion::Turn(operator, parse_i32(value, "assert turn")?)),
+        "endturn-frames" | "end_turn_frames" | "ai-turn-frames" => Ok(
+            Assertion::EndTurnFrames(operator, parse_u32(value, "assert endturn-frames")?),
+        ),
         "units" => Ok(Assertion::Units(
             operator,
             parse_u32(value, "assert units")?,

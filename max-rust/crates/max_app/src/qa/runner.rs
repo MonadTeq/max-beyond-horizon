@@ -195,6 +195,8 @@ pub struct QaRunner {
     shots: Vec<PathBuf>,
     frames: usize,
     detail: Option<String>,
+    /// Кадров, которые занял последний `end_turn` (переход + ходы ИИ).
+    last_end_turn_frames: u32,
 }
 
 impl QaRunner {
@@ -235,6 +237,7 @@ impl QaRunner {
             shots: Vec::new(),
             frames: 0,
             detail: None,
+            last_end_turn_frames: 0,
         })
     }
 
@@ -377,6 +380,7 @@ impl QaRunner {
         match command {
             Command::Click(x, y) => self.send(InputEvent::MouseClick(*x, *y)),
             Command::ClickUnit(name) => self.click_unit(name),
+            Command::ClickEnemy(name) => self.click_enemy(name),
             Command::RightClick(x, y) => self.send(InputEvent::RightClick(*x, *y)),
             Command::Key(key) => self.send(InputEvent::Key(*key)),
             Command::Type(text) => {
@@ -1075,6 +1079,49 @@ impl QaRunner {
 
         let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
         self.detail = Some(format!("клик по {name} в ({x}, {y})"));
+        self.send(InputEvent::MouseClick(
+            x + layout::MAIN_MAP.ulx,
+            y + layout::MAIN_MAP.uly,
+        ))
+    }
+
+    /// `click enemy NAME` — левый клик по чужому юниту: при выделенном своём
+    /// юните это приказ атаки (`GameManager_ClickUnit` →
+    /// `GameManager_MenuClickEvent` → `hud::build_attack_order`). Камера
+    /// центрируется на цели, поэтому клик всегда попадает в её клетку.
+    fn click_enemy(&mut self, name: &str) -> Result<Flow, String> {
+        let team = self.app.player_team();
+        let wanted = name.trim().to_ascii_lowercase();
+        let id = self
+            .app
+            .state()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|id| {
+                self.app.state().unit(*id).is_some_and(|unit| {
+                    unit.team != team
+                        && unit.team != max_core::team::TeamId::ALIEN
+                        && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
+                            == wanted
+                            || format!("{:?}", unit.unit_type).to_ascii_lowercase() == wanted)
+                })
+            })
+            .next_back()
+            .ok_or_else(|| {
+                format!("click enemy {name}: нет чужого юнита с таким именем (команда {team:?})")
+            })?;
+
+        let grid = self
+            .app
+            .state()
+            .unit(id)
+            .map(|unit| unit.grid)
+            .ok_or_else(|| "click enemy: юнит исчез".to_string())?;
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
+        self.detail = Some(format!("атака {name} в ({x}, {y})"));
         self.send(InputEvent::MouseClick(
             x + layout::MAIN_MAP.ulx,
             y + layout::MAIN_MAP.uly,
@@ -2844,6 +2891,43 @@ impl QaRunner {
 
         let before = self.frames;
         self.wait(self.config.frame_limit)?;
+        self.last_end_turn_frames = (self.frames - before) as u32;
+
+        // Диагностика зависания: ход ИИ, который крутился дольше обычного
+        // (121 тик `AiPlayer::CheckEndTurn` + ходы), печатает состояние.
+        if self.frames - before > 2_000 {
+            eprintln!(
+                "qa_run: WARN end_turn занял {} кадров (turn={}, phase={:?}, counters={:?})",
+                self.frames - before,
+                self.app.state().turn_counter,
+                self.app.local().map(|local| local.phase),
+                (0..4)
+                    .map(|team| self.app.state().ai.players[team].end_turn_retry_counter)
+                    .collect::<Vec<_>>()
+            );
+            for id in self.app.state().unit_ids_in_order() {
+                let Some(unit) = self.app.state().unit(id) else {
+                    continue;
+                };
+                if matches!(
+                    unit.orders,
+                    max_core::enums::UnitOrder::Await | max_core::enums::UnitOrder::Idle
+                ) {
+                    continue;
+                }
+                eprintln!(
+                    "  unit {:?} team={:?} {:?}/{:?} @({}, {}) hits={} parent={:?}",
+                    unit.unit_type,
+                    unit.team,
+                    unit.orders,
+                    unit.state,
+                    unit.grid.x,
+                    unit.grid.y,
+                    unit.hits,
+                    unit.parent_unit.map(|p| p.0)
+                );
+            }
+        }
 
         self.detail = Some(format!(
             "ход {} · {} кадров",
@@ -3461,6 +3545,14 @@ impl QaRunner {
                         Some(actual) => format!("unit-order={actual:?}"),
                         None => "выделения нет".to_string(),
                     },
+                )
+            }
+            Assertion::EndTurnFrames(cmp, expected) => {
+                let actual = self.last_end_turn_frames;
+                self.expect(
+                    cmp.test(i64::from(actual), i64::from(expected)),
+                    format!("endturn-frames{}{expected}", cmp.as_str()),
+                    format!("endturn-frames={actual}"),
                 )
             }
             Assertion::ResearchAlloc(topic, cmp, expected) => {

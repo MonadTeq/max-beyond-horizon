@@ -136,7 +136,7 @@ docker run --rm \
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
 # Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
-step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn) + golden"
+step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
@@ -163,6 +163,8 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/ai-turn.qa qa-out/ai-turn
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-tb.qa qa-out/sp-tb
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-rust-qa/golden/upgrade
@@ -174,6 +176,8 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/ai-turn ../max-rust-qa/golden/ai-turn
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/sp-tb ../max-rust-qa/golden/sp-tb
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-rust-qa/golden/combat-tb
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-rust-qa/golden/research-help'
 
 # P4: soak — отдельная стадия (не быстрая QA): 100 ходов UI-партии с ходами ИИ
@@ -191,7 +195,7 @@ docker run --rm \
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
      mkdir -p qa-out/soak-100 qa-out/soak-headless
      cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
-     cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --out qa-out/soak-headless'
+     cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --mode tb --out qa-out/soak-headless'
 
 if [ "$SMOKE" = "1" ]; then
     step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"

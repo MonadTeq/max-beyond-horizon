@@ -1,0 +1,66 @@
+# sp-tb.qa — одиночная партия в Turn Based с двумя компьютерами.
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/sp-tb.qa qa-out/sp-tb
+#
+# Пользовательское указание: приоритет — PlayMode=TURN_BASED. Сценарий
+# проверяет порядок команд раунда RED → GREEN → BLUE → RED
+# (`GameManager_TeamTurnTurnBased`, `game_manager.cpp:451`), закрытие хода
+# человека, ходы двух компьютеров и возврат управления без зависания
+# (`assert endturn-frames` — ход ИИ не упирается в аварийные 12 000 кадров).
+
+# --- Главное меню → Options ------------------------------------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+
+# RED — человек, GREEN и BLUE — компьютеры, GRAY — пусто.
+players 0 human
+players 1 computer
+players 2 computer
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+
+# --- Раунд 1: ход человека ------------------------------------------------
+assert turn=1
+assert team=RED
+tick 5
+select unit 0
+assert selected
+move near
+tick 5
+shot sp-tb-turn1
+
+# --- End Turn: GREEN → BLUE → снова RED -----------------------------------
+end_turn
+assert turn=2
+assert team=RED
+assert endturn-frames<3000
+assert screen=InGame
+shot sp-tb-turn2
+
+# --- Ещё два раунда: стабильность порядка команд --------------------------
+end_turn
+assert turn=3
+assert team=RED
+assert endturn-frames<3000
+end_turn
+assert turn=4
+assert team=RED
+assert endturn-frames<3000
+shot sp-tb-turn4
+
+# Локальное сохранение Turn Based партии.
+save sp-tb.mxs

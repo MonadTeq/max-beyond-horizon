@@ -527,6 +527,14 @@ pub fn unit_frame_index_with_animation(
     effects: bool,
 ) -> usize {
     let last = image_count.saturating_sub(1);
+
+    // `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`) двигает
+    // `image_index` юнита-эффекта, а `UnitInfo::Render` рисует именно
+    // `GetImageIndex()`. У взрывов нет фаз/поворотов — кадр берётся напрямую.
+    if unit.flags & unit_flags::EXPLODING != 0 {
+        return usize::try_from(unit.image_index.max(0)).unwrap_or(0).min(last);
+    }
+
     let mut index = unit_frame_index_for_angle(unit, image_base, image_count, angle);
 
     if builder_animation_active(unit) {

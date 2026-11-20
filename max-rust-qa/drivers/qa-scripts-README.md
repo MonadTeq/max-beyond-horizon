@@ -104,6 +104,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (50 шагов, 10 кадров) |
 | `visual-screens.qa` | 8 экранов только с `shot` (main menu, options, planet, players, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (37 шагов, 8 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (26 шагов, 3 кадра) |
+| `sp-tb.qa` | Turn Based SP: RED человек + GREEN/BLUE компьютеры, `end_turn` три раза, `assert turn`, `endturn-frames<3000`, сохранение `MXLS` | **PASS** (2719 кадров, 3 кадра) |
+| `combat-tb.qa` | Turn Based бой: `spawn` ракетчика и танка, `click enemy` (атака), снаряд `ROCKET`, взрыв по кадрам `image_index`, `assert unit-order`, `endturn-frames<2000` | **PASS** (193 кадра, 8 кадров; до фикса 12 000) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому

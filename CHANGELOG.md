@@ -280,6 +280,60 @@
 
 ### Исправлено
 
+- **Turn Based: зависание хода ИИ после выстрела/гибели юнита (три порта
+  оракула) и настоящая анимация снарядов/взрывов.**
+  * **Снаряд навсегда оставался в `ORDER_MOVE`.** `UnitInfo::PrepareFire`
+    создаёт `ROCKET`/`TORPEDO`/`ALNMISSL` как юнит с `speed = 0` из `SC_ATTRI`
+    (это эффект, а не машина). C++ `AirPath::Execute` проверяет скорость только
+    **внутри** `if (unit->flags & MOBILE_AIR_UNIT)` (`airpath.cpp:186-199`), а
+    `unit_order::air_path_execute` применял проверку ко всем: снаряд переходил в
+    `EXECUTING_ORDER` на стартовой клетке и больше не двигался. Каждый тик
+    `UnitsManager_ProcessOrder` выставляет `OrdersPending` для `MISSILE_UNIT`
+    (`units_manager.cpp:3268-3271`), поэтому `Ai_CheckEndTurn` не вызывался и
+    ход ИИ не закрывался до аварийного `LOCAL_AI_TICK_LIMIT` (12 000 кадров).
+    Это и был «фриз на ходу»: `combat-tb.qa` крутил 12 000 кадров вместо 169.
+  * **Взрыв не становился взрывом.** `spawn_unit` проверял `ANIMATED` по
+    флагам вызывающего слоя, а `UnitsManager_StartExplosion` передаёт только
+    класс (`MOBILE_LAND`/`MOBILE_AIR`/`MOBILE_SEA`/`STATIONARY`): `ANIMATED`
+    приходит из `SC_UNITS`. Эффекты `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/
+    `BLDEXPLD`/`HITEXPLD` рождались в `AWAIT/EXECUTING_ORDER` и оставались на
+    карте навсегда. Теперь флаги берутся из `merged_flags`, как `UnitInfo` +
+    `UnitsManager_DeployUnit` (`units_manager.cpp:2390`).
+  * **Погибший юнит не удалялся.** `UnitsManager_ProgressExplosion`
+    (`units_manager.cpp:4006-4032`) на половине анимации отпускает родителя и
+    уничтожает его, если `hits == 0`. Порт этого не делал: убитый юнит вечно
+    висел в `ORDER_STATE_DESTROY`, `OrdersPending` не сбрасывался — ход ИИ
+    снова не закрывался (ровно этот путь воспроизводит `combat-tb.qa`:
+    ИИ-танк убивает ракетчика). Порт — `progress_explosion` +
+    `GameState::destroy_unit`.
+  * **Кадры эффектов.** Добавлен `max_core::frames` — порт
+    `Unit::GetFrameInfo()` (93 записи `D_*`: `image_base`, `image_count`,
+    кадры башни, данные из `MAX.RES`/`PATCHES.RES`). `UnitInfo::new` теперь
+    выставляет `image_index = image_base + angle`,
+    `image_index_max = image_count + image_index - 1` (у `COMMANDO`/`INFANTRY`
+    — `103`, у вращающейся башни — по кадрам башни, `units_manager.cpp:2443`).
+    Взрыв листает `image_index 0..13` (LND/AIR/SEA), `0..27` (BLD), `0..4`
+    (HIT) по кадру за два тика и удаляется; у пехоты/диверсанта — своя
+    8-кадровая смерть `image_base = 168 + (angle/2)*8`
+    (`units_manager.cpp:3932`). Рендер `EXPLODING`-юнитов рисует
+    `image_index` (`UnitInfo::Render`), а не статичный кадр.
+  * **Видимость эффекта.** Взрыв принадлежит команде погибшего; видимость
+    цели копируется на эффект, иначе атакующий не видел попадание
+    (в C++ `DeployUnit(..., skip_map_status_update = true)` не пересчитывает
+    heat map).
+  Тесты: `max_core/tests/turn_based_combat.rs` (3: ход ИИ закрывается после
+  попадания ракеты, типы взрывов для land/air/sea/building + кадры и удаление,
+  промах → `HITEXPLD` и удаление), `max_app/tests/turn_based.rs` (3: ракета в
+  полёте на End Turn первого хода → возврат за <3000 кадров без остатков-
+  эффектов; горячий-seat 2 человека + компьютер; 4 раунда SP),
+  `max_app/tests/unit_sprites.rs::frame_info_table_matches_game_data`
+  (таблица `D_*` сверена с ассетами). QA: `combat-tb.qa` (выстрел ракетой,
+  снаряд, взрыв по кадрам, `assert endturn-frames<2000`), `sp-tb.qa` (Turn
+  Based с двумя компьютерами, `RED→GREEN→BLUE→RED`, `endturn-frames`), golden
+  `golden/sp-tb/`, `golden/combat-tb/`. Soak по умолчанию — Turn Based
+  (`SoakOptions::play_mode`, `soak_headless --mode tb`), `soak-100.qa` уже
+  Turn Based. Детали — §36 `docs/analysis/visual-1to1-status.md`.
+
 - **Клик по достроенной площадке выделяет СТРОИТЕЛЯ (маркеры `BLDMRK*`,
   подсказка «Finished building …» и уход с площадки снова работают).**
   Регрессия после A1/A4. `PositionInTape` держит строителя в центре ленты

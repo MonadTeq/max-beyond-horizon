@@ -1,0 +1,86 @@
+# combat-tb.qa — бой в Turn Based: выстрел ракетой, снаряд, взрыв, конец хода.
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
+#
+# Что проверяется (C++ `UnitInfo::PrepareFire`/`ProgressFire`,
+# `airpath.cpp`, `UnitsManager_StartExplosion`/`ProgressExplosion`):
+# * в Turn Based (PlayMode=TURN_BASED, пункт Options «Turn Based») игрок
+#   стреляет ракетой: `ORDER_FIRE` → наведение → отдача → снаряд `ROCKET` в
+#   списке частиц;
+# * снаряд летит к цели кадрами симуляции, при попадании появляется взрыв
+#   (`LNDEXPLD`/`HITEXPLD`) и листает кадры `image_index` до `image_index_max`,
+#   после чего юнит-эффект удаляется (не остаётся на карте);
+# * `end_turn` на первом ходу возвращает управление человеку: снаряд/взрыв не
+#   держат `OrdersPending`, поэтому `Ai_CheckEndTurn` закрывает ход ИИ.
+#
+# Юниты для боя создаются QA-командой `spawn` (в мобилизации ракетчика нет).
+
+# --- Главное меню → Options (No Limit + Turn Based) -----------------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+assert team=RED
+tick 5
+
+# --- Ракетчик и цель рядом с выделенным строителем ------------------------
+select unit 0
+assert selected
+spawn Missile Crawler
+spawn enemy Tank
+tick 1
+shot combat-tb-units
+
+# --- Выстрел: выбор ракетчика и клик по цели ------------------------------
+select type Missile Crawler
+assert selected
+click enemy Tank
+assert log=Attack:
+# `ORDER_MOVE_TO_ATTACK` → в радиусе → `ORDER_FIRE/INIT`.
+tick 2
+assert unit-order=fire
+shot combat-tb-fired
+
+# `PrepareFire`: отдача 3 кадра, затем снаряд ROCKET в списке частиц.
+tick 4
+shot combat-tb-rocket
+
+# Снаряд летит к цели (1 клетка) и попадает: `attack` → `HitExplosion`.
+tick 2
+shot combat-tb-impact
+tick 5
+shot combat-tb-explosion
+tick 2
+shot combat-tb-explosion-mid
+
+# Взрыв доигрывает кадры `image_index 0..4` и удаляется; приказ вернулся.
+tick 3
+assert unit-order=await
+shot combat-tb-explosion-end
+
+# --- Ход ИИ не зависает на снаряде/взрыве ---------------------------------
+end_turn
+assert screen=InGame
+assert turn>=2
+# До регресса ход ИИ крутил 12 000 кадров (`LOCAL_AI_TICK_LIMIT`); норма —
+# 121 тик `Ai_CheckEndTurn` + бой.
+assert endturn-frames<2000
+shot combat-tb-after-ai

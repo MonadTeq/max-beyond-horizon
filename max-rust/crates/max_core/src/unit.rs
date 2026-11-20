@@ -442,6 +442,13 @@ impl UnitInfo {
     /// Минимальный конструктор (C++ `UnitInfo()` в «особых случаях»):
     /// заказы `AWAIT/INIT`, `brightness = 255`, позиция (-1, -1).
     pub fn new(unit_type: UnitType, team: TeamId, id: UnitId) -> Self {
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:276-294`): кадровые данные типа из
+        // ресурса `D_*` — `image_base`, `turret_image_base`, `image_index =
+        // image_base + angle` и `image_index_max = image_count + image_index - 1`.
+        // `angle` в этом конструкторе ещё 0, как и в `UnitInfo(unit_type, team,
+        // id)` без угла.
+        let frames = crate::frames::frame_info(unit_type);
+
         Self {
             unit_type,
             id,
@@ -467,13 +474,13 @@ impl UnitInfo {
             turret_offset_x: 0,
             turret_offset_y: 0,
             total_images: 0,
-            image_base: 0,
-            turret_image_base: 0,
+            image_base: frames.image_base,
+            turret_image_base: frames.turret_image_base,
             firing_image_base: 0,
             connector_image_base: 0,
-            image_index: 0,
-            turret_image_index: 0,
-            image_index_max: 0,
+            image_index: frames.image_base,
+            turret_image_index: frames.turret_image_base,
+            image_index_max: crate::frames::image_index_max(unit_type, 0),
             // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): новый юнит рождается
             // в `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, и `prior` — тот же
             // (`Await`/`ExecutingOrder`). Раньше порт ставил `Init`, из-за чего

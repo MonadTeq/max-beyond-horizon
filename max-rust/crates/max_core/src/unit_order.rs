@@ -1236,7 +1236,11 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
         return false;
     }
 
-    if ctx.unit.speed == 0 {
+    if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && (ctx.unit.speed == 0 || ctx.unit.engine == 0) {
+        // C++ `AirPath::Execute` (`airpath.cpp:186-199`): проверка скорости и
+        // двигателя стоит **внутри** `if (unit->flags & MOBILE_AIR_UNIT)`. У
+        // снарядов (`MISSILE_UNIT`, `speed = 0` из `SC_ATTRI`) этой проверки
+        // нет — они летят по `m_length` и завершаются `Paths_FinishMove`.
         ctx.unit.state = UnitOrderState::ExecutingOrder;
         ctx.move_finished(true);
         return false;
@@ -2144,6 +2148,12 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     if (ctx.unit.unit_type == UnitType::Commando || ctx.unit.unit_type == UnitType::Infantry)
         && ctx.unit.hits == 0
     {
+        // `units_manager.cpp:3932-3946`: пехота/диверсант умирают собственной
+        // 8-кадровой анимацией `image_base = 168 + (angle / 2) * 8`.
+        let image_base = 168 + (i16::from(ctx.unit.angle) / 2) * 8;
+        ctx.unit.image_base = image_base;
+        ctx.unit.image_index = image_base;
+        ctx.unit.image_index_max = image_base + 7;
         ctx.unit.state = UnitOrderState::Destroy;
         ctx.unit.moved = 0;
         ctx.unit.parent_unit = None;
@@ -2182,6 +2192,19 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
         explosion_flags,
     );
 
+    // Взрыв — юнит команды погибшего, но видеть его должны те, кто видел
+    // саму цель (`UnitInfo::InitStealthStatus` оставляет эффект видимым только
+    // своей команде, а `Access_UpdateMapStatus` для него в C++ пропускается:
+    // `DeployUnit(..., skip_map_status_update = true)`). Переносим видимость
+    // цели на эффект — иначе анимация попадания не рисуется атакующему.
+    if let Some(explosion_id) = explosion {
+        let visible = ctx.unit.visible_to_team;
+        if let Some(mut effect) = ctx.world.unit(explosion_id).cloned() {
+            effect.visible_to_team = visible;
+            ctx.world.write_unit(explosion_id, effect);
+        }
+    }
+
     ctx.unit.orders = ctx.unit.prior_orders;
     ctx.unit.state = ctx.unit.prior_state;
     restore_orders(&mut ctx.unit);
@@ -2202,6 +2225,25 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
     if ctx.unit.image_index == ctx.unit.image_index_max {
         ctx.world.destroy_unit(ctx.id);
     } else {
+        // `units_manager.cpp:4015-4023`: на середине анимации взрыв отпускает
+        // родителя (погибший юнит); если у того `hits == 0`, он удаляется
+        // `UnitsManager_BuildClearing(parent, true)`. Без этого погибший юнит
+        // навсегда остаётся в `ORDER_STATE_DESTROY`, а `UnitsManager_ProcessOrder`
+        // каждый тик выставляет `OrdersPending` — ход ИИ не закрывается.
+        if let Some(parent_id) = ctx.unit.parent_unit {
+            if ctx.unit.image_index == ctx.unit.image_index_max / 2 {
+                ctx.unit.parent_unit = None;
+
+                if ctx
+                    .world
+                    .unit(parent_id)
+                    .is_some_and(|parent| parent.hits == 0)
+                {
+                    ctx.world.destroy_unit(parent_id);
+                }
+            }
+        }
+
         if ctx.unit.moved & 0x01 != 0 {
             ctx.unit.image_index = ctx.unit.image_index.wrapping_add(1);
         }
@@ -3462,11 +3504,22 @@ mod tests {
             unit.state = UnitOrderState::Init;
         }
         state.tick();
-        assert_eq!(state.unit(id).unwrap().state, UnitOrderState::Destroy);
-        // На следующем тике анимация взрыва заканчивается (image_index == max)
-        // и юнит уничтожается.
-        state.tick();
-        assert!(!state.has_unit(id));
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.state, UnitOrderState::Destroy);
+        // `units_manager.cpp:3932-3946`: своя 8-кадровая анимация смерти
+        // (`image_base = 168 + (angle / 2) * 8`, `image_index_max = base + 7`).
+        assert_eq!(unit.image_base, 168);
+        assert_eq!(unit.image_index_max, 175);
+        // Анимация идёт по кадру за два тика, затем юнит уничтожается.
+        let mut destroyed = false;
+        for _ in 0..24 {
+            state.tick();
+            if !state.has_unit(id) {
+                destroyed = true;
+                break;
+            }
+        }
+        assert!(destroyed);
     }
 
     #[test]

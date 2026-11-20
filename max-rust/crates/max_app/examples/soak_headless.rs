@@ -34,6 +34,7 @@ const USAGE: &str = "\
   --seed N         seed генерации карты (по умолчанию 0)
   --opponent N     сложность ИИ 0..=5 (по умолчанию 0 — самая простая)
   --dt-ms F        dt кадра в миллисекундах (по умолчанию 16.667 = 60 Гц)
+  --mode M         режим игры: tb|turn-based (по умолчанию) или sim|simultaneous
   --quiet          не печатать строки ходов в stdout
   -h, --help       эта справка
 ";
@@ -96,6 +97,15 @@ fn main() -> ExitCode {
             "--dt-ms" => match args.next().and_then(|value| value.parse::<f32>().ok()) {
                 Some(value) if value >= 0.0 => dt_ms = value,
                 _ => return usage_error("--dt-ms требует неотрицательное число"),
+            },
+            "--mode" => match args.next().as_deref() {
+                Some("tb" | "turn-based" | "turnbased") => {
+                    options.play_mode = max_core::enums::PlayMode::TurnBased
+                }
+                Some("sim" | "simultaneous") => {
+                    options.play_mode = max_core::enums::PlayMode::SimultaneousMoves
+                }
+                _ => return usage_error("--mode требует tb или sim"),
             },
             other => return usage_error(&format!("неизвестный аргумент «{other}»")),
         }

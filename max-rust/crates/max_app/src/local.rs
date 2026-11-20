@@ -786,6 +786,9 @@ impl App {
             }
 
             // `GameManager_ManageEconomy(team)` в начале хода команды.
+            // `GameManager_TeamTurnTurnBased` (`game_manager.cpp:472`): перед
+            // `UpdateGui` команде сбрасывается `finished_turn`.
+            self.state_mut().teams[round_team].finished_turn = false;
             self.state_mut().manage_economy(team);
             self.state_mut().active_turn_team = team;
             self.state_mut().game_state = GameStateType::InGame;
@@ -1153,6 +1156,17 @@ impl App {
                         team_name(team),
                         LOCAL_AI_TICK_LIMIT
                     ));
+                    // Диагностика «зависшего» хода: `orders_pending`/
+                    // `tasks_pending` объясняют, почему `Ai_CheckEndTurn` не
+                    // вызывался (снаряд/взрыв в `Destroy`, движущийся юнит).
+                    tracing::warn!(
+                        "AI turn timeout: team={team:?} orders_pending={} \
+                         tasks_pending={} counter={} finished_turn={}",
+                        self.state().orders_pending,
+                        self.state().ai.players[team.0 as usize].tasks_pending,
+                        self.state().ai.players[team.0 as usize].end_turn_retry_counter,
+                        self.state().teams[team.0 as usize].finished_turn,
+                    );
                 }
 
                 if finished || timed_out {

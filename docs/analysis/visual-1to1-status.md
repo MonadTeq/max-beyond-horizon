@@ -3661,4 +3661,124 @@ QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-св
 (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом). Docs: `CHANGELOG.md`
 («Исправлено») и этот раздел.
 
+## 36. Turn Based: конец хода ИИ после боя + анимация снарядов/взрывов — **сделано** (2026-11-20)
+
+**Симптомы.** В партии с `PlayMode = TURN_BASED` (пункт Options «Turn Based»)
+ход ИИ не заканчивается: после выстрела ракетой/торпедой или гибели юнита
+игра стоит до аварийного `LOCAL_AI_TICK_LIMIT` (12 000 кадров, ~200 с при
+60 Гц). Визуально — «завис на первом ходу». Параллельно не было анимации
+выстрелов/попаданий: снаряд не летел, взрыв не появлялся, а юниты-эффекты
+оставались на карте.
+
+**Воспроизведение.** `combat-tb.qa` (Turn Based, ход 1, `spawn` ракетчика и
+цели, клик атаки, `end_turn`) до исправления: `end_turn` = **12 000 кадров**.
+UNIT-тест `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_after_its_missile_impact`
+падал с `Rocket: Move/ExecutingOrder` на клетке пуска и `counter = 0`
+(`Ai_CheckEndTurn` не вызывался ни разу).
+
+**Причины — три расхождения с оракулом.**
+
+1. **Скорость снаряда.** `UnitInfo::PrepareFire` (`unitinfo.cpp:4749-4803`)
+   создаёт `ROCKET`/`TORPEDO`/`ALNMISSL` юнитом с `speed = 0` из `SC_ATTRI` —
+   это эффект. C++ `AirPath::Execute` (`airpath.cpp:186-199`) проверяет
+   `speed == 0 || engine == 0` **внутри** `if (unit->flags & MOBILE_AIR_UNIT)`;
+   `unit_order::air_path_execute` применял проверку ко всем. Снаряд переходил в
+   `ORDER_STATE_EXECUTING_ORDER` на стартовой клетке и больше не двигался, а
+   `UnitsManager_ProcessOrder` (`units_manager.cpp:3268-3271`) каждый тик
+   выставляет `UnitsManager_OrdersPending` для `MISSILE_UNIT` — `Ai_CheckEndTurn`
+   не вызывался.
+2. **`ANIMATED` по неверным флагам.** `UnitsManager_StartExplosion`
+   (`units_manager.cpp:3915-4004`) вызывает `DeployUnit(unit_type, team, …,
+   flags=класс)`, а `UnitInfo` получает `ANIMATED` из `SC_UNITS`;
+   `UnitsManager_DeployUnit` (`:2390-2393`) переводит такой юнит в
+   `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`. `GameState::spawn_unit` проверял
+   `ANIMATED` только у явных флагов вызывающего слоя → `LNDEXPLD`/`AIREXPLD`/
+   `SEAEXPLD`/`BLDEXPLD`/`HITEXPLD` рождались в `AWAIT/EXECUTING_ORDER` и
+   висели на карте вечно (не было ни кадров, ни удаления).
+3. **Погибший родитель.** `UnitsManager_ProgressExplosion`
+   (`units_manager.cpp:4006-4032`) на `image_index == image_index_max / 2`
+   отпускает `parent` и, если `parent->hits == 0`, зовёт
+   `UnitsManager_BuildClearing(parent, true)` — тот удаляет погибшего.
+   `unit_order::progress_explosion` этого не делал: убитый юнит навсегда
+   оставался в `ORDER_STATE_DESTROY` (тоже `OrdersPending` каждый тик). Именно
+   этот путь воспроизводит `combat-tb.qa`: ИИ-танк убивает ракетчика, и до
+   исправления `end_turn` крутил 12 000 кадров.
+
+**Порт.**
+
+* `unit_order::air_path_execute` — guard только для `MOBILE_AIR_UNIT`
+  (`speed == 0 || engine == 0`); снаряды летят по `m_length` (в порте — одна
+  клетка за тик, как и остальные воздушные пути, см. шапку `unit_order.rs`).
+* `GameState::spawn_unit` — `merged_flags & ANIMATED` (флаги `SC_UNITS` +
+  вызывающего слоя) переводят эффект в `ORDER_EXPLODE`/`DESTROY`; у
+  `SPINNING_TURRET` `image_index_max` считается по кадрам башни
+  (`units_manager.cpp:2443-2450`).
+* `unit_order::progress_explosion` — на половине анимации `parent_unit` снимается,
+  а погибший (`hits == 0`) удаляется `GameState::destroy_unit` (порт
+  `BuildClearing` в объёме `DestroyUnit`; обломки/связи комплекса — TODO
+  `destroy_unit`).
+* `max_core::frames` — порт `Unit::GetFrameInfo()` по 93 ресурсам `D_*`:
+  `image_base`, `image_count`, кадры башни. `UnitInfo::new` выставляет
+  `image_index = image_base + angle`, `image_index_max = image_count +
+  image_index - 1` (`unitinfo.cpp:276-294`); у `COMMANDO`/`INFANTRY` — `103`,
+  на смерти — своя 8-кадровая анимация `image_base = 168 + (angle/2)*8`
+  (`units_manager.cpp:3932-3946`). Взрыв листает `image_index 0..13`
+  (LND/AIR/SEA), `0..27` (BLD), `0..4` (HIT) по кадру за два тика
+  (`moved & 1`, `ProgressExplosion`) и удаляется на `image_index == max`.
+* `render::unit_frame_index_with_animation` — для `flags & EXPLODING` кадр
+  берётся из `unit.image_index` (`UnitInfo::Render`), а не из статичного
+  `image_base + angle`.
+* `start_explosion` копирует `visible_to_team` погибшего на эффект: взрыв
+  принадлежит команде цели, а в C++ `DeployUnit(..., skip_map_status_update =
+  true)` не пересчитывает heat map, поэтому без переноса атакующий не видел
+  попадание.
+
+**Проверка (всё в Turn Based).**
+
+* `max_core/tests/turn_based_combat.rs` (3): ход ИИ закрывается после попадания
+  ракеты (< 300 тиков, эффектов на карте нет, цель повреждена); каждый класс
+  цели даёт свой взрыв (`LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`), кадры
+  листаются, эффект исчезает; промах → `HITEXPLD` (`image_index_max = 4`) и
+  удаление.
+* `max_app/tests/turn_based.rs` (3): первый ход — игрок стреляет ракетой и
+  жмёт `end_turn`, ход ИИ возвращается за < 3000 кадров, на карте не остаётся
+  ни снаряда, ни взрыва; hot-seat (2 человека + компьютер) с окнами «Begin
+  turn»; 4 раунда SP без зависаний.
+* `max_app/tests/unit_sprites.rs::frame_info_table_matches_game_data` — таблица
+  `max_core::frames` сверена с реальными `D_*` (93 типа, кроме `MASTER` без
+  спрайта в архивах).
+* QA `combat-tb.qa`: `spawn` ракетчика и танка, `click enemy` (новая QA-команда —
+  клик по чужому юниту = приказ атаки), `assert unit-order=fire`, кадры
+  `fired/rocket/impact/explosion/explosion-mid/explosion-end`,
+  `assert endturn-frames<2000` (169 кадров). QA `sp-tb.qa`: Turn Based с двумя
+  компьютерами, `RED → GREEN → BLUE → RED`, `assert endturn-frames<3000`
+  (658/1022/1029 кадров). Golden: `golden/combat-tb/` (8 кадров, включая
+  вспышку `HitExplosion`), `golden/sp-tb/` (3).
+* Soak: `SoakOptions::play_mode` (по умолчанию `TurnBased`), `soak_headless
+  --mode tb`; `soak-100.qa` уже Turn Based.
+
+**Гейты.** `bash ci.sh` — **зелёный** (1258 с): шаг 1/4 (`cargo check`+`test`
+default/sound/no-default, включая новые тесты), 2/4 Horizon, 3/4 — **19**
+QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat-tb.qa` 193 кадра) и
+**14** golden-сверок (2 новых: `sp-tb/`, `combat-tb/`), дрейф 0; 4/4 soak —
+`soak-100.qa` 49 488 кадров и `soak_headless --turns 120 --mode tb` (120 517
+кадров, 27.6 с). Windows UI + headless пересобраны; `CHANGELOG.md`, этот
+раздел, `PLAN-production.md` P11, `max-rust-qa/scripts/README.md`.
+
+**Артефакты (2026-11-20).**
+
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`
+  6 667 264 Б, sha256
+  `c6540efded5035357a26b16050b733c281989539d328286fb08a065398b69fa5`
+  (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
+  `983085ec857849c39b7304ee7d757a728afacf413840f1e9e77a0d6fb441667a`.
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/max-rust.exe`
+  11 009 453 Б, sha256
+  `0f4146c3e8436a8f63f6053c0b957ae5573e1150419dffbaa46726a0c7ab4829`
+  (PE32+ x64, Subsystem=3 console); zip sha256
+  `7a3ab1b29e477b6d0d2db12bf4e2a16ac30e967ddeeb40788359698ce83fcc78`.
+* **QA:** `combat-tb.qa` — 193 кадра, 8 PNG, golden 0 дрейфа; `sp-tb.qa` —
+  2719 кадров, 3 PNG, golden 0 дрейфа; `soak_headless --turns 120 --mode tb` —
+  PASS (120 517 кадров, 29.9 с, RSS +336 КиБ).
+
 

@@ -370,6 +370,36 @@
 - [x] Документация: CHANGELOG, `visual-1to1-status.md` §32, этот план,
   `max-rust-qa/scripts/README.md` (новые assert-проверки).
 
+### P11 — Turn Based: конец хода ИИ и боевые анимации (2026-11-20)
+
+- [x] Воспроизвести зависание: QA `combat-tb.qa` (Options → Turn Based, ход 1,
+  выстрел ракетой, `end_turn`) до исправления крутил **12 000 кадров**
+  (`LOCAL_AI_TICK_LIMIT`); unit-тест
+  `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_after_its_missile_impact`
+  падал с `Rocket/Move/ExecutingOrder` на старте и `counter = 0`.
+- [x] Причины (оракул): `AirPath::Execute` (`airpath.cpp:186-199`) проверяет
+  `speed == 0` только у `MOBILE_AIR_UNIT`; `UnitsManager_DeployUnit`
+  (`units_manager.cpp:2390`) ставит `ANIMATED` в `ORDER_EXPLODE/DESTROY`;
+  `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006-4032`) уничтожает
+  погибшего родителя на половине анимации. Порт терял все три места →
+  `OrdersPending` не сбрасывался, `Ai_CheckEndTurn` не вызывался.
+- [x] Порт: `unit_order::air_path_execute` (guard только для воздуха),
+  `GameState::spawn_unit` (`merged_flags & ANIMATED`),
+  `unit_order::progress_explosion` (parent + `destroy_unit`), `max_core::frames`
+  (`D_*` → `image_index_max`), `UnitInfo::new` (кадры), смерть
+  пехоты/диверсанта (`image_base = 168 + angle/2*8`), рендер `EXPLODING` по
+  `image_index`, видимость эффекта от погибшего юнита.
+- [x] Тесты: `max_core/tests/turn_based_combat.rs` (3), `max_app/tests/
+  turn_based.rs` (3: ракета в полёте на End Turn, hot-seat 2 человека + ИИ,
+  4 раунда SP), `unit_sprites::frame_info_table_matches_game_data`; QA
+  `combat-tb.qa` (`assert endturn-frames<2000`), `sp-tb.qa`
+  (`endturn-frames<3000`, 2 компьютера), golden `sp-tb/`, `combat-tb/`.
+- [x] Soak: `SoakOptions::play_mode` (default `TurnBased`), `soak_headless
+  --mode tb`, `ci.sh` передаёт `--mode tb`; `soak-100.qa` уже Turn Based.
+- [x] Гейт и артефакты: `bash ci.sh` — зелёный; Windows UI + headless
+  пересобраны; CHANGELOG, `visual-1to1-status.md` §36, `scripts/README.md`
+  (новые QA/команды `click enemy`, `assert endturn-frames`).
+
 ## Порядок
 
 P1 → P2 → P3 → P4 → P5 → P6 → P7 (P1 сразу; P2/P3 параллелятся с P4 частично).

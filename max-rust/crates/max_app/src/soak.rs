@@ -46,6 +46,9 @@ pub struct SoakOptions {
     pub start_gold: u32,
     /// Сколько кадров «ходит» человек перед End Turn (активность в его ход).
     pub human_ticks: u32,
+    /// Режим игры (`settings["play_mode"]`): `TurnBased` — как пункт Options
+    /// «Turn Based», `SimultaneousMoves` — прежний режим soak.
+    pub play_mode: max_core::enums::PlayMode,
     /// Период снятия RSS в ходах (`0` — только старт/конец).
     pub sample_every: u32,
     /// Предохранитель: максимум кадров на один раунд.
@@ -65,6 +68,8 @@ impl Default for SoakOptions {
             victory_limit: 200,
             start_gold: 150,
             human_ticks: 5,
+            // Пользовательское указание: приоритет — Turn Based.
+            play_mode: max_core::enums::PlayMode::TurnBased,
             sample_every: 10,
             frame_limit_per_turn: 50_000,
         }
@@ -155,13 +160,14 @@ impl SoakReport {
             options.human_ticks, options.ai_teams
         ));
         text.push_str(&format!(
-            "# options: turns={} dt={:.2}ms ai={} world={} seed={} opponent={} victory=Duration/{} gold={} sample_every={} frame_limit={}\n",
+            "# options: turns={} dt={:.2}ms ai={} world={} seed={} opponent={} mode={:?} victory=Duration/{} gold={} sample_every={} frame_limit={}\n",
             options.turns,
             options.dt * 1000.0,
             options.ai_teams,
             options.world,
             options.seed,
             options.opponent,
+            options.play_mode,
             options.victory_limit,
             options.start_gold,
             options.sample_every,
@@ -237,6 +243,7 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
     setup.seed = options.seed;
     setup.opponent = options.opponent;
     setup.timer = 0;
+    setup.play_mode = options.play_mode;
     setup.victory_type = VictoryType::Duration;
     setup.victory_limit = options.victory_limit.max(options.turns as i32 + 1);
     setup.start_gold = options.start_gold;

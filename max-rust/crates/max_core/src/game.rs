@@ -1122,6 +1122,18 @@ impl GameState {
         let merged_flags = flags | crate::access::unit_type_flags(unit_type);
         unit.flags = merged_flags;
 
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2443-2450`): у башен
+        // `UpdateTurretAngle(angle)`, у вращающейся башни `image_index_max`
+        // считается по кадрам **башни**, а не корпуса.
+        if merged_flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+            unit.turret_image_index = unit.turret_image_base.wrapping_add(i16::from(unit.angle));
+            if merged_flags & unit_flags::SPINNING_TURRET != 0 {
+                let frames = crate::frames::frame_info(unit_type);
+                unit.image_index_max =
+                    unit.turret_image_base + frames.turret_image_count - 1;
+            }
+        }
+
         // `UnitInfo::UnitInfo`: атрибуты из current values команды.
         if let Some(values) = self
             .team_units
@@ -1164,7 +1176,13 @@ impl GameState {
             unit.experience = base.get_attribute(ATTRIB_AGENT_ADJUST) as i16;
         }
 
-        if flags & unit_flags::ANIMATED != 0 {
+        if merged_flags & unit_flags::ANIMATED != 0 {
+            // `UnitInfo::UnitInfo` (`unitinfo.cpp:288-294`) читает `image_index`
+            // из кадровых данных типа и `UnitsManager_DeployUnit`
+            // (`units_manager.cpp:2390`) переводит `ANIMATED` в
+            // `ORDER_EXPLODE/ORDER_STATE_DESTROY`. Флаг берётся из **итоговых**
+            // флагов: вызывающий слой (`UnitsManager_StartExplosion`) передаёт
+            // только класс (MOBILE_LAND/…), а `ANIMATED` приходит из `SC_UNITS`.
             unit.orders = UnitOrder::Explode;
             unit.state = UnitOrderState::Destroy;
         }

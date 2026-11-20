@@ -25,6 +25,8 @@ max-rust-qa/
 ├── scripts/xfer.qa             # TC-0632–0635: X-FER (TransferMenu) → Done (08/P3) → ProcessTransfer ↔ комплекс
 ├── scripts/preferences.qa      # TC-0935: диалог Preferences/Setup (PREFSPIC/SETUPPIC), 4 golden
 ├── scripts/ai-turn.qa          # A2/A3: мой ход → ход ИИ (End Turn нажат, таймер 00:45) → возврат хода
+├── scripts/sp-tb.qa            # Turn Based SP: RED→GREEN→BLUE→RED, 2 компьютера, endturn-frames
+├── scripts/combat-tb.qa        # Turn Based бой: выстрел ROCKET → снаряд → взрыв по кадрам → End Turn
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталоны BuildMenu, стройплощадки, её роста и кадров строителя (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -37,6 +39,8 @@ max-rust-qa/
 ├── golden/xfer/*.png           # эталоны окна X-FER: меню/значение/помощь TRANSFER_SETUP (3)
 ├── golden/preferences/*.png    # эталоны диалога Preferences/Setup (4)
 ├── golden/ai-turn/*.png        # эталоны фаз End Turn: мой ход / ход ИИ / возврат (3)
+├── golden/sp-tb/*.png          # эталоны Turn Based SP с двумя компьютерами (3)
+├── golden/combat-tb/*.png      # эталоны боя: выстрел/снаряд/взрыв по кадрам (8)
 └── scripts/README.md
 ```
 
@@ -176,6 +180,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `move grid X Y` | то же по клетке карты (0..111), если она видна в области карты |
 | `move near` | приказ в соседнюю свободную клетку выделенного юнита (перебор 8 направлений) |
 | `end_turn` | клик по кнопке `End Turn` + прокрутка кадров, пока игра не вернётся к вводу (ход ИИ/окно перехода) |
+| `click enemy NAME` | клик по чужому юниту с таким именем; при выделенном своём — приказ атаки (`GameManager_ClickUnit` → `build_attack_order`) |
 
 Высокоуровневые команды не «обходят» UI: каждая сводится к тому же
 `InputEvent`, что отправляет `main.rs`, и затем проверяет результат
@@ -187,6 +192,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | Проверка | Смысл |
 |---|---|
 | `assert turn=3`, `turn>=3`, `turn<=3`, `turn>3`, `turn<3` | `GameState::turn_counter` |
+| `assert endturn-frames<2000` | кадров, которые занял последний `end_turn` (переход + ходы ИИ); зависший ход ИИ упирается в 12 000 (`LOCAL_AI_TICK_LIMIT`) |
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
 | `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Preferences`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
@@ -272,6 +278,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `xfer.qa` | TC-0632–0635: X-FER — конструктор `storage=40` + 3 хода экономики (шахта накопила ≥5) → `select type MiningStation` → `unit-menu open` → `unit-menu-item=x-fer` (пункт **включён**) → `unit-menu item x-fer` (курсор 3) → `click unit Constructor` (`assert transfer=open`) → `assert transfer-amount>=1` (по умолчанию цель заполняется) → `transfer amount`/`right`/`left`/`999` (лимит `give_max`) → модальность (клик по карте) → `transfer help` (`assert help=open`, `help-section=transfer`) → `help done` → `transfer done` → `tick 1` (`assert unit-order=poweron`) → `select type Constructor`/`assert unit-storage=45` → обратный перенос `transfer amount -3` → `assert unit-storage=42` → `transfer cancel` → запасы не меняются; кадры `xfer-selected`/`xfer-menu`/`xfer-set`/`xfer-help` | **PASS** (1332 кадра; golden `xfer/`) |
 | `preferences.qa` | TC-0935: `menu setup` → `SETUPPIC` (`setup-dialog`, `prefs-value disable_fx=0`, toggle → `prefs-sound=off`, Cancel не применяет, Done применяет); партия → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`, все секции, `quick_scroll=16`, `timer=180`), `prefs set quick_scroll 36` → 35, `prefs toggle effects` → `effects=off`, `anim 200` → `prefs-effects-off`, Done, значение помнится, `save_v70 prefs-ini`; звук `prefs-audio=off/on`; Cancel возвращает снимок; `Help` → `help-section=preferences`; 4 golden-кадра | **PASS** (1 кадр цикла, 0 дрейфа) |
 | `ai-turn.qa` | A2/A3: конец хода человека и ход компьютера — Options (No Limit + Turn Based) → мобилизация → высадка → `assert endturn=normal` (мой ход: кнопка отжата, таймер 00:00 красным) → `click 426 12` (End Turn) → `tick 1` (`assert team=GREEN`, `assert endturn=pressed`: нажатый `G_ENDT_D` с подписью цветом команды, таймер 00:45) → `wait 2000` (`assert endturn=normal`, `assert team=RED`, `turn>=2`); кадры `ai-turn-human-normal`/`ai-turn-ai-pressed`/`ai-turn-human-again` | **PASS** (298 кадров; golden `ai-turn/`) |
+| `sp-tb.qa` | Turn Based SP: Options (No Limit + Turn Based) → Planet → Players (RED человек, GREEN+BLUE компьютеры, GRAY пусто) → мобилизация → высадка → `assert turn=1`/`team=RED` → `select unit 0`/`move near` → `end_turn` → `assert turn=2`/`team=RED`/`endturn-frames<3000` (два хода ИИ: 658 кадров) → ещё 2 раунда (1022/1029) → `save sp-tb.mxs`; кадры `sp-tb-turn1/turn2/turn4` | **PASS** (2719 кадров; golden `sp-tb/`) |
+| `combat-tb.qa` | Turn Based бой: `tick 5` → `select unit 0` → `spawn Missile Crawler` + `spawn enemy Tank` → `select type Missile Crawler` → `click enemy Tank` (новая команда: клик по чужому юниту = атака) → `assert log=Attack:` → `tick 2` (`assert unit-order=fire`) → кадры `fired`/`rocket`/`impact`/`explosion`/`explosion-mid`/`explosion-end` (кадры `image_index` `HitExplosion` 0→4) → `assert unit-order=await` → `end_turn` → `assert turn>=2`, `assert endturn-frames<2000` (169 кадров вместо 12 000 до исправления) → `combat-tb-after-ai` | **PASS** (193 кадра; golden `combat-tb/`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
