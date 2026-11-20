@@ -1,4 +1,4 @@
-//! Экран настройки локальной партии (M-SP) — 1:1 с экранами C++-порта.
+﻿//! Экран настройки локальной партии (M-SP) — 1:1 с экранами C++-порта.
 //!
 //! Три экрана, ровно в порядке `menu_custom_game_menu` (`menu.cpp:2115`):
 //!
@@ -692,7 +692,7 @@ impl GameSetupForm {
             | Key::Right
             | Key::PageUp
             | Key::PageDown
-            | Key::Other => SetupTransition::None,
+            | Key::Alt(_) | Key::Other => SetupTransition::None,
         }
     }
 

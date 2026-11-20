@@ -676,6 +676,9 @@ pub struct Assets {
     /// Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21) — попап
     /// `GameManager_PopupButtons`.
     pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
+    /// Диалог самоуничтожения здания (`SELFDSTR`/`SLFDAR`/`SLFDCN`/
+    /// `SLFDOPN1..6`/`SLFDOK`), C++ `UnitsManager_SelfDestructMenu`.
+    pub self_destruct: Option<crate::selfdestruct::SelfDestructAssets>,
     /// Диалог распределения добычи шахты (`ALLOCFRM` + `BARRAW`/`BARFUEL`/
     /// `BARGOLD` + `BARTAPE` + `LFARO_OF`/`RTARO_OF` + `MNUBTN*`), C++
     /// `AllocMenu`.
@@ -880,6 +883,8 @@ impl Assets {
         let preferences = crate::preferences::PreferencesAssets::load(&max_res);
         // Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21).
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
+        // Диалог самоуничтожения (`SELFDSTR` + `SLFDAR`/`SLFDCN`/`SLFDOPN`/`SLFDOK`).
+        let self_destruct = crate::selfdestruct::SelfDestructAssets::load(&max_res);
         // Диалог распределения добычи шахты (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
         let alloc = crate::allocmenu::AllocMenuAssets::load(&max_res);
         // Окно X-FER (`XFERPIC` + `XFR*` + `SMBR*`), C++ `TransferMenu`.
@@ -1094,6 +1099,7 @@ impl Assets {
             help: Some(help),
             preferences: Some(preferences),
             unit_menu: Some(unit_menu),
+            self_destruct: Some(self_destruct),
             alloc: Some(alloc),
             transfer: Some(transfer),
             cargo: Some(cargo),

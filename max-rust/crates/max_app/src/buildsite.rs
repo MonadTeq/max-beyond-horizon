@@ -61,9 +61,12 @@
 //! * C++ спавнит временную ленту в мире (`GameManager_TempTape`); порт рисует
 //!   её как UI-призрак — состояние партии, счётчик юнитов, CRC и сейв не
 //!   меняются, пока игрок выбирает место.
-//! * `GetBuilderUnitCursor` для `ENGINEER` (лента 1×1, путь по строке/столбцу)
-//!   не портирован: инженер ставит 1×1-постройки сразу в своей клетке, как
-//!   ветка C++ без `SELECT_SITE`.
+//! * `GetBuilderUnitCursor` для `ENGINEER` (`game_manager.cpp:5854-5909`)
+//!   портирован: лента 1×1 стоит в клетке курсора, только в строке/столбце
+//!   инженера; включается кнопкой `Path` (`BLDPTH_U`, `buildmenu.cpp:836`).
+//!   C++ `UnitsManager_StartBuild` (`units_manager.cpp:1516`) сбрасывает
+//!   `move_to` инженера в его клетку — это обнулило бы выбор `Path`, поэтому
+//!   порт ставит площадку в выбранную клетку (см. §33).
 //! * C++ открывает по Esc меню выхода (`OKCancelMenu`); здесь Esc отменяет
 //!   выбор, как просит постановка.
 //! * `GameManager_AutoSelectNext` после подтверждения не вызывается (как и в
@@ -139,10 +142,17 @@ impl BuildSiteSelect {
         production::construction_utility_types(self.unit_type).0
     }
 
+    /// Инженер (`ENGINEER`) ставит 1×1-площадку — `GameManager_GetBuilderUnitCursor`,
+    /// ветка `unit1->GetUnitType() == ENGINEER` (`game_manager.cpp:5854`).
+    pub fn is_engineer(&self) -> bool {
+        self.builder_type == UnitType::Engineer
+    }
+
     /// Двигает призрак за курсором — `GameManager_GetBuilderUnitCursor`.
     ///
     /// Якорь пересчитывается по каждой оси отдельно и сохраняется, когда
-    /// курсор ровно на линии строителя (как C++).
+    /// курсор ровно на линии строителя (как C++). У инженера лента 1×1 стоит
+    /// прямо в клетке курсора (`target_grid_x = grid_x` в C++).
     pub fn update_cursor(&mut self, state: &GameState, cursor: Point) {
         self.cursor = cursor;
 
@@ -150,13 +160,21 @@ impl BuildSiteSelect {
             self.anchor = production::site_anchor_for_cursor(unit.grid, cursor, self.anchor);
         }
 
+        if self.is_engineer() {
+            self.anchor = cursor;
+        }
+
         self.status.clear();
     }
 
-    /// Якорь 2×2 для произвольной клетки курсора (C++
+    /// Якорь для произвольной клетки курсора (C++
     /// `GameManager_GetBuilderUnitCursor`): привязка к строителю с сохранением
-    /// прежней оси, когда курсор ровно на его линии.
+    /// прежней оси, когда курсор ровно на его линии; у инженера — сама клетка.
     pub fn anchor_at(&self, state: &GameState, cursor: Point) -> Point {
+        if self.is_engineer() {
+            return cursor;
+        }
+
         match state.unit(self.builder) {
             Some(unit) => production::site_anchor_for_cursor(unit.grid, cursor, self.anchor),
             None => self.anchor,
@@ -171,6 +189,21 @@ impl BuildSiteSelect {
 
         if unit.team != self.team {
             return false;
+        }
+
+        if self.is_engineer() {
+            // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5901-5909`):
+            // 1×1-лента только в строке/столбце инженера и только на
+            // проходимой клетке (`UnitsManager_MoveUnitAndParent`).
+            return anchor == cursor
+                && production::engineer_site_covers(unit.grid, cursor)
+                && production::is_site_accessible_ignoring(
+                    state,
+                    self.team,
+                    self.unit_type,
+                    cursor,
+                    &[self.builder],
+                );
         }
 
         // C++ `GetBuilderUnitCursor` привязывает 2×2 к строителю: якорь всегда

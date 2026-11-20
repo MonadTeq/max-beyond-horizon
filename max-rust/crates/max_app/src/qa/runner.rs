@@ -414,12 +414,245 @@ impl QaRunner {
             Command::Build(action) => self.build(*action),
             Command::Upgrade(action) => self.upgrade(*action),
             Command::Research(action) => self.research(*action),
-            Command::Help(action) => self.help(*action),
+            Command::Help(action) => self.help(action.clone()),
             Command::UnitMenu(action) => self.unit_menu(action.clone()),
             Command::Allocate(action) => self.allocate(action.clone()),
             Command::Transfer(action) => self.transfer(*action),
             Command::Prefs(action) => self.prefs(action.clone()),
+            Command::Spawn { enemy, name } => self.spawn(*enemy, name),
+            Command::SelfDestruct(action) => self.self_destruct_command(*action),
+            Command::ComplexRaw(value) => self.complex_raw(*value),
+            Command::TeamValues {
+                name,
+                attribute,
+                value,
+            } => self.team_values(name, attribute, *value),
         }
+    }
+
+    /// `spawn [enemy] NAME` — QA-only: поставить юнита на свободную клетку.
+    ///
+    /// Нужен для пунктов меню, которые в мобилизации недоступны (диверсант,
+    /// транспорт, бульдозер, обломки, здание под `remove`): скрипт ставит
+    /// юнита рядом с выделенным или в центре карты, не трогая партию иначе.
+    fn spawn(&mut self, enemy: bool, name: &str) -> Result<Flow, String> {
+        let wanted = name.trim().to_ascii_lowercase();
+        let unit_type = max_core::UnitType::ALL
+            .iter()
+            .copied()
+            .find(|unit_type| {
+                crate::buildmenu::unit_name(*unit_type).to_ascii_lowercase() == wanted
+                    || format!("{unit_type:?}").to_ascii_lowercase() == wanted
+            })
+            .ok_or_else(|| format!("spawn: неизвестный тип юнита «{name}»"))?;
+
+        let player = self.app.player_team();
+        let team = if enemy {
+            (0u8..4)
+                .map(max_core::team::TeamId)
+                .find(|team| *team != player)
+                .unwrap_or(max_core::team::TeamId::GREEN)
+        } else {
+            player
+        };
+
+        let anchor = self
+            .app
+            .hud()
+            .selected
+            .and_then(|id| self.app.state().unit(id))
+            .map(|unit| unit.grid)
+            .unwrap_or_else(|| {
+                max_core::geo::Point::new(
+                    self.app.state().map.size.width / 2,
+                    self.app.state().map.size.height / 2,
+                )
+            });
+
+        let size = i16::from(max_core::production::footprint(unit_type));
+        let cell = (0..=8)
+            .flat_map(|radius| {
+                let mut cells = Vec::new();
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        cells.push(max_core::geo::Point::new(anchor.x + dx, anchor.y + dy));
+                    }
+                }
+                cells
+            })
+            .find(|cell| {
+                (0..size).all(|dy| {
+                    (0..size).all(|dx| {
+                        let point = max_core::geo::Point::new(cell.x + dx, cell.y + dy);
+                        self.app.state().map.index(point.x, point.y).is_some()
+                            && self.app.state().units_at(point).is_empty()
+                    })
+                })
+            })
+            .ok_or_else(|| format!("spawn {name}: нет свободной клетки рядом с {anchor:?}"))?;
+
+        let flags = max_core::access::unit_type_flags(unit_type);
+        let id = self
+            .app
+            .state_mut()
+            .spawn_unit(unit_type, team, cell, flags)
+            .ok_or_else(|| format!("spawn {name}: не удалось поставить юнита"))?;
+
+        if let Some(unit) = self.app.state_mut().unit_mut(id) {
+            unit.set_visible_to_team(player, true);
+        }
+
+        self.detail = Some(format!(
+            "{} {} в ({}, {})",
+            if enemy { "вражеский" } else { "свой" },
+            crate::buildmenu::unit_name(unit_type),
+            cell.x,
+            cell.y
+        ));
+
+        Ok(Flow::Continue)
+    }
+
+    /// `selfdestruct arm|ok|cancel|advance N` — диалог `SelfDestructMenu`.
+    fn self_destruct_command(
+        &mut self,
+        action: crate::qa::script::SelfDestructCommand,
+    ) -> Result<Flow, String> {
+        use crate::qa::script::SelfDestructCommand;
+
+        if self.app.self_destruct().is_none() {
+            return Err("selfdestruct: диалог не открыт".to_string());
+        }
+
+        let detail = match action {
+            SelfDestructCommand::Arm => {
+                let action = self.app.self_destruct_input(InputEvent::Key(Key::Enter));
+                format!("arm: {action:?}")
+            }
+            SelfDestructCommand::Ok => {
+                let armed = self.app.self_destruct().is_some_and(|menu| menu.is_armed());
+
+                if !armed {
+                    return Err("selfdestruct ok: анимация ещё не доиграла (advance N)".to_string());
+                }
+
+                let rect = self
+                    .app
+                    .self_destruct()
+                    .map(|menu| menu.ok_rect())
+                    .expect("диалог открыт");
+                let action = self.app.self_destruct_input(InputEvent::MouseClick(
+                    rect.ulx + rect.width / 2,
+                    rect.uly + rect.height / 2,
+                ));
+
+                // Приказ `ORDER_EXPLODE` лежит в очереди (`HudState::pending`):
+                // офлайн-путь применяет его `App::flush_orders`, как `ui.rs`
+                // (`apply_pending_orders`) после пункта меню.
+                self.app.flush_orders();
+
+                format!("ok: {action:?}")
+            }
+            SelfDestructCommand::Cancel => {
+                let action = self.app.self_destruct_input(InputEvent::Key(Key::Escape));
+                format!("cancel: {action:?}")
+            }
+            SelfDestructCommand::Advance(millis) => {
+                let total = f64::from(millis) / 1000.0;
+                let step = 1.0f64 / 60.0;
+                let mut elapsed = 0.0f64;
+
+                while elapsed + f64::EPSILON < total {
+                    let dt = step.min(total - elapsed).max(f64::EPSILON) as f32;
+                    self.app.advance_self_destruct(dt);
+                    elapsed += f64::from(dt);
+                }
+
+                let frame = self
+                    .app
+                    .self_destruct()
+                    .map(|menu| menu.frame)
+                    .unwrap_or(0);
+                format!("advance {millis} мс: кадр {frame}")
+            }
+        };
+
+        self.detail = Some(detail);
+
+        Ok(Flow::Continue)
+    }
+
+    /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита.
+    fn complex_raw(&mut self, value: i32) -> Result<Flow, String> {
+        let team = self.app.player_team();
+        let complex = self
+            .app
+            .selected_complex()
+            .map(|id| max_core::team::ComplexId(id as i16))
+            .or_else(|| {
+                self.app
+                    .state()
+                    .team_units
+                    .get(team.0 as usize)
+                    .and_then(|units| units.complexes().first().map(|complex| complex.complex_id()))
+            })
+            .ok_or_else(|| "complex raw: у команды нет комплекса".to_string())?;
+
+        let Some(target) = self.app.state_mut().complex_mut(team, complex.0 as u16) else {
+            return Err("complex raw: комплекс не найден".to_string());
+        };
+        target.material = value as i16;
+        self.detail = Some(format!("complex raw = {value}"));
+
+        Ok(Flow::Continue)
+    }
+
+    /// `teamvalues NAME ATTR VALUE` — QA-only: текущее значение атрибута команды.
+    fn team_values(&mut self, name: &str, attribute: &str, value: i32) -> Result<Flow, String> {
+        let wanted = name.trim().to_ascii_lowercase();
+        let unit_type = max_core::UnitType::ALL
+            .iter()
+            .copied()
+            .find(|unit_type| {
+                crate::buildmenu::unit_name(*unit_type).to_ascii_lowercase() == wanted
+                    || format!("{unit_type:?}").to_ascii_lowercase() == wanted
+            })
+            .ok_or_else(|| format!("teamvalues: неизвестный тип «{name}»"))?;
+
+        use max_core::unit_values::*;
+        let attribute = match attribute {
+            "turns" => ATTRIB_TURNS,
+            "hits" => ATTRIB_HITS,
+            "armor" => ATTRIB_ARMOR,
+            "attack" => ATTRIB_ATTACK,
+            "speed" => ATTRIB_SPEED,
+            "range" => ATTRIB_RANGE,
+            "rounds" => ATTRIB_ROUNDS,
+            "scan" => ATTRIB_SCAN,
+            "ammo" => ATTRIB_AMMO,
+            "storage" => ATTRIB_STORAGE,
+            other => {
+                return Err(format!(
+                    "teamvalues: неизвестный атрибут «{other}» (turns|hits|armor|attack|speed|range|rounds|scan|ammo|storage)"
+                ))
+            }
+        };
+
+        let team = self.app.player_team();
+        let Some(units) = self.app.state_mut().team_units.get_mut(team.0 as usize) else {
+            return Err("teamvalues: у команды нет TeamUnits".to_string());
+        };
+        units
+            .current_unit_values_mut(unit_type as u16)
+            .set_attribute(attribute, value);
+
+        self.detail = Some(format!(
+            "{:?} {} = {value}",
+            unit_type,
+            crate::mobilize::attribute_name(attribute)
+        ));
+
+        Ok(Flow::Continue)
     }
 
     /// `allocate …` — диалог распределения добычи шахты (C++ `AllocMenu`,
@@ -666,10 +899,15 @@ impl QaRunner {
 
                 self.send(InputEvent::MouseClick(x, y))?;
 
-                if !matches!(self.screen, Screen::Help { .. }) && self.app.help_screen().is_none() {
-                    return Err("prefs help: окно помощи не открылось".to_string());
+                // C++ `OptionsMenu` -> `HelpMenu_Menu`: включается **режим**
+                // помощи (`_HelpMode`), окно откроется кликом по элементу.
+                if self.app.help_mode().is_none()
+                    && !matches!(self.screen, Screen::Help { .. })
+                    && self.app.help_screen().is_none()
+                {
+                    return Err("prefs help: режим помощи не включился".to_string());
                 }
-                "Help".to_string()
+                "Help (режим)".to_string()
             }
         };
 
@@ -954,6 +1192,22 @@ impl QaRunner {
                 }
 
                 line.unwrap_or_else(|| "заказ принят".to_string())
+            }
+            BuildCommand::Path => {
+                if app.build_menu().is_none() {
+                    return Err("build path: меню не открыто".to_string());
+                }
+
+                let line = app.commit_build_menu_path(false);
+
+                if app.build_menu().is_some() {
+                    return Err(format!(
+                        "build path: заказ не принят ({})",
+                        line.unwrap_or_default()
+                    ));
+                }
+
+                line.unwrap_or_else(|| "площадка выбрана".to_string())
             }
             BuildCommand::Cancel => {
                 if app.build_menu().is_none() && app.build_site().is_none() {
@@ -1357,17 +1611,66 @@ impl QaRunner {
 
                 if self.current_help_section() != Some(section) {
                     return Err(format!(
-                        "help {}: окно не открылось (сейчас {:?})",
+                        "help {}: режим помощи не включился (сейчас {:?})",
                         section.as_str(),
                         self.current_help_section()
                     ));
                 }
 
                 format!(
-                    "{}: строк {}, страница {}",
-                    section.as_str(),
+                    "{}: режим помощи — клик по элементу (help entry NAME)",
+                    section.as_str()
+                )
+            }
+            HelpCommand::Entry(name) => {
+                let section = self
+                    .current_help_section()
+                    .ok_or_else(|| format!("help entry {name}: режим помощи не открыт"))?;
+                let index = crate::helpmenu::entry_by_name(section, &name).ok_or_else(|| {
+                    format!(
+                        "help entry {name}: в {} нет такой записи",
+                        section.as_str()
+                    )
+                })?;
+                let entry = &crate::helpmenu::section_entries(section)[index];
+                let (x, y) = ((entry.ux + entry.lx) / 2, (entry.uy + entry.ly) / 2);
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                if self.current_help_window_section() != Some(section) {
+                    return Err(format!(
+                        "help entry {name}: клик ({x},{y}) не открыл окно (запись перекрыта?)"
+                    ));
+                }
+
+                let actual = self.current_help_entry();
+
+                if actual != Some(entry.name.as_str()) {
+                    return Err(format!(
+                        "help entry {name}: клик ({x},{y}) выбрал {:?}",
+                        actual
+                    ));
+                }
+
+                format!(
+                    "{name}: строк {}, страница {}",
                     self.current_help_lines(),
                     crate::helpmenu::ROWS_PER_PAGE
+                )
+            }
+            HelpCommand::Click(x, y) => {
+                if self.current_help_section().is_none() {
+                    return Err("help click: режим помощи не открыт".to_string());
+                }
+
+                self.send(InputEvent::MouseClick(x, y))?;
+
+                format!(
+                    "клик ({x},{y}): {}",
+                    match self.current_help_entry() {
+                        Some(entry) => format!("запись {entry}"),
+                        None => "записи нет (режим помощи)".to_string(),
+                    }
                 )
             }
             HelpCommand::PageUp => {
@@ -1403,18 +1706,29 @@ impl QaRunner {
             HelpCommand::Done => {
                 self.require_help()?;
                 self.send(InputEvent::Key(Key::Enter))?;
-                if self.current_help_section().is_some() {
+                if self.current_help_window_section().is_some() {
                     return Err("help done: окно не закрылось".to_string());
                 }
-                "окно закрыто".to_string()
+                "окно закрыто (режим помощи активен)".to_string()
             }
             HelpCommand::Close => {
-                self.require_help()?;
-                self.send(InputEvent::Key(Key::Escape))?;
-                if self.current_help_section().is_some() {
-                    return Err("help close: окно не закрылось".to_string());
+                // Выход из режима: в игре — прямо, в меню — `Esc` в режиме.
+                if matches!(self.screen, Screen::InSession { .. }) {
+                    if self.app.help_mode().is_none() {
+                        return Err("help close: режим помощи не открыт".to_string());
+                    }
+                    self.app.exit_help_mode();
+                } else {
+                    if !matches!(self.screen, Screen::Help { .. }) {
+                        return Err("help close: режим помощи не открыт".to_string());
+                    }
+                    self.send(InputEvent::Key(Key::Escape))?;
                 }
-                "окно закрыто".to_string()
+
+                if self.current_help_section().is_some() {
+                    return Err("help close: режим помощи не выключился".to_string());
+                }
+                "режим помощи выключен".to_string()
             }
         };
 
@@ -1429,10 +1743,38 @@ impl QaRunner {
         if let Some(help) = self.app.help_screen() {
             return Some(help.section());
         }
+        if let Some(mode) = self.app.help_mode() {
+            return Some(mode.section);
+        }
         match &self.screen {
-            Screen::Help { help, .. } => Some(help.section()),
+            Screen::Help { help, mode, .. } => help
+                .as_ref()
+                .map(|help| help.section())
+                .or(Some(mode.section)),
             _ => None,
         }
+    }
+
+    /// Открыто ли **окно** помощи (а не только режим выбора элемента).
+    fn current_help_window_section(&self) -> Option<crate::helpmenu::HelpSection> {
+        if let Some(help) = self.app.help_screen() {
+            return Some(help.section());
+        }
+        match &self.screen {
+            Screen::Help { help: Some(help), .. } => Some(help.section()),
+            _ => None,
+        }
+    }
+
+    /// Имя записи, показанной в окне.
+    fn current_help_entry(&self) -> Option<&'static str> {
+        self.app
+            .help_screen()
+            .and_then(|help| help.entry_name())
+            .or_else(|| match &self.screen {
+                Screen::Help { help: Some(help), .. } => help.entry_name(),
+                _ => None,
+            })
     }
 
     fn current_help_row(&self) -> usize {
@@ -1440,7 +1782,7 @@ impl QaRunner {
             .help_screen()
             .map(|help| help.row_index())
             .or_else(|| match &self.screen {
-                Screen::Help { help, .. } => Some(help.row_index()),
+                Screen::Help { help, .. } => help.as_ref().map(|help| help.row_index()),
                 _ => None,
             })
             .unwrap_or(0)
@@ -1451,14 +1793,14 @@ impl QaRunner {
             .help_screen()
             .map(|help| help.line_count())
             .or_else(|| match &self.screen {
-                Screen::Help { help, .. } => Some(help.line_count()),
+                Screen::Help { help, .. } => help.as_ref().map(|help| help.line_count()),
                 _ => None,
             })
             .unwrap_or(0)
     }
 
     fn require_help(&self) -> Result<(), String> {
-        if self.current_help_section().is_some() {
+        if self.current_help_window_section().is_some() {
             Ok(())
         } else {
             Err("help: окно не открыто".to_string())
@@ -2993,6 +3335,72 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::UnitMenuEnabled(name) => {
+                let actual = self
+                    .app
+                    .unit_menu()
+                    .and_then(|menu| crate::unitmenu::item_enabled(menu, &name));
+
+                self.expect(
+                    actual == Some(true),
+                    format!("unit-menu-enabled={name}"),
+                    match actual {
+                        Some(true) => format!("{name}: включён"),
+                        Some(false) => format!("{name}: отключён"),
+                        None => "нет такого пункта".to_string(),
+                    },
+                )
+            }
+            Assertion::CursorMode(mode) => {
+                let actual = self.app.hud().cursor_mode;
+                let expected = match mode.as_str() {
+                    "none" | "off" | "0" => 0,
+                    "transfer" | "x-fer" => crate::unitmenu::CURSOR_TRANSFER,
+                    "repair" => crate::unitmenu::CURSOR_REPAIR,
+                    "reload" => crate::unitmenu::CURSOR_RELOAD,
+                    "load" => crate::unitmenu::CURSOR_LOAD,
+                    "steal" => crate::unitmenu::CURSOR_STEAL,
+                    "disable" => crate::unitmenu::CURSOR_DISABLE,
+                    other => {
+                        return Err(format!(
+                            "assert cursor: неизвестный режим «{other}» (load|steal|disable|repair|reload|transfer|none)"
+                        ))
+                    }
+                };
+
+                self.expect(
+                    actual == expected,
+                    format!("cursor={mode}"),
+                    format!("cursor={actual}"),
+                )
+            }
+            Assertion::Targeting(expected) => {
+                let actual = self.app.hud().targeting_mode;
+
+                self.expect(
+                    actual == expected,
+                    format!("targeting={}", if expected { "on" } else { "off" }),
+                    format!("targeting={}", if actual { "on" } else { "off" }),
+                )
+            }
+            Assertion::SelfDestructOpen(expected) => {
+                let actual = self.app.self_destruct().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("self-destruct={}", if expected { "open" } else { "closed" }),
+                    format!("self-destruct={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::PauseOpen(expected) => {
+                let actual = self.app.pause_dialog().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("pause={}", if expected { "open" } else { "closed" }),
+                    format!("pause={}", if actual { "open" } else { "closed" }),
+                )
+            }
             Assertion::UnitOrder(expected) => {
                 let actual = self
                     .app
@@ -3101,12 +3509,24 @@ impl QaRunner {
                 )
             }
             Assertion::HelpOpen(expected) => {
-                let actual = self.current_help_section().is_some();
+                let actual = self.current_help_window_section().is_some();
 
                 self.expect(
                     actual == expected,
                     format!("help={}", if expected { "open" } else { "closed" }),
                     format!("help={}", if actual { "open" } else { "closed" }),
+                )
+            }
+            Assertion::HelpEntry(name) => {
+                let actual = self.current_help_entry();
+
+                self.expect(
+                    actual == Some(name.as_str()),
+                    format!("help-entry={name}"),
+                    match actual {
+                        Some(actual) => format!("help-entry={actual}"),
+                        None => "окно помощи не открыто".to_string(),
+                    },
                 )
             }
             Assertion::HelpSection(section) => {

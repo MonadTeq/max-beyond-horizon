@@ -640,6 +640,7 @@ fn input_event(input: WindowInput) -> InputEvent {
         WindowInput::Key(WindowKey::PageUp) => InputEvent::Key(Key::PageUp),
         WindowInput::Key(WindowKey::PageDown) => InputEvent::Key(Key::PageDown),
         WindowInput::Key(WindowKey::Char(character)) => InputEvent::Key(Key::Char(character)),
+        WindowInput::Key(WindowKey::Alt(character)) => InputEvent::Key(Key::Alt(character)),
         WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
         WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),
         WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
@@ -938,6 +939,20 @@ fn run_ui(cli: &Cli) -> Result<()> {
             } else {
                 screen.handle_input(&mut ctx, input)
             };
+
+            // Звуки UI (`Sfx`): голоса — по `disable_voice`, эффекты — по
+            // `disable_fx`/громкости (C++ `SoundManager::PlaySfx`).
+            for sfx in app.take_sounds() {
+                let enabled = if sfx.is_voice() {
+                    app.preferences().voice_enabled()
+                } else {
+                    app.sound_enabled()
+                };
+
+                if enabled {
+                    let _ = ctx.audio.play_once(sfx.tag());
+                }
+            }
 
             match transition {
                 Transition::None => {}

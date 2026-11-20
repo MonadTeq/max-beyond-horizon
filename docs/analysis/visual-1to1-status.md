@@ -1905,16 +1905,16 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `Manual` | тумблер `disabled_reaction_fire` | **реализовано** (идёт в P1-поле `disabled_reaction_fire`; в C++ настройка есть только в simultaneous moves — наш UI такой режим не предлагает, поэтому пункт практически не появляется) |
 | `Done` | `UnitsManager_PerformAction` | **реализовано в объёме стека**: `Await`+`STATIONARY` → `ORDER_STATE_READY_TO_EXECUTE_ORDER`, снятие выделения (`auto_select`); «подтверждения хода» нет — приказы в нашем стеке исполняются сразу |
 | `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **реализовано**: `App::open_transfer_menu` → `max_app::transfermenu` (окно `XFERPIC`), `GameManager_GetUnitWithCargoType`, `ProcessOrderTransfer`/`ProcessTransfer` в ядре; см. §29 |
-| `attack` | тумблер `targeting_mode` | **отключено**: режим наведения не портирован, атака — кликом по врагу |
-| `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **отключено**: `ORDER_LAND` — процессор P1 и не несёт `parent_unit`, поэтому посадка не доедет до сети/получателя; вся цепочка `GameManager_ProcessMouse` (CURSOR_LOAD) не портирована |
-| `activate` | `RepairShopMenu_Menu` | **отключено**: меню ремонтного цеха не портировано |
+| `attack` | тумблер `targeting_mode` | **сделано (B1, §33)**: наведение, `CURSOR_ENEMY`, огонь по клетке (`ORDER_FIRE`) |
+| `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **сделано (B1, §33)**: P3 с `parent`, `ORDER_MOVE_TO_UNIT` у пассажира, `ORDER_LAND` в клетке транспорта |
+| `activate` | `RepairShopMenu_Menu` | **отключено**: экран `repairshopmenu.cpp:144-1141` не портирован |
 | `allocate` | `AllocMenu_Menu` (окно `ALLOCFRM`) | **реализовано**: `App::open_alloc_menu` → `max_app::allocmenu` (см. §20) |
 | `start` завод | `UnitInfo::BuildOrder` | **реализовано**: P1 `ORDER_BUILD`/`INIT` (очередь и `build_time` сохранены остановкой), см. §21 |
 | `stop` стройки | `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | **реализовано**: P1 `ORDER_BUILD`/`BUILD_CANCEL` → `CancelBuilding` (мобильный строитель — `AWAIT` и чистая очередь; завод — `HaltBuilding`), см. §21 |
-| бульдозер (`stop` расчистки) | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **отключено**: выбор площадки/расчистка из попапа не портированы |
-| `remove` здания | `UnitsManager_SelfDestructMenu` (диалог Arm/Cancel) | **отключено**: диалог не портирован |
-| `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (комплексы/материалы) | **отключено**: учёт материалов комплекса не портирован |
-| `disable`/`steal` | курсоры 8/9 диверсанта | **отключено**: стелс-режимы не портированы |
+| бульдозер (`stop` расчистки) | `GameManager_SelectBuildSite`, `Access_GetRemovableRubble` | **сделано (B1, §33)**: `ORDER_CLEAR` с родителем и `build_time` 4/1 |
+| `remove` здания | `UnitsManager_SelfDestructMenu` (диалог Arm/Cancel) | **сделано (B1, §33)**: `SELFDSTR`/`SLFDOPN1..6`/`SLFDOK` → `ORDER_EXPLODE` |
+| `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (комплексы/материалы) | **сделано (B1, §33)**: материалы комплекса, P2 `ORDER_UPGRADE`/`EXECUTING_ORDER` |
+| `disable`/`steal` | курсоры 8/9 диверсанта | **сделано (B1, §33)**: `ORDER_AWAIT_DISABLE/STEAL_UNIT` + `stealth_dice_roll` |
 | мастер-строитель `start` | `FindValidPowerGeneratorPosition` | **отключено** (пункт не регистрируется, как при `is_placeable == false`) |
 
 Отключённый пункт **остаётся в списке** (как в C++ кнопка без обработчика),
@@ -3405,3 +3405,113 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 `allocate/*`, `research-plan`) и `build-done-waiting` (строитель в центре);
 добавлены `golden/survey.png`, `golden/survey-button.png`. Повторная сверка —
 0 дрейфа.
+
+## 33. B1/B2/B3 + D1/D3: пункты меню юнита, Help-пейджинг, курсор инженера, звуки, Alt+P — **сделано** (2026-11-20)
+
+Закрыты пункты B1–B3 и D1/D3 плана (`visual-1to1-plan.md`). Ниже — что именно
+в C++-оракуле и что портировано; каждая строка со ссылкой на файл/строки.
+
+### B1. Пункты меню юнита
+
+| Пункт | C++ (оракул) | Что сделано |
+|---|---|---|
+| `attack` | `UnitsManager_Popup_OnClick_TargetingMode` (`units_manager.cpp:617`), `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`), `GameManager_SetUnitOrder` (`:6360`) | тумблер `targeting_mode` (`HudState::targeting_mode`), нажатый вид `UNTBTN_D`; в режиме наведения курсор `CURSOR_ENEMY`/`CURSOR_UNIT_NO_GO`, клик по врагу — `ORDER_MOVE_TO_ATTACK` (как раньше), клик по пустой клетке в радиусе — `ORDER_FIRE`/`INIT` с `fire_on` (`hud::build_ground_fire_order`) |
+| `load` | `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`), `GameManager_ProcessMouse` CURSOR_LOAD (`game_manager.cpp:6807-6842`), `GameManager_GetWindowCursor` (`:4416-4518`) | курсорный режим 7, `unitmenu::load_mode_click`: `ORDER_MOVE_TO_UNIT` получает **пассажир**, `ORDER_LAND`/`INIT` с `parent` — при совпадении клетки; `AIRTRANS` летит в клетку цели; `load_mode_applies` для курсора `CURSOR_LOAD` |
+| `disable`/`steal` | `UnitsManager_Popup_OnClick_Disable/Steal` (`:921/910`), `GameManager_StealUnit`/`DisableUnit` (`:4680/4696`), `UnitsManager_IsValidStealthTarget` (`:1370`) | курсорные режимы 9/8, порт `is_valid_stealth_target`, приказ `ORDER_AWAIT_DISABLE_UNIT`/`AWAIT_STEAL_UNIT` + `INIT` (08/P3) с `parent` и `stealth_dice_roll` (`Randomizer_Generate(101)`) |
+| бульдозер `remove`/`stop` | `UnitsManager_Popup_OnClick_StopRemove` (`:1082`), `Access_GetRemovableRubble` (`access.cpp:1817`), `GameManager_SelectBuildSite` (`game_manager.cpp:3549`) | `unitmenu::removable_rubble` (SMLRUBLE/LRGRUBLE + 2×2 проходимость), `parent = обломки`, `build_time = 4/1`, `ORDER_CLEAR`/`INIT`; `stop` — `ORDER_BUILD`/`BUILD_CANCEL` |
+| `remove` здания | `UnitsManager_Popup_OnClick_Remove` (`:506`), `UnitsManager_SelfDestructMenu`/`ActiveMenu` (`:292`/`:233`) | новый модуль `selfdestruct.rs`: окно `SELFDSTR` (174×82 в (317,201)), `Arm`/`Cancel` (`SLFDAR/SLFDCN`), кадры `SLFDOPN1..6` по 48 мс, `OK` (`SLFDOK`) → `ORDER_EXPLODE`/`EXPLODE`; `Esc` — отмена |
+| `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (`:414`), `UnitInfo::GetUpgradeCost` (`unitinfo.cpp`), `Complex::GetCargoInfo` | `unitmenu::upgrade_all_orders`: все стационарные своего типа/команды с `is_upgrade_available`, материалы комплекса (`complex.material`, пересчитанный `OptimizeComplexes`), `ORDER_UPGRADE`/`EXECUTING_ORDER` (P2, `parent = self`), сообщения `_(a0ee)`/`_(8967)`/`_(2693)` с римской маркой (`roman_version`) |
+| `activate` | `RepairShopMenu_Menu` (`repairshopmenu.cpp:144-1141`) | **остался disabled**: экран 6 слотов (портрет, статистика, `Activate/Reload/Repair/Upgrade`, стрелки, полоса сырья) не портирован; причина видна в `UnitMenuItem::note` |
+| мастер `start` | `UnitsManager_Popup_InitMaster`/`FindValidPowerGeneratorPosition` (`:1240`/`:1134`) | **пункт не регистрируется**: проверка площадки `POWGEN` + спавн `LRGTAPE` не портированы (как при `is_placeable == false`) |
+
+### B2. Help-пейджинг (1:1)
+
+* `HelpMenu_Menu` (`helpmenu.cpp:315`): кнопка `?`/`Help` включает **режим**
+  помощи — курсор `CURSOR_HELP` (`cursor.rs`), окна ещё нет;
+* клик по элементу: `HelpMenu_ScaleCursor` (`:412-471`) переводит точку кадра в
+  систему `help.json` (инструменты игры → 250/473, 448/473, 498/11, 565/11,
+  426/11, 610/11; карата — как есть), затем `Help::GetEntry`
+  (`help.cpp:140`) берёт **первую** запись, накрывающую точку;
+* окно (`HelpScreen`) показывает ровно текст записи; `PageUp/PageDown`,
+  стрелки, кнопки `BLDUP__/BLDDWN`, `Done` (`HELPOK`), `Keys` (`_(ceb6)`) —
+  как в C++; `Esc`/`Done` закрывают окно и возвращают в режим, `Esc`/RMB/`?` в
+  режиме выключают его;
+* клик по пустому месту окно не открывает и режим не выключает (C++: пустой
+  текст — окно не создаётся, `HelpMenu_Menu` продолжает цикл);
+* «навигация по записям» — это выбор элемента кликом: разные записи одной
+  секции дают разные окна (`help entry NAME` в QA кликает по центру записи).
+
+### B3. Курсор площадки инженера
+
+* `GameManager_GetBuilderUnitCursor`, ветка `ENGINEER`
+  (`game_manager.cpp:5854-5909`): лента 1×1 стоит **в клетке курсора**
+  (не привязана к строителю), валидна только в его строке/столбце
+  (`grid_x == unit_grid_x || grid_y == unit_grid_y`) и на проходимой клетке
+  (`UnitsManager_MoveUnitAndParent`);
+* кнопка `Path` (`BLDPTH_U/D`, 63×23 в (347,427), `buildmenu.cpp:836-839`,
+  `event_click_path_build` в `MobileBuildMenu::Build` `:921`) — только у
+  `ENGINEER`: `Build()` с `ORDER_STATE_SELECT_SITE`;
+* порт: `production::engineer_site_covers`, `BuildSiteSelect::is_engineer`
+  (якорь = курсор), `BuildMenu::site_selection_target(state, force_path)`,
+  `BuildMenuAction::PathBuild`, `App::commit_build_menu_path`;
+* **осознанное отличие**: `UnitsManager_StartBuild` (`units_manager.cpp:1516`)
+  сбрасывает `move_to` инженера в его собственную клетку, что обнуляло бы выбор
+  `Path`; порт ставит площадку в выбранную клетку (иначе пункт `Path` не имеет
+  смысла), инженер идёт к ней обычным приказом движения.
+
+### D1. Звуки меню/попапов/стройки/транспорта
+
+Новый модуль `sfx.rs` — таблица «событие → ресурс `MAX.RES`» (источник — вызовы
+`PlaySfx`/`SetSfx` C++): `KCARG0` (карта `game_manager.cpp:6711`, пункт попапа
+клавишей `:2689`, выбор элемента помощи `helpmenu.cpp:331`, строки меню
+`gameconfigmenu.hpp`), `NDONE0` (подтверждения/`Done`), `NCANC0`
+(отмена/недоступное действие), `MBUTT0` (панели `game_manager.cpp:5446/5692/5713`,
+главное меню `menu.cpp:2182`), `NHELP0` (Help экранов настройки), `NHUMN0`/
+`NCOMP0`/`NNONE0`/`NCLAN0` (`chooseplayermenu.hpp:59-74`), `V_M049` (постановка
+площадки `game_manager.cpp:4569`), `V_M210`/`V_M085`/`V_M224` (ремонт/дозаправка/
+передача `:4626/4609/4675`), а также `GameManager_PlayUnitStatusVoice`
+(`:7943-8036`) — включая `V_M093` для включённого Research Center.
+
+`App::play_sfx` копит очередь `HudState`-уровня, `main.rs` проигрывает её через
+существующий `AudioPlayer` с учётом `Preferences`: эффекты — `!disable_fx`
+(общий `set_enabled`), голоса — `!disable_voice` (`Preferences::voice_enabled`),
+громкости — `fx_sound_level`/`voice_level` (слой уже был в `main.rs`).
+Попап по мыши в C++ без `Sfx` (кнопки `InitPopupButtons` без `SetSfx`), но
+пункт, выбранный **клавишей**, звучит `KCARG0`; наш UI играет `KCARG0` на оба
+варианта (осознанное отклонение, UX).
+
+### D3. Alt+P
+
+* `GNW_KB_KEY_LALT_P` → `PauseMenu_Menu` (`game_manager.cpp:5542`,
+  `menu.cpp:1747`): для игры вне главного меню — `DialogMenu_Menu(_(f9bb))`;
+* новый модуль `dialog.rs` — порт `DialogMenu` (`dialogmenu.cpp:148-204`): окно
+  `HELPFRAM` по центру карты, текст `FONT5` в (20,14) 265×175 с центрированием,
+  `OK` (`HELPOK`, `_(ae0b)`), прокрутка `BLDUP__/BLDDWN` при >17 строк;
+* `Alt+P` (SDL `keymod` → `WindowKey::Alt` → `Key::Alt`) открывает диалог и
+  останавливает тики/таймер локальной партии (`LocalGame::paused`); `Enter`/`OK`
+  или `Esc` закрывают и возвращают прежнее состояние паузы;
+* звуки: открытие `MBUTT0`, `OK` `NDONE0`, `Esc` `NCANC0`.
+
+### Тесты, QA и кадры
+
+* юнит/интеграционные: `max_app::helpmenu` (запись по точке, панели игры,
+  страницы), `max_app::dialog`, `max_app::selfdestruct`, `max_app::sfx`,
+  `max_app/tests/unit_menu_actions.rs` (9: targeting, load, steal/disable,
+  бульдозер, `Upg. All`, самоуничтожение, `Alt+P`, звуки, `V_M093`),
+  `max_app/tests/transport`/`transfer` (help-режим), `buildsite`/`buildmenu`;
+* QA: `unit-menu.qa` (новые пункты, `spawn`, `selfdestruct …`, `complex raw`,
+  `teamvalues`, `cursor=…`, `targeting=…`), `research-help.qa` (режим помощи,
+  запись по клику, `help entry/click/close`, `help-entry`), `preferences.qa`
+  (`PREFS_MENU_SETUP` через режим, `Alt+P`), `unit-menu.qa`/`preferences.qa`
+  кадры пересняты;
+* новые эталоны: `golden/unit-menu/{unit-menu-targeting,unit-menu-load,
+  unit-menu-infiltrator,self-destruct-arm,self-destruct-armed}.png`,
+  `golden/preferences/pause-dialog.png`,
+  `golden/research-help/help-options-playmode.png`; изменены кадры `help-*`
+  (окно показывает одну запись) и `unit-menu-*` (`attack` больше не серый).
+
+### Осталось
+
+* `RepairShopMenu` (`activate`) — экран не портирован (B1);
+* мастер-строитель (`start`) — проверка площадки `POWGEN` не портирована;
+* музыка (`disable_music`) и MVE-аудио — D2/C3.

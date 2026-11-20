@@ -74,6 +74,7 @@ use crate::preferences::{
 };
 use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::researchmenu::ResearchAction;
+use crate::sfx::Sfx;
 use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::winloss;
 use crate::App;
@@ -145,6 +146,8 @@ pub enum Key {
     PageDown,
     /// Печатный символ.
     Char(char),
+    /// Печатный символ с зажатым Alt (`Alt+P` — пауза, `GNW_KB_KEY_LALT_P`).
+    Alt(char),
     /// Прочая клавиша (игнорируется).
     Other,
 }
@@ -446,8 +449,11 @@ pub enum Screen {
     Help {
         /// Экран под окном помощи.
         screen: Box<Screen>,
-        /// Открытое окно помощи.
-        help: helpmenu::HelpScreen,
+        /// Открытое окно помощи; `None` — активен режим выбора элемента
+        /// (`HelpMenu_Menu`, `helpmenu.cpp:315`).
+        help: Option<helpmenu::HelpScreen>,
+        /// Секция режима помощи.
+        mode: helpmenu::HelpMode,
     },
     /// Игра идёт: карта + статус; сетевой цикл запускает `main.rs`.
     InSession {
@@ -673,15 +679,50 @@ impl Screen {
             ctx.mouse = Some(Point::new(x, y));
         }
 
-        // Модальное окно помощи (`HelpMenu`): пока открыто, ввод получает
-        // только оно; закрытие возвращает вложенный экран как есть.
+        // Режим/окно помощи (`HelpMenu_Menu` + `HelpMenu`): ввод получает
+        // только он. Клик по элементу с записью `help.json` открывает окно;
+        // `Esc`/RMB/`?` закрывают окно (возврат в режим) или сам режим.
         if matches!(self, Self::Help { .. }) {
-            let close = match self {
-                Self::Help { help, .. } => help.input(event) == HelpAction::Close,
-                _ => false,
-            };
+            let mut exit = false;
 
-            if close {
+            if let Self::Help { help, mode, .. } = self {
+                match event {
+                    InputEvent::MouseMove(..) => {}
+                    InputEvent::MouseClick(x, y) => {
+                        if let Some(window) = help.as_mut() {
+                            if window.input(InputEvent::MouseClick(x, y)) == HelpAction::Close {
+                                *help = None;
+                            }
+                        } else if let Some(window) = mode.click(x, y) {
+                            *help = Some(window);
+                            ctx.click();
+                        }
+                    }
+                    InputEvent::RightClick(..) => {
+                        if help.is_some() {
+                            *help = None;
+                        } else {
+                            exit = true;
+                        }
+                    }
+                    InputEvent::Key(Key::Escape) | InputEvent::Key(Key::Char('?')) => {
+                        if help.is_some() {
+                            *help = None;
+                        } else {
+                            exit = true;
+                        }
+                    }
+                    InputEvent::Key(key) => {
+                        if let Some(window) = help.as_mut() {
+                            if window.input(InputEvent::Key(key)) == HelpAction::Close {
+                                *help = None;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if exit {
                 if let Self::Help { screen, .. } = std::mem::replace(self, Self::MainMenu) {
                     *self = *screen;
                 }
@@ -831,7 +872,8 @@ impl Screen {
                 let inner = std::mem::replace(self, Self::MainMenu);
                 *self = Self::Help {
                     screen: Box::new(inner),
-                    help: helpmenu::HelpScreen::new(section, HelpPlacement::Menu),
+                    help: None,
+                    mode: helpmenu::HelpMode::new(section, HelpPlacement::Menu),
                 };
                 ctx.click();
                 Transition::None
@@ -952,7 +994,8 @@ impl Screen {
             let inner = std::mem::replace(self, Self::MainMenu);
             *self = Self::Help {
                 screen: Box::new(inner),
-                help: helpmenu::HelpScreen::new(HelpSection::Cargo, HelpPlacement::Game),
+                help: None,
+                mode: helpmenu::HelpMode::new(HelpSection::Cargo, HelpPlacement::Game),
             };
             ctx.click();
         }
@@ -1050,7 +1093,7 @@ impl Screen {
         let mouse = view.mouse.map(|point| (point.x, point.y));
 
         match self {
-            Self::Help { screen, help } => {
+            Self::Help { screen, help, .. } => {
                 // Окно помощи модально: сначала экран под ним, затем `HELPFRAM`.
                 screen.render(buffer, view);
 
@@ -1063,11 +1106,13 @@ impl Screen {
                         .or_else(|| panels::UiPalette::from_assets(assets))
                 });
 
-                help.draw(
-                    buffer,
-                    assets.and_then(|assets| assets.help.as_ref()),
-                    fallback,
-                );
+                if let Some(help) = help {
+                    help.draw(
+                        buffer,
+                        assets.and_then(|assets| assets.help.as_ref()),
+                        fallback,
+                    );
+                }
             }
             Self::MainMenu => {
                 if let (Some(menu_assets), true) = (menu_assets, native_frame) {
@@ -1380,7 +1425,8 @@ impl Screen {
                 let inner = std::mem::replace(self, Self::MainMenu);
                 *self = Self::Help {
                     screen: Box::new(inner),
-                    help: helpmenu::HelpScreen::new(section, HelpPlacement::Menu),
+                    help: None,
+                    mode: helpmenu::HelpMode::new(section, HelpPlacement::Menu),
                 };
                 ctx.click();
                 Transition::None
@@ -1646,7 +1692,7 @@ impl Screen {
                         Key::Left => form.adjust(-1),
                         Key::Right => form.adjust(1),
                         Key::Char(character) => form.push_char(character),
-                        Key::PageUp | Key::PageDown | Key::Other => {}
+                        Key::PageUp | Key::PageDown | Key::Alt(_) | Key::Other => {}
                     }
                 }
             }
@@ -1731,6 +1777,22 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     let (width, height) = app.viewport().screen();
     let chrome = app.chrome_active();
 
+    // `Alt+P` — `PauseMenu_Menu` (`game_manager.cpp:5542`): диалог «Game Paused»
+    // поверх всего, тики локальной партии останавливаются.
+    if matches!(event, InputEvent::Key(Key::Alt('p' | 'P'))) {
+        if app.pause_dialog().is_some() {
+            return Transition::None;
+        }
+        if app.local_active() && app.open_pause_dialog() {
+            app.hud_mut().push_log("Paused");
+        }
+        return Transition::None;
+    }
+
+    if app.pause_dialog().is_some() {
+        return session_pause_input(app, event);
+    }
+
     // M-HS: окно перехода хода модально — как `DialogMenu::Run()` в C++, оно
     // принимает только подтверждение (клик по `OK`, Enter, Esc). Мышь двигается
     // (подсветка кнопки), всё остальное игнорируется, включая чат и приказы.
@@ -1753,6 +1815,19 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     // карта/панели/чат приказов не получают ввод, пока они открыты.
     if app.help_screen().is_some() {
         return session_help_input(app, event);
+    }
+
+    // Режим помощи C++ (`HelpMenu_Menu`): модален, клик по элементу с записью
+    // `help.json` открывает окно; `Esc`/RMB/`?` выключают режим.
+    if app.help_mode().is_some() {
+        return session_help_mode_input(app, event);
+    }
+
+    // Самоуничтожение здания (`UnitsManager_SelfDestructMenu`) — модальное окно
+    // поверх всего, включая меню команд (`GameManager_DeinitPopupButtons`
+    // вызывается до открытия).
+    if app.self_destruct().is_some() {
+        return session_self_destruct_input(app, event, online);
     }
 
     // `Preferences` (`OptionsMenu::Run`, `PREFSPIC`) — модальный диалог: карта и
@@ -1970,6 +2045,67 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     }
 }
 
+/// Ввод в диалоге самоуничтожения (`UnitsManager_SelfDestructMenu`).
+///
+/// Окно модально: `Arm`/`Enter` запускает анимацию `SLFDOPN1..6`, после неё
+/// `OK`/`Enter` отдаёт `ORDER_EXPLODE`, `Esc`/`Cancel` закрывает без приказа
+/// (C++ `UnitsManager_SelfDestructMenu` возвращает `false`).
+fn session_self_destruct_input(
+    app: &mut App,
+    event: InputEvent,
+    online: bool,
+) -> Transition {
+    let unit = app.self_destruct().map(|menu| menu.unit);
+    let stage_before = app.self_destruct().map(|menu| menu.stage);
+
+    match app.self_destruct_input(event) {
+        Some(crate::selfdestruct::SelfDestructAction::None) => {
+            // `Arm` (`units_manager.cpp:312`): sfx `MBUTT0`.
+            if stage_before == Some(crate::selfdestruct::Stage::Confirm)
+                && app
+                    .self_destruct()
+                    .is_some_and(|menu| menu.stage == crate::selfdestruct::Stage::Armed)
+            {
+                app.play_sfx(Sfx::Button);
+            }
+        }
+        Some(crate::selfdestruct::SelfDestructAction::Cancel) => {
+            // `NCANC0` (`units_manager.cpp:278/319`).
+            app.play_sfx(Sfx::Cancel);
+            app.hud_mut().push_log("Self destruct: cancelled");
+        }
+        Some(crate::selfdestruct::SelfDestructAction::Explode) => {
+            // `SLFDOK` sfx `NDONE0` (`units_manager.cpp:254`).
+            app.play_sfx(Sfx::Done);
+
+            if !online {
+                apply_pending_orders(app);
+            }
+            let name = unit
+                .and_then(|unit| app.state().unit(unit))
+                .map(unit_label)
+                .unwrap_or_else(|| "unit".to_string());
+            app.hud_mut()
+                .push_log(format!("Self destruct: {name} — ORDER_EXPLODE"));
+        }
+        None => {}
+    }
+
+    Transition::None
+}
+
+/// Ввод в диалоге паузы (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
+fn session_pause_input(app: &mut App, event: InputEvent) -> Transition {
+    match app.pause_dialog_input(event) {
+        Some(crate::dialog::DialogAction::Close) => {
+            app.hud_mut().push_log("Resumed");
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
 /// Ввод в открытом меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
 ///
 /// Меню модально: `Esc`/клик вне/правый клик закрывают его
@@ -1989,6 +2125,10 @@ fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Tr
             app.hud_mut().push_log("Unit menu closed");
         }
         crate::unitmenu::MenuEvent::Item(index) => {
+            // `GameManager_ProcessPopupMenuInput` (`game_manager.cpp:2689`):
+            // пункт попапа — `PlaySfx(KCARG0)`.
+            app.play_sfx(Sfx::Click);
+
             if let Some(line) = app.activate_unit_menu_item(index) {
                 app.hud_mut().push_log(line);
 
@@ -2134,6 +2274,11 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().push_log(line);
             }
         }
+        Some(crate::buildmenu::BuildMenuAction::PathBuild) => {
+            if let Some(line) = app.commit_build_menu_path(online) {
+                app.hud_mut().push_log(line);
+            }
+        }
         Some(crate::buildmenu::BuildMenuAction::Close) => {
             app.close_build_menu();
             app.hud_mut().push_log("Build cancelled");
@@ -2206,10 +2351,15 @@ fn session_build_site_input(
             };
 
             let line = if valid {
+                // `GameManager_PathBuild` (`game_manager.cpp:4569`): голос
+                // `V_M049`, затем `UnitsManager_StartBuild`.
+                app.play_sfx(Sfx::Done);
+                app.play_sfx(Sfx::BuildSitePlaced);
                 app.confirm_build_site(online)
             } else {
                 // C++: `CURSOR_UNIT_NO_GO` → `GameManager_ManagePlayerAction` —
                 // выбор отменяется целиком.
+                app.play_sfx(Sfx::Cancel);
                 app.cancel_build_site()
                     .map(|line| format!("{line} (invalid cell {},{} )", grid.x, grid.y))
             };
@@ -2279,9 +2429,62 @@ fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) ->
 /// экран под ним (игра/`ResearchMenu`/`UpgradeMenu`) продолжает работать с тем
 /// же состоянием.
 fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
+    // Кнопки окна: `Done` — `NDONE0`, прокрутка/`Keys` — `KCARG0`
+    // (`helpmenu.cpp:91/131/135`).
+    match event {
+        InputEvent::MouseClick(x, y) => {
+            if app.help_screen().is_some_and(|help| help.done_rect().contains(x, y)) {
+                app.play_sfx(Sfx::Done);
+            } else {
+                app.play_sfx(Sfx::Click);
+            }
+        }
+        InputEvent::Key(Key::Enter) => app.play_sfx(Sfx::Done),
+        InputEvent::Key(Key::PageUp)
+        | InputEvent::Key(Key::PageDown)
+        | InputEvent::Key(Key::Up)
+        | InputEvent::Key(Key::Down) => app.play_sfx(Sfx::Click),
+        InputEvent::Key(Key::Char('k' | 'K')) => app.play_sfx(Sfx::Done),
+        _ => {}
+    }
+
     if app.help_input(event) == Some(HelpAction::Close) {
         app.close_help();
         app.hud_mut().push_log("Help closed");
+    }
+
+    Transition::None
+}
+
+/// Ввод в режиме помощи (`HelpMenu_Menu`, `helpmenu.cpp:315`).
+///
+/// Клик по элементу с записью `help.json` открывает окно (`HelpMenu`); клик по
+/// пустому месту окно не открывает и режим не выключает (C++: пустой текст —
+/// окно не создаётся). `Esc`, правая кнопка или повторный `?` выключают режим
+/// (`MOUSE_RELEASE_RIGHT`/`GNW_KB_KEY_CTRL_ESCAPE`/`GNW_KB_KEY_SHIFT_DIVIDE`).
+fn session_help_mode_input(app: &mut App, event: InputEvent) -> Transition {
+    match event {
+        InputEvent::MouseClick(x, y) => {
+            if app.help_mode_click(x, y) {
+                // `HelpMenu_Menu` (`helpmenu.cpp:331`): выбор элемента — `KCARG0`.
+                app.play_sfx(Sfx::Click);
+                let entry = app
+                    .help_screen()
+                    .and_then(|help| help.entry_name())
+                    .unwrap_or("?");
+                app.hud_mut().push_log(format!("Help: {entry}"));
+            } else {
+                app.hud_mut()
+                    .push_log("Help: здесь нет подсказки — выберите элемент");
+            }
+        }
+        InputEvent::RightClick(..)
+        | InputEvent::Key(Key::Escape)
+        | InputEvent::Key(Key::Char('?')) => {
+            app.exit_help_mode();
+            app.hud_mut().push_log("Help closed");
+        }
+        _ => {}
     }
 
     Transition::None
@@ -2375,7 +2578,7 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
         | Key::Right
         | Key::PageUp
         | Key::PageDown
-        | Key::Other => {}
+        | Key::Alt(_) | Key::Other => {}
     }
 
     Transition::None
@@ -2478,6 +2681,9 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
 
 /// Кнопка панели 1:1: End Turn, переключатели, зум, миникарта, меню.
 fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool) -> Transition {
+    // Кнопки панелей — `PlaySfx(MBUTT0)` (`game_manager.cpp:5446/5692/5713`).
+    app.play_sfx(Sfx::Button);
+
     match button {
         PanelButton::EndTurn => {
             session_end_turn(app, online);
@@ -2585,6 +2791,10 @@ fn session_map_left_click(
     y: i32,
     online: bool,
 ) -> Transition {
+    // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6711`): отпускание LMB
+    // по карте — `PlaySfx(KCARG0)`.
+    app.play_sfx(Sfx::Click);
+
     let team = app.player_team();
     let grid = viewport.screen_to_grid(x, y);
     if debug_input() {
@@ -2602,6 +2812,44 @@ fn session_map_left_click(
         // `GameManager_ProcessPlayerInput`: клик по карте закрывает окно
         // сообщения (`MessageManager_ClearMessageBox`).
         app.hud_mut().clear_hint();
+
+        // `targeting_mode` и пустая клетка: `GameManager_SetUnitOrder`
+        // (`game_manager.cpp:6360`) — если цель не найдена, а выстрелы есть,
+        // `fire_on = (x,y)` и `ORDER_FIRE`/`INIT` (стрельба по площади).
+        if app.hud().targeting_mode {
+            if let Some(selected) = app.hud().selected {
+                let cell = max_core::geo::Point::new(grid.0, grid.1);
+                let in_range = app.state().unit(selected).is_some_and(|unit| {
+                    max_core::access::is_within_attack_range(
+                        app.state(),
+                        unit,
+                        cell,
+                        i32::from(unit.base_values.get_attribute(
+                            max_core::unit_values::ATTRIB_RANGE,
+                        )),
+                    )
+                });
+
+                if in_range {
+                    match hud::build_ground_fire_order(app.state(), selected, cell) {
+                        Some(command) => {
+                            app.hud_mut().pending.push(command);
+                            app.hud_mut()
+                                .push_log(format!("Attack ground: ({}, {})", grid.0, grid.1));
+                            if !online {
+                                apply_pending_orders(app);
+                            }
+                            return Transition::None;
+                        }
+                        None => {
+                            app.hud_mut().push_log("Attack: нет выстрелов");
+                            return Transition::None;
+                        }
+                    }
+                }
+            }
+        }
+
         if app.hud().selected.is_some() {
             app.hud_mut().clear_interaction();
             app.hud_mut().push_log("Deselected");
@@ -2656,6 +2904,13 @@ fn session_map_left_click(
                             crate::unitmenu::CURSOR_REPAIR => "Repair",
                             _ => "Reload",
                         };
+                        // `GameManager_RepairUnit`/`ReloadUnit`
+                        // (`game_manager.cpp:4609/4626`): `V_M210`/`V_M085`.
+                        app.play_sfx(if cursor == crate::unitmenu::CURSOR_REPAIR {
+                            Sfx::Repair
+                        } else {
+                            Sfx::Reload
+                        });
                         app.hud_mut().push_log(format!("{label}: приказ отдан"));
                         if !online {
                             apply_pending_orders(app);
@@ -2664,8 +2919,47 @@ fn session_map_left_click(
                     }
                     Ok(None) => {}
                     Err(message) => {
+                        // Недоступное действие — `NCANC0` (`game_manager.cpp:4612`).
+                        app.play_sfx(Sfx::Cancel);
                         app.hud_mut().push_log(message);
                         return Transition::None;
+                    }
+                }
+
+                // `load` (`cursor = 7`) — `GameManager_ProcessMouse`,
+                // ветка `CURSOR_LOAD` (`game_manager.cpp:6807`).
+                if cursor == crate::unitmenu::CURSOR_LOAD {
+                    // C++ отдаёт приказ только когда курсор — `CURSOR_LOAD`
+                    // (`load_mode_applies`); иначе цель не принимается.
+                    let applies = match (app.state().unit(selected), app.state().unit(id)) {
+                        (Some(transport), Some(passenger)) => {
+                            crate::unitmenu::load_mode_applies(transport, passenger)
+                        }
+                        _ => false,
+                    };
+
+                    if !applies {
+                        app.play_sfx(Sfx::Cancel);
+                        app.hud_mut()
+                            .push_log("load: цель не принимается транспортом");
+                        return Transition::None;
+                    }
+
+                    match crate::unitmenu::load_mode_click(app.state(), selected, id) {
+                        Ok(Some(command)) => {
+                            app.hud_mut().pending.push(command);
+                            app.hud_mut()
+                                .push_log(format!("load: погрузка ({label}) — приказ отдан"));
+                            if !online {
+                                apply_pending_orders(app);
+                            }
+                            return Transition::None;
+                        }
+                        Ok(None) => {}
+                        Err(message) => {
+                            app.hud_mut().push_log(message);
+                            return Transition::None;
+                        }
                     }
                 }
             }
@@ -2715,12 +3009,52 @@ fn session_map_left_click(
         return Transition::None;
     }
 
-    // Враг: атака по выделенному юниту (пакет 08, P3).
+    // Враг: диверсант (курсорные режимы 8/9) или атака (пакет 08, P3).
     let Some(selected) = app.hud().selected else {
         app.hud_mut()
             .push_log("Enemy unit — select your unit first");
         return Transition::None;
     };
+
+    let cursor = app.hud().cursor_mode;
+    if matches!(
+        cursor,
+        crate::unitmenu::CURSOR_STEAL | crate::unitmenu::CURSOR_DISABLE
+    ) {
+        // `GameManager_StealUnit`/`GameManager_DisableUnit`
+        // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` уходит в
+        // пакет 08/P3 (`stealth_dice_roll`), поэтому ролл генерируется здесь.
+        let roll = app.state_mut().rng.generate(101i32) as u8;
+
+        match crate::unitmenu::stealth_mode_click(app.state(), selected, id, cursor, roll) {
+            Ok(Some(command)) => {
+                app.hud_mut().pending.push(command);
+                let label = if cursor == crate::unitmenu::CURSOR_STEAL {
+                    "steal"
+                } else {
+                    "disable"
+                };
+                // `GameManager_StealUnit`/`DisableUnit` — выбор цели как KCARG0.
+                app.play_sfx(Sfx::Click);
+                app.hud_mut().push_log(format!("{label}: действие назначено"));
+                if !online {
+                    apply_pending_orders(app);
+                }
+                return Transition::None;
+            }
+            Ok(None) => {
+                app.play_sfx(Sfx::Cancel);
+                app.hud_mut()
+                    .push_log("Infiltrator: цель не подходит");
+                return Transition::None;
+            }
+            Err(message) => {
+                app.play_sfx(Sfx::Cancel);
+                app.hud_mut().push_log(message);
+                return Transition::None;
+            }
+        }
+    }
 
     match hud::build_attack_order(app.state(), selected, id) {
         Some(command) => {
@@ -4310,9 +4644,14 @@ mod tests {
         assert_eq!(transition, Transition::None);
 
         match &screen {
-            Screen::Help { screen, help } => {
-                assert_eq!(help.section(), HelpSection::Options);
-                assert_eq!(help.placement(), HelpPlacement::Menu);
+            Screen::Help {
+                screen, help, mode, ..
+            } => {
+                // C++ `HelpMenu_Menu`: кнопка `?` включает режим помощи, окна
+                // ещё нет; запись выбирается кликом по элементу.
+                assert!(help.is_none(), "режим помощи: окна ещё нет");
+                assert_eq!(mode.section, HelpSection::Options);
+                assert_eq!(mode.placement, HelpPlacement::Menu);
                 assert!(matches!(
                     screen.as_ref(),
                     Screen::LocalSetup(form) if form.screen == crate::setup::SetupScreen::Options
@@ -4321,12 +4660,37 @@ mod tests {
             other => panic!("ожидалось окно помощи, получено {other:?}"),
         }
 
-        // `PageDown` прокручивает, `Escape` закрывает и возвращает Options.
-        screen.handle_input(&mut ctx, InputEvent::Key(Key::PageDown));
-        if let Screen::Help { help, .. } = &screen {
-            assert_eq!(help.row_index(), crate::helpmenu::ROWS_PER_PAGE);
+        // Клик по элементу `PLAY_MODE` (426..632, 39..227) открывает запись.
+        screen.handle_input(&mut ctx, InputEvent::MouseClick(529, 133));
+        if let Screen::Help { help: Some(help), .. } = &screen {
+            assert_eq!(help.section(), HelpSection::Options);
+            assert_eq!(help.entry_name(), Some("PLAY_MODE"));
+        } else {
+            panic!("клик по элементу не открыл запись");
         }
 
+        // `PageDown` прокручивает запись; `Esc` закрывает окно и возвращает в
+        // режим (C++ `HelpMenu::Run` возвращает в `HelpMenu_Menu`).
+        let rows_before = match &screen {
+            Screen::Help { help: Some(help), .. } => help.line_count(),
+            _ => 0,
+        };
+        screen.handle_input(&mut ctx, InputEvent::Key(Key::PageDown));
+        if let Screen::Help { help: Some(help), .. } = &screen {
+            if rows_before > crate::helpmenu::ROWS_PER_PAGE {
+                assert_eq!(help.row_index(), crate::helpmenu::ROWS_PER_PAGE);
+            } else {
+                assert_eq!(help.row_index(), 0);
+            }
+        }
+
+        screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape));
+        assert!(
+            matches!(&screen, Screen::Help { help: None, .. }),
+            "Esc закрывает окно, режим остаётся"
+        );
+
+        // Второй `Esc` выключает режим и возвращает экран Options.
         screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape));
         assert!(matches!(
             screen,
@@ -4396,13 +4760,33 @@ mod tests {
         unit.orders = UnitOrder::Await;
         app.state_mut().write_unit(id, unit);
 
+        // `?`/кнопка HELP_OF включает режим помощи (`HelpMenu_Menu`): окна нет,
+        // запись выбирается кликом по элементу.
         assert!(app.open_help(HelpSection::GameScreen));
         assert_eq!(
-            app.help_screen().map(|help| help.section()),
+            app.help_mode().map(|mode| mode.section),
             Some(HelpSection::GameScreen)
         );
+        assert!(app.help_screen().is_none());
+
+        // Клик по панели `FILES` — запись `FILES_BUTTON` (17..83, 4..20).
+        assert_eq!(
+            handle_session_input(&mut app, InputEvent::MouseClick(50, 12), false),
+            Transition::None
+        );
+        assert_eq!(
+            app.help_screen().and_then(|help| help.entry_name()),
+            Some("FILES_BUTTON")
+        );
+
+        // `Esc` закрывает окно и возвращает в режим (C++ `HelpMenu::Run`).
         handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
         assert!(app.help_screen().is_none());
+        assert!(app.help_mode().is_some());
+
+        // Второй `Esc` выключает режим.
+        handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+        assert!(app.help_mode().is_none());
     }
 
     #[test]
@@ -4420,7 +4804,11 @@ mod tests {
             Screen::MultiplayerMenu,
             Screen::Help {
                 screen: Box::new(Screen::LocalSetup(GameSetupForm::default())),
-                help: helpmenu::HelpScreen::new(HelpSection::Options, HelpPlacement::Menu),
+                help: Some(helpmenu::HelpScreen::new(
+                    HelpSection::Options,
+                    HelpPlacement::Menu,
+                )),
+                mode: helpmenu::HelpMode::new(HelpSection::Options, HelpPlacement::Menu),
             },
             Screen::InSession {
                 request: SessionRequest {

@@ -304,15 +304,35 @@ fn xfer_help_opens_transfer_setup() {
     let (mine, constructor) = prepare_transfer(&mut app);
     open_transfer(&mut app, mine, constructor);
 
+    // `?` — `TransferMenu::ProcessKey`: режим помощи C++ (`HelpMenu_Menu`).
     let _ = key(&mut app, Key::Char('?'));
-    assert!(app.help_screen().is_some(), "? открывает окно помощи");
+    assert!(
+        app.help_screen().is_none(),
+        "? включает режим помощи, окна ещё нет"
+    );
     assert_eq!(
-        app.help_screen().map(|help| help.section()),
+        app.help_mode().map(|mode| mode.section),
         Some(max_app::helpmenu::HelpSection::Transfer)
     );
 
+    // Клик по элементу `TRANSFERER` (335..371, 177..213) открывает запись.
+    let _ = max_app::ui::handle_session_input(
+        &mut app,
+        max_app::ui::InputEvent::MouseClick(353, 195),
+        false,
+    );
+    assert_eq!(
+        app.help_screen().and_then(|help| help.entry_name()),
+        Some("TRANSFERER")
+    );
+
+    // `Esc` закрывает окно, второй `Esc` — режим; окно X-FER остаётся под ним
+    // (C++ `HelpMenu::Run` возвращает в `TransferMenu`).
     let _ = key(&mut app, Key::Escape);
-    assert!(app.help_screen().is_none(), "Esc закрывает помощь");
+    assert!(app.help_screen().is_none(), "Esc закрывает окно помощи");
+    assert!(app.help_mode().is_some(), "режим помощи ещё активен");
+    let _ = key(&mut app, Key::Escape);
+    assert!(app.help_mode().is_none(), "второй Esc выключает режим");
     assert!(
         app.transfer_menu().is_some(),
         "окно X-FER осталось под помощью (C++ HelpMenu возвращается в меню)"

@@ -21,13 +21,14 @@
 //!
 //! # Что делает Rust-клиент
 //!
-//! Кнопки `?`/`Help` открывают окно сразу для нужной секции. Так как выбора
-//! координаты нет, окно показывает **весь текст секции** (`help.json`, en-US)
-//! в порядке файла, абзацы через пустую строку — этого достаточно, чтобы
-//! длинные секции (`CARGO_SETUP`, `OPTIONS_SETUP`) прокручивались, а короткие
-//! (`PLANET_SETUP`) помещались на страницу. Это осознанное отличие: в C++
-//! текст выбирается курсором, здесь — кнопкой (см.
-//! `docs/analysis/visual-1to1-status.md` §11.6).
+//! Портирован режим C++ (`HelpMenu_Menu`): кнопка `?`/`Help` включает режим
+//! выбора элемента (`HelpMode`), клик по элементу переводит точку
+//! `HelpMenu_ScaleCursor` (`helpmenu.cpp:412`) и берёт запись `help.json`
+//! (`Help::GetEntry`, `help.cpp:140`) — окно показывает **один** абзац, как в
+//! оригинале (а не весь текст секции). Скролл, кнопки `BLDUP__/BLDDWN`,
+//! `Done`/`Keys` — 1:1; `Esc` закрывает окно и возвращает в режим, повторный
+//! `Esc`/RMB/`?` выключает режим. Подробности — §33
+//! `docs/analysis/visual-1to1-status.md`.
 //!
 //! Палитра окна — собственная палитра `HELPFRAM` (как у остальных big image
 //! Rust-клиента); C++-порт рисует `HELPFRAM` системной палитрой, но индексы
@@ -232,6 +233,114 @@ pub fn section_entries(section: HelpSection) -> &'static [HelpEntry] {
         .unwrap_or(&[])
 }
 
+/// Индекс записи по имени (`UNIT_PICT`, …).
+pub fn entry_by_name(section: HelpSection, name: &str) -> Option<usize> {
+    let wanted = name.trim();
+
+    section_entries(section)
+        .iter()
+        .position(|entry| entry.name.eq_ignore_ascii_case(wanted))
+}
+
+/// Имя записи `index`.
+pub fn entry_name(section: HelpSection, index: usize) -> Option<&'static str> {
+    section_entries(section)
+        .get(index)
+        .map(|entry| entry.name.as_str())
+}
+
+/// Текст записи `index` (en-US).
+pub fn entry_text(section: HelpSection, index: usize) -> &'static str {
+    section_entries(section)
+        .get(index)
+        .map(|entry| entry.text.as_str())
+        .unwrap_or("")
+}
+
+/// `HelpMenu_ScaleCursor` (`helpmenu.cpp:412-471`): экранная точка клика →
+/// координаты в системе `help.json`.
+///
+/// Для окон настройки/`CargoMenu` (`WINDOW_MAIN_WINDOW`) координаты совпадают с
+/// кадром. В игре (`WINDOW_MAIN_MAP`) C++ сначала переводит клики по
+/// инструментам в фиксированные точки записей (`COORDINATES` → 250/297,473;
+/// `UNIT_DESCRIPTION` → 448,473; `TURN_COUNTER` → 498,11; `TURN_TIMER` →
+/// 565,11; `ENDTURN_BUTTON` → 426,11; правый верхний инструмент → 610,11), а
+/// клики по карте оставляет как есть (в исходном масштабе 640×480).
+pub fn scale_cursor(section: HelpSection, x: i32, y: i32) -> (i32, i32) {
+    if section != HelpSection::GameScreen {
+        return (x, y);
+    }
+
+    let coordinates = max_render::layout::COORDINATES;
+    let description = max_render::layout::UNIT_DESCRIPTION;
+    let counter = max_render::layout::TURN_COUNTER;
+    let timer = max_render::layout::TURN_TIMER;
+    let end_turn = max_render::layout::END_TURN_BUTTON;
+    let top_instrument = PixelRect::new(timer.lrx() + 5, timer.uly, 20, timer.height);
+
+    if coordinates.contains(x, y) {
+        let offset = (coordinates.width * 20) / 100 + coordinates.ulx;
+
+        return if x < offset { (250, 473) } else { (297, 473) };
+    }
+
+    if description.contains(x, y) {
+        return (448, 473);
+    }
+
+    if counter.contains(x, y) {
+        return (498, 11);
+    }
+
+    if timer.contains(x, y) {
+        return (565, 11);
+    }
+
+    if end_turn.contains(x, y) {
+        return (426, 11);
+    }
+
+    if top_instrument.contains(x, y) {
+        return (610, 11);
+    }
+
+    (x, y)
+}
+
+/// Запись секции под точкой кадра — `Help::GetEntry` (`help.cpp:140-167`):
+/// первая запись, чьи координаты накрывают точку (порядок — порядок файла).
+pub fn entry_at(section: HelpSection, x: i32, y: i32) -> Option<usize> {
+    let (x, y) = scale_cursor(section, x, y);
+
+    section_entries(section).iter().position(|entry| {
+        x >= entry.ux && x <= entry.lx && y >= entry.uy && y <= entry.ly
+    })
+}
+
+/// Режим помощи — C++ `HelpMenu_Menu` (`helpmenu.cpp:315`): курсор `CURSOR_HELP`,
+/// клик по элементу открывает окно с записью под точкой.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HelpMode {
+    /// Секция.
+    pub section: HelpSection,
+    /// Где открыт режим (меню/игра) — для позиции окна.
+    pub placement: HelpPlacement,
+}
+
+impl HelpMode {
+    /// Режим для секции.
+    pub const fn new(section: HelpSection, placement: HelpPlacement) -> Self {
+        Self { section, placement }
+    }
+
+    /// Клик по элементу: `None` — записи нет (режим остаётся, как C++).
+    pub fn click(&self, x: i32, y: i32) -> Option<HelpScreen> {
+        let index = entry_at(self.section, x, y)?;
+
+        Some(HelpScreen::for_entry(self.section, self.placement, index))
+    }
+}
+
 /// Текст секции: все непустые абзацы через пустую строку.
 pub fn section_text(section: HelpSection) -> String {
     section_entries(section)
@@ -263,26 +372,56 @@ pub struct HelpScreen {
     keys_mode: bool,
     lines: Vec<String>,
     row_index: usize,
+    /// Индекс показанной записи `help.json`.
+    entry: usize,
 }
 
 impl HelpScreen {
-    /// Окно для секции: сразу показывает её текст (в C++ — после клика по
-    /// элементу экрана).
+    /// Окно для первой записи секции (страховка для вызовов без координат).
     pub fn new(section: HelpSection, placement: HelpPlacement) -> Self {
-        let text = section_text(section);
+        Self::for_entry(section, placement, 0)
+    }
+
+    /// Окно для записи `index` — C++ `HelpMenu(section, cursor_x, cursor_y)`
+    /// показывает **одну** запись (`ResourceManager_GetHelpEntry`).
+    pub fn for_entry(section: HelpSection, placement: HelpPlacement, index: usize) -> Self {
+        let text = entry_text(section, index);
 
         Self {
             section,
             placement,
             keys_mode: false,
-            lines: wrap_gnw_text(&text, TEXT_RECT.width),
+            lines: wrap_gnw_text(text, TEXT_RECT.width),
             row_index: 0,
+            entry: index,
         }
+    }
+
+    /// Окно для записи под точкой; `None` — записи нет (C++ закрывает окно).
+    pub fn for_point(
+        section: HelpSection,
+        placement: HelpPlacement,
+        x: i32,
+        y: i32,
+    ) -> Option<Self> {
+        let index = entry_at(section, x, y)?;
+
+        Some(Self::for_entry(section, placement, index))
     }
 
     /// Секция.
     pub const fn section(&self) -> HelpSection {
         self.section
+    }
+
+    /// Индекс записи.
+    pub const fn entry(&self) -> usize {
+        self.entry
+    }
+
+    /// Имя записи (`UNIT_PICT`, …).
+    pub fn entry_name(&self) -> Option<&'static str> {
+        entry_name(self.section, self.entry)
     }
 
     /// Позиция окна.
@@ -402,7 +541,7 @@ impl HelpScreen {
         let text = if self.keys_mode {
             keys_text().to_string()
         } else {
-            section_text(self.section)
+            entry_text(self.section, self.entry).to_string()
         };
         self.lines = wrap_gnw_text(&text, TEXT_RECT.width);
         self.row_index = 0;
@@ -677,6 +816,18 @@ impl HelpMenuAssets {
 mod tests {
     use super::*;
 
+    /// Запись с самым длинным текстом — для проверки прокрутки.
+    fn longest_entry(section: HelpSection) -> HelpScreen {
+        let index = section_entries(section)
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, entry)| entry.text.len())
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+
+        HelpScreen::for_entry(section, HelpPlacement::Menu, index)
+    }
+
     #[test]
     fn four_help_screens_have_text() {
         for section in [
@@ -690,43 +841,147 @@ mod tests {
 
             let screen = HelpScreen::new(section, HelpPlacement::Menu);
             assert!(screen.line_count() > 1, "{section:?}: нет строк");
+            assert!(screen.entry_name().is_some());
         }
     }
 
     #[test]
-    fn all_four_help_screens_scroll() {
+    fn help_shows_one_entry_per_click_not_the_whole_section() {
+        // Все секции имеют записи с координатами: окно показывает ровно одну.
         for section in [
             HelpSection::Cargo,
             HelpSection::Planet,
             HelpSection::NewGame,
             HelpSection::Options,
+            HelpSection::GameScreen,
+            HelpSection::Research,
+            HelpSection::Upgrades,
+            HelpSection::Allocate,
+            HelpSection::Transfer,
+            HelpSection::Preferences,
+            HelpSection::Setup,
+            HelpSection::Clan,
+            HelpSection::HotSeat,
         ] {
+            let entries = section_entries(section);
+            assert!(!entries.is_empty(), "{section:?}: нет записей в help.json");
+
             let screen = HelpScreen::new(section, HelpPlacement::Menu);
-            assert!(
-                screen.is_scrollable(),
-                "{section:?}: {} строк — должен прокручиваться",
-                screen.line_count()
+            let entry = &entries[0];
+
+            assert_eq!(screen.entry(), 0);
+            assert_eq!(
+                screen.lines(),
+                wrap_gnw_text(&entry.text, TEXT_RECT.width),
+                "{section:?}: окно должно показывать только первую запись"
+            );
+        }
+    }
+
+    #[test]
+    fn entry_is_selected_by_point_like_cpp_get_entry() {
+        // `Help::GetEntry`: первая запись, чьи координаты накрывают точку.
+        let entries = section_entries(HelpSection::Options);
+
+        for (index, entry) in entries.iter().enumerate() {
+            let x = (entry.ux + entry.lx) / 2;
+            let y = (entry.uy + entry.ly) / 2;
+
+            assert_eq!(
+                entry_at(HelpSection::Options, x, y),
+                Some(index),
+                "{:?}: центр записи должен выбирать её",
+                entry.name
             );
         }
 
-        // Один `PageDown` — ровно на страницу; `PageUp` возвращает наверх.
-        let mut cargo = HelpScreen::new(HelpSection::Cargo, HelpPlacement::Menu);
-        cargo.page_down();
-        assert_eq!(cargo.row_index(), ROWS_PER_PAGE);
-        cargo.page_up();
-        assert_eq!(cargo.row_index(), 0);
+        // Точка вне всех записей — `None` (C++ закрывает окно).
+        assert_eq!(entry_at(HelpSection::Options, 0, 0), None);
+        assert_eq!(entry_at(HelpSection::Cargo, 639, 479), None);
+    }
 
-        // Ниже конца текста не уходим.
-        for _ in 0..100 {
-            cargo.page_down();
+    #[test]
+    fn game_screen_panels_map_to_their_entries() {
+        // `HelpMenu_ScaleCursor`: клики по инструментам переводятся в точки
+        // записей `GAME_SCREEN_SETUP`.
+        assert_eq!(
+            entry_at(HelpSection::GameScreen, 242 + 10, 456 + 10).map(entry_name_of),
+            entry_at(HelpSection::GameScreen, 250, 473).map(entry_name_of)
+        );
+        assert_eq!(
+            entry_at(HelpSection::GameScreen, 338 + 10, 456 + 10).map(entry_name_of),
+            entry_at(HelpSection::GameScreen, 448, 473).map(entry_name_of)
+        );
+        assert_eq!(
+            entry_at(HelpSection::GameScreen, 534 + 10, 2 + 10).map(entry_name_of),
+            entry_at(HelpSection::GameScreen, 565, 11).map(entry_name_of)
+        );
+        assert_eq!(
+            entry_at(HelpSection::GameScreen, 390 + 10, 2 + 10).map(entry_name_of),
+            entry_at(HelpSection::GameScreen, 426, 11).map(entry_name_of)
+        );
+
+        // Клик по карте не переводится: карта — общая запись `MAIN_MAP`.
+        assert_eq!(
+            entry_at(HelpSection::GameScreen, 300, 200).map(entry_name_of),
+            entry_at(HelpSection::GameScreen, 300, 200).map(entry_name_of)
+        );
+    }
+
+    fn entry_name_of(index: usize) -> Option<&'static str> {
+        entry_name(HelpSection::GameScreen, index)
+    }
+
+    #[test]
+    fn entries_show_their_own_text_and_scroll_only_when_longer_than_a_page() {
+        // Окно показывает ровно текст записи; кнопки прокрутки — только если
+        // строк больше страницы (C++ `ProcessText`: `string_row_count >
+        // rows_per_page`).
+        for section in [
+            HelpSection::Cargo,
+            HelpSection::Planet,
+            HelpSection::NewGame,
+            HelpSection::Options,
+            HelpSection::GameScreen,
+            HelpSection::Research,
+            HelpSection::Upgrades,
+            HelpSection::Preferences,
+            HelpSection::Allocate,
+            HelpSection::Transfer,
+            HelpSection::Clan,
+            HelpSection::HotSeat,
+        ] {
+            for index in 0..section_entries(section).len() {
+                let screen = HelpScreen::for_entry(section, HelpPlacement::Menu, index);
+                let expected =
+                    wrap_gnw_text(entry_text(section, index), TEXT_RECT.width).len();
+
+                assert_eq!(screen.line_count(), expected);
+                assert_eq!(screen.is_scrollable(), expected > ROWS_PER_PAGE);
+                assert_eq!(screen.scroll_rects().is_some(), expected > ROWS_PER_PAGE);
+            }
         }
-        assert!(cargo.row_index() < cargo.line_count());
+
+        // А подсказка `Keys` (`_(ceb6)`) длиннее страницы и прокручивается.
+        let mut keys = HelpScreen::new(HelpSection::GameScreen, HelpPlacement::Game);
+        keys.toggle_keys();
+        assert!(keys.is_scrollable());
+
+        assert_eq!(keys.key(Key::PageDown), HelpAction::None);
+        assert_eq!(keys.row_index(), ROWS_PER_PAGE);
+        assert_eq!(keys.key(Key::PageUp), HelpAction::None);
+        assert_eq!(keys.row_index(), 0);
+
+        for _ in 0..100 {
+            keys.page_down();
+        }
+        assert!(keys.row_index() < keys.line_count());
     }
 
     #[test]
     fn short_text_is_centered_by_the_draw_rule() {
         // C++ `DrawText`: блок центрируется по вертикали, пока высота < 160.
-        let mut planet = HelpScreen::new(HelpSection::Planet, HelpPlacement::Menu);
+        let mut planet = HelpScreen::for_entry(HelpSection::Planet, HelpPlacement::Menu, 0);
         planet.lines = vec!["line".to_string(); 5];
         planet.row_index = 0;
 
@@ -767,28 +1022,30 @@ mod tests {
             screen.keys_rect(),
             Some(PixelRect::new(253 + 155, 126 + 193, 65, 24))
         );
-        assert!(screen.is_scrollable());
 
-        // `Keys` переключает текст и возвращает наверх.
+        // `Keys` (`_(ceb6)`) длиннее любой записи и прокручивается; переключение
+        // возвращает наверх и обратно к записи.
         let mut screen = screen;
-        screen.page_down();
-        let scrolled = screen.row_index();
-        assert!(scrolled > 0);
         screen.toggle_keys();
         assert!(screen.keys_mode());
-        assert_eq!(screen.row_index(), 0);
-        assert_eq!(
-            screen.lines().len(),
-            wrap_gnw_text(keys_text(), TEXT_RECT.width).len()
-        );
+        assert!(screen.is_scrollable());
+        screen.page_down();
+        assert!(screen.row_index() > 0);
         screen.toggle_keys();
         assert!(!screen.keys_mode());
+        assert_eq!(screen.row_index(), 0);
+        assert_eq!(
+            screen.lines(),
+            wrap_gnw_text(entry_text(HelpSection::GameScreen, 0), TEXT_RECT.width)
+        );
     }
 
     #[test]
     fn keys_close_and_scroll() {
-        let mut screen = HelpScreen::new(HelpSection::Cargo, HelpPlacement::Menu);
-
+        // Запись может не прокручиваться — страничная навигация проверяется на
+        // `Keys` (FONT5, 265 px, строк больше страницы).
+        let mut screen = HelpScreen::new(HelpSection::GameScreen, HelpPlacement::Menu);
+        screen.toggle_keys();
         assert_eq!(screen.key(Key::PageDown), HelpAction::None);
         assert_eq!(screen.row_index(), ROWS_PER_PAGE);
         assert_eq!(screen.key(Key::PageUp), HelpAction::None);
@@ -804,8 +1061,9 @@ mod tests {
 
     #[test]
     fn clicks_hit_buttons_and_ignore_the_rest() {
-        let mut screen = HelpScreen::new(HelpSection::Cargo, HelpPlacement::Game);
-        let (up, down) = screen.scroll_rects().expect("CARGO scrolls");
+        let mut screen = HelpScreen::new(HelpSection::GameScreen, HelpPlacement::Game);
+        screen.toggle_keys();
+        let (up, down) = screen.scroll_rects().expect("Keys прокручивается");
 
         assert_eq!(screen.click(up.ulx + 1, up.uly + 1), HelpAction::None);
         assert_eq!(screen.row_index(), 0);

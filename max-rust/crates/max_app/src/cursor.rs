@@ -165,6 +165,28 @@ pub enum CursorContext {
         /// Можно ли выполнить приказ.
         valid: bool,
     },
+    /// Курсорный режим `load` (`unit->cursor = 7`): `CURSOR_LOAD` над целью,
+    /// которая может сесть в транспорт (`GameManager_GetWindowCursor`).
+    Load {
+        /// Цель под курсором принимается транспортом.
+        valid: bool,
+    },
+    /// Курсорный режим диверсанта «захват» (`cursor = 8`) — `CURSOR_STEAL`.
+    Steal {
+        /// Цель — валидная цель захвата.
+        valid: bool,
+    },
+    /// Курсорный режим диверсанта «отключение» (`cursor = 9`) — `CURSOR_DISABLE`.
+    Disable {
+        /// Цель — валидная цель отключения.
+        valid: bool,
+    },
+    /// Режим наведения (`targeting_mode`): `CURSOR_ENEMY` над целью,
+    /// `CURSOR_UNIT_NO_GO` вне радиуса/без выстрелов.
+    Targeting {
+        /// Попадает ли клетка в радиус и есть ли выстрелы.
+        valid: bool,
+    },
     /// Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`):
     /// `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO` (`GameManager_GetBuilderUnitCursor`).
     BuildSite {
@@ -185,6 +207,14 @@ pub const fn cursor_for_context(context: CursorContext) -> CursorId {
         CursorContext::MapSelected(CursorHover::Empty) => CursorId::UnitGo,
         CursorContext::Order { valid: true } => CursorId::UnitGo,
         CursorContext::Order { valid: false } => CursorId::UnitNoGo,
+        CursorContext::Load { valid: true } => CursorId::Load,
+        CursorContext::Load { valid: false } => CursorId::UnitNoGo,
+        CursorContext::Steal { valid: true } => CursorId::Steal,
+        CursorContext::Steal { valid: false } => CursorId::UnitNoGo,
+        CursorContext::Disable { valid: true } => CursorId::Disable,
+        CursorContext::Disable { valid: false } => CursorId::UnitNoGo,
+        CursorContext::Targeting { valid: true } => CursorId::Enemy,
+        CursorContext::Targeting { valid: false } => CursorId::UnitNoGo,
         CursorContext::BuildSite { valid: true } => CursorId::Map2,
         CursorContext::BuildSite { valid: false } => CursorId::UnitNoGo,
         CursorContext::Help => CursorId::Help,
@@ -268,6 +298,12 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
         return (CursorId::Hand, 0);
     };
 
+    // Режим помощи (`HelpMenu_Menu`): `Cursor_SetCursor(CURSOR_HELP)`
+    // (`helpmenu.cpp:318`).
+    if app.help_mode().is_some() {
+        return (CursorId::Help, 0);
+    }
+
     if crate::panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y)
     {
         return (CursorId::Hand, 0);
@@ -291,8 +327,9 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
     }
 
     let player_team = app.state().player_team;
-    let selected = app.selected_unit().is_some();
+    let selected = app.selected_unit().cloned();
     let mut hover = None;
+    let mut hover_unit = None;
 
     for id in app
         .state()
@@ -304,17 +341,102 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
 
         if unit.team == player_team {
             hover = Some(CursorHover::Friend);
+            hover_unit = Some(unit.clone());
             break;
         }
 
         if unit.is_visible_to_team(player_team) {
             hover = Some(CursorHover::Enemy);
+            hover_unit = Some(unit.clone());
+        }
+    }
+
+    let cell = max_core::geo::Point::new(grid_x, grid_y);
+
+    // Курсорные режимы выделенного юнита — `GameManager_GetWindowCursor`
+    // (`game_manager.cpp:6009-6082`) и `GameManager_GetMilitaryCursor` (`:6150`).
+    if let Some(selected) = selected.as_ref() {
+        let mode = app.hud().cursor_mode;
+
+        match hover {
+            Some(CursorHover::Friend) => {
+                if mode == crate::unitmenu::CURSOR_LOAD {
+                    let valid = hover_unit
+                        .as_ref()
+                        .is_some_and(|target| crate::unitmenu::load_mode_applies(selected, target));
+
+                    return (cursor_for_context(CursorContext::Load { valid }), 0);
+                }
+
+                return (cursor_for_context(CursorContext::MapSelected(CursorHover::Friend)), 0);
+            }
+            Some(CursorHover::Enemy) => {
+                if mode == crate::unitmenu::CURSOR_STEAL
+                    || mode == crate::unitmenu::CURSOR_DISABLE
+                {
+                    let order = if mode == crate::unitmenu::CURSOR_STEAL {
+                        max_core::enums::UnitOrder::AwaitStealUnit
+                    } else {
+                        max_core::enums::UnitOrder::AwaitDisableUnit
+                    };
+                    let valid = hover_unit.as_ref().is_some_and(|target| {
+                        crate::unitmenu::is_valid_stealth_target(
+                            app.state(),
+                            selected,
+                            target,
+                            order,
+                        )
+                    });
+                    let context = if mode == crate::unitmenu::CURSOR_STEAL {
+                        CursorContext::Steal { valid }
+                    } else {
+                        CursorContext::Disable { valid }
+                    };
+
+                    return (cursor_for_context(context), 0);
+                }
+
+                if app.hud().targeting_mode {
+                    let valid = selected.shots > 0
+                        && max_core::access::is_within_attack_range(
+                            app.state(),
+                            selected,
+                            cell,
+                            i32::from(selected.base_values.get_attribute(
+                                max_core::unit_values::ATTRIB_RANGE,
+                            )),
+                        );
+
+                    return (cursor_for_context(CursorContext::Targeting { valid }), 0);
+                }
+            }
+            None | Some(CursorHover::Empty) => {
+                // `targeting_mode` над пустой клеткой — `CURSOR_ENEMY`, если
+                // клетка в радиусе и есть выстрелы (`game_manager.cpp:4384`).
+                if app.hud().targeting_mode {
+                    let valid = selected.shots > 0
+                        && max_core::access::is_within_attack_range(
+                            app.state(),
+                            selected,
+                            cell,
+                            i32::from(selected.base_values.get_attribute(
+                                max_core::unit_values::ATTRIB_RANGE,
+                            )),
+                        );
+
+                    return (cursor_for_context(CursorContext::Targeting { valid }), 0);
+                }
+
+                if mode != 0 {
+                    return (CursorId::UnitNoGo, 0);
+                }
+            }
         }
     }
 
     let context = if app.hud().preview.is_some() {
         CursorContext::Order { valid: true }
-    } else if selected {
+    } else if selected.is_some() {
         CursorContext::MapSelected(hover.unwrap_or(CursorHover::Empty))
     } else {
         CursorContext::MapIdle

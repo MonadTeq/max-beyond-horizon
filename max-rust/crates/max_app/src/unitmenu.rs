@@ -68,8 +68,12 @@
 //!
 //! Пункт, механика которого в нашем стеке не портирована, остаётся в списке
 //! (как в C++), но рисуется серым и не срабатывает — причина в
-//! [`UnitMenuItem::note`]. Список причин — `docs/analysis/visual-1to1-status.md`
-//! (раздел «Меню команд юнита»).
+//! [`UnitMenuItem::note`]. С 2026-11-20 (B1) включены `attack` (targeting_mode),
+//! `load` (курсорный режим 7), `disable`/`steal` (режимы 9/8), бульдозер
+//! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) и `Upg. All`.
+//! Отключён только `activate` (`RepairShopMenu` не портирован); мастер-строитель
+//! пункт не регистрирует (`FindValidPowerGeneratorPosition`). Список причин и
+//! ссылки — `docs/analysis/visual-1to1-status.md` §33.
 //!
 //! # Осознанные расхождения
 //!
@@ -93,7 +97,7 @@ use max_core::geo::Point;
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::unit_values::{
     ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN,
-    ATTRIB_SPEED, ATTRIB_TURNS,
+    ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
 };
 use max_core::victory::{cargo_type_of, CargoType};
 use max_render::buffer::{PixelRect, RgbaBuffer};
@@ -462,10 +466,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
     // `upgrade`/`Upg. All`.
     if is_upgrade_available(state, unit) {
         items.push(UnitMenuItem::new(ItemId::Upgrade, "upgrade", '5', false));
-        items.push(
-            UnitMenuItem::new(ItemId::UpgradeAll, "Upg. All", '6', false)
-                .disabled("UnitsManager_Popup_OnClick_UpgradeAll (комплексы/материалы) не портирован"),
-        );
+        items.push(UnitMenuItem::new(ItemId::UpgradeAll, "Upg. All", '6', false));
     }
 
     // `sentry` + `Done`.
@@ -491,12 +492,9 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         items.push(UnitMenuItem::new(ItemId::Done, "Done", '9', false));
     }
 
-    // `remove` — самоуничтожение здания.
+    // `remove` — самоуничтожение здания (`UnitsManager_SelfDestructMenu`).
     if unit.flags & unit_flags::STATIONARY != 0 {
-        items.push(
-            UnitMenuItem::new(ItemId::RemoveStationary, "remove", '0', false)
-                .disabled("UnitsManager_SelfDestructMenu не портирован"),
-        );
+        items.push(UnitMenuItem::new(ItemId::RemoveStationary, "remove", '0', false));
     }
 }
 
@@ -519,24 +517,20 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             items.push(UnitMenuItem::new(ItemId::Auto, "Auto", '1', unit.auto_survey));
         }
         InitKind::Military => {
-            items.push(
-                UnitMenuItem::new(ItemId::Attack, "attack", '3', false)
-                    .disabled("targeting_mode не портирован: атака — кликом по врагу"),
-            );
+            // `UnitsManager_Popup_OnClick_TargetingMode` (`units_manager.cpp:617`).
+            items.push(UnitMenuItem::new(ItemId::Attack, "attack", '3', false));
         }
         InitKind::Infiltrator => {
-            items.push(
-                UnitMenuItem::new(ItemId::Disable, "disable", '1', false)
-                    .disabled("курсорный режим диверсанта (cursor=9) не портирован"),
-            );
-            items.push(
-                UnitMenuItem::new(ItemId::Steal, "steal", '2', false)
-                    .disabled("курсорный режим диверсанта (cursor=8) не портирован"),
-            );
-            items.push(
-                UnitMenuItem::new(ItemId::Attack, "attack", '3', false)
-                    .disabled("targeting_mode не портирован: атака — кликом по врагу"),
-            );
+            // `UnitsManager_Popup_InitInfiltrator` (`units_manager.cpp:932`):
+            // `disable`/`steal` — курсорные режимы 9/8, `attack` — наведение.
+            items.push(UnitMenuItem::new(
+                ItemId::Disable,
+                "disable",
+                '1',
+                false,
+            ));
+            items.push(UnitMenuItem::new(ItemId::Steal, "steal", '2', false));
+            items.push(UnitMenuItem::new(ItemId::Attack, "attack", '3', false));
         }
         InitKind::Reloaders => {
             items.push(UnitMenuItem::new(ItemId::Reload, "reload", '1', false));
@@ -618,16 +612,17 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
         }
         InitKind::PowerGenerators => power_items(unit, "start", items),
         InitKind::Remove => {
+            // `UnitsManager_Popup_InitRemove` (`units_manager.cpp:1123`):
+            // в `ORDER_CLEAR` — `stop` (`_(bc20)`), иначе `remove` (`_(9737)`).
             if unit.orders == UnitOrder::Clear {
-                items.push(
-                    UnitMenuItem::new(ItemId::StopRemove, "stop", '7', false)
-                        .disabled("GameManager_SelectBuildSite (сброс расчистки) не портирован"),
-                );
+                items.push(UnitMenuItem::new(ItemId::StopRemove, "stop", '7', false));
             } else {
-                items.push(
-                    UnitMenuItem::new(ItemId::RemoveRubble, "remove", '0', false)
-                        .disabled("Access_GetRemovableRubble/ORDER_CLEAR из попапа не портированы"),
-                );
+                items.push(UnitMenuItem::new(
+                    ItemId::RemoveRubble,
+                    "remove",
+                    '0',
+                    false,
+                ));
             }
         }
         InitKind::Master => {
@@ -647,12 +642,12 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             };
             items.push(
                 UnitMenuItem::new(ItemId::Activate, caption, '1', false)
-                    .disabled("RepairShopMenu_Menu не портирован"),
+                    .disabled("RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141"),
             );
-            items.push(
-                UnitMenuItem::new(ItemId::Load, "load", '2', false)
-                    .disabled("погрузка в транспорт (Land + parent) не портирована"),
-            );
+            // `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`):
+            // тумблер курсорного режима 7; погрузка — `GameManager_ProcessMouse`
+            // (CURSOR_LOAD, `game_manager.cpp:6807-6842`).
+            items.push(UnitMenuItem::new(ItemId::Load, "load", '2', false));
         }
     }
 
@@ -1010,8 +1005,8 @@ pub fn p3_order(
 ///
 /// `x-fer` (`cursor = 3`) обрабатывается в UI окном
 /// [`crate::transfermenu`] (`GameManager_TransferCargo` → `TransferMenu_Menu`):
-/// здесь он не превращается в приказ. `load`/`steal`/`disable` — не
-/// портированы (см. шапку модуля).
+/// здесь он не превращается в приказ. `load` — [`load_mode_click`],
+/// `steal`/`disable` — [`stealth_mode_click`] (клик по врагу, см. `ui.rs`).
 pub fn cursor_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1076,6 +1071,478 @@ pub fn enter_mode_click(
     )
 }
 
+/// Курсорный режим диверсанта «захват» — C++ `unit->cursor = 8`
+/// (`CURSOR_ARROW_W`, `UnitsManager_Popup_OnClick_Steal`).
+pub const CURSOR_STEAL: u8 = 8;
+/// Курсорный режим диверсанта «отключение» — C++ `unit->cursor = 9`
+/// (`CURSOR_ARROW_NW`, `UnitsManager_Popup_OnClick_Disable`).
+pub const CURSOR_DISABLE: u8 = 9;
+
+/// `UnitsManager_IsValidStealthTarget` (`units_manager.cpp:1370`) — что вообще
+/// может быть целью диверсанта: электронный юнит, не свой, живой, не в полёте,
+/// не `IDLE`/`TRANSFORM`/`FIRE`/`EXPLODE`, по соседству и валиден как цель
+/// атаки. Для `ORDER_AWAIT_STEAL_UNIT` — ещё и не стационарный/не занятый
+/// транспортом с грузом.
+pub fn is_valid_stealth_target(
+    state: &GameState,
+    unit: &UnitInfo,
+    target: &UnitInfo,
+    order: UnitOrder,
+) -> bool {
+    let target_order = target.orders;
+
+    if target.team == unit.team
+        || target.hits == 0
+        || target.flags & unit_flags::ELECTRONIC_UNIT == 0
+        || (target.flags & unit_flags::MOBILE_AIR_UNIT != 0
+            && target.flags & unit_flags::HOVERING != 0)
+        || target_order == UnitOrder::Idle
+        || (target_order == UnitOrder::AwaitScaling && target.prior_orders == UnitOrder::Idle)
+        || target_order == UnitOrder::Transform
+        || target_order == UnitOrder::Fire
+        || target_order == UnitOrder::Explode
+        || target.state == UnitOrderState::Destroy
+        || !max_core::access::is_adjacent_to_grid(target, unit.grid)
+        || !max_core::access::is_valid_attack_target(state, unit, target)
+    {
+        return false;
+    }
+
+    if order == UnitOrder::AwaitStealUnit {
+        let transport_with_cargo = matches!(
+            target.unit_type,
+            UnitType::PersonnelCarrier | UnitType::SeaTransport | UnitType::AirTransport
+        ) && target.storage != 0;
+
+        target.flags & unit_flags::STATIONARY == 0 && !transport_with_cargo
+    } else {        target_order != UnitOrder::Disable
+    }
+}
+
+/// Клик по чужому юниту в курсорном режиме диверсанта (8/9) —
+/// `GameManager_ProcessMouse` → `GameManager_StealUnit`/`GameManager_DisableUnit`
+/// (`game_manager.cpp:4680/4696`).
+///
+/// Ставит `parent = цель`, `stealth_dice_roll = Randomizer_Generate(101)` и
+/// `ORDER_AWAIT_STEAL_UNIT`/`ORDER_AWAIT_DISABLE_UNIT` + `INIT` (пакет 08/P3).
+/// `Err` — у диверсанта не осталось действия на этот ход (`_(f37a)`/`_(3e56)`).
+pub fn stealth_mode_click(
+    state: &GameState,
+    selected: UnitId,
+    target: UnitId,
+    cursor: u8,
+    stealth_dice_roll: u8,
+) -> Result<Option<max_core::input::Command>, String> {
+    let (order, message) = match cursor {
+        CURSOR_STEAL => (
+            UnitOrder::AwaitStealUnit,
+            "Infiltrator has already used his action this turn. Try again next turn.",
+        ),
+        CURSOR_DISABLE => (
+            UnitOrder::AwaitDisableUnit,
+            "Infiltrator has already used his action this turn. Try again next turn.",
+        ),
+        _ => return Ok(None),
+    };
+
+    let Some(unit) = state.unit(selected) else {
+        return Ok(None);
+    };
+    if selected == target || unit.unit_type != UnitType::Commando || unit.shots == 0 {
+        return Err(message.to_string());
+    }
+
+    // `Access_GetAttackTarget(unit1, target->grid)` (напр. цель-платформа).
+    let Some(target_unit) = state.unit(target) else {
+        return Ok(None);
+    };
+    let target_id = if is_valid_stealth_target(state, unit, target_unit, order) {
+        target
+    } else if let Some(other) =
+        max_core::access::get_attack_target(state, unit, target_unit.grid, false)
+    {
+        let Some(other_unit) = state.unit(other) else {
+            return Ok(None);
+        };
+        if !is_valid_stealth_target(state, unit, other_unit, order) {
+            return Ok(None);
+        }
+        other
+    } else {
+        return Ok(None);
+    };
+
+    let unit = state.unit(selected).expect("юнит проверен");
+    let payload = max_core::input::PayloadP3 {
+        p2: max_core::input::PayloadP2 {
+            p1: max_core::input::PayloadP1 {
+                order,
+                state: UnitOrderState::Init,
+                prior_order: unit.orders,
+                prior_state: unit.state,
+                disabled_reaction_fire: unit.disabled_reaction_fire,
+            },
+            parent_unit: Some(target_id),
+            experience: unit.experience,
+        },
+        move_to: unit.target_grid,
+        fire_on: state.order_data(selected).fire_on,
+        enemy_unit: None,
+        transfer_cargo: unit.transfer_cargo,
+        stealth_dice_roll,
+    };
+
+    Ok(Some(max_core::input::Command::Order(
+        max_core::input::Packet08Order {
+            unit: selected,
+            payload: max_core::input::OrderPayload::P3(payload),
+        },
+    )))
+}
+
+/// Условия показа `CURSOR_LOAD` над целью — `GameManager_GetWindowCursor`
+/// (`game_manager.cpp:4416-4518`): у выделенного есть место, а цель — тот тип,
+/// который этот транспорт/цех принимает.
+pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
+    if selected.id == target.id || selected.team != target.team || target.hits == 0 {
+        return false;
+    }
+
+    let storage = selected.base_values.get_attribute(ATTRIB_STORAGE);
+    if i32::from(selected.storage) >= storage {
+        return false;
+    }
+
+    let target_land = target.flags & unit_flags::MOBILE_LAND_UNIT != 0;
+    let target_air = target.flags & unit_flags::MOBILE_AIR_UNIT != 0;
+    let target_sea = target.flags & unit_flags::MOBILE_SEA_UNIT != 0;
+    let infantry = matches!(
+        target.unit_type,
+        UnitType::Commando | UnitType::Infantry
+    );
+
+    match selected.unit_type {
+        UnitType::AirTransport => target_land,
+        UnitType::PersonnelCarrier => infantry,
+        UnitType::SeaTransport => target_land,
+        UnitType::Depot => target_land && !infantry,
+        UnitType::Hangar => target_air,
+        UnitType::Dock => target_sea && !target_land,
+        UnitType::Barracks => infantry,
+        _ => false,
+    }
+}
+
+/// Клик в курсорном режиме `load` (`cursor = 7`) —
+/// `GameManager_ProcessMouse`, ветка `CURSOR_LOAD` (`game_manager.cpp:6807-6842`).
+///
+/// * `AIRTRANS`: транспорт летит в клетку цели (`parent = цель`);
+/// * цель отключена — сообщение `_(9897)`;
+/// * цель уже в клетке транспорта и готова — `ORDER_LAND`/`INIT` с
+///   `parent = транспорт` (пассажир «складывается» в груз);
+/// * иначе — **цель** получает `ORDER_MOVE_TO_UNIT` в клетку транспорта
+///   (`GameManager_Unit` в C++, не выделенный юнит).
+pub fn load_mode_click(
+    state: &GameState,
+    selected: UnitId,
+    target: UnitId,
+) -> Result<Option<max_core::input::Command>, String> {
+    let Some(unit) = state.unit(selected) else {
+        return Ok(None);
+    };
+    let Some(target_unit) = state.unit(target) else {
+        return Ok(None);
+    };
+
+    if selected == target || unit.team != target_unit.team || target_unit.hits == 0 {
+        return Ok(None);
+    }
+
+    if i32::from(unit.storage) >= unit.base_values.get_attribute(ATTRIB_STORAGE) {
+        return Ok(None);
+    }
+
+    if target_unit.orders == UnitOrder::Disable {
+        return Err("Unable to load disabled units.".to_string());
+    }
+
+    if unit.unit_type == UnitType::AirTransport {
+        let payload = max_core::input::PayloadP3 {
+            p2: max_core::input::PayloadP2 {
+                p1: max_core::input::PayloadP1 {
+                    order: UnitOrder::Move,
+                    state: UnitOrderState::Init,
+                    prior_order: unit.orders,
+                    prior_state: unit.state,
+                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                },
+                parent_unit: Some(target),
+                experience: unit.experience,
+            },
+            move_to: target_unit.grid,
+            fire_on: state.order_data(selected).fire_on,
+            enemy_unit: None,
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+        };
+
+        return Ok(Some(max_core::input::Command::Order(
+            max_core::input::Packet08Order {
+                unit: selected,
+                payload: max_core::input::OrderPayload::P3(payload),
+            },
+        )));
+    }
+
+    let same_cell = unit.grid == target_unit.grid
+        && target_unit.state == UnitOrderState::ExecutingOrder;
+
+    if same_cell {
+        return Ok(p2_order(
+            state,
+            target,
+            UnitOrder::Land,
+            UnitOrderState::Init,
+            Some(selected),
+        ));
+    }
+
+    Ok(p3_order(
+        state,
+        target,
+        UnitOrder::MoveToUnit,
+        UnitOrderState::Init,
+        unit.grid,
+        None,
+    ))
+}
+
+/// `Access_GetRemovableRubble` (`access.cpp:1817`): обломки в клетке, которые
+/// бульдозер может убрать. `LRGRUBLE` требует, чтобы остальные три клетки 2×2
+/// были проходимы для `BULLDOZR` (`Access_IsAccessible` с
+/// `AccessModifier_SameClassBlocks`).
+pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: Point) -> Option<UnitId> {
+    for id in state.units_at(grid).iter().copied() {
+        let Some(unit) = state.unit(id) else {
+            continue;
+        };
+
+        match unit.unit_type {
+            UnitType::SmallRubble => return Some(id),
+            UnitType::LargeRubble => {
+                for y in unit.grid.y..=unit.grid.y + 1 {
+                    for x in unit.grid.x..=unit.grid.x + 1 {
+                        if x == grid.x && y == grid.y {
+                            continue;
+                        }
+
+                        if max_core::access::is_accessible(
+                            state,
+                            UnitType::Bulldozer,
+                            team,
+                            Point::new(x, y),
+                            max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                        ) == 0
+                        {
+                            return None;
+                        }
+                    }
+                }
+
+                return Some(id);
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Приказ `ORDER_CLEAR` бульдозеру — `UnitsManager_Popup_OnClick_StopRemove`
+/// (`units_manager.cpp:1082-1121`): родитель — обломки, `build_time` = 4 для
+/// здания и 1 для прочих обломков.
+pub fn clear_order(
+    state: &GameState,
+    selected: UnitId,
+    rubble: UnitId,
+) -> Option<max_core::input::Command> {
+    p3_order(
+        state,
+        selected,
+        UnitOrder::Clear,
+        UnitOrderState::Init,
+        state.unit(rubble).map(|unit| unit.grid).unwrap_or(Point::ZERO),
+        None,
+    )
+}
+
+/// Строка «номер марки» — `UnitInfo::GetVersion` (`unitinfo.cpp:2930`):
+/// римские цифры версии `UnitValues` (`Mk I`, `Mk II`, …).
+pub fn roman_version(mut version: u16) -> String {
+    fn digit(out: &mut String, count: u16, one: &str, five: &str, ten: &str) {
+        match count {
+            0 => {}
+            1 => out.push_str(one),
+            2 => out.push_str(&one.repeat(2)),
+            3 => out.push_str(&one.repeat(3)),
+            4 => {
+                out.push_str(one);
+                out.push_str(five);
+            }
+            5 => out.push_str(five),
+            6 => {
+                out.push_str(five);
+                out.push_str(one);
+            }
+            7 => {
+                out.push_str(five);
+                out.push_str(&one.repeat(2));
+            }
+            8 => {
+                out.push_str(five);
+                out.push_str(&one.repeat(3));
+            }
+            _ => {
+                out.push_str(one);
+                out.push_str(ten);
+            }
+        }
+    }
+
+    let mut out = String::new();
+    digit(&mut out, version / 100, "C", "D", "M");
+    version %= 100;
+    digit(&mut out, version / 10, "X", "L", "C");
+    version %= 10;
+    digit(&mut out, version, "I", "V", "X");
+
+    out
+}
+
+/// Результат `Upg. All` — приказы и сообщение (`UnitsManager_Popup_OnClick_UpgradeAll`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeAllReport {
+    /// `ORDER_UPGRADE`/`EXECUTING_ORDER` (P2) каждому улучшенному зданию.
+    pub commands: Vec<max_core::input::Command>,
+    /// Сколько зданий улучшено.
+    pub count: usize,
+    /// Потрачено сырья по комплексам.
+    pub material_cost: i32,
+    /// Сообщение игроку (`_(a0ee)`/`_(8967)`/`_(2693)`).
+    pub message: String,
+}
+
+/// `UnitsManager_Popup_OnClick_UpgradeAll` (`units_manager.cpp:414-496`):
+/// улучшить **все** здания своей команды того же типа, что и выделенное, по
+/// комплексам, списывая стоимость из материалов комплекса (`GetCargoInfo`).
+///
+/// `get_normal_rate_build_cost(unit) / 4` — `UnitInfo::GetUpgradeCost()`.
+pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeAllReport> {
+    let unit = state.unit(unit_id)?;
+    let team = unit.team;
+    let unit_type = unit.unit_type;
+    let upgrade_cost = max_core::victory::get_normal_rate_build_cost(unit) / 4;
+
+    let ids: Vec<UnitId> = state
+        .unit_list(max_core::unit::UnitListKind::Stationary)
+        .to_vec();
+    let mut complexes: Vec<max_core::team::ComplexId> = Vec::new();
+    let mut costs: Vec<i32> = Vec::new();
+    let mut commands = Vec::new();
+    let mut material_cost = 0;
+    let mut count = 0;
+    let mut last: Option<UnitId> = None;
+
+    for id in ids {
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
+
+        if other.team != team
+            || other.unit_type != unit_type
+            || !is_upgrade_available(state, other)
+            || other.state == UnitOrderState::UnitReady
+        {
+            continue;
+        }
+
+        let Some(complex) = other.complex else {
+            continue;
+        };
+
+        let index = match complexes.iter().position(|known| *known == complex) {
+            Some(index) => index,
+            None => {
+                // `(*it).GetComplex()->GetCargoInfo(materials, capacity)`: в
+                // порте агрегат комплекса уже пересчитан `OptimizeComplexes`
+                // (`GameState::update_complex_resources`), поэтому берём его
+                // поле `material` без повторного суммирования складов.
+                let materials = state
+                    .complex(team, complex.0 as u16)
+                    .map(|complex| i32::from(complex.material))
+                    .unwrap_or(0);
+
+                complexes.push(complex);
+                costs.push(materials);
+
+                complexes.len() - 1
+            }
+        };
+
+        if costs[index] >= upgrade_cost {
+            if let Some(command) = p2_order(
+                state,
+                id,
+                UnitOrder::Upgrade,
+                UnitOrderState::ExecutingOrder,
+                Some(id),
+            ) {
+                commands.push(command);
+            }
+
+            costs[index] -= upgrade_cost;
+            material_cost += upgrade_cost;
+            count += 1;
+            last = Some(id);
+        }
+    }
+
+    let version = roman_version(
+        state
+            .team_units
+            .get(team.0 as usize)
+            .map(|units| units.current_unit_values(unit_type as u16).version)
+            .unwrap_or(1),
+    );
+    let name = crate::buildmenu::unit_name(unit_type);
+
+    let message = if count == 0 {
+        format!("{upgrade_cost} raw material needed to upgrade.")
+    } else if count == 1 {
+        format!("{name} upgraded to mark {version} for {material_cost} raw material.")
+    } else {
+        format!("{count} {name} upgraded to mark {version} for {material_cost} raw material.")
+    };
+
+    let _ = last;
+
+    Some(UpgradeAllReport {
+        commands,
+        count,
+        material_cost,
+        message,
+    })
+}
+
+/// Приказ самоуничтожения здания — `UnitsManager_SetNewOrder(unit,
+/// ORDER_EXPLODE, ORDER_STATE_EXPLODE)` (`units_manager.cpp:506-511`).
+pub fn explode_order(
+    state: &GameState,
+    unit_id: UnitId,
+) -> Option<max_core::input::Command> {
+    p1_order(state, unit_id, UnitOrder::Explode, UnitOrderState::Explode)
+}
+
 /// Строка журнала для пункта, который ничего не делает (отключён).
 pub fn disabled_line(item: &UnitMenuItem) -> String {
     format!("{}: {}", item.caption, item.note)
@@ -1124,7 +1591,10 @@ mod tests {
 
         // `attack` и `sentry` — порядок позиций 3 и 8, `Done` — 9.
         assert_eq!(items[0].id, ItemId::Attack);
-        assert!(!items[0].enabled, "targeting_mode не портирован");
+        assert!(
+            items[0].enabled,
+            "attack — тумблер targeting_mode (UnitsManager_Popup_OnClick_TargetingMode)"
+        );
         assert_eq!(items[1].id, ItemId::Enter);
         assert!(items[1].enabled);
         assert_eq!(items[2].id, ItemId::Sentry);
@@ -1226,7 +1696,7 @@ mod tests {
     }
 
     #[test]
-    fn transport_lists_load_and_disable_reason() {
+    fn transport_lists_load_and_activate() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::PersonnelCarrier);
         let unit = state.unit(id).expect("транспорт").clone();
@@ -1237,9 +1707,80 @@ mod tests {
             .find(|item| item.id == ItemId::Load)
             .expect("load у транспорта");
 
-        assert!(!load.enabled, "погрузка не портирована");
-        assert!(!load.note.is_empty());
-        assert!(items.iter().any(|item| item.id == ItemId::Activate));
+        assert!(
+            load.enabled,
+            "load — тумблер курсорного режима 7 (UnitsManager_Popup_OnClick_Load)"
+        );
+        assert!(load.note.is_empty());
+
+        // `activate` (RepairShopMenu) остаётся отключённым — экран не портирован.
+        let activate = items
+            .iter()
+            .find(|item| item.id == ItemId::Activate)
+            .expect("activate у транспорта");
+        assert!(!activate.enabled);
+        assert!(!activate.note.is_empty());
+    }
+
+    #[test]
+    fn infiltrator_has_stealth_and_targeting_items_enabled() {
+        let mut state = test_state();
+        let id = spawn(&mut state, UnitType::Commando);
+        let unit = state.unit(id).expect("диверсант").clone();
+        let items = items_for(&state, &unit);
+
+        for id in [ItemId::Disable, ItemId::Steal, ItemId::Attack] {
+            let item = items
+                .iter()
+                .find(|item| item.id == id)
+                .unwrap_or_else(|| panic!("{id:?} у диверсанта"));
+
+            assert!(item.enabled, "{id:?} должен быть включён");
+            assert!(item.note.is_empty(), "{id:?}: {}", item.note);
+        }
+    }
+
+    #[test]
+    fn stationary_building_offers_enabled_remove_and_upgrade_all() {
+        let mut state = test_state();
+        let id = spawn(&mut state, UnitType::PowerStation);
+
+        // У апгрейда есть что улучшать: текущие значения команды выше базы.
+        if let Some(team_units) = state.team_units.get_mut(0) {
+            let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
+            let hits = values.get_attribute(ATTRIB_HITS);
+            values.set_attribute(ATTRIB_HITS, hits + 10);
+        }
+
+        let unit = state.unit(id).expect("здание").clone();
+        let items = items_for(&state, &unit);
+
+        let remove = items
+            .iter()
+            .find(|item| item.id == ItemId::RemoveStationary)
+            .expect("remove у здания");
+        assert!(remove.enabled, "remove открывает UnitsManager_SelfDestructMenu");
+
+        let upgrade_all = items
+            .iter()
+            .find(|item| item.id == ItemId::UpgradeAll)
+            .expect("Upg. All у здания");
+        assert!(upgrade_all.enabled, "Upg. All портирован");
+    }
+
+    #[test]
+    fn bulldozer_has_enabled_remove_rubble() {
+        let mut state = test_state();
+        let id = spawn(&mut state, UnitType::Bulldozer);
+        let unit = state.unit(id).expect("бульдозер").clone();
+        let items = items_for(&state, &unit);
+
+        let remove = items
+            .iter()
+            .find(|item| item.id == ItemId::RemoveRubble)
+            .expect("remove у бульдозера");
+        assert!(remove.enabled, "бульдозер → Access_GetRemovableRubble");
+        assert!(remove.note.is_empty());
     }
 
     #[test]
@@ -1332,17 +1873,18 @@ mod tests {
 
     #[test]
     fn disabled_item_is_not_activated_by_click_or_key() {
-        let mut state = test_state();
-        let id = spawn(&mut state, UnitType::Tank);
-        let unit = state.unit(id).expect("танк").clone();
-        let menu = UnitMenu::new(
-            &state,
-            &unit,
-            (400, 200),
-            PixelRect::new(180, 18, 448, 448),
-            64,
-        )
-        .expect("меню");
+        // Меню с отключённым пунктом: в C++ кнопка без обработчика не реагирует
+        // (у нас остался только `activate` ремонтного цеха).
+        let menu = UnitMenu {
+            unit: UnitId(1),
+            items: vec![
+                UnitMenuItem::new(ItemId::Activate, "activate", '1', false)
+                    .disabled("RepairShopMenu не портирован"),
+                UnitMenuItem::new(ItemId::Done, "Done", '9', false),
+            ],
+            rect: UnitMenu::layout((400, 200), 2, PixelRect::new(180, 18, 448, 448), 64),
+            hover: None,
+        };
 
         let rect = menu.button_rect(0);
         let centre = (rect.ulx + 1, rect.uly + 1);
@@ -1350,11 +1892,20 @@ mod tests {
         assert_eq!(
             menu_event(&menu, crate::ui::InputEvent::MouseClick(centre.0, centre.1)),
             MenuEvent::None,
-            "attack отключён — клик не срабатывает"
+            "отключённый пункт не срабатывает"
         );
         assert_eq!(
-            menu_event(&menu, crate::ui::InputEvent::Key(Key::Char('3'))),
+            menu_event(&menu, crate::ui::InputEvent::Key(Key::Char('1'))),
             MenuEvent::None
+        );
+        // Включённый пункт срабатывает.
+        let done = menu.button_rect(1);
+        assert_eq!(
+            menu_event(
+                &menu,
+                crate::ui::InputEvent::MouseClick(done.ulx + 1, done.uly + 1)
+            ),
+            MenuEvent::Item(1)
         );
         // Клик вне меню — закрытие.
         assert_eq!(

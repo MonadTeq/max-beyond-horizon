@@ -410,6 +410,10 @@ pub struct HudState {
     pub cursor_mode: u8,
     /// Режим «войти в транспорт» — C++ `UnitInfo::enter_mode`; UI-состояние.
     pub enter_mode: bool,
+    /// Режим наведения — C++ `UnitInfo::targeting_mode`: клик по врагу/пустой
+    /// клетке в радиусе даёт `ORDER_MOVE_TO_ATTACK`/`ORDER_FIRE`
+    /// (`GameManager_GetWindowCursor`/`SetUnitOrder`, `game_manager.cpp:4384`).
+    pub targeting_mode: bool,
     /// Подсказка сверху карты — C++ `MessageManager_DrawMessage`
     /// (`MESSAGE_BOX_INFO`, `MESSAGE_BOX_MODELESS`) из
     /// `GameManager_DrawUnitStatusMessage`. Для строящего юнита:
@@ -443,6 +447,7 @@ impl HudState {
             mouse_position: None,
             cursor_mode: 0,
             enter_mode: false,
+            targeting_mode: false,
             hint: None,
         }
     }
@@ -461,6 +466,7 @@ impl HudState {
         if self.selected != id {
             self.cursor_mode = 0;
             self.enter_mode = false;
+            self.targeting_mode = false;
         }
         self.selected = id;
     }
@@ -476,6 +482,7 @@ impl HudState {
         self.preview = None;
         self.cursor_mode = 0;
         self.enter_mode = false;
+        self.targeting_mode = false;
         self.hint = None;
     }
 
@@ -743,6 +750,41 @@ pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Opti
     Some(Command::Order(Packet08Order {
         unit: id,
         payload: OrderPayload::P3(payload),
+    }))
+}
+
+/// Приказ стрельбы по клетке без цели — C++ `GameManager_SetUnitOrder`
+/// (`game_manager.cpp:6360-6370`): в `targeting_mode` клик по пустой клетке в
+/// радиусе даёт `fire_on_grid = (x, y)` и `ORDER_FIRE`/`ORDER_STATE_INIT`.
+///
+/// `None` — у юнита нет выстрелов или он не может стрелять.
+pub fn build_ground_fire_order(state: &GameState, id: UnitId, grid: Point) -> Option<Command> {
+    let unit = state.unit(id)?;
+
+    if unit.hits == 0 || unit.shots == 0 {
+        return None;
+    }
+
+    Some(Command::Order(Packet08Order {
+        unit: id,
+        payload: OrderPayload::P3(PayloadP3 {
+            p2: PayloadP2 {
+                p1: PayloadP1 {
+                    order: UnitOrder::Fire,
+                    state: UnitOrderState::Init,
+                    prior_order: unit.orders,
+                    prior_state: unit.state,
+                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                },
+                parent_unit: unit.parent_unit,
+                experience: unit.experience,
+            },
+            move_to: grid,
+            fire_on: grid,
+            enemy_unit: unit.enemy_unit,
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+        }),
     }))
 }
 

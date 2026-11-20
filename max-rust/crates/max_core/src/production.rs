@@ -681,6 +681,19 @@ pub fn site_anchor_for_cursor(builder_grid: Point, cursor: Point, previous: Poin
     Point::new(anchor_x, anchor_y)
 }
 
+/// Курсорная часть `GameManager_GetBuilderUnitCursor` для `ENGINEER`
+/// (`game_manager.cpp:5854-5909`).
+///
+/// Инженер ставит **1×1**-ленту (`SMLTAPE`) ровно в клетку под курсором:
+/// C++ не привязывает её к строителю (`target_grid_x = grid_x`,
+/// `target_grid_y = grid_y`), но разрешает только клетки **в своей строке или
+/// столбце** (`grid_x == unit_grid_x || grid_y == unit_grid_y`), иначе
+/// `CURSOR_UNIT_NO_GO`. Проходимость проверяет `UnitsManager_MoveUnitAndParent`
+/// (в порте — [`is_site_accessible_ignoring`] без строителя и ленты).
+pub fn engineer_site_covers(builder_grid: Point, cursor: Point) -> bool {
+    cursor.x == builder_grid.x || cursor.y == builder_grid.y
+}
+
 /// Накрывает ли площадка типа `unit_type` с якорем `anchor` клетку `cursor`
 /// (`UnitsManager_MoveUnitAndParent` + проверка попадания в `GameManager_GetBuilderUnitCursor`).
 pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {

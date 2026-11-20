@@ -261,6 +261,17 @@ pub enum Assertion {
     /// `assert unit-menu-disabled=NAME`: пункт есть, но отключён (механика не
     /// портирована).
     UnitMenuDisabled(String),
+    /// `assert unit-menu-enabled=NAME`: пункт меню есть и включён.
+    UnitMenuEnabled(String),
+    /// `assert cursor=load|steal|disable|repair|reload|transfer|none`: курсорный
+    /// режим выделенного юнита (C++ `UnitInfo::cursor`).
+    CursorMode(String),
+    /// `assert targeting=on|off`: режим наведения (`targeting_mode`).
+    Targeting(bool),
+    /// `assert self-destruct=open|closed`: диалог `UnitsManager_SelfDestructMenu`.
+    SelfDestructOpen(bool),
+    /// `assert pause=open|closed`: диалог паузы `Alt+P` (`PauseMenu_Menu`).
+    PauseOpen(bool),
     /// `assert unit-order=NAME`: приказ выделенного юнита (`ORDER_*`).
     UnitOrder(max_core::enums::UnitOrder),
     /// `assert research-alloc attack=N`: сколько центров закреплено за темой.
@@ -269,6 +280,8 @@ pub enum Assertion {
     HelpOpen(bool),
     /// `assert help-section=cargo|planet|newgame|options|…`: секция окна.
     HelpSection(crate::helpmenu::HelpSection),
+    /// `assert help-entry=NAME`: запись `help.json`, показанная в окне.
+    HelpEntry(String),
     /// `assert help-row>=N`: первая видимая строка окна помощи.
     HelpRow(Cmp, u32),
     /// `assert gold>=N`: золото локальной команды.
@@ -472,6 +485,9 @@ pub enum BuildCommand {
     QueueStep(i32),
     /// `done` — `Done`/Enter: заказ (`Build()`).
     Done,
+    /// `path` — кнопка `Path` инженера (`BLDPTH_U`, `buildmenu.cpp:343-346`):
+    /// `Build()` с принудительным выбором места 1×1 (`event_click_path_build`).
+    Path,
     /// `cancel` — `Cancel`/Esc: закрыть без заказа.
     Cancel,
     /// `place X Y` — подтвердить место стройки в клетке `X,Y` левым кликом по
@@ -538,10 +554,16 @@ pub enum PrefsCommand {
 }
 
 /// Действие окна помощи (`HelpMenu`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelpCommand {
-    /// `open SECTION` — открыть кнопкой `?`/`Help` текущего экрана.
+    /// `open SECTION` — открыть кнопкой `?`/`Help` текущего экрана: входит в
+    /// режим помощи (`HelpMenu_Menu`), окна ещё нет.
     Open(crate::helpmenu::HelpSection),
+    /// `entry NAME` — клик по центру записи `NAME` из `help.json` (реальный
+    /// путь выбора записи по координатам).
+    Entry(String),
+    /// `click X Y` — клик по точке кадра в режиме помощи.
+    Click(i32, i32),
     /// `page up|down` — `PageUp`/`PageDown`.
     PageUp,
     /// `page down`.
@@ -552,9 +574,9 @@ pub enum HelpCommand {
     Down,
     /// `keys` — кнопка `Keys` (`GAME_SCREEN_SETUP`).
     Keys,
-    /// `done`/`close` — `Done`/`Enter`.
+    /// `done`/`ok` — `Done`/`Enter`: закрыть окно, вернуться в режим.
     Done,
-    /// `close` — `Esc`.
+    /// `close`/`cancel` — выйти из режима помощи (`Esc` в режиме/`Ctrl-Esc`).
     Close,
 }
 
@@ -617,6 +639,19 @@ pub enum UnitMenuCommand {
     Key(char),
     /// `close` — `Esc`.
     Close,
+}
+
+/// Действие диалога самоуничтожения здания (`UnitsManager_SelfDestructMenu`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfDestructCommand {
+    /// `arm` — нажать `Arm` (старт `SLFDOPN1..6`).
+    Arm,
+    /// `ok` — нажать `OK` после анимации (`ORDER_EXPLODE`).
+    Ok,
+    /// `cancel` — `Cancel`/`Esc` (приказа нет).
+    Cancel,
+    /// `advance N` — прокрутить визуальные часы на N мс.
+    Advance(u32),
 }
 
 /// Действие на экране выбора точки высадки (`GameManager_SelectSite`).
@@ -723,6 +758,31 @@ pub enum Command {
     /// `prefs open|toggle NAME|set NAME N|done|cancel|help` — диалог
     /// `Preferences`/`Setup` (C++ `OptionsMenu`).
     Prefs(PrefsCommand),
+    /// `spawn NAME` / `spawn enemy NAME` — поставить юнита на свободную клетку
+    /// рядом с выделенным (или в центре карты). QA-only: проверка пунктов меню
+    /// (`load`/`steal`/`disable`/`remove`/бульдозер), которые требуют юнитов,
+    /// недоступных в мобилизации.
+    Spawn {
+        /// Чужая команда (по умолчанию — команда игрока).
+        enemy: bool,
+        /// Имя типа (`Tank`, `Personnel Carrier`, …).
+        name: String,
+    },
+    /// `selfdestruct arm|ok|cancel` — диалог `UnitsManager_SelfDestructMenu`.
+    SelfDestruct(SelfDestructCommand),
+    /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита
+    /// (нужен для проверки `Upg. All`).
+    ComplexRaw(i32),
+    /// `teamvalues NAME ATTR VALUE` — QA-only: текущее значение атрибута команды
+    /// (апгрейд доступен, когда `current` выше `base`).
+    TeamValues {
+        /// Имя типа (`Power Station`, …).
+        name: String,
+        /// Имя атрибута (`hits`, `attack`, …).
+        attribute: String,
+        /// Новое значение.
+        value: i32,
+    },
 }
 
 /// Строка скрипта с разобранной командой.
@@ -849,6 +909,10 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "allocate" | "alloc" => parse_allocate(rest),
         "transfer" | "xfer" => parse_transfer(rest),
         "prefs" | "preferences" => parse_prefs(rest),
+        "spawn" => parse_spawn(rest),
+        "selfdestruct" | "self_destruct" => parse_selfdestruct(rest),
+        "complex" => parse_complex(rest),
+        "teamvalues" | "team_values" => parse_teamvalues(rest),
         "end_turn" | "endturn" => {
             if rest.is_empty() {
                 Ok(Command::EndTurn)
@@ -863,8 +927,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
 }
 
 /// Первое слово и остаток строки.
-fn split_word(source: &str) -> (&str, &str) {
-    match source.find(char::is_whitespace) {
+fn split_word(source: &str) -> (&str, &str) {    match source.find(char::is_whitespace) {
         Some(index) => (&source[..index], &source[index..]),
         None => (source, ""),
     }
@@ -983,6 +1046,10 @@ fn parse_key(rest: &str) -> Result<Key, String> {
         "right" => Key::Right,
         "pageup" | "page_up" | "pgup" => Key::PageUp,
         "pagedown" | "page_down" | "pgdn" => Key::PageDown,
+        // `Alt+P` — `PauseMenu_Menu` (`GNW_KB_KEY_LALT_P`).
+        "alt_p" | "altp" => Key::Alt('p'),
+        "alt_f" | "altf" => Key::Alt('f'),
+        "alt_l" | "altl" => Key::Alt('l'),
         _ => {
             let mut characters = name.chars();
 
@@ -1245,7 +1312,37 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         },
         "unit-menu-item" => Ok(Assertion::UnitMenuItem(value.to_string())),
         "unit-menu-disabled" => Ok(Assertion::UnitMenuDisabled(value.to_string())),
+        "unit-menu-enabled" => Ok(Assertion::UnitMenuEnabled(value.to_string())),
+        "cursor" => Ok(Assertion::CursorMode(value.to_ascii_lowercase())),
+        "targeting" => match value.to_ascii_lowercase().as_str() {
+            "on" | "yes" | "1" => Ok(Assertion::Targeting(true)),
+            "off" | "no" | "0" => Ok(Assertion::Targeting(false)),
+            other => Err(format!(
+                "assert targeting: ожидалось on|off, получено «{other}»"
+            )),
+        },
+        "self-destruct" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::SelfDestructOpen(true)),
+            "closed" | "none" => Ok(Assertion::SelfDestructOpen(false)),
+            other => Err(format!(
+                "assert self-destruct: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "pause" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::PauseOpen(true)),
+            "closed" | "none" => Ok(Assertion::PauseOpen(false)),
+            other => Err(format!(
+                "assert pause: ожидалось open|closed, получено «{other}»"
+            )),
+        },
         "unit-order" => Ok(Assertion::UnitOrder(parse_unit_order(value)?)),
+        "help-entry" => {
+            if value.trim().is_empty() {
+                return Err("assert help-entry: пустое имя записи".to_string());
+            }
+
+            Ok(Assertion::HelpEntry(value.trim().to_string()))
+        }
         "help" => match value.to_ascii_lowercase().as_str() {
             "open" | "opened" => Ok(Assertion::HelpOpen(true)),
             "closed" | "none" => Ok(Assertion::HelpOpen(false)),
@@ -1656,6 +1753,7 @@ fn parse_build(rest: &str) -> Result<Command, String> {
             BuildCommand::QueueStep(parse_i32(delta, "build queue step")?)
         }
         ("done", [_]) => BuildCommand::Done,
+        ("path", [_]) => BuildCommand::Path,
         ("cancel", [_]) => BuildCommand::Cancel,
         ("place", [_, "near"]) => BuildCommand::PlaceNear,
         ("place", [_, x, y]) => BuildCommand::Place(
@@ -1672,7 +1770,7 @@ fn parse_build(rest: &str) -> Result<Command, String> {
         ),
         _ => {
             return Err(format!(
-                "build: неизвестное действие «{rest}» (open|select N|add|delete|rate N|repeat|step N|queue step N|done|place X Y|place near|cursor X Y|cancel)"
+                "build: неизвестное действие «{rest}» (open|select N|add|delete|rate N|repeat|step N|queue step N|done|path|place X Y|place near|cursor X Y|cancel)"
             ))
         }
     };
@@ -1680,8 +1778,85 @@ fn parse_build(rest: &str) -> Result<Command, String> {
     Ok(Command::Build(command))
 }
 
-fn parse_upgrade(rest: &str) -> Result<Command, String> {
+/// `spawn [enemy] NAME` — QA-only юнит на свободной клетке.
+fn parse_spawn(rest: &str) -> Result<Command, String> {
+    let rest = rest.trim();
+
+    if rest.is_empty() {
+        return Err("spawn: ожидалось «spawn [enemy] NAME»".to_string());
+    }
+
+    let (enemy, name) = match rest.strip_prefix("enemy ") {
+        Some(name) => (true, name.trim()),
+        None => (false, rest),
+    };
+
+    if name.is_empty() {
+        return Err("spawn: пустое имя типа".to_string());
+    }
+
+    Ok(Command::Spawn {
+        enemy,
+        name: name.to_string(),
+    })
+}
+
+/// `selfdestruct arm|ok|cancel|advance N`.
+fn parse_selfdestruct(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    let command = match parts.as_slice() {
+        ["arm"] => SelfDestructCommand::Arm,
+        ["ok"] => SelfDestructCommand::Ok,
+        ["cancel"] => SelfDestructCommand::Cancel,
+        ["advance", millis] => SelfDestructCommand::Advance(parse_count(millis, "selfdestruct advance")?),
+        _ => {
+            return Err(format!(
+                "selfdestruct: ожидалось arm|ok|cancel|advance N, получено «{rest}»"
+            ))
+        }
+    };
+
+    Ok(Command::SelfDestruct(command))
+}
+
+/// `complex raw N` — QA-only запас сырья комплекса.
+fn parse_complex(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    match parts.as_slice() {
+        ["raw", value] => Ok(Command::ComplexRaw(parse_i32(value, "complex raw")?)),
+        _ => Err(format!(
+            "complex: ожидалось «complex raw N», получено «{rest}»"
+        )),
+    }
+}
+
+/// `teamvalues NAME ATTR VALUE` — QA-only текущее значение атрибута команды.
+fn parse_teamvalues(rest: &str) -> Result<Command, String> {
+    let value_start = rest
+        .trim_end()
+        .rsplit_once(' ')
+        .ok_or_else(|| format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»"))?;
+    let (head, value) = value_start;
+    let value = parse_i32(value.trim(), "teamvalues value")?;
+    let (name, attribute) = head
+        .trim_end()
+        .rsplit_once(' ')
+        .ok_or_else(|| format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»"))?;
+
+    if name.trim().is_empty() || attribute.trim().is_empty() {
+        return Err("teamvalues: пустое имя типа или атрибута".to_string());
+    }
+
+    Ok(Command::TeamValues {
+        name: name.trim().to_string(),
+        attribute: attribute.trim().to_ascii_lowercase(),
+        value,
+    })
+}
+
+fn parse_upgrade(rest: &str) -> Result<Command, String> {    let parts: Vec<&str> = rest.split_whitespace().collect();
     let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
         return Err(
             "upgrade: ожидалось действие (open|select N|row N up|down|done|cancel)".to_string(),
@@ -1843,6 +2018,16 @@ fn parse_help(rest: &str) -> Result<Command, String> {
         ("keys", [_]) => HelpCommand::Keys,
         ("done", [_]) | ("ok", [_]) => HelpCommand::Done,
         ("close", [_]) | ("cancel", [_]) => HelpCommand::Close,
+        ("entry", [_, _, ..]) => {
+            let name = parts[1..].join(" ");
+
+            if name.is_empty() {
+                return Err("help entry: пустое имя записи".to_string());
+            }
+
+            HelpCommand::Entry(name)
+        }
+        ("click", [_, x, y]) => HelpCommand::Click(parse_i32(x, "help click")?, parse_i32(y, "help click")?),
         (section, [_]) => {
             let section = crate::helpmenu::HelpSection::parse(section).ok_or_else(|| {
                 format!(

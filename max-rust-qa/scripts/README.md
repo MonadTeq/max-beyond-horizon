@@ -124,6 +124,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `build place X Y` | LMB по клетке карты: подтвердить место стройки (`GameManager_PathBuild`); площадка 2×2 встаёт в эту клетку (якорь 2×2, накрывающий её) |
 | `build place near` | то же по клетке выделенного строителя (якорь всегда накрывает строителя) |
 | `build cursor X Y` | навести мышь на клетку без клика: призрак переезжает, валидность (`build-site=valid\|invalid`) проверяется до подтверждения |
+| `build path` | кнопка `Path` (`BLDPTH_U`) меню **инженера** (`buildmenu.cpp:836`): `Build()` с принудительным выбором места 1×1 (`event_click_path_build`), площадка — в клетке курсора, только в строке/столбце инженера (`GetBuilderUnitCursor`, `game_manager.cpp:5854`) |
 | `upgrade open` | открыть экран апгрейдов (P6, клавиша `U`) для выделенного юнита |
 | `upgrade select N` | выбрать строку списка типов |
 | `upgrade row N up\|down` | нажать стрелку `UPGRGT`/`UPGLFT` строки N (цена/шаг — C++) |
@@ -134,15 +135,23 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `research row N up\|down` | стрелка `UPGRGT`/`UPGLFT` темы N: `+1`/`−1` центр (свободные центры — `free_capacity`) |
 | `research done` | `Done`/Enter — `ResearchMenu_OnClick_Done`: распределение пишется в `GameState` |
 | `research cancel` | `Cancel`/Esc — закрыть без изменений |
-| `help cargo\|planet\|newgame\|options\|research\|upgrades\|game\|hotseat\|clan\|preferences\|setup_menu` | открыть окно `HELPFRAM` (**CARGO/PLANET/NEW_GAME/OPTIONS_SETUP**, `RESEARCH_SETUP`, `UPGRADES_SETUP`, `GAME_SCREEN_SETUP`, `PREFS_MENU_SETUP`/`SETUP_MENU_SETUP`) кнопкой `?`/`Help` текущего экрана |
-| `help page up\|down` | `PageUp`/`PageDown` — страница текста (16 строк) |
+| `help cargo\|planet\|newgame\|options\|research\|upgrades\|game\|hotseat\|clan\|preferences\|setup_menu` | включить **режим помощи** C++ (`HelpMenu_Menu`, `helpmenu.cpp:315`) кнопкой `?`/`Help` текущего экрана: окна ещё нет, курсор `CURSOR_HELP` |
+| `help entry NAME` | клик по центру записи `NAME` из `help.json` (тот же путь, что у игрока: `HelpMenu_ScaleCursor` + `Help::GetEntry`); открывает окно с одной записью |
+| `help click X Y` | клик по точке кадра в режиме помощи: открывает запись под точкой; пустое место режим не выключает |
+| `help page up\|down` | `PageUp`/`PageDown` — страница текста окна (16 строк; записи обычно короче — прокручивается `Keys`) |
 | `help up\|down` | одна строка вверх/вниз |
 | `help keys` | кнопка `Keys` (`GAME_SCREEN_SETUP`): подсказка `_(ceb6)` |
-| `help done` / `help close` | `Done`/Enter или `Esc` — закрыть окно, вернуть экран под ним |
+| `help done` | `Done`/Enter — закрыть **окно**, вернуться в режим помощи (C++ `HelpMenu::Run`) |
+| `help close` | выйти из режима (`Esc` в режиме/`Ctrl-Esc`) |
 | `unit-menu open` | повторный клик по выделенному своему юниту — меню команд (`GameManager_ClickUnit` → `InitPopupButtons`); проверяет, что меню открылось |
 | `unit-menu item NAME` | клик по кнопке пункта (подпись `sentry`, `Build`, `x-fer`, … или символ позиции); отключённый пункт — ошибка с причиной |
 | `unit-menu key C` | горячая клавиша пункта (`GameManager_ProcessPopupMenuInput`) |
 | `unit-menu close` | `Esc` — закрыть меню |
+| `spawn NAME` / `spawn enemy NAME` | QA-only: поставить юнита на свободную клетку рядом с выделенным (или в центре карты) — для пунктов, недоступных в мобилизации (диверсант, транспорт, бульдозер, здание под `remove`) |
+| `selfdestruct arm\|ok\|cancel\|advance N` | диалог `UnitsManager_SelfDestructMenu`: `Arm`, `OK` после анимации (`SLFDOPN1..6`, `advance` — визуальные часы), `Cancel`/`Esc` |
+| `complex raw N` | QA-only: запас сырья комплекса выделенного юнита (проверка `Upg. All`) |
+| `teamvalues NAME ATTR VALUE` | QA-only: текущее значение атрибута команды (`hits`, `attack`, …) — апгрейд доступен, когда `current` выше `base` |
+| `key ALT_P` | `Alt+P` — `PauseMenu_Menu` (диалог «Game Paused», `dialogmenu.cpp`) |
 | `allocate open` | открыть диалог распределения добычи (`AllocMenu`, `ALLOCFRM`) для выделенной включённой шахты (`MININGST` с комплексом) |
 | `allocate select raw\|fuel\|gold` | выбрать секцию (клавиатура Rust-клиента, как `↑/↓`) |
 | `allocate set N` / `allocate set raw\|fuel\|gold N` | абсолютный уровень добычи (клик по полосе, `OnClick*Bar`; `N` обрезается по ёмкости шахты — 16 единиц) |
@@ -194,9 +203,15 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert upgrade=open` / `upgrade=closed` | открыт ли экран апгрейдов (P6) |
 | `assert research-menu=open` / `research-menu=closed` | открыт ли `ResearchMenu` (P7) |
 | `assert research-alloc attack=N` (и `>=`, `<=`, `>`, `<`) | сколько центров закреплено за темой (`attack\|shots\|range\|armor\|hits\|speed\|scan\|cost`) |
-| `assert help=open` / `help=closed` | открыто ли окно помощи (P7) |
-| `assert help-section=CARGO_SETUP` (короткие `cargo\|planet\|newgame\|options\|research\|upgrades\|game\|preferences\|setup_menu`) | секция открытого окна |
+| `assert help=open` / `help=closed` | открыто ли **окно** помощи (режим помощи — `help-section`, но окна нет) |
+| `assert help-section=CARGO_SETUP` (короткие `cargo\|planet\|newgame\|options\|research\|upgrades\|game\|preferences\|setup_menu`) | секция режима/окна помощи |
+| `assert help-entry=NAME` | какая запись `help.json` показана в окне |
 | `assert help-row>=N` | первая видимая строка окна помощи (проверка прокрутки) |
+| `assert unit-menu-item=NAME` / `unit-menu-enabled=NAME` / `unit-menu-disabled=NAME` | пункт меню юнита есть / включён / отключён (с причиной) |
+| `assert cursor=load\|steal\|disable\|repair\|reload\|transfer\|none` | курсорный режим выделенного юнита (`UnitInfo::cursor`) |
+| `assert targeting=on\|off` | режим наведения (`targeting_mode`, пункт `attack`) |
+| `assert self-destruct=open\|closed` | диалог `UnitsManager_SelfDestructMenu` |
+| `assert pause=open\|closed` | диалог паузы `Alt+P` (`PauseMenu_Menu`) |
 | `assert gold>=N` (и `=`, `<=`, `>`, `<`) | золото локальной команды |
 | `assert research attack>=1` | уровень темы исследований (`attack|shots|range|armor|hits|speed|scan|cost`) |
 | `assert cargo-mode=buy\|upgrade` | режим списка `CargoMenu` (P7) |

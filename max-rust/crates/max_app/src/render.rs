@@ -1001,6 +1001,10 @@ impl App {
         // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
+        // Диалог самоуничтожения здания (UnitsManager_SelfDestructMenu).
+        self.draw_self_destruct(&mut frame);
+        // Диалог паузы (PauseMenu_Menu -> DialogMenu, Alt+P) — поверх всего.
+        self.draw_pause_dialog(&mut frame);
 
         if self.hud().hint.is_some() {
             let whole = PixelRect::new(0, 0, frame.width() as i32, frame.height() as i32);
@@ -1105,6 +1109,10 @@ impl App {
         // Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
+        // Диалог самоуничтожения здания (UnitsManager_SelfDestructMenu).
+        self.draw_self_destruct(&mut frame);
+        // Диалог паузы (PauseMenu_Menu -> DialogMenu, Alt+P) — поверх всего.
+        self.draw_pause_dialog(&mut frame);
 
         (frame, stats)
     }
@@ -1192,6 +1200,38 @@ impl App {
         };
 
         menu.draw(frame, assets);
+    }
+
+    /// Рисует диалог самоуничтожения здания (`UnitsManager_SelfDestructMenu`).
+    pub(crate) fn draw_self_destruct(&self, frame: &mut RgbaBuffer) {
+        let Some(menu) = self.self_destruct() else {
+            return;
+        };
+        let fallback = self
+            .assets()
+            .and_then(|assets| UiPalette::from_assets(assets))
+            .or_else(|| {
+                self.assets()
+                    .and_then(|assets| assets.menu.as_ref().map(|menu| menu.palette))
+            });
+
+        menu.draw(frame, self.assets().and_then(|a| a.self_destruct.as_ref()), fallback);
+    }
+
+    /// Рисует диалог паузы (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
+    pub(crate) fn draw_pause_dialog(&self, frame: &mut RgbaBuffer) {
+        let Some(dialog) = self.pause_dialog() else {
+            return;
+        };
+        let fallback = self
+            .assets()
+            .and_then(|assets| UiPalette::from_assets(assets))
+            .or_else(|| {
+                self.assets()
+                    .and_then(|assets| assets.menu.as_ref().map(|menu| menu.palette))
+            });
+
+        dialog.draw(frame, self.assets().and_then(|a| a.help.as_ref()), fallback);
     }
 
     /// Рисует открытый `BuildMenu` поверх кадра (P2).

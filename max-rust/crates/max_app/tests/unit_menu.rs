@@ -242,7 +242,8 @@ fn menu_items_follow_unit_type() {
     assert!(menu.items[0].enabled);
     let _ = key(&mut app, Key::Escape);
 
-    // Транспорт: загрузка (не портирована — пункт есть, но серый).
+    // Транспорт: `load` включён (курсорный режим 7), `activate` — нет
+    // (`RepairShopMenu` не портирован).
     let transport = spawn(&mut app, UnitType::PersonnelCarrier);
     open_menu(&mut app, transport);
     let menu = app.unit_menu().expect("меню транспорта");
@@ -250,7 +251,12 @@ fn menu_items_follow_unit_type() {
         .index_of(ItemId::Load)
         .map(|index| &menu.items[index])
         .expect("load у транспорта");
-    assert!(!load.enabled, "погрузка не портирована");
+    assert!(load.enabled, "погрузка — тумблер курсорного режима 7");
+    let activate = menu
+        .index_of(ItemId::Activate)
+        .map(|index| &menu.items[index])
+        .expect("activate у транспорта");
+    assert!(!activate.enabled, "RepairShopMenu не портирован");
 }
 
 #[test]
@@ -359,13 +365,14 @@ fn disabled_item_does_not_act() {
         return;
     };
 
-    let tank = spawn(&mut app, UnitType::Tank);
-    open_menu(&mut app, tank);
+    // Единственный оставшийся отключённый пункт — `activate` ремонтного цеха.
+    let carrier = spawn(&mut app, UnitType::PersonnelCarrier);
+    open_menu(&mut app, carrier);
 
     let index = app
         .unit_menu()
-        .and_then(|menu| menu.index_of(ItemId::Attack))
-        .expect("attack в меню");
+        .and_then(|menu| menu.index_of(ItemId::Activate))
+        .expect("activate в меню");
     let rect = app.unit_menu().expect("меню").button_rect(index);
     let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
 

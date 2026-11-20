@@ -129,16 +129,32 @@ prefs cancel
 assert prefs=closed
 assert prefs-effects=off
 
-# 6. Help на диалоге: `PREFS_MENU_SETUP` поверх игры (`?`).
+# 6. Help на диалоге: `PREFS_MENU_SETUP` поверх игры (`?`) — режим помощи,
+#    затем запись под курсором (`Help::GetEntry`, `help.cpp:140`).
 prefs open
 assert prefs=open
 prefs help
-assert help=open
 assert help-section=preferences
-key ESC
 assert help=closed
+help entry ANIMATE_EFFECTS
+assert help=open
+assert help-entry=ANIMATE_EFFECTS
+help done
+assert help=closed
+help close
 assert prefs=open
 prefs done
 assert prefs=closed
+
+# 7. Alt+P — `PauseMenu_Menu` (`menu.cpp:1747`) -> `DialogMenu` `_(f9bb)`.
+#    Пока диалог открыт, тики локальной партии стоят.
+key ALT_P
+assert pause=open
+assert screen=InGame
+shot pause-dialog
+# Enter/OK закрывает и возвращает игру.
+key ENTER
+assert pause=closed
+assert screen=InGame
 
 exit

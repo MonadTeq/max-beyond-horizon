@@ -298,6 +298,7 @@ impl Recorder {
                     self.events += 1;
                 }
             }
+            Key::Alt(_) => {}
             Key::Other => {}
         }
     }
@@ -422,7 +423,7 @@ fn key_line(key: Key) -> Option<String> {
         Key::Char(character) if character.is_ascii_graphic() => {
             return Some(format!("key {character}"));
         }
-        Key::Char(_) | Key::Other => return None,
+        Key::Char(_) | Key::Alt(_) | Key::Other => return None,
     };
 
     Some(format!("key {name}"))

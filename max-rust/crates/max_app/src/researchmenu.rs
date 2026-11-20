@@ -1,4 +1,4 @@
-//! Экран исследований `ResearchMenu` — C++ `researchmenu.cpp` (окно `RSRCHPIC`).
+﻿//! Экран исследований `ResearchMenu` — C++ `researchmenu.cpp` (окно `RSRCHPIC`).
 //!
 //! # Оракул
 //!
@@ -400,7 +400,7 @@ impl ResearchMenu {
                 ResearchAction::None
             }
             Key::Char('h' | 'H' | '?') => ResearchAction::Help,
-            Key::Backspace | Key::Char(_) | Key::Other => ResearchAction::None,
+            Key::Backspace | Key::Char(_) | Key::Alt(_) | Key::Other => ResearchAction::None,
         }
     }
 

@@ -2,6 +2,50 @@
 
 ### Добавлено
 
+- **B1: оставшиеся пункты меню юнита — 1:1 с C++-оракулом.** `attack` теперь
+  тумблер `targeting_mode` (`units_manager.cpp:617`): наведение, `CURSOR_ENEMY`
+  и стрельба по пустой клетке в радиусе (`GameManager_SetUnitOrder`,
+  `game_manager.cpp:6360` → `ORDER_FIRE`). `load` — курсорный режим 7
+  (`:1011`, `GameManager_ProcessMouse` CURSOR_LOAD `:6807`): `ORDER_MOVE_TO_UNIT`
+  получает пассажир, `ORDER_LAND`/`INIT` с `parent` — в клетке транспорта.
+  `disable`/`steal` — режимы 9/8 (`:921/910`) с `ORDER_AWAIT_DISABLE/STEAL_UNIT`
+  и `stealth_dice_roll`; порт `UnitsManager_IsValidStealthTarget` (`:1370`).
+  Бульдозер: `Access_GetRemovableRubble` + `ORDER_CLEAR` (parent, `build_time`
+  4/1). `remove` здания — порт `UnitsManager_SelfDestructMenu` (`:292`):
+  `SELFDSTR`, `Arm`/`Cancel`, кадры `SLFDOPN1..6`, `OK` → `ORDER_EXPLODE`.
+  `Upg. All` — `UnitsManager_Popup_OnClick_UpgradeAll` (`:414`): материалы
+  комплекса, `ORDER_UPGRADE`/`EXECUTING_ORDER` с `parent = self`, сообщения с
+  римской маркой. Остались disabled с причинами: `activate` (`RepairShopMenu`
+  не портирован) и мастер-строитель.
+- **B2: Help-пейджинг 1:1.** Кнопка `?`/`Help` включает режим помощи
+  (`HelpMenu_Menu`, `helpmenu.cpp:315`): `CURSOR_HELP`, клик по элементу →
+  `HelpMenu_ScaleCursor` (`:412-471`) и `Help::GetEntry` (`help.cpp:140`) →
+  окно показывает **одну** запись `help.json` (а не всю секцию). Скролл,
+  `Keys`, `Done`, возврат в режим по `Esc` — как в C++; добавлены QA-команды
+  `help entry NAME`, `help click X Y`, `help close`, `assert help-entry`.
+- **B3: курсор площадки инженера.** `GameManager_GetBuilderUnitCursor` для
+  `ENGINEER` (`game_manager.cpp:5854-5909`): 1×1-лента в клетке курсора, только
+  в строке/столбце строителя; кнопка `Path` (`BLDPTH_U`, `buildmenu.cpp:836`,
+  `event_click_path_build`) в `BuildMenu` инженера; `BuildMenuAction::PathBuild`
+  → выбор места `ORDER_STATE_SELECT_SITE`.
+- **D1: звуки меню/попапов/стройки/транспорта.** Модуль `sfx.rs`: `KCARG0`,
+  `NDONE0`, `NCANC0`, `MBUTT0`, `NHELP0`, `NHUMN0/NCOMP0/NNONE0/NCLAN0`,
+  `V_M049` (постановка площадки), `V_M210/V_M085/V_M224` (ремонт/дозаправка/
+  передача) и `GameManager_PlayUnitStatusVoice` (`game_manager.cpp:7943`) с
+  `V_M093`. Очередь `App::play_sfx` проигрывается `main.rs` через `AudioPlayer`
+  с учётом `disable_fx`/`disable_voice` и громкостей.
+- **D3: `Alt+P` — пауза/настройки в игре.** `PauseMenu_Menu` (`menu.cpp:1747`)
+  → `DialogMenu` (`dialogmenu.cpp:148-204`): окно `HELPFRAM`, «Game Paused.
+  Click OK to continue.» (`_(f9bb)`), `OK`/`Enter`/`Esc`; тики и таймер
+  локальной партии на время диалога стоят. `Alt` теперь доходит до UI
+  (`WindowKey::Alt` через SDL `keymod` → `Key::Alt`).
+- **QA/golden:** `unit-menu.qa` (новые пункты, `spawn`, `selfdestruct`,
+  `cursor=…`, `targeting=…`), `research-help.qa` (режим помощи + запись по
+  клику), `preferences.qa` (`PREFS_MENU_SETUP` через режим, `Alt+P`);
+  пересняты `golden/research-help/*`, `golden/unit-menu/*`, добавлены
+  `unit-menu-targeting/load/infiltrator`, `self-destruct-arm/armed`,
+  `pause-dialog`, `help-options-playmode`.
+
 - **A4: строитель остаётся в ЦЕНТРЕ ленты после достройки.** `SpawnNewUnit`
   (`unitinfo.cpp:3440-3592`) не двигает пиксель `x`/`y` строителя: сдвиг
   `PositionInTape` (+32 px к центру 2×2) снимается только в

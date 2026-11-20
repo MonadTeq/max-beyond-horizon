@@ -65,9 +65,11 @@
 //!
 //! # Осознанные упрощения
 //!
-//! * подсказка `Help` (`BLDHLP_U`) и кнопка `Build path` инженера
-//!   (`BLDPTH_U`) не портированы (путь-строительство — задача P5);
-//! * звуки кнопок не проигрываются (аудио-слой — `audio.rs`).
+//! * подсказка `Help` (`BLDHLP_U`) не портирована; кнопка `Path` инженера
+//!   (`BLDPTH_U`, 63×23 в (347,427)) **портирована** (B3): `Build()` с
+//!   принудительным выбором места 1×1 (`buildmenu.cpp:343-346`, `:921`);
+//! * звуки кнопок самого `BuildMenu` не проигрываются (в C++ у кнопок есть
+//!   `SetSfx`; общий слой звуков UI — `sfx.rs`, см. §33).
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
@@ -126,6 +128,10 @@ pub const DONE: PixelRect = PixelRect::new(397, 452, 54, 23);
 pub const CANCEL: PixelRect = PixelRect::new(307, 452, 62, 23);
 /// Кнопка описания (`BLDDES_U`, 17×17).
 pub const DESCRIPTION: PixelRect = PixelRect::new(292, 264, 17, 17);
+/// Кнопка `Path` (`BLDPTH_U/D`, 63×23) — только у `ENGINEER`
+/// (`buildmenu.cpp:836-839`): «поставить площадку 1×1 вручную»
+/// (`event_click_path_build` → `Build()` с `ORDER_STATE_SELECT_SITE`).
+pub const PATH_BUILD: PixelRect = PixelRect::new(347, 427, 63, 23);
 /// Скорости 1×/2×/4× мобильного меню.
 pub const MOBILE_RATES: [PixelRect; 3] = [
     PixelRect::new(292, 345, 78, 23),
@@ -195,6 +201,8 @@ pub struct BuildMenuAssets {
     pub repeat: Option<MenuButtonPair>,
     /// Описание (`BLDDES_U/D`).
     pub description: Option<MenuButtonPair>,
+    /// `Path` (`BLDPTH_U/D`) — только у инженера (`buildmenu.cpp:836`).
+    pub path_build: Option<MenuButtonPair>,
 }
 
 impl BuildMenuAssets {
@@ -223,6 +231,7 @@ impl BuildMenuAssets {
             delete: read_pair("BLDDEL_U", "BLDDEL_D"),
             repeat: read_pair("BLDREP_U", "BLDREP_D"),
             description: read_pair("BLDDES_U", "BLDDES_D"),
+            path_build: read_pair("BLDPTH_U", "BLDPTH_D"),
         }
     }
 
@@ -368,6 +377,10 @@ pub enum BuildMenuAction {
     Commit,
     /// `Esc`/`Cancel` — закрыть без заказа.
     Close,
+    /// `Path` (`BLDPTH_U`, 1106) — `Build()` с принудительным выбором места:
+    /// `MobileBuildMenu::Build` (`buildmenu.cpp:921`) ставит `SELECT_SITE` и для
+    /// 1×1-постройки инженера (`event_click_path_build`).
+    PathBuild,
 }
 
 /// Состояние открытого `BuildMenu` для одного юнита.
@@ -772,6 +785,11 @@ impl BuildMenu {
             return BuildMenuAction::None;
         }
 
+        // `Path` — только у инженера (`buildmenu.cpp:836-839`).
+        if self.builder_type == UnitType::Engineer && PATH_BUILD.contains(x, y) {
+            return BuildMenuAction::PathBuild;
+        }
+
         if DONE.contains(x, y) {
             return BuildMenuAction::Commit;
         }
@@ -839,7 +857,7 @@ impl BuildMenu {
             | Key::Right
             | Key::PageUp
             | Key::PageDown
-            | Key::Other
+            | Key::Alt(_) | Key::Other
             | Key::Char(_) => BuildMenuAction::None,
         }
     }
@@ -911,10 +929,17 @@ impl BuildMenu {
     }
 
     /// Нужен ли режим выбора места (`MobileBuildMenu::Build`, C++
-    /// `(base_unit.GetFlags() & BUILDING)`) — мобильный строитель ставит здание.
+    /// `(base_unit.GetFlags() & BUILDING) || event_click_path_build`).
+    ///
+    /// `force_path` — нажата кнопка `Path` (1106): тогда место выбирается и для
+    /// 1×1-постройки инженера (`buildmenu.cpp:921-925`, `SMLTAPE`).
     ///
     /// Возвращает голову очереди (что строим) и скорость постройки.
-    pub fn site_selection_target(&self, state: &GameState) -> Option<(UnitType, u16)> {
+    pub fn site_selection_target(
+        &self,
+        state: &GameState,
+        force_path: bool,
+    ) -> Option<(UnitType, u16)> {
         if self.factory {
             return None;
         }
@@ -929,7 +954,9 @@ impl BuildMenu {
             return None;
         }
 
-        if max_core::access::unit_type_flags(head) & max_core::enums::unit_flags::BUILDING == 0 {
+        if max_core::access::unit_type_flags(head) & max_core::enums::unit_flags::BUILDING == 0
+            && !force_path
+        {
             return None;
         }
 
@@ -1305,6 +1332,18 @@ impl BuildMenu {
             mouse,
             false,
         );
+        // `Path` (`_(62fa)`) — только у инженера (`buildmenu.cpp:836-839`).
+        if self.builder_type == UnitType::Engineer {
+            painted += draw_button(
+                frame,
+                &palette,
+                menu.path_build.as_ref(),
+                PATH_BUILD,
+                "Path",
+                mouse,
+                false,
+            );
+        }
 
         painted
     }
@@ -1429,12 +1468,24 @@ impl crate::App {
     /// ставит [`crate::App::confirm_build_site`] по LMB. Завод (и не-здания
     /// инженера) идут прежним путём — сразу в очередь.
     pub fn commit_build_menu(&mut self, online: bool) -> Option<String> {
+        self.commit_build_menu_with(online, false)
+    }
+
+    /// `Build()` с признаком `event_click_path_build` (`Path` у инженера):
+    /// `force_path` открывает выбор места и для 1×1-постройки.
+    pub fn commit_build_menu_path(&mut self, online: bool) -> Option<String> {
+        self.commit_build_menu_with(online, true)
+    }
+
+    /// Общий путь `MobileBuildMenu::Build`/`AbstractBuildMenu::Build`.
+    pub fn commit_build_menu_with(&mut self, online: bool, force_path: bool) -> Option<String> {
         let mut menu = self.build_menu.take()?;
 
         // `UnitsManager_IssueBuildOrder`: рядом со строителем должен быть
         // проходимый якорь 2×2, иначе `BuildMenu` остаётся открытым с
         // сообщением «Invalid square» (`_(1031)`).
-        if let Some((unit_type, build_rate)) = menu.site_selection_target(&self.state) {
+        if let Some((unit_type, build_rate)) = menu.site_selection_target(&self.state, force_path)
+        {
             self.build_menu = Some(menu);
 
             if self.open_build_site(unit_type, build_rate) {

@@ -60,7 +60,7 @@ assert unit-menu=open
 assert unit-menu-item=sentry
 assert unit-menu-item=enter
 assert unit-menu-item=Done
-assert unit-menu-disabled=attack
+assert unit-menu-enabled=attack
 # `x-fer` у танка нет вовсе: у него `CARGO_TYPE_NONE`.
 assert unit-menu=open
 shot unit-menu-tank
@@ -110,4 +110,97 @@ assert unit-menu=closed
 assert build=open
 key ESC
 assert build=closed
+assert screen=InGame
+
+# =========================================================================
+# B1: пункты, которые раньше были disabled (C++ `UnitsManager_Popup_OnClick_*`)
+# =========================================================================
+
+# --- attack: тумблер targeting_mode (units_manager.cpp:617) --------------
+select type Tank
+unit-menu open
+assert unit-menu-enabled=attack
+assert targeting=off
+unit-menu item attack
+assert unit-menu=closed
+assert targeting=on
+unit-menu open
+assert targeting=on
+shot unit-menu-targeting
+key 3
+assert unit-menu=closed
+assert targeting=off
+
+# --- Upg. All: материалы комплекса + ORDER_UPGRADE (units_manager.cpp:414)
+spawn Power Station
+select type Power Station
+complex raw 200
+# Апгрейд доступен, когда текущие значения команды выше базы
+# (`UnitInfo::HasUpgradeableAttributes`).
+teamvalues Power Station hits 150
+unit-menu open
+assert unit-menu-enabled=Upg. All
+unit-menu item Upg. All
+assert unit-menu=closed
+assert unit-order=upgrade
+tick 5
+
+# --- load: курсорный режим 7 (units_manager.cpp:1011) --------------------
+spawn Personnel Carrier
+select type Personnel Carrier
+assert selected
+spawn Infantry
+unit-menu open
+assert unit-menu-enabled=load
+unit-menu item load
+assert cursor=load
+unit-menu open
+assert unit-menu-item=load
+shot unit-menu-load
+unit-menu item load
+assert cursor=none
+
+# --- disable/steal: курсорные режимы диверсанта (8/9) --------------------
+spawn Commando
+select type Commando
+assert selected
+unit-menu open
+assert unit-menu-enabled=disable
+assert unit-menu-enabled=steal
+shot unit-menu-infiltrator
+unit-menu item disable
+assert cursor=disable
+unit-menu open
+unit-menu item steal
+assert cursor=steal
+unit-menu open
+unit-menu item attack
+assert targeting=on
+unit-menu open
+key 3
+assert targeting=off
+
+# --- бульдозер: пункт remove включён (Access_GetRemovableRubble) ---------
+spawn Bulldozer
+select type Bulldozer
+unit-menu open
+assert unit-menu-enabled=remove
+unit-menu close
+
+# --- remove: диалог самоуничтожения (UnitsManager_SelfDestructMenu) ------
+# Последним: взрыв переводит здание в `ORDER_EXPLODE`/`DESTROY`, и другие
+# `select type` с тем же именем больше не должны его выбирать.
+spawn Power Station
+select type Power Station
+unit-menu open
+assert unit-menu-enabled=remove
+unit-menu item remove
+assert self-destruct=open
+shot self-destruct-arm
+selfdestruct arm
+selfdestruct advance 400
+shot self-destruct-armed
+selfdestruct ok
+assert self-destruct=closed
+assert unit-order=explode
 assert screen=InGame

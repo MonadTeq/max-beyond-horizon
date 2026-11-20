@@ -1,4 +1,4 @@
-//! Диалог распределения добычи шахты — C++ `allocmenu.cpp` (`AllocMenu`), окно
+﻿//! Диалог распределения добычи шахты — C++ `allocmenu.cpp` (`AllocMenu`), окно
 //! `ALLOCFRM` 640×480.
 //!
 //! # Оракул
@@ -456,7 +456,7 @@ impl AllocMenu {
                 self.increase(state, self.selected);
                 AllocAction::None
             }
-            Key::Backspace | Key::Char(_) | Key::Other => AllocAction::None,
+            Key::Backspace | Key::Char(_) | Key::Alt(_) | Key::Other => AllocAction::None,
         }
     }
 

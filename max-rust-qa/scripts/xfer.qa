@@ -93,12 +93,18 @@ transfer amount 5
 assert transfer-amount=5
 shot xfer-set
 
-# --- Help: `?` → TRANSFER_SETUP ----------------------------------------
+# --- Help: `?` → TRANSFER_SETUP (режим + запись) -----------------------
 transfer help
-assert help=open
 assert help-section=transfer
+assert help=closed
+help entry TRANSFERER
+assert help=open
+assert help-entry=TRANSFERER
 shot xfer-help
 help done
+assert help=closed
+assert help-section=transfer
+help close
 assert help=closed
 assert transfer=open
 

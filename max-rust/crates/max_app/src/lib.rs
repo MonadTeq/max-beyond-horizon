@@ -45,6 +45,7 @@ pub mod cargo_unit_data;
 pub mod chrome;
 pub mod credits;
 pub mod cursor;
+pub mod dialog;
 pub mod helpmenu;
 pub mod hotseat;
 pub mod hud;
@@ -64,7 +65,9 @@ pub mod qa;
 pub mod render;
 pub mod researchmenu;
 pub mod saveload;
+pub mod selfdestruct;
 pub mod setup;
+pub mod sfx;
 pub mod soak;
 pub mod transfermenu;
 pub mod ui;
@@ -560,6 +563,16 @@ pub struct App {
     /// Открытое меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
     /// В снапшот/CRC не входит — это UI.
     unit_menu: Option<unitmenu::UnitMenu>,
+    /// Открытый диалог самоуничтожения здания (`UnitsManager_SelfDestructMenu`,
+    /// окна `SELFDSTR`/`SLFDOPN`/`SLFDOK`). В снапшот/CRC не входит.
+    self_destruct: Option<selfdestruct::SelfDestructMenu>,
+    /// Очередь звуков UI за текущий кадр ([`sfx::Sfx`]): проигрывает `main.rs`
+    /// (`AudioPlayer`), тесты проверяют по ней события. В снапшот/CRC не входит.
+    sounds: Vec<sfx::Sfx>,
+    /// Открытый диалог паузы (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
+    pause_dialog: Option<dialog::DialogMenu>,
+    /// Какой была пауза до открытия диалога (для восстановления после `OK`).
+    pause_was_paused: bool,
     /// Открытый диалог распределения добычи шахты (C++ `AllocMenu`, окно
     /// `ALLOCFRM`). В снапшот/CRC не входит — это UI; значения живут в полях
     /// юнитов (`raw_mining`/`fuel_mining`/`gold_mining`).
@@ -569,6 +582,9 @@ pub struct App {
     transfer_menu: Option<transfermenu::TransferMenu>,
     /// Открытое окно помощи поверх игры (P7, `HelpMenu`). В снапшот/CRC не входит.
     help: Option<helpmenu::HelpScreen>,
+    /// Режим помощи C++ (`HelpMenu_Menu`, `helpmenu.cpp:315`): курсор
+    /// `CURSOR_HELP`, окно открывается кликом по элементу. В снапшот/CRC не входит.
+    help_mode: Option<helpmenu::HelpMode>,
     /// Визуальные позиции юнитов в клетках (дробные) — только для отрисовки.
     ///
     /// Симуляция по-прежнему двигает юнита на целую клетку за тик; кадр идёт
@@ -775,9 +791,14 @@ impl App {
             upgrade_menu: None,
             research_menu: None,
             unit_menu: None,
+            self_destruct: None,
+            sounds: Vec::new(),
+            pause_dialog: None,
+            pause_was_paused: false,
             alloc_menu: None,
             transfer_menu: None,
             help: None,
+            help_mode: None,
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
@@ -1119,6 +1140,9 @@ impl App {
                 unitmenu::ItemId::Repair => self.hud.cursor_mode == unitmenu::CURSOR_REPAIR,
                 unitmenu::ItemId::Reload => self.hud.cursor_mode == unitmenu::CURSOR_RELOAD,
                 unitmenu::ItemId::Load => self.hud.cursor_mode == unitmenu::CURSOR_LOAD,
+                unitmenu::ItemId::Disable => self.hud.cursor_mode == unitmenu::CURSOR_DISABLE,
+                unitmenu::ItemId::Steal => self.hud.cursor_mode == unitmenu::CURSOR_STEAL,
+                unitmenu::ItemId::Attack => self.hud.targeting_mode,
                 unitmenu::ItemId::Enter => self.hud.enter_mode,
                 _ => item.pressed,
             };
@@ -1413,6 +1437,9 @@ impl App {
         };
 
         self.hud.pending.push(command);
+        // `GameManager_TransferCargo` (`game_manager.cpp:4675`): голос `V_M224`
+        // после успешной передачи.
+        self.play_sfx(sfx::Sfx::Transfer);
 
         Some((
             format!("x-fer: {amount} ({:?} → {:?})", menu.cargo, menu.target),
@@ -1656,12 +1683,16 @@ impl App {
             unitmenu::ItemId::Transfer
             | unitmenu::ItemId::Reload
             | unitmenu::ItemId::Repair
-            | unitmenu::ItemId::Load => {
-                // Курсорные режимы C++ (`unit->cursor = 3/6/4/7`).
+            | unitmenu::ItemId::Load
+            | unitmenu::ItemId::Disable
+            | unitmenu::ItemId::Steal => {
+                // Курсорные режимы C++ (`unit->cursor = 3/6/4/7/9/8`).
                 let (cursor, label) = match item.id {
                     unitmenu::ItemId::Transfer => (unitmenu::CURSOR_TRANSFER, "x-fer"),
                     unitmenu::ItemId::Reload => (unitmenu::CURSOR_RELOAD, "reload"),
                     unitmenu::ItemId::Repair => (unitmenu::CURSOR_REPAIR, "repair"),
+                    unitmenu::ItemId::Disable => (unitmenu::CURSOR_DISABLE, "disable"),
+                    unitmenu::ItemId::Steal => (unitmenu::CURSOR_STEAL, "steal"),
                     _ => (unitmenu::CURSOR_LOAD, "load"),
                 };
 
@@ -1675,6 +1706,88 @@ impl App {
                     format!("{label}: выберите цель кликом")
                 } else {
                     format!("{label}: режим выключен")
+                }
+            }
+            unitmenu::ItemId::Attack => {
+                // `UnitsManager_Popup_OnClick_TargetingMode`
+                // (`units_manager.cpp:617`): тумблер `targeting_mode`, курсор и
+                // `enter_mode` сбрасываются.
+                self.hud.targeting_mode = !self.hud.targeting_mode;
+                self.hud.cursor_mode = 0;
+                self.hud.enter_mode = false;
+
+                if self.hud.targeting_mode {
+                    "attack: наведение включено — клик по врагу или клетке в радиусе".to_string()
+                } else {
+                    "attack: наведение выключено".to_string()
+                }
+            }
+            unitmenu::ItemId::RemoveStationary => {
+                // `UnitsManager_Popup_OnClick_Remove` → `UnitsManager_SelfDestructMenu`.
+                if self.open_self_destruct(unit_id) {
+                    format!("{}: подтвердите уничтожение здания", item.caption)
+                } else {
+                    format!("{}: здание сейчас нельзя уничтожить", item.caption)
+                }
+            }
+            unitmenu::ItemId::RemoveRubble => {
+                // `UnitsManager_Popup_OnClick_StopRemove` (`units_manager.cpp:1082`):
+                // `Access_GetRemovableRubble` → `parent = обломки`,
+                // `build_time` 4/1 и `ORDER_CLEAR`/`INIT`.
+                let Some(unit) = self.state.unit(unit_id).cloned() else {
+                    return Some("remove: юнит исчез".to_string());
+                };
+                let team = unit.team;
+                let grid = unit.grid;
+
+                let Some(rubble) = unitmenu::removable_rubble(self.state(), team, grid) else {
+                    return Some("Unable to clear at current location.".to_string());
+                };
+
+                let rubble_is_building = self
+                    .state
+                    .unit(rubble)
+                    .is_some_and(|unit| unit.flags & max_core::enums::unit_flags::BUILDING != 0);
+                let clearing_time = if rubble_is_building { 4 } else { 1 };
+
+                if let Some(unit) = self.state.unit_mut(unit_id) {
+                    unit.parent_unit = Some(rubble);
+                    unit.build_time = clearing_time;
+                }
+
+                match unitmenu::clear_order(self.state(), unit_id, rubble) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("Number of turns to clear site: {clearing_time}.")
+                    }
+                    None => "remove: юнит исчез".to_string(),
+                }
+            }
+            unitmenu::ItemId::StopRemove => {
+                // `GameManager_SelectBuildSite` (`game_manager.cpp:3549-3552`):
+                // `move_to = своя клетка` + `ORDER_BUILD`/`BUILD_CANCEL`;
+                // `CancelBuilding` не-стационарного юнита возвращает `AWAIT`.
+                match unitmenu::p1_order(
+                    self.state(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Build,
+                    max_core::enums::UnitOrderState::BuildCancel,
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        "stop: расчистка отменена".to_string()
+                    }
+                    None => "stop: юнит исчез".to_string(),
+                }
+            }
+            unitmenu::ItemId::UpgradeAll => {
+                // `UnitsManager_Popup_OnClick_UpgradeAll` (`units_manager.cpp:414`).
+                match unitmenu::upgrade_all_orders(self.state(), unit_id) {
+                    Some(report) => {
+                        self.hud.pending.extend(report.commands);
+                        report.message
+                    }
+                    None => "Upg. All: юнит исчез".to_string(),
                 }
             }
             unitmenu::ItemId::StartBuild => {
@@ -1755,13 +1868,42 @@ impl App {
         self.help.as_mut()
     }
 
-    /// Открывает окно помощи поверх игры (`HelpMenu` в `WINDOW_MAIN_MAP`).
+    /// Включает режим помощи — C++ `HelpMenu_Menu(section, WINDOW_MAIN_MAP)`
+    /// (`helpmenu.cpp:315`): курсор `CURSOR_HELP`, окно откроется кликом по
+    /// элементу с записью `help.json` под точкой.
     pub fn open_help(&mut self, section: helpmenu::HelpSection) -> bool {
         self.open_help_with(section, helpmenu::HelpPlacement::Game)
     }
 
-    /// Открывает окно помощи с явной позицией.
+    /// Режим помощи с явной позицией окна.
     pub fn open_help_with(
+        &mut self,
+        section: helpmenu::HelpSection,
+        placement: helpmenu::HelpPlacement,
+    ) -> bool {
+        self.help = None;
+        self.help_mode = Some(helpmenu::HelpMode::new(section, placement));
+        true
+    }
+
+    /// Открывает окно помощи сразу на записи `name` (QA/тесты; в C++ окно
+    /// открывается только кликом по элементу).
+    pub fn open_help_entry(
+        &mut self,
+        section: helpmenu::HelpSection,
+        placement: helpmenu::HelpPlacement,
+        name: &str,
+    ) -> bool {
+        let Some(index) = helpmenu::entry_by_name(section, name) else {
+            return false;
+        };
+
+        self.help = Some(helpmenu::HelpScreen::for_entry(section, placement, index));
+        true
+    }
+
+    /// Окно для первой записи секции (без режима; страховка для тестов).
+    pub fn open_help_first(
         &mut self,
         section: helpmenu::HelpSection,
         placement: helpmenu::HelpPlacement,
@@ -1770,7 +1912,35 @@ impl App {
         true
     }
 
-    /// Закрывает окно помощи (как `Done`/`Enter`/`Esc`).
+    /// Активный режим помощи.
+    pub fn help_mode(&self) -> Option<helpmenu::HelpMode> {
+        self.help_mode
+    }
+
+    /// Клик в режиме помощи: `true` — запись найдена и окно открыто.
+    ///
+    /// C++ `HelpMenu_Menu`: клик по пустому месту окно не открывает и режим не
+    /// выключает; `Esc`/правая кнопка/`Shift-/` выключают режим.
+    pub fn help_mode_click(&mut self, x: i32, y: i32) -> bool {
+        let Some(mode) = self.help_mode else {
+            return false;
+        };
+        let Some(screen) = mode.click(x, y) else {
+            return false;
+        };
+
+        self.help = Some(screen);
+        true
+    }
+
+    /// Выход из режима помощи (`Esc`/RMB/`Shift-/`).
+    pub fn exit_help_mode(&mut self) {
+        self.help = None;
+        self.help_mode = None;
+    }
+
+    /// Закрывает окно помощи (как `Done`/`Enter`/`Esc`); режим остаётся
+    /// активным — C++ `HelpMenu::Run` возвращает управление в `HelpMenu_Menu`.
     pub fn close_help(&mut self) {
         self.help = None;
     }
@@ -1782,6 +1952,137 @@ impl App {
         };
         let action = help.input(event);
         self.help = Some(help);
+        Some(action)
+    }
+
+    // -----------------------------------------------------------------------
+    // Самоуничтожение здания (C++ `UnitsManager_SelfDestructMenu`)
+    // -----------------------------------------------------------------------
+
+    /// Открытый диалог самоуничтожения; `None` — закрыт.
+    pub fn self_destruct(&self) -> Option<&selfdestruct::SelfDestructMenu> {
+        self.self_destruct.as_ref()
+    }
+
+    /// Открывает диалог для здания — `UnitsManager_Popup_OnClick_Remove`
+    /// (`units_manager.cpp:506`): только для стационарного своего юнита.
+    pub fn open_self_destruct(&mut self, unit_id: UnitId) -> bool {
+        let Some(unit) = self.state.unit(unit_id) else {
+            return false;
+        };
+
+        if unit.team != self.state.player_team
+            || unit.flags & max_core::enums::unit_flags::STATIONARY == 0
+        {
+            return false;
+        }
+
+        self.unit_menu = None;
+        self.self_destruct = Some(selfdestruct::SelfDestructMenu::new(unit_id));
+        true
+    }
+
+    /// Ввод в диалоге (`SelfDestructMenu`).
+    ///
+    /// `Explode` — `ORDER_EXPLODE`/`ORDER_STATE_EXPLODE` в очередь приказов,
+    /// как `UnitsManager_SetNewOrder(unit, ORDER_EXPLODE, ORDER_STATE_EXPLODE)`.
+    pub fn self_destruct_input(
+        &mut self,
+        event: InputEvent,
+    ) -> Option<selfdestruct::SelfDestructAction> {
+        let mut menu = self.self_destruct.take()?;
+        let action = menu.input(event);
+
+        match action {
+            selfdestruct::SelfDestructAction::None => {
+                self.self_destruct = Some(menu);
+            }
+            selfdestruct::SelfDestructAction::Cancel => {}
+            selfdestruct::SelfDestructAction::Explode => {
+                if let Some(command) = unitmenu::explode_order(&self.state, menu.unit) {
+                    self.hud.pending.push(command);
+                }
+            }
+        }
+
+        Some(action)
+    }
+
+    /// Продвигает кадры `SLFDOPN1..6` по визуальным часам.
+    pub fn advance_self_destruct(&mut self, dt: f32) {
+        if let Some(menu) = self.self_destruct.as_mut() {
+            menu.advance(dt);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Звуки UI (C++ `SoundManager::PlaySfx`)
+    // -----------------------------------------------------------------------
+
+    /// Ставит звук в очередь кадра (проигрывает `main.rs` через `AudioPlayer`).
+    pub fn play_sfx(&mut self, sfx: sfx::Sfx) {
+        self.sounds.push(sfx);
+    }
+
+    /// Звуки, накопленные с прошлого вызова.
+    pub fn take_sounds(&mut self) -> Vec<sfx::Sfx> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// Текущая очередь звуков (для тестов/QA).
+    pub fn sounds(&self) -> &[sfx::Sfx] {
+        &self.sounds
+    }
+
+    // -----------------------------------------------------------------------
+    // Пауза (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`)
+    // -----------------------------------------------------------------------
+
+    /// Открыт ли диалог паузы.
+    pub fn pause_dialog(&self) -> Option<&dialog::DialogMenu> {
+        self.pause_dialog.as_ref()
+    }
+
+    /// Открывает паузу — `PauseMenu_Menu` (`menu.cpp:1747`): только в партии,
+    /// тики и таймер хода останавливаются (C++ корректирует
+    /// `menu_turn_timer_value` на время диалога).
+    pub fn open_pause_dialog(&mut self) -> bool {
+        if self.local.is_none() || self.pause_dialog.is_some() {
+            return false;
+        }
+
+        self.pause_was_paused = self.local.as_ref().is_some_and(|local| local.paused);
+
+        if let Some(local) = self.local.as_mut() {
+            local.paused = true;
+        }
+
+        self.pause_dialog = Some(dialog::DialogMenu::pause());
+        self.play_sfx(sfx::Sfx::Button);
+        true
+    }
+
+    /// Ввод в диалоге паузы; `OK`/`Enter`/`Esc` закрывают его.
+    pub fn pause_dialog_input(&mut self, event: InputEvent) -> Option<dialog::DialogAction> {
+        let mut dialog = self.pause_dialog.take()?;
+        let action = dialog.input(event);
+
+        match action {
+            dialog::DialogAction::None => {
+                self.pause_dialog = Some(dialog);
+            }
+            dialog::DialogAction::Close => {
+                if let Some(local) = self.local.as_mut() {
+                    local.paused = self.pause_was_paused;
+                }
+                self.play_sfx(if matches!(event, InputEvent::Key(ui::Key::Escape)) {
+                    sfx::Sfx::Cancel
+                } else {
+                    sfx::Sfx::Done
+                });
+            }
+        }
+
         Some(action)
     }
 
@@ -1905,9 +2206,11 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.unit_menu = None;
+        self.self_destruct = None;
         self.alloc_menu = None;
         self.transfer_menu = None;
         self.help = None;
+        self.help_mode = None;
         self.reset_visual_state();
         self.focus_player();
         // Стартовый снимок: первый тик с `dt > 0` увидит, из какой клетки
@@ -2172,9 +2475,11 @@ impl App {
         self.upgrade_menu = None;
         self.research_menu = None;
         self.unit_menu = None;
+        self.self_destruct = None;
         self.alloc_menu = None;
         self.transfer_menu = None;
         self.help = None;
+        self.help_mode = None;
         self.reset_visual_state();
         self.focus_player();
         // Стартовый снимок визуальных позиций (см. `load_game`).
@@ -2526,6 +2831,8 @@ impl App {
         self.update_marker_color(dt);
         // Палитровые циклы (маяки зданий, индикатор дрели) — тоже только кадр.
         self.update_color_cycles(dt);
+        // Кадры `SLFDOPN1..6` диалога самоуничтожения (`TIMER_FPS_TO_MS(48)`).
+        self.advance_self_destruct(dt);
 
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);

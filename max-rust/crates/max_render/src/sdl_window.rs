@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 
 use sdl3::event::WindowEvent;
-use sdl3::keyboard::Keycode;
+use sdl3::keyboard::{Keycode, Mod};
 use sdl3::mouse::{Cursor, MouseButton};
 use sdl3::pixels::PixelFormat;
 use sdl3::rect::Rect as SdlRect;
@@ -61,6 +61,8 @@ pub enum WindowKey {
     PageDown,
     /// Печатный ASCII-символ (SDL отдаёт базовую раскладку: `a`, `0`, `.`).
     Char(char),
+    /// Печатный ASCII-символ с зажатым Alt (`Alt+P` — пауза в игре).
+    Alt(char),
     /// Любая другая клавиша (модификаторы, F-клавиши, …).
     Other,
 }
@@ -95,6 +97,20 @@ pub enum WindowInput {
 
 /// Переводит SDL-клавишу в [`WindowKey`].
 fn window_key(code: Keycode) -> WindowKey {
+    window_key_mod(code, Mod::empty())
+}
+
+/// [`window_key`] с модификаторами: `Alt+<печатный>` → [`WindowKey::Alt`]
+/// (C++ `GNW_KB_KEY_LALT_P`).
+fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
+    let alt = modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD);
+
+    if alt {
+        if let raw @ 0x20..=0x7E = code as u32 {
+            return WindowKey::Alt(char::from_u32(raw).unwrap_or('?'));
+        }
+    }
+
     match code {
         Keycode::Escape => WindowKey::Escape,
         Keycode::Return | Keycode::Return2 | Keycode::KpEnter => WindowKey::Enter,
@@ -423,8 +439,9 @@ impl SdlWindow {
                 sdl3::event::Event::KeyDown {
                     keycode: Some(code),
                     repeat: false,
+                    keymod,
                     ..
-                } => inputs.push(WindowInput::Key(window_key(code))),
+                } => inputs.push(WindowInput::Key(window_key_mod(code, keymod))),
                 sdl3::event::Event::MouseMotion { x, y, .. } => {
                     let (x, y) = frame_scale
                         .window_to_frame(x.round() as i32, y.round() as i32)

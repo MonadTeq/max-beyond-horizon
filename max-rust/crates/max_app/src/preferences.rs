@@ -623,6 +623,11 @@ impl Preferences {
         !self.disable_fx
     }
 
+    /// Голоса включены (`!disable_voice`) — C++ `AUDIO_TYPE_VOICE`.
+    pub fn voice_enabled(&self) -> bool {
+        !self.disable_voice
+    }
+
     /// Громкость SFX 0.0..=1.0 (`fx_sound_level / 100`).
     pub fn sound_volume(&self) -> f32 {
         self.fx_sound_level.clamp(0, 100) as f32 / 100.0

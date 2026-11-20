@@ -1,23 +1,27 @@
-# research-help.qa — ResearchMenu (P7) + четыре Help-экрана.
+# research-help.qa — ResearchMenu (P7) + Help-экраны (режим + запись).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
 #       ../max-rust-qa/scripts/research-help.qa qa-out/research-help
 #
 # Что проверяется:
-# * кнопки `?` экранов настройки открывают окно `HELPFRAM`
-#   (`OPTIONS_SETUP`, `PLANET_SETUP`, `NEW_GAME_SETUP`), кнопка `Help`
-#   мобилизации — `CARGO_SETUP`; окно прокручивается (`PageDown`/`PageUp`),
-#   `Done`/`Enter` закрывает его и возвращает экран под ним;
+# * кнопки `?` экранов настройки открывают **режим помощи** C++
+#   (`HelpMenu_Menu`, `helpmenu.cpp:315`): окна нет, курсор — `CURSOR_HELP`;
+# * запись выбирается **кликом по элементу** (`Help::GetEntry`, `help.cpp:140`):
+#   окно показывает ровно один абзац `help.json`, а не всю секцию;
+# * `help entry NAME` кликает по центру записи (тот же путь, что у игрока);
+#   `help click X Y` — произвольная точка (пустая точка режим не выключает);
+# * окно прокручивается (`PageDown`/`PageUp`), `Done`/`Enter` закрывает окно и
+#   возвращает в режим, `help close` (`Esc` в режиме) выключает режим;
 # * экран исследований открывается клавишей `R` для включённого Research
 #   Center (`ResearchMenu`, popup `Research` в C++): `RSRCHPIC`, 8 тем, центры
 #   по темам, `+N%`, ходы до завершения;
 # * распределение центров: `UPGLFT` Attack освобождает центр (`free_capacity`),
-#   `UPGRGT` Shots закрепляет его; `Done` (`ResearchMenu_OnClick_Done`) пишет
+#   `UPGRGRT` Shots закрепляет его; `Done` (`ResearchMenu_OnClick_Done`) пишет
 #   новое распределение в `GameState`;
 # * после 16 ходов уровень Shots растёт (`ResearchMenu_NewTurn` из
 #   `finish_turn`), а Attack остаётся 0 — то есть экран реально влияет на тик;
-# * кадры `help-options/planet/newgame/cargo`, `research-menu`, `research-plan` —
-#   эталоны golden/research-help/.
+# * кадры `help-options/planet/newgame/cargo/research/game/keys`,
+#   `research-menu`, `research-plan` — эталоны golden/research-help/.
 
 # --- Главное меню ---------------------------------------------------------
 assert screen=MainMenu
@@ -26,15 +30,31 @@ menu new_game
 # --- Help: OPTIONS_SETUP (кнопка ?) --------------------------------------
 assert screen=Options
 help options
-assert help=open
 assert help-section=OPTIONS_SETUP
+# Окна ещё нет: это режим выбора элемента (`HelpMenu_Menu`).
+assert help=closed
+# Клик по пустому месту окно не открывает и режим не выключает.
+help click 5 5
+assert help=closed
+assert help-section=OPTIONS_SETUP
+# Клик по элементу `COMPUTER_OPPONENT` (7..211, 39..227) открывает запись.
+help click 100 130
+assert help=open
+assert help-entry=COMPUTER_OPPONENT
 assert help-row=0
 shot help-options
 help page down
-assert help-row>=16
-help page up
 assert help-row=0
 help done
+assert help=closed
+assert help-section=OPTIONS_SETUP
+# `PLAY_MODE` — другая запись той же секции (окно показывает её, не секцию).
+help entry PLAY_MODE
+assert help-entry=PLAY_MODE
+assert help=open
+shot help-options-playmode
+help done
+help close
 assert help=closed
 assert screen=Options
 setup done
@@ -43,10 +63,13 @@ setup done
 assert screen=Planet
 help planet
 assert help-section=PLANET_SETUP
+assert help=closed
+help entry DESC_WINDOW
+assert help=open
+assert help-entry=DESC_WINDOW
 shot help-planet
-help page down
-assert help-row>=16
 help done
+help close
 assert screen=Planet
 setup done
 
@@ -58,10 +81,11 @@ players 2 none
 players 3 none
 help newgame
 assert help-section=NEW_GAME_SETUP
+help entry OPTION_BUTTON
+assert help-entry=OPTION_BUTTON
 shot help-newgame
-help page down
-assert help-row>=16
 help done
+help close
 assert screen=Players
 setup done
 
@@ -69,13 +93,12 @@ setup done
 assert screen=Mobilize
 help cargo
 assert help-section=CARGO_SETUP
+assert help=closed
+help entry LIST
+assert help-entry=LIST
 shot help-cargo
-help page down
-help page down
-assert help-row>=32
-help page up
-assert help-row>=16
 help done
+help close
 assert help=closed
 assert screen=Mobilize
 
@@ -94,8 +117,6 @@ assert selected
 build open
 build select 11
 build done
-# Здание у мобильного строителя: место выбирается на карте (`SELECT_SITE`),
-# LMB по клетке строителя подтверждает площадку (`GameManager_PathBuild`).
 assert build-site=open
 build place near
 assert build-site=closed
@@ -112,12 +133,6 @@ end_turn
 end_turn
 end_turn
 assert unit=Research Center
-# Достройка 1:1 (`SpawnNewUnit` + `UnitsManager_BuildingReady`): здание
-# появляется только после ухода строителя с площадки, а уход инициирует
-# **игрок** (`game_manager.cpp:6879-6890`: у выделенного строителя в
-# `ORDER_STATE_UNIT_READY` клик по клетке даёт `ORDER_ACTIVATE`/
-# `ORDER_STATE_IN_TRANSITION`); дальше `PositionInTape` DEINIT/LEAVE →
-# `ActivateEngineer` → `ORDER_MOVE` + раскрытие `ScaleUnit(EXPAND)`.
 select type Constructor
 assert hint=Finished building Research Center
 move near
@@ -140,12 +155,18 @@ shot research-menu
 
 # --- Help: RESEARCH_SETUP (кнопка Help экрана исследований) --------------
 help research
-assert help=open
 assert help-section=RESEARCH_SETUP
+assert help=closed
+help entry TITLE_BAR
+assert help=open
+assert help-entry=TITLE_BAR
 shot help-research
 help page down
-assert help-row>=16
+assert help-row=0
 help done
+assert help=closed
+assert help-section=RESEARCH_SETUP
+help close
 assert help=closed
 assert research-menu=open
 
@@ -162,15 +183,26 @@ shot research-plan
 
 # --- Help: GAME_SCREEN_SETUP (панель HELP_OF) + Keys ---------------------
 help game
-assert help=open
 assert help-section=GAME_SCREEN_SETUP
+assert help=closed
+# Клик по кнопке `FILES` (17..83, 4..20) — запись `FILES_BUTTON`.
+help entry FILES_BUTTON
+assert help=open
+assert help-entry=FILES_BUTTON
 shot help-game
+help done
+assert help=closed
+assert help-section=GAME_SCREEN_SETUP
+# `Keys` (`_(ceb6)`) — кнопка окна `GAME_SCREEN_SETUP`: текст длиннее страницы.
+help entry FILES_BUTTON
+assert help=open
+help keys
+assert help=open
 help page down
 assert help-row>=16
-help keys
-assert help-row=0
 shot help-game-keys
 help done
+help close
 assert help=closed
 assert screen=InGame
 
