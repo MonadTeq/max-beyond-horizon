@@ -2826,6 +2826,32 @@ fn session_map_left_click(
         );
     }
     let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
+        // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5832-5843`):
+        // выделенный строитель в `ORDER_STATE_UNIT_READY` + клетка рядом с
+        // достроенным зданием (кольцо `BLDMRK*`) — курсор `CURSOR_UNIT_GO`, и
+        // LMB отдаёт `ORDER_ACTIVATE`/`IN_TRANSITION` (`:6879-6890`), а не
+        // снимает выделение. Подсказка `_(276c)` зовёт именно кликнуть «клетку
+        // с символом».
+        let exit_cell = max_core::geo::Point::new(grid.0, grid.1);
+        if let Some(selected) = app.hud().selected {
+            if let Some(command) =
+                hud::build_builder_exit_click_order(app.state(), selected, exit_cell)
+            {
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!(
+                    "Leave construction site: click ({}, {})",
+                    exit_cell.x, exit_cell.y
+                ));
+
+                if !online {
+                    apply_pending_orders(app);
+                }
+
+                return Transition::None;
+            }
+        }
+
         // `GameManager_ProcessPlayerInput`: клик по карте закрывает окно
         // сообщения (`MessageManager_ClearMessageBox`).
         app.hud_mut().clear_hint();

@@ -3579,3 +3579,86 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 * golden-набор (все 12 каталогов) сверен заново — дрейф 0; soak-100 и
   `soak_headless --turns 120` проходят.
 
+## 35. Регрессия A1/A4: клик по площадке обязан выделять строителя — **сделано** (2026-11-20)
+
+**Симптомы (живая игра, `dt > 0`).** После достройки нет ни маркеров
+`BLDMRK1..5`, ни подсказки «Finished building …», а строителя не удаётся увести
+с площадки — правый клик отвечает «Unit cannot move (air/stationary)», здание не
+появляется. QA (`production.qa`, `dt = 0`) при этом проходил: он выделяет
+строителя командой `select type Constructor`, а не кликом по карте.
+
+**Причина.** `dt` ни при чём: `App::local_update` тикает
+`GameState::tick` **один раз за кадр** и при `dt = 0`, и при `dt > 0`; `dt`
+двигает только визуальные часы (`update_visual_units`/кадры анимаций). Разница
+интерактивного пути — во **вводе**. `PositionInTape` (`unitinfo.cpp:4414`)
+держит строителя в центре ленты и после достройки: `buildsite::tape_center_offset`
+(A4) возвращает `(±32, ±32)` для `BUILD_IN_PROGRESS`/`UNIT_READY`/`IN_TRANSITION`,
+поэтому спрайт строителя нарисован в **углу четырёх клеток** 2×2, а его `grid`
+остаётся одной из них. Игрок кликает по спрайту — попадает в соседнюю клетку
+площадки, где лежат декали. `hud::unit_at_screen` (порт `Access_GetTeamUnit`,
+`access.cpp:1804`) брал первого **не**-`ORDER_IDLE` юнита клетки и отдавал
+`LRGCONES`/`LRGSLAB`. В C++ такого не может быть: декали не `SELECTABLE`
+(первый проход их не берёт), а лента `SELECTABLE`, и `Access_GetTeamUnit`
+возвращает `unit->GetParent()` — строителя.
+
+**Что исправлено.**
+
+1. `hud::unit_at_screen` = дословный `Access_GetTeamUnit` + `Access_GetEnemyUnit`
+   (`access.cpp:1804`/`:1731`): свои — `SELECTABLE`, `order != ORDER_IDLE`,
+   сперва без `GROUND_COVER` и лент, затем любой `SELECTABLE`; чужие — зеркально,
+   мины (`LANDMINE`/`SEAMINE`) — исключение из `GROUND_COVER`; найденная лента
+   (`LRGTAPE`/`SMLTAPE`) возвращает родителя-строителя. Поэтому клик по любой
+   клетке площадки — клик по строителю: маркеры и подсказка появляются, правый
+   клик отдаёт `ORDER_ACTIVATE`.
+2. Закрыт путь игрока из C++: LMB по клетке «рядом со зданием»
+   (`GameManager_IsUnitNextToPosition`, `game_manager.cpp:3208` — прямоугольник
+   `grid-1 … grid+size`, для 2×2 это 4×4, то есть кольцо «клеток с символом»)
+   отдаёт `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`
+   (`GameManager_GetBuilderUnitCursor` `:5832-5843` → `:6879-6890`):
+   `hud::builder_exit_zone_contains` + `hud::build_builder_exit_click_order`,
+   вызов из `ui::session_map_left_click` до снятия выделения. Раньше LMB по
+   кольцу просто снимал выделение, хотя подсказка `_(276c)` зовёт кликнуть
+   именно «клетку с символом».
+3. Правый клик (конвенция порта) по кольцу работает как раньше —
+   `hud::build_builder_exit_order`; оба пути проверены тестами.
+
+**Проверка (обязательно `dt > 0`).** Новый `max_app/tests/build_lifecycle_interactive.rs`
+(4 теста, все кадры — `local_update(1.0/60.0)`):
+
+* `interactive_build_cycle_with_real_dt_marks_and_reveals_on_left_click` и
+  `…_on_right_click` — полный цикл: заказ `ORDER_BUILD`/P4 → `PositionInTape`
+  ENTER → ускорение прогресса (`build_time = 1`) → `local_end_turn()` →
+  `GameState::finish_turn` → `ProductionManager::spawn_new_unit` на кадре хода
+  ИИ → строитель `ORDER_BUILD`/`UNIT_READY` внутри габаритов 2×2, здание
+  `ORDER_IDLE`/`BUILDING_READY`, лента/конусы на месте, **0 маркеров** до
+  клика; клик по **нарисованному** строителю (экранная точка центра ленты) →
+  выделен строитель, подсказка «Finished building Training Hall», кадр содержит
+  `BLDMRK*`; клик по свободной клетке кольца → `ORDER_ACTIVATE`/
+  `IN_TRANSITION` → ≤1200 кадров → здание `AwaitScaling`/`EXPAND`
+  (`scaler_adjust = 4`), строитель вне 2×2, лента/конусы сняты, плита осталась,
+  маркеры погасли;
+* `clicking_the_site_decal_returns_the_builder` — клик по каждой декали
+  (`LRGTAPE`/`LRGCONES`/`LRGSLAB`) возвращает строителя; кольцо — `None`;
+  `LRGTAPE` `SELECTABLE`, конусы/плита — нет;
+* `builder_exit_click_zone_is_a_four_by_four_block_around_the_site` — геометрия
+  `GameManager_IsUnitNextToPosition`.
+
+Отдельно проверено, что тесты ловят дефект: старая версия `unit_at_screen` на
+той же экранной точке возвращает `LargeCones`, новая — `Constructor`.
+`hud::tests::ground_cover_slab_under_a_building_does_not_steal_the_click`
+остаётся зелёным (здание по-прежнему приоритетнее плиты).
+
+**Гейты.** `bash ci.sh` — **зелёный** (1111 с): шаг 1/4 (`cargo check`+`test`
+default/sound/no-default, включая 4 новых теста), 2/4 Horizon, 3/4 — 17
+QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-сверок, дрейф 0**
+(отрисовка не менялась), 4/4 soak (`soak-100` 49488 кадров, `soak_headless`
+120 ходов / 119303 кадра). Windows UI пересобран
+(`build/scripts/build-windows-ui.ps1`):
+`release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` 6 663 168 Б, sha256
+`11411d2461824033d8bf3a2c09d2b9abefd3bb5d6f9a903cff950a3cc09d1813`;
+`max_app-1.1.0-windows-x86_64-ui.zip` sha256
+`3ac71b1392eb7f05e33509083394324fbd40ea2ec2724500159be19160f5633d`
+(PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом). Docs: `CHANGELOG.md`
+(«Исправлено») и этот раздел.
+
+

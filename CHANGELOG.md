@@ -280,6 +280,40 @@
 
 ### Исправлено
 
+- **Клик по достроенной площадке выделяет СТРОИТЕЛЯ (маркеры `BLDMRK*`,
+  подсказка «Finished building …» и уход с площадки снова работают).**
+  Регрессия после A1/A4. `PositionInTape` держит строителя в центре ленты
+  (`tape_center_offset` = ±32 px) и после достройки, поэтому его спрайт стоит в
+  угле четырёх клеток 2×2, а не в своей `grid`. Игрок кликал по нарисованному
+  строителю, попадал в соседнюю клетку площадки, и `hud::unit_at_screen` (порт
+  `Access_GetTeamUnit`, `access.cpp:1804`) отдавал **декаль**: конусы/плиту —
+  они не `ORDER_IDLE`, а фильтра `SELECTABLE` и правила «лента → родитель» в
+  порте не было (декали не `SELECTABLE` — в C++ их клик не берёт вообще).
+  Следствия: не рисовались маркеры `BLDMRK1..5` и не появлялась подсказка
+  (`render::build_marker_cells`/`panels::builder_status_message` требуют
+  выделенного строителя в `ORDER_BUILD`/`UNIT_READY`); правый клик по карте с
+  выделенной декалью отменял приказ («Unit cannot move (air/stationary)»),
+  поэтому строителя нельзя было увести, а `UnitsManager_BuildingReady`
+  (`units_manager.cpp:4183`) не раскрывал здание. Теперь `unit_at_screen` —
+  дословно C++: `Access_GetTeamUnit` (свои: `SELECTABLE` + не `ORDER_IDLE`,
+  сперва без `GROUND_COVER`/лент, затем любой `SELECTABLE`) и
+  `Access_GetEnemyUnit` (`access.cpp:1731`: чужие, мины — исключение из
+  `GROUND_COVER`), а найденная лента возвращает `unit->GetParent()` —
+  строителя. Плюс закрыт путь игрока из C++: LMB по клетке «рядом со зданием»
+  (`GameManager_IsUnitNextToPosition`, `game_manager.cpp:3208` — 4×4 вокруг
+  2×2, то есть кольцо с символами) отдаёт `ORDER_ACTIVATE`/`IN_TRANSITION`
+  (`hud::builder_exit_zone_contains`/`build_builder_exit_click_order`,
+  `:5832-5843` + `:6879-6890`), как и обещает подсказка `_(276c)`.
+  `dt` тут не при чём: `local_update` тикает один раз за кадр и при `dt = 0`, и
+  при `dt > 0` — разница интерактивного пути только во вводе (QA выделяет
+  строителя командой `select type`, а не кликом по спрайту).
+  Тесты: `max_app/tests/build_lifecycle_interactive.rs` (4; два полных цикла
+  `local_update(1/60)` — маркеры после клика по нарисованному строителю, затем
+  уход и раскрытие здания по LMB и по RMB; клик по декали возвращает
+  строителя; зона 4×4 `IsUnitNextToPosition`), `hud::tests`
+  (`ground_cover_slab_under_a_building_does_not_steal_the_click`). Golden не
+  менялся (отрисовка не тронута).
+
 - **Пункт `x-fer` больше не disabled; добыча шахт учитывается в лимите хранилищ.**
   Раньше `unitmenu` строил пункт с `.disabled("… не портированы (TODO P3)")`, а
   `GameState::update_production`/`resupply` были заглушками: запас комплекса

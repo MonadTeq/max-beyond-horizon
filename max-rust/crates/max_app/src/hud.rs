@@ -38,7 +38,7 @@
 //!   `Packet::Command` в сессию — энкодеры `max_net::wire::command`.
 
 use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
-use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState};
+use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::command_finished_turn;
 use max_core::game::GameState;
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
@@ -834,6 +834,51 @@ pub fn build_builder_exit_order(
     }))
 }
 
+/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`) — клетка
+/// попадает в прямоугольник `grid-1 .. grid+size` (границы включительно).
+///
+/// Для 2×2-здания это 4×4: сами клетки площадки и кольцо `BLDMRK*` вокруг неё.
+/// C++ использует проверку в `GameManager_GetBuilderUnitCursor`
+/// (`:5832-5843`): пока строитель в `ORDER_STATE_UNIT_READY`, курсор над такой
+/// клеткой — `CURSOR_UNIT_GO`, и клик отдаёт `ORDER_ACTIVATE`
+/// (`:6879-6890`). Подсказка `_(276c)` зовёт игрока кликнуть «клетку с
+/// символом» — это ровно это кольцо.
+pub fn builder_exit_zone_contains(building: &UnitInfo, cell: Point) -> bool {
+    let size: i16 = if building.flags & unit_flags::BUILDING != 0 {
+        2
+    } else {
+        1
+    };
+
+    cell.x >= building.grid.x.wrapping_sub(1)
+        && cell.x <= building.grid.x.wrapping_add(size)
+        && cell.y >= building.grid.y.wrapping_sub(1)
+        && cell.y <= building.grid.y.wrapping_add(size)
+}
+
+/// Клик **левой** кнопкой по клетке рядом с достроенным зданием —
+/// `CURSOR_UNIT_GO` → `ORDER_ACTIVATE`/`IN_TRANSITION`
+/// (`game_manager.cpp:5832-5843` + `:6879-6890`).
+///
+/// Отличие от [`build_builder_exit_order`] только в проверке зоны: C++ отдаёт
+/// этот приказ лишь когда курсор над клеткой «рядом со зданием» (4×4), иначе
+/// курсор — `CURSOR_UNIT_NO_GO` и `GameManager_ManagePlayerAction` снимает
+/// выделение.
+pub fn build_builder_exit_click_order(
+    state: &GameState,
+    id: UnitId,
+    destination: Point,
+) -> Option<Command> {
+    let building_id = max_core::production::builder_awaiting_exit(state, id)?;
+    let building = state.unit(building_id)?;
+
+    if !builder_exit_zone_contains(building, destination) {
+        return None;
+    }
+
+    build_builder_exit_order(state, id, destination)
+}
+
 /// Строит приказ включения/выключения питания (попап `Power On`/`Power Off`
 /// в C++, пакет **08**, процессор `P1`).
 ///
@@ -864,16 +909,36 @@ pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
     }))
 }
 
-/// Юнит под точкой экрана: `viewport.screen_to_grid` + `GameState::units_at`.
+/// Юнит под точкой экрана: `viewport.screen_to_grid` + `Access_GetTeamUnit`
+/// (`access.cpp:1804`) / `Access_GetEnemyUnit` (`:1731`).
 ///
-/// Предпочитает юнита, видимого команде `team` (туман войны), иначе — любого
-/// в клетке (сначала свои). Точка вне карты — `None`.
+/// Порядок C++:
+/// 1. `Access_GetTeamUnit(x, y, team, SELECTABLE)` — свой юнит: `team`,
+///    `flags & SELECTABLE`, `order != ORDER_IDLE`; первый проход **без**
+///    `GROUND_COVER` и лент (плита `LRGSLAB`/`SMLSLAB` лежит под каждым
+///    зданием и клик не забирает), второй — любой `SELECTABLE` (лента
+///    стройплощадки тоже: она `GROUND_COVER`, но `SELECTABLE`);
+/// 2. если своих нет — `Access_GetEnemyUnit`: `team != team`, `SELECTABLE`,
+///    не `ORDER_IDLE`/`ORDER_EXPLODE`/`DESTROY`, снова сперва без
+///    `GROUND_COVER` (кроме мин), затем любой;
+/// 3. если найденный юнит — лента стройплощадки, возвращается её **родитель**
+///    (`unit = unit->GetParent()`), то есть строитель: `DrawMap_RenderBuildMarker`
+///    и `UnitsManager_Popup` работают с ним, а не с декалью.
 ///
-/// Как `Access_GetTeamUnit` (`access.cpp:1804`): первым ищется **не**
-/// `GROUND_COVER` (плита `LRGSLAB`/`SMLSLAB` лежит под каждым зданием и в
-/// C++ не забирает клик), а декаль — только если в клетке больше никого нет
-/// (стройплощадка `LRGTAPE` тоже `GROUND_COVER`, но `SELECTABLE` и не
-/// `ORDER_IDLE`).
+/// Пункты 1 и 3 — не косметика: на достроенной площадке строитель стоит в
+/// центре ленты (`PositionInTape`/`tape_center_offset` ±32 px), его спрайт
+/// нарисован в угле четырёх клеток, и игрок кликает по **соседней** клетке
+/// площадки. Без `SELECTABLE`/`tape → parent` клик доставался конусам/плите
+/// (они не `SELECTABLE`, второй проход порта их всё равно брал), из-за чего не
+/// было ни маркеров `BLDMRK*`, ни подсказки «Finished building …», а правый
+/// клик отменял приказ («Unit cannot move (air/stationary)») — строитель не мог
+/// уйти с площадки и здание не раскрывалось.
+///
+/// Видимость (`is_visible_to_team`, туман войны) — порт: сначала юниты,
+/// видимые команде, затем скрытые (в C++ `Access_GetEnemyUnit` требует
+/// `IsVisibleToTeam`, но в порте невидимых командой юнитов тоже можно
+/// выделить — это существующее упрощение, на нём держатся бой и клик по
+/// врагу). Точка вне карты — `None`.
 pub fn unit_at_screen(
     state: &GameState,
     viewport: &Viewport,
@@ -889,37 +954,56 @@ pub fn unit_at_screen(
 
     let grid = Point::new(grid_x, grid_y);
     let ids = state.units_at(grid);
-    let is_ground_cover = |id: &UnitId| {
+    // `((*it).flags & flags)` + `GetOrder() != ORDER_IDLE` из C++.
+    let selectable = |id: &UnitId, own: bool| {
+        state.unit(*id).is_some_and(|unit| {
+            (unit.team == team) == own
+                && unit.flags & unit_flags::SELECTABLE != 0
+                && unit.orders != UnitOrder::Idle
+        })
+    };
+    let is_tape = |id: &UnitId| {
+        state
+            .unit(*id)
+            .is_some_and(|unit| matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape))
+    };
+    let ground_cover = |id: &UnitId| {
         state
             .unit(*id)
             .is_some_and(|unit| unit.flags & unit_flags::GROUND_COVER != 0)
+    };
+    let is_mine = |id: &UnitId| {
+        state
+            .unit(*id)
+            .is_some_and(|unit| matches!(unit.unit_type, UnitType::LandMine | UnitType::SeaMine))
     };
     let visible = |id: &UnitId| {
         state
             .unit(*id)
             .is_some_and(|unit| unit.is_visible_to_team(team))
     };
-    // `ORDER_IDLE` юнита на карте не видно (`UnitInfoGroup::IsRelevant`,
-    // см. `App::draw_units`), поэтому и клик его не берёт: достроенное здание
-    // ждёт ухода строителя (`UnitsManager_BuildingReady`) именно в этом
-    // состоянии — иначе игрок мог бы отдать ему приказ и «потерять» стройку.
-    let is_idle = |id: &UnitId| {
-        state
-            .unit(*id)
-            .is_some_and(|unit| unit.orders == max_core::enums::UnitOrder::Idle)
-    };
+    let plain = |id: &UnitId, own: bool| selectable(id, own) && !is_tape(id) && !ground_cover(id);
 
-    let pick = |predicate: &dyn Fn(&UnitId) -> bool| {
-        ids.iter()
-            .copied()
-            .filter(|id| !is_idle(id))
-            .find(predicate)
-    };
+    let pick = |predicate: &dyn Fn(&UnitId) -> bool| ids.iter().copied().find(predicate);
 
-    pick(&|id| visible(id) && !is_ground_cover(id))
-        .or_else(|| pick(&|id| visible(id)))
-        .or_else(|| pick(&|id| !is_ground_cover(id)))
-        .or_else(|| pick(&|_| true))
+    // `Access_GetTeamUnit`: свои, сперва видимые и не `GROUND_COVER`.
+    let own = pick(&|id| visible(id) && plain(id, true))
+        .or_else(|| pick(&|id| visible(id) && selectable(id, true)))
+        .or_else(|| pick(&|id| plain(id, true)))
+        .or_else(|| pick(&|id| selectable(id, true)));
+
+    // `Access_GetEnemyUnit`: чужие; мины — исключение из `GROUND_COVER`.
+    let enemy = pick(&|id| selectable(id, false) && (plain(id, false) || is_mine(id)))
+        .or_else(|| pick(&|id| selectable(id, false)));
+
+    let found = own.or(enemy)?;
+
+    // `if (unit->GetUnitType() == LRGTAPE || SMLTAPE) unit = unit->GetParent();`
+    if is_tape(&found) {
+        return state.unit(found).and_then(|unit| unit.parent_unit);
+    }
+
+    Some(found)
 }
 
 /// Может ли юнит получить приказ движения от HUD.
