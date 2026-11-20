@@ -3782,3 +3782,144 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   PASS (120 517 кадров, 29.9 с, RSS +336 КиБ).
 
 
+
+## 37. Увод строителя, след снарядов и вспышка выстрела — **сделано** (2026-11-20)
+
+**Симптомы.** (1) Строитель, которого игрок уводил с недостроенной площадки,
+уходил, а стройка продолжалась: `ProgressBuildState` тратил сырьё и достраивал
+здание «само». (2) За ракетой/торпедой не было видимого следа — в оригинале
+`RKTSMOKE`/`TRPBUBLE` тянутся за снарядом. (3) При выстреле танк/пушка не
+показывали кадр пламени (`firing_image_base`), хотя сток `D_*` уже разобран и
+экспортируется.
+
+### 37.1 Как в C++ (оракул)
+
+| Что | Код | Поведение |
+|---|---|---|
+| увод строителя | `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231-4298`), ветка `!STATIONARY` | `build_list.Clear()`, `build_time = 0`, `Access_DestroyUtilities(grid_x, grid_y, true, false, false, false)`, `path = nullptr`, `moved = 0`, `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`; материалы не возвращаются |
+| когда это происходит у игрока | `UnitsManager_Popup_OnClick_BuildStop` (`units_manager.cpp:857`) → `GameManager_SelectBuildSite` (`game_manager.cpp:3529-3560`): `move_to = grid` и `UnitsManager_SetNewOrder(unit, ORDER_BUILD, ORDER_STATE_BUILD_CANCEL)`; `ProcessOrderBuild`/`BUILD_CANCEL` (`units_manager.cpp:2875-2879`) зовёт `CancelBuilding` |
+| клик по карте во время стройки | `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829-5934`), ветка `else` (`:5927-5931`): для `BUILD_IN_PROGRESS` курсор — `CURSOR_UNIT_NO_GO`, то есть приказ движения по карте **невозможен**; `GameManager_ProcessInput`/`WINDOW_MAIN_MAP` (`:6705-6965`) в этом случае только снимает/меняет выделение |
+| новый приказ другим путём | `UnitsManager_SetNewOrderInt` (`units_manager.cpp:1945-1982`): приказ не проверяет стройку — снять её обязан вызывающий (сеть/ИИ/группа); порт делает это в общей точке смены приказа |
+| утилиты площадки | `Access_DestroyUtilities` (`access.cpp:1583-1627`) | лента/конусы удаляются всегда; плиты — при `remove_slabs`; дорога/обломки/коннекторы — по своим флагам. `CancelBuilding` передаёт `true, false, false, false` |
+| след снаряда | `AirPath::Execute` (`airpath.cpp:175-360`), `:229-232`; `Paths_DrawMissile` (`:362-406`) | при выходе `MISSILE_UNIT` из клетки (`grid_x || grid_y`) и `IsVisibleToTeam(GameManager_PlayerTeam)` ставит **три** юнита в покинутую клетку: `ROCKET` → `RKTSMOKE`, `TORPEDO` → `TRPBUBLE`; `DeployUnit(..., skip_map_status_update = true)`; `OffsetDrawZones` разносит зоны отрисовки на 0/⅓/⅔ отрезка (сами `x/y` — центр клетки) |
+| жизнь частиц | `UnitInfo` + `UnitsManager_DeployUnit` (`units_manager.cpp:2390-2393`), `UnitsManager_ProgressExplosion` (`:4006-4032`) | `ANIMATED` из `SC_UNITS` переводит эффект в `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`; `moved & 1` → `image_index + 1`; удаление на `image_index == image_index_max` (`D_RKTSMOKE` 5 кадров → 4, `D_TRPBUBLE` 3 → 2); у `TRPBUBLE` ещё `GROUND_COVER` (слой отрисовки) |
+| вспышка выстрела | `UnitInfo::PrepareFire` (`unitinfo.cpp:4709-4822`), `ProgressFire` (`:4824-4866`) | `firing_recoil_frames = 3` (×5 `ANTIAIR`, ×2 `SP_FLAK`/`FASTBOAT`; 8 `COMMANDO`/`INFANTRY`); башня — `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, корпус — `DrawSpriteFrame(angle + firing_image_base)`, пехота — `unit_angle + 104`; каждый тик счётчик уменьшается, у зениток башня переключается `±8`, на нуле — обычный кадр и `RestoreOrders` |
+| данные кадров | `Unit::GetFrameInfo` (`unit.cpp:51-76`), `unitinfo.hpp:426/454` | `firing_image_base`/`firing_image_count` из `D_*`; у `D_TANK` база 16 (8 кадров), у `D_INFANT` счётчик 0 — пехота использует жёсткие 104+ |
+
+### 37.2 Что сделано
+
+* **Отмена стройки.** `max_core::unit_order::{active_build_site,
+  cancel_build_for_new_order}` — порт `CancelBuilding` для мобильного
+  строителя. Вызывается из `GameState::set_order` (ИИ/группа/прямой путь) и из
+  приёма пакетов **08** (`events::apply_packet_08`) и **38**
+  (`apply_packet_38`) до применения нового приказа, поэтому отмена одинакова у
+  всех пиров lockstep. После отмены `prior` = `AWAIT`/`EXECUTING_ORDER` (пакет
+  08 приносит старый `BUILD` в `prior_order` — иначе `RestoreOrders` вернул бы
+  пустую стройку). Штатный `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) идёт прежним
+  путём машины приказов; там же и в `ProcessOrderHaltBuilding` исправлен набор
+  флагов `Access_DestroyUtilities` на C++-шный `true, false, false, false`
+  (было `true, true, true, true` — снимались обломки/дорога/коннекторы).
+  HUD пишет `Build cancelled at (x, y)` и играет звук отмены.
+* **След снаряда.** `unit_order::spawn_missile_trail` зовётся из
+  `unit_move` при смене клетки `MISSILE_UNIT`: три частицы
+  `RKTSMOKE`/`TRPBUBLE` в покинутой клетке, флаги из `SC_UNITS` (через
+  `spawn_unit` → `ORDER_EXPLODE`/`DESTROY`), `image_index_max` из
+  `max_core::frames`, разнос 0/⅓/⅔ — в пиксельных `x/y` частиц
+  (`render::effect_pixel_anchor`); видимость — из `InitStealthStatus` (своя
+  команда), как `skip_map_status_update = true` в C++, поэтому чужие следы не
+  рисуются. Кадры
+  листает существующий `progress_explosion` (кадр за два тика, удаление на
+  последнем). Спавн не привязан к `GameManager_PlayerTeam`: в C++ это
+  локальное UI-поле, и зависимость от него развела бы состояние клиентов
+  (DESIGN §6.1); в одиночной игре поведение совпадает (свой снаряд всегда
+  виден).
+* **Вспышка выстрела.** `max_app::render::{firing_frame_active,
+  firing_body_frame_index, firing_turret_frame_index}` — порт выбора кадра
+  `firing_image_base`/`firing_image_count` из `D_*` (уже экспортируются в
+  `max-rust-3d-models` как `firing/`): корпус `angle + firing_image_base`,
+  башня `turret_angle + firing_image_base`, особая очередь
+  `COMMANDO`/`INFANTRY` (`104 + angle + 8·(8 − recoil)`), переключение `±8` у
+  `ANTIAIR`/`SP_FLAK`/`FASTBOAT` по чётности счётчика. Подключено в общую
+  точку `draw_unit_sprites_with_animation` (карта, портрет, тесты); счётчик —
+  поле состояния (`firing_recoil_frames`), поэтому вспышка детерминирована и
+  входит в снапшот/CRC. `dt = 0` (QA/headless) не меняет кадры golden.
+
+### 37.3 Тесты
+
+* `max_core/tests/builder_cancel.rs` (4): `set_order(Move)` отменяет стройку,
+  пакет **38**, пакет **08** (и `prior` больше не `BUILD`), штатный
+  `BUILD_CANCEL` снимает площадку ровно один раз; после отмены 12 ходов
+  производства не выпускают здание.
+* `max_core/tests/turn_based_combat.rs` (+2): на каждую покинутую клетку —
+  ровно три частицы нужного типа (`RKTSMOKE` 5 кадров / `TRPBUBLE` 3 кадра,
+  `image_index_max` 4/2), флаги `EXPLODING|ANIMATED|MISSILE_UNIT`
+  (+`GROUND_COVER` у пузырей), позиция — покинутая клетка с разносом по `x`,
+  удаление после анимации; CRC-детерминизм следа.
+* `max_app/tests/build_lifecycle_interactive.rs` (+1): живая Turn Based партия
+  — заказ `Training Hall`, RMB-увод, площадка и плита сняты, очередь/прогресс
+  пусты, ход производства здание не достраивает.
+* `max_app/tests/unit_sprites.rs` (+1): кадры из `D_TANK`/`D_ARTILLRY`/
+  `D_ANTIAI`/`D_SP_FLAK`/`D_INFANT` — корпус, башня, особая очередь пехоты,
+  `±8` у зениток, возврат к обычному кадру после отдачи; отрисовка кадра
+  выстрела отличается от обычной.
+* QA: `combat-tb.qa` — `assert firing=on` (тик 6), `assert trail=on` и
+  `assert unit-count RocketSmoke>=3` (тик 8), новые кадры
+  `combat-tb-trail`, `combat-tb-tank-fired`, `combat-tb-tank-restored`;
+  новый `build-cancel.qa` — `assert building=on` → `move near` →
+  `assert site=none`, `assert building=off`,
+  `assert unit-count Training Hall=0` после хода. Новые QA-ассерты:
+  `firing=on|off`, `building=on|off`, `trail=on|off`,
+  `unit-count NAME<оп>N`.
+
+### 37.4 Проверка и артефакты
+
+* Golden: `golden/combat-tb` перегенерирован (11 кадров: добавлены след и
+  вспышка танка), новый `golden/build-cancel` (3 кадра); остальные 13 наборов
+  — **0 дрейфа**.
+* Кадры: `combat-tb-tank-fired.png` — пламя `firing_image_base` у выбранного
+  танка (в отличие от `combat-tb-tank-restored.png`, где кадр обычный);
+  `combat-tb-trail.png` — облачко `RKTSMOKE` за ракетой;
+  `build-cancel-moved.png` — площадка снята, строитель получил приказ.
+* **Полный docker-гейт** `bash ci.sh` — **зелёный, 1230 с**:
+  * 1/4 `cargo check`+`test` (default SDL3-from-source, `--features sound`,
+    `--no-default-features`) — 372 unit-теста max_app и все интеграционные,
+    включая `build_lifecycle_interactive` (5), `unit_sprites` (6),
+    `builder_cancel` (5), `turn_based_combat` (5);
+  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 3/4 — **20** QA-скриптов PASS (включая `combat-tb.qa` 273 кадра/11 PNG и
+    новый `build-cancel.qa` 300 кадров/3 PNG) и **15** golden-сверок,
+    дрейф **0**;
+  * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
+    tb` — 120 517 кадров, 26.48 с, 41 юнит, `early_end=false`.
+* **Windows UI** (`build/scripts/build-windows-ui.ps1`):
+  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 666 752 Б, sha256
+  `c4e1fa10a62a2b716888b9b12139693d7ae9b56162027e2c2b4666c2d03be06f` (PE32+
+  x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
+  `4c5b3e40407d35ee4b4aad0260e2cfd0ac5fbdb360cf2b8d7c7b4c4fda4002aa`.
+* **Windows headless** (`build/scripts/build-windows.sh`):
+  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 10 999 961 Б, sha256
+  `eb2c38a804fe2bad8ab8a2dd5b61790298e6248cc929341a43e9b1411015bddb` (PE32+
+  x64, Subsystem=3 console); zip sha256
+  `caaca3de895d1b353344ce8d9c4893a96651c70c71eb701cb662676a5fe4221b`;
+  wine-smoke (`--help` + `--demo 1 тик`) — OK.
+
+### 37.5 Осознанные расхождения
+
+* **Клик по карте со строителем в `BUILD_IN_PROGRESS`.** В C++ курсор —
+  `CURSOR_UNIT_NO_GO` (`GameManager_GetBuilderUnitCursor`,
+  `game_manager.cpp:5927-5931`), и приказ просто не отдаётся: уйти можно
+  только через `stop` попапа. Постановка задачи требует «увод отменяет
+  стройку», поэтому порт отдаёт приказ движения, а ядро перед его применением
+  вызывает `CancelBuilding` — семантика та же (площадка снимается, прогресс
+  сбрасывается, материалы не возвращаются), но действие доступно одним
+  кликом. В сети/ИИ приказ идёт тем же путём и отменяет стройку у всех пиров.
+* **`ORDER_CLEAR` (бульдозер).** C++ `UnitsManager_CaptureUnit`/
+  `DisableUnit` зовут `CancelBuilding` и для `ORDER_CLEAR`, но в порте
+  `ProcessOrderClear` пока без прогресса/ленты (`TODO(P3/P5)` в
+  `unit_order.rs`), поэтому новый хук отменяет только `ORDER_BUILD`
+  (`active_build_site`); `stop`/`disable` бульдозера идут прежними путями.
+* **`GameManager_PlayerTeam` в спавне следа.** Частицы ставятся всегда (при
+  смене клетки), а не только когда снаряд виден локальному игроку: это поле —
+  UI клиента, и его использование в симуляции развело бы lockstep. Видимость
+  частиц — `InitStealthStatus` (своя команда), поэтому чужие следы не
+  рисуются.

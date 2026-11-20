@@ -3727,6 +3727,71 @@ impl QaRunner {
                     format!("research {topic:?} {actual}"),
                 )
             }
+            Assertion::UnitCount(name, cmp, expected) => {
+                let wanted = name.trim().to_ascii_lowercase();
+                let mut actual = 0u32;
+
+                for id in self.app.state().unit_ids_in_order() {
+                    let Some(unit) = self.app.state().unit(id) else {
+                        continue;
+                    };
+
+                    if crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase() == wanted
+                        || format!("{:?}", unit.unit_type).to_ascii_lowercase() == wanted
+                    {
+                        actual += 1;
+                    }
+                }
+
+                let actual = i64::from(actual);
+                let expected_i = i64::from(expected);
+
+                self.expect(
+                    cmp.test(actual, expected_i),
+                    format!("unit-count {name}{}{expected}", cmp.as_str()),
+                    format!("unit-count {name}={actual}"),
+                )
+            }
+            Assertion::Firing(expected) => {
+                let actual = self.firing_frame_drawn();
+
+                self.expect(
+                    actual == expected,
+                    format!("firing={}", if expected { "on" } else { "off" }),
+                    format!("firing={}", if actual { "on" } else { "off" }),
+                )
+            }
+            Assertion::Building(expected) => {
+                let actual = self
+                    .app
+                    .hud()
+                    .selected
+                    .and_then(|id| self.app.state().unit(id))
+                    .is_some_and(|unit| max_core::unit_order::active_build_site(unit).is_some());
+
+                self.expect(
+                    actual == expected,
+                    format!("building={}", if expected { "on" } else { "off" }),
+                    format!("building={}", if actual { "on" } else { "off" }),
+                )
+            }
+            Assertion::Trail(expected) => {
+                let actual = self.app.state().unit_ids_in_order().into_iter().any(|id| {
+                    self.app.state().unit(id).is_some_and(|unit| {
+                        matches!(
+                            unit.unit_type,
+                            max_core::enums::UnitType::RocketSmoke
+                                | max_core::enums::UnitType::TorpedoBubble
+                        )
+                    })
+                });
+
+                self.expect(
+                    actual == expected,
+                    format!("trail={}", if expected { "on" } else { "off" }),
+                    format!("trail={}", if actual { "on" } else { "off" }),
+                )
+            }
             Assertion::UnitType(name) => {
                 let team = self.app.player_team();
                 let wanted = name.trim().to_ascii_lowercase();
@@ -4316,6 +4381,38 @@ impl QaRunner {
             Screen::LocalSetup(form) => Some(form.screen),
             _ => None,
         }
+    }
+
+    /// Показывает ли выделенный юнит кадр выстрела.
+    ///
+    /// Проверяется не только счётчик отдачи (`UnitInfo::PrepareFire`,
+    /// `firing_recoil_frames`), но и то, что рендер выбрал именно кадр
+    /// `firing_image_base` из `D_*` — то есть в текущем кадре видна вспышка.
+    fn firing_frame_drawn(&self) -> bool {
+        let Some(unit) = self
+            .app
+            .hud()
+            .selected
+            .and_then(|id| self.app.state().unit(id))
+        else {
+            return false;
+        };
+
+        if !crate::render::firing_frame_active(unit) {
+            return false;
+        }
+
+        let Some(info) = self
+            .app
+            .assets()
+            .and_then(|assets| assets.sprite(unit.unit_type))
+            .and_then(|sprite| sprite.frame_info)
+        else {
+            return false;
+        };
+
+        crate::render::firing_body_frame_index(&info, unit, unit.angle).is_some()
+            || crate::render::firing_turret_frame_index(&info, unit).is_some()
     }
 
     fn screen_matches(&self, expected: ScreenName) -> bool {

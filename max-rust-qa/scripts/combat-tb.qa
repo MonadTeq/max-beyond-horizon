@@ -61,10 +61,15 @@ shot combat-tb-fired
 
 # `PrepareFire`: отдача 3 кадра, затем снаряд ROCKET в списке частиц.
 tick 4
+assert unit-order=fire
+assert firing=on
 shot combat-tb-rocket
 
 # Снаряд летит к цели (1 клетка) и попадает: `attack` → `HitExplosion`.
 tick 2
+assert trail=on
+assert unit-count RocketSmoke>=3
+shot combat-tb-trail
 shot combat-tb-impact
 tick 5
 shot combat-tb-explosion
@@ -75,6 +80,27 @@ shot combat-tb-explosion-mid
 tick 3
 assert unit-order=await
 shot combat-tb-explosion-end
+
+# --- Вспышка выстрела танка (`UnitInfo::PrepareFire`/`ProgressFire`) ---------
+# `firing_recoil_frames` 3 у танка: кадр `firing_image_base + angle` держится
+# три тика отдачи, затем возвращается обычный кадр и наносится урон.
+spawn Tank
+tick 1
+select type Tank
+assert selected
+spawn enemy Tank
+tick 1
+click enemy Tank
+assert log=Attack:
+tick 15
+assert unit-order=fire
+tick 5
+assert firing=on
+shot combat-tb-tank-fired
+tick 3
+assert firing=off
+shot combat-tb-tank-restored
+tick 6
 
 # --- Ход ИИ не зависает на снаряде/взрыве ---------------------------------
 end_turn

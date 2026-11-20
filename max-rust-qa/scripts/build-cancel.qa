@@ -1,0 +1,70 @@
+# build-cancel.qa — увод строителя с недостроенной площадки отменяет стройку.
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
+#
+# Оракул: `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`, ветка `!STATIONARY`)
+# и `UnitsManager_SetNewOrderInt` (`units_manager.cpp:1945`). В C++ приказ
+# движения строителю в `BUILD_IN_PROGRESS` по карте невозможен
+# (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`:
+# `CURSOR_UNIT_NO_GO`), а `stop` попапа идёт через `ORDER_BUILD`/
+# `ORDER_STATE_BUILD_CANCEL` → `CancelBuilding`. Порт отменяет стройку при
+# любом новом приказе (клик/RMB, сеть, ИИ): `build_list.Clear()`,
+# `build_time = 0`, `Access_DestroyUtilities(grid, true, false, false, false)`
+# (лента/конусы/плита снимаются), `ORDER_AWAIT`/`EXECUTING_ORDER`; материалы
+# не возвращаются. Ход производства после этого здание не достраивает.
+#
+# Всё — Turn Based (No Limit), как требует общий QA-режим.
+
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+assert team=RED
+tick 5
+
+# --- Заказ Training Hall конструктором (площадка ставится сразу) ---------------
+select type Constructor
+assert selected
+build open
+build select 13
+build done
+build place 28 20
+assert unit-order=build
+assert site=large
+assert site-pos=28,20
+assert building=on
+assert unit-count Training Hall=0
+shot build-cancel-placed
+
+# --- Увод строителя: новый приказ отменяет стройку --------------------------
+move near
+assert unit-order=move
+assert site=none
+assert building=off
+assert unit-count Training Hall=0
+shot build-cancel-moved
+
+# --- Ход производства не достраивает отменённое здание ----------------------
+end_turn
+assert screen=InGame
+assert turn>=2
+assert unit-count Training Hall=0
+shot build-cancel-after-turn

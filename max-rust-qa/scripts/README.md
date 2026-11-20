@@ -26,7 +26,8 @@ max-rust-qa/
 ├── scripts/preferences.qa      # TC-0935: диалог Preferences/Setup (PREFSPIC/SETUPPIC), 4 golden
 ├── scripts/ai-turn.qa          # A2/A3: мой ход → ход ИИ (End Turn нажат, таймер 00:45) → возврат хода
 ├── scripts/sp-tb.qa            # Turn Based SP: RED→GREEN→BLUE→RED, 2 компьютера, endturn-frames
-├── scripts/combat-tb.qa        # Turn Based бой: выстрел ROCKET → снаряд → взрыв по кадрам → End Turn
+├── scripts/combat-tb.qa        # Turn Based бой: выстрел ROCKET → след RKTSMOKE → взрыв → вспышка танка → End Turn
+├── scripts/build-cancel.qa     # увод строителя с недостроенной площадки отменяет стройку (CancelBuilding)
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
 ├── golden/production/*.png     # эталоны BuildMenu, стройплощадки, её роста и кадров строителя (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -40,7 +41,8 @@ max-rust-qa/
 ├── golden/preferences/*.png    # эталоны диалога Preferences/Setup (4)
 ├── golden/ai-turn/*.png        # эталоны фаз End Turn: мой ход / ход ИИ / возврат (3)
 ├── golden/sp-tb/*.png          # эталоны Turn Based SP с двумя компьютерами (3)
-├── golden/combat-tb/*.png      # эталоны боя: выстрел/снаряд/взрыв по кадрам (8)
+├── golden/combat-tb/*.png      # эталоны боя: выстрел/снаряд/след/взрыв/вспышка танка (11)
+├── golden/build-cancel/*.png   # эталоны отмены стройки уводом строителя (3)
 └── scripts/README.md
 ```
 
@@ -195,6 +197,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert endturn-frames<2000` | кадров, которые занял последний `end_turn` (переход + ходы ИИ); зависший ход ИИ упирается в 12 000 (`LOCAL_AI_TICK_LIMIT`) |
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
+| `assert unit-count NAME>=N` | юнитов типа `NAME` на карте (имя — как у `spawn`: `RocketSmoke`, `Rocket`, `TorpedoBubble`, `Training Hall`, …) |
 | `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Preferences`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
 | `assert phase=PlayerTurn` | фаза локальной партии: `PlayerTurn`, `AiTurn`, `Advancing`, `Finished` |
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
@@ -247,6 +250,9 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert unit-menu-item=NAME` | пункт есть в меню и **включён** |
 | `assert unit-menu-disabled=NAME` | пункт есть, но отключён (механика не портирована — см. `unitmenu::UnitMenuItem::note`) |
 | `assert unit-order=sentry` (и любое `ORDER_*`) | текущий приказ выделенного юнита (`await`, `move`, `sentry`, `poweron`, …) |
+| `assert firing=on\|off` | выделенный юнит показывает кадр выстрела: `firing_recoil_frames > 0` (`UnitInfo::PrepareFire`/`ProgressFire`) **и** рендер выбрал `firing_image_base` из `D_*` |
+| `assert building=on\|off` | у выделенного мобильного строителя идёт стройка (`ORDER_BUILD`/`AWAIT_TAPE_POSITIONING`, площадка стоит) |
+| `assert trail=on\|off` | на карте есть частицы следа снаряда (`RKTSMOKE`/`TRPBUBLE`, `Paths_DrawMissile`) |
 | `assert prefs=open` / `prefs=closed` | открыт ли диалог `Preferences`/`Setup` (в меню — `Screen::Preferences`, в игре — модальное окно `App::preferences_dialog`) |
 | `assert prefs-value NAME=N` | значение опции в открытом диалоге (чекбокс — `0/1`; `effects`, `disable_fx`, `quick_scroll`, `timer`, …) |
 | `assert prefs-effects=on\|off` | `settings["effects"]` (пока диалог открыт — его черновик) |
@@ -279,7 +285,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `preferences.qa` | TC-0935: `menu setup` → `SETUPPIC` (`setup-dialog`, `prefs-value disable_fx=0`, toggle → `prefs-sound=off`, Cancel не применяет, Done применяет); партия → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`, все секции, `quick_scroll=16`, `timer=180`), `prefs set quick_scroll 36` → 35, `prefs toggle effects` → `effects=off`, `anim 200` → `prefs-effects-off`, Done, значение помнится, `save_v70 prefs-ini`; звук `prefs-audio=off/on`; Cancel возвращает снимок; `Help` → `help-section=preferences`; 4 golden-кадра | **PASS** (1 кадр цикла, 0 дрейфа) |
 | `ai-turn.qa` | A2/A3: конец хода человека и ход компьютера — Options (No Limit + Turn Based) → мобилизация → высадка → `assert endturn=normal` (мой ход: кнопка отжата, таймер 00:00 красным) → `click 426 12` (End Turn) → `tick 1` (`assert team=GREEN`, `assert endturn=pressed`: нажатый `G_ENDT_D` с подписью цветом команды, таймер 00:45) → `wait 2000` (`assert endturn=normal`, `assert team=RED`, `turn>=2`); кадры `ai-turn-human-normal`/`ai-turn-ai-pressed`/`ai-turn-human-again` | **PASS** (298 кадров; golden `ai-turn/`) |
 | `sp-tb.qa` | Turn Based SP: Options (No Limit + Turn Based) → Planet → Players (RED человек, GREEN+BLUE компьютеры, GRAY пусто) → мобилизация → высадка → `assert turn=1`/`team=RED` → `select unit 0`/`move near` → `end_turn` → `assert turn=2`/`team=RED`/`endturn-frames<3000` (два хода ИИ: 658 кадров) → ещё 2 раунда (1022/1029) → `save sp-tb.mxs`; кадры `sp-tb-turn1/turn2/turn4` | **PASS** (2719 кадров; golden `sp-tb/`) |
-| `combat-tb.qa` | Turn Based бой: `tick 5` → `select unit 0` → `spawn Missile Crawler` + `spawn enemy Tank` → `select type Missile Crawler` → `click enemy Tank` (новая команда: клик по чужому юниту = атака) → `assert log=Attack:` → `tick 2` (`assert unit-order=fire`) → кадры `fired`/`rocket`/`impact`/`explosion`/`explosion-mid`/`explosion-end` (кадры `image_index` `HitExplosion` 0→4) → `assert unit-order=await` → `end_turn` → `assert turn>=2`, `assert endturn-frames<2000` (169 кадров вместо 12 000 до исправления) → `combat-tb-after-ai` | **PASS** (193 кадра; golden `combat-tb/`) |
+| `combat-tb.qa` | Turn Based бой: `tick 5` → `select unit 0` → `spawn Missile Crawler` + `spawn enemy Tank` → `select type Missile Crawler` → `click enemy Tank` (клик по чужому юниту = атака) → `assert log=Attack:` → `tick 2` (`assert unit-order=fire`) → `tick 4` (`assert firing=on`: кадр `firing_image_base` у ракетчика; `assert unit-order=fire`) → кадры `fired`/`rocket` → `tick 2` (`assert trail=on`, `assert unit-count RocketSmoke>=3`, кадр `trail`) → `impact`/`explosion`/`explosion-mid`/`explosion-end` (кадры `image_index` `HitExplosion` 0→4) → `assert unit-order=await` → танк: `spawn Tank`/`spawn enemy Tank`/`click enemy Tank` → `tick 15` (`assert unit-order=fire`) → `tick 5` (`assert firing=on`, кадры `tank-fired`/`tank-restored`, `assert firing=off`) → `end_turn` → `assert turn>=2`, `assert endturn-frames<2000` → `combat-tb-after-ai` | **PASS** (273 кадра; golden `combat-tb/`) |
+| `build-cancel.qa` | Отмена стройки уводом строителя (Turn Based, No Limit): `select type Constructor` → `build open` → `build select 13` → `build done` → `build place 28 20` → `assert unit-order=build`, `assert site=large`, `assert building=on`, `assert unit-count Training Hall=0` (кадр `build-cancel-placed`) → `move near` (RMB по соседней клетке = новый приказ) → `assert unit-order=move`, `assert site=none`, `assert building=off` (кадр `build-cancel-moved`) → `end_turn` → `assert turn>=2`, `assert unit-count Training Hall=0` (кадр `build-cancel-after-turn`): ход производства отменённую стройку не достраивает | **PASS** (300 кадров; golden `build-cancel/`) |
 
 Про `victory.qa` — **осознанный pending** по элиминации: в языке `.qa` нет
 команды «уничтожить юнит», а честный бой с ИИ занимает много ходов, поэтому
@@ -413,6 +420,8 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
@@ -420,6 +429,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/u
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-rust-qa/golden/combat-tb
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-rust-qa/golden/build-cancel
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100

@@ -236,7 +236,18 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
         if !is_valid_order(p1.order) || !is_valid_order(p1.prior_order) {
             return ApplyOutcome::Malformed;
         }
+        // Увод мобильного строителя с недостроенной площадки: C++
+        // `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`) до применения нового
+        // приказа — площадка снимается, очередь/прогресс обнуляются. Пакет несёт
+        // `prior_order = BUILD` (приказ составлен до отмены), поэтому prior
+        // восстанавливаем в состояние после `CancelBuilding` (AWAIT), иначе
+        // `RestoreOrders` мог бы вернуть пустую стройку.
+        let cancelled_build = unit_order::cancel_build_for_new_order(state, &mut unit, p1.order);
         apply_payload_p1(&mut unit, p1);
+        if cancelled_build {
+            unit.prior_orders = UnitOrder::Await;
+            unit.prior_state = UnitOrderState::ExecutingOrder;
+        }
     }
 
     // Выбор процессора по *новому* приказу юнита (`Remote_OrderProcessors[...]`).
@@ -387,6 +398,10 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
     }
 
     unit_order::new_order_while_scaling(&mut unit);
+
+    // `UnitOrder` приказ 38 — тоже «новый приказ»: увод строителя отменяет
+    // стройку, как `CancelBuilding` в C++ (см. `apply_packet_08`).
+    unit_order::cancel_build_for_new_order(state, &mut unit, packet.order);
 
     unit.orders = packet.order;
     unit.state = packet.state;

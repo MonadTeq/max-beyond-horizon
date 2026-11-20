@@ -295,6 +295,18 @@ pub enum Assertion {
     /// `assert unit=NAME`: у игрока есть юнит с таким именем (P2: юнит/здание
     /// появились после ходов производства).
     UnitType(String),
+    /// `assert unit-count NAME>=N`: юнитов такого типа на карте (имя — как у
+    /// `spawn`: `RocketSmoke`, `Rocket`, `TorpedoBubble`, …).
+    UnitCount(String, Cmp, u32),
+    /// `assert firing=on|off`: выделенный юнит показывает кадр выстрела
+    /// (`UnitInfo::PrepareFire`/`ProgressFire`, `firing_recoil_frames > 0`).
+    Firing(bool),
+    /// `assert building=on|off`: у выделенного мобильного строителя идёт
+    /// стройка (`ORDER_BUILD`, площадка на карте).
+    Building(bool),
+    /// `assert trail=on|off`: на карте есть юниты-частицы следа снаряда
+    /// (`RKTSMOKE`/`TRPBUBLE`, `Paths_DrawMissile`).
+    Trail(bool),
     /// `assert site=large|small|none`: стройплощадка в мире — лента+конусы
     /// (+плита) в одной клетке; `none` — ни ленты, ни конусов у команды
     /// игрока (после достройки плита под зданием остаётся и не мешает).
@@ -1257,6 +1269,22 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             operator,
             parse_u32(value, "assert units")?,
         )),
+        k if k.starts_with("unit-count ") => {
+            let name = k["unit-count ".len()..].trim();
+
+            if name.is_empty() {
+                return Err("assert unit-count: пустое имя типа".to_string());
+            }
+
+            Ok(Assertion::UnitCount(
+                name.to_string(),
+                operator,
+                parse_u32(value, "assert unit-count")?,
+            ))
+        }
+        "firing" => parse_on_off(value, "assert firing").map(Assertion::Firing),
+        "building" => parse_on_off(value, "assert building").map(Assertion::Building),
+        "trail" => parse_on_off(value, "assert trail").map(Assertion::Trail),
         "team" => Ok(Assertion::Team(parse_team(value)?)),
         "screen" => {
             let screen = ScreenName::parse(value)
@@ -2443,6 +2471,26 @@ mod tests {
         assert_eq!(
             one("assert units>4"),
             Command::Assert(Assertion::Units(Cmp::Gt, 4))
+        );
+        assert_eq!(
+            one("assert unit-count RocketSmoke>=3"),
+            Command::Assert(Assertion::UnitCount(
+                "rocketsmoke".to_string(),
+                Cmp::Ge,
+                3
+            ))
+        );
+        assert_eq!(
+            one("assert firing=on"),
+            Command::Assert(Assertion::Firing(true))
+        );
+        assert_eq!(
+            one("assert building=off"),
+            Command::Assert(Assertion::Building(false))
+        );
+        assert_eq!(
+            one("assert trail=on"),
+            Command::Assert(Assertion::Trail(true))
         );
         assert_eq!(one("assert team=1"), Command::Assert(Assertion::Team(1)));
         assert_eq!(one("assert team=RED"), Command::Assert(Assertion::Team(0)));

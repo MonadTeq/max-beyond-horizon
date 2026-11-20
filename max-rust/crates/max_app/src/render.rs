@@ -451,6 +451,131 @@ pub fn unit_frame_index_for_angle(
     index.min(last)
 }
 
+/// Активна ли вспышка выстрела (отдача).
+///
+/// C++ `UnitInfo::PrepareFire` (`unitinfo.cpp:4709`) выставляет
+/// `firing_recoil_frames` (3; ×5 у `ANTIAIR`, ×2 у `SP_FLAK`/`FASTBOAT`;
+/// 8 у `COMMANDO`/`INFANTRY`) и рисует кадр выстрела; каждый
+/// `UnitInfo::ProgressFire` (`:4824`) уменьшает счётчик и на нуле возвращает
+/// обычный кадр. Счётчик — поле состояния, поэтому вспышка детерминирована и
+/// попадает в снапшот/CRC.
+pub fn firing_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
+    unit.firing_recoil_frames > 0 && unit.flags & unit_flags::HAS_FIRING_SPRITE != 0
+}
+
+/// Кадр **корпуса** во время отдачи (`UnitInfo::PrepareFire`).
+///
+/// * `COMMANDO`/`INFANTRY` — особая 8-кадровая очередь C++: `DrawSpriteFrame(
+///   unit_angle + 104)`, затем каждый `ProgressFire` — `image_index + 8`
+///   (`unitinfo.cpp:4732-4742/4831-4832`), то есть кадр
+///   `104 + angle + 8·(8 − firing_recoil_frames)`;
+/// * остальные юниты без башни (`flags & TURRET_SPRITE == 0`) —
+///   `DrawSpriteFrame(unit_angle + firing_image_base)`;
+/// * у юнитов с башней корпус не меняется (C++ рисует только башню).
+///
+/// `None` — корпус рисуется обычным кадром ([`unit_frame_index_with_animation`]).
+pub fn firing_body_frame_index(
+    info: &max_assets::sprite::FrameInfo,
+    unit: &max_core::unit::UnitInfo,
+    body_angle: u8,
+) -> Option<usize> {
+    if !firing_frame_active(unit) {
+        return None;
+    }
+
+    let angle = usize::from(body_angle % 8);
+
+    if matches!(
+        unit.unit_type,
+        UnitType::Commando | UnitType::Infantry
+    ) {
+        // `unit_angle + 104`, дальше +8 за каждый тик отдачи (8 → 0).
+        let step = 8usize.saturating_sub(usize::from(unit.firing_recoil_frames));
+        return Some(104 + angle + 8 * step);
+    }
+
+    if unit.flags & unit_flags::TURRET_SPRITE != 0 {
+        return None;
+    }
+
+    if info.firing_image_count == 0 {
+        return None;
+    }
+
+    Some(usize::from(info.firing_image_base) + angle)
+}
+
+/// Кадр **башни** во время отдачи (`UnitInfo::PrepareFire`/`ProgressFire`).
+///
+/// C++ `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, а для
+/// `ANTIAIR`/`SP_FLAK`/`FASTBOAT` каждый `ProgressFire` дополнительно
+/// переключает `turret_image_index ± 8` (`unitinfo.cpp:4828-4830`), поэтому
+/// вспышка чередуется с обычным кадром башни. Знак первого переключения
+/// зависит от чётности начального счётчика (15 у `ANTIAIR`, 6 у
+/// `SP_FLAK`/`FASTBOAT`) — здесь он вычисляется из `firing_recoil_frames`.
+///
+/// `None` — у юнита нет башни/кадров выстрела, башня рисуется обычным кадром.
+pub fn firing_turret_frame_index(
+    info: &max_assets::sprite::FrameInfo,
+    unit: &max_core::unit::UnitInfo,
+) -> Option<usize> {
+    if !firing_frame_active(unit) || unit.flags & unit_flags::TURRET_SPRITE == 0 {
+        return None;
+    }
+
+    if info.firing_image_count == 0 {
+        return None;
+    }
+
+    let base = i32::from(info.firing_image_base);
+    let angle = i32::from(unit.turret_angle % 8);
+    let recoil = i32::from(unit.firing_recoil_frames);
+
+    let special = matches!(
+        unit.unit_type,
+        UnitType::AntiAir | UnitType::MobileAntiAir | UnitType::FastBoat
+    );
+
+    let shift = if special {
+        // Начальный счётчик `PrepareFire`: 3 × 5 у ANTIAIR, 3 × 2 у остальных.
+        let initial = if unit.unit_type == UnitType::AntiAir { 15 } else { 6 };
+
+        if initial % 2 == 1 {
+            // ANTIAIR: 15 → 14(чёт) переключает на firing+8.
+            if recoil % 2 == 0 {
+                8
+            } else {
+                0
+            }
+        } else if recoil % 2 == 0 {
+            0
+        } else {
+            -8
+        }
+    } else {
+        0
+    };
+
+    let index = base + angle + shift;
+
+    (index >= 0).then_some(index as usize)
+}
+
+/// Пиксельный якорь юнита-эффекта следа (дым ракеты/пузыри торпеды).
+///
+/// C++ `Paths_DrawMissile` (`airpath.cpp:392-404`) кладёт три частицы в
+/// покинутую клетку и разносит **зоны отрисовки** на 0/⅓/⅔ отрезка
+/// (`OffsetDrawZones`); `unit->x/y` при этом остаются центром клетки. Порт
+/// хранит разнесение в `x/y` (см. `unit_order::spawn_missile_trail`), поэтому
+/// рендер эффектов берёт их напрямую.
+pub fn effect_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)> {
+    matches!(
+        unit.unit_type,
+        UnitType::RocketSmoke | UnitType::TorpedoBubble
+    )
+    .then(|| (i32::from(unit.x), i32::from(unit.y)))
+}
+
 /// Кадр юнита с учётом покадровой анимации строителя (`build_step`).
 ///
 /// `build_step` — номер кадра рабочего цикла конструктора (0, 1, 2) из
@@ -745,15 +870,27 @@ pub fn draw_unit_sprites_with_animation(
         .map(|info| usize::from(info.image_count))
         .filter(|frames| *frames > 0)
         .unwrap_or(sprite.sheet.len());
-    let image_index = unit_frame_index_with_animation(
-        unit,
-        image_base,
-        sprite.sheet.len(),
-        sentry_frames,
-        body_angle,
-        animation,
-        effects,
-    );
+    let image_index = {
+        let mut index = unit_frame_index_with_animation(
+            unit,
+            image_base,
+            sprite.sheet.len(),
+            sentry_frames,
+            body_angle,
+            animation,
+            effects,
+        );
+
+        // Вспышка выстрела (`UnitInfo::PrepareFire`/`ProgressFire`): кадр
+        // `firing_image_base` (или 104+… у пехоты) держится всю отдачу.
+        if let Some(info) = sprite.frame_info.as_ref() {
+            if let Some(fire) = firing_body_frame_index(info, unit, body_angle) {
+                index = fire.min(sprite.sheet.len().saturating_sub(1));
+            }
+        }
+
+        index
+    };
     let sprite_frame = sprite.frame_at(image_index)?;
     let shadow = sprite.shadow_at(image_index);
     let colors = TeamColors::ALL
@@ -802,12 +939,29 @@ pub fn draw_unit_sprites_with_animation(
     // Башня/пушка — отдельный кадр поверх корпуса со сдвигом
     // `angle_offsets[body_angle]` (`UnitInfo::RenderWithConnectors`).
     if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
-        if let Some(turret) = sprite.turret_frame(unit.turret_angle) {
+        // Во время отдачи башня рисуется кадром выстрела
+        // (`DrawSpriteTurretFrame(turret_angle + firing_image_base)`).
+        let firing_index = sprite
+            .frame_info
+            .as_ref()
+            .and_then(|info| firing_turret_frame_index(info, unit))
+            .filter(|index| *index < sprite.sheet.len());
+
+        let turret = match firing_index {
+            Some(index) => sprite.sheet.frame(index),
+            None => sprite.turret_frame(unit.turret_angle),
+        };
+        let turret_shadow = match firing_index {
+            Some(index) => sprite.shadow_at(index),
+            None => sprite.turret_shadow(unit.turret_angle),
+        };
+
+        if let Some(turret) = turret {
             stats.turret = renderer
                 .draw_turret_scaled(
                     frame,
                     turret,
-                    sprite.turret_shadow(unit.turret_angle),
+                    turret_shadow,
                     anchor,
                     shadow_offset,
                     sprite.turret_offset(body_angle),
@@ -1321,7 +1475,10 @@ impl App {
             let (grid_x, grid_y) = self
                 .visual_position(visible[index])
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
-            let (world_x, world_y) = unit_anchor_world(unit, (grid_x, grid_y));
+            // Частицы следа ракеты/торпеды (`Paths_DrawMissile`): C++ разносит
+            // только зоны отрисовки, порт хранит это в пиксельных `x/y`.
+            let (world_x, world_y) = effect_pixel_anchor(unit)
+                .unwrap_or_else(|| unit_anchor_world(unit, (grid_x, grid_y)));
             // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
             // конструктор сдвигается на 8 px за тик к центру 2×2-ленты, всего
             // на 32 px (половину клетки) — в центр стройплощадки. Это кадровый

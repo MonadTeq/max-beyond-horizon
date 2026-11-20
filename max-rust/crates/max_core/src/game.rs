@@ -1372,10 +1372,15 @@ impl GameState {
 
     /// `UnitsManager_SetNewOrderInt` для произвольного юнита
     /// (`units_manager.cpp:1945`); возвращает `true`, если снят запрос пути.
+    ///
+    /// Увод мобильного строителя с недостроенной площадки новым приказом
+    /// сначала снимает стройку (`UnitInfo::CancelBuilding`, `unitinfo.cpp:4231`)
+    /// — см. [`unit_order::cancel_build_for_new_order`].
     pub fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
         let Some(mut unit) = self.unit(id).cloned() else {
             return false;
         };
+        unit_order::cancel_build_for_new_order(self, &mut unit, order);
         let delete_path = unit_order::set_new_order_int(&mut unit, order, state);
         if delete_path {
             self.remove_path_request(id);

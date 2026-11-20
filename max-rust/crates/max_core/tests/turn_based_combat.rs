@@ -179,6 +179,173 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     );
 }
 
+/// `Paths_DrawMissile` (`airpath.cpp:362-406`): за снарядом тянется след из
+/// трёх юнитов-эффектов на каждую покинутую клетку — `RKTSMOKE` у ракеты
+/// (`D_RKTSMOKE`: 5 кадров) и `TRPBUBLE` у торпеды (`D_TRPBUBLE`: 3 кадра).
+///
+/// Проверяется точный порт: тип частицы, позиция (покинутая клетка, но
+/// пиксельный сдвиг 0/⅓/⅔ к следующей — `OffsetDrawZones`), флаги
+/// (`EXPLODING|ANIMATED|MISSILE_UNIT`), `image_index_max` из `UnitInfo`, кадры
+/// по тику через `UnitsManager_ProgressExplosion` и удаление на последнем кадре.
+#[test]
+fn missiles_leave_three_particle_trails_behind_them() {
+    // (тип выстрела, частица, image_index_max, тик появления)
+    struct Case {
+        launcher: UnitType,
+        target: UnitType,
+        particle: UnitType,
+        image_index_max: i16,
+        flag_probe: u32,
+    }
+
+    for case in [
+        Case {
+            launcher: UnitType::MissileCrawler,
+            target: UnitType::Tank,
+            particle: UnitType::RocketSmoke,
+            image_index_max: 4, // D_RKTSMOKE.image_count = 5
+            flag_probe: 0,
+        },
+        Case {
+            launcher: UnitType::Corvette,
+            target: UnitType::Submarine,
+            particle: UnitType::TorpedoBubble,
+            image_index_max: 2, // D_TRPBUBLE.image_count = 3
+            flag_probe: max_core::enums::unit_flags::GROUND_COVER,
+        },
+    ] {
+        let mut state = combat_state();
+        // Цель — в 4 клетках: снаряд должен проехать несколько клеток и
+        // оставить несколько следов.
+        let launcher = spawn(&mut state, case.launcher, TeamId::GREEN, Point::new(5, 5));
+        spawn(&mut state, case.target, TeamId::RED, Point::new(9, 5));
+        state.update_visibility_status(false);
+
+        let mut data = state.order_data(launcher);
+        data.fire_on = Point::new(9, 5);
+        state.set_order_data(launcher, data);
+        state.set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
+
+        let mut seen_ids = std::collections::BTreeSet::new();
+        let mut spawn_ticks = Vec::new();
+        let mut frames = Vec::new();
+        let mut checked_position = false;
+        let mut despawned = false;
+
+        for _ in 0..200 {
+            state.tick();
+
+            let mut fresh = Vec::new();
+            let mut alive = 0;
+
+            for id in state.unit_ids_in_order() {
+                let Some(unit) = state.unit(id) else { continue };
+                if unit.unit_type != case.particle {
+                    continue;
+                }
+                alive += 1;
+
+                if seen_ids.insert(id) {
+                    fresh.push(unit.clone());
+                    frames.push(unit.image_index);
+                }
+
+                assert_eq!(
+                    unit.image_index_max, case.image_index_max,
+                    "{:?}: кадров в D_* — {}",
+                    case.particle,
+                    case.image_index_max + 1
+                );
+                assert!(
+                    unit.flags & max_core::enums::unit_flags::EXPLODING != 0
+                        && unit.flags & max_core::enums::unit_flags::ANIMATED != 0
+                        && unit.flags & max_core::enums::unit_flags::MISSILE_UNIT != 0,
+                    "{:?}: флаги SC_UNITS (EXPLODING|ANIMATED|MISSILE_UNIT), получено {:#x}",
+                    case.particle,
+                    unit.flags
+                );
+                assert_eq!(
+                    unit.flags & max_core::enums::unit_flags::GROUND_COVER,
+                    case.flag_probe,
+                    "{:?}: GROUND_COVER из SC_UNITS",
+                    case.particle
+                );
+            }
+
+            if fresh.len() == 3 {
+                spawn_ticks.push(state.turn_counter);
+
+                // Все три — в клетке, которую снаряд покинул, а пиксельные
+                // `x/y` разнесены на 0/⅓/⅔ отрезка к новой клетке.
+                let mut xs: Vec<i32> = fresh.iter().map(|unit| i32::from(unit.x)).collect();
+                xs.sort_unstable();
+                let grid = fresh[0].grid;
+                assert!(
+                    fresh.iter().all(|unit| unit.grid == grid),
+                    "{:?}: частицы стоят в покинутой клетке {grid:?}",
+                    case.particle
+                );
+                assert_eq!(xs[0], i32::from(grid.x) * 64 + 32);
+                assert!(xs[1] > xs[0], "след разнесён по x");
+                assert!(xs[2] > xs[1], "след разнесён по x");
+
+                if !checked_position {
+                    checked_position = true;
+                }
+            }
+
+            if alive == 0 && !seen_ids.is_empty() {
+                despawned = true;
+                break;
+            }
+        }
+
+        assert!(
+            spawn_ticks.len() >= 2,
+            "{:?}: след обязан ставиться на каждую покинутую клетку, получено {}",
+            case.particle,
+            spawn_ticks.len()
+        );
+        assert!(checked_position, "{:?}: три частицы на клетку", case.particle);
+        assert!(!frames.is_empty(), "{:?}: кадры частицы", case.particle);
+        assert!(
+            despawned,
+            "{:?}: частицы удаляются после последнего кадра",
+            case.particle
+        );
+    }
+}
+
+/// Детерминизм: след ракеты входит в состояние (id/позиции/кадры), поэтому
+/// одинаковый сценарий с одним seed обязан давать одинаковый дайджест.
+#[test]
+fn missile_trails_are_deterministic() {
+    fn run() -> u16 {
+        let mut state = combat_state();
+        let launcher = spawn(
+            &mut state,
+            UnitType::MissileCrawler,
+            TeamId::GREEN,
+            Point::new(5, 5),
+        );
+        spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(9, 5));
+        state.update_visibility_status(false);
+
+        let mut data = state.order_data(launcher);
+        data.fire_on = Point::new(9, 5);
+        state.set_order_data(launcher, data);
+        state.set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
+
+        for _ in 0..40 {
+            state.tick();
+        }
+
+        max_core::crc::state_digest(&state)
+    }
+
+    assert_eq!(run(), run(), "следы ракеты должны быть детерминированы");
+}
+
 /// Каждый тип попадания даёт свой взрыв (`UnitsManager_StartExplosion`,
 /// `units_manager.cpp:3948-3987`) и удаляется после анимации.
 #[test]

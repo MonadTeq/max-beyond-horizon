@@ -280,6 +280,61 @@
 
 ### Исправлено
 
+- **Три расхождения с C++-оракулом: увод строителя, след снарядов, вспышка
+  выстрела.**
+  * **Строитель уходил, а стройка продолжалась.** Любой новый приказ
+    мобильному строителю (`ORDER_BUILD`, площадка стоит) теперь сначала снимает
+    стройку — порт `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`, ветка
+    `!STATIONARY`) через `unit_order::cancel_build_for_new_order`:
+    `build_list.Clear()`, `build_time = 0`, `Access_DestroyUtilities(grid, true,
+    false, false, false)` (лента, конусы и плита; дорога/обломки/коннекторы не
+    трогаются), `path = nullptr`, `ORDER_AWAIT`/`EXECUTING_ORDER`, материалы не
+    возвращаются. Вызывается из `GameState::set_order` (ИИ/группа/прямой путь) и
+    из приёма пакетов 08/38 (сеть), поэтому состояние совпадает у всех пиров;
+    `prior` после отмены — `AWAIT` (пакет 08 несёт старый `BUILD` в
+    `prior_order`). Заодно исправлен набор флагов `Access_DestroyUtilities` в
+    штатной отмене (`ProcessOrderBuild`/`BUILD_CANCEL`,
+    `ProcessOrderHaltBuilding`): было `true,true,true,true`, стало C++-шное
+    `true,false,false,false`. HUD пишет `Build cancelled at (x, y)`.
+  * **У снарядов не было следа.** C++ `Paths_DrawMissile`
+    (`airpath.cpp:362-406`) на каждом переходе снаряда в новую клетку ставит
+    три юнита-эффекта в **покинутую** клетку: `RKTSMOKE` у `ROCKET` (5 кадров
+    `D_RKTSMOKE`) и `TRPBUBLE` у `TORPEDO` (3 кадра `D_TRPBUBLE`), флаги из
+    `SC_UNITS` (`EXPLODING|ANIMATED|MISSILE_UNIT`, у пузырей ещё
+    `GROUND_COVER`), `ORDER_EXPLODE`/`DESTROY`; `UnitsManager_ProgressExplosion`
+    листает кадр за два тика и удаляет на `image_index_max` (4/2);
+    `OffsetDrawZones` разносит частицы на 0/⅓/⅔ отрезка. Порт —
+    `unit_order::spawn_missile_trail`: три частицы в покинутой клетке, разнос
+    хранится в пиксельных `x/y` (рендер эффектов берёт их через
+    `render::effect_pixel_anchor`), видимость — как `InitStealthStatus` (своя
+    команда), поэтому чужие следы не рисуются. Спавн не зависит от
+    `GameManager_PlayerTeam` (локальное UI-поле развело бы состояние клиентов,
+    DESIGN §6.1) — в одиночной игре результат 1:1.
+  * **Не было вспышки выстрела.** C++ `UnitInfo::PrepareFire`
+    (`unitinfo.cpp:4709-4747`) выставляет `firing_recoil_frames` (3; ×5 у
+    `ANTIAIR`, ×2 у `SP_FLAK`/`FASTBOAT`; 8 у `COMMANDO`/`INFANTRY`) и рисует
+    кадр `firing_image_base`: у башни `DrawSpriteTurretFrame(turret_angle +
+    firing_image_base)`, у корпуса `DrawSpriteFrame(angle +
+    firing_image_base)` (пехота — `104 + angle`, затем `+8` за тик);
+    `ProgressFire` (`:4824`) уменьшает счётчик, у `ANTIAIR`/`SP_FLAK`/
+    `FASTBOAT` переключает башню `±8`, на нуле возвращает обычный кадр.
+    `max_app::render::{firing_body_frame_index, firing_turret_frame_index}` —
+    порт выбора кадра из `D_*` (`firing_image_base`/`firing_image_count`,
+    которые уже экспортируются в `max-rust-3d-models` как `firing/`), подключён
+    в общую точку отрисовки `draw_unit_sprites_with_animation`; `dt = 0` кадры
+    golden-эталонов не двигает.
+  * Тесты: `max_core/tests/builder_cancel.rs` (4: `set_order`, пакеты 38/08,
+    штатный `stop`), `max_core/tests/turn_based_combat.rs` (+2: три частицы на
+    клетку, тип/кадры/удаление/детерминизм), `max_app/tests/
+    build_lifecycle_interactive.rs` (+1: RMB-увод в живой партии Turn Based),
+    `max_app/tests/unit_sprites.rs` (+1: кадры `firing_image_base` для
+    `TANK`/`ARTILLRY`/`ANTIAIR`/`SP_FLAK`/`INFANTRY`). QA: `combat-tb.qa` —
+    `assert firing=on`, `assert trail=on`, `assert unit-count RocketSmoke>=3`,
+    кадры `combat-tb-trail`, `combat-tb-tank-fired`, `combat-tb-tank-restored`;
+    новый `build-cancel.qa` (3 кадра); новые ассерты `firing`, `building`,
+    `trail`, `unit-count NAME<оп>N`. Golden `combat-tb` перегенерирован
+    (11 кадров), новый `golden/build-cancel` (3). Детали — §37
+    `docs/analysis/visual-1to1-status.md`.
 - **Turn Based: зависание хода ИИ после выстрела/гибели юнита (три порта
   оракула) и настоящая анимация снарядов/взрывов.**
   * **Снаряд навсегда оставался в `ORDER_MOVE`.** `UnitInfo::PrepareFire`

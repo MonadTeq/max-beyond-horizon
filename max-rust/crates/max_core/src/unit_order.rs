@@ -490,6 +490,105 @@ pub fn cancel_building(unit: &mut UnitInfo) {
     }
 }
 
+/// Активная стройка мобильного строителя: клетка площадки (`target_grid`).
+///
+/// C++ `ORDER_BUILD` у мобильного строителя проходит состояния
+/// `INIT → IN_PROGRESS → BUILD_IN_PROGRESS`, а у конструктора ещё
+/// `ORDER_AWAIT_TAPE_POSITIONING` с состояниями `TAPE_POSITIONING_*`. Площадка к
+/// этому моменту уже стоит (`UnitInfo::StartBuilding`), прогресс — в
+/// `build_list`/`build_time`. `SELECT_SITE`/`UNIT_READY` сюда не входят: в
+/// первом площадки ещё нет (призрак `GameManager_TempTape`), во втором здание
+/// уже построено и строитель ждёт приказа уйти.
+///
+/// Возвращает `None`, если юнит не мобильный строитель или стройка не идёт.
+pub fn active_build_site(unit: &UnitInfo) -> Option<Point> {
+    if !production::is_mobile_builder(unit.unit_type) {
+        return None;
+    }
+
+    if !matches!(
+        unit.orders,
+        UnitOrder::Build | UnitOrder::AwaitTapePositioning
+    ) {
+        return None;
+    }
+
+    if matches!(
+        unit.state,
+        UnitOrderState::SelectSite
+            | UnitOrderState::UnitReady
+            | UnitOrderState::BuildCancel
+            | UnitOrderState::BuildAbort
+    ) {
+        return None;
+    }
+
+    // Прогресс стройки живёт в очереди: `SpawnNewUnit` очищает её на
+    // достройке, `CancelBuilding` — на отмене. Пустая очередь означает, что
+    // `AWAIT_TAPE_POSITIONING` — это уже **уход** строителя с готовой площадки
+    // (`TAPE_POSITIONING_DEINIT`, `ActivateEngineer`), а не стройка: снимать
+    // утилиты и плиту под готовым зданием нельзя.
+    if unit.build_list.is_empty() {
+        return None;
+    }
+
+    Some(unit.target_grid)
+}
+
+/// Увод мобильного строителя с недостроенной площадки — `UnitInfo::CancelBuilding`
+/// (`unitinfo.cpp:4231`, ветка `!STATIONARY`) при получении **нового приказа**.
+///
+/// В C++ приказ движения строителю во время стройки через карту невозможен
+/// (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`: для
+/// `BUILD_IN_PROGRESS` курсор — `CURSOR_UNIT_NO_GO`), а отмена идёт через
+/// `stop` попапа (`UnitsManager_Popup_OnClick_BuildStop` →
+/// `GameManager_SelectBuildSite` → `ORDER_BUILD`/`BUILD_CANCEL` →
+/// `UnitInfo::CancelBuilding`). Порт выставляет `stop` тем же
+/// `SetNewOrder`, но приказ, пришедший ДРУГИМ путём (сеть, ИИ, группа), в C++
+/// обязан сначала снять стройку: `CancelBuilding` мобильной ветки делает
+/// `build_list.Clear()`, `build_time = 0`, `Access_DestroyUtilities(grid, true,
+/// false, false, false)` (лента/конусы/плита), снимает путь и переводит юнита в
+/// `ORDER_AWAIT`/`EXECUTING_ORDER`. Материалы за прошедшие ходы не
+/// возвращаются — как в C++.
+///
+/// Возвращает `true`, если стройка была отменена.
+pub fn cancel_build_for_new_order(
+    state: &mut GameState,
+    unit: &mut UnitInfo,
+    new_order: UnitOrder,
+) -> bool {
+    // Приказы самой стройки (включая `stop`/`start` завода) её не отменяют.
+    if matches!(
+        new_order,
+        UnitOrder::Build | UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
+    ) {
+        return false;
+    }
+
+    let Some(site) = active_build_site(unit) else {
+        return false;
+    };
+
+    // `Access_DestroyUtilities(grid_x, grid_y, true, false, false, false)`:
+    // только утилиты площадки (лента/конусы) и плита; дорога/обломки/
+    // коннекторы не трогаются.
+    access::destroy_utilities(state, site, true, false, false, false);
+
+    state.remove_path_request(unit.id);
+
+    unit.build_list.clear();
+    unit.build_time = 0;
+    unit.path = None;
+    unit.moved = 0;
+    unit.orders = UnitOrder::Await;
+    unit.state = UnitOrderState::ExecutingOrder;
+    unit.prior_orders = UnitOrder::Await;
+    unit.prior_state = UnitOrderState::ExecutingOrder;
+
+    // `ORDER_LOG_WRITE(this)` — журнал приказов (диагностика P2).
+    true
+}
+
 /// `UnitInfo::ClearBuildListAndPath` (`unitinfo.cpp:1681`).
 pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
     unit.path = None;
@@ -1275,6 +1374,69 @@ fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     true
 }
 
+/// `Paths_DrawMissile` (`airpath.cpp:362-406`) — след за летящим снарядом.
+///
+/// C++ при каждом переходе снаряда в новую клетку (`AirPath::Execute`,
+/// `airpath.cpp:229-232`, ветка `grid_x || grid_y` для `MISSILE_UNIT`) зовёт
+/// `Paths_DrawMissile` и ставит **три** юнита-эффекта в клетку, которую снаряд
+/// покидает:
+/// * `ROCKET` → `RKTSMOKE` (5 кадров `D_RKTSMOKE`), `TORPEDO` → `TRPBUBLE`
+///   (3 кадра `D_TRPBUBLE`);
+/// * `UnitsManager_DeployUnit(..., skip_map_status_update = true)` с флагами из
+///   `SC_UNITS`: у обоих `EXPLODING|ANIMATED|MISSILE_UNIT` (у `TRPBUBLE` ещё
+///   `GROUND_COVER`), поэтому `UnitInfo` сразу получает
+///   `ORDER_EXPLODE`/`ORDER_STATE_DESTROY` (`units_manager.cpp:2390-2393`);
+/// * кадры листает `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`):
+///   `moved & 1` → `image_index + 1`, удаление на `image_index ==
+///   image_index_max` (4 у дыма, 2 у пузырей);
+/// * `OffsetDrawZones` разносит три частицы вдоль отрезка «старая клетка →
+///   новая» на 0, 1/3 и 2/3 — это только отрисовка (`unit->x/y` не меняются).
+///
+/// Порт хранит разнесение в пиксельных `x/y` частиц (рендер эффектов берёт их
+/// вместо клетки), сама клетка остаётся C++-шной (покинутая). Спавн не зависит
+/// от видимости: в C++ `Paths_DrawMissile` вызывается лишь при
+/// `IsVisibleToTeam(GameManager_PlayerTeam)`, но `GameManager_PlayerTeam` —
+/// локальное UI-поле, и привязка к нему развела бы состояние клиентов
+/// (DESIGN §6.1). Видимость частицы выставляет `UnitInfo::InitStealthStatus`
+/// (своя команда; `skip_map_status_update = true`), поэтому чужие следы не
+/// рисуются — как в C++.
+fn spawn_missile_trail(state: &mut GameState, unit: &UnitInfo, from: Point, to: Point) {
+    let particle_type = match unit.unit_type {
+        UnitType::Rocket => UnitType::RocketSmoke,
+        UnitType::Torpedo => UnitType::TorpedoBubble,
+        _ => return,
+    };
+
+    if from == to {
+        return;
+    }
+
+    const HALF_TILE: i32 = GFX_MAP_TILE_SIZE / 2;
+
+    let start_x = i32::from(from.x) * GFX_MAP_TILE_SIZE + HALF_TILE;
+    let start_y = i32::from(from.y) * GFX_MAP_TILE_SIZE + HALF_TILE;
+    let delta_x = i32::from(to.x) * GFX_MAP_TILE_SIZE + HALF_TILE - start_x;
+    let delta_y = i32::from(to.y) * GFX_MAP_TILE_SIZE + HALF_TILE - start_y;
+
+    // `index = 3` в C++: ровно три частицы на клетку.
+    for index in 0..3 {
+        let Some(particle_id) = state.spawn_unit(particle_type, unit.team, from, 0) else {
+            continue;
+        };
+
+        if let Some(mut particle) = state.unit(particle_id).cloned() {
+            // `OffsetDrawZones(unit->x + (delta >> 16) - particle->x)`:
+            // 0, 1/3 и 2/3 отрезка.
+            particle.x = (start_x + delta_x * index / 3) as u16;
+            particle.y = (start_y + delta_y * index / 3) as u16;
+            // Видимость — как `UnitInfo::InitStealthStatus` при
+            // `UnitsManager_DeployUnit`: частицу видит только своя команда
+            // (у `Paths_DrawMissile` `Access_UpdateMapStatus` пропускается).
+            state.write_unit(particle_id, particle);
+        }
+    }
+}
+
 /// `UnitInfo::Move` (`unitinfo.cpp:1730`) — завершение перехода клетки.
 ///
 /// В P4 один вызов завершает одну клетку (расхождение 1 в шапке модуля).
@@ -1300,6 +1462,12 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     ctx.unit.grid = target;
     ctx.unit.moved = 0;
     ctx.unit.in_transit = false;
+
+    // `airpath.cpp:229-232`: при выходе снаряда из клетки C++ ставит за ним
+    // след из трёх частиц (`RKTSMOKE`/`TRPBUBLE`).
+    if ctx.unit.flags & MISSILE_UNIT != 0 {
+        spawn_missile_trail(ctx.world, &ctx.unit, grid, target);
+    }
 
     // C++ `Move()` при `moved == GFX_MAP_TILE_SIZE`:
     // `path_steps[step_index]->x -= offset_x` — шаг «съедается» переходом.
@@ -1823,10 +1991,11 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
         UnitOrderState::BuildCancel | UnitOrderState::BuildAbort => {
             ai_task_flag(ctx.world, "Build cancel");
             cancel_building(&mut ctx.unit);
-            // `Access_DestroyUtilities(grid, …)` (`units_manager.cpp:2880`).
+            // `Access_DestroyUtilities(grid, true, false, false, false)`
+            // (`unitinfo.cpp:4269`): только утилиты площадки и плита.
             // В C++ строитель уже стоит на площадке; в порте он остаётся на
             // исходной клетке, поэтому убираем площадку из `target_grid`.
-            access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, true, true, true);
+            access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, false, false, false);
         }
         UnitOrderState::SelectSite => {
             animate(&ctx.unit);
@@ -2585,8 +2754,9 @@ fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
         ai_task_flag(ctx.world, "Build halting");
         cancel_building(&mut ctx.unit);
         // См. `ProcessOrderBuild`: порт не двигает строителя на площадку,
-        // поэтому утилиты снимаются из `target_grid`, а не из `grid`.
-        access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, true, true, true);
+        // поэтому утилиты снимаются из `target_grid`, а не из `grid`;
+        // набор флагов — как в `CancelBuilding` (`true, false, false, false`).
+        access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, false, false, false);
     }
 }
 

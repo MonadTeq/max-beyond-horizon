@@ -151,6 +151,114 @@ fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
     );
 }
 
+/// Вспышка выстрела: кадры `firing_image_base` из `D_*` (и особая очередь
+/// `COMMANDO`/`INFANTRY`), пока `firing_recoil_frames > 0`.
+///
+/// Оракул: `UnitInfo::PrepareFire` (`unitinfo.cpp:4709-4747`) — тело
+/// `DrawSpriteFrame(unit_angle + firing_image_base)`, башня
+/// `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, у
+/// `ANTIAIR`/`SP_FLAK`/`FASTBOAT` — переключение `±8` каждый `ProgressFire`
+/// (`:4824-4833`); пехота — `104 + angle`, затем `+8` за тик.
+#[test]
+fn firing_frames_come_from_the_d_star_firing_block() {
+    use max_app::render::{
+        firing_body_frame_index, firing_frame_active, firing_turret_frame_index,
+    };
+
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
+    // Танк: корпус не меняется, башня — `firing_image_base + turret_angle`.
+    let sprite = assets.sprite(UnitType::Tank).expect("TANK");
+    let info = sprite.frame_info.expect("D_TANK");
+    let mut tank = unit_of(UnitType::Tank, 0);
+    tank.turret_angle = 3;
+    tank.firing_recoil_frames = 3;
+
+    assert!(firing_frame_active(&tank));
+    assert_eq!(firing_body_frame_index(&info, &tank, 0), None);
+    assert_eq!(
+        firing_turret_frame_index(&info, &tank),
+        Some(usize::from(info.firing_image_base) + 3),
+        "туррель: `DrawSpriteTurretFrame(turret_angle + firing_image_base)`"
+    );
+
+    // Артиллерия (без башни): кадр корпуса `firing_image_base + angle`.
+    let sprite = assets.sprite(UnitType::AssaultGun).expect("ARTILLRY");
+    let info = sprite.frame_info.expect("D_ARTILLRY");
+    let mut artillery = unit_of(UnitType::AssaultGun, 0);
+    artillery.angle = 5;
+    artillery.firing_recoil_frames = 3;
+    assert_eq!(
+        firing_body_frame_index(&info, &artillery, 5),
+        Some(usize::from(info.firing_image_base) + 5)
+    );
+
+    // ANTIAIR: 15 кадров отдачи; первый тик — кадр выстрела, далее ±8.
+    let sprite = assets.sprite(UnitType::AntiAir).expect("ANTIAIR");
+    let info = sprite.frame_info.expect("D_ANTIAI");
+    let mut aa = unit_of(UnitType::AntiAir, 0);
+    aa.turret_angle = 0;
+    let base = usize::from(info.firing_image_base);
+    for (recoil, shift) in [(15, 0), (14, 8), (13, 0), (12, 8)] {
+        aa.firing_recoil_frames = recoil;
+        assert_eq!(
+            firing_turret_frame_index(&info, &aa),
+            Some(base + shift),
+            "ANTIAIR, отдача {recoil}"
+        );
+    }
+
+    // SP_FLAK: 6 кадров; первый тик — выстрел, затем чередование с обычным.
+    let sprite = assets.sprite(UnitType::MobileAntiAir).expect("SP_FLAK");
+    let info = sprite.frame_info.expect("D_SP_FLAK");
+    let mut flak = unit_of(UnitType::MobileAntiAir, 0);
+    flak.turret_angle = 0;
+    let base = usize::from(info.firing_image_base);
+    for (recoil, expected) in [(6, base), (5, base - 8), (4, base), (3, base - 8)] {
+        flak.firing_recoil_frames = recoil;
+        assert_eq!(
+            firing_turret_frame_index(&info, &flak),
+            Some(expected),
+            "SP_FLAK, отдача {recoil}"
+        );
+    }
+
+    // Пехота: `104 + angle`, затем +8 за каждый тик отдачи.
+    let sprite = assets.sprite(UnitType::Infantry).expect("INFANTRY");
+    let info = sprite.frame_info.expect("D_INFANT");
+    let mut infantry = unit_of(UnitType::Infantry, 0);
+    for (recoil, expected) in [(8, 104), (7, 112), (1, 160)] {
+        infantry.firing_recoil_frames = recoil;
+        assert_eq!(
+            firing_body_frame_index(&info, &infantry, 0),
+            Some(expected),
+            "INFANTRY, отдача {recoil}"
+        );
+    }
+
+    // После отдачи (`firing_recoil_frames == 0`) кадр обычный.
+    infantry.firing_recoil_frames = 0;
+    assert!(!firing_frame_active(&infantry));
+    assert_eq!(firing_body_frame_index(&info, &infantry, 0), None);
+
+    // Отрисовка: кадр выстрела отличается от обычного.
+    let mut normal = unit_of(UnitType::AssaultGun, 0);
+    normal.angle = 2;
+    let mut firing = normal.clone();
+    firing.firing_recoil_frames = 3;
+    let mut normal_frame = RgbaBuffer::new(256, 256);
+    let mut firing_frame = RgbaBuffer::new(256, 256);
+    draw_unit_sprites_with_angle(&assets, &normal, 0, 2, &mut normal_frame, (128, 128), 64);
+    draw_unit_sprites_with_angle(&assets, &firing, 0, 2, &mut firing_frame, (128, 128), 64);
+    assert_ne!(
+        normal_frame.pixels(),
+        firing_frame.pixels(),
+        "вспышка обязана менять кадр спрайта"
+    );
+}
+
 /// Полный кадр карты с юнитами всех 93 типов: 92 спрайта и 1 маркер
 /// (`MASTER`), без паники на любом типе.
 #[test]
