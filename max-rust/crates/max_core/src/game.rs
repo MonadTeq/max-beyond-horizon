@@ -1823,6 +1823,11 @@ impl GameState {
     pub fn update_production(&mut self, unit: &mut UnitInfo) {
         let team_index = unit.team.0 as usize;
 
+        // Флаг паузы стройки пересчитывается каждый ход: `true` ставит только
+        // ветка оплаты ниже, всё остальное (не-строитель, смена приказа,
+        // нехватка исчезла) снимает его.
+        unit.build_paused = false;
+
         if unit.orders == UnitOrder::Build
             && unit.state != UnitOrderState::UnitReady
             && unit.flags & unit_flags::MOBILE_LAND_UNIT != 0
@@ -1855,8 +1860,24 @@ impl GameState {
                 && target_turns <= 1;
 
             if !skip_for_ai {
+                // C++ `storage -= Cargo_GetRawConsumptionRate(unit_type,
+                // build_rate)` (`unitinfo.cpp:2914`) списывает сырьё **всегда**
+                // и позволяет складу уйти в минус; `GameManager_SpawnNewUnits`
+                // затем всё равно двигает `build_time`, и постройка
+                // «достраивается долгом». Порт обязан держать ресурс
+                // неотрицательным, поэтому списание идёт только при
+                // достаточном остатке, а неоплаченный ход помечается
+                // `build_paused` — прогресс такого хода не делает
+                // (`production::spawn_units`).
                 let cost = cargo_raw_consumption_rate(unit.unit_type, i32::from(unit.build_rate));
-                unit.storage = unit.storage.wrapping_sub(cost as i16);
+
+                if cost > 0 {
+                    if i32::from(unit.storage) >= cost {
+                        unit.storage -= cost as i16;
+                    } else {
+                        unit.build_paused = true;
+                    }
+                }
             }
         }
 

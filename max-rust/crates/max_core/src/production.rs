@@ -38,29 +38,27 @@
 //!    [`crate::unit_order::process_orders`]-ветка `BuildingReady` только после
 //!    ухода строителя с площадки (`UnitsManager_BuildingReady`).
 //!
-//! # Экономика (осознанное решение)
+//! # Экономика
 //!
-//! C++ списывает **сырьё комплекса** (`Cargo_GetRawConsumptionRate`), а в
-//! Rust-порте сырьё комплексов ещё не наполняется (P3: `Access_UpdateResourcesTotal`
-//! и перенос груза). Чтобы производство работало уже сейчас и совпадало по
-//! формулам, ставка C++ списывается с **золота команды**:
+//! C++ списывает **сырьё** (`Cargo_GetRawConsumptionRate`):
 //!
-//! * за ход: `cargo_raw_consumption_rate(builder, build_rate)`;
-//! * итог за постройку при `rate = 1`: `cargo_raw_consumption_rate(builder, 1) * turns` —
-//!   ровно `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
+//! * у мобильного наземного строителя — со **склада** (`UnitInfo::UpdateProduction`,
+//!   `unitinfo.cpp:2904-2915`): `storage -= rate`; порт делает то же в
+//!   [`crate::game::GameState::update_production`], но **не уводя склад в
+//!   минус**: если `storage < rate`, списания нет, а юнит получает
+//!   `build_paused` и ход стройки не двигается
+//!   ([`ProductionEventKind::PausedNoResources`]). C++ в этом случае уходит в
+//!   долг и всё равно достраивает — порт так не делает (требование QA);
+//! * у заводов — «золото» команды (осознанная абстракция порта: материалы
+//!   комплекса наполняются только шахтами, а `ProductionManager_OptimizeProduction`
+//!   остаётся TODO). Нехватка ставит постройку на паузу
+//!   ([`ProductionEventKind::PausedNoGold`]), заказ не теряется.
 //!
-//! Дополнительно у мобильного строителя на каждом ходу уменьшается `storage`
-//! на ту же ставку, как C++ `UnitInfo::UpdateProduction`: от склада зависит
-//! `BuildMenu_GetMaxPossibleBuildRate`, поэтому при нехватке сырья скорость
-//! падает (2× → 1×), а фактические ходы и полная цена совпадают с колонками
-//! `Turns`/`Cost` (`turns_and_consumption`, `UnitInfo::GetTurnsToBuild`).
+//! Итог за постройку при `rate = 1` — `cargo_raw_consumption_rate(builder, 1) * turns`,
+//! ровно `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
 //!
-//! Нехватка золота **ставит постройку на паузу** (не отменяет): заказ остаётся
-//! в очереди, в этом ходу не списывается и не двигается —
-//! [`ProductionEventKind::PausedNoGold`]. C++ в этой ситуации прерывает
-//! постройку (`ValidateIndustry`), но там списываются материалы комплекса,
-//! которые в порте пока не наполняются (P3); пауза сохраняет заказ игрока и не
-//! ломает партии с нулевым стартовым бюджетом.
+//! `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`) требует при 1× всю
+//! стоимость постройки на руках — [`BuildError::NotEnoughMaterials`].
 //!
 //! # Что упрощено (честно)
 //!
@@ -302,16 +300,16 @@ pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i
     }
 }
 
-/// Стоимость одного хода постройки в золоте — `Cargo_GetRawConsumptionRate`.
+/// Стоимость одного хода постройки — `Cargo_GetRawConsumptionRate`.
 ///
-/// C++ списывает эту ставку с сырья комплекса; порт — с золота команды (см.
-/// шапку модуля). Для `rate = 1` суммарная стоимость равна
+/// Мобильный строитель платит ею сырьём со склада, завод — «золотом» команды
+/// (см. шапку модуля). Для `rate = 1` суммарная стоимость равна
 /// `Cargo_GetRawConsumptionRate(builder, 1) * turns` — C++-стоимость постройки.
 pub fn cost_per_turn(builder: UnitType, build_rate: i32) -> i32 {
     cargo_raw_consumption_rate(builder, build_rate)
 }
 
-/// Полная стоимость постройки при скорости 1× (в золоте) — C++-формула
+/// Полная стоимость постройки при скорости 1× — C++-формула
 /// `GetNormalRateBuildCost` для юнита, который строит `builder`.
 pub fn total_cost(builder: UnitType, turns: i32) -> i32 {
     cost_per_turn(builder, 1) * turns.max(0)
@@ -465,6 +463,10 @@ pub enum BuildError {
     NoSite,
     /// Команда не найдена в состоянии.
     InvalidTeam,
+    /// `BuildMenu::Build` отказал: при `build_rate == 1` у мобильного строителя
+    /// не хватает сырья на всю постройку (`buildmenu.cpp:903-906`, сообщение
+    /// `_(c529)`). C++ не отдаёт приказ — иначе постройка встала бы навсегда.
+    NotEnoughMaterials,
 }
 
 impl BuildError {
@@ -476,6 +478,7 @@ impl BuildError {
             Self::EmptyQueue => "build queue is empty",
             Self::NoSite => "no valid build site nearby",
             Self::InvalidTeam => "unknown team",
+            Self::NotEnoughMaterials => "not enough raw materials on hand",
         }
     }
 }
@@ -505,8 +508,15 @@ pub enum ProductionEventKind {
     /// Постройка приостановлена: золота команды не хватает на ход
     /// (`ValidateIndustry` в C++ прерывает, порт ставит на паузу — см. шапку).
     PausedNoGold,
+    /// Постройка приостановлена: у мобильного строителя не хватает **сырья** на
+    /// складе (`storage < Cargo_GetRawConsumptionRate`) — C++
+    /// `UnitInfo::UpdateProduction` в этом случае уходит в минус, порт не
+    /// двигает стройку (см. [`UnitInfo::build_paused`]).
+    PausedNoResources,
     /// Спавн отложен: рядом нет свободной клетки (юнит остаётся в очереди).
     NoSpawnCell,
+    /// Бульдозер расчистил обломок (`UnitInfo::SpawnNewUnit`, ветка BULLDOZR).
+    RubbleCleared,
 }
 
 /// Событие производства — для HUD-лога и QA-ассертов.
@@ -1233,6 +1243,18 @@ impl<'a> ProductionManager<'a> {
         let build_rate = i32::from(unit.build_rate.max(1)).min(max_rate.max(1)) as u16;
         let builder_type = unit.unit_type;
 
+        // `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`): при скорости 1×
+        // требуется всё сырьё на руках — `storage >= rate(1) * turns`, иначе
+        // сообщение `_(c529)` и приказ не отдаётся. C++ считает по
+        // `Cargo_GetRawConsumptionRate(unit->GetUnitType(), 1)` и `turns_to_build`
+        // из `BuildMenu_GetTurnsToBuild`.
+        if is_mobile_builder(builder_type)
+            && build_rate == 1
+            && i32::from(unit.storage) < crate::victory::cargo_raw_consumption_rate(builder_type, 1) * turns
+        {
+            return Err(BuildError::NotEnoughMaterials);
+        }
+
         unit.build_time = turns.min(i32::from(u8::MAX)) as u8;
         unit.build_rate = build_rate;
         unit.target_grid = site;
@@ -1362,6 +1384,25 @@ impl<'a> ProductionManager<'a> {
                         .min(max_rate.max(1))
                         .max(1)
                 };
+
+                // Мобильный строитель платит **сырьём со склада** (C++
+                // `Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`),
+                // а не золотом команды; факт оплаты уже посчитан там же
+                // (`build_paused`). Ход без оплаты стройку не двигает.
+                if mobile_land {
+                    if unit.build_paused {
+                        paused.push(id);
+                        events.push(ProductionEvent {
+                            builder: id,
+                            unit_type: unit.build_list[0],
+                            spawned: None,
+                            kind: ProductionEventKind::PausedNoResources,
+                        });
+                    }
+
+                    continue;
+                }
+
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
                 if cost > 0 {
@@ -1413,7 +1454,15 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 };
 
-                if unit.team != team || unit.build_time == 0 || unit.build_list.is_empty() {
+                if unit.team != team || unit.build_time == 0 {
+                    continue;
+                }
+
+                // `GameManager_SpawnNewUnits` (`game_manager.cpp:8078`) крутит
+                // `build_time` и у бульдозера (`ORDER_CLEAR`, очередь пуста):
+                // по нулю вызывается `UnitInfo::SpawnNewUnit`, который сносит
+                // обломок и забирает его груз.
+                if unit.build_list.is_empty() && unit.unit_type != UnitType::Bulldozer {
                     continue;
                 }
 
@@ -1437,6 +1486,83 @@ impl<'a> ProductionManager<'a> {
         events
     }
 
+    /// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), ветка `BULLDOZR`:
+    /// обломок расчищен.
+    ///
+    /// C++ сносит `SMLRUBLE`/`LRGRUBLE` в клетке бульдозера (у большого — ещё
+    /// `+1` по обеим осям), забирает их `storage` (груз обломка) себе, режет по
+    /// `ATTRIB_STORAGE`, снимает утилиты клетки и возвращается в
+    /// `ORDER_AWAIT`/`EXECUTING_ORDER`. Для обломка здания дополнительно
+    /// запускается `AWAIT_TAPE_POSITIONING`/`DEINIT` — в порте ленты расчистки
+    /// нет (`ProcessOrderClear` без `StartClearing`), поэтому шаг пропущен.
+    fn finish_bulldozer_clearing(&mut self, id: UnitId) -> ProductionEvent {
+        let Some(mut builder) = self.state.unit(id).cloned() else {
+            return ProductionEvent {
+                builder: id,
+                unit_type: UnitType::Bulldozer,
+                spawned: None,
+                kind: ProductionEventKind::NoSpawnCell,
+            };
+        };
+
+        let parent = builder
+            .parent_unit
+            .and_then(|parent_id| self.state.unit(parent_id).cloned());
+        let limit = if parent
+            .as_ref()
+            .is_some_and(|parent| parent.unit_type == UnitType::LargeRubble)
+        {
+            1
+        } else {
+            0
+        };
+
+        let mut storage = i32::from(builder.storage);
+
+        for dx in 0..=limit {
+            for dy in 0..=limit {
+                let cell = Point::new(builder.grid.x + dx, builder.grid.y + dy);
+
+                for rubble_id in self.state.units_at(cell).to_vec() {
+                    let Some(rubble) = self.state.unit(rubble_id) else {
+                        continue;
+                    };
+
+                    if matches!(
+                        rubble.unit_type,
+                        UnitType::SmallRubble | UnitType::LargeRubble
+                    ) {
+                        storage += i32::from(rubble.storage);
+                        self.state.destroy_unit(rubble_id);
+                    }
+                }
+            }
+        }
+
+        crate::access::destroy_utilities(self.state, builder.grid, false, false, false, false);
+
+        let capacity = builder
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_STORAGE);
+        builder.storage = storage.min(capacity).clamp(0, i32::from(i16::MAX)) as i16;
+        // `DrawSpriteFrame(image_index - 8)`.
+        builder.image_index = builder.image_index.saturating_sub(8);
+        builder.orders = UnitOrder::Await;
+        builder.state = UnitOrderState::ExecutingOrder;
+        builder.build_time = 0;
+        builder.build_paused = false;
+        builder.parent_unit = None;
+        builder.target_grid = builder.grid;
+        self.state.write_unit(id, builder);
+
+        ProductionEvent {
+            builder: id,
+            unit_type: UnitType::Bulldozer,
+            spawned: None,
+            kind: ProductionEventKind::RubbleCleared,
+        }
+    }
+
     /// `UnitInfo::SpawnNewUnit` — выпуск юнита/достройка здания.
     fn spawn_new_unit(&mut self, id: UnitId) -> ProductionEvent {
         let team = self.team;
@@ -1448,6 +1574,13 @@ impl<'a> ProductionManager<'a> {
                 kind: ProductionEventKind::NoSpawnCell,
             };
         };
+
+        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), ветка BULLDOZR:
+        // расчистка обломка завершена — обломки сносятся, их груз переходит
+        // бульдозеру.
+        if builder.unit_type == UnitType::Bulldozer {
+            return self.finish_bulldozer_clearing(id);
+        }
 
         let Some(&unit_type) = builder.build_list.first() else {
             return ProductionEvent {
@@ -1594,13 +1727,21 @@ pub fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<Producti
     ProductionManager::new(state, team).progress()
 }
 
-/// Хватает ли золота команды на текущий ход постройки (проверка UI/ИИ).
+/// Хватает ли ресурса команды на текущий ход постройки (проверка UI/ИИ).
+///
+/// У мобильного строителя платёж — сырьё на складе
+/// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), у
+/// заводов — золото команды (абстракция порта, см. шапку модуля).
 pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
     let Some(unit) = state.unit(unit_id) else {
         return false;
     };
 
     let cost = cost_per_turn(unit.unit_type, i32::from(unit.build_rate.max(1)));
+
+    if unit.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+        return i32::from(unit.storage) >= cost.max(0);
+    }
 
     state
         .team_units

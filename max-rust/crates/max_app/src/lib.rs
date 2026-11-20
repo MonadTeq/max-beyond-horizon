@@ -56,6 +56,7 @@ pub mod mem;
 pub mod menu;
 pub mod mobilize;
 pub mod net;
+pub mod overlays;
 pub mod panels;
 pub mod portrait;
 pub mod preferences;

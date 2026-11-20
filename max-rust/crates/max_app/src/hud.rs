@@ -414,6 +414,12 @@ pub struct HudState {
     /// клетке в радиусе даёт `ORDER_MOVE_TO_ATTACK`/`ORDER_FIRE`
     /// (`GameManager_GetWindowCursor`/`SetUnitOrder`, `game_manager.cpp:4384`).
     pub targeting_mode: bool,
+    /// Нажат ли `Shift` — C++ `GameManager_IsShiftKeyPressed`. Включает
+    /// `CURSOR_WAY` (маршрут по точкам) в `GameManager_GetWindowCursor`
+    /// (`game_manager.cpp:4459`/`:5989`). Слой ввода порта модификаторы пока не
+    /// передаёт, поэтому флаг выставляется через [`App::set_shift_pressed`]
+    /// (SDL-слой/QA); по умолчанию `false`.
+    pub shift_pressed: bool,
     /// Подсказка сверху карты — C++ `MessageManager_DrawMessage`
     /// (`MESSAGE_BOX_INFO`, `MESSAGE_BOX_MODELESS`) из
     /// `GameManager_DrawUnitStatusMessage`. Для строящего юнита:
@@ -448,6 +454,7 @@ impl HudState {
             cursor_mode: 0,
             enter_mode: false,
             targeting_mode: false,
+            shift_pressed: false,
             hint: None,
         }
     }
@@ -1029,6 +1036,17 @@ impl App {
     /// Изменяемое состояние HUD.
     pub fn hud_mut(&mut self) -> &mut HudState {
         &mut self.hud
+    }
+
+    /// Нажат ли `Shift` — C++ `GameManager_IsShiftKeyPressed` (курсор
+    /// `CURSOR_WAY`, маршрут по точкам).
+    pub fn shift_pressed(&self) -> bool {
+        self.hud.shift_pressed
+    }
+
+    /// Установить состояние `Shift` (SDL-слой модификаторов/QA).
+    pub fn set_shift_pressed(&mut self, pressed: bool) {
+        self.hud.shift_pressed = pressed;
     }
 
     /// Команда локального игрока (`player_team` партии).

@@ -4207,6 +4207,36 @@ impl QaRunner {
                     ),
                 )
             }
+            Assertion::PanelToggle(button, expected) => {
+                let actual = self.app.hud().panels.get(button);
+                let on_off = |value: bool| if value { "on" } else { "off" };
+
+                self.expect(
+                    actual == expected,
+                    format!("panel={button:?}:{}", on_off(expected)),
+                    format!("panel={button:?}:{}", on_off(actual)),
+                )
+            }
+            Assertion::OverlayPixels(cmp, expected) => {
+                // Кнопка «работает», если её слой действительно нарисован:
+                // `crate::overlays` возвращает число закрашенных пикселей.
+                let (_, stats) = self.app.render_frame_with_stats();
+                let actual = i64::from(stats.overlay_pixels);
+                let expected = i64::from(expected);
+                let ok = match cmp {
+                    crate::qa::script::Cmp::Eq => actual == expected,
+                    crate::qa::script::Cmp::Ge => actual >= expected,
+                    crate::qa::script::Cmp::Le => actual <= expected,
+                    crate::qa::script::Cmp::Gt => actual > expected,
+                    crate::qa::script::Cmp::Lt => actual < expected,
+                };
+
+                self.expect(
+                    ok,
+                    format!("overlay {:?} {expected}", cmp),
+                    format!("overlay {actual}"),
+                )
+            }
             Assertion::CargoMode(expected) => {
                 let actual = self
                     .mobilization()

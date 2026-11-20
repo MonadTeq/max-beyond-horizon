@@ -394,6 +394,13 @@ pub struct UnitInfo {
     pub repeat_build: bool,
     /// Скорость постройки (множитель; 0 в файле трактуется как 1).
     pub build_rate: u16,
+    /// Транзиент: в этом ходу стройке нечем платить (`UpdateProduction` увидел
+    /// `storage < Cargo_GetRawConsumptionRate`), поэтому `GameManager_SpawnNewUnits`
+    /// в C++ всё равно сдвинул бы `build_time`, а порт — нет: ресурс не должен
+    /// уходить в минус (см. `production::charge_units`).
+    ///
+    /// В сейв/CRC не входит: вычисляется заново каждый ход из `storage`.
+    pub build_paused: bool,
     /// Ответный огонь выключен.
     pub disabled_reaction_fire: bool,
     /// Авто-разведка.
@@ -529,6 +536,7 @@ impl UnitInfo {
             movement_wait_count: 0,
             repeat_build: false,
             build_rate: 1,
+            build_paused: false,
             disabled_reaction_fire: false,
             auto_survey: false,
             ai_state_bits: 0,

@@ -1,4 +1,4 @@
-//! Проходимость, занятость клеток и групповые приказы.
+﻿//! Проходимость, занятость клеток и групповые приказы.
 //!
 //! Оракул: `max-cpp-port/src/access.cpp` (`Access_IsAccessible`,
 //! `Access_GetModifiedSurfaceType`, `Access_GetAttackTarget`,
@@ -93,7 +93,7 @@ pub const SURFACE_TYPE_ALL: u8 = 0x0F;
 /// Флаги и проходимость типа юнита — поля `Unit` C++ (`units.json`/`SC_UNITS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitTypeProperties {
-    /// `Unit::m_flags` (`unit_flags::*`).
+    /// `Unit::m_flags` (`crate::enums::unit_flags::*`).
     pub flags: u32,
     /// `Unit::m_land_type` (`SURFACE_TYPE_*`).
     pub land_type: u8,
@@ -1722,6 +1722,92 @@ pub fn destroy_utilities(
             state.destroy_unit(id);
         }
     }
+}
+
+/// `UnitsManager_BuildClearing(unit, mode)` (`units_manager.cpp:3646-3805`) —
+/// уничтожение юнита с оставлением обломков.
+///
+/// C++:
+/// 1. `rubble_type = LRGRUBLE` для `BUILDING`, иначе `SMLRUBLE`, но только если
+///    `mode` (юнит уничтожен, а не убран), тип не `COMMANDO`/`INFANTRY`, нет
+///    флагов `CONNECTOR_UNIT`/`HOVERING` и клетка **полностью на суше**
+///    (`Access_IsFullyLandCovered`, `access.cpp:1049`);
+/// 2. `cargo_amount = GetNormalRateBuildCost() / 2` (+ `storage` для сырья);
+/// 3. `Access_DestroyGroundCovers(unit)` — дорога/площадка под обломком;
+/// 4. `UnitsManager_DestroyUnit(unit, mode)`;
+/// 5. для зданий — `Access_DestroyUtilities(grid, true, …, false, false)`;
+/// 6. `UnitsManager_DeployUnit(rubble_type, team, …, Randomizer_Generate(image_count))`
+///    и `rubble->storage = cargo_amount`.
+///
+/// Мины обломков не оставляют (`rubble_type = INVALID_ID`, `units_manager.cpp:3720`).
+///
+/// Возвращает id созданного обломка (для тестов/лога).
+pub fn build_clearing(
+    state: &mut GameState,
+    unit_id: crate::unit::UnitId,
+    mode: bool,
+) -> Option<crate::unit::UnitId> {
+    let unit = state.unit(unit_id)?.clone();
+    let team = unit.team;
+    let grid = unit.grid;
+    let flags = unit.flags;
+    let mut rubble_type = None;
+    let mut cargo_amount = 0i32;
+
+    let is_mine = matches!(unit.unit_type, UnitType::LandMine | UnitType::SeaMine);
+
+    if mode
+        && !is_mine
+        && !matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry)
+        && flags & (crate::enums::unit_flags::CONNECTOR_UNIT | crate::enums::unit_flags::HOVERING) == 0
+        && is_fully_land_covered(state, grid, flags)
+    {
+        rubble_type = Some(if flags & crate::enums::unit_flags::BUILDING != 0 {
+            UnitType::LargeRubble
+        } else {
+            UnitType::SmallRubble
+        });
+
+        cargo_amount = crate::victory::get_normal_rate_build_cost(&unit) / 2;
+
+        if crate::victory::cargo_type_of(unit.unit_type) == crate::victory::CargoType::Raw {
+            cargo_amount += i32::from(unit.storage);
+        }
+    }
+
+    // `Access_DestroyGroundCovers(unit)` — наземные/стационарные (не HOVERING).
+    if flags & (crate::enums::unit_flags::MOBILE_AIR_UNIT | crate::enums::unit_flags::MOBILE_LAND_UNIT | crate::enums::unit_flags::STATIONARY)
+        != 0
+        && flags & crate::enums::unit_flags::HOVERING == 0
+    {
+        destroy_ground_covers(state, &unit);
+    }
+
+    let remove_rubble = !(unit.unit_type == UnitType::Bulldozer && unit.orders == UnitOrder::Clear);
+
+    state.destroy_unit(unit_id);
+
+    // `Access_DestroyUtilities(unit_grid, true, !skip_rubble_removal, false, false)`
+    // — плиты/ленты под зданием и недостроенной стройкой.
+    if flags & (crate::enums::unit_flags::BUILDING | crate::enums::unit_flags::STANDALONE) != 0
+        || unit.orders == UnitOrder::Build
+    {
+        destroy_utilities(state, grid, true, remove_rubble, false, false);
+    }
+
+    let rubble_type = rubble_type?;
+    let image_count = crate::frames::frame_info(rubble_type).image_count.max(1);
+    let angle = state.rng.generate_i32(i32::from(image_count)) as u8;
+
+    let rubble = state.spawn_unit(rubble_type, team, grid, 0)?;
+
+    if let Some(rubble_unit) = state.unit_mut(rubble) {
+        rubble_unit.angle = angle;
+        rubble_unit.image_index = rubble_unit.image_base + i16::from(angle);
+        rubble_unit.storage = cargo_amount as i16;
+    }
+
+    Some(rubble)
 }
 
 /// `Access_DestroyGroundCovers` (`access.cpp`): убирает дорогу/площадку/

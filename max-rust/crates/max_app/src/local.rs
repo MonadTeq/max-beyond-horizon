@@ -910,8 +910,14 @@ impl App {
                     max_core::ProductionEventKind::PausedNoGold => {
                         self.hud.push_log("Production paused: not enough gold")
                     }
+                    max_core::ProductionEventKind::PausedNoResources => {
+                        self.hud.push_log("Production paused: not enough raw materials")
+                    }
                     max_core::ProductionEventKind::NoSpawnCell => {
                         self.hud.push_log("Production: no free cell near the factory")
+                    }
+                    max_core::ProductionEventKind::RubbleCleared => {
+                        self.hud.push_log("Rubble cleared")
                     }
                 }
             }

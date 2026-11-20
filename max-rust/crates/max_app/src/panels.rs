@@ -420,19 +420,57 @@ impl PanelButton {
         }
     }
 
-    /// Вертикальный сдвиг подписи (`GameManager_MenuItemLabelOffsets`).
-    pub const fn caption_offset_y(self) -> i32 {
+    /// Смещение подписи `(x, y)` — `GameManager_MenuItemLabelOffsets`
+    /// (`game_manager.cpp:275-278`), 1:1 по индексу `GameManager_MenuItems`.
+    ///
+    /// C++ `Button::SetCaption(caption, x, y, …)` (`button.cpp:412`) строит
+    /// прямоугольник `{0, 0, width - x, height - y}` и центрирует текст **в
+    /// нём**: горизонталь — `Text_TextLine` (`text.cpp:772`) по `width - x`,
+    /// вертикаль — `uly_caption = ((height - y) - Text_GetHeight()) / 2 + y`.
+    /// Поэтому оба смещения уменьшают область центровки, а не сдвигают её.
+    pub const fn caption_offset(self) -> (i32, i32) {
         match self {
-            Self::Files | Self::Preferences => 2,
-            Self::Prev | Self::Next => 2,
-            Self::Done | Self::Reports | Self::Chat => 3,
-            Self::Colors | Self::Range | Self::Names => 4,
-            Self::Survey | Self::Status | Self::Hits | Self::Ammo | Self::Scan | Self::Grid => 2,
-            _ => 0,
+            Self::Files | Self::Preferences => (0, 2),
+            Self::Prev => (-10, 2),
+            Self::Next => (10, 2),
+            Self::Done | Self::Reports | Self::Chat => (0, 3),
+            Self::Colors | Self::Range | Self::Names => (2, 4),
+            Self::Survey | Self::Status | Self::Hits | Self::Ammo | Self::Scan | Self::Grid => (2, 2),
+            _ => (0, 0),
         }
     }
 
-    /// Это переключатель HUD (рисуется `*_ON` при включении).
+    /// Вертикальный сдвиг подписи (`GameManager_MenuItemLabelOffsets[i].y`).
+    pub const fn caption_offset_y(self) -> i32 {
+        self.caption_offset().1
+    }
+
+    /// Позиция подписи в кадре — `Button::SetCaption` (`button.cpp:412-449`).
+    ///
+    /// `SetCaption(caption, x, y, …)` строит `Rect bounds = {0, 0, width - x,
+    /// height - y}`, затем `Text_TextLine` (`text.cpp:772-783`) центрирует
+    /// строку в `bounds`: `spacing = (swidth - (Text_GetWidth + 1)) / 2`
+    /// (сдвиг только при `spacing > 0`), `uly_caption = ((height - y) -
+    /// Text_GetHeight()) / 2 + y`.
+    pub fn caption_position(self) -> (i32, i32) {
+        let rect = self.rect();
+        let font = self.caption_font().font();
+        let (offset_x, offset_y) = self.caption_offset();
+        let bounds_width = rect.width - offset_x;
+        let bounds_height = rect.height - offset_y;
+        let text_width = self
+            .caption()
+            .map(|caption| font.text_width(caption) + 1)
+            .unwrap_or(0);
+        let spacing = (bounds_width - text_width) / 2;
+
+        (
+            rect.ulx + spacing.max(0),
+            rect.uly + (bounds_height - font.height()) / 2 + offset_y,
+        )
+    }
+
+    /// Переключатель HUD (`PanelButton::is_toggle`).
     pub const fn is_toggle(self) -> bool {
         matches!(
             self,
@@ -538,6 +576,28 @@ impl PanelState {
     }
 }
 
+/// Иконки оверлея `STATUS` — `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444`).
+///
+/// C++ грузит их из `MAX.RES` по требованию через `ResourceManager_LoadResource`
+/// (`IL_DSBLD`, `IL_SPEED`, `IL_SHOTS`); порт держит их рядом с панелями и
+/// рисует при включённой кнопке STATUS (см. [`crate::overlays`]).
+#[derive(Debug, Clone, Default)]
+pub struct StatusIcons {
+    /// `IL_DSBLD` — юнит в `ORDER_DISABLE`.
+    pub disabled: Option<SimpleImage>,
+    /// `IL_SPEED` — есть скорость (`unit->speed != 0`).
+    pub speed: Option<SimpleImage>,
+    /// `IL_SHOTS` — есть выстрелы (`unit->shots > 0`).
+    pub shots: Option<SimpleImage>,
+}
+
+impl StatusIcons {
+    /// Есть ли хоть одна иконка (иначе оверлей STATUS нечего рисовать).
+    pub fn is_empty(&self) -> bool {
+        self.disabled.is_none() && self.speed.is_none() && self.shots.is_none()
+    }
+}
+
 /// Пара картинок «отжата/нажата».
 #[derive(Debug, Clone)]
 pub struct ButtonPair {
@@ -611,6 +671,8 @@ pub struct Panels {
     minimap_tnt: ButtonPair,
     /// Прочие кнопки: готовая картинка и положение в окне.
     aux: Vec<(SimpleImage, PixelRect)>,
+    /// Иконки оверлея `STATUS` (`IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`).
+    pub status_icons: StatusIcons,
 }
 
 impl Panels {
@@ -681,6 +743,12 @@ impl Panels {
             minimap_2x: pair("MIN2X_OF", "MIN2X_ON")?,
             minimap_tnt: pair("MINFL_OF", "MINFL_ON")?,
             aux,
+            // Необязательные (C++ грузит их только при включённом STATUS).
+            status_icons: StatusIcons {
+                disabled: simple("IL_DSBLD"),
+                speed: simple("IL_SPEED"),
+                shots: simple("IL_SHOTS"),
+            },
         })
     }
 
@@ -1102,14 +1170,16 @@ impl Panels {
     }
 
     /// Подпись кнопки заданными индексами палитры — `Button::SetCaption`
-    /// (`button.cpp:419`: `Text_TextLine`, центр по `horizontal_align`) и
-    /// запечённая в ресурс подпись End Turn (`Text_TextBox(..., 0, 0, w, h,
-    /// true, true, FontColor(...))`).
+    /// (`button.cpp:412-449`) и запечённая в ресурс подпись End Turn
+    /// (`Text_TextBox(..., 0, 0, w, h, true, true, FontColor(...))`).
     ///
-    /// Позиция одна и та же в обоих случаях: `x = (width - (Text_GetWidth + 1)) /
-    /// 2`, `y = (height - Text_GetHeight()) / 2` (`SetCaption`) — при `height =
-    /// 21` и высоте `FONT5` 10 это `y = 5`, как и `Text_TextBox` с
-    /// `vertical_align = true` (`((21 + 1) - 11) / 2 = 5`).
+    /// Геометрия 1:1 C++: `SetCaption(caption, x, y, …)` уменьшает область
+    /// центровки до `width - x` / `height - y`, затем `Text_TextLine`
+    /// (`text.cpp:772`) центрирует строку в этой области:
+    /// `x = (swidth - (Text_GetWidth + 1)) / 2` (сдвиг только если > 0),
+    /// `y = ((height - y) - Text_GetHeight()) / 2 + y`. Раньше порт центровал
+    /// в полном прямоугольнике кнопки — подписи 3×3 уезжали на 1-2 px вниз и
+    /// на 1 px вправо.
     fn draw_caption_colored(
         &self,
         frame: &mut RgbaBuffer,
@@ -1122,11 +1192,8 @@ impl Panels {
         let Some(caption) = button.caption() else {
             return;
         };
-        let rect = button.rect();
         let font = button.caption_font().font();
-        let width = font.text_width(caption) + 1;
-        let x = rect.ulx + (rect.width - width).max(0) / 2;
-        let y = rect.uly + (rect.height - font.height()) / 2 + button.caption_offset_y();
+        let (x, y) = button.caption_position();
 
         draw_text_gnw_shadowed(
             frame,
@@ -2470,6 +2537,65 @@ mod tests {
         assert_eq!(end_turn_caption_color(TeamId::GREEN), 2);
         assert_eq!(end_turn_caption_color(TeamId::BLUE), 3);
         assert_eq!(end_turn_caption_color(TeamId::GRAY), GRAY_TEAM_TEXT);
+    }
+
+    #[test]
+    fn caption_offsets_match_the_cpp_label_table() {
+        // `GameManager_MenuItemLabelOffsets` (`game_manager.cpp:275-278`).
+        assert_eq!(PanelButton::Files.caption_offset(), (0, 2));
+        assert_eq!(PanelButton::Preferences.caption_offset(), (0, 2));
+        assert_eq!(PanelButton::Prev.caption_offset(), (-10, 2));
+        assert_eq!(PanelButton::Next.caption_offset(), (10, 2));
+        assert_eq!(PanelButton::Done.caption_offset(), (0, 3));
+        assert_eq!(PanelButton::Reports.caption_offset(), (0, 3));
+        assert_eq!(PanelButton::Chat.caption_offset(), (0, 3));
+        assert_eq!(PanelButton::Survey.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Status.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Colors.caption_offset(), (2, 4));
+        assert_eq!(PanelButton::Hits.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Ammo.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Range.caption_offset(), (2, 4));
+        assert_eq!(PanelButton::Scan.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Grid.caption_offset(), (2, 2));
+        assert_eq!(PanelButton::Names.caption_offset(), (2, 4));
+        assert_eq!(PanelButton::EndTurn.caption_offset(), (0, 0));
+    }
+
+    #[test]
+    fn captions_are_centered_inside_the_inset_button_rect() {
+        // `Button::SetCaption` (`button.cpp:412-449`) + `Text_TextLine`
+        // (`text.cpp:772`): центровка внутри `width - x` / `height - y`.
+        for button in PanelButton::ALL {
+            let Some(caption) = button.caption() else {
+                continue;
+            };
+            let rect = button.rect();
+            let font = button.caption_font().font();
+            let (offset_x, offset_y) = button.caption_offset();
+            let (x, y) = button.caption_position();
+            let text_width = font.text_width(caption) + 1;
+
+            assert!(
+                x >= rect.ulx && x + text_width <= rect.lrx(),
+                "{button:?}: подпись «{caption}» вылезает за кнопку"
+            );
+            assert_eq!(
+                y,
+                rect.uly + (rect.height - offset_y - font.height()) / 2 + offset_y,
+                "{button:?}: вертикальная центровка 1:1 button.cpp:433"
+            );
+
+            let expected_x = rect.ulx + ((rect.width - offset_x - text_width) / 2).max(0);
+            assert_eq!(x, expected_x, "{button:?}: горизонтальная центровка");
+        }
+
+        // Точные значения для верхней строки 3×3 (`FONT_2` — 9 px, height 16):
+        // C++ `((16 - 2) - 9) / 2 + 2 = 4`.
+        assert_eq!(PanelButton::Survey.caption_position().1, 298 + 4);
+        assert_eq!(PanelButton::Hits.caption_position().1, 298 + 4);
+        // COLORS/RANGE/NAMES: `((18 - 4) - 9) / 2 + 4 = 6`.
+        assert_eq!(PanelButton::Colors.caption_position().1, 330 + 6);
+        assert_eq!(PanelButton::Names.caption_position().1, 330 + 6);
     }
 
     #[test]

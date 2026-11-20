@@ -327,6 +327,14 @@ pub enum Assertion {
     /// `assert unit-selector=yes|no`: нарисован ли индикатор выделенного юнита
     /// (`GameManager_DrawUnitSelector`).
     UnitSelector(bool),
+    /// `assert panel=NAME:on|off`: переключатель 3×3 левой панели
+    /// (`CTInfo::display_button_*`, `GameManager_MenuClick*Button`,
+    /// `game_manager.cpp:3800-3990`). `NAME` — `survey`, `status`, `colors`,
+    /// `hits`, `ammo`, `range`, `scan`, `grid`, `names`.
+    PanelToggle(crate::panels::PanelButton, bool),
+    /// `assert overlay>=N`: сколько пикселей оверлеев кнопок 3×3 нарисовано в
+    /// текущем кадре (`crate::overlays`, `RenderStats::overlay_pixels`).
+    OverlayPixels(Cmp, u32),
     /// `assert cargo-mode=buy|upgrade`: режим списка `CargoMenu`.
     CargoMode(bool),
     /// `assert cargo-types=N`: длина списка типов (15 в покупке).
@@ -1362,6 +1370,24 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert unit-selector: ожидалось yes|no, получено «{other}»"
             )),
         },
+        "panel" => {
+            let (name, state) = value
+                .split_once(':')
+                .ok_or_else(|| "assert panel: ожидалось NAME:on|off".to_string())?;
+            let button = parse_panel_button(name.trim())?;
+
+            match state.trim().to_ascii_lowercase().as_str() {
+                "on" | "yes" | "true" | "pressed" => Ok(Assertion::PanelToggle(button, true)),
+                "off" | "no" | "false" | "released" => Ok(Assertion::PanelToggle(button, false)),
+                other => Err(format!(
+                    "assert panel={name}: ожидалось on|off, получено «{other}»"
+                )),
+            }
+        }
+        "overlay" => Ok(Assertion::OverlayPixels(
+            operator,
+            parse_u32(value, "assert overlay")?,
+        )),
         "endturn" | "end-turn" => match value.to_ascii_lowercase().as_str() {
             "pressed" | "down" | "on" => Ok(Assertion::EndTurnPressed(true)),
             "normal" | "up" | "released" | "off" => Ok(Assertion::EndTurnPressed(false)),
@@ -1624,6 +1650,26 @@ fn parse_on_off(value: &str, what: &str) -> Result<bool, String> {
         "on" | "true" | "1" | "yes" | "enabled" => Ok(true),
         "off" | "false" | "0" | "no" | "disabled" => Ok(false),
         other => Err(format!("{what}: ожидалось on|off, получено «{other}»")),
+    }
+}
+
+/// Имя переключателя левой панели (`assert panel=NAME:on|off`).
+fn parse_panel_button(name: &str) -> Result<crate::panels::PanelButton, String> {
+    use crate::panels::PanelButton;
+
+    match name.to_ascii_lowercase().as_str() {
+        "survey" => Ok(PanelButton::Survey),
+        "status" => Ok(PanelButton::Status),
+        "colors" | "colours" => Ok(PanelButton::Colors),
+        "hits" => Ok(PanelButton::Hits),
+        "ammo" => Ok(PanelButton::Ammo),
+        "range" => Ok(PanelButton::Range),
+        "scan" => Ok(PanelButton::Scan),
+        "grid" => Ok(PanelButton::Grid),
+        "names" | "name" => Ok(PanelButton::Names),
+        other => Err(format!(
+            "assert panel: неизвестная кнопка «{other}» (survey|status|colors|hits|ammo|range|scan|grid|names)"
+        )),
     }
 }
 

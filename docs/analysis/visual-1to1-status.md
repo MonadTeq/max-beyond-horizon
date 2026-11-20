@@ -1,4 +1,4 @@
-# Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
+﻿# Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
 
 **Дата среза:** 2026-11-19 (§27) · **Версия workspace:** 1.1.0 (разделы §1–§11 —
 срез 2026-11-15/1.0.0, §12 — полное покрытие спрайтов) · **Задача:** довести визуал
@@ -3923,3 +3923,231 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   UI клиента, и его использование в симуляции развело бы lockstep. Видимость
   частиц — `InitStealthStatus` (своя команда), поэтому чужие следы не
   рисуются.
+
+
+## 38. Экономика стройки, обломки, кнопки 3×3 и таблица курсоров — **сделано** (2026-11-21)
+
+Четыре дефекта из QA-разбора, все — 1:1 по C++-оракулу `max-cpp-port`
+(оракул не менялся).
+
+### 38.1 Экономика стройки: ресурс не уходит в минус, завершение корректно
+
+**Как в C++ (оракул).**
+
+* `Cargo_GetRawConsumptionRate(unit_type, speed_multiplier)` (`cargo.cpp:140`):
+  `TRAINHAL` — 1, `CONSTRCT`/`ENGINEER` — 2, `SHIPYARD`/`LANDPLT`/`AIRPLT`/
+  `LIGHTPLT` — 3 на 1×; при 2× множитель 4, при 4× — 12.
+* `BuildMenu_GetTurnsToBuild` (`buildmenu.cpp:688`) — `ATTRIB_TURNS` плюс
+  поправка сложности для компьютера; `BuildMenu_GetMaxPossibleBuildRate`
+  (`buildmenu.cpp:729`) режет 2×/4× по складу строителя.
+* `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`): при `build_rate == 1`
+  приказ **не отдаётся**, если `storage < rate(1) * turns` — сообщение `_(c529)`.
+* `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904-2915`): у мобильного
+  наземного строителя в `ORDER_BUILD` `build_rate = min(build_rate, max_rate)`,
+  затем `storage -= Cargo_GetRawConsumptionRate(unit_type, build_rate)`.
+* `GameManager_SpawnNewUnits` (`game_manager.cpp:8076-8094`): при
+  `build_time <= build_rate` — `build_time = 0` и `SpawnNewUnit` (завершение),
+  иначе `build_time -= build_rate`.
+
+**Что было в порте.** Стоимость хода списывалась с **золота команды**
+(`production::charge_units`), а `UnitInfo::UpdateProduction` в `game.rs`
+параллельно делал `unit.storage.wrapping_sub(cost)` — склад строителя уходил в
+огромное положительное/отрицательное число, а «стройка» платилась не тем
+ресурсом, который есть у конструктора. При нулевом золоте стройка вставала
+навсегда: ресурса нет, прогресса нет, здание не появляется.
+
+**Что сделано.**
+
+* `game::update_production` (`unitinfo.cpp:2904`): ставка списывается со
+  **склада строителя**, `wrapping_sub` заменён на проверку
+  `storage >= cost`; при нехватке склад не меняется, а юнит получает
+  транзиентный флаг `UnitInfo::build_paused` (в сейв/CRC не входит).
+  Ставка предварительно режется `BuildMenu_GetMaxPossibleBuildRate`.
+* `production::charge_units`: мобильный строитель больше **не** платит
+  золотом; неоплаченный ход даёт событие `ProductionEventKind::PausedNoResources`
+  и не двигает `build_time`. Заводы сохраняют прежний «золотой» гейт
+  (`PausedNoGold`) — это осознанная абстракция порта для стационарной
+  индустрии (описана в шапке `production.rs`).
+* `production::spawn_units` двигает/завершает стройку только для оплаченных
+  юнитов; завершение — ровно `build_time <= build_rate` (`SpawnNewUnit`).
+* `ProductionManager::commit` повторяет проверку `MobileBuildMenu::Build`:
+  `BuildError::NotEnoughMaterials` («not enough raw materials on hand»).
+* `production::can_afford_turn` учитывает склад у мобильного строителя.
+
+### 38.2 Обломки после гибели наземного юнита
+
+**Как в C++.** `UnitsManager_BuildClearing(unit, mode)`
+(`units_manager.cpp:3646-3805`) вызывается из
+`UnitsManager_ProgressExplosion` (`units_manager.cpp:4021`) на середине
+анимации взрыва и:
+
+1. `rubble_type = LRGRUBLE` для `BUILDING`, иначе `SMLRUBLE`, но только если
+   `mode` (гибель, не удаление), тип не `COMMANDO`/`INFANTRY`, нет
+   `CONNECTOR_UNIT`/`HOVERING` и клетка **полностью на суше**
+   (`Access_IsFullyLandCovered`, `access.cpp:1049`);
+2. `cargo_amount = GetNormalRateBuildCost() / 2` (+ `storage` для сырья);
+3. `Access_DestroyGroundCovers(unit)`, затем `UnitsManager_DestroyUnit`;
+4. для зданий — `Access_DestroyUtilities(grid, true, …)`;
+5. `UnitsManager_DeployUnit(rubble_type, team, grid, Randomizer_Generate(image_count))`,
+   `rubble->storage = cargo_amount`. Мины обломков не оставляют
+   (`units_manager.cpp:3720`).
+
+Расчистка: `UnitsManager_Popup_OnClick_StopRemove` (`units_manager.cpp:1092-1113`)
+ставит `bulldozer->build_time = 4` (строение) или `1` (юнит) и
+`ORDER_CLEAR`/`INIT`; `UnitInfo::SpawnNewUnit` ветка `BULLDOZR`
+(`unitinfo.cpp:3441-3487`) сносит обломки в габарите, забирает их груз и
+возвращает бульдозер в `ORDER_AWAIT`.
+
+**Что было.** `destroy_unit` просто удалял юнита — обломков не появлялось
+вовсе; `ProcessOrderClear` был заглушкой, поэтому и расчищать было нечего.
+
+**Что сделано.**
+
+* `access::build_clearing(state, id, mode)` — порт `UnitsManager_BuildClearing`
+  (тип по размеру, груз, RNG-кадр, снятие ground covers и утилит здания).
+* `unit_order::progress_explosion` вызывает `build_clearing(parent, true)`
+  вместо `destroy_unit` — как C++ на `image_index_max / 2`.
+* `production::finish_bulldozer_clearing` — порт ветки `BULLDOZR`
+  `UnitInfo::SpawnNewUnit`: снос `SMLRUBLE`/`LRGRUBLE` (у большого — 2×2),
+  перенос груза, `ORDER_AWAIT`; `spawn_units` теперь пропускает бульдозер с
+  `build_time > 0` и пустой очередью.
+
+### 38.3 Кнопки 3×3 в левой панели: центровка и поведение
+
+**Как в C++.**
+
+* Подписи: `Button::SetCaption(caption, x, y, …)` (`button.cpp:412-449`)
+  строит `Rect bounds = {0, 0, width - x, height - y}` и центрирует строку
+  **в нём**: `Text_TextLine` (`text.cpp:772-783`) — `x = (swidth -
+  (Text_GetWidth + 1)) / 2` (сдвиг только при `spacing > 0`),
+  `y = ((height - y) - Text_GetHeight()) / 2 + y`. Смещения —
+  `GameManager_MenuItemLabelOffsets` (`game_manager.cpp:275-278`): у 3×3
+  `x = 2`, `y = 2` (SURVEY/STATUS/HITS/AMMO/SCAN/GRID) или `y = 4`
+  (COLORS/RANGE/NAMES); шрифт `FONT_2`.
+* Поведение: каждая кнопка — `CTInfo::display_button_*` и
+  `SetRestState(rest_state)` (`GameManager_MenuClick*Button`,
+  `game_manager.cpp:3800-3990`): SURVEY — иконки ресурсов
+  (`GameManager_RenderSurveyIndicator`), STATUS — иконки
+  `IL_DSBLD`/`IL_SPEED`/`IL_SHOTS` (`DrawMap_RenderStatusDisplay`,
+  `drawmap.cpp:444`), COLORS — рамка цвета команды у мобильных юнитов
+  (`drawmap.cpp:581`), HITS/AMMO — две полоски под юнитом при `zoom > 8`
+  (`drawmap.cpp:605-669`), RANGE/SCAN — круги `ATTRIB_RANGE`/`ATTRIB_SCAN`
+  (`GameManager_RenderScanRangeIndicators`, `game_manager.cpp:933-960`),
+  GRID — сетка клеток цветом поверхности
+  (`DrawMap_RenderSimpleGridOverlay`/`…ComplexGridOverlay`, `drawmap.cpp:922/956`),
+  NAME — имя юнита (`DrawMap_RenderNamesDisplay`, `drawmap.cpp:747`).
+
+**Что было.** Порт центровал подпись в **полном** прямоугольнике кнопки
+(`(height - font)/2 + y`), из-за чего подписи 3×3 уезжали на 1-2 px вниз и на
+1 px вправо; смещение `x = 2` игнорировалось. Из девяти кнопок реально
+работала только SURVEY — остальные меняли флаг, но ничего не рисовали.
+
+**Что сделано.**
+
+* `PanelButton::caption_offset()` — таблица `(x, y)` 1:1;
+  `PanelButton::caption_position()` — точная формула `SetCaption`;
+  `Panels::draw_caption_colored` рисует по ней (единый источник истины).
+* Новый модуль `max_app::overlays`: GRID (простая и «сложная» сетка цветом
+  поверхности), COLORS, STATUS (иконки из `MAX.RES`, грузятся в `Panels`),
+  HITS, AMMO, RANGE, SCAN, NAMES — с теми же формулами геометрии, что C++
+  (`DrawMap_RenderUnitDisplays`/`Gfx_RenderCircle`/`DrawMap_RenderTextBox`).
+* `SURVEY` осталась на прежнем слое иконок ресурсов; все девять кнопок
+  по-прежнему переключаются кликом (`ui::session_panel_button`).
+
+### 38.4 Таблица курсоров
+
+**Как в C++.** `GameManager_GetWindowCursor` (`game_manager.cpp:4215-4564`) —
+порядок веток: вне карты → `HANDPTR`; конец хода/чужой ход →
+`FRND_PTR`/`UNIT_NGO`; юнит не принимает приказы → `FRND_PTR`/`UNIT_NGO`;
+прерванный групповой приказ → то же; `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING`
+наземного строителя → `GameManager_GetBuilderUnitCursor` (`:5829`);
+`ORDER_IDLE` → `GameManager_GetAirUnitCursor` (`:5937`, `ACTVTPTR`);
+`ORDER_STATE_EXECUTING_ORDER` + валидная цель → `GameManager_GetMilitaryCursor`
+(`:6150`: `ENMY_PTR`/`PTR_FTRG`/`DISBLPTR`/`STEALPTR`/`UNIT_NGO`);
+`targeting_mode` → `ENMY_PTR`/`UNIT_NGO`; `enter_mode` → `UNIT_GO`/`UNIT_NGO`;
+по классу: воздух → `FRND_LOD`/`FRND_PTR`/`WAY_PTR`/`UNIT_GO`;
+земля/море → `GameManager_GetUnitActionCursor` (`:5976`: `UNIT_GO`/`WAY_PTR`,
+`FRND_XFR` при `unit->cursor == CURSOR_ARROW_NE`, `FRND_FIX` при
+`CURSOR_ARROW_E`, `PTR_RLD` при `CURSOR_ARROW_S`, `FRND_LOD` при
+`CURSOR_ARROW_SW`); стационарные → `FRND_LOD` по типу здания
+(`DEPOT`/`HANGAR`/`DOCK`/`BARRACKS`), `FRND_XFR`/`PTR_RLD` по курсорному
+режиму, иначе `FRND_PTR`/`UNIT_NGO`.
+
+**Что было.** `session_cursor` знал только «меню/панель → HANDPTR», «карта без
+выделения → MAP_PTR», «над своим/чужим → FRND/ENMY», `targeting_mode` и режим
+`load`. Курсоры X-FER (`FRND_XFR`), repair (`FRND_FIX`), reload (`PTR_RLD`),
+`PTR_FTRG`, `WAY_PTR`, `ACTVTPTR`, а также загрузка в здания не выбирались
+вовсе — X-FER показывал обычную стрелку.
+
+**Что сделано.**
+
+* `cursor::window_cursor(app, grid)` — полный порт `GameManager_GetWindowCursor`
+  вместе с `builder_unit_cursor`, `air_unit_cursor`, `unit_action_cursor`,
+  `military_cursor`, `is_unit_next_to_position`, `ready_to_take_orders`,
+  `is_valid_transfer_target`, `is_group_order_interrupted`.
+* Курсорный режим берётся из `HudState::cursor_mode` (порт `UnitInfo::cursor`),
+  `targeting_mode`/`enter_mode` — из HUD (порт полей `UnitInfo`).
+* `HudState::shift_pressed` + `App::set_shift_pressed` — `CURSOR_WAY` по
+  `GameManager_IsShiftKeyPressed` (слой ввода SDL модификаторы пока не
+  передаёт; флаг выставляется извне).
+* `CURSOR_MAP` больше не выбирается на карте: в C++ `GetWindowCursor` такой
+  ветки нет, `MAP_PTR` — только запись `Cursor_DefaultWindowCursorLut`,
+  которую `GameManager_ProcessInput` всегда перекрывает.
+
+### 38.5 Тесты
+
+* `max_core/tests/construction_economy.rs` (6): сырьё вместо золота, склад не
+  уходит в минус, пауза без траты и прогресса, завершение ровно на
+  `build_time <= build_rate`, `NotEnoughMaterials` при нехватке, гейт завода,
+  возобновление после подвоза.
+* `max_core/tests/rubble.rs` (7): `SMLRUBLE` за танком, отсутствие обломка у
+  пехоты и на воде, `LRGRUBLE` за зданием, `mode = false` без обломка,
+  детерминизм (кадр + дайджест), расчистка бульдозером с переносом груза.
+* `max_app/tests/cursor_table.rs` (12): курсор на каждый режим (X-FER, repair,
+  reload, load, targeting, military far-target, воздух/`WAY_PTR`, строитель).
+* `max_app/src/panels.rs` (+2): `caption_offset` 1:1 по таблице C++ и точная
+  центровка подписей (`y = 298 + 4` для строки SURVEY/HITS/SCAN, `330 + 6`
+  для COLORS/RANGE/NAMES).
+* `max_app/src/overlays.rs` (+3): цвета сетки `world.cpp:536-539`, контур
+  круга `Gfx_RenderCircle`, заливка полосок.
+* `max_app/tests/*` после правок: 377 lib-тестов + все интеграционные —
+  зелёные; `max_core` — 245 + 14 наборов.
+
+### 38.6 QA и артефакты
+
+* Новый **`panels.qa`**: мобилизация Tank (есть RANGE/SCAN/HITS/AMMO),
+  поочерёдное включение всех девяти кнопок кликом по панели, `assert
+  panel=NAME:on|off` (новый ассерт), `assert overlay>0` / `assert overlay=0`
+  (новый ассерт — `RenderStats::overlay_pixels`) и 12 кадров; сценарий
+  **PASS**, новый эталон `golden/panels` (12 PNG).
+* `combat-tb` — единственный дрейф (`combat-tb-after-ai.png`, 1.17 %): на
+  кадре появился обломок убитого ИИ юнита; эталон перегенерирован осознанно.
+  Остальные 14 наборов — **0 дрейфа**.
+* Кадры `panels-combined`, `panel-names`, `panel-status` и др. показывают
+  сетку, рамки команд, полоски hits/ammo, имена и иконки статуса.
+* Новые ассерты QA: `assert panel=survey|status|colors|hits|ammo|range|scan|grid|
+  names:on|off`, `assert overlay>=N`.
+
+### 38.7 Полный гейт и артефакты
+
+* **Полный docker-гейт** `bash ci.sh` — **зелёный** (1284 с первый прогон, 843 с финальный на тёплом кэше):
+  * 1/4 `cargo check` + `cargo test` (default SDL3-from-source,
+    `--features sound`, `--no-default-features`) — 377 lib-тестов max_app и все
+    интеграционные (включая `cursor_table` 12), `max_core` 245 + 14 наборов
+    (включая `construction_economy` 6 и `rubble` 7);
+  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 3/4 — **21** QA-скрипт PASS (включая новый `panels.qa`: 5 кадров/12 PNG)
+    и **16** golden-наборов, дрейф **0**;
+  * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
+    tb` — 120 826 кадров, 28.65 с, 41 юнит, `early_end=false`, RSS стабилен
+    (growth +84…+124 KiB между прогонами — шум аллокатора).
+* **Windows UI** (`build/scripts/build-windows-ui.ps1`):
+  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 680 576 Б, sha256
+  `8a4f320e728da42b17bb5da2b4d7000812d558f763ae1aa1c7420fcd08c6fb10`
+  (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
+  `e232c0a155e6575af5dbec39a735bb0d882bc1078bddabc1cb8dcbbab589c7d2`.
+* **Windows headless** (`build/scripts/build-windows.sh`):
+  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 034 212 Б, sha256
+  `7f08129d39dbef34843d9321c0b76eb0f042e9d71b85c200602a03cc85c183d2`;
+  zip sha256 `52b10483d530f3c180fc88db898311be8a28cd2a22f94dc7fd337faca1bf776f`;
+  wine-smoke (`--help` + `--demo 1 тик`, digest `0x6BB9`) — OK.

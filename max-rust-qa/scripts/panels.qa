@@ -1,0 +1,146 @@
+# panels.qa — кнопки 3×3 в левой панели (SURVEY/STATUS/COLORS/HITS/AMMO/
+# RANGE/SCAN/GRID/NAME) — поведение 1:1 C++ (game_manager.cpp:3800-3990,
+# DrawMap_RenderUnitDisplays, GameManager_RenderScanRangeIndicators,
+# DrawMap_RenderMapTiles).
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/panels.qa qa-out/panels
+#
+# Что проверяется:
+# * подписи кнопок отцентрованы по `Button::SetCaption` (button.cpp:412-449);
+# * каждая кнопка — переключатель `CTInfo::display_button_*`: клик включает
+#   слой, повторный выключает (`assert panel=NAME:on|off`);
+# * включённый слой действительно рисуется в кадре
+#   (`assert overlay>0` — `RenderStats::overlay_pixels`), выключенный — нет
+#   (`assert overlay=0`);
+# * SURVEY — единственная кнопка, которая рисует иконки ресурсов
+#   (`assert survey-overlay=yes`), остальные — оверлеи юнитов/карты.
+
+# --- Главное меню и запуск партии ----------------------------------------
+shot main-menu
+assert screen=MainMenu
+menu new_game
+
+assert screen=Options
+click 240 110
+click 500 100
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+
+# --- Мобилизация: Tank (индекс 5) — есть RANGE, SCAN, HITS и AMMO -------
+assert screen=Mobilize
+mobilize buy 5
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+tick 5
+select type Tank
+assert selected
+
+# Все переключатели выключены — оверлеев нет.
+assert panel=survey:off
+assert panel=status:off
+assert panel=colors:off
+assert panel=hits:off
+assert panel=ammo:off
+assert panel=range:off
+assert panel=scan:off
+assert panel=grid:off
+assert panel=names:off
+assert overlay=0
+shot panels-off
+
+# --- GRID: сетка клеток (DrawMap_RenderSimpleGridOverlay) ----------------
+click 141 322
+assert panel=grid:on
+assert overlay>0
+shot panel-grid
+click 141 322
+assert panel=grid:off
+assert overlay=0
+
+# --- COLORS: рамки цвета команды вокруг мобильных юнитов -----------------
+click 31 339
+assert panel=colors:on
+assert overlay>0
+shot panel-colors
+click 31 339
+assert panel=colors:off
+assert overlay=0
+
+# --- HITS и AMMO: полоски под юнитом при zoom > 8 ------------------------
+click 86 306
+assert panel=hits:on
+assert overlay>0
+shot panel-hits
+click 86 322
+assert panel=ammo:on
+assert overlay>0
+shot panel-hits-ammo
+click 86 306
+click 86 322
+assert overlay=0
+
+# --- RANGE: круг радиуса ATTRIB_RANGE (цвет RED/CHROME_YELLOW) -----------
+click 86 339
+assert panel=range:on
+assert overlay>0
+shot panel-range
+click 86 339
+assert overlay=0
+
+# --- SCAN: круг радиуса ATTRIB_SCAN (COLOR_YELLOW) -----------------------
+click 141 306
+assert panel=scan:on
+assert overlay>0
+shot panel-scan
+click 141 306
+assert overlay=0
+
+# --- NAME: имя юнита над ним (DrawMap_RenderNamesDisplay) ----------------
+click 141 339
+assert panel=names:on
+assert overlay>0
+shot panel-names
+click 141 339
+assert overlay=0
+
+# --- STATUS: иконки IL_SPEED/IL_SHOTS (DrawMap_RenderStatusDisplay) ------
+click 31 322
+assert panel=status:on
+assert overlay>0
+shot panel-status
+click 31 322
+assert panel=status:off
+assert overlay=0
+
+# --- SURVEY: иконки ресурсов (отдельный счётчик `resource-icons`) --------
+click 31 306
+assert panel=survey:on
+assert survey-overlay=yes
+shot panel-survey
+click 31 306
+assert panel=survey:off
+assert survey-overlay=no
+assert overlay=0
+
+# Комбинация переключателей: GRID + HITS + COLORS.
+click 141 322
+click 86 306
+click 31 339
+assert overlay>0
+shot panels-combined
+click 141 322
+click 86 306
+click 31 339
+assert overlay=0
+assert screen=InGame

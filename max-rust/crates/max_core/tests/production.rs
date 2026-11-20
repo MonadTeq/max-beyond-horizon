@@ -332,6 +332,10 @@ fn constructor_builds_a_building_on_a_site() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    // Реальный десант даёт конструктору 40 сырья (`DEFAULT_MISSION_LOADOUT`);
+    // `BuildMenu::Build` требует всю стоимость постройки на руках
+    // (`buildmenu.cpp:903-906`: 2 × 10 ходов = 20).
+    state.unit_mut(constructor).expect("builder").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -355,7 +359,16 @@ fn constructor_builds_a_building_on_a_site() {
         1,
         "здание должно появиться через 10 ходов"
     );
-    assert_eq!(state.team_units[0].gold(), 100 - 20, "2 золота × 10 ходов");
+    assert_eq!(
+        state.team_units[0].gold(),
+        100,
+        "стройка платится сырьём со склада, золото команды не тратится"
+    );
+    assert_eq!(
+        state.unit(constructor).expect("constructor alive").storage,
+        20,
+        "40 − 2 × 10 ходов = 20 сырья"
+    );
 
     // C++ `SpawnNewUnit`: строитель достроил и ждёт ухода с площадки
     // (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), очередь очищена (!path).
@@ -521,13 +534,22 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
     assert_eq!(turns, 8, "2× держится 4 хода, затем 1× ещё 4");
     assert_eq!(
         state.team_units[0].gold(),
-        1000 - 40,
-        "полная стоимость = ходы × ставка (4×8 + 4×2)"
+        1000,
+        "мобильный строитель платит сырьём со склада (C++ \
+         `Cargo_GetRawConsumptionRate` → `UpdateProduction`), не золотом"
     );
     assert_eq!(
         state.unit(constructor).expect("builder").storage,
         0,
-        "C++ `storage -= Cargo_GetRawConsumptionRate(...)`"
+        "C++ `storage -= Cargo_GetRawConsumptionRate(...)`: 40 → 0"
+    );
+    assert!(
+        state
+            .unit(constructor)
+            .expect("builder")
+            .storage
+            >= 0,
+        "склад не уходит в минус"
     );
 }
 

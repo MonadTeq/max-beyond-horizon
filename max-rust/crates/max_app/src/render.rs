@@ -738,6 +738,9 @@ pub struct RenderStats {
     pub selector_units: usize,
     /// Сколько юнитов пропущено (нет в списках/невидимы камере).
     pub units_skipped: usize,
+    /// Сколько пикселей оверлеев кнопок 3×3 (GRID/HITS/AMMO/COLORS/STATUS/
+    /// NAMES/RANGE/SCAN) нарисовано — [`crate::overlays`].
+    pub overlay_pixels: u32,
 }
 
 impl RenderStats {
@@ -1138,7 +1141,11 @@ impl App {
             }
         }
 
+        self.draw_grid_overlay(&mut frame, self.viewport(), &mut stats);
         self.draw_units(&mut frame, self.viewport(), &mut stats);
+        // Кнопки 3×3 левой панели (`game_manager.cpp`): COLORS/STATUS/HITS/
+        // AMMO/NAMES — поверх спрайтов, RANGE/SCAN — круги поверх всего.
+        self.draw_toggle_overlays(&mut frame, self.viewport(), &mut stats);
         // Иконки ресурсов — поверх юнитов/зданий (`GameManager_RenderSurveyIndicator`).
         self.draw_resource_icons(&mut frame, self.viewport(), &mut stats);
         // Маркеры стройки — последними, как `DrawMap_RedrawDirtyZones`.
@@ -1223,7 +1230,11 @@ impl App {
             }
         }
 
+        self.draw_grid_overlay(&mut map, &viewport, &mut stats);
         self.draw_units(&mut map, &viewport, &mut stats);
+        // Кнопки 3×3 левой панели: оверлеи поверх спрайтов, как
+        // `DrawMap_RenderUnitDisplays`/`GameManager_RenderScanRangeIndicators`.
+        self.draw_toggle_overlays(&mut map, &viewport, &mut stats);
         // `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991-995`) —
         // **после** юнитов, поэтому иконки ресурсов ложатся поверх зданий.
         self.draw_resource_icons(&mut map, &viewport, &mut stats);
@@ -1406,6 +1417,47 @@ impl App {
     }
 
     /// Юниты в буфер через камеру: только видимые и известные команде.
+    /// `DrawMap_RenderMapTiles(..., GameManager_DisplayButtonGrid)`
+    /// (`game_manager.cpp:1177`): сетка клеток поверх тайлов и **под** юнитами.
+    ///
+    /// `complex_grid_overlay` — настройка `settings` (`settings.cpp`), в порте
+    /// не портирована; берётся значение по умолчанию C++ (`0` — простая сетка
+    /// одним цветом, `DrawMap_RenderSimpleGridOverlay`).
+    fn draw_grid_overlay(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        if !self.hud().panels.grid {
+            return;
+        }
+
+        let Some(palette) = self.assets().and_then(UiPalette::from_assets) else {
+            return;
+        };
+
+        stats.overlay_pixels +=
+            crate::overlays::draw_grid(frame, self, viewport, &palette, false);
+    }
+
+    /// Оверлеи кнопок 3×3 (`DrawMap_RenderUnitDisplays`,
+    /// `GameManager_RenderScanRangeIndicators`): COLORS/STATUS/HITS/AMMO/NAMES и
+    /// круги RANGE/SCAN.
+    fn draw_toggle_overlays(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        let Some(palette) = self.assets().and_then(UiPalette::from_assets) else {
+            return;
+        };
+
+        stats.overlay_pixels += crate::overlays::draw_unit_overlays(frame, self, viewport, &palette);
+        stats.overlay_pixels += crate::overlays::draw_range_scan(frame, self, viewport, &palette);
+    }
+
     fn draw_units(
         &self,
         frame: &mut RgbaBuffer,

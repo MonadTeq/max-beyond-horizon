@@ -16,7 +16,12 @@
 //! когда переключать кадр (`Cursor_AnimationTick`, 200 мс в C++).
 
 use max_assets::{CursorSet, CURSOR_RESOURCES};
-use max_core::enums::unit_flags;
+use max_core::access;
+use max_core::enums::{unit_flags, GameStateType, UnitOrder, UnitOrderState, UnitType};
+use max_core::geo::Point;
+use max_core::team::{TeamId, TeamKind};
+use max_core::unit::{UnitId, UnitInfo, UnitListKind};
+use max_core::GameState;
 use max_render::terrain::PaletteRgba;
 
 /// Индекс курсора (`CursorId` из `cursor.hpp:34-65`).
@@ -291,8 +296,789 @@ pub fn cursor_image(
     })
 }
 
-/// Курсор для точки окна в партии — порт `GameManager_GetWindowCursor` в той
-/// части, которую покрывает клиент.
+/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`): клетка в
+/// окрестности юнита (для здания 2×2 — расширенной на 1 во все стороны).
+pub fn is_unit_next_to_position(unit: &UnitInfo, grid: Point) -> bool {
+    let size = if unit.flags & unit_flags::BUILDING != 0 {
+        2
+    } else {
+        1
+    };
+
+    i32::from(unit.grid.x) - 1 <= i32::from(grid.x)
+        && i32::from(unit.grid.x) + size >= i32::from(grid.x)
+        && i32::from(unit.grid.y) - 1 <= i32::from(grid.y)
+        && i32::from(unit.grid.y) + size >= i32::from(grid.y)
+}
+
+/// `Task_IsReadyToTakeOrders` (`task.cpp:105`).
+///
+/// `Access_GetActiveLoader(unit) == nullptr` в порте моделируется
+/// [`max_core::access::is_engaged`] (юнит, которого грузят/ведут, приказов не
+/// принимает).
+pub fn ready_to_take_orders(state: &GameState, unit: &UnitInfo) -> bool {
+    if unit.hits == 0 {
+        return false;
+    }
+
+    let order_ok = matches!(unit.orders, UnitOrder::Await | UnitOrder::Sentry)
+        || (matches!(unit.orders, UnitOrder::Move | UnitOrder::MoveToUnit)
+            && unit.state == UnitOrderState::ExecutingOrder);
+
+    order_ok && !access::is_engaged(state, unit)
+}
+
+/// `Access_GetEnemyUnit(team, x, y, flags)` (`access.cpp:1731`): видимый враг в
+/// клетке (сначала обычные юниты, затем ground cover/мины).
+pub fn get_enemy_unit(
+    state: &GameState,
+    team: TeamId,
+    grid: Point,
+    flags: u32,
+) -> Option<UnitId> {
+    let mut fallback = None;
+
+    for id in state.units_at(grid).iter().copied() {
+        let Some(other) = state.unit(id) else {
+            continue;
+        };
+
+        if other.team == team
+            || !other.is_visible_to_team(team)
+            || other.orders == UnitOrder::Idle
+            || other.flags & flags == 0
+            || other.orders == UnitOrder::Explode
+            || other.state == UnitOrderState::Destroy
+        {
+            continue;
+        }
+
+        let ground_cover = other.flags & unit_flags::GROUND_COVER != 0;
+
+        if !ground_cover
+            || matches!(other.unit_type, UnitType::LandMine | UnitType::SeaMine)
+        {
+            return resolve_tape_parent(state, id);
+        }
+
+        if fallback.is_none() {
+            fallback = Some(id);
+        }
+    }
+
+    fallback.and_then(|id| resolve_tape_parent(state, id))
+}
+
+/// Хвост `Access_GetTeamUnit`/`Access_GetEnemyUnit`: лента принадлежит
+/// строителю (`unit = unit->GetParent()`).
+fn resolve_tape_parent(state: &GameState, id: UnitId) -> Option<UnitId> {
+    let unit = state.unit(id)?;
+
+    if matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape) {
+        unit.parent_unit
+    } else {
+        Some(id)
+    }
+}
+
+/// `GameManager_IsValidTransferTarget` (`game_manager.cpp:6084`).
+pub fn is_valid_transfer_target(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
+    if unit1.id == unit2.id {
+        return false;
+    }
+
+    if let Some(complex) = unit2.complex {
+        for id in state.unit_list(UnitListKind::Stationary) {
+            let Some(other) = state.unit(*id) else {
+                continue;
+            };
+
+            if other.complex == Some(complex) && is_unit_next_to_position(other, unit1.grid) {
+                return true;
+            }
+        }
+
+        false
+    } else {
+        is_unit_next_to_position(unit2, unit1.grid)
+    }
+}
+
+/// `GameManager_IsGroupOrderInterrupted` (`access.cpp:2390`): в группе есть
+/// юнит, который ещё идёт.
+pub fn is_group_order_interrupted(state: &GameState, unit: &UnitInfo) -> bool {
+    let Some(members) = access::group_members_of(state, unit.id) else {
+        return false;
+    };
+
+    members.iter().any(|id| {
+        state.unit(*id).is_some_and(|other| {
+            matches!(other.orders, UnitOrder::Move | UnitOrder::MoveToAttack)
+                && matches!(
+                    other.state,
+                    UnitOrderState::InProgress
+                        | UnitOrderState::InTransition
+                        | UnitOrderState::NewOrder
+                )
+        })
+    })
+}
+
+/// `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`).
+///
+/// Ветка выбора площадки (`SELECT_SITE`) приходит сюда только из
+/// `GameManager_GetWindowCursor`; в порте призрак площадки живёт в
+/// [`crate::buildsite`] и проверяется до вызова этой функции
+/// ([`session_cursor`]).
+pub fn builder_unit_cursor(
+    state: &GameState,
+    player_team: TeamId,
+    unit1: &UnitInfo,
+    grid: Point,
+    team_unit: Option<&UnitInfo>,
+) -> CursorId {
+    if unit1.state == UnitOrderState::UnitReady {
+        let next_to_parent = unit1
+            .parent_unit
+            .and_then(|id| state.unit(id))
+            .is_some_and(|parent| is_unit_next_to_position(parent, grid));
+
+        if next_to_parent
+            && access::is_accessible(
+                state,
+                unit1.unit_type,
+                player_team,
+                grid,
+                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+        {
+            CursorId::UnitGo
+        } else if team_unit.is_some() {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        }
+    } else if team_unit.is_some() {
+        CursorId::Friend
+    } else {
+        CursorId::UnitNoGo
+    }
+}
+
+/// `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937`): приказ
+/// `ORDER_IDLE` у юнита (лента/внутри здания) — `CURSOR_ACTIVATE`.
+pub fn air_unit_cursor(
+    state: &GameState,
+    player_team: TeamId,
+    unit1: &UnitInfo,
+    grid: Point,
+    team_unit: Option<&UnitInfo>,
+) -> CursorId {
+    let parent = unit1.parent_unit.and_then(|id| state.unit(id));
+
+    if let Some(parent) = parent {
+        if is_unit_next_to_position(parent, grid)
+            && access::is_accessible(
+                state,
+                unit1.unit_type,
+                player_team,
+                grid,
+                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+        {
+            let inside = unit1.flags & unit_flags::MOBILE_AIR_UNIT != 0
+                && i32::from(parent.grid.x) <= i32::from(grid.x)
+                && i32::from(parent.grid.x) + 1 >= i32::from(grid.x)
+                && i32::from(parent.grid.y) <= i32::from(grid.y)
+                && i32::from(parent.grid.y) + 1 >= i32::from(grid.y);
+
+            return if inside {
+                CursorId::Friend
+            } else {
+                CursorId::Activate
+            };
+        }
+    }
+
+    if team_unit.is_some() {
+        CursorId::Friend
+    } else {
+        CursorId::UnitNoGo
+    }
+}
+
+/// `GameManager_GetUnitActionCursor` (`game_manager.cpp:5976`): курсор для
+/// наземного/морского юнита — движение, X-FER (`CURSOR_TRANSFER`),
+/// `repair` (`CURSOR_REPAIR`), `reload` (`CURSOR_RELOAD`), `load` (`CURSOR_LOAD`).
+///
+/// `cursor` — режим `unit->cursor` C++; в порте он живёт в
+/// [`crate::hud::HudState::cursor_mode`] и передаётся сюда явно.
+pub fn unit_action_cursor(
+    state: &GameState,
+    player_team: TeamId,
+    unit1: &UnitInfo,
+    grid: Point,
+    team_unit: Option<&UnitInfo>,
+    shift_pressed: bool,
+    cursor: u8,
+) -> CursorId {
+    let accessible = access::is_accessible(
+        state,
+        unit1.unit_type,
+        player_team,
+        grid,
+        access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) > 0;
+
+    if accessible {
+        if team_unit.is_some_and(|team| team.flags & unit_flags::MOBILE_AIR_UNIT != 0) {
+            CursorId::Friend
+        } else if unit1.orders == UnitOrder::Clear {
+            CursorId::UnitNoGo
+        } else if shift_pressed {
+            CursorId::Way
+        } else {
+            CursorId::UnitGo
+        }
+    } else if let Some(team_unit) = team_unit {
+        let capacity = unit1
+            .base_values
+            .get_attribute(max_core::unit_values::ATTRIB_STORAGE);
+
+        if cursor == crate::unitmenu::CURSOR_TRANSFER
+            || cursor == crate::unitmenu::CURSOR_LOAD
+            || cursor == crate::unitmenu::CURSOR_REPAIR
+            || cursor == crate::unitmenu::CURSOR_RELOAD
+        {
+            // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, то есть режим `load`
+            // (и `repair`/`reload`/`x-fer` попадают в `else` ниже).
+            if cursor == crate::unitmenu::CURSOR_LOAD && i32::from(unit1.storage) < capacity {
+                let land = access::get_team_unit(
+                    state,
+                    grid,
+                    player_team,
+                    unit_flags::MOBILE_LAND_UNIT,
+                )
+                .and_then(|id| state.unit(id));
+
+                if let Some(land) = land {
+                    if ready_to_take_orders(state, land) {
+                        if unit1.unit_type == UnitType::PersonnelCarrier
+                            && matches!(
+                                land.unit_type,
+                                UnitType::Commando | UnitType::Infantry
+                            )
+                        {
+                            return CursorId::Load;
+                        }
+
+                        if unit1.unit_type == UnitType::SeaTransport {
+                            return CursorId::Load;
+                        }
+                    }
+                }
+
+                return CursorId::Friend;
+            }
+
+            if cursor != crate::unitmenu::CURSOR_LOAD {
+                // Общая ветка C++: `CURSOR_ARROW_NE` — X-FER, `E` — repair,
+                // `S` — reload; проверяются только для соседней цели.
+                if is_unit_next_to_position(unit1, grid)
+                    && unit1.id != team_unit.id
+                    && team_unit.hits > 0
+                {
+                    return match cursor {
+                        crate::unitmenu::CURSOR_TRANSFER => {
+                            if transfer_target_accepts(state, unit1, team_unit) {
+                                CursorId::Transfer
+                            } else {
+                                CursorId::Friend
+                            }
+                        }
+                        crate::unitmenu::CURSOR_REPAIR => {
+                            if i32::from(team_unit.hits)
+                                < team_unit
+                                    .base_values
+                                    .get_attribute(max_core::unit_values::ATTRIB_HITS)
+                            {
+                                CursorId::Repair
+                            } else {
+                                CursorId::Friend
+                            }
+                        }
+                        crate::unitmenu::CURSOR_RELOAD => {
+                            if i32::from(team_unit.ammo)
+                                < team_unit
+                                    .base_values
+                                    .get_attribute(max_core::unit_values::ATTRIB_AMMO)
+                            {
+                                CursorId::Reload
+                            } else {
+                                CursorId::Friend
+                            }
+                        }
+                        _ => CursorId::Friend,
+                    };
+                }
+            }
+        }
+
+        CursorId::Friend
+    } else {
+        CursorId::UnitNoGo
+    }
+}
+
+/// Проверка `CURSOR_ARROW_NE` (`x-fer`) из `GameManager_GetUnitActionCursor`:
+/// та же категория груза, цель не в `CLEAR`/`BUILD`, либо у цели-здания в
+/// комплексе есть приёмник нужного груза.
+fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInfo) -> bool {
+    let cargo = max_core::victory::cargo_type_of(unit1.unit_type);
+
+    if max_core::victory::cargo_type_of(target.unit_type) == cargo
+        && target.orders != UnitOrder::Clear
+        && target.orders != UnitOrder::Build
+    {
+        return true;
+    }
+
+    if unit1.flags & unit_flags::STATIONARY == 0
+        && target.flags & unit_flags::STATIONARY != 0
+    {
+        if let Some(complex) = target.complex {
+            return max_core::transfer::find_unit_with_cargo_type(
+                state, target.team, complex, cargo,
+            )
+            .is_some();
+        }
+    }
+
+    false
+}
+
+/// `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`): курсор по
+/// валидной цели — `CURSOR_ENEMY`, `CURSOR_FAR_TARGET`, `CURSOR_DISABLE`,
+/// `CURSOR_STEAL`, иначе `CURSOR_UNIT_NO_GO`.
+pub fn military_cursor(
+    state: &GameState,
+    selected: &UnitInfo,
+    grid: Point,
+    cursor: u8,
+) -> CursorId {
+    if selected.delayed_reaction != 0 {
+        return CursorId::UnitNoGo;
+    }
+
+    if selected.unit_type != UnitType::Commando {
+        if selected.weapon != 2 {
+            return CursorId::UnitNoGo;
+        }
+
+        if selected.ammo == 0 && access::group_members_of(state, selected.id).is_none() {
+            return CursorId::UnitNoGo;
+        }
+    }
+
+    let Some(target_id) = access::get_attack_target(state, selected, grid, false) else {
+        return CursorId::UnitNoGo;
+    };
+    let Some(target) = state.unit(target_id) else {
+        return CursorId::UnitNoGo;
+    };
+
+    // Диверсант без режима наведения: рядом — steal/disable по направлению.
+    if selected.unit_type == UnitType::Commando && selected.targeting_mode == 0 {
+        if is_unit_next_to_position(selected, grid) {
+            let disable = cursor == crate::unitmenu::CURSOR_DISABLE || cursor == 0;
+            let steal = cursor == crate::unitmenu::CURSOR_STEAL || cursor == 0;
+
+            if disable
+                && crate::unitmenu::is_valid_stealth_target(
+                    state,
+                    selected,
+                    target,
+                    UnitOrder::AwaitDisableUnit,
+                )
+            {
+                return CursorId::Disable;
+            }
+
+            if steal
+                && crate::unitmenu::is_valid_stealth_target(
+                    state,
+                    selected,
+                    target,
+                    UnitOrder::AwaitStealUnit,
+                )
+            {
+                return CursorId::Steal;
+            }
+        }
+    }
+
+    if selected.weapon != 2 {
+        return CursorId::UnitNoGo;
+    }
+
+    if selected.ammo == 0 && access::group_members_of(state, selected.id).is_none() {
+        return CursorId::UnitNoGo;
+    }
+
+    let range = selected
+        .base_values
+        .get_attribute(max_core::unit_values::ATTRIB_RANGE);
+
+    if access::is_within_attack_range(state, selected, grid, range) {
+        if selected.ammo > 0 {
+            CursorId::Enemy
+        } else {
+            CursorId::UnitNoGo
+        }
+    } else if selected.flags & unit_flags::STATIONARY != 0 {
+        CursorId::UnitNoGo
+    } else {
+        CursorId::FarTarget
+    }
+}
+
+/// `GameManager_GetWindowCursor` (`game_manager.cpp:4215-4564`) — точная
+/// таблица курсоров по контексту карты.
+///
+/// Порядок веток 1:1 C++ (первая подходящая выигрывает):
+/// 1. клетка вне карты → `HANDPTR`;
+/// 2. конец хода или ход не игрока → `FRND_PTR`/`UNIT_NGO`;
+/// 3. юнит не «готов к приказам» (нет выбора, движется, стреляет, взрывается,
+///    отключён, грузится, масштабируется, чужой) → `FRND_PTR`/`UNIT_NGO`;
+/// 4. прерванный групповой приказ → `FRND_PTR`/`UNIT_NGO`;
+/// 5. `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING` наземного строителя →
+///    [`builder_unit_cursor`];
+/// 6. `ORDER_IDLE` → [`air_unit_cursor`] (`ACTVTPTR`);
+/// 7. `ORDER_STATE_EXECUTING_ORDER` и валидная цель → [`military_cursor`];
+/// 8. `targeting_mode` → `FRND_PTR`/`UNIT_NGO`/`ENMY_PTR`;
+/// 9. `enter_mode` → `UNIT_GO`/`UNIT_NGO`;
+/// 10. по классу: воздух — `LOAD`/`FRND_PTR`/`WAY`/`UNIT_GO`;
+///     земля/море — [`unit_action_cursor`]; стационарные — `LOAD` (по типу
+///     здания), `TRANSFER`/`RELOAD` по курсорному режиму, иначе
+///     `FRND_PTR`/`UNIT_NGO`.
+pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
+    let state = app.state();
+    let player_team = state.player_team;
+    // `unit->cursor` C++ (режимы X-FER/repair/reload/load/steal/disable).
+    let cursor_mode = app.hud().cursor_mode;
+    // `targeting_mode`/`enter_mode` C++ живут в `UnitInfo`; в порте — в HUD
+    // (`HudState::targeting_mode`/`enter_mode`, `unitmenu` их переключает).
+    let targeting_mode = app.hud().targeting_mode;
+    let enter_mode = app.hud().enter_mode;
+    let team_unit_id = access::get_team_unit(state, grid, player_team, unit_flags::SELECTABLE);
+    let team_unit = team_unit_id.and_then(|id| state.unit(id));
+    let active_kind = state
+        .teams
+        .get(usize::from(state.active_turn_team.0))
+        .map(|team| team.team_type)
+        .unwrap_or(TeamKind::None);
+
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= max_core::geo::MAP_WIDTH as i16
+        || grid.y >= max_core::geo::MAP_HEIGHT as i16
+    {
+        return CursorId::Hand;
+    }
+
+    if state.game_state == GameStateType::EndTurn || active_kind != TeamKind::Player {
+        return if team_unit.is_some() {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        };
+    }
+
+    let Some(selected_id) = app.hud().selected else {
+        return if team_unit.is_some() {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        };
+    };
+    let Some(selected) = state.unit(selected_id) else {
+        return CursorId::UnitNoGo;
+    };
+
+    // Ветка 3 C++: юнит не принимает приказы.
+    let not_ready = matches!(
+        selected.orders,
+        UnitOrder::Fire
+            | UnitOrder::Explode
+            | UnitOrder::Disable
+            | UnitOrder::AwaitDisableUnit
+            | UnitOrder::AwaitStealUnit
+            | UnitOrder::Load
+            | UnitOrder::AwaitScaling
+    ) || selected.state == UnitOrderState::Destroy
+        || (matches!(
+            selected.orders,
+            UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
+        ) && selected.state != UnitOrderState::ExecutingOrder)
+        || selected.team != player_team;
+
+    if not_ready {
+        if Some(selected.id) == team_unit_id && selected.orders != UnitOrder::Disable {
+            return CursorId::UnitNoGo;
+        }
+
+        if let Some(team_unit) = team_unit {
+            if selected.unit_list == team_unit.unit_list && selected.orders != UnitOrder::Idle {
+                return CursorId::UnitNoGo;
+            }
+        }
+
+        return if team_unit.is_some_and(|unit| unit.flags & unit_flags::GROUND_COVER == 0) {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        };
+    }
+
+    if is_group_order_interrupted(state, selected) {
+        if let Some(team_unit) = team_unit {
+            if team_unit.unit_list == selected.unit_list && selected.orders != UnitOrder::Idle {
+                return CursorId::UnitNoGo;
+            }
+        }
+
+        return if team_unit.is_some_and(|unit| unit.flags & unit_flags::GROUND_COVER == 0) {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        };
+    }
+
+    if matches!(
+        selected.orders,
+        UnitOrder::Build | UnitOrder::AwaitTapePositioning
+    ) && selected.flags & unit_flags::MOBILE_LAND_UNIT != 0
+    {
+        return builder_unit_cursor(state, player_team, selected, grid, team_unit);
+    }
+
+    if selected.orders == UnitOrder::Idle {
+        return air_unit_cursor(state, player_team, selected, grid, team_unit);
+    }
+
+    if selected.state == UnitOrderState::ExecutingOrder {
+        if let Some(enemy) = get_enemy_unit(state, player_team, grid, unit_flags::SELECTABLE) {
+            if let Some(enemy) = state.unit(enemy) {
+                if enemy.unit_type != UnitType::Connector
+                    && (enemy.flags & unit_flags::GROUND_COVER == 0
+                        || matches!(enemy.unit_type, UnitType::LandMine | UnitType::SeaMine))
+                    && access::is_valid_attack_target(state, selected, enemy)
+                {
+                    let result = military_cursor(state, selected, grid, cursor_mode);
+
+                    if result != CursorId::UnitNoGo || team_unit.is_none() {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
+    if targeting_mode {
+        if Some(selected.id) == team_unit_id {
+            return CursorId::Friend;
+        }
+
+        if selected.shots == 0 {
+            return CursorId::UnitNoGo;
+        }
+
+        let range = selected
+            .base_values
+            .get_attribute(max_core::unit_values::ATTRIB_RANGE);
+
+        if !access::is_within_attack_range(state, selected, grid, range) {
+            return CursorId::UnitNoGo;
+        }
+
+        if let Some(team_unit) = team_unit {
+            if !access::is_valid_attack_target(state, selected, team_unit) {
+                return CursorId::UnitNoGo;
+            }
+        }
+
+        // `Cursor_DrawAttackPowerCursor` в SDL-слое (полоска силы удара).
+        return CursorId::Enemy;
+    }
+
+    if enter_mode {
+        if Some(selected.id) == team_unit_id {
+            return CursorId::Friend;
+        }
+
+        return if access::get_receiver_unit(state, selected, grid).is_some() {
+            CursorId::UnitGo
+        } else {
+            CursorId::UnitNoGo
+        };
+    }
+
+    let class = selected.flags
+        & (unit_flags::MOBILE_AIR_UNIT
+            | unit_flags::MOBILE_SEA_UNIT
+            | unit_flags::MOBILE_LAND_UNIT
+            | unit_flags::STATIONARY);
+
+    if class == unit_flags::MOBILE_AIR_UNIT {
+        // Погрузка: транспорт в режиме `load` (`CURSOR_ARROW_SW`) с местом.
+        if cursor_mode == crate::unitmenu::CURSOR_LOAD
+            && selected.state == UnitOrderState::ExecutingOrder
+            && i32::from(selected.storage)
+                < selected
+                    .base_values
+                    .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
+        {
+            let land = access::get_team_unit(state, grid, player_team, unit_flags::MOBILE_LAND_UNIT)
+                .and_then(|id| state.unit(id));
+
+            if let Some(land) = land {
+                if land.orders != UnitOrder::Clear
+                    && land.orders != UnitOrder::Build
+                    && access::get_team_unit(
+                        state,
+                        grid,
+                        player_team,
+                        unit_flags::MOBILE_AIR_UNIT,
+                    )
+                    .is_none()
+                {
+                    return CursorId::Load;
+                }
+            }
+        }
+
+        return if team_unit.is_some_and(|unit| {
+            unit.unit_type != UnitType::LandingPad
+                && unit.flags & unit_flags::GROUND_COVER == 0
+        }) {
+            CursorId::Friend
+        } else if app.shift_pressed() {
+            CursorId::Way
+        } else {
+            CursorId::UnitGo
+        };
+    }
+
+    if class == unit_flags::MOBILE_LAND_UNIT
+        || class == unit_flags::MOBILE_SEA_UNIT
+        || class == unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT
+    {
+        return unit_action_cursor(
+            state,
+            player_team,
+            selected,
+            grid,
+            team_unit,
+            app.shift_pressed(),
+            cursor_mode,
+        );
+    }
+
+    if class == unit_flags::STATIONARY {
+        // Погрузка в здание (`CURSOR_ARROW_SW` = режим `load`).
+        if cursor_mode == crate::unitmenu::CURSOR_LOAD
+            && i32::from(selected.storage)
+                < selected
+                    .base_values
+                    .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
+        {
+            let (class_flags, only_special) = match selected.unit_type {
+                UnitType::Depot => (unit_flags::MOBILE_LAND_UNIT, false),
+                UnitType::Hangar => (unit_flags::MOBILE_AIR_UNIT, false),
+                UnitType::Dock => (unit_flags::MOBILE_SEA_UNIT, false),
+                UnitType::Barracks => (unit_flags::MOBILE_LAND_UNIT, true),
+                _ => (0, false),
+            };
+
+            if class_flags != 0 {
+                let candidate =
+                    access::get_team_unit(state, grid, player_team, class_flags)
+                        .and_then(|id| state.unit(id));
+
+                if let Some(candidate) = candidate {
+                    let special = matches!(
+                        candidate.unit_type,
+                        UnitType::Commando | UnitType::Infantry
+                    );
+
+                    let ready = if selected.unit_type == UnitType::Barracks {
+                        special
+                    } else {
+                        ready_to_take_orders(state, candidate)
+                    };
+
+                    let sea_ok = selected.unit_type != UnitType::Dock
+                        || candidate.flags & unit_flags::MOBILE_LAND_UNIT == 0;
+
+                    if ready && sea_ok && (!only_special || special) {
+                        return CursorId::Load;
+                    }
+                }
+            }
+        }
+
+        if cursor_mode != 0 {
+            let target = access::get_team_unit(state, grid, player_team, unit_flags::SELECTABLE)
+                .and_then(|id| state.unit(id));
+
+            if let Some(target) = target {
+                if is_valid_transfer_target(state, &target, selected) {
+                    match cursor_mode {
+                        crate::unitmenu::CURSOR_TRANSFER => {
+                            let cargo =
+                                max_core::victory::cargo_type_of(selected.unit_type);
+
+                            if max_core::victory::cargo_type_of(target.unit_type) == cargo
+                                && target.orders != UnitOrder::Clear
+                                && target.orders != UnitOrder::Build
+                            {
+                                return CursorId::Transfer;
+                            }
+                        }
+                        crate::unitmenu::CURSOR_RELOAD => {
+                            if i32::from(target.ammo)
+                                < target
+                                    .base_values
+                                    .get_attribute(max_core::unit_values::ATTRIB_AMMO)
+                            {
+                                return CursorId::Reload;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        return if team_unit.is_some() {
+            CursorId::Friend
+        } else {
+            CursorId::UnitNoGo
+        };
+    }
+
+    CursorId::UnitNoGo
+}
+
+/// Курсор для точки окна в партии — `GameManager_ProcessInput`
+/// (`game_manager.cpp:6359-6468`): меню/панель/миникарта — `HANDPTR`
+/// (`Cursor_GetDefaultWindowCursor`), карта — [`window_cursor`].
+///
+/// Перед таблицей карты стоят две портовые ветки, которых нет в C++ в таком
+/// виде: режим помощи (`HelpMenu_Menu`, `helpmenu.cpp:318`) и призрак
+/// стройплощадки (`GameManager_TempTape`; в C++ его обрабатывает
+/// `GameManager_GetBuilderUnitCursor`/`SELECT_SITE`, в порте — [`crate::buildsite`],
+/// т.к. приказ ещё не отдан).
 pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId, usize) {
     let Some((x, y)) = mouse else {
         return (CursorId::Hand, 0);
@@ -319,130 +1105,17 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
     // Режим выбора места стройки важнее наведения на юнитов:
     // `GameManager_GetBuilderUnitCursor` возвращает `CURSOR_MAP2`/`UNIT_NO_GO`.
     if let Some(site) = app.build_site() {
-        let hovered = max_core::geo::Point::new(grid_x, grid_y);
+        let hovered = Point::new(grid_x, grid_y);
         let anchor = site.anchor_at(app.state(), hovered);
         let valid = site.is_valid_at(app.state(), anchor, hovered);
 
         return (cursor_for_context(CursorContext::BuildSite { valid }), 0);
     }
 
-    let player_team = app.state().player_team;
-    let selected = app.selected_unit().cloned();
-    let mut hover = None;
-    let mut hover_unit = None;
-
-    for id in app
-        .state()
-        .units_at(max_core::geo::Point::new(grid_x, grid_y))
-    {
-        let Some(unit) = app.state().unit(*id) else {
-            continue;
-        };
-
-        if unit.team == player_team {
-            hover = Some(CursorHover::Friend);
-            hover_unit = Some(unit.clone());
-            break;
-        }
-
-        if unit.is_visible_to_team(player_team) {
-            hover = Some(CursorHover::Enemy);
-            hover_unit = Some(unit.clone());
-        }
-    }
-
-    let cell = max_core::geo::Point::new(grid_x, grid_y);
-
-    // Курсорные режимы выделенного юнита — `GameManager_GetWindowCursor`
-    // (`game_manager.cpp:6009-6082`) и `GameManager_GetMilitaryCursor` (`:6150`).
-    if let Some(selected) = selected.as_ref() {
-        let mode = app.hud().cursor_mode;
-
-        match hover {
-            Some(CursorHover::Friend) => {
-                if mode == crate::unitmenu::CURSOR_LOAD {
-                    let valid = hover_unit
-                        .as_ref()
-                        .is_some_and(|target| crate::unitmenu::load_mode_applies(selected, target));
-
-                    return (cursor_for_context(CursorContext::Load { valid }), 0);
-                }
-
-                return (cursor_for_context(CursorContext::MapSelected(CursorHover::Friend)), 0);
-            }
-            Some(CursorHover::Enemy) => {
-                if mode == crate::unitmenu::CURSOR_STEAL
-                    || mode == crate::unitmenu::CURSOR_DISABLE
-                {
-                    let order = if mode == crate::unitmenu::CURSOR_STEAL {
-                        max_core::enums::UnitOrder::AwaitStealUnit
-                    } else {
-                        max_core::enums::UnitOrder::AwaitDisableUnit
-                    };
-                    let valid = hover_unit.as_ref().is_some_and(|target| {
-                        crate::unitmenu::is_valid_stealth_target(
-                            app.state(),
-                            selected,
-                            target,
-                            order,
-                        )
-                    });
-                    let context = if mode == crate::unitmenu::CURSOR_STEAL {
-                        CursorContext::Steal { valid }
-                    } else {
-                        CursorContext::Disable { valid }
-                    };
-
-                    return (cursor_for_context(context), 0);
-                }
-
-                if app.hud().targeting_mode {
-                    let valid = selected.shots > 0
-                        && max_core::access::is_within_attack_range(
-                            app.state(),
-                            selected,
-                            cell,
-                            i32::from(selected.base_values.get_attribute(
-                                max_core::unit_values::ATTRIB_RANGE,
-                            )),
-                        );
-
-                    return (cursor_for_context(CursorContext::Targeting { valid }), 0);
-                }
-            }
-            None | Some(CursorHover::Empty) => {
-                // `targeting_mode` над пустой клеткой — `CURSOR_ENEMY`, если
-                // клетка в радиусе и есть выстрелы (`game_manager.cpp:4384`).
-                if app.hud().targeting_mode {
-                    let valid = selected.shots > 0
-                        && max_core::access::is_within_attack_range(
-                            app.state(),
-                            selected,
-                            cell,
-                            i32::from(selected.base_values.get_attribute(
-                                max_core::unit_values::ATTRIB_RANGE,
-                            )),
-                        );
-
-                    return (cursor_for_context(CursorContext::Targeting { valid }), 0);
-                }
-
-                if mode != 0 {
-                    return (CursorId::UnitNoGo, 0);
-                }
-            }
-        }
-    }
-
-    let context = if app.hud().preview.is_some() {
-        CursorContext::Order { valid: true }
-    } else if selected.is_some() {
-        CursorContext::MapSelected(hover.unwrap_or(CursorHover::Empty))
-    } else {
-        CursorContext::MapIdle
-    };
-
-    (cursor_for_context(context), 0)
+    (
+        window_cursor(app, Point::new(grid_x, grid_y)),
+        0,
+    )
 }
 
 /// Есть ли у курсора анимация (для SDL-тика).
@@ -509,8 +1182,14 @@ mod tests {
         assert_eq!(session_cursor(&app, None).0, CursorId::Hand);
         // Миникарта (15,356) — HANDPTR, как default-window-cursor C++.
         assert_eq!(session_cursor(&app, Some((20, 360))).0, CursorId::Hand);
-        // Карта без выделения — MAP_PTR.
-        assert_eq!(session_cursor(&app, Some((300, 200))).0, CursorId::Map);
+        // Карта без выделения — `CURSOR_UNIT_NO_GO`: `GameManager_GetWindowCursor`
+        // (`game_manager.cpp:4305-4335`) не имеет ветки `MAP_PTR`; `CURSOR_MAP`
+        // остаётся только записью `Cursor_DefaultWindowCursorLut`, которую
+        // `GameManager_ProcessInput` всегда перекрывает.
+        assert_eq!(
+            session_cursor(&app, Some((300, 200))).0,
+            CursorId::UnitNoGo
+        );
     }
 
     #[test]

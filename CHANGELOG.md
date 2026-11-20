@@ -1,5 +1,53 @@
 ## [Unreleased]
 
+### Исправлено
+
+- **Стройка: ресурс больше не уходит в минус, конструктор достраивает.**
+  Оракул — `Cargo_GetRawConsumptionRate` (`cargo.cpp:140`),
+  `BuildMenu_GetMaxPossibleBuildRate`/`MobileBuildMenu::Build`
+  (`buildmenu.cpp:729/903`), `UnitInfo::UpdateProduction`
+  (`unitinfo.cpp:2904-2915`), `GameManager_SpawnNewUnits`
+  (`game_manager.cpp:8076-8094`). Мобильный строитель платит **сырьём со
+  склада** (а не золотом команды), списание идёт только при
+  `storage >= rate`, неоплаченный ход — `PausedNoResources` без движения
+  `build_time` (новый транзиент `UnitInfo::build_paused`, вне сейва/CRC);
+  завершение — ровно `build_time <= build_rate`; `commit` повторяет отказ
+  `_(c529)` (`BuildError::NotEnoughMaterials`). Тесты:
+  `max_core/tests/construction_economy.rs` (6).
+- **Обломки после гибели наземного юнита.** Порт
+  `UnitsManager_BuildClearing` (`units_manager.cpp:3646-3805`):
+  `access::build_clearing` создаёт `SMLRUBLE` за юнитом и `LRGRUBLE` за
+  зданием (груз — `GetNormalRateBuildCost()/2` + `storage` сырья, кадр из
+  `Randomizer_Generate`), не оставляет обломков пехоте/диверсанту, минам, на
+  воде и при удалении (`mode = false`). Вызов — из
+  `UnitsManager_ProgressExplosion` (`units_manager.cpp:4021`) на середине
+  анимации. Расчистка бульдозером — порт ветки `BULLDOZR`
+  `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`): обломки сносятся,
+  груз переходит бульдозеру. Тесты: `max_core/tests/rubble.rs` (7).
+- **Кнопки 3×3: центровка подписей и поведение каждой кнопки.**
+  `Button::SetCaption` (`button.cpp:412-449`) центрирует текст в
+  `width - x`/`height - y` — порт центровал в полном прямоугольнике (подписи
+  уезжали на 1-2 px). Таблица смещений `GameManager_MenuItemLabelOffsets`
+  (`game_manager.cpp:275-278`) и формула `Text_TextLine` (`text.cpp:772`)
+  теперь 1:1 (`PanelButton::caption_offset`/`caption_position`). Новый модуль
+  `max_app/src/overlays.rs` рисует все слои: GRID (сетка цветом поверхности,
+  `drawmap.cpp:922/956`), COLORS (рамка команды, `:581`), STATUS (иконки
+  `IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`, `:444`), HITS/AMMO (полоски, `:605-669`),
+  RANGE/SCAN (круги, `game_manager.cpp:933-960`), NAMES
+  (`drawmap.cpp:747`); SURVEY остаётся иконками ресурсов. Тесты:
+  `panels.rs` (+2), `overlays.rs` (+3), QA `panels.qa` + `golden/panels`.
+- **Таблица курсоров 1:1.** `cursor::window_cursor` — полный порт
+  `GameManager_GetWindowCursor` (`game_manager.cpp:4215-4564`) с
+  `GetBuilderUnitCursor` (`:5829`), `GetAirUnitCursor` (`:5937`),
+  `GetUnitActionCursor` (`:5976`) и `GetMilitaryCursor` (`:6150`): X-FER
+  (`FRND_XFR`), repair (`FRND_FIX`), reload (`PTR_RLD`), load (`FRND_LOD`,
+  включая `DEPOT`/`HANGAR`/`DOCK`/`BARRACKS`), `PTR_FTRG`, `WAY_PTR`,
+  `ACTVTPTR`, `DISBLPTR`/`STEALPTR`. Режим берётся из `HudState::cursor_mode`
+  (порт `UnitInfo::cursor`), добавлен `HudState::shift_pressed`
+  (`GameManager_IsShiftKeyPressed`). `CURSOR_MAP` на карте больше не
+  выбирается — в оракуле такой ветки нет. Тесты:
+  `max_app/tests/cursor_table.rs` (12).
+
 ### Добавлено
 
 - **B4/B5: настройки Preferences реально действуют (1:1 с C++).** Раньше они

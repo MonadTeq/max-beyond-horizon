@@ -2399,6 +2399,10 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
         // `UnitsManager_BuildClearing(parent, true)`. Без этого погибший юнит
         // навсегда остаётся в `ORDER_STATE_DESTROY`, а `UnitsManager_ProcessOrder`
         // каждый тик выставляет `OrdersPending` — ход ИИ не закрывается.
+        //
+        // `BuildClearing` (а не `DestroyUnit`) — именно здесь C++ оставляет
+        // обломки: `SMLRUBLE` для юнита и `LRGRUBLE` для здания
+        // (`access::build_clearing`).
         if let Some(parent_id) = ctx.unit.parent_unit {
             if ctx.unit.image_index == ctx.unit.image_index_max / 2 {
                 ctx.unit.parent_unit = None;
@@ -2408,7 +2412,7 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
                     .unit(parent_id)
                     .is_some_and(|parent| parent.hits == 0)
                 {
-                    ctx.world.destroy_unit(parent_id);
+                    access::build_clearing(ctx.world, parent_id, true);
                 }
             }
         }
