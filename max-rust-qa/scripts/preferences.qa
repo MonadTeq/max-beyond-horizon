@@ -107,6 +107,76 @@ prefs done
 assert prefs=closed
 save_v70 prefs-ini
 
+# 3a. B4: настройки, которые раньше только сохранялись, реально действуют.
+#     Проводятся через настоящий ввод диалога (`OptionsMenu`), поэтому здесь же
+#     проверяется, что контролы кликаются/редактируются.
+prefs open
+assert prefs=open
+
+# Управление камерой/движением/выделением (секция `preferences`).
+assert prefs-value click_scroll=1
+prefs toggle click_scroll
+assert prefs-value click_scroll=0
+prefs toggle click_scroll
+assert prefs-value click_scroll=1
+
+prefs set quick_scroll 70
+assert prefs-value quick_scroll=69
+
+assert prefs-value fast_movement=1
+prefs toggle fast_movement
+assert prefs-value fast_movement=0
+prefs toggle fast_movement
+assert prefs-value fast_movement=1
+
+assert prefs-value follow_unit=0
+prefs toggle follow_unit
+assert prefs-value follow_unit=1
+prefs toggle follow_unit
+assert prefs-value follow_unit=0
+
+assert prefs-value auto_select=0
+prefs toggle auto_select
+assert prefs-value auto_select=1
+prefs toggle auto_select
+assert prefs-value auto_select=0
+
+assert prefs-value enemy_halt=1
+prefs toggle enemy_halt
+assert prefs-value enemy_halt=0
+prefs toggle enemy_halt
+assert prefs-value enemy_halt=1
+
+# Таймеры хода и конца хода (секция `options`) — поля ввода.
+prefs set timer 90
+assert prefs-value timer=90
+prefs set endturn 60
+assert prefs-value endturn=60
+shot prefs-b4-settings
+
+# Player Name в игре — имя команды (`menu_team_name_setting`, `PREFSPIC`).
+prefs set player_name Cmdr
+assert prefs-text player_name=Cmdr
+prefs done
+assert prefs=closed
+
+# Значения не потерялись и применяются к приложению (`ApplyPreferences` ->
+# `App::preferences`): таймер уходит в `GameManager_UpdateGui`, имя — в команду.
+prefs open
+assert prefs=open
+assert prefs-value click_scroll=1
+assert prefs-value quick_scroll=69
+assert prefs-value fast_movement=1
+assert prefs-value follow_unit=0
+assert prefs-value auto_select=0
+assert prefs-value enemy_halt=1
+assert prefs-value timer=90
+assert prefs-value endturn=60
+assert prefs-text player_name=Cmdr
+prefs done
+assert prefs=closed
+save_v70 prefs-b4
+
 # 4. Звук: FX Disabled -> аудио-слой (в игре применяется сразу).
 prefs open
 assert prefs=open

@@ -490,6 +490,7 @@ impl ManualPlay {
 
         let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
         ctx.player_name = "Commander".to_string();
+        ctx.preferences.player_name = "Commander".to_string();
         ctx.world_dir = repo_root().join("max-original");
 
         let recorder = Recorder::new(out_dir.join("recorded.qa"))

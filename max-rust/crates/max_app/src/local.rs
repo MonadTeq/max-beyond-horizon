@@ -429,6 +429,13 @@ pub struct LocalGame {
     /// M-HS: окно перехода хода (`GameManager_UpdateGuiControl`), пока оно
     /// открыто, таймер хода стоит и ввод принимает только подтверждение.
     pub notice: Option<TurnNotice>,
+    /// Имена команд, переименованных игроком в игре (`Preferences` →
+    /// «Player Name»). C++ `OptionsMenu` в `PREFSPIC` правит
+    /// `menu_team_name_setting[team]` (`optionsmenu.cpp:177,552`), а не только
+    /// глобальный `player_name`; `None` — имя по умолчанию из
+    /// [`LocalSetup::display_name`]. Не входит в CRC симуляции: это UI-имя
+    /// (как `Settings` в C++).
+    pub team_names: [Option<String>; LOCAL_TEAM_COUNT],
 }
 
 impl LocalGame {
@@ -448,6 +455,33 @@ impl LocalGame {
             outcome: None,
             human_teams,
             notice: None,
+            team_names: std::array::from_fn(|_| None),
+        }
+    }
+
+    /// Имя команды в игре: переименование из Preferences или
+    /// [`LocalSetup::display_name`] (`menu_team_name_setting` C++).
+    pub fn display_name(&self, team: TeamId) -> String {
+        self.team_names
+            .get(usize::from(team.0))
+            .and_then(|name| name.clone())
+            .unwrap_or_else(|| self.setup.display_name(team))
+    }
+
+    /// Переименовывает команду (`OptionsMenu` `PREFSPIC` → `player_name`).
+    ///
+    /// В одиночной игре имя команды человека совпадает с `player_name`
+    /// (`menu.cpp:1944`), поэтому обновляется и `setup.player_name` — иначе
+    /// имя разъехалось бы между экраном победы и V70-сейвом.
+    pub fn rename_team(&mut self, team: TeamId, name: impl Into<String>) {
+        let name = name.into();
+
+        if let Some(slot) = self.team_names.get_mut(usize::from(team.0)) {
+            *slot = Some(name.clone());
+        }
+
+        if !self.is_hot_seat() && Some(team) == self.setup.human_team() {
+            self.setup.player_name = name;
         }
     }
 
@@ -570,16 +604,33 @@ impl App {
     pub fn start_local_game(&mut self, setup: &LocalSetup) -> Result<(), String> {
         setup.validate()?;
 
+        // `GameConfigMenu` `Done` пишет те же `settings["timer"]`/`["endturn"]`
+        // (`gameconfigmenu.cpp:134-141,273-274`), что показывает и правит
+        // `OptionsMenu`; дальше партия читает их при каждом начале хода
+        // (`GameManager_UpdateGui`, `game_manager.cpp:2416-2471`).
+        self.preferences.turn_timer = setup.timer.min(i32::MAX as u32) as i32;
+        self.preferences.endturn = setup.endturn.min(i32::MAX as u32) as i32;
+        // Имя тоже приходит из настроек (`settings["player_name"]`,
+        // `menu.cpp:1944`): поле на экране настройки пишет его обратно тем же
+        // путём, что `GameConfigMenu` — в `settings`.
+        if !setup.player_name.is_empty() {
+            self.preferences.player_name = setup.player_name.clone();
+        }
+
         let human = setup.human_team().unwrap_or(TeamId::RED);
         let config = setup.new_game_config();
         let report = self
             .new_game(&config)
             .map_err(|error| format!("local game: {error:#}"))?;
 
+        let enemy_halt = self.preferences.enemy_halt;
         let state = self.state_mut();
 
         // `Remote_IsNetworkGame = false` — локальная партия, а не lockstep.
         state.network_game = false;
+        // `GameManager_InitGame`: `GameManager_FastMovement`/`enemy_halt` —
+        // живые настройки; в симуляции порта вторая — поле состояния.
+        state.enemy_halt = enemy_halt;
         // `GameManager_UpdateHumanPlayerCount`: hot-seat всегда turn-based.
         state.play_mode = setup.effective_play_mode();
         state.victory_type = setup.victory_type;
@@ -888,7 +939,7 @@ impl App {
                 team: player_team,
                 status,
                 turn_counter,
-                player_name: local.setup.display_name(player_team),
+                player_name: local.display_name(player_team),
             });
             self.local = Some(local);
             self.hud.push_log(if is_winner {
@@ -1022,13 +1073,23 @@ impl App {
         // влияет на симуляцию — тик по-прежнему один за кадр.
         let _profile = crate::profile::local_update_scope();
 
+        // Краевой скролл камеры (`Preferences`: `click_scroll`/`quick_scroll`)
+        // идёт тем же кадром, что и игра: `GameManager_ProcessInput` →
+        // `GameManager_ScrollMainMapView`.
+        self.update_scroll(dt);
+
         match phase {
             LocalPhase::PlayerTurn => {
+                // `GameManager_AutoSelectNext` после завершения приказа
+                // (`UnitInfo::MoveFinished`): снимок приказа — до тика.
+                let before = self.selected_order_snapshot();
                 self.state.tick();
                 // `App::tick` считает тики для диагностики/дайджеста; локальный
                 // цикл тикает здесь же, поэтому счётчик обязан расти и в окне,
                 // иначе трасса `MAX_DEBUG_INPUT` показывает вечный `tick 0`.
                 self.ticks += 1;
+                self.auto_select_after_tick(before);
+                self.follow_selected_unit();
                 self.update_visual_units(dt);
                 update.ticked = true;
 
@@ -1051,8 +1112,11 @@ impl App {
                 }
             }
             LocalPhase::AiTurn(team) => {
+                let before = self.selected_order_snapshot();
                 self.state.tick();
                 self.ticks += 1;
+                self.auto_select_after_tick(before);
+                self.follow_selected_unit();
                 self.update_visual_units(dt);
                 update.ticked = true;
 
@@ -1142,9 +1206,11 @@ impl App {
 pub const LOCAL_SAVE_MAGIC: [u8; 4] = *b"MXLS";
 /// Версия контейнера.
 ///
-/// `2` — добавлен флаг `LocalSetup::hot_seat` (M-HS); файлы версии 1
-/// отклоняются, контейнер локальный и переживает только одну сборку.
-pub const LOCAL_SAVE_VERSION: u16 = 3;
+/// `2` — добавлен флаг `LocalSetup::hot_seat` (M-HS); `3` — кланы команд;
+/// `4` — имена команд, переименованных в игре (`LocalGame::team_names`).
+/// Файлы версий 1 отклоняются, контейнер локальный и переживает только одну
+/// сборку.
+pub const LOCAL_SAVE_VERSION: u16 = 4;
 /// РРјСЏ С„Р°Р№Р»Р° Р±С‹СЃС‚СЂРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё.
 pub const LOCAL_SAVE_FILE: &str = "max-local.mxs";
 
@@ -1186,6 +1252,8 @@ pub struct LocalSave {
     pub snapshot: Vec<u8>,
     /// CRC16 СЃРЅРёРјРєР° (`max_core::crc::crc16`).
     pub snapshot_crc: u16,
+    /// Имена команд из Preferences (`LocalGame::team_names`).
+    pub team_names: [Option<String>; LOCAL_TEAM_COUNT],
 }
 
 impl LocalSave {
@@ -1208,6 +1276,7 @@ impl LocalSave {
             turn_counter: app.state().turn_counter,
             snapshot,
             snapshot_crc,
+            team_names: local.team_names.clone(),
         })
     }
 
@@ -1243,6 +1312,16 @@ impl LocalSave {
         );
         out.push(u8::from(self.setup.hot_seat));
         out.extend_from_slice(&self.setup.seed.to_le_bytes());
+        // v4: имена команд (`LocalGame::team_names`).
+        for name in &self.team_names {
+            match name {
+                Some(name) => {
+                    out.push(1);
+                    put_string(&mut out, name);
+                }
+                None => out.push(0),
+            }
+        }
 
         // С„Р°Р·Р°
         match self.phase {
@@ -1279,7 +1358,7 @@ impl LocalSave {
             return Err("not a local session save (bad magic)".to_string());
         }
         let version = reader.u16()?;
-        if version != 2 && version != LOCAL_SAVE_VERSION {
+        if version < 2 || version > LOCAL_SAVE_VERSION {
             return Err(format!("unsupported local save version {version}"));
         }
 
@@ -1319,6 +1398,14 @@ impl LocalSave {
         }
         let hot_seat = reader.u8()? != 0;
         let seed = reader.u32()?;
+        let mut team_names: [Option<String>; LOCAL_TEAM_COUNT] = std::array::from_fn(|_| None);
+        if version >= 4 {
+            for slot in team_names.iter_mut() {
+                if reader.u8()? != 0 {
+                    *slot = Some(reader.string()?);
+                }
+            }
+        }
 
         let phase = match reader.u8()? {
             0 => LocalPhase::PlayerTurn,
@@ -1379,6 +1466,7 @@ impl LocalSave {
             turn_counter,
             snapshot,
             snapshot_crc,
+            team_names,
         })
     }
 
@@ -1458,6 +1546,14 @@ impl App {
         // применяются к настройкам игрока — `effects` снова управляет кадрами.
         let saved_preferences = self.state().save_meta.ini_preferences;
         self.preferences.apply_ini(saved_preferences);
+        // `SaveLoad_Load` (`saveload.cpp:1175-1176`): таймеры из файла снова
+        // становятся `settings["timer"]`/`["endturn"]`.
+        let saved_timer = self.state().save_meta.ini_options.turn_timer.max(0);
+        let saved_endturn = self.state().save_meta.ini_options.endturn.max(0);
+        self.preferences.turn_timer = saved_timer;
+        self.preferences.endturn = saved_endturn;
+        // `settings`-настройки, которые читает симуляция (`enemy_halt`).
+        self.state_mut().enemy_halt = self.preferences.enemy_halt;
 
         let state = self.state_mut();
         state.network_game = false;
@@ -1497,6 +1593,8 @@ impl App {
 
         let mut loaded = setup.clone();
         loaded.team_types = team_types;
+        loaded.timer = saved_timer as u32;
+        loaded.endturn = saved_endturn as u32;
         // Сейв с несколькими человеческими командами играется как hot-seat.
         loaded.hot_seat = loaded.is_hot_seat();
 

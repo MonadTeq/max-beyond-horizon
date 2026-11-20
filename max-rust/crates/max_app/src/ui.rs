@@ -1054,7 +1054,9 @@ impl Screen {
             }
             Some(menu::MultiplayerAction::HotSeat) => {
                 let mut form = GameSetupForm::hot_seat();
-                form.setup.player_name = ctx.player_name.clone();
+                // C++ `menu_choose_player_menu_loop`: имя человека берётся из
+                // `settings["player_name"]` (`menu.cpp:1944`), а не из CLI.
+                form.setup.player_name = ctx.preferences.player_name.clone();
                 form.world_dir = ctx.world_dir.clone();
                 *self = Self::LocalSetup(form);
                 ctx.status = "Hot seat: 2-4 humans, Options -> Planet -> Players".to_string();
@@ -1351,7 +1353,7 @@ impl Screen {
                 // M-SP: «New Game» открывает настройку локальной партии
                 // (`menu_custom_game_menu`: Options → Planet → Players).
                 let mut form = GameSetupForm::default();
-                form.setup.player_name = ctx.player_name.clone();
+                form.setup.player_name = ctx.preferences.player_name.clone();
                 form.world_dir = ctx.world_dir.clone();
                 *self = Self::LocalSetup(form);
                 ctx.status = "New game: options, Enter — next screen, Esc — back".to_string();
@@ -1434,6 +1436,8 @@ impl Screen {
             preferences::PreferencesAction::Done => {
                 let prefs = dialog.draft.clone();
                 ctx.preferences = prefs.clone();
+                // Следующая партия начнётся с этим именем (`menu.cpp:1944`).
+                ctx.player_name = prefs.player_name.clone();
                 ctx.status = "Preferences saved".to_string();
                 *self = Self::MainMenu;
                 ctx.click();
@@ -1776,6 +1780,14 @@ impl Screen {
 pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let (width, height) = app.viewport().screen();
     let chrome = app.chrome_active();
+
+    // Мышь для краевого скролла камеры (`Preferences`: `click_scroll`):
+    // `GameManager_ProcessInput` помнит позицию и кнопки между кадрами.
+    match event {
+        InputEvent::MouseMove(x, y) => app.note_mouse_move(x, y),
+        InputEvent::MouseClick(x, y) => app.note_mouse_click(x, y),
+        _ => {}
+    }
 
     // `Alt+P` — `PauseMenu_Menu` (`game_manager.cpp:5542`): диалог «Game Paused»
     // поверх всего, тики локальной партии останавливаются.
@@ -2273,11 +2285,16 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
             if let Some(line) = app.commit_build_menu(online) {
                 app.hud_mut().push_log(line);
             }
+            // `UnitsManager_Popup_OnClick_Build` → `GameManager_AutoSelectNext`
+            // (`units_manager.cpp:825-826`): после заказа постройки C++ снимает
+            // выделение со строителя, если он больше не интерактивен.
+            app.auto_select_after_order();
         }
         Some(crate::buildmenu::BuildMenuAction::PathBuild) => {
             if let Some(line) = app.commit_build_menu_path(online) {
                 app.hud_mut().push_log(line);
             }
+            app.auto_select_after_order();
         }
         Some(crate::buildmenu::BuildMenuAction::Close) => {
             app.close_build_menu();

@@ -783,12 +783,14 @@ impl GameState {
         }
 
         let mut grid_y = uly;
+        let mut enemy_target_class = access::TARGET_CLASS_NONE;
+
         while grid_y <= lry {
             let mut grid_x = ulx;
             while grid_x <= lrx {
                 if Self::is_within_scan_range(unit, grid_x, grid_y, scan) {
                     if mode {
-                        self.update_map_status_add_unit(id, grid_x, grid_y);
+                        enemy_target_class |= self.update_map_status_add_unit(id, grid_x, grid_y);
                     } else {
                         self.update_map_status_remove_unit(id, grid_x, grid_y);
                     }
@@ -796,6 +798,48 @@ impl GameState {
                 grid_x += 1;
             }
             grid_y += 1;
+        }
+
+        // `enemy_halt` (`access.cpp:827-868`): обнаружен враг, которого этот
+        // юнит (или его группа) может атаковать, а у юнита есть активный
+        // приказ — ставим `UnitEventEmergencyStop`, который обработается в
+        // `UnitsManager_ProcessOrders` (`GameState::process_orders`).
+        if !mode || enemy_target_class == access::TARGET_CLASS_NONE || !self.enemy_halt {
+            return;
+        }
+
+        let team_type = self.teams[visible_team.0 as usize].team_type;
+        if !matches!(team_type, TeamKind::Player | TeamKind::Computer) {
+            return;
+        }
+
+        // `unit->GetOrder() != ORDER_AWAIT`.
+        if unit.orders == UnitOrder::Await {
+            return;
+        }
+
+        let mut friendly_target_class = access::target_class(self, unit);
+
+        if let Some(members) = self.group_members(id) {
+            for member in members {
+                if let Some(member_unit) = self.unit(member) {
+                    friendly_target_class |= access::target_class(self, member_unit);
+                }
+            }
+        }
+
+        if friendly_target_class & enemy_target_class == 0 {
+            return;
+        }
+
+        let stops: Vec<UnitId> = match self.group_members(id) {
+            Some(members) => members,
+            None => vec![id],
+        };
+
+        for stopped in stops {
+            self.unit_events
+                .push(crate::events::UnitEvent::EmergencyStop { unit: stopped });
         }
     }
 

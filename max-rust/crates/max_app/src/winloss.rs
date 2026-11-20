@@ -68,9 +68,11 @@ pub const ARM_POSITION: (i32, i32) = (273, 458);
 ///
 /// В hot-seat имя игрока одно на всех, поэтому там все команды — `Red Team`,
 /// `Green Team`, … (`menu.cpp:1941`: `player_name` подставляется только в
-/// одиночной игре).
+/// одиночной игре). Переименование в игре (`OptionsMenu` `PREFSPIC`) хранится в
+/// [`crate::local::LocalGame::team_names`], поэтому имя берётся из партии, а не
+/// из статичных настроек.
 pub fn display_name(local: &LocalGame, team: TeamId) -> String {
-    local.setup.display_name(team)
+    local.display_name(team)
 }
 
 /// Индекс фона `ENDGAME1..9`.

@@ -35,8 +35,8 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
 | B1 | Пункты меню юнита: `attack` (targeting), `load` (Land), `activate`, `start`/`stop` завода, `remove` здания, бульдозер, `Upg. All`, мастер, `disable`/`steal` | **сделано (2026-11-20)**, кроме `activate` (`RepairShopMenu`) и мастера — см. §33 |
 | B2 | Help-режим | **сделано**: режим `HelpMenu_Menu` + запись под курсором (`Help::GetEntry`), скролл и `Keys` — §33 |
 | B3 | Курсор площадки для инженера (`GetBuilderUnitCursor` для ENGINEER) | **сделано**: кнопка `Path` (`BLDPTH_U`), лента 1×1, строка/столбец — §33 |
-| B4 | Настройки из Preferences, которые только сохраняются: `click_scroll`, `quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`, `disable_music/voice/movie`, `enhanced_graphics`, `host/port`, `Turn Time`/`End Turn Time`, `Player Name` | «хранится, в игру не идёт» (§27) |
-| B5 | Управление камерой/выделением из Preferences (скролл, скорость) | не портировано |
+| B4 | Настройки из Preferences, которые только сохраняются: `click_scroll`, `quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`, `disable_music/voice/movie`, `enhanced_graphics`, `host/port`, `Turn Time`/`End Turn Time`, `Player Name` | **сделано (2026-11-20)**: камера/скролл, скорость спрайта, слежение, авто-выделение, `enemy_halt` в симуляции, таймеры хода и имя игрока — §34. Остались только `disable_music/voice/movie`, `enhanced_graphics`, `host_address`/`host_port` (музыки/видео в слое нет, сеть — CLI) |
+| B5 | Управление камерой/выделением из Preferences (скролл, скорость) | **сделано** в рамках B4: краевой скролл (`click_scroll`), `quick_scroll`, `follow_unit`, `auto_select` — §34 |
 | B6 | Debug-секция Preferences (`invalid`) | не портирована |
 
 ## C. Анимации
@@ -74,7 +74,11 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
    дорисовка оставшихся анимаций.
 4. ~~**B2/B3** — Help-пейджинг и курсор инженера~~ — **сделано**: §33.
 5. ~~**D1/D3** — звуки меню/попапов и Alt-P~~ — **сделано**: §33.
-6. **B4/B5/B6** — довести Preferences до полного действия.
+6. ~~**B4/B5/B6** — довести Preferences до полного действия.~~ **B4/B5
+   сделано (2026-11-20)**: §34 (камера/скролл, `fast_movement`, `follow_unit`,
+   `auto_select`, `enemy_halt`, таймеры, `Player Name`). Остались B6
+   (debug-секция) и настройки без слоя в клиенте (`disable_music/voice/movie`,
+   `enhanced_graphics`, `host/port`).
 7. **C3/C4/D2** — MVE-аудио/субтитры, форматы 0x06/0x10, музыка.
 8. **E1** — симуляция коннекторов.
 

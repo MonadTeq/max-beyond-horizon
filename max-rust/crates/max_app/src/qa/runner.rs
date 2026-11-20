@@ -217,6 +217,10 @@ impl QaRunner {
 
         let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
         ctx.player_name = "Commander".to_string();
+        // `Settings`: имя игрока в Preferences — то же, что видит сценарий
+        // (`App` и `ctx` должны совпадать, иначе форма настройки возьмёт
+        // `player_name` из дефолтов и кадры поменяются).
+        ctx.preferences.player_name = "Commander".to_string();
         ctx.world_dir = config.data_dir.clone();
         ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
         ctx.status = String::new();
@@ -839,35 +843,76 @@ impl QaRunner {
                 self.require_prefs("set")?;
                 let key = PrefKey::parse(&name)
                     .ok_or_else(|| format!("prefs set: неизвестная опция «{name}»"))?;
-                let dialog = self.prefs_dialog().expect("prefs открыт");
-                let x = dialog
-                    .slider_screen_x(key, value)
-                    .ok_or_else(|| format!("prefs set {name}: контрол не виден в этом варианте"))?;
-                let expected = dialog
-                    .slider_value_at(key, x)
-                    .ok_or_else(|| format!("prefs set {name}: нет жёлоба слайдера"))?;
-                let rect = dialog
-                    .screen_rect(key)
-                    .ok_or_else(|| format!("prefs set {name}: нет области клика"))?;
-                let y = rect.uly + rect.height / 2;
-                let (min, max) = key.range();
-                let target = value.clamp(min, max);
 
-                self.send(InputEvent::MouseClick(x, y))?;
+                if key.is_edit() {
+                    // Поле ввода: клик по нему начинает редактирование,
+                    // Backspace чистит текущее значение, печатные символы
+                    // набирают новое, `Enter` фиксирует (как
+                    // `ProcessTextEditKeyPress`).
+                    let dialog = self.prefs_dialog().expect("prefs открыт");
+                    let old = dialog.edit_text(key).ok_or_else(|| {
+                        format!("prefs set {name}: контрол не виден в этом варианте")
+                    })?;
+                    let rect = dialog
+                        .screen_rect(key)
+                        .ok_or_else(|| format!("prefs set {name}: нет области клика"))?;
+                    let (x, y) = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
-                let dialog = self.prefs_dialog().expect("prefs остаётся открытым");
-                let actual = dialog.value(key);
-                if actual != Some(expected) {
-                    return Err(format!(
-                        "prefs set {name}: клик в {x} дал {actual:?}, ожидалось {expected}"
-                    ));
+                    self.send(InputEvent::MouseClick(x, y))?;
+
+                    for _ in 0..old.chars().count() {
+                        self.send(InputEvent::Key(Key::Backspace))?;
+                    }
+                    for character in value.chars() {
+                        self.send(InputEvent::Key(Key::Char(character)))?;
+                    }
+                    self.send(InputEvent::Key(Key::Enter))?;
+
+                    let dialog = self.prefs_dialog().expect("prefs остаётся открытым");
+                    let actual = dialog
+                        .string_value(key)
+                        .or_else(|| dialog.value(key).map(|value| value.to_string()));
+                    let expected = value.trim().to_string();
+
+                    if actual.as_deref() != Some(expected.as_str()) {
+                        return Err(format!(
+                            "prefs set {name}: после ввода «{expected}» получено {actual:?}"
+                        ));
+                    }
+
+                    format!("{name} = {expected}")
+                } else {
+                    let value = crate::qa::script::parse_i32(&value, "prefs set: значение")?;
+                    let dialog = self.prefs_dialog().expect("prefs открыт");
+                    let x = dialog.slider_screen_x(key, value).ok_or_else(|| {
+                        format!("prefs set {name}: контрол не виден в этом варианте")
+                    })?;
+                    let expected = dialog
+                        .slider_value_at(key, x)
+                        .ok_or_else(|| format!("prefs set {name}: нет жёлоба слайдера"))?;
+                    let rect = dialog
+                        .screen_rect(key)
+                        .ok_or_else(|| format!("prefs set {name}: нет области клика"))?;
+                    let y = rect.uly + rect.height / 2;
+                    let (min, max) = key.range();
+                    let target = value.clamp(min, max);
+
+                    self.send(InputEvent::MouseClick(x, y))?;
+
+                    let dialog = self.prefs_dialog().expect("prefs остаётся открытым");
+                    let actual = dialog.value(key);
+                    if actual != Some(expected) {
+                        return Err(format!(
+                            "prefs set {name}: клик в {x} дал {actual:?}, ожидалось {expected}"
+                        ));
+                    }
+                    if (actual.unwrap_or(min) - target).abs() > 1 {
+                        return Err(format!(
+                            "prefs set {name}: значение {target} недостижимо кликом (дали {actual:?})"
+                        ));
+                    }
+                    format!("{name} = {}", actual.unwrap_or(target))
                 }
-                if (actual.unwrap_or(min) - target).abs() > 1 {
-                    return Err(format!(
-                        "prefs set {name}: значение {target} недостижимо кликом (дали {actual:?})"
-                    ));
-                }
-                format!("{name} = {}", actual.unwrap_or(target))
             }
             action @ (PrefsCommand::Done | PrefsCommand::Cancel) => {
                 self.require_prefs("done")?;
@@ -3786,6 +3831,21 @@ impl QaRunner {
                 self.expect(
                     ok,
                     format!("prefs-value {}={expected}", key.name()),
+                    match actual {
+                        Some(actual) => format!("{}={actual}", key.name()),
+                        None => "диалог не открыт/контрол скрыт".to_string(),
+                    },
+                )
+            }
+            Assertion::PrefsText(key, expected) => {
+                let actual = self
+                    .prefs_dialog()
+                    .and_then(|dialog| dialog.string_value(key));
+                let ok = actual.as_deref() == Some(expected.as_str());
+
+                self.expect(
+                    ok,
+                    format!("prefs-text {}={expected}", key.name()),
                     match actual {
                         Some(actual) => format!("{}={actual}", key.name()),
                         None => "диалог не открыт/контрол скрыт".to_string(),

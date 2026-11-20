@@ -65,7 +65,7 @@
 //!   `last_rest_state` в C++). Изменения эффектов/звука применяются сразу —
 //!   как `SetVolume`/`Halt*Playback` в C++.
 //!
-//! # Что реально действует
+//! # Что реально действует (B4)
 //!
 //! * `Animate Effects` (`effects`) — выключает покадровые анимации:
 //!   `App::update_unit_animations` не листает кадры строителя, `ANIMATED`-зданий
@@ -75,17 +75,37 @@
 //! * `FX Disabled` (`disable_fx`) — **звук (SFX) вкл/выкл**: `AudioPlayer::
 //!   set_enabled(!disable_fx)`; `FX` — громкость `AudioPlayer::set_volume`
 //!   (`fx_sound_level/100`), как `AUDIO_TYPE_SFX2` в C++;
-//! * `Auto-Save Enabled` (`auto_save`) — `App::autosave` (слот 10).
+//! * `Auto-Save Enabled` (`auto_save`) — `App::autosave` (слот 10);
+//! * `Click to Scroll` (`click_scroll`) — `App::update_scroll` строит смещение
+//!   только при «зажатой» ЛКМ, иначе скролл идёт по наведению
+//!   (`GameManager_SetGridOffset`, `game_manager.cpp:6351`);
+//! * `Scroll Speed` (`quick_scroll`) — шаг камеры в экранных пикселях за кадр
+//!   30 Гц (`GameManager_ZoomMainMapView`/`ScrollMainMapView`,
+//!   `game_manager.cpp:1711/1652`);
+//! * `Double Unit Steps` (`fast_movement`) — скорость спрайта юнитов ×2
+//!   (`UnitInfo::Move`: `velocity += 2`, `unitinfo.cpp:1742`);
+//! * `Track Selected Unit` (`follow_unit`) — камера центрируется на выделенном
+//!   юните, когда он выходит за окно карты (`UnitInfo::FollowUnit`,
+//!   `unitinfo.cpp:3597`);
+//! * `Auto-Select Next Unit` (`auto_select`) — после завершения приказа или
+//!   постройки выделяется следующий юнит команды (`GameManager_AutoSelectNext`,
+//!   `game_manager.cpp:1779`);
+//! * `Halt movement when enemy is detected` (`enemy_halt`) — симуляция ставит
+//!   `UnitEventEmergencyStop` при обнаружении врага (`access.cpp:827`);
+//! * `Turn Time`/`End Turn Time` (`timer`/`endturn`) — те же `settings`, что
+//!   читает `GameManager_UpdateGui` в начале каждого хода; старт партии берёт
+//!   их с экрана настройки, `Preferences` меняет со следующего хода;
+//! * `Player Name` (`player_name`) — в одиночной игре имя команды
+//!   (`menu.cpp:1944`); в игре `PREFSPIC` правит имя текущей команды
+//!   (`menu_team_name_setting`, `optionsmenu.cpp:177/552`) — оно видно в
+//!   журнале HUD, на экране победы и в V70-сейве.
 //!
-//! Остальные опции сохраняются и попадают в `IniPreferences`/`preferences.ini`,
-//! но в текущем клиенте не действуют (помечено в `docs/analysis/visual-1to1-status.md`):
-//! `disable_music`/`disable_voice`/`disable_movie` и уровни Music/Voice/Video
-//! (музыки/голоса/видео в звуковом слое нет), `click_scroll`, `quick_scroll`,
-//! `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt` (управление
-//! камерой/выделением ещё не портировано), `enhanced_graphics`, `host_address`,
-//! `host_port` (сеть задаётся CLI), `Turn Time`/`End Turn Time` (таймеры партии
-//! берутся с экрана настройки), `Player Name` (в игре C++ правит имя команды —
-//! у нас общее имя игрока для следующей партии).
+//! Сохраняются, но пока не действуют: `disable_music`/`disable_voice`/
+//! `disable_movie` и уровни Music/Voice/Video (музыки/голоса/видео в звуковом
+//! слое нет — D2/C3), `enhanced_graphics`, `host_address`/`host_port` (сеть
+//! задаётся CLI). Отличия ввода: у оконного слоя нет `MouseButtonUp`, поэтому
+//! «удержание» ЛКМ для `click_scroll` — импульс
+//! [`crate::scroll::CLICK_HOLD_SECONDS`].
 
 use std::path::{Path, PathBuf};
 
@@ -973,6 +993,16 @@ impl PreferencesDialog {
         None
     }
 
+    /// Текст поля ввода в том виде, в котором его видит `Enter`
+    /// (`timer`/`endturn` — число, `player_name`/`host_address` — строка).
+    pub fn edit_text(&self, key: PrefKey) -> Option<String> {
+        if !key.is_edit() || !self.rows.iter().any(|row| row.key == key) {
+            return None;
+        }
+
+        Some(self.current_string(key))
+    }
+
     /// Переключает чекбокс (клавиатура/QA-тест). `false` — ключ не чекбокс.
     pub fn toggle(&mut self, key: PrefKey) -> bool {
         let Some(row) = self.rows.iter().find(|row| row.key == key) else {
@@ -1843,6 +1873,25 @@ impl crate::App {
     /// Заменяет настройки (эффекты/звук применяются отрисовкой/аудио-слоем).
     pub fn set_preferences(&mut self, preferences: Preferences) {
         self.preferences = preferences;
+        self.sync_preferences_to_game();
+    }
+
+    /// Применяет настройки, которые живут в партии, к текущей сессии.
+    ///
+    /// * `timer`/`endturn` — `GameManager_UpdateGui` читает их из `settings` в
+    ///   начале каждого хода (`game_manager.cpp:2416-2471`), поэтому новая
+    ///   партия получает их при старте, а смена в игре действует со следующего
+    ///   хода;
+    /// * `enemy_halt` — `Access_UpdateMapStatus` читает настройку на каждом
+    ///   шаге юнита (`access.cpp:830`), поэтому поле состояния обновляется
+    ///   сразу.
+    fn sync_preferences_to_game(&mut self) {
+        self.state.enemy_halt = self.preferences.enemy_halt;
+
+        if let Some(local) = self.local.as_mut() {
+            local.setup.timer = self.preferences.turn_timer.max(0) as u32;
+            local.setup.endturn = self.preferences.endturn.max(0) as u32;
+        }
     }
 
     /// Включены ли визуальные эффекты (`settings["effects"]`).
@@ -1924,11 +1973,22 @@ impl crate::App {
         }
 
         let info = self.preferences_info();
-        self.preferences_dialog = Some(PreferencesDialog::new(
-            PreferencesVariant::InGame,
-            self.preferences.clone(),
-            info,
-        ));
+        // C++ `PREFSPIC`: поле `Player Name:` привязано к
+        // `menu_team_name_setting[team]` — имени команды, за которую играет
+        // открывший диалог (`optionsmenu.cpp:172-181`), а не к глобальному
+        // `player_name` из главного меню.
+        let mut draft = self.preferences.clone();
+
+        if let Some(local) = self.local.as_ref() {
+            draft.player_name = local.display_name(self.state.player_team);
+        }
+
+        let mut dialog = PreferencesDialog::new(PreferencesVariant::InGame, draft, info);
+        // `Cancel` возвращает значения приложения на момент открытия: поле
+        // имени показывает имя команды, но глобальный `player_name` меняется
+        // только по `Done` (как `SetStringValue` в `OptionsMenu::Run`).
+        dialog.initial = self.preferences.clone();
+        self.preferences_dialog = Some(dialog);
         true
     }
 
@@ -1947,7 +2007,20 @@ impl crate::App {
 
         match action {
             PreferencesAction::Changed => {
-                self.preferences = dialog.draft.clone();
+                // C++ `OptionsMenu`: чекбоксы и слайдеры пишут `settings` сразу
+                // (`SetVolume`/`SetNumericValue`), а EDIT_STR/EDIT_INT — только
+                // по `Done` (`optionsmenu.cpp:533-560`). Поэтому черновик
+                // применяется весь, кроме полей ввода: иначе имя/таймер
+                // менялись бы при уходе из поля без «Done».
+                let mut applied = dialog.draft.clone();
+                applied.player_name = self.preferences.player_name.clone();
+                applied.host_address = self.preferences.host_address.clone();
+                applied.host_port = self.preferences.host_port;
+                applied.turn_timer = self.preferences.turn_timer;
+                applied.endturn = self.preferences.endturn;
+
+                self.preferences = applied;
+                self.sync_preferences_to_game();
                 self.preferences_dialog = Some(dialog);
             }
             PreferencesAction::None | PreferencesAction::Help => {
@@ -1955,11 +2028,19 @@ impl crate::App {
             }
             PreferencesAction::Done => {
                 self.preferences = dialog.draft.clone();
+                // C++ `OptionsMenu` `PREFSPIC` по `Done` пишет введённое имя и
+                // в `player_name`, и в `menu_team_name_setting[team]`
+                // (`optionsmenu.cpp:548-560`): имя команды меняется сразу.
+                if let Some(local) = self.local.as_mut() {
+                    local.rename_team(self.state.player_team, dialog.draft.player_name.clone());
+                }
+                self.sync_preferences_to_game();
                 self.persist_preferences();
                 self.hud.push_log("Preferences saved");
             }
             PreferencesAction::Cancel => {
                 self.preferences = dialog.initial.clone();
+                self.sync_preferences_to_game();
             }
         }
 

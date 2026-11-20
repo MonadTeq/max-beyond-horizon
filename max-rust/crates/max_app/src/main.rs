@@ -790,7 +790,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
     // M-SP: имя игрока и каталог карт для настройки и мини-карт планет.
-    ctx.player_name = config.player_name.clone();
+    // `player_name` — из `settings` (`preferences.ini`), как в C++ `OptionsMenu`
+    // `SETUP`; CLI `--player` остаётся именем сетевого клиента (`config`).
+    ctx.player_name = app.preferences().player_name.clone();
     ctx.world_dir = config
         .world_dir
         .clone()
@@ -968,6 +970,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 Transition::ApplyPreferences(preferences) => {
                     // `OptionsMenu` `Done`: значения уже сохранены в
                     // `preferences.ini`; применяем к приложению и аудио-слою.
+                    ctx.player_name = preferences.player_name.clone();
                     app.set_preferences(*preferences);
                     app.persist_preferences();
                     ctx.preferences = app.preferences().clone();
@@ -1345,6 +1348,13 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         if !running || leave {
             return false;
         }
+
+        // Preferences, действующие в любой партии (в т.ч. сетевой):
+        // краевой скролл (`click_scroll`/`quick_scroll`) и камера за
+        // выделенным (`follow_unit`). Авто-выделение (`auto_select`) включено
+        // в `App::tick`, который крутит сетевой цикл.
+        app.update_scroll(1.0 / 60.0);
+        app.follow_selected_unit();
 
         // 2. Кадр: карта + HUD поверх неё.
         self.status = format!(

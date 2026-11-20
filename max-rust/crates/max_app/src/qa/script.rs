@@ -356,6 +356,9 @@ pub enum Assertion {
     PrefsOpen(bool),
     /// `assert prefs-value NAME=N`: значение опции в открытом диалоге.
     PrefsValue(crate::preferences::PrefKey, Cmp, i32),
+    /// `assert prefs-text NAME=VALUE`: строковое значение опции в диалоге
+    /// (`player_name`, `host_address`).
+    PrefsText(crate::preferences::PrefKey, String),
     /// `assert prefs-effects=on|off`: `settings["effects"]` приложения.
     PrefsEffects(bool),
     /// `assert prefs-sound=on|off`: флаг звука (`!disable_fx`).
@@ -538,12 +541,13 @@ pub enum PrefsCommand {
     Open,
     /// `toggle NAME` — клик по чекбоксу (`effects`, `disable_fx`, …).
     Toggle(String),
-    /// `set NAME VALUE` — клик по слайдеру в позицию значения.
+    /// `set NAME VALUE` — слайдер (клик в позицию) или поле ввода
+    /// (`timer`/`endturn`/`player_name`): клик по полю, очистка, ввод, Enter.
     Set {
-        /// Имя опции (`music_level`, `quick_scroll`, …).
+        /// Имя опции (`music_level`, `quick_scroll`, `timer`, `player_name`, …).
         name: String,
-        /// Значение.
-        value: i32,
+        /// Значение в текстовом виде.
+        value: String,
     },
     /// `done` — кнопка `Done` (сохраняет).
     Done,
@@ -933,7 +937,7 @@ fn split_word(source: &str) -> (&str, &str) {    match source.find(char::is_whit
     }
 }
 
-fn parse_i32(text: &str, what: &str) -> Result<i32, String> {
+pub(crate) fn parse_i32(text: &str, what: &str) -> Result<i32, String> {
     text.parse::<i32>()
         .map_err(|_| format!("{what}: ожидалось целое число, получено «{text}»"))
 }
@@ -1154,18 +1158,48 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
 
     // `prefs-value NAME=N` содержит собственный `=`; иначе общий разбор
     // оператора принял бы «prefs-value NAME» за имя проверки.
-    if let Some(body) = lowered.strip_prefix("prefs-value ") {
-        let (name, expected) = body
-            .split_once('=')
-            .ok_or_else(|| format!("assert prefs-value: ожидалось NAME=N, получено «{rest}»"))?;
+    if lowered.starts_with("prefs-value ") {
+        let body = &rest["prefs-value ".len()..];
+        let (name, cmp, expected) = if let Some((name, value)) = body.split_once(">=") {
+            (name, Cmp::Ge, value)
+        } else if let Some((name, value)) = body.split_once("<=") {
+            (name, Cmp::Le, value)
+        } else if let Some((name, value)) = body.split_once('=') {
+            (name, Cmp::Eq, value)
+        } else {
+            return Err(format!(
+                "assert prefs-value: ожидалось NAME=N или NAME>=N, получено «{rest}»"
+            ));
+        };
         let key = crate::preferences::PrefKey::parse(name.trim())
             .ok_or_else(|| format!("assert prefs-value: неизвестная опция «{}»", name.trim()))?;
 
         return Ok(Assertion::PrefsValue(
             key,
-            Cmp::Eq,
+            cmp,
             parse_i32(expected.trim(), "assert prefs-value")?,
         ));
+    }
+
+    // `prefs-text NAME=VALUE` — строковая опция (`player_name`).
+    if lowered.starts_with("prefs-text ") {
+        // Префикс тот же по длине в нижнем регистре, поэтому берём тело из
+        // исходной строки — значение имени чувствительно к регистру.
+        let body = &rest["prefs-text ".len()..];
+        let (name, expected) = body
+            .split_once('=')
+            .ok_or_else(|| format!("assert prefs-text: ожидалось NAME=VALUE, получено «{rest}»"))?;
+        let key = crate::preferences::PrefKey::parse(name.trim())
+            .ok_or_else(|| format!("assert prefs-text: неизвестная опция «{}»", name.trim()))?;
+
+        if !key.is_edit() {
+            return Err(format!(
+                "assert prefs-text: «{}» — не поле ввода",
+                name.trim()
+            ));
+        }
+
+        return Ok(Assertion::PrefsText(key, expected.trim().to_string()));
     }
 
     // Оператор ищем от самого длинного, иначе «>=» распадётся на «>» и «=».
@@ -1974,23 +2008,34 @@ fn parse_prefs(rest: &str) -> Result<Command, String> {
             Ok(Command::Prefs(PrefsCommand::Toggle(name.to_string())))
         }
         "set" => {
-            let parts: Vec<&str> = args.split_whitespace().collect();
-            if parts.len() != 2 {
+            let Some((name, value)) = args.trim().split_once(char::is_whitespace) else {
+                return Err(format!(
+                    "prefs set: ожидалось «NAME VALUE», получено «{args}»"
+                ));
+            };
+            let name = name.trim();
+            let value = value.trim();
+            if value.is_empty() {
                 return Err(format!(
                     "prefs set: ожидалось «NAME VALUE», получено «{args}»"
                 ));
             }
-            let key = crate::preferences::PrefKey::parse(parts[0])
-                .ok_or_else(|| format!("prefs set: неизвестная опция «{}»", parts[0]))?;
-            if !key.is_slider() {
+            let key = crate::preferences::PrefKey::parse(name)
+                .ok_or_else(|| format!("prefs set: неизвестная опция «{name}»"))?;
+            if key.is_checkbox() {
                 return Err(format!(
-                    "prefs set: «{}» не слайдер (для чекбокса — prefs toggle NAME)",
-                    parts[0]
+                    "prefs set: «{name}» — чекбокс (для него — prefs toggle NAME)"
                 ));
             }
+            if !key.is_slider() && !key.is_edit() {
+                return Err(format!("prefs set: «{name}» не имеет значения"));
+            }
+            if key.is_slider() {
+                parse_i32(value, "prefs set: значение")?;
+            }
             Ok(Command::Prefs(PrefsCommand::Set {
-                name: parts[0].to_string(),
-                value: parse_i32(parts[1], "prefs set: значение")?,
+                name: name.to_string(),
+                value: value.to_string(),
             }))
         }
         other => Err(format!(
@@ -2975,8 +3020,36 @@ type \"a#b\"  # решётка в кавычках — часть текста
             one("prefs set quick_scroll 36"),
             Command::Prefs(PrefsCommand::Set {
                 name: "quick_scroll".to_string(),
-                value: 36
+                value: "36".to_string()
             })
+        );
+        assert_eq!(
+            one("prefs set timer 90"),
+            Command::Prefs(PrefsCommand::Set {
+                name: "timer".to_string(),
+                value: "90".to_string()
+            })
+        );
+        assert_eq!(
+            one("prefs set player_name Commander"),
+            Command::Prefs(PrefsCommand::Set {
+                name: "player_name".to_string(),
+                value: "Commander".to_string()
+            })
+        );
+        assert_eq!(
+            one("prefs set player_name Jane Doe"),
+            Command::Prefs(PrefsCommand::Set {
+                name: "player_name".to_string(),
+                value: "Jane Doe".to_string()
+            })
+        );
+        assert_eq!(
+            one("assert prefs-text player_name=Commander"),
+            Command::Assert(Assertion::PrefsText(
+                crate::preferences::PrefKey::PlayerName,
+                "Commander".to_string()
+            ))
         );
         assert_eq!(one("prefs done"), Command::Prefs(PrefsCommand::Done));
         assert_eq!(one("prefs cancel"), Command::Prefs(PrefsCommand::Cancel));
@@ -2990,6 +3063,7 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "prefs toggle quick_scroll", // слайдер, не чекбокс
             "prefs set effects 1",       // чекбокс, не слайдер
             "prefs set quick_scroll nope",
+            "prefs set quick_scroll",
         ] {
             assert!(
                 parse_script(&format!("{source}\n")).is_err(),

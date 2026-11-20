@@ -2853,14 +2853,13 @@ C++ центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2
   (в C++ `HaltSfxPlayback`); `fx_sound_level` — громкость
   (`AudioPlayer::set_volume`, `AUDIO_TYPE_SFX2`).
 * `auto_save` — `App::autosave` (слот 10).
-**Что только хранится** (честно помечено, в игру не идёт): `click_scroll`,
-`quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`
-(управление камерой/выделением ещё не портировано), `disable_music`,
+**С B4 (2026-11-20) действуют** (см. §34): `click_scroll`, `quick_scroll`,
+`fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`,
+`Turn Time`/`End Turn Time`, `Player Name`.
+**Что только хранится** (честно помечено, в игру не идёт): `disable_music`,
 `disable_voice`, `disable_movie` и уровни Music/Voice/Video (музыки/голоса/видео
 в звуковом слое нет), `enhanced_graphics` (рендер всегда «enhanced»),
-`host_address`/`host_port` (сеть задаётся CLI), `Turn Time`/`End Turn Time`
-(таймеры берутся с экрана настройки), `Player Name` (в C++ `PREFSPIC` правит
-имя команды; у нас — общее имя игрока для следующей партии).
+`host_address`/`host_port` (сеть задаётся CLI).
 
 **Сохранение.** `IniPreferences` (7 × `signed int`: `effects`, `click_scroll`,
 `quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`)
@@ -3515,3 +3514,68 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 * `RepairShopMenu` (`activate`) — экран не портирован (B1);
 * мастер-строитель (`start`) — проверка площадки `POWGEN` не портирована;
 * музыка (`disable_music`) и MVE-аудио — D2/C3.
+
+## 34. B4: настройки Preferences теперь действуют — **сделано** (2026-11-20)
+
+Закрыт пункт B4 плана: `click_scroll`, `quick_scroll`, `fast_movement`,
+`follow_unit`, `auto_select`, `enemy_halt`, `Turn Time`/`End Turn Time`,
+`Player Name`. Ниже — строка C++-оракула и место в порте для каждой настройки;
+всё применяется из диалога (`OptionsMenu`) сразу и сохраняется в
+`preferences.ini` / `IniPreferences` V70.
+
+| Настройка | C++ (оракул) | Порт |
+|---|---|---|
+| `click_scroll` | `GameManager_SetGridOffset` (`game_manager.cpp:6351-6357`): смещение принимается только при `click_scroll == 0` **или** зажатой ЛКМ | `scroll::ScrollState::step` + `App::update_scroll`: при `click_scroll` скролл идёт только «при удержании», иначе по наведению; кнопки панели (`End Turn`/`Files`/`Preferences`) приоритетнее, как порядок `windows[]` в `GameManager_ProcessInput` (`:6527-6563`) |
+| `quick_scroll` | `GameManager_ZoomMainMapView` (`:1711-1721`) → `GridStepLevel`; `ScrollMainMapView` (`:1652-1677`) накапливает `ScrollRate += GridStepLevel * ScrollRateLimit` | шаг камеры = `quick_scroll` **экранных** пикселей за кадр 30 Гц (`grid_step` сокращается с переводом мир↔экран); дробная часть переносится, `ScrollRateLimit ≤ 1.5` (`:1636-1650`); в `Scroll Speed` 4..128 |
+| `fast_movement` | `UnitInfo::Move` (`unitinfo.cpp:1742`): `velocity += FastMovement ? 2 : 1`; `Paths_CalculateStep` (`paths.cpp:297`): `max_velocity` 16 вместо 8 | скорость визуального маршрута ×2 (`VISUAL_CELLS_PER_SECOND * 2` в `App::update_visual_units`). Симуляция порта двигает юнита на клетку за тик, поэтому настройка видна ровно как визуальный эффект оригинала; число шагов/очков движения не меняется |
+| `follow_unit` | `UnitInfo::FollowUnit` (`unitinfo.cpp:3597-3606`): turn-based / ход команды / ход закончен, юнит виден и вне окна карты → `MAP_VIEW_CENTER` | `App::follow_selected_unit`: `PlayMode::TurnBased || team == player || finished_turn`, `visible_to_team`, `!map_viewport().is_tile_visible` → `center_on_grid`; вызывается после тика локальной партии (и в кадре сетевого `UiSessionSink`) |
+| `auto_select` | `GameManager_AutoSelectNext` (`game_manager.cpp:1779-1792`), `IsInteractable` (`:3230-3265`), `SelectNextUnit` (`:1544-1566`) | `App::auto_select_after_tick` (снимок приказа до тика): завершение `MOVE`/`MOVE_TO_UNIT`/`MOVE_TO_ATTACK` или гибель выделенного → если юнит не интерактивен, `select_next_unit`; `is_interactable` — порт условий (`speed`, `shots` + враг в радиусе `RANGE`, `BUILD/SELECT_SITE`), `next_valid_unit` — `Access_IsValidNextUnit`/`Access_SeekNextUnit` в порядке `Access_UnitsLists` + fallback `GetFirstRelevantUnit`. После `BuildMenu` — `App::auto_select_after_order` (`units_manager.cpp:825-826`). В сетевой партии хук — в `App::tick` |
+| `enemy_halt` | `Access_UpdateMapStatus` (`access.cpp:827-868`): обнаружен враг класса, который юнит/группа может атаковать, `order != ORDER_AWAIT` → `UnitEventEmergencyStop` | `max_core`: поле `GameState::enemy_halt` (в C++ — `settings`, у нас вход симуляции); `access::target_class` — порт `Access_GetTargetClass` (`:724`); в `GameState::update_map_status_unit` накапливается `enemy_target_class` и ставится `UnitEvent::EmergencyStop` (обрабатывается `process_orders` → `stop_movement`). Ядро по умолчанию `false` (юнит-тесты), `App` пишет значение из `Preferences` при старте/загрузке — `settings.cpp` default `enemy_halt=1` |
+| `timer`/`endturn` | `GameManager_UpdateGui` (`game_manager.cpp:2416-2476`): `settings["timer"]` на ход человека (0 — без лимита), `settings["endturn"]` для ИИ (`< 45 → 45`) | `App::start_local_game` синхронизирует `Preferences` с экраном настройки (как `GameConfigMenu` Done, `gameconfigmenu.cpp:134-141`), `Preferences` в игре обновляет `LocalGame::setup.timer/endturn` — новый ход берёт их из тех же полей; `SaveLoad_Load` возвращает таймеры из сейва (`saveload.cpp:1175`), `sync_save_meta` пишет текущие в V70 |
+| `Player Name` | `menu.cpp:1944` — имя команды человека из `settings["player_name"]`; `OptionsMenu` `PREFSPIC` привязывает поле к `menu_team_name_setting[team]` (`optionsmenu.cpp:172-181`) и по Done пишет и `player_name`, и имя команды (`:548-560`); экран победы — `menu.cpp:189`, сейв — `saveload.cpp:426` | форма настройки берёт имя из `Preferences`; `open_preferences` показывает **имя текущей команды**, Done → `LocalGame::rename_team` (сразу в журнале HUD, на экране победы `winloss::display_name` и в V70-сейве); `MXLS` v4 хранит имена команд |
+
+### Отличия и ограничения (честно)
+
+* у оконного слоя (`max_render::sdl_window`) нет `MouseButtonUp` — «зажатая ЛКМ»
+  для `click_scroll` моделируется импульсом `scroll::CLICK_HOLD_SECONDS`
+  (один клик — несколько кадров скролла). Мультивыделение (`RenderState == 2`),
+  при котором C++ игнорирует `click_scroll`, в порте не портировано;
+* `fast_movement` в C++ меняет и пиксельную `max_velocity` (темп тиков), но в
+  порте шаг симуляции — клетка за тик, поэтому настройка влияет только на
+  визуальную скорость; очки движения и число шагов те же;
+* `is_interactable` вместо `Access_FindReachableSpot` проверяет врага в радиусе
+  `RANGE` (квадрат расстояния) — та же идея, без поиска достижимой клетки;
+* `auto_select` срабатывает на завершении маршрута/приказа постройки; C++ также
+  вызывает его после `PowerUp`/саботажа/уничтожения — эти места в порте пока
+  без выделения (сеть/`Sabotage` — отдельные задачи);
+* `enemy_halt` — единственная настройка B4, влияющая на симуляцию; в
+  `snapshot_bytes` она не входит (как и `settings` C++), но её эффект виден в
+  состоянии юнитов и, значит, в CRC;
+* сетевые партии: `click_scroll`/`quick_scroll`/`follow_unit` работают в кадре
+  `UiSessionSink`, `auto_select` — в `App::tick`; таймеры сети задаёт лобби
+  (`ini_timer`), а не локальные Preferences (как в C++ пакет 07). Сетевой чат
+  по-прежнему подписывается именами слотов (`hud::team_name`), а не именами
+  команд: в C++ `Remote_ReceiveNetPacket_18` берёт `menu_team_name_setting`, но
+  в `max_app::net` имён команд нет (они живут в лобби `max_net`) — отдельная
+  задача передачи имён.
+
+### Тесты, QA и кадры
+
+* `max_app/tests/preferences_behavior.rs` (8): вкл/выкл для `click_scroll`,
+  `quick_scroll`, `fast_movement` (сравнение пройденного пути спрайта),
+  `follow_unit`, `auto_select`, `enemy_halt` (доходит до `GameState`), таймеры
+  (новый ход = 60 с), `Player Name` (журнал, имя команды, экран победы,
+  заголовок V70);
+* `max_core/tests/enemy_halt.rs` (4): `EmergencyStop` ставится/не ставится,
+  `StopMovement` реально снимает приказ, `ORDER_AWAIT`/`REMOTE` не трогаются;
+* `max_app::scroll` (9): таблица окон `WINDOW_SCROLL_*`, приоритет кнопок
+  панели, направления `SetGridOffset`, шаг `quick_scroll`, перенос дробной
+  части, импульс удержания;
+* QA: `preferences.qa` — `prefs set/toggle` для всех настроек, `prefs-text`
+  (`player_name`), `assert prefs-value NAME>=N`, повторное открытие после Done;
+  новый кадр `golden/preferences/prefs-b4-settings.png`; `prefs-dialog`,
+  `prefs-effects-off`, `setup-dialog` пересняты (в поле имени теперь имя
+  команды/QA-игрока — осознанно, дрейф был 222 px = 0.07 %);
+* golden-набор (все 12 каталогов) сверен заново — дрейф 0; soak-100 и
+  `soak_headless --turns 120` проходят.
+

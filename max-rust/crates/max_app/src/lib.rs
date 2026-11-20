@@ -65,6 +65,7 @@ pub mod qa;
 pub mod render;
 pub mod researchmenu;
 pub mod saveload;
+pub mod scroll;
 pub mod selfdestruct;
 pub mod setup;
 pub mod sfx;
@@ -81,7 +82,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use max_core::crc;
 use max_core::deploy::TeamDeployment;
-use max_core::enums::{GameStateType, Planet, TeamClan};
+use max_core::enums::{GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState};
 use max_core::events::{apply_command, ApplyOutcome};
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
 use max_core::geo::Point;
@@ -656,6 +657,10 @@ pub struct App {
     /// `game_manager.cpp:1189-1192`); при `dt = 0` (QA/headless) — `0xFF`.
     pub(crate) marker_color_index: u8,
     pub(crate) marker_color_elapsed: f32,
+    /// Мышь и «зажатая» ЛКМ для скролла камеры по краям
+    /// (`GameManager_ProcessInput`/`GameManager_SetGridOffset`). В снапшот/CRC
+    /// не входит — это чистый ввод.
+    pub(crate) scroll: scroll::ScrollState,
 }
 
 /// Визуальные кадровые часы одного юнита.
@@ -771,6 +776,22 @@ struct VisualStep {
     angle: u8,
 }
 
+/// Приказ выделенного юнита на начало тика — для авто-выделения
+/// (`Preferences::auto_select`) после завершения приказа.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderSnapshot {
+    /// Id юнита на момент снимка.
+    pub id: UnitId,
+    /// Приказ (`UnitInfo::orders`).
+    pub orders: UnitOrder,
+    /// Состояние исполнения (`UnitInfo::state`).
+    pub state: UnitOrderState,
+    /// Был ли маршрут (`UnitInfo::path`).
+    pub has_path: bool,
+    /// Очки движения на начало тика (`UnitInfo::speed`).
+    pub speed: u16,
+}
+
 impl App {
     /// Пустое приложение (без ассетов; состояние — пустая партия `GameState::new`).
     pub fn new(config: AppConfig) -> Self {
@@ -813,6 +834,7 @@ impl App {
             build_marker_elapsed: 0.0,
             marker_color_index: 0xFF,
             marker_color_elapsed: 0.0,
+            scroll: scroll::ScrollState::new(),
         }
     }
 
@@ -2128,6 +2150,387 @@ impl App {
         &mut self.viewport
     }
 
+    // -----------------------------------------------------------------------
+    // Скролл камеры (Preferences: click_scroll / quick_scroll)
+    // -----------------------------------------------------------------------
+
+    /// Запоминает позицию мыши для краевого скролла (`MouseMove`).
+    pub fn note_mouse_move(&mut self, x: i32, y: i32) {
+        if x < 0 || y < 0 {
+            self.scroll.clear_pointer();
+        } else {
+            self.scroll.set_pointer(x, y);
+        }
+    }
+
+    /// Клик ЛКМ: при `click_scroll` включает «удержание» для скролла.
+    pub fn note_mouse_click(&mut self, x: i32, y: i32) {
+        if x >= 0 && y >= 0 {
+            self.scroll.press(x, y);
+        }
+    }
+
+    /// Состояние скролла (указатель/удержание) — для тестов и живого UI.
+    pub fn scroll_state(&self) -> &scroll::ScrollState {
+        &self.scroll
+    }
+
+    /// Один кадр краевого скролла — порт `GameManager_ProcessInput` →
+    /// `GameManager_SetGridOffset` → `GameManager_ScrollMainMapView`.
+    ///
+    /// Возвращает сдвиг камеры в экранных пикселях, если он был. Смещение
+    /// применяется к [`App::viewport`] той же функцией
+    /// [`Viewport::scroll_by_screen`], что и остальной ввод мыши, поэтому клики
+    /// после скролла попадают в те же клетки.
+    ///
+    /// `click_scroll`: при `true` карта едет только пока «зажата» ЛКМ
+    /// (`GameManager_SetGridOffset`, `game_manager.cpp:6352`); при `false` — по
+    /// наведению. `quick_scroll` — «Scroll Speed» (`GridStepLevel`,
+    /// `game_manager.cpp:1711`).
+    pub fn update_scroll(&mut self, dt: f32) -> Option<(i32, i32)> {
+        self.scroll.tick(dt);
+
+        let (dx, dy) = self.scroll.step(
+            dt,
+            self.preferences.click_scroll,
+            self.preferences.quick_scroll,
+        )?;
+
+        if dx == 0 && dy == 0 {
+            return None;
+        }
+
+        let before = self.viewport.center();
+        self.viewport.scroll_by_screen(dx, dy);
+
+        // `GameManager_ScrollMainMapView` возвращает `false`, если границы
+        // карты не изменились; у края карты шаг не считается прокруткой.
+        (self.viewport.center() != before).then_some((dx, dy))
+    }
+
+    // -----------------------------------------------------------------------
+    // Камера за выделенным юнитом (Preferences: follow_unit)
+    // -----------------------------------------------------------------------
+
+    /// Порт `UnitInfo::FollowUnit` (`unitinfo.cpp:3597`).
+    ///
+    /// При `follow_unit` камера центрируется на выделенном юните, как только он
+    /// выходит за пределы окна карты. Условия видимости — дословно C++:
+    /// turn-based, либо ход команды юнита, либо она уже закончила ход; юнит
+    /// виден локальной команде.
+    ///
+    /// Возвращает `true`, если камера сдвинулась.
+    pub fn follow_selected_unit(&mut self) -> bool {
+        if !self.preferences.follow_unit {
+            return false;
+        }
+
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+        let player = self.state.player_team;
+        let Some(unit) = self.state.unit(id) else {
+            return false;
+        };
+
+        if !unit.is_visible_to_team(player) {
+            return false;
+        }
+
+        let finished_turn = self.state.teams[player.0 as usize].finished_turn;
+        let allowed = self.state.play_mode == max_core::enums::PlayMode::TurnBased
+            || unit.team == player
+            || finished_turn;
+
+        if !allowed {
+            return false;
+        }
+
+        let grid = unit.grid;
+
+        if self.map_viewport().is_tile_visible(grid.x, grid.y) {
+            return false;
+        }
+
+        self.viewport.center_on_grid(grid.x, grid.y);
+
+        true
+    }
+
+    // -----------------------------------------------------------------------
+    // Авто-выделение следующего юнита (Preferences: auto_select)
+    // -----------------------------------------------------------------------
+
+    /// Снимок приказа выделенного юнита перед тиком — чтобы отличить
+    /// «приказ только что завершился» от «юнит стоит и ждёт».
+    fn selected_order_snapshot(&self) -> Option<OrderSnapshot> {
+        let id = self.hud.selected?;
+        let unit = self.state.unit(id)?;
+
+        Some(OrderSnapshot {
+            id,
+            orders: unit.orders,
+            state: unit.state,
+            has_path: unit.path.is_some(),
+            speed: unit.speed,
+        })
+    }
+
+    /// Реагирует на завершение приказа выделенного юнита, как
+    /// `UnitsManager_PerformAction`/`UnitInfo::MoveFinished`
+    /// (`unitinfo.cpp:3654` → `GameManager_AutoSelectNext`, `game_manager.cpp:1779`).
+    ///
+    /// * приказ движения (`ORDER_MOVE`/`MOVE_TO_UNIT`/`MOVE_TO_ATTACK`) был в
+    ///   работе и завершился (`AWAIT` без пути) или юнит уничтожен;
+    /// * если `auto_select` выключен или юнит ещё «интерактивен»
+    ///   (`GameManager_IsInteractable`) — выделение остаётся;
+    /// * иначе выделяется следующий юнит команды (`GameManager_SelectNextUnit`).
+    pub fn auto_select_after_tick(&mut self, before: Option<OrderSnapshot>) {
+        if !self.preferences.auto_select {
+            return;
+        }
+
+        let Some(before) = before else {
+            return;
+        };
+
+        // Игрок успел выделить другого юнита — не перебиваем.
+        if self.hud.selected != Some(before.id) {
+            return;
+        }
+
+        let moved_order = matches!(
+            before.orders,
+            UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
+        );
+
+        if !moved_order {
+            return;
+        }
+
+        let was_moving = before.has_path
+            || matches!(
+                before.state,
+                UnitOrderState::InProgress
+                    | UnitOrderState::InTransition
+                    | UnitOrderState::Init
+                    | UnitOrderState::MoveInit
+                    | UnitOrderState::IssuingPath
+                    | UnitOrderState::ExecutingOrder
+            );
+
+        if !was_moving {
+            return;
+        }
+
+        let finished = match self.state.unit(before.id) {
+            // Юнит уничтожен на этом тике (`CheckIfDestroyed` в C++ зовёт
+            // `GameManager_AutoSelectNext` для выделенного).
+            None => true,
+            Some(unit) => {
+                unit.hits == 0
+                    || (matches!(unit.orders, UnitOrder::Await | UnitOrder::Idle)
+                        && unit.path.is_none())
+            }
+        };
+
+        if !finished {
+            return;
+        }
+
+        if let Some(unit) = self.state.unit(before.id) {
+            if unit.hits > 0 && self.is_interactable(unit) {
+                return;
+            }
+        }
+
+        self.select_next_unit();
+    }
+
+    /// После `BuildMenu` (`UnitsManager_Popup_OnClick_Build` →
+    /// `GameManager_AutoSelectNext`) — авто-выделение следующего юнита, если
+    /// текущий больше не интерактивен.
+    pub fn auto_select_after_order(&mut self) {
+        if !self.preferences.auto_select {
+            return;
+        }
+
+        let Some(id) = self.hud.selected else {
+            return;
+        };
+
+        if let Some(unit) = self.state.unit(id) {
+            if unit.hits > 0 && self.is_interactable(unit) {
+                return;
+            }
+        }
+
+        self.select_next_unit();
+    }
+
+    /// `GameManager_IsInteractable` (`game_manager.cpp:3230`): юнит ещё может
+    /// действовать, поэтому авто-выделение его не пропускает.
+    ///
+    /// Точный порт `Access_FindReachableSpot` в max_core отсутствует; «есть
+    /// куда стрелять» оценивается как `shots > 0` и враг в радиусе `RANGE`
+    /// (квадрат расстояния, как в [`max_core::access::is_within_attack_range`]).
+    fn is_interactable(&self, unit: &max_core::unit::UnitInfo) -> bool {
+        if matches!(
+            unit.orders,
+            UnitOrder::Sentry
+                | UnitOrder::Idle
+                | UnitOrder::Disable
+                | UnitOrder::Explode
+                | UnitOrder::AwaitScaling
+        ) || matches!(
+            unit.state,
+            UnitOrderState::Destroy | UnitOrderState::ReadyToExecuteOrder
+        ) {
+            return false;
+        }
+
+        if matches!(unit.orders, UnitOrder::Build | UnitOrder::Clear) {
+            return unit.state == UnitOrderState::SelectSite;
+        }
+
+        if unit.speed > 0 {
+            return true;
+        }
+
+        if unit.shots > 0 {
+            let range =
+                i32::from(unit.base_values.get_attribute(max_core::unit_values::ATTRIB_RANGE));
+            let squared = range * range;
+
+            for id in self.state.unit_ids_in_order() {
+                let Some(enemy) = self.state.unit(id) else {
+                    continue;
+                };
+
+                if enemy.team == unit.team || enemy.hits == 0 || !enemy.is_visible_to_team(unit.team)
+                {
+                    continue;
+                }
+
+                if max_core::access::squared_distance(unit.grid, enemy.grid) <= squared {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// `GameManager_SelectNextUnit(1)` (`game_manager.cpp:1544`): следующий
+    /// валидный юнит команды в порядке `Access_UnitsLists`, с переносом в
+    /// начало; камера центрируется, если он за пределами окна.
+    pub fn select_next_unit(&mut self) -> Option<UnitId> {
+        let player = self.state.player_team;
+        let current = self.hud.selected;
+        let next = self.next_valid_unit(player, current)?;
+
+        self.close_unit_menu();
+        self.select_unit(Some(next));
+
+        let grid = self.state.unit(next).map(|unit| unit.grid);
+
+        if let Some(grid) = grid {
+            if !self.map_viewport().is_tile_visible(grid.x, grid.y) {
+                self.viewport.center_on_grid(grid.x, grid.y);
+            }
+        }
+
+        Some(next)
+    }
+
+    /// `Access_SeekNextUnit(team, unit, +1)` по пяти спискам в порядке
+    /// `Access_UnitsLists` (mobile land/sea → air → stationary → ground cover →
+    /// particles), затем `GameManager_GetFirstRelevantUnit`.
+    fn next_valid_unit(&self, team: TeamId, current: Option<UnitId>) -> Option<UnitId> {
+        const ORDER_: [max_core::unit::UnitListKind; 5] = [
+            max_core::unit::UnitListKind::MobileLandSea,
+            max_core::unit::UnitListKind::MobileAir,
+            max_core::unit::UnitListKind::Stationary,
+            max_core::unit::UnitListKind::GroundCover,
+            max_core::unit::UnitListKind::Particle,
+        ];
+
+        // Плоский порядок обхода + позиция текущего юнита в нём.
+        let mut flat: Vec<UnitId> = Vec::new();
+
+        for kind in ORDER_ {
+            flat.extend_from_slice(self.state.unit_list(kind));
+        }
+
+        let start = current
+            .and_then(|id| flat.iter().position(|candidate| *candidate == id))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+
+        for step in 0..flat.len() {
+            let id = flat[(start + step) % flat.len()];
+            let Some(unit) = self.state.unit(id) else {
+                continue;
+            };
+
+            // C++ `Access_SeekNextUnit` не возвращает сам текущий юнит.
+            if Some(id) == current {
+                continue;
+            }
+
+            if unit.team == team && Self::is_valid_next_unit(unit) {
+                return Some(id);
+            }
+        }
+
+        // `GameManager_GetFirstRelevantUnit`: шахта, иначе первый активный юнит.
+        for kind in ORDER_ {
+            for id in self.state.unit_list(kind) {
+                let Some(unit) = self.state.unit(*id) else {
+                    continue;
+                };
+
+                if unit.team == team && unit.hits > 0 && unit.unit_type == UnitType::MiningStation {
+                    return Some(*id);
+                }
+            }
+        }
+
+        for kind in ORDER_ {
+            for id in self.state.unit_list(kind) {
+                let Some(unit) = self.state.unit(*id) else {
+                    continue;
+                };
+
+                if unit.team == team && unit.hits > 0 && Self::is_valid_next_unit(unit) {
+                    return Some(*id);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// `Access_IsValidNextUnit` (`access.cpp:1377`).
+    fn is_valid_next_unit(unit: &max_core::unit::UnitInfo) -> bool {
+        if matches!(
+            unit.orders,
+            UnitOrder::Sentry | UnitOrder::Idle | UnitOrder::Disable | UnitOrder::Explode
+        ) || matches!(
+            unit.state,
+            UnitOrderState::Destroy | UnitOrderState::ReadyToExecuteOrder
+        ) || (unit.orders == UnitOrder::Build && unit.state != UnitOrderState::UnitReady)
+        {
+            return false;
+        }
+
+        if unit.speed > 0 || unit.shots > 0 || unit.storage != 0 {
+            return true;
+        }
+
+        unit.orders != UnitOrder::Await
+    }
+
     /// Сколько тиков прокручено с момента загрузки/генерации.
     pub fn ticks(&self) -> u64 {
         self.ticks
@@ -2197,6 +2600,10 @@ impl App {
         let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
 
         self.state = GameState::from_save(&save);
+        // `SaveLoad_Load` оставляет `settings` игрока как есть: `enemy_halt`
+        // берётся из `Preferences`, а не из файла (`saveload.cpp:1175` пишет в
+        // настройки только таймеры).
+        self.state.enemy_halt = self.preferences.enemy_halt;
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
@@ -2370,6 +2777,8 @@ impl App {
 
         let mut state = GameState::with_setup(output.map, team_kinds);
         state.player_team = config.player_team;
+        // Живые настройки, которые читает симуляция (`settings["enemy_halt"]`).
+        state.enemy_halt = self.preferences.enemy_halt;
         // Кланы из настроек — до высадки юнитов: `deploy_starting_units`
         // берёт атрибуты из `team_units` (`ResourceManager_InitClanUnitValues`).
         for index in 0..PLAYER_TEAM_COUNT {
@@ -2489,8 +2898,14 @@ impl App {
     }
 
     /// Один тик симуляции (`GameManager_ProcessTick`).
+    ///
+    /// Заодно повторяет UI-хук `UnitInfo::MoveFinished` → `AutoSelectNext`
+    /// (`auto_select`) для сетевого цикла: выделение — локальное UI-состояние,
+    /// поэтому настройка действует и в lockstep-партии.
     pub fn tick(&mut self) -> TickReport {
+        let before = self.selected_order_snapshot();
         self.state.tick();
+        self.auto_select_after_tick(before);
         self.ticks += 1;
 
         TickReport {
@@ -2836,6 +3251,18 @@ impl App {
 
         let ids = self.state.unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
+        // `fast_movement` («Double Unit Steps»): C++ удваивает скорость
+        // движения (`UnitInfo::Move`: `velocity += FastMovement ? 2 : 1`,
+        // `unitinfo.cpp:1742`; `Paths_CalculateStep`: `max_velocity` 16 вместо
+        // 8, `paths.cpp:297`), поэтому спрайт проходит клетку вдвое быстрее.
+        // Симуляция порта двигает юнита на клетку за тик; скорость кадра —
+        // единственное место, где настройка видна, ровно как визуальный эффект
+        // оригинала.
+        let speed_scale = if self.preferences.fast_movement {
+            2.0
+        } else {
+            1.0
+        };
 
         // Раздельные заимствования полей: `retain` читает состояние.
         let state = &self.state;
@@ -2862,7 +3289,7 @@ impl App {
             return;
         }
 
-        let budget = VISUAL_CELLS_PER_SECOND * dt;
+        let budget = VISUAL_CELLS_PER_SECOND * speed_scale * dt;
 
         for id in ids {
             let Some(unit) = state.unit(id) else {

@@ -246,6 +246,19 @@ pub struct GameState {
     /// Настройка `GameManager_RealTime` (`paths.cpp:Paths_CalculateStep`):
     /// при истине шаг пути не тратит `speed`.
     pub real_time: bool,
+    /// Настройка `enemy_halt` («Halt movement when enemy is detected»).
+    ///
+    /// `Access_UpdateMapStatus` (`access.cpp:827-868`) при обнаружении врага в
+    /// радиусе сканирования ставит `UnitEventEmergencyStop` юниту (или его
+    /// группе), если у него есть активный приказ. Настройка читается из
+    /// `settings` на каждом шаге, поэтому в C++ она не входит в состояние
+    /// партии; здесь — поле `GameState`, чтобы симуляция была самодостаточной.
+    /// `App` пишет его из `Preferences` при старте/загрузке партии.
+    ///
+    /// По умолчанию `false`: чистое ядро (юнит-тесты) сохраняет прежнее
+    /// поведение; приложение ставит значение из настроек (`settings.cpp`:
+    /// `enemy_halt = 1`).
+    pub enemy_halt: bool,
     /// Очередь входных команд (DESIGN §5.1 шаг 1).
     pub commands: CommandQueue,
     /// Состояние ИИ: игроки, менеджер задач, тепловые карты (P6, `ai.cpp`).
@@ -341,6 +354,7 @@ impl GameState {
             settings_effects: false,
             disable_fire: false,
             real_time: false,
+            enemy_halt: false,
             commands: CommandQueue::new(),
             ai: crate::ai::AiState::new(),
             save_meta: crate::save_write::SaveMeta::default(),

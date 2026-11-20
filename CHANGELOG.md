@@ -2,6 +2,33 @@
 
 ### Добавлено
 
+- **B4/B5: настройки Preferences реально действуют (1:1 с C++).** Раньше они
+  только сохранялись:
+  * `click_scroll`/`quick_scroll` — новый модуль `max_app/src/scroll.rs`: окна
+    `WINDOW_SCROLL_*` (`window_manager.cpp:90-101`) и
+    `GameManager_SetGridOffset`/`ScrollMainMapView` (`game_manager.cpp:6351`,
+    `:1652`); шаг камеры = `quick_scroll` экранных пикселей за кадр 30 Гц,
+    кнопки панели приоритетнее скролла; в игре и сетевом кадре;
+  * `fast_movement` — скорость спрайта ×2 (`UnitInfo::Move`,
+    `unitinfo.cpp:1742`); `follow_unit` — камера за выделенным
+    (`UnitInfo::FollowUnit`, `unitinfo.cpp:3597`);
+  * `auto_select` — после завершения приказа/постройки выделяется следующий
+    юнит (`GameManager_AutoSelectNext`/`SelectNextUnit`,
+    `game_manager.cpp:1779/1544`, `Access_IsValidNextUnit`); в сетевой партии
+    хук в `App::tick`;
+  * `enemy_halt` — симуляция: `GameState::enemy_halt`, `access::target_class`
+    и `UnitEventEmergencyStop` из `Access_UpdateMapStatus` (`access.cpp:827`);
+  * `Turn Time`/`End Turn Time` из Preferences читаются в начале хода
+    (`GameManager_UpdateGui`, `game_manager.cpp:2416-2476`), старт партии
+    синхронизирует их с экраном настройки, сейв пишет текущие;
+  * `Player Name` — имя команды из `menu.cpp:1944`, в игре `PREFSPIC` правит
+    имя текущей команды (`optionsmenu.cpp:177/552`) и сразу видно в журнале
+    HUD, на экране победы и в V70 (имена команд — `MXLS` v4).
+  Тесты: `max_app/tests/preferences_behavior.rs` (8), `max_core/tests/
+  enemy_halt.rs` (4), `scroll` (9). QA: `preferences.qa` — `prefs set/toggle`
+  для всех настроек, `prefs-text`, `assert prefs-value NAME>=N`; новый кадр
+  `golden/preferences/prefs-b4-settings.png`. Детали — §34
+  `docs/analysis/visual-1to1-status.md`.
 - **B1: оставшиеся пункты меню юнита — 1:1 с C++-оракулом.** `attack` теперь
   тумблер `targeting_mode` (`units_manager.cpp:617`): наведение, `CURSOR_ENEMY`
   и стрельба по пустой клетке в радиусе (`GameManager_SetUnitOrder`,

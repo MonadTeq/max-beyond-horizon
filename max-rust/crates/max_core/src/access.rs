@@ -556,6 +556,44 @@ pub fn squared_distance(first: Point, second: Point) -> i32 {
     dx * dx + dy * dy
 }
 
+/// `Access_GetTargetClass` (`access.cpp:724`) — класс цели, которым является
+/// сам юнит (не путать с группой атаки `Access_GetAttackTargetGroup`,
+/// [`crate::game::GameState::attack_target_group`]).
+///
+/// Нужен `enemy_halt`: `Access_UpdateMapStatus` сравнивает класс обнаруженных
+/// врагов с классом самого юнита (и его группы), чтобы не останавливать
+/// движение из-за цели, которую он всё равно не может атаковать.
+pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
+    if unit.unit_type == UnitType::Commando || state.is_unit_under_water(unit) {
+        for team_index in 0..crate::game::PLAYER_TEAM_COUNT {
+            let team = TeamId(team_index as u8);
+
+            if unit.team != team
+                && state.teams[team_index].team_type != TeamKind::None
+                && unit.is_visible_to_team(team)
+            {
+                return if unit.unit_type == UnitType::Commando {
+                    TARGET_CLASS_LAND
+                } else {
+                    TARGET_CLASS_WATER
+                };
+            }
+        }
+
+        if unit.unit_type == UnitType::Commando {
+            TARGET_CLASS_LAND_STEALTH
+        } else {
+            TARGET_CLASS_SEA_STEALTH
+        }
+    } else if unit.flags & MOBILE_AIR_UNIT != 0 {
+        TARGET_CLASS_AIR
+    } else if unit.flags & MOBILE_SEA_UNIT != 0 {
+        TARGET_CLASS_WATER
+    } else {
+        TARGET_CLASS_LAND
+    }
+}
+
 /// `Access_GetApproximateDistance(distance_x, distance_y)`.
 #[inline]
 pub fn approximate_distance(distance_x: i32, distance_y: i32) -> i32 {

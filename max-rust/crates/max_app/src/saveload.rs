@@ -917,9 +917,38 @@ impl crate::App {
         let zoom_level = zoom.min(u32::from(u16::MAX)) as u16;
 
         let preferences = self.preferences().to_ini();
+        // `SaveLoad_Save` (`saveload.cpp:426,502-511`): имя команды —
+        // `menu_team_name_setting` (его правит `OptionsMenu` в игре), таймеры —
+        // текущие `settings["timer"]`/`["endturn"]` (их мог изменить
+        // `Preferences` после старта партии).
+        let live_names: Vec<(usize, String)> = self
+            .local()
+            .map(|local| {
+                (0..4)
+                    .filter(|team| local.setup.team_types[*team] != TeamKind::None)
+                    .map(|team| {
+                        (
+                            team,
+                            local.display_name(max_core::TeamId(team as u8)),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (turn_timer, endturn) = (
+            self.preferences().turn_timer.max(0),
+            self.preferences().endturn.max(0),
+        );
         let meta = &mut self.state_mut().save_meta;
         SaveMeta::set_name(&mut meta.save_name, save_name);
         meta.turn_timer = timer_left;
+        meta.turn_timer_time = turn_timer.clamp(0, i32::from(u16::MAX)) as u16;
+        meta.endturn_time = endturn.clamp(0, i32::from(u16::MAX)) as u16;
+        meta.ini_options.turn_timer = turn_timer;
+        meta.ini_options.endturn = endturn;
+        for (team, name) in live_names {
+            SaveMeta::set_name(&mut meta.team_names[team], &name);
+        }
         // `IniPreferences` (7 × `signed int`): текущие настройки игрока, как
         // `SaveLoad_Save` (`saveload.cpp:547` — `settings->GetNumericValue`).
         meta.ini_preferences = preferences;
