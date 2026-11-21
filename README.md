@@ -1,8 +1,13 @@
-# M.A.X. — Rust-клиент под Horizon
+# M.A.X. : Beyond Rust Horizon
 
 Современный клиент игры **M.A.X.: Mechanized Assault & Exploration** (Interplay, 1996),
 написанный заново на **Rust**, с серверной инфраструктурой **Horizon** и
 визуальным паритетом **1:1 с оригиналом**.
+
+**Проект называется «M.A.X. : Beyond Rust Horizon»** (сокращённо **BRH** — от
+*Beyond Rust Horizon*). Отсюда префикс каталогов `max-brh*` и имя бинарника
+`max-brh(.exe)`. Полный глоссарий терминов и сокращений —
+[max-brh-docs/glossary.md](max-brh-docs/glossary.md).
 
 M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 Для игры требуются оригинальные данные (`MAX.RES`, `PATCHES.RES`, `COLOR.PAL`, карты `.WRL`, звуки `.SPW`) — они не входят в репозиторий.
