@@ -77,7 +77,7 @@ doc-комментариев `UnitType` (`/// TOKEN / C++_NAME`); мануал �
 | 61 | SEAMNLYR | SeaMineLayer | SEA_MINE_LAYER | Sea Mine Layer | Sea Mine Layer |
 | 62 | CARGOSHP | CargoShip | CARGO_SHIP | Supply Boats | Cargo Ship |
 | 63 | FIGHTER | Fighter | FIGHTER | Fighters | Fighter |
-| 64 | BOMBER | Bomber | GROUND_ATTACK_PLANE | Ground Attack Planes | Bomber |
+| 64 | BOMBER | Bomber | GROUND_ATTACK_PLANE | Ground Attack Planes | Ground Attack Plane |
 | 65 | AIRTRANS | AirTransport | AIR_TRANSPORT | Air Transports | Air Transport |
 | 66 | AWAC | Awac | AWAC | AWAC | AWAC |
 | 67 | JUGGRNT | Juggernaut | ALIEN_GUNBOAT | — | Juggernaut |
@@ -111,7 +111,7 @@ doc-комментариев `UnitType` (`/// TOKEN / C++_NAME`); мануал �
 - `SHIELDGN` / `SUPRTPLT` / `RECCENTR`: C++-идентификаторы — `ALIEN_BUILDING_1/2/3`.
   Требуется уточнить каноничные имена (сейчас `ShieldGenerator` / `SupportPlant` /
   `RecreationCenter`).
-- `BOMBER`: C++/мануал — «Ground Attack Plane»; решение владельца — «Bomber».
+- `BOMBER`: Rust-имя `Bomber` (решение владельца), User-Friendly Name — «Ground Attack Plane».
 - `SEATRANS`: мануал — «Supply Boats»; решение владельца — «Sea Transport».
 - `CARGOSHP`: мануал — «Supply Boats» (совпадает с `SEATRANS` в списке верфи);
   уточнить корректный User-Friendly Name.
