@@ -15,7 +15,7 @@
 #       на каждом 45-барьере сверяет CRC и не пишет `Desync check failed` /
 #       desync-отчёт — значит, состояние Rust-клиентов совпало с C++-симуляцией.
 #   Без изменения `src/` (добавления headless client mode) полноценная
-#   Rust+C++-сессия невозможна; см. max-brh-docs/architecture/protocol.md §12 и
+#   Rust+C++-сессия невозможна; см. max-brh-docs/architecture/client/protocol.md §12 и
 #   max-brh-cicd/scripts/README.md.
 set -euo pipefail
 

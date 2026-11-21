@@ -1,16 +1,30 @@
 # Архитектура проекта
 
-Клиент-серверная архитектура Rust-клиента M.A.X. под Horizon, протоколы и модели.
+Архитектура клиента M.A.X. и выделенного сервера Horizon, протоколы и модели.
+Документация разделена на два подкаталога:
+
+## Архитектура клиента — [`client/`](client/)
+
+Игра для одного игрока, hot-seat и сетевая игра в режиме Peer-to-Peer через
+TCP/IP (один из игроков — хост).
 
 | Документ | Содержимое |
 |---|---|
-| [plan-modes.md](plan-modes.md) | Три режима игры (одиночная, hot-seat, сеть) и принцип визуального паритета 1:1 |
-| [protocol.md](protocol.md) | Полный контракт сети: WS/gRPC Horizon + ENet-сессия, ~70 сообщений побайтово |
-| [protocol-grpc.md](protocol-grpc.md) | protobuf-схемы Horizon (horizon.v1), решения, JSON↔proto |
-| [state-model.md](state-model.md) | Модель состояния партии (15 перечислений, 11 структур, проекция снапшота) |
-| [barrier-flow.md](barrier-flow.md) | Lockstep-барьеры 00/52/45/54 и релей в звезде |
-| [dedicated-server-plan.md](dedicated-server-plan.md) | Эксплуатация C++-headless под Horizon |
-| [lobby-ui.md](lobby-ui.md) | UI-лобби выделенного сервера (игровой лобби + админ-консоль) — отдельно от игры |
+| [plan-modes.md](client/plan-modes.md) | Три режима игры (одиночная, hot-seat, сеть) и принцип визуального паритета 1:1 |
+| [game-mechanics.md](client/game-mechanics.md) | Игровые механики (ресурсы, производство, бой, движение) — контракт для сверки |
+| [state-model.md](client/state-model.md) | Модель состояния партии (15 перечислений, 11 структур, проекция снапшота) |
+| [barrier-flow.md](client/barrier-flow.md) | Lockstep-барьеры 00/52/45/54 и релей в звезде |
+| [protocol.md](client/protocol.md) | Сетевой контракт: ENet-сессия + WS к Horizon, ~70 сообщений побайтово |
+
+## Архитектура выделенного сервера — [`server/`](server/)
+
+Игроки подключаются к выделенному серверу через лобби.
+
+| Документ | Содержимое |
+|---|---|
+| [dedicated-server-plan.md](server/dedicated-server-plan.md) | План выделенного сервера: C++-headless под Horizon |
+| [lobby-ui.md](server/lobby-ui.md) | UI-лобби сервера (игровой лобби + админ-консоль) — отдельно от игры |
+| [protocol-grpc.md](server/protocol-grpc.md) | protobuf-схемы Horizon (horizon.v1), решения, JSON↔proto |
 
 ## Общая схема
 

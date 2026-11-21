@@ -35,7 +35,7 @@
 //!   пакету 10 на каждый изменённый тип. Пакета 09 в Rust-протоколе нет,
 //!   поэтому в сети отправляются только пакеты **10** (`Command::UpgradeUnitType`),
 //!   а золото/`gold_spent` синхронизируются локально — ограничение
-//!   задокументировано в `max-brh-docs/architecture/protocol.md` §8.4.
+//!   задокументировано в `max-brh-docs/architecture/client/protocol.md` §8.4.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::access::unit_type_flags;

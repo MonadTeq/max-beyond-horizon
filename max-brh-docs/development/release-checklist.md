@@ -285,7 +285,7 @@ bash max-brh-cicd/scripts/live-smoke-mixed.sh 5
       `Desync check failed`. _(2026-11-16: PARTIAL PASS)_
 - [ ] Полная mixed-сессия Rust-клиент + C++-клиент: **блокер** — headless
       `src/` поддерживает только `--server`, GUI-клиенту нужен X11 и ручной ввод
-      (`src/main.cpp`). См. `max-brh-docs/architecture/protocol.md` §9/§12.
+      (`src/main.cpp`). См. `max-brh-docs/architecture/client/protocol.md` §9/§12.
 - [x] Реконнект-состояние: in-process 3-клиентный мок-тест (B offline → resume-54
       → CRC/turn сходятся); реальный pause/proxy smoke не автоматизирован.
       Пределы — `protocol.md` §9.2.

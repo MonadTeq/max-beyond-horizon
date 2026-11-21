@@ -31,7 +31,7 @@
 //! В оригинале сохранение в сети **разрешено**: `SaveLoadMenu_Save` рассылает
 //! пакет 16 (`Remote_SendNetPacket_16`) и пишет файл, а загрузка запрещена
 //! («Save/Load is not available in a network game», `saveloadmenu.cpp:461`).
-//! В нашем протоколе пакета 16 нет (`max-brh-docs/architecture/protocol.md`), поэтому
+//! В нашем протоколе пакета 16 нет (`max-brh-docs/architecture/client/protocol.md`), поэтому
 //! меню в сетевой сессии **не открывается** и пишет в журнал, что сохранение
 //! сети не поддержано — иначе клиенты разошлись бы (см. [`crate::App::open_save_menu`]).
 

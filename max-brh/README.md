@@ -123,7 +123,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   подробности — `../max-brh-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
   восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
-  M6.1-финал, см. `crates/max_app/README.md` и `max-brh-docs/architecture/protocol.md` §9.
+  M6.1-финал, см. `crates/max_app/README.md` и `max-brh-docs/architecture/client/protocol.md` §9.
 
 ## Визуал 1:1 с оригиналом (в работе)
 

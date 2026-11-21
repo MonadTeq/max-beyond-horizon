@@ -65,7 +65,7 @@ RPC-схема — `max-brh-server/proto/horizon.proto`, сервис `horizon.v
 
 gRPC-контракт дублирует WebSocket-JSON-протокол Horizon (одна RPC на пару
 запрос/ответ, ключи JSON повторяют поля proto). Подробности — в
-[protocol-grpc.md](protocol-grpc.md) и [protocol.md](protocol.md).
+[protocol-grpc.md](protocol-grpc.md) и [protocol.md](../client/protocol.md).
 
 ## 4. Поток «лобби → игра»
 
@@ -74,7 +74,7 @@ gRPC-контракт дублирует WebSocket-JSON-протокол Horizon
 3. `JoinGame` отдаёт **тикет**: `host:port` ENet + сессионный ключ/токен.
 4. Игровой клиент (`max-brh`) подключается по UDP (ENet) и входит в
    lockstep-сессию; барьеры и CRC — внутри игры (см.
-   [barrier-flow.md](barrier-flow.md)).
+   [barrier-flow.md](../client/barrier-flow.md)).
 5. По окончании партии клиент возвращается в лобби.
 
 ## 5. Текущее состояние и план

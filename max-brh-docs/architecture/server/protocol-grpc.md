@@ -3,7 +3,7 @@
 > Версия: v1 (проект схемы) · Статус: СПРОЕКТИРОВАНО, реализация — следующий этап.
 > Источник истины: [`max-brh-server/proto/`](../max-brh-server/proto/) —
 > `horizon.proto` (сервис) + `types.proto` (общие типы).
-> Базовый контракт (WS JSON): [`max-brh-docs/protocol.md`](protocol.md).
+> Базовый контракт (WS JSON): [protocol.md](../client/protocol.md).
 
 ## 1. Цель
 

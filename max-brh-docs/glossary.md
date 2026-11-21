@@ -45,8 +45,8 @@ M.A.X. (Mechanized Assault & Exploration, Interplay 1996).
 | Термин | Значение |
 |---|---|
 | **Horizon** | серверный протокол/инфраструктура (gRPC + WS, protobuf) выделенного сервера |
-| **UI-лобби** | отдельная поверхность сервера (игровой лобби + админ-консоль), **не игра** — см. [architecture/lobby-ui.md](architecture/lobby-ui.md) |
-| **арбитр** | C++-headless `max-port --server`: игровой авторитет, релей пакетов и CRC-барьеры — см. [architecture/dedicated-server-plan.md](architecture/dedicated-server-plan.md) |
+| **UI-лобби** | отдельная поверхность сервера (игровой лобби + админ-консоль), **не игра** — см. [architecture/server/lobby-ui.md](architecture/server/lobby-ui.md) |
+| **арбитр** | C++-headless `max-port --server`: игровой авторитет, релей пакетов и CRC-барьеры — см. [architecture/server/dedicated-server-plan.md](architecture/server/dedicated-server-plan.md) |
 | **тикет** | выданный `JoinGame` ключ/адрес для входа клиента в ENet-сессию |
 
 ## 5. Прочие термины

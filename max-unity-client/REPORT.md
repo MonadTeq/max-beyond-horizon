@@ -25,11 +25,11 @@
 
 | Артефакт | Что содержит | Значение для Unity-порта |
 |---|---|---|
-| `max-brh-docs/architecture/protocol.md` (813 строк) | Полный сетевой контракт: WS/gRPC Horizon + ENet-сессия, ~70 сообщений побайтово, инварианты, фазы соединения | Сеть **не переписывается** — живёт в `max_net`; Unity её даже не видит |
-| `max-brh-docs/architecture/protocol-grpc.md` (479 строк) | protobuf `horizon.v1` (10 unary RPC), решения JSON↔proto | То же: потребляется нативной стороной |
-| `max-brh-docs/architecture/state-model.md` (897 строк) | Модель состояния: 15 перечислений, 11 структур, проекция снапшота | Спека структур, которые FFI отдаёт в Unity как view |
-| `max-brh-docs/architecture/plan-modes.md` (309 строк) | M-SP / M-SP+ / M-HS / M-NET — **все три режима реализованы** в Rust (v1.0–v1.4) | Чек-лист поведения экранов и циклов для P5 |
-| `max-brh-docs/architecture/barrier-flow.md` (341 строка) | Lockstep-барьеры 00/01/45/52/53/54, релей в звезде, таймауты | Полностью внутри `max_net`/`max_core` — Unity не участвует |
+| `max-brh-docs/architecture/client/protocol.md` (813 строк) | Полный сетевой контракт: WS/gRPC Horizon + ENet-сессия, ~70 сообщений побайтово, инварианты, фазы соединения | Сеть **не переписывается** — живёт в `max_net`; Unity её даже не видит |
+| `max-brh-docs/architecture/server/protocol-grpc.md` (479 строк) | protobuf `horizon.v1` (10 unary RPC), решения JSON↔proto | То же: потребляется нативной стороной |
+| `max-brh-docs/architecture/client/state-model.md` (897 строк) | Модель состояния: 15 перечислений, 11 структур, проекция снапшота | Спека структур, которые FFI отдаёт в Unity как view |
+| `max-brh-docs/architecture/client/plan-modes.md` (309 строк) | M-SP / M-SP+ / M-HS / M-NET — **все три режима реализованы** в Rust (v1.0–v1.4) | Чек-лист поведения экранов и циклов для P5 |
+| `max-brh-docs/architecture/client/barrier-flow.md` (341 строка) | Lockstep-барьеры 00/01/45/52/53/54, релей в звезде, таймауты | Полностью внутри `max_net`/`max_core` — Unity не участвует |
 | `max-brh-docs/analysis/visual-1to1-status.md` (984 строки) | Форматы ресурсов (.WRL, MAX.RES simple/big RLE, спрайты, курсоры, GNW-шрифты), раскладка окна 640×480 (`windows[]`), план A–F | **Готовая спека рендера**: координаты, палитры, порядок слоёв, все подводные камни (смещение RLE 776 и т.п.) уже разобраны |
 | `max-brh-assets/images/` | **1069 PNG** уже извлечены из MAX.RES и классифицированы: ui 537, sprites/units 170, misc 363; `manifest.csv` (имя, размер, kind, палитра, прозрачность, фреймы) | Прямой импорт в Unity; классификация и метаданные снимают ~половину работы P1 |
 | `max-brh/` | Rust-клиент v1.0.0: `max_core` (40,3 тыс. строк, чистая детерминированная симуляция с ИИ, бит-в-бит с C++), `max_net` (7,2 тыс., gRPC tonic 0.14 + vendored ENet 1.3.18), `max_assets` (4,6 тыс.), `max_render` (6,4 тыс.), `max_app` (27,8 тыс.); **692 `#[test]`** | `max_core`+`max_net` переносятся **без изменений** как cdylib; тесты остаются регресс-сеткой |

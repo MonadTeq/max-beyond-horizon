@@ -37,7 +37,7 @@
 //! * `1`/`2`/`3` — скорости 1×/2×/4× (`1101..1103`).
 //!
 //! Заказ уходит **тем же путём**, что в сети: `Command::Order` с `PayloadP4`
-//! (`max-brh-docs/architecture/protocol.md` §8: `repeat_build`, `build_time`,
+//! (`max-brh-docs/architecture/client/protocol.md` §8: `repeat_build`, `build_time`,
 //! `build_rate`, `build_count × unit_type`) — локально применяется
 //! `apply_command`, в сети отправляется пакетом 08.
 //!

@@ -887,9 +887,9 @@ pub struct Map {
 
 1. **Кодирование снапшота.** Форма состояния зафиксирована здесь; конкретное
    кодирование сообщений (`snapshot`/`delta`/`welcome`) — в
-   [`max-brh-docs/protocol.md`](protocol.md) (пока таблица-каркас) и в реализации
+   [`protocol.md`](protocol.md) (пока таблица-каркас) и в реализации
    headless-сервера [`src/server.cpp`](../src/server.cpp)
-   (+ [`max-brh-docs/dedicated-server-plan.md`](dedicated-server-plan.md)). Нужно решить:
+   (+ [`dedicated-server-plan.md`](../server/dedicated-server-plan.md)). Нужно решить:
    binary vs JSON/MessagePack, полный снапшот vs дельта, частота (ход/кадр),
    формат `Path` и ссылок на юниты.
 2. **Согласование с каркасом max_core.** Заменить `unit::UnitKind` на полный

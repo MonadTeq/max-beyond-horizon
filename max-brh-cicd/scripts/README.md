@@ -42,7 +42,7 @@ probe и клиенты живут в network namespace контейнера Hor
   (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`), ветки `--client`/`--connect`
   нет; GUI-клиент требует X11 и ручного прохода меню. Полная mixed-сессия
   требует изменения `src/` (headless client mode) либо Xvfb+автоматизации —
-  см. `max-brh-docs/architecture/protocol.md` §9/§12.
+  см. `max-brh-docs/architecture/client/protocol.md` §9/§12.
 
 Логи и коды выхода: `build/smoke-logs/live3-*.log`, `live3-ai_log.txt`,
 `mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь

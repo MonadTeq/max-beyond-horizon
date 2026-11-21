@@ -68,7 +68,7 @@
   `research.qa`, `research-help.qa` ставят `POWGEN`/`FDUMP`/`HABITAT`;
   новая QA-команда `complex fuel|gold N` (как `complex raw`), golden
   `production`/`research`/`research-help` перегенерированы (новые здания).
-  Документация: `max-brh-docs/architecture/game-mechanics.md` §3/§5,
+  Документация: `max-brh-docs/architecture/client/game-mechanics.md` §3/§5,
   `max-brh-docs/analysis/visual-1to1-status.md` §42.
 - **Построенный в AIRPLT самолёт стоит НА заводе и выводится приказом игрока.**
   Оракул: `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520` — юнит на клетке
@@ -1123,7 +1123,7 @@
   (`raw_mining`/`fuel_mining`/`gold_mining`, сумма ≤ 16, `total_mining`) — как
   в C++ (`unitinfo.hpp:434-440`); они уже в снапшоте/CRC и в V70-сейве.
   `Done`/`Esc` ставят каждой шахте комплекса `ORDER_NEW_ALLOCATE` — пакет **08**,
-  процессор **P5** (`payload P5` в `max-brh-docs/architecture/protocol.md`), как
+  процессор **P5** (`payload P5` в `max-brh-docs/architecture/client/protocol.md`), как
   `Remote_SendNetPacket_11` (`remote.cpp:2195`).
   Экономика: `max_core::alloc` — `AllocMenu_Optimize`/`AllocMenu_
   ReduceProduction`/`Balance` (`Allocator` с маской `cargo_material_type`),
@@ -1727,7 +1727,7 @@
     `sync_index`, встречные 54 исправляют удалённые команды, барьеры 52/54/45
     доигрываются. `reconnect_pending_state=false` после resume; пределы (нет
     SNAP, 54 только своя команда/экономика, C++ ELIMINATED через 30 с) —
-    `max-brh-docs/architecture/protocol.md` §9.
+    `max-brh-docs/architecture/client/protocol.md` §9.
   - **Тесты:** unit `resume_state_sync_publishes_the_last_completed_index`;
     in-process 3-клиентный мок-релей
     `three_clients_survive_disconnect_and_converge_via_state_sync` (B offline,
@@ -1941,7 +1941,7 @@
   `NewGameConfig::clans` и меняет стартовые атрибуты юнитов команды
   (`ResourceManager_InitClanUnitValues`). Контейнер `MXLS` — версия 3
   (`team_clans`), старые v2 читаются с кланами Random.
-- **M-SP — одиночная игра против ИИ** (`max-brh-docs/architecture/plan-modes.md`):
+- **M-SP — одиночная игра против ИИ** (`max-brh-docs/architecture/client/plan-modes.md`):
   - экран настройки 1:1 из трёх экранов C++-порта (`max_app/src/setup.rs`):
     `GameConfigMenu` (`OPTNFRM`: сложность ИИ, таймеры, режим игры, кредиты,
     уровни ресурсов, условие победы), `PlanetSelectMenu` (`PLANETSE`: 3×2
