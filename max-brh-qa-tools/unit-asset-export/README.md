@@ -1,7 +1,7 @@
 # unit-asset-export — ресурсы M.A.X. по каждому типу юнита
 
 Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-rust`),
-как [`tools/max-resource-editor`](../max-resource-editor/README.md). Обходит все
+как [`max-brh-qa-tools/max-resource-editor`](../max-resource-editor/README.md). Обходит все
 **93 типа юнитов** (`UnitType::ALL`) и раскладывает их ресурсы по каталогам
 `max-rust-3d-models/assets-base/<TAG>/`:
 
@@ -28,7 +28,7 @@ assets-base/TANK/
 `assets/PATCHES.RES` и `max-rust/crates/max_app/data/cargo_unit_data.json`):
 
 ```sh
-cd tools/unit-asset-export
+cd max-brh-qa-tools/unit-asset-export
 cargo run --release
 ```
 

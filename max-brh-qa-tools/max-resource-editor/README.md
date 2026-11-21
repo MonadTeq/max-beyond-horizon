@@ -34,7 +34,7 @@
 ### Headless (без SDL) — всегда
 
 ```sh
-cd tools/max-resource-editor
+cd max-brh-qa-tools/max-resource-editor
 cargo build --release
 cargo run --release -- --export \
   ../../max-original/MAX.RES ../../max-original/COLOR.PAL ../../max-assets
@@ -109,7 +109,7 @@ error: выбор MAX.RES отменён — редактор не открыт.
 
 ```sh
 # UI из корня репозитория: MAX.RES найдётся в ./max-original/MAX.RES
-./tools/max-resource-editor/target/release/max-resource-editor
+./max-brh-qa-tools/max-resource-editor/target/release/max-resource-editor
 
 # явные пути + начальный выбор
 cargo run --release --features sdl -- --res ../../max-original/MAX.RES \

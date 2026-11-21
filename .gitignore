@@ -109,9 +109,9 @@ max-original/preferences.ini
 
 # max-resource-editor: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
 max-assets/images/
-tools/max-resource-editor/target/
-tools/max-resource-editor/*.png
-!tools/max-resource-editor/screenshot.png
+max-brh-qa-tools/max-resource-editor/target/
+max-brh-qa-tools/max-resource-editor/*.png
+!max-brh-qa-tools/max-resource-editor/screenshot.png
 
 # max-resource-editor: файловые логи headless-режимов (GUI-подсистема без консоли)
 export-log.txt
@@ -122,5 +122,5 @@ max-resource-editor-error.txt
 # MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (� git � ������ ����������, README
 # � manifest.csv)
 max-rust-3d-models/assets-base/
-tools/unit-asset-export/target/
+max-brh-qa-tools/unit-asset-export/target/
 ci-run.log
