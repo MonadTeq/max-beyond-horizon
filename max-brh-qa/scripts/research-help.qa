@@ -111,7 +111,7 @@ assert screen=InGame
 assert turn=1
 tick 5
 
-# --- Строим Research Center (как research.qa) ----------------------------
+# --- Строим Research Centre (как research.qa) ----------------------------
 select type Constructor
 assert selected
 build open
@@ -132,9 +132,9 @@ end_turn
 end_turn
 end_turn
 end_turn
-assert unit=Research Center
+assert unit=Research Centre
 select type Constructor
-assert hint=Finished building Research Center
+assert hint=Finished building Research Centre
 move near
 assert unit-order=activate
 tick 30
@@ -142,15 +142,15 @@ assert build-ready=no
 assert builder=outside
 assert site=none
 
-# --- Энергия/рабочие для Research Center (как research.qa) -----------------
+# --- Энергия/рабочие для Research Centre (как research.qa) -----------------
 # `Cargo_GetNetProduction(RESEARCH)` = power −1, life −1;
 # `ValidateIndustry` без `POWGEN`/`HABITAT` не дал бы центру работать.
 spawn at 27 20 Power Generator
-spawn at 26 20 Fuel Tank
+spawn at 26 20 Fuel Storage
 spawn at 26 22 Habitat
 
 # --- Включаем питание ----------------------------------------------------
-select type Research Center
+select type Research Centre
 complex fuel 40
 assert complex-fuel>=38
 key o

@@ -832,7 +832,8 @@ pub enum Command {
     Spawn {
         /// Чужая команда (по умолчанию — команда игрока).
         enemy: bool,
-        /// Имя типа (`Tank`, `Personnel Carrier`, …).
+        /// Имя типа — UFN (`Tank`, `Armoured Personnel Carrier`, …) или
+        /// `Debug`-имя варианта (`Tank`, `ArmouredPersonnelCarrier`).
         name: String,
     },
     /// `spawn at X Y NAME` — QA-only: поставить юнита **в указанную клетку**

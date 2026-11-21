@@ -1563,7 +1563,7 @@ pub fn unit_cost(unit: UnitType, clan: TeamClan) -> u32 {
     unit_price(&team_base_values(clan), unit)
 }
 
-/// Имя юнита (`ResourceManager_GetUnit(...).GetSingularName()`).
+/// Отображаемое имя типа — User-Friendly Name (`ResourceManager_GetUnit(...).GetSingularName()`).
 pub fn unit_label(unit: UnitType) -> &'static str {
     crate::buildmenu::unit_name(unit)
 }

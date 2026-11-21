@@ -2014,7 +2014,7 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().push_log("Research menu");
             } else {
                 app.hud_mut().push_log(
-                    "Research: select a powered Research Center of your team (O to power)",
+                    "Research: select a powered Research Centre of your team (O to power)",
                 );
             }
             Transition::None
@@ -3398,9 +3398,12 @@ fn apply_pending_orders(app: &mut App) {
 }
 
 /// Подпись юнита для журнала: имя (если задано) и тип.
+///
+/// Без собственного имени (`unit.name`) подпись — User-Friendly Name типа
+/// ([`crate::unit_names::unit_user_friendly_name`]), а не `Debug`-имя варианта.
 fn unit_label(unit: &UnitInfo) -> String {
     if unit.name.is_empty() {
-        format!("{:?}", unit.unit_type)
+        crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
     } else {
         format!("{} [{:?}]", unit.name, unit.unit_type)
     }

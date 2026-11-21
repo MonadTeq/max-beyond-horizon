@@ -146,8 +146,8 @@ assert unit-order=upgrade
 tick 5
 
 # --- load: курсорный режим 7 (units_manager.cpp:1011) --------------------
-spawn Personnel Carrier
-select type Personnel Carrier
+spawn Armoured Personnel Carrier
+select type Armoured Personnel Carrier
 assert selected
 spawn Infantry
 unit-menu open

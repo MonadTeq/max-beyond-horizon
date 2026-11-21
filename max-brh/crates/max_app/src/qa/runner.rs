@@ -1667,7 +1667,7 @@ impl QaRunner {
             ResearchCommand::Open => {
                 if !app.open_research_menu() {
                     return Err(
-                        "research open: нужен выделенный включённый Research Center своей команды (select type …, key O)"
+                        "research open: нужен выделенный включённый Research Centre своей команды (select type …, key O)"
                             .to_string(),
                     );
                 }
@@ -2821,8 +2821,9 @@ impl QaRunner {
         self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
     }
 
-    /// `select type NAME`: юнит игрока с таким именем (`unit_name` из
-    /// `BuildMenu`, без учёта регистра). Берётся самый новый подходящий.
+    /// `select type NAME`: юнит игрока с таким именем — UFN
+    /// ([`crate::buildmenu::unit_name`]) или `Debug`-имя варианта, без учёта
+    /// регистра. Берётся самый новый подходящий.
     fn select_type(&mut self, name: &str) -> Result<Flow, String> {
         let team = self.app.player_team();
         let wanted = name.trim().to_ascii_lowercase();

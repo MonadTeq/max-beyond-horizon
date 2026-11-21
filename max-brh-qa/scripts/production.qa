@@ -319,7 +319,7 @@ select type Training Hall
 # `POWGEN` (27,20) примыкает к западной грани 2×2, `FDUMP` (26,20) — к
 # генератору, `HABITAT` 2×2 (26,22) — к складу/генератору.
 spawn at 27 20 Power Generator
-spawn at 26 20 Fuel Tank
+spawn at 26 20 Fuel Storage
 spawn at 26 22 Habitat
 # `complex fuel N` — QA-only `Complex::Transfer(0,N,0)`: запас топлива в
 # котле выделенного комплекса (как `complex raw`, но для `FDUMP`).

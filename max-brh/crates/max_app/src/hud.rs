@@ -1469,9 +1469,9 @@ pub fn unit_panel_lines(state: &GameState, id: UnitId) -> Vec<String> {
     };
 
     let name = if unit.name.is_empty() {
-        format!("{:?}", unit.unit_type)
+        crate::unit_names::unit_user_friendly_name(unit.unit_type)
     } else {
-        unit.name.clone()
+        unit.name.as_str()
     };
     let max_hits = unit.base_values.get_attribute(ATTRIB_HITS);
     let max_ammo = unit.base_values.get_attribute(ATTRIB_AMMO);

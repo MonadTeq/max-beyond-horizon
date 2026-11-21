@@ -66,7 +66,7 @@ end_turn
 end_turn
 end_turn
 end_turn
-assert unit=Research Center
+assert unit=Research Centre
 # Достройка 1:1 (`SpawnNewUnit` + `UnitsManager_BuildingReady`): здание
 # появляется только после ухода строителя с площадки, а уход инициирует
 # **игрок** (`game_manager.cpp:6879-6890`: у выделенного строителя в
@@ -74,7 +74,7 @@ assert unit=Research Center
 # `ORDER_STATE_IN_TRANSITION`); дальше `PositionInTape` DEINIT/LEAVE →
 # `ActivateEngineer` → `ORDER_MOVE` + раскрытие `ScaleUnit(EXPAND)`.
 select type Constructor
-assert hint=Finished building Research Center
+assert hint=Finished building Research Centre
 move near
 assert unit-order=activate
 tick 30
@@ -82,17 +82,17 @@ assert build-ready=no
 assert builder=outside
 assert site=none
 
-# --- Энергия/рабочие для Research Center ----------------------------------
+# --- Энергия/рабочие для Research Centre ----------------------------------
 # `Cargo_GetNetProduction(RESEARCH)` при `ORDER_POWER_ON`: raw 0, power −1,
 # life −1 (`cargo.cpp:98-103`, `Cargo_GetLifeConsumptionRate(RESEARCH)=1`).
 # Центр стоит отдельным комплексом от базы, поэтому даём ему `POWGEN` (+1
 # энергия за 2 топлива) и `HABITAT` (+3 рабочих); топливо — в `FDUMP`.
 spawn at 27 20 Power Generator
-spawn at 26 20 Fuel Tank
+spawn at 26 20 Fuel Storage
 spawn at 26 22 Habitat
 
 # --- Включаем питание: тема Attack по умолчанию ----------------------------
-select type Research Center
+select type Research Centre
 complex fuel 40
 assert complex-fuel>=38
 key o

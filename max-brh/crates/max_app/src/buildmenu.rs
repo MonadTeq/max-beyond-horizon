@@ -241,81 +241,17 @@ impl BuildMenuAssets {
     }
 }
 
-/// Английские имена юнитов (`ResourceManager_GetUnit(...).GetSingularName()`).
+/// Отображаемое имя типа юнита — User-Friendly Name (UFN).
 ///
-/// Канон User-Friendly Name (`max-brh-docs/unit-name-review.md`) реализован
-/// отдельно — [`crate::unit_names::unit_user_friendly_name`] по `data/unit_names.json`.
-/// Эта таблица остаётся источником строк для QA-языка (`spawn NAME`,
-/// `select type NAME`, `unit-menu-item=…`); в 12 позициях она расходится с
-/// каноном (например `GoldRefinery` → «Comm Tower», `EcoSphere` → «Greenhouse»,
-/// `MaterialStorage` → «Ammo Dump») — сведение к UFN-таблице входит в Ф5.
+/// Единственный источник строк интерфейса для юнитов и зданий: список/очередь
+/// [`BuildMenu`], `CargoMenu`, `AbstractUpgradeMenu`, `TransferMenu`, портрет и
+/// подсказки HUD, журнал. Значения — [`crate::unit_names::unit_user_friendly_name`]
+/// (таблица `data/unit_names.json`; канон —
+/// `max-brh-docs/unit-name-review.md`, колонка «User-Friendly Name»).
+///
+/// C++: `ResourceManager_GetUnit(...).GetSingularName()`.
 pub fn unit_name(unit_type: UnitType) -> &'static str {
-    match unit_type {
-        // здания (строитель)
-        UnitType::MiningStation => "Mining Station",
-        UnitType::PowerStation => "Power Station",
-        UnitType::LightVehiclePlant => "Light Vehicle Plant",
-        UnitType::HeavyVehiclePlant => "Heavy Vehicle Plant",
-        UnitType::AirUnitsPlant => "Air Units Plant",
-        UnitType::Shipyard => "Shipyard",
-        UnitType::GoldRefinery => "Comm Tower",
-        UnitType::Depot => "Depot",
-        UnitType::Hangar => "Hangar",
-        UnitType::Dock => "Dock",
-        UnitType::Habitat => "Habitat",
-        UnitType::ResearchCentre => "Research Center",
-        UnitType::EcoSphere => "Greenhouse",
-        UnitType::TrainingHall => "Training Hall",
-        UnitType::Barracks => "Barracks",
-        UnitType::MaterialStorage => "Ammo Dump",
-        UnitType::FuelStorage => "Fuel Tank",
-        UnitType::GoldVault => "Gold Vault",
-        UnitType::PowerGenerator => "Power Generator",
-        UnitType::Connector => "Connector",
-        UnitType::Radar => "Radar",
-        UnitType::GunTurret => "Gun Turret",
-        UnitType::AntiAir => "Anti Aircraft",
-        UnitType::Artillery => "Artillery Turret",
-        UnitType::MissileLauncher => "Missile Launcher",
-        UnitType::LandingPad => "Landing Pad",
-        UnitType::Bridge => "Bridge",
-        UnitType::WaterPlatform => "Water Platform",
-        UnitType::ConcreteBlock => "Concrete Block",
-        UnitType::Road => "Road",
-        // подвижные
-        UnitType::Scout => "Scout",
-        UnitType::Surveyor => "Surveyor",
-        UnitType::Engineer => "Engineer",
-        UnitType::RepairUnit => "Repair Unit",
-        UnitType::SupplyTruck => "Supply Truck",
-        UnitType::FuelTruck => "Fuel Truck",
-        UnitType::GoldTruck => "Gold Truck",
-        UnitType::MobileAntiAir => "Mobile AA",
-        UnitType::MineLayer => "Mine Layer",
-        UnitType::Bulldozer => "Bulldozer",
-        UnitType::ArmouredPersonnelCarrier => "Personnel Carrier",
-        UnitType::Constructor => "Constructor",
-        UnitType::Scanner => "Scanner",
-        UnitType::Tank => "Tank",
-        UnitType::AssaultGun => "Assault Gun",
-        UnitType::RocketLauncher => "Rocket Launcher",
-        UnitType::MissileCrawler => "Missile Crawler",
-        UnitType::Fighter => "Fighter",
-        UnitType::Bomber => "Ground Attack Plane",
-        UnitType::AirTransport => "Air Transport",
-        UnitType::Awac => "AWAC",
-        UnitType::Escort => "Escort",
-        UnitType::Corvette => "Corvette",
-        UnitType::Gunboat => "Gunboat",
-        UnitType::Submarine => "Submarine",
-        UnitType::SeaTransport => "Sea Transport",
-        UnitType::MissileCruiser => "Missile Cruiser",
-        UnitType::SeaMineLayer => "Sea Mine Layer",
-        UnitType::CargoShip => "Cargo Ship",
-        UnitType::Infiltrator => "Infiltrator",
-        UnitType::Infantry => "Infantry",
-        _ => "Unit",
-    }
+    crate::unit_names::unit_user_friendly_name(unit_type)
 }
 
 // ---------------------------------------------------------------------------
@@ -1628,6 +1564,42 @@ mod tests {
         state.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
         state.team_units[0].set_gold(150);
         state
+    }
+
+    /// Интерфейс показывает UFN, а не прежние строки `unit_name`.
+    ///
+    /// 9 переименованных и 3 ранее отсутствовавших типа (`ShieldGenerator`,
+    /// `SupportPlant`, `RecreationCenter` отдавались как «Unit») сверены с
+    /// `data/unit_names.json` (`max-brh-docs/unit-name-review.md`).
+    #[test]
+    fn unit_name_is_the_user_friendly_name() {
+        for unit_type in UnitType::ALL {
+            assert_eq!(
+                unit_name(*unit_type),
+                crate::unit_names::unit_user_friendly_name(*unit_type),
+                "{unit_type:?}: UI-строка должна совпадать с UFN-таблицей"
+            );
+        }
+
+        for (unit_type, expected) in [
+            (UnitType::GoldRefinery, "Gold Refinery"),
+            (UnitType::ResearchCentre, "Research Centre"),
+            (UnitType::EcoSphere, "Eco-Sphere"),
+            (UnitType::MaterialStorage, "Material Storage"),
+            (UnitType::FuelStorage, "Fuel Storage"),
+            (UnitType::AntiAir, "Anti-Air"),
+            (UnitType::Artillery, "Artillery"),
+            (UnitType::MobileAntiAir, "Mobile Anti-Air"),
+            (
+                UnitType::ArmouredPersonnelCarrier,
+                "Armoured Personnel Carrier",
+            ),
+            (UnitType::ShieldGenerator, "Shield Generator"),
+            (UnitType::SupportPlant, "Support Plant"),
+            (UnitType::RecreationCenter, "Recreation Center"),
+        ] {
+            assert_eq!(unit_name(unit_type), expected, "{unit_type:?}");
+        }
     }
 
     #[test]

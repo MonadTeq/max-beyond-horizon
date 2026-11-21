@@ -1305,10 +1305,14 @@ pub fn map_viewport(viewport: &Viewport) -> Viewport {
     )
 }
 
-/// Имя юнита для панелей (`UnitInfo::GetDisplayName`): имя или тип.
+/// Имя юнита для панелей (`UnitInfo::GetDisplayName`): имя или User-Friendly Name.
+///
+/// Если у юнита не задано собственное имя (`unit.name`), панель показывает UFN
+/// типа — [`crate::unit_names::unit_user_friendly_name`], а не `Debug`-имя
+/// варианта (`MiningStation` → «Mining Station»).
 pub fn unit_name(unit: &UnitInfo) -> String {
     if unit.name.is_empty() {
-        format!("{:?}", unit.unit_type)
+        crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
     } else {
         unit.name.clone()
     }
