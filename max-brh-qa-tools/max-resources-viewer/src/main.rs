@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! max-resources-viewer                      # UI (нужен --features sdl)
-//! max-resources-viewer --export MAX.RES COLOR.PAL max-assets
+//! max-resources-viewer --export MAX.RES COLOR.PAL max-brh-assets
 //! max-resources-viewer --report MAX.RES
 //! ```
 //!

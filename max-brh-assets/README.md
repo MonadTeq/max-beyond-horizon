@@ -1,13 +1,13 @@
-# max-assets — изображения ресурсов M.A.X.
+# max-brh-assets — изображения ресурсов M.A.X.
 
 Каталог содержит **только** `README.md`: сами PNG регенерируются из
 `max-original/MAX.RES` и в git не коммитятся (см. `.gitignore`,
-`max-assets/images/`). Манифест и отчёт тоже генерируются.
+`max-brh-assets/images/`). Манифест и отчёт тоже генерируются.
 
 ## Что здесь лежит
 
 ```
-max-assets/
+max-brh-assets/
 ├── README.md
 └── images/                     # генерируется, в git не входит
     ├── ui/                     # 536 файлов: фон окна, панели, кнопки, поля
@@ -29,7 +29,7 @@ cd max-brh-qa-tools/max-resources-viewer
 cargo run --release -- --export \
   ../../max-original/MAX.RES \
   ../../max-original/COLOR.PAL \
-  ../../max-assets
+  ../../max-brh-assets
 ```
 
 `--export` работает **без SDL** (headless), поэтому достаточно Rust-тулчейна.

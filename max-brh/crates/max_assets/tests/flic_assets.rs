@@ -1,6 +1,6 @@
 //! FLC-ресурсы `MAX.RES` на реальных данных: все 71 `flc-ref` записи.
 //!
-//! * `MAX.RES` содержит 71 запись-ссылку (`flc-ref` в `max-assets/images/manifest.csv`):
+//! * `MAX.RES` содержит 71 запись-ссылку (`flc-ref` в `max-brh-assets/images/manifest.csv`):
 //!   тело записи — ASCIIZ-имя `*.FLC`-файла рядом с архивом (как `*.SPW`-ссылки,
 //!   `max-original-dasm/formats/spw.md` §1);
 //! * `manifest.csv` фиксирует `index/offset/size/ref` этих записей — тест
@@ -53,7 +53,7 @@ struct ManifestRow {
 
 fn manifest_flc_rows() -> Option<Vec<ManifestRow>> {
     let path = repo_root()
-        .join("max-assets")
+        .join("max-brh-assets")
         .join("images")
         .join("manifest.csv");
     let text = fs::read_to_string(&path).ok()?;
@@ -171,7 +171,7 @@ fn max_res_has_71_flc_reference_records() {
 #[test]
 fn max_res_flc_records_match_the_generated_manifest() {
     let Some(rows) = manifest_flc_rows() else {
-        eprintln!("пропуск: нет max-assets/images/manifest.csv");
+        eprintln!("пропуск: нет max-brh-assets/images/manifest.csv");
         return;
     };
     let max_res = data_dir().join("MAX.RES");

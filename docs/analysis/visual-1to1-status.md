@@ -1220,7 +1220,7 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 * Ошибки — значениями (`FlicError`), паник на битых данных нет.
 
 **Проверка.** `max_assets/tests/flic_assets.rs`: все 71 `flc-ref` записи
-`MAX.RES` (имена/смещения сверены с `max-assets/images/manifest.csv`), каждый
+`MAX.RES` (имена/смещения сверены с `max-brh-assets/images/manifest.csv`), каждый
 файл разобран и декодирован целиком — 1115 кадров, из них 36 анимированных
 (30 кадров), 35 статичных; размеры 128×128 (кроме `SAVELOAD.FLC` 128×256),
 `speed` 67/71, число кадров 1/30. `max_assets/tests/flic_vectors.rs` сверяет

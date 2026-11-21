@@ -108,7 +108,7 @@ max-brh-qa/out/
 max-original/preferences.ini
 
 # max-resources-viewer: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
-max-assets/images/
+max-brh-assets/images/
 max-brh-qa-tools/max-resources-viewer/target/
 max-brh-qa-tools/max-resources-viewer/*.png
 !max-brh-qa-tools/max-resources-viewer/screenshot.png

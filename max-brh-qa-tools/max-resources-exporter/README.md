@@ -69,7 +69,7 @@ cargo run --release -- \
   `animation.gif` пишется своим GIF89a-кодировщиком (`src/gif.rs`: LZW,
   локальные палитры кадров при смене, зацикливание);
 * `sheet.png` — горизонтальная лента кадров **корпуса**, выровненная по горячей
-  точке, как в [`max-assets/README.md`](../../max-assets/README.md) §«Лента
+  точке, как в [`max-brh-assets/README.md`](../../max-brh-assets/README.md) §«Лента
   кадров» (у `INFANTRY`/`COMMANDO` она до ~25 000 px в ширину — это нормально
   для 200 кадров).
 

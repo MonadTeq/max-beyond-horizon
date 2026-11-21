@@ -32,7 +32,7 @@
   для команд в порядке `RED..GRAY` (`ManageEconomy` → `ProgressBuildState`).
   Экономика: золото списывается ставкой `Cargo_GetRawConsumptionRate` за ход
   (материалы комплексов — TODO(P3)); нехватка золота — пауза, а не отмена.
-- [x] BuildMenu: заказ юнитов/зданий (UI 1:1, ресурсы `B_*`/иконки из max-assets).
+- [x] BuildMenu: заказ юнитов/зданий (UI 1:1, ресурсы `B_*`/иконки из max-brh-assets).
   `max-brh/crates/max_app/src/buildmenu.rs`: `FACBUILD`/`CONBUILD` + `BLD*`
   (фон 640×480, списки 483,60 / 337,60, кнопки по координатам C++), клавиша
   `B`, модальный ввод, заказ — `Command::Order` с `PayloadP4` (пакет 08).

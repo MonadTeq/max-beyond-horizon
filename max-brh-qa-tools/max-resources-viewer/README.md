@@ -22,7 +22,7 @@
   дереву, затем нативный диалог с фильтром `*.RES`; `COLOR.PAL` — рядом с
   архивом или заглушка-палитра с предупреждением.
 * **Экспорт 1069 PNG** из реального `MAX.RES` ≈ 10,1 МБ (см.
-  [`max-assets/README.md`](../../max-assets/README.md)).
+  [`max-brh-assets/README.md`](../../max-brh-assets/README.md)).
 * **Без консольного окна**: `.exe` всегда собирается с подсистемой Windows
   (GUI), двойной клик открывает только окно редактора. Headless-режимы
   дублируют вывод в файлы — см. «Логи headless-режимов».
@@ -37,7 +37,7 @@
 cd max-brh-qa-tools/max-resources-viewer
 cargo build --release
 cargo run --release -- --export \
-  ../../max-original/MAX.RES ../../max-original/COLOR.PAL ../../max-assets
+  ../../max-original/MAX.RES ../../max-original/COLOR.PAL ../../max-brh-assets
 ```
 
 ### Windows + SDL3 через vcpkg (как `max_app`)
