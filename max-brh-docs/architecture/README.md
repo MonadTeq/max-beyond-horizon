@@ -9,7 +9,6 @@
 | [protocol-grpc.md](protocol-grpc.md) | protobuf-схемы Horizon (horizon.v1), решения, JSON↔proto |
 | [state-model.md](state-model.md) | Модель состояния партии (15 перечислений, 11 структур, проекция снапшота) |
 | [barrier-flow.md](barrier-flow.md) | Lockstep-барьеры 00/52/45/54 и релей в звезде |
-| [src-fork.md](src-fork.md) | Отношение src/ (наша развилка) к max-cpp-port (оракулу) |
 | [dedicated-server-plan.md](dedicated-server-plan.md) | Эксплуатация C++-headless под Horizon |
 | [lobby-ui.md](lobby-ui.md) | UI-лобби выделенного сервера (игровой лобби + админ-консоль) — отдельно от игры |
 
