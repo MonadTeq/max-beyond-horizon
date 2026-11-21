@@ -118,9 +118,8 @@ export-log.txt
 report.txt
 max-resources-viewer-error.txt
 
-# unit-asset-export: �������� �������� �� ������� ����� �������������� ��
-# MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (� git � ������ ����������, README
-# � manifest.csv)
-max-rust-3d-models/assets-base/
+# max-resources-exporter: по-юнитная выгрузка (93 каталога) регенерируется из
+# MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC; в git — только README и manifest.csv.
+max-brh-assets/units/*/
 max-brh-qa-tools/max-resources-exporter/target/
 ci-run.log
