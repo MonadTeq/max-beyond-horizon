@@ -11,11 +11,12 @@
 | [barrier-flow.md](barrier-flow.md) | Lockstep-барьеры 00/52/45/54 и релей в звезде |
 | [src-fork.md](src-fork.md) | Отношение src/ (наша развилка) к max-cpp-port (оракулу) |
 | [dedicated-server-plan.md](dedicated-server-plan.md) | Эксплуатация C++-headless под Horizon |
+| [lobby-ui.md](lobby-ui.md) | UI-лобби выделенного сервера (игровой лобби + админ-консоль) — отдельно от игры |
 
 ## Общая схема
 
 ```
-Rust-клиент (max-brh)              Horizon (max-brh-server)        C++ headless (src/)
+Rust-клиент (max-brh)              Horizon (max-brh-server)        C++ headless (max-cpp-port)
 ┌─────────────────────┐   gRPC      ┌──────────────────────┐  spawn     ┌──────────────────┐
 │ max_app (UI/цикл)   │◄───────────►│ WS+gRPC лобби/админ   │───────────►│ max-port --server │
 │ max_render (визуал) │   ENet/UDP  │ тикеты, сессии        │            │ релей/арбитр     │
@@ -28,11 +29,11 @@ Rust-клиент (max-brh)              Horizon (max-brh-server)        C++ hea
 - **max_core** — полная детерминированная lockstep-симуляция (бит-в-бит с C++), чистые функции без I/O.
 - **max_net** — бинарные протоколы: gRPC (Horizon) + UDP/ENet-семантика (сессия).
 - **max_assets/max_render** — форматы оригинальных ресурсов и визуал 1:1.
-- **src/** — наша развилка C++-порта: headless-сервер-арбитр (релей пакетов, CRC-барьеры).
+- **max-cpp-port** — оракул C++-порта; из него собирается headless-сервер-арбитр (`--server`: релей пакетов, CRC-барьеры).
 - **max-brh-server** — оркестратор сессий (Rust).
 
 ## Референсы-оракулы (не изменяются)
 
 - `max-cpp-port/` — канонический код M.A.X. Port (klei1984/max, git-субмодуль).
-- `max-cpp-port-max-brh-docs/` — документация автора (save-формат V70, Watcom-конструкции, сеть).
+- `max-cpp-port-docs/` — документация автора (save-формат V70, Watcom-конструкции, сеть).
 - `max-original/` — оригинальная игра; `max-original-dasm/` — наши RE-артефакты.
