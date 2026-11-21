@@ -68,16 +68,18 @@ Horizon — plaintext `http://host:port` (`horizon.rs` собирает `Endpoin
 cargo build -p max_app --features tls      # max_net/tls → tonic/tls-ring + tls-webpki-roots
 ```
 
-### Кросс-компиляция под Windows (`x86_64-pc-windows-gnu`)
+### Windows-сборка (`x86_64-pc-windows-msvc`, нативно; `windows-gnu` — тоже работает)
 
 `build.rs` выбирает платформенный файл ENet по **`CARGO_CFG_TARGET_OS`**, а не
 по `cfg!(target_os = "windows")`: в build-скрипте этот `cfg!` раскрывается для
 **хоста**, поэтому при кросс-сборке в Windows компилировался `unix.c` (он весь
 под `#ifndef _WIN32` → пустой объект) и линковка падала на
 `undefined reference to enet_socket_create`. Тот же env-переменной управляются
-`winmm`/`ws2_32`.
+`winmm`/`ws2_32`. На нативном MSVC `cfg!` и `CARGO_CFG_TARGET_OS` совпадают,
+правило нужно для любого кросс-таргета.
 
-Сборка: `bash max-brh-cicd/scripts/build-windows.sh` (mingw-w64 в Docker, headless:
+Сборка: `powershell -ExecutionPolicy Bypass -File
+max-brh-cicd\scripts\build-windows-headless.ps1` (нативный MSVC, headless:
 `--no-default-features`, без `sdl*`/`sound`), см. `max-brh-cicd/scripts/README.md`.
 
 ## Проверка

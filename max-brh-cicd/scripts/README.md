@@ -1,15 +1,15 @@
 # max-brh-cicd/scripts — релизные и проверочные скрипты
 
-`build-windows.sh` и `live-smoke*.sh` рассчитаны на Git Bash / WSL / Linux и
-работают через Docker (`rust:1.94.0-bookworm`) — хостовый Rust-тулчейн им не
-нужен. На Windows их запускать из **Git Bash** (не из `cmd`/PowerShell):
+Windows-сборки — **нативные** PowerShell-скрипты на Windows-хосте (MSVC, без
+Docker и без mingw): `build-windows-headless.ps1` (headless) и
+`build-windows-ui.ps1` (окно SDL3 + звук). Linux-часть (`live-smoke*.sh`,
+`release.sh`, `ci.sh`) по-прежнему идёт через Docker (`rust:1.94.0-bookworm`);
+на Windows их запускать из **Git Bash** (не из `cmd`/PowerShell):
 `cygpath` и `MSYS_NO_PATHCONV` нужны для корректной передачи путей в Docker.
-`build-windows-ui.ps1` — наоборот, PowerShell-скрипт для **Windows-хоста**:
-он собирает интерактивный клиент нативным MSVC.
 
 | Скрипт | Что делает | Требования |
 |---|---|---|
-| `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-brh` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
+| `build-windows-headless.ps1` | **нативная** Windows-сборка `max-brh` (headless: `--no-default-features`, без SDL3/звука) на MSVC + упаковка `bin/release/max_app-<ver>-windows-x86_64.zip` + прогон `--help`/`--demo` нативно | Windows, VS с workload «Desktop development with C++» (MSVC + Windows SDK), Rust 1.94.0 (`x86_64-pc-windows-msvc`), данные игры для `--demo` |
 | `build-windows-ui.ps1` | **нативная** Windows-сборка `max-brh` с окном SDL3 и звуком + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
 | `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранный UI-клиент |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
@@ -48,33 +48,38 @@ probe и клиенты живут в network namespace контейнера Hor
 `mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь
 `session_root` — там лежит 58-МБ `max-port`).
 
-## build-windows.sh
+## build-windows-headless.ps1
 
-```sh
-bash max-brh-cicd/scripts/build-windows.sh             # сборка + zip + wine-smoke
-bash max-brh-cicd/scripts/build-windows.sh --no-wine   # без wine (~400 МБ apt)
-bash max-brh-cicd/scripts/build-windows.sh --dry-run   # план, Docker не запускается
-bash max-brh-cicd/scripts/build-windows.sh --out /tmp/rel
+Нативная Windows-сборка **headless**-бинаря (без окна SDL3, без звука).
+Прежняя кросс-сборка `build-windows.sh` (Docker + mingw-w64, target
+`x86_64-pc-windows-gnu`) удалена: на Windows-хосте есть MSVC, и нативный
+тулчейн даёт обычный MSVC-рантайм вместо mingw без Docker и wine.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
+# только собрать и проверить, без упаковки:
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -NoPackage
+# не запускать exe (--help/--demo) — на хосте без данных игры:
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -SkipSmoke
 ```
 
-В контейнере `rust:1.94.0-bookworm` скрипт ставит
-`gcc-mingw-w64-x86-64` + `binutils-mingw-w64-x86-64` (ими собирается vendored
-ENet 1.3.18), `file`, `zip`, опционально `wine`, добавляет target
-`x86_64-pc-windows-gnu` и выполняет:
+Что делает: находит VS через `vswhere`
+(`-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), пишет
+`build\msvc-headless-build.bat` (там `call vcvars64.bat`, `PATH` +
+`~\.cargo\bin`, `CARGO_TARGET_DIR=<repo>\bin\target-headless`) и собирает:
 
 ```sh
-cargo build --release --locked --target x86_64-pc-windows-gnu \
-            -p max_app --no-default-features
+cargo build --release --locked -p max_app --no-default-features
 ```
 
-`--no-default-features` = headless: default-фичи `max_app`
-(`sdl-from-source` → SDL3 из исходников через CMake) выключены, поэтому окно
-SDL3 и `sound` (rodio/cpal → WASAPI) не включаются. Полная SDL-сборка — только
-на Windows-хосте, инструкция лежит в
-`bin/release/max_app-<версия>-windows-x86_64/README.txt` и в
-`max-brh-docs/development/release-checklist.md` §6.
+target — дефолтный для Windows-rustup `x86_64-pc-windows-msvc` (нативный, без
+`--target`). `--no-default-features` = headless: default-фича `max_app`
+(`sdl-from-source` → SDL3 3.4.20 через CMake) выключена, поэтому окно SDL3 и
+`sound` (rodio/cpal → WASAPI) не включаются, а **vcpkg/SDL3 не нужны вовсе**.
+Vendored ENet 1.3.18 (`max_net/build.rs`) компилируется `cc` через `cl.exe`
+из vcvars.
 
-Артефакты (`$OUT` = `release/` по умолчанию):
+Артефакты (`-Out` = `bin\release` по умолчанию):
 
 ```
 bin/release/max_app-<ver>-windows-x86_64/            max-brh.exe, README.txt,
@@ -83,47 +88,35 @@ bin/release/max_app-<ver>-windows-x86_64.zip         архив каталога
 bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 ```
 
-Проверки внутри скрипта:
+Проверки внутри скрипта (всё — **нативно** на хосте, без wine):
 
-- PE-заголовок: `file` → `PE32+ executable (console) x86-64`,
-  `objdump -f` → `file format pei-x86-64`, первые байты `MZ`;
-- подсистема PE: `file` должен давать `PE32+ executable (console)` —
-  headless-бинарь обязан остаться **Console** (Subsystem=3): подсистема
-  `windows` включается только feature `sdl`, а без неё `--help`/`--demo`
-  должны печатать в терминал/CI (несовпадение — ошибка сборки);
-- импорты перечисляются в логе; `libgcc_s_seh-1.dll`/`libwinpthread-1.dll` в
-  них быть не должно (иначе exe не запустится без mingw-рантайма) — это
-  проверяется как ошибка сборки;
-- wine-smoke (если wine поставлен): `max-brh.exe --help` и
-  `max-brh.exe --demo SAVE1.CAM --turns 1` в каталоге с сейвом
-  `max-original/SAVE1.CAM`; лог — `build/smoke-logs/windows-wine-smoke.log`.
+- PE-заголовок читается inline: `MZ`, сигнатура `PE\0\0`, машина x64, `PE32+`;
+- подсистема PE — **Console (Subsystem=3)**: подсистема `windows` включается
+  только feature `sdl`, а headless собирается без неё, поэтому `--help` и
+  `--demo` печатают в терминал/CI (несовпадение — ошибка сборки);
+- импорты (`dumpbin /dependents`, лог `build\msvc-headless\imports.txt`):
+  системные DLL + `VCRUNTIME140.dll`; mingw-рантайма
+  (`libgcc_s_*`/`libwinpthread-1.dll`) быть не должно;
+- `max-brh.exe --help` печатает справку (ищется «ИСПОЛЬЗОВАНИЕ», rc=0);
+- `max-brh.exe --demo max-original\SAVE1.CAM --turns 1` даёт `ticks=1` и
+  `state_digest=0x…`; лог прогона —
+  `build\smoke-logs\windows-msvc-headless-smoke.log`.
 
-Про wine: в Debian bookworm (база образа) wine 8.0, а `std` Rust импортирует
-`bcryptprimitives!ProcessPrng` — этой DLL в wine 8.0 нет, и exe падает на
-загрузке (exit 53, «Importing dlls failed, status c0000135»). Скрипт не угадывает
-версию: сначала запускает exe «как есть», и только если `--help`/`--demo` не
-прошли, подкладывает рядом с копией exe **тестовый** шим
-`bcryptprimitives.dll` (`ProcessPrng` → `advapi32!SystemFunction036`) и
-повторяет прогон. В релизный zip шим **не входит** — на настоящей Windows
-`bcryptprimitives.dll` системная. Вердикт виден в логе:
-`WINE: ok (…; шим bcryptprimitives: да|нет)` или `WINE: failed (…)`. Если wine
-не установился, шаг помечается `WINE: skipped` и сборка не падает; сделать
-wine-smoke обязательным можно через `WINE_STRICT=1`.
+Вывод exe снимается через `cmd` с перенаправлением в файл и читается как
+UTF-8: так проверка справки не зависит от кодировки консоли PowerShell.
 
-Переменные: `RUST_IMAGE`, `OUT`, `WINE_STRICT=1`.
+### Особенности сборки, которые остались в коде
 
-### Что пришлось поправить ради кросс-сборки
-
-- `max_net/build.rs` выбирал файл ENet по `cfg!(target_os = "windows")` — это
-  cfg **хоста**, на котором компилируется build-скрипт. При кросс-сборке в
-  Windows получался `unix.c` (он весь под `#ifndef _WIN32` → пустой объект) и
-  линковка падала на `undefined reference to enet_socket_create`. Теперь
-  платформа берётся из `CARGO_CFG_TARGET_OS`.
+- `max_net/build.rs` выбирает платформенный файл ENet по
+  `CARGO_CFG_TARGET_OS`, а не по `cfg!(target_os = "windows")`: в build-скрипте
+  `cfg!` раскрывается для **хоста**, поэтому при любой кросс-сборке в Windows
+  компилировался `unix.c` (он весь под `#ifndef _WIN32` → пустой объект) и
+  линковка падала на `undefined reference to enet_socket_create`. При нативной
+  MSVC-сборке это неважно, но правило осталось — target-совместимость.
 - `tonic` (0.14) подключён с `default-features = false` и явными
-  `router,transport,codegen`. У 0.14 дефолт и так без TLS (в `Cargo.lock`
-  rustls/ring не было), но набор зафиксирован явно: смена дефолтов в будущих
-  версиях не притащит ring/aws-lc (C+asm) в кросс-сборку. Для `https://` есть
-  opt-in фича `tls` (`max_net/tls` → `max_app/tls`, `tonic/tls-ring` +
+  `router,transport,codegen`: смена дефолтов в будущих версиях не притащит
+  ring/aws-lc (C+asm) в лёгкую headless-сборку. Для `https://` есть opt-in
+  фича `tls` (`max_net/tls` → `max_app/tls`, `tonic/tls-ring` +
   `tonic/tls-webpki-roots`); её зависимости лежат в `Cargo.lock` как
   опциональные и не собираются без фичи.
 

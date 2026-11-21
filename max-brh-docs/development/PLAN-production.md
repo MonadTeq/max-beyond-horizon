@@ -188,7 +188,8 @@
   `max-brh` workspace = **1.1.0** (Cargo.lock обновлён); `CHANGELOG.md`
   `[1.1.0] — 2026-11-16`; пересобраны
   `bin/release/max_app-1.1.0-windows-x86_64-ui` (MSVC+vcpkg, SDL3+sound),
-  `bin/release/max_app-1.1.0-windows-x86_64` (mingw, headless, wine-smoke) и
+  `bin/release/max_app-1.1.0-windows-x86_64` (нативный MSVC, headless,
+  `--help`/`--demo` нативно) и
   `bin/release/max_app-1.1.0-linux-x86_64.tar.gz`; SHA256SUMS внутри бандлов;
   `release-checklist.md` — раздел v1.1.0 со свидетельствами. **Тег не создан**
   (по указанию: сделает хозяин), команда подготовлена:
@@ -273,7 +274,8 @@
   новые стадии. Портрет/описание/иконки — frame-тесты
   `tests/cargo_render.rs` (портрет, описание вкл/выкл, pips, линии, смена
   типа) и UNIT-тесты `mobilize`/`cargo_unit_data`.
-- [x] Артефакты и документация: Windows UI (MSVC+vcpkg) и headless (mingw)
+- [x] Артефакты и документация: Windows UI (MSVC+vcpkg) и headless (нативный
+  MSVC, без Docker/mingw)
   пересобраны; `CHANGELOG.md`, `max-brh-docs/analysis/visual-1to1-status.md`,
   `suite/03-single-player.md` (TC-0324…0328), `suite/09-visual-1to1.md`
   (TC-0922/0927), `tools/cargo_vectors/README.md`.

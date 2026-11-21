@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 <#
 .SYNOPSIS
   Проверка подсистемы PE-файла (Subsystem из IMAGE_OPTIONAL_HEADER) без dumpbin.

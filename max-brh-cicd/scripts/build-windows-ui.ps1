@@ -1,13 +1,14 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 <#
 .SYNOPSIS
   Нативная Windows-сборка M.A.X. Rust-клиента (max_app) с окном SDL3 и звуком,
   упаковка в bin/bin/release/max_app-<ver>-windows-x86_64-ui/.
 
 .DESCRIPTION
-  В отличие от max-brh-cicd/scripts/build-windows.sh (кросс-сборка headless в Docker),
-  этот скрипт собирает ИНТЕРАКТИВНЫЙ клиент на Windows-хосте: SDL3 берётся из
-  vcpkg и линкуется MSVC, звук — rodio/cpal (WASAPI, отдельных DLL не нужно).
+  Нативный двойник build-windows-headless.ps1 (тот собирает headless на MSVC,
+  без SDL3 и звука): этот скрипт собирает ИНТЕРАКТИВНЫЙ клиент на Windows-хосте —
+  SDL3 берётся из vcpkg и линкуется MSVC, звук — rodio/cpal (WASAPI, отдельных
+  DLL не нужно).
 
   Требуется (всё ставится без прав администратора, кроме самого Visual Studio):
     * Visual Studio (Build Tools или Community) с workload "Desktop development

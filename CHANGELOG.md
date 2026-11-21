@@ -1,6 +1,41 @@
 ## [Unreleased]
 
+### Изменено
+
+- **Windows-сборки переведены на нативный MSVC: Docker/mingw-w64 и wine для
+  Windows убраны.** Headless-бинарь теперь собирает
+  `max-brh-cicd/scripts/build-windows-headless.ps1` — PowerShell-скрипт на
+  Windows-хосте: `vswhere` → `vcvars64.bat` → `cargo build --release --locked
+  -p max_app --no-default-features` под target по умолчанию
+  `x86_64-pc-windows-msvc` (без `--target`, без vcpkg/SDL3, без `sound`).
+  Упаковка та же, что у прежней кросс-сборки:
+  `bin/release/max_app-<ver>-windows-x86_64/` (`max-brh.exe`, `README.txt`,
+  `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`) + `.zip` + `.zip.sha256`. Проверки
+  идут **нативно на хосте** (не под wine): `--help` и
+  `--demo SAVE1.CAM --turns 1`; PE-подсистема остаётся Console (Subsystem=3),
+  импорты — системные DLL + `vcruntime140.dll` (mingw-рантайма и `SDL3.dll`
+  нет). Артефакты 1.1.0 пересобраны: `max-brh.exe` 4 433 408 Б, sha256
+  `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`; zip
+  1 807 530 Б, sha256
+  `f5388c39c52c6d2a069f4bfdc6087cba8efa323e3e98d96207305542069f06f1`;
+  `--demo` даёт `ticks=1 … units=312 state_digest=0x733D`.
+  Удалён `max-brh-cicd/scripts/build-windows.sh` (Docker +
+  mingw-w64, `x86_64-pc-windows-gnu`) и ссылки на него: `release.sh`,
+  `max-brh-cicd/scripts/README.md`, `max-brh-docs/development/build.md`,
+  `max-brh-docs/development/release-checklist.md` §6, `max-brh/README.md`,
+  `max-brh/crates/max_net/README.md`, `max-brh/crates/max_app/README.md`.
+  `workspace-clean.ps1` чистит target-каталоги нативных Windows-сборок
+  (`bin\target`, `bin\target-headless`) и `build\msvc-headless`.
+
 ### Исправлено
+
+- **Windows-PowerShell-скрипты сборки не парсились в PowerShell 5.1.**
+  `pe-subsystem.ps1` и `build-windows-ui.ps1` лежали в UTF-8 **без BOM**, а
+  Windows PowerShell 5.1 читает такой файл как ANSI: кириллица в строках ломала
+  парсер (`Unexpected token`, `Missing closing '}'`), то есть проверка PE и
+  UI-сборка на хосте падали ещё до запуска. Оба файла пересохранены в UTF-8
+  **с BOM** (как и новый `build-windows-headless.ps1`);
+  `pe-subsystem.ps1 -Expected 3` теперь отрабатывает (rc=0).
 
 - **Энергия комплекса: завод не стартует без power/life, здания отключаются при
   дефиците, сверху — сообщение о нехватке.** Оракул: `cargo.cpp:70-138`

@@ -97,13 +97,17 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   `--no-default-features --features sdl-from-source,sound`, упаковывает
   `release/` и готовит тег `v1.1.0`; полный порядок —
   `../max-brh-docs/development/release-checklist.md`.
-- Windows x64, headless (M6.4): `bash ../max-brh-cicd/scripts/build-windows.sh` —
-  кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
-  Windows-тулчейна на хосте: `cargo build --release --target
-  x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
-  **console** (`max-brh.exe` + `bin/release/max_app-<ver>-windows-x86_64.zip` и
-  wine-smoke `--help`, `--demo SAVE1.CAM`): без feature `sdl` подсистема
-  остаётся 3, вывод `--demo`/`--new-game`/`--connect` виден в терминале/CI.
+- Windows x64, headless (M6.4): нативная сборка на MSVC —
+  `powershell -ExecutionPolicy Bypass -File ..\max-brh-cicd\scripts\build-windows-headless.ps1`
+  (VS с workload «Desktop development with C++»: MSVC + Windows SDK ищутся через
+  `vswhere` → `vcvars64`; Docker и mingw для Windows больше не нужны):
+  `cargo build --release --locked -p max_app --no-default-features` под target по
+  умолчанию `x86_64-pc-windows-msvc` → PE32+ x86-64 **console** (`max-brh.exe` +
+  `bin/release/max_app-<ver>-windows-x86_64.zip`). Скрипт проверяет
+  Subsystem=3 и прогоняет `--help`/`--demo SAVE1.CAM --turns 1` **нативно**
+  (без wine; лог — `build/smoke-logs/windows-msvc-headless-smoke.log`): без
+  feature `sdl` подсистема остаётся 3, вывод `--demo`/`--new-game`/`--connect`
+  виден в терминале/CI.
 - Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
   Windows-хосте через `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1`
   (`--no-default-features --features sdl-vcpkg,sound`, SDL3 из vcpkg) →

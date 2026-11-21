@@ -64,10 +64,15 @@ M.A.X. Port используется как **оракул** (каноничес
 
 ```sh
 bash ci.sh                                   # тесты + QA + golden (Docker)
+powershell -File max-brh-cicd\scripts\build-windows-headless.ps1   # Windows headless (нативный MSVC, без Docker/mingw)
 powershell -File max-brh-cicd\scripts\build-windows-ui.ps1   # Windows-бинарь с окном (MSVC+vcpkg)
 bash release.sh                              # Linux-бинарь + архив
 docker compose up -d --build                 # сервер Horizon
 ```
+
+Docker для Windows-сборок не нужен: обе Windows-сборки идут нативным MSVC на
+хосте (headless — `bin\release\max_app-1.1.0-windows-x86_64.zip`, UI —
+`…-windows-x86_64-ui.zip`).
 
 Необходимые инструменты и библиотеки — там же (Rust 1.94, MSVC+vcpkg/SDL3, Docker,
 Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).

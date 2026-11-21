@@ -54,11 +54,16 @@ powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.p
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
 ```
 
-### Windows headless-бинарь (кросс-сборка, без MSVC)
-```sh
-bash max-brh-cicd/scripts/build-windows.sh
+### Windows headless-бинарь (нативная сборка MSVC)
+```powershell
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe
 ```
+Нативно на MSVC (`x86_64-pc-windows-msvc`), без Docker и без mingw; Docker для
+Windows-сборок больше не используется. Скрипт сам поднимает `vcvars64`, собирает
+`cargo build --release --locked -p max_app --no-default-features`, проверяет PE
+(Subsystem=3, console) и прогоняет `--help`/`--demo SAVE1.CAM --turns 1` на
+хосте (без wine), затем упаковывает каталог + `.zip` + `.zip.sha256`.
 
 ### Linux-бинарь + архив
 ```sh
@@ -157,7 +162,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
-Готовый headless-артефакт (Windows, кросс-сборка): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
+Готовый headless-артефакт (Windows, нативный MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через

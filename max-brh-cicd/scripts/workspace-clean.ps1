@@ -1,4 +1,4 @@
-# Очистка рабочих артефактов (сборки/логи/скриншоты). Повторяемая.
+﻿# Очистка рабочих артефактов (сборки/логи/скриншоты). Повторяемая.
 #   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\workspace-clean.ps1 [-DryRun]
 param([switch]$DryRun)
 $ErrorActionPreference = 'Continue'
@@ -24,11 +24,19 @@ Write-Host ("== workspace: {0:N1} GB ==" -f ($before / 1GB))
 Remove-Target 'max-brh\target'
 Remove-Target 'max-brh-server\target'
 Remove-Target 'max-brh-qa-tools\max-resources-viewer\target'
+# Windows-сборки нативным MSVC: UI (build-windows-ui.ps1) и headless
+# (build-windows-headless.ps1) держат target отдельно от max-brh\target, чтобы
+# MSVC-артефакты не смешивались с Linux/Docker-сборками.
+Remove-Target 'bin\target'
+Remove-Target 'bin\target-headless'
+# CARGO_HOME для Linux/Docker-сборок (ci.sh, release.sh); Windows-сборки его не
+# используют — они берут ~\.cargo.
 Remove-Target 'build\cargo-home'
 
 # --- устаревшие/кросс-сборки и временные каталоги build\ -------------------
 $buildDirs = @(
-    'bin\target', 'bin\target-headless', 'bin\release',
+    'bin\release',
+    'build\msvc-headless',
     'build\cross-winxp-x64-debug', 'build\cross-winxp-x64-server-debug',
     'build\linux-x64-debug', 'build\linux-x64-server-static',
     'build\m52', 'build\run', 'build\run2', 'build\recovered',
