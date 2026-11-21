@@ -298,7 +298,7 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
             UnitOrderState::UnitReady => Some("V_M166"),
             _ => Some("V_M284"),
         }
-    } else if unit.unit_type == UnitType::ResearchCenter && unit.orders == UnitOrder::PowerOn {
+    } else if unit.unit_type == UnitType::ResearchCentre && unit.orders == UnitOrder::PowerOn {
         // C++ дополнительно проверяет `turns_to_complete == 0`; в порте счётчик
         // живёт в `GameState`, поэтому V_M093 играет при выборе включённого
         // Research Center (см. `App::select_unit`).
@@ -343,7 +343,7 @@ mod tests {
             "таблица должна покрывать все {} типов SC_UNITS",
             UNIT_END
         );
-        assert_eq!(unit_sfx_token(UnitType::CommTower), "COMMTWR");
+        assert_eq!(unit_sfx_token(UnitType::GoldRefinery), "COMMTWR");
         assert_eq!(unit_sfx_token(UnitType::Tank), "TANK");
         assert_eq!(unit_sfx_token(UnitType::AirUnitsPlant), "AIRPLT");
         assert_eq!(unit_sfx_token(UnitType::RocketSmoke), "RKTSMOKE");

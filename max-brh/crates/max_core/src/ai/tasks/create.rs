@@ -70,7 +70,7 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
         UnitType::AirUnitsPlant
     } else if flags & unit_flags::MOBILE_SEA_UNIT != 0 {
         UnitType::Shipyard
-    } else if matches!(unit_type, UnitType::Infantry | UnitType::Commando) {
+    } else if matches!(unit_type, UnitType::Infantry | UnitType::Infiltrator) {
         UnitType::TrainingHall
     } else if flags & unit_flags::MOBILE_LAND_UNIT != 0 {
         UnitType::HeavyVehiclePlant
@@ -192,9 +192,9 @@ pub fn cargo_type_of(unit_type: UnitType) -> Option<CargoType> {
         | UnitType::GoldTruck
         | UnitType::FuelTruck => Some(CargoType::Raw),
         UnitType::Depot
-        | UnitType::ADump
+        | UnitType::MaterialStorage
         | UnitType::MiningStation
-        | UnitType::Greenhouse
+        | UnitType::EcoSphere
         | UnitType::Barracks => Some(CargoType::Raw),
         _ => None,
     }
@@ -206,9 +206,9 @@ pub fn cargo_type_of(unit_type: UnitType) -> Option<CargoType> {
 /// что у зданий-потребителей по классам.
 pub fn raw_consumption_rate(unit_type: UnitType) -> i32 {
     match unit_type {
-        UnitType::MiningStation | UnitType::Greenhouse | UnitType::Habitat => 2,
+        UnitType::MiningStation | UnitType::EcoSphere | UnitType::Habitat => 2,
         UnitType::PowerStation | UnitType::PowerGenerator => 1,
-        UnitType::ResearchCenter | UnitType::CommTower => 1,
+        UnitType::ResearchCentre | UnitType::GoldRefinery => 1,
         UnitType::Barracks | UnitType::Depot | UnitType::Hangar | UnitType::Dock => 1,
         UnitType::LightVehiclePlant
         | UnitType::HeavyVehiclePlant
@@ -1054,7 +1054,7 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
         return;
     }
 
-    let should_request = unit_type != UnitType::CommTower
+    let should_request = unit_type != UnitType::GoldRefinery
         && state_now != create_building_state::GETTING_BUILDER
         && state_now < create_building_state::BUILDING
         && tasks_empty;

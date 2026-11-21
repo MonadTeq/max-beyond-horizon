@@ -43,7 +43,7 @@ select type Constructor
 assert selected
 build open
 assert build=open
-# CONSTRCT: ResearchCenter — 12-я строка списка (индекс 11).
+# CONSTRCT: ResearchCentre — 12-я строка списка (индекс 11).
 build select 11
 build done
 assert build=closed

@@ -242,6 +242,13 @@ impl BuildMenuAssets {
 }
 
 /// Английские имена юнитов (`ResourceManager_GetUnit(...).GetSingularName()`).
+///
+/// Канон User-Friendly Name (`max-brh-docs/unit-name-review.md`) реализован
+/// отдельно — [`crate::unit_names::unit_user_friendly_name`] по `data/unit_names.json`.
+/// Эта таблица остаётся источником строк для QA-языка (`spawn NAME`,
+/// `select type NAME`, `unit-menu-item=…`); в 12 позициях она расходится с
+/// каноном (например `GoldRefinery` → «Comm Tower», `EcoSphere` → «Greenhouse»,
+/// `MaterialStorage` → «Ammo Dump») — сведение к UFN-таблице входит в Ф5.
 pub fn unit_name(unit_type: UnitType) -> &'static str {
     match unit_type {
         // здания (строитель)
@@ -251,29 +258,29 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
         UnitType::HeavyVehiclePlant => "Heavy Vehicle Plant",
         UnitType::AirUnitsPlant => "Air Units Plant",
         UnitType::Shipyard => "Shipyard",
-        UnitType::CommTower => "Comm Tower",
+        UnitType::GoldRefinery => "Comm Tower",
         UnitType::Depot => "Depot",
         UnitType::Hangar => "Hangar",
         UnitType::Dock => "Dock",
         UnitType::Habitat => "Habitat",
-        UnitType::ResearchCenter => "Research Center",
-        UnitType::Greenhouse => "Greenhouse",
+        UnitType::ResearchCentre => "Research Center",
+        UnitType::EcoSphere => "Greenhouse",
         UnitType::TrainingHall => "Training Hall",
         UnitType::Barracks => "Barracks",
-        UnitType::ADump => "Ammo Dump",
-        UnitType::FDump => "Fuel Tank",
-        UnitType::GoldSmelter => "Gold Vault",
+        UnitType::MaterialStorage => "Ammo Dump",
+        UnitType::FuelStorage => "Fuel Tank",
+        UnitType::GoldVault => "Gold Vault",
         UnitType::PowerGenerator => "Power Generator",
         UnitType::Connector => "Connector",
         UnitType::Radar => "Radar",
         UnitType::GunTurret => "Gun Turret",
         UnitType::AntiAir => "Anti Aircraft",
-        UnitType::ArtilleryTurret => "Artillery Turret",
-        UnitType::AntiMissile => "Missile Launcher",
+        UnitType::Artillery => "Artillery Turret",
+        UnitType::MissileLauncher => "Missile Launcher",
         UnitType::LandingPad => "Landing Pad",
         UnitType::Bridge => "Bridge",
         UnitType::WaterPlatform => "Water Platform",
-        UnitType::Block => "Concrete Block",
+        UnitType::ConcreteBlock => "Concrete Block",
         UnitType::Road => "Road",
         // подвижные
         UnitType::Scout => "Scout",
@@ -286,7 +293,7 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
         UnitType::MobileAntiAir => "Mobile AA",
         UnitType::MineLayer => "Mine Layer",
         UnitType::Bulldozer => "Bulldozer",
-        UnitType::PersonnelCarrier => "Personnel Carrier",
+        UnitType::ArmouredPersonnelCarrier => "Personnel Carrier",
         UnitType::Constructor => "Constructor",
         UnitType::Scanner => "Scanner",
         UnitType::Tank => "Tank",
@@ -297,15 +304,15 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
         UnitType::Bomber => "Ground Attack Plane",
         UnitType::AirTransport => "Air Transport",
         UnitType::Awac => "AWAC",
-        UnitType::FastBoat => "Escort",
+        UnitType::Escort => "Escort",
         UnitType::Corvette => "Corvette",
-        UnitType::Battleship => "Gunboat",
+        UnitType::Gunboat => "Gunboat",
         UnitType::Submarine => "Submarine",
         UnitType::SeaTransport => "Sea Transport",
-        UnitType::MissileBoat => "Missile Cruiser",
+        UnitType::MissileCruiser => "Missile Cruiser",
         UnitType::SeaMineLayer => "Sea Mine Layer",
         UnitType::CargoShip => "Cargo Ship",
-        UnitType::Commando => "Infiltrator",
+        UnitType::Infiltrator => "Infiltrator",
         UnitType::Infantry => "Infantry",
         _ => "Unit",
     }
@@ -1679,7 +1686,7 @@ mod tests {
         assert!(menu.add_to_queue());
         assert_eq!(
             menu.queue,
-            vec![UnitType::Infantry, UnitType::Commando],
+            vec![UnitType::Infantry, UnitType::Infiltrator],
             "порядок очереди — порядок добавления"
         );
 

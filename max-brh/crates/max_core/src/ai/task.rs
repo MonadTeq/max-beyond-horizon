@@ -585,7 +585,7 @@ pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
                 continue;
             };
             if unit.team == TeamId(team as u8)
-                && unit.unit_type == UnitType::Greenhouse
+                && unit.unit_type == UnitType::EcoSphere
                 && unit.orders == UnitOrder::PowerOn
             {
                 count += 1;
@@ -682,12 +682,12 @@ pub fn task_should_reserve_shot(world: &GameState, unit: &UnitInfo, site: Point)
 
         if matches!(
             unit.unit_type,
-            UnitType::Submarine | UnitType::PersonnelCarrier
+            UnitType::Submarine | UnitType::ArmouredPersonnelCarrier
         ) && access_modified_surface_is_water(world, site)
             && !unit.is_detected_by_team(team_id)
         {
             relevant_teams[team] = heat.get_stealth_sea(i32::from(site.x), i32::from(site.y)) != 0;
-        } else if unit.unit_type == UnitType::Commando && !unit.is_detected_by_team(team_id) {
+        } else if unit.unit_type == UnitType::Infiltrator && !unit.is_detected_by_team(team_id) {
             relevant_teams[team] = heat.get_stealth_land(i32::from(site.x), i32::from(site.y)) != 0;
         } else {
             relevant_teams[team] = heat.get_complete(i32::from(site.x), i32::from(site.y)) != 0;

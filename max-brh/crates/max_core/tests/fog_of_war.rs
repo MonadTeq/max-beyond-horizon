@@ -111,7 +111,7 @@ fn stealth_units_stay_hidden_outside_fov() {
         .unwrap();
     // `COMMANDO` вне радиуса обзора танка (scan 4) — не виден.
     let commando = state
-        .spawn_unit(UnitType::Commando, TeamId::GREEN, Point::new(40, 40), 0)
+        .spawn_unit(UnitType::Infiltrator, TeamId::GREEN, Point::new(40, 40), 0)
         .unwrap();
 
     state.update_visibility_status(false);

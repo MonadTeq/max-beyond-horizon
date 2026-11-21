@@ -59,7 +59,7 @@ impl FrameInfo {
 pub fn image_index_max(unit_type: UnitType, angle: u8) -> i16 {
     let info = frame_info(unit_type);
 
-    if matches!(unit_type, UnitType::Commando | UnitType::Infantry) {
+    if matches!(unit_type, UnitType::Infiltrator | UnitType::Infantry) {
         103
     } else {
         info.image_count + info.image_base + i16::from(angle) - 1
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(image_index_max(UnitType::BuildingExplosion, 0), 27);
         assert_eq!(image_index_max(UnitType::HitExplosion, 0), 4);
         // Пехота/диверсант — фиксированное 103 (`unitinfo.cpp:288-291`).
-        assert_eq!(image_index_max(UnitType::Commando, 0), 103);
+        assert_eq!(image_index_max(UnitType::Infiltrator, 0), 103);
         assert_eq!(image_index_max(UnitType::Infantry, 0), 103);
         // Поворот корпуса сдвигает `image_index` (`image_base + angle`).
         assert_eq!(image_index_max(UnitType::Tank, 3), 10);

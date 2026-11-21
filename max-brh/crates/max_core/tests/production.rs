@@ -38,9 +38,14 @@ fn state_with_gold(gold: u32) -> GameState {
 /// не входит.
 fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
     let id = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(12, 10), 0)
-        .expect("ADump");
-    state.unit_mut(id).expect("ADump").storage = materials;
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(12, 10),
+            0,
+        )
+        .expect("MaterialStorage");
+    state.unit_mut(id).expect("MaterialStorage").storage = materials;
     id
 }
 
@@ -64,7 +69,7 @@ fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_co
         .expect("power generator");
     let fuel = state
         .spawn_unit(
-            UnitType::FDump,
+            UnitType::FuelStorage,
             TeamId::RED,
             Point::new(grid.x - 2, grid.y),
             0,
@@ -165,7 +170,7 @@ fn builder_tables_match_the_game_rules_script() {
         builder_type(UnitType::Fighter),
         Some(UnitType::AirUnitsPlant)
     );
-    assert_eq!(builder_type(UnitType::Battleship), Some(UnitType::Shipyard));
+    assert_eq!(builder_type(UnitType::Gunboat), Some(UnitType::Shipyard));
     assert_eq!(
         builder_type(UnitType::MiningStation),
         Some(UnitType::Constructor)
@@ -1570,7 +1575,9 @@ fn two_identical_production_runs_have_identical_state() {
 
         let mut manager = ProductionManager::new(&mut state, TeamId::RED);
         manager.enqueue(factory, UnitType::Infantry).expect("queue");
-        manager.enqueue(factory, UnitType::Commando).expect("queue");
+        manager
+            .enqueue(factory, UnitType::Infiltrator)
+            .expect("queue");
         manager.commit(factory).expect("build");
         manager
             .enqueue(constructor, UnitType::LightVehiclePlant)
@@ -1605,23 +1612,39 @@ fn awac_completes_from_the_merged_complex_pot() {
         .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
         .expect("air plant");
     let first = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(12, 10), 0)
-        .expect("ADump 1");
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(12, 10),
+            0,
+        )
+        .expect("MaterialStorage 1");
     // `ADUMP` — `STANDALONE` 1×1 (`UpdateConnectors` даёт `unit_size = 1`),
     // поэтому второй склад ставится вплотную: `(12,10)` и `(13,10)`.
     let second = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(13, 10), 0)
-        .expect("ADump 2");
-    state.unit_mut(first).expect("ADump 1").storage = 40;
-    state.unit_mut(second).expect("ADump 2").storage = 40;
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(13, 10),
+            0,
+        )
+        .expect("MaterialStorage 2");
+    state.unit_mut(first).expect("MaterialStorage 1").storage = 40;
+    state.unit_mut(second).expect("MaterialStorage 2").storage = 40;
 
     let complex = state
         .unit(factory)
         .expect("factory")
         .complex
         .expect("complex");
-    assert_eq!(state.unit(first).expect("ADump 1").complex, Some(complex));
-    assert_eq!(state.unit(second).expect("ADump 2").complex, Some(complex));
+    assert_eq!(
+        state.unit(first).expect("MaterialStorage 1").complex,
+        Some(complex)
+    );
+    assert_eq!(
+        state.unit(second).expect("MaterialStorage 2").complex,
+        Some(complex)
+    );
     assert_eq!(
         state.team_units[0]
             .get_complex(complex)
@@ -1740,7 +1763,7 @@ fn finish_turn_runs_the_production_phase() {
             .unit_ids_in_order()
             .into_iter()
             .filter_map(|id| state.unit(id))
-            .find(|unit| unit.unit_type == UnitType::ADump)
+            .find(|unit| unit.unit_type == UnitType::MaterialStorage)
             .map(|unit| unit.storage),
         Some(19),
         "ход завода списан материалами (1 за INFANTRY)"
@@ -1779,7 +1802,7 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
         .expect("tank");
     state.unit_mut(tank).expect("tank").storage = 9;
     let gas = state
-        .spawn_unit(UnitType::FDump, TeamId::RED, Point::new(50, 50), 0)
+        .spawn_unit(UnitType::FuelStorage, TeamId::RED, Point::new(50, 50), 0)
         .expect("fuel dump");
     state.unit_mut(gas).expect("fuel dump").storage = 11;
 

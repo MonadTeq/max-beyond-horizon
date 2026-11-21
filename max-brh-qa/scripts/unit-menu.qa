@@ -161,8 +161,8 @@ unit-menu item load
 assert cursor=none
 
 # --- disable/steal: курсорные режимы диверсанта (8/9) --------------------
-spawn Commando
-select type Commando
+spawn Infiltrator
+select type Infiltrator
 assert selected
 unit-menu open
 assert unit-menu-enabled=disable

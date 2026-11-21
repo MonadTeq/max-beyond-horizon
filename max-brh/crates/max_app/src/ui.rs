@@ -3091,8 +3091,7 @@ fn session_map_left_click(
             }
             Ok(None) => {
                 app.play_sfx(Sfx::Cancel);
-                app.hud_mut()
-                    .push_log("Infiltrator: цель не подходит");
+                app.hud_mut().push_log("Infiltrator: цель не подходит");
                 return Transition::None;
             }
             Err(message) => {
@@ -4838,7 +4837,7 @@ mod tests {
         let mut app = App::new(AppConfig::default());
         let id = app
             .state_mut()
-            .spawn_unit(UnitType::ResearchCenter, TeamId::RED, Point::new(20, 20), 0)
+            .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("center");
         let mut unit = app.state().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;

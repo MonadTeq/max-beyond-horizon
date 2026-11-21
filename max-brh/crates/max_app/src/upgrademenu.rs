@@ -331,9 +331,9 @@ impl UpgradeMenu {
         if actual.get_attribute(ATTRIB_STORAGE) != 0
             && matches!(
                 unit_type,
-                UnitType::ADump
-                    | UnitType::FDump
-                    | UnitType::GoldSmelter
+                UnitType::MaterialStorage
+                    | UnitType::FuelStorage
+                    | UnitType::GoldVault
                     | UnitType::Engineer
                     | UnitType::Constructor
                     | UnitType::CargoShip

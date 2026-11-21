@@ -896,7 +896,7 @@ mod tests {
         let complex = state.unit(mine).expect("mine").complex.expect("complex");
         let dump = state
             .spawn_unit(
-                UnitType::ADump,
+                UnitType::MaterialStorage,
                 TeamId::RED,
                 Point::new(22, 24),
                 unit_flags::STATIONARY | unit_flags::BUILDING,

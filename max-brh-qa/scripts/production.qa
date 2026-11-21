@@ -298,15 +298,15 @@ shot build-done
 # (30,22), поэтому все три здания попадают в один комплекс.
 select type Constructor
 assert unit-pos=29,22
-spawn ADump
-assert unit=ADump
+spawn MaterialStorage
+assert unit=MaterialStorage
 # `complex raw N` — QA-only `Complex::Transfer(raw,0,0)`: кладёт сырьё в общий
 # котёл **выделенного** комплекса (раскладывается по складам членов).
 select type Training Hall
 complex raw 60
 assert complex-raw>=50
 # Склад в комплексе цеха реально получил сырьё — значит коннекторы слили их.
-select type ADump
+select type MaterialStorage
 assert unit-storage>=1
 select type Training Hall
 

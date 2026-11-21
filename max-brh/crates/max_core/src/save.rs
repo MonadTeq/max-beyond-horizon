@@ -1126,7 +1126,7 @@ impl<'a> Reader<'a> {
         // V70: опыт живёт в `storage` у COMMANDO/REGENERATING_UNIT
         // (`unitinfo.cpp`), `transfer_cargo`/`stealth_dice_roll` — из `move_to_grid_x`.
         if info.flags & crate::enums::unit_flags::REGENERATING_UNIT != 0
-            || unit_type == UnitType::Commando
+            || unit_type == UnitType::Infiltrator
         {
             info.experience = info.storage;
             info.storage = 0;
@@ -1937,7 +1937,7 @@ impl Writer {
         self.u8(info.move_and_fire);
         // V70: опыт у COMMANDO/REGENERATING_UNIT хранится в `storage`.
         if info.flags & crate::enums::unit_flags::REGENERATING_UNIT != 0
-            || info.unit_type == UnitType::Commando
+            || info.unit_type == UnitType::Infiltrator
         {
             self.i16(info.storage.wrapping_add(info.experience));
         } else {

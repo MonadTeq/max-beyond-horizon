@@ -171,7 +171,7 @@ impl ResearchMenu {
                 continue;
             };
             if unit.team != team
-                || unit.unit_type != UnitType::ResearchCenter
+                || unit.unit_type != UnitType::ResearchCentre
                 || unit.orders != UnitOrder::PowerOn
             {
                 continue;
@@ -738,7 +738,7 @@ mod tests {
         let mut state = GameState::new();
         state.teams[0].research_topics[topic as usize].research_level = level;
         let id = state
-            .spawn_unit(UnitType::ResearchCenter, TeamId::RED, Point::new(20, 20), 0)
+            .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("research center");
         let mut unit = state.unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
@@ -854,7 +854,7 @@ mod tests {
             .unit_ids_in_order()
             .into_iter()
             .filter_map(|id| state.unit(id))
-            .find(|unit| unit.unit_type == UnitType::ResearchCenter)
+            .find(|unit| unit.unit_type == UnitType::ResearchCentre)
             .expect("center");
         assert_eq!(unit.research_topic, ResearchTopic::Shots);
     }
@@ -875,7 +875,7 @@ mod tests {
             .unit_ids_in_order()
             .into_iter()
             .filter_map(|id| state.unit(id))
-            .find(|unit| unit.unit_type == UnitType::ResearchCenter)
+            .find(|unit| unit.unit_type == UnitType::ResearchCentre)
             .expect("center");
         assert_eq!(unit.orders, UnitOrder::PowerOff);
 
@@ -900,7 +900,7 @@ mod tests {
 
         // Второй центр: скорость темы меняется (детерминированная формула).
         let second = state
-            .spawn_unit(UnitType::ResearchCenter, TeamId::RED, Point::new(21, 20), 0)
+            .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(21, 20), 0)
             .expect("second center");
         let mut unit = state.unit(second).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;

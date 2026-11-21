@@ -168,7 +168,7 @@ fn sea_unit_on_water_leaves_no_rubble() {
     let mut state = state();
     let boat = spawn(
         &mut state,
-        UnitType::Battleship,
+        UnitType::Gunboat,
         TeamId::RED,
         Point::new(30, 30),
     );

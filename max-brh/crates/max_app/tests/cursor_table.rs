@@ -108,9 +108,20 @@ fn own_unit_without_selection_is_friend() {
 #[test]
 fn xfer_mode_over_matching_cargo_is_transfer() {
     let mut app = app();
-    let constructor =
-        spawn(&mut app, UnitType::Constructor, TeamId::RED, Point::new(40, 40)).expect("ctor");
-    let depot = spawn(&mut app, UnitType::ADump, TeamId::RED, Point::new(41, 40)).expect("raw dump");
+    let constructor = spawn(
+        &mut app,
+        UnitType::Constructor,
+        TeamId::RED,
+        Point::new(40, 40),
+    )
+    .expect("ctor");
+    let depot = spawn(
+        &mut app,
+        UnitType::MaterialStorage,
+        TeamId::RED,
+        Point::new(41, 40),
+    )
+    .expect("raw dump");
     ready(&mut app, constructor);
     ready(&mut app, depot);
     app.hud_mut().select(Some(constructor));
@@ -207,7 +218,7 @@ fn load_mode_over_passenger_is_load() {
     let mut app = app();
     let carrier = spawn(
         &mut app,
-        UnitType::PersonnelCarrier,
+        UnitType::ArmouredPersonnelCarrier,
         TeamId::RED,
         Point::new(40, 40),
     )

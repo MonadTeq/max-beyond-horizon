@@ -363,7 +363,7 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
             UnitType::SeaExplosion,
         ),
         (
-            UnitType::CommTower,
+            UnitType::GoldRefinery,
             max_core::enums::unit_flags::BUILDING,
             UnitType::BuildingExplosion,
         ),

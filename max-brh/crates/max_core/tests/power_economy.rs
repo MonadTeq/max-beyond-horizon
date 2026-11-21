@@ -37,13 +37,13 @@ fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> max_core::U
 /// Завод `Training Hall` в (12,11) и склад сырья в (12,12): один комплекс.
 fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_core::UnitId) {
     let factory = spawn(state, UnitType::TrainingHall, Point::new(12, 11));
-    let dump = spawn(state, UnitType::ADump, Point::new(12, 13));
-    state.unit_mut(dump).expect("ADump").storage = raw;
+    let dump = spawn(state, UnitType::MaterialStorage, Point::new(12, 13));
+    state.unit_mut(dump).expect("MaterialStorage").storage = raw;
 
     assert_eq!(
         state.unit(factory).expect("factory").complex,
-        state.unit(dump).expect("ADump").complex,
-        "завод и ADump — один комплекс"
+        state.unit(dump).expect("MaterialStorage").complex,
+        "завод и MaterialStorage — один комплекс"
     );
 
     (factory, dump)
@@ -52,7 +52,7 @@ fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_c
 /// `POWGEN` (+1 энергия) и `FDUMP` с топливом — производитель энергии.
 fn add_power(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
     let generator = spawn(state, UnitType::PowerGenerator, Point::new(14, 11));
-    let fuel = spawn(state, UnitType::FDump, Point::new(14, 12));
+    let fuel = spawn(state, UnitType::FuelStorage, Point::new(14, 12));
     state.unit_mut(fuel).expect("fuel dump").storage = 50;
     (generator, fuel)
 }
@@ -158,9 +158,9 @@ fn factory_start_is_refused_without_raw_materials() {
 fn power_deficit_powers_off_research_center_before_the_mine() {
     let mut state = state();
     let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-    let research = spawn(&mut state, UnitType::ResearchCenter, Point::new(12, 11));
+    let research = spawn(&mut state, UnitType::ResearchCentre, Point::new(12, 11));
     let generator = spawn(&mut state, UnitType::PowerGenerator, Point::new(9, 11));
-    let fuel = spawn(&mut state, UnitType::FDump, Point::new(8, 11));
+    let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 11));
     state.unit_mut(fuel).expect("fuel").storage = 50;
 
     // `DeployUnit` ставит RESEARCH в POWER_OFF; включаем вручную.
@@ -216,7 +216,7 @@ fn generators_are_switched_on_and_off_automatically() {
     let mut state = state();
     let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
     let generator = spawn(&mut state, UnitType::PowerGenerator, Point::new(9, 11));
-    let fuel = spawn(&mut state, UnitType::FDump, Point::new(8, 11));
+    let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 11));
     state.unit_mut(fuel).expect("fuel").storage = 50;
 
     let complex = state.unit(mine).expect("mine").complex.expect("complex");
@@ -390,7 +390,7 @@ fn optimization_is_deterministic() {
         let (factory, _dump) = factory_with_raw(&mut state, 20);
         add_power(&mut state);
         add_workers(&mut state);
-        spawn(&mut state, UnitType::ResearchCenter, Point::new(9, 12));
+        spawn(&mut state, UnitType::ResearchCentre, Point::new(9, 12));
 
         let mut manager = ProductionManager::new(&mut state, TeamId::RED);
         manager.enqueue(factory, UnitType::Infantry).expect("queue");

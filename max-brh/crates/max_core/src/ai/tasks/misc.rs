@@ -94,7 +94,11 @@ fn repair_shop_type(unit_type: UnitType) -> UnitType {
 
 /// Склад-источник ресурсов (`TaskGetMaterials::FindBuilding`).
 fn find_source_building(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<UnitId> {
-    for kind in [UnitType::ADump, UnitType::Depot, UnitType::MiningStation] {
+    for kind in [
+        UnitType::MaterialStorage,
+        UnitType::Depot,
+        UnitType::MiningStation,
+    ] {
         for id in ctx.list(UnitListKind::Stationary) {
             let Some(info) = ctx.unit(id) else { continue };
             if info.team == team && info.unit_type == kind && info.orders != UnitOrder::Idle {

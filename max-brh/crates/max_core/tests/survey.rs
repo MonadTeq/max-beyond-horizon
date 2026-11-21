@@ -145,7 +145,7 @@ fn only_a_surveyor_marks_resources() {
     for unit_type in [
         UnitType::MineLayer,
         UnitType::SeaMineLayer,
-        UnitType::Commando,
+        UnitType::Infiltrator,
         UnitType::Tank,
         UnitType::Engineer,
     ] {

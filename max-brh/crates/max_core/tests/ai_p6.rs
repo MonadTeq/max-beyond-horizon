@@ -557,7 +557,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     // реакции для команды с `team_type == NONE`, а `Ai_UnitSpotted` с
     // `team = ALIEN` не обращается к несуществующему `AiPlayer`.
     let commando = state
-        .spawn_unit(UnitType::Commando, TeamId::RED, Point::new(11, 12), 0)
+        .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(11, 12), 0)
         .expect("commando deploys");
     max_core::combat::attack_unit(&mut state, alien_tank, commando, 0, 0);
     state.tick();

@@ -384,8 +384,8 @@ fn campaign_1_real_save_evaluates_like_the_script() {
         TeamKind::Player
     );
 
-    let research = green_count(&state, UnitType::ResearchCenter);
-    let greenhouses = green_count(&state, UnitType::Greenhouse);
+    let research = green_count(&state, UnitType::ResearchCentre);
+    let greenhouses = green_count(&state, UnitType::EcoSphere);
 
     // `SC_C0001`: RED — LOST при 0 research center у GREEN, WON при 0
     // экосфер (и живом research center), иначе PENDING.
@@ -406,8 +406,8 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     assert_eq!(status.mission_type, MissionCategory::Campaign as i32);
 
     // Уничтожаем все центры исследований зелёных → поражение красных.
-    destroy_all(&mut state, UnitType::ResearchCenter);
-    assert_eq!(green_count(&state, UnitType::ResearchCenter), 0);
+    destroy_all(&mut state, UnitType::ResearchCentre);
+    assert_eq!(green_count(&state, UnitType::ResearchCentre), 0);
     let status = victory::evaluate_status(&state, state.turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
@@ -426,15 +426,15 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
     assert_eq!(state.mission_index, 18);
 
     // Пока у зелёных есть центры исследований — миссия продолжается.
-    assert!(green_count(&state, UnitType::ResearchCenter) > 0);
+    assert!(green_count(&state, UnitType::ResearchCentre) > 0);
     let status = victory::evaluate_status(&state, state.turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Pending
     );
 
-    destroy_all(&mut state, UnitType::ResearchCenter);
-    assert_eq!(green_count(&state, UnitType::ResearchCenter), 0);
+    destroy_all(&mut state, UnitType::ResearchCentre);
+    assert_eq!(green_count(&state, UnitType::ResearchCentre), 0);
 
     let status = victory::evaluate_status(&state, state.turn_counter);
     assert_eq!(

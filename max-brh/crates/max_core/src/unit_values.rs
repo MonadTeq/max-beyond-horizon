@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn representative_base_values_match_cpp_table() {
         // COMMTWR / POWERSTN: 12 ходов, 56 hp, 8 брони, обзор 3.
-        let commtower = base_unit_values(UnitType::CommTower);
+        let commtower = base_unit_values(UnitType::GoldRefinery);
         assert_eq!(
             (commtower.turns, commtower.hits, commtower.armor),
             (12, 56, 8)

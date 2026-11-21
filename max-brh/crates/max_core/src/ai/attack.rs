@@ -56,7 +56,7 @@ pub fn get_target_value(unit: &UnitInfo) -> i32 {
 
     if turns_to_build > 4 {
         if attack_range >= 10
-            || unit.unit_type == UnitType::Commando
+            || unit.unit_type == UnitType::Infiltrator
             || unit.unit_type == UnitType::Submarine
             || unit
                 .base_values
@@ -125,7 +125,7 @@ pub fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::Te
 
 /// `AiAttack_IsValidSabotageTarget` (`aiattack.cpp:314`).
 pub fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &UnitInfo) -> bool {
-    unit.unit_type == UnitType::Commando
+    unit.unit_type == UnitType::Infiltrator
         && target.flags & crate::enums::unit_flags::ELECTRONIC_UNIT != 0
         && target.flags & crate::enums::unit_flags::HOVERING == 0
         && (target.orders != UnitOrder::Disable
@@ -135,7 +135,7 @@ pub fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &Uni
 
 /// `AiAttack_CanAttack` (`aiattack.cpp:455`).
 pub fn can_attack(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
-    if attacker.unit_type == UnitType::Commando {
+    if attacker.unit_type == UnitType::Infiltrator {
         if is_valid_sabotage_target(world, attacker, target)
             && task_is_adjacent(target, attacker.grid.x, attacker.grid.y)
             && crate::combat::get_stealth_chance_percentage(
@@ -348,7 +348,7 @@ pub fn get_target_worth(world: &GameState, attacker: &UnitInfo, target: &UnitInf
 
 /// `AiAttack_IsPriorityTarget` (`aiattack.cpp:1323`).
 pub fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::team::TeamId) -> bool {
-    (target.unit_type == UnitType::Greenhouse || target.unit_type == UnitType::MiningStation)
+    (target.unit_type == UnitType::EcoSphere || target.unit_type == UnitType::MiningStation)
         && world.teams[target.team.0 as usize].team_points
             > world.teams[team.0 as usize].team_points
 }
@@ -407,7 +407,7 @@ pub fn get_target_flags(
                     | UnitType::MiningStation
                     | UnitType::Scanner
                     | UnitType::Radar
-                    | UnitType::Greenhouse
+                    | UnitType::EcoSphere
             ) {
                 result += 0x38;
             }
@@ -674,13 +674,13 @@ pub fn process_attack(
 
     world.set_order_data(attacker, data);
 
-    let can_issue = attacker_info.shots > 0 || attacker_info.unit_type != UnitType::Commando;
+    let can_issue = attacker_info.shots > 0 || attacker_info.unit_type != UnitType::Infiltrator;
 
     if !can_issue {
         return false;
     }
 
-    if attacker_info.unit_type == UnitType::Commando && attack_range == 1 {
+    if attacker_info.unit_type == UnitType::Infiltrator && attack_range == 1 {
         let order = if target_info.orders == UnitOrder::Disable
             || (target_info.flags & crate::enums::unit_flags::STATIONARY == 0
                 && crate::combat::get_stealth_chance_percentage(
@@ -1059,7 +1059,7 @@ pub fn evaluate_attack(
         return false;
     };
 
-    if info.unit_type == UnitType::Commando
+    if info.unit_type == UnitType::Infiltrator
         && is_valid_sabotage_target(world, &info, &target)
         && !task_is_adjacent(&target, info.grid.x, info.grid.y)
     {

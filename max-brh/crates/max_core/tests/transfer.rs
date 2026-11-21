@@ -97,7 +97,7 @@ fn transfer_menu_info_matches_get_cargo_info_for_own_complex() {
     let complex = complex_of(&state, mine);
     let dump = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 24),
         Some(complex),
     );
@@ -133,18 +133,23 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
     // Шахта 2×2 (20..=21), `ADUMP` — 1×1 `STANDALONE` вплотную справа:
     // `UpdateConnectors` сливает их в один комплекс.
     let dump = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(22, 20), 0)
-        .expect("ADump");
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(22, 20),
+            0,
+        )
+        .expect("MaterialStorage");
 
     let mine_complex = complex_of(&state, mine);
     assert_eq!(
-        state.unit(dump).expect("ADump").complex,
+        state.unit(dump).expect("MaterialStorage").complex,
         Some(mine_complex),
         "шахта и ADUMP — один комплекс"
     );
 
     state.unit_mut(mine).expect("mine").storage = 20;
-    state.unit_mut(dump).expect("ADump").storage = 0;
+    state.unit_mut(dump).expect("MaterialStorage").storage = 0;
     update_resources_total(&mut state, TeamId::RED, mine_complex);
 
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(23, 20));
@@ -196,7 +201,7 @@ fn transfer_to_complex_and_back_changes_both_sides() {
     let complex = complex_of(&state, mine);
     let dump = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 24),
         Some(complex),
     );
@@ -251,7 +256,7 @@ fn transfer_order_processor_runs_restores_orders_and_is_deterministic() {
         let complex = complex_of(&state, mine);
         let dump = spawn_in_complex(
             &mut state,
-            UnitType::ADump,
+            UnitType::MaterialStorage,
             Point::new(22, 24),
             Some(complex),
         );
@@ -306,13 +311,13 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
     let complex = complex_of(&state, mine);
     let first = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 20),
         Some(complex),
     );
     let second = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 24),
         Some(complex),
     );
@@ -328,7 +333,7 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
         find_unit_with_cargo_type(&state, TeamId::RED, complex, CargoType::Raw)
             .and_then(|id| state.unit(id))
             .map(|unit| unit.unit_type),
-        Some(UnitType::ADump)
+        Some(UnitType::MaterialStorage)
     );
 }
 
@@ -339,9 +344,14 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
 #[test]
 fn dump_capacities_match_cpp_attribute_storage() {
     let mut state = test_state();
-    let adump = spawn_in_complex(&mut state, UnitType::ADump, Point::new(20, 20), None);
-    let fdump = spawn_in_complex(&mut state, UnitType::FDump, Point::new(22, 20), None);
-    let goldsm = spawn_in_complex(&mut state, UnitType::GoldSmelter, Point::new(24, 20), None);
+    let adump = spawn_in_complex(
+        &mut state,
+        UnitType::MaterialStorage,
+        Point::new(20, 20),
+        None,
+    );
+    let fdump = spawn_in_complex(&mut state, UnitType::FuelStorage, Point::new(22, 20), None);
+    let goldsm = spawn_in_complex(&mut state, UnitType::GoldVault, Point::new(24, 20), None);
 
     for (id, expected) in [(adump, 50), (fdump, 50), (goldsm, 50)] {
         let unit = state.unit(id).expect("dump");
@@ -367,7 +377,7 @@ fn mining_income_is_pulled_into_the_mine_and_then_the_dump() {
     let complex = complex_of(&state, mine);
     let dump = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 24),
         Some(complex),
     );
@@ -419,7 +429,7 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
         Point::new(19, 20),
         None,
     );
-    let fuel = spawn_in_complex(&mut state, UnitType::FDump, Point::new(18, 20), None);
+    let fuel = spawn_in_complex(&mut state, UnitType::FuelStorage, Point::new(18, 20), None);
     state.unit_mut(fuel).expect("fuel dump").storage = 50;
     let complex = state.unit(mine).expect("mine").complex;
     assert_eq!(state.unit(generator).expect("generator").complex, complex);
@@ -502,13 +512,13 @@ fn fuel_and_gold_income_need_their_own_storage_buildings() {
     // Ставим FDUMP и GOLDSM: доход начинает накапливаться в них.
     let fdump = spawn_in_complex(
         &mut state,
-        UnitType::FDump,
+        UnitType::FuelStorage,
         Point::new(22, 24),
         Some(complex),
     );
     let goldsm = spawn_in_complex(
         &mut state,
-        UnitType::GoldSmelter,
+        UnitType::GoldVault,
         Point::new(24, 24),
         Some(complex),
     );
@@ -537,13 +547,13 @@ fn storage_economy_is_deterministic() {
         let complex = complex_of(&state, mine);
         let dump = spawn_in_complex(
             &mut state,
-            UnitType::ADump,
+            UnitType::MaterialStorage,
             Point::new(22, 24),
             Some(complex),
         );
         let fdump = spawn_in_complex(
             &mut state,
-            UnitType::FDump,
+            UnitType::FuelStorage,
             Point::new(24, 24),
             Some(complex),
         );
@@ -588,13 +598,13 @@ fn complex_transfer_negative_uses_buildings_in_stationary_order() {
     let complex = complex_of(&state, mine);
     let first = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 24),
         Some(complex),
     );
     let second = spawn_in_complex(
         &mut state,
-        UnitType::ADump,
+        UnitType::MaterialStorage,
         Point::new(22, 28),
         Some(complex),
     );
@@ -615,7 +625,12 @@ fn complex_transfer_negative_uses_buildings_in_stationary_order() {
 #[test]
 fn transfer_cargo_kind_never_exceeds_storage_capacity() {
     let mut state = test_state();
-    let dump = spawn_in_complex(&mut state, UnitType::ADump, Point::new(20, 20), None);
+    let dump = spawn_in_complex(
+        &mut state,
+        UnitType::MaterialStorage,
+        Point::new(20, 20),
+        None,
+    );
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 45;
     if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {

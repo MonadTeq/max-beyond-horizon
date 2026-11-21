@@ -914,9 +914,9 @@ impl Mobilization {
         if actual.get_attribute(ATTRIB_STORAGE) != 0
             && matches!(
                 unit,
-                UnitType::ADump
-                    | UnitType::FDump
-                    | UnitType::GoldSmelter
+                UnitType::MaterialStorage
+                    | UnitType::FuelStorage
+                    | UnitType::GoldVault
                     | UnitType::Engineer
                     | UnitType::Constructor
                     | UnitType::CargoShip
@@ -1021,13 +1021,13 @@ impl Mobilization {
     /// buffer`), даже если `ATTRIB_STORAGE` > 0 (казармы, док, ремонт, …).
     fn storage_icon(unit: UnitType) -> Option<&'static str> {
         match unit {
-            UnitType::ADump
+            UnitType::MaterialStorage
             | UnitType::CargoShip
             | UnitType::SupplyTruck
             | UnitType::Engineer
             | UnitType::Constructor => Some("I_RAW"),
-            UnitType::FuelTruck | UnitType::FDump => Some("I_FUEL"),
-            UnitType::GoldSmelter | UnitType::GoldTruck => Some("I_GOLD"),
+            UnitType::FuelTruck | UnitType::FuelStorage => Some("I_FUEL"),
+            UnitType::GoldVault | UnitType::GoldTruck => Some("I_GOLD"),
             _ => None,
         }
     }
@@ -1539,7 +1539,7 @@ pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u
     let flags = unit_type_flags(unit);
     let rate = if flags & unit_flags::STATIONARY != 0 {
         cargo_raw_consumption_rate(UnitType::Constructor, 1) as u32
-    } else if unit == UnitType::Commando || unit == UnitType::Infantry {
+    } else if unit == UnitType::Infiltrator || unit == UnitType::Infantry {
         cargo_raw_consumption_rate(UnitType::TrainingHall, 1) as u32
     } else {
         LANDPLT_RAW_CONSUMPTION
@@ -1897,15 +1897,15 @@ pub const STAT_ICONS: [&str; 14] = [
 /// `Unit::GetIcon()` — ресурсы `I_*` из `SC_UNITS` (units.json), в порядке
 /// [`UnitType`]; типы без иконки (`INVALID_ID`) пропущены.
 pub const UNIT_ICONS: [(UnitType, &str); 71] = [
-    (UnitType::CommTower, "I_TRANSP"),
+    (UnitType::GoldRefinery, "I_TRANSP"),
     (UnitType::PowerStation, "I_POWSTN"),
     (UnitType::PowerGenerator, "I_POWGEN"),
     (UnitType::Barracks, "I_BARRCK"),
     (UnitType::ShieldGenerator, "I_SHIELD"),
     (UnitType::Radar, "I_RADAR"),
-    (UnitType::ADump, "I_SMSTOR"),
-    (UnitType::FDump, "I_SMFUEL"),
-    (UnitType::GoldSmelter, "I_SMVLT"),
+    (UnitType::MaterialStorage, "I_SMSTOR"),
+    (UnitType::FuelStorage, "I_SMFUEL"),
+    (UnitType::GoldVault, "I_SMVLT"),
     (UnitType::Depot, "I_DEPOT"),
     (UnitType::Hangar, "I_HANGAR"),
     (UnitType::Dock, "I_DOCK"),
@@ -1918,16 +1918,16 @@ pub const UNIT_ICONS: [(UnitType, &str); 71] = [
     (UnitType::SupportPlant, "I_LIFESP"),
     (UnitType::AirUnitsPlant, "I_AIRPLT"),
     (UnitType::Habitat, "I_HABITA"),
-    (UnitType::ResearchCenter, "I_RESEAR"),
-    (UnitType::Greenhouse, "I_GREENH"),
+    (UnitType::ResearchCentre, "I_RESEAR"),
+    (UnitType::EcoSphere, "I_GREENH"),
     (UnitType::RecreationCenter, "I_RECCTR"),
     (UnitType::TrainingHall, "I_TRNHLL"),
     (UnitType::WaterPlatform, "I_WATER"),
     (UnitType::GunTurret, "I_GUNTUR"),
     (UnitType::AntiAir, "I_FXAA"),
-    (UnitType::ArtilleryTurret, "I_ARTYTR"),
-    (UnitType::AntiMissile, "I_FXROCK"),
-    (UnitType::Block, "I_BLOCK"),
+    (UnitType::Artillery, "I_ARTYTR"),
+    (UnitType::MissileLauncher, "I_FXROCK"),
+    (UnitType::ConcreteBlock, "I_BLOCK"),
     (UnitType::Bridge, "I_BRIDGE"),
     (UnitType::MiningStation, "I_MINING"),
     (UnitType::LandMine, "I_LANDMN"),
@@ -1949,15 +1949,15 @@ pub const UNIT_ICONS: [(UnitType, &str); 71] = [
     (UnitType::Bulldozer, "I_BULLDZ"),
     (UnitType::RepairUnit, "I_REPAIR"),
     (UnitType::FuelTruck, "I_FUELTR"),
-    (UnitType::PersonnelCarrier, "I_COLNST"),
-    (UnitType::Commando, "I_COMMAN"),
+    (UnitType::ArmouredPersonnelCarrier, "I_COLNST"),
+    (UnitType::Infiltrator, "I_COMMAN"),
     (UnitType::Infantry, "I_INFANT"),
-    (UnitType::FastBoat, "I_ESCORT"),
+    (UnitType::Escort, "I_ESCORT"),
     (UnitType::Corvette, "I_CORVET"),
-    (UnitType::Battleship, "I_GUNBT"),
+    (UnitType::Gunboat, "I_GUNBT"),
     (UnitType::Submarine, "I_SUB"),
     (UnitType::SeaTransport, "I_SEATRN"),
-    (UnitType::MissileBoat, "I_MSLCR"),
+    (UnitType::MissileCruiser, "I_MSLCR"),
     (UnitType::SeaMineLayer, "I_SEAMNL"),
     (UnitType::CargoShip, "I_CARGOS"),
     (UnitType::Fighter, "I_FIGHTR"),
@@ -3322,7 +3322,7 @@ mod tests {
         // Мобильные — ставка LANDPLT (3), здания — CONSTRCT (2), пехота —
         // TRAINHAL (1).
         assert_eq!(mobilization.list_price(UnitType::Tank), 12);
-        assert_eq!(mobilization.list_price(UnitType::Commando), 9);
+        assert_eq!(mobilization.list_price(UnitType::Infiltrator), 9);
         assert_eq!(mobilization.list_price(UnitType::Infantry), 2);
         assert_eq!(mobilization.list_price(UnitType::MineLayer), 9);
         assert_eq!(
@@ -3330,7 +3330,7 @@ mod tests {
             8,
             "4 хода * 2"
         );
-        assert_eq!(mobilization.list_price(UnitType::CommTower), 24);
+        assert_eq!(mobilization.list_price(UnitType::GoldRefinery), 24);
     }
 
     #[test]
@@ -3369,7 +3369,7 @@ mod tests {
             UnitType::Fighter,
             UnitType::LandMine,
             UnitType::SeaMine,
-            UnitType::Commando,
+            UnitType::Infiltrator,
             UnitType::Infantry,
         ] {
             assert!(upgrade.types.contains(&unit), "{unit:?}");

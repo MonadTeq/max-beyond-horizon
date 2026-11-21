@@ -1925,7 +1925,7 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
     }
 
     // Теплица игрока — Type3 вместо Type1.
-    if unit.unit_type == UnitType::Greenhouse && own {
+    if unit.unit_type == UnitType::EcoSphere && own {
         greenhouse_rows(state, unit, &mut rows);
     } else {
         life_rows(state, unit, player_team, &mut rows);

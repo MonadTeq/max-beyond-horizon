@@ -221,9 +221,9 @@ pub fn is_power_producer(unit_type: UnitType) -> bool {
 pub fn is_switchable_consumer(unit_type: UnitType) -> bool {
     matches!(
         unit_type,
-        UnitType::ResearchCenter
-            | UnitType::Greenhouse
-            | UnitType::CommTower
+        UnitType::ResearchCentre
+            | UnitType::EcoSphere
+            | UnitType::GoldRefinery
             | UnitType::MiningStation
     )
 }
@@ -233,9 +233,9 @@ pub fn is_switchable_consumer(unit_type: UnitType) -> bool {
 /// `RESEARCH` → `GREENHSE` → `COMMTWR`, затем стройки (`OptimizeIndustry`) и
 /// только потом `MININGST` (`OptimizeMiningIndustry`).
 pub const CONSUMER_OFF_ORDER: [UnitType; 3] = [
-    UnitType::ResearchCenter,
-    UnitType::Greenhouse,
-    UnitType::CommTower,
+    UnitType::ResearchCentre,
+    UnitType::EcoSphere,
+    UnitType::GoldRefinery,
 ];
 
 /// Положительная мощность производителя (`-Cargo_GetPowerConsumptionRate`).
@@ -257,9 +257,9 @@ fn producer_fuel(unit_type: UnitType) -> i32 {
 /// которые встречаются в энергетических сообщениях.
 pub fn industry_unit_name(unit_type: UnitType) -> &'static str {
     match unit_type {
-        UnitType::ResearchCenter => "Research Center",
-        UnitType::Greenhouse => "Greenhouse",
-        UnitType::CommTower => "Comm Tower",
+        UnitType::ResearchCentre => "Research Center",
+        UnitType::EcoSphere => "Greenhouse",
+        UnitType::GoldRefinery => "Comm Tower",
         UnitType::MiningStation => "Mining Station",
         UnitType::PowerStation => "Power Station",
         UnitType::PowerGenerator => "Power Generator",
@@ -696,7 +696,7 @@ pub fn optimize_complex(
         if shortage == Shortage::Gold {
             let candidate = units.iter().copied().find(|id| {
                 state.unit(*id).is_some_and(|unit| {
-                    unit.unit_type == UnitType::CommTower && is_active_switchable_consumer(unit)
+                    unit.unit_type == UnitType::GoldRefinery && is_active_switchable_consumer(unit)
                 })
             });
 
@@ -916,7 +916,7 @@ mod tests {
     fn totals_include_inventory_and_net_production() {
         let mut state = state();
         let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-        let dump = spawn(&mut state, UnitType::ADump, Point::new(12, 10));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 10));
         state.unit_mut(dump).unwrap().storage = 7;
 
         let complex = state.unit(mine).unwrap().complex.unwrap();
@@ -938,10 +938,10 @@ mod tests {
     fn surplus_turns_extra_generators_off_and_deficit_turns_them_on() {
         let mut state = state();
         let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-        let fuel = spawn(&mut state, UnitType::FDump, Point::new(12, 10));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(12, 10));
         let gen1 = spawn(&mut state, UnitType::PowerGenerator, Point::new(9, 11));
         let gen2 = spawn(&mut state, UnitType::PowerGenerator, Point::new(9, 12));
-        let raw = spawn(&mut state, UnitType::ADump, Point::new(14, 12));
+        let raw = spawn(&mut state, UnitType::MaterialStorage, Point::new(14, 12));
 
         state.unit_mut(fuel).unwrap().storage = 40;
         state.unit_mut(raw).unwrap().storage = 10;

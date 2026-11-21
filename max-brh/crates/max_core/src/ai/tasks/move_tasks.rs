@@ -892,7 +892,7 @@ pub fn assist_move_is_unit_usable(
         && info.hits > 0
         && matches!(
             info.unit_type,
-            UnitType::SeaTransport | UnitType::AirTransport | UnitType::PersonnelCarrier
+            UnitType::SeaTransport | UnitType::AirTransport | UnitType::ArmouredPersonnelCarrier
         )
         && info.orders != UnitOrder::Idle
 }

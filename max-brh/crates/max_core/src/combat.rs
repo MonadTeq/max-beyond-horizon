@@ -150,7 +150,7 @@ pub fn attack_unit(
         state.remove_pending_attack(target.id);
 
         // `RemoveTasks`/`RemoveDelayedTasks`/`Ai_RemoveUnit` (`ai.cpp:295`).
-        if target.unit_type == UnitType::Infantry || target.unit_type == UnitType::Commando {
+        if target.unit_type == UnitType::Infantry || target.unit_type == UnitType::Infiltrator {
             target.angle = ((direction + 5) & 0x07) as u8;
         }
     }
@@ -451,7 +451,7 @@ pub fn attack(state: &mut GameState, id: UnitId, grid: Point) {
             if enemy.is_none()
                 && unit.unit_type != UnitType::AntiAir
                 && unit.unit_type != UnitType::MobileAntiAir
-                && unit.unit_type != UnitType::FastBoat
+                && unit.unit_type != UnitType::Escort
             {
                 let flags = access::unit_type_flags(UnitType::HitExplosion);
                 state.spawn_unit(UnitType::HitExplosion, unit.team, grid, flags);
@@ -499,12 +499,12 @@ pub fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
     unit.firing_recoil_frames = 3;
     if unit.unit_type == UnitType::AntiAir {
         unit.firing_recoil_frames *= 5;
-    } else if unit.unit_type == UnitType::MobileAntiAir || unit.unit_type == UnitType::FastBoat {
+    } else if unit.unit_type == UnitType::MobileAntiAir || unit.unit_type == UnitType::Escort {
         unit.firing_recoil_frames *= 2;
     }
 
     if unit.flags & HAS_FIRING_SPRITE != 0
-        && (unit.unit_type == UnitType::Commando || unit.unit_type == UnitType::Infantry)
+        && (unit.unit_type == UnitType::Infiltrator || unit.unit_type == UnitType::Infantry)
     {
         unit.firing_recoil_frames = 8;
     }
@@ -664,7 +664,7 @@ pub fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> 
 pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
     if (unit1.unit_type == UnitType::MobileAntiAir
         || unit1.unit_type == UnitType::AntiAir
-        || unit1.unit_type == UnitType::FastBoat)
+        || unit1.unit_type == UnitType::Escort)
         && unit2.flags & MOBILE_AIR_UNIT == 0
     {
         return false;
@@ -686,7 +686,7 @@ pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> b
         return false;
     }
 
-    if (unit1.unit_type == UnitType::Commando || unit1.unit_type == UnitType::Submarine)
+    if (unit1.unit_type == UnitType::Infiltrator || unit1.unit_type == UnitType::Submarine)
         && !unit1.is_visible_to_team(unit2.team)
     {
         return false;
@@ -1021,7 +1021,7 @@ pub fn is_valid_stealth_target(
 
     if order == UnitOrder::AwaitStealUnit {
         !(target.flags & STATIONARY != 0)
-            && !((target.unit_type == UnitType::PersonnelCarrier
+            && !((target.unit_type == UnitType::ArmouredPersonnelCarrier
                 || target.unit_type == UnitType::SeaTransport
                 || target.unit_type == UnitType::AirTransport)
                 && target.storage != 0)
@@ -1157,7 +1157,7 @@ pub fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
                 );
                 unit_order::power_down(state, &mut parent);
 
-                if parent.unit_type == UnitType::ResearchCenter {
+                if parent.unit_type == UnitType::ResearchCentre {
                     // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
                     state.update_research_progress(
                         parent.team,
@@ -1201,7 +1201,7 @@ pub fn get_attack_range(unit: &UnitInfo) -> i32 {
 pub fn init_stealth_status(unit: &mut UnitInfo, all_visible: bool) {
     let stealth = matches!(
         unit.unit_type,
-        UnitType::LandMine | UnitType::SeaMine | UnitType::Commando | UnitType::Submarine
+        UnitType::LandMine | UnitType::SeaMine | UnitType::Infiltrator | UnitType::Submarine
     );
 
     for index in 0..TEAM_SLOTS {
@@ -1405,7 +1405,7 @@ mod tests {
         let mut state = state();
         let tower = state
             .spawn_unit(
-                UnitType::CommTower,
+                UnitType::GoldRefinery,
                 TeamId::GREEN,
                 Point::new(5, 5),
                 STATIONARY | ELECTRONIC_UNIT | crate::enums::unit_flags::BUILDING,
@@ -1418,7 +1418,7 @@ mod tests {
         }
         let commando = state
             .spawn_unit(
-                UnitType::Commando,
+                UnitType::Infiltrator,
                 TeamId::RED,
                 Point::new(5, 6),
                 MOBILE_LAND_UNIT | SELECTABLE,
@@ -1535,7 +1535,7 @@ mod tests {
         let mut state = state();
         let tower = state
             .spawn_unit(
-                UnitType::CommTower,
+                UnitType::GoldRefinery,
                 TeamId::GREEN,
                 Point::new(5, 5),
                 STATIONARY | ELECTRONIC_UNIT | crate::enums::unit_flags::BUILDING,
@@ -1548,7 +1548,7 @@ mod tests {
         }
         let commando = state
             .spawn_unit(
-                UnitType::Commando,
+                UnitType::Infiltrator,
                 TeamId::RED,
                 Point::new(5, 6),
                 MOBILE_LAND_UNIT | SELECTABLE,
@@ -1604,7 +1604,7 @@ mod tests {
 
     #[test]
     fn disable_turns_follows_cpp_formula() {
-        let mut infiltrator = UnitInfo::new(UnitType::Commando, TeamId::RED, UnitId(1));
+        let mut infiltrator = UnitInfo::new(UnitType::Infiltrator, TeamId::RED, UnitId(1));
         infiltrator.experience = 4;
         let mut target = UnitInfo::new(UnitType::Tank, TeamId::GREEN, UnitId(2));
         target.speed = target.base_values.get_attribute(ATTRIB_SPEED) as u16;

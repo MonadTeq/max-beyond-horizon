@@ -142,7 +142,7 @@ mod tests {
         }
 
         // C++-токены особых типов (сверка порядка `SC_UNITS`/`UnitType`).
-        assert_eq!(unit_token(UnitType::CommTower), "COMMTWR");
+        assert_eq!(unit_token(UnitType::GoldRefinery), "COMMTWR");
         assert_eq!(unit_token(UnitType::HeavyVehiclePlant), "LANDPLT");
         assert_eq!(unit_token(UnitType::MineLayer), "MINELAYR");
         assert_eq!(unit_token(UnitType::DeadWaldo), "WALDO");
@@ -158,7 +158,7 @@ mod tests {
 
         assert_eq!(with_portrait, 71, "SC_UNITS: 71 ресурс P_*");
         assert_eq!(unit_portrait(UnitType::Tank), Some("P_TANK"));
-        assert_eq!(unit_portrait(UnitType::CommTower), Some("P_TRANSP"));
+        assert_eq!(unit_portrait(UnitType::GoldRefinery), Some("P_TRANSP"));
         assert_eq!(unit_portrait(UnitType::HeavyVehiclePlant), Some("P_HVYPLT"));
         assert_eq!(unit_portrait(UnitType::Constructor), Some("P_CONTRC"));
         // Не-юниты: `portrait` = `INVALID_ID` в `SC_UNITS`.
@@ -257,7 +257,7 @@ mod tests {
 
         assert_eq!(unit_frame_data(UnitType::Tank), Some("D_TANK"));
         assert_eq!(unit_frame_data(UnitType::MobileAntiAir), Some("D_SP_FLK"));
-        assert_eq!(unit_frame_data(UnitType::FastBoat), Some("D_ESCORT"));
+        assert_eq!(unit_frame_data(UnitType::Escort), Some("D_ESCORT"));
         assert_eq!(unit_frame_data(UnitType::GunTurret), Some("D_FIXED"));
         assert_eq!(unit_frame_data(UnitType::Scanner), Some("D_SCANNR"));
     }

@@ -89,10 +89,10 @@ pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
     match unit_type {
         UnitType::Barracks
         | UnitType::Depot
-        | UnitType::PersonnelCarrier
+        | UnitType::ArmouredPersonnelCarrier
         | UnitType::SeaTransport
         | UnitType::AirTransport => CargoType::Land,
-        UnitType::ADump
+        UnitType::MaterialStorage
         | UnitType::MiningStation
         | UnitType::Constructor
         | UnitType::MineLayer
@@ -102,8 +102,8 @@ pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
         | UnitType::RepairUnit
         | UnitType::SeaMineLayer
         | UnitType::CargoShip => CargoType::Raw,
-        UnitType::FDump | UnitType::FuelTruck => CargoType::Fuel,
-        UnitType::GoldSmelter | UnitType::GoldTruck => CargoType::Gold,
+        UnitType::FuelStorage | UnitType::FuelTruck => CargoType::Fuel,
+        UnitType::GoldVault | UnitType::GoldTruck => CargoType::Gold,
         UnitType::Hangar | UnitType::LandingPad => CargoType::Air,
         UnitType::Dock => CargoType::Sea,
         _ => CargoType::None,
@@ -196,7 +196,7 @@ pub fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bo
         if unit.team == team
             && unit.ammo > 0
             && unit.unit_type != UnitType::Submarine
-            && unit.unit_type != UnitType::Commando
+            && unit.unit_type != UnitType::Infiltrator
         {
             return true;
         }
@@ -612,9 +612,9 @@ pub fn cargo_power_consumption_rate(unit_type: UnitType) -> i32 {
         | UnitType::AirUnitsPlant
         | UnitType::LightVehiclePlant
         | UnitType::TrainingHall
-        | UnitType::Greenhouse
-        | UnitType::ResearchCenter
-        | UnitType::CommTower
+        | UnitType::EcoSphere
+        | UnitType::ResearchCentre
+        | UnitType::GoldRefinery
         | UnitType::MiningStation => 1,
         UnitType::PowerStation => -6,
         UnitType::PowerGenerator => -1,
@@ -626,7 +626,7 @@ pub fn cargo_power_consumption_rate(unit_type: UnitType) -> i32 {
 pub fn cargo_life_consumption_rate(unit_type: UnitType) -> i32 {
     match unit_type {
         UnitType::Habitat => -3,
-        UnitType::TrainingHall | UnitType::Greenhouse | UnitType::ResearchCenter => 1,
+        UnitType::TrainingHall | UnitType::EcoSphere | UnitType::ResearchCentre => 1,
         _ => 0,
     }
 }
@@ -634,7 +634,7 @@ pub fn cargo_life_consumption_rate(unit_type: UnitType) -> i32 {
 /// `Cargo_GetGoldConsumptionRate` (`cargo.cpp:257`).
 pub fn cargo_gold_consumption_rate(unit_type: UnitType) -> i32 {
     match unit_type {
-        UnitType::CommTower => 5,
+        UnitType::GoldRefinery => 5,
         _ => 0,
     }
 }
@@ -692,12 +692,12 @@ pub fn cargo_get_net_production(
                 );
             }
         }
-        UnitType::CommTower
+        UnitType::GoldRefinery
         | UnitType::PowerStation
         | UnitType::PowerGenerator
         | UnitType::Habitat
-        | UnitType::ResearchCenter
-        | UnitType::Greenhouse => {
+        | UnitType::ResearchCentre
+        | UnitType::EcoSphere => {
             if orders == UnitOrder::PowerOn {
                 cargo_apply_unit_consumption(unit.unit_type, 1, &mut cargo);
             }
@@ -787,7 +787,7 @@ pub fn get_normal_rate_build_cost(unit: &UnitInfo) -> i32 {
 
     if unit.flags & unit_flags::STATIONARY != 0 {
         cargo_raw_consumption_rate(UnitType::Constructor, 1) * turns
-    } else if unit.unit_type == UnitType::Commando || unit.unit_type == UnitType::Infantry {
+    } else if unit.unit_type == UnitType::Infiltrator || unit.unit_type == UnitType::Infantry {
         cargo_raw_consumption_rate(UnitType::TrainingHall, 1) * turns
     } else {
         cargo_raw_consumption_rate(UnitType::HeavyVehiclePlant, 1) * turns
@@ -960,7 +960,7 @@ pub fn mission_win_loss(
                 let a;
                 if has_materials(state, TeamId::RED, CargoType::Raw) < 1
                     || has_materials(state, TeamId::RED, CargoType::Fuel) < 1
-                    || count_ready_units(state, TeamId::RED, UnitType::ADump) <= 0
+                    || count_ready_units(state, TeamId::RED, UnitType::MaterialStorage) <= 0
                 {
                     if count_ready_units(state, TeamId::RED, UnitType::MiningStation) > 0
                         && count_ready_units(state, TeamId::RED, UnitType::Engineer) > 0
@@ -1159,7 +1159,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if has_unit_experience(state, team, UnitType::Commando) {
+                        if has_unit_experience(state, team, UnitType::Infiltrator) {
                             b = Won;
                         } else if count_ready_units(state, TeamId::RED, UnitType::TrainingHall) > 0
                             && count_ready_units(state, TeamId::RED, UnitType::Habitat) > 0
@@ -1249,7 +1249,7 @@ pub fn mission_win_loss(
                     if b != Lost {
                         if get_research_level(state, TeamId::RED, ResearchTopic::Armor) > 0 {
                             b = Won;
-                        } else if count_ready_units(state, TeamId::RED, UnitType::ResearchCenter)
+                        } else if count_ready_units(state, TeamId::RED, UnitType::ResearchCentre)
                             > 0
                         {
                             b = Pending;
@@ -1290,7 +1290,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if count_ready_units(state, TeamId::GREEN, UnitType::ResearchCenter) > 0 {
+                        if count_ready_units(state, TeamId::GREEN, UnitType::ResearchCentre) > 0 {
                             b = Pending;
                         } else {
                             b = Won;
@@ -1306,7 +1306,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if count_ready_units(state, TeamId::GREEN, UnitType::Greenhouse) > 0 {
+                        if count_ready_units(state, TeamId::GREEN, UnitType::EcoSphere) > 0 {
                             b = Pending;
                         } else {
                             b = Won;
@@ -1328,10 +1328,9 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if count_ready_units(state, TeamId::GREEN, UnitType::ResearchCenter) == 0 {
+                        if count_ready_units(state, TeamId::GREEN, UnitType::ResearchCentre) == 0 {
                             b = Lost;
-                        } else if count_ready_units(state, TeamId::GREEN, UnitType::Greenhouse) > 0
-                        {
+                        } else if count_ready_units(state, TeamId::GREEN, UnitType::EcoSphere) > 0 {
                             b = Pending;
                         } else {
                             b = Won;
@@ -1348,7 +1347,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if count_casualties(state, TeamId::RED, UnitType::ResearchCenter) > 0 {
+                        if count_casualties(state, TeamId::RED, UnitType::ResearchCentre) > 0 {
                             b = Lost;
                         } else if team_turn_value(state) < team_turn_victory_limit(state) {
                             b = Pending;
@@ -1373,7 +1372,7 @@ pub fn mission_win_loss(
                             b = Lost;
                         } else if count_ready_units(state, TeamId::RED, UnitType::SupplyTruck) > 1 {
                             b = Won;
-                        } else if count_ready_units(state, TeamId::RED, UnitType::Commando) > 0 {
+                        } else if count_ready_units(state, TeamId::RED, UnitType::Infiltrator) > 0 {
                             b = Pending;
                         } else {
                             b = Lost;
@@ -1389,7 +1388,7 @@ pub fn mission_win_loss(
                 let mut b = base(Pending);
                 if red {
                     if b != Lost {
-                        if count_ready_units(state, TeamId::GREEN, UnitType::Greenhouse) > 0 {
+                        if count_ready_units(state, TeamId::GREEN, UnitType::EcoSphere) > 0 {
                             b = Pending;
                         } else {
                             b = Won;
@@ -1655,7 +1654,7 @@ mod tests {
         // Подлодка и диверсант не считаются военной мощью (save.md, corner case).
         let mut stealth = empty_match();
         spawn(&mut stealth, UnitType::Submarine, TeamId::RED, 20, 20);
-        spawn(&mut stealth, UnitType::Commando, TeamId::RED, 21, 20);
+        spawn(&mut stealth, UnitType::Infiltrator, TeamId::RED, 21, 20);
         assert_eq!(
             default_win_loss_conditions(&stealth, TeamId::RED),
             WinLossState::Lost
@@ -1785,7 +1784,7 @@ mod tests {
         state.mission_index = 18;
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
         spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
-        spawn(&mut state, UnitType::ResearchCenter, TeamId::GREEN, 42, 40);
+        spawn(&mut state, UnitType::ResearchCentre, TeamId::GREEN, 42, 40);
 
         let status = evaluate_status(&state, 0);
         assert_eq!(
@@ -1804,7 +1803,7 @@ mod tests {
             .find(|id| {
                 state
                     .unit(*id)
-                    .is_some_and(|unit| unit.unit_type == UnitType::ResearchCenter)
+                    .is_some_and(|unit| unit.unit_type == UnitType::ResearchCentre)
             })
             .expect("green research center");
         state.destroy_unit(research);
@@ -1828,8 +1827,8 @@ mod tests {
         state.mission_index = 1;
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
         spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
-        spawn(&mut state, UnitType::ResearchCenter, TeamId::GREEN, 42, 40);
-        spawn(&mut state, UnitType::Greenhouse, TeamId::GREEN, 44, 40);
+        spawn(&mut state, UnitType::ResearchCentre, TeamId::GREEN, 42, 40);
+        spawn(&mut state, UnitType::EcoSphere, TeamId::GREEN, 44, 40);
 
         assert_eq!(
             mission_win_loss(&state, MissionCategory::Campaign, 1, TeamId::RED),
@@ -1842,7 +1841,7 @@ mod tests {
             .find(|id| {
                 state
                     .unit(*id)
-                    .is_some_and(|unit| unit.unit_type == UnitType::ResearchCenter)
+                    .is_some_and(|unit| unit.unit_type == UnitType::ResearchCentre)
             })
             .expect("green research center");
         state.destroy_unit(research);
@@ -1866,7 +1865,7 @@ mod tests {
         state.mission_category = MissionCategory::Training;
         state.mission_index = 15;
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
-        spawn(&mut state, UnitType::ResearchCenter, TeamId::RED, 22, 20);
+        spawn(&mut state, UnitType::ResearchCentre, TeamId::RED, 22, 20);
 
         assert_eq!(
             mission_win_loss(&state, MissionCategory::Training, 15, TeamId::RED),
@@ -1909,7 +1908,7 @@ mod tests {
     #[test]
     fn cargo_types_match_sc_units_table() {
         assert_eq!(cargo_type_of(UnitType::MiningStation), CargoType::Raw);
-        assert_eq!(cargo_type_of(UnitType::FDump), CargoType::Fuel);
+        assert_eq!(cargo_type_of(UnitType::FuelStorage), CargoType::Fuel);
         assert_eq!(cargo_type_of(UnitType::GoldTruck), CargoType::Gold);
         assert_eq!(cargo_type_of(UnitType::Barracks), CargoType::Land);
         assert_eq!(cargo_type_of(UnitType::Hangar), CargoType::Air);
@@ -1939,7 +1938,7 @@ mod tests {
             cargo_raw_consumption_rate(UnitType::LightVehiclePlant, 2),
             12
         );
-        assert_eq!(cargo_gold_consumption_rate(UnitType::CommTower), 5);
+        assert_eq!(cargo_gold_consumption_rate(UnitType::GoldRefinery), 5);
     }
 
     #[test]
@@ -2079,13 +2078,17 @@ mod tests {
 
         // Опыт (`storage` у COMMANDO) и версия (mark level).
         let commando = state
-            .spawn_unit(UnitType::Commando, TeamId::RED, Point::new(22, 20), 0)
+            .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(22, 20), 0)
             .expect("commando");
         {
             let unit = state.unit_mut(commando).expect("unit");
             unit.storage = 1;
         }
-        assert!(has_unit_experience(&state, TeamId::RED, UnitType::Commando));
+        assert!(has_unit_experience(
+            &state,
+            TeamId::RED,
+            UnitType::Infiltrator
+        ));
 
         {
             let unit = state.unit_mut(tank).expect("unit");

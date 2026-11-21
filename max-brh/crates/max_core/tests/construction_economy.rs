@@ -73,7 +73,7 @@ fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_co
         .expect("power generator");
     let fuel = state
         .spawn_unit(
-            UnitType::FDump,
+            UnitType::FuelStorage,
             TeamId::RED,
             Point::new(grid.x - 2, grid.y),
             0,
@@ -281,14 +281,19 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     // Склад вплотную к заводу (`Access_GetTeamBuilding` + `UpdateConnectors`
     // сливают их в один комплекс: ёмкости складываются).
     let dump = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(22, 20), 0)
-        .expect("ADump");
-    state.unit_mut(dump).expect("ADump").storage = 1;
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(22, 20),
+            0,
+        )
+        .expect("MaterialStorage");
+    state.unit_mut(dump).expect("MaterialStorage").storage = 1;
     power_the_complex(&mut state, factory);
 
     assert_eq!(
         state.unit(factory).expect("factory").complex,
-        state.unit(dump).expect("ADump").complex,
+        state.unit(dump).expect("MaterialStorage").complex,
         "завод и ADUMP — один комплекс"
     );
 
@@ -306,7 +311,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         "первый ход оплачен: {events:?}"
     );
     assert_eq!(
-        state.unit(dump).expect("ADump").storage,
+        state.unit(dump).expect("MaterialStorage").storage,
         0,
         "1 материал ушёл"
     );
@@ -323,7 +328,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     );
     assert_eq!(state.team_units[0].gold(), 0, "золото не уходит в минус");
     assert_eq!(
-        state.unit(dump).expect("ADump").storage,
+        state.unit(dump).expect("MaterialStorage").storage,
         0,
         "склад не уходит в минус"
     );
@@ -335,7 +340,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
 
     // Подвоз в тот же котёл: стройка завершается с того же места.
-    state.unit_mut(dump).expect("ADump").storage = 5;
+    state.unit_mut(dump).expect("MaterialStorage").storage = 5;
     let events = production_turn(&mut state);
     assert!(
         events
@@ -344,7 +349,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         "после подвоза завод обязан выпустить юнита: {events:?}"
     );
     assert_eq!(count_type(&state, UnitType::Infantry), 1);
-    assert_eq!(state.unit(dump).expect("ADump").storage, 4);
+    assert_eq!(state.unit(dump).expect("MaterialStorage").storage, 4);
 }
 
 #[test]
@@ -359,9 +364,9 @@ fn factory_without_connected_storage_pauses_even_with_team_materials() {
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
         .expect("training hall");
     let far_dump = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(2, 2), 0)
-        .expect("ADump");
-    state.unit_mut(far_dump).expect("ADump").storage = 50;
+        .spawn_unit(UnitType::MaterialStorage, TeamId::RED, Point::new(2, 2), 0)
+        .expect("MaterialStorage");
+    state.unit_mut(far_dump).expect("MaterialStorage").storage = 50;
     power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
@@ -383,7 +388,7 @@ fn factory_without_connected_storage_pauses_even_with_team_materials() {
         state.unit(factory).expect("factory").orders,
         UnitOrder::Build
     );
-    assert_eq!(state.unit(far_dump).expect("ADump").storage, 50);
+    assert_eq!(state.unit(far_dump).expect("MaterialStorage").storage, 50);
 }
 
 #[test]

@@ -244,7 +244,7 @@ fn menu_items_follow_unit_type() {
 
     // Транспорт: `load` включён (курсорный режим 7), `activate` — нет
     // (`RepairShopMenu` не портирован).
-    let transport = spawn(&mut app, UnitType::PersonnelCarrier);
+    let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, transport);
     let menu = app.unit_menu().expect("меню транспорта");
     let load = menu
@@ -366,7 +366,7 @@ fn disabled_item_does_not_act() {
     };
 
     // Единственный оставшийся отключённый пункт — `activate` ремонтного цеха.
-    let carrier = spawn(&mut app, UnitType::PersonnelCarrier);
+    let carrier = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, carrier);
 
     let index = app
@@ -593,7 +593,7 @@ fn enter_mode_moves_to_unit() {
     };
 
     let tank = spawn(&mut app, UnitType::Tank);
-    let transport = spawn(&mut app, UnitType::PersonnelCarrier);
+    let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
 
     open_menu(&mut app, tank);
     let index = app

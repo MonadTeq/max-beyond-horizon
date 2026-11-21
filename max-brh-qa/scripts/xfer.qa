@@ -69,14 +69,14 @@ assert unit-storage>=5
 # членов до `ATTRIB_STORAGE`).
 # x-fer из шахты после этого видит запас ВСЕГО комплекса, а не только склада
 # шахты; `TransferMenu_GetUnitCargoInfo` (`transfermenu.cpp:37-60`).
-spawn at 29 22 ADump
-assert unit=ADump
+spawn at 29 22 MaterialStorage
+assert unit=MaterialStorage
 select type MiningStation
 complex raw 100
 # Попап шахты (ALLOCATE/X-FER/STOP/REMOVE) перекрывает соседнюю клетку —
 # закрываем его, иначе клик по ADUMP попадёт в кнопку, а не на карту.
 key ESC
-select type ADump
+select type MaterialStorage
 assert unit-storage>=30
 select type MiningStation
 

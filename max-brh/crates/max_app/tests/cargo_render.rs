@@ -125,7 +125,7 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
     assert!(flak.has_turret(), "мобильная зенитка");
     assert_eq!(flak.turret_offset, (11, -1), "D_SP_FLK angle_offsets[2]");
 
-    let escort = cargo.icon(UnitType::FastBoat).expect("I_ESCORT");
+    let escort = cargo.icon(UnitType::Escort).expect("I_ESCORT");
     assert!(escort.has_turret(), "эскорт");
     assert_eq!(escort.turret_offset, (4, 0), "D_ESCORT angle_offsets[2]");
 
@@ -134,12 +134,12 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
     for unit in [
         UnitType::GunTurret,
         UnitType::AntiAir,
-        UnitType::ArtilleryTurret,
-        UnitType::AntiMissile,
+        UnitType::Artillery,
+        UnitType::MissileLauncher,
         UnitType::Tank,
         UnitType::MobileAntiAir,
-        UnitType::FastBoat,
-        UnitType::Battleship,
+        UnitType::Escort,
+        UnitType::Gunboat,
         UnitType::AlienTank,
         UnitType::Scanner,
         UnitType::Awac,

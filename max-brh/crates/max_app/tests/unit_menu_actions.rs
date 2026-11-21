@@ -106,7 +106,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
         app.state().map.size.width / 2,
         app.state().map.size.height / 2,
     );
-    let Some(carrier) = spawn(&mut app, UnitType::PersonnelCarrier, team, center) else {
+    let Some(carrier) = spawn(&mut app, UnitType::ArmouredPersonnelCarrier, team, center) else {
         return;
     };
     let Some(infantry) = spawn(
@@ -199,10 +199,10 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
     let point = free_point(&app, center);
     let commando = state
         .spawn_unit(
-            UnitType::Commando,
+            UnitType::Infiltrator,
             team,
             point,
-            max_core::access::unit_type_flags(UnitType::Commando),
+            max_core::access::unit_type_flags(UnitType::Infiltrator),
         )
         .expect("диверсант");
     let enemy_team = TeamId(1);
@@ -538,7 +538,7 @@ fn ui_events_queue_cpp_sounds() {
 /// для включённого Research Center.
 #[test]
 fn unit_status_voice_matches_cpp_chain() {
-    let mut unit = max_core::unit::UnitInfo::new(UnitType::ResearchCenter, TeamId::RED, UnitId(1));
+    let mut unit = max_core::unit::UnitInfo::new(UnitType::ResearchCentre, TeamId::RED, UnitId(1));
     unit.orders = UnitOrder::PowerOn;
     unit.state = UnitOrderState::ExecutingOrder;
     unit.speed = 1;

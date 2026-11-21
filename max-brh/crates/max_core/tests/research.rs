@@ -341,7 +341,7 @@ fn research_center_allocation_reassigns_and_powers_off() {
     state.team_units[TeamId::RED.0 as usize] = team_units();
     let id = state
         .spawn_unit(
-            UnitType::ResearchCenter,
+            UnitType::ResearchCentre,
             TeamId::RED,
             max_core::geo::Point::new(10, 10),
             0,

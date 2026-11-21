@@ -711,7 +711,7 @@ mod tests {
     fn adjacent_buildings_share_one_complex_and_capacity() {
         let mut state = test_state();
         let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-        let dump = spawn(&mut state, UnitType::ADump, Point::new(12, 10));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 10));
 
         let mine_complex = state.unit(mine).unwrap().complex;
         assert!(mine_complex.is_some());
@@ -748,7 +748,7 @@ mod tests {
     fn connector_units_merge_two_complexes() {
         let mut state = test_state();
         let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-        let dump = spawn(&mut state, UnitType::ADump, Point::new(15, 10));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(15, 10));
 
         assert_ne!(
             state.unit(mine).unwrap().complex,
@@ -778,7 +778,7 @@ mod tests {
     fn destroying_a_connector_splits_the_complex() {
         let mut state = test_state();
         let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-        let dump = spawn(&mut state, UnitType::ADump, Point::new(15, 10));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(15, 10));
         let bridge = spawn(&mut state, UnitType::Connector, Point::new(12, 10));
         spawn(&mut state, UnitType::Connector, Point::new(13, 10));
         spawn(&mut state, UnitType::Connector, Point::new(14, 10));
@@ -831,7 +831,7 @@ mod tests {
         fn build() -> (GameState, UnitId, UnitId) {
             let mut state = test_state();
             let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-            let dump = spawn(&mut state, UnitType::ADump, Point::new(12, 10));
+            let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 10));
             state.unit_mut(mine).unwrap().storage = 9;
             state.unit_mut(dump).unwrap().storage = 4;
             let complex = state.unit(mine).unwrap().complex.expect("complex");

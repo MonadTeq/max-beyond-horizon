@@ -515,9 +515,9 @@ impl AiPlayer {
         matches!(
             unit_type,
             UnitType::MiningStation
-                | UnitType::Greenhouse
-                | UnitType::CommTower
-                | UnitType::ResearchCenter
+                | UnitType::EcoSphere
+                | UnitType::GoldRefinery
+                | UnitType::ResearchCentre
                 | UnitType::LightVehiclePlant
                 | UnitType::HeavyVehiclePlant
                 | UnitType::Shipyard
@@ -1154,7 +1154,7 @@ impl AiPlayer {
             let Some(unit) = world.unit(*id) else {
                 continue;
             };
-            if unit.team == self.player_team && unit.unit_type == UnitType::FDump {
+            if unit.team == self.player_team && unit.unit_type == UnitType::FuelStorage {
                 fuel_reserves += i32::from(unit.storage);
             }
         }
@@ -1172,7 +1172,7 @@ impl AiPlayer {
                 UnitType::MiningStation => {
                     unit.orders != UnitOrder::PowerOn && unit.orders != UnitOrder::Idle
                 }
-                UnitType::CommTower | UnitType::Greenhouse | UnitType::ResearchCenter => {
+                UnitType::GoldRefinery | UnitType::EcoSphere | UnitType::ResearchCentre => {
                     fuel_reserves >= 10
                         && unit.orders != UnitOrder::PowerOn
                         && unit.orders != UnitOrder::Idle
@@ -1322,7 +1322,7 @@ impl AiPlayer {
                 let escort_type = match unit.unit_type {
                     UnitType::Awac | UnitType::Bomber => Some(UnitType::Fighter),
                     UnitType::MissileCrawler | UnitType::Scanner => Some(UnitType::Tank),
-                    UnitType::MobileAntiAir | UnitType::FastBoat => Some(UnitType::Fighter),
+                    UnitType::MobileAntiAir | UnitType::Escort => Some(UnitType::Fighter),
                     _ => None,
                 };
 
@@ -1822,9 +1822,9 @@ pub fn build_threat_map(
     let risk_group = match risk_level {
         2 => Some(UnitType::Surveyor),
         3 => Some(UnitType::Fighter),
-        4 | 5 => Some(UnitType::Commando),
+        4 | 5 => Some(UnitType::Infiltrator),
         6 => Some(UnitType::Submarine),
-        7 => Some(UnitType::PersonnelCarrier),
+        7 => Some(UnitType::ArmouredPersonnelCarrier),
         _ => Some(UnitType::Tank),
     };
 
@@ -2235,8 +2235,10 @@ fn is_able_to_attack(
         return false;
     }
 
-    if matches!(attacker.unit_type, UnitType::Commando | UnitType::Submarine)
-        && !attacker.is_visible_to_team(team)
+    if matches!(
+        attacker.unit_type,
+        UnitType::Infiltrator | UnitType::Submarine
+    ) && !attacker.is_visible_to_team(team)
     {
         return false;
     }

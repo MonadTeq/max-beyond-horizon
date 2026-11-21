@@ -73,6 +73,7 @@ pub mod sfx;
 pub mod soak;
 pub mod transfermenu;
 pub mod ui;
+pub mod unit_names;
 pub mod unitmenu;
 pub mod upgrademenu;
 pub mod winloss;
@@ -1037,7 +1038,7 @@ impl App {
             return false;
         };
         if unit.team != self.state.player_team
-            || unit.unit_type != UnitType::ResearchCenter
+            || unit.unit_type != UnitType::ResearchCentre
             || unit.orders != max_core::enums::UnitOrder::PowerOn
         {
             return false;

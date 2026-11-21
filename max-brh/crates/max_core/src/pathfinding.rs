@@ -1300,7 +1300,7 @@ mod tests {
         let mut state = state();
         let commando = state
             .spawn_unit(
-                UnitType::Commando,
+                UnitType::Infiltrator,
                 TeamId::RED,
                 Point::new(5, 6),
                 MOBILE_LAND_UNIT | SELECTABLE,

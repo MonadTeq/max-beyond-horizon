@@ -210,12 +210,12 @@ fn manage_check_needs(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
         }
     }
 
-    if get_unit_count(ctx, team, UnitType::ADump) == 0 && turn >= 8 {
+    if get_unit_count(ctx, team, UnitType::MaterialStorage) == 0 && turn >= 8 {
         if manage_create_building(
             kind,
             ctx,
             header,
-            UnitType::ADump,
+            UnitType::MaterialStorage,
             TASK_PRIORITY_BUILDING_DUMP,
         )
         .is_some()

@@ -109,7 +109,10 @@ fn save1_all_sections_are_present() {
     assert_eq!(save.team_units[0].gold, 52);
     assert_eq!(save.team_units[0].complexes.len(), 2);
     assert_eq!(save.team_units[1].complexes.len(), 3);
-    assert_eq!(save.teams[0].unit_counters[UnitType::CommTower as usize], 2);
+    assert_eq!(
+        save.teams[0].unit_counters[UnitType::GoldRefinery as usize],
+        2
+    );
     // UI-поля: камера красных (85, 52), зум 35, выбран юнит 0x0057.
     assert_eq!(save.team_ui[0].camera_position, Point::new(85, 52));
     assert_eq!(save.team_ui[0].zoom_level, 35);

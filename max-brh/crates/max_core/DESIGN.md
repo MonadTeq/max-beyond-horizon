@@ -249,7 +249,7 @@ ai/tasks/*.rs     — по файлу на каждый класс задачи 
 | `PlanetType` | `Planet` | `#[repr(u8)]` 0..23 (24 планеты) | |
 | `ResearchTopicType` | `ResearchTopic` | `#[repr(u8)]` 0..7 + COUNT=8 | |
 | `SurfaceType` (биты) | `struct Surface(u8)` | const: NONE=0, LAND=0x1, WATER=0x2, COAST=0x4, AIR=0x8 | **битмаска**, не enum |
-| `ResourceID` (тип юнита) | `UnitType` | `#[repr(u16)]`, 93 варианта `CommTower=0 … DeadWaldo=92` | порядок = state-model §2.11; `from_u16` → `Option` |
+| `ResourceID` (тип юнита) | `UnitType` | `#[repr(u16)]`, 93 варианта `GoldRefinery=0 … DeadWaldo=92`; ресурсный токен — `UnitType::tag()` | порядок = state-model §2.11; `from_u16` → `Option` |
 | `UnitOrderType` | `UnitOrder` | `#[repr(u8)]`, 32 значения 0x00–0x1F | `Order17 = 0x12` (имя в C++ не восстановлено) |
 | `UnitOrderStateType` | `UnitOrderState` | `#[repr(u8)]`, 47 значений 0x00–0x2E | |
 | `GameStateType` | `GameStateType` | `#[repr(u8)]` 0x0–0xF | неигровые фазы — только для парсинга сейвов |

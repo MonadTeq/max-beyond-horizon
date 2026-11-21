@@ -564,7 +564,7 @@ pub fn squared_distance(first: Point, second: Point) -> i32 {
 /// врагов с классом самого юнита (и его группы), чтобы не останавливать
 /// движение из-за цели, которую он всё равно не может атаковать.
 pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
-    if unit.unit_type == UnitType::Commando || state.is_unit_under_water(unit) {
+    if unit.unit_type == UnitType::Infiltrator || state.is_unit_under_water(unit) {
         for team_index in 0..crate::game::PLAYER_TEAM_COUNT {
             let team = TeamId(team_index as u8);
 
@@ -572,7 +572,7 @@ pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
                 && state.teams[team_index].team_type != TeamKind::None
                 && unit.is_visible_to_team(team)
             {
-                return if unit.unit_type == UnitType::Commando {
+                return if unit.unit_type == UnitType::Infiltrator {
                     TARGET_CLASS_LAND
                 } else {
                     TARGET_CLASS_WATER
@@ -580,7 +580,7 @@ pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
             }
         }
 
-        if unit.unit_type == UnitType::Commando {
+        if unit.unit_type == UnitType::Infiltrator {
             TARGET_CLASS_LAND_STEALTH
         } else {
             TARGET_CLASS_SEA_STEALTH
@@ -675,12 +675,12 @@ pub fn is_within_attack_range(state: &GameState, unit: &UnitInfo, grid: Point, r
 pub fn valid_attack_target_types(unit_type: UnitType) -> u32 {
     use UnitType::*;
     match unit_type {
-        Scout | Commando | Infantry | Corvette | Battleship | Submarine | MissileBoat | Bomber
-        | Juggernaut | AlienTank | AlienAssaultGun | Tank | AssaultGun | RocketLauncher
-        | MissileCrawler | GunTurret | ArtilleryTurret | AntiMissile => {
+        Scout | Infiltrator | Infantry | Corvette | Gunboat | Submarine | MissileCruiser
+        | Bomber | Juggernaut | AlienTank | AlienAssaultGun | Tank | AssaultGun
+        | RocketLauncher | MissileCrawler | GunTurret | Artillery | MissileLauncher => {
             MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | STATIONARY
         }
-        FastBoat | Fighter | MobileAntiAir | AntiAir => MOBILE_AIR_UNIT,
+        Escort | Fighter | MobileAntiAir | AntiAir => MOBILE_AIR_UNIT,
         AlienPlane => MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | STATIONARY,
         LandMine | SeaMine => MOBILE_SEA_UNIT | MOBILE_LAND_UNIT,
         _ => 0,
@@ -1010,14 +1010,14 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
 
         if flags & MOBILE_LAND_UNIT != 0 {
             if (other.unit_type == UnitType::Barracks
-                || other.unit_type == UnitType::PersonnelCarrier
+                || other.unit_type == UnitType::ArmouredPersonnelCarrier
                 || other.unit_type == UnitType::SeaTransport)
-                && (unit.unit_type == UnitType::Commando || unit.unit_type == UnitType::Infantry)
+                && (unit.unit_type == UnitType::Infiltrator || unit.unit_type == UnitType::Infantry)
             {
                 return Some(id);
             } else if (other.unit_type == UnitType::Depot
                 || other.unit_type == UnitType::SeaTransport)
-                && unit.unit_type != UnitType::Commando
+                && unit.unit_type != UnitType::Infiltrator
                 && unit.unit_type != UnitType::Infantry
             {
                 return Some(id);
@@ -1091,7 +1091,7 @@ pub fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
         let Some(other) = state.unit(*id) else {
             continue;
         };
-        if other.unit_type == UnitType::Commando
+        if other.unit_type == UnitType::Infiltrator
             && other.parent_unit == Some(unit.id)
             && is_stealth_action_in_progress(other)
         {
@@ -1151,8 +1151,8 @@ pub fn paths_is_occupied(state: &mut GameState, grid: Point, angle: i32, team: T
     for id in ids {
         let Some(unit) = state.unit(id) else { continue };
         if (unit.unit_type == UnitType::Submarine
-            || unit.unit_type == UnitType::Commando
-            || unit.unit_type == UnitType::PersonnelCarrier)
+            || unit.unit_type == UnitType::Infiltrator
+            || unit.unit_type == UnitType::ArmouredPersonnelCarrier)
             && !unit.is_visible_to_team(team)
         {
             if !attempt_side_step(state, id, grid, angle) {
@@ -1217,7 +1217,7 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
         return true;
     }
 
-    let is_clntrans = unit.unit_type == UnitType::PersonnelCarrier;
+    let is_clntrans = unit.unit_type == UnitType::ArmouredPersonnelCarrier;
     let mut best_cost = 0i32;
     let mut best_angle = 0i32;
     let mut best_site = unit.grid;
@@ -1758,7 +1758,7 @@ pub fn build_clearing(
 
     if mode
         && !is_mine
-        && !matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry)
+        && !matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry)
         && flags & (crate::enums::unit_flags::CONNECTOR_UNIT | crate::enums::unit_flags::HOVERING) == 0
         && is_fully_land_covered(state, grid, flags)
     {
@@ -1930,16 +1930,19 @@ mod tests {
     #[test]
     fn unit_type_table_matches_resource_units() {
         assert_eq!(UNIT_TYPE_PROPERTIES.len(), 93);
-        assert_eq!(unit_type_flags(UnitType::CommTower), 0x0160_4210);
-        assert_eq!(unit_type_land_type(UnitType::CommTower), SURFACE_TYPE_LAND);
+        assert_eq!(unit_type_flags(UnitType::GoldRefinery), 0x0160_4210);
+        assert_eq!(
+            unit_type_land_type(UnitType::GoldRefinery),
+            SURFACE_TYPE_LAND
+        );
         assert_eq!(unit_type_land_type(UnitType::Fighter), SURFACE_TYPE_ALL);
-        assert_eq!(unit_type_land_type(UnitType::PersonnelCarrier), 0x7);
+        assert_eq!(unit_type_land_type(UnitType::ArmouredPersonnelCarrier), 0x7);
         assert_eq!(
             unit_type_flags(UnitType::Tank) & MOBILE_LAND_UNIT,
             MOBILE_LAND_UNIT
         );
         assert_eq!(
-            unit_type_flags(UnitType::CommTower) & ELECTRONIC_UNIT,
+            unit_type_flags(UnitType::GoldRefinery) & ELECTRONIC_UNIT,
             ELECTRONIC_UNIT
         );
         assert_eq!(
@@ -2000,7 +2003,7 @@ mod tests {
         assert_eq!(
             is_accessible(
                 &state,
-                UnitType::PersonnelCarrier,
+                UnitType::ArmouredPersonnelCarrier,
                 TeamId::RED,
                 Point::new(5, 6),
                 same
@@ -2151,7 +2154,7 @@ mod tests {
         // Диверсант, «держащий» цель, тоже блокирует её.
         let commando = spawn(
             &mut state,
-            UnitType::Commando,
+            UnitType::Infiltrator,
             TeamId::GREEN,
             Point::new(5, 6),
             MOBILE_LAND_UNIT | SELECTABLE,
@@ -2184,7 +2187,7 @@ mod tests {
         }
         let commando = state
             .spawn_unit(
-                UnitType::Commando,
+                UnitType::Infiltrator,
                 TeamId::RED,
                 Point::new(5, 6),
                 MOBILE_LAND_UNIT | SELECTABLE,

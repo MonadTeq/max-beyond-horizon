@@ -1235,7 +1235,7 @@ impl GameState {
             }
         }
 
-        if unit_type == UnitType::Commando {
+        if unit_type == UnitType::Infiltrator {
             unit.experience = base.get_attribute(ATTRIB_AGENT_ADJUST) as i16;
         }
 
@@ -1252,10 +1252,12 @@ impl GameState {
 
         // Стартовые приказы по типу (`UnitsManager_DeployUnit`, switch).
         match unit_type {
-            UnitType::SeaTransport | UnitType::AirTransport | UnitType::PersonnelCarrier => {
+            UnitType::SeaTransport
+            | UnitType::AirTransport
+            | UnitType::ArmouredPersonnelCarrier => {
                 unit.storage = 0;
             }
-            UnitType::CommTower | UnitType::Habitat | UnitType::MiningStation => {
+            UnitType::GoldRefinery | UnitType::Habitat | UnitType::MiningStation => {
                 unit.orders = UnitOrder::PowerOn;
                 unit.state = UnitOrderState::Init;
                 unit.prior_orders = UnitOrder::PowerOn;
@@ -1265,13 +1267,13 @@ impl GameState {
             | UnitType::SeaMine
             | UnitType::GunTurret
             | UnitType::AntiAir
-            | UnitType::ArtilleryTurret
-            | UnitType::AntiMissile
+            | UnitType::Artillery
+            | UnitType::MissileLauncher
             | UnitType::Radar => {
                 unit.orders = UnitOrder::Sentry;
                 unit.state = UnitOrderState::ExecutingOrder;
             }
-            UnitType::PowerStation | UnitType::PowerGenerator | UnitType::ResearchCenter => {
+            UnitType::PowerStation | UnitType::PowerGenerator | UnitType::ResearchCentre => {
                 unit.orders = UnitOrder::PowerOff;
                 unit.state = UnitOrderState::ExecutingOrder;
             }
@@ -1850,7 +1852,7 @@ impl GameState {
                 continue;
             };
             if unit.team != team
-                || unit.unit_type != UnitType::ResearchCenter
+                || unit.unit_type != UnitType::ResearchCentre
                 || unit.orders != UnitOrder::PowerOn
             {
                 continue;
@@ -1997,15 +1999,15 @@ impl GameState {
             }
         }
 
-        if unit.unit_type == UnitType::CommTower && unit.orders == UnitOrder::PowerOn {
+        if unit.unit_type == UnitType::GoldRefinery && unit.orders == UnitOrder::PowerOn {
             if let Some(team_units) = self.team_units.get_mut(team_index) {
                 let reserves = team_units.gold();
-                let income = cargo_gold_consumption_rate(UnitType::CommTower).max(0) as u32;
+                let income = cargo_gold_consumption_rate(UnitType::GoldRefinery).max(0) as u32;
                 team_units.set_gold(reserves.wrapping_add(income));
             }
         }
 
-        if unit.unit_type == UnitType::Greenhouse && unit.orders == UnitOrder::PowerOn {
+        if unit.unit_type == UnitType::EcoSphere && unit.orders == UnitOrder::PowerOn {
             unit.storage = unit.storage.wrapping_add(1);
 
             if let Some(info) = self.teams.get_mut(team_index) {

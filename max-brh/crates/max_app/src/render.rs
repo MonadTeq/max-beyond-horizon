@@ -430,10 +430,7 @@ pub fn firing_body_frame_index(
 
     let angle = usize::from(body_angle % 8);
 
-    if matches!(
-        unit.unit_type,
-        UnitType::Commando | UnitType::Infantry
-    ) {
+    if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
         // `unit_angle + 104`, дальше +8 за каждый тик отдачи (8 → 0).
         let step = 8usize.saturating_sub(usize::from(unit.firing_recoil_frames));
         return Some(104 + angle + 8 * step);
@@ -478,7 +475,7 @@ pub fn firing_turret_frame_index(
 
     let special = matches!(
         unit.unit_type,
-        UnitType::AntiAir | UnitType::MobileAntiAir | UnitType::FastBoat
+        UnitType::AntiAir | UnitType::MobileAntiAir | UnitType::Escort
     );
 
     let shift = if special {

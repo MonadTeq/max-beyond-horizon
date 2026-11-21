@@ -563,11 +563,8 @@ pub fn unit_action_cursor(
 
                 if let Some(land) = land {
                     if ready_to_take_orders(state, land) {
-                        if unit1.unit_type == UnitType::PersonnelCarrier
-                            && matches!(
-                                land.unit_type,
-                                UnitType::Commando | UnitType::Infantry
-                            )
+                        if unit1.unit_type == UnitType::ArmouredPersonnelCarrier
+                            && matches!(land.unit_type, UnitType::Infiltrator | UnitType::Infantry)
                         {
                             return CursorId::Load;
                         }
@@ -670,7 +667,7 @@ pub fn military_cursor(
         return CursorId::UnitNoGo;
     }
 
-    if selected.unit_type != UnitType::Commando {
+    if selected.unit_type != UnitType::Infiltrator {
         if selected.weapon != 2 {
             return CursorId::UnitNoGo;
         }
@@ -688,7 +685,7 @@ pub fn military_cursor(
     };
 
     // Диверсант без режима наведения: рядом — steal/disable по направлению.
-    if selected.unit_type == UnitType::Commando && selected.targeting_mode == 0 {
+    if selected.unit_type == UnitType::Infiltrator && selected.targeting_mode == 0 {
         if is_unit_next_to_position(selected, grid) {
             let disable = cursor == crate::unitmenu::CURSOR_DISABLE || cursor == 0;
             let steal = cursor == crate::unitmenu::CURSOR_STEAL || cursor == 0;
@@ -1008,7 +1005,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                 if let Some(candidate) = candidate {
                     let special = matches!(
                         candidate.unit_type,
-                        UnitType::Commando | UnitType::Infantry
+                        UnitType::Infiltrator | UnitType::Infantry
                     );
 
                     let ready = if selected.unit_type == UnitType::Barracks {

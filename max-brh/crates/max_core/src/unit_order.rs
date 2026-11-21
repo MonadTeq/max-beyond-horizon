@@ -122,12 +122,12 @@ pub fn is_bridge_elevated(unit: &UnitInfo) -> bool {
 /// `UnitInfo::RestoreOrders` (`unitinfo.cpp:3783`).
 pub fn restore_orders(unit: &mut UnitInfo) {
     if unit.prior_orders == unit.orders
-        && unit.unit_type != UnitType::CommTower
+        && unit.unit_type != UnitType::GoldRefinery
         && unit.unit_type != UnitType::MiningStation
         && unit.unit_type != UnitType::Habitat
         && unit.unit_type != UnitType::PowerGenerator
         && unit.unit_type != UnitType::PowerStation
-        && unit.unit_type != UnitType::ResearchCenter
+        && unit.unit_type != UnitType::ResearchCentre
     {
         unit.prior_orders = UnitOrder::Await;
         unit.prior_state = UnitOrderState::ExecutingOrder;
@@ -304,7 +304,7 @@ pub fn move_finished(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
 
     clear_movement_wait(unit);
 
-    if unit.unit_type == UnitType::Infantry || unit.unit_type == UnitType::Commando {
+    if unit.unit_type == UnitType::Infantry || unit.unit_type == UnitType::Infiltrator {
         // `UpdateSpriteFrame(0, image_index_max)` — UI.
     }
 
@@ -405,7 +405,7 @@ pub fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
     ai_task_flag(state, "Power Down");
     power_up(unit, 1);
 
-    if unit.unit_type == UnitType::ResearchCenter {
+    if unit.unit_type == UnitType::ResearchCentre {
         // TODO(риск 1): ResearchMenu_UpdateResearchProgress(team, topic, -1).
     }
 }
@@ -856,7 +856,7 @@ pub fn paths_calculate_step(
 ) -> bool {
     let mut max_velocity = if fast_movement { 16 } else { 8 };
 
-    if unit.unit_type == UnitType::Commando || unit.unit_type == UnitType::Infantry {
+    if unit.unit_type == UnitType::Infiltrator || unit.unit_type == UnitType::Infantry {
         max_velocity >>= 1;
         unit.velocity = max_velocity as u8;
     }
@@ -1207,7 +1207,7 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
                 ctx.unit.orders = UnitOrder::Idle;
                 let receiver_type = receiver_unit.as_ref().map(|unit| unit.unit_type);
                 if receiver_type == Some(UnitType::SeaTransport)
-                    || receiver_type == Some(UnitType::PersonnelCarrier)
+                    || receiver_type == Some(UnitType::ArmouredPersonnelCarrier)
                 {
                     ctx.unit.state = UnitOrderState::PrepareStore;
                 } else {
@@ -2566,7 +2566,7 @@ fn process_order_power_on(ctx: &mut OrderContext<'_>) {
         ai_task_flag(ctx.world, "Power up");
         power_up(&mut ctx.unit, -1);
 
-        if ctx.unit.unit_type == UnitType::ResearchCenter {
+        if ctx.unit.unit_type == UnitType::ResearchCentre {
             // `ResearchMenu_UpdateResearchProgress(team, topic, +1)`
             // (`units_manager.cpp:2956`).
             ctx.world
@@ -2582,7 +2582,7 @@ fn process_order_power_off(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
         power_down(ctx.world, &mut ctx.unit);
 
-        if ctx.unit.unit_type == UnitType::ResearchCenter {
+        if ctx.unit.unit_type == UnitType::ResearchCentre {
             // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
             ctx.world
                 .update_research_progress(ctx.unit.team, ctx.unit.research_topic, -1);
@@ -2630,7 +2630,7 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
         },
     });
 
-    if (ctx.unit.unit_type == UnitType::Commando || ctx.unit.unit_type == UnitType::Infantry)
+    if (ctx.unit.unit_type == UnitType::Infiltrator || ctx.unit.unit_type == UnitType::Infantry)
         && ctx.unit.hits == 0
     {
         // `units_manager.cpp:3932-3946`: пехота/диверсант умирают собственной
@@ -3532,7 +3532,7 @@ mod tests {
         assert_eq!(tank.state, UnitOrderState::ExecutingOrder);
 
         // У зданий с питанием совпадение prior/order сохраняется (как в C++).
-        let mut tower = UnitInfo::new(UnitType::CommTower, TeamId::RED, UnitId(2));
+        let mut tower = UnitInfo::new(UnitType::GoldRefinery, TeamId::RED, UnitId(2));
         tower.orders = UnitOrder::PowerOn;
         tower.state = UnitOrderState::Init;
         tower.prior_orders = UnitOrder::PowerOn;
@@ -3958,7 +3958,7 @@ mod tests {
         // Родитель-транспорт и пассажир.
         let carrier = state
             .spawn_unit(
-                UnitType::PersonnelCarrier,
+                UnitType::ArmouredPersonnelCarrier,
                 TeamId::RED,
                 Point::new(10, 10),
                 MOBILE_SEA_UNIT | MOBILE_LAND_UNIT,

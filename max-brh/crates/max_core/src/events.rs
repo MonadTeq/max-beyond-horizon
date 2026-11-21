@@ -1581,7 +1581,7 @@ mod tests {
             .spawn_unit(UnitType::Scout, TeamId::GREEN, Point::new(6, 5), 0)
             .expect("scout");
         let tower = state
-            .spawn_unit(UnitType::CommTower, TeamId::GREEN, Point::new(8, 8), 0)
+            .spawn_unit(UnitType::GoldRefinery, TeamId::GREEN, Point::new(8, 8), 0)
             .expect("tower");
         (state, tank, scout, tower)
     }

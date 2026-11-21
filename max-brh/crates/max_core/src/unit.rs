@@ -441,7 +441,7 @@ pub struct UnitInfo {
 
 impl Default for UnitInfo {
     fn default() -> Self {
-        Self::new(UnitType::CommTower, TeamId::RED, UnitId::NO_ID)
+        Self::new(UnitType::GoldRefinery, TeamId::RED, UnitId::NO_ID)
     }
 }
 

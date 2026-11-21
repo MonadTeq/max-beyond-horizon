@@ -364,32 +364,32 @@ fn init_kind(unit_type: UnitType) -> InitKind {
 
     match unit_type {
         // `COMMTWR` → `UnitsManager_PopupCallbacks[22]` (`unitinfo.cpp:456`).
-        CommTower => InitKind::GoldRefinery,
+        GoldRefinery => InitKind::GoldRefinery,
         PowerStation | PowerGenerator => InitKind::PowerGenerators,
         Barracks | Depot | Hangar | Dock => InitKind::RepairShops,
-        ADump | FDump => InitKind::Commons,
+        MaterialStorage | FuelStorage => InitKind::Commons,
         Shipyard | LightVehiclePlant | HeavyVehiclePlant | AirUnitsPlant | TrainingHall => {
             InitKind::Factories
         }
-        ResearchCenter => InitKind::Research,
-        Greenhouse => InitKind::EcoSphere,
+        ResearchCentre => InitKind::Research,
+        EcoSphere => InitKind::EcoSphere,
         RecreationCenter => InitKind::RecreationCenter,
-        GunTurret | AntiAir | ArtilleryTurret | AntiMissile | Scanner | Tank | AssaultGun
-        | RocketLauncher | MissileCrawler | MobileAntiAir | Infantry | FastBoat | Corvette
-        | Battleship | Submarine | MissileBoat | Fighter | Bomber | Juggernaut | AlienTank
+        GunTurret | AntiAir | Artillery | MissileLauncher | Scanner | Tank | AssaultGun
+        | RocketLauncher | MissileCrawler | MobileAntiAir | Infantry | Escort | Corvette
+        | Gunboat | Submarine | MissileCruiser | Fighter | Bomber | Juggernaut | AlienTank
         | AlienAssaultGun | AlienPlane => InitKind::Military,
         MiningStation => InitKind::MiningStation,
         MasterBuilder => InitKind::Master,
         Constructor | Engineer => InitKind::Builders,
         MineLayer | SeaMineLayer => InitKind::MineLayers,
         Surveyor => InitKind::Surveyor,
-        GoldSmelter => InitKind::GoldRefinery,
+        GoldVault => InitKind::GoldRefinery,
         SupplyTruck | CargoShip => InitKind::Reloaders,
         Bulldozer => InitKind::Remove,
         RepairUnit => InitKind::Repair,
         FuelTruck => InitKind::Commons,
-        PersonnelCarrier | SeaTransport | AirTransport => InitKind::RepairShops,
-        Commando => InitKind::Infiltrator,
+        ArmouredPersonnelCarrier | SeaTransport | AirTransport => InitKind::RepairShops,
+        Infiltrator => InitKind::Infiltrator,
         // `default:` — `UnitsManager_PopupCallbacks[0]` (`InitCommons`).
         _ => InitKind::Commons,
     }
@@ -430,7 +430,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
     // `Manual`: только simultaneous moves, с боезапасом и не диверсант.
     if state.play_mode == PlayMode::SimultaneousMoves
         && unit.base_values.get_attribute(ATTRIB_AMMO) > 0
-        && unit.unit_type != UnitType::Commando
+        && unit.unit_type != UnitType::Infiltrator
     {
         items.push(UnitMenuItem::new(
             ItemId::Manual,
@@ -471,7 +471,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
 
     // `sentry` + `Done`.
     if unit.flags & unit_flags::SENTRY_UNIT != 0 {
-        if unit.unit_type != UnitType::Commando {
+        if unit.unit_type != UnitType::Infiltrator {
             match order {
                 UnitOrder::Sentry => items.push(UnitMenuItem::new(
                     ItemId::Sentry,
@@ -1111,7 +1111,7 @@ pub fn is_valid_stealth_target(
     if order == UnitOrder::AwaitStealUnit {
         let transport_with_cargo = matches!(
             target.unit_type,
-            UnitType::PersonnelCarrier | UnitType::SeaTransport | UnitType::AirTransport
+            UnitType::ArmouredPersonnelCarrier | UnitType::SeaTransport | UnitType::AirTransport
         ) && target.storage != 0;
 
         target.flags & unit_flags::STATIONARY == 0 && !transport_with_cargo
@@ -1148,7 +1148,7 @@ pub fn stealth_mode_click(
     let Some(unit) = state.unit(selected) else {
         return Ok(None);
     };
-    if selected == target || unit.unit_type != UnitType::Commando || unit.shots == 0 {
+    if selected == target || unit.unit_type != UnitType::Infiltrator || unit.shots == 0 {
         return Err(message.to_string());
     }
 
@@ -1216,14 +1216,11 @@ pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
     let target_land = target.flags & unit_flags::MOBILE_LAND_UNIT != 0;
     let target_air = target.flags & unit_flags::MOBILE_AIR_UNIT != 0;
     let target_sea = target.flags & unit_flags::MOBILE_SEA_UNIT != 0;
-    let infantry = matches!(
-        target.unit_type,
-        UnitType::Commando | UnitType::Infantry
-    );
+    let infantry = matches!(target.unit_type, UnitType::Infiltrator | UnitType::Infantry);
 
     match selected.unit_type {
         UnitType::AirTransport => target_land,
-        UnitType::PersonnelCarrier => infantry,
+        UnitType::ArmouredPersonnelCarrier => infantry,
         UnitType::SeaTransport => target_land,
         UnitType::Depot => target_land && !infantry,
         UnitType::Hangar => target_air,
@@ -1698,7 +1695,7 @@ mod tests {
     #[test]
     fn transport_lists_load_and_activate() {
         let mut state = test_state();
-        let id = spawn(&mut state, UnitType::PersonnelCarrier);
+        let id = spawn(&mut state, UnitType::ArmouredPersonnelCarrier);
         let unit = state.unit(id).expect("транспорт").clone();
         let items = items_for(&state, &unit);
 
@@ -1725,7 +1722,7 @@ mod tests {
     #[test]
     fn infiltrator_has_stealth_and_targeting_items_enabled() {
         let mut state = test_state();
-        let id = spawn(&mut state, UnitType::Commando);
+        let id = spawn(&mut state, UnitType::Infiltrator);
         let unit = state.unit(id).expect("диверсант").clone();
         let items = items_for(&state, &unit);
 
@@ -1975,7 +1972,7 @@ mod tests {
     fn enter_mode_click_orders_move_to_unit() {
         let mut state = test_state();
         let tank = spawn(&mut state, UnitType::Tank);
-        let transport = spawn(&mut state, UnitType::PersonnelCarrier);
+        let transport = spawn(&mut state, UnitType::ArmouredPersonnelCarrier);
 
         state.unit_mut(transport).expect("транспорт").grid = Point::new(25, 22);
         state.unit_mut(tank).expect("танк").grid = Point::new(22, 22);

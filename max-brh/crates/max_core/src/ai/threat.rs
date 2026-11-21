@@ -319,7 +319,7 @@ impl HeatMap {
             cell.stealth_sea = cell.stealth_sea.wrapping_add(1);
         }
 
-        if matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) {
+        if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
             cell.stealth_land = cell.stealth_land.wrapping_add(1);
         }
 
@@ -341,7 +341,7 @@ impl HeatMap {
             cell.stealth_sea -= 1;
         }
 
-        if matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry)
+        if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry)
             && cell.stealth_land > 0
         {
             cell.stealth_land -= 1;
@@ -411,7 +411,7 @@ impl GameState {
             return true;
         }
 
-        if unit.unit_type == UnitType::PersonnelCarrier {
+        if unit.unit_type == UnitType::ArmouredPersonnelCarrier {
             return access::modified_surface_type(self, unit.grid, false)
                 == access::SURFACE_TYPE_WATER;
         }
@@ -433,21 +433,21 @@ impl GameState {
         use crate::access::{TARGET_CLASS_NONE, TARGET_CLASS_SEA_STEALTH, TARGET_CLASS_WATER};
 
         match unit.unit_type {
-            UnitType::Commando | UnitType::Infantry => {
+            UnitType::Infiltrator | UnitType::Infantry => {
                 TARGET_CLASS_LAND_STEALTH | TARGET_CLASS_LAND | TARGET_CLASS_WATER
             }
             UnitType::Corvette => TARGET_CLASS_SEA_STEALTH | TARGET_CLASS_WATER,
             UnitType::GunTurret
-            | UnitType::ArtilleryTurret
-            | UnitType::AntiMissile
+            | UnitType::Artillery
+            | UnitType::MissileLauncher
             | UnitType::Scout
             | UnitType::Tank
             | UnitType::AssaultGun
             | UnitType::RocketLauncher
             | UnitType::MissileCrawler
-            | UnitType::FastBoat
-            | UnitType::Battleship
-            | UnitType::MissileBoat
+            | UnitType::Escort
+            | UnitType::Gunboat
+            | UnitType::MissileCruiser
             | UnitType::Bomber
             | UnitType::Juggernaut
             | UnitType::AlienTank
@@ -469,7 +469,7 @@ impl GameState {
 
         if unit.is_detected_by_team(team)
             || (!world.is_unit_under_water(&unit)
-                && unit.unit_type != UnitType::Commando
+                && unit.unit_type != UnitType::Infiltrator
                 && unit.unit_type != UnitType::LandMine
                 && unit.unit_type != UnitType::SeaMine)
         {
@@ -536,7 +536,7 @@ impl GameState {
         for id in ids {
             let is_commando = self
                 .unit(id)
-                .map(|unit| unit.unit_type == UnitType::Commando)
+                .map(|unit| unit.unit_type == UnitType::Infiltrator)
                 .unwrap_or(false);
 
             if is_commando {
@@ -566,7 +566,10 @@ impl GameState {
     pub fn survey_area(&mut self, unit: &UnitInfo) {
         if !matches!(
             unit.unit_type,
-            UnitType::Surveyor | UnitType::MineLayer | UnitType::SeaMineLayer | UnitType::Commando
+            UnitType::Surveyor
+                | UnitType::MineLayer
+                | UnitType::SeaMineLayer
+                | UnitType::Infiltrator
         ) {
             return;
         }
@@ -644,17 +647,18 @@ impl GameState {
         }
 
         if land_transition
-            || (matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) && land_was_zero)
+            || (matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry)
+                && land_was_zero)
         {
             self.reveal_land_stealth(team, grid_x, grid_y);
 
-            if matches!(unit.unit_type, UnitType::Commando | UnitType::Infantry) {
+            if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
                 let ids: Vec<UnitId> = self
                     .units_at(Point::new(grid_x as i16, grid_y as i16))
                     .to_vec();
                 for other in ids {
                     if let Some(other_unit) = self.unit(other) {
-                        if other_unit.unit_type == UnitType::Commando
+                        if other_unit.unit_type == UnitType::Infiltrator
                             && unit.team != other_unit.team
                         {
                             result |= Self::attack_target_group(other_unit);
@@ -979,9 +983,9 @@ impl ThreatMap {
     /// `ThreatMap::GetRiskLevel(ResourceID)` (`threatmap.cpp:96`).
     pub fn get_risk_level_for_type(unit_type: UnitType) -> i32 {
         match unit_type {
-            UnitType::PersonnelCarrier => 7,
+            UnitType::ArmouredPersonnelCarrier => 7,
             UnitType::Submarine => 6,
-            UnitType::Commando => 5,
+            UnitType::Infiltrator => 5,
             UnitType::Surveyor => 2,
             _ => {
                 if crate::access::unit_type_flags(unit_type) & unit_flags::MOBILE_AIR_UNIT != 0 {

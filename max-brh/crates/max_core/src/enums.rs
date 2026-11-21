@@ -508,10 +508,10 @@ enum_u16! {
     ///
     /// 93 игровых типа, `#[repr(u16)]`, значения 0x00–0x5C; 0x5D (`UNIT_END`) —
     /// счётчик, а не вариант. Имена — смысловые (C++-токен / save.md указаны в
-    /// комментариях).
+    /// комментариях); ресурсный токен типа отдаёт [`UnitType::tag`].
     UnitType {
         /// `COMMTWR` / `UNIT_TYPE_GOLD_REFINERY`.
-        CommTower = 0x00,
+        GoldRefinery = 0x00,
         /// `POWERSTN` / `POWER_STATION`.
         PowerStation = 0x01,
         /// `POWGEN` / `POWER_GENERATOR`.
@@ -523,11 +523,11 @@ enum_u16! {
         /// `RADAR` / `RADAR`.
         Radar = 0x05,
         /// `ADUMP` / `STORAGE_UNIT`.
-        ADump = 0x06,
+        MaterialStorage = 0x06,
         /// `FDUMP` / `FUEL_TANK`.
-        FDump = 0x07,
+        FuelStorage = 0x07,
         /// `GOLDSM` / `GOLD_VAULT`.
-        GoldSmelter = 0x08,
+        GoldVault = 0x08,
         /// `DEPOT` / `DEPOT`.
         Depot = 0x09,
         /// `HANGAR` / `HANGAR`.
@@ -569,9 +569,9 @@ enum_u16! {
         /// `HABITAT` / `HABITAT`.
         Habitat = 0x1C,
         /// `RESEARCH` / `RESEARCH_CENTER`.
-        ResearchCenter = 0x1D,
+        ResearchCentre = 0x1D,
         /// `GREENHSE` / `ECOSPHERE`.
-        Greenhouse = 0x1E,
+        EcoSphere = 0x1E,
         /// `RECCENTR` / `ALIEN_BUILDING_3`.
         RecreationCenter = 0x1F,
         /// `TRAINHAL` / `TRAINING_HALL`.
@@ -583,11 +583,11 @@ enum_u16! {
         /// `ANTIAIR` / `ANTI_AIRCRAFT`.
         AntiAir = 0x23,
         /// `ARTYTRRT` / `ARTILLERY`.
-        ArtilleryTurret = 0x24,
+        Artillery = 0x24,
         /// `ANTIMSSL` / `MISSILE_LAUNCHER`.
-        AntiMissile = 0x25,
+        MissileLauncher = 0x25,
         /// `BLOCK` / `CONCRETE_BLOCK`.
-        Block = 0x26,
+        ConcreteBlock = 0x26,
         /// `BRIDGE` / `BRIDGE`.
         Bridge = 0x27,
         /// `MININGST` / `MINING_STATION`.
@@ -641,23 +641,23 @@ enum_u16! {
         /// `FUELTRCK` / `FUEL_TRUCK`.
         FuelTruck = 0x40,
         /// `CLNTRANS` / `PERSONNEL_CARRIER`.
-        PersonnelCarrier = 0x41,
+        ArmouredPersonnelCarrier = 0x41,
         /// `COMMANDO` / `INFILTRATOR`.
-        Commando = 0x42,
+        Infiltrator = 0x42,
         /// `INFANTRY` / `INFANTRY`.
         Infantry = 0x43,
         /// `FASTBOAT` / `ESCORT`.
-        FastBoat = 0x44,
+        Escort = 0x44,
         /// `CORVETTE` / `CORVETTE`.
         Corvette = 0x45,
         /// `BATTLSHP` / `GUNBOAT`.
-        Battleship = 0x46,
+        Gunboat = 0x46,
         /// `SUBMARNE` / `SUBMARINE`.
         Submarine = 0x47,
         /// `SEATRANS` / `SEA_TRANSPORT`.
         SeaTransport = 0x48,
         /// `MSSLBOAT` / `MISSILE_CRUISER`.
-        MissileBoat = 0x49,
+        MissileCruiser = 0x49,
         /// `SEAMNLYR` / `SEA_MINE_LAYER`.
         SeaMineLayer = 0x4A,
         /// `CARGOSHP` / `CARGO_SHIP`.
@@ -703,6 +703,126 @@ enum_u16! {
 pub const UNIT_END: u16 = 0x5D;
 /// Количество типов юнитов.
 pub const UNIT_TYPE_COUNT: usize = UnitType::COUNT;
+
+/// Ресурсный токен типа юнита — C++ `ResourceID` / ресурс `SC_UNITS`.
+///
+/// Токен (`COMMTWR`, `MININGST`, …) — это **данные** (совместимость с файлами
+/// ресурсов), а не имя типа: правило 6.4 `rust-programming-rules.md`. Он же
+/// первая часть doc-комментария каждого варианта (`/// TOKEN / C++_NAME`) и
+/// ключ таблицы User-Friendly Name в слое представления (`max_app`,
+/// `data/unit_names.json`).
+///
+/// Соответствие C++: `resourcetable.hpp` / `UNIT_TYPE_*`, `ResourceManager_GetUnit`.
+impl UnitType {
+    /// Токен ресурса типа (`COMMTWR` для [`UnitType::GoldRefinery`] и т.д.).
+    ///
+    /// Для всех 93 вариантов: значение — ровно первая часть doc-комментария
+    /// варианта. Порядок и дискриминанты enum не затрагиваются.
+    #[inline]
+    pub fn tag(&self) -> &'static str {
+        match self {
+            UnitType::GoldRefinery => "COMMTWR",
+            UnitType::PowerStation => "POWERSTN",
+            UnitType::PowerGenerator => "POWGEN",
+            UnitType::Barracks => "BARRACKS",
+            UnitType::ShieldGenerator => "SHIELDGN",
+            UnitType::Radar => "RADAR",
+            UnitType::MaterialStorage => "ADUMP",
+            UnitType::FuelStorage => "FDUMP",
+            UnitType::GoldVault => "GOLDSM",
+            UnitType::Depot => "DEPOT",
+            UnitType::Hangar => "HANGAR",
+            UnitType::Dock => "DOCK",
+            UnitType::Connector => "CNCT_4W",
+            // 0x0D–0x14: декорации — обломки, следы, плиты, конусы.
+            UnitType::LargeRubble => "LRGRUBLE",
+            UnitType::SmallRubble => "SMLRUBLE",
+            UnitType::LargeTape => "LRGTAPE",
+            UnitType::SmallTape => "SMLTAPE",
+            UnitType::LargeSlab => "LRGSLAB",
+            UnitType::SmallSlab => "SMLSLAB",
+            UnitType::LargeCones => "LRGCONES",
+            UnitType::SmallCones => "SMLCONES",
+            // 0x15–0x2A: здания, дороги, мины.
+            UnitType::Road => "ROAD",
+            UnitType::LandingPad => "LANDPAD",
+            UnitType::Shipyard => "SHIPYARD",
+            UnitType::LightVehiclePlant => "LIGHTPLT",
+            UnitType::HeavyVehiclePlant => "LANDPLT",
+            UnitType::SupportPlant => "SUPRTPLT",
+            UnitType::AirUnitsPlant => "AIRPLT",
+            UnitType::Habitat => "HABITAT",
+            UnitType::ResearchCentre => "RESEARCH",
+            UnitType::EcoSphere => "GREENHSE",
+            UnitType::RecreationCenter => "RECCENTR",
+            UnitType::TrainingHall => "TRAINHAL",
+            UnitType::WaterPlatform => "WTRPLTFM",
+            UnitType::GunTurret => "GUNTURRT",
+            UnitType::AntiAir => "ANTIAIR",
+            UnitType::Artillery => "ARTYTRRT",
+            UnitType::MissileLauncher => "ANTIMSSL",
+            UnitType::ConcreteBlock => "BLOCK",
+            UnitType::Bridge => "BRIDGE",
+            UnitType::MiningStation => "MININGST",
+            UnitType::LandMine => "LANDMINE",
+            UnitType::SeaMine => "SEAMINE",
+            // 0x2B–0x2F: эффекты взрывов.
+            UnitType::LandExplosion => "LNDEXPLD",
+            UnitType::AirExplosion => "AIREXPLD",
+            UnitType::SeaExplosion => "SEAEXPLD",
+            UnitType::BuildingExplosion => "BLDEXPLD",
+            UnitType::HitExplosion => "HITEXPLD",
+            // 0x30–0x53: юнит-типы (строитель, боевые, транспорт, alien).
+            UnitType::MasterBuilder => "MASTER",
+            UnitType::Constructor => "CONSTRCT",
+            UnitType::Scout => "SCOUT",
+            UnitType::Tank => "TANK",
+            UnitType::AssaultGun => "ARTILLRY",
+            UnitType::RocketLauncher => "ROCKTLCH",
+            UnitType::MissileCrawler => "MISSLLCH",
+            UnitType::MobileAntiAir => "SP_FLAK",
+            UnitType::MineLayer => "MINELAYR",
+            UnitType::Surveyor => "SURVEYOR",
+            UnitType::Scanner => "SCANNER",
+            UnitType::SupplyTruck => "SPLYTRCK",
+            UnitType::GoldTruck => "GOLDTRCK",
+            UnitType::Engineer => "ENGINEER",
+            UnitType::Bulldozer => "BULLDOZR",
+            UnitType::RepairUnit => "REPAIR",
+            UnitType::FuelTruck => "FUELTRCK",
+            UnitType::ArmouredPersonnelCarrier => "CLNTRANS",
+            UnitType::Infiltrator => "COMMANDO",
+            UnitType::Infantry => "INFANTRY",
+            UnitType::Escort => "FASTBOAT",
+            UnitType::Corvette => "CORVETTE",
+            UnitType::Gunboat => "BATTLSHP",
+            UnitType::Submarine => "SUBMARNE",
+            UnitType::SeaTransport => "SEATRANS",
+            UnitType::MissileCruiser => "MSSLBOAT",
+            UnitType::SeaMineLayer => "SEAMNLYR",
+            UnitType::CargoShip => "CARGOSHP",
+            UnitType::Fighter => "FIGHTER",
+            UnitType::Bomber => "BOMBER",
+            UnitType::AirTransport => "AIRTRANS",
+            UnitType::Awac => "AWAC",
+            UnitType::Juggernaut => "JUGGRNT",
+            UnitType::AlienTank => "ALNTANK",
+            UnitType::AlienAssaultGun => "ALNASGUN",
+            UnitType::AlienPlane => "ALNPLANE",
+            // 0x54–0x5A: снаряды и следы (эффекты).
+            UnitType::Rocket => "ROCKET",
+            UnitType::Torpedo => "TORPEDO",
+            UnitType::AlienMissile => "ALNMISSL",
+            UnitType::AlienTankBall => "ALNTBALL",
+            UnitType::AlienArtilleryBall => "ALNABALL",
+            UnitType::RocketSmoke => "RKTSMOKE",
+            UnitType::TorpedoBubble => "TRPBUBLE",
+            // 0x5B–0x5C: harvester и «мёртвый WALDO».
+            UnitType::Harvester => "HARVSTER",
+            UnitType::DeadWaldo => "WALDO",
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SurfaceType — битовая маска проходимости
@@ -1021,7 +1141,7 @@ mod tests {
     #[test]
     fn key_values_match_cpp() {
         // resourcetable.hpp
-        assert_eq!(UnitType::CommTower as u16, 0);
+        assert_eq!(UnitType::GoldRefinery as u16, 0);
         assert_eq!(UnitType::Tank as u16, 0x33);
         assert_eq!(UnitType::Tank as u16, 51);
         assert_eq!(UnitType::Harvester as u16, 0x5B);
@@ -1049,6 +1169,46 @@ mod tests {
         // save.md
         assert_eq!(TeamIndex::Red as u8, 0);
         assert_eq!(TeamIndex::Alien as u8, 4);
+    }
+
+    #[test]
+    fn unit_type_tags_match_resources() {
+        // Токен — первая часть doc-комментария варианта (`/// TOKEN / C++_NAME`);
+        // он же ключ UFN-таблицы в слое представления, поэтому у 93 вариантов
+        // ровно 93 различных токена в формате ресурса.
+        assert_eq!(UnitType::COUNT, 93);
+        assert_eq!(UnitType::GoldRefinery.tag(), "COMMTWR");
+        assert_eq!(UnitType::MaterialStorage.tag(), "ADUMP");
+        assert_eq!(UnitType::FuelStorage.tag(), "FDUMP");
+        assert_eq!(UnitType::ResearchCentre.tag(), "RESEARCH");
+        assert_eq!(UnitType::EcoSphere.tag(), "GREENHSE");
+        assert_eq!(UnitType::Artillery.tag(), "ARTYTRRT");
+        assert_eq!(UnitType::MissileLauncher.tag(), "ANTIMSSL");
+        assert_eq!(UnitType::ConcreteBlock.tag(), "BLOCK");
+        assert_eq!(UnitType::ArmouredPersonnelCarrier.tag(), "CLNTRANS");
+        assert_eq!(UnitType::Infiltrator.tag(), "COMMANDO");
+        assert_eq!(UnitType::Escort.tag(), "FASTBOAT");
+        assert_eq!(UnitType::Gunboat.tag(), "BATTLSHP");
+        assert_eq!(UnitType::MissileCruiser.tag(), "MSSLBOAT");
+        assert_eq!(UnitType::MiningStation.tag(), "MININGST");
+        assert_eq!(UnitType::Harvester.tag(), "HARVSTER");
+        assert_eq!(UnitType::DeadWaldo.tag(), "WALDO");
+
+        let mut seen = std::collections::HashSet::new();
+        for unit_type in UnitType::ALL {
+            let tag = unit_type.tag();
+            assert!(
+                (4..=8).contains(&tag.len()),
+                "{unit_type:?}: токен «{tag}» не в формате ресурса (4–8 символов)"
+            );
+            assert!(
+                tag.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "{unit_type:?}: токен «{tag}» не в формате ресурса (A-Z, 0-9, _)"
+            );
+            assert!(seen.insert(tag), "повторяющийся токен «{tag}» ({unit_type:?})");
+        }
+        assert_eq!(seen.len(), UnitType::COUNT);
     }
 
     #[test]

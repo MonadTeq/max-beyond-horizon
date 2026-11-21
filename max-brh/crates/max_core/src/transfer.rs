@@ -462,7 +462,12 @@ mod tests {
     fn transfer_cargo_fills_and_drains_building() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let dump = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
+        let dump = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
 
         state.unit_mut(dump).expect("dump").storage = 0;
 
@@ -486,7 +491,12 @@ mod tests {
     fn transfer_cargo_caps_at_attribute_storage() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let dump = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
+        let dump = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
 
         state.unit_mut(dump).expect("dump").storage = 0;
 
@@ -500,8 +510,18 @@ mod tests {
     fn transfer_cargo_kind_distributes_overflow_across_members() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let first = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
-        let second = spawn_member(&mut state, UnitType::ADump, Point::new(22, 24), Some(complex));
+        let first = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
+        let second = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(22, 24),
+            Some(complex),
+        );
 
         for id in [first, second] {
             state.unit_mut(id).expect("dump").storage = 0;
@@ -524,8 +544,18 @@ mod tests {
     fn complex_transfer_negative_drains_members_in_order() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let first = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
-        let second = spawn_member(&mut state, UnitType::ADump, Point::new(22, 24), Some(complex));
+        let first = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
+        let second = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(22, 24),
+            Some(complex),
+        );
 
         state.unit_mut(first).expect("first").storage = 10;
         state.unit_mut(second).expect("second").storage = 10;
@@ -550,7 +580,12 @@ mod tests {
     fn process_transfer_unit_to_complex_and_back() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let dump = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
+        let dump = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
         state.unit_mut(dump).expect("dump").storage = 0;
 
         // Мобильный грузовик вне комплекса.
@@ -597,8 +632,18 @@ mod tests {
     fn process_transfer_from_complex_spills_across_buildings() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let first = spawn_member(&mut state, UnitType::FDump, Point::new(20, 20), Some(complex));
-        let second = spawn_member(&mut state, UnitType::FDump, Point::new(22, 24), Some(complex));
+        let first = spawn_member(
+            &mut state,
+            UnitType::FuelStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
+        let second = spawn_member(
+            &mut state,
+            UnitType::FuelStorage,
+            Point::new(22, 24),
+            Some(complex),
+        );
 
         state.unit_mut(first).expect("first").storage = 10;
         state.unit_mut(second).expect("second").storage = 30;
@@ -630,8 +675,18 @@ mod tests {
     fn transfer_menu_cargo_info_uses_complex_only_for_foreign_target() {
         let mut state = test_state();
         let complex = new_complex(&mut state);
-        let dump = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), Some(complex));
-        let other = spawn_member(&mut state, UnitType::ADump, Point::new(22, 24), Some(complex));
+        let dump = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            Some(complex),
+        );
+        let other = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(22, 24),
+            Some(complex),
+        );
 
         state.unit_mut(dump).expect("dump").storage = 7;
         state.unit_mut(other).expect("other").storage = 0;
@@ -669,7 +724,12 @@ mod tests {
     #[test]
     fn transfer_order_restores_orders() {
         let mut state = test_state();
-        let dump = spawn_member(&mut state, UnitType::ADump, Point::new(20, 20), None);
+        let dump = spawn_member(
+            &mut state,
+            UnitType::MaterialStorage,
+            Point::new(20, 20),
+            None,
+        );
         state.unit_mut(dump).expect("dump").storage = 0;
 
         let truck = state
