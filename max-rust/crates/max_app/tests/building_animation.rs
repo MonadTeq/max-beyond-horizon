@@ -8,24 +8,29 @@
 //!   `image_index + 1`, после последнего кадра — `image_index = image_base`;
 //! * у шахт/заводов покадровой анимации в C++ **нет**: есть кадры состояния,
 //!   `image_base` (выключено) и `image_base + 1` (включено), которые
-//!   выставляются при `POWER_ON`/`POWER_DOWN`;
+//!   выставляются приказами (`UnitInfo::StartBuilding`/`SpawnNewUnit`/
+//!   `PowerDown`);
 //! * **шахта в idle статична** (§7.2: за ~118 с игрового времени корпус
 //!   всегда кадр 0, включённая — `+1`), а мигают маяки и индикатор дрели —
-//!   палитровые циклы WRL (`World::InitColorCycles`: диапазоны 13–16 и 21–24
+//!   палитровые циклы (`World::InitColorCycles`: диапазоны 13–16 и 21–24
 //!   @6 fps, §7.3);
+//! * у заводов `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/`AIRPLT`/`SHIPYARD` в `MAX.RES`
+//!   ровно **два** кадра корпуса (`image_base`, `image_base + 1`) и 8 кадров
+//!   коннекторов; кадр `+1` (`StartBuilding`) использует слоты палитровых
+//!   циклов 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6), 25–30 (2) — это и
+//!   есть «мигание» включённого завода;
 //! * у конструктора `UnitsManager_ProcessOrderBuild` (`+8`, при
 //!   `image_index + 8 >= 40` — `-16`), инженер держит `+16`.
 //!
-//! Порт листает кадры **только у завода с очередью** (промежуточное правило
-//! до съёмки работающего завода); `dt = 0` даёт статичный кадр C++, поэтому
-//! golden-кадры не дрейфуют. Палитровые циклы — тоже только часы кадра:
-//! `dt > 0` вращает слоты, `dt = 0` возвращает исходную палитру.
+//! Порт не листает кадры зданий по времени: `dt` двигает только палитровые
+//! циклы и визуальные часы `ANIMATED`/строителя; `dt = 0` даёт статичный кадр
+//! C++, поэтому golden-кадры не дрейфуют.
 //!
 //! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
 
 use std::path::{Path, PathBuf};
 
-use max_app::{App, AppConfig, WORKING_BUILDING_ANIM_FRAME_SECONDS};
+use max_app::{App, AppConfig};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
@@ -92,7 +97,10 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
 
     // `dt = 0` — статичный кадр C++ (`image_base + 1`), палитра исходная.
     let statically_powered = app.render_frame();
-    assert_eq!(app.unit_animation(mine).work_step, 0);
+    assert!(
+        !max_app::render::factory_on_frame_active(app.state().unit(mine).expect("mine")),
+        "шахта не завод — кадр состояния по `POWER_ON`"
+    );
     assert!(
         app.animated_palette().is_none(),
         "dt = 0 не вращает палитру"
@@ -128,10 +136,14 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         "4 шага по 6 fps возвращают цвета маяков"
     );
 
-    // Корпус шахты не листается ни на одном dt: `work_step` всегда 0.
+    // Корпус шахты не листается ни на одном dt: кадровые часы здания пусты.
     for _ in 0..10 {
-        app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
-        assert_eq!(app.unit_animation(mine).work_step, 0);
+        app.update_visual_units(1.0 / 30.0 + 0.0005);
+        assert_eq!(
+            app.unit_animation(mine),
+            max_app::render::FrameAnimation::default(),
+            "у здания нет кадровых часов по времени"
+        );
     }
 
     // `dt = 0` снова — в точности исходный статичный кадр.
@@ -161,7 +173,10 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         for _ in 0..7 {
             app.update_visual_units(0.1);
         }
-        assert_eq!(app.unit_animation(mine).work_step, 0);
+        assert_eq!(
+            app.unit_animation(mine),
+            max_app::render::FrameAnimation::default()
+        );
         assert_eq!(
             changed_pixels(&powered_off, &app.render_frame()),
             0,
@@ -170,10 +185,14 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
     }
 }
 
-/// Завод с непустой очередью (`ORDER_BUILD`, `build_list`) листает свой блок
-/// (`D_LRGBLD.image_count` = 2), тот же завод без очереди — статичен.
+/// Завод с непустой очередью (`ORDER_BUILD`) **не листает кадры корпуса**:
+/// C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) рисует `image_base + 1`
+/// и держит его до `SpawnNewUnit`/`CancelBuilding`. Мигание включённого
+/// завода — палитровые циклы `World::InitColorCycles` (`world.cpp:542`):
+/// кадр `+1` использует слоты 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6),
+/// 25–30 (2) — это ровно те диапазоны, которые вращает `ColorCycles`.
 #[test]
-fn factory_with_a_production_queue_animates_and_without_it_is_static() {
+fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
     let Some(mut app) = app_with_assets() else {
         return;
     };
@@ -186,51 +205,88 @@ fn factory_with_a_production_queue_animates_and_without_it_is_static() {
     {
         let unit = app.state_mut().unit_mut(factory).expect("factory");
         unit.orders = UnitOrder::Build;
-        unit.state = UnitOrderState::UnitReady;
+        unit.state = UnitOrderState::ExecutingOrder;
         unit.build_list.push(UnitType::Infantry);
     }
+    assert!(max_app::render::factory_on_frame_active(
+        app.state().unit(factory).expect("factory")
+    ));
 
-    let static_queue = app.render_frame();
-    assert_eq!(app.unit_animation(factory).work_step, 0);
+    // `dt = 0` — кадр C++ `image_base + 1` (работающий завод), палитра исходная.
+    let working_static = app.render_frame();
 
-    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
-    assert_eq!(app.unit_animation(factory).work_step, 1);
-    let animated = app.render_frame();
-    assert!(
-        changed_pixels(&static_queue, &animated) > 0,
-        "завод с очередью обязан менять кадр по dt"
-    );
-
-    // Блок завода — два кадра: второй тик возвращает статичный кадр C++.
-    app.update_visual_units(WORKING_BUILDING_ANIM_FRAME_SECONDS + 0.0005);
-    assert_eq!(app.unit_animation(factory).work_step, 2);
+    // Один тик оригинала (1/30 с) в C++ **не** меняет кадр корпуса: минимум
+    // палитрового периода — 100 мс (10 fps), поэтому и пиксели те же. До
+    // правки порт листал кадры завода за 1/30 с — это и было «слишком быстро».
+    app.update_visual_units(1.0 / 30.0 + 0.0005);
     assert_eq!(
-        changed_pixels(&static_queue, &app.render_frame()),
+        changed_pixels(&working_static, &app.render_frame()),
         0,
-        "по кругу: блок завода из двух кадров"
+        "за 1/30 с корпус и палитра завода не меняются"
     );
 
-    // Очередь опустела — цикл выключается.
+    // Через 1/6 с палитровые циклы 6 fps делают шаг — завод мигает.
+    app.update_visual_units(1.0 / 6.0 + 0.0005);
+    assert!(
+        app.color_cycles().step_counts()[1] >= 1,
+        "цикл 13–16 (6 fps) шагнул"
+    );
+    let blink = app.render_frame();
+    assert!(
+        changed_pixels(&working_static, &blink) > 0,
+        "включённый завод мигает палитровыми циклами"
+    );
+
+    // Корпус при этом остаётся кадром `image_base + 1`: кадровых часов завода
+    // нет вообще, поэтому любые dt дают `FrameAnimation::default()`.
+    for _ in 0..30 {
+        app.update_visual_units(1.0 / 30.0);
+        assert_eq!(
+            app.unit_animation(factory),
+            max_app::render::FrameAnimation::default()
+        );
+    }
+
+    // Периоды палитровых циклов за 1 с — ровно `TIMER_FPS_TO_MS` C++
+    // (`World::InitColorCycles`): 9/6/9/6/2/6/8/8/10/6/6 шагов. Часы кадра
+    // двигаются шагами по 0.1 с (реальный кадр ~16 мс), поэтому считаем 10
+    // шагов; допуск ±1 — округление накопленного dt.
+    app.update_visual_units(0.0);
+    for _ in 0..10 {
+        app.update_visual_units(0.1);
+    }
+    let expected = [9, 6, 9, 6, 2, 6, 8, 8, 10, 6, 6];
+    for (index, (actual, expected)) in app
+        .color_cycles()
+        .step_counts()
+        .iter()
+        .zip(expected.iter())
+        .enumerate()
+    {
+        assert!(
+            actual.abs_diff(*expected as u64) <= 1,
+            "цикл {index}: за 1 с {actual} шагов, ожидалось ~{expected}"
+        );
+    }
+
+    // Очередь опустела + `UNIT_READY` — C++ `SpawnNewUnit` рисует `image_base`
+    // (кадр 0), завод статичен.
     {
         let unit = app.state_mut().unit_mut(factory).expect("factory");
         unit.build_list.clear();
-        unit.orders = UnitOrder::Await;
-        unit.state = UnitOrderState::ExecutingOrder;
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::UnitReady;
     }
+    assert!(!max_app::render::factory_on_frame_active(
+        app.state().unit(factory).expect("factory")
+    ));
     app.update_visual_units(0.0);
-    let idle = app.render_frame();
-
-    for _ in 0..3 {
-        for _ in 0..7 {
-            app.update_visual_units(0.1);
-        }
-        assert_eq!(app.unit_animation(factory).work_step, 0);
-        assert_eq!(
-            changed_pixels(&idle, &app.render_frame()),
-            0,
-            "завод без очереди статичен"
-        );
-    }
+    let ready = app.render_frame();
+    assert_ne!(
+        changed_pixels(&ready, &working_static),
+        0,
+        "готовый завод рисует кадр `image_base`, а не работающий `+1`"
+    );
 }
 
 /// `RADAR` — единственное здание с флагом `ANIMATED`; C++ листает его кадры в
@@ -305,7 +361,11 @@ fn animation_clock_does_not_change_the_snapshot() {
     assert_eq!(before, after, "визуальная анимация не меняет состояние");
     // 12 × 0.1 с = 1.2 с → палитровые циклы шагнули (маяки мигают), тело
     // шахты при этом статично, а состояние — байт-в-байт то же.
-    assert_eq!(app.unit_animation(mine).work_step, 0, "корпус шахты статичен");
+    assert_eq!(
+        app.unit_animation(mine),
+        max_app::render::FrameAnimation::default(),
+        "корпус шахты статичен"
+    );
     assert!(
         app.color_cycles().step_counts().iter().any(|&steps| steps > 0),
         "часы палитровых циклов идут, но в снапшот не входят"

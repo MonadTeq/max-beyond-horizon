@@ -604,13 +604,14 @@ pub struct App {
     visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
     /// Визуальные кадровые часы юнитов (`FrameAnimation`).
     ///
-    /// Три механизма: цикл строителя (`ProcessOrderBuild`), анимация
-    /// `ANIMATED`-зданий (`ProcessOrderSentry`, например RADAR) и
-    /// **промежуточный** цикл кадров работающих заводов
-    /// ([`WORKING_BUILDING_ANIM_FRAME_SECONDS`]). В снапшот/CRC не входят:
-    /// симуляция не хранит «номер кадра» — она хранит только
-    /// `moved`/`image_index`, которые C++ использует как счётчик. `dt = 0`
-    /// (QA/headless) — статичный кадр C++, детерминированно.
+    /// Два механизма: цикл строителя (`ProcessOrderBuild`) и анимация
+    /// `ANIMATED`-зданий (`ProcessOrderSentry`, например RADAR). Кадры заводов
+    /// и шахт по времени **не листаются** (DOS-съёмка §7.2): у них кадры
+    /// состояния, а видимое мигание дают палитровые циклы
+    /// [`App::color_cycles`]. В снапшот/CRC не входят: симуляция не хранит
+    /// «номер кадра» — она хранит только `moved`/`image_index`, которые C++
+    /// использует как счётчик. `dt = 0` (QA/headless) — статичный кадр C++,
+    /// детерминированно.
     frame_anims: std::collections::HashMap<UnitId, FrameAnim>,
     /// Часы палитровых циклов (`World::InitColorCycles` +
     /// `World::UpdateColorAnimations`): 11 диапазонов слотов DAC, которые
@@ -668,9 +669,9 @@ pub struct App {
 ///
 /// Каждый счётчик живёт независимо: строитель листает кадры на 10 Гц
 /// ([`BUILDER_ANIM_FRAME_SECONDS`]), `ANIMATED`-здание — на каждом тике C++
-/// ([`SENTRY_ANIM_FRAME_SECONDS`]), **промежуточный** полный цикл работающего
-/// здания — со скоростью `RADAR` ([`render::WORKING_BUILDING_ANIM_FRAME_SECONDS`],
-/// 1/30 с). Все они — только для кадра и в снапшот/CRC не входят.
+/// ([`SENTRY_ANIM_FRAME_SECONDS`]). Кадров заводов нет: C++ их по времени не
+/// листает, мигание даёт палитра. Все они — только для кадра и в снапшот/CRC
+/// не входят.
 #[derive(Debug, Clone, Copy, Default)]
 struct FrameAnim {
     /// Секунды с прошлого сдвига кадра строителя.
@@ -681,10 +682,6 @@ struct FrameAnim {
     sentry_elapsed: f32,
     /// Номер тика `ProcessOrderSentry` (ANIMATED-здание).
     sentry_step: u32,
-    /// Секунды с прошлого кадра полного цикла работающего здания.
-    work_elapsed: f32,
-    /// Номер кадра цикла (`0` — статичный кадр C++, дальше по кругу).
-    work_step: u32,
 }
 
 /// Визуальный переход «вырастания» от `scaler_adjust` к полному размеру.
@@ -722,19 +719,15 @@ pub const BUILD_MARKER_FRAME_SECONDS: f32 = 0.1;
 /// `dt`: 1/30 с на кадр, 16 кадров RADAR — оборот за ~0.53 с.
 pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 
-/// Скорость и включение промежуточного цикла кадров работающих заводов.
+/// Скорость и включение кадров дрели шахты.
 ///
-/// **ПРОМЕЖУТОЧНОЕ правило** до съёмки работающего завода: завод листает блок
-/// `image_base + angle .. image_index_max` по кругу с той же скоростью, что
-/// `RADAR` (1 кадр за 1/30 с). Обе ручки — «одна строка на откат»: скорость в
-/// [`render::WORKING_BUILDING_ANIM_FRAME_SECONDS`], включение — в
-/// [`render::WORKING_BUILDING_ANIMATION_ENABLED`]. У шахты цикла нет:
-/// DOS-съёмка показала статичный корпус в idle — кадры дрели включаются
-/// отдельной константой [`render::MINING_DRILL_FRAMES_ENABLED`].
-pub use crate::render::{
-    MINING_DRILL_FRAMES_ENABLED, WORKING_BUILDING_ANIMATION_ENABLED,
-    WORKING_BUILDING_ANIM_FRAME_SECONDS,
-};
+/// DOS-съёмка (`max-original-dasm/formats/unit-animation.md` §7.2) показала,
+/// что в idle корпус шахты статичен; кадры дрели `1..15` включаются только
+/// после отдельной съёмки активной добычи. Заводы кадров по времени не имеют
+/// вообще: смена `image_base` ↔ `image_base + 1` идёт по приказу
+/// (`UnitInfo::StartBuilding`/`SpawnNewUnit`), а мигание дают палитровые
+/// циклы [`render::MINING_DRILL_FRAMES_ENABLED`] / [`App::color_cycles`].
+pub use crate::render::MINING_DRILL_FRAMES_ENABLED;
 
 /// Длительность визуального «вырастания» юнита, секунды.
 ///
@@ -2983,17 +2976,18 @@ impl App {
 
     /// Кадровые часы юнита для отрисовки ([`render::FrameAnimation`]).
     ///
-    /// Содержит цикл строителя, тик `ProcessOrderSentry` (ANIMATED-здания) и
-    /// **промежуточный** полный цикл кадров работающих шахт/заводов. Значение
-    /// двигает [`App::update_unit_animations`] по реальному `dt`; `dt = 0` —
-    /// все счётчики нулевые, то есть статичный кадр C++ (golden не дрейфуют).
+    /// Содержит цикл строителя и тик `ProcessOrderSentry`
+    /// (ANIMATED-здания). Кадров заводов/шахт нет: C++ их по времени не
+    /// листает — у зданий два кадра состояния, включённый завод мигает
+    /// палитровыми циклами. Значение двигает [`App::update_unit_animations`]
+    /// по реальному `dt`; `dt = 0` — все счётчики нулевые, то есть статичный
+    /// кадр C++ (golden не дрейфуют).
     pub fn unit_animation(&self, id: UnitId) -> crate::render::FrameAnimation {
         self.frame_anims
             .get(&id)
             .map(|anim| crate::render::FrameAnimation {
                 builder_step: anim.builder_step,
                 sentry_step: anim.sentry_step,
-                work_step: anim.work_step,
             })
             .unwrap_or_default()
     }
@@ -3140,11 +3134,8 @@ impl App {
 
             let builder = crate::render::builder_animation_active(unit);
             let sentry = effects && crate::render::sentry_animation_active(unit);
-            let working = effects
-                && WORKING_BUILDING_ANIMATION_ENABLED
-                && crate::render::working_building_animation_active(unit);
 
-            if !(builder || sentry || working) {
+            if !(builder || sentry) {
                 self.frame_anims.remove(id);
                 continue;
             }
@@ -3174,21 +3165,6 @@ impl App {
             } else {
                 anim.sentry_elapsed = 0.0;
                 anim.sentry_step = 0;
-            }
-
-            // ПРОМЕЖУТОЧНОЕ правило: полный цикл кадров работающего здания со
-            // скоростью RADAR (1 кадр за 1/30 с). Модуль длины блока считает
-            // рендер — здесь только счётчик кадров.
-            if working {
-                anim.work_elapsed += dt;
-
-                while anim.work_elapsed >= WORKING_BUILDING_ANIM_FRAME_SECONDS {
-                    anim.work_elapsed -= WORKING_BUILDING_ANIM_FRAME_SECONDS;
-                    anim.work_step = anim.work_step.wrapping_add(1);
-                }
-            } else {
-                anim.work_elapsed = 0.0;
-                anim.work_step = 0;
             }
         }
 

@@ -18,10 +18,10 @@
 //! * покадровой анимации по времени у зданий в C++ нет: `UnitInfo::Animate`
 //!   только добавляет draw bounds; шахта в idle статична (DOS §7.2).
 //!
-//! Порт листает кадры **только у завода с очередью** (промежуточное правило
-//! до съёмки работающего завода); `work_step = 0` — статичный кадр C++,
-//! поэтому golden не дрейфуют. Мигание маяков — палитровые циклы
-//! (`max_render::palette::ColorCycles`).
+//! Порт **не листает кадры зданий по времени**: у завода кадр `image_base + 1`
+//! держится весь `ORDER_BUILD` (`UnitInfo::StartBuilding`), после
+//! `SpawnNewUnit`/`CancelBuilding` — `image_base`; мигание включённого завода
+//! дают палитровые циклы (`max_render::palette::ColorCycles`).
 //!
 //! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
 
@@ -29,9 +29,8 @@ use std::path::{Path, PathBuf};
 
 use max_app::assets::Assets;
 use max_app::render::{
-    draw_unit_sprites_with_base, image_base_for, sentry_animation_active, unit_frame_index,
-    unit_frame_index_with_animation, working_building_animation_active,
-    working_building_frame_block, FrameAnimation, BUILDER_WORK_FRAME_OFFSET,
+    draw_unit_sprites_with_base, factory_on_frame_active, image_base_for, sentry_animation_active,
+    unit_frame_index, unit_frame_index_with_animation, FrameAnimation, BUILDER_WORK_FRAME_OFFSET,
 };
 use max_app::AppConfig;
 use max_core::access::unit_type_flags;
@@ -190,48 +189,50 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
 
 /// Шахта в idle **не листает кадры** — DOS-съёмка §7.2
 /// (`max-original-dasm/formats/unit-animation.md`): включённая стоит на
-/// `image_base + 1`, выключенная — на `image_base`, при любом `work_step`.
-/// Восемь кадров `16..23` — не «частицы бурения», а коннекторы
+/// `image_base + 1`, выключенная — на `image_base`. Восемь кадров `16..23` —
+/// не «частицы бурения», а коннекторы
 /// (`D_MINING.connector_image_base = 16`, `connector_image_count = 8`):
 /// рисуются по маске `connectors`, в плотной базе — все восемь сразу
 /// (это и засняла DOS-съёмка, §7.1).
 #[test]
 fn mining_station_body_is_static_and_connectors_are_mask_driven() {
-    use max_app::render::{connector_frame_indices, working_building_animation_active};
+    use max_app::render::connector_frame_indices;
 
     let mut mine = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
-    let animated = |step: u32| FrameAnimation {
-        work_step: step,
-        ..FrameAnimation::default()
-    };
 
     assert!(
-        !working_building_animation_active(&mine),
+        !factory_on_frame_active(&mine),
         "шахта в idle статична (DOS-съёмка §7.2)"
     );
 
-    // `work_step` не влияет на кадр корпуса: включённая шахта — всегда `+1`.
-    for step in [0, 1, 2, 15, 16, 99] {
+    // Кадр корпуса не зависит от времени: у здания нет кадровых часов.
+    for _ in 0..16 {
         assert_eq!(
-            unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
+            unit_frame_index_with_animation(
+                &mine,
+                0,
+                24,
+                16,
+                0,
+                FrameAnimation::default(),
+                true
+            ),
             1,
-            "шаг {step}: корпус включённой шахты статичен"
+            "корпус включённой шахты статичен"
         );
     }
 
-    // Выключенная — кадр 0, тоже при любом шаге.
+    // Выключенная — кадр 0.
     mine.orders = UnitOrder::PowerOff;
-    for step in [0, 1, 2, 15, 16] {
-        assert_eq!(
-            unit_frame_index_with_animation(&mine, 0, 24, 16, 0, animated(step), true),
-            0,
-            "выключенная шахта статична"
-        );
-    }
+    assert_eq!(
+        unit_frame_index_with_animation(&mine, 0, 24, 16, 0, FrameAnimation::default(), true),
+        0,
+        "выключенная шахта статична"
+    );
     // Клановый сдвиг сохраняется (кадры состояния клана: 12/13, 14/15).
     mine.orders = UnitOrder::PowerOn;
     assert_eq!(
-        unit_frame_index_with_animation(&mine, 12, 24, 16, 0, animated(7), true),
+        unit_frame_index_with_animation(&mine, 12, 24, 16, 0, FrameAnimation::default(), true),
         13,
         "клан 7: включённый кадр = 12 + 1"
     );
@@ -307,52 +308,102 @@ fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
     );
 }
 
-/// Завод с непустой очередью листает свой блок кадров (`D_LRGBLD.image_count` = 2:
-/// выключено/включено; остальные 8 кадров ленты — коннекторы), без очереди —
-/// статичный кадр C++.
+/// Работающий завод держит кадр `image_base + 1` (`UnitInfo::StartBuilding`,
+/// `unitinfo.cpp:2789`), готовый/остановленный — `image_base`
+/// (`SpawnNewUnit`/`CancelBuilding`). Кадры по времени не листаются: у
+/// `TRAINHAL` 10 кадров (2 корпуса + 8 коннекторов), повторный проход
+/// `unit_frame_index` при любом dt даёт тот же кадр.
 #[test]
-fn factory_with_a_queue_cycles_frames_and_an_idle_factory_is_static() {
+fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
+    let Some(assets) = game_assets() else {
+        return;
+    };
+
     let mut factory = unit_of(UnitType::TrainingHall, UnitOrder::Build, 0);
     factory.state = UnitOrderState::BuildInProgress;
     factory.build_list.push(UnitType::Infantry);
-    let animated = |step: u32| FrameAnimation {
-        work_step: step,
-        ..FrameAnimation::default()
-    };
+    let sprite = assets.sprite(UnitType::TrainingHall).expect("TRAINHAL");
+    assert_eq!(sprite.sheet.len(), 10, "2 кадра корпуса + 8 коннекторов");
 
-    assert!(working_building_animation_active(&factory));
+    assert!(factory_on_frame_active(&factory));
     assert_eq!(
-        working_building_frame_block(0, 10, 2, 0),
-        (0, 2),
-        "блок завода — только кадры состояния, коннекторы не входят"
-    );
-
-    assert_eq!(
-        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, FrameAnimation::default(), true),
-        0,
-        "TRAINHAL: базовый кадр C++"
-    );
-    assert_eq!(
-        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(1), true),
-        1,
-        "работающий завод: второй кадр блока"
-    );
-    assert_eq!(
-        unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(2), true),
-        0,
-        "по кругу: блок из двух кадров"
-    );
-
-    factory.build_list.clear();
-    factory.orders = UnitOrder::Await;
-    assert!(!working_building_animation_active(&factory));
-    for step in [0, 1, 2, 15] {
-        assert_eq!(
-            unit_frame_index_with_animation(&factory, 0, 10, 2, 0, animated(step), true),
+        unit_frame_index_with_animation(
+            &factory,
             0,
-            "без очереди завод статичен"
+            10,
+            2,
+            0,
+            FrameAnimation::default(),
+            true
+        ),
+        1,
+        "C++ StartBuilding: DrawSpriteFrame(image_base + 1)"
+    );
+
+    // Никакого листания: кадр тот же при любом числе «тиков».
+    for _ in 0..30 {
+        assert_eq!(
+            unit_frame_index_with_animation(
+                &factory,
+                0,
+                10,
+                2,
+                0,
+                FrameAnimation::default(),
+                true
+            ),
+            1,
+            "работающий завод статичен (мигает только палитра)"
         );
     }
+
+    // Готовый завод (`UNIT_READY`) — C++ `DrawSpriteFrame(image_base)`.
+    factory.state = UnitOrderState::UnitReady;
+    assert!(!factory_on_frame_active(&factory));
+    assert_eq!(
+        unit_frame_index_with_animation(
+            &factory,
+            0,
+            10,
+            2,
+            0,
+            FrameAnimation::default(),
+            true
+        ),
+        0,
+        "SpawnNewUnit: DrawSpriteFrame(image_base)"
+    );
+
+    // Остановленный (`CancelBuilding` → HALT_BUILDING) — тоже кадр 0.
+    factory.orders = UnitOrder::HaltBuilding;
+    factory.state = UnitOrderState::ExecutingOrder;
+    assert_eq!(
+        unit_frame_index_with_animation(
+            &factory,
+            0,
+            10,
+            2,
+            0,
+            FrameAnimation::default(),
+            true
+        ),
+        0,
+        "CancelBuilding: DrawSpriteFrame(image_base)"
+    );
+
+    // Кадры `+1` и `0` действительно разные (два кадра состояния).
+    let on = render(&assets, &{
+        let mut unit = factory.clone();
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::BuildInProgress;
+        unit
+    }, 0);
+    let off = render(&assets, &factory, 0);
+    assert!(painted(&on) > 0 && painted(&off) > 0);
+    assert!(
+        on.pixels() != off.pixels(),
+        "включённый и выключенный кадры завода различаются"
+    );
 }
 
 /// `RADAR` — единственное здание с флагом `ANIMATED`: C++

@@ -27,6 +27,35 @@ pub use crate::enums::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TeamId(pub u8);
 
+/// `TeamUnits::hash_team_id` — бит цвета команды в флагах юнита.
+///
+/// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:179`) собирает флаги как
+/// `unit_flags | UnitsManager_TeamInfo[team].team_units->hash_team_id`, а
+/// `hash_team_id` выставляется слотам в `ResourceManager_InitTeamUnits`
+/// (`resource_manager.cpp:969-981`): RED = `HASH_TEAM_RED` 0x2000,
+/// GREEN = 0x1000, BLUE = 0x800, GRAY = 0x400, ALIEN/derelict = 0x8000.
+/// Именно эти биты читают рамка `COLORS` (`DrawMap_RenderUnitDisplays`,
+/// `drawmap.cpp:581-598`), мини-карта (`drawmap.cpp:844-858`) и перекраска
+/// спрайта (`unitinfo.cpp:3112-3126`), а `team_clan` влияет только на кадры
+/// шахты (`unitinfo.cpp:282`) и торговые модификаторы клана.
+///
+/// Порт **не пишет** эти биты в `UnitInfo::flags` при спавне (набор флагов
+/// входит в канонический дайджест, а эталонный C++-вектор собран без них) —
+/// слой отрисовки получает тот же цвет из этого отображения
+/// (`max_app::overlays::team_color_index`), а биты из загруженных сейвов
+/// honoured напрямую.
+pub const fn hash_team_id(team: TeamId) -> u16 {
+    use crate::enums::unit_flags;
+
+    match team.0 {
+        0 => unit_flags::HASH_TEAM_RED as u16,
+        1 => unit_flags::HASH_TEAM_GREEN as u16,
+        2 => unit_flags::HASH_TEAM_BLUE as u16,
+        3 => unit_flags::HASH_TEAM_GRAY as u16,
+        _ => unit_flags::HASH_TEAM_DERELICT as u16,
+    }
+}
+
 /// Кем управляется команда (C++ `PlayerType`, save.md `TeamType`).
 ///
 /// Значения зафиксированы как в C++/V70: `None=0`, `Player=1` (HUMAN),

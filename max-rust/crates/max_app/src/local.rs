@@ -907,8 +907,9 @@ impl App {
                     max_core::ProductionEventKind::BuildingDone => {
                         self.hud.push_log(format!("{name} built"))
                     }
-                    max_core::ProductionEventKind::PausedNoGold => {
-                        self.hud.push_log("Production paused: not enough gold")
+                    max_core::ProductionEventKind::PausedNoMaterials => {
+                        self.hud
+                            .push_log("Production paused: not enough raw materials")
                     }
                     max_core::ProductionEventKind::PausedNoResources => {
                         self.hud.push_log("Production paused: not enough raw materials")

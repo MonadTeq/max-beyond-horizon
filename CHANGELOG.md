@@ -2,6 +2,51 @@
 
 ### Исправлено
 
+- **Заводы производят: платят материалами базы, а не золотом команды.**
+  Оракул — `Cargo_GetRawConsumptionRate` (`cargo.cpp:140`),
+  `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`: `complex->material -= rate`),
+  `Cargo_GetNetProduction` (`cargo.cpp:88-95`: та же ставка в балансе каждый
+  ход), `ProductionManager::ValidateIndustry` (`production_manager.cpp:673-707`),
+  `GameManager_SpawnNewUnits` (`game_manager.cpp:8076-8094`), очередь завода —
+  `FactoryBuildMenu::Build` (`buildmenu.cpp:1171-1203`). После правки
+  «мобильный строитель платит сырьём, заводы — золотом» (011629f) завод
+  вставал навсегда, как только игрок тратил кредиты на мобилизации (обычный
+  случай): золото за производство C++ не берёт. Теперь
+  `production::team_raw_materials`/`spend_team_raw_materials` списывают ставку
+  из складов сырья стационарных зданий (материалы комплекса в C++; комплексы
+  порта не сливаются по коннекторам — известное ограничение §20), нехватка —
+  `PausedNoMaterials` без потери заказа, `build_time` не двигается; золото не
+  тратится. Тесты: `max_core/tests/production.rs` (28),
+  `construction_economy.rs` (6); QA `production.qa` ассертит, что после
+  выпуска пехоты золото не изменилось, а материалы шахты на месте.
+- **Анимация включённого завода — как в оригинале: корпус статичен, мигают
+  палитровые циклы.** Убран промежуточный цикл кадров
+  `WORKING_BUILDING_ANIM_FRAME_SECONDS = 1/30` (завод «дёргался» в 30 раз
+  быстрее оригинала). C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`)
+  держит `image_base + 1`, `SpawnNewUnit`/`CancelBuilding` — `image_base`
+  (`unitinfo.cpp:3507/4246`); у `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/`AIRPLT` в
+  `MAX.RES` ровно два кадра корпуса, а видимое мигание дают палитровые циклы
+  `World::InitColorCycles` (`world.cpp:542`) — кадр `+1` использует слоты
+  9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6), 25–30 (2). DOS-съёмка
+  (`max-original-dasm/formats/unit-animation.md` §7.2/§7.3) подтверждает:
+  корпус зданий по времени не листается. Тесты:
+  `max_app/tests/building_animation.rs` (5, период 1 с =
+  9/6/9/6/2/6/8/8/10/6/6 шагов, за 1/30 с кадр не меняется),
+  `building_frames.rs` (9); QA `production.qa` (`factory-work-a/b`) + эталон.
+- **COLORS рисует цвет команды (красный/зелёный/синий/серый), а не derelict.**
+  Оракул — `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`): цвет рамки по
+  битам `HASH_TEAM_*` в `unit->flags`; `UnitInfo::UnitInfo`
+  (`unitinfo.cpp:179`) добавляет `team_units->hash_team_id`
+  (`resource_manager.cpp:969-981`: RED 0x2000, GREEN 0x1000, BLUE 0x800,
+  GRAY 0x400); сама рамка — `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`),
+  только для `!(flags & STATIONARY)`. Порт эти биты не выставлял, поэтому все
+  рамки были derelict-цвета 0xA9. Теперь `overlays::team_color_index` повторяет
+  то же отображение слот→цвет; биты из сейвов honoured напрямую, стационарные
+  здания пропускаются. `team_clan` в C++ к цвету рамки отношения не имеет (он
+  задаёт клановые кадры шахты, `unitinfo.cpp:282`). Тесты:
+  `max_app/tests/overlay_colors.rs` (2, покадрово: 4 разные рамки + derelict),
+  `max_core` — соответствие `hash_team_id` константам C++; QA `panels.qa` +
+  обновлённые эталоны `golden/panels/panel-colors.png`, `panels-combined.png`.
 - **Стройка: ресурс больше не уходит в минус, конструктор достраивает.**
   Оракул — `Cargo_GetRawConsumptionRate` (`cargo.cpp:140`),
   `BuildMenu_GetMaxPossibleBuildRate`/`MobileBuildMenu::Build`

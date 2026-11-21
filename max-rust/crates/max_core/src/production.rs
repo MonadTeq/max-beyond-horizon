@@ -40,19 +40,30 @@
 //!
 //! # Экономика
 //!
-//! C++ списывает **сырьё** (`Cargo_GetRawConsumptionRate`):
+//! C++ тратит на производство **материалы** (`Cargo_GetRawConsumptionRate`,
+//! `cargo.cpp:140`), а не золото команды:
 //!
-//! * у мобильного наземного строителя — со **склада** (`UnitInfo::UpdateProduction`,
-//!   `unitinfo.cpp:2904-2915`): `storage -= rate`; порт делает то же в
-//!   [`crate::game::GameState::update_production`], но **не уводя склад в
-//!   минус**: если `storage < rate`, списания нет, а юнит получает
-//!   `build_paused` и ход стройки не двигается
+//! * мобильный наземный строитель — со **своего склада** (`UnitInfo::
+//!   UpdateProduction`, `unitinfo.cpp:2904-2915`): `storage -= rate`; порт
+//!   делает то же в [`crate::game::GameState::update_production`], но **не
+//!   уводя склад в минус**: если `storage < rate`, списания нет, а юнит
+//!   получает `build_paused` и ход стройки не двигается
 //!   ([`ProductionEventKind::PausedNoResources`]). C++ в этом случае уходит в
 //!   долг и всё равно достраивает — порт так не делает (требование QA);
-//! * у заводов — «золото» команды (осознанная абстракция порта: материалы
-//!   комплекса наполняются только шахтами, а `ProductionManager_OptimizeProduction`
-//!   остаётся TODO). Нехватка ставит постройку на паузу
-//!   ([`ProductionEventKind::PausedNoGold`]), заказ не теряется.
+//! * стационарный завод — из **материалов базы** (`UnitInfo::StartBuilding`,
+//!   `unitinfo.cpp:2757`: `complex->material -= Cargo_GetRawConsumptionRate`;
+//!   `Cargo_GetNetProduction`, `cargo.cpp:88-95` на каждом ходу вычитает ту же
+//!   ставку из баланса), а `ProductionManager::ValidateIndustry`
+//!   (`production_manager.cpp:673-707`) прерывает стройку, когда материалов
+//!   комплекса не хватает. Порт списывает ставку из общего склада материалов
+//!   команды ([`team_raw_materials`]) — C++ берёт её из комплекса, но комплексы
+//!   зданий в порте не сливаются по коннекторам (`TestConnections` — известное
+//!   ограничение §20), поэтому базой считается команда. Нехватка ставит заказ
+//!   на паузу ([`ProductionEventKind::PausedNoMaterials`]), заказ не теряется;
+//! * **золото команды за производство не тратится** — в C++ оно нужно только
+//!   `CargoMenu` (покупка на мобилизации) и апгрейдам. Старое поведение порта
+//!   («завод платит золотом») и было причиной «заводы ничего не производят»:
+//!   после мобилизации кредиты обычно нулевые, а шахты дают материалы.
 //!
 //! Итог за постройку при `rate = 1` — `cargo_raw_consumption_rate(builder, 1) * turns`,
 //! ровно `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
@@ -62,8 +73,10 @@
 //!
 //! # Что упрощено (честно)
 //!
-//! * материалы/энергия/рабочие комплекса и `ProductionManager_OptimizeProduction`
-//!   (перераспределение шахт) остаются TODO(P3);
+//! * энергия/рабочие и `ProductionManager_OptimizeProduction` (перераспределение
+//!   шахт, отключение зданий при отрицательном балансе) остаются TODO(P3):
+//!   `ValidateIndustry` в C++ проверяет ещё `power`/`workers`, порт — только
+//!   материалы;
 //! * завод выпускает юнит сразу в свободную соседнюю клетку, а не хранит его
 //!   внутри и не «выезжает» по `AWAIT_TAPE_POSITIONING`;
 //! * `quick_build` (настройка обучающих миссий) не моделируется;
@@ -302,8 +315,9 @@ pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i
 
 /// Стоимость одного хода постройки — `Cargo_GetRawConsumptionRate`.
 ///
-/// Мобильный строитель платит ею сырьём со склада, завод — «золотом» команды
-/// (см. шапку модуля). Для `rate = 1` суммарная стоимость равна
+/// Мобильный строитель платит ею сырьём со своего склада, завод — материалами
+/// базы ([`team_raw_materials`]); золото команды не тратится (см. шапку
+/// модуля). Для `rate = 1` суммарная стоимость равна
 /// `Cargo_GetRawConsumptionRate(builder, 1) * turns` — C++-стоимость постройки.
 pub fn cost_per_turn(builder: UnitType, build_rate: i32) -> i32 {
     cargo_raw_consumption_rate(builder, build_rate)
@@ -505,14 +519,17 @@ pub enum ProductionEventKind {
     Spawned,
     /// Мобильный строитель достроил здание.
     BuildingDone,
-    /// Постройка приостановлена: золота команды не хватает на ход
-    /// (`ValidateIndustry` в C++ прерывает, порт ставит на паузу — см. шапку).
-    PausedNoGold,
     /// Постройка приостановлена: у мобильного строителя не хватает **сырья** на
     /// складе (`storage < Cargo_GetRawConsumptionRate`) — C++
     /// `UnitInfo::UpdateProduction` в этом случае уходит в минус, порт не
     /// двигает стройку (см. [`UnitInfo::build_paused`]).
     PausedNoResources,
+    /// Постройка приостановлена: у команды не хватает **материалов** на
+    /// текущий ход завода (`Cargo_GetRawConsumptionRate` → материалы базы).
+    /// C++ `ProductionManager::ValidateIndustry` прерывает стройку
+    /// (`ORDER_STATE_BUILD_ABORT`) и возобновляет её позже; порт держит заказ в
+    /// очереди на паузе.
+    PausedNoMaterials,
     /// Спавн отложен: рядом нет свободной клетки (юнит остаётся в очереди).
     NoSpawnCell,
     /// Бульдозер расчистил обломок (`UnitInfo::SpawnNewUnit`, ветка BULLDOZR).
@@ -1051,6 +1068,79 @@ fn find_spawn_cell(
 }
 
 // ---------------------------------------------------------------------------
+// Материалы базы (C++ `Complex::material` + `Complex::Transfer`)
+// ---------------------------------------------------------------------------
+
+/// Материалы команды, которыми платят заводы.
+///
+/// В C++ завод списывает ставку из **комплекса** (`UnitInfo::StartBuilding`,
+/// `unitinfo.cpp:2757`; на каждом ходу — `Cargo_GetNetProduction`,
+/// `cargo.cpp:88-95`), а `Complex::Transfer` (`complex.cpp:161-189`)
+/// раскладывает материалы по складам зданий комплекса. Соединители
+/// (`TestConnections`) в порте не считаются, поэтому все здания команды
+/// образуют один общий склад: сумма `storage` **стационарных** зданий с типом
+/// груза `CARGO_TYPE_RAW` (`victory::cargo_type_of`) — шахты, `ADUMP`,
+/// теплицы и казармы.
+///
+/// Порядок обхода — `UnitsManager_StationaryUnits` (порядок вставки), как в
+/// `Complex::Transfer`, поэтому списание детерминировано.
+pub fn team_raw_materials(state: &GameState, team: TeamId) -> i32 {
+    let raw = crate::victory::CargoType::Raw;
+
+    state
+        .unit_list(UnitListKind::Stationary)
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .filter(|unit| unit.team == team)
+        .filter(|unit| crate::victory::cargo_type_of(unit.unit_type) == raw)
+        .map(|unit| i32::from(unit.storage).max(0))
+        .sum()
+}
+
+/// Списывает `amount` материалов команды, если их хватает: порт
+/// `Complex::Transfer` (`complex.cpp:161-189`) для отрицательной суммы.
+///
+/// Возвращает `false` (ничего не списав), если материалов меньше ставки —
+/// C++-долг (`storage`/`complex->material` в минус) порт не допускает
+/// (требование QA), завод вместо этого встаёт на паузу.
+fn spend_team_raw_materials(state: &mut GameState, team: TeamId, amount: i32) -> bool {
+    if amount <= 0 {
+        return true;
+    }
+
+    if team_raw_materials(state, team) < amount {
+        return false;
+    }
+
+    let mut remaining = amount;
+    let raw = crate::victory::CargoType::Raw;
+
+    for id in state.unit_list(UnitListKind::Stationary).to_vec() {
+        if remaining <= 0 {
+            break;
+        }
+
+        let Some(mut unit) = state.unit(id).cloned() else {
+            continue;
+        };
+
+        if unit.team != team || crate::victory::cargo_type_of(unit.unit_type) != raw {
+            continue;
+        }
+
+        let take = i32::from(unit.storage).max(0).min(remaining);
+
+        if take > 0 {
+            unit.storage -= take as i16;
+            state.write_unit(id, unit);
+            remaining -= take;
+        }
+    }
+
+    remaining == 0
+}
+
+// ---------------------------------------------------------------------------
 // ProductionManager
 // ---------------------------------------------------------------------------
 
@@ -1329,8 +1419,13 @@ impl<'a> ProductionManager<'a> {
     /// `GameManager_ManageEconomy` → `GameManager_UpdateProductions`
     /// (`UnitInfo::UpdateProduction`): списание ставки за ход.
     ///
+    /// Мобильный строитель уже заплатил сырьём со склада в
+    /// [`crate::game::GameState::update_production`]; завод платит здесь
+    /// **материалами базы** (`Cargo_GetRawConsumptionRate` →
+    /// [`team_raw_materials`]) — как C++ `UnitInfo::StartBuilding`/`Cargo_GetNetProduction`.
+    ///
     /// Возвращает события и множество построек, которые в этом ходу **не
-    /// двигаются** из-за нехватки золота (C++ `ValidateIndustry` прерывает
+    /// двигаются** из-за нехватки материалов (C++ `ValidateIndustry` прерывает
     /// постройку; порт ставит её на паузу — см. шапку модуля).
     fn charge_units(&mut self) -> (Vec<ProductionEvent>, Vec<UnitId>) {
         let mut events = Vec::new();
@@ -1405,29 +1500,22 @@ impl<'a> ProductionManager<'a> {
 
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
-                if cost > 0 {
-                    let slot = team.0 as usize;
-                    let gold = self.state.team_units[slot].gold();
-
-                    if gold < cost as u32 {
-                        paused.push(id);
-                        events.push(ProductionEvent {
-                            builder: id,
-                            unit_type: unit.build_list[0],
-                            spawned: None,
-                            kind: ProductionEventKind::PausedNoGold,
-                        });
-                        continue;
-                    }
-
-                    self.state.team_units[slot].set_gold(gold - cost as u32);
+                // C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`):
+                // `complex->material -= Cargo_GetRawConsumptionRate(...)`;
+                // `Cargo_GetNetProduction` (`cargo.cpp:88-95`) вычитает ставку
+                // каждый ход, пока `ORDER_BUILD` и состояние не `UNIT_READY`.
+                // Материалы — базы ([`team_raw_materials`]), не золото команды:
+                // золото в C++ тратится только `CargoMenu`/апгрейдами.
+                if !spend_team_raw_materials(self.state, team, cost) {
+                    paused.push(id);
+                    events.push(ProductionEvent {
+                        builder: id,
+                        unit_type: unit.build_list[0],
+                        spawned: None,
+                        kind: ProductionEventKind::PausedNoMaterials,
+                    });
+                    continue;
                 }
-
-                // Расход сырья со склада строителя списывает
-                // `UnitInfo::UpdateProduction` в начале хода команды
-                // (`storage -= Cargo_GetRawConsumptionRate(...)`), а не
-                // `ProgressBuildState`; здесь платится только «золото» команды
-                // (абстракция порта). Двойного списания быть не должно.
             }
         }
 
@@ -1727,11 +1815,11 @@ pub fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<Producti
     ProductionManager::new(state, team).progress()
 }
 
-/// Хватает ли ресурса команды на текущий ход постройки (проверка UI/ИИ).
+/// Хватает ли материалов команды на текущий ход постройки (проверка UI/ИИ).
 ///
-/// У мобильного строителя платёж — сырьё на складе
+/// У мобильного строителя платёж — сырьё на своём складе
 /// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), у
-/// заводов — золото команды (абстракция порта, см. шапку модуля).
+/// заводов — материалы базы ([`team_raw_materials`], C++ `complex->material`).
 pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
     let Some(unit) = state.unit(unit_id) else {
         return false;
@@ -1743,9 +1831,5 @@ pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool
         return i32::from(unit.storage) >= cost.max(0);
     }
 
-    state
-        .team_units
-        .get(team.0 as usize)
-        .map(|units| units.gold() >= cost.max(0) as u32)
-        .unwrap_or(false)
+    team_raw_materials(state, team) >= cost.max(0)
 }

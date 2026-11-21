@@ -4151,3 +4151,207 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   `7f08129d39dbef34843d9321c0b76eb0f042e9d71b85c200602a03cc85c183d2`;
   zip sha256 `52b10483d530f3c180fc88db898311be8a28cd2a22f94dc7fd337faca1bf776f`;
   wine-smoke (`--help` + `--demo 1 тик`, digest `0x6BB9`) — OK.
+
+---
+
+## 39. Заводы производят на материалах, анимация завода как в оригинале, COLORS — цвет команды — **сделано** (2026-11-21)
+
+Три дефекта Turn Based, найденные после 011629f. Оракул — `max-cpp-port`
+(не менялся), данные — `max-original/MAX.RES`/`COLOR.PAL`, спека
+`max-original-dasm/formats/unit-animation.md`, сейв `save10.dta`.
+
+### 39.1 Заводы ничего не производили: платили золотом вместо материалов
+
+**C++.** Завод тратит **материалы** (`Cargo_GetRawConsumptionRate`,
+`cargo.cpp:140`), а не кредиты команды:
+
+* `UnitInfo::StartBuilding` (`unitinfo.cpp:2755-2760`):
+  `complex->material -= Cargo_GetRawConsumptionRate(unit_type, GetMaxAllowedBuildRate())`,
+  `complex->power -= ...`, `complex->workers -= ...`;
+* `Cargo_GetNetProduction` (`cargo.cpp:88-95`): пока `ORDER_BUILD` и состояние
+  не `ORDER_STATE_UNIT_READY`, в балансе комплекса каждый ход
+  `raw -= Cargo_GetRawConsumptionRate(unit, GetMaxAllowedBuildRate())`;
+* `ProductionManager::ValidateIndustry` (`production_manager.cpp:673-707`):
+  `total.raw < 0` → `UnitsManager_SetNewOrder(unit, ORDER_BUILD,
+  ORDER_STATE_BUILD_ABORT)`; `ProductionManager_UpdateIndustryOrders`
+  (`production_manager.cpp:467-492`) позже возобновляет
+  `ORDER_HALT_BUILDING_2`, когда материалы появились;
+* `GameManager_SpawnNewUnits` (`game_manager.cpp:8076-8094`):
+  `build_time <= build_rate` → `build_time = 0`, `SpawnNewUnit()`;
+* очередь: `FactoryBuildMenu::Build` (`buildmenu.cpp:1171-1203`) кладёт всю
+  `build_queue` в `build_list`, `build_time = GetTurnsToBuild(head)`,
+  `SetBuildRate`, `BuildOrder()`.
+
+**Порт до правки.** `production.rs::charge_units` списывал
+`cost_per_turn = Cargo_GetRawConsumptionRate` с **золота команды** (абстракция,
+введённая в 011629f), а `GameManager_ManageEconomy` в C++ золото за
+производство не трогает. В реальной партии кредиты после мобилизации обычно
+нулевые → каждый ход `PausedNoGold`, `build_time` не двигается: «завод включён,
+но юниты не строятся». Это и был дефект.
+
+**Сделано.** `max_core::production`:
+
+* `team_raw_materials(state, team)` — сумма `storage` **стационарных** зданий с
+  `CARGO_TYPE_RAW` (`victory::cargo_type_of`: шахта, `ADUMP`, теплица,
+  казарма). В C++ это `Complex::material` + `Complex::Transfer`
+  (`complex.cpp:161-189`); коннекторы в порте не сливаются (§20), поэтому
+  складом базы считается команда;
+* `spend_team_raw_materials` — то же списание в порядке
+  `UnitsManager_StationaryUnits` (`Complex::Transfer`), без ухода в минус;
+* `charge_units` для завода: `cost = Cargo_GetRawConsumptionRate(builder,
+  build_rate)`, не хватает — `PausedNoMaterials` (новый вариант вместо
+  `PausedNoGold`), заказ остаётся в очереди, `build_time` не двигается;
+* `can_afford_turn` для завода — материалы, для мобильного строителя — его
+  склад (как раньше);
+* золото команды за производство **не списывается** ни при каких условиях.
+
+Порядок прежний и совпадает с C++: `commit` (P4: `ORDER_BUILD`/`INIT`,
+`build_time`, `build_rate`, `build_list`) → `start_building`
+(`ORDER_STATE_EXECUTING_ORDER`) → каждый ход `charge` → `SpawnNewUnits`
+(`build_time <= build_rate` → `SpawnNewUnit`, очередь `Remove(0)`,
+`repeat_build` → `PushBack`).
+
+### 39.2 Анимация включённого завода: статичный корпус, мигание — палитра
+
+**C++.** Заводы не листают кадры по времени: у `TRAINHAL`/`LIGHTPLT`/
+`LANDPLT`/`AIRPLT`/`SHIPYARD` в `MAX.RES` ровно **два** кадра корпуса
+(`image_base` — выключен, `image_base + 1` — работает) и 8 кадров коннекторов.
+`UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) рисует `image_base + 1`,
+`SpawnNewUnit` — `image_base` (`unitinfo.cpp:3507`), `CancelBuilding` —
+`image_base` (`unitinfo.cpp:4246`). Видимое «мигание» дают **палитровые
+циклы** `World::InitColorCycles` (`world.cpp:542-557`): кадр `+1` использует
+слоты 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6), 25–30 (2). DOS-съёмка
+(`unit-animation.md` §7.2/§7.3) подтвердила: корпус зданий в покое не
+листается, маяки/индикаторы мигают палитрой.
+
+**Порт до правки.** `WORKING_BUILDING_ANIM_FRAME_SECONDS = 1/30` листал блок
+кадров завода на каждом тике — «слишком быстро» и не как в оригинале; кроме
+того, работающий завод рисовал кадр 0 (выключенный), потому что `+1`
+добавлялся только при `ORDER_POWER_ON`.
+
+**Сделано.** Механизм покадрового цикла зданий удалён
+(`WORKING_BUILDING_ANIMATION_ENABLED`/`WORKING_BUILDING_ANIM_FRAME_SECONDS`/
+`working_building_frame_block`/`FrameAnimation::work_step`).
+`render::factory_on_frame_active` = завод в `ORDER_BUILD` без
+`UNIT_READY`/`BUILD_CANCEL`/`BUILD_ABORT`; `unit_frame_index_for_angle` для
+такого завода берёт `image_base + 1`, для готового/остановленного — `image_base`.
+Мигание — существующие 1:1 палитровые циклы (`max_render::palette::COLOR_CYCLES`,
+11 диапазонов 2/6/8/9/10 fps, `dt = 0` не вращает). Кадровые тесты сравнивают
+**периоды**: за 1/30 с кадр и палитра не меняются, за 1 с циклы делают
+9/6/9/6/2/6/8/8/10/6/6 шагов.
+
+### 39.3 COLORS: цвет команды (красный/зелёный/синий/серый), а не derelict
+
+**C++.** `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`): при
+`GameManager_DisplayButtonColors` и `!(unit->flags & STATIONARY)` вокруг юнита
+рисуется `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`, 4 линии по
+габариту) цветом `COLOR_RED (1)`/`COLOR_GREEN (2)`/`COLOR_BLUE (3)`/`0xFF`/
+`COLOR_DERELICT (0xA9)`. Цвет выбирается по битам `HASH_TEAM_*` в
+`unit->flags`; конструктор `UnitInfo` (`unitinfo.cpp:179`) добавляет
+`UnitsManager_TeamInfo[team].team_units->hash_team_id`, а тот выставлен слотам
+в `ResourceManager_InitTeamUnits` (`resource_manager.cpp:969-981`):
+RED 0x2000, GREEN 0x1000, BLUE 0x800, GRAY 0x400, ALIEN/derelict 0x8000.
+`team_clan` к цвету рамки отношения не имеет — он задаёт клановые кадры шахты
+(`unitinfo.cpp:282`, `image_base = (team_clan - 1) * 2`) и торговые
+модификаторы (`clans.cpp`).
+
+**Порт до правки.** `overlays::team_frame_color` читал `HASH_TEAM_*` из
+`unit.flags`, но порт эти биты никогда не выставлял → **все** рамки рисовались
+derelict-цветом 0xA9.
+
+**Сделано.** `overlays::team_color_index(team)` повторяет отображение
+слот→цвет C++ (`max_core::team::hash_team_id`), `team_frame_color` сначала
+honours биты из `flags` (так приходят загруженные V70-сейвы), иначе берёт то же
+отображение из `unit.team`. Стационарные здания по-прежнему пропускаются
+(`!(flags & STATIONARY)`). Биты в `flags` новых юнитов не пишутся сознательно:
+набор флагов входит в канонический дайджест, эталонный C++-вектор
+(`tools/sim_vectors`) собран без них — визуально и по смыслу отображение
+эквивалентно.
+
+### 39.4 Тесты
+
+* `max_core/tests/production.rs` (28): +`factory_produces_with_zero_gold_and_pauses_until_materials_return`
+  (0 кредитов, 1 материал → ход, пауза, подвоз → `SpawnNewUnit`),
+  +`team_raw_materials_sums_raw_stationary_storage` (ADUMP+шахта, топливный
+  склад и танк не в счёт), +`team_hash_ids_match_the_cpp_color_slots`;
+  заводские тесты переведены с золота на материалы (`factory_queue_spawns…`,
+  `repeated_build…`, `two_speed_build…`, `cancel…`,
+  `missing_materials_pause…`, `finish_turn…`, детерминизм).
+* `max_core/tests/construction_economy.rs` (6):
+  `factory_pays_base_materials_and_never_goes_negative` — 0 кредитов, склад
+  1 → ход, пауза без минуса, заказ цел.
+* `max_app/tests/building_animation.rs` (5):
+  `factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette` —
+  за 1/30 с кадр не меняется (регресс «слишком быстро»), за 1/6 с палитра
+  шагнула, за 1 с шаги 9/6/9/6/2/6/8/8/10/6/6, `UNIT_READY` → кадр 0.
+* `max_app/tests/building_frames.rs` (9):
+  `working_factory_holds_the_on_frame_and_an_idle_factory_is_off` — кадр
+  `+1`/`0`/`0` для работающего/готового/остановленного, 10 кадров ленты
+  (2 корпуса + 8 коннекторов), кадры различаются.
+* `max_app/tests/overlay_colors.rs` (2): 4 команды рисуют 4 разных цвета
+  (покадрово, до/после включения COLORS), ALIEN → 0xA9, стационарный завод
+  рамки не получает, биты `HASH_TEAM_*` из сейва honoured.
+* `max_core` — 245 lib + 14 наборов; `max_app` — 377 lib + все интеграционные
+  (33 набора) зелёные.
+
+### 39.5 QA и golden
+
+* `production.qa` — заводская часть расширена: после 2 ходов
+  `assert unit=Infantry`, `assert gold>=150` (кредиты не тратятся — завод
+  платит материалами) и `select type Mining Station` + `assert
+  unit-storage>=1`; комментарии `factory-work-a/b` — статичный корпус +
+  палитровые циклы. Сценарий PASS.
+* Эталоны осознанно обновлены под исправленное поведение:
+  `golden/production/factory-work-a.png`, `factory-work-b.png` (кадр
+  `image_base + 1`, без листания) и `golden/panels/panel-colors.png`,
+  `panels-combined.png` (цвет команды вместо derelict).
+* Все 21 QA — PASS; golden: 16 наборов, дрейф **0**. Остаточные 0.6 % в
+  `mine-selected`/`portrait`/`survey`/`survey-button` — устаревшие подписи
+  панели с 011629f (текст, не карта), ниже порога 1 % и к этой задаче
+  отношения не имеют.
+
+### 39.6 Полный гейт и артефакты
+
+* **Полный docker-гейт** `bash ci.sh` — **зелёный**, `CI_EXIT=0` (921 с на итоговом дереве; 833/1203 с — предыдущие прогоны):
+  * 1/4 `cargo check` + `cargo test` (default GUI/SDL3-from-source,
+    `--features sound`, `--no-default-features`): `max_app` 377 lib-тестов +
+    33 интеграционных набора (включая новые `overlay_colors` 2 и
+    `building_animation` 5), `max_core` 245 lib + 14 наборов (включая
+    `production` 27 и `construction_economy` 6); `max_assets` 10 +
+    `max_render` 85 + doc-tests — всё зелёное;
+  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 3/4 — **21** QA-скрипт PASS (включая обновлённый `production.qa`:
+    5835 кадров, 27 PNG, завод выпускает пехоту, золото не тронуто) и
+    **16** golden-наборов, дрейф **0**;
+  * 4/4 soak — `soak-100.qa` 49 813 кадров; `soak_headless --turns 120
+    --mode tb` — 120 826 кадров, 28.55 с, 41 юнит, `early_end=false`,
+    RSS +116 KiB (стабильно).
+* **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
+  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 680 064 Б,
+  sha256 `34abcd8dcda9fd7ad9c434c9360f8d0488d88d86b070e8112e5014f40d05a3a4`
+  (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
+  `bc0880e83ed434b392e0cdc5741bf3a89f190235b51042f9261b1b84b771c412`;
+  `--help` OK.
+* **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
+  Docker): `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 040 032 Б,
+  sha256 `06df484484aedb1d26084e33d9ef6eeb101893293b13787521a98a00676799db`;
+  zip sha256
+  `43d7b0021a3e02d79e05448b51d8dac7f0bdbc2a518ef19c12414680bbfb778e`;
+  wine-smoke `--help` + `--demo SAVE1.CAM --turns 1` — OK, `units=312`,
+  `state_digest=0x6BB9`, `state_checksum=0x408A`, `replay_crc=0x5561`
+  (дайджест не изменился: флаги юнитов не тронуты).
+
+### 39.7 Осознанные расхождения
+
+* Комплексы зданий по коннекторам не сливаются (`TestConnections`), поэтому
+  материалы завода берутся из общего склада команды, а не из комплекса; в
+  C++ при разорванной связи завод бы остановился. Формула ставки, момент
+  списания, пауза/возобновление и спавн — 1:1.
+* `ProductionManager` целиком (энергия/рабочие, `OptimizeIndustry`,
+  перераспределение шахт) остаётся TODO: `ValidateIndustry` проверяет ещё
+  `power`/`workers`, порт — только материалы. Энергия в C++ всё равно
+  управляется включением генераторов, а не отказом в производстве.
+* Завод порта выпускает юнит в соседнюю клетку и сразу начинает следующий из
+  очереди; C++ держит готовый юнит внутри (`ORDER_IDLE`/`STORE`) до приказа
+  игрока и тогда же запускает следующую позицию очереди
+  (`UnitsManager_ActivateUnit`). Упрощение было и до этой задачи.

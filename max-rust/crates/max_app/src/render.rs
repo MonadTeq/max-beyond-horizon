@@ -62,22 +62,6 @@ pub const BUILDER_WORK_FRAME_STEP: usize = 8;
 /// Сколько разных кадров в рабочем цикле конструктора (`+16`, `+24`, `+32`).
 pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 
-/// Сколько секунд показывается один кадр полного цикла работающего здания.
-///
-/// **ПРОМЕЖУТОЧНОЕ правило** для заводов (DOS-съёмка шахту уже уточнила, см.
-/// [`MINING_DRILL_FRAMES_ENABLED`]): та же скорость, что у
-/// `RADAR`/`ProcessOrderSentry` — 1 кадр за 1/30 с (один тик обработки
-/// приказов C++). Для шахты цикл больше не применяется: в idle корпус
-/// статичен (кадр `image_base + 1` при `POWER_ON`), а видимое «мигание» дают
-/// палитровые циклы ([`max_render::palette::ColorCycles`]).
-pub const WORKING_BUILDING_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
-
-/// Включено ли листание кадров корпуса работающего завода (ПРОМЕЖУТОЧНОЕ).
-///
-/// `false` возвращает статичный кадр C++: завод с очередью — `image_base`.
-/// У шахты листания нет вообще (см. [`MINING_DRILL_FRAMES_ENABLED`]).
-pub const WORKING_BUILDING_ANIMATION_ENABLED: bool = true;
-
 /// Включено ли листание кадров дрели шахты (кадры `1..15`).
 ///
 /// **Выключено сознательно:** DOS-съёмка (`max-original-dasm/formats/
@@ -91,29 +75,27 @@ pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 
 /// Кадровые часы юнита (только для отрисовки, в снапшот/CRC не входят).
 ///
-/// Три независимых счётчика повторяют три разных механизма C++:
+/// Два независимых счётчика повторяют два разных механизма C++:
 ///
 /// * `builder_step` — `UnitsManager_ProcessOrderBuild` (`+8`, `-16` при
-///   `image_index + 8 >= 40`), 0 — кадр `+16` из `StartBuilding`;
+///   `image_index + 8 >= 40`);
 /// * `sentry_step` — `UnitsManager_ProcessOrderSentry` у юнитов с флагом
 ///   `ANIMATED`: каждый тик `image_index + 1`, после последнего —
-///   `image_index = image_base`;
-/// * `work_step` — **промежуточный** цикл кадров работающего завода:
-///   завод листает блок `image_base + angle .. image_index_max`
-///   (`image_index_max = image_count + image_index - 1`, как в C++
-///   `UnitInfo::UnitInfo`) с той же скоростью, что `ProcessOrderSentry`.
-///   C++ сам заводы по времени не анимирует, поэтому это **только
-///   визуальное** дополнение; `0` — статичный кадр C++ (поэтому `dt = 0` не
-///   двигает golden-кадры). Шахта этот цикл больше не использует: DOS-съёмка
-///   показала статичный корпус в idle ([`MINING_DRILL_FRAMES_ENABLED`]).
+///   `image_index = image_base`.
+///
+/// Кадров **заводов** здесь нет: C++ их по времени не листает. Завод с
+/// `ORDER_BUILD` держит кадр `image_base + 1` (`UnitInfo::StartBuilding`,
+/// `unitinfo.cpp:2789`), после `SpawnNewUnit`/`CancelBuilding` — `image_base`;
+/// видимое «мигание» включённого завода дают **палитровые циклы**
+/// (`World::InitColorCycles`, `world.cpp:542`: слоты 9–30, 6/9/2 fps), а не
+/// кадры спрайта (DOS-съёмка §7.2/§7.3 и кадры `MAX.RES`:
+/// `TRAINHAL`/`LIGHTPLT`/`AIRPLT` имеют ровно 2 кадра корпуса).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameAnimation {
     /// Номер кадра рабочего цикла строителя (`0..BUILDER_WORK_FRAME_STEPS`).
     pub builder_step: u8,
     /// Номер тика `ProcessOrderSentry` (ANIMATED).
     pub sentry_step: u32,
-    /// Номер кадра полного цикла работающего здания (`0` — статичный кадр C++).
-    pub work_step: u32,
 }
 
 /// Активна ли покадровая анимация строителя (`ProcessOrderBuild`).
@@ -144,63 +126,23 @@ pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.flags & unit_flags::ANIMATED != 0 && unit.orders == UnitOrder::Sentry
 }
 
-/// Работает ли здание, у которого порт листает кадры корпуса.
+/// Работает ли **стационарный завод** — C++ держит у него кадр
+/// `image_base + 1` (`UnitInfo::StartBuilding`, `unitinfo.cpp:2789`).
 ///
-/// C++ не перелистывает кадры шахт/заводов по времени: у них есть кадры
-/// состояния (`image_base` — выключено, `image_base + 1` — включено), которые
-/// выставляются при `POWER_ON`/`POWER_DOWN`. DOS-съёмка подтвердила это и для
-/// шахты (корпус в idle статичен, §7.2 `unit-animation.md`), поэтому цикл
-/// остаётся только у **завода** с непустой очередью (`build_list`) —
-/// промежуточное правило до съёмки работающего завода
-/// ([`WORKING_BUILDING_ANIMATION_ENABLED`]).
-pub fn working_building_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
-    // Шахта в idle не листает корпус: DOS-съёмка (§7.2) опровергла цикл
-    // 0..15. Кадры дрели 1..15 включаются только константой
-    // [`MINING_DRILL_FRAMES_ENABLED`] после съёмки активной добычи.
-    if unit.unit_type == UnitType::MiningStation {
-        return MINING_DRILL_FRAMES_ENABLED && unit.orders == UnitOrder::PowerOn;
-    }
-
+/// C++ не листает кадры заводов по времени: у `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/
+/// `AIRPLT`/`SHIPYARD` в `MAX.RES` ровно два кадра корпуса (`image_base` —
+/// выключен, `image_base + 1` — работает) и 8 кадров коннекторов. Смена
+/// `image_base` ↔ `image_base + 1` идёт по приказу: `StartBuilding` рисует
+/// `+1`, `SpawnNewUnit`/`CancelBuilding`/`PowerDown` — базовый кадр. Видимое
+/// «мигание» дают палитровые циклы (`World::InitColorCycles`), а не кадры
+/// (`max-original-dasm/formats/unit-animation.md` §7).
+pub fn factory_on_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
     max_core::production::is_factory(unit.unit_type)
         && unit.orders == UnitOrder::Build
-        && !unit.build_list.is_empty()
-}
-
-/// Блок кадров работающего **завода**: `image_base + angle .. image_index_max`.
-///
-/// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:293`) задаёт
-/// `image_index_max = image_count + image_index - 1`, где
-/// `image_index = image_base + angle`. [`draw_unit_sprites_with_animation`]
-/// передаёт сюда `frame_info.image_count` (`sentry_frames`) — это и есть
-/// `image_count` C++ (`D_LRGBLD` = 2, `D_RADAR` = 16), а `image_count` —
-/// длина ленты спрайта (`TRAINHAL` — 10 кадров: 2 кадра состояния + 8
-/// коннекторов). Блок никогда не выходит за кадры корпуса `D_*`: кадры после
-/// `image_count` — коннекторы, их нельзя рисовать на месте корпуса.
-///
-/// У шахты блока нет: DOS-съёмка показала статичный корпус в idle
-/// ([`MINING_DRILL_FRAMES_ENABLED`]).
-///
-/// Возвращает `(start, len)`: первый кадр блока и длину блока (`len >= 1`).
-pub fn working_building_frame_block(
-    image_base: i16,
-    image_count: usize,
-    sentry_frames: usize,
-    angle: u8,
-) -> (usize, usize) {
-    let last = image_count.saturating_sub(1);
-    // Кадры корпуса — первые `image_count` кадров ленты (`D_*`), остальные
-    // кадры ленты — частицы/коннекторы (`MININGST`: 24 кадра, из них 16 корпуса).
-    let body_last = sentry_frames.max(1).min(image_count).saturating_sub(1);
-    let start = usize::try_from(image_base.max(0))
-        .unwrap_or(0)
-        .saturating_add(usize::from(angle % 8))
-        .min(last)
-        .min(body_last);
-    let end = start
-        .saturating_add(sentry_frames.max(1) - 1)
-        .min(body_last);
-
-    (start, end - start + 1)
+        && !matches!(
+            unit.state,
+            UnitOrderState::UnitReady | UnitOrderState::BuildCancel | UnitOrderState::BuildAbort
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +379,11 @@ pub fn unit_frame_index_for_angle(
     let base = usize::try_from(image_base.max(0)).unwrap_or(0);
     let mut index = base.saturating_add(usize::from(angle % 8));
 
-    if unit.orders == UnitOrder::PowerOn && index < last {
+    // C++ `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) и
+    // `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) рисуют `image_base + 1`
+    // (включённое здание/работающий завод), `PowerDown`/`SpawnNewUnit`/
+    // `CancelBuilding` — `image_base`.
+    if index < last && (unit.orders == UnitOrder::PowerOn || factory_on_frame_active(unit)) {
         index += 1;
     }
 
@@ -625,22 +571,20 @@ pub fn unit_frame_index_for_animation(
 /// Порядок как в C++:
 ///
 /// 1. статичный кадр [`unit_frame_index_for_angle`] (`image_base + angle`,
-///    `+1` при `POWER_ON`, `+16` рабочая поза строителя);
+///    `+1` при `POWER_ON` и у работающего завода, `+16` рабочая поза
+///    строителя);
 /// 2. цикл конструктора `+8` / `-16` ([`builder_animation_active`]);
 /// 3. `ProcessOrderSentry` для `ANIMATED` (`sentry_step`, сброс на
-///    `image_base` после последнего кадра);
-/// 4. **промежуточный** цикл кадров работающего **завода** (`work_step`, см.
-///    [`working_building_frame_block`] и
-///    [`WORKING_BUILDING_ANIMATION_ENABLED`]).
+///    `image_base` после последнего кадра).
 ///
-/// `effects = false` отключает п. 3–4, как `settings["effects"]` в C++.
+/// `effects = false` отключает п. 3, как `settings["effects"]` в C++.
 ///
-/// Пункт 4 — **временное** правило до съёмки работающего завода: блок C++
-/// `image_base + angle .. image_index_max` листается по кругу со скоростью
-/// `RADAR` (1 кадр за 1/30 с). Шахта его не использует: DOS-съёмка показала
-/// статичный корпус в idle ([`MINING_DRILL_FRAMES_ENABLED`]).
-/// `work_step = 0` возвращает статичный кадр C++ (включённая шахта — `+1`),
-/// поэтому `dt = 0` не двигает golden-кадры.
+/// Кадры **зданий по времени не листаются** (DOS-съёмка §7.2,
+/// `max-original-dasm/formats/unit-animation.md`): у заводов два кадра
+/// состояния, видимое мигание включённого завода — палитровые циклы
+/// (`World::InitColorCycles`), а не спрайт. Поэтому здесь нет счётчика кадров
+/// завода: `dt = 0` и `dt > 0` дают один и тот же кадр корпуса, а мигает
+/// только палитра ([`max_render::palette::ColorCycles`]).
 #[allow(clippy::too_many_arguments)]
 pub fn unit_frame_index_with_animation(
     unit: &max_core::unit::UnitInfo,
@@ -684,17 +628,6 @@ pub fn unit_frame_index_with_animation(
         // `D_RADAR.image_count = 16`) — 16 кадров оборота.
         let phase = (usize::from(angle % 8) + animation.sentry_step as usize) % frames;
         index = base + phase;
-    } else if effects
-        && WORKING_BUILDING_ANIMATION_ENABLED
-        && working_building_animation_active(unit)
-    {
-        // ПРОМЕЖУТОЧНОЕ правило: полный цикл кадров работающего здания.
-        // C++ `image_index_max = image_count + image_index - 1`; шаг 0 —
-        // статичный кадр C++ (фаза `POWER_ON`/`image_base`), дальше по кругу.
-        let (start, len) =
-            working_building_frame_block(image_base, image_count, sentry_frames, angle);
-        let phase = index.saturating_sub(start).min(len - 1);
-        index = start + (phase + animation.work_step as usize) % len;
     }
 
     index.min(last)

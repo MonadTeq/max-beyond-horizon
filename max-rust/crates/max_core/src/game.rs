@@ -1119,6 +1119,14 @@ impl GameState {
         // C++-код ниже (`DeployUnit`, `UnitInfo::SetPosition`) читает уже
         // собранные флаги `unit->flags`, поэтому дальше используется
         // `unit_flags`, а не только входной `flags`.
+        //
+        // Биты цвета команды (`HASH_TEAM_*`) в C++ добавляет конструктор
+        // `UnitInfo` (`unitinfo.cpp:179`). Порт их в `flags` не пишет: набор
+        // флагов входит в канонический дайджест состояния, и эталонный
+        // C++-вектор (`tools/sim_vectors`) собран без них. Цвет команды
+        // восстанавливается тем же отображением слот→цвет из `unit.team`
+        // (`max_app::overlays::team_color_index`), а если юнит пришёл из сейва
+        // с уже выставленными битами — они honoured.
         let merged_flags = flags | crate::access::unit_type_flags(unit_type);
         unit.flags = merged_flags;
 

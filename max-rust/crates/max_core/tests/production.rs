@@ -28,6 +28,20 @@ fn state_with_gold(gold: u32) -> GameState {
     state
 }
 
+/// Стационарный склад материалов команды — `ADUMP` с `storage`.
+///
+/// Заводы в C++ платят **материалами** (`complex->material` /
+/// `Cargo_GetRawConsumptionRate`), а не золотом; `ADUMP` — здание с
+/// `CARGO_TYPE_RAW`, чей склад видит [`max_core::production::team_raw_materials`].
+/// Ставим склад далеко от тестовых юнитов, чтобы он не мешал площадкам.
+fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
+    let id = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(2, 2), 0)
+        .expect("ADump");
+    state.unit_mut(id).expect("ADump").storage = materials;
+    id
+}
+
 /// Один «ход производства» — как `GameState::finish_turn` для одной команды.
 fn production_turn(state: &mut GameState) -> Vec<max_core::ProductionEvent> {
     // Начало хода команды: `GameManager_ManageEconomy` → `UpdateProduction`
@@ -264,7 +278,8 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
 
 #[test]
 fn factory_queue_spawns_a_unit_after_n_turns() {
-    let mut state = state_with_gold(100);
+    let mut state = state_with_gold(0);
+    let dump = add_materials(&mut state, 20);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
@@ -281,21 +296,25 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
     assert_eq!(report.build_rate, 1);
     assert_eq!(report.cost_per_turn, 1);
 
-    // Ход 1: списание 1, build_time 2 → 1 (юнита ещё нет).
+    // Ход 1: списание 1 материала, build_time 2 → 1 (юнита ещё нет).
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
-    assert_eq!(state.team_units[0].gold(), 99);
+    assert_eq!(state.unit(dump).expect("dump").storage, 19);
 
     // Ход 2: `build_time <= build_rate` → `SpawnNewUnit`.
     let events = production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Infantry), 1);
-    assert_eq!(state.team_units[0].gold(), 98);
+    assert_eq!(state.unit(dump).expect("dump").storage, 18);
     assert!(
         events
             .iter()
             .any(|event| event.kind == ProductionEventKind::Spawned),
         "спавн должен попасть в события: {events:?}"
     );
+
+    // Золото команды производством не тратится (C++: только `CargoMenu`/
+    // апгрейды) — раньше завод «платил золотом» и вставал при нуле кредитов.
+    assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
     let factory_unit = state.unit(factory).expect("factory alive");
     assert_eq!(factory_unit.state, UnitOrderState::UnitReady);
@@ -305,7 +324,8 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
 
 #[test]
 fn repeated_build_keeps_producing() {
-    let mut state = state_with_gold(100);
+    let mut state = state_with_gold(0);
+    let dump = add_materials(&mut state, 20);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
@@ -324,6 +344,57 @@ fn repeated_build_keeps_producing() {
         3,
         "repeat: 3 юнита за 6 ходов по 2 хода на юнита"
     );
+    assert_eq!(
+        state.unit(dump).expect("dump").storage,
+        14,
+        "6 ходов × 1 материал"
+    );
+}
+
+#[test]
+fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
+    // Реальный сценарий игрока: кредиты на мобилизации потрачены (0 золота),
+    // завод обязан работать на материалах шахт и вставать только когда
+    // кончились материалы — C++ `ValidateIndustry` (`production_manager.cpp:673`).
+    let mut state = state_with_gold(0);
+    let dump = add_materials(&mut state, 1);
+    let factory = state
+        .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
+        .expect("training hall");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(factory, UnitType::Infantry).expect("queue");
+    manager.commit(factory).expect("build");
+    drop(manager);
+
+    // Ход 1: 1 материал ушёл, стройка сдвинулась 2 → 1.
+    production_turn(&mut state);
+    assert_eq!(state.unit(dump).expect("dump").storage, 0);
+    assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(1));
+
+    // Ход 2: материалов нет — пауза, `build_time` не двигается, заказ цел.
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::PausedNoMaterials),
+        "ожидалась пауза: {events:?}"
+    );
+    assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(1));
+    assert_eq!(count_type(&state, UnitType::Infantry), 0);
+    assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
+
+    // Подвоз материалов (шахта/склад): стройка доходит с того же места.
+    state.unit_mut(dump).expect("dump").storage = 5;
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::Spawned),
+        "после подвоза завод обязан выпустить юнита: {events:?}"
+    );
+    assert_eq!(count_type(&state, UnitType::Infantry), 1);
+    assert_eq!(state.unit(dump).expect("dump").storage, 4);
 }
 
 #[test]
@@ -379,10 +450,10 @@ fn constructor_builds_a_building_on_a_site() {
     );
     assert!(builder.build_list.is_empty(), "очередь очищена");
 }
-
 #[test]
 fn cancel_stops_the_construction() {
-    let mut state = state_with_gold(100);
+    let mut state = state_with_gold(0);
+    let dump = add_materials(&mut state, 20);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
@@ -395,7 +466,7 @@ fn cancel_stops_the_construction() {
     assert!(manager.queue(factory).is_empty());
     drop(manager);
 
-    assert_eq!(state.team_units[0].gold(), 99);
+    assert_eq!(state.unit(dump).expect("dump").storage, 19);
     assert_eq!(
         state.unit(factory).map(|unit| unit.state),
         Some(UnitOrderState::BuildCancel)
@@ -407,8 +478,8 @@ fn cancel_stops_the_construction() {
 
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
     assert_eq!(
-        state.team_units[0].gold(),
-        99,
+        state.unit(dump).expect("dump").storage,
+        19,
         "после отмены не списывается"
     );
 }
@@ -437,8 +508,8 @@ fn empty_queue_is_rejected() {
 }
 
 #[test]
-fn missing_gold_pauses_the_build_without_losing_the_queue() {
-    let mut state = state_with_gold(0);
+fn missing_materials_pause_the_build_without_losing_the_queue() {
+    let mut state = state_with_gold(100);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
@@ -452,8 +523,8 @@ fn missing_gold_pauses_the_build_without_losing_the_queue() {
     assert!(
         events
             .iter()
-            .any(|event| event.kind == ProductionEventKind::PausedNoGold),
-        "нехватка золота — событие паузы: {events:?}"
+            .any(|event| event.kind == ProductionEventKind::PausedNoMaterials),
+        "нехватка материалов — событие паузы: {events:?}"
     );
     assert_eq!(
         manager.queue(factory),
@@ -468,12 +539,19 @@ fn missing_gold_pauses_the_build_without_losing_the_queue() {
         Some(2),
         "build_time не двигается на паузе"
     );
-    assert_eq!(state.team_units[0].gold(), 0, "списывать нечего");
+    assert_eq!(
+        state.team_units[0].gold(),
+        100,
+        "золото не тратится на производство"
+    );
 }
 
 #[test]
 fn two_speed_build_costs_the_cpp_rate() {
-    let mut state = state_with_gold(200);
+    let mut state = state_with_gold(0);
+    // `ADUMP` вмещает 50 единиц (`ATTRIB_STORAGE`); `manage_economy` разложит
+    // материалы комплекса по складам — берём ровно вместимость.
+    let dump = add_materials(&mut state, 50);
     let factory = state
         .spawn_unit(
             UnitType::HeavyVehiclePlant,
@@ -492,12 +570,12 @@ fn two_speed_build_costs_the_cpp_rate() {
     assert_eq!(report.cost_per_turn, 12, "3 × 4 (множитель 2× в C++)");
 
     production_turn(&mut state);
-    assert_eq!(state.team_units[0].gold(), 188);
+    assert_eq!(state.unit(dump).expect("dump").storage, 38);
     assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(2));
 
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Tank), 1);
-    assert_eq!(state.team_units[0].gold(), 176);
+    assert_eq!(state.unit(dump).expect("dump").storage, 26);
 }
 
 #[test]
@@ -1208,6 +1286,7 @@ fn construction_site_layout_is_deterministic() {
 fn two_identical_production_runs_have_identical_state() {
     fn run() -> Vec<u8> {
         let mut state = state_with_gold(100);
+        add_materials(&mut state, 100);
         let factory = state
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
             .expect("training hall");
@@ -1251,6 +1330,7 @@ fn finish_turn_runs_the_production_phase() {
     state.team_units[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
     state.team_units[1].set_gold(100);
     state.network_game = false;
+    add_materials(&mut state, 20);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
@@ -1288,8 +1368,71 @@ fn finish_turn_runs_the_production_phase() {
         status.team_status[1]
     );
     assert_eq!(state.turn_counter, 1);
-    assert_eq!(state.team_units[0].gold(), 99, "стоимость хода списана");
+    assert_eq!(
+        state.team_units[0].gold(),
+        100,
+        "золото команды производством не тратится"
+    );
+    assert_eq!(
+        state
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| state.unit(id))
+            .find(|unit| unit.unit_type == UnitType::ADump)
+            .map(|unit| unit.storage),
+        Some(19),
+        "ход завода списан материалами (1 за INFANTRY)"
+    );
     assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(1));
+}
+
+/// Цвет команды — `TeamUnits::hash_team_id` (`resource_manager.cpp:969-981`):
+/// RED = `HASH_TEAM_RED` 0x2000, GREEN = 0x1000, BLUE = 0x800, GRAY = 0x400,
+/// ALIEN/derelict = 0x8000. C++ пишет этот бит в флаги юнита
+/// (`unitinfo.cpp:179`), порт — восстанавливает цвет тем же отображением
+/// (флаги входят в эталонный дайджест и остаются без битов).
+#[test]
+fn team_hash_ids_match_the_cpp_color_slots() {
+    assert_eq!(max_core::team::hash_team_id(TeamId::RED), 0x2000);
+    assert_eq!(max_core::team::hash_team_id(TeamId::GREEN), 0x1000);
+    assert_eq!(max_core::team::hash_team_id(TeamId::BLUE), 0x0800);
+    assert_eq!(max_core::team::hash_team_id(TeamId::GRAY), 0x0400);
+    assert_eq!(max_core::team::hash_team_id(TeamId::ALIEN), 0x8000);
+}
+
+/// Материалы базы — сумма складов стационарных зданий с `CARGO_TYPE_RAW`:
+/// шахт, `ADUMP`, теплиц и казарм (C++ `Complex::material` + `Complex::Transfer`;
+/// в порте комплексы не сливаются, поэтому — вся команда).
+#[test]
+fn team_raw_materials_sums_raw_stationary_storage() {
+    let mut state = state_with_gold(0);
+    assert_eq!(max_core::production::team_raw_materials(&state, TeamId::RED), 0);
+
+    let dump = add_materials(&mut state, 30);
+    let mine = state
+        .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(30, 30), 0)
+        .expect("mine");
+    state.unit_mut(mine).expect("mine").storage = 7;
+    // Не-сырьевые здания и мобильные юниты в склад материалов не входят.
+    let tank = state
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(40, 40), 0)
+        .expect("tank");
+    state.unit_mut(tank).expect("tank").storage = 9;
+    let gas = state
+        .spawn_unit(UnitType::FDump, TeamId::RED, Point::new(50, 50), 0)
+        .expect("fuel dump");
+    state.unit_mut(gas).expect("fuel dump").storage = 11;
+
+    assert_eq!(
+        max_core::production::team_raw_materials(&state, TeamId::RED),
+        37,
+        "ADUMP 30 + шахта 7; топливный склад и танк не в счёт"
+    );
+    assert_eq!(
+        max_core::production::team_raw_materials(&state, TeamId::GREEN),
+        0
+    );
+    assert_eq!(state.unit(dump).expect("dump").storage, 30, "склад не тронут");
 }
 
 /// Флаги здания/юнита — проверка, что заводы действительно стационарны.

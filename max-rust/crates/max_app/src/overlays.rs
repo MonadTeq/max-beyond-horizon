@@ -108,7 +108,39 @@ fn draw_color_frame(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba) -> u32
     painted
 }
 
-/// Цвет рамки `COLORS` по флагам команды (`drawmap.cpp:581-598`).
+/// Индекс палитры цвета команды по её слоту — `TeamUnits::hash_team_id`
+/// (`resource_manager.cpp:969-981`).
+///
+/// C++ хранит цвет команды битом в `unit->flags` (`UnitInfo::UnitInfo`,
+/// `unitinfo.cpp:179`), а `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`)
+/// выбирает по нему `COLOR_RED/GREEN/BLUE/0xFF`. Порт те же биты при спавне не
+/// пишет (набор флагов входит в эталонный дайджест) и восстанавливает цвет тем
+/// же отображением слот→цвет из `unit.team`
+/// ([`max_core::team::hash_team_id`]); биты из сейвов honoured напрямую.
+pub const fn team_color_index(team: max_core::team::TeamId) -> u8 {
+    let hash = max_core::team::hash_team_id(team);
+
+    if hash == unit_flags::HASH_TEAM_RED as u16 {
+        COLOR_RED
+    } else if hash == unit_flags::HASH_TEAM_GREEN as u16 {
+        COLOR_GREEN
+    } else if hash == unit_flags::HASH_TEAM_BLUE as u16 {
+        COLOR_BLUE
+    } else if hash == unit_flags::HASH_TEAM_GRAY as u16 {
+        COLOR_GRAY
+    } else {
+        COLOR_DERELICT
+    }
+}
+
+/// Цвет рамки `COLORS` по флагам команды (`drawmap.cpp:581-598`), как в C++.
+///
+/// Биты `HASH_TEAM_*` — цвет **команды** (слота RED/GREEN/BLUE/GRAY), а не
+/// `team_clan`: `team_clan` в C++ задаёт только клановые кадры шахты
+/// (`unitinfo.cpp:282`) и торговые модификаторы, к цвету рамки отношения не
+/// имеет. Если битов в `flags` нет (новые юниты порта, синтетические тесты) —
+/// берётся то же отображение `unit.team → цвет` ([`team_color_index`]); юнит
+/// без команды (ALIEN/derelict) рисуется `COLOR_DERELICT`.
 pub fn team_frame_color(palette: &UiPalette, unit: &UnitInfo) -> Rgba {
     let index = if unit.flags & unit_flags::HASH_TEAM_RED != 0 {
         COLOR_RED
@@ -118,8 +150,10 @@ pub fn team_frame_color(palette: &UiPalette, unit: &UnitInfo) -> Rgba {
         COLOR_BLUE
     } else if unit.flags & unit_flags::HASH_TEAM_GRAY != 0 {
         COLOR_GRAY
-    } else {
+    } else if unit.flags & unit_flags::HASH_TEAM_DERELICT != 0 {
         COLOR_DERELICT
+    } else {
+        team_color_index(unit.team)
     };
 
     palette.rgba(index)

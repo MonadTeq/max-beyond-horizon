@@ -301,21 +301,29 @@ build add
 build done
 assert build=closed
 
-# Завод с очередью (промежуточное правило до DOS-съёмки): C++ не анимирует его
-# кадры по времени, порт листает блок C++ `image_base + angle .. image_index_max`
-# (у `D_LRGBLD.image_count` = 2 — кадры состояния) со скоростью RADAR
-# (1 кадр за 1/30 с). Второй кадр — через один кадр цикла (34 мс = 2 шага
-# `anim` по 1/60 с); без очереди завод статичен.
+# Завод с очередью: C++ НЕ листает кадры корпуса по времени
+# (`max-original-dasm/formats/unit-animation.md` §7.2). Пока идёт `ORDER_BUILD`,
+# `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) держит кадр `image_base + 1`;
+# видимое мигание включённого завода дают палитровые циклы
+# `World::InitColorCycles` (слоты 9–30 @6/9/2 fps). `anim 600` проворачивает
+# палитру на 0.6 с, `anim 34` (~1/30 с) корпус не меняет — кадр статичен.
 anim 600
 shot factory-work-a
 anim 34
 shot factory-work-b
 
 # --- 2 хода постройки (ATTRIB_TURNS INFANTRY) ----------------------------
+# Завод платит МАТЕРИАЛАМИ базы (`Cargo_GetRawConsumptionRate` →
+# `UnitInfo::StartBuilding`/`Cargo_GetNetProduction`), а не золотом команды:
+# кредиты после мобилизации не тратятся, материалы даёт шахта.
 end_turn
 end_turn
 assert unit=Infantry
+assert gold>=150
 shot production-done
+# Материалы базы: шахта копит сырьё, которым платит завод.
+select type Mining Station
+assert unit-storage>=1
 
 # Итог: партия продолжается, производство не сломало цикл хода.
 assert screen=InGame

@@ -1,4 +1,4 @@
-﻿//! Экономика стройки в Turn Based — 1:1 по C++-оракулу.
+//! Экономика стройки в Turn Based — 1:1 по C++-оракулу.
 //!
 //! Оракул:
 //! * `buildmenu.cpp:688` — `BuildMenu_GetTurnsToBuild`;
@@ -222,10 +222,12 @@ fn build_rate_is_capped_by_the_storage_like_cpp() {
 }
 
 #[test]
-fn factory_keeps_the_gold_gate_and_never_goes_negative() {
-    // Заводы платят «золотом» команды (абстракция порта, см. шапку
-    // production.rs): нехватка ставит на паузу без ухода в минус, заказ цел.
-    let mut state = economy_state(1);
+fn factory_pays_base_materials_and_never_goes_negative() {
+    // Заводы платят материалами базы (`Cargo_GetRawConsumptionRate` →
+    // `UnitInfo::StartBuilding` / `Cargo_GetNetProduction`), а не золотом:
+    // при нуле кредитов производство всё равно идёт, а нехватка материалов
+    // ставит на паузу без ухода в минус и без потери заказа.
+    let mut state = economy_state(0);
     let factory = state
         .spawn_unit(
             UnitType::TrainingHall,
@@ -234,17 +236,22 @@ fn factory_keeps_the_gold_gate_and_never_goes_negative() {
             0,
         )
         .expect("training hall");
+    let dump = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(4, 4), 0)
+        .expect("ADump");
+    state.unit_mut(dump).expect("ADump").storage = 1;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
 
-    // Первый ход: 1 золото уходит, `build_time` 2 → 1.
+    // Первый ход: 1 материал уходит, `build_time` 2 → 1.
     manager.progress();
     drop(manager);
-    assert_eq!(state.team_units[0].gold(), 0, "1 золото ушло на ход");
+    assert_eq!(state.unit(dump).expect("ADump").storage, 0, "1 материал ушёл");
+    assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
-    // Второй ход: платить нечем — пауза, золото остаётся 0, заказ цел.
+    // Второй ход: платить нечем — пауза, заказ цел.
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     let events = manager.progress();
     let queue = manager.queue(factory);
@@ -253,11 +260,17 @@ fn factory_keeps_the_gold_gate_and_never_goes_negative() {
     assert!(
         events
             .iter()
-            .any(|event| event.kind == ProductionEventKind::PausedNoGold),
-        "нехватка золота — пауза: {events:?}"
+            .any(|event| event.kind == ProductionEventKind::PausedNoMaterials),
+        "нехватка материалов — пауза: {events:?}"
     );
     assert_eq!(state.team_units[0].gold(), 0, "золото не уходит в минус");
+    assert_eq!(
+        state.unit(dump).expect("ADump").storage,
+        0,
+        "склад не уходит в минус"
+    );
     assert_eq!(queue, vec![UnitType::Infantry]);
+    assert_eq!(count_type(&state, UnitType::Infantry), 0);
 }
 
 #[test]
