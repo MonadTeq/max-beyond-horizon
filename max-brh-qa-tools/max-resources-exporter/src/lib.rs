@@ -11,11 +11,11 @@
 //!   `max-brh/crates/max_app/data/cargo_unit_data.json`, его генерирует
 //!   `max-brh/tools/gen_cargo_unit_data.py`; здесь он проверяется по архиву).
 //!
-//! Выход — `max-rust-3d-models/assets-base/<TAG>/` для всех 93 типов
+//! Выход — `max-brh-assets/units/<TAG>/` для всех 93 типов
 //! ([`max_core::enums::UnitType::ALL`]):
 //!
 //! ```text
-//! assets-base/TANK/
+//! max-brh-assets/units/TANK/
 //! ├── sprites/            кадры корпуса (frame_XXX.png) + sheet.png (лента) + sprite.json
 //! ├── turret/             кадры башни (если есть у типа)
 //! ├── firing/             кадры выстрела (если есть)

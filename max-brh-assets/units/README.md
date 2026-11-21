@@ -1,4 +1,4 @@
-# max-rust-3d-models — ресурсы M.A.X. по юнитам
+# max-brh-assets/units — ресурсы M.A.X. по юнитам
 
 Выгрузка «один каталог на тип юнита»: спрайты корпуса, башня, выстрел,
 коннекторы, тень, портрет `P_*` и FLC-анимация — всё, что игра берёт для
@@ -6,22 +6,25 @@
 `flics_animation`).
 
 ```text
-max-rust-3d-models/
+max-brh-assets/units/
 ├── README.md            этот файл (в git)
 ├── manifest.csv         строка на тип: теги, кадры, портрет, FLC (в git)
-└── assets-base/         САМА ВЫГРУЗКА — в git не коммитится (.gitignore)
-    ├── TANK/
-    │   ├── sprites/       frame_XXX.png (корпус), sheet.png (лента), sprite.json
-    │   ├── turret/        кадры башни (если есть)
-    │   ├── firing/        кадры выстрела (если есть)
-    │   ├── connectors/    кадры коннекторов (если есть)
-    │   ├── shadow/        кадры тени S_*
-    │   ├── portrait.png   P_* 300×240 (палитра окна) или fallback
-    │   ├── animation/     frame_000.png…, animation.gif, копия .FLC
-    │   └── unit.json      тип/имя/флаги/источники/размеры/анимация
-    ├── MININGST/
-    └── …                  всего 93 каталога (все UnitType)
+├── TANK/
+│   ├── sprites/       frame_XXX.png (корпус), sheet.png (лента), sprite.json
+│   ├── turret/        кадры башни (если есть)
+│   ├── firing/        кадры выстрела (если есть)
+│   ├── connectors/    кадры коннекторов (если есть)
+│   ├── shadow/        кадры тени S_*
+│   ├── portrait.png   P_* 300×240 (палитра окна) или fallback
+│   ├── animation/     frame_000.png…, animation.gif, копия .FLC
+│   └── unit.json      тип/имя/флаги/источники/размеры/анимация
+├── MININGST/
+└── …                  всего 93 каталога (все UnitType)
 ```
+
+Каталоги `<TAG>/` — сама выгрузка: в git не коммитятся
+(`.gitignore` → `max-brh-assets/units/*/`), потому что регенерируются из данных
+игры.
 
 ## Как перегенерировать
 
@@ -36,8 +39,8 @@ cargo run --release
 (`../../max-original/MAX.RES`, `../../max-original/COLOR.PAL`,
 `../../max-original/*.FLC`,
 `../../max-brh/crates/max_app/data/cargo_unit_data.json`,
-`../../assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —
-`../../max-rust-3d-models`). Любой путь переопределяется флагом:
+`../../max-cpp-port/assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —
+`../../max-brh-assets/units`). Любой путь переопределяется флагом:
 
 ```sh
 cargo run --release -- \
@@ -45,8 +48,8 @@ cargo run --release -- \
   --pal ../../max-original/COLOR.PAL \
   --flc-dir ../../max-original \
   --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \
-  --patches ../../assets/PATCHES.RES \
-  --out ../../max-rust-3d-models \
+  --patches ../../max-cpp-port/assets/PATCHES.RES \
+  --out ../../max-brh-assets/units \
   --only TANK,MININGST
 ```
 
@@ -61,7 +64,7 @@ cargo run --release -- \
 |---|---:|
 | Типов юнитов | **93** |
 | — зданий / мобильных | 22 / 71 |
-| Каталогов в `assets-base/` | 93 |
+| Каталогов в `units/` | 93 |
 | PNG всего | **4131** |
 | Объём каталогов | 35.2 МБ |
 | Кадров корпуса | 975 |

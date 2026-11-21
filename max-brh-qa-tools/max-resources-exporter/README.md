@@ -3,10 +3,10 @@
 Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-brh`),
 как [`max-brh-qa-max-brh-qa-tools/max-resources-viewer`](../max-resources-viewer/README.md). Обходит все
 **93 типа юнитов** (`UnitType::ALL`) и раскладывает их ресурсы по каталогам
-`max-rust-3d-models/assets-base/<TAG>/`:
+`max-brh-assets/units/<TAG>/`:
 
 ```text
-assets-base/TANK/
+units/TANK/
 ├── sprites/            frame_XXX.png (корпус), sheet.png (лента кадров), sprite.json
 ├── turret/             кадры башни (если у типа есть)
 ├── firing/             кадры выстрела (если есть)
@@ -17,15 +17,15 @@ assets-base/TANK/
 └── unit.json           тип/имя/флаги/источники/размеры/наличие анимации
 ```
 
-Рядом с выгрузкой (в `max-rust-3d-models`) пишутся `manifest.csv` (строка на
-тип) и `README.md` со статистикой; сама выгрузка в git не входит
-(`.gitignore` → `max-rust-3d-models/assets-base/`), потому что регенерируется
-из данных игры.
+Рядом с каталогами юнитов (в `max-brh-assets/units`) пишутся `manifest.csv`
+(строка на тип) и `README.md` со статистикой; сами каталоги в git не входят
+(`.gitignore` → `max-brh-assets/units/*/`), потому что регенерируются из данных
+игры.
 
 ## Запуск
 
 Из корня репозитория (нужны `max-original/MAX.RES`, `COLOR.PAL`, `*.FLC`,
-`assets/PATCHES.RES` и `max-brh/crates/max_app/data/cargo_unit_data.json`):
+`max-cpp-port/assets/PATCHES.RES` и `max-brh/crates/max_app/data/cargo_unit_data.json`):
 
 ```sh
 cd max-brh-qa-tools/max-resources-exporter
@@ -40,8 +40,8 @@ cargo run --release -- \
   --pal ../../max-original/COLOR.PAL \
   --flc-dir ../../max-original \
   --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \
-  --patches ../../assets/PATCHES.RES \
-  --out ../../max-rust-3d-models \
+  --patches ../../max-cpp-port/assets/PATCHES.RES \
+  --out ../../max-brh-assets/units \
   --only TANK,MININGST
 ```
 

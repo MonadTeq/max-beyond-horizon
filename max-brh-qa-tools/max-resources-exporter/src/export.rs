@@ -1,9 +1,9 @@
-//! Обход всех 93 типов юнитов и запись каталогов `assets-base/<TAG>/`.
+//! Обход всех 93 типов юнитов и запись каталогов `units/<TAG>/`.
 //!
-//! Один тип — один каталог:
+//! Один тип — один каталог (`out_root` = `max-brh-assets/units`):
 //!
 //! ```text
-//! assets-base/TANK/
+//! max-brh-assets/units/TANK/
 //! ├── sprites/          frame_XXX.png (корпус), sheet.png (лента), sprite.json
 //! ├── turret/           кадры башни (если есть)
 //! ├── firing/           кадры выстрела (если есть)
@@ -14,7 +14,7 @@
 //! └── unit.json         тип/имя/флаги/источники/размеры/наличие анимации
 //! ```
 //!
-//! Плюс два корневых файла в `out_root` (`max-rust-3d-models`):
+//! Плюс два корневых файла в `out_root` (`max-brh-assets/units`):
 //! `manifest.csv` (строка на тип) и `README.md` (что выгружено, как
 //! перегенерировать, статистика).
 //!
@@ -23,7 +23,7 @@
 //! Каталог юнита синхронизируется по **множеству ожидаемых файлов**: заранее
 //! собранные байты пишутся поверх, а файлы вне ожидаемого набора удаляются
 //! вместе с опустевшими подкаталогами. Каталоги типов, которых нет среди 93,
-//! удаляются из `assets-base` целиком. Тот же вход → те же байты (PNG-кодек без
+//! удаляются из `out_root` целиком. Тот же вход → те же байты (PNG-кодек без
 //! времени, GIF без счётчика кадров, JSON с фиксированным порядком ключей),
 //! поэтому повторный прогон только перезаписывает файлы.
 
@@ -60,8 +60,8 @@ pub struct ExportOptions {
     pub flc_dir: PathBuf,
     /// `cargo_unit_data.json` — маппинг тип → ресурсы (снимок `SC_UNITS`).
     pub units_json: PathBuf,
-    /// Корень выгрузки (`max-rust-3d-models`): сюда `assets-base/`,
-    /// `manifest.csv`, `README.md`.
+    /// Корень выгрузки (`max-brh-assets/units`): сюда каталоги `<TAG>/`,
+    /// `manifest.csv`, `README.md`. Уровня `assets-base/` нет.
     pub out_root: PathBuf,
     /// `PATCHES.RES` для сверки маппинга с `SC_UNITS`; `None` — не сверять.
     pub patches: Option<PathBuf>,
@@ -79,11 +79,23 @@ impl ExportOptions {
             color_pal: root.join("max-original/COLOR.PAL"),
             flc_dir: root.join("max-original"),
             units_json: root.join("max-brh/crates/max_app/data/cargo_unit_data.json"),
-            out_root: root.join("max-rust-3d-models"),
-            patches: Some(root.join("assets/PATCHES.RES")),
+            out_root: root.join("max-brh-assets/units"),
+            patches: default_patches(root),
             only: None,
         }
     }
+}
+
+/// `PATCHES.RES` по умолчанию: исторический `assets/` (если ещё есть) либо
+/// общий каталог C++-порта `max-cpp-port/assets/` (как fallback в
+/// `max_app::assets`). `None` — сверять с `SC_UNITS` не с чем.
+fn default_patches(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("assets/PATCHES.RES"),
+        root.join("max-cpp-port/assets/PATCHES.RES"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 /// Откуда взят портрет.
@@ -162,10 +174,8 @@ pub struct UnitReport {
 /// Итог экспорта.
 #[derive(Debug, Clone)]
 pub struct ExportReport {
-    /// Куда писали (`max-rust-3d-models`).
+    /// Куда писали (`max-brh-assets/units`); каталоги юнитов лежат прямо здесь.
     pub out_root: PathBuf,
-    /// Каталог выгрузки (`out_root/assets-base`).
-    pub assets_root: PathBuf,
     /// Отчёт по типам в порядке `UnitType`.
     pub units: Vec<UnitReport>,
     /// Всего PNG в выгрузке.
@@ -328,10 +338,9 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
         _ => None,
     };
 
-    let assets_root = options.out_root.join("assets-base");
-
-    fs::create_dir_all(&assets_root)
-        .with_context(|| format!("создание {}", assets_root.display()))?;
+    // `out_root` — уже каталог юнитов (`max-brh-assets/units`): без `assets-base/`.
+    fs::create_dir_all(&options.out_root)
+        .with_context(|| format!("создание {}", options.out_root.display()))?;
 
     let only: Option<HashSet<&str>> = options
         .only
@@ -340,7 +349,6 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
 
     let mut report = ExportReport {
         out_root: options.out_root.clone(),
-        assets_root: assets_root.clone(),
         units: Vec::new(),
         pngs: 0,
         bytes: 0,
@@ -367,7 +375,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
 
     // Каталоги типов, которых нет в наборе (устаревшие/опечатки), убираем.
     if only.is_none() {
-        remove_stale_unit_dirs(&assets_root, &report.units)?;
+        remove_stale_unit_dirs(&options.out_root, &report.units)?;
     }
 
     write_manifest(&options.out_root.join("manifest.csv"), &report)?;
@@ -772,7 +780,7 @@ fn export_unit(
     files.json("unit.json", &unit_json);
 
     // --- запись на диск -------------------------------------------------
-    let dir = options.out_root.join("assets-base").join(&unit.token);
+    let dir = options.out_root.join(&unit.token);
     let (pngs, bytes) = sync_unit_dir(&dir, &files)?;
 
     Ok(UnitReport {
@@ -1008,26 +1016,26 @@ fn remove_stale(dir: &Path, expected: &HashSet<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Удаляет из `assets-base` всё, что не является каталогом одного из 93 типов.
-fn remove_stale_unit_dirs(assets_root: &Path, units: &[UnitReport]) -> Result<()> {
+/// Удаляет из `out_root` (`units`) всё, что не является каталогом одного из 93
+/// типов. Корневые `manifest.csv`/`README.md` живут здесь же — их не трогаем.
+fn remove_stale_unit_dirs(units_root: &Path, units: &[UnitReport]) -> Result<()> {
     let expected: HashSet<&str> = units.iter().map(|unit| unit.token.as_str()).collect();
     let entries =
-        fs::read_dir(assets_root).with_context(|| format!("чтение {}", assets_root.display()))?;
+        fs::read_dir(units_root).with_context(|| format!("чтение {}", units_root.display()))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
 
         if path.is_dir() {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default();
-
             if !expected.contains(name.as_str()) {
                 fs::remove_dir_all(&path)
                     .with_context(|| format!("удаление устаревшего {}", path.display()))?;
             }
-        } else {
+        } else if !matches!(name.as_str(), "manifest.csv" | "README.md") {
             fs::remove_file(&path)
                 .with_context(|| format!("удаление лишнего файла {}", path.display()))?;
         }
@@ -1084,7 +1092,7 @@ fn write_manifest(path: &Path, report: &ExportReport) -> Result<()> {
             csv_field(&unit.token),
             unit.unit_type,
             csv_field(&unit.name),
-            csv_field(&format!("assets-base/{}", unit.token)),
+            csv_field(&format!("units/{}", unit.token)),
             u8::from(unit.building),
             csv_field(unit.sprite_tag.as_deref().unwrap_or("")),
             csv_field(unit.shadow_tag.as_deref().unwrap_or("")),
@@ -1127,7 +1135,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
 
     let mut out = String::new();
 
-    out.push_str("# max-rust-3d-models — ресурсы M.A.X. по юнитам\n\n");
+    out.push_str("# max-brh-assets/units — ресурсы M.A.X. по юнитам\n\n");
     out.push_str(
         "Выгрузка «один каталог на тип юнита»: спрайты корпуса, башня, выстрел,\n\
 коннекторы, тень, портрет `P_*` и FLC-анимация — всё, что игра берёт для\n\
@@ -1135,22 +1143,26 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
 `flics_animation`).\n\n",
     );
     out.push_str("```text\n");
-    out.push_str("max-rust-3d-models/\n");
+    out.push_str("max-brh-assets/units/\n");
     out.push_str("├── README.md            этот файл (в git)\n");
     out.push_str("├── manifest.csv         строка на тип: теги, кадры, портрет, FLC (в git)\n");
-    out.push_str("└── assets-base/         САМА ВЫГРУЗКА — в git не коммитится (.gitignore)\n");
-    out.push_str("    ├── TANK/\n");
-    out.push_str("    │   ├── sprites/       frame_XXX.png (корпус), sheet.png (лента), sprite.json\n");
-    out.push_str("    │   ├── turret/        кадры башни (если есть)\n");
-    out.push_str("    │   ├── firing/        кадры выстрела (если есть)\n");
-    out.push_str("    │   ├── connectors/    кадры коннекторов (если есть)\n");
-    out.push_str("    │   ├── shadow/        кадры тени S_*\n");
-    out.push_str("    │   ├── portrait.png   P_* 300×240 (палитра окна) или fallback\n");
-    out.push_str("    │   ├── animation/     frame_000.png…, animation.gif, копия .FLC\n");
-    out.push_str("    │   └── unit.json      тип/имя/флаги/источники/размеры/анимация\n");
-    out.push_str("    ├── MININGST/\n");
-    out.push_str("    └── …                  всего 93 каталога (все UnitType)\n");
+    out.push_str("├── TANK/\n");
+    out.push_str("│   ├── sprites/       frame_XXX.png (корпус), sheet.png (лента), sprite.json\n");
+    out.push_str("│   ├── turret/        кадры башни (если есть)\n");
+    out.push_str("│   ├── firing/        кадры выстрела (если есть)\n");
+    out.push_str("│   ├── connectors/    кадры коннекторов (если есть)\n");
+    out.push_str("│   ├── shadow/        кадры тени S_*\n");
+    out.push_str("│   ├── portrait.png   P_* 300×240 (палитра окна) или fallback\n");
+    out.push_str("│   ├── animation/     frame_000.png…, animation.gif, копия .FLC\n");
+    out.push_str("│   └── unit.json      тип/имя/флаги/источники/размеры/анимация\n");
+    out.push_str("├── MININGST/\n");
+    out.push_str("└── …                  всего 93 каталога (все UnitType)\n");
     out.push_str("```\n\n");
+    out.push_str(
+        "Каталоги `<TAG>/` — сама выгрузка: в git не коммитятся\n\
+(`.gitignore` → `max-brh-assets/units/*/`), потому что регенерируются из данных\n\
+игры.\n\n",
+    );
 
     out.push_str("## Как перегенерировать\n\n");
     out.push_str("Из корня репозитория:\n\n");
@@ -1163,8 +1175,8 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
 (`../../max-original/MAX.RES`, `../../max-original/COLOR.PAL`,\n\
 `../../max-original/*.FLC`,\n\
 `../../max-brh/crates/max_app/data/cargo_unit_data.json`,\n\
-`../../assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —\n\
-`../../max-rust-3d-models`). Любой путь переопределяется флагом:\n\n",
+`../../max-cpp-port/assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —\n\
+`../../max-brh-assets/units`). Любой путь переопределяется флагом:\n\n",
     );
     out.push_str("```sh\n");
     out.push_str("cargo run --release -- \\\n");
@@ -1172,8 +1184,8 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     out.push_str("  --pal ../../max-original/COLOR.PAL \\\n");
     out.push_str("  --flc-dir ../../max-original \\\n");
     out.push_str("  --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \\\n");
-    out.push_str("  --patches ../../assets/PATCHES.RES \\\n");
-    out.push_str("  --out ../../max-rust-3d-models \\\n");
+    out.push_str("  --patches ../../max-cpp-port/assets/PATCHES.RES \\\n");
+    out.push_str("  --out ../../max-brh-assets/units \\\n");
     out.push_str("  --only TANK,MININGST\n");
     out.push_str("```\n\n");
     out.push_str(
@@ -1188,7 +1200,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     out.push_str(&format!("| Типов юнитов | **{}** |\n", report.units.len()));
     out.push_str(&format!("| — зданий / мобильных | {buildings} / {mobile} |\n"));
     out.push_str(&format!(
-        "| Каталогов в `assets-base/` | {} |\n",
+        "| Каталогов в `units/` | {} |\n",
         report.units.len()
     ));
     out.push_str(&format!("| PNG всего | **{payload}** |\n"));

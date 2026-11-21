@@ -5,7 +5,7 @@
 //!
 //! ```sh
 //! cargo run --release
-//! cargo run --release -- --out ../../max-rust-3d-models --only TANK,MININGST
+//! cargo run --release -- --out ../../max-brh-assets/units --only TANK,MININGST
 //! ```
 //!
 //! Флаги: `--res`, `--pal`, `--flc-dir`, `--units`, `--out`, `--patches`,
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use unit_asset_export::{export_all, export::summary, ExportOptions};
+use max_resources_exporter::{export_all, export::summary, ExportOptions};
 
 fn main() -> ExitCode {
     match run() {
@@ -120,7 +120,7 @@ fn usage() {
     println!("  --pal PATH        COLOR.PAL");
     println!("  --flc-dir PATH    каталог с *.FLC");
     println!("  --units PATH      cargo_unit_data.json (снимок SC_UNITS)");
-    println!("  --out PATH        корень выгрузки (max-rust-3d-models)");
+    println!("  --out PATH        каталог юнитов (max-brh-assets/units)");
     println!("  --patches PATH    PATCHES.RES для сверки SC_UNITS");
     println!("  --no-patches-check  не сверять с SC_UNITS");
     println!("  --only T1,T2      выгрузить только эти токены");

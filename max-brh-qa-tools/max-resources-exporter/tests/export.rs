@@ -13,8 +13,8 @@ use std::sync::OnceLock;
 use max_assets::sprite::{decode_sprite, FrameInfo};
 use max_assets::ResArchive;
 use serde_json::Value;
-use unit_asset_export::png;
-use unit_asset_export::{export_all, ExportOptions, ExportReport};
+use max_resources_exporter::png;
+use max_resources_exporter::{export_all, ExportOptions, ExportReport};
 
 // ---------------------------------------------------------------------------
 // Инфраструктура
@@ -62,8 +62,10 @@ fn shared() -> &'static Shared {
     })
 }
 
-fn assets_base(root: &Path) -> PathBuf {
-    root.join("assets-base")
+/// Каталог выгрузки: `out_root` и есть каталог юнитов (`.../units`), каталоги
+/// типов лежат прямо в нём.
+fn units_dir(root: &Path) -> PathBuf {
+    root.to_path_buf()
 }
 
 fn read_json(path: &Path) -> Value {
@@ -190,8 +192,8 @@ fn exports_all_93_unit_types_with_expected_counts() {
     assert_eq!(report.units.len(), max_core::enums::UnitType::COUNT);
 
     // 93 каталога, ровно по одному на тип.
-    let mut dirs: Vec<String> = fs::read_dir(assets_base(&shared.root))
-        .expect("assets-base")
+    let mut dirs: Vec<String> = fs::read_dir(units_dir(&shared.root))
+        .expect("units")
         .flatten()
         .filter(|entry| entry.path().is_dir())
         .map(|entry| entry.file_name().to_string_lossy().to_string())
@@ -231,12 +233,16 @@ fn exports_all_93_unit_types_with_expected_counts() {
     let manifest = fs::read_to_string(shared.root.join("manifest.csv")).expect("manifest.csv");
     assert_eq!(manifest.lines().count(), 94);
     assert!(manifest.starts_with("token,unit_type,name,dir,"));
+    assert!(
+        manifest.contains("units/TANK"),
+        "manifest: каталог юнита — units/<TAG>"
+    );
 
     // README со статистикой.
     let readme = fs::read_to_string(shared.root.join("README.md")).expect("README.md");
     assert!(readme.contains("93"), "README: количество типов");
     assert!(readme.contains("70"), "README: портреты/анимации");
-    assert!(readme.contains("assets-base/"), "README: структура");
+    assert!(readme.contains("units/"), "README: структура");
 
     // Сверка маппинга с SC_UNITS выполнялась.
     let check = report.sc_units.as_ref().expect("сверка SC_UNITS");
@@ -256,7 +262,7 @@ fn tank_has_body_turret_firing_shadow_portrait_and_animation() {
     }
 
     let shared = shared();
-    let dir = assets_base(&shared.root).join("TANK");
+    let dir = units_dir(&shared.root).join("TANK");
 
     let count = |sub: &str| {
         fs::read_dir(dir.join(sub))
@@ -333,7 +339,7 @@ fn sprite_json_matches_frame_info_for_every_unit() {
     let mut checked = 0;
 
     for unit in &shared.report.units {
-        let dir = assets_base(&shared.root).join(&unit.token);
+        let dir = units_dir(&shared.root).join(&unit.token);
         let sprite_json_path = dir.join("sprites/sprite.json");
 
         // У MASTER нет спрайта в MAX.RES — sprite.json не пишется.
@@ -472,7 +478,7 @@ fn animation_gif_is_a_valid_gif89a_with_flc_frames() {
     }
 
     let shared = shared();
-    let dir = assets_base(&shared.root).join("TANK");
+    let dir = units_dir(&shared.root).join("TANK");
     let bytes = fs::read(dir.join("animation/animation.gif")).expect("animation.gif");
     let (width, height, frames) = parse_gif(&bytes);
 
@@ -485,7 +491,7 @@ fn animation_gif_is_a_valid_gif89a_with_flc_frames() {
     assert_eq!(png_size(&dir.join("animation/frame_029.png")), (128, 128));
 
     // И у здания: GIF есть там, где есть FLC.
-    let commtower = assets_base(&shared.root).join("COMMTWR");
+    let commtower = units_dir(&shared.root).join("COMMTWR");
     let bytes = fs::read(commtower.join("animation/animation.gif")).expect("COMMTWR animation.gif");
 
     assert_eq!(parse_gif(&bytes).2, 1, "у COMMTWR FLC из одного кадра");
@@ -500,7 +506,7 @@ fn units_without_resources_are_exported_with_notes() {
     let shared = shared();
 
     // MASTER вырезан из игры: в SC_UNITS теги есть, ресурсов в MAX.RES нет.
-    let master = assets_base(&shared.root).join("MASTER");
+    let master = units_dir(&shared.root).join("MASTER");
 
     assert!(master.is_dir(), "каталог MASTER всё равно создан");
     assert!(master.join("unit.json").is_file());
@@ -524,7 +530,7 @@ fn units_without_resources_are_exported_with_notes() {
     );
 
     // SUBMARNE: `S_SUBMAR` в MAX.RES отсутствует — тень пропущена с пометкой.
-    let submarine = assets_base(&shared.root).join("SUBMARNE");
+    let submarine = units_dir(&shared.root).join("SUBMARNE");
 
     assert!(submarine.is_dir());
     assert!(!submarine.join("shadow").exists(), "тени нет");
@@ -549,7 +555,7 @@ fn fallback_portrait_is_a_scaled_sprite_frame() {
     let shared = shared();
 
     // LNDEXPLD — без P_*: 11×14 кадр, fallback 300×240.
-    let dir = assets_base(&shared.root).join("LNDEXPLD");
+    let dir = units_dir(&shared.root).join("LNDEXPLD");
     let unit = read_json(&dir.join("unit.json"));
 
     assert_eq!(unit["portrait"]["source"], "fallback");
@@ -597,15 +603,15 @@ fn repeated_export_is_byte_identical_and_leaves_no_junk() {
     let tree_before = collect_tree(&root);
 
     // Мусор, который обязан исчезнуть: лишний кадр в каталоге юнита, целый
-    // «чужой» каталог типа и файл в корне assets-base.
+    // «чужой» каталог типа и файл в корне units.
     fs::write(
-        assets_base(&root).join("TANK/sprites/frame_999.png"),
+        units_dir(&root).join("TANK/sprites/frame_999.png"),
         b"junk",
     )
     .expect("мусорный кадр");
-    fs::create_dir_all(assets_base(&root).join("ZZZZ")).expect("мусорный каталог");
-    fs::write(assets_base(&root).join("ZZZZ/unit.json"), b"{}").expect("мусорный json");
-    fs::write(assets_base(&root).join("stray.txt"), b"stray").expect("мусорный файл");
+    fs::create_dir_all(units_dir(&root).join("ZZZZ")).expect("мусорный каталог");
+    fs::write(units_dir(&root).join("ZZZZ/unit.json"), b"{}").expect("мусорный json");
+    fs::write(units_dir(&root).join("stray.txt"), b"stray").expect("мусорный файл");
 
     let second = export_all(&options).expect("повторный экспорт");
 
@@ -614,13 +620,13 @@ fn repeated_export_is_byte_identical_and_leaves_no_junk() {
     assert_eq!(second.pngs, first.pngs);
     assert_eq!(second.bytes, first.bytes);
 
-    assert!(!assets_base(&root).join("ZZZZ").exists(), "чужой каталог удалён");
+    assert!(!units_dir(&root).join("ZZZZ").exists(), "чужой каталог удалён");
     assert!(
-        !assets_base(&root).join("stray.txt").exists(),
+        !units_dir(&root).join("stray.txt").exists(),
         "лишний файл удалён"
     );
     assert!(
-        !assets_base(&root).join("TANK/sprites/frame_999.png").exists(),
+        !units_dir(&root).join("TANK/sprites/frame_999.png").exists(),
         "лишний кадр удалён"
     );
 
