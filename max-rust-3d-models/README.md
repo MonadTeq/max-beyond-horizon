@@ -28,7 +28,7 @@ max-rust-3d-models/
 Из корня репозитория:
 
 ```sh
-cd max-brh-qa-tools/unit-asset-export
+cd max-brh-qa-tools/max-resources-exporter
 cargo run --release
 ```
 
@@ -125,7 +125,7 @@ cargo run --release -- \
 
 ## Проверки
 
-`cargo test` в `max-brh-qa-tools/unit-asset-export` (числа — см. таблицу
+`cargo test` в `max-brh-qa-tools/max-resources-exporter` (числа — см. таблицу
 «Статистика последнего экспорта» выше):
 
 * счётчики: 93 каталога (все `UnitType`), число портретов `P_*`,

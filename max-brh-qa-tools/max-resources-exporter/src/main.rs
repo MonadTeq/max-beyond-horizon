@@ -1,6 +1,6 @@
 //! CLI экспорта ресурсов по юнитам.
 //!
-//! Запуск из `tools/unit-asset-export` (пути по умолчанию — относительно корня
+//! Запуск из `max-brh-qa-tools/max-resources-exporter` (пути по умолчанию — относительно корня
 //! репозитория):
 //!
 //! ```sh
@@ -33,7 +33,7 @@ fn run() -> Result<()> {
         return Ok(());
     };
 
-    println!("unit-asset-export: {} типов", 93);
+    println!("max-resources-exporter: {} типов", 93);
     println!("  MAX.RES:    {}", options.max_res.display());
     println!("  COLOR.PAL:  {}", options.color_pal.display());
     println!("  FLC dir:    {}", options.flc_dir.display());
@@ -102,7 +102,7 @@ fn parse_args() -> Result<Option<ExportOptions>> {
     Ok(Some(options))
 }
 
-/// Корень репозитория: `tools/unit-asset-export` → `tools` → корень.
+/// Корень репозитория: `max-brh-qa-tools/max-resources-exporter` → `max-brh-qa-tools` → корень.
 fn repo_root() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
 
@@ -114,7 +114,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn usage() {
-    println!("unit-asset-export — выгрузка ресурсов M.A.X. по каждому типу юнита\n");
+    println!("max-resources-exporter — выгрузка ресурсов M.A.X. по каждому типу юнита\n");
     println!("Флаги (по умолчанию — пути из корня репозитория):");
     println!("  --res PATH        MAX.RES");
     println!("  --pal PATH        COLOR.PAL");

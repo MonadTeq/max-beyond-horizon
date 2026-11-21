@@ -122,5 +122,5 @@ max-resource-editor-error.txt
 # MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (� git � ������ ����������, README
 # � manifest.csv)
 max-rust-3d-models/assets-base/
-max-brh-qa-tools/unit-asset-export/target/
+max-brh-qa-tools/max-resources-exporter/target/
 ci-run.log

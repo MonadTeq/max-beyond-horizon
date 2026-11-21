@@ -36,7 +36,7 @@ fn data_available() -> bool {
 }
 
 fn temp_dir(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("unit-asset-export-{name}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("max-resources-exporter-{name}-{}", std::process::id()))
 }
 
 /// Один общий экспорт на весь тестовый бинарник: 93 каталога пишутся один раз,

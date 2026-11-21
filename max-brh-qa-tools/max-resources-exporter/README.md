@@ -1,4 +1,4 @@
-# unit-asset-export — ресурсы M.A.X. по каждому типу юнита
+# max-resources-exporter — ресурсы M.A.X. по каждому типу юнита
 
 Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-rust`),
 как [`max-brh-qa-tools/max-resource-editor`](../max-resource-editor/README.md). Обходит все
@@ -28,7 +28,7 @@ assets-base/TANK/
 `assets/PATCHES.RES` и `max-rust/crates/max_app/data/cargo_unit_data.json`):
 
 ```sh
-cd max-brh-qa-tools/unit-asset-export
+cd max-brh-qa-tools/max-resources-exporter
 cargo run --release
 ```
 

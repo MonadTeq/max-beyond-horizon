@@ -1155,7 +1155,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     out.push_str("## Как перегенерировать\n\n");
     out.push_str("Из корня репозитория:\n\n");
     out.push_str("```sh\n");
-    out.push_str("cd tools/unit-asset-export\n");
+    out.push_str("cd max-brh-qa-tools/max-resources-exporter\n");
     out.push_str("cargo run --release\n");
     out.push_str("```\n\n");
     out.push_str(
@@ -1295,7 +1295,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     ));
 
     out.push_str("## Проверки\n\n");
-    out.push_str("`cargo test` в `tools/unit-asset-export` (числа — см. таблицу\n«Статистика последнего экспорта» выше):\n\n");
+    out.push_str("`cargo test` в `max-brh-qa-tools/max-resources-exporter` (числа — см. таблицу\n«Статистика последнего экспорта» выше):\n\n");
     out.push_str(concat!(
         "* счётчики: 93 каталога (все `UnitType`), число портретов `P_*`,\n",
         "  fallback-портретов и типов с FLC сверяется с реальными данными;\n",
