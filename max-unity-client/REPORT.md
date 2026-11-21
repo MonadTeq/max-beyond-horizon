@@ -35,7 +35,7 @@
 | `max-rust/` | Rust-клиент v1.0.0: `max_core` (40,3 тыс. строк, чистая детерминированная симуляция с ИИ, бит-в-бит с C++), `max_net` (7,2 тыс., gRPC tonic 0.14 + vendored ENet 1.3.18), `max_assets` (4,6 тыс.), `max_render` (6,4 тыс.), `max_app` (27,8 тыс.); **692 `#[test]`** | `max_core`+`max_net` переносятся **без изменений** как cdylib; тесты остаются регресс-сеткой |
 | `max-rust-qa/` | QA-фабрика: `suite/` — 11 областей, **166 тест-кейсов** (TC-01xx…11xx); `scripts/` — `.qa`-сценарии драйвера (`click/rclick/key/type/wait/tick/shot/assert/menu/setup/players/…`); `golden/` — 10 эталонных кадров; `qa_golden_check` (порог дрейфа 1 %); `--record` (запись сценариев из живой игры); C++-генераторы векторов (rng/map/sim/barrier/lobby/font) | Переносится на Unity как **чек-лист приёмки и регрессия**; golden-кадры — эталоны P2/P3 |
 | `max-horizon-server` + `src/` (C++ headless) | Серверная часть: оркестратор сессий, релей/арбитр барьеров, watchdog | **Не меняется вообще** — Unity-клиент обязан вписаться в существующий контракт |
-| `tools/max-resource-editor` | GUI-редактор ресурсов (SDL3) с PNG-экспортом и тестом на реальном MAX.RES | Образец конвейера «RES → PNG → метаданные» для P1 |
+| `max-brh-qa-tools/max-resources-viewer` | GUI-редактор ресурсов (SDL3) с PNG-экспортом и тестом на реальном MAX.RES | Образец конвейера «RES → PNG → метаданные» для P1 |
 | `docs/development/release-checklist.md`, `ci.sh`, `.github/workflows/ci.yml` | Релизные гейты, CI-пайплайн Rust | Образец для релизного пайплайна Unity (P6) |
 
 Ключевые числа, на которых строится оценка:

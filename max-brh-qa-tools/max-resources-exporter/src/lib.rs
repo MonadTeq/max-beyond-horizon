@@ -27,7 +27,7 @@
 //! ```
 //!
 //! Модули: [`png`] — PNG-кодек (копия `max-rust/crates/max_app/src/qa/png.rs`,
-//! расширенная RGBA в `tools/max-resource-editor`); [`gif`] — свой
+//! расширенная RGBA в `max-brh-qa-tools/max-resources-viewer`); [`gif`] — свой
 //! GIF89a-кодировщик; [`render`] — растеризация спрайтов/теней/портретов;
 //! [`units`] — чтение `cargo_unit_data.json` и сверка с `SC_UNITS`; [`export`] —
 //! обход типов, запись файлов, `manifest.csv` и `README.md`.

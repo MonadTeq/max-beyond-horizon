@@ -58,7 +58,7 @@ impl fmt::Display for StartupError {
             Self::Cancelled => write!(
                 formatter,
                 "выбор MAX.RES отменён — редактор не открыт. \
-                 Укажите файл аргументом: max-resource-editor --res <MAX.RES>"
+                 Укажите файл аргументом: max-resources-viewer --res <MAX.RES>"
             ),
             Self::Dialog(error) => {
                 write!(
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn default_candidates_start_next_to_exe_and_include_cwd() {
-        let exe = Path::new("/repo/tools/editor/target/release/max-resource-editor.exe");
+        let exe = Path::new("/repo/tools/editor/target/release/max-resources-viewer.exe");
         let cwd = Path::new("/repo/tools/editor");
         let candidates = default_candidates_for(Some(exe), Some(cwd));
 
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn default_candidates_walk_up_to_repository_root() {
-        let exe = Path::new("/repo/tools/editor/target/release/max-resource-editor.exe");
+        let exe = Path::new("/repo/tools/editor/target/release/max-resources-viewer.exe");
         let cwd = Path::new("/repo/tools/editor");
         let candidates = default_candidates_for(Some(exe), Some(cwd));
 
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn repo_root_default_is_found_before_the_dialog() {
-        let exe = Path::new("/repo/tools/editor/target/release/max-resource-editor.exe");
+        let exe = Path::new("/repo/tools/editor/target/release/max-resources-viewer.exe");
         let cwd = Path::new("/repo/tools/editor");
         let candidates = default_candidates_for(Some(exe), Some(cwd));
         let repo_res = path("/repo/max-original/MAX.RES");

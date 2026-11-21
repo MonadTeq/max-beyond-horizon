@@ -1,6 +1,6 @@
 //! Растеризация ресурсов в RGBA: палитры, прозрачность, лента кадров.
 //!
-//! Соглашения — те же, что у `max-assets` (`tools/max-resource-editor`), чтобы
+//! Соглашения — те же, что у `max-assets` (`max-brh-qa-tools/max-resources-viewer`), чтобы
 //! выгрузка юнитов стыковалась с уже существующей:
 //!
 //! * спрайты (`COMMTWR`…`WALDO`) индексируются `COLOR.PAL`, у которого
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn strip_packs_frames_by_hot_spot() {
-        // Как в тесте max-resource-editor: ячейки 44+6=50 и 56, высота max(50,57).
+        // Как в тесте max-resources-viewer: ячейки 44+6=50 и 56, высота max(50,57).
         let (width, height) = strip_dimensions(&[(44, 45, 20, 23), (56, 57, 26, 28)]);
 
         assert_eq!(width, 50 + 56);

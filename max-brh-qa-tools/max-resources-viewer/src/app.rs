@@ -105,7 +105,7 @@ fn handle_event(
                 Keycode::F3 => state.toggle_search(),
                 Keycode::F5 => state.fit_zoom(),
                 Keycode::F12 => {
-                    let path = std::path::PathBuf::from("max-resource-editor-screenshot.png");
+                    let path = std::path::PathBuf::from("max-resources-viewer-screenshot.png");
                     if let Err(error) = state.save_screenshot(&path) {
                         state.status = format!("{error:#}");
                     }

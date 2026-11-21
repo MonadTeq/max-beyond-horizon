@@ -204,7 +204,7 @@ PE32+ (в PE32+ нет `BaseOfData`, но `ImageBase` шире — смещен�
 абсолютное смещение — `e_lfanew + 4 + 20 + 0x44 = e_lfanew + 0x5C`. Скрипт
 проверяет `MZ` и сигнатуру `PE\0\0`, печатает машину и `PE32(+)`, а с
 `-Expected 2|3` возвращает exit 1 при несовпадении. Его вызывают
-`build-windows-ui.ps1` и `tools/max-resource-editor/build.ps1` (ожидается 2 —
+`build-windows-ui.ps1` и `max-brh-qa-tools/max-resources-viewer/build.ps1` (ожидается 2 —
 GUI без консоли).
 
 ## live-smoke.sh

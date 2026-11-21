@@ -1,4 +1,4 @@
-# max-resource-editor
+# max-resources-viewer
 
 Просмотр и классификация ресурсов `MAX.RES` (M.A.X.) + пакетный экспорт
 изображений в PNG. Отдельный Cargo-проект (свой `Cargo.lock`), path-зависимости
@@ -34,7 +34,7 @@
 ### Headless (без SDL) — всегда
 
 ```sh
-cd max-brh-qa-tools/max-resource-editor
+cd max-brh-qa-tools/max-resources-viewer
 cargo build --release
 cargo run --release -- --export \
   ../../max-original/MAX.RES ../../max-original/COLOR.PAL ../../max-assets
@@ -81,7 +81,7 @@ cargo build --release --features sdl
 
 При старте UI `MAX.RES` ищется в таком порядке:
 
-1. аргумент командной строки — `--res PATH` или позиционный `max-resource-editor PATH`;
+1. аргумент командной строки — `--res PATH` или позиционный `max-resources-viewer PATH`;
 2. дефолтные пути:
    * рядом с `.exe` — `<exe_dir>/MAX.RES`, `<exe_dir>/max-original/MAX.RES`;
    * вверх по дереву от каталога `.exe` — `<ancestor>/max-original/MAX.RES`
@@ -93,12 +93,12 @@ cargo build --release --features sdl
    приложение ждёт решения пользователя.
 
 Отмена диалога — не аварийная ситуация, но работать не с чем: сообщение
-пишется в `max-resource-editor-error.txt` в текущем каталоге (консоли у
+пишется в `max-resources-viewer-error.txt` в текущем каталоге (консоли у
 GUI-подсистемы нет), процесс завершается с кодом **1**:
 
 ```
 error: выбор MAX.RES отменён — редактор не открыт.
-       Укажите файл аргументом: max-resource-editor --res <MAX.RES>
+       Укажите файл аргументом: max-resources-viewer --res <MAX.RES>
 ```
 
 `COLOR.PAL` ищется рядом с выбранным `MAX.RES`. Если файла нет (или явный
@@ -109,7 +109,7 @@ error: выбор MAX.RES отменён — редактор не открыт.
 
 ```sh
 # UI из корня репозитория: MAX.RES найдётся в ./max-original/MAX.RES
-./max-brh-qa-tools/max-resource-editor/target/release/max-resource-editor
+./max-brh-qa-tools/max-resources-viewer/target/release/max-resources-viewer
 
 # явные пути + начальный выбор
 cargo run --release --features sdl -- --res ../../max-original/MAX.RES \
@@ -141,17 +141,17 @@ Headless-команды (`--export`, `--report`) работают как ран�
 |---|---|
 | `--export <RES> <PAL> <OUT_ROOT>` | `<OUT_ROOT>/export-log.txt` — рядом с `images/` и `manifest.csv`; полный отчёт по записям — `<OUT_ROOT>/images/EXPORT-REPORT.txt` |
 | `--report <RES> [PAL]` | `./report.txt` — в текущем каталоге |
-| любая ошибка (включая UI и отмену диалога) | `./max-resource-editor-error.txt` — в текущем каталоге |
+| любая ошибка (включая UI и отмену диалога) | `./max-resources-viewer-error.txt` — в текущем каталоге |
 
 Ошибки `--export`/`--report` попадают и в их лог (`export-log.txt`/`report.txt`),
-и в `max-resource-editor-error.txt`. Если `OUT_ROOT` не передан (не хватает
+и в `max-resources-viewer-error.txt`. Если `OUT_ROOT` не передан (не хватает
 аргументов), `export-log.txt` пишется в текущий каталог. Вывод в stdout
 сохранён: под `cargo run` или с перенаправлением он виден как раньше.
 
 ```powershell
 # справка и итог отчёта доступны через файл/перенаправление:
-max-resource-editor.exe --help > help.txt
-max-resource-editor.exe --report ../../max-original/MAX.RES
+max-resources-viewer.exe --help > help.txt
+max-resources-viewer.exe --report ../../max-original/MAX.RES
 Get-Content .\report.txt
 ```
 
@@ -160,7 +160,7 @@ Get-Content .\report.txt
 Автоматически проверяются порядок поиска, ветка отмены (мок диалога) и
 сборка диалогового пути; сам нативный диалог удобно проверить руками:
 
-1. скопировать `max-resource-editor.exe` и `SDL3.dll` в пустой каталог
+1. скопировать `max-resources-viewer.exe` и `SDL3.dll` в пустой каталог
    (без `MAX.RES`/`max-original`, и вне репозитория);
 2. запустить `.exe` без аргументов из этого каталога;
 3. убедиться, что открылся диалог с заголовком «Укажите файл MAX.RES» и
@@ -168,11 +168,11 @@ Get-Content .\report.txt
 4. выбрать `MAX.RES` — редактор должен открыться; при отсутствии
    `COLOR.PAL` рядом появится предупреждение и серое превью;
 5. повторить запуск и нажать «Отмена» — сообщение об отмене в
-   `max-resource-editor-error.txt` (текущий каталог), код возврата 1.
+   `max-resources-viewer-error.txt` (текущий каталог), код возврата 1.
 
 Проверка на Windows без ручного клика: диалог можно закрыть крестиком через
 `WM_CLOSE`; процесс завершается с кодом 1 и тем же сообщением в
-`max-resource-editor-error.txt` (так проверялся этот сценарий).
+`max-resources-viewer-error.txt` (так проверялся этот сценарий).
 
 ## Горячие клавиши
 
@@ -191,7 +191,7 @@ Get-Content .\report.txt
 | `Enter` | применить фильтр (снять фокус) |
 | колесо мыши | прокрутка превью (или списка под курсором) |
 | drag ЛКМ по превью | панорама |
-| `F12` | сохранить кадр в `max-resource-editor-screenshot.png` |
+| `F12` | сохранить кадр в `max-resources-viewer-screenshot.png` |
 | `Esc` | выход |
 
 Фильтр — подстрока имени без учёта регистра («tank» → `TANK`, `S_TANK`,
@@ -200,11 +200,11 @@ Get-Content .\report.txt
 ## CLI
 
 ```
-max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]
-max-resource-editor [MAX.RES]
-max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>   # итог: <OUT_ROOT>/export-log.txt
-max-resource-editor --report <MAX.RES> [COLOR.PAL]            # итог: ./report.txt
-max-resource-editor --help
+max-resources-viewer [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]
+max-resources-viewer [MAX.RES]
+max-resources-viewer --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>   # итог: <OUT_ROOT>/export-log.txt
+max-resources-viewer --report <MAX.RES> [COLOR.PAL]            # итог: ./report.txt
+max-resources-viewer --help
 ```
 
 `--res` и позиционный `MAX.RES` эквивалентны; при отсутствии пути работает

@@ -23,7 +23,7 @@ Write-Host ("== workspace: {0:N1} GB ==" -f ($before / 1GB))
 # --- cargo-сборки -----------------------------------------------------------
 Remove-Target 'max-rust\target'
 Remove-Target 'max-horizon-server\target'
-Remove-Target 'max-brh-qa-tools\max-resource-editor\target'
+Remove-Target 'max-brh-qa-tools\max-resources-viewer\target'
 Remove-Target 'build\cargo-home'
 
 # --- устаревшие/кросс-сборки и временные каталоги build\ -------------------

@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use sdl3::sys;
 
-use max_resource_editor::startup::PickResult;
+use max_resources_viewer::startup::PickResult;
 
 /// Заголовок диалога (пункт 1 задачи).
 const DIALOG_TITLE: &str = "Укажите файл MAX.RES";

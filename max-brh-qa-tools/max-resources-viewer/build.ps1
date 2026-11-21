@@ -1,4 +1,4 @@
-﻿# Сборка max-resource-editor (Windows) с автокопированием SDL3.dll.
+# Сборка max-resources-viewer (Windows) с автокопированием SDL3.dll.
 # Ищет SDL3: vcpkg ($env:VCPKG_ROOT или D:\dev\toolchain\vcpkg / C:\vcpkg),
 # затем локальную копию build\sdl3-3.4.20, затем бандл клиента.
 # Использование: powershell -ExecutionPolicy Bypass -File build.ps1 [-Debug] [-NoPackage]
@@ -12,7 +12,7 @@ function Fail([string]$m) { Write-Host "ОШИБКА: $m" -ForegroundColor Red; 
 
 $root = Split-Path -Parent $PSScriptRoot            # tools/
 $repo = Split-Path -Parent $root                    # корень репозитория
-$here = Join-Path $root 'max-resource-editor'
+$here = Join-Path $root 'max-resources-viewer'
 $profile = if ($Debug) { 'debug' } else { 'release' }
 $flags = if ($Debug) { '' } else { '--release' }
 
@@ -51,13 +51,13 @@ if (-not (Test-Path $cargo)) {
 }
 $cargoBin = Split-Path -Parent $cargo
 
-Write-Host "build: max-resource-editor → $profile"
+Write-Host "build: max-resources-viewer → $profile"
 Write-Host "  VS:    $vsPath"
 Write-Host "  SDL3:  $(if ($sdlLib) { $sdlLib } else { 'НЕ НАЙДЕН' })"
 Write-Host "  cargo: $cargo"
 
 # vcvars64 через .bat (set "VAR=value" — без пробела в значении)
-$bat = Join-Path $env:TEMP 'max-res-editor-build.bat'
+$bat = Join-Path $env:TEMP 'max-res-viewer-build.bat'
 $libLine = if ($sdlLib) { "set `"LIB=%LIB%;$sdlLib`"" } else { 'rem no-sdl-lib' }
 $vcpkgLine = if ($vcpkg) { "set `"VCPKG_ROOT=$vcpkg`"" } else { 'rem no-vcpkg' }
 $batLines = @(
@@ -75,7 +75,7 @@ cmd /c "`"$bat`""
 if ($LASTEXITCODE -ne 0) { Fail "cargo build: exit $LASTEXITCODE" }
 
 # --- подсистема PE: GUI (2), иначе двойной клик по .exe откроет консоль ------
-$exePath = Join-Path $here "target\$profile\max-resource-editor.exe"
+$exePath = Join-Path $here "target\$profile\max-resources-viewer.exe"
 if (-not (Test-Path $exePath)) { Fail "после сборки нет $exePath" }
 $peScript = Join-Path $repo 'build\scripts\pe-subsystem.ps1'
 & powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
@@ -95,7 +95,7 @@ if ($sdlDll -and (Test-Path $sdlDll)) {
 if (-not $NoPackage) {
     $dist = Join-Path $here 'dist'
     New-Item -ItemType Directory -Force $dist | Out-Null
-    Copy-Item (Join-Path $targetDir 'max-resource-editor.exe') $dist -Force
+    Copy-Item (Join-Path $targetDir 'max-resources-viewer.exe') $dist -Force
     if (Test-Path (Join-Path $targetDir 'SDL3.dll')) { Copy-Item (Join-Path $targetDir 'SDL3.dll') $dist -Force }
     Write-Host "пакет: $dist"
 }

@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use max_assets::ResArchive;
 use max_render::palette::Palette;
-use max_resource_editor::export::{export_archive, ExportOptions};
-use max_resource_editor::model::{classify_archive, Category, Kind, NonImageKind, ResourceInfo};
-use max_resource_editor::render::strip_dimensions;
+use max_resources_viewer::export::{export_archive, ExportOptions};
+use max_resources_viewer::model::{classify_archive, Category, Kind, NonImageKind, ResourceInfo};
+use max_resources_viewer::render::strip_dimensions;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -81,7 +81,7 @@ fn all_1828_max_res_entries_are_classified() {
         }
     }
 
-    let stats = max_resource_editor::model::ClassificationStats::from_infos(&infos);
+    let stats = max_resources_viewer::model::ClassificationStats::from_infos(&infos);
     assert_eq!(stats.entries, 1828);
     assert_eq!(stats.images, 1070, "изображений в MAX.RES");
     assert_eq!(stats.non_images, 758, "не-изображений в MAX.RES");
@@ -220,7 +220,7 @@ fn export_of_selected_images_has_expected_dimensions_and_is_idempotent() {
         .iter()
         .find(|path| path.contains("/TANK_"))
         .expect("TANK PNG");
-    let tank = max_resource_editor::png::read(dir.join(tank_name)).expect("TANK PNG читается");
+    let tank = max_resources_viewer::png::read(dir.join(tank_name)).expect("TANK PNG читается");
     let tank_info = find(&infos, "TANK");
     let tank_frames: Vec<_> = tank_info
         .frames
@@ -242,7 +242,7 @@ fn export_of_selected_images_has_expected_dimensions_and_is_idempotent() {
         .find(|path| path.contains("/FRAMEPIC_"))
         .expect("FRAMEPIC PNG");
     let framepic =
-        max_resource_editor::png::read(dir.join(framepic_name)).expect("FRAMEPIC PNG читается");
+        max_resources_viewer::png::read(dir.join(framepic_name)).expect("FRAMEPIC PNG читается");
     assert_eq!((framepic.width, framepic.height), (640, 480));
 
     let snow_name = first
@@ -250,7 +250,7 @@ fn export_of_selected_images_has_expected_dimensions_and_is_idempotent() {
         .iter()
         .find(|path| path.contains("/SNOW_PIC_"))
         .expect("SNOW_PIC PNG");
-    let snow = max_resource_editor::png::read(dir.join(snow_name)).expect("SNOW_PIC PNG читается");
+    let snow = max_resources_viewer::png::read(dir.join(snow_name)).expect("SNOW_PIC PNG читается");
     assert_eq!((snow.width, snow.height), (128, 128));
 
     // Повторный экспорт в тот же каталог — те же байты.

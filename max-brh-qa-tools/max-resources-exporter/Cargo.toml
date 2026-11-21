@@ -6,7 +6,7 @@ license = "MIT"
 description = "M.A.X. per-unit asset exporter: sprites, turrets, shadows, connectors, portraits and FLC animations"
 
 # Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-rust —
-# как tools/max-resource-editor. Зависимости — только крейты порта (path).
+# как max-brh-qa-tools/max-resources-viewer. Зависимости — только крейты порта (path).
 [workspace]
 
 [dependencies]

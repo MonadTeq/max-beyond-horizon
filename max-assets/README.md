@@ -18,14 +18,14 @@ max-assets/
 ```
 
 Экспорт сделан утилитой
-[`tools/max-resource-editor`](../tools/max-resource-editor/README.md).
+[`max-brh-qa-tools/max-resources-viewer`](../max-brh-qa-tools/max-resources-viewer/README.md).
 
 ## Как перегенерировать
 
 Из корня репозитория:
 
 ```sh
-cd tools/max-resource-editor
+cd max-brh-qa-tools/max-resources-viewer
 cargo run --release -- --export \
   ../../max-original/MAX.RES \
   ../../max-original/COLOR.PAL \
@@ -150,4 +150,4 @@ images/misc/HANDPTR_18x18.png
   `SNOW_PIC → misc/big 128×128`, `TANK1 → wav-ref`, `FONT_1 → ttf`;
 * повторный экспорт избранного (`TANK`/`FRAMEPIC`/`SNOW_PIC`) даёт те же байты.
 
-См. `tools/max-resource-editor/tests/real_res.rs`.
+См. `max-brh-qa-tools/max-resources-viewer/tests/real_res.rs`.

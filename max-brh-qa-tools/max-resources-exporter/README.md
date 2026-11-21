@@ -1,7 +1,7 @@
 # max-resources-exporter — ресурсы M.A.X. по каждому типу юнита
 
 Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-rust`),
-как [`max-brh-qa-tools/max-resource-editor`](../max-resource-editor/README.md). Обходит все
+как [`max-brh-qa-max-brh-qa-tools/max-resources-viewer`](../max-resources-viewer/README.md). Обходит все
 **93 типа юнитов** (`UnitType::ALL`) и раскладывает их ресурсы по каталогам
 `max-rust-3d-models/assets-base/<TAG>/`:
 

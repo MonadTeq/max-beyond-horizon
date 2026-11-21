@@ -1,9 +1,9 @@
 //! M.A.X. resource editor: просмотр MAX.RES и пакетный экспорт изображений.
 //!
 //! ```text
-//! max-resource-editor                      # UI (нужен --features sdl)
-//! max-resource-editor --export MAX.RES COLOR.PAL max-assets
-//! max-resource-editor --report MAX.RES
+//! max-resources-viewer                      # UI (нужен --features sdl)
+//! max-resources-viewer --export MAX.RES COLOR.PAL max-assets
+//! max-resources-viewer --report MAX.RES
 //! ```
 //!
 //! Без флагов открывается окно; `--export` работает headless и не требует SDL.
@@ -12,7 +12,7 @@
 //! `windows`: двойной клик не открывает консоль. Плата за это — у `.exe` нет
 //! stdout/stderr в консоли, поэтому headless-режимы дублируют итог в файл:
 //! `--export` → `<OUT_ROOT>/export-log.txt`, `--report` → `./report.txt`,
-//! сообщения об ошибках (включая UI-режим) → `./max-resource-editor-error.txt`.
+//! сообщения об ошибках (включая UI-режим) → `./max-resources-viewer-error.txt`.
 //!
 //! При запуске UI путь к `MAX.RES` ищется в порядке: аргумент (`--res` или
 //! позиционный) → рядом с `.exe` → `CWD` → вверх по дереву каталогов
@@ -28,12 +28,12 @@
 #[cfg(feature = "sdl")]
 mod dialog;
 
-use max_resource_editor::export;
-use max_resource_editor::model;
+use max_resources_viewer::export;
+use max_resources_viewer::model;
 #[cfg(feature = "sdl")]
-use max_resource_editor::startup;
+use max_resources_viewer::startup;
 #[cfg(feature = "sdl")]
-use max_resource_editor::ui;
+use max_resources_viewer::ui;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -52,7 +52,7 @@ const EXPORT_LOG_NAME: &str = "export-log.txt";
 /// Лог `--report`: в текущем каталоге (`./report.txt`).
 const REPORT_LOG_NAME: &str = "report.txt";
 /// Ошибки (в том числе UI-режима, где консоли нет): в текущем каталоге.
-const ERROR_LOG_NAME: &str = "max-resource-editor-error.txt";
+const ERROR_LOG_NAME: &str = "max-resources-viewer-error.txt";
 
 /// Журнал headless-режима: дублирует stdout в файл.
 ///
@@ -186,23 +186,23 @@ fn run_report(args: &[String]) -> Result<ExitCode> {
 
 fn print_help() {
     println!(
-        "max-resource-editor — просмотр MAX.RES и экспорт изображений\n\
+        "max-resources-viewer — просмотр MAX.RES и экспорт изображений\n\
          \n\
-         UI:\n  max-resource-editor [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]\n  max-resource-editor [MAX.RES]\n\
+         UI:\n  max-resources-viewer [--res PATH] [--pal PATH] [--select TAG] [--shot OUT.png]\n  max-resources-viewer [MAX.RES]\n\
          \n\
          Если MAX.RES не указан и не найден рядом с exe / в CWD / вверх по дереву,\n\
          открывается диалог выбора файла (фильтр *.RES). COLOR.PAL ищется рядом\n\
          с MAX.RES; если его нет, редактор работает с заглушкой-палитрой.\n\
          \n\
-         Экспорт:\n  max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>\n\
+         Экспорт:\n  max-resources-viewer --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>\n\
          \n\
-         Отчёт без записи файлов:\n  max-resource-editor --report <MAX.RES> [COLOR.PAL]\n\
+         Отчёт без записи файлов:\n  max-resources-viewer --report <MAX.RES> [COLOR.PAL]\n\
          \n\
          Подсистема Windows — GUI (окно без консоли), поэтому stdout headless-режимов\n\
          не виден в консоли. Итог и ошибки дублируются в файлы:\n\
            --export  → <OUT_ROOT>/export-log.txt\n\
            --report  → ./report.txt\n\
-           ошибки    → ./max-resource-editor-error.txt\n\
+           ошибки    → ./max-resources-viewer-error.txt\n\
          \n\
          UI требует сборки с --features sdl (SDL3); headless-команды работают без SDL."
     );
@@ -210,7 +210,7 @@ fn print_help() {
 
 fn export_command(args: &[String], log: &mut FileLog) -> Result<ExitCode> {
     if args.len() < 3 {
-        bail!("usage: max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>");
+        bail!("usage: max-resources-viewer --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>");
     }
 
     let archive = ResArchive::open(&args[0]).with_context(|| format!("чтение {}", args[0]))?;
@@ -231,7 +231,7 @@ fn export_command(args: &[String], log: &mut FileLog) -> Result<ExitCode> {
 
 fn report_command(args: &[String], log: &mut FileLog) -> Result<ExitCode> {
     let Some(path) = args.first() else {
-        bail!("usage: max-resource-editor --report <MAX.RES> [COLOR.PAL]");
+        bail!("usage: max-resources-viewer --report <MAX.RES> [COLOR.PAL]");
     };
 
     let archive = ResArchive::open(path).with_context(|| format!("чтение {path}"))?;
@@ -360,7 +360,7 @@ fn open_ui(options: &UiOptions) -> Result<ExitCode> {
                 .to_string();
     }
 
-    max_resource_editor::app::run_with_sdl(sdl, state, options.shot.as_deref())?;
+    max_resources_viewer::app::run_with_sdl(sdl, state, options.shot.as_deref())?;
 
     Ok(ExitCode::SUCCESS)
 }
@@ -371,6 +371,6 @@ fn open_ui(_options: &UiOptions) -> Result<ExitCode> {
     bail!(
         "UI не собрано: нужен SDL3 и feature `sdl`.\n\
          Сборка: cargo build --release --features sdl-vcpkg\n\
-         Headless-экспорт: max-resource-editor --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>"
+         Headless-экспорт: max-resources-viewer --export <MAX.RES> <COLOR.PAL> <OUT_ROOT>"
     )
 }

@@ -107,16 +107,16 @@ max-rust-qa/out/
 # Пользовательские настройки (C++ settings.json): пишутся рядом с сейвами
 max-original/preferences.ini
 
-# max-resource-editor: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
+# max-resources-viewer: PNG-экспорт регенерируется из MAX.RES (коммитится только README)
 max-assets/images/
-max-brh-qa-tools/max-resource-editor/target/
-max-brh-qa-tools/max-resource-editor/*.png
-!max-brh-qa-tools/max-resource-editor/screenshot.png
+max-brh-qa-tools/max-resources-viewer/target/
+max-brh-qa-tools/max-resources-viewer/*.png
+!max-brh-qa-tools/max-resources-viewer/screenshot.png
 
-# max-resource-editor: файловые логи headless-режимов (GUI-подсистема без консоли)
+# max-resources-viewer: файловые логи headless-режимов (GUI-подсистема без консоли)
 export-log.txt
 report.txt
-max-resource-editor-error.txt
+max-resources-viewer-error.txt
 
 # unit-asset-export: �������� �������� �� ������� ����� �������������� ��
 # MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (� git � ������ ����������, README
