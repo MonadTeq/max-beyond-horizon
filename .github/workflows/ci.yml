@@ -5,7 +5,7 @@ name: CI
 # qa_run-сценарии + golden-кадры, см. max-brh-qa/plans/qa-plan.md).
 # Живой live-smoke здесь не запускается: ему нужен собранный C++-headless.
 # Локально:
-#   ./ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
+#   ./max-brh-cicd/ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
 
 on:
   push:

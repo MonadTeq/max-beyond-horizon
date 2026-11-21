@@ -1597,7 +1597,7 @@ Rust раньше не выбирал. `render::unit_frame_index` теперь: 
 
 Разбор жалобы «юниты не двигаются» по трассе **живого окна**
 (`MAX_DEBUG_INPUT=1`, `eprintln` в `main.rs`/`ui.rs`) и живому прогону
-`build/scripts/ui-test-move2.ps1` (`SendInput`, проверка фокуса). Оракул
+`max-brh-cicd/scripts/ui-test-move2.ps1` (`SendInput`, проверка фокуса). Оракул
 `max-cpp-port` не менялся.
 
 ### 16.1 «Генератор стоит на клетке шахты» — это плита, а не генератор
@@ -1699,7 +1699,7 @@ PASS (трасса build/ui-test-move2/trace.log, кадры 01…11)
   проходит промежуточные позиции и заканчивается в цели, End Turn кнопкой
   `END_TURN_BUTTON` не теряет приказ, после хода ИИ — `grid`/`vis` в цели и
   повторное выделение кликом.
-* `build/scripts/ui-test-move2.ps1` — живой прогон с `SendInput`; PASS.
+* `max-brh-cicd/scripts/ui-test-move2.ps1` — живой прогон с `SendInput`; PASS.
 * QA: `move-input.qa` PASS; `golden/move-input/*` — 0 дрейфа (раскладка не
   менялась, менялись только диагностика и синхронизация точки высадки).
 
@@ -2028,9 +2028,9 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   (новая команда драйвера `assert angle=N`, 0..7); golden `move-input/*` —
   **0 дрейфа** (сценарии с `dt = 0` кадр не интерполируют, поэтому эталоны не
   переснимались).
-* Windows UI: `build/scripts/ui-test-move2.ps1` (живое окно, SendInput,
+* Windows UI: `max-brh-cicd/scripts/ui-test-move2.ps1` (живое окно, SendInput,
   скриншоты `build/ui-test-move2/*.png`) — прогон движения после сборки
-  `build/scripts/build-windows-ui.ps1`; headless-кадры — `qa-out/move-input/*`.
+  `max-brh-cicd/scripts/build-windows-ui.ps1`; headless-кадры — `qa-out/move-input/*`.
 * Headless-артефакт: `max_app --example angle_demo -- qa-out/angle` снимает
   `01-east-with-sim-ne.png` (симуляция уже NE, спрайт ещё едет на восток и
   смотрит E), `02-turn.png` (поворот на клетке) и `03-stopped-north.png`
@@ -2137,12 +2137,12 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   `POWER_ON` → `end_turn` → `assert complex-raw>=4` → повторное открытие
   помнит значения. Кадры `allocate-selected`, `allocate-menu`, `allocate-set` —
   golden `max-brh-qa/golden/allocate` (0 дрейфа).
-* Windows UI (живое окно): `build/scripts/ui-test-allocate.ps1` — меню → партия,
+* Windows UI (живое окно): `max-brh-cicd/scripts/ui-test-allocate.ps1` — меню → партия,
   клик по шахте ×2 (выделение + меню), пункт `allocate` (`alloc=open` в трассе
   `MAX_DEBUG_INPUT`), полноэкранный диалог (зелёный заголовок в кадре окна),
   модальность (клик по карте), `RTARO_OF` (`+1`), `Done` (`alloc=closed`);
   скриншоты `build/ui-test-allocate/*.png`. Сборка клиента —
-  `build/scripts/build-windows-ui.ps1 -NoPackage`.
+  `max-brh-cicd/scripts/build-windows-ui.ps1 -NoPackage`.
 * Существующие golden (visual-screens/production/upgrade/research/cargo/
   move-input/unit-menu/research-help) — **0 дрейфа**.
 
@@ -2290,13 +2290,13 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `build-site-grow`, `build-site-grown`, `build-work-a`, `build-work-b`,
   `buildmenu`, `buildmenu-factory`) — 0 дрейфа; остальные эталоны тоже
   0 дрейфа (font/golden `research*` не тронуты).
-* Windows UI (живое окно): `build/scripts/ui-test-construction.ps1` —
+* Windows UI (живое окно): `max-brh-cicd/scripts/ui-test-construction.ps1` —
   меню → партия → конструктор найден по трассе `MAX_DEBUG_INPUT` (тип `49`) →
   камера кликом по миникарте → `B` → Training Hall стрелками списка → `Done`;
   в трассе появились `15@` (LRGTAPE), `17@` (LRGSLAB), `19@` (LRGCONES),
   скриншоты `03-construction-site.png` (площадка 2×2 с лентой и плитой) и
   `04-construction-grown.png` (после роста плиты; кадры различаются).
-  Сборка клиента — `build/scripts/build-windows-ui.ps1 -NoPackage`.
+  Сборка клиента — `max-brh-cicd/scripts/build-windows-ui.ps1 -NoPackage`.
 
 ### 22.4 Осознанные расхождения
 
@@ -2415,7 +2415,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `build-slide-1..4` и переснятые `buildmenu`/`buildmenu-factory` (иконки и
   `P_*`), 0 дрейфа; игровые `build-ordered`/`build-site*`/`build-work-*` не
   изменились. `research/` (1 кадр) и `research-help/` (9 кадров) — 0 дрейфа.
-* Живой Windows-прогон: `build/scripts/ui-test-construction.ps1` по умолчанию
+* Живой Windows-прогон: `max-brh-cicd/scripts/ui-test-construction.ps1` по умолчанию
   проверяет **упакованный** exe (`release/max_app-*-windows-x86_64-ui/max-brh.exe`),
   `-OpenVia key|popup` — оба пути открытия `BuildMenu`. Проверки: `site=open`
   в трассе, якорь накрывает строителя (`valid=1`), до LMB в мире нет `LRGTAPE`
@@ -2683,7 +2683,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 
 ### 25.5 Артефакт Windows UI (пересобран)
 
-`build/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg, feature
+`max-brh-cicd/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg, feature
 `sdl-vcpkg,sound`), упаковка `release/max_app-1.1.0-windows-x86_64-ui`:
 
 * `max-brh.exe` — 6 441 472 Б, sha256 `91d10f26284efe47e1589690be3872c9cbafa2b4dfd149d4ad425791679bbe88`
@@ -2786,12 +2786,12 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * **Headless, QA:** `max-brh/qa-out/allocate/mine-work-a.png` — включённая
   шахта: 4 маяка по углам и корпус `image_base + 1`;
   `qa-out/allocate/allocate-selected.png` — `POWGEN` с трубами.
-* **Windows UI:** `build/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg) →
+* **Windows UI:** `max-brh-cicd/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg) →
   `release/max_app-1.1.0-windows-x86_64-ui`: `max-brh.exe` — 6 442 496 Б,
   sha256 `10e9e30e75e943d00a66aa26515d2dbbf0f77c76c49b23bbd611b4684893defc`
   (PE32+ x64, Subsystem=2, `--help` — OK); zip —
   sha256 `a85555e2f6ba17d6f6c1a943a1f6306dcecfd33335b708662d42201cac0487b6`.
-* **Windows headless** (`build/scripts/build-windows.sh --no-wine`, mingw-w64
+* **Windows headless** (`max-brh-cicd/scripts/build-windows.sh --no-wine`, mingw-w64
   x86_64-pc-windows-gnu, `--no-default-features`): `max-brh.exe` — 10 702 092 Б,
   sha256 `5f6f89f73cc056d2099cd5288a6659b37c06151eb29cf4af24845bdf1dbac01b`
   (PE32+ console, Subsystem=3, без mingw-рантайма); zip —
@@ -2899,7 +2899,7 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
   `max-brh.exe` 10 867 626 Б, sha256
   `54a8fefe4199d1ad4343f26fdc0eb048edc5c233693780dfe51735331103f0a5`
   (PE32+ console, Subsystem=3).
-* Живой тест `build/scripts/ui-test-prefs.ps1` (нужен интерактивный рабочий
+* Живой тест `max-brh-cicd/scripts/ui-test-prefs.ps1` (нужен интерактивный рабочий
   стол; в headless-сессии агента скриншот `CopyFromScreen` чёрный — не
   считается свидетельством).
 
@@ -3023,12 +3023,12 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
   `max-brh.exe` 6 628 864 Б, sha256
   `32fb612c08f173ffe2631c4a76181d05f1dc8bdce89de53fb7f96b4d5e8820a9`
   (PE32+ x64, Subsystem=2 GUI, SDL3.dll рядом; сборка
-  `build/scripts/build-windows-ui.ps1`, MSVC+vcpkg, `--help` OK).
+  `max-brh-cicd/scripts/build-windows-ui.ps1`, MSVC+vcpkg, `--help` OK).
 * **Windows headless:** `release/max_app-1.1.0-windows-x86_64.zip` —
   sha256 `451bab19510943621cfe987731563b9659c9bffe1ae8bc9a507fe986ed562b63`;
   `max-brh.exe` 10 861 522 Б, sha256
   `743364ffeff523f986cc81c7de25ac2e95111bd7b7213fb068cb7b2e2b38e1f3`
-  (PE32+ x64, Subsystem=3 console; сборка `build/scripts/build-windows.sh
+  (PE32+ x64, Subsystem=3 console; сборка `max-brh-cicd/scripts/build-windows.sh
   --no-wine`).
 * CI-гейт `bash ci.sh` — **зелёный** (799 с): шаги 1/4 (cargo check+test:
   default/sound/no-default), 2/4 (Horizon), 3/4 (15 QA-скриптов + 9 golden-сверок),
@@ -3655,7 +3655,7 @@ default/sound/no-default, включая 4 новых теста), 2/4 Horizon, 
 QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-сверок, дрейф 0**
 (отрисовка не менялась), 4/4 soak (`soak-100` 49488 кадров, `soak_headless`
 120 ходов / 119303 кадра). Windows UI пересобран
-(`build/scripts/build-windows-ui.ps1`):
+(`max-brh-cicd/scripts/build-windows-ui.ps1`):
 `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` 6 663 168 Б, sha256
 `11411d2461824033d8bf3a2c09d2b9abefd3bb5d6f9a903cff950a3cc09d1813`;
 `max_app-1.1.0-windows-x86_64-ui.zip` sha256
@@ -3893,12 +3893,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
     дрейф **0**;
   * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
     tb` — 120 517 кадров, 26.48 с, 41 юнит, `early_end=false`.
-* **Windows UI** (`build/scripts/build-windows-ui.ps1`):
+* **Windows UI** (`max-brh-cicd/scripts/build-windows-ui.ps1`):
   `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 666 752 Б, sha256
   `c4e1fa10a62a2b716888b9b12139693d7ae9b56162027e2c2b4666c2d03be06f` (PE32+
   x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `4c5b3e40407d35ee4b4aad0260e2cfd0ac5fbdb360cf2b8d7c7b4c4fda4002aa`.
-* **Windows headless** (`build/scripts/build-windows.sh`):
+* **Windows headless** (`max-brh-cicd/scripts/build-windows.sh`):
   `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 10 999 961 Б, sha256
   `eb2c38a804fe2bad8ab8a2dd5b61790298e6248cc929341a43e9b1411015bddb` (PE32+
   x64, Subsystem=3 console); zip sha256
@@ -4143,12 +4143,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
     tb` — 120 826 кадров, 28.65 с, 41 юнит, `early_end=false`, RSS стабилен
     (growth +84…+124 KiB между прогонами — шум аллокатора).
-* **Windows UI** (`build/scripts/build-windows-ui.ps1`):
+* **Windows UI** (`max-brh-cicd/scripts/build-windows-ui.ps1`):
   `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 680 576 Б, sha256
   `8a4f320e728da42b17bb5da2b4d7000812d558f763ae1aa1c7420fcd08c6fb10`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `e232c0a155e6575af5dbec39a735bb0d882bc1078bddabc1cb8dcbbab589c7d2`.
-* **Windows headless** (`build/scripts/build-windows.sh`):
+* **Windows headless** (`max-brh-cicd/scripts/build-windows.sh`):
   `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 034 212 Б, sha256
   `7f08129d39dbef34843d9321c0b76eb0f042e9d71b85c200602a03cc85c183d2`;
   zip sha256 `52b10483d530f3c180fc88db898311be8a28cd2a22f94dc7fd337faca1bf776f`;
@@ -4328,13 +4328,13 @@ honours биты из `flags` (так приходят загруженные V7
   * 4/4 soak — `soak-100.qa` 49 813 кадров; `soak_headless --turns 120
     --mode tb` — 120 826 кадров, 28.55 с, 41 юнит, `early_end=false`,
     RSS +116 KiB (стабильно).
-* **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
+* **Windows UI** (`max-brh-cicd/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
   `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 680 064 Б,
   sha256 `34abcd8dcda9fd7ad9c434c9360f8d0488d88d86b070e8112e5014f40d05a3a4`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `bc0880e83ed434b392e0cdc5741bf3a89f190235b51042f9261b1b84b771c412`;
   `--help` OK.
-* **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
+* **Windows headless** (`max-brh-cicd/scripts/build-windows.sh`, mingw-w64 cross в
   Docker): `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 040 032 Б,
   sha256 `06df484484aedb1d26084e33d9ef6eeb101893293b13787521a98a00676799db`;
   zip sha256
@@ -4533,13 +4533,13 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
     `build-cancel/` 4 кадра);
   * 4/4 soak — `soak-100.qa` 49 813 кадров; `soak_headless --turns 120
     --mode tb` — 120 826 кадров, 35.04 с, 41 юнит, `early_end=false`.
-* **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
+* **Windows UI** (`max-brh-cicd/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
   `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 704 128 Б, sha256
   `e32900333dc453d19b632140cceeadf5016f344bdc461ad70dddd67e97718f9c` (PE32+
   x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `7a3272d9fef47f391cb901de3bf2106f63efa0fcd976524b533944fd54045ffc`;
   `--help` OK.
-* **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
+* **Windows headless** (`max-brh-cicd/scripts/build-windows.sh`, mingw-w64 cross в
   Docker): `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 054 858 Б,
   sha256 `6efb8c6570234157c7462ccfd22655767c627e484fcdd6e2a6ec1ec008ab8d7e`;
   zip sha256
@@ -4770,13 +4770,13 @@ gain (включая выключенный звук), `App::tick` наполн�
 * QA: все 22 сценария `ci.sh` (включая новый `missile-line`) + 17 наборов
   golden-кадров (16 каталогов + `golden/*.png` для `visual-screens`); вывод —
   `max-brh/qa-out/`;
-* Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
+* Windows UI (`max-brh-cicd/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
   `--features sdl-vcpkg,sound`): `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe`
   — 6 773 760 Б, sha256 `3a9ca7cbf9bf263057d44815f80a5c8acf146f4142547363af86b32f1afa7ae8`
   (PE32+ Subsystem=2 GUI), zip sha256
   `baa02f80a700c6e0e5b1d97c2cf2de91307cc7fb68eccf60d3ccbc8512e55e3c`;
   `--help` — OK.
-* Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
+* Windows headless (`max-brh-cicd/scripts/build-windows.sh`, mingw-w64 в Docker):
   `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 088 700 Б, sha256
   `ecd15bf3de5766ce0bed916fe37408e3fd6914e1e91074195b61be1ced882feb`; zip sha256
   `d59465749620a8289f3ffc845e93a266b5ad7e2539ae450d6cc9b7f01cb25eef`;
@@ -4945,14 +4945,14 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
     production 29, research-help 10 кадров) — без дрейфа;
   * soak: `soak-100.qa` (100 ходов, 49 813 кадров) и `soak_headless`
     (120 ходов, 120 826 кадров, 28.58 с, 41 юнит) — PASS.
-* Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
+* Windows UI (`max-brh-cicd/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
   `--features sdl-vcpkg,sound`):
   `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 798 848 Б,
   sha256 `0488fa855c0e180dd7b2863242424c66ffa5c83c68e510e82fa9c89a9f91a892`
   (PE32+ Subsystem=2 GUI), zip sha256
   `967efecb7911db2ec60e402376a82949975470a0564692524f38ffdf16ee56aa`;
   `--help` — OK.
-* Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
+* Windows headless (`max-brh-cicd/scripts/build-windows.sh`, mingw-w64 в Docker):
   `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 105 591 Б, sha256
   `e80d83c1ae47a492bee175ad66229ff2378f71ac57b541be07014dc981241bc8`; zip sha256
   `890b26de786cf6c956dbce33631adb7a19936e95ccfd60e3d4c736f6def03d41`.

@@ -24,7 +24,7 @@ if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS2_ARG_CONV_EXCL='*'
 fi
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # Docker Desktop для Windows ждёт путь вида D:/..., а не /d/...
 if command -v cygpath >/dev/null 2>&1; then
     ROOT="$(cygpath -m "$ROOT")"
@@ -40,9 +40,9 @@ usage() {
     cat <<'EOF'
 Использование: bash ci.sh [--smoke] [--smoke3] [--smoke-mixed] [--turns N]
 
-  --smoke         после тестов запустить build/scripts/live-smoke.sh (2 клиента)
-  --smoke3        после тестов запустить build/scripts/live-smoke-3.sh (3 клиента)
-  --smoke-mixed   после тестов запустить build/scripts/live-smoke-mixed.sh
+  --smoke         после тестов запустить max-brh-cicd/scripts/live-smoke.sh (2 клиента)
+  --smoke3        после тестов запустить max-brh-cicd/scripts/live-smoke-3.sh (3 клиента)
+  --smoke-mixed   после тестов запустить max-brh-cicd/scripts/live-smoke-mixed.sh
                   (Rust×2 + C++ desync-оракул; при отсутствии C++ headless
                   client mode — PARTIAL PASS)
   --turns N       число ходов для smoke-скриптов (по умолчанию 5)
@@ -204,18 +204,18 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --mode tb --out qa-out/soak-headless'
 
 if [ "$SMOKE" = "1" ]; then
-    step "SMOKE: build/scripts/live-smoke.sh ($TURNS ходов)"
-    bash "$ROOT/build/scripts/live-smoke.sh" "$TURNS"
+    step "SMOKE: max-brh-cicd/scripts/live-smoke.sh ($TURNS ходов)"
+    bash "$ROOT/max-brh-cicd/scripts/live-smoke.sh" "$TURNS"
 fi
 
 if [ "$SMOKE3" = "1" ]; then
-    step "SMOKE3: build/scripts/live-smoke-3.sh ($TURNS ходов, 3 клиента)"
-    bash "$ROOT/build/scripts/live-smoke-3.sh" "$TURNS"
+    step "SMOKE3: max-brh-cicd/scripts/live-smoke-3.sh ($TURNS ходов, 3 клиента)"
+    bash "$ROOT/max-brh-cicd/scripts/live-smoke-3.sh" "$TURNS"
 fi
 
 if [ "$SMOKE_MIXED" = "1" ]; then
-    step "SMOKE-MIXED: build/scripts/live-smoke-mixed.sh ($TURNS ходов)"
-    bash "$ROOT/build/scripts/live-smoke-mixed.sh" "$TURNS"
+    step "SMOKE-MIXED: max-brh-cicd/scripts/live-smoke-mixed.sh ($TURNS ходов)"
+    bash "$ROOT/max-brh-cicd/scripts/live-smoke-mixed.sh" "$TURNS"
 fi
 
 step "CI OK за $(( $(date +%s) - started )) с"
@@ -223,6 +223,6 @@ step "CI OK за $(( $(date +%s) - started )) с"
 # Очистка мусора после прогонов (остановленные контейнеры, dangling-образы,
 # build-cache). Отключается: DOCKER_CLEAN=0 bash ci.sh
 if [ "${DOCKER_CLEAN:-1}" = "1" ]; then
-    step "DOCKER-CLEAN: build/scripts/docker-clean.sh"
-    bash "$ROOT/build/scripts/docker-clean.sh"
+    step "DOCKER-CLEAN: max-brh-cicd/scripts/docker-clean.sh"
+    bash "$ROOT/max-brh-cicd/scripts/docker-clean.sh"
 fi

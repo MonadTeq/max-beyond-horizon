@@ -23,11 +23,11 @@
   Ожидаемая подсистема: 2 (GUI) или 3 (Console). Несовпадение — ошибка (exit 1).
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File build\scripts\pe-subsystem.ps1 `
+  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\pe-subsystem.ps1 `
       -Path release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
 
 .EXAMPLE
-  . .\build\scripts\pe-subsystem.ps1 -Path .\max-brh.exe -Expected 3
+  . .\max-brh-cicd\scripts\pe-subsystem.ps1 -Path .\max-brh.exe -Expected 3
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)][string[]]$Path,

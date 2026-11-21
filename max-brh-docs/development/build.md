@@ -50,13 +50,13 @@ cargo build --release -p max_app --no-default-features       # headless
 
 ### Windows UI-бинарь (готовый путь)
 ```powershell
-powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
 # артефакт: release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
 ```
 
 ### Windows headless-бинарь (кросс-сборка, без MSVC)
 ```sh
-bash build/scripts/build-windows.sh
+bash max-brh-cicd/scripts/build-windows.sh
 # артефакт: release\max_app-1.1.0-windows-x86_64\max-brh.exe
 ```
 
@@ -146,7 +146,7 @@ docker compose up -d --build
 # 2. клиенты (в меню: Multiplayer Game → Host/Join Network Game):
 release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 ```
-Автоматический smoke: `bash build/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
+Автоматический smoke: `bash max-brh-cicd/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
 ### Headless-режимы (без окна)
 Headless-бинарь собирается **без** default-фич — SDL3/ALSA тогда не нужны ни

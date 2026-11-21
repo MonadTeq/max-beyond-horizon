@@ -145,7 +145,7 @@ GUI-сборки (`sdl` — он же default `sdl-from-source`, `sdl-vcpkg`; в
 
 Headless-сборка (`--no-default-features`, **без** `sdl`) остаётся **console**
 (Subsystem=3): `--demo`, `--new-game`, `--connect` печатают в терминал и CI,
-как раньше. Так собираются `build/scripts/build-windows.sh`, CI и QA-прогоны.
+как раньше. Так собираются `max-brh-cicd/scripts/build-windows.sh`, CI и QA-прогоны.
 Примеры (`qa_run`, `qa_golden_check`) — отдельные console-бинари и подсистемой
 клиента не затрагиваются; в CI они идут с `--no-default-features`.
 

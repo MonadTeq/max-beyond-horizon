@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Повторяемый живой smoke: Horizon (WS+gRPC) + C++-headless + 2 Rust-клиента × N ходов.
 # Запуск снаружи (Git Bash/WSL/Linux) или изнутри контейнера с докером:
-#   bash build/scripts/live-smoke.sh [turns]
+#   bash max-brh-cicd/scripts/live-smoke.sh [turns]
 # Требования: workspace смонтирован как /src (HOST_ROOT -> /src);
 # собранные: max-brh-server/target/release/horizon, build/linux-server-template/max-port.
 set -euo pipefail

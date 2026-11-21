@@ -288,7 +288,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   — Create сразу `InSession`, `CreateGame` один раз, `ListGames` не
   повторяется.
 
-**Живой smoke** — `bash build/scripts/live-smoke.sh 10` **без**
+**Живой smoke** — `bash max-brh-cicd/scripts/live-smoke.sh 10` **без**
 `--handshake-patches`: оба клиента получают `TP 03 GameData`, переподключаются
 с 64-символьным хэшем и проходят 10 ходов; скрипт проверяет
 `data_hash=<hex>(64)` и отсутствие `Session failed` в `a.log`/`b.log`.

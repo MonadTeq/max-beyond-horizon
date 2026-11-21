@@ -182,9 +182,9 @@ cargo run -p max_app -- \
 ## Playbook запуска (для QA вручную)
 
 1. `bash ci.sh` — всё автоматическое (тесты + QA-сценарии + golden).
-2. Ручной оконный прогон: `powershell -File build/scripts/ui-test-sp.ps1` (реальный
+2. Ручной оконный прогон: `powershell -File max-brh-cicd/scripts/ui-test-sp.ps1` (реальный
    бинарь, мышь, скриншоты) — перед релизом.
-3. Живой smoke: `bash build/scripts/live-smoke.sh 10`.
+3. Живой smoke: `bash max-brh-cicd/scripts/live-smoke.sh 10`.
 4. Разбор QA-падения: `max-brh-qa/out/<сценарий>/log.txt` + `diff-*.png`;
    формат и перегенерация эталонов — `max-brh-qa/scripts/README.md`.
 

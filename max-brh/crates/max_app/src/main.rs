@@ -865,7 +865,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     _ => "Other",
                 };
                 // Модальные окна партии: по этим полям живой UI-тест
-                // (`build/scripts/ui-test-allocate.ps1`) понимает, что диалог
+                // (`max-brh-cicd/scripts/ui-test-allocate.ps1`) понимает, что диалог
                 // распределения добычи открылся/закрылся.
                 let alloc = if app.alloc_menu().is_some() {
                     "alloc=open"
@@ -879,7 +879,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     "xfer=closed"
                 };
                 // `BuildMenu` (`buildmenu`): по нему живой тест строительства
-                // (`build/scripts/ui-probe-build.ps1`) видит, что экран открылся.
+                // (`max-brh-cicd/scripts/ui-probe-build.ps1`) видит, что экран открылся.
                 let build = if app.build_menu().is_some() {
                     "build=open"
                 } else {
@@ -900,7 +900,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     None => "site=closed".to_string(),
                 };
                 // `Preferences`/`Setup` (`OptionsMenu`): живой тест
-                // (`build/scripts/ui-test-prefs.ps1`) проверяет открытие/закрытие.
+                // (`max-brh-cicd/scripts/ui-test-prefs.ps1`) проверяет открытие/закрытие.
                 let preferences = if app.preferences_dialog().is_some()
                     || matches!(screen, Screen::Preferences(_))
                 {

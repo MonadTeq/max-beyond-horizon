@@ -16,7 +16,7 @@
 | TC-0510 | End Turn синхронно | оба клиента End Turn | 06+52+45, ход закрыт у обоих | ✅ SMOKE |
 | TC-0511 | Расхождение/десинк | намеренный десинк (если есть хук) | сервер шлёт 51/рестарт (как C++) | ⏭ not planned: хука намеренного десинка нет; обратная проверка — `live-smoke-mixed.sh` (C++ `GameManager_CheckDesync` молчит) |
 | TC-0512 | Разрыв соединения | убить сеть клиента | реконнект-политика (retry, статус), без паники; партия продолжается | ✅ UNIT/in-process: `three_clients_survive_disconnect_and_converge_via_state_sync` + `resume_state_sync_*`; ⏭ not planned — живой pause/proxy-сценарий не автоматизирован |
-| TC-0513 | Соединение с 3+ клиентами | 3 клиента, min_players=3 | релей всем, барьеры 00/52/54/45 по всем командам, CRC совпадает | ✅ SMOKE `build/scripts/live-smoke-3.sh` (3×10 PASS, CRC `0x34D5`) |
+| TC-0513 | Соединение с 3+ клиентами | 3 клиента, min_players=3 | релей всем, барьеры 00/52/54/45 по всем командам, CRC совпадает | ✅ SMOKE `max-brh-cicd/scripts/live-smoke-3.sh` (3×10 PASS, CRC `0x34D5`) |
 | TC-0514 | Спектатор | клиент без команды | наблюдатель видит партию | ⏭ not planned (blocker): нет `TEAM_TYPE_SPECTATOR`, `Remote_SetupPlayers` требует команду, поздний вход без снапшота (protocol.md §9.2) |
 | TC-0515 | Выход из сессии | Esc/Menu из сессии | корректное отключение, сессия жива для остальных | ⏭ not planned: требует живого сетевого сценария; in-process `run_network` завершается по Esc без паник (smoke) |
 

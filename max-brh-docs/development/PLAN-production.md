@@ -135,7 +135,7 @@
 
 ### P5 — Сетевая зрелость
 - [x] 3+ клиента в сессии (релей всем, барьеры по всем командам) — live-smoke с 3 клиентами.
-  `build/scripts/live-smoke-3.sh` (3 Rust-клиента, `--min-players 3` через
+  `max-brh-cicd/scripts/live-smoke-3.sh` (3 Rust-клиента, `--min-players 3` через
   `horizon_probe ... 3`, BLUE занимает реальный клиент): **PASS 3×10**,
   `пиров=2`, релей 00 от двух других команд, 00/52/54/45 пройдены у всех,
   `barrier_timeouts=0`, `state_checksum=0x34D5` у всех. `MAX_LOG` включает
@@ -143,7 +143,7 @@
 - [ ] Паритет Rust+C++-клиентов в одной сессии (бит-в-бит) — тест с C++-клиентом (headless-пара).
   **Частично / блокер:** headless-сборка `src/` умеет только `--server`
   (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`, ветки `--client`/`--connect`
-  нет); GUI-клиент требует X11 и ручного меню. `build/scripts/live-smoke-mixed.sh`:
+  нет); GUI-клиент требует X11 и ручного меню. `max-brh-cicd/scripts/live-smoke-mixed.sh`:
   **PARTIAL PASS** — Rust×2, CRC `0x7035`, C++-сервер (эталонный
   `state_checksum`/`GameManager_CheckDesync`) не пишет `Desync check failed`,
   т.е. состояние Rust-клиентов совпало с C++-симуляцией; одновременная сессия
@@ -341,7 +341,7 @@
   `golden/preferences`; `ci.sh` — новая QA+golden-стадия.
 - [x] Тесты: `preferences` (9, раскладка/клики/ini/файл), `tests/preferences.rs`
   (6: меню/игра, модальность, статичные кадры при effects=off, звук→AudioPlayer,
-  V70 round-trip, Cancel); живой `build/scripts/ui-test-prefs.ps1`.
+  V70 round-trip, Cancel); живой `max-brh-cicd/scripts/ui-test-prefs.ps1`.
 - [x] Артефакты/документация: Windows UI + headless пересобраны; CHANGELOG,
   `visual-1to1-status.md` §27, `state-model.md` §3.3, suite TC-0108/TC-0935,
   `scripts/README.md`, `qa-plan.md`.

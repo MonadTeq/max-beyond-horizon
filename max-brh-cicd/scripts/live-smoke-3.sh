@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Живой smoke P5: Horizon (WS+gRPC) + C++-headless + ТРИ Rust-клиента × N ходов.
 #
-#   bash build/scripts/live-smoke-3.sh [turns]
+#   bash max-brh-cicd/scripts/live-smoke-3.sh [turns]
 #
 # Проверяет то, чего не проверял двухклиентный live-smoke.sh:
 #   * третий клиент занимает BLUE (--min-players 3), а не компьютерный слот;

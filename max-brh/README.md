@@ -91,13 +91,13 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   ставит X11/Wayland/ALSA/GL dev-заголовки, `cargo test` — с
   `LD_LIBRARY_PATH=target/debug`), `--features sound`, `--no-default-features`
   (headless) и `cargo test --workspace` Horizon в `rust:1.94.0-bookworm`;
-  `bash ci.sh --smoke` добавляет живой `build/scripts/live-smoke.sh`
+  `bash ci.sh --smoke` добавляет живой `max-brh-cicd/scripts/live-smoke.sh`
   (2 клиента × N ходов). GitHub-эквивалент — `../.github/workflows/ci.yml`.
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
   `--no-default-features --features sdl-from-source,sound`, упаковывает
   `release/` и готовит тег `v1.1.0`; полный порядок —
   `../max-brh-docs/development/release-checklist.md`.
-- Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
+- Windows x64, headless (M6.4): `bash ../max-brh-cicd/scripts/build-windows.sh` —
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
   x86_64-pc-windows-gnu -p max_app --no-default-features` → PE32+ x86-64
@@ -105,7 +105,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   wine-smoke `--help`, `--demo SAVE1.CAM`): без feature `sdl` подсистема
   остаётся 3, вывод `--demo`/`--new-game`/`--connect` виден в терминале/CI.
 - Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
-  Windows-хосте через `powershell -File build\scripts\build-windows-ui.ps1`
+  Windows-хосте через `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1`
   (`--no-default-features --features sdl-vcpkg,sound`, SDL3 из vcpkg) →
   `release/max_app-<ver>-windows-x86_64-ui.zip` (`max-brh.exe` + `SDL3.dll`).
   Подсистема — **windows** (Subsystem=2): двойной клик открывает окно SDL3 без
@@ -114,7 +114,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук — `rodio/cpal`
   (WASAPI, без отдельных DLL). Требования к тулчейну —
   `../max-brh-docs/development/release-checklist.md` §6.1, разбор грабель —
-  `../build/scripts/README.md`.
+  `../max-brh-cicd/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-brh-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,

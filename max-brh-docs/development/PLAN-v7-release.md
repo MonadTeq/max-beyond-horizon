@@ -35,7 +35,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   (06+52+45) → следующий ход; сверка RNG-чекпоинтов (DBG rng cp) с C++.
 - **3.3 Два клиента × 10+ ходов**: CRC сходится; автотест-реплей двух App против
   headless в контейнере (повторяемый скрипт).
-- **Критерий**: скрипт `build/scripts/live-smoke.sh` гоняет 2 клиента 10 ходов,
+- **Критерий**: скрипт `max-brh-cicd/scripts/live-smoke.sh` гоняет 2 клиента 10 ходов,
   расхождений нет (логи + exit 0).
 
 ## M4 — UI и ввод (человек может сыграть)
@@ -84,7 +84,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 - **6.3 CI — готово (M6.3)**: `ci.sh` (локальный CI в Docker: `cargo
   check`+`cargo test` max-brh + `cargo check/test --features sound`,
   `cargo test --workspace` Horizon, optional `--smoke` →
-  `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml` (push/PR);
+  `max-brh-cicd/scripts/live-smoke.sh`) и `.github/workflows/ci.yml` (push/PR);
   использование описано в `README.md`, `max-brh-server/README.Docker.md`,
   `max-brh/README.md`.
 - **6.4 Релиз — артефакты готовы (M6.4)**: версия 1.0.0, `CHANGELOG.md`,

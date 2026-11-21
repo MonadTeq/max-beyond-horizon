@@ -15,7 +15,7 @@
 #    нарисован в кадре окна, и что после End Turn `grid` юнита = цель, а
 #    визуальная позиция `vX.Y` прошла маршрут.
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File build\scripts\ui-test-move2.ps1
+# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-move2.ps1
 param(
     [string]$Out = "",
     [switch]$KeepProcess

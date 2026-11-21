@@ -3,7 +3,7 @@
 Обозначения автоматизации:
 - `QA:<script>` — .qa-скрипт в `max-brh-qa/scripts/`;
 - `UNIT` — юнит/интеграционные тесты (`cargo test`);
-- `SMOKE` — живой сетевой smoke (`build/scripts/live-smoke.sh`);
+- `SMOKE` — живой сетевой smoke (`max-brh-cicd/scripts/live-smoke.sh`);
 - `WINDOW` — оконный прогон на реальном бинаре (`max-brh-qa/drivers/`);
 - `MANUAL` — ручной сценарий.
 

@@ -16,7 +16,7 @@
 bash ci.sh
 
 # Собрать Windows UI-бинарь (хост: MSVC + vcpkg SDL3):
-powershell -File build/scripts/build-windows-ui.ps1
+powershell -File max-brh-cicd/scripts/build-windows-ui.ps1
 
 # Собрать Linux-бинарь:
 bash release.sh

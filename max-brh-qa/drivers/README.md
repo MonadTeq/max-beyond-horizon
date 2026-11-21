@@ -12,8 +12,8 @@
 
 | Драйвер | Назначение |
 |---|---|
-| `build/scripts/ui-test-sp.ps1` | клики мышью через user32: меню→настройка→партия→скриншоты |
-| `build/scripts/live-smoke.sh` | сетевой smoke: Horizon + headless + 2 клиента × N ходов |
+| `max-brh-cicd/scripts/ui-test-sp.ps1` | клики мышью через user32: меню→настройка→партия→скриншоты |
+| `max-brh-cicd/scripts/live-smoke.sh` | сетевой smoke: Horizon + headless + 2 клиента × N ходов |
 
 ## Утилиты
 

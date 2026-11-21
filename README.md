@@ -61,7 +61,7 @@ M.A.X. Port используется как **оракул** (каноничес
 
 ```sh
 bash ci.sh                                   # тесты + QA + golden (Docker)
-powershell -File build\scripts\build-windows-ui.ps1   # Windows-бинарь с окном (MSVC+vcpkg)
+powershell -File max-brh-cicd\scripts\build-windows-ui.ps1   # Windows-бинарь с окном (MSVC+vcpkg)
 bash release.sh                              # Linux-бинарь + архив
 docker compose up -d --build                 # сервер Horizon
 ```

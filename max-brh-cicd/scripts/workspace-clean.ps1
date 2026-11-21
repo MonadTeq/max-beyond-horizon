@@ -1,5 +1,5 @@
 # Очистка рабочих артефактов (сборки/логи/скриншоты). Повторяемая.
-#   powershell -ExecutionPolicy Bypass -File build\scripts\workspace-clean.ps1 [-DryRun]
+#   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\workspace-clean.ps1 [-DryRun]
 param([switch]$DryRun)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

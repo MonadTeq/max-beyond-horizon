@@ -5,7 +5,7 @@
   упаковка в release/max_app-<ver>-windows-x86_64-ui/.
 
 .DESCRIPTION
-  В отличие от build/scripts/build-windows.sh (кросс-сборка headless в Docker),
+  В отличие от max-brh-cicd/scripts/build-windows.sh (кросс-сборка headless в Docker),
   этот скрипт собирает ИНТЕРАКТИВНЫЙ клиент на Windows-хосте: SDL3 берётся из
   vcpkg и линкуется MSVC, звук — rodio/cpal (WASAPI, отдельных DLL не нужно).
 
@@ -37,10 +37,10 @@
   Только собрать (и проверить --help), не упаковывать.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
+  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoPackage
+  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1 -NoPackage
 #>
 param(
     [string]$VcpkgRoot = "",
@@ -56,7 +56,7 @@ function Fail([string]$message) {
     exit 1
 }
 
-# <repo>\build\scripts -> <repo>
+# <repo>\max-brh-cicd\scripts -> <repo>
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Out) { $Out = Join-Path $root "release" }
 

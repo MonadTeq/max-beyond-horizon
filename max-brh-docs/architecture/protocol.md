@@ -732,7 +732,7 @@ Packet23Data. Клиент сверяет со своей копией и отв
   возврата B публикует 54, A/C принимают, встречный 54 исправляет B; 52/54/45
   сходятся, CRC и `turn_counter` совпадают.
 - `resume_state_sync_publishes_the_last_completed_index` — индекс/состав 54.
-- Живые `build/scripts/live-smoke-3.sh` (3 клиента × N, релей, 00/52/54/45,
+- Живые `max-brh-cicd/scripts/live-smoke-3.sh` (3 клиента × N, релей, 00/52/54/45,
   CRC) и `live-smoke-mixed.sh` (Rust×2 + C++ desync-детектор; C++-клиент
   headless недоступен — см. §12).
 

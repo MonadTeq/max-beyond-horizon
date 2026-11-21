@@ -1,4 +1,4 @@
-# build/scripts — релизные и проверочные скрипты
+# max-brh-cicd/scripts — релизные и проверочные скрипты
 
 `build-windows.sh` и `live-smoke*.sh` рассчитаны на Git Bash / WSL / Linux и
 работают через Docker (`rust:1.94.0-bookworm`) — хостовый Rust-тулчейн им не
@@ -20,9 +20,9 @@
 ## P5 smoke: 3 клиента и Rust+C++
 
 ```sh
-bash build/scripts/live-smoke-3.sh 5
-bash build/scripts/live-smoke-mixed.sh 5
-MIXED_REQUIRE_CPP=1 bash build/scripts/live-smoke-mixed.sh 5   # ожидаемо BLOCKED
+bash max-brh-cicd/scripts/live-smoke-3.sh 5
+bash max-brh-cicd/scripts/live-smoke-mixed.sh 5
+MIXED_REQUIRE_CPP=1 bash max-brh-cicd/scripts/live-smoke-mixed.sh 5   # ожидаемо BLOCKED
 ```
 
 `live-smoke-3.sh` сам собирает `max-brh` и `horizon_probe`
@@ -51,10 +51,10 @@ probe и клиенты живут в network namespace контейнера Hor
 ## build-windows.sh
 
 ```sh
-bash build/scripts/build-windows.sh             # сборка + zip + wine-smoke
-bash build/scripts/build-windows.sh --no-wine   # без wine (~400 МБ apt)
-bash build/scripts/build-windows.sh --dry-run   # план, Docker не запускается
-bash build/scripts/build-windows.sh --out /tmp/rel
+bash max-brh-cicd/scripts/build-windows.sh             # сборка + zip + wine-smoke
+bash max-brh-cicd/scripts/build-windows.sh --no-wine   # без wine (~400 МБ apt)
+bash max-brh-cicd/scripts/build-windows.sh --dry-run   # план, Docker не запускается
+bash max-brh-cicd/scripts/build-windows.sh --out /tmp/rel
 ```
 
 В контейнере `rust:1.94.0-bookworm` скрипт ставит
@@ -132,8 +132,8 @@ wine-smoke обязательным можно через `WINE_STRICT=1`.
 Нативная Windows-сборка **интерактивного** клиента (окно SDL3 + звук WASAPI).
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
-powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoPackage   # только собрать
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1 -NoPackage   # только собрать
 ```
 
 Что делает: находит VS через `vswhere` (`-requires
@@ -194,7 +194,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 Проверка подсистемы PE без `dumpbin`/`vcvars` (PowerShell 5.1):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File build\scripts\pe-subsystem.ps1 `
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\pe-subsystem.ps1 `
     -Path release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
 # PE: ...\max-brh.exe — PE32+ x64, Subsystem=2 (Windows GUI)
 ```

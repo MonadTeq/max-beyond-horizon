@@ -93,8 +93,8 @@ release/
 # Smoke data dir (MAX.RES + PATCHES.RES together)
 build/game-data-smoke/
 
-!build/scripts/
-!build/scripts/**
+!max-brh-cicd/scripts/
+!max-brh-cicd/scripts/**
 
 # QA-артефакты слоя 2–3: логи, кадры прогонов, diff-*.png, *.mxs
 # (эталоны лежат в max-brh-qa/golden/ и коммитятся)

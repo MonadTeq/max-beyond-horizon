@@ -27,7 +27,7 @@ set -euo pipefail
 
 # Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-brh` →
 # `C:/Program Files/Git/src/max-brh`) — конверсию отключаем, как в
-# build/scripts/build-windows.sh.
+# max-brh-cicd/scripts/build-windows.sh.
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS_NO_PATHCONV=1
     export MSYS2_ARG_CONV_EXCL='*'

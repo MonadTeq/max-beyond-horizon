@@ -40,7 +40,7 @@ tonic-prost-build = "0.14"
 protoc-bin-vendored = "3"
 # Vendored ENet 1.3.18 (vendor/enet) is compiled as a static C library.
 # Under `--target x86_64-pc-windows-gnu` `cc` picks `x86_64-w64-mingw32-gcc`
-# (mingw-w64, installed by build/scripts/build-windows.sh).
+# (mingw-w64, installed by max-brh-cicd/scripts/build-windows.sh).
 cc = "1"
 
 [features]

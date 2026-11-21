@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # P5: смешанная сессия Rust + C++ и проверка кросс-имплементационного паритета.
 #
-#   bash build/scripts/live-smoke-mixed.sh [turns]
-#   MIXED_REQUIRE_CPP=1 bash build/scripts/live-smoke-mixed.sh  # падать без C++
+#   bash max-brh-cicd/scripts/live-smoke-mixed.sh [turns]
+#   MIXED_REQUIRE_CPP=1 bash max-brh-cicd/scripts/live-smoke-mixed.sh  # падать без C++
 #
 # ЧЕСТНЫЙ СТАТУС C++-КЛИЕНТА:
 #   headless-сборка `src/` умеет ТОЛЬКО `--server` (`src/main.cpp:37-44`,
@@ -16,7 +16,7 @@
 #       desync-отчёт — значит, состояние Rust-клиентов совпало с C++-симуляцией.
 #   Без изменения `src/` (добавления headless client mode) полноценная
 #   Rust+C++-сессия невозможна; см. max-brh-docs/architecture/protocol.md §12 и
-#   build/scripts/README.md.
+#   max-brh-cicd/scripts/README.md.
 set -euo pipefail
 
 TURNS="${1:-5}"

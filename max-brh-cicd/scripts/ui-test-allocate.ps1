@@ -11,10 +11,10 @@
 #    и возвращает игру;
 #  * кадры `00-menu` … `06-alloc-done` — в `build/ui-test-allocate/`.
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File build\scripts\ui-test-allocate.ps1
+# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-allocate.ps1
 #
 # Нужен собранный клиент:
-#   powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoPackage
+#   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1 -NoPackage
 param(
     [string]$Out = "",
     [switch]$KeepProcess

@@ -1,6 +1,6 @@
 # UI-тест перемещения юнита в ЖИВОМ окне (SDL3): регресс «юнит не двигается».
 #
-#   powershell -ExecutionPolicy Bypass -File build\scripts\ui-test-move.ps1
+#   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-move.ps1
 #
 # Путь тот же, что у игрока мышью: New Game → Options Done → Planet Done →
 # Players (Green = Computer) Done → мобилизация Done → высадка Enter → в игре:
@@ -22,7 +22,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# build\scripts -> <repo>
+# max-brh-cicd\scripts -> <repo>
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Out) { $Out = Join-Path $root "build\ui-test-move" }
 New-Item -ItemType Directory -Force $Out | Out-Null

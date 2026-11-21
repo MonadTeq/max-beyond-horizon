@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Кросс-сборка Windows-бинарника M.A.X. Rust-клиента (max_app) в Docker.
 #
-#   bash build/scripts/build-windows.sh             # сборка + упаковка + wine-smoke
-#   bash build/scripts/build-windows.sh --no-wine   # без wine (быстрее, без ~400 МБ apt)
-#   bash build/scripts/build-windows.sh --dry-run   # показать план, ничего не делать
-#   bash build/scripts/build-windows.sh --out /tmp/rel
+#   bash max-brh-cicd/scripts/build-windows.sh             # сборка + упаковка + wine-smoke
+#   bash max-brh-cicd/scripts/build-windows.sh --no-wine   # без wine (быстрее, без ~400 МБ apt)
+#   bash max-brh-cicd/scripts/build-windows.sh --dry-run   # показать план, ничего не делать
+#   bash max-brh-cicd/scripts/build-windows.sh --out /tmp/rel
 #
 # Что происходит: в контейнере `rust:1.94.0-bookworm` ставятся
 # gcc/binutils-mingw-w64-x86-64 (для enet — C-библиотеки ENet 1.3.18), `file`,
@@ -51,7 +51,7 @@ DRY_RUN=0
 
 usage() {
     cat <<'EOF'
-Использование: bash build/scripts/build-windows.sh [--dry-run] [--no-wine] [--out DIR]
+Использование: bash max-brh-cicd/scripts/build-windows.sh [--dry-run] [--no-wine] [--out DIR]
 
   --dry-run     показать план сборки/упаковки и выйти (Docker не запускается)
   --no-wine     не ставить wine и не делать wine-smoke (--help + --demo 1 ход)

@@ -46,7 +46,7 @@ max-brh-qa/
 ## Соответствие «Test Case → автоматизация»
 
 Каждый TC в `suite/` имеет поле `Автоматизация`: ссылку на `.qa`-скрипт, юнит/интеграционный
-тест (`cargo test`), живой smoke (`build/scripts/live-smoke.sh`), оконный прогон
+тест (`cargo test`), живой smoke (`max-brh-cicd/scripts/live-smoke.sh`), оконный прогон
 (`drivers/ui-test-*.ps1`) или `manual` с шагами для человека.
 
 ## Быстрый старт

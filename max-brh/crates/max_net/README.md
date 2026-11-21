@@ -77,8 +77,8 @@ cargo build -p max_app --features tls      # max_net/tls → tonic/tls-ring + tl
 `undefined reference to enet_socket_create`. Тот же env-переменной управляются
 `winmm`/`ws2_32`.
 
-Сборка: `bash build/scripts/build-windows.sh` (mingw-w64 в Docker, headless:
-`--no-default-features`, без `sdl*`/`sound`), см. `build/scripts/README.md`.
+Сборка: `bash max-brh-cicd/scripts/build-windows.sh` (mingw-w64 в Docker, headless:
+`--no-default-features`, без `sdl*`/`sound`), см. `max-brh-cicd/scripts/README.md`.
 
 ## Проверка
 

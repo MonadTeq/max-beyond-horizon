@@ -1,5 +1,5 @@
-﻿# Компакция docker_data.vhdx (Docker Desktop + WSL2).
-#   powershell -ExecutionPolicy Bypass -File build\scripts\docker-vhdx-compact.ps1 [-NoRestart]
+# Компакция docker_data.vhdx (Docker Desktop + WSL2).
+#   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\docker-vhdx-compact.ps1 [-NoRestart]
 param(
     [string]$Vhdx = "C:\Users\Solo Sovey\AppData\Local\Docker\wsl\disk\docker_data.vhdx",
     [switch]$NoRestart

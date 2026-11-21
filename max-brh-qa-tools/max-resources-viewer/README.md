@@ -52,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 `SDL3.dll` должна быть рядом с `.exe` или в `PATH`. `build.ps1` после сборки
 проверяет PE-заголовок: Subsystem=2 (GUI), иначе двойной клик открыл бы
-консоль (`build/scripts/pe-subsystem.ps1`).
+консоль (`max-brh-cicd/scripts/pe-subsystem.ps1`).
 
 ### Windows + готовый SDL3 (вариант без vcpkg)
 

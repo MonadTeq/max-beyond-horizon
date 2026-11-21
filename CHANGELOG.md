@@ -998,7 +998,7 @@
   `production/` переснят (10 кадров: `build-site-select`, `build-site-invalid`,
   `build-ordered` + обновлённые `build-site*`/`build-work-*`), `research/` и
   `research-help/` пересняты из-за нового места постройки — 0 дрейфа.
-  Живой Windows-прогон — `build/scripts/ui-test-construction.ps1` (призрак,
+  Живой Windows-прогон — `max-brh-cicd/scripts/ui-test-construction.ps1` (призрак,
   выбор клетки, строитель в центре).
 
 - **Анимация стройки: кадры конструктора и «вырастание» постройки.** C++
@@ -1029,7 +1029,7 @@
   `anim 1000` (`shot build-site-grow`/`build-site-grown`) и
   `tick 6`/`anim 150` (`shot build-work-a`/`build-work-b`); golden
   `production/` — 7 кадров, 0 дрейфа. Живой Windows-прогон
-  `build/scripts/ui-test-construction.ps1` пишет `03-construction-site` и
+  `max-brh-cicd/scripts/ui-test-construction.ps1` пишет `03-construction-site` и
   `04-construction-grown` (кадры различаются).
 
 - **Стройплощадка на карте (`PrepareConstructionSite` /
@@ -1062,7 +1062,7 @@
   `golden/production/build-site.png`), `research.qa` golden переснят (у
   Research Center теперь плита-фундамент, как в C++),
   `research-help/research-plan.png` — тоже (здание на плите), живой
-  Windows-прогон `build/scripts/ui-test-construction.ps1` (скриншоты
+  Windows-прогон `max-brh-cicd/scripts/ui-test-construction.ps1` (скриншоты
   `build/ui-test-construction/`, `03-construction-site.png` — площадка в окне).
   Полный docker-гейт — зелёный, golden — 0 дрейфа.
 
@@ -1105,7 +1105,7 @@
   12 `max_app::allocmenu`, 9 кадровых `tests/alloc_menu.rs`, QA
   `allocate.qa` (128 кадров) + golden `golden/allocate` (0 дрейфа; остальные
   эталоны — тоже 0 дрейфа), живой Windows-прогон
-  `build/scripts/ui-test-allocate.ps1` (скриншоты `build/ui-test-allocate/`).
+  `max-brh-cicd/scripts/ui-test-allocate.ps1` (скриншоты `build/ui-test-allocate/`).
   Осознанное расхождение: коннекторы зданий не
   моделируются, поэтому комплекс = одно здание.
 
@@ -1439,7 +1439,7 @@
     `grid` и визуальную `vX.Y` каждого юнита + `preview=N`; добавлен
     `[rclick]` с grid/selected/результатом (`move`/`cancel`/`no-path`/…).
     Без переменной окружения ничего не печатается.
-  - **Живой тест.** `build/scripts/ui-test-move2.ps1` — `SendInput`
+  - **Живой тест.** `max-brh-cicd/scripts/ui-test-move2.ps1` — `SendInput`
     (`MOUSEEVENTF_*`; union `INPUT` — на смещении 8, как в Win32), проверка
     фокуса перед каждым кликом, `Enter` на высадке, координаты берутся из
     трассы. Проверяет `[in] … RightClick`, `[rclick] result=move`,
@@ -1680,7 +1680,7 @@
     (тесты + QA + golden + soak) зелёный.
 
 - **P5 — сетевая зрелость** (`max-brh-docs/development/PLAN-production.md`):
-  - **Три клиента.** `build/scripts/live-smoke-3.sh`: Horizon + C++-headless +
+  - **Три клиента.** `max-brh-cicd/scripts/live-smoke-3.sh`: Horizon + C++-headless +
     3 Rust-клиента (`--min-players 3`, слоты RED/GREEN/BLUE), N ходов.
     Проверяет `пиров=2`, релей 00 от двух других команд каждому, прохождение
     00/52/54/45, `barrier_timeouts=0` и совпадение `state_checksum` у всех.
@@ -1698,7 +1698,7 @@
     `three_clients_survive_disconnect_and_converge_via_state_sync` (B offline,
     копия его юнита испорчена, после возврата 54 владельца восстанавливает
     состояние; CRC/turn_counter совпадают у всех).
-  - **C++-паритет — PARTIAL.** `build/scripts/live-smoke-mixed.sh`: Rust×2 + C++
+  - **C++-паритет — PARTIAL.** `max-brh-cicd/scripts/live-smoke-mixed.sh`: Rust×2 + C++
     сервер как desync-оракул (Rust CRC `0x7035`, `Desync check failed` нет).
     Полная mixed-сессия заблокирована: headless `src/` умеет только `--server`,
     `--client`/`--connect` нет, GUI-клиенту нужен X11 и ручной ввод
@@ -1708,7 +1708,7 @@
     (protocol.md §9.2). **MAX_LOG** (простой уровень/`target=level`) включает
     debug-логи для smoke без включения `env-filter`.
   - Документация: `protocol.md` §9/§11/§12, `barrier-flow.md` (P5-статус),
-    `PLAN-production.md` P5, `build/scripts/README.md`,
+    `PLAN-production.md` P5, `max-brh-cicd/scripts/README.md`,
     `max-brh-qa/suite/05-network.md`, `release-checklist.md` §3.1.
   - **Тесты:** 759 passed / 0 failed (`cargo test`, default; + sound и
     `--no-default-features` — зелёные).
@@ -1961,10 +1961,10 @@
   исходников — системный SDL3 и vcpkg не нужны, нужны только C-компилятор и
   `cmake`. Раньше `default = []`, и запуск без флагов падал с
   «GUI-режим … требует сборки с feature sdl». Headless-сборки явно собираются
-  с `--no-default-features` (`build/scripts/build-windows.sh`, `ci.sh`, QA);
+  с `--no-default-features` (`max-brh-cicd/scripts/build-windows.sh`, `ci.sh`, QA);
   явные оконные фичи (`sdl`, `sdl-vcpkg`) комбинировать с default нельзя —
   их тоже нужно включать через `--no-default-features`, иначе добавится
-  `sdl-from-source` (`build/scripts/build-windows-ui.ps1`, `release.sh`).
+  `sdl-from-source` (`max-brh-cicd/scripts/build-windows-ui.ps1`, `release.sh`).
   Звук (`sound`) **не** входит в default: rodio/cpal тянет ALSA/WASAPI —
   включается явно `--features sound`.
 - **CI/Docker: системные зависимости для сборки SDL3 из исходников**.
@@ -1996,7 +1996,7 @@
   теряли вывод, итог и ошибки дублируются в файлы
   (`<OUT_ROOT>/export-log.txt`, `./report.txt`,
   `./max-resources-viewer-error.txt`). Сборки проверяют подсистему PE
-  (`build/scripts/pe-subsystem.ps1`), `build-windows.sh` — console для
+  (`max-brh-cicd/scripts/pe-subsystem.ps1`), `build-windows.sh` — console для
   headless; README/чек-лист обновлены.
 - **Бинарь клиента переименован `max_app` → `max-brh`** (Windows:
   `max-brh.exe`). Крейт и библиотека остаются `max_app`, примеры

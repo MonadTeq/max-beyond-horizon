@@ -10,7 +10,7 @@
 #    (`effects=0` в трассе `MAX_DEBUG_INPUT`) и `Done` их сохраняет;
 #  * `FX Disabled` доходит до звука (`sound=0` в трассе).
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File build\scripts\ui-test-prefs.ps1
+# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-prefs.ps1
 # Нужен собранный клиент (build-windows-ui.ps1; exe ищется в
 # build\win-msvc-target\release и release\*-ui).
 param(

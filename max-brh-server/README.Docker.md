@@ -135,7 +135,7 @@ UDP-портов `32000-32100` (NAT/firewall). Для TLS перед gRPC — re
 
 ```sh
 bash ci.sh                  # max-brh: cargo check+test; Horizon: cargo test --workspace
-bash ci.sh --smoke          # + build/scripts/live-smoke.sh (2 клиента × 5 ходов)
+bash ci.sh --smoke          # + max-brh-cicd/scripts/live-smoke.sh (2 клиента × 5 ходов)
 bash ci.sh --smoke --turns 10
 ```
 
@@ -145,7 +145,7 @@ M5/M6); для Horizon дополнительно `pkg-config libssl-dev`. Workf
 запускается: нужны лицензионные `MAX.RES` и собранный C++-headless — гоняйте
 `bash ci.sh --smoke` на машине с данными.
 
-`build/scripts/live-smoke.sh` также обновлён: корень репозитория и путь для
+`max-brh-cicd/scripts/live-smoke.sh` также обновлён: корень репозитория и путь для
 Docker вычисляются от расположения скрипта (не захардкожен `D:/...`), контейнеры
 убираются по `trap`.
 

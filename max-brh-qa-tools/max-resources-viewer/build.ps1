@@ -77,7 +77,7 @@ if ($LASTEXITCODE -ne 0) { Fail "cargo build: exit $LASTEXITCODE" }
 # --- подсистема PE: GUI (2), иначе двойной клик по .exe откроет консоль ------
 $exePath = Join-Path $here "target\$profile\max-resources-viewer.exe"
 if (-not (Test-Path $exePath)) { Fail "после сборки нет $exePath" }
-$peScript = Join-Path $repo 'build\scripts\pe-subsystem.ps1'
+$peScript = Join-Path $repo 'max-brh-cicd\scripts\pe-subsystem.ps1'
 & powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
 if ($LASTEXITCODE -ne 0) { Fail "PE-подсистема $exePath не GUI (ожидалось Subsystem=2)" }
 
