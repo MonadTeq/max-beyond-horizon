@@ -28,7 +28,7 @@ set -euo pipefail
 # Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-brh` →
 # `C:/Program Files/Git/src/max-brh`) — конверсию отключаем.
 # Windows-бинарь этот скрипт не собирает: headless — нативно на MSVC
-# (max-brh-cicd/scripts/build-windows-headless.ps1), UI — build-windows-ui.ps1.
+# (max-brh-cicd/scripts/build-windows-console.ps1), UI — build-windows-ui.ps1.
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS_NO_PATHCONV=1
     export MSYS2_ARG_CONV_EXCL='*'
@@ -54,7 +54,7 @@ usage() {
   --tag            после успешной упаковки создать git-тег v<version>
                    (только на чистом рабочем дереве; тег не пушится)
   --features LIST  features max_app (по умолчанию sdl-from-source,sound;
-                   пустая строка — headless-сборка: --features '')
+                   пустая строка — консольная сборка клиента: --features '')
   --out DIR        каталог артефактов (по умолчанию <repo>/bin/release)
   -h, --help       эта справка
 

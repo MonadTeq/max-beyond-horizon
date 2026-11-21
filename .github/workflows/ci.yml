@@ -64,7 +64,7 @@ jobs:
           cargo test --features sound
 
       - name: cargo test (headless, --no-default-features)
-        # Headless-сборка (без SDL) — отдельный cfg-набор: проверяет
+        # Консольная сборка клиента (без SDL) — отдельный cfg-набор: проверяет
         # `main.rs`-ветки без feature `sdl` (понятная ошибка GUI, --sdl).
         working-directory: max-brh
         run: cargo test --no-default-features

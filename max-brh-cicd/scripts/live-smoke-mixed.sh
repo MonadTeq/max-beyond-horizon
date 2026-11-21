@@ -5,7 +5,7 @@
 #   MIXED_REQUIRE_CPP=1 bash max-brh-cicd/scripts/live-smoke-mixed.sh  # падать без C++
 #
 # ЧЕСТНЫЙ СТАТУС C++-КЛИЕНТА:
-#   headless-сборка `src/` умеет ТОЛЬКО `--server` (`src/main.cpp:37-44`,
+#   консольная сборка клиента `src/` умеет ТОЛЬКО `--server` (`src/main.cpp:37-44`,
 #   `CMakeLists.txt: MAX_HEADLESS` -> `Server_Main`). Клиентской ветки
 #   `--client`/`--connect` нет: обычный `max-port` — SDL GUI, которому нужен
 #   дисплей и ручной проход меню. Поэтому mixed-сессия Rust+C++ этим скриптом

@@ -866,7 +866,7 @@ bin/release/max_app-1.0.0-windows-x86_64-ui/max-brh.exe --ui --scale 2 \
 `max-brh/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
 
 Ранее закоммичено: `6295a8e` (Windows-кросс-сборка + `build-windows.sh`),
-`ba8279a` (нативная Windows UI-сборка + `build-windows-ui.ps1`), плюс правки
+`ba8279a` (нативная Windows игровая сборка + `build-windows-ui.ps1`), плюс правки
 `--turn-wait` и шрифта (коммиты делались между итерациями).
 
 ---

@@ -143,9 +143,9 @@ GUI-сборки (`sdl` — он же default `sdl-from-source`, `sdl-vcpkg`; в
 сборки нет stdout в терминале, `--help`/`--demo` печатают только при
 перенаправлении (`max-brh.exe --help > help.txt`).
 
-Headless-сборка (`--no-default-features`, **без** `sdl`) остаётся **console**
+Консольная сборка клиента (`--no-default-features`, **без** `sdl`) остаётся **console**
 (Subsystem=3): `--demo`, `--new-game`, `--connect` печатают в терминал и CI,
-как раньше. Так собираются `max-brh-cicd/scripts/build-windows-headless.ps1`
+как раньше. Так собираются `max-brh-cicd/scripts/build-windows-console.ps1`
 (нативный MSVC), CI и QA-прогоны.
 Примеры (`qa_run`, `qa_golden_check`) — отдельные console-бинари и подсистемой
 клиента не затрагиваются; в CI они идут с `--no-default-features`.
@@ -321,7 +321,7 @@ SDL-часть проверяется компиляцией:
 
 ```sh
 # default-фичи включают sdl-from-source (окно) — проверяется компиляцией;
-# headless-сборка (без SDL) — отдельно:
+# консольная сборка клиента (без SDL) — отдельно:
 cargo check -p max_app
 cargo check -p max_app --no-default-features
 ```
@@ -419,7 +419,7 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-brh \
    export LD_LIBRARY_PATH=/src/max-brh/target/debug && \
    cargo check && cargo test"
 
-# только приложение; headless-сборка (без SDL) — --no-default-features
+# только приложение; консольная сборка клиента (без SDL) — --no-default-features
 cargo test -p max_app
 cargo check -p max_app --no-default-features
 ```

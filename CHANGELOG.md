@@ -4,7 +4,7 @@
 
 - **Windows-сборки переведены на нативный MSVC: Docker/mingw-w64 и wine для
   Windows убраны.** Headless-сборку теперь собирает
-  `max-brh-cicd/scripts/build-windows-headless.ps1` — PowerShell-скрипт на
+  `max-brh-cicd/scripts/build-windows-console.ps1` — PowerShell-скрипт на
   Windows-хосте: `vswhere` → `vcvars64.bat` → `cargo build --release --locked
   -p max_app --no-default-features` под target по умолчанию
   `x86_64-pc-windows-msvc` (без `--target`, без vcpkg/SDL3, без `sound`).
@@ -25,7 +25,7 @@
   `max-brh-docs/development/release-checklist.md` §6, `max-brh/README.md`,
   `max-brh/crates/max_net/README.md`, `max-brh/crates/max_app/README.md`.
   `workspace-clean.ps1` чистит target-каталоги нативных Windows-сборок
-  (`bin\target`, `bin\target-headless`) и `build\msvc-headless`.
+  (`bin\target`, `bin\target-console`) и `build\msvc-console`.
 
 ### Исправлено
 
@@ -33,8 +33,8 @@
   `pe-subsystem.ps1` и `build-windows-ui.ps1` лежали в UTF-8 **без BOM**, а
   Windows PowerShell 5.1 читает такой файл как ANSI: кириллица в строках ломала
   парсер (`Unexpected token`, `Missing closing '}'`), то есть проверка PE и
-  UI-сборка на хосте падали ещё до запуска. Оба файла пересохранены в UTF-8
-  **с BOM** (как и новый `build-windows-headless.ps1`);
+  игровая сборка на хосте падали ещё до запуска. Оба файла пересохранены в UTF-8
+  **с BOM** (как и новый `build-windows-console.ps1`);
   `pe-subsystem.ps1 -Expected 3` теперь отрабатывает (rc=0).
 
 - **Энергия комплекса: завод не стартует без power/life, здания отключаются при
@@ -2063,7 +2063,7 @@
   реконнект через 54; C++ mixed — PARTIAL (блокер headless client).
 - **QA/стабильность:** 100-ходовый soak, бюджет 60 Гц, память, edge-кейсы,
   golden-дрейф, полный `ci.sh`; детерминизм RNG/карт/симуляции.
-- **Сборка/поставка:** rename проекта в **max-brh**; GUI-сборка по умолчанию
+- **Сборка/поставка:** rename проекта в **max-brh**; Gигровая сборка по умолчанию
   (`cargo run -p max_app` открывает игру, bundled SDL3); Windows UI/headless и
   Linux-артефакты, `SHA256SUMS`, `release-checklist.md`.
 

@@ -1,11 +1,11 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
 .SYNOPSIS
   Нативная Windows-сборка M.A.X. Rust-клиента (max_app) с окном SDL3 и звуком,
   упаковка в bin/bin/release/max_app-<ver>-windows-x86_64-ui/.
 
 .DESCRIPTION
-  Нативный двойник build-windows-headless.ps1 (тот собирает headless на MSVC,
+  Нативный двойник build-windows-console.ps1 (тот собирает headless на MSVC,
   без SDL3 и звука): этот скрипт собирает ИНТЕРАКТИВНЫЙ клиент на Windows-хосте —
   SDL3 берётся из vcpkg и линкуется MSVC, звук — rodio/cpal (WASAPI, отдельных
   DLL не нужно).
@@ -151,7 +151,7 @@ Copy-Item $sdlDll $exeDir -Force
 $exeSize = (Get-Item $exePath).Length
 Write-Host ("exe: {0} ({1:N0} байт), SDL3.dll рядом" -f $exePath, $exeSize)
 
-# GUI-сборка обязана иметь подсистему windows (Subsystem=2), иначе двойной клик
+# Gигровая сборка обязана иметь подсистему windows (Subsystem=2), иначе двойной клик
 # откроет консоль. Проверяем PE-заголовок напрямую (без dumpbin/vcvars).
 $peScript = Join-Path $PSScriptRoot "pe-subsystem.ps1"
 & powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
@@ -199,7 +199,7 @@ M.A.X. Rust client $version — Windows x86_64 (UI: SDL3 + звук)
 
 Окно без консоли
 ----------------
-Это GUI-сборка: подсистема Windows (Subsystem=2 в PE-заголовке), поэтому
+Это Gигровая сборка: подсистема Windows (Subsystem=2 в PE-заголовке), поэтому
 двойной клик по max-brh.exe открывает только окно SDL3 — окно cmd не
 появляется. Плата за это: stdout этой сборки не виден в терминале.
 Для справки и headless-режимов есть Console-сборка

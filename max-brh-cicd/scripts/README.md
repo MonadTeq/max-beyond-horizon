@@ -1,17 +1,17 @@
 # max-brh-cicd/scripts — релизные и проверочные скрипты
 
 Windows-сборки — **нативные MSVC-сборки** PowerShell-скриптами на Windows-хосте
-(без Docker и mingw): `build-windows-headless.ps1` (headless-сборка) и
-`build-windows-ui.ps1` (UI-сборка: окно SDL3 + звук). Linux-часть (`live-smoke*.sh`,
+(без Docker и mingw): `build-windows-console.ps1` (консольная сборка клиента) и
+`build-windows-ui.ps1` (игровая сборка: окно SDL3 + звук). Linux-часть (`live-smoke*.sh`,
 `release.sh`, `ci.sh`) по-прежнему идёт через Docker (`rust:1.94.0-bookworm`);
 на Windows их запускать из **Git Bash** (не из `cmd`/PowerShell):
 `cygpath` и `MSYS_NO_PATHCONV` нужны для корректной передачи путей в Docker.
 
 | Скрипт | Что делает | Требования |
 |---|---|---|
-| `build-windows-headless.ps1` | **нативная MSVC-сборка** `max-brh` — headless-сборка (`--no-default-features`, без SDL3/звука) + упаковка `bin/release/max_app-<ver>-windows-x86_64.zip` + прогон `--help`/`--demo` нативно | Windows, VS с workload «Desktop development with C++» (MSVC + Windows SDK), Rust 1.94.0 (`x86_64-pc-windows-msvc`), данные игры для `--demo` |
-| `build-windows-ui.ps1` | **нативная MSVC-сборка** `max-brh` — UI-сборка (окно SDL3 + звук) + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
-| `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранная UI-сборка |
+| `build-windows-console.ps1` | **нативная MSVC-сборка** `max-brh` — консольная сборка клиента (`--no-default-features`, без SDL3/звука) + упаковка `bin/release/max_app-<ver>-windows-x86_64.zip` + прогон `--help`/`--demo` нативно | Windows, VS с workload «Desktop development with C++» (MSVC + Windows SDK), Rust 1.94.0 (`x86_64-pc-windows-msvc`), данные игры для `--demo` |
+| `build-windows-ui.ps1` | **нативная MSVC-сборка** `max-brh` — игровая сборка (окно SDL3 + звук) + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранная игровая сборка |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-brh-server/target/release/horizon` и `build/linux-server-template/max-port` |
 | `live-smoke-3.sh` | P5: живой smoke **3 клиента × N ходов** (RED/GREEN/BLUE): релей всем, 00/52/54/45, `state_checksum` у всех, 0 таймаутов | то же; Docker; `--min-players 3` создаётся автоматически |
@@ -48,7 +48,7 @@ probe и клиенты живут в network namespace контейнера Hor
 `mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь
 `session_root` — там лежит 58-МБ `max-port`).
 
-## build-windows-headless.ps1
+## build-windows-console.ps1
 
 Нативная MSVC-сборка **headless**-варианта (без окна SDL3, без звука).
 Прежняя кросс-сборка `build-windows.sh` (Docker + mingw-w64, target
@@ -56,17 +56,17 @@ probe и клиенты живут в network namespace контейнера Hor
 MSVC-рантайм вместо mingw, без Docker и wine.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
 # только собрать и проверить, без упаковки:
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -NoPackage
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1 -NoPackage
 # не запускать exe (--help/--demo) — на хосте без данных игры:
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -SkipSmoke
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1 -SkipSmoke
 ```
 
 Что делает: находит VS через `vswhere`
 (`-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), пишет
-`build\msvc-headless-build.bat` (там `call vcvars64.bat`, `PATH` +
-`~\.cargo\bin`, `CARGO_TARGET_DIR=<repo>\bin\target-headless`) и собирает:
+`build\msvc-console-build.bat` (там `call vcvars64.bat`, `PATH` +
+`~\.cargo\bin`, `CARGO_TARGET_DIR=<repo>\bin\target-console`) и собирает:
 
 ```sh
 cargo build --release --locked -p max_app --no-default-features
@@ -94,13 +94,13 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 - подсистема PE — **Console (Subsystem=3)**: подсистема `windows` включается
   только feature `sdl`, а headless собирается без неё, поэтому `--help` и
   `--demo` печатают в терминал/CI (несовпадение — ошибка сборки);
-- импорты (`dumpbin /dependents`, лог `build\msvc-headless\imports.txt`):
+- импорты (`dumpbin /dependents`, лог `build\msvc-console\imports.txt`):
   системные DLL + `VCRUNTIME140.dll`; mingw-рантайма
   (`libgcc_s_*`/`libwinpthread-1.dll`) быть не должно;
 - `max-brh.exe --help` печатает справку (ищется «ИСПОЛЬЗОВАНИЕ», rc=0);
 - `max-brh.exe --demo max-original\SAVE1.CAM --turns 1` даёт `ticks=1` и
   `state_digest=0x…`; лог прогона —
-  `build\smoke-logs\windows-msvc-headless-smoke.log`.
+  `build\smoke-logs\windows-msvc-console-smoke.log`.
 
 Вывод exe снимается через `cmd` с перенаправлением в файл и читается как
 UTF-8: так проверка справки не зависит от кодировки консоли PowerShell.

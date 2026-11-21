@@ -26,8 +26,8 @@
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
 | 8 | Live smoke 2×10 | `max-brh-cicd/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
 | 9 | Live smoke 3×10 | `max-brh-cicd/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows UI-сборка | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` | ✅ `bin/release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-brh.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
-| 11 | Windows headless-сборка | `powershell -File max-brh-cicd\scripts\build-windows-headless.ps1` (нативный MSVC) | ✅ `bin/release/max_app-1.1.0-windows-x86_64/` (2026-11-21, пересобран нативно): `max-brh.exe` 4 433 408 Б, sha256 `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`; zip 1 807 530 Б, sha256 `f5388c39c52c6d2a069f4bfdc6087cba8efa323e3e98d96207305542069f06f1`; PE Subsystem=3 (console); `--help` и `--demo SAVE1.CAM --turns 1` (`state_digest=0x733D`) — нативно, без wine |
+| 10 | Windows игровая сборка | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` | ✅ `bin/release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-brh.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
+| 11 | Windows консольная сборка клиента | `powershell -File max-brh-cicd\scripts\build-windows-console.ps1` (нативный MSVC) | ✅ `bin/release/max_app-1.1.0-windows-x86_64/` (2026-11-21, пересобран нативно): `max-brh.exe` 4 433 408 Б, sha256 `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`; zip 1 807 530 Б, sha256 `f5388c39c52c6d2a069f4bfdc6087cba8efa323e3e98d96207305542069f06f1`; PE Subsystem=3 (console); `--help` и `--demo SAVE1.CAM --turns 1` (`state_digest=0x733D`) — нативно, без wine |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows-сборки (UI и headless); Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows-сборки (UI и headless) пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
 | 14 | Документация | `README.md`, `max-brh/README.md`, `max-brh-docs/development/build.md`, `max-brh-docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
@@ -132,7 +132,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-brh/target/debug && cargo check --features sound && cargo test --features sound'
 
 # 2.3 Headless-путь (--no-default-features): SDL не тянется ни при сборке, ни в
-# рантайме — так собираются Windows headless-сборка, QA и серверные артефакты; этот
+# рантайме — так собираются Windows консольная сборка клиента, QA и серверные артефакты; этот
 # прогон проверяет и cfg-ветки main.rs без feature sdl.
 docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config >/dev/null && cargo test --no-default-features'
@@ -391,7 +391,7 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
 `release.sh` собирает в Docker **интерактивную** сборку с
 `--no-default-features --features sdl-from-source,sound` (решение
 зафиксировано здесь: релизный Linux-клиент — с окном и звуком; явные features
-плюс `--no-default-features`, чтобы default не подмешивался; headless-сборка
+плюс `--no-default-features`, чтобы default не подмешивался; консольная сборка клиента
 для серверов — `bash release.sh --features ''`, то есть
 `cargo build --release -p max_app --no-default-features`). Скрипт кладёт всё в
 `bin/release/max_app-<version>-linux-x86_64/` и `.tar.gz`.
@@ -439,12 +439,12 @@ bash release.sh --tag         # сборка + аннотированный те
 Обе Windows-сборки делаются **на Windows-хосте тулчейном MSVC**; Docker,
 mingw-w64 и wine для Windows больше не используются (кросс-сборка
 `x86_64-pc-windows-gnu` в контейнере удалена вместе с
-`max-brh-cicd/scripts/build-windows.sh`). headless-сборка — этот раздел, скрипт
-`max-brh-cicd/scripts/build-windows-headless.ps1` (описание —
-`max-brh-cicd/scripts/README.md`); UI-сборка — §6.1
+`max-brh-cicd/scripts/build-windows.sh`). консольная сборка клиента — этот раздел, скрипт
+`max-brh-cicd/scripts/build-windows-console.ps1` (описание —
+`max-brh-cicd/scripts/README.md`); игровая сборка — §6.1
 (`build-windows-ui.ps1`).
 
-Термины (headless-сборка, UI-сборка, нативная MSVC-сборка) — в
+Термины (консольная сборка клиента, игровая сборка, нативная MSVC-сборка) — в
 `max-brh-docs/development/build.md`, раздел «Термины (сборка и артефакты)».
 
 Собирается **headless**-вариант (`--no-default-features`: без `sdl*`, без
@@ -454,15 +454,15 @@ Horizon gRPC + ENet). Окно SDL3 и звук в этот бинарь не в
 
 ```powershell
 # Windows-хост: VS (MSVC + Windows SDK) и Rust 1.94.0 уже стоят
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
 # только собрать и проверить, без упаковки:
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -NoPackage
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1 -NoPackage
 # без данных игры (пропустить --help/--demo):
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -SkipSmoke
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1 -SkipSmoke
 ```
 
 Скрипт находит VS через `vswhere`, поднимает окружение `vcvars64.bat`, задаёт
-`CARGO_TARGET_DIR=<repo>\bin\target-headless` и выполняет (target по умолчанию —
+`CARGO_TARGET_DIR=<repo>\bin\target-console` и выполняет (target по умолчанию —
 нативный `x86_64-pc-windows-msvc`, без `--target`):
 
 ```sh
@@ -479,7 +479,7 @@ bin/release/max_app-<ver>-windows-x86_64.zip         архив каталога
 bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 ```
 
-- [x] **Нативная сборка MSVC (2026-11-21)**: `build-windows-headless.ps1` →
+- [x] **Нативная сборка MSVC (2026-11-21)**: `build-windows-console.ps1` →
       `bin/release/max_app-1.1.0-windows-x86_64/`; `max-brh.exe` **4 433 408 Б**,
       sha256 `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`;
       zip **1 807 530 Б**, sha256
@@ -490,10 +490,10 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
       `CARGO_CFG_TARGET_OS`, `tonic` подключён без `default-features`
       (`router,transport,codegen`; TLS — opt-in фича `tls`). _(2026-11-21)_
 - [x] Подсистема PE — **Console (Subsystem=3)**; проверка зашита в
-      `max-brh-cicd/scripts/build-windows-headless.ps1` (headless-сборка не
+      `max-brh-cicd/scripts/build-windows-console.ps1` (консольная сборка клиента не
       должна быть GUI, иначе `--help`/`--demo` теряют stdout в терминале/CI).
       _(2026-11-21)_
-- [x] Импорты (`dumpbin /dependents`, `build/msvc-headless/imports.txt`):
+- [x] Импорты (`dumpbin /dependents`, `build/msvc-console/imports.txt`):
       `KERNEL32`, `ws2_32`, `WINMM`, `ntdll`, `bcryptprimitives`,
       `api-ms-win-core-synch-l1-2-0`, `api-ms-win-crt-*`, `VCRUNTIME140.dll` —
       mingw-рантайма (`libgcc_s_seh-1.dll`/`libwinpthread-1.dll`) и `SDL3.dll`
@@ -504,7 +504,7 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
       — **нативно на хосте** (не wine): справка печатается (`ИСПОЛЬЗОВАНИЕ`,
       rc=0), demo даёт `ticks=1 … units=312 state_digest=0x733D
       state_checksum=0x408A`, rc=0; лог —
-      `build/smoke-logs/windows-msvc-headless-smoke.log`. _(2026-11-21)_
+      `build/smoke-logs/windows-msvc-console-smoke.log`. _(2026-11-21)_
 - [x] `bin/release/max_app-1.1.0-windows-x86_64/` содержит `max-brh.exe`,
       `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`; рядом
       `.zip` + `.zip.sha256`; хеши в `SHA256SUMS` совпадают с файлами.
@@ -522,7 +522,7 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 > в `CHANGELOG.md` и `max-brh-docs/analysis/visual-1to1-status.md`; скрипт
 > `max-brh-cicd/scripts/build-windows.sh` удалён, артефакты пересобраны нативно.
 
-### 6.1. UI-сборка: окно SDL3 и звук (Windows-хост)
+### 6.1. игровая сборка: окно SDL3 и звук (Windows-хост)
 
 Скрипт: `max-brh-cicd/scripts/build-windows-ui.ps1` (PowerShell 5.1+, без прав
 администратора). Он сам находит VS через `vswhere`, vcpkg с `sdl3:x64-windows`,
@@ -542,7 +542,7 @@ powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.p
 `SDL3.dll`, `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`) и
 `bin/release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256`. Сборка идёт в
 `bin/target/` (`CARGO_TARGET_DIR`), чтобы не смешиваться с Linux/Docker-артефактами
-`max-brh/target/`; headless-сборка §6 использует `bin/target-headless/`.
+`max-brh/target/`; консольная сборка клиента §6 использует `bin/target-console/`.
 
 > Примечание: с появлением default `sdl-from-source` скрипт и ручная команда
 > собирают с `--no-default-features` — иначе к `sdl-vcpkg` добавилась бы
@@ -697,9 +697,9 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 - [ ] `CHANGELOG.md`: 1.0.0, список возможностей и ограничений, ссылка на
       `LICENSE`.
 - [ ] `max-brh-docs/release-checklist.md` (этот файл) актуален: команды и пути
-      совпадают с `release.sh`/`ci.sh`/`max-brh-cicd/scripts/build-windows-headless.ps1`.
+      совпадают с `release.sh`/`ci.sh`/`max-brh-cicd/scripts/build-windows-console.ps1`.
 - [ ] `max-brh-cicd/scripts/README.md` описывает релизные скрипты
-      (`build-windows-headless.ps1` — нативная Windows-сборка на MSVC,
+      (`build-windows-console.ps1` — нативная Windows-сборка на MSVC,
       `build-windows-ui.ps1`, `live-smoke.sh`) и обойдённые блокеры
       (ENet-платформа в `build.rs`, TLS-фича `tonic`).
 - [ ] `LICENSE` (MIT) присутствует в корне и в архиве релиза; в `README.txt`
@@ -729,13 +729,13 @@ git push origin v1.0.0              # публикация тега (по реш
 
 - [ ] `bin/release/max_app-1.0.0-linux-x86_64.tar.gz` + `SHA256SUMS` сохранены.
 - [ ] `bin/release/max_app-1.0.0-windows-x86_64.zip` + `.zip.sha256` сохранены
-      (продукт `max-brh-cicd/scripts/build-windows-headless.ps1`); headless-каталог
+      (продукт `max-brh-cicd/scripts/build-windows-console.ps1`); headless-каталог
       `bin/release/max_app-1.0.0-windows-x86_64/` тоже несёт свой `SHA256SUMS`.
 - [ ] `bin/release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256` сохранены
       (продукт `max-brh-cicd/scripts/build-windows-ui.ps1`; в архиве `max-brh.exe` +
       `SDL3.dll`).
 - [ ] Логи гейтов: `max-brh/target/cargo-test.log` (если писали),
-      `build/smoke-logs/*.log`, `build/smoke-logs/windows-msvc-headless-smoke.log`,
+      `build/smoke-logs/*.log`, `build/smoke-logs/windows-msvc-console-smoke.log`,
       скриншоты M4 — приложены к релизной записи.
 - [ ] Артефакты **не** закоммичены в git (`release/` в `.gitignore`).
 
@@ -759,7 +759,7 @@ git push origin v1.0.0              # публикация тега (по реш
 ```sh
 bash ci.sh                                  # 2.1 + 2.4
 bash max-brh-cicd/scripts/live-smoke.sh 10         # §3
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1  # §6, Windows headless-сборка: прогон сборки + --help/--demo + zip
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1  # §6, Windows консольная сборка клиента: прогон сборки + --help/--demo + zip
 bash release.sh --dry-run                   # §5, проверка плана
 bash release.sh                             # §5, артефакты
 ```
@@ -775,16 +775,16 @@ bash release.sh                             # §5, артефакты
 | Live smoke 2×10 | 2026-11-15 | `MSYS_NO_PATHCONV=1 bash max-brh-cicd/scripts/live-smoke.sh 10` без `--handshake-patches`, два прогона | `GAME_ID=87b1c4dc-…` (повтор `83621ef3-…`); A/B: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, fallback подтверждён | `build/live-smoke-mnet-final.log`, `build/live-smoke-mnet.log`, `build/smoke-logs/a.log`/`b.log` |
 | M4 вручную | | | | |
 | Linux-сборка | | | | |
-| Windows headless-сборка (MSVC) | 2026-11-21 | `powershell -File max-brh-cicd\scripts\build-windows-headless.ps1` (MSVC 14.x + Windows SDK, Rust 1.94.0 `x86_64-pc-windows-msvc`, без Docker/mingw/wine) | PE32+ x64, 4 433 408 Б, sha256 `2a36cd6e…`; `--help` и `--demo SAVE1.CAM --turns 1` нативно — rc=0, `ticks=1 … state_digest=0x733D`; zip 1 807 530 Б + `.zip.sha256` | `bin/release/max_app-1.1.0-windows-x86_64.zip`, `build/smoke-logs/windows-msvc-headless-smoke.log` |
-| Windows headless-сборка (mingw-кросс — история) | 2026-11-15 | `bash max-brh-cicd/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0; скрипт удалён 2026-11-21) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `bin/release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows UI-сборка (SDL3 + звук, нативная MSVC) | 2026-11-15 | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-brh.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `bin/release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
+| Windows консольная сборка клиента (MSVC) | 2026-11-21 | `powershell -File max-brh-cicd\scripts\build-windows-console.ps1` (MSVC 14.x + Windows SDK, Rust 1.94.0 `x86_64-pc-windows-msvc`, без Docker/mingw/wine) | PE32+ x64, 4 433 408 Б, sha256 `2a36cd6e…`; `--help` и `--demo SAVE1.CAM --turns 1` нативно — rc=0, `ticks=1 … state_digest=0x733D`; zip 1 807 530 Б + `.zip.sha256` | `bin/release/max_app-1.1.0-windows-x86_64.zip`, `build/smoke-logs/windows-msvc-console-smoke.log` |
+| Windows консольная сборка клиента (mingw-кросс — история) | 2026-11-15 | `bash max-brh-cicd/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0; скрипт удалён 2026-11-21) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `bin/release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
+| Windows игровая сборка (SDL3 + звук, нативная MSVC) | 2026-11-15 | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-brh.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `bin/release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
 | Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max-brh.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
 | Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
 | Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-brh/tools/font_vectors/render.txt` |
 | Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max-brh.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (576 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max-brh.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
-| Windows UI-сборка (SDL3 + звук) | | | | |
+| Windows игровая сборка (SDL3 + звук) | | | | |
 | Тег v1.0.0 | | | | |
 
 ## Приложение C. M-SP (локальная партия против ИИ)

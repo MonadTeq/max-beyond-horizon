@@ -1,7 +1,7 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
 .SYNOPSIS
-  Нативная Windows-сборка headless-бинаря M.A.X. Rust-клиента (max_app) на MSVC,
+  Нативная Windows-сборка консольного бинаря клиента M.A.X. Rust-клиента (max_app) на MSVC,
   без Docker и без mingw.
 
 .DESCRIPTION
@@ -20,11 +20,11 @@
     cargo build --release --locked -p max_app --no-default-features
 
   Сборка не засоряет max-brh/target (там живут Linux/Docker-артефакты):
-  используется CARGO_TARGET_DIR=<repo>\bin\target-headless (как у
+  используется CARGO_TARGET_DIR=<repo>\bin\target-console (как у
   build-windows-ui.ps1, который собирает в <repo>\bin\target).
 
   Проверки после сборки (нативно, без wine):
-    * PE-заголовок: MZ, PE32+ x64, Subsystem=3 (Console) — headless-бинарь
+    * PE-заголовок: MZ, PE32+ x64, Subsystem=3 (Console) — консольный бинарь клиента
       обязан быть консольным, иначе --help/--demo не печатают в терминал/CI;
     * список импортируемых DLL (dumpbin /dependents): системные + vcruntime140,
       никакого mingw-рантайма (libgcc_s_*/libwinpthread-1);
@@ -43,7 +43,7 @@
   Каталог артефактов. По умолчанию <repo>\bin\release.
 
 .PARAMETER TargetDir
-  CARGO_TARGET_DIR для сборки. По умолчанию <repo>\bin\target-headless.
+  CARGO_TARGET_DIR для сборки. По умолчанию <repo>\bin\target-console.
 
 .PARAMETER NoPackage
   Только собрать и проверить (--help/--demo), не упаковывать.
@@ -53,10 +53,10 @@
   Нужен на хосте без данных оригинальной игры.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
+  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1 -NoPackage
+  powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1 -NoPackage
 #>
 param(
     [string]$Out = "",
@@ -68,7 +68,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Fail([string]$message) {
-    Write-Host "build-windows-headless: $message" -ForegroundColor Red
+    Write-Host "build-windows-console: $message" -ForegroundColor Red
     exit 1
 }
 
@@ -122,7 +122,7 @@ function Get-PeInfo([string]$file) {
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Out) { $Out = Join-Path $root "bin\release" }
 elseif (-not [System.IO.Path]::IsPathRooted($Out)) { $Out = Join-Path (Get-Location).Path $Out }
-if (-not $TargetDir) { $TargetDir = Join-Path $root "bin\target-headless" }
+if (-not $TargetDir) { $TargetDir = Join-Path $root "bin\target-console" }
 elseif (-not [System.IO.Path]::IsPathRooted($TargetDir)) { $TargetDir = Join-Path (Get-Location).Path $TargetDir }
 
 # --- версия workspace -------------------------------------------------------
@@ -157,18 +157,18 @@ if (-not (Test-Path $cargo)) {
 $cargoBin = Split-Path -Parent $cargo
 
 $exePath = Join-Path $TargetDir "release\max-brh.exe"
-$workDir = Join-Path $root "build\msvc-headless"
+$workDir = Join-Path $root "build\msvc-console"
 $buildLog = Join-Path $workDir "build.log"
 $importsFile = Join-Path $workDir "imports.txt"
 $helpFile = Join-Path $workDir "help.txt"
 $demoLog = Join-Path $workDir "demo.log"
-$smokeLog = Join-Path $root "build\smoke-logs\windows-msvc-headless-smoke.log"
+$smokeLog = Join-Path $root "build\smoke-logs\windows-msvc-console-smoke.log"
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $smokeLog) | Out-Null
 
 $buildCmd = "cargo build --release --locked -p max_app --no-default-features"
 
-Write-Host "build-windows-headless: M.A.X. Rust client $version → Windows x86_64 (headless, MSVC)"
+Write-Host "build-windows-console: M.A.X. Rust client $version → Windows x86_64 (консольная сборка, MSVC)"
 Write-Host "  Visual Studio: $vsPath"
 Write-Host "  cargo:         $cargo"
 Write-Host "  target:        x86_64-pc-windows-msvc (native)"
@@ -181,7 +181,7 @@ Write-Host "  архив:         $zip"
 # ENet 1.3.18 (cc → cl.exe). Переменные окружения ставим через .bat: в cmd
 # `set VAR=value && ...` захватывает пробел в значение, поэтому только
 # `set "VAR=value"` (та же грабля, что в build-windows-ui.ps1).
-$bat = Join-Path $root "build\msvc-headless-build.bat"
+$bat = Join-Path $root "build\msvc-console-build.bat"
 $batLines = @(
     '@echo off',
     "call `"$vcvars`" >nul",
@@ -233,10 +233,10 @@ Write-Host ("PE: {0} — {1} {2}, Subsystem={3} ({4})" -f $exePath, $pe.Magic, $
 if ($pe.Machine -ne "x64") { Fail "ожидался PE x64, получено $($pe.Machine)" }
 if ($pe.Magic -ne "PE32+") { Fail "ожидался PE32+, получено $($pe.Magic)" }
 if ($pe.Subsystem -ne 3) {
-    # Подсистема windows включается только feature sdl (main.rs), а headless
-    # собирается с --no-default-features — иначе --help/--demo не печатают в
-    # терминал/CI.
-    Fail "headless-бинарь должен быть Console (Subsystem=3), получено $($pe.Subsystem) ($peName)"
+    # Подсистема windows включается только feature sdl (main.rs), а консольная
+    # сборка клиента собирается с --no-default-features — иначе --help/--demo
+    # не печатают в терминал/CI.
+    Fail "консольный бинарь клиента должен быть Console (Subsystem=3), получено $($pe.Subsystem) ($peName)"
 }
 
 $dlls = @()
@@ -301,7 +301,7 @@ if ($SkipSmoke) {
 
     # Единый лог прогона (заменяет build/smoke-logs/windows-wine-smoke.log).
     $smokeLines = @(
-        "== M.A.X. Rust client $version — нативный MSVC headless ==",
+        "== M.A.X. Rust client $version — нативный MSVC (консольная сборка клиента) ==",
         "exe:    $exePath",
         "sha256: $exeHash",
         "target: x86_64-pc-windows-msvc (native, без wine/mingw)",
@@ -337,7 +337,7 @@ Copy-Item (Join-Path $root "LICENSE") $bundle
 Copy-Item (Join-Path $root "CHANGELOG.md") $bundle
 
 $readme = @"
-M.A.X. Rust client $version — Windows x86_64 (headless, native MSVC build)
+M.A.X. Rust client $version — Windows x86_64 (консольная сборка клиента, native MSVC build)
 ==========================================================================
 
 Собран нативно на Windows-хосте тулчейном MSVC (Visual Studio Build Tools,
@@ -348,16 +348,16 @@ target: x86_64-pc-windows-msvc
 Клиент не содержит данных игры: нужны MAX.RES, PATCHES.RES, COLOR.PAL,
 *.WRL и *.SPW из оригинальной M.A.X. (собственность Interplay Productions).
 
-Запуск (headless)
+Запуск (консольная сборка)
 -----------------
   max-brh.exe --help
   max-brh.exe --demo SAVE1.CAM --turns 5          # прогон сейва → digest
   max-brh.exe --new-game --world 12 --seed 42 --out frame.ppm
   max-brh.exe --connect HOST:8082 --join GAME_ID  # Horizon gRPC + ENet, без окна
 
-Запуск без флагов (GUI) в этой headless-сборке недоступен: клиент скажет,
+Запуск без флагов (GUI) в этой консольной сборке недоступен: клиент скажет,
 что нужна сборка с feature sdl (она входит в default-features max_app), и
-предложит headless-флаги выше. Интерактивная сборка — отдельный артефакт
+предложит консольные флаги выше. Интерактивная сборка — отдельный артефакт
 max_app-$version-windows-x86_64-ui.zip (build-windows-ui.ps1, SDL3 + звук).
 
 Подсистема этого exe — Console (Subsystem=3), поэтому --help/--demo/--new-game
@@ -385,7 +385,7 @@ max_app-$version-windows-x86_64-ui.zip (build-windows-ui.ps1, SDL3 + звук).
 ------------
   README.txt (этот файл), CHANGELOG.md, LICENSE.
   Полный чек-лист релиза — max-brh-docs/development/release-checklist.md в
-  репозитории (§6 — Windows x64: headless нативно на MSVC и UI-сборка).
+  репозитории (§6 — Windows x64: консольная сборка нативно на MSVC и игровая сборка).
 
 Лицензия
 --------

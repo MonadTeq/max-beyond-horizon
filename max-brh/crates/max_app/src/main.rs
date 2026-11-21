@@ -15,7 +15,7 @@
 //! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
 
 // Windows: GUI-сборки (`--features sdl*`) — подсистема `windows`, поэтому
-// двойной клик по `max-brh.exe` не открывает консоль. Headless-сборка без
+// двойной клик по `max-brh.exe` не открывает консоль. Консольная сборка клиента без
 // `sdl` остаётся console: `--demo`/`--new-game`/`--connect` печатают в stdout
 // терминала и CI. `sdl-vcpkg` и `sdl-from-source` включают `sdl` (см.
 // Cargo.toml), поэтому одного cfg достаточно для всех оконных фич.
@@ -1196,7 +1196,7 @@ fn run_ui(_cli: &Cli) -> Result<()> {
     bail!(
         "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl \
          (входит в default-features): cargo run -p max_app; \
-         headless-сборка — с --no-default-features"
+         консольная сборка клиента — с --no-default-features"
     )
 }
 

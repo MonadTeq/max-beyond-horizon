@@ -6,8 +6,8 @@
 
 | Термин | Что значит |
 |---|---|
-| **headless-сборка** | артефакт `max_app-<ver>-windows-x86_64` (+ `.zip`, `.zip.sha256`): клиент без окна и звука (`--no-default-features`, без фич `sdl*`/`sound`), PE **Subsystem=3** (Console); режимы `--demo`, `--new-game`, `--connect` |
-| **UI-сборка** | артефакт `max_app-<ver>-windows-x86_64-ui` (+ `.zip`, `.zip.sha256`): клиент с окном SDL3 и звуком (фичи `sdl-vcpkg,sound`), PE **Subsystem=2** (Windows GUI) |
+| **консольная сборка клиента** | артефакт `max_app-<ver>-windows-x86_64` (+ `.zip`, `.zip.sha256`): клиент без окна и звука (`--no-default-features`, без фич `sdl*`/`sound`), PE **Subsystem=3** (Console); режимы `--demo`, `--new-game`, `--connect` |
+| **игровая сборка** | артефакт `max_app-<ver>-windows-x86_64-ui` (+ `.zip`, `.zip.sha256`): клиент с окном SDL3 и звуком (фичи `sdl-vcpkg,sound`), PE **Subsystem=2** (Windows GUI) |
 | **нативная MSVC-сборка** | сборка на Windows-хосте тулчейном MSVC (`vswhere` → `vcvars64`), target `x86_64-pc-windows-msvc`; Docker, mingw-w64 и wine не участвуют |
 | **кросс-сборка** | сборка под чужую платформу; в актуальных инструкциях не используется — только в исторических записях (`x86_64-pc-windows-gnu`, mingw) и для Linux/Docker-сборок |
 | **бинарь** | файл `max-brh.exe` (`max-brh` на Linux); каталог и архив — «сборка»/«артефакт», процесс — «сборка» |
@@ -62,15 +62,15 @@ cargo build --release -p max_app --features sdl-vcpkg,sound --no-default-feature
 cargo build --release -p max_app --no-default-features       # headless
 ```
 
-### Windows UI-сборка (готовый путь)
+### Windows игровая сборка (готовый путь)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
 ```
 
-### Windows headless-сборка (MSVC, нативно)
+### Windows консольная сборка клиента (MSVC, нативно)
 ```powershell
-powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe
 ```
 Нативная MSVC-сборка (`x86_64-pc-windows-msvc`), без Docker и mingw. Скрипт
@@ -168,7 +168,7 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 Автоматический smoke: `bash max-brh-cicd/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
 ### Headless-режимы (без окна)
-Headless-сборка собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
+Консольная сборка клиента собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
 при сборке, ни в рантайме:
 ```sh
 cd max-brh
@@ -176,7 +176,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
-Готовая headless-сборка (Windows, MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
+Готовая консольная сборка клиента (Windows, MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через

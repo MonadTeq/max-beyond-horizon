@@ -141,7 +141,7 @@
   `barrier_timeouts=0`, `state_checksum=0x34D5` у всех. `MAX_LOG` включает
   debug-логи барьеров (ограничение `tracing-subscriber` без `env-filter`).
 - [ ] Паритет Rust+C++-клиентов в одной сессии (бит-в-бит) — тест с C++-клиентом (headless-пара).
-  **Частично / блокер:** headless-сборка `src/` умеет только `--server`
+  **Частично / блокер:** консольная сборка клиента `src/` умеет только `--server`
   (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`, ветки `--client`/`--connect`
   нет); GUI-клиент требует X11 и ручного меню. `max-brh-cicd/scripts/live-smoke-mixed.sh`:
   **PARTIAL PASS** — Rust×2, CRC `0x7035`, C++-сервер (эталонный

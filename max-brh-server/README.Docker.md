@@ -107,7 +107,7 @@ docker compose down
 | `HORIZON_ANNOUNCE_HOST` | `127.0.0.1` | host, который `JoinGame` отдаёт клиентам (`[server.grpc].announce_host`) |
 | `HORIZON_WS_BIND` | `0.0.0.0:8080` | bind WS |
 | `HORIZON_GRPC_BIND` | `0.0.0.0:8082` | bind gRPC |
-| `MAX_EXECUTABLE` | `/opt/max/template/max-port` | headless-бинарь |
+| `MAX_EXECUTABLE` | `/opt/max/template/max-port` | консольный бинарь клиента |
 | `MAX_TEMPLATE_DIR` | `/opt/max/template` | шаблон сессии (`build/linux-server-template`) |
 | `MAX_SESSION_ROOT` | `/var/lib/horizon/sessions` | рабочие каталоги сессий |
 | `MAX_GAME_DATA` | `/opt/max/game-data` | каталог `MAX.RES` (без `PATCHES.RES`) |

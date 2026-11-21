@@ -64,14 +64,14 @@ M.A.X. Port используется как **оракул** (каноничес
 
 ```sh
 bash ci.sh                                   # тесты + QA + golden (Docker)
-powershell -File max-brh-cicd\scripts\build-windows-headless.ps1   # Windows headless-сборка (нативный MSVC, без Docker/mingw)
-powershell -File max-brh-cicd\scripts\build-windows-ui.ps1   # Windows UI-сборка (MSVC+vcpkg)
+powershell -File max-brh-cicd\scripts\build-windows-console.ps1   # Windows консольная сборка клиента (нативный MSVC, без Docker/mingw)
+powershell -File max-brh-cicd\scripts\build-windows-ui.ps1   # Windows игровая сборка (MSVC+vcpkg)
 bash release.sh                              # Linux-сборка + архив
 docker compose up -d --build                 # сервер Horizon
 ```
 
 Docker для Windows-сборок не нужен: обе делаются нативной MSVC-сборкой на хосте
-(headless-сборка — `bin\release\max_app-1.1.0-windows-x86_64.zip`, UI-сборка —
+(консольная сборка клиента — `bin\release\max_app-1.1.0-windows-x86_64.zip`, игровая сборка —
 `…-windows-x86_64-ui.zip`).
 
 Необходимые инструменты и библиотеки — там же (Rust 1.94, MSVC+vcpkg/SDL3, Docker,
@@ -95,10 +95,10 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```
 
-UI-сборка (`bin\release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
+игровая сборка (`bin\release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
 Windows (GUI): двойной клик открывает окно без консоли, а `--help`/`--demo` у
 неё видны только при перенаправлении (`max-brh.exe --help > help.txt`).
-Вывод для терминала/CI даёт headless-сборка
+Вывод для терминала/CI даёт консольная сборка клиента
 `bin\release\max_app-*-windows-x86_64.zip` (подсистема Console).
 
 Подробно: [max-brh-docs/development/build.md](max-brh-docs/development/build.md) (раздел «Запуск»).

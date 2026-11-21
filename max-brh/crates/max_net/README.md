@@ -79,7 +79,7 @@ cargo build -p max_app --features tls      # max_net/tls → tonic/tls-ring + tl
 правило нужно для любого кросс-таргета.
 
 Сборка: `powershell -ExecutionPolicy Bypass -File
-max-brh-cicd\scripts\build-windows-headless.ps1` (нативный MSVC, headless:
+max-brh-cicd\scripts\build-windows-console.ps1` (нативный MSVC, headless:
 `--no-default-features`, без `sdl*`/`sound`), см. `max-brh-cicd/scripts/README.md`.
 
 ## Проверка

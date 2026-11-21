@@ -15,7 +15,7 @@
 # Все тесты + QA + сборка (Docker):
 bash ci.sh
 
-# Собрать Windows UI-бинарь (хост: MSVC + vcpkg SDL3):
+# Собрать Windows игровой бинарь (хост: MSVC + vcpkg SDL3):
 powershell -File max-brh-cicd/scripts/build-windows-ui.ps1
 
 # Собрать Linux-бинарь:
