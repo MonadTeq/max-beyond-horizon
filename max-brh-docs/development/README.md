@@ -10,6 +10,8 @@
 | [PLAN-host-mode.md](PLAN-host-mode.md) | Сетевой режим хоста (P2P) — цель 2 |
 | [agent-programmer.md](agent-programmer.md) | Руководство агента-программиста (правила и порядок работы) |
 | [rust-programming-rules.md](rust-programming-rules.md) | Канонические правила программирования на Rust (заполняются владельцем) |
+| [analyst-rules.md](analyst-rules.md) | Правила аналитика (заполняются владельцем) |
+| [architect-rules.md](architect-rules.md) | Правила архитектора (заполняются владельцем) |
 | [release-checklist.md](release-checklist.md) | Чек-лист релиза со свидетельствами |
 
 ## Быстрый старт
