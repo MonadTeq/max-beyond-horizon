@@ -53,7 +53,7 @@
 | Наземная мина | `LandMine` | `LANDMINE` | — |
 | Морская мина | `SeaMine` | `SEAMINE` | — |
 | Конструктор | `Constructor` | `CONSTRCT` | — |
-| Разведчик (парящий) | `Scout` | `SCOUT` | — |
+| Разведчик (амфибийный) | `Scout` | `SCOUT` | `MOBILE_SEA_UNIT\|MOBILE_LAND_UNIT` |
 | Танк | `Tank` | `TANK` | — |
 | Штурмовое орудие | `AssaultGun` | `ARTILLRY` | — |
 | Ракетная установка | `RocketLauncher` | `ROCKTLCH` | — |
