@@ -45,7 +45,21 @@
 
 ## 4. Валидация изменений
 
-Каждое изменение кода проходит полный гейт, прежде чем считаться готовым:
+**Правило тулчейна (Windows-хост).** Рабочая машина — Windows с нативным
+`rustup`/MSVC. Девелоперские проверки выполняются **нативно** (MSVC), без Docker:
+
+```powershell
+# Быстрая проверка логики (headless, без SDL3):
+cargo check --no-default-features
+cargo test --no-default-features
+```
+
+**Docker используется только** для полного CI-гейта (`ci.sh`, Linux + SDL/X11-
+зависимости) и Linux-сборок (`release.sh`), а также когда нужна эталонная
+«зелёная» сверка default-фич (SDL3 из исходников). Быстрые dev-прогоны в Docker
+гонять не требуется.
+
+Полный гейт, который делает изменение «готовым»:
 
 ```sh
 bash ci.sh   # cargo check/test (default/sound/headless), Horizon, QA, golden, soak
@@ -54,7 +68,7 @@ bash ci.sh   # cargo check/test (default/sound/headless), Horizon, QA, golden, s
 Обязательные проверки:
 
 - `cargo check`/`cargo test` в трёх конфигурациях (default, `--features sound`,
-  `--no-default-features`);
+  `--no-default-features`) — финально через `ci.sh`;
 - QA-сценарии `max-brh-qa/scripts/*.qa` (падение любого assert — ошибка);
 - golden-сверка (`qa_golden_check`) — дрейф 0 (порог 1 %);
 - soak (100/120 ходов);
