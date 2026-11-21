@@ -1,7 +1,7 @@
 # edge-cases.qa — TC-1106/1111/1112: спам кликов, юникод, повторный старт.
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
+#       ../max-brh-qa/scripts/edge-cases.qa qa-out/edge-cases
 #
 # Проверяется (слой 2, тот же путь ввода, что у мыши/клавиатуры):
 # * TC-1106: 50 кликов подряд в главном меню (пустые области, кнопки не

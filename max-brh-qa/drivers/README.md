@@ -59,11 +59,11 @@ exit
 ```sh
 # из max-rust/; GUI — default: SDL3 3.4.20 собирается из исходников (cmake)
 cargo run -p max_app -- \
-  --record ../max-rust-qa/scripts/my-run.qa
+  --record ../max-brh-qa/scripts/my-run.qa
 
 # системный SDL3 вместо сборки из исходников (явные фичи + --no-default-features)
 cargo run -p max_app --no-default-features --features sdl -- \
-  --record ../max-rust-qa/scripts/my-run.qa
+  --record ../max-brh-qa/scripts/my-run.qa
 ```
 
 При старте печатается фактический путь (`RECORD: …`), при выходе —
@@ -161,7 +161,7 @@ shot game-turn2
    ```sh
    cd max-rust
    cargo run -p max_app --no-default-features --example qa_run -- \
-     ../max-rust-qa/scripts/my-run.qa ../max-rust-qa/out/my-run
+     ../max-brh-qa/scripts/my-run.qa ../max-brh-qa/out/my-run
    ```
    Упавший `assert` печатает фактическое значение и номер строки (`log.txt`).
 3. Если кадр должен стать эталоном — добавьте `shot` в `visual-screens.qa`

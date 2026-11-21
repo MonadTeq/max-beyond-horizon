@@ -49,7 +49,7 @@
   `production` (единая таблица). Тест:
   `max_core/tests/ai_p6.rs::ai_completes_a_build_queue_through_production`.
 - Критерий: скриптом строится завод → заказан юнит → юнит появляется через N ходов; ИИ строит флот; партия 30+ ходов с производством без расхождений (детерминизм).
-  Завод → юнит: `max-rust-qa/scripts/production.qa` (TRAINHAL за 10 ходов,
+  Завод → юнит: `max-brh-qa/scripts/production.qa` (TRAINHAL за 10 ходов,
   INFANTRY за 2). ИИ использует флот, только если `TaskObtainUnits` запросит
   морской юнит (зависит от стратегии ИИ — отдельная задача); детерминизм
   очереди проверен (`tests/production.rs::two_identical_production_runs_have_identical_state`).
@@ -92,7 +92,7 @@
 
 ### P4 — Стабильность и производительность
 - [x] Soak: 100+ ходов ИИ×ИИ и человек+ИИ через qa-драйвер — без паник/утечек (замер памяти).
-  `max-rust-qa/scripts/soak-100.qa`: Options (Clueless, No Limit, Turn Based,
+  `max-brh-qa/scripts/soak-100.qa`: Options (Clueless, No Limit, Turn Based,
   Duration 200) → 100 × `end_turn` (человек RED + компьютер GREEN), `assert
   turn=21/41/61/81/101`, `shot`/`mem` каждые 20 ходов, `save_v70` на 100-м.
   **PASS**: 12 208 кадров, V70-сейв 157 921 байт; RSS 54 696 → 60 944 КиБ
@@ -119,7 +119,7 @@
   визуальные позиции не входят в CRC/снапшот) — порядок и арифметика
   симуляции не изменены.
 - [x] Краевые: спам кликов, alt-tab, битые файлы, юникод — по TC-11xx.
-  `max-rust-qa/scripts/edge-cases.qa` → **PASS**: 50 кликов по пустым областям
+  `max-brh-qa/scripts/edge-cases.qa` → **PASS**: 50 кликов по пустым областям
   главного меню + 50 по карте, не-ASCII `type` в чате/имени (символы
   отклоняются, паник нет), выход → New Game → Cancel → полный второй старт до
   `turn=2`; TC-1112 — `tests/app.rs::app_can_be_created_twice_and_start_exit_twice`
@@ -131,7 +131,7 @@
   `ci.sh` — стадия **4/4 soak** (`soak-100.qa` с `MAX_TICK_PROFILE=1` +
   `soak_headless --turns 120`); `.github/workflows/ci.yml` — job `soak` с
   `timeout-minutes: 45` (push/ручной запуск, не PR). Метрики и пороги —
-  `release-checklist.md` §2.9, `max-rust-qa/scripts/README.md` §P4.
+  `release-checklist.md` §2.9, `max-brh-qa/scripts/README.md` §P4.
 
 ### P5 — Сетевая зрелость
 - [x] 3+ клиента в сессии (релей всем, барьеры по всем командам) — live-smoke с 3 клиентами.
@@ -368,7 +368,7 @@
   `assert resource-icons`, `assert survey-overlay`, `assert unit-selector`,
   `assert build-center=yes`; golden переснят (0 дрейфа после повторной сверки).
 - [x] Документация: CHANGELOG, `visual-1to1-status.md` §32, этот план,
-  `max-rust-qa/scripts/README.md` (новые assert-проверки).
+  `max-brh-qa/scripts/README.md` (новые assert-проверки).
 
 ### P11 — Turn Based: конец хода ИИ и боевые анимации (2026-11-20)
 

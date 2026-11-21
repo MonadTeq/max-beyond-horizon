@@ -1,7 +1,7 @@
 # soak-100.qa — soak-партия P4: 100 ходов «человек + компьютер» (слой 2 QA).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+#       ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100
 #
 # Что проверяется:
 # * длинная партия (100+ ходов) без паник: каждый ход закрывается кнопкой

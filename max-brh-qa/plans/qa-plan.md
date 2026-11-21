@@ -6,7 +6,7 @@
 
 **Статус:** слои 1–4 и запись сценариев (2.5) реализованы, слой 5 —
 ручной/полуавтоматический (Windows). Свидетельства и команды:
-`max-rust-qa/scripts/README.md`, `build/qa-*.log`.
+`max-brh-qa/scripts/README.md`, `build/qa-*.log`.
 
 ## Слои тестирования (пирамида)
 
@@ -43,7 +43,7 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
     `setup done|cancel|random`, `players <slot> human|computer|none`,
     `select X Y` / `select unit N`, `move X Y` / `move grid X Y` / `move near`,
     `end_turn`.
-- Покрытие сценариями (`max-rust-qa/scripts/*.qa`, все — PASS):
+- Покрытие сценариями (`max-brh-qa/scripts/*.qa`, все — PASS):
   1. `sp-full.qa` — New Game → Options → Planet → Players (RED человек,
      GREEN компьютер) → мобилизация (`mobilize buy` ×2 + Done) → выбор точки
      высадки (`landing grid 30 22` + Done; точка не совпадает со стартовой
@@ -129,7 +129,7 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
 cd max-rust
 # GUI — default (SDL3 из исходников через CMake)
 cargo run -p max_app -- \
-  --ui --record ../max-rust-qa/scripts/my-run.qa
+  --ui --record ../max-brh-qa/scripts/my-run.qa
 ```
 
 - Старт — при запуске (MainMenu), финал — при выходе; файл пишется построчно
@@ -150,9 +150,9 @@ cargo run -p max_app -- \
 
 ## Golden-кадры (слой 3)
 
-- Эталонные кадры экранов — в `max-rust-qa/golden/*.png` (13 кадров, ~1.4 МиБ;
+- Эталонные кадры экранов — в `max-brh-qa/golden/*.png` (13 кадров, ~1.4 МиБ;
   индексированный PNG при ≤256 цветах), генерируются из `visual-screens.qa`.
-- Сверка: `cargo run -p max_app --no-default-features --example qa_golden_check -- <out> ../max-rust-qa/golden` —
+- Сверка: `cargo run -p max_app --no-default-features --example qa_golden_check -- <out> ../max-brh-qa/golden` —
   попиксельный diff с порогом: пиксель изменён при `max|Δканал| > 30`, кадр
   «дрейфнул» при > 1 % таких пикселей; превышение → exit 1, список файлов и
   `diff-*.png` (белый фон, красные — расхождения). `--update` перезаписывает
@@ -185,8 +185,8 @@ cargo run -p max_app -- \
 2. Ручной оконный прогон: `powershell -File build/scripts/ui-test-sp.ps1` (реальный
    бинарь, мышь, скриншоты) — перед релизом.
 3. Живой smoke: `bash build/scripts/live-smoke.sh 10`.
-4. Разбор QA-падения: `max-rust-qa/out/<сценарий>/log.txt` + `diff-*.png`;
-   формат и перегенерация эталонов — `max-rust-qa/scripts/README.md`.
+4. Разбор QA-падения: `max-brh-qa/out/<сценарий>/log.txt` + `diff-*.png`;
+   формат и перегенерация эталонов — `max-brh-qa/scripts/README.md`.
 
 ## Метрики готовности релиза
 

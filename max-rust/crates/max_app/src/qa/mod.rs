@@ -1,4 +1,4 @@
-//! Слои 2–4 QA-стратегии (`max-rust-qa/plans/qa-plan.md`): скриптовый
+//! Слои 2–4 QA-стратегии (`max-brh-qa/plans/qa-plan.md`): скриптовый
 //! UI-драйвер, запись ручной игры и golden-кадры — без SDL, окна и сети.
 //!
 //! | Модуль | Что делает |
@@ -12,13 +12,13 @@
 //!
 //! ```sh
 //! # слой 2: прогнать сценарий, получить log.txt + PNG (SDL не нужен)
-//! cargo run -p max_app --no-default-features --example qa_run -- max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+//! cargo run -p max_app --no-default-features --example qa_run -- max-brh-qa/scripts/sp-full.qa qa-out/sp-full
 //!
 //! # слой 3: сверить кадры с эталонами (порог 1 % пикселей, Δ > 30)
-//! cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens max-rust-qa/golden
+//! cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens max-brh-qa/golden
 //!
 //! # слой 2.5: записать ручную игру в .qa (из max-rust/; GUI — default)
-//! cargo run -p max_app -- --ui --record ../max-rust-qa/scripts/my.qa
+//! cargo run -p max_app -- --ui --record ../max-brh-qa/scripts/my.qa
 //! ```
 //!
 //! Почему это возможно без окна: экраны и игровой цикл `max_app` — чистые

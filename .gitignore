@@ -97,12 +97,12 @@ build/game-data-smoke/
 !build/scripts/**
 
 # QA-артефакты слоя 2–3: логи, кадры прогонов, diff-*.png, *.mxs
-# (эталоны лежат в max-rust-qa/golden/ и коммитятся)
+# (эталоны лежат в max-brh-qa/golden/ и коммитятся)
 max-rust/qa-out/
 
 
 # QA work outputs
-max-rust-qa/out/
+max-brh-qa/out/
 
 # Пользовательские настройки (C++ settings.json): пишутся рядом с сейвами
 max-original/preferences.ini

@@ -1,7 +1,7 @@
 # allocate.qa — распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/allocate.qa qa-out/allocate
+#       ../max-brh-qa/scripts/allocate.qa qa-out/allocate
 #
 # Что проверяется (всё — теми же кликами/клавишами, что у игрока):
 # * пункт `allocate` меню команд шахты включён и открывает диалог
@@ -16,7 +16,7 @@
 #   растёт на добычу сырья за ход.
 #
 # Кадры `allocate-selected`, `allocate-menu`, `allocate-set` —
-# golden-эталоны (`max-rust-qa/golden/allocate`).
+# golden-эталоны (`max-brh-qa/golden/allocate`).
 
 # --- Главное меню → партия ------------------------------------------------
 assert screen=MainMenu

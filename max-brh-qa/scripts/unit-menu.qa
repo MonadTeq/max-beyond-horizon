@@ -1,7 +1,7 @@
 # unit-menu.qa — меню команд юнита (C++ `GameManager_PopupButtons`).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
+#       ../max-brh-qa/scripts/unit-menu.qa qa-out/unit-menu
 #
 # Что проверяется (всё — теми же кликами/клавишами, что у игрока):
 # * триггер 1:1 из C++: меню открывается **повторным кликом** по уже
@@ -18,7 +18,7 @@
 #   `BuildMenu`.
 #
 # Кадры `unit-menu-tank` и `unit-menu-builder` — golden-эталоны
-# (`max-rust-qa/golden/unit-menu`).
+# (`max-brh-qa/golden/unit-menu`).
 
 # --- Главное меню → партия ------------------------------------------------
 assert screen=MainMenu

@@ -1,7 +1,7 @@
 # research.qa — исследования (P6, слой 2 QA).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/research.qa qa-out/research
+#       ../max-brh-qa/scripts/research.qa qa-out/research
 #
 # Что проверяется:
 # * исследовательский центр строится конструктором (`BuildMenu`, 10 ходов);

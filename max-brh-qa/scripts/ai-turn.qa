@@ -5,7 +5,7 @@
 # высадка → **клик по End Turn** → кадры хода компьютера → возврат хода.
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/ai-turn.qa qa-out/ai-turn
+#       ../max-brh-qa/scripts/ai-turn.qa qa-out/ai-turn
 #
 # Что проверяется (C++ `GameManager_UpdateGui`, `game_manager.cpp:2437-2492`):
 # * на ходу человека кнопка End Turn **отжата** (`TEAM_TYPE_PLAYER` →

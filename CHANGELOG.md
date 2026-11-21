@@ -1383,7 +1383,7 @@
     координата сценария `(468,178)` попадает в клетку `Surveyor`'а;
     клик выделяет (`hud.selected`), RMB даёт предпросмотр + «Move: N steps» +
     зелёные пиксели в кадре; после тиков юнит стоит в целевой клетке.
-  - **QA.** Новый `max-rust-qa/scripts/move-input.qa` — весь путь **кликами**
+  - **QA.** Новый `max-brh-qa/scripts/move-input.qa` — весь путь **кликами**
     (меню → мобилизация → высадка `Enter` → клик по своему `Surveyor`'у →
     RMB → `End Turn` → позиция изменилась) с ассертами `selected`/`unit-pos`/
     `preview`/`log=Move:`/`log=Cancelled`; добавлен в `ci.sh` (стадия 3/4).
@@ -1672,7 +1672,7 @@
     `assert upgrade=`, `assert gold`, `assert research <тема>=`.
   - **Финальный QA-свип:** все 🟡/❌ `suite/*.md` закрыты — 161 ✅, 0 🟡,
     18 ⏭ not planned с причинами (спектатор, mixed Rust+C++, FLIC, ручной
-    WINDOW, сквозной урон); матрица покрытия в `max-rust-qa/suite/README.md`.
+    WINDOW, сквозной урон); матрица покрытия в `max-brh-qa/suite/README.md`.
   - **Релиз:** workspace `max-rust` → **1.1.0**; пересобраны артефакты Windows
     UI/headless и Linux, обновлены `SHA256SUMS`/`release-checklist.md`.
   - **Тесты:** +16 `max_core/tests/research.rs`, +5
@@ -1709,12 +1709,12 @@
     debug-логи для smoke без включения `env-filter`.
   - Документация: `protocol.md` §9/§11/§12, `barrier-flow.md` (P5-статус),
     `PLAN-production.md` P5, `build/scripts/README.md`,
-    `max-rust-qa/suite/05-network.md`, `release-checklist.md` §3.1.
+    `max-brh-qa/suite/05-network.md`, `release-checklist.md` §3.1.
   - **Тесты:** 759 passed / 0 failed (`cargo test`, default; + sound и
     `--no-default-features` — зелёные).
 
 - **P4 — стабильность и производительность клиента** (`docs/development/PLAN-production.md`):
-  - **Soak 100+ ходов.** `max-rust-qa/scripts/soak-100.qa`: партия RED
+  - **Soak 100+ ходов.** `max-brh-qa/scripts/soak-100.qa`: партия RED
     (человек, `end_turn` + `select`/`move`) против GREEN (Clueless, Duration
     200), 100 ходов, `assert turn=21/41/61/81/101`, `shot`/`mem` каждые
     20 ходов, `save_v70 soak-turn100.dta`. **PASS**: 12 208 кадров, V70-сейв
@@ -1742,7 +1742,7 @@
     `App::update_visual_units` обновляет карту визуальных позиций на месте
     (`retain` + `insert`) вместо сборки `HashMap` каждый кадр; визуальные
     позиции не входят в CRC/снапшот — `AppDigest` и порядок симуляции те же.
-  - **Краевые TC-11xx**: `max-rust-qa/scripts/edge-cases.qa` — 50 кликов по
+  - **Краевые TC-11xx**: `max-brh-qa/scripts/edge-cases.qa` — 50 кликов по
     пустым областям главного меню + 50 по карте, не-ASCII `type` в чате и
     поле имени (отклоняется без паник, кадры `edge-unicode-*`), выход →
     New Game → Cancel → полный второй старт (кадр `edge-second-game`);
@@ -1762,9 +1762,9 @@
     не PR) с артефактами `soak.txt`/`log.txt` при падении; `edge-cases.qa`
     добавлен в стадию 3/4 и job `qa`.
   - Документация: `docs/development/PLAN-production.md` (P4 закрыт),
-    `max-rust-qa/scripts/README.md` §P4 (команды, метрики, пороги),
-    `max-rust-qa/plans/qa-plan.md`, `docs/development/release-checklist.md`
-    §2.9 (свидетельства soak), `max-rust-qa/suite/11-edge-cases.md`.
+    `max-brh-qa/scripts/README.md` §P4 (команды, метрики, пороги),
+    `max-brh-qa/plans/qa-plan.md`, `docs/development/release-checklist.md`
+    §2.9 (свидетельства soak), `max-brh-qa/suite/11-edge-cases.md`.
 
 - **P3 — запись V70-сейвов из живой партии** (`docs/development/PLAN-production.md`):
   - `max_core::save_write`: `build_save_file(&GameState) -> SaveFile`,
@@ -1807,7 +1807,7 @@
     партии (C++ `Alt+F`/`Alt+L`); в сети окно не открывается (пакет 16
     сохранения не портирован, загрузка запрещена и в оригинале).
   - QA: команда `save_v70 NAME` (настоящий V70, в отличие от контейнера
-    `MXLS` команды `save`), сценарий `max-rust-qa/scripts/save-load.qa`
+    `MXLS` команды `save`), сценарий `max-brh-qa/scripts/save-load.qa`
     (2 хода → `save_v70` → `load` в свежем состоянии → те же ход/юниты),
     кадры `save-menu`/`after-load`; прогон в `ci.sh`.
   - Тесты: `max_core/tests/save_write.rs` (6 тестов, включая побайтовые
@@ -1858,9 +1858,9 @@
   - QA: новые команды `build open|select N|add|delete|rate N|repeat|step N|
     queue step N|done|cancel`, `select last`, `select type NAME`,
     `assert build=open|closed`, `assert unit=NAME`; сценарий
-    `max-rust-qa/scripts/production.qa` (конструктор → BuildMenu → TRAINHAL за
+    `max-brh-qa/scripts/production.qa` (конструктор → BuildMenu → TRAINHAL за
     10 ходов → завод → INFANTRY за 2 хода), golden-кадр
-    `max-rust-qa/golden/production/buildmenu.png`, прогоны в `ci.sh` и
+    `max-brh-qa/golden/production/buildmenu.png`, прогоны в `ci.sh` и
     `.github/workflows/ci.yml`.
 
 ### Исправлено
@@ -1976,8 +1976,8 @@
   --no-default-features` (headless-путь и cfg-ветки без feature `sdl`) и
   `cargo build … --no-default-features` в `release.sh` для headless-релиза.
   Заодно исправлены пути QA-сценариев в
-  `ci.sh`/`ci.yml`/`release-checklist` (`../max-rust-qa/scripts/…`,
-  `../max-rust-qa/golden` — каталога `max-rust/qa/` давно нет, из-за чего
+  `ci.sh`/`ci.yml`/`release-checklist` (`../max-brh-qa/scripts/…`,
+  `../max-brh-qa/golden` — каталога `max-rust/qa/` давно нет, из-за чего
   стадия 3/3 не находила скрипты) и путь артефактов QA в workflow.
   `ci.sh`/`release.sh` экспортируют `MSYS_NO_PATHCONV` (иначе в Git Bash
   `docker run -w /src/max-rust` ломался на `C:/Program Files/Git/...`).

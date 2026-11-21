@@ -27,11 +27,11 @@
 cd max-rust
 # soak (слой 2 QA) + память/профиль в log.txt
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- \
-    ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+    ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100
 # headless ИИ×ИИ 120 ходов (время кадра/хода, RSS)
 cargo run -q -p max_app --no-default-features --example soak_headless -- \
     --turns 120 --out qa-out/soak-headless
 # спам кликов/юникод/повторный старт
 cargo run -q -p max_app --no-default-features --example qa_run -- \
-    ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
+    ../max-brh-qa/scripts/edge-cases.qa qa-out/edge-cases
 ```

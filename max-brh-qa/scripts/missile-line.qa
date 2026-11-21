@@ -1,7 +1,7 @@
 # missile-line.qa — снаряд летит ПО ПРЯМОЙ в пикселях (C++ `AirPath`).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/missile-line.qa qa-out/missile-line
+#       ../max-brh-qa/scripts/missile-line.qa qa-out/missile-line
 #
 # Что проверяется (оракул — `max-cpp-port/src/airpath.cpp`):
 # * `AirPath::Execute` (`airpath.cpp:175-295`) двигает снаряд **попиксельно**:
@@ -16,7 +16,7 @@
 #   `assert missile-line` (отклонение ≤ 1.5 px) падал бы.
 #
 # Кадры `missile-line-1..4`/`missile-line-impact` — golden
-# `max-rust-qa/golden/missile-line`.
+# `max-brh-qa/golden/missile-line`.
 
 # --- Главное меню → партия (Turn Based, таймер без лимита) -----------------
 assert screen=MainMenu

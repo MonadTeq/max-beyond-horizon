@@ -51,7 +51,7 @@ M.A.X. Port используется как **оракул** (каноничес
 | `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
 | `max-port-site/` | документация автора (формат сейвов V70 и пр.) |
 | `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
-| `max-rust-qa/` | QA: Test-Suite, сценарии, golden, драйверы |
+| `max-brh-qa/` | QA: Test-Suite, сценарии, golden, драйверы |
 | `docs/` | документация по направлениям: `architecture/`, `analysis/`, `qa/`, `development/` |
 | `build/`, `deploy/`, `release/` | сборки, развёртывание, артефакты |
 
@@ -99,7 +99,7 @@ Windows (GUI): двойной клик открывает окно без кон
 
 - **Architecture**: [docs/architecture/](docs/architecture/) — протоколы, модель состояния, режимы игры, барьеры.
 - **Analysis**: [docs/analysis/](docs/analysis/) — визуальный паритет, реверс-инжиниринг.
-- **QA**: [docs/qa/](docs/qa/) и [max-rust-qa/](max-rust-qa/) — Test-Suite, драйверы, golden.
+- **QA**: [docs/qa/](docs/qa/) и [max-brh-qa/](max-brh-qa/) — Test-Suite, драйверы, golden.
 - **Development**: [docs/development/](docs/development/) — планы, сборка, чек-лист релиза.
 - История изменений: [CHANGELOG.md](CHANGELOG.md). Лицензия: [LICENSE](LICENSE).
 

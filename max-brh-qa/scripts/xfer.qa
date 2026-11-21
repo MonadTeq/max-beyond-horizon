@@ -1,6 +1,6 @@
 # xfer.qa — перенос груза (C++ `TransferMenu` + `UnitInfo::ProcessTransfer`).#
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/xfer.qa qa-out/xfer
+#       ../max-brh-qa/scripts/xfer.qa qa-out/xfer
 #
 # Что проверяется — всё теми же кликами/клавишами, что у игрока:
 # * пункт `x-fer` меню команд включён у юнитов с грузом `RAW..GOLD` и включает
@@ -16,7 +16,7 @@
 # * отрицательное значение переносит обратно из комплекса в юнит;
 # * `Esc`/`Cancel` не меняет запасы.
 #
-# Кадры `xfer-menu`, `xfer-help`, `xfer-set` — golden `max-rust-qa/golden/xfer`.
+# Кадры `xfer-menu`, `xfer-help`, `xfer-set` — golden `max-brh-qa/golden/xfer`.
 
 # --- Главное меню → партия ------------------------------------------------
 assert screen=MainMenu

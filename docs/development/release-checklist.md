@@ -30,7 +30,7 @@
 | 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (2026-11-19): `max-rust.exe` 10 928 081 Б, sha256 `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`; zip 4 082 276 Б, sha256 `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`; PE Subsystem=3 (console), без wine-smoke (флаг `--no-wine`) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows UI/headless; Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
-| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-rust-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
+| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
 | 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
 | 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
 
@@ -145,18 +145,18 @@ docker run --rm -v "$ROOT/max-horizon-server:/src" -w /src rust:1.94.0-bookworm 
 # 2.5 Полный локальный CI (2.1 + 2.4 + QA-сценарии/эталоны; с --smoke добавляет §3)
 bash ci.sh
 
-# 2.6 QA-слои 2–3 вручную (то же, что стадия 3/3 ci.sh; подробности — max-rust-qa/scripts/README.md)
+# 2.6 QA-слои 2–3 вручную (то же, что стадия 3/3 ci.sh; подробности — max-brh-qa/scripts/README.md)
 #     примеры идут с --no-default-features: QA-драйверу окно не нужно;
-#     сценарии/эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust)
+#     сценарии/эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-rust)
 docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
   rm -rf qa-out
-  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
-  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
-  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
-  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
-  cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden'
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/hs-2.qa qa-out/hs-2
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
+  cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/victory.qa qa-out/victory
+  cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden'
 ```
 
 - [ ] 2.1 `cargo check` и `cargo test` — зелёные, 0 failed (default-фичи =
@@ -184,7 +184,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
   Свидетельство: ______________________
 - [ ] 2.5 `bash ci.sh` — `CI OK` за разумное время.
   Свидетельство: ______________________
-- [x] 2.6 QA-слои 2–3 (`max-rust-qa/scripts/`): сценарии `sp-full`, `hs-2`,
+- [x] 2.6 QA-слои 2–3 (`max-brh-qa/scripts/`): сценарии `sp-full`, `hs-2`,
       `visual-screens`, `victory` — PASS, golden-кадры без дрейфа (порог:
       1 % пикселей с Δ>30). Свидетельство: 2026-11-15,
       `rust:1.94.0-bookworm`; `qa-out/*/log.txt` (`RESULT: PASS`),

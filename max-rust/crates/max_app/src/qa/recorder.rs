@@ -471,7 +471,7 @@ fn header_lines() -> Vec<String> {
             "# кадр: {}x{}; координаты кликов — пиксели кадра",
             FRAME_WIDTH, FRAME_HEIGHT
         ),
-        "# формат: max-rust-qa/drivers/README.md, раздел «Запись сценариев вручную»".to_string(),
+        "# формат: max-brh-qa/drivers/README.md, раздел «Запись сценариев вручную»".to_string(),
         "# реплей: cargo run -p max_app --example qa_run -- <этот файл> <out_dir>".to_string(),
         "# ассерты и shot QA-инженер добавляет вручную после записи".to_string(),
     ]

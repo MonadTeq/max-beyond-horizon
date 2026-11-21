@@ -1,7 +1,7 @@
 # research-help.qa — ResearchMenu (P7) + Help-экраны (режим + запись).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/research-help.qa qa-out/research-help
+#       ../max-brh-qa/scripts/research-help.qa qa-out/research-help
 #
 # Что проверяется:
 # * кнопки `?` экранов настройки открывают **режим помощи** C++

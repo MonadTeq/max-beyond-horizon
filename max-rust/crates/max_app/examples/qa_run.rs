@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! cargo run -p max_app --example qa_run -- <script.qa> <out_dir>
-//! cargo run -p max_app --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full \
+//! cargo run -p max_app --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full \
 //!     --data-dir ../max-original --assets-dir ../assets
 //! ```
 //!

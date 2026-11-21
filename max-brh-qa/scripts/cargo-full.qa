@@ -1,7 +1,7 @@
 # cargo-full.qa — полный экран мобилизации `CargoMenu` (P7).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
+#       ../max-brh-qa/scripts/cargo-full.qa qa-out/cargo-full
 #
 # Что проверяется (всё — теми же кликами/клавишами, что у игрока):
 # * список покупки — полный `CargoMenu::unit_types1` (15 типов, `assert
@@ -23,7 +23,7 @@
 #
 # Кадры `cargo-buy` (покупка), `cargo-description` (описание/портрет/статы
 # Tank), `cargo-upgrade` (модернизация), `cargo-upgraded` (после апгрейда и
-# загрузки cargo) — golden-эталоны (`max-rust-qa/golden/cargo`).
+# загрузки cargo) — golden-эталоны (`max-brh-qa/golden/cargo`).
 
 # --- Главное меню ---------------------------------------------------------
 shot main-menu

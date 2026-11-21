@@ -2,7 +2,7 @@
 # отмена стройки — только явная (`stop` попапа → CancelBuilding).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
+#       ../max-brh-qa/scripts/build-cancel.qa qa-out/build-cancel
 #
 # Оракул: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829-5935`):
 # для строителя в `BUILD_IN_PROGRESS` клик по карте даёт `CURSOR_UNIT_NO_GO`,

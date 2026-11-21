@@ -208,12 +208,12 @@ max-rust --turn-wait 0           # прежнее поведение (по ум�
 ### Запись QA-сценария: `--record`
 
 `--record <file.qa>` записывает ручную игру в скрипт слоя 2 (см.
-`max-rust-qa/drivers/README.md`, раздел «Запись сценариев вручную»):
+`max-brh-qa/drivers/README.md`, раздел «Запись сценариев вручную»):
 
 ```sh
 # из max-rust/; GUI (default): SDL3 из исходников или системный SDL3
 cargo run -p max_app -- \
-  --record ../max-rust-qa/scripts/my-run.qa
+  --record ../max-brh-qa/scripts/my-run.qa
 ```
 
 Запись начинается с главного меню и дописывается при выходе. В файл попадают

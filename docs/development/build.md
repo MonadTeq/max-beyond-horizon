@@ -200,7 +200,7 @@ stack`). Release-сборки и Linux работали и без этого.
 
 ## QA
 
-`bash ci.sh` — тесты + QA-сценарии + golden. Детали: `max-rust-qa/README.md`.
+`bash ci.sh` — тесты + QA-сценарии + golden. Детали: `max-brh-qa/README.md`.
 
 ### C++-векторы (эталоны формул)
 

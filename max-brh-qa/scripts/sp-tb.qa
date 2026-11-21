@@ -1,7 +1,7 @@
 # sp-tb.qa — одиночная партия в Turn Based с двумя компьютерами.
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/sp-tb.qa qa-out/sp-tb
+#       ../max-brh-qa/scripts/sp-tb.qa qa-out/sp-tb
 #
 # Пользовательское указание: приоритет — PlayMode=TURN_BASED. Сценарий
 # проверяет порядок команд раунда RED → GREEN → BLUE → RED

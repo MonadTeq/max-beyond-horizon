@@ -6,7 +6,7 @@
 поэтому скрипт нажимает те же кнопки, что игрок мышью, и получает те же кадры.
 
 ```
-max-rust-qa/
+max-brh-qa/
 ├── scripts/sp-full.qa          # одиночная партия: New Game → Options → Planet → Players → 3 хода с ИИ
 ├── scripts/hs-2.qa             # hot-seat на двоих: окна «Begin turn», 2+ раунда, чередование команд
 ├── scripts/visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
@@ -51,16 +51,16 @@ max-rust-qa/
 
 Драйвер живёт в библиотеке (`max-rust/crates/max_app/src/qa/`), а примеры —
 тонкие CLI-обёртки (команды — из `max-rust/`, пути к сценариям/эталонам — через
-`../max-rust-qa/`):
+`../max-brh-qa/`):
 
 ```sh
 cd max-rust
 
 # слой 2: прогнать сценарий (log.txt + PNG в каталог вывода)
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
 
 # слой 3: сверить кадры с эталонами
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
 ```
 
 Код выхода `qa_run`: **0** — все шаги выполнились, **1** — упал `assert` или
@@ -383,7 +383,7 @@ CRC/снапшот, порядок симуляции не меняется. С�
 
 ## Golden-кадры (слой 3)
 
-Эталоны — `../max-rust-qa/golden/*.png`, ровно те кадры, которые снимает
+Эталоны — `../max-brh-qa/golden/*.png`, ровно те кадры, которые снимает
 `visual-screens.qa` (сравнение по имени файла: `golden/NAME.png` ↔
 `<out>/NAME.png`). Порог дрейфа (как в `docs/qa-plan.md`):
 
@@ -405,17 +405,17 @@ CRC/снапшот, порядок симуляции не меняется. С�
 cd max-rust
 
 # 1. снять кадры скриптом
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
 
 # 2. посмотреть, что изменилось (без --update эталоны не трогаются)
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
 #    → ДРЕЙФ name.png: N пикселей (M %), diff qa-out/visual-screens/diff-name.png
 
 # 3. глазами проверить diff-*.png: изменение ожидаемое?
 
 # 4. зафиксировать новые эталоны и закоммитить их вместе с изменением
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden --update
-git add ../max-rust-qa/golden && git commit -m "..."
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden --update
+git add ../max-brh-qa/golden && git commit -m "..."
 ```
 
 Правило: эталоны **не** обновляются «чтобы CI стал зелёным». Сначала
@@ -432,34 +432,34 @@ check/test), `2/4` (Horizon), `3/4` — QA-сценарии и golden, `4/4` —
 
 ```sh
 # 3/4: сценарии + golden
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/missile-line.qa qa-out/missile-line
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-rust-qa/golden/combat-tb
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/missile-line ../max-rust-qa/golden/missile-line
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-rust-qa/golden/build-cancel
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/hs-2.qa qa-out/hs-2
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/victory.qa qa-out/victory
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/production.qa qa-out/production
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/save-load.qa qa-out/save-load
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/edge-cases.qa qa-out/edge-cases
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/move-input.qa qa-out/move-input
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/unit-menu.qa qa-out/unit-menu
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/allocate.qa qa-out/allocate
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/xfer.qa qa-out/xfer
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/preferences.qa qa-out/preferences
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/combat-tb.qa qa-out/combat-tb
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/missile-line.qa qa-out/missile-line
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/build-cancel.qa qa-out/build-cancel
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-brh-qa/golden/production
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-brh-qa/golden/move-input
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-brh-qa/golden/unit-menu
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-brh-qa/golden/allocate
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-brh-qa/golden/xfer
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-brh-qa/golden/preferences
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-brh-qa/golden/combat-tb
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/missile-line ../max-brh-qa/golden/missile-line
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-brh-qa/golden/build-cancel
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)
-MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100
 cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --out qa-out/soak-headless
 ```
 
@@ -476,7 +476,7 @@ cargo run -q -p max_app --no-default-features --example soak_headless -- --turns
   CRC/Adler, компаратор;
 * `src/qa/runner.rs` (unit) — конфиг, клиент лобби, имена экранов/фаз;
 * `tests/qa_driver.rs` (integration) — все команды парсера, прогон
-  `../max-rust-qa/scripts/sp-full.qa` целиком, падение `assert` → `passed=false` (в CLI → exit 1),
+  `../max-brh-qa/scripts/sp-full.qa` целиком, падение `assert` → `passed=false` (в CLI → exit 1),
   `load` V70-сейва, PNG/golden round-trip.
 
 ```sh
@@ -502,9 +502,9 @@ cd max-rust && cargo test -p max_app --lib qa:: && cargo test -p max_app --test 
 
 ## Как добавить сценарий
 
-1. Создать `../max-rust-qa/scripts/NAME.qa` (формат выше), координаты брать из кадров
+1. Создать `../max-brh-qa/scripts/NAME.qa` (формат выше), координаты брать из кадров
    (`shot` + просмотр PNG).
-2. Прогнать локально: `cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/NAME.qa qa-out/NAME`.
+2. Прогнать локально: `cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/NAME.qa qa-out/NAME`.
 3. Если сценарий проверяет экран, который должен быть в golden — добавить
    `shot` в `visual-screens.qa` (не в новый файл), перегенерировать эталоны.
 4. Добавить прогон в `ci.sh` (стадия 3/4 — обычные сценарии, 4/4 — soak) и

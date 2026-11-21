@@ -1,7 +1,7 @@
 # save-load.qa — сохранение и загрузка настоящего V70-сейва (P3, слой 2 QA).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/save-load.qa qa-out/save-load
+#       ../max-brh-qa/scripts/save-load.qa qa-out/save-load
 #
 # Что проверяется:
 # * локальная партия играется два хода (`end_turn` человека + ход ИИ);

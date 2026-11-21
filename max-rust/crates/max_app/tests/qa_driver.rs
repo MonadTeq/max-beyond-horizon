@@ -3,7 +3,7 @@
 //! Проверяется:
 //!
 //! 1. парсер `.qa` понимает **все** команды языка (и отклоняет опечатки);
-//! 2. скрипт `max-rust-qa/scripts/sp-full.qa` проходит целиком теми же
+//! 2. скрипт `max-brh-qa/scripts/sp-full.qa` проходит целиком теми же
 //!    обработчиками, что у мыши/клавиатуры (экраны настройки → партия → ходы
 //!    ИИ → сохранение);
 //! 3. упавший `assert` даёт `passed = false` и текст с номером строки —
@@ -166,7 +166,7 @@ fn sp_full_script_passes_through_the_real_input_path() {
 
     let dir = temp_dir("sp_full");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/sp-full.qa"));
+    let report = runner.run_file(repo_root().join("max-brh-qa/scripts/sp-full.qa"));
 
     assert!(
         report.passed,
@@ -221,7 +221,7 @@ fn cargo_full_script_passes_through_the_real_input_path() {
 
     let dir = temp_dir("cargo_full");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/cargo-full.qa"));
+    let report = runner.run_file(repo_root().join("max-brh-qa/scripts/cargo-full.qa"));
 
     assert!(
         report.passed,
@@ -260,7 +260,7 @@ fn move_input_script_passes_through_the_real_input_path() {
 
     let dir = temp_dir("move_input");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/move-input.qa"));
+    let report = runner.run_file(repo_root().join("max-brh-qa/scripts/move-input.qa"));
 
     assert!(
         report.passed,
@@ -313,7 +313,7 @@ fn research_help_script_passes_through_the_real_input_path() {
 
     let dir = temp_dir("research_help");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/research-help.qa"));
+    let report = runner.run_file(repo_root().join("max-brh-qa/scripts/research-help.qa"));
 
     assert!(
         report.passed,
@@ -799,7 +799,7 @@ fn mem_command_writes_rss_to_the_log() {
 
 #[test]
 fn soak_script_is_100_turns_with_periodic_checks() {
-    let text = std::fs::read_to_string(repo_root().join("max-rust-qa/scripts/soak-100.qa"))
+    let text = std::fs::read_to_string(repo_root().join("max-brh-qa/scripts/soak-100.qa"))
         .expect("soak-100.qa читается");
     let parsed = parse_script(&text).expect("soak-100.qa разбирается");
 
@@ -840,7 +840,7 @@ fn edge_cases_script_passes_click_spam_and_unicode() {
 
     let dir = temp_dir("edge_cases");
     let mut runner = runner(&dir);
-    let report = runner.run_file(repo_root().join("max-rust-qa/scripts/edge-cases.qa"));
+    let report = runner.run_file(repo_root().join("max-brh-qa/scripts/edge-cases.qa"));
 
     assert!(
         report.passed,

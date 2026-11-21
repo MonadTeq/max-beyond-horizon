@@ -1032,7 +1032,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
   цены), `cargo-upgrade.png` (режим модернизации: 62 типа, фильтры, стрелки и
   цены апгрейдов), `cargo-upgraded.png` (после armor +1 и загрузки cargo);
   `assert cargo-mode/cargo-types/cargo-credits`; эталоны —
-  `max-rust-qa/golden/cargo/*.png`.
+  `max-brh-qa/golden/cargo/*.png`.
 * `qa_run sp-full.qa` → кадры `clan.png` (логотипы 8 кланов по центру
   карточек), `mobilize.png`, `mobilize-bought.png`, `landing.png`,
   `landing-cursor.png`; база в `game-start.png` стоит у выбранной клетки
@@ -1186,7 +1186,7 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 | Предпросмотр пути | зелёная линия `PREVIEW_COLOR` (120,255,152) в буфере карты и при хроме (66 px на 1 шаг) |
 
 **Свидетельства.** `max_app/tests/move_input.rs` (6 тестов), новый сценарий
-`max-rust-qa/scripts/move-input.qa` (полный путь кликами, `assert selected`/
+`max-brh-qa/scripts/move-input.qa` (полный путь кликами, `assert selected`/
 `unit-pos`/`preview`/`log=Move:`/`log=Cancelled`), эталоны
 `golden/move-input/*` (5 кадров) и переснятые `golden/game.png` +
 `golden/research/research-done.png`; `qa_golden_check` — 0 дрейфа.
@@ -1950,13 +1950,13 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   `sentry` даёт `ORDER_SENTRY`, горячая клавиша снимает его, `Build` открывает
   `BuildMenu`, отключённый пункт не срабатывает, меню заметно меняет кадр,
   уровни процессоров приказов (`P1/P2/P3`), курсорный `repair` и `enter`.
-* QA `max-rust-qa/scripts/unit-menu.qa`: покупка танка и строителя в
+* QA `max-brh-qa/scripts/unit-menu.qa`: покупка танка и строителя в
   мобилизации → высадка → `select type Tank` → `unit-menu open` (повторный
   клик) → проверки пунктов → `unit-menu item sentry` (`assert unit-order=sentry`)
   → повторное открытие (нажатый пункт) → `key 8` (снять) → `Esc` → модальность →
   меню строителя → `Build` открывает `BuildMenu`. Кадры
   `unit-menu-tank-selected`, `unit-menu-tank`, `unit-menu-sentry-on`,
-  `unit-menu-builder` — golden `max-rust-qa/golden/unit-menu` (0 дрейфа).
+  `unit-menu-builder` — golden `max-brh-qa/golden/unit-menu` (0 дрейфа).
 
 ## 19. Угол юнита по ходу движения — **сделано** (2026-11-17)
 
@@ -2132,11 +2132,11 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   и совпадает с раскладкой C++, значения меняются и переживают закрытие,
   стрелки `±1`, модальность, влияние на доход комплекса на следующем ходу,
   детерминизм двух прогонов, полноэкранный кадр, `ORDER_NEW_ALLOCATE` → P5.
-* QA `max-rust-qa/scripts/allocate.qa` (128 кадров): шахта → меню → `allocate`
+* QA `max-brh-qa/scripts/allocate.qa` (128 кадров): шахта → меню → `allocate`
   → `allocate set`/`row` → `Done` → `ORDER_NEW_ALLOCATE` → тик возвращает
   `POWER_ON` → `end_turn` → `assert complex-raw>=4` → повторное открытие
   помнит значения. Кадры `allocate-selected`, `allocate-menu`, `allocate-set` —
-  golden `max-rust-qa/golden/allocate` (0 дрейфа).
+  golden `max-brh-qa/golden/allocate` (0 дрейфа).
 * Windows UI (живое окно): `build/scripts/ui-test-allocate.ps1` — меню → партия,
   клик по шахте ×2 (выделение + меню), пункт `allocate` (`alloc=open` в трассе
   `MAX_DEBUG_INPUT`), полноэкранный диалог (зелёный заголовок в кадре окна),
@@ -2410,7 +2410,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   добавлен `build place near`.
 * Новые команды QA: `build place X Y|near`, `build cursor X Y`; проверки
   `build-site=open|closed|valid|invalid`, `build-center=yes|no`,
-  `site-pos=X,Y`, `angle=N` (`max-rust-qa/scripts/README.md`).
+  `site-pos=X,Y`, `angle=N` (`max-brh-qa/scripts/README.md`).
 * Golden: `production/` — 15 кадров, из них новые `build-slide-turn` +
   `build-slide-1..4` и переснятые `buildmenu`/`buildmenu-factory` (иконки и
   `P_*`), 0 дрейфа; игровые `build-ordered`/`build-site*`/`build-work-*` не
@@ -3071,10 +3071,10 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
 пункт включён, окно открывается кликом по цели и переносит 5/3, отмена, help,
 кадр окна).
 
-**QA.** `max-rust-qa/scripts/xfer.qa` (1332 кадра): меню шахты → `x-fer` →
+**QA.** `max-brh-qa/scripts/xfer.qa` (1332 кадра): меню шахты → `x-fer` →
 клик по конструктору → значения/полоса/`±1`/лимит → модальность → `TRANSFER_SETUP`
 → `Done` (08/P3) → `tick 1` → `storage` 45 → обратный `−3` → 42 → `Cancel` без
-изменений. Golden `max-rust-qa/golden/xfer/` — `xfer-menu.png`, `xfer-set.png`,
+изменений. Golden `max-brh-qa/golden/xfer/` — `xfer-menu.png`, `xfer-set.png`,
 `xfer-help.png`; `unit-menu-builder.png` переснят (x-fer стал зелёным).
 
 ## 30. Запас комплекса и хранилища — **сделано** (2026-11-19)
@@ -3765,7 +3765,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 **14** golden-сверок (2 новых: `sp-tb/`, `combat-tb/`), дрейф 0; 4/4 soak —
 `soak-100.qa` 49 488 кадров и `soak_headless --turns 120 --mode tb` (120 517
 кадров, 27.6 с). Windows UI + headless пересобраны; `CHANGELOG.md`, этот
-раздел, `PLAN-production.md` P11, `max-rust-qa/scripts/README.md`.
+раздел, `PLAN-production.md` P11, `max-brh-qa/scripts/README.md`.
 
 **Артефакты (2026-11-20).**
 
@@ -4363,7 +4363,7 @@ honours биты из `flags` (так приходят загруженные V7
 ## 40. Комплексы и коннекторы 1:1, завод AWAC из общего котла, отмена стройки только явная — **сделано** (2026-11-21)
 
 Три дефекта Turn Based из пользовательского отчёта. Оракул — `max-cpp-port`
-(не менялся), данные — `max-original/MAX.RES`, QA — `max-rust-qa`.
+(не менялся), данные — `max-original/MAX.RES`, QA — `max-brh-qa`.
 
 ### 40.1 Как C++ моделирует комплекс, коннекторы и ёмкости
 
@@ -4569,7 +4569,7 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
 ## 41. Юнит из AIRPLT выводится приказом, пиксельные ракеты, стрелка X-FER, звуки боя — **сделано** (2026-11-21)
 
 Четыре дефекта Turn Based из пользовательского отчёта. Оракул — `max-cpp-port` (не
-менялся), данные — `max-original/MAX.RES` / `assets/PATCHES.RES`, QA — `max-rust-qa`.
+менялся), данные — `max-original/MAX.RES` / `assets/PATCHES.RES`, QA — `max-brh-qa`.
 
 ### 41.1 Построенный самолёт стоит НА заводе, пока игрок не выведет его
 
@@ -4703,7 +4703,7 @@ C++ (`m_step`, `position`, `OffsetDrawZones`, `grid >> 6`,
 цели, урон). `turn_based_combat.rs` (5 тестов) — след/кадры/детерминизм.
 
 **QA.** Новый сценарий `missile-line.qa` (диагональ −3/+4, 5 клеток) + golden
-`max-rust-qa/golden/missile-line` (4 кадра) и новая проверка
+`max-brh-qa/golden/missile-line` (4 кадра) и новая проверка
 `assert missile-line` (отклонение снаряда от прямой ≤ 1.5 px). `combat-tb.qa`
 больше не зависит от точного числа тиков наведения: новая команда
 `wait firing` крутит кадры до кадра выстрела.
@@ -4802,7 +4802,7 @@ gain (включая выключенный звук), `App::tick` наполн�
 ## 42. Энергия комплекса, запуск завода и сообщение о нехватке — **сделано** (2026-11-21)
 
 Три дефекта экономики Turn Based из пользовательского отчёта. Оракул —
-`max-cpp-port` (не менялся), данные/QA — `max-original`/`max-rust-qa`.
+`max-cpp-port` (не менялся), данные/QA — `max-original`/`max-brh-qa`.
 
 ### 42.1 Завод не запускается без энергии и других ресурсов
 

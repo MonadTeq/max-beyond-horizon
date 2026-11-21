@@ -1,7 +1,7 @@
 # upgrade.qa — покупные апгрейды (P6, слой 2 QA).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/upgrade.qa qa-out/upgrade
+#       ../max-brh-qa/scripts/upgrade.qa qa-out/upgrade
 #
 # Что проверяется:
 # * экран `UpgradeMenu` открывается клавишей `U` для выделенного юнита своей

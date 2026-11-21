@@ -1,7 +1,7 @@
 # combat-tb.qa — бой в Turn Based: выстрел ракетой, снаряд, взрыв, конец хода.
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
+#       ../max-brh-qa/scripts/combat-tb.qa qa-out/combat-tb
 #
 # Что проверяется (C++ `UnitInfo::PrepareFire`/`ProgressFire`,
 # `airpath.cpp`, `UnitsManager_StartExplosion`/`ProgressExplosion`):

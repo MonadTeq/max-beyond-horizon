@@ -7,7 +7,7 @@
 # BuildMenu завода → заказ Infantry (2 хода) → юнит появляется.
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/production.qa qa-out/production
+#       ../max-brh-qa/scripts/production.qa qa-out/production
 #
 # Что проверяется:
 # * `BuildMenu` открывается для конструктора и показывает список зданий

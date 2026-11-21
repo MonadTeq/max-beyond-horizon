@@ -4,7 +4,7 @@
 # DrawMap_RenderMapTiles).
 #
 #   cargo run -p max_app --no-default-features --example qa_run -- \
-#       ../max-rust-qa/scripts/panels.qa qa-out/panels
+#       ../max-brh-qa/scripts/panels.qa qa-out/panels
 #
 # Что проверяется:
 # * подписи кнопок отцентрованы по `Button::SetCaption` (button.cpp:412-449);

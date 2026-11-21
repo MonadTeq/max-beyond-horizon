@@ -1,11 +1,11 @@
-# max-rust-qa — центр обеспечения качества клиента M.A.X.
+# max-brh-qa — центр обеспечения качества клиента M.A.X.
 
 Всё QA в одном каталоге: планы, тест-кейсы, скрипты, golden-кадры, драйверы, утилиты.
 
 ## Структура
 
 ```
-max-rust-qa/
+max-brh-qa/
   README.md               этот файл
   plans/                  планы QA и стратегия (qa-plan.md и пр.)
   suite/                  каталог тест-кейсов (по одному файлу на область, TC-IDs)
@@ -57,10 +57,10 @@ bash ci.sh
 
 cd max-rust   # примеры собираются в workspace max-rust
 
-# один скрипт (сценарии — в ../max-rust-qa/scripts/, вывод — в qa-out/):
-cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp
+# один скрипт (сценарии — в ../max-brh-qa/scripts/, вывод — в qa-out/):
+cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp
 
 # golden-сверка / перегенерация (<shots_dir> <golden_dir>):
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-rust-qa/golden
-cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-rust-qa/golden --update
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-brh-qa/golden
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-brh-qa/golden --update
 ```

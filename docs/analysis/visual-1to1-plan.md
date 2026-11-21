@@ -2,7 +2,7 @@
 
 Сводка: что уже 1:1, что осталось и в каком порядке делать. Источник истины по
 деталям — [visual-1to1-status.md](visual-1to1-status.md) (разделы §1–§30) и
-Test-Suite `max-rust-qa/suite/`.
+Test-Suite `max-brh-qa/suite/`.
 
 ## 0. Уже сделано 1:1 (для контекста)
 

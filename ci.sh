@@ -131,11 +131,11 @@ docker run --rm \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
-# Слои 2–3 QA (max-rust-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
+# Слои 2–3 QA (max-brh-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
 # Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
-# Сценарии и эталоны лежат в ../max-rust-qa/ (рабочий каталог — /src/max-rust).
+# Сценарии и эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-rust).
 step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb, missile-line, build-cancel, panels) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
@@ -146,45 +146,45 @@ docker run --rm \
     'set -e
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
      rm -rf qa-out
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-full.qa qa-out/sp-full
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/hs-2.qa qa-out/hs-2
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/visual-screens.qa qa-out/visual-screens
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/victory.qa qa-out/victory
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/production.qa qa-out/production
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/save-load.qa qa-out/save-load
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/upgrade.qa qa-out/upgrade
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research.qa qa-out/research
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/edge-cases.qa qa-out/edge-cases
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/cargo-full.qa qa-out/cargo-full
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/move-input.qa qa-out/move-input
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/research-help.qa qa-out/research-help
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/unit-menu.qa qa-out/unit-menu
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/allocate.qa qa-out/allocate
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/ai-turn.qa qa-out/ai-turn
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/sp-tb.qa qa-out/sp-tb
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/missile-line.qa qa-out/missile-line
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/panels.qa qa-out/panels
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-rust-qa/golden/upgrade
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-rust-qa/golden/research
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-rust-qa/golden/cargo
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-rust-qa/golden/move-input
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-rust-qa/golden/unit-menu
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-rust-qa/golden/allocate
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/ai-turn ../max-rust-qa/golden/ai-turn
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/sp-tb ../max-rust-qa/golden/sp-tb
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-rust-qa/golden/combat-tb
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/missile-line ../max-rust-qa/golden/missile-line
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-rust-qa/golden/build-cancel
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/panels ../max-rust-qa/golden/panels
-     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-rust-qa/golden/research-help'
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/hs-2.qa qa-out/hs-2
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/victory.qa qa-out/victory
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/production.qa qa-out/production
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/save-load.qa qa-out/save-load
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/upgrade.qa qa-out/upgrade
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/research.qa qa-out/research
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/edge-cases.qa qa-out/edge-cases
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/cargo-full.qa qa-out/cargo-full
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/move-input.qa qa-out/move-input
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/research-help.qa qa-out/research-help
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/unit-menu.qa qa-out/unit-menu
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/allocate.qa qa-out/allocate
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/preferences.qa qa-out/preferences
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/xfer.qa qa-out/xfer
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/ai-turn.qa qa-out/ai-turn
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-tb.qa qa-out/sp-tb
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/combat-tb.qa qa-out/combat-tb
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/missile-line.qa qa-out/missile-line
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/build-cancel.qa qa-out/build-cancel
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/panels.qa qa-out/panels
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-brh-qa/golden/production
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-brh-qa/golden/upgrade
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-brh-qa/golden/research
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-brh-qa/golden/cargo
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-brh-qa/golden/move-input
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-brh-qa/golden/unit-menu
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-brh-qa/golden/allocate
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-brh-qa/golden/preferences
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-brh-qa/golden/xfer
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/ai-turn ../max-brh-qa/golden/ai-turn
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/sp-tb ../max-brh-qa/golden/sp-tb
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-brh-qa/golden/combat-tb
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/missile-line ../max-brh-qa/golden/missile-line
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-brh-qa/golden/build-cancel
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/panels ../max-brh-qa/golden/panels
+     cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-brh-qa/golden/research-help'
 
 # P4: soak — отдельная стадия (не быстрая QA): 100 ходов UI-партии с ходами ИИ
 # + 120 ходов headless ИИ×ИИ с профилем тика (MAX_TICK_PROFILE=1) и RSS.
@@ -200,7 +200,7 @@ docker run --rm \
     'set -e
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
      mkdir -p qa-out/soak-100 qa-out/soak-headless
-     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/soak-100.qa qa-out/soak-100
+     cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100
      cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --mode tb --out qa-out/soak-headless'
 
 if [ "$SMOKE" = "1" ]; then
