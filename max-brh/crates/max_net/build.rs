@@ -2,9 +2,9 @@
 //!
 //! Two independent jobs:
 //!
-//! 1. **Horizon gRPC codegen** — compile `../../../max-horizon-server/proto`
+//! 1. **Horizon gRPC codegen** — compile `../../../max-brh-server/proto`
 //!    (relative to `CARGO_MANIFEST_DIR`, i.e. `max-brh/crates/max_net` →
-//!    repository root `max-horizon-server/proto`) with `tonic-prost-build`.
+//!    repository root `max-brh-server/proto`) with `tonic-prost-build`.
 //!    `protoc` comes from the `protoc-bin-vendored` crate, so Docker images
 //!    do not need `apt-get install protobuf-compiler`.
 //! 2. **Vendored ENet 1.3.18** — compile `vendor/enet/*.c` with `cc` into a
@@ -24,8 +24,8 @@ fn main() {
 /// Generates `horizon.v1` client + server stubs into `OUT_DIR`.
 fn compile_horizon_proto() {
     // `CARGO_MANIFEST_DIR` is `<repo>/max-brh/crates/max_net`.
-    // `../../../max-horizon-server/proto` resolves to `<repo>/max-horizon-server/proto`.
-    const PROTO_REL: &str = "../../../max-horizon-server/proto";
+    // `../../../max-brh-server/proto` resolves to `<repo>/max-brh-server/proto`.
+    const PROTO_REL: &str = "../../../max-brh-server/proto";
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let proto_dir = normalize(&manifest_dir.join(PROTO_REL));
@@ -35,7 +35,7 @@ fn compile_horizon_proto() {
     assert!(
         horizon.is_file() && types.is_file(),
         "max_net: Horizon proto files not found under {} (looked for horizon.proto and types.proto); \
-         the repository layout must keep max-horizon-server/proto next to max-brh/",
+         the repository layout must keep max-brh-server/proto next to max-brh/",
         proto_dir.display()
     );
 

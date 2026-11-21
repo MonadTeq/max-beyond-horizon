@@ -1,12 +1,12 @@
 # M5.3: runtime-образ для Horizon.
 #
 # Прагматичный вариант: Horizon НЕ собирается внутри этого образа — готовый
-# Linux-бинарь монтируется из `max-horizon-server/target/release/horizon`
+# Linux-бинарь монтируется из `max-brh-server/target/release/horizon`
 # (см. docker-compose.yml). Образ содержит только то, что нужно бинарю в
 # рантайме: glibc/OpenSSL из Ubuntu 24.04 и bash для healthcheck.
 #
 # Сборка (если бинаря нет):
-#   docker run --rm -v "$PWD/max-horizon-server:/src" -w /src \
+#   docker run --rm -v "$PWD/max-brh-server:/src" -w /src \
 #     rust:1.94.0-bookworm bash -c \
 #     "apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null \
 #      && cargo build --release -p horizon"

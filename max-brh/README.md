@@ -116,7 +116,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   `../max-brh-docs/development/release-checklist.md` §6.1, разбор грабель —
   `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
-  подробности — `../max-horizon-server/README.Docker.md`.
+  подробности — `../max-brh-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
   восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
   M6.1-финал, см. `crates/max_app/README.md` и `max-brh-docs/architecture/protocol.md` §9.

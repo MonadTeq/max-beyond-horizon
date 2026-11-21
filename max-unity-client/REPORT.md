@@ -34,7 +34,7 @@
 | `max-brh-assets/images/` | **1069 PNG** уже извлечены из MAX.RES и классифицированы: ui 537, sprites/units 170, misc 363; `manifest.csv` (имя, размер, kind, палитра, прозрачность, фреймы) | Прямой импорт в Unity; классификация и метаданные снимают ~половину работы P1 |
 | `max-brh/` | Rust-клиент v1.0.0: `max_core` (40,3 тыс. строк, чистая детерминированная симуляция с ИИ, бит-в-бит с C++), `max_net` (7,2 тыс., gRPC tonic 0.14 + vendored ENet 1.3.18), `max_assets` (4,6 тыс.), `max_render` (6,4 тыс.), `max_app` (27,8 тыс.); **692 `#[test]`** | `max_core`+`max_net` переносятся **без изменений** как cdylib; тесты остаются регресс-сеткой |
 | `max-brh-qa/` | QA-фабрика: `suite/` — 11 областей, **166 тест-кейсов** (TC-01xx…11xx); `scripts/` — `.qa`-сценарии драйвера (`click/rclick/key/type/wait/tick/shot/assert/menu/setup/players/…`); `golden/` — 10 эталонных кадров; `qa_golden_check` (порог дрейфа 1 %); `--record` (запись сценариев из живой игры); C++-генераторы векторов (rng/map/sim/barrier/lobby/font) | Переносится на Unity как **чек-лист приёмки и регрессия**; golden-кадры — эталоны P2/P3 |
-| `max-horizon-server` + `src/` (C++ headless) | Серверная часть: оркестратор сессий, релей/арбитр барьеров, watchdog | **Не меняется вообще** — Unity-клиент обязан вписаться в существующий контракт |
+| `max-brh-server` + `src/` (C++ headless) | Серверная часть: оркестратор сессий, релей/арбитр барьеров, watchdog | **Не меняется вообще** — Unity-клиент обязан вписаться в существующий контракт |
 | `max-brh-qa-tools/max-resources-viewer` | GUI-редактор ресурсов (SDL3) с PNG-экспортом и тестом на реальном MAX.RES | Образец конвейера «RES → PNG → метаданные» для P1 |
 | `max-brh-docs/development/release-checklist.md`, `ci.sh`, `.github/workflows/ci.yml` | Релизные гейты, CI-пайплайн Rust | Образец для релизного пайплайна Unity (P6) |
 
@@ -103,7 +103,7 @@ Unity Player (C#, IL2CPP или Mono)
 │  · catch_unwind, arena-аллокации, детерминизм          │
 └───────────────────────────────────────────────────────┘
         (по сети, уже готово, не меняется)
-Horizon (max-horizon-server)  ⇄  C++ headless (src/)
+Horizon (max-brh-server)  ⇄  C++ headless (src/)
 ```
 
 ### 3.2 Два интерфейса FFI (ключевое проектное решение)
@@ -307,7 +307,7 @@ P6 (двое, часть параллельна хвосту P5)         ≈ 8 �
 | Golden-кадры 10 экранов | `max-brh-qa/golden/` | Эталоны pixel-diff приёмки P2/P3 |
 | QA-фабрика: `.qa`-язык, 166 TC, `qa_golden_check`, `--record` | `max-brh-qa/` | Переносится как чек-лист и регресс-набор (P6) |
 | 692 Rust-теста + C++-векторы (rng/map/sim/barrier) | `max-brh/`, `max-brh/tools/` | Остаются гейтом при любых правках core/net |
-| Сервер: Horizon + C++ headless | `max-horizon-server/`, `src/` | Не меняется; live-smoke «2 Unity-клиента» против него |
+| Сервер: Horizon + C++ headless | `max-brh-server/`, `src/` | Не меняется; live-smoke «2 Unity-клиента» против него |
 | Образцы пайплайнов/чек-листов | `ci.sh`, `release-checklist.md`, `ui-test-*.ps1` | Паттерн для Unity-CI и оконных прогонов |
 
 ### 7.2 Делается заново

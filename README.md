@@ -46,7 +46,7 @@ M.A.X. Port используется как **оракул** (каноничес
 | Каталог | Назначение |
 |---|---|
 | `max-brh/` | Rust-клиент (workspace: core/net/assets/render/app) |
-| `max-horizon-server/` | Horizon: оркестратор сессий (Rust, gRPC+WS) |
+| `max-brh-server/` | Horizon: оркестратор сессий (Rust, gRPC+WS) |
 | `src/` | наша развилка C++-порта: headless-сервер-арбитр |
 | `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
 | `max-cpp-port-max-brh-docs/` | документация автора (формат сейвов V70 и пр.) |

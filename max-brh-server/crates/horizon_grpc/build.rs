@@ -1,6 +1,6 @@
 //! Build script for `horizon_grpc`.
 //!
-//! Compiles `max-horizon-server/proto/horizon.proto` + `types.proto` (the
+//! Compiles `max-brh-server/proto/horizon.proto` + `types.proto` (the
 //! single source of truth of the Horizon gRPC contract) with
 //! `tonic-prost-build` into `OUT_DIR`, which `src/proto.rs` includes as
 //! `horizon.v1`. `protoc` comes from `protoc-bin-vendored`, so the build is
@@ -16,8 +16,8 @@ fn main() {
 }
 
 fn compile_horizon_proto() {
-    // `CARGO_MANIFEST_DIR` is `<repo>/max-horizon-server/crates/horizon_grpc`.
-    // `../../proto` resolves to `<repo>/max-horizon-server/proto`.
+    // `CARGO_MANIFEST_DIR` is `<repo>/max-brh-server/crates/horizon_grpc`.
+    // `../../proto` resolves to `<repo>/max-brh-server/proto`.
     const PROTO_REL: &str = "../../proto";
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -28,7 +28,7 @@ fn compile_horizon_proto() {
     assert!(
         horizon.is_file() && types.is_file(),
         "horizon_grpc: Horizon proto files not found under {} (looked for horizon.proto and \
-         types.proto); the repository layout must keep max-horizon-server/proto next to crates/",
+         types.proto); the repository layout must keep max-brh-server/proto next to crates/",
         proto_dir.display()
     );
 

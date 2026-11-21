@@ -58,13 +58,13 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   `src/` или репорт автору); задокументировать.
 - **5.3 Развёртывание — готово (M5.3)**: `docker-compose.yml` (Horizon +
   C++-headless), образ `ubuntu:24.04` + готовый Linux-бинарь
-  `max-horizon-server/target/release/horizon` volume-маунтом (плюс optional
+  `max-brh-server/target/release/horizon` volume-маунтом (плюс optional
   `--profile build`), порты 8080/8082 + UDP 32000-32100, конфиг из
   `smoke_config.toml` через `deploy/horizon.toml.template` + `entrypoint.sh`
   (`HORIZON_ANNOUNCE_HOST`, пути, секреты), healthcheck по LISTEN-сокетам.
   Проверено: `docker compose config` валиден, `up` → `healthy`, gRPC-проба
   `horizon_probe` (hello/list/create/join/ping) проходит; документация —
-  `max-horizon-server/README.Docker.md`.
+  `max-brh-server/README.Docker.md`.
 - **Критерий**: `docker compose up` → два клиента играют по инструкции.
 
 ## M6 — Полировка и релиз
@@ -85,7 +85,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   check`+`cargo test` max-brh + `cargo check/test --features sound`,
   `cargo test --workspace` Horizon, optional `--smoke` →
   `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml` (push/PR);
-  использование описано в `README.md`, `max-horizon-server/README.Docker.md`,
+  использование описано в `README.md`, `max-brh-server/README.Docker.md`,
   `max-brh/README.md`.
 - **6.4 Релиз — артефакты готовы (M6.4)**: версия 1.0.0, `CHANGELOG.md`,
   `max-brh-docs/release-checklist.md`, `release.sh` (сборка Linux-бинаря в Docker,
@@ -94,7 +94,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 
 ## Гейты релиза
 
-1. Все тесты зелёные: workspace `max-brh` + `max-horizon-server` (с учётом 5.1).
+1. Все тесты зелёные: workspace `max-brh` + `max-brh-server` (с учётом 5.1).
 2. Живой smoke: 2 клиента × 10+ ходов, CRC сходится (скрипт).
 3. Человеческий сценарий: партия против AI от меню до экрана победы.
 4. Документация: README, deploy, smoke, чек-лист релиза (`max-brh-docs/release-checklist.md`).

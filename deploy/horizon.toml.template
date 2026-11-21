@@ -1,6 +1,6 @@
 # Шаблон конфига Horizon для docker-compose (M5.3).
 #
-# Основа — max-horizon-server/smoke_config.toml, но пути и announce_host
+# Основа — max-brh-server/smoke_config.toml, но пути и announce_host
 # параметризованы. deploy/entrypoint.sh подставляет значения из окружения
 # (переменные HORIZON_* / MAX_*) и пишет итоговый TOML в /tmp/horizon/config.toml.
 # Сам шаблон в контейнере read-only; для ручной правки меняйте

@@ -1,6 +1,6 @@
 //! Horizon lobby/admin client over gRPC (`max-brh-docs/protocol-grpc.md`).
 //!
-//! The schemas in `max-horizon-server/proto` are the single source of truth;
+//! The schemas in `max-brh-server/proto` are the single source of truth;
 //! `build.rs` generates `horizon.v1` into `OUT_DIR` and [`proto`] exposes it.
 //! This module is the typed, async façade used by the client:
 //!

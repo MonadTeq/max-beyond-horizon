@@ -70,7 +70,7 @@ jobs:
         run: cargo test --no-default-features
 
   horizon:
-    name: max-horizon-server (workspace tests)
+    name: max-brh-server (workspace tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
             gcc g++ cmake pkg-config libssl-dev
 
       - name: cargo test --workspace
-        working-directory: max-horizon-server
+        working-directory: max-brh-server
         run: cargo test --workspace
 
   # Слои 2–3 QA (max-brh-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.

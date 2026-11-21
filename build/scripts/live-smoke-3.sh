@@ -11,7 +11,7 @@
 #   * barrier_timeouts=0, в логах нет десинка/ошибок сессии.
 #
 # Требования: Docker; workspace смонтирован как /src; собраны
-#   max-horizon-server/target/release/horizon и build/linux-server-template/max-port.
+#   max-brh-server/target/release/horizon и build/linux-server-template/max-port.
 # Клиенты собираются один раз (--no-default-features) и запускаются прямо из
 # target/debug, поэтому три параллельных `cargo run` не конкурируют за lock.
 set -euo pipefail
@@ -54,7 +54,7 @@ PROBE_BIN="$WS/max-brh/target/debug/examples/horizon_probe"
 # 1. Horizon. Порты наружу не публикуем: probe и клиенты живут в его network
 #    namespace, поэтому занятые хостом 8080/8082 не мешают прогону.
 echo "== horizon =="
-docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-horizon-server" \
+docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-brh-server" \
   ubuntu:24.04 bash -c \
   "apt-get update -qq && apt-get install -y -qq libssl3t64 libgcc-s1 libstdc++6 >/dev/null && \
    ./target/release/horizon --config smoke_config.toml" >/dev/null

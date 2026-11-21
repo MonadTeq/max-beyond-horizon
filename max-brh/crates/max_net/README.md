@@ -2,7 +2,7 @@
 
 Сетевая часть Rust-клиента M.A.X.: **Horizon по gRPC** и **игровая сессия по
 UDP/ENet 1.3.18**. Контракты — `max-brh-docs/protocol-grpc.md`, `max-brh-docs/protocol.md`,
-схемы — `max-horizon-server/proto/`.
+схемы — `max-brh-server/proto/`.
 
 ## Модули
 
@@ -29,8 +29,8 @@ UDP/ENet 1.3.18**. Контракты — `max-brh-docs/protocol-grpc.md`, `max-
 ### Proto (gRPC)
 
 `build.rs` вызывает `tonic-prost-build` для
-`../../../max-horizon-server/proto` относительно `CARGO_MANIFEST_DIR`
-(из `max-brh/crates/max_net` это `<repo>/max-horizon-server/proto`). Путь
+`../../../max-brh-server/proto` относительно `CARGO_MANIFEST_DIR`
+(из `max-brh/crates/max_net` это `<repo>/max-brh-server/proto`). Путь
 зафиксирован и проверяется ассертом; `protoc` берётся из крейта
 `protoc-bin-vendored`, поэтому `apt-get install protobuf-compiler` не нужен.
 
@@ -105,7 +105,7 @@ docker run --rm -v "$PWD:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c \
 ## Живой smoke (Docker)
 
 1. Собрать и запустить Horizon + headless по
-   `max-horizon-server/README.Docker.md` / `Dockerfile`, прописав в
+   `max-brh-server/README.Docker.md` / `Dockerfile`, прописав в
    `config.toml` секцию `[max]` (бинарь headless, `template_dir`, диапазон
    UDP-портов) и gRPC-листенер (`max-brh-docs/protocol-grpc.md` §4.4, порт 8082).
 2. Убедиться, что в лобби есть игра (`ListGames`), либо создать её

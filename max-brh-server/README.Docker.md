@@ -16,7 +16,7 @@
 
 **Выбранный вариант развёртывания — прагматичный:** Horizon не собирается внутри
 compose-образа. Монтируется готовый Linux-бинарь
-`max-horizon-server/target/release/horizon`; образ содержит только glibc/OpenSSL
+`max-brh-server/target/release/horizon`; образ содержит только glibc/OpenSSL
 Ubuntu 24.04. Плюсы: `up` занимает секунды, не нужен Rust-образ на рантайме,
 бинарь можно обновлять без пересборки. Минус: бинарь нужно собрать заранее
 (ниже есть и профиль-сборщик).
@@ -27,7 +27,7 @@ Ubuntu 24.04. Плюсы: `up` занимает секунды, не нужен 
 - Собранный Linux-бинарь Horizon:
   ```sh
   # из корня репозитория; сборка в отдельном контейнере (rust:1.94.0-bookworm)
-  docker run --rm -v "$PWD/max-horizon-server:/src" -w /src \
+  docker run --rm -v "$PWD/max-brh-server:/src" -w /src \
     rust:1.94.0-bookworm bash -c \
     "apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null \
      && cargo build --release -p horizon"
@@ -167,7 +167,7 @@ Docker вычисляются от расположения скрипта (не
 
 | Симптом | Причина/решение |
 |---|---|
-| `entrypoint: нет бинаря /opt/horizon/horizon` | не собран `max-horizon-server/target/release/horizon` |
+| `entrypoint: нет бинаря /opt/horizon/horizon` | не собран `max-brh-server/target/release/horizon` |
 | `game is not running (status: starting)` | headless ещё стартует; probe ретраит, клиенту — повторить join |
 | `TP 03 reason 3` у клиента | не совпал `data_hash` (`MAX.RES`/`PATCHES.RES`), проверьте `--assets-dir`/`--handshake-patches` |
 | headless падает на старте | `PATCHES.RES` попал в `MAX_GAME_DATA` (M5.2) |

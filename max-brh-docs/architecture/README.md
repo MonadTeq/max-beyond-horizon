@@ -15,7 +15,7 @@
 ## Общая схема
 
 ```
-Rust-клиент (max-brh)              Horizon (max-horizon-server)        C++ headless (src/)
+Rust-клиент (max-brh)              Horizon (max-brh-server)        C++ headless (src/)
 ┌─────────────────────┐   gRPC      ┌──────────────────────┐  spawn     ┌──────────────────┐
 │ max_app (UI/цикл)   │◄───────────►│ WS+gRPC лобби/админ   │───────────►│ max-port --server │
 │ max_render (визуал) │   ENet/UDP  │ тикеты, сессии        │            │ релей/арбитр     │
@@ -29,7 +29,7 @@ Rust-клиент (max-brh)              Horizon (max-horizon-server)        C++
 - **max_net** — бинарные протоколы: gRPC (Horizon) + UDP/ENet-семантика (сессия).
 - **max_assets/max_render** — форматы оригинальных ресурсов и визуал 1:1.
 - **src/** — наша развилка C++-порта: headless-сервер-арбитр (релей пакетов, CRC-барьеры).
-- **max-horizon-server** — оркестратор сессий (Rust).
+- **max-brh-server** — оркестратор сессий (Rust).
 
 ## Референсы-оракулы (не изменяются)
 

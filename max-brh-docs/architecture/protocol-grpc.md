@@ -1,13 +1,13 @@
 # Протокол Horizon: лобби/админ поверх gRPC + protobuf
 
 > Версия: v1 (проект схемы) · Статус: СПРОЕКТИРОВАНО, реализация — следующий этап.
-> Источник истины: [`max-horizon-server/proto/`](../max-horizon-server/proto/) —
+> Источник истины: [`max-brh-server/proto/`](../max-brh-server/proto/) —
 > `horizon.proto` (сервис) + `types.proto` (общие типы).
 > Базовый контракт (WS JSON): [`max-brh-docs/protocol.md`](protocol.md).
 
 ## 1. Цель
 
-Сегодня клиенты общаются с Horizon (max-horizon-server) по **WebSocket + JSON**
+Сегодня клиенты общаются с Horizon (max-brh-server) по **WebSocket + JSON**
 (`max-brh-docs/protocol.md` §5). По PLAN v6.0 лобби и админка переводятся на
 **gRPC + protobuf**:
 
@@ -28,8 +28,8 @@ WS-контракту.
 
 | Файл | Содержимое |
 |---|---|
-| [`types.proto`](../max-horizon-server/proto/types.proto) | Общие типы: `GameStatus`, `GameInfo`, `AdminSession`, `SessionStatusInfo`, `Ticket`, `TicketKind`, `Error` |
-| [`horizon.proto`](../max-horizon-server/proto/horizon.proto) | Сервис `Horizon` + все `*Request`/`*Response` |
+| [`types.proto`](../max-brh-server/proto/types.proto) | Общие типы: `GameStatus`, `GameInfo`, `AdminSession`, `SessionStatusInfo`, `Ticket`, `TicketKind`, `Error` |
+| [`horizon.proto`](../max-brh-server/proto/horizon.proto) | Сервис `Horizon` + все `*Request`/`*Response` |
 
 Разнесение выбрано (а не один файл), потому что `types.proto` переиспользуем
 будущими сервисами Horizon (метрики, чат-мост, события GORC для лобби) без
@@ -39,7 +39,7 @@ WS-контракту.
 
 Зависимостей на `google/protobuf/*.proto` (well-known types) **нет**: схема
 компилируется голым `protoc` без include-путей (см.
-[`proto/README.md`](../max-horizon-server/proto/README.md)).
+[`proto/README.md`](../max-brh-server/proto/README.md)).
 
 ## 3. Сервис и методы
 

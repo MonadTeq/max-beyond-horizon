@@ -26,7 +26,7 @@ if [ ! -f "$CONFIG_TEMPLATE" ]; then
     exit 1
 fi
 if [ ! -f /opt/horizon/horizon ]; then
-    echo "entrypoint: нет бинаря /opt/horizon/horizon (смонтируйте ./max-horizon-server/target/release/horizon)" >&2
+    echo "entrypoint: нет бинаря /opt/horizon/horizon (смонтируйте ./max-brh-server/target/release/horizon)" >&2
     exit 1
 fi
 

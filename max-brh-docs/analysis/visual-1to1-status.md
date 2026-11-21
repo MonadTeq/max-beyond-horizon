@@ -1154,7 +1154,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 **Полный гейт и артефакты.** `bash ci.sh` (Docker, `rust:1.94.0-bookworm`) —
 **CI OK за 577 с**: `cargo check/test` default + `sound` + `--no-default-features`,
-`max-horizon-server` (108 тестов), все 10 QA-сценариев PASS, golden без дрейфа,
+`max-brh-server` (108 тестов), все 10 QA-сценариев PASS, golden без дрейфа,
 soak PASS (RSS +172 КиБ). Пересобраны артефакты
 `release/max_app-1.1.0-windows-x86_64/` (headless, mingw),
 `release/max_app-1.1.0-windows-x86_64-ui/` (MSVC + SDL3.dll) и
@@ -3887,7 +3887,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
     `--no-default-features`) — 372 unit-теста max_app и все интеграционные,
     включая `build_lifecycle_interactive` (5), `unit_sprites` (6),
     `builder_cancel` (5), `turn_based_combat` (5);
-  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
   * 3/4 — **20** QA-скриптов PASS (включая `combat-tb.qa` 273 кадра/11 PNG и
     новый `build-cancel.qa` 300 кадров/3 PNG) и **15** golden-сверок,
     дрейф **0**;
@@ -4137,7 +4137,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
     `--features sound`, `--no-default-features`) — 377 lib-тестов max_app и все
     интеграционные (включая `cursor_table` 12), `max_core` 245 + 14 наборов
     (включая `construction_economy` 6 и `rubble` 7);
-  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
   * 3/4 — **21** QA-скрипт PASS (включая новый `panels.qa`: 5 кадров/12 PNG)
     и **16** golden-наборов, дрейф **0**;
   * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
@@ -4321,7 +4321,7 @@ honours биты из `flags` (так приходят загруженные V7
     `building_animation` 5), `max_core` 245 lib + 14 наборов (включая
     `production` 27 и `construction_economy` 6); `max_assets` 10 +
     `max_render` 85 + doc-tests — всё зелёное;
-  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
   * 3/4 — **21** QA-скрипт PASS (включая обновлённый `production.qa`:
     5835 кадров, 27 PNG, завод выпускает пехоту, золото не тронуто) и
     **16** golden-наборов, дрейф **0**;
@@ -4526,7 +4526,7 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
     `max_assets` 10, `max_render` 85, doc-tests — всё зелёное; `max_net` 86
     (в Windows-хосте один enet-тест `service_with_zero_timeout…` падает из-за
     окружения, в Linux-гейте — зелёный);
-  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
   * 3/4 — **21** QA-скрипт PASS (`production.qa` 5835 кадров/27 PNG,
     `build-cancel.qa` 299 кадров/4 PNG, `xfer.qa` 1332/4) и **16**
     golden-наборов, дрейф **0** (включая обновлённые `production/` 27 кадров и

@@ -4,7 +4,7 @@
 //!
 //! 1. **Horizon lobby/admin — gRPC + protobuf** ([`horizon`]): `Hello`,
 //!    `ListGames`, `CreateGame`, `JoinGame`, `Ping` from the
-//!    `max-horizon-server/proto` contract ([`proto`]). The client gets the
+//!    `max-brh-server/proto` contract ([`proto`]). The client gets the
 //!    session `host`/`port`/`ticket` from `JoinGame`.
 //! 2. **Game session — ENet 1.3.18 over UDP**
 //!    ([`session`], [`handshake`], [`wire`], [`enet`]):

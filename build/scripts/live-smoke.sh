@@ -3,7 +3,7 @@
 # Запуск снаружи (Git Bash/WSL/Linux) или изнутри контейнера с докером:
 #   bash build/scripts/live-smoke.sh [turns]
 # Требования: workspace смонтирован как /src (HOST_ROOT -> /src);
-# собранные: max-horizon-server/target/release/horizon, build/linux-server-template/max-port.
+# собранные: max-brh-server/target/release/horizon, build/linux-server-template/max-port.
 set -euo pipefail
 TURNS="${1:-5}"
 WS="/src"
@@ -21,7 +21,7 @@ cleanup
 mkdir -p "$LOGS"
 
 # 1. Horizon
-docker run -d --name horizon-live -v "$HOST_ROOT:/src" -w "$WS/max-horizon-server" \
+docker run -d --name horizon-live -v "$HOST_ROOT:/src" -w "$WS/max-brh-server" \
   -p 8082:8082 -p 8080:8080 ubuntu:24.04 bash -c \
   "apt-get update -qq && apt-get install -y -qq libssl3t64 libgcc-s1 libstdc++6 >/dev/null && ./target/release/horizon --config smoke_config.toml"
 sleep 8

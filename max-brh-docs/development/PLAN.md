@@ -40,7 +40,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
    реле и арбитр барьеров, а не источник снапшотов (в коде C++ снапшотов нет:
    есть CRC-синхронизация юнитов, пакет 54, и аудит 23/24/49 — см. max-brh-docs/protocol.md §8–9).
 2. **Бинарные протоколы**:
-   - Horizon (лобби/админ): **gRPC + protobuf** (схемы в `max-horizon-server/proto/`,
+   - Horizon (лобби/админ): **gRPC + protobuf** (схемы в `max-brh-server/proto/`,
      единственный источник истины; клиенты Rust/C++ генерируются из .proto).
    - Игровая сессия: **UDP с каналами в семантике ENet** (ordered reliable), пакеты —
      плоские LE-структуры с полем версии (быстро, zero-copy; раскладки уже в
@@ -61,7 +61,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 | `max-cpp-port/` | **Канонический** репозиторий автора M.A.X. Port (klei1984/max, актуальнее нашего `src/`; наш `src/` = его копия + Horizon-доработки: ws_client и пр.) | оракул №1 | да (как upstream-справка) |
 | `max-cpp-port-max-brh-docs/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
 | `src/` | C++-порт + наши доработки (headless/транспорт/RNG-чекпоинты) | сборка сервера | да |
-| `max-horizon-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
+| `max-brh-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
 | `max-brh/` | Rust-клиент | продукт (Цель 2) | да |
 | `max-brh-docs/` | protocol.md, state-model.md, dedicated-server-plan.md | спецификации (Цель 1) | да |
 | `max-original-dasm/` | RE-артефакты и инструменты | верификация/пробелы | да (кроме пересобираемого) |
@@ -93,7 +93,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 ### 1.3 Протоколы → `max-brh-docs/protocol.md` + `.proto`-схемы ✅ (основа)
 - Сделано: полный контракт (~70 сообщений: WS-лобби Horizon + UDP-сессия ENet,
   хендшейк/барьеры/приказы/чат; раскладки побайтово; открытые вопросы в §12).
-- Дальше (v6): вынести схемы Horizon в **protobuf** (`max-horizon-server/proto/`)
+- Дальше (v6): вынести схемы Horizon в **protobuf** (`max-brh-server/proto/`)
   и перевести Horizon-лобби на gRPC; сессионные пакеты остаются плоскими LE
   (типизация — через Rust-структуры в `max_net` с юнит-тестами на байты).
 - **Критерий**: `max_net` собирается по .proto + таблицам protocol.md без чтения C++.

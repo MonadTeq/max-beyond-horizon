@@ -60,7 +60,7 @@ CLIENT_BIN="$WS/max-brh/target/debug/max-brh"
 PROBE_BIN="$WS/max-brh/target/debug/examples/horizon_probe"
 
 echo "== horizon =="
-docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-horizon-server" \
+docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-brh-server" \
   ubuntu:24.04 bash -c \
   "apt-get update -qq && apt-get install -y -qq libssl3t64 libgcc-s1 libstdc++6 >/dev/null && \
    ./target/release/horizon --config smoke_config.toml" >/dev/null

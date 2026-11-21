@@ -7,7 +7,7 @@
 #
 # Прагматичный вариант развёртывания (выбран из двух): Horizon не собирается
 # внутри compose-образа — монтируется готовый Linux-бинарь
-# ./max-horizon-server/target/release/horizon. Образ `deploy/Dockerfile.runtime`
+# ./max-brh-server/target/release/horizon. Образ `deploy/Dockerfile.runtime`
 # — это ubuntu:24.04 с рантайм-зависимостями. Если бинаря нет:
 #
 #   docker compose --profile build run --rm builder
@@ -48,7 +48,7 @@ services:
       MAX_ADMIN_SECRET: "${HORIZON_ADMIN_SECRET:-smoke-admin}"
     volumes:
       # Готовый Linux-бинарь Horizon (см. `--profile build` ниже).
-      - ./max-horizon-server/target/release/horizon:/opt/horizon/horizon:ro
+      - ./max-brh-server/target/release/horizon:/opt/horizon/horizon:ro
       - ./deploy/entrypoint.sh:/opt/horizon/entrypoint.sh:ro
       - ./deploy/horizon.toml.template:/opt/horizon/horizon.toml.template:ro
       # C++ headless: max-port + .so + PATCHES.RES.
@@ -66,14 +66,14 @@ services:
     # 8080/8082 через /proc/net/tcp, без TCP-connect и лишних ошибок WS).
 
   # Опциональный сборщик (profile `build`). Кладёт Linux-бинарь в
-  # ./max-horizon-server/target/release/horizon, который монтирует horizon.
+  # ./max-brh-server/target/release/horizon, который монтирует horizon.
   # Запуск: docker compose --profile build run --rm builder
   builder:
     profiles: ["build"]
     image: rust:1.94.0-bookworm
     working_dir: /app
     volumes:
-      - ./max-horizon-server:/app
+      - ./max-brh-server:/app
       - horizon-cargo-registry:/usr/local/cargo/registry
     command: >
       bash -lc "apt-get update -qq

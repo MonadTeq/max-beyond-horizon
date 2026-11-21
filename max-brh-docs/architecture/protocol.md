@@ -1,7 +1,7 @@
 # Протокол клиент ↔ Horizon ↔ headless (спецификация для крейта max_net)
 
 > Статус: ЗАПОЛНЕНО из кода (`src/transport_*.cpp`, `src/remote.cpp`, `src/ws_client.cpp`,
-> `max-horizon-server/crates/*`). По этому документу можно написать сетевую часть
+> `max-brh-server/crates/*`). По этому документу можно написать сетевую часть
 > `max_net` без чтения C++/Rust-исходников. Все имена полей, порядок байтов и
 > числовые константы взяты из кода; места, где код не даёт ответа, вынесены в
 > «Открытые вопросы» (§12).
@@ -17,7 +17,7 @@
 ## 1. Топология
 
 ```
-max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-horizon-server, Rust)
+max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-brh-server, Rust)
     │                                            │  spawn/stop/restart, settings.json, тикет
     │                                            ▼
     │                                   max-port.exe --server (headless, C++)
@@ -26,7 +26,7 @@ max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-horizon-ser
 ```
 
 - **Horizon** — управляющая плоскость: WS-слушатель (по умолчанию `0.0.0.0:8081`,
-  JSON-фреймы, см. `max-horizon-server/config.toml`), плагины `max_lobby`
+  JSON-фреймы, см. `max-brh-server/config.toml`), плагины `max_lobby`
   (лобби/сессии) и `max_admin` (администрирование). Игровых данных через себя
   **не гоняет** (ретрансляция UDP — только план, фаза 3).
 - **Headless max-port** — авторитет: один процесс на сессию, в своём каталоге
@@ -740,7 +740,7 @@ Packet23Data. Клиент сверяет со своей копией и отв
 
 **Smoke через Horizon + headless (Docker или локально):**
 
-1. Собрать/запустить Horizon (см. `max-horizon-server/README.Docker.md`,
+1. Собрать/запустить Horizon (см. `max-brh-server/README.Docker.md`,
    `Dockerfile`, `compose.yaml`). По умолчанию он слушает WS на `0.0.0.0:8081`,
    грузит плагины `max_admin` и `max_lobby`, читает `config.toml` (секция
    `[max]`: путь к headless-бинари, `template_dir`, диапазон портов, секреты).
@@ -749,7 +749,7 @@ Packet23Data. Клиент сверяет со своей копией и отв
    horizon-smoke.py join <game_id> [password]` — печатает JSON-ответы
    (`game_created`, `game_list`, `game_joined`). Админ-драйвер:
    `python build/horizon-admin.py`. Пример успешного прогона —
-   `max-horizon-server/horizon-smoke.log`.
+   `max-brh-server/horizon-smoke.log`.
 3. Из `game_joined` взять `port` и `ticket`, подключиться ENet к
    `<host>:<port>` и выполнить §7 + §8.2. Маркеры успеха в логах headless
    (`sessions/<uuid>/ai_log.txt`, `stdout.txt`): `SERVER: entry`, вход клиента

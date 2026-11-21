@@ -14,7 +14,7 @@
 | `max-original-dasm/export/` | Экспорт Ghidra: `functions.csv`, `strings.csv` (пересобираемый, в git нет) |
 | `max-original-dasm/ghidra-project/` | Проект Ghidra (пересобираемый, в git нет) |
 | `max-original-dasm/tools/` | Скрипты и исходники инструментов |
-| `max-horizon-server/` | Horizon (Rust, оркестратор сессий) |
+| `max-brh-server/` | Horizon (Rust, оркестратор сессий) |
 
 ## Инструменты
 

@@ -82,7 +82,7 @@ pips, дельтой апгрейда и красными линиями; вто
 - [ ] Данные оригинальной игры на месте: `max-original/MAX.RES`,
       `max-original/COLOR.PAL`, `assets/PATCHES.RES`, звуки
       `max-original/*.SPW`, карты `*.WRL` (или `--world-dir`).
-- [ ] Для live-smoke: собран `max-horizon-server/target/release/horizon` и
+- [ ] Для live-smoke: собран `max-brh-server/target/release/horizon` и
       C++-headless `build/linux-server-template/max-port`.
 - [ ] Для Windows-бинаря (кросс-сборка, §6): сеть до apt
       (`gcc-mingw-w64-x86-64`, `wine`) и crates.io; запуск из Git Bash
@@ -139,7 +139,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config >/dev/null && cargo test --no-default-features'
 
 # 2.4 Horizon + C++-адаптер
-docker run --rm -v "$ROOT/max-horizon-server:/src" -w /src rust:1.94.0-bookworm \
+docker run --rm -v "$ROOT/max-brh-server:/src" -w /src rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
 # 2.5 Полный локальный CI (2.1 + 2.4 + QA-сценарии/эталоны; с --smoke добавляет §3)
@@ -294,7 +294,7 @@ bash build/scripts/live-smoke-mixed.sh 5
 ## 4. Человеческий сценарий M4 (SDL, мышь)
 
 Выполняется на машине с SDL3 и (для звука) аудиоустройством. Сервер — по
-`max-horizon-server/README.Docker.md`:
+`max-brh-server/README.Docker.md`:
 
 ```sh
 docker compose up -d --build          # Horizon + headless

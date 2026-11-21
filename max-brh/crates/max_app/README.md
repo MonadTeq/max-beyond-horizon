@@ -461,7 +461,7 @@ cargo check -p max_app --no-default-features
 1. Собрать headless-сервер оригинального порта (`MAX_HEADLESS`, `--server`) по
    `build/make-server-run.ps1` / `build/docker-build-linux-server.sh`; он
    арбитр и сам командой не играет.
-2. Поднять Horizon (`max-horizon-server`) с секцией `[max]` в `config.toml`
+2. Поднять Horizon (`max-brh-server`) с секцией `[max]` в `config.toml`
    (путь к headless-бинари, `template_dir`, диапазон UDP-портов) и gRPC
    листенером (по умолчанию `0.0.0.0:8082`, `max-brh-docs/protocol-grpc.md` §4.4).
 3. Убедиться, что сессия видна в лобби (`ListGames`), либо создать её

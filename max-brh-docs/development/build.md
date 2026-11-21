@@ -15,7 +15,7 @@
 ### Docker-образы
 | Образ | Назначение |
 |---|---|
-| `rust:1.94.0-bookworm` | сборка/тесты max-brh и max-horizon-server |
+| `rust:1.94.0-bookworm` | сборка/тесты max-brh и max-brh-server |
 | `ubuntu:24.04` | рантайм сервера, radare2, вспомогательные |
 | `max-port-build:latest` | сборка C++-headless (Linux) |
 | `max-ghidra`, `max-dosbox` | RE (по необходимости) |
@@ -67,7 +67,7 @@ bash release.sh          # release/max_app-1.1.0-linux-x86_64.tar.gz
 
 ### Horizon (сервер)
 ```sh
-docker run --rm -v "D:/dev/max-port-debug/max-horizon-server:/src" -w /src rust:1.94.0-bookworm \
+docker run --rm -v "D:/dev/max-port-debug/max-brh-server:/src" -w /src rust:1.94.0-bookworm \
   bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo build --release -p horizon"
 # или: docker compose up -d --build
 ```

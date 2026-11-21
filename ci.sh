@@ -10,7 +10,7 @@
 #   bash ci.sh --smoke --turns 10
 #
 # Требования: Docker с Linux-контейнерами; для --smoke — собранные
-# max-horizon-server/target/release/horizon и build/linux-server-template/max-port.
+# max-brh-server/target/release/horizon и build/linux-server-template/max-port.
 # Запускать из любой оболочки: bash/ Git Bash/ WSL/ Linux.
 set -euo pipefail
 
@@ -124,10 +124,10 @@ docker run --rm \
      cargo check --features sound && cargo test --features sound && \
      cargo test --no-default-features"
 
-step "2/4 max-horizon-server: cargo test --workspace"
+step "2/4 max-brh-server: cargo test --workspace"
 docker run --rm \
-    -v "$ROOT/max-horizon-server:/src/max-horizon-server" \
-    -w /src/max-horizon-server \
+    -v "$ROOT/max-brh-server:/src/max-brh-server" \
+    -w /src/max-brh-server \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
