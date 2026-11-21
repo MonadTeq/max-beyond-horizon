@@ -1,5 +1,19 @@
 # Сборка, запуск, инструменты и библиотеки
 
+## Термины (сборка и артефакты)
+
+Документация держит один набор терминов; `headless`, `UI` и `Console` не переводятся.
+
+| Термин | Что значит |
+|---|---|
+| **headless-сборка** | артефакт `max_app-<ver>-windows-x86_64` (+ `.zip`, `.zip.sha256`): клиент без окна и звука (`--no-default-features`, без фич `sdl*`/`sound`), PE **Subsystem=3** (Console); режимы `--demo`, `--new-game`, `--connect` |
+| **UI-сборка** | артефакт `max_app-<ver>-windows-x86_64-ui` (+ `.zip`, `.zip.sha256`): клиент с окном SDL3 и звуком (фичи `sdl-vcpkg,sound`), PE **Subsystem=2** (Windows GUI) |
+| **нативная MSVC-сборка** | сборка на Windows-хосте тулчейном MSVC (`vswhere` → `vcvars64`), target `x86_64-pc-windows-msvc`; Docker, mingw-w64 и wine не участвуют |
+| **кросс-сборка** | сборка под чужую платформу; в актуальных инструкциях не используется — только в исторических записях (`x86_64-pc-windows-gnu`, mingw) и для Linux/Docker-сборок |
+| **бинарь** | файл `max-brh.exe` (`max-brh` на Linux); каталог и архив — «сборка»/«артефакт», процесс — «сборка» |
+| **GUI-режим** | поведение клиента по умолчанию (`default = ["sdl-from-source"]`): окно SDL3; не путать с «UI-сборкой» — это артефакт для Windows со `SDL3.dll` |
+| **Subsystem=3 / 2** | поле PE `Subsystem`: 3 = Console (stdout в терминал), 2 = Windows GUI (консоли нет, `--help` виден только при перенаправлении) |
+
 ## Необходимые инструменты
 
 ### Разработка (хост, Windows)
@@ -48,24 +62,24 @@ cargo build --release -p max_app --features sdl-vcpkg,sound --no-default-feature
 cargo build --release -p max_app --no-default-features       # headless
 ```
 
-### Windows UI-бинарь (готовый путь)
+### Windows UI-сборка (готовый путь)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
 ```
 
-### Windows headless-бинарь (нативная сборка MSVC)
+### Windows headless-сборка (MSVC, нативно)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe
 ```
-Нативно на MSVC (`x86_64-pc-windows-msvc`), без Docker и без mingw; Docker для
-Windows-сборок больше не используется. Скрипт сам поднимает `vcvars64`, собирает
-`cargo build --release --locked -p max_app --no-default-features`, проверяет PE
-(Subsystem=3, console) и прогоняет `--help`/`--demo SAVE1.CAM --turns 1` на
-хосте (без wine), затем упаковывает каталог + `.zip` + `.zip.sha256`.
+Нативная MSVC-сборка (`x86_64-pc-windows-msvc`), без Docker и mingw. Скрипт
+поднимает `vcvars64`, собирает
+`cargo build --release --locked -p max_app --no-default-features`, проверяет
+PE (Subsystem=3, Console) и прогоняет `--help`/`--demo SAVE1.CAM --turns 1`
+нативно, затем упаковывает каталог + `.zip` + `.zip.sha256`.
 
-### Linux-бинарь + архив
+### Linux-сборка + архив
 ```sh
 bash release.sh          # bin/release/max_app-1.1.0-linux-x86_64.tar.gz
 ```
@@ -154,7 +168,7 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 Автоматический smoke: `bash max-brh-cicd/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
 ### Headless-режимы (без окна)
-Headless-бинарь собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
+Headless-сборка собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
 при сборке, ни в рантайме:
 ```sh
 cd max-brh
@@ -162,7 +176,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
-Готовый headless-артефакт (Windows, нативный MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
+Готовая headless-сборка (Windows, MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через

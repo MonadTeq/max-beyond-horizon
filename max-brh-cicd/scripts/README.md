@@ -1,17 +1,17 @@
 # max-brh-cicd/scripts — релизные и проверочные скрипты
 
-Windows-сборки — **нативные** PowerShell-скрипты на Windows-хосте (MSVC, без
-Docker и без mingw): `build-windows-headless.ps1` (headless) и
-`build-windows-ui.ps1` (окно SDL3 + звук). Linux-часть (`live-smoke*.sh`,
+Windows-сборки — **нативные MSVC-сборки** PowerShell-скриптами на Windows-хосте
+(без Docker и mingw): `build-windows-headless.ps1` (headless-сборка) и
+`build-windows-ui.ps1` (UI-сборка: окно SDL3 + звук). Linux-часть (`live-smoke*.sh`,
 `release.sh`, `ci.sh`) по-прежнему идёт через Docker (`rust:1.94.0-bookworm`);
 на Windows их запускать из **Git Bash** (не из `cmd`/PowerShell):
 `cygpath` и `MSYS_NO_PATHCONV` нужны для корректной передачи путей в Docker.
 
 | Скрипт | Что делает | Требования |
 |---|---|---|
-| `build-windows-headless.ps1` | **нативная** Windows-сборка `max-brh` (headless: `--no-default-features`, без SDL3/звука) на MSVC + упаковка `bin/release/max_app-<ver>-windows-x86_64.zip` + прогон `--help`/`--demo` нативно | Windows, VS с workload «Desktop development with C++» (MSVC + Windows SDK), Rust 1.94.0 (`x86_64-pc-windows-msvc`), данные игры для `--demo` |
-| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-brh` с окном SDL3 и звуком + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
-| `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранный UI-клиент |
+| `build-windows-headless.ps1` | **нативная MSVC-сборка** `max-brh` — headless-сборка (`--no-default-features`, без SDL3/звука) + упаковка `bin/release/max_app-<ver>-windows-x86_64.zip` + прогон `--help`/`--demo` нативно | Windows, VS с workload «Desktop development with C++» (MSVC + Windows SDK), Rust 1.94.0 (`x86_64-pc-windows-msvc`), данные игры для `--demo` |
+| `build-windows-ui.ps1` | **нативная MSVC-сборка** `max-brh` — UI-сборка (окно SDL3 + звук) + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранная UI-сборка |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-brh-server/target/release/horizon` и `build/linux-server-template/max-port` |
 | `live-smoke-3.sh` | P5: живой smoke **3 клиента × N ходов** (RED/GREEN/BLUE): релей всем, 00/52/54/45, `state_checksum` у всех, 0 таймаутов | то же; Docker; `--min-players 3` создаётся автоматически |
@@ -50,10 +50,10 @@ probe и клиенты живут в network namespace контейнера Hor
 
 ## build-windows-headless.ps1
 
-Нативная Windows-сборка **headless**-бинаря (без окна SDL3, без звука).
+Нативная MSVC-сборка **headless**-варианта (без окна SDL3, без звука).
 Прежняя кросс-сборка `build-windows.sh` (Docker + mingw-w64, target
-`x86_64-pc-windows-gnu`) удалена: на Windows-хосте есть MSVC, и нативный
-тулчейн даёт обычный MSVC-рантайм вместо mingw без Docker и wine.
+`x86_64-pc-windows-gnu`) удалена: нативная MSVC-сборка даёт обычный
+MSVC-рантайм вместо mingw, без Docker и wine.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-headless.ps1
@@ -122,7 +122,7 @@ UTF-8: так проверка справки не зависит от коди�
 
 ## build-windows-ui.ps1
 
-Нативная Windows-сборка **интерактивного** клиента (окно SDL3 + звук WASAPI).
+Нативная MSVC-сборка **UI**-варианта (окно SDL3 + звук WASAPI).
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
@@ -149,7 +149,7 @@ Subsystem=2 = GUI) и `max-brh.exe --help`, затем пакует
 LICENSE + CHANGELOG.md + SHA256SUMS) и `.zip` + `.zip.sha256`.
 
 Справка проверяется через `cmd` с перенаправлением в
-`build/win-msvc-target/max-brh-help.txt`: у GUI-сборки нет консоли, поэтому
+`bin/target/max-brh-help.txt`: у UI-сборки нет консоли, поэтому
 `& max-brh.exe --help | Out-String` в PowerShell не дожидается процесса и
 возвращает пустоту, а `cmd` ждёт exit code, и перенаправленный stdout читается
 из файла. Тот же приём работает и для ручного запуска:
@@ -170,16 +170,16 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 Грабли, которые скрипт обходит (проверено на этом хосте):
 
 - **cmd `set VAR=value && …`** записывает в значение пробел перед `&&`:
-  `CARGO_TARGET_DIR=…\win-msvc-target ` → `failed to create directory … target \release`.
+  `CARGO_TARGET_DIR=…\bin\target ` → `failed to create directory … target \release`.
   Поэтому в батнике только `set "VAR=value"`.
 - **`SDL3.lib` не находится**: `sdl3-sys` с фичей `use-vcpkg` линкует `SDL3.lib`,
   но путь поиска в `LIB` не добавляет → `LNK1181: cannot open input file
   'SDL3.lib'`. Скрипт дописывает `<vcpkg>\installed\x64-windows\lib` в `LIB`.
 - **`SDL3.dll`** должна лежать рядом с exe (без неё exe не стартует) — копируется
-  и в `build/win-msvc-target/release/`, и в архив.
+  и в `bin/target/release/`, и в архив.
 - **PowerShell 5.1 читает .ps1 как ANSI**, если нет BOM: файл сохранён в UTF-8
   **с BOM**, иначе русские строки ломают парсер.
-- Сборка идёт в `build/win-msvc-target/`, а не в `max-brh/target/`, чтобы не
+- Сборка идёт в `bin/target/`, а не в `max-brh/target/`, чтобы не
   смешивать MSVC-артефакты с Linux/Docker-сборками.
 
 ## pe-subsystem.ps1

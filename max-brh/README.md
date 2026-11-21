@@ -48,7 +48,7 @@
   `cargo run -p max_app` открывает игру (SDL3 3.4.20 собирается из исходников
   через CMake), флаги не нужны; headless-сборки идут с `--no-default-features`.
 - Релизный чек-лист (гейты, live-smoke 2×10, человеческий сценарий M4,
-  Linux/Windows-бинарники, тег) — `../max-brh-docs/development/release-checklist.md`; история —
+  Linux/Windows-сборки, тег) — `../max-brh-docs/development/release-checklist.md`; история —
   `../CHANGELOG.md`.
 - Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M6).
 
@@ -93,22 +93,22 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   (headless) и `cargo test --workspace` Horizon в `rust:1.94.0-bookworm`;
   `bash ci.sh --smoke` добавляет живой `max-brh-cicd/scripts/live-smoke.sh`
   (2 клиента × N ходов). GitHub-эквивалент — `../.github/workflows/ci.yml`.
-- Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
+- Релиз (M6.4): `bash ../release.sh` собирает Linux-сборку с
   `--no-default-features --features sdl-from-source,sound`, упаковывает
   `release/` и готовит тег `v1.1.0`; полный порядок —
   `../max-brh-docs/development/release-checklist.md`.
-- Windows x64, headless (M6.4): нативная сборка на MSVC —
+- Windows x64, headless-сборка (M6.4): нативная MSVC-сборка —
   `powershell -ExecutionPolicy Bypass -File ..\max-brh-cicd\scripts\build-windows-headless.ps1`
   (VS с workload «Desktop development with C++»: MSVC + Windows SDK ищутся через
   `vswhere` → `vcvars64`; Docker и mingw для Windows больше не нужны):
   `cargo build --release --locked -p max_app --no-default-features` под target по
-  умолчанию `x86_64-pc-windows-msvc` → PE32+ x86-64 **console** (`max-brh.exe` +
+  умолчанию `x86_64-pc-windows-msvc` → PE32+ x86-64, **Subsystem=3 (Console)** (`max-brh.exe` +
   `bin/release/max_app-<ver>-windows-x86_64.zip`). Скрипт проверяет
   Subsystem=3 и прогоняет `--help`/`--demo SAVE1.CAM --turns 1` **нативно**
   (без wine; лог — `build/smoke-logs/windows-msvc-headless-smoke.log`): без
   feature `sdl` подсистема остаётся 3, вывод `--demo`/`--new-game`/`--connect`
   виден в терминале/CI.
-- Windows x64, интерактивный (окно SDL3 + звук): нативная сборка на
+- Windows x64, UI-сборка (окно SDL3 + звук): нативная MSVC-сборка на
   Windows-хосте через `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1`
   (`--no-default-features --features sdl-vcpkg,sound`, SDL3 из vcpkg) →
   `bin/release/max_app-<ver>-windows-x86_64-ui.zip` (`max-brh.exe` + `SDL3.dll`).

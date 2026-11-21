@@ -3,7 +3,7 @@
 ### Изменено
 
 - **Windows-сборки переведены на нативный MSVC: Docker/mingw-w64 и wine для
-  Windows убраны.** Headless-бинарь теперь собирает
+  Windows убраны.** Headless-сборку теперь собирает
   `max-brh-cicd/scripts/build-windows-headless.ps1` — PowerShell-скрипт на
   Windows-хосте: `vswhere` → `vcvars64.bat` → `cargo build --release --locked
   -p max_app --no-default-features` под target по умолчанию
