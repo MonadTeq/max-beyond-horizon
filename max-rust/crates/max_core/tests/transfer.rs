@@ -25,8 +25,11 @@ fn test_state() -> GameState {
     state
 }
 
-/// Спавн здания и перенос его комплекса в `target` (в порте каждое здание
-/// получает свой комплекс: слияние по коннекторам не портировано).
+/// Спавн здания и **принудительный** перенос его комплекса в `target`.
+///
+/// Боевой путь слияния — `UnitsManager_UpdateConnectors` (см. `complex.rs`):
+/// соседние здания сливаются сами. Хелпер нужен тестам, где здания стоят
+/// далеко друг от друга, а комплекс всё равно должен быть общим.
 fn spawn_in_complex(
     state: &mut GameState,
     unit_type: UnitType,
@@ -108,6 +111,75 @@ fn transfer_menu_info_matches_get_cargo_info_for_own_complex() {
     assert_eq!(
         complex_free_capacity(&state, TeamId::RED, complex, CargoType::Raw),
         60
+    );
+}
+
+#[test]
+fn xfer_takes_materials_from_the_whole_connected_complex() {
+    let mut state = test_state();
+    let mine = state
+        .spawn_unit(
+            UnitType::MiningStation,
+            TeamId::RED,
+            Point::new(20, 20),
+            0,
+        )
+        .expect("mine");
+    // Шахта 2×2 (20..=21), `ADUMP` — 1×1 `STANDALONE` вплотную справа:
+    // `UpdateConnectors` сливает их в один комплекс.
+    let dump = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(22, 20), 0)
+        .expect("ADump");
+
+    let mine_complex = complex_of(&state, mine);
+    assert_eq!(
+        state.unit(dump).expect("ADump").complex,
+        Some(mine_complex),
+        "шахта и ADUMP — один комплекс"
+    );
+
+    state.unit_mut(mine).expect("mine").storage = 20;
+    state.unit_mut(dump).expect("ADump").storage = 0;
+    update_resources_total(&mut state, TeamId::RED, mine_complex);
+
+    let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(23, 20));
+
+    // `TransferMenu_GetUnitCargoInfo`: у источника комплекс, отличный от
+    // комплекса цели (у грузовика его нет) — показывается весь котёл.
+    assert_eq!(
+        transfer_menu_cargo_info(&state, dump, truck, CargoType::Raw),
+        (20, 75),
+        "запас комплекса 20, ёмкость 25 (шахта) + 50 (ADUMP)"
+    );
+
+    // `ProcessTransfer`: минус — из комплекса в грузовик.
+    {
+        let unit = state.unit_mut(truck).expect("truck");
+        unit.parent_unit = Some(dump);
+        unit.transfer_cargo = -12;
+        unit.orders = UnitOrder::Transfer;
+        unit.state = UnitOrderState::Init;
+        unit.prior_orders = UnitOrder::Await;
+        unit.prior_state = UnitOrderState::ExecutingOrder;
+    }
+
+    process_transfer(&mut state, truck);
+
+    assert_eq!(storage(&state, truck), 12);
+    assert_eq!(
+        storage(&state, dump),
+        0,
+        "пустой склад ничего не отдал"
+    );
+    assert_eq!(
+        storage(&state, mine),
+        8,
+        "остаток взят из шахты того же комплекса"
+    );
+    assert_eq!(
+        get_cargo_info(&state, TeamId::RED, mine_complex).0.raw,
+        8,
+        "общий котёл комплекса уменьшился на 12"
     );
 }
 

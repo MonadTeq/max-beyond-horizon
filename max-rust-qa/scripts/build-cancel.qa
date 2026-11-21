@@ -1,18 +1,18 @@
-# build-cancel.qa — увод строителя с недостроенной площадки отменяет стройку.
+# build-cancel.qa — строителя НЕЛЬЗЯ увести с недостроенной площадки;
+# отмена стройки — только явная (`stop` попапа → CancelBuilding).
 #
 #   cargo run -q -p max_app --no-default-features --example qa_run -- \
 #       ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
 #
-# Оракул: `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`, ветка `!STATIONARY`)
-# и `UnitsManager_SetNewOrderInt` (`units_manager.cpp:1945`). В C++ приказ
-# движения строителю в `BUILD_IN_PROGRESS` по карте невозможен
-# (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`:
-# `CURSOR_UNIT_NO_GO`), а `stop` попапа идёт через `ORDER_BUILD`/
-# `ORDER_STATE_BUILD_CANCEL` → `CancelBuilding`. Порт отменяет стройку при
-# любом новом приказе (клик/RMB, сеть, ИИ): `build_list.Clear()`,
-# `build_time = 0`, `Access_DestroyUtilities(grid, true, false, false, false)`
-# (лента/конусы/плита снимаются), `ORDER_AWAIT`/`EXECUTING_ORDER`; материалы
-# не возвращаются. Ход производства после этого здание не достраивает.
+# Оракул: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829-5935`):
+# для строителя в `BUILD_IN_PROGRESS` клик по карте даёт `CURSOR_UNIT_NO_GO`,
+# приказ движения не создаётся. Отмена — `UnitsManager_Popup_OnClick_BuildStop`
+# → `GameManager_SelectBuildSite` → `ORDER_BUILD`/`ORDER_STATE_BUILD_CANCEL` →
+# `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`, ветка `!STATIONARY`):
+# `build_list.Clear()`, `build_time = 0`,
+# `Access_DestroyUtilities(grid, true, false, false, false)` (лента/конусы/плита
+# снимаются), `ORDER_AWAIT`/`EXECUTING_ORDER`; материалы не возвращаются.
+# Ход производства после этого здание не достраивает.
 #
 # Всё — Turn Based (No Limit), как требует общий QA-режим.
 
@@ -54,13 +54,30 @@ assert building=on
 assert unit-count Training Hall=0
 shot build-cancel-placed
 
-# --- Увод строителя: новый приказ отменяет стройку --------------------------
-move near
-assert unit-order=move
+# --- Попытка увода: RMB по соседней клетке — UNIT_NO_GO, приказа нет -----------
+# Курсор C++ для `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`; приказ движения
+# не создаётся, площадка/очередь остаются нетронутыми.
+move near refused
+assert unit-order=build
+assert site=large
+assert site-pos=28,20
+assert building=on
+assert unit-count Training Hall=0
+shot build-cancel-no-go
+
+# --- Явная отмена: `stop` попапа → ORDER_BUILD/BUILD_CANCEL ------------------
+unit-menu open
+assert unit-menu=open
+assert unit-menu-item=stop
+unit-menu item stop
+assert unit-menu=closed
+# `CancelBuilding` исполняется процессором приказа на следующем тике.
+tick 1
+assert unit-order=await
 assert site=none
 assert building=off
 assert unit-count Training Hall=0
-shot build-cancel-moved
+shot build-cancel-stopped
 
 # --- Ход производства не достраивает отменённое здание ----------------------
 end_turn

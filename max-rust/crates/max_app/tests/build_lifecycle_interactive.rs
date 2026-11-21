@@ -379,18 +379,15 @@ fn run_build_cycle(exit: ExitClick) {
     );
 }
 
-/// Увод строителя с **недостроенной** площадки отменяет стройку.
+/// Клик по другой клетке во время стройки **не** отдаёт приказ движения.
 ///
-/// Оракул: `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`, ветка
-/// `!STATIONARY`): `build_list.Clear()`, `build_time = 0`,
-/// `Access_DestroyUtilities(grid, true, false, false, false)` (лента, конусы и
-/// плита), `ORDER_AWAIT`/`EXECUTING_ORDER`. В C++ клик по пустой клетке со
-/// строителем в `BUILD_IN_PROGRESS` даёт `CURSOR_UNIT_NO_GO`
-/// (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`), а приказ
-/// уйти приходит через `stop` попапа → `CancelBuilding`; порт отменяет стройку
-/// при любом новом приказе (сеть/ИИ/группа/клик) и сообщает об этом в HUD.
+/// Оракул: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5927-5931`) —
+/// для строителя в `BUILD_IN_PROGRESS` курсор `CURSOR_UNIT_NO_GO`; отмена
+/// стройки — только явный `stop` попапа (`UnitsManager_Popup_OnClick_BuildStop`
+/// → `ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`). Порт не
+/// отменяет стройку при попытке увода и не тратит заказ.
 #[test]
-fn moving_the_builder_away_cancels_the_unfinished_build() {
+fn right_click_while_building_is_no_go_and_keeps_the_site() {
     let Some(mut app) = local_app() else {
         return;
     };
@@ -464,7 +461,7 @@ fn moving_the_builder_away_cancels_the_unfinished_build() {
     };
     assert!(slab_at_site(&app), "плита стоит на площадке");
 
-    // Свободная достижимая клетка рядом: клик по ней — приказ движения.
+    // Свободная достижимая клетка рядом: клик по ней в C++ — `UNIT_NO_GO`.
     let destination = (0..=4)
         .flat_map(|radius| {
             (-radius..=radius).flat_map(move |dy| (-radius..=radius).map(move |dx| (dx, dy)))
@@ -479,49 +476,40 @@ fn moving_the_builder_away_cancels_the_unfinished_build() {
         .expect("достижимая клетка для ухода");
 
     let (click_x, click_y) = cell_screen(&app, destination);
-    // Выделение строителя: в живой партии игрок кликает по спрайту, здесь —
-    // напрямую (UI-поле, в состоянии/CRC не входит).
     app.hud_mut().select(Some(builder));
+
+    // Курсор C++ для `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`.
+    assert_eq!(
+        max_app::cursor::window_cursor(&app, destination),
+        max_app::cursor::CursorId::UnitNoGo,
+        "курсор над клеткой увода — CURSOR_UNIT_NO_GO"
+    );
+
     handle_session_input(&mut app, InputEvent::RightClick(click_x, click_y), false);
 
     let unit = app.state().unit(builder).expect("builder alive").clone();
     assert_eq!(
-        unit.orders,
-        UnitOrder::Move,
-        "приказ движения применён после отмены стройки"
+        (unit.orders, unit.state),
+        (UnitOrder::Build, UnitOrderState::BuildInProgress),
+        "приказ движения не отдан — строитель продолжает стройку"
     );
-    assert!(
-        unit.build_list.is_empty() && unit.build_time == 0,
-        "очередь и прогресс стройки сброшены"
+    assert_eq!(
+        unit.build_list,
+        vec![UnitType::TrainingHall],
+        "очередь стройки не тронута"
     );
-    assert_eq!(site_units(&app, team), 0, "лента и конусы сняты");
-    assert!(
-        !slab_at_site(&app),
-        "плита снята (`Access_DestroyUtilities(..., true, false, false, false)`)"
-    );
+    assert!(unit.build_time > 0, "прогресс стройки сохранён");
+    assert!(site_units(&app, team) > 0, "лента и конусы на месте");
+    assert!(slab_at_site(&app), "плита на месте");
     assert!(
         app.hud()
             .log
             .lines()
             .iter()
-            .any(|line| line.contains("Build cancelled")),
-        "HUD сообщает об отмене стройки: {:?}",
+            .any(|line| line.contains("Cannot move while building")),
+        "HUD объясняет отказ: {:?}",
         app.hud().log.lines()
     );
-
-    // Достройки после ухода строителя быть не должно: ход производства
-    // пропускает юнита с пустой очередью.
-    app.local_end_turn();
-    assert!(
-        run_until_player_turn(&mut app, 8000),
-        "не дождались хода человека после отмены"
-    );
-    let hall = app.state().unit_ids_in_order().into_iter().any(|id| {
-        app.state()
-            .unit(id)
-            .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::TrainingHall)
-    });
-    assert!(!hall, "отменённая стройка не должна достраиваться сама");
 }
 
 #[test]

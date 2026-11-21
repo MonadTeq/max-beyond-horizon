@@ -288,10 +288,31 @@ assert site=none
 assert build-ready=no
 shot build-done
 
-# --- BuildMenu завода: очередь и заказ пехоты ----------------------------
-# Завод — стационарный юнит: `select unit` его не видит, выбираем по имени.
+# --- Комплекс завода: склад вплотную к цеху + общий котёл -------------------
+# C++ `UnitsManager_UpdateConnectors` (`units_manager.cpp:2051-2225`) сливает
+# здания команды через коннекторы в ОДИН комплекс, а завод тратит сырьё
+# комплекса (`Complex::GetCargoInfo` — сумма складов, `complex.cpp:136-147`;
+# `Cargo_GetNetProduction` вычитает ставку из `complex->material`). Цех,
+# построенный на (28,20), стоит по диагонали к шахте (30,22) — коннектора нет.
+# Ставим ADUMP в клетку (30,21): она примыкает и к цеху (29,21), и к шахте
+# (30,22), поэтому все три здания попадают в один комплекс.
+select type Constructor
+assert unit-pos=29,22
+spawn ADump
+assert unit=ADump
+# `complex raw N` — QA-only `Complex::Transfer(raw,0,0)`: кладёт сырьё в общий
+# котёл **выделенного** комплекса (раскладывается по складам членов).
+select type Training Hall
+complex raw 60
+assert complex-raw>=50
+# Склад в комплексе цеха реально получил сырьё — значит коннекторы слили их.
+select type ADump
+assert unit-storage>=1
 select type Training Hall
 assert unit=Training Hall
+
+# --- BuildMenu завода: очередь и заказ пехоты ----------------------------
+# Завод — стационарный юнит: `select unit` его не видит, выбираем по имени.
 build open
 assert build=open
 shot buildmenu-factory
@@ -313,15 +334,16 @@ anim 34
 shot factory-work-b
 
 # --- 2 хода постройки (ATTRIB_TURNS INFANTRY) ----------------------------
-# Завод платит МАТЕРИАЛАМИ базы (`Cargo_GetRawConsumptionRate` →
+# Завод платит МАТЕРИАЛАМИ СВОЕГО КОМПЛЕКСА (`Cargo_GetRawConsumptionRate` →
 # `UnitInfo::StartBuilding`/`Cargo_GetNetProduction`), а не золотом команды:
-# кредиты после мобилизации не тратятся, материалы даёт шахта.
+# кредиты после мобилизации не тратятся, сырьё берётся из общего котла
+# (ADUMP + шахта), подключённого коннекторами.
 end_turn
 end_turn
 assert unit=Infantry
 assert gold>=150
 shot production-done
-# Материалы базы: шахта копит сырьё, которым платит завод.
+# Материалы комплекса: шахта копит сырьё, которым платит завод.
 select type Mining Station
 assert unit-storage>=1
 

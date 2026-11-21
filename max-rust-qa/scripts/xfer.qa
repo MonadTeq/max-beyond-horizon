@@ -60,6 +60,26 @@ assert screen=InGame
 select type MiningStation
 assert unit-storage>=5
 
+# --- Общий котёл комплекса: ADUMP вплотную к шахте --------------------------
+# C++ `UnitsManager_UpdateConnectors` сливает соседние здания в один комплекс,
+# `Complex::GetCargoInfo` суммирует их склады, а `Complex::Transfer` раскладывает
+# груз по членам. Ставим ADUMP в (29,22) — клетка примыкает к шахте (30,22) с
+# запада — и кладём сырьё в котёл командой `complex raw 100` (`Complex::Transfer`;
+# QA-команда задаёт запас кэша, поэтому 100 гарантированно заполняет склады
+# членов до `ATTRIB_STORAGE`).
+# x-fer из шахты после этого видит запас ВСЕГО комплекса, а не только склада
+# шахты; `TransferMenu_GetUnitCargoInfo` (`transfermenu.cpp:37-60`).
+spawn at 29 22 ADump
+assert unit=ADump
+select type MiningStation
+complex raw 100
+# Попап шахты (ALLOCATE/X-FER/STOP/REMOVE) перекрывает соседнюю клетку —
+# закрываем его, иначе клик по ADUMP попадёт в кнопку, а не на карту.
+key ESC
+select type ADump
+assert unit-storage>=30
+select type MiningStation
+
 # --- x-fer: пункт включён, режим курсора --------------------------------
 unit-menu open
 assert unit-menu=open
@@ -71,7 +91,7 @@ assert unit-menu=closed
 # --- Клик по конструктору открывает окно X-FER ---------------------------
 click unit Constructor
 assert transfer=open
-# По умолчанию полоса заполняет цель: min(60-40, запас шахты).
+# По умолчанию полоса заполняет цель: min(60-40, запас комплекса).
 assert transfer-amount>=1
 shot xfer-menu
 

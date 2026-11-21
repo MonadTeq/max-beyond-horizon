@@ -320,9 +320,10 @@ fn allocation_changes_the_complex_income_next_turn() {
     // `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`.
     app.state_mut().manage_economy(TeamId::RED);
 
+    let complex_id = app.economy_complex().expect("комплекс шахты");
     let complex = app
-        .economy_complex()
-        .and_then(|id| app.state().complex(TeamId::RED, id))
+        .state()
+        .complex(TeamId::RED, complex_id)
         .expect("комплекс шахты");
 
     assert_eq!(complex.material, 0, "доля сырья 0 — добычи сырья нет");
@@ -331,9 +332,33 @@ fn allocation_changes_the_complex_income_next_turn() {
         MiningKind::Gold => complex.gold,
         MiningKind::Raw => unreachable!(),
     };
+    // `POWGEN` в том же комплексе (он стоит вплотную к шахте, коннекторы их
+    // слили) сам тратит топливо: `Cargo_GetFuelConsumptionRate(POWGEN) = 2`
+    // (`cargo.cpp:183-200`), поэтому чистый доход = добыча − 2. До слияния
+    // комплексов генератор в котёл шахты не входил и тест видел полные 5.
+    let has_generator = app
+        .state()
+        .unit_list(max_core::unit::UnitListKind::Stationary)
+        .iter()
+        .filter_map(|id| app.state().unit(*id))
+        .any(|unit| {
+            unit.complex.map(|complex| complex.0) == Some(complex_id as i16)
+                && unit.unit_type == UnitType::PowerGenerator
+        });
+    let generator_fuel_draw = if matches!(other, MiningKind::Fuel) && has_generator {
+        2
+    } else {
+        0
+    };
     assert!(
-        i32::from(income) >= target,
-        "добыча {other:?} попала в запас комплекса: {income} (ждали {target})"
+        i32::from(income) >= target - generator_fuel_draw,
+        "чистая добыча {other:?} попала в запас комплекса: {income} \
+         (ждали ≥ {} = {target} − {generator_fuel_draw})",
+        target - generator_fuel_draw
+    );
+    assert!(
+        i32::from(income) > 0,
+        "добыча {other:?} положительна даже с расходом генератора: {income}"
     );
 }
 

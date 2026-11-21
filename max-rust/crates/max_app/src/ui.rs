@@ -3251,24 +3251,36 @@ fn session_map_right_click(
         return Transition::None;
     }
 
+    // Строитель на недостроенной площадке: C++ не даёт приказ движения
+    // (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931` —
+    // `CURSOR_UNIT_NO_GO` для всех состояний, кроме `UNIT_READY`/`SELECT_SITE`).
+    // Увести его можно только явной отменой `stop` в попапе
+    // (`UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/`BUILD_CANCEL`).
+    if let Some(site) = app
+        .state()
+        .unit(selected)
+        .and_then(max_core::unit_order::active_build_site)
+    {
+        app.hud_mut().preview = None;
+        app.play_sfx(Sfx::Cancel);
+        app.hud_mut().push_log(format!(
+            "Cannot move while building at ({}, {}) — use stop",
+            site.x, site.y
+        ));
+
+        if debug {
+            eprintln!(
+                "[rclick] result=no-go-building selected={} site=({},{})",
+                selected.0, site.x, site.y
+            );
+        }
+
+        return Transition::None;
+    }
+
     match hud::build_move_order(app.state(), selected, destination) {
         Some(order) => {
             let steps = order.preview.len();
-            // Увод мобильного строителя с недостроенной площадки отменяет
-            // стройку (`UnitInfo::CancelBuilding`, `unitinfo.cpp:4231`): ядро
-            // делает это при применении приказа, HUD сообщает игроку.
-            if let Some(site) = app
-                .state()
-                .unit(selected)
-                .and_then(max_core::unit_order::active_build_site)
-            {
-                app.play_sfx(Sfx::Cancel);
-                app.hud_mut().push_log(format!(
-                    "Build cancelled at ({}, {})",
-                    site.x, site.y
-                ));
-                app.hud_mut().clear_hint();
-            }
             app.hud_mut().preview = Some(order.preview);
             app.hud_mut().pending.push(order.command);
             app.hud_mut().push_log(format!(

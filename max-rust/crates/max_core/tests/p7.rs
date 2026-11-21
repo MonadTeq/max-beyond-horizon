@@ -255,12 +255,22 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
     state.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
     state.game_state = max_core::enums::GameStateType::InGame;
 
+    // Высадка идёт в фазе `GAME_STATE_12_DEPLOYING_UNITS`: C++
+    // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`) в этой фазе
+    // **не** обнуляет склад (движок ожидает погрузку миссии), поэтому у
+    // ENGINEER остаётся `ATTRIB_STORAGE` (40) — ровно как в
+    // `tools/sim_vectors` (`deploy_unit` пишет `values.storage`).
+    let deploy_state = state.game_state;
+    state.game_state = max_core::enums::GameStateType::DeployingUnits;
+
     for (unit_type, team, x, y) in &replay.deploys {
         let unit_type = UnitType::try_from(*unit_type).expect("unit type");
         state
             .spawn_unit(unit_type, TeamId(*team), Point::new(*x, *y), 0)
             .expect("unit deploys");
     }
+
+    state.game_state = deploy_state;
 
     for _ in 0..replay.ticks {
         state.tick();

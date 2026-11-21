@@ -613,6 +613,12 @@ pub fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (C
 /// Именно здесь добыча шахты (`raw_mining`/`fuel_mining`/`gold_mining`)
 /// становится добычей комплекса **за ход**: `GameManager_ManageEconomy`
 /// вызывает это каждый ход (`OptimizeComplexes`).
+///
+/// Оговорка порта: расход сырья строящегося завода C++ списывает здесь же
+/// (через `Cargo_GetNetProduction`), но порт не допускает отрицательных
+/// складов и списывает ставку в [`crate::production`] с паузой. Поэтому для
+/// кэша комплекса берётся [`cargo_get_net_production_for_total`] — та же
+/// формула без `raw`-расхода завода (см. её документацию).
 pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, complex: ComplexId) {
     let mut material = 0i32;
     let mut fuel = 0i32;
@@ -629,7 +635,7 @@ pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, 
             continue;
         }
 
-        let net = cargo_get_net_production(state, unit, false);
+        let net = crate::victory::cargo_get_net_production_for_total(state, unit, false);
         let inventory = cargo_get_inventory(unit);
 
         material += net.raw + inventory.raw;

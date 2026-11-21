@@ -74,6 +74,10 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         .state_mut()
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(40, 40), 0)
         .expect("constructor");
+    app.state_mut()
+        .unit_mut(constructor)
+        .expect("constructor")
+        .storage = 40;
 
     let site = find_build_site(app.state(), TeamId::RED, UnitType::TrainingHall, Point::new(40, 40))
         .expect("site");

@@ -2,6 +2,66 @@
 
 ### Исправлено
 
+- **Комплексы и коннекторы портированы 1:1 — завод снова видит сырьё базы (AWAC
+  достраивается).** Оракул: `UnitsManager_UpdateConnectors`
+  (`units_manager.cpp:2051-2225`), `UnitInfo::AttachComplex`/`AttachToPrimaryComplex`/
+  `TestConnections`/`GetFirstUntestedConnection`/`DetachComplex`
+  (`unitinfo.cpp:1978-2313`), `UnitsManager_RemoveConnections`
+  (`units_manager.cpp:1556-1709`), `Access_GetTeamBuilding` (`access.cpp:2157`),
+  `Complex::Grow/Shrink`/`GetCargoInfo` (`complex.cpp:136-215`). Новый модуль
+  `max_core/src/complex.rs`: восемь направлений `CONNECTOR_*` ставятся себе и
+  соседу (у `CONNECTOR_UNIT`/`STANDALONE` — «левая/верхняя» пара, как в C++),
+  `AttachToPrimaryComplex` сливает всё связное подграфство в комплекс с
+  наименьшим id, `DetachComplex` при уничтожении/переносе здания разделяет граф
+  на связные группы (временная привязка отделяемого здания — как в C++),
+  `RemoveConnections` снимает парные биты у соседей. Ёмкость/запас комплекса —
+  сумма складов подключённых `ADUMP`/`FDUMP`/`GOLDSM`/шахт (`Complex::GetCargoInfo`),
+  x-fer и `Complex::Transfer` работают по общему котлу. Слияние идёт при
+  спавне/раскрытии здания (`spawn_unit`, `ORDER_AWAIT_SCALING`/`EXPAND`) и при
+  входе в новый приказ — как `UnitsManager_UpdateConnectors` в C++.
+  `GameState::snapshot_bytes` (и CRC `state_digest`) теперь включают
+  `UnitInfo::complex` и `TeamUnits::complexes` (id, material/fuel/gold/power/
+  workers/buildings), поэтому детерминизм ловит и развал комплекса.
+- **Экономика завода — материалы ЕГО комплекса, а не всей команды.** Оракул:
+  `Cargo_GetNetProduction` (`cargo.cpp:70-130`, `Cargo_ApplyUnitConsumption`:
+  `raw = Cargo_GetRawConsumptionRate(type, GetMaxAllowedBuildRate())`, fuel/power/
+  life по ставкам, `gold = 0`), `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`),
+  `ProductionManager::ValidateIndustry` (`production_manager.cpp:673-707`).
+  `production::complex_raw_materials`/`spend_complex_raw_materials` списывают
+  ставку со складов членов комплекса в порядке `UnitsManager_StationaryUnits`;
+  чужой склад (без коннекторов) завод не оплачивает — даже если у команды есть
+  сырьё. Попутно `spawn_unit` повторяет `UnitsManager_DeployUnit`
+  (`units_manager.cpp:2382-2384`): у нового юнита склад пуст (кроме фазы
+  `GAME_STATE_12_DEPLOYING_UNITS`), поэтому только что построенный `ADUMP` не
+  появляется полным. Прежняя привязка «ставка из общего склада команды»
+  (`team_raw_materials`) удалена. Тесты: `max_core/tests/production.rs`
+  (`awac_completes_from_the_merged_complex_pot`), `construction_economy.rs`
+  (`factory_pays_the_connected_complex_materials...`,
+  `factory_without_connected_storage_pauses...`), `transfer.rs`
+  (`xfer_takes_materials_from_the_whole_connected_complex`), `complex.rs`.
+- **Строителя нельзя сдвинуть без явной отмены — как в C++.** Оракул:
+  `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829-5935`: для
+  `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`, приказ движения не создаётся),
+  `UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/`BUILD_CANCEL` →
+  `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`). Откат «автоотмены при уводе»
+  из 2de7085: `cancel_build_for_new_order` удалён из пакетов 08/38 и
+  `GameState::set_order`; RMB во время стройки в `ui.rs` не отдаёт приказ, а
+  пишет «Cannot move while building … use stop». Отмена — только `stop` попапа
+  (мобильный строитель — `AWAIT`, площадка снимается; завод — `HALT_BUILDING`,
+  заказ жив и продолжается пунктом `start`). Готовая площадка
+  (`ORDER_STATE_UNIT_READY`) не тронута: уход по приказу (A1). Тесты:
+  `max_core/tests/builder_cancel.rs` (`move/packet 08/38 do not cancel`,
+  `explicit_stop_cancels_the_build`), `max_app/tests/build_lifecycle_interactive.rs`
+  (`right_click_while_building_is_no_go_and_keeps_the_site`), QA
+  `build-cancel.qa` переписан на `move near refused` + `stop`.
+- **QA/эталоны:** `production.qa` теперь строит ADUMP вплотную к цеху и шахте
+  (клетка (30,21)) и кладёт 60 сырья в общий котёл через `complex raw`
+  (`Complex::Transfer`; QA-команда теперь раскладывает разницу по складам),
+  поэтому Infantry действительно выпускается из материалов комплекса.
+  `build-cancel.qa` — NO_GO + явный `stop`; пересняты эталоны
+  `golden/production/factory-work-*`, `production-done`, `golden/build-cancel/*` (4 кадра), `golden/xfer/menu|selected|set`.
+  В `production.qa` и `xfer.qa` проверяется общий котёл комплекса: в `xfer.qa` добавлены `spawn at 29 22 ADump` вплотную к шахте и `complex raw 100` (склад получает 50 из общего запаса), для точной постановки появилась QA-команда `spawn at X Y NAME`.
+
 - **Заводы производят: платят материалами базы, а не золотом команды.**
   Оракул — `Cargo_GetRawConsumptionRate` (`cargo.cpp:140`),
   `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`: `complex->material -= rate`),

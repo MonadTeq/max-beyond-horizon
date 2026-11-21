@@ -1,18 +1,22 @@
-//! Увод строителя с недостроенной площадки отменяет стройку.
+//! Отмена стройки — только явная (`stop`), увод строителя приказом её не снимает.
 //!
-//! Оракул: `unitinfo.cpp` `UnitInfo::CancelBuilding` (`:4231`, ветка
-//! `!STATIONARY`), `game_manager.cpp` `GameManager_SelectBuildSite` (`:3529`) /
-//! `GameManager_GetBuilderUnitCursor` (`:5829`), `units_manager.cpp`
-//! `UnitsManager_SetNewOrderInt` (`:1945`). В C++ приказ движения по карте
-//! строителю в `BUILD_IN_PROGRESS` невозможен (`CURSOR_UNIT_NO_GO`), а `stop`
-//! попапа идёт через `ORDER_BUILD`/`ORDER_STATE_BUILD_CANCEL` →
-//! `CancelBuilding`: `build_list.Clear()`, `build_time = 0`,
-//! `Access_DestroyUtilities(grid, true, false, false, false)` (лента, конусы,
-//! плита), `ORDER_AWAIT`/`EXECUTING_ORDER`; материалы не возвращаются.
+//! Оракул: `game_manager.cpp` `GameManager_GetBuilderUnitCursor` (`:5829-5935`)
+//! и `GameManager_SelectBuildSite` (`:3529`), `units_manager.cpp`
+//! `UnitsManager_Popup_OnClick_BuildStop` → `UnitsManager_SetNewOrder(unit,
+//! ORDER_BUILD, ORDER_STATE_BUILD_CANCEL)` → `UnitInfo::CancelBuilding`
+//! (`unitinfo.cpp:4231`, ветка `!STATIONARY`).
 //!
-//! Порт обязан снимать стройку и тогда, когда приказ пришёл другим путём
-//! (пакет 38/08, ИИ, группа): иначе строитель уходил, а `ProgressBuildState`
-//! продолжал тратить сырьё и достраивал здание «само».
+//! В C++ приказ движения по карте строителю в `BUILD_IN_PROGRESS` не отдаётся
+//! вовсе: для всех состояний, кроме `SELECT_SITE` и `UNIT_READY`,
+//! `GameManager_GetBuilderUnitCursor` возвращает `CURSOR_UNIT_NO_GO`
+//! (`:5927-5931`). Приказ, пришедший другим путём (пакет 08/38, ИИ, группа),
+//! стройку **не отменяет**: `CancelBuilding` вызывается только из
+//! `UnitsManager_ProcessOrderHaltBuilding` по явному `stop`
+//! (`units_manager.cpp:3142-3148`). Порт повторяет это поведение — прежняя
+//! «автоотмена при уводе» противоречила оракулу.
+//!
+//! Готовая площадка (`ORDER_STATE_UNIT_READY`) — отдельный случай: здание уже
+//! достроено, уход разрешён (`ORDER_ACTIVATE`) и стройку не отменяет.
 
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::events::apply_command;
@@ -34,7 +38,11 @@ fn count_type(state: &max_core::GameState, unit_type: UnitType) -> usize {
     state
         .unit_ids_in_order()
         .into_iter()
-        .filter(|id| state.unit(*id).is_some_and(|unit| unit.unit_type == unit_type))
+        .filter(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.unit_type == unit_type)
+        })
         .count()
 }
 
@@ -43,6 +51,9 @@ fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point)
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    // Высадка даёт конструктору сырьё (`DEFAULT_MISSION_LOADOUT`, 40);
+    // `UnitsManager_DeployUnit` обнуляет склад нового юнита.
+    state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(state, TeamId::RED);
     manager
@@ -52,6 +63,22 @@ fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point)
     drop(manager);
 
     (constructor, report.site)
+}
+
+/// Признаки **живой** стройки: очередь, прогресс и утилиты площадки на месте.
+fn assert_build_intact(state: &max_core::GameState, builder: UnitId, site: Point) {
+    let unit = state.unit(builder).expect("builder alive");
+
+    assert_eq!(
+        unit.build_list,
+        vec![UnitType::TrainingHall],
+        "очередь стройки не тронута"
+    );
+    assert!(unit.build_time > 0, "прогресс стройки сохранён");
+    assert!(
+        production::construction_utility(state, TeamId::RED, site).is_some(),
+        "лента площадки на месте"
+    );
 }
 
 /// Признаки отменённой стройки (C++ `CancelBuilding` мобильной ветки).
@@ -85,9 +112,9 @@ fn assert_build_cancelled(state: &max_core::GameState, builder: UnitId, site: Po
     }
 }
 
-/// `UnitsManager_SetNewOrder` (ИИ, группа, прямой вызов) — тоже новый приказ.
+/// `UnitsManager_SetNewOrder` (ИИ, группа, прямой вызов) стройку не отменяет.
 #[test]
-fn set_order_to_move_cancels_the_unfinished_build() {
+fn set_order_move_does_not_cancel_the_unfinished_build() {
     let mut state = state_with_gold(100);
     let (builder, site) = start_training_hall_build(&mut state);
 
@@ -97,29 +124,14 @@ fn set_order_to_move_cancels_the_unfinished_build() {
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Move, UnitOrderState::InProgress),
-        "новый приказ применён после отмены стройки"
+        "приказ применён, но стройка не снята"
     );
-    // `CancelBuilding` оставляет `prior` на `AWAIT`: новый приказ не должен
-    // «восстанавливаться» в пустую стройку при `RestoreOrders`.
-    assert_eq!(unit.prior_orders, UnitOrder::Await);
-    assert_eq!(unit.prior_state, UnitOrderState::ExecutingOrder);
-    assert_build_cancelled(&state, builder, site);
-
-    // Достройки «сама собой» больше нет: ни одного хода производства.
-    for _ in 0..12 {
-        state.manage_economy(TeamId::RED);
-        production::progress_build_state(&mut state, TeamId::RED);
-    }
-    assert_eq!(
-        count_type(&state, UnitType::TrainingHall),
-        0,
-        "отменённая стройка не должна выпускать здание"
-    );
+    assert_build_intact(&state, builder, site);
 }
 
 /// Пакет **38** (движение с путём) — сетевой путь приказа игрока.
 #[test]
-fn packet_38_move_cancels_the_unfinished_build() {
+fn packet_38_move_does_not_cancel_the_unfinished_build() {
     let mut state = state_with_gold(100);
     let (builder, site) = start_training_hall_build(&mut state);
     let grid = state.unit(builder).expect("builder").grid;
@@ -141,13 +153,13 @@ fn packet_38_move_cancels_the_unfinished_build() {
         (UnitOrder::Move, UnitOrderState::InProgress)
     );
     assert_eq!(unit.target_grid, Point::new(20, 20));
-    assert_build_cancelled(&state, builder, site);
+    assert_build_intact(&state, builder, site);
 }
 
-/// Пакет **08** (`UnitsManager_SetNewOrder` удалённого игрока): `prior_order`
-/// в пакете — старый `ORDER_BUILD`, после отмены он обязан стать `AWAIT`.
+/// Пакет **08** (`UnitsManager_SetNewOrder` удалённого игрока): `prior` из
+/// пакета сохраняется, стройка не снимается.
 #[test]
-fn packet_08_move_cancels_the_unfinished_build_and_clears_prior_build() {
+fn packet_08_move_does_not_cancel_the_unfinished_build() {
     use max_core::input::{OrderPayload, Packet08Order, PayloadP1};
 
     let mut state = state_with_gold(100);
@@ -170,13 +182,14 @@ fn packet_08_move_cancels_the_unfinished_build_and_clears_prior_build() {
         (unit.orders, unit.state),
         (UnitOrder::Move, UnitOrderState::Init)
     );
-    assert_build_cancelled(&state, builder, site);
+    assert_eq!(unit.prior_orders, UnitOrder::Build);
+    assert_eq!(unit.prior_state, UnitOrderState::BuildInProgress);
+    assert_build_intact(&state, builder, site);
 }
 
 /// Достроенная площадка: уход строителя (`UNIT_READY` → `ORDER_ACTIVATE` →
 /// `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT`) **не** отменяет стройку
-/// и не снимает плиту под готовым зданием (`CancelBuilding` в C++ вызывается
-/// только для `ORDER_BUILD`/`ORDER_CLEAR`, а не для ухода).
+/// и не снимает плиту под готовым зданием.
 #[test]
 fn leaving_a_finished_site_keeps_the_foundation() {
     let mut state = state_with_gold(100);
@@ -223,11 +236,11 @@ fn leaving_a_finished_site_keeps_the_foundation() {
     );
 }
 
-/// `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) идёт штатным путём машины приказов и
-/// не должен попадать под «отмену перед новым приказом» дважды: площадка
-/// снимается ровно один раз, завода-очередь это не трогает.
+/// Явный `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) идёт штатным путём машины
+/// приказов: `ProcessOrderHaltBuilding` → `CancelBuilding` снимает площадку
+/// ровно один раз.
 #[test]
-fn build_cancel_order_still_goes_through_the_order_machine() {
+fn explicit_stop_cancels_the_build() {
     let mut state = state_with_gold(100);
     let (builder, site) = start_training_hall_build(&mut state);
 

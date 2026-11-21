@@ -70,6 +70,7 @@ pub mod access;
 pub mod ai;
 pub mod alloc;
 pub mod combat;
+pub mod complex;
 pub mod crc;
 pub mod deploy;
 pub mod enums;
@@ -122,6 +123,11 @@ pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
     progress_fire, ATTACK_DAMAGE_MIN,
 };
+pub use complex::{
+    attach_complex, attach_to_primary_complex, connected_building, detach_complex,
+    first_untested_connection, remove_connections, team_building_at, test_connections,
+    unit_size as complex_unit_size, update_connectors, CONNECTOR_ORDER,
+};
 pub use crc::{
     crc16, crc16_update_byte, get_crc16_word, get_unit_list_checksum, replay_digest_bytes,
     replay_digest_crc, state_checksum, state_digest, CRC16_INITIAL, CRC16_POLYNOMIAL,
@@ -163,11 +169,11 @@ pub use pathfinding::{
     find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,
 };
 pub use production::{
-    builder_type, buildable_units, can_afford_turn, can_build, cost_per_turn, find_build_site,
-    initial_build_site, is_builder, is_factory, is_mobile_builder, is_site_accessible,
-    is_site_accessible_ignoring,
+    builder_type, buildable_units, can_afford_turn, can_build, complex_raw_materials, cost_per_turn,
+    find_build_site, initial_build_site, is_builder, is_factory, is_mobile_builder,
+    is_site_accessible, is_site_accessible_ignoring,
     max_possible_build_rate, progress_build_state, site_anchor_for_cursor, site_covers,
-    team_raw_materials, total_cost,
+    total_cost,
     turns_to_build as production_turns_to_build, BuildError, BuildReport, ProductionEvent,
     ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
 };

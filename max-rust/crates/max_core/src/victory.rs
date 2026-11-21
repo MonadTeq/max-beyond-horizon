@@ -730,6 +730,47 @@ pub fn cargo_get_net_production(
     cargo
 }
 
+/// `Cargo_GetNetProduction` для пересчёта запаса комплекса
+/// (`Access_UpdateResourcesTotal`) с одной оговоркой порта.
+///
+/// C++ списывает ход строящегося завода **здесь** — внутри
+/// `Cargo_GetNetProduction` (`cargo.cpp:88-95`), и `Access_UpdateResourcesTotal`
+/// (`access.cpp:912`) кладёт это списание в `Complex::material`. Порт по
+/// требованию QA не допускает отрицательных `storage`/`complex.material`,
+/// поэтому фактическое списание с паузой делает
+/// [`crate::production::ProductionManager`] в фазе
+/// `GameManager_ProgressBuildState` (как `StartBuilding`/`ValidateIndustry`).
+/// Чтобы ставка не списалась дважды, из кэша комплекса возвращается **только
+/// `raw`** строящегося завода; `power`/`life`/`fuel`/`gold` остаются
+/// C++-точными (порт их пока не валидирует, см. шапку `production`).
+pub fn cargo_get_net_production_for_total(
+    state: &GameState,
+    unit: &UnitInfo,
+    current_order: bool,
+) -> NetProduction {
+    let mut cargo = cargo_get_net_production(state, unit, current_order);
+
+    let mut orders = unit.orders;
+    if unit.state == UnitOrderState::Init && !current_order {
+        orders = unit.prior_orders;
+    }
+
+    if matches!(
+        unit.unit_type,
+        UnitType::Shipyard
+            | UnitType::LightVehiclePlant
+            | UnitType::HeavyVehiclePlant
+            | UnitType::TrainingHall
+            | UnitType::AirUnitsPlant
+    ) && orders == UnitOrder::Build
+        && unit.state != UnitOrderState::UnitReady
+    {
+        cargo.raw += cargo_raw_consumption_rate(unit.unit_type, max_allowed_build_rate(unit));
+    }
+
+    cargo
+}
+
 // ---------------------------------------------------------------------------
 // Стоимость юнита/базы — unitinfo.cpp:3719, winloss.cpp
 // ---------------------------------------------------------------------------

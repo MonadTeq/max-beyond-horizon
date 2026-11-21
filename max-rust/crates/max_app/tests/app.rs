@@ -26,12 +26,12 @@ const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 ///
 /// Фиксируется в тесте, чтобы любое изменение симуляции/загрузки сейва
 /// (регрессия паритета) падало явно, а не «тихо» меняло дайджест.
-const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xC354;
+const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xDBD0;
 const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0x408A;
 const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0x5561;
 const SAVE1_FIVE_TICK_UNITS: usize = 312;
 const SAVE1_FIVE_TICK_TURN: i32 = 1;
-const SAVE1_FIVE_TICK_SNAPSHOT_LEN: usize = 788_026;
+const SAVE1_FIVE_TICK_SNAPSHOT_LEN: usize = 788_740;
 
 fn fixture_save_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/save1_v70.cam")
@@ -1676,6 +1676,11 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
         .state_mut()
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(30, 30), 0)
         .expect("engineer");
+    // `UnitsManager_DeployUnit` обнуляет склад нового юнита; высадка даёт 40.
+    app.state_mut()
+        .unit_mut(engineer)
+        .expect("engineer")
+        .storage = 40;
 
     {
         let state = app.state_mut();

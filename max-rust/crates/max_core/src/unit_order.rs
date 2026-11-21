@@ -89,9 +89,6 @@ fn animate(_unit: &UnitInfo) {}
 /// `UnitInfo::RefreshScreen` — UI.
 fn refresh_screen(_unit: &UnitInfo) {}
 
-/// `UnitsManager_UpdateConnectors` (`units_manager.cpp:2051`) — P3 комплексы.
-fn update_connectors(_unit: &mut UnitInfo) {}
-
 /// `Ai_SetTasksPendingFlag(name)` (`ai.cpp:140`).
 ///
 /// C++ выставляет флаг «у компьютерной команды есть работа» на каждом тике,
@@ -188,7 +185,9 @@ pub fn new_order_while_scaling(unit: &mut UnitInfo) {
     }
     if unit.state == UnitOrderState::Expand {
         unit.scaler_adjust = 0;
-        update_connectors(unit);
+        // `UnitsManager_UpdateConnectors(unit)` требует `GameState`; вызывающие
+        // её ветки (приказ/пакет 08) делают это сами — см.
+        // [`crate::complex::update_connectors`]. Чистая функция не может.
     } else {
         unit.scaler_adjust = 4;
         finish_unit_scaling(unit);
@@ -535,59 +534,23 @@ pub fn active_build_site(unit: &UnitInfo) -> Option<Point> {
     Some(unit.target_grid)
 }
 
-/// Увод мобильного строителя с недостроенной площадки — `UnitInfo::CancelBuilding`
-/// (`unitinfo.cpp:4231`, ветка `!STATIONARY`) при получении **нового приказа**.
-///
-/// В C++ приказ движения строителю во время стройки через карту невозможен
-/// (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`: для
-/// `BUILD_IN_PROGRESS` курсор — `CURSOR_UNIT_NO_GO`), а отмена идёт через
-/// `stop` попапа (`UnitsManager_Popup_OnClick_BuildStop` →
-/// `GameManager_SelectBuildSite` → `ORDER_BUILD`/`BUILD_CANCEL` →
-/// `UnitInfo::CancelBuilding`). Порт выставляет `stop` тем же
-/// `SetNewOrder`, но приказ, пришедший ДРУГИМ путём (сеть, ИИ, группа), в C++
-/// обязан сначала снять стройку: `CancelBuilding` мобильной ветки делает
-/// `build_list.Clear()`, `build_time = 0`, `Access_DestroyUtilities(grid, true,
-/// false, false, false)` (лента/конусы/плита), снимает путь и переводит юнита в
-/// `ORDER_AWAIT`/`EXECUTING_ORDER`. Материалы за прошедшие ходы не
-/// возвращаются — как в C++.
-///
-/// Возвращает `true`, если стройка была отменена.
-pub fn cancel_build_for_new_order(
-    state: &mut GameState,
-    unit: &mut UnitInfo,
-    new_order: UnitOrder,
-) -> bool {
-    // Приказы самой стройки (включая `stop`/`start` завода) её не отменяют.
-    if matches!(
-        new_order,
-        UnitOrder::Build | UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
-    ) {
-        return false;
-    }
-
-    let Some(site) = active_build_site(unit) else {
-        return false;
-    };
-
-    // `Access_DestroyUtilities(grid_x, grid_y, true, false, false, false)`:
-    // только утилиты площадки (лента/конусы) и плита; дорога/обломки/
-    // коннекторы не трогаются.
-    access::destroy_utilities(state, site, true, false, false, false);
-
-    state.remove_path_request(unit.id);
-
-    unit.build_list.clear();
-    unit.build_time = 0;
-    unit.path = None;
-    unit.moved = 0;
-    unit.orders = UnitOrder::Await;
-    unit.state = UnitOrderState::ExecutingOrder;
-    unit.prior_orders = UnitOrder::Await;
-    unit.prior_state = UnitOrderState::ExecutingOrder;
-
-    // `ORDER_LOG_WRITE(this)` — журнал приказов (диагностика P2).
-    true
-}
+// Увод мобильного строителя с недостроенной площадки **невозможен** без явной
+// отмены — это исключённый путь из C++.
+//
+// В C++ приказ движения строителю во время стройки через карту не отдаётся
+// (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`: для
+// `BUILD_IN_PROGRESS` курсор — `CURSOR_UNIT_NO_GO`), а отмена идёт только через
+// `stop` попапа (`UnitsManager_Popup_OnClick_BuildStop` →
+// `GameManager_SelectBuildSite` → `ORDER_BUILD`/`BUILD_CANCEL` →
+// `UnitInfo::CancelBuilding`). Прежняя портовая «автоотмена при уводе»
+// противоречила оракулу и удалена: новый приказ (пакет 08/38, ИИ, группа)
+// стройку не снимает — приказ просто меняет `orders`, а площадка/очередь
+// остаются до явного `stop`.
+//
+// Готовая площадка (`ORDER_STATE_UNIT_READY`) — исключение: там уход по приказу
+// разрешён и обрабатывается `ORDER_ACTIVATE` (см.
+// [`crate::production::builder_awaiting_exit`]), потому что здание уже
+// достроено.
 
 /// `UnitInfo::ClearBuildListAndPath` (`unitinfo.cpp:1681`).
 pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
@@ -2781,7 +2744,12 @@ fn process_order_await_scaling(ctx: &mut OrderContext<'_>) {
                 ctx.unit.scaler_adjust -= 1;
             } else {
                 ctx.restore_orders();
-                update_connectors(&mut ctx.unit);
+                // `UnitsManager_UpdateConnectors(unit)` (`units_manager.cpp:3166`):
+                // здание заняло окончательный приказ и становится членом
+                // комплекса (слияние по коннекторам).
+                ctx.sync_to_world();
+                crate::complex::update_connectors(ctx.world, ctx.id);
+                ctx.sync_from_world();
                 schedule_delayed_tasks(ctx.world, ctx.id, true);
             }
         }

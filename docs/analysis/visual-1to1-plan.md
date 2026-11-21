@@ -60,7 +60,7 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
 
 | # | Что | Статус |
 |---|---|---|
-| E1 | Симуляционный апдейт коннекторов комплекса (`UnitsManager_UpdateConnectors`) | рендер есть, симуляция — заглушка |
+| E1 | Симуляционный апдейт коннекторов комплекса (`UnitsManager_UpdateConnectors`) | **сделано (2026-11-21)**: §40 — `max_core::complex` (UpdateConnectors/AttachComplex/DetachComplex/RemoveConnections), общий котёл завода и x-fer |
 | E2 | `find_build_site` fallback | оставлен для ИИ/тестов |
 | E3 | Пакет 09 (золото/распределение команды) для Upgrade/ResearchMenu | не отправляется (как и в C++) |
 
@@ -80,7 +80,7 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
    (debug-секция) и настройки без слоя в клиенте (`disable_music/voice/movie`,
    `enhanced_graphics`, `host/port`).
 7. **C3/C4/D2** — MVE-аудио/субтитры, форматы 0x06/0x10, музыка.
-8. **E1** — симуляция коннекторов.
+8. ~~**E1** — симуляция коннекторов.~~ **сделано (2026-11-21)**: §40.
 
 ## Критерий «визуал 1:1»
 

@@ -1,4 +1,4 @@
-﻿# Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
+# Визуал M.A.X. Rust-клиента: статус 1:1 с оригиналом
 
 **Дата среза:** 2026-11-19 (§27) · **Версия workspace:** 1.1.0 (разделы §1–§11 —
 срез 2026-11-15/1.0.0, §12 — полное покрытие спрайтов) · **Задача:** довести визуал
@@ -3106,7 +3106,9 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 
 **Осознанные ограничения.** Слияние зданий в комплекс по коннекторам
 (`TestConnections`) в порте по-прежнему не считается (см. §20): в QA и тестах
-комплекс собирается явно. `ProductionManager_OptimizeProduction` (отключение
+комплекс собирается явно. **Уточнение (2026-11-21, §40): слияние по
+коннекторам уже портировано 1:1 — этот абзац оставлен как историческая запись
+§30.** `ProductionManager_OptimizeProduction` (отключение
 зданий при отрицательном балансе) остаётся TODO — `update_complex_resources`
 пересчитывает запасы, но не управляет приказами; это не влияет на лимиты
 хранилищ, которые и были предметом задачи.
@@ -4355,3 +4357,209 @@ honours биты из `flags` (так приходят загруженные V7
   очереди; C++ держит готовый юнит внутри (`ORDER_IDLE`/`STORE`) до приказа
   игрока и тогда же запускает следующую позицию очереди
   (`UnitsManager_ActivateUnit`). Упрощение было и до этой задачи.
+
+---
+
+## 40. Комплексы и коннекторы 1:1, завод AWAC из общего котла, отмена стройки только явная — **сделано** (2026-11-21)
+
+Три дефекта Turn Based из пользовательского отчёта. Оракул — `max-cpp-port`
+(не менялся), данные — `max-original/MAX.RES`, QA — `max-rust-qa`.
+
+### 40.1 Как C++ моделирует комплекс, коннекторы и ёмкости
+
+**Граф.** `UnitInfo::connectors` (`unitinfo.hpp:468`) — 8 бит направлений
+(`CONNECTOR_NORTH_LEFT` … `CONNECTOR_WEST_BOTTOM`) плюс служебный
+`CONNECTION_BEING_TESTED` (`0x400`). `UnitInfo::IsComplexMember`
+(`unitinfo.hpp:255`) — `(flags & (CONNECTOR_UNIT | BUILDING | STANDALONE)) &&
+!(flags & GROUND_COVER) && id != NO_ID`. `Access_GetTeamBuilding`
+(`access.cpp:2157`) ищет в клетке здание команды, у которого
+`GetOrder() != ORDER_IDLE` и `IsComplexMember()` — поэтому здание, достроенное
+на площадке (`ORDER_IDLE`/`BUILDING_READY`), входит в комплекс только после
+`UnitsManager_BuildingReady` (RestoreOrders).
+
+**Соединение.** `UnitsManager_UpdateConnectors`
+(`units_manager.cpp:2051-2225`) для восьми направлений:
+`NORTH_LEFT (gx, gy-1)`, `SOUTH_LEFT (gx, gy+size)`,
+`NORTH_RIGHT/SOUTH_RIGHT (gx+1, …)` — только у `BUILDING`, `EAST_TOP
+(gx+size, gy)`, `WEST_TOP (gx-1, gy)`, плюс `EAST_BOTTOM/WEST_BOTTOM` у
+зданий. Своему юниту ставится бит направления; соседу — парный бит: у
+`CONNECTOR_UNIT`/`STANDALONE` всегда «левый/верхний» вариант, иначе выбор между
+двумя вариантами пары по тому, совпадает ли сосед со зданием в соседней клетке
+(`Access_GetTeamBuilding`) — то есть длинное здание соединяется «по длинной
+стороне». Затем `AttachToPrimaryComplex()` и
+`Access_UpdateResourcesTotal(complex)`.
+
+**Слияние.** `UnitInfo::AttachToPrimaryComplex` (`unitinfo.cpp:2054-2131`)
+перебирает соседние комплексы и берёт **наименьший** `Complex::id` (или
+`TeamUnits::CreateComplex`, если соседей нет), после чего
+`UnitInfo::AttachComplex` (`unitinfo.cpp:1978-2052`) рекурсивно перевешивает
+здание и всё связное подграфство: `Complex::Grow` нового, `Complex::Shrink`
+старого (при нуле зданий `TeamUnits::RemoveComplex`). Рекурсия
+останавливается на здании, уже привязанном к целевому комплексу.
+
+**Распад.** `UnitInfo::DetachComplex` (`unitinfo.cpp:2275-2313`) выводит
+здание, помечает его `CONNECTION_BEING_TESTED`, находит первый непроверенный
+сосед — его группа остаётся в прежнем комплексе (`TestConnections`,
+`unitinfo.cpp:2133-2203`, рекурсивно метит группу), остальные непроверенные
+группы получают `CreateComplex` + `AttachComplex`, затем
+`Access_UpdateResourcesTotal` для новой и «главной» групп. Отделяемое здание
+временно привязывается к новому комплексу (`complex = new_complex`), чтобы
+рекурсия `AttachComplex` не «захватила» через его биты весь прежний граф.
+`UnitsManager_RemoveConnections` (`units_manager.cpp:1556-1709`) вызывается
+перед уничтожением/переносом здания: сначала `DetachComplex`, затем у соседей
+снимаются парные биты по тем же правилам.
+
+**Запас и ёмкость.** `Complex::GetCargoInfo` (`complex.cpp:136-147`) — сумма
+`Cargo_GetInventory`/`Cargo_GetCargoCapacity` всех зданий комплекса
+(`Cargo_GetInventory`, `cargo.cpp:30` — `storage` по типу груза;
+`Cargo_GetCargoCapacity`, `cargo.cpp:50` — `ATTRIB_STORAGE`). `Complex::Transfer`
+(`complex.cpp:178-203`) меняет кэш `material/fuel/gold` и раскладывает разницу
+по складам членов в порядке `UnitsManager_StationaryUnits` через
+`TransferCargo` (`complex.cpp:149`, лимит `ATTRIB_STORAGE`).
+`Access_UpdateResourcesTotal` (`access.cpp:912-934`) каждый ход пересчитывает
+кэш: `Cargo_GetNetProduction(unit, false) + Cargo_GetInventory(unit)`;
+`UnitInfo::UpdateProduction` (`unitinfo.cpp:2904-2960`) затем раздаёт кэш по
+складам (`storage = min(complex->field, ATTRIB_STORAGE)`,
+`complex->field -= storage`).
+
+### 40.2 Что было сломано и что исправлено
+
+**Порт (§20/§30/§39).** Каждое здание получало **свой** комплекс
+(`spawn_unit` → `AttachComplex(CreateComplex)`), `UpdateConnectors` был
+заглушкой (`unit_order.rs`), `DetachComplex` — только `Shrink`. Поэтому
+завод не видел `ADUMP`/шахту, стоящие рядом: кэш его комплекса считался лишь
+по нему самому. В §39 это компенсировали «общим складом команды»
+(`production::team_raw_materials`), что противоречит оракулу: завод платит
+сырьём **своего** комплекса, а чужой склад (без коннекторов) не оплачивает
+стройку.
+
+**Сделано.** Новый модуль `max_core/src/complex.rs`: `unit_size`,
+`team_building_at`, `connected_building`, `update_connectors`,
+`attach_complex`, `attach_to_primary_complex`, `test_connections`,
+`first_untested_connection`, `detach_complex`, `remove_connections` —
+построчный порт перечисленных функций (включая временную привязку отделяемого
+здания в `DetachComplex`). Точки вызова: `spawn_unit` (после `Hash_MapHash.Add`
+и `update_map_status`, если приказ не `ORDER_IDLE`), завершение
+`ORDER_AWAIT_SCALING`/`EXPAND` (`unit_order::process_order_await_scaling`),
+смена приказа на этапе `EXPAND` (`GameState::set_order` и пакет 08 — как
+`UnitsManager_NewOrderWhileScaling`), `GameState::destroy_unit`
+(`UnitsManager_RemoveConnections` → распад комплекса и снятие битов у соседей).
+
+Экономика: `production::complex_raw_materials` (сырьё комплекса) и
+`spend_complex_raw_materials` (списание со складов **членов** комплекса в
+порядке `UnitsManager_StationaryUnits`, без минуса — требование QA).
+`charge_units`/`can_afford_turn` больше не используют `team_raw_materials`
+(функция удалена). `UnitInfo::StartBuilding`/`ValidateIndustry` в C++ списывают
+так же; кэш комплекса (`Access::UpdateResourcesTotal`) в порте считает ту же
+сумму, но `raw`-расход строящегося завода вычитается в фазе
+`ProgressBuildState` (`cargo_get_net_production_for_total` возвращает его в
+кэш), чтобы не списывать ставку дважды и не уходить в минус; `power`/`life`
+остаются C++-точными в кэше (порт их пока не валидирует).
+
+Попутно `spawn_unit` повторяет `UnitsManager_DeployUnit`
+(`units_manager.cpp:2382-2384`): у нового юнита склад пуст, кроме фазы
+`GAME_STATE_12_DEPLOYING_UNITS`. Раньше только что построенный `ADUMP`/`FDUMP`/
+`GOLDSM` появлялся полным и давал «бесплатное» сырьё в котёл. Высадка задаёт
+груз явно (`deploy_team_supplies`), тесты — тоже.
+
+Детерминизм: `GameState::snapshot_bytes` (а значит и CRC `crc::state_digest`)
+теперь содержит `UnitInfo::complex` и `TeamUnits::complexes` (id, material,
+fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
+раньше. Развал/слияние комплекса меняет и снапшот, и CRC.
+
+### 40.3 AWAC достраивается из общего котла
+
+Сценарий: `AIRPLT` + два `ADUMP` вплотную (`(12,10)`/`(13,10)`), 80 сырья.
+`UpdateConnectors` сливает их в один комплекс, `complex_raw_materials = 80`.
+Тест `production.rs::awac_completes_from_the_merged_complex_pot`: заказ AWAC
+на 4×, первый ход — 36 (`3 × 12`), второй — 12 (остаток `build_time = 2`
+режет `GetMaxAllowedBuildRate` до 2×), `SpawnNewUnit` выпускает AWAC, в котле
+остаётся 32. Без подключённого склада завод стоит на `PausedNoMaterials`, даже
+если у команды есть сырьё (`factory_without_connected_storage_pauses...`), — как
+`ValidateIndustry` в C++.
+
+### 40.4 Отмена стройки — только явная
+
+`GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5927-5931`): для
+`BUILD_IN_PROGRESS` курсор `CURSOR_UNIT_NO_GO`, приказ движения по карте не
+создаётся; исключение — `UNIT_READY` (`CURSOR_UNIT_GO`, уход по приказу, A1).
+Отмена — `UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/
+`BUILD_CANCEL` → `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`). Порт из
+2de7085 отменял стройку при любом новом приказе (`cancel_build_for_new_order`
+в пакетах 08/38 и `set_order`) — это противоречило оракулу и откатано:
+функция удалена, `ui.rs` при RMB во время стройки не отдаёт приказ и пишет
+«Cannot move while building … use stop». Готовая площадка не тронута: клик по
+клетке рядом отдаёт `ORDER_ACTIVATE`/`IN_TRANSITION`. Заводской `stop`
+по-прежнему `HALT_BUILDING` (заказ жив, продолжение — `start`).
+
+### 40.5 Тесты и QA
+
+* `max_core` — 249 lib-тестов (включая `complex.rs`: слияние соседей,
+  цепочка коннекторов, распад при уничтожении, снапшот/CRC комплексов) +
+  14 наборов. Новые: `production.rs::awac_completes_from_the_merged_complex_pot`,
+  `construction_economy.rs::factory_pays_the_connected_complex_materials_and_never_goes_negative`,
+  `factory_without_connected_storage_pauses_even_with_team_materials`,
+  `transfer.rs::xfer_takes_materials_from_the_whole_connected_complex`,
+  `builder_cancel.rs` (move/08/38 стройку не отменяют; явный `stop` — отменяет).
+* `max_app` — 377 lib + 32 интеграционных набора: интерактивный
+  `right_click_while_building_is_no_go_and_keeps_the_site` (курсор
+  `CURSOR_UNIT_NO_GO`, приказа нет, площадка/плита целы), `unit_menu` —
+  явный `stop` через попап; `cursor_table::builder_in_build_progress_is_unit_no_go`.
+* QA: `production.qa` строит `ADUMP` вплотную к цеху и шахте и кладёт 60
+  сырья в котёл (`complex raw`, теперь `Complex::Transfer` по складам), затем
+  Infantry выпускается из комплекса; `build-cancel.qa` переписан:
+  `move near refused` (NO_GO) + явный `stop`; `xfer.qa` — общий котёл:
+  `spawn at 29 22 ADump` вплотную к шахте, `complex raw 100` (ADUMP получает
+  50 из общего запаса), затем прежний перенос 5/3 через `TransferMenu`. Для
+  точной постановки добавлена QA-команда `spawn at X Y NAME`.
+  Все 21 QA PASS; 16 golden-наборов, дрейф 0 (пересняты
+  `golden/production/factory-work-a|b`, `production-done`,
+  `golden/build-cancel/*` — 4 кадра, `golden/xfer/menu|selected|set`).
+
+### 40.6 Гейт и артефакты
+
+* **Полный docker-гейт** `bash ci.sh` — **зелёный**, `CI_EXIT=0`, 925 с (финальное дерево; первый прогон — 1276 с):
+  * 1/4 `cargo check` + `cargo test` (default GUI/SDL3-from-source,
+    `--features sound`, `--no-default-features`): `max_core` 249 lib + 14
+    наборов (включая `complex` 4), `max_app` 377 lib + 32 интеграционных
+    набора (включая `right_click_while_building_is_no_go_and_keeps_the_site`),
+    `max_assets` 10, `max_render` 85, doc-tests — всё зелёное; `max_net` 86
+    (в Windows-хосте один enet-тест `service_with_zero_timeout…` падает из-за
+    окружения, в Linux-гейте — зелёный);
+  * 2/4 `max-horizon-server` — `cargo test --workspace` — зелёный;
+  * 3/4 — **21** QA-скрипт PASS (`production.qa` 5835 кадров/27 PNG,
+    `build-cancel.qa` 299 кадров/4 PNG, `xfer.qa` 1332/4) и **16**
+    golden-наборов, дрейф **0** (включая обновлённые `production/` 27 кадров и
+    `build-cancel/` 4 кадра);
+  * 4/4 soak — `soak-100.qa` 49 813 кадров; `soak_headless --turns 120
+    --mode tb` — 120 826 кадров, 35.04 с, 41 юнит, `early_end=false`.
+* **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
+  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 704 128 Б, sha256
+  `e32900333dc453d19b632140cceeadf5016f344bdc461ad70dddd67e97718f9c` (PE32+
+  x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
+  `7a3272d9fef47f391cb901de3bf2106f63efa0fcd976524b533944fd54045ffc`;
+  `--help` OK.
+* **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
+  Docker): `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 054 858 Б,
+  sha256 `6efb8c6570234157c7462ccfd22655767c627e484fcdd6e2a6ec1ec008ab8d7e`;
+  zip sha256
+  `8bc03237573551466e47a1b679e0b9f5357ada134126b73899216f3776a38cd4`;
+  wine-smoke `--help` + `--demo SAVE1.CAM --turns 1` — OK, `units=312`,
+  `state_digest=0x733D` (снапшот теперь содержит комплексы), `state_checksum=0x408A`,
+  `replay_crc=0x5561`, `snapshot=788740B`. Проверка `--help`/`--demo` — через
+  шим `bcryptprimitives`.
+
+### 40.7 Осознанные расхождения (обновление §39.7)
+
+* Комплексы по коннекторам теперь сливаются 1:1 (§40.2), поэтому пункт
+  §39.7 «материалы завода берутся из общего склада команды» больше не
+  действует: завод платит из своего комплекса.
+* Момент списания `raw` строящегося завода: C++ учитывает его в
+  `Access_UpdateResourcesTotal` (через `Cargo_GetNetProduction`), порт — в
+  `ProductionManager::charge_units` (`ProgressBuildState`), с паузой вместо
+  отрицательного `storage`; суммарный расход за ход тот же.
+* `Power`/`workers` (`Cargo_ApplyUnitConsumption`) в порте пока не
+  валидируются (`OptimizeIndustry` — TODO); `raw` — валидируется.
+* Завод порта по-прежнему выпускает юнит в соседнюю клетку и сразу берёт
+  следующую позицию очереди (C++ держит готовый юнит внутри до приказа
+  игрока) — упрощение было и до этой задачи.

@@ -230,24 +230,25 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
         return ApplyOutcome::UnknownUnit;
     };
 
+    // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): приказ,
+    // пришедший на этапе `EXPAND`, в C++ сразу зовёт
+    // `UnitsManager_UpdateConnectors` — иначе здание, переставленное приказом,
+    // никогда не попало бы в комплекс (анимация уже не завершится).
+    let connectors_due =
+        unit.orders == UnitOrder::AwaitScaling && unit.state == UnitOrderState::Expand;
+
     // `Remote_ReceiveNetPacket_08`: предварительный проход `P1` по копии
     // пакета — валидация приказов до выбора процессора.
     if let Some(p1) = packet.payload.p1() {
         if !is_valid_order(p1.order) || !is_valid_order(p1.prior_order) {
             return ApplyOutcome::Malformed;
         }
-        // Увод мобильного строителя с недостроенной площадки: C++
-        // `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`) до применения нового
-        // приказа — площадка снимается, очередь/прогресс обнуляются. Пакет несёт
-        // `prior_order = BUILD` (приказ составлен до отмены), поэтому prior
-        // восстанавливаем в состояние после `CancelBuilding` (AWAIT), иначе
-        // `RestoreOrders` мог бы вернуть пустую стройку.
-        let cancelled_build = unit_order::cancel_build_for_new_order(state, &mut unit, p1.order);
+        // Стройку нельзя отменить новым приказом: в C++ увод строителя с
+        // недостроенной площадки через карту невозможен (`game_manager.cpp:5927-5931`
+        // — `CURSOR_UNIT_NO_GO`), а отмена идёт только явным `stop`
+        // (`UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/
+        // `ORDER_STATE_BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
         apply_payload_p1(&mut unit, p1);
-        if cancelled_build {
-            unit.prior_orders = UnitOrder::Await;
-            unit.prior_state = UnitOrderState::ExecutingOrder;
-        }
     }
 
     // Выбор процессора по *новому* приказу юнита (`Remote_OrderProcessors[...]`).
@@ -291,6 +292,10 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
     };
 
     state.write_unit(packet.unit, unit);
+
+    if connectors_due {
+        crate::complex::update_connectors(state, packet.unit);
+    }
 
     // Порт ставит площадку в момент заказа (`DeployConstructionSiteUtilities` +
     // `PrepareConstructionSite`): C++ `StartBuilding` идёт на следующем тике
@@ -399,9 +404,8 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
 
     unit_order::new_order_while_scaling(&mut unit);
 
-    // `UnitOrder` приказ 38 — тоже «новый приказ»: увод строителя отменяет
-    // стройку, как `CancelBuilding` в C++ (см. `apply_packet_08`).
-    unit_order::cancel_build_for_new_order(state, &mut unit, packet.order);
+    // Приказ движения стройку не отменяет: отмена — только явный `stop`
+    // (`UnitInfo::CancelBuilding`), см. `apply_packet_08`.
 
     unit.orders = packet.order;
     unit.state = packet.state;

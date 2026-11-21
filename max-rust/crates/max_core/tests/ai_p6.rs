@@ -597,6 +597,13 @@ fn ai_completes_a_build_queue_through_production() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    // Реальная высадка даёт конструктору сырьё (`DEFAULT_MISSION_LOADOUT`);
+    // `UnitsManager_DeployUnit` обнуляет склад нового юнита, поэтому тест
+    // задаёт груз явно — иначе `BuildMenu::Build` откажет (нет 24 единиц).
+    state
+        .unit_mut(constructor)
+        .expect("constructor")
+        .storage = 60;
     assert!(max_core::ai_setup_strategy(&mut state, TeamId::RED));
 
     let mut built = None;

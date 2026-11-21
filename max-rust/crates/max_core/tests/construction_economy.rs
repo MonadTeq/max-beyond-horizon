@@ -222,11 +222,12 @@ fn build_rate_is_capped_by_the_storage_like_cpp() {
 }
 
 #[test]
-fn factory_pays_base_materials_and_never_goes_negative() {
-    // Заводы платят материалами базы (`Cargo_GetRawConsumptionRate` →
-    // `UnitInfo::StartBuilding` / `Cargo_GetNetProduction`), а не золотом:
-    // при нуле кредитов производство всё равно идёт, а нехватка материалов
-    // ставит на паузу без ухода в минус и без потери заказа.
+fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
+    // Заводы платят материалами **своего комплекса** (`Cargo_GetRawConsumptionRate`
+    // → `UnitInfo::StartBuilding` / `Cargo_GetNetProduction`), а не золотом и не
+    // «котлом всей команды»: при нуле кредитов производство идёт, пока в
+    // объединённом коннекторами комплексе есть сырьё. Нехватка ставит на паузу
+    // без ухода в минус и без потери заказа.
     let mut state = economy_state(0);
     let factory = state
         .spawn_unit(
@@ -236,27 +237,38 @@ fn factory_pays_base_materials_and_never_goes_negative() {
             0,
         )
         .expect("training hall");
+    // Склад вплотную к заводу (`Access_GetTeamBuilding` + `UpdateConnectors`
+    // сливают их в один комплекс: ёмкости складываются).
     let dump = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(4, 4), 0)
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(22, 20), 0)
         .expect("ADump");
     state.unit_mut(dump).expect("ADump").storage = 1;
+
+    assert_eq!(
+        state.unit(factory).expect("factory").complex,
+        state.unit(dump).expect("ADump").complex,
+        "завод и ADUMP — один комплекс"
+    );
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
-
-    // Первый ход: 1 материал уходит, `build_time` 2 → 1.
-    manager.progress();
     drop(manager);
+
+    // Первый ход: 1 материал уходит из общего котла, `build_time` 2 → 1.
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.kind != ProductionEventKind::PausedNoMaterials),
+        "первый ход оплачен: {events:?}"
+    );
     assert_eq!(state.unit(dump).expect("ADump").storage, 0, "1 материал ушёл");
+    assert_eq!(state.unit(factory).expect("factory").build_time, 1);
     assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
     // Второй ход: платить нечем — пауза, заказ цел.
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
-    let events = manager.progress();
-    let queue = manager.queue(factory);
-    drop(manager);
-
+    let events = production_turn(&mut state);
     assert!(
         events
             .iter()
@@ -269,8 +281,59 @@ fn factory_pays_base_materials_and_never_goes_negative() {
         0,
         "склад не уходит в минус"
     );
-    assert_eq!(queue, vec![UnitType::Infantry]);
+    assert_eq!(
+        ProductionManager::new(&mut state, TeamId::RED).queue(factory),
+        vec![UnitType::Infantry],
+        "заказ сохранён"
+    );
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
+
+    // Подвоз в тот же котёл: стройка завершается с того же места.
+    state.unit_mut(dump).expect("ADump").storage = 5;
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::Spawned),
+        "после подвоза завод обязан выпустить юнита: {events:?}"
+    );
+    assert_eq!(count_type(&state, UnitType::Infantry), 1);
+    assert_eq!(state.unit(dump).expect("ADump").storage, 4);
+}
+
+#[test]
+fn factory_without_connected_storage_pauses_even_with_team_materials() {
+    // Оракул: `ValidateIndustry` смотрит только комплекс завода
+    // (`complex == unit->GetComplex()`). Склад, стоящий отдельно (без
+    // коннекторов), в котёл завода не входит — даже если у команды есть сырьё.
+    let mut state = economy_state(0);
+    let factory = state
+        .spawn_unit(
+            UnitType::TrainingHall,
+            TeamId::RED,
+            Point::new(20, 20),
+            0,
+        )
+        .expect("training hall");
+    let far_dump = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(2, 2), 0)
+        .expect("ADump");
+    state.unit_mut(far_dump).expect("ADump").storage = 50;
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(factory, UnitType::Infantry).expect("queue");
+    manager.commit(factory).expect("build");
+    drop(manager);
+
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::PausedNoMaterials),
+        "склад вне комплекса не оплачивает завод: {events:?}"
+    );
+    assert_eq!(state.unit(far_dump).expect("ADump").storage, 50);
+    assert_eq!(state.unit(factory).expect("factory").build_time, 2);
 }
 
 #[test]

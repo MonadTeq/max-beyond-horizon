@@ -453,8 +453,10 @@ pub fn deploy_team_supplies(
     }
 
     // `GameManager_GameState = GAME_STATE_12_DEPLOYING_UNITS` — в C++ от этого
-    // зависит обнуление `storage` в `DeployUnit`; в max_core `spawn_unit` его не
-    // делает, но фаза всё равно выставляется для соответствия порядку состояний.
+    // зависит обнуление `storage` в `DeployUnit` (`units_manager.cpp:2382-2384`):
+    // при высадке склад **не** обнуляется, и груз задаётся явно ниже
+    // (`mining_station->storage = 0`, `unit->storage = cargo`). `spawn_unit`
+    // повторяет ту же проверку фазы.
     let previous_state = state.game_state;
     state.game_state = GameStateType::DeployingUnits;
 

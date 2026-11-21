@@ -1164,6 +1164,18 @@ impl GameState {
             0
         };
 
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`): у нового
+        // юнита склад пуст — `if (GameManager_GameState != GAME_STATE_12_DEPLOYING_UNITS
+        // && !QuickBuild_MenuActive && !is_existing_unit) unit->storage = 0;`.
+        // Раньше порт оставлял `ATTRIB_STORAGE`, и только что построенный
+        // `ADUMP`/`FDUMP`/`GOLDSM` появлялся полным — «бесплатное» сырьё
+        // попадало в котёл комплекса. При высадке (`DeployingUnits`) C++
+        // склад не обнуляет; конкретные грузы задаёт
+        // `GameManager_ProcessTeamMissionSupplyUnits` (`deploy.rs`).
+        if self.game_state != GameStateType::DeployingUnits {
+            unit.storage = 0;
+        }
+
         // `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`): мины, коммандос
         // и подлодки невидимы всем; остальные видны только при
         // `GameManager_AllVisible`, а своя команда видит всегда. Раньше здесь
@@ -1244,8 +1256,10 @@ impl GameState {
         // `Complex::Grow` ставит `buildings = 1`. Без этого у шахты не было
         // `unit->GetComplex()`, и диалог `allocate` (`AllocMenu`) не открывался,
         // а `Access_UpdateResourcesTotal` не видел добычу комплекса.
-        // Слияние комплексов по коннекторам (`TestConnections`) не портировано
-        // (соединители в модели пока не считаются).
+        // Слияние с соседями по коннекторам делает
+        // [`crate::complex::update_connectors`] ниже — как
+        // `UnitsManager_UpdateConnectors` после завершения масштабирования
+        // здания (`units_manager.cpp:3166`).
         if unit.is_complex_member() {
             unit.complex = self.attach_new_complex(team);
         }
@@ -1284,6 +1298,22 @@ impl GameState {
         // `Access_UpdateMapStatus(unit, true)` — покрытие сканирования (P6).
         self.update_map_status(id, true);
 
+        // `UnitsManager_UpdateConnectors(unit)` (`units_manager.cpp:2051`):
+        // здание ищет соседей по восьми направлениям, сливает комплексы
+        // (`AttachToPrimaryComplex`) и пересчитывает запасы. В C++ вызов идёт
+        // по завершении `ORDER_AWAIT_SCALING`/`EXPAND`; в порте здание уже стоит
+        // на карте, поэтому коннекторы считаются сразу — иначе завод до конца
+        // анимации не видел бы материалов комплекса. Здание в `ORDER_IDLE`
+        // (готовое, но ещё не раскрытое) в комплекс не входит: её приказ
+        // восстановит `UnitsManager_BuildingReady`, и тогда `update_connectors`
+        // вызовется из `process_order_await_scaling`.
+        if self
+            .unit(id)
+            .is_some_and(|unit| unit.is_complex_member() && unit.orders != UnitOrder::Idle)
+        {
+            crate::complex::update_connectors(self, id);
+        }
+
         Some(id)
     }
 
@@ -1299,22 +1329,15 @@ impl GameState {
         Some(id)
     }
 
-    /// `UnitInfo::DetachComplex` (`unitinfo.cpp:2275`) в объёме модели:
-    /// `Complex::Shrink`, при нуле зданий комплекс удаляется
-    /// (`Complex::Shrink` → `TeamUnits::RemoveComplex`).
+    /// `UnitsManager_RemoveConnections` (`units_manager.cpp:1556`) в объёме
+    /// модели: снятие парных битов у соседей и разделение комплекса
+    /// (`UnitInfo::DetachComplex`).
     ///
-    /// Разделение связанных комплексов по коннекторам не портировано.
-    fn detach_complex(&mut self, team: TeamId, complex: crate::team::ComplexId) {
-        let Some(team_units) = self.team_units.get_mut(team.0 as usize) else {
-            return;
-        };
-        let Some(target) = team_units.get_complex_mut(complex) else {
-            return;
-        };
-
-        if target.shrink() {
-            team_units.remove_complex(complex);
-        }
+    /// C++ вызывает `RemoveConnections` из `UnitsManager_BuildClearing` перед
+    /// `DestroyUnit`; в порте уничтожение идёт через [`Self::destroy_unit`],
+    /// поэтому разделение комплекса делается здесь же.
+    fn remove_connections(&mut self, id: UnitId) {
+        crate::complex::remove_connections(self, id);
     }
 
     /// Уничтожение юнита — подмножество `UnitsManager_DestroyUnit`
@@ -1336,13 +1359,11 @@ impl GameState {
         crate::ai::ai_remove_unit(self, id);
 
         // `UnitsManager_RemoveConnections` → `DetachComplex` (`units_manager.cpp:1569`):
-        // здание покидает комплекс, пустой комплекс удаляется.
+        // здание покидает комплекс, оставшиеся связные группы получают свои
+        // комплексы, у соседей снимаются биты коннекторов.
         if let Some(unit) = self.unit(id) {
             if unit.is_complex_member() {
-                if let Some(complex) = unit.complex {
-                    let team = unit.team;
-                    self.detach_complex(team, complex);
-                }
+                self.remove_connections(id);
             }
         }
 
@@ -1381,19 +1402,27 @@ impl GameState {
     /// `UnitsManager_SetNewOrderInt` для произвольного юнита
     /// (`units_manager.cpp:1945`); возвращает `true`, если снят запрос пути.
     ///
-    /// Увод мобильного строителя с недостроенной площадки новым приказом
-    /// сначала снимает стройку (`UnitInfo::CancelBuilding`, `unitinfo.cpp:4231`)
-    /// — см. [`unit_order::cancel_build_for_new_order`].
+    /// Новый приказ **не** отменяет стройку: в C++ строителя нельзя увести
+    /// кликом с недостроенной площадки (`CURSOR_UNIT_NO_GO`,
+    /// `game_manager.cpp:5927-5931`), а отмена идёт только явным `stop`
+    /// (`ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
     pub fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
         let Some(mut unit) = self.unit(id).cloned() else {
             return false;
         };
-        unit_order::cancel_build_for_new_order(self, &mut unit, order);
+        // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): если
+        // приказ меняется на этапе `EXPAND`, C++ сразу зовёт
+        // `UnitsManager_UpdateConnectors`, не дожидаясь конца анимации.
+        let connectors_due =
+            unit.orders == UnitOrder::AwaitScaling && unit.state == UnitOrderState::Expand;
         let delete_path = unit_order::set_new_order_int(&mut unit, order, state);
         if delete_path {
             self.remove_path_request(id);
         }
         self.write_unit(id, unit);
+        if connectors_due {
+            crate::complex::update_connectors(self, id);
+        }
         delete_path
     }
 
@@ -2290,6 +2319,23 @@ impl GameState {
             put_u16(&mut out, self.team_data_crc16[team]);
             out.push(self.frame_sync_counter[team]);
             out.push(self.frame_sync_counter2[team]);
+
+            // Комплексы команды — C++ `TeamUnits::complexes` (порядок по
+            // возрастанию id, который держит `CreateComplex`): id, запасы и
+            // число зданий. Поля `Complex::{material,fuel,gold,power,workers}`
+            // — кэш `Access_UpdateResourcesTotal`, но он влияет на показ и на
+            // `Complex::Transfer`, поэтому входит в снапшот/CRC (`state_digest`).
+            let complexes = &self.team_units[team].complexes;
+            put_u32(&mut out, complexes.len() as u32);
+            for complex in complexes {
+                put_i16(&mut out, complex.id);
+                put_i16(&mut out, complex.material);
+                put_i16(&mut out, complex.fuel);
+                put_i16(&mut out, complex.gold);
+                put_i16(&mut out, complex.power);
+                put_i16(&mut out, complex.workers);
+                put_i16(&mut out, complex.buildings);
+            }
         }
 
         put_u32(&mut out, self.pending_attacks.len() as u32);
@@ -2409,6 +2455,10 @@ impl GameState {
             out.push(u8::from(unit.tasks_enabled));
             put_u32(&mut out, unit.ai_state_bits);
             put_u16(&mut out, unit.connectors);
+            put_u16(
+                &mut out,
+                unit.complex.map(|complex| complex.0 as u16).unwrap_or(u16::MAX),
+            );
             put_u16(&mut out, unit.parent_unit.map(|p| p.0).unwrap_or(u16::MAX));
             put_u16(&mut out, unit.enemy_unit.map(|p| p.0).unwrap_or(u16::MAX));
             put_u32(&mut out, unit.build_list.len() as u32);

@@ -28,15 +28,17 @@ fn state_with_gold(gold: u32) -> GameState {
     state
 }
 
-/// Стационарный склад материалов команды — `ADUMP` с `storage`.
+/// Стационарный склад материалов **в комплексе тестового завода** — `ADUMP`
+/// с `storage`, стоящий вплотную к заводу в `(10,10)` (2×2): коннекторы
+/// (`UnitsManager_UpdateConnectors`) сливают их в один комплекс, и завод
+/// тратит сырьё из общего котла (`Complex::GetCargoInfo`).
 ///
-/// Заводы в C++ платят **материалами** (`complex->material` /
-/// `Cargo_GetRawConsumptionRate`), а не золотом; `ADUMP` — здание с
-/// `CARGO_TYPE_RAW`, чей склад видит [`max_core::production::team_raw_materials`].
-/// Ставим склад далеко от тестовых юнитов, чтобы он не мешал площадкам.
+/// Заводы в C++ платят **материалами комплекса** (`complex->material` /
+/// `Cargo_GetRawConsumptionRate`), а не золотом; отдельно стоящий склад в котёл
+/// не входит.
 fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
     let id = state
-        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(2, 2), 0)
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(12, 10), 0)
         .expect("ADump");
     state.unit_mut(id).expect("ADump").storage = materials;
     id
@@ -664,6 +666,8 @@ fn constructor_order_deploys_the_large_construction_site() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    // `UnitsManager_DeployUnit` обнуляет склад; высадка даёт 40.
+    state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -744,6 +748,7 @@ fn engineer_order_deploys_the_small_construction_site_without_a_slab() {
     let engineer = state
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(20, 20), 0)
         .expect("engineer");
+    state.unit_mut(engineer).expect("engineer").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(engineer, UnitType::Road).expect("queue");
@@ -816,6 +821,7 @@ fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, P
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -1077,6 +1083,7 @@ fn a_built_radar_restores_its_sentry_order() {
     let constructor = state
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(10, 10), 0)
         .expect("engineer");
+    state.unit_mut(constructor).expect("engineer").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -1198,6 +1205,7 @@ fn cancelling_the_build_removes_the_site() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
+    state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -1234,6 +1242,7 @@ fn construction_site_layout_is_deterministic() {
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(30, 30), 0)
             .expect("constructor");
+        state.unit_mut(constructor).expect("constructor").storage = 40;
 
         let mut manager = ProductionManager::new(&mut state, TeamId::RED);
         manager
@@ -1293,6 +1302,7 @@ fn two_identical_production_runs_have_identical_state() {
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(20, 20), 0)
             .expect("constructor");
+        state.unit_mut(constructor).expect("constructor").storage = 40;
 
         let mut manager = ProductionManager::new(&mut state, TeamId::RED);
         manager.enqueue(factory, UnitType::Infantry).expect("queue");
@@ -1315,6 +1325,94 @@ fn two_identical_production_runs_have_identical_state() {
         run(),
         "два прогона производства совпадают байт-в-байт"
     );
+}
+
+#[test]
+fn awac_completes_from_the_merged_complex_pot() {
+    // Сценарий пользователя: AWAC «никогда не достраивается», потому что завод
+    // не видел сырья. C++ (`Cargo_GetNetProduction` → `Cargo_ApplyUnitConsumption`)
+    // списывает raw из **комплекса** (`Complex::GetCargoInfo` = сумма складов
+    // подключённых зданий), а не из одного здания. Здесь два ADUMP стоят
+    // вплотную к AIRPLT и слиты коннекторами в один комплекс: AWAC строится
+    // 6 ходов; первый ход 4× (36), последний — `GetMaxAllowedBuildRate`
+    // ограничивает 2× по остатку `build_time = 2` (12), итого 48 из 80.
+    let mut state = state_with_gold(0);
+    let factory = state
+        .spawn_unit(
+            UnitType::AirUnitsPlant,
+            TeamId::RED,
+            Point::new(10, 10),
+            0,
+        )
+        .expect("air plant");
+    let first = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(12, 10), 0)
+        .expect("ADump 1");
+    // `ADUMP` — `STANDALONE` 1×1 (`UpdateConnectors` даёт `unit_size = 1`),
+    // поэтому второй склад ставится вплотную: `(12,10)` и `(13,10)`.
+    let second = state
+        .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(13, 10), 0)
+        .expect("ADump 2");
+    state.unit_mut(first).expect("ADump 1").storage = 40;
+    state.unit_mut(second).expect("ADump 2").storage = 40;
+
+    let complex = state.unit(factory).expect("factory").complex.expect("complex");
+    assert_eq!(state.unit(first).expect("ADump 1").complex, Some(complex));
+    assert_eq!(state.unit(second).expect("ADump 2").complex, Some(complex));
+    assert_eq!(
+        state
+            .team_units[0]
+            .get_complex(complex)
+            .expect("complex")
+            .buildings,
+        3,
+        "завод и два склада — один комплекс"
+    );
+    assert_eq!(
+        max_core::production::complex_raw_materials(&state, TeamId::RED, complex),
+        80,
+        "общий котёл комплекса"
+    );
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(factory, UnitType::Awac).expect("queue");
+    manager.set_build_rate(factory, 4);
+    let report = manager.commit(factory).expect("build");
+    drop(manager);
+
+    assert_eq!(report.build_rate, 4, "AIRPLT ускоряется до 4×");
+    assert_eq!(report.cost_per_turn, 36, "3 × 12 (множитель 4×)");
+
+    // Ход 1: 36 из общего котла, `build_time` 6 → 2.
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.kind != ProductionEventKind::PausedNoMaterials),
+        "первый ход оплачен из комплекса: {events:?}"
+    );
+    assert_eq!(state.unit(factory).expect("factory").build_time, 2);
+    assert_eq!(
+        max_core::production::complex_raw_materials(&state, TeamId::RED, complex),
+        44
+    );
+
+    // Ход 2: `GetMaxAllowedBuildRate` режет 4× до 2× (осталось 2 хода) —
+    // 12 из общего котла; `build_time <= build_rate` → `SpawnNewUnit` (AWAC).
+    let events = production_turn(&mut state);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::Spawned),
+        "AWAC обязан выпуститься: {events:?}"
+    );
+    assert_eq!(count_type(&state, UnitType::Awac), 1, "AWAC достроен");
+    assert_eq!(
+        max_core::production::complex_raw_materials(&state, TeamId::RED, complex),
+        32,
+        "80 − 36 (4×) − 12 (2× на последнем ходу)"
+    );
+    assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,14 +1498,12 @@ fn team_hash_ids_match_the_cpp_color_slots() {
     assert_eq!(max_core::team::hash_team_id(TeamId::ALIEN), 0x8000);
 }
 
-/// Материалы базы — сумма складов стационарных зданий с `CARGO_TYPE_RAW`:
-/// шахт, `ADUMP`, теплиц и казарм (C++ `Complex::material` + `Complex::Transfer`;
-/// в порте комплексы не сливаются, поэтому — вся команда).
+/// Материалы комплекса — сумма складов **подключённых** зданий с
+/// `CARGO_TYPE_RAW` (C++ `Complex::GetCargoInfo`, `complex.cpp:136-147`), а не
+/// всей команды: несвязанный склад в котёл завода не входит.
 #[test]
-fn team_raw_materials_sums_raw_stationary_storage() {
+fn complex_raw_materials_sums_only_connected_raw_storage() {
     let mut state = state_with_gold(0);
-    assert_eq!(max_core::production::team_raw_materials(&state, TeamId::RED), 0);
-
     let dump = add_materials(&mut state, 30);
     let mine = state
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(30, 30), 0)
@@ -1423,14 +1519,24 @@ fn team_raw_materials_sums_raw_stationary_storage() {
         .expect("fuel dump");
     state.unit_mut(gas).expect("fuel dump").storage = 11;
 
+    let dump_complex = state.unit(dump).expect("dump").complex.expect("complex");
+    let mine_complex = state.unit(mine).expect("mine").complex.expect("complex");
+    assert_ne!(dump_complex, mine_complex, "склады не связаны коннекторами");
+
     assert_eq!(
-        max_core::production::team_raw_materials(&state, TeamId::RED),
-        37,
-        "ADUMP 30 + шахта 7; топливный склад и танк не в счёт"
+        max_core::production::complex_raw_materials(&state, TeamId::RED, dump_complex),
+        30,
+        "ADUMP — свой котёл"
     );
     assert_eq!(
-        max_core::production::team_raw_materials(&state, TeamId::GREEN),
-        0
+        max_core::production::complex_raw_materials(&state, TeamId::RED, mine_complex),
+        7,
+        "шахта — свой котёл"
+    );
+    assert_eq!(
+        max_core::production::complex_raw_materials(&state, TeamId::GREEN, dump_complex),
+        0,
+        "чужая команда"
     );
     assert_eq!(state.unit(dump).expect("dump").storage, 30, "склад не тронут");
 }

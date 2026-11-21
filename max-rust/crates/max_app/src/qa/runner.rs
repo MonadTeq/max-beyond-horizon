@@ -416,6 +416,7 @@ impl QaRunner {
             Command::Move(x, y) => self.move_point(*x, *y, &format!("move {x} {y}")),
             Command::MoveGrid(x, y) => self.move_grid(*x, *y),
             Command::MoveNear => self.move_near(),
+            Command::MoveNearRefused => self.move_near_refused(),
             Command::EndTurn => self.end_turn(),
             Command::Mobilize(action) => self.mobilize(*action),
             Command::Landing(action) => self.landing(*action),
@@ -428,6 +429,7 @@ impl QaRunner {
             Command::Transfer(action) => self.transfer(*action),
             Command::Prefs(action) => self.prefs(action.clone()),
             Command::Spawn { enemy, name } => self.spawn(*enemy, name),
+            Command::SpawnAt { x, y, name } => self.spawn_at(*x, *y, name),
             Command::SelfDestruct(action) => self.self_destruct_command(*action),
             Command::ComplexRaw(value) => self.complex_raw(*value),
             Command::TeamValues {
@@ -521,6 +523,60 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
+    /// `spawn at X Y NAME` — QA-only: юнит **в указанной клетке**.
+    ///
+    /// Нужен для проверки слияния комплексов коннекторами (например, поставить
+    /// `ADUMP` вплотную к шахте): `spawn NAME` ищет свободную клетку сам и может
+    /// поставить склад по диагонали, где связи нет.
+    fn spawn_at(&mut self, x: i16, y: i16, name: &str) -> Result<Flow, String> {
+        let wanted = name.trim().to_ascii_lowercase();
+        let unit_type = max_core::UnitType::ALL
+            .iter()
+            .copied()
+            .find(|unit_type| {
+                crate::buildmenu::unit_name(*unit_type).to_ascii_lowercase() == wanted
+                    || format!("{unit_type:?}").to_ascii_lowercase() == wanted
+            })
+            .ok_or_else(|| format!("spawn at: неизвестный тип юнита «{name}»"))?;
+
+        let player = self.app.player_team();
+        let cell = Point::new(x, y);
+        let size = i16::from(max_core::production::footprint(unit_type));
+
+        for dy in 0..size {
+            for dx in 0..size {
+                let point = Point::new(cell.x + dx, cell.y + dy);
+
+                if self.app.state().map.index(point.x, point.y).is_none() {
+                    return Err(format!("spawn at: клетка ({}, {}) вне карты", point.x, point.y));
+                }
+                if !self.app.state().units_at(point).is_empty() {
+                    return Err(format!("spawn at: клетка ({}, {}) занята", point.x, point.y));
+                }
+            }
+        }
+
+        let flags = max_core::access::unit_type_flags(unit_type);
+        let id = self
+            .app
+            .state_mut()
+            .spawn_unit(unit_type, player, cell, flags)
+            .ok_or_else(|| format!("spawn at: не удалось поставить юнита {name}"))?;
+
+        if let Some(unit) = self.app.state_mut().unit_mut(id) {
+            unit.set_visible_to_team(player, true);
+        }
+
+        self.detail = Some(format!(
+            "{} в ({}, {})",
+            crate::buildmenu::unit_name(unit_type),
+            cell.x,
+            cell.y
+        ));
+
+        Ok(Flow::Continue)
+    }
+
     /// `selfdestruct arm|ok|cancel|advance N` — диалог `SelfDestructMenu`.
     fn self_destruct_command(
         &mut self,
@@ -591,6 +647,12 @@ impl QaRunner {
     }
 
     /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита.
+    ///
+    /// Как `Complex::Transfer(raw, 0, 0)` (`complex.cpp:178`): меняет кэш
+    /// комплекса **и раскладывает** разницу по складам членов в порядке
+    /// `UnitsManager_StationaryUnits`. Это важно для производства: завод
+    /// тратит `storage` подключённых хранилищ
+    /// (`production::complex_raw_materials`), а не поле-кэш.
     fn complex_raw(&mut self, value: i32) -> Result<Flow, String> {
         let team = self.app.player_team();
         let complex = self
@@ -606,10 +668,12 @@ impl QaRunner {
             })
             .ok_or_else(|| "complex raw: у команды нет комплекса".to_string())?;
 
-        let Some(target) = self.app.state_mut().complex_mut(team, complex.0 as u16) else {
+        let Some(target) = self.app.state().complex(team, complex.0 as u16) else {
             return Err("complex raw: комплекс не найден".to_string());
         };
-        target.material = value as i16;
+        let delta = value - i32::from(target.material);
+
+        max_core::transfer::complex_transfer(self.app.state_mut(), team, complex, delta, 0, 0);
         self.detail = Some(format!("complex raw = {value}"));
 
         Ok(Flow::Continue)
@@ -2858,6 +2922,82 @@ impl QaRunner {
 
         Err(format!(
             "move near: свободной соседней клетки, принявшей приказ, нет ({})",
+            rejections.join("; ")
+        ))
+    }
+
+    /// `move near refused` — правый клик по свободной соседней клетке, который
+    /// **обязан** не дать приказа: C++ `GameManager_GetBuilderUnitCursor`
+    /// (`game_manager.cpp:5927-5931`) для строителя в `BUILD_IN_PROGRESS`
+    /// возвращает `CURSOR_UNIT_NO_GO`, и ввод приказа не создаёт.
+    fn move_near_refused(&mut self) -> Result<Flow, String> {
+        let Some(id) = self.app.hud().selected else {
+            return Err("move near refused: нет выделенного юнита (сначала select)".to_string());
+        };
+
+        let grid = self
+            .app
+            .state()
+            .unit(id)
+            .map(|unit| unit.grid)
+            .ok_or_else(|| "move near refused: выделенный юнит исчез".to_string())?;
+
+        self.app.viewport_mut().center_on_grid(grid.x, grid.y);
+
+        let mut rejections = Vec::new();
+
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
+            let target = Point::new(grid.x + dx, grid.y + dy);
+
+            if target.x < 0
+                || target.y < 0
+                || target.x >= max_core::geo::MAP_WIDTH
+                || target.y >= max_core::geo::MAP_HEIGHT
+            {
+                continue;
+            }
+            if !self.app.state().units_at(target).is_empty() {
+                rejections.push(format!("({}, {}): занято", target.x, target.y));
+                continue;
+            }
+
+            let before = self.selected_orders();
+            let (x, y) = hud::tile_center(&self.app.map_viewport(), target);
+
+            self.send(InputEvent::RightClick(
+                x + layout::MAIN_MAP.ulx,
+                y + layout::MAIN_MAP.uly,
+            ))?;
+
+            let after = self.selected_orders();
+
+            if before != after || self.app.hud().preview.is_some() {
+                return Err(format!(
+                    "move near refused: клик по ({}, {}) дал приказ {after:?}, ожидался UNIT_NO_GO",
+                    target.x, target.y
+                ));
+            }
+
+            if self.last_log_line().contains("Cannot move while building") {
+                self.detail = Some(format!(
+                    "отказ в ({}, {}): {}",
+                    target.x,
+                    target.y,
+                    self.last_log_line()
+                ));
+                return Ok(Flow::Continue);
+            }
+
+            rejections.push(format!(
+                "({}, {}): {}",
+                target.x,
+                target.y,
+                self.last_log_line()
+            ));
+        }
+
+        Err(format!(
+            "move near refused: нет свободной соседней клетки с UNIT_NO_GO ({})",
             rejections.join("; ")
         ))
     }

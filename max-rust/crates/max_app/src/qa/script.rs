@@ -764,6 +764,9 @@ pub enum Command {
     MoveGrid(i16, i16),
     /// `move near` — приказ в соседнюю свободную клетку выделенного юнита.
     MoveNear,
+    /// `move near refused` — правый клик по соседней клетке **без** приказа:
+    /// ожидается отказ (`CURSOR_UNIT_NO_GO`, строитель в `BUILD_IN_PROGRESS`).
+    MoveNearRefused,
     /// `end_turn` — кнопка End Turn + ходы ИИ до готовности к вводу.
     EndTurn,
     /// `mobilize buy|buy N|delete|step N|done|cancel`.
@@ -797,6 +800,17 @@ pub enum Command {
         /// Чужая команда (по умолчанию — команда игрока).
         enemy: bool,
         /// Имя типа (`Tank`, `Personnel Carrier`, …).
+        name: String,
+    },
+    /// `spawn at X Y NAME` — QA-only: поставить юнита **в указанную клетку**
+    /// (для проверки слияния комплексов коннекторами: `ADUMP` вплотную к
+    /// шахте).
+    SpawnAt {
+        /// Клетка карты.
+        x: i16,
+        /// Клетка карты.
+        y: i16,
+        /// Имя типа.
         name: String,
     },
     /// `selfdestruct arm|ok|cancel` — диалог `UnitsManager_SelfDestructMenu`.
@@ -982,6 +996,13 @@ fn split_word(source: &str) -> (&str, &str) {    match source.find(char::is_whit
 pub(crate) fn parse_i32(text: &str, what: &str) -> Result<i32, String> {
     text.parse::<i32>()
         .map_err(|_| format!("{what}: ожидалось целое число, получено «{text}»"))
+}
+
+/// Координата клетки (`i16`) с проверкой диапазона.
+fn parse_i16(text: &str, what: &str) -> Result<i16, String> {
+    let value = parse_i32(text, what)?;
+
+    i16::try_from(value).map_err(|_| format!("{what}: вне диапазона i16: «{text}»"))
 }
 
 fn parse_u32(text: &str, what: &str) -> Result<u32, String> {
@@ -1916,7 +1937,22 @@ fn parse_spawn(rest: &str) -> Result<Command, String> {
     let rest = rest.trim();
 
     if rest.is_empty() {
-        return Err("spawn: ожидалось «spawn [enemy] NAME»".to_string());
+        return Err("spawn: ожидалось «spawn [enemy] NAME» или «spawn at X Y NAME»".to_string());
+    }
+
+    if let Some(rest) = rest.strip_prefix("at ") {
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+
+        return match parts.as_slice() {
+            [x, y, name] if !name.is_empty() => Ok(Command::SpawnAt {
+                x: parse_i16(x, "spawn at x")?,
+                y: parse_i16(y, "spawn at y")?,
+                name: (*name).to_string(),
+            }),
+            _ => Err(format!(
+                "spawn at: ожидалось «spawn at X Y NAME», получено «{rest}»"
+            )),
+        };
     }
 
     let (enemy, name) = match rest.strip_prefix("enemy ") {
@@ -2432,10 +2468,13 @@ fn parse_move(rest: &str) -> Result<Command, String> {
 
     match parts.first().map(|part| part.to_ascii_lowercase()) {
         Some(word) if word == "near" => {
-            if parts.len() != 1 {
-                return Err(format!("move near: лишние аргументы «{rest}»"));
+            if parts.len() == 1 {
+                return Ok(Command::MoveNear);
             }
-            Ok(Command::MoveNear)
+            if parts.len() == 2 && parts[1].eq_ignore_ascii_case("refused") {
+                return Ok(Command::MoveNearRefused);
+            }
+            return Err(format!("move near: лишние аргументы «{rest}»"));
         }
         Some(word) if word == "grid" => {
             if parts.len() != 3 {
