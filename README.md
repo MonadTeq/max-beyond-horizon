@@ -1,8 +1,14 @@
 # M.A.X. : Beyond Rust Horizon
 
-Современный клиент игры **M.A.X.: Mechanized Assault & Exploration** (Interplay, 1996),
-написанный заново на **Rust**, с серверной инфраструктурой **Horizon** и
+**M.A.X. : Beyond Rust Horizon** — ремейк игры **M.A.X.: Mechanized Assault & Exploration**
+(Interplay, 1996), переписанный на **Rust**, с серверной инфраструктурой **Horizon** и
 визуальным паритетом **1:1 с оригиналом**.
+
+В основе ремейка — два **референса**, которые в процессе разработки **не меняются** и
+используются для сверки игровых механик:
+
+- оригинальная игра **M.A.X.** (Interplay, 1996);
+- порт **M.A.X. Port** (klei1984) — канонический C++-код логики и визуала.
 
 **Проект называется «M.A.X. : Beyond Rust Horizon»** (сокращённо **BRH** — от
 *Beyond Rust Horizon*). Отсюда префикс каталогов `max-brh*` и имя бинарника
@@ -14,13 +20,13 @@ M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 
 ---
 
-## Чем это отличается от M.A.X. Port
+## Ремейк на базе оригинала и M.A.X. Port
 
-[M.A.X. Port](https://github.com/klei1984/max) (klei1984) — нативный порт оригинального
-движка на C++ (та же логика, тот же сетевой P2P/lockstep-стек). Этот проект —
-**переосмысление клиента**, а не порт 1:1:
+Оригинальная **M.A.X.** и порт **M.A.X. Port** ([klei1984/max](https://github.com/klei1984/max)) —
+два референса, которые не изменяются в ходе разработки и служат для сверки игровых
+механик. Ремейк **не** порт 1:1, а переосмысление клиента:
 
-| Аспект | M.A.X. Port | Наш проект |
+| Аспект | M.A.X. Port (референс) | Наш проект (ремейк) |
 |---|---|---|
 | Язык клиента | C++ (порт оригинального кода) | **Rust**, чистая модульная архитектура |
 | Архитектура | монолит порта | `max_core` (симуляция) / `max_net` / `max_assets` / `max_render` / `max_app` — строгие границы |
@@ -30,8 +36,8 @@ M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 | Качество | ручное | **QA-фабрика**: Test-Suite (179 TC), скриптовый драйвер, golden-кадры, CI, запись сценариев вручную |
 | RE-база | частная IDA-база автора | собственная RE-линия (`max-original-dasm/`) + оракулы C++ |
 
-M.A.X. Port используется как **оракул** (канонический референс логики и визуала) и
-не изменяется; C++-headless из нашей развилки остаётся игровым арбитром для сетевых сессий.
+Оригинал и M.A.X. Port используются как **референсы** (каноническая логика и визуал) и
+**не изменяются**; headless-арбитр для сетевых сессий собирается из `max-cpp-port` (режим `--server`).
 
 ## Принципиально новое
 
@@ -115,13 +121,3 @@ Windows (GUI): двойной клик открывает окно без кон
 - **QA**: [max-brh-docs/qa/](max-brh-docs/qa/) и [max-brh-qa/](max-brh-qa/) — Test-Suite, драйверы, golden.
 - **Development**: [max-brh-docs/development/](max-brh-docs/development/) — планы, сборка, чек-лист релиза.
 - История изменений: [CHANGELOG.md](CHANGELOG.md). Лицензия: [LICENSE](LICENSE).
-
-
-### Быстрая сборка на Windows (автокопирование SDL3.dll)
-
-`powershell
-powershell -ExecutionPolicy Bypass -File build.ps1          # release + DLL в target\\release\\ и dist\\
-powershell -ExecutionPolicy Bypass -File build.ps1 -Debug   # debug-сборка
-``r
-
-Скрипт сам находит SDL3 (vcpkg → build\\sdl3-3.4.20 → бандл клиента) и копирует SDL3.dll рядом с exe — отдельный запуск с ошибкой «SDL3.dll not found» не повторится.
