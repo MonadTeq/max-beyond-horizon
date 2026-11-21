@@ -4929,12 +4929,14 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
   перегенерированы: в кадре появились новые `POWGEN`/`FDUMP`/`HABITAT`, а
   исследовательский центр теперь рисуется включённым (раньше уходил в
   `POWER_OFF` без энергии).
-* `cargo test` max_core (263+10+…), max_app headless/default/sound — зелёные
-  (см. §42.5).
+* `cargo test` max_core: 254 unit + `power_economy` 10, `production` 30,
+  `construction_economy` 7, `transfer` 13 и остальные интеграционные — зелёные;
+  max_app: 383 unit + 10 main + интеграционные (default/sound/headless) —
+  зелёные (см. §42.5).
 
 ### 42.5 Гейт и артефакты
 
-* полный docker-гейт `bash ci.sh` — **PASS** (1294 с):
+* полный docker-гейт `bash ci.sh` — **PASS** (944 с):
   * `cargo check`/`cargo test` max-rust в трёх конфигурациях (default =
     GUI/SDL3 из исходников, `--features sound`, `--no-default-features`);
   * `cargo test --workspace` Horizon;
@@ -4942,26 +4944,24 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
     `research`, `research-help`) — PASS; 17 наборов golden (в т.ч.
     production 29, research-help 10 кадров) — без дрейфа;
   * soak: `soak-100.qa` (100 ходов, 49 813 кадров) и `soak_headless`
-    (120 ходов, 120 826 кадров, 34.92 с, 41 юнит) — PASS.
+    (120 ходов, 120 826 кадров, 28.58 с, 41 юнит) — PASS.
 * Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
   `--features sdl-vcpkg,sound`):
   `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 798 848 Б,
-  sha256 `006eb889201726d3d4c52b90c327066da94df4f07cc8d4630e41461b1a0c6c51`
+  sha256 `0488fa855c0e180dd7b2863242424c66ffa5c83c68e510e82fa9c89a9f91a892`
   (PE32+ Subsystem=2 GUI), zip sha256
-  `ef745efe8bf7dfa69f3b0f2c60bf8642133acab6c5e76a3494621cf0152a5b3e`;
+  `967efecb7911db2ec60e402376a82949975470a0564692524f38ffdf16ee56aa`;
   `--help` — OK.
 * Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
-  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 105 578 Б, sha256
-  `ba4ceed0deb4802d048f8d7dd0626e45c7f279e8ce99867fb2d12db6081a0a59`; zip sha256
-  `5df73970e77603060d1d6d096ed653c7b44fcec4edb9ae5fc9d70676f267e9a6`.
+  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 105 591 Б, sha256
+  `e80d83c1ae47a492bee175ad66229ff2378f71ac57b541be07014dc981241bc8`; zip sha256
+  `890b26de786cf6c956dbce33631adb7a19936e95ccfd60e3d4c736f6def03d41`.
   Нативный `--help` — OK (exit 0); нативный
   `--demo SAVE1.CAM --turns 1` — `units=312`, `state_digest=0x733D`,
   `state_checksum=0x408A`, `replay_crc=0x5561`, `snapshot=788740B` — дайджест
   сейва **не изменился** (новые поля энергии — существующие `UnitInfo::orders`
   и `Complex::{power,workers}`; `industry_message` в снимок не входит).
-  wine-8 smoke: `--demo` — OK, `--help` под wine 8 с тестовым шимом
-  `bcryptprimitives` завершился кодом 1 (вывод справки в консоль wine);
-  нативный запуск это не воспроизводит.
+  wine-smoke (`--help` + `--demo`, тестовый шим `bcryptprimitives`) — OK.
 
 ### 42.6 Осознанные расхождения (обновление §41.6)
 
