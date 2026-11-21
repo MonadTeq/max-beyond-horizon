@@ -45,8 +45,8 @@
 | Водная платформа | `WaterPlatform` | `WTRPLTFM` | — |
 | Орудийная башня | `GunTurret` | `GUNTURRT` | — |
 | Зенитка | `AntiAir` | `ANTIAIR` | — |
-| Артиллерийская башня | `ArtilleryTurret` | `ARTYTRRT` | — |
-| Противоракетная установка | `AntiMissile` | `ANTIMSSL` | мануал: «Missile Launcher» |
+| Артиллерийская башня | `Artillery` | `ARTYTRRT` | переименовать `ArtilleryTurret` |
+| Противоракетная установка | `MissileLauncher` | `ANTIMSSL` | переименовать `AntiMissile` |
 | Бетонный блок | `Block` | `BLOCK` | — |
 | Мост | `Bridge` | `BRIDGE` | — |
 | Шахта | `MiningStation` | `MININGST` | — |
@@ -61,7 +61,7 @@
 | Мобильная ПВО | `MobileAntiAir` | `SP_FLAK` | — |
 | Миноукладчик | `MineLayer` | `MINELAYR` | — |
 | Сюрвейер | `Surveyor` | `SURVEYOR` | — |
-| Мобильный сканер | `MobileScanner` | `SCANNER` | переименовать `Scanner` |
+| Мобильный сканер | `Scanner` | `SCANNER` | — |
 | Грузовик снабжения | `SupplyTruck` | `SPLYTRCK` | — |
 | Золотой грузовик | `GoldTruck` | `GOLDTRCK` | — |
 | Инженер | `Engineer` | `ENGINEER` | — |
@@ -69,7 +69,7 @@
 | Ремонтный юнит | `RepairUnit` | `REPAIR` | — |
 | Топливный грузовик | `FuelTruck` | `FUELTRCK` | — |
 | Бронетранспортёр | `ArmouredPersonnelCarrier` | `CLNTRANS` | переименовать `PersonnelCarrier` |
-| Диверсант | `Commando` | `COMMANDO` | — |
+| Диверсант | `Infiltrator` | `COMMANDO` | переименовать `Commando` |
 | Пехота | `Infantry` | `INFANTRY` | — |
 | Эскорт | `Escort` | `FASTBOAT` | переименовать `FastBoat` |
 | Корвет | `Corvette` | `CORVETTE` | — |

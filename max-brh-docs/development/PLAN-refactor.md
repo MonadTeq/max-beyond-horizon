@@ -73,17 +73,20 @@ get_attribute(attribute: u8, value: i32)` повторяет C++-расклад�
 Стратегия имён (Ф1): код = Rust-имя; ресурсный токен = `fn tag()`; User-Friendly
 Name = данные вне `max_core` (рекомендуется `max_assets`/`max_app`).
 
-## 3. Эскалации владельцу (Ф0 — блокируют старт)
+## 3. Решения владельца (Ф0)
 
-1. **Авторитет имён:** `domain-map.md` vs `unit-name-review.md` расходятся по
-   `SCANNER` (`Scanner`/`MobileScanner`), `ARTYTRRT` (`ArtilleryTurret`/`Artillery`),
-   `ANTIMSSL` (`AntiMissile`/`MissileLauncher`), `COMMANDO` (`Commando`/`Infiltrator`).
-   Какой документ канон?
-2. **Открытые имена:** `SHIELDGN`/`SUPRTPLT`/`RECCENTR` (C++ `ALIEN_BUILDING_1/2/3`);
-   UFN для `BOMBER` (решено «Ground Attack Plane»), `SEATRANS`/`CARGOSHP`
-   (коллизия «Supply Boats» в списке верфи).
-3. **Rule 4 ↔ Rule 5:** `max_net`/`max_assets` зависят от `max_core`. Варианты:
-   (а) считать их Application-слоем; (б) выделить общий нижний crate в
-   Infrastructure. Рекомендация Архитектора — (б).
-4. **UI/V70-данные в `UnitInfo`** и место UFN-таблицы (вынести из `max_core` или
-   оставить как «чистые данные»). Рекомендация — вынести.
+1. **Авторитет имён — РЕШЕНО:** `unit-name-review.md` — канон; `domain-map.md`
+   приведён в соответствие (`SCANNER=Scanner`, `ARTYTRRT=Artillery`,
+   `ANTIMSSL=MissileLauncher`, `COMMANDO=Infiltrator`).
+2. **Имена — РЕШЕНО (частично):** `SEATRANS` = «Sea Transport»,
+   `CARGOSHP` = «Cargo Ship». Остаются открытыми `SHIELDGN`/`SUPRTPLT`/`RECCENTR`
+   (C++ `ALIEN_BUILDING_1/2/3`) — не блокируют Ф1, решаются до Ф2/UFN.
+3. **Rule 4 ↔ Rule 5 — РЕШЕНО (вариант б):** выделить общий нижний crate в
+   Infrastructure (доменные типы `UnitType`/`ResourceId`/протокольные типы), от
+   которого зависят `max_core`, `max_net`, `max_assets`. Уточнить имя crate и
+   границу на Ф5.
+4. **UI/V70-данные — РЕШЕНО:** вынести из `max_core` (презентационные поля
+   `UnitInfo`, `Rect`, `frames`, `UnitSound`, UFN-таблица) — в отдельный слой
+   представления/данных с сохранением побайтного V70-round-trip.
+
+Ф0 закрыт → передать Разработчику пофазное ТЗ, начиная с Ф1.

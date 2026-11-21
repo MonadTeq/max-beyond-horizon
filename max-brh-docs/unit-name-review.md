@@ -111,7 +111,11 @@ doc-комментариев `UnitType` (`/// TOKEN / C++_NAME`); мануал �
 - `SHIELDGN` / `SUPRTPLT` / `RECCENTR`: C++-идентификаторы — `ALIEN_BUILDING_1/2/3`.
   Требуется уточнить каноничные имена (сейчас `ShieldGenerator` / `SupportPlant` /
   `RecreationCenter`).
-- `BOMBER`: Rust-имя `Bomber` (решение владельца), User-Friendly Name — «Ground Attack Plane».
-- `SEATRANS`: мануал — «Supply Boats»; решение владельца — «Sea Transport».
-- `CARGOSHP`: мануал — «Supply Boats» (совпадает с `SEATRANS` в списке верфи);
-  уточнить корректный User-Friendly Name.
+
+## Решения владельца
+
+- `BOMBER`: Rust-имя `Bomber`, User-Friendly Name — «Ground Attack Plane».
+- `SEATRANS`: User-Friendly Name — «Sea Transport» (морской транспорт).
+- `CARGOSHP`: User-Friendly Name — «Cargo Ship» (грузовое судно).
+- Авторитет имён: `unit-name-review.md` — канон; `domain-map.md` приведён в
+  соответствие.
