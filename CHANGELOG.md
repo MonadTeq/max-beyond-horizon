@@ -918,7 +918,7 @@
 - **Призрак выбора места и центр ленты доходили до игрока: упакованный Windows
   UI был старым; оба пути `Build` теперь проверяются живым тестом.** Прошлый
   `ui-test-construction.ps1` брал `build/win-msvc-target/release/max-brh.exe`,
-  а в `release/max_app-1.1.0-windows-x86_64-ui/` лежал exe, собранный **до**
+  а в `bin/release/max_app-1.1.0-windows-x86_64-ui/` лежал exe, собранный **до**
   `SELECT_SITE`: он сразу ставил площадку в автоматически найденную клетку
   (`find_build_site`), поэтому игрок не видел призрака, площадка не накрывала
   строителя, а `PositionInTape` не центрировал его. Теперь скрипт по умолчанию
@@ -1493,9 +1493,9 @@
     сценариев PASS; golden `landing.png` переснят (реальные тайлы вместо
     плоских цветов), `game.png`/`upgrade-done.png`/`research-done.png` — после
     исправления тумана войны; `qa_golden_check` — 0 дрейфа. Пересобраны
-    Windows-артефакты `release/max_app-1.1.0-windows-x86_64-ui` (MSVC/SDL3,
+    Windows-артефакты `bin/release/max_app-1.1.0-windows-x86_64-ui` (MSVC/SDL3,
     живой кадр — `build/landing-ui.png`) и
-    `release/max_app-1.1.0-windows-x86_64` (mingw, headless); `bash ci.sh` —
+    `bin/release/max_app-1.1.0-windows-x86_64` (mingw, headless); `bash ci.sh` —
     CI OK (496 с).
 
 ### Добавлено
@@ -1870,7 +1870,7 @@
   текущий каталог и его родитель → каталог запущенного exe
   (`std::env::current_exe`) и вверх по дереву до ближайшего каталога с
   `max-original`. Резолверы `resolve_max_res` (новый), `resolve_patches_res`,
-  `resolve_color_pal` ходят по этому списку; запуск `release\max_app.exe` из
+  `resolve_color_pal` ходят по этому списку; запуск `bin\release\max_app.exe` из
   чужого CWD находит данные, а ошибка `MAX.RES` теперь подсказывает
   `--data-dir/--max-res`. Тесты: `assets::tests::exe_dir_resolves_game_data_when_cwd_is_elsewhere`,
   `exe_ancestors_are_searched_up_to_the_data_root`; `absent_everywhere…`

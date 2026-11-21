@@ -30,7 +30,7 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 if (-not $Exe) {
     $bundle = Get-ChildItem (Join-Path $root "release") -Directory -Filter "max_app-*-windows-x86_64-ui" |
         Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $bundle) { Write-Host "ui-test-move: нет release/max_app-*-windows-x86_64-ui"; exit 1 }
+    if (-not $bundle) { Write-Host "ui-test-move: нет bin/release/max_app-*-windows-x86_64-ui"; exit 1 }
     $Exe = Join-Path $bundle.FullName "max-brh.exe"
 }
 if (-not (Test-Path $Exe)) { Write-Host "ui-test-move: нет $Exe"; exit 1 }

@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
   Нативная Windows-сборка M.A.X. Rust-клиента (max_app) с окном SDL3 и звуком,
-  упаковка в release/max_app-<ver>-windows-x86_64-ui/.
+  упаковка в bin/bin/release/max_app-<ver>-windows-x86_64-ui/.
 
 .DESCRIPTION
   В отличие от max-brh-cicd/scripts/build-windows.sh (кросс-сборка headless в Docker),
@@ -19,14 +19,14 @@
        D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows).
 
   Сборка не засоряет max-brh/target (там живут Linux/Docker-артефакты):
-  используется CARGO_TARGET_DIR=<repo>\build\win-msvc-target.
+  используется CARGO_TARGET_DIR=<repo>\bin\target.
 
 .PARAMETER VcpkgRoot
   Каталог vcpkg. По умолчанию $env:VCPKG_ROOT, затем D:\dev\toolchain\vcpkg,
   затем C:\vcpkg.
 
 .PARAMETER Out
-  Каталог артефактов. По умолчанию <repo>\release.
+  Каталог артефактов. По умолчанию <repo>\bin\release.
 
 .PARAMETER Features
   Набор features max_app. По умолчанию "sdl-vcpkg,sound". Скрипт собирает с
@@ -58,7 +58,7 @@ function Fail([string]$message) {
 
 # <repo>\max-brh-cicd\scripts -> <repo>
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $Out) { $Out = Join-Path $root "release" }
+if (-not $Out) { $Out = Join-Path $root "bin\release" }
 
 # --- версия workspace -------------------------------------------------------
 $manifest = Join-Path $root "max-brh\Cargo.toml"
@@ -106,7 +106,7 @@ if (-not (Test-Path $cargo)) {
 }
 $cargoBin = Split-Path -Parent $cargo
 
-$targetDir = Join-Path $root "build\win-msvc-target"
+$targetDir = Join-Path $root "bin\target"
 $exePath = Join-Path $targetDir "release\max-brh.exe"
 $bundleName = "max_app-$version-windows-x86_64-ui"
 $bundle = Join-Path $Out $bundleName
@@ -233,7 +233,7 @@ max_app-$version-windows-x86_64.zip; при необходимости выво�
 Меню "Create game" создаёт игру и входит в неё.
 
 Headless-вариант (без SDL/звука) — отдельный артефакт
-release/max_app-$version-windows-x86_64.zip.
+bin/release/max_app-$version-windows-x86_64.zip.
 
 Лицензия
 --------

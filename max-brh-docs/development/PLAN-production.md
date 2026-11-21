@@ -187,9 +187,9 @@
 - [x] Релиз: версия 1.1.0, CHANGELOG, чек-лист, артефакты (UI/headless Windows + Linux), тег v1.1.0.
   `max-brh` workspace = **1.1.0** (Cargo.lock обновлён); `CHANGELOG.md`
   `[1.1.0] — 2026-11-16`; пересобраны
-  `release/max_app-1.1.0-windows-x86_64-ui` (MSVC+vcpkg, SDL3+sound),
-  `release/max_app-1.1.0-windows-x86_64` (mingw, headless, wine-smoke) и
-  `release/max_app-1.1.0-linux-x86_64.tar.gz`; SHA256SUMS внутри бандлов;
+  `bin/release/max_app-1.1.0-windows-x86_64-ui` (MSVC+vcpkg, SDL3+sound),
+  `bin/release/max_app-1.1.0-windows-x86_64` (mingw, headless, wine-smoke) и
+  `bin/release/max_app-1.1.0-linux-x86_64.tar.gz`; SHA256SUMS внутри бандлов;
   `release-checklist.md` — раздел v1.1.0 со свидетельствами. **Тег не создан**
   (по указанию: сделает хозяин), команда подготовлена:
   `bash release.sh --tag`.

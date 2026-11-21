@@ -17,7 +17,7 @@
 # ALSA/WASAPI) не включаются — им нужен Windows-хост с CMake/MSVC/vcpkg
 # (см. README.txt в архиве и max-brh-docs/development/release-checklist.md §6).
 #
-# Артефакты (в $OUT, по умолчанию <repo>/release):
+# Артефакты (в $OUT, по умолчанию <repo>/bin/release):
 #   max_app-<version>-windows-x86_64/            каталог: max-brh.exe + README.txt +
 #                                                LICENSE + CHANGELOG.md + SHA256SUMS
 #   max_app-<version>-windows-x86_64.zip         архив (zip из контейнера)
@@ -44,7 +44,7 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 RUST_IMAGE="${RUST_IMAGE:-rust:1.94.0-bookworm}"
-OUT="${OUT:-$ROOT/release}"
+OUT="${OUT:-$ROOT/bin/release}"
 TARGET="x86_64-pc-windows-gnu"
 DO_WINE=1
 DRY_RUN=0
@@ -55,7 +55,7 @@ usage() {
 
   --dry-run     показать план сборки/упаковки и выйти (Docker не запускается)
   --no-wine     не ставить wine и не делать wine-smoke (--help + --demo 1 ход)
-  --out DIR     каталог артефактов (по умолчанию <repo>/release)
+  --out DIR     каталог артефактов (по умолчанию <repo>/bin/release)
   -h, --help    эта справка
 
 Переменные: RUST_IMAGE (rust:1.94.0-bookworm), OUT, WINE_STRICT=1.

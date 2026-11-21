@@ -46,14 +46,17 @@ M.A.X. Port используется как **оракул** (каноничес
 | Каталог | Назначение |
 |---|---|
 | `max-brh/` | Rust-клиент (workspace: core/net/assets/render/app) |
-| `max-brh-server/` | Horizon: оркестратор сессий (Rust, gRPC+WS) |
-| `src/` | наша развилка C++-порта: headless-сервер-арбитр |
-| `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
-| `max-cpp-port-max-brh-docs/` | документация автора (формат сейвов V70 и пр.) |
-| `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
+| `max-brh-server/` | выделенный игровой сервер (gRPC+WS) |
+| `max-brh-docs/` | проектная документация: `architecture/`, `analysis/`, `qa/`, `development/` |
 | `max-brh-qa/` | QA: Test-Suite, сценарии, golden, драйверы |
-| `max-brh-docs/` | документация по направлениям: `architecture/`, `analysis/`, `qa/`, `development/` |
-| `build/`, `deploy/`, `release/` | сборки, развёртывание, артефакты |
+| `max-brh-qa-tools/` | QA-утилиты: `max-resources-viewer`, `max-resources-exporter` |
+| `max-brh-assets/` | референс/ремастер: `images/`, `units/`, `text/` |
+| `max-brh-cicd/` | CI/CD: `ci.sh` + `scripts/` |
+| `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
+| `max-cpp-port-docs/` | документация автора (сайт, формат сейвов V70) |
+| `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
+| `max-unity-client/` | Unity-прототип |
+| `build/`, `deploy/`, `bin/` | временные сборки, развёртывание, артефакты (`bin/` — легко удалить) |
 
 ## Собрать
 
@@ -73,7 +76,7 @@ Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
 
 ```powershell
 # одиночная / hot-seat (окно; без флагов — GUI, --ui — совместимый alias):
-release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
+bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 #   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
 #   После экрана Players: мобилизация (покупка юнитов, cargo, апгрейды —
 #   переключатель Buy Units/Upgrades) → выбор точки высадки.
@@ -87,11 +90,11 @@ release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```
 
-UI-сборка (`release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
+UI-сборка (`bin\release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
 Windows (GUI): двойной клик открывает окно без консоли, а `--help`/`--demo` у
 неё видны только при перенаправлении (`max-brh.exe --help > help.txt`).
 Вывод для терминала/CI даёт headless-сборка
-`release\max_app-*-windows-x86_64.zip` (подсистема Console).
+`bin\release\max_app-*-windows-x86_64.zip` (подсистема Console).
 
 Подробно: [max-brh-docs/development/build.md](max-brh-docs/development/build.md) (раздел «Запуск»).
 

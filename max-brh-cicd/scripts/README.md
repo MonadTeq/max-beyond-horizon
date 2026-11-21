@@ -10,7 +10,7 @@
 | Скрипт | Что делает | Требования |
 |---|---|---|
 | `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-brh` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
-| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-brh` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-brh` с окном SDL3 и звуком + упаковка `bin/release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
 | `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранный UI-клиент |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-brh-server/target/release/horizon` и `build/linux-server-template/max-port` |
@@ -71,16 +71,16 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
 (`sdl-from-source` → SDL3 из исходников через CMake) выключены, поэтому окно
 SDL3 и `sound` (rodio/cpal → WASAPI) не включаются. Полная SDL-сборка — только
 на Windows-хосте, инструкция лежит в
-`release/max_app-<версия>-windows-x86_64/README.txt` и в
+`bin/release/max_app-<версия>-windows-x86_64/README.txt` и в
 `max-brh-docs/development/release-checklist.md` §6.
 
 Артефакты (`$OUT` = `release/` по умолчанию):
 
 ```
-release/max_app-<ver>-windows-x86_64/            max-brh.exe, README.txt,
+bin/release/max_app-<ver>-windows-x86_64/            max-brh.exe, README.txt,
                                                  LICENSE, CHANGELOG.md, SHA256SUMS
-release/max_app-<ver>-windows-x86_64.zip         архив каталога
-release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
+bin/release/max_app-<ver>-windows-x86_64.zip         архив каталога
+bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 ```
 
 Проверки внутри скрипта:
@@ -152,7 +152,7 @@ cargo build --release --locked -p max_app --no-default-features --features sdl-v
 
 кладёт `SDL3.dll` рядом с exe, проверяет PE-заголовок (`pe-subsystem.ps1`,
 Subsystem=2 = GUI) и `max-brh.exe --help`, затем пакует
-`release/max_app-<ver>-windows-x86_64-ui/` (exe + SDL3.dll + README.txt +
+`bin/release/max_app-<ver>-windows-x86_64-ui/` (exe + SDL3.dll + README.txt +
 LICENSE + CHANGELOG.md + SHA256SUMS) и `.zip` + `.zip.sha256`.
 
 Справка проверяется через `cmd` с перенаправлением в
@@ -195,7 +195,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\pe-subsystem.ps1 `
-    -Path release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
+    -Path bin\release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
 # PE: ...\max-brh.exe — PE32+ x64, Subsystem=2 (Windows GUI)
 ```
 

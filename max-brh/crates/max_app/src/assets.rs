@@ -78,7 +78,7 @@ pub const COLOR_PAL_NAME: &str = "COLOR.PAL";
 /// 3. каталог запущенного **exe** ([`std::env::current_exe`]) и вверх по дереву
 ///    до ближайшего каталога с `max-original` включительно.
 ///
-/// Пункт 3 — фикс TC-1109: `release\max_app.exe` (или `target\debug\…` в
+/// Пункт 3 — фикс TC-1109: `bin\release\max_app.exe` (или `target\debug\…` в
 /// checkout'е) находит данные, даже если CWD — чужой каталог.
 pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().ok();
@@ -726,7 +726,7 @@ impl Assets {
     /// [`Self::warnings`].
     pub fn load(config: &AppConfig) -> Result<Self> {
         // TC-1109: `MAX.RES` тоже ищется от каталога exe/вверх, а не только по
-        // конфигу (запуск `release\max_app.exe` из чужого CWD).
+        // конфигу (запуск `bin\release\max_app.exe` из чужого CWD).
         let (max_res_path, max_res_warning) = resolve_max_res(config);
         let max_res = ResArchive::open(&max_res_path).with_context(|| {
             format!(
@@ -1662,7 +1662,7 @@ mod tests {
     }
 
     /// TC-1109: `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` находятся от каталога exe,
-    /// когда CWD — чужой пустой каталог (запуск `release\max_app.exe`).
+    /// когда CWD — чужой пустой каталог (запуск `bin\release\max_app.exe`).
     #[test]
     fn exe_dir_resolves_game_data_when_cwd_is_elsewhere() {
         let root = temp_dir("exe");

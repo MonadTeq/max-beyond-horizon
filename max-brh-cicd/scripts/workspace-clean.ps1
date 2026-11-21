@@ -28,7 +28,7 @@ Remove-Target 'build\cargo-home'
 
 # --- устаревшие/кросс-сборки и временные каталоги build\ -------------------
 $buildDirs = @(
-    'build\win-msvc-target', 'build\win-msvc-target-headless',
+    'bin\target', 'bin\target-headless', 'bin\release',
     'build\cross-winxp-x64-debug', 'build\cross-winxp-x64-server-debug',
     'build\linux-x64-debug', 'build\linux-x64-server-static',
     'build\m52', 'build\run', 'build\run2', 'build\recovered',

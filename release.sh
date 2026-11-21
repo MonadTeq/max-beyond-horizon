@@ -2,7 +2,7 @@
 # Сборка релизного Linux-бинаря Rust-клиента M.A.X. (M6.4).
 #
 #   bash release.sh --dry-run          # показать план, ничего не собирать
-#   bash release.sh                    # собрать + упаковать release/
+#   bash release.sh                    # собрать + упаковать bin/release/
 #   bash release.sh --tag              # то же + аннотированный тег v<version>
 #   bash release.sh --features sdl-vcpkg,sound   # свой набор features (по
 #                                      # умолчанию sdl-from-source,sound;
@@ -15,11 +15,11 @@
 # rust:1.94.0-bookworm, хост-тулчейн не нужен.
 #
 # Артефакты:
-#   release/max_app-<version>-linux-x86_64/        каталог (бинарь + run.sh +
+#   bin/bin/release/max_app-<version>-linux-x86_64/        каталог (бинарь + run.sh +
 #                                                  README.txt + LICENSE +
 #                                                  CHANGELOG.md + lib/ + SHA256SUMS)
-#   release/max_app-<version>-linux-x86_64.tar.gz  архив
-#   release/max_app-<version>-linux-x86_64.tar.gz.sha256
+#   bin/release/max_app-<version>-linux-x86_64.tar.gz  архив
+#   bin/release/max_app-<version>-linux-x86_64.tar.gz.sha256
 #
 # Тег создаётся только по --tag и только на чистом рабочем дереве; пуш тега —
 # отдельное осознанное действие (см. max-brh-docs/development/release-checklist.md §8).
@@ -41,7 +41,7 @@ fi
 
 RUST_IMAGE="${RUST_IMAGE:-rust:1.94.0-bookworm}"
 FEATURES="${FEATURES:-sdl-from-source,sound}"
-OUT="${OUT:-$ROOT/release}"
+OUT="${OUT:-$ROOT/bin/release}"
 DRY_RUN=0
 MAKE_TAG=0
 
@@ -54,7 +54,7 @@ usage() {
                    (только на чистом рабочем дереве; тег не пушится)
   --features LIST  features max_app (по умолчанию sdl-from-source,sound;
                    пустая строка — headless-сборка: --features '')
-  --out DIR        каталог артефактов (по умолчанию <repo>/release)
+  --out DIR        каталог артефактов (по умолчанию <repo>/bin/release)
   -h, --help       эта справка
 
 Переменные: RUST_IMAGE (rust:1.94.0-bookworm), FEATURES, OUT.
