@@ -56,11 +56,11 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   horizon_event_system (или осознанный exclude).
 - **5.2 Headless**: обход/фикс падения при PATCHES.RES в game_data (патч в нашем
   `src/` или репорт автору); задокументировать.
-- **5.3 Развёртывание — готово (M5.3)**: `docker-compose.yml` (Horizon +
+- **5.3 Развёртывание — готово (M5.3)**: `max-brh-server/docker-compose.yml` (Horizon +
   C++-headless), образ `ubuntu:24.04` + готовый Linux-бинарь
   `max-brh-server/target/release/horizon` volume-маунтом (плюс optional
   `--profile build`), порты 8080/8082 + UDP 32000-32100, конфиг из
-  `smoke_config.toml` через `deploy/horizon.toml.template` + `entrypoint.sh`
+  `smoke_config.toml` через `max-brh-server/deploy/horizon.toml.template` + `entrypoint.sh`
   (`HORIZON_ANNOUNCE_HOST`, пути, секреты), healthcheck по LISTEN-сокетам.
   Проверено: `docker compose config` валиден, `up` → `healthy`, gRPC-проба
   `horizon_probe` (hello/list/create/join/ping) проходит; документация —

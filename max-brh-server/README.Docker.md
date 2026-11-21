@@ -1,6 +1,6 @@
 # Развёртывание Horizon + headless M.A.X. (M5.3)
 
-Готовый `docker-compose.yml` в корне репозитория поднимает **Horizon** (WS + gRPC)
+Готовый `docker-compose.yml` в `max-brh-server/` поднимает **Horizon** (WS + gRPC)
 и даёт ему спавнить **C++-headless `max-port`** на каждую игру. Rust-клиент
 (`max-brh`) подключается к gRPC `:8082`, получает тикет и играет по UDP.
 

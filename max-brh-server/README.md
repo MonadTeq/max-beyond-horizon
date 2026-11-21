@@ -510,7 +510,7 @@ The server is fully containerized and includes Docker and Kubernetes deployment 
 
 Container deployment includes support for secrets management, environment-specific configuration injection, and integration with container orchestration platforms. The system provides detailed metrics for container runtime monitoring and resource usage optimization.
 
-**M.A.X. deployment (M5.3):** the repository root `docker-compose.yml` runs Horizon
+**M.A.X. deployment (M5.3):** `max-brh-server/docker-compose.yml` runs Horizon
 together with the C++ headless `max-port` session launcher. It mounts the prebuilt
 Linux binary `target/release/horizon` into an `ubuntu:24.04` runtime image, publishes
 WS `8080`, gRPC `8082` and UDP `32000-32100`, renders the config from

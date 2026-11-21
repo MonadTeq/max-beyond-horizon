@@ -54,7 +54,7 @@ Before you start contributing, ensure you have the following installed:
    Use Docker to build the Horizon service:
 
    ```bash
-   docker-compose up --build
+   docker compose -f docker-compose.yml up --build
    ```
 
 4. **Configure Environment Variables**

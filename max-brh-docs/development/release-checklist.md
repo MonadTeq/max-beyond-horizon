@@ -307,7 +307,7 @@ cargo run -p max_app --features sound -- --turn-wait 60
 `--turn-wait 60` обязателен для игры руками: без него сетевой цикл закрывает ход
 сразу после тика (~16 мс) и клики не успевают попасть в партию — это режим для
 headless/live-smoke. **Обходные флаги не нужны (M-NET-доводки):** если каталог
-данных headless-сервера без `PATCHES.RES` (как в `docker-compose.yml`), клиент
+данных headless-сервера без `PATCHES.RES` (как в `max-brh-server/docker-compose.yml`), клиент
 сам после `TP 03 GameData` переподключается с хэшем только `MAX.RES`; пока
 сессия греется 10–15 с, `SessionHandle::start` повторяется с backoff
 (статус `Session warming up — attempt N/M`), поэтому `Create game` сразу ведёт
