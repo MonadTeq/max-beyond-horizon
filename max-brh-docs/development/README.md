@@ -8,6 +8,7 @@
 | [PLAN.md](PLAN.md) | Генеральный план проекта (v5) |
 | [PLAN-v7-release.md](PLAN-v7-release.md) | Дорожная карта до рабочего релиза |
 | [PLAN-host-mode.md](PLAN-host-mode.md) | Сетевой режим хоста (P2P) — цель 2 |
+| [agent-programmer.md](agent-programmer.md) | Руководство агента-программиста (правила и порядок работы) |
 | [release-checklist.md](release-checklist.md) | Чек-лист релиза со свидетельствами |
 
 ## Быстрый старт
