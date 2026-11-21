@@ -38,8 +38,10 @@
 //!   приём в транспорт, `IsEngaged`, групповые списки (P5);
 //! * [`classification`] — типобезопасный «вид» над флагами (Ф2): классифицирующие
 //!   перечисления (`CombatRole`, `Mobility`, `Footprint`, `Environment`,
-//!   `CargoKind`) для `UnitType` и `UnitInfo` (решение C: маркерные типажи не
-//!   используются). `UnitInfo` (Ф3 переводит логику на этот слой);
+//!   `CargoKind`, `ObjectKind`) для `UnitType` и `UnitInfo` (решение C: маркерные
+//!   типажи не используются). `ObjectKind` отделяет не-юниты (эффекты,
+//!   декорации, сюжетные объекты) без изменения `UnitType` (Ф4). `UnitInfo` (Ф3
+//!   переводит логику на этот слой);
 //! * [`combat`] — `GetAttackDamage`/`AttackUnit`, `Attack` (площадная атака),
 //!   `PrepareFire`/`ProgressFire`/`AimAtTarget`, реактивный огонь
 //!   (`AssessAttacks`), стелс-действия диверсанта (P5);
@@ -126,7 +128,8 @@ pub use alloc::{
     MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
 };
 pub use classification::{
-    is_turret, CargoKind, CombatRole, Environment, Footprint, Mobility, PRODUCING_UNIT_TYPES,
+    is_turret, CargoKind, CombatRole, Environment, Footprint, Mobility, ObjectKind,
+    DECORATION_UNIT_TYPES, EFFECT_UNIT_TYPES, PLOT_PROP_UNIT_TYPES, PRODUCING_UNIT_TYPES,
     TURRET_UNIT_TYPES,
 };
 pub use combat::{

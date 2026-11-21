@@ -11,10 +11,21 @@
 //!   `STATIONARY`), поэтому у экземпляра своя классификация.
 //!
 //! Источник таксономии — `max-brh-docs/object-classifier.md` («Ключевые
-//! критерии», «Оси классификации юнитов»). Оси:
+//! критерии», «Оси классификации юнитов», «Не-юниты»).
+//!
+//! # Отделение не-юнитов (Ф4)
+//!
+//! [`ObjectKind`] отделяет **юниты** от **не-юнитов** (эффекты, декорации,
+//! сюжетные объекты) на уровне семантики. Сам [`UnitType`] при этом **не
+//! меняется**: 93 варианта с дискриминантами `0x00–0x5C` остаются `ResourceID`
+//! (`SC_UNITS`) — от них зависят CRC, replay-дайджест и формат V70. `ObjectKind`
+//! — производное значение, как [`Footprint`].
+//!
+//! Оси:
 //!
 //! | Ось | Значения | Rust |
 //! |---|---|---|
+//! | Вид объекта | юнит / эффект / декорация / сюжетная декорация | [`ObjectKind`] |
 //! | Боевая роль | боевой / небоевой | [`CombatRole`] |
 //! | Форма | здание / мобильный / стационарный-прочий | [`Mobility`] |
 //! | Футпринт (размер на карте) | 1×1 / 2×2 | [`Footprint`] |
@@ -85,6 +96,59 @@ pub const PRODUCING_UNIT_TYPES: [UnitType; 12] = [
 pub fn is_turret(unit_type: UnitType) -> bool {
     TURRET_UNIT_TYPES.contains(&unit_type)
 }
+
+// ---------------------------------------------------------------------------
+// Данные предметной области: не-юниты (Ф4)
+// ---------------------------------------------------------------------------
+
+/// Эффекты — **не-юниты**: снаряды, взрывы, обломки, следы (14 типов).
+///
+/// Источник — `object-classifier.md`, «Не-юниты» → «Эффект»:
+/// `ROCKET`, `TORPEDO`, `ALNMISSL`, `ALNTBALL`, `ALNABALL` (снаряды);
+/// `LNDEXPLD`, `AIREXPLD`, `SEAEXPLD`, `BLDEXPLD`, `HITEXPLD` (взрывы);
+/// `LRGRUBLE`, `SMLRUBLE` (обломки); `RKTSMOKE`, `TRPBUBLE` (следы).
+///
+/// C++: отдельного признака нет — все они `ResourceID` из `SC_UNITS`;
+/// отделение семантическое (Ф4), `UnitType` не меняется.
+pub const EFFECT_UNIT_TYPES: [UnitType; 14] = [
+    UnitType::Rocket,
+    UnitType::Torpedo,
+    UnitType::AlienMissile,
+    UnitType::AlienTankBall,
+    UnitType::AlienArtilleryBall,
+    UnitType::LandExplosion,
+    UnitType::AirExplosion,
+    UnitType::SeaExplosion,
+    UnitType::BuildingExplosion,
+    UnitType::HitExplosion,
+    UnitType::LargeRubble,
+    UnitType::SmallRubble,
+    UnitType::RocketSmoke,
+    UnitType::TorpedoBubble,
+];
+
+/// Декорации/стройплощадки — **не-юниты** (6 типов): `LRGTAPE`, `SMLTAPE`,
+/// `LRGSLAB`, `SMLSLAB`, `LRGCONES`, `SMLCONES`.
+///
+/// Источник — `object-classifier.md`, «Не-юниты» → «Декорация/стройплощадка».
+pub const DECORATION_UNIT_TYPES: [UnitType; 6] = [
+    UnitType::LargeTape,
+    UnitType::SmallTape,
+    UnitType::LargeSlab,
+    UnitType::SmallSlab,
+    UnitType::LargeCones,
+    UnitType::SmallCones,
+];
+
+/// Сюжетные декорации (удалённые/скрытые) — **не-юниты** (3 типа): `MASTER`,
+/// `HARVSTER`, `WALDO`.
+///
+/// Источник — `object-classifier.md`, «Не-юниты» → «Сюжетная декорация».
+pub const PLOT_PROP_UNIT_TYPES: [UnitType; 3] = [
+    UnitType::MasterBuilder,
+    UnitType::Harvester,
+    UnitType::DeadWaldo,
+];
 
 // ---------------------------------------------------------------------------
 // Боевая роль
@@ -358,6 +422,85 @@ impl CargoKind {
 }
 
 // ---------------------------------------------------------------------------
+// Вид объекта: юнит / не-юнит (Ф4)
+// ---------------------------------------------------------------------------
+
+/// Вид объекта — семантическое отделение **юнитов** от **не-юнитов** (Ф4).
+///
+/// Это **производная** ось, как [`Footprint`]: сам [`UnitType`] остаётся
+/// `ResourceID`-совместимым (`#[repr(u16)]`, 93 варианта, `0x00–0x5C`), потому
+/// что его дискриминанты индексируют таблицы `SC_UNITS`/`SC_ATTRI`, входят в
+/// CRC/replay-дайджест и в формат V70. Переклассификация — **без изменения
+/// поведения**: эффекты и декорации остаются объектами тех же `ResourceID` в
+/// мире, но больше не считаются «юнитами» в логическом классификаторе.
+///
+/// Стабильные теги сериализации — **явные** дискриминанты (порядок вариантов
+/// контрактом не является): `Unit = 0`, `Effect = 1`, `Decoration = 2`,
+/// `PlotProp = 3`.
+///
+/// Источник: `object-classifier.md`, разделы «Юниты» и «Не-юниты».
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ObjectKind {
+    /// Юнит: реальный юнит или здание (70 типов, `COMMTWR`..`ALNPLANE`).
+    Unit = 0,
+    /// Эффект: снаряд, взрыв, обломок, след ([`EFFECT_UNIT_TYPES`], 14).
+    Effect = 1,
+    /// Декорация/стройплощадка ([`DECORATION_UNIT_TYPES`], 6).
+    Decoration = 2,
+    /// Сюжетная декорация: удалённые/скрытые объекты
+    /// ([`PLOT_PROP_UNIT_TYPES`], 3).
+    PlotProp = 3,
+}
+
+impl ObjectKind {
+    /// Вид типа объекта по [`UnitType::tag`] — тотальная биекция
+    /// `0x00–0x5C` (93 типа, без пропусков и дублей).
+    ///
+    /// Единственный источник — три списка исключений
+    /// ([`EFFECT_UNIT_TYPES`], [`DECORATION_UNIT_TYPES`],
+    /// [`PLOT_PROP_UNIT_TYPES`]); всё остальное — [`Self::Unit`]. Тотальность и
+    /// взаимоисключение проверяются тестами по [`UnitType::ALL`].
+    #[inline]
+    pub fn classify(unit_type: UnitType) -> Self {
+        // Эффекты (14) — снаряды, взрывы, обломки, следы.
+        if EFFECT_UNIT_TYPES.contains(&unit_type) {
+            Self::Effect
+        } else if DECORATION_UNIT_TYPES.contains(&unit_type) {
+            Self::Decoration
+        } else if PLOT_PROP_UNIT_TYPES.contains(&unit_type) {
+            Self::PlotProp
+        } else {
+            Self::Unit
+        }
+    }
+
+    /// Юнит ли вид.
+    #[inline]
+    pub fn is_unit(self) -> bool {
+        matches!(self, Self::Unit)
+    }
+
+    /// Эффект ли вид.
+    #[inline]
+    pub fn is_effect(self) -> bool {
+        matches!(self, Self::Effect)
+    }
+
+    /// Декорация ли вид.
+    #[inline]
+    pub fn is_decoration(self) -> bool {
+        matches!(self, Self::Decoration)
+    }
+
+    /// Сюжетная декорация ли вид.
+    #[inline]
+    pub fn is_plot_prop(self) -> bool {
+        matches!(self, Self::PlotProp)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Классификация типа юнита (per-type)
 // ---------------------------------------------------------------------------
 
@@ -396,6 +539,38 @@ impl UnitType {
     #[inline]
     pub fn cargo_kind(self) -> CargoKind {
         CargoKind::classify(self)
+    }
+
+    /// Вид объекта типа ([`ObjectKind::classify`]): юнит / эффект / декорация /
+    /// сюжетная декорация. `UnitType` при этом не меняется (Ф4).
+    #[inline]
+    pub fn object_kind(self) -> ObjectKind {
+        ObjectKind::classify(self)
+    }
+
+    /// Реальный юнит или здание (`ObjectKind::Unit`, 70 типов).
+    #[inline]
+    pub fn is_unit(self) -> bool {
+        self.object_kind() == ObjectKind::Unit
+    }
+
+    /// Эффект (`ObjectKind::Effect`): снаряд, взрыв, обломок, след (14).
+    #[inline]
+    pub fn is_effect(self) -> bool {
+        self.object_kind() == ObjectKind::Effect
+    }
+
+    /// Декорация/стройплощадка (`ObjectKind::Decoration`, 6).
+    #[inline]
+    pub fn is_decoration(self) -> bool {
+        self.object_kind() == ObjectKind::Decoration
+    }
+
+    /// Сюжетная декорация (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
+    /// `WALDO`.
+    #[inline]
+    pub fn is_plot_prop(self) -> bool {
+        self.object_kind() == ObjectKind::PlotProp
     }
 
     /// Производящий ли тип (`Cargo_GetNetProduction`, [`PRODUCING_UNIT_TYPES`]).
@@ -1209,5 +1384,214 @@ mod tests {
         tank.flags = (tank.flags & !(MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) | MOBILE_AIR_UNIT;
         assert!(tank.is_air());
         assert!(!tank.is_ground());
+    }
+
+    // -----------------------------------------------------------------------
+    // Вид объекта (Ф4): юнит / эффект / декорация / сюжетная декорация
+    // -----------------------------------------------------------------------
+
+    /// Токены эффектов — дословно из `object-classifier.md`, «Не-юниты».
+    const EFFECT_TOKENS: [&str; 14] = [
+        "ROCKET", "TORPEDO", "ALNMISSL", "ALNTBALL", "ALNABALL", "LNDEXPLD", "AIREXPLD",
+        "SEAEXPLD", "BLDEXPLD", "HITEXPLD", "LRGRUBLE", "SMLRUBLE", "RKTSMOKE", "TRPBUBLE",
+    ];
+
+    /// Токены декораций — дословно из `object-classifier.md`, «Не-юниты».
+    const DECORATION_TOKENS: [&str; 6] = [
+        "LRGTAPE", "SMLTAPE", "LRGSLAB", "SMLSLAB", "LRGCONES", "SMLCONES",
+    ];
+
+    /// Токены сюжетных декораций — дословно из `object-classifier.md`.
+    const PLOT_PROP_TOKENS: [&str; 3] = ["MASTER", "HARVSTER", "WALDO"];
+
+    /// Независимый оракул: ожидаемый вид — по ресурсному токену [`UnitType::tag`].
+    fn expected_object_kind(unit_type: UnitType) -> ObjectKind {
+        let tag = unit_type.tag();
+
+        if EFFECT_TOKENS.contains(&tag) {
+            ObjectKind::Effect
+        } else if DECORATION_TOKENS.contains(&tag) {
+            ObjectKind::Decoration
+        } else if PLOT_PROP_TOKENS.contains(&tag) {
+            ObjectKind::PlotProp
+        } else {
+            ObjectKind::Unit
+        }
+    }
+
+    #[test]
+    fn object_kind_is_total_bijection_over_93_types() {
+        let mut counts = [0usize; 4];
+
+        for &unit_type in UnitType::ALL {
+            let expected = expected_object_kind(unit_type);
+            let actual = unit_type.object_kind();
+
+            assert_eq!(
+                actual,
+                expected,
+                "{:?}: tag = {}, flags = {:#010X}",
+                unit_type,
+                unit_type.tag(),
+                unit_type_flags(unit_type)
+            );
+            assert_eq!(ObjectKind::classify(unit_type), expected, "{unit_type:?}");
+
+            counts[actual as usize] += 1;
+        }
+
+        // 70 юнитов + 14 эффектов + 6 декораций + 3 сюжетных = 93 (тотальная
+        // биекция, нет пропусков и дублей).
+        assert_eq!(counts, [70, 14, 6, 3]);
+        assert_eq!(counts.iter().sum::<usize>(), UnitType::ALL.len());
+        assert_eq!(counts.iter().sum::<usize>(), 93);
+
+        // Списки исключений — без дублей и ровно объявленной длины.
+        assert_eq!(EFFECT_UNIT_TYPES.len(), 14);
+        assert_eq!(DECORATION_UNIT_TYPES.len(), 6);
+        assert_eq!(PLOT_PROP_UNIT_TYPES.len(), 3);
+
+        for (name, list) in [
+            ("EFFECT_UNIT_TYPES", &EFFECT_UNIT_TYPES[..]),
+            ("DECORATION_UNIT_TYPES", &DECORATION_UNIT_TYPES[..]),
+            ("PLOT_PROP_UNIT_TYPES", &PLOT_PROP_UNIT_TYPES[..]),
+        ] {
+            for (index, unit_type) in list.iter().enumerate() {
+                assert_eq!(
+                    list.iter().filter(|other| *other == unit_type).count(),
+                    1,
+                    "{name}: дубль {unit_type:?} (позиция {index})"
+                );
+                assert!(
+                    UnitType::ALL.contains(unit_type),
+                    "{name}: {unit_type:?} вне `UnitType::ALL`"
+                );
+            }
+        }
+
+        // Границы диапазона юнитов по токенам: `COMMTWR`..`ALNPLANE`.
+        assert_eq!(UnitType::GoldRefinery.tag(), "COMMTWR");
+        assert_eq!(UnitType::AlienPlane.tag(), "ALNPLANE");
+        assert_eq!(UnitType::GoldRefinery.object_kind(), ObjectKind::Unit);
+        assert_eq!(UnitType::AlienPlane.object_kind(), ObjectKind::Unit);
+    }
+
+    #[test]
+    fn object_kind_variants_are_mutually_exclusive() {
+        // Виды различаются: `Unit` не равен остальным.
+        for other in [
+            ObjectKind::Effect,
+            ObjectKind::Decoration,
+            ObjectKind::PlotProp,
+        ] {
+            assert_ne!(ObjectKind::Unit, other, "{other:?}");
+            assert!(!other.is_unit(), "{other:?}");
+        }
+        assert!(ObjectKind::Unit.is_unit());
+        assert!(!ObjectKind::Unit.is_effect());
+        assert!(!ObjectKind::Unit.is_decoration());
+        assert!(!ObjectKind::Unit.is_plot_prop());
+
+        // У каждого из 93 типов срабатывает ровно один помощник.
+        for &unit_type in UnitType::ALL {
+            let kind = unit_type.object_kind();
+            let fired = [
+                unit_type.is_unit(),
+                unit_type.is_effect(),
+                unit_type.is_decoration(),
+                unit_type.is_plot_prop(),
+            ];
+
+            assert_eq!(
+                fired.iter().filter(|set| **set).count(),
+                1,
+                "{unit_type:?}: {fired:?}"
+            );
+            assert_eq!(
+                unit_type.is_unit(),
+                kind == ObjectKind::Unit,
+                "{unit_type:?}"
+            );
+            assert_eq!(
+                unit_type.is_effect(),
+                kind == ObjectKind::Effect,
+                "{unit_type:?}"
+            );
+            assert_eq!(
+                unit_type.is_decoration(),
+                kind == ObjectKind::Decoration,
+                "{unit_type:?}"
+            );
+            assert_eq!(
+                unit_type.is_plot_prop(),
+                kind == ObjectKind::PlotProp,
+                "{unit_type:?}"
+            );
+            assert_eq!(kind.is_unit(), kind == ObjectKind::Unit, "{unit_type:?}");
+        }
+    }
+
+    #[test]
+    fn object_kind_control_cases() {
+        // (в) Юниты: производящее здание, шахта, боевой мобильный.
+        for unit_type in [
+            UnitType::GoldRefinery,
+            UnitType::MiningStation,
+            UnitType::Tank,
+        ] {
+            assert_eq!(
+                unit_type.object_kind(),
+                ObjectKind::Unit,
+                "{unit_type:?}: {}",
+                unit_type.tag()
+            );
+            assert!(unit_type.is_unit(), "{unit_type:?}");
+        }
+
+        // Эффекты: взрыв, след, обломок.
+        for effect in [
+            UnitType::LandExplosion,
+            UnitType::RocketSmoke,
+            UnitType::LargeRubble,
+        ] {
+            assert_eq!(
+                effect.object_kind(),
+                ObjectKind::Effect,
+                "{effect:?}: {}",
+                effect.tag()
+            );
+            assert!(effect.is_effect(), "{effect:?}");
+            assert!(!effect.is_unit(), "{effect:?}");
+        }
+
+        // Декорация: стройплощадка 2×2.
+        assert_eq!(UnitType::LargeTape.object_kind(), ObjectKind::Decoration);
+        assert!(UnitType::LargeTape.is_decoration());
+        assert!(!UnitType::LargeTape.is_unit());
+
+        // Сюжетные декорации: `MASTER`, `HARVSTER`, `WALDO`.
+        for plot_prop in [
+            UnitType::MasterBuilder,
+            UnitType::Harvester,
+            UnitType::DeadWaldo,
+        ] {
+            assert_eq!(
+                plot_prop.object_kind(),
+                ObjectKind::PlotProp,
+                "{plot_prop:?}: {}",
+                plot_prop.tag()
+            );
+            assert!(plot_prop.is_plot_prop(), "{plot_prop:?}");
+            assert!(!plot_prop.is_unit(), "{plot_prop:?}");
+        }
+    }
+
+    #[test]
+    fn object_kind_discriminants_are_stable() {
+        // Стабильные теги сериализации — явные дискриминанты, не порядок.
+        assert_eq!(ObjectKind::Unit as u8, 0);
+        assert_eq!(ObjectKind::Effect as u8, 1);
+        assert_eq!(ObjectKind::Decoration as u8, 2);
+        assert_eq!(ObjectKind::PlotProp as u8, 3);
     }
 }
