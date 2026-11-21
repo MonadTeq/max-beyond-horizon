@@ -538,13 +538,9 @@ pub fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool 
     true
 }
 
-/// `Task_IsAdjacent` (`task.cpp:311`) — соседство с учётом размера здания 2×2.
+/// `Task_IsAdjacent` (`task.cpp:311`) — соседство с учётом футпринта 2×2.
 pub fn task_is_adjacent(unit: &UnitInfo, grid_x: i16, grid_y: i16) -> bool {
-    let unit_size: i16 = if unit.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
+    let unit_size: i16 = if unit.is_quad() { 2 } else { 1 };
 
     unit.grid.x - 1 <= grid_x
         && unit.grid.x + unit_size >= grid_x

@@ -604,6 +604,12 @@ impl UnitInfo {
     }
 
     /// Признак «юнит — член комплекса» (`UnitInfo::IsComplexMember`).
+    ///
+    /// Читается бит `BUILDING`, а не `is_building()`: C++ (`unitinfo.hpp:255`)
+    /// включает в комплекс структуры `CONNECTOR_UNIT | BUILDING | STANDALONE`.
+    /// Турель — здание семантически (`Mobility::Building`), но **не** член
+    /// комплекса (`BUILDING`/`CONNECTOR_UNIT`/`STANDALONE` у неё сняты), поэтому
+    /// замена на `is_building()` изменила бы коннекторы — поведение сохранено.
     #[inline]
     pub fn is_complex_member(&self) -> bool {
         use crate::enums::unit_flags::{BUILDING, CONNECTOR_UNIT, GROUND_COVER, STANDALONE};

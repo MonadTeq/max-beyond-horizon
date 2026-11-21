@@ -65,11 +65,17 @@
 |---|---|---|---|
 | Боевая роль | Боевой / Небоевой | `CombatRole::{Combat, NonCombat}` | `attack > 0` / `attack = 0` |
 | Форма | Здание / Мобильный / Стационарный-прочий | `Mobility::{Building, Mobile, Stationary}` | `BUILDING(0x10)`† / `¬STATIONARY` / `STATIONARY(0x200)∧¬BUILDING` |
+| Футпринт (размер на карте) | 1×1 / 2×2 | `Footprint::{Single, Quad}` | `BUILDING(0x10)` |
 | Среда мобильного | Воздушный / Амфибийный / Наземный / Морской | `Environment::{Air, Amphibious, Ground, Sea}` | `MOBILE_AIR_UNIT` / `SEA\|LAND` / `MOBILE_LAND_UNIT` / `MOBILE_SEA_UNIT` |
 | Производственный | Производственный / Непроизводственный | `is_producing()` | `Cargo_GetNetProduction` (12 типов) |
 | Cargo (тип) | Без / Ресурсный / Юнитный | `CargoKind::{None, Resource, Unit}` | `cargo_type` (`CARGO_TYPE_*`) |
 
-† Турели — семантически здания, хотя флаг `BUILDING` не установлен (решение владельца).
+† Турели — семантически здания (`Mobility::Building`), но `Footprint::Single`
+(флаг `BUILDING` не установлен). Инвариант: `Footprint::Quad ⟹ Mobility::Building`
+(обратное неверно). `Footprint` — лайаут, `Mobility::Building` — семантика.
+
+Стабильные теги сериализации `Footprint` (не полагаться на порядок вариантов):
+`Single = 0`, `Quad = 1`.
 
 ## Производственные юниты
 

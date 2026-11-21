@@ -17,6 +17,7 @@
 //! |---|---|---|
 //! | Боевая роль | боевой / небоевой | [`CombatRole`] |
 //! | Форма | здание / мобильный / стационарный-прочий | [`Mobility`] |
+//! | Футпринт (размер на карте) | 1×1 / 2×2 | [`Footprint`] |
 //! | Среда мобильного | воздух / амфибия / земля / море | [`Environment`] |
 //! | Производственный | производящий / непроизводящий | [`UnitType::is_producing`] |
 //! | Груз | нет / ресурсный / юнитный | [`CargoKind`] |
@@ -177,6 +178,86 @@ impl Mobility {
 }
 
 // ---------------------------------------------------------------------------
+// Футпринт
+// ---------------------------------------------------------------------------
+
+/// Футпринт (размер на карте) — ось `object-classifier.md` «Футпринт».
+///
+/// **Лайаут, а не семантика:** ось читает ровно бит `BUILDING` (`0x10`,
+/// «2×2-структура»). Турели — [`Mobility::Building`] семантически, но у них
+/// флаг снят, поэтому [`Footprint::Single`]; инвариант
+/// [`Footprint::Quad`] `⟹` [`Mobility::Building`] (обратное неверно).
+///
+/// Стабильные теги сериализации — **явные** дискриминанты (порядок вариантов
+/// контрактом не является): `Single = 0`, `Quad = 1`.
+///
+/// C++: `BUILDING` (`enums.hpp`); `Hash_MapHash::Add/Remove` (`hash.cpp:188`,
+/// `hash.cpp:227`); габарит `(flags & BUILDING) ? 2 : 1` (`units_manager.cpp:2056`,
+/// `unitinfo.cpp:4086`, `task.cpp:314`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Footprint {
+    /// 1×1 — одна клетка карты (мобильные, турели, 1×1-структуры, эффекты).
+    Single = 0,
+    /// 2×2 — четыре клетки карты (флаг `BUILDING`).
+    Quad = 1,
+}
+
+impl Footprint {
+    /// Футпринт типа юнита по флагам `SC_UNITS`.
+    #[inline]
+    pub fn classify(unit_type: UnitType) -> Self {
+        Self::classify_flags(unit_type, unit_type_flags(unit_type))
+    }
+
+    /// Футпринт экземпляра по **его** флагам (`unit.flags`): если у экземпляра
+    /// динамически снят `BUILDING`, он занимает 1×1.
+    #[inline]
+    pub fn classify_unit(unit: &UnitInfo) -> Self {
+        Self::classify_flags(unit.unit_type, unit.flags)
+    }
+
+    /// Футпринт по флагу `BUILDING` (`0x10`): установлен — 2×2, снят — 1×1.
+    ///
+    /// Инвариант `Quad ⟹ Mobility::Building` проверяется `debug_assert!`: флаг
+    /// `BUILDING` всегда даёт [`Mobility::Building`], обратное неверно (турель —
+    /// `Building` + `Single`).
+    #[inline]
+    pub fn classify_flags(unit_type: UnitType, flags: u32) -> Self {
+        let footprint = Self::from_flags(flags);
+        debug_assert!(
+            !footprint.is_quad()
+                || Mobility::classify_flags(unit_type, flags) == Mobility::Building,
+            "{unit_type:?}: Footprint::Quad при Mobility ≠ Building (flags = {flags:#010X})"
+        );
+        footprint
+    }
+
+    /// Футпринт по сырым флагам, когда тип неизвестен (лайаутные API: `MapHash`,
+    /// `Access_*` принимают `flags`). Единственное место оси, читающее бит.
+    #[inline]
+    pub fn from_flags(flags: u32) -> Self {
+        if flags & BUILDING != 0 {
+            Self::Quad
+        } else {
+            Self::Single
+        }
+    }
+
+    /// 2×2 ли футпринт.
+    #[inline]
+    pub fn is_quad(self) -> bool {
+        matches!(self, Self::Quad)
+    }
+
+    /// 1×1 ли футпринт.
+    #[inline]
+    pub fn is_single(self) -> bool {
+        matches!(self, Self::Single)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Среда мобильного
 // ---------------------------------------------------------------------------
 
@@ -293,6 +374,18 @@ impl UnitType {
         Mobility::classify(self)
     }
 
+    /// Футпринт типа ([`Footprint::classify`]): 1×1 или 2×2.
+    #[inline]
+    pub fn footprint(self) -> Footprint {
+        Footprint::classify(self)
+    }
+
+    /// Занимает ли тип 2×2 (`BUILDING`). Лайаут, см. [`Footprint`].
+    #[inline]
+    pub fn is_quad(self) -> bool {
+        self.footprint().is_quad()
+    }
+
     /// Среда типа ([`Environment::classify`]).
     #[inline]
     pub fn environment(self) -> Option<Environment> {
@@ -358,7 +451,8 @@ impl UnitType {
     ///
     /// **Не эквивалент бита `BUILDING`**: турели — здания по решению
     /// владельца, хотя флаг `BUILDING` (`0x10`, «2×2-структура») у них снят.
-    /// Там, где проверяется именно раскладка 2×2, бит читается напрямую.
+    /// Там, где проверяется именно раскладка 2×2, используется [`Footprint`]
+    /// ([`is_quad()`](Self::is_quad)).
     #[inline]
     pub fn is_building(self) -> bool {
         self.mobility() == Mobility::Building
@@ -396,6 +490,18 @@ impl UnitInfo {
     #[inline]
     pub fn mobility(&self) -> Mobility {
         Mobility::classify_unit(self)
+    }
+
+    /// Футпринт экземпляра по его флагам ([`Footprint::classify_unit`]).
+    #[inline]
+    pub fn footprint(&self) -> Footprint {
+        Footprint::classify_unit(self)
+    }
+
+    /// Занимает ли экземпляр 2×2 (`BUILDING` в его флагах).
+    #[inline]
+    pub fn is_quad(&self) -> bool {
+        self.footprint().is_quad()
     }
 
     /// Среда экземпляра по его флагам ([`Environment::classify_unit`]).
@@ -507,6 +613,15 @@ mod tests {
         }
     }
 
+    /// Ожидаемый футпринт по флагу `BUILDING` (`object-classifier.md`).
+    fn expected_footprint(unit_type: UnitType) -> Footprint {
+        if has_flag(unit_type, BUILDING) {
+            Footprint::Quad
+        } else {
+            Footprint::Single
+        }
+    }
+
     /// Ожидаемая среда по флагам (`MOBILE_*`).
     fn expected_environment(unit_type: UnitType) -> Option<Environment> {
         let air = has_flag(unit_type, MOBILE_AIR_UNIT);
@@ -602,6 +717,119 @@ mod tests {
         }
         assert!(is_turret(UnitType::GunTurret));
         assert!(!is_turret(UnitType::LandMine));
+    }
+
+    #[test]
+    fn footprint_matches_building_bit_for_all_93_types() {
+        let (mut quad, mut single) = (0, 0);
+
+        for &unit_type in UnitType::ALL {
+            let expected = expected_footprint(unit_type);
+
+            assert_eq!(
+                Footprint::classify(unit_type),
+                expected,
+                "{unit_type:?}: flags = {:#010X}",
+                unit_type_flags(unit_type)
+            );
+            assert_eq!(unit_type.footprint(), expected, "{unit_type:?}");
+            assert_eq!(unit_type.is_quad(), expected.is_quad(), "{unit_type:?}");
+            assert_eq!(
+                Footprint::classify_flags(unit_type, unit_type_flags(unit_type)),
+                expected,
+                "{unit_type:?}"
+            );
+
+            if expected.is_quad() {
+                quad += 1;
+            } else {
+                single += 1;
+            }
+        }
+
+        // 26 зданий по `Mobility`, из них у 4 турелей `BUILDING` снят: 22 + 71.
+        assert_eq!((quad, single), (22, 71));
+
+        // Стабильные теги сериализации — явные дискриминанты, не порядок.
+        assert_eq!(Footprint::Single as u8, 0);
+        assert_eq!(Footprint::Quad as u8, 1);
+    }
+
+    #[test]
+    fn footprint_quad_implies_mobility_building_for_all_93_types() {
+        for &unit_type in UnitType::ALL {
+            if unit_type.is_quad() {
+                assert_eq!(
+                    Mobility::classify(unit_type),
+                    Mobility::Building,
+                    "{unit_type:?}: Footprint::Quad без Mobility::Building"
+                );
+            }
+        }
+
+        // Обратное неверно: турели — `Building`, но `Single`.
+        assert!(TURRET_UNIT_TYPES.iter().any(|turret| turret.is_building()));
+    }
+
+    #[test]
+    fn turrets_are_single_footprint_but_building_mobility() {
+        for &turret in &TURRET_UNIT_TYPES {
+            assert_eq!(
+                turret.footprint(),
+                Footprint::Single,
+                "{turret:?}: турель занимает 1×1"
+            );
+            assert!(!turret.is_quad(), "{turret:?}");
+            assert_eq!(
+                Mobility::classify(turret),
+                Mobility::Building,
+                "{turret:?}: турель — здание семантически"
+            );
+            assert!(!has_flag(turret, BUILDING), "{turret:?}");
+        }
+    }
+
+    #[test]
+    fn footprint_control_cases_for_decorations() {
+        // 2×2-декорации несут `BUILDING` (`SC_UNITS`) — это `Quad`.
+        for decoration in [
+            UnitType::LargeRubble,
+            UnitType::LargeTape,
+            UnitType::LargeSlab,
+            UnitType::LargeCones,
+        ] {
+            assert_eq!(
+                decoration.footprint(),
+                Footprint::Quad,
+                "{decoration:?}: {:#010X}",
+                unit_type_flags(decoration)
+            );
+            assert!(decoration.is_quad(), "{decoration:?}");
+        }
+
+        // 1×1-декорации — `Single`.
+        for decoration in [
+            UnitType::SmallRubble,
+            UnitType::SmallTape,
+            UnitType::SmallSlab,
+            UnitType::SmallCones,
+        ] {
+            assert_eq!(
+                decoration.footprint(),
+                Footprint::Single,
+                "{decoration:?}: {:#010X}",
+                unit_type_flags(decoration)
+            );
+            assert!(decoration.footprint().is_single(), "{decoration:?}");
+        }
+
+        // Экземпляр: футпринт — по флагам экземпляра.
+        let mut mine = UnitInfo::new(UnitType::MiningStation, TeamId::RED, UnitId::NO_ID);
+        mine.flags = unit_type_flags(UnitType::MiningStation);
+        assert!(mine.is_quad());
+        mine.flags &= !BUILDING;
+        assert!(!mine.is_quad());
+        assert!(mine.footprint().is_single());
     }
 
     #[test]

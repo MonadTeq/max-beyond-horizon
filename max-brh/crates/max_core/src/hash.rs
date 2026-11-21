@@ -14,7 +14,7 @@
 //! Значения в ведёрках — произвольный ключ `T` (`UnitId` для доменной модели,
 //! `u16` — номер объекта в файле V70, см. `save.rs`).
 
-use crate::enums::unit_flags::BUILDING;
+use crate::classification::Footprint;
 use crate::geo::Point;
 use crate::unit::UnitId;
 
@@ -269,10 +269,11 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::Add`: клетка юнита, у зданий — ещё три клетки 2×2.
-    pub fn add(&mut self, id: UnitId, grid_x: u16, grid_y: u16, flags: u32, mode: bool) {
+    /// `MapHash::Add`: клетка юнита, у 2×2-структур ([`Footprint::Quad`]) — ещё
+    /// три клетки.
+    pub fn add(&mut self, id: UnitId, grid_x: u16, grid_y: u16, footprint: Footprint, mode: bool) {
         self.add_ex(id, grid_x, grid_y, mode);
-        if flags & BUILDING != 0 {
+        if footprint.is_quad() {
             self.add_ex(id, grid_x.wrapping_add(1), grid_y, mode);
             self.add_ex(id, grid_x, grid_y.wrapping_add(1), mode);
             self.add_ex(id, grid_x.wrapping_add(1), grid_y.wrapping_add(1), mode);
@@ -290,10 +291,11 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::Remove`: клетка юнита, у зданий — ещё три клетки 2×2.
-    pub fn remove(&mut self, id: UnitId, grid_x: u16, grid_y: u16, flags: u32) {
+    /// `MapHash::Remove`: клетка юнита, у 2×2-структур ([`Footprint::Quad`]) —
+    /// ещё три клетки.
+    pub fn remove(&mut self, id: UnitId, grid_x: u16, grid_y: u16, footprint: Footprint) {
         self.remove_ex(id, grid_x, grid_y);
-        if flags & BUILDING != 0 {
+        if footprint.is_quad() {
             self.remove_ex(id, grid_x.wrapping_add(1), grid_y);
             self.remove_ex(id, grid_x, grid_y.wrapping_add(1));
             self.remove_ex(id, grid_x.wrapping_add(1), grid_y.wrapping_add(1));
@@ -365,22 +367,21 @@ mod tests {
 
     #[test]
     fn map_hash_adds_buildings_to_four_cells() {
-        use crate::enums::unit_flags;
         let mut hash = MapHash::<UnitId>::for_standard_map();
         let id = UnitId::new(crate::team::TeamId::RED, 9);
         // Мобильный юнит — одна клетка.
-        hash.add(id, 10, 10, unit_flags::MOBILE_LAND_UNIT, false);
+        hash.add(id, 10, 10, Footprint::Single, false);
         assert_eq!(hash.get(10, 10), Some(&vec![id]));
         assert_eq!(hash.get(11, 10), None);
-        hash.remove(id, 10, 10, unit_flags::MOBILE_LAND_UNIT);
+        hash.remove(id, 10, 10, Footprint::Single);
         assert_eq!(hash.get(10, 10), None);
 
         // Здание занимает 2×2.
-        hash.add(id, 20, 20, unit_flags::BUILDING, false);
+        hash.add(id, 20, 20, Footprint::Quad, false);
         for (x, y) in [(20u16, 20u16), (21, 20), (20, 21), (21, 21)] {
             assert_eq!(hash.get(x, y), Some(&vec![id]), "cell {x},{y}");
         }
-        hash.remove(id, 20, 20, unit_flags::BUILDING);
+        hash.remove(id, 20, 20, Footprint::Quad);
         for (x, y) in [(20u16, 20u16), (21, 20), (20, 21), (21, 21)] {
             assert_eq!(hash.get(x, y), None, "cell {x},{y}");
         }
@@ -389,17 +390,38 @@ mod tests {
     }
 
     #[test]
+    fn map_hash_places_turret_in_single_cell() {
+        use crate::enums::UnitType;
+
+        // Турель — `Mobility::Building`, но `Footprint::Single`: в `MapHash` она
+        // занимает ровно одну клетку (не 2×2), как в C++ (флаг `BUILDING` снят).
+        let turret = UnitType::GunTurret;
+        assert_eq!(turret.footprint(), Footprint::Single);
+        assert!(turret.is_building());
+
+        let mut hash = MapHash::<UnitId>::for_standard_map();
+        let id = UnitId::new(crate::team::TeamId::RED, 10);
+        hash.add(id, 30, 30, turret.footprint(), false);
+        assert_eq!(hash.get(30, 30), Some(&vec![id]));
+        for (x, y) in [(31u16, 30u16), (30, 31), (31, 31)] {
+            assert_eq!(hash.get(x, y), None, "cell {x},{y} не должна заниматься");
+        }
+        hash.remove(id, 30, 30, turret.footprint());
+        assert_eq!(hash.get(30, 30), None);
+    }
+
+    #[test]
     fn map_hash_keeps_insertion_order() {
         let mut hash = MapHash::<UnitId>::for_standard_map();
         let a = UnitId::new(crate::team::TeamId::RED, 1);
         let b = UnitId::new(crate::team::TeamId::RED, 2);
-        hash.add(a, 5, 5, 0, false);
-        hash.add(b, 5, 5, 0, false);
+        hash.add(a, 5, 5, Footprint::Single, false);
+        hash.add(b, 5, 5, Footprint::Single, false);
         assert_eq!(hash.get(5, 5), Some(&vec![a, b]));
         // `mode == true` — push_front (C++ для LRGTAPE/SMLTAPE).
         let mut hash = MapHash::<UnitId>::for_standard_map();
-        hash.add(a, 5, 5, 0, true);
-        hash.add(b, 5, 5, 0, true);
+        hash.add(a, 5, 5, Footprint::Single, true);
+        hash.add(b, 5, 5, Footprint::Single, true);
         assert_eq!(hash.get(5, 5), Some(&vec![b, a]));
         assert_eq!(
             hash.bucket_index(5, 5),

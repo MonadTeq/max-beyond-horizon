@@ -900,7 +900,9 @@ pub fn choose_site_to_sabotage(
         return Some((unit.grid, damage));
     }
 
-    let standing = target.flags & crate::enums::unit_flags::BUILDING != 0;
+    // 2×2-цель обходится по большему радиусу (`Footprint`: лайаут, не
+    // семантика — турель 1×1 идёт по ветке 2).
+    let standing = target.is_quad();
     let range = if standing { 3 } else { 2 };
 
     let mut best: Option<(i32, i32, Point)> = None;

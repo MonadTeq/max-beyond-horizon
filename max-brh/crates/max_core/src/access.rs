@@ -31,10 +31,10 @@
 //! (`unit_group`/`groups`): списки не сериализуются в V70, поэтому отдельного
 //! поля в [`crate::unit::UnitInfo`] нет.
 
-use crate::classification::Environment;
+use crate::classification::{Environment, Footprint};
 use crate::enums::unit_flags::{
-    BUILDING, GROUND_COVER, HOVERING, MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT,
-    SELECTABLE, STATIONARY,
+    GROUND_COVER, HOVERING, MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT, SELECTABLE,
+    STATIONARY,
 };
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
@@ -1113,7 +1113,10 @@ pub fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &Unit
 
     let mut position = target.grid;
 
-    if target.flags & BUILDING != 0 {
+    // 2×2-цель: атакующему нужно встать не в её центр, а за габарит (сдвиг
+    // +1 по осям, где он правее/ниже). Турель (1×1) сюда не попадает —
+    // это лайаут (`is_quad()`), а не «здание» (`is_building()`).
+    if target.is_quad() {
         if attacker.grid.x > position.x {
             position.x += 1;
         }
@@ -1517,7 +1520,7 @@ pub fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
 pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
-    if flags & BUILDING != 0 {
+    if Footprint::from_flags(flags).is_quad() {
         is_land(grid.x + 1, grid.y)
             || is_land(grid.x, grid.y + 1)
             || is_land(grid.x + 1, grid.y + 1)
@@ -1531,7 +1534,7 @@ pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
 pub fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
-    if flags & BUILDING == 0
+    if Footprint::from_flags(flags).is_single()
         || (is_land(grid.x + 1, grid.y)
             && is_land(grid.x, grid.y + 1)
             && is_land(grid.x + 1, grid.y + 1))
@@ -1761,7 +1764,7 @@ pub fn build_clearing(
         && flags & (crate::enums::unit_flags::CONNECTOR_UNIT | crate::enums::unit_flags::HOVERING) == 0
         && is_fully_land_covered(state, grid, flags)
     {
-        rubble_type = Some(if flags & crate::enums::unit_flags::BUILDING != 0 {
+        rubble_type = Some(if unit.is_quad() {
             UnitType::LargeRubble
         } else {
             UnitType::SmallRubble
@@ -1786,8 +1789,10 @@ pub fn build_clearing(
     state.destroy_unit(unit_id);
 
     // `Access_DestroyUtilities(unit_grid, true, !skip_rubble_removal, false, false)`
-    // — плиты/ленты под зданием и недостроенной стройкой.
-    if flags & (crate::enums::unit_flags::BUILDING | crate::enums::unit_flags::STANDALONE) != 0
+    // — плиты/ленты под зданием и недостроенной стройкой. `STANDALONE` — 1×1
+    // структуры со своей площадкой, поэтому условие не сводится к футпринту.
+    if unit.is_quad()
+        || flags & crate::enums::unit_flags::STANDALONE != 0
         || unit.orders == UnitOrder::Build
     {
         destroy_utilities(state, grid, true, remove_rubble, false, false);
@@ -1811,7 +1816,8 @@ pub fn build_clearing(
 /// `Access_DestroyGroundCovers` (`access.cpp`): убирает дорогу/площадку/
 /// платформу/мост под юнитом (здание занимает 2×2).
 pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
-    let positions = if unit.flags & BUILDING != 0 {
+    let footprint = unit.footprint();
+    let positions = if footprint.is_quad() {
         [
             Point::new(unit.grid.x, unit.grid.y),
             Point::new(unit.grid.x + 1, unit.grid.y),
@@ -1821,7 +1827,7 @@ pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
     } else {
         [unit.grid; 4]
     };
-    let count = if unit.flags & BUILDING != 0 { 4 } else { 1 };
+    let count = if footprint.is_quad() { 4 } else { 1 };
 
     for position in positions.iter().take(count) {
         for id in state.units_at(*position).to_vec() {

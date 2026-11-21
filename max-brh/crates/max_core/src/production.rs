@@ -649,9 +649,9 @@ fn site_is_free(
     true
 }
 
-/// Габарит постройки в клетках (здания — 2×2, `BUILDING`).
+/// Габарит постройки в клетках (2×2 — `Footprint::Quad`, иначе 1×1).
 pub fn footprint(unit_type: UnitType) -> i16 {
-    if crate::access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+    if unit_type.is_quad() {
         2
     } else {
         1
@@ -841,10 +841,10 @@ pub fn find_build_site(
 
 /// `DeployConstructionSiteUtilities` (`unitinfo.cpp:3802`): пара «лента+конусы».
 ///
-/// Здание (флаг `BUILDING`) получает большие декали `LRGTAPE`/`LRGCONES`
-/// (2×2), всё остальное — малые `SMLTAPE`/`SMLCONES` (1×1).
+/// Тип `Footprint::Quad` получает большие декали `LRGTAPE`/`LRGCONES` (2×2),
+/// всё остальное — малые `SMLTAPE`/`SMLCONES` (1×1).
 pub fn construction_utility_types(unit_type: UnitType) -> (UnitType, UnitType) {
-    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+    if unit_type.is_quad() {
         (UnitType::LargeTape, UnitType::LargeCones)
     } else {
         (UnitType::SmallTape, UnitType::SmallCones)
@@ -853,10 +853,10 @@ pub fn construction_utility_types(unit_type: UnitType) -> (UnitType, UnitType) {
 
 /// `PrepareConstructionSite` (`unitinfo.cpp:4122`): плита под постройкой.
 ///
-/// `LRGSLAB` для зданий, `SMLSLAB` для остальных типов; создаётся только при
-/// флаге `REQUIRES_SLAB`.
+/// `LRGSLAB` для `Footprint::Quad`, `SMLSLAB` для остальных типов; создаётся
+/// только при флаге `REQUIRES_SLAB`.
 pub fn construction_slab_type(unit_type: UnitType) -> UnitType {
-    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+    if unit_type.is_quad() {
         UnitType::LargeSlab
     } else {
         UnitType::SmallSlab
@@ -865,7 +865,7 @@ pub fn construction_slab_type(unit_type: UnitType) -> UnitType {
 
 /// `image_count` плиты — второй байт `D_LRGSLA`/`D_DEFALT` (`MAX.RES`).
 fn slab_image_count(unit_type: UnitType) -> i32 {
-    if access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0 {
+    if unit_type.is_quad() {
         LARGE_SLAB_IMAGE_COUNT
     } else {
         SMALL_SLAB_IMAGE_COUNT
@@ -1036,14 +1036,10 @@ pub fn builder_exit_cell(
     crate::unit_order::activation_exit_cell(state, builder, building)
 }
 
-/// Прямоугольник 2×2 (здание) или 1×1 в клетках — `UnitInfo::GetBounds` +
-/// `Access_IsInsideBounds` (`access.cpp`).
+/// Прямоугольник 2×2 (`Footprint::Quad`) или 1×1 в клетках —
+/// `UnitInfo::GetBounds` + `Access_IsInsideBounds` (`access.cpp`).
 pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
-    let size: i16 = if unit.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
+    let size: i16 = if unit.is_quad() { 2 } else { 1 };
 
     grid.x >= unit.grid.x
         && grid.y >= unit.grid.y
@@ -1999,4 +1995,64 @@ pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool
 
     unit.complex
         .is_some_and(|complex| complex_raw_materials(state, team, complex) >= cost.max(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::classification::Footprint;
+
+    #[test]
+    fn turret_layout_is_one_by_one() {
+        // Турель — здание семантически, но `Footprint::Single`: площадка,
+        // лента/конусы и плита — малые (1×1), габарит — одна клетка.
+        for turret in [
+            UnitType::GunTurret,
+            UnitType::Artillery,
+            UnitType::AntiAir,
+            UnitType::MissileLauncher,
+        ] {
+            assert_eq!(turret.footprint(), Footprint::Single, "{turret:?}");
+            assert!(turret.is_building(), "{turret:?}");
+            assert_eq!(footprint(turret), 1, "{turret:?}");
+            assert_eq!(
+                construction_utility_types(turret),
+                (UnitType::SmallTape, UnitType::SmallCones),
+                "{turret:?}"
+            );
+            assert_eq!(
+                construction_slab_type(turret),
+                UnitType::SmallSlab,
+                "{turret:?}"
+            );
+        }
+
+        // Для контраста: 2×2-здание — большие утилиты и плита.
+        assert_eq!(footprint(UnitType::MiningStation), 2);
+        assert_eq!(
+            construction_utility_types(UnitType::MiningStation),
+            (UnitType::LargeTape, UnitType::LargeCones)
+        );
+        assert_eq!(
+            construction_slab_type(UnitType::MiningStation),
+            UnitType::LargeSlab
+        );
+    }
+
+    #[test]
+    fn turret_bounds_cover_exactly_one_cell() {
+        let mut turret = UnitInfo::new(UnitType::GunTurret, TeamId::RED, UnitId::NO_ID);
+        turret.flags = crate::access::unit_type_flags(UnitType::GunTurret);
+        turret.grid = Point::new(10, 10);
+        let mut mine = UnitInfo::new(UnitType::MiningStation, TeamId::RED, UnitId::NO_ID);
+        mine.flags = crate::access::unit_type_flags(UnitType::MiningStation);
+        mine.grid = Point::new(10, 10);
+
+        assert!(unit_bounds_contains(&turret, Point::new(10, 10)));
+        assert!(!unit_bounds_contains(&turret, Point::new(11, 10)));
+        assert!(!unit_bounds_contains(&turret, Point::new(10, 11)));
+
+        assert!(unit_bounds_contains(&mine, Point::new(10, 10)));
+        assert!(unit_bounds_contains(&mine, Point::new(11, 11)));
+    }
 }

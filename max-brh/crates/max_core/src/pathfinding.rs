@@ -36,7 +36,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::access;
-use crate::enums::unit_flags::{BUILDING, HOVERING};
+use crate::enums::unit_flags::HOVERING;
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::{PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
@@ -423,14 +423,14 @@ fn process_ground_cover(
             UnitType::Road | UnitType::SmallSlab | UnitType::LargeSlab => {
                 if process_paved {
                     block_cell(costs, cover.grid, 2);
-                    if cover.flags & BUILDING != 0 {
+                    if cover.is_quad() {
                         block_building(costs, cover.grid, 2);
                     }
                 }
             }
             UnitType::LargeTape | UnitType::SmallTape => {
                 block_cell(costs, cover.grid, 0);
-                if cover.flags & BUILDING != 0 {
+                if cover.is_quad() {
                     block_building(costs, cover.grid, 0);
                 }
             }
@@ -534,7 +534,7 @@ fn process_stationary_units(state: &GameState, unit: &UnitInfo, costs: &mut [u8;
         };
         if other.unit_type != UnitType::Connector && is_visible_or_detected(other, team) {
             block_cell(costs, other.grid, 0);
-            if other.flags & BUILDING != 0 {
+            if other.is_quad() {
                 block_building(costs, other.grid, 0);
             }
         }
@@ -643,7 +643,7 @@ fn find_ground_path_inner(
     if board_transport {
         if let Some(receiver) = access::get_receiver_unit(state, unit, destination) {
             if let Some(receiver_unit) = state.unit(receiver) {
-                if receiver_unit.flags & BUILDING != 0 {
+                if receiver_unit.is_quad() {
                     block_building(&mut costs, receiver_unit.grid, 2);
                 } else {
                     block_cell(&mut costs, receiver_unit.grid, 2);

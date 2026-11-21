@@ -33,7 +33,7 @@
 //!    соответствующие состояния остаются «блокирующими», как в C++ при
 //!    отказе запроса.
 
-use crate::enums::{unit_flags, CautionLevel, UnitOrder, UnitOrderState, UnitType};
+use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
 use crate::team::TeamId;
 use crate::unit::UnitId;
@@ -221,15 +221,15 @@ pub fn raw_consumption_rate(unit_type: UnitType) -> i32 {
 // Выбор площадки
 // ---------------------------------------------------------------------------
 
-/// Площадка под здание валидна: 2×2 доступны и свободны от юнитов.
+/// Площадка под постройку валидна: весь футпринт (2×2 или 1×1) доступен и
+/// свободен от юнитов.
 fn is_valid_building_site(
     world: &crate::game::GameState,
     team: TeamId,
     unit_type: UnitType,
     site: Point,
 ) -> bool {
-    let building = crate::access::unit_type_flags(unit_type) & unit_flags::BUILDING != 0;
-    let size = if building { 2 } else { 1 };
+    let size = if unit_type.is_quad() { 2 } else { 1 };
 
     for dy in 0..size {
         for dx in 0..size {

@@ -2281,7 +2281,9 @@ pub fn activation_exit_cell(
     client: &UnitInfo,
     container: &UnitInfo,
 ) -> Option<Point> {
-    let unit_size: i16 = if container.flags & BUILDING != 0 { 2 } else { 1 };
+    // Габарит **контейнера**: 2 у 2×2-структуры, 1 у 1×1 (в т.ч. турель —
+    // `Footprint::Single`, хотя семантически это здание).
+    let unit_size: i16 = if container.is_quad() { 2 } else { 1 };
 
     let mut position = Point::new(
         container.grid.x.wrapping_sub(1),
@@ -2449,7 +2451,7 @@ fn building_ready(ctx: &mut OrderContext<'_>) {
                     // площадки): C++ `ReturnToConstructionSite` возвращает его
                     // в центр, чтобы он ушёл снова.
                     if !is_found
-                        && ctx.unit.flags & BUILDING != 0
+                        && ctx.unit.is_quad()
                         && parent.orders == UnitOrder::Await
                         && parent.state == UnitOrderState::ExecutingOrder
                     {
@@ -2484,7 +2486,7 @@ fn building_ready(ctx: &mut OrderContext<'_>) {
 
         access::destroy_utilities(ctx.world, ctx.unit.grid, false, false, true, remove_road);
 
-        if ctx.unit.flags & BUILDING != 0 {
+        if ctx.unit.is_quad() {
             let other_cells = [
                 Point::new(ctx.unit.grid.x.wrapping_add(1), ctx.unit.grid.y),
                 Point::new(ctx.unit.grid.x, ctx.unit.grid.y.wrapping_add(1)),
@@ -2648,9 +2650,9 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     let unit_flags = ctx.unit.flags;
     let explosion_type = if ctx.unit.hits > 0 {
         UnitType::HitExplosion
-    } else if unit_flags & BUILDING != 0 {
-        // Бит `BUILDING` («2×2-структура»), а не `is_building()`: у турелей
-        // взрыв наземный (`LandExplosion`), как в C++.
+    } else if ctx.unit.is_quad() {
+        // Лайаутный футпринт (`Footprint::Quad`), а не `is_building()`: у турелей
+        // (`Building` + `Single`) взрыв наземный (`LandExplosion`), как в C++.
         UnitType::BuildingExplosion
     } else if ctx.unit.is_ground() || ctx.unit.is_amphibious() {
         UnitType::LandExplosion
@@ -2823,12 +2825,11 @@ fn process_order_clear(ctx: &mut OrderContext<'_>) {
         // TODO(P3/P5): DeployUnit(LRGCONES/LRGTAPE/SMLCONES/SMLTAPE).
         ctx.unit.state = UnitOrderState::InProgress;
 
-        let parent_is_building = ctx
-            .parent()
-            .map(|parent| parent.flags & BUILDING != 0)
-            .unwrap_or(false);
+        // Большая лента (`LRGTAPE`) — только у 2×2-родителя (футпринт, не
+        // семантика: у турели `SMLTAPE`).
+        let parent_is_quad = ctx.parent().map(|parent| parent.is_quad()).unwrap_or(false);
 
-        if parent_is_building {
+        if parent_is_quad {
             ctx.set_new_order(
                 UnitOrder::AwaitTapePositioning,
                 UnitOrderState::TapePositioningInit,

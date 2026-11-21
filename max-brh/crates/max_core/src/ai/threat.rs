@@ -285,9 +285,9 @@ impl HeatMap {
         self.get_complete(grid_x, grid_y) > 0
     }
 
-    /// `HeatMap::IsVisible(unit)` — у зданий проверяются четыре клетки 2×2.
+    /// `HeatMap::IsVisible(unit)` — у 2×2-структур проверяются четыре клетки.
     pub fn is_unit_visible(&self, unit: &UnitInfo) -> bool {
-        if unit.flags & unit_flags::BUILDING != 0 {
+        if unit.is_quad() {
             return self.get_complete(i32::from(unit.grid.x), i32::from(unit.grid.y)) > 0
                 || self.get_complete(i32::from(unit.grid.x) + 1, i32::from(unit.grid.y)) > 0
                 || self.get_complete(i32::from(unit.grid.x), i32::from(unit.grid.y) + 1) > 0

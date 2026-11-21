@@ -55,6 +55,7 @@
 //! 4. `UnitInfo::x/y` (пиксельные координаты, UI) поддерживаются только как
 //!    производные от клетки: `x = grid*64 + 32` (+31 для зданий).
 
+use crate::classification::Footprint;
 use crate::enums::{
     unit_flags, GameStateType, PlayMode, ResearchTopic, Surface, UnitOrder, UnitOrderState,
     UnitType, VictoryType, RESEARCH_TOPIC_COUNT,
@@ -776,13 +777,13 @@ impl GameState {
                         id,
                         previous.grid.x as u16,
                         previous.grid.y as u16,
-                        previous.flags,
+                        previous.footprint(),
                     );
                     self.map_hash.add(
                         id,
                         unit.grid.x as u16,
                         unit.grid.y as u16,
-                        unit.flags,
+                        unit.footprint(),
                         false,
                     );
 
@@ -824,18 +825,28 @@ impl GameState {
     }
 
     /// `Hash_MapHash.Add` для внешних модулей (`MoveInTransitUnitInMapHash`).
+    /// Футпринт вычисляется из флагов (лайаутный API C++ принимает флаги).
     pub fn map_hash_add(&mut self, id: UnitId, grid: Point, flags: u32) {
         if grid.x >= 0 && grid.y >= 0 {
-            self.map_hash
-                .add(id, grid.x as u16, grid.y as u16, flags, false);
+            self.map_hash.add(
+                id,
+                grid.x as u16,
+                grid.y as u16,
+                Footprint::from_flags(flags),
+                false,
+            );
         }
     }
 
     /// `Hash_MapHash.Remove` для внешних модулей.
     pub fn map_hash_remove(&mut self, id: UnitId, grid: Point, flags: u32) {
         if grid.x >= 0 && grid.y >= 0 {
-            self.map_hash
-                .remove(id, grid.x as u16, grid.y as u16, flags);
+            self.map_hash.remove(
+                id,
+                grid.x as u16,
+                grid.y as u16,
+                Footprint::from_flags(flags),
+            );
         }
     }
 
@@ -1291,7 +1302,7 @@ impl GameState {
         unit.grid = grid;
         unit.x = (grid.x as i32 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
         unit.y = (grid.y as i32 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
-        if merged_flags & unit_flags::BUILDING != 0 {
+        if unit.is_quad() {
             unit.x = unit.x.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
             unit.y = unit.y.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
         }
@@ -1308,6 +1319,9 @@ impl GameState {
         if unit.is_complex_member() {
             unit.complex = self.attach_new_complex(team);
         }
+
+        // Футпринт — до перемещения `unit` в слот (лайаут 2×2 — в `MapHash`).
+        let footprint = unit.footprint();
 
         // Слот: свободный (LIFO, как переиспользование `SmartObjectArray`) или новый.
         let slot = match self.free_slots.pop() {
@@ -1334,9 +1348,10 @@ impl GameState {
         };
         // `Hash_UnitHash.PushBack(unit)` — ведёрко по `id % hash_size`.
         self.unit_hash.push_at(u32::from(id.0), slot as u16);
-        // `Hash_MapHash.Add` (`units_manager.cpp`): клетка (у зданий — 2×2).
+        // `Hash_MapHash.Add` (`units_manager.cpp`): клетка (у 2×2-структур — ещё
+        // три клетки).
         self.map_hash
-            .add(id, grid.x as u16, grid.y as u16, merged_flags, false);
+            .add(id, grid.x as u16, grid.y as u16, footprint, false);
 
         self.add_to_draw_list(id);
 
@@ -1394,7 +1409,7 @@ impl GameState {
         let Some(slot) = self.lookup(id) else {
             return;
         };
-        let placement = self.unit(id).map(|unit| (unit.grid, unit.flags));
+        let placement = self.unit(id).map(|unit| (unit.grid, unit.footprint()));
         // Атаку завершаем до удаления из хэша (`UnitsManager_EndAttack` ищет
         // юнита по id).
         self.end_attack(id);
@@ -1415,9 +1430,9 @@ impl GameState {
         self.clear_group_member(id);
         self.remove_unit_from_unit_lists(id);
         self.unit_hash.remove_at(u32::from(id.0), &(slot as u16));
-        if let Some((grid, flags)) = placement {
+        if let Some((grid, footprint)) = placement {
             self.map_hash
-                .remove(id, grid.x as u16, grid.y as u16, flags);
+                .remove(id, grid.x as u16, grid.y as u16, footprint);
         }
         if let Some(entry) = self.units.get_mut(slot) {
             *entry = None;

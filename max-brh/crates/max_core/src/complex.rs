@@ -37,8 +37,9 @@
 //! workers}` — кэш на текущий ход (`Access_UpdateResourcesTotal`).
 
 use crate::alloc::update_resources_total;
+use crate::classification::Footprint;
 use crate::enums::{
-    unit_flags::{BUILDING, CONNECTOR_UNIT, STANDALONE},
+    unit_flags::{CONNECTOR_UNIT, STANDALONE},
     UnitOrder, CONNECTION_BEING_TESTED, CONNECTOR_EAST_BOTTOM, CONNECTOR_EAST_TOP,
     CONNECTOR_NORTH_LEFT, CONNECTOR_NORTH_RIGHT, CONNECTOR_SOUTH_LEFT, CONNECTOR_SOUTH_RIGHT,
     CONNECTOR_WEST_BOTTOM, CONNECTOR_WEST_TOP,
@@ -61,11 +62,11 @@ pub const CONNECTOR_ORDER: [u16; 8] = [
     CONNECTOR_WEST_TOP,
 ];
 
-/// Габарит здания в клетках: `(flags & BUILDING) ? 2 : 1`
-/// (`units_manager.cpp:2056`).
+/// Габарит структуры в клетках по футпринту: `Quad` — 2, `Single` — 1
+/// (`units_manager.cpp:2056`: `(flags & BUILDING) ? 2 : 1`).
 #[inline]
-pub fn unit_size(flags: u32) -> i16 {
-    if flags & BUILDING != 0 {
+pub fn unit_size(footprint: Footprint) -> i16 {
+    if footprint.is_quad() {
         2
     } else {
         1
@@ -92,7 +93,7 @@ pub fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<
 /// Смещения — ровно C++-switch: для здания (`grid_size = 2`) юго-восточные
 /// пары сдвинуты на 2 клетки.
 pub fn connected_building(state: &GameState, unit: &UnitInfo, connector: u16) -> Option<UnitId> {
-    let size = unit_size(unit.flags);
+    let size = unit_size(unit.footprint());
     let x = unit.grid.x;
     let y = unit.grid.y;
 
@@ -378,7 +379,7 @@ pub fn remove_connections(state: &mut GameState, id: UnitId) {
     }
 
     let team = unit.team;
-    let size = unit_size(unit.flags);
+    let size = unit_size(unit.footprint());
     let grid_x = unit.grid.x;
     let grid_y = unit.grid.y;
 
@@ -549,7 +550,7 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
     }
 
     let team = unit.team;
-    let size = unit_size(unit.flags);
+    let size = unit_size(unit.footprint());
     let grid_x = unit.grid.x;
     let grid_y = unit.grid.y;
     let mut connectors = unit.connectors;
@@ -604,7 +605,10 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
         Point::new(grid_x + 1, grid_y + size),
     );
 
-    if unit.flags & BUILDING != 0 {
+    // «Правые/нижние» пары есть только у 2×2-структур. Турель — `Mobility::
+    // Building`, но `Footprint::Single` и не член комплекса (`IsComplexMember`),
+    // поэтому эта ветка для неё не выполняется: лайаут `is_quad()`, не семантика.
+    if unit.is_quad() {
         // `CONNECTOR_NORTH_RIGHT` — `(grid_x + 1, grid_y - 1)`.
         let target = team_building_at(state, team, Point::new(grid_x + 1, grid_y - 1));
         link(
@@ -650,7 +654,7 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
         Point::new(grid_x - 1, grid_y + 1),
     );
 
-    if unit.flags & BUILDING != 0 {
+    if unit.is_quad() {
         // `CONNECTOR_EAST_BOTTOM` — `(grid_x + unit_size, grid_y + 1)`.
         let target = team_building_at(state, team, Point::new(grid_x + size, grid_y + 1));
         link(
@@ -881,5 +885,15 @@ mod tests {
             crate::crc::state_digest(&changed),
             crate::crc::state_digest(&first)
         );
+    }
+
+    #[test]
+    fn connector_unit_size_uses_layout_footprint() {
+        // Турель — здание семантически, но 1×1: смещения коннекторов и якорь
+        // не должны раздувать её до 2×2.
+        assert_eq!(unit_size(UnitType::GunTurret.footprint()), 1);
+        assert_eq!(unit_size(UnitType::MiningStation.footprint()), 2);
+        assert!(UnitType::GunTurret.is_building());
+        assert!(!UnitType::GunTurret.is_quad());
     }
 }
