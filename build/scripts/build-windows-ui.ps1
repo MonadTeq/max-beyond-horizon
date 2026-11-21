@@ -107,7 +107,7 @@ if (-not (Test-Path $cargo)) {
 $cargoBin = Split-Path -Parent $cargo
 
 $targetDir = Join-Path $root "build\win-msvc-target"
-$exePath = Join-Path $targetDir "release\max-rust.exe"
+$exePath = Join-Path $targetDir "release\max-brh.exe"
 $bundleName = "max_app-$version-windows-x86_64-ui"
 $bundle = Join-Path $Out $bundleName
 $zip = Join-Path $Out "$bundleName.zip"
@@ -159,15 +159,15 @@ if ($LASTEXITCODE -ne 0) { Fail "PE-подсистема $exePath не GUI (ож
 # Подсистема windows не подключается к консоли: `& $exe --help` в PowerShell не
 # дождётся процесса и не соберёт вывод. cmd ждёт дочерний процесс, а
 # перенаправление `>` всё равно отдаёт GUI-exe stdout — читаем справку из файла.
-$helpFile = Join-Path $targetDir "max-rust-help.txt"
+$helpFile = Join-Path $targetDir "max-brh-help.txt"
 if (Test-Path $helpFile) { Remove-Item $helpFile -Force }
 & cmd.exe /c "`"$exePath`" --help > `"$helpFile`" 2>&1"
 $helpRc = $LASTEXITCODE
 $help = if (Test-Path $helpFile) { Get-Content $helpFile -Raw -Encoding UTF8 } else { "" }
 if ($helpRc -ne 0 -or $help -notmatch "ИСПОЛЬЗОВАНИЕ") {
-    Fail "max-rust.exe --help не отработал (rc=$helpRc, Subsystem=2):`n$help"
+    Fail "max-brh.exe --help не отработал (rc=$helpRc, Subsystem=2):`n$help"
 }
-Write-Host "проверка: PE Subsystem=2 (GUI), max-rust.exe --help — OK (GUI по умолчанию, --ui — alias)"
+Write-Host "проверка: PE Subsystem=2 (GUI), max-brh.exe --help — OK (GUI по умолчанию, --ui — alias)"
 
 if ($NoPackage) {
     Write-Host ""
@@ -193,24 +193,24 @@ M.A.X. Rust client $version — Windows x86_64 (UI: SDL3 + звук)
 
 Собран на Windows-хосте (MSVC + SDL3 из vcpkg):
   cargo build --release -p max_app --no-default-features --features $Features
-Рядом с max-rust.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
+Рядом с max-brh.exe лежит SDL3.dll — она обязательна, ставить ничего не нужно.
 Звук — rodio/cpal (WASAPI), отдельных DLL не требует.
 
 Окно без консоли
 ----------------
 Это GUI-сборка: подсистема Windows (Subsystem=2 в PE-заголовке), поэтому
-двойной клик по max-rust.exe открывает только окно SDL3 — окно cmd не
+двойной клик по max-brh.exe открывает только окно SDL3 — окно cmd не
 появляется. Плата за это: stdout этой сборки не виден в терминале.
 Для справки и headless-режимов есть Console-сборка
 max_app-$version-windows-x86_64.zip; при необходимости вывод перенаправляется:
-  max-rust.exe --help > help.txt
+  max-brh.exe --help > help.txt
 
 Запуск
 ------
-  max-rust.exe                          # GUI: меню, создать/выбрать игру, партия
-  max-rust.exe --ui                     # то же (совместимый alias)
-  max-rust.exe --connect HOST:8082 --join GAME_ID --sdl
-  max-rust.exe --help
+  max-brh.exe                          # GUI: меню, создать/выбрать игру, партия
+  max-brh.exe --ui                     # то же (совместимый alias)
+  max-brh.exe --connect HOST:8082 --join GAME_ID --sdl
+  max-brh.exe --help
 
 Управление в игре: мышь (LMB — выбор/атака, RMB — движение/отмена),
 стрелки/Enter — меню, End Turn — конец хода, Esc — выход.
@@ -244,7 +244,7 @@ Set-Content -Path (Join-Path $bundle "README.txt") -Value $readme -Encoding UTF8
 
 Push-Location $bundle
 try {
-    $files = @("max-rust.exe", "SDL3.dll", "README.txt", "LICENSE", "CHANGELOG.md")
+    $files = @("max-brh.exe", "SDL3.dll", "README.txt", "LICENSE", "CHANGELOG.md")
     $sums = foreach ($file in $files) {
         $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
         "$hash  $file"
@@ -259,13 +259,13 @@ Compress-Archive -Path $bundle -DestinationPath $zip -CompressionLevel Optimal
 $zipHash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
 Set-Content -Path "$zip.sha256" -Value "$zipHash  $bundleName.zip" -Encoding ASCII
 
-$exeHash = (Get-FileHash -Algorithm SHA256 (Join-Path $bundle "max-rust.exe")).Hash.ToLower()
+$exeHash = (Get-FileHash -Algorithm SHA256 (Join-Path $bundle "max-brh.exe")).Hash.ToLower()
 Write-Host ""
 Write-Host "Готово:"
 Write-Host "  $bundle\"
-Write-Host ("    max-rust.exe  {0:N0} байт, sha256 {1}" -f $exeSize, $exeHash)
+Write-Host ("    max-brh.exe  {0:N0} байт, sha256 {1}" -f $exeSize, $exeHash)
 Write-Host "    SDL3.dll, README.txt, LICENSE, CHANGELOG.md, SHA256SUMS"
 Write-Host "  $zip"
 Write-Host ("    sha256 {0}" -f $zipHash)
 Write-Host ""
-Write-Host "Запуск: `"$(Join-Path $bundle 'max-rust.exe')`" (без флагов — GUI)"
+Write-Host "Запуск: `"$(Join-Path $bundle 'max-brh.exe')`" (без флагов — GUI)"

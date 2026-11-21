@@ -77,7 +77,7 @@ SDL3 и `sound` (rodio/cpal → WASAPI) не включаются. Полная 
 Артефакты (`$OUT` = `release/` по умолчанию):
 
 ```
-release/max_app-<ver>-windows-x86_64/            max-rust.exe, README.txt,
+release/max_app-<ver>-windows-x86_64/            max-brh.exe, README.txt,
                                                  LICENSE, CHANGELOG.md, SHA256SUMS
 release/max_app-<ver>-windows-x86_64.zip         архив каталога
 release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
@@ -94,8 +94,8 @@ release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 - импорты перечисляются в логе; `libgcc_s_seh-1.dll`/`libwinpthread-1.dll` в
   них быть не должно (иначе exe не запустится без mingw-рантайма) — это
   проверяется как ошибка сборки;
-- wine-smoke (если wine поставлен): `max-rust.exe --help` и
-  `max-rust.exe --demo SAVE1.CAM --turns 1` в каталоге с сейвом
+- wine-smoke (если wine поставлен): `max-brh.exe --help` и
+  `max-brh.exe --demo SAVE1.CAM --turns 1` в каталоге с сейвом
   `max-original/SAVE1.CAM`; лог — `build/smoke-logs/windows-wine-smoke.log`.
 
 Про wine: в Debian bookworm (база образа) wine 8.0, а `std` Rust импортирует
@@ -151,16 +151,16 @@ cargo build --release --locked -p max_app --no-default-features --features sdl-v
 добавилась бы ещё и сборка из исходников.
 
 кладёт `SDL3.dll` рядом с exe, проверяет PE-заголовок (`pe-subsystem.ps1`,
-Subsystem=2 = GUI) и `max-rust.exe --help`, затем пакует
+Subsystem=2 = GUI) и `max-brh.exe --help`, затем пакует
 `release/max_app-<ver>-windows-x86_64-ui/` (exe + SDL3.dll + README.txt +
 LICENSE + CHANGELOG.md + SHA256SUMS) и `.zip` + `.zip.sha256`.
 
 Справка проверяется через `cmd` с перенаправлением в
-`build/win-msvc-target/max-rust-help.txt`: у GUI-сборки нет консоли, поэтому
-`& max-rust.exe --help | Out-String` в PowerShell не дожидается процесса и
+`build/win-msvc-target/max-brh-help.txt`: у GUI-сборки нет консоли, поэтому
+`& max-brh.exe --help | Out-String` в PowerShell не дожидается процесса и
 возвращает пустоту, а `cmd` ждёт exit code, и перенаправленный stdout читается
 из файла. Тот же приём работает и для ручного запуска:
-`max-rust.exe --help > help.txt`.
+`max-brh.exe --help > help.txt`.
 
 Установка тулчейна (Windows, без администратора — кроме самого VS):
 
@@ -195,8 +195,8 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build\scripts\pe-subsystem.ps1 `
-    -Path release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe -Expected 2
-# PE: ...\max-rust.exe — PE32+ x64, Subsystem=2 (Windows GUI)
+    -Path release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
+# PE: ...\max-brh.exe — PE32+ x64, Subsystem=2 (Windows GUI)
 ```
 
 `Subsystem` лежит в Optional Header по смещению `0x44` и для PE32, и для

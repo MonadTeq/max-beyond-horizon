@@ -15,7 +15,7 @@
 //! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
 
 // Windows: GUI-сборки (`--features sdl*`) — подсистема `windows`, поэтому
-// двойной клик по `max-rust.exe` не открывает консоль. Headless-сборка без
+// двойной клик по `max-brh.exe` не открывает консоль. Headless-сборка без
 // `sdl` остаётся console: `--demo`/`--new-game`/`--connect` печатают в stdout
 // терминала и CI. `sdl-vcpkg` и `sdl-from-source` включают `sdl` (см.
 // Cargo.toml), поэтому одного cfg достаточно для всех оконных фич.
@@ -1490,10 +1490,10 @@ fn print_help() {
 max-brh — клиент M.A.X. (core + net + assets + render)
 
 ИСПОЛЬЗОВАНИЕ:
-    max-rust.exe [ОПЦИИ]                     # по умолчанию — GUI (окно SDL3)
-    max-rust.exe --demo <save> [--turns N] [ОПЦИИ]
-    max-rust.exe --new-game [ОПЦИИ]
-    max-rust.exe --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
+    max-brh.exe [ОПЦИИ]                     # по умолчанию — GUI (окно SDL3)
+    max-brh.exe --demo <save> [--turns N] [ОПЦИИ]
+    max-brh.exe --new-game [ОПЦИИ]
+    max-brh.exe --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
 
 РЕЖИМЫ:
     (без флагов)         интерактивное меню: создать/выбрать игру и играть
@@ -1542,10 +1542,10 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          оригинала); окно = кадр × --scale
 
 ПРИМЕРЫ:
-    max-rust.exe                                     # GUI: меню + партия
-    max-rust.exe --demo max-original\\SAVE1.CAM --turns 5
-    max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
-    max-rust.exe --connect 127.0.0.1:8082 --join demo --sdl
+    max-brh.exe                                     # GUI: меню + партия
+    max-brh.exe --demo max-original\\SAVE1.CAM --turns 5
+    max-brh.exe --new-game --world 12 --seed 42 --out frame.ppm
+    max-brh.exe --connect 127.0.0.1:8082 --join demo --sdl
     cargo run -p max_app                             # из max-brh/: GUI (default)
     cargo run -p max_app --features sound            # GUI + звук
     cargo run -p max_app --no-default-features -- --demo ...   # headless

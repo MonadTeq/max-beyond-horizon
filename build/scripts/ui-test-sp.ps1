@@ -64,7 +64,7 @@ function Shot([string]$name) {
 Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
 # Без --ui: клиент по умолчанию открывает GUI (окно SDL3).
-Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe" -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
+Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe" -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
 Start-Sleep -Seconds 6
 $proc = Get-Process max-brh | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $proc) { Write-Host 'window not found'; exit 1 }

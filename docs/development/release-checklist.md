@@ -26,8 +26,8 @@
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
 | 8 | Live smoke 2×10 | `build/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
 | 9 | Live smoke 3×10 | `build/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-rust.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
-| 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (2026-11-19): `max-rust.exe` 10 928 081 Б, sha256 `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`; zip 4 082 276 Б, sha256 `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`; PE Subsystem=3 (console), без wine-smoke (флаг `--no-wine`) |
+| 10 | Windows UI | `powershell -File build\scripts\build-windows-ui.ps1` | ✅ `release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-brh.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
+| 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (2026-11-19): `max-brh.exe` 10 928 081 Б, sha256 `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`; zip 4 082 276 Б, sha256 `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`; PE Subsystem=3 (console), без wine-smoke (флаг `--no-wine`) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows UI/headless; Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
 | 14 | Документация | `README.md`, `max-brh/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
@@ -120,7 +120,7 @@ pips, дельтой апгрейда и красными линиями; вто
 Все команды — через Docker, чтобы не зависеть от хостового toolchain:
 
 ```sh
-# 2.1 Базовые тесты max-rust. default max_app = ["sdl-from-source"]: SDL3 3.4.20
+# 2.1 Базовые тесты max-brh. default max_app = ["sdl-from-source"]: SDL3 3.4.20
 # собирается из исходников через CMake, поэтому нужны dev-заголовки
 # X11/Wayland/ALSA/GL/KMSDRM/dbus/udev, а тестам — LD_LIBRARY_PATH на
 # target/debug (туда sdl3-sys кладёт libSDL3.so.0).
@@ -467,7 +467,7 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
 Артефакты:
 
 ```
-release/max_app-1.0.0-windows-x86_64/            max-rust.exe, README.txt (инструкция
+release/max_app-1.0.0-windows-x86_64/            max-brh.exe, README.txt (инструкция
                                                  SDL-сборки), LICENSE, CHANGELOG.md,
                                                  SHA256SUMS
 release/max_app-1.0.0-windows-x86_64.zip         архив каталога
@@ -497,7 +497,7 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
       `api-ms-win-core-synch-l1-2-0` — нет `libgcc_s_seh-1.dll` и
       `libwinpthread-1.dll`, то есть mingw-рантайм рядом с exe не нужен.
       _(2026-11-15)_
-- [x] `max-rust.exe --help` и `max-rust.exe --demo SAVE1.CAM --turns 1` под
+- [x] `max-brh.exe --help` и `max-brh.exe --demo SAVE1.CAM --turns 1` под
       **wine 8.0** в контейнере: справка печатается, demo даёт
       `ticks=1 … units=312`, оба exit 0 (лог:
       `build/smoke-logs/windows-wine-smoke.log`, вердикт
@@ -509,7 +509,7 @@ release/max_app-1.0.0-windows-x86_64.zip.sha256  sha256 архива
       копией exe **тестовый** шим `ProcessPrng` → `advapi32!SystemFunction036`.
       В архив шим не входит: на настоящей Windows `bcryptprimitives.dll`
       системная (поэтому отдельный пункт ниже — прогон на реальной Windows).
-- [x] `release/max_app-1.0.0-windows-x86_64/` содержит `max-rust.exe`,
+- [x] `release/max_app-1.0.0-windows-x86_64/` содержит `max-brh.exe`,
       `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`;
       `release/max_app-1.0.0-windows-x86_64.zip` (3 255 566 байт) и
       `.zip.sha256` собраны, `sha256sum -c SHA256SUMS` в каталоге — все файлы
@@ -545,7 +545,7 @@ powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1
 powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoPackage
 ```
 
-Артефакты: `release/max_app-1.0.0-windows-x86_64-ui/` (`max-rust.exe`,
+Артефакты: `release/max_app-1.0.0-windows-x86_64-ui/` (`max-brh.exe`,
 `SDL3.dll`, `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`) и
 `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256`. Сборка идёт в
 `build/win-msvc-target/`, чтобы не смешиваться с Linux/Docker-артефактами
@@ -594,15 +594,15 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   exe (скрипт копирует).
 
 - [x] `cargo build --release -p max_app --features sdl-vcpkg,sound` — успешно
-      (MSVC; `max-rust.exe` 5 423 616 байт,
+      (MSVC; `max-brh.exe` 5 423 616 байт,
       sha256 `279e472dcc41e1747548a7e38d9c1b98738e861db913b9f1d1228ac858ff23c9` —
       сборка с меню E на `MAINPIC`/`PLANETSE`/`MULTGAME`, масштабом F
       (`FrameScale`, ресайз, `--scale`), панелями 1:1, GNW-шрифтами,
       маркерами C/D и курсорами). _(2026-11-15)_
-- [x] `SDL3.dll` лежит рядом с `max-rust.exe`; `max-rust.exe --help` работает
+- [x] `SDL3.dll` лежит рядом с `max-brh.exe`; `max-brh.exe --help` работает
       (rc=0, справка читается через `cmd` с `>` в файл — у GUI-сборки нет
       консоли), в справке есть `--scale N`. _(2026-11-15)_
-- [x] Подсистема PE — **Windows GUI (Subsystem=2)**: `Start-Process max-rust.exe`
+- [x] Подсистема PE — **Windows GUI (Subsystem=2)**: `Start-Process max-brh.exe`
       открывает окно SDL3 без консольного окна; проверка зашита в
       `build-windows-ui.ps1` (`build/scripts/pe-subsystem.ps1 -Expected 2`).
       `--help`/`--demo` этой сборки видны только при перенаправлении —
@@ -648,23 +648,23 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 - [x] **M-HS: пересборка Windows UI с hot-seat** (окно `DialogMenu` на
       `HELPFRAM`, `Hot Seat Menu`, `Multiplayer Menu`):
       `cargo build --release -p max_app --features sdl-vcpkg,sound` —
-      `max-rust.exe` 5 572 096 Б, sha256
+      `max-brh.exe` 5 572 096 Б, sha256
       `7af62ac1175886ee775b77e0417736b51acaa36f3ca60ae8703e7467ef11bc42`;
       zip `release/max_app-1.0.0-windows-x86_64-ui.zip` sha256
       `9ce01c0a03eeb49557055882baca8e27b49129bb1c4c92844dd2ac362a6a2c0e`
       (меняется от mtime упаковки; exe-хеш стабилен);
-      `max-rust.exe --help` — rc=0; в бинаре есть строки `Hot Seat Game`,
+      `max-brh.exe --help` — rc=0; в бинаре есть строки `Hot Seat Game`,
       `Hot Seat Menu`, `Begin turn.`, `HELPFRAM`, `HELPOK_U` (проверка
       `build/exe_hs_probe.py`). Лог `build/win-ui-hotseat-final.log`.
       _(2026-11-15)_
 - [x] **M-NET: пересборка Windows UI с ретраем первого подключения и
       fallback `data_hash`**:
       `cargo build --release -p max_app --features sdl-vcpkg,sound`
-      (`build\scripts\build-windows-ui.ps1`) — `max-rust.exe` 5 540 864 Б,
+      (`build\scripts\build-windows-ui.ps1`) — `max-brh.exe` 5 540 864 Б,
       sha256 `136ff7743019702d94c3c7ad364138d1f97e640b3c1342d5e3ee9e6855e8c3c3`;
       zip `release/max_app-1.0.0-windows-x86_64-ui.zip` sha256
       `40d644ff4d4ab00a972a03845de4ebe570467a7efa30a5f7419dea974b6b71ca`
-      (меняется от mtime упаковки); `max-rust.exe --help` — rc=0, в справке
+      (меняется от mtime упаковки); `max-brh.exe --help` — rc=0, в справке
       `--join-retry-attempts`/`--join-retry-timeout` и необязательный
       `--handshake-patches`. Лог `build/win-ui-mnet-final.log`. _(2026-11-15)_
 - [x] **Сетевая партия 2 игрока в окне** (`--ui --turn-wait 45`,
@@ -738,7 +738,7 @@ git push origin v1.0.0              # публикация тега (по реш
       (продукт `build/scripts/build-windows.sh`); headless-каталог
       `release/max_app-1.0.0-windows-x86_64/` тоже несёт свой `SHA256SUMS`.
 - [ ] `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256` сохранены
-      (продукт `build/scripts/build-windows-ui.ps1`; в архиве `max-rust.exe` +
+      (продукт `build/scripts/build-windows-ui.ps1`; в архиве `max-brh.exe` +
       `SDL3.dll`).
 - [ ] Логи гейтов: `max-brh/target/cargo-test.log` (если писали),
       `build/smoke-logs/*.log`, `build/smoke-logs/windows-wine-smoke.log`,
@@ -782,13 +782,13 @@ bash release.sh                             # §5, артефакты
 | M4 вручную | | | | |
 | Linux-бинарь | | | | |
 | Windows-бинарь (headless, кросс-сборка) | 2026-11-15 | `bash build/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
-| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-rust.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
-| Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max-rust.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
-| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-rust.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
-| Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-rust.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-brh/tools/font_vectors/render.txt` |
-| Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max-rust.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
+| Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-brh.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
+| Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max-brh.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
+| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
+| Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-brh/tools/font_vectors/render.txt` |
+| Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max-brh.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (576 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |
-| Сетевая партия 2×UI | 2026-11-15 | 2× `max-rust.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
+| Сетевая партия 2×UI | 2026-11-15 | 2× `max-brh.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |
 | Windows-бинарь (SDL, хост) | | | | |
 | Тег v1.0.0 | | | | |
 

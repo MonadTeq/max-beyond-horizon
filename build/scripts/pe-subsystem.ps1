@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
 .SYNOPSIS
   Проверка подсистемы PE-файла (Subsystem из IMAGE_OPTIONAL_HEADER) без dumpbin.
@@ -24,10 +24,10 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File build\scripts\pe-subsystem.ps1 `
-      -Path release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe -Expected 2
+      -Path release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe -Expected 2
 
 .EXAMPLE
-  . .\build\scripts\pe-subsystem.ps1 -Path .\max-rust.exe -Expected 3
+  . .\build\scripts\pe-subsystem.ps1 -Path .\max-brh.exe -Expected 3
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)][string[]]$Path,

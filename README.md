@@ -73,7 +73,7 @@ Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
 
 ```powershell
 # одиночная / hot-seat (окно; без флагов — GUI, --ui — совместимый alias):
-release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
+release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 #   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
 #   После экрана Players: мобилизация (покупка юнитов, cargo, апгрейды —
 #   переключатель Buy Units/Upgrades) → выбор точки высадки.
@@ -87,9 +87,9 @@ release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```
 
-UI-сборка (`release\max_app-*-windows-x86_64-ui\max-rust.exe`) — подсистема
+UI-сборка (`release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
 Windows (GUI): двойной клик открывает окно без консоли, а `--help`/`--demo` у
-неё видны только при перенаправлении (`max-rust.exe --help > help.txt`).
+неё видны только при перенаправлении (`max-brh.exe --help > help.txt`).
 Вывод для терминала/CI даёт headless-сборка
 `release\max_app-*-windows-x86_64.zip` (подсистема Console).
 

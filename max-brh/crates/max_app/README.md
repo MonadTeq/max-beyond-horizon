@@ -138,10 +138,10 @@ cargo run -p max_app --no-default-features --features sdl-vcpkg -- \
 GUI-сборки (`sdl` — он же default `sdl-from-source`, `sdl-vcpkg`; все включают
 `sdl`) собираются с
 `#![cfg_attr(feature = "sdl", windows_subsystem = "windows")]` в `src/main.rs`:
-у `max-rust.exe` подсистема **windows** (PE Subsystem=2), поэтому двойной клик
+у `max-brh.exe` подсистема **windows** (PE Subsystem=2), поэтому двойной клик
 открывает только окно SDL3 — окно cmd не появляется. Обратная сторона: у этой
 сборки нет stdout в терминале, `--help`/`--demo` печатают только при
-перенаправлении (`max-rust.exe --help > help.txt`).
+перенаправлении (`max-brh.exe --help > help.txt`).
 
 Headless-сборка (`--no-default-features`, **без** `sdl`) остаётся **console**
 (Subsystem=3): `--demo`, `--new-game`, `--connect` печатают в терминал и CI,

@@ -24,7 +24,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 `--no-default-features` — у `max_app` default-фичи включают GUI (`sdl-from-source`,
 SDL3 через CMake); QA-драйвер работает без SDL, поэтому собирается без них.
 
-Запись сценария вручную: `max-rust.exe --record my.qa` — GUI открывается без
+Запись сценария вручную: `max-brh.exe --record my.qa` — GUI открывается без
 флагов, действия пишутся в скрипт (см. `max-brh-qa/drivers/README.md`).
 
 Чек-лист релиза: `docs/development/release-checklist.md`.

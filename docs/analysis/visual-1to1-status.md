@@ -450,11 +450,11 @@ hit-test прямоугольников, сетка 8×3), 3 теста `max_app
 (`snow_pic_decodes_all_rows`), плюс `max_app::assets`/`planet`-тесты.
 
 **Артефакт (Windows UI):** `release/max_app-1.0.0-windows-x86_64-ui/`
-- `max-rust.exe` — 5 423 616 Б,
+- `max-brh.exe` — 5 423 616 Б,
   sha256 `279e472dcc41e1747548a7e38d9c1b98738e861db913b9f1d1228ac858ff23c9`
 - `zip` — 3 065 885 Б,
   sha256 `d7415687a5d70381d30bf7ccd1bb2f67dc8afcabea993775fe22aca22b91f0d0`
-- `SHA256SUMS` по 5 файлам — `OK`; `max-rust.exe --help` работает,
+- `SHA256SUMS` по 5 файлам — `OK`; `max-brh.exe --help` работает,
   `--ui` открывается (окно 640×480 при `--scale 1`, 1280×960 при
   `--scale 2`), клик `New Game` в окне 2× открывает форму создания
   (`build/frame-ef-main-windows*.png`,
@@ -472,18 +472,18 @@ hit-test прямоугольников, сетка 8×3), 3 теста `max_app
 | `build/frame-panels.png` | **пункт A:** кадр 640×480 с выбранным юнитом: верхние кнопки/End Turn/счётчики, портрет, 4 строки статистики, сетка, зум, координаты/описание, миникарта |
 | `build/frame-newgame-panels.png` | тот же кадр из `--new-game --width 640 --height 480` (выбор первого юнита игрока) |
 | `build/frame-panels-left.png` | левая панель `frame-panels.png` в 2× (детали подписей/статистики) |
-| `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max-rust.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
+| `build/frame-windows-artifact.png` | тот же кадр, отрисованный собранным `max-brh.exe` (Windows UI-артефакт); пиксель-в-пиксель с Linux-кадром |
 | `build/frame-cd-game.png` | **пункт C/D:** 640×480: маркеры ресурсов `RAWMSK*`/`GOLDMK*` (не точки), миникарта с FOV-маской, рамкой камеры, точками юнитов, кнопки `2x`/`TNT` |
 | `build/frame-cd-game-2x.png` | тот же кадр в режиме `2x` (миникарта 56×56 → 112×112, кнопка нажата) |
 | `build/frame-cd-game-minimap-4x.png` | кроп миникарты 4× (виден перепад FOV и красная рамка камеры) |
 | `build/frame-cd-planets.png` | **пункт D:** форма создания игры — сетка 24 планет на `SNOW_PIC + world/6`, имя под каждой, красная рамка выбранной, поле `World` как fallback |
 | `build/frame-cd-cursors.png` | все 30 курсоров из `MAX.RES` (контактный лист: hotspot/кадры/палитра) |
-| `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max-rust.exe` (Windows UI) |
+| `build/frame-cd-windows.png` | тот же игровой кадр, отрисованный собранным `max-brh.exe` (Windows UI) |
 | `build/frame-ef-main.png` | **пункт E:** главное меню 640×480 на `MAINPIC`: 6 кнопок `BLANK_*` + `Exit` `SBLNK_*`, портрет `P_TANK` в рамках `BGRSCRN*`, `FONT1`-подписи, наведение на `New Game` |
 | `build/frame-ef-create.png` | **пункт E:** форма создания на `PLANETSE`: большая картинка планеты (26,98), сетка 8×3, поля 3×2, кнопки `MNUBTN4/5/6` в y=438 |
 | `build/frame-ef-join.png` | **пункт E:** список игр на `MULTGAME`: рамка (359,28) 209×160, строки по 20 px, `BTNHIDE`, кнопки `MNUBTN3/4/5/6` |
 | `build/frame-ef-main-2x.png` | **пункт F:** тот же кадр главного меню после `FrameScale` 2× — 1280×960, каждый пиксель блоком 2×2 |
-| `build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png` | те же экраны из живого `max-rust.exe --ui --scale 1` (клиент 640×480) |
+| `build/frame-ef-main-windows.png`, `build/frame-ef-create-windows.png` | те же экраны из живого `max-brh.exe --ui --scale 1` (клиент 640×480) |
 | `build/frame-ef-main-windows-2x.png`, `build/frame-ef-create-windows-2x.png` | живое окно `--ui --scale 2` (1280×960); клик в окне 2× открывает форму — обратный пересчёт координат работает |
 | `build/ui-chrome-session-final.png` | живая сессия `--ui`: хром + карта + панели |
 | `build/rle-FRAMEPIC.bmp` | независимая (Python) эмуляция RLE — сверка с Rust-декодером |
@@ -803,7 +803,7 @@ nearest-neighbour апскейл всего кадра; по-элементно�
 
 ```sh
 # 1) окно 1:1 в кадре (без SDL): FRAMEPIC + карта
-release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --new-game --world 0 --seed 42 \
+release/max_app-1.0.0-windows-x86_64-ui/max-brh.exe --new-game --world 0 --seed 42 \
     --width 640 --height 480 --out build/frame-chrome2.ppm
 powershell -File build/ppm2png.ps1 -Ppm build/frame-chrome2.ppm -Png build/frame-chrome2.png
 
@@ -844,7 +844,7 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-brh \
 
 # 7) живая сессия в окне (--scale 2 — окно 1280×960; без флага — авто)
 docker compose up -d --build                     # Horizon + headless
-release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
+release/max_app-1.0.0-windows-x86_64-ui/max-brh.exe --ui --scale 2 \
     --handshake-patches build/nonexistent.res --turn-wait 45
 ```
 
@@ -2416,7 +2416,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `P_*`), 0 дрейфа; игровые `build-ordered`/`build-site*`/`build-work-*` не
   изменились. `research/` (1 кадр) и `research-help/` (9 кадров) — 0 дрейфа.
 * Живой Windows-прогон: `build/scripts/ui-test-construction.ps1` по умолчанию
-  проверяет **упакованный** exe (`release/max_app-*-windows-x86_64-ui/max-rust.exe`),
+  проверяет **упакованный** exe (`release/max_app-*-windows-x86_64-ui/max-brh.exe`),
   `-OpenVia key|popup` — оба пути открытия `BuildMenu`. Проверки: `site=open`
   в трассе, якорь накрывает строителя (`valid=1`), до LMB в мире нет `LRGTAPE`
   (15) / `LRGCONES` (19), после LMB площадка накрывает строителя, `05-builder-centered`
@@ -2447,8 +2447,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 в центре площадки. В исходниках оба пути уже сходились в один
 `App::open_build_menu` → `BuildMenu` → `open_build_site`, а `GetBuilderUnitCursor`
 держал якорь 2×2 вокруг строителя. Расхождение было в **артефакте**: прошлый
-живой тест запускал `build/win-msvc-target/release/max-rust.exe` (свежая сборка),
-а игрок — упакованный `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`,
+живой тест запускал `build/win-msvc-target/release/max-brh.exe` (свежая сборка),
+а игрок — упакованный `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe`,
 собранный **до** режима `SELECT_SITE`. Старый exe сразу ставил площадку в
 автоматически найденную клетку (`find_build_site`, 2 клетки от строителя),
 поэтому «призрака» не было, а площадка не накрывала строителя и `PositionInTape`
@@ -2686,7 +2686,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 `build/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg, feature
 `sdl-vcpkg,sound`), упаковка `release/max_app-1.1.0-windows-x86_64-ui`:
 
-* `max-rust.exe` — 6 441 472 Б, sha256 `91d10f26284efe47e1589690be3872c9cbafa2b4dfd149d4ad425791679bbe88`
+* `max-brh.exe` — 6 441 472 Б, sha256 `91d10f26284efe47e1589690be3872c9cbafa2b4dfd149d4ad425791679bbe88`
   (PE32+ x64, Subsystem=2, `--help` отработал);
 * zip — sha256 `0da39fcddae96727664d50cc7091662d58b5cf0d7865ec94fdc035ee30621731`;
 * рядом `SDL3.dll`, `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`.
@@ -2787,12 +2787,12 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   шахта: 4 маяка по углам и корпус `image_base + 1`;
   `qa-out/allocate/allocate-selected.png` — `POWGEN` с трубами.
 * **Windows UI:** `build/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg) →
-  `release/max_app-1.1.0-windows-x86_64-ui`: `max-rust.exe` — 6 442 496 Б,
+  `release/max_app-1.1.0-windows-x86_64-ui`: `max-brh.exe` — 6 442 496 Б,
   sha256 `10e9e30e75e943d00a66aa26515d2dbbf0f77c76c49b23bbd611b4684893defc`
   (PE32+ x64, Subsystem=2, `--help` — OK); zip —
   sha256 `a85555e2f6ba17d6f6c1a943a1f6306dcecfd33335b708662d42201cac0487b6`.
 * **Windows headless** (`build/scripts/build-windows.sh --no-wine`, mingw-w64
-  x86_64-pc-windows-gnu, `--no-default-features`): `max-rust.exe` — 10 702 092 Б,
+  x86_64-pc-windows-gnu, `--no-default-features`): `max-brh.exe` — 10 702 092 Б,
   sha256 `5f6f89f73cc056d2099cd5288a6659b37c06151eb29cf4af24845bdf1dbac01b`
   (PE32+ console, Subsystem=3, без mingw-рантайма); zip —
   sha256 `855ea275ef4f38d109be73fb3a63190b7e0656dc922008638ee9e4ab89066038`.
@@ -2891,12 +2891,12 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
 **Артефакты (2026-11-19).**
 * **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui.zip` —
   sha256 `42f7be834946cf9dbecfea8e7f5557db4d402936d930f56debbfe664cfb68f15`;
-  `max-rust.exe` 6 597 120 Б, sha256
+  `max-brh.exe` 6 597 120 Б, sha256
   `edcda45d00d0a99093e2367eeddf630d135eff046e9a2865748aeb3845caef57`
   (PE32+ x64, Subsystem=2, `--help` OK).
 * **Windows headless:** `release/max_app-1.1.0-windows-x86_64.zip` —
   sha256 `bee54053dbc1230eb5e6bb9e282f1b9e03e57e5bcac1ab911007e65200dbc2d7`;
-  `max-rust.exe` 10 867 626 Б, sha256
+  `max-brh.exe` 10 867 626 Б, sha256
   `54a8fefe4199d1ad4343f26fdc0eb048edc5c233693780dfe51735331103f0a5`
   (PE32+ console, Subsystem=3).
 * Живой тест `build/scripts/ui-test-prefs.ps1` (нужен интерактивный рабочий
@@ -3020,13 +3020,13 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
 **Артефакты (2026-11-19).**
 * **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui.zip` —
   sha256 `1980087878ff65440f429217c3de5d22365e36a9d9daa5f4f997a6a2891dcf70`;
-  `max-rust.exe` 6 628 864 Б, sha256
+  `max-brh.exe` 6 628 864 Б, sha256
   `32fb612c08f173ffe2631c4a76181d05f1dc8bdce89de53fb7f96b4d5e8820a9`
   (PE32+ x64, Subsystem=2 GUI, SDL3.dll рядом; сборка
   `build/scripts/build-windows-ui.ps1`, MSVC+vcpkg, `--help` OK).
 * **Windows headless:** `release/max_app-1.1.0-windows-x86_64.zip` —
   sha256 `451bab19510943621cfe987731563b9659c9bffe1ae8bc9a507fe986ed562b63`;
-  `max-rust.exe` 10 861 522 Б, sha256
+  `max-brh.exe` 10 861 522 Б, sha256
   `743364ffeff523f986cc81c7de25ac2e95111bd7b7213fb068cb7b2e2b38e1f3`
   (PE32+ x64, Subsystem=3 console; сборка `build/scripts/build-windows.sh
   --no-wine`).
@@ -3120,14 +3120,14 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
   golden-сверок, включая `golden/xfer` — 0 дрейфа), 4/4 (`soak-100` +
   `soak_headless --turns 120`: PASS, RSS стабилен).
 * **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/` —
-  `max-rust.exe` 6 612 480 Б, sha256
+  `max-brh.exe` 6 612 480 Б, sha256
   `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`;
   `max_app-1.1.0-windows-x86_64-ui.zip` sha256
   `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`
   (PE32+ x64, Subsystem=2 GUI, SDL3.dll рядом; `build-windows-ui.ps1`,
   MSVC+vcpkg, `--help` OK).
 * **Windows headless:** `release/max_app-1.1.0-windows-x86_64/` —
-  `max-rust.exe` 10 928 081 Б, sha256
+  `max-brh.exe` 10 928 081 Б, sha256
   `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`;
   `max_app-1.1.0-windows-x86_64.zip` (4 082 276 Б) sha256
   `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`
@@ -3293,14 +3293,14 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
   было (шаг 3/4 падал бы), и файл лежал в рабочем каталоге с CRLF (WSL/Git Bash
   `set -o pipefail` → «invalid option name»); теперь сценарий есть, а `*.sh`
   снова LF (как требует `.gitattributes`).
-* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/` — `max-rust.exe`
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/` — `max-brh.exe`
   6 646 272 Б, sha256
   `d67e1e21f5b8e22aef950ed226e94bbe0ea865ae21e2c5d5e072fabb93c197fb`;
   `max_app-1.1.0-windows-x86_64-ui.zip` 3 596 564 Б, sha256
   `c6c165cbae2455d2fc1583d2d2e04e12e0cc36789c1f71d6719be3af6eff6c5d`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом; `build-windows-ui.ps1`,
   MSVC+vcpkg, `--help` OK).
-* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/` — `max-rust.exe`
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/` — `max-brh.exe`
   10 913 045 Б, sha256
   `b78405a01ceef7fafc4ad72c5d0fd804b88d30886f0044e979159736a80aee5e`;
   `max_app-1.1.0-windows-x86_64.zip` 4 078 385 Б, sha256
@@ -3656,7 +3656,7 @@ QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-св
 (отрисовка не менялась), 4/4 soak (`soak-100` 49488 кадров, `soak_headless`
 120 ходов / 119303 кадра). Windows UI пересобран
 (`build/scripts/build-windows-ui.ps1`):
-`release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` 6 663 168 Б, sha256
+`release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` 6 663 168 Б, sha256
 `11411d2461824033d8bf3a2c09d2b9abefd3bb5d6f9a903cff950a3cc09d1813`;
 `max_app-1.1.0-windows-x86_64-ui.zip` sha256
 `3ac71b1392eb7f05e33509083394324fbd40ea2ec2724500159be19160f5633d`
@@ -3769,12 +3769,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 
 **Артефакты (2026-11-20).**
 
-* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`
+* **Windows UI:** `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe`
   6 667 264 Б, sha256
   `c6540efded5035357a26b16050b733c281989539d328286fb08a065398b69fa5`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `983085ec857849c39b7304ee7d757a728afacf413840f1e9e77a0d6fb441667a`.
-* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/max-rust.exe`
+* **Windows headless:** `release/max_app-1.1.0-windows-x86_64/max-brh.exe`
   11 009 453 Б, sha256
   `0f4146c3e8436a8f63f6053c0b957ae5573e1150419dffbaa46726a0c7ab4829`
   (PE32+ x64, Subsystem=3 console); zip sha256
@@ -3894,12 +3894,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
     tb` — 120 517 кадров, 26.48 с, 41 юнит, `early_end=false`.
 * **Windows UI** (`build/scripts/build-windows-ui.ps1`):
-  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 666 752 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 666 752 Б, sha256
   `c4e1fa10a62a2b716888b9b12139693d7ae9b56162027e2c2b4666c2d03be06f` (PE32+
   x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `4c5b3e40407d35ee4b4aad0260e2cfd0ac5fbdb360cf2b8d7c7b4c4fda4002aa`.
 * **Windows headless** (`build/scripts/build-windows.sh`):
-  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 10 999 961 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 10 999 961 Б, sha256
   `eb2c38a804fe2bad8ab8a2dd5b61790298e6248cc929341a43e9b1411015bddb` (PE32+
   x64, Subsystem=3 console); zip sha256
   `caaca3de895d1b353344ce8d9c4893a96651c70c71eb701cb662676a5fe4221b`;
@@ -4144,12 +4144,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
     tb` — 120 826 кадров, 28.65 с, 41 юнит, `early_end=false`, RSS стабилен
     (growth +84…+124 KiB между прогонами — шум аллокатора).
 * **Windows UI** (`build/scripts/build-windows-ui.ps1`):
-  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 680 576 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 680 576 Б, sha256
   `8a4f320e728da42b17bb5da2b4d7000812d558f763ae1aa1c7420fcd08c6fb10`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `e232c0a155e6575af5dbec39a735bb0d882bc1078bddabc1cb8dcbbab589c7d2`.
 * **Windows headless** (`build/scripts/build-windows.sh`):
-  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 034 212 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 034 212 Б, sha256
   `7f08129d39dbef34843d9321c0b76eb0f042e9d71b85c200602a03cc85c183d2`;
   zip sha256 `52b10483d530f3c180fc88db898311be8a28cd2a22f94dc7fd337faca1bf776f`;
   wine-smoke (`--help` + `--demo 1 тик`, digest `0x6BB9`) — OK.
@@ -4329,13 +4329,13 @@ honours биты из `flags` (так приходят загруженные V7
     --mode tb` — 120 826 кадров, 28.55 с, 41 юнит, `early_end=false`,
     RSS +116 KiB (стабильно).
 * **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
-  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 680 064 Б,
+  `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 680 064 Б,
   sha256 `34abcd8dcda9fd7ad9c434c9360f8d0488d88d86b070e8112e5014f40d05a3a4`
   (PE32+ x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `bc0880e83ed434b392e0cdc5741bf3a89f190235b51042f9261b1b84b771c412`;
   `--help` OK.
 * **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
-  Docker): `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 040 032 Б,
+  Docker): `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 040 032 Б,
   sha256 `06df484484aedb1d26084e33d9ef6eeb101893293b13787521a98a00676799db`;
   zip sha256
   `43d7b0021a3e02d79e05448b51d8dac7f0bdbc2a518ef19c12414680bbfb778e`;
@@ -4534,13 +4534,13 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
   * 4/4 soak — `soak-100.qa` 49 813 кадров; `soak_headless --turns 120
     --mode tb` — 120 826 кадров, 35.04 с, 41 юнит, `early_end=false`.
 * **Windows UI** (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3):
-  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 704 128 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 704 128 Б, sha256
   `e32900333dc453d19b632140cceeadf5016f344bdc461ad70dddd67e97718f9c` (PE32+
   x64, Subsystem=2 GUI, `SDL3.dll` рядом); zip sha256
   `7a3272d9fef47f391cb901de3bf2106f63efa0fcd976524b533944fd54045ffc`;
   `--help` OK.
 * **Windows headless** (`build/scripts/build-windows.sh`, mingw-w64 cross в
-  Docker): `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 054 858 Б,
+  Docker): `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 054 858 Б,
   sha256 `6efb8c6570234157c7462ccfd22655767c627e484fcdd6e2a6ec1ec008ab8d7e`;
   zip sha256
   `8bc03237573551466e47a1b679e0b9f5357ada134126b73899216f3776a38cd4`;
@@ -4771,13 +4771,13 @@ gain (включая выключенный звук), `App::tick` наполн�
   golden-кадров (16 каталогов + `golden/*.png` для `visual-screens`); вывод —
   `max-brh/qa-out/`;
 * Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
-  `--features sdl-vcpkg,sound`): `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`
+  `--features sdl-vcpkg,sound`): `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe`
   — 6 773 760 Б, sha256 `3a9ca7cbf9bf263057d44815f80a5c8acf146f4142547363af86b32f1afa7ae8`
   (PE32+ Subsystem=2 GUI), zip sha256
   `baa02f80a700c6e0e5b1d97c2cf2de91307cc7fb68eccf60d3ccbc8512e55e3c`;
   `--help` — OK.
 * Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
-  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 088 700 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 088 700 Б, sha256
   `ecd15bf3de5766ce0bed916fe37408e3fd6914e1e91074195b61be1ced882feb`; zip sha256
   `d59465749620a8289f3ffc845e93a266b5ad7e2539ae450d6cc9b7f01cb25eef`;
   wine-smoke (`--help` + `--demo SAVE1.CAM --turns 1`) — OK: `units=312`,
@@ -4947,13 +4947,13 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
     (120 ходов, 120 826 кадров, 28.58 с, 41 юнит) — PASS.
 * Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
   `--features sdl-vcpkg,sound`):
-  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 798 848 Б,
+  `release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 798 848 Б,
   sha256 `0488fa855c0e180dd7b2863242424c66ffa5c83c68e510e82fa9c89a9f91a892`
   (PE32+ Subsystem=2 GUI), zip sha256
   `967efecb7911db2ec60e402376a82949975470a0564692524f38ffdf16ee56aa`;
   `--help` — OK.
 * Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
-  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 105 591 Б, sha256
+  `release/max_app-1.1.0-windows-x86_64/max-brh.exe` — 11 105 591 Б, sha256
   `e80d83c1ae47a492bee175ad66229ff2378f71ac57b541be07014dc981241bc8`; zip sha256
   `890b26de786cf6c956dbce33631adb7a19936e95ccfd60e3d4c736f6def03d41`.
   Нативный `--help` — OK (exit 0); нативный

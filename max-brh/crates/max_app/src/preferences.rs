@@ -2240,7 +2240,7 @@ mod tests {
     #[test]
     fn preferences_file_roundtrip() {
         let dir = std::env::temp_dir().join(format!(
-            "max-rust-prefs-{}-{}",
+            "max-brh-prefs-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

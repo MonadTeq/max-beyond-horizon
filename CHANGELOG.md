@@ -917,7 +917,7 @@
 
 - **Призрак выбора места и центр ленты доходили до игрока: упакованный Windows
   UI был старым; оба пути `Build` теперь проверяются живым тестом.** Прошлый
-  `ui-test-construction.ps1` брал `build/win-msvc-target/release/max-rust.exe`,
+  `ui-test-construction.ps1` брал `build/win-msvc-target/release/max-brh.exe`,
   а в `release/max_app-1.1.0-windows-x86_64-ui/` лежал exe, собранный **до**
   `SELECT_SITE`: он сразу ставил площадку в автоматически найденную клетку
   (`find_build_site`), поэтому игрок не видел призрака, площадка не накрывала
@@ -1999,7 +1999,7 @@
   (`build/scripts/pe-subsystem.ps1`), `build-windows.sh` — console для
   headless; README/чек-лист обновлены.
 - **Бинарь клиента переименован `max_app` → `max-brh`** (Windows:
-  `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
+  `max-brh.exe`). Крейт и библиотека остаются `max_app`, примеры
   `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему
   работает (бинарь в пакете один), а артефакты теперь `max-brh(.exe)`.
   Каталоги артефактов (`max_app-<version>-…`) сохранены.
@@ -2009,7 +2009,7 @@
   `sdl`) запуск без флагов даёт понятную ошибку с подсказкой собрать без
   `--no-default-features` и headless-флаги.
 - Help-текст, build/release-скрипты и документация переведены на
-  `max-rust.exe`; Windows UI-артефакт содержит `max-rust.exe` + `SDL3.dll`.
+  `max-brh.exe`; Windows UI-артефакт содержит `max-brh.exe` + `SDL3.dll`.
 
 ### Состав релиза 1.1.0 (всё с v1.0.0)
 

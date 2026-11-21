@@ -18,7 +18,7 @@
 # (см. README.txt в архиве и docs/development/release-checklist.md §6).
 #
 # Артефакты (в $OUT, по умолчанию <repo>/release):
-#   max_app-<version>-windows-x86_64/            каталог: max-rust.exe + README.txt +
+#   max_app-<version>-windows-x86_64/            каталог: max-brh.exe + README.txt +
 #                                                LICENSE + CHANGELOG.md + SHA256SUMS
 #   max_app-<version>-windows-x86_64.zip         архив (zip из контейнера)
 #   max_app-<version>-windows-x86_64.zip.sha256  sha256 архива
@@ -127,8 +127,8 @@ if [ "$DRY_RUN" = "1" ]; then
         "$([ "$DO_WINE" = "1" ] && printf ' wine wine64' || printf '')"
     printf '    rustup target add %s\n' "$TARGET"
     printf '    %s\n' "$BUILD_CMD"
-    printf '    → /out/%s/max-rust.exe + SHA256SUMS + zip\n' "$BUNDLE_NAME"
-    printf '    wine max-rust.exe --help; wine max-rust.exe --demo SAVE1.CAM --turns 1\n'
+    printf '    → /out/%s/max-brh.exe + SHA256SUMS + zip\n' "$BUNDLE_NAME"
+    printf '    wine max-brh.exe --help; wine max-brh.exe --demo SAVE1.CAM --turns 1\n'
     exit 0
 fi
 
@@ -153,10 +153,10 @@ M.A.X. Rust client ${VERSION} — Windows x86_64 (headless)
 
 Запуск (headless)
 -----------------
-  max-rust.exe --help
-  max-rust.exe --demo SAVE1.CAM --turns 5          # прогон сейва → digest
-  max-rust.exe --new-game --world 12 --seed 42 --out frame.ppm
-  max-rust.exe --connect HOST:8082 --join GAME_ID  # Horizon gRPC + ENet, без окна
+  max-brh.exe --help
+  max-brh.exe --demo SAVE1.CAM --turns 5          # прогон сейва → digest
+  max-brh.exe --new-game --world 12 --seed 42 --out frame.ppm
+  max-brh.exe --connect HOST:8082 --join GAME_ID  # Horizon gRPC + ENet, без окна
 
 Запуск без флагов (GUI) в этой headless-сборке недоступен: клиент скажет,
 что нужна сборка с feature sdl (она входит в default-features max_app), и
@@ -200,7 +200,7 @@ Windows-машине с Rust 1.94.0 и MSVC:
   #    вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC) —
   #    он же default, поэтому достаточно \`cargo run -p max_app\` / \`cargo build -p max_app\`
   # 5. SDL3.dll рядом с exe (vcpkg: C:\\vcpkg\\installed\\x64-windows\\bin\\SDL3.dll)
-  target\\release\\max-rust.exe
+  target\\release\\max-brh.exe
 
   Звук (feature sound) добавляется к фичам: --features sdl-vcpkg,sound;
   отдельные DLL не нужны (WASAPI — часть Windows).
@@ -279,7 +279,7 @@ echo "СТАДИЯ: build"
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
 $BUILD_CMD || fail "$BUILD_CMD"
-EXE="target/$TARGET/release/max-rust.exe"
+EXE="target/$TARGET/release/max-brh.exe"
 [ -f "$EXE" ] || fail "после сборки нет $EXE"
 
 # --- 5. проверки PE --------------------------------------------------------
@@ -313,10 +313,10 @@ printf 'SHA256(exe): '; sha256sum "$EXE" | cut -d' ' -f1
 echo "СТАДИЯ: package"
 BUNDLE="/out/$BUNDLE_NAME"
 mkdir -p "$BUNDLE"
-cp "$EXE" "$BUNDLE/max-rust.exe"
+cp "$EXE" "$BUNDLE/max-brh.exe"
 (
     cd "$BUNDLE"
-    sha256sum max-rust.exe README.txt LICENSE CHANGELOG.md > SHA256SUMS
+    sha256sum max-brh.exe README.txt LICENSE CHANGELOG.md > SHA256SUMS
 )
 (
     cd /out
@@ -334,7 +334,7 @@ else
     export WINEPREFIX=/tmp/wineprefix WINEDEBUG=-all
     WORK=/tmp/wine-smoke
     rm -rf "$WORK"; mkdir -p "$WORK"
-    cp "$BUNDLE/max-rust.exe" "$WORK/"
+    cp "$BUNDLE/max-brh.exe" "$WORK/"
     SAVE=/src/max-original/SAVE1.CAM
     if [ -f "$SAVE" ]; then
         cp "$SAVE" "$WORK/"
@@ -376,15 +376,15 @@ EOF
             echo
             echo "== попытка: $1 =="
             echo "== wine $(wine --version 2>/dev/null), хост $(uname -srm) =="
-            echo "== max-rust.exe sha256: $(sha256sum max-rust.exe | cut -d' ' -f1) =="
+            echo "== max-brh.exe sha256: $(sha256sum max-brh.exe | cut -d' ' -f1) =="
             echo
-            echo "== 1/2: max-rust.exe --help =="
-            timeout 180 wine ./max-rust.exe --help 2>&1
+            echo "== 1/2: max-brh.exe --help =="
+            timeout 180 wine ./max-brh.exe --help 2>&1
             echo "EXIT_HELP=$?"
             if [ -f SAVE1.CAM ]; then
                 echo
-                echo "== 2/2: max-rust.exe --demo SAVE1.CAM --turns 1 =="
-                timeout 300 wine ./max-rust.exe --demo SAVE1.CAM --turns 1 2>&1
+                echo "== 2/2: max-brh.exe --demo SAVE1.CAM --turns 1 =="
+                timeout 300 wine ./max-brh.exe --demo SAVE1.CAM --turns 1 2>&1
                 echo "EXIT_DEMO=$?"
             fi
         } | tee -a "$LOG"
@@ -422,18 +422,18 @@ CONTAINER
 
 echo
 echo "== проверка артефактов на хосте =="
-[ -f "$BUNDLE/max-rust.exe" ] || { echo "build-windows.sh: нет $BUNDLE/max-rust.exe" >&2; exit 1; }
+[ -f "$BUNDLE/max-brh.exe" ] || { echo "build-windows.sh: нет $BUNDLE/max-brh.exe" >&2; exit 1; }
 [ -f "$BUNDLE/SHA256SUMS" ] || { echo "build-windows.sh: нет $BUNDLE/SHA256SUMS" >&2; exit 1; }
 [ -f "$ZIP" ] || { echo "build-windows.sh: нет $ZIP" >&2; exit 1; }
 [ -f "$ZIP.sha256" ] || { echo "build-windows.sh: нет $ZIP.sha256" >&2; exit 1; }
 
-EXE_HASH="$(cd "$BUNDLE" && sha256sum max-rust.exe | cut -d' ' -f1)"
-EXE_SIZE="$(stat -c %s "$BUNDLE/max-rust.exe")"
+EXE_HASH="$(cd "$BUNDLE" && sha256sum max-brh.exe | cut -d' ' -f1)"
+EXE_SIZE="$(stat -c %s "$BUNDLE/max-brh.exe")"
 
 echo
 echo "Готово:"
 echo "  $OUT_HOST/$BUNDLE_NAME/"
-echo "    max-rust.exe   ${EXE_SIZE} байт"
+echo "    max-brh.exe   ${EXE_SIZE} байт"
 echo "    SHA256        $EXE_HASH"
 echo "  $OUT_HOST/$BUNDLE_NAME.zip"
 sed 's/^/    /' "$ZIP.sha256" 2>/dev/null || true
