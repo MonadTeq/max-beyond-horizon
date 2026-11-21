@@ -128,8 +128,7 @@ pub fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &Uni
     unit.unit_type == UnitType::Infiltrator
         && target.flags & crate::enums::unit_flags::ELECTRONIC_UNIT != 0
         && target.flags & crate::enums::unit_flags::HOVERING == 0
-        && (target.orders != UnitOrder::Disable
-            || target.flags & crate::enums::unit_flags::STATIONARY == 0)
+        && (target.orders != UnitOrder::Disable || target.is_mobile())
         && crate::access::is_valid_attack_target(world, unit, target)
 }
 
@@ -389,7 +388,7 @@ pub fn get_target_flags(
             UnitOrder::AwaitDisableUnit,
         ) / 13) as u32;
 
-        if target.flags & crate::enums::unit_flags::STATIONARY == 0 {
+        if target.is_mobile() {
             result += 0x40;
         }
     } else {
@@ -682,7 +681,7 @@ pub fn process_attack(
 
     if attacker_info.unit_type == UnitType::Infiltrator && attack_range == 1 {
         let order = if target_info.orders == UnitOrder::Disable
-            || (target_info.flags & crate::enums::unit_flags::STATIONARY == 0
+            || (target_info.is_mobile()
                 && crate::combat::get_stealth_chance_percentage(
                     world,
                     &attacker_info,

@@ -21,7 +21,7 @@
 //! * `TaskCheckAssaults` контролирует штурмовые группы по приказам
 //!   `ORDER_MOVE_TO_ATTACK` (полные проверки воздушных штурмов — P7).
 
-use crate::enums::{unit_flags, CautionLevel, UnitOrder, UnitOrderState, UnitType};
+use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
 use crate::unit::{UnitId, UnitListKind};
 
@@ -81,11 +81,9 @@ fn find_closest_unit_of_type(
 
 /// Ремонтный цех для типа юнита (`TaskRepair::GetRepairShopType`).
 fn repair_shop_type(unit_type: UnitType) -> UnitType {
-    let flags = crate::access::unit_type_flags(unit_type);
-
-    if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+    if unit_type.is_air() {
         UnitType::Hangar
-    } else if flags & unit_flags::MOBILE_SEA_UNIT != 0 {
+    } else if unit_type.is_sea() || unit_type.is_amphibious() {
         UnitType::Dock
     } else {
         UnitType::Depot

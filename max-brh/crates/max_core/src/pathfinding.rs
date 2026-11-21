@@ -36,7 +36,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::access;
-use crate::enums::unit_flags::{BUILDING, HOVERING, MOBILE_AIR_UNIT, STATIONARY};
+use crate::enums::unit_flags::{BUILDING, HOVERING};
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::{PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
@@ -294,7 +294,7 @@ fn assign_ground_path(unit: &mut UnitInfo, steps: &[PathStep], destination: Poin
         steps: steps[..used].to_vec(),
     };
 
-    if unit.flags & MOBILE_AIR_UNIT != 0 {
+    if unit.is_air() {
         // C++: `SetEndXY(position)` + `Paths_GetAirPath(unit)`.
         path.end_x = position.x;
         path.end_y = position.y;
@@ -311,7 +311,7 @@ fn assign_ground_path(unit: &mut UnitInfo, steps: &[PathStep], destination: Poin
 /// (`accessmap.cpp:372`). `0` — непроходимо.
 pub fn build_access_costs(state: &GameState, unit: &UnitInfo, flags: u32) -> [u8; MAP_TILES] {
     let mut costs = [0u8; MAP_TILES];
-    let is_air = unit.flags & MOBILE_AIR_UNIT != 0;
+    let is_air = unit.is_air();
 
     if is_air {
         costs.fill(4);
@@ -484,7 +484,7 @@ fn process_mobile_air_units(
     costs: &mut [u8; MAP_TILES],
 ) {
     let team = unit.team;
-    let is_air_pathfinder = unit.flags & MOBILE_AIR_UNIT != 0;
+    let is_air_pathfinder = unit.is_air();
 
     for id in state.unit_list(UnitListKind::MobileAir) {
         let Some(other) = state.unit(*id) else {
@@ -496,10 +496,7 @@ fn process_mobile_air_units(
                 || (flags & access::ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS != 0
                     && other.team != team)
             {
-                if other.flags & MOBILE_AIR_UNIT != 0
-                    && !is_air_pathfinder
-                    && other.flags & HOVERING != 0
-                {
+                if other.is_air() && !is_air_pathfinder && other.flags & HOVERING != 0 {
                     continue;
                 }
 
@@ -517,10 +514,10 @@ fn process_mobile_air_units(
         }
 
         if !is_air_pathfinder
-            && other.flags & MOBILE_AIR_UNIT != 0
+            && other.is_air()
             && other.flags & HOVERING == 0
             && other.is_visible_to_team(team)
-            && (other.orders != UnitOrder::Idle || other.flags & STATIONARY != 0)
+            && (other.orders != UnitOrder::Idle || !other.is_mobile())
         {
             block_cell(costs, other.grid, 0);
         }
@@ -863,7 +860,7 @@ pub fn paths_get_air_path(
     let distance_y = i32::from(end_y) - i32::from(unit.grid.y);
     // `AirPath::AirPath`: воздушный юнит получает угол на цель, остальные —
     // текущий угол (ракета летит туда, куда её развернул `PrepareFire`).
-    let angle = if unit.flags & MOBILE_AIR_UNIT != 0 {
+    let angle = if unit.is_air() {
         crate::combat::get_target_angle(distance_x, distance_y)
     } else {
         i32::from(unit.angle)
@@ -1135,7 +1132,7 @@ pub fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
 /// `AirPath::GetPosition` (`airpath.cpp:104`) — прогноз клетки воздушного
 /// юнита (для карты стоимости).
 pub fn air_path_position(unit: &UnitInfo, path: &AirPath) -> Point {
-    if unit.flags & MOBILE_AIR_UNIT == 0 {
+    if !unit.is_air() {
         return unit.grid;
     }
 
@@ -1155,7 +1152,7 @@ pub fn air_path_position(unit: &UnitInfo, path: &AirPath) -> Point {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+    use crate::enums::unit_flags::{MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, SELECTABLE};
     use crate::enums::{Surface, TeamClan};
     use crate::team::{TeamId, TeamKind};
 

@@ -938,7 +938,7 @@ pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> Appl
 /// Юниты команды, которых нет у владельца, удаляются; здания/наземное
 /// покрытие (`STATIONARY | GROUND_COVER`) не удаляются — как в C++.
 fn remove_extra_units(state: &mut GameState, team: TeamId) {
-    use crate::enums::unit_flags::{EXPLODING, GROUND_COVER, STATIONARY};
+    use crate::enums::unit_flags::{EXPLODING, GROUND_COVER};
 
     let mut owner_unit_ids = state.state_sync_unit_ids[team.0 as usize].clone();
     owner_unit_ids.sort_unstable();
@@ -962,7 +962,7 @@ fn remove_extra_units(state: &mut GameState, team: TeamId) {
             {
                 continue;
             }
-            if unit.flags & (STATIONARY | GROUND_COVER) != 0 {
+            if !unit.is_mobile() || unit.flags & GROUND_COVER != 0 {
                 continue;
             }
             extra.push(unit.id);

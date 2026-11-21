@@ -31,6 +31,7 @@
 //! (`unit_group`/`groups`): списки не сериализуются в V70, поэтому отдельного
 //! поля в [`crate::unit::UnitInfo`] нет.
 
+use crate::classification::Environment;
 use crate::enums::unit_flags::{
     BUILDING, GROUND_COVER, HOVERING, MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT,
     SELECTABLE, STATIONARY,
@@ -386,7 +387,6 @@ pub fn is_accessible_ignoring(
     ignored: &[crate::unit::UnitId],
 ) -> u32 {
     let props = unit_type_properties(unit_type);
-    let unit_flags = props.flags;
 
     if grid.x < 0
         || grid.y < 0
@@ -402,7 +402,7 @@ pub fn is_accessible_ignoring(
         let mut surface = modified_surface_type(state, grid, false);
 
         if surface & SURFACE_TYPE_WATER != 0
-            && unit_flags & MOBILE_LAND_UNIT != 0
+            && (unit_type.is_ground() || unit_type.is_amphibious())
             && unit_type != UnitType::Surveyor
         {
             result = 4 + 8;
@@ -415,23 +415,22 @@ pub fn is_accessible_ignoring(
             let Some(other) = state.unit(id) else {
                 continue;
             };
-            let other_flags = other.flags;
 
             if !(other.is_visible_to_team(team)
                 || flags & ACCESS_MODIFIER_IGNORE_VISIBILITY != 0
-                || (other.is_detected_by_team(team) && other_flags & STATIONARY != 0))
+                || (other.is_detected_by_team(team) && !other.is_mobile()))
             {
                 continue;
             }
 
-            if other.orders == UnitOrder::Idle && other_flags & STATIONARY == 0 {
+            if other.orders == UnitOrder::Idle && other.is_mobile() {
                 continue;
             }
 
-            if unit_flags & MOBILE_AIR_UNIT != 0 {
+            if unit_type.is_air() {
                 if (flags & ACCESS_MODIFIER_SAME_CLASS_BLOCKS != 0
                     || (flags & ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS != 0 && other.team != team))
-                    && other_flags & MOBILE_AIR_UNIT != 0
+                    && other.is_air()
                 {
                     return 0;
                 }
@@ -439,17 +438,20 @@ pub fn is_accessible_ignoring(
                 if flags & ACCESS_MODIFIER_SAME_CLASS_BLOCKS != 0
                     || (flags & ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS != 0 && other.team != team)
                 {
-                    if other_flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {
+                    if matches!(
+                        other.environment(),
+                        Some(Environment::Sea | Environment::Ground | Environment::Amphibious)
+                    ) {
                         return 0;
                     }
 
                     // Приземлившийся самолёт (не в полёте) блокирует наземный путь.
-                    if other_flags & MOBILE_AIR_UNIT != 0 && other_flags & HOVERING == 0 {
+                    if other.is_air() && other.flags & HOVERING == 0 {
                         return 0;
                     }
                 }
 
-                if unit_flags & STATIONARY != 0
+                if !unit_type.is_mobile()
                     && unit_type != UnitType::Connector
                     && (other.unit_type == UnitType::Bridge
                         || (other.unit_type as u16 >= UnitType::LargeRubble as u16
@@ -460,7 +462,7 @@ pub fn is_accessible_ignoring(
                     return 0;
                 }
 
-                if other_flags & STATIONARY != 0 {
+                if !other.is_mobile() {
                     match other.unit_type {
                         UnitType::Road => {
                             if unit_type == UnitType::Road {
@@ -470,7 +472,7 @@ pub fn is_accessible_ignoring(
                         }
                         UnitType::Bridge => {
                             result = 4;
-                            if unit_flags & MOBILE_LAND_UNIT != 0 {
+                            if unit_type.is_ground() || unit_type.is_amphibious() {
                                 result = 2;
                                 if is_bridge_elevated(other)
                                     && flags & ACCESS_MODIFIER_MOVES_UNDER_BRIDGE != 0
@@ -504,7 +506,7 @@ pub fn is_accessible_ignoring(
                         UnitType::Connector => {
                             if unit_type == UnitType::Connector {
                                 return 0;
-                            } else if unit_flags & STATIONARY != 0
+                            } else if !unit_type.is_mobile()
                                 && other.team != team
                                 && unit_type != UnitType::WaterPlatform
                                 && unit_type != UnitType::Bridge
@@ -585,9 +587,9 @@ pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
         } else {
             TARGET_CLASS_SEA_STEALTH
         }
-    } else if unit.flags & MOBILE_AIR_UNIT != 0 {
+    } else if unit.is_air() {
         TARGET_CLASS_AIR
-    } else if unit.flags & MOBILE_SEA_UNIT != 0 {
+    } else if unit.is_sea() || unit.is_amphibious() {
         TARGET_CLASS_WATER
     } else {
         TARGET_CLASS_LAND
@@ -743,11 +745,11 @@ pub fn is_valid_attack_target_point(
     let mut target_flags = target.flags;
     let mut target_type = target.unit_type;
 
-    if attacker.flags & MOBILE_AIR_UNIT != 0 && attacker.flags & HOVERING == 0 {
+    if attacker.is_air() && attacker.flags & HOVERING == 0 {
         return false;
     }
 
-    if target_flags & MOBILE_AIR_UNIT != 0 && target_flags & HOVERING == 0 {
+    if target.is_air() && target_flags & HOVERING == 0 {
         target_flags &= !MOBILE_AIR_UNIT;
         target_flags |= MOBILE_LAND_UNIT;
     }
@@ -774,7 +776,7 @@ pub fn is_unit_busy_at_location(state: &GameState, unit: &UnitInfo) -> bool {
         let Some(other) = state.unit(id) else {
             continue;
         };
-        if other.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | STATIONARY) != 0
+        if (other.is_sea() || other.is_ground() || other.is_amphibious() || !other.is_mobile())
             && other.flags & GROUND_COVER == 0
             && other.orders != UnitOrder::Idle
         {
@@ -998,7 +1000,6 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
     }
 
     let team = unit.team;
-    let flags = unit.flags;
 
     for id in state.units_at(grid).iter().copied() {
         let Some(other) = state.unit(id) else {
@@ -1008,7 +1009,7 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
             continue;
         }
 
-        if flags & MOBILE_LAND_UNIT != 0 {
+        if unit.is_ground() || unit.is_amphibious() {
             if (other.unit_type == UnitType::Barracks
                 || other.unit_type == UnitType::ArmouredPersonnelCarrier
                 || other.unit_type == UnitType::SeaTransport)
@@ -1024,13 +1025,11 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
             }
         }
 
-        if flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == MOBILE_SEA_UNIT
-            && other.unit_type == UnitType::Dock
-        {
+        if unit.is_sea() && other.unit_type == UnitType::Dock {
             return Some(id);
         }
 
-        if flags & MOBILE_AIR_UNIT != 0
+        if unit.is_air()
             && (other.unit_type == UnitType::LandingPad || other.unit_type == UnitType::Hangar)
         {
             return Some(id);
@@ -1326,7 +1325,7 @@ pub fn set_unit_destination(
         let Some(other) = state.unit(id) else {
             continue;
         };
-        if other.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {
+        if other.is_sea() || other.is_ground() || other.is_amphibious() {
             if other.orders == UnitOrder::Idle {
                 continue;
             }
@@ -1418,7 +1417,7 @@ pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
         let Some(unit) = state.unit(id) else { continue };
         if unit.state == UnitOrderState::NewOrder && unit.path.is_none() {
             if unit.hits > 0 {
-                if unit.flags & MOBILE_AIR_UNIT != 0 && unit.orders != UnitOrder::MoveToAttack {
+                if unit.is_air() && unit.orders != UnitOrder::MoveToAttack {
                     process_group_air_path(state, id);
                 }
                 return false;
@@ -1470,7 +1469,7 @@ pub fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
     };
     for id in group {
         let Some(unit) = state.unit(id) else { continue };
-        if unit.flags & MOBILE_AIR_UNIT != 0 && unit.orders != UnitOrder::MoveToAttack {
+        if unit.is_air() && unit.orders != UnitOrder::MoveToAttack {
             if mode {
                 process_group_air_path(state, id);
             }
@@ -1776,8 +1775,7 @@ pub fn build_clearing(
     }
 
     // `Access_DestroyGroundCovers(unit)` — наземные/стационарные (не HOVERING).
-    if flags & (crate::enums::unit_flags::MOBILE_AIR_UNIT | crate::enums::unit_flags::MOBILE_LAND_UNIT | crate::enums::unit_flags::STATIONARY)
-        != 0
+    if (unit.is_air() || unit.is_ground() || unit.is_amphibious() || !unit.is_mobile())
         && flags & crate::enums::unit_flags::HOVERING == 0
     {
         destroy_ground_covers(state, &unit);

@@ -310,6 +310,75 @@ impl UnitType {
     pub fn is_producing(self) -> bool {
         PRODUCING_UNIT_TYPES.contains(&self)
     }
+
+    /// Воздушная среда (`MOBILE_AIR_UNIT`) — [`Environment::Air`].
+    ///
+    /// Точный эквивалент проверки бита `flags & MOBILE_AIR_UNIT != 0`:
+    /// `Environment::classify_flags` ставит `Air` первым и только по этому
+    /// биту, поэтому других источников `Environment::Air` нет.
+    #[inline]
+    pub fn is_air(self) -> bool {
+        self.environment() == Some(Environment::Air)
+    }
+
+    /// Наземная среда (`MOBILE_LAND_UNIT` без `MOBILE_SEA_UNIT`) —
+    /// [`Environment::Ground`].
+    ///
+    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_LAND_UNIT`
+    /// (включая амфибии) условие — `is_ground() || is_amphibious()`.
+    #[inline]
+    pub fn is_ground(self) -> bool {
+        self.environment() == Some(Environment::Ground)
+    }
+
+    /// Морская среда (`MOBILE_SEA_UNIT` без `MOBILE_LAND_UNIT`) —
+    /// [`Environment::Sea`].
+    ///
+    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_SEA_UNIT`
+    /// (включая амфибии) условие — `is_sea() || is_amphibious()`.
+    #[inline]
+    pub fn is_sea(self) -> bool {
+        self.environment() == Some(Environment::Sea)
+    }
+
+    /// Наземно-морская среда (`MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`) —
+    /// [`Environment::Amphibious`].
+    #[inline]
+    pub fn is_amphibious(self) -> bool {
+        self.environment() == Some(Environment::Amphibious)
+    }
+
+    /// Мобильный (`STATIONARY` снят) — [`Mobility::Mobile`].
+    #[inline]
+    pub fn is_mobile(self) -> bool {
+        self.mobility() == Mobility::Mobile
+    }
+
+    /// Здание — [`Mobility::Building`] (`BUILDING` либо турель).
+    ///
+    /// **Не эквивалент бита `BUILDING`**: турели — здания по решению
+    /// владельца, хотя флаг `BUILDING` (`0x10`, «2×2-структура») у них снят.
+    /// Там, где проверяется именно раскладка 2×2, бит читается напрямую.
+    #[inline]
+    pub fn is_building(self) -> bool {
+        self.mobility() == Mobility::Building
+    }
+
+    /// Стационарный-прочий ([`Mobility::Stationary`]): `STATIONARY` без
+    /// `BUILDING`, не турель.
+    ///
+    /// Не путать с «неподвижным вообще» (здание или стационарный-прочий): для
+    /// этого — `!is_mobile()`, что эквивалентно биту `STATIONARY`.
+    #[inline]
+    pub fn is_stationary(self) -> bool {
+        self.mobility() == Mobility::Stationary
+    }
+
+    /// Боевой ([`CombatRole::Combat`]): `attack > 0`.
+    #[inline]
+    pub fn is_combat(self) -> bool {
+        self.combat_role().is_combat()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +414,54 @@ impl UnitInfo {
     #[inline]
     pub fn is_producing(&self) -> bool {
         self.unit_type.is_producing()
+    }
+
+    /// Воздушная среда экземпляра по его флагам — [`UnitType::is_air`].
+    #[inline]
+    pub fn is_air(&self) -> bool {
+        self.environment() == Some(Environment::Air)
+    }
+
+    /// Наземная среда экземпляра по его флагам — [`UnitType::is_ground`].
+    #[inline]
+    pub fn is_ground(&self) -> bool {
+        self.environment() == Some(Environment::Ground)
+    }
+
+    /// Морская среда экземпляра по его флагам — [`UnitType::is_sea`].
+    #[inline]
+    pub fn is_sea(&self) -> bool {
+        self.environment() == Some(Environment::Sea)
+    }
+
+    /// Наземно-морская среда экземпляра — [`UnitType::is_amphibious`].
+    #[inline]
+    pub fn is_amphibious(&self) -> bool {
+        self.environment() == Some(Environment::Amphibious)
+    }
+
+    /// Мобильный ли экземпляр (`STATIONARY` снят) — [`UnitType::is_mobile`].
+    #[inline]
+    pub fn is_mobile(&self) -> bool {
+        self.mobility() == Mobility::Mobile
+    }
+
+    /// Здание ли экземпляр — [`UnitType::is_building`] (турели — здания).
+    #[inline]
+    pub fn is_building(&self) -> bool {
+        self.mobility() == Mobility::Building
+    }
+
+    /// Стационарный-прочий ли экземпляр — [`UnitType::is_stationary`].
+    #[inline]
+    pub fn is_stationary(&self) -> bool {
+        self.mobility() == Mobility::Stationary
+    }
+
+    /// Боевой ли экземпляр (по его `base_values`) — [`UnitType::is_combat`].
+    #[inline]
+    pub fn is_combat(&self) -> bool {
+        self.combat_role().is_combat()
     }
 }
 
@@ -765,5 +882,104 @@ mod tests {
         let mut barracks = UnitInfo::new(UnitType::Barracks, TeamId::RED, UnitId::NO_ID);
         barracks.flags = 0;
         assert_eq!(barracks.cargo_kind(), CargoKind::Unit);
+    }
+
+    #[test]
+    fn ergonomic_helpers_agree_with_axes_for_all_93_types() {
+        let mut environment_counts = [0usize; 4];
+        let mut mobile = 0;
+
+        for &unit_type in UnitType::ALL {
+            let environment = unit_type.environment();
+            let mobility = unit_type.mobility();
+
+            assert_eq!(unit_type.is_air(), environment == Some(Environment::Air));
+            assert_eq!(
+                unit_type.is_ground(),
+                environment == Some(Environment::Ground)
+            );
+            assert_eq!(unit_type.is_sea(), environment == Some(Environment::Sea));
+            assert_eq!(
+                unit_type.is_amphibious(),
+                environment == Some(Environment::Amphibious)
+            );
+            assert_eq!(unit_type.is_mobile(), mobility == Mobility::Mobile);
+            assert_eq!(unit_type.is_building(), mobility == Mobility::Building);
+            assert_eq!(unit_type.is_stationary(), mobility == Mobility::Stationary);
+            assert_eq!(
+                unit_type.is_combat(),
+                unit_type.combat_role() == CombatRole::Combat
+            );
+
+            // Среды взаимоисключающие: одновременно не более одной.
+            let flags = [
+                unit_type.is_air(),
+                unit_type.is_ground(),
+                unit_type.is_sea(),
+                unit_type.is_amphibious(),
+            ];
+            assert!(
+                flags.iter().filter(|set| **set).count() <= 1,
+                "{unit_type:?}"
+            );
+
+            if let Some(environment) = environment {
+                environment_counts[match environment {
+                    Environment::Air => 0,
+                    Environment::Ground => 1,
+                    Environment::Sea => 2,
+                    Environment::Amphibious => 3,
+                }] += 1;
+                assert!(unit_type.is_mobile(), "{unit_type:?}");
+            }
+
+            if mobility == Mobility::Mobile {
+                mobile += 1;
+            }
+        }
+
+        assert_eq!(environment_counts, [5, 17, 9, 5]);
+        assert_eq!(mobile, 43);
+
+        // Бит `STATIONARY` эквивалентен `!is_mobile()`, если соблюдён
+        // инвариант `BUILDING ⟹ STATIONARY`.
+        for &unit_type in UnitType::ALL {
+            assert_eq!(
+                !unit_type.is_mobile(),
+                has_flag(unit_type, STATIONARY),
+                "{unit_type:?}"
+            );
+        }
+
+        // Турель — здание по решению владельца, но бит `BUILDING` у неё снят:
+        // это разные вопросы (`is_building()` ≠ `flags & BUILDING`).
+        assert!(UnitType::GunTurret.is_building());
+        assert!(!has_flag(UnitType::GunTurret, BUILDING));
+    }
+
+    #[test]
+    fn instance_helpers_follow_instance_flags() {
+        let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId::NO_ID);
+        tank.flags = unit_type_flags(UnitType::Tank);
+        assert!(!tank.is_air());
+        assert!(tank.is_ground());
+        assert!(tank.is_mobile());
+        assert!(!tank.is_building());
+        assert!(tank.is_combat());
+
+        // Снятые `STATIONARY`/`BUILDING` у экземпляра здания — экземпляр
+        // мобильный, тип остаётся зданием.
+        let mut barracks = UnitInfo::new(UnitType::Barracks, TeamId::RED, UnitId::NO_ID);
+        barracks.flags = unit_type_flags(UnitType::Barracks);
+        assert!(barracks.is_building());
+        assert!(!barracks.is_mobile());
+        barracks.flags &= !(BUILDING | STATIONARY);
+        assert!(!barracks.is_building());
+        assert!(barracks.is_mobile());
+
+        // Воздушные флаги вместо наземных — экземпляр «воздушный».
+        tank.flags = (tank.flags & !(MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) | MOBILE_AIR_UNIT;
+        assert!(tank.is_air());
+        assert!(!tank.is_ground());
     }
 }

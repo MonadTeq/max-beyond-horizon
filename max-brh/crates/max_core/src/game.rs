@@ -1106,11 +1106,11 @@ impl GameState {
                     remove(&mut self.lists[UnitListKind::Stationary.index()]);
                 }
             }
-        } else if unit.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {
+        } else if unit.is_sea() || unit.is_ground() || unit.is_amphibious() {
             remove(&mut self.lists[UnitListKind::MobileLandSea.index()]);
-        } else if unit.flags & STATIONARY != 0 {
+        } else if !unit.is_mobile() {
             remove(&mut self.lists[UnitListKind::Stationary.index()]);
-        } else if unit.flags & MOBILE_AIR_UNIT != 0 {
+        } else if unit.is_air() {
             remove(&mut self.lists[UnitListKind::MobileAir.index()]);
         } else if unit.flags & MISSILE_UNIT != 0 {
             remove(&mut self.lists[UnitListKind::Particle.index()]);
@@ -1940,13 +1940,13 @@ impl GameState {
         // завода принадлежит `ProductionManager::progress` (оптимизатор
         // энергии) и здесь не сбрасывается — иначе решение об отключении
         // терялось бы между `ManageEconomy` и `ProgressBuildState`.
-        if unit.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+        if unit.is_ground() || unit.is_amphibious() {
             unit.build_paused = false;
         }
 
         if unit.orders == UnitOrder::Build
             && unit.state != UnitOrderState::UnitReady
-            && unit.flags & unit_flags::MOBILE_LAND_UNIT != 0
+            && (unit.is_ground() || unit.is_amphibious())
         {
             let max_rate = crate::production::max_possible_build_rate(
                 unit.unit_type,

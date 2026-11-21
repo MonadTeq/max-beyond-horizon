@@ -119,13 +119,13 @@ pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
 pub fn relevant_list(unit_type: UnitType) -> UnitListKind {
     let flags = crate::access::unit_type_flags(unit_type);
 
-    if flags & unit_flags::STATIONARY != 0 {
+    if !unit_type.is_mobile() {
         if flags & unit_flags::GROUND_COVER != 0 {
             UnitListKind::GroundCover
         } else {
             UnitListKind::Stationary
         }
-    } else if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+    } else if unit_type.is_air() {
         UnitListKind::MobileAir
     } else {
         UnitListKind::MobileLandSea
@@ -342,7 +342,7 @@ pub fn get_total_units_being_constructed(
     team: TeamId,
     unit_type: UnitType,
 ) -> i32 {
-    let kind = if crate::access::unit_type_flags(unit_type) & unit_flags::STATIONARY != 0 {
+    let kind = if !unit_type.is_mobile() {
         UnitListKind::MobileLandSea
     } else {
         UnitListKind::Stationary
@@ -785,7 +785,7 @@ pub fn cargo_get_net_production_for_total(
 pub fn get_normal_rate_build_cost(unit: &UnitInfo) -> i32 {
     let turns = unit.base_values.get_attribute(ATTRIB_TURNS);
 
-    if unit.flags & unit_flags::STATIONARY != 0 {
+    if !unit.is_mobile() {
         cargo_raw_consumption_rate(UnitType::Constructor, 1) * turns
     } else if unit.unit_type == UnitType::Infiltrator || unit.unit_type == UnitType::Infantry {
         cargo_raw_consumption_rate(UnitType::TrainingHall, 1) * turns

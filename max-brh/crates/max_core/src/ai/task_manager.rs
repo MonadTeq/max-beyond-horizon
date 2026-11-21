@@ -877,8 +877,7 @@ impl TaskManager {
             return false;
         }
 
-        let flags = crate::access::unit_type_flags(unit_type);
-        let list_kind = if flags & unit_flags::STATIONARY != 0 {
+        let list_kind = if !unit_type.is_mobile() {
             UnitListKind::Stationary
         } else {
             UnitListKind::MobileLandSea
@@ -962,7 +961,7 @@ impl TaskManager {
             return;
         }
 
-        let station_ok = info.flags & unit_flags::STATIONARY == 0
+        let station_ok = info.is_mobile()
             || info
                 .base_values
                 .get_attribute(crate::unit_values::ATTRIB_AMMO)
@@ -1003,7 +1002,7 @@ impl TaskManager {
         let opponent = world.ai.settings.opponent;
 
         if opponent >= Opponent::Apprentice as u8
-            && info.flags & unit_flags::STATIONARY == 0
+            && info.is_mobile()
             && i32::from(info.hits)
                 != info
                     .base_values
@@ -1031,12 +1030,7 @@ impl TaskManager {
         }
 
         // `ExchangeOperator` — обмен оператора здания/комплекса.
-        if info.flags
-            & (unit_flags::MOBILE_AIR_UNIT
-                | unit_flags::MOBILE_SEA_UNIT
-                | unit_flags::MOBILE_LAND_UNIT)
-            != 0
-        {
+        if info.environment().is_some() {
             let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
             for task_id in ids {
                 if self.task(task_id).map(|task| task.team) != Some(info.team) {

@@ -546,7 +546,7 @@ pub fn explore_is_unit_usable(
 
     info.team == header.team
         && info.hits > 0
-        && info.flags & crate::enums::unit_flags::MOBILE_LAND_UNIT != 0
+        && (info.is_ground() || info.is_amphibious())
         && info.orders != UnitOrder::Idle
 }
 

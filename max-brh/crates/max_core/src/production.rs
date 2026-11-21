@@ -384,7 +384,7 @@ pub fn turns_and_consumption(
                 .unwrap_or(0)
         };
 
-    let mut local_storage = if builder.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+    let mut local_storage = if builder.is_ground() || builder.is_amphibious() {
         i32::from(builder.storage)
     } else {
         i32::from(i16::MAX)
@@ -428,7 +428,7 @@ pub fn max_possible_build_rate(unit_type: UnitType, build_time: i32, storage: i3
         RATE_2X
     };
 
-    if crate::access::unit_type_flags(unit_type) & unit_flags::MOBILE_LAND_UNIT != 0 {
+    if unit_type.is_ground() || unit_type.is_amphibious() {
         let cost_1x = cargo_raw_consumption_rate(unit_type, 1);
         let cost_2x = cargo_raw_consumption_rate(unit_type, 2);
         let cost_4x = cargo_raw_consumption_rate(unit_type, 4);
@@ -1591,7 +1591,7 @@ impl<'a> ProductionManager<'a> {
                 // по нему; повторный пересчёт по уменьшившемуся `storage` срезал
                 // бы скорость второй раз, и «золото» порта перестало бы
                 // соответствовать израсходованному сырью (колонка `Cost`).
-                let mobile_land = unit.flags & unit_flags::MOBILE_LAND_UNIT != 0;
+                let mobile_land = unit.is_ground() || unit.is_amphibious();
                 let build_rate = if mobile_land {
                     i32::from(unit.build_rate.max(1))
                 } else {
@@ -1993,7 +1993,7 @@ pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool
 
     let cost = cost_per_turn(unit.unit_type, i32::from(unit.build_rate.max(1)));
 
-    if unit.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+    if unit.is_ground() || unit.is_amphibious() {
         return i32::from(unit.storage) >= cost.max(0);
     }
 

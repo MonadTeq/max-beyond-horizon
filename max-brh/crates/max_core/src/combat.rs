@@ -44,8 +44,7 @@
 
 use crate::access;
 use crate::enums::unit_flags::{
-    FIRES_MISSILES, HAS_FIRING_SPRITE, HOVERING, MISSILE_UNIT, MOBILE_AIR_UNIT, SELECTABLE,
-    STATIONARY, TURRET_SPRITE,
+    FIRES_MISSILES, HAS_FIRING_SPRITE, HOVERING, MISSILE_UNIT, SELECTABLE, TURRET_SPRITE,
 };
 use crate::enums::{PlayMode, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, PLAYER_TEAM_COUNT, TEAM_SLOTS};
@@ -665,7 +664,7 @@ pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> b
     if (unit1.unit_type == UnitType::MobileAntiAir
         || unit1.unit_type == UnitType::AntiAir
         || unit1.unit_type == UnitType::Escort)
-        && unit2.flags & MOBILE_AIR_UNIT == 0
+        && !unit2.is_air()
     {
         return false;
     }
@@ -1006,7 +1005,7 @@ pub fn is_valid_stealth_target(
     if target.team == unit.team
         || target.hits == 0
         || target.flags & crate::enums::unit_flags::ELECTRONIC_UNIT == 0
-        || (target.flags & MOBILE_AIR_UNIT != 0 && target.flags & HOVERING != 0)
+        || (target.is_air() && target.flags & HOVERING != 0)
         || target_order == UnitOrder::Idle
         || (target_order == UnitOrder::AwaitScaling && target.prior_orders == UnitOrder::Idle)
         || target_order == UnitOrder::Transform
@@ -1020,7 +1019,7 @@ pub fn is_valid_stealth_target(
     }
 
     if order == UnitOrder::AwaitStealUnit {
-        !(target.flags & STATIONARY != 0)
+        target.is_mobile()
             && !((target.unit_type == UnitType::ArmouredPersonnelCarrier
                 || target.unit_type == UnitType::SeaTransport
                 || target.unit_type == UnitType::AirTransport)
@@ -1215,7 +1214,7 @@ pub fn init_stealth_status(unit: &mut UnitInfo, all_visible: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::unit_flags::{ELECTRONIC_UNIT, MOBILE_LAND_UNIT, SELECTABLE};
+    use crate::enums::unit_flags::{ELECTRONIC_UNIT, MOBILE_LAND_UNIT, SELECTABLE, STATIONARY};
     use crate::enums::TeamClan;
     use crate::team::TeamKind;
     use crate::unit_values::{ATTRIB_ARMOR, ATTRIB_SPEED, ATTRIB_TURNS};

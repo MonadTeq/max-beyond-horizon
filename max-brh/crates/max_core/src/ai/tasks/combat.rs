@@ -606,12 +606,7 @@ pub(crate) fn attack_is_unit_usable(
         return false;
     }
 
-    if info.flags
-        & (crate::enums::unit_flags::MOBILE_AIR_UNIT
-            | crate::enums::unit_flags::MOBILE_SEA_UNIT
-            | crate::enums::unit_flags::MOBILE_LAND_UNIT)
-        == 0
-    {
+    if info.environment().is_none() {
         return false;
     }
 
@@ -673,7 +668,7 @@ pub(crate) fn defense_reserve_is_unit_usable(
     info.team == header.team
         && info.hits > 0
         && info.ammo > 0
-        && info.flags & crate::enums::unit_flags::MOBILE_LAND_UNIT != 0
+        && (info.is_ground() || info.is_amphibious())
 }
 
 /// `TaskSupportAttack::IsUnitUsable` (`unit_flags` — класс поддерживающих).

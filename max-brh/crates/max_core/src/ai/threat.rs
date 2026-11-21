@@ -988,7 +988,7 @@ impl ThreatMap {
             UnitType::Infiltrator => 5,
             UnitType::Surveyor => 2,
             _ => {
-                if crate::access::unit_type_flags(unit_type) & unit_flags::MOBILE_AIR_UNIT != 0 {
+                if unit_type.is_air() {
                     3
                 } else {
                     1

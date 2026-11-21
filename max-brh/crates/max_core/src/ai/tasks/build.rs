@@ -343,7 +343,7 @@ pub(crate) fn manage_buildings_is_unit_usable(
     };
 
     info.team == header.team
-        && info.flags & unit_flags::STATIONARY != 0
+        && !info.is_mobile()
         && info.flags & unit_flags::GROUND_COVER == 0
         && info.orders != UnitOrder::Idle
 }

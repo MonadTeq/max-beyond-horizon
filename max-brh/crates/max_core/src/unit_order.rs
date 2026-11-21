@@ -206,7 +206,7 @@ pub fn finish_unit_scaling(unit: &mut UnitInfo) {
         unit.orders = UnitOrder::Await;
         unit.state = UnitOrderState::ExecutingOrder;
 
-        if unit.flags & MOBILE_AIR_UNIT != 0 {
+        if unit.is_air() {
             set_new_order_int(unit, UnitOrder::TakeOff, UnitOrderState::Init);
         }
 
@@ -262,7 +262,7 @@ pub fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo) {
     unit.orders = UnitOrder::Await;
     unit.state = UnitOrderState::ExecutingOrder;
 
-    if unit.flags & MOBILE_AIR_UNIT != 0 {
+    if unit.is_air() {
         set_new_order_int(unit, UnitOrder::TakeOff, UnitOrderState::Init);
     }
 
@@ -425,7 +425,7 @@ pub fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
         return;
     };
 
-    if unit.flags & STATIONARY != 0 {
+    if !unit.is_mobile() {
         // TODO(P3): списание материалов/энергии/рабочих комплекса
         // (`Cargo_GetRawConsumptionRate`, `Cargo_GetPowerConsumptionRate`,
         // `Cargo_GetLifeConsumptionRate`).
@@ -461,7 +461,7 @@ pub fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
 
 /// `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`).
 pub fn cancel_building(unit: &mut UnitInfo) {
-    if unit.flags & STATIONARY != 0 {
+    if !unit.is_mobile() {
         if unit.orders == UnitOrder::Build {
             if unit.state == UnitOrderState::BuildCancel {
                 unit.orders = UnitOrder::HaltBuilding;
@@ -1062,7 +1062,7 @@ fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
     }
 
     if ctx.unit.path.is_some() {
-        if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.flags & HOVERING == 0 {
+        if ctx.unit.is_air() && ctx.unit.flags & HOVERING == 0 {
             ctx.set_new_order(UnitOrder::TakeOff, UnitOrderState::Init);
             ai_task_flag(ctx.world, "plane takeoff");
             false
@@ -1254,7 +1254,7 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
         }
     } else {
         // `Access_SetUnitDestination` (`groundpath.cpp:398`).
-        let mode = ctx.unit.flags & MOBILE_SEA_UNIT == 0;
+        let mode = !ctx.unit.is_sea() && !ctx.unit.is_amphibious();
         if access::set_unit_destination(ctx.world, &ctx.unit, grid, target, mode) {
             if register_movement_wait(&mut ctx.unit) {
                 ctx.blocked_on_path_request(true);
@@ -1308,7 +1308,7 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
         return false;
     }
 
-    if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && (ctx.unit.speed == 0 || ctx.unit.engine == 0) {
+    if ctx.unit.is_air() && (ctx.unit.speed == 0 || ctx.unit.engine == 0) {
         // C++ `AirPath::Execute` (`airpath.cpp:186-199`): проверка скорости и
         // двигателя стоит **внутри** `if (unit->flags & MOBILE_AIR_UNIT)`. У
         // снарядов (`MISSILE_UNIT`, `speed = 0` из `SC_ATTRI`) этой проверки
@@ -1757,7 +1757,7 @@ fn process_order_move(ctx: &mut OrderContext<'_>) {
         UnitOrderState::NewOrder => {
             // C++ ставит `PendingAirGroupLeader` только для члена группового
             // списка (`UnitInfo::GetUnitList() != nullptr`).
-            if ctx.unit.flags & MOBILE_AIR_UNIT != 0
+            if ctx.unit.is_air()
                 && ctx.world.teams[ctx.unit.team.0 as usize].team_type
                     == crate::team::TeamKind::Player
                 && ctx.world.group_members(ctx.id).is_some()
@@ -1889,7 +1889,7 @@ fn init_unit_move(ctx: &mut OrderContext<'_>) -> bool {
         // `FollowUnit()` + `Redraw()` — P5/UI.
         ctx.unit.state = UnitOrderState::InProgress;
 
-        if ctx.world.network_game && ctx.unit.flags & MOBILE_AIR_UNIT != 0 {
+        if ctx.world.network_game && ctx.unit.is_air() {
             // `Remote_SendNetPacket_38(unit)` — сеть (max_net), не max_core.
             return false;
         }
@@ -1919,7 +1919,7 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
     }
 
     if ctx.unit.state == UnitOrderState::MoveInit {
-        if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.orders != UnitOrder::MoveToAttack {
+        if ctx.unit.is_air() && ctx.unit.orders != UnitOrder::MoveToAttack {
             let target = ctx.data.move_to;
             ctx.unit.path = pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target)
                 .map(UnitPath::Air);
@@ -1933,7 +1933,7 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
         }
     } else if ctx.world.group_members(ctx.id).is_some() {
         access::group_attack_order(ctx.world, ctx.id, true);
-    } else if ctx.unit.flags & MOBILE_AIR_UNIT != 0 && ctx.unit.orders != UnitOrder::MoveToAttack {
+    } else if ctx.unit.is_air() && ctx.unit.orders != UnitOrder::MoveToAttack {
         let target = ctx.data.move_to;
         ctx.unit.path =
             pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target).map(UnitPath::Air);
@@ -2169,7 +2169,7 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
     };
 
     let move_to = ctx.data.move_to;
-    let is_air = client.flags & MOBILE_AIR_UNIT != 0;
+    let is_air = client.is_air();
     let destination_ok = if is_air {
         // Воздушному юниту площадка не нужна — только топливо/двигатель:
         // `(client->flags & MOBILE_AIR_UNIT) && client->speed > 0`.
@@ -2649,17 +2649,21 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     let explosion_type = if ctx.unit.hits > 0 {
         UnitType::HitExplosion
     } else if unit_flags & BUILDING != 0 {
+        // Бит `BUILDING` («2×2-структура»), а не `is_building()`: у турелей
+        // взрыв наземный (`LandExplosion`), как в C++.
         UnitType::BuildingExplosion
-    } else if unit_flags & MOBILE_LAND_UNIT != 0 {
+    } else if ctx.unit.is_ground() || ctx.unit.is_amphibious() {
         UnitType::LandExplosion
-    } else if unit_flags & MOBILE_AIR_UNIT != 0 {
+    } else if ctx.unit.is_air() {
         UnitType::AirExplosion
-    } else if unit_flags & MOBILE_SEA_UNIT != 0 {
+    } else if ctx.unit.is_sea() || ctx.unit.is_amphibious() {
         UnitType::SeaExplosion
     } else {
         UnitType::LandExplosion
     };
 
+    // Флаги самого эффекта взрыва — часть сериализуемого состояния (`SC_UNITS`
+    // взрыва): маска строится из битов погибшего юнита, а не классифицируется.
     let explosion_flags = if unit_flags & GROUND_COVER != 0 {
         MOBILE_LAND_UNIT
     } else if unit_flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) != 0 {

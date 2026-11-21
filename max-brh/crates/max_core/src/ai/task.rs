@@ -472,13 +472,13 @@ pub fn default_caution_level(world: &GameState, unit: &UnitInfo) -> CautionLevel
 pub fn task_unit_list_kind(unit_type: UnitType) -> crate::unit::UnitListKind {
     let flags = crate::access::unit_type_flags(unit_type);
 
-    if flags & unit_flags::STATIONARY != 0 {
+    if !unit_type.is_mobile() {
         if flags & unit_flags::GROUND_COVER != 0 {
             crate::unit::UnitListKind::GroundCover
         } else {
             crate::unit::UnitListKind::Stationary
         }
-    } else if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+    } else if unit_type.is_air() {
         crate::unit::UnitListKind::MobileAir
     } else {
         crate::unit::UnitListKind::MobileLandSea

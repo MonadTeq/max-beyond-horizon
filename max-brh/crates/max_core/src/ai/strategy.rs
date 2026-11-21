@@ -388,7 +388,7 @@ impl AiPlayer {
             return;
         };
 
-        let air = info.flags & unit_flags::MOBILE_AIR_UNIT != 0;
+        let air = info.is_air();
         let slot = if air {
             &mut self.task_clear_air_zone
         } else {
@@ -499,7 +499,7 @@ impl AiPlayer {
             return;
         }
 
-        let list = if info.flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+        let list = if info.is_air() {
             &mut self.air_force
         } else {
             &mut self.ground_forces
@@ -1136,12 +1136,7 @@ impl AiPlayer {
                 if (target_unit.unit_type == UnitType::Constructor
                     && target_unit.orders == UnitOrder::Build)
                     || Self::is_key_facility(target_unit.unit_type)
-                    || (target_unit.team == TeamId::ALIEN
-                        && target_unit.flags
-                            & (unit_flags::MOBILE_AIR_UNIT
-                                | unit_flags::MOBILE_SEA_UNIT
-                                | unit_flags::MOBILE_LAND_UNIT)
-                            != 0)
+                    || (target_unit.team == TeamId::ALIEN && target_unit.environment().is_some())
                 {
                     self.determine_attack(world, index as u32, TASK_PRIORITY_ATTACK_DEFAULT);
                 }
@@ -1984,7 +1979,7 @@ fn determine_threats(
     air_map: &mut ThreatMap,
     ground_map: &mut ThreatMap,
 ) {
-    let is_air = unit.flags & unit_flags::MOBILE_AIR_UNIT != 0;
+    let is_air = unit.is_air();
     let _ = team;
 
     let base = unit.base_values;
@@ -2293,11 +2288,7 @@ pub fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
 /// единицах сырья: `turns * consumption`.
 pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = turns_to_build(world, team, unit_type);
-    let flags = crate::access::unit_type_flags(unit_type);
-    let rate = if flags
-        & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
-        != 0
-    {
+    let rate = if unit_type.environment().is_some() {
         super::tasks::create::raw_consumption_rate(UnitType::HeavyVehiclePlant)
     } else {
         super::tasks::create::raw_consumption_rate(UnitType::Constructor)

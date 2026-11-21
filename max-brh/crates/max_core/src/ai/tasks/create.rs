@@ -62,17 +62,15 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
         return builder;
     }
 
-    let flags = crate::access::unit_type_flags(unit_type);
-
-    if flags & unit_flags::STATIONARY != 0 {
+    if !unit_type.is_mobile() {
         UnitType::Constructor
-    } else if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+    } else if unit_type.is_air() {
         UnitType::AirUnitsPlant
-    } else if flags & unit_flags::MOBILE_SEA_UNIT != 0 {
+    } else if unit_type.is_sea() || unit_type.is_amphibious() {
         UnitType::Shipyard
     } else if matches!(unit_type, UnitType::Infantry | UnitType::Infiltrator) {
         UnitType::TrainingHall
-    } else if flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+    } else if unit_type.is_ground() || unit_type.is_amphibious() {
         UnitType::HeavyVehiclePlant
     } else {
         UnitType::Constructor
@@ -411,13 +409,7 @@ pub(crate) fn find_unit(
             continue;
         }
 
-        if unit.orders == UnitOrder::Build
-            && unit.flags
-                & (unit_flags::MOBILE_AIR_UNIT
-                    | unit_flags::MOBILE_SEA_UNIT
-                    | unit_flags::MOBILE_LAND_UNIT)
-                != 0
-        {
+        if unit.orders == UnitOrder::Build && unit.environment().is_some() {
             let speed = i32::from(unit.build_time)
                 * unit
                     .base_values
@@ -531,8 +523,7 @@ pub(crate) fn obtain_units_end_turn(
     if *init {
         let mut requested = Vec::new();
         for unit_type in units.iter() {
-            let stationary =
-                crate::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+            let stationary = !unit_type.is_mobile();
 
             if stationary {
                 ctx.tm
@@ -844,9 +835,7 @@ fn create_unit_add_unit(
         return;
     };
 
-    if *op_state == create_unit_state::OBTAINING_BUILDER
-        && unit_info.flags & unit_flags::STATIONARY != 0
-    {
+    if *op_state == create_unit_state::OBTAINING_BUILDER && !unit_info.is_mobile() {
         *op_state = create_unit_state::WAITING_FOR_MATERIALS;
         *builder = Some(unit);
 
@@ -868,7 +857,7 @@ fn create_unit_add_unit(
         return;
     }
 
-    if *op_state == create_unit_state::FINISHED && unit_info.flags & unit_flags::STATIONARY != 0 {
+    if *op_state == create_unit_state::FINISHED && !unit_info.is_mobile() {
         ctx.clear_unit_tasks(unit, false);
         return;
     }
