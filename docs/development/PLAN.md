@@ -22,7 +22,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 - **`max-cpp-port/` — оракул №1 (неизменяемый)**: имена, структуры, константы,
   загрузчики форматов, сетевой слой. `src/` — наша развилка (headless-сервер,
   см. docs/src-fork.md).
-- **`max-port-site/` — оракул №2**: save.md (формат V70), documentation.md
+- **`max-cpp-port-docs/` — оракул №2**: save.md (формат V70), documentation.md
   (Watcom-конструкции), network.md, scripting.md.
 - **RE оригинала (`max-original-dasm/`) — верификация и пробелы**.
 - Ничего не реверсим «на будущее»: каждый RE-артефакт привязан к потребности.
@@ -59,7 +59,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 | Путь | Содержимое | Роль в целях | В git |
 |---|---|---|---|
 | `max-cpp-port/` | **Канонический** репозиторий автора M.A.X. Port (klei1984/max, актуальнее нашего `src/`; наш `src/` = его копия + Horizon-доработки: ws_client и пр.) | оракул №1 | да (как upstream-справка) |
-| `max-port-site/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
+| `max-cpp-port-docs/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
 | `src/` | C++-порт + наши доработки (headless/транспорт/RNG-чекпоинты) | сборка сервера | да |
 | `max-horizon-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
 | `max-brh/` | Rust-клиент | продукт (Цель 2) | да |
@@ -74,7 +74,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 байтами оригинала (где нужно) → пометить «проверено RE».
 
 ### 1.1 Модель состояния → `docs/state-model.md` + `max-original-dasm/structures.md`
-- Источник №1: **`max-port-site/save.md`** — авторская спецификация формата V70
+- Источник №1: **`max-cpp-port-docs/save.md`** — авторская спецификация формата V70
   (SaveFormatHeader, TeamInfo, TeamUnits/UnitValues/Complex, GameManagerState,
   UnitType ×93, условия победы/поражения по миссиям, битфилды карты ресурсов,
   unit hash ID). Источник №2: заголовки C++ (`src/*.h`, свериться с
@@ -104,7 +104,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
   перед RUN); расширение каталога.
 - **Расширение каталога функций — метод автора (backlog)**: у автора в IDA
   5706 подпрограмм, из них 1644 — библиотечные с именами (Watcom clib3r/plib3r
-  и др.); метод из `max-port-site/documentation.md`: Open Watcom (wdis/wlib),
+  и др.); метод из `max-cpp-port-docs/documentation.md`: Open Watcom (wdis/wlib),
   сравнение сигнатур библиотечных .obj с бинарём, regex-скрипты Python.
   Задача: применить тот же метод к `maxrun.flat` → доименовать библиотечные
   функции в functions-named.csv (наш r2-каталог: 6857 функций, 159 с именами).

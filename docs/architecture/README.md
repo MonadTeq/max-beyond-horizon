@@ -34,5 +34,5 @@ Rust-клиент (max-brh)              Horizon (max-horizon-server)        C++
 ## Референсы-оракулы (не изменяются)
 
 - `max-cpp-port/` — канонический код M.A.X. Port (klei1984/max, git-субмодуль).
-- `max-port-site/` — документация автора (save-формат V70, Watcom-конструкции, сеть).
+- `max-cpp-port-docs/` — документация автора (save-формат V70, Watcom-конструкции, сеть).
 - `max-original/` — оригинальная игра; `max-original-dasm/` — наши RE-артефакты.

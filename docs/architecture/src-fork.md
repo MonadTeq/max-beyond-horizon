@@ -33,6 +33,6 @@
 
 - **`max-brh/`** — workspace Rust-клиента (бывший client-rust-port): core/net/
   assets/render/app. Референс — `max-cpp-port/` + спецификации `docs/` +
-  исследования `max-original-dasm/` + документация автора `max-port-site/`.
+  исследования `max-original-dasm/` + документация автора `max-cpp-port-docs/`.
 - `src/` остаётся сборкой headless-сервера (игровой авторитет для клиента);
   C++-клиент и P2P-режимы больше не развиваются.

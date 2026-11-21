@@ -562,7 +562,7 @@
     `FASTBOAT` переключает башню `±8`, на нуле возвращает обычный кадр.
     `max_app::render::{firing_body_frame_index, firing_turret_frame_index}` —
     порт выбора кадра из `D_*` (`firing_image_base`/`firing_image_count`,
-    которые уже экспортируются в `max-rust-3d-models` как `firing/`), подключён
+    которые уже экспортируются в `max-brh-assets/units` как `firing/`), подключён
     в общую точку отрисовки `draw_unit_sprites_with_animation`; `dt = 0` кадры
     golden-эталонов не двигает.
   * Тесты: `max_core/tests/builder_cancel.rs` (4: `set_order`, пакеты 38/08,

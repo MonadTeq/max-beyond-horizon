@@ -7,7 +7,7 @@
 //! `unitvalues.cpp`, `complex.cpp`, `groundpath.cpp`, `airpath.cpp`,
 //! `builderpath.cpp`, `hash.cpp`, `heatmap.cpp` (`LoadV70`),
 //! `message_manager.cpp` (логи), `aiplayer.cpp` (`AiPlayer::FileLoad`),
-//! плюс `docs/state-model.md` §3 и `max-port-site/save.md`.
+//! плюс `docs/state-model.md` §3 и `max-cpp-port-docs/save.md`.
 //!
 //! ## Объектная модель файла
 //!

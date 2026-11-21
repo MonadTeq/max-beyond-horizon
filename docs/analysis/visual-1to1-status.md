@@ -3838,7 +3838,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 * **Вспышка выстрела.** `max_app::render::{firing_frame_active,
   firing_body_frame_index, firing_turret_frame_index}` — порт выбора кадра
   `firing_image_base`/`firing_image_count` из `D_*` (уже экспортируются в
-  `max-rust-3d-models` как `firing/`): корпус `angle + firing_image_base`,
+  `max-brh-assets/units` как `firing/`): корпус `angle + firing_image_base`,
   башня `turret_angle + firing_image_base`, особая очередь
   `COMMANDO`/`INFANTRY` (`104 + angle + 8·(8 − recoil)`), переключение `±8` у
   `ANTIAIR`/`SP_FLAK`/`FASTBOAT` по чётности счётчика. Подключено в общую

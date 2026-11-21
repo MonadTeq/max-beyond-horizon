@@ -49,7 +49,7 @@ M.A.X. Port используется как **оракул** (каноничес
 | `max-horizon-server/` | Horizon: оркестратор сессий (Rust, gRPC+WS) |
 | `src/` | наша развилка C++-порта: headless-сервер-арбитр |
 | `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
-| `max-port-site/` | документация автора (формат сейвов V70 и пр.) |
+| `max-cpp-port-docs/` | документация автора (формат сейвов V70 и пр.) |
 | `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
 | `max-brh-qa/` | QA: Test-Suite, сценарии, golden, драйверы |
 | `docs/` | документация по направлениям: `architecture/`, `analysis/`, `qa/`, `development/` |

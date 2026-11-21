@@ -4,7 +4,7 @@
 `resource_manager.cpp/.hpp`, `unitinfo.cpp`, `units.cpp`, `world.cpp`, `color.h/.cpp`,
 `enums.hpp`, `resourcetable.cpp/.hpp`), байты реальных файлов
 (`max-original/MAX.RES`, 272 файла `*.SPW` из `max-original/`), сайт проекта
-(`max-port-site/`, в т.ч. `scripting.md`), якоря RE (`max-original-dasm/01-strings.txt`,
+(`max-cpp-port-docs/`, в т.ч. `scripting.md`), якоря RE (`max-original-dasm/01-strings.txt`,
 `functions-named.md`), `max-original-dasm/formats/res.md`.
 
 ---
@@ -38,7 +38,7 @@ ACTIVATE.SPW (17 964), KBUY0.SPW (2 604), CANFIRE.SPW — тот же RIFF-за�
 ```
 
 Это подтверждается документацией автора порта
-([`max-port-site/scripting.md`](../../max-port-site/scripting.md), строка 51):
+([`max-cpp-port-docs/scripting.md`](../../max-cpp-port-docs/scripting.md), строка 51):
 оригинальные разработчики использовали механизм «ресурс-ссылка» RES-файла только
 для того, чтобы **переименовывать RIFF `*.WAV` в `*.SPW`** на поздних тиражах CD
 (`CD-ICD-082-SP`, `CD-ICD-082-1`). Отсюда и имя формата звука в проекте.
@@ -828,5 +828,5 @@ flat + 0x160010, см. `README.md` дазма).
   `assets/PATCHES.RES`.
 - `max-original-dasm/01-strings.txt`, `functions-named.md`, `formats/res.md`,
   `tools/res_parser.py` — якоря и инструмент извлечения ресурсов.
-- `max-port-site/scripting.md` (переименование WAV→SPW), `defects.md` (№105, №233
+- `max-cpp-port-docs/scripting.md` (переименование WAV→SPW), `defects.md` (№105, №233
   — отсутствующие спрайты), `_posts/2019-12-21-Sprites-finally-render-correctly.md`.
