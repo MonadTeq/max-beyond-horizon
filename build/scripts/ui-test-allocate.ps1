@@ -1,4 +1,4 @@
-﻿# ui-test-allocate.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
+# ui-test-allocate.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
 # распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`), TC-0627–0629.
 #
 # Что проверяется в реальном окне (клики через SendInput, фокус проверяется):
@@ -142,7 +142,7 @@ if (-not $exe) { throw "ui-test-allocate: нет собранного max-rust.e
 $env:MAX_DEBUG_INPUT = '1'
 $script:trace = Join-Path $Out 'trace.log'
 
-Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
 $process = Start-Process -FilePath $exe `
@@ -384,6 +384,6 @@ finally {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
-        Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 }

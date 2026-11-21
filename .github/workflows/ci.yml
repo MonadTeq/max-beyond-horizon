@@ -1,7 +1,7 @@
 name: CI
 
 # M6.3: то же, что ./ci.sh, но на GitHub-hosted ubuntu.
-# Стадии: max-rust (check/test), horizon (workspace-тесты), qa (слои 2–3:
+# Стадии: max-brh (check/test), horizon (workspace-тесты), qa (слои 2–3:
 # qa_run-сценарии + golden-кадры, см. max-brh-qa/plans/qa-plan.md).
 # Живой live-smoke здесь не запускается: ему нужен собранный C++-headless.
 # Локально:
@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  max-rust:
-    name: max-rust (check + test)
+  max-brh:
+    name: max-brh (check + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,21 +44,21 @@ jobs:
             libdbus-1-dev libudev-dev
 
       - name: cargo check
-        working-directory: max-rust
+        working-directory: max-brh
         run: cargo check
 
       - name: cargo test
-        working-directory: max-rust
+        working-directory: max-brh
         # libSDL3.so.0 копируется из CMake-каталога в target/debug; тестовым
         # бинарям она нужна в LD_LIBRARY_PATH (в артефактах это делает run.sh).
         env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/max-rust/target/debug
+          LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
         run: cargo test
 
       - name: cargo check + test (feature sound)
-        working-directory: max-rust
+        working-directory: max-brh
         env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/max-rust/target/debug
+          LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
         run: |
           cargo check --features sound
           cargo test --features sound
@@ -66,7 +66,7 @@ jobs:
       - name: cargo test (headless, --no-default-features)
         # Headless-сборка (без SDL) — отдельный cfg-набор: проверяет
         # `main.rs`-ветки без feature `sdl` (понятная ошибка GUI, --sdl).
-        working-directory: max-rust
+        working-directory: max-brh
         run: cargo test --no-default-features
 
   horizon:
@@ -110,10 +110,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
       - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb)
-        working-directory: max-rust
+        working-directory: max-brh
         # --no-default-features: QA-драйверу окно не нужно, иначе примеры
         # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
-        # Сценарии/эталоны — в ../max-brh-qa/ (рабочий каталог max-rust).
+        # Сценарии/эталоны — в ../max-brh-qa/ (рабочий каталог max-brh).
         run: |
           set -e
           rm -rf qa-out
@@ -138,7 +138,7 @@ jobs:
           cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/combat-tb.qa qa-out/combat-tb
 
       - name: Golden frames (1 % pixels, Δ > 30)
-        working-directory: max-rust
+        working-directory: max-brh
         run: |
           set -e
           cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
@@ -162,9 +162,9 @@ jobs:
         with:
           name: qa-artifacts
           path: |
-            max-rust/qa-out/**/*.png
-            max-rust/qa-out/**/log.txt
-            max-rust/qa-out/**/soak.txt
+            max-brh/qa-out/**/*.png
+            max-brh/qa-out/**/log.txt
+            max-brh/qa-out/**/soak.txt
           if-no-files-found: warn
 
   # P4: soak — 100 ходов QA-партии с ходами ИИ + 120 ходов headless ИИ×ИИ
@@ -189,7 +189,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc g++ cmake
 
       - name: Soak (100 turns QA + 120 turns headless, memory/profile)
-        working-directory: max-rust
+        working-directory: max-brh
         env:
           MAX_TICK_PROFILE: "1"
         run: |
@@ -204,7 +204,7 @@ jobs:
         with:
           name: soak-artifacts
           path: |
-            max-rust/qa-out/soak-100/log.txt
-            max-rust/qa-out/soak-headless/soak.txt
+            max-brh/qa-out/soak-100/log.txt
+            max-brh/qa-out/soak-headless/soak.txt
           if-no-files-found: warn
 

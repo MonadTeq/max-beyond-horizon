@@ -15,7 +15,7 @@
 # по элиминации. Путь «элиминация ИИ → победа» покрыт юнит-тестом
 # `crates/max_app/tests/local_sp.rs::eliminating_the_ai_wins_and_the_game_over_screen_renders`
 # и остаётся в силе для слоя 1; слой 2 закроет его, когда в .qa появится
-# команда разрушения/урона (см. max-rust/qa/README.md, «Ограничения»).
+# команда разрушения/урона (см. max-brh/qa/README.md, «Ограничения»).
 
 shot main-menu
 menu new_game

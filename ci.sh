@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M6.3: локальный CI (то же, что .github/workflows/ci.yml) в Docker.
 #
-#   bash ci.sh                 # cargo check/test max-rust + cargo test --workspace Horizon
+#   bash ci.sh                 # cargo check/test max-brh + cargo test --workspace Horizon
 #                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) и golden
 #                              # + SOAK: soak_headless 120 ходов
 #   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
@@ -15,8 +15,8 @@
 set -euo pipefail
 
 # Git Bash (MSYS2/Cygwin) переписывает POSIX-пути в аргументах прямо в
-# Windows-пути: `docker run -w /src/max-rust` превращался в
-# `-w C:/Program Files/Git/src/max-rust` и docker падал с «working directory is
+# Windows-пути: `docker run -w /src/max-brh` превращался в
+# `-w C:/Program Files/Git/src/max-brh` и docker падал с «working directory is
 # invalid». Пути внутри контейнера обязаны остаться POSIX — конверсию отключаем
 # (на Linux/macOS эти переменные игнорируются).
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
@@ -99,7 +99,7 @@ step() {
 
 started=$(date +%s)
 
-step "1/4 max-rust: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
+step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
 # через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux
 # CMake собирает SDL3 с теми драйверами, чьи dev-заголовки видит, поэтому ставим
@@ -116,10 +116,10 @@ docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
     -e "CARGO_HOME=/cargo-home" \
-    -w /src/max-rust \
+    -w /src/max-brh \
     "$RUST_IMAGE" bash -c \
     "apt-get update -qq && apt-get install -y -qq $SDL_DEPS >/dev/null && \
-     export LD_LIBRARY_PATH=/src/max-rust/target/debug\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
+     export LD_LIBRARY_PATH=/src/max-brh/target/debug\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
      cargo check && cargo test && \
      cargo check --features sound && cargo test --features sound && \
      cargo test --no-default-features"
@@ -135,13 +135,13 @@ docker run --rm \
 # Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
 # Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
 # нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
-# Сценарии и эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-rust).
+# Сценарии и эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-brh).
 step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb, missile-line, build-cancel, panels) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
     -v "$ROOT/build/cargo-home:/cargo-home" \
     -e "CARGO_HOME=/cargo-home" \
-    -w /src/max-rust \
+    -w /src/max-brh \
     "$RUST_IMAGE" bash -c \
     'set -e
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
@@ -195,7 +195,7 @@ docker run --rm \
     -v "$ROOT/build/cargo-home:/cargo-home" \
     -e "CARGO_HOME=/cargo-home" \
     -e "MAX_TICK_PROFILE=1" \
-    -w /src/max-rust \
+    -w /src/max-brh \
     "$RUST_IMAGE" bash -c \
     'set -e
      apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null

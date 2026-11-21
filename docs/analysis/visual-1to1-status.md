@@ -365,7 +365,7 @@ SDL3 создаётся ресайзимым; `--scale N` задаёт множ�
 | `max_assets/src/image.rs` | +50 | ресинхронизация RLE при литерале за границей записи (иначе `SNOW_PIC` декодировался на 20 строк); тест `snow_pic_decodes_all_rows` |
 | `max_app/examples/visual_ef.rs` | 190 | кадры E/F: главное меню, форма, список игр, апскейл 2× |
 | `max_app/examples/visual_cd.rs` | 230 | кадры C/D: игра (маркеры/FOV/2x), экран планет, контактный лист курсоров |
-| `max-rust/tools/font_vectors/main.cpp` + `vectors.txt`/`render.txt` | 388 + 34 КБ | эталонный генератор: FreeType-путь C++-порта и `.FON`-декодер, побайтовое сравнение |
+| `max-brh/tools/font_vectors/main.cpp` + `vectors.txt`/`render.txt` | 388 + 34 КБ | эталонный генератор: FreeType-путь C++-порта и `.FON`-декодер, побайтовое сравнение |
 | `max_app/examples/panel_frame.rs` | 80 | кадр 640×480 с выбранным юнитом (доказательство пункта A) |
 | `max_app/src/render.rs` | +82 | режим «окно 1:1»: хром + карта в `MAIN_MAP`; `draw_units` вынесен |
 | `max_app/src/ui.rs` | +25 | в сессии при активном хроме процедурный HUD не рисуется — только строка статуса в углу карты |
@@ -558,7 +558,7 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
   `{u32 width; u32 offset}`, битмапы `ceil(width/8) × height`, MSB-first.
   Декодер — `max_render::text::gnw::GnwFont::decode`; сами файлы вкомпилированы
   в `max_render/data/README.md`.
-- Инструмент `max-rust/tools/font_vectors` собрал эталон C++/FreeType и
+- Инструмент `max-brh/tools/font_vectors` собрал эталон C++/FreeType и
   независимый декодер `.FON`: для ASCII **оба пути дают побайтово одинаковые
   битмапы** строк `M.A.X.`, `Hits 15/15`, `End Turn`, `SURVEY STATUS COLORS`,
   `044-034` (все три шрифта). Метрики: высота 16/9/10, `ascender` 13/7/8,
@@ -833,10 +833,10 @@ powershell -File build/capture-ef.ps1
 
 # 5) эталон шрифтов: FreeType-путь C++-порта против .FON (пункт B)
 docker run --rm -v "D:/dev/max-port-debug:/src" \
-    -w /src/max-rust/tools/font_vectors rust:1.94.0-bookworm bash run.sh
+    -w /src/max-brh/tools/font_vectors rust:1.94.0-bookworm bash run.sh
 
 # 6) тесты (ровно релизный гейт)
-docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust \
+docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-brh \
     rust:1.94.0-bookworm bash -c \
     "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"
 
@@ -852,9 +852,9 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 
 ## 8. Состояние репозитория
 
-Изменено (не закоммичено): `max-rust/crates/max_app/src/{assets,cursor,lib,main,render,ui}.rs`,
+Изменено (не закоммичено): `max-brh/crates/max_app/src/{assets,cursor,lib,main,render,ui}.rs`,
 `max_app/src/{hud,menu}.rs`, `max_render/src/{lib,frame_scale,layout,map_render,sdl_window,text}.rs`,
-`max_assets/src/{image,lib}.rs`, `max-rust/README.md`,
+`max_assets/src/{image,lib}.rs`, `max-brh/README.md`,
 `docs/{visual-1to1-status,release-checklist}.md`.
 
 Новые файлы (эта итерация): `max_render/src/frame_scale.rs`,
@@ -863,7 +863,7 @@ release/max_app-1.0.0-windows-x86_64-ui/max-rust.exe --ui --scale 2 \
 Ранее добавленные: `max_assets/src/{cursor,markers}.rs`, `max_app/src/cursor.rs`,
 `max_render/src/text/gnw.rs` (+ `max_render/data/gnw_font_*.fnt`),
 `max_app/src/panels.rs`, `max_app/examples/{panel_frame,visual_cd}.rs`,
-`max-rust/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
+`max-brh/tools/font_vectors/{main.cpp,run.sh,README.md,vectors.txt,render.txt}`.
 
 Ранее закоммичено: `6295a8e` (Windows-кросс-сборка + `build-windows.sh`),
 `ba8279a` (нативная Windows UI-сборка + `build-windows-ui.ps1`), плюс правки
@@ -1340,9 +1340,9 @@ allocation не в момент `Done`, а на следующем тике
 * `Done` — `HELPOK_U/D` 65×24 в (120,193), подпись `_(4bfa)`, закрывают
   `Enter`/`Esc`; в секции `GAME_SCREEN_SETUP` `Done` сдвинут в (85,193), а
   `Keys` (`_(f0d6)`) в (155,193) переключает текст на подсказку `_(ceb6)`.
-* Тексты: генератор `max-rust/tools/gen_help_data.py` читает
+* Тексты: генератор `max-brh/tools/gen_help_data.py` читает
   `max-cpp-port/assets/help.json` + `language.json` и пишет
-  `max-rust/crates/max_app/data/help.json` — **32 секции, 661 запись**
+  `max-brh/crates/max_app/data/help.json` — **32 секции, 661 запись**
   (en-US, ASCII). Rust-клиент грузит его `include_str!` (как `credits.json`).
 * Кнопки, которые открывают окно (сверено с C++): `?` на `Options`/`Planet`/
   `Players`/`Clan` (`GameConfigMenu::EventHelp`, `PlanetSelectMenu::EventHelp`,
@@ -2658,8 +2658,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `qa_golden_check` — **0 дрейфа** на всех эталонах: правки задевают только
   работающие здания, а их вклад ниже порога 1 % (максимум 0.664 % у
   `factory-work-b`), поэтому пересъёмка golden **не потребовалась**.
-* Артефакты: headless-кадры — `max-rust/qa-out/production/`,
-  `max-rust/qa-out/allocate/`; Windows UI
+* Артефакты: headless-кадры — `max-brh/qa-out/production/`,
+  `max-brh/qa-out/allocate/`; Windows UI
   `max_app-1.1.0-windows-x86_64-ui` пересобран (см. §25.5).
 
 ### 25.4 Осознанные расхождения и открытые вопросы
@@ -2771,7 +2771,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `qa_golden_check` даёт **0 пикселей** на всех наборах (пересъёмка
   воспроизводится на Linux побайтово), soak `soak-100`/`soak_headless` (120
   ходов) — PASS, RSS стабилен (+156 КиБ).
-* Артефакты: headless-кадры — `max-rust/qa-out/allocate/mine-work-a.png`,
+* Артефакты: headless-кадры — `max-brh/qa-out/allocate/mine-work-a.png`,
   `qa-out/production/factory-work-a.png`; Windows UI — см. §26.4.
 
 ### 26.4 Артефакты
@@ -2783,7 +2783,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   (маяки шахты 13–16 + индикатор дрели 21–24 + огни `POWGEN`), 4-я фаза
   побайтово равна статичному кадру, `dt = 0` — тоже. Сцена намеренно ставит
   `POWGEN` вплотную к шахте: видны трубы-коннекторы `D_MINING`/`D_SMLBLD`.
-* **Headless, QA:** `max-rust/qa-out/allocate/mine-work-a.png` — включённая
+* **Headless, QA:** `max-brh/qa-out/allocate/mine-work-a.png` — включённая
   шахта: 4 маяка по углам и корпус `image_base + 1`;
   `qa-out/allocate/allocate-selected.png` — `POWGEN` с трубами.
 * **Windows UI:** `build/scripts/build-windows-ui.ps1` (MSVC + SDL3 из vcpkg) →
@@ -4769,7 +4769,7 @@ gain (включая выключенный звук), `App::tick` наполн�
   max_app 380+); `--features sound` — те же тесты (звук только через rodio);
 * QA: все 22 сценария `ci.sh` (включая новый `missile-line`) + 17 наборов
   golden-кадров (16 каталогов + `golden/*.png` для `visual-screens`); вывод —
-  `max-rust/qa-out/`;
+  `max-brh/qa-out/`;
 * Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
   `--features sdl-vcpkg,sound`): `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`
   — 6 773 760 Б, sha256 `3a9ca7cbf9bf263057d44815f80a5c8acf146f4142547363af86b32f1afa7ae8`
@@ -4937,7 +4937,7 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 ### 42.5 Гейт и артефакты
 
 * полный docker-гейт `bash ci.sh` — **PASS** (944 с):
-  * `cargo check`/`cargo test` max-rust в трёх конфигурациях (default =
+  * `cargo check`/`cargo test` max-brh в трёх конфигурациях (default =
     GUI/SDL3 из исходников, `--features sound`, `--no-default-features`);
   * `cargo test --workspace` Horizon;
   * все 22 QA-сценария `ci.sh` (включая изменённые `production`,

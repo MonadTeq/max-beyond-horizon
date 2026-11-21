@@ -49,12 +49,12 @@ max-brh-qa/
 └── scripts/README.md
 ```
 
-Драйвер живёт в библиотеке (`max-rust/crates/max_app/src/qa/`), а примеры —
-тонкие CLI-обёртки (команды — из `max-rust/`, пути к сценариям/эталонам — через
+Драйвер живёт в библиотеке (`max-brh/crates/max_app/src/qa/`), а примеры —
+тонкие CLI-обёртки (команды — из `max-brh/`, пути к сценариям/эталонам — через
 `../max-brh-qa/`):
 
 ```sh
-cd max-rust
+cd max-brh
 
 # слой 2: прогнать сценарий (log.txt + PNG в каталог вывода)
 cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
@@ -330,7 +330,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 2. **Headless-пример** `soak_headless` — 120 ходов ИИ×ИИ без UI:
 
    ```sh
-   cd max-rust
+   cd max-brh
    cargo run -q -p max_app --no-default-features --example soak_headless -- \
        --turns 120 --out qa-out/soak-headless
    # qa-out/soak-headless/soak.txt: строка на ход (wall/frames/units/rss),
@@ -402,7 +402,7 @@ CRC/снапшот, порядок симуляции не меняется. С�
 ### Перегенерация эталонов (после осознанного визуального изменения)
 
 ```sh
-cd max-rust
+cd max-brh
 
 # 1. снять кадры скриптом
 cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
@@ -480,7 +480,7 @@ cargo run -q -p max_app --no-default-features --example soak_headless -- --turns
   `load` V70-сейва, PNG/golden round-trip.
 
 ```sh
-cd max-rust && cargo test -p max_app --lib qa:: && cargo test -p max_app --test qa_driver
+cd max-brh && cargo test -p max_app --lib qa:: && cargo test -p max_app --test qa_driver
 ```
 
 ## Ограничения

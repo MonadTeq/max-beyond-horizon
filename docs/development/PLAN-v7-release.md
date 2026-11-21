@@ -18,7 +18,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   `sound`), клики меню; базовые сборки не тянут ALSA/CPAL.
 - [~] **M6.4 — артефакты готовы**: версия 1.0.0, `CHANGELOG.md`,
   `docs/release-checklist.md`, `release.sh` (Linux-бинарь в Docker, архив,
-  подготовка тега `v1.0.0`). Осталось выполнить гейты чек-листа: тесты max-rust
+  подготовка тега `v1.0.0`). Осталось выполнить гейты чек-листа: тесты max-brh
   + Horizon, live-smoke 2×10, человеческий сценарий M4, Windows-бинарь, тег.
 - [x] **M6.1 — реконнект** (P5): ENet+`TP 00`, продолжение lockstep и resume-54
   своей команды; пределы (нет SNAP/spectator) — `protocol.md` §9.
@@ -82,11 +82,11 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   вывод — `docs/release-checklist.md` §2.2. FLC-ролики — по-прежнему не
   блокер.
 - **6.3 CI — готово (M6.3)**: `ci.sh` (локальный CI в Docker: `cargo
-  check`+`cargo test` max-rust + `cargo check/test --features sound`,
+  check`+`cargo test` max-brh + `cargo check/test --features sound`,
   `cargo test --workspace` Horizon, optional `--smoke` →
   `build/scripts/live-smoke.sh`) и `.github/workflows/ci.yml` (push/PR);
   использование описано в `README.md`, `max-horizon-server/README.Docker.md`,
-  `max-rust/README.md`.
+  `max-brh/README.md`.
 - **6.4 Релиз — артефакты готовы (M6.4)**: версия 1.0.0, `CHANGELOG.md`,
   `docs/release-checklist.md`, `release.sh` (сборка Linux-бинаря в Docker,
   `release/` с README/LICENSE/SHA256SUMS/архивом, тег `v1.0.0` по `--tag`).
@@ -94,7 +94,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 
 ## Гейты релиза
 
-1. Все тесты зелёные: workspace `max-rust` + `max-horizon-server` (с учётом 5.1).
+1. Все тесты зелёные: workspace `max-brh` + `max-horizon-server` (с учётом 5.1).
 2. Живой smoke: 2 клиента × 10+ ходов, CRC сходится (скрипт).
 3. Человеческий сценарий: партия против AI от меню до экрана победы.
 4. Документация: README, deploy, smoke, чек-лист релиза (`docs/release-checklist.md`).

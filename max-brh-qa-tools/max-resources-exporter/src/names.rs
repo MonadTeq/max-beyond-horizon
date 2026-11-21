@@ -1,6 +1,6 @@
 //! Английские имена юнитов по индексу `UnitType` (0..93).
 //!
-//! Источник — таблица `unit_name` из `max-rust/crates/max_app/src/buildmenu.rs`
+//! Источник — таблица `unit_name` из `max-brh/crates/max_app/src/buildmenu.rs`
 //! (в C++ это `ResourceManager_GetUnit(...).GetSingularName()`). В порте имена
 //! есть только у 61 «настоящего» типа; для служебных (эффекты, ракеты, обломки,
 //! инопланетная техника) `None` — в манифесте и `unit.json` берётся токен

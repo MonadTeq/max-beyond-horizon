@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
 .SYNOPSIS
   Нативная Windows-сборка M.A.X. Rust-клиента (max_app) с окном SDL3 и звуком,
@@ -18,7 +18,7 @@
        D:\dev\toolchain\vcpkg\bootstrap-vcpkg.bat;
        D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows).
 
-  Сборка не засоряет max-rust/target (там живут Linux/Docker-артефакты):
+  Сборка не засоряет max-brh/target (там живут Linux/Docker-артефакты):
   используется CARGO_TARGET_DIR=<repo>\build\win-msvc-target.
 
 .PARAMETER VcpkgRoot
@@ -61,7 +61,7 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Out) { $Out = Join-Path $root "release" }
 
 # --- версия workspace -------------------------------------------------------
-$manifest = Join-Path $root "max-rust\Cargo.toml"
+$manifest = Join-Path $root "max-brh\Cargo.toml"
 if (-not (Test-Path $manifest)) { Fail "нет $manifest" }
 $version = (Select-String -Path $manifest -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"').Matches.Groups[1].Value
 if (-not $version) { Fail "не удалось прочитать версию из $manifest" }
@@ -130,7 +130,7 @@ $batLines = @(
     "set `"VCPKG_ROOT=$vcpkg`"",
     "set `"LIB=%LIB%;$sdlLib`"",
     "set `"CARGO_TARGET_DIR=$targetDir`"",
-    "cd /d `"$root\max-rust`"",
+    "cd /d `"$root\max-brh`"",
     "`"$cargo`" build --release --locked -p max_app --no-default-features --features $Features",
     "exit /b %ERRORLEVEL%"
 )

@@ -15,7 +15,7 @@
 ```sh
 bash ci.sh                              # все тесты + QA-сценарии + golden
 
-cd max-rust                             # примеры живут в workspace max-rust
+cd max-brh                             # примеры живут в workspace max-brh
 # (сценарий, каталог вывода); эталоны — ../max-brh-qa/golden
 cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual ../max-brh-qa/golden

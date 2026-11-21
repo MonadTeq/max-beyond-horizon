@@ -7,7 +7,7 @@
 > `unitvalues.hpp`, `complex.hpp`, `teamunits.hpp`, `ctinfo.hpp`,
 > `units_manager.hpp`, `game_manager.hpp`, `resourcetable.hpp`, `hash.hpp`,
 > `saveload.cpp`, `unitinfo.cpp`); каркас Rust-крейта —
-> [`max-rust/crates/max_core/src/`](../max-rust/crates/max_core/src/).
+> [`max-brh/crates/max_core/src/`](../max-brh/crates/max_core/src/).
 
 ## 0. Обозначения
 
@@ -528,7 +528,7 @@ save.md: `struct __attribute__((packed)) Complex`; C++: `class Complex : FileObj
 `power`/`workers` — не склады, а **баланс** членов комплекса: каждый ход
 `Access_UpdateResourcesTotal` (`access.cpp:912-934`) кладёт сюда
 `Cargo_GetNetProduction` (`cargo.cpp:70-130`), а
-[`crate::power::optimize_complex`](../max-rust/crates/max_core/src/power.rs)
+[`crate::power::optimize_complex`](../max-brh/crates/max_core/src/power.rs)
 включает производителей (`POWERSTN`/`POWGEN`) и гасит потребителей при
 дефиците (`production_manager.cpp:481-790`). Кэш входит в снапшот/CRC; приказы
 `PowerOn/PowerOff` — часть `UnitInfo::orders`. Сообщение о нехватке

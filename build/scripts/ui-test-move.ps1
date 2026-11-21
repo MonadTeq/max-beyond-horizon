@@ -1,4 +1,4 @@
-﻿# UI-тест перемещения юнита в ЖИВОМ окне (SDL3): регресс «юнит не двигается».
+# UI-тест перемещения юнита в ЖИВОМ окне (SDL3): регресс «юнит не двигается».
 #
 #   powershell -ExecutionPolicy Bypass -File build\scripts\ui-test-move.ps1
 #
@@ -72,7 +72,7 @@ function RightClick-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
 }
 
 function Get-Window([string]$title) {
-    $proc = Get-Process max-rust -ErrorAction SilentlyContinue |
+    $proc = Get-Process max-brh -ErrorAction SilentlyContinue |
         Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if (-not $proc) { return $null }
     [Win32.Mouse]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null
@@ -82,7 +82,7 @@ function Get-Window([string]$title) {
 }
 
 function Shot([string]$name) {
-    $proc = Get-Window 'max-rust'
+    $proc = Get-Window 'max-brh'
     if (-not $proc) { Write-Host "shot ${name}: нет окна"; return $null }
     $r = New-Object Win32.Mouse+RECT
     [Win32.Mouse]::GetClientRect($proc.MainWindowHandle, [ref]$r) | Out-Null
@@ -129,12 +129,12 @@ function Count-Preview([string]$path) {
     return $count
 }
 
-Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
 
 Start-Process -FilePath $Exe -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
 Start-Sleep -Seconds 6
-$proc = Get-Window 'max-rust'
+$proc = Get-Window 'max-brh'
 if (-not $proc) { Write-Host 'ui-test-move: окно не появилось'; exit 1 }
 $hwnd = $proc.MainWindowHandle
 

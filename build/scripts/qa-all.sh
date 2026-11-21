@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Прогон всех QA-сценариев + golden (для docker: rust:1.94.0-bookworm).
 set -u
-cd /src/max-rust
+cd /src/max-brh
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}
 for s in sp-full hs-2 visual-screens victory production save-load upgrade research edge-cases cargo-full move-input research-help unit-menu allocate preferences; do
   cargo run -q --no-default-features -p max_app --example qa_run -- \

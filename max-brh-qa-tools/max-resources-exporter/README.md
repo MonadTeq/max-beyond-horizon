@@ -1,6 +1,6 @@
 # max-resources-exporter — ресурсы M.A.X. по каждому типу юнита
 
-Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-rust`),
+Отдельный Cargo-проект (свой `Cargo.lock`, не входит в workspace `max-brh`),
 как [`max-brh-qa-max-brh-qa-tools/max-resources-viewer`](../max-resources-viewer/README.md). Обходит все
 **93 типа юнитов** (`UnitType::ALL`) и раскладывает их ресурсы по каталогам
 `max-rust-3d-models/assets-base/<TAG>/`:
@@ -25,7 +25,7 @@ assets-base/TANK/
 ## Запуск
 
 Из корня репозитория (нужны `max-original/MAX.RES`, `COLOR.PAL`, `*.FLC`,
-`assets/PATCHES.RES` и `max-rust/crates/max_app/data/cargo_unit_data.json`):
+`assets/PATCHES.RES` и `max-brh/crates/max_app/data/cargo_unit_data.json`):
 
 ```sh
 cd max-brh-qa-tools/max-resources-exporter
@@ -39,7 +39,7 @@ cargo run --release -- \
   --res ../../max-original/MAX.RES \
   --pal ../../max-original/COLOR.PAL \
   --flc-dir ../../max-original \
-  --units ../../max-rust/crates/max_app/data/cargo_unit_data.json \
+  --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \
   --patches ../../assets/PATCHES.RES \
   --out ../../max-rust-3d-models \
   --only TANK,MININGST
@@ -49,9 +49,9 @@ cargo run --release -- \
 
 ## Откуда берётся маппинг
 
-`max-rust/crates/max_app/data/cargo_unit_data.json` — снимок `SC_UNITS` из
+`max-brh/crates/max_app/data/cargo_unit_data.json` — снимок `SC_UNITS` из
 `assets/PATCHES.RES`, который генерирует
-[`max-rust/tools/gen_cargo_unit_data.py`](../../max-rust/tools/gen_cargo_unit_data.py):
+[`max-brh/tools/gen_cargo_unit_data.py`](../../max-brh/tools/gen_cargo_unit_data.py):
 для каждого из 93 типов `sprite` / `shadow` / `portrait` / `data` / `flics`
 (`INVALID_ID` → `null`). Экспорт читает этот JSON, а по `--patches` ещё и
 сверяет его с самим архивом (`SC_UNITS` XOR-зашифрован таблицей
@@ -96,5 +96,5 @@ cargo test          # 24 юнит-теста + 7 интеграционных н
 | `src/export.rs` | обход 93 типов, кадры/портрет/FLC, `manifest.csv`, `README.md`, идемпотентная запись |
 | `src/render.rs` | палитры, спрайты/тени/портреты, лента кадров по горячей точке |
 | `src/gif.rs` | GIF89a: LZW + локальные палитры + зацикливание |
-| `src/png.rs` | PNG-кодек (копия `max-rust/crates/max_app/src/qa/png.rs` + RGBA) |
+| `src/png.rs` | PNG-кодек (копия `max-brh/crates/max_app/src/qa/png.rs` + RGBA) |
 | `src/names.rs` | английские имена типов (`buildmenu::unit_name`) |

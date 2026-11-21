@@ -1,6 +1,6 @@
 # Драйверы и утилиты QA
 
-## Драйверы (исполняемые примеры в `max-rust/crates/max_app/examples/`)
+## Драйверы (исполняемые примеры в `max-brh/crates/max_app/examples/`)
 
 | Драйвер | Назначение | Запуск |
 |---|---|---|
@@ -19,10 +19,10 @@
 
 | Утилита | Назначение |
 |---|---|
-| `max-rust/tools/rng_vectors/` | C++-генератор эталонных векторов RNG |
-| `max-rust/tools/map_vectors/` | C++-генератор эталонов генерации карты |
-| `max-rust/tools/sim_vectors/` | C++ мини-реплей для паритета дайджеста |
-| `max-rust/tools/lobby_vectors/`, `barrier_vectors/`, `font_vectors/` | байтовые эталоны пакетов/шрифтов |
+| `max-brh/tools/rng_vectors/` | C++-генератор эталонных векторов RNG |
+| `max-brh/tools/map_vectors/` | C++-генератор эталонов генерации карты |
+| `max-brh/tools/sim_vectors/` | C++ мини-реплей для паритета дайджеста |
+| `max-brh/tools/lobby_vectors/`, `barrier_vectors/`, `font_vectors/` | байтовые эталоны пакетов/шрифтов |
 | `max-original-dasm/tools/*_parser.py` | эталонные Python-парсеры форматов |
 
 ## Формат .qa-скрипта (кратко)
@@ -57,7 +57,7 @@ exit
 выходе.
 
 ```sh
-# из max-rust/; GUI — default: SDL3 3.4.20 собирается из исходников (cmake)
+# из max-brh/; GUI — default: SDL3 3.4.20 собирается из исходников (cmake)
 cargo run -p max_app -- \
   --record ../max-brh-qa/scripts/my-run.qa
 
@@ -159,7 +159,7 @@ shot game-turn2
    места файла; синтаксис проверок — `plans/qa-plan.md`.
 2. Прогоните:
    ```sh
-   cd max-rust
+   cd max-brh
    cargo run -p max_app --no-default-features --example qa_run -- \
      ../max-brh-qa/scripts/my-run.qa ../max-brh-qa/out/my-run
    ```

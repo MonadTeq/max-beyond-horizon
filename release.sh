@@ -25,8 +25,8 @@
 # отдельное осознанное действие (см. docs/development/release-checklist.md §8).
 set -euo pipefail
 
-# Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-rust` →
-# `C:/Program Files/Git/src/max-rust`) — конверсию отключаем, как в
+# Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-brh` →
+# `C:/Program Files/Git/src/max-brh`) — конверсию отключаем, как в
 # build/scripts/build-windows.sh.
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS_NO_PATHCONV=1
@@ -107,7 +107,7 @@ else
     OUT_HOST="$OUT"
 fi
 
-MANIFEST="$ROOT/max-rust/Cargo.toml"
+MANIFEST="$ROOT/max-brh/Cargo.toml"
 [ -f "$MANIFEST" ] || {
     echo "release.sh: нет $MANIFEST" >&2
     exit 1
@@ -123,7 +123,7 @@ BUNDLE_NAME="max_app-${VERSION}-linux-x86_64"
 BUNDLE="$OUT/$BUNDLE_NAME"
 TARBALL="$OUT/$BUNDLE_NAME.tar.gz"
 TARBALL_HASH="$TARBALL.sha256"
-BINARY="$ROOT/max-rust/target/release/max-rust"
+BINARY="$ROOT/max-brh/target/release/max-brh"
 CARGO_HOME_DIR="$ROOT/build/cargo-home"
 
 for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/docs/development/release-checklist.md"; do
@@ -147,7 +147,7 @@ DOCKER_RUN=(docker run --rm
     -v "$ROOT:/src"
     -v "$CARGO_HOME_DIR:/cargo-home"
     -e "CARGO_HOME=/cargo-home"
-    -w /src/max-rust
+    -w /src/max-brh
     "$RUST_IMAGE"
     bash -c "$INNER")
 
@@ -162,10 +162,10 @@ if [ "$DRY_RUN" = "1" ]; then
     echo
     echo "release.sh: dry-run — команды, которые были бы выполнены:"
     printf '  mkdir -p %q\n' "$OUT_HOST/$BUNDLE_NAME/lib"
-    printf '  docker run --rm -v %q -v %q -e CARGO_HOME=/cargo-home -w /src/max-rust %q bash -c %q\n' \
+    printf '  docker run --rm -v %q -v %q -e CARGO_HOME=/cargo-home -w /src/max-brh %q bash -c %q\n' \
         "$ROOT:/src" "$CARGO_HOME_DIR:/cargo-home" "$RUST_IMAGE" "$INNER"
-    printf '  cp %q %q\n' "$BINARY" "$BUNDLE/max-rust"
-    printf '  cp -a max-rust/target/release/libSDL3.so* %q\n' "$BUNDLE/lib/"
+    printf '  cp %q %q\n' "$BINARY" "$BUNDLE/max-brh"
+    printf '  cp -a max-brh/target/release/libSDL3.so* %q\n' "$BUNDLE/lib/"
     printf '  tar -C %q -czf %q %q\n' "$OUT_HOST" "$OUT_HOST/$BUNDLE_NAME.tar.gz" "$BUNDLE_NAME"
     if [ "$MAKE_TAG" = "1" ]; then
         echo "  git tag -a v$VERSION -m \"M.A.X. Rust client $VERSION\"  # только на чистом дереве"
@@ -202,8 +202,8 @@ echo
 echo "== 2/3: упаковка $BUNDLE_NAME =="
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/lib"
-cp "$BINARY" "$BUNDLE/max-rust"
-chmod +x "$BUNDLE/max-rust"
+cp "$BINARY" "$BUNDLE/max-brh"
+chmod +x "$BUNDLE/max-brh"
 cp "$ROOT/LICENSE" "$BUNDLE/LICENSE"
 cp "$ROOT/CHANGELOG.md" "$BUNDLE/CHANGELOG.md"
 
@@ -211,7 +211,7 @@ cp "$ROOT/CHANGELOG.md" "$BUNDLE/CHANGELOG.md"
 # чтобы артефакт не зависел от системного SDL3. Если сборка статическая,
 # каталог lib останется пустым (это нормально).
 shopt -s nullglob
-SDL_LIBS=("$ROOT"/max-rust/target/release/libSDL3.so*)
+SDL_LIBS=("$ROOT"/max-brh/target/release/libSDL3.so*)
 shopt -u nullglob
 if [ "${#SDL_LIBS[@]}" -gt 0 ]; then
     cp -a "${SDL_LIBS[@]}" "$BUNDLE/lib/"
@@ -223,7 +223,7 @@ cat > "$BUNDLE/run.sh" <<'EOF'
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$HERE/max-rust" "$@"
+exec "$HERE/max-brh" "$@"
 EOF
 chmod +x "$BUNDLE/run.sh"
 
@@ -267,7 +267,7 @@ M.A.X. Rust client ${VERSION} — Linux x86_64
 EOF
 
 echo "== 3/3: sha256 + архив =="
-FILES=(max-rust run.sh README.txt CHANGELOG.md LICENSE)
+FILES=(max-brh run.sh README.txt CHANGELOG.md LICENSE)
 shopt -s nullglob
 for lib in "$BUNDLE"/lib/*; do
     FILES+=("lib/$(basename "$lib")")

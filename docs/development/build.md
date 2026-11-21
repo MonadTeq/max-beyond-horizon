@@ -5,7 +5,7 @@
 ### Разработка (хост, Windows)
 | Инструмент | Версия | Зачем |
 |---|---|---|
-| Rust (rustup) | 1.94.0 | сборка max-rust |
+| Rust (rustup) | 1.94.0 | сборка max-brh |
 | MSVC (VS Build Tools 2022+/VS 2026) + Windows SDK + CMake | — | Windows-сборка SDL3 (default `sdl-from-source`: `cargo run -p max_app` собирает SDL3 из исходников через CMake) |
 | vcpkg + `sdl3:x64-windows` | SDL3 3.4.20 | опционально: окно на Windows без CMake-сборки SDL3 (`--features sdl-vcpkg --no-default-features`); нужен для `build-windows-ui.ps1` |
 | Docker (Desktop) | — | Linux-сборки, сервер, CI |
@@ -15,7 +15,7 @@
 ### Docker-образы
 | Образ | Назначение |
 |---|---|
-| `rust:1.94.0-bookworm` | сборка/тесты max-rust и max-horizon-server |
+| `rust:1.94.0-bookworm` | сборка/тесты max-brh и max-horizon-server |
 | `ubuntu:24.04` | рантайм сервера, radare2, вспомогательные |
 | `max-port-build:latest` | сборка C++-headless (Linux) |
 | `max-ghidra`, `max-dosbox` | RE (по необходимости) |
@@ -28,19 +28,19 @@
 # поэтому ставим dev-заголовки SDL3 (X11/Wayland/ALSA/GL) и собираем SDL3 из
 # исходников через CMake; libSDL3.so.0 кладётся в target/debug, тестам нужен
 # LD_LIBRARY_PATH.
-docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-rust rust:1.94.0-bookworm \
+docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-brh rust:1.94.0-bookworm \
   bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config \
     libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev \
     libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev \
     libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols \
     libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev \
     libdbus-1-dev libudev-dev >/dev/null && \
-    export LD_LIBRARY_PATH=/src/max-rust/target/debug && \
+    export LD_LIBRARY_PATH=/src/max-brh/target/debug && \
     cargo check && cargo test"
 
 # на хосте (Windows, MSVC + CMake в PATH — проще всего из Developer PowerShell
 # VS; см. §«Запуск без флагов» ниже):
-cd max-rust
+cd max-brh
 cargo build --release -p max_app              # GUI: SDL3 из исходников (default)
 cargo build --release -p max_app --features sound            # + звук
 cargo build --release -p max_app --features sdl-vcpkg,sound --no-default-features
@@ -84,7 +84,7 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src max-port-build:latest \
 ### Одиночная игра / hot-seat (окно)
 ```sh
 # из исходников: default features — GUI, SDL3 собирается из исходников (cmake)
-cd max-rust
+cd max-brh
 cargo run -p max_app
 # со звуком:
 cargo run -p max_app --features sound
@@ -104,7 +104,7 @@ $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $env:Path = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;$env:Path"
 
 # 2. Запуск (сборка SDL3 из исходников идёт один раз, дальше — из кэша)
-cd D:\dev\max-port-debug\max-rust
+cd D:\dev\max-port-debug\max-brh
 cargo run -p max_app
 ```
 
@@ -152,7 +152,7 @@ release\max_app-1.1.0-windows-x86_64-ui\max-rust.exe
 Headless-бинарь собирается **без** default-фич — SDL3/ALSA тогда не нужны ни
 при сборке, ни в рантайме:
 ```sh
-cd max-rust
+cd max-brh
 cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
@@ -161,7 +161,7 @@ cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <G
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через
-`max-rust/.cargo/config.toml` (`/STACK:8388608`): дефолтный 1 МиБ не вмещает
+`max-brh/.cargo/config.toml` (`/STACK:8388608`): дефолтный 1 МиБ не вмещает
 загрузку V70-сейва (`--demo`/`--new-game` падали бы с `has overflowed its
 stack`). Release-сборки и Linux работали и без этого.
 
@@ -204,19 +204,19 @@ stack`). Release-сборки и Linux работали и без этого.
 
 ### C++-векторы (эталоны формул)
 
-`max-rust/tools/*_vectors` — самостоятельные C++-программы, повторяющие
+`max-brh/tools/*_vectors` — самостоятельные C++-программы, повторяющие
 формулы оракула; компилируются в образе `max-port-build:latest` (`g++`) и
 пишут закоммиченные `vectors.txt`, которые Rust-тесты сверяют бит-в-бит:
 
 ```sh
 # стоимости апгрейдов/исследований (P6)
 docker run --rm -v "D:/dev/max-port-debug:/src" \
-    -w /src/max-rust/tools/upgrade_vectors max-port-build:latest \
-    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-rust/tools/upgrade_vectors/vectors.txt'
+    -w /src/max-brh/tools/upgrade_vectors max-port-build:latest \
+    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-brh/tools/upgrade_vectors/vectors.txt'
 
 # экран мобилизации (P7): сначала данные из PATCHES.RES, затем векторы
-python max-rust/tools/gen_cargo_data.py
+python max-brh/tools/gen_cargo_data.py
 docker run --rm -v "D:/dev/max-port-debug:/src" \
-    -w /src/max-rust/tools/cargo_vectors max-port-build:latest \
-    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-rust/tools/cargo_vectors/vectors.txt'
+    -w /src/max-brh/tools/cargo_vectors max-port-build:latest \
+    bash -c 'g++ -O2 -std=c++17 main.cpp -o /tmp/v && /tmp/v > /src/max-brh/tools/cargo_vectors/vectors.txt'
 ```

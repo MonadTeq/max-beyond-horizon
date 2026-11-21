@@ -80,10 +80,10 @@ max-port-site/
 
 
 # Rust workspace artifacts
-max-rust/target/
+max-brh/target/
 
 # C++ font reference generator (собирается tools/font_vectors/run.sh)
-max-rust/tools/font_vectors/font_vectors
+max-brh/tools/font_vectors/font_vectors
 
 
 # Release artifacts (собираются release.sh, не коммитятся)
@@ -98,7 +98,7 @@ build/game-data-smoke/
 
 # QA-артефакты слоя 2–3: логи, кадры прогонов, diff-*.png, *.mxs
 # (эталоны лежат в max-brh-qa/golden/ и коммитятся)
-max-rust/qa-out/
+max-brh/qa-out/
 
 
 # QA work outputs

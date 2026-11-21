@@ -1,4 +1,4 @@
-﻿# ui-test-move2.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
+# ui-test-move2.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
 # LMB-выбор юнита, RMB-приказ (SendInput!), зелёный предпросмотр пути,
 # End Turn и проверка, что юнит реально перешёл в целевую клетку.
 #
@@ -34,7 +34,7 @@ $exeCandidates = @(
 $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $exe) { throw "ui-test-move2: нет собранного max-rust.exe (build-windows-ui.ps1 -NoPackage)" }
 
-$srcTime = (Get-ChildItem (Join-Path $root 'max-rust\crates\max_app\src') -Recurse -File |
+$srcTime = (Get-ChildItem (Join-Path $root 'max-brh\crates\max_app\src') -Recurse -File |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
 $exeTime = (Get-Item $exe).LastWriteTime
 if ($exeTime -lt $srcTime) {
@@ -136,7 +136,7 @@ public static class MaxUi {
 # --- окружение процесса -----------------------------------------------------
 $env:MAX_DEBUG_INPUT = '1'
 $script:trace = Join-Path $Out 'trace.log'
-Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
 $process = Start-Process -FilePath $exe `
@@ -495,6 +495,6 @@ finally {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
-        Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 }

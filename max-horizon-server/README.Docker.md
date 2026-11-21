@@ -2,7 +2,7 @@
 
 Готовый `docker-compose.yml` в корне репозитория поднимает **Horizon** (WS + gRPC)
 и даёт ему спавнить **C++-headless `max-port`** на каждую игру. Rust-клиент
-(`max-rust`) подключается к gRPC `:8082`, получает тикет и играет по UDP.
+(`max-brh`) подключается к gRPC `:8082`, получает тикет и играет по UDP.
 
 ## Что внутри
 
@@ -64,7 +64,7 @@ docker compose logs -f horizon
 
 ```sh
 docker run --rm --network container:max-horizon \
-  -v "$PWD:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c \
+  -v "$PWD:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c \
   "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null \
    && cargo run -q -p max_app --no-default-features --example horizon_probe -- 127.0.0.1 8082 smoke"
 ```
@@ -85,7 +85,7 @@ docker run --rm --network container:max-horizon \
 Клиент (headless-прогон 3 ходов):
 
 ```sh
-cargo run --manifest-path max-rust/Cargo.toml -p max_app -- \
+cargo run --manifest-path max-brh/Cargo.toml -p max_app -- \
   --connect 127.0.0.1:8082 --join <game_id> --player rust --team 0 --turns 3 \
   --data-dir max-original --assets-dir assets --handshake-patches /tmp/nonexistent.res
 ```
@@ -134,7 +134,7 @@ UDP-портов `32000-32100` (NAT/firewall). Для TLS перед gRPC — re
 `ci.sh` в корне — локальный эквивалент GitHub Actions:
 
 ```sh
-bash ci.sh                  # max-rust: cargo check+test; Horizon: cargo test --workspace
+bash ci.sh                  # max-brh: cargo check+test; Horizon: cargo test --workspace
 bash ci.sh --smoke          # + build/scripts/live-smoke.sh (2 клиента × 5 ходов)
 bash ci.sh --smoke --turns 10
 ```

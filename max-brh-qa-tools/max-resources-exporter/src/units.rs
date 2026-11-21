@@ -1,8 +1,8 @@
 //! Маппинг «тип юнита → ресурсы»: `cargo_unit_data.json` + проверка по
 //! `SC_UNITS` из `PATCHES.RES`.
 //!
-//! `max-rust/crates/max_app/data/cargo_unit_data.json` — сгенерированный
-//! (`max-rust/tools/gen_cargo_unit_data.py`) снимок `SC_UNITS`: 93 записи в
+//! `max-brh/crates/max_app/data/cargo_unit_data.json` — сгенерированный
+//! (`max-brh/tools/gen_cargo_unit_data.py`) снимок `SC_UNITS`: 93 записи в
 //! порядке [`max_core::enums::UnitType`], поля `sprite`/`shadow`/`portrait`/
 //! `data`/`flics`, `INVALID_ID` → `null`. Экспорт читает готовый JSON (это тот
 //! же маппинг, что использует `CargoMenu` порта), а [`verify_sc_units`]
@@ -217,7 +217,7 @@ mod tests {
     }
 
     fn unit_json_path() -> PathBuf {
-        repo_root().join("max-rust/crates/max_app/data/cargo_unit_data.json")
+        repo_root().join("max-brh/crates/max_app/data/cargo_unit_data.json")
     }
 
     fn patches_path() -> PathBuf {

@@ -35,7 +35,7 @@ cargo run --release
 Пути по умолчанию — относительно корня репозитория
 (`../../max-original/MAX.RES`, `../../max-original/COLOR.PAL`,
 `../../max-original/*.FLC`,
-`../../max-rust/crates/max_app/data/cargo_unit_data.json`,
+`../../max-brh/crates/max_app/data/cargo_unit_data.json`,
 `../../assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —
 `../../max-rust-3d-models`). Любой путь переопределяется флагом:
 
@@ -44,7 +44,7 @@ cargo run --release -- \
   --res ../../max-original/MAX.RES \
   --pal ../../max-original/COLOR.PAL \
   --flc-dir ../../max-original \
-  --units ../../max-rust/crates/max_app/data/cargo_unit_data.json \
+  --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \
   --patches ../../assets/PATCHES.RES \
   --out ../../max-rust-3d-models \
   --only TANK,MININGST

@@ -1,4 +1,4 @@
-﻿# ui-test-prefs.ps1 — ЖИВОЙ прогон окна: диалог Preferences/Setup
+# ui-test-prefs.ps1 — ЖИВОЙ прогон окна: диалог Preferences/Setup
 # (C++ `OptionsMenu`), TC-0108/TC-0935.
 #
 # Проверяется в реальном окне (SendInput + фокус, кадры в build/ui-test-prefs):
@@ -126,7 +126,7 @@ if (-not $exe) { throw 'ui-test-prefs: нет собранного max-rust.exe 
 
 $env:MAX_DEBUG_INPUT = '1'
 $script:trace = Join-Path $Out 'trace.log'
-Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
 $process = Start-Process -FilePath $exe `
@@ -300,6 +300,6 @@ try {
     Write-Host 'PASS: Preferences/Setup в живом окне (открытие из меню и из игры, Cancel/Done, effects/sound)'
 } finally {
     if (-not $KeepProcess) {
-        Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 }

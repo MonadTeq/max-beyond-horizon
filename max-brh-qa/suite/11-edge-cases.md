@@ -24,7 +24,7 @@
 Проверки P4:
 
 ```sh
-cd max-rust
+cd max-brh
 # soak (слой 2 QA) + память/профиль в log.txt
 MAX_TICK_PROFILE=1 cargo run -q -p max_app --no-default-features --example qa_run -- \
     ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100

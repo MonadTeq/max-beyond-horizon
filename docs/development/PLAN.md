@@ -62,7 +62,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 | `max-port-site/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
 | `src/` | C++-порт + наши доработки (headless/транспорт/RNG-чекпоинты) | сборка сервера | да |
 | `max-horizon-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
-| `max-rust/` | Rust-клиент | продукт (Цель 2) | да |
+| `max-brh/` | Rust-клиент | продукт (Цель 2) | да |
 | `docs/` | protocol.md, state-model.md, dedicated-server-plan.md | спецификации (Цель 1) | да |
 | `max-original-dasm/` | RE-артефакты и инструменты | верификация/пробелы | да (кроме пересобираемого) |
 | `max-original/` | оригинальная игра | источник данных/байтов | да, целиком |
@@ -115,7 +115,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 ## 4. Цель 2 — Rust-клиент
 
 ### R1 — Каркас ✅ выполнено
-Workspace `max-rust` (core/net/assets/render/app), `cargo check/test` зелёные.
+Workspace `max-brh` (core/net/assets/render/app), `cargo check/test` зелёные.
 
 ### R2 — Локальная симуляция + сессия Horizon + рендер
 - **2.0 `max_core` — переписывается полностью** ✅ **P0–P7 ЗАВЕРШЕНЫ** (ядро

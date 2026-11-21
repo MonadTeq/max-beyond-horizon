@@ -1502,7 +1502,7 @@
 
 - **Спрайты всех 93 типов юнитов на карте и в HUD** (`max_app/src/assets.rs`,
   `max_app/src/render.rs`, `max_app/src/panels.rs`, `max_app/src/cargo_unit_data.rs`,
-  `max-rust/tools/gen_cargo_unit_data.py`):
+  `max-brh/tools/gen_cargo_unit_data.py`):
   - **Таблица.** `UNIT_SPRITES` расширен с 43 до **93** записей — построчный
     порт `SC_UNITS` (`assets/PATCHES.RES`, `Units::LoadResource`): `sprite`
     (`Unit::GetSprite()`) и `shadow` (`Unit::GetShadow()`), порядок `UnitType`.
@@ -1543,7 +1543,7 @@
   `docs/development/PLAN-production.md`):
   - **Описания.** Источник — `SC_UNITS` (`description` → hex-ключ) +
     `assets/language.json` (en-US), как `Unit::GetDescription()`. Генератор
-    `max-rust/tools/gen_cargo_unit_data.py` расшифровывает XOR-ресурс и
+    `max-brh/tools/gen_cargo_unit_data.py` расшифровывает XOR-ресурс и
     складывает 93 записи в `max_app/data/cargo_unit_data.json` (читается
     `include_str!` + serde_json). Текстов 69: у 24 служебных типов (обломки,
     взрывы, снаряды, `HARVSTER`, `WALDO`) описания в оригинале нет, но они и
@@ -1673,7 +1673,7 @@
   - **Финальный QA-свип:** все 🟡/❌ `suite/*.md` закрыты — 161 ✅, 0 🟡,
     18 ⏭ not planned с причинами (спектатор, mixed Rust+C++, FLIC, ручной
     WINDOW, сквозной урон); матрица покрытия в `max-brh-qa/suite/README.md`.
-  - **Релиз:** workspace `max-rust` → **1.1.0**; пересобраны артефакты Windows
+  - **Релиз:** workspace `max-brh` → **1.1.0**; пересобраны артефакты Windows
     UI/headless и Linux, обновлены `SHA256SUMS`/`release-checklist.md`.
   - **Тесты:** +16 `max_core/tests/research.rs`, +5
     `max_app/tests/upgrade.rs` (всего 780, 0 failed); полный `ci.sh`
@@ -1977,11 +1977,11 @@
   `cargo build … --no-default-features` в `release.sh` для headless-релиза.
   Заодно исправлены пути QA-сценариев в
   `ci.sh`/`ci.yml`/`release-checklist` (`../max-brh-qa/scripts/…`,
-  `../max-brh-qa/golden` — каталога `max-rust/qa/` давно нет, из-за чего
+  `../max-brh-qa/golden` — каталога `max-brh/qa/` давно нет, из-за чего
   стадия 3/3 не находила скрипты) и путь артефактов QA в workflow.
   `ci.sh`/`release.sh` экспортируют `MSYS_NO_PATHCONV` (иначе в Git Bash
-  `docker run -w /src/max-rust` ломался на `C:/Program Files/Git/...`).
-- **`max-rust/.cargo/config.toml`: 8 МиБ стека для Windows-целей**.
+  `docker run -w /src/max-brh` ломался на `C:/Program Files/Git/...`).
+- **`max-brh/.cargo/config.toml`: 8 МиБ стека для Windows-целей**.
   У главного потока PE-стек 1 МиБ, а debug-сборка headless-режимов
   (`--demo`/`--new-game`) в него не влезала — `thread 'main' has overflowed its
   stack`; release-сборка работала. `-C link-arg=/STACK:8388608` (msvc) и
@@ -1998,10 +1998,10 @@
   `./max-resources-viewer-error.txt`). Сборки проверяют подсистему PE
   (`build/scripts/pe-subsystem.ps1`), `build-windows.sh` — console для
   headless; README/чек-лист обновлены.
-- **Бинарь клиента переименован `max_app` → `max-rust`** (Windows:
+- **Бинарь клиента переименован `max_app` → `max-brh`** (Windows:
   `max-rust.exe`). Крейт и библиотека остаются `max_app`, примеры
   `qa_run`/`qa_golden_check` не тронуты; `cargo run -p max_app` по-прежнему
-  работает (бинарь в пакете один), а артефакты теперь `max-rust(.exe)`.
+  работает (бинарь в пакете один), а артефакты теперь `max-brh(.exe)`.
   Каталоги артефактов (`max_app-<version>-…`) сохранены.
 - **Запуск без флагов открывает GUI** (меню SDL3): headless-режимы доступны
   только по явным `--demo`, `--new-game`, `--connect`; `--ui` оставлен
@@ -2028,7 +2028,7 @@
   реконнект через 54; C++ mixed — PARTIAL (блокер headless client).
 - **QA/стабильность:** 100-ходовый soak, бюджет 60 Гц, память, edge-кейсы,
   golden-дрейф, полный `ci.sh`; детерминизм RNG/карт/симуляции.
-- **Сборка/поставка:** rename проекта в **max-rust**; GUI-сборка по умолчанию
+- **Сборка/поставка:** rename проекта в **max-brh**; GUI-сборка по умолчанию
   (`cargo run -p max_app` открывает игру, bundled SDL3); Windows UI/headless и
   Linux-артефакты, `SHA256SUMS`, `release-checklist.md`.
 
@@ -2056,7 +2056,7 @@
   - клики меню в `--ui` озвучиваются (`KBUY0` → `kbuy0.spw`); звук не блокирует
     игровой цикл и молча деградирует до no-op без устройства/файлов.
 - **M6.4 — релиз**:
-  - версия workspace `max-rust` — **1.0.0** (все пять крейтов наследуют её);
+  - версия workspace `max-brh` — **1.0.0** (все пять крейтов наследуют её);
   - `docs/development/release-checklist.md` — полный чек-лист релиза;
   - `release.sh` — сборка Linux-бинаря в Docker, упаковка `release/` с
     `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS` и `.tar.gz`;

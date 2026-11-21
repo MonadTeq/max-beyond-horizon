@@ -3,7 +3,7 @@
 Ревизия: 2026-11-14. Источники: байты 24 реальных файлов `max-original/*.WRL` (GOG-дистрибутив),
 эталонная реализация загрузчика `max-cpp-port/src/world.cpp` + `world.hpp`, `resource_manager.cpp`,
 `game_manager.cpp`, `enums.hpp`, `gfx.hpp`, `color.h`, `resourcetable.hpp`; Rust-порт
-`max-rust/crates/max_core/src/setup.rs` (`derive_surface_map`); якоря RE —
+`max-brh/crates/max_core/src/setup.rs` (`derive_surface_map`); якоря RE —
 `max-original-dasm/01-strings.txt`, `functions-named.csv`; формат RES — `formats/res.md`.
 
 Файлы-примеры (все 24 карты лежат свободными файлами в каталоге данных игры, **не** внутри MAX.RES):
@@ -267,7 +267,7 @@ SURFACE_TYPE_NONE = 0x0,  SURFACE_TYPE_LAND = 0x1,  SURFACE_TYPE_WATER = 0x2,
 SURFACE_TYPE_COAST = 0x4, SURFACE_TYPE_AIR = 0x8
 ```
 
-Rust-порт — чистая функция `derive_surface_map` в `max-rust/crates/max_core/src/setup.rs:425`
+Rust-порт — чистая функция `derive_surface_map` в `max-brh/crates/max_core/src/setup.rs:425`
 (порт `world.cpp:382-409`):
 
 ```rust
@@ -278,9 +278,9 @@ pub fn derive_surface_map(tile_ids: &[u16], pass_table: &[u8]) -> SurfaceMap
 ```
 
 `Surface` в Rust — битовая маска `NONE=0x00, LAND=0x01, WATER=0x02, COAST=0x04, AIR=0x08`
-(`max-rust/crates/max_core/src/enums.rs:716-730`), размер карты —
+(`max-brh/crates/max_core/src/enums.rs:716-730`), размер карты —
 `MAP_WIDTH = MAP_HEIGHT = 112`, `MAP_TILES = 12 544`
-(`max-rust/crates/max_core/src/geo.rs:19-23`). Некорректные индексы (tile_id ≥
+(`max-brh/crates/max_core/src/geo.rs:19-23`). Некорректные индексы (tile_id ≥
 tile_count, pass-байт ≥ 4) в C++ — выход за границы массива; в Rust они дают
 `Surface::NONE` + `debug_assert!` (см. §7).
 
@@ -512,7 +512,7 @@ obj#3 (данные) `runtime = flat + 0x14D610`.
   `color.h` — `PALETTE_SIZE=256`, `PALETTE_STRIDE=3`; `point.hpp` — `Point`.
 - `max-cpp-port/src/color.cpp`, `window_manager.cpp` — `COLOR.PAL` и конвенция `/4`.
 - `max-cpp-port/src/resourcetable.hpp` — ID `SNOW_1=0x76E … DESERT_6=0x785`.
-- `max-rust/crates/max_core/src/setup.rs` — `derive_surface_map`, `PASS_TABLE_SURFACES`;
+- `max-brh/crates/max_core/src/setup.rs` — `derive_surface_map`, `PASS_TABLE_SURFACES`;
   `enums.rs` — `Surface`; `geo.rs` — `MAP_WIDTH/HEIGHT/TILES`; `crates/max_assets/src/lib.rs`.
 - `max-original/*.WRL` (24 файла) — эталонные байты (дампы в §1, §2; размеры в шапке).
 - `max-original/MAX.RES` — ресурсы-ссылки `SNOW_1`…`DESERT_6` (проверено

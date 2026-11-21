@@ -2,7 +2,7 @@
 
 Просмотр и классификация ресурсов `MAX.RES` (M.A.X.) + пакетный экспорт
 изображений в PNG. Отдельный Cargo-проект (свой `Cargo.lock`), path-зависимости
-на `max_assets` и `max_render`; в workspace `max-rust` не входит.
+на `max_assets` и `max_render`; в workspace `max-brh` не входит.
 
 ![Редактор: MAX.RES, список ресурсов, превью ленты кадров и метаданные](screenshot.png)
 

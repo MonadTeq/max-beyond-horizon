@@ -311,7 +311,7 @@ NCC 0.8758–0.8762, ни одного перехода 0→1→…→15. Час
 
 ## 9. Применено в Rust-порте (2026-11-19)
 
-Съёмка перенесена в `max-rust` (оракул `max-cpp-port` не менялся):
+Съёмка перенесена в `max-brh` (оракул `max-cpp-port` не менялся):
 
 * **Палитровые циклы** — `max_render::palette::{COLOR_CYCLES, ColorCycles,
   rotate_palette}`: 1:1 порт `World::InitColorCycles`/`UpdateColorAnimations`

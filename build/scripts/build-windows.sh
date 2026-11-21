@@ -28,8 +28,8 @@
 set -euo pipefail
 
 # Git Bash (MSYS2/Cygwin) переписывает POSIX-пути в Windows-пути прямо в
-# аргументах команд: `docker run -w /src/max-rust` превращался в
-# `-w C:/Program Files/Git/src/max-rust` и docker падал с «working directory
+# аргументах команд: `docker run -w /src/max-brh` превращался в
+# `-w C:/Program Files/Git/src/max-brh` и docker падал с «working directory
 # is invalid». Пути внутри контейнера обязаны остаться POSIX-путями, поэтому
 # конверсию аргументов отключаем (на Linux/macOS эти переменные игнорируются).
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
@@ -76,7 +76,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-MANIFEST="$ROOT/max-rust/Cargo.toml"
+MANIFEST="$ROOT/max-brh/Cargo.toml"
 [ -f "$MANIFEST" ] || { echo "build-windows.sh: нет $MANIFEST" >&2; exit 1; }
 
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$MANIFEST")"
@@ -120,8 +120,8 @@ if [ "$DRY_RUN" = "1" ]; then
     echo
     echo "build-windows.sh: dry-run — команды, которые были бы выполнены:"
     printf '  mkdir -p %q\n' "$OUT_HOST/$BUNDLE_NAME"
-    printf '  cp max-rust/../LICENSE CHANGELOG.md README.txt → %q\n' "$OUT_HOST/$BUNDLE_NAME"
-    printf '  docker run --rm -v %q -v %q -v %q -w /src/max-rust %q bash -s\n' \
+    printf '  cp max-brh/../LICENSE CHANGELOG.md README.txt → %q\n' "$OUT_HOST/$BUNDLE_NAME"
+    printf '  docker run --rm -v %q -v %q -v %q -w /src/max-brh %q bash -s\n' \
         "$ROOT:/src" "$OUT_HOST:/out" "$CARGO_HOME_DIR:/cargo-home" "$RUST_IMAGE"
     printf '    apt-get install gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 file zip%s\n' \
         "$([ "$DO_WINE" = "1" ] && printf ' wine wine64' || printf '')"
@@ -195,7 +195,7 @@ Windows-машине с Rust 1.94.0 и MSVC:
   set VCPKG_ROOT=C:\\vcpkg          # PowerShell: \$env:VCPKG_ROOT = "C:\\vcpkg"
   # 4. Сборка (vcpkg-фича max_app/max_render). --no-default-features обязателен:
   #    иначе к sdl-vcpkg добавится default sdl-from-source (SDL3 через CMake).
-  cd max-rust
+  cd max-brh
   cargo build --release -p max_app --no-default-features --features sdl-vcpkg
   #    вариант без vcpkg: --features sdl-from-source (нужен CMake + MSVC) —
   #    он же default, поэтому достаточно \`cargo run -p max_app\` / \`cargo build -p max_app\`
@@ -231,7 +231,7 @@ docker run --rm -i \
     -e TARGET="$TARGET" \
     -e BUILD_CMD="$BUILD_CMD" \
     -e DO_WINE="$DO_WINE" \
-    -w /src/max-rust \
+    -w /src/max-brh \
     "$RUST_IMAGE" bash -s <<'CONTAINER'
 set -uo pipefail
 fail() { echo "СТАДИЯ: FAIL: $*" >&2; exit 1; }

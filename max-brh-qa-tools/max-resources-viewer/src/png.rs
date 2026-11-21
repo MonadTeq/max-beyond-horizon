@@ -1,7 +1,7 @@
 //! PNG-кодек: без внешних зависимостей (только std).
 #![allow(dead_code)]
 //!
-//! Скопирован из `max-rust/crates/max_app/src/qa/png.rs` (тот же формат и
+//! Скопирован из `max-brh/crates/max_app/src/qa/png.rs` (тот же формат и
 //! deflate) и дополнен [`RgbaImage`] / [`encode_rgba`] для экспорта спрайтов,
 //! курсоров и теней с настоящей альфой (color type 6). RGB-кадры [`Image`]
 //! по-прежнему пишутся индексированным (PLTE) или truecolor PNG.

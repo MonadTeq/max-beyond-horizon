@@ -1,7 +1,7 @@
 //! PNG-кодек: без внешних зависимостей (только std).
 #![allow(dead_code)]
 //!
-//! Скопирован из `max-rust/crates/max_app/src/qa/png.rs` (тот же формат и
+//! Скопирован из `max-brh/crates/max_app/src/qa/png.rs` (тот же формат и
 //! deflate), RGBA-часть — из `max-brh-qa-tools/max-resources-viewer/src/png.rs`, и дополнен
 //! [`RgbaImage`] / [`encode_rgba`] для экспорта спрайтов, теней и FLC-кадров с
 //! настоящей альфой (color type 6). RGB-кадры [`Image`] по-прежнему пишутся

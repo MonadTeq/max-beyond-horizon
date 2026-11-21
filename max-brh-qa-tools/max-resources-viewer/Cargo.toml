@@ -5,13 +5,13 @@ edition = "2021"
 license = "MIT"
 description = "M.A.X. MAX.RES viewer/classifier and PNG batch exporter"
 
-# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-rust.
+# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-brh.
 [workspace]
 
 [dependencies]
 anyhow = "1"
-max_assets = { path = "../../max-rust/crates/max_assets" }
-max_render = { path = "../../max-rust/crates/max_render" }
+max_assets = { path = "../../max-brh/crates/max_assets" }
+max_render = { path = "../../max-brh/crates/max_render" }
 sdl3 = { version = "0.22", optional = true, default-features = false }
 
 [features]

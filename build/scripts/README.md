@@ -9,8 +9,8 @@
 
 | Скрипт | Что делает | Требования |
 |---|---|---|
-| `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-rust` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
-| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-rust` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
+| `build-windows.sh` | кросс-сборка **Windows x86_64** бинаря `max-brh` (headless) + упаковка в `release/` + wine-smoke | Docker, сеть (apt + crates.io) |
+| `build-windows-ui.ps1` | **нативная** Windows-сборка `max-brh` с окном SDL3 и звуком + упаковка `release/max_app-<ver>-windows-x86_64-ui.zip` | Windows, VS с workload «Desktop development with C++» (MSVC, Windows SDK, CMake), Rust 1.94.0, vcpkg с `sdl3:x64-windows` |
 | `ui-test-prefs.ps1` | живой прогон диалога Preferences/Setup: `Setup` в меню (`SETUPPIC`), `Cancel`, кнопка `Preferences` панели (`PREFSPIC`), `Animate Effects`/`FX Disabled` → `effects=0`/`sound=0` в трассе `MAX_DEBUG_INPUT`, `Done`; кадры в `build/ui-test-prefs/` | Windows с **интерактивным рабочим столом** (скриншот через `CopyFromScreen`) и собранный UI-клиент |
 | `pe-subsystem.ps1` | читает `Subsystem` из PE-заголовка (2=GUI, 3=Console) без `dumpbin`; используется сборочными скриптами как проверка | Windows PowerShell 5.1 |
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-horizon-server/target/release/horizon` и `build/linux-server-template/max-port` |
@@ -25,7 +25,7 @@ bash build/scripts/live-smoke-mixed.sh 5
 MIXED_REQUIRE_CPP=1 bash build/scripts/live-smoke-mixed.sh 5   # ожидаемо BLOCKED
 ```
 
-`live-smoke-3.sh` сам собирает `max-rust` и `horizon_probe`
+`live-smoke-3.sh` сам собирает `max-brh` и `horizon_probe`
 (`--no-default-features`) и запускает клиентов из `target/debug` — три
 параллельных `cargo run` не конкурируют за lock. Порты наружу не публикуются:
 probe и клиенты живут в network namespace контейнера Horizon, поэтому занятые
@@ -186,7 +186,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
   и в `build/win-msvc-target/release/`, и в архив.
 - **PowerShell 5.1 читает .ps1 как ANSI**, если нет BOM: файл сохранён в UTF-8
   **с BOM**, иначе русские строки ломают парсер.
-- Сборка идёт в `build/win-msvc-target/`, а не в `max-rust/target/`, чтобы не
+- Сборка идёт в `build/win-msvc-target/`, а не в `max-brh/target/`, чтобы не
   смешивать MSVC-артефакты с Linux/Docker-сборками.
 
 ## pe-subsystem.ps1

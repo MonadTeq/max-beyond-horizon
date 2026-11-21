@@ -78,7 +78,7 @@ impl ExportOptions {
             max_res: root.join("max-original/MAX.RES"),
             color_pal: root.join("max-original/COLOR.PAL"),
             flc_dir: root.join("max-original"),
-            units_json: root.join("max-rust/crates/max_app/data/cargo_unit_data.json"),
+            units_json: root.join("max-brh/crates/max_app/data/cargo_unit_data.json"),
             out_root: root.join("max-rust-3d-models"),
             patches: Some(root.join("assets/PATCHES.RES")),
             only: None,
@@ -1162,7 +1162,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
         "Пути по умолчанию — относительно корня репозитория\n\
 (`../../max-original/MAX.RES`, `../../max-original/COLOR.PAL`,\n\
 `../../max-original/*.FLC`,\n\
-`../../max-rust/crates/max_app/data/cargo_unit_data.json`,\n\
+`../../max-brh/crates/max_app/data/cargo_unit_data.json`,\n\
 `../../assets/PATCHES.RES` для сверки `SC_UNITS`, вывод —\n\
 `../../max-rust-3d-models`). Любой путь переопределяется флагом:\n\n",
     );
@@ -1171,7 +1171,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     out.push_str("  --res ../../max-original/MAX.RES \\\n");
     out.push_str("  --pal ../../max-original/COLOR.PAL \\\n");
     out.push_str("  --flc-dir ../../max-original \\\n");
-    out.push_str("  --units ../../max-rust/crates/max_app/data/cargo_unit_data.json \\\n");
+    out.push_str("  --units ../../max-brh/crates/max_app/data/cargo_unit_data.json \\\n");
     out.push_str("  --patches ../../assets/PATCHES.RES \\\n");
     out.push_str("  --out ../../max-rust-3d-models \\\n");
     out.push_str("  --only TANK,MININGST\n");

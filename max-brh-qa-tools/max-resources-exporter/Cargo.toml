@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "M.A.X. per-unit asset exporter: sprites, turrets, shadows, connectors, portraits and FLC animations"
 
-# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-rust —
+# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-brh —
 # как max-brh-qa-tools/max-resources-viewer. Зависимости — только крейты порта (path).
 [workspace]
 
@@ -16,9 +16,9 @@ serde = { version = "1", features = ["derive"] }
 # ключи JSON идут по алфавиту — это детерминированно, что и нужно для
 # идемпотентности выгрузки.
 serde_json = "1"
-max_assets = { path = "../../max-rust/crates/max_assets" }
-max_core = { path = "../../max-rust/crates/max_core" }
-max_render = { path = "../../max-rust/crates/max_render" }
+max_assets = { path = "../../max-brh/crates/max_assets" }
+max_core = { path = "../../max-brh/crates/max_core" }
+max_render = { path = "../../max-brh/crates/max_render" }
 
 [[bin]]
 name = "max-resources-exporter"

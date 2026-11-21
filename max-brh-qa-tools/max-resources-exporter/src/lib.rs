@@ -8,8 +8,8 @@
 //! * `*.FLC` — анимации портретов (файлы, на которые ссылаются `F_*`);
 //! * `PATCHES.RES` — `SC_UNITS`: маппинг тип → `sprite`/`shadow`/`portrait`/
 //!   `data`/`flics_animation` (снимок уже лежит в
-//!   `max-rust/crates/max_app/data/cargo_unit_data.json`, его генерирует
-//!   `max-rust/tools/gen_cargo_unit_data.py`; здесь он проверяется по архиву).
+//!   `max-brh/crates/max_app/data/cargo_unit_data.json`, его генерирует
+//!   `max-brh/tools/gen_cargo_unit_data.py`; здесь он проверяется по архиву).
 //!
 //! Выход — `max-rust-3d-models/assets-base/<TAG>/` для всех 93 типов
 //! ([`max_core::enums::UnitType::ALL`]):
@@ -26,7 +26,7 @@
 //! └── unit.json           тип/имя/флаги/источники/размеры/наличие анимации
 //! ```
 //!
-//! Модули: [`png`] — PNG-кодек (копия `max-rust/crates/max_app/src/qa/png.rs`,
+//! Модули: [`png`] — PNG-кодек (копия `max-brh/crates/max_app/src/qa/png.rs`,
 //! расширенная RGBA в `max-brh-qa-tools/max-resources-viewer`); [`gif`] — свой
 //! GIF89a-кодировщик; [`render`] — растеризация спрайтов/теней/портретов;
 //! [`units`] — чтение `cargo_unit_data.json` и сверка с `SC_UNITS`; [`export`] —

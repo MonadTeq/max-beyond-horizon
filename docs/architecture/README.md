@@ -15,7 +15,7 @@
 ## Общая схема
 
 ```
-Rust-клиент (max-rust)              Horizon (max-horizon-server)        C++ headless (src/)
+Rust-клиент (max-brh)              Horizon (max-horizon-server)        C++ headless (src/)
 ┌─────────────────────┐   gRPC      ┌──────────────────────┐  spawn     ┌──────────────────┐
 │ max_app (UI/цикл)   │◄───────────►│ WS+gRPC лобби/админ   │───────────►│ max-port --server │
 │ max_render (визуал) │   ENet/UDP  │ тикеты, сессии        │            │ релей/арбитр     │

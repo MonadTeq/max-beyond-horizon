@@ -18,7 +18,7 @@ max-brh-qa/
 
 ## Как это работает
 
-1. **Драйвер `qa_run`** (пример в `max-rust/crates/max_app/examples/qa_run.rs`) исполняет
+1. **Драйвер `qa_run`** (пример в `max-brh/crates/max_app/examples/qa_run.rs`) исполняет
    `.qa`-скрипты через реальные обработчики ввода клиента (без SDL): команды
    `click/rclick/key/type/wait/tick/shot/assert …`, высокоуровневые `menu/setup/players/
    mobilize/landing/select/move/end_turn`. Формат — в `plans/qa-plan.md` и
@@ -31,7 +31,7 @@ max-brh-qa/
    golden — `golden/upgrade/`, `golden/research/`. **P7**: `scripts/cargo-full.qa`
    — полный `CargoMenu` (15 типов покупки, cargo-слайдер, режим модернизации,
    апгрейд до высадки), golden — `golden/cargo/`; C++-векторы —
-   `max-rust/tools/cargo_vectors`. **P8**: `scripts/research-help.qa` —
+   `max-brh/tools/cargo_vectors`. **P8**: `scripts/research-help.qa` —
    `ResearchMenu` (`R`, распределение центров Attack→Shots и `Done`) и окна
    `HELPFRAM` (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/`CARGO_SETUP`/
    `RESEARCH_SETUP`/`GAME_SCREEN_SETUP`), golden — `golden/research-help/`.
@@ -55,7 +55,7 @@ max-brh-qa/
 # все qa-скрипты + golden (в docker):
 bash ci.sh
 
-cd max-rust   # примеры собираются в workspace max-rust
+cd max-brh   # примеры собираются в workspace max-brh
 
 # один скрипт (сценарии — в ../max-brh-qa/scripts/, вывод — в qa-out/):
 cargo run -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp

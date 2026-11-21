@@ -2,8 +2,8 @@
 
 > Статус: ЗАПОЛНЕНО из кода `src/remote.cpp`, `src/transport_udp_default.cpp`,
 > `src/game_manager.cpp`, канона `max-cpp-port/src/remote.cpp` и Rust-стороны
-> (`max-rust/crates/max_net/src/session.rs`, `max-rust/crates/max_app/src/net.rs`,
-> `max-rust/crates/max_core/src/{events,game,crc}.rs`). Сопутствующие раскладки —
+> (`max-brh/crates/max_net/src/session.rs`, `max-brh/crates/max_app/src/net.rs`,
+> `max-brh/crates/max_core/src/{events,game,crc}.rs`). Сопутствующие раскладки —
 > `docs/protocol.md` §7–8.
 >
 > **P5-статус:** реле сервера, приём/отправка 53/54/45 и применение 54 в Rust
@@ -220,7 +220,7 @@ A (RED)                headless (арбитр+реле)             B (GREEN)
 
 ## 6. Сравнение с реализацией Rust (что не так)
 
-Канон: `max_app` шлёт только **00, 01, 52** (`max-rust/crates/max_app/src/net.rs`,
+Канон: `max_app` шлёт только **00, 01, 52** (`max-brh/crates/max_app/src/net.rs`,
 `run_game_loop`, строки 380–503); сессия ретранслирует 00/45/52
 (`session.rs:637-644`). Дыры:
 
@@ -299,7 +299,7 @@ A (RED)                headless (арбитр+реле)             B (GREEN)
 
 ### 8.2 Rust-клиент
 
-1. `max-rust/crates/max_app/src/net.rs::run_game_loop`:
+1. `max-brh/crates/max_app/src/net.rs::run_game_loop`:
    - отдельные счётчики `begin_counter` (00) / `end_counter` (52) /
      `crc_index` (45) / `sync_index` (54), все pre-increment, **первый отчёт = 1**;
    - выставить `TeamKind` из `LobbyWelcome.team_nodes` (условие `> 4`, как
@@ -314,18 +314,18 @@ A (RED)                headless (арбитр+реле)             B (GREEN)
    - применять входящие `Packet::StateSync` и сравнивать CRC после 45-раунда
      (`state.team_data_crc16[team] != свой crc` → ждать 51/писать отчёт);
    - убрать двойной трекинг (п. 6.8).
-2. `max-rust/crates/max_net/src/session.rs`:
+2. `max-brh/crates/max_net/src/session.rs`:
    - добавить `SessionCommand::SendUntracked` для ретрансмитов трекера;
    - `BarrierTracker` оставить, но использовать его события как единственный
      источник повторов/таймаутов.
-3. `max-rust/crates/max_core/src/game.rs` + `events.rs`:
+3. `max-brh/crates/max_core/src/game.rs` + `events.rs`:
    - helper `begin_turn_barrier()` (common_barrier по `frame_sync_counter`);
    - `apply_packet_54` (минимальный порт `Remote_ApplyUnitState` +
      `Remote_RemoveExtraUnits` + выравнивание `unit_counters`/gold);
    - счётчик хода согласовать с C++ (`GameManager_TurnCounter` стартует с 1;
      Rust — с 0): для пакета 53 использовать серверное значение (turn = C++-ный
      счётчик хода).
-4. `max-rust/crates/max_app/src/lib.rs`: инициализировать мир/команды/seed из
+4. `max-brh/crates/max_app/src/lib.rs`: инициализировать мир/команды/seed из
    `LobbyGameSettings` (сейчас `App::new` — пустая партия; CRC-барьер сравнит
    «пустой мир» с серверным и честно сообщит десинк, даже если барьеры сойдутся).
 

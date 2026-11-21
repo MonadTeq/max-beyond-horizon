@@ -1,4 +1,4 @@
-﻿# UI-тест одиночной игры: главное меню -> New Game -> Options/Planet/Players -> партия с ИИ.
+# UI-тест одиночной игры: главное меню -> New Game -> Options/Planet/Players -> партия с ИИ.
 $ErrorActionPreference = 'Stop'
 $root = 'D:\dev\max-port-debug'
 $out = "$root\build\ui-test-sp"
@@ -41,7 +41,7 @@ function RightClick-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
 }
 
 function Shot([string]$name) {
-    $proc = Get-Process max-rust -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    $proc = Get-Process max-brh -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if (-not $proc) { Write-Host "shot ${name}: no window"; return }
     # Скриншот снимается с экрана: окно должно быть сверху, иначе в кадр
     # попадает браузер/терминал, а клики уходят не в игру.
@@ -61,12 +61,12 @@ function Shot([string]$name) {
     Write-Host "shot $name ($w x $h)"
 }
 
-Get-Process max-rust -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
 # Без --ui: клиент по умолчанию открывает GUI (окно SDL3).
 Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max-rust.exe" -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
 Start-Sleep -Seconds 6
-$proc = Get-Process max-rust | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$proc = Get-Process max-brh | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $proc) { Write-Host 'window not found'; exit 1 }
 $hwnd = $proc.MainWindowHandle
 [Win32.Mouse]::ShowWindow($hwnd, 9) | Out-Null

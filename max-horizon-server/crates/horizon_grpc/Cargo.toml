@@ -22,7 +22,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 
 # gRPC stack. Tonic 0.14 keeps protobuf compilation in `tonic-prost-build` and
-# the codec in `tonic-prost`; this mirrors max-rust/crates/max_net (the client).
+# the codec in `tonic-prost`; this mirrors max-brh/crates/max_net (the client).
 tonic = "0.14"
 tonic-prost = "0.14"
 prost = "0.14"

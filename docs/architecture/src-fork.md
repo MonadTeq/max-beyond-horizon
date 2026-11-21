@@ -31,7 +31,7 @@
 
 ## Rust-ремейк
 
-- **`max-rust/`** — workspace Rust-клиента (бывший client-rust-port): core/net/
+- **`max-brh/`** — workspace Rust-клиента (бывший client-rust-port): core/net/
   assets/render/app. Референс — `max-cpp-port/` + спецификации `docs/` +
   исследования `max-original-dasm/` + документация автора `max-port-site/`.
 - `src/` остаётся сборкой headless-сервера (игровой авторитет для клиента);

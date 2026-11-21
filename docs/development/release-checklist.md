@@ -17,10 +17,10 @@
 
 | # | Пункт | Команда/свидетельство | Результат |
 |---|---|---|---|
-| 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-rust/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | ✅ `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
+| 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-brh/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | ✅ `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
 | 2 | CHANGELOG | `CHANGELOG.md` | ✅ `[1.1.0] — 2026-11-16` + состав с v1.0.0 (режимы, визуал, производство, сейвы, сеть, QA, rename, GUI-default) |
 | 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | ✅ P8: `CI OK за 566 с` (`build/ci-p8.log`): тесты 0 failed, QA/golden/soak PASS |
-| 4 | Тесты max-rust | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **0 failed**; в P8 добавлено: `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1 (264 lib-теста `max_app`, 14 `qa_driver`, 220 `max_core`, 86 `max_net`, 79 `max_render`) |
+| 4 | Тесты max-brh | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **0 failed**; в P8 добавлено: `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1 (264 lib-теста `max_app`, 14 `qa_driver`, 220 `max_core`, 86 `max_net`, 79 `max_render`) |
 | 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases, **cargo-full**, **research-help** | ✅ все PASS; golden-дрейф 0 |
 | 6 | Golden новых экранов | `golden/cargo/`, `golden/upgrade/`, `golden/research/`, `golden/research-help/` (9: Help-окна + `research-menu`) | ✅ 0 пикселей отличий |
 | 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
@@ -30,7 +30,7 @@
 | 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (2026-11-19): `max-rust.exe` 10 928 081 Б, sha256 `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`; zip 4 082 276 Б, sha256 `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`; PE Subsystem=3 (console), без wine-smoke (флаг `--no-wine`) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows UI/headless; Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
-| 14 | Документация | `README.md`, `max-rust/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
+| 14 | Документация | `README.md`, `max-brh/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
 | 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
 | 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
 
@@ -72,7 +72,7 @@ pips, дельтой апгрейда и красными линиями; вто
 
 - `[ ]` — не проверено; `[x]` — проверено; `[!]` — осознанное исключение с
   причиной (записать рядом).
-- `$ROOT` — корень репозитория (каталог с `max-rust/`, `assets/`,
+- `$ROOT` — корень репозитория (каталог с `max-brh/`, `assets/`,
   `max-original/`).
 
 ## 0. Предпосылки и данные
@@ -101,15 +101,15 @@ pips, дельтой апгрейда и красными линиями; вто
 
 - [ ] `git status --short` — рабочее дерево чистое (кроме `release/`, он в
       `.gitignore`).
-- [ ] Версия workspace `max-rust` = `1.0.0`:
+- [ ] Версия workspace `max-brh` = `1.0.0`:
 
-      grep -n 'version = "1.0.0"' max-rust/Cargo.toml
-      grep -rn 'version.workspace = true' max-rust/crates/*/Cargo.toml
+      grep -n 'version = "1.0.0"' max-brh/Cargo.toml
+      grep -rn 'version.workspace = true' max-brh/crates/*/Cargo.toml
 
   Ожидается: `[workspace.package] version = "1.0.0"`; все пять крейтов
   (`max_core`, `max_net`, `max_assets`, `max_render`, `max_app`) наследуют её и
   не переопределяют `version`.
-- [ ] `max-rust/Cargo.lock` обновлён (`cargo check` меняет версии локальных
+- [ ] `max-brh/Cargo.lock` обновлён (`cargo check` меняет версии локальных
       пакетов на 1.0.0); закоммичен вместе с релизом.
 - [ ] `CHANGELOG.md` содержит секцию `[1.0.0]` с датой и ограничениями.
 - [ ] `LICENSE` (MIT) на месте; ссылки на лицензию есть в `CHANGELOG.md` и
@@ -124,18 +124,18 @@ pips, дельтой апгрейда и красными линиями; вто
 # собирается из исходников через CMake, поэтому нужны dev-заголовки
 # X11/Wayland/ALSA/GL/KMSDRM/dbus/udev, а тестам — LD_LIBRARY_PATH на
 # target/debug (туда sdl3-sys кладёт libSDL3.so.0).
-docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-rust/target/debug && cargo check && cargo test'
+docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
+  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-brh/target/debug && cargo check && cargo test'
 
 # 2.2 Звук: WAV-декодер + rodio за feature sound (нужен libasound2-dev;
 # default-фичи GUI остаются включены)
-docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
-  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-rust/target/debug && cargo check --features sound && cargo test --features sound'
+docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
+  bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev >/dev/null && export LD_LIBRARY_PATH=/src/max-brh/target/debug && cargo check --features sound && cargo test --features sound'
 
 # 2.3 Headless-путь (--no-default-features): SDL не тянется ни при сборке, ни в
 # рантайме — так собираются build-windows.sh, QA и серверные артефакты; этот
 # прогон проверяет и cfg-ветки main.rs без feature sdl.
-docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm \
+docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm \
   bash -c 'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config >/dev/null && cargo test --no-default-features'
 
 # 2.4 Horizon + C++-адаптер
@@ -147,8 +147,8 @@ bash ci.sh
 
 # 2.6 QA-слои 2–3 вручную (то же, что стадия 3/3 ci.sh; подробности — max-brh-qa/scripts/README.md)
 #     примеры идут с --no-default-features: QA-драйверу окно не нужно;
-#     сценарии/эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-rust)
-docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
+#     сценарии/эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-brh)
+docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null
   rm -rf qa-out
@@ -228,9 +228,9 @@ docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c '
     средний кадр **6.76 µs**, max 5.21 мс, кадров дольше бюджета 60 Гц —
     **0**; `finish_turn` avg 58 µs, max 5.19 мс (24-й ход), на 120-м 9.4 µs.
   * `edge-cases.qa` — **PASS**, 125 кадров, 8 снимков, паник нет.
-  * Логи: `max-rust/qa-out/soak-100/log.txt`,
-    `max-rust/qa-out/soak-headless/soak.txt`,
-    `max-rust/qa-out/edge-cases/log.txt`.
+  * Логи: `max-brh/qa-out/soak-100/log.txt`,
+    `max-brh/qa-out/soak-headless/soak.txt`,
+    `max-brh/qa-out/edge-cases/log.txt`.
   Повторный прожиг перед тегом (после последних изменений кода): __________.
 
 ## 3. Живой smoke: 2 клиента × 10 ходов
@@ -407,13 +407,13 @@ bash release.sh --tag         # сборка + аннотированный те
 - [ ] `bash release.sh --dry-run` завершается 0 и печатает команду сборки,
       список файлов и путь `release/…`.
 - [ ] `bash release.sh` завершается 0; в `release/` есть каталог и `.tar.gz`.
-- [ ] В каталоге: `max-rust`, `run.sh`, `README.txt`, `CHANGELOG.md`, `LICENSE`,
+- [ ] В каталоге: `max-brh`, `run.sh`, `README.txt`, `CHANGELOG.md`, `LICENSE`,
       `SHA256SUMS` и `lib/` (если SDL3 не статический).
-- [ ] `ldd release/…/max-rust` с `LD_LIBRARY_PATH=release/…/lib` не содержит
+- [ ] `ldd release/…/max-brh` с `LD_LIBRARY_PATH=release/…/lib` не содержит
       `not found`; `libSDL3.so.0` лежит в `lib/` (или залинкован статически).
-- [ ] `release/…/max-rust --help` через `run.sh` запускается на чистом
+- [ ] `release/…/max-brh --help` через `run.sh` запускается на чистом
       Linux-хосте (или в `ubuntu:24.04` c `libasound2`) и печатает справку:
-      сырой `max-rust` требует `LD_LIBRARY_PATH=…/lib`, это делает `run.sh`.
+      сырой `max-brh` требует `LD_LIBRARY_PATH=…/lib`, это делает `run.sh`.
 - [ ] `release/…/run.sh --demo max-original/SAVE1.CAM --turns 1` печатает
       digest (`ticks=1 … units=312`), exit 0 — headless-путь живого бинаря.
 - [ ] `release/…/run.sh` (без флагов) открывает окно и играет клики (на хосте с
@@ -549,7 +549,7 @@ powershell -ExecutionPolicy Bypass -File build\scripts\build-windows-ui.ps1 -NoP
 `SDL3.dll`, `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`) и
 `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256`. Сборка идёт в
 `build/win-msvc-target/`, чтобы не смешиваться с Linux/Docker-артефактами
-`max-rust/target/`.
+`max-brh/target/`.
 
 > Примечание: с появлением default `sdl-from-source` скрипт и ручная команда
 > собирают с `--no-default-features` — иначе к `sdl-vcpkg` добавилась бы
@@ -700,7 +700,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 
 - [ ] `README.md` (корень): раздел про Rust-клиент ссылается на
       `docs/release-checklist.md`, `release.sh` и звук.
-- [ ] `max-rust/README.md`: версия 1.0.0, feature `sound`, ссылка на чек-лист.
+- [ ] `max-brh/README.md`: версия 1.0.0, feature `sound`, ссылка на чек-лист.
 - [ ] `CHANGELOG.md`: 1.0.0, список возможностей и ограничений, ссылка на
       `LICENSE`.
 - [ ] `docs/release-checklist.md` (этот файл) актуален: команды и пути
@@ -740,7 +740,7 @@ git push origin v1.0.0              # публикация тега (по реш
 - [ ] `release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256` сохранены
       (продукт `build/scripts/build-windows-ui.ps1`; в архиве `max-rust.exe` +
       `SDL3.dll`).
-- [ ] Логи гейтов: `max-rust/target/cargo-test.log` (если писали),
+- [ ] Логи гейтов: `max-brh/target/cargo-test.log` (если писали),
       `build/smoke-logs/*.log`, `build/smoke-logs/windows-wine-smoke.log`,
       скриншоты M4 — приложены к релизной записи.
 - [ ] Артефакты **не** закоммичены в git (`release/` в `.gitignore`).
@@ -774,7 +774,7 @@ bash release.sh                             # §5, артефакты
 
 | Гейт | Дата | Команда/стенд | Результат | Ссылка |
 |---|---|---|---|---|
-| Тесты max-rust | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-rust rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **622 теста, 0 failed**; `cargo check` — 0 ошибок и 0 предупреждений; SDL-сборка — 0 ошибок | `build/cargo-docker-mnet-final.log`, `build/cargo-docker-ef-sdl-final.log` |
+| Тесты max-brh | 2026-11-15 | `docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && cargo check && cargo test"`; плюс `cargo check -p max_app --features sdl-from-source` (полный X11/ALSA dev-набор) | **622 теста, 0 failed**; `cargo check` — 0 ошибок и 0 предупреждений; SDL-сборка — 0 ошибок | `build/cargo-docker-mnet-final.log`, `build/cargo-docker-ef-sdl-final.log` |
 | M-HS (hot-seat) | 2026-11-15 | та же команда Docker; `cargo test -p max_app --test hot_seat`; `cargo run -p max_app --example sp_frames -- ../max-original ../build`; `build\scripts\build-windows-ui.ps1` | 13 тестов hot-seat (2 и 4 человека, ИИ между людьми, окно `DialogMenu` 1:1, таймер до подтверждения, только свои юниты); 5 кадров; Windows UI exe 5 572 096 Б sha256 `7af62ac1…` | `build/hs-{players,turn,turn2,game,ai}.png`, `build/cargo-docker-hotseat-final.log`, `release/max_app-1.0.0-windows-x86_64-ui.zip` |
 | M-NET-доводки (ретрай + data_hash fallback) | 2026-11-15 | `docker run … rust:1.94.0-bookworm … cargo check && cargo test`; `MSYS_NO_PATHCONV=1 bash build/scripts/live-smoke.sh 10`; `build\scripts\build-windows-ui.ps1` | **622 теста, 0 failed** (+7: тайм-контролируемый ретрай, fallback MAX-only, отказ `Version` без fallback, варианты хэша, статус, backoff; UI Create→InSession); smoke 2×10 без `--handshake-patches`: `data_hash=dd24703e(64)`, `barrier_timeouts=0`, fallback подтверждён; Windows UI exe 5 540 864 Б sha256 `136ff774…`, zip `40d644ff…` | `build/cargo-docker-mnet-final.log`, `build/live-smoke-mnet-final.log`, `build/smoke-logs/a.log`/`b.log`, `build/win-ui-mnet-final.log` |
 | Тесты Horizon | | | | |
@@ -785,7 +785,7 @@ bash release.sh                             # §5, артефакты
 | Windows-бинарь (SDL3 + звук, хост) | 2026-11-15 | `powershell -File build\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-rust.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
 | Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max-rust.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
 | Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-rust.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
-| Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-rust.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-rust/tools/font_vectors/render.txt` |
+| Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-rust.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-brh/tools/font_vectors/render.txt` |
 | Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max-rust.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (576 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |
 | Сетевая партия 2×UI | 2026-11-15 | 2× `max-rust.exe --ui --turn-wait 45` (MSVC-сборка) + Horizon + C++ headless (`docker compose up -d --build`) | 6 ходов в lockstep, приказы `38` и чат `18` доходят до сервера и пира, `End Turn` → `06+52`, таймаутов/десинков 0 | `build/ui-alice.log`, `build/ui-bob.log`, `build/final-a.png` |

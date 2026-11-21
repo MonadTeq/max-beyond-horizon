@@ -15,7 +15,7 @@
 - [x] TC-1109: поиск данных игры от каталога exe (сейчас только от CWD).
   `assets::data_search_roots` — каталог `current_exe` и вверх до ближайшего
   `max-original`; `resolve_max_res`/`resolve_patches_res`/`resolve_color_pal`
-  используют общий порядок, тесты — `max-rust/crates/max_app/src/assets.rs`
+  используют общий порядок, тесты — `max-brh/crates/max_app/src/assets.rs`
   (`exe_dir_resolves_game_data_when_cwd_is_elsewhere`).
 - [ ] Согласование путей: `--data-dir/--assets-dir` единообразны во всех режимах и документации.
   Сделано частично: сообщение об ошибке `MAX.RES` подсказывает
@@ -25,7 +25,7 @@
 
 ### P2 — Производство и строительство (крупнейший геймплейный пробел)
 - [x] ProductionManager: очереди заводов, `SpawnNewUnits`, стоимости (Cargo/Upgrade-формулы).
-  `max-rust/crates/max_core/src/production.rs`: таблица
+  `max-brh/crates/max_core/src/production.rs`: таблица
   `max_builder_capability_list`, `turns_to_build`, `cost_per_turn`,
   `max_possible_build_rate` (порт `buildmenu.cpp:729`), `ProductionManager`
   (queue/commit/cancel/progress), `GameState::finish_turn` → ход производства
@@ -33,7 +33,7 @@
   Экономика: золото списывается ставкой `Cargo_GetRawConsumptionRate` за ход
   (материалы комплексов — TODO(P3)); нехватка золота — пауза, а не отмена.
 - [x] BuildMenu: заказ юнитов/зданий (UI 1:1, ресурсы `B_*`/иконки из max-assets).
-  `max-rust/crates/max_app/src/buildmenu.rs`: `FACBUILD`/`CONBUILD` + `BLD*`
+  `max-brh/crates/max_app/src/buildmenu.rs`: `FACBUILD`/`CONBUILD` + `BLD*`
   (фон 640×480, списки 483,60 / 337,60, кнопки по координатам C++), клавиша
   `B`, модальный ввод, заказ — `Command::Order` с `PayloadP4` (пакет 08).
 - [x] Исследования/апгрейды: ResearchMenu-факторы (float-формулы → build-time таблицы по DESIGN).
@@ -83,7 +83,7 @@
   (загрузка в сети запрещена и в оригинале).
 - Критерий: round-trip V70 байт-в-байт на 9 эталонных сейвах + сейв нашей партии грузится C++-портом (кросс-проверка).
   Сделано для **двух** эталонов, которые есть в репозитории
-  (`max-rust/crates/max_core/tests/data/save1_v70.cam`, `save2_v70.cam`):
+  (`max-brh/crates/max_core/tests/data/save1_v70.cam`, `save2_v70.cam`):
   `load → to_save` совпадает побайтово. Остальные 7 файлов `max-original/SAVE3..9`
   в репозитории отсутствуют (не добавлялись как фикстуры). Кросс-проверка
   «наш сейв грузит C++-порт» требует собранного `max-port` (Docker
@@ -185,7 +185,7 @@
   `upgrade-done.png`, `golden/research/research-done.png`; `ci.sh` сверяет
   три набора.
 - [x] Релиз: версия 1.1.0, CHANGELOG, чек-лист, артефакты (UI/headless Windows + Linux), тег v1.1.0.
-  `max-rust` workspace = **1.1.0** (Cargo.lock обновлён); `CHANGELOG.md`
+  `max-brh` workspace = **1.1.0** (Cargo.lock обновлён); `CHANGELOG.md`
   `[1.1.0] — 2026-11-16`; пересобраны
   `release/max_app-1.1.0-windows-x86_64-ui` (MSVC+vcpkg, SDL3+sound),
   `release/max_app-1.1.0-windows-x86_64` (mingw, headless, wine-smoke) и
@@ -258,7 +258,7 @@
   `UPGLFT/UPGRGT`, цены `UpgradeControl_CalculateCost` (целочисленный
   `max_core::research`), `Done` фиксирует `UnitValues` до высадки; продажа
   возвращает цену + `cargo/5`.
-- [x] C++-вектор-генератор: `max-rust/tools/cargo_vectors` (`main.cpp` +
+- [x] C++-вектор-генератор: `max-brh/tools/cargo_vectors` (`main.cpp` +
   `data.inc` от `tools/gen_cargo_data.py`), векторы `vectors.txt`; тесты
   `max_app/tests/cargo_vectors.rs` сверяют бит-в-бит 15 цен покупки, 93 цены
   списка, 7 наборов списка модернизации, строки и первые стоимости

@@ -53,11 +53,11 @@ if [ -n "$CPP_CLIENT_BLOCKER" ] && [ "${MIXED_REQUIRE_CPP:-0}" = "1" ]; then
 fi
 
 echo "== build: max_app + horizon_probe =="
-docker run --rm -v "$HOST_ROOT:/src" -w "$WS/max-rust" rust:1.94.0-bookworm bash -c \
+docker run --rm -v "$HOST_ROOT:/src" -w "$WS/max-brh" rust:1.94.0-bookworm bash -c \
   "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && \
    cargo build -q --locked --no-default-features -p max_app --example horizon_probe"
-CLIENT_BIN="$WS/max-rust/target/debug/max-rust"
-PROBE_BIN="$WS/max-rust/target/debug/examples/horizon_probe"
+CLIENT_BIN="$WS/max-brh/target/debug/max-brh"
+PROBE_BIN="$WS/max-brh/target/debug/examples/horizon_probe"
 
 echo "== horizon =="
 docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-horizon-server" \
