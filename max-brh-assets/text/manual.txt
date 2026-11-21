@@ -1,0 +1,4009 @@
+MECHANIZED ASSAULT & EXPLORATION
+                                      TM
+
+
+
+
+            BY GAMERS. FOR GAMERSTM
+                       Games Player Charter
+• Avoid playing when tired. Play for no more than one hour at a time.
+• Sit well away from the screen.
+• Play games in well-lit areas.
+• Reduce the brightness of the screen to darken the contrast.
+• Use as small a screen as possible. These tips will help you enjoy your
+  gameplaying more and maximise your performance.
+
+                           TABLE OF CONTENTS
+WELCOME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .2
+INHERIT THE GALAXY, FOR A PRICE . . . . . . . . . . . . . . . . . . . . . . . . .5
+CLAN ORIGINS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .16
+SYSTEM REQUIREMENTS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .18
+INSTALLATION & SETUP . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .18
+STARTING THE GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .24
+COMMAND BUTTONS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .25
+KEYBOARD REFERENCE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .30
+MAIN MENU . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .31
+NEW GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .32
+LOAD GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .33
+MULTIPLAYER GAMES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .34
+NETWORK GAMES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .35
+MODEM GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .37
+SERIAL GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .39
+CUSTOM GAME . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .40
+OPTIONS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .40
+PLANET SELECTION . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .43
+INITIAL PURCHASE (CARGO SELECTION SCREEN) . . . . . . . . . . . . . . . .44
+IN GAME HELP . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .46
+REPORTS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .47
+MAIN GAME SCREEN . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .49
+MAIN MAP DISPLAY WINDOWS . . . . . . . . . . . . . . . . . . . . . . . . . . .57
+GAME ELEMENTS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .58
+FACTORIES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .59
+SUPPORT STRUCTURE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .62
+COLONIST STRUCTURE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .76
+HUMAN UNITS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .78
+MOBILE UNITS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .79
+CONSTRUCTION VEHICLES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .79
+SUPPORT VEHICLES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .81
+COMBAT VEHICLES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .85
+UPGRADES . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .96
+TROUBLESHOOTING . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .97
+CREDITS . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .100
+     MECHANISED ASSAULT & EXPLORATION™ 1
+    WELCOME
+    Thank you for your purchase and welcome to the universe of M.A.X.
+    You are now about to start on a journey which, we hope, will be a
+    source of great fun for a long time.
+
+    In the future portrayed in M.A.X., military conflict and conquest is a
+    function performed by self-operating machines under the control
+    and direction of M.A.X. Commanders. To become a M.A.X.
+    Commander, a qualifying candidate undergoes a surgical procedure
+    wherein the subject's brain is extracted from his/her body. The
+    living brain is placed in a special life-support container, and the
+    container is placed in a special compartment of the highly-
+    sophisticated electronic command centre of a Mechanised Assault &
+    Exploration (M.A.X.) force. For further details of this particular
+    vision of the future, please be sure to read the Revelations later in
+    this manual. To command your own M.A.X. force, you too must
+    become a brain in a jar, just like the rest of us. Fortunately, a good
+    brain is all you need to succeed as a M.A.X. Commander -- no other
+    body parts are required!
+
+    The basic premise of M.A.X. can be defined as "tactical unit-level
+    mechanised combat and planetary conquest, based on limited
+    resource management and colonisation." If this definition sounds
+    like a mouthful, don't worry: it means you build and direct tanks,
+    planes, and other military units to destroy the forces of your
+    opponent(s), typically for the purpose of colonisation of a planet by
+    your side alone. "Sharing" and "compromise" are not popular
+    concepts in the M.A.X. universe.
+
+    If you are running Win95, installing M.A.X. should be as simple as
+    placing the CD in your CD-ROM drive. If needed, installation and set-
+    up sections of this manual provide step-by-step instructions for both
+    DOS and Windows.
+
+    After you successfully install M.A.X., please take a few minutes to
+    browse through the readme file for any last minute changes,
+    additional troubleshooting, and for any other information that may
+    be important. Simply type "readme" if you are running under DOS,
+    or click on the "Readme" icon under windows.
+
+
+
+
+2                                 M.A.X.™
+You can start M.A.X. by clicking on its icon if running under
+Windows. If you are running under DOS, switch to the MAX
+subdirectory, type "max," and press the ENTER key.
+
+If you hear no sound while the introduction is in progress, you might
+have a setup problem. Consult the Installation & Setup section of
+this manual to find out how you can run just the setup program
+again without going through the full installation.
+
+After the introduction, the main selection menu of M.A.X. appears on
+your screen, awaiting your selection. Note that each such screen in
+M.A.X. has a title for your convenience -- if you are looking at the
+main menu or any other selection screen, and you are unclear about
+what you see and what you should do, simply note the screen title
+and locate the appropriate section of the manual for reference.
+Also, please note that every screen in M.A.X. has a button with a "?"
+symbol. By clicking on this button you can switch to on-line help
+mode at any time. Your onscreen mouse cursor should become a
+question mark as your confirmation. You can now click on any part
+of the screen and related help text will appear on your screen.
+
+We highly recommend that all new players start their M.A.X.
+experience by going through the training missions first. You don't
+have to play them all, and you can always come back for more
+training later. But even for the most seasoned strategy game
+enthusiast, going through a few training missions first may make
+the initial learning phase go faster.
+
+We recognise there are great many people out in the world who
+enjoy the strategy genre in general. But when it comes to specifics,
+there is a great variety of preferences and needs. Some people
+enjoy real-time systems where everything seems to happen at once.
+Others prefer the less frantic pace of turn-based games where they
+have time to engage in deeper planning and analysis. Some people
+prefer games designed around short episodes that can each be
+completed in one session, while yet others enjoy epic undertakings
+that may take weeks to see to completion. Then of course there are
+those of us who like them all.
+
+This design is an attempt to accommodate many different tastes,
+
+
+
+
+   MECHANISED ASSAULT & EXPLORATION™ 3
+preferences, and experience levels, all in one package. Our single
+missions vary greatly both in challenge level and in length. There
+are some that may take a while to complete, but many of them are
+designed to present an interesting situation and a challenge that
+can be resolved within one session.
+
+For those people who enjoy the epic experience, we have designed
+the custom game which allows the player to set up new games that
+can be tailored to individual needs and preferences. In other
+words, among many other things, you can set a custom game to be
+as long or as short as you wish.
+
+For those real-time fans we came up with the simultaneous play
+mode which allows all players to play in real-time within each turn.
+This almost totally eliminates waiting for your opponent(s) to
+complete their turns. And for the more traditional strategy fan,
+standard turn-based play is still there.
+
+We hope we have been successful in our efforts to provide a strategy
+game that offers what you look for and enjoy. Be sure to fill and
+send in the registration form and please keep in mind that we
+always look forward to and value your feedback. If you have
+comments, please see elsewhere in the manual for all the
+information you will need to contact Interplay over the net or
+otherwise.
+
+Good luck M.A.X. Commander!
+
+Ali Atabek
+
+
+
+
+4                            M.A.X.™
+INHERIT THE GALAXY, FOR A PRICE
+THE DISCORDANT CONCORD
+
+There was Space, and Space was vast and incomprehensible. In
+the vastness of soundless Space there was no voice and no
+thought. The Starmaker saw this vastness and knew that it must be
+filled. He called forth many stars and more planets. But Space was
+vaster than the Starmaker knew. Stars were still separated by great
+gaps of Space. And even the Starmaker could only bless some of
+the planets with life.
+                               From the Concord Revelations—
+
+       Space is as close to infinite as any mind can comprehend.
+       The galaxy is quite a bit smaller, but “quite a bit” is a very
+       relative term. Half the stars in the galaxy have only lifeless
+       planets, if they have any at all. But life is common on a
+       variety of worlds.
+                               Secret Revelations—
+
+Upon some of those life-blessed planets there developed creatures
+with Intelligence. Eventually, these sought to fulfil the Starmaker’s
+hope by travelling to other stars. As they found other planets ready
+for the taking, they created great Empires, and became known as
+the Star Lords. These Star Lords met between the worlds with
+amiability and tolerance and each kept to the worlds that were
+beholden to him.
+                                From the Concord Revelations—
+
+       Intelligent life is quite a bit rarer. Intelligent species who
+       survived the transition to the stars initially found many
+       worlds to spread out into and exploit. When they contacted
+       each other, relations were amicable because there were
+       planets enough for all.
+                                Secret Revelations—
+
+But there came a time when the largess of the Starmaker was not
+enough. The peoples of the Star Lords cried out for more, but their
+planets were bereft of all the plenty that had been given them. The
+Star Lords looked about them and found other worlds, but they
+found other Star Lords also coveted those worlds.
+                               From the Concord Revelations—
+
+
+
+   MECHANISED ASSAULT & EXPLORATION™ 5
+           But over millennia, the interstellar powers depleted
+           the resources of their planets. No matter how well
+           they preserved their planets, and many cared little
+           for doing so, eventually they ran out of resources. Resources
+           could be taken from other planets, but now exploitable
+           planets were in much shorter supply. Frequently other races
+           had claims to the same planets.
+                                   Secret Revelations—
+
+    The Councils of the Star Lords became tumultuous. Star Lord fought
+    against Star Lord for the planets both sought. They called upon the
+    Lightning and the Flare and smote one another, both upon the
+    worlds they lusted for and their own worlds they fought, and great
+    was the slaughter among the peoples of the Star Lords.
+                                   From the Concord Revelations—
+
+           When two or more interstellar powers wanted the same
+           world, they fought for it. But space-borne weapons are too
+           indiscriminate and destructive.
+                                  Secret Revelations—
+
+    Star Lords themselves were slain in these wars, and the Council of
+    the Lords, in its wisdom, realised that this could not be allowed to
+    continue. The most puissant Lords banded together and brought
+    forth the Concord to bring peace to the Galaxy.
+                                   From the Concord Revelations—
+
+           After three races were utterly destroyed, the population of
+           the galaxy drew back in horror and formed the Concord.
+                                  Secret Revelations—
+
+    The Concord was formed to promulgate and perpetuate two
+    guiding principles:
+    1. No race may attempt to take a planet that is fully occupied by
+    another Concord member.
+    2. Disputed worlds may only be fought over on the surface of that
+    world, using appropriate forces. Space-borne weaponry cannot be
+    used on planets. Nuclear and biological weapons cannot be used
+    on planets.
+                                  From the Concord Revelations—
+
+
+
+
+6                                M.A.X.™
+       The Concord attained peace, or at least safety for the city
+       zen of the worlds of the Concord. Those Star Lords who did
+       not immediately join the Concord soon saw that two important
+       hidden provisos ensured their status.
+       1. Members of the Concord could do anything they wanted to
+       non-member worlds without anyone raising a complaint.
+       2. The Concord had no power to interfere with any of the
+       policies of a neighbour as long as it did not lead to all-out
+war.
+                               Secret Revelations—
+
+But the Star Lords found that they had made one error in accepting
+these rules. The citizens of the Concord were incapable of raising
+a hand against citizens of other Concord worlds. Warriors had to
+be found or no Star Lord would ever gain another world.
+                                The Concord Revelations—
+
+       The decadent citizens of the Concord worlds had no interest
+       in fighting face-to-face on a planet’s surface. So the
+       Concord powers had to find mercenaries.
+                              Secret Revelations—
+
+At first the Star Lords created metal warriors to fight for them, but
+even these creations needed a guiding hand, a warrior who could
+use them to the best advantage.
+                                The Concord Revelations—
+
+       Using the same technology that created the Master Pilots
+       who navigate their faster-than-light ships and the Master
+       Controllers who build their orbital factories and run their
+       shipyards, the Concord created M.A.X. Commanders to lead
+       mechanised forces instead of live troops.
+                              Secret Revelations—
+
+The Star Lords then looked among their people for those who
+would colonise the new worlds and bring back their riches. But
+they came to realise that their peoples were too vital to the tasks
+they already fulfiled. They must find others to colonise the new
+planets and repay this generosity with appropriate tribute.
+                               The Concord Revelations—
+
+       They also needed colonists for the new worlds and the
+       Concord citizens willing to colonise new worlds were even
+
+
+
+   MECHANISED ASSAULT & EXPLORATION™ 7
+           rarer than those willing to fight for them. The Concord needed
+           a more primitive race that would be willing to fight for
+           the privilege of living on a new world and then continue to
+           pay for it.
+                                    Secret Revelations—
+
+    The Star Lords of the Concord looked about them, seeking a people
+    who would be worthy of this largess. They sought throughout the
+    galaxy, among a myriad of worlds, seeking the one race who
+    could provide both warriors and colonists. At last, their
+    omniscient gaze fell upon Earth.
+                                   The Concord Revelations—
+
+           Then they started picking up radio transmissions from
+           Earth…
+                                  Secret Revelations—
+
+    From among their number they selected one who would go
+    amongst these worthy people and tell them of the honour and
+    glory that was to be theirs.
+                                 The Concord Revelations—
+
+           The Concord chose one of its members to deal with this
+           potential source of pioneers. They picked a member who
+           resembled the images found among the video broadcasts
+           they received and sent him to make the best possible deal
+           for the Concord. Given the Concord’s edge in technology and
+           numbers, it would probably be a very good deal.
+                                  Secret Revelations—
+
+    The Alien Enigma
+    As the Star Lords deliberated and sought, those upon the Earth
+    were reaping the harvest they had so diligently sown. They were
+    as children, fractious and intolerant. Each sought to gain
+    dominion over the others, and they had little regard for the planet
+    they quarrelled over. They breathed poison and drank venom, all
+    of their own making.
+                                   The Concord Revelations–
+
+           Early in the 21st century, the Earth was fractured into several
+           opposing camps. Despite numerous attempts at control,
+           nuclear arms had proliferated; the entire world feared that
+           some madman would push the button. In the meantime, the
+
+
+
+8                                M.A.X.™
+       warring camps spent insufficient money and effort to
+       ensure that their world would be worth fighting over.
+       Pollution and toxicity were the rules of the day.
+                              Secret Revelations—
+
+Onto this world in division their came a peacemaker. The chosen
+Star Lord made a stately procession through the Solar System and
+the warring tribes of the Earth took time from their quarrels to
+observe in awe.
+                               The Concord Revelations—
+
+       The Meteor Watch was the first to detect the Visitor. A
+       gigantic ship, obviously made from an asteroid, suddenly
+       appeared around the orbit of Mars, then progressed slowly
+       under power toward Earth.
+                              Secret Revelations—
+
+The warlords fumed and tried to destroy this threat to their
+sovereignty, but their efforts were for naught. They needs must
+listen as the Star Lord offered the bounty of the Concord to the
+peoples of the Earth.
+                                The Concord Revelations—
+
+       Long out of the range of any earth or orbit-bound missiles,
+       the Dealer in Worlds introduced himself. He offered
+       humanity the stars, for a price. He said that represented the
+       Concord, the organisation of space-faring people in the
+       Galaxy. The Concord needed warriors. Any political
+       organisation that supplied warriors to the Concord could
+       put colonists out among the stars.
+                              Secret Revelations—
+
+Some peoples, prideful in their place among the great of one
+planet, disdained the offer of the Concord. Their position of power
+on one planet was enough for them, they had no wish to be small
+among the stars.
+                               The Concord Revelations—
+
+       The Industrial world sat back to evaluate the offer. None
+       were eager to send their fighting men to fight wars for
+       aliens in order to obtain farmland.
+                               Secret Revelations—
+
+
+
+
+   MECHANISED ASSAULT & EXPLORATION™ 9
+ But the downtrodden and repressed of the world saw that the Star
+ Lords were their salvation. They clamoured for acceptance and the
+ Star Lord smiled upon them and offered his beneficence.
+                                The Concord Revelations—
+
+        But a thousand smaller powers, fringe organisations, and
+        special interests clamoured to take the alien up on his offer
+        Persecuted minorities in dozens of countries saw the
+        opportunity for land of their own and were delighted (and
+        usually somewhat surprised) to find that the alien was
+        willing to consider each of them a political organisation.
+        Religious minorities, tribes surrounded by more powerful
+        traditional enemies, and those to whom the promise of their
+        own land was something worth fighting for, all lined up to go.
+                                 Secret Revelations—
+
+ Eventually, even the mighty of the world saw that the people who
+ wished to flee the planet deserved their chance to do so, and
+ assisted the Star Lord in recruiting the disaffected amongst their
+ own people.
+                                The Concord Revelations—
+
+        Major powers, seeing the chance to defuse a hundred
+        powder kegs, supported the claimants and offered to help
+        them on their way. Many also coerced factions disinclined to
+        leave their Earthly roots to do so anyway.
+                                Secret Revelations—
+
+ With all of Earth accepting the largess, the Star Lord created huge
+ vessels to hold the displaced of Earth. Each migrating people were
+ given their own vessel and the immense armada left Earth to take
+ its precious cargo to the stars.
+                                 The Concord Revelations—
+
+        Sophisticated robots under the control of Star Lord Master
+        Controllers used the raw materials of the Asteroid Belt and
+        the Moon to build scores of gigantic colony ships in orbit
+        above the Earth. Each was sent out with its own band of
+        dissidents and seekers.
+                               Secret Revelations—
+
+
+
+
+10                            M.A.X.™
+THE BARGAIN
+
+When once the Ships of the Chosen embarked upon the seas of
+Space, there arose some who sought to warp and pervert the
+Contract that had been signed with the Space Lords. “Surely,” they
+said, “only those among us who have chosen the path of the
+warrior need fight for the worlds that have been allotted to us.
+We who lead and follow shall secure the planets after the warriors
+have conquered them.
+                              The Concord Revelations—
+
+       Only after the ships left Earth were the leaders of the
+       factions told the true requirements of their contract with
+       the Dealer. The factions had been given the impression that
+       they would be given planets to colonise if members of the
+       faction acted as mercenary warriors for the Concord.
+       Instead, to gain the planets they craved, the colonists had
+       to fight for them. Not just the warriors: all the colonists.
+                                The Secret Revelations—
+
+“Nay,” said the Star Lord. “To possess a world you must be fully
+committed to its conquest. When a Star Lord must dispute a world
+with another Lord, each shall choose a Ship from amongst these
+and those who reside in those ships shall fight for the glory of the
+Lord who has chosen them. Some shall lead the armies that
+conquer the world, others shall colonise the world even as the
+struggle continues to prove the claim to the world. The Ship whose
+people fight best for the world shall have dominion over that
+world, and shall increase the glory of their sponsor by tribute of
+resources, artifacts, and others signs of devotion.
+                               The Concord Revelations—
+
+       The human colonists were brought off Earth to be mercenary
+       colonists. On each world disputed by members of the
+       Concord, factions would be chosen by each disputant to
+       fight the mercenaries of the faction chosen by the other
+       disputant. The faction that won gained the right to populate
+       the world in the name of the alien race that sponsored
+       them. This meant that the alien sponsor gained title to the
+       planet and took a rent in the form of resources and
+       manufactured goods from the colonists.
+                              The Secret Revelations—
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 11
+ One dissenter asked, “Why should we fight and die for a planet for
+ which use we must pay a burdensome tax?” But when the full
+ glory of the Star Lords was revealed to him, he acquiesced and
+ was silent forevermore. No others had objections.
+                                The Concord Revelations—
+
+        One colony ship’s passengers refused to be “sharecroppers.”
+        for the Concord. That ship blew up quite spectacularly in
+        full view of the others and the Dealer asked if anyone else
+        had objections to the arrangement.
+                                Secret Revelations
+
+ As one, the Factions agreed. Then from among the people of the
+ Ships, the Star Lord selected those who would become M.A.X.
+ Commanders. To these leaders would be given the task of piloting
+ the colonists to their new lands and commanding the electronic
+ servitors who would defend the world and build a fit place for the
+ colonists to live.
+                                 The Concord Revelations—
+
+        After the rest agreed to the deal, the Dealer revealed the
+        final arrangement. Certain of the colonists were selected by
+        the aliens as M.A.X. Commanders. These were the leaders of
+        the colonisation efforts. Their duties included piloting a
+        colonisation ship at faster-than-light speed to the target
+        planet and then creating the colonisation force of robots
+        and establishing a beachhead the colonists could grow and
+        thrive on.
+                                Secret Revelations—
+
+ To protect these Chosen from among the Chosen from the rigors of
+ the journeys they must undertake, the new M.A.X. Commanders
+ were removed from the cares of the world and ensconced in
+ receptacles that would protect them and make them virtually
+ immortal, as onto the Star Lords themselves. In this way, the
+ M.A.X. Commanders were made equal with the most important
+ servants of the Star Lords.
+                               The Concord Revelations—
+
+        This power exacted a price. The waking human (or any other
+        intelligent species) mind cannot take the rigors of faster-
+        than-light travel. The prospective M.A.X. Commander must
+
+
+
+12                           M.A.X.™
+        have his brain removed from his body and put into a life-
+        support system. The colonists can travel to their new planet
+        in cold sleep, but the piloting must be done by a waking
+        mind. Over the centuries, the other races of the galaxy have
+        found that only by isolating that mind in the life support
+        system and putting a layer of interfaces (conveniently
+        human-shaped for human M.A.X. Commanders to allow for
+        maximum ease of control) between the brain and the
+        universe can piloting a faster-than-light ship be
+        accomplished without driving the pilots mad.
+                                Secret Revelations—
+
+COME THE REVOLUTION
+
+The human M.A.X. Commanders soon proved their superiority to
+those of all other races of the Concord. For centuries the humans
+have paid the price of blood for their glory and their land on a
+hundred planets. And still the Great Ships sail through space, each
+serving as a source of new colonists and M.A.X. Commanders for
+its faction.
+                                The Concord Revelations—
+
+        And so it was for centuries. Humans fought and died on
+        worlds so that their alien masters could enjoy the resources
+        of those worlds. The Colony Ships still plyed through space,
+        providing colonists for those worlds. Far slower than light,
+        they were now many light years from any habitable star.
+        Only the Dealer’s supply ships keep them going so that they
+        could continue to supply colonists and the occasional M.A.X.
+                Commander.
+                                Secret Revelations—
+
+As the centuries passed, those who sailed the Great Ships found
+that the creeds that had kept them apart seemed less and less
+important in the face of their shared experience. Yet animosities
+bound in their histories and in the conflicts on the disputed
+planets still kept them from any unity. The hundreds of factions
+became eight Clans, all mutually hostile, each with its own
+specialties that made it particularly potent in colonising and
+fighting for certain planets. The Great Ships shifted in their paths
+until all those with affiliations to a clan were in that clan’s flight
+of ships.
+                                The Concord Revelations—
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 13
+        Over the decades, many of the old differences between the
+        factions fell away. However, there are still many differences
+        and this has resulted in the formation of eight Clans, each
+        of which specialises in certain aspects of warfare,
+        production, and colonisation. Each is a bitter rival of the
+        other and has its own flight of the Colony Ships.
+                                The Secret Revelations—
+
+ And as the Clans grew together and apart at the same time,
+ similar shifts were happening to the M.A.X. Commanders. They
+ whose lives were constant struggle and service became separate
+ from the Clans who brought them into the world. As they proved
+ themselves adept in certain situations, they were chosen for
+ similar situations again, and assigned to a sponsored Clan
+ whether the Commander had any connection to the Clan or not.
+ Realising the great trust bestowed upon them and responding to
+ the great challenge of working with different troops for each
+ situation, M.A.X. Commanders became independent of Clan
+ affiliation.
+                                The Concord Revelations—
+
+        As these Clans grew in influence, the M.A.X. Commanders,
+        virtually immortal in their life support systems, began to
+        lose their affiliations to individual clans. They became
+        separated from their original groups and were selected by
+        the Dealer for their abilities in certain environments. A
+        M.A.X. Commander could find himself leading a
+        colonisation force from one of his original peoples’ hated
+        enemies, and opposing his own people. As they became
+        more and more removed from their memories of human
+        life, they became less and less likely to object to this
+        situation.
+                                 Secret Revelations—
+
+ The M.A.X. Commanders formed their own association, and
+ established the Circuit. New M.A.X. Commanders would be given
+ assignments with different clans for each of their early missions
+ so that they could learn the strengths and weaknesses of each
+ clan’s forces.
+                                The Concord Revelations—
+
+        Eventually, new M.A.X. Commanders, chosen from colonies
+        or the Ships when more were needed, were purposely
+
+
+14                            M.A.X.™
+        assigned to more than one Clan during their careers so that
+they could become familiar with all the specialties and foibles
+of each group.
+                              Secret Revelations—
+
+This acquaintanceship with all the Clans prompted some among the
+new M.A.X. Commanders to adopt the folly of believing that there
+might be room upon a new planet for more than one Star Lord
+Sponsor’s minion.
+                             The Concord Revelations–
+
+       For some of the newer M.A.X. Commanders, however, this
+       Circuit made them realise that all of them were humans,
+       equally deserving to live and enjoy the planets they lived
+       on. Why should they fight for alien Masters when they could
+       simply cooperate and live on a world amicably?
+                               Secret Revelations—
+
+Their folly was demonstrated to them.
+                             The Concord Revelations—
+
+       The Concord met the first such attempt with massive
+       overkill. When they were done the planet was a cinder. All
+       M.A.X. Commanders and Clans were informed that they
+       should learn a lesson from this and continue to maintain
+       the status quo. Most took the lesson to heart. Some realised
+       that no human would be safe in the galaxy until they could
+       call their fates their own. But only M.A.X. Commanders had
+       access to faster-than-light travel and then only when
+       assigned a mission. The Colony Ships and individual human
+       worlds were extremely vulnerable. For that matter, the
+       weapons available to the M.A.X. Commanders were little
+       better than those their ancestors had known on Earth. The
+       Concord space fleet had far more potent weapons. How
+       could anyone break the endless cycle of brokered battles?
+                                Secret Revelations—
+
+And now, with all the secrets of the Star Lords revealed to you, we
+welcome the new M.A.X. Commander to the ranks of his compatriots
+and await your acquisition of the glory that is no doubt rightfully
+yours.
+                              The Concord Revelations—
+
+To this situation you come, one of the latest of the M.A.X. Commanders.
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 15
+ CLAN ORIGINS
+ The original refugees taken from Earth came from over a thousand
+ factions. Each faction was given a ship, unless the faction was so
+ small that it had to be lumped in with another faction of similar
+ size (though not necessarily similar attitudes) Many of these
+ conglomerate factions resorted to open warfare within the great
+ ships to establish the leaders of their ship.
+
+ Over the generations, the various factions have found their
+ similarities and resolved their differences until eight Clans stand
+ out as conglomerates of factions. Some smaller factions are still
+ independent in name, though each is generally dependent on one
+ of the Clans.
+
+ The origins of the principal members of each clan may prove
+ instructive.
+
+ The Chosen
+ These were mainly religious refugees, each certain that his vision
+ of the True Way was the right one. Slowly, they have come together
+ and established a central credo that all can adhere to. This is quite
+ an achievement, as there are “fundamentalists” of the Christian,
+ Moslem, and Jewish religions amongst the ancestors of the current
+ Chosen.
+
+ Crimson Path
+ These are the last of the various Communist insurgencies. It is
+ thought that part of their name comes from the Shining Path
+ insurgency of Peru. Mutually dedicated to the liberation of the
+ people and collectivisation of all community effort, they were
+ among the first of the clans to form, showing a triumph of ideology
+ over ethnicity. Of course, most members would be hard put to tell
+ you today about the causes their ancestors believed in.
+
+ Von Griffin
+ An assemblage of most of the street-level fascists and Nazis of the
+ world. They lived in the shadows and specialised in atrocities. They
+ came together in their hatred of foreigners, even though most were
+ foreign to each other and, in several cases, one group on their
+ home turf had persecuted members of another group that had
+ immigrated to their turf on Earth.
+
+
+
+
+16                             M.A.X.™
+Ayer’s Hand
+To this Clan came all the prosperous who felt dispossessed by the
+entry of foreigners into their land. The name seems to come from
+an organisation of Australian landholders that felt dispossessed by
+the government-sponsored resurgence of aborigines in the early 21st
+century.
+
+Musashi
+These are the samurai, the independent, arrogantly noble
+dispossessed of a dozen countries whose governments ignored their
+nobility to pursue democratic or socialistic solutions. Despite the
+Japanese name, this Clan attracted membership from every nation
+that had possessed or wanted to possess a chivalric tradition. One
+can see a connection to their concentration on bigger and better
+armour.
+
+Sacred Eight
+Unlike the Chosen, the religious refugees of the Sacred Eight were
+mostly persecuted because of their difference to their neighbours
+(often members of what is now the Chosen) rather than their own
+arrogance in assuming a religious superiority. Frequently the meek
+among different religions found more common ground with those
+similarly discriminated against than with their arrogant co-
+religionists. Like the Chosen, the Sacred Eight are of many
+ethnicities and countries, united in their common wish for
+religious freedom, not dominance.
+
+Seven Knights
+The clan has much in common with Musashi, but felt it more
+imperative to maintain station and power than to live up to a code
+of honour. These were the nobility of place, not attitude. Their
+philosophy is to establish and maintain, not seek out danger and
+destroy it.
+
+Axis
+These were the businesses and establishments that sought to keep a
+status quo that was not in accord with the World Order. Mostly
+fascistic and autocratic, they are also pragmatists who realise that
+the way to dominance is not conquest but assimilation. They were
+established as a counterpoint to the burgeoning Crimson Path and
+have remained their bitter rivals ever since.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 17
+ M.A.X. SYSTEM REQUIREMENTS:
+ Requirements:
+ - 486/DX2-66
+ - IBM PC compatible 486-66 or faster
+ - 8 MB RAM
+ - DOS 5.0 or later
+ - Microsoft-compatible mouse 100%
+
+ Recommended:
+ - Pentium processor
+ - 16 MB RAM
+ - stereo 16-bit soundcard with General MIDI support
+
+ Supports:
+ - Sound cards: SoundBlaster™ Pro/16/AWE32/compatibles, Spectrum
+ Plus/16/Studio, Gravis Ultrasound/Max
+
+
+
+
+18                            M.A.X.™
+INSTALLATION & SETUP
+DOS Installation
+Place the M.A.X. CD in your CD-ROM drive and then switch to that
+drive and type "Install."
+
+Example:
+D:<ENTER> (replace D with the letter of your CD-ROM drive if other than D:)
+INSTALL <ENTER>
+
+The Installation program will then run, and display information on
+your system's hard drive(s) and available disk space. Use the arrow
+key to select the hard drive letter you wish to install M.A.X. to and
+press ENTER. Next you will be prompted as to which type of install
+you wish to perform. The available options are: Minimum Install,
+which installs only the basic required files to your hard drive,
+leaving the rest of the files on the CD. Use the Minimum Installation
+option only if you are very short of available hard drive space, as
+the game will run slower if it must constantly access your CD drive.
+The next option is Medium Install, which will copy most of the
+program to your hard drive. Finally, the Full Installation will copy
+all necessary files to your hard drive. We recommend using the full
+installation whenever possible, to provide the fastest gameplay
+possible on your system. Once you have selected the destination
+hard drive and the type of installation to perform, the Installation
+Program will copy M.A.X. to your hard drive. Once completed, the
+sound card setup program will begin.
+
+Uninstall:
+Use this option to remove M.A.X. from your computer. Although use
+of this option is not recommended, it has been included as a
+failsafe measure. The only acceptable use for this option
+discovered to date is for the deletion of an illegal copy of the
+game.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 19
+WINDOWS 95 INSTALLATION
+The M.A.X. CD is Windows 95-compatible and includes the AutoPlay
+Feature. To install M.A.X. from Windows 95, simply insert the CD
+into your CD-ROM drive. After a moment, the M.A.X. Installation
+Menu will open automatically (Windows 95 Auto-Run), and the
+installation wizard will guide you through installation and setup.
+
+Install M.A.X.:
+Click this button to install M.A.X. on your computer. The install
+wizard will guide you through the entire installation process.
+
+View Readme:
+This Option allows you to view the Readme.txt file for additional
+information that may not have been available when this manual
+was written. Be sure to check the Readme.txt file if you experience
+any technical problems installing or running M.A.X.
+
+Register M.A.X.:
+Clicking this button allows you to Register your copy of M.A.X. with
+Interplay Productions, and makes you eligible for various special
+offers and advance information of upcoming games. Your
+registration also allows us to serve you better and be more
+responsive to your needs. The registration process should take only
+about five minutes, and, when completed, your registration form
+can be automatically sent via modem, or printed and mailed to us
+at the address printed on the form. Optionally, you may cancel out
+of the registration process and proceed directly with the game.
+Canceling the registration process three times will abort the
+registration, and you will no longer be prompted to register. You
+will then miss out on all the special offers.
+
+If, at some later date, you start feeling bad for not registering your
+copy of M.A.X. with us, you can always invoke the registration program
+by typing EREGCARD <ENTER> at the DOS prompt. Of course, registering
+your copy of M.A.X. presupposes that you purchased the game legally,
+and didn't download it from some pirate board or snag it from a
+friend. If you did receive this game illegally, please turn yourself
+over to the proper authorities at your earliest convenience.
+
+
+
+
+20                            M.A.X.™
+SOUND CARD SETUP
+When the Installation program has finished, the Sound Card Setup
+Program will start automatically, allowing you to configure the
+game for the Sound Card installed in your system. You must set up
+your Sound Hardware before running M.A.X. Failure to do so, or
+incorrect Sound Card settings may result in M.A.X. being unable to
+run properly, or even crash. To change soundcard configuration at
+any time, you can also type SETUP <ENTER> from the DOS prompt to
+restart the setup program. The Sound Card Setup Program will
+display the following options:
+
+Auto Detect Sound Card:
+Begins the automatic sound card detection program.
+
+Change Digital Sound Card:
+Allows manual entry of Sound Card Hardware and settings.
+
+Test Digital Sound:
+Tests your sound card settings to verify the proper values have been
+selected.
+
+View Readme:
+This Option allows you to view the Readme.txt file for additional
+information that may not have been available at the time this
+manual was written. Be sure to check the Readme.txt file if you
+experience any technical problems installing or running M.A.X.
+
+Exit:
+Prompts to save the current Sound Card Settings and then exits the
+Sound Card setup program and returns to the operating system (DOS
+or Windows). Be sure to use the "Test Digital Sound" option to be
+certain your Sound Hardware is set up properly.
+
+Use the arrow keys to move up and down through the list of sound
+card setup options, and the Enter key to select an option.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 21
+ AUTO DETECT SOUND CARD
+ Select this option to attempt Automatic Detection of your sound
+ card. In most cases this will successfully find your sound card and
+ its correct parameters. Auto Detection may not work properly on
+ some systems, and on rare occasions it may cause your system to
+ lock up. If this occurs, simply restart your computer and run the
+ Setup Program again, this time choosing "Change Digital Sound
+ Card" to manually set your sound card parameters.
+
+ After successfully Auto Detecting your sound card, your sound card
+ information will be displayed in the window on the right of the
+ screen. Check this information carefully, and, if it all looks
+ correct, select Test Digital Sound.
+
+
+
+
+22                            M.A.X.™
+CHANGE DIGITAL SOUND CARD
+Select this option if you are having problems with the Automatic
+Detection, or if you know the type of sound card installed in your
+system, as well as its Port Address, IRQ, and DMA. Port Address, IRQ
+and DMA information can usually be found in the AUTOEXEC.BAT file
+located in the root directory of your C: drive. This information
+usually appears similar to the following statement:
+
+SET BLASTER    A220 I5 D1
+where:         A= Port Address
+               I= IRQ
+               D= DMA
+
+Make a note of these values as they appear in your Autoexec.bat file
+and use them to input into the proper fields in the setup program.
+
+Once you have correctly entered the proper values for your sound
+card, your sound card information will be displayed in the window
+on the right of the screen. Check this information carefully, and if
+it all looks correct, select "TEST Digital Sound" to ensure the current
+settings are valid.
+
+
+
+TEST DIGITAL SOUND
+After you have either Auto Detected your sound card or manually
+inserted the information, select TEST DIGITAL SOUND to ensure that
+M.A.X. is set up properly to play sound on your system. The Sound
+Card Setup Program will play a short digital sample (sound effect)
+through the left channel, right channel, and centre (left and right
+speakers simultaneously). If you hear the test sounds and
+everything seems to be working properly, select EXIT from the
+menu. If you don't hear the test sound, check to be sure all sound
+card information is correct, and that your speakers are connected,
+receiving power, and the volume level is turned up.
+
+If you hear the test sounds but the left and right channels are
+backwards on your system, choose the "Reverse Channels" option to
+swap the left and right outputs.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 23
+ EXIT
+ Once you have auto-detected or manually entered your sound card
+ information, and have tested the digital sound settings to ensure
+ they are correct, select EXIT from the Setup Menu, and select SAVE
+ Changes to write your sound card information to the M.A.X.
+ configuration file.
+
+ STARTING THE GAME
+ Once you have completed Installation and Sound Card Setup you will
+ be placed back at the DOS prompt. To start M.A.X., change to the
+ M.A.X. directory on your hard drive and type MAX <ENTER>. The
+ game will then display an Electronic Registration program that will
+ allow you to register your copy of M.A.X.with Interplay Productions.
+ After completing or bypassing the registration, the game will begin
+ by displaying the Interplay Logo, the MAX Introductory Movie and
+ Logo, and then place you at the Main Game Menu.
+
+ Note: The Electronic Registration will only prompt you to register
+ the first three (3) times you start M.A.X., and will then be
+ automatically bypassed. If you wish to register at a later date,
+ simply type EREGCARD <ENTER> from the DOS prompt while in your
+ M.A.X. directory to start the registration program.
+
+ QUICKSTART INSTRUCTIONS
+ Welcome to M.A.X. (M.A.X. Mechanised Assault and Exploration). In
+ M.A.X. you play a M.A.X. Commander, a robotic unit with a human
+ brain. Attached directly to the computer in this way, you command
+ a great variety of fighting vehicles, construction equipment,
+ factories and other structures which you use to colonise new
+ worlds.
+
+ M.A.X. can be played in standard Turn-Based mode or in Concurrent
+ mode, in which players take their turns simultaneously as in a real-
+ time game.
+
+ The Game Clock works somewhat like a chess timer. Two timer
+ values are of significance: the Turn Timer, and the End Turn Timer.
+ As each new turn is started, the Turn Timer resets and starts to
+
+
+
+24                             M.A.X.™
+count-down to zero. The default Turn time is 180 seconds, or three
+minutes. This is the time available for each turn. When the timer
+gets to zero, the turn ends automatically, and the next turn starts.
+You may click the End Turn button when you are finished with each
+turn to reset the timer and start a new turn.
+
+After clicking End Turn, the End Turn Timer starts counting down to
+allow your opponent(s) the opportunity to finish their turns. The
+default End Turn time is 45 seconds.
+
+Players that have clicked End Turn may still move and perform all
+other game functions until all players have finished their turn.
+Once the last player has ended their turn, the timer clock resets,
+and a new turn is begun.
+
+Each player selects a Clan to fight for. Each Clan provides the
+player with bonus upgrades to various types of units. Choose your
+Clan carefully to maximise the effectiveness of your strategy.
+
+HELP:
+There are two forms of help in M.A.X.: "Right Click" Help, and
+"Question Mark" help.
+
+Right Click Help:
+To obtain Help on any unit or structure, simply touch it with the
+mouse cursor and click the right mouse button to open the Stat
+Screen. Basic Unit information and unit attributes will be displayed.
+
+Question Mark Help: On most menu screens you'll find a button
+labelled with a question mark. Click on this button to activate help
+-- the mouse cursor will change into a question mark. Now
+click on any item on the screen and a help message will appear,
+explaining the basic function of the item.
+
+COMMAND BUTTONS
+Every unit and structure in M.A.X. has its own set of command
+buttons. To access the command buttons on an unselected unit,
+click on the unit once to select it, then click on it again to open its
+command buttons. To open the command buttons on a structure,
+simply click once on the structure.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 25
+ Mining Stations:
+ Mining Stations are capable of extracting a certain amount of Raw
+ Materials, Fuel and Gold from underground deposits each turn. The
+ exact amount mined per turn, depends on the amount of resources
+ at the mining site, which can be determined by using a surveyor
+ unit. Buildings must be connected to mining stations in order to
+ use these resources, and the mining station must have a power
+ generator attached in order to operate. If no storage is available
+ and the Mining Station is full. The Mining Station provides storage
+ for 25 raw materials, no provision is made for storage of Fuel or
+ Gold within mining stations, materials mined of this type will be
+ lost.
+
+ Power Plants:
+ Power Plants burn Fuel to create power for your factories, mining
+ stations, and some other types of structures such as refineries and
+ eco-spheres. There are two types of power plants: Power Generators
+ and Power Stations. Power Generators use two (2) fuel per turn and
+ can power one mining station, factory, or other structure. Power
+ Stations use eight (8) fuel per turn, and can power six (6)
+ structures. Always plan your complex carefully to avoid building
+ delays due to power shortages.
+
+ Connectors:
+ Connectors are built by Engineers and are used to attach structures
+ together so they can receive Power and/or Materials. Any
+ unconnected building cannot receive power, and so will not be
+ operational until it is connected. In addition, stationary guns
+ cannot be reloaded unless connected to a source of Materials.
+ Always plan your complex carefully to avoid building delays due to
+ lack of connections.
+
+ Note: Mobile ground and sea units can travel underneath
+ connectors.
+
+ Surveyors:
+ Surveyors are used to scan the planet surface for deposits of Raw
+ materials, fuel and gold, in preparation for the construction of
+ additional mining stations. When the surveyor locates a deposit, it
+ marks the area with a colour-coded disk displaying the type and
+ amount of resources at that site. The amount indicates the vails of
+ Raw Material, Fuel or Gold that could be mined each turn.
+
+
+
+
+26                            M.A.X.™
+Colour Codes
+Grey Marker                    Material Reserve
+Green Marker                   Fuel Reserve
+Gold Marker                    Gold Reserve
+Empty Circle                   No Reserves
+
+Constructors:
+Constructors are mobile builders that use Materials in order to
+create all the large structures in M.A.X. Constructors are built by
+Heavy Vehicle Plains. Constructors can build:
+
+Mining Stations                Power Stations
+Light Vehicle Plant            Heavy Vehicle Plant
+Air Units Plant                Shipyard
+Gold Refinery                  Depot
+Hangar                         Dock
+Habitat                        Research Centre
+Eco-Sphere                     Training Hall
+Barracks
+
+To operate, first position the constructor at the desired location,
+then click on a constructor to select it, and then click again to
+open the Constructor's Command Buttons. Next, click on the
+"BUILD" button. The Constructor Build Window will then open,
+allowing you to select the structure you wish to build. After
+making your selection, the Build Window will close, bringing you
+back to the Main Game Screen. Your Constructor will now display a
+square of caution tape around it, which you can move into the
+position you wish the new structure to be built. When the tape is
+properly placed, click inside the tape and building will begin.
+
+Note:
+Transfer Materials from your Mining Station or Materials Storage
+Building to refill your Constructor.
+
+Engineers:
+Engineers are mobile builders that use Materials to construct
+smaller structures. Engineers are built by Light Vehicle Plants.
+Engineers can build:
+
+Material Storage               Fuel Storage
+Gold Vault                     Power Generator
+Connector                      Radar
+Gun Turret                     Anti-Air
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 27
+ Artillery                      Missile Launcher
+ Landing Pad                    Bridge
+ Water Platform                 Concrete Block
+ Road
+
+ To operate an Engineer, move the Engineer into the position you
+ wish to start building, and then click on it to open the Engineers
+ Command Buttons. Next, click on the "BUILD" button. The Engineer
+ Build Window will then open, allowing you to select the structure
+ you wish to build. After making your selection, the Build Window
+ will close, bringing you back to the Main Game Screen. The
+ Engineer will automatically start building the selected structure.
+ Transfer Materials from your Mining Station or Materials Storage
+ Building to refill your Engineer.
+
+ Light Vehicle Plant:
+ Light Vehicle Plants are built by Constructors.
+
+ Light Vehicle Plants build:
+
+ Scouts              Surveyors
+ Engineers           Repair Units
+ Supply Trucks       Fuel Truck
+ Gold Truck          Mobile Anti-Air
+ Mine Layers         Bulldozers
+ Armoured Personnel Carriers
+
+ To operate a Light Vehicle Plant, click on it to bring up the
+ command buttons. Then, click on the "BUILD" button to open the
+ Build Screen.
+
+ Heavy Vehicle Plant :
+ Heavy Vehicle Plants are built by Constructors.
+
+ Heavy Vehicle Plants build:
+
+ Constructors           Mobile Scanners
+ Tanks                  Assault Guns
+ Rocket Launcher        Missile Crawlers
+
+ To operate a Heavy Vehicle Plant, click on it to bring up the
+ command buttons. Then, click on the "BUILD" button to open the
+ Build Screen.
+
+
+
+28                             M.A.X.™
+Air Units Plants:
+Air Units Plants are built by Constructors. Air Units Plants build:
+Air Plants can build:
+
+Fighters               Ground Attack Planes
+Air Transports         AWAC
+
+To operate an Air Units Plant, click on it to bring up the command
+buttons. Then, click on the "BUILD" button to open the Build Screen.
+
+Shipyard:
+Shipyards are built by constructors.
+
+Shipyards build:
+
+Escorts                Corvette’s
+Gunboats               Missile Cruisers
+Submarines             Supply Boats
+Sea Mine Layer
+
+Depot:
+Depots are built by constructors and are used to repair and upgrade
+your mobile units. To use the depot, click on it to open its
+command buttons, then click on the "LOAD" button. Next, click on
+the units you wish to enter the depot. Each unit selected will then
+drive into depot. Once all the desired units have been loaded, click
+on the Depot again, and then click on the "ACTIVATE" button. The
+Depot window will open, displaying all the units currently being
+held within the Depot. On this screen you can choose to upgrade or
+repair your units. Once your units are ready, click on the
+"Activate" button to remove the selected units from the Depot.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 29
+ KEYBOARD REFERENCE
+ Following is the full keyboard command reference list for M.A.X.
+
+
+ e     End Turn
+       Find the current Selected Unit. Currently selected
+ f     unit will be centred on screen.
+
+ -,+   Zoom In, Out
+
+
+ g     Turns on Grid Display
+
+
+ K
+ F1    Centres on Tagged Unit
+
+
+ WUXV Scrolls the map
+ Al    Opens the Load Game Menu
+
+ As    Opens the Save Game Menu
+
+
+ Ax    Exits the Game to the Main Menu
+                                Saves the current
+ AY,AY,AY,AY window position
+       F5             F6    F7        F8
+
+
+
+ Y,Y,Y,Y
+ F5   F6    F7   F8
+                                Jumps to a previously-
+                                saved window position
+
+ ?     Initiates HELP mode. The cursor changes
+       to a question mark, clicking on screen
+                  items will display help text.
+
+
+ Ac Saves a screen shot of the game in PCX format.
+
+ Z,E,G Cancels               demo.
+                                      the self-running
+
+
+ S  Shift-click to select units for group command
+
+
+
+
+30                               M.A.X.™
+MAIN MENU
+
+
+
+
+Following is a listing of the options available from the M.A.X. Main
+Menu:
+
+New Game:
+Opens the new game menu with options for starting a training
+mission, scenario, campaign, or custom game.
+Load Game:
+Loads a previously-saved single player game.
+Multiplayer:
+Opens the Multiplayer Menu, containing options for
+Network, Modem, Serial and "Hot Seat" Games:
+Setup:
+Opens the Setup Menu, allowing you to change various global
+options.
+Intro:
+Plays the M.A.X. Intro Movie.
+Credits:
+Displays the names of the people who brought you M.A.X.
+Exit:
+Exits the game to DOS or Windows.
+ NEW GAME
+
+
+
+
+ Selecting New Game from the Main Menu opens a menu of various
+ options:
+
+ Training Missions:
+ The completion of all Training Missions is recommended for all
+ beginning M.A.X. Commanders.
+ Stand Alone Missions:
+ The "stand-alone" missions included with M.A.X. enable you to work
+ missions for various clans without making the long time
+ commitment of a campaign.
+ Custom Game:
+ Selecting Custom Game allows you to set up a single player game
+ against one or more computer opponents. Includes variety of user-
+ defined preferences, such as planet selection and the number and
+ Skill Level of the computer opponent(s).
+ Campaign Game:
+ Opens the Campaign Menu to start a new or previously-saved
+ Campaign Game.
+ Tips:
+ The Tips button opens the 'Tips Screen' where you can obtain a
+ variety of information related to M.A.X.
+ Cancel:
+ Selecting Cancel closes the New Game Menu and returns you to
+ M.A.X. Main Menu.
+
+
+
+
+32                           M.A.X.™
+LOAD GAME
+
+
+
+
+Selecting Load Game from the M.A.X. Main Menu opens the Load
+Game Menu, from which you can select any previously-saved Single
+Player game against computer opponent(s). There are several ways
+to load saved games in M.A.X., depending on the type of game you
+wish to load. Saved Multiplayer Games have their own Save/Load
+Menus, which can be accessed by clicking the Multiplayer button on
+the M.A.X. Main Menu and then selecting the type of Multiplayer
+game, either Network, Modem or Serial Game, that you wish to load.
+Hot-Seat Games also have their own Load/Save Menu, which can also
+be accessed on the Multiplayer Menu.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 33
+ MULTIPLAYER GAMES
+
+
+
+
+ M.A.X. may be played by two, three or four humans via a local area
+ network using IPX protocol, or by two humans via modem or serial
+ connection. Specific instructions for starting multiplayer games is
+ detailed below.
+
+ Network
+ Network play requires an IPX driver to be installed on each system
+ before M.A.X. is started. If your system does not currently use IPX,
+ look for a file named IPX.COM in the software supplied with your
+ network card. To install the IPX driver from DOS, simply type IPX
+ while you are within the directory that contains the IPX.COM file.
+
+
+
+
+34                             M.A.X.™
+HOST NETWORK GAME
+
+
+
+
+Selecting this option opens the Host Menu, allowing you to
+customise various game options and choose your human opponents.
+This screen contains the following items:
+
+Player Name:
+Simply click in this window and then type in the name you wish to
+use for this game.
+
+Clan Button:
+To the right of the player name field is the Clan button, which
+displays the currently selected Clan. Click the Clan button to open
+the Clan Menu if you wish to select a different Clan.
+
+Status Window:
+The Status window displays the current game setup information,
+including the name of the planet selected, the starting credits,
+Turn Timer values, and Play Mode.
+
+Player Buttons:
+When you first open the Host Window, your brain will appear in
+the first of the player buttons, signifying the team colour you will
+be playing. You may optionally switch to a different team colour if
+desired by clicking on one of the other teams.
+
+Map Window:
+The Map Window displays the current world that will be used for
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 35
+ this game. To select a different world, click the “Maps" button.
+ The Planet Selection Menu will then open and allow you to select a
+ different world. After your selection is made, you will be returned
+ to the Host Menu, and the newly-selected planet will now be
+ displayed.
+
+ Load Game:
+ To load a saved network game, click on the “Load” Button. The
+ Network Load Game Screen will then open, and allow you to select
+ the game you wish to continue. Note that your opponent must have
+ the save game file on his machine.
+
+
+
+ JOIN NETWORK GAME
+
+
+
+
+ To Join a Network game, click on the Join button on the Multiplayer
+ Menu. In the status window, any Network games that are awaiting
+ players will be displayed. Click on the Network Game that you wish
+ to join; the network connection will be made, and you will be
+ placed in the first open team slot. The Status window will then
+ display the game options that have been set up, and the planet that
+ was selected by the host will be displayed in the Map window. At
+ this point, you may change your Clan affiliation, and review all of
+ the setup options the host has made. Use the Chat bar to
+ communicate with the host if desired. When you are satisfied with
+ all the game options, click the “Ready” button. This will signal the
+ Host by the appearance of a “Start” Button on his screen. When the
+ Host clicks START, the game will commence.
+
+
+36                            M.A.X.™
+MODEM GAME
+
+
+
+
+Modem connection is done over telephone lines between two
+computers with Hayes-compatible modems. After selecting Modem
+game from the Multiplayer menu, the Modem Game window will
+appear, displaying various options which must be configured for
+your particular machine before gameplay is initiated.
+
+Comm Port:
+Clicking the Comm Port button will display a list of Comm Ports in
+the status window. Check your existing modem software to
+determine the proper setting, and then click on the appropriate
+selection. The comm port selection made in this window must
+accurately represent the settings on your modem, or the connection
+will not be successful, and your system may crash.
+
+Baud Rate:
+The Baud Rate option allows you to set the speed at which the two
+modems will communicate with each other. Initially, enter the
+highest baud rate that your modem is capable of using. If
+problems occur, such as failure to make a connection or
+disconnection of the modems during gameplay, you may try
+reducing the baud rate to a slower speed.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 37
+ Interrupt:
+ The Interrupt setting is based on your comm port setting, and must
+ match the settings on your modem. Check your existing modem
+ software or documentation for the proper setting for this field. An
+ incorrect setting may cause your system to crash.
+
+ Init String:
+ The Init String is a command you type in to initialise your modem
+ to ready it for use. The default init string, ATX, performs the
+ function of resetting your modem to its default values, and should
+ work with all Hayes compatible modems. If required, you may
+ change this string to reflect any special properties of your modem.
+ Check your modem documentation before making changes to the
+ init string, or connection may fail.
+
+ Answer String:
+ The Answer String is a command which is sent to your modem to
+ initiate the answering of an incoming call. The default of ATSO
+ should work with any Hayes-compatible modem but, if required,
+ this field may be changed to reflect any special requirements of
+ your particular modem. Check your modem documentation before
+ changing this field.
+
+ Dial Prefix:
+ This field displays the modem command to initiate the dialling
+ sequence.
+
+ Phone Number:
+ Enter the telephone number of your opponent in this field, then
+ click the 'Dial' Button.
+
+ Dial:
+ Dials the phone number inputted. The Status window will display
+ the connection results. Once connection is made you may set up
+ the game play options, map and Clan selection.
+
+ Answer:
+ The status window will display "Ring" when an outside call is
+ received to your modem. Simply click the Answer button to make
+ the connection.
+
+ Cancel:
+ Returns you to the Multiplayer Menu
+
+
+
+38                            M.A.X.™
+SERIAL GAME
+
+
+
+
+Serial or Null Modem connection is accomplished by connecting two
+computers with an RS-232 cable, which is available from most
+computer retailers. Once the cable is attached to the two
+computers, one player should select “Host” the other player “Join.”
+At this point, the Host/Join Menu will appear, and players can
+proceed in the same manner as the start-up of a Network Game
+
+HOT-SEAT GAME
+A Hot-Seat Game is one in which two or more human players take
+turns on the same computer. After clicking Hot-Seat Game, the Hot
+Seat Menu will appear, and each player may then select a team to
+play for and a Clan affiliation. From this point, gameplay
+proceeds as in a regular game.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 39
+OPTIONS
+
+
+
+
+Computer Opponent:
+This option allows you to set the difficulty level of the game by
+specifying the intelligence of the computer opponent. The options
+are:
+
+Clueless:      A very easy opponent with no advanced strategies
+               and a 25% building penalty all mining and
+               construction for this opponent will take 25% longer
+               to complete.
+
+Apprentice:    A basic opponent with some advanced tactics and
+               no building penalties.
+
+Average:       A fairly clever opponent with some advanced
+               strategies and nastier tactics.
+
+Expert:        The smartest opponent available.
+
+Master:        The smartest opponent available, plus a 25%
+               increase in production and mining
+
+God:           The smartest opponent, plus a 50% increase in
+               production and mining.
+
+Starting Credit:
+This option allows you to set the amount of credits (gold) available
+to purchase units and/or upgrades before landing on the planet,
+and applies to all players in the game. Starting Credit ranges from
+0 to 250 credits.
+
+Resource Levels:
+The Resource Levels option allows you to set the amount and
+distribution of the various resources (Raw Material, Fuel and Gold)
+that will be available during the game. The available options are
+Poor, Medium, and Rich for each resource. A setting of Poor will
+limit the total amount of that resource in any one location, and
+deposits will be spaced farther apart on the map. A setting of
+Medium will increase the total amount of that resource, and
+locations will be spaced closer together. The Rich setting will place
+the maximum amount of resources in locations that are very close
+together.
+
+Victory Condition:
+Two Victory Conditions are available during Custom Games, and are
+based either on reaching a certain goal of points or upon the
+number of turns played. When playing for a set number of points,
+the first player who reaches the goal is designated the winner.
+When playing based on the number of turns, the player with the
+highest number of points when the turn limit is reached wins the
+game. Points are accumulated each turn by every operating Eco-
+Sphere. Stand-Alone Missions and Campaign Games may have other
+Victory Conditions, which will be explained in the briefing of each
+mission.
+
+Play Mode:
+M.A.X. can be played as a standard Turn-Based game or in
+Simultaneous Mode. When the game is set to Turn-Based, each
+player takes his turn independently of the other player, and each
+player must wait while his opponent(s) take their turns. However,
+in Simultaneous Mode, all players take their turns at the same time
+as in a real-time game. Players are still confined to actions and
+movements that are allowed during a turn, but within that turn the
+game functions as a real-time game.
+
+Turn Timers:
+The Turn Timer option allows you to set both the length of each turn as
+well as the length of the End Turn Timer.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 41
+ Done:
+ Saves changes and closes the Options Menu.
+
+ Cancel:
+ Cancels any changes made and returns you to the main menu.
+
+ CUSTOM GAME
+
+
+
+
+ Opponent Selection: The New Game Setup Menu displays four rows,
+ each in a different colour, to designate the four teams possible.
+ Each Team has three main columns of buttons in which to set the
+ active players for the game. The first column signifies a Human
+ Player, and displays a brain when one of the buttons is clicked. The
+ next column will designate a computer player; the buttons will
+ display a circuit board when checked. The third column designated
+ No Player for that team.
+
+ Clan Selection: The large buttons alongside each team are used to
+ set the Clan that you will represent in this game. To change your
+ Clan, click on the Clan button for your Team. The Clan Menu will
+ then open, displaying icons for each Clan. Clicking on any of these
+ buttons will display information about that particular Clan. Each
+ Clan provides different upgrades and benefits, and Clan Selection
+ can be an important part of a successful strategy.
+
+ Clan selection is kept secret from other players, and so you may not
+ see or change the Clan of a computer player at this time. However,
+ because each team’s Clan Logo appears on every Mining Station that
+ is constructed, this information can be obtained later in the game.
+
+42                            M.A.X.™
+PLANET SELECTION
+
+
+
+
+After setting the options in the New Game Setup Menu, the Planet
+Selection Menu will open and allow you to choose the planet you
+wish to use for this mission. There are four planet types offered:
+lush tropical Green Worlds, frozen Snow Worlds, barren Desert
+Worlds, and rocky Crater Worlds. Each world type has six planets to
+choose from.
+
+The Planet Selection Menu displays a picture of the type of planet in
+the upper left of the screen. Clicking on the arrow buttons under
+this picture will cycle through the different planet types.
+
+The six maps covering most of the screen area are the different
+planets associated with this planet type. To select a map, simply
+click on it. The map will become highlighted, indicating is has
+been selected. When you have finished planet selection, click the
+"Done" button to proceed to the next phase of the game, Cargo and
+Upgrade Selection.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 43
+INITIAL PURCHASE (CARGO SELECTION SCREEN)
+
+
+
+
+The Cargo Selection Screen opens before your forces land on a planet
+– this is your opportunity to buy vehicles to add to the landing craft
+and/or make unit upgrades. The large picture window in the upper
+left of the screen displays the currently-selected unit. A brief text
+description is also provided, and may be toggled on or off by
+clicking the "Description" Button.
+
+Directly underneath the picture window is displayed a list of
+statistics representing that unit’s current attributes. To the right of
+the list are arrow buttons to increase (pointing to the right) or
+decrease (pointing to the left) a particular attribute. A column
+labelled "Cost" is displayed alongside the arrow buttons; this, of
+course, displays the amount of gold required to purchase that
+particular upgrade. To purchase an upgrade, click on the
+appropriate arrow key next to the attribute you wish to increase.
+That attribute will then increase to the next level, the appropriate
+amount of gold will be removed from your reserve, and the cost of
+the next upgrade will then be displayed. An upgrade performed
+affects your entire inventory of the particular type of unit – not only
+during the purchase phase, but also the units built during the game.
+
+The window in the top middle portion of the screen is the Purchase
+Window, which displays any additional units you purchase in
+addition to the three which are always provided: a constructor, an
+engineer, and a surveyor. Arrow keys directly below this window
+allow you to scroll through this list, and the delete button allows
+
+
+44                             M.A.X.™
+you to eliminate that unit from your landing party and get back full
+credits. You may not delete the three provided units.
+
+The window at the upper right of the screen is the "Available"
+window. In this list are all the units which may be purchased at
+the start of the game. Arrow buttons under this list enable you to
+scroll this window.
+
+At the middle of the screen are two gauges, one of gold, the other
+of raw materials. Gold is used to purchase or upgrade units. Raw
+materials can be stocked aboard certain vehicles (called “Cargo”)
+to allow them to construct buildings or perform other functions,
+such as laying mines and repairing, after landing on the planet.
+Use the two up/down buttons, to add raw materials to units with
+cargo bays, such as constructors and engineers (directly below the
+“Cargo” Gauge.)
+
+
+Toward the bottom right of the screen is a toggle switch labelled
+"Buy Units” and “Upgrades." These buttons control which vehicles
+are displayed in the "Available" list. When set to "Buy Units," only
+the units which can be purchased at this point of the game are
+included. Clicking this switch to "Upgrades" will display every unit
+in the list, and will activate the five "filter buttons." The filter
+buttons display a particular type of unit, and may be turned on or off
+to facilitate the locating of particular units. The filter buttons will
+turn on or off the display of Land Vehicles, Air Units, Sea Units, and
+Structures. The fifth filter button, labelled TNT, will modify the
+display list to include only those units which are units capable of
+firing weaponry. Initially, all filter buttons will be active, and so all
+units will appear in the list; you may click them at your leisure in
+order to reduce the list to show only those units you're interested in.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 45
+IN-GAME HELP
+There are two types of Help systems in M.A.X.: help buttons, and
+“right-click” help.
+
+[?] Help buttons:
+Special help buttons [?], called "Question Buttons," are provided on
+most screens in the game and can be used to get information about
+the function of any button, window, or control. To use, click the
+question button. Your mouse cursor will change into a question
+mark. Now move the cursor over the area of the screen you wish to
+obtain information about, and click the left mouse button. You may
+also use the [?] key on your keyboard to activate the [?] help mode.
+
+Right-click help:
+Right-click help is specialised for use directly on the units and
+structures in the game, both initially to gain an understanding of
+your own units. However, it can also can be especially helpful in
+gaining information about your enemies' technology and the unit
+attributes being upgraded.
+
+To use right-click help, simply move the mouse cursor over the unit
+or structure you wish to get information on and click the right
+mouse button. An information screen will then be displayed,
+showing a picture of the selected unit, a brief unit description, and
+the units current technology level for a variety of attributes.
+
+Each attribute may be upgraded by the refining of gold. Whenever
+an attribute has been increased by the purchase of an upgrade, a
+small blue bar will be displayed on the statistics display for that
+unit, separating the base, or initial starting level, with the amount
+that has been upgraded.
+
+
+
+
+46                            M.A.X.™
+REPORTS
+
+Clicking on the Reports button to open the Report Menu. When it
+first opens, the Unit Report will be displayed. You may select a
+different report by clicking on one of the buttons on the upper right
+of your screen. Available reports are:
+
+
+Units:
+The Units report provides detailed information about all your units
+and structures. The column on the left of the screen displays a small
+picture of the unit, followed by the unit’s name. The middle column
+displays the units statistics, including information on movement,
+ammo, and cargo, as applicable. The next column displays the
+units current position on the map using an x,y coordinate system.
+The units status is displayed in the last column, and shows the units
+current orders.
+
+
+Casualties:
+The Casualty Report displays a listing off each teams destroyed
+units, organised into columns by team colour.
+
+
+Score:
+The Score Report presents a graph of each teams point totals over a
+period of the last 50 turns. Each team is represented on the graph in
+the appropriate team colour. The Vertical axis of the graph
+represents Turns, the horizontal bar represents points. At the bottom
+of the graph, two numbers are displayed. The number on the left
+displays the current turn. A gray vertical bar is drawn at this point
+to mark the number of points on the graph. The number on the right
+displays a projection of 10 turns into the future. Looking up the
+graph, you can determine the projected point totals for the various
+teams. When the victory condition for that game is neared, a gray
+horizontal line will appear on the graph to mark the goal.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 47
+Messages:
+The Message report saves the last 50 game and/or chat messages that
+have been displayed in the game, so you may easily go back and
+review them.
+
+
+Reports Filters
+
+On the right side of the screen are a number of ‘Filter Buttons’ which
+can be used to limit the reports displays to only the specified units.
+There are two types of filter buttons provided, Include Filters, and
+Limit filters.
+
+
+The include filters control what types of units to display in the
+report. The available options are:
+
+        Air Units
+        Land Units
+        Sea Units
+        Stationary Units
+
+The Limit filters break down the display further, by limiting the
+report display to only the specific units you wish to see. The
+available options are:
+
+        Production
+        Combat Units
+        Damaged Units
+        Stealthy Units
+
+When you first enter the reports, all Include filter buttons are active,
+and all units will be displayed. To narrow down the list, click on
+the appropriate filter buttons. For example, if you wish to see only
+Air Units that are damaged, click the filter buttons to deselect all
+but Air Units, and then click the Limit - Damaged Units button. The
+report will then display all Air Units that have been damaged.
+
+
+
+
+48                             M.A.X.™
+MAIN GAME SCREEN
+
+
+
+
+Files Button:
+Clicking on the Files button opens the Load/Save Menu and allows
+you to either save the game in progress or load a previously saved
+game.
+
+
+Preference Button:
+Clicking the Preference button opens a menu of various game
+options, each of which will be discussed separately below:
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 49
+ Music/Sound Effects Sliders:
+ Use the Music and Sound Effect Sliders to adjust the volume to a
+ comfortable level for your system.
+
+
+ Reverse Channels: Clicking the Reverse Channels checkbox will
+ reverse the sound output to your speakers so that, in effect, the left
+ channel becomes the right and vice versa. Use this option if the
+ sound effects seem to be coming from the wrong speaker.
+
+
+ AutoSave:
+ The Auto Save option allows you to select the frequency at which
+ games are automatically saved during play. The default auto save is
+ 1, meaning the game will be saved every turn. Auto-saved games are
+ always saved in the number 10 slot of the Save Menu.
+
+
+ IPX Socket:
+ If your computer is connected to a network, this field will display
+ the current IPX socket that the game will use to communicate over
+ the network.
+
+
+ Animate Effects: The Animate Effects button is used to stop or start
+ various game animations. On slower systems, game speed may be
+ drastically improved by turning the animation effects off.
+
+
+ Quick Scroll:
+ Quick Scroll adjusts the speed at which the map will move when you
+ are scrolling. Experiment with both speeds, and choose the one you
+ feel most comfortable using.
+
+
+ Follow Unit: When clicked, this feature will cause the map display
+ to scroll automatically to follow the selected unit’s movement.
+
+
+ Click-To-Scroll:
+ This governs the way map scrolling is initiated. When clicked,
+ Click-To-Scroll requires the left mouse button to be clicked and held
+
+
+
+50                             M.A.X.™
+during scrolling. When off, the default, the map will scroll
+automatically when the cursor is brought to the edge of the screen.
+
+
+Fast Unit Moves:
+A unit’s movement in M.A.X. can be displayed in two ways. When
+Fast Unit Moves is selected, the unit will move much more quickly,
+but in a more unrealistic way.
+
+
+Player Name:
+Clicking in this field allows you to change your player name at any
+time during the game.
+
+Turn Timer:
+The Turn Timer Display shows the current length, in seconds, for
+each turn. This option can be adjusted in the New Game Setup
+Screen, under "Options: Turn Timers."
+
+
+End Turn Timer:
+This regulates how much time you are given to wrap up your turn
+after your opponent has ended turn. For example, if the turn timer is
+set to three minutes and the end turn timer is set to one minute, you
+have three minutes for your turn until someone ends their turn, in
+which case the timer switches to one minute.
+
+Victory Limit:
+The Victory Limit shows the number of turns or points required to
+win. This option must initially be set in the New Game Setup Screen,
+under "Options: Victory Conditions."
+
+
+Coordinate Display:
+At the bottom of the Map Window a small LCD displays the map
+coordinates currently under the cursor. The coordinate system is based
+on a standard x,y grid, with coordinate 0,0 at the top left of the map.
+X-coordinate measures from left to right and Y-coordinates from top to
+bottom. The coordinates system can be better understood by toggling
+the Grid display button.
+
+
+End Turn Button:
+The end turn button is used to end the current turn when you have
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 51
+ finished issuing commands. Depending on the play mode, the timer
+ settings, and the type of opponent, clicking End Turn will do one of
+ several things:
+ If you are playing in “Turn-Based” mode, clicking End Turn will give
+ control over to the other player. You then must wait for your
+ opponent(s) to finish their turn(s). This is the normal system for
+ most turn based games. If you are playing in “Simultaneous”
+ mode, all players take their turns at the same time. In a battle
+ between Two opponents, when one player clicks the End Turn
+ button, the turn timer resets to the END Turn time (default 45
+ seconds.) The other player must then complete his/her turn within
+ the remaining time. With more than two players, the End Turn Timer
+ does not start until only one player is left that has not clicked the
+ End Turn Button.
+
+
+ Turn Counter:
+ The Turn Counter Display shows the number of the Current Turn.
+
+
+
+
+ Unit ID Window: The Unit ID window displays the currently selected
+ unit, along with a variety of useful information. Different units may
+ display different types of information, as detailed below:
+
+
+ Name -- MK:
+ In the upper lefthand corner of the Unit ID window, the name of the
+ currently selected unit is displayed. The colour in which the name is
+ displayed will be the same colour as the team colour for that player.
+ You may click on this field and then type in a new name for the unit
+ if you prefer. Next to the unit name is the MK1 (Mark 1) Number.
+ Initially all units are Mark I technology, but may be increased
+ through the purchasing of upgrades or through research.
+
+
+ Hits:
+ The total number of Hits the vehicle has is displayed, with any hits
+ lost “grayed out.”
+
+
+
+
+52                             M.A.X.™
+Cargo:
+Some units like the Constructor, Engineer, and Storage buildings
+have a cargo bay to hold resources such as Materials, Fuel or Gold.
+Resources are indicated by two numbers, such as 20/60. The first
+number indicates the amount of resource presently contained in
+that unit. The second number indicates the total amount of that
+resource available to the complex units. An example of this is a
+complex that has five storage units, each with a capacity of 50
+materials. In this case, if all storage was full, the display might
+read 50/250, indicating that the selected storage unit is holding 50
+material, with a total of 250 Material available to the complex. (This
+example neglects the fact that Mining Stations each may hold up to
+25 materials.)
+
+
+Speed:
+Displays the movement points allowed for that vehicle, and become
+“greyed out” as they are used.
+
+
+Power:
+The Display for Power generators and Power Stations is similar to
+Cargo Display, displaying the amount of Power produced by the
+selected generator, next to the Total production within the complex.
+Thus a display of 1/5 means that the selected generator is producing
+one unit of power per turn, with a total of 5 power available to the
+complex.
+
+
+Ammo:
+The Ammo display shows the Amount of Ammunition contained in
+the unit. When a unit runs out of ammunition, it must be reloaded
+by loading the unit into a Depot, Hangar, or Shipyard as appropriate.
+
+
+Shots:
+The Shots display shows the number of shots that can be fired per
+turn. Most units cannot move and fire in the same turn, and so the
+amount of shots per turn will be reduced as the unit moves. If a
+unit is capable of two shots per turn, and moves a little way, it may
+still take one shot. If it were to move a bit further, it would lose the
+second shot and have to wait until the next turn to fire. Some units,
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 53
+ such as the Scout, Fighter, and Ground Attack Plane, are always able
+ to move and fire during the same turn, even if all of their
+ movement points are used up.
+
+
+ Centre Button:
+ Clicking the Centre button will centre the currently selected unit on the
+ screen.
+
+
+ Lock Button
+ The lock button is used to display several enemy unit’s range and/or
+ scan at the same time, and is used in conjunction with the Range and
+ Scan buttons. To use, click the Lock button, and then click on the
+ enemy units whose range or scan circles you wish to see. Each enemy
+ unit selected on will then display their range/scan circles. To deselect
+ a unit, simply click on it again. To turn off the enemy range/scan
+ display, click the Lock button again. Note: Some units have very large
+ scan circles, and you may need to zoom out to view them.
+
+
+ [?] Question Mark Help Button:
+ Click on this button to activate help. Your cursor will change into a
+ question mark. Now click on any onscreen item to receive help
+ information.
+
+
+ Prev - Next - Done Buttons:
+ These buttons may be used to cycle through your units; clicking
+ Prev selects the previous unit you looked at, the Next displays the
+ next unit. Clicking the Done button tells the selected unit that no
+ more orders will be given to it, and it will proceed with any
+ outstanding order.
+
+
+ Reports Button:
+ Clicking the Reports button will open a panel of buttons for each of
+ the various report functions in M.A.X.
+
+
+
+
+54                              M.A.X.™
+Chat Button (multiplayer only): During a multiplayer game, you may
+send messages to all your opponent(s) by clicking the Chat button
+and then typing in your message in the Chat window that opens.
+
+
+
+Zoom:
+The zoom buttons adjusts the resolution of the Main Map Display
+window. There are five levels of zoom, ranging from a very close-up
+view to a view zoomed out to display the entire map within the
+display window.
+
+Display Buttons:
+Each of the Display Buttons are toggles which activate a visual
+display of some kind on the Map Display Window.
+
+
+Survey:
+When selected, the Survey toggle will display all known resource
+information that has been gained from your surveyors. This toggle
+is especially useful in guiding your constructor to the proper
+location to begin construction of a new mining station.
+
+
+Status:
+The Status button displays a unit’s Movement and/or Shots status by
+placing icons at the bottom of each mobile unit. When the display is
+turned on, any unit with available movement points will display a
+small green arrow. Units that have a Shot available will display a small
+explosive “shell”. Units with no movement or shots available will not
+display any status icon.
+
+
+
+Colours:
+The Colours button will place a coloured box around each unit to
+make it easier to determine your units from the enemies. The
+colours will match the team colours of each player. This option is
+especially useful when playing in the higher zoom levels, where the
+normal unit colours can be hard to see.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 55
+ Hits:
+ When the Hits button is active a small bar graph will appear above
+ each unit, showing if the unit has taken any hits from enemy fire.
+ The graph will be green if the unit has not taken a substantial
+ number of hits. As the unit takes more hits, the graph will change
+ to Yellow, indicating the unit has been slightly damaged, and
+ change to red if the unit has taken severe damage.
+
+
+ Ammo:
+ When the Ammo display is selected, each unit that contains ammo
+ will display a small bar graph indicating the percent age of ammo
+ remaining. units may be reloaded with a supply truck, or by loading
+ the unit into a depot, dock or hangar.
+
+
+ Range:
+ When the Range display is activated, any unit that is capable of
+ firing will display a red ring outlining the unit’s effective firing range.
+
+
+ Scan:
+ The Scan display shows the selected unit’s scan range, or how far
+ that unit can see.
+
+
+ Names:
+ The Names button, when selected will display the name of each unit
+ and stractive on the map.
+
+
+
+
+ MiniMap:
+ The Mini-Map displays can display the entire map within its
+ boundary, or zoomed to detail a specific location. Movement orders
+ may be given on the Mini-Map, by first selecting the unit you wish to
+ move and then right-clicking the spot on the Mini-Map to which you
+ wish the unit to move.
+
+
+
+
+56                               M.A.X.™
+2x button:
+Zooms the Mini-Map
+
+
+TNT button:
+When selected, only units with weapons will be displayed on the
+mini-map. Construction equipment and other non-military units
+will not be displayed.
+
+MAIN MAP DISPLAY WINDOW
+The Main Map Display Window is where most of the game takes
+place.
+
+The window has seven levels of zoom which can be adjusted by
+using the Zoom Bar on the control panel, or by hitting the - or + key
+to lower or raise the zoom level. In all but the lowest zoom level,
+where the entire map is displayed, the map may be scrolled by
+moving the mouse cursor to the edge of the map in the direction you
+wish to scroll. Alternatively, the Arrow keys on your keyboard will
+provide the same function. You may instantly jump to any location
+on the map by left clicking the appropriate spot on the MiniMap.
+
+To select a Unit, simply left-click on it. A highlighted box will be
+displayed, indicating that the unit is now selected as the active
+unit. Moving the cursor, you will notice it change to a green “Go”
+Cursor. Left-clicking will order the unit to begin driving to that
+location. (Alternately, right-clicking on the mini-map will order the
+selected unit to drive to that location.)
+
+Once a unit is selected, clicking on the unit again will open the Unit
+Command Buttons. Depending on the unit, different command
+buttons will appear, relating to that unit’s various functions.
+
+Setting Locations:
+From time to time, you may wish to save a particular screen
+location so you may quickly and easily get back to that location
+without an undue amount of scrolling. To save a location, hold the
+ALT key and then hit F5, F6, F7 or F8. You may then hit the
+corresponding F key (without holding ALT) to pop the screen to the
+saved position.
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 57
+ Cursor Displays:
+ As you play M.A.X., the cursor will change periodically to display the
+ functions that will be performed if the mouse is left-clicked.
+
+ •The green “GO” cursor indicates that the selected unit will begin
+ driving to that location if the left-mouse button is clicked.
+ •The red “Targeting” cursor will appear when you have a fighting
+ unit selected, and you bring the cursor over an enemy unit that is
+ within your units firing range.
+ •The yellow “Targeting” cursor will appear when the enemy is not
+ within your unit’s firing range; it signifies that your unit will move
+ until it is within range, and then fire.
+
+
+
+ GAME ELEMENTS
+
+ Surveying:
+ As in real life, nothing can be accomplished in M.A.X. without raw
+ materials with which to raise structures and build vehicles. Each
+ player can use a surveyor to search the land and locate the local
+ deposits of raw materials, fuel, and gold. It is then up to the player
+ to plan how to best retrieve and utilise these natural resources.
+
+ Mining:
+ Once surveying has pinpointed a location rich in raw materials, fuel,
+ and/or gold, move a constructor to the area to build a mining
+ station. Mining stations bring these resources to the surface and
+ render them down into usable form, as well as ammunition and
+ repairs. Raw materials are used to build new units and structures.
+ Fuel is used to support power plants. Gold, once refined, is used to
+ purchase upgrades for your units. Mining stations and storage units
+ can TRANSFER materials to other units, such as constructors and
+ engineers. Each mining station can mine the resources on the four
+ squares upon which it is located.
+
+ Make sure you provide storage structures for your products.
+ Buildings must be connected to a mine to utilise its products --
+ therefore, it is often wiser to search a little longer for a good spot
+ than to settle for a below-average one. Long games with large
+ complexes require several mining stations to bring in enough
+ resources each turn to operate smoothly.
+
+
+
+
+58                              M.A.X.™
+Scouting:
+Scouts are fast, can travel long distances, and have a large scan
+range, and so are very useful in finding enemy units and
+installations. Although they are lightly armoured and cannot take
+many hits, their ability to move and shoot can make them formidable
+attack units in their own right. Upgrading your scouts, scan range
+and firepower can be a very effective strategy for early detection and
+even elimination of the enemy in the early parts of a mission.
+
+
+
+FACTORIES
+
+Factories include such structures as the Light Vehicle Plant, Heavy
+Vehicle Plant, Air Units Plant and Sea Units Plant. Each kind of
+factory differs in the types of units it produces, but all factories are
+similar in their basic operational features:
+
+• All factories consume 1 unit of power and 3 units of raw materials
+during each turn in which they are building.
+
+• All factories contain a "build queue," so any number of vehicles
+can be built in any order desired, one at a time.
+
+• Each factory builds units based on the software specifications for
+each unit. Upgrades to individual units are accomplished by means
+of software upgrades purchased by refining gold reserves.
+
+
+
+
+                                                                           59
+ LIGHT VEHICLE PLANT
+
+
+ Armour: 8
+ Hits: 56
+ Scan 3
+ Cost: 20
+ Turns to build: 10
+
+
+
+ Light Vehicle Plants build a variety of important light support
+ vehicles essential to the game, and are usually one of the first
+ factory types completed upon landing on a new planet. Light
+ Vehicle Plants can build Scouts, Surveyors, Engineers, Repair Units,
+ Supply Trucks, Fuel Trucks, Gold Trucks, Mobile Anti-Air, Mine Layers,
+ Bulldozers, and Armoured Personnel Carriers (APCs).
+
+
+ HEAVY VEHICLE PLANT
+
+
+
+ Armour: 8
+ Hits: 56
+ Scan 3
+ Cost: 40
+ Turns to build: 20
+
+
+ Heavy Vehicle Plants build support vehicles well as all the heavy,
+ land-based military units: Constructors, Scanners, Tanks, Assault
+ Guns, Rocket Launchers, and Missile Crawlers.
+
+
+
+
+60                             M.A.X.™
+AIR UNITS PLANT
+
+
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 40
+Turns to build: 20
+
+
+
+
+Air Units Plants construct all the flying units in M.A.X.: Fighters,
+Ground Attack Planes, Air Transport, and AWACs.
+
+
+
+SHIPYARD
+
+
+
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 32
+Turns to build: 16
+
+
+
+Shipyards build the sea units in M.A.X.: escorts, Corvettes, Gunboats,
+Submarines, Sea Transports, Missile Cruisers, Sea-Mine Layers, and
+Cargo Ships.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 61
+ SUPPORT STRUCTURES
+ MINING STATIONS
+
+
+
+ Armour: 8
+ Hits: 56
+ Scan: 3
+ Cost: 20
+ Turns to build: 10
+
+
+
+
+ Mining Stations are large, self-contained structures capable of
+ mining underground resources of available Raw materials, fuel and
+ gold. Raw Materials are used for many purposes, such as
+ construction, ammunition and repairs. Fuel is used by power plants
+ and mined Gold can be later be refined and used for the purchase of
+ unit upgrades.
+
+ Mining Stations can only be placed in locations in which sufficient
+ underground resources exist. Location of resources is accomplished
+ with the Surveyor unit, which scans any area it is moved into and
+ places markers displaying the type and amount of any resource
+ found, ranging from 0 to 16 units available per turn. Buildings must
+ be connected to a mine to utilise its products – therefore, it is often
+ wiser to search a little longer for a good spot, than to settle for a
+ below-average one. Long games with large complexes require
+ several mining stations to bring in enough resources each turn to
+ operate smoothly.
+
+ Each Mining Station has a built-in Storage Unit that will hold up to 25
+ Raw Materials. No provision is made to store Fuel or Gold within
+ mining stations, but must have Fuel and/or Gold Storage buildings
+ connected. Any resource mined without adequate storage is lost
+ each turn.
+ Allocation: Mining stations are capable of mining a maximum of 16
+
+
+
+62                             M.A.X.™
+units of resources each turn. If placed in an location where the
+combined total of available materials is less than 16, the mining
+station will be limited in its production. When a new mining
+station is placed at a location, it automatically adjusts the ratio of
+materials it mines to conform to the needs of a complex. If, for
+example, a new factory is built and more fuel is needed, the
+mining station will automatically increase the ratio of Fuel
+production. In this way, the process of micro-managing your
+complexes resources is kept to a minimum.
+
+If desired, you may override the automatic system and specify the
+ratio of Materials/Fuel/Gold by clicking on a mining station to
+activate its command buttons, and then clicking 'Allocate.' The
+complex Allocation Screen will open, allowing you to increase or
+decrease the mining of the various resources. Note that changes
+made in this screen reflect production values throughout the entire
+complex – that is, there are not individual allocation screens for
+each individual mining station.
+
+
+
+MATERIALS STORAGE UNIT
+
+
+Cargo: 50
+Armour: 8
+Hits: 14
+Scan: 3
+Cost: 4
+
+
+
+The Materials Storage Unit is a large concrete bunker that can hold
+up to 50 units of surplus Raw Materials. Materials within a storage
+unit will be automatically used as needed by any connected factory.
+Materials may be also be transferred from Storage into certain
+vehicles like constructors, engineers, and Supply Trucks, by
+clicking once on the Storage Unit to select it, and then clicking
+again to open the Storage Units Command Buttons and clicking
+"Transfer."
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 63
+Note:
+The unit does not have to be adjusted to the Material Storage Unit.
+The receiving unit can be anywhere as long as it is adjusted to any
+structure that is ultimately connected to the storage unit.
+
+
+
+FUEL STORAGE UNIT
+
+
+Cargo: 50
+Armour: 8
+Hits: 14
+Scan: 3
+Cost: 4
+
+
+
+
+The Fuel Storage Unit holds up to 50 units of surplus fuel and will
+automatically allow any power plant to draw from this reserve as
+needed. Although Power Plants are the only units in M.A.X. that
+require fuel, a shortage of fuel can cripple your complex. It is often
+a good idea to build Fuel Storage Units early in the game to build up
+a fuel reserve for later use.
+
+
+
+
+64                            M.A.X.™
+GOLD STORAGE UNIT
+
+
+
+Cargo: 50
+Armour: 8
+Hits: 14
+Scan: 3
+Cost: 4
+
+
+
+The Gold Storage Unit holds up to 50 units of unrefined gold. Gold is
+added to storage automatically as it is mined, and will be removed
+automatically at the rate of five units per turn by any operating Gold
+Refinery. For every five units of gold refined, five credits are added
+to your account balance, which can then be used for purchasing
+upgrades to your units.
+
+
+
+POWER GENERATORS
+
+
+Output: 1 Unit of
+Power
+Needs: 2 Fuel each
+Turn
+Armour: 8
+Hits: 14
+Scan: 3
+Cost: 8
+
+The small size and quick construction of Power Generators make
+them a good choice towards the beginning of a mission. Each Power
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 65
+generator takes four turns to build, and, when complete, will supply
+all the power requirements for a mining station or factory for a cost
+of two units of fuel per turn. Always be sure to plan ahead, and have
+Power Plants and fuel reserves available for each factory constructed.
+
+
+
+
+POWER STATIONS
+
+
+
+Output: 6 Power Units
+Needs: 6 Fuel
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 30
+
+
+Much larger than Power Generators, Power Stations operate more
+efficiently, but take longer to build. Each Power Station can support
+the operation of six Mining Stations or Factories for the combined
+cost of only six fuel per turn.
+DEPOT
+
+
+
+Armour: 12
+Hits: 56
+Scan: 3
+Cost: 12
+
+
+
+
+The Depot serves as a maintenance and storage facility for your land
+vehicles. Vehicles can be loaded into the depot and then repaired,
+resupplied with ammunition, and upgraded to current technology
+levels. As many of the functions of the Depot require access to Raw
+Materials, the Depot must be connected to your complex or have its
+own Materials Storage Building attached. Each depot has the
+capacity to service four vehicles.
+
+
+
+HANGAR
+
+
+
+Armour: 12
+Hits: 56
+Scan: 3
+Cost: 16
+
+
+
+
+The Hangar performs maintenance functions and allows convenient
+storage for your Air Force. Planes can be loaded into the Hangar and
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 67
+ then repaired, resupplied with ammunition, and Upgraded to
+ current technology levels. As many of the functions of the Hangar
+ require access to Raw Materials, the Hangar must be connected to
+ your complex or have its own Materials Storage Building attached.
+
+ DOCK
+
+
+ Armour: 12
+ Hits: 56
+ Scan: 3
+ Cost: 12
+
+
+
+
+ The Dock performs maintenance functions and allows convenient
+ storage for your navy. Ships can be loaded into a Dock and then
+ repaired, resupplied with ammunition, and/or upgraded to current
+ technology levels. As many of the functions of a Dock require access
+ to raw materials, Docks must be connected to your complex or have
+ their own Materials Storage Buildings attached.
+
+
+
+
+68                            M.A.X.™
+GOLD REFINERY
+
+
+
+Needs: 1 Power,
+5 Gold per Turn
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 30
+
+
+Refineries process gold reserves at a rate of five units of gold per
+turn. All refined gold is added to your account balance of available
+credits, with which you can purchase software upgrades for your
+units. To purchase upgrades, or check your account balance at any
+time, click on an operating refinery to activate its command
+buttons, then click on “Upgrade.” All Refineries must be connected
+to both a power source and a supply of raw gold reserves.
+
+
+
+CONNECTORS
+
+
+
+Armour: 8
+Hits: 14
+Scan: 1
+Cost: 2
+
+
+
+
+Connectors provide the skeletal framework of your complex, and
+serve to facilitate the transfer of materials, fuel, gold and power
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 69
+ between the various buildings and factories in a complex. Most
+ structures in M.A.X. require connection to a supply of power and/or
+ material resource, and will not operate until proper connection is
+ made.
+
+ Structures that are adjacent to each other are connected
+ automatically when constructed; in all other cases, connectors must
+ be used to link the structures together.
+
+
+
+ RADAR
+
+
+
+ Armour: 8
+ Hits: 24
+ Scan: 18
+ Cost: 18
+
+
+
+
+ An adequate radar network is essential is all but the simplest of
+ missions, and the stationary radar is usually used in conjunction
+ with mobile scanners to accomplish this task. Having the longest
+ scan range of any unit in the game, stationary radars are the unit of
+ choice for long range defence and surveillance.
+
+
+
+
+70                            M.A.X.™
+ANTI-AIRCRAFT
+
+
+Attack: 16
+Shots: 2
+Range: 8
+Ammo: 20
+Armour: 8
+Hits: 24
+Scan: 4
+Cost: 12
+
+
+Stationary Anti-Aircraft units provide long-range protection from
+enemy aircraft. Anti-Aircraft guns may be used as a general
+deterrent in various locations throughout your complex, but should
+be also be placed at strategic locations to protect important
+structures such as mining stations and eco-spheres.
+
+
+
+GUN TURRET
+
+
+Attack: 16
+Shots: 2
+Range: 6
+Ammo: 14
+Armour: 12
+Hits: 24
+Scan: 4
+Cost: 8
+Cheap to build, heavily armoured, and capable of two shots per
+turn, the Gun Turret is the defensive weapon of choice, especially in
+the early stages of a mission. Many an inexperienced M.A.X.
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 71
+ Commander has been killed by neglecting the protection a Gun
+ Turret or two can provide to a fledgling complex. Turrets fire
+ automatically to protect your holdings, but remember, a turret can't
+ fire on what it can't see -- so it's important to have a scout,
+ scanner, or radar nearby.
+
+ ARTILLERY TURRET
+
+
+ Attack: 18
+ Shots: 2
+ Range: 8
+ Ammo: 16
+ Armour: 9
+ Hits: 24
+ Scan: 4
+ Cost: 16
+
+ The artillery gun is a high-powered, medium-range cannon which
+ serves as a compromise between the cheap, rugged gun turret and
+ the expensive long-range missile turret.
+
+
+
+
+72                            M.A.X.™
+MISSILE LAUNCHER
+
+
+Attack: 28
+Shots: 1
+Range: 11
+Ammo: 10
+Armour: 6
+Hits: 24
+Scan: 4
+Cost: 24
+
+Long-range missile launcher on a fixed mount. Excellent range and
+firepower, but possesses only slightly more armour than the mobile
+version. Best surrounded by gun turrets and anti-aircraft.
+
+LANDING PAD
+
+
+
+Armour: 8
+Hits: 14
+Scan: 3
+Cost: 4
+
+
+
+A landing facility for planes. However, you cannot not repair,
+resupply, or refuel planes here -- to resupply a plane on a landing
+pad, use a nearby truck or storage unit.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 73
+ BRIDGE
+
+
+
+ Armour: 8
+ Hits: 20
+ Scan: 1
+ Cost: 2
+
+
+
+
+ This pontoon bridge allows land units to cross otherwise unpassable
+ bodies of water.
+
+
+
+ WATER PLATFORM
+
+
+
+ Armour: 6
+ Hits: 10
+ Scan: 1
+ Cost: 2
+
+
+
+
+ Provides a surface over water on which to construct other buildings,
+ effectively extending your available building area.
+
+
+
+
+74                            M.A.X.™
+CONCRETE BLOCK
+
+
+Armour: 12
+Hits: 24
+Scan: 1
+Cost: 2
+
+
+
+
+Just what it sounds like: a solid armoured block useful for laying
+barricades and impeding enemy movement.
+
+
+
+ROAD
+
+
+
+
+Hits: 2
+Cost: 2
+
+
+
+
+Units move twice as fast over roads than over raw terrain.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 75
+ COLONIST STRUCTURES
+ HABITAT
+
+
+ Produces: 3 Workers
+ Armour: 8
+ Hits: 56
+ Scan: 3
+ Cost: 20
+
+
+
+ Houses colonists. Colonists working in research centres, training
+ halls, and eco-spheres require habitats.
+
+
+
+
+ ECO-SPHERE
+
+
+ Needs: 1 Power,
+ 1 Worker
+ Armour: 8
+ Hits: 56
+ Scan: 3
+ Cost: 20
+
+
+ Domed building containing an Earth-like environment. Your ultimate
+ goal is to provide as many of these for your colonists as possible.
+
+
+
+
+76                            M.A.X.™
+RESEARCH CENTRE
+
+
+Needs: 1 Power, 1
+Worker
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 20
+
+
+Conducts research to improve your units.
+
+
+
+
+TRAINING HALL
+
+
+Needs: 1 Power, 1
+Worker, 1 Material
+Armour: 8
+Hits: 56
+Scan: 3
+Cost: 20
+
+
+Trains infiltrators and infantry. Infiltrators are stealth units who can
+disable or capture enemy units. Infantry carry shoulder cannons and
+can spot infiltrators.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 77
+ HUMAN UNITS
+ INFILTRATOR
+
+ Attack: 6
+ Shots: 1
+ Range: 4
+ Ammo: 12
+ Armour: 2
+ Hits: 8
+ Scan: 4
+ Speed: 5
+ Cost: 27
+ Commando trained in the arts of stealth and electronic warfare.
+ Capable of disabling or capturing enemy units, infiltrators are
+ normally invisible to the enemy until they make a mistake trying to
+ capture enemy units, or until spotted by infantry or other
+ infiltrators, or until they fire on any enemy units. Infiltrators can
+ also detect land mines, but they cannot disable them.
+
+
+
+ INFANTRY
+ Attack: 16
+ Shots: 1
+ Range: 4
+ Ammo: 12
+ Armour: 2
+ Hits: 8
+ Scan: 4
+ Speed: 5
+ Cost: 6
+ Human soldiers equipped with light anti-tank shoulder weapons.
+ Infantry can spot enemy infiltrators.
+
+
+
+78                             M.A.X.™
+MOBILE UNITS
+
+MOVING AND FIRING
+A note on vehicles capable of battle: Most fighting units can either
+fire or move, but not always both. The further a vehicle moves the
+less firepower it has available that turn, and vice versa. For
+example, if you don't move a tank, it can fire twice each turn -- if
+you move it a short way, it can fire once -- if you move it a long
+way, it can't fire at all.
+
+CONSTRUCTION VEHICLES
+
+CONSTRUCTORS
+
+Cargo: 60
+Uses: 2 Materials
+per Turn
+Armour: 6
+Hits: 24
+Scan: 3
+Speed: 6
+Cost: 18
+
+
+Large construction vehicle for creating large buildings, such as
+mines and factories. Constructors can move on land and sea.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 79
+ ENGINEER
+
+ Cargo: 40
+ Uses: 2 Materials
+ per Turn of Building
+ Armour: 4
+ Hits: 14
+ Scan: 3
+ Speed: 6
+ Cost: 18
+
+ Small construction vehicle useful for creating small buildings and
+ stationary weapons.
+
+
+
+
+ REPAIR UNIT
+
+
+ Cargo: 30 Materials
+ Armour: 4
+ Hits: 20
+ Scan: 3
+ Speed: 7
+ Cost: 15
+
+
+ Light vehicle which can rapidly repair ground units and buildings. It
+ needs to have a supply of raw materials in order to do the repairs.
+
+
+
+
+80                            M.A.X.™
+BULLDOZER
+
+
+Cargo: 16
+Armour: 4
+Hits: 12
+Scan: 3
+Speed: 7
+Cost: 15
+
+
+Vehicle for clearing rubble and demolishing buildings. Bulldozers
+can scavenge material from debris.
+
+
+SUPPORT VEHICLES
+
+SCOUT
+Attack: 12
+Shots: 1
+Range: 3
+Ammo: 10
+Armour: 4
+Hits: 16
+Scan: 9
+Speed: 12
+Cost: 9
+
+High-speed scouting vehicle for exploration and spotting enemy
+units. Can cross water without a bridge, but is faster on land. Very
+fast and good scan range, but much weaker than most combat
+units.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 81
+ SURVEYOR
+
+
+ Armour: 4
+ Hits: 16
+ Scan: 3
+ Speed: 7
+ Cost: 9
+
+
+
+
+ Light amphibious vehicle with sophisticated sensors for detecting
+ underground minerals and enemy mines. Surveyors spot minerals
+ under the ground -- to find a good place for a mining station, move
+ the surveyor around until you find a square with a white “Raw
+ Materials” symbol. Surveyors can travel on land and sea.
+
+
+
+ SUPPLY TRUCK
+
+
+ Cargo: 50
+ Armour: 4
+ Hits: 24
+ Scan: 3
+ Speed: 7
+ Cost: 12
+
+
+
+ Truck for hauling raw material. Useful for resupplying engineers,
+ constructors, and repair units, and for supplying combat units with
+ new ammunition.
+
+
+
+82                            M.A.X.™
+FUEL TRUCK
+
+Cargo: 50
+Armour: 4
+Hits: 20
+Scan: 3
+Speed: 7
+Cost: 12
+
+
+
+
+Truck used for transporting fuel.
+
+
+
+
+GOLD TRUCK
+
+
+Cargo: 50
+Armour: 4
+Hits: 24
+Scan: 3
+Speed: 7
+Cost: 12
+
+
+Unit for moving gold ore from one location to another.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 83
+ARMOURED PERSONNEL CARRIER
+
+
+Armour: 8
+Hits: 24
+Scan: 4
+Speed: 9
+Cost: 12
+
+
+
+
+Fast vehicle intended to transport infantry and infiltrators.
+
+
+
+SCANNER
+
+
+Armour: 4
+Hits: 24
+Scan 14
+Speed: 7
+Cost: 12
+
+
+
+Mobile radar platform. Slower and more expensive than a scout, but
+with a better scan range.
+
+
+
+
+84                            M.A.X.™
+COMBAT VEHICLES
+
+MOBILE ANTI-AIR
+
+Attack: 22
+Shots: 1
+Range: 7
+Ammo: 10
+Armour: 4
+Hits: 24
+Scan: 4
+Speed: 7
+Cost: 18
+Lightly-armoured vehicle equipped with a rapid-fire gun to shoot
+down enemy planes.
+
+
+
+MINE LAYER
+
+
+Cargo: 16
+Armour: 4
+Hits: 24
+Scan: 4
+Speed: 7
+Cost: 9
+
+
+Slow, lightly-armoured vehicle designed specifically for placing
+land mines. It can also detect and remove land mines, and in the
+process converts the mines into raw materials.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 85
+ LAND MINE
+
+
+
+
+ Attack: 28
+ Hits: 2
+ Scan: 1
+ Cost: 2
+
+
+
+ Small, hard-to-detect explosive device triggered by contact.
+ Invisible to enemy units except surveyors, mine layers, and
+ infiltrators.
+
+
+
+ TANK
+
+ Attack: 16
+ Shots: 2
+ Range: 4
+ Ammo: 14
+ Armour: 10
+ Hits: 24
+ Scan: 4
+ Speed: 6
+ Cost: 12
+
+ Heavily-armoured fighting vehicle. Best used in the front line to
+ prevent enemy units from reaching lightly-armoured support units
+ such as assault guns and rocket launchers.
+
+
+
+
+86                            M.A.X.™
+ASSAULT GUN
+
+Attack: 18
+Shots: 2
+Range: 6
+Ammo: 14
+Armour: 4
+Hits: 24
+Scan: 5
+Speed: 12
+Cost: 24
+
+Lightly-armoured vehicle with a long-range gun firing high-
+explosive shells. Fast and effective on the attack, but fragile.
+
+
+
+ROCKET LAUNCHER
+
+Attack: 15
+Shots: 2
+Range: 7
+Ammo: 16
+Armour: 4
+Hits: 24
+Scan: 4
+Speed: 6
+Cost: 24
+
+
+Lightly-armoured vehicle firing medium-range rockets which affect
+all units within two squares of the target. Most effective against
+groups of enemy units.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 87
+ MISSILE CRAWLER
+
+ Attack: 22
+ Shots: 1
+ Range: 10
+ Ammo: 6
+ Armour: 4
+ Hits: 24
+ Scan: 4
+ Speed: 6
+ Cost: 36
+
+ Missile launcher on a lightly-armoured chassis. This mobile
+ launcher is slightly less sturdy than the stationary version, and
+ requires more material to build. However, the ability to move
+ makes it much more flexible.
+
+
+
+ AIRCRAFT
+ Note:
+ Once aircrafts are created in an Air Unit Plant, they can fly to any
+ square within their range, whether over land or sea. They can also
+ “park” in any square; they do not have to return to an airbase or
+ landing strip at the end of each turn.
+
+
+
+
+88                             M.A.X.™
+FIGHTER
+
+Attack: 16
+Shots: 1
+Range: 5
+Ammo: 4
+Armour: 4
+Hits: 12
+Scan: 5
+Speed: 24
+Cost: 24
+
+A swift and efficient craft when pitted against other aircraft, but
+cannot attack targets at sea or on the ground.
+
+
+
+GROUND ATTACK PLANE
+
+Attack: 18
+Shots: 2
+Range: 4
+Ammo: 12
+Armour: 4
+Hits: 18
+Scan: 5
+Speed: 18
+Cost: 30
+
+
+A heavy ground-attack plane. Fast and immune to attack from all
+but fighters and anti-aircraft units, but cannot attack other planes.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 89
+ AWAC
+
+
+ Armour: 4
+ Hits: 18
+ Scan:12
+ Speed: 18
+ Cost: 18
+
+
+
+ "Flying radar" – your eyes in the skies.
+
+
+
+
+ AIR TRANSPORT
+
+
+ Armour: 4
+ Hits: 18
+ Scan: 5
+ Speed: 18
+ Cost: 18
+
+
+
+
+ Capable of transporting two ground units -- sea transport carries
+ more units at a time but air transport is quicker.
+
+
+
+
+90                             M.A.X.™
+SHIPS
+
+Escort
+
+Attack: 22
+Shots: 1
+Range: 7
+Ammo: 24
+Armour: 6
+Hits: 32
+Scan: 10
+Speed: 11
+Cost: 18
+High-speed boat with good radar and rapid-fire anti-aircraft
+cannon. Escorts are the eyes of a fleet, and a fleet's protection from
+planes.
+
+
+
+
+CORVETTE
+
+Attack: 14
+Shots: 2
+Range: 5
+Ammo: 14
+Armour: 7
+Hits: 32
+Scan: 5
+Speed: 11
+Cost: 18
+
+High-speed boat with torpedo tubes and sonar. Corvettes can attack
+any sea unit, but their real strength is their ability to spot and
+attack submarines.
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 91
+ GUNBOAT
+
+ Attack: 20
+ Shots: 2
+ Range: 8
+ Ammo: 14
+ Armour: 14
+ Hits: 36
+ Scan: 4
+ Speed: 7
+ Cost: 24
+
+ Heavily-armoured ship with a high-calibre, medium-range cannon.
+ Excellent at destroying other ships and bombarding shore targets.
+
+
+
+
+ SUBMARINE
+
+ Attack: 24
+ Shots: 2
+ Range: 4
+ Ammo: 16
+ Armour: 2
+ Hits: 24
+ Scan: 6
+ Speed: 9
+ Cost: 18
+
+ Lurking beneath the surface, submarines must sneak close to the
+ enemy to fire their powerful torpedoes. Only submarines, corvettes,
+ and ground attack planes can see or attack submarines.
+
+
+
+
+92                            M.A.X.™
+SEA TRANSPORT
+
+
+Armour: 12
+Hits: 32
+Scan: 3
+Speed: 9
+Cost: 12
+
+
+
+Transports up to six ground units.
+
+
+
+
+MISSILE CRUISER
+
+Attack: 28
+Shots: 1
+Range: 11
+Ammo: 10
+Armour: 6
+Hits: 28
+Scan: 4
+Speed: 7
+Cost: 36
+
+Ship-mounted missile launcher. Excellent range, high attack
+strength, and medium armour makes this a powerful unit.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 93
+SEA MINE LAYER
+
+
+
+Cargo: 16
+Armour: 8
+Hits: 28
+Scan: 4
+Speed: 9
+Cost: 18
+
+
+Ship which lays, detects and eliminates mines.
+
+
+
+
+SEA MINE
+
+
+
+
+Attack: 28
+Hits: 2
+Scan: 1
+Cost: 2
+
+
+
+
+The aquatic equivalent of a land mine, set to detonate on contact.
+Invisible to enemy units except surveyors and sea mine layers.
+
+
+
+
+94                           M.A.X.™
+CARGO SHIP
+
+
+Cargo: 50
+Armour: 12
+Hits: 32
+Scan: 3
+Speed: 9
+Cost: 12
+
+
+
+Ships for hauling raw material. Useful for resupplying engineers
+and sea combat units with new ammunition.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 95
+ UPGRADES
+ In M.A.X. there is virtually an unlimited number of unit upgrades
+ possible, covering almost every attribute of every unit. Players can
+ gain upgrades either by doing research or by purchasing them from
+ the Concord’s master technicians known as the Xenti, who supply
+ software upgrades to your factories and thereby render them
+ capable of building the enhanced units. Each of these methods is
+ described below:
+
+ Purchasing upgrades:
+ Upgrades may be purchased before landing on a planet, or after
+ landing and construction of a gold refinery. Initial Upgrade
+ purchases are done in the Cargo Menu, by spending your starting
+ credits. Each unit has various attributes, and all except the cost
+ may be upgraded. The first upgrade to any one category of attribute
+ is usually fairly cheap; however, the cost for upgrades goes up
+ exponentially as more of the same type are purchased.
+
+ In addition, depending on the Clan you have selected to play for,
+ you may receive bonus upgrades to a range of various units'
+ attributes. These are beneficial in two ways. First, your units start
+ out better with no extra expenditure on your part; secondly, the
+ bonus also makes additional upgrades to the unit cheaper, because
+ upgrade price is directly related to the units' starting attribute
+ level. For example, a unit with a base value of 4 scan range is
+ much more expensive to upgrade than a unit with 10 scan range,
+ because an increase in the first case will result in a 25% increase in
+ scan, whereas the second units would only be increase by 10%.
+
+ Research:
+ Research can also provide unit upgrades, but in a slightly different
+ way from simple purchasing. After construction of a Research
+ Station, you may choose to perform research on a variety of different
+ topics, including Scan, Attack, Range, Armour and others. Each
+ topic displays the number of turns required to perform the research,
+ and each time research is started in the same category the amount
+ of turns required will increase. Once research in a given area is
+ complete, it will affect that attribute of every new unit built. If you
+ want to upgrade existing units, you can do that for your land, sea
+ and air units in a depot, Dock and Hanger respectively. In this way,
+ you can affect the attributes of a wider range of units than with the
+ typical purchase of single-unit upgrades.
+
+
+96                             M.A.X.™
+TROUBLESHOOTING
+Multitasking, Screen Savers, or simply switching back to Windows
+while M.A.X. is running can cause M.A.X. to lock up on some systems.
+It is recommended that you exit M.A.X. before switching back into
+Windows if you experience this problem.
+
+If you are experiencing any other problems running M.A.X. under
+Win95 (sound, netgame difficulties, etc.) try running M.A.X in DOS
+mode.
+
+If you use the Minimum or Medium Install, the M.A.X. sound files
+will not be copied off the CD to your hard drive. This may slow down
+game play on some systems. If you experience this problem, go to
+the Preferences Menu and turn the Music Volume down to its lowest
+position.
+
+If you get an "Out of Environment Space" message when running
+M.A.X., add the following line to your CONFIG.SYS:
+
+shell=C:\DOS\COMMAND.COM /e:512 /p
+
+The FILES statement in your CONFIG.SYS should read 25 or more:
+ex. FILES=25
+
+Q: Why won't M.A.X. Install onto my hard drive?
+A: Check to be sure you have sufficient Hard Drive space for
+the installation option you have selected. If you are low on hard
+drive space, you may choose to perform a minimum install, which
+will copy only the required M.A.X. program files to your computers
+hard disk. Note that with the Minimum and Medium Installs, the
+game may run significantly slower, as it will need to continuously
+access your CD ROM drive.
+
+Q: Why won't the game load?
+A: Make sure you're in the correct DOS directory (usually
+C:\INTRPLAY\MAX) when you enter the MAX command to start the game.
+Max requires 8 Mbs of RAM, a mouse driver loaded, and on some
+systems an external VESA driver to run.
+
+Q: Will M.A.X. run under Windows 95?
+A: M.A.X. is not a Windows program, but should have no difficulty
+under windows 95 on most systems. Both a DOS INSTALL, and a
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 97
+ windows 95 SETUP program have been provided for your
+ convenience. If M.A.X. does not run properly through windows on
+ your system, restart your computer in DOS mode, switch to the M.A.X.
+ directory, and type Max to begin the game.
+
+ Note: Screen savers and any windows 'Notify' messages (such as e-
+ mail notification) may automatically change the current video
+ mode and cause problems with Max. We recommend suspending
+ programs of this sort while running Max.
+
+ Q: Why doesn't the sound and music play?
+ A: Be sure to run the soundcard setup program after you have
+ installed M.A.X., and have properly configured the game to run on
+ your system. Use the Test option in the setup program to ensure
+ sound and music are set up correctly. If the AUTODETECT option does
+ not work, check your AUTOEXEC.BAT file to find the correct settings
+ for your system.
+
+ Q: Where can I find more troubleshooting information?
+ A: Check the README.TXT file for more information if you are
+ experiencing problems not mentioned in this troubleshooting
+ section.
+
+
+
+ GAME PLAY QUESTIONS AND ANSWERS
+ Q: I tried to use my Constructor to build a factory, but I get a
+ message saying I have Insufficient Materials. What do I do?
+ A: Use the Transfer button on Mining stations and Materials Storage
+ buildings to fill your constructors (and engineers) with raw
+ materials.
+
+ Q: I built a new factory, but I can't get it to operate.
+ A: All factories require power and a source of Raw Materials, and so
+ must be connected to both a power plant and either a mining
+ station or Materials Storage building. Use your engineer to build
+ Connectors to solve this problem.
+
+ Q: How do I acquire Victory Points?
+ A: Victory points are acquired at the rate of 1 point per turn for each
+ operating Eco-Sphere. Three Eco-Spheres may be run from each
+ operating Habitat.
+
+
+
+
+98                             M.A.X.™
+Q: After one of my Eco-Spheres was destroyed, I noticed that my
+Victory Point total had been drastically reduced. What gives?
+A: If an Eco-Sphere is destroyed, all points gained from that Eco-
+Sphere are deducted from your total. When attacking enemy Eco-
+Spheres, always try to destroy the oldest ones first, to deduct as
+many points as possible from your opponents score.
+
+Q: I've heard you can continue to perform an unlimited amount of
+upgrades to your units. How does this work?
+A: To upgrade your units, you must first mine gold, and then refine
+it with a Refinery. Refineries process gold at the rate of 5 credits
+per turn, which is added to your account balance. To purchase
+upgrades, click on the refinery to bring up it's command buttons
+and select 'BUY.' Once purchased, each new unit built will reflect
+the new upgrades.
+
+Q: I purchased some upgrades to a unit, but now my old units
+seem obsolete. Is there any way to upgrade my old vehicles to the
+new level?
+A: Yes, inferior units may be loaded into a depot, hangar, or dock,
+as appropriate and upgraded to the present levels of technology.
+
+
+
+
+   M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 99
+ CREDITS
+ Project Manager:                     DOS and Windows Install Programmer:
+ Ali Atabek                           Darren Monahan
+
+ Producers:                           Manual Design:
+ Ali Atabek                           Patrizia Scharli
+ Paul Kellner
+                                      Director Of Quality Assurance:
+ Game Design:                         Chad Allison
+ Ali Atabek
+ Paul Kellner                         Assistant Director:
+ Gus Smedstad                         Colin Totman
+
+ Based On An Original Idea By         Lead Tester:
+ Larry Froistad                       Cory Nelson
+
+ Lead Programmer:                     Testers:
+ Dave Boulanger                       Amy Mitchell
+                                      Chris Peak
+ Design and AI Programming:           Quinn Summers
+ Gus Smedstad                         Doug Avery
+                                      Steve McLafferty
+ Network Programming:                 Erick Lujan
+ Dave Boulanger                       Steve Victory
+ Bernie Weir                          James Dunn
+                                      Henry Kahng
+ 2D Artists:                          Bill Field
+ Tony Postma                          Steve Reed
+ Arlene C. Somers                     John Stavors
+                                      Steve Baldoni
+ 3D Artists:                          Richard Barker
+ Chris Regalado                       Jon Atabek
+ Mark Bergo                           Larry Smith
+ Mike Dean                            Daniel Huffman
+ Arlene C. Somers                     Tony Bland
+                                      John Stavros
+ Visual Concept & Storyboards:
+ Tony Postma                          I.S. Technicians:
+                                      Bill Delk
+ Original World Design:               Aaron J. Meyers
+ Cheryl Austin
+                                      Director Of Compatibility:
+ World Creation:                      John Werner
+ Arlene C. Somers
+                                      Compatibility Technicians:
+ Audio Director:                      Dan Forsyth
+ Charles Deenen                       John Parker
+                                      Aaron Olaiz
+ Head Writer:                         Derek Gibbs
+ Steve Perrin                         Phuong Nguyen
+                                      Marc Duran
+ Writers:
+ Paul Kellner
+ Amy Mitchell                         Video Compression & Playback Technology:
+ Laura Mitchell                       Paul Allen Edelstein
+
+ Editor:                              Marketing Manager:
+ Kelly Newcomb                        Dean Schulte
+
+                                      PR Manager:
+                                      Julie Roether
+
+
+100                              M.A.X.™
+  Voices:                                            Cinematics Music
+  Brian Cummings                                     Albert LIoyd Olson for Four Bars
+  Nicole Pelerine                                    Entertainment
+
+  VO Director                                        Cinematics Sound Design
+  Charles Deenen                                     David Farmer
+
+  VO Supervision                                     Cinematics Mixers
+  Chris Borders                                      Ken Teaney
+                                                     Marshall Garlington
+  VO Mastering
+  Craig Duman                                        Cinematics Sound Supervision
+                                                     Charles Deenen
+  VO editing
+  Sergio Bustamante                                  Cinematics ambient Voices
+  Craig Duman                                        Doug Rappaport
+  Chris Borders
+  Doug Rappaport                                     Cinematic Voices Processing
+                                                     Doug Rappaport
+  Gameplay music                                     Sergio Bustamante
+  Brian Luzietti
+                                                     Mixed in Dolby Surround at EFX systems,
+  Music Mastering                                    Burbank
+  Digital brothers
+
+  Gameplay Soundeffects                              Dolby and the double-D symbol are trademarks of Dolby Laboratories
+                                                     Licensing Corporation.
+  Gregory R. Allen
+  Larry Peacock                                      Thanks to:
+                                                     Tim Cain for GNW
+  Soundeffects mastering                             Jay Patel for Technical Assistance,
+  Craig Duman                                        Newtek, Inc. for Lightwave 3D,
+                                                     James Thomas for Story Elements and
+  Intro Movie                                        assorted inspirations
+  Jams Doyle
+  Apple’s Animation
+
+
+
+
+                                                                                      M.A.X. is
+                                                                                     dedicated
+                                                                                 to the memory of
+                                                                                 Amanda Froistad
+
+
+
+Back Row, left to right:
+Tony Postma, Paul Kellner, Cory Nelson, Mark Bergo, Chris Peak, Steve Perrin, Gus Smedstad, Tony
+Bland, John Stavros
+
+Front Row, Left to right:
+Ali Atabek, Dave Boulanger, Arlene C. Sommers, Amy Mitchell, Chris Regalado
+
+
+
+
+       M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 101
+CUSTOMER SUPPORT
+Thank you for purchasing GAME TITLE. If you are experiencing difficulties with this title, please take
+      advantage of the following product support. Please note that all our operators only speak English and
+      that we are unable to give gameplay hints through our Technical Support number. Our Technical
+      support lines are open between the hours of 10am and 5pm.
+
+
+Technical Support :         + 44 (0)207 551 4266
+Fax :                       + 44 (0)207 551 4267
+
+
+WorldWide Web :             http://www.virgininteractive.co.uk
+
+
+Address :                   Customer Services Department
+                            Virgin Interactive Entertainment Europe Ltd.
+                            74a Charlotte Street
+                            London
+                            W1P 1LR
+
+LIMITED WARRANTY
+   In the unlikely event of a software fault please return the complete package, with your
+   receipt, to the original place of purchase. Interplay disclaims all responsibility for incidental
+   or consequential damages. These statements do not affect your statutory rights.
+
+
+      If you do telephone, please be sitting in front of your computer (if possible) and be sure to
+      provide us with as much information as possible. Make sure to note the exact type of
+      hardware that you are using in your system, including:
+      •      Speed and Manufacturer of your Processor.
+      •      Make & Model of your Sound Card and Video Card.
+      •      Make & Model of your CD-ROM drive.
+      •      Amount of RAM present.
+      •      Any additional Hardware and Peripherals.
+      •      Information contained in your Config.Sys & Autoexec.Bat files.
+      Note: If you have any problems in obtaining any System Information please consult your
+      System supplier. It is extremely important that you have the information above at hand when
+      you call.
+
+
+
+
+102                                                M.A.X.™
+     When contacting us by post, ensure you include the Title & Version of the game, a detailed
+     description of the problem you are experiencing and the exact type of hardware that you
+     are using.
+     When sending us a fax, please remember to leave your fax machine switched on and ready
+     to receive. If you are using a Telephone/Fax system please make sure that the Fax
+     connection is enabled. Ensure to include your name, a return Fax number with the area code
+     and a Voice number so we can contact you if we experience problems when trying to Fax
+     you back.
+
+
+NOTICE
+   Interplay reserves the right to make modifications or improvements to the product
+   described in this manual at any time and without notice.
+
+COPYING PROHIBITED
+   This software product and the manual are copyrighted and all rights are reserved by Interplay Productions and
+   are protected by the copyright laws that pertain to computer software. You may not copy the software except
+   that you may make a single copy for backup purposes only. You may not loan, sell, rent, lease, give, sub-
+   license, or otherwise transfer the software (or any copy) unless expressly permitted to do so by Interplay
+   Productions Ltd. You may not modify, adapt, translate, create derivative works, decompile, disassemble, or
+   otherwise reverse engineer or derive source code from, all or any portion of the software or anything
+   incorporated therein or permit any third party to do so.
+
+
+
+
+     M E C H A N I S E D A S S A U L T & E X P L O R A T I O N ™ 103
+INTERPLAY’S WORLD WIDE WEB SITE
+
+"Welcome to the Interplay Web! As a company dedicated to providing innovative, high
+quality interactive entertainment software, we are always striving to stay as close as
+possible to the leading edge of technology. This Web site is designed to provide a wealth
+of information and opportunities to you. As a company of fanatic gamers, we love the
+idea of gamers all over the world tapping into cyberspace to see, touch and feel our
+latest games. To make it work, our goal is to keep this site fresh and new, to make it a
+place where you can tell US what you like about our game and what you don’t like about
+them! Enjoy your visit to our web site, explore all the different areas we have to offer, and
+come back soon. Keep checking us out as we introduce new and exciting areas for you to
+experience.
+Once again, Welcome!"
+Brian Fargo
+To find us
+www.interplay.com
+
+
+
+  HOW TO
+ GET THERE
+
+Interplay’s World Wide Web site is an Internet service
+designed to give you the latest information about
+Interplay and our products.
+The site features our demos, upgrades, product
+information and ordering information.
+From your Internet account, point your favourite
+browser to: http://www.interplay.com
+
+
+
+
+104                                     M.A.X.™
+BY GAMERS. FOR GAMERSTM
+
+
+
+
+   MC-ICD-082-GEN
+
