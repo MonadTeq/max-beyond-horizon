@@ -4,7 +4,8 @@
 другом написании — править сюда и ссылаться отсюда. Соответствие доменного языка
 и C++-оракула (имена объектов кода) — в [domain-map.md](domain-map.md); системная
 таксономия игровых объектов — в [object-classifier.md](object-classifier.md);
-свойства производственных юнитов — в [unit-properties.md](unit-properties.md).
+свойства производственных юнитов — в [unit-properties.md](unit-properties.md);
+сверка имён юнитов — в [unit-name-review.md](unit-name-review.md).
 
 ## 1. Название проекта
 
