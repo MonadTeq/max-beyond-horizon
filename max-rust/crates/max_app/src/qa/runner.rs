@@ -433,7 +433,9 @@ impl QaRunner {
             Command::Spawn { enemy, name } => self.spawn(*enemy, name),
             Command::SpawnAt { x, y, name } => self.spawn_at(*x, *y, name),
             Command::SelfDestruct(action) => self.self_destruct_command(*action),
-            Command::ComplexRaw(value) => self.complex_raw(*value),
+            Command::ComplexRaw(value) => self.complex_transfer(Some(*value), None, None),
+            Command::ComplexFuel(value) => self.complex_transfer(None, Some(*value), None),
+            Command::ComplexGold(value) => self.complex_transfer(None, None, Some(*value)),
             Command::TeamValues {
                 name,
                 attribute,
@@ -516,7 +518,11 @@ impl QaRunner {
 
         self.detail = Some(format!(
             "{} {} в ({}, {})",
-            if enemy { "вражеский" } else { "свой" },
+            if enemy {
+                "вражеский"
+            } else {
+                "свой"
+            },
             crate::buildmenu::unit_name(unit_type),
             cell.x,
             cell.y
@@ -561,10 +567,16 @@ impl QaRunner {
                 let point = Point::new(cell.x + dx, cell.y + dy);
 
                 if self.app.state().map.index(point.x, point.y).is_none() {
-                    return Err(format!("spawn at: клетка ({}, {}) вне карты", point.x, point.y));
+                    return Err(format!(
+                        "spawn at: клетка ({}, {}) вне карты",
+                        point.x, point.y
+                    ));
                 }
                 if !self.app.state().units_at(point).is_empty() {
-                    return Err(format!("spawn at: клетка ({}, {}) занята", point.x, point.y));
+                    return Err(format!(
+                        "spawn at: клетка ({}, {}) занята",
+                        point.x, point.y
+                    ));
                 }
             }
         }
@@ -645,11 +657,7 @@ impl QaRunner {
                     elapsed += f64::from(dt);
                 }
 
-                let frame = self
-                    .app
-                    .self_destruct()
-                    .map(|menu| menu.frame)
-                    .unwrap_or(0);
+                let frame = self.app.self_destruct().map(|menu| menu.frame).unwrap_or(0);
                 format!("advance {millis} мс: кадр {frame}")
             }
         };
@@ -666,7 +674,14 @@ impl QaRunner {
     /// `UnitsManager_StationaryUnits`. Это важно для производства: завод
     /// тратит `storage` подключённых хранилищ
     /// (`production::complex_raw_materials`), а не поле-кэш.
-    fn complex_raw(&mut self, value: i32) -> Result<Flow, String> {
+    /// `complex raw|fuel|gold N` — QA-only `Complex::Transfer(raw, fuel, gold)`
+    /// для комплекса выделенного юнита (или первого комплекса команды).
+    fn complex_transfer(
+        &mut self,
+        raw: Option<i32>,
+        fuel: Option<i32>,
+        gold: Option<i32>,
+    ) -> Result<Flow, String> {
         let team = self.app.player_team();
         let complex = self
             .app
@@ -677,17 +692,42 @@ impl QaRunner {
                     .state()
                     .team_units
                     .get(team.0 as usize)
-                    .and_then(|units| units.complexes().first().map(|complex| complex.complex_id()))
+                    .and_then(|units| {
+                        units
+                            .complexes()
+                            .first()
+                            .map(|complex| complex.complex_id())
+                    })
             })
-            .ok_or_else(|| "complex raw: у команды нет комплекса".to_string())?;
+            .ok_or_else(|| "complex: у команды нет комплекса".to_string())?;
 
         let Some(target) = self.app.state().complex(team, complex.0 as u16) else {
-            return Err("complex raw: комплекс не найден".to_string());
+            return Err("complex: комплекс не найден".to_string());
         };
-        let delta = value - i32::from(target.material);
 
-        max_core::transfer::complex_transfer(self.app.state_mut(), team, complex, delta, 0, 0);
-        self.detail = Some(format!("complex raw = {value}"));
+        // Абсолютные значения, как у прежнего `complex raw N`: считаем дельту
+        // к текущему полю и зовём `Complex::Transfer`. Не указанные ресурсы не
+        // трогаем.
+        let delta_raw = raw.map_or(0, |value| value - i32::from(target.material));
+        let delta_fuel = fuel.map_or(0, |value| value - i32::from(target.fuel));
+        let delta_gold = gold.map_or(0, |value| value - i32::from(target.gold));
+        let detail = format!(
+            "complex raw={} fuel={} gold={}",
+            raw.map_or_else(|| i32::from(target.material).to_string(), |v| v.to_string()),
+            fuel.map_or_else(|| i32::from(target.fuel).to_string(), |v| v.to_string()),
+            gold.map_or_else(|| i32::from(target.gold).to_string(), |v| v.to_string()),
+        );
+
+        max_core::transfer::complex_transfer(
+            self.app.state_mut(),
+            team,
+            complex,
+            delta_raw,
+            delta_fuel,
+            delta_gold,
+        );
+
+        self.detail = Some(detail);
 
         Ok(Flow::Continue)
     }
@@ -1823,10 +1863,7 @@ impl QaRunner {
                     .current_help_section()
                     .ok_or_else(|| format!("help entry {name}: режим помощи не открыт"))?;
                 let index = crate::helpmenu::entry_by_name(section, &name).ok_or_else(|| {
-                    format!(
-                        "help entry {name}: в {} нет такой записи",
-                        section.as_str()
-                    )
+                    format!("help entry {name}: в {} нет такой записи", section.as_str())
                 })?;
                 let entry = &crate::helpmenu::section_entries(section)[index];
                 let (x, y) = ((entry.ux + entry.lx) / 2, (entry.uy + entry.ly) / 2);
@@ -1957,7 +1994,9 @@ impl QaRunner {
             return Some(help.section());
         }
         match &self.screen {
-            Screen::Help { help: Some(help), .. } => Some(help.section()),
+            Screen::Help {
+                help: Some(help), ..
+            } => Some(help.section()),
             _ => None,
         }
     }
@@ -1968,7 +2007,9 @@ impl QaRunner {
             .help_screen()
             .and_then(|help| help.entry_name())
             .or_else(|| match &self.screen {
-                Screen::Help { help: Some(help), .. } => help.entry_name(),
+                Screen::Help {
+                    help: Some(help), ..
+                } => help.entry_name(),
                 _ => None,
             })
     }
@@ -3020,7 +3061,16 @@ impl QaRunner {
 
         let mut rejections = Vec::new();
 
-        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
+        for (dx, dy) in [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ] {
             let target = Point::new(grid.x + dx, grid.y + dy);
 
             if target.x < 0
@@ -3116,17 +3166,15 @@ impl QaRunner {
 
         let target = match action {
             LaunchCommand::Grid(x, y) => Point::new(x, y),
-            LaunchCommand::Near => max_core::production::factory_exit_cell(
-                self.app.state(),
-                &container,
-                &client,
-            )
-            .ok_or_else(|| {
-                format!(
-                    "launch near: рядом с {:?} в ({}, {}) нет проходимой клетки",
-                    container.unit_type, container.grid.x, container.grid.y
-                )
-            })?,
+            LaunchCommand::Near => {
+                max_core::production::factory_exit_cell(self.app.state(), &container, &client)
+                    .ok_or_else(|| {
+                        format!(
+                            "launch near: рядом с {:?} в ({}, {}) нет проходимой клетки",
+                            container.unit_type, container.grid.x, container.grid.y
+                        )
+                    })?
+            }
         };
 
         self.app
@@ -4126,37 +4174,39 @@ impl QaRunner {
                 // `AirPath::Execute` (`airpath.cpp:219-242`): пиксельная позиция
                 // снаряда (`unit->x/y` после `OffsetDrawZones`) обязана лежать на
                 // прямой «центр клетки пуска → центр клетки цели».
-                let found = self.app.state().unit_ids_in_order().into_iter().find_map(|id| {
-                    let unit = self.app.state().unit(id)?;
-                    if unit.flags & max_core::enums::unit_flags::MISSILE_UNIT == 0 {
-                        return None;
-                    }
-                    let Some(max_core::unit::UnitPath::Air(path)) = unit.path.as_ref() else {
-                        return None;
-                    };
+                let found = self
+                    .app
+                    .state()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .find_map(|id| {
+                        let unit = self.app.state().unit(id)?;
+                        if unit.flags & max_core::enums::unit_flags::MISSILE_UNIT == 0 {
+                            return None;
+                        }
+                        let Some(max_core::unit::UnitPath::Air(path)) = unit.path.as_ref() else {
+                            return None;
+                        };
 
-                    let start = (
-                        i32::from(path.start_x),
-                        i32::from(path.start_y),
-                    );
-                    let end = (
-                        i32::from(path.end_x) * 64 + 32,
-                        i32::from(path.end_y) * 64 + 32,
-                    );
-                    let point = (i32::from(unit.x), i32::from(unit.y));
+                        let start = (i32::from(path.start_x), i32::from(path.start_y));
+                        let end = (
+                            i32::from(path.end_x) * 64 + 32,
+                            i32::from(path.end_y) * 64 + 32,
+                        );
+                        let point = (i32::from(unit.x), i32::from(unit.y));
 
-                    let dx = f64::from(end.0 - start.0);
-                    let dy = f64::from(end.1 - start.1);
-                    let length = (dx * dx + dy * dy).sqrt();
-                    if length == 0.0 {
-                        return None;
-                    }
-                    let px = f64::from(point.0 - start.0);
-                    let py = f64::from(point.1 - start.1);
-                    let distance = (px * dy - py * dx).abs() / length;
+                        let dx = f64::from(end.0 - start.0);
+                        let dy = f64::from(end.1 - start.1);
+                        let length = (dx * dx + dy * dy).sqrt();
+                        if length == 0.0 {
+                            return None;
+                        }
+                        let px = f64::from(point.0 - start.0);
+                        let py = f64::from(point.1 - start.1);
+                        let distance = (px * dy - py * dx).abs() / length;
 
-                    Some((unit.unit_type, point, start, end, distance))
-                });
+                        Some((unit.unit_type, point, start, end, distance))
+                    });
 
                 match found {
                     Some((unit_type, point, start, end, distance)) => self.expect(

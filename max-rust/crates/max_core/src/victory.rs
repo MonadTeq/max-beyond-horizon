@@ -681,7 +681,10 @@ pub fn cargo_get_net_production(
         | UnitType::HeavyVehiclePlant
         | UnitType::TrainingHall
         | UnitType::AirUnitsPlant => {
-            if orders == UnitOrder::Build && unit.state != UnitOrderState::UnitReady {
+            if orders == UnitOrder::Build
+                && unit.state != UnitOrderState::UnitReady
+                && !unit.build_paused
+            {
                 cargo_apply_unit_consumption(
                     unit.unit_type,
                     max_allowed_build_rate(unit),
@@ -742,7 +745,8 @@ pub fn cargo_get_net_production(
 /// `GameManager_ProgressBuildState` (как `StartBuilding`/`ValidateIndustry`).
 /// Чтобы ставка не списалась дважды, из кэша комплекса возвращается **только
 /// `raw`** строящегося завода; `power`/`life`/`fuel`/`gold` остаются
-/// C++-точными (порт их пока не валидирует, см. шапку `production`).
+/// C++-точными и проверяются [`crate::power::optimize_complex`] (см. шапку
+/// `production`). Пауза (`build_paused`) исключает расход целиком.
 pub fn cargo_get_net_production_for_total(
     state: &GameState,
     unit: &UnitInfo,
@@ -764,6 +768,7 @@ pub fn cargo_get_net_production_for_total(
             | UnitType::AirUnitsPlant
     ) && orders == UnitOrder::Build
         && unit.state != UnitOrderState::UnitReady
+        && !unit.build_paused
     {
         cargo.raw += cargo_raw_consumption_rate(unit.unit_type, max_allowed_build_rate(unit));
     }

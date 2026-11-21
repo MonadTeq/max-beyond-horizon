@@ -44,6 +44,55 @@ fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
     id
 }
 
+/// Обеспечить комплекс завода энергией/рабочими так, как это делает база в
+/// C++: `POWGEN` (+1 энергия за 2 топлива), `FDUMP` с запасом топлива и
+/// `HABITAT` (+3 рабочих). Все три встают вплотную к заводу, поэтому
+/// `UnitsManager_UpdateConnectors` сливает их в один комплекс.
+///
+/// Нужен, потому что `Cargo_ApplyUnitConsumption` для завода списывает
+/// `power` (и `life` у `TRAINHAL`) из котла комплекса — без производителя
+/// заказ не стартует (`production_manager.cpp:677-711`).
+fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_core::UnitId {
+    let grid = state.unit(factory).expect("factory").grid;
+    let generator = state
+        .spawn_unit(
+            UnitType::PowerGenerator,
+            TeamId::RED,
+            Point::new(grid.x - 1, grid.y),
+            0,
+        )
+        .expect("power generator");
+    let fuel = state
+        .spawn_unit(
+            UnitType::FDump,
+            TeamId::RED,
+            Point::new(grid.x - 2, grid.y),
+            0,
+        )
+        .expect("fuel dump");
+    let habitat = state
+        .spawn_unit(
+            UnitType::Habitat,
+            TeamId::RED,
+            Point::new(grid.x - 1, grid.y + 1),
+            0,
+        )
+        .expect("habitat");
+    state.unit_mut(fuel).expect("fuel dump").storage = 50;
+
+    let complex = state.unit(factory).expect("factory").complex;
+    assert!(complex.is_some(), "завод должен входить в комплекс");
+    for id in [generator, fuel, habitat] {
+        assert_eq!(
+            state.unit(id).expect("power unit").complex,
+            complex,
+            "производитель энергии/рабочих должен слиться с комплексом завода"
+        );
+    }
+
+    habitat
+}
+
 /// Один «ход производства» — как `GameState::finish_turn` для одной команды.
 fn production_turn(state: &mut GameState) -> Vec<max_core::ProductionEvent> {
     // Начало хода команды: `GameManager_ManageEconomy` → `UpdateProduction`
@@ -285,6 +334,7 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager
@@ -336,6 +386,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     let plant = state
         .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
         .expect("air plant");
+    power_the_complex(&mut state, plant);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
@@ -368,7 +419,11 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     assert_eq!(unit.scaler_adjust, 4, "C++: scaler_adjust = 4");
 
     // Завод: родитель — готовый юнит, `storage = 1`, ждёт вывода.
-    assert_eq!(plant_unit.parent_unit, Some(fighter), "родитель завода — юнит");
+    assert_eq!(
+        plant_unit.parent_unit,
+        Some(fighter),
+        "родитель завода — юнит"
+    );
     assert_eq!(plant_unit.storage, 1);
     assert_eq!(plant_unit.orders, UnitOrder::Build);
     assert_eq!(plant_unit.state, UnitOrderState::UnitReady);
@@ -385,8 +440,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
         let fighter_unit = state.unit(fighter).expect("fighter alive");
         // Взлёт: `AirPath` доводит `HOVERING` (`UnitInfo::Take`), затем юнит
         // уходит с клетки завода.
-        if fighter_unit.flags & unit_flags::HOVERING != 0
-            && fighter_unit.grid != Point::new(10, 10)
+        if fighter_unit.flags & unit_flags::HOVERING != 0 && fighter_unit.grid != Point::new(10, 10)
         {
             break;
         }
@@ -417,6 +471,7 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
     let plant = state
         .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
         .expect("air plant");
+    power_the_complex(&mut state, plant);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
@@ -459,7 +514,6 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
     );
 }
 
-
 fn launch_ready_unit(state: &mut GameState, factory: max_core::UnitId) -> bool {
     if !max_core::unit_order::issue_factory_exit(state, factory) {
         return false;
@@ -488,6 +542,7 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
@@ -522,7 +577,10 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
     );
 
     // Вывод юнита запускает следующий заказ (repeat).
-    assert!(launch_ready_unit(&mut state, factory), "юнит выведен из завода");
+    assert!(
+        launch_ready_unit(&mut state, factory),
+        "юнит выведен из завода"
+    );
     let factory_unit = state.unit(factory).expect("factory alive");
     assert_eq!(factory_unit.orders, UnitOrder::Build);
     assert_eq!(factory_unit.storage, 0);
@@ -561,6 +619,7 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
@@ -657,6 +716,7 @@ fn cancel_stops_the_construction() {
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
@@ -710,14 +770,22 @@ fn empty_queue_is_rejected() {
 #[test]
 fn missing_materials_pause_the_build_without_losing_the_queue() {
     let mut state = state_with_gold(100);
+    let dump = add_materials(&mut state, 1);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
+    drop(manager);
 
+    // Сырьё «увезли» после старта: ход не оплачивается, стройка встаёт на
+    // паузу, но заказ остаётся (C++ `ValidateIndustry`; порт не теряет очередь).
+    state.unit_mut(dump).expect("dump").storage = 0;
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     let events = manager.progress();
 
     assert!(
@@ -760,6 +828,7 @@ fn two_speed_build_costs_the_cpp_rate() {
             0,
         )
         .expect("heavy vehicle plant");
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Tank).expect("queue");
@@ -822,11 +891,7 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
         "C++ `storage -= Cargo_GetRawConsumptionRate(...)`: 40 → 0"
     );
     assert!(
-        state
-            .unit(constructor)
-            .expect("builder")
-            .storage
-            >= 0,
+        state.unit(constructor).expect("builder").storage >= 0,
         "склад не уходит в минус"
     );
 }
@@ -1497,6 +1562,7 @@ fn two_identical_production_runs_have_identical_state() {
         let factory = state
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
             .expect("training hall");
+        power_the_complex(&mut state, factory);
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(20, 20), 0)
             .expect("constructor");
@@ -1536,12 +1602,7 @@ fn awac_completes_from_the_merged_complex_pot() {
     // ограничивает 2× по остатку `build_time = 2` (12), итого 48 из 80.
     let mut state = state_with_gold(0);
     let factory = state
-        .spawn_unit(
-            UnitType::AirUnitsPlant,
-            TeamId::RED,
-            Point::new(10, 10),
-            0,
-        )
+        .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
         .expect("air plant");
     let first = state
         .spawn_unit(UnitType::ADump, TeamId::RED, Point::new(12, 10), 0)
@@ -1554,12 +1615,15 @@ fn awac_completes_from_the_merged_complex_pot() {
     state.unit_mut(first).expect("ADump 1").storage = 40;
     state.unit_mut(second).expect("ADump 2").storage = 40;
 
-    let complex = state.unit(factory).expect("factory").complex.expect("complex");
+    let complex = state
+        .unit(factory)
+        .expect("factory")
+        .complex
+        .expect("complex");
     assert_eq!(state.unit(first).expect("ADump 1").complex, Some(complex));
     assert_eq!(state.unit(second).expect("ADump 2").complex, Some(complex));
     assert_eq!(
-        state
-            .team_units[0]
+        state.team_units[0]
             .get_complex(complex)
             .expect("complex")
             .buildings,
@@ -1571,6 +1635,7 @@ fn awac_completes_from_the_merged_complex_pot() {
         80,
         "общий котёл комплекса"
     );
+    power_the_complex(&mut state, factory);
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Awac).expect("queue");
@@ -1630,6 +1695,7 @@ fn finish_turn_runs_the_production_phase() {
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
         .expect("training hall");
+    power_the_complex(&mut state, factory);
     state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(14, 14), 0)
         .expect("constructor");
@@ -1736,7 +1802,11 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
         0,
         "чужая команда"
     );
-    assert_eq!(state.unit(dump).expect("dump").storage, 30, "склад не тронут");
+    assert_eq!(
+        state.unit(dump).expect("dump").storage,
+        30,
+        "склад не тронут"
+    );
 }
 
 /// Флаги здания/юнита — проверка, что заводы действительно стационарны.

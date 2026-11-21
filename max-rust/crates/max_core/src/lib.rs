@@ -83,6 +83,7 @@ pub mod input;
 pub mod map;
 pub mod order;
 pub mod pathfinding;
+pub mod power;
 pub mod production;
 pub mod research;
 pub mod rng;
@@ -101,14 +102,6 @@ pub use access::{
     unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
     ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
 };
-pub use alloc::{
-    balance as alloc_balance, cargo_get_cargo_capacity, cargo_get_inventory,
-    get_cargo_info as complex_get_cargo_info, get_cargo_minable as complex_get_cargo_minable,
-    get_cargo_mining as complex_get_cargo_mining, is_active_mine, mining_survey,
-    optimize as alloc_optimize, optimize_masked as alloc_optimize_masked, reduce_production,
-    total_mining as complex_total_mining, update_resources_total, unit_complex, MiningKind,
-    MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
-};
 pub use ai::HeatMap as AiHeatMap;
 pub use ai::{
     ai_begin_turn, ai_check_end_turn, ai_check_mines, ai_check_reactions,
@@ -118,6 +111,14 @@ pub use ai::{
     ai_setup_strategy, ai_unit_hidden, ai_unit_spotted, task_manager_need_to_reserve_raw_materials,
     AiPlayer, AiReactionState, AiSettings, AiState, Reminder, Task, TaskHeader, TaskKind,
     TaskManager, ThreatMap, WeightTable,
+};
+pub use alloc::{
+    balance as alloc_balance, cargo_get_cargo_capacity, cargo_get_inventory,
+    get_cargo_info as complex_get_cargo_info, get_cargo_minable as complex_get_cargo_minable,
+    get_cargo_mining as complex_get_cargo_mining, is_active_mine, mining_survey,
+    optimize as alloc_optimize, optimize_masked as alloc_optimize_masked, reduce_production,
+    total_mining as complex_total_mining, unit_complex, update_resources_total, MiningKind,
+    MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
 };
 pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
@@ -149,8 +150,8 @@ pub use enums::{
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
     GameState, LiveAttack, OrderData, UnitSound, UnitSoundKind,
-    GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
-    INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, TEAM_SLOTS,
+    GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT,
+    PLAYER_TEAM_MAX, TEAM_SLOTS,
 };
 pub use geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
@@ -169,22 +170,25 @@ pub use order::Order;
 pub use pathfinding::{
     find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,
 };
+pub use power::{
+    complex_totals as complex_energy_totals, industry_unit_name, is_power_producer,
+    is_switchable_consumer, optimize_complex, shortage_build_error, EnergyTotals, IndustryOutcome,
+    Shortage, CONSUMER_OFF_ORDER,
+};
 pub use production::{
-    builder_type, buildable_units, can_afford_turn, can_build, complex_raw_materials, cost_per_turn,
-    find_build_site, initial_build_site, is_builder, is_factory, is_mobile_builder,
-    is_site_accessible, is_site_accessible_ignoring,
-    max_possible_build_rate, progress_build_state, site_anchor_for_cursor, site_covers,
-    total_cost,
-    turns_to_build as production_turns_to_build, BuildError, BuildReport, ProductionEvent,
-    ProductionEventKind, ProductionManager, BUILDABLE, FACTORIES, MOBILE_BUILDERS,
+    buildable_units, builder_type, can_afford_turn, can_build, complex_raw_materials,
+    cost_per_turn, find_build_site, initial_build_site, is_builder, is_factory, is_mobile_builder,
+    is_site_accessible, is_site_accessible_ignoring, max_possible_build_rate, progress_build_state,
+    site_anchor_for_cursor, site_covers, total_cost, turns_to_build as production_turns_to_build,
+    BuildError, BuildReport, ProductionEvent, ProductionEventKind, ProductionManager, BUILDABLE,
+    FACTORIES, MOBILE_BUILDERS,
 };
 pub use research::{
     apply_research_upgrades, research_attribute_values, research_factor, research_new_turn,
-    research_turns_to_complete, team_upgrade_cost, team_upgrade_cost_step, update_research_progress,
-    upgrade_amount,
-    upgrade_amount_for_base, upgrade_control_cost, upgrade_cost_step, upgrade_packet_values,
-    ResearchEvent, UpgradeQuote, RESEARCH_TOPIC_FACTORS, UPGRADE_CONTROL_COUNT,
-    UPGRADE_CONTROL_FACTORS, UPGRADE_COST_LIMIT, UPGRADE_PACKET_ATTRIBUTES,
+    research_turns_to_complete, team_upgrade_cost, team_upgrade_cost_step,
+    update_research_progress, upgrade_amount, upgrade_amount_for_base, upgrade_control_cost,
+    upgrade_cost_step, upgrade_packet_values, ResearchEvent, UpgradeQuote, RESEARCH_TOPIC_FACTORS,
+    UPGRADE_CONTROL_COUNT, UPGRADE_CONTROL_FACTORS, UPGRADE_COST_LIMIT, UPGRADE_PACKET_ATTRIBUTES,
 };
 pub use rng::{GenerateValue, Randomizer};
 pub use save::{
@@ -202,12 +206,12 @@ pub use team::{
     Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId, TeamInfo,
     TeamInfoUi, TeamKind, TeamUnits,
 };
-pub use unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
 pub use transfer::{
     complex_free_capacity, complex_income, complex_stored, complex_transfer,
     find_unit_with_cargo_type, process_transfer, transfer_cargo, transfer_cargo_kind,
     transfer_menu_cargo_info, unit_cargo,
 };
+pub use unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
 pub use unit_order::{
     blocked_on_path_request, move_finished, restore_orders, set_new_order_int, OrderContext,
     MOVEMENT_WAIT_LIMIT,

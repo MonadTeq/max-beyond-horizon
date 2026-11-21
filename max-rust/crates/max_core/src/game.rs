@@ -231,6 +231,14 @@ pub struct GameState {
     /// События последнего хода исследований (`ResearchMenu_NewTurn`):
     /// завершённые уровни тем. Не входит в дайджест — отчёт для UI/QA.
     pub research_events: Vec<crate::research::ResearchEvent>,
+    /// Сообщение энергетики комплекса для верхней строки карты — C++
+    /// `ProductionManager::DrawResourceMessage`/`ComposeIndustryMessage`
+    /// (`production_manager.cpp:308-330/792-804`), `MESSAGE_BOX_NOTICE`.
+    ///
+    /// Отчёт для UI/QA, в снапшот/CRC не входит (как `production_events`).
+    /// Копится за ход производства и забирается
+    /// [`Self::take_industry_message`].
+    pub industry_message: Option<String>,
     /// Звуки боя за тик — `SoundManager::PlaySfx(unit, SfxType)`
     /// (`unitinfo.cpp:4725` — выстрел, `units_manager.cpp:3922/3929` — попадание
     /// и взрыв). Симуляция только копит события, ресурс/громкость выбирает
@@ -372,8 +380,9 @@ impl GameState {
             live_attacks: Vec::new(),
             delayed_reactions_pending: false,
             production_events: Vec::new(),
-        research_events: Vec::new(),
-        unit_sounds: Vec::new(),
+            research_events: Vec::new(),
+            industry_message: None,
+            unit_sounds: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -1172,8 +1181,7 @@ impl GameState {
             unit.turret_image_index = unit.turret_image_base.wrapping_add(i16::from(unit.angle));
             if merged_flags & unit_flags::SPINNING_TURRET != 0 {
                 let frames = crate::frames::frame_info(unit_type);
-                unit.image_index_max =
-                    unit.turret_image_base + frames.turret_image_count - 1;
+                unit.image_index_max = unit.turret_image_base + frames.turret_image_count - 1;
             }
         }
 
@@ -1705,10 +1713,26 @@ impl GameState {
         // `team_units->OptimizeComplexes(team)` (`teamunits.cpp:170`):
         // `Access_UpdateResourcesTotal(complex)` — запасы комплекса (включая
         // добычу шахт по их `raw/fuel/gold_mining`) пересчитываются на начало
-        // хода; затем `ProductionManager_OptimizeProduction` (в нашем стеке —
-        // только `UpdateProduction`, см. ниже: выключение зданий при
-        // отрицательном балансе остаётся TODO P3).
+        // хода; затем `ProductionManager_OptimizeProduction` — включение
+        // производителей энергии, отключение потребителей при дефиците и
+        // пауза строек (`production_manager.cpp:830-901`).
+        let complexes: Vec<crate::team::ComplexId> = self
+            .team_units
+            .get(team.0 as usize)
+            .map(|units| {
+                units
+                    .complexes
+                    .iter()
+                    .map(|complex| complex.complex_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         self.update_complex_resources(team);
+
+        for complex in &complexes {
+            let _ = crate::power::optimize_complex(self, team, *complex, None, None, false);
+        }
 
         for kind in [
             UnitListKind::MobileLandSea,
@@ -1744,6 +1768,11 @@ impl GameState {
             }
         }
 
+        // Повторная оптимизация здесь **не** нужна: `update_production` не
+        // сбрасывает паузу стационарных заводов (её решение принято
+        // `ProductionManager_OptimizeProduction` выше), а
+        // `Access_UpdateResourcesTotal` после раздачи складов вернул бы кэш
+        // комплекса к «инвентарь + добыча» (C++ `ManageEconomy` этого не делает).
         if let Some(team_info) = self.teams.get_mut(team.0 as usize) {
             for index in 0..RESEARCH_TOPIC_COUNT {
                 let topic = team_info.research_topics[index];
@@ -1766,7 +1795,12 @@ impl GameState {
 
     /// `ResearchMenu_UpdateResearchProgress(team, topic, allocation)` —
     /// изменить число исследовательских центров темы и пересчитать прогресс.
-    pub fn update_research_progress(&mut self, team: TeamId, topic: ResearchTopic, allocation: i32) {
+    pub fn update_research_progress(
+        &mut self,
+        team: TeamId,
+        topic: ResearchTopic,
+        allocation: i32,
+    ) {
         let index = topic as usize;
         if index >= RESEARCH_TOPIC_COUNT {
             return;
@@ -1830,11 +1864,7 @@ impl GameState {
 
             let Some(new_index) = remaining.iter().position(|count| *count > 0) else {
                 let mut unit = unit;
-                unit_order::set_new_order_int(
-                    &mut unit,
-                    UnitOrder::PowerOff,
-                    UnitOrderState::Init,
-                );
+                unit_order::set_new_order_int(&mut unit, UnitOrder::PowerOff, UnitOrderState::Init);
                 self.write_unit(id, unit);
                 continue;
             };
@@ -1903,10 +1933,14 @@ impl GameState {
     pub fn update_production(&mut self, unit: &mut UnitInfo) {
         let team_index = unit.team.0 as usize;
 
-        // Флаг паузы стройки пересчитывается каждый ход: `true` ставит только
-        // ветка оплаты ниже, всё остальное (не-строитель, смена приказа,
-        // нехватка исчезла) снимает его.
-        unit.build_paused = false;
+        // Флаг паузы мобильного строителя пересчитывается каждый ход:
+        // `true` ставит только ветка оплаты ниже. Пауза **стационарного**
+        // завода принадлежит `ProductionManager::progress` (оптимизатор
+        // энергии) и здесь не сбрасывается — иначе решение об отключении
+        // терялось бы между `ManageEconomy` и `ProgressBuildState`.
+        if unit.flags & unit_flags::MOBILE_LAND_UNIT != 0 {
+            unit.build_paused = false;
+        }
 
         if unit.orders == UnitOrder::Build
             && unit.state != UnitOrderState::UnitReady
@@ -1926,9 +1960,11 @@ impl GameState {
                 .build_list
                 .first()
                 .and_then(|unit_type| {
-                    self.team_units
-                        .get(team_index)
-                        .map(|units| units.current_unit_values(*unit_type as u16).get_attribute(ATTRIB_TURNS))
+                    self.team_units.get(team_index).map(|units| {
+                        units
+                            .current_unit_values(*unit_type as u16)
+                            .get_attribute(ATTRIB_TURNS)
+                    })
                 })
                 .unwrap_or(0);
 
@@ -2189,6 +2225,7 @@ impl GameState {
         // (`GroundCover → MobileLandSea → Stationary → MobileAir`).
         self.production_events.clear();
         self.research_events.clear();
+        self.industry_message = None;
 
         for team in 0..PLAYER_TEAM_COUNT {
             let kind = self.teams[team].team_type;
@@ -2211,6 +2248,32 @@ impl GameState {
     /// Забирает события последнего хода производства (для HUD-лога).
     pub fn take_production_events(&mut self) -> Vec<crate::production::ProductionEvent> {
         std::mem::take(&mut self.production_events)
+    }
+
+    /// Добавляет строку в сообщение энергетики комплекса — C++
+    /// `ComposeIndustryMessage`/`DrawResourceMessage`
+    /// (`production_manager.cpp:308-330/792-804`).
+    pub fn push_industry_message(&mut self, message: impl Into<String>) {
+        let message = message.into();
+
+        if message.is_empty() {
+            return;
+        }
+
+        match &mut self.industry_message {
+            Some(buffer) => {
+                if !buffer.ends_with('\n') {
+                    buffer.push('\n');
+                }
+                buffer.push_str(&message);
+            }
+            None => self.industry_message = Some(message),
+        }
+    }
+
+    /// Забирает накопленное сообщение энергетики (для `hud.hint`).
+    pub fn take_industry_message(&mut self) -> Option<String> {
+        self.industry_message.take()
     }
 
     // -----------------------------------------------------------------------
@@ -2509,7 +2572,9 @@ impl GameState {
             put_u16(&mut out, unit.connectors);
             put_u16(
                 &mut out,
-                unit.complex.map(|complex| complex.0 as u16).unwrap_or(u16::MAX),
+                unit.complex
+                    .map(|complex| complex.0 as u16)
+                    .unwrap_or(u16::MAX),
             );
             put_u16(&mut out, unit.parent_unit.map(|p| p.0).unwrap_or(u16::MAX));
             put_u16(&mut out, unit.enemy_unit.map(|p| p.0).unwrap_or(u16::MAX));
@@ -2654,11 +2719,13 @@ impl GameState {
     /// Порядок комплексов — порядок `TeamUnits::complexes` (тот же, что в
     /// C++-списке: по возрастанию id).
     pub fn update_complex_resources(&mut self, team: TeamId) {
-        let Some(ids) = self
-            .team_units
-            .get(team.0 as usize)
-            .map(|units| units.complexes.iter().map(|complex| complex.id).collect::<Vec<_>>())
-        else {
+        let Some(ids) = self.team_units.get(team.0 as usize).map(|units| {
+            units
+                .complexes
+                .iter()
+                .map(|complex| complex.id)
+                .collect::<Vec<_>>()
+        }) else {
             return;
         };
 

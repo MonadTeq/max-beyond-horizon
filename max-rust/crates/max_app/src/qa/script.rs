@@ -851,6 +851,13 @@ pub enum Command {
     /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита
     /// (нужен для проверки `Upg. All`).
     ComplexRaw(i32),
+    /// `complex fuel N` — QA-only: запас топлива комплекса выделенного юнита
+    /// (C++ `Complex::Transfer(0, N, 0)`), например чтобы проверить
+    /// энергоснабжение `POWGEN`/`POWERSTN`.
+    ComplexFuel(i32),
+    /// `complex gold N` — QA-only: запас золота комплекса
+    /// (`Complex::Transfer(0, 0, N)`).
+    ComplexGold(i32),
     /// `teamvalues NAME ATTR VALUE` — QA-only: текущее значение атрибута команды
     /// (апгрейд доступен, когда `current` выше `base`).
     TeamValues {
@@ -1028,7 +1035,8 @@ fn parse_command(source: &str) -> Result<Command, String> {
 }
 
 /// Первое слово и остаток строки.
-fn split_word(source: &str) -> (&str, &str) {    match source.find(char::is_whitespace) {
+fn split_word(source: &str) -> (&str, &str) {
+    match source.find(char::is_whitespace) {
         Some(index) => (&source[..index], &source[index..]),
         None => (source, ""),
     }
@@ -2050,7 +2058,9 @@ fn parse_selfdestruct(rest: &str) -> Result<Command, String> {
         ["arm"] => SelfDestructCommand::Arm,
         ["ok"] => SelfDestructCommand::Ok,
         ["cancel"] => SelfDestructCommand::Cancel,
-        ["advance", millis] => SelfDestructCommand::Advance(parse_count(millis, "selfdestruct advance")?),
+        ["advance", millis] => {
+            SelfDestructCommand::Advance(parse_count(millis, "selfdestruct advance")?)
+        }
         _ => {
             return Err(format!(
                 "selfdestruct: ожидалось arm|ok|cancel|advance N, получено «{rest}»"
@@ -2067,24 +2077,24 @@ fn parse_complex(rest: &str) -> Result<Command, String> {
 
     match parts.as_slice() {
         ["raw", value] => Ok(Command::ComplexRaw(parse_i32(value, "complex raw")?)),
+        ["fuel", value] => Ok(Command::ComplexFuel(parse_i32(value, "complex fuel")?)),
+        ["gold", value] => Ok(Command::ComplexGold(parse_i32(value, "complex gold")?)),
         _ => Err(format!(
-            "complex: ожидалось «complex raw N», получено «{rest}»"
+            "complex: ожидалось «complex raw|fuel|gold N», получено «{rest}»"
         )),
     }
 }
 
 /// `teamvalues NAME ATTR VALUE` — QA-only текущее значение атрибута команды.
 fn parse_teamvalues(rest: &str) -> Result<Command, String> {
-    let value_start = rest
-        .trim_end()
-        .rsplit_once(' ')
-        .ok_or_else(|| format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»"))?;
+    let value_start = rest.trim_end().rsplit_once(' ').ok_or_else(|| {
+        format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»")
+    })?;
     let (head, value) = value_start;
     let value = parse_i32(value.trim(), "teamvalues value")?;
-    let (name, attribute) = head
-        .trim_end()
-        .rsplit_once(' ')
-        .ok_or_else(|| format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»"))?;
+    let (name, attribute) = head.trim_end().rsplit_once(' ').ok_or_else(|| {
+        format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»")
+    })?;
 
     if name.trim().is_empty() || attribute.trim().is_empty() {
         return Err("teamvalues: пустое имя типа или атрибута".to_string());
@@ -2097,7 +2107,8 @@ fn parse_teamvalues(rest: &str) -> Result<Command, String> {
     })
 }
 
-fn parse_upgrade(rest: &str) -> Result<Command, String> {    let parts: Vec<&str> = rest.split_whitespace().collect();
+fn parse_upgrade(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
     let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
         return Err(
             "upgrade: ожидалось действие (open|select N|row N up|down|done|cancel)".to_string(),
@@ -2665,11 +2676,7 @@ mod tests {
         );
         assert_eq!(
             one("assert unit-count RocketSmoke>=3"),
-            Command::Assert(Assertion::UnitCount(
-                "rocketsmoke".to_string(),
-                Cmp::Ge,
-                3
-            ))
+            Command::Assert(Assertion::UnitCount("rocketsmoke".to_string(), Cmp::Ge, 3))
         );
         assert_eq!(
             one("assert firing=on"),
@@ -3252,6 +3259,9 @@ type \"a#b\"  # решётка в кавычках — часть текста
             one("assert complex-gold=1"),
             Command::Assert(Assertion::ComplexGold(Cmp::Eq, 1))
         );
+        assert_eq!(one("complex raw 60"), Command::ComplexRaw(60));
+        assert_eq!(one("complex fuel 40"), Command::ComplexFuel(40));
+        assert_eq!(one("complex gold -5"), Command::ComplexGold(-5));
 
         for source in [
             "allocate nope",

@@ -10,7 +10,10 @@
 //! * `game_manager.cpp` — `GameManager_ManageEconomy` (`UpdateProduction`,
 //!   списание за ход) и `GameManager_ProgressBuildState`
 //!   (`GameManager_SpawnNewUnits` — спавн в конце «хода производства»);
-//! * `cargo.cpp` — `Cargo_GetRawConsumptionRate` (ставка расхода).
+//! * `cargo.cpp` — `Cargo_GetRawConsumptionRate` (ставка расхода),
+//!   `Cargo_ApplyUnitConsumption` (raw + fuel + power + life + gold);
+//! * `production_manager.cpp` — `ProductionManager_OptimizeProduction`
+//!   (энергия/рабочие; порт — [`crate::power`]).
 //!
 //! # Модель
 //!
@@ -63,6 +66,16 @@
 //!   порядке `UnitsManager_StationaryUnits` — как `Complex::Transfer`
 //!   (`complex.cpp:178-203`). Нехватка ставит заказ на паузу
 //!   ([`ProductionEventKind::PausedNoMaterials`]), заказ не теряется;
+//! * **энергия и рабочие** — тоже из котла комплекса (`Cargo_ApplyUnitConsumption`,
+//!   `cargo.cpp:132-138`): `power` тратит каждый строящийся завод, `life` —
+//!   `TRAINHAL`/`GREENHSE`/`RESEARCH`. Перед стартом и на каждом ходу
+//!   [`crate::power::optimize_complex`] включает производителей
+//!   (`POWGEN`/`POWERSTN`), выключает потребителей при дефиците и ставит
+//!   стройку на паузу (`PausedNoPower`/`PausedNoWorkers`); заказ **не
+//!   стартует**, если первый ход не оплачивается ([`BuildError::NotEnoughPower`],
+//!   [`BuildError::NotEnoughWorkers`]). Сообщение об этом —
+//!   [`crate::power::IndustryOutcome::message`]
+//!   (`production_manager.cpp:308-330/792-804`);
 //! * **золото команды за производство не тратится** — в C++ оно нужно только
 //!   `CargoMenu` (покупка на мобилизации) и апгрейдам. Старое поведение порта
 //!   («завод платит золотом») и было причиной «заводы ничего не производят»:
@@ -76,10 +89,14 @@
 //!
 //! # Что упрощено (честно)
 //!
-//! * энергия/рабочие и `ProductionManager_OptimizeProduction` (перераспределение
-//!   шахт, отключение зданий при отрицательном балансе) остаются TODO(P3):
-//!   `ValidateIndustry` в C++ проверяет ещё `power`/`workers`, порт — только
-//!   материалы;
+//! * энергия/рабочие портированы в [`crate::power`] в объёме наблюдаемого
+//!   баланса: точная арифметика `OptimizePowerProduction` с `count` заменена
+//!   эквивалентным детерминированным выбором «станции → генераторы» (см.
+//!   шапку `power`), а `OptimizeCargoProduction` (перераспределение добычи
+//!   ради топлива) не портирован;
+//! * выключенные при дефиците **потребители** (`RESEARCH`/`GREENHSE`/`COMMTWR`/
+//!   `MININGST`) C++ сам обратно не включает — только игрок/ИИ; порт следует
+//!   этому правилу (`production_manager.cpp:729-790`);
 //! * завод выпускает юнит сразу в свободную соседнюю клетку, а не хранит его
 //!   внутри и не «выезжает» по `AWAIT_TAPE_POSITIONING`;
 //! * `quick_build` (настройка обучающих миссий) не моделируется;
@@ -482,6 +499,19 @@ pub enum BuildError {
     /// не хватает сырья на всю постройку (`buildmenu.cpp:903-906`, сообщение
     /// `_(c529)`). C++ не отдаёт приказ — иначе постройка встала бы навсегда.
     NotEnoughMaterials,
+    /// Завод не может оплатить первый ход: комплексу не хватает энергии
+    /// (`Cargo_GetPowerConsumptionRate` → `Cargo_ApplyUnitConsumption`,
+    /// `production_manager.cpp:677-711`; в порте — отказ вместо `BUILD_ABORT`,
+    /// чтобы не терять очередь).
+    NotEnoughPower,
+    /// Заводу не хватает топлива на производителей энергии его комплекса
+    /// (`PowerOn`/`OptimizePowerProduction`, `production_manager.cpp:332-364`).
+    NotEnoughFuel,
+    /// Заводу не хватает рабочих (`TRAINHAL`/`GREENHSE`/`RESEARCH`:
+    /// `Cargo_GetLifeConsumptionRate = 1`, `production_manager.cpp:366-380`).
+    NotEnoughWorkers,
+    /// Заводу не хватает золота (`COMMTWR`: `Cargo_GetGoldConsumptionRate = 5`).
+    NotEnoughGold,
 }
 
 impl BuildError {
@@ -494,6 +524,10 @@ impl BuildError {
             Self::NoSite => "no valid build site nearby",
             Self::InvalidTeam => "unknown team",
             Self::NotEnoughMaterials => "not enough raw materials on hand",
+            Self::NotEnoughPower => "not enough power in the complex",
+            Self::NotEnoughFuel => "not enough fuel for the power plants",
+            Self::NotEnoughWorkers => "not enough workers in the complex",
+            Self::NotEnoughGold => "not enough gold in the complex",
         }
     }
 }
@@ -535,6 +569,18 @@ pub enum ProductionEventKind {
     NoSpawnCell,
     /// Бульдозер расчистил обломок (`UnitInfo::SpawnNewUnit`, ветка BULLDOZR).
     RubbleCleared,
+    /// Стройка завода приостановлена: комплексу не хватает **энергии**
+    /// (`Cargo_GetPowerConsumptionRate` → `Cargo_ApplyUnitConsumption`;
+    /// C++ `ValidateIndustry` выключает стройку, порт — пауза).
+    PausedNoPower,
+    /// Стройка завода приостановлена: не хватает **топлива** производителям
+    /// энергии (`CalculatePowerConsumption`/`CheckPowerNeed`).
+    PausedNoFuel,
+    /// Стройка завода приостановлена: комплексу не хватает **рабочих**
+    /// (`Cargo_GetLifeConsumptionRate`, `production_manager.cpp:366-380`).
+    PausedNoWorkers,
+    /// Стройка завода приостановлена: не хватает **золота** (`COMMTWR`).
+    PausedNoGold,
 }
 
 /// Событие производства — для HUD-лога и QA-ассертов.
@@ -548,6 +594,19 @@ pub struct ProductionEvent {
     pub spawned: Option<UnitId>,
     /// Итог шага.
     pub kind: ProductionEventKind,
+}
+
+/// Событие паузы по ресурсу из [`crate::power::Shortage`].
+fn pause_event_kind(shortage: crate::power::Shortage) -> ProductionEventKind {
+    use crate::power::Shortage;
+
+    match shortage {
+        Shortage::Power => ProductionEventKind::PausedNoPower,
+        Shortage::Fuel => ProductionEventKind::PausedNoFuel,
+        Shortage::Workers => ProductionEventKind::PausedNoWorkers,
+        Shortage::Gold => ProductionEventKind::PausedNoGold,
+        Shortage::Raw => ProductionEventKind::PausedNoMaterials,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,7 +1064,11 @@ pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
 /// Возвращает `None`, если рядом нет проходимой клетки — тогда C++
 /// (`UnitsManager_ActivateUnit`, `units_manager.cpp:3832-3836`) приказ не
 /// выполняет и возвращает прежний.
-pub fn factory_exit_cell(state: &GameState, container: &UnitInfo, client: &UnitInfo) -> Option<Point> {
+pub fn factory_exit_cell(
+    state: &GameState,
+    container: &UnitInfo,
+    client: &UnitInfo,
+) -> Option<Point> {
     crate::unit_order::activation_exit_cell(state, client, container)
 }
 
@@ -1282,22 +1345,79 @@ impl<'a> ProductionManager<'a> {
         // из `BuildMenu_GetTurnsToBuild`.
         if is_mobile_builder(builder_type)
             && build_rate == 1
-            && i32::from(unit.storage) < crate::victory::cargo_raw_consumption_rate(builder_type, 1) * turns
+            && i32::from(unit.storage)
+                < crate::victory::cargo_raw_consumption_rate(builder_type, 1) * turns
         {
             return Err(BuildError::NotEnoughMaterials);
         }
+
+        let prior_orders = unit.orders;
+        let prior_state = unit.state;
 
         unit.build_time = turns.min(i32::from(u8::MAX)) as u8;
         unit.build_rate = build_rate;
         unit.target_grid = site;
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::Init;
-        self.state.write_unit(unit_id, unit);
+        unit.build_paused = false;
+        self.state.write_unit(unit_id, unit.clone());
 
         // `ORDER_BUILD` с целью: клетка постройки в `order_data.move_to`.
         let mut data = self.state.order_data(unit_id);
         data.move_to = site;
         self.state.set_order_data(unit_id, data);
+
+        // `UnitInfo::StartBuilding` (`unitinfo.cpp:2751-2794`) сразу списала бы
+        // `complex->material/power/workers` и вызвала
+        // `GameManager_OptimizeProduction` (`game_manager.cpp:2555-2584`):
+        // при нехватке `ValidateIndustry` (`production_manager.cpp:677-711`)
+        // прерывает заказ. Порт не теряет очередь: проверяет баланс до старта и
+        // возвращает `BuildError`, оставляя `build_list` нетронутым.
+        if is_factory(builder_type) {
+            let Some(complex) = unit.complex else {
+                let mut unit = self.state.unit(unit_id).cloned().unwrap_or(unit);
+                unit.build_time = 0;
+                unit.orders = prior_orders;
+                unit.state = prior_state;
+                unit.build_paused = false;
+                self.state.write_unit(unit_id, unit);
+                return Err(BuildError::NotEnoughMaterials);
+            };
+
+            let is_player = self
+                .state
+                .teams
+                .get(self.team.0 as usize)
+                .is_some_and(|info| info.team_type == TeamKind::Player);
+            let outcome = crate::power::optimize_complex(
+                self.state,
+                self.team,
+                complex,
+                Some(unit_id),
+                Some(unit_id),
+                is_player,
+            );
+
+            if let Some(message) = outcome.message.as_ref() {
+                self.state.push_industry_message(message.clone());
+            }
+
+            if outcome.paused.iter().any(|(id, _)| *id == unit_id) {
+                let mut unit = self.state.unit(unit_id).cloned().unwrap_or(unit);
+                unit.build_time = 0;
+                unit.orders = prior_orders;
+                unit.state = prior_state;
+                unit.build_paused = false;
+                self.state.write_unit(unit_id, unit);
+                let shortage = outcome
+                    .paused
+                    .iter()
+                    .find(|(id, _)| *id == unit_id)
+                    .map(|(_, shortage)| *shortage)
+                    .unwrap_or(crate::power::Shortage::Raw);
+                return Err(crate::power::shortage_build_error(shortage));
+            }
+        }
 
         // `UnitInfo::StartBuilding` в C++ зовётся синхронно из `Build`:
         // `DeployConstructionSiteUtilities` + `PrepareConstructionSite`.
@@ -1348,14 +1468,41 @@ impl<'a> ProductionManager<'a> {
         true
     }
 
-    /// Ход производства: списание за ход → `SpawnNewUnits` (порядок C++).
+    /// Ход производства: оптимизация энергии → списание за ход →
+    /// `SpawnNewUnits` (порядок C++).
     ///
     /// Возвращает события (спавны/остановки) в порядке C++ — для HUD-лога и
     /// тестов.
     pub fn progress(&mut self) -> Vec<ProductionEvent> {
         let (mut events, paused) = self.charge_units();
         events.extend(self.spawn_units(&paused));
+
+        // `GameManager_ProgressBuildState` (`game_manager.cpp:8183-8204`):
+        // после `SpawnNewUnits` C++ ещё раз пересчитывает комплексы и зовёт
+        // `ProductionManager_OptimizeProduction`. Заводы в `UNIT_READY` больше
+        // не потребляют энергию, поэтому лишние производители выключаются.
+        let team = self.team;
+        let complexes = self.team_complexes();
+        for complex in complexes {
+            let _ = crate::power::optimize_complex(self.state, team, complex, None, None, false);
+        }
+
         events
+    }
+
+    /// Комплексы команды в порядке `TeamUnits::complexes` (по возрастанию id).
+    fn team_complexes(&self) -> Vec<crate::team::ComplexId> {
+        self.state
+            .team_units
+            .get(self.team.0 as usize)
+            .map(|units| {
+                units
+                    .complexes
+                    .iter()
+                    .map(|complex| complex.complex_id())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// `GameManager_ManageEconomy` → `GameManager_UpdateProductions`
@@ -1367,13 +1514,43 @@ impl<'a> ProductionManager<'a> {
     /// [`complex_raw_materials`]) — как C++ `UnitInfo::StartBuilding`/
     /// `Cargo_GetNetProduction`.
     ///
+    /// Перед списанием каждый комплекс проходит
+    /// [`crate::power::optimize_complex`] (C++
+    /// `TeamUnits::OptimizeComplexes`): производители энергии включаются,
+    /// потребители при дефиците выключаются, стройки без энергии/рабочих
+    /// ставятся на паузу.
+    ///
     /// Возвращает события и множество построек, которые в этом ходу **не
-    /// двигаются** из-за нехватки материалов (C++ `ValidateIndustry` прерывает
+    /// двигаются** из-за нехватки ресурсов (C++ `ValidateIndustry` прерывает
     /// постройку; порт ставит её на паузу — см. шапку модуля).
     fn charge_units(&mut self) -> (Vec<ProductionEvent>, Vec<UnitId>) {
         let mut events = Vec::new();
         let mut paused = Vec::new();
         let team = self.team;
+        let is_player = self
+            .state
+            .teams
+            .get(team.0 as usize)
+            .is_some_and(|info| info.team_type == TeamKind::Player);
+
+        // `TeamUnits::OptimizeComplexes(team)` + `ProductionManager_OptimizeProduction`:
+        // решение о паузах и режиме производителей принимается до списания.
+        let mut pause_reason: Vec<(UnitId, crate::power::Shortage)> = Vec::new();
+        let complexes = self.team_complexes();
+
+        for complex in complexes {
+            let outcome =
+                crate::power::optimize_complex(self.state, team, complex, None, None, is_player);
+
+            if let Some(message) = outcome.message.as_ref() {
+                self.state.push_industry_message(message.clone());
+            }
+
+            for (id, shortage) in outcome.paused {
+                paused.push(id);
+                pause_reason.push((id, shortage));
+            }
+        }
 
         for kind in CHARGE_LIST_ORDER {
             let ids = self.state.unit_list(kind).to_vec();
@@ -1442,6 +1619,20 @@ impl<'a> ProductionManager<'a> {
                 }
 
                 let cost = cost_per_turn(unit.unit_type, build_rate);
+
+                // Завод, который оптимизатор уже поставил на паузу (нет
+                // энергии/топлива/рабочих/материалов), в этом ходу не платит и
+                // не двигается (C++ `ValidateIndustry` → `BUILD_ABORT`; порт —
+                // пауза с сохранением очереди).
+                if let Some((_, shortage)) = pause_reason.iter().find(|(unit, _)| *unit == id) {
+                    events.push(ProductionEvent {
+                        builder: id,
+                        unit_type: unit.build_list[0],
+                        spawned: None,
+                        kind: pause_event_kind(*shortage),
+                    });
+                    continue;
+                }
 
                 // C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`):
                 // `complex->material -= Cargo_GetRawConsumptionRate(...)`;

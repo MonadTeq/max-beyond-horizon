@@ -2,6 +2,39 @@
 
 ### Исправлено
 
+- **Энергия комплекса: завод не стартует без power/life, здания отключаются при
+  дефиците, сверху — сообщение о нехватке.** Оракул: `cargo.cpp:70-138`
+  (`Cargo_GetNetProduction`/`Cargo_ApplyUnitConsumption` — завод тратит
+  raw+power+life из котла), `unitinfo.cpp:2751-2794` (`StartBuilding` сразу
+  списывает `complex->material/power/workers` и зовёт
+  `GameManager_OptimizeProduction`), `game_manager.cpp:2555-2584`,
+  `production_manager.cpp:84-197` (активные `POWERSTN`/`POWGEN`), `:481-562`
+  (`OptimizePowerProduction`/`OptimizePowerConsumption`), `:642-664`
+  (`CheckPowerNeed`: топливо), `:677-790` (`ValidateIndustry` и порядок
+  отключения `RESEARCH` → `GREENHSE` → `COMMTWR` → стройки → `MININGST`),
+  `:366-380` (`UpdateUnitLifeConsumption` — `HABITAT`), `:308-330/792-804`
+  (`ComposeIndustryMessage`/`DrawResourceMessage`), `teamunits.cpp:170-175`
+  (`OptimizeComplexes`), `game_manager.cpp:8183-8204` (`ProgressBuildState`).
+  Порт раньше не проверял `power`/`workers` вообще: завод запускался и строил
+  без энергии, потребители не отключались, сообщения не было.
+  Новый `max_core::power` (`optimize_complex`, `complex_totals`, `Shortage`,
+  `IndustryOutcome`): баланс энергии/рабочих по комплексу, автоматическое
+  включение/выключение производителей по спросу и топливу, отключение
+  потребителей в C++-порядке (генераторы восстанавливаются сами; выключенные
+  потребители C++ сам не включает — только игрок/ИИ), пауза стройки вместо
+  потери очереди. `ProductionManager::commit` проверяет первый ход завода
+  (`BuildError::NotEnoughPower/Fuel/Workers/Materials`) и оставляет очередь;
+  `progress`/`manage_economy` прогоняют оптимизацию, `GameState` копит
+  `industry_message`, `App` выводит его в `hud.hint` (верх карты). Тесты:
+  `max_core/tests/power_economy.rs` (10: старт без power/workers/raw, порядок
+  отключения, пауза/возобновление, сообщение, снапшот/CRC, детерминизм),
+  `max_core/src/power.rs` (2), обновлены `production`/`construction_economy`/
+  `transfer` под энергоснабжение комплекса. QA: `production.qa`,
+  `research.qa`, `research-help.qa` ставят `POWGEN`/`FDUMP`/`HABITAT`;
+  новая QA-команда `complex fuel|gold N` (как `complex raw`), golden
+  `production`/`research`/`research-help` перегенерированы (новые здания).
+  Документация: `docs/architecture/game-mechanics.md` §3/§5,
+  `docs/analysis/visual-1to1-status.md` §42.
 - **Построенный в AIRPLT самолёт стоит НА заводе и выводится приказом игрока.**
   Оракул: `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520` — юнит на клетке
   завода, `ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`, `parent` —

@@ -1,3 +1,0 @@
-if(CPACK_GENERATOR STREQUAL "NSIS")
-	file(REMOVE "${CPACK_TEMPORARY_DIRECTORY}/.portable")
-endif()

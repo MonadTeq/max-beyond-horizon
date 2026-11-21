@@ -309,6 +309,23 @@ assert complex-raw>=50
 select type ADump
 assert unit-storage>=1
 select type Training Hall
+
+# --- Энергия и рабочие комплекса завода ----------------------------------
+# C++ `Cargo_ApplyUnitConsumption` для `TRAINHAL` списывает из котла
+# `power = 1` и `life = 1` (`cargo.cpp:132-138`, `Cargo_GetLifeConsumptionRate`
+# = 1 у TRAINHAL). Без `POWGEN`/`FDUMP` (2 топлива за 1 энергию) завод не
+# стартует (`ValidateIndustry`, `production_manager.cpp:677-711`), а без
+# `HABITAT` (+3 рабочих) не хватает рабочих. Ставим их вплотную к цеху:
+# `POWGEN` (27,20) примыкает к западной грани 2×2, `FDUMP` (26,20) — к
+# генератору, `HABITAT` 2×2 (26,22) — к складу/генератору.
+spawn at 27 20 Power Generator
+spawn at 26 20 Fuel Tank
+spawn at 26 22 Habitat
+# `complex fuel N` — QA-only `Complex::Transfer(0,N,0)`: запас топлива в
+# котле выделенного комплекса (как `complex raw`, но для `FDUMP`).
+complex fuel 40
+assert complex-fuel>=38
+assert unit=Habitat
 assert unit=Training Hall
 
 # --- BuildMenu завода: очередь и заказ пехоты ----------------------------

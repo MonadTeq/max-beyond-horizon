@@ -532,7 +532,10 @@ impl LocalGame {
         match self.phase {
             LocalPhase::PlayerTurn => {
                 if self.is_hot_seat() {
-                    format!("{}'s turn", crate::hotseat::team_display_name(self.active_team))
+                    format!(
+                        "{}'s turn",
+                        crate::hotseat::team_display_name(self.active_team)
+                    )
                 } else {
                     "Your turn".to_string()
                 }
@@ -690,10 +693,8 @@ impl App {
         self.local = Some(local);
         // P3: настройки партии для записи V70 (`SaveFormatHeader`/`IniOptions`),
         // плюс текущие `IniPreferences` игрока (7 × `signed int`).
-        let meta = crate::saveload::save_meta_for_local_game_with(
-            setup,
-            &self.preferences.to_ini(),
-        );
+        let meta =
+            crate::saveload::save_meta_for_local_game_with(setup, &self.preferences.to_ini());
         self.state_mut().set_save_meta(meta);
         self.hud.clear();
         self.close_unit_menu();
@@ -813,7 +814,8 @@ impl App {
                 // сменилась человеческая команда (`GameManager_PlayerTeam != team`)
                 // и людей больше одного (`GameManager_HumanPlayerCount`).
                 let previous_player_team = self.state().player_team;
-                let notice = (hot_seat && previous_player_team != team).then(|| TurnNotice::new(team));
+                let notice =
+                    (hot_seat && previous_player_team != team).then(|| TurnNotice::new(team));
 
                 {
                     let state = self.state_mut();
@@ -833,17 +835,26 @@ impl App {
                 // Выделение не переезжает между игроками: иначе новый игрок
                 // приказал бы чужому юниту (`GameManager_UpdateGuiControl`).
                 self.hud.clear_interaction();
+                // Сообщение энергетики (`ProductionManager::DrawResourceMessage`)
+                // переустанавливается после смены хода: `clear_interaction`
+                // снимает `hint` вместе с выделением.
+                if let Some(message) = self.state().industry_message.clone() {
+                    self.hud.set_hint(message);
+                }
                 // Попап команд принадлежит прежнему выделению
                 // (`GameManager_DeinitPopupButtons` на смене хода).
                 self.close_unit_menu();
                 self.focus_player();
 
                 if let Some(notice) = notice {
-                    self.hud
-                        .push_log(crate::hotseat::notice_log_line(&notice));
+                    self.hud.push_log(crate::hotseat::notice_log_line(&notice));
                 } else {
                     self.hud.push_log(if hot_seat {
-                        format!("Turn {}: {} moves", self.state().turn_counter, team_name(team))
+                        format!(
+                            "Turn {}: {} moves",
+                            self.state().turn_counter,
+                            team_name(team)
+                        )
                     } else {
                         format!("Turn {}: your move", self.state().turn_counter)
                     });
@@ -907,16 +918,27 @@ impl App {
                     max_core::ProductionEventKind::BuildingDone => {
                         self.hud.push_log(format!("{name} built"))
                     }
-                    max_core::ProductionEventKind::PausedNoMaterials => {
-                        self.hud
-                            .push_log("Production paused: not enough raw materials")
+                    max_core::ProductionEventKind::PausedNoMaterials => self
+                        .hud
+                        .push_log("Production paused: not enough raw materials"),
+                    max_core::ProductionEventKind::PausedNoResources => self
+                        .hud
+                        .push_log("Production paused: not enough raw materials"),
+                    max_core::ProductionEventKind::PausedNoPower => {
+                        self.hud.push_log("Production paused: not enough power")
                     }
-                    max_core::ProductionEventKind::PausedNoResources => {
-                        self.hud.push_log("Production paused: not enough raw materials")
+                    max_core::ProductionEventKind::PausedNoFuel => {
+                        self.hud.push_log("Production paused: not enough fuel")
                     }
-                    max_core::ProductionEventKind::NoSpawnCell => {
-                        self.hud.push_log("Production: no free cell near the factory")
+                    max_core::ProductionEventKind::PausedNoWorkers => {
+                        self.hud.push_log("Production paused: not enough workers")
                     }
+                    max_core::ProductionEventKind::PausedNoGold => {
+                        self.hud.push_log("Production paused: not enough gold")
+                    }
+                    max_core::ProductionEventKind::NoSpawnCell => self
+                        .hud
+                        .push_log("Production: no free cell near the factory"),
                     max_core::ProductionEventKind::RubbleCleared => {
                         self.hud.push_log("Rubble cleared")
                     }
@@ -930,6 +952,14 @@ impl App {
                     "Research complete: {:?} level {}",
                     event.topic, event.level
                 ));
+            }
+
+            // `ProductionManager::DrawResourceMessage` (`production_manager.cpp:792-804`):
+            // «Adjustments made: …» над картой (`MESSAGE_BOX_NOTICE`).
+            // Сообщение живёт в состоянии до конца раунда и переустанавливается
+            // при входе в ход человека (смена хода чистит `hint`).
+            if let Some(message) = self.state().industry_message.clone() {
+                self.hud.set_hint(message);
             }
         }
 
@@ -1034,7 +1064,9 @@ impl App {
 
     /// Приказы/выделение заблокированы (ход ИИ, переход, окно перехода).
     pub fn local_input_blocked(&self) -> bool {
-        self.local.as_ref().is_some_and(|local| local.input_blocked())
+        self.local
+            .as_ref()
+            .is_some_and(|local| local.input_blocked())
     }
 
     /// Пауза/продолжение. Возвращает новое состояние (`true` — на паузе).
@@ -1331,12 +1363,7 @@ impl LocalSave {
         out.push(self.setup.victory_type as u8);
         out.extend_from_slice(&self.setup.victory_limit.to_le_bytes());
         out.extend(self.setup.team_types.iter().map(|kind| *kind as u8));
-        out.extend(
-            self.setup
-                .team_clans
-                .iter()
-                .map(|clan| *clan as u8),
-        );
+        out.extend(self.setup.team_clans.iter().map(|clan| *clan as u8));
         out.push(u8::from(self.setup.hot_seat));
         out.extend_from_slice(&self.setup.seed.to_le_bytes());
         // v4: имена команд (`LocalGame::team_names`).

@@ -82,8 +82,19 @@ assert build-ready=no
 assert builder=outside
 assert site=none
 
+# --- Энергия/рабочие для Research Center ----------------------------------
+# `Cargo_GetNetProduction(RESEARCH)` при `ORDER_POWER_ON`: raw 0, power −1,
+# life −1 (`cargo.cpp:98-103`, `Cargo_GetLifeConsumptionRate(RESEARCH)=1`).
+# Центр стоит отдельным комплексом от базы, поэтому даём ему `POWGEN` (+1
+# энергия за 2 топлива) и `HABITAT` (+3 рабочих); топливо — в `FDUMP`.
+spawn at 27 20 Power Generator
+spawn at 26 20 Fuel Tank
+spawn at 26 22 Habitat
+
 # --- Включаем питание: тема Attack по умолчанию ----------------------------
 select type Research Center
+complex fuel 40
+assert complex-fuel>=38
 key o
 tick 10
 

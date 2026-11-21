@@ -55,8 +55,12 @@
   `build_time` не двигается, в минус не уходит.
 - **Завод** (SHIPYARD/LIGHTPLT/LANDPLT/TRAINHAL/AIRPLT): при `ORDER_BUILD &&
   state != UNIT_READY` — `Cargo_ApplyUnitConsumption(unit_type, max_build_rate)`
-  из **общего котла комплекса** (raw + fuel + power + life; золото не тратит).
-  Нехватка → стройка паузится (`PausedNoMaterials`), очередь сохраняется.
+  из **общего котла комплекса** (raw + power + life; `fuel` — только через
+  производителей энергии, `gold` не тратит). **Старт** требует, чтобы первый ход
+  был оплачен (raw+power+life, п.5): иначе заказ не отдаётся
+  (`NotEnoughPower/Workers/Materials`), очередь не теряется. Нехватка в ходе
+  стройки → пауза (`PausedNoMaterials`/`PausedNoPower`/…), `build_time` не
+  двигается, очередь сохраняется.
 - Завершение: `build_time <= build_rate` → `SpawnNewUnit`; ставка режется по
   складу (`BuildMenu_GetMaxPossibleBuildRate`).
 - **Построенный юнит** (завод): встаёт на клетку завода, `ORDER_IDLE/STORE`,
@@ -78,11 +82,38 @@
 - `raw_mining + fuel_mining + gold_mining ≤ 16`; распределение — диалог
   `Allocate` (ALLOCFRM).
 
-## 5. Энергия
+## 5. Энергия и рабочие
 
-- Здания потребляют энергию по ставкам из п.1; производители — `POWERSTN`/`POWGEN`.
-- (ПОРТИТСЯ СЕЙЧАС): при нехватке энергии здания отключаются; производство
-  нельзя запустить без энергии; сообщение сверху о нехватке.
+- Потребление/производство — ставки п.1 (`cargo.cpp:203-233`): `POWERSTN` +6,
+  `POWGEN` +1, а `SHIPYARD`/`LIGHT/LAND/AIRPLT`/`TRAINHAL`/`GREENHSE`/`RESEARCH`/
+  `COMMTWR`/`MININGST` — по 1. Баланс комплекса — `Σ Cargo_GetNetProduction`
+  (`cargo.cpp:70-130`) + инвентарь (`Access_UpdateResourcesTotal`,
+  `access.cpp:912-934`).
+- **Запуск производства** (`UnitInfo::StartBuilding`, `unitinfo.cpp:2751-2794`)
+  сразу списывает из котла `complex->material`, `complex->power`,
+  `complex->workers` и зовёт `GameManager_OptimizeProduction`
+  (`game_manager.cpp:2555-2584`). Если дефицит не закрывается (энергия, топливо,
+  рабочие, материалы), `ValidateIndustry` (`production_manager.cpp:677-711`)
+  не даёт заказу стартовать (`ORDER_STATE_BUILD_ABORT`); в порте —
+  `BuildError::NotEnoughPower/Fuel/Workers/Materials`, очередь сохраняется.
+- **Каждый ход** `TeamUnits::OptimizeComplexes` (`teamunits.cpp:170-175`) →
+  `ProductionManager_OptimizeProduction` (`production_manager.cpp:830-901`)
+  включает/выключает производителей и гасит потребителей. Порядок отключения при
+  дефиците энергии: `RESEARCH` → `GREENHSE` → `COMMTWR` → стройки
+  (`ValidateIndustry`) → `MININGST` (`OptimizeMiningIndustry`).
+- Генераторы включаются автоматически при спросе и запасе топлива
+  (`OptimizePowerProduction`/`OptimizePowerConsumption`, `production_manager.cpp:
+  481-562`, `CheckPowerNeed` `:642-664`); без топлива (`POWGEN` 2, `POWERSTN` 6
+  за ход) производитель не работает. Выключенные из-за дефицита потребители C++
+  сам обратно **не** включает — это делает игрок (`power on`) или ИИ.
+- `HABITAT` (`life = -3`) при нехватке рабочих включается
+  `UpdateUnitLifeConsumption` (`production_manager.cpp:366-380`); `TRAINHAL`/
+  `GREENHSE`/`RESEARCH` тратят по 1 рабочему.
+- **Сообщение над картой** — `ComposeIndustryMessage`/`DrawResourceMessage`
+  (`production_manager.cpp:308-330/465-479/792-804`), `MESSAGE_BOX_NOTICE`:
+  «Adjustments made:», «Cannot turn X on, power needed.», «More power needed,
+  X turned off./on.». Материал выбирается по первому дефициту: `raw material`,
+  `fuel`, `gold`, `power`, `workers`.
 
 ## 6. Бой
 

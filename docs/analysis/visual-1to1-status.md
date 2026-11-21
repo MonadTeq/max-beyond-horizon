@@ -4798,3 +4798,183 @@ gain (включая выключенный звук), `App::tick` наполн�
   одна, эффект уже задан настройкой `FX`.
 * Постоянные звуки (`SFX_TYPE_IDLE`/`DRIVE`, циклы двигателя) в порте не играются
   — только транзиентные боевые.
+
+## 42. Энергия комплекса, запуск завода и сообщение о нехватке — **сделано** (2026-11-21)
+
+Три дефекта экономики Turn Based из пользовательского отчёта. Оракул —
+`max-cpp-port` (не менялся), данные/QA — `max-original`/`max-rust-qa`.
+
+### 42.1 Завод не запускается без энергии и других ресурсов
+
+**Как в C++.** `UnitInfo::StartBuilding` (`unitinfo.cpp:2751-2794`) для
+`flags & STATIONARY` сразу списывает из котла комплекса:
+
+```cpp
+complex->material -= Cargo_GetRawConsumptionRate(unit_type, GetMaxAllowedBuildRate()); // :2757
+complex->power    -= Cargo_GetPowerConsumptionRate(unit_type);                        // :2758
+complex->workers  -= Cargo_GetLifeConsumptionRate(unit_type);                          // :2759
+...
+GameManager_OptimizeProduction(team, &*complex, true, true);                          // :2765
+```
+
+`GameManager_OptimizeProduction` (`game_manager.cpp:2555-2584`) при любом
+отрицательном `material/fuel/gold/power/workers` зовёт
+`ProductionManager_OptimizeProduction` (`production_manager.cpp:830-901`).
+Тот сначала добирает энергию производителями и перераспределением добычи, а
+если дефицит остался — `ValidateIndustry` (`:677-711`) ставит
+`ORDER_STATE_BUILD_ABORT`, и `UnitsManager_ProcessOrderBuild`
+(`units_manager.cpp:2900-2904`) отменяет заказ. Энергия завода — `Cargo_ApplyUnitConsumption`
+(`cargo.cpp:132-138`): `power -= 1` у каждого завода, `life -= 1` у
+`TRAINHAL`/`GREENHSE`/`RESEARCH` (`Cargo_GetLifeConsumptionRate`,
+`cargo.cpp:235-255`).
+
+**Что было сломано.** Порт проверял при старте только raw (`complex_raw_materials`)
+и не смотрел на `power`/`workers`: завод стартовал и строил без единого
+`POWGEN`/`POWERSTN`, даже если весь комплекс потреблял больше, чем давал.
+
+**Что сделано.**
+* новый `max_core::power` — `complex_totals` (C++ `ProductionManager` ctor,
+  `production_manager.cpp:84-160` + `Access_UpdateResourcesTotal`,
+  `access.cpp:912-934`), `optimize_complex` (порт `OptimizePowerProduction`/
+  `OptimizePowerConsumption`/`CheckPowerNeed`/`ValidateIndustry`);
+* `ProductionManager::commit` для завода временно ставит `ORDER_BUILD`,
+  прогоняет оптимизацию на первом ходу и при паузе этого заказа **не отдаёт
+  приказ**: `BuildError::NotEnoughPower`/`NotEnoughFuel`/`NotEnoughWorkers`/
+  `NotEnoughMaterials` (raw тоже проверяется), `build_list` и очередь
+  сохраняются, `build_time = 0`;
+* `GameState::manage_economy` прогоняет `optimize_complex` до и после
+  `update_production` (`teamunits.cpp:170-175` → `GameManager_ManageEconomy`,
+  `game_manager.cpp:2058-2076`), `ProductionManager::progress` — до списания и
+  после `SpawnNewUnits` (`GameManager_ProgressBuildState`, `:8183-8204`);
+* уже идущая стройка при нехватке **паузится** (`build_paused`), а не
+  отменяется: это требование контракта QA (ресурс не уходит в минус), в
+  отличие от C++ `BUILD_ABORT`; `cargo_get_net_production` при паузе не
+  списывает `raw/power/life`.
+
+### 42.2 Здания потребляют энергию; при дефиците отключаются
+
+**Как в C++.** `ProductionManager::OptimizePowerConsumption`
+(`production_manager.cpp:551-562`) обходит производителей, а
+`UpdateUnitPowerConsumption` (`:164-186`) выключает лишние и включает
+недостающие `POWERSTN`/`POWGEN`. Потребителей гасит
+`ProductionManager_OptimizeProduction` (`:830-901`) в порядке
+`OptimizeAuxilaryIndustry(RESEARCH)` → `GREENHSE` → `COMMTWR` →
+`OptimizeIndustry` (стройки через `ValidateIndustry`) →
+`OptimizeMiningIndustry` (`:729-790`). Рабочих даёт `HABITAT`
+(`UpdateUnitLifeConsumption`, `:366-380`). Производитель без топлива не
+работает: `CheckPowerNeed` (`:642-664`), `POWGEN` — 2 топлива/ход, `POWERSTN`
+— 6 (`cargo.cpp:183-201`).
+
+**Что было сломано.** Отключений не было вовсе: `total.power < 0` никак не
+влиял на приказы, шахты/исследования/теплицы работали «из воздуха».
+
+**Что сделано.**
+* `optimize_complex` включает/выключает производителей по текущему спросу и
+  запасу топлива (детерминированно: `POWERSTN` раньше `POWGEN`, внутри типа —
+  порядок `UnitsManager_StationaryUnits`);
+* при дефиците гасит включённых потребителей ровно в C++-порядке
+  `RESEARCH` → `GREENHSE` → `COMMTWR` → `MININGST`, по одному на итерацию;
+  `HABITAT` включается при `life < 0`;
+* при восстановлении **генераторы** включаются автоматически; выключенные
+  потребители C++ обратно не включает (это делает `power on` игрока или ИИ) —
+  порт повторяет правило, см. §42.6;
+* состояние — приказы `PowerOn/PowerOff` + `Complex::{power,workers}` —
+  входит в снапшот/CRC (`GameState::snapshot_bytes`, `crc::replay_digest_bytes`)
+  без новых полей; `build_paused` — производный от ресурсов флаг, в дайджест
+  не входит.
+
+### 42.3 Сообщение сверху о нехватке ресурсов
+
+**Как в C++.** `ProductionManager::ComposeIndustryMessage`
+(`production_manager.cpp:308-330`) собирает строки из `language.json`:
+для выделенного юнита — «Cannot turn %s on, %s needed.» (`cdcc`/`0aea`/…), для
+остальных — «More %s needed, %s turned off./on.» (`b9d9`/`d25b`); первый
+не-выделенный юнит добавляет префикс «Adjustments made:» (`b441`).
+`DrawResourceMessage` (`:792-804`) отправляет буфер в
+`MessageManager_DrawMessage(..., MESSAGE_BOX_NOTICE, MODELESS)`; материал
+выбирается по дефициту — `raw material`, `fuel`, `gold`, `power`, `workers`
+(`ValidatorIndustry` `:686-694`, `ValidateAuxilaryIndustry` `:398-429`).
+
+**Что было сломано.** Сообщения не было: `compose_message` отсутствовал,
+`hud.hint` заполнялся только подсказкой строителя.
+
+**Что сделано.**
+* `power::IndustryOutcome::message` — точные английские строки C++ с префиксом
+  «Adjustments made:», когда первое действие относится не к выделенному
+  юниту;
+* `GameState::industry_message` (отчёт, не в снапшоте) копится за ход;
+  `App::local_finish_round`/`local_next_team` выставляют его в `hud.hint`
+  (верхняя строка карты, `MessageManager`-аналог), сообщение переустанавливается
+  после смены хода;
+* `ProductionEventKind::PausedNoPower/Fuel/Workers/Gold` — для журнала HUD;
+  QA-команда `assert hint=…` теперь ловит и это сообщение.
+
+### 42.4 Тесты, QA и эталоны
+
+* `max_core/tests/power_economy.rs` (10): отказ старта без `power`/`workers`/
+  `raw`; порядок отключения `RESEARCH` раньше шахты; отключение самой шахты,
+  когда больше некого гасить; авто-включение/выключение `POWGEN` по спросу и
+  топливу; пауза и возобновление идущей стройки; точный текст сообщения
+  («More power needed, Training Hall turned off.»); `complex fuel`/`gold`;
+  снапшот+CRC энергии; детерминизм двух прогонов.
+* `max_core/src/power.rs` (2): баланс `inventory + net` по комплексу,
+  включение второго генератора под спрос строящегося завода.
+* Обновлены `max_core/tests/production.rs`, `construction_economy.rs`,
+  `transfer.rs` — комплексы заводов/шахт получают `POWGEN`/`FDUMP`/`HABITAT`
+  (без них C++-правило теперь корректно не даёт строить/добывать).
+* QA: `production.qa`, `research.qa`, `research-help.qa` ставят энергию и
+  рабочих вплотную к комплексу; новая QA-only команда `complex fuel|gold N`
+  (как `complex raw N`, C++ `Complex::Transfer`). Все 22 сценария `ci.sh` —
+  PASS; golden `production` (5 кадров), `research` (1) и `research-help` (5)
+  перегенерированы: в кадре появились новые `POWGEN`/`FDUMP`/`HABITAT`, а
+  исследовательский центр теперь рисуется включённым (раньше уходил в
+  `POWER_OFF` без энергии).
+* `cargo test` max_core (263+10+…), max_app headless/default/sound — зелёные
+  (см. §42.5).
+
+### 42.5 Гейт и артефакты
+
+* полный docker-гейт `bash ci.sh` — **PASS** (1294 с):
+  * `cargo check`/`cargo test` max-rust в трёх конфигурациях (default =
+    GUI/SDL3 из исходников, `--features sound`, `--no-default-features`);
+  * `cargo test --workspace` Horizon;
+  * все 22 QA-сценария `ci.sh` (включая изменённые `production`,
+    `research`, `research-help`) — PASS; 17 наборов golden (в т.ч.
+    production 29, research-help 10 кадров) — без дрейфа;
+  * soak: `soak-100.qa` (100 ходов, 49 813 кадров) и `soak_headless`
+    (120 ходов, 120 826 кадров, 34.92 с, 41 юнит) — PASS.
+* Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
+  `--features sdl-vcpkg,sound`):
+  `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe` — 6 798 848 Б,
+  sha256 `006eb889201726d3d4c52b90c327066da94df4f07cc8d4630e41461b1a0c6c51`
+  (PE32+ Subsystem=2 GUI), zip sha256
+  `ef745efe8bf7dfa69f3b0f2c60bf8642133acab6c5e76a3494621cf0152a5b3e`;
+  `--help` — OK.
+* Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
+  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 105 578 Б, sha256
+  `ba4ceed0deb4802d048f8d7dd0626e45c7f279e8ce99867fb2d12db6081a0a59`; zip sha256
+  `5df73970e77603060d1d6d096ed653c7b44fcec4edb9ae5fc9d70676f267e9a6`.
+  Нативный `--help` — OK (exit 0); нативный
+  `--demo SAVE1.CAM --turns 1` — `units=312`, `state_digest=0x733D`,
+  `state_checksum=0x408A`, `replay_crc=0x5561`, `snapshot=788740B` — дайджест
+  сейва **не изменился** (новые поля энергии — существующие `UnitInfo::orders`
+  и `Complex::{power,workers}`; `industry_message` в снимок не входит).
+  wine-8 smoke: `--demo` — OK, `--help` под wine 8 с тестовым шимом
+  `bcryptprimitives` завершился кодом 1 (вывод справки в консоль wine);
+  нативный запуск это не воспроизводит.
+
+### 42.6 Осознанные расхождения (обновление §41.6)
+
+* Точная арифметика `OptimizePowerProduction` с `count` заменена эквивалентным
+  по наблюдаемому балансу детерминированным выбором «станции → генераторы»
+  (`power::settle_producers`); `OptimizeCargoProduction` (перераспределение
+  добычи ради топлива) не портирован — при нехватке топлива производитель
+  просто не включается.
+* Идущая стройка при нехватке ставится на паузу, а не отменяется
+  (`ValidateIndustry` → `BUILD_ABORT` в C++): контракт QA запрещает уход
+  ресурса в минус и потерю очереди.
+* Выключенные из-за дефицита потребители не включаются автоматически (C++ тоже
+  не включает); генераторы восстанавливаются автоматически.
+* `build_paused` — поле порта (в C++ его нет): производное от ресурсов
+  состояние, в снапшот/CRC не входит; после загрузки сейва пересчитывается на
+  ближайшем `manage_economy`.
