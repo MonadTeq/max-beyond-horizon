@@ -58,13 +58,16 @@
 
 ### Оси классификации юнитов
 
-| Ось | Значения | Rust-имя (маркер/признак) | C++ |
+Классификацию несёт `enum` (единственный источник истины); поведение — поведенческие
+типажи (решение владельца, вариант C).
+
+| Ось | Значения | Rust (enum) | C++ |
 |---|---|---|---|
-| Боевая роль | Боевой / Небоевой | `Combat` / `NonCombat` | `attack > 0` / `attack = 0` |
-| Форма | Здание / Мобильный / Стационарный-прочий | `Building` / `Mobile` / `Stationary` | `BUILDING(0x10)`† / `¬STATIONARY` / `STATIONARY(0x200)∧¬BUILDING` |
-| Среда мобильного | Воздушный / Амфибийный / Наземный / Морской | `Air` / `Amphibious` / `Ground` / `Sea` | `MOBILE_AIR_UNIT` / `SEA\|LAND` / `MOBILE_LAND_UNIT` / `MOBILE_SEA_UNIT` |
-| Производственный | Производственный / Непроизводственный | `Producing` / `NonProducing` | `Cargo_GetNetProduction` (12 типов) |
-| Cargo (тип) | Без / Ресурсный / Юнитный | — | `cargo_type` (`CARGO_TYPE_*`) + `storage` |
+| Боевая роль | Боевой / Небоевой | `CombatRole::{Combat, NonCombat}` | `attack > 0` / `attack = 0` |
+| Форма | Здание / Мобильный / Стационарный-прочий | `Mobility::{Building, Mobile, Stationary}` | `BUILDING(0x10)`† / `¬STATIONARY` / `STATIONARY(0x200)∧¬BUILDING` |
+| Среда мобильного | Воздушный / Амфибийный / Наземный / Морской | `Environment::{Air, Amphibious, Ground, Sea}` | `MOBILE_AIR_UNIT` / `SEA\|LAND` / `MOBILE_LAND_UNIT` / `MOBILE_SEA_UNIT` |
+| Производственный | Производственный / Непроизводственный | `is_producing()` | `Cargo_GetNetProduction` (12 типов) |
+| Cargo (тип) | Без / Ресурсный / Юнитный | `CargoKind::{None, Resource, Unit}` | `cargo_type` (`CARGO_TYPE_*`) |
 
 † Турели — семантически здания, хотя флаг `BUILDING` не установлен (решение владельца).
 

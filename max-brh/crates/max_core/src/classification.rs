@@ -21,15 +21,13 @@
 //! | Производственный | производящий / непроизводящий | [`UnitType::is_producing`] |
 //! | Груз | нет / ресурсный / юнитный | [`CargoKind`] |
 //!
-//! # Маркерные типажи
+//! # Решение по маркерным типажам (вариант C)
 //!
-//! [`Combat`], [`NonCombat`], [`Building`], [`Mobile`], [`Stationary`], [`Air`],
-//! [`Amphibious`], [`Ground`], [`Sea`], [`Producing`], [`NonProducing`] —
-//! пустые маркеры (правило 7: без префиксов `Is`/`Has`, без методов): это
-//! словарь ограничений для обобщённого кода фазы Ф3. В `max_core` тип юнита —
-//! значение [`UnitType`], а не отдельный тип, поэтому `impl Combat for
-//! UnitType` утверждал бы «боевой» про все 93 типа сразу; рантайм-истина оси
-//! живёт в перечислении, маркер — только имя признака.
+//! Маркерные типажи без реализаций **не используются** (правило 1, решение
+//! владельца): `UnitType` — закрытый `enum` из 93 вариантов, и `impl Combat for
+//! UnitType` утверждал бы «боевой» про все 93 сразу — мёртвый код. Классификацию
+//! несёт `enum` (единственный источник истины); поведение — поведенческие
+//! типажи (`CanMove`, `CanAttack`) в обобщённом коде, а не маркеры категорий.
 //!
 //! Источник C++: `enums.hpp` (`BUILDING`, `STATIONARY`, `MOBILE_*_UNIT`),
 //! `units.cpp` (`Units::LoadResource` — флаги `SC_UNITS`), `attributes.cpp`
@@ -44,48 +42,6 @@ use crate::enums::UnitType;
 use crate::unit::UnitInfo;
 use crate::unit_values::base_unit_values;
 use crate::victory::{cargo_type_of, CargoType};
-
-// ---------------------------------------------------------------------------
-// Маркерные типажи (пустые)
-// ---------------------------------------------------------------------------
-
-/// Маркер: боевой юнит (`attack > 0`, `ATTRIB_ATTACK`).
-///
-/// C++: `SC_ATTRI` (`Attributes::LoadResource`), ось «Combat/NonCombat»
-/// `object-classifier.md`.
-pub trait Combat {}
-
-/// Маркер: небоевой юнит (`attack = 0`).
-pub trait NonCombat {}
-
-/// Маркер: здание — `BUILDING` (`0x10`, 2×2-структура) либо турель
-/// (семантическое исключение владельца, [`TURRET_UNIT_TYPES`]).
-pub trait Building {}
-
-/// Маркер: мобильный юнит — `STATIONARY` (`0x200`) снят.
-pub trait Mobile {}
-
-/// Маркер: стационарный-прочий (`STATIONARY` без `BUILDING`, не турель).
-pub trait Stationary {}
-
-/// Маркер: воздушная среда мобильного юнита (`MOBILE_AIR_UNIT`, `0x40`).
-pub trait Air {}
-
-/// Маркер: амфибийная среда (`MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`).
-pub trait Amphibious {}
-
-/// Маркер: наземная среда (`MOBILE_LAND_UNIT` без `MOBILE_SEA_UNIT`).
-pub trait Ground {}
-
-/// Маркер: морская среда (`MOBILE_SEA_UNIT` без `MOBILE_LAND_UNIT`).
-pub trait Sea {}
-
-/// Маркер: производящий тип — ровно 12 типов `Cargo_GetNetProduction`
-/// ([`PRODUCING_UNIT_TYPES`]).
-pub trait Producing {}
-
-/// Маркер: непроизводящий тип (вне [`PRODUCING_UNIT_TYPES`]).
-pub trait NonProducing {}
 
 // ---------------------------------------------------------------------------
 // Данные предметной области: списки исключений

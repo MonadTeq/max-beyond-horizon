@@ -36,9 +36,9 @@
 //! * [`access`] — проходимость клетки (`Access_IsAccessible` с флагами и
 //!   `land_type` 93 типов из `SC_UNITS`), `MapHash`-занятость, цели атаки,
 //!   приём в транспорт, `IsEngaged`, групповые списки (P5);
-//! * [`classification`] — типобезопасный «вид» над флагами (Ф2): маркерные
-//!   типажи (`Combat`, `Air`, `Producing`, …) и классифицирующие перечисления
-//!   (`CombatRole`, `Mobility`, `Environment`, `CargoKind`) для `UnitType` и
+//! * [`classification`] — типобезопасный «вид» над флагами (Ф2): классифицирующие
+//!   перечисления (`CombatRole`, `Mobility`, `Environment`, `CargoKind`) для
+//!   `UnitType` и `UnitInfo` (решение C: маркерные типажи не используются).
 //!   `UnitInfo` (Ф3 переводит логику на этот слой);
 //! * [`combat`] — `GetAttackDamage`/`AttackUnit`, `Attack` (площадная атака),
 //!   `PrepareFire`/`ProgressFire`/`AimAtTarget`, реактивный огонь
@@ -126,8 +126,7 @@ pub use alloc::{
     MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
 };
 pub use classification::{
-    is_turret, Air, Amphibious, Building, CargoKind, Combat, CombatRole, Environment, Ground,
-    Mobile, Mobility, NonCombat, NonProducing, Producing, Sea, Stationary, PRODUCING_UNIT_TYPES,
+    is_turret, CargoKind, CombatRole, Environment, Mobility, PRODUCING_UNIT_TYPES,
     TURRET_UNIT_TYPES,
 };
 pub use combat::{
