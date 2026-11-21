@@ -118,8 +118,9 @@ export-log.txt
 report.txt
 max-resource-editor-error.txt
 
-# unit-asset-export: выгрузка ресурсов по каждому юниту регенерируется из
-# MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (в git — только инструмент, README
-# и manifest.csv)
+# unit-asset-export: пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ
+# MAX.RES / PATCHES.RES / COLOR.PAL / *.FLC (пїЅ git пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, README
+# пїЅ manifest.csv)
 max-rust-3d-models/assets-base/
 tools/unit-asset-export/target/
+ci-run.log

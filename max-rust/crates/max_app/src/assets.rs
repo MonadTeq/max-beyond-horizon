@@ -54,10 +54,13 @@ pub fn world_asset_name(planet: Planet) -> &'static str {
 ///
 /// Пути относительны: корня репозитория, текущего каталога и каталога
 /// [`AppConfig::max_res`]. Первый — шаблон headless-сервера, из которого
-/// запускается живой smoke; второй — обычный `assets/` репозитория.
-pub const PATCHES_RES_FALLBACKS: [&str; 2] = [
+/// запускается живой smoke; второй — обычный `assets/` репозитория; третий —
+/// общий каталог C++-порта (`max-cpp-port/assets/`), где `PATCHES.RES`
+/// лежит в этом checkout'е.
+pub const PATCHES_RES_FALLBACKS: [&str; 3] = [
     "build/linux-server-template/PATCHES.RES",
     "assets/PATCHES.RES",
+    "max-cpp-port/assets/PATCHES.RES",
 ];
 
 /// Имя каталога данных игры в корне поставки (`max-original/`).

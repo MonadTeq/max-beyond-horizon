@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=M.A.X. Port
-Categories=Game;StrategyGame;
-Terminal=false
-Exec=@MAXPORT_LAUNCHER_DIR@/max-port
-TryExec=@MAXPORT_LAUNCHER_DIR@/max-port
-Icon=max-port
