@@ -886,6 +886,147 @@ pub fn build_builder_exit_click_order(
     build_builder_exit_order(state, id, destination)
 }
 
+/// Приказ вывода готового юнита из завода/транспорта — C++ `CURSOR_ACTIVATE`
+/// (`game_manager.cpp:6918-6926`), пакет **08/P3**.
+///
+/// C++ в `GameManager_ManagePlayerAction` для выделенного юнита с
+/// `GetOrder() == ORDER_IDLE` (готовый юнит стоит **в** контейнере) считает
+/// курсор `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937-5962`):
+/// клик по клетке рядом с контейнером — `CURSOR_ACTIVATE`, и тогда:
+///
+/// ```text
+/// UnitInfo* parent = GameManager_SelectedUnit->GetParent();
+/// parent->move_to_grid_x/y = GameManager_MousePosition;   // клетка клика
+/// parent->SetParent(&*GameManager_SelectedUnit);
+/// UnitsManager_SetNewOrder(parent, ORDER_ACTIVATE, ORDER_STATE_EXECUTING_ORDER);
+/// ```
+///
+/// `parent` — контейнер (завод, чей `parent_unit` — готовый юнит, или транспорт
+/// с пассажиром); приказ получает **он**, а `UnitsManager_ActivateUnit`
+/// (`units_manager.cpp:3826`) переставляет/выпускает юнита. Клетка внутри 2×2
+/// контейнера — `CURSOR_FRIEND`, приказа нет.
+///
+/// `None` — выделенный юнит не «в контейнере» (`ORDER_IDLE` без родителя),
+/// клик не рядом с контейнером или клетка непроходима для него.
+pub fn build_activate_order(
+    state: &GameState,
+    id: UnitId,
+    destination: Point,
+) -> Option<Command> {
+    let unit = state.unit(id)?;
+
+    if unit.hits == 0 || unit.orders != UnitOrder::Idle {
+        return None;
+    }
+
+    let parent_id = unit.parent_unit?;
+    let parent = state.unit(parent_id)?;
+
+    // `GameManager_IsUnitNextToPosition(parent, grid_x, grid_y)`.
+    if !builder_exit_zone_contains(parent, destination) {
+        return None;
+    }
+
+    // Воздушный юнит внутри 2×2 контейнера — `CURSOR_FRIEND` (не выводим).
+    if unit.flags & unit_flags::MOBILE_AIR_UNIT != 0
+        && parent.grid.x <= destination.x
+        && parent.grid.x + 1 >= destination.x
+        && parent.grid.y <= destination.y
+        && parent.grid.y + 1 >= destination.y
+    {
+        return None;
+    }
+
+    if max_core::access::is_accessible(
+        state,
+        unit.unit_type,
+        unit.team,
+        destination,
+        max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) == 0
+    {
+        return None;
+    }
+
+    Some(Command::Order(Packet08Order {
+        unit: parent_id,
+        payload: OrderPayload::P3(PayloadP3 {
+            p2: PayloadP2 {
+                p1: PayloadP1 {
+                    order: UnitOrder::Activate,
+                    state: UnitOrderState::ExecutingOrder,
+                    prior_order: parent.orders,
+                    prior_state: parent.state,
+                    disabled_reaction_fire: parent.disabled_reaction_fire,
+                },
+                parent_unit: Some(id),
+                experience: parent.experience,
+            },
+            move_to: destination,
+            fire_on: Point::ZERO,
+            enemy_unit: parent.enemy_unit,
+            transfer_cargo: parent.transfer_cargo,
+            stealth_dice_roll: parent.stealth_dice_roll,
+        }),
+    }))
+}
+
+/// Приказ движения воздушного юнита — пакет **08/P3**
+/// (`ORDER_MOVE`/`ORDER_STATE_INIT`).
+///
+/// В C++ воздушный юнит получает приказ тем же
+/// `GameManager_SetUnitOrder(ORDER_MOVE, …)` (`game_manager.cpp:6898`), а путь
+/// строит получатель: `UnitsManager_InitUnitPath` →
+/// `Paths_GetAirPath` (`paths.cpp:97`) по прямой в пикселях. Порт не гоняет
+/// авиацию через наземный `Packet38Move` (`build_move_order`), поэтому здесь
+/// только `move_to`: симуляция сама посчитает `AirPath` и взлёт
+/// (`ExecuteMove` → `ORDER_TAKE_OFF`).
+pub fn build_air_move_order(
+    state: &GameState,
+    id: UnitId,
+    destination: Point,
+) -> Option<Command> {
+    let unit = state.unit(id)?;
+
+    if unit.hits == 0 || unit.grid == destination {
+        return None;
+    }
+
+    if destination.x < 0
+        || destination.y < 0
+        || destination.x >= MAP_WIDTH
+        || destination.y >= MAP_HEIGHT
+    {
+        return None;
+    }
+
+    if unit.flags & unit_flags::MOBILE_AIR_UNIT == 0 {
+        return None;
+    }
+
+    Some(Command::Order(Packet08Order {
+        unit: id,
+        payload: OrderPayload::P3(PayloadP3 {
+            p2: PayloadP2 {
+                p1: PayloadP1 {
+                    order: UnitOrder::Move,
+                    state: UnitOrderState::Init,
+                    prior_order: unit.orders,
+                    prior_state: unit.state,
+                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                },
+                parent_unit: unit.parent_unit,
+                experience: unit.experience,
+            },
+            move_to: destination,
+            fire_on: Point::ZERO,
+            enemy_unit: unit.enemy_unit,
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+        }),
+    }))
+}
+
 /// Строит приказ включения/выключения питания (попап `Power On`/`Power Off`
 /// в C++, пакет **08**, процессор `P1`).
 ///

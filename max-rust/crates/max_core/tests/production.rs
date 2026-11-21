@@ -324,8 +324,165 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
     assert!(factory_unit.build_list.is_empty());
 }
 
+/// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), ветка `STATIONARY`:
+/// построенный юнит появляется **на клетке завода** и остаётся в нём
+/// (`ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`), родитель юнита —
+/// завод, родитель завода — юнит, `storage = 1`. Игрок выводит его приказом
+/// (`ORDER_ACTIVATE` → `UnitsManager_ActivateUnit`).
 #[test]
-fn repeated_build_keeps_producing() {
+fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
+    let mut state = state_with_gold(0);
+    let _dump = add_materials(&mut state, 40);
+    let plant = state
+        .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
+        .expect("air plant");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(plant, UnitType::Fighter).expect("fighter");
+    manager.commit(plant).expect("build");
+
+    // FIGHTER: `ATTRIB_TURNS` из SC_ATTRI; строим до `UNIT_READY`.
+    let turns = max_core::production::turns_to_build(&state, TeamId::RED, UnitType::Fighter);
+    for _ in 0..turns {
+        production_turn(&mut state);
+    }
+
+    let fighter = state
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.unit_type == UnitType::Fighter)
+        })
+        .expect("истребитель построен");
+
+    let unit = state.unit(fighter).expect("fighter");
+    let plant_unit = state.unit(plant).expect("plant");
+
+    // Юнит стоит НА заводе (та же клетка), а не на соседней.
+    assert_eq!(unit.grid, Point::new(10, 10), "юнит на клетке завода");
+    assert_eq!(unit.parent_unit, Some(plant), "родитель — завод");
+    assert_eq!(unit.orders, UnitOrder::Idle);
+    assert_eq!(unit.state, UnitOrderState::Store, "юнит «в трюме» завода");
+    assert_eq!(unit.scaler_adjust, 4, "C++: scaler_adjust = 4");
+
+    // Завод: родитель — готовый юнит, `storage = 1`, ждёт вывода.
+    assert_eq!(plant_unit.parent_unit, Some(fighter), "родитель завода — юнит");
+    assert_eq!(plant_unit.storage, 1);
+    assert_eq!(plant_unit.orders, UnitOrder::Build);
+    assert_eq!(plant_unit.state, UnitOrderState::UnitReady);
+    assert!(plant_unit.build_list.is_empty());
+
+    // Клик игрока по клетке рядом → приказ `ORDER_ACTIVATE` заводу.
+    assert!(
+        max_core::unit_order::issue_factory_exit(&mut state, plant),
+        "приказ вывода отдан"
+    );
+    for _ in 0..64 {
+        state.tick();
+
+        let fighter_unit = state.unit(fighter).expect("fighter alive");
+        // Взлёт: `AirPath` доводит `HOVERING` (`UnitInfo::Take`), затем юнит
+        // уходит с клетки завода.
+        if fighter_unit.flags & unit_flags::HOVERING != 0
+            && fighter_unit.grid != Point::new(10, 10)
+        {
+            break;
+        }
+    }
+
+    let fighter_unit = state.unit(fighter).expect("fighter alive");
+    assert_ne!(
+        fighter_unit.grid,
+        Point::new(10, 10),
+        "истребитель вылетел из завода"
+    );
+    assert!(
+        fighter_unit.flags & unit_flags::HOVERING != 0,
+        "истребитель в воздухе (`ORDER_TAKE_OFF` → `HOVERING`)"
+    );
+
+    let plant_unit = state.unit(plant).expect("plant");
+    assert_eq!(plant_unit.parent_unit, None, "завод отдал юнита");
+    assert_eq!(plant_unit.storage, 0, "--storage в ActivateUnit");
+}
+
+/// Без приказа юнит остаётся в заводе: очередь не двигается, а юнит не
+/// появляется на карте (`Access_GetTeamUnit` пропускает `ORDER_IDLE`).
+#[test]
+fn air_plant_unit_stays_inside_without_a_launch_order() {
+    let mut state = state_with_gold(0);
+    let _dump = add_materials(&mut state, 40);
+    let plant = state
+        .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
+        .expect("air plant");
+
+    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    manager.enqueue(plant, UnitType::Fighter).expect("fighter");
+    manager.commit(plant).expect("build");
+
+    let turns = max_core::production::turns_to_build(&state, TeamId::RED, UnitType::Fighter);
+    for _ in 0..turns {
+        production_turn(&mut state);
+    }
+
+    let fighter = state
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.unit_type == UnitType::Fighter)
+        })
+        .expect("истребитель построен");
+
+    for _ in 0..8 {
+        state.tick();
+    }
+
+    let unit = state.unit(fighter).expect("fighter");
+    assert_eq!(unit.grid, Point::new(10, 10), "юнит не покинул завод");
+    assert_eq!(unit.orders, UnitOrder::Idle);
+    assert_eq!(unit.state, UnitOrderState::Store);
+
+    // Клик по клетке завода выбирает сам завод, а не юнита в нём.
+    assert_eq!(
+        max_core::access::get_team_unit(
+            &state,
+            Point::new(10, 10),
+            TeamId::RED,
+            unit_flags::SELECTABLE
+        ),
+        Some(plant),
+        "`Access_GetTeamUnit` пропускает `ORDER_IDLE`"
+    );
+}
+
+
+fn launch_ready_unit(state: &mut GameState, factory: max_core::UnitId) -> bool {
+    if !max_core::unit_order::issue_factory_exit(state, factory) {
+        return false;
+    }
+
+    for _ in 0..16 {
+        state.tick();
+
+        let done = state.unit(factory).is_some_and(|unit| {
+            unit.parent_unit.is_none()
+                && !(unit.orders == UnitOrder::Build && unit.state == UnitOrderState::UnitReady)
+        });
+
+        if done {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[test]
+fn repeated_build_keeps_producing_after_the_unit_is_launched() {
     let mut state = state_with_gold(0);
     let dump = add_materials(&mut state, 20);
     let factory = state
@@ -337,15 +494,56 @@ fn repeated_build_keeps_producing() {
     manager.set_repeat(factory, true);
     manager.commit(factory).expect("build");
 
-    for _ in 0..6 {
+    // 2 хода — первый юнит готов и стоит **в заводе** (`UnitInfo::SpawnNewUnit`:
+    // юнит на клетке завода, `ORDER_IDLE`/`ORDER_STATE_STORE`, родитель — завод).
+    for _ in 0..2 {
+        production_turn(&mut state);
+    }
+    assert_eq!(count_type(&state, UnitType::Infantry), 1);
+
+    let factory_unit = state.unit(factory).expect("factory alive");
+    assert_eq!(factory_unit.state, UnitOrderState::UnitReady);
+    assert_eq!(factory_unit.storage, 1, "в заводе один готовый юнит");
+    assert_eq!(
+        factory_unit.build_list,
+        vec![UnitType::Infantry],
+        "repeat_build вернул тип в очередь"
+    );
+
+    // Автостарта следующего заказа нет: пока юнита не вывели, завод стоит —
+    // следующий заказ запускает только `UnitsManager_ActivateUnit`.
+    for _ in 0..2 {
+        production_turn(&mut state);
+    }
+    assert_eq!(
+        count_type(&state, UnitType::Infantry),
+        1,
+        "без вывода юнита очередь не двигается (C++: UNIT_READY ждёт клиента)"
+    );
+
+    // Вывод юнита запускает следующий заказ (repeat).
+    assert!(launch_ready_unit(&mut state, factory), "юнит выведен из завода");
+    let factory_unit = state.unit(factory).expect("factory alive");
+    assert_eq!(factory_unit.orders, UnitOrder::Build);
+    assert_eq!(factory_unit.storage, 0);
+    assert!(factory_unit.build_time > 0, "следующий заказ стартовал");
+
+    // 2 хода — второй юнит, ещё вывод + 2 хода — третий.
+    for _ in 0..2 {
+        production_turn(&mut state);
+    }
+    assert_eq!(count_type(&state, UnitType::Infantry), 2);
+    assert!(launch_ready_unit(&mut state, factory));
+    for _ in 0..2 {
         production_turn(&mut state);
     }
 
     assert_eq!(
         count_type(&state, UnitType::Infantry),
         3,
-        "repeat: 3 юнита за 6 ходов по 2 хода на юнита"
+        "repeat: 3 юнита за 6 ходов по 2 хода на юнита (каждый выведен)"
     );
+    // 6 «ходов постройки» × 1 материал: три заказа по 2 хода.
     assert_eq!(
         state.unit(dump).expect("dump").storage,
         14,

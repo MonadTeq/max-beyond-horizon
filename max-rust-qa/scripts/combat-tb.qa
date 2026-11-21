@@ -60,7 +60,7 @@ assert unit-order=fire
 shot combat-tb-fired
 
 # `PrepareFire`: отдача 3 кадра, затем снаряд ROCKET в списке частиц.
-tick 4
+wait firing
 assert unit-order=fire
 assert firing=on
 shot combat-tb-rocket
@@ -92,9 +92,12 @@ spawn enemy Tank
 tick 1
 click enemy Tank
 assert log=Attack:
-tick 15
+# Наведение + отдача: `firing_recoil_frames` = 3 у танка, поэтому фиксированный
+# `tick N` попадает в кадр выстрела только при неизменном числе шагов
+# `AimAtTarget` (и пока не рассеялся след снаряда: `UnitsManager_PursueEnemy`
+# ждёт пустой список частиц). `wait firing` крутит кадры ровно до кадра выстрела.
+wait firing
 assert unit-order=fire
-tick 5
 assert firing=on
 shot combat-tb-tank-fired
 tick 3

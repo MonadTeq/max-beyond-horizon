@@ -1094,6 +1094,9 @@ impl App {
                 // (`UnitInfo::MoveFinished`): снимок приказа — до тика.
                 let before = self.selected_order_snapshot();
                 self.state.tick();
+                // Звуки боя этого тика (`UnitInfo::PrepareFire`/
+                // `StartExplosion`): очередь забирает `main.rs` (`AudioPlayer`).
+                self.collect_combat_sounds();
                 // `App::tick` считает тики для диагностики/дайджеста; локальный
                 // цикл тикает здесь же, поэтому счётчик обязан расти и в окне,
                 // иначе трасса `MAX_DEBUG_INPUT` показывает вечный `tick 0`.
@@ -1124,6 +1127,9 @@ impl App {
             LocalPhase::AiTurn(team) => {
                 let before = self.selected_order_snapshot();
                 self.state.tick();
+                // Бой ИИ слышен игроку так же, как свой (`PlaySfx` в C++ не
+                // зависит от владельца юнита) — очередь кадра.
+                self.collect_combat_sounds();
                 self.ticks += 1;
                 self.auto_select_after_tick(before);
                 self.follow_selected_unit();

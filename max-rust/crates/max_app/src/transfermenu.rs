@@ -122,9 +122,12 @@ pub struct TransferMenuAssets {
     pub left: Option<MenuButtonPair>,
     /// `+` (`XFRRGT_U/D`, 18×17).
     pub right: Option<MenuButtonPair>,
-    /// `XFRLFARO` 31×16 — `total >= 0` (`button_arrow` rest state).
+    /// `XFRLFARO` 31×16 — стрелка **влево**, `total < 0` (`button_arrow`
+    /// отжата: `rest_state = total >= 0` = `false`, рисуется `up`-кадр).
     pub arrow_left: Option<SimpleImage>,
-    /// `XFRRTARO` 31×16 — `total < 0`.
+    /// `XFRRTARO` 31×16 — стрелка **вправо**, `total >= 0` (нажатый
+    /// `rest_state`: `win_set_button_rest_state` рисует `down`-кадр кнопки,
+    /// а `down` у `Button(XFRLFARO, XFRRTARO, …)` — это `XFRRTARO`).
     pub arrow_right: Option<SimpleImage>,
     /// `SMBRRAW` 285×16 — полоса сырья.
     pub bar_raw: Option<SimpleImage>,
@@ -442,6 +445,22 @@ impl TransferMenu {
             .clamp(0, SLIDER_RECT.width)
     }
 
+    /// Куда смотрит стрелка направления: `true` — вправо (от источника к
+    /// приёмнику), `false` — влево (из приёмника в источник).
+    ///
+    /// Оракул — `TransferMenu::UpdateIndicators` (`transfermenu.cpp:94-96`):
+    /// `button_arrow->SetRestState(total_materials_transferred >= 0)`. Кнопка
+    /// создана как `Button(XFRLFARO, XFRRTARO, 141, 43)`
+    /// (`transfermenu.cpp:239`), то есть `up = XFRLFARO` (стрелка влево) и
+    /// `down = XFRRTARO` (стрелка вправо). `win_set_button_rest_state`
+    /// (`button.c:1022`) при `rest_down != 0` рисует `b->down` — значит при
+    /// `total >= 0` (перенос из источника в приёмник) видна стрелка **вправо**.
+    /// Раньше порт рисовал наоборот (`amount >= 0` → `XFRLFARO`), то есть
+    /// направление было перевёрнуто.
+    pub fn arrow_points_right(&self) -> bool {
+        self.amount >= 0
+    }
+
     /// Рисует окно поверх кадра.
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &crate::Assets, state: &GameState) -> u32 {
         let Some(menu_assets) = assets.transfer.as_ref() else {
@@ -606,11 +625,18 @@ impl TransferMenu {
             );
         }
 
-        // Стрелка направления (`button_arrow`: `rest_state = total >= 0`).
-        let arrow = if self.amount >= 0 {
-            menu_assets.arrow_left.as_ref()
-        } else {
+        // Стрелка направления: `Button::SetRestState(total_materials_transferred
+        // >= 0)` (`transfermenu.cpp:95`). Кнопка создана как
+        // `Button(XFRLFARO, XFRRTARO, 141, 43)` (`transfermenu.cpp:239`), то есть
+        // `up = XFRLFARO` (стрелка влево), `down = XFRRTARO` (стрелка вправо), а
+        // `win_set_button_rest_state` (`button.c:1022`) при `rest_down != 0`
+        // рисует именно `b->down`. Значит положительная сумма (перенос из
+        // источника в приёмник, источник нарисован слева, приёмник справа)
+        // показывает стрелку **вправо**, отрицательная — влево.
+        let arrow = if self.arrow_points_right() {
             menu_assets.arrow_right.as_ref()
+        } else {
+            menu_assets.arrow_left.as_ref()
         };
         if let Some(arrow) = arrow {
             painted += blit_simple(
@@ -1006,6 +1032,27 @@ mod tests {
         let rect = TransferMenu::layout(area);
         assert_eq!(rect.ulx, (640 - 1 - 308) / 2);
         assert_eq!(rect.uly, (480 - 1 - 162) / 2);
+    }
+
+    #[test]
+    fn arrow_points_from_source_to_target() {
+        let (state, truck, dump) = state_with_transfer();
+        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+
+        // `SetRestState(total >= 0)` → нажата → `down` = `XFRRTARO` (вправо):
+        // перенос идёт из юнита (источник, слева) в приёмник (справа).
+        menu.set_amount(5);
+        assert!(menu.arrow_points_right(), "give: стрелка к приёмнику");
+        assert_eq!(menu.amount, 5);
+
+        // Ноль — тоже `total >= 0`, C++ оставляет кнопку нажатой.
+        menu.set_amount(0);
+        assert!(menu.arrow_points_right());
+
+        // Отрицательное значение — обратный перенос: кнопка отжата, `up` =
+        // `XFRLFARO` (влево).
+        menu.set_amount(-5);
+        assert!(!menu.arrow_points_right(), "take: стрелка обратно к юниту");
     }
 
     #[test]

@@ -662,6 +662,37 @@ fn create_unit_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         }
     }
 
+    // `TaskCreateUnit::BeginTurn` (`taskcreateunit.cpp:147-155`): завод в
+    // `ORDER_STATE_UNIT_READY` получает `TaskActivate` на готового юнита, и тот
+    // выходит из завода (`UnitsManager_ActivateUnit`). Порт ставит тот же приказ
+    // напрямую ([`crate::unit_order::issue_factory_exit`]). Как только завод
+    // отдал юнита (уже не `ORDER_BUILD`+`UNIT_READY`), задача завершается —
+    // дальше юнита ведут обычные задачи (`AiPlayer::AddMilitaryUnit`,
+    // `FindTaskForUnit`), как C++ `TaskCreateUnit::AddUnit`.
+    if *op_state == create_unit_state::ACTIVATING {
+        if let Some(builder_id) = *builder {
+            let waiting = ctx
+                .world
+                .unit(builder_id)
+                .map(|unit| {
+                    unit.orders == UnitOrder::Build && unit.state == UnitOrderState::UnitReady
+                })
+                .unwrap_or(false);
+
+            if waiting {
+                // `TaskActivate` ждёт, пока рядом с заводом освободится клетка.
+                if !crate::unit_order::issue_factory_exit(ctx.world, builder_id) {
+                    return;
+                }
+            } else {
+                ctx.clear_unit_tasks(builder_id, false);
+                ctx.set_parent(header.id, None);
+                ctx.remove_self(header.id);
+                return;
+            }
+        }
+    }
+
     if *op_state != create_unit_state::FINISHED {
         let _ = create_unit_is_still_needed(kind, ctx, header);
     }

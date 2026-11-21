@@ -206,6 +206,11 @@ pub enum Assertion {
     /// `assert preview`: у выделенного юнита есть непустой предпросмотр пути
     /// (зелёный маршрут HUD после RMB).
     Preview,
+    /// `assert missile-line`: летящий снаряд (`MISSILE_UNIT` с `AirPath`) стоит
+    /// на **пиксельной прямой** от точки пуска к цели
+    /// (`AirPath::Execute`, `airpath.cpp:219-242`; отклонение ≤ 1.5 px).
+    /// Ловит регресс «снаряд идёт по клеткам 8-дирекционным маршрутом».
+    MissileLine,
     /// `assert log=ТЕКСТ`: в журнале HUD есть строка с `ТЕКСТ` (например,
     /// `assert log=Move:` после RMB-приказа).
     Log(String),
@@ -238,6 +243,14 @@ pub enum Assertion {
     /// `assert build-ready=yes|no`: есть ли у игрока достроенное здание,
     /// ждущее ухода строителя (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`).
     BuildReady(bool),
+    /// `assert factory-ready=yes|no`: выделенный завод ждёт вывода готового
+    /// юнита (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, `SpawnNewUnit`,
+    /// `unitinfo.cpp:3489-3520`).
+    FactoryReady(bool),
+    /// `assert unit-stored=NAME|none`: у выделенного завода **внутри** стоит
+    /// юнит этого типа (`ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — завод);
+    /// `none` — готового юнита в заводе нет.
+    UnitStored(Option<String>),
     /// `assert endturn=pressed|normal`: вид кнопки End Turn.
     ///
     /// C++ `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) зовёт
@@ -669,6 +682,15 @@ pub enum UnitMenuCommand {
     Close,
 }
 
+/// Действие вывода готового юнита из завода/транспорта (`launch`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchCommand {
+    /// `near` — клетка рядом с контейнером (`TaskActivate`-порядок перебора).
+    Near,
+    /// `grid X Y` — ровно указанная клетка карты.
+    Grid(i16, i16),
+}
+
 /// Действие диалога самоуничтожения здания (`UnitsManager_SelfDestructMenu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfDestructCommand {
@@ -714,6 +736,12 @@ pub enum Command {
     Type(String),
     /// `wait N` — до N кадров, пока игра не будет готова к вводу.
     Wait(u32),
+    /// `wait firing` — крутить кадры, пока выделенный юнит не покажет кадр
+    /// выстрела (`firing_recoil_frames > 0`, `UnitInfo::PrepareFire`), иначе
+    /// ошибка. Убирает зависимость сценария от точного числа тиков наведения:
+    /// отдача длится всего 3 кадра (`firing_recoil_frames`), и фиксированный
+    /// `tick N` попадает в неё только при неизменном числе шагов `AimAtTarget`.
+    WaitFiring,
     /// `tick N` — ровно N кадров игрового цикла.
     Tick(u32),
     /// `anim N` — прокрутить только **визуальные** часы на N мс реального
@@ -767,6 +795,11 @@ pub enum Command {
     /// `move near refused` — правый клик по соседней клетке **без** приказа:
     /// ожидается отказ (`CURSOR_UNIT_NO_GO`, строитель в `BUILD_IN_PROGRESS`).
     MoveNearRefused,
+    /// `launch near` / `launch grid X Y` — вывод готового юнита из завода:
+    /// правый клик по клетке рядом даёт `ORDER_ACTIVATE` **заводу**
+    /// (`CURSOR_ACTIVATE`, `game_manager.cpp:6918-6926`), и
+    /// `UnitsManager_ActivateUnit` выпускает юнита.
+    Launch(LaunchCommand),
     /// `end_turn` — кнопка End Turn + ходы ИИ до готовности к вводу.
     EndTurn,
     /// `mobilize buy|buy N|delete|step N|done|cancel`.
@@ -932,7 +965,14 @@ fn parse_command(source: &str) -> Result<Command, String> {
         }
         "key" => Ok(Command::Key(parse_key(rest)?)),
         "type" => Ok(Command::Type(parse_text(rest)?)),
-        "wait" => Ok(Command::Wait(parse_count(rest, "wait")?)),
+        "wait" => {
+            // `wait firing` — кадры до кадра выстрела выделенного юнита.
+            if rest.eq_ignore_ascii_case("firing") {
+                Ok(Command::WaitFiring)
+            } else {
+                Ok(Command::Wait(parse_count(rest, "wait")?))
+            }
+        }
         "tick" => Ok(Command::Tick(parse_count(rest, "tick")?)),
         "anim" => Ok(Command::Anim(parse_count(rest, "anim")?)),
         "mem" => {
@@ -969,6 +1009,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "allocate" | "alloc" => parse_allocate(rest),
         "transfer" | "xfer" => parse_transfer(rest),
         "prefs" | "preferences" => parse_prefs(rest),
+        "launch" => parse_launch(rest),
         "spawn" => parse_spawn(rest),
         "selfdestruct" | "self_destruct" => parse_selfdestruct(rest),
         "complex" => parse_complex(rest),
@@ -1216,6 +1257,7 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         "defeat" | "lose" => return Ok(Assertion::Defeat),
         "selected" => return Ok(Assertion::Selected),
         "preview" => return Ok(Assertion::Preview),
+        "missile-line" | "missile_line" => return Ok(Assertion::MissileLine),
         _ => {}
     }
 
@@ -1373,6 +1415,24 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
                 "assert build-ready: ожидалось yes|no, получено «{other}»"
             )),
         },
+        "factory-ready" => match value.to_ascii_lowercase().as_str() {
+            "yes" | "true" | "on" | "waiting" => Ok(Assertion::FactoryReady(true)),
+            "no" | "false" | "off" | "ready" => Ok(Assertion::FactoryReady(false)),
+            other => Err(format!(
+                "assert factory-ready: ожидалось yes|no, получено «{other}»"
+            )),
+        },
+        "unit-stored" => {
+            if value.is_empty() {
+                return Err("assert unit-stored: пустое имя типа".to_string());
+            }
+
+            if value.eq_ignore_ascii_case("none") {
+                Ok(Assertion::UnitStored(None))
+            } else {
+                Ok(Assertion::UnitStored(Some(value.to_string())))
+            }
+        }
         "resource-icons" => Ok(Assertion::ResourceIcons(
             operator,
             parse_u32(value, "assert resource-icons")?,
@@ -1941,18 +2001,30 @@ fn parse_spawn(rest: &str) -> Result<Command, String> {
     }
 
     if let Some(rest) = rest.strip_prefix("at ") {
-        let parts: Vec<&str> = rest.split_whitespace().collect();
+        // `spawn at X Y [enemy] NAME` — имя типа может состоять из нескольких
+        // слов («Missile Crawler», «Training Hall»), поэтому режем только первые
+        // два числа, а остаток считаем именем (с необязательным `enemy`).
+        let mut parts = rest.splitn(3, char::is_whitespace);
+        let x = parts.next().unwrap_or_default();
+        let y = parts.next().unwrap_or_default();
+        let tail = parts.next().unwrap_or_default().trim();
 
-        return match parts.as_slice() {
-            [x, y, name] if !name.is_empty() => Ok(Command::SpawnAt {
-                x: parse_i16(x, "spawn at x")?,
-                y: parse_i16(y, "spawn at y")?,
-                name: (*name).to_string(),
-            }),
-            _ => Err(format!(
-                "spawn at: ожидалось «spawn at X Y NAME», получено «{rest}»"
-            )),
+        if x.is_empty() || y.is_empty() || tail.is_empty() {
+            return Err(format!(
+                "spawn at: ожидалось «spawn at X Y [enemy] NAME», получено «{rest}»"
+            ));
+        }
+
+        let name = match tail.strip_prefix("enemy ") {
+            Some(rest) => format!("enemy {}", rest.trim()),
+            None => tail.to_string(),
         };
+
+        return Ok(Command::SpawnAt {
+            x: parse_i16(x, "spawn at x")?,
+            y: parse_i16(y, "spawn at y")?,
+            name,
+        });
     }
 
     let (enemy, name) = match rest.strip_prefix("enemy ") {
@@ -2461,6 +2533,40 @@ fn parse_select(rest: &str) -> Result<Command, String> {
     let (x, y) = parse_point(rest)?;
 
     Ok(Command::Select(x, y))
+}
+
+/// `launch near` / `launch grid X Y` — вывод готового юнита из завода.
+fn parse_launch(rest: &str) -> Result<Command, String> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    match parts.first().map(|part| part.to_ascii_lowercase()) {
+        Some(word) if word == "near" => {
+            if parts.len() != 1 {
+                return Err(format!("launch near: лишние аргументы «{rest}»"));
+            }
+
+            Ok(Command::Launch(LaunchCommand::Near))
+        }
+        Some(word) if word == "grid" => {
+            if parts.len() != 3 {
+                return Err(format!(
+                    "launch grid: ожидалось «launch grid X Y», получено «{rest}»"
+                ));
+            }
+
+            let x = parse_i32(parts[1], "launch grid X")?;
+            let y = parse_i32(parts[2], "launch grid Y")?;
+
+            if !(0..112).contains(&x) || !(0..112).contains(&y) {
+                return Err(format!("launch grid: клетка ({x}, {y}) вне карты 112×112"));
+            }
+
+            Ok(Command::Launch(LaunchCommand::Grid(x as i16, y as i16)))
+        }
+        _ => Err(format!(
+            "launch: ожидалось «launch near» или «launch grid X Y», получено «{rest}»"
+        )),
+    }
 }
 
 fn parse_move(rest: &str) -> Result<Command, String> {

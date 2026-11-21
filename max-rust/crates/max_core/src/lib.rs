@@ -148,7 +148,8 @@ pub use enums::{
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
-    GameState, LiveAttack, OrderData, GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
+    GameState, LiveAttack, OrderData, UnitSound, UnitSoundKind,
+    GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
     INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, TEAM_SLOTS,
 };
 pub use geo::{

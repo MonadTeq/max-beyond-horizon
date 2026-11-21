@@ -121,6 +121,35 @@ pub struct LiveAttack {
     pub targets: Vec<UnitId>,
 }
 
+/// Какой звук юнита проиграть — C++ `Unit::SfxType`
+/// (`unit.hpp:49-68`), в объёме боя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitSoundKind {
+    /// `SFX_TYPE_FIRE` — `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`).
+    Fire,
+    /// `SFX_TYPE_HIT` — попадание по живому (`units_manager.cpp:3922`).
+    Hit,
+    /// `SFX_TYPE_EXPLOAD` — взрыв уничтоженного (`units_manager.cpp:3929`).
+    Explode,
+}
+
+/// Одно звуковое событие боя: кто и какой `SfxType`.
+///
+/// Ресурс `*.SPW` и громкость выбираются на клиенте по таблице `SC_UNITS`
+/// (`SoundManager::PlaySfx(UnitInfo*, Unit::SfxType)`,
+/// `sound_manager.cpp:413-490`): симуляция обязана оставаться без ссылок на
+/// ресурсы (DESIGN §6.1), поэтому событие несёт только id юнита и тип звука.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitSound {
+    /// Юнит, чей звук играет (`PlaySfx(unit, …)`).
+    pub unit: UnitId,
+    /// Тип юнита на момент события (`unit->GetUnitType()`): клиент выбирает по
+    /// нему звук из `SC_UNITS`, даже если юнит к моменту чтения уже уничтожен.
+    pub unit_type: crate::enums::UnitType,
+    /// Тип звука.
+    pub kind: UnitSoundKind,
+}
+
 // ---------------------------------------------------------------------------
 // GameState
 // ---------------------------------------------------------------------------
@@ -202,6 +231,11 @@ pub struct GameState {
     /// События последнего хода исследований (`ResearchMenu_NewTurn`):
     /// завершённые уровни тем. Не входит в дайджест — отчёт для UI/QA.
     pub research_events: Vec<crate::research::ResearchEvent>,
+    /// Звуки боя за тик — `SoundManager::PlaySfx(unit, SfxType)`
+    /// (`unitinfo.cpp:4725` — выстрел, `units_manager.cpp:3922/3929` — попадание
+    /// и взрыв). Симуляция только копит события, ресурс/громкость выбирает
+    /// клиент (`max_app::sfx`, таблица `SC_UNITS`). В дайджест/CRC не входит.
+    pub unit_sounds: Vec<UnitSound>,
     /// `UnitsManager_TeamInfo[*].finished_turn` дублируется в `teams`; здесь —
     /// счётчики барьеров, чтобы состояние было самодостаточным.
     pub turn_indices: [u8; TEAM_SLOTS],
@@ -339,6 +373,7 @@ impl GameState {
             delayed_reactions_pending: false,
             production_events: Vec::new(),
         research_events: Vec::new(),
+        unit_sounds: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -1837,6 +1872,14 @@ impl GameState {
         std::mem::take(&mut self.research_events)
     }
 
+    /// Забирает звуковые события боя (для `AudioPlayer`).
+    ///
+    /// Копятся `PrepareFire`/`UnitsManager_StartExplosion`; читает клиент
+    /// (`max_app::App::collect_combat_sounds`) сразу после тика.
+    pub fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
+        std::mem::take(&mut self.unit_sounds)
+    }
+
     /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — сброс скоростей,
     /// выстрелов, снабжения и **разбор запаса комплекса по складам зданий** на
     /// начало хода.
@@ -2184,6 +2227,15 @@ impl GameState {
     ///    через чередование `update_flag`, `DispatchJobs`, `Ai_CheckReactions`,
     ///    `Ai_CheckEndTurn`.
     pub fn tick(&mut self) {
+        // Звуки боя копятся до чтения клиентом (`App::collect_combat_sounds`
+        // сразу после тика). Headless-прогоны их не забирают, поэтому очередь
+        // подрезается: события — отчёт для UI, а не состояние партии.
+        const MAX_UNIT_SOUNDS: usize = 256;
+        if self.unit_sounds.len() > MAX_UNIT_SOUNDS {
+            let excess = self.unit_sounds.len() - MAX_UNIT_SOUNDS;
+            self.unit_sounds.drain(0..excess);
+        }
+
         // 1. `ResourceManager_GetPathsManager().PollResults()` — P5.
         self.poll_path_results();
 

@@ -69,7 +69,24 @@ pub trait AudioBackend: fmt::Debug {
     fn name(&self) -> &'static str;
 
     /// Ставит клип в очередь. Не блокирует.
-    fn play(&mut self, clip: Arc<WavClip>, mode: PlayMode) -> Result<(), String>;
+    fn play(&mut self, clip: Arc<WavClip>, mode: PlayMode) -> Result<(), String> {
+        self.play_scaled(clip, mode, 1.0)
+    }
+
+    /// Ставит клип в очередь с дополнительным усилением `gain` (0..1+).
+    ///
+    /// Нужно для звуков юнитов: `SC_UNITS` задаёт громкость на эффект
+    /// (`SoundManager::PlaySfx`: `volume / 100`), а общая громкость `FX`
+    /// остаётся в [`AudioPlayer::set_volume`]. Реализация по умолчанию
+    /// делегирует в [`AudioBackend::play`] (усиление игнорируется).
+    fn play_scaled(
+        &mut self,
+        clip: Arc<WavClip>,
+        mode: PlayMode,
+        _gain: f32,
+    ) -> Result<(), String> {
+        self.play(clip, mode)
+    }
 
     /// Останавливает всё, что играет.
     fn stop_all(&mut self) {}
@@ -316,6 +333,11 @@ impl AudioPlayer {
     /// Не блокирует и не возвращает ошибку наружу: причина попадает в
     /// [`Self::errors`], а UI продолжает работать (звук — не блокер).
     pub fn play(&mut self, name: &str, mode: PlayMode) -> bool {
+        self.play_gain(name, mode, 1.0)
+    }
+
+    /// [`AudioPlayer::play`] с усилением (звуки юнитов: `volume / 100`).
+    pub fn play_gain(&mut self, name: &str, mode: PlayMode, gain: f32) -> bool {
         if !self.enabled {
             return false;
         }
@@ -329,7 +351,7 @@ impl AudioPlayer {
             return false;
         };
 
-        match self.backend.play(clip, mode) {
+        match self.backend.play_scaled(clip, mode, gain.clamp(0.0, 4.0)) {
             Ok(()) => {
                 self.plays += 1;
                 true
@@ -489,6 +511,15 @@ mod rodio_backend {
         }
 
         fn play(&mut self, clip: Arc<WavClip>, mode: PlayMode) -> Result<(), String> {
+            self.play_scaled(clip, mode, 1.0)
+        }
+
+        fn play_scaled(
+            &mut self,
+            clip: Arc<WavClip>,
+            mode: PlayMode,
+            gain: f32,
+        ) -> Result<(), String> {
             // Завершившиеся клипы не держим; очередь ограничена, чтобы частые
             // клики не копили потоки.
             self.sinks.retain(|sink| !sink.empty());
@@ -508,7 +539,7 @@ mod rodio_backend {
                 sink.append(source);
             }
 
-            sink.set_volume(self.volume);
+            sink.set_volume(self.volume * gain.clamp(0.0, 4.0));
             self.sinks.push(sink);
 
             Ok(())
@@ -543,6 +574,7 @@ mod tests {
     #[derive(Debug)]
     struct RecordingBackend {
         calls: Arc<Mutex<Vec<PlayMode>>>,
+        gains: Arc<Mutex<Vec<f32>>>,
     }
 
     impl AudioBackend for RecordingBackend {
@@ -555,6 +587,29 @@ mod tests {
 
             Ok(())
         }
+
+        fn play_scaled(
+            &mut self,
+            _clip: Arc<WavClip>,
+            mode: PlayMode,
+            gain: f32,
+        ) -> Result<(), String> {
+            self.calls.lock().expect("lock").push(mode);
+            self.gains.lock().expect("lock").push(gain);
+
+            Ok(())
+        }
+    }
+
+    fn recording_player() -> (AudioPlayer, Arc<Mutex<Vec<PlayMode>>>, Arc<Mutex<Vec<f32>>>) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let gains = Arc::new(Mutex::new(Vec::new()));
+        let player = AudioPlayer::with_backend(Box::new(RecordingBackend {
+            calls: calls.clone(),
+            gains: gains.clone(),
+        }));
+
+        (player, calls, gains)
     }
 
     fn clip() -> WavClip {
@@ -623,10 +678,7 @@ mod tests {
 
     #[test]
     fn plays_preloaded_clip_once_and_looping() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut player = AudioPlayer::with_backend(Box::new(RecordingBackend {
-            calls: calls.clone(),
-        }));
+        let (mut player, calls, gains) = recording_player();
         player.preload("KBUY0", clip());
 
         assert!(player.has_clip("KBUY0"));
@@ -637,6 +689,20 @@ mod tests {
             *calls.lock().expect("lock"),
             vec![PlayMode::Once, PlayMode::Loop]
         );
+        // Обычные звуки играют с усилением 1.0 (`play` → `play_scaled`).
+        assert_eq!(*gains.lock().expect("lock"), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn play_gain_forwards_the_unit_volume_to_the_backend() {
+        let (mut player, _calls, gains) = recording_player();
+        player.preload("TANK14", clip());
+
+        // `SoundManager::PlaySfx`: `volume / 100` из таблицы юнита.
+        assert!(player.play_gain("TANK14", PlayMode::Once, 0.6));
+        assert!(player.play_gain("TANK14", PlayMode::Once, 0.8));
+        assert_eq!(player.plays(), 2);
+        assert_eq!(*gains.lock().expect("lock"), vec![0.6, 0.8]);
     }
 
     #[test]
@@ -645,10 +711,7 @@ mod tests {
         // Ссылка строчная, файл — заглавный, как в оригинальном каталоге.
         std::fs::write(dir.join("TANK1.SPW"), wav_bytes(&[1, 2, 3, 4])).expect("wav");
         let res = res_with_ref("TANK1", "tank1.spw");
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut player = AudioPlayer::with_backend(Box::new(RecordingBackend {
-            calls: calls.clone(),
-        }));
+        let (mut player, calls, _gains) = recording_player();
 
         player.load_from(&res, &dir);
 

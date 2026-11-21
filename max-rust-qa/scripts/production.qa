@@ -343,6 +343,37 @@ end_turn
 assert unit=Infantry
 assert gold>=150
 shot production-done
+
+# --- Готовый юнит стоит В ЗАВОДЕ, пока игрок не выведет его ----------------
+# C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`): юнит рождается на
+# клетке завода (`UnitsManager_DeployUnit(..., grid_x, grid_y, ...)`), получает
+# `ORDER_IDLE`/`ORDER_STATE_STORE` и `scaler_adjust = 4` (не рисуется:
+# `UnitInfoGroup::IsRelevant` пропускает `ORDER_IDLE`), завод — его родитель,
+# а сам юнит становится родителем завода (`SetParent(factory_unit)`), у завода
+# `storage = 1` и `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. Свободная клетка рядом
+# не ищется — раньше порт ставил юнита на землю, это было расхождение.
+select type Training Hall
+assert factory-ready=yes
+assert unit-stored=Infantry
+shot factory-unit-ready
+
+# Повторный клик по заводу (`UnitsManager_Popup_InitFactories`,
+# `units_manager.cpp:869-872`) меню НЕ открывает: `PlaceNewUnit` выбирает
+# готового юнита, следующий клик по клетке рядом даёт `CURSOR_ACTIVATE`
+# (`game_manager.cpp:6918-6926`) → `ORDER_ACTIVATE` заводу →
+# `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`).
+unit-menu open
+launch near
+tick 6
+assert unit-order=await
+assert selected
+shot factory-unit-launched
+
+# Завод отдал юнита: `--storage`, `parent = nullptr`, очередь пуста.
+select type Training Hall
+assert factory-ready=no
+assert unit-stored=none
+
 # Материалы комплекса: шахта копит сырьё, которым платит завод.
 select type Mining Station
 assert unit-storage>=1

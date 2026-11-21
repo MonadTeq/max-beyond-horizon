@@ -506,6 +506,17 @@ pub fn firing_turret_frame_index(
     (index >= 0).then_some(index as usize)
 }
 
+/// Пиксельный якорь летящего снаряда (`MISSILE_UNIT`).
+///
+/// C++ `AirPath::Execute` двигает снаряд **попиксельно**
+/// (`unit->OffsetDrawZones`, `airpath.cpp:219-242`), и `UnitInfo::Render` рисует
+/// его ровно по `unit->x/y`. Порт хранит ту же пиксельную позицию в
+/// `UnitInfo::x/y` (`unit_order::missile_path_execute`), поэтому снаряд летит по
+/// прямой, а не прыгает по центрам клеток.
+pub fn missile_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)> {
+    (unit.flags & unit_flags::MISSILE_UNIT != 0).then(|| (i32::from(unit.x), i32::from(unit.y)))
+}
+
 /// Пиксельный якорь юнита-эффекта следа (дым ракеты/пузыри торпеды).
 ///
 /// C++ `Paths_DrawMissile` (`airpath.cpp:392-404`) кладёт три частицы в
@@ -1459,9 +1470,11 @@ impl App {
             let (grid_x, grid_y) = self
                 .visual_position(visible[index])
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
-            // Частицы следа ракеты/торпеды (`Paths_DrawMissile`): C++ разносит
+            // Частицы следа ракеты/торпеды (`Paths_DrawMissile`) и сами
+            // снаряды (`AirPath::Execute` — пиксельный шаг): C++ разносит
             // только зоны отрисовки, порт хранит это в пиксельных `x/y`.
             let (world_x, world_y) = effect_pixel_anchor(unit)
+                .or_else(|| missile_pixel_anchor(unit))
                 .unwrap_or_else(|| unit_anchor_world(unit, (grid_x, grid_y)));
             // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
             // конструктор сдвигается на 8 px за тик к центру 2×2-ленты, всего

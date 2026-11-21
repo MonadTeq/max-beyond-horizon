@@ -22,6 +22,31 @@
 //! Голоса (`V_*`) — тоже `.spw`-ресурсы, поэтому идут через тот же плеер; они
 //! отключаются настройкой `disable_voice`, эффекты — `disable_fx`
 //! (`Preferences`).
+//!
+//! # Звуки боя (`SC_UNITS`)
+//!
+//! Выстрел, попадание и взрыв берут ресурс **из таблицы юнита**:
+//! `SoundManager::PlaySfx(UnitInfo*, Unit::SfxType)` (`sound_manager.cpp:413-490`)
+//! ищет `Unit::SoundEffectInfo` в
+//! `Unit::m_sound_effects` (`units.cpp` `ParseSoundEffects`, `units.cpp:228-290`):
+//! сначала `units[TOKEN].sound_effects`, иначе `default_sound_effects`. Таблица
+//! сгенерирована в `data/unit_sfx.json` (`tools/gen_unit_sfx.py`) и читается
+//! [`unit_sound`]; события копит симуляция (`max_core::UnitSound`), а
+//! [`combat_sound`] превращает их в `(тег, громкость)`.
+//!
+//! Вызовы C++:
+//! * выстрел — `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`), `SFX_TYPE_FIRE`;
+//! * попадание — `UnitsManager_StartExplosion` при `hits > 0`
+//!   (`units_manager.cpp:3922`), `SFX_TYPE_HIT`;
+//! * взрыв — там же при `hits == 0` (`units_manager.cpp:3929`),
+//!   `SFX_TYPE_EXPLOAD` (у `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/
+//!   `HITEXPLD` своего звука нет — играет `GEN_XPLD`, как в C++).
+
+use std::sync::OnceLock;
+
+use max_core::enums::{UnitType, UNIT_END};
+use max_core::game::{UnitSound, UnitSoundKind};
+use serde::Deserialize;
 
 /// Звуковое событие UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +106,127 @@ impl Sfx {
             Self::BuildSitePlaced | Self::Repair | Self::Reload | Self::Transfer
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// Звуки юнитов (боевые) — SC_UNITS
+// ---------------------------------------------------------------------------
+
+/// JSON-таблица звуков (`tools/gen_unit_sfx.py` из `SC_UNITS`).
+pub const UNIT_SFX_JSON: &str = include_str!("../data/unit_sfx.json");
+
+/// `Unit::SoundEffectInfo` (`unit.hpp:64-70`) для одного `SfxType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitSfxInfo {
+    /// Тег ресурса `MAX.RES` (`TANK14` → `tank14.spw`).
+    pub tag: &'static str,
+    /// Громкость 0..100 из `SC_UNITS` (`SoundManager::PlaySfx`: `volume / 100`).
+    pub volume: u8,
+    /// `is_default` C++: юнит своего звука не задавал и сыграл
+    /// `default_sound_effects` (`units.cpp:288`).
+    pub is_default: bool,
+}
+
+/// Готовый к проигрыванию звук боя: тег ресурса и усиление 0..1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CombatSfx {
+    /// Тег ресурса (`AudioPlayer::play_gain`).
+    pub tag: &'static str,
+    /// Громкость из таблицы юнита (`volume / 100`).
+    pub gain: f32,
+    /// `is_default` (диагностика/тесты).
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UnitSfxJson {
+    resource: String,
+    volume: u8,
+    #[serde(default)]
+    default: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UnitSfxRecord {
+    token: String,
+    fire: Option<UnitSfxJson>,
+    hit: Option<UnitSfxJson>,
+    expload: Option<UnitSfxJson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UnitSfxFile {
+    units: Vec<UnitSfxRecord>,
+}
+
+/// Разобранная таблица (индекс — [`UnitType`] как `usize`).
+fn unit_sfx_table() -> &'static [UnitSfxRecord] {
+    static TABLE: OnceLock<Vec<UnitSfxRecord>> = OnceLock::new();
+
+    TABLE
+        .get_or_init(|| {
+            serde_json::from_str::<UnitSfxFile>(UNIT_SFX_JSON)
+                .map(|file| file.units)
+                .unwrap_or_default()
+        })
+        .as_slice()
+}
+
+/// `Unit::GetSoundEffect(SfxType)` (`unit.hpp`, `units.cpp`): ресурс и громкость
+/// звука юнита, как их выбрал `ParseSoundEffects` (`units.cpp:228-290`).
+///
+/// `None` — тип вне таблицы или `INVALID_ID` (звука нет).
+pub fn unit_sound(unit_type: UnitType, kind: UnitSoundKind) -> Option<UnitSfxInfo> {
+    let record = unit_sfx_table().get(unit_type as usize)?;
+
+    let entry = match kind {
+        UnitSoundKind::Fire => record.fire.as_ref(),
+        UnitSoundKind::Hit => record.hit.as_ref(),
+        UnitSoundKind::Explode => record.expload.as_ref(),
+    }?;
+
+    Some(UnitSfxInfo {
+        tag: entry.resource.as_str(),
+        volume: entry.volume,
+        is_default: entry.default,
+    })
+}
+
+/// Событие симуляции → звук боя (`SoundManager::PlaySfx`).
+///
+/// Громкость — `volume / 100` из `SC_UNITS` (`sound_manager.cpp:479-482`:
+/// `const float volume = sfx_info.volume / 100.0f`). Затухание по расстоянию и
+/// панорама C++ (`GetDistanceAttenuation`/`GetPanning`) в порте не
+/// моделируются: камера одна, а громкость эффекта уже задана настройкой `FX`.
+pub fn combat_sound(event: UnitSound) -> Option<CombatSfx> {
+    let info = unit_sound(event.unit_type, event.kind)?;
+
+    Some(CombatSfx {
+        tag: info.tag,
+        gain: f32::from(info.volume) / 100.0,
+        is_default: info.is_default,
+    })
+}
+
+/// Размер таблицы звуков (диагностика/тесты): должно быть [`UNIT_END`].
+pub fn unit_sfx_count() -> usize {
+    let count = unit_sfx_table().len();
+
+    debug_assert!(
+        count == 0 || count == UNIT_END as usize,
+        "unit_sfx.json: {} записей вместо {}",
+        count,
+        UNIT_END
+    );
+
+    count
+}
+
+/// C++-токен типа (`TANK`, …) в таблице звуков; `""` — записи нет.
+pub fn unit_sfx_token(unit_type: UnitType) -> &'static str {
+    unit_sfx_table()
+        .get(unit_type as usize)
+        .map_or("", |record| record.token.as_str())
 }
 
 /// Голос статуса выделенного юнита — `GameManager_PlayUnitStatusVoice`
@@ -183,6 +329,107 @@ mod tests {
         assert_eq!(Sfx::BuildSitePlaced.tag(), "V_M049");
         assert!(Sfx::BuildSitePlaced.is_voice());
         assert!(!Sfx::Click.is_voice());
+    }
+
+    // -----------------------------------------------------------------------
+    // Звуки боя: таблица `SC_UNITS` (`ParseSoundEffects`, units.cpp:228-290)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unit_sfx_table_covers_all_types_in_cpp_order() {
+        assert_eq!(
+            unit_sfx_count(),
+            UNIT_END as usize,
+            "таблица должна покрывать все {} типов SC_UNITS",
+            UNIT_END
+        );
+        assert_eq!(unit_sfx_token(UnitType::CommTower), "COMMTWR");
+        assert_eq!(unit_sfx_token(UnitType::Tank), "TANK");
+        assert_eq!(unit_sfx_token(UnitType::AirUnitsPlant), "AIRPLT");
+        assert_eq!(unit_sfx_token(UnitType::RocketSmoke), "RKTSMOKE");
+    }
+
+    #[test]
+    fn unit_fire_hit_explosion_come_from_the_unit_tables() {
+        // `TANK` задаёт свои звуки: fire = TANK14, hit = TANK15, expload = TANK16.
+        let fire = unit_sound(UnitType::Tank, UnitSoundKind::Fire).expect("fire");
+        assert_eq!(fire.tag, "TANK14");
+        assert_eq!(fire.volume, 60);
+        assert!(!fire.is_default);
+
+        let hit = unit_sound(UnitType::Tank, UnitSoundKind::Hit).expect("hit");
+        assert_eq!(hit.tag, "TANK15");
+        assert!(!hit.is_default);
+
+        let explosion = unit_sound(UnitType::Tank, UnitSoundKind::Explode).expect("expload");
+        assert_eq!(explosion.tag, "TANK16");
+        assert_eq!(explosion.volume, 80);
+        assert!(!explosion.is_default);
+
+        // Пехота (`INFANTRY`) — `INFAN14/15/16`.
+        assert_eq!(
+            unit_sound(UnitType::Infantry, UnitSoundKind::Fire)
+                .expect("infantry fire")
+                .tag,
+            "INFAN14"
+        );
+
+        // `FIGHTER` — `FIGHT14/15/16` (авиация).
+        assert_eq!(
+            unit_sound(UnitType::Fighter, UnitSoundKind::Explode)
+                .expect("fighter expload")
+                .tag,
+            "FIGHT16"
+        );
+    }
+
+    #[test]
+    fn units_without_own_sound_fall_back_to_default_table() {
+        // У `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD` своего `sound_effects`
+        // нет — `ParseSoundEffects` берёт `default_sound_effects` и помечает
+        // `is_default` (`units.cpp:288`). `GEN_XPLD` — громкость 80.
+        for unit_type in [
+            UnitType::LandExplosion,
+            UnitType::AirExplosion,
+            UnitType::SeaExplosion,
+            UnitType::BuildingExplosion,
+        ] {
+            let explosion = unit_sound(unit_type, UnitSoundKind::Explode)
+                .unwrap_or_else(|| panic!("{unit_type:?}: default expload"));
+            assert_eq!(explosion.tag, "GEN_XPLD", "{unit_type:?}");
+            assert_eq!(explosion.volume, 80);
+            assert!(explosion.is_default, "{unit_type:?}: звук по умолчанию");
+        }
+
+        // Ракета/след тоже без своих звуков — дефолтные.
+        assert_eq!(
+            unit_sound(UnitType::Rocket, UnitSoundKind::Fire)
+                .expect("rocket fire")
+                .tag,
+            "GEN_FIRE"
+        );
+    }
+
+    #[test]
+    fn combat_sound_maps_events_to_tags_and_volume() {
+        let event = UnitSound {
+            unit: max_core::unit::UnitId(7),
+            unit_type: UnitType::Tank,
+            kind: UnitSoundKind::Fire,
+        };
+        let sound = combat_sound(event).expect("tank fire");
+        assert_eq!(sound.tag, "TANK14");
+        assert!((sound.gain - 0.6).abs() < 1e-6, "volume 60 → gain 0.6");
+
+        let explosion = combat_sound(UnitSound {
+            unit: max_core::unit::UnitId(7),
+            unit_type: UnitType::LandExplosion,
+            kind: UnitSoundKind::Explode,
+        })
+        .expect("explosion");
+        assert_eq!(explosion.tag, "GEN_XPLD");
+        assert!((explosion.gain - 0.8).abs() < 1e-6);
+        assert!(explosion.is_default);
     }
 
     #[test]

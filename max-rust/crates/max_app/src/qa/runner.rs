@@ -33,7 +33,7 @@ use crate::mobilize::{
 };
 use crate::qa::png::{self, Image};
 use crate::qa::script::{
-    self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, MenuTarget,
+    self, Assertion, BuildCommand, Command, HelpCommand, LandingCommand, LaunchCommand, MenuTarget,
     MobilizeAction, PhaseName, PrefsCommand, ResearchCommand, ScreenName, SetupAction, Step,
     TransferCommand, UnitMenuCommand, UpgradeCommand,
 };
@@ -391,6 +391,7 @@ impl QaRunner {
                 Ok(Flow::Continue)
             }
             Command::Wait(frames) => self.wait(*frames as usize),
+            Command::WaitFiring => self.wait_firing(),
             Command::Tick(frames) => {
                 for _ in 0..*frames {
                     self.frame();
@@ -417,6 +418,7 @@ impl QaRunner {
             Command::MoveGrid(x, y) => self.move_grid(*x, *y),
             Command::MoveNear => self.move_near(),
             Command::MoveNearRefused => self.move_near_refused(),
+            Command::Launch(action) => self.launch(*action),
             Command::EndTurn => self.end_turn(),
             Command::Mobilize(action) => self.mobilize(*action),
             Command::Landing(action) => self.landing(*action),
@@ -529,7 +531,13 @@ impl QaRunner {
     /// `ADUMP` вплотную к шахте): `spawn NAME` ищет свободную клетку сам и может
     /// поставить склад по диагонали, где связи нет.
     fn spawn_at(&mut self, x: i16, y: i16, name: &str) -> Result<Flow, String> {
-        let wanted = name.trim().to_ascii_lowercase();
+        // `spawn at X Y enemy NAME` — чужой юнит (для сценариев с известной
+        // геометрией: диагональный выстрел, комплекс и т.п.).
+        let (enemy, name) = match name.trim().strip_prefix("enemy ") {
+            Some(name) => (true, name.trim()),
+            None => (false, name.trim()),
+        };
+        let wanted = name.to_ascii_lowercase();
         let unit_type = max_core::UnitType::ALL
             .iter()
             .copied()
@@ -540,6 +548,11 @@ impl QaRunner {
             .ok_or_else(|| format!("spawn at: неизвестный тип юнита «{name}»"))?;
 
         let player = self.app.player_team();
+        let team = if enemy {
+            max_core::TeamId((player.0 + 1) % 2)
+        } else {
+            player
+        };
         let cell = Point::new(x, y);
         let size = i16::from(max_core::production::footprint(unit_type));
 
@@ -560,7 +573,7 @@ impl QaRunner {
         let id = self
             .app
             .state_mut()
-            .spawn_unit(unit_type, player, cell, flags)
+            .spawn_unit(unit_type, team, cell, flags)
             .ok_or_else(|| format!("spawn at: не удалось поставить юнита {name}"))?;
 
         if let Some(unit) = self.app.state_mut().unit_mut(id) {
@@ -1054,6 +1067,33 @@ impl QaRunner {
                 ))?;
 
                 let Some(menu) = self.app.unit_menu() else {
+                    // `UnitsManager_Popup_InitFactories` (`units_manager.cpp:869-872`):
+                    // у завода в `ORDER_STATE_UNIT_READY` меню не открывается —
+                    // `Popup_PlaceNewUnit` выбирает готового юнита, и следующий
+                    // клик по клетке рядом выводит его (`ORDER_ACTIVATE`).
+                    let now_selected = self.app.hud().selected;
+                    let released = now_selected != Some(id)
+                        && self.app.state().unit(id).is_some_and(|unit| {
+                            unit.orders == max_core::enums::UnitOrder::Build
+                                && unit.state == max_core::enums::UnitOrderState::UnitReady
+                        })
+                        && now_selected
+                            .and_then(|client| self.app.state().unit(client))
+                            .is_some_and(|client| client.parent_unit == Some(id));
+
+                    if released {
+                        let client = now_selected
+                            .and_then(|client| self.app.state().unit(client))
+                            .map(|client| client.unit_type);
+
+                        self.detail = Some(format!(
+                            "готовый {:?} выбран (PlaceNewUnit): клик по клетке рядом выведет его",
+                            client
+                        ));
+
+                        return Ok(Flow::Continue);
+                    }
+
                     let unit = self.app.state().unit(id);
                     return Err(format!(
                         "unit-menu open: меню не открылось (юнит {:?} в ({}, {}), orders={:?}/{:?})",
@@ -2369,6 +2409,40 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
+    /// `wait firing`: кадры до кадра выстрела выделенного юнита.
+    ///
+    /// `UnitInfo::PrepareFire` держит отдачу всего 3 кадра
+    /// (`firing_recoil_frames`), поэтому фиксированный `tick N` попадает в неё
+    /// лишь при неизменном числе тиков наведения (`AimAtTarget`). Команда
+    /// убирает эту хрупкость: крутит кадры, пока `firing_frame_active`
+    /// (`firing_recoil_frames > 0` и `HAS_FIRING_SPRITE`) не станет истинным.
+    fn wait_firing(&mut self) -> Result<Flow, String> {
+        const LIMIT: usize = 240;
+
+        for frames in 0..LIMIT {
+            if self.firing_frame_drawn() {
+                self.detail = Some(format!("кадр выстрела через {frames} кадров"));
+
+                return Ok(Flow::Continue);
+            }
+
+            self.frame();
+        }
+
+        let unit = self
+            .app
+            .hud()
+            .selected
+            .and_then(|id| self.app.state().unit(id));
+
+        Err(format!(
+            "wait firing: выделенный юнит не показал кадр выстрела за {LIMIT} кадров (unit={:?} orders={:?}/{:?})",
+            unit.map(|unit| unit.unit_type),
+            unit.map(|unit| unit.orders),
+            unit.map(|unit| unit.state)
+        ))
+    }
+
     /// `mem`: текущий RSS процесса в лог шага (P4 soak, TC-1108).
     fn mem(&mut self) -> Result<Flow, String> {
         self.detail = Some(crate::mem::memory_line());
@@ -3002,6 +3076,102 @@ impl QaRunner {
         ))
     }
 
+    /// `launch near` / `launch grid X Y` — вывод готового юнита из завода.
+    ///
+    /// Игрок: выделен готовый юнит (`Popup_InitFactories` → `PlaceNewUnit`
+    /// выбирает его при повторном клике по заводу), затем правый клик по клетке
+    /// рядом с заводом — `CURSOR_ACTIVATE` → приказ `ORDER_ACTIVATE` **заводу**
+    /// (`game_manager.cpp:6918-6926`). Проверка: контейнер получил `Activate`
+    /// (или юнит уже выпущен).
+    fn launch(&mut self, action: LaunchCommand) -> Result<Flow, String> {
+        let Some(id) = self.app.hud().selected else {
+            return Err("launch: нет выделенного юнита (сначала select)".to_string());
+        };
+        let Some(selected) = self.app.state().unit(id).cloned() else {
+            return Err("launch: выделенный юнит исчез".to_string());
+        };
+
+        // Контейнер и готовый юнит: либо выделен завод (`ORDER_BUILD`+`UNIT_READY`),
+        // либо сам юнит «в трюме» (`ORDER_IDLE` с родителем).
+        let (container_id, client_id) = if selected.orders == max_core::enums::UnitOrder::Idle {
+            let parent = selected
+                .parent_unit
+                .ok_or_else(|| "launch: у выделенного юнита нет контейнера".to_string())?;
+
+            (parent, id)
+        } else {
+            let client = selected
+                .parent_unit
+                .ok_or_else(|| "launch: выделенный юнит не ждёт вывода".to_string())?;
+
+            (id, client)
+        };
+
+        let Some(container) = self.app.state().unit(container_id).cloned() else {
+            return Err("launch: контейнер исчез".to_string());
+        };
+        let Some(client) = self.app.state().unit(client_id).cloned() else {
+            return Err("launch: готовый юнит исчез".to_string());
+        };
+
+        let target = match action {
+            LaunchCommand::Grid(x, y) => Point::new(x, y),
+            LaunchCommand::Near => max_core::production::factory_exit_cell(
+                self.app.state(),
+                &container,
+                &client,
+            )
+            .ok_or_else(|| {
+                format!(
+                    "launch near: рядом с {:?} в ({}, {}) нет проходимой клетки",
+                    container.unit_type, container.grid.x, container.grid.y
+                )
+            })?,
+        };
+
+        self.app
+            .viewport_mut()
+            .center_on_grid(container.grid.x, container.grid.y);
+
+        let (x, y) = hud::tile_center(&self.app.map_viewport(), target);
+        let (frame_x, frame_y) = (x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly);
+
+        if !layout::MAIN_MAP.contains(frame_x, frame_y) {
+            return Err(format!(
+                "launch: клетка ({}, {}) вне видимой области карты",
+                target.x, target.y
+            ));
+        }
+
+        self.send(InputEvent::RightClick(frame_x, frame_y))?;
+
+        // Приказ применён локально сразу (`apply_pending_orders`): контейнер
+        // должен быть в `ORDER_ACTIVATE`/`EXECUTING_ORDER`.
+        let container_now = self.app.state().unit(container_id);
+        let activated = container_now.is_some_and(|unit| {
+            unit.orders == max_core::enums::UnitOrder::Activate
+                || unit.parent_unit.is_none()
+                || unit.storage == 0
+        });
+
+        if !activated {
+            return Err(format!(
+                "launch: приказ не принят — {:?} остался в {:?}/{:?} ({})",
+                container.unit_type,
+                container_now.map(|unit| unit.orders),
+                container_now.map(|unit| unit.state),
+                self.last_log_line()
+            ));
+        }
+
+        self.detail = Some(format!(
+            "вывод {:?} из {:?} в ({}, {})",
+            client.unit_type, container.unit_type, target.x, target.y
+        ));
+
+        Ok(Flow::Continue)
+    }
+
     fn end_turn(&mut self) -> Result<Flow, String> {
         if !self.app.local_active() {
             return Err("end_turn: локальная партия не идёт".to_string());
@@ -3489,6 +3659,66 @@ impl QaRunner {
                     },
                 )
             }
+            Assertion::FactoryReady(waiting) => {
+                // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`): завод в
+                // `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` держит готовый юнит
+                // «внутри» (`parent_unit` — он) и ждёт приказа игрока.
+                let found = self.app.hud().selected.and_then(|id| {
+                    self.app.state().unit(id).and_then(|unit| {
+                        (unit.orders == max_core::enums::UnitOrder::Build
+                            && unit.state == max_core::enums::UnitOrderState::UnitReady)
+                            .then_some(unit)
+                    })
+                });
+
+                self.expect(
+                    found.is_some() == waiting,
+                    format!("factory-ready={}", if waiting { "yes" } else { "no" }),
+                    match found {
+                        Some(unit) => format!(
+                            "завод {:?} в ({},{}) ждёт вывода (storage={})",
+                            unit.unit_type, unit.grid.x, unit.grid.y, unit.storage
+                        ),
+                        None => "выделенный юнит не ждёт вывода".to_string(),
+                    },
+                )
+            }
+            Assertion::UnitStored(name) => {
+                let wanted = name.as_deref().map(|name| name.trim().to_ascii_lowercase());
+                let stored = self.app.hud().selected.and_then(|id| {
+                    let container = self.app.state().unit(id)?;
+                    let client_id = container.parent_unit?;
+                    let client = self.app.state().unit(client_id)?;
+
+                    (client.orders == max_core::enums::UnitOrder::Idle
+                        && client.state == max_core::enums::UnitOrderState::Store)
+                        .then_some(client)
+                });
+
+                let matches = match (&wanted, stored) {
+                    (None, None) => true,
+                    (Some(wanted), Some(unit)) => {
+                        crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase() == *wanted
+                            || format!("{:?}", unit.unit_type).to_ascii_lowercase() == *wanted
+                    }
+                    _ => false,
+                };
+
+                self.expect(
+                    matches,
+                    match &wanted {
+                        Some(wanted) => format!("unit-stored={wanted}"),
+                        None => "unit-stored=none".to_string(),
+                    },
+                    match stored {
+                        Some(unit) => format!(
+                            "в заводе {:?} (ORDER_IDLE/STORE) в ({},{})",
+                            unit.unit_type, unit.grid.x, unit.grid.y
+                        ),
+                        None => "в выделенном заводе готового юнита нет".to_string(),
+                    },
+                )
+            }
             Assertion::EndTurnPressed(pressed) => {
                 // Та же функция, что рисует кнопку (`panels::end_turn_pressed`):
                 // ход компьютера — нажата, ход человека — отжата.
@@ -3891,6 +4121,57 @@ impl QaRunner {
                     format!("unit-count {name}{}{expected}", cmp.as_str()),
                     format!("unit-count {name}={actual}"),
                 )
+            }
+            Assertion::MissileLine => {
+                // `AirPath::Execute` (`airpath.cpp:219-242`): пиксельная позиция
+                // снаряда (`unit->x/y` после `OffsetDrawZones`) обязана лежать на
+                // прямой «центр клетки пуска → центр клетки цели».
+                let found = self.app.state().unit_ids_in_order().into_iter().find_map(|id| {
+                    let unit = self.app.state().unit(id)?;
+                    if unit.flags & max_core::enums::unit_flags::MISSILE_UNIT == 0 {
+                        return None;
+                    }
+                    let Some(max_core::unit::UnitPath::Air(path)) = unit.path.as_ref() else {
+                        return None;
+                    };
+
+                    let start = (
+                        i32::from(path.start_x),
+                        i32::from(path.start_y),
+                    );
+                    let end = (
+                        i32::from(path.end_x) * 64 + 32,
+                        i32::from(path.end_y) * 64 + 32,
+                    );
+                    let point = (i32::from(unit.x), i32::from(unit.y));
+
+                    let dx = f64::from(end.0 - start.0);
+                    let dy = f64::from(end.1 - start.1);
+                    let length = (dx * dx + dy * dy).sqrt();
+                    if length == 0.0 {
+                        return None;
+                    }
+                    let px = f64::from(point.0 - start.0);
+                    let py = f64::from(point.1 - start.1);
+                    let distance = (px * dy - py * dx).abs() / length;
+
+                    Some((unit.unit_type, point, start, end, distance))
+                });
+
+                match found {
+                    Some((unit_type, point, start, end, distance)) => self.expect(
+                        distance <= 1.5,
+                        "missile-line (отклонение ≤ 1.5 px)".to_string(),
+                        format!(
+                            "{unit_type:?} в {point:?}: отклонение {distance:.2} px от прямой {start:?}→{end:?}"
+                        ),
+                    ),
+                    None => self.expect(
+                        false,
+                        "missile-line (отклонение ≤ 1.5 px)".to_string(),
+                        "в полёте нет снаряда с AirPath".to_string(),
+                    ),
+                }
             }
             Assertion::Firing(expected) => {
                 let actual = self.firing_frame_drawn();

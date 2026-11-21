@@ -1093,7 +1093,17 @@ fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
 fn path_execute(ctx: &mut OrderContext<'_>) -> bool {
     match ctx.unit.path.clone() {
         Some(UnitPath::Ground(_)) => ground_path_execute(ctx),
-        Some(UnitPath::Air(path)) => air_path_execute(ctx, &path),
+        Some(UnitPath::Air(path)) => {
+            // `AirPath::Execute` (`airpath.cpp:175-295`) для снаряда
+            // (`MISSILE_UNIT`) шагает **попиксельно** по прямой `m_start_* →
+            // m_end_*`; `unit_move` (клетка за тик) к снарядам не применяется.
+            if ctx.unit.flags & MISSILE_UNIT != 0 {
+                missile_path_execute(ctx, &path);
+                false
+            } else {
+                air_path_execute(ctx, &path)
+            }
+        }
         Some(UnitPath::Builder(_)) => builder_path_execute(ctx),
         None => false,
     }
@@ -1337,6 +1347,100 @@ fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     true
 }
 
+/// `AirPath::Execute` (`airpath.cpp:175-295`) для **снаряда**: попиксельный шаг
+/// по прямой от точки пуска к цели.
+///
+/// C++ `AirPath::Execute` каждый вызов:
+///
+/// ```text
+/// m_step_x += m_delta_x;                      // airpath.cpp:219-220
+/// m_step_y += m_delta_y;
+/// position_x = (m_step_x >> 16) + m_start_x;  // :222-223
+/// position_y = (m_step_y >> 16) + m_start_y;
+/// grid_x = (position_x >> 6) - unit->grid_x;  // :226-227
+/// if (grid_x || grid_y) {                     // :229
+///     if (MISSILE_UNIT) Paths_DrawMissile(unit, position_x, position_y);  // :231
+/// }
+/// unit->OffsetDrawZones(offset_x, offset_y);  // :240 — x/y := position
+/// unit->grid_x = unit->x >> 6;                 // :241-242
+/// --m_length;                                  // :244
+/// ```
+///
+/// `m_delta_*` — 22-битная дробь шага (пиксели/тик), `m_start_*` — пиксель
+/// центра клетки пуска, `m_length` — число тиков (≈ число клеток дистанции).
+/// Итог: снаряд проходит **тот же отрезок**, что и в оригинале, а не 8-дирек-
+/// ционную ломаную по клеткам. Клетка (`grid`) пересчитывается из пикселя, а
+/// след (`Paths_DrawMissile`) ставится из точки «было → стало» — тоже по линии.
+fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
+    let mut path = *path;
+
+    // Снаряд не доворачивает (`AirPath::AirPath`: `m_angle = unit->angle`),
+    // поэтому `Paths_UpdateAngle` в C++ сразу возвращает false; шаг
+    // выполняется, только когда угол уже совпал.
+    if paths_update_angle(&mut ctx.unit, i32::from(path.angle)) {
+        if let Some(UnitPath::Air(stored)) = ctx.unit.path.as_mut() {
+            *stored = path;
+        }
+
+        return;
+    }
+
+    path.step_x = path.step_x.wrapping_add(path.delta_x);
+    path.step_y = path.step_y.wrapping_add(path.delta_y);
+
+    let position_x = (path.step_x >> 16) + i32::from(path.start_x);
+    let position_y = (path.step_y >> 16) + i32::from(path.start_y);
+
+    let old_grid = ctx.unit.grid;
+    let old_pixel = (i32::from(ctx.unit.x), i32::from(ctx.unit.y));
+
+    // `OffsetDrawZones`: пиксельная позиция спрайта снаряда.
+    ctx.unit.x = position_x.clamp(0, i32::from(u16::MAX)) as u16;
+    ctx.unit.y = position_y.clamp(0, i32::from(u16::MAX)) as u16;
+
+    let grid = Point::new(
+        (position_x >> 6).clamp(0, i32::from(crate::geo::MAP_WIDTH) - 1) as i16,
+        (position_y >> 6).clamp(0, i32::from(crate::geo::MAP_HEIGHT) - 1) as i16,
+    );
+
+    if grid != old_grid {
+        ctx.unit.grid = grid;
+        // `Paths_DrawMissile(unit, position_x, position_y)` (`airpath.cpp:231`,
+        // `:362-406`): три частицы в **покинутую** клетку (`grid_x/grid_y` ещё
+        // старые: C++ зовёт это до обновления `unit->grid_*`) на отрезке «старый
+        // пиксель → новый пиксель».
+        spawn_missile_trail(
+            ctx.world,
+            &ctx.unit,
+            old_grid,
+            old_pixel,
+            (position_x, position_y),
+        );
+    }
+
+    path.length = path.length.saturating_sub(1);
+
+    if path.length > 0 {
+        if let Some(UnitPath::Air(stored)) = ctx.unit.path.as_mut() {
+            *stored = path;
+        }
+
+        return;
+    }
+
+    // `Paths_FinishMove` (`airpath.cpp:408-420`) для `MISSILE_UNIT`:
+    // `UnitsManager_EndAttack` → `parent->Attack(grid_x, grid_y)` →
+    // `UnitsManager_DestroyUnit(unit)`.
+    ctx.unit.path = None;
+
+    if let Some(parent_id) = ctx.unit.parent_unit {
+        let position = ctx.unit.grid;
+        ctx.world.end_attack(ctx.id);
+        combat::attack(ctx.world, parent_id, position);
+        ctx.world.destroy_unit(ctx.id);
+    }
+}
+
 /// `Paths_DrawMissile` (`airpath.cpp:362-406`) — след за летящим снарядом.
 ///
 /// C++ при каждом переходе снаряда в новую клетку (`AirPath::Execute`,
@@ -1352,8 +1456,9 @@ fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
 /// * кадры листает `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`):
 ///   `moved & 1` → `image_index + 1`, удаление на `image_index ==
 ///   image_index_max` (4 у дыма, 2 у пузырей);
-/// * `OffsetDrawZones` разносит три частицы вдоль отрезка «старая клетка →
-///   новая» на 0, 1/3 и 2/3 — это только отрисовка (`unit->x/y` не меняются).
+/// * `OffsetDrawZones` разносит три частицы вдоль отрезка «старый пиксель снаряда
+///   → новый пиксель» на 0, 1/3 и 2/3 — это только отрисовка (`unit->x/y` у самих
+///   частиц не меняются).
 ///
 /// Порт хранит разнесение в пиксельных `x/y` частиц (рендер эффектов берёт их
 /// вместо клетки), сама клетка остаётся C++-шной (покинутая). Спавн не зависит
@@ -1363,27 +1468,30 @@ fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
 /// (DESIGN §6.1). Видимость частицы выставляет `UnitInfo::InitStealthStatus`
 /// (своя команда; `skip_map_status_update = true`), поэтому чужие следы не
 /// рисуются — как в C++.
-fn spawn_missile_trail(state: &mut GameState, unit: &UnitInfo, from: Point, to: Point) {
+fn spawn_missile_trail(
+    state: &mut GameState,
+    unit: &UnitInfo,
+    spawn_grid: Point,
+    from_pixel: (i32, i32),
+    to_pixel: (i32, i32),
+) {
     let particle_type = match unit.unit_type {
         UnitType::Rocket => UnitType::RocketSmoke,
         UnitType::Torpedo => UnitType::TorpedoBubble,
         _ => return,
     };
 
-    if from == to {
+    let (start_x, start_y) = from_pixel;
+    let delta_x = to_pixel.0 - start_x;
+    let delta_y = to_pixel.1 - start_y;
+
+    if delta_x == 0 && delta_y == 0 {
         return;
     }
 
-    const HALF_TILE: i32 = GFX_MAP_TILE_SIZE / 2;
-
-    let start_x = i32::from(from.x) * GFX_MAP_TILE_SIZE + HALF_TILE;
-    let start_y = i32::from(from.y) * GFX_MAP_TILE_SIZE + HALF_TILE;
-    let delta_x = i32::from(to.x) * GFX_MAP_TILE_SIZE + HALF_TILE - start_x;
-    let delta_y = i32::from(to.y) * GFX_MAP_TILE_SIZE + HALF_TILE - start_y;
-
     // `index = 3` в C++: ровно три частицы на клетку.
     for index in 0..3 {
-        let Some(particle_id) = state.spawn_unit(particle_type, unit.team, from, 0) else {
+        let Some(particle_id) = state.spawn_unit(particle_type, unit.team, spawn_grid, 0) else {
             continue;
         };
 
@@ -1426,11 +1534,9 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     ctx.unit.moved = 0;
     ctx.unit.in_transit = false;
 
-    // `airpath.cpp:229-232`: при выходе снаряда из клетки C++ ставит за ним
-    // след из трёх частиц (`RKTSMOKE`/`TRPBUBLE`).
-    if ctx.unit.flags & MISSILE_UNIT != 0 {
-        spawn_missile_trail(ctx.world, &ctx.unit, grid, target);
-    }
+    // Снаряды сюда не доходят: [`path_execute`] ведёт их попиксельно
+    // ([`missile_path_execute`]) и след ставится из пиксельного отрезка
+    // (`Paths_DrawMissile`, `airpath.cpp:229-232`).
 
     // C++ `Move()` при `moved == GFX_MAP_TILE_SIZE`:
     // `path_steps[step_index]->x -= offset_x` — шаг «съедается» переходом.
@@ -1994,11 +2100,11 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
 
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
-            // TODO(P3/P5): `UnitsManager_ActivateUnit` — проверка занятости
-            // площадки (`Paths_IsOccupied`, `Access_IsAccessible`), перенос
-            // клиента на карту; без модуля доступа активация не выполняется и
-            // приказ возвращается к отложенному (как в ветке отказа C++).
-            ctx.restore_orders();
+            // `UnitsManager_ActivateUnit(unit)` (`units_manager.cpp:3826`):
+            // `unit` — контейнер (завод/транспорт), `unit->GetParent()` —
+            // готовый юнит, которого игрок выводит кликом (пакет 08/P3) или ИИ
+            // (`issue_factory_exit`).
+            activate_unit(ctx);
         }
         UnitOrderState::InTransition => {
             if ctx.unit.unit_type == UnitType::Constructor {
@@ -2015,6 +2121,130 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
             activate_engineer(ctx);
         }
         _ => {}
+    }
+}
+
+/// `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`) — вывод готового
+/// юнита из контейнера.
+///
+/// Вызывается для **контейнера**: у завода `parent_unit` — готовый юнит
+/// (`UnitInfo::SpawnNewUnit`, `unitinfo.cpp:3513`:
+/// `SetParent(factory_unit.Get())`), у транспорта — пассажир. C++
+/// (`units_manager.cpp:3827-3936`):
+///
+/// ```text
+/// client = unit->GetParent();                      // готовый юнит
+/// if ((client->MOBILE_AIR_UNIT && client->speed > 0) ||
+///     (!Paths_IsOccupied(move_to) && !client->MOBILE_AIR_UNIT &&
+///      Access_IsAccessible(client->type, move_to, SameClassBlocks))) {
+///     --unit->storage; unit->SetParent(nullptr);
+///     if (unit->GetBuildList().GetCount() > 0) { ORDER_BUILD/EXECUTING_ORDER;
+///         build_time = turns; StartBuilding(); }       // следующий заказ
+///     else { ORDER_AWAIT/EXECUTING_ORDER; }
+///     if (client->MOBILE_AIR_UNIT) {
+///         client->SetParent(nullptr); client->move_to = unit->move_to;
+///         client->SetOrder(ORDER_MOVE); SetOrderState(INIT);
+///         ScaleUnit(client, EXPAND);                   // взлёт из завода
+///     } else {
+///         Access_TriggerEnemyMine(move_to);
+///         UnitsManager_UpdateMapHash(client, move_to); // юнит в клетке клика
+///         client->SetOrder(ORDER_AWAIT); SetOrderState(EXECUTING_ORDER);
+///         client->InitStealthStatus(); ScaleUnit(client, EXPAND);
+///     }
+/// } else { unit->RestoreOrders(); }
+/// ```
+///
+/// Воздушный юнит выходит **сам** (`ORDER_MOVE`/`INIT` → `ExecuteMove` →
+/// `ORDER_TAKE_OFF`), наземный/морской — переставляется в клетку клика. Если
+/// клетка занята/непроходима — приказ возвращается к отложенному (завод остаётся
+/// в `ORDER_BUILD`/`UNIT_READY`), ровно как в C++.
+fn activate_unit(ctx: &mut OrderContext<'_>) {
+    let Some(client_id) = ctx.unit.parent_unit else {
+        ctx.restore_orders();
+        return;
+    };
+    let Some(client) = ctx.other(client_id) else {
+        ctx.restore_orders();
+        return;
+    };
+
+    let move_to = ctx.data.move_to;
+    let is_air = client.flags & MOBILE_AIR_UNIT != 0;
+    let destination_ok = if is_air {
+        // Воздушному юниту площадка не нужна — только топливо/двигатель:
+        // `(client->flags & MOBILE_AIR_UNIT) && client->speed > 0`.
+        client.speed > 0
+    } else {
+        !access::paths_is_occupied(ctx.world, move_to, 0, ctx.unit.team)
+            && access::is_accessible(
+                ctx.world,
+                client.unit_type,
+                ctx.unit.team,
+                move_to,
+                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+    };
+
+    if !destination_ok {
+        ctx.restore_orders();
+        return;
+    }
+
+    // `--unit->storage; unit->SetParent(nullptr);` — контейнер отдал юнита.
+    ctx.unit.storage = ctx.unit.storage.saturating_sub(1);
+    ctx.unit.parent_unit = None;
+
+    if let Some(&next) = ctx.unit.build_list.first() {
+        // `SetOrder(ORDER_BUILD); SetOrderState(EXECUTING_ORDER);
+        //  build_time = BuildMenu_GetTurnsToBuild(...); StartBuilding();`
+        let turns = production::turns_to_build(ctx.world, ctx.unit.team, next).max(1);
+        ctx.unit.build_time = turns.min(i32::from(u8::MAX)) as u8;
+        ctx.unit.build_paused = false;
+        ctx.unit.orders = UnitOrder::Build;
+        ctx.unit.state = UnitOrderState::ExecutingOrder;
+        start_building(ctx.world, &mut ctx.unit);
+    } else {
+        ctx.unit.orders = UnitOrder::Await;
+        ctx.unit.state = UnitOrderState::ExecutingOrder;
+    }
+
+    if is_air {
+        // `client->SetParent(nullptr); client->move_to = unit->move_to;
+        //  SetOrder(ORDER_MOVE); SetOrderState(ORDER_STATE_INIT);`
+        let mut client = client;
+        client.parent_unit = None;
+        client.target_grid = move_to;
+        client.orders = UnitOrder::Move;
+        client.state = UnitOrderState::Init;
+        ctx.world.write_unit(client_id, client);
+
+        let mut data = ctx.world.order_data(client_id);
+        data.move_to = move_to;
+        ctx.world.set_order_data(client_id, data);
+
+        // `UnitsManager_ScaleUnit(client, ORDER_STATE_EXPAND)`: самолёт
+        // «вырастает» из завода (`scaler_adjust` 4 → 0), затем
+        // `RestoreOrders` возвращает `ORDER_MOVE`/`INIT` → взлёт.
+        ctx.world.scale_unit(client_id, UnitOrderState::Expand);
+    } else {
+        // `UnitsManager_UpdateMapHash(client, move_to)` +
+        // `UnitInfo::UpdateGridPosition` (`unitinfo.cpp:4995-5011`): клетка и
+        // пиксельный центр клетки.
+        let mut client = client;
+        client.grid = move_to;
+        client.target_grid = move_to;
+        client.x = (i32::from(move_to.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
+        client.y = (i32::from(move_to.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
+        client.parent_unit = None;
+        client.orders = UnitOrder::Await;
+        client.state = UnitOrderState::ExecutingOrder;
+        ctx.world.write_unit(client_id, client);
+
+        let mut data = ctx.world.order_data(client_id);
+        data.move_to = move_to;
+        ctx.world.set_order_data(client_id, data);
+
+        ctx.world.scale_unit(client_id, UnitOrderState::Expand);
     }
 }
 
@@ -2036,6 +2266,54 @@ fn activate_engineer(ctx: &mut OrderContext<'_>) {
         }
         ctx.unit.parent_unit = None;
     }
+}
+
+/// `TaskActivate::Activate` — первая проходимая клетка вокруг контейнера.
+///
+/// C++ (`taskactivate.cpp:106-167`): старт в
+/// `(container.grid_x - 1, container.grid_y + unit_size)`, где `unit_size` —
+/// габарит **контейнера** (2 у здания, 1 у транспорта), затем четыре
+/// направления (`N, E, S, W` — `direction += 2`) по `unit_size + 1` шагов
+/// накопительно; первая клетка, проходимая для **выводимого** типа
+/// (`Access_IsAccessible(client->type, …, SameClassBlocks)`), становится целью.
+pub fn activation_exit_cell(
+    state: &GameState,
+    client: &UnitInfo,
+    container: &UnitInfo,
+) -> Option<Point> {
+    let unit_size: i16 = if container.flags & BUILDING != 0 { 2 } else { 1 };
+
+    let mut position = Point::new(
+        container.grid.x.wrapping_sub(1),
+        container.grid.y.wrapping_add(unit_size),
+    );
+
+    for direction in (0..8).step_by(2) {
+        for _ in 0..=unit_size {
+            let step = DIRECTION_OFFSETS[direction as usize];
+            position = Point::new(
+                position.x.wrapping_add(step.x),
+                position.y.wrapping_add(step.y),
+            );
+
+            if position == client.grid {
+                continue;
+            }
+
+            if access::is_accessible(
+                state,
+                client.unit_type,
+                client.team,
+                position,
+                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) > 0
+            {
+                return Some(position);
+            }
+        }
+    }
+
+    None
 }
 
 /// Строитель уходит с достроенной площадки — `TaskActivate::Activate`
@@ -2079,6 +2357,66 @@ pub fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
         builder_id,
         UnitOrder::Activate,
         UnitOrderState::InTransition,
+    );
+
+    true
+}
+
+/// Завод выводит готовый юнит — `TaskCreateUnit::BeginTurn`
+/// (`taskcreateunit.cpp:147-155`) через `TaskActivate::Activate`
+/// (`taskactivate.cpp:135-144`), путь **ИИ**.
+///
+/// У игрока тот же приказ рождается кликом по клетке у завода
+/// (`game_manager.cpp:6918-6926`, ветка `CURSOR_ACTIVATE`) — порт отправляет его
+/// пакетом 08/P3 (`hud::build_activate_order`). У ИИ клика нет: задача ищет
+/// первую проходимую клетку вокруг завода ([`activation_exit_cell`]) и ставит
+/// **заводу** `ORDER_ACTIVATE`/`ORDER_STATE_EXECUTING_ORDER` (у завода
+/// `parent_unit` — готовый юнит, `UnitInfo::SpawnNewUnit`,
+/// `unitinfo.cpp:3513`), после чего `UnitsManager_ActivateUnit` выводит юнита.
+///
+/// `true` — приказ выставлен.
+pub fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> bool {
+    let Some(factory) = state.unit(factory_id).cloned() else {
+        return false;
+    };
+
+    // `TaskActivate::Activate`: приказ только для завода в
+    // `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (`taskactivate.cpp:70`);
+    // готовый юнит — в `ORDER_IDLE` (`unitinfo.cpp:3499`).
+    if factory.orders != UnitOrder::Build || factory.state != UnitOrderState::UnitReady {
+        return false;
+    }
+
+    let Some(client_id) = factory.parent_unit else {
+        return false;
+    };
+    let Some(client) = state.unit(client_id).cloned() else {
+        return false;
+    };
+
+    if client.orders != UnitOrder::Idle {
+        return false;
+    }
+
+    let Some(exit) = activation_exit_cell(state, &client, &factory) else {
+        return false;
+    };
+
+    let mut data = state.order_data(factory_id);
+    data.move_to = exit;
+    state.set_order_data(factory_id, data);
+
+    if let Some(mut unit) = state.unit(factory_id).cloned() {
+        unit.target_grid = exit;
+        state.write_unit(factory_id, unit);
+    }
+
+    // `unit_parent->SetParent(unit_to_activate)` — у завода родитель уже готовый
+    // юнит (`SpawnNewUnit`), связь не меняется.
+    state.set_order(
+        factory_id,
+        UnitOrder::Activate,
+        UnitOrderState::ExecutingOrder,
     );
 
     true
@@ -2276,6 +2614,21 @@ fn process_order_explode(ctx: &mut OrderContext<'_>) {
 /// с флагами класса, как C++ (`base_unit.SetFlags(...)`).
 fn start_explosion(ctx: &mut OrderContext<'_>) {
     refresh_screen(&ctx.unit);
+
+    // `UnitsManager_StartExplosion` (`units_manager.cpp:3915-3930`):
+    // `if (unit->hits > 0) PlaySfx(unit, SFX_TYPE_HIT);   // попадание
+    //  else                PlaySfx(unit, SFX_TYPE_EXPLOAD); // взрыв`
+    // Звук принадлежит **самому юниту** (его таблица `SC_UNITS`), поэтому в
+    // событии — id цели; ресурс/громкость выбирает клиент (`max_app::sfx`).
+    ctx.world.unit_sounds.push(crate::game::UnitSound {
+        unit: ctx.id,
+        unit_type: ctx.unit.unit_type,
+        kind: if ctx.unit.hits > 0 {
+            crate::game::UnitSoundKind::Hit
+        } else {
+            crate::game::UnitSoundKind::Explode
+        },
+    });
 
     if (ctx.unit.unit_type == UnitType::Commando || ctx.unit.unit_type == UnitType::Infantry)
         && ctx.unit.hits == 0
@@ -3681,5 +4034,202 @@ mod tests {
         state.tick();
         // scale до нуля → RestoreOrders возвращает Move/InProgress.
         assert_eq!(state.unit(id).unwrap().orders, UnitOrder::Move);
+    }
+
+    // -----------------------------------------------------------------------
+    // Снаряды: попиксельная прямая (`AirPath::Execute`, airpath.cpp:175-295)
+    // -----------------------------------------------------------------------
+
+    /// Ракета в (10,10) летит в (13,14): dx=3, dy=4 — линия идёт **не** по
+    /// 8-дирекционному маршруту (старый порт шёл по клеткам и вилял).
+    fn state_with_missile_in_flight() -> (GameState, UnitId, UnitId, (i32, i32)) {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.teams[1].team_type = TeamKind::Computer;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+        state.team_units[1] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+        let target = state
+            .spawn_unit(
+                UnitType::Tank,
+                TeamId::GREEN,
+                Point::new(13, 14),
+                MOBILE_LAND_UNIT | SELECTABLE,
+            )
+            .expect("target");
+        let attacker = state
+            .spawn_unit(
+                UnitType::MissileCrawler,
+                TeamId::RED,
+                Point::new(10, 10),
+                MOBILE_LAND_UNIT | SELECTABLE,
+            )
+            .expect("attacker");
+        let missile = state
+            .spawn_unit(UnitType::Rocket, TeamId::RED, Point::new(10, 10), 0)
+            .expect("rocket");
+        let start = {
+            let unit = state.unit(missile).expect("rocket");
+            (i32::from(unit.x), i32::from(unit.y))
+        };
+        let mut unit = state.unit(missile).expect("rocket").clone();
+        unit.parent_unit = Some(attacker);
+        unit.orders = UnitOrder::Move;
+        unit.state = UnitOrderState::Init;
+        state.write_unit(missile, unit);
+        state.set_order_data(
+            missile,
+            OrderData {
+                move_to: Point::new(13, 14),
+                fire_on: Point::new(13, 14),
+            },
+        );
+        state.set_order_data(
+            attacker,
+            OrderData {
+                move_to: Point::new(13, 14),
+                fire_on: Point::new(13, 14),
+            },
+        );
+
+        (state, missile, target, start)
+    }
+
+    /// Перпендикулярное расстояние точки до прямой `start → end` (пиксели).
+    fn distance_to_line(point: (i32, i32), start: (i32, i32), end: (i32, i32)) -> f64 {
+        let dx = f64::from(end.0 - start.0);
+        let dy = f64::from(end.1 - start.1);
+        let length = (dx * dx + dy * dy).sqrt();
+        if length == 0.0 {
+            return 0.0;
+        }
+        let px = f64::from(point.0 - start.0);
+        let py = f64::from(point.1 - start.1);
+        (px * dy - py * dx).abs() / length
+    }
+
+    #[test]
+    fn missile_flies_a_pixel_straight_line() {
+        let (mut state, missile, _target, start) = state_with_missile_in_flight();
+        // Точка прицела — центр клетки (13,14).
+        let end = (13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2, 14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2);
+
+        let mut samples = Vec::new();
+        for _ in 0..12 {
+            state.tick();
+            let Some(unit) = state.unit(missile) else {
+                break;
+            };
+            samples.push((i32::from(unit.x), i32::from(unit.y)));
+        }
+
+        assert!(samples.len() >= 3, "снаряд должен лететь несколько тиков");
+        // Первая точка — ещё на месте пуска, дальше строго по линии.
+        for point in &samples {
+            let distance = distance_to_line(*point, start, end);
+            assert!(
+                distance <= 1.5,
+                "точка {point:?} не на прямой {start:?}→{end:?}: отклонение {distance:.2} px"
+            );
+        }
+        // Позиция действительно меняется от тика к тику (пиксельный шаг, не
+        // «клетка за тик в центр»).
+        let unique: std::collections::BTreeSet<_> = samples.iter().collect();
+        assert!(unique.len() >= 3, "снаряд должен двигаться попиксельно");
+        // И приходит в клетку цели (последняя живая точка — рядом с центром).
+        let last = *samples.last().expect("точки");
+        assert!(
+            distance_to_line(last, start, end) <= 1.5
+                && (last.0 - end.0).abs() <= GFX_MAP_TILE_SIZE
+                && (last.1 - end.1).abs() <= GFX_MAP_TILE_SIZE,
+            "снаряд не дошёл до цели: {last:?}"
+        );
+    }
+
+    #[test]
+    fn missile_trail_particles_lie_on_the_line() {
+        let (mut state, missile, _target, start) = state_with_missile_in_flight();
+        let end = (13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2, 14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2);
+
+        // Один тик: снаряд проходит первую клетку и ставит за собой три частицы.
+        state.tick();
+        state.tick();
+        let particles: Vec<_> = state
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| state.unit(id).cloned())
+            .filter(|unit| unit.unit_type == UnitType::RocketSmoke)
+            .collect();
+
+        assert!(
+            particles.len() >= 3,
+            "Paths_DrawMissile: три частицы на покинутую клетку, найдено {}",
+            particles.len()
+        );
+        for particle in &particles {
+            let point = (i32::from(particle.x), i32::from(particle.y));
+            let distance = distance_to_line(point, start, end);
+            assert!(
+                distance <= 1.5,
+                "частица следа {point:?} не на прямой (отклонение {distance:.2} px)"
+            );
+        }
+        let _ = missile;
+    }
+
+    #[test]
+    fn missile_impact_uses_the_engine_cell_and_destroys_the_round() {
+        let (mut state, missile, target, _start) = state_with_missile_in_flight();
+
+        let mut impact_cell = None;
+        let mut destroyed = false;
+        for _ in 0..24 {
+            state.tick();
+
+            if impact_cell.is_none() {
+                impact_cell = state.unit_ids_in_order().into_iter().find_map(|id| {
+                    state.unit(id).and_then(|unit| {
+                        matches!(
+                            unit.unit_type,
+                            UnitType::HitExplosion
+                                | UnitType::LandExplosion
+                                | UnitType::BuildingExplosion
+                                | UnitType::AirExplosion
+                                | UnitType::SeaExplosion
+                        )
+                        .then_some(unit.grid)
+                    })
+                });
+            }
+
+            if !state.has_unit(missile) {
+                destroyed = true;
+
+                // Взрыв ставится на следующем тике (`ProcessOrderExplode`/`INIT`
+                // → `UnitsManager_StartExplosion`), поэтому добираем кадры.
+                if impact_cell.is_some() {
+                    break;
+                }
+            }
+        }
+
+        assert!(destroyed, "по `m_length == 0` снаряд уничтожается");
+        // `Paths_FinishMove` наносит удар в клетке цели (`13,14`) — взрыв
+        // `HITEXPLD`/`LNDEXPLD` появляется именно там.
+        assert_eq!(
+            impact_cell,
+            Some(Point::new(13, 14)),
+            "`parent->Attack(grid_x, grid_y)`: удар в клетке цели"
+        );
+        // И цель получила урон.
+        let tank = state.unit(target).expect("танк");
+        assert!(
+            tank.hits == 0
+                || tank.hits
+                    < tank
+                        .base_values
+                        .get_attribute(crate::unit_values::ATTRIB_HITS) as u16,
+            "попадание должно нанести урон"
+        );
     }
 }

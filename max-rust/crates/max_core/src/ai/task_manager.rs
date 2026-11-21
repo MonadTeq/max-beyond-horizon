@@ -22,7 +22,7 @@
 //! напоминаний идёт строго в этом порядке; карт с неупорядоченной итерацией
 //! нет. RNG вызывается только внутри задач и `AiPlayer` (см. `rng.rs`).
 
-use crate::enums::{unit_flags, Opponent, UnitOrder, UnitType};
+use crate::enums::{unit_flags, Opponent, UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
@@ -981,6 +981,15 @@ impl TaskManager {
         }
 
         if self.unit_task(unit).is_some() || info.hits == 0 {
+            return;
+        }
+
+        // Юнит «в трюме» (завод/транспорт: `ORDER_IDLE` + `ORDER_STATE_STORE`)
+        // задач не получает: C++ такие юниты не видит ни в одном цикле выдачи
+        // задач (`GetOrder() != ORDER_IDLE` в `AiPlayer`), а выводит их
+        // `UnitsManager_ActivateUnit` по приказу `TaskCreateUnit`/`TaskActivate`
+        // (`unitinfo.cpp:3489-3520`, `taskcreateunit.cpp:147-155`).
+        if info.orders == UnitOrder::Idle && info.state == UnitOrderState::Store {
             return;
         }
 

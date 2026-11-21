@@ -3033,8 +3033,12 @@ fn session_map_left_click(
             session_show_unit_status(app, id);
 
             let line = if app.open_unit_menu() {
-                let items = app.unit_menu().map_or(0, |menu| menu.items.len());
-                format!("Unit menu: {label} ({items})")
+                match app.unit_menu() {
+                    Some(menu) => format!("Unit menu: {label} ({})", menu.items.len()),
+                    // `Popup_InitFactories`: у завода с готовым юнитом меню не
+                    // открывается — `PlaceNewUnit` выбрал готового юнита.
+                    None => format!("Launch {label}: click a cell next to it"),
+                }
             } else {
                 format!("Unit menu: no commands for {label}")
             };
@@ -3211,6 +3215,62 @@ fn session_map_right_click(
             eprintln!("[rclick] result=outside-map grid=({grid_x},{grid_y})");
         }
         app.hud_mut().push_log("Outside the map");
+        return Transition::None;
+    }
+
+    // Готовый юнит в контейнере (завод/транспорт: `ORDER_IDLE`, родитель —
+    // контейнер): клик по клетке рядом — `CURSOR_ACTIVATE`, приказ
+    // `ORDER_ACTIVATE` получает контейнер (`game_manager.cpp:6918-6926`),
+    // `UnitsManager_ActivateUnit` выводит юнита. Проверяется **до**
+    // `unit_can_move`: готовый самолёт в AIRPLT тоже `ORDER_IDLE`.
+    if let Some(command) = hud::build_activate_order(app.state(), selected, destination) {
+        app.hud_mut().preview = None;
+        app.hud_mut().pending.push(command);
+        app.hud_mut().push_log(format!(
+            "Launch: click ({}, {})",
+            destination.x, destination.y
+        ));
+
+        if debug {
+            eprintln!(
+                "[rclick] result=activate selected={} to=({},{})",
+                selected.0, destination.x, destination.y
+            );
+        }
+
+        if !online {
+            apply_pending_orders(app);
+        }
+
+        return Transition::None;
+    }
+
+    // Авиация ходит по `ORDER_MOVE`/`INIT` (пакет 08/P3): путь `AirPath`
+    // строит симуляция (`Paths_GetAirPath`), а `unit_can_move` намеренно
+    // исключает `MOBILE_AIR_UNIT` (наземный `Packet38Move` ей не подходит).
+    if app
+        .state()
+        .unit(selected)
+        .is_some_and(|unit| unit.flags & max_core::enums::unit_flags::MOBILE_AIR_UNIT != 0)
+    {
+        match hud::build_air_move_order(app.state(), selected, destination) {
+            Some(command) => {
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!(
+                    "Move (air): ({}, {})",
+                    destination.x, destination.y
+                ));
+
+                if !online {
+                    apply_pending_orders(app);
+                }
+            }
+            None => {
+                app.hud_mut().push_log("Air move refused");
+            }
+        }
+
         return Transition::None;
     }
 

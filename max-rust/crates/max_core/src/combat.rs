@@ -509,6 +509,17 @@ pub fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
         unit.firing_recoil_frames = 8;
     }
 
+    // `UnitInfo::PrepareFire` (`unitinfo.cpp:4718-4726`):
+    // `PlaySfx(this, Unit::SFX_TYPE_FIRE)` — выстрел орудия юнита. C++ играет
+    // его лишь при видимости цели для локальной команды (`team_visibility`) или
+    // по heat map; `GameManager_PlayerTeam` — UI-поле, поэтому в lockstep
+    // симуляции событие копится всегда (DESIGN §6.1), а фильтрует его клиент.
+    state.unit_sounds.push(crate::game::UnitSound {
+        unit: unit.id,
+        unit_type: unit.unit_type,
+        kind: crate::game::UnitSoundKind::Fire,
+    });
+
     if unit.flags & FIRES_MISSILES != 0 {
         let particle_unit = match unit.unit_type {
             UnitType::Submarine | UnitType::Corvette => UnitType::Torpedo,

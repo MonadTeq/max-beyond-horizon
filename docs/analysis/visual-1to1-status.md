@@ -4563,3 +4563,238 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
 * Завод порта по-прежнему выпускает юнит в соседнюю клетку и сразу берёт
   следующую позицию очереди (C++ держит готовый юнит внутри до приказа
   игрока) — упрощение было и до этой задачи.
+
+---
+
+## 41. Юнит из AIRPLT выводится приказом, пиксельные ракеты, стрелка X-FER, звуки боя — **сделано** (2026-11-21)
+
+Четыре дефекта Turn Based из пользовательского отчёта. Оракул — `max-cpp-port` (не
+менялся), данные — `max-original/MAX.RES` / `assets/PATCHES.RES`, QA — `max-rust-qa`.
+
+### 41.1 Построенный самолёт стоит НА заводе, пока игрок не выведет его
+
+**Как в C++.** `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), ветка
+`flags & STATIONARY`:
+
+```cpp
+factory_unit = UnitsManager_DeployUnit(GetConstructedUnitType(), team, GetComplex(),
+                                       position_x, position_y, 0, false, true);  // :3491
+factory_unit->SetParent(this);                       // :3495 — родитель юнита — завод
+factory_unit->SetOrder(ORDER_IDLE);                  // :3496
+factory_unit->SetOrderState(ORDER_STATE_STORE);      // :3497 — «в трюме»
+factory_unit->scaler_adjust = 4;                     // :3500 — сжат, не рисуется
+build_list.Remove(0);                                // :3504
+if (repeat_build) build_list.PushBack(&factory_unit->unit_type);
+SetParent(factory_unit.Get());                       // :3513 — родитель ЗАВОДА — юнит
+storage = 1;                                         // :3515
+orders = ORDER_BUILD; state = ORDER_STATE_UNIT_READY; // :3517-3518
+```
+
+`position_x/position_y` — `this->grid_x/grid_y` завода (`:3488-3489`), свободная
+клетка рядом **не** ищется. Готовый юнит `ORDER_IDLE`, поэтому
+`Access_GetTeamUnit` (`access.cpp:1813`) его не выбирает, а
+`UnitInfoGroup::IsRelevant` не рисует; у завода `storage = 1` — счётчик.
+
+**Как игрок его выводит.**
+* повторный клик по заводу: `UnitsManager_Popup_InitFactories`
+  (`units_manager.cpp:869-872`) видит `ORDER_STATE_UNIT_READY` и вызывает
+  `UnitsManager_Popup_PlaceNewUnit` (`:833-855`) — меню **не открывается**,
+  `GameManager_EnableMainMenu(parent)` выбирает готового юнита (`parent` —
+  тот, для кого завод родитель);
+* клик по клетке рядом: `GameManager_GetAirUnitCursor`
+  (`game_manager.cpp:5937-5962`) даёт `CURSOR_ACTIVATE`, и
+  `GameManager_ManagePlayerAction` (`:6918-6926`) отдаёт **заводу**
+  `ORDER_ACTIVATE`/`ORDER_STATE_EXECUTING_ORDER`;
+* `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`): `client =
+  unit->GetParent()`, проверка клетки, `--unit->storage`,
+  `unit->SetParent(nullptr)`, затем `if (build_list.GetCount() > 0)`
+  `ORDER_BUILD` + `build_time` + `StartBuilding()` (`:3843-3848`) — **здесь**
+  стартует следующий заказ очереди; самолёт получает `ORDER_MOVE`/`INIT`,
+  `move_to` = клик, `ScaleUnit(EXPAND)` (`:3859-3867`) и взлетает
+  (`ExecuteMove` → `ORDER_TAKE_OFF`), наземный — переставляется в клетку клика
+  (`UnitsManager_UpdateMapHash`, `:3873`);
+* ИИ: `TaskCreateUnit::BeginTurn` (`taskcreateunit.cpp:147-155`) вешает
+  `TaskActivate`, тот ищет первую проходимую клетку вокруг завода
+  (`taskactivate.cpp:104-167`) и отдаёт тот же приказ
+  (`unit_order::issue_factory_exit`).
+
+**Что было сломано.** `production::spawn_new_unit` искал свободную клетку рядом
+(`find_spawn_cell`) и ставил юнита на землю; завод сразу начинал следующий заказ
+(«автостарт»), а `ORDER_ACTIVATE`/`UnitsManager_ActivateUnit` были TODO(restore
+orders). Самолёт появлялся на земле рядом с AIRPLT и «выходил» сам.
+
+**Что сделано.**
+* `production::spawn_new_unit` (ветка `is_factory`): спавн **на клетке завода**,
+  `orders = ORDER_IDLE`, `state = ORDER_STATE_STORE`, `scaler_adjust = 4`,
+  `parent = завод`; завод получает `parent = юнит`, `storage = 1`,
+  `Build`/`UnitReady`; автостарт очереди убран (он теперь в `ActivateUnit`);
+* `unit_order::activate_unit` — порт `UnitsManager_ActivateUnit` (воздушный:
+  `Move`/`Init` + `ScaleUnit(EXPAND)`, наземный: `UpdateGridPosition` в клетку
+  клика, `ScaleUnit(EXPAND)`; отказ — `RestoreOrders`, завод остаётся
+  `UNIT_READY`);
+* `unit_order::issue_factory_exit` + `activation_exit_cell` — ИИ-путь
+  (`TaskActivate`), используется `TaskCreateUnit` состоянием `ACTIVATING`
+  (`ai/tasks/create.rs`);
+* `hud::build_activate_order` (пакет **08/P3**, `parent_unit` = готовый юнит) +
+  ветка RMB в `ui.rs` — путь игрока до `CURSOR_ACTIVATE`;
+* `hud::build_air_move_order` — авиация теперь ходит приказом
+  `ORDER_MOVE`/`INIT` (пакет 08/P3), путь `AirPath` считает симуляция
+  (`unit_can_move` намеренно исключает `MOBILE_AIR_UNIT` — наземный
+  `Packet38Move` ей не подходит);
+* `App::open_unit_menu`: завод в `UNIT_READY` не открывает меню, а выбирает
+  готового юнита (`Popup_InitFactories` → `PlaceNewUnit`) и пишет подсказку;
+* ИИ больше не выдаёт задачи юниту «в трюме» (`Idle`/`Store`):
+  `TaskManager::find_task_for_unit` — как C++ (`GetOrder() != ORDER_IDLE`).
+
+**Тесты.** `max_core/tests/production.rs`:
+`air_plant_keeps_the_built_fighter_on_its_cell_until_activated` (юнит на клетке
+завода, `parent`, `Store`, `scaler_adjust`, после `issue_factory_exit` —
+`HOVERING` и уход с клетки), `air_plant_unit_stays_inside_without_a_launch_order`,
+`repeated_build_keeps_producing_after_the_unit_is_launched`.
+`max_app/tests/airplant_launch.rs` (6 тестов): пакет `ORDER_ACTIVATE` нацелен на
+завод и несёт юнита в `parent_unit`, клик внутри 2×2 приказа не даёт, наземному
+юниту приказ не строится, `App::apply` + `App::tick` выводят истребитель
+(`HOVERING`, клетка сменилась, `parent` снят), `open_unit_menu` выбирает юнита.
+
+**QA.** `production.qa` после `assert unit=Infantry` теперь проверяет
+`factory-ready=yes` + `unit-stored=Infantry` (кадр `factory-unit-ready`), затем
+`unit-menu open` (выбирает юнита, меню не открывается) → `launch near` →
+`assert unit-order=await` + кадр `factory-unit-launched` → `factory-ready=no`,
+`unit-stored=none`. Новые QA-команды: `launch near|grid X Y`,
+`assert factory-ready=yes|no`, `assert unit-stored=NAME|none`.
+
+### 41.2 Ракеты летят ПО ПРЯМОЙ в пикселях, а не по клеткам
+
+**Как в C++.** `AirPath::Execute` (`airpath.cpp:175-295`) для `MISSILE_UNIT`:
+
+```text
+m_step_x += m_delta_x;                          // :219-220
+position_x = (m_step_x >> 16) + m_start_x;      // :222-223
+grid_x = (position_x >> 6) - unit->grid_x;      // :226-227
+if (grid_x || grid_y) Paths_DrawMissile(unit, position_x, position_y);  // :229-232
+unit->OffsetDrawZones(offset_x, offset_y);      // :240 — unit->x/y := position
+unit->grid_x = unit->x >> 6;                     // :241-242
+--m_length;                                      // :244
+if (m_length == 0) Paths_FinishMove(unit);       // :281-283
+```
+
+`m_start_*` — пиксель центра клетки пуска, `m_delta_*` — 22-битная дробь шага
+(`AirPath::AirPath`, `:54-55`: `(distance << 22) / euclidean_distance`),
+`Paths_GetMissilePath` (`units_manager.cpp:4759-4774`) задаёт
+`length = distance / 4`. `Paths_DrawMissile` (`:362-406`) ставит три частицы на
+отрезке «старый пиксель → новый пиксель» (`scaled = (position - unit->x) << 16
+/ 3`), `Paths_FinishMove` (`:408-420`) наносит удар `parent->Attack(grid)` и
+уничтожает снаряд.
+
+**Что было сломано.** Порт вёл снаряд как юнит: `air_path_execute` →
+`IN_TRANSITION` → `unit_move` (одна клетка за тик по `DIRECTION_OFFSETS[angle]`),
+то есть по 8-дирекционной ломаной; след ставился по центрам клеток.
+
+**Что сделано.** `unit_order::missile_path_execute` — попиксельный шаг по
+C++ (`m_step`, `position`, `OffsetDrawZones`, `grid >> 6`,
+`Paths_DrawMissile`, `m_length`, `Paths_FinishMove`), вызывается из
+`path_execute` для `MISSILE_UNIT`; `spawn_missile_trail` принимает пиксельный
+отрезок и ставит частицы на нём; `render::missile_pixel_anchor` рисует снаряд по
+`unit.x/y` (как `UnitInfo::Render`), а не по интерполяции клеток.
+
+**Тесты.** `max_core/src/unit_order.rs`: `missile_flies_a_pixel_straight_line`
+(диагональ dx=3, dy=4: все точки в ≤1.5 px от прямой), `missile_trail_particles_lie_on_the_line`,
+`missile_impact_uses_the_engine_cell_and_destroys_the_round` (взрыв в клетке
+цели, урон). `turn_based_combat.rs` (5 тестов) — след/кадры/детерминизм.
+
+**QA.** Новый сценарий `missile-line.qa` (диагональ −3/+4, 5 клеток) + golden
+`max-rust-qa/golden/missile-line` (4 кадра) и новая проверка
+`assert missile-line` (отклонение снаряда от прямой ≤ 1.5 px). `combat-tb.qa`
+больше не зависит от точного числа тиков наведения: новая команда
+`wait firing` крутит кадры до кадра выстрела.
+
+### 41.3 Стрелка X-FER показывает направление перевода
+
+**Как в C++.** `TransferMenu::UpdateIndicators` (`transfermenu.cpp:94-96`):
+`button_arrow->SetRestState(total_materials_transferred >= 0)`. Кнопка создана
+как `Button(XFRLFARO, XFRRTARO, 141, 43)` (`:239`), то есть `up = XFRLFARO`
+(стрелка влево), `down = XFRRTARO` (стрелка вправо), а
+`win_set_button_rest_state` (`button.c:1022`) при `rest_down != 0` рисует
+`b->down`. Значит при положительной сумме (перенос из источника в приёмник;
+источник нарисован слева, приёмник справа) — стрелка **вправо**.
+
+**Что было сломано.** Порт рисовал наоборот: `amount >= 0` → `XFRLFARO`.
+
+**Что сделано.** `TransferMenu::arrow_points_right()` (`amount >= 0`) + выбор
+`arrow_right`/`arrow_left` в `draw`; комментарии ресурсов исправлены.
+
+**Тесты/кадры.** `transfermenu::tests::arrow_points_from_source_to_target`
+(give/0/take). Golden `xfer/` перегенерирован (`xfer-menu`, `xfer-set`,
+`xfer-selected`, `xfer-help`) — стрелка развернулась.
+
+### 41.4 Звуки выстрела, попадания и взрыва
+
+**Как в C++.** `SoundManager::PlaySfx(UnitInfo*, Unit::SfxType)`
+(`sound_manager.cpp:413-490`) берёт `Unit::GetSoundEffect(sound)`
+(`Unit::m_sound_effects`, разбор — `ParseSoundEffects`, `units.cpp:228-290`):
+сначала `units[TOKEN].sound_effects`, иначе `default_sound_effects`, громкость
+`volume` → `volume / 100` (`:479-482`). Вызовы:
+* `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`) — `SFX_TYPE_FIRE`;
+* `UnitsManager_StartExplosion` (`units_manager.cpp:3922`) — `SFX_TYPE_HIT`
+  (юнит выжил), `:3929` — `SFX_TYPE_EXPLOAD` (уничтожен).
+У `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/`HITEXPLD` своих звуков нет — играет
+`GEN_XPLD` (громкость 80), у танка — `TANK14/15/16`, у пехоты — `INFAN14/15/16`.
+
+**Что было сломано.** В порте не было ни одного боевого звука: симуляция не
+сообщала о выстреле/попадании, `AudioPlayer` играл только UI-звуки.
+
+**Что сделано.**
+* `max_core`: `UnitSound { unit, unit_type, kind }` + `UnitSoundKind { Fire, Hit,
+  Explode }` в `GameState.unit_sounds`; заполняется в `combat::prepare_fire` и
+  `unit_order::start_explosion`, забирается `GameState::take_unit_sounds()`
+  (в дайджест/CRC не входит — как и `production_events`);
+* `max_app`: `data/unit_sfx.json` (генератор `tools/gen_unit_sfx.py`, 93 типа × 3
+  звука, порт `ParseSoundEffects`) + `sfx::unit_sound`/`sfx::combat_sound`;
+  `AudioBackend::play_scaled` (усиление `volume / 100` поверх общей громкости
+  `FX`) и `AudioPlayer::play_gain`;
+* `App::collect_combat_sounds` после каждого тика (`App::tick`,
+  `App::local_update` — и ход игрока, и ход ИИ), очередь `App::take_unit_sounds`;
+* `main.rs` играет очередь через `AudioPlayer::play_gain`, выключатель —
+  `Preferences::sound_enabled` (`!disable_fx`).
+
+**Тесты.** `max_app/tests/unit_sounds.rs` (5): `TANK14/15/16` из таблицы, дефолт
+`GEN_XPLD` у `LNDEXPLD`, усиление 0.6/0.8, мок `AudioBackend` получает теги и
+gain (включая выключенный звук), `App::tick` наполняет очередь кадра.
+`audio.rs`: `play_gain_forwards_the_unit_volume_to_the_backend`,
+`plays_preloaded_clip_once_and_looping` (gain 1.0). `sfx.rs`: 4 теста таблицы.
+
+### 41.5 Гейт и артефакты
+
+* `cargo test --no-default-features` (max_core 252 + все интеграционные,
+  max_app 380+); `--features sound` — те же тесты (звук только через rodio);
+* QA: все 22 сценария `ci.sh` (включая новый `missile-line`) + 17 наборов
+  golden-кадров (16 каталогов + `golden/*.png` для `visual-screens`); вывод —
+  `max-rust/qa-out/`;
+* Windows UI (`build/scripts/build-windows-ui.ps1`, MSVC + vcpkg SDL3 3.4.20,
+  `--features sdl-vcpkg,sound`): `release/max_app-1.1.0-windows-x86_64-ui/max-rust.exe`
+  — 6 773 760 Б, sha256 `3a9ca7cbf9bf263057d44815f80a5c8acf146f4142547363af86b32f1afa7ae8`
+  (PE32+ Subsystem=2 GUI), zip sha256
+  `baa02f80a700c6e0e5b1d97c2cf2de91307cc7fb68eccf60d3ccbc8512e55e3c`;
+  `--help` — OK.
+* Windows headless (`build/scripts/build-windows.sh`, mingw-w64 в Docker):
+  `release/max_app-1.1.0-windows-x86_64/max-rust.exe` — 11 088 700 Б, sha256
+  `ecd15bf3de5766ce0bed916fe37408e3fd6914e1e91074195b61be1ced882feb`; zip sha256
+  `d59465749620a8289f3ffc845e93a266b5ad7e2539ae450d6cc9b7f01cb25eef`;
+  wine-smoke (`--help` + `--demo SAVE1.CAM --turns 1`) — OK: `units=312`,
+  `state_digest=0x733D`, `state_checksum=0x408A`, `replay_crc=0x5561`,
+  `snapshot=788740B` (дайджест сейва не изменился — новые события звука и
+  `unit_sounds` в снимок не входят).
+* полный docker-гейт `bash ci.sh` — **PASS** (1277 с: `cargo check/test`
+  default+sound+headless, Horizon, 22 QA-сценария + 17 наборов golden, soak
+  100/120).
+
+### 41.6 Осознанные расхождения (обновление §40.7)
+
+* Завод больше **не** выпускает юнит в соседнюю клетку и **не** берёт сразу
+  следующую позицию очереди — теперь это делает `UnitsManager_ActivateUnit`.
+  Пункт §40.7 про это упрощение снят.
+* Звуки боя играются без затухания по расстоянию и без панорамы
+  (`GetDistanceAttenuation`/`GetPanning`, `sound_manager.cpp:486-489`): камера
+  одна, эффект уже задан настройкой `FX`.
+* Постоянные звуки (`SFX_TYPE_IDLE`/`DRIVE`, циклы двигателя) в порте не играются
+  — только транзиентные боевые.

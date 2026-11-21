@@ -27,6 +27,7 @@ max-rust-qa/
 ├── scripts/ai-turn.qa          # A2/A3: мой ход → ход ИИ (End Turn нажат, таймер 00:45) → возврат хода
 ├── scripts/sp-tb.qa            # Turn Based SP: RED→GREEN→BLUE→RED, 2 компьютера, endturn-frames
 ├── scripts/combat-tb.qa        # Turn Based бой: выстрел ROCKET → след RKTSMOKE → взрыв → вспышка танка → End Turn
+├── scripts/missile-line.qa     # снаряд летит ПО ПРЯМОЙ (диагональ −3/+4): `assert missile-line`, след по линии
 ├── scripts/build-cancel.qa     # строителя нельзя увести (UNIT_NO_GO); отмена — только явный `stop` (CancelBuilding)
 ├── scripts/panels.qa           # кнопки 3×3 левой панели: переключатели и их оверлеи (overlay/panel)
 ├── golden/*.png                # эталоны visual-screens.qa (15 кадров, ~1.6 МиБ)
@@ -43,6 +44,7 @@ max-rust-qa/
 ├── golden/ai-turn/*.png        # эталоны фаз End Turn: мой ход / ход ИИ / возврат (3)
 ├── golden/sp-tb/*.png          # эталоны Turn Based SP с двумя компьютерами (3)
 ├── golden/combat-tb/*.png      # эталоны боя: выстрел/снаряд/след/взрыв/вспышка танка (11)
+├── golden/missile-line/*.png   # эталоны пиксельной прямой снаряда (4)
 ├── golden/build-cancel/*.png   # эталоны NO_GO и явной отмены стройки (4)
 └── scripts/README.md
 ```
@@ -184,6 +186,8 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `move grid X Y` | то же по клетке карты (0..111), если она видна в области карты |
 | `move near` | приказ в соседнюю свободную клетку выделенного юнита (перебор 8 направлений) |
 | `move near refused` | RMB по соседней клетке **обязан** не дать приказа (`UNIT_NO_GO`): проверяет отказ, а не приказ |
+| `launch near` / `launch grid X Y` | вывод готового юнита из завода: RMB по клетке рядом даёт `ORDER_ACTIVATE` **заводу** (`CURSOR_ACTIVATE`, `game_manager.cpp:6918-6926`), `UnitsManager_ActivateUnit` выпускает юнита (`production.qa`) |
+| `wait firing` | крутить кадры, пока выделенный юнит не покажет кадр выстрела (`firing_recoil_frames > 0`): убирает зависимость сценария от точного числа тиков наведения (`combat-tb.qa`, `missile-line.qa`) |
 | `end_turn` | клик по кнопке `End Turn` + прокрутка кадров, пока игра не вернётся к вводу (ход ИИ/окно перехода) |
 | `click enemy NAME` | клик по чужому юниту с таким именем; при выделенном своём — приказ атаки (`GameManager_ClickUnit` → `build_attack_order`) |
 
@@ -238,6 +242,9 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert build-center=yes` / `build-center=no` | спрайт строителя стоит ровно в центре ленты 2×2 (`UnitInfo::PositionInTape` + `OffsetDrawZones`: доворот `Paths_UpdateAngle`, затем 8 px × 4 тика = 32 px по `DIRECTION_OFFSETS[angle]`) |
 | `assert builder=inside` / `builder=outside` | стоит ли строитель (`CONSTRCT`) в габаритах ближайшего своего здания 2×2: `inside` — площадка ещё занята им, `outside` — он сошёл с неё (`ORDER_ACTIVATE` → `PositionInTape` LEAVE → `ActivateEngineer` → `ORDER_MOVE`) |
 | `assert build-ready=yes` / `build-ready=no` | есть ли у игрока достроенное здание, ждущее ухода строителя (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`: `SpawnNewUnit` уже поставил его на площадку, но `UnitInfoGroup::IsRelevant` его не рисует) |
+| `assert factory-ready=yes` / `factory-ready=no` | выделенный **завод** ждёт вывода готового юнита (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, `UnitInfo::SpawnNewUnit`, `unitinfo.cpp:3489-3520`) |
+| `assert unit-stored=NAME` / `unit-stored=none` | внутри выделенного завода стоит юнит этого типа (`ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — завод); `none` — готового юнита нет |
+| `assert missile-line` | летящий снаряд стоит на **пиксельной прямой** «центр клетки пуска → центр клетки цели» (отклонение ≤ 1.5 px): `AirPath::Execute` (`airpath.cpp:219-242`), ловит «снаряд идёт по клеткам» |
 | `assert resource-icons>=N` (и `=`, `<=`, `>`, `<`) | сколько **клеток** с иконкой ресурса нарисовано в текущем кадре (`Survey_RenderMarkers`): только разведанные клетки (`CargoMap & hash_team_id`), `0` — оверлей выключен |
 | `assert survey-overlay=yes` / `survey-overlay=no` | включён ли показ иконок ресурсов (`GameManager_RenderSurveyIndicator`: кнопка SURVEY `GameManager_DisplayButtonSurvey` **или** выделенный разведчик `GameManager_IsSurveyorSelected`) |
 | `assert panel=NAME:on` / `panel=NAME:off` | переключатель 3×3 левой панели (`CTInfo::display_button_*`, `GameManager_MenuClick*Button`, `game_manager.cpp:3800-3990`): `survey`, `status`, `colors`, `hits`, `ammo`, `range`, `scan`, `grid`, `names` |
@@ -427,6 +434,7 @@ cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/sc
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/xfer.qa qa-out/xfer
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/preferences.qa qa-out/preferences
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/combat-tb.qa qa-out/combat-tb
+cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/missile-line.qa qa-out/missile-line
 cargo run -p max_app --no-default-features --example qa_run -- ../max-rust-qa/scripts/build-cancel.qa qa-out/build-cancel
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-rust-qa/golden
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-rust-qa/golden/production
@@ -436,6 +444,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/a
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-rust-qa/golden/xfer
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-rust-qa/golden/preferences
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-rust-qa/golden/combat-tb
+cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/missile-line ../max-rust-qa/golden/missile-line
 cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/build-cancel ../max-rust-qa/golden/build-cancel
 
 # 4/4: soak (100 ходов QA + 120 ходов headless; профиль и память в лог)

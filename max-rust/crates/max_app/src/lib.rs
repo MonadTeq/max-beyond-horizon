@@ -571,6 +571,10 @@ pub struct App {
     /// Очередь звуков UI за текущий кадр ([`sfx::Sfx`]): проигрывает `main.rs`
     /// (`AudioPlayer`), тесты проверяют по ней события. В снапшот/CRC не входит.
     sounds: Vec<sfx::Sfx>,
+    /// Звуки боя за кадр ([`sfx::CombatSfx`]): выстрел/попадание/взрыв юнита
+    /// (`max_core::UnitSound` → `SC_UNITS`). Проигрывает `main.rs`; в
+    /// снапшот/CRC не входит.
+    unit_sounds: Vec<sfx::CombatSfx>,
     /// Открытый диалог паузы (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
     pause_dialog: Option<dialog::DialogMenu>,
     /// Какой была пауза до открытия диалога (для восстановления после `OK`).
@@ -808,6 +812,7 @@ impl App {
             unit_menu: None,
             self_destruct: None,
             sounds: Vec::new(),
+            unit_sounds: Vec::new(),
             pause_dialog: None,
             pause_was_paused: false,
             alloc_menu: None,
@@ -1126,6 +1131,35 @@ impl App {
 
         if unit.team != self.state.active_turn_team {
             return false;
+        }
+
+        // `UnitsManager_Popup_InitFactories` (`units_manager.cpp:869-872`): у
+        // завода в `ORDER_STATE_UNIT_READY` меню не открывается —
+        // `UnitsManager_Popup_PlaceNewUnit` (`:833`) сразу выбирает **готового
+        // юнита** (`GameManager_EnableMainMenu(parent)`, `parent` — тот, для кого
+        // завод является родителем) и ждёт клик по клетке рядом: тот же клик
+        // потом даёт `CURSOR_ACTIVATE` → `ORDER_ACTIVATE`
+        // (`game_manager.cpp:6918-6926`).
+        if unit.orders == UnitOrder::Build && unit.state == UnitOrderState::UnitReady {
+            if let Some(stored) = unit.parent_unit {
+                if let Some(stored_unit) = self.state.unit(stored) {
+                    if stored_unit.orders == UnitOrder::Idle {
+                        self.hud.select(Some(stored));
+                        self.hud.preview = None;
+                        // `GameManager_MenuUnitSelect` → `DrawUnitStatusMessage`:
+                        // у готового юнита своей подсказки нет, прошлая
+                        // («Finished building …») снимается.
+                        self.hud.clear_hint();
+                        self.hud.push_log(format!(
+                            "Unit ready in {}: click a cell next to the plant to launch it",
+                            crate::buildmenu::unit_name(unit.unit_type)
+                        ));
+                        self.unit_menu = None;
+
+                        return true;
+                    }
+                }
+            }
         }
 
         let area = if self.chrome_active() {
@@ -2050,6 +2084,47 @@ impl App {
         &self.sounds
     }
 
+    /// Забирает события боя из симуляции и превращает их в звуки кадра.
+    ///
+    /// Вызывается сразу после `GameState::tick` (в [`App::tick`] и
+    /// `App::local_update`): симуляция копит `max_core::UnitSound`
+    /// (`PrepareFire`/`StartExplosion`), а ресурс и громкость выбирает таблица
+    /// `SC_UNITS` ([`sfx::combat_sound`]). Очередь читает `main.rs` и проигрывает
+    /// через `AudioPlayer` (в тестах — мок-плеер).
+    pub fn collect_combat_sounds(&mut self) -> usize {
+        // Очередь кадра: `main.rs` забирает её каждый кадр. QA/headless-прогоны
+        // звук не проигрывают, поэтому старые события подрезаются, чтобы очередь
+        // не росла на десятках тысяч кадров soak-а.
+        const MAX_QUEUED: usize = 64;
+
+        let events = self.state.take_unit_sounds();
+        let mut added = 0;
+
+        for event in events {
+            if let Some(sound) = sfx::combat_sound(event) {
+                self.unit_sounds.push(sound);
+                added += 1;
+            }
+        }
+
+        if self.unit_sounds.len() > MAX_QUEUED {
+            let excess = self.unit_sounds.len() - MAX_QUEUED;
+            self.unit_sounds.drain(0..excess);
+        }
+
+        added
+    }
+
+    /// Забирает звуки боя, накопленные с прошлого вызова.
+    pub fn take_unit_sounds(&mut self) -> Vec<sfx::CombatSfx> {
+        std::mem::take(&mut self.unit_sounds)
+    }
+
+    /// Текущая очередь звуков боя (для тестов/QA).
+    pub fn unit_sounds(&self) -> &[sfx::CombatSfx] {
+        &self.unit_sounds
+    }
+
     // -----------------------------------------------------------------------
     // Пауза (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`)
     // -----------------------------------------------------------------------
@@ -2899,6 +2974,8 @@ impl App {
     pub fn tick(&mut self) -> TickReport {
         let before = self.selected_order_snapshot();
         self.state.tick();
+        // Звуки боя этого тика (`UnitInfo::PrepareFire`/`StartExplosion`).
+        self.collect_combat_sounds();
         self.auto_select_after_tick(before);
         self.ticks += 1;
 

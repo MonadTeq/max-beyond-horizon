@@ -96,7 +96,7 @@ use crate::deploy::{LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT};
 use crate::enums::unit_flags;
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
-use crate::geo::{Point, DIRECTION_OFFSETS};
+use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::unit_values::ATTRIB_TURNS;
@@ -231,8 +231,6 @@ pub const CHARGE_LIST_ORDER: [UnitListKind; 3] = [
     UnitListKind::MobileAir,
 ];
 
-/// Радиус поиска свободной клетки для выпуска юнита заводом.
-pub const SPAWN_SEARCH_RADIUS: i16 = 4;
 /// Радиус поиска площадки под здание (`TaskCreateBuilding::FindBuildSite`).
 pub const SITE_SEARCH_RADIUS: i16 = 8;
 
@@ -976,43 +974,7 @@ pub fn builder_exit_cell(
     builder: &UnitInfo,
     building: &UnitInfo,
 ) -> Option<Point> {
-    let unit_size: i16 = if building.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
-
-    let mut position = Point::new(
-        building.grid.x.wrapping_sub(1),
-        building.grid.y.wrapping_add(unit_size),
-    );
-
-    for direction in (0..8).step_by(2) {
-        for _ in 0..=unit_size {
-            let step = DIRECTION_OFFSETS[direction as usize];
-            position = Point::new(
-                position.x.wrapping_add(step.x),
-                position.y.wrapping_add(step.y),
-            );
-
-            if position == builder.grid {
-                continue;
-            }
-
-            if access::is_accessible(
-                state,
-                builder.unit_type,
-                builder.team,
-                position,
-                access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-            ) > 0
-            {
-                return Some(position);
-            }
-        }
-    }
-
-    None
+    crate::unit_order::activation_exit_cell(state, builder, building)
 }
 
 /// Прямоугольник 2×2 (здание) или 1×1 в клетках — `UnitInfo::GetBounds` +
@@ -1030,44 +992,21 @@ pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
         && grid.y < unit.grid.y.wrapping_add(size)
 }
 
-/// Свободная клетка рядом с заводом под выпущенный юнит.
-fn find_spawn_cell(
-    state: &GameState,
-    team: TeamId,
-    unit_type: UnitType,
-    origin: Point,
-) -> Option<Point> {
-    let size = footprint(unit_type);
-    let mut candidates: Vec<(i32, i16, i16)> = Vec::new();
-
-    for dy in -SPAWN_SEARCH_RADIUS..=SPAWN_SEARCH_RADIUS {
-        for dx in -SPAWN_SEARCH_RADIUS..=SPAWN_SEARCH_RADIUS {
-            let x = origin.x + dx;
-            let y = origin.y + dy;
-
-            if x < 0 || y < 0 {
-                continue;
-            }
-
-            candidates.push((
-                i32::from(dx) * i32::from(dx) + i32::from(dy) * i32::from(dy),
-                y,
-                x,
-            ));
-        }
-    }
-
-    candidates.sort_unstable();
-
-    for (_, y, x) in candidates {
-        let cell = Point::new(x, y);
-
-        if site_is_free(state, team, unit_type, cell, size) {
-            return Some(cell);
-        }
-    }
-
-    None
+/// Клетка, с которой готовый юнит завода **выходит** из него — порт
+/// `TaskActivate::Activate` (`taskactivate.cpp:104-167`) для приказа
+/// `ORDER_ACTIVATE`.
+///
+/// C++ перебирает клетки вокруг контейнера, начиная с
+/// `(grid_x - 1, grid_y + unit_size)`, затем четыре направления (`N, E, S, W` —
+/// `direction += 2`) по `unit_size + 1` шагов, накопительно; первая проходимая
+/// клетка становится целью. `unit_size` — габарит **контейнера** (2 у здания),
+/// проходимость проверяется для **выводимого** типа.
+///
+/// Возвращает `None`, если рядом нет проходимой клетки — тогда C++
+/// (`UnitsManager_ActivateUnit`, `units_manager.cpp:3832-3836`) приказ не
+/// выполняет и возвращает прежний.
+pub fn factory_exit_cell(state: &GameState, container: &UnitInfo, client: &UnitInfo) -> Option<Point> {
+    crate::unit_order::activation_exit_cell(state, client, container)
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,18 +1635,13 @@ impl<'a> ProductionManager<'a> {
         };
 
         let factory = is_factory(builder.unit_type);
+        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3494`): стационарный
+        // завод ставит готовый юнит **на свою клетку** —
+        // `UnitsManager_DeployUnit(GetConstructedUnitType(), team, GetComplex(),
+        // position_x = this->grid_x, position_y = this->grid_y, …)`. Свободная
+        // клетка рядом не ищется: юнит «внутри» завода до приказа игрока.
         let cell = if factory {
-            match find_spawn_cell(self.state, team, unit_type, builder.grid) {
-                Some(cell) => cell,
-                None => {
-                    return ProductionEvent {
-                        builder: id,
-                        unit_type,
-                        spawned: None,
-                        kind: ProductionEventKind::NoSpawnCell,
-                    }
-                }
-            }
+            builder.grid
         } else {
             builder.target_grid
         };
@@ -1749,18 +1683,42 @@ impl<'a> ProductionManager<'a> {
         };
 
         if factory {
-            // `SpawnNewUnit` (стационарный): `orders = ORDER_BUILD`,
-            // `state = ORDER_STATE_UNIT_READY`.
+            // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), ветка
+            // `flags & STATIONARY` — построенный юнит остаётся **в заводе**:
+            // * `factory_unit->SetParent(this)` — родитель юнита — завод;
+            // * `factory_unit->SetOrder(ORDER_IDLE)`;
+            //   `factory_unit->SetOrderState(ORDER_STATE_STORE)` — юнит «в
+            //   трюме» (`GetTeamUnit` такие не выбирает, `Access_IsAccessible`
+            //   не считает, рендер `IsRelevant` не рисует);
+            // * `factory_unit->scaler_adjust = 4` — сжат (1/32 размера, за
+            //   пределами отрисовки), пока стоит в заводе;
+            // * `SetParent(factory_unit.Get())` — у **завода** родитель теперь
+            //   готовый юнит: именно это читает `UnitsManager_ActivateUnit`
+            //   (`units_manager.cpp:3827`: `client = unit->GetParent()`), когда
+            //   игрок выводит юнита приказом;
+            // * `storage = 1` — счётчик готовых юнитов в заводе;
+            // * `orders = ORDER_BUILD`, `state = ORDER_STATE_UNIT_READY` —
+            //   завод ждёт вывода (следующий заказ стартует только в
+            //   `UnitsManager_ActivateUnit`, `units_manager.cpp:3843-3848`, а не
+            //   здесь: автостарт очереди был расхождением порта).
+            if let Some(mut unit) = self.state.unit(spawned).cloned() {
+                unit.parent_unit = Some(id);
+                // C++: `SetOrder(ORDER_IDLE)` + `SetOrderState(STORE)` — приказ
+                // ставится напрямую, `prior` остаётся от `DeployUnit`
+                // (`ORDER_AWAIT`/`EXECUTING_ORDER`).
+                unit.orders = UnitOrder::Idle;
+                unit.state = UnitOrderState::Store;
+                unit.target_grid = cell;
+                unit.scaler_adjust = 4;
+                self.state.write_unit(spawned, unit);
+            }
+
+            builder.parent_unit = Some(spawned);
+            builder.storage = 1;
             builder.orders = UnitOrder::Build;
             builder.state = UnitOrderState::UnitReady;
             builder.build_time = 0;
-
-            // `UnitsManager_BuildNext`: очередь продолжается автоматически.
-            if let Some(&next) = builder.build_list.first() {
-                let turns = crate::production::turns_to_build(self.state, team, next).max(1);
-                builder.build_time = turns.min(i32::from(u8::MAX)) as u8;
-                builder.state = UnitOrderState::Init;
-            }
+            builder.build_paused = false;
         } else {
             // `UnitInfo::SpawnNewUnit` (мобильный строитель) — порядок C++:
             //  1. здание встаёт на клетку ленты, но остаётся

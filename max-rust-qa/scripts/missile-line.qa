@@ -1,0 +1,78 @@
+# missile-line.qa — снаряд летит ПО ПРЯМОЙ в пикселях (C++ `AirPath`).
+#
+#   cargo run -q -p max_app --no-default-features --example qa_run -- \
+#       ../max-rust-qa/scripts/missile-line.qa qa-out/missile-line
+#
+# Что проверяется (оракул — `max-cpp-port/src/airpath.cpp`):
+# * `AirPath::Execute` (`airpath.cpp:175-295`) двигает снаряд **попиксельно**:
+#   `m_step_x += m_delta_x`, `position = (m_step >> 16) + m_start`, затем
+#   `unit->OffsetDrawZones(...)` — то есть `unit->x/y` идут по прямой от центра
+#   клетки пуска к центру клетки цели, а `grid_x/grid_y` лишь пересчитываются
+#   из пикселя (`>> 6`);
+# * `Paths_DrawMissile` (`airpath.cpp:362-406`) ставит три частицы следа на
+#   отрезке «старый пиксель → новый пиксель», поэтому хвост тоже лежит на линии;
+# * выстрел строго **по диагонали** (dx = -3, dy = +4, 5 клеток): 8-дирекционный
+#   клеточный маршрут (как у обычных юнитов) уводил бы снаряд с этой прямой, и
+#   `assert missile-line` (отклонение ≤ 1.5 px) падал бы.
+#
+# Кадры `missile-line-1..4`/`missile-line-impact` — golden
+# `max-rust-qa/golden/missile-line`.
+
+# --- Главное меню → партия (Turn Based, таймер без лимита) -----------------
+assert screen=MainMenu
+menu new_game
+assert screen=Options
+click 240 110       # Turn Timers: No Limit
+click 500 100       # Play Mode: Turn Based
+setup done
+assert screen=Planet
+setup done
+assert screen=Players
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+assert screen=Mobilize
+mobilize done
+assert screen=Landing
+landing grid 30 22
+landing done
+assert screen=InGame
+assert turn=1
+tick 5
+
+# --- Геометрия: ракетчик (29,18) и цель (26,22) — dx=-3, dy=+4 ------------
+# Клетки задаются явно (`spawn at`, QA-only): сценарий не зависит от того, куда
+# авто-спавн поставит юнитов.
+spawn at 29 18 Missile Crawler
+spawn at 26 22 enemy Tank
+tick 1
+select type Missile Crawler
+assert selected
+click enemy Tank
+assert log=Attack:
+# Наведение/отдача: `wait firing` (см. combat-tb.qa) ждёт кадр выстрела.
+wait firing
+
+# Первый тик строит `AirPath` (INIT) и делает пиксельный шаг; частицы следа
+# ставятся на отрезке «старый пиксель → новый».
+tick 1
+assert unit-count Rocket>=1
+assert trail=on
+assert missile-line
+shot missile-line-1
+
+# Снаряд идёт по той же прямой (5 клеток дистанции: dx=-3, dy=+4).
+tick 1
+assert missile-line
+shot missile-line-2
+tick 1
+assert missile-line
+shot missile-line-3
+
+# Попадание: `Paths_FinishMove` наносит удар в клетке цели и снимает снаряд.
+tick 4
+assert unit-count Rocket=0
+shot missile-line-impact
+assert screen=InGame

@@ -956,6 +956,18 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 }
             }
 
+            // Звуки боя (`UnitInfo::PrepareFire` → `SFX_TYPE_FIRE`,
+            // `UnitsManager_StartExplosion` → `SFX_TYPE_HIT`/`SFX_TYPE_EXPLOAD`):
+            // тег и громкость — из `SC_UNITS` (`max_app::sfx`), выключатель —
+            // `disable_fx` (`Preferences::sound_enabled`).
+            for sound in app.take_unit_sounds() {
+                if app.sound_enabled() {
+                    let _ = ctx
+                        .audio
+                        .play_gain(sound.tag, max_app::audio::PlayMode::Once, sound.gain);
+                }
+            }
+
             match transition {
                 Transition::None => {}
                 Transition::Quit => {

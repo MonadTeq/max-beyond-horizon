@@ -2,6 +2,62 @@
 
 ### Исправлено
 
+- **Построенный в AIRPLT самолёт стоит НА заводе и выводится приказом игрока.**
+  Оракул: `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520` — юнит на клетке
+  завода, `ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`, `parent` —
+  завод, у завода `parent` — юнит и `storage = 1`),
+  `UnitsManager_Popup_InitFactories`/`Popup_PlaceNewUnit`
+  (`units_manager.cpp:833-886` — повторный клик по заводу выбирает готового
+  юнита), `GameManager_GetAirUnitCursor` + `GameManager_ManagePlayerAction`
+  (`game_manager.cpp:5937-5962`, `:6918-6926` — `CURSOR_ACTIVATE` →
+  `ORDER_ACTIVATE` заводу), `UnitsManager_ActivateUnit`
+  (`units_manager.cpp:3826-3913` — `--storage`, снятие родителя, старт
+  следующего заказа очереди, самолёту `ORDER_MOVE`/`INIT` + `ScaleUnit(EXPAND)`
+  → взлёт; наземному — клетка клика), `TaskActivate`
+  (`taskactivate.cpp:65-201`) для ИИ. Порт раньше спавнил юнит в соседнюю
+  клетку, завод сразу начинал следующий заказ, а `ORDER_ACTIVATE` возвращал
+  прежний приказ. Новые `unit_order::activate_unit`/`issue_factory_exit`/
+  `activation_exit_cell`, `hud::build_activate_order`/`build_air_move_order`
+  (авиация ходит пакетом **08/P3**), `App::open_unit_menu` выбирает готового
+  юнита, `TaskManager::find_task_for_unit` не даёт задач юниту «в трюме».
+  Тесты: `max_core/tests/production.rs` (`air_plant_*`,
+  `repeated_build_keeps_producing_after_the_unit_is_launched`),
+  `max_app/tests/airplant_launch.rs` (6). QA: `production.qa` +
+  `assert factory-ready`/`unit-stored`, команда `launch near|grid`, кадры
+  `factory-unit-ready`/`factory-unit-launched`.
+- **Ракеты летят по прямой в пикселях, а не по клеткам.** Оракул:
+  `AirPath::Execute` (`airpath.cpp:175-295` — `m_step += m_delta`,
+  `position = (m_step >> 16) + m_start`, `OffsetDrawZones`, `grid = pixel >> 6`,
+  `Paths_DrawMissile`, `m_length`, `Paths_FinishMove`),
+  `AirPath::AirPath` (`:46-62`), `Paths_GetMissilePath`
+  (`units_manager.cpp:4759-4774`), `Paths_DrawMissile` (`:362-406`),
+  `Paths_FinishMove` (`:408-420`). Порт вёл снаряд как юнит (клетка за тик по
+  `DIRECTION_OFFSETS`), след ставил по центрам клеток. Новый
+  `unit_order::missile_path_execute`, пиксельный `spawn_missile_trail`,
+  `render::missile_pixel_anchor`. Тесты: `unit_order` (`missile_flies_a_pixel_straight_line`,
+  `missile_trail_particles_lie_on_the_line`,
+  `missile_impact_uses_the_engine_cell_and_destroys_the_round`). QA: новый
+  `missile-line.qa` + golden, `assert missile-line`, команда `wait firing`.
+- **Стрелка X-FER показывает направление перевода (от источника к приёмнику).**
+  Оракул: `TransferMenu::UpdateIndicators` (`transfermenu.cpp:94-96` —
+  `button_arrow->SetRestState(total >= 0)`), `Button(XFRLFARO, XFRRTARO, …)`
+  (`:239` — `up` = влево, `down` = вправо), `win_set_button_rest_state`
+  (`button.c:1022` — `rest_down` рисует `down`). Порт рисовал наоборот.
+  `TransferMenu::arrow_points_right()` + тест
+  `arrow_points_from_source_to_target`; golden `xfer/` перегенерирован.
+- **Звуки выстрела, попадания и взрыва (орудие юнита, взрыв).** Оракул:
+  `UnitInfo::PrepareFire` (`unitinfo.cpp:4725` — `SFX_TYPE_FIRE`),
+  `UnitsManager_StartExplosion` (`units_manager.cpp:3922/3929` —
+  `SFX_TYPE_HIT`/`SFX_TYPE_EXPLOAD`), `SoundManager::PlaySfx`
+  (`sound_manager.cpp:413-490` — `volume / 100`), `ParseSoundEffects`
+  (`units.cpp:228-290` — `units[TOKEN].sound_effects`, иначе
+  `default_sound_effects`; у взрывов `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/
+  `HITEXPLD` — `GEN_XPLD`, у `TANK` — `TANK14/15/16`). Симуляция копит
+  `UnitSound` (`GameState::take_unit_sounds`, в CRC не входит), клиент берёт тег
+  из `data/unit_sfx.json` (генератор `tools/gen_unit_sfx.py`) и играет через
+  `AudioPlayer::play_gain` (`AudioBackend::play_scaled`, усиление `volume/100`);
+  выключатель — `Preferences::disable_fx`. Тесты:
+  `max_app/tests/unit_sounds.rs` (5, мок плеера), `audio.rs`, `sfx.rs`.
 - **Комплексы и коннекторы портированы 1:1 — завод снова видит сырьё базы (AWAC
   достраивается).** Оракул: `UnitsManager_UpdateConnectors`
   (`units_manager.cpp:2051-2225`), `UnitInfo::AttachComplex`/`AttachToPrimaryComplex`/
