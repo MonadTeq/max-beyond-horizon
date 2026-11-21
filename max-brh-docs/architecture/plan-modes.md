@@ -5,7 +5,7 @@
 ## Принцип
 
 Клиент визуально **не отличается от оригинала** (каждый экран — по ресурсам и
-раскладке C++-порта), под капотом — наша Rust-архитектура (max_core — полная
+раскладке C++-порта), в основе — Rust-архитектура проекта (max_core — полная
 детерминированная симуляция с ИИ, max_net — сеть, max_app — UI/цикл).
 Оракул: `max-cpp-port/` (не изменяется). Визуальный статус: `max-brh-docs/visual-1to1-status.md`.
 
@@ -36,7 +36,7 @@
   пропускаются;
 * начало хода команды — `GameState::manage_economy` (`ManageEconomy`) и
   `ProgressBuildState` в объёме max_core;
-* компьютер: `Ai_BeginTurn(team)`, ход крутится тиками, пока
+* компьютер: `Ai_BeginTurn(team)`, ход выполняется тиками, пока
   `AiPlayer::CheckEndTurn` не дойдёт до `end_turn_retry_counter > 120`
   (в C++ на этом пороге `GameManager_RefreshOrders` закрывает ход) — затем
   пакет `06` и следующая команда; страховка — предел тиков;
@@ -80,7 +80,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 * `PlayMode::SimultaneousMoves` поддержан циклом (ходы команд идут
   последовательно, а не одновременно); для 1–3 ИИ поведение совпадает, но
   конкурентный `GameManager_TeamTurnConcurrent` (общий `GameState_9_END_TURN`
-  и барьеры) не портирован 1:1.
+  и барьеры) не перенесён 1:1.
 * Кланы (`ClanSelectMenu`) не портированы; экраны Help (`PLANET_SETUP`,
   `NEW_GAME_SETUP`, `OPTIONS_SETUP`, `CARGO_SETUP`) и `ResearchMenu` закрыты в
   P8 (см. `max-brh-docs/analysis/visual-1to1-status.md` §13).
@@ -154,7 +154,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 | кнопка | `Button(HELPOK_U, HELPOK_D, 120, 193)` 65×24, подпись `_(ae0b)` = `OK` (`Fonts_GoldColor`) | `OK_RECT`/`ok_rect_frame()`, `HELPOK_U/D` |
 | закрытие | `ProcessKey`: `GNW_KB_KEY_RETURN`, `GNW_KB_KEY_ESCAPE`, клик по `OK` | Enter/Esc/клик по `OK` (`hotseat::ok_at`) |
 
-Отличие: нет прокрутки `BLDUP`/`BLDDWN` (`row_count > 17`) — сообщение две
+Отличие: нет прокрутки `BLDUP`/`BLDDWN` (`row_count > 17`) — сообщение занимает две
 строки.
 
 **Точка входа** — `Multiplayer Menu` (`menu_multiplayer_menu_loop`, `:2361`):
@@ -165,7 +165,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 в x=385 y=175/210/280/315/350 и `Cancel` `SBLNK_*` 100×30 в (435,420)).
 `Host Network Game` открывает существующую форму создания игры Horizon,
 `Join Network Game` — список игр; сценарии и загрузка hot-seat ещё не
-портированы (кнопки пишут статус).
+портированы (кнопки выводят статус).
 
 **Настройка** (`max_app/src/setup.rs`) — те же три экрана, но
 `is_single_player = false` (`GameSetupForm::hot_seat()`):
@@ -184,8 +184,8 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   выделение, приказы, панели, туман и курсор смотрят на него (`GameManager_PlayerTeam`);
   в начале хода выделение сбрасывается (`hud.clear_interaction`);
 * при смене человеческой команды открывается `LocalGame::notice`
-  (`hotseat::TurnNotice`); пока он открыт, `local_update` **не тикает и не
-  крутит таймер**, а `handle_session_input` принимает только подтверждение
+  (`hotseat::TurnNotice`); пока он открыт, `local_update` **не обновляется и не
+  отсчитывает таймер**, а `handle_session_input` принимает только подтверждение
   (клик по `OK`/Enter/Esc) — как цикл, стоящий в `DialogMenu::Run()`;
 * ход ИИ (если он есть между людьми) идёт сам, без окна: во время него приказы
   и выделение заблокированы (`LocalGame::input_blocked`), панели/миникарта
@@ -221,7 +221,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 
 * Экран `Hot Seat Scenarios` (`MISSION_CATEGORY_MULTI_PLAYER_SCENARIO`) и
   `Load Hot Seat Game` (`SaveLoadMenu_MenuLoop(MISSION_CATEGORY_HOT_SEAT)`) не
-  портированы — кнопки пишут статус.
+  портированы — кнопки выводят статус.
 * Кланы (`ClanSelectMenu`) реализованы: 8 карточек с логотипами, Random/
   Cancel/?/Done, выбранный клан пишется в `LocalSetup::team_clans` и
   применяется к стартовым атрибутам юнитов (`NewGameConfig::clans`).
@@ -233,11 +233,11 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 
 Уже работает: 2 клиента × 10 ходов headless (`live-smoke.sh`) и партия в окне
 (6 ходов, приказы `38`, чат `18`, барьеры `45/52/53/54` без таймаутов).
-Доводки M-NET (v1.3) убрали два UX-обхода, без которых Create не доходил до
-игры:
+Доводки M-NET (v1.3) устранили два обхода UX, без которых Create не достигал
+стадии игры:
 
 **1. Ретрай первого подключения (`Create game → Join → SessionHandle::start`).**
-Сессия headless греется 10–15 с, и первый `ENet connect` падал с
+Сессия headless запускается 10–15 с, и первый `ENet connect` завершался с
 `connect timed out after 10s`. Теперь `max_app/src/net.rs`:
 `JoinRetryPolicy { attempts, timeout, budget }` и `retry_join` — те же
 принципы, что у `ReconnectPolicy` (транспорт + resume-54, см.
@@ -266,14 +266,14 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
    `SessionTicket`, `Unknown`) — ошибка; для `GameData` с подсказкой
    `--handshake-patches <PATCHES.RES сервера>`, без fallback.
 
-Явный `--handshake-patches` сохраняет старое поведение: ровно один вариант
+Явный `--handshake-patches` сохраняет прежнее поведение: ровно один вариант
 хэша, fallback выключен.
 
 **Тесты** (`max_app/src/net.rs`, 7 модульных + UI-тест):
 
 * `join_backoff_is_one_two_three_five_eight_eleven` — расписание и `0`;
 * `join_retry_succeeds_on_the_second_attempt_after_backoff` — мок-коннектор:
-  1-я попытка падает, 2-я проходит; `start_paused` фиксирует ровно 1 с
+  1-я попытка завершается ошибкой, 2-я проходит; `start_paused` фиксирует ровно 1 с
   backoff;
 * `join_retry_attempt_timeout_is_bounded_by_the_policy` — тайм-контроль:
   2 попытки по 2 с + 1 с backoff = 5 с, без зависания;
@@ -297,16 +297,16 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 SNAP для реконнекта — см. `protocol.md` §9.2/§12. Реконнект в идущую партию
 реализован через ENet+`TP 00`, продолжение lockstep и resume-54 (без SNAP:
 54 покрывает юнитов/экономику своей команды). `--handshake-patches` остаётся
-аварийным override'ом. Три клиента проверены `live-smoke-3.sh`.
+аварийным переопределением. Три клиента проверены `live-smoke-3.sh`.
 
 ## Порядок
 
-M-SP ✅ → M-HS ✅ → M-NET-доводки ✅. Каждый этап: коммит + тесты +
+M-SP — выполнено → M-HS — выполнено → M-NET-доводки — выполнено. Каждый этап: коммит + тесты +
 скриншот-свидетельство.
 
 ## Общее для всех режимов
 
 - Визуал: все экраны по C++-ресурсам; регресс-сверка кадров с эталонами C++-порта
   (`build/run/dbg.png`, `build/smoke-window.png`).
-- Тесты: max-brh весь workspace зелёный; смоук-скрипты повторяемы.
+- Тесты: все тесты workspace max-brh успешны; смоук-скрипты повторяемы.
 - Артефакт: Windows UI + Linux пересобираются после каждого этапа.

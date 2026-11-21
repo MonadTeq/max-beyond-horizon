@@ -111,14 +111,14 @@ RLE по строкам: i16 n;
 - `sizeof(ImageBigHeader) == 777` (`resource_manager.hpp:54-63`), декодер —
   `WindowManager_DecodeBigImage` (`window_manager.cpp:615`), загрузка —
   `WindowManager_LoadBigImage` (`window_manager.cpp:659`).
-- **Ключевой нюанс (без него картинка не собирается):** кодировщик выпускает
-  чанки **шире строки**. У `FRAMEPIC` первая строка: литерал 255 + повтор 1616
-  при ширине 640 → 1871 пиксель на строку. C++ пишет чанк подряд по буферу
+- **Ключевая особенность (без её учёта изображение не декодируется):** кодировщик
+  выпускает чанки **шире строки**. У `FRAMEPIC` первая строка: литерал 255 + повтор
+  1616 при ширине 640 → 1871 пиксель на строку. C++ пишет чанк подряд по буферу
   (переливая в следующие строки), а следующая строка начинается со своего начала
   и **перекрывает хвост**. Rust-декодер воспроизводит это 1:1 (клиппинг по концу
   буфера, счётчик строки += длина чанка). Проверено: поток `FRAMEPIC` читается
   ровно до конца записи (212 750 байт данных на 640×480), последние 2 байта
-  C++ читает уже за границей ресурса — у нас остаток кадра заполняется нулями.
+  C++ читает уже за границей ресурса — в порте остаток кадра заполняется нулями.
 - Разобранные big image: `FRAMEPIC` 640×480, `DEPOTFRM`/`HANGRFRM` 640×480
   (фоны диалогов), `P_DEPOT`/`P_HANGAR` 300×240 (картинки юнитов в диалогах),
   `SNOW_PIC` 128×128 (миниатюра планеты; в C++ — `SNOW_PIC + world/6`,
@@ -132,7 +132,7 @@ RLE по строкам: i16 n;
 (`FRAMEPIC`, `ENDGAME1..9`): декод со смещением 776 даёт целый кадр, со
 смещением 777 — сдвиг на байт, «scanline»-артефакты и обрыв потока.
 `max_assets::image::BIG_HEADER` исправлен на 776 (тест
-`chrome_draws_frame_and_reports_ready` и новый `sp-*`-набор кадров зелёные);
+`chrome_draws_frame_and_reports_ready` и новый `sp-*`-набор кадров проходят);
 это исправило и хром игрового окна, и фоны экрана победы `ENDGAME*`.
 
 ### 2.3 Спрайты зданий/юнитов
@@ -152,7 +152,7 @@ RLE по строкам: i16 n;
   `max_app::render::draw_unit_sprites`: тень → корпус → башня со сдвигом
   `angle_offsets[angle]`, масштаб `zoom/64`; её же использует HUD-портрет,
   поэтому панели автоматически показывают все типы.
-- **Дыры самих данных игры.** `MASTER` (`Master Builder`) объявлен в
+- **Отсутствие данных в ресурсах игры.** `MASTER` (`Master Builder`) объявлен в
   `SC_UNITS`, но ресурса `MASTER`/`S_MASTER` нет ни в `MAX.RES`, ни в
   `PATCHES.RES` (в каталоге игры лежит осиротевший `MASTR17.SPW`, ссылки на
   него в архивах нет): C++ `UnitInfo::RenderSprite` проверяет
@@ -708,7 +708,7 @@ nearest-neighbour апскейл всего кадра; по-элементно�
 
 ---
 
-## 6. Риски и подводные камни (уже наступили или известны)
+## 6. Риски и известные ограничения (реализовавшиеся или предполагаемые)
 
 1. **RLE big image с чанками через строку** — при наивном «построчном» декодере
    `FRAMEPIC` не собирается (`RLE-строка 0: позиция 255 вне строки`). Решение
@@ -716,7 +716,7 @@ nearest-neighbour апскейл всего кадра; по-элементно�
 2. **8-байтный заголовок simple image**, а не 9: `9 + w*h` не сходится на
    `PANELTOP/PANELBTM` (`40878 ≠ 40877`). Не «исправлять» обратно.
 3. **Хвост потока big image**: последние 2 байта C++ читает за границей записи;
-   у нас остаток кадра = нули. Если появится рассинхрон картинки — смотреть сюда.
+   в порте остаток кадра = нули. При рассинхронизации изображения проверять в первую очередь.
 4. **Координаты мыши (закрыт).** При хроме карта занимает (180,18) 448×448, а
    `Viewport` приложения — 640×480. Теперь ввод сессии при активном хроме
    переводит экранные координаты в локальные координаты карты
@@ -877,7 +877,7 @@ bin/release/max_app-1.0.0-windows-x86_64-ui/max-brh.exe --ui --scale 2 \
    элементов как в C++?~~ Решено: **вариант 1** — фиксированный кадр 640×480,
    целочисленный nearest-neighbour в окно любого размера и обратный пересчёт
    кликов (`max_render::frame_scale`); координаты UI остаются константами.
-2. ~~**Шрифт:** тащить битмапы GNW в репозиторий или рисовать свой?~~ Решено:
+2. ~~**Шрифт:** включать битмапы GNW в репозиторий или рисовать собственный?~~ Решено:
    оригинальные `FONT*.FON` вкомпилированы (12 КБ) и сверены с FreeType-путём
    порта; 8×8 остался fallback'ом.
 3. ~~**Портрет юнита:** FLIC или статичная картинка?~~ Решено: **FLIC**
@@ -981,17 +981,17 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
   **якоря**, а `WindowManager_DecodeSimpleImage` вычитает её собственные
   `ulx/uly` (`window_manager.cpp:784`). Добавлен
   `menu::blit_simple_anchored`; применён на экране `Players` (флаги 93×89) и
-  `Clans` (карточки 91×86). До фикса логотип рисовался от `(41,40)` и вылезал
-  вправо-вниз за кнопку.
+  `Clans` (карточки 91×86). До исправления логотип рисовался от `(41,40)` и выходил
+  за пределы кнопки вправо-вниз.
 * **Знак `?`**: сверен с оракульным кадром C++-порта (снят самим портом по
   Alt+C, 640×480: `Players`) — подпись `?` в кнопке `MNUBTN5` (48×40)
   совпадает с `Button::SetCaption`/`Text_TextLine`: `x = ulx + (48 −
   (Text_GetWidth+1))/2 = 484`, `y = uly + (40 − 16)/2 = 450`, тень/обводка —
-  как `Text_TextLine`. Наш кадр совпал с оракулом в этой области
+  как `Text_TextLine`. Кадр порта совпал с оракулом в этой области
   пиксель-в-пиксель; формула закреплена юнит-тестом
   `menu::tests::quest_caption_is_centered_like_cpp`.
 
-### 11.4. Упрощения (честно)
+### 11.4. Упрощения (осознанные ограничения)
 
 * Мобилизация — полный `CargoMenu` (P7): списки, иконки, cargo-слайдер, полоса
   золота, апгрейды, режим модернизации, портрет `P_*` 1:1, описания юнитов
@@ -1061,7 +1061,7 @@ PLAYER_TEAM_RED; --i)`, то есть GRAY→BLUE→GREEN→RED) идёт
 
 ### 11.6. Туман войны на карте и миникарте — исправлено
 
-До фикса `GameState::spawn_unit` повторял `UnitInfo::InitStealthStatus`
+До исправления `GameState::spawn_unit` повторял `UnitInfo::InitStealthStatus`
 (`unitinfo.cpp:2796`) неточно: все не-стелс юниты получали
 `visible_to_team = true` **для всех команд**. Поэтому на карте
 (`DrawMap_RenderUnits`) и миникарте (`DrawMap_RenderMiniMapUnitList`) были
@@ -1258,7 +1258,7 @@ soak PASS (RSS +172 КиБ). Пересобраны артефакты
 В C++ это MVE-видео: `Movie_PlayIntro` → `movie_run(INTROFLC, track, INTROSUB)`,
 а `INTROFLC` — ASCIIZ-ссылка на `maxint.mve`; играет `mvelib32.c` (Interplay
 MVE, свои видеокодек и звуковые дорожки). Декодер MVE портирован в
-`max_assets::mve` (см. §14): экран декодирует кадр 0 при входе, крутит 15 FPS
+`max_assets::mve` (см. §14): экран декодирует кадр 0 при входе, воспроизводит 15 FPS
 по `dt`, масштабирует 432×320 в 640×474 с letterbox (как `movie_cb_show_frame`
 + `cscale`) и возвращается в меню по концу видео или Esc/клику (`mve_cb_ctl`).
 Если `maxint.mve` рядом с `MAX.RES` нет, остаётся прежняя заглушка с фоном
@@ -1450,8 +1450,8 @@ Rust-клиент делает то же: `mobilize::CargoMenuAssets` грузи
 `SET_PALETTE` (12, 6-бит → `*4`), `SET_DECODING_MAP` (15, ниббл на блок),
 `VIDEO_DATA_11` (17). `maxint.mve` — **4391 кадр**, 432×320, 8-бит
 индексированные, 13 обновлений палитры по ходу фильма. Аудио-опкоды
-читаются и пропускаются; субтитры `INTROSUB` не накладываются (честное
-ограничение, отдельный слой `moviesubtitle.cpp`).
+читаются и пропускаются; субтитры `INTROSUB` не накладываются (осознанное
+ограничение; отдельный слой `moviesubtitle.cpp`).
 
 Видеокодек — точный порт `nfPkDecomp`: блоки 8×8, карта из нибблов
 (младший — левый блок), коды 0x0…0xF: копия прошлого/позапрошлого кадра,
@@ -1499,19 +1499,19 @@ Rust-клиент делает то же: `mobilize::CargoMenuAssets` грузи
   `UnitInfo::Move`). В интерактивном локальном цикле тик идёт **каждый кадр**
   (`local_update` → `state.tick`), т.е. до 60 клеток/с.
 * Старая `App::update_visual_units` подтягивала позицию к симуляционной
-  максимум на 12 клеток/с и при расхождении > 2.5 клетки **снапала** к цели.
-  Симуляция убегала на клетку за кадр, поэтому спрайт сначала стоял, а потом
-  прыгал: визуально движения не было.
+  максимум на 12 клеток/с и при расхождении > 2.5 клетки выполняла мгновенное
+  совмещение с целью. Симуляция опережала отрисовку на клетку за кадр, поэтому
+  спрайт оставался на месте, а затем смещался скачком: движение было незаметно.
 * В C++ скорость задаёт `Paths_CalculateStep` (`max_velocity = 8` px/тик) и
   тик ~30 Гц (`TickTimer`): 8 × 30 / 64 ≈ **3.75 клетки/с**; одна клетка
   проходится ~8 тиков, а не один.
 
-Исправление (`max_app/src/lib.rs`): вместо «догоняния» кадр ведёт
+Исправление (`max_app/src/lib.rs`): вместо подтягивания кадр ведёт
 **очередь фактического маршрута**. `update_visual_units` запоминает последнюю
 симуляционную клетку (`visual_goals`), при её изменении дописывает пройденные
 клетки в `visual_paths` и проходит их со скоростью
 `VISUAL_CELLS_PER_SECOND` = 4 клетки/с с постоянным бюджетом `dt`.
-Скачок > `VISUAL_TELEPORT_CELLS` (6) — телепорт/синхронизация: снап.
+Скачок > `VISUAL_TELEPORT_CELLS` (6) — телепорт/синхронизация: мгновенное совмещение.
 `dt = 0` (headless/QA) — снимок ровно по `grid` и сброс очереди, поэтому
 golden-кадры детерминированы, а `snapshot_bytes`/CRC не меняются.
 Визуальное состояние по-прежнему не входит в симуляцию.
@@ -1533,8 +1533,8 @@ golden-кадры детерминированы, а `snapshot_bytes`/CRC не �
 (`unitinfo.cpp:1301`) для `flags & BUILDING` сдвигает `x/y` на
 `GFX_MAP_TILE_SIZE / 2 - 1 = +31` px от центра клетки — здание 2×2
 (`MININGST`, `LRGSLAB`) рисуется в своём 2×2-прямоугольнике. Rust рисовал всё
-от центра клетки, поэтому 116×108-спрайт шахты уезжал на полклетки вверх-влево
-и заходил на клетку генератора. Теперь якорь — `render::unit_anchor_world`
+от центра клетки, поэтому спрайт шахты 116×108 смещался на половину клетки вверх-влево
+и перекрывал клетку генератора. Теперь якорь — `render::unit_anchor_world`
 (+31 для `BUILDING`), как `unit.x/y` в C++; спрайты шахты и генератора больше
 не пересекаются (регресс-тест).
 
@@ -1602,7 +1602,7 @@ Rust раньше не выбирал. `render::unit_frame_index` теперь: 
 
 ### 16.1 «Генератор стоит на клетке шахты» — это плита, а не генератор
 
-Трасса печатала тип юнита (`unit_type as u8`), а не id, и в ней на клетке
+Трасса выводила тип юнита (`unit_type as u8`), а не id, и в ней на клетке
 высадки стояли `17@(22,22)` и `40@(22,22)`. Это **`LRGSLAB` (0x11) и
 `MININGST` (0x28)**: C++ `GameManager_ProcessTeamMissionSupplyUnits`
 (`game_manager.cpp:4996`) вызывает
@@ -1635,7 +1635,7 @@ Rust раньше не выбирал. `render::unit_frame_index` теперь: 
 поэтому раскладка и golden не изменились, но поток больше не расходится с C++
 при любой будущей правке `Optimize`.
 
-### 16.3 Почему «RMB не доходит» оказалось ложной тревогой
+### 16.3 «RMB не доходит»: сообщение не подтвердилось
 
 Путь `SDL MouseButtonDown(Right) → WindowInput::MouseRightClick →
 InputEvent::RightClick → handle_session_input → session_chrome_right_click →
@@ -1665,7 +1665,7 @@ session_map_right_click` корректен. В живом прогоне соб
 проверяется `GetForegroundWindow() == hwnd`; кнопки — `SendInput`
 (`MOUSEEVENTF_LEFTDOWN/UP`, `RIGHTDOWN/UP`).
 
-Практические грабли (в скрипте учтены):
+Практические замечания (учтены в скрипте):
 
 * В `INPUT` union начинается со смещения **8** (выравнивание `ULONG_PTR`), а не
   4: при `FieldOffset(4)` `SendInput` возвращает 2/`ERROR_SUCCESS`, но SDL3 не
@@ -1716,7 +1716,7 @@ PASS (трасса build/ui-test-move2/trace.log, кадры 01…11)
 по классу юнита — строки выбираются по атрибутам `UnitInfo::base_values`, а
 `GameManager_DrawInfoDisplayRow` (`:7370`) рисует строку только при
 `base_value && factor`. Поэтому у шахты `ATTRIB_SPEED == 0` — строки `Speed`
-просто нет (фон окна), а не «0/0».
+отсутствует (остаётся фон окна), а не «0/0».
 
 Базовые строки (`:7682-7731`):
 
@@ -1813,7 +1813,7 @@ Total, `c54a` points).
 `ORDER_DISABLE`, юнит в видимой части карты, для `MOBILE_LAND_UNIT` состояние не
 `ORDER_STATE_UNIT_READY`, и `popup->init` зарегистрировал ≥ 1 пункт. Открытие
 закрывает выделение-предпросмотр и перерисовывает портрет/статистику
-(`GameManager_MenuUnitSelect` — у нас панель и так следует за выделением).
+(`GameManager_MenuUnitSelect` — в порте панель и так следует за выделением).
 
 Закрытие — всё то, что в C++ вызывает `DeinitPopupButtons`: `Esc`
 (`game_manager.cpp:5469`), повторный клик по юниту (`GameManager_ClickUnit`),
@@ -1821,12 +1821,12 @@ Total, `c54a` points).
 (`GameManager_UpdateGuiControl` → `hud.clear_interaction` + `close_unit_menu`).
 
 **Осознанное расхождение:** C++ открывает попап уже при *выделении*
-стационарного юнита (`GameManager_UnitSelect` → `InitPopupButtons`). У нас меню
+стационарного юнита (`GameManager_UnitSelect` → `InitPopupButtons`). В порте меню
 открывается только повторным кликом — иначе менялись бы существующие
 golden-кадры (`mine-selected` в `move-input.qa`/`visual-screens.qa`), где
 здание выделено без попапа.
 
-### 18.2 Раскладка (по C++, без «на глаз»)
+### 18.2 Раскладка (по коду C++)
 
 | Элемент | C++ | Значение |
 |---|---|---|
@@ -1888,7 +1888,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 
 ### 18.4 Что делает каждый пункт: реализовано / отключено
 
-| Пункт | C++ | У нас |
+| Пункт | C++ | Порт |
 |---|---|---|
 | `Build` | `BuildMenu_Menu(unit)` | **реализовано**: `App::open_build_menu` |
 | `start`/`stop` питания | `ORDER_POWER_ON`/`ORDER_POWER_OFF` (P1) | **реализовано**: `hud::build_power_order` |
@@ -1902,8 +1902,8 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `repair` | курсор `cursor = 4`, клик по своему → `ORDER_REPAIR` (P2) с родителем | **реализовано** (нужен `storage`, цель не `ORDER_DISABLE`) |
 | `reload` | курсор `cursor = 6`, клик → `ORDER_RELOAD` (P2) | **реализовано** |
 | `Auto` | тумблер `auto_survey` (+ `Ai_EnableAutoSurvey`) | **реализовано** (поле `UnitInfo::auto_survey`, как C++, локально) |
-| `Manual` | тумблер `disabled_reaction_fire` | **реализовано** (идёт в P1-поле `disabled_reaction_fire`; в C++ настройка есть только в simultaneous moves — наш UI такой режим не предлагает, поэтому пункт практически не появляется) |
-| `Done` | `UnitsManager_PerformAction` | **реализовано в объёме стека**: `Await`+`STATIONARY` → `ORDER_STATE_READY_TO_EXECUTE_ORDER`, снятие выделения (`auto_select`); «подтверждения хода» нет — приказы в нашем стеке исполняются сразу |
+| `Manual` | тумблер `disabled_reaction_fire` | **реализовано** (идёт в P1-поле `disabled_reaction_fire`; в C++ настройка есть только в simultaneous moves — интерфейс порта такой режим не предлагает, поэтому пункт практически не появляется) |
+| `Done` | `UnitsManager_PerformAction` | **реализовано в объёме стека**: `Await`+`STATIONARY` → `ORDER_STATE_READY_TO_EXECUTE_ORDER`, снятие выделения (`auto_select`); подтверждение хода отсутствует — приказы в стеке порта исполняются сразу |
 | `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **реализовано**: `App::open_transfer_menu` → `max_app::transfermenu` (окно `XFERPIC`), `GameManager_GetUnitWithCargoType`, `ProcessOrderTransfer`/`ProcessTransfer` в ядре; см. §29 |
 | `attack` | тумблер `targeting_mode` | **сделано (B1, §33)**: наведение, `CURSOR_ENEMY`, огонь по клетке (`ORDER_FIRE`) |
 | `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **сделано (B1, §33)**: P3 с `parent`, `ORDER_MOVE_TO_UNIT` у пассажира, `ORDER_LAND` в клетке транспорта |
@@ -1926,7 +1926,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 * мышь: клик по кнопке пункта; клик вне меню/правый клик — закрыть;
 * клавиатура: `toupper(символ позиции)` или `toupper(первая буква подписи)` —
   `GameManager_ProcessPopupMenuInput`; **стрелки и `Enter` в C++ попапе не
-  работают** (нет выбора/подсветки), поэтому здесь тоже молча игнорируются;
+  работают** (нет выбора/подсветки), поэтому здесь также игнорируются без реакции;
 * `Esc` — закрыть (не выходить из партии);
 * пока меню открыто — модально: карта, панели и чат ввод не получают.
 
@@ -1976,7 +1976,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | поворот | `Paths_UpdateAngle` (`paths.cpp:258`) | сравнивает с текущим, выбирает короткую сторону (`delta_a >= delta_b` → −1), делает **ровно один шаг 45°** и возвращает `true` |
 | перед шагом | `GroundPath::Execute` (`groundpath.cpp:236/260`) | угол = направление текущего `PathStep`; если `Paths_UpdateAngle` вернул `true` — движение в этот тик **не начинается** (юнит доворачивает на месте) |
 | на завершении клетки | `UnitInfo::Move` (`unitinfo.cpp:1835`) → `GroundPath::UpdateUnitAngle` (`groundpath.cpp:430`) | после `moved == GFX_MAP_TILE_SIZE`: если есть следующий шаг, `Paths_UpdateAngle` к его направлению — один шаг 45° начинается **на границе клетки** |
-| движение | `UnitInfo::Move` (`unitinfo.cpp:1781`) | `step_x/y = DIRECTION_OFFSETS[angle]` — юнит физически едет только туда, куда смотрит |
+| движение | `UnitInfo::Move` (`unitinfo.cpp:1781`) | `step_x/y = DIRECTION_OFFSETS[angle]` — юнит перемещается только в направлении своего угла |
 | башня | `UnitInfo::UpdateAngle` (`unitinfo.cpp:1161`) | при повороте корпуса на `image_diff` у `TURRET_SPRITE` башня поворачивается на тот же шаг: `turret_angle = (turret_angle + image_diff) & 7` |
 | кадр | `RenderWithConnectors` (`unitinfo.cpp:4838`) | корпус `image_base + angle`; башня `turret_image_base + turret_angle` со сдвигом `angle_offsets[angle]` |
 
@@ -2032,8 +2032,8 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
   скриншоты `build/ui-test-move2/*.png`) — прогон движения после сборки
   `max-brh-cicd/scripts/build-windows-ui.ps1`; headless-кадры — `qa-out/move-input/*`.
 * Headless-артефакт: `max_app --example angle_demo -- qa-out/angle` снимает
-  `01-east-with-sim-ne.png` (симуляция уже NE, спрайт ещё едет на восток и
-  смотрит E), `02-turn.png` (поворот на клетке) и `03-stopped-north.png`
+  `01-east-with-sim-ne.png` (симуляция уже NE, спрайт ещё движется на восток и
+  ориентирован на E), `02-turn.png` (поворот на клетке) и `03-stopped-north.png`
   (остановка, угол 0); пример сам проверяет «угол = направлению смещения» и
   завершается кодом 1 при расхождении.
 
@@ -2158,15 +2158,15 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | отмена | `UnitInfo::CancelBuilding` (`unitinfo.cpp:4231`) | мобильный строитель: `build_list.Clear()`, `build_time = 0`, путь снят, `ORDER_AWAIT`/`EXECUTING_ORDER`; завод: `HaltBuilding`/`HaltBuilding2` + `EXECUTING_ORDER` (очередь и `build_time` сохранены) |
 | `start` завода | `UnitsManager_Popup_OnClick_BuildOrder` → `UnitInfo::BuildOrder` | `ORDER_BUILD` + `ORDER_STATE_INIT` + `StartBuilding` — продолжение остановленной стройки |
 
-### 21.2 Что было сломано у нас
+### 21.2 Что работало некорректно в порте
 
 Пункты `stop` (у строителя и завода) и `start` (у завода) были **серыми**
 (`.disabled("GameManager_SelectBuildSite не портирован")` /
 `("UnitInfo::BuildOrder ... не портирован")`). Сам приказ постройки при этом
 работал — но по C++-логике `Build` во время `ORDER_BUILD` из попапа исчезает и
-остаётся только `stop`: серый пункт ⇒ у инженера/конструктора после **первого
-же** заказа попап навсегда превращался в `stop` + `Done`, и построить что-то
-ещё (или отменить заказ) было нельзя. Симптом игрока — «инженер и конструктор
+остаётся только `stop`: неактивный пункт ⇒ у инженера/конструктора после **первого
+же** заказа попап навсегда сводился к `stop` + `Done`, и повторный заказ (или его
+отмена) становились невозможны. Наблюдаемый симптом: «инженер и конструктор
 не могут ничего построить».
 
 ### 21.3 Что сделано
@@ -2329,7 +2329,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 | курсор/валидность | `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`) | Конструктор: якорь по каждой оси — курсор правее → `builder.x`, левее → `builder.x-1`, ровно на линии → прежний якорь (по `y` так же). Валидно (`CURSOR_MAP2`), если `UnitsManager_MoveUnitAndParent` дал проходимость `UnitsManager_IsAccessible` (2×2, `AccessModifier_SameClassBlocks`, строитель и лента вынуты из хэша) **и** 2×2 накрывает клетку курсора; иначе `CURSOR_UNIT_NO_GO` |
 | подтверждение | `GameManager_PathBuild` (`game_manager.cpp:4566`) | LMB по `CURSOR_MAP2`: `move_to = TempTape->grid`, лента уничтожается, `UnitsManager_StartBuild` → `BuildOrder` (`ORDER_BUILD`/`INIT`); на следующем тике `UnitInfo::StartBuilding` ставит `LRGTAPE`+`LRGCONES`+`LRGSLAB` в `move_to` |
 | отмена | `GameManager_ManagePlayerAction` → `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | RMB по карте и LMB по невалидной клетке: лента уничтожается, `BuildList` очищается, `SetOrder(prior)`/`SetOrderState(prior)` — заказа нет |
-| центр ленты | `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`), `GetTargetUnitAngle` (`4147`), `Paths_UpdateAngle` (`paths.cpp:258`) | После `StartBuilding` конструктор идёт `ORDER_AWAIT_TAPE_POSITIONING`/`INIT → ENTER`: на каждом тике `GetTargetUnitAngle` даёт диагональ к центру 2×2 (по клетке ленты: обе оси совпали — `SE`, только `x` — `NE`, только `y` — `SW`, иначе `NW`). Пока `moved == 0`, `Paths_UpdateAngle` крутит юнита на месте (до 4 шагов по 45°); как только угол совпал, `moved` 1..4 и на каждом шаге `OffsetDrawZones(DIRECTION_OFFSETS[target_angle] * 8)` — спрайт едет **по направлению своего угла** на 8 px за тик (всего 32 px = половина клетки) в центр 2×2. На завершении: `RestoreOrders` в `ORDER_BUILD`/`BUILD_IN_PROGRESS`, `Paths_UpdateAngle(this, (angle + 1) & 7)` — доворот на 45° под рабочую позу, `DrawSpriteFrame(image_index + 16)`. Сетка строителя (`grid_x/grid_y`) не меняется |
+| центр ленты | `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`), `GetTargetUnitAngle` (`4147`), `Paths_UpdateAngle` (`paths.cpp:258`) | После `StartBuilding` конструктор идёт `ORDER_AWAIT_TAPE_POSITIONING`/`INIT → ENTER`: на каждом тике `GetTargetUnitAngle` даёт диагональ к центру 2×2 (по клетке ленты: обе оси совпали — `SE`, только `x` — `NE`, только `y` — `SW`, иначе `NW`). Пока `moved == 0`, `Paths_UpdateAngle` выполняет доворот на месте (до 4 шагов по 45°); как только угол совпал, `moved` 1..4 и на каждом шаге `OffsetDrawZones(DIRECTION_OFFSETS[target_angle] * 8)` — спрайт смещается **по направлению своего угла** на 8 px за тик (всего 32 px = половина клетки) в центр 2×2. На завершении: `RestoreOrders` в `ORDER_BUILD`/`BUILD_IN_PROGRESS`, `Paths_UpdateAngle(this, (angle + 1) & 7)` — доворот на 45° под рабочую позу, `DrawSpriteFrame(image_index + 16)`. Сетка строителя (`grid_x/grid_y`) не меняется |
 
 Клавиши: RMB и LMB по невалидной клетке — отмена (как выше); Esc в C++ открывает
 меню выхода (`OKCancelMenu`), а не отменяет выбор.
@@ -2443,8 +2443,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 
 ### 23.5 Почему пользователь не видел призрак и центр (2026-11-18)
 
-Симптомы пользователя: при выборе места призрака не видно, конструктор стоит не
-в центре площадки. В исходниках оба пути уже сходились в один
+Симптомы, зафиксированные пользователем: при выборе места призрак не отображается,
+строитель стоит не в центре площадки. В исходниках оба пути уже сходились в один
 `App::open_build_menu` → `BuildMenu` → `open_build_site`, а `GetBuilderUnitCursor`
 держал якорь 2×2 вокруг строителя. Расхождение было в **артефакте**: прошлый
 живой тест запускал `build/win-msvc-target/release/max-brh.exe` (свежая сборка),
@@ -2457,7 +2457,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 Исправления:
 
 * `ui-test-construction.ps1` выбирает **упакованный** exe (build-target — только
-  fallback), поэтому живой тест больше не может «зеленеть» на другой сборке;
+  fallback), поэтому живой тест не может успешно завершаться на другой сборке;
 * проверяется инвариант якоря и в коде: `BuildSiteSelect::is_valid_at` требует,
   чтобы 2×2 накрывал клетку строителя; `tape_center_offset` не сдвигает спрайт,
   если лента его не накрывает;
@@ -2468,8 +2468,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 
 ### 23.6 Скольжение под углом (2026-11-18)
 
-Симптом: конструктор «въезжал» в центр площадки прямым/вертикальным сдвигом,
-глядя не туда, куда ехал. Причина — в порте `PositionInTape` наращивал `moved`
+Симптом: строитель «въезжал» в центр площадки прямым или вертикальным сдвигом
+при неверной ориентации спрайта. Причина — в порте `PositionInTape` наращивал `moved`
 сразу, без `Paths_UpdateAngle`, а `tape_center_offset` считал направление по
 разнице клеток, не поворачивая спрайт. C++ (`unitinfo.cpp:4472-4482`) сначала
 доворачивает строителя к `GetTargetUnitAngle`, и только потом
@@ -2478,7 +2478,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 `tape_center_offset` берёт `DIRECTION_OFFSETS[unit.angle]`; на завершении
 портирован доворот `(angle + 1) & 7`. Штатно у 2×2-ленты `GetTargetUnitAngle`
 даёт диагональ (строитель всегда внутри ленты), поэтому кадрово это (−8,−8) за
-тик; функция `tape_center_offset` при этом честно следует любому углу — тест
+тик; функция `tape_center_offset` при этом корректно следует любому углу — тест
 проверяет и (1,0)*8 для взгляда на восток. Golden: `build-slide-turn` (после
 доворота, сдвиг 0), `build-slide-1..4` (−8/−16/−24/−32) — 0 дрейфа.
 
@@ -2603,8 +2603,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   Раньше Rust-рендер вообще не читал `image_index` и всегда рисовал
   `image_base + angle`, поэтому анимация терялась.
 * **Полный цикл кадров работающего завода** — **ПРОМЕЖУТОЧНОЕ правило**
-  (до съёмки работающего завода). Прежний «пульс» двух кадров состояния
-  (`activity_step`, 0.5 с) **заменён**: пока завод работает
+  (до съёмки работающего завода). Прежнее чередование двух кадров состояния
+  (`activity_step`, 0.5 с) **заменено**: пока завод работает
   (`ORDER_BUILD` + непустая `build_list`), кадр листается по блоку C++
   `image_base + angle .. image_index_max` по кругу со скоростью `RADAR` —
   `render::WORKING_BUILDING_ANIM_FRAME_SECONDS = 1/30` с на кадр, как
@@ -2651,7 +2651,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   листается, без очереди — нет; `RADAR` меняет кадр за 1/30 с;
   `snapshot_bytes` до/после `dt` идентичны.
 * `max_app/tests/construction_animation.rs` (3) — прежний цикл конструктора
-  и «вырастание» постройки остаются зелёными (строитель не затронут).
+  и «вырастание» постройки остаются успешными (строитель не затронут).
 * QA `production.qa`: `factory-work-a`/`factory-work-b` (кадры состояния
   завода, второй — через один кадр цикла), `build-work-a/b` (строитель,
   без изменений); QA `allocate.qa`: `mine-work-a`/`mine-work-b`.
@@ -2677,9 +2677,9 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   Цикл шахты отменён, кадры дрели 1..15 выключены константой
   `render::MINING_DRILL_FRAMES_ENABLED` до съёмки активной добычи.
 * Визуальные часы идут по `dt`, а не по номеру симуляционного тика: в
-  интерактиве `local_update` тикает каждый кадр, поэтому темп совпадает с
-  C++ (~30 Гц для `ProcessOrderSentry`), а QA-команда `anim` может крутить
-  только кадр, не трогая состояние партии.
+  интерактивном режиме `local_update` выполняется каждый кадр, поэтому темп совпадает с
+  C++ (~30 Гц для `ProcessOrderSentry`), а QA-команда `anim` может изменять
+  только кадр, не затрагивая состояние партии.
 
 ### 25.5 Артефакт Windows UI (пересобран)
 
@@ -2816,7 +2816,7 @@ C++ центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2
 `Help` — `PRFHLP_U/D` 25×23 в (188,383); подписи — `FONT5`,
 `Fonts_GoldColor (165,175,199)` (в конструкторе `Text_SetFont(FONT5)` стоит до
 создания кнопок). В игре диалог модален (`OptionsMenu::Run` блокирует цикл),
-поэтому `App::local_update` не тикает, а карта/панели ввод не получают.
+поэтому `App::local_update` не выполняется, а карта/панели ввод не получают.
 
 **Раскладка** — дословно `OptionsMenu::Init`: `window_uly` стартует с 20,
 секция даёт `+20`, каждая опция с `ulx = 25` — `+20`, `LABEL` после отрисовки
@@ -2856,7 +2856,7 @@ C++ центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2
 **С B4 (2026-11-20) действуют** (см. §34): `click_scroll`, `quick_scroll`,
 `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`,
 `Turn Time`/`End Turn Time`, `Player Name`.
-**Что только хранится** (честно помечено, в игру не идёт): `disable_music`,
+**Что только хранится** (помечено явно, в игре не применяется): `disable_music`,
 `disable_voice`, `disable_movie` и уровни Music/Voice/Video (музыки/голоса/видео
 в звуковом слое нет), `enhanced_graphics` (рендер всегда «enhanced»),
 `host_address`/`host_port` (сеть задаётся CLI).
@@ -2875,8 +2875,8 @@ C++ центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2
 откатывает только громкости и `disable_music/fx/voice/movie` (`last_rest_state`),
 а остальные чекбоксы уже записаны в `settings` и остаются до перезапуска (но не
 сохраняются, пока не нажат `Done`). Здесь `Cancel` возвращает **весь** снимок
-открытия — предсказуемее для игрока и совпадает с тем, что видит пользователь;
-`Done` — единственный путь записи `preferences.ini`/`IniPreferences`.
+открытия — поведение предсказуемо для игрока и соответствует отображаемому
+состоянию; `Done` — единственный путь записи `preferences.ini`/`IniPreferences`.
 
 **Проверка.** QA `preferences.qa`: `menu setup` → `SETUPPIC`, `prefs
 open/toggle/set/done/cancel/help`, `assert prefs=…`, `prefs-value NAME=N`,
@@ -2916,10 +2916,10 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
 `unitinfogroup.cpp:59` `IsRelevant`; `aiplayer.cpp:2828` `CheckEndTurn`;
 тексты — `language.json` (`ee24`, `cdf8`, `af4a`, `276c`, `1200`, `74d3`, `8c62`).
 
-**Порядок завершения стройки (было → стало).** Было: `spawn_new_unit` сразу
+**Порядок завершения стройки (до → после).** Ранее: `spawn_new_unit` сразу
 раскрывал здание (`ScaleUnit(EXPAND)`), снимал ленту и ставил строителя в
-`ORDER_AWAIT` — строитель оставался стоять в 2×2 и был перекрыт зданием.
-Стало — дословно C++:
+`ORDER_AWAIT` — строитель оставался в области 2×2 и перекрывался зданием.
+Теперь — дословно по C++:
 
 1. `SpawnNewUnit` (`unitinfo.cpp:3520-3550`): здание
    `UnitsManager_DeployUnit(constructed, team, nullptr, tape.grid)`; затем
@@ -2937,7 +2937,7 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
    делает `unit_order::start_leaving_site` из ветки
    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (C++ для игрока ждёт клика в
    подсвеченную клетку, `DrawMap_RenderBuildMarker`, но окно — один тик; порт
-   активирует сразу, чтобы поведение не зависело от внимательности игрока).
+   активирует сразу, чтобы поведение не зависело от действий игрока).
 3. `ProcessOrderActivate`/`IN_TRANSITION` для `CONSTRCT` →
    `ORDER_AWAIT_TAPE_POSITIONING`/`ORDER_STATE_TAPE_POSITIONING_DEINIT`;
    `PositionInTape`: доворот `Paths_UpdateAngle` к `GetTargetUnitAngle` (для
@@ -2962,7 +2962,7 @@ Unit/integration: `max_app::preferences` (9 тестов: раскладка `PR
 
 **Плита мгновенно.** `PrepareConstructionSite` ставит `LRGSLAB` в момент
 заказа; в C++ `StartBuilding` идёт на следующем тике (`GameManager_PathBuild` →
-`BuildOrder` → `ORDER_BUILD`/`INIT`), поэтому окно в один тик незаметно. В
+`BuildOrder` → `ORDER_BUILD`/`INIT`), поэтому разница в один тик не наблюдается. В
 порте путь «клик по карте» (`build place` → пакет 08/P4) применяется сразу
 (`events::apply_command`), поэтому площадка ставится там же: `LRGTAPE` +
 `LRGCONES` + `LRGSLAB` (кадр плиты из `Randomizer_Generate(image_count)`) видны
@@ -2995,7 +2995,7 @@ Turns to completion: %i.» (`_(ee24)`), где
 `AiPlayer::CheckEndTurn` использовал статическую проверку
 `TaskManager::has_pending_work` («есть незавершённые задачи»), а задача
 `CreateBuilding` ждала строителя, у которого кончилась скорость хода, поэтому
-ход ИИ не закрывался (QA крутил 12 000 кадров на `end_turn` 8-го хода). Теперь
+ход ИИ не закрывался (QA выполнял 12 000 кадров до `end_turn` 8-го хода). Теперь
 `tasks_pending` — тот же флаг, что в C++: `Ai_SetTasksPendingFlag` из
 `UnitsManager_ProcessOrder*`, `UnitInfo::ExecuteMove`, `PositionInTape`; сброс —
 `Ai_ClearTasksPendingFlags` в начале `UnitsManager_ProcessOrders`. Порте-специфичные
@@ -3030,7 +3030,7 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
   `743364ffeff523f986cc81c7de25ac2e95111bd7b7213fb068cb7b2e2b38e1f3`
   (PE32+ x64, Subsystem=3 console; сборка `max-brh-cicd/scripts/build-windows.sh
   --no-wine`).
-* CI-гейт `bash ci.sh` — **зелёный** (799 с): шаги 1/4 (cargo check+test:
+* CI-гейт `bash ci.sh` — **успешный** (799 с): шаги 1/4 (cargo check+test:
   default/sound/no-default), 2/4 (Horizon), 3/4 (15 QA-скриптов + 9 golden-сверок),
   4/4 (soak-100 + soak_headless). Живой интерактивный прогон окна в этой сессии не
   выполнялся (headless-сессия агента: `CopyFromScreen` даёт чёрный кадр — не
@@ -3039,9 +3039,9 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
 ## 29. X-FER (`TransferMenu` + `ProcessOrderTransfer`) — **сделано** (2026-11-19)
 
 Пункт `x-fer` меню команд был серым: механики не было ни в UI, ни в ядре.
-Теперь порт 1:1.
+Теперь перенос 1:1.
 
-| Что | C++ | У нас |
+| Что | C++ | Порт |
 |---|---|---|
 | пункт меню | `UnitsManager_Popup_InitCommons` (`units_manager.cpp:550`): груз `RAW..GOLD`, приказ ≠ `CLEAR`/`BUILD`, `pressed = cursor == 3` | `unitmenu::init_commons` — без `.disabled`; нажатие выставляется в `App::open_unit_menu` из `HudState.cursor_mode` |
 | обработчик | `UnitsManager_Popup_OnClick_Transfer` (`:518`): тумблер `cursor = 3`, `targeting_mode/enter_mode = 0` | `activate_unit_menu_item` — то же (поле в `HudState`) |
@@ -3075,7 +3075,7 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
 клик по конструктору → значения/полоса/`±1`/лимит → модальность → `TRANSFER_SETUP`
 → `Done` (08/P3) → `tick 1` → `storage` 45 → обратный `−3` → 42 → `Cancel` без
 изменений. Golden `max-brh-qa/golden/xfer/` — `xfer-menu.png`, `xfer-set.png`,
-`xfer-help.png`; `unit-menu-builder.png` переснят (x-fer стал зелёным).
+`xfer-help.png`; `unit-menu-builder.png` переснят (пункт x-fer стал доступен).
 
 ## 30. Запас комплекса и хранилища — **сделано** (2026-11-19)
 
@@ -3084,7 +3084,7 @@ build-done`); `end_turn` на 8-м ходу — 516 кадров вместо 12
 были заглушками. Из-за этого добыча шахт не попадала в `ADUMP`/`FDUMP`/`GOLDSM`
 и лимит ёмкости не действовал.
 
-| Что | C++ | У нас |
+| Что | C++ | Порт |
 |---|---|---|
 | ёмкости | `ATTRIB_STORAGE` из `SC_ATTRI`: `ADUMP`/`FDUMP`/`GOLDSM` = **50**, `MININGST` = **25**, `CONSTRCT` = 60, `SPLYTRCK`/`FUELTRCK`/`GOLDTRIK` = 50 | таблица `BASE_UNIT_VALUES` (уже была верной; закреплено тестом `dump_capacities_match_cpp_attribute_storage`) |
 | добыча | `Access_UpdateResourcesTotal` (`access.cpp:912`): `Σ (Cargo_GetNetProduction(unit,false) + Cargo_GetInventory(unit))` по зданиям комплекса | `max_core::alloc::update_resources_total` — без изменений |
@@ -3114,7 +3114,7 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 хранилищ, которые и были предметом задачи.
 
 **Артефакты и гейты (2026-11-19, X-FER + хранилища).**
-* CI-гейт `bash ci.sh` — **зелёный** (889 с): шаги 1/4 (`cargo check`+`test`
+* CI-гейт `bash ci.sh` — **успешный** (889 с): шаги 1/4 (`cargo check`+`test`
   default/sound/no-default; 343 UNIT-теста `max_app`, 243 `max_core`), 2/4
   (Horizon), 3/4 (16 QA-скриптов, включая `xfer.qa` — PASS 1332 кадра; 11
   golden-сверок, включая `golden/xfer` — 0 дрейфа), 4/4 (`soak-100` +
@@ -3197,7 +3197,7 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
    `op_state = MOVING_OFF_SITE` и зовёт `unit_order::issue_builder_exit`
    (`TaskActivate`-эквивалент, цель — `production::builder_exit_cell`); задача
    завершается, когда строитель ушёл (как `taskcreatebuilding.cpp:847-854`).
-   Без этого соло-ИИ ждал бы «игрока» вечно — тест
+   Без этого соло-ИИ ожидал бы «игрока» бесконечно — тест
    `ai_builder_leaves_the_finished_site_and_the_building_appears`.
 5. Маркеры `BLDMRK1..5` (`render::build_marker_cells` +
    `render::draw_build_markers`): клетки вокруг **родителя** выделенного юнита,
@@ -3278,7 +3278,7 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 (golden детерминированны).
 
 **Артефакты и гейты (2026-11-20, A1–A3).**
-* CI-гейт `bash ci.sh` — **зелёный** (1625 с; холодный кэш cargo: заново скачаны
+* CI-гейт `bash ci.sh` — **успешный** (1625 с; холодный кэш cargo: заново скачаны
   крейты и собран SDL3 из исходников): шаг 1/4 (`cargo check`+`test`
   default/sound/no-default), 2/4 (Horizon `cargo test --workspace`), 3/4 —
   **17 QA-скриптов** (`sp-full`, `hs-2`, `visual-screens`, `victory`,
@@ -3341,7 +3341,7 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 его в `ORDER_BUILD`/`UNIT_READY`, но пиксель остаётся в центре; первый сброс —
 `TAPE_POSITIONING_DEINIT`/`LEAVE` по приказу игрока (клик, A1). Порт
 `buildsite::tape_center_offset` для `UNIT_READY` возвращал `0`, спрайт
-«прыгал» в угол площадки (кадр `build-done-waiting` до правки). Теперь
+смещался скачком в угол площадки (кадр `build-done-waiting` до исправления). Теперь
 `BUILD_IN_PROGRESS`, `UNIT_READY` и `ACTIVATE`/`IN_TRANSITION` держат
 `(±32, ±32)`, а `ACTIVATE`/`BUILD_IN_PROGRESS` (состояние уже после съезда) —
 `0`.
@@ -3371,8 +3371,8 @@ QA: `xfer.qa` ассертит `unit-storage` до/после переноса; 
 **A7. RADAR.** `UnitsManager_DeployUnit` ставит `RADAR` в `ORDER_SENTRY`;
 `SpawnNewUnit` переводит здание в `IDLE`/`BUILDING_READY` через `SetNewOrderInt`
 (prior = `SENTRY`), после ухода строителя `RestoreOrders` возвращает `SENTRY`, и
-`ProcessOrderSentry` листает 16 кадров. Порт писал `prior_orders = AWAIT`
-жёстко → построенный радар замирал. Теперь prior сохраняется
+`ProcessOrderSentry` листает 16 кадров. Порт жёстко задавал `prior_orders = AWAIT`,
+из-за чего построенный радар не анимировался. Теперь prior сохраняется
 (`unit_order::set_new_order_int`), кадр считается `image_base + (angle + step) %
 image_count`. `dt = 0` возвращает `image_base`.
 
@@ -3431,7 +3431,7 @@ IN_TRANSITION). Golden переснят осознанно: изменились
   помощи — курсор `CURSOR_HELP` (`cursor.rs`), окна ещё нет;
 * клик по элементу: `HelpMenu_ScaleCursor` (`:412-471`) переводит точку кадра в
   систему `help.json` (инструменты игры → 250/473, 448/473, 498/11, 565/11,
-  426/11, 610/11; карата — как есть), затем `Help::GetEntry`
+  426/11, 610/11; карата — без изменений), затем `Help::GetEntry`
   (`help.cpp:140`) берёт **первую** запись, накрывающую точку;
 * окно (`HelpScreen`) показывает ровно текст записи; `PageUp/PageDown`,
   стрелки, кнопки `BLDUP__/BLDDWN`, `Done` (`HELPOK`), `Keys` (`_(ceb6)`) —
@@ -3478,8 +3478,8 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 (общий `set_enabled`), голоса — `!disable_voice` (`Preferences::voice_enabled`),
 громкости — `fx_sound_level`/`voice_level` (слой уже был в `main.rs`).
 Попап по мыши в C++ без `Sfx` (кнопки `InitPopupButtons` без `SetSfx`), но
-пункт, выбранный **клавишей**, звучит `KCARG0`; наш UI играет `KCARG0` на оба
-варианта (осознанное отклонение, UX).
+пункт, выбранный **клавишей**, звучит `KCARG0`; интерфейс порта воспроизводит `KCARG0` для обоих
+вариантов (осознанное отклонение, UX).
 
 ### D3. Alt+P
 
@@ -3532,11 +3532,11 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 | `fast_movement` | `UnitInfo::Move` (`unitinfo.cpp:1742`): `velocity += FastMovement ? 2 : 1`; `Paths_CalculateStep` (`paths.cpp:297`): `max_velocity` 16 вместо 8 | скорость визуального маршрута ×2 (`VISUAL_CELLS_PER_SECOND * 2` в `App::update_visual_units`). Симуляция порта двигает юнита на клетку за тик, поэтому настройка видна ровно как визуальный эффект оригинала; число шагов/очков движения не меняется |
 | `follow_unit` | `UnitInfo::FollowUnit` (`unitinfo.cpp:3597-3606`): turn-based / ход команды / ход закончен, юнит виден и вне окна карты → `MAP_VIEW_CENTER` | `App::follow_selected_unit`: `PlayMode::TurnBased || team == player || finished_turn`, `visible_to_team`, `!map_viewport().is_tile_visible` → `center_on_grid`; вызывается после тика локальной партии (и в кадре сетевого `UiSessionSink`) |
 | `auto_select` | `GameManager_AutoSelectNext` (`game_manager.cpp:1779-1792`), `IsInteractable` (`:3230-3265`), `SelectNextUnit` (`:1544-1566`) | `App::auto_select_after_tick` (снимок приказа до тика): завершение `MOVE`/`MOVE_TO_UNIT`/`MOVE_TO_ATTACK` или гибель выделенного → если юнит не интерактивен, `select_next_unit`; `is_interactable` — порт условий (`speed`, `shots` + враг в радиусе `RANGE`, `BUILD/SELECT_SITE`), `next_valid_unit` — `Access_IsValidNextUnit`/`Access_SeekNextUnit` в порядке `Access_UnitsLists` + fallback `GetFirstRelevantUnit`. После `BuildMenu` — `App::auto_select_after_order` (`units_manager.cpp:825-826`). В сетевой партии хук — в `App::tick` |
-| `enemy_halt` | `Access_UpdateMapStatus` (`access.cpp:827-868`): обнаружен враг класса, который юнит/группа может атаковать, `order != ORDER_AWAIT` → `UnitEventEmergencyStop` | `max_core`: поле `GameState::enemy_halt` (в C++ — `settings`, у нас вход симуляции); `access::target_class` — порт `Access_GetTargetClass` (`:724`); в `GameState::update_map_status_unit` накапливается `enemy_target_class` и ставится `UnitEvent::EmergencyStop` (обрабатывается `process_orders` → `stop_movement`). Ядро по умолчанию `false` (юнит-тесты), `App` пишет значение из `Preferences` при старте/загрузке — `settings.cpp` default `enemy_halt=1` |
+| `enemy_halt` | `Access_UpdateMapStatus` (`access.cpp:827-868`): обнаружен враг класса, который юнит/группа может атаковать, `order != ORDER_AWAIT` → `UnitEventEmergencyStop` | `max_core`: поле `GameState::enemy_halt` (в C++ — `settings`, в порте — вход симуляции); `access::target_class` — порт `Access_GetTargetClass` (`:724`); в `GameState::update_map_status_unit` накапливается `enemy_target_class` и ставится `UnitEvent::EmergencyStop` (обрабатывается `process_orders` → `stop_movement`). Ядро по умолчанию `false` (юнит-тесты), `App` пишет значение из `Preferences` при старте/загрузке — `settings.cpp` default `enemy_halt=1` |
 | `timer`/`endturn` | `GameManager_UpdateGui` (`game_manager.cpp:2416-2476`): `settings["timer"]` на ход человека (0 — без лимита), `settings["endturn"]` для ИИ (`< 45 → 45`) | `App::start_local_game` синхронизирует `Preferences` с экраном настройки (как `GameConfigMenu` Done, `gameconfigmenu.cpp:134-141`), `Preferences` в игре обновляет `LocalGame::setup.timer/endturn` — новый ход берёт их из тех же полей; `SaveLoad_Load` возвращает таймеры из сейва (`saveload.cpp:1175`), `sync_save_meta` пишет текущие в V70 |
 | `Player Name` | `menu.cpp:1944` — имя команды человека из `settings["player_name"]`; `OptionsMenu` `PREFSPIC` привязывает поле к `menu_team_name_setting[team]` (`optionsmenu.cpp:172-181`) и по Done пишет и `player_name`, и имя команды (`:548-560`); экран победы — `menu.cpp:189`, сейв — `saveload.cpp:426` | форма настройки берёт имя из `Preferences`; `open_preferences` показывает **имя текущей команды**, Done → `LocalGame::rename_team` (сразу в журнале HUD, на экране победы `winloss::display_name` и в V70-сейве); `MXLS` v4 хранит имена команд |
 
-### Отличия и ограничения (честно)
+### Отличия и ограничения (осознанные)
 
 * у оконного слоя (`max_render::sdl_window`) нет `MouseButtonUp` — «зажатая ЛКМ»
   для `click_scroll` моделируется импульсом `scroll::CLICK_HOLD_SECONDS`
@@ -3589,7 +3589,7 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 появляется. QA (`production.qa`, `dt = 0`) при этом проходил: он выделяет
 строителя командой `select type Constructor`, а не кликом по карте.
 
-**Причина.** `dt` ни при чём: `App::local_update` тикает
+**Причина.** Значение `dt` не является причиной: `App::local_update` вызывает
 `GameState::tick` **один раз за кадр** и при `dt = 0`, и при `dt > 0`; `dt`
 двигает только визуальные часы (`update_visual_units`/кадры анимаций). Разница
 интерактивного пути — во **вводе**. `PositionInTape` (`unitinfo.cpp:4414`)
@@ -3619,7 +3619,7 @@ IN_TRANSITION). Golden переснят осознанно: изменились
    (`GameManager_GetBuilderUnitCursor` `:5832-5843` → `:6879-6890`):
    `hud::builder_exit_zone_contains` + `hud::build_builder_exit_click_order`,
    вызов из `ui::session_map_left_click` до снятия выделения. Раньше LMB по
-   кольцу просто снимал выделение, хотя подсказка `_(276c)` зовёт кликнуть
+   кольцу только снимал выделение, хотя подсказка `_(276c)` требует кликнуть
    именно «клетку с символом».
 3. Правый клик (конвенция порта) по кольцу работает как раньше —
    `hud::build_builder_exit_order`; оба пути проверены тестами.
@@ -3648,9 +3648,9 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 Отдельно проверено, что тесты ловят дефект: старая версия `unit_at_screen` на
 той же экранной точке возвращает `LargeCones`, новая — `Constructor`.
 `hud::tests::ground_cover_slab_under_a_building_does_not_steal_the_click`
-остаётся зелёным (здание по-прежнему приоритетнее плиты).
+остаётся успешным (здание по-прежнему приоритетнее плиты).
 
-**Гейты.** `bash ci.sh` — **зелёный** (1111 с): шаг 1/4 (`cargo check`+`test`
+**Гейты.** `bash ci.sh` — **успешный** (1111 с): шаг 1/4 (`cargo check`+`test`
 default/sound/no-default, включая 4 новых теста), 2/4 Horizon, 3/4 — 17
 QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-сверок, дрейф 0**
 (отрисовка не менялась), 4/4 soak (`soak-100` 49488 кадров, `soak_headless`
@@ -3668,7 +3668,7 @@ QA-скриптов PASS (`production.qa` 5835 кадров) и **12 golden-св
 **Симптомы.** В партии с `PlayMode = TURN_BASED` (пункт Options «Turn Based»)
 ход ИИ не заканчивается: после выстрела ракетой/торпедой или гибели юнита
 игра стоит до аварийного `LOCAL_AI_TICK_LIMIT` (12 000 кадров, ~200 с при
-60 Гц). Визуально — «завис на первом ходу». Параллельно не было анимации
+60 Гц). Визуально — остановка на первом ходу. Параллельно не было анимации
 выстрелов/попаданий: снаряд не летел, взрыв не появлялся, а юниты-эффекты
 оставались на карте.
 
@@ -3696,15 +3696,15 @@ UNIT-тест `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_afte
    `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`. `GameState::spawn_unit` проверял
    `ANIMATED` только у явных флагов вызывающего слоя → `LNDEXPLD`/`AIREXPLD`/
    `SEAEXPLD`/`BLDEXPLD`/`HITEXPLD` рождались в `AWAIT/EXECUTING_ORDER` и
-   висели на карте вечно (не было ни кадров, ни удаления).
+   оставались на карте бесконечно (не было ни кадров, ни удаления).
 3. **Погибший родитель.** `UnitsManager_ProgressExplosion`
    (`units_manager.cpp:4006-4032`) на `image_index == image_index_max / 2`
    отпускает `parent` и, если `parent->hits == 0`, зовёт
    `UnitsManager_BuildClearing(parent, true)` — тот удаляет погибшего.
-   `unit_order::progress_explosion` этого не делал: убитый юнит навсегда
+   `unit_order::progress_explosion` этого не делал: уничтоженный юнит постоянно
    оставался в `ORDER_STATE_DESTROY` (тоже `OrdersPending` каждый тик). Именно
    этот путь воспроизводит `combat-tb.qa`: ИИ-танк убивает ракетчика, и до
-   исправления `end_turn` крутил 12 000 кадров.
+   исправления `end_turn` выполнял 12 000 кадров.
 
 **Порт.**
 
@@ -3743,7 +3743,7 @@ UNIT-тест `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_afte
   листаются, эффект исчезает; промах → `HITEXPLD` (`image_index_max = 4`) и
   удаление.
 * `max_app/tests/turn_based.rs` (3): первый ход — игрок стреляет ракетой и
-  жмёт `end_turn`, ход ИИ возвращается за < 3000 кадров, на карте не остаётся
+  нажимает `end_turn`, ход ИИ возвращается за < 3000 кадров, на карте не остаётся
   ни снаряда, ни взрыва; hot-seat (2 человека + компьютер) с окнами «Begin
   turn»; 4 раунда SP без зависаний.
 * `max_app/tests/unit_sprites.rs::frame_info_table_matches_game_data` — таблица
@@ -3759,7 +3759,7 @@ UNIT-тест `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_afte
 * Soak: `SoakOptions::play_mode` (по умолчанию `TurnBased`), `soak_headless
   --mode tb`; `soak-100.qa` уже Turn Based.
 
-**Гейты.** `bash ci.sh` — **зелёный** (1258 с): шаг 1/4 (`cargo check`+`test`
+**Гейты.** `bash ci.sh` — **успешный** (1258 с): шаг 1/4 (`cargo check`+`test`
 default/sound/no-default, включая новые тесты), 2/4 Horizon, 3/4 — **19**
 QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat-tb.qa` 193 кадра) и
 **14** golden-сверок (2 новых: `sp-tb/`, `combat-tb/`), дрейф 0; 4/4 soak —
@@ -3787,9 +3787,9 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 
 ## 37. Увод строителя, след снарядов и вспышка выстрела — **сделано** (2026-11-20)
 
-**Симптомы.** (1) Строитель, которого игрок уводил с недостроенной площадки,
-уходил, а стройка продолжалась: `ProgressBuildState` тратил сырьё и достраивал
-здание «само». (2) За ракетой/торпедой не было видимого следа — в оригинале
+**Симптомы.** (1) Строитель, уведённый игроком с недостроенной площадки,
+уходил, а строительство продолжалось: `ProgressBuildState` расходовал сырьё и
+достраивал здание без участия игрока. (2) За ракетой/торпедой не было видимого следа — в оригинале
 `RKTSMOKE`/`TRPBUBLE` тянутся за снарядом. (3) При выстреле танк/пушка не
 показывали кадр пламени (`firing_image_base`), хотя сток `D_*` уже разобран и
 экспортируется.
@@ -3819,7 +3819,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   08 приносит старый `BUILD` в `prior_order` — иначе `RestoreOrders` вернул бы
   пустую стройку). Штатный `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) идёт прежним
   путём машины приказов; там же и в `ProcessOrderHaltBuilding` исправлен набор
-  флагов `Access_DestroyUtilities` на C++-шный `true, false, false, false`
+  флагов `Access_DestroyUtilities` на соответствующий C++ (`true, false, false, false`)
   (было `true, true, true, true` — снимались обломки/дорога/коннекторы).
   HUD пишет `Build cancelled at (x, y)` и играет звук отмены.
 * **След снаряда.** `unit_order::spawn_missile_trail` зовётся из
@@ -3882,12 +3882,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   танка (в отличие от `combat-tb-tank-restored.png`, где кадр обычный);
   `combat-tb-trail.png` — облачко `RKTSMOKE` за ракетой;
   `build-cancel-moved.png` — площадка снята, строитель получил приказ.
-* **Полный docker-гейт** `bash ci.sh` — **зелёный, 1230 с**:
+* **Полный docker-гейт** `bash ci.sh` — **успешный, 1230 с**:
   * 1/4 `cargo check`+`test` (default SDL3-from-source, `--features sound`,
     `--no-default-features`) — 372 unit-теста max_app и все интеграционные,
     включая `build_lifecycle_interactive` (5), `unit_sprites` (6),
     `builder_cancel` (5), `turn_based_combat` (5);
-  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — успешный;
   * 3/4 — **20** QA-скриптов PASS (включая `combat-tb.qa` 273 кадра/11 PNG и
     новый `build-cancel.qa` 300 кадров/3 PNG) и **15** golden-сверок,
     дрейф **0**;
@@ -3909,7 +3909,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 
 * **Клик по карте со строителем в `BUILD_IN_PROGRESS`.** В C++ курсор —
   `CURSOR_UNIT_NO_GO` (`GameManager_GetBuilderUnitCursor`,
-  `game_manager.cpp:5927-5931`), и приказ просто не отдаётся: уйти можно
+  `game_manager.cpp:5927-5931`), и приказ не отдаётся: уйти можно
   только через `stop` попапа. Постановка задачи требует «увод отменяет
   стройку», поэтому порт отдаёт приказ движения, а ядро перед его применением
   вызывает `CancelBuilding` — семантика та же (площадка снимается, прогресс
@@ -3951,12 +3951,12 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   `build_time <= build_rate` — `build_time = 0` и `SpawnNewUnit` (завершение),
   иначе `build_time -= build_rate`.
 
-**Что было в порте.** Стоимость хода списывалась с **золота команды**
+**Прежнее поведение в порте.** Стоимость хода списывалась с **золота команды**
 (`production::charge_units`), а `UnitInfo::UpdateProduction` в `game.rs`
-параллельно делал `unit.storage.wrapping_sub(cost)` — склад строителя уходил в
-огромное положительное/отрицательное число, а «стройка» платилась не тем
-ресурсом, который есть у конструктора. При нулевом золоте стройка вставала
-навсегда: ресурса нет, прогресса нет, здание не появляется.
+параллельно делал `unit.storage.wrapping_sub(cost)` — склад строителя принимал
+огромные положительные или отрицательные значения, а строительство оплачивалось
+не тем ресурсом, который есть у конструктора. При нулевом золоте строительство
+останавливалось окончательно: ресурса нет, прогресса нет, здание не появляется.
 
 **Что сделано.**
 
@@ -4000,7 +4000,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 (`unitinfo.cpp:3441-3487`) сносит обломки в габарите, забирает их груз и
 возвращает бульдозер в `ORDER_AWAIT`.
 
-**Что было.** `destroy_unit` просто удалял юнита — обломков не появлялось
+**Дефект.** `destroy_unit` только удалял юнита — обломки не появлялись
 вовсе; `ProcessOrderClear` был заглушкой, поэтому и расчищать было нечего.
 
 **Что сделано.**
@@ -4039,8 +4039,8 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
   (`DrawMap_RenderSimpleGridOverlay`/`…ComplexGridOverlay`, `drawmap.cpp:922/956`),
   NAME — имя юнита (`DrawMap_RenderNamesDisplay`, `drawmap.cpp:747`).
 
-**Что было.** Порт центровал подпись в **полном** прямоугольнике кнопки
-(`(height - font)/2 + y`), из-за чего подписи 3×3 уезжали на 1-2 px вниз и на
+**Прежнее поведение.** Порт центровал подпись в **полном** прямоугольнике кнопки
+(`(height - font)/2 + y`), из-за чего подписи 3×3 смещались на 1-2 px вниз и на
 1 px вправо; смещение `x = 2` игнорировалось. Из девяти кнопок реально
 работала только SURVEY — остальные меняли флаг, но ничего не рисовали.
 
@@ -4075,7 +4075,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 (`DEPOT`/`HANGAR`/`DOCK`/`BARRACKS`), `FRND_XFR`/`PTR_RLD` по курсорному
 режиму, иначе `FRND_PTR`/`UNIT_NGO`.
 
-**Что было.** `session_cursor` знал только «меню/панель → HANDPTR», «карта без
+**Прежнее поведение.** `session_cursor` учитывал только «меню/панель → HANDPTR», «карта без
 выделения → MAP_PTR», «над своим/чужим → FRND/ENMY», `targeting_mode` и режим
 `load`. Курсоры X-FER (`FRND_XFR`), repair (`FRND_FIX`), reload (`PTR_RLD`),
 `PTR_FTRG`, `WAY_PTR`, `ACTVTPTR`, а также загрузка в здания не выбирались
@@ -4113,7 +4113,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 * `max_app/src/overlays.rs` (+3): цвета сетки `world.cpp:536-539`, контур
   круга `Gfx_RenderCircle`, заливка полосок.
 * `max_app/tests/*` после правок: 377 lib-тестов + все интеграционные —
-  зелёные; `max_core` — 245 + 14 наборов.
+  успешные; `max_core` — 245 + 14 наборов.
 
 ### 38.6 QA и артефакты
 
@@ -4132,17 +4132,17 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 
 ### 38.7 Полный гейт и артефакты
 
-* **Полный docker-гейт** `bash ci.sh` — **зелёный** (1284 с первый прогон, 843 с финальный на тёплом кэше):
+* **Полный docker-гейт** `bash ci.sh` — **успешный** (1284 с первый прогон, 843 с финальный на тёплом кэше):
   * 1/4 `cargo check` + `cargo test` (default SDL3-from-source,
     `--features sound`, `--no-default-features`) — 377 lib-тестов max_app и все
     интеграционные (включая `cursor_table` 12), `max_core` 245 + 14 наборов
     (включая `construction_economy` 6 и `rubble` 7);
-  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — успешный;
   * 3/4 — **21** QA-скрипт PASS (включая новый `panels.qa`: 5 кадров/12 PNG)
     и **16** golden-наборов, дрейф **0**;
   * 4/4 soak — `soak-100.qa` 49 488 кадров, `soak_headless --turns 120 --mode
     tb` — 120 826 кадров, 28.65 с, 41 юнит, `early_end=false`, RSS стабилен
-    (growth +84…+124 KiB между прогонами — шум аллокатора).
+    (growth +84…+124 KiB между прогонами — вариация аллокатора).
 * **Windows UI** (`max-brh-cicd/scripts/build-windows-ui.ps1`):
   `bin/release/max_app-1.1.0-windows-x86_64-ui/max-brh.exe` — 6 680 576 Б, sha256
   `8a4f320e728da42b17bb5da2b4d7000812d558f763ae1aa1c7420fcd08c6fb10`
@@ -4189,7 +4189,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 введённая в 011629f), а `GameManager_ManageEconomy` в C++ золото за
 производство не трогает. В реальной партии кредиты после мобилизации обычно
 нулевые → каждый ход `PausedNoGold`, `build_time` не двигается: «завод включён,
-но юниты не строятся». Это и был дефект.
+но юниты не производятся». Это и было дефектом.
 
 **Сделано.** `max_core::production`:
 
@@ -4227,7 +4227,7 @@ QA-скриптов PASS (включая `sp-tb.qa` 2719 кадров и `combat
 листается, маяки/индикаторы мигают палитрой.
 
 **Порт до правки.** `WORKING_BUILDING_ANIM_FRAME_SECONDS = 1/30` листал блок
-кадров завода на каждом тике — «слишком быстро» и не как в оригинале; кроме
+кадров завода на каждом тике — слишком быстро и не соответствует оригиналу; кроме
 того, работающий завод рисовал кадр 0 (выключенный), потому что `+1`
 добавлялся только при `ORDER_POWER_ON`.
 
@@ -4263,7 +4263,7 @@ derelict-цветом 0xA9.
 
 **Сделано.** `overlays::team_color_index(team)` повторяет отображение
 слот→цвет C++ (`max_core::team::hash_team_id`), `team_frame_color` сначала
-honours биты из `flags` (так приходят загруженные V70-сейвы), иначе берёт то же
+учитывает биты из `flags` (так приходят загруженные V70-сейвы), иначе берёт то же
 отображение из `unit.team`. Стационарные здания по-прежнему пропускаются
 (`!(flags & STATIONARY)`). Биты в `flags` новых юнитов не пишутся сознательно:
 набор флагов входит в канонический дайджест, эталонный C++-вектор
@@ -4292,9 +4292,9 @@ honours биты из `flags` (так приходят загруженные V7
   (2 корпуса + 8 коннекторов), кадры различаются.
 * `max_app/tests/overlay_colors.rs` (2): 4 команды рисуют 4 разных цвета
   (покадрово, до/после включения COLORS), ALIEN → 0xA9, стационарный завод
-  рамки не получает, биты `HASH_TEAM_*` из сейва honoured.
+  рамки не получает, биты `HASH_TEAM_*` из сейва учитываются.
 * `max_core` — 245 lib + 14 наборов; `max_app` — 377 lib + все интеграционные
-  (33 набора) зелёные.
+  (33 набора) успешные.
 
 ### 39.5 QA и golden
 
@@ -4314,14 +4314,14 @@ honours биты из `flags` (так приходят загруженные V7
 
 ### 39.6 Полный гейт и артефакты
 
-* **Полный docker-гейт** `bash ci.sh` — **зелёный**, `CI_EXIT=0` (921 с на итоговом дереве; 833/1203 с — предыдущие прогоны):
+* **Полный docker-гейт** `bash ci.sh` — **успешный**, `CI_EXIT=0` (921 с на итоговом дереве; 833/1203 с — предыдущие прогоны):
   * 1/4 `cargo check` + `cargo test` (default GUI/SDL3-from-source,
     `--features sound`, `--no-default-features`): `max_app` 377 lib-тестов +
     33 интеграционных набора (включая новые `overlay_colors` 2 и
     `building_animation` 5), `max_core` 245 lib + 14 наборов (включая
     `production` 27 и `construction_economy` 6); `max_assets` 10 +
-    `max_render` 85 + doc-tests — всё зелёное;
-  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
+    `max_render` 85 + doc-tests — всё успешно;
+  * 2/4 `max-brh-server` — `cargo test --workspace` — успешный;
   * 3/4 — **21** QA-скрипт PASS (включая обновлённый `production.qa`:
     5835 кадров, 27 PNG, завод выпускает пехоту, золото не тронуто) и
     **16** golden-наборов, дрейф **0**;
@@ -4351,8 +4351,8 @@ honours биты из `flags` (так приходят загруженные V7
   списания, пауза/возобновление и спавн — 1:1.
 * `ProductionManager` целиком (энергия/рабочие, `OptimizeIndustry`,
   перераспределение шахт) остаётся TODO: `ValidateIndustry` проверяет ещё
-  `power`/`workers`, порт — только материалы. Энергия в C++ всё равно
-  управляется включением генераторов, а не отказом в производстве.
+  `power`/`workers`, порт — только материалы. Энергия в C++ управляется
+  включением генераторов, а не отказом в производстве.
 * Завод порта выпускает юнит в соседнюю клетку и сразу начинает следующий из
   очереди; C++ держит готовый юнит внутри (`ORDER_IDLE`/`STORE`) до приказа
   игрока и тогда же запускает следующую позицию очереди
@@ -4360,7 +4360,7 @@ honours биты из `flags` (так приходят загруженные V7
 
 ---
 
-## 40. Комплексы и коннекторы 1:1, завод AWAC из общего котла, отмена стройки только явная — **сделано** (2026-11-21)
+## 40. Комплексы и коннекторы 1:1, завод AWAC из запаса комплекса, отмена стройки только явная — **сделано** (2026-11-21)
 
 Три дефекта Turn Based из пользовательского отчёта. Оракул — `max-cpp-port`
 (не менялся), данные — `max-original/MAX.RES`, QA — `max-brh-qa`.
@@ -4404,7 +4404,7 @@ honours биты из `flags` (так приходят загруженные V7
 группы получают `CreateComplex` + `AttachComplex`, затем
 `Access_UpdateResourcesTotal` для новой и «главной» групп. Отделяемое здание
 временно привязывается к новому комплексу (`complex = new_complex`), чтобы
-рекурсия `AttachComplex` не «захватила» через его биты весь прежний граф.
+рекурсия `AttachComplex` не охватила через его биты весь прежний граф.
 `UnitsManager_RemoveConnections` (`units_manager.cpp:1556-1709`) вызывается
 перед уничтожением/переносом здания: сначала `DetachComplex`, затем у соседей
 снимаются парные биты по тем же правилам.
@@ -4422,7 +4422,7 @@ honours биты из `flags` (так приходят загруженные V7
 складам (`storage = min(complex->field, ATTRIB_STORAGE)`,
 `complex->field -= storage`).
 
-### 40.2 Что было сломано и что исправлено
+### 40.2 Дефект и исправление
 
 **Порт (§20/§30/§39).** Каждое здание получало **свой** комплекс
 (`spawn_unit` → `AttachComplex(CreateComplex)`), `UpdateConnectors` был
@@ -4459,21 +4459,21 @@ honours биты из `flags` (так приходят загруженные V7
 Попутно `spawn_unit` повторяет `UnitsManager_DeployUnit`
 (`units_manager.cpp:2382-2384`): у нового юнита склад пуст, кроме фазы
 `GAME_STATE_12_DEPLOYING_UNITS`. Раньше только что построенный `ADUMP`/`FDUMP`/
-`GOLDSM` появлялся полным и давал «бесплатное» сырьё в котёл. Высадка задаёт
-груз явно (`deploy_team_supplies`), тесты — тоже.
+`GOLDSM` появлялся заполненным и давал необоснованное сырьё в общий запас
+комплекса. Высадка задаёт груз явно (`deploy_team_supplies`), тесты — тоже.
 
 Детерминизм: `GameState::snapshot_bytes` (а значит и CRC `crc::state_digest`)
 теперь содержит `UnitInfo::complex` и `TeamUnits::complexes` (id, material,
 fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
 раньше. Развал/слияние комплекса меняет и снапшот, и CRC.
 
-### 40.3 AWAC достраивается из общего котла
+### 40.3 AWAC достраивается из общего запаса комплекса
 
 Сценарий: `AIRPLT` + два `ADUMP` вплотную (`(12,10)`/`(13,10)`), 80 сырья.
 `UpdateConnectors` сливает их в один комплекс, `complex_raw_materials = 80`.
 Тест `production.rs::awac_completes_from_the_merged_complex_pot`: заказ AWAC
 на 4×, первый ход — 36 (`3 × 12`), второй — 12 (остаток `build_time = 2`
-режет `GetMaxAllowedBuildRate` до 2×), `SpawnNewUnit` выпускает AWAC, в котле
+режет `GetMaxAllowedBuildRate` до 2×), `SpawnNewUnit` выпускает AWAC, в запасе
 остаётся 32. Без подключённого склада завод стоит на `PausedNoMaterials`, даже
 если у команды есть сырьё (`factory_without_connected_storage_pauses...`), — как
 `ValidateIndustry` в C++.
@@ -4506,9 +4506,9 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
   `CURSOR_UNIT_NO_GO`, приказа нет, площадка/плита целы), `unit_menu` —
   явный `stop` через попап; `cursor_table::builder_in_build_progress_is_unit_no_go`.
 * QA: `production.qa` строит `ADUMP` вплотную к цеху и шахте и кладёт 60
-  сырья в котёл (`complex raw`, теперь `Complex::Transfer` по складам), затем
+  сырья в запас комплекса (`complex raw`, теперь `Complex::Transfer` по складам), затем
   Infantry выпускается из комплекса; `build-cancel.qa` переписан:
-  `move near refused` (NO_GO) + явный `stop`; `xfer.qa` — общий котёл:
+  `move near refused` (NO_GO) + явный `stop`; `xfer.qa` — общий запас:
   `spawn at 29 22 ADump` вплотную к шахте, `complex raw 100` (ADUMP получает
   50 из общего запаса), затем прежний перенос 5/3 через `TransferMenu`. Для
   точной постановки добавлена QA-команда `spawn at X Y NAME`.
@@ -4518,15 +4518,15 @@ fuel, gold, power, workers, buildings); `UnitInfo::connectors` входил и
 
 ### 40.6 Гейт и артефакты
 
-* **Полный docker-гейт** `bash ci.sh` — **зелёный**, `CI_EXIT=0`, 925 с (финальное дерево; первый прогон — 1276 с):
+* **Полный docker-гейт** `bash ci.sh` — **успешный**, `CI_EXIT=0`, 925 с (финальное дерево; первый прогон — 1276 с):
   * 1/4 `cargo check` + `cargo test` (default GUI/SDL3-from-source,
     `--features sound`, `--no-default-features`): `max_core` 249 lib + 14
     наборов (включая `complex` 4), `max_app` 377 lib + 32 интеграционных
     набора (включая `right_click_while_building_is_no_go_and_keeps_the_site`),
-    `max_assets` 10, `max_render` 85, doc-tests — всё зелёное; `max_net` 86
+    `max_assets` 10, `max_render` 85, doc-tests — всё успешно; `max_net` 86
     (в Windows-хосте один enet-тест `service_with_zero_timeout…` падает из-за
-    окружения, в Linux-гейте — зелёный);
-  * 2/4 `max-brh-server` — `cargo test --workspace` — зелёный;
+    окружения, в Linux-гейте — успешный);
+  * 2/4 `max-brh-server` — `cargo test --workspace` — успешный;
   * 3/4 — **21** QA-скрипт PASS (`production.qa` 5835 кадров/27 PNG,
     `build-cancel.qa` 299 кадров/4 PNG, `xfer.qa` 1332/4) и **16**
     golden-наборов, дрейф **0** (включая обновлённые `production/` 27 кадров и
@@ -4618,10 +4618,10 @@ orders = ORDER_BUILD; state = ORDER_STATE_UNIT_READY; // :3517-3518
   (`taskactivate.cpp:104-167`) и отдаёт тот же приказ
   (`unit_order::issue_factory_exit`).
 
-**Что было сломано.** `production::spawn_new_unit` искал свободную клетку рядом
+**Дефект.** `production::spawn_new_unit` искал свободную клетку рядом
 (`find_spawn_cell`) и ставил юнита на землю; завод сразу начинал следующий заказ
 («автостарт»), а `ORDER_ACTIVATE`/`UnitsManager_ActivateUnit` были TODO(restore
-orders). Самолёт появлялся на земле рядом с AIRPLT и «выходил» сам.
+orders). Самолёт появлялся на земле рядом с AIRPLT и выходил без приказа.
 
 **Что сделано.**
 * `production::spawn_new_unit` (ветка `is_factory`): спавн **на клетке завода**,
@@ -4686,7 +4686,7 @@ if (m_length == 0) Paths_FinishMove(unit);       // :281-283
 / 3`), `Paths_FinishMove` (`:408-420`) наносит удар `parent->Attack(grid)` и
 уничтожает снаряд.
 
-**Что было сломано.** Порт вёл снаряд как юнит: `air_path_execute` →
+**Дефект.** Порт вёл снаряд как юнит: `air_path_execute` →
 `IN_TRANSITION` → `unit_move` (одна клетка за тик по `DIRECTION_OFFSETS[angle]`),
 то есть по 8-дирекционной ломаной; след ставился по центрам клеток.
 
@@ -4706,7 +4706,7 @@ C++ (`m_step`, `position`, `OffsetDrawZones`, `grid >> 6`,
 `max-brh-qa/golden/missile-line` (4 кадра) и новая проверка
 `assert missile-line` (отклонение снаряда от прямой ≤ 1.5 px). `combat-tb.qa`
 больше не зависит от точного числа тиков наведения: новая команда
-`wait firing` крутит кадры до кадра выстрела.
+`wait firing` прокручивает кадры до кадра выстрела.
 
 ### 41.3 Стрелка X-FER показывает направление перевода
 
@@ -4718,7 +4718,7 @@ C++ (`m_step`, `position`, `OffsetDrawZones`, `grid >> 6`,
 `b->down`. Значит при положительной сумме (перенос из источника в приёмник;
 источник нарисован слева, приёмник справа) — стрелка **вправо**.
 
-**Что было сломано.** Порт рисовал наоборот: `amount >= 0` → `XFRLFARO`.
+**Дефект.** Порт рисовал обратное: `amount >= 0` → `XFRLFARO`.
 
 **Что сделано.** `TransferMenu::arrow_points_right()` (`amount >= 0`) + выбор
 `arrow_right`/`arrow_left` в `draw`; комментарии ресурсов исправлены.
@@ -4740,7 +4740,7 @@ C++ (`m_step`, `position`, `OffsetDrawZones`, `grid >> 6`,
 У `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/`HITEXPLD` своих звуков нет — играет
 `GEN_XPLD` (громкость 80), у танка — `TANK14/15/16`, у пехоты — `INFAN14/15/16`.
 
-**Что было сломано.** В порте не было ни одного боевого звука: симуляция не
+**Дефект.** В порте не было ни одного боевого звука: симуляция не
 сообщала о выстреле/попадании, `AudioPlayer` играл только UI-звуки.
 
 **Что сделано.**
@@ -4807,7 +4807,7 @@ gain (включая выключенный звук), `App::tick` наполн�
 ### 42.1 Завод не запускается без энергии и других ресурсов
 
 **Как в C++.** `UnitInfo::StartBuilding` (`unitinfo.cpp:2751-2794`) для
-`flags & STATIONARY` сразу списывает из котла комплекса:
+`flags & STATIONARY` сразу списывает с запаса комплекса:
 
 ```cpp
 complex->material -= Cargo_GetRawConsumptionRate(unit_type, GetMaxAllowedBuildRate()); // :2757
@@ -4828,7 +4828,7 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 `TRAINHAL`/`GREENHSE`/`RESEARCH` (`Cargo_GetLifeConsumptionRate`,
 `cargo.cpp:235-255`).
 
-**Что было сломано.** Порт проверял при старте только raw (`complex_raw_materials`)
+**Дефект.** Порт проверял при старте только raw (`complex_raw_materials`)
 и не смотрел на `power`/`workers`: завод стартовал и строил без единого
 `POWGEN`/`POWERSTN`, даже если весь комплекс потреблял больше, чем давал.
 
@@ -4865,8 +4865,8 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 работает: `CheckPowerNeed` (`:642-664`), `POWGEN` — 2 топлива/ход, `POWERSTN`
 — 6 (`cargo.cpp:183-201`).
 
-**Что было сломано.** Отключений не было вовсе: `total.power < 0` никак не
-влиял на приказы, шахты/исследования/теплицы работали «из воздуха».
+**Дефект.** Отключений не было вовсе: `total.power < 0` никак не
+влиял на приказы, шахты/исследования/теплицы работали без учёта энергии.
 
 **Что сделано.**
 * `optimize_complex` включает/выключает производителей по текущему спросу и
@@ -4895,7 +4895,7 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 выбирается по дефициту — `raw material`, `fuel`, `gold`, `power`, `workers`
 (`ValidatorIndustry` `:686-694`, `ValidateAuxilaryIndustry` `:398-429`).
 
-**Что было сломано.** Сообщения не было: `compose_message` отсутствовал,
+**Дефект.** Сообщения не было: `compose_message` отсутствовал,
 `hud.hint` заполнялся только подсказкой строителя.
 
 **Что сделано.**
@@ -4930,9 +4930,9 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
   исследовательский центр теперь рисуется включённым (раньше уходил в
   `POWER_OFF` без энергии).
 * `cargo test` max_core: 254 unit + `power_economy` 10, `production` 30,
-  `construction_economy` 7, `transfer` 13 и остальные интеграционные — зелёные;
+  `construction_economy` 7, `transfer` 13 и остальные интеграционные — успешные;
   max_app: 383 unit + 10 main + интеграционные (default/sound/headless) —
-  зелёные (см. §42.5).
+  успешные (см. §42.5).
 
 ### 42.5 Гейт и артефакты
 
@@ -4969,7 +4969,7 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
   по наблюдаемому балансу детерминированным выбором «станции → генераторы»
   (`power::settle_producers`); `OptimizeCargoProduction` (перераспределение
   добычи ради топлива) не портирован — при нехватке топлива производитель
-  просто не включается.
+  не включается.
 * Идущая стройка при нехватке ставится на паузу, а не отменяется
   (`ValidateIndustry` → `BUILD_ABORT` в C++): контракт QA запрещает уход
   ресурса в минус и потерю очереди.

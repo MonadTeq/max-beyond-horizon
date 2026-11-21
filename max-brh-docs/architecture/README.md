@@ -35,4 +35,4 @@ Rust-клиент (max-brh)              Horizon (max-brh-server)        C++ hea
 
 - `max-cpp-port/` — канонический код M.A.X. Port (klei1984/max, git-субмодуль).
 - `max-cpp-port-docs/` — документация автора (save-формат V70, Watcom-конструкции, сеть).
-- `max-original/` — оригинальная игра; `max-original-dasm/` — наши RE-артефакты.
+- `max-original/` — оригинальная игра; `max-original-dasm/` — RE-артефакты проекта.

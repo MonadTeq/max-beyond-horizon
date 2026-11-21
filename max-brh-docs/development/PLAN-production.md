@@ -11,7 +11,7 @@
 
 ## Этапы
 
-### P1 — Быстрые UX-фиксы (1–2 дня)
+### P1 — Быстрые UX-исправления (1–2 дня)
 - [x] TC-1109: поиск данных игры от каталога exe (сейчас только от CWD).
   `assets::data_search_roots` — каталог `current_exe` и вверх до ближайшего
   `max-original`; `resolve_max_res`/`resolve_patches_res`/`resolve_color_pal`
@@ -44,7 +44,7 @@
   экран `UpgradeMenu` 1:1 (`U`), QA `research.qa`/`upgrade.qa`.
 - [x] Интеграция с ИИ (ИИ строит через ProductionManager, как C++).
   ИИ уже выдаёт `ORDER_BUILD` с очередью (`TaskCreateBuilding`/`TaskCreateUnit`
-  → `TaskCtx::build_order`); теперь очередь реально тикает и выпускает юнитов
+  → `TaskCtx::build_order`); теперь очередь фактически обрабатывается и выпускает юнитов
   в `finish_turn`. `builder_type_for`/`turns_to_build` делегируют в
   `production` (единая таблица). Тест:
   `max_core/tests/ai_p6.rs::ai_completes_a_build_queue_through_production`.
@@ -111,22 +111,22 @@
   дольше бюджета 16.67 мс — **0**; `finish_turn` на 100-м ходу **23.7 µs**
   (avg 23.6 µs, max 56.6 µs). Headless 120 ходов (debug): средний кадр
   59.9 µs, один выброс 121.9 мс на 24-м ходу (`finish_turn`, 1 кадр из
-  362 502) — планировочный спайк, не вычисление. **Релизная сборка** тех же
+  362 502) — планировочный выброс, не вычисление. **Релизная сборка** тех же
   120 ходов: средний кадр **6.76 µs**, max **5.21 мс**, кадров сверх бюджета
   16.67 мс — **0**, средний ход 20.6 мс; `finish_turn` avg 58 µs, max 5.19 мс
   (тот же 24-й ход), на 120-м — 9.4 µs. `App::update_visual_units`
   больше не собирает `HashMap` каждый кадр (in-place `retain` + `insert`;
   визуальные позиции не входят в CRC/снапшот) — порядок и арифметика
   симуляции не изменены.
-- [x] Краевые: спам кликов, alt-tab, битые файлы, юникод — по TC-11xx.
+- [x] Краевые: многократные клики, alt-tab, повреждённые файлы, юникод — по TC-11xx.
   `max-brh-qa/scripts/edge-cases.qa` → **PASS**: 50 кликов по пустым областям
   главного меню + 50 по карте, не-ASCII `type` в чате/имени (символы
   отклоняются, паник нет), выход → New Game → Cancel → полный второй старт до
   `turn=2`; TC-1112 — `tests/app.rs::app_can_be_created_twice_and_start_exit_twice`
   (`App::new` дважды, один файл сейва, одинаковый digest). TC-1107 (alt-tab):
   SDL `FocusLost/FocusGained/Minimized/Restored/…` явно нейтральны
-  (`window_event_is_input_neutral` + тест), живой alt-tab остаётся ручным
-  WINDOW-пунктом. Итог `suite/11-edge-cases.md`: **13 ✅ / 1 🟡**.
+  (`window_event_is_input_neutral` + тест), реальный alt-tab остаётся ручным
+  WINDOW-пунктом. Итог `suite/11-edge-cases.md`: **13 выполнено / 1 замечание**.
 - Критерий: soak-сценарий в CI (ночной/релизный), память стабильна, время тика в норме.
   `ci.sh` — стадия **4/4 soak** (`soak-100.qa` с `MAX_TICK_PROFILE=1` +
   `soak_headless --turns 120`); `.github/workflows/ci.yml` — job `soak` с
@@ -141,14 +141,14 @@
   `barrier_timeouts=0`, `state_checksum=0x34D5` у всех. `MAX_LOG` включает
   debug-логи барьеров (ограничение `tracing-subscriber` без `env-filter`).
 - [ ] Паритет Rust+C++-клиентов в одной сессии (бит-в-бит) — тест с C++-клиентом (headless-пара).
-  **Частично / блокер:** консольная сборка клиента `src/` умеет только `--server`
+  **Частично / блокер:** консольная сборка клиента `src/` поддерживает только `--server`
   (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`, ветки `--client`/`--connect`
   нет); GUI-клиент требует X11 и ручного меню. `max-brh-cicd/scripts/live-smoke-mixed.sh`:
   **PARTIAL PASS** — Rust×2, CRC `0x7035`, C++-сервер (эталонный
   `state_checksum`/`GameManager_CheckDesync`) не пишет `Desync check failed`,
   т.е. состояние Rust-клиентов совпало с C++-симуляцией; одновременная сессия
   Rust+C++ не доказана. Для полного пункта нужен headless client mode
-  (или Xvfb+автоматизация GUI) — это изменение `src/` вне доказанного бага.
+  (или Xvfb+автоматизация GUI) — это изменение `src/` вне подтверждённого дефекта.
 - [x] Полный реконнект: восстановление состояния после разрыва (54/CRC) — по barrier-flow.
   `ReconnectPolicy` (ENet+TP00 тем же тикетом, без повторного лобби) →
   продолжение локального lockstep-состояния → resume-54 своей команды
@@ -157,7 +157,7 @@
   (3 клиента, мок-релей, B offline, CRC/turn сходятся) +
   `resume_state_sync_publishes_the_last_completed_index`. **Пределы:** SNAP нет;
   54 покрывает только юнитов/экономику своей команды; пропущенные приказы
-  других не replay-ятся; C++-пиры исключают команду через 30 с; своя команда
+  других не воспроизводятся; C++-пиры исключают команду через 30 с; своя команда
   авторитетна (возможен откат её состояния). См. `protocol.md` §9.
 - [ ] Спектатор (клиент без команды) — если достижимо без изменения сервера.
   **Невозможно без сервера:** нет `TEAM_TYPE_SPECTATOR` (`enums.hpp:164-168`),
@@ -166,12 +166,12 @@
   и релей 53/54 наблюдателю. Задокументировано в `protocol.md` §9.2.
 - Критерий: smoke-скрипты 3-клиентов и Rust+C++ зелёные; реконнект переживает разрыв.
   **Факт:** 3-клиентный smoke зелёный; Rust+C++ — PARTIAL (блокер C++ headless
-  client mode); реконнект проверен в in-process 3-клиентном мок-тесте, живой
+  client mode); реконнект проверен в in-process 3-клиентном мок-тесте, реальный
   разрыв в smoke не автоматизирован (нужен pause/proxy-хук).
 
 ### P6 — QA-покрытие и релиз v1.1.0
-- [x] Перевод 🟡/❌ тест-кейсов suite в зелёные (или осознанное закрытие).
-  `suite/*.md`: **161 ✅ / 0 🟡 / 18 ⏭ not planned** (причины в строках и
+- [x] Перевод тест-кейсов suite со статусами «замечание»/«не выполнено» в зелёные (или осознанное закрытие).
+  `suite/*.md`: **161 выполнено / 0 замечаний / 18 отложено (not planned)** (причины в строках и
   `suite/README.md`): закрыты клавиатурная навигация, Esc, Name, chat,
   invalid order; `not planned` — спектатор (нет серверной поддержки),
   mixed Rust+C++ (нет headless client mode), FLIC, ручной WINDOW, сквозной
@@ -192,7 +192,7 @@
   `--help`/`--demo` нативно) и
   `bin/release/max_app-1.1.0-linux-x86_64.tar.gz`; SHA256SUMS внутри бандлов;
   `release-checklist.md` — раздел v1.1.0 со свидетельствами. **Тег не создан**
-  (по указанию: сделает хозяин), команда подготовлена:
+  (по указанию: создаётся релиз-менеджером), команда подготовлена:
   `bash release.sh --tag`.
 - Критерий: ci.sh (все стадии) + live-smoke зелёные; чек-лист полностью заполнен.
   `ci.sh` (стадии 1–4) — **PASS**; QA `sp-full/hs-2/visual-screens/victory/
@@ -279,7 +279,7 @@
   пересобраны; `CHANGELOG.md`, `max-brh-docs/analysis/visual-1to1-status.md`,
   `suite/03-single-player.md` (TC-0324…0328), `suite/09-visual-1to1.md`
   (TC-0922/0927), `tools/cargo_vectors/README.md`.
-- Критерий: `cargo check/test` — зелено; все qa-сценарии PASS; golden —
+- Критерий: `cargo check/test` — успешно; все qa-сценарии PASS; golden —
   0 дрейфа; `cargo test --all-targets` (в т.ч. новые 24 теста) — 0 failed.
 
 ### P8 — ResearchMenu и Help-экраны 1:1 (2026-11-17)
@@ -336,14 +336,14 @@
   `visual-1to1-status.md` §27.
 - [x] Сохранение: `SaveMeta::ini_preferences` (`save_meta_for_local_game_with`,
   `sync_save_meta`), чтение при загрузке V70 (`SaveLoad_Load`),
-  `preferences.ini` рядом с сейвами; `Files` панели заодно открывает
+  `preferences.ini` рядом с сейвами; `Files` панели также открывает
   существующее окно сохранения/загрузки.
 - [x] QA: `prefs open|toggle NAME|set NAME N|done|cancel|help`, `assert prefs=…`,
   `prefs-value NAME=N`, `prefs-effects/sound/audio`; `preferences.qa` и golden
   `golden/preferences`; `ci.sh` — новая QA+golden-стадия.
 - [x] Тесты: `preferences` (9, раскладка/клики/ini/файл), `tests/preferences.rs`
   (6: меню/игра, модальность, статичные кадры при effects=off, звук→AudioPlayer,
-  V70 round-trip, Cancel); живой `max-brh-cicd/scripts/ui-test-prefs.ps1`.
+  V70 round-trip, Cancel); проверка на реальном стенде — `max-brh-cicd/scripts/ui-test-prefs.ps1`.
 - [x] Артефакты/документация: Windows UI + headless пересобраны; CHANGELOG,
   `visual-1to1-status.md` §27, `state-model.md` §3.3, suite TC-0108/TC-0935,
   `scripts/README.md`, `qa-plan.md`.
@@ -375,10 +375,10 @@
 ### P11 — Turn Based: конец хода ИИ и боевые анимации (2026-11-20)
 
 - [x] Воспроизвести зависание: QA `combat-tb.qa` (Options → Turn Based, ход 1,
-  выстрел ракетой, `end_turn`) до исправления крутил **12 000 кадров**
+  выстрел ракетой, `end_turn`) до исправления выполнял **12 000 кадров**
   (`LOCAL_AI_TICK_LIMIT`); unit-тест
   `max_core/tests/turn_based_combat.rs::turn_based_ai_turn_ends_after_its_missile_impact`
-  падал с `Rocket/Move/ExecutingOrder` на старте и `counter = 0`.
+  завершался ошибкой `Rocket/Move/ExecutingOrder` на старте и `counter = 0`.
 - [x] Причины (оракул): `AirPath::Execute` (`airpath.cpp:186-199`) проверяет
   `speed == 0` только у `MOBILE_AIR_UNIT`; `UnitsManager_DeployUnit`
   (`units_manager.cpp:2390`) ставит `ANIMATED` в `ORDER_EXPLODE/DESTROY`;

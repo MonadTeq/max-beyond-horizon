@@ -1,6 +1,6 @@
 # Модель состояния партии M.A.X. — спецификация для `max_core`
 
-> Статус: **рабочая спецификация** (заменяет прежний черновик-скелет).
+> Статус: **рабочая спецификация** (заменяет прежний черновой каркас).
 > Источники: авторская спецификация формата сохранений v1.04 (V70) —
 > [`max-cpp-port-max-brh-docs/save.md`](../max-cpp-port-max-brh-docs/save.md); заголовки и код C++-порта —
 > [`max-cpp-port/src/`](../max-cpp-port/src/) (`enums.hpp`, `unitinfo.hpp`,
@@ -47,7 +47,7 @@
 локально. Крейт `max_core` описывает слои 1–2 + минимальные UI-поля (см. раздел 6
 «Проекция»).
 
-### 1.2 Числа, с которыми все согласны
+### 1.2 Согласованные числовые параметры
 
 - Карта всегда **112 × 112** тайлов (размер задаёт WRL-файл мира; в практике V70 — 112).
 - Типов юнитов **93** (`UNIT_END` = 93 = 0x5D в C++).
@@ -286,7 +286,7 @@ Rust: `#[repr(u16)] enum UnitType { ... }` с 93 вариантами.
 | 89 | `RKTSMOKE` | `SMOKE_TRAIL` | Smoke trail (rocket smoke) |
 | 90 | `TRPBUBLE` | `BUBBLE_TRAIL` | Bubble trail (torpedo bubble) |
 | 91 | `HARVSTER` | `HARVESTER` | Harvester |
-| 92 | `WALDO` | `DEAD_WALDO` | Dead Waldo (пасхалка) |
+| 92 | `WALDO` | `DEAD_WALDO` | Dead Waldo (скрытая отсылка) |
 
 ### 2.12 GameStateType — 16 состояний игры
 
@@ -318,7 +318,7 @@ Rust: `#[repr(u8)] enum GameStateType`.
 save.md: `enum OrderType : unsigned char`, 32 значения 0x00–0x1F; C++: `enum
 UnitOrderType : uint8_t` (`ORDER_*`, `ORDER_COUNT_MAX`). Rust: `#[repr(u8)] enum UnitOrder`.
 
-> Не путать с `order::Order` из каркаса `max_core` — это **клиентская команда
+> Не следует путать с `order::Order` из каркаса `max_core` — это **клиентская команда
 > серверу** (Move/Attack/Build/...). Здесь `OrderType` — **внутренний приказ
 > юнита** в модели симуляции. Рекомендация: `OrderType` → `UnitOrder`,
 > `OrderStateType` → `UnitOrderState`, чтобы имена не пересекались.
@@ -359,7 +359,7 @@ C++: `enum WinLossState` (`enums.hpp`); Rust: `#[repr(u8)] enum WinLossState`.
 | Знач. | C++ | Смысл |
 |--:|--|---|
 | 0 | `VICTORY_STATE_GENERIC` | партия идёт по общим правилам |
-| 1 | `VICTORY_STATE_PENDING` | условие вот-вот сработает (проверка в конце хода) |
+| 1 | `VICTORY_STATE_PENDING` | условие близко к срабатыванию (проверка в конце хода) |
 | 2 | `VICTORY_STATE_WON` | победа |
 | 3 | `VICTORY_STATE_LOST` | поражение |
 
@@ -439,7 +439,7 @@ save.md: `struct __attribute__((packed)) TeamInfo`; C++: `struct CTInfo`
 
 | Поле | C-тип (V70) | Rust-тип | Назначение | Источник | Проекция |
 |---|---|---|---|---|---|
-| `markers[10]` | `Point[10]` | — | маркеры на карте; фича вырезана, всегда {-1,-1} | save.md | `—` |
+| `markers[10]` | `Point[10]` | — | маркеры на карте; функция удалена из игры, значение всегда {-1,-1} | save.md | `—` |
 | `team_type` | `TeamType` (u8) | `TeamKind` | тип команды | save.md | `S` |
 | `finished_turn` | `bool` (1 байт) | `bool` | команда закончила ход | save.md | `S` |
 | `team_clan` | `TeamClan` (u8) | `TeamClan` | клан команды | save.md | `S` |
@@ -665,7 +665,7 @@ u16-битфилд на клетку (save.md; C++: `ResourceManager_CargoMap`, 
 | 11 | `0x0800` | `TEAM_VISIBILITY_BLUE` | разведана синими |
 | 12 | `0x1000` | `TEAM_VISIBILITY_GREEN` | разведана зелёными |
 | 13 | `0x2000` | `TEAM_VISIBILITY_RED` | разведана красными |
-| 10–12 | `0x1C00` | `TEAM_VISIBILITY_MASK` | **⚠ в save.md не накрывает красных (0x2000); фактическая маска всех четырёх — `0x3C00`** (см. 7.3) |
+| 10–12 | `0x1C00` | `TEAM_VISIBILITY_MASK` | **замечание: в save.md не накрывает красных (0x2000); фактическая маска всех четырёх — `0x3C00`** (см. 7.3) |
 
 Пример из save.md: `0x208C` = 12 материалов, разведано только красными.
 Rust-предложение (вместо `map::Map.resources: Vec<Option<ResourceKind>>` из каркаса):
@@ -702,7 +702,7 @@ pub struct Map {
 ### 3.12 `SaveMeta` — что переносится ради записи V70 (P3)
 
 `GameState` хранит слои 1–2 (см. §1.1), но в V70 есть поля, которых в
-симуляции нет. Для записи сейва 1:1 они живут в `GameState::save_meta`
+симуляции нет. Для записи сейва 1:1 они размещены в `GameState::save_meta`
 (`max_core::save_write::SaveMeta`); в канонический дайджест
 (`GameState::snapshot_bytes`) **не входят**, потому что не влияют на игру:
 
@@ -710,13 +710,13 @@ pub struct Map {
 |---|---|---|
 | `save_game_type`, `save_name`, `world`, `team_names`, `rng_seed`, `opponent`, `turn_timer_time`, `endturn_time` | `SaveFormatHeader` | настройки партии; `Randomizer` хранит только состояние, не seed |
 | `ini_options`, `ini_preferences` | `IniOptions`/`IniPreferences` | 12 + 7 значений INI, часть дублирует заголовок |
-| `team_ui` (×4) | `markers[10]`, `camera_positions[6]`, `selected_unit`, `zoom_level`, `camera_position`, `display_button_*` | UI-состояние (`CTInfo`), у нас — в `hud`/`Viewport`; запись — из снимка на момент save |
+| `team_ui` (×4) | `markers[10]`, `camera_positions[6]`, `selected_unit`, `zoom_level`, `camera_position`, `display_button_*` | UI-состояние (`CTInfo`), в проекте — в `hud`/`Viewport`; запись — из снимка на момент save |
 | `team_gold_spent_raw` (×4) | `stats_gold_spent_on_upgrades` (`int16_t`) | C++ клампит ≥ 0 при загрузке; сырое значение нужно для побайтового round-trip |
 | `alien_team_type`, `alien_team_clan` | `team_type[4]`/`team_clan[4]` заголовка | V70 пишет 5-й слот, `CTInfo` его не хранит; `GameState.teams[4]` — служебный ALIEN |
 | `ai_unused_v70`, `ai_target_team_v70` (×4) | `AiPlayer::FileLoad` (V70-поля) | C++ **читает и выбрасывает**; нужны только для байтов |
 | `ai_has_info_map`, `ai_has_mine_map` (×4) | наличие блоков `info_map`/`mine_map` | в эталонных V70-сейвах карт ИИ нет (`item_count = 0`), а рантайм всегда держит 112×112 |
 | `message_logs` (×4) | `MessageLogList` | журнал — UI-поток событий; `max_core` хранит как данные для записи/чтения |
-| `turn_timer` | `GameManagerState::turn_timer` | остаток таймера живёт в `LocalGame`, снимок берётся при save |
+| `turn_timer` | `GameManagerState::turn_timer` | остаток таймера хранится в `LocalGame`, снимок берётся при save |
 | `unit_hash_size`, `map_hash_size`, `map_hash_x_shift`, `unit_hash_order`, `map_hash_cells` | заголовки и порядок `UnitHash`/`MapHash` | C++ вставляет юнитов в ведро при создании, а `MapHash` при загрузке перехэширует; порядок из состояния не выводится — переносится из файла |
 
 Запись: `GameState::to_save()` → `SaveFile` → `GameState::to_save_bytes()`.
@@ -795,7 +795,7 @@ pub struct Map {
 
 1. **Снапшот = игровое состояние (слои 1–2 из §1.1), не состояние экрана.**
    В оригинале UI-поля попали в `TeamInfo` только потому, что сохранение
-   снимает слепок всего процесса, включая экран. Для клиент-сервера их слать
+   фиксирует снимок всего процесса, включая экран. Для клиент-сервера их передавать
    нельзя: у каждого клиента своя камера, свой зум и свои переключатели
    отображения; в сетевой игре оригинала эти поля не синхронизируются и не
    участвуют в сверке рассинхронизации.
@@ -822,7 +822,7 @@ pub struct Map {
 | `UnitInfo` | `S` за вычетом `UI`-полей | см. 6.4 |
 | `SurfaceMap` | `S` | статична в партии; можно один раз |
 | `ResourceMap` | `S` (тип+количество — всем; биты видимости — по п. 7.5) | |
-| `Hash_UnitInfo`/`Hash_MapHash`, списки | `—` | клиент пересобирает индексы сам |
+| `Hash_UnitInfo`/`Hash_MapHash`, списки | `—` | клиент пересобирает индексы самостоятельно |
 | `TeamHeatMaps` | открытый вопрос (7.5) | предложение: не слать, клиент строит туман из `visible_to_team` |
 | `MessageLog` | `—` в снапшоте | события отдельным каналом |
 | `AiPlayer` | `—` | только сервер |
@@ -833,16 +833,16 @@ pub struct Map {
 не партии: `camera_positions` (F5–F8), `selected_unit`, `zoom_level`,
 `camera_position`, все 11 `display_button_*`, `markers`.
 
-- `camera_position`/`zoom_level`/`camera_positions`: в оригинале — где игрок
-  смотрит; два клиента в одной партии видят разные места карты. Передавать
-  серверу их не нужно (и незачем); каждый клиент хранит свои.
+- `camera_position`/`zoom_level`/`camera_positions`: в оригинале — позиция просмотра
+  игрока; два клиента в одной партии видят разные места карты. Передавать
+  серверу их не требуется; каждый клиент хранит свои.
 - `selected_unit`: выбор — клиентское действие; серверу выбранный юнит не нужен
   (приказы приходят с явным `UnitId` в `order::Order` каркаса). В сохранении
-  поле живёт только ради восстановления экрана после загрузки.
+  поле сохраняется только для восстановления экрана после загрузки.
 - `display_button_*`: переключатели слоёв отображения (сетка/имена/обзор и
   т.д.) — чисто визуальные, на симуляцию не влияют.
-- `markers`: фича вырезана из игры (всегда {-1,-1}) — исключаем полностью.
-- Спорные: `score_graph[50]` и `stats_*`/`casualties` — **включаем** (`S`):
+- `markers`: функция удалена из игры (значение всегда {-1,-1}) — исключается полностью.
+- Спорные: `score_graph[50]` и `stats_*`/`casualties` — **включаются** (`S`):
   `casualties` напрямую используется условиями победы/поражения; `stats_*` —
   итоговая статистика партии (сервер должен её авторитетно знать); `score_graph`
   — история очков, технически выводима на клиенте из дельт, но массив в 50
@@ -867,8 +867,8 @@ pub struct Map {
   `velocity`, `max_velocity`, `brightness`, `scaler_adjust`, `sprite_bounds`,
   `shadow_bounds`, `shadow_offset`, `turret_*`, `image_*`, `bobbed`,
   `shake_effect_state`, `engine`, `weapon`, `cursor`, `move_fraction`). Всё это
-  выводится из `grid_position` + параметров движения/повреждения либо вообще не
-  нужно без рендера оригинала.
+  выводится из `grid_position` + параметров движения/повреждения либо не
+  требуется без рендера оригинала.
 - **`—`**: `field_221`/`ai_state_bits` (AI только на сервере), `comm`/
   `fuel_distance`/`energized` (C++-порт не восстанавливает — см. 7.6),
   `object_index`/`class_type` (`T`).
@@ -878,7 +878,7 @@ pub struct Map {
 - Механика классового сериализатора (`object_index`, `class_type`,
   `last_object_index`, рекурсивные вложения объектов).
 - Состояние меню/экранов (не-игровые `GAME_STATE_3_MAIN_MENU` и т.п. сервер
-  просто не будет слать как «партию»; в снапшоте фазы — только игровые).
+  не будет передавать как «партию»; в снапшоте фазы — только игровые).
 - `IniPreferences` и любые настройки клиента.
 
 ---
@@ -907,8 +907,9 @@ pub struct Map {
    Уточнить назначение 5-го/6-го элемента (возможно, вторая пара — зум/вид).
 5. **Туман войны в клиент-сервере.** В оригинале каждый клиент имеет полное
    состояние и сам фильтрует по `visible_to_team`/`spotted_by_team`/heat maps
-   (lockstep). В клиент-серверной модели полный снапшот = тривиальный чит.
-   Варианты: (а) сервер фильтрует снапшот по команде (дорого, но честно);
+   (lockstep). В клиент-серверной модели полный снапшот создаёт возможность
+   нечестной игры.
+   Варианты: (а) сервер фильтрует снапшот по команде (ресурсоёмко, но корректно);
    (б) слать всё + пометить поля видимости (как в оригинале, доверие клиенту);
    (в) слать `heatmap_complete` команды + видимые юниты. Требует решения в
    `max-brh-docs/protocol.md`.

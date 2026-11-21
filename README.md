@@ -24,17 +24,18 @@ M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 
 Оригинальная **M.A.X.** и порт **M.A.X. Port** ([klei1984/max](https://github.com/klei1984/max)) —
 два референса, которые не изменяются в ходе разработки и служат для сверки игровых
-механик. Ремейк **не** порт 1:1, а переосмысление клиента:
+механик. Ремейк **не является переносом** 1:1, а представляет собой переосмысление
+клиента:
 
-| Аспект | M.A.X. Port (референс) | Наш проект (ремейк) |
+| Аспект | M.A.X. Port (референс) | Ремейк (BRH) |
 |---|---|---|
 | Язык клиента | C++ (порт оригинального кода) | **Rust**, чистая модульная архитектура |
 | Архитектура | монолит порта | `max_core` (симуляция) / `max_net` / `max_assets` / `max_render` / `max_app` — строгие границы |
 | Сеть | P2P-меш, ENet | **серверная звезда через Horizon**: gRPC-лобби (protobuf) + headless-арбитр, релей пакетов, подписанные тикеты |
-| Серверная инфраструктура | — | **Horizon** (Rust): лобби/админ, сессии, масштабирование (docker compose) |
-| Согласованность | lockstep как есть | lockstep с **бит-в-бит верификацией** (RNG-векторы, CRC-барьеры, C++-эталоны) |
-| Качество | ручное | **QA-фабрика**: Test-Suite (179 TC), скриптовый драйвер, golden-кадры, CI, запись сценариев вручную |
-| RE-база | частная IDA-база автора | собственная RE-линия (`max-original-dasm/`) + оракулы C++ |
+| Серверная инфраструктура | — | **Horizon** (Rust): лобби и администрирование, сессии, масштабирование (docker compose) |
+| Согласованность | lockstep в исходном виде | lockstep с **бит-в-бит верификацией** (RNG-векторы, CRC-барьеры, C++-эталоны) |
+| Качество | ручное | **QA-инфраструктура**: Test-Suite (179 TC), скриптовый драйвер, golden-кадры, CI, запись сценариев вручную |
+| RE-база | частная IDA-база автора | собственная RE-база (`max-original-dasm/`) + оракулы C++ |
 
 Оригинал и M.A.X. Port используются как **референсы** (каноническая логика и визуал) и
 **не изменяются**; headless-арбитр для сетевых сессий собирается из `max-cpp-port` (режим `--server`).
@@ -50,7 +51,7 @@ M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 4. **Визуальный паритет 1:1**: тайлы карт, спрайты, окно FRAMEPIC, панели,
    оригинальные шрифты GNW, курсоры, меню — из оригинальных ресурсов.
 5. **Автоматическое QA**: 780+ тестов, скриптовые UI-сценарии (включая
-   `upgrade.qa`/`research.qa`), golden-кадры, живой сетевой smoke — в CI.
+   `upgrade.qa`/`research.qa`), golden-кадры, сетевой smoke-тест в CI.
 
 ## Структура репозитория
 
@@ -64,14 +65,14 @@ M.A.X. COPYRIGHT (C) 1996 INTERPLAY PRODUCTIONS. ALL RIGHTS RESERVED.
 | `max-brh-assets/` | референс/ремастер: `images/`, `units/`, `text/` |
 | `max-brh-cicd/` | CI/CD: `ci.sh` + `scripts/` |
 | `max-cpp-port/` | оракул: канонический M.A.X. Port (git-субмодуль, неизменяемый) |
-| `max-cpp-port-docs/` | документация автора (сайт, формат сейвов V70) |
+| `max-cpp-port-docs/` | документация автора (сайт, формат сохранений V70) |
 | `max-original/`, `max-original-dasm/` | оригинальная игра и RE-артефакты |
 | `max-unity-client/` | Unity-прототип |
-| `build/`, `bin/` | временные сборки, артефакты (`bin/` — легко удалить) |
+| `build/`, `bin/` | временные сборки, артефакты (`bin/` можно удалить) |
 
 ## Собрать
 
-Кратко — в [max-brh-docs/development/build.md](max-brh-docs/development/build.md). Основное:
+Краткое руководство — в [max-brh-docs/development/build.md](max-brh-docs/development/build.md). Основные команды:
 
 ```sh
 bash ci.sh                                   # тесты + QA + golden (Docker)
@@ -81,8 +82,9 @@ bash release.sh                              # Linux-сборка + архив
 docker compose up -d --build                 # сервер Horizon
 ```
 
-Docker для Windows-сборок не нужен: обе делаются нативной MSVC-сборкой на хосте
-(консольная сборка клиента — `bin\release\max_app-1.1.0-windows-x86_64.zip`, игровая сборка —
+Docker для Windows-сборок не требуется: обе сборки выполняются нативной MSVC-сборкой
+на хосте (консольная сборка клиента —
+`bin\release\max_app-1.1.0-windows-x86_64.zip`, игровая сборка —
 `…-windows-x86_64-ui.zip`).
 
 Необходимые инструменты и библиотеки — там же (Rust 1.94, MSVC+vcpkg/SDL3, Docker,
@@ -106,13 +108,13 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 # сетевая: сначала docker compose up -d --build, затем в меню Host/Join Network Game.
 ```
 
-игровая сборка (`bin\release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
-Windows (GUI): двойной клик открывает окно без консоли, а `--help`/`--demo` у
-неё видны только при перенаправлении (`max-brh.exe --help > help.txt`).
-Вывод для терминала/CI даёт консольная сборка клиента
+Игровая сборка (`bin\release\max_app-*-windows-x86_64-ui\max-brh.exe`) — подсистема
+Windows (GUI): двойной щелчок открывает окно без консоли; параметры `--help`/`--demo`
+отображаются только при перенаправлении вывода (`max-brh.exe --help > help.txt`).
+Вывод для терминала и CI обеспечивает консольная сборка клиента
 `bin\release\max_app-*-windows-x86_64.zip` (подсистема Console).
 
-Подробно: [max-brh-docs/development/build.md](max-brh-docs/development/build.md) (раздел «Запуск»).
+Подробное описание: [max-brh-docs/development/build.md](max-brh-docs/development/build.md) (раздел «Запуск»).
 
 ## Документация
 

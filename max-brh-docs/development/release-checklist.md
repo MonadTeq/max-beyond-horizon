@@ -1,7 +1,7 @@
 # Чек-лист релиза Rust-клиента M.A.X.
 
 Версия: **1.1.0** · дата среза: **2026-11-16** · тег: **v1.1.0** (не создан —
-сделает хозяин; команда подготовлена в §v1.1.0 ниже).
+создаётся релиз-менеджером; команда подготовлена в §v1.1.0 ниже).
 
 Документ — исполняемая последовательность: каждый пункт либо команда с
 ожидаемым результатом, либо ручная проверка с местом для свидетельства.
@@ -17,27 +17,27 @@
 
 | # | Пункт | Команда/свидетельство | Результат |
 |---|---|---|---|
-| 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-brh/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | ✅ `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
-| 2 | CHANGELOG | `CHANGELOG.md` | ✅ `[1.1.0] — 2026-11-16` + состав с v1.0.0 (режимы, визуал, производство, сейвы, сеть, QA, rename, GUI-default) |
-| 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | ✅ P8: `CI OK за 566 с` (`build/ci-p8.log`): тесты 0 failed, QA/golden/soak PASS |
-| 4 | Тесты max-brh | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | ✅ **0 failed**; в P8 добавлено: `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1 (264 lib-теста `max_app`, 14 `qa_driver`, 220 `max_core`, 86 `max_net`, 79 `max_render`) |
-| 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases, **cargo-full**, **research-help** | ✅ все PASS; golden-дрейф 0 |
-| 6 | Golden новых экранов | `golden/cargo/`, `golden/upgrade/`, `golden/research/`, `golden/research-help/` (9: Help-окна + `research-menu`) | ✅ 0 пикселей отличий |
-| 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | ✅ PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
-| 8 | Live smoke 2×10 | `max-brh-cicd/scripts/live-smoke.sh 10` | ✅ PASS: `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
-| 9 | Live smoke 3×10 | `max-brh-cicd/scripts/live-smoke-3.sh 10` | ✅ PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
-| 10 | Windows игровая сборка | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` | ✅ `bin/release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-brh.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
-| 11 | Windows консольная сборка клиента | `powershell -File max-brh-cicd\scripts\build-windows-console.ps1` (нативный MSVC) | ✅ `bin/release/max_app-1.1.0-windows-x86_64/` (2026-11-21, пересобран нативно): `max-brh.exe` 4 433 408 Б, sha256 `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`; zip 1 807 530 Б, sha256 `f5388c39c52c6d2a069f4bfdc6087cba8efa323e3e98d96207305542069f06f1`; PE Subsystem=3 (console); `--help` и `--demo SAVE1.CAM --turns 1` (`state_digest=0x733D`) — нативно, без wine |
-| 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows-сборки (UI и headless); Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
-| 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows-сборки (UI и headless) пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
-| 14 | Документация | `README.md`, `max-brh/README.md`, `max-brh-docs/development/build.md`, `max-brh-docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
-| 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
-| 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
+| 1 | Версия workspace | `grep -n 'version = "1.1.0"' max-brh/Cargo.toml`; `Cargo.lock` обновлён `cargo check` | выполнено: `[workspace.package] version = "1.1.0"`, все 5 крейтов 1.1.0 |
+| 2 | CHANGELOG | `CHANGELOG.md` | выполнено: `[1.1.0] — 2026-11-16` + состав с v1.0.0 (режимы, визуал, производство, сейвы, сеть, QA, rename, GUI-default) |
+| 3 | Полный CI | `bash ci.sh --smoke --smoke3 --turns 10` (Docker, стадии 1–4) | выполнено: P8 — `CI OK за 566 с` (`build/ci-p8.log`): тесты 0 failed, QA/golden/soak PASS |
+| 4 | Тесты max-brh | стадия 1/4 (`cargo check && cargo test`; `--features sound`; `--no-default-features`) | выполнено: **0 failed**; в P8 добавлено: `researchmenu` 10, `helpmenu` 9, `ui` +3, `qa_driver` +1 (264 lib-теста `max_app`, 14 `qa_driver`, 220 `max_core`, 86 `max_net`, 79 `max_render`) |
+| 5 | QA-сценарии | `qa_run`: sp-full, hs-2, visual-screens, victory, production, save-load, **upgrade**, **research**, edge-cases, **cargo-full**, **research-help** | выполнено: все PASS; golden-дрейф 0 |
+| 6 | Golden новых экранов | `golden/cargo/`, `golden/upgrade/`, `golden/research/`, `golden/research-help/` (9: Help-окна + `research-menu`) | выполнено: 0 пикселей отличий |
+| 7 | Soak/память | `soak-100.qa` + `soak_headless --turns 120` (`MAX_TICK_PROFILE=1`) | выполнено: PASS; бюджет 60 Гц, RSS в пороге 64 МиБ |
+| 8 | Live smoke 2×10 | `max-brh-cicd/scripts/live-smoke.sh 10` | выполнено: PASS — `turns=10`, `barrier_timeouts=0`, `data_hash=dd24703e(64)`, `state_checksum=0x7035` у A/B |
+| 9 | Live smoke 3×10 | `max-brh-cicd/scripts/live-smoke-3.sh 10` | выполнено: PASS, `пиров=2`, `barrier_timeouts=0`, CRC `0x34D5` у трёх клиентов |
+| 10 | Windows игровая сборка | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` | выполнено: `bin/release/max_app-1.1.0-windows-x86_64-ui/` (2026-11-19, X-FER + хранилища): `max-brh.exe` 6 612 480 Б, sha256 `3a7994d531a2d469f2de6b89e26a89ce5e3250b3ae0eae81144bd4fa8e96bce9`; zip sha256 `d4cc8be4ddb2b4b1cef6cf0744ef8630aeae87742b8498f6a23c2f74858abcb3`; PE Subsystem=2 (GUI), MSVC + vcpkg SDL3 3.4.20, sound; `--help` OK |
+| 11 | Windows консольная сборка клиента | `powershell -File max-brh-cicd\scripts\build-windows-console.ps1` (нативный MSVC) | выполнено: `bin/release/max_app-1.1.0-windows-x86_64/` (2026-11-21, пересобран нативно): `max-brh.exe` 4 433 408 Б, sha256 `2a36cd6e13e5e590778a98bea77015722ea9e62d7d6b6e6aa27112dc10a9807d`; zip 1 807 530 Б, sha256 `f5388c39c52c6d2a069f4bfdc6087cba8efa323e3e98d96207305542069f06f1`; PE Subsystem=3 (console); `--help` и `--demo SAVE1.CAM --turns 1` (`state_digest=0x733D`) — нативно, без wine |
+| 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | частично выполнено: пересобраны Windows-сборки (UI и headless); Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
+| 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | выполнено: Windows-сборки (UI и headless) пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
+| 14 | Документация | `README.md`, `max-brh/README.md`, `max-brh-docs/development/build.md`, `max-brh-docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | выполнено: версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA: 193 выполнено / 16 отложено |
+| 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | проверено: пусто (C++-порт и оригинал не менялись) |
+| 16 | Тег | `git tag -l 'v1.1.0'` | проверено: пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
 
 **Остаточные ограничения 1.1.0** (не блокируют релиз, отражены в QA как
-`⏭ not planned`): спектатор (нужна серверная поддержка `TEAM_TYPE_SPECTATOR`),
-полная mixed-сессия Rust+C++ (headless `src/` умеет только `--server`),
-живой alt-tab/авто-масштаб (WINDOW-проверки), сквозной
+`not planned` со статусом «отложено»): спектатор (нужна серверная поддержка `TEAM_TYPE_SPECTATOR`),
+полная mixed-сессия Rust+C++ (headless `src/` поддерживает только `--server`),
+реальный alt-tab/авто-масштаб (WINDOW-проверки), сквозной
 бой/поражение в QA (нет команды урона), MXLS-загрузка (полный путь — V70),
 пакет 09 (золото команды) в сети — апгрейды идут пакетом 10.
 
@@ -178,7 +178,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c '
   `max_app` с `frame_scale`/`SdlWindow::new_scaled`/`window_to_frame`);
   лог `build/cargo-docker-ef-sdl-final.log` (тогда проверялось
   `--features sdl-from-source` — сейчас это default).
-- [ ] 2.4 Horizon: `cargo test --workspace` — зелёный (известные падения
+- [ ] 2.4 Horizon: `cargo test --workspace` — зелёный (известные сбои
       `horizon_event_system` должны быть исправлены или явно исключены — M5.1).
   Свидетельство: ______________________
 - [ ] 2.5 `bash ci.sh` — `CI OK` за разумное время.
@@ -191,7 +191,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c '
       повторный прогон `visual-screens.qa` даёт 0 отличающихся пикселей;
       `cargo test -p max_app --test qa_driver` — 11 тестов, 0 failed (P4:
       команда `mem`, структура `soak-100.qa`, прогон `edge-cases.qa`).
-- [x] 2.7 Golden-эталоны проверены глазами (каждый `diff-*.png` после
+- [x] 2.7 Golden-эталоны проверены визуально (каждый `diff-*.png` после
       осознанного изменения рендера объяснён и закоммичен вместе с ним).
   Свидетельство: 2026-11-15 — обновлены `players.png` (эмблемы кланов теперь
   с якорем 41,40 — сверено с кадром C++-порта), `game.png` (ИИ выбирает точку
@@ -209,7 +209,7 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c '
 - [x] 2.9 **Soak и производительность P4** (ночной/релизный гейт):
       `ci.sh` стадия 4/4 — `soak-100.qa` (100 ходов человек+ИИ,
       `MAX_TICK_PROFILE=1`) и `soak_headless --turns 120` (ИИ×ИИ); стадия 3/4
-      дополнительно гоняет `edge-cases.qa` (спам кликов/юникод/повторный
+      дополнительно запускает `edge-cases.qa` (многократные клики/юникод/повторный
       старт). Критерии: партия доходит до конца, память без линейного роста,
       кадр укладывается в бюджет 60 Гц (16.67 мс).
   Свидетельство: 2026-11-16, `rust:1.94.0-bookworm`, debug-сборка CI:
@@ -230,9 +230,9 @@ docker run --rm -v "$ROOT:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c '
   * Логи: `max-brh/qa-out/soak-100/log.txt`,
     `max-brh/qa-out/soak-headless/soak.txt`,
     `max-brh/qa-out/edge-cases/log.txt`.
-  Повторный прожиг перед тегом (после последних изменений кода): __________.
+  Повторный прогон перед тегом (после последних изменений кода): __________.
 
-## 3. Живой smoke: 2 клиента × 10 ходов
+## 3. Smoke на реальном стенде: 2 клиента × 10 ходов
 
 Скрипт: `max-brh-cicd/scripts/live-smoke.sh` (Docker: Horizon + C++-headless + два
 Rust-клиента в общем network namespace).
@@ -284,10 +284,10 @@ bash max-brh-cicd/scripts/live-smoke-mixed.sh 5
 - [x] `live-smoke-mixed.sh`: Rust×2 ×10, CRC `0x7035`, C++-сервер без
       `Desync check failed`. _(2026-11-16: PARTIAL PASS)_
 - [ ] Полная mixed-сессия Rust-клиент + C++-клиент: **блокер** — headless
-      `src/` имеет только `--server`, GUI-клиенту нужен X11 и ручной ввод
+      `src/` поддерживает только `--server`, GUI-клиенту нужен X11 и ручной ввод
       (`src/main.cpp`). См. `max-brh-docs/architecture/protocol.md` §9/§12.
 - [x] Реконнект-состояние: in-process 3-клиентный мок-тест (B offline → resume-54
-      → CRC/turn сходятся); живой pause/proxy smoke не автоматизирован.
+      → CRC/turn сходятся); реальный pause/proxy smoke не автоматизирован.
       Пределы — `protocol.md` §9.2.
 
 ## 4. Человеческий сценарий M4 (SDL, мышь)
@@ -303,12 +303,12 @@ cargo run -p max_app -- --turn-wait 60
 cargo run -p max_app --features sound -- --turn-wait 60
 ```
 
-`--turn-wait 60` обязателен для игры руками: без него сетевой цикл закрывает ход
+`--turn-wait 60` обязателен для интерактивной игры: без него сетевой цикл закрывает ход
 сразу после тика (~16 мс) и клики не успевают попасть в партию — это режим для
 headless/live-smoke. **Обходные флаги не нужны (M-NET-доводки):** если каталог
 данных headless-сервера без `PATCHES.RES` (как в `max-brh-server/docker-compose.yml`), клиент
 сам после `TP 03 GameData` переподключается с хэшем только `MAX.RES`; пока
-сессия греется 10–15 с, `SessionHandle::start` повторяется с backoff
+сессия инициализируется 10–15 с, `SessionHandle::start` повторяется с backoff
 (статус `Session warming up — attempt N/M`), поэтому `Create game` сразу ведёт
 в партию. `--handshake-patches <файл>` остался явным override'ом (один вариант
 хэша, без fallback) — нужен только для нестандартного стенда. Подробности —
@@ -351,13 +351,13 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
 - [ ] Чат: Enter/T, ввод, Enter — сообщение уходит (пакет 18) и видно в
       журнале; Esc — отмена.
 - [ ] Партия против AI идёт до экрана победы/поражения; HUD показывает итог,
-      игра не падает.
+      игра не завершается аварийно.
 - [ ] Меню → выход из сессии → главное меню; повторный вход в игру работает.
 - [ ] Окно закрывается/Esc — корректное завершение процесса (exit 0).
 
 Свидетельство (скриншоты/лог, дата, ОС): ______________________
 
-### 4.1. Hot-seat (M-HS) руками, без сети
+### 4.1. Hot-seat (M-HS) в интерактивном режиме, без сети
 
 Локальная партия, сервер не нужен (`cargo run -p max_app` — GUI по умолчанию,
 `--ui` — alias).
@@ -381,7 +381,7 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
       окно показывается следующему человеку.
 - [ ] Таймер `Turn Limit` действует на каждую человеческую команду отдельно и
       закрывает ход сам.
-- [ ] Партия доходит до экрана победы/поражения без падений.
+- [ ] Партия доходит до экрана победы/поражения без аварийных завершений.
 
 Свидетельство: `build/hs-players.png`, `build/hs-turn.png`, `build/hs-game.png`,
 `build/hs-ai.png`; дата/ОС: ______________________
@@ -390,8 +390,8 @@ headless/live-smoke. **Обходные флаги не нужны (M-NET-дов
 
 `release.sh` собирает в Docker **интерактивную** сборку с
 `--no-default-features --features sdl-from-source,sound` (решение
-зафиксировано здесь: релизный Linux-клиент — с окном и звуком; явные features
-плюс `--no-default-features`, чтобы default не подмешивался; консольная сборка клиента
+зафиксировано здесь: релизный Linux-клиент — с окном и звуком; явно указанные features
+плюс `--no-default-features`, чтобы default-набор не добавлялся; консольная сборка клиента
 для серверов — `bash release.sh --features ''`, то есть
 `cargo build --release -p max_app --no-default-features`). Скрипт кладёт всё в
 `bin/release/max_app-<version>-linux-x86_64/` и `.tar.gz`.
@@ -414,13 +414,13 @@ bash release.sh --tag         # сборка + аннотированный те
       Linux-хосте (или в `ubuntu:24.04` c `libasound2`) и печатает справку:
       сырой `max-brh` требует `LD_LIBRARY_PATH=…/lib`, это делает `run.sh`.
 - [ ] `release/…/run.sh --demo max-original/SAVE1.CAM --turns 1` печатает
-      digest (`ticks=1 … units=312`), exit 0 — headless-путь живого бинаря.
-- [ ] `release/…/run.sh` (без флагов) открывает окно и играет клики (на хосте с
+      digest (`ticks=1 … units=312`), exit 0 — headless-путь реального бинаря.
+- [ ] `release/…/run.sh` (без флагов) открывает окно и обрабатывает клики (на хосте с
       дисплеем и звуком); без дисплея — понятная ошибка SDL, не паника.
       `run.sh --ui` — совместимый alias.
 - [ ] `sha256sum -c release/…/SHA256SUMS` — все файлы `OK`.
 - [ ] `tar -tzf bin/release/max_app-1.0.0-linux-x86_64.tar.gz` содержит тот же
-      набор файлов (без вложенного мусора/`target`).
+      набор файлов (без посторонних файлов/`target`).
 
 Свидетельство (размер, sha256, дата): ______________________
 
@@ -509,9 +509,9 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
       `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS`; рядом
       `.zip` + `.zip.sha256`; хеши в `SHA256SUMS` совпадают с файлами.
       _(2026-11-21; sha256 exe зависит от PE-таймстампа линковки, а zip — от
-      mtime файлов: при пересборке они меняются, сверяй `SHA256SUMS` и
+      mtime файлов: при пересборке они меняются; сверяются `SHA256SUMS` и
       `.zip.sha256` в самом архиве)_
-- [ ] `--connect HOST:8082 --join GAME_ID` с этим exe против живого Horizon
+- [ ] `--connect HOST:8082 --join GAME_ID` с этим exe против работающего Horizon
       (headless-цикл gRPC+ENet на Windows-бинаре).
 - [ ] `--new-game` этим exe (кадр в PPM) — визуальная проверка на Windows-хосте.
 
@@ -522,7 +522,7 @@ bin/release/max_app-<ver>-windows-x86_64.zip.sha256  sha256 архива
 > в `CHANGELOG.md` и `max-brh-docs/analysis/visual-1to1-status.md`; скрипт
 > `max-brh-cicd/scripts/build-windows.sh` удалён, артефакты пересобраны нативно.
 
-### 6.1. игровая сборка: окно SDL3 и звук (Windows-хост)
+### 6.1. Игровая сборка: окно SDL3 и звук (Windows-хост)
 
 Скрипт: `max-brh-cicd/scripts/build-windows-ui.ps1` (PowerShell 5.1+, без прав
 администратора). Он сам находит VS через `vswhere`, vcpkg с `sdl3:x64-windows`,
@@ -575,7 +575,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 # (workload "Desktop development with C++") — требует прав администратора
 ```
 
-Два подводных камня, из-за которых «просто cargo build» в cmd не работает
+Две особенности, из-за которых команда `cargo build` в cmd не работает
 (учтены в скрипте):
 
 - `set VAR=value && …` в cmd записывает в значение **пробел** перед `&&`
@@ -609,7 +609,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `build/frame-ef-main-windows-2x.png`,
       `build/frame-ef-create-windows-2x.png`; скрипт `build/capture-ef.ps1`.
       _(2026-11-15)_
-- [x] `--ui` открывает окно: процесс живёт, `MainWindowTitle` =
+- [x] `--ui` открывает окно: процесс остаётся активным, `MainWindowTitle` =
       `M.A.X. — Rust client (M4.2 HUD)`, в логе `UI: окно 512x384; меню — …`.
       Звук — `backend=rodio/cpal` (WASAPI, отдельных DLL не нужно), 272 файла
       `*.SPW`, 607 ссылок. _(2026-11-15)_
@@ -670,8 +670,8 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `barrier_timeouts=0`, десинков (`CRC 45 … десинк`) — 0.
       Отмечено: `--turn-wait` добавлен именно по итогам этого прогона — без него
       ход закрывался за один кадр (~16 мс). _(2026-11-15)_
-- [x] **M-NET-доводки: оба обхода убраны из клиента** _(2026-11-15)_:
-      (1) `Create game` больше не падает с `connect timed out after 10s`:
+- [x] **M-NET-доводки: оба обходных пути удалены из клиента** _(2026-11-15)_:
+      (1) `Create game` больше не завершается ошибкой `connect timed out after 10s`:
       первый `SessionHandle::start` повторяется с backoff 1,2,3,5,8,11 с
       (окно 30 с, статус `Session warming up — attempt N/M`), `CreateForm`
       сразу ведёт в `InSession`; (2) без `--handshake-patches` клиент сам
@@ -683,10 +683,10 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `max_app/README.md` обновлён.
 - [x] Партия в окне без обходных флагов: `Create game` → сессия сразу
       (ретрай/прогрев в клиенте) и дефолтный `data_hash`, совпадающий с
-      сервером. Свидетельство: UI-переход Create→InSession (тест), живой smoke
+      сервером. Свидетельство: UI-переход Create→InSession (тест), реальный smoke
       2×10 без `--handshake-patches` (§3), прежний прогон окна 2 клиентов
       (6 ходов). _(2026-11-15)_
-- [ ] Полный сценарий §4 (меню → create → бой/чат/End Turn до победы) на живом
+- [ ] Полный сценарий §4 (меню → create → бой/чат/End Turn до победы) на работающем
       сервере, без ручных флагов совместимости.
 
 ## 7. Документация и лицензии
@@ -700,7 +700,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       совпадают с `release.sh`/`ci.sh`/`max-brh-cicd/scripts/build-windows-console.ps1`.
 - [ ] `max-brh-cicd/scripts/README.md` описывает релизные скрипты
       (`build-windows-console.ps1` — нативная Windows-сборка на MSVC,
-      `build-windows-ui.ps1`, `live-smoke.sh`) и обойдённые блокеры
+      `build-windows-ui.ps1`, `live-smoke.sh`) и преодолённые блокеры
       (ENet-платформа в `build.rs`, TLS-фича `tonic`).
 - [ ] `LICENSE` (MIT) присутствует в корне и в архиве релиза; в `README.txt`
       архива — копирайт Interplay на данные игры.
@@ -734,7 +734,7 @@ git push origin v1.0.0              # публикация тега (по реш
 - [ ] `bin/release/max_app-1.0.0-windows-x86_64-ui.zip` + `.zip.sha256` сохранены
       (продукт `max-brh-cicd/scripts/build-windows-ui.ps1`; в архиве `max-brh.exe` +
       `SDL3.dll`).
-- [ ] Логи гейтов: `max-brh/target/cargo-test.log` (если писали),
+- [ ] Логи гейтов: `max-brh/target/cargo-test.log` (если записывался),
       `build/smoke-logs/*.log`, `build/smoke-logs/windows-msvc-console-smoke.log`,
       скриншоты M4 — приложены к релизной записи.
 - [ ] Артефакты **не** закоммичены в git (`release/` в `.gitignore`).
@@ -779,7 +779,7 @@ bash release.sh                             # §5, артефакты
 | Windows консольная сборка клиента (mingw-кросс — история) | 2026-11-15 | `bash max-brh-cicd/scripts/build-windows.sh` (Docker, `rust:1.94.0-bookworm`, mingw-w64 + wine 8.0; скрипт удалён 2026-11-21) | PE32+ x86-64, 8 908 438 Б, sha256 `15cd9fa2…`; `--help`/`--demo` под wine 8.0 — exit 0; zip 3 255 566 Б + `.zip.sha256` | `bin/release/max_app-1.0.0-windows-x86_64.zip`, `build/smoke-logs/windows-wine-smoke.log` |
 | Windows игровая сборка (SDL3 + звук, нативная MSVC) | 2026-11-15 | `powershell -File max-brh-cicd\scripts\build-windows-ui.ps1` (MSVC 14.51 + Windows SDK 10.0.26100, SDL3 3.4.20 из vcpkg) | `max-brh.exe` 5 423 616 Б, sha256 `279e472d…`; окно открывается, `--scale 1/2` = 640×480/1280×960, клик 2× работает, звук `backend=rodio/cpal`; zip 3 065 885 Б, sha256 `d7415687…` + `.zip.sha256`; `--new-game --width 640 --height 480` отработал | `bin/release/max_app-1.0.0-windows-x86_64-ui.zip`, `build/frame-ef-create-windows-2x.png` |
 | Визуал: меню E и масштаб F | 2026-11-15 | `cargo run -p max_app --example visual_ef -- ../build/frame-ef`; `max-brh.exe --ui --scale 1/2` + `build/capture-ef.ps1`; `cargo test -p max_app -p max_render -p max_assets` | главное меню `MAINPIC` + `BLANK_*`, форма `PLANETSE` + `MNUBTN4/5/6` + сетка 8×3, список `MULTGAME` + `BTNHIDE`; `FrameScale` 2× — каждый пиксель блоком 2×2, клик в окне 1280×960 попадает в ту же клетку карты (56,55); декодер `SNOW_PIC` исправлен (планета 0..5 больше не чёрная); +17 тестов (576 всего) | `build/frame-ef-main.png`, `build/frame-ef-create.png`, `build/frame-ef-join.png`, `build/frame-ef-main-2x.png`, `build/frame-ef-*-windows*.png` |
-| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out frame.ppm`; живая сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
+| Визуал: окно 1:1 (FRAMEPIC) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out frame.ppm`; реальная сессия `--ui` против Horizon+headless | FRAMEPIC (640×480, своя палитра, RLE с чанками через строку) + раскладка C++-порта: карта (180,18) 448×448, миникарта (15,356), кнопки End Turn/Files/Prefs; в сессии процедурный HUD не рисуется | `build/frame-chrome2.png`, `build/ui-chrome-session-final.png`, `build/ui-framepic.png` |
 | Визуал: панели и шрифт GNW (A/B) | 2026-11-15 | `max-brh.exe --new-game --width 640 --height 480 --out build/frame-windows-artifact.ppm`; `cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm`; `tools/font_vectors/run.sh` | верхние кнопки/счётчики, портрет (спрайт ×2), 4 строки статистики, 9 переключателей, зум, координаты/описание, миникарта из `.WRL`; `FONT1/2/5.FON` совпали с FreeType-путём C++-порта побайтово для ASCII; Windows- и Linux-кадры идентичны | `build/frame-newgame-panels.png`, `build/frame-panels.png`, `build/frame-panels-left.png`, `build/frame-windows-artifact.png`, `max-brh/tools/font_vectors/render.txt` |
 | Визуал: тайлы и здания | 2026-11-15 | `cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL out`; `max-brh.exe --new-game --out frame.ppm` | 337 тайлов/12 544 клетки SNOW_1 рендерятся палитрой `.WRL` (снимки `build/wrl-snow-*.png`), спрайтов грузится 43 (здания и alien-обломки видны вместо маркеров) | `build/wrl-snow-map.png`, `build/frame-original-terrain.png` |
 | Визуал: миникарта/иконки/курсоры/планеты (C/D) | 2026-11-15 | `cargo run -p max_app --example visual_cd -- ../build/frame-cd`; `cargo test -p max_assets -p max_app --lib` | 30/30 курсоров декодированы (размеры/hotspot/кадры сверены с C++), 99 маркеров ресурсов, миникарта с FOV-маской/рамкой камеры/точками юнитов/2x/TNT, сетка 24 планет `SNOW_PIC + world/6` с числовым fallback; +20 тестов (576 всего) | `build/frame-cd-game.png`, `build/frame-cd-game-2x.png`, `build/frame-cd-game-minimap-4x.png`, `build/frame-cd-planets.png`, `build/frame-cd-cursors.png` |

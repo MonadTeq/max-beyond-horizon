@@ -4,9 +4,9 @@
 
 Канонический глоссарий (включая название проекта и префикс `max-brh`) — в
 [`max-brh-docs/glossary.md`](../glossary.md); здесь — краткая выжимка.
-Документация держит один набор терминов; `headless`, `UI` и `Console` не переводятся.
+Документация использует единый набор терминов; `headless`, `UI` и `Console` не переводятся.
 
-| Термин | Что значит |
+| Термин | Значение |
 |---|---|
 | **консольная сборка клиента** | артефакт `max_app-<ver>-windows-x86_64` (+ `.zip`, `.zip.sha256`): клиент без окна и звука (`--no-default-features`, без фич `sdl*`/`sound`), PE **Subsystem=3** (Console); режимы `--demo`, `--new-game`, `--connect` |
 | **игровая сборка** | артефакт `max_app-<ver>-windows-x86_64-ui` (+ `.zip`, `.zip.sha256`): клиент с окном SDL3 и звуком (фичи `sdl-vcpkg,sound`), PE **Subsystem=2** (Windows GUI) |
@@ -19,7 +19,7 @@
 ## Необходимые инструменты
 
 ### Разработка (хост, Windows)
-| Инструмент | Версия | Зачем |
+| Инструмент | Версия | Назначение |
 |---|---|---|
 | Rust (rustup) | 1.94.0 | сборка max-brh |
 | MSVC (VS Build Tools 2022+/VS 2026) + Windows SDK + CMake | — | Windows-сборка SDL3 (default `sdl-from-source`: `cargo run -p max_app` собирает SDL3 из исходников через CMake) |
@@ -64,7 +64,7 @@ cargo build --release -p max_app --features sdl-vcpkg,sound --no-default-feature
 cargo build --release -p max_app --no-default-features       # headless
 ```
 
-### Windows игровая сборка (готовый путь)
+### Windows игровая сборка (штатный сценарий)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
 # артефакт: bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
@@ -78,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-cons
 Нативная MSVC-сборка (`x86_64-pc-windows-msvc`), без Docker и mingw. Скрипт
 поднимает `vcvars64`, собирает
 `cargo build --release --locked -p max_app --no-default-features`, проверяет
-PE (Subsystem=3, Console) и прогоняет `--help`/`--demo SAVE1.CAM --turns 1`
+PE (Subsystem=3, Console) и выполняет `--help`/`--demo SAVE1.CAM --turns 1`
 нативно, затем упаковывает каталог + `.zip` + `.zip.sha256`.
 
 ### Linux-сборка + архив
@@ -100,7 +100,7 @@ docker run --rm -v "D:/dev/max-port-debug:/src" -w /src max-port-build:latest \
 # бинарь: build/linux-server-template/max-port
 ```
 
-## Запуск (как играть)
+## Запуск (порядок игры)
 
 ### Одиночная игра / hot-seat (окно)
 ```sh
@@ -113,7 +113,7 @@ cargo run -p max_app --features sound
 `cargo run -p max_app` **без флагов** открывает окно игры: меню → New Game /
 Multiplayer Game → Hot Seat. `--ui` — совместимый alias. Чтобы окно собралось,
 нужен CMake и C-компилятор (на Windows — MSVC/Windows SDK из состава VS
-«Desktop development with C++»; проще запускать из Developer PowerShell, где
+«Desktop development with C++»; предпочтительно запускать из Developer PowerShell, где
 `cl.exe`/`cmake` уже в PATH, либо добавить cmake в PATH):
 
 ```powershell
@@ -157,7 +157,7 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 - каталог — `AppConfig::save_dir` (`--save-dir`/`with_save_dir`), по умолчанию
   каталог `MAX.RES` (`max-original/`); QA пишет сейвы в `qa-out/...`;
 - в сетевой сессии окно не открывается: оригинал при сохранении рассылает
-  пакет 16, которого в нашем протоколе нет (загрузка в сети запрещена и в
+  пакет 16, которого в протоколе проекта нет (загрузка в сети запрещена и в
   оригинале).
 
 ### Сетевая игра
@@ -193,7 +193,7 @@ stack`). Release-сборки и Linux работали и без этого.
 
 ## Фичи `max_app`
 
-| Фича | Что включает | В default |
+| Фича | Что включает | По умолчанию |
 |---|---|---|
 | `sdl-from-source` | окно SDL3; SDL3 3.4.20 собирается из vendored `sdl3-src` через CMake (нужны C-компилятор + cmake) | **да** |
 | `sdl` | окно с системным SDL3 (`libsdl3-dev` / vcpkg) — база для остальных sdl-фич | нет (включается ими) |

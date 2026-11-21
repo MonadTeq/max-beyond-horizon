@@ -1,9 +1,9 @@
 # Игровые механики M.A.X. (выверено по C++-порту)
 
-Сводка правил, которые мы портировали и проверяли по оракулу `max-cpp-port`
-(источник — построчный разбор функций, ссылки ниже). Этот файл — «контракт»:
-перед любым изменением экономики/производства/боя сверяйтесь с ним, чтобы
-починкой одного не сломать другое.
+Сводка правил, перенесённых и проверенных по оракулу `max-cpp-port`
+(источник — построчный разбор функций, ссылки ниже). Файл является «контрактом»:
+перед любым изменением экономики/производства/боя требуется сверка с ним, чтобы
+исправление одного механизма не нарушило другой.
 
 Обозначения: `raw` — материалы, `fuel` — топливо, `gold` — золото, `power` —
 энергия, `life/workers` — рабочие.
@@ -19,8 +19,8 @@
   `life -= Cargo_GetLifeConsumptionRate(unit_type)`,
   `gold -= Cargo_GetGoldConsumptionRate(unit_type)`.
 - `Cargo_GetRawConsumptionRate(unit_type, multiplier)`: multiplier 1→1, 2→4, 4→12.
-- `Cargo_GetGoldConsumptionRate`: `COMMTWR = 5`, всё остальное **0** — т.е.
-  производство заводов золото **не** тратит (только `COMMTWR`).
+- `Cargo_GetGoldConsumptionRate`: `COMMTWR = 5`, остальные типы **0** — т.е.
+  производство заводов золото **не** расходует (только `COMMTWR`).
 - `Cargo_GetFuelConsumptionRate`: `POWERSTN = 6`, `POWGEN = 2`, остальные 0.
 - `Cargo_GetPowerConsumptionRate`: заводы/SHIPYARD/LANDPLT/AIRPLT/LIGHTPLT/
   TRAINHAL/GREENHSE/RESEARCH/COMMTWR/MININGST = 1; `POWERSTN` — производитель
@@ -41,26 +41,26 @@
   по типу груза). Каждое хранилище имеет свой объём: `ADUMP`(raw)/`FDUMP`(fuel)/
   `GOLDSM`(gold) = 50; `MININGST` = 25; `CONSTRCT` = 60; `SPLYTRCK`/`FUELTRCK`/
   `GOLDTRCK` = 50.
-- `Complex::Transfer(delta)` меняет кэш и раздаёт разницу по складам в порядке
+- `Complex::Transfer(delta)` изменяет кэш и распределяет разницу по складам в порядке
   `UnitsManager_StationaryUnits` (`TransferCargo`).
 - Каждый ход `Access_UpdateResourcesTotal` пересчитывает кэш как
   `Cargo_GetNetProduction + Cargo_GetInventory`, а `UnitInfo::UpdateProduction`
-  раздаёт его по складам. x-fer берёт из **общего котла** комплекса.
+  раздаёт его по складам. Перенос (x-fer) выполняется из **общего запаса** комплекса.
 
 ## 3. Производство
 
 - **Мобильный строитель** (конструктор/инженер, `MOBILE_LAND_UNIT`): платит
   `Cargo_GetRawConsumptionRate(unit_type, build_rate)` из **своего `storage`**
   (`UnitInfo::UpdateProduction`, `unitinfo.cpp:2904`); при нехватке — пауза,
-  `build_time` не двигается, в минус не уходит.
+  `build_time` не изменяется, отрицательное значение не допускается.
 - **Завод** (SHIPYARD/LIGHTPLT/LANDPLT/TRAINHAL/AIRPLT): при `ORDER_BUILD &&
   state != UNIT_READY` — `Cargo_ApplyUnitConsumption(unit_type, max_build_rate)`
-  из **общего котла комплекса** (raw + power + life; `fuel` — только через
+  из **общего запаса комплекса** (raw + power + life; `fuel` — только через
   производителей энергии, `gold` не тратит). **Старт** требует, чтобы первый ход
   был оплачен (raw+power+life, п.5): иначе заказ не отдаётся
   (`NotEnoughPower/Workers/Materials`), очередь не теряется. Нехватка в ходе
   стройки → пауза (`PausedNoMaterials`/`PausedNoPower`/…), `build_time` не
-  двигается, очередь сохраняется.
+  изменяется, очередь сохраняется.
 - Завершение: `build_time <= build_rate` → `SpawnNewUnit`; ставка режется по
   складу (`BuildMenu_GetMaxPossibleBuildRate`).
 - **Построенный юнит** (завод): встаёт на клетку завода, `ORDER_IDLE/STORE`,
@@ -71,7 +71,7 @@
   `LRGSLAB` у зданий, иначе малые; вода — без конусов, угол 1); строитель
   въезжает в центр (`PositionInTape`); при завершении — `UNIT_READY`, маркеры
   `BLDMRK1..5` по кольцу; **здание раскрывается после ухода строителя**
-  (`BuildingReady`), плита остаётся. **Увести строителя во время стройки
+  (`BuildingReady`), плита остаётся. **Вывести строителя во время стройки
   нельзя** (`CURSOR_UNIT_NO_GO`) — отмена только явным `stop` (`CancelBuilding`).
 
 ## 4. Шахта и добыча
@@ -90,7 +90,7 @@
   (`cargo.cpp:70-130`) + инвентарь (`Access_UpdateResourcesTotal`,
   `access.cpp:912-934`).
 - **Запуск производства** (`UnitInfo::StartBuilding`, `unitinfo.cpp:2751-2794`)
-  сразу списывает из котла `complex->material`, `complex->power`,
+  сразу списывает из общего запаса `complex->material`, `complex->power`,
   `complex->workers` и зовёт `GameManager_OptimizeProduction`
   (`game_manager.cpp:2555-2584`). Если дефицит не закрывается (энергия, топливо,
   рабочие, материалы), `ValidateIndustry` (`production_manager.cpp:677-711`)
@@ -105,7 +105,7 @@
   (`OptimizePowerProduction`/`OptimizePowerConsumption`, `production_manager.cpp:
   481-562`, `CheckPowerNeed` `:642-664`); без топлива (`POWGEN` 2, `POWERSTN` 6
   за ход) производитель не работает. Выключенные из-за дефицита потребители C++
-  сам обратно **не** включает — это делает игрок (`power on`) или ИИ.
+  повторно **не** включает автоматически — это выполняет игрок (`power on`) или ИИ.
 - `HABITAT` (`life = -3`) при нехватке рабочих включается
   `UpdateUnitLifeConsumption` (`production_manager.cpp:366-380`); `TRAINHAL`/
   `GREENHSE`/`RESEARCH` тратят по 1 рабочему.
@@ -130,7 +130,7 @@
 
 ## 7. Движение
 
-- Угол по ходу: `Paths_UpdateAngle` (поворот 45° за тик, движение только «лицом»),
+- Угол по ходу: `Paths_UpdateAngle` (поворот 45° за тик, движение только в направлении корпуса),
   башня поворачивается вместе с корпусом.
 
 ---
