@@ -17,7 +17,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   `KBUY0.SPW`), `max_app::audio` (`AudioPlayer`, noop + rodio за feature
   `sound`), клики меню; базовые сборки не тянут ALSA/CPAL.
 - [~] **M6.4 — артефакты готовы**: версия 1.0.0, `CHANGELOG.md`,
-  `docs/release-checklist.md`, `release.sh` (Linux-бинарь в Docker, архив,
+  `max-brh-docs/release-checklist.md`, `release.sh` (Linux-бинарь в Docker, архив,
   подготовка тега `v1.0.0`). Осталось выполнить гейты чек-листа: тесты max-brh
   + Horizon, live-smoke 2×10, человеческий сценарий M4, Windows-бинарь, тег.
 - [x] **M6.1 — реконнект** (P5): ENet+`TP 00`, продолжение lockstep и resume-54
@@ -79,7 +79,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 - **6.2 Звук — выполнено (M6.2)**: WAV-декодер `max_assets::wav` (PCM16,
   моно/стерео; 272 реальных `*.SPW`), ASCIIZ-ссылки `MAX.RES`, `AudioPlayer` с
   noop-backend'ом и rodio за feature `sound`, клики меню в `--ui`; полный
-  вывод — `docs/release-checklist.md` §2.2. FLC-ролики — по-прежнему не
+  вывод — `max-brh-docs/release-checklist.md` §2.2. FLC-ролики — по-прежнему не
   блокер.
 - **6.3 CI — готово (M6.3)**: `ci.sh` (локальный CI в Docker: `cargo
   check`+`cargo test` max-brh + `cargo check/test --features sound`,
@@ -88,7 +88,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
   использование описано в `README.md`, `max-horizon-server/README.Docker.md`,
   `max-brh/README.md`.
 - **6.4 Релиз — артефакты готовы (M6.4)**: версия 1.0.0, `CHANGELOG.md`,
-  `docs/release-checklist.md`, `release.sh` (сборка Linux-бинаря в Docker,
+  `max-brh-docs/release-checklist.md`, `release.sh` (сборка Linux-бинаря в Docker,
   `release/` с README/LICENSE/SHA256SUMS/архивом, тег `v1.0.0` по `--tag`).
   Бинарники Windows x64 + Linux, README и git tag выпускаются по чек-листу.
 
@@ -97,7 +97,7 @@ Horizon (gRPC), создаёт/входит в игру, играет **полн
 1. Все тесты зелёные: workspace `max-brh` + `max-horizon-server` (с учётом 5.1).
 2. Живой smoke: 2 клиента × 10+ ходов, CRC сходится (скрипт).
 3. Человеческий сценарий: партия против AI от меню до экрана победы.
-4. Документация: README, deploy, smoke, чек-лист релиза (`docs/release-checklist.md`).
+4. Документация: README, deploy, smoke, чек-лист релиза (`max-brh-docs/release-checklist.md`).
 
 ## Порядок исполнения
 

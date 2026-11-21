@@ -137,5 +137,5 @@
 
 Ссылки: все функции — в `max-cpp-port/src/{cargo,complex,production_manager,
 units_manager,unitinfo,access,game_manager,airpath,paths}.cpp`; детали порта и
-тестов — `docs/analysis/visual-1to1-status.md` (§39–§41), `docs/architecture/
+тестов — `max-brh-docs/analysis/visual-1to1-status.md` (§39–§41), `max-brh-docs/architecture/
 state-model.md`.

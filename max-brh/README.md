@@ -43,12 +43,12 @@
   (`Build`, `sentry`, `stop`, `enter`, `repair`, `reload`, питание, `buy upg`,
   `resrch`, `x-fer`, мины, `Done`…). Пункты, механика которых не портирована
   (`attack`, `load`, `activate`, …), видны, но отключены —
-  см. `../docs/analysis/visual-1to1-status.md` §18.
+  см. `../max-brh-docs/analysis/visual-1to1-status.md` §18.
 - **GUI — режим по умолчанию**: `default = ["sdl-from-source"]` в `max_app` —
   `cargo run -p max_app` открывает игру (SDL3 3.4.20 собирается из исходников
   через CMake), флаги не нужны; headless-сборки идут с `--no-default-features`.
 - Релизный чек-лист (гейты, live-smoke 2×10, человеческий сценарий M4,
-  Linux/Windows-бинарники, тег) — `../docs/development/release-checklist.md`; история —
+  Linux/Windows-бинарники, тег) — `../max-brh-docs/development/release-checklist.md`; история —
   `../CHANGELOG.md`.
 - Полный детальный план: `../PLAN.md` (v4.0, фазы R2–R4 и milestones M3–M6).
 
@@ -96,7 +96,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-бинарь с
   `--no-default-features --features sdl-from-source,sound`, упаковывает
   `release/` и готовит тег `v1.1.0`; полный порядок —
-  `../docs/development/release-checklist.md`.
+  `../max-brh-docs/development/release-checklist.md`.
 - Windows x64, headless (M6.4): `bash ../build/scripts/build-windows.sh` —
   кросс-компиляция `x86_64-pc-windows-gnu` (mingw-w64) в Docker, без
   Windows-тулчейна на хосте: `cargo build --release --target
@@ -113,13 +113,13 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   (`max-brh.exe --help > help.txt`). Проверено на MSVC 14.51 + SDL3 3.4.20:
   окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук — `rodio/cpal`
   (WASAPI, без отдельных DLL). Требования к тулчейну —
-  `../docs/development/release-checklist.md` §6.1, разбор грабель —
+  `../max-brh-docs/development/release-checklist.md` §6.1, разбор грабель —
   `../build/scripts/README.md`.
 - Horizon + C++-headless в Docker (M5.3): `docker compose up --build` из корня;
   подробности — `../max-horizon-server/README.Docker.md`.
 - Реконнект (M6.1-заготовка): `--reconnect-attempts`/`--reconnect-timeout`,
   восстановление только транспорта ENet+`TP 00`; полное восстановление партии —
-  M6.1-финал, см. `crates/max_app/README.md` и `docs/architecture/protocol.md` §9.
+  M6.1-финал, см. `crates/max_app/README.md` и `max-brh-docs/architecture/protocol.md` §9.
 
 ## Визуал 1:1 с оригиналом (в работе)
 
@@ -222,7 +222,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 `ORDER_TRANSFER` (08/P3), питание, `buy upg`, `resrch`, мины,
 `Done`); то, что не портировано (`attack`, `load`, `activate`,
 самоуничтожение, `Upg. All`), показано серым с причиной. Подробности
-и таблица «реализовано/отключено» — `../docs/analysis/visual-1to1-status.md` §18
+и таблица «реализовано/отключено» — `../max-brh-docs/analysis/visual-1to1-status.md` §18
 и §29 (X-FER), §30 (хранилища).
 
 Экраны главного меню: `Introduction` — **MVE-видео** (`INTROFLC` →

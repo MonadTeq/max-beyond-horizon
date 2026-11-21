@@ -3,12 +3,12 @@
 > Версия: v1 (проект схемы) · Статус: СПРОЕКТИРОВАНО, реализация — следующий этап.
 > Источник истины: [`max-horizon-server/proto/`](../max-horizon-server/proto/) —
 > `horizon.proto` (сервис) + `types.proto` (общие типы).
-> Базовый контракт (WS JSON): [`docs/protocol.md`](protocol.md).
+> Базовый контракт (WS JSON): [`max-brh-docs/protocol.md`](protocol.md).
 
 ## 1. Цель
 
 Сегодня клиенты общаются с Horizon (max-horizon-server) по **WebSocket + JSON**
-(`docs/protocol.md` §5). По PLAN v6.0 лобби и админка переводятся на
+(`max-brh-docs/protocol.md` §5). По PLAN v6.0 лобби и админка переводятся на
 **gRPC + protobuf**:
 
 - **бинаризация и типизация** — нет ручного парсинга JSON, нет расхождений

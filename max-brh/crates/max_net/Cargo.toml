@@ -11,7 +11,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-# Horizon gRPC (docs/protocol-grpc.md): tonic 0.14 + prost 0.14.
+# Horizon gRPC (max-brh-docs/protocol-grpc.md): tonic 0.14 + prost 0.14.
 #
 # Features are pinned explicitly instead of relying on tonic's `default`:
 # the Horizon endpoint is plaintext `http://host:port` (horizon.rs), so no

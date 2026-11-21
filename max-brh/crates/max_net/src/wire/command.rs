@@ -1,4 +1,4 @@
-//! Codecs for the in-game APPL commands (`docs/protocol.md` §8.4).
+//! Codecs for the in-game APPL commands (`max-brh-docs/protocol.md` §8.4).
 //!
 //! The DTOs are [`max_core::input`] types: the protocol model already exists
 //! there and is what [`max_core::events::apply_command`] consumes, so the wire
@@ -6,7 +6,7 @@
 //!
 //! Layouts were cross-checked against the headless server (`src/remote.cpp`,
 //! `Remote_SendNetPacket_*` / `Remote_ReceiveNetPacket_*`). The fork's `src/`
-//! carries the same richer layouts as `docs/protocol.md` (grid in 38, round in
+//! carries the same richer layouts as `max-brh-docs/protocol.md` (grid in 38, round in
 //! 12, full form of 41), while the upstream `max-cpp-port/` snapshot still has
 //! shorter forms; both forms of 41 are accepted on decode.
 
@@ -382,7 +382,7 @@ fn read_packet_41(r: &mut Reader<'_>) -> WireResult<Command> {
     let mode = r.read_bool()?;
 
     // Upstream `max-cpp-port` sends only `unit_id, mode` (short form); the
-    // fork (`src/remote.cpp`) and docs/protocol.md send the full form.
+    // fork (`src/remote.cpp`) and max-brh-docs/protocol.md send the full form.
     if r.remaining() == 0 {
         return Ok(Command::MoveFinished(Packet41MoveFinished::port_form(
             unit, mode,

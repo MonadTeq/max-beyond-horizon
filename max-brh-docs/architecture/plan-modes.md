@@ -7,7 +7,7 @@
 Клиент визуально **не отличается от оригинала** (каждый экран — по ресурсам и
 раскладке C++-порта), под капотом — наша Rust-архитектура (max_core — полная
 детерминированная симуляция с ИИ, max_net — сеть, max_app — UI/цикл).
-Оракул: `max-cpp-port/` (не изменяется). Визуальный статус: `docs/visual-1to1-status.md`.
+Оракул: `max-cpp-port/` (не изменяется). Визуальный статус: `max-brh-docs/visual-1to1-status.md`.
 
 ## Режимы
 
@@ -83,7 +83,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
   и барьеры) не портирован 1:1.
 * Кланы (`ClanSelectMenu`) не портированы; экраны Help (`PLANET_SETUP`,
   `NEW_GAME_SETUP`, `OPTIONS_SETUP`, `CARGO_SETUP`) и `ResearchMenu` закрыты в
-  P8 (см. `docs/analysis/visual-1to1-status.md` §13).
+  P8 (см. `max-brh-docs/analysis/visual-1to1-status.md` §13).
 * Производство (`ProgressBuildState`: `SpawnNewUnits`, `ResearchMenu_NewTurn`)
   портировано: P2 — очередь `ProductionManager`/спавн, P6 — исследования
   (`max_core::research`, питание Research Center) и покупные апгрейды
@@ -116,7 +116,7 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 `landing.rs` (SelectSite); результаты уходят в `LocalSetup::start_positions` /
 `team_loadouts` / `team_gold` → `NewGameConfig::deployments` →
 `deploy_starting_units_with`. ИИ-точки — `setup::ai_choose_starting_position`.
-Подробности и упрощения: `docs/analysis/visual-1to1-status.md` §11.
+Подробности и упрощения: `max-brh-docs/analysis/visual-1to1-status.md` §11.
 
 ### M-HS — Hot-seat (2–4 игрока на одном ПК) — **сделано (v1.2)**
 

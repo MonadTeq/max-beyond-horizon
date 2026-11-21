@@ -11,7 +11,7 @@
 //!    static library linked into the crate. No system ENet, no apt package.
 //!
 //! The proto path is fixed and asserted: the schemas are the single source of
-//! truth of the Horizon contract (`docs/protocol-grpc.md` §2), and silently
+//! truth of the Horizon contract (`max-brh-docs/protocol-grpc.md` §2), and silently
 //! skipping generation would produce a confusing `include_proto!` failure.
 
 use std::path::{Path, PathBuf};

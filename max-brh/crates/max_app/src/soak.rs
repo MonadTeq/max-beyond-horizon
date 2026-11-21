@@ -1,4 +1,4 @@
-//! Headless soak-прогон (P4, `docs/development/PLAN-production.md`).
+//! Headless soak-прогон (P4, `max-brh-docs/development/PLAN-production.md`).
 //!
 //! Идея: одна локальная партия «человек (RED, ничего не делает) + N
 //! компьютеров», где каждый раунд закрывается `local_end_turn` человека, а ходы

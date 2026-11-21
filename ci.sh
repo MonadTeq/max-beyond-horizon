@@ -103,7 +103,7 @@ step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; +
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
 # через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux
 # CMake собирает SDL3 с теми драйверами, чьи dev-заголовки видит, поэтому ставим
-# полный набор из docs/development/release-checklist.md §2.3: X11
+# полный набор из max-brh-docs/development/release-checklist.md §2.3: X11
 # (x11/xext/xrender/xcursor/xi/xrandr/xinerama/xss/xtst/xfixes), Wayland
 # (wayland/xkbcommon/libdecor), EGL/GLES/GL, KMSDRM (drm/gbm), ALSA (звук SDL и
 # feature sound), dbus-1 и libudev. Без них SDL3 соберётся с dummy-драйверами —

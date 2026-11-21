@@ -388,7 +388,7 @@ WARN ... reconnect: транспорт восстановлен ..., но вос
 
 Что **не** делает заготовка (это M6.1-финал): вход в идущую партию и
 восстановление состояния. В протоколе нет SNAP/повторного входа в сессию
-(`docs/protocol.md` §9); пакет **54** — синхронизация состояния *своей команды*
+(`max-brh-docs/protocol.md` §9); пакет **54** — синхронизация состояния *своей команды*
 на CRC-проверке, а не запрос снапшота. Поэтому после успешного транспортного
 реконнекта прогон завершается, а `NetworkReport` несёт
 `reconnects`/`reconnect_attempts`/`reconnect_pending_state = true` (их печатает
@@ -405,7 +405,7 @@ WARN ... reconnect: транспорт восстановлен ..., но вос
 
 ```sh
 # из max-brh/; default = GUI (SDL3 из исходников через CMake) — для Docker
-# нужны dev-заголовки X11/Wayland/ALSA/GL, см. docs/development/release-checklist.md §2.3;
+# нужны dev-заголовки X11/Wayland/ALSA/GL, см. max-brh-docs/development/release-checklist.md §2.3;
 # libSDL3.so.0 кладётся в target/debug, тестам нужен LD_LIBRARY_PATH.
 docker run --rm -v "D:/dev/max-port-debug:/src" -w /src/max-brh \
   rust:1.94.0-bookworm bash -c \
@@ -456,14 +456,14 @@ cargo check -p max_app --no-default-features
 ## Живой smoke с Horizon + headless (опционально)
 
 Полный прогон **не требуется** для R2.4 и здесь не выполнялся; шаги — из
-`docs/dedicated-server-plan.md` (§9) и `max_net/README.md`:
+`max-brh-docs/dedicated-server-plan.md` (§9) и `max_net/README.md`:
 
 1. Собрать headless-сервер оригинального порта (`MAX_HEADLESS`, `--server`) по
    `build/make-server-run.ps1` / `build/docker-build-linux-server.sh`; он
    арбитр и сам командой не играет.
 2. Поднять Horizon (`max-horizon-server`) с секцией `[max]` в `config.toml`
    (путь к headless-бинари, `template_dir`, диапазон UDP-портов) и gRPC
-   листенером (по умолчанию `0.0.0.0:8082`, `docs/protocol-grpc.md` §4.4).
+   листенером (по умолчанию `0.0.0.0:8082`, `max-brh-docs/protocol-grpc.md` §4.4).
 3. Убедиться, что сессия видна в лобби (`ListGames`), либо создать её
    (`CreateGame`); получить `game_id`.
 4. Проверить, что `MAX.RES`/`PATCHES.RES` клиента побайтово совпадают с

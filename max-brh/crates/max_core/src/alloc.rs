@@ -16,7 +16,7 @@
 //! | `raw_mining_max`/`fuel_mining_max`/`gold_mining_max` | сколько вообще есть в клетке (`Survey_GetTotalResourcesInArea`) |
 //!
 //! Эти же поля едут по сети в пакете **08** с процессором `P5`
-//! (`docs/architecture/protocol.md` §«payload P5»), входят в снапшот/CRC
+//! (`max-brh-docs/architecture/protocol.md` §«payload P5»), входят в снапшот/CRC
 //! ([`crate::crc`]) и в V70-сейв — отдельного поля в `TeamUnits` нет.
 //!
 //! # Что делает диалог (`allocmenu.cpp`)

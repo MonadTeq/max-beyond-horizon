@@ -6,7 +6,7 @@
 //! `GameManager_ManageEconomy`, `GameManager_UpdateScoreGraph`,
 //! `GameManager_TeamTurnFinish`, `GameManager_AreTeamsFinishedTurn`),
 //! `unitinfo.cpp` (`UnitInfo::AddToDrawList`, `UpdateProduction`).
-//! Порядок фаз — DESIGN.md §5.1-§5.3, `docs/state-model.md` §3.
+//! Порядок фаз — DESIGN.md §5.1-§5.3, `max-brh-docs/state-model.md` §3.
 //!
 //! # Что здесь есть и чего нет
 //!
@@ -2130,7 +2130,7 @@ impl GameState {
 
     /// Общий счётчик барьера конца хода (пакет 52), если **все** играющие
     /// команды прислали одинаковое значение — `Remote_ServerWaitBarrier`
-    /// (`docs/protocol.md` §8.6: «ждёт, пока все удалённые команды пришлют
+    /// (`max-brh-docs/protocol.md` §8.6: «ждёт, пока все удалённые команды пришлют
     /// одинаковое значение счётчика»).
     ///
     /// `None` — барьер ещё не собран (или команды разошлись).

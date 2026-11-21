@@ -1,4 +1,4 @@
-//! Horizon lobby/admin client over gRPC (`docs/protocol-grpc.md`).
+//! Horizon lobby/admin client over gRPC (`max-brh-docs/protocol-grpc.md`).
 //!
 //! The schemas in `max-horizon-server/proto` are the single source of truth;
 //! `build.rs` generates `horizon.v1` into `OUT_DIR` and [`proto`] exposes it.
@@ -12,7 +12,7 @@
 //! * [`HorizonClient::join_game`] — get `host`/`port`/`ticket` for ENet;
 //! * [`HorizonClient::ping`] — liveness probe.
 //!
-//! Errors are the standard gRPC statuses (`docs/protocol-grpc.md` §4.2): the
+//! Errors are the standard gRPC statuses (`max-brh-docs/protocol-grpc.md` §4.2): the
 //! legacy WS `error` text is carried in `status.message` and the category in
 //! `status.code`, preserved by [`HorizonError::Status`]. There is no
 //! `max_core` status type for lobby sessions, so [`GameStatus`] mirrors the
@@ -89,7 +89,7 @@ impl HorizonError {
         }
     }
 
-    /// True for `NOT_FOUND` (unknown game id, `docs/protocol-grpc.md` §6.1).
+    /// True for `NOT_FOUND` (unknown game id, `max-brh-docs/protocol-grpc.md` §6.1).
     pub const fn is_not_found(&self) -> bool {
         matches!(self.code(), Some(tonic::Code::NotFound))
     }
@@ -137,7 +137,7 @@ impl GameStatus {
         }
     }
 
-    /// Legacy WS `status` string (`docs/protocol-grpc.md` §4.5).
+    /// Legacy WS `status` string (`max-brh-docs/protocol-grpc.md` §4.5).
     pub const fn as_ws_str(self) -> &'static str {
         match self {
             Self::Unspecified => "unspecified",
@@ -220,7 +220,7 @@ impl TryFrom<proto::GameInfo> for GameInfo {
     }
 }
 
-/// Ticket format (`TicketKind` in `types.proto`, `docs/protocol.md` §6).
+/// Ticket format (`TicketKind` in `types.proto`, `max-brh-docs/protocol.md` §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TicketKind {
     /// Proto3 zero value.
@@ -326,7 +326,7 @@ impl TryFrom<proto::HelloAck> for HelloAck {
 }
 
 /// Parameters of `CreateGame`; every field is optional and unset fields keep
-/// the Horizon session defaults (`docs/protocol-grpc.md` §5.3).
+/// the Horizon session defaults (`max-brh-docs/protocol-grpc.md` §5.3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateGameParams {
     /// Human-readable game name.

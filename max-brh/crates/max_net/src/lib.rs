@@ -13,12 +13,12 @@
 //!    `ENET_PACKET_FLAG_RELIABLE`, packets stay within 1440 bytes.
 //!
 //! The legacy WS JSON client ([`lobby`], [`protocol`]) is kept so `max_app`
-//! still builds while the migration described in `docs/protocol-grpc.md` is in
+//! still builds while the migration described in `max-brh-docs/protocol-grpc.md` is in
 //! progress; new code should use [`horizon`].
 //!
 //! # Layout
 //!
-//! * [`wire`] — byte-accurate codecs for the game protocol (`docs/protocol.md`
+//! * [`wire`] — byte-accurate codecs for the game protocol (`max-brh-docs/protocol.md`
 //!   §8). Command packets reuse [`max_core::input`] types and convert to/from
 //!   [`max_core::input::Command`]; lobby/audit packets have their own DTOs.
 //! * [`handshake`] — `TP 00`/`TP 03`, `SHA256(MAX.RES)‖SHA256(PATCHES.RES)`.

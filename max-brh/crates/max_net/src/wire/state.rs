@@ -1,4 +1,4 @@
-//! Audit/synchronisation and auxiliary in-game packets (`docs/protocol.md`
+//! Audit/synchronisation and auxiliary in-game packets (`max-brh-docs/protocol.md`
 //! §8.3–§8.6).
 //!
 //! These packets either carry whole-unit snapshots (23/54 — the closest thing
@@ -50,7 +50,7 @@ pub struct ResearchTopicWire {
 }
 
 /// Canonical unit state used by audit packet 23 and state-sync packet 54
-/// (`Packet23Data` in `remote.cpp` / `docs/protocol.md` §8.5).
+/// (`Packet23Data` in `remote.cpp` / `max-brh-docs/protocol.md` §8.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct UnitState {
     /// Current order (`UnitOrderType`, raw byte).

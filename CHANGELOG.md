@@ -33,8 +33,8 @@
   `research.qa`, `research-help.qa` ставят `POWGEN`/`FDUMP`/`HABITAT`;
   новая QA-команда `complex fuel|gold N` (как `complex raw`), golden
   `production`/`research`/`research-help` перегенерированы (новые здания).
-  Документация: `docs/architecture/game-mechanics.md` §3/§5,
-  `docs/analysis/visual-1to1-status.md` §42.
+  Документация: `max-brh-docs/architecture/game-mechanics.md` §3/§5,
+  `max-brh-docs/analysis/visual-1to1-status.md` §42.
 - **Построенный в AIRPLT самолёт стоит НА заводе и выводится приказом игрока.**
   Оракул: `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520` — юнит на клетке
   завода, `ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`, `parent` —
@@ -270,7 +270,7 @@
   enemy_halt.rs` (4), `scroll` (9). QA: `preferences.qa` — `prefs set/toggle`
   для всех настроек, `prefs-text`, `assert prefs-value NAME>=N`; новый кадр
   `golden/preferences/prefs-b4-settings.png`. Детали — §34
-  `docs/analysis/visual-1to1-status.md`.
+  `max-brh-docs/analysis/visual-1to1-status.md`.
 - **B1: оставшиеся пункты меню юнита — 1:1 с C++-оракулом.** `attack` теперь
   тумблер `targeting_mode` (`units_manager.cpp:617`): наведение, `CURSOR_ENEMY`
   и стрельба по пустой клетке в радиусе (`GameManager_SetUnitOrder`,
@@ -511,7 +511,7 @@
   `auto_select`, `enemy_halt`, `disable_music/voice/movie`, уровни
   Music/Voice/Video, `enhanced_graphics`, `host_address/port`,
   `Turn Time`/`End Turn Time`, `Player Name`) сохраняются, но в игру пока не
-  идут — помечено в `docs/analysis/visual-1to1-status.md` §27.
+  идут — помечено в `max-brh-docs/analysis/visual-1to1-status.md` §27.
   Сохранение: `IniPreferences` (7 × `signed int`) в V70-сейв
   (`SaveMeta::ini_preferences`, как `SaveLoad_Save`), чтение при загрузке
   (`SaveLoad_Load`), плюс `preferences.ini` рядом с сейвами. QA:
@@ -576,7 +576,7 @@
     новый `build-cancel.qa` (3 кадра); новые ассерты `firing`, `building`,
     `trail`, `unit-count NAME<оп>N`. Golden `combat-tb` перегенерирован
     (11 кадров), новый `golden/build-cancel` (3). Детали — §37
-    `docs/analysis/visual-1to1-status.md`.
+    `max-brh-docs/analysis/visual-1to1-status.md`.
 - **Turn Based: зависание хода ИИ после выстрела/гибели юнита (три порта
   оракула) и настоящая анимация снарядов/взрывов.**
   * **Снаряд навсегда оставался в `ORDER_MOVE`.** `UnitInfo::PrepareFire`
@@ -629,7 +629,7 @@
   Based с двумя компьютерами, `RED→GREEN→BLUE→RED`, `endturn-frames`), golden
   `golden/sp-tb/`, `golden/combat-tb/`. Soak по умолчанию — Turn Based
   (`SoakOptions::play_mode`, `soak_headless --mode tb`), `soak-100.qa` уже
-  Turn Based. Детали — §36 `docs/analysis/visual-1to1-status.md`.
+  Turn Based. Детали — §36 `max-brh-docs/analysis/visual-1to1-status.md`.
 
 - **Клик по достроенной площадке выделяет СТРОИТЕЛЯ (маркеры `BLDMRK*`,
   подсказка «Finished building …» и уход с площадки снова работают).**
@@ -1088,7 +1088,7 @@
   (`raw_mining`/`fuel_mining`/`gold_mining`, сумма ≤ 16, `total_mining`) — как
   в C++ (`unitinfo.hpp:434-440`); они уже в снапшоте/CRC и в V70-сейве.
   `Done`/`Esc` ставят каждой шахте комплекса `ORDER_NEW_ALLOCATE` — пакет **08**,
-  процессор **P5** (`payload P5` в `docs/architecture/protocol.md`), как
+  процессор **P5** (`payload P5` в `max-brh-docs/architecture/protocol.md`), как
   `Remote_SendNetPacket_11` (`remote.cpp:2195`).
   Экономика: `max_core::alloc` — `AllocMenu_Optimize`/`AllocMenu_
   ReduceProduction`/`Balance` (`Allocator` с маской `cargo_material_type`),
@@ -1140,7 +1140,7 @@
   `ORDER_REPAIR`/`ORDER_RELOAD` с родителем (P2), `Auto` → `auto_survey`,
   `Done` → `UnitsManager_PerformAction` (в объёме стека: `Await`+`STATIONARY` →
   `READY_TO_EXECUTE_ORDER`, снятие выделения). Честно **отключены** (серый пункт,
-  причина в `UnitMenuItem::note` и `docs/analysis/visual-1to1-status.md`):
+  причина в `UnitMenuItem::note` и `max-brh-docs/analysis/visual-1to1-status.md`):
   `x-fer` (`TransferMenu_Menu`/`ProcessOrderTransfer` — TODO P3, хотя приказ
   `Transfer` в протоколе есть), `attack` (`targeting_mode`; атака — кликом по
   врагу), `load` (погрузка в транспорт: `Land` — P1 и не несёт родителя),
@@ -1540,7 +1540,7 @@
 
 - **P7 — мобилизация: портрет `P_*` 1:1, описания юнитов и сетка иконок
   статистики** (`max_app/src/mobilize.rs`, `max_app/src/cargo_unit_data.rs`,
-  `docs/development/PLAN-production.md`):
+  `max-brh-docs/development/PLAN-production.md`):
   - **Описания.** Источник — `SC_UNITS` (`description` → hex-ключ) +
     `assets/language.json` (en-US), как `Unit::GetDescription()`. Генератор
     `max-brh/tools/gen_cargo_unit_data.py` расшифровывает XOR-ресурс и
@@ -1578,7 +1578,7 @@
     (0 дрейфа).
 
 - **P7 — предвысадочный экран мобилизации доведён до паритета с `CargoMenu`**
-  (`docs/development/PLAN-production.md`, `max_app/src/mobilize.rs`):
+  (`max-brh-docs/development/PLAN-production.md`, `max_app/src/mobilize.rs`):
   - **Изображения юнитов в списках.** Строки `Available`/`Purchased` рисуют
     ресурсы `I_*` (`Unit::GetIcon()`): 32×32, горячая точка в центре строки,
     масштаб как `ReportStats_DrawListItemIcon` (мобильные — 1:2, стационарные —
@@ -1640,7 +1640,7 @@
 ### Добавлено
 
 - **P6 — исследования/апгрейды, финальный QA-свип и релиз v1.1.0**
-  (`docs/development/PLAN-production.md`):
+  (`max-brh-docs/development/PLAN-production.md`):
   - **Исследования и покупные апгрейды (последний геймплейный пробел).**
     `max_core::research` — порт `researchmenu.cpp`/`upgradecontrol.cpp`/
     `teamunits.cpp`: `ResearchMenu_CalculateFactor`, ходы исследования
@@ -1679,7 +1679,7 @@
     `max_app/tests/upgrade.rs` (всего 780, 0 failed); полный `ci.sh`
     (тесты + QA + golden + soak) зелёный.
 
-- **P5 — сетевая зрелость** (`docs/development/PLAN-production.md`):
+- **P5 — сетевая зрелость** (`max-brh-docs/development/PLAN-production.md`):
   - **Три клиента.** `build/scripts/live-smoke-3.sh`: Horizon + C++-headless +
     3 Rust-клиента (`--min-players 3`, слоты RED/GREEN/BLUE), N ходов.
     Проверяет `пиров=2`, релей 00 от двух других команд каждому, прохождение
@@ -1692,7 +1692,7 @@
     `sync_index`, встречные 54 исправляют удалённые команды, барьеры 52/54/45
     доигрываются. `reconnect_pending_state=false` после resume; пределы (нет
     SNAP, 54 только своя команда/экономика, C++ ELIMINATED через 30 с) —
-    `docs/architecture/protocol.md` §9.
+    `max-brh-docs/architecture/protocol.md` §9.
   - **Тесты:** unit `resume_state_sync_publishes_the_last_completed_index`;
     in-process 3-клиентный мок-релей
     `three_clients_survive_disconnect_and_converge_via_state_sync` (B offline,
@@ -1713,7 +1713,7 @@
   - **Тесты:** 759 passed / 0 failed (`cargo test`, default; + sound и
     `--no-default-features` — зелёные).
 
-- **P4 — стабильность и производительность клиента** (`docs/development/PLAN-production.md`):
+- **P4 — стабильность и производительность клиента** (`max-brh-docs/development/PLAN-production.md`):
   - **Soak 100+ ходов.** `max-brh-qa/scripts/soak-100.qa`: партия RED
     (человек, `end_turn` + `select`/`move`) против GREEN (Clueless, Duration
     200), 100 ходов, `assert turn=21/41/61/81/101`, `shot`/`mem` каждые
@@ -1761,12 +1761,12 @@
     `.github/workflows/ci.yml` (`timeout-minutes: 45`, push/ручной запуск,
     не PR) с артефактами `soak.txt`/`log.txt` при падении; `edge-cases.qa`
     добавлен в стадию 3/4 и job `qa`.
-  - Документация: `docs/development/PLAN-production.md` (P4 закрыт),
+  - Документация: `max-brh-docs/development/PLAN-production.md` (P4 закрыт),
     `max-brh-qa/scripts/README.md` §P4 (команды, метрики, пороги),
-    `max-brh-qa/plans/qa-plan.md`, `docs/development/release-checklist.md`
+    `max-brh-qa/plans/qa-plan.md`, `max-brh-docs/development/release-checklist.md`
     §2.9 (свидетельства soak), `max-brh-qa/suite/11-edge-cases.md`.
 
-- **P3 — запись V70-сейвов из живой партии** (`docs/development/PLAN-production.md`):
+- **P3 — запись V70-сейвов из живой партии** (`max-brh-docs/development/PLAN-production.md`):
   - `max_core::save_write`: `build_save_file(&GameState) -> SaveFile`,
     `GameState::to_save()`/`to_save_bytes()`, `SaveMeta` — мост
     `GameState → SaveFile` для **всех** структур V70: `SaveFormatHeader`
@@ -1822,7 +1822,7 @@
     окружении их нет (кросс-сборка SDL3 из Linux не поддерживается, см.
     README артефакта).
 
-- **P2 — производство и строительство** (`docs/development/PLAN-production.md`):
+- **P2 — производство и строительство** (`max-brh-docs/development/PLAN-production.md`):
   - `max_core::production` — порт `buildmenu.cpp`/`unitinfo.cpp`/`game_manager.cpp`:
     таблица `max_builder_capability_list` из `default.game_rules.lua`
     (`BUILDABLE`: 7 строителей, 45 типов), `turns_to_build`
@@ -1906,7 +1906,7 @@
   `NewGameConfig::clans` и меняет стартовые атрибуты юнитов команды
   (`ResourceManager_InitClanUnitValues`). Контейнер `MXLS` — версия 3
   (`team_clans`), старые v2 читаются с кланами Random.
-- **M-SP — одиночная игра против ИИ** (`docs/architecture/plan-modes.md`):
+- **M-SP — одиночная игра против ИИ** (`max-brh-docs/architecture/plan-modes.md`):
   - экран настройки 1:1 из трёх экранов C++-порта (`max_app/src/setup.rs`):
     `GameConfigMenu` (`OPTNFRM`: сложность ИИ, таймеры, режим игры, кредиты,
     уровни ресурсов, условие победы), `PlanetSelectMenu` (`PLANETSE`: 3×2
@@ -1969,7 +1969,7 @@
   включается явно `--features sound`.
 - **CI/Docker: системные зависимости для сборки SDL3 из исходников**.
   `ci.sh` и `.github/workflows/ci.yml` ставят dev-заголовки X11/Wayland/ALSA/
-  GL/KMSDRM/dbus/udev (набор из `docs/development/release-checklist.md` §2.3);
+  GL/KMSDRM/dbus/udev (набор из `max-brh-docs/development/release-checklist.md` §2.3);
   `cargo test` идёт с `LD_LIBRARY_PATH=target/debug` (там `libSDL3.so.0`).
   QA-примеры (`qa_run`, `qa_golden_check`) собираются с
   `--no-default-features` — окно им не нужно. Добавлен `cargo test
@@ -2057,7 +2057,7 @@
     игровой цикл и молча деградирует до no-op без устройства/файлов.
 - **M6.4 — релиз**:
   - версия workspace `max-brh` — **1.0.0** (все пять крейтов наследуют её);
-  - `docs/development/release-checklist.md` — полный чек-лист релиза;
+  - `max-brh-docs/development/release-checklist.md` — полный чек-лист релиза;
   - `release.sh` — сборка Linux-бинаря в Docker, упаковка `release/` с
     `README.txt`, `LICENSE`, `CHANGELOG.md`, `SHA256SUMS` и `.tar.gz`;
     подготовка/создание тега `v1.0.0` по флагу `--tag`;
@@ -2084,7 +2084,7 @@
 - Озвучены только клики меню; звуки юнитов/выстрелов/взрывов декодируются
   (`WavClip`), но точки вызова в игровом цикле появятся позже.
 - Windows-бинарь в этом репозитории не собирается автоматически: инструкция —
-  в `docs/development/release-checklist.md` §6 (нужен MSVC + vcpkg SDL3).
+  в `max-brh-docs/development/release-checklist.md` §6 (нужен MSVC + vcpkg SDL3).
 - Человеческий сценарий M4 и live-smoke 2×10 — гейты релиза, а не свойство
   кода: они проверяются по чек-листу на машине с SDL/данными игры.
 

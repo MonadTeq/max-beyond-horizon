@@ -194,4 +194,4 @@ cargo run -p max_app -- \
 - QA-сценарии `sp-full`, `hs-2`, `visual-screens`, `victory` — PASS, golden без
   дрейфа;
 - оконный прогон (слой 5) снят и сверен;
-- `docs/release-checklist.md` — все пункты с датами/свидетельствами.
+- `max-brh-docs/release-checklist.md` — все пункты с датами/свидетельствами.

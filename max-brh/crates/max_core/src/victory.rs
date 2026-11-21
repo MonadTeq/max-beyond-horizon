@@ -12,7 +12,7 @@
 //! | значения `MAX_REGISTRY.*` | `maxregistryhandler.cpp:33-163` |
 //! | условия победы/поражения миссий (Lua) | `assets/PATCHES.RES` → `SC_L0002`, `SC_T0001..15`, `SC_S0001..24`, `SC_C0001..09` |
 //! | generic end-game (`menu_check_end_game_conditions`) | `menu.cpp:548` |
-//! | описание правил | `max-cpp-port-docs/save.md` → *Victory and Loss Conditions* |
+//! | описание правил | `max-cpp-port-max-brh-docs/save.md` → *Victory and Loss Conditions* |
 //!
 //! # Модель
 //!

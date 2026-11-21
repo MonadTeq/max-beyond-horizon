@@ -688,7 +688,7 @@ fn apply_packet_53(
 // 54 — авторитетное состояние команды (P23-запись + хвост экономики)
 // ---------------------------------------------------------------------------
 
-/// Каноническое состояние юнита — `struct Packet23Data` (`docs/protocol.md`
+/// Каноническое состояние юнита — `struct Packet23Data` (`max-brh-docs/protocol.md`
 /// §8.5); используется пакетами 23 и 54.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct UnitStatePacket {
@@ -978,7 +978,7 @@ fn remove_extra_units(state: &mut GameState, team: TeamId) {
 // 10 / 20 / 43 / 12 — апгрейды, имя, снабжение
 // ---------------------------------------------------------------------------
 
-/// Порядок 13 атрибутов пакетов 10/20 (`docs/protocol.md` §8.4).
+/// Порядок 13 атрибутов пакетов 10/20 (`max-brh-docs/protocol.md` §8.4).
 ///
 /// Совпадает с порядком присваиваний в `Remote_ReceiveNetPacket_10/20`.
 pub const UPGRADE_ATTRIBUTE_ORDER: [u8; UPGRADE_VALUE_COUNT] = [

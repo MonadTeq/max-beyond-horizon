@@ -4,11 +4,11 @@
 > `src/game_manager.cpp`, канона `max-cpp-port/src/remote.cpp` и Rust-стороны
 > (`max-brh/crates/max_net/src/session.rs`, `max-brh/crates/max_app/src/net.rs`,
 > `max-brh/crates/max_core/src/{events,game,crc}.rs`). Сопутствующие раскладки —
-> `docs/protocol.md` §7–8.
+> `max-brh-docs/protocol.md` §7–8.
 >
 > **P5-статус:** реле сервера, приём/отправка 53/54/45 и применение 54 в Rust
 > реализованы; §6 хранит исторический снимок «что было не так» на момент
-> диагностики. Актуальные пределы реконнекта — `docs/protocol.md` §9.
+> диагностики. Актуальные пределы реконнекта — `max-brh-docs/protocol.md` §9.
 
 ## 1. Роли в звезде
 

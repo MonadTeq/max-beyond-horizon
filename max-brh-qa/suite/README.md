@@ -15,7 +15,7 @@
 
 В P8 (2026-11-17) закрыты `ResearchMenu` (`RSRCHPIC`) и Help-экраны: TC-0220, TC-0329/0330, TC-0929/0930; QA `research-help.qa`, golden `golden/research-help`, тексты — `data/help.json` (32 секции, 661 запись из `help.json` + `language.json`).
 
-В P9 (2026-11-19) закрыт диалог `Preferences`/`Setup` (C++ `OptionsMenu`): TC-0108 (Setup больше не заглушка — остался только `Load Game`) и TC-0935; QA `preferences.qa`, golden `golden/preferences`, `effects`/`disable_fx`/`auto_save` реально действуют, `IniPreferences` пишутся в V70 (`docs/analysis/visual-1to1-status.md` §27).
+В P9 (2026-11-19) закрыт диалог `Preferences`/`Setup` (C++ `OptionsMenu`): TC-0108 (Setup больше не заглушка — остался только `Load Game`) и TC-0935; QA `preferences.qa`, golden `golden/preferences`, `effects`/`disable_fx`/`auto_save` реально действуют, `IniPreferences` пишутся в V70 (`max-brh-docs/analysis/visual-1to1-status.md` §27).
 
 ## Области и файлы
 

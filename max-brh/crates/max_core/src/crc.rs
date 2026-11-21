@@ -16,7 +16,7 @@
 //!   (`Remote_ReceiveNetPacket_45`) — только **транспорт** пакета 45
 //!   (счётчик хода + `uint16_t crc_checksum`); сам CRC считает
 //!   `GameManager_CheckDesync` через `crc16()`/`GameManager_GetCrc16`;
-//! * `docs/protocol.md` §8.6 — пакет 45 как барьер конца хода.
+//! * `max-brh-docs/protocol.md` §8.6 — пакет 45 как барьер конца хода.
 //!
 //! # Два дайджеста
 //!

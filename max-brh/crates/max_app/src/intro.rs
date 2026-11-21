@@ -24,7 +24,7 @@
 //!   заглушку с фоном `MLOGO`/`MAINPIC`, чтобы экран не был пустым.
 //!
 //! Аудио и субтитры (`INTROSUB`, `moviesubtitle.cpp`) не портированы — это
-//! честно отмечено в `docs/analysis/visual-1to1-status.md`.
+//! честно отмечено в `max-brh-docs/analysis/visual-1to1-status.md`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

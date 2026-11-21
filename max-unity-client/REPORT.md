@@ -25,18 +25,18 @@
 
 | Артефакт | Что содержит | Значение для Unity-порта |
 |---|---|---|
-| `docs/architecture/protocol.md` (813 строк) | Полный сетевой контракт: WS/gRPC Horizon + ENet-сессия, ~70 сообщений побайтово, инварианты, фазы соединения | Сеть **не переписывается** — живёт в `max_net`; Unity её даже не видит |
-| `docs/architecture/protocol-grpc.md` (479 строк) | protobuf `horizon.v1` (10 unary RPC), решения JSON↔proto | То же: потребляется нативной стороной |
-| `docs/architecture/state-model.md` (897 строк) | Модель состояния: 15 перечислений, 11 структур, проекция снапшота | Спека структур, которые FFI отдаёт в Unity как view |
-| `docs/architecture/plan-modes.md` (309 строк) | M-SP / M-SP+ / M-HS / M-NET — **все три режима реализованы** в Rust (v1.0–v1.4) | Чек-лист поведения экранов и циклов для P5 |
-| `docs/architecture/barrier-flow.md` (341 строка) | Lockstep-барьеры 00/01/45/52/53/54, релей в звезде, таймауты | Полностью внутри `max_net`/`max_core` — Unity не участвует |
-| `docs/analysis/visual-1to1-status.md` (984 строки) | Форматы ресурсов (.WRL, MAX.RES simple/big RLE, спрайты, курсоры, GNW-шрифты), раскладка окна 640×480 (`windows[]`), план A–F | **Готовая спека рендера**: координаты, палитры, порядок слоёв, все подводные камни (смещение RLE 776 и т.п.) уже разобраны |
+| `max-brh-docs/architecture/protocol.md` (813 строк) | Полный сетевой контракт: WS/gRPC Horizon + ENet-сессия, ~70 сообщений побайтово, инварианты, фазы соединения | Сеть **не переписывается** — живёт в `max_net`; Unity её даже не видит |
+| `max-brh-docs/architecture/protocol-grpc.md` (479 строк) | protobuf `horizon.v1` (10 unary RPC), решения JSON↔proto | То же: потребляется нативной стороной |
+| `max-brh-docs/architecture/state-model.md` (897 строк) | Модель состояния: 15 перечислений, 11 структур, проекция снапшота | Спека структур, которые FFI отдаёт в Unity как view |
+| `max-brh-docs/architecture/plan-modes.md` (309 строк) | M-SP / M-SP+ / M-HS / M-NET — **все три режима реализованы** в Rust (v1.0–v1.4) | Чек-лист поведения экранов и циклов для P5 |
+| `max-brh-docs/architecture/barrier-flow.md` (341 строка) | Lockstep-барьеры 00/01/45/52/53/54, релей в звезде, таймауты | Полностью внутри `max_net`/`max_core` — Unity не участвует |
+| `max-brh-docs/analysis/visual-1to1-status.md` (984 строки) | Форматы ресурсов (.WRL, MAX.RES simple/big RLE, спрайты, курсоры, GNW-шрифты), раскладка окна 640×480 (`windows[]`), план A–F | **Готовая спека рендера**: координаты, палитры, порядок слоёв, все подводные камни (смещение RLE 776 и т.п.) уже разобраны |
 | `max-brh-assets/images/` | **1069 PNG** уже извлечены из MAX.RES и классифицированы: ui 537, sprites/units 170, misc 363; `manifest.csv` (имя, размер, kind, палитра, прозрачность, фреймы) | Прямой импорт в Unity; классификация и метаданные снимают ~половину работы P1 |
 | `max-brh/` | Rust-клиент v1.0.0: `max_core` (40,3 тыс. строк, чистая детерминированная симуляция с ИИ, бит-в-бит с C++), `max_net` (7,2 тыс., gRPC tonic 0.14 + vendored ENet 1.3.18), `max_assets` (4,6 тыс.), `max_render` (6,4 тыс.), `max_app` (27,8 тыс.); **692 `#[test]`** | `max_core`+`max_net` переносятся **без изменений** как cdylib; тесты остаются регресс-сеткой |
 | `max-brh-qa/` | QA-фабрика: `suite/` — 11 областей, **166 тест-кейсов** (TC-01xx…11xx); `scripts/` — `.qa`-сценарии драйвера (`click/rclick/key/type/wait/tick/shot/assert/menu/setup/players/…`); `golden/` — 10 эталонных кадров; `qa_golden_check` (порог дрейфа 1 %); `--record` (запись сценариев из живой игры); C++-генераторы векторов (rng/map/sim/barrier/lobby/font) | Переносится на Unity как **чек-лист приёмки и регрессия**; golden-кадры — эталоны P2/P3 |
 | `max-horizon-server` + `src/` (C++ headless) | Серверная часть: оркестратор сессий, релей/арбитр барьеров, watchdog | **Не меняется вообще** — Unity-клиент обязан вписаться в существующий контракт |
 | `max-brh-qa-tools/max-resources-viewer` | GUI-редактор ресурсов (SDL3) с PNG-экспортом и тестом на реальном MAX.RES | Образец конвейера «RES → PNG → метаданные» для P1 |
-| `docs/development/release-checklist.md`, `ci.sh`, `.github/workflows/ci.yml` | Релизные гейты, CI-пайплайн Rust | Образец для релизного пайплайна Unity (P6) |
+| `max-brh-docs/development/release-checklist.md`, `ci.sh`, `.github/workflows/ci.yml` | Релизные гейты, CI-пайплайн Rust | Образец для релизного пайплайна Unity (P6) |
 
 Ключевые числа, на которых строится оценка:
 
@@ -301,8 +301,8 @@ P6 (двое, часть параллельна хвосту P5)         ≈ 8 �
 | `max_core` — симуляция + ИИ (40,3 тыс. строк, бит-в-бит с C++) | `max-brh/crates/max_core` | Компилируется в cdylib; единственная реализация правил игры |
 | `max_net` — gRPC Horizon + ENet + барьеры (7,2 тыс.) | `max-brh/crates/max_net` | То же; Unity не видит сокеты |
 | Оркестрация режимов (фазы, циклы, таймеры, ретраи) | `max_app` (headless-часть) | Через `max_ffi` Control API |
-| Спеки протокола/состояния/барьеров | `docs/architecture/*` (5 документов) | Единственный источник истины для FFI-контракта |
-| Спека визуала и раскладки `windows[]` | `docs/analysis/visual-1to1-status.md` | Спека P2/P3 (координаты, слои, палитры, нюансы декодеров) |
+| Спеки протокола/состояния/барьеров | `max-brh-docs/architecture/*` (5 документов) | Единственный источник истины для FFI-контракта |
+| Спека визуала и раскладки `windows[]` | `max-brh-docs/analysis/visual-1to1-status.md` | Спека P2/P3 (координаты, слои, палитры, нюансы декодеров) |
 | 1069 PNG + `manifest.csv` (kind/palette/frames/hotspot) | `max-brh-assets/images/` | Прямой импорт в P1; метаданные — вход Editor-импортера |
 | Golden-кадры 10 экранов | `max-brh-qa/golden/` | Эталоны pixel-diff приёмки P2/P3 |
 | QA-фабрика: `.qa`-язык, 166 TC, `qa_golden_check`, `--record` | `max-brh-qa/` | Переносится как чек-лист и регресс-набор (P6) |

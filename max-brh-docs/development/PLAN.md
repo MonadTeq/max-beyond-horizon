@@ -21,8 +21,8 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 ### Принцип источников (из v5)
 - **`max-cpp-port/` — оракул №1 (неизменяемый)**: имена, структуры, константы,
   загрузчики форматов, сетевой слой. `src/` — наша развилка (headless-сервер,
-  см. docs/src-fork.md).
-- **`max-cpp-port-docs/` — оракул №2**: save.md (формат V70), documentation.md
+  см. max-brh-docs/src-fork.md).
+- **`max-cpp-port-max-brh-docs/` — оракул №2**: save.md (формат V70), documentation.md
   (Watcom-конструкции), network.md, scripting.md.
 - **RE оригинала (`max-original-dasm/`) — верификация и пробелы**.
 - Ничего не реверсим «на будущее»: каждый RE-артефакт привязан к потребности.
@@ -38,13 +38,13 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 ### Архитектурные решения (v6)
 1. **Lockstep, вариант 1**: клиент сам симулирует игру; сервер/headless —
    реле и арбитр барьеров, а не источник снапшотов (в коде C++ снапшотов нет:
-   есть CRC-синхронизация юнитов, пакет 54, и аудит 23/24/49 — см. docs/protocol.md §8–9).
+   есть CRC-синхронизация юнитов, пакет 54, и аудит 23/24/49 — см. max-brh-docs/protocol.md §8–9).
 2. **Бинарные протоколы**:
    - Horizon (лобби/админ): **gRPC + protobuf** (схемы в `max-horizon-server/proto/`,
      единственный источник истины; клиенты Rust/C++ генерируются из .proto).
    - Игровая сессия: **UDP с каналами в семантике ENet** (ordered reliable), пакеты —
      плоские LE-структуры с полем версии (быстро, zero-copy; раскладки уже в
-     docs/protocol.md). gRPC поверх TCP на сессию НЕ берём: head-of-line blocking
+     max-brh-docs/protocol.md). gRPC поверх TCP на сессию НЕ берём: head-of-line blocking
      вредит lockstep-барьерам.
 3. **max_core переписывается**: полная симуляция (GameManager/UnitsManager/
    TaskManager/AI/пути) идиоматичным Rust — enum вместо magic-чисел, Option/Result
@@ -59,22 +59,22 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 | Путь | Содержимое | Роль в целях | В git |
 |---|---|---|---|
 | `max-cpp-port/` | **Канонический** репозиторий автора M.A.X. Port (klei1984/max, актуальнее нашего `src/`; наш `src/` = его копия + Horizon-доработки: ws_client и пр.) | оракул №1 | да (как upstream-справка) |
-| `max-cpp-port-docs/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
+| `max-cpp-port-max-brh-docs/` | Сайт автора (gh-pages ветка того же репо): save.md (формат V70 полностью), documentation.md (Watcom-конструкции), network.md, scripting.md и пр. | оракул №2: спецификации | нет (worktree, восстанавливается из max-cpp-port) |
 | `src/` | C++-порт + наши доработки (headless/транспорт/RNG-чекпоинты) | сборка сервера | да |
 | `max-horizon-server/` | Horizon (Rust) | оркестратор сессий (Цель 3) | да |
 | `max-brh/` | Rust-клиент | продукт (Цель 2) | да |
-| `docs/` | protocol.md, state-model.md, dedicated-server-plan.md | спецификации (Цель 1) | да |
+| `max-brh-docs/` | protocol.md, state-model.md, dedicated-server-plan.md | спецификации (Цель 1) | да |
 | `max-original-dasm/` | RE-артефакты и инструменты | верификация/пробелы | да (кроме пересобираемого) |
 | `max-original/` | оригинальная игра | источник данных/байтов | да, целиком |
 | `build/` | сборки C++, smoke-харнесс | тестовая инфраструктура | частично |
 
 ## 3. Цель 1 — Спецификации
 
-Порядок работы: взять из C++-порта → оформить в `docs/` или `formats/` → сверить с
+Порядок работы: взять из C++-порта → оформить в `max-brh-docs/` или `formats/` → сверить с
 байтами оригинала (где нужно) → пометить «проверено RE».
 
-### 1.1 Модель состояния → `docs/state-model.md` + `max-original-dasm/structures.md`
-- Источник №1: **`max-cpp-port-docs/save.md`** — авторская спецификация формата V70
+### 1.1 Модель состояния → `max-brh-docs/state-model.md` + `max-original-dasm/structures.md`
+- Источник №1: **`max-cpp-port-max-brh-docs/save.md`** — авторская спецификация формата V70
   (SaveFormatHeader, TeamInfo, TeamUnits/UnitValues/Complex, GameManagerState,
   UnitType ×93, условия победы/поражения по миссиям, битфилды карты ресурсов,
   unit hash ID). Источник №2: заголовки C++ (`src/*.h`, свериться с
@@ -90,7 +90,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
 - **Критерий**: по каждому документу Flash-агент пишет парсер в `max_assets` без
   обращения к C++-коду; RES дополнительно имеет эталонный Python-парсер.
 
-### 1.3 Протоколы → `docs/protocol.md` + `.proto`-схемы ✅ (основа)
+### 1.3 Протоколы → `max-brh-docs/protocol.md` + `.proto`-схемы ✅ (основа)
 - Сделано: полный контракт (~70 сообщений: WS-лобби Horizon + UDP-сессия ENet,
   хендшейк/барьеры/приказы/чат; раскладки побайтово; открытые вопросы в §12).
 - Дальше (v6): вынести схемы Horizon в **protobuf** (`max-horizon-server/proto/`)
@@ -104,7 +104,7 @@ UDP/ENet-семантика для игровой сессии); max_core пер
   перед RUN); расширение каталога.
 - **Расширение каталога функций — метод автора (backlog)**: у автора в IDA
   5706 подпрограмм, из них 1644 — библиотечные с именами (Watcom clib3r/plib3r
-  и др.); метод из `max-cpp-port-docs/documentation.md`: Open Watcom (wdis/wlib),
+  и др.); метод из `max-cpp-port-max-brh-docs/documentation.md`: Open Watcom (wdis/wlib),
   сравнение сигнатур библиотечных .obj с бинарём, regex-скрипты Python.
   Задача: применить тот же метод к `maxrun.flat` → доименовать библиотечные
   функции в functions-named.csv (наш r2-каталог: 6857 функций, 159 с именами).
@@ -176,7 +176,7 @@ RE-стенд (1.4) ведётся параллельно как фоновая 
    `deepseek-flash`; выход каждого субагента проверяется в основном потоке.
 3. «Сделано» = артефакт-файл + проверка критерия; без файла — не сделано.
 4. Тестовые данные игры — копии из `build/server-run`, не из `max-original` напрямую.
-5. Спецификации — единственный интерфейс между линиями: крейты пишутся по `docs/`
+5. Спецификации — единственный интерфейс между линиями: крейты пишутся по `max-brh-docs/`
    и `formats/`, а не по C++-коду.
 
 ## 8. Риски и контрмеры

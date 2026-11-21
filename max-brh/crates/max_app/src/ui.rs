@@ -2661,7 +2661,7 @@ fn session_left_click(
 ///
 /// Экранные координаты окна переводятся в координаты области карты
 /// ([`panels::screen_to_map`]) до `screen_to_grid` — иначе клик уезжает на
-/// (180,18) (риск 4 в `docs/visual-1to1-status.md`).
+/// (180,18) (риск 4 в `max-brh-docs/visual-1to1-status.md`).
 fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
     if let Some(button) = panels::panel_button_at(x, y) {
         return session_panel_button(app, button, x, online);

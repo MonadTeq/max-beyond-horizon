@@ -20,7 +20,7 @@
 - [ ] Согласование путей: `--data-dir/--assets-dir` единообразны во всех режимах и документации.
   Сделано частично: сообщение об ошибке `MAX.RES` подсказывает
   `--data-dir/--max-res`, fallback предупреждает о подмене. Полный аудит флагов
-  (все режимы + `docs/development/build.md`) — не закрыт.
+  (все режимы + `max-brh-docs/development/build.md`) — не закрыт.
 - Критерий: запуск из любого каталога находит данные или даёт точную подсказку.
 
 ### P2 — Производство и строительство (крупнейший геймплейный пробел)
@@ -274,7 +274,7 @@
   `tests/cargo_render.rs` (портрет, описание вкл/выкл, pips, линии, смена
   типа) и UNIT-тесты `mobilize`/`cargo_unit_data`.
 - [x] Артефакты и документация: Windows UI (MSVC+vcpkg) и headless (mingw)
-  пересобраны; `CHANGELOG.md`, `docs/analysis/visual-1to1-status.md`,
+  пересобраны; `CHANGELOG.md`, `max-brh-docs/analysis/visual-1to1-status.md`,
   `suite/03-single-player.md` (TC-0324…0328), `suite/09-visual-1to1.md`
   (TC-0922/0927), `tools/cargo_vectors/README.md`.
 - Критерий: `cargo check/test` — зелено; все qa-сценарии PASS; golden —

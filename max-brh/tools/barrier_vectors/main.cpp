@@ -45,7 +45,7 @@ public:
     const std::vector<std::uint8_t>& bytes() const { return buffer; }
 };
 
-// `struct Packet23Data` (docs/protocol.md §8.5). Field order is the wire order
+// `struct Packet23Data` (max-brh-docs/protocol.md §8.5). Field order is the wire order
 // of `Remote_ReadPacket23Data`; these fields are packed by the game's ABI
 // (uint8_t/bool/int16_t/uint16_t only), so `sizeof` is 45.
 struct Packet23Data {

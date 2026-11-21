@@ -1,4 +1,4 @@
-//! Byte-level primitives of the game protocol (`docs/protocol.md` §8.1).
+//! Byte-level primitives of the game protocol (`max-brh-docs/protocol.md` §8.1).
 //!
 //! The wire format is a raw little-endian field dump with no struct padding:
 //! every integer is written field by field by the C++ port's `operator<<`,

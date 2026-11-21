@@ -18,7 +18,7 @@
 //!
 //! The version is pinned to the same 1.3.18 sources the C++ port builds
 //! (`dependencies/enet-1.3.18.tar.gz`, `ENET_VERSION = 0x010312`); the
-//! handshake compares this value byte-for-byte (`docs/protocol.md` §7).
+//! handshake compares this value byte-for-byte (`max-brh-docs/protocol.md` §7).
 
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::net::Ipv4Addr;

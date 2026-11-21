@@ -42,7 +42,7 @@
 ## Что переиспользуется напрямую
 
 `max_core` + `max_net` (как есть, в cdylib), оркестрация `max_app`, все спеки
-(`docs/architecture/*`, `docs/analysis/visual-1to1-status.md`), 1069 PNG + `manifest.csv`,
+(`max-brh-docs/architecture/*`, `max-brh-docs/analysis/visual-1to1-status.md`), 1069 PNG + `manifest.csv`,
 10 golden-кадров, QA-фабрика (`suite/` 166 TC, `.qa`-язык, `qa_golden_check`), C++-векторы
 детерминизма, серверная часть целиком.
 

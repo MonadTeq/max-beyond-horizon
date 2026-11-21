@@ -28,7 +28,7 @@ banned_ips = []
 max_connections_per_ip = 5
 
 # gRPC lobby/admin listener (horizon.v1.Horizon). Runs beside the WebSocket
-# listener; see docs/protocol-grpc.md and the README. Terminate TLS in front of
+# listener; see max-brh-docs/protocol-grpc.md and the README. Terminate TLS in front of
 # this port if clients connect over https:// (phase 1 serves plaintext h2c).
 # announce_host is the address JoinGame advertises to clients; set it to the
 # public address of this server. It defaults to "127.0.0.1".

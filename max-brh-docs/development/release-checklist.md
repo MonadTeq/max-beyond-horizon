@@ -30,7 +30,7 @@
 | 11 | Windows headless | `bash build/scripts/build-windows.sh --no-wine` (mingw) | ✅ `release/max_app-1.1.0-windows-x86_64/` (2026-11-19): `max-brh.exe` 10 928 081 Б, sha256 `540ad93caf80d1f5662c0998bcd6b61f56ac5303caa56c96dd7199d2fc7c9bd4`; zip 4 082 276 Б, sha256 `743114bbce67a3a1b5a9184b815114a5c116c183045425d03266704d3dffd56f`; PE Subsystem=3 (console), без wine-smoke (флаг `--no-wine`) |
 | 12 | Linux | `bash release.sh` (rust:1.94.0-bookworm, `sdl-from-source,sound`) | ⏳ пересобраны Windows UI/headless; Linux-бандл 1.1.0 остаётся прежним (X-FER/хранилища в него не входят) |
 | 13 | SHA256SUMS | `release/*/SHA256SUMS`, `*.zip.sha256`, `*.tar.gz.sha256` | ✅ Windows UI/headless пересобраны (sha256 в строках 10–11); Linux — прежний `*.tar.gz.sha256` |
-| 14 | Документация | `README.md`, `max-brh/README.md`, `docs/development/build.md`, `docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
+| 14 | Документация | `README.md`, `max-brh/README.md`, `max-brh-docs/development/build.md`, `max-brh-docs/analysis/visual-1to1-status.md` §29–30, `max-brh-qa/suite/README.md` | ✅ версия 1.1.0, X-FER (`TransferMenu`/`ProcessOrderTransfer`) и хранилища комплекса, матрица QA 193 ✅ / 16 ⏭ |
 | 15 | Оракулы не тронуты | `git status --short max-cpp-port max-original max-original-dasm` | ✅ пусто (C++-порт и оригинал не менялись) |
 | 16 | Тег | `git tag -l 'v1.1.0'` | ✅ пусто — **не создан** по указанию; команда: `bash release.sh --tag` (чистое дерево) |
 
@@ -286,7 +286,7 @@ bash build/scripts/live-smoke-mixed.sh 5
       `Desync check failed`. _(2026-11-16: PARTIAL PASS)_
 - [ ] Полная mixed-сессия Rust-клиент + C++-клиент: **блокер** — headless
       `src/` имеет только `--server`, GUI-клиенту нужен X11 и ручной ввод
-      (`src/main.cpp`). См. `docs/architecture/protocol.md` §9/§12.
+      (`src/main.cpp`). См. `max-brh-docs/architecture/protocol.md` §9/§12.
 - [x] Реконнект-состояние: in-process 3-клиентный мок-тест (B offline → resume-54
       → CRC/turn сходятся); живой pause/proxy smoke не автоматизирован.
       Пределы — `protocol.md` §9.2.
@@ -627,7 +627,7 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       `text::tests::glyph_bits_are_lsb_first`; проверено визуально по скриншоту
       окна: `NEW GAME ? settings`, `Name: …`, `World: 23`, `Back`/`Create`,
       `Configure the game and press Enter`. _(2026-11-15)_
-- [x] **Панели 1:1 и шрифты GNW (пункты A/B `docs/visual-1to1-status.md`)**:
+- [x] **Панели 1:1 и шрифты GNW (пункты A/B `max-brh-docs/visual-1to1-status.md`)**:
       `FILES_OF/ON`, `PREF_OFF/ON`, `ENDTRN_U`, `TURNS`, `TIMER`, `XYPOS`,
       `UNITNAME`, 9 переключателей `*_OFF/ON`, `ZOOMPNL1`/`ZOOMPTR`, портрет
       (кадр спрайта ×2), миникарта из `.WRL`, миникарта `2x`/`TNT`; текст —
@@ -699,11 +699,11 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
 ## 7. Документация и лицензии
 
 - [ ] `README.md` (корень): раздел про Rust-клиент ссылается на
-      `docs/release-checklist.md`, `release.sh` и звук.
+      `max-brh-docs/release-checklist.md`, `release.sh` и звук.
 - [ ] `max-brh/README.md`: версия 1.0.0, feature `sound`, ссылка на чек-лист.
 - [ ] `CHANGELOG.md`: 1.0.0, список возможностей и ограничений, ссылка на
       `LICENSE`.
-- [ ] `docs/release-checklist.md` (этот файл) актуален: команды и пути
+- [ ] `max-brh-docs/release-checklist.md` (этот файл) актуален: команды и пути
       совпадают с `release.sh`/`ci.sh`/`build/scripts/build-windows.sh`.
 - [ ] `build/scripts/README.md` описывает релизные скрипты (`build-windows.sh`
       — Windows-кросс-сборка, `live-smoke.sh`) и обойдённые блокеры

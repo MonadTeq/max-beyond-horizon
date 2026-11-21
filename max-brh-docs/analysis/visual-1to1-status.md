@@ -855,7 +855,7 @@ release/max_app-1.0.0-windows-x86_64-ui/max-brh.exe --ui --scale 2 \
 Изменено (не закоммичено): `max-brh/crates/max_app/src/{assets,cursor,lib,main,render,ui}.rs`,
 `max_app/src/{hud,menu}.rs`, `max_render/src/{lib,frame_scale,layout,map_render,sdl_window,text}.rs`,
 `max_assets/src/{image,lib}.rs`, `max-brh/README.md`,
-`docs/{visual-1to1-status,release-checklist}.md`.
+`max-brh-docs/{visual-1to1-status,release-checklist}.md`.
 
 Новые файлы (эта итерация): `max_render/src/frame_scale.rs`,
 `max_app/src/menu.rs`, `max_app/examples/visual_ef.rs`,

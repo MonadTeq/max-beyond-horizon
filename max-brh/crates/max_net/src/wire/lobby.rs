@@ -1,4 +1,4 @@
-//! In-game lobby packets on channel 1 (`docs/protocol.md` §8.2).
+//! In-game lobby packets on channel 1 (`max-brh-docs/protocol.md` §8.2).
 //!
 //! These packets exchange node identities and session settings before the
 //! first game turn: 28 → 44 → 29 → 47/30 → 36 → 35 → 32 → 05 → 34.

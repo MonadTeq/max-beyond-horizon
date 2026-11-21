@@ -1,6 +1,6 @@
 # `upgrade_vectors` — эталонные стоимости исследований/апгрейдов
 
-Генератор векторов для P6 (`docs/development/PLAN-production.md`). Повторяет
+Генератор векторов для P6 (`max-brh-docs/development/PLAN-production.md`). Повторяет
 **float-формулы C++-порта** (`std::pow(..., 7.5)`) и печатает точные значения,
 которые Rust-симуляция обязана воспроизвести **без `f64`** (DESIGN §6.4:
 `#![deny(clippy::float_arithmetic)]`).

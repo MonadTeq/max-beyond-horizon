@@ -1,9 +1,9 @@
 //! Сетевой режим: Horizon (gRPC) → ENet-сессия → внутриигровое лобби → игра.
 //!
-//! Последовательность соответствует `docs/protocol.md` §2/§7/§8:
+//! Последовательность соответствует `max-brh-docs/protocol.md` §2/§7/§8:
 //!
 //! 1. [`connect_horizon`] — `Hello` + `JoinGame`; ответ [`GameJoined`] несёт
-//!    `host`/`port`/`ticket` UDP-сессии (`docs/protocol-grpc.md` §4).
+//!    `host`/`port`/`ticket` UDP-сессии (`max-brh-docs/protocol-grpc.md` §4).
 //! 2. [`SessionConfig::from_joined`] + [`SessionHandle::start`] — ENet-подключение
 //!    и `TP 00`/`TP 03` (канал 0).
 //! 3. Внутриигровое лобби (канал 1): `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`
@@ -11,7 +11,7 @@
 //! 4. Игровой цикл ([`run_network_with_sink`]): мир/seed/типы команд из
 //!    `LobbyGameSettings` (пакет 30), затем FSM хода
 //!    `00 → 53 → тики → 06 → 52 → 54 → 45 → finish_turn`
-//!    (`docs/barrier-flow.md` §3) → [`max_core::game::GameState::finish_turn`].
+//!    (`max-brh-docs/barrier-flow.md` §3) → [`max_core::game::GameState::finish_turn`].
 //!
 //! # Барьеры
 //!
@@ -25,7 +25,7 @@
 //!   таймаутом 30 с; после прохода счётчики/трекер очищаются;
 //! * повторы идут через [`SessionHandle::send_untracked`], чтобы сессионный
 //!   трекер не получал вторую запись на каждый ретрансмит
-//!   (`docs/barrier-flow.md` §6.8);
+//!   (`max-brh-docs/barrier-flow.md` §6.8);
 //! * входящий 54 применяется к [`max_core::game::GameState`]
 //!   (`max_core::events::apply_state_sync`), после 45-барьера CRC команды
 //!   сверяются с собственным (`Remote_TeamDataCrc16`).
@@ -41,7 +41,7 @@
 //! встречные 54 пиров исправляют удалённые команды, затем доигрываются
 //! 52/54/45 и `finish_turn`; `reconnect_pending_state=false`.
 //!
-//! Пределы (`docs/protocol.md` §9): SNAP-пакета нет, 54 покрывает только
+//! Пределы (`max-brh-docs/protocol.md` §9): SNAP-пакета нет, 54 покрывает только
 //! юнитов/экономику одной команды, пропущенные приказы других не
 //! replay-ятся, C++-пиры исключают команду через 30 с. Лобби-реконнект не
 //! поддерживается (сервер уже не в `Remote_GameState=1`).
@@ -159,7 +159,7 @@ pub const DEFAULT_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 /// `attempts = 0` выключает автоматический реконнект. Транспорт
 /// восстанавливается через ENet connect + `TP 00`; игровое состояние
 /// продолжается с локальной точки lockstep и догоняется resume-54
-/// (`docs/protocol.md` §9). SNAP/полного снимка по-прежнему нет.
+/// (`max-brh-docs/protocol.md` §9). SNAP/полного снимка по-прежнему нет.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconnectPolicy {
     /// Максимальное число попыток (`0` — не переподключаться).
@@ -785,7 +785,7 @@ where
 ///
 /// При успехе заменяет `handle` новой сессией. Состояние игры не сбрасывается;
 /// [`pump_events`] после возврата публикует resume-54 и продолжает барьеры
-/// (`docs/protocol.md` §9).
+/// (`max-brh-docs/protocol.md` §9).
 async fn reconnect_session(
     handle: &mut SessionHandle,
     config: &SessionConfig,
@@ -1061,7 +1061,7 @@ async fn run_lobby(
                     ReconnectOutcome::Restored { attempts, .. } => bail!(
                         "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}), \
                          но повторный вход в лобби невозможен: сервер уже не в Remote_GameState=1 \
-                         (docs/protocol.md §9)"
+                         (max-brh-docs/protocol.md §9)"
                     ),
                     ReconnectOutcome::Exhausted { attempts } => bail!(
                         "reconnect: не удалось переподключиться за {attempts} попыт(ок) в лобби"
@@ -1344,7 +1344,7 @@ const BARRIER_RETRY: Duration = DEFAULT_BARRIER_REPEAT;
 /// Таймаут ожидания пиров (`REMOTE_RESPONSE_TIMEOUT`).
 const BARRIER_TIMEOUT: Duration = DEFAULT_BARRIER_TIMEOUT;
 
-/// Фаза барьерного FSM текущего хода (`docs/barrier-flow.md` §3).
+/// Фаза барьерного FSM текущего хода (`max-brh-docs/barrier-flow.md` §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BarrierPhase {
     /// 00 — вход в раунд.
@@ -1507,7 +1507,7 @@ impl TurnBarrierFsm {
 
     /// Состояние своей команды для восстановления после реконнекта.
     ///
-    /// Пакет 54 — единственный «снимок» в протоколе (`docs/protocol.md` §8.5,
+    /// Пакет 54 — единственный «снимок» в протоколе (`max-brh-docs/protocol.md` §8.5,
     /// §9): он несёт юнитов, золото, исследования и счётчики id одной
     /// команды. После разрыва клиент повторно публикует **своё** состояние с
     /// последним завершённым `sync_index`: сервер и пиры применяют его как
@@ -1588,7 +1588,7 @@ enum WaitOutcome {
 ///
 /// В отличие от [`max_net::BarrierTracker`] запись **не** исчезает после
 /// таймаута: C++ продолжает пинговать отстающую команду, Rust логирует и ждёт
-/// (`docs/barrier-flow.md` §3).
+/// (`max-brh-docs/barrier-flow.md` §3).
 struct BarrierPending {
     packets: Vec<Packet>,
     first_sent: Instant,
@@ -1765,7 +1765,7 @@ async fn send_frame_barrier(
 /// Пока ждёт: вычерпывает события (применяя команды/54), повторяет пакеты
 /// барьера через [`SessionHandle::send_untracked`] раз в 3 с, шлёт 01 и по
 /// истечении 30 с логирует таймаут (но продолжает ждать, как Rust-клиент в
-/// `docs/barrier-flow.md` §3).
+/// `max-brh-docs/barrier-flow.md` §3).
 async fn wait_barrier(
     app: &mut App,
     handle: &mut SessionHandle,
@@ -1813,7 +1813,7 @@ async fn wait_barrier(
     }
 }
 
-/// Игровой цикл lockstep-клиента по FSM `docs/barrier-flow.md` §3.
+/// Игровой цикл lockstep-клиента по FSM `max-brh-docs/barrier-flow.md` §3.
 async fn run_game_loop(
     app: &mut App,
     handle: &mut SessionHandle,
@@ -2095,7 +2095,7 @@ fn handle_session_event(
             }
             // 00 — команда ВСЕГДА из поля `team` payload'а, а не из
             // ENet-отправителя: релейная копия приходит от сервера, у которого
-            // своей команды нет (`docs/barrier-flow.md` §1, `remote.cpp:2313`).
+            // своей команды нет (`max-brh-docs/barrier-flow.md` §1, `remote.cpp:2313`).
             if let Command::TurnBarrier(barrier) = &command {
                 tracing::debug!(
                     "00: команда {} счётчик {} (team из payload)",

@@ -5,7 +5,7 @@
 //! `teamunits.hpp/.cpp` (`TeamUnits`), `complex.hpp/.cpp` (`Complex`),
 //! `cargo.hpp/.cpp` (`Cargo`), `enums.hpp` (`PlayerTeamType`, `TeamClanType`).
 //!
-//! Проекция `S`/`UI` — по `docs/state-model.md` §3.4/§3.6/§3.7 и §6.3: UI-поля
+//! Проекция `S`/`UI` — по `max-brh-docs/state-model.md` §3.4/§3.6/§3.7 и §6.3: UI-поля
 //! `TeamInfo` (камера, зум, переключатели отображения, маркеры) в симуляцию не
 //! входят; они собраны в [`TeamInfoUi`] и нужны только слою сейвов (V70).
 

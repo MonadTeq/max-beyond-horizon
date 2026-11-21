@@ -15,7 +15,7 @@
 #
 # Headless: фичи `sdl*` (SDL3 из исходников/vcpkg) и `sound` (rodio/cpal →
 # ALSA/WASAPI) не включаются — им нужен Windows-хост с CMake/MSVC/vcpkg
-# (см. README.txt в архиве и docs/development/release-checklist.md §6).
+# (см. README.txt в архиве и max-brh-docs/development/release-checklist.md §6).
 #
 # Артефакты (в $OUT, по умолчанию <repo>/release):
 #   max_app-<version>-windows-x86_64/            каталог: max-brh.exe + README.txt +
@@ -208,7 +208,7 @@ Windows-машине с Rust 1.94.0 и MSVC:
 Документация
 ------------
   README.txt (этот файл), CHANGELOG.md, LICENSE.
-  Полный чек-лист релиза — docs/development/release-checklist.md в репозитории (§6 —
+  Полный чек-лист релиза — max-brh-docs/development/release-checklist.md в репозитории (§6 —
   Windows x64: headless кросс-сборка и полная SDL-сборка на хосте).
 
 Лицензия

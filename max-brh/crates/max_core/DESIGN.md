@@ -2,8 +2,8 @@
 
 > Статус: **дизайн для переписывания ядра на Rust**.
 > Оракул поведения: `max-cpp-port/src/` (неизменяемый, C++).
-> Спецификация состояния: `docs/state-model.md` (15 перечислений, 11 структур, V70).
-> Сетевой контракт: `docs/protocol.md` (lockstep, пакеты 00–54).
+> Спецификация состояния: `max-brh-docs/state-model.md` (15 перечислений, 11 структур, V70).
+> Сетевой контракт: `max-brh-docs/protocol.md` (lockstep, пакеты 00–54).
 > RE-каталог оригинала: `max-original-dasm/functions-named.csv` (имена исходных файлов игры: `task*.cpp`, `paths_manager.cpp`, `winloss.cpp`, …).
 > Каркас для рефакторинга: `max-brh/crates/max_core/src/` (`lib.rs`, `map.rs`, `team.rs`, `unit.rs`, `order.rs`).
 
@@ -589,7 +589,7 @@ C++: `static_cast<T>((static_cast<int64_t>(next) * value) >> 32)`.
 
 ### 8.3 Фикстуры из `.dta`-сейвов
 
-- формат V70 (state-model.md + `max-cpp-port-docs/save.md`); `save.rs` — чистый парсер/писатель `&[u8]`;
+- формат V70 (state-model.md + `max-cpp-port-max-brh-docs/save.md`); `save.rs` — чистый парсер/писатель `&[u8]`;
 - фикстуры: реальные сейвы (из ресурсов игры) + синтетические (сгенерированные headless-портом на N-м ходу скрипта);
 - каталог: `testdata/saves/{name}.dta` + метаданные `{name}.json` (seed, правила, описание сценария);
 - запрещено коммитить сейвы, полученные недетерминированным путём.

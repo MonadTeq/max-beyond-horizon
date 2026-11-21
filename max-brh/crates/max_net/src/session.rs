@@ -7,7 +7,7 @@
 //!    two channels, calls `enet_host_connect` and waits for
 //!    `ENET_EVENT_TYPE_CONNECT` (up to [`SessionConfig::connect_timeout`]).
 //! 2. Both sides send `TP 00` on channel 0; the client validates the server's
-//!    copy (`docs/protocol.md` §7). A mismatch sends `TP 03` and drops the
+//!    copy (`max-brh-docs/protocol.md` §7). A mismatch sends `TP 03` and drops the
 //!    link; a server `TP 03` becomes [`SessionError::Handshake`].
 //! 3. [`SessionHandle::start`] moves the session into a tokio task with a
 //!    command/event channel pair. Incoming APPL frames are decoded into
@@ -45,9 +45,9 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default ENet service cadence (C++ client: 10 ms).
 pub const DEFAULT_SERVICE_TICK: Duration = Duration::from_millis(10);
-/// Default barrier retransmit period (`docs/protocol.md` §8.6).
+/// Default barrier retransmit period (`max-brh-docs/protocol.md` §8.6).
 pub const DEFAULT_BARRIER_REPEAT: Duration = Duration::from_secs(3);
-/// Default barrier timeout (`docs/protocol.md` §8.6).
+/// Default barrier timeout (`max-brh-docs/protocol.md` §8.6).
 pub const DEFAULT_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration of one UDP session.
@@ -221,7 +221,7 @@ pub enum SessionCommand {
     /// Barrier packets (00/45/52) are also registered for retransmission. A
     /// caller that repeats an already tracked barrier itself must use
     /// [`SessionCommand::SendUntracked`] instead, otherwise every repeat adds
-    /// another tracker entry (`docs/barrier-flow.md` §6.8).
+    /// another tracker entry (`max-brh-docs/barrier-flow.md` §6.8).
     Send(Packet),
     /// Encode and send an APPL packet **without** registering it for
     /// retransmission.
@@ -235,7 +235,7 @@ pub enum SessionCommand {
     Disconnect,
 }
 
-/// Barrier bookkeeping (`docs/protocol.md` §8.6): repeat every 3 s, wait 30 s.
+/// Barrier bookkeeping (`max-brh-docs/protocol.md` §8.6): repeat every 3 s, wait 30 s.
 #[derive(Debug, Clone, Copy)]
 pub struct BarrierTiming {
     /// Retransmit period.
@@ -280,7 +280,7 @@ struct PendingBarrier {
 
 /// Tracks outgoing barrier packets.
 ///
-/// The server arbiter does not echo barriers back (`docs/protocol.md` §8.6),
+/// The server arbiter does not echo barriers back (`max-brh-docs/protocol.md` §8.6),
 /// so the client cannot observe its own barrier being accepted. The tracker
 /// therefore keeps retransmitting until the application calls
 /// [`BarrierTracker::clear`] (exposed as [`SessionCommand::ClearBarriers`]),
@@ -461,7 +461,7 @@ impl Session {
                         }
                     }
                     // APPL packets before verification are dropped
-                    // (`docs/protocol.md` §7).
+                    // (`max-brh-docs/protocol.md` §7).
                     EventKind::Receive | EventKind::Connect | EventKind::None => {}
                 }
             }

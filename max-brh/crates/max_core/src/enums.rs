@@ -2,8 +2,8 @@
 //!
 //! Источники значений:
 //! * оракул `max-cpp-port/src/enums.hpp`, `resourcetable.hpp`, `planetselectmenu.hpp`;
-//! * `max-cpp-port-docs/save.md` (V70) — имена и значения сохраняемых перечислений;
-//! * `docs/state-model.md` §2 — предлагаемые Rust-имена.
+//! * `max-cpp-port-max-brh-docs/save.md` (V70) — имена и значения сохраняемых перечислений;
+//! * `max-brh-docs/state-model.md` §2 — предлагаемые Rust-имена.
 //!
 //! Правила модуля (DESIGN.md §3.2):
 //! * каждое перечисление — `#[repr(uN)]` с точными значениями C++;

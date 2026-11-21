@@ -73,7 +73,7 @@
 //! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) и `Upg. All`.
 //! Отключён только `activate` (`RepairShopMenu` не портирован); мастер-строитель
 //! пункт не регистрирует (`FindValidPowerGeneratorPosition`). Список причин и
-//! ссылки — `docs/analysis/visual-1to1-status.md` §33.
+//! ссылки — `max-brh-docs/analysis/visual-1to1-status.md` §33.
 //!
 //! # Осознанные расхождения
 //!

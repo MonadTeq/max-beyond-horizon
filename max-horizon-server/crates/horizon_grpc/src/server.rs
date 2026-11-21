@@ -12,7 +12,7 @@
 //!
 //! `enabled` defaults to `false`, `bind_address` to `0.0.0.0:8082` — the
 //! WebSocket listener (8081) keeps running unchanged next to it
-//! (`docs/protocol-grpc.md` §4.4). `announce_host` defaults to `127.0.0.1` (the
+//! (`max-brh-docs/protocol-grpc.md` §4.4). `announce_host` defaults to `127.0.0.1` (the
 //! legacy WS value) and is independent of `bind_address`, so a public server
 //! can listen on `0.0.0.0` but advertise its real host. TLS is not enabled in
 //! phase 1; put the listener behind a TLS terminator if clients need
@@ -37,7 +37,7 @@ use crate::backend::{HorizonBackend, MaxBackend};
 use crate::proto::v1::horizon_server::HorizonServer;
 use crate::service::HorizonService;
 
-/// Default bind address of the gRPC listener (`docs/protocol-grpc.md` §4.4).
+/// Default bind address of the gRPC listener (`max-brh-docs/protocol-grpc.md` §4.4).
 pub const DEFAULT_GRPC_BIND_ADDRESS: &str = "0.0.0.0:8082";
 
 /// Default advertised host of `JoinGameResponse.host`: the legacy WS value.

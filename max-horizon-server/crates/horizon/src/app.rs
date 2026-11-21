@@ -175,7 +175,7 @@ impl Application {
         let config = self.config.clone();
 
         // ---- gRPC lobby/admin listener (`[server.grpc]`) ----
-        // Runs next to the WebSocket listener (docs/protocol-grpc.md §4.4): the
+        // Runs next to the WebSocket listener (max-brh-docs/protocol-grpc.md §4.4): the
         // WS plugin path is untouched, the gRPC adapter is additive.
         let grpc_settings = self.config.server.grpc.clone();
         let grpc_config_path = self.config_path.clone();

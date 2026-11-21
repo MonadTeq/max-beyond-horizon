@@ -2,9 +2,9 @@
 //
 // Package `horizon.v1` is the versioned contract shared by `horizon.proto`
 // (the service) and this file. Field names deliberately mirror the JSON keys
-// of the legacy WebSocket protocol (docs/protocol.md §5) so that a JSON frame
+// of the legacy WebSocket protocol (max-brh-docs/protocol.md §5) so that a JSON frame
 // and its protobuf counterpart can be mapped 1:1; the mapping tables live in
-// docs/protocol-grpc.md.
+// max-brh-docs/protocol-grpc.md.
 //
 // Backward-compatibility rules for this file: field numbers never change and
 // are never reused; existing fields are only extended with new enum values or
@@ -110,7 +110,7 @@ message SessionStatusInfo {
 
 // Format of the `value` string of a Ticket.
 //
-// Two formats exist (docs/protocol.md §6):
+// Two formats exist (max-brh-docs/protocol.md §6):
 //   * legacy — the game password for protected games, "" for open games;
 //   * signed — "v1.<session_id>.<player_id>.<unix_expiry>.<hex_hmac>", minted
 //     by max_auth when MAX_SESSION_SECRET is configured (24 h TTL).
@@ -151,7 +151,7 @@ message Ticket {
 // reports a failure inline inside a normal frame — the `error` field of
 // `session_stopped` / `session_restarted` / `session_started` with
 // `ok:false`. Everything else (lobby errors, admin auth errors, malformed
-// input) is raised as a standard gRPC status; see docs/protocol-grpc.md §6
+// input) is raised as a standard gRPC status; see max-brh-docs/protocol-grpc.md §6
 // for the full mapping.
 message Error {
   // Standard gRPC status code this error would carry if it were raised as a

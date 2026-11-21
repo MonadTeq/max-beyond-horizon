@@ -32,7 +32,7 @@ jobs:
         # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из
         # исходников через CMake; dev-заголовки включают настоящие драйверы
         # (X11, Wayland, KMSDRM, ALSA) — без них SDL3 соберётся с dummy.
-        # Набор — как в docs/development/release-checklist.md §2.3.
+        # Набор — как в max-brh-docs/development/release-checklist.md §2.3.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \

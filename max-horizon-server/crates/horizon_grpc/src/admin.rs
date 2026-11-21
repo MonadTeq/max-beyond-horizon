@@ -1,7 +1,7 @@
 //! Admin token scheme (shared with the `max_admin` WebSocket plugin).
 //!
 //! A token is `hex(HMAC-SHA256(admin_secret, "max-admin"))`, exactly as the WS
-//! plugin computes it (`crates/max_admin`, `docs/protocol.md` §5.4), so an
+//! plugin computes it (`crates/max_admin`, `max-brh-docs/protocol.md` §5.4), so an
 //! operator can use the same token on both transports. Verification is
 //! constant-time (`hmac`'s `verify_slice`) and fail-closed: without a configured
 //! secret every admin RPC is rejected.

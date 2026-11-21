@@ -1,7 +1,7 @@
 # max_net
 
 Сетевая часть Rust-клиента M.A.X.: **Horizon по gRPC** и **игровая сессия по
-UDP/ENet 1.3.18**. Контракты — `docs/protocol-grpc.md`, `docs/protocol.md`,
+UDP/ENet 1.3.18**. Контракты — `max-brh-docs/protocol-grpc.md`, `max-brh-docs/protocol.md`,
 схемы — `max-horizon-server/proto/`.
 
 ## Модули
@@ -9,7 +9,7 @@ UDP/ENet 1.3.18**. Контракты — `docs/protocol-grpc.md`, `docs/protoco
 | Модуль | Назначение |
 |---|---|
 | `horizon` | Типизированный async-клиент Horizon: `connect`, `hello`, `list_games`, `create_game`, `join_game` (→ `GameJoined` с `ticket`), `ping`. Таймауты на connect и на каждый вызов. Ошибки — стандартные gRPC-статусы (`HorizonError::Status { code, message }`). |
-| `wire` | Байтовые (де)сериализаторы игрового протокола (`docs/protocol.md` §8): конверт `0x50 + n`, команды 00/01/06/08/10/11/12/13/14/18/20/38/41/43/45/50/52/53, лобби 05/26/28/29/30/31/32/33/34/35/36/37/44/47, состояние 09/16/17, аудит/синк 23/24/49/51/54, управление 07/39/40/42/46/48. Пакеты ≤ 1440 байт. |
+| `wire` | Байтовые (де)сериализаторы игрового протокола (`max-brh-docs/protocol.md` §8): конверт `0x50 + n`, команды 00/01/06/08/10/11/12/13/14/18/20/38/41/43/45/50/52/53, лобби 05/26/28/29/30/31/32/33/34/35/36/37/44/47, состояние 09/16/17, аудит/синк 23/24/49/51/54, управление 07/39/40/42/46/48. Пакеты ≤ 1440 байт. |
 | `handshake` | `TP 00` / `TP 03` (канал 0), `data_hash = SHA256(MAX.RES)‖SHA256(PATCHES.RES)` (128 hex), проверки версий/тикета/данных. |
 | `session` | ENet-подключение, `TP 00`-обмен, асинхронный цикл «команды → события», барьеры 00/45/52 (повтор 3 с, таймаут 30 с). |
 | `enet` | Единственный `unsafe`-модуль: минимальная обёртка над вендоренным C-ENet. |
@@ -107,7 +107,7 @@ docker run --rm -v "$PWD:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c \
 1. Собрать и запустить Horizon + headless по
    `max-horizon-server/README.Docker.md` / `Dockerfile`, прописав в
    `config.toml` секцию `[max]` (бинарь headless, `template_dir`, диапазон
-   UDP-портов) и gRPC-листенер (`docs/protocol-grpc.md` §4.4, порт 8082).
+   UDP-портов) и gRPC-листенер (`max-brh-docs/protocol-grpc.md` §4.4, порт 8082).
 2. Убедиться, что в лобби есть игра (`ListGames`), либо создать её
    `CreateGame`.
 3. `JoinGame` → `GameJoined { host, port, ticket }`.
@@ -123,6 +123,6 @@ docker run --rm -v "$PWD:/src" -w /src/max-brh rust:1.94.0-bookworm bash -c \
    `Main game loop`, отсутствие `Desync check failed` / `desync-*.txt`.
 
 Ограничения, зафиксированные в контракте: игрового реконнекта/SNAP нет
-(`docs/protocol.md` §9), ретрансляция «сервер → остальные клиенты» в текущем
+(`max-brh-docs/protocol.md` §9), ретрансляция «сервер → остальные клиенты» в текущем
 снапшоте не подтверждена (§12.1), `host` в `JoinGameResponse` пока
 `127.0.0.1` (§12.2) — для удалённого сервера подставляйте адрес из конфига.

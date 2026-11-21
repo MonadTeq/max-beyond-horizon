@@ -1,7 +1,7 @@
 // Horizon lobby/admin gRPC service.
 //
 // gRPC + protobuf counterpart of the WebSocket JSON protocol described in
-// docs/protocol.md §5 (PLAN v6.0: lobby/admin moves to gRPC, the ENet/UDP
+// max-brh-docs/protocol.md §5 (PLAN v6.0: lobby/admin moves to gRPC, the ENet/UDP
 // game session stays untouched). One unary RPC per WS request/response pair:
 //
 //   hello                      -> Hello
@@ -17,10 +17,10 @@
 //
 // All methods are unary request/response; the WS protocol has no pushes and
 // the lobby list is a small snapshot, so no streaming is defined in v1
-// (rationale in docs/protocol-grpc.md §4.1, together with the backward-
+// (rationale in max-brh-docs/protocol-grpc.md §4.1, together with the backward-
 // compatible extension path). Errors use the standard gRPC status; the
 // WS `event` keys disappear because the RPC name is the event
-// (docs/protocol-grpc.md §4.2).
+// (max-brh-docs/protocol-grpc.md §4.2).
 
 syntax = "proto3";
 
@@ -114,7 +114,7 @@ message ListGamesResponse {
 }
 
 // max_lobby:create_game — every field is optional; unset fields keep the
-// SessionConfig defaults (docs/protocol.md §5.3).
+// SessionConfig defaults (max-brh-docs/protocol.md §5.3).
 message CreateGameRequest {
   // Human readable game name; default: the first 8 characters of the
   // session UUID.
@@ -165,7 +165,7 @@ message JoinGameResponse {
   // Host the ENet client connects to for the game session.
   //
   // KNOWN LIMITATION: the WS implementation hardcodes "127.0.0.1"
-  // (docs/protocol.md §12). `host` is part of the schema precisely so the
+  // (max-brh-docs/protocol.md §12). `host` is part of the schema precisely so the
   // value can be fixed (e.g. taken from server config / advertised address)
   // without a protocol change.
   string host = 2;
@@ -182,10 +182,10 @@ message JoinGameResponse {
 // max_admin:list_sessions — no payload besides the optional token.
 message AdminListSessionsRequest {
   // Admin authorization token: hex(HMAC-SHA256(admin_secret, "max-admin")),
-  // compared in constant time (docs/protocol.md §5.4). Kept as a message
+  // compared in constant time (max-brh-docs/protocol.md §5.4). Kept as a message
   // field for WS parity; moving it to gRPC metadata (e.g. an
   // `x-horizon-admin-token` header) is a backward-compatible alternative
-  // documented in docs/protocol-grpc.md.
+  // documented in max-brh-docs/protocol-grpc.md.
   optional string admin_token = 1;
 }
 

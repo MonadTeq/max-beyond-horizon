@@ -23,7 +23,7 @@
 //!
 //! ## Relation to the WebSocket plugins
 //!
-//! `docs/protocol-grpc.md` §4.4 notes that the plugins and this adapter each
+//! `max-brh-docs/protocol-grpc.md` §4.4 notes that the plugins and this adapter each
 //! hold a `SessionManager`: sharing one handle across a `cdylib` plugin and the
 //! host binary is a separate refactor of the plugin loader, so phase 1 keeps
 //! *separate* managers (the WS server is untouched). Each manager is
@@ -49,7 +49,7 @@ use uuid::Uuid;
 use crate::admin::verify_admin_token;
 use crate::error::ServiceError;
 
-/// Lifetime of a signed per-player join ticket (`docs/protocol.md` §6: 24 h).
+/// Lifetime of a signed per-player join ticket (`max-brh-docs/protocol.md` §6: 24 h).
 pub const TICKET_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 // ============================================================================
@@ -82,7 +82,7 @@ impl GameStatus {
         }
     }
 
-    /// Legacy WS `status`/`state` string (`docs/protocol.md` §5.3).
+    /// Legacy WS `status`/`state` string (`max-brh-docs/protocol.md` §5.3).
     pub fn as_ws_str(&self) -> &'static str {
         match self {
             Self::Starting => "starting",
@@ -455,7 +455,7 @@ pub struct MaxBackend {
     port_range: RangeInclusive<u16>,
     /// Advertised host of `JoinGameResponse.host`; comes from
     /// `[server.grpc].announce_host`, defaulting to `127.0.0.1` (WS parity)
-    /// (`docs/protocol-grpc.md` §4.6 keeps the field for exactly this).
+    /// (`max-brh-docs/protocol-grpc.md` §4.6 keeps the field for exactly this).
     host: String,
 }
 
@@ -571,7 +571,7 @@ impl MaxBackend {
             .ok_or_else(|| ServiceError::unavailable("max_admin is not configured"))
     }
 
-    /// Fail-closed admin authorization (`docs/protocol.md` §5.4), with the exact
+    /// Fail-closed admin authorization (`max-brh-docs/protocol.md` §5.4), with the exact
     /// legacy `admin_error` texts.
     fn authorize(&self, admin_token: Option<&str>) -> Result<(), ServiceError> {
         let Some(secret) = self.admin_secret.as_deref() else {
@@ -720,7 +720,7 @@ impl HorizonBackend for MaxBackend {
         let id = match Uuid::parse_str(game_id) {
             Ok(id) => id,
             // "Not a UUID" is indistinguishable from "unknown game" for the WS
-            // client and both are NOT_FOUND (docs/protocol-grpc.md §6.1).
+            // client and both are NOT_FOUND (max-brh-docs/protocol-grpc.md §6.1).
             Err(_) => return Err(ServiceError::not_found("game not found")),
         };
 

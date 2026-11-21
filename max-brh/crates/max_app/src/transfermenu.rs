@@ -800,7 +800,7 @@ pub fn resolve_target(
 /// `GameManager_TransferCargo` → `unit1->transfer_cargo = cargo_transferred;
 /// UnitsManager_SetNewOrder(unit1, ORDER_TRANSFER, ORDER_STATE_INIT)`.
 ///
-/// Пакет **08/P3** (`docs/architecture/protocol.md` §8.4): `parent_unit` —
+/// Пакет **08/P3** (`max-brh-docs/architecture/protocol.md` §8.4): `parent_unit` —
 /// цель, `transfer_cargo` — знаковое количество. `prior_order`/`prior_state`
 /// берутся из юнита, как `Remote_SendNetPacket_08` после `SetNewOrder`.
 pub fn transfer_order(

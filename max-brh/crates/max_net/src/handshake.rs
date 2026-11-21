@@ -1,4 +1,4 @@
-//! ENet transport handshake on channel 0 (`docs/protocol.md` §7).
+//! ENet transport handshake on channel 0 (`max-brh-docs/protocol.md` §7).
 //!
 //! Both peers send `TP 00` right after `ENET_EVENT_TYPE_CONNECT` and validate
 //! the peer's copy. A mismatch is answered with `TP 03` (reason 1/2/3) and the
@@ -22,7 +22,7 @@ use crate::wire::reader::{Reader, WireError, Writer};
 
 /// ENet wire version pinned by the C++ port (`ENET_VERSION` in `enet.h`).
 pub const ENET_VERSION: u32 = 0x010312;
-/// M.A.X. network protocol version (`docs/protocol.md` §7).
+/// M.A.X. network protocol version (`max-brh-docs/protocol.md` §7).
 pub const PROTOCOL_VERSION: u16 = 0x0004;
 /// Default `GAME_VERSION` of the M.A.X. Port 0.8.0 builds
 /// (`(major<<16)|(minor<<8)|patch`). The value must match the server build;
@@ -188,7 +188,7 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-/// Reject reason of `TP 03` (`docs/protocol.md` §7).
+/// Reject reason of `TP 03` (`max-brh-docs/protocol.md` §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
     /// `1` — game/enet/protocol version mismatch.

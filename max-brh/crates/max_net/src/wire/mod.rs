@@ -1,4 +1,4 @@
-//! Game protocol on ENet channel 1 (`APPL`) — `docs/protocol.md` §8.
+//! Game protocol on ENet channel 1 (`APPL`) — `max-brh-docs/protocol.md` §8.
 //!
 //! Every APPL packet is a single ENet frame whose first byte is
 //! `TRANSPORT_APPL_PACKET_ID + number` (`0x50 + n`, so packet 54 → `0x86`).

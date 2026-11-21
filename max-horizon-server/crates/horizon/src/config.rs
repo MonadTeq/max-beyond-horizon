@@ -65,7 +65,7 @@ pub struct ServerSettings {
     #[serde(default)]
     pub webtransport: game_server::config::WebTransportConfig,
     /// gRPC lobby/admin listener settings (`[server.grpc]`). The listener speaks
-    /// `horizon.v1.Horizon` (see `horizon_grpc` / `docs/protocol-grpc.md`) and
+    /// `horizon.v1.Horizon` (see `horizon_grpc` / `max-brh-docs/protocol-grpc.md`) and
     /// runs next to the WebSocket listener; disabled by default.
     #[serde(default)]
     pub grpc: horizon_grpc::GrpcSettings,

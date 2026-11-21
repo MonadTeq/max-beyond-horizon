@@ -1,7 +1,7 @@
 # QA-скрипты клиента M.A.X. (слои 2–4)
 
 Этот каталог — слой 2 (**скриптовый UI-драйвер**), слой 3 (**golden-кадры**) и
-их обвязка в CI из `docs/qa-plan.md`. Всё работает **in-process, без SDL, окна
+их обвязка в CI из `max-brh-docs/qa-plan.md`. Всё работает **in-process, без SDL, окна
 и сети**: экраны и игровой цикл `max_app` — чистые функции от `InputEvent`,
 поэтому скрипт нажимает те же кнопки, что игрок мышью, и получает те же кадры.
 
@@ -321,7 +321,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 
 ## P4: soak и производительность (`soak-100.qa`, `soak_headless`)
 
-Два независимых прогона P4 (`docs/development/PLAN-production.md`):
+Два независимых прогона P4 (`max-brh-docs/development/PLAN-production.md`):
 
 1. **QA-сценарий** `soak-100.qa` — тот же UI-путь игрока (100 × `end_turn` с
    ходами ИИ), поэтому он ловит паники/десинк экранов и заодно пишет
@@ -385,7 +385,7 @@ CRC/снапшот, порядок симуляции не меняется. С�
 
 Эталоны — `../max-brh-qa/golden/*.png`, ровно те кадры, которые снимает
 `visual-screens.qa` (сравнение по имени файла: `golden/NAME.png` ↔
-`<out>/NAME.png`). Порог дрейфа (как в `docs/qa-plan.md`):
+`<out>/NAME.png`). Порог дрейфа (как в `max-brh-docs/qa-plan.md`):
 
 * пиксель «изменился», если `max(|ΔR|, |ΔG|, |ΔB|) > 30`;
 * кадр «дрейфнул», если изменилось больше **1 %** пикселей (3072 из 307 200);
@@ -486,7 +486,7 @@ cd max-brh && cargo test -p max_app --lib qa:: && cargo test -p max_app --test q
 ## Ограничения
 
 * **`load` понимает только V70** (`*.CAM`): у контейнера `MXLS` (команда
-  `save`) нет десериализатора состояния — см. `docs/plan-modes.md`; `save`
+  `save`) нет десериализатора состояния — см. `max-brh-docs/plan-modes.md`; `save`
   проверяется round-trip'ом в `tests/local_sp.rs` и здесь пишется как артефакт.
 * **Сеть не поднимается**: `menu join` использует заглушку клиента лобби
   (`QaMenuClient`, 2 детерминированные игры) — слой 4 (`live-smoke.sh`)

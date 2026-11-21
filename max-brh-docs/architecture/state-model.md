@@ -2,7 +2,7 @@
 
 > Статус: **рабочая спецификация** (заменяет прежний черновик-скелет).
 > Источники: авторская спецификация формата сохранений v1.04 (V70) —
-> [`max-cpp-port-docs/save.md`](../max-cpp-port-docs/save.md); заголовки и код C++-порта —
+> [`max-cpp-port-max-brh-docs/save.md`](../max-cpp-port-max-brh-docs/save.md); заголовки и код C++-порта —
 > [`max-cpp-port/src/`](../max-cpp-port/src/) (`enums.hpp`, `unitinfo.hpp`,
 > `unitvalues.hpp`, `complex.hpp`, `teamunits.hpp`, `ctinfo.hpp`,
 > `units_manager.hpp`, `game_manager.hpp`, `resourcetable.hpp`, `hash.hpp`,
@@ -13,7 +13,7 @@
 
 | Обозначение | Значение |
 |---|---|
-| **save.md** | `max-cpp-port-docs/save.md` — спецификация бинарного формата V70 (главный источник раскладки байт). |
+| **save.md** | `max-cpp-port-max-brh-docs/save.md` — спецификация бинарного формата V70 (главный источник раскладки байт). |
 | **C++** | `max-cpp-port/src/` — заголовки/код порта; источник имён, семантики и уточнений типов. |
 | **Rust-тип** | Предлагаемый тип для `max_core` (чистая модель, serde `Serialize/Deserialize`, без I/O). |
 | **Проекция** | `S` — игровое состояние, входит в серверный снапшот; `UI` — состояние экрана клиента, в снапшот **не** входит; `T` — техническое поле сериализации сохранений; `—` — исключено из модели/серверная внутренняя деталь. |
@@ -423,7 +423,7 @@ save.md: `IniPreferences` — 7 × `signed int` (`effects`, `click_scroll`, `qui
 `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`). Это **пользовательские
 предпочтения клиента**, они не влияют на симуляцию и в снапшот не входят (`—`).
 В `max_core` их хранить не нужно (конфигурация клиента, не модели).
-С P8 (`docs/analysis/visual-1to1-status.md` §27) клиент держит полный набор
+С P8 (`max-brh-docs/analysis/visual-1to1-status.md` §27) клиент держит полный набор
 настроек (`max_app::preferences::Preferences`): `IniPreferences` пишутся в
 `SaveMeta::ini_preferences` при сохранении и читаются при загрузке
 (`SaveLoad_Load`, `saveload.cpp:920-934`); `effects` управляет только кадровыми
@@ -801,7 +801,7 @@ pub struct Map {
    участвуют в сверке рассинхронизации.
 2. **Сервер — единственный авторитет**; клиент предсказывает визуальное
    (позиции анимации, спрайты, угол), а игровые значения получает из снапшота
-   (`docs/protocol.md`, инварианты).
+   (`max-brh-docs/protocol.md`, инварианты).
 3. **Технические поля формата** (`object_index`, `class_type`,
    `complex_count`, счётчики сериализатора) в модель не переносятся.
 4. **Ссылки на объекты** в снапшоте — по id (`UnitId`, id комплекса), а не
@@ -887,9 +887,9 @@ pub struct Map {
 
 1. **Кодирование снапшота.** Форма состояния зафиксирована здесь; конкретное
    кодирование сообщений (`snapshot`/`delta`/`welcome`) — в
-   [`docs/protocol.md`](protocol.md) (пока таблица-каркас) и в реализации
+   [`max-brh-docs/protocol.md`](protocol.md) (пока таблица-каркас) и в реализации
    headless-сервера [`src/server.cpp`](../src/server.cpp)
-   (+ [`docs/dedicated-server-plan.md`](dedicated-server-plan.md)). Нужно решить:
+   (+ [`max-brh-docs/dedicated-server-plan.md`](dedicated-server-plan.md)). Нужно решить:
    binary vs JSON/MessagePack, полный снапшот vs дельта, частота (ход/кадр),
    формат `Path` и ссылок на юниты.
 2. **Согласование с каркасом max_core.** Заменить `unit::UnitKind` на полный
@@ -911,7 +911,7 @@ pub struct Map {
    Варианты: (а) сервер фильтрует снапшот по команде (дорого, но честно);
    (б) слать всё + пометить поля видимости (как в оригинале, доверие клиенту);
    (в) слать `heatmap_complete` команды + видимые юниты. Требует решения в
-   `docs/protocol.md`.
+   `max-brh-docs/protocol.md`.
 6. **Не восстановленные поля V70.** `comm`, `fuel_distance`, `energized` в
    `UnitInfo` читаются, но не используются C++-портом (`unitinfo.cpp`) — их
    семантика не подтверждена. Порядок `OrderType` 0x12: save.md называет

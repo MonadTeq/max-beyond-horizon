@@ -2,7 +2,7 @@
 //!
 //! The WebSocket protocol reports failures as JSON frames (`error` /
 //! `admin_error`) with a human-readable text, plus connection-level close codes
-//! 4000–4008. The gRPC contract (`docs/protocol-grpc.md` §4.2 and §6) keeps the
+//! 4000–4008. The gRPC contract (`max-brh-docs/protocol-grpc.md` §4.2 and §6) keeps the
 //! **exact legacy text** as `status.message` and maps the category onto a
 //! standard gRPC code:
 //!
@@ -27,7 +27,7 @@ use crate::proto::v1;
 pub struct ServiceError {
     /// Standard gRPC code (numeric value of `google.rpc.Code`).
     pub code: Code,
-    /// Exact legacy WebSocket `error` / `admin_error` text (`docs/protocol-grpc.md` §6.1).
+    /// Exact legacy WebSocket `error` / `admin_error` text (`max-brh-docs/protocol-grpc.md` §6.1).
     pub message: String,
     /// Legacy WebSocket close code (4000–4008), or 0 for plain business errors.
     pub legacy_close_code: u32,
@@ -78,14 +78,14 @@ impl ServiceError {
         Self::new(Code::ResourceExhausted, message)
     }
 
-    /// Classifies a legacy WS `error`/`admin_error` text (`docs/protocol-grpc.md` §6.1).
+    /// Classifies a legacy WS `error`/`admin_error` text (`max-brh-docs/protocol-grpc.md` §6.1).
     pub fn from_ws(message: impl Into<String>) -> Self {
         let message = message.into();
         Self::new(classify_ws_error(&message), message)
     }
 
     /// Classifies a legacy WS close code (4000–4008) plus its reason text
-    /// (`docs/protocol-grpc.md` §6.2).
+    /// (`max-brh-docs/protocol-grpc.md` §6.2).
     pub fn from_legacy_close(close_code: u16, message: impl Into<String>) -> Self {
         Self {
             code: code_for_legacy_close(close_code),
@@ -120,7 +120,7 @@ impl From<ServiceError> for tonic::Status {
 
 /// Maps a legacy WS `error` / `admin_error` text onto a gRPC code.
 ///
-/// The table is `docs/protocol-grpc.md` §6.1. Any text that is not in the table
+/// The table is `max-brh-docs/protocol-grpc.md` §6.1. Any text that is not in the table
 /// is a server-side failure (`INTERNAL`), matching the "by the place it occurs"
 /// rule for process errors.
 pub fn classify_ws_error(message: &str) -> Code {
@@ -177,7 +177,7 @@ pub fn classify_ws_error(message: &str) -> Code {
 }
 
 /// Maps a legacy WS close code (4000–4008) onto a gRPC code
-/// (`docs/protocol-grpc.md` §6.2).
+/// (`max-brh-docs/protocol-grpc.md` §6.2).
 pub fn code_for_legacy_close(close_code: u16) -> Code {
     match close_code {
         4000 => Code::FailedPrecondition, // protocol version not supported
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn ws_error_texts_map_to_the_documented_codes() {
-        // Verbatim rows of docs/protocol-grpc.md §6.1.
+        // Verbatim rows of max-brh-docs/protocol-grpc.md §6.1.
         let table = [
             ("max_lobby is not configured", Code::Unavailable),
             ("game not found", Code::NotFound),
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn ws_close_codes_map_to_the_documented_codes() {
-        // Verbatim rows of docs/protocol-grpc.md §6.2.
+        // Verbatim rows of max-brh-docs/protocol-grpc.md §6.2.
         let table = [
             (4000, Code::FailedPrecondition),
             (4001, Code::Internal),

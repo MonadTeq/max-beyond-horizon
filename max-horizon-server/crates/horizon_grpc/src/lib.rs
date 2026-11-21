@@ -2,7 +2,7 @@
 //!
 //! The Horizon lobby/admin **gRPC server** (`horizon.v1.Horizon`), a thin
 //! adapter over the existing session services. It runs next to the WebSocket
-//! listener during the transition described in `docs/protocol-grpc.md` §4.4,
+//! listener during the transition described in `max-brh-docs/protocol-grpc.md` §4.4,
 //! and is the server side of the same `.proto` contract the `max_net` client
 //! already speaks.
 //!
@@ -10,13 +10,13 @@
 //!
 //! * the 10 unary RPCs the proto defines — `Hello`, the four lobby calls, the
 //!   five admin calls and `Ping` — with exactly the semantics of their WS
-//!   counterparts (`docs/protocol.md` §5, `docs/protocol-grpc.md` §3/§5);
+//!   counterparts (`max-brh-docs/protocol.md` §5, `max-brh-docs/protocol-grpc.md` §3/§5);
 //! * the production backend [`MaxBackend`] reuses the very same services the
 //!   `max_lobby` and `max_admin` plugins use: [`max_session::SessionManager`]
 //!   for process lifecycle/ports and [`max_auth`] for signed per-player tickets;
 //! * errors are standard gRPC statuses whose `message` is the verbatim legacy WS
 //!   text, plus the inline `horizon.v1.Error` of the three admin `ok:false`
-//!   responses (`docs/protocol-grpc.md` §6);
+//!   responses (`max-brh-docs/protocol-grpc.md` §6);
 //! * the listener is configured by `[server.grpc]` in `config.toml`, defaults to
 //!   `0.0.0.0:8082`, and is disabled unless `enabled = true`;
 //! * `JoinGameResponse.host` is `[server.grpc].announce_host` — the address
@@ -58,7 +58,7 @@
 //! its own [`max_session::SessionManager`] instance configured from the same
 //! `[max]` section, because sharing one handle between a `cdylib` plugin and
 //! the host binary is a plugin-loader refactor (documented in
-//! `docs/protocol-grpc.md` §4.4 and in the server README).
+//! `max-brh-docs/protocol-grpc.md` §4.4 and in the server README).
 
 #![forbid(unsafe_code)]
 

@@ -29,5 +29,5 @@
 - Каталог функций: radare2 (с применением LE-fixups) — 6857 функций, 428 строк
   с xref'ами; `functions-named.csv/.md` — 159 функций с именами файлов C++
   (`tools/r2_export.sh` + `tools/r2_to_csv.py` + `tools/join_functions.py`).
-- Проектные документы: `PLAN.md` (v5.0), `TOOLS.md`, `docs/protocol.md`,
-  `docs/state-model.md`.
+- Проектные документы: `PLAN.md` (v5.0), `TOOLS.md`, `max-brh-docs/protocol.md`,
+  `max-brh-docs/state-model.md`.

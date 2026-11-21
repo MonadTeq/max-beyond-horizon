@@ -1,7 +1,7 @@
 //! The `horizon.v1.Horizon` service: a thin protobuf shell around
 //! [`HorizonBackend`].
 //!
-//! Each RPC is one WS request/response pair (`docs/protocol-grpc.md` §3):
+//! Each RPC is one WS request/response pair (`max-brh-docs/protocol-grpc.md` §3):
 //!
 //! | RPC                  | WS event                     |
 //! |----------------------|------------------------------|
@@ -19,7 +19,7 @@
 //! The layer does three things and nothing else: convert protobuf to the
 //! backend's domain types, convert results back to protobuf, and turn
 //! [`ServiceError`] into a `tonic::Status` whose message is the verbatim legacy
-//! WS text (`docs/protocol-grpc.md` §6).
+//! WS text (`max-brh-docs/protocol-grpc.md` §6).
 //!
 //! gRPC has no per-connection identity (every RPC is independent), so a fresh
 //! player UUID is minted per `CreateGame`/`JoinGame` call — the same thing the
@@ -68,7 +68,7 @@ impl Horizon for HorizonService {
             ))
         })?;
 
-        // WS close 4000 → FAILED_PRECONDITION (`docs/protocol-grpc.md` §6.2).
+        // WS close 4000 → FAILED_PRECONDITION (`max-brh-docs/protocol-grpc.md` §6.2).
         if protocol_version != PROTOCOL_VERSION {
             return Err(Status::failed_precondition("protocol version not supported"));
         }

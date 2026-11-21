@@ -42,7 +42,7 @@ probe и клиенты живут в network namespace контейнера Hor
   (`src/main.cpp`: `MAX_HEADLESS` → `Server_Main`), ветки `--client`/`--connect`
   нет; GUI-клиент требует X11 и ручного прохода меню. Полная mixed-сессия
   требует изменения `src/` (headless client mode) либо Xvfb+автоматизации —
-  см. `docs/architecture/protocol.md` §9/§12.
+  см. `max-brh-docs/architecture/protocol.md` §9/§12.
 
 Логи и коды выхода: `build/smoke-logs/live3-*.log`, `live3-ai_log.txt`,
 `mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь
@@ -72,7 +72,7 @@ cargo build --release --locked --target x86_64-pc-windows-gnu \
 SDL3 и `sound` (rodio/cpal → WASAPI) не включаются. Полная SDL-сборка — только
 на Windows-хосте, инструкция лежит в
 `release/max_app-<версия>-windows-x86_64/README.txt` и в
-`docs/development/release-checklist.md` §6.
+`max-brh-docs/development/release-checklist.md` §6.
 
 Артефакты (`$OUT` = `release/` по умолчанию):
 
@@ -209,7 +209,7 @@ GUI без консоли).
 
 ## live-smoke.sh
 
-См. заголовок скрипта; подробности прогона — `docs/development/release-checklist.md` §3.
+См. заголовок скрипта; подробности прогона — `max-brh-docs/development/release-checklist.md` §3.
 `--handshake-patches` скрипт не передаёт: клиент сам переходит на хэш только
 `MAX.RES` после `TP 03 GameData`, а скрипт проверяет `data_hash=<hex>(64)` в
 логах. На Git Bash запускать с `MSYS_NO_PATHCONV=1` (иначе `-w /src/...`

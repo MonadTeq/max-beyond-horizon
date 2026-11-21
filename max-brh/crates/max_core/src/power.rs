@@ -42,7 +42,7 @@
 //! завод потребляют по 1 (`cargo_power_consumption_rate`). Рабочие — тоже
 //! баланс: `HABITAT` даёт +3, `TRAINHAL`/`GREENHSE`/`RESEARCH` потребляют по 1.
 //!
-//! Порт соблюдает контракт `docs/architecture/game-mechanics.md` §3/§5:
+//! Порт соблюдает контракт `max-brh-docs/architecture/game-mechanics.md` §3/§5:
 //! * заказ завода **не стартует**, если комплекс не может оплатить первый ход
 //!   (raw, power, life) — [`crate::production::BuildError`];
 //! * уже идущая стройка при нехватке **паузится** (`build_paused`, очередь

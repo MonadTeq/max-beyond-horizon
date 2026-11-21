@@ -1,5 +1,5 @@
 //! Масштабирование фиксированного кадра 640×480 в окно любого размера
-//! (пункт F `docs/visual-1to1-status.md`).
+//! (пункт F `max-brh-docs/visual-1to1-status.md`).
 //!
 //! Вариант 1 плана: приложение всегда рисует кадр [`crate::layout::WINDOW_WIDTH`]×
 //! [`crate::layout::WINDOW_HEIGHT`] (640×480), а в окно он выводится

@@ -1,7 +1,7 @@
 //! Входная модель команд — пакеты протокола как чистые данные.
 //!
 //! Оракул: `max-cpp-port/src/remote.cpp` (обработчики `Remote_ReceiveNetPacket_*`
-//! и процессоры приказов `Remote_OrderProcessor{0..5}_Read`), `docs/protocol.md`
+//! и процессоры приказов `Remote_OrderProcessor{0..5}_Read`), `max-brh-docs/protocol.md`
 //! §8.4 (форматы полей на проводе) и DESIGN.md §2.4.
 //!
 //! Сетевое кодирование (ENet, little-endian, `NetPacket`) — **не здесь**: это
@@ -22,12 +22,12 @@
 //! ## Расхождения с C++-портом (зафиксированы осознанно)
 //!
 //! * Пакет **41** в C++-порте несёт только `unit_id` и `mode` (см.
-//!   `Remote_SendNetPacket_41`), а `docs/protocol.md` §8.4 описывает ещё
+//!   `Remote_SendNetPacket_41`), а `max-brh-docs/protocol.md` §8.4 описывает ещё
 //!   `grid_x/grid_y/speed/group_speed/shots/move_fraction`. В
 //!   [`Packet41MoveFinished`] эти поля есть (протокол — контракт с max_net), но
 //!   применяются только если отличаются от уже известного состояния; см.
 //!   [`crate::events::apply_command`].
-//! * Пакет **38** в C++-порте не несёт `grid_x/grid_y`, а `docs/protocol.md`
+//! * Пакет **38** в C++-порте не несёт `grid_x/grid_y`, а `max-brh-docs/protocol.md`
 //!   §8.4 их описывает; поле оставлено в структуре для совместимости и
 //!   применяется как «текущая клетка владельца» (C++: `Remote_RelocateUnit`).
 //! * Пакет **53** (итоги комплексов) в C++-порте не реализован вовсе; в Rust —
@@ -41,7 +41,7 @@ use crate::team::TeamId;
 pub const MAX_TEAM_COUNT: usize = 4;
 
 /// Число атрибутов, которые несут пакеты апгрейдов 10/20 (13 значений
-/// `u16` в фиксированном порядке, `docs/protocol.md` §8.4).
+/// `u16` в фиксированном порядке, `max-brh-docs/protocol.md` §8.4).
 pub const UPGRADE_VALUE_COUNT: usize = 13;
 
 /// Уровень процессора payload'а пакета 08 (`Remote_OrderProcessor{0..5}`).
@@ -273,7 +273,7 @@ pub struct Packet38Move {
 /// Пакет **41** — завершение движения (`BlockedOnPathRequest` у получателя).
 ///
 /// В C++-порте передаются только `unit_id` + `mode`; остальные поля — из
-/// `docs/protocol.md` §8.4 (см. шапку модуля). Они `Option`, чтобы отправитель
+/// `max-brh-docs/protocol.md` §8.4 (см. шапку модуля). Они `Option`, чтобы отправитель
 /// мог собрать «портовую» (короткую) форму пакета: `None` = поле не передано и
 /// не применяется.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -490,7 +490,7 @@ pub struct Packet12MissionSupply {
     pub proximity_alert_ack: u8,
 }
 
-/// Идентификатор типа пакета (`docs/protocol.md` §8.4, номера после
+/// Идентификатор типа пакета (`max-brh-docs/protocol.md` §8.4, номера после
 /// `TRANSPORT_APPL_PACKET_ID`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]

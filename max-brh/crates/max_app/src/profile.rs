@@ -1,4 +1,4 @@
-//! Профилирование тика (P4, `docs/development/PLAN-production.md`).
+//! Профилирование тика (P4, `max-brh-docs/development/PLAN-production.md`).
 //!
 //! Зачем: на 60 Гц кадр обязан укладываться в бюджет ~16.7 мс, а `finish_turn`
 //! (`GameManager_TeamTurnFinish`) — самая тяжёлая точка хода (победа/поражение,

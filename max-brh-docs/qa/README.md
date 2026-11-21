@@ -27,4 +27,4 @@ SDL3 через CMake); QA-драйвер работает без SDL, поэт�
 Запись сценария вручную: `max-brh.exe --record my.qa` — GUI открывается без
 флагов, действия пишутся в скрипт (см. `max-brh-qa/drivers/README.md`).
 
-Чек-лист релиза: `docs/development/release-checklist.md`.
+Чек-лист релиза: `max-brh-docs/development/release-checklist.md`.

@@ -192,7 +192,7 @@ pub struct AppConfig {
     /// `PATCHES.RES` (его часть хэша пуста), а клиент должен остаться с
     /// полноценными ассетами: тогда `--patches` указывает на реальный архив,
     /// а `--handshake-patches` — на несуществующий файл, повторяя серверную
-    /// семантику (`docs/protocol.md` §7).
+    /// семантику (`max-brh-docs/protocol.md` §7).
     pub handshake_patches: Option<PathBuf>,
     /// `COLOR.PAL` (256 × RGB).
     pub color_pal: PathBuf,
@@ -202,7 +202,7 @@ pub struct AppConfig {
     pub save: Option<PathBuf>,
     /// Адрес gRPC Horizon (`--connect`).
     pub horizon_host: String,
-    /// Порт gRPC Horizon (`docs/protocol-grpc.md` §4.4: по умолчанию 8082).
+    /// Порт gRPC Horizon (`max-brh-docs/protocol-grpc.md` §4.4: по умолчанию 8082).
     pub horizon_port: u16,
     /// Имя игрока в лобби (пакет 36).
     pub player_name: String,
@@ -289,13 +289,13 @@ impl AppConfig {
     ///
     /// Ассеты продолжают грузиться из [`Self::patches_res`] (или его
     /// fallback), поэтому путь может не существовать — как у сервера, чей
-    /// `game_data` не содержит `PATCHES.RES` (`docs/protocol.md` §7).
+    /// `game_data` не содержит `PATCHES.RES` (`max-brh-docs/protocol.md` §7).
     pub fn with_handshake_patches(mut self, path: impl Into<PathBuf>) -> Self {
         self.handshake_patches = Some(path.into());
         self
     }
 
-    /// Путь `PATCHES.RES` для `data_hash` (`docs/protocol.md` §7).
+    /// Путь `PATCHES.RES` для `data_hash` (`max-brh-docs/protocol.md` §7).
     ///
     /// `handshake_patches == None` → assets-путь [`Self::patches_res`]
     /// (поведение до разделения путей).
