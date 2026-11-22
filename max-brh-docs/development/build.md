@@ -97,7 +97,7 @@ docker run --rm -v "D:/dev/max-port-debug/max-brh-server:/src" -w /src rust:1.94
 ```sh
 docker run --rm -v "D:/dev/max-port-debug:/src" -w /src max-port-build:latest \
   bash /src/build/docker-build-linux-server.sh
-# бинарь: build/linux-server-template/max-port
+# бинарь: bin/linux-server-template/max-port
 ```
 
 ## Запуск (порядок игры)

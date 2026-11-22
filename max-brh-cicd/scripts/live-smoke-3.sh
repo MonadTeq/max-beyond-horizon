@@ -11,7 +11,7 @@
 #   * barrier_timeouts=0, в логах нет десинка/ошибок сессии.
 #
 # Требования: Docker; workspace смонтирован как /src; собраны
-#   max-brh-server/target/release/horizon и build/linux-server-template/max-port.
+#   max-brh-server/target/release/horizon и bin/linux-server-template/max-port.
 # Клиенты собираются один раз (--no-default-features) и запускаются прямо из
 # target/debug, поэтому три параллельных `cargo run` не конкурируют за lock.
 set -euo pipefail

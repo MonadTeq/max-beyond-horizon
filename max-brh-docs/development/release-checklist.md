@@ -83,7 +83,7 @@ pips, дельтой апгрейда и красными линиями; вто
       `max-original/COLOR.PAL`, `assets/PATCHES.RES`, звуки
       `max-original/*.SPW`, карты `*.WRL` (или `--world-dir`).
 - [ ] Для live-smoke: собран `max-brh-server/target/release/horizon` и
-      C++-headless `build/linux-server-template/max-port`.
+      C++-headless `bin/linux-server-template/max-port`.
 - [ ] Для Windows-сборок (§6 и §6.1): **Windows-хост** с VS (workload
       «Desktop development with C++»: MSVC + Windows SDK + CMake) и Rust 1.94.0
       (`x86_64-pc-windows-msvc`) — headless- и UI-сборки делаются нативной

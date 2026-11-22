@@ -10,7 +10,7 @@
 #   bash ci.sh --smoke --turns 10
 #
 # Требования: Docker с Linux-контейнерами; для --smoke — собранные
-# max-brh-server/target/release/horizon и build/linux-server-template/max-port.
+# max-brh-server/target/release/horizon и bin/linux-server-template/max-port.
 # Запускать из любой оболочки: bash/ Git Bash/ WSL/ Linux.
 set -euo pipefail
 

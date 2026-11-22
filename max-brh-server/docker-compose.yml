@@ -52,7 +52,7 @@ services:
       - ./deploy/entrypoint.sh:/opt/horizon/entrypoint.sh:ro
       - ./deploy/horizon.toml.template:/opt/horizon/horizon.toml.template:ro
       # C++ headless: max-port + .so + PATCHES.RES.
-      - ${HORIZON_TEMPLATE_DIR:-../build/linux-server-template}:/opt/max/template:ro
+      - ${HORIZON_TEMPLATE_DIR:-../bin/linux-server-template}:/opt/max/template:ro
       # MAX.RES; PATCHES.RES здесь быть НЕ должно (обход падения headless, M5.2).
       - ${HORIZON_GAME_DATA_DIR:-../max-original}:/opt/max/game-data:ro
       # Логи и рабочие каталоги сессий остаются на хосте.

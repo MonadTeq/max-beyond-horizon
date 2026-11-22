@@ -348,7 +348,7 @@ zstd/lz4; опционально WebTransport/QUIC с датаграммами �
   Направление A полностью закрыто.
 - **B6 — Linux-headless запускается**: max_session портирован на Unix
   (имя `max-port`, LD_LIBRARY_PATH на каталог сессии; тесты успешны),
-  собран шаблон `build/linux-server-template` (exe + 7 .so + данные игры),
+  собран шаблон `bin/linux-server-template` (exe + 7 .so + данные игры),
   ldd без замечаний, smoke-run `--server` работает (exit 0). Остался финальный шаг:
   Horizon с этим шаблоном запускает сессию → игра в списке → клиенты
   подключаются → полный smoke.

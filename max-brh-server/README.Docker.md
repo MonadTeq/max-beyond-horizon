@@ -36,7 +36,7 @@ Ubuntu 24.04. Плюсы: `up` занимает секунды, не нужен 
   ```sh
   docker compose --profile build run --rm builder
   ```
-- `build/linux-server-template/` — headless `max-port` + `.so` + `PATCHES.RES`
+- `bin/linux-server-template/` — headless `max-port` + `.so` + `PATCHES.RES`
   (собирается отдельно, см. `max-brh-docs/architecture/server/dedicated-server-plan.md` §9).
 - `max-original/` с `MAX.RES` (и `COLOR.PAL`, `.WRL`). **PATCHES.RES в этом
   каталоге быть не должно** — headless падает при загрузке ресурсов, если
@@ -108,7 +108,7 @@ docker compose down
 | `HORIZON_WS_BIND` | `0.0.0.0:8080` | bind WS |
 | `HORIZON_GRPC_BIND` | `0.0.0.0:8082` | bind gRPC |
 | `MAX_EXECUTABLE` | `/opt/max/template/max-port` | консольный бинарь клиента |
-| `MAX_TEMPLATE_DIR` | `/opt/max/template` | шаблон сессии (`build/linux-server-template`) |
+| `MAX_TEMPLATE_DIR` | `/opt/max/template` | шаблон сессии (`bin/linux-server-template`) |
 | `MAX_SESSION_ROOT` | `/var/lib/horizon/sessions` | рабочие каталоги сессий |
 | `MAX_GAME_DATA` | `/opt/max/game-data` | каталог `MAX.RES` (без `PATCHES.RES`) |
 | `MAX_PORT_START`/`MAX_PORT_END` | `32000`/`32100` | UDP-диапазон сессий |
@@ -160,7 +160,7 @@ Docker вычисляются от расположения скрипта (не
 - Реконнект: M6.1-заготовка в клиенте (`--reconnect-attempts`,
   `--reconnect-timeout`) восстанавливает только транспорт ENet+`TP 00`; полное
   восстановление партии (SNAP/54) — M6.1-финал, см. `max-brh-docs/architecture/client/protocol.md` §9.
-- `max-original` и `build/linux-server-template` содержат данные игры и не
+- `max-original` и `bin/linux-server-template` содержат данные игры и не
   предназначены для распространения.
 
 ## Troubleshooting

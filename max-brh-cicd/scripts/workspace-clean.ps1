@@ -57,12 +57,10 @@ Remove-Target 'build\anim-dos\game'
 if (Test-Path 'build\anim-dos\dosextract') { Remove-Target 'build\anim-dos\dosextract' }
 
 # --- ad-hoc логи/скриншоты/одноразовые скрипты в корне build\ -------------
-$keep = @('scripts', 'linux-server-template', 'Dockerfile', 'docker-build-linux-server.sh',
-    'docker-build-server.sh', 'docker-build.sh', 'prepare-linux-template.sh',
-    'run-linux-server-with-data.sh', 'verify-linux-template.sh', 'capture-ef.ps1',
-    'make-run.ps1', 'make-server-run.ps1', 'ui-lib.ps1', 'anim-dos')
+# Reusable-скрипты перенесены в max-brh-cicd/scripts/ (git-tracked); артефакты —
+# в bin/ (bin/linux-server-template, bin/sdl3-3.4.20, bin/release, bin/target).
+# В корне build/ остаются только транзиентные логи/кэши.
 Get-ChildItem 'build' -File -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($keep -contains $_.Name) { return }
     Write-Host ("build\{0}" -f $_.Name)
     if (-not $DryRun) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Continue }
 }

@@ -1,4 +1,4 @@
-# Живой smoke: Horizon (WS 8080 + gRPC 8082) + headless-шаблон из build/linux-server-template.
+# Живой smoke: Horizon (WS 8080 + gRPC 8082) + headless-шаблон из bin/linux-server-template.
 [server]
 bind_address = "0.0.0.0:8080"
 max_connections = 100
@@ -64,8 +64,8 @@ max_cpu_percent = 80.0
 max_file_descriptors = 65536
 
 [max]
-executable = "/src/build/linux-server-template/max-port"
-template_dir = "/src/build/linux-server-template"
+executable = "/src/bin/linux-server-template/max-port"
+template_dir = "/src/bin/linux-server-template"
 session_root = "/tmp/horizon-sessions"
 # game_data без PATCHES.RES: headless C++ падает при загрузке ресурсов, если
 # PATCHES.RES лежит в game_data (баг серверной загрузки); тогда data_hash

@@ -1,6 +1,6 @@
 # Сборка max-resources-viewer (Windows) с автокопированием SDL3.dll.
 # Ищет SDL3: vcpkg ($env:VCPKG_ROOT или D:\dev\toolchain\vcpkg / C:\vcpkg),
-# затем локальную копию build\sdl3-3.4.20, затем бандл клиента.
+# затем локальную копию bin\sdl3-3.4.20, затем бандл клиента.
 # Использование: powershell -ExecutionPolicy Bypass -File build.ps1 [-Debug] [-NoPackage]
 param(
     [switch]$Debug,
@@ -37,7 +37,7 @@ if ($vcpkg) {
     $sdlLib = Join-Path $vcpkg 'installed\x64-windows\lib'
     $sdlDll = Join-Path $vcpkg 'installed\x64-windows\bin\SDL3.dll'
 } else {
-    $local = Join-Path $repo 'build\sdl3-3.4.20\SDL3-3.4.20\lib\x64'
+    $local = Join-Path $repo 'bin\sdl3-3.4.20\SDL3-3.4.20\lib\x64'
     if (Test-Path (Join-Path $local 'SDL3.dll')) { $sdlLib = $local; $sdlDll = Join-Path $local 'SDL3.dll' }
     else { Write-Host 'WARN: SDL3 не найден (vcpkg/local) — линковка sdl-vcpkg может не сработать.' }
 }

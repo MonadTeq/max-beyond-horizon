@@ -60,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 указать линковщику каталог `lib\x64`:
 
 ```powershell
-$sdl = "D:\dev\max-port-debug\build\sdl3-3.4.20\SDL3-3.4.20"
+$sdl = "D:\dev\max-port-debug\bin\sdl3-3.4.20\SDL3-3.4.20"
 $env:PATH = "$sdl\lib\x64;$env:PATH"
 $env:RUSTFLAGS = "-L native=$sdl\lib\x64"
 cargo build --release --features sdl

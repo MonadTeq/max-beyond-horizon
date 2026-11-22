@@ -3,7 +3,7 @@
 # Запуск снаружи (Git Bash/WSL/Linux) или изнутри контейнера с докером:
 #   bash max-brh-cicd/scripts/live-smoke.sh [turns]
 # Требования: workspace смонтирован как /src (HOST_ROOT -> /src);
-# собранные: max-brh-server/target/release/horizon, build/linux-server-template/max-port.
+# собранные: max-brh-server/target/release/horizon, bin/linux-server-template/max-port.
 set -euo pipefail
 TURNS="${1:-5}"
 WS="/src"

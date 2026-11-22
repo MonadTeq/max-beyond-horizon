@@ -58,7 +58,7 @@ pub fn world_asset_name(planet: Planet) -> &'static str {
 /// общий каталог C++-порта (`max-cpp-port/assets/`), где `PATCHES.RES`
 /// лежит в этом checkout'е.
 pub const PATCHES_RES_FALLBACKS: [&str; 3] = [
-    "build/linux-server-template/PATCHES.RES",
+    "bin/linux-server-template/PATCHES.RES",
     "assets/PATCHES.RES",
     "max-cpp-port/assets/PATCHES.RES",
 ];
@@ -1586,7 +1586,7 @@ mod tests {
         let max_res = data.join("MAX.RES");
         std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
 
-        let fallback = dir.join("build/linux-server-template/PATCHES.RES");
+        let fallback = dir.join("bin/linux-server-template/PATCHES.RES");
         std::fs::create_dir_all(fallback.parent().expect("parent")).expect("template dir");
         std::fs::write(&fallback, b"RES0fallback").expect("write fallback");
 
