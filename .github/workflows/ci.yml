@@ -1,11 +1,9 @@
 name: CI
 
-# M6.3: the same as ./ci.sh, but on GitHub-hosted ubuntu.
-# Stages: max-brh (check/test), horizon (workspace tests), qa (layers 2–3:
-# qa_run scenarios + golden frames, see max-brh-qa/plans/qa-plan.md).
-# The live live-smoke is not run here: it needs the built C++ headless.
-# Locally:
-#   ./max-brh-cicd/ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
+# Builds only the game client (max-brh): cargo check/test in three configs
+# (default GUI/SDL-from-source, +sound, headless). The dedicated server
+# (max-brh-server), QA golden and soak stages live in ./max-brh-cicd/ci.sh
+# (run locally/Docker), not in this workflow.
 
 on:
   push:
@@ -18,10 +16,13 @@ concurrency:
 
 jobs:
   max-brh:
-    name: max-brh (check + test)
+    name: max-brh client (check + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Only the SDL3 vendored submodule is needed to build the client.
+          submodules: max-brh-vendor/SDL
 
       - name: Install Rust 1.94.0
         uses: dtolnay/rust-toolchain@master
@@ -68,143 +69,3 @@ jobs:
         # `main.rs` branches without the `sdl` feature (clear GUI error, --sdl).
         working-directory: max-brh
         run: cargo test --no-default-features
-
-  horizon:
-    name: max-brh-server (workspace tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust 1.94.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.94.0
-
-      - name: Install build deps (gcc/cmake/pkg-config/libssl-dev)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc g++ cmake pkg-config libssl-dev
-
-      - name: cargo test --workspace
-        working-directory: max-brh-server
-        run: cargo test --workspace
-
-  # QA layers 2–3 (max-brh-qa/plans/qa-plan.md): scripted UI driver without SDL + golden frames.
-  # The same commands as in ci.sh (stage 3/3): one scenario = one
-  # qa_run process, any failing assert → exit 1 → red CI.
-  qa:
-    name: qa (scripts + golden frames)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust 1.94.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.94.0
-
-      - name: Install build deps (gcc/cmake)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc g++ cmake
-
-      - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb)
-        working-directory: max-brh
-        # --no-default-features: the QA driver does not need a window, otherwise the examples
-        # would pull in the default GUI (CMake build of SDL3 + X11 headers).
-        # Scenarios/goldens live in ../max-brh-qa/ (working directory max-brh).
-        run: |
-          set -e
-          rm -rf qa-out
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-full.qa qa-out/sp-full
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/hs-2.qa qa-out/hs-2
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/visual-screens.qa qa-out/visual-screens
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/victory.qa qa-out/victory
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/production.qa qa-out/production
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/save-load.qa qa-out/save-load
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/upgrade.qa qa-out/upgrade
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/research.qa qa-out/research
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/edge-cases.qa qa-out/edge-cases
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/cargo-full.qa qa-out/cargo-full
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/move-input.qa qa-out/move-input
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/research-help.qa qa-out/research-help
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/unit-menu.qa qa-out/unit-menu
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/allocate.qa qa-out/allocate
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/preferences.qa qa-out/preferences
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/xfer.qa qa-out/xfer
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/ai-turn.qa qa-out/ai-turn
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/sp-tb.qa qa-out/sp-tb
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/combat-tb.qa qa-out/combat-tb
-
-      - name: Golden frames (1 % pixels, Δ > 30)
-        working-directory: max-brh
-        run: |
-          set -e
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/production ../max-brh-qa/golden/production
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/upgrade ../max-brh-qa/golden/upgrade
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research ../max-brh-qa/golden/research
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/cargo-full ../max-brh-qa/golden/cargo
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/move-input ../max-brh-qa/golden/move-input
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/unit-menu ../max-brh-qa/golden/unit-menu
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/allocate ../max-brh-qa/golden/allocate
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-brh-qa/golden/research-help
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/preferences ../max-brh-qa/golden/preferences
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/xfer ../max-brh-qa/golden/xfer
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/ai-turn ../max-brh-qa/golden/ai-turn
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/sp-tb ../max-brh-qa/golden/sp-tb
-          cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/combat-tb ../max-brh-qa/golden/combat-tb
-
-      - name: Upload log + frames + diff on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qa-artifacts
-          path: |
-            max-brh/qa-out/**/*.png
-            max-brh/qa-out/**/log.txt
-            max-brh/qa-out/**/soak.txt
-          if-no-files-found: warn
-
-  # P4: soak — 100 turns of a QA game with AI turns + 120 turns of headless AI×AI
-  # with a tick profile (`MAX_TICK_PROFILE=1`) and RSS measurement. A separate job:
-  # the long run must not delay PRs, hence push/manual dispatch only.
-  soak:
-    name: soak (soak-100.qa + soak_headless 120 turns)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: github.event_name != 'pull_request' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust 1.94.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.94.0
-
-      - name: Install build deps (gcc/cmake)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc g++ cmake
-
-      - name: Soak (100 turns QA + 120 turns headless, memory/profile)
-        working-directory: max-brh
-        env:
-          MAX_TICK_PROFILE: "1"
-        run: |
-          set -e
-          mkdir -p qa-out/soak-100 qa-out/soak-headless
-          cargo run -q -p max_app --no-default-features --example qa_run -- ../max-brh-qa/scripts/soak-100.qa qa-out/soak-100
-          cargo run -q -p max_app --no-default-features --example soak_headless -- --turns 120 --mode tb --out qa-out/soak-headless
-
-      - name: Upload soak logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: soak-artifacts
-          path: |
-            max-brh/qa-out/soak-100/log.txt
-            max-brh/qa-out/soak-headless/soak.txt
-          if-no-files-found: warn
-
