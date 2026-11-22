@@ -4,13 +4,14 @@
 //! These packets either carry whole-unit snapshots (23/54 — the closest thing
 //! to a "snapshot" in a lockstep protocol), team-level bookkeeping (09/17), or
 //! session control facts (07/24/39/40/42/46/48/49/51). None of them is a
-//! [`max_core::input::Command`], so their DTOs live here; the numbers are kept
+//! [`max_types::input::Command`], so their DTOs live here; the numbers are kept
 //! raw where the simulation has no typed counterpart (the client only forwards
 //! or logs them).
 
-use max_core::enums::TeamClan;
-use max_core::team::{ResearchTopicInfo, TeamId};
-use max_core::unit::{UnitId, UnitInfo, UnitListKind};
+use max_core::unit::UnitInfo;
+use max_types::enums::TeamClan;
+use max_types::team::{ResearchTopicInfo, TeamId};
+use max_types::unit::{UnitId, UnitListKind};
 
 use super::reader::{Reader, WireError, WireResult, Writer, MAX_STRING_LEN, MAX_VECTOR_LEN};
 
@@ -503,8 +504,8 @@ impl UnitState {
     }
 
     /// Канонический вид для [`max_core::events::apply_unit_state`].
-    pub fn to_core(&self) -> max_core::events::UnitStatePacket {
-        max_core::events::UnitStatePacket {
+    pub fn to_core(&self) -> max_types::events::UnitStatePacket {
+        max_types::events::UnitStatePacket {
             orders: self.orders,
             state: self.state,
             prior_orders: self.prior_orders,
@@ -544,7 +545,7 @@ impl StateSyncTail {
     ///
     /// `i32` на проводе и `u32` в `max_core` — одни и те же биты (C++ кладёт
     /// `int32_t` в `uint32_t`/`memcpy`), поэтому конверсия — приведение типа.
-    pub fn to_core(&self) -> max_core::events::TeamStateSyncTail {
+    pub fn to_core(&self) -> max_types::events::TeamStateSyncTail {
         let mut research = [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT];
         for (destination, source) in research.iter_mut().zip(self.research.iter()) {
             *destination = ResearchTopicInfo {
@@ -554,12 +555,12 @@ impl StateSyncTail {
             };
         }
 
-        let mut unit_counters = [0u32; max_core::unit_values::UNIT_COUNT];
+        let mut unit_counters = [0u32; max_types::UNIT_COUNT];
         for (destination, source) in unit_counters.iter_mut().zip(self.unit_counters.iter()) {
             *destination = *source;
         }
 
-        max_core::events::TeamStateSyncTail {
+        max_types::events::TeamStateSyncTail {
             gold: self.gold,
             gold_spent_on_upgrades: self.gold_spent_on_upgrades,
             research,
@@ -571,8 +572,8 @@ impl StateSyncTail {
 
 impl StateSync {
     /// Канонический вид для [`max_core::events::apply_state_sync`].
-    pub fn to_core(&self) -> max_core::events::StateSyncPacket {
-        max_core::events::StateSyncPacket {
+    pub fn to_core(&self) -> max_types::events::StateSyncPacket {
+        max_types::events::StateSyncPacket {
             team: self.team,
             sync_index: self.sync_index,
             is_last: self.is_last,
@@ -609,7 +610,7 @@ pub fn state_sync_for(
         state.unit(*id).is_some_and(|unit| {
             unit.team == team
                 && !unit.id.is_no_id()
-                && unit.flags & max_core::enums::unit_flags::EXPLODING == 0
+                && unit.flags & max_types::enums::unit_flags::EXPLODING == 0
         })
     })
     .collect();
@@ -722,11 +723,11 @@ pub const MAX_SAVE_FILE_LEN: usize = MAX_STRING_LEN;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::enums::{TeamClan, UnitOrder, UnitOrderState};
     use max_core::game::GameState;
-    use max_core::geo::Point;
-    use max_core::team::TeamKind;
-    use max_core::unit_values::UNIT_COUNT;
+    use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
+    use max_types::geo::Point;
+    use max_types::team::TeamKind;
+    use max_types::UNIT_COUNT;
 
     fn state_with_green_units(count: usize) -> (GameState, Vec<UnitId>) {
         let mut state = GameState::new();
@@ -737,7 +738,7 @@ mod tests {
         for index in 0..count {
             let id = state
                 .spawn_unit(
-                    max_core::UnitType::Tank,
+                    UnitType::Tank,
                     TeamId::GREEN,
                     Point::new(10 + (index % 80) as i16, 10 + (index / 80) as i16),
                     0,
@@ -747,7 +748,7 @@ mod tests {
         }
         // Юнит другой команды не должен попасть в 54 команды GREEN.
         state
-            .spawn_unit(max_core::UnitType::Tank, TeamId::RED, Point::new(50, 50), 0)
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(50, 50), 0)
             .expect("red tank");
         (state, ids)
     }
@@ -758,7 +759,7 @@ mod tests {
         state.team_units[TeamId::GREEN.0 as usize].gold = 777;
         state.teams[TeamId::GREEN.0 as usize].stats_gold_spent_on_upgrades = 12;
         state.teams[TeamId::GREEN.0 as usize].number_of_objects_created = 5;
-        state.teams[TeamId::GREEN.0 as usize].unit_counters[max_core::UnitType::Tank as usize] = 9;
+        state.teams[TeamId::GREEN.0 as usize].unit_counters[UnitType::Tank as usize] = 9;
         state.teams[TeamId::GREEN.0 as usize].research_topics[2] = ResearchTopicInfo {
             research_level: 4,
             turns_to_complete: 5,
@@ -791,7 +792,7 @@ mod tests {
         assert_eq!(tail.gold, 777);
         assert_eq!(tail.gold_spent_on_upgrades, 12);
         assert_eq!(tail.number_of_objects_created, 5);
-        assert_eq!(tail.unit_counters[max_core::UnitType::Tank as usize], 9);
+        assert_eq!(tail.unit_counters[UnitType::Tank as usize], 9);
         assert_eq!(
             tail.research[2],
             ResearchTopicWire {
@@ -868,7 +869,7 @@ mod tests {
         let core = wire.to_core();
         assert_eq!(core.experience, 17);
         assert_eq!(core.storage, -3);
-        assert_eq!(core.unit_type, max_core::UnitType::Tank as u16);
+        assert_eq!(core.unit_type, UnitType::Tank as u16);
         assert_eq!(core.grid_y, 10);
     }
 }

@@ -1,6 +1,6 @@
 //! Codecs for the in-game APPL commands (`max-brh-docs/protocol.md` §8.4).
 //!
-//! The DTOs are [`max_core::input`] types: the protocol model already exists
+//! The DTOs are [`max_types::input`] types: the protocol model already exists
 //! there and is what [`max_core::events::apply_command`] consumes, so the wire
 //! layer is a pure byte ⇄ `Command` mapping (no duplicate packet structs).
 //!
@@ -10,9 +10,9 @@
 //! 12, full form of 41), while the upstream `max-cpp-port/` snapshot still has
 //! shorter forms; both forms of 41 are accepted on decode.
 
-use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-use max_core::geo::{PathStep, Point};
-use max_core::input::{
+use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
+use max_types::geo::{PathStep, Point};
+use max_types::input::{
     Command, ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload,
     Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order,
     Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed,
@@ -21,8 +21,8 @@ use max_core::input::{
     Packet53ComplexSummary, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
     UPGRADE_VALUE_COUNT,
 };
-use max_core::team::TeamId;
-use max_core::unit::UnitId;
+use max_types::team::TeamId;
+use max_types::unit::UnitId;
 
 use super::reader::{Reader, WireError, WireResult, Writer, MAX_VECTOR_LEN};
 

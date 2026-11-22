@@ -37,9 +37,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use max_core::enums::Surface;
-use max_core::geo::MAP_TILES;
-use max_core::map::{MapSize, SurfaceMap};
+use max_types::enums::Surface;
+use max_types::geo::MAP_TILES;
+use max_types::map::{MapSize, SurfaceMap};
 
 /// Штатная сигнатура WRL (3 байта, без NUL).
 pub const WRL_SIGNATURE: [u8; 3] = *b"WRL";

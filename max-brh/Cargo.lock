@@ -759,7 +759,7 @@ name = "max_assets"
 version = "1.1.0"
 dependencies = [
  "anyhow",
- "max_core",
+ "max_types",
  "serde",
 ]
 
@@ -778,6 +778,7 @@ dependencies = [
  "anyhow",
  "cc",
  "max_core",
+ "max_types",
  "prost",
  "protoc-bin-vendored",
  "serde",

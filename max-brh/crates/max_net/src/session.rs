@@ -22,9 +22,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use max_core::enums::TeamClan;
-use max_core::input::Command;
-use max_core::team::TeamId;
+use max_types::enums::TeamClan;
+use max_types::input::Command;
+use max_types::team::TeamId;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -720,11 +720,11 @@ fn records_barrier(tracked: bool, packet: &Packet) -> bool {
 /// same fields and order as `GameManager_CheckDesync`), so the owner team can
 /// send its units' CRC without duplicating the algorithm in `max_net`.
 pub fn crc_barrier_for(
-    team: max_core::team::TeamId,
+    team: max_types::team::TeamId,
     next_turn_index: u8,
     state: &max_core::game::GameState,
 ) -> Packet {
-    Packet::Command(Command::CrcBarrier(max_core::input::Packet45CrcBarrier {
+    Packet::Command(Command::CrcBarrier(max_types::input::Packet45CrcBarrier {
         team,
         next_turn_index,
         crc16: max_core::crc::state_checksum(state),
@@ -740,13 +740,13 @@ pub fn crc_barrier_for(
 /// order.
 pub fn complex_summary_for(
     state: &max_core::game::GameState,
-    team: max_core::team::TeamId,
+    team: max_types::team::TeamId,
     turn: i32,
 ) -> Packet {
     let complexes = state.team_units[team.0 as usize]
         .complexes()
         .iter()
-        .map(|complex| max_core::input::ComplexSummaryEntry {
+        .map(|complex| max_types::input::ComplexSummaryEntry {
             complex_id: complex.id as u16,
             values: [
                 complex.material,
@@ -760,7 +760,7 @@ pub fn complex_summary_for(
         .collect();
 
     Packet::Command(Command::ComplexSummary(
-        max_core::input::Packet53ComplexSummary {
+        max_types::input::Packet53ComplexSummary {
             team,
             turn,
             complexes,
@@ -896,11 +896,11 @@ pub const fn ip_addr(ip: Ipv4Addr) -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::input::{
+    use max_types::input::{
         Packet00TurnBarrier, Packet01FrameBarrier, Packet18Chat, Packet45CrcBarrier,
         Packet52EndTurnBarrier,
     };
-    use max_core::team::TeamId;
+    use max_types::team::TeamId;
 
     fn barrier_packet(counter: u8) -> Packet {
         Packet::Command(Command::EndTurnBarrier(Packet52EndTurnBarrier {
@@ -1003,11 +1003,11 @@ mod tests {
 
     #[test]
     fn complex_summary_for_matches_team_complexes() {
-        use max_core::enums::TeamClan;
         use max_core::team::TeamUnits;
+        use max_types::enums::TeamClan;
 
         let mut state = max_core::game::GameState::new();
-        state.teams[TeamId::RED.0 as usize].team_type = max_core::team::TeamKind::Player;
+        state.teams[TeamId::RED.0 as usize].team_type = max_types::team::TeamKind::Player;
         state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
         let id = state.team_units[TeamId::RED.0 as usize].create_complex();
         let complex = state.team_units[TeamId::RED.0 as usize]

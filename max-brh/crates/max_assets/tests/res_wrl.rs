@@ -14,10 +14,9 @@ use std::path::{Path, PathBuf};
 
 use max_assets::res::{ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE};
 use max_assets::{ResArchive, ResError, WrlError, WrlMap, WrlOffsets};
-use max_core::enums::Surface;
-use max_core::geo::MAP_TILES;
-use max_core::map::MapSize;
-use max_core::setup::derive_surface_map;
+use max_types::enums::Surface;
+use max_types::geo::MAP_TILES;
+use max_types::map::MapSize;
 
 // ---------------------------------------------------------------------------
 // Фикстуры и эталоны
@@ -341,13 +340,23 @@ fn crater3_surface_map_matches_python_reference_bit_for_bit() {
 
     assert_eq!(histogram, [2_292, 9_429, 753, 70]);
 
-    // Паритет с портированной формулой max_core: derive_surface_map.
-    let derived = derive_surface_map(map.tile_map(), map.pass_table());
+    // Паритет с формулой C++ (`world.cpp:382-409`), записанной здесь независимо
+    // от крейтов: pass-таблица разворачивается в поверхность, tile-id клетки
+    // индексируют её. Раньше это сверялось с `max_core::setup::derive_surface_map`;
+    // после Ф5.2 у max_assets нет зависимости от max_core, поэтому эталонная
+    // формула продублирована в тесте (плюс остаётся сверка с Python-дампом выше).
+    const PASS_DATA: [u8; 4] = [0x01, 0x02, 0x04, 0x08]; // LAND, WATER, COAST, AIR
+    let mut derived = Vec::with_capacity(MAP_TILES);
+
+    for &tile_id in map.tile_map() {
+        let pass_index = usize::from(map.pass_table()[usize::from(tile_id)]);
+        let surface = PASS_DATA.get(pass_index).copied().unwrap_or(0);
+        derived.push(surface);
+    }
 
     assert_eq!(
-        derived.to_bytes(),
-        got,
-        "WrlMap::surface_map и max_core::setup::derive_surface_map расходятся"
+        derived, got,
+        "WrlMap::surface_map расходится с формулой world.cpp:382-409"
     );
 
     assert_eq!(map.pass_surfaces().len(), map.tile_count() as usize);

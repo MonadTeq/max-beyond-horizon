@@ -16,9 +16,9 @@
 //! them shifts every following field by two bytes per node (see
 //! [`NET_ADDRESS_WIRE_LEN`]).
 
-use max_core::enums::TeamClan;
-use max_core::team::TeamId;
-use max_core::victory::MissionCategory;
+use max_types::enums::TeamClan;
+use max_types::team::TeamId;
+use max_types::victory::MissionCategory;
 
 use super::reader::{Reader, WireError, WireName, WireResult, Writer, MAX_VECTOR_LEN};
 
@@ -613,7 +613,7 @@ pub fn encode_lobby(packet: &LobbyPacket, w: &mut Writer) -> WireResult<()> {
 mod tests {
     use super::*;
     use crate::wire::Packet;
-    use max_core::victory::MissionCategory;
+    use max_types::victory::MissionCategory;
 
     // Reference frames printed by `tools/lobby_vectors/main.cpp`, a copy of the
     // C++ serializers (Remote_SendNetPacket_30/35/37/44/47 + Remote_WriteNetNode

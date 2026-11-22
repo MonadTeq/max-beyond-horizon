@@ -17,7 +17,7 @@
 
 use crate::image::{ImageError, SimpleImage};
 use crate::res::ResArchive;
-use max_core::map::ResourceKind;
+use max_types::map::ResourceKind;
 
 /// Больших маркеров на каждый тип: `*MK0..*MK16` (0 — пустая клетка).
 pub const BIG_MARKER_COUNT: usize = 17;

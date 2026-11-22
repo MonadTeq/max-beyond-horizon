@@ -7,4 +7,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
-max_core = { path = "../max_core" }
+# Infrastructure-типы (Surface/SurfaceMap/MapSize/ResourceKind) — из нижнего
+# слоя; зависимости от `max_core` (Application) у max_assets больше нет (Ф5.2).
+max_types = { path = "../max_types" }

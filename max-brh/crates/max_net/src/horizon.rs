@@ -338,7 +338,7 @@ pub struct CreateGameParams {
     /// End-turn timer in seconds.
     pub endturn: Option<i64>,
     /// Play-mode value passed through to the server (the proto comment and the
-    /// `max_core::enums::PlayMode` representation disagree; keep the raw value
+    /// `max_types::enums::PlayMode` representation disagree; keep the raw value
     /// so no silent remapping happens).
     pub play_mode: Option<i64>,
     /// Starting credits.

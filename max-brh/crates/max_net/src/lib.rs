@@ -19,8 +19,8 @@
 //! # Layout
 //!
 //! * [`wire`] — byte-accurate codecs for the game protocol (`max-brh-docs/protocol.md`
-//!   §8). Command packets reuse [`max_core::input`] types and convert to/from
-//!   [`max_core::input::Command`]; lobby/audit packets have their own DTOs.
+//!   §8). Command packets reuse [`max_types::input`] types and convert to/from
+//!   [`max_types::input::Command`]; lobby/audit packets have their own DTOs.
 //! * [`handshake`] — `TP 00`/`TP 03`, `SHA256(MAX.RES)‖SHA256(PATCHES.RES)`.
 //! * [`session`] — ENet connect, handshake, async command/event loop, barriers.
 //! * [`enet`] — the only `unsafe` module: a minimal wrapper over the vendored

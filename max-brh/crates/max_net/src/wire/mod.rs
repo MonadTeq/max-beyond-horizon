@@ -6,8 +6,8 @@
 //! envelope: it dispatches the type byte to the command, lobby or state
 //! codec and verifies the 1440-byte transport limit.
 //!
-//! The command variants deliberately *are* [`max_core::input::Command`]
-//! values: `max_core` already owns the protocol model and
+//! The command variants deliberately *are* [`max_types::input::Command`]
+//! values: `max_types` already owns the protocol model and
 //! [`max_core::events::apply_command`] consumes it, so `max_net` does not
 //! duplicate packet structs. Types without a simulation counterpart (lobby
 //! nodes, audit snapshots) have their DTOs here.
@@ -29,9 +29,9 @@ pub use state::{
     StateSyncTail, TeamState, UnitState, STATE_SYNC_UNITS_PER_PACKET, UNIT_END,
 };
 
-use max_core::input::Command;
-use max_core::team::TeamId;
-use max_core::unit::UnitId;
+use max_types::input::Command;
+use max_types::team::TeamId;
+use max_types::unit::UnitId;
 
 /// `TRANSPORT_APPL_PACKET_ID` — base byte of APPL packets (`0x50`).
 pub const TRANSPORT_APPL_PACKET_ID: u8 = 0x50;
@@ -356,9 +356,9 @@ impl Packet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-    use max_core::geo::{PathStep, Point};
-    use max_core::input::{
+    use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
+    use max_types::geo::{PathStep, Point};
+    use max_types::input::{
         ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
         Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet11ComplexOrder,
         Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit,
@@ -1056,7 +1056,7 @@ mod tests {
     fn lobby_welcome_round_trips() {
         use super::lobby::{LobbyGameSettings, LobbyWelcome, NetAddress, NetNode};
         let settings = LobbyGameSettings {
-            mission_category: max_core::victory::MissionCategory::Multiplayer,
+            mission_category: max_types::victory::MissionCategory::Multiplayer,
             multi_scenario_id: Some(3),
             mission_hashes: Vec::new(),
             world_name: WireName::from("world"),

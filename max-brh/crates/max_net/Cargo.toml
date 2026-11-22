@@ -6,6 +6,10 @@ license.workspace = true
 
 [dependencies]
 max_core = { path = "../max_core" }
+# Infrastructure: доменные/протокольные типы (enums/geo/input/team/unit/events/
+# victory/UNIT_COUNT) — из нижнего слоя (Ф5.2). `max_core` остаётся только для
+# симуляции: `game`, `crc`, `events::apply_*`, `unit::UnitInfo`, `team::TeamUnits`.
+max_types = { path = "../max_types" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
