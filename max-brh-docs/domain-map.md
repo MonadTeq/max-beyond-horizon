@@ -188,7 +188,7 @@
 | Топливо | `ResourceKind::Fuel`, `Cargo.fuel`, `Complex.fuel` | `CARGO_TYPE_FUEL`, `CARGO_FUEL` | C++ | потребляется только электростанциями (`POWERSTN` 6, `POWGEN` 2); склад `FDUMP` |
 | Золото (руда) | `ResourceKind::Gold`, `Cargo.gold`, `Complex.gold` | `CARGO_TYPE_GOLD`, `CARGO_GOLD` | C++ | перерабатывается `COMMTWR` 5/ход → кредиты; склад `GOLDSM` |
 | Энергия (мощность) | `Complex.power` | `Complex.power` | C++ | производится `POWERSTN`/`POWGEN`; потребляется по 1/ход заводами/исследованиями; не хранится |
-| Рабочие (колонисты) | `Complex.workers` | `Complex.workers`, `Cargo.life` | C++/мануал | **ложный друг**: C++-токен `life` ≠ прочность (`hits`); производится `HABITAT` (+3), тратится `TRAINHAL`/`GREENHSE`/`RESEARCH` |
+| workers (рабочие) | `Complex.workers` | `Complex.workers` | C++/мануал/RE | канон по оригиналу «workers»; C++-токен `Cargo.life` — ложный друг (≠ прочность `hits`); производится `HABITAT` (+3), тратится `TRAINHAL`/`GREENHSE`/`RESEARCH` |
 | Кредиты | `TeamUnits::gold` | `TeamUnits::gold` | C++/мануал | очищенное золото на счёте команды; тратится на покупку/апгрейд; не путать с «золото (руда)» |
 
 > Примечания: грузовой тип юнита — `CargoType` (`None/Raw/Fuel/Gold/Land/Sea/Air`);
