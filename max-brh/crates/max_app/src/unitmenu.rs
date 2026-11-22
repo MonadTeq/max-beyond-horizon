@@ -1473,10 +1473,10 @@ pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeA
                 // `(*it).GetComplex()->GetCargoInfo(materials, capacity)`: в
                 // порте агрегат комплекса уже пересчитан `OptimizeComplexes`
                 // (`GameState::update_complex_resources`), поэтому берём его
-                // поле `material` без повторного суммирования складов.
+                // поле `raw` без повторного суммирования складов.
                 let materials = state
                     .complex(team, complex.0 as u16)
-                    .map(|complex| i32::from(complex.material))
+                    .map(|complex| i32::from(complex.raw))
                     .unwrap_or(0);
 
                 complexes.push(complex);

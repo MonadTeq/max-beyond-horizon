@@ -945,7 +945,7 @@ impl<'a> Reader<'a> {
 
     fn read_complex_body(&mut self) -> Result<Complex> {
         Ok(Complex {
-            material: self.i16()?,
+            raw: self.i16()?,
             fuel: self.i16()?,
             gold: self.i16()?,
             power: self.i16()?,
@@ -1837,7 +1837,7 @@ impl Writer {
     }
 
     fn write_complex_body(&mut self, complex: &Complex) {
-        self.i16(complex.material);
+        self.i16(complex.raw);
         self.i16(complex.fuel);
         self.i16(complex.gold);
         self.i16(complex.power);

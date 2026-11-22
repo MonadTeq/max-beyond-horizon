@@ -33,7 +33,7 @@
 //! `STANDALONE` одной команды. `UnitInfo::complex` хранит id комплекса, а
 //! `UnitInfo::connectors` — биты `CONNECTOR_*` (они входят в снапшот/CRC).
 //! Запасы и ёмкость комплекса вычисляются из зданий
-//! ([`crate::alloc::get_cargo_info`]), а `Complex::{material,fuel,gold,power,
+//! ([`crate::alloc::get_cargo_info`]), а `Complex::{raw,fuel,gold,power,
 //! workers}` — кэш на текущий ход (`Access_UpdateResourcesTotal`).
 
 use crate::alloc::update_resources_total;
@@ -874,12 +874,12 @@ mod tests {
             crate::crc::state_digest(&first)
         );
 
-        // Запас комплекса (`Complex::material` как кэш `Access_UpdateResourcesTotal`)
+        // Запас комплекса (`Complex::raw` как кэш `Access_UpdateResourcesTotal`)
         // входит в снапшот: `Complex::Transfer` и UI читают именно его.
         let mut changed = first.clone();
         let complex = changed.unit(mine).unwrap().complex.expect("complex");
         if let Some(target) = changed.complex_mut(TeamId::RED, complex.0 as u16) {
-            target.material = target.material.wrapping_add(1);
+            target.raw = target.raw.wrapping_add(1);
         }
         assert_ne!(changed.snapshot_bytes(), first.snapshot_bytes());
         assert_ne!(

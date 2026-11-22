@@ -708,12 +708,12 @@ impl QaRunner {
         // Абсолютные значения, как у прежнего `complex raw N`: считаем дельту
         // к текущему полю и зовём `Complex::Transfer`. Не указанные ресурсы не
         // трогаем.
-        let delta_raw = raw.map_or(0, |value| value - i32::from(target.material));
+        let delta_raw = raw.map_or(0, |value| value - i32::from(target.raw));
         let delta_fuel = fuel.map_or(0, |value| value - i32::from(target.fuel));
         let delta_gold = gold.map_or(0, |value| value - i32::from(target.gold));
         let detail = format!(
             "complex raw={} fuel={} gold={}",
-            raw.map_or_else(|| i32::from(target.material).to_string(), |v| v.to_string()),
+            raw.map_or_else(|| i32::from(target.raw).to_string(), |v| v.to_string()),
             fuel.map_or_else(|| i32::from(target.fuel).to_string(), |v| v.to_string()),
             gold.map_or_else(|| i32::from(target.gold).to_string(), |v| v.to_string()),
         );
@@ -4011,7 +4011,7 @@ impl QaRunner {
             }
             Assertion::ComplexRaw(cmp, expected) => {
                 self.check_complex_value("complex-raw", cmp, expected, |complex| {
-                    i32::from(complex.material)
+                    i32::from(complex.raw)
                 })
             }
             Assertion::ComplexFuel(cmp, expected) => {
@@ -4828,7 +4828,7 @@ impl QaRunner {
         }
     }
 
-    /// Проверка запаса комплекса (`Complex::material/...`).
+    /// Проверка запаса комплекса (`Complex::raw/...`).
     ///
     /// Комплекс — выделенного юнита, иначе первый комплекс команды игрока
     /// ([`crate::App::economy_complex`]): после смены хода выделение снимается,

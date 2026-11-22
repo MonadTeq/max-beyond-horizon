@@ -377,8 +377,8 @@ pub struct Packet11ComplexOrder {
     pub team: TeamId,
     /// `complex_id u16`.
     pub complex_id: u16,
-    /// `material i16`.
-    pub material: i16,
+    /// `raw i16` (C++/провод: `material`).
+    pub raw: i16,
     /// `fuel i16`.
     pub fuel: i16,
     /// `gold i16`.
@@ -397,7 +397,8 @@ pub struct ComplexSummaryEntry {
     /// `complex_id u16`.
     pub complex_id: u16,
     /// Шесть полей `i16` в порядке пакета 11/53
-    /// (`material, fuel, gold, power, workers, buildings`).
+    /// (`raw, fuel, gold, power, workers, buildings`; C++-порядок
+    /// `material, fuel, …`, `raw` ≡ `material`).
     pub values: [i16; 6],
 }
 

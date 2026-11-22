@@ -375,7 +375,7 @@ pub enum Assertion {
     /// `assert alloc-free=N`: свободные единицы добычи
     /// (`production.free_capacity`).
     AllocFree(Cmp, i32),
-    /// `assert complex-raw=N`: запас сырья комплекса (`Complex::material`).
+    /// `assert complex-raw=N`: запас сырья комплекса (`Complex::raw`).
     ComplexRaw(Cmp, i32),
     /// `assert complex-fuel=N`: запас топлива комплекса.
     ComplexFuel(Cmp, i32),

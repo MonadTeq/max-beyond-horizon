@@ -141,7 +141,7 @@ fn prepare_transfer(app: &mut App) -> (UnitId, UnitId) {
         .state_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
     {
-        target.material = 10;
+        target.raw = 10;
     }
 
     (mine, constructor)
@@ -252,7 +252,7 @@ fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
         app.state()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("комплекс")
-            .material,
+            .raw,
         4,
         "запас комплекса уменьшился на 6"
     );

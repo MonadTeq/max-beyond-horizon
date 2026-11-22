@@ -224,7 +224,7 @@ fn transfer_to_complex_and_back_changes_both_sides() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         12
     );
 
@@ -238,7 +238,7 @@ fn transfer_to_complex_and_back_changes_both_sides() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         7
     );
 }
@@ -289,7 +289,7 @@ fn transfer_order_processor_runs_restores_orders_and_is_deterministic() {
             state
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
-                .material,
+                .raw,
         )
     }
 
@@ -465,7 +465,7 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         41,
         "25 инвентаря + 16 добычи за ход (кэш на один ход)"
     );
@@ -475,7 +475,7 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         16,
         "излишек 16 не накапливается — теряется"
     );
@@ -613,7 +613,7 @@ fn complex_transfer_negative_uses_buildings_in_stationary_order() {
     state.unit_mut(first).expect("first").storage = 10;
     state.unit_mut(second).expect("second").storage = 10;
     if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
-        target.material = 20;
+        target.raw = 20;
     }
 
     complex_transfer(&mut state, TeamId::RED, complex, -15, 0, 0);
@@ -634,7 +634,7 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 45;
     if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
-        target.material = 45;
+        target.raw = 45;
     }
 
     transfer_cargo_kind(&mut state, dump, CargoType::Raw, 20);
@@ -650,7 +650,7 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         65
     );
 
@@ -659,7 +659,7 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
         state
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
-            .material,
+            .raw,
         50,
         "пересчёт из инвентаря отбрасывает нераспределённый излишек"
     );

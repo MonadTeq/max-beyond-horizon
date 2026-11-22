@@ -326,7 +326,7 @@ fn allocation_changes_the_complex_income_next_turn() {
         .complex(TeamId::RED, complex_id)
         .expect("комплекс шахты");
 
-    assert_eq!(complex.material, 0, "доля сырья 0 — добычи сырья нет");
+    assert_eq!(complex.raw, 0, "доля сырья 0 — добычи сырья нет");
     let income = match other {
         MiningKind::Fuel => complex.fuel,
         MiningKind::Gold => complex.gold,

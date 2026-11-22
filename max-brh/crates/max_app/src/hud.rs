@@ -1447,7 +1447,7 @@ pub fn resources_line(state: &GameState, team: TeamId) -> String {
 
     if let Some(units) = units {
         for complex in units.complexes() {
-            raw += i32::from(complex.material);
+            raw += i32::from(complex.raw);
             fuel += i32::from(complex.fuel);
             complex_gold += i32::from(complex.gold);
             power += i32::from(complex.power);

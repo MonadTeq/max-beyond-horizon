@@ -67,7 +67,7 @@ M.A.X. (Mechanized Assault & Exploration, Interplay 1996).
 
 | Канон (DSL) | Русская глосса | Rust | C++-токен | Примечание |
 |---|---|---|---|---|
-| **raw** | сырьё / материалы | `Cargo.raw`, `Complex.material` | `CARGO_TYPE_RAW`, `raw`≡`material` | один ресурс; мануал равно пишет «Raw Materials»/«Materials» |
+| **raw** | сырьё / материалы | `Cargo.raw`, `Complex.raw` | `CARGO_TYPE_RAW`, `raw`≡`material` | один ресурс; мануал равно пишет «Raw Materials»/«Materials» |
 | **fuel** | топливо | `Cargo.fuel`, `Complex.fuel` | `CARGO_TYPE_FUEL` | не путать с `ATTRIB_FUEL` (собственный запас топлива машины) |
 | **gold** | золото (руда) | `Cargo.gold`, `Complex.gold` | `CARGO_TYPE_GOLD` | не путать с `credits` |
 | **power** | энергия / мощность | `Complex.power` | `Complex.power` | поток комплекса, не хранится в складах |

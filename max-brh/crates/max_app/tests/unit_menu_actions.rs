@@ -371,7 +371,7 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
     // В комплексе есть материалы (C++ `GetCargoInfo`).
     if let Some(complex) = app.state().unit(station).and_then(|unit| unit.complex) {
         if let Some(complex) = app.state_mut().complex_mut(team, complex.0 as u16) {
-            complex.material = 120;
+            complex.raw = 120;
         }
     }
 

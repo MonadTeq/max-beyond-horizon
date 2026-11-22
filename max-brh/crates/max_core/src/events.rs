@@ -651,7 +651,7 @@ fn apply_packet_11(
         return ApplyOutcome::Ignored;
     };
 
-    complex.material = packet.material;
+    complex.raw = packet.raw;
     complex.fuel = packet.fuel;
     complex.gold = packet.gold;
     complex.power = packet.power;
@@ -672,7 +672,7 @@ fn apply_packet_53(
     // `TeamUnits::ReadComplexPacket` с `GetComplex(id)` == nullptr в порту).
     for entry in &packet.complexes {
         if let Some(complex) = state.complex_mut(packet.team, entry.complex_id) {
-            complex.material = entry.values[0];
+            complex.raw = entry.values[0];
             complex.fuel = entry.values[1];
             complex.gold = entry.values[2];
             complex.power = entry.values[3];
@@ -1364,7 +1364,7 @@ mod tests {
             &Command::ComplexOrder(crate::input::Packet11ComplexOrder {
                 team: TeamId::RED,
                 complex_id: complex_id.0 as u16,
-                material: 5,
+                raw: 5,
                 fuel: 6,
                 gold: 7,
                 power: 8,
@@ -1375,7 +1375,7 @@ mod tests {
         let complex = state
             .complex(TeamId::RED, complex_id.0 as u16)
             .expect("complex");
-        assert_eq!(complex.material, 5);
+        assert_eq!(complex.raw, 5);
         assert_eq!(complex.buildings, 10);
 
         apply_command(
@@ -1392,7 +1392,7 @@ mod tests {
         let complex = state
             .complex(TeamId::RED, complex_id.0 as u16)
             .expect("complex");
-        assert_eq!(complex.material, 1);
+        assert_eq!(complex.raw, 1);
         assert_eq!(complex.buildings, 6);
     }
 

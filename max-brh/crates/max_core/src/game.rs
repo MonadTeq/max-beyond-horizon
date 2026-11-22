@@ -2513,14 +2513,14 @@ impl GameState {
 
             // Комплексы команды — C++ `TeamUnits::complexes` (порядок по
             // возрастанию id, который держит `CreateComplex`): id, запасы и
-            // число зданий. Поля `Complex::{material,fuel,gold,power,workers}`
+            // число зданий. Поля `Complex::{raw,fuel,gold,power,workers}`
             // — кэш `Access_UpdateResourcesTotal`, но он влияет на показ и на
             // `Complex::Transfer`, поэтому входит в снапшот/CRC (`state_digest`).
             let complexes = &self.team_units[team].complexes;
             put_u32(&mut out, complexes.len() as u32);
             for complex in complexes {
                 put_i16(&mut out, complex.id);
-                put_i16(&mut out, complex.material);
+                put_i16(&mut out, complex.raw);
                 put_i16(&mut out, complex.fuel);
                 put_i16(&mut out, complex.gold);
                 put_i16(&mut out, complex.power);
@@ -2740,8 +2740,8 @@ fn state_complex_pull(
 
     let value = match cargo {
         CargoType::Raw => {
-            let value = i32::from(target.material).min(capacity);
-            target.material = target.material.wrapping_sub(value as i16);
+            let value = i32::from(target.raw).min(capacity);
+            target.raw = target.raw.wrapping_sub(value as i16);
             value
         }
         CargoType::Fuel => {
@@ -2785,7 +2785,7 @@ impl GameState {
 
     /// `TeamUnits::OptimizeComplexes(team)` (`teamunits.cpp:170`) в объёме
     /// экономики: для каждого комплекса команды — `Access_UpdateResourcesTotal`
-    /// (`access.cpp:912`), то есть пересчёт `material/fuel/gold/power/workers`
+    /// (`access.cpp:912`), то есть пересчёт `raw/fuel/gold/power/workers`
     /// из зданий (`Cargo_GetNetProduction + Cargo_GetInventory`).
     ///
     /// Добыча шахты попадает сюда через `raw_mining`/`fuel_mining`/

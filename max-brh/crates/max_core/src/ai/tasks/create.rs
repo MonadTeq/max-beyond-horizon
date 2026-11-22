@@ -94,12 +94,7 @@ pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i3
         return None;
     }
 
-    Some(
-        complexes
-            .iter()
-            .map(|complex| i32::from(complex.material))
-            .sum(),
-    )
+    Some(complexes.iter().map(|complex| i32::from(complex.raw)).sum())
 }
 
 /// `TaskCreateBuilding::CheckMaterials` — хватает ли материалов на постройку.

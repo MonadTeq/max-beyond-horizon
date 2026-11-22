@@ -46,7 +46,7 @@
 //!
 //! Только поля юнитов `raw_mining`/`fuel_mining`/`gold_mining`/`total_mining`
 //! (см. [`max_core::alloc`]) и — как в C++ `Update*Allocation` — запас
-//! комплекса (`Complex::material/fuel/gold`). Никаких полей `TeamUnits` нет:
+//! комплекса (`Complex::raw/fuel/gold`). Никаких полей `TeamUnits` нет:
 //! в C++ значение живёт на каждом юните `MININGST`, едет пакетом **08/P5**
 //! (`ORDER_NEW_ALLOCATE`) и входит в снапшот/CRC.
 //!
@@ -268,7 +268,7 @@ impl AllocMenu {
         // `complex->material/fuel/gold += material` — запас комплекса.
         if let Some(complex) = state.complex_mut(self.team, self.complex.0 as u16) {
             match kind {
-                MiningKind::Raw => complex.material = complex.material.saturating_add(material as i16),
+                MiningKind::Raw => complex.raw = complex.raw.saturating_add(material as i16),
                 MiningKind::Fuel => complex.fuel = complex.fuel.saturating_add(material as i16),
                 MiningKind::Gold => complex.gold = complex.gold.saturating_add(material as i16),
             }
@@ -976,7 +976,7 @@ pub fn stored(state: &GameState, team: TeamId, complex: ComplexId, kind: MiningK
     };
 
     match kind {
-        MiningKind::Raw => i32::from(complex.material),
+        MiningKind::Raw => i32::from(complex.raw),
         MiningKind::Fuel => i32::from(complex.fuel),
         MiningKind::Gold => i32::from(complex.gold),
     }

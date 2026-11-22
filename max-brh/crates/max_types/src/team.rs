@@ -145,8 +145,8 @@ pub struct ComplexId(pub i16);
 /// Комплекс — связная группа зданий, делящих энергию и грузы.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Complex {
-    /// Материалы (запас + добыча).
-    pub material: i16,
+    /// Сырьё (запас + добыча) — DSL `raw` (C++ `Complex::material`).
+    pub raw: i16,
     /// Топливо.
     pub fuel: i16,
     /// Золото.
@@ -165,7 +165,7 @@ impl Complex {
     /// `Complex::Complex(id)`: все запасы 0, `buildings = 0`.
     pub const fn new(id: i16) -> Self {
         Self {
-            material: 0,
+            raw: 0,
             fuel: 0,
             gold: 0,
             power: 0,

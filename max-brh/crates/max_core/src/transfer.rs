@@ -10,7 +10,7 @@
 //! # Модель
 //!
 //! Комплекс — `(TeamId, ComplexId)`; его запас лежит в
-//! `Complex::{material,fuel,gold}` и одновременно в `storage` зданий-членов
+//! `Complex::{raw,fuel,gold}` и одновременно в `storage` зданий-членов
 //! (см. [`crate::alloc::get_cargo_info`]). Перенос поэтому всегда делает две
 //! вещи, как C++: меняет запас здания (`unit.storage`) и поле комплекса.
 //!
@@ -36,7 +36,7 @@
 //! `MININGST` = 25, `CONSTRCT` = 60, `FUELTRCK`/`GOLDTRIK` = 50, …). Когда
 //! `UnitInfo::UpdateProduction` (см. [`crate::game::GameState::update_production`])
 //! переносит запас комплекса в здания, каждое берёт
-//! `min(complex.material, ATTRIB_STORAGE)`; остаток остаётся в поле комплекса и
+//! `min(complex.raw, ATTRIB_STORAGE)`; остаток остаётся в поле комплекса и
 //! на следующем ходу `Access_UpdateResourcesTotal` пересчитывает его из
 //! инвентаря зданий — то есть **излишек за ёмкость складов теряется**, как в
 //! C++ (в `Complex` поля — только кэш на текущий ход).
@@ -120,12 +120,12 @@ pub fn transfer_cargo(
     }
 }
 
-/// Поле комплекса, которое меняет ресурс (`Complex::{material,fuel,gold}`).
+/// Поле комплекса, которое меняет ресурс (`Complex::{raw,fuel,gold}`).
 fn complex_field(state: &mut GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> Option<&mut i16> {
     let target = state.complex_mut(team, complex.0 as u16)?;
 
     Some(match cargo {
-        CargoType::Raw => &mut target.material,
+        CargoType::Raw => &mut target.raw,
         CargoType::Fuel => &mut target.fuel,
         CargoType::Gold => &mut target.gold,
         _ => return None,
@@ -146,7 +146,7 @@ pub fn complex_transfer(
     mut gold: i32,
 ) {
     if let Some(target) = state.complex_mut(team, complex.0 as u16) {
-        target.material = target.material.wrapping_add(raw as i16);
+        target.raw = target.raw.wrapping_add(raw as i16);
         target.fuel = target.fuel.wrapping_add(fuel as i16);
         target.gold = target.gold.wrapping_add(gold as i16);
     }
@@ -535,7 +535,7 @@ mod tests {
             state
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
-                .material,
+                .raw,
             70
         );
     }
@@ -560,7 +560,7 @@ mod tests {
         state.unit_mut(first).expect("first").storage = 10;
         state.unit_mut(second).expect("second").storage = 10;
         if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
-            target.material = 20;
+            target.raw = 20;
         }
 
         complex_transfer(&mut state, TeamId::RED, complex, -15, 0, 0);
@@ -571,7 +571,7 @@ mod tests {
             state
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
-                .material,
+                .raw,
             5
         );
     }
@@ -609,7 +609,7 @@ mod tests {
             state
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
-                .material,
+                .raw,
             15
         );
 
@@ -623,7 +623,7 @@ mod tests {
             state
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
-                .material,
+                .raw,
             5
         );
     }
@@ -691,7 +691,7 @@ mod tests {
         state.unit_mut(dump).expect("dump").storage = 7;
         state.unit_mut(other).expect("other").storage = 0;
         if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
-            target.material = 7;
+            target.raw = 7;
         }
 
         let truck = state

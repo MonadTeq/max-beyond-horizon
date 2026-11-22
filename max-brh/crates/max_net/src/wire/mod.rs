@@ -958,7 +958,7 @@ mod tests {
             Packet11ComplexOrder {
                 team: TeamId::GREEN,
                 complex_id: 2,
-                material: 1,
+                raw: 1,
                 fuel: 2,
                 gold: 3,
                 power: 4,

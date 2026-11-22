@@ -255,7 +255,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert alloc=open` / `alloc=closed` | открыт ли диалог распределения добычи (C++ `AllocMenu`) |
 | `assert alloc-raw=N` (и `>=`, `<=`, `>`, `<`) | добыча сырья в комплексе шахты (`production.raw`, сумма `raw_mining`); так же `alloc-fuel`, `alloc-gold` |
 | `assert alloc-free=N` | свободные единицы добычи комплекса (`Σ(16 − total_mining)`) |
-| `assert complex-raw=N` | запас сырья комплекса (`Complex::material`, после `manage_economy`); так же `complex-fuel`, `complex-gold` — комплекс выделенного юнита, иначе первый комплекс команды |
+| `assert complex-raw=N` | запас сырья комплекса (`Complex::raw`, после `manage_economy`); так же `complex-fuel`, `complex-gold` — комплекс выделенного юнита, иначе первый комплекс команды |
 | `assert unit-storage=N` | `storage` выделенного юнита (груз по его типу; `ATTRIB_STORAGE` — предел) |
 | `assert transfer=open` / `transfer=closed` | открыто ли окно X-FER (`TransferMenu`, `XFERPIC`) |
 | `assert transfer-amount=N` | текущее значение полосы X-FER (знаковое) |

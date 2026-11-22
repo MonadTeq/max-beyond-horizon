@@ -42,7 +42,7 @@
 //! `raw += raw_mining`, `fuel += fuel_mining`, `gold += gold_mining`
 //! (для компьютера — с множителем сложности `×5/4`, `×6/4`).
 //! `Access_UpdateResourcesTotal` (`access.cpp:912`) суммирует это по всем
-//! зданиям комплекса в `Complex::{material,fuel,gold,power,workers}` — так доля
+//! зданиям комплекса в `Complex::{raw,fuel,gold,power,workers}` — так доля
 //! шахты становится **добычей комплекса за ход**; `GameManager_ManageEconomy`
 //! (`game_manager.cpp:2058`) вызывает её каждый ход через
 //! `TeamUnits::OptimizeComplexes` → `ProductionManager_OptimizeProduction`.
@@ -646,7 +646,7 @@ pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, 
     }
 
     if let Some(target) = state.complex_mut(team, complex.0 as u16) {
-        target.material = material.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        target.raw = material.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
         target.fuel = fuel.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
         target.gold = gold.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
         target.power = power.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
@@ -840,7 +840,7 @@ mod tests {
         update_resources_total(&mut state, TeamId::RED, complex);
 
         let stored = state.complex(TeamId::RED, complex.0 as u16).expect("комплекс");
-        assert!(stored.material >= 4, "добыча сырья в комплексе: {}", stored.material);
+        assert!(stored.raw >= 4, "добыча сырья в комплексе: {}", stored.raw);
     }
 
     #[test]
@@ -863,7 +863,7 @@ mod tests {
         state.unit_mut(id).unwrap().raw_mining = 5;
         update_resources_total(&mut state, TeamId::RED, complex);
         let after = state.complex(TeamId::RED, complex.0 as u16).expect("комплекс");
-        assert!(after.material >= 5);
+        assert!(after.raw >= 5);
         assert_eq!(after.gold, 0, "доля золота 0 — добычи золота нет");
     }
 

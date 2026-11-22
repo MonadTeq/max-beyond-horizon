@@ -740,7 +740,7 @@ pub fn cargo_get_net_production(
 /// C++ списывает ход строящегося завода **здесь** — внутри
 /// `Cargo_GetNetProduction` (`cargo.cpp:88-95`), и `Access_UpdateResourcesTotal`
 /// (`access.cpp:912`) кладёт это списание в `Complex::material`. Порт по
-/// требованию QA не допускает отрицательных `storage`/`complex.material`,
+/// требованию QA не допускает отрицательных `storage`/`complex.raw`,
 /// поэтому фактическое списание с паузой делает
 /// [`crate::production::ProductionManager`] в фазе
 /// `GameManager_ProgressBuildState` (как `StartBuilding`/`ValidateIndustry`).

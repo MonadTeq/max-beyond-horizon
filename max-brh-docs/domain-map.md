@@ -184,7 +184,7 @@
 
 | Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
 |---|---|---|---|---|
-| raw (сырьё / материалы) | `ResourceKind::Raw`, `Cargo.raw`, `Complex.material` | `CARGO_TYPE_RAW`, `CARGO_MATERIALS` | C++/мануал | добыча `MININGST`; тратится заводами (3/ход), строителями (2/ход), `TRAINHAL` (1/ход); склад `ADUMP` |
+| raw (сырьё / материалы) | `ResourceKind::Raw`, `Cargo.raw`, `Complex.raw` | `CARGO_TYPE_RAW`, `CARGO_MATERIALS` | C++/мануал | добыча `MININGST`; тратится заводами (3/ход), строителями (2/ход), `TRAINHAL` (1/ход); склад `ADUMP` |
 | fuel (топливо) | `ResourceKind::Fuel`, `Cargo.fuel`, `Complex.fuel` | `CARGO_TYPE_FUEL`, `CARGO_FUEL` | C++ | потребляется только электростанциями (`POWERSTN` 6, `POWGEN` 2); склад `FDUMP` |
 | gold (золото, руда) | `ResourceKind::Gold`, `Cargo.gold`, `Complex.gold` | `CARGO_TYPE_GOLD`, `CARGO_GOLD` | C++ | перерабатывается `COMMTWR` 5/ход → кредиты; склад `GOLDSM` |
 | power (энергия / мощность) | `Complex.power` | `Complex.power` | C++ | производится `POWERSTN`/`POWGEN`; потребляется по 1/ход заводами/исследованиями; не хранится |

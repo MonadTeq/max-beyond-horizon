@@ -759,7 +759,7 @@ pub fn complex_summary_for(
         .map(|complex| max_types::input::ComplexSummaryEntry {
             complex_id: complex.id as u16,
             values: [
-                complex.material,
+                complex.raw,
                 complex.fuel,
                 complex.gold,
                 complex.power,
@@ -1023,7 +1023,7 @@ mod tests {
         let complex = state.team_units[TeamId::RED.0 as usize]
             .get_complex_mut(id)
             .expect("complex created");
-        complex.material = 10;
+        complex.raw = 10;
         complex.fuel = 20;
         complex.gold = 30;
         complex.power = 40;

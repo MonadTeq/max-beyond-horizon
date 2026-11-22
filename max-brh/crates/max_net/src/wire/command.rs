@@ -514,7 +514,7 @@ fn read_packet_11(r: &mut Reader<'_>) -> WireResult<Command> {
     Ok(Command::ComplexOrder(Packet11ComplexOrder {
         team: read_team(r)?,
         complex_id: r.read_u16()?,
-        material: r.read_i16()?,
+        raw: r.read_i16()?,
         fuel: r.read_i16()?,
         gold: r.read_i16()?,
         power: r.read_i16()?,
@@ -725,7 +725,7 @@ pub fn encode_command(command: &Command, w: &mut Writer) -> WireResult<()> {
         Command::ComplexOrder(packet) => {
             write_team(w, packet.team);
             w.write_u16(packet.complex_id);
-            w.write_i16(packet.material);
+            w.write_i16(packet.raw);
             w.write_i16(packet.fuel);
             w.write_i16(packet.gold);
             w.write_i16(packet.power);
