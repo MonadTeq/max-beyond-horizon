@@ -1,35 +1,35 @@
-//! Детерминированный RNG ядра — точный порт `max-cpp-port/src/randomizer.cpp`.
+//! Deterministic core RNG — an exact port of `max-cpp-port/src/randomizer.cpp`.
 //!
-//! Алгоритм (DESIGN.md §4.1):
-//! * сидирование — **SplitMix64**: `state += 0x9E3779B97F4A7C15`, затем
+//! Algorithm (DESIGN.md §4.1):
+//! * seeding — **SplitMix64**: `state += 0x9E3779B97F4A7C15`, then
 //!   `z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9`,
 //!   `z = (z ^ (z >> 27)) * 0x94D049BB133111EB`, `z ^ (z >> 31)`;
-//! * четыре младших 32-битных слова SplitMix64 образуют состояние
-//!   [`Randomizer`] (как конструктор `Xoshiro128StarStar(uint64_t)` в
+//! * the four least significant 32-bit words of SplitMix64 form the state of
+//!   [`Randomizer`] (as does the `Xoshiro128StarStar(uint64_t)` constructor in
 //!   `XoshiroCpp.hpp`);
-//! * генерация — **Xoshiro128\*\***: `rotl(s[1] * 5, 7) * 9` и стандартное
-//!   обновление состояния.
+//! * generation — **Xoshiro128\*\***: `rotl(s[1] * 5, 7) * 9` and the standard
+//!   state update.
 //!
-//! `Randomizer_Generate<T>` (§4.2) — две ветки семантики:
-//! * `T <= u32` (и `i8..=i32`): `(next as i64 * value) >> 32` (арифметический
-//!   сдвиг, `i64`-умножение);
-//! * `T == u64` (сайты `sizeof(...)`/`size_t`): `(next as u64 * value) >> 32`
-//!   (логический сдвиг, беззнаковое умножение).
+//! `Randomizer_Generate<T>` (§4.2) — two semantic branches:
+//! * `T <= u32` (and `i8..=i32`): `(next as i64 * value) >> 32` (arithmetic
+//!   shift, `i64` multiplication);
+//! * `T == u64` (`sizeof(...)`/`size_t` sites): `(next as u64 * value) >> 32`
+//!   (logical shift, unsigned multiplication).
 //!
-//! Крейт не использует `rand` и не обращается ко времени: единственная точка
-//! сидирования — [`Randomizer::new`]/[`Randomizer::set_seed`] (в симуляции —
-//! `Command::Seed`). Состояние сериализуемо и входит в CRC-дайджест.
+//! The crate does not use `rand` and does not touch time: the only
+//! seeding points are [`Randomizer::new`]/[`Randomizer::set_seed`] (in simulation —
+//! `Command::Seed`). The state is serializable and enters the CRC digest.
 
 use serde::{Deserialize, Serialize};
 
-/// Seed по умолчанию (`XoshiroCpp::DefaultSeed = 1234567890`).
+/// Default seed (`XoshiroCpp::DefaultSeed = 1234567890`).
 pub const DEFAULT_SEED: u32 = 1_234_567_890;
 
 const SPLITMIX_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
 const SPLITMIX_MUL1: u64 = 0xBF58_476D_1CE4_E5B9;
 const SPLITMIX_MUL2: u64 = 0x94D0_49BB_1331_11EB;
 
-/// Один шаг SplitMix64; состояние — `u64`.
+/// One SplitMix64 step; the state is `u64`.
 #[inline]
 fn splitmix64_next(state: &mut u64) -> u64 {
     *state = state.wrapping_add(SPLITMIX_GAMMA);
@@ -39,9 +39,9 @@ fn splitmix64_next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Генератор M.A.X. — Xoshiro128\*\* с сидированием SplitMix64.
+/// The M.A.X. generator — Xoshiro128\*\* seeded with SplitMix64.
 ///
-/// Состояние — `[u32; 4]`, ровно как `XoshiroCpp::Xoshiro128StarStar::state_type`.
+/// State is `[u32; 4]`, exactly like `XoshiroCpp::Xoshiro128StarStar::state_type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Randomizer {
     state: [u32; 4],
@@ -54,7 +54,7 @@ impl Default for Randomizer {
 }
 
 impl Randomizer {
-    /// Создаёт генератор с сидом `seed` (как `Randomizer_SetSeed`).
+    /// Creates a generator with seed `seed` (like `Randomizer_SetSeed`).
     #[inline]
     pub fn new(seed: u32) -> Self {
         let mut randomizer = Self { state: [0; 4] };
@@ -62,7 +62,7 @@ impl Randomizer {
         randomizer
     }
 
-    /// Пересидирует генератор (как `Randomizer_SetSeed`, включая reseed).
+    /// Reseeds the generator (like `Randomizer_SetSeed`, including reseed).
     pub fn set_seed(&mut self, seed: u32) {
         let mut splitmix_state = seed as u64;
         for slot in &mut self.state {
@@ -71,25 +71,25 @@ impl Randomizer {
         }
     }
 
-    /// Текущее состояние `[u32; 4]` (для CRC/сейвов).
+    /// Current state `[u32; 4]` (for CRC/saves).
     #[inline]
     pub const fn state(&self) -> [u32; 4] {
         self.state
     }
 
-    /// Восстанавливает состояние (загрузка сейва).
+    /// Restores the state (save loading).
     #[inline]
     pub fn from_state(state: [u32; 4]) -> Self {
         Self { state }
     }
 
-    /// Перезаписывает состояние (загрузка сейва).
+    /// Overwrites the state (save loading).
     #[inline]
     pub fn set_state(&mut self, state: [u32; 4]) {
         self.state = state;
     }
 
-    /// Следующее 32-битное значение — `Xoshiro128StarStar::operator()`.
+    /// Next 32-bit value — `Xoshiro128StarStar::operator()`.
     #[inline]
     pub fn next_u32(&mut self) -> u32 {
         let result = self.state[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
@@ -103,23 +103,23 @@ impl Randomizer {
         result
     }
 
-    /// Порт `Randomizer_Generate<T>` для всех поддерживаемых типов.
+    /// Port of `Randomizer_Generate<T>` for all supported types.
     ///
-    /// Делает ровно один вызов [`Self::next_u32`] и маскирует результат по типу
-    /// `T` (см. [`GenerateValue`]).
+    /// Performs exactly one [`Self::next_u32`] call and masks the result by type
+    /// `T` (see [`GenerateValue`]).
     #[inline]
     pub fn generate<T: GenerateValue>(&mut self, value: T) -> T {
         T::generate_from(self.next_u32(), value)
     }
 
-    /// Ветка `i64` (C++ `T` — `int8_t..int32_t`/`uint8_t..uint32_t`):
+    /// `i64` branch (C++ `T` — `int8_t..int32_t`/`uint8_t..uint32_t`):
     /// `(next as i64 * value) >> 32`.
     #[inline]
     pub fn generate_i64(&mut self, value: i64) -> i64 {
         ((self.next_u32() as i64).wrapping_mul(value)) >> 32
     }
 
-    /// Ветка `u64` (C++ `size_t`, сайты `sizeof(...)`):
+    /// `u64` branch (C++ `size_t`, `sizeof(...)` sites):
     /// `(next as u64 * value) >> 32`.
     #[inline]
     pub fn generate_u64(&mut self, value: u64) -> u64 {
@@ -139,14 +139,14 @@ impl Randomizer {
     }
 }
 
-/// Семантика `Randomizer_Generate<T>` для конкретного типа `T`.
+/// Semantics of `Randomizer_Generate<T>` for a concrete type `T`.
 ///
-/// Реализована ровно для типов, встречающихся в C++-порту: `i8..=i32`,
-/// `u8..=u32`, `i64`, `u64`, `bool`. `char` намеренно не реализован: в C++
-/// `char` имеет платформенную знаковость, а Rust `char` — Unicode-скаляр; все
-/// байтовые сайты портируются через `i8`/`u8`.
+/// Implemented exactly for the types occurring in the C++ port: `i8..=i32`,
+/// `u8..=u32`, `i64`, `u64`, `bool`. `char` is deliberately not implemented: in C++
+/// `char` has platform-defined signedness, while Rust `char` is a Unicode scalar; all
+/// byte sites are ported via `i8`/`u8`.
 pub trait GenerateValue: Copy {
-    /// Преобразует одно значение `next_u32()` в результат типа `Self`.
+    /// Converts one `next_u32()` value into a result of type `Self`.
     fn generate_from(next: u32, value: Self) -> Self;
 }
 
@@ -195,23 +195,23 @@ impl GenerateValue for bool {
 }
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Разбор эталонных векторов, сгенерированных C++-программой
-    /// `max-brh/tools/rng_vectors/main.cpp` (см. README рядом с `vectors.txt`).
+    /// Parsing of reference vectors generated by the C++ program
+    /// `max-brh/tools/rng_vectors/main.cpp` (see the README next to `vectors.txt`).
     const VECTORS: &str = include_str!("../../../tools/rng_vectors/vectors.txt");
 
-    /// Число сидов в генераторе: {0, 1, 2, 0xDEADBEEF, 1234567890} + 3
-    /// детерминированных «случайных» сида.
+    /// Number of seeds in the generator: {0, 1, 2, 0xDEADBEEF, 1234567890} + 3
+    /// deterministic "random" seeds.
     const SEED_COUNT: usize = 8;
-    /// Длина каждой последовательности.
+    /// Length of each sequence.
     const SEQ_LEN: usize = 1000;
-    /// Длина блока reseed-проверки.
+    /// Length of the reseed check block.
     const RESEED_LEN: usize = 32;
 
     struct Tokens {
@@ -221,7 +221,7 @@ mod tests {
 
     impl Tokens {
         fn new(text: &'static str) -> Self {
-            // Комментарии начинаются с '#'; такие строки не попадают в поток.
+            // Comments start with '#'; such lines do not enter the stream.
             Self {
                 values: text
                     .lines()
@@ -259,7 +259,7 @@ mod tests {
         }
     }
 
-    /// Полная сверка бит-в-бит с векторами, сгенерированными из C++.
+    /// Full bit-for-bit comparison with the vectors generated from C++.
     #[test]
     fn matches_cpp_reference_vectors() {
         let mut tokens = Tokens::new(VECTORS);
@@ -350,8 +350,8 @@ mod tests {
                     );
 
                     let mut rng = Randomizer::new(seed);
-                    // Прогреваем состояние, затем reseed — значения должны
-                    // совпасть с блоком `first`.
+                    // Warm up the state, then reseed — the values must
+                    // match the `first` block.
                     for _ in 0..17 {
                         let _ = rng.next_u32();
                     }
@@ -373,7 +373,7 @@ mod tests {
             SEED_COUNT * 6,
             "expected {SEED_COUNT} x (state + 4 sequences + reseed)"
         );
-        // 4 последовательности по 1000 + 2 блока reseed по 32 + 4 слова state.
+        // 4 sequences of 1000 + 2 reseed blocks of 32 + 4 state words.
         assert_eq!(
             values_checked,
             SEED_COUNT * (4 * SEQ_LEN + 2 * RESEED_LEN + 4)
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn splitmix64_reference_values() {
-        // Классические векторы SplitMix64 (prng.di.unimi.it/splitmix64.c).
+        // Classic SplitMix64 vectors (prng.di.unimi.it/splitmix64.c).
         let mut state = 0u64;
         assert_eq!(splitmix64_next(&mut state), 0xE220_A839_7B1D_CDAF);
         assert_eq!(splitmix64_next(&mut state), 0x6E78_9E6A_A1B9_65F4);
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn generate_respects_type_widths() {
-        // u16-результат не должен выходить за 16 бит даже при range = u16::MAX.
+        // A u16 result must stay within 16 bits even with range = u16::MAX.
         let mut rng = Randomizer::new(0xDEAD_BEEF);
         for _ in 0..10_000 {
             let v = rng.generate(u16::MAX);
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn generate_u64_uses_unsigned_branch() {
-        // Для value >= 2^32 знаковая и беззнаковая ветки расходятся.
+        // For value >= 2^32 the signed and unsigned branches diverge.
         let value = u64::MAX;
 
         let mut source = Randomizer::new(42);
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn seed_zero_state_is_low_words_of_splitmix() {
-        // XoshiroCpp берёт младшие 32 бита каждого выхода SplitMix64.
+        // XoshiroCpp takes the low 32 bits of each SplitMix64 output.
         assert_eq!(
             Randomizer::new(0).state(),
             [0x7B1D_CDAF, 0xA1B9_65F4, 0x8009_454F, 0x724C_81EC]

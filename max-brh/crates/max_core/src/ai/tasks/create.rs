@@ -1,37 +1,37 @@
-//! Создание юнитов и зданий: `TaskCreate*`, `TaskObtainUnits`, `TaskActivate`.
+//! Unit and building creation: `TaskCreate*`, `TaskObtainUnits`, `TaskActivate`.
 //!
-//! Оракул: `taskcreate.cpp/.hpp`, `taskcreateunit.cpp/.hpp`,
+//! Oracle: `taskcreate.cpp/.hpp`, `taskcreateunit.cpp/.hpp`,
 //! `taskcreatebuilding.cpp/.hpp`, `taskobtainunits.cpp/.hpp`,
 //! `taskactivate.cpp/.hpp`, `builder.cpp` (`Builder_GetBuilderType`).
 //!
-//! # Что портировано дословно
+//! # What is ported verbatim
 //!
-//! * `TaskCreateUnit`: состояния `CREATE_UNIT_STATE_*`, `Init`/`BeginTurn`/
+//! * `TaskCreateUnit`: states `CREATE_UNIT_STATE_*`, `Init`/`BeginTurn`/
 //!   `EndTurn`/`Execute`/`AddUnit`/`RemoveUnit`, `WaitForMaterials`,
 //!   `IsUnitStillNeeded`, `IsActivelyBuilding`, `HasCommittedToSite`.
 //! * `TaskObtainUnits`: `CountInstancesOfUnitType`, `FindUnit`,
 //!   `IsValidCandidate`, `AddUnit`, `Init`/`BeginTurn`/`EndTurn`,
-//!   `RequestUnits` (упрощённо, см. ниже), `IsEndTurnNeeded`.
-//! * `TaskCreateBuilding`: конструктор, `Init`, `AddUnit`, `Execute`,
+//!   `RequestUnits` (simplified, see below), `IsEndTurnNeeded`.
+//! * `TaskCreateBuilding`: constructor, `Init`, `AddUnit`, `Execute`,
 //!   `BeginTurn`, `EndTurn`, `RequestBuilder`, `BeginBuilding`,
 //!   `FindBuildSite`, `CheckMaterials`, `Activate`, `Finish`, `Abort`,
 //!   `IsActivelyBuilding`, `HasCommittedToSite`, `IsEndTurnNeeded`.
 //!
-//! # Осознанные упрощения (P6)
+//! # Intentional simplifications (P6)
 //!
-//! 1. `Builder_GetBuildableUnits`/`BuildMenu_*` — данные производства
-//!    (P3-таблица `resourcetable`), поэтому `TaskObtainUnits::RequestUnits`
-//!    заказывает по одному `TaskCreateUnit` на недостающий юнит, а не
-//!    «2×(заводов)+1 − уже заказано»;
-//! 2. `CheckMaterials` считает материалы команды по комплексам
-//!    (`TeamUnits::complexes()`), порог — 10 единиц сырья, как для постройки
-//!    юнита в C++; если комплексов у команды нет (P3-экономика не
-//!    смоделирована), материалы считаются доступными;
-//! 3. участки под дороги/мосты/водные платформы (`BuildRoad`,
-//!    `BuildBoardwalks`, `BuildBridges`, `RequestWaterPlatform`) не
-//!    портированы — они опираются на `AccessMap` и `Zone`-очистку (P5/P7);
-//!    соответствующие состояния остаются «блокирующими», как в C++ при
-//!    отказе запроса.
+//! 1. `Builder_GetBuildableUnits`/`BuildMenu_*` — production data
+//!    (the P3 `resourcetable`), so `TaskObtainUnits::RequestUnits`
+//!    orders one `TaskCreateUnit` per missing unit rather than
+//!    "2×(factories)+1 − already ordered";
+//! 2. `CheckMaterials` computes team materials by complexes
+//!    (`TeamUnits::complexes()`), the threshold is 10 raw units, as for building
+//!    a unit in C++; if the team has no complexes (P3 economy is not
+//!    modeled), materials are considered available;
+//! 3. sites for roads/bridges/water platforms (`BuildRoad`,
+//!    `BuildBoardwalks`, `BuildBridges`, `RequestWaterPlatform`) are not
+//!    ported — they rely on `AccessMap` and `Zone` clearing (P5/P7);
+//!    the corresponding states remain "blocking", as in C++ on
+//!    a request refusal.
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
@@ -47,17 +47,17 @@ use super::super::task_manager::TaskManager;
 use super::{create_building_state, create_unit_state, TaskCtx, TaskKind};
 
 // ---------------------------------------------------------------------------
-// Данные производства (замена `Builder_*`/`BuildMenu_*`)
+// Production data (replacing `Builder_*`/`BuildMenu_*`)
 // ---------------------------------------------------------------------------
 
-/// `Builder_GetBuilderType(team, unit_type)` — тип юнита, которым строят
+/// `Builder_GetBuilderType(team, unit_type)` — the unit type that builds
 /// (`builder.cpp`).
 ///
-/// P2: сначала точная таблица `max_builder_capability_list` из
-/// `default.game_rules.lua` ([`crate::production::builder_type`]) — она задаёт
-/// и `LIGHTPLT` для `SCOUT`/`REPAIR`, и `TRAINHAL` для `INFANTRY`/`COMMANDO`,
-/// и `SHIPYARD`/`AIRPLT` для флота/авиации. Fallback по классу юнита — для
-/// типов вне таблицы (aliens, ракеты, обломки).
+/// P2: first the exact `max_builder_capability_list` table from
+/// `default.game_rules.lua` ([`crate::production::builder_type`]) — it defines
+/// both `LIGHTPLT` for `SCOUT`/`REPAIR` and `TRAINHAL` for `INFANTRY`/`COMMANDO`,
+/// and `SHIPYARD`/`AIRPLT` for the fleet/air force. A fallback by unit class — for
+/// types outside the table (aliens, missiles, rubble).
 pub fn builder_type_for(unit_type: UnitType) -> UnitType {
     if let Some(builder) = crate::production::builder_type(unit_type) {
         return builder;
@@ -78,15 +78,15 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
     }
 }
 
-/// `BuildMenu_GetTurnsToBuild(unit_type, team)` — ходы на постройку.
+/// `BuildMenu_GetTurnsToBuild(unit_type, team)` — turns to build.
 ///
-/// P2: единая формула с `BuildMenu` (`max_core::production::turns_to_build`,
-/// включая множитель сложности для компьютера).
+/// P2: a single formula with `BuildMenu` (`max_core::production::turns_to_build`,
+/// including the computer difficulty multiplier).
 pub fn turns_to_build(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> i32 {
     crate::production::turns_to_build(world, team, unit_type)
 }
 
-/// Материалы команды (сумма по комплексам). `None` — комплексов нет.
+/// Team materials (sum over complexes). `None` — no complexes.
 pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i32> {
     let complexes = world.team_units[team.0 as usize].complexes();
 
@@ -97,7 +97,7 @@ pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i3
     Some(complexes.iter().map(|complex| i32::from(complex.raw)).sum())
 }
 
-/// `TaskCreateBuilding::CheckMaterials` — хватает ли материалов на постройку.
+/// `TaskCreateBuilding::CheckMaterials` — whether there are enough materials to build.
 pub fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> bool {
     const REQUIRED_RAW_MATERIALS: i32 = 10;
 
@@ -110,10 +110,10 @@ pub fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: 
     }
 }
 
-/// `UnitsManager_NeedToReserveRawMaterials` для команды.
+/// `UnitsManager_NeedToReserveRawMaterials` for the team.
 ///
-/// Порт `TaskManager_NeedToReserveRawMaterials` (`ai.cpp:434`): сырьё,
-/// которое везут юниты, минус расход зданий команды.
+/// A port of `TaskManager_NeedToReserveRawMaterials` (`ai.cpp:434`): raw material
+/// carried by units minus the consumption of the team's buildings.
 pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamId) -> bool {
     let mut raw_materials: i32 = -10;
 
@@ -164,14 +164,14 @@ pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamI
     raw_materials < 0
 }
 
-/// Тип груза юнита — `Unit::CargoType` (`unit.hpp`), минимальный набор.
+/// Unit cargo type — `Unit::CargoType` (`unit.hpp`), a minimal set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CargoType {
-    /// Сырьё (`CARGO_TYPE_RAW`).
+    /// Raw material (`CARGO_TYPE_RAW`).
     Raw,
-    /// Топливо.
+    /// Fuel.
     Fuel,
-    /// Золото.
+    /// Gold.
     Gold,
 }
 
@@ -194,10 +194,10 @@ pub fn cargo_type_of(unit_type: UnitType) -> Option<CargoType> {
     }
 }
 
-/// `Cargo_GetRawConsumptionRate(unit_type, 1)` — расход сырья зданием.
+/// `Cargo_GetRawConsumptionRate(unit_type, 1)` — raw consumption of a building.
 ///
-/// Таблица потребления — данные P3 (`resourcetable`); здесь — те же значения,
-/// что у зданий-потребителей по классам.
+/// The consumption table is P3 data (`resourcetable`); here — the same values
+/// as consumer buildings by class.
 pub fn raw_consumption_rate(unit_type: UnitType) -> i32 {
     match unit_type {
         UnitType::MiningStation | UnitType::EcoSphere | UnitType::Habitat => 2,
@@ -214,11 +214,11 @@ pub fn raw_consumption_rate(unit_type: UnitType) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Выбор площадки
+// Site selection
 // ---------------------------------------------------------------------------
 
-/// Площадка под постройку валидна: весь футпринт (2×2 или 1×1) доступен и
-/// свободен от юнитов.
+/// The building site is valid: the whole footprint (2×2 or 1×1) is accessible and
+/// free of units.
 fn is_valid_building_site(
     world: &crate::game::GameState,
     team: TeamId,
@@ -251,7 +251,7 @@ fn is_valid_building_site(
     true
 }
 
-/// Сырьё в клетке (`ResourceMapEntry`): количество.
+/// Raw material in a cell (`ResourceMapEntry`): the amount.
 fn resource_amount(world: &crate::game::GameState, site: Point) -> i32 {
     if world.map.index(site.x, site.y).is_none() {
         return 0;
@@ -262,11 +262,11 @@ fn resource_amount(world: &crate::game::GameState, site: Point) -> i32 {
     i32::from(entry.amount())
 }
 
-/// `TaskCreateBuilding::FindBuildSite` — поиск свободной площадки рядом.
+/// `TaskCreateBuilding::FindBuildSite` — search for a free site nearby.
 ///
-/// C++ сканирует карту `AccessMap` вокруг заявленного сайта; здесь — квадрат
-/// радиуса 8 вокруг сайта в порядке `y`, затем `x` (как `rect`-циклы C++),
-/// с предпочтением площадок рядом с сырьём для рудной станции.
+/// C++ scans the `AccessMap` around the claimed site; here — the square
+/// of radius 8 around the site in `y`, then `x` order (like the C++ `rect` loops),
+/// preferring sites near raw material for an ore station.
 pub fn find_build_site(
     world: &crate::game::GameState,
     team: TeamId,
@@ -373,15 +373,15 @@ pub(crate) fn is_valid_candidate(
             } else if !task.kind.is_unit_transferable(world, task, unit) {
                 false
             } else {
-                // `task->ComparePriority(GetPriority()) > 0` — приоритет запроса
-                // совпадает с приоритетом родителя задачи.
+                // `task->ComparePriority(GetPriority()) > 0` — the request priority
+                // matches the priority of the task's parent.
                 task.compare_priority(world, request_priority) > 0
             }
         }
     }
 }
 
-/// `TaskObtainUnits::FindUnit` — ближайший подходящий юнит типа.
+/// `TaskObtainUnits::FindUnit` — the nearest suitable unit of the type.
 pub(crate) fn find_unit(
     manager: &TaskManager,
     world: &crate::game::GameState,
@@ -441,16 +441,16 @@ pub(crate) fn find_unit(
     }
 }
 
-/// `TaskObtainUnits::EndTurn` — найти готовых юнитов и заказать недостающих.
+/// `TaskObtainUnits::EndTurn` — find ready units and order the missing ones.
 ///
-/// Отличие от C++ (`taskobtainunits.cpp:225`): поиск готового юнита
-/// повторяется на каждом `EndTurn`, пока запрос не удовлетворён. В C++ поиск
-/// выполняется один раз на `Init`, потому что `TaskManageBuildings` появляется
-/// только при наличии зданий и не конкурирует с разведкой за единственного
-/// строителя; в max_core менеджер застройки создаётся и для «голой» базы,
-/// поэтому единственный `CONSTRCT` иначе остаётся в `TaskSurvey` и запрос на
-/// постройку не выполняется никогда. Остальная структура (`RequestUnits`,
-/// `IsValidCandidate`, `FindUnit`, порядок перебора) — как в C++.
+/// Difference from C++ (`taskobtainunits.cpp:225`): the search for a ready unit
+/// is repeated on every `EndTurn` until the request is satisfied. In C++ the search
+/// is performed once at `Init`, because `TaskManageBuildings` appears
+/// only when buildings exist and does not compete with reconnaissance for the single
+/// builder; in max_core the construction manager is created even for a "bare" base,
+/// so the single `CONSTRCT` would otherwise stay in `TaskSurvey` and the build request
+/// would never be fulfilled. The rest of the structure (`RequestUnits`,
+/// `IsValidCandidate`, `FindUnit`, iteration order) — as in C++.
 pub(crate) fn obtain_units_end_turn(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -482,7 +482,7 @@ pub(crate) fn obtain_units_end_turn(
         while index >= 0 {
             let unit_type = units[index as usize];
 
-            // `TaskObtainUnits::GetPriority` — приоритет родителя.
+            // `TaskObtainUnits::GetPriority` — the parent's priority.
             let request_priority = header
                 .parent
                 .and_then(|parent| ctx.tm.task(parent).map(|task| task.get_priority(ctx.world)))
@@ -538,10 +538,10 @@ pub(crate) fn obtain_units_end_turn(
         *init = false;
     }
 
-    // Повторный поиск юнита на следующем конце хода (см. примечание к
-    // функции): в C++ это делает `TaskObtainUnits::EndTurn` по расписанию
-    // `TaskManager::EndTurn`, здесь — сам себя, потому что менеджер получает
-    // `EndTurn` только по событию конца хода ИИ.
+    // Repeat the unit search at the next end of turn (see the note to the
+    // function): in C++ this is done by `TaskObtainUnits::EndTurn` on the schedule
+    // `TaskManager::EndTurn`; here — by itself, because the manager receives
+    // `EndTurn` only on the AI end-of-turn event.
     if !units.is_empty() {
         ctx.remind_turn_end(header.id, true);
     }
@@ -556,7 +556,7 @@ pub(crate) fn obtain_units_end_turn(
     }
 }
 
-/// `TaskObtainUnits::RequestUnits` — заказ `TaskCreateUnit` (упрощённо).
+/// `TaskObtainUnits::RequestUnits` — ordering `TaskCreateUnit` (simplified).
 fn request_units(
     ctx: &mut TaskCtx<'_>,
     header: TaskHeader,
@@ -571,7 +571,7 @@ fn request_units(
         return;
     }
 
-    // Строитель себя не строит (см. `TaskManager::create_unit`).
+    // A builder does not build itself (see `TaskManager::create_unit`).
     if builder_type_for(unit_type) == unit_type {
         return;
     }
@@ -585,7 +585,7 @@ fn request_units(
     }
 }
 
-/// `TaskObtainUnits::AddUnit(unit_type)` — добавить требование.
+/// `TaskObtainUnits::AddUnit(unit_type)` — add a requirement.
 pub(crate) fn obtain_units_add_type(kind: &mut TaskKind, unit_type: UnitType) {
     if let TaskKind::ObtainUnits { units, .. } = kind {
         units.push(unit_type);
@@ -610,9 +610,9 @@ fn create_unit_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     if *op_state == create_unit_state::INITIALIZING {
         let builder_type = builder_type_for(*unit_type);
 
-        // Защита от рекурсии: строитель, который «строит сам себя»
-        // (`CONSTRCT`/`MASTER_BUILDER`), заводом не производится — задача
-        // снимается (в C++ такой запрос отсекает `Builder_GetBuilderType`).
+        // Recursion guard: a builder that "builds itself"
+        // (`CONSTRCT`/`MASTER_BUILDER`) is not produced by a factory — the task
+        // is removed (in C++ such a request is cut off by `Builder_GetBuilderType`).
         if builder_type == *unit_type {
             *op_state = create_unit_state::FINISHED;
             ctx.set_parent(header.id, None);
@@ -649,13 +649,13 @@ fn create_unit_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         }
     }
 
-    // `TaskCreateUnit::BeginTurn` (`taskcreateunit.cpp:147-155`): завод в
-    // `ORDER_STATE_UNIT_READY` получает `TaskActivate` на готового юнита, и тот
-    // выходит из завода (`UnitsManager_ActivateUnit`). Порт ставит тот же приказ
-    // напрямую ([`crate::unit_order::issue_factory_exit`]). Как только завод
-    // отдал юнита (уже не `ORDER_BUILD`+`UNIT_READY`), задача завершается —
-    // дальше юнита ведут обычные задачи (`AiPlayer::AddMilitaryUnit`,
-    // `FindTaskForUnit`), как C++ `TaskCreateUnit::AddUnit`.
+    // `TaskCreateUnit::BeginTurn` (`taskcreateunit.cpp:147-155`): a factory in
+    // `ORDER_STATE_UNIT_READY` gets `TaskActivate` for the ready unit, and it
+    // exits the factory (`UnitsManager_ActivateUnit`). The port issues the same order
+    // directly ([`crate::unit_order::issue_factory_exit`]). As soon as the factory
+    // releases the unit (no longer `ORDER_BUILD`+`UNIT_READY`), the task completes —
+    // then the unit is led by normal tasks (`AiPlayer::AddMilitaryUnit`,
+    // `FindTaskForUnit`), as in C++ `TaskCreateUnit::AddUnit`.
     if *op_state == create_unit_state::ACTIVATING {
         if let Some(builder_id) = *builder {
             let waiting = ctx
@@ -667,7 +667,7 @@ fn create_unit_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
                 .unwrap_or(false);
 
             if waiting {
-                // `TaskActivate` ждёт, пока рядом с заводом освободится клетка.
+                // `TaskActivate` waits until a cell next to the factory becomes free.
                 if !crate::unit_order::issue_factory_exit(ctx.world, builder_id) {
                     return;
                 }
@@ -701,7 +701,7 @@ fn create_unit_wait_for_materials(
         return;
     }
 
-    // Материалов достаточно: строим.
+    // Enough materials: build.
     if matches!(unit_type, UnitType::Engineer | UnitType::Constructor)
         && crate::ai::task::task_get_ready_units_count(ctx.world, header.team, unit_type) > 0
         && need_to_reserve_raw_materials(ctx.world, header.team)
@@ -915,8 +915,8 @@ fn create_building_request_builder(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, h
 }
 
 fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-    // Снимок полей: дальнейшие вызовы берут `kind` целиком, поэтому
-    // заимствование полей не должно переживать чтение.
+    // Snapshot of fields: subsequent calls take `kind` whole, so field
+    // borrows must not outlive the read.
     let (unit_type, state_now, builder, manager, site, tasks_empty) = match kind {
         TaskKind::CreateBuilding {
             unit_type,
@@ -953,7 +953,7 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
                     }
                     None => {
                         if let Some(manager_id) = manager {
-                            // `manager->ChangeSite` — попросить менеджера другой сайт.
+                            // `manager->ChangeSite` — ask the manager for another site.
                             ctx.tm.task_child_complete(ctx.world, manager_id, header.id);
                             ctx.remove_self(header.id);
                         } else if let TaskKind::CreateBuilding { op_state, .. } = kind {
@@ -1073,7 +1073,7 @@ fn create_building_add_unit(
         return;
     };
 
-    // Постройка готова: юнит стоит на площадке.
+    // The construction is complete: the unit stands on the site.
     if unit_info.unit_type == *unit_type
         && unit_info.grid == *site
         && unit_info.orders != UnitOrder::Idle
@@ -1424,16 +1424,16 @@ fn create_building_abort(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 }
 
 /// `TaskCreateBuilding::Activate` (`taskcreatebuilding.cpp:912`) —
-/// **уход строителя с площадки** через `TaskActivate` (`taskactivate.cpp:104`).
+/// **builder exit from the site** via `TaskActivate` (`taskactivate.cpp:104`).
 ///
-/// C++: `Activate` ставит `op_state = CREATE_BUILDING_STATE_MOVING_OFF_SITE` и
-/// вешает `TaskActivate(builder, this, building)`; сама `TaskActivate::Activate`
-/// ищет первую проходимую клетку вокруг здания (`Access_IsAccessible`) и отдаёт
-/// строителю `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` (у игрока то же самое
-/// делает клик, `game_manager.cpp:6879`). Задача завершается позже — в
-/// `EndTurn`/`Execute` при `builder->GetOrder() == ORDER_AWAIT`
-/// (`taskcreatebuilding.cpp:847-854`), то есть после того, как здание раскрылось
-/// (`UnitsManager_BuildingReady` ждёт ухода строителя).
+/// C++: `Activate` sets `op_state = CREATE_BUILDING_STATE_MOVING_OFF_SITE` and
+/// attaches `TaskActivate(builder, this, building)`; `TaskActivate::Activate` itself
+/// searches the first passable cell around the building (`Access_IsAccessible`) and issues
+/// `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` to the builder (for the player the same
+/// is done by a click, `game_manager.cpp:6879`). The task completes later — in
+/// `EndTurn`/`Execute` when `builder->GetOrder() == ORDER_AWAIT`
+/// (`taskcreatebuilding.cpp:847-854`), i.e. after the building unfolds
+/// (`UnitsManager_BuildingReady` waits for the builder to leave).
 fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::CreateBuilding {
         unit_type,
@@ -1451,9 +1451,9 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
         return;
     };
 
-    // Строитель ещё на площадке (`ORDER_BUILD`/`UNIT_READY`, здание
-    // `ORDER_IDLE`/`BUILDING_READY`) — отдаём приказ на уход один раз; дальше
-    // ждём, пока он сойдёт с габаритов 2×2 (`TaskActivate_IsComplete`).
+    // The builder is still on the site (`ORDER_BUILD`/`UNIT_READY`, the building
+    // `ORDER_IDLE`/`BUILDING_READY`) — issue the exit order once; after that
+    // wait until it leaves the 2×2 footprint (`TaskActivate_IsComplete`).
     if crate::production::builder_awaiting_exit(ctx.world, builder_id).is_some() {
         *op_state = create_building_state::MOVING_OFF_SITE;
 
@@ -1461,8 +1461,8 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
             return;
         }
 
-        // C++ просит очистить зону (`TaskActivate`: `AiPlayer_Teams[...].ClearZone`)
-        // и повторяет попытку на следующем ходу — в порте зон нет (P5/P7).
+        // C++ asks to clear the zone (`TaskActivate`: `AiPlayer_Teams[...].ClearZone`)
+        // and retries next turn — the port has no zones (P5/P7).
         ctx.remind_turn_end(header.id, true);
 
         return;
@@ -1493,7 +1493,7 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
 // TaskActivate
 // ---------------------------------------------------------------------------
 
-/// `TaskActivate::Activate` (`taskactivate.cpp`): `ORDER_ACTIVATE` контейнеру.
+/// `TaskActivate::Activate` (`taskactivate.cpp`): `ORDER_ACTIVATE` to the container.
 fn activate_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::Activate {
         unit_to_activate,
@@ -1532,7 +1532,7 @@ fn activate_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `TaskActivate_IsComplete` (`taskactivate.cpp`): груз выгружен на карту.
+/// `TaskActivate_IsComplete` (`taskactivate.cpp`): the cargo is unloaded onto the map.
 pub fn task_activate_is_complete(
     world: &crate::game::GameState,
     payload: UnitId,
@@ -1549,10 +1549,10 @@ pub fn task_activate_is_complete(
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация жизненного цикла
+// Lifecycle dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для create-классов.
+/// `Init` for create classes.
 pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::CreateUnit { builder, .. } => {
@@ -1582,14 +1582,14 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
                     create_building_activate(kind, ctx, header);
                 }
             } else {
-                // `TaskCreateBuilding::Init`: без строителя — `RemindTurnStart(true)`.
+                // `TaskCreateBuilding::Init`: without a builder — `RemindTurnStart(true)`.
                 ctx.remind_turn_start(header.id, true);
             }
 
             true
         }
         TaskKind::ObtainUnits { .. } => {
-            // `TaskObtainUnits::Init`: `RemindTurnEnd(true)` один раз.
+            // `TaskObtainUnits::Init`: `RemindTurnEnd(true)` once.
             if let TaskKind::ObtainUnits {
                 reinit,
                 init: init_flag,
@@ -1623,7 +1623,7 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
     }
 }
 
-/// `BeginTurn` для create-классов.
+/// `BeginTurn` for create classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::CreateUnit { .. } => {
@@ -1671,7 +1671,7 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
     }
 }
 
-/// `EndTurn` для create-классов.
+/// `EndTurn` for create classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::CreateUnit { .. } => {
@@ -1694,7 +1694,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `Execute(unit)` для create-классов.
+/// `Execute(unit)` for create classes.
 pub fn execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1743,7 +1743,7 @@ pub fn execute(
     }
 }
 
-/// `AddUnit(unit)` для create-классов.
+/// `AddUnit(unit)` for create classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::CreateUnit { .. } => create_unit_add_unit(kind, ctx, header, unit),
@@ -1788,7 +1788,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для create-классов.
+/// `RemoveUnit(unit)` for create classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     let _ = header;
     match kind {
@@ -1812,7 +1812,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для create-классов.
+/// `RemoveSelf()` for create classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::CreateUnit { builder, .. } => {
@@ -1844,7 +1844,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` для create-классов.
+/// `ChildComplete(task)` for create classes.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1868,7 +1868,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении `TaskMove`.
+/// Notification about `TaskMove` completion.
 pub fn move_finished(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1894,7 +1894,7 @@ pub fn move_finished(
     }
 }
 
-/// `ExchangeOperator` для create-классов.
+/// `ExchangeOperator` for create classes.
 pub fn exchange_operator(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1943,7 +1943,7 @@ pub fn exchange_operator(
     true
 }
 
-/// `EventUnitDestroyed` для create-классов.
+/// `EventUnitDestroyed` for create classes.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1974,7 +1974,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `IsUnitUsable` для `TaskObtainUnits`.
+/// `IsUnitUsable` for `TaskObtainUnits`.
 pub fn obtain_units_is_unit_usable(
     world: &crate::game::GameState,
     _header: TaskHeader,
@@ -1992,7 +1992,7 @@ pub fn obtain_units_is_unit_usable(
     units.iter().any(|unit_type| *unit_type == info.unit_type)
 }
 
-/// `TaskObtainUnits` для тестов/менеджера.
+/// `TaskObtainUnits` for tests/the manager.
 pub fn obtain_units(kind: &TaskKind) -> Option<(&[UnitType], Point)> {
     match kind {
         TaskKind::ObtainUnits { units, point, .. } => Some((units, *point)),
@@ -2014,7 +2014,7 @@ pub fn is_needed(world: &crate::game::GameState, header: TaskHeader) -> bool {
         .unwrap_or(false)
 }
 
-/// `TaskCreateUnit::GetUnitType` (`TaskCreate::GetUnitType`) — для переписи.
+/// `TaskCreateUnit::GetUnitType` (`TaskCreate::GetUnitType`) — for the census.
 pub fn create_kind_type(kind: &TaskKind) -> Option<UnitType> {
     match kind {
         TaskKind::CreateUnit { unit_type, .. } | TaskKind::CreateBuilding { unit_type, .. } => {
@@ -2024,12 +2024,12 @@ pub fn create_kind_type(kind: &TaskKind) -> Option<UnitType> {
     }
 }
 
-/// Прочие обработчики, которые create-классы не переопределяют.
+/// Other handlers that create classes do not override.
 pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     false
 }
 
-/// `EventEnemyUnitSpotted` — не переопределён.
+/// `EventEnemyUnitSpotted` — not overridden.
 pub fn event_enemy_unit_spotted(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -2039,7 +2039,7 @@ pub fn event_enemy_unit_spotted(
     false
 }
 
-/// `EventCargoTransfer` — не переопределён.
+/// `EventCargoTransfer` — not overridden.
 pub fn event_cargo_transfer(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -2049,7 +2049,7 @@ pub fn event_cargo_transfer(
     false
 }
 
-/// `EventUnitLoaded` — не переопределён.
+/// `EventUnitLoaded` — not overridden.
 pub fn event_unit_loaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -2060,7 +2060,7 @@ pub fn event_unit_loaded(
     false
 }
 
-/// `EventUnitUnloaded` — не переопределён.
+/// `EventUnitUnloaded` — not overridden.
 pub fn event_unit_unloaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -2071,6 +2071,6 @@ pub fn event_unit_unloaded(
     false
 }
 
-/// Неиспользуемый маркер, чтобы `TASK_TYPE_CREATE_UNIT`/`TASK_TYPE_OBTAIN_UNITS`
-/// оставались видимыми в этом модуле (соответствие типам задач).
+/// An unused marker so that `TASK_TYPE_CREATE_UNIT`/`TASK_TYPE_OBTAIN_UNITS`
+/// remain visible in this module (task type correspondence).
 pub const CREATE_MODULE_TASK_TYPES: [u8; 2] = [TASK_TYPE_CREATE_UNIT, TASK_TYPE_OBTAIN_UNITS];

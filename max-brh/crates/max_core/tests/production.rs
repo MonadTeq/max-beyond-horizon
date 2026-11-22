@@ -1,10 +1,10 @@
-//! P2: производство и строительство — тесты очередей, цен, спавна и отмены.
+//! P2: production and construction — tests of queues, prices, spawning and cancellation.
 //!
-//! Оракул: `unitinfo.cpp` (`BuildOrder`/`StartBuilding`/`SpawnNewUnit`/
+//! Oracle: `unitinfo.cpp` (`BuildOrder`/`StartBuilding`/`SpawnNewUnit`/
 //! `CancelBuilding`), `cargo.cpp` (`Cargo_GetRawConsumptionRate`),
 //! `game_manager.cpp` (`GameManager_ProgressBuildState`), `buildmenu.cpp`
 //! (`BuildMenu_GetTurnsToBuild`, `BuildMenu_GetMaxPossibleBuildRate`),
-//! таблица `default.game_rules.lua` (`max_builder_capability_list`).
+//! the `default.game_rules.lua` table (`max_builder_capability_list`).
 
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
@@ -16,26 +16,26 @@ use max_core::production::{
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
 
-/// Партия с одной командой-игроком и золотом.
+/// A game with one player team and gold.
 fn state_with_gold(gold: u32) -> GameState {
     let mut state = GameState::new();
     state.teams[0].team_type = TeamKind::Player;
-    // `TeamUnits::with_clan` заполняет `current_values` из `SC_ATTRI`: без этого
-    // `ATTRIB_TURNS` = 0 и производство «мгновенное» (в реальной партии таблицу
-    // заполняет `ResourceManager_InitTeamUnits`).
+    // `TeamUnits::with_clan` fills `current_values` from `SC_ATTRI`: otherwise
+    // `ATTRIB_TURNS` = 0 and production is "instant" (in a real game the table
+    // is filled by `ResourceManager_InitTeamUnits`).
     state.team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
     state.team_units[0].set_gold(gold);
     state
 }
 
-/// Стационарный склад материалов **в комплексе тестового завода** — `ADUMP`
-/// с `storage`, стоящий вплотную к заводу в `(10,10)` (2×2): коннекторы
-/// (`UnitsManager_UpdateConnectors`) сливают их в один комплекс, и завод
-/// тратит сырьё из общего котла (`Complex::GetCargoInfo`).
+/// A stationary materials storage **in the test factory's complex** — an `ADUMP`
+/// with `storage` standing right next to the factory at `(10,10)` (2×2): connectors
+/// (`UnitsManager_UpdateConnectors`) merge them into one complex, and the factory
+/// spends raw material from the common pool (`Complex::GetCargoInfo`).
 ///
-/// Заводы в C++ платят **материалами комплекса** (`complex->material` /
-/// `Cargo_GetRawConsumptionRate`), а не золотом; отдельно стоящий склад в котёл
-/// не входит.
+/// In C++ factories pay with **complex materials** (`complex->material` /
+/// `Cargo_GetRawConsumptionRate`), not gold; a standalone storage does not
+/// enter the pool.
 fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
     let id = state
         .spawn_unit(
@@ -49,14 +49,14 @@ fn add_materials(state: &mut GameState, materials: i16) -> max_core::UnitId {
     id
 }
 
-/// Обеспечить комплекс завода энергией/рабочими так, как это делает база в
-/// C++: `POWGEN` (+1 энергия за 2 топлива), `FDUMP` с запасом топлива и
-/// `HABITAT` (+3 рабочих). Все три встают вплотную к заводу, поэтому
-/// `UnitsManager_UpdateConnectors` сливает их в один комплекс.
+/// Provide the factory complex with power/workers the way a base does in
+/// C++: `POWGEN` (+1 power for 2 fuel), `FDUMP` with a fuel reserve and
+/// `HABITAT` (+3 workers). All three stand right next to the factory, so
+/// `UnitsManager_UpdateConnectors` merges them into one complex.
 ///
-/// Нужен, потому что `Cargo_ApplyUnitConsumption` для завода списывает
-/// `power` (и `life` у `TRAINHAL`) из котла комплекса — без производителя
-/// заказ не стартует (`production_manager.cpp:677-711`).
+/// Needed because `Cargo_ApplyUnitConsumption` for a factory charges
+/// `power` (and `life` for `TRAINHAL`) from the complex pool — without a producer
+/// the order does not start (`production_manager.cpp:677-711`).
 fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_core::UnitId {
     let grid = state.unit(factory).expect("factory").grid;
     let generator = state
@@ -98,10 +98,10 @@ fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_co
     habitat
 }
 
-/// Один «ход производства» — как `GameState::finish_turn` для одной команды.
+/// One "production turn" — like `GameState::finish_turn` for one team.
 fn production_turn(state: &mut GameState) -> Vec<max_core::ProductionEvent> {
-    // Начало хода команды: `GameManager_ManageEconomy` → `UpdateProduction`
-    // (списание сырья со склада строителя), затем `ProgressBuildState`.
+    // Start of the team turn: `GameManager_ManageEconomy` → `UpdateProduction`
+    // (charging raw material from the builder's storage), then `ProgressBuildState`.
     state.manage_economy(TeamId::RED);
     max_core::production::progress_build_state(state, TeamId::RED)
 }
@@ -120,12 +120,12 @@ fn count_type(state: &GameState, unit_type: UnitType) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Таблицы «кто что строит» (default.game_rules.lua)
+// "Who builds what" tables (default.game_rules.lua)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn builder_tables_match_the_game_rules_script() {
-    // `max_builder_capability_list` — 7 строителей.
+    // `max_builder_capability_list` — 7 builders.
     assert_eq!(buildable_units(UnitType::Constructor).len(), 15);
     assert_eq!(buildable_units(UnitType::Engineer).len(), 15);
     assert_eq!(buildable_units(UnitType::LightVehiclePlant).len(), 11);
@@ -134,7 +134,7 @@ fn builder_tables_match_the_game_rules_script() {
     assert_eq!(buildable_units(UnitType::Shipyard).len(), 8);
     assert_eq!(buildable_units(UnitType::TrainingHall).len(), 2);
 
-    // Порядок — как в Lua: у CONSTRCT первый MININGST, у LIGHTPLT — SCOUT.
+    // Order — as in Lua: CONSTRCT has MININGST first, LIGHTPLT — SCOUT.
     assert_eq!(
         buildable_units(UnitType::Constructor).first(),
         Some(&UnitType::MiningStation)
@@ -184,24 +184,24 @@ fn builder_tables_match_the_game_rules_script() {
 }
 
 // ---------------------------------------------------------------------------
-// Цены: `Cargo_GetRawConsumptionRate` (cargo.cpp:140)
+// Prices: `Cargo_GetRawConsumptionRate` (cargo.cpp:140)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn costs_follow_the_cpp_formulas() {
-    // cargo.cpp:140 — TRAINHAL 1, CONSTRCT/ENGINEER 2, заводы 3 на 1×.
+    // cargo.cpp:140 — TRAINHAL 1, CONSTRCT/ENGINEER 2, factories 3 at 1×.
     assert_eq!(cost_per_turn(UnitType::TrainingHall, 1), 1);
     assert_eq!(cost_per_turn(UnitType::Constructor, 1), 2);
     assert_eq!(cost_per_turn(UnitType::Engineer, 1), 2);
     assert_eq!(cost_per_turn(UnitType::HeavyVehiclePlant, 1), 3);
     assert_eq!(cost_per_turn(UnitType::LightVehiclePlant, 1), 3);
 
-    // Ускорение: 2× → множитель 4, 4× → множитель 12 (та же функция C++).
+    // Acceleration: 2× → multiplier 4, 4× → multiplier 12 (the same C++ function).
     assert_eq!(cost_per_turn(UnitType::HeavyVehiclePlant, 2), 12);
     assert_eq!(cost_per_turn(UnitType::HeavyVehiclePlant, 4), 36);
     assert_eq!(cost_per_turn(UnitType::Constructor, 2), 8);
 
-    // Стоимость постройки при 1× = ставка × ходы (CargoMenu::BuyUnit,
+    // Construction cost at 1× = rate × turns (CargoMenu::BuyUnit,
     // GetNormalRateBuildCost).
     assert_eq!(total_cost(UnitType::HeavyVehiclePlant, 4), 12);
     assert_eq!(total_cost(UnitType::Constructor, 10), 20);
@@ -215,7 +215,7 @@ fn max_build_rate_matches_the_cpp_algorithm() {
         max_possible_build_rate(UnitType::HeavyVehiclePlant, 1, i32::from(i16::MAX)),
         1
     );
-    // Здания (не MOBILE_LAND_UNIT): > 2 → 4×, 2 → 2×.
+    // Buildings (not MOBILE_LAND_UNIT): > 2 → 4×, 2 → 2×.
     assert_eq!(
         max_possible_build_rate(UnitType::HeavyVehiclePlant, 3, i32::from(i16::MAX)),
         4
@@ -224,7 +224,7 @@ fn max_build_rate_matches_the_cpp_algorithm() {
         max_possible_build_rate(UnitType::HeavyVehiclePlant, 2, i32::from(i16::MAX)),
         2
     );
-    // Мобильный строитель ограничен складом: при малом складе остаётся 1×.
+    // A mobile builder is limited by storage: with a small storage 1× remains.
     assert_eq!(max_possible_build_rate(UnitType::Constructor, 10, 0), 1);
 }
 
@@ -241,8 +241,8 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         .expect("heavy vehicle plant");
     let heavy = state.unit(heavy).expect("factory").clone();
 
-    // `UnitInfo::GetTurnsToBuild`: TANK = 4 хода, завод — 3/ход на 1×, 12 на 2×,
-    // 36 на 4×. 4×: 4 хода делятся на 4 → (1,36); 2×: (2,24).
+    // `UnitInfo::GetTurnsToBuild`: TANK = 4 turns, factory — 3/turn at 1×, 12 at 2×,
+    // 36 at 4×. 4×: 4 turns divided by 4 → (1,36); 2×: (2,24).
     assert_eq!(
         turns_and_consumption(&state, &heavy, UnitType::Tank, 1),
         (4, 12)
@@ -256,8 +256,8 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         (1, 36)
     );
 
-    // Если строитель уже строит тип (`build_time`), берётся остаток, а не
-    // `ATTRIB_TURNS`: 3 хода на 2× → 12 + 3 = 15, два хода.
+    // If the builder already builds the type (`build_time`), the remainder is taken, not
+    // `ATTRIB_TURNS`: 3 turns at 2× → 12 + 3 = 15, two turns.
     let mut active = heavy.clone();
     active.build_time = 3;
     active.build_list = vec![UnitType::Tank];
@@ -266,8 +266,8 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         (2, 15)
     );
 
-    // У Training Hall 2×/4× в C++ отключены, но функция считает так же, как
-    // `UnitInfo::GetTurnsToBuild`: INFANTRY = 2 хода, ставка 1/ход.
+    // Training Hall has 2×/4× disabled in C++, but the function computes like
+    // `UnitInfo::GetTurnsToBuild`: INFANTRY = 2 turns, rate 1/turn.
     let hall = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
         .expect("training hall");
@@ -281,8 +281,8 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         (1, 4)
     );
 
-    // Мобильный строитель с пустым складом: скорость всегда 1×, полная
-    // стоимость = ходы × 2 (MININGST = 12 → 24), даже если запросили 2×/4×.
+    // A mobile builder with empty storage: rate always 1×, full
+    // cost = turns × 2 (MININGST = 12 → 24), even if 2×/4× was requested.
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(30, 30), 0)
         .expect("constructor");
@@ -299,9 +299,9 @@ fn turns_and_consumption_matches_the_cpp_loop() {
 
 #[test]
 fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
-    // `CLAN_TRADEOFFS`: CrimsonPath (2) даёт SHIPYARD (0x17) `ATTRIB_TURNS -5`
-    // (20 → 15). C++ `BuildMenu_GetTurnsToBuild` читает current values, значит
-    // и 1×-цена у конструктора падает 40 → 30.
+    // `CLAN_TRADEOFFS`: CrimsonPath (2) gives SHIPYARD (0x17) `ATTRIB_TURNS -5`
+    // (20 → 15). C++ `BuildMenu_GetTurnsToBuild` reads current values, so
+    // the 1× price of the constructor also drops 40 → 30.
     let mut random = state_with_gold(100);
     let builder = random
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
@@ -329,7 +329,7 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
 }
 
 // ---------------------------------------------------------------------------
-// Очередь → спавн через N ходов
+// Queue → spawn after N turns
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -347,18 +347,18 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
         .expect("infantry is buildable at the training hall");
     let report = manager.commit(factory).expect("build order accepted");
 
-    // INFANTRY: ATTRIB_TURNS = 2, ставка TRAINHAL = 1/ход.
+    // INFANTRY: ATTRIB_TURNS = 2, TRAINHAL rate = 1/turn.
     assert_eq!(report.unit_type, UnitType::Infantry);
     assert_eq!(report.turns, 2);
     assert_eq!(report.build_rate, 1);
     assert_eq!(report.cost_per_turn, 1);
 
-    // Ход 1: списание 1 материала, build_time 2 → 1 (юнита ещё нет).
+    // Turn 1: 1 material charged, build_time 2 → 1 (no unit yet).
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
     assert_eq!(state.unit(dump).expect("dump").storage, 19);
 
-    // Ход 2: `build_time <= build_rate` → `SpawnNewUnit`.
+    // Turn 2: `build_time <= build_rate` → `SpawnNewUnit`.
     let events = production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::Infantry), 1);
     assert_eq!(state.unit(dump).expect("dump").storage, 18);
@@ -369,8 +369,8 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
         "спавн должен попасть в события: {events:?}"
     );
 
-    // Золото команды производством не тратится (C++: только `CargoMenu`/
-    // апгрейды) — раньше завод «платил золотом» и вставал при нуле кредитов.
+    // Team gold is not spent by production (C++: only `CargoMenu`/
+    // upgrades) — previously the factory "paid with gold" and stopped at zero credits.
     assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
     let factory_unit = state.unit(factory).expect("factory alive");
@@ -379,10 +379,10 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
     assert!(factory_unit.build_list.is_empty());
 }
 
-/// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), ветка `STATIONARY`:
-/// построенный юнит появляется **на клетке завода** и остаётся в нём
-/// (`ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`), родитель юнита —
-/// завод, родитель завода — юнит, `storage = 1`. Игрок выводит его приказом
+/// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), `STATIONARY` branch:
+/// the built unit appears **on the factory cell** and stays in it
+/// (`ORDER_IDLE`/`ORDER_STATE_STORE`, `scaler_adjust = 4`), the unit's parent is
+/// the factory, the factory's parent is the unit, `storage = 1`. The player brings it out by order
 /// (`ORDER_ACTIVATE` → `UnitsManager_ActivateUnit`).
 #[test]
 fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
@@ -397,7 +397,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
     manager.commit(plant).expect("build");
 
-    // FIGHTER: `ATTRIB_TURNS` из SC_ATTRI; строим до `UNIT_READY`.
+    // FIGHTER: `ATTRIB_TURNS` from SC_ATTRI; build until `UNIT_READY`.
     let turns = max_core::production::turns_to_build(&state, TeamId::RED, UnitType::Fighter);
     for _ in 0..turns {
         production_turn(&mut state);
@@ -416,14 +416,14 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     let unit = state.unit(fighter).expect("fighter");
     let plant_unit = state.unit(plant).expect("plant");
 
-    // Юнит стоит НА заводе (та же клетка), а не на соседней.
+    // The unit stands ON the factory (same cell), not on an adjacent one.
     assert_eq!(unit.grid, Point::new(10, 10), "юнит на клетке завода");
     assert_eq!(unit.parent_unit, Some(plant), "родитель — завод");
     assert_eq!(unit.orders, UnitOrder::Idle);
     assert_eq!(unit.state, UnitOrderState::Store, "юнит «в трюме» завода");
     assert_eq!(unit.scaler_adjust, 4, "C++: scaler_adjust = 4");
 
-    // Завод: родитель — готовый юнит, `storage = 1`, ждёт вывода.
+    // Factory: the parent is the ready unit, `storage = 1`, waiting for the exit.
     assert_eq!(
         plant_unit.parent_unit,
         Some(fighter),
@@ -434,7 +434,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     assert_eq!(plant_unit.state, UnitOrderState::UnitReady);
     assert!(plant_unit.build_list.is_empty());
 
-    // Клик игрока по клетке рядом → приказ `ORDER_ACTIVATE` заводу.
+    // A player click on an adjacent cell → `ORDER_ACTIVATE` to the factory.
     assert!(
         max_core::unit_order::issue_factory_exit(&mut state, plant),
         "приказ вывода отдан"
@@ -443,8 +443,8 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
         state.tick();
 
         let fighter_unit = state.unit(fighter).expect("fighter alive");
-        // Взлёт: `AirPath` доводит `HOVERING` (`UnitInfo::Take`), затем юнит
-        // уходит с клетки завода.
+        // Takeoff: `AirPath` completes `HOVERING` (`UnitInfo::Take`), then the unit
+        // leaves the factory cell.
         if fighter_unit.flags & unit_flags::HOVERING != 0 && fighter_unit.grid != Point::new(10, 10)
         {
             break;
@@ -467,8 +467,8 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     assert_eq!(plant_unit.storage, 0, "--storage в ActivateUnit");
 }
 
-/// Без приказа юнит остаётся в заводе: очередь не двигается, а юнит не
-/// появляется на карте (`Access_GetTeamUnit` пропускает `ORDER_IDLE`).
+/// Without an order the unit stays in the factory: the queue does not move and the unit does not
+/// appear on the map (`Access_GetTeamUnit` skips `ORDER_IDLE`).
 #[test]
 fn air_plant_unit_stays_inside_without_a_launch_order() {
     let mut state = state_with_gold(0);
@@ -506,7 +506,7 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
     assert_eq!(unit.orders, UnitOrder::Idle);
     assert_eq!(unit.state, UnitOrderState::Store);
 
-    // Клик по клетке завода выбирает сам завод, а не юнита в нём.
+    // A click on the factory cell selects the factory itself, not the unit in it.
     assert_eq!(
         max_core::access::get_team_unit(
             &state,
@@ -554,8 +554,8 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
     manager.set_repeat(factory, true);
     manager.commit(factory).expect("build");
 
-    // 2 хода — первый юнит готов и стоит **в заводе** (`UnitInfo::SpawnNewUnit`:
-    // юнит на клетке завода, `ORDER_IDLE`/`ORDER_STATE_STORE`, родитель — завод).
+    // 2 turns — the first unit is ready and stands **in the factory** (`UnitInfo::SpawnNewUnit`:
+    // the unit on the factory cell, `ORDER_IDLE`/`ORDER_STATE_STORE`, the parent — the factory).
     for _ in 0..2 {
         production_turn(&mut state);
     }
@@ -570,8 +570,8 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
         "repeat_build вернул тип в очередь"
     );
 
-    // Автостарта следующего заказа нет: пока юнита не вывели, завод стоит —
-    // следующий заказ запускает только `UnitsManager_ActivateUnit`.
+    // There is no auto-start of the next order: while the unit is not taken out, the factory stands —
+    // the next order is started only by `UnitsManager_ActivateUnit`.
     for _ in 0..2 {
         production_turn(&mut state);
     }
@@ -581,7 +581,7 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
         "без вывода юнита очередь не двигается (C++: UNIT_READY ждёт клиента)"
     );
 
-    // Вывод юнита запускает следующий заказ (repeat).
+    // Taking the unit out starts the next order (repeat).
     assert!(
         launch_ready_unit(&mut state, factory),
         "юнит выведен из завода"
@@ -591,7 +591,7 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
     assert_eq!(factory_unit.storage, 0);
     assert!(factory_unit.build_time > 0, "следующий заказ стартовал");
 
-    // 2 хода — второй юнит, ещё вывод + 2 хода — третий.
+    // 2 turns — the second unit, another exit + 2 turns — the third.
     for _ in 0..2 {
         production_turn(&mut state);
     }
@@ -606,7 +606,7 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
         3,
         "repeat: 3 юнита за 6 ходов по 2 хода на юнита (каждый выведен)"
     );
-    // 6 «ходов постройки» × 1 материал: три заказа по 2 хода.
+    // 6 "build turns" × 1 material: three orders of 2 turns.
     assert_eq!(
         state.unit(dump).expect("dump").storage,
         14,
@@ -616,9 +616,9 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
 
 #[test]
 fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
-    // Реальный сценарий игрока: кредиты на мобилизации потрачены (0 золота),
-    // завод обязан работать на материалах шахт и вставать только когда
-    // кончились материалы — C++ `ValidateIndustry` (`production_manager.cpp:673`).
+    // A real player scenario: credits spent during mobilization (0 gold),
+    // the factory must work on mine materials and stop only when
+    // materials run out — C++ `ValidateIndustry` (`production_manager.cpp:673`).
     let mut state = state_with_gold(0);
     let dump = add_materials(&mut state, 1);
     let factory = state
@@ -631,12 +631,12 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
     manager.commit(factory).expect("build");
     drop(manager);
 
-    // Ход 1: 1 материал ушёл, стройка сдвинулась 2 → 1.
+    // Turn 1: 1 material left, construction advanced 2 → 1.
     production_turn(&mut state);
     assert_eq!(state.unit(dump).expect("dump").storage, 0);
     assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(1));
 
-    // Ход 2: материалов нет — пауза, `build_time` не двигается, заказ цел.
+    // Turn 2: no materials — pause, `build_time` does not advance, the order is intact.
     let events = production_turn(&mut state);
     assert!(
         events
@@ -648,7 +648,7 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
     assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
-    // Подвоз материалов (шахта/склад): стройка доходит с того же места.
+    // Material delivery (mine/storage): the construction reaches the end from the same place.
     state.unit_mut(dump).expect("dump").storage = 5;
     let events = production_turn(&mut state);
     assert!(
@@ -667,9 +667,9 @@ fn constructor_builds_a_building_on_a_site() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
-    // Реальный десант даёт конструктору 40 сырья (`DEFAULT_MISSION_LOADOUT`);
-    // `BuildMenu::Build` требует всю стоимость постройки на руках
-    // (`buildmenu.cpp:903-906`: 2 × 10 ходов = 20).
+    // A real landing gives the constructor 40 raw (`DEFAULT_MISSION_LOADOUT`);
+    // `BuildMenu::Build` requires the whole construction cost on hand
+    // (`buildmenu.cpp:903-906`: 2 × 10 turns = 20).
     state.unit_mut(constructor).expect("builder").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
@@ -705,8 +705,8 @@ fn constructor_builds_a_building_on_a_site() {
         "40 − 2 × 10 ходов = 20 сырья"
     );
 
-    // C++ `SpawnNewUnit`: строитель достроил и ждёт ухода с площадки
-    // (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), очередь очищена (!path).
+    // C++ `SpawnNewUnit`: the builder completed and waits to leave the site
+    // (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), the queue is cleared (!path).
     let builder = state.unit(constructor).expect("constructor alive");
     assert_eq!(
         (builder.orders, builder.state),
@@ -786,8 +786,8 @@ fn missing_materials_pause_the_build_without_losing_the_queue() {
     manager.commit(factory).expect("build");
     drop(manager);
 
-    // Сырьё «увезли» после старта: ход не оплачивается, стройка встаёт на
-    // паузу, но заказ остаётся (C++ `ValidateIndustry`; порт не теряет очередь).
+    // The raw material was "taken away" after the start: the turn is not paid, the construction
+    // pauses, but the order remains (C++ `ValidateIndustry`; the port does not lose the queue).
     state.unit_mut(dump).expect("dump").storage = 0;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
@@ -822,8 +822,8 @@ fn missing_materials_pause_the_build_without_losing_the_queue() {
 #[test]
 fn two_speed_build_costs_the_cpp_rate() {
     let mut state = state_with_gold(0);
-    // `ADUMP` вмещает 50 единиц (`ATTRIB_STORAGE`); `manage_economy` разложит
-    // материалы комплекса по складам — берём ровно вместимость.
+    // `ADUMP` holds 50 units (`ATTRIB_STORAGE`); `manage_economy` distributes
+    // the complex materials over storages — we take exactly the capacity.
     let dump = add_materials(&mut state, 50);
     let factory = state
         .spawn_unit(
@@ -854,10 +854,10 @@ fn two_speed_build_costs_the_cpp_rate() {
 
 #[test]
 fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
-    // Реальный сценарий игрока: у конструктора 40 сырья в cargo (как
-    // `deploy_starting_units`), заказ 2×. C++ `UnitInfo::UpdateProduction`
-    // каждый ход уменьшает `storage`; когда его не хватает на 2×, скорость
-    // падает до 1×. Итог — ровно (8 ходов, 40 золота), как в колонке `Cost`
+    // A real player scenario: the constructor has 40 raw in cargo (as
+    // `deploy_starting_units`), a 2× order. C++ `UnitInfo::UpdateProduction`
+    // reduces `storage` every turn; when it is insufficient for 2×, the rate
+    // drops to 1×. Result — exactly (8 turns, 40 gold), as in the `Cost` column
     // `BuildMenu` (`turns_and_consumption`).
     let mut state = state_with_gold(1000);
     let constructor = state
@@ -902,10 +902,10 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
 }
 
 // ---------------------------------------------------------------------------
-// Стройплощадка (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
+// Construction site (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
 // ---------------------------------------------------------------------------
 
-/// Все юниты команды в клетке `site` (C++ `Hash_MapHash[Point]`).
+/// All team units on the `site` cell (C++ `Hash_MapHash[Point]`).
 fn units_at(state: &GameState, site: Point) -> Vec<&max_core::unit::UnitInfo> {
     state
         .units_at(site)
@@ -924,17 +924,17 @@ fn find_at<'a>(
         .find(|unit| unit.unit_type == unit_type)
 }
 
-/// C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`: заказ
-/// конструктора ставит **большую** площадку `LRGTAPE`/`LRGCONES`/`LRGSLAB`
-/// ровно в клетке постройки, все — `AWAIT`/`EXECUTING_ORDER`, лента с
-/// родителем-строителем, плита — случайный кадр `0..5`.
+/// C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`: the constructor's
+/// order places the **large** site `LRGTAPE`/`LRGCONES`/`LRGSLAB`
+/// exactly on the construction cell, all — `AWAIT`/`EXECUTING_ORDER`, the tape with
+/// the builder parent, the slab — a random frame `0..5`.
 #[test]
 fn constructor_order_deploys_the_large_construction_site() {
     let mut state = state_with_gold(100);
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
-    // `UnitsManager_DeployUnit` обнуляет склад; высадка даёт 40.
+    // `UnitsManager_DeployUnit` zeroes the storage; landing gives 40.
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
@@ -944,7 +944,7 @@ fn constructor_order_deploys_the_large_construction_site() {
     let report = manager.commit(constructor).expect("build order");
     let site = report.site;
 
-    // Раскладка C++: конусы и лента — в клетке площадки, большие декали.
+    // C++ layout: cones and tape — on the site cell, large decals.
     assert_eq!(
         construction_utility_types(UnitType::TrainingHall),
         (UnitType::LargeTape, UnitType::LargeCones)
@@ -991,8 +991,8 @@ fn constructor_order_deploys_the_large_construction_site() {
         "C++ ScaleUnit(slab, ORDER_STATE_EXPAND)"
     );
 
-    // Ровно один комплект: повторный вызов (как из start_building/машины
-    // приказов) не плодит вторую площадку и не жжёт RNG.
+    // Exactly one set: a repeated call (as from start_building/the order
+    // machine) does not spawn a second site and does not burn RNG.
     let mut duplicate_state = state.clone();
     let rng_before = duplicate_state.rng;
     let duplicate = max_core::production::deploy_construction_site(
@@ -1008,8 +1008,8 @@ fn constructor_order_deploys_the_large_construction_site() {
     assert_eq!(duplicate_state.rng, rng_before, "RNG не сдвинут");
 }
 
-/// Инженер строит малый объект (`ROAD`): `SMLTAPE`/`SMLCONES`, плиты нет
-/// (`REQUIRES_SLAB` у дороги не выставлен).
+/// The engineer builds a small object (`ROAD`): `SMLTAPE`/`SMLCONES`, no slab
+/// (`REQUIRES_SLAB` is not set for the road).
 #[test]
 fn engineer_order_deploys_the_small_construction_site_without_a_slab() {
     let mut state = state_with_gold(100);
@@ -1045,8 +1045,8 @@ fn engineer_order_deploys_the_small_construction_site_without_a_slab() {
     );
 }
 
-/// Вода/побережье: C++ `DeployConstructionSiteUtilities` не ставит конусы, а
-/// лента получает угол 1; плита (`REQUIRES_SLAB` у здания) всё равно ставится.
+/// Water/coast: C++ `DeployConstructionSiteUtilities` does not place cones, and
+/// the tape gets angle 1; the slab (`REQUIRES_SLAB` for a building) is still placed.
 #[test]
 fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
     let mut state = state_with_gold(100);
@@ -1076,11 +1076,11 @@ fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
     );
 }
 
-/// Готовит партию с достроенным зданием: заказ конструктора + `turns` ходов
-/// производства. Возвращает id строителя и клетку площадки.
+/// Prepares a game with a completed building: constructor order + `turns` production
+/// turns. Returns the builder id and the site cell.
 fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, Point) {
     let mut state = state_with_gold(100);
-    // Суша: `Access_IsAccessible` иначе не находит клетку схода с площадки.
+    // Land: otherwise `Access_IsAccessible` does not find a cell to leave the site.
     for y in 0..max_core::geo::MAP_HEIGHT {
         for x in 0..max_core::geo::MAP_WIDTH {
             let _ = state.map.surface.set(x, y, max_core::enums::Surface::LAND);
@@ -1098,9 +1098,9 @@ fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, P
     let report = manager.commit(constructor).expect("site");
     drop(manager);
 
-    // В партии строитель стоит на площадке (C++ `PositionInTape` въезжает в
-    // центр ленты); здесь ставим его в клетку якоря, чтобы завершение шло по
-    // ветке «строитель внутри габаритов 2×2».
+    // In game the builder stands on the site (C++ `PositionInTape` enters the
+    // tape center); here we put it on the anchor cell so that completion follows
+    // the "builder inside the 2×2 footprint" branch.
     if let Some(mut unit) = state.unit(constructor).cloned() {
         unit.grid = report.site;
         state.write_unit(constructor, unit);
@@ -1113,28 +1113,28 @@ fn state_with_finished_building(turns: usize) -> (GameState, max_core::UnitId, P
     (state, constructor, report.site)
 }
 
-/// Один тик симуляции — `GameState::tick` (`GameManager_ProcessTick`): пути
-/// (`PollResults`) + машина приказов. `process_orders` отдельно недостаточно:
-/// `ORDER_MOVE`/`NEW_ORDER` ждёт результата запроса пути, который применяется
-/// именно в тике.
+/// One simulation tick — `GameState::tick` (`GameManager_ProcessTick`): paths
+/// (`PollResults`) + the order machine. `process_orders` alone is not enough:
+/// `ORDER_MOVE`/`NEW_ORDER` waits for the path request result, which is applied
+/// in the tick itself.
 fn tick_orders(state: &mut GameState) {
     state.tick();
 }
 
-/// Достройка 1:1 C++. `SpawnNewUnit` (`unitinfo.cpp:3440`) ставит здание на
-/// площадку в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (оно не рисуется —
-/// `UnitInfoGroup::IsRelevant`) и оставляет строителя на площадке в
-/// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. **Автоматического** ухода нет
+/// Completion 1:1 C++. `SpawnNewUnit` (`unitinfo.cpp:3440`) places the building on
+/// the site in `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (it is not drawn —
+/// `UnitInfoGroup::IsRelevant`) and leaves the builder on the site in
+/// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`. There is **no automatic** exit
 /// (`UnitsManager_ProcessOrderBuild`/`UNIT_READY`: `if (path) BuildNext else
-/// Animate`): приказ даёт игрок кликом по клетке (`game_manager.cpp:6879-6890`)
-/// или ИИ задачей `TaskActivate`. Лента и конусы снимаются, а здание
-/// раскрывается (`ScaleUnit(EXPAND)`) только после того, как строитель сошёл с
-/// площадки — `UnitsManager_BuildingReady` (`units_manager.cpp:4183`).
+/// Animate`): the order is given by the player clicking a cell (`game_manager.cpp:6879-6890`)
+/// or by the AI with the `TaskActivate` task. The tape and cones are removed, and the building
+/// unfolds (`ScaleUnit(EXPAND)`) only after the builder leaves
+/// the site — `UnitsManager_BuildingReady` (`units_manager.cpp:4183`).
 #[test]
 fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     let (mut state, constructor, site) = state_with_finished_building(10);
 
-    // Кадр сразу после `SpawnNewUnit`: здание создано, но ждёт строителя.
+    // The frame right after `SpawnNewUnit`: the building is created but waits for the builder.
     assert_eq!(count_type(&state, UnitType::TrainingHall), 1);
     let (building_id, building_grid) = {
         let building = find_at(&state, site, UnitType::TrainingHall).expect("здание создано");
@@ -1165,8 +1165,8 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         assert!(builder.build_list.is_empty(), "!path → build_list.Clear()");
     }
 
-    // Пока строитель стоит на площадке, лента и конусы на месте, а здание не
-    // раскрыто (нет `ORDER_AWAIT_SCALING`).
+    // While the builder stands on the site, the tape and cones are in place, and the building is not
+    // unfolded (no `ORDER_AWAIT_SCALING`).
     assert!(
         construction_utility(&state, TeamId::RED, site).is_some(),
         "лента ещё на площадке: здание не раскрыто"
@@ -1189,8 +1189,8 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         "C++: строитель в ORDER_BUILD/UNIT_READY у достроенного здания"
     );
 
-    // Игрок **не** отдавал приказ: за 30 тиков ничего не происходит — ни
-    // `ORDER_ACTIVATE`, ни снятия площадки, ни раскрытия здания.
+    // The player did **not** give an order: for 30 ticks nothing happens — neither
+    // `ORDER_ACTIVATE`, nor site removal, nor building unfolding.
     for _ in 0..30 {
         tick_orders(&mut state);
     }
@@ -1211,10 +1211,10 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     );
     assert!(construction_utility(&state, TeamId::RED, site).is_some());
 
-    // Приказ игрока (`game_manager.cpp:6879-6890`): `ORDER_ACTIVATE`/
-    // `ORDER_STATE_IN_TRANSITION` с `move_to` = клетка клика. В порте это
-    // `unit_order::issue_builder_exit` (путь ИИ) или пакет 08/P3 от UI; цель —
-    // первая проходимая клетка вокруг здания.
+    // Player order (`game_manager.cpp:6879-6890`): `ORDER_ACTIVATE`/
+    // `ORDER_STATE_IN_TRANSITION` with `move_to` = the click cell. In the port this is
+    // `unit_order::issue_builder_exit` (the AI path) or packet 08/P3 from the UI; the target is
+    // the first passable cell around the building.
     assert!(
         max_core::unit_order::issue_builder_exit(&mut state, constructor),
         "приказ на уход выставлен"
@@ -1228,7 +1228,7 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         );
     }
 
-    // Следующий тик: `PositionInTape` DEINIT/LEAVE — доворот и съезд с ленты.
+    // Next tick: `PositionInTape` DEINIT/LEAVE — final rotation and exit from the tape.
     tick_orders(&mut state);
     {
         let builder = state.unit(constructor).expect("constructor alive");
@@ -1242,8 +1242,8 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         );
     }
 
-    // Уход: доворот + четыре шага по 8 px (PositionInTape), затем
-    // `ActivateEngineer` → ORDER_MOVE к свободной клетке вокруг здания.
+    // Exit: final rotation + four steps of 8 px (PositionInTape), then
+    // `ActivateEngineer` → ORDER_MOVE to a free cell around the building.
     let mut left_site = false;
     for _ in 0..20 {
         tick_orders(&mut state);
@@ -1258,8 +1258,8 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     }
     assert!(left_site, "строитель обязан сойти с площадки");
 
-    // Строитель вне габаритов → `UnitsManager_BuildingReady`: утилиты сняты,
-    // плита осталась, здание раскрывается.
+    // The builder is outside the footprint → `UnitsManager_BuildingReady`: utilities removed,
+    // the slab remains, the building unfolds.
     let mut expanded = false;
     for _ in 0..12 {
         tick_orders(&mut state);
@@ -1297,8 +1297,8 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     }
     assert_eq!(count_type(&state, UnitType::TrainingHall), 1);
 
-    // После раскрытия здание возвращается в `ORDER_AWAIT`, а строитель идёт к
-    // клетке схода (`ORDER_MOVE`) и по прибытии — в `ORDER_AWAIT`.
+    // After unfolding the building returns to `ORDER_AWAIT`, and the builder goes to
+    // the exit cell (`ORDER_MOVE`) and on arrival — to `ORDER_AWAIT`.
     for _ in 0..40 {
         tick_orders(&mut state);
     }
@@ -1325,17 +1325,17 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     assert_ne!(builder_grid, building_grid, "строитель сошёл с площадки");
 }
 
-/// `RADAR` после достройки обязан вернуться в `ORDER_SENTRY`.
+/// `RADAR` must return to `ORDER_SENTRY` after completion.
 ///
-/// C++: `UnitsManager_DeployUnit` (`units_manager.cpp:2412-2421`) ставит
-/// `RADAR` (как турели и мины) в `ORDER_SENTRY`; `SpawnNewUnit`
-/// (`unitinfo.cpp:3581`) переводит здание в `ORDER_IDLE`/
-/// `ORDER_STATE_BUILDING_READY` через **`SetNewOrderInt`**, который сохраняет
-/// текущий приказ в `prior_orders` (`units_manager.cpp:1969-1975`). После ухода
-/// строителя `UnitsManager_BuildingReady` (`units_manager.cpp:4240`) делает
-/// `RestoreOrders` (`unitinfo.cpp:3783`) → снова `ORDER_SENTRY`, и
-/// `ProcessOrderSentry` листает 16 кадров `D_RADAR` (`ANIMATED`). Порт раньше
-/// жёстко писал `prior = AWAIT`, поэтому радар замирал в `ORDER_AWAIT`.
+/// C++: `UnitsManager_DeployUnit` (`units_manager.cpp:2412-2421`) puts
+/// `RADAR` (like turrets and mines) in `ORDER_SENTRY`; `SpawnNewUnit`
+/// (`unitinfo.cpp:3581`) moves the building to `ORDER_IDLE`/
+/// `ORDER_STATE_BUILDING_READY` via **`SetNewOrderInt`**, which preserves
+/// the current order in `prior_orders` (`units_manager.cpp:1969-1975`). After the builder
+/// leaves, `UnitsManager_BuildingReady` (`units_manager.cpp:4240`) does
+/// `RestoreOrders` (`unitinfo.cpp:3783`) → `ORDER_SENTRY` again, and
+/// `ProcessOrderSentry` cycles through 16 `D_RADAR` frames (`ANIMATED`). The port previously
+/// hard-coded `prior = AWAIT`, so the radar froze in `ORDER_AWAIT`.
 #[test]
 fn a_built_radar_restores_its_sentry_order() {
     let mut state = state_with_gold(400);
@@ -1346,8 +1346,8 @@ fn a_built_radar_restores_its_sentry_order() {
         }
     }
 
-    // `RADAR` строит **инженер** (`builder_type(Radar) == Engineer`), но ветка
-    // `SpawnNewUnit` для мобильного строителя — та же, что у конструктора.
+    // `RADAR` is built by an **engineer** (`builder_type(Radar) == Engineer`), but the
+    // `SpawnNewUnit` branch for a mobile builder is the same as for the constructor.
     let constructor = state
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(10, 10), 0)
         .expect("engineer");
@@ -1404,7 +1404,7 @@ fn a_built_radar_restores_its_sentry_order() {
         );
     }
 
-    // Приказ на уход даёт игрок/ИИ (`issue_builder_exit`) — см. A1.
+    // The exit order is given by the player/AI (`issue_builder_exit`) — see A1.
     assert!(max_core::unit_order::issue_builder_exit(
         &mut state,
         constructor
@@ -1439,16 +1439,16 @@ fn a_built_radar_restores_its_sentry_order() {
     );
 }
 
-/// Достройка детерминирована: два одинаковых прогона дают один снапшот на
-/// каждом кадре (порядок «уход строителя → раскрытие здания» не зависит от
-/// итерации по хешам).
+/// Completion is deterministic: two identical runs give one snapshot on
+/// every frame (the "builder exit → building unfold" order does not depend on
+/// hash iteration).
 #[test]
 fn completion_sequence_is_deterministic() {
     fn run() -> Vec<Vec<u8>> {
         let (mut state, constructor, _) = state_with_finished_building(10);
         let mut frames = vec![state.snapshot_bytes()];
 
-        // Приказ игрока на уход (`ORDER_ACTIVATE`), затем тики до раскрытия.
+        // Player exit order (`ORDER_ACTIVATE`), then ticks until unfolding.
         assert!(max_core::unit_order::issue_builder_exit(
             &mut state,
             constructor
@@ -1465,8 +1465,8 @@ fn completion_sequence_is_deterministic() {
     assert_eq!(run(), run());
 }
 
-/// `stop` мобильного строителя (`CancelBuilding` → `BuildCancel`) убирает
-/// площадку из клетки заказа: лента, конусы и плита не остаются на карте.
+/// `stop` of a mobile builder (`CancelBuilding` → `BuildCancel`) removes
+/// the site from the order cell: tape, cones and slab do not remain on the map.
 #[test]
 fn cancelling_the_build_removes_the_site() {
     let mut state = state_with_gold(100);
@@ -1488,7 +1488,7 @@ fn cancelling_the_build_removes_the_site() {
     assert!(manager.cancel(constructor));
     drop(manager);
 
-    // `CancelBuilding` исполняется процессором приказа на следующем тике.
+    // `CancelBuilding` is executed by the order processor on the next tick.
     state.process_orders();
 
     assert_eq!(count_type(&state, UnitType::LargeTape), 0);
@@ -1501,8 +1501,8 @@ fn cancelling_the_build_removes_the_site() {
     );
 }
 
-/// Раскладка площадки и порядок RNG детерминированы: два одинаковых заказа
-/// дают одинаковые типы/клетки/кадры и одинаковый снапшот.
+/// Site layout and RNG order are deterministic: two identical orders
+/// give the same types/cells/frames and the same snapshot.
 #[test]
 fn construction_site_layout_is_deterministic() {
     fn run() -> (Vec<u8>, Point, Vec<(UnitType, Point, u8)>) {
@@ -1556,7 +1556,7 @@ fn construction_site_layout_is_deterministic() {
 }
 
 // ---------------------------------------------------------------------------
-// Детерминизм
+// Determinism
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1600,13 +1600,13 @@ fn two_identical_production_runs_have_identical_state() {
 
 #[test]
 fn awac_completes_from_the_merged_complex_pot() {
-    // Сценарий пользователя: AWAC «никогда не достраивается», потому что завод
-    // не видел сырья. C++ (`Cargo_GetNetProduction` → `Cargo_ApplyUnitConsumption`)
-    // списывает raw из **комплекса** (`Complex::GetCargoInfo` = сумма складов
-    // подключённых зданий), а не из одного здания. Здесь два ADUMP стоят
-    // вплотную к AIRPLT и слиты коннекторами в один комплекс: AWAC строится
-    // 6 ходов; первый ход 4× (36), последний — `GetMaxAllowedBuildRate`
-    // ограничивает 2× по остатку `build_time = 2` (12), итого 48 из 80.
+    // User scenario: the AWAC "never completes" because the factory
+    // did not see raw material. C++ (`Cargo_GetNetProduction` → `Cargo_ApplyUnitConsumption`)
+    // charges raw from the **complex** (`Complex::GetCargoInfo` = the sum of connected
+    // building storages), not from one building. Here two ADUMPs stand
+    // right next to AIRPLT and are merged by connectors into one complex: the AWAC is built
+    // in 6 turns; the first turn 4× (36), the last — `GetMaxAllowedBuildRate`
+    // limits to 2× by the remaining `build_time = 2` (12), 48 of 80 in total.
     let mut state = state_with_gold(0);
     let factory = state
         .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
@@ -1619,8 +1619,8 @@ fn awac_completes_from_the_merged_complex_pot() {
             0,
         )
         .expect("MaterialStorage 1");
-    // `ADUMP` — `STANDALONE` 1×1 (`UpdateConnectors` даёт `unit_size = 1`),
-    // поэтому второй склад ставится вплотную: `(12,10)` и `(13,10)`.
+    // `ADUMP` is a 1×1 `STANDALONE` (`UpdateConnectors` gives `unit_size = 1`),
+    // so the second storage is placed right next to it: `(12,10)` and `(13,10)`.
     let second = state
         .spawn_unit(
             UnitType::MaterialStorage,
@@ -1669,7 +1669,7 @@ fn awac_completes_from_the_merged_complex_pot() {
     assert_eq!(report.build_rate, 4, "AIRPLT ускоряется до 4×");
     assert_eq!(report.cost_per_turn, 36, "3 × 12 (множитель 4×)");
 
-    // Ход 1: 36 из общего котла, `build_time` 6 → 2.
+    // Turn 1: 36 from the common pool, `build_time` 6 → 2.
     let events = production_turn(&mut state);
     assert!(
         events
@@ -1683,8 +1683,8 @@ fn awac_completes_from_the_merged_complex_pot() {
         44
     );
 
-    // Ход 2: `GetMaxAllowedBuildRate` режет 4× до 2× (осталось 2 хода) —
-    // 12 из общего котла; `build_time <= build_rate` → `SpawnNewUnit` (AWAC).
+    // Turn 2: `GetMaxAllowedBuildRate` cuts 4× to 2× (2 turns remain) —
+    // 12 from the common pool; `build_time <= build_rate` → `SpawnNewUnit` (AWAC).
     let events = production_turn(&mut state);
     assert!(
         events
@@ -1702,14 +1702,14 @@ fn awac_completes_from_the_merged_complex_pot() {
 }
 
 // ---------------------------------------------------------------------------
-// `finish_turn` — интеграция хода производства
+// `finish_turn` — production turn integration
 // ---------------------------------------------------------------------------
 
 #[test]
 fn finish_turn_runs_the_production_phase() {
     let mut state = state_with_gold(100);
-    // Дуэль как в партии: RED — человек, GREEN — компьютер, сетевая ветка
-    // выключена (локальная семантика `menu_check_end_game_conditions`).
+    // A duel as in a game: RED is a human, GREEN is a computer, the network branch
+    // is disabled (local semantics of `menu_check_end_game_conditions`).
     state.teams[1].team_type = TeamKind::Computer;
     state.team_units[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
     state.team_units[1].set_gold(100);
@@ -1722,8 +1722,8 @@ fn finish_turn_runs_the_production_phase() {
     state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(14, 14), 0)
         .expect("constructor");
-    // Боевая мощь держит команду «живой» по generic-правилам (`SC_L0002`):
-    // без неё `menu_check_end_game_conditions` закрывает партию.
+    // Combat power keeps the team "alive" by generic rules (`SC_L0002`):
+    // without it `menu_check_end_game_conditions` closes the game.
     state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(16, 16), 0)
         .expect("red tank");
@@ -1771,11 +1771,11 @@ fn finish_turn_runs_the_production_phase() {
     assert_eq!(state.unit(factory).map(|unit| unit.build_time), Some(1));
 }
 
-/// Цвет команды — `TeamUnits::hash_team_id` (`resource_manager.cpp:969-981`):
+/// Team color — `TeamUnits::hash_team_id` (`resource_manager.cpp:969-981`):
 /// RED = `HASH_TEAM_RED` 0x2000, GREEN = 0x1000, BLUE = 0x800, GRAY = 0x400,
-/// ALIEN/derelict = 0x8000. C++ пишет этот бит в флаги юнита
-/// (`unitinfo.cpp:179`), порт — восстанавливает цвет тем же отображением
-/// (флаги входят в эталонный дайджест и остаются без битов).
+/// ALIEN/derelict = 0x8000. C++ writes this bit into unit flags
+/// (`unitinfo.cpp:179`), the port restores the color by the same mapping
+/// (flags enter the reference digest and remain without the bits).
 #[test]
 fn team_hash_ids_match_the_cpp_color_slots() {
     assert_eq!(max_core::team::hash_team_id(TeamId::RED), 0x2000);
@@ -1785,9 +1785,9 @@ fn team_hash_ids_match_the_cpp_color_slots() {
     assert_eq!(max_core::team::hash_team_id(TeamId::ALIEN), 0x8000);
 }
 
-/// Материалы комплекса — сумма складов **подключённых** зданий с
-/// `CARGO_TYPE_RAW` (C++ `Complex::GetCargoInfo`, `complex.cpp:136-147`), а не
-/// всей команды: несвязанный склад в котёл завода не входит.
+/// Complex materials — the sum of storages of **connected** buildings with
+/// `CARGO_TYPE_RAW` (C++ `Complex::GetCargoInfo`, `complex.cpp:136-147`), not
+/// of the whole team: an unconnected storage does not enter the factory pool.
 #[test]
 fn complex_raw_materials_sums_only_connected_raw_storage() {
     let mut state = state_with_gold(0);
@@ -1796,7 +1796,7 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(30, 30), 0)
         .expect("mine");
     state.unit_mut(mine).expect("mine").storage = 7;
-    // Не-сырьевые здания и мобильные юниты в склад материалов не входят.
+    // Non-raw buildings and mobile units do not enter the materials storage.
     let tank = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(40, 40), 0)
         .expect("tank");
@@ -1832,7 +1832,7 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
     );
 }
 
-/// Флаги здания/юнита — проверка, что заводы действительно стационарны.
+/// Building/unit flags — checking that factories are really stationary.
 #[test]
 fn factories_are_stationary_units() {
     for factory in [

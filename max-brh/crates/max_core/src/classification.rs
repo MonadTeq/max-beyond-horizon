@@ -1,48 +1,48 @@
-//! Типобезопасный слой классификации юнитов — «вид» над битовыми флагами (Ф2).
+//! Type-safe unit classification layer — "kind" over bit flags (F2).
 //!
-//! Слой **ничего не меняет**: `UnitInfo::flags` остаётся сериализуемым
-//! состоянием (снапшот/CRC — правило 1.3 `rust-programming-rules.md`), а всё
-//! ниже — производные значения, вычислимые из уже существующих данных:
+//! The layer **changes nothing**: `UnitInfo::flags` remains serializable
+//! state (snapshot/CRC — rule 1.3 of `rust-programming-rules.md`), and everything
+//! below is derived values computable from already existing data:
 //!
-//! * [`UnitType`] — по таблице [`crate::access::UNIT_TYPE_PROPERTIES`]
-//!   (`SC_UNITS`) и [`crate::unit_values::BASE_UNIT_VALUES`] (`SC_ATTRI`);
-//! * [`UnitInfo`] — по флагам **экземпляра** (`unit.flags`): в runtime они
-//!   могут расходиться с таблицей типа (`HOVERING`, `EXPLODING`, снятый
-//!   `STATIONARY`), поэтому у экземпляра своя классификация.
+//! * [`UnitType`] — from the [`crate::access::UNIT_TYPE_PROPERTIES`] table
+//!   (`SC_UNITS`) and [`crate::unit_values::BASE_UNIT_VALUES`] (`SC_ATTRI`);
+//! * [`UnitInfo`] — from the **instance** flags (`unit.flags`): at runtime they
+//!   may differ from the type table (`HOVERING`, `EXPLODING`, cleared
+//!   `STATIONARY`), so the instance has its own classification.
 //!
-//! Источник таксономии — `max-brh-docs/object-classifier.md` («Ключевые
-//! критерии», «Оси классификации юнитов», «Не-юниты»).
+//! The taxonomy source is `max-brh-docs/object-classifier.md` ("Key
+//! criteria", "Unit classification axes", "Non-units").
 //!
-//! # Отделение не-юнитов (Ф4)
+//! # Separation of non-units (F4)
 //!
-//! [`ObjectKind`] отделяет **юниты** от **не-юнитов** (эффекты, декорации,
-//! сюжетные объекты) на уровне семантики. Сам [`UnitType`] при этом **не
-//! меняется**: 93 варианта с дискриминантами `0x00–0x5C` остаются `ResourceID`
-//! (`SC_UNITS`) — от них зависят CRC, replay-дайджест и формат V70. `ObjectKind`
-//! — производное значение, как [`Footprint`].
+//! [`ObjectKind`] separates **units** from **non-units** (effects, decorations,
+//! plot objects) at the semantic level. [`UnitType`] itself **does not
+//! change**: the 93 variants with discriminants `0x00–0x5C` remain `ResourceID`
+//! (`SC_UNITS`) — CRC, the replay digest and the V70 format depend on them. `ObjectKind`
+//! is a derived value, like [`Footprint`].
 //!
-//! Оси:
+//! Axes:
 //!
-//! | Ось | Значения | Rust |
+//! | Axis | Values | Rust |
 //! |---|---|---|
-//! | Вид объекта | юнит / эффект / декорация / сюжетная декорация | [`ObjectKind`] |
-//! | Боевая роль | боевой / небоевой | [`CombatRole`] |
-//! | Форма | здание / мобильный / стационарный-прочий | [`Mobility`] |
-//! | Футпринт (размер на карте) | 1×1 / 2×2 | [`Footprint`] |
-//! | Среда мобильного | воздух / амфибия / земля / море | [`Environment`] |
-//! | Производственный | производящий / непроизводящий | [`UnitType::is_producing`] |
-//! | Груз | нет / ресурсный / юнитный | [`CargoKind`] |
+//! | Object kind | unit / effect / decoration / plot decoration | [`ObjectKind`] |
+//! | Combat role | combat / non-combat | [`CombatRole`] |
+//! | Form | building / mobile / stationary-other | [`Mobility`] |
+//! | Footprint (map size) | 1×1 / 2×2 | [`Footprint`] |
+//! | Mobile environment | air / amphibious / ground / sea | [`Environment`] |
+//! | Production | producing / non-producing | [`UnitType::is_producing`] |
+//! | Cargo | none / resource / unit | [`CargoKind`] |
 //!
-//! # Решение по маркерным типажам (вариант C)
+//! # Decision on marker traits (variant C)
 //!
-//! Маркерные типажи без реализаций **не используются** (правило 1, решение
-//! владельца): `UnitType` — закрытый `enum` из 93 вариантов, и `impl Combat for
-//! UnitType` утверждал бы «боевой» про все 93 сразу — мёртвый код. Классификацию
-//! несёт `enum` (единственный источник истины); поведение — поведенческие
-//! типажи (`CanMove`, `CanAttack`) в обобщённом коде, а не маркеры категорий.
+//! Marker traits without implementations are **not used** (rule 1, the owner's
+//! decision): `UnitType` is a closed `enum` of 93 variants, and `impl Combat for
+//! UnitType` would claim "combat" for all 93 at once — dead code. The
+//! classification is carried by the `enum` (the single source of truth); behavior — by behavioral
+//! traits (`CanMove`, `CanAttack`) in generic code, not category markers.
 //!
-//! Источник C++: `enums.hpp` (`BUILDING`, `STATIONARY`, `MOBILE_*_UNIT`),
-//! `units.cpp` (`Units::LoadResource` — флаги `SC_UNITS`), `attributes.cpp`
+//! C++ source: `enums.hpp` (`BUILDING`, `STATIONARY`, `MOBILE_*_UNIT`),
+//! `units.cpp` (`Units::LoadResource` — `SC_UNITS` flags), `attributes.cpp`
 //! (`Attributes::LoadResource` — `SC_ATTRI`), `cargo.cpp` (`Cargo_GetNetProduction`),
 //! `unit.hpp` (`Unit::CargoType`).
 
@@ -56,12 +56,12 @@ use crate::unit_values::base_unit_values;
 use crate::victory::{cargo_type_of, CargoType};
 
 // ---------------------------------------------------------------------------
-// Данные предметной области: списки исключений
+// Domain data: exception lists
 // ---------------------------------------------------------------------------
 
-/// Турели — **семантически здания**, хотя флаг `BUILDING` (`0x10`) не
-/// установлен: по `SC_UNITS` это 1×1 `STATIONARY`. Решение владельца
-/// (`object-classifier.md`, «Ключевые критерии»).
+/// Turrets are **semantically buildings**, although the `BUILDING` flag (`0x10`) is
+/// not set: in `SC_UNITS` they are 1×1 `STATIONARY`. The owner's decision
+/// (`object-classifier.md`, "Key criteria").
 ///
 /// C++: `GUNTURRT`/`ARTYTRRT`/`ANTIAIR`/`ANTIMSSL` (`SC_UNITS`).
 pub const TURRET_UNIT_TYPES: [UnitType; 4] = [
@@ -71,11 +71,11 @@ pub const TURRET_UNIT_TYPES: [UnitType; 4] = [
     UnitType::MissileLauncher,
 ];
 
-/// Производящие типы — ровно те, что разбирает `Cargo_GetNetProduction`
-/// (`cargo.cpp:70`, 12 типов): 5 заводов юнитов + 6 ресурсных зданий + шахта.
+/// Producing types — exactly those handled by `Cargo_GetNetProduction`
+/// (`cargo.cpp:70`, 12 types): 5 unit factories + 6 resource buildings + the mine.
 ///
 /// C++: `Cargo_GetNetProduction` (`cargo.cpp:70`); `object-classifier.md`,
-/// «Производственные юниты».
+/// "Production units".
 pub const PRODUCING_UNIT_TYPES: [UnitType; 12] = [
     UnitType::Shipyard,
     UnitType::LightVehiclePlant,
@@ -91,25 +91,25 @@ pub const PRODUCING_UNIT_TYPES: [UnitType; 12] = [
     UnitType::MiningStation,
 ];
 
-/// Турель ли тип (см. [`TURRET_UNIT_TYPES`]).
+/// Whether the type is a turret (see [`TURRET_UNIT_TYPES`]).
 #[inline]
 pub fn is_turret(unit_type: UnitType) -> bool {
     TURRET_UNIT_TYPES.contains(&unit_type)
 }
 
 // ---------------------------------------------------------------------------
-// Данные предметной области: не-юниты (Ф4)
+// Domain data: non-units (F4)
 // ---------------------------------------------------------------------------
 
-/// Эффекты — **не-юниты**: снаряды, взрывы, обломки, следы (14 типов).
+/// Effects are **non-units**: projectiles, explosions, rubble, trails (14 types).
 ///
-/// Источник — `object-classifier.md`, «Не-юниты» → «Эффект»:
-/// `ROCKET`, `TORPEDO`, `ALNMISSL`, `ALNTBALL`, `ALNABALL` (снаряды);
-/// `LNDEXPLD`, `AIREXPLD`, `SEAEXPLD`, `BLDEXPLD`, `HITEXPLD` (взрывы);
-/// `LRGRUBLE`, `SMLRUBLE` (обломки); `RKTSMOKE`, `TRPBUBLE` (следы).
+/// Source — `object-classifier.md`, "Non-units" → "Effect":
+/// `ROCKET`, `TORPEDO`, `ALNMISSL`, `ALNTBALL`, `ALNABALL` (projectiles);
+/// `LNDEXPLD`, `AIREXPLD`, `SEAEXPLD`, `BLDEXPLD`, `HITEXPLD` (explosions);
+/// `LRGRUBLE`, `SMLRUBLE` (rubble); `RKTSMOKE`, `TRPBUBLE` (trails).
 ///
-/// C++: отдельного признака нет — все они `ResourceID` из `SC_UNITS`;
-/// отделение семантическое (Ф4), `UnitType` не меняется.
+/// C++: there is no separate predicate — they are all `ResourceID`s from `SC_UNITS`;
+/// the separation is semantic (F4), `UnitType` does not change.
 pub const EFFECT_UNIT_TYPES: [UnitType; 14] = [
     UnitType::Rocket,
     UnitType::Torpedo,
@@ -127,10 +127,10 @@ pub const EFFECT_UNIT_TYPES: [UnitType; 14] = [
     UnitType::TorpedoBubble,
 ];
 
-/// Декорации/стройплощадки — **не-юниты** (6 типов): `LRGTAPE`, `SMLTAPE`,
+/// Decorations/build sites are **non-units** (6 types): `LRGTAPE`, `SMLTAPE`,
 /// `LRGSLAB`, `SMLSLAB`, `LRGCONES`, `SMLCONES`.
 ///
-/// Источник — `object-classifier.md`, «Не-юниты» → «Декорация/стройплощадка».
+/// Source — `object-classifier.md`, "Non-units" → "Decoration/build site".
 pub const DECORATION_UNIT_TYPES: [UnitType; 6] = [
     UnitType::LargeTape,
     UnitType::SmallTape,
@@ -140,10 +140,10 @@ pub const DECORATION_UNIT_TYPES: [UnitType; 6] = [
     UnitType::SmallCones,
 ];
 
-/// Сюжетные декорации (удалённые/скрытые) — **не-юниты** (3 типа): `MASTER`,
+/// Plot decorations (removed/hidden) are **non-units** (3 types): `MASTER`,
 /// `HARVSTER`, `WALDO`.
 ///
-/// Источник — `object-classifier.md`, «Не-юниты» → «Сюжетная декорация».
+/// Source — `object-classifier.md`, "Non-units" → "Plot decoration".
 pub const PLOT_PROP_UNIT_TYPES: [UnitType; 3] = [
     UnitType::MasterBuilder,
     UnitType::Harvester,
@@ -151,35 +151,35 @@ pub const PLOT_PROP_UNIT_TYPES: [UnitType; 3] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Боевая роль
+// Combat role
 // ---------------------------------------------------------------------------
 
-/// Боевая роль юнита — ось `object-classifier.md` «Боевой / Небоевой».
+/// Unit combat role — the `object-classifier.md` axis "Combat / Non-combat".
 ///
-/// C++: `attack` (`ATTRIB_ATTACK`) из `SC_ATTRI` (`Attributes::LoadResource`).
+/// C++: `attack` (`ATTRIB_ATTACK`) from `SC_ATTRI` (`Attributes::LoadResource`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombatRole {
-    /// Боевой: `attack > 0`.
+    /// Combat: `attack > 0`.
     Combat,
-    /// Небоевой: `attack = 0`.
+    /// Non-combat: `attack = 0`.
     NonCombat,
 }
 
 impl CombatRole {
-    /// Классифицирует тип юнита по базовому атрибуту `attack`.
+    /// Classifies a unit type by the base `attack` attribute.
     #[inline]
     pub fn classify(unit_type: UnitType) -> Self {
         Self::from_attack(base_unit_values(unit_type).attack)
     }
 
-    /// Классифицирует экземпляр по **его** атрибутам (`base_values`:
-    /// клановые модификаторы и апгрейды типа этой команды).
+    /// Classifies an instance by **its** attributes (`base_values`:
+    /// clan modifiers and the upgrades of this team's type).
     #[inline]
     pub fn classify_unit(unit: &UnitInfo) -> Self {
         Self::from_attack(unit.base_values.attack)
     }
 
-    /// `attack > 0` — боевой; `attack = 0` — небоевой.
+    /// `attack > 0` — combat; `attack = 0` — non-combat.
     #[inline]
     pub fn from_attack(attack: u16) -> Self {
         if attack > 0 {
@@ -189,7 +189,7 @@ impl CombatRole {
         }
     }
 
-    /// Боевой ли тип.
+    /// Whether the type is combat.
     #[inline]
     pub fn is_combat(self) -> bool {
         matches!(self, Self::Combat)
@@ -197,34 +197,34 @@ impl CombatRole {
 }
 
 // ---------------------------------------------------------------------------
-// Форма
+// Form
 // ---------------------------------------------------------------------------
 
-/// Форма юнита — ось `object-classifier.md` «Здание / Мобильный /
-/// Стационарный-прочий».
+/// Unit form — the `object-classifier.md` axis "Building / Mobile /
+/// Stationary-other".
 ///
-/// C++: `UNIT_TYPE_PROPERTIES` (`SC_UNITS`, `Units::LoadResource`), флаги
-/// `BUILDING` (`0x10`) и `STATIONARY` (`0x200`); турели — исключение
+/// C++: `UNIT_TYPE_PROPERTIES` (`SC_UNITS`, `Units::LoadResource`), the
+/// `BUILDING` (`0x10`) and `STATIONARY` (`0x200`) flags; turrets are the exception
 /// ([`TURRET_UNIT_TYPES`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mobility {
-    /// Здание: `BUILDING` установлен (2×2-структура) либо тип — турель.
+    /// Building: `BUILDING` is set (2×2 structure) or the type is a turret.
     Building,
-    /// Мобильный: `STATIONARY` снят (в т.ч. снаряды — так их видит и C++).
+    /// Mobile: `STATIONARY` is cleared (including projectiles — C++ sees them so too).
     Mobile,
-    /// Стационарный-прочий: `STATIONARY` без `BUILDING`, не турель.
+    /// Stationary-other: `STATIONARY` without `BUILDING`, not a turret.
     Stationary,
 }
 
 impl Mobility {
-    /// Классифицирует тип по флагам `SC_UNITS` и списку турелей.
+    /// Classifies a type by `SC_UNITS` flags and the turret list.
     #[inline]
     pub fn classify(unit_type: UnitType) -> Self {
         Self::classify_flags(unit_type, unit_type_flags(unit_type))
     }
 
-    /// Классифицирует экземпляр по флагам экземпляра (`unit.flags`), форма
-    /// типа — только ради списка турелей.
+    /// Classifies an instance by instance flags (`unit.flags`); the type form
+    /// is used only for the turret list.
     #[inline]
     pub fn classify_unit(unit: &UnitInfo) -> Self {
         Self::classify_flags(unit.unit_type, unit.flags)
@@ -242,49 +242,49 @@ impl Mobility {
 }
 
 // ---------------------------------------------------------------------------
-// Футпринт
+// Footprint
 // ---------------------------------------------------------------------------
 
-/// Футпринт (размер на карте) — ось `object-classifier.md` «Футпринт».
+/// Footprint (map size) — the `object-classifier.md` "Footprint" axis.
 ///
-/// **Лайаут, а не семантика:** ось читает ровно бит `BUILDING` (`0x10`,
-/// «2×2-структура»). Турели — [`Mobility::Building`] семантически, но у них
-/// флаг снят, поэтому [`Footprint::Single`]; инвариант
-/// [`Footprint::Quad`] `⟹` [`Mobility::Building`] (обратное неверно).
+/// **Layout, not semantics:** the axis reads exactly the `BUILDING` bit (`0x10`,
+/// "2×2 structure"). Turrets are [`Mobility::Building`] semantically, but their
+/// flag is cleared, hence [`Footprint::Single`]; the invariant
+/// [`Footprint::Quad`] `⟹` [`Mobility::Building`] holds (the converse does not).
 ///
-/// Стабильные теги сериализации — **явные** дискриминанты (порядок вариантов
-/// контрактом не является): `Single = 0`, `Quad = 1`.
+/// Stable serialization tags are **explicit** discriminants (variant order is
+/// not part of the contract): `Single = 0`, `Quad = 1`.
 ///
 /// C++: `BUILDING` (`enums.hpp`); `Hash_MapHash::Add/Remove` (`hash.cpp:188`,
-/// `hash.cpp:227`); габарит `(flags & BUILDING) ? 2 : 1` (`units_manager.cpp:2056`,
+/// `hash.cpp:227`); the size `(flags & BUILDING) ? 2 : 1` (`units_manager.cpp:2056`,
 /// `unitinfo.cpp:4086`, `task.cpp:314`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Footprint {
-    /// 1×1 — одна клетка карты (мобильные, турели, 1×1-структуры, эффекты).
+    /// 1×1 — one map cell (mobile units, turrets, 1×1 structures, effects).
     Single = 0,
-    /// 2×2 — четыре клетки карты (флаг `BUILDING`).
+    /// 2×2 — four map cells (the `BUILDING` flag).
     Quad = 1,
 }
 
 impl Footprint {
-    /// Футпринт типа юнита по флагам `SC_UNITS`.
+    /// Unit-type footprint by `SC_UNITS` flags.
     #[inline]
     pub fn classify(unit_type: UnitType) -> Self {
         Self::classify_flags(unit_type, unit_type_flags(unit_type))
     }
 
-    /// Футпринт экземпляра по **его** флагам (`unit.flags`): если у экземпляра
-    /// динамически снят `BUILDING`, он занимает 1×1.
+    /// Instance footprint by **its** flags (`unit.flags`): if the instance has
+    /// `BUILDING` dynamically cleared, it occupies 1×1.
     #[inline]
     pub fn classify_unit(unit: &UnitInfo) -> Self {
         Self::classify_flags(unit.unit_type, unit.flags)
     }
 
-    /// Футпринт по флагу `BUILDING` (`0x10`): установлен — 2×2, снят — 1×1.
+    /// Footprint by the `BUILDING` flag (`0x10`): set — 2×2, cleared — 1×1.
     ///
-    /// Инвариант `Quad ⟹ Mobility::Building` проверяется `debug_assert!`: флаг
-    /// `BUILDING` всегда даёт [`Mobility::Building`], обратное неверно (турель —
+    /// The `Quad ⟹ Mobility::Building` invariant is checked by `debug_assert!`: the
+    /// `BUILDING` flag always yields [`Mobility::Building`], the converse is false (a turret is
     /// `Building` + `Single`).
     #[inline]
     pub fn classify_flags(unit_type: UnitType, flags: u32) -> Self {
@@ -297,8 +297,8 @@ impl Footprint {
         footprint
     }
 
-    /// Футпринт по сырым флагам, когда тип неизвестен (лайаутные API: `MapHash`,
-    /// `Access_*` принимают `flags`). Единственное место оси, читающее бит.
+    /// Footprint by raw flags when the type is unknown (layout APIs: `MapHash`,
+    /// `Access_*` take `flags`). The only place in the axis that reads the bit.
     #[inline]
     pub fn from_flags(flags: u32) -> Self {
         if flags & BUILDING != 0 {
@@ -308,13 +308,13 @@ impl Footprint {
         }
     }
 
-    /// 2×2 ли футпринт.
+    /// Whether the footprint is 2×2.
     #[inline]
     pub fn is_quad(self) -> bool {
         matches!(self, Self::Quad)
     }
 
-    /// 1×1 ли футпринт.
+    /// Whether the footprint is 1×1.
     #[inline]
     pub fn is_single(self) -> bool {
         matches!(self, Self::Single)
@@ -322,38 +322,38 @@ impl Footprint {
 }
 
 // ---------------------------------------------------------------------------
-// Среда мобильного
+// Mobile environment
 // ---------------------------------------------------------------------------
 
-/// Среда мобильного юнита — ось `object-classifier.md` «Воздушный /
-/// Амфибийный / Наземный / Морской».
+/// Mobile unit environment — the `object-classifier.md` axis "Air /
+/// Amphibious / Ground / Sea".
 ///
 /// C++: `MOBILE_AIR_UNIT` (`0x40`), `MOBILE_SEA_UNIT` (`0x80`),
-/// `MOBILE_LAND_UNIT` (`0x100`) из `SC_UNITS`. `HOVERING` (`0x10000`) — **не
-/// среда**, а runtime-состояние полёта (`UnitInfo::Take`/`Land`), поэтому не
-/// участвует в классификации.
+/// `MOBILE_LAND_UNIT` (`0x100`) from `SC_UNITS`. `HOVERING` (`0x10000`) is **not an
+/// environment** but a runtime flight state (`UnitInfo::Take`/`Land`), so it does not
+/// participate in the classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Environment {
-    /// Воздушная: `MOBILE_AIR_UNIT`.
+    /// Air: `MOBILE_AIR_UNIT`.
     Air,
-    /// Наземно-морская: `MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`.
+    /// Land-sea: `MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`.
     Amphibious,
-    /// Наземная: `MOBILE_LAND_UNIT` без `MOBILE_SEA_UNIT`.
+    /// Ground: `MOBILE_LAND_UNIT` without `MOBILE_SEA_UNIT`.
     Ground,
-    /// Морская: `MOBILE_SEA_UNIT` без `MOBILE_LAND_UNIT`.
+    /// Sea: `MOBILE_SEA_UNIT` without `MOBILE_LAND_UNIT`.
     Sea,
 }
 
 impl Environment {
-    /// Среда типа юнита; `None` — флагов среды нет (стационарные здания,
-    /// а также снаряды/следы без `MOBILE_*`: `ROCKET`, `TORPEDO`, `ALNMISSL`,
+    /// Unit-type environment; `None` — no environment flags (stationary buildings,
+    /// as well as projectiles/trails without `MOBILE_*`: `ROCKET`, `TORPEDO`, `ALNMISSL`,
     /// `ALNTBALL`, `ALNABALL`, `RKTSMOKE`, `TRPBUBLE`).
     #[inline]
     pub fn classify(unit_type: UnitType) -> Option<Self> {
         Self::classify_flags(unit_type_flags(unit_type))
     }
 
-    /// Среда экземпляра по его флагам (`unit.flags`); `HOVERING` не влияет.
+    /// Instance environment by its flags (`unit.flags`); `HOVERING` has no effect.
     #[inline]
     pub fn classify_unit(unit: &UnitInfo) -> Option<Self> {
         Self::classify_flags(unit.flags)
@@ -379,38 +379,38 @@ impl Environment {
 }
 
 // ---------------------------------------------------------------------------
-// Груз
+// Cargo
 // ---------------------------------------------------------------------------
 
-/// Вид груза юнита — ось `object-classifier.md` «Cargo (тип)».
+/// Unit cargo kind — the `object-classifier.md` "Cargo (type)" axis.
 ///
 /// C++: `Unit::CargoType` (`unit.hpp`), `ResourceManager_GetUnit(type)
-/// .GetCargoType()`; взаимно исключающие группы `CARGO_TYPE_*`.
+/// .GetCargoType()`; mutually exclusive `CARGO_TYPE_*` groups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CargoKind {
-    /// Груза нет (`CARGO_TYPE_NONE`).
+    /// No cargo (`CARGO_TYPE_NONE`).
     None,
-    /// Ресурсный груз (`RAW`/`FUEL`/`GOLD`).
+    /// Resource cargo (`RAW`/`FUEL`/`GOLD`).
     Resource,
-    /// Юнитный груз (`LAND`/`SEA`/`AIR`) — транспорт/ангар/док.
+    /// Unit cargo (`LAND`/`SEA`/`AIR`) — transport/hangar/dock.
     Unit,
 }
 
 impl CargoKind {
-    /// Вид груза типа юнита по [`cargo_type_of`].
+    /// Unit-type cargo kind via [`cargo_type_of`].
     #[inline]
     pub fn classify(unit_type: UnitType) -> Self {
         Self::from_cargo_type(cargo_type_of(unit_type))
     }
 
-    /// Вид груза экземпляра: груз — свойство **типа**, флаги экземпляра его не
-    /// меняют.
+    /// Instance cargo kind: cargo is a **type** property, instance flags do not
+    /// change it.
     #[inline]
     pub fn classify_unit(unit: &UnitInfo) -> Self {
         Self::classify(unit.unit_type)
     }
 
-    /// Группирует `CARGO_TYPE_*` в три вида.
+    /// Groups `CARGO_TYPE_*` into three kinds.
     #[inline]
     pub fn from_cargo_type(cargo_type: CargoType) -> Self {
         match cargo_type {
@@ -422,48 +422,48 @@ impl CargoKind {
 }
 
 // ---------------------------------------------------------------------------
-// Вид объекта: юнит / не-юнит (Ф4)
+// Object kind: unit / non-unit (F4)
 // ---------------------------------------------------------------------------
 
-/// Вид объекта — семантическое отделение **юнитов** от **не-юнитов** (Ф4).
+/// Object kind — semantic separation of **units** from **non-units** (F4).
 ///
-/// Это **производная** ось, как [`Footprint`]: сам [`UnitType`] остаётся
-/// `ResourceID`-совместимым (`#[repr(u16)]`, 93 варианта, `0x00–0x5C`), потому
-/// что его дискриминанты индексируют таблицы `SC_UNITS`/`SC_ATTRI`, входят в
-/// CRC/replay-дайджест и в формат V70. Переклассификация — **без изменения
-/// поведения**: эффекты и декорации остаются объектами тех же `ResourceID` в
-/// мире, но больше не считаются «юнитами» в логическом классификаторе.
+/// This is a **derived** axis, like [`Footprint`]: [`UnitType`] itself remains
+/// `ResourceID`-compatible (`#[repr(u16)]`, 93 variants, `0x00–0x5C`), because
+/// its discriminants index the `SC_UNITS`/`SC_ATTRI` tables and enter the
+/// CRC/replay digest and the V70 format. Reclassification happens **without changing
+/// behavior**: effects and decorations remain objects of the same `ResourceID`s in
+/// the world, but are no longer considered "units" by the logical classifier.
 ///
-/// Стабильные теги сериализации — **явные** дискриминанты (порядок вариантов
-/// контрактом не является): `Unit = 0`, `Effect = 1`, `Decoration = 2`,
+/// Stable serialization tags are **explicit** discriminants (variant order is
+/// not part of the contract): `Unit = 0`, `Effect = 1`, `Decoration = 2`,
 /// `PlotProp = 3`.
 ///
-/// Источник: `object-classifier.md`, разделы «Юниты» и «Не-юниты».
+/// Source: `object-classifier.md`, sections "Units" and "Non-units".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ObjectKind {
-    /// Юнит: реальный юнит или здание (70 типов, `COMMTWR`..`ALNPLANE`).
+    /// Unit: a real unit or building (70 types, `COMMTWR`..`ALNPLANE`).
     Unit = 0,
-    /// Эффект: снаряд, взрыв, обломок, след ([`EFFECT_UNIT_TYPES`], 14).
+    /// Effect: projectile, explosion, rubble, trail ([`EFFECT_UNIT_TYPES`], 14).
     Effect = 1,
-    /// Декорация/стройплощадка ([`DECORATION_UNIT_TYPES`], 6).
+    /// Decoration/build site ([`DECORATION_UNIT_TYPES`], 6).
     Decoration = 2,
-    /// Сюжетная декорация: удалённые/скрытые объекты
+    /// Plot decoration: removed/hidden objects
     /// ([`PLOT_PROP_UNIT_TYPES`], 3).
     PlotProp = 3,
 }
 
 impl ObjectKind {
-    /// Вид типа объекта по [`UnitType::tag`] — тотальная биекция
-    /// `0x00–0x5C` (93 типа, без пропусков и дублей).
+    /// Object type kind via [`UnitType::tag`] — a total bijection
+    /// over `0x00–0x5C` (93 types, without gaps or duplicates).
     ///
-    /// Единственный источник — три списка исключений
+    /// The only source is the three exception lists
     /// ([`EFFECT_UNIT_TYPES`], [`DECORATION_UNIT_TYPES`],
-    /// [`PLOT_PROP_UNIT_TYPES`]); всё остальное — [`Self::Unit`]. Тотальность и
-    /// взаимоисключение проверяются тестами по [`UnitType::ALL`].
+    /// [`PLOT_PROP_UNIT_TYPES`]); everything else is [`Self::Unit`]. Totality and
+    /// mutual exclusivity are checked by tests over [`UnitType::ALL`].
     #[inline]
     pub fn classify(unit_type: UnitType) -> Self {
-        // Эффекты (14) — снаряды, взрывы, обломки, следы.
+        // Effects (14) — projectiles, explosions, rubble, trails.
         if EFFECT_UNIT_TYPES.contains(&unit_type) {
             Self::Effect
         } else if DECORATION_UNIT_TYPES.contains(&unit_type) {
@@ -475,25 +475,25 @@ impl ObjectKind {
         }
     }
 
-    /// Юнит ли вид.
+    /// Whether the kind is a unit.
     #[inline]
     pub fn is_unit(self) -> bool {
         matches!(self, Self::Unit)
     }
 
-    /// Эффект ли вид.
+    /// Whether the kind is an effect.
     #[inline]
     pub fn is_effect(self) -> bool {
         matches!(self, Self::Effect)
     }
 
-    /// Декорация ли вид.
+    /// Whether the kind is a decoration.
     #[inline]
     pub fn is_decoration(self) -> bool {
         matches!(self, Self::Decoration)
     }
 
-    /// Сюжетная декорация ли вид.
+    /// Whether the kind is a plot decoration.
     #[inline]
     pub fn is_plot_prop(self) -> bool {
         matches!(self, Self::PlotProp)
@@ -501,239 +501,239 @@ impl ObjectKind {
 }
 
 // ---------------------------------------------------------------------------
-// Классификация типа юнита (per-type)
+// Unit-type classification (per-type)
 // ---------------------------------------------------------------------------
 
-/// Приватный супертип-модуль sealed-типажа: реализовать [`Sealed`] (а значит и
-/// [`UnitTypeClassify`]) можно только внутри этого крейта.
+/// Private supertrait module of the sealed trait: [`Sealed`] (and thus
+/// [`UnitTypeClassify`]) can be implemented only inside this crate.
 mod sealed {
-    /// Маркер «свой» для `UnitType` (см. [`super::UnitTypeClassify`]).
+    /// "Own" marker for `UnitType` (see [`super::UnitTypeClassify`]).
     pub trait Sealed {}
 
     impl Sealed for max_types::enums::UnitType {}
 }
 
-/// Классификация [`UnitType`] — extension-типаж (правило сироты, Ф5.2).
+/// Classification of [`UnitType`] — an extension trait (orphan rule, F5.2).
 ///
-/// `UnitType` объявлен в нижнем слое (`max_types::enums`), а эти методы читают
-/// данные `max_core` (`UNIT_TYPE_PROPERTIES`, `BASE_UNIT_VALUES`, списки
+/// `UnitType` is declared in the lower layer (`max_types::enums`), and these methods read
+/// `max_core` data (`UNIT_TYPE_PROPERTIES`, `BASE_UNIT_VALUES`, the
 /// `TURRET_`/`PRODUCING_`/`EFFECT_`/`DECORATION_`/`PLOT_PROP_UNIT_TYPES`),
-/// поэтому они не могут остаться inherent-`impl` этого крейта.
+/// so they cannot remain an inherent `impl` of this crate.
 ///
-/// Типаж **sealed** ([`sealed::Sealed`] — приватный супертип): downstream
-/// крейты могут вызывать методы, но не могут реализовать типаж для своих типов.
+/// The trait is **sealed** ([`sealed::Sealed`] is a private supertrait): downstream
+/// crates may call the methods but cannot implement the trait for their own types.
 ///
-/// Импорт — **явный**, в месте вызова (`use max_core::UnitTypeClassify;`),
-/// никаких глоб-реэкспортов. `UnitType::tag()` остаётся inherent и едет с типом.
+/// The import is **explicit**, at the call site (`use max_core::UnitTypeClassify;`),
+/// no glob re-exports. `UnitType::tag()` remains inherent and travels with the type.
 //
-// `self` by value — как в прежних inherent-методах `UnitType` (тип `Copy`,
-// передача по значению бесплатна и сохраняет call-sites без изменений). Clippy
-// предупреждает о `is_*`/`self` только для trait-методов, где `Copy` реализатора
-// неизвестен; здесь это осознанное исключение, а не нарушение стиля.
+// `self` by value — as in the former `UnitType` inherent methods (`Copy` type,
+// pass by value is free and keeps call sites unchanged). Clippy
+// warns about `is_*`/`self` only for trait methods where the implementor's `Copy`
+// is unknown; here it is an intentional exception, not a style violation.
 #[allow(clippy::wrong_self_convention)]
 pub trait UnitTypeClassify: sealed::Sealed {
-    /// Боевая роль типа ([`CombatRole::classify`]).
+    /// Type combat role ([`CombatRole::classify`]).
     fn combat_role(self) -> CombatRole;
 
-    /// Форма типа ([`Mobility::classify`]).
+    /// Type form ([`Mobility::classify`]).
     fn mobility(self) -> Mobility;
 
-    /// Футпринт типа ([`Footprint::classify`]): 1×1 или 2×2.
+    /// Type footprint ([`Footprint::classify`]): 1×1 or 2×2.
     fn footprint(self) -> Footprint;
 
-    /// Занимает ли тип 2×2 (`BUILDING`). Лайаут, см. [`Footprint`].
+    /// Whether the type occupies 2×2 (`BUILDING`). Layout, see [`Footprint`].
     fn is_quad(self) -> bool;
 
-    /// Среда типа ([`Environment::classify`]).
+    /// Type environment ([`Environment::classify`]).
     fn environment(self) -> Option<Environment>;
 
-    /// Вид груза типа ([`CargoKind::classify`]).
+    /// Type cargo kind ([`CargoKind::classify`]).
     fn cargo_kind(self) -> CargoKind;
 
-    /// Вид объекта типа ([`ObjectKind::classify`]): юнит / эффект / декорация /
-    /// сюжетная декорация. `UnitType` при этом не меняется (Ф4).
+    /// Type object kind ([`ObjectKind::classify`]): unit / effect / decoration /
+    /// plot decoration. `UnitType` does not change (F4).
     fn object_kind(self) -> ObjectKind;
 
-    /// Реальный юнит или здание (`ObjectKind::Unit`, 70 типов).
+    /// A real unit or building (`ObjectKind::Unit`, 70 types).
     fn is_unit(self) -> bool;
 
-    /// Эффект (`ObjectKind::Effect`): снаряд, взрыв, обломок, след (14).
+    /// Effect (`ObjectKind::Effect`): projectile, explosion, rubble, trail (14).
     fn is_effect(self) -> bool;
 
-    /// Декорация/стройплощадка (`ObjectKind::Decoration`, 6).
+    /// Decoration/build site (`ObjectKind::Decoration`, 6).
     fn is_decoration(self) -> bool;
 
-    /// Сюжетная декорация (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
+    /// Plot decoration (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
     /// `WALDO`.
     fn is_plot_prop(self) -> bool;
 
-    /// Производящий ли тип (`Cargo_GetNetProduction`, [`PRODUCING_UNIT_TYPES`]).
+    /// Whether the type is producing (`Cargo_GetNetProduction`, [`PRODUCING_UNIT_TYPES`]).
     fn is_producing(self) -> bool;
 
-    /// Воздушная среда (`MOBILE_AIR_UNIT`) — [`Environment::Air`].
+    /// Air environment (`MOBILE_AIR_UNIT`) — [`Environment::Air`].
     fn is_air(self) -> bool;
 
-    /// Наземная среда (`MOBILE_LAND_UNIT` без `MOBILE_SEA_UNIT`) —
+    /// Ground environment (`MOBILE_LAND_UNIT` without `MOBILE_SEA_UNIT`) —
     /// [`Environment::Ground`].
     fn is_ground(self) -> bool;
 
-    /// Морская среда (`MOBILE_SEA_UNIT` без `MOBILE_LAND_UNIT`) —
+    /// Sea environment (`MOBILE_SEA_UNIT` without `MOBILE_LAND_UNIT`) —
     /// [`Environment::Sea`].
     fn is_sea(self) -> bool;
 
-    /// Наземно-морская среда (`MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`) —
+    /// Land-sea environment (`MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`) —
     /// [`Environment::Amphibious`].
     fn is_amphibious(self) -> bool;
 
-    /// Мобильный (`STATIONARY` снят) — [`Mobility::Mobile`].
+    /// Mobile (`STATIONARY` cleared) — [`Mobility::Mobile`].
     fn is_mobile(self) -> bool;
 
-    /// Здание — [`Mobility::Building`] (`BUILDING` либо турель).
+    /// Building — [`Mobility::Building`] (`BUILDING` or a turret).
     ///
-    /// **Не эквивалент бита `BUILDING`**: турели — здания по решению
-    /// владельца, хотя флаг `BUILDING` (`0x10`, «2×2-структура») у них снят.
-    /// Там, где проверяется именно раскладка 2×2, используется [`Footprint`]
+    /// **Not equivalent to the `BUILDING` bit**: turrets are buildings by the owner's
+    /// decision, although their `BUILDING` flag (`0x10`, "2×2 structure") is cleared.
+    /// Where the 2×2 layout specifically is checked, [`Footprint`] is used
     /// ([`is_quad()`](Self::is_quad)).
     fn is_building(self) -> bool;
 
-    /// Стационарный-прочий ([`Mobility::Stationary`]): `STATIONARY` без
-    /// `BUILDING`, не турель.
+    /// Stationary-other ([`Mobility::Stationary`]): `STATIONARY` without
+    /// `BUILDING`, not a turret.
     ///
-    /// Не путать с «неподвижным вообще» (здание или стационарный-прочий): для
-    /// этого — `!is_mobile()`, что эквивалентно биту `STATIONARY`.
+    /// Not to be confused with "immobile in general" (building or stationary-other): for
+    /// that use `!is_mobile()`, which is equivalent to the `STATIONARY` bit.
     fn is_stationary(self) -> bool;
 
-    /// Боевой ([`CombatRole::Combat`]): `attack > 0`.
+    /// Combat ([`CombatRole::Combat`]): `attack > 0`.
     fn is_combat(self) -> bool;
 }
 
 impl UnitTypeClassify for UnitType {
-    /// Боевая роль типа — [`CombatRole::classify`].
+    /// Type combat role — [`CombatRole::classify`].
     #[inline]
     fn combat_role(self) -> CombatRole {
         CombatRole::classify(self)
     }
 
-    /// Форма типа — [`Mobility::classify`].
+    /// Type form — [`Mobility::classify`].
     #[inline]
     fn mobility(self) -> Mobility {
         Mobility::classify(self)
     }
 
-    /// Футпринт типа — [`Footprint::classify`].
+    /// Type footprint — [`Footprint::classify`].
     #[inline]
     fn footprint(self) -> Footprint {
         Footprint::classify(self)
     }
 
-    /// Занимает ли тип 2×2 (`BUILDING`).
+    /// Whether the type occupies 2×2 (`BUILDING`).
     #[inline]
     fn is_quad(self) -> bool {
         self.footprint().is_quad()
     }
 
-    /// Среда типа — [`Environment::classify`].
+    /// Type environment — [`Environment::classify`].
     #[inline]
     fn environment(self) -> Option<Environment> {
         Environment::classify(self)
     }
 
-    /// Вид груза типа — [`CargoKind::classify`].
+    /// Type cargo kind — [`CargoKind::classify`].
     #[inline]
     fn cargo_kind(self) -> CargoKind {
         CargoKind::classify(self)
     }
 
-    /// Вид объекта типа — [`ObjectKind::classify`].
+    /// Type object kind — [`ObjectKind::classify`].
     #[inline]
     fn object_kind(self) -> ObjectKind {
         ObjectKind::classify(self)
     }
 
-    /// Реальный юнит или здание (`ObjectKind::Unit`, 70 типов).
+    /// A real unit or building (`ObjectKind::Unit`, 70 types).
     #[inline]
     fn is_unit(self) -> bool {
         self.object_kind() == ObjectKind::Unit
     }
 
-    /// Эффект (`ObjectKind::Effect`): снаряд, взрыв, обломок, след (14).
+    /// Effect (`ObjectKind::Effect`): projectile, explosion, rubble, trail (14).
     #[inline]
     fn is_effect(self) -> bool {
         self.object_kind() == ObjectKind::Effect
     }
 
-    /// Декорация/стройплощадка (`ObjectKind::Decoration`, 6).
+    /// Decoration/build site (`ObjectKind::Decoration`, 6).
     #[inline]
     fn is_decoration(self) -> bool {
         self.object_kind() == ObjectKind::Decoration
     }
 
-    /// Сюжетная декорация (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
+    /// Plot decoration (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
     /// `WALDO`.
     #[inline]
     fn is_plot_prop(self) -> bool {
         self.object_kind() == ObjectKind::PlotProp
     }
 
-    /// Производящий ли тип (`Cargo_GetNetProduction`).
+    /// Whether the type is producing (`Cargo_GetNetProduction`).
     #[inline]
     fn is_producing(self) -> bool {
         PRODUCING_UNIT_TYPES.contains(&self)
     }
 
-    /// Воздушная среда — [`Environment::Air`].
+    /// Air environment — [`Environment::Air`].
     ///
-    /// Точный эквивалент проверки бита `flags & MOBILE_AIR_UNIT != 0`:
-    /// `Environment::classify_flags` ставит `Air` первым и только по этому
-    /// биту, поэтому других источников `Environment::Air` нет.
+    /// An exact equivalent of the `flags & MOBILE_AIR_UNIT != 0` check:
+    /// `Environment::classify_flags` sets `Air` first and only by this
+    /// bit, so there are no other sources of `Environment::Air`.
     #[inline]
     fn is_air(self) -> bool {
         self.environment() == Some(Environment::Air)
     }
 
-    /// Наземная среда — [`Environment::Ground`].
+    /// Ground environment — [`Environment::Ground`].
     ///
-    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_LAND_UNIT`
-    /// (включая амфибии) условие — `is_ground() || is_amphibious()`.
+    /// Amphibious types do **not** fall here: for the `MOBILE_LAND_UNIT` bit
+    /// (including amphibians) the condition is `is_ground() || is_amphibious()`.
     #[inline]
     fn is_ground(self) -> bool {
         self.environment() == Some(Environment::Ground)
     }
 
-    /// Морская среда — [`Environment::Sea`].
+    /// Sea environment — [`Environment::Sea`].
     ///
-    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_SEA_UNIT`
-    /// (включая амфибии) условие — `is_sea() || is_amphibious()`.
+    /// Amphibious types do **not** fall here: for the `MOBILE_SEA_UNIT` bit
+    /// (including amphibians) the condition is `is_sea() || is_amphibious()`.
     #[inline]
     fn is_sea(self) -> bool {
         self.environment() == Some(Environment::Sea)
     }
 
-    /// Наземно-морская среда — [`Environment::Amphibious`].
+    /// Land-sea environment — [`Environment::Amphibious`].
     #[inline]
     fn is_amphibious(self) -> bool {
         self.environment() == Some(Environment::Amphibious)
     }
 
-    /// Мобильный (`STATIONARY` снят) — [`Mobility::Mobile`].
+    /// Mobile (`STATIONARY` cleared) — [`Mobility::Mobile`].
     #[inline]
     fn is_mobile(self) -> bool {
         self.mobility() == Mobility::Mobile
     }
 
-    /// Здание — [`Mobility::Building`] (`BUILDING` либо турель).
+    /// Building — [`Mobility::Building`] (`BUILDING` or a turret).
     #[inline]
     fn is_building(self) -> bool {
         self.mobility() == Mobility::Building
     }
 
-    /// Стационарный-прочий — [`Mobility::Stationary`].
+    /// Stationary-other — [`Mobility::Stationary`].
     #[inline]
     fn is_stationary(self) -> bool {
         self.mobility() == Mobility::Stationary
     }
 
-    /// Боевой — [`CombatRole::Combat`] (`attack > 0`).
+    /// Combat — [`CombatRole::Combat`] (`attack > 0`).
     #[inline]
     fn is_combat(self) -> bool {
         self.combat_role().is_combat()
@@ -741,95 +741,95 @@ impl UnitTypeClassify for UnitType {
 }
 
 // ---------------------------------------------------------------------------
-// Классификация экземпляра (per-instance)
+// Instance classification (per-instance)
 // ---------------------------------------------------------------------------
 
 impl UnitInfo {
-    /// Боевая роль экземпляра по его `base_values` ([`CombatRole::classify_unit`]).
+    /// Instance combat role by its `base_values` ([`CombatRole::classify_unit`]).
     #[inline]
     pub fn combat_role(&self) -> CombatRole {
         CombatRole::classify_unit(self)
     }
 
-    /// Форма экземпляра по его флагам ([`Mobility::classify_unit`]).
+    /// Instance form by its flags ([`Mobility::classify_unit`]).
     #[inline]
     pub fn mobility(&self) -> Mobility {
         Mobility::classify_unit(self)
     }
 
-    /// Футпринт экземпляра по его флагам ([`Footprint::classify_unit`]).
+    /// Instance footprint by its flags ([`Footprint::classify_unit`]).
     #[inline]
     pub fn footprint(&self) -> Footprint {
         Footprint::classify_unit(self)
     }
 
-    /// Занимает ли экземпляр 2×2 (`BUILDING` в его флагах).
+    /// Whether the instance occupies 2×2 (`BUILDING` in its flags).
     #[inline]
     pub fn is_quad(&self) -> bool {
         self.footprint().is_quad()
     }
 
-    /// Среда экземпляра по его флагам ([`Environment::classify_unit`]).
+    /// Instance environment by its flags ([`Environment::classify_unit`]).
     #[inline]
     pub fn environment(&self) -> Option<Environment> {
         Environment::classify_unit(self)
     }
 
-    /// Вид груза экземпляра ([`CargoKind::classify_unit`]).
+    /// Instance cargo kind ([`CargoKind::classify_unit`]).
     #[inline]
     pub fn cargo_kind(&self) -> CargoKind {
         CargoKind::classify_unit(self)
     }
 
-    /// Производящий ли экземпляр (свойство типа).
+    /// Whether the instance is producing (a type property).
     #[inline]
     pub fn is_producing(&self) -> bool {
         self.unit_type.is_producing()
     }
 
-    /// Воздушная среда экземпляра по его флагам — [`UnitType::is_air`].
+    /// Instance air environment by its flags — [`UnitType::is_air`].
     #[inline]
     pub fn is_air(&self) -> bool {
         self.environment() == Some(Environment::Air)
     }
 
-    /// Наземная среда экземпляра по его флагам — [`UnitType::is_ground`].
+    /// Instance ground environment by its flags — [`UnitType::is_ground`].
     #[inline]
     pub fn is_ground(&self) -> bool {
         self.environment() == Some(Environment::Ground)
     }
 
-    /// Морская среда экземпляра по его флагам — [`UnitType::is_sea`].
+    /// Instance sea environment by its flags — [`UnitType::is_sea`].
     #[inline]
     pub fn is_sea(&self) -> bool {
         self.environment() == Some(Environment::Sea)
     }
 
-    /// Наземно-морская среда экземпляра — [`UnitType::is_amphibious`].
+    /// Instance land-sea environment — [`UnitType::is_amphibious`].
     #[inline]
     pub fn is_amphibious(&self) -> bool {
         self.environment() == Some(Environment::Amphibious)
     }
 
-    /// Мобильный ли экземпляр (`STATIONARY` снят) — [`UnitType::is_mobile`].
+    /// Whether the instance is mobile (`STATIONARY` cleared) — [`UnitType::is_mobile`].
     #[inline]
     pub fn is_mobile(&self) -> bool {
         self.mobility() == Mobility::Mobile
     }
 
-    /// Здание ли экземпляр — [`UnitType::is_building`] (турели — здания).
+    /// Whether the instance is a building — [`UnitType::is_building`] (turrets are buildings).
     #[inline]
     pub fn is_building(&self) -> bool {
         self.mobility() == Mobility::Building
     }
 
-    /// Стационарный-прочий ли экземпляр — [`UnitType::is_stationary`].
+    /// Whether the instance is stationary-other — [`UnitType::is_stationary`].
     #[inline]
     pub fn is_stationary(&self) -> bool {
         self.mobility() == Mobility::Stationary
     }
 
-    /// Боевой ли экземпляр (по его `base_values`) — [`UnitType::is_combat`].
+    /// Whether the instance is combat (by its `base_values`) — [`UnitType::is_combat`].
     #[inline]
     pub fn is_combat(&self) -> bool {
         self.combat_role().is_combat()
@@ -837,7 +837,7 @@ impl UnitInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Тесты: исчерпывающая сверка 93 типов с прямыми проверками флагов/атрибутов
+// Tests: exhaustive verification of the 93 types against direct flag/attribute checks
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -848,17 +848,17 @@ mod tests {
     use crate::team::TeamId;
     use crate::unit::UnitId;
 
-    /// Прямая проверка бита флага `SC_UNITS` — независимо от классификатора.
+    /// Direct `SC_UNITS` flag-bit check — independent of the classifier.
     fn has_flag(unit_type: UnitType, mask: u32) -> bool {
         UNIT_TYPE_PROPERTIES[unit_type as usize].flags & mask != 0
     }
 
-    /// Прямая проверка атрибута `SC_ATTRI`.
+    /// Direct `SC_ATTRI` attribute check.
     fn base_attack(unit_type: UnitType) -> u16 {
         base_unit_values(unit_type).attack
     }
 
-    /// Ожидаемая форма по флагам и списку турелей (из `object-classifier.md`).
+    /// Expected form by flags and the turret list (from `object-classifier.md`).
     fn expected_mobility(unit_type: UnitType) -> Mobility {
         let is_building = has_flag(unit_type, BUILDING)
             || matches!(
@@ -878,7 +878,7 @@ mod tests {
         }
     }
 
-    /// Ожидаемый футпринт по флагу `BUILDING` (`object-classifier.md`).
+    /// Expected footprint by the `BUILDING` flag (`object-classifier.md`).
     fn expected_footprint(unit_type: UnitType) -> Footprint {
         if has_flag(unit_type, BUILDING) {
             Footprint::Quad
@@ -887,7 +887,7 @@ mod tests {
         }
     }
 
-    /// Ожидаемая среда по флагам (`MOBILE_*`).
+    /// Expected environment by flags (`MOBILE_*`).
     fn expected_environment(unit_type: UnitType) -> Option<Environment> {
         let air = has_flag(unit_type, MOBILE_AIR_UNIT);
         let sea = has_flag(unit_type, MOBILE_SEA_UNIT);
@@ -937,7 +937,7 @@ mod tests {
             }
         }
 
-        // 25 боевых типов в `SC_ATTRI` (турели, мины, мобильная техника).
+        // 25 combat types in `SC_ATTRI` (turrets, mines, mobile vehicles).
         assert_eq!(combat, 25);
     }
 
@@ -956,7 +956,7 @@ mod tests {
             );
             assert_eq!(unit_type.mobility(), expected, "{unit_type:?}");
 
-            // Инвариант данных: `BUILDING ⟹ STATIONARY` (`object-classifier.md`).
+            // Data invariant: `BUILDING ⟹ STATIONARY` (`object-classifier.md`).
             if has_flag(unit_type, BUILDING) {
                 assert!(
                     has_flag(unit_type, STATIONARY),
@@ -973,8 +973,8 @@ mod tests {
 
         assert_eq!((building, stationary, mobile), (26, 24, 43));
 
-        // Турели: флаг `BUILDING` снят, поэтому зданиями их делает только
-        // семантическое исключение (решение владельца).
+        // Turrets: the `BUILDING` flag is cleared, so only the semantic
+        // exception (the owner's decision) makes them buildings.
         for &turret in &TURRET_UNIT_TYPES {
             assert!(!has_flag(turret, BUILDING), "{turret:?}");
             assert!(has_flag(turret, STATIONARY), "{turret:?}");
@@ -1012,10 +1012,10 @@ mod tests {
             }
         }
 
-        // 26 зданий по `Mobility`, из них у 4 турелей `BUILDING` снят: 22 + 71.
+        // 26 buildings by `Mobility`, of which 4 turrets have `BUILDING` cleared: 22 + 71.
         assert_eq!((quad, single), (22, 71));
 
-        // Стабильные теги сериализации — явные дискриминанты, не порядок.
+        // Stable serialization tags — explicit discriminants, not order.
         assert_eq!(Footprint::Single as u8, 0);
         assert_eq!(Footprint::Quad as u8, 1);
     }
@@ -1032,7 +1032,7 @@ mod tests {
             }
         }
 
-        // Обратное неверно: турели — `Building`, но `Single`.
+        // The converse is false: turrets are `Building` but `Single`.
         assert!(TURRET_UNIT_TYPES.iter().any(|turret| turret.is_building()));
     }
 
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn footprint_control_cases_for_decorations() {
-        // 2×2-декорации несут `BUILDING` (`SC_UNITS`) — это `Quad`.
+        // 2×2 decorations carry `BUILDING` (`SC_UNITS`) — they are `Quad`.
         for decoration in [
             UnitType::LargeRubble,
             UnitType::LargeTape,
@@ -1072,7 +1072,7 @@ mod tests {
             assert!(decoration.is_quad(), "{decoration:?}");
         }
 
-        // 1×1-декорации — `Single`.
+        // 1×1 decorations — `Single`.
         for decoration in [
             UnitType::SmallRubble,
             UnitType::SmallTape,
@@ -1088,7 +1088,7 @@ mod tests {
             assert!(decoration.footprint().is_single(), "{decoration:?}");
         }
 
-        // Экземпляр: футпринт — по флагам экземпляра.
+        // Instance: footprint by instance flags.
         let mut mine = UnitInfo::new(UnitType::MiningStation, TeamId::RED, UnitId::NO_ID);
         mine.flags = unit_type_flags(UnitType::MiningStation);
         assert!(mine.is_quad());
@@ -1114,15 +1114,15 @@ mod tests {
 
             let air = has_flag(unit_type, MOBILE_AIR_UNIT);
             if air {
-                // Воздух не совмещается с наземно-морскими флагами — иначе
-                // приоритет `Air` скрывал бы амфибию.
+                // Air does not combine with land-sea flags — otherwise
+                // the `Air` priority would hide an amphibian.
                 assert!(
                     !has_flag(unit_type, MOBILE_SEA_UNIT | MOBILE_LAND_UNIT),
                     "{unit_type:?}: MOBILE_AIR_UNIT вместе с SEA/LAND"
                 );
             }
 
-            // Среда определена только у мобильных типов.
+            // The environment is defined only for mobile types.
             if expected.is_some() {
                 assert_eq!(
                     Mobility::classify(unit_type),
@@ -1140,10 +1140,10 @@ mod tests {
             }] += 1;
         }
 
-        // Air=5, Amphibious=5, Ground=17, Sea=9, без среды=57.
+        // Air=5, Amphibious=5, Ground=17, Sea=9, no environment=57.
         assert_eq!(counts, [57, 5, 5, 17, 9]);
 
-        // Снаряды и следы — мобильные по флагу, но среды у них нет.
+        // Projectiles and trails are mobile by flag, but have no environment.
         for projectile in [
             UnitType::Rocket,
             UnitType::Torpedo,
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[test]
     fn producing_matches_cargo_get_net_production_for_all_93_types() {
-        // Независимый перечень — ровно ветки `Cargo_GetNetProduction`
+        // An independent list — exactly the `Cargo_GetNetProduction` branches
         // (`cargo.cpp:70`).
         let expected: [UnitType; 12] = [
             UnitType::Shipyard,
@@ -1190,7 +1190,7 @@ mod tests {
 
             if is_producing {
                 producing += 1;
-                // Производящие здания небоевые (`object-classifier.md`).
+                // Producing buildings are non-combat (`object-classifier.md`).
                 assert_eq!(
                     CombatRole::classify(unit_type),
                     CombatRole::NonCombat,
@@ -1201,15 +1201,15 @@ mod tests {
         assert_eq!(producing, 12);
         assert_eq!(PRODUCING_UNIT_TYPES.len(), 12);
 
-        // `BARRACKS`/`SUPRTPLT` не производящие: их нет в
-        // `Cargo_GetNetProduction` (ремонт/alien-здание).
+        // `BARRACKS`/`SUPRTPLT` are not producing: they are absent from
+        // `Cargo_GetNetProduction` (repair/alien building).
         assert!(!UnitType::Barracks.is_producing());
         assert!(!UnitType::SupportPlant.is_producing());
     }
 
     #[test]
     fn cargo_kind_matches_cargo_type_for_all_93_types() {
-        // Независимые перечни по группам `CARGO_TYPE_*` (`unit.hpp`).
+        // Independent lists by `CARGO_TYPE_*` groups (`unit.hpp`).
         let resource: [UnitType; 14] = [
             UnitType::MaterialStorage,
             UnitType::MiningStation,
@@ -1265,7 +1265,7 @@ mod tests {
         // None=71, Resource=14, Unit=8.
         assert_eq!(counts, [71, 14, 8]);
 
-        // Группировка `CARGO_TYPE_*` — все 7 значений C++.
+        // Grouping of `CARGO_TYPE_*` — all 7 C++ values.
         assert_eq!(CargoKind::from_cargo_type(CargoType::None), CargoKind::None);
         for cargo_type in [CargoType::Raw, CargoType::Fuel, CargoType::Gold] {
             assert_eq!(
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test]
     fn documented_control_cases() {
-        // Scout — амфибийный боевой.
+        // Scout — amphibious combat.
         assert_eq!(Mobility::classify(UnitType::Scout), Mobility::Mobile);
         assert_eq!(
             Environment::classify(UnitType::Scout),
@@ -1293,14 +1293,14 @@ mod tests {
         );
         assert_eq!(CombatRole::classify(UnitType::Scout), CombatRole::Combat);
 
-        // Awac — воздушный небоевой.
+        // Awac — air non-combat.
         assert_eq!(
             Environment::classify(UnitType::Awac),
             Some(Environment::Air)
         );
         assert_eq!(CombatRole::classify(UnitType::Awac), CombatRole::NonCombat);
 
-        // GunTurret — здание по решению владельца, хотя `BUILDING` снят.
+        // GunTurret — a building by the owner's decision, although `BUILDING` is cleared.
         assert!(!has_flag(UnitType::GunTurret, BUILDING));
         assert_eq!(Mobility::classify(UnitType::GunTurret), Mobility::Building);
         assert_eq!(
@@ -1308,11 +1308,11 @@ mod tests {
             CombatRole::Combat
         );
 
-        // LandMine — стационарный боевой юнит (не здание).
+        // LandMine — a stationary combat unit (not a building).
         assert_eq!(Mobility::classify(UnitType::LandMine), Mobility::Stationary);
         assert_eq!(CombatRole::classify(UnitType::LandMine), CombatRole::Combat);
 
-        // Производство: очиститель золота — да, казармы — нет.
+        // Production: the gold refinery — yes, the barracks — no.
         assert!(UnitType::GoldRefinery.is_producing());
         assert!(!UnitType::Barracks.is_producing());
     }
@@ -1333,24 +1333,24 @@ mod tests {
 
     #[test]
     fn instance_classification_follows_instance_flags() {
-        // Наземный танк.
+        // A ground tank.
         let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId::NO_ID);
         tank.flags = unit_type_flags(UnitType::Tank);
         assert_eq!(tank.mobility(), Mobility::Mobile);
         assert_eq!(tank.environment(), Some(Environment::Ground));
 
-        // Runtime: воздушные флаги вместо наземных — экземпляр классифицируется
-        // по своим флагам, таблица типа не участвует.
+        // Runtime: air flags instead of ground ones — the instance is classified
+        // by its own flags, the type table does not participate.
         tank.flags = (tank.flags & !(MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) | MOBILE_AIR_UNIT;
         assert_eq!(tank.mobility(), Mobility::Mobile);
         assert_eq!(tank.environment(), Some(Environment::Air));
 
-        // `HOVERING` — состояние полёта, а не среда.
+        // `HOVERING` is a flight state, not an environment.
         tank.flags |= HOVERING;
         assert_eq!(tank.environment(), Some(Environment::Air));
 
-        // У здания динамически сняты `BUILDING`/`STATIONARY` — экземпляр
-        // «мобильный», хотя тип остаётся зданием.
+        // The building has `BUILDING`/`STATIONARY` dynamically cleared — the instance is
+        // "mobile", although the type remains a building.
         let mut barracks = UnitInfo::new(UnitType::Barracks, TeamId::RED, UnitId::NO_ID);
         barracks.flags = unit_type_flags(UnitType::Barracks);
         assert_eq!(barracks.mobility(), Mobility::Building);
@@ -1359,14 +1359,14 @@ mod tests {
         assert_eq!(barracks.environment(), None);
         assert_eq!(Mobility::classify(UnitType::Barracks), Mobility::Building);
 
-        // Боевая роль экземпляра — по его `base_values` (апгрейды/клан).
+        // Instance combat role — by its `base_values` (upgrades/clan).
         let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId::NO_ID);
         assert_eq!(tank.combat_role(), CombatRole::Combat);
         tank.base_values.attack = 0;
         assert_eq!(tank.combat_role(), CombatRole::NonCombat);
         assert_eq!(CombatRole::classify(UnitType::Tank), CombatRole::Combat);
 
-        // Производство и груз — свойства типа, флаги экземпляра их не меняют.
+        // Production and cargo are type properties; instance flags do not change them.
         let mut refinery = UnitInfo::new(UnitType::GoldRefinery, TeamId::RED, UnitId::NO_ID);
         refinery.flags = 0;
         assert!(refinery.is_producing());
@@ -1404,7 +1404,7 @@ mod tests {
                 unit_type.combat_role() == CombatRole::Combat
             );
 
-            // Среды взаимоисключающие: одновременно не более одной.
+            // Environments are mutually exclusive: at most one at a time.
             let flags = [
                 unit_type.is_air(),
                 unit_type.is_ground(),
@@ -1434,8 +1434,8 @@ mod tests {
         assert_eq!(environment_counts, [5, 17, 9, 5]);
         assert_eq!(mobile, 43);
 
-        // Бит `STATIONARY` эквивалентен `!is_mobile()`, если соблюдён
-        // инвариант `BUILDING ⟹ STATIONARY`.
+        // The `STATIONARY` bit is equivalent to `!is_mobile()` if the
+        // invariant `BUILDING ⟹ STATIONARY` holds.
         for &unit_type in UnitType::ALL {
             assert_eq!(
                 !unit_type.is_mobile(),
@@ -1444,8 +1444,8 @@ mod tests {
             );
         }
 
-        // Турель — здание по решению владельца, но бит `BUILDING` у неё снят:
-        // это разные вопросы (`is_building()` ≠ `flags & BUILDING`).
+        // A turret is a building by the owner's decision, but its `BUILDING` bit is cleared:
+        // these are different questions (`is_building()` ≠ `flags & BUILDING`).
         assert!(UnitType::GunTurret.is_building());
         assert!(!has_flag(UnitType::GunTurret, BUILDING));
     }
@@ -1460,8 +1460,8 @@ mod tests {
         assert!(!tank.is_building());
         assert!(tank.is_combat());
 
-        // Снятые `STATIONARY`/`BUILDING` у экземпляра здания — экземпляр
-        // мобильный, тип остаётся зданием.
+        // Cleared `STATIONARY`/`BUILDING` on a building instance — the instance is
+        // mobile, the type remains a building.
         let mut barracks = UnitInfo::new(UnitType::Barracks, TeamId::RED, UnitId::NO_ID);
         barracks.flags = unit_type_flags(UnitType::Barracks);
         assert!(barracks.is_building());
@@ -1470,31 +1470,31 @@ mod tests {
         assert!(!barracks.is_building());
         assert!(barracks.is_mobile());
 
-        // Воздушные флаги вместо наземных — экземпляр «воздушный».
+        // Air flags instead of ground ones — the instance is "air".
         tank.flags = (tank.flags & !(MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)) | MOBILE_AIR_UNIT;
         assert!(tank.is_air());
         assert!(!tank.is_ground());
     }
 
     // -----------------------------------------------------------------------
-    // Вид объекта (Ф4): юнит / эффект / декорация / сюжетная декорация
+    // Object kind (F4): unit / effect / decoration / plot decoration
     // -----------------------------------------------------------------------
 
-    /// Токены эффектов — дословно из `object-classifier.md`, «Не-юниты».
+    /// Effect tokens — verbatim from `object-classifier.md`, "Non-units".
     const EFFECT_TOKENS: [&str; 14] = [
         "ROCKET", "TORPEDO", "ALNMISSL", "ALNTBALL", "ALNABALL", "LNDEXPLD", "AIREXPLD",
         "SEAEXPLD", "BLDEXPLD", "HITEXPLD", "LRGRUBLE", "SMLRUBLE", "RKTSMOKE", "TRPBUBLE",
     ];
 
-    /// Токены декораций — дословно из `object-classifier.md`, «Не-юниты».
+    /// Decoration tokens — verbatim from `object-classifier.md`, "Non-units".
     const DECORATION_TOKENS: [&str; 6] = [
         "LRGTAPE", "SMLTAPE", "LRGSLAB", "SMLSLAB", "LRGCONES", "SMLCONES",
     ];
 
-    /// Токены сюжетных декораций — дословно из `object-classifier.md`.
+    /// Plot decoration tokens — verbatim from `object-classifier.md`.
     const PLOT_PROP_TOKENS: [&str; 3] = ["MASTER", "HARVSTER", "WALDO"];
 
-    /// Независимый оракул: ожидаемый вид — по ресурсному токену [`UnitType::tag`].
+    /// Independent oracle: the expected kind by resource token [`UnitType::tag`].
     fn expected_object_kind(unit_type: UnitType) -> ObjectKind {
         let tag = unit_type.tag();
 
@@ -1530,13 +1530,13 @@ mod tests {
             counts[actual as usize] += 1;
         }
 
-        // 70 юнитов + 14 эффектов + 6 декораций + 3 сюжетных = 93 (тотальная
-        // биекция, нет пропусков и дублей).
+        // 70 units + 14 effects + 6 decorations + 3 plot props = 93 (a total
+        // bijection, no gaps or duplicates).
         assert_eq!(counts, [70, 14, 6, 3]);
         assert_eq!(counts.iter().sum::<usize>(), UnitType::ALL.len());
         assert_eq!(counts.iter().sum::<usize>(), 93);
 
-        // Списки исключений — без дублей и ровно объявленной длины.
+        // Exception lists — without duplicates and exactly the declared length.
         assert_eq!(EFFECT_UNIT_TYPES.len(), 14);
         assert_eq!(DECORATION_UNIT_TYPES.len(), 6);
         assert_eq!(PLOT_PROP_UNIT_TYPES.len(), 3);
@@ -1559,7 +1559,7 @@ mod tests {
             }
         }
 
-        // Границы диапазона юнитов по токенам: `COMMTWR`..`ALNPLANE`.
+        // Unit range boundaries by token: `COMMTWR`..`ALNPLANE`.
         assert_eq!(UnitType::GoldRefinery.tag(), "COMMTWR");
         assert_eq!(UnitType::AlienPlane.tag(), "ALNPLANE");
         assert_eq!(UnitType::GoldRefinery.object_kind(), ObjectKind::Unit);
@@ -1568,7 +1568,7 @@ mod tests {
 
     #[test]
     fn object_kind_variants_are_mutually_exclusive() {
-        // Виды различаются: `Unit` не равен остальным.
+        // The kinds differ: `Unit` is not equal to the others.
         for other in [
             ObjectKind::Effect,
             ObjectKind::Decoration,
@@ -1582,7 +1582,7 @@ mod tests {
         assert!(!ObjectKind::Unit.is_decoration());
         assert!(!ObjectKind::Unit.is_plot_prop());
 
-        // У каждого из 93 типов срабатывает ровно один помощник.
+        // Exactly one helper fires for each of the 93 types.
         for &unit_type in UnitType::ALL {
             let kind = unit_type.object_kind();
             let fired = [
@@ -1623,7 +1623,7 @@ mod tests {
 
     #[test]
     fn object_kind_control_cases() {
-        // (в) Юниты: производящее здание, шахта, боевой мобильный.
+        // (c) Units: a producing building, the mine, a combat mobile.
         for unit_type in [
             UnitType::GoldRefinery,
             UnitType::MiningStation,
@@ -1638,7 +1638,7 @@ mod tests {
             assert!(unit_type.is_unit(), "{unit_type:?}");
         }
 
-        // Эффекты: взрыв, след, обломок.
+        // Effects: explosion, trail, rubble.
         for effect in [
             UnitType::LandExplosion,
             UnitType::RocketSmoke,
@@ -1654,12 +1654,12 @@ mod tests {
             assert!(!effect.is_unit(), "{effect:?}");
         }
 
-        // Декорация: стройплощадка 2×2.
+        // Decoration: a 2×2 build site.
         assert_eq!(UnitType::LargeTape.object_kind(), ObjectKind::Decoration);
         assert!(UnitType::LargeTape.is_decoration());
         assert!(!UnitType::LargeTape.is_unit());
 
-        // Сюжетные декорации: `MASTER`, `HARVSTER`, `WALDO`.
+        // Plot decorations: `MASTER`, `HARVSTER`, `WALDO`.
         for plot_prop in [
             UnitType::MasterBuilder,
             UnitType::Harvester,
@@ -1678,7 +1678,7 @@ mod tests {
 
     #[test]
     fn object_kind_discriminants_are_stable() {
-        // Стабильные теги сериализации — явные дискриминанты, не порядок.
+        // Stable serialization tags — explicit discriminants, not order.
         assert_eq!(ObjectKind::Unit as u8, 0);
         assert_eq!(ObjectKind::Effect as u8, 1);
         assert_eq!(ObjectKind::Decoration as u8, 2);

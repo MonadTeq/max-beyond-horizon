@@ -1,31 +1,31 @@
-//! Упорядоченные хэш-таблицы: `UnitHash` (id → юнит) и `MapHash`
-//! (клетка → юниты), как в `max-cpp-port/src/hash.cpp` / `hash.hpp`.
+//! Ordered hash tables: `UnitHash` (id → unit) and `MapHash`
+//! (cell → units), as in `max-cpp-port/src/hash.cpp` / `hash.hpp`.
 //!
-//! Детерминизм важнее скорости: ведёрки — `Vec` (порядок вставки), итерация
-//! всегда по возрастанию индекса ведёрка, внутри — порядок вставки
-//! (DESIGN §6.2). Хэш-функции и размеры — 1:1 с C++:
+//! Determinism matters more than speed: buckets are `Vec`s (insertion order), iteration
+//! is always by ascending bucket index, and within a bucket by insertion order
+//! (DESIGN §6.2). Hash functions and sizes are 1:1 with C++:
 //!
-//! * `UnitHash`: `hash_size = 8192` (`HASH_UNIT_HASH_SIZE`), ведёрко =
+//! * `UnitHash`: `hash_size = 8192` (`HASH_UNIT_HASH_SIZE`), a bucket =
 //!   `id % hash_size`;
-//! * `MapHash`: размер 512..32768 (`HASH_MAP_HASH_SIZE_MIN/MAX`), ведёрко =
-//!   `(grid_y ^ (grid_x << x_shift)) % hash_size`, где `x_shift` растёт, пока
-//!   `size > 128` (`MapHash::Init`); `SetMapSize` берёт ~8 клеток на ведёрко.
+//! * `MapHash`: size 512..32768 (`HASH_MAP_HASH_SIZE_MIN/MAX`), a bucket =
+//!   `(grid_y ^ (grid_x << x_shift)) % hash_size`, where `x_shift` grows while
+//!   `size > 128` (`MapHash::Init`); `SetMapSize` takes ~8 cells per bucket.
 //!
-//! Значения в ведёрках — произвольный ключ `T` (`UnitId` для доменной модели,
-//! `u16` — номер объекта в файле V70, см. `save.rs`).
+//! Bucket values are an arbitrary key `T` (`UnitId` for the domain model,
+//! `u16` — the object number in the V70 file, see `save.rs`).
 
 use crate::classification::Footprint;
 use crate::geo::Point;
 use crate::unit::UnitId;
 
-/// Размер `UnitHash` (`HASH_UNIT_HASH_SIZE`).
+/// `UnitHash` size (`HASH_UNIT_HASH_SIZE`).
 pub const HASH_UNIT_HASH_SIZE: u16 = 8192;
-/// Минимальный размер `MapHash` (`HASH_MAP_HASH_SIZE_MIN`).
+/// Minimum `MapHash` size (`HASH_MAP_HASH_SIZE_MIN`).
 pub const HASH_MAP_HASH_SIZE_MIN: u16 = 512;
-/// Максимальный размер `MapHash` (`HASH_MAP_HASH_SIZE_MAX`).
+/// Maximum `MapHash` size (`HASH_MAP_HASH_SIZE_MAX`).
 pub const HASH_MAP_HASH_SIZE_MAX: u16 = 32768;
 
-/// `UnitHash` — `hash_size` упорядоченных ведёрок по `id % hash_size`.
+/// `UnitHash` — `hash_size` ordered buckets keyed by `id % hash_size`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitHash<T = UnitId> {
     size: u16,
@@ -33,7 +33,7 @@ pub struct UnitHash<T = UnitId> {
 }
 
 impl<T> UnitHash<T> {
-    /// Создаёт хэш указанного размера (`UnitHash::UnitHash`).
+    /// Creates a hash of the given size (`UnitHash::UnitHash`).
     pub fn new(size: u16) -> Self {
         Self {
             size,
@@ -41,43 +41,43 @@ impl<T> UnitHash<T> {
         }
     }
 
-    /// Размер таблицы.
+    /// Table size.
     #[inline]
     pub const fn size(&self) -> u16 {
         self.size
     }
 
-    /// Ведёрки по порядку индекса (порядок итерации C++).
+    /// Buckets by index order (C++ iteration order).
     #[inline]
     pub fn buckets(&self) -> &[Vec<T>] {
         &self.buckets
     }
 
-    /// Изменяемый доступ к ведёркам (для парсера сейвов).
+    /// Mutable access to the buckets (for the save parser).
     #[inline]
     pub fn buckets_mut(&mut self) -> &mut [Vec<T>] {
         &mut self.buckets
     }
 
-    /// Ведёрко по индексу (`None` вне диапазона).
+    /// Bucket by index (`None` out of range).
     #[inline]
     pub fn bucket(&self, index: u16) -> Option<&Vec<T>> {
         self.buckets.get(index as usize)
     }
 
-    /// Изменяемое ведёрко по индексу.
+    /// Mutable bucket by index.
     #[inline]
     pub fn bucket_mut(&mut self, index: u16) -> Option<&mut Vec<T>> {
         self.buckets.get_mut(index as usize)
     }
 
-    /// Кладёт значение в конец ведёрка (`idx % size`).
+    /// Pushes a value to the end of a bucket (`idx % size`).
     pub fn push_at(&mut self, key: u32, value: T) {
         let index = (key % u32::from(self.size)) as usize;
         self.buckets[index].push(value);
     }
 
-    /// Убирает первое вхождение значения из его ведёрка.
+    /// Removes the first occurrence of a value from its bucket.
     pub fn remove_at(&mut self, key: u32, value: &T) -> bool
     where
         T: PartialEq,
@@ -92,26 +92,26 @@ impl<T> UnitHash<T> {
         }
     }
 
-    /// Очищает все ведёрки (`UnitHash::Clear`).
+    /// Clears all buckets (`UnitHash::Clear`).
     pub fn clear(&mut self) {
         for bucket in &mut self.buckets {
             bucket.clear();
         }
     }
 
-    /// Обходит все значения: ведёрки по порядку, внутри — порядок вставки.
+    /// Iterates all values: buckets in order, insertion order within each.
     pub fn iter_values(&self) -> impl Iterator<Item = &T> {
         self.buckets.iter().flat_map(|bucket| bucket.iter())
     }
 }
 
 impl UnitHash<UnitId> {
-    /// `UnitHash` для доменной модели: 8192 ведёрка, ключ — [`UnitId`].
+    /// `UnitHash` for the domain model: 8192 buckets, key — [`UnitId`].
     pub fn with_default_size() -> Self {
         Self::new(HASH_UNIT_HASH_SIZE)
     }
 
-    /// `UnitHash::PushBack`: в ведёрко `id % hash_size`.
+    /// `UnitHash::PushBack`: into bucket `id % hash_size`.
     pub fn push_back(&mut self, id: UnitId) {
         self.push_at(u32::from(id.0), id);
     }
@@ -121,26 +121,26 @@ impl UnitHash<UnitId> {
         self.remove_at(u32::from(id.0), &id)
     }
 
-    /// `UnitHash::operator[]`: поиск по id (точное совпадение внутри ведёрка).
+    /// `UnitHash::operator[]`: lookup by id (exact match within the bucket).
     pub fn get(&self, id: UnitId) -> Option<UnitId> {
         let bucket = self.bucket((u32::from(id.0) % u32::from(self.size)) as u16)?;
         bucket.iter().copied().find(|item| *item == id)
     }
 }
 
-/// Элемент `MapHash`: клетка и список юнитов на ней (`MapHashObject`).
+/// `MapHash` entry: a cell and the list of units on it (`MapHashObject`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapHashObject<T = UnitId> {
-    /// Клетка X.
+    /// Cell X.
     pub x: u16,
-    /// Клетка Y.
+    /// Cell Y.
     pub y: u16,
-    /// Юниты на клетке — порядок вставки (`SmartList<UnitInfo>`).
+    /// Units on the cell — insertion order (`SmartList<UnitInfo>`).
     pub units: Vec<T>,
 }
 
 impl<T> MapHashObject<T> {
-    /// Пустой объект клетки.
+    /// An empty cell object.
     pub fn new(x: u16, y: u16) -> Self {
         Self {
             x,
@@ -149,14 +149,14 @@ impl<T> MapHashObject<T> {
         }
     }
 
-    /// Совпадает ли клетка.
+    /// Whether the cell matches.
     #[inline]
     pub fn matches(&self, x: u16, y: u16) -> bool {
         self.x == x && self.y == y
     }
 }
 
-/// `MapHash` — ведёрки списков `MapHashObject` из `hash.cpp`.
+/// `MapHash` — buckets of `MapHashObject` lists from `hash.cpp`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapHash<T = UnitId> {
     size: u16,
@@ -165,7 +165,7 @@ pub struct MapHash<T = UnitId> {
 }
 
 impl<T> MapHash<T> {
-    /// Создаёт таблицу размера `size` (`MapHash::MapHash` + `Init`).
+    /// Creates a table of size `size` (`MapHash::MapHash` + `Init`).
     pub fn new(size: u16) -> Self {
         let mut x_shift = 0u16;
         let mut reduced = size;
@@ -180,7 +180,7 @@ impl<T> MapHash<T> {
         }
     }
 
-    /// `MapHash::SetMapSize`: ~8 клеток карты на ведёрко.
+    /// `MapHash::SetMapSize`: ~8 map cells per bucket.
     pub fn set_map_size(map_size: Point) -> Self {
         let mut size = HASH_MAP_HASH_SIZE_MIN;
         let cells = u32::from(map_size.x.max(0) as u16) * u32::from(map_size.y.max(0) as u16);
@@ -190,74 +190,74 @@ impl<T> MapHash<T> {
         Self::new(size)
     }
 
-    /// Размер таблицы (`MapHash::hash_size`).
+    /// Table size (`MapHash::hash_size`).
     #[inline]
     pub const fn size(&self) -> u16 {
         self.size
     }
 
-    /// Сдвиг `x` для хэш-функции (`MapHash::x_shift`).
+    /// `x` shift for the hash function (`MapHash::x_shift`).
     #[inline]
     pub const fn x_shift(&self) -> u16 {
         self.x_shift
     }
 
-    /// Ведёрки по порядку индекса.
+    /// Buckets by index order.
     #[inline]
     pub fn buckets(&self) -> &[Vec<MapHashObject<T>>] {
         &self.buckets
     }
 
-    /// Изменяемый доступ к ведёркам (парсер сейвов).
+    /// Mutable access to the buckets (save parser).
     #[inline]
     pub fn buckets_mut(&mut self) -> &mut [Vec<MapHashObject<T>>] {
         &mut self.buckets
     }
 
-    /// Индекс ведёрка для клетки: `(y ^ (x << x_shift)) % size`.
+    /// Bucket index for a cell: `(y ^ (x << x_shift)) % size`.
     #[inline]
     pub fn bucket_index(&self, x: u16, y: u16) -> u16 {
         ((y ^ (x << self.x_shift)) % self.size) as u16
     }
 
-    /// Ведёрко клетки.
+    /// Bucket of a cell.
     pub fn bucket(&self, x: u16, y: u16) -> &[MapHashObject<T>] {
         &self.buckets[self.bucket_index(x, y) as usize]
     }
 
-    /// Изменяемое ведёрко клетки.
+    /// Mutable bucket of a cell.
     pub fn bucket_mut(&mut self, x: u16, y: u16) -> &mut Vec<MapHashObject<T>> {
         let index = self.bucket_index(x, y) as usize;
         &mut self.buckets[index]
     }
 
-    /// Очищает таблицу (`MapHash::Clear`).
+    /// Clears the table (`MapHash::Clear`).
     pub fn clear(&mut self) {
         for bucket in &mut self.buckets {
             bucket.clear();
         }
     }
 
-    /// Обходит все объекты клеток: ведёрки по порядку, внутри — порядок вставки.
+    /// Iterates all cell objects: buckets in order, insertion order within each.
     pub fn iter_objects(&self) -> impl Iterator<Item = &MapHashObject<T>> {
         self.buckets.iter().flat_map(|bucket| bucket.iter())
     }
 }
 
 impl MapHash<UnitId> {
-    /// `MapHash` для карты 112×112 (`SetMapSize` даёт 512 ведёрок, `x_shift = 2`).
+    /// `MapHash` for the 112×112 map (`SetMapSize` yields 512 buckets, `x_shift = 2`).
     pub fn for_standard_map() -> Self {
         Self::set_map_size(crate::geo::MAP_SIZE.as_point())
     }
 
-    /// `MapHash::AddEx`: вставляет юнита в объект клетки (создавая его при
-    /// необходимости), `push_front` при `mode == true`, иначе `push_back`.
+    /// `MapHash::AddEx`: inserts a unit into the cell object (creating it if
+    /// needed), `push_front` when `mode == true`, otherwise `push_back`.
     pub fn add_ex(&mut self, id: UnitId, grid_x: u16, grid_y: u16, mode: bool) {
         let bucket = self.bucket_mut(grid_x, grid_y);
         let position = match bucket.iter().position(|object| object.matches(grid_x, grid_y)) {
             Some(position) => position,
             None => {
-                // C++ `PushFront` нового объекта клетки.
+                // C++ `PushFront` of a new cell object.
                 bucket.insert(0, MapHashObject::new(grid_x, grid_y));
                 0
             }
@@ -269,8 +269,8 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::Add`: клетка юнита, у 2×2-структур ([`Footprint::Quad`]) — ещё
-    /// три клетки.
+    /// `MapHash::Add`: the unit's cell, and for 2×2 structures ([`Footprint::Quad`])
+    /// three more cells.
     pub fn add(&mut self, id: UnitId, grid_x: u16, grid_y: u16, footprint: Footprint, mode: bool) {
         self.add_ex(id, grid_x, grid_y, mode);
         if footprint.is_quad() {
@@ -280,7 +280,7 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::RemoveEx`: убирает юнита из клетки, пустой объект удаляет.
+    /// `MapHash::RemoveEx`: removes the unit from the cell, deleting an empty object.
     pub fn remove_ex(&mut self, id: UnitId, grid_x: u16, grid_y: u16) {
         let bucket = self.bucket_mut(grid_x, grid_y);
         if let Some(position) = bucket.iter().position(|object| object.matches(grid_x, grid_y)) {
@@ -291,8 +291,8 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::Remove`: клетка юнита, у 2×2-структур ([`Footprint::Quad`]) —
-    /// ещё три клетки.
+    /// `MapHash::Remove`: the unit's cell, and for 2×2 structures ([`Footprint::Quad`])
+    /// three more cells.
     pub fn remove(&mut self, id: UnitId, grid_x: u16, grid_y: u16, footprint: Footprint) {
         self.remove_ex(id, grid_x, grid_y);
         if footprint.is_quad() {
@@ -302,7 +302,7 @@ impl MapHash<UnitId> {
         }
     }
 
-    /// `MapHash::operator[]`: список юнитов клетки.
+    /// `MapHash::operator[]`: the list of units on a cell.
     pub fn get(&self, x: u16, y: u16) -> Option<&Vec<UnitId>> {
         self.bucket(x, y)
             .iter()
@@ -311,7 +311,7 @@ impl MapHash<UnitId> {
     }
 }
 
-/// `Point` → `Point`-размер карты (удобный адаптер для `MapHash::set_map_size`).
+/// `Point` → map-size `Point` (a convenience adapter for `MapHash::set_map_size`).
 trait MapSizeExt {
     fn as_point(self) -> Point;
 }
@@ -334,8 +334,8 @@ mod tests {
         let second = UnitId::new(crate::team::TeamId::GREEN, 5);
         hash.push_back(first);
         hash.push_back(second);
-        // Ключ ведёрка — `id % hash_size`; обе команды дают 5 (`GREEN << 13` кратно 8192),
-        // поэтому оба юнита лежат в одном ведёрке в порядке вставки.
+        // Bucket key is `id % hash_size`; both teams give 5 (`GREEN << 13` is a multiple of 8192),
+        // so both units sit in the same bucket in insertion order.
         assert_eq!(hash.bucket((first.0 % 8192) as u16).unwrap(), &vec![first, second]);
         assert_eq!(hash.get(first), Some(first));
         assert_eq!(hash.get(second), Some(second));
@@ -349,9 +349,9 @@ mod tests {
     #[test]
     fn map_hash_sizing_matches_cpp() {
         let hash = MapHash::<UnitId>::for_standard_map();
-        // C++ `SetMapSize` для 112×112: 512*8 < 12544 -> 1024 -> 2048 (2048*8 > 12544).
+        // C++ `SetMapSize` for 112×112: 512*8 < 12544 -> 1024 -> 2048 (2048*8 > 12544).
         assert_eq!(hash.size(), 4 * HASH_MAP_HASH_SIZE_MIN);
-        // 2048 > 128 -> сдвиги: 1024, 512, 256, 128 => x_shift = 4.
+        // 2048 > 128 -> shifts: 1024, 512, 256, 128 => x_shift = 4.
         assert_eq!(hash.x_shift(), 4);
         assert_eq!(hash.bucket_index(0, 0), 0);
         assert_eq!(
@@ -360,7 +360,7 @@ mod tests {
         );
         let big = MapHash::<UnitId>::set_map_size(Point::new(1000, 1000));
         assert_eq!(big.size(), HASH_MAP_HASH_SIZE_MAX);
-        // Размер из V70-файла (512) даёт сдвиг 2 — как в реальном сейве.
+        // The size from the V70 file (512) gives shift 2 — as in a real save.
         let saved = MapHash::<UnitId>::new(HASH_MAP_HASH_SIZE_MIN);
         assert_eq!(saved.x_shift(), 2);
     }
@@ -369,14 +369,14 @@ mod tests {
     fn map_hash_adds_buildings_to_four_cells() {
         let mut hash = MapHash::<UnitId>::for_standard_map();
         let id = UnitId::new(crate::team::TeamId::RED, 9);
-        // Мобильный юнит — одна клетка.
+        // A mobile unit — one cell.
         hash.add(id, 10, 10, Footprint::Single, false);
         assert_eq!(hash.get(10, 10), Some(&vec![id]));
         assert_eq!(hash.get(11, 10), None);
         hash.remove(id, 10, 10, Footprint::Single);
         assert_eq!(hash.get(10, 10), None);
 
-        // Здание занимает 2×2.
+        // A building occupies 2×2.
         hash.add(id, 20, 20, Footprint::Quad, false);
         for (x, y) in [(20u16, 20u16), (21, 20), (20, 21), (21, 21)] {
             assert_eq!(hash.get(x, y), Some(&vec![id]), "cell {x},{y}");
@@ -385,7 +385,7 @@ mod tests {
         for (x, y) in [(20u16, 20u16), (21, 20), (20, 21), (21, 21)] {
             assert_eq!(hash.get(x, y), None, "cell {x},{y}");
         }
-        // Пустой объект клетки удаляется (C++ `list->Remove(object)`).
+        // An empty cell object is deleted (C++ `list->Remove(object)`).
         assert_eq!(hash.iter_objects().count(), 0);
     }
 
@@ -394,8 +394,8 @@ mod tests {
         use crate::classification::UnitTypeClassify;
         use crate::enums::UnitType;
 
-        // Турель — `Mobility::Building`, но `Footprint::Single`: в `MapHash` она
-        // занимает ровно одну клетку (не 2×2), как в C++ (флаг `BUILDING` снят).
+        // A turret is `Mobility::Building` but `Footprint::Single`: in `MapHash` it
+        // occupies exactly one cell (not 2×2), as in C++ (the `BUILDING` flag is cleared).
         let turret = UnitType::GunTurret;
         assert_eq!(turret.footprint(), Footprint::Single);
         assert!(turret.is_building());
@@ -419,7 +419,7 @@ mod tests {
         hash.add(a, 5, 5, Footprint::Single, false);
         hash.add(b, 5, 5, Footprint::Single, false);
         assert_eq!(hash.get(5, 5), Some(&vec![a, b]));
-        // `mode == true` — push_front (C++ для LRGTAPE/SMLTAPE).
+        // `mode == true` — push_front (C++ for LRGTAPE/SMLTAPE).
         let mut hash = MapHash::<UnitId>::for_standard_map();
         hash.add(a, 5, 5, Footprint::Single, true);
         hash.add(b, 5, 5, Footprint::Single, true);

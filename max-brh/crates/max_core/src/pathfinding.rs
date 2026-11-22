@@ -1,36 +1,36 @@
-//! Поиск путей: наземный/воздушный/строителя, очередь запросов, PathFill.
+//! Pathfinding: ground/air/builder paths, the request queue, PathFill.
 //!
-//! Оракул: `max-cpp-port/src/` — `paths.cpp` (`Paths_RequestPath`,
+//! Oracle: `max-cpp-port/src/` — `paths.cpp` (`Paths_RequestPath`,
 //! `Paths_GetAirPath`, `Paths_GetAngle`, `Paths_UpdateAngle`,
-//! `Paths_CalculateStep`, `Paths_IsOccupied`, `Paths_IsAccessible`-семантика),
+//! `Paths_CalculateStep`, `Paths_IsOccupied`, `Paths_IsAccessible` semantics),
 //! `groundpath.cpp` (`GroundPath::Execute`, `AppendLinearSteps`,
 //! `GetPosition`, `GetMovementCost`), `airpath.cpp` (`AirPath`), `builderpath.cpp`,
-//! `searcher.cpp`/`paths_manager.cpp` (`Searcher` — поиск по карте стоимости),
+//! `searcher.cpp`/`paths_manager.cpp` (`Searcher` — search over the cost map),
 //! `pathrequest.cpp` (`PathRequest::Finish`, `AssignGroundPath`),
-//! `accessmap.cpp` (`AccessMap::Init` — карта стоимостей),
-//! `pathfill.cpp` (`PathFill`), `maxfloodfill.cpp`, DESIGN.md §1.4 п.2
-//! (**синхронно, без потоков**) и риск 2 (результаты применяются в порядке
-//! постановки запросов).
+//! `accessmap.cpp` (`AccessMap::Init` — the cost map),
+//! `pathfill.cpp` (`PathFill`), `maxfloodfill.cpp`, DESIGN.md §1.4 item 2
+//! (**synchronous, without threads**) and risk 2 (results are applied in
+//! request submission order).
 //!
-//! # Синхронная модель
+//! # Synchronous model
 //!
-//! C++ ставит `PathRequest` в `PathsManager` и обрабатывает их в рабочих
-//! потоках. `max_core` не использует потоки: [`request_path`] кладёт запрос в
-//! очередь [`crate::game::GameState::path_requests`], [`poll_results`] считает и
-//! применяет **все** запросы в порядке очереди (`PushFront` для людей,
-//! `PushBack` для компьютеров — как в `Paths_RequestPath`). Порядок применения
-//! поэтому совпадает с порядком постановки, а не с порядком завершения
-//! воркеров (DESIGN риск 2).
+//! C++ puts `PathRequest`s into `PathsManager` and processes them in worker
+//! threads. `max_core` does not use threads: [`request_path`] puts a request into
+//! the [`crate::game::GameState::path_requests`] queue, [`poll_results`] computes and
+//! applies **all** requests in queue order (`PushFront` for humans,
+//! `PushBack` for computers — as in `Paths_RequestPath`). The application order
+//! therefore matches submission order rather than worker completion
+//! order (DESIGN risk 2).
 //!
-//! # Поиск
+//! # Search
 //!
-//! C++ `Searcher` — двунаправленный A* по `AccessMap` с инициализацией
-//! прямолинейным маршрутом. Здесь портирован детерминированный A*-поиск по той
-//! же карте стоимости: направления перебираются строго `0..8`
-//! (`DIRECTION_OFFSETS`), очередь — по `(стоимость, порядковый номер вставки)`,
-//! поэтому равнозначные пути разрешаются всегда одинаково. Диагональ стоит
-//! `cost * 3 / 2`, как в `Searcher::ForwardSearch`. Воздушные пути — линейный
-//! отрезок (`Paths_GetAirPath`) без обхода препятствий.
+//! C++ `Searcher` is a bidirectional A* over `AccessMap` initialized with
+//! a straight route. Here a deterministic A* search over the same
+//! cost map is ported: directions are iterated strictly `0..8`
+//! (`DIRECTION_OFFSETS`), the queue is by `(cost, insertion sequence number)`,
+//! so equally valid paths always resolve identically. A diagonal costs
+//! `cost * 3 / 2`, as in `Searcher::ForwardSearch`. Air paths are a straight
+//! segment (`Paths_GetAirPath`) without obstacle avoidance.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -44,28 +44,28 @@ use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath}
 use crate::unit_order;
 use crate::unit_values::ATTRIB_RANGE;
 
-/// `PathRequest_CautionLevels[0]` — без осторожности (P5 не моделирует
-/// damage-карты ИИ; предупреждения об опасности считаются нулевыми).
+/// `PathRequest_CautionLevels[0]` — without caution (P5 does not model
+/// AI damage maps; danger warnings are considered zero).
 pub const CAUTION_LEVEL_NONE: i32 = 0;
 
-/// `SHRT_MAX` — «нет ограничения» в `Paths_GetAirPath`.
+/// `SHRT_MAX` — "no limit" in `Paths_GetAirPath`.
 const SHRT_MAX: i32 = 32767;
 
-/// Запрос пути — C++ `class PathRequest` (`pathrequest.hpp`).
+/// A path request — C++ `class PathRequest` (`pathrequest.hpp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathRequest {
-    /// Юнит-клиент (`client`).
+    /// Client unit (`client`).
     pub unit: UnitId,
-    /// Флаги `AccessModifier_*` (`flags`).
+    /// `AccessModifier_*` flags (`flags`).
     pub flags: u32,
-    /// Пункт назначения на момент постановки (`point`).
+    /// Destination at submission time (`point`).
     pub destination: Point,
-    /// Минимальная дистанция до цели (`minimum_distance`) — радиус атаки в
-    /// квадрате для `MOVE_TO_ATTACK`.
+    /// Minimum distance to the target (`minimum_distance`) — the attack radius
+    /// squared for `MOVE_TO_ATTACK`.
     pub minimum_distance: i32,
-    /// Запрос на посадку в транспорт (`board_transport`).
+    /// Request to board a transport (`board_transport`).
     pub board_transport: bool,
-    /// Ограничение стоимости (`max_cost`; C++ по умолчанию `INT16_MAX`).
+    /// Cost limit (`max_cost`; C++ defaults to `INT16_MAX`).
     pub max_cost: i32,
 }
 
@@ -85,9 +85,9 @@ impl PathRequest {
 
 /// `Paths_RequestPath` (`paths.cpp:46`).
 ///
-/// Возвращает `true`, если запрос поставлен в очередь. При невалидном
-/// пункте назначения юнит получает `BlockedOnPathRequest(false)` и функция
-/// возвращает `false` (как C++).
+/// Returns `true` if the request was enqueued. With an invalid
+/// destination the unit receives `BlockedOnPathRequest(false)` and the function
+/// returns `false` (as in C++).
 pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
@@ -138,8 +138,8 @@ pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
         state.path_requests.retain(|queued| queued.unit != id);
     }
 
-    // Одинаковые запросы одного юнита не дублируются (иначе `PursueEnemy`
-    // ставил бы по запросу на тик, пока путь не готов).
+    // Identical requests of one unit are not duplicated (otherwise `PursueEnemy`
+    // would enqueue a request every tick until the path is ready).
     if state
         .path_requests
         .iter()
@@ -157,12 +157,12 @@ pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
     true
 }
 
-/// `PathsManager::DispatchJobs` — в синхронной модели работа выполняется в
-/// [`poll_results`]; точка вызова сохранена для порядка тика (DESIGN §5.1).
+/// `PathsManager::DispatchJobs` — in the synchronous model the work is done in
+/// [`poll_results`]; the call site is kept for tick order (DESIGN §5.1).
 pub fn dispatch_jobs(_state: &mut GameState) {}
 
-/// `PathsManager::PollResults` — считает и применяет все запросы в порядке
-/// постановки.
+/// `PathsManager::PollResults` — computes and applies all requests in
+/// submission order.
 pub fn poll_results(state: &mut GameState) {
     let mut requests: Vec<PathRequest> = Vec::new();
     while let Some(request) = state.path_requests.pop_front() {
@@ -174,7 +174,7 @@ pub fn poll_results(state: &mut GameState) {
     }
 }
 
-/// Считает путь для запроса и применяет его через `PathRequest::Finish`.
+/// Computes the path for a request and applies it via `PathRequest::Finish`.
 fn apply_request(state: &mut GameState, request: &PathRequest) {
     let Some(unit) = state.unit(request.unit).cloned() else {
         return;
@@ -249,7 +249,7 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
             access::clear_unit_group(state, request.unit);
         }
     } else if order == UnitOrder::Build {
-        // `UnitsManager_StartBuild` — P3-логика площадки; состояние не меняется.
+        // `UnitsManager_StartBuild` — P3 site logic; the state does not change.
         unit.state = UnitOrderState::InProgress;
     } else if previous_state == UnitOrderState::MoveGettingPath {
         if order == UnitOrder::MoveToAttack {
@@ -268,8 +268,8 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
     }
 }
 
-/// `PathRequest::AssignGroundPath` (`pathrequest.cpp:115`): путь обрезается
-/// там, откуда цель уже в радиусе атаки.
+/// `PathRequest::AssignGroundPath` (`pathrequest.cpp:115`): the path is truncated
+/// at the point from which the target is already within attack range.
 fn assign_ground_path(unit: &mut UnitInfo, steps: &[PathStep], destination: Point) {
     let range = unit.base_values.get_attribute(ATTRIB_RANGE);
     let range = range * range;
@@ -304,11 +304,11 @@ fn assign_ground_path(unit: &mut UnitInfo, steps: &[PathStep], destination: Poin
 }
 
 // ---------------------------------------------------------------------------
-// Карта стоимости (AccessMap)
+// Cost map (AccessMap)
 // ---------------------------------------------------------------------------
 
-/// Строит карту стоимостей входа для юнита — порт `AccessMap::Init`
-/// (`accessmap.cpp:372`). `0` — непроходимо.
+/// Builds the entry-cost map for a unit — a port of `AccessMap::Init`
+/// (`accessmap.cpp:372`). `0` — impassable.
 pub fn build_access_costs(state: &GameState, unit: &UnitInfo, flags: u32) -> [u8; MAP_TILES] {
     let mut costs = [0u8; MAP_TILES];
     let is_air = unit.is_air();
@@ -444,7 +444,7 @@ fn process_ground_cover(
     }
 }
 
-/// `AccessMap::ProcessMobileUnits` для наземных/морских.
+/// `AccessMap::ProcessMobileUnits` for ground/naval units.
 fn process_mobile_land_sea_units(
     state: &GameState,
     unit: &UnitInfo,
@@ -476,7 +476,7 @@ fn process_mobile_land_sea_units(
     }
 }
 
-/// `AccessMap::ProcessMobileUnits` для воздуха (и блокировка приземлившихся).
+/// `AccessMap::ProcessMobileUnits` for air (and blocking of landed aircraft).
 fn process_mobile_air_units(
     state: &GameState,
     unit: &UnitInfo,
@@ -541,8 +541,8 @@ fn process_stationary_units(state: &GameState, unit: &UnitInfo, costs: &mut [u8;
     }
 }
 
-/// `GroundPath::GetPosition` (`groundpath.cpp:94`) — прогноз позиции идущего
-/// юнита на текущий ход (для блокировки «будущей» клетки).
+/// `GroundPath::GetPosition` (`groundpath.cpp:94`) — predicted position of a moving
+/// unit for the current turn (to block its "future" cell).
 pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
     let mut position = unit.grid;
     let speed = i32::from(unit.speed) * 4;
@@ -596,13 +596,13 @@ pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
 }
 
 // ---------------------------------------------------------------------------
-// Поиск наземного пути
+// Ground path search
 // ---------------------------------------------------------------------------
 
-/// Ищет путь `unit.grid → destination` по карте стоимости.
+/// Finds a path `unit.grid → destination` over the cost map.
 ///
-/// `minimum_distance` — квадрат радиуса: поиск останавливается на любой клетке,
-/// откуда цель уже достижима (C++ `BuildAccessMap` + `IsProcessed`).
+/// `minimum_distance` — the squared radius: the search stops at any cell
+/// from which the target is already reachable (C++ `BuildAccessMap` + `IsProcessed`).
 pub fn find_ground_path(
     state: &GameState,
     unit: &UnitInfo,
@@ -613,8 +613,8 @@ pub fn find_ground_path(
     find_ground_path_inner(state, unit, destination, flags, minimum_distance, false)
 }
 
-/// То же с флагом посадки в транспорт (`PathRequest::board_transport`): клетка
-/// получателя помечается проходимой, как `PathsManager::BuildAccessMap`.
+/// The same with the transport boarding flag (`PathRequest::board_transport`): the
+/// receiver's cell is marked passable, as `PathsManager::BuildAccessMap`.
 fn find_ground_path_inner(
     state: &GameState,
     unit: &UnitInfo,
@@ -652,7 +652,7 @@ fn find_ground_path_inner(
         }
     }
 
-    // Тривиальный случай: соседняя клетка (`paths_manager.cpp:415`).
+    // Trivial case: an adjacent cell (`paths_manager.cpp:415`).
     if access::squared_distance(start, destination) <= 2 {
         let receiver_reachable =
             board_transport && access::get_receiver_unit(state, unit, destination).is_some();
@@ -771,8 +771,8 @@ fn find_ground_path_inner(
     })
 }
 
-/// `GroundPath::AppendLinearSteps` (`groundpath.cpp:582`) — прямолинейный
-/// маршрут (P4-совместимый helper; в симуляции используется как fallback).
+/// `GroundPath::AppendLinearSteps` (`groundpath.cpp:582`) — a straight
+/// route (a P4-compatible helper; used in the simulation as a fallback).
 pub fn append_linear_steps(from: Point, to: Point) -> Vec<PathStep> {
     let mut steps = Vec::new();
     let mut x = i32::from(to.x) - i32::from(from.x);
@@ -790,10 +790,10 @@ pub fn append_linear_steps(from: Point, to: Point) -> Vec<PathStep> {
 }
 
 // ---------------------------------------------------------------------------
-// Воздушные пути и ракеты
+// Air paths and missiles
 // ---------------------------------------------------------------------------
 
-/// Целочисленный квадратный корень (`isqrt`), без `f64` (DESIGN §1.4 п.2).
+/// Integer square root (`isqrt`), without `f64` (DESIGN §1.4 item 2).
 pub fn isqrt(value: u32) -> u32 {
     if value < 2 {
         return value;
@@ -807,7 +807,7 @@ pub fn isqrt(value: u32) -> u32 {
     x
 }
 
-/// Целочисленный квадратный корень для `u64`.
+/// Integer square root for `u64`.
 fn isqrt_u64(value: u64) -> u64 {
     if value < 2 {
         return value;
@@ -821,7 +821,7 @@ fn isqrt_u64(value: u64) -> u64 {
     x
 }
 
-/// `sqrt(dx² + dy²) * 4 + 0.5` в целых числах (`paths.cpp`).
+/// `sqrt(dx² + dy²) * 4 + 0.5` in integer arithmetic (`paths.cpp`).
 pub fn scaled_distance4(distance_x: i32, distance_y: i32) -> i32 {
     let squared = i64::from(distance_x) * i64::from(distance_x)
         + i64::from(distance_y) * i64::from(distance_y);
@@ -834,9 +834,9 @@ pub fn scaled_distance4(distance_x: i32, distance_y: i32) -> i32 {
     (root + u64::from(round_up)) as i32
 }
 
-/// `Paths_GetAirPath` (`paths.cpp:97`) — линейный воздушный отрезок.
+/// `Paths_GetAirPath` (`paths.cpp:97`) — a straight air segment.
 ///
-/// Мутирует `speed`/`move_fraction`/`max_velocity` юнита, как C++.
+/// Mutates the unit's `speed`/`move_fraction`/`max_velocity`, as C++ does.
 pub fn paths_get_air_path(
     state: &GameState,
     unit: &mut UnitInfo,
@@ -858,8 +858,8 @@ pub fn paths_get_air_path(
 
     let distance_x = i32::from(end_x) - i32::from(unit.grid.x);
     let distance_y = i32::from(end_y) - i32::from(unit.grid.y);
-    // `AirPath::AirPath`: воздушный юнит получает угол на цель, остальные —
-    // текущий угол (ракета летит туда, куда её развернул `PrepareFire`).
+    // `AirPath::AirPath`: an air unit gets the angle to the target, the rest —
+    // the current angle (a missile flies where `PrepareFire` pointed it).
     let angle = if unit.is_air() {
         crate::combat::get_target_angle(distance_x, distance_y)
     } else {
@@ -978,10 +978,10 @@ pub fn get_missile_path(unit: &UnitInfo, fire_on: Point) -> Option<AirPath> {
 // PathFill / MAXFloodFill
 // ---------------------------------------------------------------------------
 
-/// `PathFill` (`pathfill.cpp`) — заливка связной области по карте стоимости.
+/// `PathFill` (`pathfill.cpp`) — flood-fill of a connected area over the cost map.
 ///
-/// `mark` — бит `0x20` «клетка обработана заливкой»; `0x1F` — стоимость,
-/// `0x80` — «непроходимо/не обрабатывать». Возвращает число помеченных клеток.
+/// `mark` — the `0x20` bit "cell processed by the fill"; `0x1F` — cost,
+/// `0x80` — "impassable/do not process". Returns the number of marked cells.
 pub fn path_fill(costs: &[u8; MAP_TILES], start: Point) -> ([u8; MAP_TILES], u32) {
     let mut map = *costs;
     let Some(start_index) = tile_index(start) else {
@@ -1006,7 +1006,7 @@ pub fn path_fill(costs: &[u8; MAP_TILES], start: Point) -> ([u8; MAP_TILES], u32
         let x = (index % MAP_WIDTH as usize) as i16;
         let y = (index / MAP_WIDTH as usize) as i16;
 
-        // Порядок обхода: 4 ортогональных направления `0,2,4,6`, как в
+        // Traversal order: 4 orthogonal directions `0,2,4,6`, as in
         // `MAXFloodFill` (N, E, S, W).
         for direction in [0usize, 2, 4, 6] {
             let offset = DIRECTION_OFFSETS[direction];
@@ -1030,21 +1030,21 @@ pub fn is_processed(costs: &[u8; MAP_TILES], grid: Point) -> bool {
     }
 }
 
-/// `Paths_CalculateStep` (см. [`crate::unit_order::paths_calculate_step`]) —
-/// повторно экспортируется для вызывающих модулей пути.
+/// `Paths_CalculateStep` (see [`crate::unit_order::paths_calculate_step`]) —
+/// re-exported for path-calling modules.
 pub use crate::unit_order::paths_calculate_step;
 
-/// `Paths_IsOccupied` — повторный экспорт из [`crate::access`] (занятость
-/// клетки скрытным юнитом; DESIGN §2 относит это к access).
+/// `Paths_IsOccupied` — a re-export from [`crate::access`] (occupancy of
+/// a cell by a stealthy unit; DESIGN §2 assigns this to access).
 pub use crate::access::paths_is_occupied;
 
 // ---------------------------------------------------------------------------
-// BuilderPath (P5: минимальный порт)
+// BuilderPath (P5: minimal port)
 // ---------------------------------------------------------------------------
 
-/// `BuilderPath::Execute` (`builderpath.cpp`) — путь строителя: движение к
-/// цели по одной оси (направление `(1,1)` по умолчанию). Возвращает шаг к
-/// цели, если он проходим.
+/// `BuilderPath::Execute` (`builderpath.cpp`) — the builder's path: movement to
+/// the target along one axis (direction `(1,1)` by default). Returns the step to
+/// the target if it is passable.
 pub fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Point) -> Option<PathStep> {
     let dx = i32::from(target.x) - i32::from(unit.grid.x);
     let dy = i32::from(target.y) - i32::from(unit.grid.y);
@@ -1063,7 +1063,7 @@ pub fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Point) -> O
         .then_some(step)
 }
 
-/// Стоимость пути `GroundPath::GetMovementCost` (`groundpath.cpp:178`).
+/// Path cost `GroundPath::GetMovementCost` (`groundpath.cpp:178`).
 pub fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
     let Some(UnitPath::Ground(path)) = unit.path.as_ref() else {
         return 0;
@@ -1111,17 +1111,17 @@ pub fn air_path_movement_cost(unit: &UnitInfo) -> i32 {
     }
 }
 
-/// `UnitsManager_InitUnitPath`-часть для ракеты: путь к `fire_on`.
+/// The `UnitsManager_InitUnitPath` part for a missile: the path to `fire_on`.
 pub fn missile_path(unit: &UnitInfo, fire_on: Point) -> Option<UnitPath> {
     get_missile_path(unit, fire_on).map(UnitPath::Air)
 }
 
-/// Список юнитов, которым сейчас нужен путь (для отладки/тестов).
+/// Units that currently need a path (for debugging/tests).
 pub fn pending_request_count(state: &GameState) -> usize {
     state.path_requests.len()
 }
 
-/// Очередь запросов без изменений (для тестов/дампа).
+/// The request queue, unchanged (for tests/dump).
 pub fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
     state
         .path_requests
@@ -1129,8 +1129,8 @@ pub fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
         .find(|request| request.unit == unit)
 }
 
-/// `AirPath::GetPosition` (`airpath.cpp:104`) — прогноз клетки воздушного
-/// юнита (для карты стоимости).
+/// `AirPath::GetPosition` (`airpath.cpp:104`) — the predicted cell of an air
+/// unit (for the cost map).
 pub fn air_path_position(unit: &UnitInfo, path: &AirPath) -> Point {
     if !unit.is_air() {
         return unit.grid;
@@ -1212,14 +1212,14 @@ mod tests {
             assert_eq!((step.x, step.y), (0, 1));
         }
 
-        // Старт == финиш — пути нет (C++ `CompleteRequest(nullptr)`).
+        // Start == finish — no path (C++ `CompleteRequest(nullptr)`).
         assert!(find_ground_path(&state, &unit, unit.grid, 0, 0).is_none());
     }
 
     #[test]
     fn path_goes_around_water_wall() {
         let mut state = state();
-        // Вода стеной x = 7, y = 0..=10, проход только y = 11.
+        // Water as a wall x = 7, y = 0..=10, the only passage is y = 11.
         for y in 0..=10 {
             state.map.surface.set(7, y, Surface::WATER);
         }
@@ -1228,8 +1228,8 @@ mod tests {
         let unit = state.unit(tank).unwrap().clone();
         let path = find_ground_path(&state, &unit, Point::new(9, 5), 0, 0).expect("path");
 
-        // Путь не может быть короче манхэттенского расстояния и обязан
-        // обходить стену (по y до 11 включительно и обратно).
+        // The path cannot be shorter than the Manhattan distance and must
+        // go around the wall (down to y = 11 and back).
         assert!(path.steps.len() >= 12);
         for point in cumulative(&path.steps, unit.grid) {
             assert_eq!(
@@ -1275,10 +1275,10 @@ mod tests {
         }
 
         state.tick();
-        // Оба запроса поставлены в одном тике. Мобильные наземные юниты
-        // вставляются в список `PushFront` (`AddToDrawList`), поэтому второй
-        // юнит обходится первым; `Paths_RequestPath` для игроков делает
-        // `PushFront` — итоговый порядок очереди: первый, второй.
+        // Both requests are submitted in the same tick. Mobile ground units
+        // are inserted into the list with `PushFront` (`AddToDrawList`), so the second
+        // unit is walked first; `Paths_RequestPath` does
+        // `PushFront` for players — the final queue order: first, second.
         assert_eq!(state.path_requests.len(), 2);
         assert_eq!(state.path_requests[0].unit, first);
         assert_eq!(state.path_requests[1].unit, second);
@@ -1355,7 +1355,7 @@ mod tests {
             unit.orders = UnitOrder::MoveToAttack;
             unit.state = UnitOrderState::Init;
         }
-        // Путь движущегося к атаке юнита обрезается радиусом (`AssignGroundPath`).
+        // The path of a unit moving to attack is truncated by the radius (`AssignGroundPath`).
         for _ in 0..12 {
             state.tick();
         }
@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!((path.end_x, path.end_y), (9, 8));
         assert_eq!(path.start_x, unit.x as i16);
         assert_eq!(path.start_y, unit.y as i16);
-        // Направление дельты — знак расстояния.
+        // The delta direction is the sign of the distance.
         assert!(path.delta_x > 0);
         assert!(path.delta_y > 0);
         assert!(path.length > 0);
@@ -1393,7 +1393,7 @@ mod tests {
     #[test]
     fn path_fill_marks_only_connected_cells() {
         let mut costs = [4u8; MAP_TILES];
-        // Стена по x = 6 (юниты не проходят).
+        // A wall at x = 6 (units cannot pass).
         for y in 0..MAP_HEIGHT {
             let index = y as usize * MAP_WIDTH as usize + 6;
             costs[index] = 0;
@@ -1404,12 +1404,12 @@ mod tests {
         assert!(count < MAP_TILES as u32);
         let start_index = 2 * MAP_WIDTH as usize + 2;
         assert_ne!(filled[start_index] & 0x20, 0);
-        // Клетка за стеной не залита.
+        // The cell behind the wall is not filled.
         let beyond = 2 * MAP_WIDTH as usize + 8;
         assert_eq!(filled[beyond] & 0x20, 0);
         assert!(is_processed(&costs, Point::new(2, 2)));
 
-        // Повторный прогон даёт тот же результат (детерминизм заливки).
+        // A repeated run gives the same result (fill determinism).
         let (again, again_count) = path_fill(&costs, Point::new(2, 2));
         assert_eq!(count, again_count);
         assert_eq!(filled, again);

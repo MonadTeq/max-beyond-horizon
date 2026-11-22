@@ -1,12 +1,12 @@
-//! Сквозные тесты P7: CRC16, мини-реплей C++ ⇄ Rust, победа/поражение на
-//! реальных сейвах V70 и загрузка `GameState` из V70.
+//! P7 end-to-end tests: CRC16, a mini C++ ⇄ Rust replay, victory/defeat on
+//! real V70 saves and loading `GameState` from V70.
 //!
-//! Оракулы: `max-cpp-port/src/{crc16.c,game_manager.cpp,winloss.cpp}`,
-//! `assets/PATCHES.RES` (`SC_T*`/`SC_S*`/`SC_C*` — скрипты миссий),
-//! `assets/PATCHES.RES` (`SC_L0002` — generic-скрипт).
+//! Oracles: `max-cpp-port/src/{crc16.c,game_manager.cpp,winloss.cpp}`,
+//! `assets/PATCHES.RES` (`SC_T*`/`SC_S*`/`SC_C*` — mission scripts),
+//! `assets/PATCHES.RES` (`SC_L0002` — the generic script).
 //!
-//! Векторы: `max-brh/tools/sim_vectors/vectors.txt` (C++-генератор, ubuntu:24.04)
-//! и `max-brh/tools/map_vectors/vectors.txt` (P2: вход `.wrl` + параметры карты).
+//! Vectors: `max-brh/tools/sim_vectors/vectors.txt` (C++ generator, ubuntu:24.04)
+//! and `max-brh/tools/map_vectors/vectors.txt` (P2: `.wrl` input + map parameters).
 
 use max_core::crc;
 use max_core::enums::{FileType, TeamClan, UnitOrderState, UnitType, WinLossState};
@@ -46,7 +46,7 @@ fn hex_to_u16(text: &str) -> Vec<u16> {
 }
 
 // ---------------------------------------------------------------------------
-// Разбор P2-вектора (вход `.wrl` + параметры генерации)
+// Parsing a P2 vector (`.wrl` input + generation parameters)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Default)]
@@ -113,7 +113,7 @@ fn map_vector_case(text: &str, wanted: &str) -> MapVectorCase {
 }
 
 // ---------------------------------------------------------------------------
-// Разбор replay-секции sim_vectors/vectors.txt
+// Parsing the replay section of sim_vectors/vectors.txt
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -201,8 +201,8 @@ fn level(value: u8) -> ResourceLevel {
     ResourceLevel::new(value).expect("menu resource level 0..=2")
 }
 
-/// Собирает состояние ровно так, как его собирает C++-генератор:
-/// карта P2-параметрами, два юнита через `GameState::spawn_unit`, N тиков.
+/// Assembles the state exactly as the C++ generator does:
+/// the map with P2 parameters, two units via `GameState::spawn_unit`, N ticks.
 fn build_replay_state(replay: &ReplayVector) -> GameState {
     let case = map_vector_case(MAP_VECTORS, &replay.case);
     assert_eq!(case.seed, replay.seed);
@@ -236,7 +236,7 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
     let mut state = GameState::new();
     state.map = output.map;
 
-    // Команды: красные и синие — люди, серые/зелёные не играют, ALIEN — компьютер.
+    // Teams: red and blue are humans, gray/green do not play, ALIEN is a computer.
     let kinds = [
         TeamKind::Player,
         TeamKind::None,
@@ -255,11 +255,11 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
     state.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
     state.game_state = max_core::enums::GameStateType::InGame;
 
-    // Высадка идёт в фазе `GAME_STATE_12_DEPLOYING_UNITS`: C++
-    // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`) в этой фазе
-    // **не** обнуляет склад (движок ожидает погрузку миссии), поэтому у
-    // ENGINEER остаётся `ATTRIB_STORAGE` (40) — ровно как в
-    // `tools/sim_vectors` (`deploy_unit` пишет `values.storage`).
+    // Deployment happens in phase `GAME_STATE_12_DEPLOYING_UNITS`: C++
+    // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`) in this phase
+    // does **not** zero the storage (the engine expects mission loading), so
+    // ENGINEER keeps `ATTRIB_STORAGE` (40) — exactly as in
+    // `tools/sim_vectors` (`deploy_unit` writes `values.storage`).
     let deploy_state = state.game_state;
     state.game_state = max_core::enums::GameStateType::DeployingUnits;
 
@@ -280,7 +280,7 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
 }
 
 // ---------------------------------------------------------------------------
-// (б) Ключевой тест паритета: 10 тиков C++ ⇄ Rust, дайджест бит-в-бит
+// (b) The key parity test: 10 C++ ⇄ Rust ticks, digest bit for bit
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -301,7 +301,7 @@ fn mini_replay_matches_cpp_digest_bit_for_bit() {
         crc::replay_digest_crc(&state.clone())
     );
 
-    // Магия и CRC в конце.
+    // Magic and CRC at the end.
     assert_eq!(&digest[..8], crc::REPLAY_DIGEST_MAGIC);
     assert_eq!(
         u16::from_le_bytes([digest[digest.len() - 2], digest[digest.len() - 1]]),
@@ -324,13 +324,13 @@ fn mini_replay_is_deterministic_over_two_runs() {
 }
 
 // ---------------------------------------------------------------------------
-// (а) CRC16: сетевой CRC пакета 45
+// (a) CRC16: the network CRC of packet 45
 // ---------------------------------------------------------------------------
 
 #[test]
 fn network_crc_matches_cpp_vector_bytes() {
-    // Сверка `crc_bytes`-секции выполняется в юнит-тесте `crc`; здесь — ещё
-    // один независимый прогон на граничных значениях и на состоянии реплея.
+    // The `crc_bytes` section comparison is done in the `crc` unit test; here — one more
+    // independent run on boundary values and on the replay state.
     assert_eq!(crc::crc16(&[]), crc::CRC16_INITIAL);
     assert_eq!(crc::crc16(&[0x00]), 0xE1F0);
 
@@ -338,15 +338,15 @@ fn network_crc_matches_cpp_vector_bytes() {
     let state = build_replay_state(&replay);
     let checksum = crc::state_checksum(&state);
 
-    // `GameManager_CheckDesync` (пакет 45) на том же состоянии в C++.
+    // `GameManager_CheckDesync` (packet 45) on the same state in C++.
     assert_eq!(checksum, replay.checksum, "packet 45 CRC mismatch");
     assert_eq!(checksum, crc::state_checksum(&state.clone()));
-    // Юниты в реплее есть, поэтому CRC отличается от начального значения.
+    // There are units in the replay, so the CRC differs from the initial value.
     assert_ne!(checksum, crc::CRC16_INITIAL);
 }
 
 // ---------------------------------------------------------------------------
-// (в) Победа/поражение на реальных сейвах
+// (c) Victory/defeat on real saves
 // ---------------------------------------------------------------------------
 
 fn green_count(state: &GameState, unit_type: UnitType) -> i32 {
@@ -387,8 +387,8 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     let research = green_count(&state, UnitType::ResearchCentre);
     let greenhouses = green_count(&state, UnitType::EcoSphere);
 
-    // `SC_C0001`: RED — LOST при 0 research center у GREEN, WON при 0
-    // экосфер (и живом research center), иначе PENDING.
+    // `SC_C0001`: RED — LOST when GREEN has 0 research centers, WON at 0
+    // greenhouses (and a live research center), otherwise PENDING.
     let expected = if research == 0 {
         WinLossState::Lost
     } else if greenhouses > 0 {
@@ -405,7 +405,7 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     );
     assert_eq!(status.mission_type, MissionCategory::Campaign as i32);
 
-    // Уничтожаем все центры исследований зелёных → поражение красных.
+    // Destroy all green research centers → red loses.
     destroy_all(&mut state, UnitType::ResearchCentre);
     assert_eq!(green_count(&state, UnitType::ResearchCentre), 0);
     let status = victory::evaluate_status(&state, state.turn_counter);
@@ -425,7 +425,7 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
     assert_eq!(state.mission_category, MissionCategory::Scenario);
     assert_eq!(state.mission_index, 18);
 
-    // Пока у зелёных есть центры исследований — миссия продолжается.
+    // While green has research centers — the mission continues.
     assert!(green_count(&state, UnitType::ResearchCentre) > 0);
     let status = victory::evaluate_status(&state, state.turn_counter);
     assert_eq!(
@@ -444,7 +444,7 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
 }
 
 // ---------------------------------------------------------------------------
-// (г) Загрузка SAVE1.CAM → 5 тиков: детерминизм двух прогонов, нет паники
+// (d) Loading SAVE1.CAM → 5 ticks: determinism of two runs, no panic
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -453,7 +453,7 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
     let mut first = GameState::from_save(&save);
     let mut second = GameState::from_save(&save);
 
-    // --- нормализации `UnitInfo::FileLoad` / `SaveLoad_LoadFormatV70` ---
+    // --- normalizations of `UnitInfo::FileLoad` / `SaveLoad_LoadFormatV70` ---
     assert_eq!(first.unit_id_counter, INITIAL_UNIT_ID_COUNTER);
     assert!(first.unit_count() > 0, "fixture has units");
 
@@ -476,7 +476,7 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
         assert_eq!(unit.movement_wait_count, 0);
     }
 
-    // Каждый юнит из файла попал в карту клеток (иначе `Access_*` его не видит).
+    // Every unit from the file got into the cell map (otherwise `Access_*` does not see it).
     for id in first.unit_ids_in_order() {
         let grid = first.unit(id).expect("unit").grid;
         assert!(
@@ -485,7 +485,7 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
         );
     }
 
-    // --- 5 тиков, два независимых прогона ---
+    // --- 5 ticks, two independent runs ---
     for _ in 0..5 {
         first.tick();
         second.tick();
@@ -501,10 +501,10 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
 
 #[test]
 fn loaded_units_resolve_parent_and_enemy_references() {
-    // В трёх реальных фикстурах ссылок `parent_unit`/`enemy_unit` нет (это
-    // ранние сейвы без транспортов и атак), поэтому путь разрешения ссылок
-    // проверяется на модифицированной копии настоящего сейва: номера объектов
-    // двух юнитов связываются, загрузчик обязан вернуть их `UnitId`.
+    // The three real fixtures have no `parent_unit`/`enemy_unit` references (these are
+    // early saves without transports and attacks), so the reference resolution path
+    // is checked on a modified copy of the real save: the object numbers of
+    // two units are linked, and the loader must return their `UnitId`.
     let mut save = SaveFile::parse(SAVE1_CAMPAIGN).expect("fixture parses");
     assert!(save.units.len() >= 2, "fixture has units");
 
@@ -524,7 +524,7 @@ fn loaded_units_resolve_parent_and_enemy_references() {
     assert_eq!(unit.parent_unit, Some(parent_id));
     assert_eq!(unit.enemy_unit, Some(enemy_id));
 
-    // Ссылки, которых нет в файле (номер объекта 0), остаются пустыми.
+    // References absent from the file (object number 0) remain empty.
     let other = state
         .unit(save.units[1].info.id)
         .expect("loaded unit exists");

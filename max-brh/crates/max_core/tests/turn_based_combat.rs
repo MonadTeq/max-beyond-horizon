@@ -1,19 +1,19 @@
-//! Turn Based: боевые эффекты не должны держать ход ИИ.
+//! Turn Based: combat effects must not hold the AI turn.
 //!
-//! Регресс: снаряд (`ROCKET`/`TORPEDO`/…) создаётся с `speed = 0` из
-//! `SC_ATTRI`, потому что это юнит-эффект. `AirPath::Execute` в C++ проверяет
-//! скорость только у `MOBILE_AIR_UNIT` (`airpath.cpp:186-199`); порт применял
-//! проверку ко всем, и снаряд навсегда оставался в `ORDER_MOVE`/
-//! `ORDER_STATE_EXECUTING_ORDER`. `UnitsManager_ProcessOrder` каждый тик
-//! выставляет `OrdersPending` для `MISSILE_UNIT`, поэтому
-//! `Ai_CheckEndTurn` не вызывался и ход ИИ не закрывался до аварийного
-//! `LOCAL_AI_TICK_LIMIT` (12 000 кадров) — «зависание на ходу ИИ».
+//! Regression: a projectile (`ROCKET`/`TORPEDO`/…) is created with `speed = 0` from
+//! `SC_ATTRI`, because it is a unit effect. `AirPath::Execute` in C++ checks
+//! speed only for `MOBILE_AIR_UNIT` (`airpath.cpp:186-199`); the port applied
+//! the check to all, and the projectile stayed in `ORDER_MOVE`/
+//! `ORDER_STATE_EXECUTING_ORDER` forever. `UnitsManager_ProcessOrder` set
+//! `OrdersPending` every tick for `MISSILE_UNIT`, so
+//! `Ai_CheckEndTurn` was not called and the AI turn did not close until the emergency
+//! `LOCAL_AI_TICK_LIMIT` (12,000 frames) — a "hang on the AI turn".
 //!
-//! Второй регресс: `UnitsManager_StartExplosion` создаёт юнит-эффект с флагами
-//! класса (`MOBILE_LAND`/…), а `ANIMATED` приходит из `SC_UNITS`;
-//! `spawn_unit` проверял только явные флаги и не переводил эффект в
-//! `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`, поэтому взрыв оставался на карте
-//! навсегда.
+//! Second regression: `UnitsManager_StartExplosion` creates a unit effect with
+//! class flags (`MOBILE_LAND`/…), while `ANIMATED` comes from `SC_UNITS`;
+//! `spawn_unit` checked only explicit flags and did not move the effect to
+//! `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`, so the explosion stayed on the map
+//! forever.
 
 use max_core::combat;
 use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
@@ -30,7 +30,7 @@ fn combat_state() -> GameState {
     state.teams[1].team_type = TeamKind::Computer;
     state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
-    // Цель видна стрелку: в партии это даёт разведка, здесь — детерминизм.
+    // The target is visible to the shooter: in game this comes from reconnaissance, here — determinism.
     state.ai.all_visible = true;
     state
 }
@@ -64,7 +64,7 @@ fn is_combat_effect(unit_type: UnitType) -> bool {
     )
 }
 
-/// Ход ИИ закрывается, когда его ракета попала и взрыв доиграл.
+/// The AI turn closes when its missile hit and the explosion finished.
 #[test]
 fn turn_based_ai_turn_ends_after_its_missile_impact() {
     let mut state = combat_state();
@@ -134,15 +134,15 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
     );
 }
 
-/// Промах (нет цели в клетке) даёт `HITEXPLD` (`unitinfo.cpp:2713-2723`) —
-/// так же юнитом-эффектом с анимацией и удалением.
+/// A miss (no target on the cell) gives `HITEXPLD` (`unitinfo.cpp:2713-2723`) —
+/// also as a unit effect with animation and removal.
 #[test]
 fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     let mut state = combat_state();
     let shooter = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5));
     state.update_visibility_status(false);
 
-    // Стреляем по пустой клетке в радиусе: `Fire` без цели.
+    // Shoot at an empty cell within range: `Fire` without a target.
     combat::attack(&mut state, shooter, Point::new(6, 5));
 
     let mut explosion = None;
@@ -179,17 +179,17 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     );
 }
 
-/// `Paths_DrawMissile` (`airpath.cpp:362-406`): за снарядом тянется след из
-/// трёх юнитов-эффектов на каждую покинутую клетку — `RKTSMOKE` у ракеты
-/// (`D_RKTSMOKE`: 5 кадров) и `TRPBUBLE` у торпеды (`D_TRPBUBLE`: 3 кадра).
+/// `Paths_DrawMissile` (`airpath.cpp:362-406`): a trail of
+/// three effect units is left behind the projectile for every cell it leaves — `RKTSMOKE` for a rocket
+/// (`D_RKTSMOKE`: 5 frames) and `TRPBUBLE` for a torpedo (`D_TRPBUBLE`: 3 frames).
 ///
-/// Проверяется точный порт: тип частицы, позиция (покинутая клетка, но
-/// пиксельный сдвиг 0/⅓/⅔ к следующей — `OffsetDrawZones`), флаги
-/// (`EXPLODING|ANIMATED|MISSILE_UNIT`), `image_index_max` из `UnitInfo`, кадры
-/// по тику через `UnitsManager_ProgressExplosion` и удаление на последнем кадре.
+/// The exact port is checked: particle type, position (the left cell, but
+/// pixel offset 0/⅓/⅔ toward the next one — `OffsetDrawZones`), flags
+/// (`EXPLODING|ANIMATED|MISSILE_UNIT`), `image_index_max` from `UnitInfo`, frames
+/// per tick via `UnitsManager_ProgressExplosion` and removal on the last frame.
 #[test]
 fn missiles_leave_three_particle_trails_behind_them() {
-    // (тип выстрела, частица, image_index_max, тик появления)
+    // (shot type, particle, image_index_max, spawn tick)
     struct Case {
         launcher: UnitType,
         target: UnitType,
@@ -215,8 +215,8 @@ fn missiles_leave_three_particle_trails_behind_them() {
         },
     ] {
         let mut state = combat_state();
-        // Цель — в 4 клетках: снаряд должен проехать несколько клеток и
-        // оставить несколько следов.
+        // The target is 4 cells away: the projectile must travel several cells and
+        // leave several trails.
         let launcher = spawn(&mut state, case.launcher, TeamId::GREEN, Point::new(5, 5));
         spawn(&mut state, case.target, TeamId::RED, Point::new(9, 5));
         state.update_visibility_status(false);
@@ -275,8 +275,8 @@ fn missiles_leave_three_particle_trails_behind_them() {
             if fresh.len() == 3 {
                 spawn_ticks.push(state.turn_counter);
 
-                // Все три — в клетке, которую снаряд покинул, а пиксельные
-                // `x/y` разнесены на 0/⅓/⅔ отрезка к новой клетке.
+                // All three — in the cell the projectile left, and the pixel
+                // `x/y` are spread by 0/⅓/⅔ of the segment toward the new cell.
                 let mut xs: Vec<i32> = fresh.iter().map(|unit| i32::from(unit.x)).collect();
                 xs.sort_unstable();
                 let grid = fresh[0].grid;
@@ -316,8 +316,8 @@ fn missiles_leave_three_particle_trails_behind_them() {
     }
 }
 
-/// Детерминизм: след ракеты входит в состояние (id/позиции/кадры), поэтому
-/// одинаковый сценарий с одним seed обязан давать одинаковый дайджест.
+/// Determinism: the missile trail enters the state (ids/positions/frames), so
+/// the same scenario with one seed must give the same digest.
 #[test]
 fn missile_trails_are_deterministic() {
     fn run() -> u16 {
@@ -346,8 +346,8 @@ fn missile_trails_are_deterministic() {
     assert_eq!(run(), run(), "следы ракеты должны быть детерминированы");
 }
 
-/// Каждый тип попадания даёт свой взрыв (`UnitsManager_StartExplosion`,
-/// `units_manager.cpp:3948-3987`) и удаляется после анимации.
+/// Each hit type gives its own explosion (`UnitsManager_StartExplosion`,
+/// `units_manager.cpp:3948-3987`) and is removed after the animation.
 #[test]
 fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
     for (target_type, flags, expected) in [
@@ -372,7 +372,7 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
         let dead = state
             .spawn_unit(target_type, TeamId::GREEN, Point::new(10, 10), flags)
             .expect("spawn");
-        // Юнит погиб: `StartExplosion` спавнит эффект по классу юнита.
+        // The unit died: `StartExplosion` spawns an effect by the unit class.
         {
             let unit = state.unit_mut(dead).expect("unit");
             unit.hits = 0;

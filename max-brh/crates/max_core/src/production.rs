@@ -1,112 +1,112 @@
-//! Производство и строительство — очереди заводов и строителей (P2).
+//! Production and construction — factory and builder queues (P2).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `buildmenu.cpp` — состав меню и таблица «какой строитель что строит»
+//! * `buildmenu.cpp` — menu composition and the "which builder builds what" table
 //!   (`Builder_GetBuildableUnits` → `GameRulesHandler` → `max_get_buildable_units`
-//!   из `default.game_rules.lua`, [`BUILDABLE`]);
+//!   from `default.game_rules.lua`, [`BUILDABLE`]);
 //! * `unitinfo.cpp` — `BuildOrder`, `StartBuilding`, `SpawnNewUnit`,
 //!   `CancelBuilding`, `GetTurnsToBuild`;
 //! * `game_manager.cpp` — `GameManager_ManageEconomy` (`UpdateProduction`,
-//!   списание за ход) и `GameManager_ProgressBuildState`
-//!   (`GameManager_SpawnNewUnits` — спавн в конце «хода производства»);
-//! * `cargo.cpp` — `Cargo_GetRawConsumptionRate` (ставка расхода),
+//!   per-turn charging) and `GameManager_ProgressBuildState`
+//!   (`GameManager_SpawnNewUnits` — spawn at the end of the "production turn");
+//! * `cargo.cpp` — `Cargo_GetRawConsumptionRate` (the consumption rate),
 //!   `Cargo_ApplyUnitConsumption` (raw + fuel + power + life + gold);
 //! * `production_manager.cpp` — `ProductionManager_OptimizeProduction`
-//!   (энергия/рабочие; порт — [`crate::power`]).
+//!   (power/workers; the port — [`crate::power`]).
 //!
-//! # Модель
+//! # Model
 //!
-//! 1. У каждого строителя/завода есть очередь [`crate::unit::UnitInfo::build_list`],
-//!    `build_time` (сколько «ходов постройки» осталось) и `build_rate`
-//!    (1/2/4 — ускорение, `buildmenu.cpp:729`).
-//! 2. Приказ `Build` ([`ProductionManager::commit`]) фиксирует первый элемент
-//!    очереди: `build_time = turns`, `build_rate = rate`, `target_grid = site`
-//!    (для мобильного строителя площадка ищется [`find_build_site`], как
+//! 1. Every builder/factory has a queue [`crate::unit::UnitInfo::build_list`],
+//!    `build_time` (how many "build turns" remain) and `build_rate`
+//!    (1/2/4 — acceleration, `buildmenu.cpp:729`).
+//! 2. The `Build` order ([`ProductionManager::commit`]) fixes the first queue
+//!    element: `build_time = turns`, `build_rate = rate`, `target_grid = site`
+//!    (for a mobile builder the site is searched by [`find_build_site`], as
 //!    `UnitsManager_IssueBuildOrder`).
-//! 3. Каждый ход [`ProductionManager::progress`] (вызывается из
-//!    [`crate::game::GameState::finish_turn`]) **сначала** списывает стоимость
-//!    хода, **потом** двигает/спавнит — порядок C++
+//! 3. Every turn [`ProductionManager::progress`] (called from
+//!    [`crate::game::GameState::finish_turn`]) **first** charges the turn
+//!    cost, **then** advances/spawns — the C++ order
 //!    (`ManageEconomy` → `ProgressBuildState`).
 //! 4. `build_time <= build_rate` → [`ProductionManager::spawn_new_unit`]:
-//!    завод выпускает юнит в соседнюю клетку и получает
-//!    `ORDER_STATE_UNIT_READY` (как `UnitInfo::SpawnNewUnit`), мобильный
-//!    строитель достраивает здание на площадке: здание встаёт на клетку ленты
-//!    в `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (не рисуется), строитель —
-//!    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` и **остаётся на площадке**
-//!    ([`builder_awaiting_exit`]). Уход инициирует игрок кликом по клетке
-//!    (`ORDER_ACTIVATE`/`IN_TRANSITION`, `game_manager.cpp:6879`) или ИИ задачей
-//!    `TaskActivate` ([`crate::unit_order::issue_builder_exit`]); раскрытие
-//!    (`ScaleUnit(EXPAND)`, снятие ленты, плита остаётся) делает
-//!    [`crate::unit_order::process_orders`]-ветка `BuildingReady` только после
-//!    ухода строителя с площадки (`UnitsManager_BuildingReady`).
+//!    the factory spawns the unit into an adjacent cell and gets
+//!    `ORDER_STATE_UNIT_READY` (like `UnitInfo::SpawnNewUnit`), while a mobile
+//!    builder completes the building on the site: the building is placed on the tape cell
+//!    in `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` (not drawn), the builder —
+//!    `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` and **stays on the site**
+//!    ([`builder_awaiting_exit`]). The exit is initiated by the player clicking a cell
+//!    (`ORDER_ACTIVATE`/`IN_TRANSITION`, `game_manager.cpp:6879`) or by the AI with the
+//!    `TaskActivate` task ([`crate::unit_order::issue_builder_exit`]); unfolding
+//!    (`ScaleUnit(EXPAND)`, tape removal, the slab stays) is done by
+//!    the [`crate::unit_order::process_orders`] `BuildingReady` branch only after
+//!    the builder leaves the site (`UnitsManager_BuildingReady`).
 //!
-//! # Экономика
+//! # Economy
 //!
-//! C++ тратит на производство **материалы** (`Cargo_GetRawConsumptionRate`,
-//! `cargo.cpp:140`), а не золото команды:
+//! C++ spends **materials** on production (`Cargo_GetRawConsumptionRate`,
+//! `cargo.cpp:140`), not team gold:
 //!
-//! * мобильный наземный строитель — со **своего склада** (`UnitInfo::
-//!   UpdateProduction`, `unitinfo.cpp:2904-2915`): `storage -= rate`; порт
-//!   делает то же в [`crate::game::GameState::update_production`], но **не
-//!   уводя склад в минус**: если `storage < rate`, списания нет, а юнит
-//!   получает `build_paused` и ход стройки не двигается
-//!   ([`ProductionEventKind::PausedNoResources`]). C++ в этом случае уходит в
-//!   долг и всё равно достраивает — порт так не делает (требование QA);
-//! * стационарный завод — из **материалов своего комплекса**
+//! * a mobile ground builder — from **its own storage** (`UnitInfo::
+//!   UpdateProduction`, `unitinfo.cpp:2904-2915`): `storage -= rate`; the port
+//!   does the same in [`crate::game::GameState::update_production`], but **without**
+//!   driving storage negative**: if `storage < rate`, there is no charge, and the unit
+//!   gets `build_paused` and the construction turn does not advance
+//!   ([`ProductionEventKind::PausedNoResources`]). In this case C++ goes into
+//!   debt and still completes the build — the port does not (a QA requirement);
+//! * a stationary factory — from **its complex's materials**
 //!   (`UnitInfo::StartBuilding`, `unitinfo.cpp:2757`:
 //!   `complex->material -= Cargo_GetRawConsumptionRate`; `Cargo_GetNetProduction`,
-//!   `cargo.cpp:88-95` на каждом ходу вычитает ту же ставку из баланса), а
+//!   `cargo.cpp:88-95` subtracts the same rate from the balance every turn), and
 //!   `ProductionManager::ValidateIndustry` (`production_manager.cpp:673-707`)
-//!   прерывает стройку, когда материалов комплекса не хватает. Комплекс —
-//!   связная группа зданий/коннекторов ([`crate::complex`]), а его запас и
-//!   ёмкость — **сумма** подключённых хранилищ (`Complex::GetCargoInfo`,
-//!   `complex.cpp:136-147`): `ADUMP`/`FDUMP`/`GOLDSM`/шахта в одной группе
-//!   дают общий котёл. Ставка списывается со складов членов комплекса в
-//!   порядке `UnitsManager_StationaryUnits` — как `Complex::Transfer`
-//!   (`complex.cpp:178-203`). Нехватка ставит заказ на паузу
-//!   ([`ProductionEventKind::PausedNoMaterials`]), заказ не теряется;
-//! * **энергия и рабочие** — тоже из котла комплекса (`Cargo_ApplyUnitConsumption`,
-//!   `cargo.cpp:132-138`): `power` тратит каждый строящийся завод, `life` —
-//!   `TRAINHAL`/`GREENHSE`/`RESEARCH`. Перед стартом и на каждом ходу
-//!   [`crate::power::optimize_complex`] включает производителей
-//!   (`POWGEN`/`POWERSTN`), выключает потребителей при дефиците и ставит
-//!   стройку на паузу (`PausedNoPower`/`PausedNoWorkers`); заказ **не
-//!   стартует**, если первый ход не оплачивается ([`BuildError::NotEnoughPower`],
-//!   [`BuildError::NotEnoughWorkers`]). Сообщение об этом —
+//!   interrupts the construction when the complex lacks materials. A complex is
+//!   a connected group of buildings/connectors ([`crate::complex`]), and its stock and
+//!   capacity are the **sum** of connected storages (`Complex::GetCargoInfo`,
+//!   `complex.cpp:136-147`): `ADUMP`/`FDUMP`/`GOLDSM`/mine in one group
+//!   form a common pool. The rate is charged from member storages in
+//!   `UnitsManager_StationaryUnits` order — like `Complex::Transfer`
+//!   (`complex.cpp:178-203`). A shortage pauses the order
+//!   ([`ProductionEventKind::PausedNoMaterials`]), the order is not lost;
+//! * **power and workers** — also from the complex pool (`Cargo_ApplyUnitConsumption`,
+//!   `cargo.cpp:132-138`): every factory under construction spends `power`, `life` —
+//!   `TRAINHAL`/`GREENHSE`/`RESEARCH`. Before the start and on every turn
+//!   [`crate::power::optimize_complex`] turns producers on
+//!   (`POWGEN`/`POWERSTN`), turns consumers off on a deficit and pauses
+//!   the construction (`PausedNoPower`/`PausedNoWorkers`); the order **does not
+//!   start** if the first turn cannot be paid ([`BuildError::NotEnoughPower`],
+//!   [`BuildError::NotEnoughWorkers`]). The message about this —
 //!   [`crate::power::IndustryOutcome::message`]
 //!   (`production_manager.cpp:308-330/792-804`);
-//! * **золото команды за производство не тратится** — в C++ оно нужно только
-//!   `CargoMenu` (покупка на мобилизации) и апгрейдам. Старое поведение порта
-//!   («завод платит золотом») и было причиной «заводы ничего не производят»:
-//!   после мобилизации кредиты обычно нулевые, а шахты дают материалы.
+//! * **team gold is not spent on production** — in C++ it is needed only by
+//!   `CargoMenu` (purchases during mobilization) and upgrades. The port's old behavior
+//!   ("the factory pays with gold") caused "factories produce nothing":
+//!   after mobilization credits are usually zero, while mines yield materials.
 //!
-//! Итог за постройку при `rate = 1` — `cargo_raw_consumption_rate(builder, 1) * turns`,
-//! ровно `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
+//! Total construction at `rate = 1` — `cargo_raw_consumption_rate(builder, 1) * turns`,
+//! exactly `UnitInfo::GetNormalRateBuildCost` / `CargoMenu::BuyUnit`.
 //!
-//! `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`) требует при 1× всю
-//! стоимость постройки на руках — [`BuildError::NotEnoughMaterials`].
+//! `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`) requires the whole
+//! construction cost on hand at 1× — [`BuildError::NotEnoughMaterials`].
 //!
-//! # Что упрощено (честно)
+//! # What is simplified (honestly)
 //!
-//! * энергия/рабочие портированы в [`crate::power`] в объёме наблюдаемого
-//!   баланса: точная арифметика `OptimizePowerProduction` с `count` заменена
-//!   эквивалентным детерминированным выбором «станции → генераторы» (см.
-//!   шапку `power`), а `OptimizeCargoProduction` (перераспределение добычи
-//!   ради топлива) не портирован;
-//! * выключенные при дефиците **потребители** (`RESEARCH`/`GREENHSE`/`COMMTWR`/
-//!   `MININGST`) C++ сам обратно не включает — только игрок/ИИ; порт следует
-//!   этому правилу (`production_manager.cpp:729-790`);
-//! * завод выпускает юнит сразу в свободную соседнюю клетку, а не хранит его
-//!   внутри и не «выезжает» по `AWAIT_TAPE_POSITIONING`;
-//! * `quick_build` (настройка обучающих миссий) не моделируется;
-//! * мобильный строитель ставит здание на `target_grid` без анимации
-//!   переезда/`StartBuilding`-телепорта; стройплощадка (лента, конусы, плита)
-//!   появляется сразу при заказе (`PrepareConstructionSite` в момент
-//!   применения пакета 08/P4, `events::apply_command`), а не после 4 кадров
+//! * power/workers are ported in [`crate::power`] to the extent of the observable
+//!   balance: the exact `OptimizePowerProduction` arithmetic with `count` is replaced
+//!   by an equivalent deterministic choice "stations → generators" (see
+//!   the `power` header), and `OptimizeCargoProduction` (redistribution of mining
+//!   for fuel) is not ported;
+//! * **consumers** disabled on a deficit (`RESEARCH`/`GREENHSE`/`COMMTWR`/
+//!   `MININGST`) are not turned back on by C++ itself — only by the player/AI; the port follows
+//!   this rule (`production_manager.cpp:729-790`);
+//! * the factory spawns the unit directly into a free adjacent cell instead of storing it
+//!   inside nor "driving out" via `AWAIT_TAPE_POSITIONING`;
+//! * `quick_build` (a training-mission setting) is not modeled;
+//! * a mobile builder places the building on `target_grid` without the move
+//!   animation/`StartBuilding` teleport; the construction site (tape, cones, slab)
+//!   appears immediately on order (`PrepareConstructionSite` when
+//!   packet 08/P4 is applied, `events::apply_command`), not after 4 frames
 //!   `TAPE_POSITIONING`;
-//! * анимация «вырастания» плиты/здания (`scaler_adjust`/`AwaitScaling`) идёт
-//!   в симуляции, но кадр рендера её пока не масштабирует.
+//! * the slab/building "growing" animation (`scaler_adjust`/`AwaitScaling`) runs
+//!   in the simulation, but the render frame does not scale it yet.
 
 use crate::access;
 use crate::classification::UnitTypeClassify;
@@ -120,10 +120,10 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::unit_values::ATTRIB_TURNS;
 use crate::victory::cargo_raw_consumption_rate;
 
-/// Таблица `max_builder_capability_list` (`default.game_rules.lua`) — 1:1.
+/// `max_builder_capability_list` table (`default.game_rules.lua`) — 1:1.
 ///
-/// Порядок строк и элементов совпадает с Lua-файлом: от него зависит порядок
-/// строк в `BuildMenu` (C++ `Builder_GetBuildableUnits`).
+/// Row and element order match the Lua file: the order of
+/// rows in `BuildMenu` depends on it (C++ `Builder_GetBuildableUnits`).
 pub const BUILDABLE: [(UnitType, &[UnitType]); 7] = [
     (
         UnitType::Constructor,
@@ -220,7 +220,7 @@ pub const BUILDABLE: [(UnitType, &[UnitType]); 7] = [
     ),
 ];
 
-/// Заводы-производители (стационарные, `Cargo_GetPowerConsumptionRate == 1`).
+/// Producing factories (stationary, `Cargo_GetPowerConsumptionRate == 1`).
 pub const FACTORIES: [UnitType; 5] = [
     UnitType::Shipyard,
     UnitType::LightVehiclePlant,
@@ -229,10 +229,10 @@ pub const FACTORIES: [UnitType; 5] = [
     UnitType::TrainingHall,
 ];
 
-/// Мобильные строители (`CONSTRCT`/`ENGINEER`).
+/// Mobile builders (`CONSTRCT`/`ENGINEER`).
 pub const MOBILE_BUILDERS: [UnitType; 2] = [UnitType::Constructor, UnitType::Engineer];
 
-/// Порядок обхода списков в `GameManager_ProgressBuildState` (C++): спавн
+/// List traversal order in `GameManager_ProgressBuildState` (C++): spawning
 /// GroundCover → MobileLandSea → Stationary → MobileAir.
 pub const PROGRESS_LIST_ORDER: [UnitListKind; 4] = [
     UnitListKind::GroundCover,
@@ -241,24 +241,24 @@ pub const PROGRESS_LIST_ORDER: [UnitListKind; 4] = [
     UnitListKind::MobileAir,
 ];
 
-/// Порядок обхода списков в `GameManager_ManageEconomy` (C++ `UpdateProductions`):
-/// MobileLandSea → Stationary → MobileAir (GroundCover не расходует).
+/// List traversal order in `GameManager_ManageEconomy` (C++ `UpdateProductions`):
+/// MobileLandSea → Stationary → MobileAir (GroundCover does not consume).
 pub const CHARGE_LIST_ORDER: [UnitListKind; 3] = [
     UnitListKind::MobileLandSea,
     UnitListKind::Stationary,
     UnitListKind::MobileAir,
 ];
 
-/// Радиус поиска площадки под здание (`TaskCreateBuilding::FindBuildSite`).
+/// Build-site search radius (`TaskCreateBuilding::FindBuildSite`).
 pub const SITE_SEARCH_RADIUS: i16 = 8;
 
 // ---------------------------------------------------------------------------
-// Таблицы «кто что строит»
+// "Who builds what" tables
 // ---------------------------------------------------------------------------
 
-/// `Builder_GetBuildableUnits(team, builder)` — список доступных постройек.
+/// `Builder_GetBuildableUnits(team, builder)` — the list of available builds.
 ///
-/// Пустой срез — строитель не умеет строить (обычный юнит).
+/// An empty slice — the builder cannot build (an ordinary unit).
 pub fn buildable_units(builder: UnitType) -> &'static [UnitType] {
     for (unit_type, units) in BUILDABLE {
         if unit_type == builder {
@@ -269,13 +269,13 @@ pub fn buildable_units(builder: UnitType) -> &'static [UnitType] {
     &[]
 }
 
-/// `Builder_GetBuildableUnits(team, unit_type)` — хватает ли строителя.
+/// `Builder_GetBuildableUnits(team, unit_type)` — whether the builder suffices.
 pub fn can_build(builder: UnitType, unit_type: UnitType) -> bool {
     buildable_units(builder).contains(&unit_type)
 }
 
-/// `Builder_GetBuilderType(team, unit_type)` — кто строит этот тип (первый в
-/// таблице, как Lua-цикл `pairs` по фиксированному порядку таблицы).
+/// `Builder_GetBuilderType(team, unit_type)` — who builds this type (the first in
+/// the table, like the Lua `pairs` loop over the fixed table order).
 pub fn builder_type(unit_type: UnitType) -> Option<UnitType> {
     for (builder, units) in BUILDABLE {
         if units.contains(&unit_type) {
@@ -286,29 +286,29 @@ pub fn builder_type(unit_type: UnitType) -> Option<UnitType> {
     None
 }
 
-/// Стационарный завод-производитель (`SpawnNewUnit`-ветка `flags & STATIONARY`).
+/// A stationary producing factory (`SpawnNewUnit` branch `flags & STATIONARY`).
 pub fn is_factory(unit_type: UnitType) -> bool {
     FACTORIES.contains(&unit_type)
 }
 
-/// Мобильный строитель (`CONSTRCT`/`ENGINEER`).
+/// A mobile builder (`CONSTRCT`/`ENGINEER`).
 pub fn is_mobile_builder(unit_type: UnitType) -> bool {
     MOBILE_BUILDERS.contains(&unit_type)
 }
 
-/// Есть ли у типа очередь постройки (завод или мобильный строитель).
+/// Whether the type has a build queue (factory or mobile builder).
 pub fn is_builder(unit_type: UnitType) -> bool {
     !buildable_units(unit_type).is_empty()
 }
 
 // ---------------------------------------------------------------------------
-// Стоимость и время
+// Cost and time
 // ---------------------------------------------------------------------------
 
 /// `BuildMenu_GetTurnsToBuild(unit_type, team)` (`buildmenu.cpp:688`).
 ///
-/// Для компьютера действует множитель сложности (`opponent`), как в C++.
-/// `quick_build` (обучающие миссии) в порте не моделируется.
+/// For a computer the difficulty multiplier applies (`opponent`), as in C++.
+/// `quick_build` (training missions) is not modeled in the port.
 pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = state
         .team_units
@@ -332,38 +332,38 @@ pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i
     }
 }
 
-/// Стоимость одного хода постройки — `Cargo_GetRawConsumptionRate`.
+/// Cost of one construction turn — `Cargo_GetRawConsumptionRate`.
 ///
-/// Мобильный строитель платит ею сырьём со своего склада, завод — материалами
-/// своего комплекса; золото команды не тратится (см. шапку модуля). Для
-/// `rate = 1` суммарная стоимость равна
-/// `Cargo_GetRawConsumptionRate(builder, 1) * turns` — C++-стоимость постройки.
+/// A mobile builder pays it in raw materials from its storage, a factory — in materials
+/// of its complex; team gold is not spent (see the module header). For
+/// `rate = 1` the total cost equals
+/// `Cargo_GetRawConsumptionRate(builder, 1) * turns` — the C++ construction cost.
 pub fn cost_per_turn(builder: UnitType, build_rate: i32) -> i32 {
     cargo_raw_consumption_rate(builder, build_rate)
 }
 
-/// Полная стоимость постройки при скорости 1× — C++-формула
-/// `GetNormalRateBuildCost` для юнита, который строит `builder`.
+/// The full construction cost at 1× rate — the C++ formula
+/// `GetNormalRateBuildCost` for the unit that `builder` builds.
 pub fn total_cost(builder: UnitType, turns: i32) -> i32 {
     cost_per_turn(builder, 1) * turns.max(0)
 }
 
-/// `UnitInfo::GetTurnsToBuild` (`unitinfo.cpp:3393`) — сколько ходов займёт
-/// постройка и сколько всего сырья она спишет при скорости
+/// `UnitInfo::GetTurnsToBuild` (`unitinfo.cpp:3393`) — how many turns the
+/// construction takes and how much raw material it charges in total at
 /// `build_speed_multiplier` (`1/2/4`).
 ///
-/// Возвращает `(ходов, полный расход)` — ровно то, что C++
-/// `AbstractBuildMenu::Draw` печатает в колонках `Turns`/`Cost`.
+/// Returns `(turns, total consumption)` — exactly what C++
+/// `AbstractBuildMenu::Draw` prints in the `Turns`/`Cost` columns.
 ///
-/// * база — `build_time`, если строитель уже строит этот тип (голова очереди,
-///   `build_time > 0`), иначе текущее `ATTRIB_TURNS` типа (в нём уже учтены
-///   клановые модификаторы `SC_CLANS` и исследования — C++
+/// * the base is `build_time` if the builder already builds this type (queue head,
+///   `build_time > 0`), otherwise the type's current `ATTRIB_TURNS` (which already includes
+///   the `SC_CLANS` clan modifiers and research — C++
 ///   `UnitsManager_GetCurrentUnitValues`);
-/// * на каждом ходу скорость ограничивается
-///   [`max_possible_build_rate`] по **оставшимся** ходам и складу строителя
-///   (`INT16_MAX` у стационарных): `min(build_speed_multiplier, limit)`;
-/// * расход — `Cargo_GetRawConsumptionRate(builder, effective_rate)`, склад
-///   уменьшается на него (у мобильного строителя, как C++ `storage -= ...`).
+/// * every turn the rate is limited by
+///   [`max_possible_build_rate`] by the **remaining** turns and the builder's storage
+///   (`INT16_MAX` for stationary ones): `min(build_speed_multiplier, limit)`;
+/// * consumption — `Cargo_GetRawConsumptionRate(builder, effective_rate)`, the storage
+///   decreases by it (at a mobile builder, like C++ `storage -= ...`).
 pub fn turns_and_consumption(
     state: &GameState,
     builder: &UnitInfo,
@@ -412,8 +412,8 @@ pub fn turns_and_consumption(
 /// `BuildMenu_GetMaxPossibleBuildRate(unit_type, build_time, storage)`
 /// (`buildmenu.cpp:729`) — 1:1.
 ///
-/// `unit_type` — тип **строителя** (C++ передаёт `unit->GetUnitType()`), а
-/// `storage` — его склад (для зданий C++ передаёт `INT16_MAX`).
+/// `unit_type` — the **builder's** type (C++ passes `unit->GetUnitType()`), and
+/// `storage` — its storage (for buildings C++ passes `INT16_MAX`).
 pub fn max_possible_build_rate(unit_type: UnitType, build_time: i32, storage: i32) -> i32 {
     const RATE_1X: i32 = 1;
     const RATE_2X: i32 = 2;
@@ -480,43 +480,43 @@ pub fn max_possible_build_rate(unit_type: UnitType, build_time: i32, storage: i3
 }
 
 // ---------------------------------------------------------------------------
-// Ошибки и отчёты
+// Errors and reports
 // ---------------------------------------------------------------------------
 
-/// Почему заказ/приказ постройки отклонён (`BuildMenu::Build` в C++).
+/// Why a build order was rejected (`BuildMenu::Build` in C++).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildError {
-    /// Юнит не строитель (нет очереди постройки).
+    /// The unit is not a builder (no build queue).
     NotABuilder,
-    /// `Builder_IsBuildable` ложно: строитель не умеет строить этот тип.
+    /// `Builder_IsBuildable` is false: the builder cannot build this type.
     NotBuildable,
-    /// Очередь пуста (`FactoryBuildMenu::Build` без выбранных юнитов).
+    /// The queue is empty (`FactoryBuildMenu::Build` without selected units).
     EmptyQueue,
-    /// Нет площадки (`UnitsManager_IssueBuildOrder` == false).
+    /// No site (`UnitsManager_IssueBuildOrder` == false).
     NoSite,
-    /// Команда не найдена в состоянии.
+    /// The team was not found in the state.
     InvalidTeam,
-    /// `BuildMenu::Build` отказал: при `build_rate == 1` у мобильного строителя
-    /// не хватает сырья на всю постройку (`buildmenu.cpp:903-906`, сообщение
-    /// `_(c529)`). C++ не отдаёт приказ — иначе постройка встала бы навсегда.
+    /// `BuildMenu::Build` refused: at `build_rate == 1` a mobile builder
+    /// lacks raw material for the whole construction (`buildmenu.cpp:903-906`, message
+    /// `_(c529)`). C++ does not issue the order — otherwise the build would stall forever.
     NotEnoughMaterials,
-    /// Завод не может оплатить первый ход: комплексу не хватает энергии
+    /// The factory cannot pay for the first turn: the complex lacks power
     /// (`Cargo_GetPowerConsumptionRate` → `Cargo_ApplyUnitConsumption`,
-    /// `production_manager.cpp:677-711`; в порте — отказ вместо `BUILD_ABORT`,
-    /// чтобы не терять очередь).
+    /// `production_manager.cpp:677-711`; the port refuses instead of `BUILD_ABORT`
+    /// so as not to lose the queue).
     NotEnoughPower,
-    /// Заводу не хватает топлива на производителей энергии его комплекса
+    /// The factory lacks fuel for its complex's power producers
     /// (`PowerOn`/`OptimizePowerProduction`, `production_manager.cpp:332-364`).
     NotEnoughFuel,
-    /// Заводу не хватает рабочих (`TRAINHAL`/`GREENHSE`/`RESEARCH`:
+    /// The factory lacks workers (`TRAINHAL`/`GREENHSE`/`RESEARCH`:
     /// `Cargo_GetLifeConsumptionRate = 1`, `production_manager.cpp:366-380`).
     NotEnoughWorkers,
-    /// Заводу не хватает золота (`COMMTWR`: `Cargo_GetGoldConsumptionRate = 5`).
+    /// The factory lacks gold (`COMMTWR`: `Cargo_GetGoldConsumptionRate = 5`).
     NotEnoughGold,
 }
 
 impl BuildError {
-    /// Текст для UI/лога.
+    /// Text for the UI/log.
     pub const fn message(self) -> &'static str {
         match self {
             Self::NotABuilder => "unit cannot build",
@@ -533,71 +533,71 @@ impl BuildError {
     }
 }
 
-/// Результат `Build` (C++ `BuildMenu_EventStrings_Available*`).
+/// `Build` result (C++ `BuildMenu_EventStrings_Available*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildReport {
-    /// Что будет построено (голова очереди).
+    /// What will be built (queue head).
     pub unit_type: UnitType,
-    /// Ходов постройки (`GET_TURNS`).
+    /// Build turns (`GET_TURNS`).
     pub turns: i32,
-    /// Скорость (1/2/4).
+    /// Rate (1/2/4).
     pub build_rate: u16,
-    /// Стоимость одного хода в золоте.
+    /// Cost of one turn in gold.
     pub cost_per_turn: i32,
-    /// Площадка (для мобильного строителя).
+    /// Site (for a mobile builder).
     pub site: Point,
 }
 
-/// Тип события производства.
+/// Production event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductionEventKind {
-    /// Завод выпустил юнит (`SpawnNewUnit`).
+    /// The factory spawned a unit (`SpawnNewUnit`).
     Spawned,
-    /// Мобильный строитель достроил здание.
+    /// The mobile builder completed the building.
     BuildingDone,
-    /// Постройка приостановлена: у мобильного строителя не хватает **сырья** на
-    /// складе (`storage < Cargo_GetRawConsumptionRate`) — C++
-    /// `UnitInfo::UpdateProduction` в этом случае уходит в минус, порт не
-    /// двигает стройку (см. [`UnitInfo::build_paused`]).
+    /// Construction paused: the mobile builder lacks **raw material** in
+    /// storage (`storage < Cargo_GetRawConsumptionRate`) — C++
+    /// `UnitInfo::UpdateProduction` goes negative in this case, while the port does not
+    /// advance the construction (see [`UnitInfo::build_paused`]).
     PausedNoResources,
-    /// Постройка приостановлена: у команды не хватает **материалов** на
-    /// текущий ход завода (`Cargo_GetRawConsumptionRate` → материалы базы).
-    /// C++ `ProductionManager::ValidateIndustry` прерывает стройку
-    /// (`ORDER_STATE_BUILD_ABORT`) и возобновляет её позже; порт держит заказ в
-    /// очереди на паузе.
+    /// Construction paused: the team lacks **materials** for
+    /// the factory's current turn (`Cargo_GetRawConsumptionRate` → base materials).
+    /// C++ `ProductionManager::ValidateIndustry` interrupts the construction
+    /// (`ORDER_STATE_BUILD_ABORT`) and resumes it later; the port keeps the order
+    /// in the queue on pause.
     PausedNoMaterials,
-    /// Спавн отложен: рядом нет свободной клетки (юнит остаётся в очереди).
+    /// Spawn deferred: there is no free adjacent cell (the unit stays in the queue).
     NoSpawnCell,
-    /// Бульдозер расчистил обломок (`UnitInfo::SpawnNewUnit`, ветка BULLDOZR).
+    /// The bulldozer cleared rubble (`UnitInfo::SpawnNewUnit`, BULLDOZR branch).
     RubbleCleared,
-    /// Стройка завода приостановлена: комплексу не хватает **энергии**
+    /// Factory construction paused: the complex lacks **power**
     /// (`Cargo_GetPowerConsumptionRate` → `Cargo_ApplyUnitConsumption`;
-    /// C++ `ValidateIndustry` выключает стройку, порт — пауза).
+    /// C++ `ValidateIndustry` turns the construction off, the port pauses it).
     PausedNoPower,
-    /// Стройка завода приостановлена: не хватает **топлива** производителям
-    /// энергии (`CalculatePowerConsumption`/`CheckPowerNeed`).
+    /// Factory construction paused: there is not enough **fuel** for the
+    /// power producers (`CalculatePowerConsumption`/`CheckPowerNeed`).
     PausedNoFuel,
-    /// Стройка завода приостановлена: комплексу не хватает **рабочих**
+    /// Factory construction paused: the complex lacks **workers**
     /// (`Cargo_GetLifeConsumptionRate`, `production_manager.cpp:366-380`).
     PausedNoWorkers,
-    /// Стройка завода приостановлена: не хватает **золота** (`COMMTWR`).
+    /// Factory construction paused: there is not enough **gold** (`COMMTWR`).
     PausedNoGold,
 }
 
-/// Событие производства — для HUD-лога и QA-ассертов.
+/// A production event — for the HUD log and QA assertions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductionEvent {
-    /// Строитель/завод.
+    /// Builder/factory.
     pub builder: UnitId,
-    /// Что строилось.
+    /// What was being built.
     pub unit_type: UnitType,
-    /// Что появилось (если появилось).
+    /// What appeared (if anything).
     pub spawned: Option<UnitId>,
-    /// Итог шага.
+    /// Step outcome.
     pub kind: ProductionEventKind,
 }
 
-/// Событие паузы по ресурсу из [`crate::power::Shortage`].
+/// Pause event for a resource from [`crate::power::Shortage`].
 fn pause_event_kind(shortage: crate::power::Shortage) -> ProductionEventKind {
     use crate::power::Shortage;
 
@@ -611,10 +611,10 @@ fn pause_event_kind(shortage: crate::power::Shortage) -> ProductionEventKind {
 }
 
 // ---------------------------------------------------------------------------
-// Площадка и клетка выпуска
+// Site and spawn cell
 // ---------------------------------------------------------------------------
 
-/// Площадка под здание/юнит: все клетки внутри карты, свободны и проходимы.
+/// Site for a building/unit: all cells are inside the map, free and passable.
 fn site_is_free(
     state: &GameState,
     team: TeamId,
@@ -650,7 +650,7 @@ fn site_is_free(
     true
 }
 
-/// Габарит постройки в клетках (2×2 — `Footprint::Quad`, иначе 1×1).
+/// Construction size in cells (2×2 — `Footprint::Quad`, otherwise 1×1).
 pub fn footprint(unit_type: UnitType) -> i16 {
     if unit_type.is_quad() {
         2
@@ -659,14 +659,14 @@ pub fn footprint(unit_type: UnitType) -> i16 {
     }
 }
 
-/// `UnitsManager_IsAccessible` (`units_manager.cpp:4982`): проходим ли весь
-/// footprint типа в клетке `site` (2×2 у зданий, 1×1 у остальных).
+/// `UnitsManager_IsAccessible` (`units_manager.cpp:4982`): whether the whole
+/// footprint of the type is passable at `site` (2×2 for buildings, 1×1 for the rest).
 ///
-/// В отличие от [`find_build_site`] (поиск ИИ/запасной путь) здесь **нет**
-/// требования «в клетке нет юнитов»: C++ проверяет только
-/// `Access_IsAccessible(..., AccessModifier_SameClassBlocks)`, поэтому стройку
-/// можно разметить поверх своих мобильных юнитов — их C++ не считает
-/// препятствием зданию (ветка `flags & STATIONARY` в `Access_IsAccessible`).
+/// Unlike [`find_build_site`] (AI search/fallback) there is **no**
+/// requirement "no units on the cell": C++ checks only
+/// `Access_IsAccessible(..., AccessModifier_SameClassBlocks)`, so a construction
+/// can be laid out over own mobile units — C++ does not consider them
+/// an obstacle to the building (`flags & STATIONARY` branch in `Access_IsAccessible`).
 pub fn is_site_accessible(
     state: &GameState,
     team: TeamId,
@@ -676,9 +676,9 @@ pub fn is_site_accessible(
     is_site_accessible_ignoring(state, team, unit_type, site, &[])
 }
 
-/// [`is_site_accessible`] с юнитами, которых C++ вынул из хэша на время
-/// проверки (`UnitsManager_MoveUnitAndParent`/`IssueBuildOrder` убирают
-/// строителя и временную ленту, иначе 2×2 «занята» самим строителем).
+/// [`is_site_accessible`] with units C++ removed from the hash during
+/// the check (`UnitsManager_MoveUnitAndParent`/`IssueBuildOrder` remove
+/// the builder and the temporary tape, otherwise the 2×2 is "occupied" by the builder itself).
 pub fn is_site_accessible_ignoring(
     state: &GameState,
     team: TeamId,
@@ -713,13 +713,13 @@ pub fn is_site_accessible_ignoring(
     true
 }
 
-/// `UnitsManager_IssueBuildOrder` (`units_manager.cpp:4998`): стартовая клетка
-/// «ленты» площадки при заказе здания в `BuildMenu`.
+/// `UnitsManager_IssueBuildOrder` (`units_manager.cpp:4998`): the starting cell
+/// of the site "tape" when a building is ordered in `BuildMenu`.
 ///
-/// C++ перебирает ровно четыре якоря 2×2, все они содержат клетку строителя
-/// (сдвиг не больше одной клетки по каждой оси):
-/// `(x, y)`, `(x, y-1)`, `(x-1, y-1)`, `(x-1, y)` — порядок важен, потому что
-/// первый проходимый якорь становится стартовым положением призрака.
+/// C++ iterates exactly four 2×2 anchors, all of them contain the builder's cell
+/// (shift of at most one cell per axis):
+/// `(x, y)`, `(x, y-1)`, `(x-1, y-1)`, `(x-1, y)` — the order matters because
+/// the first passable anchor becomes the ghost's initial position.
 pub fn initial_build_site(
     state: &GameState,
     team: TeamId,
@@ -728,7 +728,7 @@ pub fn initial_build_site(
     ignored: &[UnitId],
 ) -> Option<Point> {
     if footprint(unit_type) == 1 {
-        // C++ для не-зданий проверяет только собственную клетку строителя.
+        // For non-buildings C++ checks only the builder's own cell.
         return is_site_accessible_ignoring(state, team, unit_type, builder_grid, ignored)
             .then_some(builder_grid);
     }
@@ -742,14 +742,14 @@ pub fn initial_build_site(
         .find(|site| is_site_accessible_ignoring(state, team, unit_type, *site, ignored))
 }
 
-/// Якорь площадки для курсора в режиме выбора места — порт курсорной части
-/// `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5845`) для
-/// конструктора.
+/// Site anchor for the cursor in site-selection mode — a port of the cursor part of
+/// `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5845`) for the
+/// constructor.
 ///
-/// C++ привязывает 2×2 к строителю: курсор правее строителя — якорь
-/// `builder.x`, левее — `builder.x - 1`; ровно на колонке строителя якорь
-/// сохраняется прежним (поэтому передаётся `previous`). По каждой оси
-/// независимо; стройплощадка всегда накрывает клетку строителя.
+/// C++ binds the 2×2 to the builder: cursor to the right of the builder — anchor
+/// `builder.x`, to the left — `builder.x - 1`; exactly on the builder's column the anchor
+/// stays as before (hence `previous` is passed). On each axis
+/// independently; the site always covers the builder's cell.
 pub fn site_anchor_for_cursor(builder_grid: Point, cursor: Point, previous: Point) -> Point {
     let anchor_x = if cursor.x < builder_grid.x {
         builder_grid.x - 1
@@ -769,21 +769,21 @@ pub fn site_anchor_for_cursor(builder_grid: Point, cursor: Point, previous: Poin
     Point::new(anchor_x, anchor_y)
 }
 
-/// Курсорная часть `GameManager_GetBuilderUnitCursor` для `ENGINEER`
+/// The cursor part of `GameManager_GetBuilderUnitCursor` for `ENGINEER`
 /// (`game_manager.cpp:5854-5909`).
 ///
-/// Инженер ставит **1×1**-ленту (`SMLTAPE`) ровно в клетку под курсором:
-/// C++ не привязывает её к строителю (`target_grid_x = grid_x`,
-/// `target_grid_y = grid_y`), но разрешает только клетки **в своей строке или
-/// столбце** (`grid_x == unit_grid_x || grid_y == unit_grid_y`), иначе
-/// `CURSOR_UNIT_NO_GO`. Проходимость проверяет `UnitsManager_MoveUnitAndParent`
-/// (в порте — [`is_site_accessible_ignoring`] без строителя и ленты).
+/// The engineer places a **1×1** tape (`SMLTAPE`) exactly on the cell under the cursor:
+/// C++ does not bind it to the builder (`target_grid_x = grid_x`,
+/// `target_grid_y = grid_y`), but allows only cells **in its own row or
+/// column** (`grid_x == unit_grid_x || grid_y == unit_grid_y`), otherwise
+/// `CURSOR_UNIT_NO_GO`. Passability is checked by `UnitsManager_MoveUnitAndParent`
+/// (in the port — [`is_site_accessible_ignoring`] without the builder and tape).
 pub fn engineer_site_covers(builder_grid: Point, cursor: Point) -> bool {
     cursor.x == builder_grid.x || cursor.y == builder_grid.y
 }
 
-/// Накрывает ли площадка типа `unit_type` с якорем `anchor` клетку `cursor`
-/// (`UnitsManager_MoveUnitAndParent` + проверка попадания в `GameManager_GetBuilderUnitCursor`).
+/// Whether the site of `unit_type` with `anchor` covers the `cursor` cell
+/// (`UnitsManager_MoveUnitAndParent` + the hit check in `GameManager_GetBuilderUnitCursor`).
 pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
     let size = footprint(unit_type);
 
@@ -793,10 +793,10 @@ pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
         && cursor.y < anchor.y + size
 }
 
-/// `TaskCreateBuilding::FindBuildSite` — ближайшая свободная площадка.
+/// `TaskCreateBuilding::FindBuildSite` — the nearest free site.
 ///
-/// Порядок обхода детерминированный: по возрастанию расстояния, затем `y`,
-/// затем `x` (никаких хэш-таблиц), поэтому два прогона совпадают.
+/// The traversal order is deterministic: by ascending distance, then `y`,
+/// then `x` (no hash tables), so two runs match.
 pub fn find_build_site(
     state: &GameState,
     team: TeamId,
@@ -837,13 +837,13 @@ pub fn find_build_site(
 }
 
 // ---------------------------------------------------------------------------
-// Стройплощадка (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
+// Construction site (C++ `DeployConstructionSiteUtilities` + `PrepareConstructionSite`)
 // ---------------------------------------------------------------------------
 
-/// `DeployConstructionSiteUtilities` (`unitinfo.cpp:3802`): пара «лента+конусы».
+/// `DeployConstructionSiteUtilities` (`unitinfo.cpp:3802`): the "tape+cones" pair.
 ///
-/// Тип `Footprint::Quad` получает большие декали `LRGTAPE`/`LRGCONES` (2×2),
-/// всё остальное — малые `SMLTAPE`/`SMLCONES` (1×1).
+/// A `Footprint::Quad` type gets the large decals `LRGTAPE`/`LRGCONES` (2×2),
+/// everything else — the small `SMLTAPE`/`SMLCONES` (1×1).
 pub fn construction_utility_types(unit_type: UnitType) -> (UnitType, UnitType) {
     if unit_type.is_quad() {
         (UnitType::LargeTape, UnitType::LargeCones)
@@ -852,10 +852,10 @@ pub fn construction_utility_types(unit_type: UnitType) -> (UnitType, UnitType) {
     }
 }
 
-/// `PrepareConstructionSite` (`unitinfo.cpp:4122`): плита под постройкой.
+/// `PrepareConstructionSite` (`unitinfo.cpp:4122`): the slab under a construction.
 ///
-/// `LRGSLAB` для `Footprint::Quad`, `SMLSLAB` для остальных типов; создаётся
-/// только при флаге `REQUIRES_SLAB`.
+/// `LRGSLAB` for `Footprint::Quad`, `SMLSLAB` for the other types; created
+/// only with the `REQUIRES_SLAB` flag.
 pub fn construction_slab_type(unit_type: UnitType) -> UnitType {
     if unit_type.is_quad() {
         UnitType::LargeSlab
@@ -864,7 +864,7 @@ pub fn construction_slab_type(unit_type: UnitType) -> UnitType {
     }
 }
 
-/// `image_count` плиты — второй байт `D_LRGSLA`/`D_DEFALT` (`MAX.RES`).
+/// Slab `image_count` — the second byte of `D_LRGSLA`/`D_DEFALT` (`MAX.RES`).
 fn slab_image_count(unit_type: UnitType) -> i32 {
     if unit_type.is_quad() {
         LARGE_SLAB_IMAGE_COUNT
@@ -873,20 +873,20 @@ fn slab_image_count(unit_type: UnitType) -> i32 {
     }
 }
 
-/// Что поставила стройплощадка (для тестов/QA; id позволяют проверить уборку).
+/// What the construction site placed (for tests/QA; the ids allow checking cleanup).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConstructionSite {
-    /// Клетка-источник площадки (`DeployConstructionSiteUtilities`).
+    /// Source cell of the site (`DeployConstructionSiteUtilities`).
     pub site: Point,
-    /// `LRGTAPE`/`SMLTAPE` — родитель-строитель, стоит до конца стройки.
+    /// `LRGTAPE`/`SMLTAPE` — parent builder, stands until the construction ends.
     pub tape: UnitId,
-    /// `LRGCONES`/`SMLCONES`; `None` на воде/побережье (C++ не ставит конусы).
+    /// `LRGCONES`/`SMLCONES`; `None` on water/coast (C++ does not place cones).
     pub cones: Option<UnitId>,
-    /// `LRGSLAB`/`SMLSLAB` — плита; `None`, если тип не `REQUIRES_SLAB`.
+    /// `LRGSLAB`/`SMLSLAB` — the slab; `None` if the type is not `REQUIRES_SLAB`.
     pub slab: Option<UnitId>,
 }
 
-/// Лента площадки команды в клетке (`Access_GetConstructionUtility`,
+/// The team's site tape on a cell (`Access_GetConstructionUtility`,
 /// `access.cpp:1773`).
 pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Option<UnitId> {
     state.units_at(site).iter().copied().find(|id| {
@@ -896,21 +896,21 @@ pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Opt
     })
 }
 
-/// Поставить стройплощадку — порт `DeployConstructionSiteUtilities` +
-/// `PrepareConstructionSite` в точке `site`.
+/// Place a construction site — a port of `DeployConstructionSiteUtilities` +
+/// `PrepareConstructionSite` at `site`.
 ///
-/// Раскладка C++ (`unitinfo.cpp:3802/4122`):
-/// * конусы `LRGCONES`/`SMLCONES` — в клетке площадки, угол `0`; на
-///   воде/побережье (`SURFACE_TYPE_WATER|COAST`) **не ставятся**;
-/// * лента `LRGTAPE`/`SMLTAPE` — там же, угол `0` на земле и `1` на воде,
-///   родитель — строитель;
-/// * плита `LRGSLAB`/`SMLSLAB` (если `REQUIRES_SLAB`) — там же, кадр
-///   `Randomizer_Generate(image_count)` (5 у большой, 1 у малой), затем
-///   `scaler_adjust = 4` + `ScaleUnit(EXPAND)` — анимация роста.
+/// C++ layout (`unitinfo.cpp:3802/4122`):
+/// * cones `LRGCONES`/`SMLCONES` — on the site cell, angle `0`; on
+///   water/coast (`SURFACE_TYPE_WATER|COAST`) they are **not placed**;
+/// * tape `LRGTAPE`/`SMLTAPE` — there too, angle `0` on land and `1` on water,
+///   parent — the builder;
+/// * slab `LRGSLAB`/`SMLSLAB` (if `REQUIRES_SLAB`) — there too, frame
+///   `Randomizer_Generate(image_count)` (5 for the large, 1 for the small), then
+///   `scaler_adjust = 4` + `ScaleUnit(EXPAND)` — the growth animation.
 ///
-/// Функция идемпотентна по клетке: `StartBuilding` в C++ вызывается один раз,
-/// но порт зовёт её ещё из `ProductionManager::commit` (заказ применяется сразу,
-/// а не на следующем кадре) и из машины приказов — вторая площадка не нужна.
+/// The function is idempotent per cell: `StartBuilding` is called once in C++,
+/// but the port also calls it from `ProductionManager::commit` (the order applies immediately,
+/// not on the next frame) and from the order machine — a second site is not needed.
 pub fn deploy_construction_site(
     state: &mut GameState,
     builder: UnitId,
@@ -957,7 +957,7 @@ pub fn deploy_construction_site(
             }
             set_site_unit_orders(state, id, None);
 
-            // C++ `PrepareConstructionSite`: `scaler_adjust = 4` и
+            // C++ `PrepareConstructionSite`: `scaler_adjust = 4` and
             // `UnitsManager_ScaleUnit(unit, ORDER_STATE_EXPAND)`.
             if let Some(unit) = state.unit_mut(id) {
                 unit.scaler_adjust = 4;
@@ -978,9 +978,9 @@ pub fn deploy_construction_site(
     })
 }
 
-/// Новые декали площадки — `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, как
-/// `UnitInfo::UnitInfo` (`unitinfo.cpp:174`); иначе `App::draw_units` пропустит
-/// их как `ORDER_IDLE` и площадка будет невидима.
+/// New site decals — `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, as in
+/// `UnitInfo::UnitInfo` (`unitinfo.cpp:174`); otherwise `App::draw_units` would skip
+/// them as `ORDER_IDLE` and the site would be invisible.
 fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId>) {
     if let Some(unit) = state.unit_mut(id) {
         unit.orders = UnitOrder::Await;
@@ -991,19 +991,19 @@ fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId
     }
 }
 
-/// Строитель достроил здание и **ждёт приказа уйти с площадки**.
+/// The builder completed the building and **waits for an order to leave the site**.
 ///
-/// C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3536-3592`, не стационарный
-/// строитель): здание ставится на клетку ленты в `ORDER_IDLE`/
-/// `ORDER_STATE_BUILDING_READY` и не рисуется (`UnitInfoGroup::IsRelevant`),
-/// строитель получает `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` и остаётся на
-/// площадке; взаимные родители (`this->SetParent(&*utility_unit)` +
-/// `utility_unit->SetParent(this)`). Уход инициирует **игрок** — клик по клетке
-/// (`game_manager.cpp:6879-6890`: у выделенного строителя состояние
-/// `ORDER_STATE_UNIT_READY` → `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`), у
-/// ИИ — `TaskCreateBuilding::Activate`/`TaskActivate` (`taskactivate.cpp:104`).
+/// C++ `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3536-3592`, not a stationary
+/// builder): the building is placed on the tape cell in `ORDER_IDLE`/
+/// `ORDER_STATE_BUILDING_READY` and is not drawn (`UnitInfoGroup::IsRelevant`),
+/// the builder gets `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` and stays on
+/// the site; mutual parents (`this->SetParent(&*utility_unit)` +
+/// `utility_unit->SetParent(this)`). The exit is initiated by the **player** — a cell click
+/// (`game_manager.cpp:6879-6890`: for the selected builder the state
+/// `ORDER_STATE_UNIT_READY` → `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`), by
+/// the AI — `TaskCreateBuilding::Activate`/`TaskActivate` (`taskactivate.cpp:104`).
 ///
-/// Возвращает id здания-родителя, пока строитель стоит на площадке.
+/// Returns the parent building id while the builder stands on the site.
 pub fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<UnitId> {
     let builder = state.unit(builder_id)?;
 
@@ -1020,15 +1020,15 @@ pub fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<Un
     }
 }
 
-/// Клетка, куда строитель уходит с достроенной площадки — порт поиска
+/// The cell the builder leaves to from a completed site — a port of the search
 /// `TaskActivate::Activate` (`taskactivate.cpp:104-167`).
 ///
-/// C++ перебирает клетки вокруг родителя-здания (2×2): старт в
-/// `(grid_x - 1, grid_y + unit_size)`, затем четыре направления
-/// (`N, E, S, W` — `direction += 2`) по `unit_size + 1` шагов, накопительно —
-/// первая проходимая клетка становится целью. Это цель **ИИ** (`TaskActivate`);
-/// игрок кликом задаёт любую клетку (`move_to` = клик), поэтому у него
-/// `builder_exit_cell` не используется.
+/// C++ iterates cells around the parent building (2×2): start at
+/// `(grid_x - 1, grid_y + unit_size)`, then four directions
+/// (`N, E, S, W` — `direction += 2`) for `unit_size + 1` steps, cumulatively —
+/// the first passable cell becomes the target. This is the **AI** target (`TaskActivate`);
+/// the player sets any cell by clicking (`move_to` = click), so for them
+/// `builder_exit_cell` is not used.
 pub fn builder_exit_cell(
     state: &GameState,
     builder: &UnitInfo,
@@ -1037,7 +1037,7 @@ pub fn builder_exit_cell(
     crate::unit_order::activation_exit_cell(state, builder, building)
 }
 
-/// Прямоугольник 2×2 (`Footprint::Quad`) или 1×1 в клетках —
+/// A 2×2 (`Footprint::Quad`) or 1×1 rectangle in cells —
 /// `UnitInfo::GetBounds` + `Access_IsInsideBounds` (`access.cpp`).
 pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
     let size: i16 = if unit.is_quad() { 2 } else { 1 };
@@ -1048,19 +1048,19 @@ pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
         && grid.y < unit.grid.y.wrapping_add(size)
 }
 
-/// Клетка, с которой готовый юнит завода **выходит** из него — порт
-/// `TaskActivate::Activate` (`taskactivate.cpp:104-167`) для приказа
+/// The cell from which the factory's ready unit **exits** it — a port of
+/// `TaskActivate::Activate` (`taskactivate.cpp:104-167`) for the
 /// `ORDER_ACTIVATE`.
 ///
-/// C++ перебирает клетки вокруг контейнера, начиная с
-/// `(grid_x - 1, grid_y + unit_size)`, затем четыре направления (`N, E, S, W` —
-/// `direction += 2`) по `unit_size + 1` шагов, накопительно; первая проходимая
-/// клетка становится целью. `unit_size` — габарит **контейнера** (2 у здания),
-/// проходимость проверяется для **выводимого** типа.
+/// C++ iterates cells around the container, starting from
+/// `(grid_x - 1, grid_y + unit_size)`, then four directions (`N, E, S, W` —
+/// `direction += 2`) for `unit_size + 1` steps, cumulatively; the first passable
+/// cell becomes the target. `unit_size` — the **container** size (2 for a building),
+/// passability is checked for the **exiting** type.
 ///
-/// Возвращает `None`, если рядом нет проходимой клетки — тогда C++
-/// (`UnitsManager_ActivateUnit`, `units_manager.cpp:3832-3836`) приказ не
-/// выполняет и возвращает прежний.
+/// Returns `None` if there is no passable cell nearby — then C++
+/// (`UnitsManager_ActivateUnit`, `units_manager.cpp:3832-3836`) does not
+/// execute the order and returns the previous one.
 pub fn factory_exit_cell(
     state: &GameState,
     container: &UnitInfo,
@@ -1070,15 +1070,15 @@ pub fn factory_exit_cell(
 }
 
 // ---------------------------------------------------------------------------
-// Материалы комплекса (C++ `Complex::GetCargoInfo` + `Complex::Transfer`)
+// Complex materials (C++ `Complex::GetCargoInfo` + `Complex::Transfer`)
 // ---------------------------------------------------------------------------
 
-/// Материалы комплекса — `Complex::GetCargoInfo(materials, capacity)` →
+/// Complex materials — `Complex::GetCargoInfo(materials, capacity)` →
 /// `materials.raw` (`complex.cpp:136-147`).
 ///
-/// Сумма `storage` **всех подключённых** зданий комплекса с типом груза
-/// `CARGO_TYPE_RAW` (`victory::cargo_type_of`): шахты, `ADUMP`, теплицы и
-/// казармы. Именно этот «общий котёл» тратит завод
+/// The sum of `storage` of **all connected** complex buildings with cargo type
+/// `CARGO_TYPE_RAW` (`victory::cargo_type_of`): mines, `ADUMP`, greenhouses and
+/// barracks. This "common pool" is what the factory spends
 /// (`UnitInfo::StartBuilding`, `unitinfo.cpp:2757`).
 pub fn complex_raw_materials(
     state: &GameState,
@@ -1088,14 +1088,14 @@ pub fn complex_raw_materials(
     crate::alloc::get_cargo_info(state, team, complex).0.raw
 }
 
-/// Списывает `amount` материалов **комплекса**: порт `Complex::Transfer`
-/// (`complex.cpp:178-203`) для отрицательной суммы.
+/// Charges `amount` of **complex** materials: a port of `Complex::Transfer`
+/// (`complex.cpp:178-203`) for a negative amount.
 ///
-/// C++ раскладывает отрицательную сумму по складам членов комплекса в порядке
-/// `UnitsManager_StationaryUnits` (`Complex::TransferCargo`), поэтому списание
-/// детерминировано. Возвращает `false` (ничего не списав), если материалов
-/// меньше ставки — C++-долг (`storage`/`complex->material` в минус) порт не
-/// допускает (требование QA), завод вместо этого встаёт на паузу.
+/// C++ distributes the negative amount over member storages in
+/// `UnitsManager_StationaryUnits` order (`Complex::TransferCargo`), so the charge
+/// is deterministic. Returns `false` (having charged nothing) if there are fewer
+/// materials than the rate — the port does not allow C++ debt (`storage`/`complex->material`
+/// going negative) (a QA requirement), and the factory pauses instead.
 fn spend_complex_raw_materials(
     state: &mut GameState,
     team: TeamId,
@@ -1146,39 +1146,39 @@ fn spend_complex_raw_materials(
 // ProductionManager
 // ---------------------------------------------------------------------------
 
-/// Менеджер производства команды — порт `ProductionManager`/`BuildMenu`-части
+/// Team production manager — a port of the `ProductionManager`/`BuildMenu` part
 /// `production_manager.cpp` + `unitinfo.cpp` (`BuildOrder`/`SpawnNewUnit`).
 ///
-/// Держит `&mut GameState`: все изменения (очередь, `build_time`, всплытие
-/// юнита) применяются к состоянию сразу, поэтому сетевой/локальный цикл видит
-/// один и тот же результат.
+/// Holds `&mut GameState`: all changes (queue, `build_time`, unit
+/// spawning) apply to the state immediately, so the network/local loop sees
+/// the same result.
 pub struct ProductionManager<'a> {
     state: &'a mut GameState,
     team: TeamId,
 }
 
 impl<'a> ProductionManager<'a> {
-    /// Менеджер для команды.
+    /// A manager for the team.
     pub fn new(state: &'a mut GameState, team: TeamId) -> Self {
         Self { state, team }
     }
 
-    /// Команда менеджера.
+    /// The manager's team.
     pub const fn team(&self) -> TeamId {
         self.team
     }
 
-    /// `Builder_GetBuildableUnits` для строителя.
+    /// `Builder_GetBuildableUnits` for a builder.
     pub fn buildable(&self, builder: UnitType) -> &'static [UnitType] {
         buildable_units(builder)
     }
 
-    /// `BuildMenu_GetTurnsToBuild` для типа.
+    /// `BuildMenu_GetTurnsToBuild` for a type.
     pub fn turns_to_build(&self, unit_type: UnitType) -> i32 {
         turns_to_build(self.state, self.team, unit_type)
     }
 
-    /// Текущая очередь постройки юнита (копия).
+    /// The unit's current build queue (a copy).
     pub fn queue(&self, unit_id: UnitId) -> Vec<UnitType> {
         self.state
             .unit(unit_id)
@@ -1186,10 +1186,10 @@ impl<'a> ProductionManager<'a> {
             .unwrap_or_default()
     }
 
-    /// `FactoryBuildMenu::AddSelection` — добавить тип в конец очереди.
+    /// `FactoryBuildMenu::AddSelection` — add a type to the end of the queue.
     ///
-    /// Для мобильного строителя очередь — ровно один элемент (`Build` заменяет
-    /// выбор, как `MobileBuildMenu::Build`: `build_list.Clear(); PushBack`).
+    /// For a mobile builder the queue is exactly one element (`Build` replaces
+    /// the selection, like `MobileBuildMenu::Build`: `build_list.Clear(); PushBack`).
     pub fn enqueue(&mut self, unit_id: UnitId, unit_type: UnitType) -> Result<usize, BuildError> {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return Err(BuildError::NotABuilder);
@@ -1215,7 +1215,7 @@ impl<'a> ProductionManager<'a> {
         Ok(len)
     }
 
-    /// `FactoryBuildMenu::RemoveSelection` — убрать последний выбранный тип.
+    /// `FactoryBuildMenu::RemoveSelection` — remove the last selected type.
     pub fn dequeue_last(&mut self, unit_id: UnitId) -> bool {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return false;
@@ -1229,7 +1229,7 @@ impl<'a> ProductionManager<'a> {
         true
     }
 
-    /// `SetRepeatBuildState` (кнопка `Repeat`).
+    /// `SetRepeatBuildState` (the `Repeat` button).
     pub fn set_repeat(&mut self, unit_id: UnitId, repeat: bool) -> bool {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return false;
@@ -1244,7 +1244,7 @@ impl<'a> ProductionManager<'a> {
         true
     }
 
-    /// Состояние повтора.
+    /// Repeat state.
     pub fn repeat(&self, unit_id: UnitId) -> bool {
         self.state
             .unit(unit_id)
@@ -1252,7 +1252,7 @@ impl<'a> ProductionManager<'a> {
             .unwrap_or(false)
     }
 
-    /// Выбранная скорость постройки (`GetBuildRate`).
+    /// Selected build rate (`GetBuildRate`).
     pub fn build_rate(&self, unit_id: UnitId) -> u16 {
         self.state
             .unit(unit_id)
@@ -1260,10 +1260,10 @@ impl<'a> ProductionManager<'a> {
             .unwrap_or(1)
     }
 
-    /// `SetBuildRate` с клампом по `BuildMenu_GetMaxPossibleBuildRate`.
+    /// `SetBuildRate` with a clamp by `BuildMenu_GetMaxPossibleBuildRate`.
     ///
-    /// До `Build` (`build_time == 0`) скорость ограничивается по времени головы
-    /// очереди, иначе кнопки 2×/4× не нажимались бы до заказа.
+    /// Before `Build` (`build_time == 0`) the rate is limited by the queue head's
+    /// time, otherwise the 2×/4× buttons could not be pressed before the order.
     pub fn set_build_rate(&mut self, unit_id: UnitId, rate: u16) -> bool {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return false;
@@ -1291,10 +1291,10 @@ impl<'a> ProductionManager<'a> {
         true
     }
 
-    /// `BuildMenu::Build` — зафиксировать голову очереди и выдать `ORDER_BUILD`.
+    /// `BuildMenu::Build` — fix the queue head and issue `ORDER_BUILD`.
     ///
-    /// Для мобильного строителя площадка ищется [`find_build_site`]
-    /// (`UnitsManager_IssueBuildOrder`), для завода — клетка не нужна.
+    /// For a mobile builder the site is searched by [`find_build_site`]
+    /// (`UnitsManager_IssueBuildOrder`), for a factory no cell is needed.
     pub fn commit(&mut self, unit_id: UnitId) -> Result<BuildReport, BuildError> {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return Err(BuildError::InvalidTeam);
@@ -1335,11 +1335,11 @@ impl<'a> ProductionManager<'a> {
         let build_rate = i32::from(unit.build_rate.max(1)).min(max_rate.max(1)) as u16;
         let builder_type = unit.unit_type;
 
-        // `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`): при скорости 1×
-        // требуется всё сырьё на руках — `storage >= rate(1) * turns`, иначе
-        // сообщение `_(c529)` и приказ не отдаётся. C++ считает по
-        // `Cargo_GetRawConsumptionRate(unit->GetUnitType(), 1)` и `turns_to_build`
-        // из `BuildMenu_GetTurnsToBuild`.
+        // `MobileBuildMenu::Build` (`buildmenu.cpp:903-906`): at 1× rate
+        // all raw material must be on hand — `storage >= rate(1) * turns`, otherwise
+        // the `_(c529)` message and the order is not issued. C++ computes by
+        // `Cargo_GetRawConsumptionRate(unit->GetUnitType(), 1)` and `turns_to_build`
+        // from `BuildMenu_GetTurnsToBuild`.
         if is_mobile_builder(builder_type)
             && build_rate == 1
             && i32::from(unit.storage)
@@ -1359,17 +1359,17 @@ impl<'a> ProductionManager<'a> {
         unit.build_paused = false;
         self.state.write_unit(unit_id, unit.clone());
 
-        // `ORDER_BUILD` с целью: клетка постройки в `order_data.move_to`.
+        // `ORDER_BUILD` with a target: the build cell in `order_data.move_to`.
         let mut data = self.state.order_data(unit_id);
         data.move_to = site;
         self.state.set_order_data(unit_id, data);
 
-        // `UnitInfo::StartBuilding` (`unitinfo.cpp:2751-2794`) сразу списала бы
-        // `complex->material/power/workers` и вызвала
+        // `UnitInfo::StartBuilding` (`unitinfo.cpp:2751-2794`) would immediately charge
+        // `complex->material/power/workers` and call
         // `GameManager_OptimizeProduction` (`game_manager.cpp:2555-2584`):
-        // при нехватке `ValidateIndustry` (`production_manager.cpp:677-711`)
-        // прерывает заказ. Порт не теряет очередь: проверяет баланс до старта и
-        // возвращает `BuildError`, оставляя `build_list` нетронутым.
+        // on a shortage `ValidateIndustry` (`production_manager.cpp:677-711`)
+        // interrupts the order. The port does not lose the queue: it checks the balance before starting and
+        // returns `BuildError`, leaving `build_list` untouched.
         if is_factory(builder_type) {
             let Some(complex) = unit.complex else {
                 let mut unit = self.state.unit(unit_id).cloned().unwrap_or(unit);
@@ -1416,10 +1416,10 @@ impl<'a> ProductionManager<'a> {
             }
         }
 
-        // `UnitInfo::StartBuilding` в C++ зовётся синхронно из `Build`:
+        // In C++ `UnitInfo::StartBuilding` is called synchronously from `Build`:
         // `DeployConstructionSiteUtilities` + `PrepareConstructionSite`.
-        // Ставим площадку сразу, чтобы она была видна уже на кадре заказа, а
-        // машина приказов (`start_building`) повторно её не дублирует.
+        // The site is placed immediately so it is visible on the order frame, and
+        // the order machine (`start_building`) does not duplicate it.
         if is_mobile_builder(builder_type) {
             let _ = deploy_construction_site(self.state, unit_id, unit_type, site);
         }
@@ -1433,10 +1433,10 @@ impl<'a> ProductionManager<'a> {
         })
     }
 
-    /// `UnitInfo::CancelBuilding` — прервать постройку и очистить очередь.
+    /// `UnitInfo::CancelBuilding` — abort the construction and clear the queue.
     ///
-    /// Списывания за уже прошедшие ходы не возвращаются (в C++ материал также
-    /// не возвращается), очередь обнуляется.
+    /// Charges for past turns are not refunded (in C++ the material is also
+    /// not refunded), the queue is cleared.
     pub fn cancel(&mut self, unit_id: UnitId) -> bool {
         let Some(mut unit) = self.state.unit(unit_id).cloned() else {
             return false;
@@ -1465,19 +1465,19 @@ impl<'a> ProductionManager<'a> {
         true
     }
 
-    /// Ход производства: оптимизация энергии → списание за ход →
-    /// `SpawnNewUnits` (порядок C++).
+    /// Production turn: power optimization → per-turn charging →
+    /// `SpawnNewUnits` (C++ order).
     ///
-    /// Возвращает события (спавны/остановки) в порядке C++ — для HUD-лога и
-    /// тестов.
+    /// Returns events (spawns/stops) in C++ order — for the HUD log and
+    /// tests.
     pub fn progress(&mut self) -> Vec<ProductionEvent> {
         let (mut events, paused) = self.charge_units();
         events.extend(self.spawn_units(&paused));
 
         // `GameManager_ProgressBuildState` (`game_manager.cpp:8183-8204`):
-        // после `SpawnNewUnits` C++ ещё раз пересчитывает комплексы и зовёт
-        // `ProductionManager_OptimizeProduction`. Заводы в `UNIT_READY` больше
-        // не потребляют энергию, поэтому лишние производители выключаются.
+        // after `SpawnNewUnits` C++ recomputes the complexes once more and calls
+        // `ProductionManager_OptimizeProduction`. Factories in `UNIT_READY` no longer
+        // consume power, so surplus producers are turned off.
         let team = self.team;
         let complexes = self.team_complexes();
         for complex in complexes {
@@ -1487,7 +1487,7 @@ impl<'a> ProductionManager<'a> {
         events
     }
 
-    /// Комплексы команды в порядке `TeamUnits::complexes` (по возрастанию id).
+    /// Team complexes in `TeamUnits::complexes` order (ascending id).
     fn team_complexes(&self) -> Vec<crate::team::ComplexId> {
         self.state
             .team_units
@@ -1503,23 +1503,23 @@ impl<'a> ProductionManager<'a> {
     }
 
     /// `GameManager_ManageEconomy` → `GameManager_UpdateProductions`
-    /// (`UnitInfo::UpdateProduction`): списание ставки за ход.
+    /// (`UnitInfo::UpdateProduction`): charging the per-turn rate.
     ///
-    /// Мобильный строитель уже заплатил сырьём со склада в
-    /// [`crate::game::GameState::update_production`]; завод платит здесь
-    /// **материалами своего комплекса** (`Cargo_GetRawConsumptionRate` →
-    /// [`complex_raw_materials`]) — как C++ `UnitInfo::StartBuilding`/
+    /// The mobile builder has already paid in raw material from its storage in
+    /// [`crate::game::GameState::update_production`]; the factory pays here
+    /// **with its complex's materials** (`Cargo_GetRawConsumptionRate` →
+    /// [`complex_raw_materials`]) — like C++ `UnitInfo::StartBuilding`/
     /// `Cargo_GetNetProduction`.
     ///
-    /// Перед списанием каждый комплекс проходит
+    /// Before charging, every complex goes through
     /// [`crate::power::optimize_complex`] (C++
-    /// `TeamUnits::OptimizeComplexes`): производители энергии включаются,
-    /// потребители при дефиците выключаются, стройки без энергии/рабочих
-    /// ставятся на паузу.
+    /// `TeamUnits::OptimizeComplexes`): power producers are turned on,
+    /// consumers are turned off on a deficit, constructions without power/workers
+    /// are paused.
     ///
-    /// Возвращает события и множество построек, которые в этом ходу **не
-    /// двигаются** из-за нехватки ресурсов (C++ `ValidateIndustry` прерывает
-    /// постройку; порт ставит её на паузу — см. шапку модуля).
+    /// Returns events and the set of constructions that **do not
+    /// advance** this turn due to a resource shortage (C++ `ValidateIndustry` interrupts
+    /// the construction; the port pauses it — see the module header).
     fn charge_units(&mut self) -> (Vec<ProductionEvent>, Vec<UnitId>) {
         let mut events = Vec::new();
         let mut paused = Vec::new();
@@ -1531,7 +1531,7 @@ impl<'a> ProductionManager<'a> {
             .is_some_and(|info| info.team_type == TeamKind::Player);
 
         // `TeamUnits::OptimizeComplexes(team)` + `ProductionManager_OptimizeProduction`:
-        // решение о паузах и режиме производителей принимается до списания.
+        // the pause and producer-mode decision is made before charging.
         let mut pause_reason: Vec<(UnitId, crate::power::Shortage)> = Vec::new();
         let complexes = self.team_complexes();
 
@@ -1561,7 +1561,7 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 }
 
-                // C++ списывает только во время `ORDER_BUILD`
+                // C++ charges only during `ORDER_BUILD`
                 // (`UnitInfo::UpdateProduction`/`StartBuilding`).
                 if unit.orders != UnitOrder::Build {
                     continue;
@@ -1575,7 +1575,7 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 }
 
-                // `max_allowed_build_rate`: здания не ограничены складом.
+                // `max_allowed_build_rate`: buildings are not limited by storage.
                 let storage = if is_factory(unit.unit_type) {
                     i32::from(i16::MAX)
                 } else {
@@ -1583,11 +1583,11 @@ impl<'a> ProductionManager<'a> {
                 };
                 let max_rate =
                     max_possible_build_rate(unit.unit_type, i32::from(unit.build_time), storage);
-                // У мобильного строителя `UnitInfo::UpdateProduction` уже в этом
-                // ходу урезал `build_rate` по складу **и** списал сырьё именно
-                // по нему; повторный пересчёт по уменьшившемуся `storage` срезал
-                // бы скорость второй раз, и «золото» порта перестало бы
-                // соответствовать израсходованному сырью (колонка `Cost`).
+                // For a mobile builder `UnitInfo::UpdateProduction` has already
+                // this turn cut `build_rate` by storage **and** charged raw material
+                // exactly by it; a repeated computation over the reduced `storage` would cut
+                // the rate a second time, and the port's "gold" would stop
+                // matching the consumed raw material (the `Cost` column).
                 let mobile_land = unit.is_ground() || unit.is_amphibious();
                 let build_rate = if mobile_land {
                     i32::from(unit.build_rate.max(1))
@@ -1597,10 +1597,10 @@ impl<'a> ProductionManager<'a> {
                         .max(1)
                 };
 
-                // Мобильный строитель платит **сырьём со склада** (C++
+                // A mobile builder pays **in raw material from its storage** (C++
                 // `Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`),
-                // а не золотом команды; факт оплаты уже посчитан там же
-                // (`build_paused`). Ход без оплаты стройку не двигает.
+                // rather than team gold; the payment fact is already computed there
+                // (`build_paused`). A turn without payment does not advance the construction.
                 if mobile_land {
                     if unit.build_paused {
                         paused.push(id);
@@ -1617,10 +1617,10 @@ impl<'a> ProductionManager<'a> {
 
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
-                // Завод, который оптимизатор уже поставил на паузу (нет
-                // энергии/топлива/рабочих/материалов), в этом ходу не платит и
-                // не двигается (C++ `ValidateIndustry` → `BUILD_ABORT`; порт —
-                // пауза с сохранением очереди).
+                // A factory the optimizer has already paused (no
+                // power/fuel/workers/materials) does not pay this turn and
+                // does not advance (C++ `ValidateIndustry` → `BUILD_ABORT`; the port —
+                // a pause with the queue preserved).
                 if let Some((_, shortage)) = pause_reason.iter().find(|(unit, _)| *unit == id) {
                     events.push(ProductionEvent {
                         builder: id,
@@ -1633,11 +1633,11 @@ impl<'a> ProductionManager<'a> {
 
                 // C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2757`):
                 // `complex->material -= Cargo_GetRawConsumptionRate(...)`;
-                // `Cargo_GetNetProduction` (`cargo.cpp:88-95`) вычитает ставку
-                // каждый ход, пока `ORDER_BUILD` и состояние не `UNIT_READY`.
-                // Материалы — **комплекса завода** ([`complex_raw_materials`]),
-                // а не всей команды: завод без подключённого хранилища
-                // (`ADUMP`/шахта) стоит, как в оракуле.
+                // `Cargo_GetNetProduction` (`cargo.cpp:88-95`) subtracts the rate
+                // every turn while `ORDER_BUILD` and the state is not `UNIT_READY`.
+                // Materials — of the **factory's complex** ([`complex_raw_materials`]),
+                // not of the whole team: a factory without a connected storage
+                // (`ADUMP`/mine) stands still, as in the oracle.
                 let Some(complex) = unit.complex else {
                     paused.push(id);
                     events.push(ProductionEvent {
@@ -1665,10 +1665,10 @@ impl<'a> ProductionManager<'a> {
         (events, paused)
     }
 
-    /// `GameManager_SpawnNewUnits` для всех четырёх списков в порядке C++.
+    /// `GameManager_SpawnNewUnits` for all four lists in C++ order.
     ///
-    /// `paused` — постройки, за которые в этом ходу не заплачено: они не
-    /// двигаются и не выпускают юнитов.
+    /// `paused` — constructions not paid for this turn: they do not
+    /// advance and do not spawn units.
     fn spawn_units(&mut self, paused: &[UnitId]) -> Vec<ProductionEvent> {
         let mut events = Vec::new();
         let team = self.team;
@@ -1689,10 +1689,10 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 }
 
-                // `GameManager_SpawnNewUnits` (`game_manager.cpp:8078`) крутит
-                // `build_time` и у бульдозера (`ORDER_CLEAR`, очередь пуста):
-                // по нулю вызывается `UnitInfo::SpawnNewUnit`, который сносит
-                // обломок и забирает его груз.
+                // `GameManager_SpawnNewUnits` (`game_manager.cpp:8078`) advances
+                // `build_time` for the bulldozer too (`ORDER_CLEAR`, empty queue):
+                // at zero `UnitInfo::SpawnNewUnit` is called, which demolishes
+                // the rubble and takes its cargo.
                 if unit.build_list.is_empty() && unit.unit_type != UnitType::Bulldozer {
                     continue;
                 }
@@ -1717,15 +1717,15 @@ impl<'a> ProductionManager<'a> {
         events
     }
 
-    /// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), ветка `BULLDOZR`:
-    /// обломок расчищен.
+    /// `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), the `BULLDOZR` branch:
+    /// the rubble is cleared.
     ///
-    /// C++ сносит `SMLRUBLE`/`LRGRUBLE` в клетке бульдозера (у большого — ещё
-    /// `+1` по обеим осям), забирает их `storage` (груз обломка) себе, режет по
-    /// `ATTRIB_STORAGE`, снимает утилиты клетки и возвращается в
-    /// `ORDER_AWAIT`/`EXECUTING_ORDER`. Для обломка здания дополнительно
-    /// запускается `AWAIT_TAPE_POSITIONING`/`DEINIT` — в порте ленты расчистки
-    /// нет (`ProcessOrderClear` без `StartClearing`), поэтому шаг пропущен.
+    /// C++ demolishes `SMLRUBLE`/`LRGRUBLE` on the bulldozer's cell (for the large one also
+    /// `+1` on both axes), takes their `storage` (the rubble cargo) for itself, clamps to
+    /// `ATTRIB_STORAGE`, removes the cell utilities and returns to
+    /// `ORDER_AWAIT`/`EXECUTING_ORDER`. For building rubble additionally
+    /// `AWAIT_TAPE_POSITIONING`/`DEINIT` is started — the port has no clearing tape
+    /// (`ProcessOrderClear` without `StartClearing`), so the step is skipped.
     fn finish_bulldozer_clearing(&mut self, id: UnitId) -> ProductionEvent {
         let Some(mut builder) = self.state.unit(id).cloned() else {
             return ProductionEvent {
@@ -1794,7 +1794,7 @@ impl<'a> ProductionManager<'a> {
         }
     }
 
-    /// `UnitInfo::SpawnNewUnit` — выпуск юнита/достройка здания.
+    /// `UnitInfo::SpawnNewUnit` — spawning a unit/completing a building.
     fn spawn_new_unit(&mut self, id: UnitId) -> ProductionEvent {
         let team = self.team;
         let Some(builder) = self.state.unit(id).cloned() else {
@@ -1806,9 +1806,9 @@ impl<'a> ProductionManager<'a> {
             };
         };
 
-        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), ветка BULLDOZR:
-        // расчистка обломка завершена — обломки сносятся, их груз переходит
-        // бульдозеру.
+        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3441-3487`), BULLDOZR branch:
+        // rubble clearing is complete — the rubble is demolished, its cargo goes
+        // to the bulldozer.
         if builder.unit_type == UnitType::Bulldozer {
             return self.finish_bulldozer_clearing(id);
         }
@@ -1823,11 +1823,11 @@ impl<'a> ProductionManager<'a> {
         };
 
         let factory = is_factory(builder.unit_type);
-        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3494`): стационарный
-        // завод ставит готовый юнит **на свою клетку** —
+        // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3494`): a stationary
+        // factory places the ready unit **on its own cell** —
         // `UnitsManager_DeployUnit(GetConstructedUnitType(), team, GetComplex(),
-        // position_x = this->grid_x, position_y = this->grid_y, …)`. Свободная
-        // клетка рядом не ищется: юнит «внутри» завода до приказа игрока.
+        // position_x = this->grid_x, position_y = this->grid_y, …)`. A free
+        // adjacent cell is not searched: the unit is "inside" the factory until the player's order.
         let cell = if factory {
             builder.grid
         } else {
@@ -1843,7 +1843,7 @@ impl<'a> ProductionManager<'a> {
             };
         };
 
-        // Новый юнит принадлежит комплексу строителя (`SpawnNewUnit`:
+        // The new unit belongs to the builder's complex (`SpawnNewUnit`:
         // `UnitsManager_DeployUnit(..., GetComplex(), ...)`).
         if builder.complex.is_some() {
             if let Some(mut unit) = self.state.unit(spawned).cloned() {
@@ -1856,7 +1856,7 @@ impl<'a> ProductionManager<'a> {
             info.stats_units_built = info.stats_units_built.saturating_add(1);
         }
 
-        // Учёт очереди: `build_list.Remove(0)`, `repeat_build` возвращает тип.
+        // Queue accounting: `build_list.Remove(0)`, `repeat_build` returns the type.
         let mut builder = builder;
         builder.build_list.remove(0);
 
@@ -1871,28 +1871,28 @@ impl<'a> ProductionManager<'a> {
         };
 
         if factory {
-            // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), ветка
-            // `flags & STATIONARY` — построенный юнит остаётся **в заводе**:
-            // * `factory_unit->SetParent(this)` — родитель юнита — завод;
+            // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), the
+            // `flags & STATIONARY` branch — the built unit stays **in the factory**:
+            // * `factory_unit->SetParent(this)` — the unit's parent is the factory;
             // * `factory_unit->SetOrder(ORDER_IDLE)`;
-            //   `factory_unit->SetOrderState(ORDER_STATE_STORE)` — юнит «в
-            //   трюме» (`GetTeamUnit` такие не выбирает, `Access_IsAccessible`
-            //   не считает, рендер `IsRelevant` не рисует);
-            // * `factory_unit->scaler_adjust = 4` — сжат (1/32 размера, за
-            //   пределами отрисовки), пока стоит в заводе;
-            // * `SetParent(factory_unit.Get())` — у **завода** родитель теперь
-            //   готовый юнит: именно это читает `UnitsManager_ActivateUnit`
-            //   (`units_manager.cpp:3827`: `client = unit->GetParent()`), когда
-            //   игрок выводит юнита приказом;
-            // * `storage = 1` — счётчик готовых юнитов в заводе;
+            //   `factory_unit->SetOrderState(ORDER_STATE_STORE)` — the unit is "in
+            //   the hold" (`GetTeamUnit` does not select such units, `Access_IsAccessible`
+            //   does not count it, the `IsRelevant` render does not draw it);
+            // * `factory_unit->scaler_adjust = 4` — compressed (1/32 size, beyond
+            //   the drawing bounds), while it stands in the factory;
+            // * `SetParent(factory_unit.Get())` — the **factory's** parent is now
+            //   the ready unit: this is exactly what `UnitsManager_ActivateUnit` reads
+            //   (`units_manager.cpp:3827`: `client = unit->GetParent()`) when
+            //   the player orders the unit out;
+            // * `storage = 1` — the counter of ready units in the factory;
             // * `orders = ORDER_BUILD`, `state = ORDER_STATE_UNIT_READY` —
-            //   завод ждёт вывода (следующий заказ стартует только в
-            //   `UnitsManager_ActivateUnit`, `units_manager.cpp:3843-3848`, а не
-            //   здесь: автостарт очереди был расхождением порта).
+            //   the factory waits for the exit (the next order starts only in
+            //   `UnitsManager_ActivateUnit`, `units_manager.cpp:3843-3848`, not
+            //   here: auto-starting the queue was a port divergence).
             if let Some(mut unit) = self.state.unit(spawned).cloned() {
                 unit.parent_unit = Some(id);
-                // C++: `SetOrder(ORDER_IDLE)` + `SetOrderState(STORE)` — приказ
-                // ставится напрямую, `prior` остаётся от `DeployUnit`
+                // C++: `SetOrder(ORDER_IDLE)` + `SetOrderState(STORE)` — the order
+                // is set directly, `prior` stays from `DeployUnit`
                 // (`ORDER_AWAIT`/`EXECUTING_ORDER`).
                 unit.orders = UnitOrder::Idle;
                 unit.state = UnitOrderState::Store;
@@ -1908,33 +1908,33 @@ impl<'a> ProductionManager<'a> {
             builder.build_time = 0;
             builder.build_paused = false;
         } else {
-            // `UnitInfo::SpawnNewUnit` (мобильный строитель) — порядок C++:
-            //  1. здание встаёт на клетку ленты, но остаётся
-            //     `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` и **не рисуется**
-            //     (`UnitInfoGroup::IsRelevant`), пока строитель на площадке;
-            //  2. строитель получает `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`
-            //     (`this->SetParent(&*utility_unit)` — взаимный родитель) и
-            //     продолжает стоять (`ProcessOrderBuild`/`UNIT_READY` только
-            //     анимирует) — **никакого автовыхода**;
-            //  3. уход заказывает игрок кликом (`ORDER_ACTIVATE` →
+            // `UnitInfo::SpawnNewUnit` (mobile builder) — C++ order:
+            //  1. the building is placed on the tape cell but remains
+            //     `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY` and is **not drawn**
+            //     (`UnitInfoGroup::IsRelevant`) while the builder is on the site;
+            //  2. the builder gets `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`
+            //     (`this->SetParent(&*utility_unit)` — mutual parent) and
+            //     keeps standing (`ProcessOrderBuild`/`UNIT_READY` only
+            //     animates) — **no automatic exit**;
+            //  3. the exit is ordered by the player clicking (`ORDER_ACTIVATE` →
             //     `PositionInTape` DEINIT/LEAVE → `ActivateEngineer` →
-            //     `ORDER_MOVE`, см. `hud::build_builder_exit_order`) или ИИ
+            //     `ORDER_MOVE`, see `hud::build_builder_exit_order`) or by the AI
             //     (`TaskActivate` → `unit_order::issue_builder_exit`);
-            //  4. `UnitsManager_BuildingReady` снимает ленту и конусы, плита
-            //     (`*SLAB`) остаётся фундаментом, здание раскрывается
-            //     (`ScaleUnit(EXPAND)`) — только после ухода строителя.
+            //  4. `UnitsManager_BuildingReady` removes the tape and cones, the slab
+            //     (`*SLAB`) remains as the foundation, the building unfolds
+            //     (`ScaleUnit(EXPAND)`) — only after the builder leaves.
             if let Some(mut unit) = self.state.unit(spawned).cloned() {
                 unit.parent_unit = Some(id);
                 // `UnitsManager_SetNewOrderInt(&*utility_unit, ORDER_IDLE,
-                // ORDER_STATE_BUILDING_READY)` (`unitinfo.cpp:3581`): в отличие
-                // от `SetOrder`, `SetNewOrderInt` сохраняет **prior**
-                // (`units_manager.cpp:1970-1971`). Это важно для юнитов,
-                // которые `UnitsManager_DeployUnit` ставит в особый приказ:
-                // `RADAR`, турели и мины рождаются в `ORDER_SENTRY`
-                // (`units_manager.cpp:2412-2421`), и `RestoreOrders`
-                // (`unitinfo.cpp:3783`) после достройки возвращает именно
-                // `ORDER_SENTRY` — иначе ANIMATED-радар (`ProcessOrderSentry`)
-                // замирал бы в `ORDER_AWAIT` и не листал 16 кадров.
+                // ORDER_STATE_BUILDING_READY)` (`unitinfo.cpp:3581`): unlike
+                // `SetOrder`, `SetNewOrderInt` preserves **prior**
+                // (`units_manager.cpp:1970-1971`). This matters for units
+                // that `UnitsManager_DeployUnit` puts into a special order:
+                // `RADAR`, turrets and mines are born in `ORDER_SENTRY`
+                // (`units_manager.cpp:2412-2421`), and `RestoreOrders`
+                // (`unitinfo.cpp:3783`) after completion returns exactly
+                // `ORDER_SENTRY` — otherwise an ANIMATED radar (`ProcessOrderSentry`)
+                // would freeze in `ORDER_AWAIT` and not cycle through 16 frames.
                 crate::unit_order::set_new_order_int(
                     &mut unit,
                     UnitOrder::Idle,
@@ -1943,10 +1943,10 @@ impl<'a> ProductionManager<'a> {
                 self.state.write_unit(spawned, unit);
             }
 
-            // `this->SetParent(&*utility_unit)`: строитель «внутри» здания до
-            // ухода с площадки; `if (!path) build_list.Clear()` — порте строитель
-            // к площадке не идёт (`PositionInTape` двигает только спрайт),
-            // пути нет, поэтому очередь очищается.
+            // `this->SetParent(&*utility_unit)`: the builder is "inside" the building until
+            // leaving the site; `if (!path) build_list.Clear()` — here the builder
+            // does not move to the site (`PositionInTape` moves only the sprite),
+            // there is no path, so the queue is cleared.
             builder.parent_unit = Some(spawned);
             builder.orders = UnitOrder::Build;
             builder.state = UnitOrderState::UnitReady;
@@ -1966,22 +1966,22 @@ impl<'a> ProductionManager<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Свободные функции для GameState/ИИ
+// Free functions for GameState/AI
 // ---------------------------------------------------------------------------
 
-/// `GameManager_ProgressBuildState(team)` — ход производства команды.
+/// `GameManager_ProgressBuildState(team)` — the team's production turn.
 ///
-/// Порядок 1:1 C++: `ManageEconomy` (списание) → `SpawnNewUnits` по спискам
+/// C++ order 1:1: `ManageEconomy` (charging) → `SpawnNewUnits` over the lists
 /// `GroundCover → MobileLandSea → Stationary → MobileAir`.
 pub fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<ProductionEvent> {
     ProductionManager::new(state, team).progress()
 }
 
-/// Хватает ли материалов на текущий ход постройки (проверка UI/ИИ).
+/// Whether there are enough materials for the current construction turn (UI/AI check).
 ///
-/// У мобильного строителя платёж — сырьё на своём складе
-/// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), у
-/// заводов — материалы **своего комплекса** ([`complex_raw_materials`],
+/// For a mobile builder the payment is raw material in its storage
+/// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), for
+/// factories — the materials of **their own complex** ([`complex_raw_materials`],
 /// C++ `complex->material`).
 pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
     let Some(unit) = state.unit(unit_id) else {
@@ -2005,8 +2005,8 @@ mod tests {
 
     #[test]
     fn turret_layout_is_one_by_one() {
-        // Турель — здание семантически, но `Footprint::Single`: площадка,
-        // лента/конусы и плита — малые (1×1), габарит — одна клетка.
+        // A turret is a building semantically, but `Footprint::Single`: the site,
+        // tape/cones and slab are small (1×1), the size is one cell.
         for turret in [
             UnitType::GunTurret,
             UnitType::Artillery,
@@ -2028,7 +2028,7 @@ mod tests {
             );
         }
 
-        // Для контраста: 2×2-здание — большие утилиты и плита.
+        // For contrast: a 2×2 building — large utilities and slab.
         assert_eq!(footprint(UnitType::MiningStation), 2);
         assert_eq!(
             construction_utility_types(UnitType::MiningStation),

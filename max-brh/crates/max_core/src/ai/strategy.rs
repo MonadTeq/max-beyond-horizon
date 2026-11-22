@@ -1,20 +1,20 @@
-//! Игрок ИИ — C++ `class AiPlayer` (`aiplayer.cpp/.hpp`).
+//! The AI player — C++ `class AiPlayer` (`aiplayer.cpp/.hpp`).
 //!
-//! # Что портировано
+//! # What is ported
 //!
-//! * `AiPlayer::Init` (поля, весовые таблицы, `need_init`), `SelectStrategy`
-//!   **без перегенерации карты** (DESIGN: `Ai_SetupStrategy` — только выбор
-//!   стратегии): континенты считаются заливкой по `SurfaceMap`, оценки
-//!   стратегий — по формулам `aiplayer.cpp:3770`, выбор — одним взвешенным
-//!   броском RNG, как в C++;
-//! * `SelectTeamClan`, `RollGreenhouseRatio`, `RollMinefieldDensity` — порт
-//!   порядка вызовов RNG и ветвлений;
-//! * `BeginTurn` (целиком по структуре): сброс карт угроз, рейтинг атакующих
-//!   задач (`UpdatePriorityTasks`), инициализация задач первого хода
+//! * `AiPlayer::Init` (fields, weight tables, `need_init`), `SelectStrategy`
+//!   **without map regeneration** (DESIGN: `Ai_SetupStrategy` — strategy selection
+//!   only): continents are computed by flood-fill over `SurfaceMap`,
+//!   strategy scores — by `aiplayer.cpp:3770` formulas, the choice — by one weighted
+//!   RNG roll, as in C++;
+//! * `SelectTeamClan`, `RollGreenhouseRatio`, `RollMinefieldDensity` — a port
+//!   of the RNG call order and branches;
+//! * `BeginTurn` (in full by structure): threat map reset, attack task
+//!   rating (`UpdatePriorityTasks`), first-turn task initialization
 //!   (`CheckAssaults`, `Survey`/`Explore`, `MineAssistant`, `UpdateTerrain`,
-//!   `Scavenge`, `AssistMove`, `ManageBuildings`), выбор атак по замеченным
-//!   юнитам (`DetermineAttack`), включение питания зданий, регистрация
-//!   простаивающих юнитов (`RegisterIdleUnits`), напоминания о движении/атаке,
+//!   `Scavenge`, `AssistMove`, `ManageBuildings`), attack selection against spotted
+//!   units (`DetermineAttack`), powering buildings, registering
+//!   idle units (`RegisterIdleUnits`), movement/attack reminders,
 //!   `TaskManager::BeginTurn`;
 //! * `CheckEndTurn` (`end_turn_retry_counter` 10/20/30/60/120), `CreateBuilding`
 //!   (`FindManager` + `TaskManageBuildings::CreateBuilding`), `FindManager`,
@@ -22,23 +22,23 @@
 //!   `GetMilitaryValue`, `DetermineAttack`, `IsKeyFacility`, `FindMines`,
 //!   `GetDamagePotential(Map)`, `GetPredictedAttack`, `InvalidateThreatMaps`,
 //!   `UpdateMap`/`UpdateThreatMaps`/`DetermineDefenses`/`DetermineThreats`/
-//!   `NormalizeThreatMap`/`SumUpMaps` (карты угроз), `SetInfoMapPoint`,
+//!   `NormalizeThreatMap`/`SumUpMaps` (threat maps), `SetInfoMapPoint`,
 //!   `MarkMineMapPoint`, `UpdateMineMap`, `GetMineMapEntry`, `GuessEnemyAttackDirections`
-//!   и `PlanMinefields` (упрощённо), `GetFilteredWeightTable`,
+//!   and `PlanMinefields` (simplified), `GetFilteredWeightTable`,
 //!   `GetExtendedWeightTable`, `ShouldUpgradeUnit`, `MatchPath`.
 //!
-//! # Осознанные упрощения (документированы в коде)
+//! # Intentional simplifications (documented in code)
 //!
 //! 1. `ChooseStrategicBuildOrders`/`ChooseGenericBuildOrders`/`ChooseUpgrade`/
-//!    `UpgradeUnitType`/`DetermineResearchProjects` опираются на данные
-//!    производства (`BuildMenu_*`, `Builder_*`, таблицы апгрейдов — P3/P7) и
-//!    поэтому в P6 не портированы: `begin_turn` не закупает заводы и не
-//!    апгрейдит юнитов; сами хуки присутствуют.
-//! 2. `RollTeamMissionSupplies`/`SelectLandingSite` (setup карты) — P2, не P6.
-//! 3. `GetThreatMap` в C++ кэширует 10 карт и живёт на глобальном массиве
-//!    `AiPlayer_ThreatMaps`; здесь карта считается по требованию, поэтому
-//!    чтение не требует `&mut`. Это не меняет результат (карта — чистая
-//!    функция состояния), но может стоить дороже на больших картах.
+//!    `UpgradeUnitType`/`DetermineResearchProjects` rely on production data
+//!    (`BuildMenu_*`, `Builder_*`, upgrade tables — P3/P7) and are
+//!    therefore not ported in P6: `begin_turn` does not purchase factories and does not
+//!    upgrade units; the hooks themselves are present.
+//! 2. `RollTeamMissionSupplies`/`SelectLandingSite` (map setup) — P2, not P6.
+//! 3. `GetThreatMap` in C++ caches 10 maps and lives on the global
+//!    `AiPlayer_ThreatMaps` array; here the map is computed on demand, so
+//!    reading does not require `&mut`. This does not change the result (the map is a pure
+//!    function of state), but may cost more on large maps.
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{
@@ -72,18 +72,18 @@ pub const ATTACK_VALUE: i32 = 600;
 /// `AI_SAFE_ENEMY_DISTANCE` (`ai.cpp:41`).
 pub const AI_SAFE_ENEMY_DISTANCE: i32 = 400;
 
-/// Обнаруженный юнит — C++ `class SpottedUnit` (`spottedunit.cpp`).
+/// A spotted unit — C++ `class SpottedUnit` (`spottedunit.cpp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpottedUnit {
-    /// Юнит.
+    /// Unit.
     pub unit: Option<UnitId>,
-    /// Задача, которая работает по этому юниту (`GetTask`).
+    /// The task working on this unit (`GetTask`).
     pub task: Option<u32>,
-    /// Команда-наблюдатель.
+    /// Observer team.
     pub team: TeamId,
-    /// Последняя известная позиция.
+    /// Last known position.
     pub last_position: Point,
-    /// Виден ли сейчас (`visible_to_team`).
+    /// Whether it is currently visible (`visible_to_team`).
     pub visible_to_team: bool,
 }
 
@@ -99,7 +99,7 @@ impl SpottedUnit {
         }
     }
 
-    /// `SpottedUnit::GetLastPosition` — виден → текущая клетка, иначе последняя.
+    /// `SpottedUnit::GetLastPosition` — visible → current cell, otherwise the last one.
     pub fn last_position_of(&self, world: &GameState) -> Point {
         let Some(unit_id) = self.unit else {
             return self.last_position;
@@ -125,16 +125,16 @@ impl SpottedUnit {
     }
 }
 
-/// Игрок ИИ — C++ `class AiPlayer`.
+/// The AI player — C++ `class AiPlayer`.
 #[derive(Debug, Clone)]
 pub struct AiPlayer {
     /// `player_team`.
     pub player_team: TeamId,
     /// `strategy`.
     pub strategy: AiStrategy,
-    /// `greenhouse_ratio` (-1 — не разыгран).
+    /// `greenhouse_ratio` (-1 — not rolled).
     pub greenhouse_ratio: i16,
-    /// `minefield_density` (-1 — не разыгран).
+    /// `minefield_density` (-1 — not rolled).
     pub minefield_density: i16,
     /// `upgrade_cost`.
     pub upgrade_cost: i16,
@@ -144,9 +144,9 @@ pub struct AiPlayer {
     pub tasks_pending: bool,
     /// `end_turn_retry_counter`.
     pub end_turn_retry_counter: u8,
-    /// `task_clear_ground_zone`/`task_clear_air_zone` — id задач очистки зоны.
+    /// `task_clear_ground_zone`/`task_clear_air_zone` — zone clearing task ids.
     pub task_clear_ground_zone: Option<u32>,
-    /// Задача очистки воздушной зоны.
+    /// Air-zone clearing task.
     pub task_clear_air_zone: Option<u32>,
     /// `task_list`.
     pub task_list: Vec<u32>,
@@ -160,11 +160,11 @@ pub struct AiPlayer {
     pub place_mines_task: Option<u32>,
     /// `attack_reserve_task`.
     pub attack_reserve_task: Option<u32>,
-    /// `attack_tasks` — от самого срочного к наименее срочному.
+    /// `attack_tasks` — from most urgent to least urgent.
     pub attack_tasks: Vec<Option<u32>>,
     /// `attack_value_share`.
     pub attack_value_share: i32,
-    /// `spotted_units` (порядок обнаружения).
+    /// `spotted_units` (detection order).
     pub spotted_units: Vec<SpottedUnit>,
     /// `air_force`.
     pub air_force: Vec<UnitId>,
@@ -174,13 +174,13 @@ pub struct AiPlayer {
     pub dimension_x: i16,
     /// `info_map` (`INFO_MAP_*`).
     pub info_map: Vec<u8>,
-    /// `mine_map` (плотность мин по клеткам).
+    /// `mine_map` (mine density per cell).
     pub mine_map: Vec<i8>,
-    /// `transport_orders` — упрощённо: `(клиент, транспорт, цель)`.
+    /// `transport_orders` — simplified: `(client, transport, target)`.
     pub transport_orders: Vec<(UnitId, UnitId, Point)>,
     /// `target_location`.
     pub target_location: Point,
-    /// Весовые таблицы (`WeightTable` × 18, `aiplayer.hpp:93`).
+    /// Weight tables (`WeightTable` × 18, `aiplayer.hpp:93`).
     pub weight_table_ground_defense: WeightTable,
     /// `weight_table_scout`.
     pub weight_table_scout: WeightTable,
@@ -216,7 +216,7 @@ pub struct AiPlayer {
     pub weight_table_infantry: WeightTable,
     /// `weight_table_generic`.
     pub weight_table_generic: WeightTable,
-    /// Кэш карт угроз (`AiPlayer_ThreatMaps`; заполняется по требованию).
+    /// Threat map cache (`AiPlayer_ThreatMaps`; filled on demand).
     pub threat_maps: Vec<ThreatMap>,
 }
 
@@ -227,7 +227,7 @@ impl Default for AiPlayer {
 }
 
 impl AiPlayer {
-    /// `AiPlayer::AiPlayer` — пустой игрок команды.
+    /// `AiPlayer::AiPlayer` — an empty team player.
     pub fn new(player_team: TeamId) -> Self {
         let team = player_team.0;
 
@@ -280,7 +280,7 @@ impl AiPlayer {
         }
     }
 
-    /// `AiPlayer::Init` (`aiplayer.cpp:2902`) — сброс состояния игрока.
+    /// `AiPlayer::Init` (`aiplayer.cpp:2902`) — reset the player state.
     pub fn init(&mut self) {
         self.strategy = AiStrategy::Random;
         self.greenhouse_ratio = -1;
@@ -334,7 +334,7 @@ impl AiPlayer {
     }
 
     // -----------------------------------------------------------------------
-    // Информационная и минная карты
+    // Information and mine maps
     // -----------------------------------------------------------------------
 
     fn map_index(site: Point) -> Option<usize> {
@@ -383,7 +383,7 @@ impl AiPlayer {
             .unwrap_or(0)
     }
 
-    /// `AiPlayer::ClearZone` (`aiplayer.cpp:3367`) — задача очистки зоны.
+    /// `AiPlayer::ClearZone` (`aiplayer.cpp:3367`) — zone clearing task.
     pub fn clear_zone(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
@@ -415,7 +415,7 @@ impl AiPlayer {
     }
 
     // -----------------------------------------------------------------------
-    // Наблюдения
+    // Observations
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::UnitSpotted` (`aiplayer.cpp:3606`).
@@ -437,7 +437,7 @@ impl AiPlayer {
 
         self.invalidate_threat_maps();
 
-        // Обновить существующую запись (без дублей).
+        // Update the existing record (no duplicates).
         if let Some(spot) = self
             .spotted_units
             .iter_mut()
@@ -529,7 +529,7 @@ impl AiPlayer {
         )
     }
 
-    /// `AiPlayer::MineSpotted` (`aiplayer.cpp:1078`) — плотность мин.
+    /// `AiPlayer::MineSpotted` (`aiplayer.cpp:1078`) — mine density.
     pub fn mine_spotted(&mut self, world: &GameState, unit: &UnitInfo) {
         let mut walker = super::threat::ZoneWalker::new(unit.grid, 1);
         let density = self.minefield_density.max(0) as i32;
@@ -550,7 +550,7 @@ impl AiPlayer {
         let _ = world;
     }
 
-    /// `AiPlayer::FindMines` (`aiplayer.cpp:3442`) — создать `TaskFindMines`.
+    /// `AiPlayer::FindMines` (`aiplayer.cpp:3442`) — create `TaskFindMines`.
     pub fn find_mines(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
@@ -572,7 +572,7 @@ impl AiPlayer {
     }
 
     // -----------------------------------------------------------------------
-    // Военная ценность и атаки
+    // Military value and attacks
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::GetMilitaryValue` (`aiplayer.cpp:242`).
@@ -778,14 +778,14 @@ impl AiPlayer {
     }
 
     // -----------------------------------------------------------------------
-    // Стратегия
+    // Strategy
     // -----------------------------------------------------------------------
 
-    /// `AiPlayer::SelectStrategy` (`aiplayer.cpp:3719`) — **без перегенерации
-    /// карты**: континенты считаются заливкой по уже готовой `SurfaceMap`.
+    /// `AiPlayer::SelectStrategy` (`aiplayer.cpp:3719`) — **without map
+    /// regeneration**: continents are computed by flood-fill over the ready `SurfaceMap`.
     ///
-    /// Возвращает `false`, если на карте нет пригодного континента: в C++ это
-    /// переводит команду в `TEAM_TYPE_NONE` (и `Ai_SetupStrategy` вернёт
+    /// Returns `false` if there is no suitable continent on the map: in C++ this
+    /// switches the team to `TEAM_TYPE_NONE` (and `Ai_SetupStrategy` returns
     /// `false`).
     pub fn select_strategy(&mut self, world: &mut GameState) -> bool {
         let continents = land_continents(world);
@@ -887,7 +887,7 @@ impl AiPlayer {
 
         self.strategy = AiStrategy::Random;
 
-        // Команды выбирают разные стратегии (C++ исключает чужие).
+        // Teams choose different strategies (C++ excludes foreign ones).
         let mut potential_strategies =
             strategy_scores.iter().filter(|score| **score > 0).count() as i32;
 
@@ -924,7 +924,7 @@ impl AiPlayer {
         let total_score: i32 = strategy_scores.iter().sum();
 
         if total_score > 0 {
-            // Один бросок RNG, как в C++ (`Randomizer_Generate(total_score)`).
+            // One RNG roll, as in C++ (`Randomizer_Generate(total_score)`).
             let mut roll = world.rng.generate_i32(total_score) + 1;
             let mut index = 0usize;
 
@@ -949,8 +949,8 @@ impl AiPlayer {
         let total_continent_size: i32 = viable.iter().map(|continent| continent.size).sum();
 
         if total_continent_size > 0 {
-            // C++ разыгрывает континент и точку высадки; в P6 (без setup)
-            // важна только стратегия — фиксируем целевую точку центра карты.
+            // C++ rolls a continent and a landing point; in P6 (without setup)
+            // only the strategy matters — we pin the target point to the map center.
             self.target_location = Point::new(MAP_WIDTH / 2, MAP_HEIGHT / 2);
 
             let clan = self.select_team_clan(world);
@@ -1028,8 +1028,8 @@ impl AiPlayer {
             _ => TeamClan::Random,
         };
 
-        // `menu_team_clan_setting` — настройка входа; в max_core она хранится в
-        // `TeamInfo::team_clan` (P3) и применяется вызывающим слоем.
+        // `menu_team_clan_setting` — an entry setting; in max_core it is stored in
+        // `TeamInfo::team_clan` (P3) and applied by the caller layer.
         clan
     }
 
@@ -1087,7 +1087,7 @@ impl AiPlayer {
     }
 
     // -----------------------------------------------------------------------
-    // Ход
+    // Turn
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::BeginTurn` (`aiplayer.cpp:2213`).
@@ -1109,7 +1109,7 @@ impl AiPlayer {
             self.need_init = false;
         }
 
-        // Атаки по замеченным юнитам.
+        // Attacks on spotted units.
         let spotted: Vec<usize> = (0..self.spotted_units.len()).collect();
         for index in spotted {
             let has_task = self
@@ -1144,7 +1144,7 @@ impl AiPlayer {
             }
         }
 
-        // Питание зданий (структурно, как C++: рудные станции всегда ON).
+        // Powering buildings (structurally, as in C++: ore stations always ON).
         let mut fuel_reserves = 0;
         for id in world.unit_list(UnitListKind::Stationary) {
             let Some(unit) = world.unit(*id) else {
@@ -1187,7 +1187,7 @@ impl AiPlayer {
 
         self.register_idle_units(world);
 
-        // Напоминания: движение и атака по мобильным спискам в порядке C++.
+        // Reminders: movement and attack over mobile lists in C++ order.
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
             let ids: Vec<UnitId> = world.unit_list(kind).to_vec();
             for id in ids {
@@ -1215,7 +1215,7 @@ impl AiPlayer {
         }
     }
 
-    /// Инициализация задач первого хода (`need_init`).
+    /// First-turn task initialization (`need_init`).
     fn init_tasks(&mut self, world: &mut GameState, position: Point) {
         let team = self.player_team;
 
@@ -1227,7 +1227,7 @@ impl AiPlayer {
         let task_id = world.ai_append_task(team, None, TASK_PRIORITY_CHECK_ASSAULTS, kind);
         self.check_assaults_task = Some(task_id);
 
-        // Клан-стратегия (C++ `strategy == RANDOM` → по клану).
+        // Clan strategy (C++ `strategy == RANDOM` → by clan).
         if self.strategy == AiStrategy::Random {
             self.strategy = match world.teams[team.0 as usize].team_clan {
                 TeamClan::TheChosen => AiStrategy::Air,
@@ -1247,7 +1247,7 @@ impl AiPlayer {
             self.roll_minefield_density(world);
         }
 
-        // `info_map` из тепловой карты команды.
+        // `info_map` from the team heat map.
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 if world.ai_heat_map_complete(team, i32::from(x), i32::from(y)) > 0 {
@@ -1258,7 +1258,7 @@ impl AiPlayer {
             }
         }
 
-        // Разведка и обследование.
+        // Reconnaissance and survey.
         if position.x != 0 || position.y != 0 {
             let survey_kind = TaskKind::survey(position);
             world.ai_append_task(
@@ -1272,11 +1272,11 @@ impl AiPlayer {
             world.ai_append_task(team, None, TASK_PRIORITY_EXPLORE, explore_kind);
         }
 
-        // Менеджер застройки.
+        // Construction manager.
         let manage_kind = TaskKind::manage_buildings(position);
         world.ai_append_task(team, None, TASK_PRIORITY_MANAGE_BUILDINGS, manage_kind);
 
-        // Минный ассистент и обновление местности.
+        // Mine assistant and terrain update.
         let mine_kind = TaskKind::mine_assistant();
         world.ai_append_task(team, None, TASK_PRIORITY_CHECK_ASSAULTS, mine_kind);
 
@@ -1293,7 +1293,7 @@ impl AiPlayer {
             world.ai_append_task(team, None, TASK_PRIORITY_ASSIST_MOVE, assist_kind);
         }
 
-        // Оборона: резерв для каждой команды.
+        // Defense: a reserve for every team.
         if self.defense_reserve_task.is_none() && position.x != 0 {
             let kind = TaskKind::DefenseReserve {
                 units: Vec::new(),
@@ -1304,7 +1304,7 @@ impl AiPlayer {
             self.defense_reserve_task = Some(task_id);
         }
 
-        // Эскорты техники (C++ BeginTurn).
+        // Vehicle escorts (C++ BeginTurn).
         let mut escorts = Vec::new();
         for kind_list in [UnitListKind::MobileAir, UnitListKind::MobileLandSea] {
             for id in world.unit_list(kind_list) {
@@ -1346,7 +1346,7 @@ impl AiPlayer {
             world.ai_append_task(team, None, TASK_PRIORITY_ESCORT, kind);
         }
 
-        // Военные юниты стационарных зданий.
+        // Military units of stationary buildings.
         for id in world.unit_list(UnitListKind::Stationary) {
             let Some(unit) = world.unit(*id) else {
                 continue;
@@ -1361,7 +1361,7 @@ impl AiPlayer {
             }
         }
 
-        // Ключевые объекты противника → атака.
+        // Enemy key objects → attack.
         let spotted: Vec<usize> = (0..self.spotted_units.len()).collect();
         for index in spotted {
             let Some(unit_id) = self.spotted_units[index].unit else {
@@ -1376,7 +1376,7 @@ impl AiPlayer {
             }
         }
 
-        // Минные поля.
+        // Minefields.
         if self.find_mines_task.is_none() && self.mine_map.iter().any(|value| *value > 0) {
             let kind = TaskKind::find_mines(position);
             let task_id = world.ai_append_task(team, None, TASK_PRIORITY_FIND_MINES, kind);
@@ -1453,11 +1453,11 @@ impl AiPlayer {
 
     /// `AiPlayer::CheckEndTurn` (`aiplayer.cpp:2828`).
     ///
-    /// `tasks_pending` — тот же флаг, что в C++: `Ai_SetTasksPendingFlag`
-    /// выставляется из `UnitsManager_ProcessOrder*`/`UnitInfo::ExecuteMove` на
-    /// каждом тике, в котором юнит реально что-то делает, и сбрасывается в
-    /// начале `UnitsManager_ProcessOrders` (`Ai_ClearTasksPendingFlags`).
-    /// Поэтому юнит, у которого кончилась скорость, ход не держит.
+    /// `tasks_pending` — the same flag as in C++: `Ai_SetTasksPendingFlag`
+    /// is set from `UnitsManager_ProcessOrder*`/`UnitInfo::ExecuteMove` on
+    /// every tick in which the unit actually does something, and is reset at
+    /// the start of `UnitsManager_ProcessOrders` (`Ai_ClearTasksPendingFlags`).
+    /// Therefore a unit that ran out of speed does not hold the turn.
     pub fn check_end_turn(&mut self, world: &mut GameState) -> bool {
         if self.need_init {
             self.begin_turn(world);
@@ -1510,8 +1510,8 @@ impl AiPlayer {
         }
     }
 
-    /// `AiPlayer::AreActionsPending` (`aiplayer.cpp:489`) — упрощённо: есть
-    /// напоминания или незавершённые приказы.
+    /// `AiPlayer::AreActionsPending` (`aiplayer.cpp:489`) — simplified: there are
+    /// reminders or unfinished orders.
     fn are_actions_pending(&self, world: &GameState) -> bool {
         world.ai.task_manager.reminders_count() > 0
             || world
@@ -1551,8 +1551,8 @@ impl AiPlayer {
         }
     }
 
-    /// `AiPlayer::CheckAttacks` (`aiplayer.cpp:452`) — структурно: пересчитать
-    /// рейтинг атакующих задач.
+    /// `AiPlayer::CheckAttacks` (`aiplayer.cpp:452`) — structurally: recompute
+    /// the rating of attack tasks.
     fn check_attacks(&mut self, world: &mut GameState) {
         self.update_priority_tasks(world);
     }
@@ -1602,8 +1602,8 @@ impl AiPlayer {
         result
     }
 
-    /// `AiPlayer::FindManager` (`aiplayer.cpp:2141`) — ближайший
-    /// `TaskManageBuildings` команды.
+    /// `AiPlayer::FindManager` (`aiplayer.cpp:2141`) — the nearest
+    /// `TaskManageBuildings` of the team.
     pub fn find_manager(&self, world: &GameState, site: Point) -> Option<u32> {
         let mut best: Option<(i32, u32)> = None;
 
@@ -1627,8 +1627,8 @@ impl AiPlayer {
         best.map(|(_, id)| id)
     }
 
-    /// `AiPlayer::ShouldUpgradeUnit` (`aiplayer.cpp:3519`) — структурно: юнит не
-    /// в идеальном состоянии и апгрейд ещё не максимален.
+    /// `AiPlayer::ShouldUpgradeUnit` (`aiplayer.cpp:3519`) — structurally: the unit is not
+    /// in perfect condition and the upgrade is not yet maxed.
     pub fn should_upgrade_unit(&self, world: &GameState, unit: &UnitInfo) -> bool {
         if unit.flags & unit_flags::REGENERATING_UNIT != 0 {
             return false;
@@ -1654,8 +1654,8 @@ impl AiPlayer {
         }
     }
 
-    /// `AiPlayer::MatchPath` (`aiplayer.cpp:3660`) — упрощённо: запрос
-    /// принимается, если путь ведёт к цели задачи.
+    /// `AiPlayer::MatchPath` (`aiplayer.cpp:3660`) — simplified: the request
+    /// is accepted if the path leads to the task's target.
     pub fn match_path(&self, world: &GameState, request: &crate::pathfinding::PathRequest) -> bool {
         let Some(unit) = world.unit(request.unit) else {
             return false;
@@ -1669,11 +1669,11 @@ impl AiPlayer {
 }
 
 // ---------------------------------------------------------------------------
-// Свободные функции `AiPlayer_*`
+// Free `AiPlayer_*` functions
 // ---------------------------------------------------------------------------
 
-/// `AiPlayer_CalculateProjectedDamage` (`aiplayer.cpp`): урон, который цель
-/// нанесёт дружественному юниту в ответ.
+/// `AiPlayer_CalculateProjectedDamage` (`aiplayer.cpp`): the damage the target
+/// will deal back to a friendly unit.
 pub fn calculate_projected_damage(
     world: &GameState,
     friendly: &UnitInfo,
@@ -1694,7 +1694,7 @@ pub fn calculate_projected_damage(
     rounds * damage
 }
 
-/// `AiPlayer_GetProjectedDamage` — ожидаемый урон от `friendly` по `enemy`.
+/// `AiPlayer_GetProjectedDamage` — expected damage from `friendly` to `enemy`.
 pub fn get_projected_damage(
     world: &GameState,
     friendly: &UnitInfo,
@@ -1715,7 +1715,7 @@ pub fn get_projected_damage(
     rounds * damage
 }
 
-/// `AiPlayer::GetPredictedAttack` для команды.
+/// `AiPlayer::GetPredictedAttack` for the team.
 pub fn get_predicted_attack(
     world: &GameState,
     unit: &UnitInfo,
@@ -1763,8 +1763,8 @@ pub fn get_damage_potential(
     }
 }
 
-/// `AiPlayer::GetDamagePotentialMap` (`aiplayer.cpp:3312`) — карта урона для
-/// типа риска юнита и уровня осторожности.
+/// `AiPlayer::GetDamagePotentialMap` (`aiplayer.cpp:3312`) — damage map for
+/// the unit risk type and caution level.
 pub fn get_damage_potential_map(
     world: &GameState,
     team: TeamId,
@@ -1782,11 +1782,11 @@ pub fn get_damage_potential_map(
     Some(map)
 }
 
-/// `AiPlayer::GetThreatMap` (`aiplayer.cpp:761`) — построение карты угроз.
+/// `AiPlayer::GetThreatMap` (`aiplayer.cpp:761`) — building the threat map.
 ///
-/// C++ кэширует до 10 карт по `(risk_level, caution_level)`; здесь карта
-/// строится сразу, порядок обхода — `spotted_units` (порядок обнаружения) и
-/// пять списков юнитов, как в C++.
+/// C++ caches up to 10 maps by `(risk_level, caution_level)`; here the map
+/// is built immediately, the traversal order — `spotted_units` (detection order) and
+/// the five unit lists, as in C++.
 pub fn build_threat_map(
     world: &GameState,
     team: TeamId,
@@ -1855,7 +1855,7 @@ pub fn build_threat_map(
         sum_up_maps(&mut map.shots_map, &air_map.shots_map);
     }
 
-    // Маска видимости по тепловым картам команд.
+    // Visibility mask over team heat maps.
     let mut visible = [false; MAP_TILES];
 
     for other_team in 0..PLAYER_TEAM_COUNT {
@@ -1894,7 +1894,7 @@ pub fn build_threat_map(
         }
     }
 
-    // Мины команды.
+    // Team mines.
     if !matches!(risk_level, 2 | 3) {
         let player = &world.ai.players[team.0 as usize];
 
@@ -2164,7 +2164,7 @@ fn update_threat_maps(
     }
 }
 
-/// `AiPlayer::UpdateMap` (`aiplayer.cpp:544`) — наложение квадрата урона.
+/// `AiPlayer::UpdateMap` (`aiplayer.cpp:544`) — overlaying the damage square.
 fn update_map(
     map: &mut [i16],
     position: Point,
@@ -2262,8 +2262,8 @@ pub fn get_filtered_weight_table(
     result
 }
 
-/// `AiPlayer::ChooseUpgrade` (`aiplayer.cpp:4194`) — структурно: выбрать тему
-/// исследования с наименьшим уровнем (детерминированно).
+/// `AiPlayer::ChooseUpgrade` (`aiplayer.cpp:4194`) — structurally: choose the research
+/// topic with the lowest level (deterministically).
 pub fn choose_upgrade_topic(team_info: &crate::team::TeamInfo) -> ResearchTopic {
     let mut best = ResearchTopic::Attack;
     let mut best_level = u32::MAX;
@@ -2280,13 +2280,13 @@ pub fn choose_upgrade_topic(team_info: &crate::team::TeamInfo) -> ResearchTopic 
     best
 }
 
-/// `AiPlayer::GetStrategy` для команды.
+/// `AiPlayer::GetStrategy` for the team.
 pub fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
     world.ai.players[team.0 as usize].strategy
 }
 
-/// `AiPlayer::GetNormalRateBuildCost` (`unitinfo.cpp:3730`) — стоимость в
-/// единицах сырья: `turns * consumption`.
+/// `AiPlayer::GetNormalRateBuildCost` (`unitinfo.cpp:3730`) — cost in
+/// raw material units: `turns * consumption`.
 pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = turns_to_build(world, team, unit_type);
     let rate = if unit_type.environment().is_some() {
@@ -2298,12 +2298,12 @@ pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitTy
     turns * rate.max(1)
 }
 
-/// Ходы на постройку типа (`BuildMenu_GetTurnsToBuild`).
+/// Turns to build a type (`BuildMenu_GetTurnsToBuild`).
 pub fn turns_to_build(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     super::tasks::create::turns_to_build(world, team, unit_type)
 }
 
-/// `AiPlayer::CreateBuilding` для команды (свободная функция).
+/// `AiPlayer::CreateBuilding` for the team (a free function).
 pub fn create_building(
     world: &mut GameState,
     team: TeamId,
@@ -2388,7 +2388,7 @@ pub fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListK
     Point::new((sum_x / count) as i16, (sum_y / count) as i16)
 }
 
-/// Континент для `SelectStrategy` (заливка по `SurfaceMap`).
+/// Continent for `SelectStrategy` (flood-fill over `SurfaceMap`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Continent {
     size: i32,
@@ -2397,7 +2397,7 @@ struct Continent {
     close_proximity: bool,
 }
 
-/// Заливка суши: 4-связность, обход `x`, затем `y` (детерминированно).
+/// Land flood-fill: 4-connectivity, traversal `x`, then `y` (deterministically).
 fn land_continents(world: &GameState) -> Vec<Continent> {
     let mut visited = vec![false; MAP_TILES];
     let mut continents = Vec::new();
@@ -2416,7 +2416,7 @@ fn land_continents(world: &GameState) -> Vec<Continent> {
                 continue;
             }
 
-            // BFS в порядке постановки (Vec как очередь).
+            // BFS in submission order (Vec as a queue).
             let mut queue = Vec::new();
             queue.push(Point::new(x, y));
             let mut size = 0;
@@ -2464,7 +2464,7 @@ fn land_continents(world: &GameState) -> Vec<Continent> {
     continents
 }
 
-/// Применение клана к значениям юнитов команды (`ResourceManager_InitClanUnitValues`).
+/// Applying a clan to the team's unit values (`ResourceManager_InitClanUnitValues`).
 pub fn apply_clan(world: &mut GameState, team: TeamId, clan: TeamClan) {
     let team_index = team.0 as usize;
 
@@ -2485,5 +2485,5 @@ pub fn ai_get_normal_rate_build_cost(world: &GameState, unit_type: UnitType, tea
     normal_rate_build_cost(world, team, unit_type)
 }
 
-/// `TaskManager_NeedToReserveRawMaterials` — реэкспорт из create-модуля.
+/// `TaskManager_NeedToReserveRawMaterials` — re-export from the create module.
 pub use super::tasks::create::need_to_reserve_raw_materials;

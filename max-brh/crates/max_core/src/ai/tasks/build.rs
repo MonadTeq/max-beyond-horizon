@@ -1,40 +1,40 @@
-//! Управление застройкой: `TaskManageBuildings` и помощники
+//! Construction management: `TaskManageBuildings` and helpers
 //! (`TaskPowerAssistant`, `TaskHabitatAssistant`, `TaskRadarAssistant`,
 //! `TaskConnectionAssistant`, `TaskDefenseAssistant`,
 //! `TaskFrontierAssistant`, `TaskMineAssistant`, `TaskUpdateTerrain`).
 //!
-//! Оракул: `taskmanagebuildings.cpp/.hpp` (100 КБ — самая большая задача порта),
+//! Oracle: `taskmanagebuildings.cpp/.hpp` (100 KB — the largest port task),
 //! `taskpowerassistant.cpp`, `taskhabitatassistant.cpp`,
 //! `taskradarassistant.cpp`, `taskconnectionassistant.cpp`,
 //! `taskdefenseassistant.cpp`, `taskfrontierassistant.cpp`,
 //! `taskmineassistant.cpp`, `taskupdateterrain.cpp`.
 //!
-//! # Модель
+//! # Model
 //!
-//! `TaskManageBuildings` — «менеджер базы»: он держит список своих зданий,
-//! дочерних `TaskCreateBuilding` и решает, что строить дальше. В C++ решение
-//! принимается по картам потребления грузов (`Cargo`), `AccessMap`
+//! `TaskManageBuildings` is the "base manager": it keeps a list of its buildings,
+//! child `TaskCreateBuilding`s and decides what to build next. In C++ the decision
+//! is made by cargo consumption maps (`Cargo`), the `AccessMap`
 //! (`MarkMiningAreas`, `MarkBuildingAreas`, `EvaluateSite`,
-//! `FindSite`, `ConnectBuilding`, `ReconnectBuildings`) и блок-картам
+//! `FindSite`, `ConnectBuilding`, `ReconnectBuildings`) and block maps
 //! (`Block`/`LimitBlockSize`).
 //!
-//! В P6 портированы:
+//! In P6 the following are ported:
 //!
-//! * цикл жизни (`Init`/`BeginTurn`/`EndTurn`/`ChildComplete`/`AddUnit`/
+//! * the life cycle (`Init`/`BeginTurn`/`EndTurn`/`ChildComplete`/`AddUnit`/
 //!   `RemoveSelf`/`RemoveUnit`/`EventUnitDestroyed`), `AddCreateOrder`,
-//!   `CreateBuilding` (создание дочерней `TaskCreateBuilding`),
+//!   `CreateBuilding` (creating a child `TaskCreateBuilding`),
 //!   `GetUnitCount`, `CheckNeeds`, `PlanNextBuildJob`;
-//! * потребность в рудных станциях (`UpdateMiningNeeds`): считается по
-//!   количеству своих `MININGST` и залежам в клетках базы;
-//! * помощники (`Task*Assistant`) как отдельные задачи: они порождают
-//!   `CreateBuilding` с приоритетами из `task.hpp`.
+//! * the need for ore stations (`UpdateMiningNeeds`): computed from
+//!   the number of own `MININGST`s and deposits in base cells;
+//! * helpers (`Task*Assistant`) as separate tasks: they spawn
+//!   `CreateBuilding` with priorities from `task.hpp`.
 //!
-//! НЕ портированы (требуют `AccessMap`-разметки, P5/P7): блок-карты
-//! (`MarkBuildingAreas`, `LimitBlockSize`, `ClearBlocks`), дороги/мосты
-//! (`BuildBridge`, `MakeConnectors`), энергобаланс (`CheckPower`,
-//! `CheckWorkers`), обороны (`MarkDefenseSites`, `ClearDefenseSites`) и
-//! переподключение (`ReconnectBuildings`). Соответствующие решения заменены
-//! детерминированными эвристиками, отмеченными в коде.
+//! NOT ported (they require `AccessMap` marking, P5/P7): block maps
+//! (`MarkBuildingAreas`, `LimitBlockSize`, `ClearBlocks`), roads/bridges
+//! (`BuildBridge`, `MakeConnectors`), power balance (`CheckPower`,
+//! `CheckWorkers`), defenses (`MarkDefenseSites`, `ClearDefenseSites`) and
+//! reconnection (`ReconnectBuildings`). The corresponding decisions are replaced
+//! by deterministic heuristics marked in the code.
 
 use crate::enums::{unit_flags, UnitOrder, UnitType};
 use crate::geo::Point;
@@ -52,10 +52,10 @@ use super::super::task::{
 use super::{TaskCtx, TaskKind};
 
 // ---------------------------------------------------------------------------
-// Вспомогательные запросы
+// Helper requests
 // ---------------------------------------------------------------------------
 
-/// Количество зданий типа у команды (`TaskManageBuildings::GetUnitCount`).
+/// Number of buildings of a type in the team (`TaskManageBuildings::GetUnitCount`).
 pub(crate) fn get_unit_count(ctx: &TaskCtx<'_>, team: TeamId, unit_type: UnitType) -> i32 {
     ctx.list(UnitListKind::Stationary)
         .into_iter()
@@ -71,7 +71,7 @@ pub(crate) fn get_unit_count(ctx: &TaskCtx<'_>, team: TeamId, unit_type: UnitTyp
         .count() as i32
 }
 
-/// Количество залежей в квадрате `2×2` рядом с площадкой.
+/// Number of deposits in the 2×2 square next to the site.
 fn ore_near(ctx: &TaskCtx<'_>, site: Point) -> i32 {
     let mut total = 0;
 
@@ -88,7 +88,7 @@ fn ore_near(ctx: &TaskCtx<'_>, site: Point) -> i32 {
     total
 }
 
-/// Ближайшая площадка под здание с учётом залежей (`IsFavorableMiningSite`).
+/// The nearest building site considering deposits (`IsFavorableMiningSite`).
 fn pick_building_site(
     ctx: &TaskCtx<'_>,
     team: TeamId,
@@ -98,7 +98,7 @@ fn pick_building_site(
     super::create::find_build_site(ctx.world, team, unit_type, origin)
 }
 
-/// Есть ли у команды свободный строитель под задачу.
+/// Whether the team has a free builder for the task.
 fn team_has_builder(ctx: &TaskCtx<'_>, team: TeamId) -> bool {
     ctx.list(UnitListKind::MobileLandSea).into_iter().any(|id| {
         ctx.unit(id)
@@ -134,7 +134,7 @@ pub(crate) fn manage_create_building(
         return None;
     };
 
-    // Уже планируется такое же здание? (`ClearPlannedBuildings`).
+    // Is the same building already planned? (`ClearPlannedBuildings`).
     for task_id in tasks.iter() {
         if let Some(task) = ctx.tm.task(*task_id) {
             if let TaskKind::CreateBuilding {
@@ -157,14 +157,14 @@ pub(crate) fn manage_create_building(
     Some(task_id)
 }
 
-/// `TaskManageBuildings::CheckNeeds` — что строить в этом ходу.
+/// `TaskManageBuildings::CheckNeeds` — what to build this turn.
 ///
-/// Эвристика детерминированная и не использует RNG:
-/// 1. первая рудная станция (если есть залежи рядом с базой);
-/// 2. замена/расширение рудных станций до `1 + turn/25`, но не больше 4;
-/// 3. склад (`ADUMP`) для команды без склада на 8-м ходу;
-/// 4. электростанция (`POWGEN`) для команды без энергетики на 6-м ходу;
-/// 5. радар (`RADAR`) на 12-м ходу.
+/// The heuristic is deterministic and uses no RNG:
+/// 1. the first ore station (if there are deposits near the base);
+/// 2. replacement/expansion of ore stations up to `1 + turn/25`, but no more than 4;
+/// 3. a storage (`ADUMP`) for a team without one on turn 8;
+/// 4. a power station (`POWGEN`) for a team without power on turn 6;
+/// 5. a radar (`RADAR`) on turn 12.
 fn manage_check_needs(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::ManageBuildings {
         building_site,
@@ -273,7 +273,7 @@ fn manage_buildings_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
     if !*initialized {
         *initialized = true;
 
-        // Дочерние помощники (`Task*Assistant`) — как в C++ BeginTurn.
+        // Child assistants (`Task*Assistant`) — as in C++ BeginTurn.
         let manager = Some(header.id);
         let team = header.team;
         let priority = TASK_PRIORITY_MANAGE_BUILDINGS;
@@ -332,7 +332,7 @@ fn manage_buildings_add_unit(
     let _ = (ctx, header);
 }
 
-/// `TaskManageBuildings::IsUnitUsable` — стационарное здание команды.
+/// `TaskManageBuildings::IsUnitUsable` — a stationary team building.
 pub(crate) fn manage_buildings_is_unit_usable(
     world: &crate::game::GameState,
     header: TaskHeader,
@@ -349,10 +349,10 @@ pub(crate) fn manage_buildings_is_unit_usable(
 }
 
 // ---------------------------------------------------------------------------
-// Помощники
+// Helpers
 // ---------------------------------------------------------------------------
 
-/// `TaskPowerAssistant::BeginTurn` — попросить электростанцию.
+/// `TaskPowerAssistant::BeginTurn` — request a power station.
 fn power_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::PowerAssistant { manager } = kind else {
         return;
@@ -373,7 +373,7 @@ fn power_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     ctx.remove_self(header.id);
 }
 
-/// `TaskHabitatAssistant` — хабитат при нехватке рабочих.
+/// `TaskHabitatAssistant` — a habitat when workers are short.
 fn habitat_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::HabitatAssistant { manager } = kind else {
         return;
@@ -393,7 +393,7 @@ fn habitat_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, head
     ctx.remove_self(header.id);
 }
 
-/// `TaskRadarAssistant` — радар при отсутствии.
+/// `TaskRadarAssistant` — a radar when absent.
 fn radar_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::RadarAssistant { manager } = kind else {
         return;
@@ -413,7 +413,7 @@ fn radar_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     ctx.remove_self(header.id);
 }
 
-/// `TaskConnectionAssistant` — коннекторы между зданиями.
+/// `TaskConnectionAssistant` — connectors between buildings.
 fn connection_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::ConnectionAssistant { manager } = kind else {
         return;
@@ -433,7 +433,7 @@ fn connection_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, h
     ctx.remove_self(header.id);
 }
 
-/// `TaskDefenseAssistant` — оборонительная турель.
+/// `TaskDefenseAssistant` — a defensive turret.
 fn defense_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::DefenseAssistant { manager, unit_type } = kind else {
         return;
@@ -453,13 +453,13 @@ fn defense_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, head
     ctx.remove_self(header.id);
 }
 
-/// `TaskFrontierAssistant` — фронтир: добыча/минирование.
+/// `TaskFrontierAssistant` — frontier: mining/mine laying.
 fn frontier_assistant_begin_turn(_kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-    // Сайт фронтира выбирает `TaskUpdateTerrain`/`PlanMinefields` (P7).
+    // The frontier site is chosen by `TaskUpdateTerrain`/`PlanMinefields` (P7).
     ctx.remove_self(header.id);
 }
 
-/// `TaskMineAssistant` — менеджер минных полей (`TaskMineAssistant`).
+/// `TaskMineAssistant` — the minefield manager (`TaskMineAssistant`).
 fn mine_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::MineAssistant { manager } = kind else {
         return;
@@ -475,7 +475,7 @@ fn mine_assistant_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
     ctx.remove_self(header.id);
 }
 
-/// `TaskUpdateTerrain` — обновление карты расстояний (`AiPlayer_TerrainDistanceField`).
+/// `TaskUpdateTerrain` — updating the distance field (`AiPlayer_TerrainDistanceField`).
 fn update_terrain_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::UpdateTerrain { location } = kind else {
         return;
@@ -486,10 +486,10 @@ fn update_terrain_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация
+// Dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для build-классов.
+/// `Init` for build classes.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
         TaskKind::ManageBuildings { .. } => true,
@@ -505,7 +505,7 @@ pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) ->
     }
 }
 
-/// `BeginTurn` для build-классов.
+/// `BeginTurn` for build classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::ManageBuildings { .. } => {
@@ -548,7 +548,7 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
     }
 }
 
-/// `EndTurn` для build-классов.
+/// `EndTurn` for build classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::ManageBuildings { .. } => {
@@ -567,7 +567,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `Execute(unit)` — помощники не исполняют приказов.
+/// `Execute(unit)` — assistants do not execute orders.
 pub fn execute(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -577,7 +577,7 @@ pub fn execute(
     false
 }
 
-/// `AddUnit(unit)` для build-классов.
+/// `AddUnit(unit)` for build classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::ManageBuildings { .. } => manage_buildings_add_unit(kind, ctx, header, unit),
@@ -585,7 +585,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для build-классов.
+/// `RemoveUnit(unit)` for build classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::ManageBuildings { units, .. } => {
@@ -597,7 +597,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для build-классов.
+/// `RemoveSelf()` for build classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::ManageBuildings { tasks, .. } => {
@@ -624,7 +624,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` — менеджер убирает завершённую задачу.
+/// `ChildComplete(task)` — the manager removes a completed task.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -651,7 +651,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении дочернего `TaskMove`.
+/// Notification about a child `TaskMove` completion.
 pub fn move_finished(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -662,12 +662,12 @@ pub fn move_finished(
     false
 }
 
-/// `CheckReactions` — менеджер застройки не реагирует.
+/// `CheckReactions` — the construction manager does not react.
 pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     false
 }
 
-/// `ExchangeOperator` — не переопределён.
+/// `ExchangeOperator` — not overridden.
 pub fn exchange_operator(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -677,7 +677,7 @@ pub fn exchange_operator(
     false
 }
 
-/// `EventUnitDestroyed(unit)` — менеджер забывает здание.
+/// `EventUnitDestroyed(unit)` — the manager forgets the building.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -696,7 +696,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `EventEnemyUnitSpotted` — не переопределён.
+/// `EventEnemyUnitSpotted` — not overridden.
 pub fn event_enemy_unit_spotted(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -706,7 +706,7 @@ pub fn event_enemy_unit_spotted(
     false
 }
 
-/// `EventCargoTransfer` — не переопределён.
+/// `EventCargoTransfer` — not overridden.
 pub fn event_cargo_transfer(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -716,7 +716,7 @@ pub fn event_cargo_transfer(
     false
 }
 
-/// `EventUnitLoaded` — не переопределён.
+/// `EventUnitLoaded` — not overridden.
 pub fn event_unit_loaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -727,7 +727,7 @@ pub fn event_unit_loaded(
     false
 }
 
-/// `EventUnitUnloaded` — не переопределён.
+/// `EventUnitUnloaded` — not overridden.
 pub fn event_unit_unloaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -738,7 +738,7 @@ pub fn event_unit_unloaded(
     false
 }
 
-/// Приоритеты помощников (экспорт для тестов соответствия `task.hpp`).
+/// Assistant priorities (exported for `task.hpp` conformance tests).
 pub const ASSISTANT_PRIORITIES: [(u16, &str); 12] = [
     (TASK_PRIORITY_BUILDING_LOW, "MiningStation(first)"),
     (TASK_PRIORITY_BUILDING_LIGHT_PLANT, "LightPlant"),

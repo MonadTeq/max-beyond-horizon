@@ -1,37 +1,37 @@
-//! ИИ: `AiPlayer`, `TaskManager`, задачи, карты угроз — порт `ai.cpp`.
+//! AI: `AiPlayer`, `TaskManager`, tasks, threat maps — a port of `ai.cpp`.
 //!
-//! # Состав
+//! # Composition
 //!
-//! | Модуль | C++-оракул |
+//! | Module | C++ oracle |
 //! |---|---|
-//! | [`attack`] | `aiattack.cpp` — решения об атаке |
-//! | [`reminders`] | `reminders.cpp` — отложенные вызовы задач |
-//! | [`strategy`] | `aiplayer.cpp` — `AiPlayer`, стратегия, карты угроз |
-//! | [`task`] | `task.cpp` — база задачи, приоритеты, `Task_*` |
-//! | [`task_manager`] | `task_manager.cpp` — очереди, `FindTaskForUnit` |
-//! | [`tasks`] | 49 классов `task*.cpp` |
+//! | [`attack`] | `aiattack.cpp` — attack decisions |
+//! | [`reminders`] | `reminders.cpp` — deferred task calls |
+//! | [`strategy`] | `aiplayer.cpp` — `AiPlayer`, strategy, threat maps |
+//! | [`task`] | `task.cpp` — task base, priorities, `Task_*` |
+//! | [`task_manager`] | `task_manager.cpp` — queues, `FindTaskForUnit` |
+//! | [`tasks`] | 49 `task*.cpp` classes |
 //! | [`threat`] | `heatmap.cpp`, `threatmap.cpp`, `zonewalker.cpp` |
 //! | [`weight`] | `weighttable.cpp` |
 //!
-//! Этот модуль — сам `ai.cpp`: [`ai_init`], [`ai_setup_strategy`],
+//! This module is `ai.cpp` itself: [`ai_init`], [`ai_setup_strategy`],
 //! [`ai_begin_turn`], [`ai_check_reactions`], [`ai_check_end_turn`],
 //! [`ai_check_mines`], [`ai_evaluate_attack_targets`], [`ai_remove_unit`],
 //! [`ai_unit_spotted`], [`ai_is_dangerous_location`],
-//! [`task_manager_need_to_reserve_raw_materials`] и состояние [`AiState`].
+//! [`task_manager_need_to_reserve_raw_materials`] and the [`AiState`] state.
 //!
-//! # Где живёт состояние ИИ
+//! # Where the AI state lives
 //!
-//! `GameState.ai: AiState` — аналог глобалов C++ (`AiPlayer_Teams`,
-//! `TaskManager`, `Ai_AiReactionState`, тепловые карты команд,
-//! `ResourceManager_GetSettings()`). Так состояние входит в дайджест партии и
-//! не требует менять `TeamInfo` (P3) или вводить глобальную мутацию
-//! (DESIGN §1.4 п.5).
+//! `GameState.ai: AiState` is the analog of the C++ globals (`AiPlayer_Teams`,
+//! `TaskManager`, `Ai_AiReactionState`, team heat maps,
+//! `ResourceManager_GetSettings()`). Thus the state enters the game digest and
+//! does not require changing `TeamInfo` (P3) or introducing global mutation
+//! (DESIGN §1.4 item 5).
 //!
-//! # Идиома `with_task_manager`
+//! # The `with_task_manager` idiom
 //!
-//! Обработчики задач получают одновременно `&mut TaskManager` и
-//! `&mut GameState`. Поскольку менеджер лежит **внутри** `GameState`, его
-//! временно изымают:
+//! Task handlers receive `&mut TaskManager` and
+//! `&mut GameState` at the same time. Since the manager lives **inside** `GameState`, it is
+//! temporarily taken out:
 //!
 //! ```
 //! # use max_core::game::GameState;
@@ -42,9 +42,9 @@
 //! });
 //! ```
 //!
-//! Внутри замыкания `world.ai.task_manager` пуст — все обращения к менеджеру
-//! должны идти через параметр `tm` (это же правило действует в обработчиках
-//! задач, см. [`tasks::TaskCtx`]).
+//! Inside the closure `world.ai.task_manager` is empty — all accesses to the manager
+//! must go through the `tm` parameter (the same rule applies in task
+//! handlers, see [`tasks::TaskCtx`]).
 
 pub mod attack;
 pub mod reminders;
@@ -77,24 +77,24 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AiReactionState {
-    /// Готов обрабатывать реакции.
+    /// Ready to process reactions.
     #[default]
     Idle = 0,
-    /// Ждёт завершения движений/обработки.
+    /// Waiting for movements/processing to finish.
     Processing = 1,
-    /// Частицы/атаки в процессе.
+    /// Particles/attacks in progress.
     AnimationsActive = 2,
 }
 
-/// Настройки ИИ — `ResourceManager_GetSettings()` в объёме, который читает ИИ.
+/// AI settings — `ResourceManager_GetSettings()` in the scope the AI reads.
 ///
-/// Значения по умолчанию — из `settings.cpp`: `max_percent` = 90,
+/// Default values come from `settings.cpp`: `max_percent` = 90,
 /// `opponent` = 1 (`OPPONENT_TYPE_APPRENTICE`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AiSettings {
     /// `opponent` (`OpponentType`).
     pub opponent: u8,
-    /// `max_percent` (порог стелс-действий).
+    /// `max_percent` (stealth action threshold).
     pub max_percent: i32,
 }
 
@@ -107,7 +107,7 @@ impl Default for AiSettings {
     }
 }
 
-/// Состояние ИИ партии (аналог глобалов C++).
+/// Game AI state (analog of the C++ globals).
 #[derive(Debug, Clone)]
 pub struct AiState {
     /// `AiPlayer_Teams[PLAYER_TEAM_MAX - 1]`.
@@ -118,9 +118,9 @@ pub struct AiState {
     pub reaction_state: AiReactionState,
     /// `UnitsManager_TeamInfo[team].heat_map` (`heatmap.cpp`).
     pub heat_maps: [HeatMap; PLAYER_TEAM_COUNT],
-    /// Настройки партии, читаемые ИИ.
+    /// Game settings read by the AI.
     pub settings: AiSettings,
-    /// `GameManager_AllVisible` (отладка/тесты: все юниты видны).
+    /// `GameManager_AllVisible` (debug/tests: all units are visible).
     pub all_visible: bool,
 }
 
@@ -131,7 +131,7 @@ impl Default for AiState {
 }
 
 impl AiState {
-    /// Пустое состояние: по игроку на команду, пустые карты.
+    /// Empty state: one player per team, empty maps.
     pub fn new() -> Self {
         Self {
             players: std::array::from_fn(|team| AiPlayer::new(TeamId(team as u8))),
@@ -143,7 +143,7 @@ impl AiState {
         }
     }
 
-    /// Канонический дайджест состояния ИИ (для тестов детерминизма).
+    /// Canonical AI state digest (for determinism tests).
     pub fn digest_into(&self, out: &mut Vec<u8>) {
         self.task_manager.digest_into(out);
         out.push(self.reaction_state as u8);
@@ -199,11 +199,11 @@ impl AiState {
 }
 
 // ---------------------------------------------------------------------------
-// Мост «ИИ ⇄ состояние партии» (`ai.cpp`)
+// The "AI ⇄ game state" bridge (`ai.cpp`)
 // ---------------------------------------------------------------------------
 
 impl GameState {
-    /// Временное изъятие менеджера задач (см. документацию модуля).
+    /// Temporary removal of the task manager (see the module documentation).
     pub fn with_task_manager<R>(
         &mut self,
         f: impl FnOnce(&mut TaskManager, &mut GameState) -> R,
@@ -214,7 +214,7 @@ impl GameState {
         result
     }
 
-    /// Регистрирует задачу в менеджере (`TaskManager::AppendTask`).
+    /// Registers a task in the manager (`TaskManager::AppendTask`).
     pub fn ai_append_task(
         &mut self,
         team: TeamId,
@@ -227,7 +227,7 @@ impl GameState {
         })
     }
 
-    /// Ставит напоминание (`TaskManager::AppendReminder`).
+    /// Enqueues a reminder (`TaskManager::AppendReminder`).
     pub fn ai_append_reminder(&mut self, reminder: Reminder, priority: bool) {
         self.with_task_manager(|task_manager, world| {
             task_manager.append_reminder(world, reminder, priority);
@@ -269,8 +269,8 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2810`) — обнаружение юнита
-    /// командой: видимость, пометка «замечен», уведомление ИИ.
+    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2810`) — spotting a unit
+    /// by a team: visibility, marking as spotted, notifying the AI.
     pub fn spot_by_team(&mut self, id: UnitId, team: TeamId) {
         let Some(unit) = self.unit(id).cloned() else {
             return;
@@ -286,9 +286,9 @@ impl GameState {
             self.write_unit(id, info);
         }
 
-        // C++-слот `PLAYER_TEAM_ALIEN` имеет `team_type = TEAM_TYPE_NONE`:
-        // у него нет `AiPlayer`, поэтому чужой трекер реакции не заводится.
-        // Уведомление spotting-команды (`Ai_UnitSpotted`) ниже остаётся, как в
+        // The C++ slot `PLAYER_TEAM_ALIEN` has `team_type = TEAM_TYPE_NONE`:
+        // it has no `AiPlayer`, so no reaction tracker is created for it.
+        // The spotting team's notification (`Ai_UnitSpotted`) below remains, as in
         // `UnitInfo::SpotByTeam`.
         if unit.team != TeamId::ALIEN
             && self.teams[unit.team.0 as usize].team_type == TeamKind::Computer
@@ -299,7 +299,7 @@ impl GameState {
         ai_unit_spotted(self, id, team);
     }
 
-    /// `Ai_CheckReactions` (`ai.cpp:407`) — точка вызова тика.
+    /// `Ai_CheckReactions` (`ai.cpp:407`) — the tick call site.
     pub fn ai_check_reactions(&mut self) {
         if self.play_mode == PlayMode::Unknown {
             return;
@@ -327,7 +327,7 @@ impl GameState {
         self.execute_reminders();
     }
 
-    /// `TaskManager::ExecuteReminders` через `with_task_manager`.
+    /// `TaskManager::ExecuteReminders` via `with_task_manager`.
     pub fn execute_reminders(&mut self) -> bool {
         self.with_task_manager(|task_manager, world| task_manager.execute_reminders(world))
     }
@@ -392,7 +392,7 @@ impl GameState {
         }
     }
 
-    /// `AiPlayer::CheckEndTurn` для команды (с изъятием игрока ради `&mut`).
+    /// `AiPlayer::CheckEndTurn` for a team (the player is removed to obtain `&mut`).
     fn ai_check_player_end_turn(&mut self, team: TeamId) -> bool {
         let mut player =
             std::mem::replace(&mut self.ai.players[team.0 as usize], AiPlayer::new(team));
@@ -418,13 +418,13 @@ impl GameState {
     }
 }
 
-/// Проверка «команда — компьютер» без заимствования.
+/// "Team is a computer" check without borrowing.
 fn world_is_computer(world: &GameState, team: TeamId) -> bool {
     world.teams[team.0 as usize].team_type == TeamKind::Computer
 }
 
 // ---------------------------------------------------------------------------
-// Функции `ai.cpp`
+// `ai.cpp` functions
 // ---------------------------------------------------------------------------
 
 /// `Ai_Init` (`ai.cpp:154`).
@@ -438,8 +438,8 @@ pub fn ai_init(world: &mut GameState) {
     }
 }
 
-/// `Ai_SetupStrategy` (`ai.cpp:116`) — только выбор стратегии, без
-/// перегенерации карты.
+/// `Ai_SetupStrategy` (`ai.cpp:116`) — strategy selection only, without
+/// regenerating the map.
 pub fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
     let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
@@ -464,7 +464,7 @@ pub fn ai_update_mine_map(world: &mut GameState, point: Point, team: TeamId) {
     world.ai_update_mine_map(team, point);
 }
 
-/// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) — флаг «есть работа» у компьютеров.
+/// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) — the "has work" flag for computers.
 pub fn ai_set_tasks_pending_flag(world: &mut GameState) {
     for team in 0..PLAYER_TEAM_COUNT {
         if world.teams[team].team_type == TeamKind::Computer {
@@ -495,7 +495,7 @@ pub fn ai_add_unit_to_tracker_list(world: &mut GameState, unit: UnitId) {
     world.ai_add_unit_to_tracker_list(unit);
 }
 
-/// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — создать `TaskAutoSurvey`.
+/// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — create `TaskAutoSurvey`.
 pub fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -507,7 +507,7 @@ pub fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
 }
 
 impl GameState {
-    /// `Ai_EnableAutoSurvey` без проверки `tasks_enabled`.
+    /// `Ai_EnableAutoSurvey` without the `tasks_enabled` check.
     pub fn ai_enable_auto_survey(&mut self, unit: UnitId) {
         let Some(info) = self.unit(unit).cloned() else {
             return;
@@ -552,15 +552,15 @@ pub fn ai_is_dangerous_location(
     strategy::get_damage_potential(world, unit.team, unit, destination, caution_level) >= unit_hits
 }
 
-/// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) — в max_core
-/// `TerrainDistanceField` не заведён (P5 — только `pathfinding::TerrainDistanceField`
-/// в объёме поиска), поэтому портирована вторая половина: учёт военной силы.
+/// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) — in max_core
+/// `TerrainDistanceField` is not set up (P5 — only `pathfinding::TerrainDistanceField`
+/// within path search), so the second half is ported: accounting for military strength.
 pub fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
 
-    // У `PLAYER_TEAM_ALIEN` нет `AiPlayer` (C++ `team_type == TEAM_TYPE_NONE`).
+    // `PLAYER_TEAM_ALIEN` has no `AiPlayer` (C++ `team_type == TEAM_TYPE_NONE`).
     if info.team.0 as usize >= PLAYER_TEAM_COUNT {
         return;
     }
@@ -663,7 +663,7 @@ pub fn ai_check_computer_reactions(world: &mut GameState) {
     world.ai_check_computer_reactions();
 }
 
-/// `Ai_CheckMines` (`ai.cpp:365`) — миноукладчик сообщает командам о минах.
+/// `Ai_CheckMines` (`ai.cpp:365`) — the minelayer reports mines to teams.
 pub fn ai_check_mines(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -737,8 +737,8 @@ pub fn task_manager_need_to_reserve_raw_materials(world: &GameState, team: TeamI
 
 /// `Ai_SelectStartingPosition` (`ai.cpp:105`).
 ///
-/// Часть setup'а (P2), но целиком на RNG и `TeamMissionSupplies`: портирована
-/// 1:1 — до 64 попыток найти безопасную точку в `[3, size-3]`.
+/// Part of setup (P2), but entirely on RNG and `TeamMissionSupplies`: ported
+/// 1:1 — up to 64 attempts to find a safe point in `[3, size-3]`.
 pub fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     let mut position = Point::ZERO;
     let mut attempts = 0;
@@ -762,7 +762,7 @@ pub fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     }
 }
 
-/// `Ai_IsValidStartingPosition` (`ai.cpp:68`) — 5×5 вокруг точки — суша.
+/// `Ai_IsValidStartingPosition` (`ai.cpp:68`) — a 5×5 area around the point is land.
 fn is_valid_starting_position(world: &GameState, bounds: (i32, i32, i32, i32)) -> bool {
     let (ulx, uly, lrx, lry) = bounds;
 
@@ -884,7 +884,7 @@ mod tests {
     fn select_starting_position_is_within_map() {
         let mut world = GameState::new();
         ai_select_starting_position(&mut world, TeamId::RED);
-        // Без `TeamMissionSupplies` позиция не сохраняется, но RNG потреблён.
+        // Without `TeamMissionSupplies` the position is not saved, but RNG is consumed.
         let _ = world.rng.state();
     }
 }

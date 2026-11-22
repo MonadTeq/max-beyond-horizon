@@ -1,49 +1,49 @@
-//! Победа/поражение — `winloss.cpp`, `winlosshandler.cpp`, `scripter.cpp` (P7).
+//! Victory/defeat — `winloss.cpp`, `winlosshandler.cpp`, `scripter.cpp` (P7).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! | Что | Где |
+//! | What | Where |
 //! |---|---|
 //! | `WinLoss_GetWorthOfAssets`, `WinLoss_GetTotalWorthOfAssets`, `WinLoss_EvaluateStatus` | `max-cpp-port/src/winloss.cpp` |
-//! | общий тест условий (`TestWinLossConditions` → Lua) | `winlosshandler.cpp` |
-//! | примитивы-предикаты `max_*` | `scripter.cpp:159-1149` |
-//! | `Cargo_*` (расход/добыча/производство) | `cargo.cpp:30-271` |
+//! | common condition test (`TestWinLossConditions` → Lua) | `winlosshandler.cpp` |
+//! | `max_*` primitive predicates | `scripter.cpp:159-1149` |
+//! | `Cargo_*` (consumption/mining/production) | `cargo.cpp:30-271` |
 //! | `GetNormalRateBuildCost` | `unitinfo.cpp:3719` |
-//! | значения `MAX_REGISTRY.*` | `maxregistryhandler.cpp:33-163` |
-//! | условия победы/поражения миссий (Lua) | `assets/PATCHES.RES` → `SC_L0002`, `SC_T0001..15`, `SC_S0001..24`, `SC_C0001..09` |
+//! | `MAX_REGISTRY.*` values | `maxregistryhandler.cpp:33-163` |
+//! | mission victory/defeat conditions (Lua) | `assets/PATCHES.RES` → `SC_L0002`, `SC_T0001..15`, `SC_S0001..24`, `SC_C0001..09` |
 //! | generic end-game (`menu_check_end_game_conditions`) | `menu.cpp:548` |
-//! | описание правил | `max-cpp-port-max-brh-docs/save.md` → *Victory and Loss Conditions* |
+//! | rule description | `max-cpp-port-max-brh-docs/save.md` → *Victory and Loss Conditions* |
 //!
-//! # Модель
+//! # Model
 //!
-//! 1. [`predicates`] — чистые порты Lua-API (`max_*`): счётчики юнитов,
-//!    потери, ресурсы, очки, исследования, ходы, добыча/потребление, состояние
-//!    юнитов и три «инфраструктурных» предиката (военная мощь, производство,
-//!    строительство).
-//! 2. [`mission_win_loss`] — статус команды по правилам миссии. Скрипты миссий
-//!    из ресурсов порта переписаны 1:1 (в комментариях к каждой ветке — исходный
-//!    Lua), поэтому это **данные-правила**, а не интерпретатор Lua (DESIGN §7,
-//!    риск 8). `mission_index == 0` и категории без скрипта дают
+//! 1. [`predicates`] — pure ports of the Lua API (`max_*`): unit counters,
+//!    losses, resources, points, research, turns, mining/consumption, unit
+//!    state and three "infrastructure" predicates (military power, production,
+//!    construction).
+//! 2. [`mission_win_loss`] — team status by mission rules. Mission scripts
+//!    from the port's resources are rewritten 1:1 (each branch's comment contains the original
+//!    Lua), so this is **rule data**, not a Lua interpreter (DESIGN §7,
+//!    risk 8). `mission_index == 0` and categories without a script give
 //!    [`default_win_loss_conditions`] (`SC_L0002`).
-//! 3. [`evaluate_status`] — дословный порт `WinLoss_EvaluateStatus`: статусы,
-//!    счётчики команд, сортировка `teams_in_play` (очки, затем «стоимость базы»
-//!    [`get_total_worth_of_assets`]) и ранги.
-//! 4. [`check_end_game_conditions`] — порт `menu_check_end_game_conditions`
-//!    (generic-правила SCORE/DURATION, «последний выживший», «все люди
-//!    выбиты»), вызывается из [`crate::game::GameState::finish_turn`].
+//! 3. [`evaluate_status`] — a verbatim port of `WinLoss_EvaluateStatus`: statuses,
+//!    team counters, `teams_in_play` sorting (points, then "base worth"
+//!    [`get_total_worth_of_assets`]) and ranks.
+//! 4. [`check_end_game_conditions`] — a port of `menu_check_end_game_conditions`
+//!    (generic SCORE/DURATION rules, "last survivor", "all humans"
+//!    eliminated"), called from [`crate::game::GameState::finish_turn`].
 //!
-//! # Осознанные расхождения
+//! # Intentional divergences
 //!
-//! * `WinLoss_EvaluateStatus(turn_counter)` в C++ **не использует** аргумент
-//!   (все предикаты читают `GameManager_TurnCounter`); в Rust так же — параметр
-//!   сохранён для соответствия сигнатуре.
-//! * `Cargo_GetNetProduction` для фабрик в `ORDER_BUILD` использует
-//!   `GetMaxAllowedBuildRate()`; в max_core это `build_rate` без клампа
-//!   `BuildMenu_GetMaxPossibleBuildRate` (нужны данные `BuildMenu`, P3) — на
-//!   предикаты миссий это не влияет (см. `tests`).
-//! * `menu_check_end_game_conditions` в C++ рисует экран итогов; здесь возвращается
-//!   только факт конца партии и (для не-сетевой ветки) команда помечается
-//!   `TeamKind::Eliminated` — как `menu.cpp:605`.
+//! * C++ `WinLoss_EvaluateStatus(turn_counter)` **does not use** the argument
+//!   (all predicates read `GameManager_TurnCounter`); Rust does the same — the parameter
+//!   is kept for signature compatibility.
+//! * `Cargo_GetNetProduction` for factories in `ORDER_BUILD` uses
+//!   `GetMaxAllowedBuildRate()`; in max_core this is `build_rate` without the
+//!   `BuildMenu_GetMaxPossibleBuildRate` clamp (`BuildMenu` data is needed, P3) — this
+//!   does not affect mission predicates (see `tests`).
+//! * `menu_check_end_game_conditions` in C++ draws the results screen; here only
+//!   the fact that the game ended is returned and (for the non-network branch) the team is marked
+//!   `TeamKind::Eliminated` — as `menu.cpp:605`.
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{
@@ -58,10 +58,10 @@ use crate::unit_values::{
 };
 
 // ---------------------------------------------------------------------------
-// Тип груза юнита — Unit::CargoType (unit.hpp), данные SC_UNITS
+// Unit cargo type — Unit::CargoType (unit.hpp), SC_UNITS data
 // ---------------------------------------------------------------------------
 
-/// `Unit::CargoType` (`unit.hpp`), значения — как в C++.
+/// `Unit::CargoType` (`unit.hpp`), values as in C++.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CargoType {
@@ -73,19 +73,19 @@ pub enum CargoType {
     Fuel = 2,
     /// `CARGO_TYPE_GOLD`.
     Gold = 3,
-    /// `CARGO_TYPE_LAND` (транспорт).
+    /// `CARGO_TYPE_LAND` (transport).
     Land = 4,
-    /// `CARGO_TYPE_SEA` (транспорт).
+    /// `CARGO_TYPE_SEA` (transport).
     Sea = 5,
-    /// `CARGO_TYPE_AIR` (транспорт).
+    /// `CARGO_TYPE_AIR` (transport).
     Air = 6,
 }
 
 /// `ResourceManager_GetUnit(type).GetCargoType()`.
 ///
-/// Таблица — из `assets/PATCHES.RES` → `SC_UNITS` (JSON-описание `units.cpp`),
-/// сгруппирована по типам груза. В C++ поле читается из ресурса при загрузке
-/// данных юнитов; здесь — const-данные (DESIGN §1.4 п.4).
+/// The table — from `assets/PATCHES.RES` → `SC_UNITS` (the JSON description of `units.cpp`),
+/// grouped by cargo type. In C++ the field is read from the resource when loading
+/// unit data; here — const data (DESIGN §1.4 item 4).
 pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
     match unit_type {
         UnitType::Barracks
@@ -111,12 +111,12 @@ pub fn cargo_type_of(unit_type: UnitType) -> CargoType {
     }
 }
 
-/// `GetRelevantUnits(unit_type)` (`scripter.cpp:140`): список юнитов, в котором
-/// предикаты ищут юнитов данного типа.
+/// `GetRelevantUnits(unit_type)` (`scripter.cpp:140`): the unit list in which
+/// the predicates search for units of this type.
 ///
-/// Порядок проверок — как в C++ (`STATIONARY` первым, затем `MOBILE_AIR`, иначе
-/// `MOBILE_LAND_SEA`). Поэтому `GROUND_COVER`-типы без `STATIONARY` (например
-/// `TORPEDO`) попадают в `MobileLandSea`, а не в `GroundCover`.
+/// Check order — as in C++ (`STATIONARY` first, then `MOBILE_AIR`, otherwise
+/// `MOBILE_LAND_SEA`). Therefore `GROUND_COVER` types without `STATIONARY` (e.g.
+/// `TORPEDO`) land in `MobileLandSea`, not in `GroundCover`.
 pub fn relevant_list(unit_type: UnitType) -> UnitListKind {
     let flags = crate::access::unit_type_flags(unit_type);
 
@@ -133,7 +133,7 @@ pub fn relevant_list(unit_type: UnitType) -> UnitListKind {
     }
 }
 
-/// `MAX_UNIT_CLASS` в Lua-предикатах `max_has_attack_power`.
+/// `MAX_UNIT_CLASS` in the `max_has_attack_power` Lua predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnitClass {
     /// `MOBILE_LAND_UNIT | MOBILE_SEA_UNIT`.
@@ -145,11 +145,11 @@ pub enum UnitClass {
 }
 
 // ---------------------------------------------------------------------------
-// Примитивы-предикаты (scripter.cpp → Lua API)
+// Primitive predicates (scripter.cpp → Lua API)
 // ---------------------------------------------------------------------------
 
-/// `HasMaterials()` (`scripter.cpp:159`): сумма `storage` юнитов команды с
-/// заданным типом груза по спискам `Stationary` и `MobileLandSea`.
+/// `HasMaterials()` (`scripter.cpp:159`): the sum of `storage` of the team's units with
+/// the given cargo type over the `Stationary` and `MobileLandSea` lists.
 pub fn has_materials(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut cargo_sum = 0i32;
 
@@ -165,8 +165,8 @@ pub fn has_materials(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     cargo_sum
 }
 
-/// `CountReadyUnits()` (`scripter.cpp:204`): юниты типа, **готовые** (состояние
-/// не `ORDER_STATE_BUILDING_READY`).
+/// `CountReadyUnits()` (`scripter.cpp:204`): units of the type that are **ready** (state
+/// is not `ORDER_STATE_BUILDING_READY`).
 pub fn count_ready_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut ready_units = 0i32;
 
@@ -183,8 +183,8 @@ pub fn count_ready_units(state: &GameState, team: TeamId, unit_type: UnitType) -
     ready_units
 }
 
-/// `HasAttackPower()` (`scripter.cpp:244`): есть юнит класса с `ammo > 0`,
-/// не `SUBMARNE` и не `COMMANDO`.
+/// `HasAttackPower()` (`scripter.cpp:244`): there is a unit of the class with `ammo > 0`,
+/// not `SUBMARNE` and not `COMMANDO`.
 pub fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bool {
     let kind = match class {
         UnitClass::MobileLandSea => UnitListKind::MobileLandSea,
@@ -206,9 +206,9 @@ pub fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bo
     false
 }
 
-/// `HasProductionInfrastructure()` (`scripter.cpp:296`): фабрика + топливо ≥ 8 и
-/// материалы ≥ 24, иначе шахта; покрывает потребность в энергии (`power_demand`
-/// 1 или 2).
+/// `HasProductionInfrastructure()` (`scripter.cpp:296`): a factory + fuel ≥ 8 and
+/// materials ≥ 24, otherwise a mine; it covers the power demand (`power_demand`
+/// 1 or 2).
 pub fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
     let has_plant = state.unit_list(UnitListKind::Stationary).iter().any(|id| {
         state.unit(*id).is_some_and(|unit| {
@@ -260,9 +260,9 @@ pub fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
     sum_cargo_generated_power >= power_demand
 }
 
-/// `HasConstructionInfrastructure()` (`scripter.cpp:372`): конструктор +
-/// инженер + достаточно материалов (38, 8 при наличии шахты, −8 при своей
-/// генерации).
+/// `HasConstructionInfrastructure()` (`scripter.cpp:372`): constructor +
+/// engineer + enough materials (38, 8 with a mine, −8 with own
+/// generation).
 pub fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool {
     let has_constructor = state
         .unit_list(UnitListKind::MobileLandSea)
@@ -311,8 +311,8 @@ pub fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool 
     resources_needed == 0 || resources_needed <= has_materials(state, team, CargoType::Raw)
 }
 
-/// `CountTotalMining()` (`scripter.cpp:454`): суммарные **максимумы** добычи
-/// включённых шахт (`ORDER_POWER_ON`) — `(raw, fuel, gold)`.
+/// `CountTotalMining()` (`scripter.cpp:454`): the total **maximums** of mining
+/// of enabled mines (`ORDER_POWER_ON`) — `(raw, fuel, gold)`.
 pub fn count_total_mining(state: &GameState, team: TeamId) -> (i32, i32, i32) {
     let mut raw = 0i32;
     let mut fuel = 0i32;
@@ -335,9 +335,9 @@ pub fn count_total_mining(state: &GameState, team: TeamId) -> (i32, i32, i32) {
 
 /// `GetTotalUnitsBeingConstructed()` (`scripter.cpp:498`).
 ///
-/// Забавная деталь C++: если **строящийся** тип стационарный, перебирается
-/// список мобильных наземных/морских юнитов, и наоборот (список содержит
-/// «производителей»).
+/// A curious C++ detail: if the **constructed** type is stationary, the list of
+/// mobile ground/naval units is iterated, and vice versa (the list contains
+/// "producers").
 pub fn get_total_units_being_constructed(
     state: &GameState,
     team: TeamId,
@@ -365,8 +365,8 @@ pub fn get_total_units_being_constructed(
     result
 }
 
-/// `GetTotalPowerConsumption()` (`scripter.cpp:547`) — число стационарных юнитов
-/// типа в состоянии `POWER_ON`/`BUILD`.
+/// `GetTotalPowerConsumption()` (`scripter.cpp:547`) — the number of stationary units
+/// of the type in state `POWER_ON`/`BUILD`.
 pub fn get_total_power_consumption(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut result = 0i32;
 
@@ -383,7 +383,7 @@ pub fn get_total_power_consumption(state: &GameState, team: TeamId, unit_type: U
     result
 }
 
-/// `GetTotalMining()` (`scripter.cpp:588`) — фактическая добыча включённых шахт.
+/// `GetTotalMining()` (`scripter.cpp:588`) — the actual mining of enabled mines.
 pub fn get_total_mining(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut result = 0i32;
 
@@ -405,8 +405,8 @@ pub fn get_total_mining(state: &GameState, team: TeamId, cargo: CargoType) -> i3
     result
 }
 
-/// `GetTotalConsumption()` (`scripter.cpp:638`) — суммарное потребление
-/// (отрицательные компоненты `Cargo_GetNetProduction`).
+/// `GetTotalConsumption()` (`scripter.cpp:638`) — the total consumption
+/// (negative components of `Cargo_GetNetProduction`).
 pub fn get_total_consumption(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut result = 0i32;
 
@@ -428,8 +428,8 @@ pub fn get_total_consumption(state: &GameState, team: TeamId, cargo: CargoType) 
     result
 }
 
-/// `HasUnitAboveMarkLevel()` (`scripter.cpp:699`) — версия юнита (mark level)
-/// выше заданной; проверяется **только** список `MobileLandSea` (как в C++).
+/// `HasUnitAboveMarkLevel()` (`scripter.cpp:699`) — the unit version (mark level)
+/// is above the given one; **only** the `MobileLandSea` list is checked (as in C++).
 pub fn has_unit_above_mark_level(
     state: &GameState,
     team: TeamId,
@@ -449,8 +449,8 @@ pub fn has_unit_above_mark_level(
     false
 }
 
-/// `HasUnitExperience()` (`scripter.cpp:741`): есть юнит типа с `storage > 0`
-/// (у `COMMANDO`/`REGENERATING_UNIT` `storage` — это опыт).
+/// `HasUnitExperience()` (`scripter.cpp:741`): there is a unit of the type with `storage > 0`
+/// (for `COMMANDO`/`REGENERATING_UNIT` `storage` is experience).
 pub fn has_unit_experience(state: &GameState, team: TeamId, unit_type: UnitType) -> bool {
     for &id in state.unit_list(relevant_list(unit_type)) {
         let Some(unit) = state.unit(id) else { continue };
@@ -471,7 +471,7 @@ pub fn count_casualties(state: &GameState, team: TeamId, unit_type: UnitType) ->
         .unwrap_or(0)
 }
 
-/// `CountDamangedUnits()` (`scripter.cpp:809`) — юниты с `hits != base hits`.
+/// `CountDamangedUnits()` (`scripter.cpp:809`) — units with `hits != base hits`.
 pub fn count_damaged_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut result = 0i32;
 
@@ -511,8 +511,8 @@ pub fn count_units_above_attrib_level(
     result
 }
 
-/// `CountUnitsWithReducedAttrib()` (`scripter.cpp:900`): атрибут юнита ниже
-/// базового (`ammo`, `speed`, `shots`/`rounds`, `hits`, `storage`).
+/// `CountUnitsWithReducedAttrib()` (`scripter.cpp:900`): a unit attribute is below
+/// the base (`ammo`, `speed`, `shots`/`rounds`, `hits`, `storage`).
 pub fn count_units_with_reduced_attrib(
     state: &GameState,
     team: TeamId,
@@ -559,21 +559,21 @@ pub fn get_research_level(state: &GameState, team: TeamId, topic: ResearchTopic)
 // Cargo_* — cargo.cpp
 // ---------------------------------------------------------------------------
 
-/// `Cargo` в объёме `Cargo_GetNetProduction` (C++ `Cargo` — cargo.hpp, поля
-/// `int16_t`; здесь i32 до сужения, как в формулах C++).
+/// `Cargo` in the `Cargo_GetNetProduction` scope (C++ `Cargo` — cargo.hpp, fields
+/// are `int16_t`; here i32 until narrowing, as in the C++ formulas).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NetProduction {
-    /// Золото.
+    /// Gold.
     pub gold: i32,
-    /// Материалы.
+    /// Materials.
     pub raw: i32,
-    /// Топливо.
+    /// Fuel.
     pub fuel: i32,
-    /// Энергия.
+    /// Power.
     pub power: i32,
-    /// Жизнеобеспечение.
+    /// Life support.
     pub life: i32,
-    /// Свободная вместимость комплекса.
+    /// Free complex capacity.
     pub free_capacity: i32,
 }
 
@@ -655,10 +655,10 @@ fn cargo_apply_unit_consumption(
 
 /// `UnitInfo::GetMaxAllowedBuildRate()` (`unitinfo.cpp:3208`).
 ///
-/// Для мобильных наземных — `build_rate`; для зданий C++ берёт
-/// `min(build_rate, BuildMenu_GetMaxPossibleBuildRate(...))`. Последняя зависит
-/// от данных `BuildMenu` (доступных материалов/времени) и в max_core не
-/// портирована — используется `build_rate` (см. «Осознанные расхождения»).
+/// For mobile ground units — `build_rate`; for buildings C++ takes
+/// `min(build_rate, BuildMenu_GetMaxPossibleBuildRate(...))`. The latter depends
+/// on `BuildMenu` data (available materials/time) and is not
+/// ported in max_core — `build_rate` is used (see "Intentional divergences").
 fn max_allowed_build_rate(unit: &UnitInfo) -> i32 {
     i32::from(unit.build_rate)
 }
@@ -734,20 +734,20 @@ pub fn cargo_get_net_production(
     cargo
 }
 
-/// `Cargo_GetNetProduction` для пересчёта запаса комплекса
-/// (`Access_UpdateResourcesTotal`) с одной оговоркой порта.
+/// `Cargo_GetNetProduction` for recomputing the complex stock
+/// (`Access_UpdateResourcesTotal`) with one port caveat.
 ///
-/// C++ списывает ход строящегося завода **здесь** — внутри
-/// `Cargo_GetNetProduction` (`cargo.cpp:88-95`), и `Access_UpdateResourcesTotal`
-/// (`access.cpp:912`) кладёт это списание в `Complex::material`. Порт по
-/// требованию QA не допускает отрицательных `storage`/`complex.raw`,
-/// поэтому фактическое списание с паузой делает
-/// [`crate::production::ProductionManager`] в фазе
-/// `GameManager_ProgressBuildState` (как `StartBuilding`/`ValidateIndustry`).
-/// Чтобы ставка не списалась дважды, из кэша комплекса возвращается **только
-/// `raw`** строящегося завода; `power`/`life`/`fuel`/`gold` остаются
-/// C++-точными и проверяются [`crate::power::optimize_complex`] (см. шапку
-/// `production`). Пауза (`build_paused`) исключает расход целиком.
+/// C++ charges the turn of a factory under construction **here** — inside
+/// `Cargo_GetNetProduction` (`cargo.cpp:88-95`), and `Access_UpdateResourcesTotal`
+/// (`access.cpp:912`) puts this charge into `Complex::material`. The port, per
+/// the QA requirement, does not allow negative `storage`/`complex.raw`,
+/// so the actual charging with a pause is done by
+/// [`crate::production::ProductionManager`] in the
+/// `GameManager_ProgressBuildState` phase (like `StartBuilding`/`ValidateIndustry`).
+/// So that the rate is not charged twice, **only
+/// `raw`** of the factory under construction is returned from the complex cache; `power`/`life`/`fuel`/`gold` remain
+/// C++-exact and are checked by [`crate::power::optimize_complex`] (see the
+/// `production` header). A pause (`build_paused`) excludes the consumption entirely.
 pub fn cargo_get_net_production_for_total(
     state: &GameState,
     unit: &UnitInfo,
@@ -778,11 +778,11 @@ pub fn cargo_get_net_production_for_total(
 }
 
 // ---------------------------------------------------------------------------
-// Стоимость юнита/базы — unitinfo.cpp:3719, winloss.cpp
+// Unit/base worth — unitinfo.cpp:3719, winloss.cpp
 // ---------------------------------------------------------------------------
 
-/// `UnitInfo::GetNormalRateBuildCost()` (`unitinfo.cpp:3719`): стоимость
-/// постройки при скорости 1× в единицах сырья.
+/// `UnitInfo::GetNormalRateBuildCost()` (`unitinfo.cpp:3719`): the construction
+/// cost at 1× rate in raw material units.
 pub fn get_normal_rate_build_cost(unit: &UnitInfo) -> i32 {
     let turns = unit.base_values.get_attribute(ATTRIB_TURNS);
 
@@ -795,8 +795,8 @@ pub fn get_normal_rate_build_cost(unit: &UnitInfo) -> i32 {
     }
 }
 
-/// `WinLoss_GetWorthOfAssets` (`winloss.cpp:33`) — суммарная стоимость юнитов
-/// команды в одном списке.
+/// `WinLoss_GetWorthOfAssets` (`winloss.cpp:33`) — the total worth of the team's
+/// units in one list.
 pub fn get_worth_of_assets(state: &GameState, team: TeamId, kind: UnitListKind) -> i32 {
     let mut sum = 0i32;
 
@@ -810,8 +810,8 @@ pub fn get_worth_of_assets(state: &GameState, team: TeamId, kind: UnitListKind) 
     sum
 }
 
-/// `WinLoss_GetTotalWorthOfAssets` (`winloss.cpp:47`): мобильные наземные/морские
-/// + воздушные + стационарные (ground cover не входит).
+/// `WinLoss_GetTotalWorthOfAssets` (`winloss.cpp:47`): mobile ground/naval
+/// + air + stationary (ground cover is not included).
 pub fn get_total_worth_of_assets(state: &GameState, team: TeamId) -> i32 {
     get_worth_of_assets(state, team, UnitListKind::MobileLandSea)
         + get_worth_of_assets(state, team, UnitListKind::MobileAir)
@@ -819,29 +819,29 @@ pub fn get_total_worth_of_assets(state: &GameState, team: TeamId) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Категории миссий
+// Mission categories
 // ---------------------------------------------------------------------------
 
-// `MissionCategory` — чистое перечисление нижнего слоя (`max_types`, Ф5.2);
-// здесь реэкспорт, чтобы путь `max_core::victory::MissionCategory` не менялся.
+// `MissionCategory` is a pure lower-layer enum (`max_types`, F5.2);
+// re-exported here so that the path `max_core::victory::MissionCategory` does not change.
 pub use max_types::victory::MissionCategory;
 
 // ---------------------------------------------------------------------------
-// WinLoss_Status и generic-правила
+// WinLoss_Status and generic rules
 // ---------------------------------------------------------------------------
 
-/// `WinLoss_Status` (`winloss.hpp:29`) — результат оценки победы/поражения.
+/// `WinLoss_Status` (`winloss.hpp:29`) — the victory/defeat evaluation result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WinLossStatus {
-    /// `mission_type` — категория миссии ([`MissionCategory`] как `i32`).
+    /// `mission_type` — mission category ([`MissionCategory`] as `i32`).
     pub mission_type: i32,
-    /// `team_type[PLAYER_TEAM_MAX]` — типы команд как `i32`.
+    /// `team_type[PLAYER_TEAM_MAX]` — team types as `i32`.
     pub team_type: [i32; TEAM_SLOTS],
     /// `team_status[PLAYER_TEAM_MAX]`.
     pub team_status: [WinLossState; TEAM_SLOTS],
-    /// `team_rank[PLAYER_TEAM_MAX]` — 1..N среди играющих.
+    /// `team_rank[PLAYER_TEAM_MAX]` — 1..N among playing teams.
     pub team_rank: [i32; TEAM_SLOTS],
-    /// `teams_total` — число команд с `team_type != NONE`.
+    /// `teams_total` — the number of teams with `team_type != NONE`.
     pub teams_total: i32,
     /// `teams_in_play`.
     pub teams_in_play: i32,
@@ -851,7 +851,7 @@ pub struct WinLossStatus {
     pub teams_non_computers: i32,
 }
 
-/// База скрипта миссии: `if alive then <alive_state> else LOST`.
+/// Mission script base: `if alive then <alive_state> else LOST`.
 fn survival_status(state: &GameState, team: TeamId, alive_state: WinLossState) -> WinLossState {
     let alive = has_attack_power(state, team, UnitClass::MobileLandSea)
         || has_attack_power(state, team, UnitClass::MobileAir)
@@ -866,7 +866,7 @@ fn survival_status(state: &GameState, team: TeamId, alive_state: WinLossState) -
     }
 }
 
-/// Скрипт по умолчанию — `SC_L0002` (`LoadDefaultWinLossConditions`):
+/// The default script — `SC_L0002` (`LoadDefaultWinLossConditions`):
 ///
 /// ```lua
 /// if max_has_attack_power(a,MOBILE_LAND_SEA) or max_has_attack_power(a,MOBILE_AIR)
@@ -875,8 +875,8 @@ fn survival_status(state: &GameState, team: TeamId, alive_state: WinLossState) -
 /// then b=GENERIC else b=LOST end; return b
 /// ```
 ///
-/// `GENERIC` означает: дальше действуют generic-правила
-/// ([`check_end_game_conditions`]); `LOST` — команда выбита из игры.
+/// `GENERIC` means: the generic rules apply from now on
+/// ([`check_end_game_conditions`]); `LOST` — the team is out of the game.
 pub fn default_win_loss_conditions(state: &GameState, team: TeamId) -> WinLossState {
     survival_status(state, team, WinLossState::Generic)
 }
@@ -888,7 +888,7 @@ fn team_turn_value(state: &GameState) -> i64 {
 }
 
 /// `MAX_REGISTRY.TeamTurnVictoryLimit` (`maxregistryhandler.cpp:59`):
-/// `victory_limit` для `VICTORY_TYPE_DURATION`, иначе `-1`.
+/// `victory_limit` for `VICTORY_TYPE_DURATION`, otherwise `-1`.
 fn team_turn_victory_limit(state: &GameState) -> i64 {
     if state.victory_type == VictoryType::Duration {
         i64::from(state.victory_limit)
@@ -897,14 +897,14 @@ fn team_turn_victory_limit(state: &GameState) -> i64 {
     }
 }
 
-/// Статус команды по правилам миссии (`WinLossHandler::TestWinLossConditions`).
+/// Team status by mission rules (`WinLossHandler::TestWinLossConditions`).
 ///
-/// `None` — неизвестная миссия (в C++ `SDL_assert(0)` в
-/// `WinLoss_EvaluateStatus`); вызывающий подставляет `GENERIC`, как это делает
+/// `None` — an unknown mission (in C++ `SDL_assert(0)` in
+/// `WinLoss_EvaluateStatus`); the caller substitutes `GENERIC`, as
 /// `winloss.cpp:77`.
 ///
-/// Каждая ветка — дословный перевод Lua-скрипта из `assets/PATCHES.RES`
-/// (код ресурса указан в комментарии).
+/// Each branch is a verbatim translation of a Lua script from `assets/PATCHES.RES`
+/// (the resource code is given in the comment).
 pub fn mission_win_loss(
     state: &GameState,
     category: MissionCategory,
@@ -914,7 +914,7 @@ pub fn mission_win_loss(
     use WinLossState::{Generic, Lost, Pending, Won};
 
     let red = team == TeamId::RED;
-    // Общий пролог скриптов: `b` — «команда жива» (PENDING или GENERIC).
+    // Common script prologue: `b` — "team is alive" (PENDING or GENERIC).
     let base = |alive_state| survival_status(state, team, alive_state);
 
     let status = match category {
@@ -1232,7 +1232,7 @@ pub fn mission_win_loss(
 
         // --- Single player scenarios (SC_S0001..SC_S0024, SAVE1..24.SCE) ---
         MissionCategory::Scenario => match mission_index {
-            // SC_S0009: сценарий со сравнением очков команд.
+            // SC_S0009: a scenario comparing team points.
             9 => {
                 let mut b = base(Pending);
                 if red {
@@ -1250,7 +1250,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_S0018: у зелёных 0 центров исследований → победа красных.
+            // SC_S0018: green has 0 research centers → red wins.
             18 => {
                 let mut b = base(Pending);
                 if red {
@@ -1266,7 +1266,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_S0024: у зелёных 0 экосфер → победа красных.
+            // SC_S0024: green has 0 greenhouses → red wins.
             24 => {
                 let mut b = base(Pending);
                 if red {
@@ -1287,8 +1287,8 @@ pub fn mission_win_loss(
 
         // --- Campaign (SC_C0001..SC_C0009, SAVE1..9.CAM) ---
         MissionCategory::Campaign => match mission_index {
-            // SC_C0001: зелёные потеряли центр исследований → поражение красных;
-            // 0 экосфер у зелёных → победа.
+            // SC_C0001: green lost its research center → red loses;
+            // 0 greenhouses at green → victory.
             1 => {
                 let mut b = base(Pending);
                 if red {
@@ -1306,8 +1306,8 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_C0002: потеря центра исследований красных → поражение; лимит
-            // ходов → победа.
+            // SC_C0002: losing red's research center → defeat; the turn
+            // limit → victory.
             2 => {
                 let mut b = base(Pending);
                 if red {
@@ -1325,7 +1325,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_C0003: снабжение и диверсант.
+            // SC_C0003: supplies and the saboteur.
             3 => {
                 let mut b = base(Pending);
                 if red {
@@ -1348,7 +1348,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_C0004 / SC_C0005 / SC_C0009: 0 экосфер у зелёных → победа.
+            // SC_C0004 / SC_C0005 / SC_C0009: 0 greenhouses at green → victory.
             4 | 5 | 9 => {
                 let mut b = base(Pending);
                 if red {
@@ -1364,7 +1364,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_C0008: инопланетные юниты, лимит ходов.
+            // SC_C0008: alien units, turn limit.
             8 => {
                 let mut b = base(Pending);
                 if red {
@@ -1393,7 +1393,7 @@ pub fn mission_win_loss(
                 }
                 b
             }
-            // SC_C0006 / SC_C0007 и прочие — generic-скрипт.
+            // SC_C0006 / SC_C0007 and others — the generic script.
             _ => default_win_loss_conditions(state, team),
         },
 
@@ -1404,10 +1404,10 @@ pub fn mission_win_loss(
     Some(status)
 }
 
-/// `WinLoss_EvaluateStatus` (`winloss.cpp:53`) — дословный порт.
+/// `WinLoss_EvaluateStatus` (`winloss.cpp:53`) — a verbatim port.
 ///
-/// `turn_counter` сохранён для соответствия сигнатуре C++; предикаты читают
-/// [`GameState::turn_counter`] (как `MAX_REGISTRY.TeamTurnValue`).
+/// `turn_counter` is kept for C++ signature compatibility; the predicates read
+/// [`GameState::turn_counter`] (like `MAX_REGISTRY.TeamTurnValue`).
 pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
     let _ = turn_counter;
 
@@ -1431,10 +1431,10 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
         let team_id = TeamId(team as u8);
         let kind = state.teams[team].team_type;
 
-        // C++: у `PLAYER_TEAM_ALIEN` `team_type = TEAM_TYPE_NONE` (`ResourceManager_InitTeamInfo`),
-        // поэтому служебная команда обломков не попадает в `teams_total`/
-        // `teams_in_play` и не участвует в условиях победы. В max_core слот
-        // `ALIEN` помечен `Computer`, поэтому пропускаем его явно.
+        // C++: `PLAYER_TEAM_ALIEN` has `team_type = TEAM_TYPE_NONE` (`ResourceManager_InitTeamInfo`),
+        // so the service derelict team does not enter `teams_total`/
+        // `teams_in_play` and does not participate in victory conditions. In max_core the
+        // `ALIEN` slot is marked `Computer`, so we skip it explicitly.
         if team == TeamId::ALIEN.0 as usize || kind == TeamKind::None {
             continue;
         }
@@ -1459,8 +1459,8 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
         }
     }
 
-    // Пузырьковая сортировка C++ (`winloss.cpp:98`): по убыванию очков, при
-    // равенстве — по «стоимости базы» (больше стоимость — выше).
+    // C++ bubble sort (`winloss.cpp:98`): by descending points, and on
+    // equality by "base worth" (higher worth — higher).
     for i in 0..(status.teams_in_play as usize).saturating_sub(1) {
         for j in (i + 1)..(status.teams_in_play as usize) {
             let left = teams_in_play[i] as usize;
@@ -1486,23 +1486,23 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
     status
 }
 
-/// `menu_check_end_game_conditions` (`menu.cpp:548`) в части правил generic
-/// партии (без UI).
+/// `menu_check_end_game_conditions` (`menu.cpp:548`) for the generic
+/// game rules (without UI).
 ///
-/// Условия конца партии (проверяются для каждой команды, как в C++):
-/// 1. статус локального игрока `WON`/`LOST`;
-/// 2. остался один играющий (`teams_in_play == 1`, `teams_total > 1`) и он не
+/// End-of-game conditions (checked for each team, as in C++):
+/// 1. the local player's status is `WON`/`LOST`;
+/// 2. one player remains (`teams_in_play == 1`, `teams_total > 1`) and it is not
 ///    `PENDING`;
-/// 3. не осталось играющих (`teams_in_play == 0`);
-/// 4. выбиты все люди, но не все были компьютерами;
-/// 5. `VICTORY_TYPE_DURATION` и лимит ходов достигнут;
-/// 6. `VICTORY_TYPE_SCORE` и очки команды ≥ лимита.
+/// 3. no players remain (`teams_in_play == 0`);
+/// 4. all humans are eliminated, but not all were computers;
+/// 5. `VICTORY_TYPE_DURATION` and the turn limit is reached;
+/// 6. `VICTORY_TYPE_SCORE` and the team points ≥ the limit.
 ///
-/// Дополнительно (ветка не-сетевой игры, `menu.cpp:593-609`): если у
-/// локального игрока статус `GENERIC`, а команда-человек проиграла — она
-/// помечается `TeamKind::Eliminated`.
+/// Additionally (non-network branch, `menu.cpp:593-609`): if the
+/// local player's status is `GENERIC` and a human team lost, it is
+/// marked `TeamKind::Eliminated`.
 ///
-/// Возвращает `true`, если партия завершена (`menu_wrap_up_game`).
+/// Returns `true` if the game is over (`menu_wrap_up_game`).
 pub fn check_end_game_conditions(state: &mut GameState) -> bool {
     let status = evaluate_status(state, state.turn_counter);
     let player_team = state.player_team.0 as usize;
@@ -1539,9 +1539,9 @@ pub fn check_end_game_conditions(state: &mut GameState) -> bool {
             && kind == TeamKind::Player
             && status.team_status[team] == WinLossState::Lost
         {
-            // Сетевая игра в C++ возвращает true; локальная — помечает команду
-            // выбитой и продолжает. max_core — lockstep, поэтому берём
-            // не-сетевую ветку.
+            // A network game in C++ returns true; the local one marks the team
+            // eliminated and continues. max_core is lockstep, so we take
+            // the non-network branch.
             if state.network_game {
                 return true;
             }
@@ -1553,7 +1553,7 @@ pub fn check_end_game_conditions(state: &mut GameState) -> bool {
     false
 }
 
-/// Число команд без `ALIEN` — вспомогательная константа для тестов.
+/// Number of teams without `ALIEN` — a helper constant for tests.
 pub const PLAYING_TEAMS: usize = PLAYER_TEAM_COUNT;
 
 #[cfg(test)]
@@ -1572,9 +1572,9 @@ mod tests {
         state.mission_index = 0;
         state.victory_type = VictoryType::Duration;
         state.victory_limit = 50;
-        // Дуэль: красные — человек, зелёные — компьютер, синие/серые не играют.
-        // Сетевая ветка выключена, чтобы проверять локальную семантику
-        // `menu_check_end_game_conditions` (помечивание Eliminated).
+        // A duel: red — human, green — computer, blue/gray do not play.
+        // The network branch is disabled to check the local semantics of
+        // `menu_check_end_game_conditions` (marking Eliminated).
         state.player_team = TeamId::RED;
         state.network_game = false;
 
@@ -1616,7 +1616,7 @@ mod tests {
             default_win_loss_conditions(&state, TeamId::RED),
             WinLossState::Generic
         );
-        // Подлодка и диверсант не считаются военной мощью (save.md, corner case).
+        // A submarine and a saboteur are not counted as military power (save.md, corner case).
         let mut stealth = empty_match();
         spawn(&mut stealth, UnitType::Submarine, TeamId::RED, 20, 20);
         spawn(&mut stealth, UnitType::Infiltrator, TeamId::RED, 21, 20);
@@ -1630,15 +1630,15 @@ mod tests {
     fn production_and_construction_infrastructure_keep_team_alive() {
         let mut state = empty_match();
         spawn(&mut state, UnitType::LightVehiclePlant, TeamId::RED, 20, 20);
-        // Фабрика без топлива/материалов и без шахты — не производство.
+        // A factory without fuel/materials and without a mine is not production.
         assert!(!has_production_infrastructure(&state, TeamId::RED));
 
         spawn(&mut state, UnitType::MiningStation, TeamId::RED, 22, 20);
         assert!(!has_production_infrastructure(&state, TeamId::RED));
-        // Генератор даёт энергию (power_demand = 2 для шахты).
+        // The generator provides power (power_demand = 2 for the mine).
         spawn(&mut state, UnitType::PowerGenerator, TeamId::RED, 24, 20);
         assert!(!has_production_infrastructure(&state, TeamId::RED));
-        // Энергии хватает (POWGEN даёт 1) — нет, demand 2 → нужен ещё один.
+        // Power is enough (POWGEN gives 1) — no, demand 2 → another one is needed.
         spawn(&mut state, UnitType::PowerGenerator, TeamId::RED, 26, 20);
         assert!(has_production_infrastructure(&state, TeamId::RED));
         assert_eq!(
@@ -1655,8 +1655,8 @@ mod tests {
             20,
         );
         spawn(&mut construction, UnitType::Engineer, TeamId::RED, 21, 20);
-        // 38 материалов (без шахты и без своей генерации) — нет ресурсов.
-        // Спавн даёт `storage` из таблицы атрибутов, поэтому обнуляем его явно.
+        // 38 materials (without a mine and without own generation) — no resources.
+        // Spawn sets `storage` from the attribute table, so we zero it explicitly.
         let ids = construction.unit_ids_in_order();
         for id in ids {
             if let Some(mut unit) = construction.unit(id).cloned() {
@@ -1678,7 +1678,7 @@ mod tests {
     fn last_team_standing_wins_generic_game() {
         let mut state = empty_match();
         state.player_team = TeamId::RED;
-        // Красные живы танком, зелёные пусты (и потому LOST).
+        // Red is alive with a tank, green is empty (and therefore LOST).
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
         let status = evaluate_status(&state, state.turn_counter);
         assert_eq!(status.teams_total, 2);
@@ -1730,11 +1730,11 @@ mod tests {
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
         spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
         let status = evaluate_status(&state, 0);
-        // Равные очки и равные базы → меньший индекс выше (RED=0).
+        // Equal points and equal bases → the lower index is higher (RED=0).
         assert_eq!(status.team_rank[TeamId::RED.0 as usize], 1);
         assert_eq!(status.team_rank[TeamId::GREEN.0 as usize], 2);
 
-        // Больше очков у зелёных → зелёные выше.
+        // Green has more points → green is higher.
         state.teams[TeamId::GREEN.0 as usize].team_points = 10;
         let status = evaluate_status(&state, 0);
         assert_eq!(status.team_rank[TeamId::GREEN.0 as usize], 1);
@@ -1761,7 +1761,7 @@ mod tests {
             WinLossState::Generic
         );
 
-        // Уничтожаем центр исследований зелёных.
+        // Destroy green's research center.
         let research = state
             .unit_ids_in_order()
             .into_iter()
@@ -1816,8 +1816,8 @@ mod tests {
             Some(WinLossState::Lost)
         );
 
-        // Оставшийся без центра исследований зелёный тоже получает GENERIC
-        // (он не RED и жив).
+        // Green, left without a research center, also gets GENERIC
+        // (it is not RED and is alive).
         assert_eq!(
             mission_win_loss(&state, MissionCategory::Campaign, 1, TeamId::GREEN),
             Some(WinLossState::Generic)
@@ -1885,7 +1885,7 @@ mod tests {
     fn build_cost_and_consumption_rates_match_cpp() {
         let mut unit = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId::NO_ID);
         unit.base_values.turns = 5;
-        // Мобильный юнит (не STATIONARY): ставка LANDPLT = 3 × turns.
+        // A mobile unit (not STATIONARY): the LANDPLT rate = 3 × turns.
         assert_eq!(get_normal_rate_build_cost(&unit), 15);
 
         let mut stationary = UnitInfo::new(UnitType::MiningStation, TeamId::RED, UnitId::NO_ID);
@@ -1908,8 +1908,8 @@ mod tests {
 
     #[test]
     fn every_mission_index_has_a_rule_and_returns_a_status() {
-        // Скрипты покрывают training 1..15, scenario 1..24, campaign 1..9;
-        // прочие номера и категории падают в generic-скрипт `SC_L0002`.
+        // The scripts cover training 1..15, scenario 1..24, campaign 1..9;
+        // other numbers and categories fall back to the generic script `SC_L0002`.
         let mut state = empty_match();
         spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
 
@@ -1938,7 +1938,7 @@ mod tests {
         let mut state = empty_match();
         state.mission_category = MissionCategory::Training;
 
-        // Шахта с включённым питанием: максимумы и факт добычи.
+        // A mine with power on: maximums and actual mining.
         let mining = state
             .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
             .expect("mining station");
@@ -1959,7 +1959,7 @@ mod tests {
         assert_eq!(get_total_mining(&state, TeamId::RED, CargoType::Fuel), 2);
         assert_eq!(get_total_mining(&state, TeamId::RED, CargoType::Gold), 1);
 
-        // Выключенная шахта не даёт ни максимумов, ни добычи.
+        // A disabled mine gives neither maximums nor mining.
         {
             let unit = state.unit_mut(mining).expect("unit");
             unit.orders = UnitOrder::PowerOff;
@@ -1967,7 +1967,7 @@ mod tests {
         assert_eq!(count_total_mining(&state, TeamId::RED), (0, 0, 0));
         assert_eq!(get_total_mining(&state, TeamId::RED, CargoType::Raw), 0);
 
-        // `Cargo_GetNetProduction` шахты: gold + raw + fuel и потребление.
+        // `Cargo_GetNetProduction` of the mine: gold + raw + fuel and consumption.
         {
             let unit = state.unit_mut(mining).expect("unit");
             unit.orders = UnitOrder::PowerOn;
@@ -1979,7 +1979,7 @@ mod tests {
         assert_eq!(net.power, -1);
         assert_eq!(net.free_capacity, 16 - 8);
 
-        // Фабрика в ORDER_BUILD потребляет материалы по `build_rate`.
+        // A factory in ORDER_BUILD consumes materials by `build_rate`.
         let plant = state
             .spawn_unit(
                 UnitType::LightVehiclePlant,
@@ -2016,14 +2016,14 @@ mod tests {
             .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 20), 0)
             .expect("tank");
 
-        // Повреждённый юнит (hits ниже базовых).
+        // A damaged unit (hits below the base).
         {
             let unit = state.unit_mut(tank).expect("unit");
             unit.hits = unit.base_values.get_attribute(ATTRIB_HITS) as u16 - 1;
         }
         assert_eq!(count_damaged_units(&state, TeamId::RED, UnitType::Tank), 1);
 
-        // Уменьшенный боезапас.
+        // Reduced ammo.
         {
             let unit = state.unit_mut(tank).expect("unit");
             unit.ammo = 0;
@@ -2041,7 +2041,7 @@ mod tests {
             0
         );
 
-        // Опыт (`storage` у COMMANDO) и версия (mark level).
+        // Experience (`storage` of COMMANDO) and version (mark level).
         let commando = state
             .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(22, 20), 0)
             .expect("commando");
@@ -2066,7 +2066,7 @@ mod tests {
             1
         ));
 
-        // Потери и уровень исследований.
+        // Losses and research level.
         state.teams[TeamId::RED.0 as usize].casualties[UnitType::Tank as usize] = 3;
         assert_eq!(count_casualties(&state, TeamId::RED, UnitType::Tank), 3);
 
@@ -2083,7 +2083,7 @@ mod tests {
         let mut state = empty_match();
         spawn(&mut state, UnitType::Tank, TeamId::RED, 10, 10);
         spawn(&mut state, UnitType::Engineer, TeamId::RED, 12, 10);
-        // Ground cover (плита) в стоимость базы не входит (`winloss.cpp:47`).
+        // Ground cover (a slab) is not included in the base worth (`winloss.cpp:47`).
         spawn(&mut state, UnitType::LargeSlab, TeamId::RED, 14, 10);
 
         let tank_cost = state

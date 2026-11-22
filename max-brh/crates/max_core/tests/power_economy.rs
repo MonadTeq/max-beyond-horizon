@@ -1,18 +1,18 @@
-//! Энергия комплекса: старт завода только при достаточном балансе,
-//! автоматическое отключение зданий при дефиците и сообщение над картой.
+//! Complex power: factory start only with a sufficient balance,
+//! automatic shutdown of buildings on a deficit and the message above the map.
 //!
-//! Оракул — `max-cpp-port`:
+//! Oracle — `max-cpp-port`:
 //! * `cargo.cpp:70-138` — `Cargo_GetNetProduction`/`Cargo_ApplyUnitConsumption`
-//!   (стройка завода тратит raw+power+life из котла комплекса);
+//!   (factory construction spends raw+power+life from the complex pool);
 //! * `production_manager.cpp:481-562` — `OptimizePowerProduction`/
-//!   `OptimizePowerConsumption` (генераторы включаются/выключаются по балансу);
-//! * `production_manager.cpp:677-790` — `ValidateIndustry` (стройка
-//!   останавливается при нехватке), `OptimizeAuxilaryIndustry`/
-//!   `OptimizeMiningIndustry` (порядок отключения потребителей);
+//!   `OptimizePowerConsumption` (generators are turned on/off by balance);
+//! * `production_manager.cpp:677-790` — `ValidateIndustry` (construction
+//!   stops on a shortage), `OptimizeAuxilaryIndustry`/
+//!   `OptimizeMiningIndustry` (consumer shutdown order);
 //! * `production_manager.cpp:308-330/792-804` — `ComposeIndustryMessage`/
-//!   `DrawResourceMessage` (текст сообщения);
+//!   `DrawResourceMessage` (message text);
 //! * `game_manager.cpp:2058-2076/8183-8204` — `ManageEconomy`/
-//!   `ProgressBuildState` (когда оптимизация запускается).
+//!   `ProgressBuildState` (when optimization runs).
 
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -34,7 +34,7 @@ fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> max_core::U
         .expect("unit")
 }
 
-/// Завод `Training Hall` в (12,11) и склад сырья в (12,12): один комплекс.
+/// `Training Hall` factory at (12,11) and a raw storage at (12,12): one complex.
 fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_core::UnitId) {
     let factory = spawn(state, UnitType::TrainingHall, Point::new(12, 11));
     let dump = spawn(state, UnitType::MaterialStorage, Point::new(12, 13));
@@ -49,7 +49,7 @@ fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_c
     (factory, dump)
 }
 
-/// `POWGEN` (+1 энергия) и `FDUMP` с топливом — производитель энергии.
+/// `POWGEN` (+1 power) and `FDUMP` with fuel — a power producer.
 fn add_power(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
     let generator = spawn(state, UnitType::PowerGenerator, Point::new(14, 11));
     let fuel = spawn(state, UnitType::FuelStorage, Point::new(14, 12));
@@ -57,7 +57,7 @@ fn add_power(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
     (generator, fuel)
 }
 
-/// `HABITAT` (+3 рабочих; сам энергию не потребляет).
+/// `HABITAT` (+3 workers; it does not consume power itself).
 fn add_workers(state: &mut GameState) -> max_core::UnitId {
     spawn(state, UnitType::Habitat, Point::new(11, 12))
 }
@@ -80,7 +80,7 @@ fn count_type(state: &GameState, unit_type: UnitType) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Завод не стартует без необходимых ресурсов
+// 1. The factory does not start without the necessary resources
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -91,10 +91,10 @@ fn factory_start_is_refused_without_power() {
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
 
-    // `Cargo_GetNetProduction(TRAINHAL)` = raw 1 + power 1 + life 1. Энергии
-    // нет (нет POWGEN/POWERSTN) — `StartBuilding` в C++ сразу ушла бы в
-    // минус, `ValidateIndustry` прервала бы заказ. Порт не стартует и не
-    // теряет очередь.
+    // `Cargo_GetNetProduction(TRAINHAL)` = raw 1 + power 1 + life 1. There is no
+    // power (no POWGEN/POWERSTN) — `StartBuilding` in C++ would immediately go
+    // negative, `ValidateIndustry` would interrupt the order. The port does not start and does not
+    // lose the queue.
     assert_eq!(
         manager.commit(factory),
         Err(BuildError::NotEnoughPower),
@@ -114,8 +114,8 @@ fn factory_start_is_refused_without_workers() {
     let (factory, _dump) = factory_with_raw(&mut state, 20);
     add_power(&mut state);
 
-    // Энергии хватает (POWGEN +1, TRAINHAL −1), но `Training Hall` требует
-    // ещё и рабочего (`Cargo_GetLifeConsumptionRate(TRAINHAL) = 1`).
+    // Power is enough (POWGEN +1, TRAINHAL −1), but `Training Hall` also requires
+    // a worker (`Cargo_GetLifeConsumptionRate(TRAINHAL) = 1`).
     let mut manager = ProductionManager::new(&mut state, TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     assert_eq!(
@@ -151,7 +151,7 @@ fn factory_start_is_refused_without_raw_materials() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Дефицит энергии выключает здания, восстановление — по правилу C++
+// 2. A power deficit turns buildings off; recovery — by the C++ rule
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -163,7 +163,7 @@ fn power_deficit_powers_off_research_center_before_the_mine() {
     let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 11));
     state.unit_mut(fuel).expect("fuel").storage = 50;
 
-    // `DeployUnit` ставит RESEARCH в POWER_OFF; включаем вручную.
+    // `DeployUnit` puts RESEARCH in POWER_OFF; turn it on manually.
     let _ = state.set_order(research, UnitOrder::PowerOn, UnitOrderState::Init);
 
     let complex = state.unit(mine).expect("mine").complex.expect("complex");
@@ -171,7 +171,7 @@ fn power_deficit_powers_off_research_center_before_the_mine() {
         assert_eq!(state.unit(id).expect("unit").complex, Some(complex));
     }
 
-    // Спрос: шахта 1 + RESEARCH 1 = 2; генератор даёт 1 → дефицит 1.
+    // Demand: mine 1 + RESEARCH 1 = 2; the generator gives 1 → deficit 1.
     let outcome = power::optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
 
     assert_eq!(
@@ -199,9 +199,9 @@ fn power_deficit_powers_off_the_mine_when_no_other_consumer_is_left() {
     let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
     let complex = state.unit(mine).expect("mine").complex.expect("complex");
 
-    // У шахты нет производителя энергии: она включена (`ORDER_POWER_ON`),
-    // значит её собственное потребление 1 > 0. C++ `OptimizeMiningIndustry`
-    // выключает шахту (`production_manager.cpp:729-774`).
+    // The mine has no power producer: it is on (`ORDER_POWER_ON`),
+    // so its own consumption 1 > 0. C++ `OptimizeMiningIndustry`
+    // turns the mine off (`production_manager.cpp:729-774`).
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::Init);
     let outcome = power::optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
 
@@ -222,8 +222,8 @@ fn generators_are_switched_on_and_off_automatically() {
     let complex = state.unit(mine).expect("mine").complex.expect("complex");
     assert_eq!(state.unit(generator).expect("gen").complex, Some(complex));
 
-    // POWGEN после `DeployUnit` выключен; шахта требует 1 энергию — генератор
-    // включается автоматически (`OptimizePowerProduction`).
+    // POWGEN is off after `DeployUnit`; the mine requires 1 power — the generator
+    // turns on automatically (`OptimizePowerProduction`).
     assert_eq!(
         state.unit(generator).expect("generator").orders,
         UnitOrder::PowerOff
@@ -235,7 +235,7 @@ fn generators_are_switched_on_and_off_automatically() {
         "генератор включён под спрос шахты"
     );
 
-    // Если топлива нет, генератор выключается, а шахта — как потребитель.
+    // If there is no fuel, the generator turns off, and the mine — as a consumer.
     state.unit_mut(fuel).expect("fuel").storage = 0;
     power::optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
     assert_eq!(
@@ -249,9 +249,9 @@ fn generators_are_switched_on_and_off_automatically() {
         "шахта без энергии выключается"
     );
 
-    // Восстановление топлива снова включает генератор — но потребителя C++
-    // сам обратно не включает (`ProductionManager_OptimizeProduction` трогает
-    // только производителей), поэтому шахту включаем как игрок.
+    // Refueling turns the generator back on — but C++ does not turn the consumer
+    // back on itself (`ProductionManager_OptimizeProduction` touches
+    // only producers), so we turn the mine on as the player.
     state.unit_mut(fuel).expect("fuel").storage = 50;
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::Init);
     power::optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
@@ -263,7 +263,7 @@ fn generators_are_switched_on_and_off_automatically() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Пауза уже идущей стройки и сообщение
+// 3. Pause of an already running construction and the message
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -278,12 +278,12 @@ fn running_build_pauses_on_power_loss_and_resumes() {
     manager.commit(factory).expect("power/workers/raw enough");
     drop(manager);
 
-    // Ход 1: оплачен, build_time 2 → 1.
+    // Turn 1: paid, build_time 2 → 1.
     production_turn(&mut state);
     assert_eq!(state.unit(factory).expect("factory").build_time, 1);
     assert_eq!(state.unit(dump).expect("dump").storage, 19);
 
-    // Топливо кончилось — производитель энергии не может работать.
+    // Fuel ran out — the power producer cannot work.
     state.unit_mut(fuel).expect("fuel").storage = 0;
 
     let events = production_turn(&mut state);
@@ -305,10 +305,10 @@ fn running_build_pauses_on_power_loss_and_resumes() {
         "пауза не списывает сырьё"
     );
 
-    // Сообщение над карты — C++ `ComposeIndustryMessage`/
-    // `DrawResourceMessage`: ход производства идёт от лица команды без
-    // «выделенного» юнита, поэтому форма «More power needed, X turned off.»
-    // с префиксом «Adjustments made:».
+    // The message above the map — C++ `ComposeIndustryMessage`/
+    // `DrawResourceMessage`: the production turn runs on behalf of the team without
+    // a "selected" unit, so the form "More power needed, X turned off."
+    // with the "Adjustments made:" prefix.
     let message = state
         .take_industry_message()
         .expect("сообщение о нехватке энергии");
@@ -318,7 +318,7 @@ fn running_build_pauses_on_power_loss_and_resumes() {
     );
     assert!(message.starts_with("Adjustments made:"), "{message:?}");
 
-    // Подвоз топлива: генератор снова включается, стройка доходит до конца.
+    // Fuel delivery: the generator turns on again, the construction reaches the end.
     state.unit_mut(fuel).expect("fuel").storage = 50;
     let events = production_turn(&mut state);
     assert!(
@@ -345,7 +345,7 @@ fn commit_message_names_the_missing_power() {
 }
 
 // ---------------------------------------------------------------------------
-// Детерминизм и снапшот
+// Determinism and snapshot
 // ---------------------------------------------------------------------------
 
 #[test]

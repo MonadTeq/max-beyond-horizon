@@ -1,52 +1,52 @@
-//! Распределение добычи шахты — C++ `allocmenu.cpp` (`AllocMenu`) и экономика
-//! комплекса (`cargo.cpp`/`complex.cpp`/`access.cpp`).
+//! Mine mining allocation — C++ `allocmenu.cpp` (`AllocMenu`) and complex
+//! economy (`cargo.cpp`/`complex.cpp`/`access.cpp`).
 //!
-//! # Где хранится значение (оракул — C++)
+//! # Where the value is stored (oracle — C++)
 //!
-//! У шахты **нет** процентной доли и нет поля в `TeamUnits`: C++
-//! (`unitinfo.hpp:434-440`) держит три счётчика на каждом юните `MININGST`
-//! (`uint8_t`, сумма ограничена `16` — «единиц добычи» шахты):
+//! A mine has **no** percentage share and no `TeamUnits` field: C++
+//! (`unitinfo.hpp:434-440`) keeps three counters on each `MININGST` unit
+//! (`uint8_t`, the sum is limited to `16` "mining units" of the mine):
 //!
-//! | поле | смысл |
+//! | field | meaning |
 //! |---|---|
-//! | `raw_mining` | сколько единиц **сырья** в час/ход даёт шахта |
-//! | `fuel_mining` | сколько единиц **топлива** |
-//! | `gold_mining` | сколько единиц **золота** |
-//! | `total_mining` | их сумма (кэш; `raw + fuel + gold`) |
-//! | `raw_mining_max`/`fuel_mining_max`/`gold_mining_max` | сколько вообще есть в клетке (`Survey_GetTotalResourcesInArea`) |
+//! | `raw_mining` | how many units of **raw materials** per hour/turn the mine yields |
+//! | `fuel_mining` | how many units of **fuel** |
+//! | `gold_mining` | how many units of **gold** |
+//! | `total_mining` | their sum (a cache; `raw + fuel + gold`) |
+//! | `raw_mining_max`/`fuel_mining_max`/`gold_mining_max` | how much exists in the cell at all (`Survey_GetTotalResourcesInArea`) |
 //!
-//! Эти же поля едут по сети в пакете **08** с процессором `P5`
-//! (`max-brh-docs/architecture/client/protocol.md` §«payload P5»), входят в снапшот/CRC
-//! ([`crate::crc`]) и в V70-сейв — отдельного поля в `TeamUnits` нет.
+//! The same fields travel over the network in packet **08** with the `P5` processor
+//! (`max-brh-docs/architecture/client/protocol.md` §"payload P5"), enter the snapshot/CRC
+//! ([`crate::crc`]) and the V70 save — there is no separate `TeamUnits` field.
 //!
-//! # Что делает диалог (`allocmenu.cpp`)
+//! # What the dialog does (`allocmenu.cpp`)
 //!
-//! Открывается пунктом `allocate` меню юнита у `MININGST`. Три секции (`Raw`,
-//! `Fuel`, `Gold`) по три полосы: добыча комплекса, потребление, запас
-//! комплекса. Стрелки `LFARO_OF`/`RTARO_OF` (`+1`/`−1`) и клик по полосе
-//! меняют счётчики **живо** — `Done`/`Esc` только закрывают окно, применения
-//! «на выходе» нет (`AllocMenu::Run` → `GameManager_EnableMainMenu`).
+//! Opened by the `allocate` item of the unit menu at `MININGST`. Three sections (`Raw`,
+//! `Fuel`, `Gold`) with three bars each: complex mining, consumption, complex
+//! stock. The `LFARO_OF`/`RTARO_OF` arrows (`+1`/`−1`) and a click on a bar
+//! change the counters **live** — `Done`/`Esc` only close the window, there is no
+//! "on exit" application (`AllocMenu::Run` → `GameManager_EnableMainMenu`).
 //!
-//! `AllocMenu_Optimize` — «включить добычу типа `X` в комплексе на `N`
-//! единиц»: сначала добирает свободные единицы у шахт, где `X < максимума
-//! клетки`, затем перекладывает в `X` добычу других ресурсов
-//! (`Allocator::Optimize`). `AllocMenu_ReduceProduction` — обратное, «выключить
-//! `N` единиц типа `X`». `AllocMenu::Balance` — сколько единиц `X` комплекс
-//! может добывать при текущем распределении (нужно только для отрисовки
-//! полосы).
+//! `AllocMenu_Optimize` — "enable mining of type `X` in the complex by `N`
+//! units": first it takes free units at mines where `X < cell
+//! maximum`, then it converts the mining of other resources into `X`
+//! (`Allocator::Optimize`). `AllocMenu_ReduceProduction` is the reverse, "disable
+//! `N` units of type `X`". `AllocMenu::Balance` — how many units of `X` the complex
+//! can mine under the current allocation (needed only to draw
+//! the bar).
 //!
-//! # Влияние на экономику
+//! # Effect on the economy
 //!
-//! `Cargo_GetNetProduction(MININGST)` (`cargo.cpp:105-126`) при
-//! `ORDER_POWER_ON`/`ORDER_NEW_ALLOCATE` даёт
+//! `Cargo_GetNetProduction(MININGST)` (`cargo.cpp:105-126`) with
+//! `ORDER_POWER_ON`/`ORDER_NEW_ALLOCATE` yields
 //! `raw += raw_mining`, `fuel += fuel_mining`, `gold += gold_mining`
-//! (для компьютера — с множителем сложности `×5/4`, `×6/4`).
-//! `Access_UpdateResourcesTotal` (`access.cpp:912`) суммирует это по всем
-//! зданиям комплекса в `Complex::{raw,fuel,gold,power,workers}` — так доля
-//! шахты становится **добычей комплекса за ход**; `GameManager_ManageEconomy`
-//! (`game_manager.cpp:2058`) вызывает её каждый ход через
+//! (for a computer — with the difficulty multiplier `×5/4`, `×6/4`).
+//! `Access_UpdateResourcesTotal` (`access.cpp:912`) sums this over all
+//! complex buildings into `Complex::{raw,fuel,gold,power,workers}` — so the mine's
+//! share becomes the **complex production per turn**; `GameManager_ManageEconomy`
+//! (`game_manager.cpp:2058`) calls it every turn via
 //! `TeamUnits::OptimizeComplexes` → `ProductionManager_OptimizeProduction`.
-//! [`crate::game::GameState::manage_economy`] делает то же самое
+//! [`crate::game::GameState::manage_economy`] does the same
 //! ([`update_resources_total`]).
 
 use crate::enums::{UnitOrder, UnitType};
@@ -56,36 +56,36 @@ use crate::team::{Cargo, ComplexId, TeamId};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::victory::{cargo_get_net_production, cargo_type_of, CargoType};
 
-/// Предел суммы добычи одной шахты (`16 - total_mining` в `allocmenu.cpp`).
+/// Limit of the mining sum of one mine (`16 - total_mining` in `allocmenu.cpp`).
 pub const MINING_CAPACITY: i32 = 16;
-/// Лимит `Survey_GetResourcesInArea(..., resource_limit = 16, ...)`
+/// Limit of `Survey_GetResourcesInArea(..., resource_limit = 16, ...)`
 /// (`allocmenu.cpp:457`).
 pub const MINING_SURVEY_LIMIT: i32 = 16;
-/// Радиус замера клетки шахты в `allocmenu.cpp:457`.
+/// Survey radius of the mine cell in `allocmenu.cpp:457`.
 pub const MINING_SURVEY_RADIUS: i32 = 1;
 
 // ---------------------------------------------------------------------------
-// Ресурс добычи
+// Mining resource
 // ---------------------------------------------------------------------------
 
-/// Ресурс добычи — C++ `CARGO_MATERIALS`/`CARGO_FUEL`/`CARGO_GOLD`
+/// Mining resource — C++ `CARGO_MATERIALS`/`CARGO_FUEL`/`CARGO_GOLD`
 /// (`enums.hpp:230-232`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MiningKind {
-    /// Сырьё (`raw_mining`, `CARGO_MATERIALS = 0x80`).
+    /// Raw materials (`raw_mining`, `CARGO_MATERIALS = 0x80`).
     Raw,
-    /// Топливо (`fuel_mining`, `CARGO_FUEL = 0x20`).
+    /// Fuel (`fuel_mining`, `CARGO_FUEL = 0x20`).
     Fuel,
-    /// Золото (`gold_mining`, `CARGO_GOLD = 0x40`).
+    /// Gold (`gold_mining`, `CARGO_GOLD = 0x40`).
     Gold,
 }
 
 impl MiningKind {
-    /// Порядок секций диалога и обхода `switch` в `allocmenu.cpp`
+    /// Order of dialog sections and of the `switch` in `allocmenu.cpp`
     /// (`Raw` → `Fuel` → `Gold`).
     pub const ALL: [Self; 3] = [Self::Raw, Self::Fuel, Self::Gold];
 
-    /// Бит `CARGO_*` (используется как маска в `Allocator::cargo_material_type`).
+    /// The `CARGO_*` bit (used as a mask in `Allocator::cargo_material_type`).
     #[inline]
     pub const fn flag(self) -> u32 {
         match self {
@@ -95,7 +95,7 @@ impl MiningKind {
         }
     }
 
-    /// Тип груза [`CargoType`] для `Cargo_GetNetProduction`/`Cargo_GetInventory`.
+    /// Cargo type [`CargoType`] for `Cargo_GetNetProduction`/`Cargo_GetInventory`.
     #[inline]
     pub const fn cargo_type(self) -> CargoType {
         match self {
@@ -105,7 +105,7 @@ impl MiningKind {
         }
     }
 
-    /// Имя для журнала/QA (`allocate set raw N`).
+    /// Name for the log/QA (`allocate set raw N`).
     #[inline]
     pub const fn name(self) -> &'static str {
         match self {
@@ -115,7 +115,7 @@ impl MiningKind {
         }
     }
 
-    /// Разбор имени (регистр не важен).
+    /// Name parsing (case-insensitive).
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
             "raw" | "materials" | "material" => Some(Self::Raw),
@@ -125,7 +125,7 @@ impl MiningKind {
         }
     }
 
-    /// Текущее значение поля у юнита.
+    /// Current value of the field on the unit.
     #[inline]
     pub fn get(self, unit: &UnitInfo) -> u8 {
         match self {
@@ -135,7 +135,7 @@ impl MiningKind {
         }
     }
 
-    /// Запись поля (`uint8_t` в C++).
+    /// Field write (`uint8_t` in C++).
     #[inline]
     pub fn set(self, unit: &mut UnitInfo, value: i32) {
         let value = value.clamp(0, i32::from(u8::MAX)) as u8;
@@ -147,7 +147,7 @@ impl MiningKind {
         }
     }
 
-    /// Максимум добычи в клетке шахты (`raw_mining_max` и т.п.).
+    /// Mining maximum in the mine cell (`raw_mining_max` etc.).
     #[inline]
     pub fn max(self, unit: &UnitInfo) -> u8 {
         match self {
@@ -157,7 +157,7 @@ impl MiningKind {
         }
     }
 
-    /// Индекс 0..2 (`Raw`, `Fuel`, `Gold`) — ключ массивов UI.
+    /// Index 0..2 (`Raw`, `Fuel`, `Gold`) — the UI array key.
     #[inline]
     pub const fn index(self) -> usize {
         match self {
@@ -169,10 +169,10 @@ impl MiningKind {
 }
 
 // ---------------------------------------------------------------------------
-// Вспомогательное
+// Helpers
 // ---------------------------------------------------------------------------
 
-/// Шахта, которую C++ учитывает в диалоге/комплексе:
+/// A mine that C++ counts in the dialog/complex:
 /// `GetOrder() != POWER_OFF && != DISABLE && != IDLE` (`allocmenu.cpp:454-457`,
 /// `complex.cpp:119-120`).
 #[inline]
@@ -183,17 +183,17 @@ pub fn is_active_mine(unit: &UnitInfo) -> bool {
         && unit.orders != UnitOrder::Idle
 }
 
-/// Стационарные юниты в порядке обхода C++ (`UnitsManager_StationaryUnits`).
+/// Stationary units in C++ traversal order (`UnitsManager_StationaryUnits`).
 #[inline]
 fn stationary_ids(state: &GameState) -> Vec<UnitId> {
     state.unit_list(UnitListKind::Stationary).to_vec()
 }
 
 /// `Survey_GetResourcesInArea(x, y, 1, 16, &raw, &gold, &fuel, true, team)` —
-/// ресурсы в квадрате клетки шахты с лимитом 16 (а не 255, как у
+/// resources in the mine-cell square with limit 16 (not 255, as in
 /// `Survey_GetTotalResourcesInArea`).
 ///
-/// Возвращает `(raw, gold, fuel)` — порядок выходных параметров C++.
+/// Returns `(raw, gold, fuel)` — the C++ output-parameter order.
 pub fn mining_survey(state: &GameState, grid: Point) -> (i32, i32, i32) {
     let (raw, gold, fuel) = crate::deploy::survey_resources_in_area(state, grid, MINING_SURVEY_RADIUS);
 
@@ -204,7 +204,7 @@ pub fn mining_survey(state: &GameState, grid: Point) -> (i32, i32, i32) {
     )
 }
 
-/// Максимум добычи ресурса в клетке шахты из `mining_survey`.
+/// Mining maximum of a resource in the mine cell, from `mining_survey`.
 #[inline]
 fn survey_capacity(state: &GameState, grid: Point, kind: MiningKind) -> i32 {
     let (raw, gold, fuel) = mining_survey(state, grid);
@@ -216,7 +216,7 @@ fn survey_capacity(state: &GameState, grid: Point, kind: MiningKind) -> i32 {
     }
 }
 
-/// `Cargo_GetInventory(unit)` (`cargo.cpp:30`) — груз в `storage` по типу груза.
+/// `Cargo_GetInventory(unit)` (`cargo.cpp:30`) — cargo in `storage` by cargo type.
 pub fn cargo_get_inventory(unit: &UnitInfo) -> Cargo {
     let mut cargo = Cargo::init();
 
@@ -230,8 +230,8 @@ pub fn cargo_get_inventory(unit: &UnitInfo) -> Cargo {
     cargo
 }
 
-/// `Cargo_GetCargoCapacity(unit)` (`cargo.cpp:50`) — вместимость `ATTRIB_STORAGE`
-/// по типу груза.
+/// `Cargo_GetCargoCapacity(unit)` (`cargo.cpp:50`) — `ATTRIB_STORAGE` capacity
+/// by cargo type.
 pub fn cargo_get_cargo_capacity(unit: &UnitInfo) -> Cargo {
     let mut cargo = Cargo::init();
 
@@ -257,31 +257,31 @@ pub fn cargo_get_cargo_capacity(unit: &UnitInfo) -> Cargo {
 
 /// `struct Allocator` (`allocmenu.cpp:45-52`).
 struct Allocator {
-    /// Команда, чей комплекс перераспределяется.
+    /// The team whose complex is being reallocated.
     ///
-    /// В C++ комплекс — объект команды (`Complex*`), поэтому сравнение
-    /// указателей само отделяет чужие команды. В `max_core` комплекс — это
-    /// `(team, ComplexId)` (id уникален только внутри команды), поэтому
-    /// команда проверяется явно.
+    /// In C++ a complex is a team object (`Complex*`), so comparing
+    /// pointers separates foreign teams by itself. In `max_core` a complex is
+    /// `(team, ComplexId)` (the id is unique only within a team), so
+    /// the team is checked explicitly.
     team: TeamId,
-    /// Комплекс, в котором идёт перераспределение.
+    /// The complex in which reallocation happens.
     complex: ComplexId,
-    /// Сколько единиц ещё нужно раздать.
+    /// How many units still need to be distributed.
     cargo_demand: i32,
-    /// Маска «какие ресурсы нельзя забирать» (`cargo_type1 | cargo_type2`).
+    /// Mask of "which resources must not be taken" (`cargo_type1 | cargo_type2`).
     cargo_material_type: u32,
-    /// Сколько единиц раздали.
+    /// How many units were distributed.
     material_mining: i32,
 }
 
 impl Allocator {
     /// `Allocator::Optimize(cargo_type, cargo1, cargo_value, cargo2)`
-    /// (`allocmenu.cpp:413`): переложить до `cargo_demand` единиц из поля
-    /// `source` этого же юнита в его поле `target`.
+    /// (`allocmenu.cpp:413`): move up to `cargo_demand` units from the field
+    /// `source` of this same unit into its field `target`.
     ///
-    /// `cargo1`/`cargo2` в C++ — указатели в поля **одного** юнита; вложенный
-    /// `AllocMenu_Optimize` может изменить этот же юнит, поэтому значения
-    /// перечитываются после вызова (как и в C++, где указатели «живые»).
+    /// `cargo1`/`cargo2` in C++ are pointers to fields of **one** unit; the nested
+    /// `AllocMenu_Optimize` may change this same unit, so the values
+    /// are re-read after the call (as in C++, where the pointers are "live").
     fn optimize_step(
         &mut self,
         state: &mut GameState,
@@ -337,12 +337,12 @@ impl Allocator {
 }
 
 /// `AllocMenu_Optimize(complex, cargo_type1, material, cargo_type2)`
-/// (`allocmenu.cpp:438`) — «включить добычу `kind` на `material` единиц».
+/// (`allocmenu.cpp:438`) — "enable mining of `kind` by `material` units".
 ///
-/// `mask` — второй тип `cargo_type2` (в C++ это либо тот же ресурс, либо маска
-/// `cargo_material_type` вложенного аллокатора).
+/// `mask` — the second type `cargo_type2` (in C++ either the same resource or the mask
+/// `cargo_material_type` of the nested allocator).
 ///
-/// Возвращает, сколько единиц реально удалось добавить.
+/// Returns how many units were actually added.
 pub fn optimize_masked(
     state: &mut GameState,
     team: TeamId,
@@ -418,7 +418,7 @@ pub fn optimize_masked(
     alloc.material_mining
 }
 
-/// `AllocMenu_Optimize(complex, kind, material, kind)` — публичная форма
+/// `AllocMenu_Optimize(complex, kind, material, kind)` — the public form
 /// (`AllocMenu::OnClick*Bar`, `Run` case 1001/1004/1007).
 pub fn optimize(
     state: &mut GameState,
@@ -431,7 +431,7 @@ pub fn optimize(
 }
 
 /// `AllocMenu_ReduceProduction(complex, cargo_type, amount)`
-/// (`allocmenu.cpp:525`) — выключить `amount` единиц добычи `kind` в комплексе.
+/// (`allocmenu.cpp:525`) — disable `amount` units of `kind` mining in the complex.
 pub fn reduce_production(
     state: &mut GameState,
     team: TeamId,
@@ -475,10 +475,10 @@ pub fn reduce_production(
 }
 
 /// `AllocMenu::Balance(complex, cargo_type, material1, material2)`
-/// (`allocmenu.cpp:567`) — «сколько единиц ресурса доступно комплексу».
+/// (`allocmenu.cpp:567`) — "how many units of a resource are available to the complex".
 ///
-/// Нужен только для полосы диалога: перераспределяет добычу, чтобы показать
-/// достижимый уровень, и возвращает его.
+/// Needed only for the dialog bar: reallocates mining to show
+/// the achievable level, and returns it.
 pub fn balance(
     state: &mut GameState,
     team: TeamId,
@@ -502,10 +502,10 @@ pub fn balance(
 // ---------------------------------------------------------------------------
 
 /// `Complex::GetCargoMining(materials, capacity)` (`complex.cpp:109`) —
-/// фактическая добыча комплекса и максимум по клеткам шахт.
+/// actual complex mining and the maximum over mine cells.
 ///
-/// `materials` — сумма `raw/fuel/gold_mining` (+ `free_capacity` свободных
-/// единиц добычи), `capacity` — сумма максимумов клеток.
+/// `materials` — the sum of `raw/fuel/gold_mining` (+ `free_capacity` free
+/// mining units), `capacity` — the sum of cell maximums.
 pub fn get_cargo_mining(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
     let mut materials = Cargo::init();
     let mut capacity = Cargo::init();
@@ -535,8 +535,8 @@ pub fn get_cargo_mining(state: &GameState, team: TeamId, complex: ComplexId) -> 
     (materials, capacity)
 }
 
-/// `Complex::GetCargoMinable(capacity)` (`complex.cpp:87`) — «занято»
-/// производством остальных зданий комплекса (потребление).
+/// `Complex::GetCargoMinable(capacity)` (`complex.cpp:87`) — "occupied"
+/// by the production of the other complex buildings (consumption).
 pub fn get_cargo_minable(state: &GameState, team: TeamId, complex: ComplexId) -> Cargo {
     let mut capacity = Cargo::init();
 
@@ -572,8 +572,8 @@ pub fn get_cargo_minable(state: &GameState, team: TeamId, complex: ComplexId) ->
     capacity
 }
 
-/// `Complex::GetCargoInfo(materials, capacity)` (`complex.cpp:136`) — что лежит
-/// в комплексе и сколько он может хранить.
+/// `Complex::GetCargoInfo(materials, capacity)` (`complex.cpp:136`) — what is
+/// in the complex and how much it can store.
 pub fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
     let mut materials = Cargo::init();
     let mut capacity = Cargo::init();
@@ -606,19 +606,19 @@ pub fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (C
 // Access_UpdateResourcesTotal
 // ---------------------------------------------------------------------------
 
-/// `Access_UpdateResourcesTotal(complex)` (`access.cpp:912`) — пересчитать
-/// запасы комплекса из его зданий: для каждого члена
+/// `Access_UpdateResourcesTotal(complex)` (`access.cpp:912`) — recompute
+/// the complex stocks from its buildings: for each member
 /// `Cargo_GetNetProduction(unit, false) + Cargo_GetInventory(unit)`.
 ///
-/// Именно здесь добыча шахты (`raw_mining`/`fuel_mining`/`gold_mining`)
-/// становится добычей комплекса **за ход**: `GameManager_ManageEconomy`
-/// вызывает это каждый ход (`OptimizeComplexes`).
+/// This is where the mine's mining (`raw_mining`/`fuel_mining`/`gold_mining`)
+/// becomes the complex production **per turn**: `GameManager_ManageEconomy`
+/// calls this every turn (`OptimizeComplexes`).
 ///
-/// Оговорка порта: расход сырья строящегося завода C++ списывает здесь же
-/// (через `Cargo_GetNetProduction`), но порт не допускает отрицательных
-/// складов и списывает ставку в [`crate::production`] с паузой. Поэтому для
-/// кэша комплекса берётся [`cargo_get_net_production_for_total`] — та же
-/// формула без `raw`-расхода завода (см. её документацию).
+/// Port caveat: C++ charges the raw consumption of a factory under construction here too
+/// (via `Cargo_GetNetProduction`), but the port does not allow negative
+/// stocks and charges the rate in [`crate::production`] with a pause. Therefore for
+/// the complex cache [`cargo_get_net_production_for_total`] is used — the same
+/// formula without the factory's `raw` consumption (see its documentation).
 pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, complex: ComplexId) {
     let mut material = 0i32;
     let mut fuel = 0i32;
@@ -654,8 +654,8 @@ pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, 
     }
 }
 
-/// Суммарная добыча комплекса по ресурсу — то, что показывает диалог
-/// (`production.raw` в `AllocMenu`).
+/// Total complex mining by resource — what the dialog shows
+/// (`production.raw` in `AllocMenu`).
 pub fn total_mining(state: &GameState, team: TeamId, complex: ComplexId, kind: MiningKind) -> i32 {
     let mut total = 0i32;
 
@@ -674,7 +674,7 @@ pub fn total_mining(state: &GameState, team: TeamId, complex: ComplexId, kind: M
     total
 }
 
-/// Комплекс, в котором стоит шахта (для открытия диалога).
+/// The complex the mine stands in (to open the dialog).
 pub fn unit_complex(unit: &UnitInfo) -> Option<ComplexId> {
     unit.complex
 }
@@ -686,9 +686,9 @@ mod tests {
     use crate::team::TeamId;
     use crate::TeamUnits;
 
-    /// Партия с одной шахтой RED в клетке с известными ресурсами:
-    /// квадрат 2×2 вокруг `(20, 20)` — сырьё 8+8, топливо 8, золото 8
-    /// (`Survey_GetResourcesInArea` суммирует 4 клетки и режет по 16).
+    /// A game with one RED mine on a cell with known resources:
+    /// the 2×2 square around `(20, 20)` — raw 8+8, fuel 8, gold 8
+    /// (`Survey_GetResourcesInArea` sums 4 cells and clamps at 16).
     fn state_with_mine() -> (GameState, UnitId, ComplexId) {
         let mut state = GameState::new();
         state.teams[0].team_type = crate::team::TeamKind::Player;
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!(i32::from(state.unit(id).unwrap().raw_mining), 4);
         assert_eq!(i32::from(state.unit(id).unwrap().total_mining), 4);
 
-        // Избыток упирается в свободные единицы шахты (всего 16).
+        // The excess hits the mine's free units (16 in total).
         let added = optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 99);
         assert_eq!(added, 12, "16 − 4 свободных единиц");
         assert_eq!(i32::from(state.unit(id).unwrap().raw_mining), 16);
@@ -815,9 +815,9 @@ mod tests {
         {
             let unit = state.unit_mut(id).unwrap();
             unit.raw_mining = 3;
-            // `Cargo_GetNetProduction(..., current_order = false)` берёт
-            // `prior_order` при `ORDER_STATE_INIT` — приказ должен быть уже в
-            // исполнении, как у работающей шахты.
+            // `Cargo_GetNetProduction(..., current_order = false)` takes
+            // `prior_order` at `ORDER_STATE_INIT` — the order must already be in
+            // execution, as on a working mine.
             unit.state = UnitOrderState::ExecutingOrder;
         }
 
@@ -847,7 +847,7 @@ mod tests {
     fn allocation_changes_the_complex_income() {
         let (mut state, id, complex) = state_with_mine();
 
-        // Переключить всю добычу на золото.
+        // Switch all mining to gold.
         state.unit_mut(id).unwrap().raw_mining = 0;
         state.unit_mut(id).unwrap().gold_mining = 5;
         state.unit_mut(id).unwrap().total_mining = 5;
@@ -858,7 +858,7 @@ mod tests {
             .gold;
         assert!(gold_income >= 5);
 
-        // Переключить на сырьё — золото уходит из добычи.
+        // Switch to raw materials — gold leaves the mining.
         state.unit_mut(id).unwrap().gold_mining = 0;
         state.unit_mut(id).unwrap().raw_mining = 5;
         update_resources_total(&mut state, TeamId::RED, complex);

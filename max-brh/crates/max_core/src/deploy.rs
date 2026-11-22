@@ -1,62 +1,62 @@
-//! Развёртывание стартового набора команд — `GameManager_ProcessTeamMissionSupplyUnits`.
+//! Deployment of starting team loadouts — `GameManager_ProcessTeamMissionSupplyUnits`.
 //!
-//! # Зачем это нужно
+//! # Why this is needed
 //!
-//! `GameManager_InitGame` (`game_manager.cpp:3056`) не только генерирует карту, но
-//! и высаживает стартовые армии: без них `menu_check_end_game_conditions` видит
-//! команды без «жизни» (`HasConstructionInfrastructure`/`HasAttackPower` — ложь)
-//! и завершает партию сразу после первого хода. Поэтому развёртывание — часть
-//! создания партии, а не UI.
+//! `GameManager_InitGame` (`game_manager.cpp:3056`) not only generates the map but
+//! also lands the starting armies: without them `menu_check_end_game_conditions` sees
+//! teams without "life" (`HasConstructionInfrastructure`/`HasAttackPower` are false)
+//! and ends the game right after the first turn. Therefore deployment is part of
+//! game creation, not of the UI.
 //!
-//! # Что именно создаётся (custom-игра, не миссия)
+//! # What exactly is created (custom game, not a mission)
 //!
-//! Порядок и состав — дословно `GameManager_ProcessTeamMissionSupplyUnits`
-//! (`game_manager.cpp:5137` в форке с выделенным сервером; в оракуле
+//! Order and composition — verbatim `GameManager_ProcessTeamMissionSupplyUnits`
+//! (`game_manager.cpp:5137` in the fork with a dedicated server; in the oracle
 //! `max-cpp-port/src/game_manager.cpp:4967`):
 //!
 //! 1. `team_units->SetGold(team_gold)`; `stats_units_built += units.GetCount()`;
-//! 2. шахта `MININGST` в `GameManager_GetStartPositionMiningStation(team)`,
+//! 2. mine `MININGST` at `GameManager_GetStartPositionMiningStation(team)`,
 //!    `storage = 0`, `stats_mines_built`/`stats_buildings_built` +1;
-//! 3. большая плита `LRGSLAB` в клетке шахты, кадр —
+//! 3. large slab `LRGSLAB` on the mine cell, frame —
 //!    `Randomizer_Generate(image_count(LRGSLAB))`;
-//! 4. `UnitsManager_SetInitialMining` для шахты;
-//! 5. генератор `POWGEN` в `GameManager_GetStartingPositionPowerGenerator(...)`,
-//!    приказ `ORDER_POWER_ON`/`ORDER_STATE_INIT`;
-//! 6. малая плита `SMLSLAB` в клетке генератора, кадр —
+//! 4. `UnitsManager_SetInitialMining` for the mine;
+//! 5. generator `POWGEN` at `GameManager_GetStartingPositionPowerGenerator(...)`,
+//!    order `ORDER_POWER_ON`/`ORDER_STATE_INIT`;
+//! 6. small slab `SMLSLAB` on the generator cell, frame —
 //!    `Randomizer_Generate(image_count(SMLSLAB))`;
-//! 7. `UnitsManager_UpdateConnectors(power_generator)` — в этой версии C++ у
-//!    генератора нет комплекса (`DeployUnit` игнорирует параметр `complex`),
-//!    поэтому `IsComplexMember()` ложен и вызов ничего не делает;
-//! 8. юниты снабжения: `Access_FindReachableSpot` от клетки шахты, затем
-//!    `DeployUnit` и `storage = cargo`.
+//! 7. `UnitsManager_UpdateConnectors(power_generator)` — in this C++ version the
+//!    generator has no complex (`DeployUnit` ignores the `complex` parameter),
+//!    so `IsComplexMember()` is false and the call does nothing;
+//! 8. supply units: `Access_FindReachableSpot` from the mine cell, then
+//!    `DeployUnit` and `storage = cargo`.
 //!
-//! Откуда берётся список юнитов в custom-игре (миссии — отдельная ветка):
-//! `TeamMissionSupplies::units/cargos` заполняет `GetMissionLoadout`, а он для
-//! custom/multiplayer вызывает Lua-функцию `max_get_mission_loadout` из
-//! `assets/PATCHES.RES` (`SC_L0001`). Её загрузчик по умолчанию —
-//! `CONSTRCT` (cargo 40), `ENGINEER` (cargo 20), `SURVEYOR` (cargo 0); это и
-//! есть [`DEFAULT_MISSION_LOADOUT`].
+//! Where the unit list comes from in a custom game (missions are a separate branch):
+//! `TeamMissionSupplies::units/cargos` is filled by `GetMissionLoadout`, which for
+//! custom/multiplayer calls the Lua function `max_get_mission_loadout` from
+//! `assets/PATCHES.RES` (`SC_L0001`). Its default loadout is
+//! `CONSTRCT` (cargo 40), `ENGINEER` (cargo 20), `SURVEYOR` (cargo 0); this is
+//! [`DEFAULT_MISSION_LOADOUT`].
 //!
 //! # RNG
 //!
-//! Единственные вызовы ГПСЧ в развёртывании — кадры двух плит, строго в этом
-//! порядке и **по два на команду** (в порядке возрастания индекса команды).
-//! `image_count` берётся из данных юнита (`D_LRGSLA`/`D_DEFALT` в `MAX.RES`,
-//! второй байт записи): 5 и 1. Так как `Randomizer_Generate(1)` всё равно
-//! забирает одно значение, поток совпадает с C++.
+//! The only RNG calls during deployment are the frames of the two slabs, strictly in this
+//! order and **two per team** (in ascending team index order).
+//! `image_count` comes from the unit data (`D_LRGSLA`/`D_DEFALT` in `MAX.RES`,
+//! the second byte of the record): 5 and 1. Since `Randomizer_Generate(1)` still
+//! consumes one value, the stream matches C++.
 //!
-//! # Осознанные ограничения
+//! # Intentional limitations
 //!
-//! * Загрузка для ИИ-команд (`AiPlayer::RollTeamMissionSupplies`, `aiplayer.cpp`)
-//!   в этой задаче не портирована: она тянет выбор стратегии и
-//!   `ChooseInitialUpgrades`, которые сейчас вне объёма M3.2. Всем командам
-//!   выдаётся [`DEFAULT_MISSION_LOADOUT`] — так же, как человеку, который ничего
-//!   не менял в меню снабжения.
-//! * Миссии (`MissionCategory != Custom`) получают снабжение пакетом 12 и
-//!   отдельными скриптами; здесь порт именно custom-ветки.
-//! * Кадр плиты (`angle`/`image_index`) — UI-поле: в `max_core` сохраняется
-//!   `angle` (RNG-значение), `image_base`/`image_index` остаются 0, как и у
-//!   остальных юнитов (спрайтовые поля — вне симуляции).
+//! * The loadout for AI teams (`AiPlayer::RollTeamMissionSupplies`, `aiplayer.cpp`)
+//!   is not ported in this task: it pulls in strategy selection and
+//!   `ChooseInitialUpgrades`, which are currently outside the M3.2 scope. All teams
+//!   receive [`DEFAULT_MISSION_LOADOUT`] — the same as a human who changed nothing
+//!   in the supply menu.
+//! * Missions (`MissionCategory != Custom`) receive supplies via packet 12 and
+//!   separate scripts; here exactly the custom branch is ported.
+//! * The slab frame (`angle`/`image_index`) is a UI field: `max_core` keeps
+//!   `angle` (the RNG value), while `image_base`/`image_index` stay 0, as for
+//!   other units (sprite fields are outside the simulation).
 
 use crate::access;
 use crate::enums::{
@@ -70,32 +70,32 @@ use crate::unit::UnitId;
 use crate::unit_values::UnitValues;
 use crate::victory::cargo_fuel_consumption_rate;
 
-/// `start_gold` по умолчанию — `settings.cpp:118` (150).
+/// Default `start_gold` — `settings.cpp:118` (150).
 pub const DEFAULT_START_GOLD: u32 = 150;
 
-/// `image_count` юнита `LRGSLAB` — второй байт ресурса `D_LRGSLA` в `MAX.RES`.
+/// `image_count` of `LRGSLAB` — the second byte of the `D_LRGSLA` resource in `MAX.RES`.
 pub const LARGE_SLAB_IMAGE_COUNT: i32 = 5;
-/// `image_count` юнита `SMLSLAB` — второй байт ресурса `D_DEFALT` в `MAX.RES`.
+/// `image_count` of `SMLSLAB` — the second byte of the `D_DEFALT` resource in `MAX.RES`.
 pub const SMALL_SLAB_IMAGE_COUNT: i32 = 1;
 
-/// Клеток в радиусе обзора `Survey_GetTotalResourcesInArea`/`SetInitialMining`.
+/// Cells in the scan radius of `Survey_GetTotalResourcesInArea`/`SetInitialMining`.
 pub const SURVEY_RADIUS: i32 = 1;
-/// Лимит суммы ресурсов в `Survey_GetTotalResourcesInArea` (`255`).
+/// Resource sum limit in `Survey_GetTotalResourcesInArea` (`255`).
 pub const SURVEY_RESOURCE_LIMIT: i32 = 255;
-/// `Access_FindReachableSpot` при высадке ищет по всей ширине карты
+/// `Access_FindReachableSpot` searches across the whole map width during landing
 /// (`ResourceManager_MapSize.x`).
 pub const DEPLOY_SEARCH_RANGE: i32 = MAP_WIDTH as i32;
 
-/// Один юнит стартового набора — `TeamMissionSupplies::units[i]`/`cargos[i]`.
+/// One starting-loadout unit — `TeamMissionSupplies::units[i]`/`cargos[i]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TeamSupply {
-    /// Тип юнита (`MAX_UNIT.*`).
+    /// Unit type (`MAX_UNIT.*`).
     pub unit_type: UnitType,
-    /// `cargo` — значение `storage` после высадки.
+    /// `cargo` — the `storage` value after landing.
     pub cargo: u16,
 }
 
-/// Загрузка по умолчанию для custom-игры (`SC_L0001`, `max_get_mission_loadout`).
+/// Default loadout for a custom game (`SC_L0001`, `max_get_mission_loadout`).
 pub const DEFAULT_MISSION_LOADOUT: [TeamSupply; 3] = [
     TeamSupply {
         unit_type: UnitType::Constructor,
@@ -112,10 +112,10 @@ pub const DEFAULT_MISSION_LOADOUT: [TeamSupply; 3] = [
 ];
 
 /// `Survey_GetResourcesInArea(grid_x, grid_y, radius, 255, ..., mode = true, team)`
-/// (`survey.cpp:157`): сумма ресурсов в квадрате `[grid, grid + radius)`.
+/// (`survey.cpp:157`): the sum of resources in the square `[grid, grid + radius)`.
 ///
-/// Возвращает `(raw, gold, fuel)` — порядок выходных параметров C++. `mode =
-/// true` в C++ означает `mask = 0xFFFF`, то есть разведанность команды не важна.
+/// Returns `(raw, gold, fuel)` — the C++ output-parameter order. `mode =
+/// true` in C++ means `mask = 0xFFFF`, i.e. the team's explored state does not matter.
 pub fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> (i32, i32, i32) {
     let mut raw = 0i32;
     let mut gold = 0i32;
@@ -137,7 +137,7 @@ pub fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> 
             let value = state.map.resources.get(x as i16, y as i16).bits();
 
             // `mode = true` → `mask = 0xFFFF`; `Access_GetModifiedSurfaceType`
-            // без нового аргумента (mode = false), как в `survey.cpp`.
+            // without a new argument (mode = false), as in `survey.cpp`.
             if value != 0
                 && access::modified_surface_type(state, Point::new(x as i16, y as i16), false)
                     != access::SURFACE_TYPE_AIR
@@ -168,8 +168,8 @@ pub fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> 
 
 /// `GameManager_IsValidStartingPosition` (`game_manager.cpp:4360`).
 ///
-/// 4×4 вокруг точки (`x-1..=x+2`) обязаны быть сушей по
-/// `Access_GetModifiedSurfaceType` (с учётом мостов alien-обломков).
+/// The 4×4 area around the point (`x-1..=x+2`) must be land according to
+/// `Access_GetModifiedSurfaceType` (including alien-debris bridges).
 pub fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
     let grid_x = i32::from(position.x);
     let grid_y = i32::from(position.y);
@@ -195,8 +195,8 @@ pub fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
     true
 }
 
-/// `GameManager_FindValidStartingPosition` (`game_manager.cpp:4712`), вариант с
-/// `GameState` (учитывает юниты, уже стоящие на карте).
+/// `GameManager_FindValidStartingPosition` (`game_manager.cpp:4712`), the variant with
+/// `GameState` (takes into account units already on the map).
 pub fn find_valid_starting_position(state: &GameState, position: &mut Point) {
     if is_valid_starting_position(state, *position) {
         return;
@@ -224,9 +224,9 @@ pub fn find_valid_starting_position(state: &GameState, position: &mut Point) {
 
 /// `GameManager_GetStartPositionMiningStation` (`game_manager.cpp:1794`).
 ///
-/// Если в стартовой клетке (и вокруг неё) не хватает материалов/топлива, точка
-/// ищется по расширяющейся спирали, как в C++. `max_resources` — настройка
-/// генерации (`GenerationSettings::max_resources`).
+/// If the starting cell (and around it) lacks materials/fuel, the point
+/// is searched in an expanding spiral, as in C++. `max_resources` is the generation
+/// setting (`GenerationSettings::max_resources`).
 pub fn start_position_mining_station(
     state: &GameState,
     starting_position: Point,
@@ -267,10 +267,10 @@ pub fn start_position_mining_station(
 
 /// `GameManager_GetStartingPositionPowerGenerator` (`game_manager.cpp:1833`).
 ///
-/// Клетки возвращаются ровно как в C++ (RNG здесь не используется, порядок
-/// вызовов `spawn_unit` не меняется). Генератор может стоять **рядом** с
-/// шахтой — это нормальная раскладка базы; визуальное «наложение» спрайтов
-/// лечится в рендере: у зданий с флагом `BUILDING` якорь сдвинут на +31 px
+/// Cells are returned exactly as in C++ (RNG is not used here, the order of
+/// `spawn_unit` calls does not change). The generator may stand **next to** the
+/// mine — this is a normal base layout; the visual sprite "overlap"
+/// is handled in the renderer: buildings with the `BUILDING` flag have their anchor shifted by +31 px
 /// (`max_app::render::BUILDING_ANCHOR_OFFSET`, C++ `UnitInfo::SetPosition`).
 pub fn starting_position_power_generator(
     state: &GameState,
@@ -327,7 +327,7 @@ pub fn set_initial_mining(state: &mut GameState, id: UnitId, grid: Point) {
     }
 }
 
-/// `Access_FindReachableSpotInt` (`access.cpp:261`), режим 0 (`IsAccessible`).
+/// `Access_FindReachableSpotInt` (`access.cpp:261`), mode 0 (`IsAccessible`).
 fn find_reachable_spot_int(
     state: &GameState,
     unit_type: UnitType,
@@ -364,7 +364,7 @@ fn find_reachable_spot_int(
                         return true;
                     }
                 }
-                // Режим 1 (поиск цели атаки) при высадке не используется.
+                // Mode 1 (attack-target search) is not used during landing.
                 _ => {}
             }
         }
@@ -376,10 +376,10 @@ fn find_reachable_spot_int(
     false
 }
 
-/// `Access_FindReachableSpot` (`access.cpp:460`) в объёме высадки (`mode = 0`).
+/// `Access_FindReachableSpot` (`access.cpp:460`) in the landing scope (`mode = 0`).
 ///
-/// Мутирует `position` так же, как C++: на каждой итерации `--x`, `--y`, затем
-/// обход четырёх направлений. Возвращает `true`, если клетка найдена.
+/// Mutates `position` as C++ does: on each iteration `--x`, `--y`, then
+/// a walk of four directions. Returns `true` if a cell is found.
 pub fn find_reachable_spot(
     state: &GameState,
     unit_type: UnitType,
@@ -410,8 +410,8 @@ pub fn find_reachable_spot(
     false
 }
 
-/// Приводит приказы высаженного юнита к значениям C++-конструктора
-/// `UnitInfo::UnitInfo(unit_type, team, id, angle)` плюс `switch` из
+/// Brings the orders of a landed unit to the values of the C++ constructor
+/// `UnitInfo::UnitInfo(unit_type, team, id, angle)` plus the `switch` from
 /// `UnitsManager_DeployUnit`.
 fn apply_deploy_orders(
     state: &mut GameState,
@@ -431,12 +431,12 @@ fn apply_deploy_orders(
 
 /// `GameManager_ProcessTeamMissionSupplyUnits(team)` (`game_manager.cpp:5137`).
 ///
-/// `team_gold` — `TeamMissionSupplies::team_gold` после закупки/апгрейдов;
-/// `loadout` — `units`/`cargos`; `starting_position` — точка высадки команды;
-/// `max_resources` — настройка генерации (`start_gold`-независимая: из неё
-/// считаются минимумы ресурсов у шахты).
+/// `team_gold` — `TeamMissionSupplies::team_gold` after purchases/upgrades;
+/// `loadout` — `units`/`cargos`; `starting_position` — the team's landing point;
+/// `max_resources` — the generation setting (`start_gold`-independent: the
+/// resource minimums at the mine are computed from it).
 ///
-/// Возвращает id высаженных юнитов в порядке C++ (`DeployUnit`).
+/// Returns the ids of landed units in C++ order (`DeployUnit`).
 pub fn deploy_team_supplies(
     state: &mut GameState,
     team: TeamId,
@@ -452,11 +452,11 @@ pub fn deploy_team_supplies(
         return deployed;
     }
 
-    // `GameManager_GameState = GAME_STATE_12_DEPLOYING_UNITS` — в C++ от этого
-    // зависит обнуление `storage` в `DeployUnit` (`units_manager.cpp:2382-2384`):
-    // при высадке склад **не** обнуляется, и груз задаётся явно ниже
+    // `GameManager_GameState = GAME_STATE_12_DEPLOYING_UNITS` — in C++ the
+    // zeroing of `storage` in `DeployUnit` (`units_manager.cpp:2382-2384`) depends on it:
+    // during landing the storage is **not** zeroed, and the cargo is set explicitly below
     // (`mining_station->storage = 0`, `unit->storage = cargo`). `spawn_unit`
-    // повторяет ту же проверку фазы.
+    // repeats the same phase check.
     let previous_state = state.game_state;
     state.game_state = GameStateType::DeployingUnits;
 
@@ -481,8 +481,8 @@ pub fn deploy_team_supplies(
 
     deployed.push(mining_station);
 
-    // `mining_station->storage = 0` (C++), приказы — `ORDER_POWER_ON`/`INIT`
-    // из `UnitsManager_DeployUnit`.
+    // `mining_station->storage = 0` (C++), orders — `ORDER_POWER_ON`/`INIT`
+    // from `UnitsManager_DeployUnit`.
     if let Some(unit) = state.unit_mut(mining_station) {
         unit.storage = 0;
         unit.orders = UnitOrder::PowerOn;
@@ -496,7 +496,7 @@ pub fn deploy_team_supplies(
         info.stats_buildings_built = info.stats_buildings_built.wrapping_add(1);
     }
 
-    // `LRGSLAB` поверх шахты с кадром из RNG.
+    // `LRGSLAB` on top of the mine with a frame from RNG.
     let large_slab_angle = state.rng.generate_i32(LARGE_SLAB_IMAGE_COUNT) as u8;
 
     if let Some(id) = state.spawn_unit(UnitType::LargeSlab, team, mining_station_location, 0) {
@@ -515,8 +515,8 @@ pub fn deploy_team_supplies(
         deployed.push(id);
     }
 
-    // `UnitsManager_SetInitialMining` (DeployUnit вызывает её же для MININGST —
-    // повторный вызов идемпотентен, как в C++).
+    // `UnitsManager_SetInitialMining` (DeployUnit calls it for MININGST too —
+    // the repeated call is idempotent, as in C++).
     set_initial_mining(state, mining_station, mining_station_location);
 
     let power_generator_location =
@@ -540,7 +540,7 @@ pub fn deploy_team_supplies(
         UnitOrderState::ExecutingOrder,
     );
 
-    // `SMLSLAB` поверх генератора с кадром из RNG (всегда 0, но вызов обязателен).
+    // `SMLSLAB` on top of the generator with a frame from RNG (always 0, but the call is mandatory).
     let small_slab_angle = state.rng.generate_i32(SMALL_SLAB_IMAGE_COUNT) as u8;
 
     if let Some(id) = state.spawn_unit(UnitType::SmallSlab, team, power_generator_location, 0) {
@@ -559,9 +559,9 @@ pub fn deploy_team_supplies(
         deployed.push(id);
     }
 
-    // `UnitsManager_UpdateConnectors(power_generator)`: у генератора нет
-    // комплекса (C++ передаёт `complex` в `DeployUnit`, но тот его игнорирует),
-    // поэтому вызов — no-op, как и в оракуле.
+    // `UnitsManager_UpdateConnectors(power_generator)`: the generator has no
+    // complex (C++ passes `complex` to `DeployUnit`, but it ignores it),
+    // so the call is a no-op, as in the oracle.
 
     for supply in loadout {
         let mut position = mining_station_location;
@@ -597,31 +597,31 @@ pub fn deploy_team_supplies(
     deployed
 }
 
-/// Готовая к высадке команда: точка высадки, остаток кредитов и загрузка.
+/// A team ready for landing: landing point, remaining credits and loadout.
 ///
-/// Это `UnitsManager_TeamMissionSupplies[team]` после фаз старта
-/// (`CargoMenu` + выбор точки высадки, см. `GameManager_PlayerMissionSetup`):
-/// `position` — выбранная игроком (или ИИ) точка, `gold` — `team_gold` после
-/// закупки, `supplies` — итоговый список `units`/`cargos`.
+/// This is `UnitsManager_TeamMissionSupplies[team]` after the start phases
+/// (`CargoMenu` + landing point selection, see `GameManager_PlayerMissionSetup`):
+/// `position` — the point chosen by the player (or AI), `gold` — `team_gold` after
+/// purchases, `supplies` — the final `units`/`cargos` list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamDeployment {
-    /// Команда.
+    /// Team.
     pub team: TeamId,
-    /// Точка высадки (`starting_position`).
+    /// Landing point (`starting_position`).
     pub position: Point,
-    /// Кредиты команды на момент высадки (`team_gold`).
+    /// Team credits at landing time (`team_gold`).
     pub gold: u32,
-    /// Загрузка: бесплатный mission-loadout плюс купленные юниты.
+    /// Loadout: the free mission loadout plus purchased units.
     pub supplies: Vec<TeamSupply>,
-    /// Купленные в `CargoMenu` апгрейды атрибутов
-    /// (`TeamUnits::SetCurrentUnitValues` до высадки).
+    /// Attribute upgrades purchased in `CargoMenu`
+    /// (`TeamUnits::SetCurrentUnitValues` before landing).
     pub upgrades: Vec<(UnitType, UnitValues)>,
-    /// `stats_gold_spent_on_upgrades` команды (`CargoMenu::CommitUpgradeChanges`).
+    /// The team's `stats_gold_spent_on_upgrades` (`CargoMenu::CommitUpgradeChanges`).
     pub gold_spent_on_upgrades: u32,
 }
 
 impl TeamDeployment {
-    /// Команда со стандартной загрузкой `SC_L0001` и заданным золотом.
+    /// A team with the standard `SC_L0001` loadout and the given gold.
     pub fn default_loadout(team: TeamId, position: Point, gold: u32) -> Self {
         Self {
             team,
@@ -634,16 +634,16 @@ impl TeamDeployment {
     }
 }
 
-/// Высадка стартовых армий всех играющих команд — цикл
-/// `for (i = RED; i < MAX - 1; ++i)` из `GameManager_InitGame`, в котором
-/// `GameManager_ProcessTeamMissionSupplyUnits(i)` вызывается для
+/// Landing of the starting armies of all playing teams — the loop
+/// `for (i = RED; i < MAX - 1; ++i)` from `GameManager_InitGame`, in which
+/// `GameManager_ProcessTeamMissionSupplyUnits(i)` is called for
 /// `team_type != TEAM_TYPE_NONE`.
 ///
-/// `teams` — стартовые позиции из [`crate::setup::generate_map`] (они уже прошли
-/// `FindValidStartingPosition`/`Optimize`); команда без записи в `teams` не
-/// высаживается (вызывающий слой не дал ей точку старта).
+/// `teams` — starting positions from [`crate::setup::generate_map`] (they have already passed
+/// `FindValidStartingPosition`/`Optimize`); a team without an entry in `teams` is not
+/// landed (the caller layer gave it no starting point).
 ///
-/// Возвращает число высаженных юнитов (все команды).
+/// Returns the number of landed units (all teams).
 pub fn deploy_starting_units(
     state: &mut GameState,
     start_gold: u32,
@@ -658,11 +658,11 @@ pub fn deploy_starting_units(
     deploy_starting_units_with(state, max_resources, &deployments)
 }
 
-/// То же, но с готовыми [`TeamDeployment`] — точками высадки, кредитами и
-/// загрузкой, которые вернули фазы старта (`CargoMenu`/site select).
+/// The same, but with ready [`TeamDeployment`]s — landing points, credits and
+/// loadouts returned by the start phases (`CargoMenu`/site select).
 ///
-/// Порядок обхода — возрастающий индекс команды (как в `GameManager_InitGame`),
-/// поэтому поток ГПСЧ (кадры плит по две на команду) совпадает с
+/// Traversal order is ascending team index (as in `GameManager_InitGame`),
+/// so the RNG stream (slab frames, two per team) matches
 /// [`deploy_starting_units`].
 pub fn deploy_starting_units_with(
     state: &mut GameState,
@@ -703,11 +703,11 @@ mod tests {
     use crate::map::{ResourceKind, ResourceMapEntry};
     use crate::team::TeamUnits;
 
-    /// `max_resources` для уровней 1/1/1 (см. `GenerationSettings::from_menu_levels`).
+    /// `max_resources` for levels 1/1/1 (see `GenerationSettings::from_menu_levels`).
     const MAX_RESOURCES: i32 = 20;
 
-    /// Карта из суши с ресурсами, которых хватает `GetStartPositionMiningStation`:
-    /// в любом квадрате 2×2 есть материалы и топливо по 16.
+    /// A land map with resources sufficient for `GetStartPositionMiningStation`:
+    /// every 2×2 square has 16 materials and 16 fuel.
     fn land_state(teams: &[TeamId]) -> GameState {
         let mut state = GameState::new();
 
@@ -814,7 +814,7 @@ mod tests {
         assert_eq!(unit.orders, UnitOrder::PowerOn);
         assert_eq!(unit.state, UnitOrderState::Init);
 
-        // Загрузка: storage = cargo, приказы как у конструктора C++.
+        // Loadout: storage = cargo, orders as in the C++ constructor.
         for (index, supply) in DEFAULT_MISSION_LOADOUT.iter().enumerate() {
             let unit = state.unit(deployed[4 + index]).expect("юнит загрузки");
             assert_eq!(unit.unit_type, supply.unit_type);
@@ -830,14 +830,14 @@ mod tests {
     }
 
     /// `GameManager_GetStartingPositionPowerGenerator` (`game_manager.cpp:1833`):
-    /// генератор — в отдельной клетке от шахты.
+    /// the generator — on a cell separate from the mine.
     ///
-    /// Точка старта `(20,20)` валидна на этой карте, поэтому шахта остаётся в
-    /// ней. Поиск генератора начинается с `(mining.x - 1, mining.y + 2)` и
-    /// идёт на север (`DIRECTION_OFFSETS[0]`), первый доступный кандидат —
-    /// `(19,21)`. Здесь же стоит `SMLSLAB` (плита под генератором) — по той же
-    /// клетке, как в C++. Регресс «генератор наложен на шахту» ловится
-    /// сравнением клеток.
+    /// The start point `(20,20)` is valid on this map, so the mine stays in
+    /// it. The generator search starts from `(mining.x - 1, mining.y + 2)` and
+    /// goes north (`DIRECTION_OFFSETS[0]`), the first available candidate is
+    /// `(19,21)`. `SMLSLAB` (the slab under the generator) is placed there too — on the same
+    /// cell, as in C++. The "generator overlaps the mine" regression is caught
+    /// by comparing cells.
     #[test]
     fn power_generator_starts_next_to_the_mining_station_but_not_on_it() {
         let mut state = land_state(&[TeamId::RED]);
@@ -872,7 +872,7 @@ mod tests {
             "SMLSLAB ставится в клетку генератора (как C++ DeployUnit)"
         );
 
-        // Клетки не совпадают и по 2×2-габариту здания `BUILDING` (шахта).
+        // The cells do not coincide even by the 2×2 footprint of the `BUILDING` (mine).
         assert!(
             power_generator.x < mining_station.x && power_generator.y > mining_station.y,
             "генератор слева-снизу от шахты: {power_generator:?} vs {mining_station:?}"
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn deployment_consumes_two_rng_draws_per_team() {
-        // Две команды → ровно два кадра плит на каждую.
+        // Two teams → exactly two slab frames per team.
         const TEAMS: usize = 2;
 
         let mut expected_rng = crate::rng::Randomizer::new(0);

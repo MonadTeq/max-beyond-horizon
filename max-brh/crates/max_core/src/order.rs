@@ -1,37 +1,37 @@
-//! Приказы — ввод клиента, который уходит на сервер.
+//! Orders — client input that is sent to the server.
 
 use serde::{Deserialize, Serialize};
 
 use crate::unit::UnitId;
 
-/// Приказ юниту. Клиент лишь *предлагает* приказ; легальность решает сервер.
+/// An order to a unit. The client only *proposes* an order; the server decides legality.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Order {
-    /// Движение в точку (маршрут).
+    /// Move to a point (route).
     Move { unit: UnitId, path: Vec<(i16, i16)> },
-    /// Атака юнита/точки.
+    /// Attack a unit/point.
     Attack { unit: UnitId, target: Target },
-    /// Постройка здания в точке.
+    /// Build a building at a point.
     Build {
         unit: UnitId,
         building: u8,
         x: i16,
         y: i16,
     },
-    /// Смена режима (огонь/патруль/...).
+    /// Change mode (fire/patrol/...).
     Mode { unit: UnitId, mode: u8 },
-    /// Конец хода.
+    /// End of turn.
     EndTurn,
 }
 
-/// Цель атаки.
+/// Attack target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Target {
     Unit(UnitId),
     Cell(i16, i16),
 }
 
-/// Подтверждение/отклонение приказа от сервера.
+/// Confirmation/rejection of an order by the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OrderResult {
     Accepted { seq: u64 },

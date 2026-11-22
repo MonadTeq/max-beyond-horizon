@@ -1,11 +1,11 @@
-//! Классы задач ИИ (`ai/tasks/*`) — порт `task*.cpp` / `task*.hpp`.
+//! AI task classes (`ai/tasks/*`) — a port of `task*.cpp` / `task*.hpp`.
 //!
-//! Каждый класс задачи — вариант [`TaskKind`] с полями состояния из
-//! соответствующего `task*.hpp`, плюс обработчики жизненного цикла
-//! (`Init`/`BeginTurn`/`EndTurn`/`Execute`/`AddUnit`/…). Обработчики
-//! сгруппированы по файлам:
+//! Each task class is a [`TaskKind`] variant with the state fields of
+//! the corresponding `task*.hpp`, plus lifecycle handlers
+//! (`Init`/`BeginTurn`/`EndTurn`/`Execute`/`AddUnit`/…). Handlers
+//! are grouped by file:
 //!
-//! | Файл | Классы C++ |
+//! | File | C++ classes |
 //! |---|---|
 //! | [`create`] | `taskcreate.cpp`, `taskcreateunit.cpp`, `taskcreatebuilding.cpp`, `taskobtainunits.cpp`, `taskactivate.cpp` |
 //! | [`combat`] | `taskattack.cpp`, `taskkillunit.cpp`, `taskfrontalattack.cpp`, `taskwaittoattack.cpp`, `tasksupportattack.cpp`, `taskattackreserve.cpp`, `taskdefensereserve.cpp`, `taskescort.cpp`, `taskretreat.cpp` |
@@ -13,15 +13,15 @@
 //! | [`build`] | `taskmanagebuildings.cpp`, `taskpowerassistant.cpp`, `taskhabitatassistant.cpp`, `taskradarassistant.cpp`, `taskconnectionassistant.cpp`, `taskdefenseassistant.cpp`, `taskfrontierassistant.cpp`, `taskmineassistant.cpp`, `taskupdateterrain.cpp` |
 //! | [`misc`] | `taskgetresource.cpp`, `taskgetmaterials.cpp`, `taskrepair.cpp`, `taskreload.cpp`, `taskupgrade.cpp`, `taskremoverubble.cpp`, `taskremovemines.cpp`, `taskfindmines.cpp`, `taskplacemines.cpp`, `taskscavenge.cpp`, `taskabstractsearch.cpp`, `tasksurvey.cpp`, `taskexplore.cpp`, `taskautosurvey.cpp`, `taskclearzone.cpp`, `taskcheckassaults.cpp` |
 //!
-//! # Как задачи получают доступ к партии
+//! # How tasks access the game
 //!
-//! Задача живёт в [`crate::ai::task_manager::TaskManager`], который лежит в
-//! `GameState.ai.task_manager`. Мутирующие обработчики получают
-//! [`TaskCtx`] — `&mut TaskManager` + `&mut GameState` одновременно; сам
-//! `TaskKind` берётся из клона задачи, а после вызова записывается обратно
-//! (`TaskManager::write_kind`). Это повторяет семантику C++-указателей
-//! (`SmartPointer<Task>`) и исключает заимствование `Self` из-за состояния
-//! партии.
+//! A task lives in [`crate::ai::task_manager::TaskManager`], which is in
+//! `GameState.ai.task_manager`. Mutating handlers receive
+//! [`TaskCtx`] — `&mut TaskManager` + `&mut GameState` at once; `TaskKind`
+//! itself is taken from a clone of the task and written back after the call
+//! (`TaskManager::write_kind`). This repeats the semantics of C++ pointers
+//! (`SmartPointer<Task>`) and avoids borrowing `Self` because of the game
+//! state.
 
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
@@ -56,7 +56,7 @@ pub mod move_tasks;
 pub mod search;
 
 // ---------------------------------------------------------------------------
-// Состояние классов задач (поля из task*.hpp)
+// Task class state (fields from task*.hpp)
 // ---------------------------------------------------------------------------
 
 /// `ATTACK_STATE_*` (`taskattack.hpp:33`).
@@ -123,14 +123,14 @@ pub mod create_building_state {
     pub const FINISHED: u8 = 11;
 }
 
-/// `TaskAttack` — состояние атаки (`taskattack.hpp:44`).
+/// `TaskAttack` — attack state (`taskattack.hpp:44`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AttackState {
     /// `target_team`.
     pub target_team: Option<TeamId>,
     /// `op_state`.
     pub op_state: u8,
-    /// `primary_targets` — задачи `TaskKillUnit`.
+    /// `primary_targets` — `TaskKillUnit` tasks.
     pub primary_targets: Vec<u32>,
     /// `secondary_targets`.
     pub secondary_targets: Vec<u32>,
@@ -150,31 +150,31 @@ pub struct AttackState {
     pub managed_unit_types: Vec<UnitType>,
     /// `attack_zone_reached`.
     pub attack_zone_reached: bool,
-    /// `fire_target` (id цели, которая была обстреляна).
+    /// `fire_target` (id of the target that was fired at).
     pub fire_target: Option<UnitId>,
     /// `fire_turn`.
     pub fire_turn: i32,
     /// `defenders_fire`.
     pub defenders_fire: i32,
-    /// Сайт сбора (`DeterminePosition`).
+    /// Rally site (`DeterminePosition`).
     pub site: Point,
 }
 
-/// `TaskKillUnit::UnitDamage` — вклад юнита в урон по цели.
+/// `TaskKillUnit::UnitDamage` — a unit's contribution to damage against the target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitDamage {
-    /// Юнит.
+    /// Unit.
     pub unit: UnitId,
-    /// Ожидаемый урон.
+    /// Expected damage.
     pub damage: i32,
 }
 
-/// `TaskKillUnit` — состояние уничтожения цели (`taskkillunit.hpp:42`).
+/// `TaskKillUnit` — target destruction state (`taskkillunit.hpp:42`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KillUnitState {
     /// `unit_requests`.
     pub unit_requests: u16,
-    /// `spotted_unit` — id `SpottedUnit` в списке `AiPlayer::spotted_units`.
+    /// `spotted_unit` — the `SpottedUnit` id in `AiPlayer::spotted_units`.
     pub spotted_unit: Option<u32>,
     /// `units`.
     pub units: Vec<UnitId>,
@@ -186,21 +186,21 @@ pub struct KillUnitState {
     pub hits: u16,
     /// `managed_unit`.
     pub managed_unit: Option<UnitId>,
-    /// `weight_table` — типы, которыми добивают цель.
+    /// `weight_table` — the types used to finish the target.
     pub weight_table: super::weight::WeightTable,
     /// `seek_target`.
     pub seek_target: bool,
     /// `recruit_turn`.
     pub recruit_turn: i32,
-    /// Позиция цели (`spotted_unit->GetLastPosition`).
+    /// Target position (`spotted_unit->GetLastPosition`).
     pub target_position: Point,
-    /// Тип цели.
+    /// Target type.
     pub target_type: Option<UnitType>,
-    /// Активный сбор рекрутов в этом ходу (`HoldRecruitsThisTurn`).
+    /// Active recruit gathering this turn (`HoldRecruitsThisTurn`).
     pub recruits_held: bool,
 }
 
-/// `TaskMove` — состояние перемещения (`taskmove.hpp:41`).
+/// `TaskMove` — movement state (`taskmove.hpp:41`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveState {
     /// `passenger`.
@@ -229,11 +229,11 @@ pub struct MoveState {
     pub move_order_issued: bool,
     /// `path_result`.
     pub path_result: u8,
-    /// Конечная точка (`GetDestination`).
+    /// Destination (`GetDestination`).
     pub destination: Point,
-    /// Юнит, который едет.
+    /// The unit that moves.
     pub unit: Option<UnitId>,
-    /// Приказ отдан и путь запрошен.
+    /// The order was issued and a path was requested.
     pub started: bool,
 }
 
@@ -260,10 +260,10 @@ impl Default for MoveState {
     }
 }
 
-/// «Нет результата» для `TaskMove::path_result`.
+/// "No result" for `TaskMove::path_result`.
 pub const TASKMOVE_RESULT_NONE: u8 = 0xFF;
 
-/// `TaskAbstractSearch` — состояние абстрактного поиска (`taskabstractsearch.hpp`).
+/// `TaskAbstractSearch` — abstract search state (`taskabstractsearch.hpp`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SearchState {
     /// `point`.
@@ -272,64 +272,64 @@ pub struct SearchState {
     pub units: Vec<UnitId>,
     /// `requestors`.
     pub requestors: i16,
-    /// Юниты, уже посещённые (для `IsVisited`).
+    /// Units already visited (for `IsVisited`).
     pub visited: Vec<(UnitId, Point)>,
 }
 
-/// `TaskRepair` (база для `TaskReload`/`TaskUpgrade`) — `taskrepair.hpp:43`.
+/// `TaskRepair` (base for `TaskReload`/`TaskUpgrade`) — `taskrepair.hpp:43`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RepairState {
     /// `target_unit`.
     pub target_unit: Option<UnitId>,
     /// `operator_unit`.
     pub operator_unit: Option<UnitId>,
-    /// Ожидание прибытия оператора.
+    /// Waiting for the operator to arrive.
     pub operator_requested: bool,
 }
 
-/// `TaskRemoveRubble` (база для `TaskRemoveMines`) — `taskremoverubble.hpp:33`.
+/// `TaskRemoveRubble` (base for `TaskRemoveMines`) — `taskremoverubble.hpp:33`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RemoveRubbleState {
     /// `unit`.
     pub unit: Option<UnitId>,
     /// `target`.
     pub target: Option<UnitId>,
-    /// Целевая клетка (`target->grid`).
+    /// Target cell (`target->grid`).
     pub site: Point,
-    /// Запрос на юнита сделан.
+    /// A unit request was made.
     pub unit_requested: bool,
 }
 
-/// `TaskGetResource` — состояние снабжения (`taskgetresource.hpp:32`).
+/// `TaskGetResource` — supply state (`taskgetresource.hpp:32`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GetResourceState {
-    /// `requestor` — кому везут.
+    /// `requestor` — who it is delivered to.
     pub requestor: Option<UnitId>,
-    /// `supplier` — кто везёт.
+    /// `supplier` — who delivers.
     pub supplier: Option<UnitId>,
-    /// `source` — откуда.
+    /// `source` — from where.
     pub source: Option<UnitId>,
-    /// Перевозка начата.
+    /// Transportation started.
     pub started: bool,
 }
 
-/// Режим завершения `TaskRendezvous` — результат `Primary/Secondary`-колбэка.
+/// `TaskRendezvous` completion mode — the result of the `Primary/Secondary` callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendezvousMode {
-    /// Оба юнита на месте.
+    /// Both units are in place.
     Success,
-    /// Не удалось.
+    /// Failed.
     Failed,
 }
 
-/// `TaskDump`/`TaskTransport` — направление разгрузки.
+/// `TaskDump`/`TaskTransport` — unload direction.
 pub const DUMP_NONE: i16 = -1;
 
 // ---------------------------------------------------------------------------
 // TaskKind
 // ---------------------------------------------------------------------------
 
-/// Состояние и тип конкретной задачи — аналог `class Task*` из `task*.hpp`.
+/// State and type of a concrete task — the analog of `class Task*` from `task*.hpp`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskKind {
     /// `TaskActivate`.
@@ -338,9 +338,9 @@ pub enum TaskKind {
         unit_to_activate: Option<UnitId>,
         /// `unit_parent`.
         unit_parent: Option<UnitId>,
-        /// Зона очищена (`EventZoneCleared`).
+        /// Zone cleared (`EventZoneCleared`).
         zone_cleared: bool,
-        /// Активация заказана.
+        /// Activation ordered.
         activate_issued: bool,
     },
     /// `TaskAssistMove`.
@@ -384,16 +384,16 @@ pub enum TaskKind {
     },
     /// `TaskCheckAssaults`.
     CheckAssaults {
-        /// Индекс текущего юнита в списке (итератор C++ заменён индексом).
+        /// Index of the current unit in the list (the C++ iterator is replaced by an index).
         index: usize,
-        /// Есть незавершённые проверки.
+        /// There are unfinished checks.
         active: bool,
     },
     /// `TaskClearZone`.
     ClearZone {
         /// `state` (`CLEARZONE_STATE_*`).
         state: u8,
-        /// `zones` — сайты, требующие очистки.
+        /// `zones` — sites requiring clearing.
         zones: Vec<Point>,
         /// `moving_unit`.
         moving_unit: Option<UnitId>,
@@ -421,11 +421,11 @@ pub enum TaskKind {
         builder: Option<UnitId>,
         /// `building`.
         building: Option<UnitId>,
-        /// `manager` — id `TaskManageBuildings` (или `None`).
+        /// `manager` — the `TaskManageBuildings` id (or `None`).
         manager: Option<u32>,
         /// `needs_water_platforms`.
         needs_water_platforms: bool,
-        /// `tasks` — дочерние задачи (снос обломков/мин, платформа).
+        /// `tasks` — child tasks (rubble/mine removal, platform).
         tasks: Vec<u32>,
     },
     /// `TaskEscort`.
@@ -484,13 +484,13 @@ pub enum TaskKind {
     },
     /// `TaskFindPath`.
     FindPath {
-        /// Юнит запроса.
+        /// Request unit.
         unit: Option<UnitId>,
-        /// Пункт назначения.
+        /// Destination.
         destination: Point,
-        /// Родительская задача, ожидающая путь.
+        /// Parent task waiting for a path.
         parent_move: Option<u32>,
-        /// Запрос завершён.
+        /// Request completed.
         finished: bool,
     },
     /// `TaskFrontalAttack`.
@@ -505,7 +505,7 @@ pub enum TaskKind {
         units2: Vec<UnitId>,
         /// `caution_level`.
         caution_level: CautionLevel,
-        /// Целевая клетка.
+        /// Target cell.
         site: Point,
     },
     /// `TaskGetMaterials`.
@@ -528,11 +528,11 @@ pub enum TaskKind {
         building_site: Point,
         /// `units`.
         units: Vec<UnitId>,
-        /// `tasks` — дочерние `TaskCreateBuilding`.
+        /// `tasks` — child `TaskCreateBuilding`s.
         tasks: Vec<u32>,
         /// `cargo_demand`.
         cargo_demand: Cargo,
-        /// Первичная инициализация выполнена.
+        /// Primary initialization done.
         initialized: bool,
     },
     /// `TaskMineAssistant`.
@@ -546,12 +546,12 @@ pub enum TaskKind {
     MoveHome {
         /// `unit`.
         unit: Option<UnitId>,
-        /// Целевая клетка.
+        /// Target cell.
         site: Point,
     },
     /// `TaskObtainUnits`.
     ObtainUnits {
-        /// `units` — требуемые типы.
+        /// `units` — required types.
         units: Vec<UnitType>,
         /// `point`.
         point: Point,
@@ -581,7 +581,7 @@ pub enum TaskKind {
     },
     /// `TaskFrontierAssistant`.
     FrontierAssistant {
-        /// Сайт, вокруг которого ищется фронтир.
+        /// The site around which the frontier is searched.
         site: Point,
     },
     /// `TaskPowerAssistant`.
@@ -589,12 +589,12 @@ pub enum TaskKind {
         /// `manager`.
         manager: Option<u32>,
     },
-    /// `TaskReload` (наследник `TaskRepair`).
+    /// `TaskReload` (a `TaskRepair` subclass).
     Reload {
         /// `TaskRepair`.
         repair: RepairState,
     },
-    /// `TaskRemoveMines` (наследник `TaskRemoveRubble`).
+    /// `TaskRemoveMines` (a `TaskRemoveRubble` subclass).
     RemoveMines {
         /// `TaskRemoveRubble`.
         rubble: RemoveRubbleState,
@@ -607,7 +607,7 @@ pub enum TaskKind {
         unit1: Option<UnitId>,
         /// `unit2`.
         unit2: Option<UnitId>,
-        /// Режим завершения.
+        /// Completion mode.
         mode: RendezvousMode,
     },
     /// `TaskRepair`.
@@ -631,7 +631,7 @@ pub enum TaskKind {
         caution_level: CautionLevel,
         /// `found_valid_position`.
         found_valid_position: i8,
-        /// Найденный сайт отступления.
+        /// Found retreat site.
         destination: Point,
     },
     /// `TaskSearchDestination`.
@@ -656,7 +656,7 @@ pub enum TaskKind {
         searched_sites: i16,
         /// `enterable_sites`.
         enterable_sites: i16,
-        /// Найденный сайт.
+        /// Found site.
         destination: Point,
     },
     /// `TaskScavenge`.
@@ -688,7 +688,7 @@ pub enum TaskKind {
         transporter_unit_type: UnitType,
         /// `unit_transporter`.
         unit_transporter: Option<UnitId>,
-        /// `move_tasks` — клиенты.
+        /// `move_tasks` — clients.
         move_tasks: Vec<u32>,
         /// `task_move`.
         task_move: Option<u32>,
@@ -700,7 +700,7 @@ pub enum TaskKind {
         /// `location`.
         location: Point,
     },
-    /// `TaskUpgrade` (наследник `TaskRepair`).
+    /// `TaskUpgrade` (a `TaskRepair` subclass).
     Upgrade {
         /// `TaskRepair`.
         repair: RepairState,
@@ -719,7 +719,7 @@ impl Default for TaskKind {
 }
 
 // ---------------------------------------------------------------------------
-// Конструкторы классов задач (C++ конструкторы `Task*::Task*`)
+// Task class constructors (C++ `Task*::Task*` constructors)
 // ---------------------------------------------------------------------------
 
 impl TaskKind {
@@ -748,7 +748,7 @@ impl TaskKind {
     }
 
     /// `TaskObtainUnits::TaskObtainUnits(task, point)` (`taskobtainunits.cpp:26`):
-    /// конструктор C++ ставит `init = reinit = true`.
+    /// the C++ constructor sets `init = reinit = true`.
     pub fn obtain_units(point: Point) -> Self {
         Self::ObtainUnits {
             units: Vec::new(),
@@ -886,7 +886,7 @@ impl TaskKind {
         }
     }
 
-    /// Прототип `TaskFindMines::TaskFindMines(team, point)`.
+    /// Prototype `TaskFindMines::TaskFindMines(team, point)`.
     pub fn find_mines(point: Point) -> Self {
         Self::FindMines {
             search: SearchState {
@@ -920,7 +920,7 @@ impl TaskKind {
         }
     }
 
-    /// Тип задачи (`GetType`).
+    /// Task type (`GetType`).
     pub fn get_type(&self) -> u8 {
         match self {
             Self::Activate { .. } => TASK_TYPE_ACTIVATE,
@@ -972,54 +972,54 @@ impl TaskKind {
 }
 
 // ---------------------------------------------------------------------------
-// TaskCtx — задача + партия одновременно
+// TaskCtx — task + game at once
 // ---------------------------------------------------------------------------
 
-/// Контекст обработчика задачи: менеджер задач и состояние партии.
+/// Task handler context: the task manager and the game state.
 pub struct TaskCtx<'a> {
-    /// Менеджер задач (очереди, списки, регистрация).
+    /// Task manager (queues, lists, registration).
     pub tm: &'a mut TaskManager,
-    /// Состояние партии.
+    /// Game state.
     pub world: &'a mut GameState,
 }
 
 impl<'a> TaskCtx<'a> {
-    /// Создаёт контекст.
+    /// Creates the context.
     pub fn new(tm: &'a mut TaskManager, world: &'a mut GameState) -> Self {
         Self { tm, world }
     }
 
-    /// Копия юнита (`Hash_UnitHash[...]`).
+    /// Unit copy (`Hash_UnitHash[...]`).
     pub fn unit(&self, id: UnitId) -> Option<UnitInfo> {
         self.world.unit(id).cloned()
     }
 
-    /// Есть ли юнит.
+    /// Whether the unit exists.
     pub fn has_unit(&self, id: UnitId) -> bool {
         self.world.has_unit(id)
     }
 
-    /// Записывает юнита.
+    /// Writes the unit.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
         self.world.write_unit(id, unit);
     }
 
-    /// Данные приказа (`move_to`/`fire_on`).
+    /// Order data (`move_to`/`fire_on`).
     pub fn order_data(&self, id: UnitId) -> crate::game::OrderData {
         self.world.order_data(id)
     }
 
-    /// Устанавливает данные приказа.
+    /// Sets the order data.
     pub fn set_order_data(&mut self, id: UnitId, data: crate::game::OrderData) {
         self.world.set_order_data(id, data);
     }
 
-    /// `UnitsManager_SetNewOrder` (`units_manager.cpp:1945`) для юнита.
+    /// `UnitsManager_SetNewOrder` (`units_manager.cpp:1945`) for a unit.
     pub fn set_new_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) {
         self.world.set_order(id, order, state);
     }
 
-    /// `Task_IsReadyToTakeOrders` для юнита.
+    /// `Task_IsReadyToTakeOrders` for a unit.
     pub fn ready_to_take_orders(&self, unit: UnitId) -> bool {
         super::task::task_is_ready_to_take_orders(self.world, unit)
     }
@@ -1029,22 +1029,22 @@ impl<'a> TaskCtx<'a> {
         self.tm.remind_move_finished(self.world, unit, priority);
     }
 
-    /// `Task::RemindTurnEnd` для задачи.
+    /// `Task::RemindTurnEnd` for a task.
     pub fn remind_turn_end(&mut self, task_id: u32, priority: bool) {
         self.tm.remind_turn_end(task_id, priority);
     }
 
-    /// `Task::RemindTurnStart` для задачи.
+    /// `Task::RemindTurnStart` for a task.
     pub fn remind_turn_start(&mut self, task_id: u32, priority: bool) {
         self.tm.remind_turn_start(task_id, priority);
     }
 
-    /// `UnitInfo::AddTask` — «верхняя» задача юнита.
+    /// `UnitInfo::AddTask` — the unit's "top" task.
     pub fn attach(&mut self, task_id: u32, unit: UnitId) {
         self.tm.attach_task_to_unit(unit, task_id);
     }
 
-    /// `UnitInfo::RemoveTask` (с напоминанием новой верхней задаче, если `mode`).
+    /// `UnitInfo::RemoveTask` (with a reminder to the new top task if `mode`).
     pub fn detach(&mut self, task_id: u32, unit: UnitId, mode: bool) {
         self.tm
             .detach_task_from_unit(self.world, task_id, unit, mode);
@@ -1056,7 +1056,7 @@ impl<'a> TaskCtx<'a> {
             .clear_unit_tasks_and_remind_available(self.world, unit, priority);
     }
 
-    /// Регистрирует задачу (`TaskManager::AppendTask`).
+    /// Registers a task (`TaskManager::AppendTask`).
     pub fn append_task(
         &mut self,
         team: TeamId,
@@ -1068,12 +1068,12 @@ impl<'a> TaskCtx<'a> {
             .append_task(self.world, Task::new(0, team, parent, priority, kind))
     }
 
-    /// `Task::RemoveSelf` для задачи.
+    /// `Task::RemoveSelf` for a task.
     pub fn remove_self(&mut self, task_id: u32) {
         self.tm.remove_task(self.world, task_id);
     }
 
-    /// Базовый приоритет задачи.
+    /// Task base priority.
     pub fn priority_of(&self, task_id: u32) -> u16 {
         self.tm
             .task(task_id)
@@ -1081,14 +1081,14 @@ impl<'a> TaskCtx<'a> {
             .unwrap_or(0)
     }
 
-    /// Устанавливает приоритет (`Task::SetPriority`).
+    /// Sets the priority (`Task::SetPriority`).
     pub fn set_priority(&mut self, task_id: u32, priority: u16) {
         if let Some(task) = self.tm.task_mut(task_id) {
             task.base_priority = priority;
         }
     }
 
-    /// Устанавливает родителя (`Task::SetParent`).
+    /// Sets the parent (`Task::SetParent`).
     pub fn set_parent(&mut self, task_id: u32, parent: Option<u32>) {
         if let Some(task) = self.tm.task_mut(task_id) {
             task.parent = parent;
@@ -1102,7 +1102,7 @@ impl<'a> TaskCtx<'a> {
         }
     }
 
-    /// Регистрирует юнит как «потерявший задачу» (`RemindAvailable`).
+    /// Registers a unit as "having lost its task" (`RemindAvailable`).
     pub fn remind_available(&mut self, unit: UnitId, priority: bool) {
         self.tm.append_reminder(
             self.world,
@@ -1111,7 +1111,7 @@ impl<'a> TaskCtx<'a> {
         );
     }
 
-    /// `AiPlayer::CreateBuilding` для команды.
+    /// `AiPlayer::CreateBuilding` for the team.
     pub fn create_building(
         &mut self,
         team: TeamId,
@@ -1122,7 +1122,7 @@ impl<'a> TaskCtx<'a> {
         super::strategy::create_building(self.world, team, unit_type, site, task);
     }
 
-    /// Ставит приказ `ORDER_MOVE` с целью (как `UnitsManager_SetNewOrder`).
+    /// Issues an `ORDER_MOVE` with a target (like `UnitsManager_SetNewOrder`).
     pub fn issue_move(&mut self, unit_id: UnitId, site: Point) -> bool {
         let Some(mut unit) = self.unit(unit_id) else {
             return false;
@@ -1147,7 +1147,7 @@ impl<'a> TaskCtx<'a> {
         true
     }
 
-    /// `UnitInfo::BuildOrder` (`unitinfo.cpp:1380`): очередь постройки + `ORDER_BUILD`.
+    /// `UnitInfo::BuildOrder` (`unitinfo.cpp:1380`): build queue + `ORDER_BUILD`.
     pub fn build_order(
         &mut self,
         unit_id: UnitId,
@@ -1188,7 +1188,7 @@ impl<'a> TaskCtx<'a> {
         );
     }
 
-    /// Список юнитов команды с флагами (`Task_GetReadyUnitsCount`-фильтр).
+    /// Team unit list with flags (`Task_GetReadyUnitsCount` filter).
     pub fn team_units_in(&self, team: TeamId, kind: UnitListKind) -> Vec<UnitId> {
         self.world
             .unit_list(kind)
@@ -1203,7 +1203,7 @@ impl<'a> TaskCtx<'a> {
             .collect()
     }
 
-    /// Копия списка юнитов списка.
+    /// Copy of a list of units.
     pub fn list(&self, kind: UnitListKind) -> Vec<UnitId> {
         self.world.unit_list(kind).to_vec()
     }
@@ -1213,13 +1213,13 @@ impl<'a> TaskCtx<'a> {
         super::task::is_enemy_team(self.world, team)
     }
 
-    /// `Access_IsAccessible` для типа.
+    /// `Access_IsAccessible` for a type.
     pub fn accessible(&self, unit_type: UnitType, team: TeamId, grid: Point, flags: u32) -> bool {
         crate::access::is_accessible(self.world, unit_type, team, grid, flags) != 0
     }
 }
 
-/// Регистрация задачи (свободная функция для `task.rs`).
+/// Task registration (a free function for `task.rs`).
 pub fn append_task(
     manager: &mut TaskManager,
     world: &mut GameState,
@@ -1231,22 +1231,22 @@ pub fn append_task(
     manager.append_task(world, Task::new(0, team, parent, priority, kind))
 }
 
-/// `RemindTurnStart`-обработчик (обёртка для `reminders.rs`).
+/// `RemindTurnStart` handler (a wrapper for `reminders.rs`).
 pub fn task_begin_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
     manager.task_begin_turn(world, task_id);
 }
 
-/// `RemindTurnEnd`-обработчик (обёртка для `reminders.rs`).
+/// `RemindTurnEnd` handler (a wrapper for `reminders.rs`).
 pub fn task_end_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
     manager.task_end_turn(world, task_id);
 }
 
-/// `RemindMoveFinished`-обработчик (обёртка для `reminders.rs`).
+/// `RemindMoveFinished` handler (a wrapper for `reminders.rs`).
 pub fn task_execute(manager: &mut TaskManager, world: &mut GameState, task_id: u32, unit: UnitId) {
     manager.task_execute(world, task_id, unit);
 }
 
-/// Состояние `TaskRetreat` (поля `taskretreat.hpp:28`).
+/// `TaskRetreat` state (`taskretreat.hpp:28` fields).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetreatState {
     /// `unit_to_retreat`.
@@ -1263,7 +1263,7 @@ pub struct RetreatState {
     pub caution_level: CautionLevel,
     /// `found_valid_position`.
     pub found_valid_position: i8,
-    /// Найденный сайт отступления.
+    /// Found retreat site.
     pub destination: Point,
 }
 
@@ -1283,11 +1283,11 @@ impl Default for RetreatState {
 }
 
 // ---------------------------------------------------------------------------
-// Жизненный цикл: диспетчеризация по классу задачи
+// Lifecycle: dispatch by task class
 // ---------------------------------------------------------------------------
 
 impl TaskKind {
-    /// `Task::GetPriority()` — по умолчанию базовый; переопределения в классах.
+    /// `Task::GetPriority()` — base by default; overridden in classes.
     pub fn get_priority(&self, world: &GameState, task: &Task) -> u16 {
         match self {
             // `TaskCreateUnit::GetPriority` (`taskcreateunit.cpp:56`).
@@ -1311,9 +1311,9 @@ impl TaskKind {
                 None => super::task::TASK_PRIORITY_MOVE,
             },
             Self::GetMaterials { .. } => task.base_priority,
-            // `TaskKillUnit::GetPriority` — пока цель не оценена, задача
-            // считается «без целей» и получает штраф
-            // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` без цели).
+            // `TaskKillUnit::GetPriority` — until the target is evaluated, the task
+            // is considered "without targets" and gets the penalty
+            // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` without a target).
             Self::KillUnit(state) => {
                 if state.required_damage == u16::MAX {
                     task.base_priority
@@ -1326,7 +1326,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::GetCautionLevel(unit)` — переопределения классов.
+    /// `Task::GetCautionLevel(unit)` — class overrides.
     pub fn get_caution_level(
         &self,
         world: &GameState,
@@ -1407,7 +1407,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsUnitUsable(unit)` — по умолчанию `false`.
+    /// `Task::IsUnitUsable(unit)` — `false` by default.
     pub fn is_unit_usable(&self, world: &GameState, header: TaskHeader, unit: UnitId) -> bool {
         match self {
             Self::Attack(_) => combat::attack_is_unit_usable(world, header, unit),
@@ -1435,7 +1435,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsUnitTransferable(unit)` — по умолчанию `true` с учётом родителя.
+    /// `Task::IsUnitTransferable(unit)` — `true` by default, considering the parent.
     pub fn is_unit_transferable(&self, world: &GameState, task: &Task, unit: &UnitInfo) -> bool {
         match self {
             Self::Attack(_)
@@ -1457,7 +1457,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsNeeded()` — переопределения (CreateBuilding, ObtainUnits, …).
+    /// `Task::IsNeeded()` — overrides (CreateBuilding, ObtainUnits, …).
     pub fn is_needed_kind(&self, world: &GameState) -> bool {
         let _ = world;
         match self {
@@ -1468,7 +1468,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsEndTurnNeeded()` — по умолчанию `true`.
+    /// `Task::IsEndTurnNeeded()` — `true` by default.
     pub fn is_end_turn_needed_kind(&self) -> bool {
         match self {
             // `TaskCreateBuilding::IsEndTurnNeeded` (`taskcreatebuilding.cpp:699`).
@@ -1489,7 +1489,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsThinking()` — по умолчанию `false`.
+    /// `Task::IsThinking()` — `false` by default.
     pub fn is_thinking_kind(&self) -> bool {
         matches!(
             self,
@@ -1548,7 +1548,7 @@ impl TaskKind {
         }
     }
 
-    /// `Task::IsUnitTransferable` — базовая реализация для наследников.
+    /// `Task::IsUnitTransferable` — base implementation for subclasses.
     fn _unused(&self) {}
 
     /// `TaskObtainUnits::CountInstancesOfUnitType`.
@@ -1562,7 +1562,7 @@ impl TaskKind {
         }
     }
 
-    /// `TaskCreate::GetUnitType` — тип создаваемого юнита (для переписи).
+    /// `TaskCreate::GetUnitType` — the type being created (for the census).
     pub fn create_unit_type(&self) -> Option<UnitType> {
         match self {
             Self::CreateUnit { unit_type, .. } | Self::CreateBuilding { unit_type, .. } => {
@@ -1583,19 +1583,19 @@ impl TaskKind {
 }
 
 // ---------------------------------------------------------------------------
-// Жизненный цикл: каждый модуль обрабатывает свои варианты и сообщает об этом
+// Lifecycle: each module handles its variants and reports it
 // ---------------------------------------------------------------------------
 
 impl TaskKind {
-    /// `Task::Init()` — по умолчанию `RemindTurnStart(true)`.
+    /// `Task::Init()` — `RemindTurnStart(true)` by default.
     pub fn init(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-        // Классы `TaskCreate*`/`TaskObtainUnits`/`TaskActivate` переопределяют
-        // `Task::Init` и сами планируют первое напоминание.
+        // The `TaskCreate*`/`TaskObtainUnits`/`TaskActivate` classes override
+        // `Task::Init` and schedule the first reminder themselves.
         if create::init(self, ctx, header) {
             return;
         }
 
-        // Остальные наследуют `Task::Init` → `RemindTurnStart(true)`.
+        // The rest inherit `Task::Init` → `RemindTurnStart(true)`.
         let _ = move_tasks::init(self, ctx, header);
         let _ = combat::init(self, ctx, header);
         let _ = build::init(self, ctx, header);
@@ -1605,7 +1605,7 @@ impl TaskKind {
         ctx.remind_turn_start(header.id, true);
     }
 
-    /// `Task::BeginTurn()` — по умолчанию `EndTurn()`.
+    /// `Task::BeginTurn()` — `EndTurn()` by default.
     pub fn begin_turn(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
         if create::begin_turn(self, ctx, header)
             || move_tasks::begin_turn(self, ctx, header)
@@ -1620,7 +1620,7 @@ impl TaskKind {
         self.end_turn(ctx, header);
     }
 
-    /// `Task::EndTurn()` — по умолчанию пусто.
+    /// `Task::EndTurn()` — empty by default.
     pub fn end_turn(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
         if create::end_turn(self, ctx, header)
             || move_tasks::end_turn(self, ctx, header)
@@ -1635,7 +1635,7 @@ impl TaskKind {
         let _ = (ctx, header);
     }
 
-    /// `Task::Execute(unit)` — по умолчанию `false`.
+    /// `Task::Execute(unit)` — `false` by default.
     pub fn execute(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) -> bool {
         create::execute(self, ctx, header, unit)
             || move_tasks::execute(self, ctx, header, unit)
@@ -1645,10 +1645,10 @@ impl TaskKind {
             || search::execute(self, ctx, header, unit)
     }
 
-    /// `Task::AddUnit(unit)` — по умолчанию пусто.
+    /// `Task::AddUnit(unit)` — empty by default.
     ///
-    /// Каждый модуль обрабатывает свои варианты и молча пропускает чужие,
-    /// поэтому вызовы идут последовательно.
+    /// Each module handles its variants and silently skips others,
+    /// so the calls go sequentially.
     pub fn add_unit(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
         create::add_unit(self, ctx, header, unit);
         move_tasks::add_unit(self, ctx, header, unit);
@@ -1658,7 +1658,7 @@ impl TaskKind {
         search::add_unit(self, ctx, header, unit);
     }
 
-    /// `Task::RemoveUnit(unit)` — по умолчанию пусто.
+    /// `Task::RemoveUnit(unit)` — empty by default.
     pub fn remove_unit(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
         create::remove_unit(self, ctx, header, unit);
         move_tasks::remove_unit(self, ctx, header, unit);
@@ -1668,7 +1668,7 @@ impl TaskKind {
         search::remove_unit(self, ctx, header, unit);
     }
 
-    /// `Task::RemoveSelf()` — по умолчанию сброс родителя и удаление.
+    /// `Task::RemoveSelf()` — parent reset and deletion by default.
     pub fn remove_self(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
         if create::remove_self(self, ctx, header)
             || move_tasks::remove_self(self, ctx, header)
@@ -1699,7 +1699,7 @@ impl TaskKind {
         let _ = (ctx, header, child);
     }
 
-    /// Уведомление о завершении дочернего `TaskMove`.
+    /// Notification about a child `TaskMove` completion.
     pub fn move_finished(
         &mut self,
         ctx: &mut TaskCtx<'_>,
@@ -1720,7 +1720,7 @@ impl TaskKind {
         let _ = (ctx, header, unit, result);
     }
 
-    /// `Task::CheckReactions()` — по умолчанию `false`.
+    /// `Task::CheckReactions()` — `false` by default.
     pub fn check_reactions(&mut self, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
         combat::check_reactions(self, ctx, header)
             || build::check_reactions(self, ctx, header)
@@ -1730,7 +1730,7 @@ impl TaskKind {
             || search::check_reactions(self, ctx, header)
     }
 
-    /// `Task::ExchangeOperator(unit)` — по умолчанию `false`.
+    /// `Task::ExchangeOperator(unit)` — `false` by default.
     pub fn exchange_operator(
         &mut self,
         ctx: &mut TaskCtx<'_>,

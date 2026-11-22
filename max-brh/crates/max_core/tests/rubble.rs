@@ -1,15 +1,15 @@
-﻿//! Обломки: гибель наземного юнита оставляет `SMLRUBLE`/`LRGRUBLE` — 1:1 C++.
+﻿//! Rubble: the death of a ground unit leaves `SMLRUBLE`/`LRGRUBLE` — 1:1 C++.
 //!
-//! Оракул `UnitsManager_BuildClearing` (`units_manager.cpp:3646-3805`):
-//! * обломок создаётся только при `mode = true` (юнит уничтожен), не для
-//!   `COMMANDO`/`INFANTRY`, не для `CONNECTOR_UNIT`/`HOVERING` и только на
-//!   **полностью сухой** клетке (`Access_IsFullyLandCovered`, `access.cpp:1049`);
-//! * тип: `LRGRUBLE` для `BUILDING`, иначе `SMLRUBLE`;
-//! * груз обломка — `GetNormalRateBuildCost() / 2` (+ `storage` для сырья);
-//! * кадр — `Randomizer_Generate(image_count)`;
-//! * мины обломков не оставляют (`units_manager.cpp:3720`);
-//! * вызвается из `UnitsManager_ProgressExplosion` (`units_manager.cpp:4021`) на
-//!   середине анимации взрыва.
+//! Oracle `UnitsManager_BuildClearing` (`units_manager.cpp:3646-3805`):
+//! * rubble is created only with `mode = true` (the unit was destroyed), not for
+//!   `COMMANDO`/`INFANTRY`, not for `CONNECTOR_UNIT`/`HOVERING`, and only on
+//!   a **fully dry** cell (`Access_IsFullyLandCovered`, `access.cpp:1049`);
+//! * type: `LRGRUBLE` for `BUILDING`, otherwise `SMLRUBLE`;
+//! * rubble cargo — `GetNormalRateBuildCost() / 2` (+ `storage` for raw material);
+//! * frame — `Randomizer_Generate(image_count)`;
+//! * mines leave no rubble (`units_manager.cpp:3720`);
+//! * called from `UnitsManager_ProgressExplosion` (`units_manager.cpp:4021`) at
+//!   the middle of the explosion animation.
 
 use max_core::access;
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
@@ -29,7 +29,7 @@ fn state() -> GameState {
     state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
     state.ai.all_visible = true;
 
-    // Вся карта — суша: `Access_IsFullyLandCovered` требует `SURFACE_TYPE_LAND`.
+    // The whole map is land: `Access_IsFullyLandCovered` requires `SURFACE_TYPE_LAND`.
     for tile in state.map.surface.tiles_mut().iter_mut() {
         *tile = Surface::LAND;
     }
@@ -41,7 +41,7 @@ fn spawn(state: &mut GameState, unit_type: UnitType, team: TeamId, grid: Point) 
     state.spawn_unit(unit_type, team, grid, 0).expect("spawn")
 }
 
-/// Убить юнита: `hits = 0` + `ORDER_EXPLODE`/`STATE_EXPLODE` (как
+/// Kill the unit: `hits = 0` + `ORDER_EXPLODE`/`STATE_EXPLODE` (as
 /// `UnitsManager_ProcessOrderExplode`, `units_manager.cpp:2972`).
 fn kill(state: &mut GameState, id: max_core::UnitId) {
     let mut unit = state.unit(id).expect("unit").clone();
@@ -195,7 +195,7 @@ fn sea_unit_on_water_leaves_no_rubble() {
 
 #[test]
 fn quick_build_removal_does_not_leave_rubble() {
-    // `UnitsManager_BuildClearing(unit, false)` — юнит убран, а не уничтожен.
+    // `UnitsManager_BuildClearing(unit, false)` — the unit was removed, not destroyed.
     let mut state = state();
     let tank = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(14, 14));
 
@@ -259,7 +259,7 @@ fn bulldozer_clears_rubble_and_takes_its_cargo() {
     );
 
     // `UnitsManager_Popup_OnClick_StopRemove` (`units_manager.cpp:1092-1113`):
-    // `bulldozer->SetParent(rubble)`, `build_time = 1` (для строения — 4),
+    // `bulldozer->SetParent(rubble)`, `build_time = 1` (4 for a building),
     // `ORDER_CLEAR`/`INIT`.
     {
         let mut unit = state.unit(bulldozer).expect("bulldozer").clone();
@@ -276,7 +276,7 @@ fn bulldozer_clears_rubble_and_takes_its_cargo() {
         state.write_unit(rubble, unit);
     }
 
-    // `GameManager_SpawnNewUnits` → `UnitInfo::SpawnNewUnit` (ветка BULLDOZR).
+    // `GameManager_SpawnNewUnits` → `UnitInfo::SpawnNewUnit` (BULLDOZR branch).
     production::progress_build_state(&mut state, TeamId::RED);
 
     assert!(state.unit(rubble).is_none(), "обломок снесён");

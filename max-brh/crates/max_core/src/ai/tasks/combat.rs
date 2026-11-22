@@ -1,32 +1,32 @@
-//! Бой: `TaskAttack`, `TaskKillUnit`, `TaskFrontalAttack`, `TaskWaitToAttack`,
+//! Combat: `TaskAttack`, `TaskKillUnit`, `TaskFrontalAttack`, `TaskWaitToAttack`,
 //! `TaskSupportAttack`, `TaskAttackReserve`, `TaskDefenseReserve`,
 //! `TaskEscort`, `TaskRetreat`.
 //!
-//! Оракул: `taskattack.cpp/.hpp`, `taskkillunit.cpp/.hpp`,
+//! Oracle: `taskattack.cpp/.hpp`, `taskkillunit.cpp/.hpp`,
 //! `taskfrontalattack.cpp/.hpp`, `taskwaittoattack.cpp/.hpp`,
 //! `tasksupportattack.cpp/.hpp`, `taskattackreserve.cpp/.hpp`,
 //! `taskdefensereserve.cpp/.hpp`, `taskescort.cpp/.hpp`,
-//! `taskretreat.cpp/.hpp`, `aiattack.cpp` (решения об атаке — модуль
+//! `taskretreat.cpp/.hpp`, `aiattack.cpp` (attack decisions — the module
 //! [`crate::ai::attack`]).
 //!
-//! # Что портировано
+//! # What is ported
 //!
 //! * `TaskAttack`: `target_team`/`op_state`/`primary_targets`/
 //!   `secondary_targets`, `Init`, `BeginTurn`, `EndTurn`, `AddUnit`,
 //!   `IsUnitUsable`, `Execute`, `RemoveSelf`, `RemoveUnit`, `ChildComplete`,
-//!   `ExchangeOperator` (структурно), `GetCautionLevel`.
+//!   `ExchangeOperator` (structurally), `GetCautionLevel`.
 //! * `TaskKillUnit`: `spotted_unit`, `units`, `unit_damages`,
 //!   `required_damage`, `weight_table`, `seek_target`, `recruit_turn`;
 //!   `GetProjectedDamage`, `IsUnitSuitable`, `BeginTurn`, `EndTurn`,
 //!   `Execute`, `EventUnitDestroyed`, `EventEnemyUnitSpotted`,
 //!   `HoldRecruitsThisTurn`.
 //! * `TaskWaitToAttack`: `Init`, `EndTurn`, `CheckReactions`, `IsThinking`.
-//! * `TaskRetreat`: поиск безопасной клетки по карте урона
-//!   (`Ai_IsDangerousLocation`/`GetDamagePotentialMap`) и `TaskMove` к ней.
+//! * `TaskRetreat`: searching a safe cell by the damage map
+//!   (`Ai_IsDangerousLocation`/`GetDamagePotentialMap`) and `TaskMove` to it.
 //! * `TaskFrontalAttack`, `TaskSupportAttack`, `TaskAttackReserve`,
-//!   `TaskDefenseReserve`, `TaskEscort` — цикл жизни и приказы; их внутренние
-//!   эвристики (транспортные карты, сектора обороны, `TransporterMap`) сведены
-//!   к детерминированному выбору сайта/юнита (см. примечания в функциях).
+//!   `TaskDefenseReserve`, `TaskEscort` — life cycle and orders; their internal
+//!   heuristics (transport maps, defense sectors, `TransporterMap`) are reduced
+//!   to deterministic site/unit selection (see notes in the functions).
 
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
@@ -41,10 +41,10 @@ use super::super::task::{
 use super::{attack_state, TaskCtx, TaskKind, UnitDamage};
 
 // ---------------------------------------------------------------------------
-// Общие помощники
+// Common helpers
 // ---------------------------------------------------------------------------
 
-/// Цель задачи `TaskKillUnit` по индексу `SpottedUnit` (`AiPlayer::spotted_units`).
+/// The `TaskKillUnit` target by `SpottedUnit` index (`AiPlayer::spotted_units`).
 pub(crate) fn spotted_target(
     ctx: &TaskCtx<'_>,
     team: TeamId,
@@ -58,7 +58,7 @@ pub(crate) fn spotted_target(
     Some((unit_id, spotted.last_position, info.unit_type))
 }
 
-/// Цель `SpottedUnit` без `TaskCtx` (для `aiattack.cpp`-слоя).
+/// The `SpottedUnit` target without `TaskCtx` (for the `aiattack.cpp` layer).
 pub fn spotted_target_for_ai(
     world: &crate::game::GameState,
     team: TeamId,
@@ -72,12 +72,12 @@ pub fn spotted_target_for_ai(
     Some((unit_id, spotted.last_position, info.unit_type))
 }
 
-/// `TaskKillUnit::GetProjectedDamage` (статическая) — суммарный урон группы.
+/// `TaskKillUnit::GetProjectedDamage` (static) — the group's total damage.
 pub(crate) fn kill_unit_total_projected_damage(state: &super::KillUnitState) -> i32 {
     state.unit_damages.iter().map(|entry| entry.damage).sum()
 }
 
-/// `TaskKillUnit::GetProjectedDamage(attacker, target)` — ожидаемый урон.
+/// `TaskKillUnit::GetProjectedDamage(attacker, target)` — expected damage.
 pub fn get_projected_damage(
     _world: &crate::game::GameState,
     attacker: &UnitInfo,
@@ -97,7 +97,7 @@ pub fn get_projected_damage(
     per_shot * shots
 }
 
-/// `TaskKillUnit::IsUnitSuitable` — юнит может бить цель.
+/// `TaskKillUnit::IsUnitSuitable` — the unit can hit the target.
 pub(crate) fn is_unit_suitable(
     ctx: &TaskCtx<'_>,
     team: TeamId,
@@ -119,7 +119,7 @@ pub(crate) fn is_unit_suitable(
     crate::access::is_valid_attack_target_type(info.unit_type, target_type)
 }
 
-/// `TaskKillUnit::IsAttackShareLeft` — доля военной силы ещё не исчерпана.
+/// `TaskKillUnit::IsAttackShareLeft` — the share of military force is not exhausted yet.
 fn is_attack_share_left(ctx: &TaskCtx<'_>, team: TeamId, state: &super::KillUnitState) -> bool {
     let share = ctx.world.ai.players[team.0 as usize].attack_value_share;
     let total = kill_unit_total_projected_damage(state);
@@ -127,7 +127,7 @@ fn is_attack_share_left(ctx: &TaskCtx<'_>, team: TeamId, state: &super::KillUnit
     total < share || state.units.is_empty()
 }
 
-/// `TaskKillUnit::UpdateDemand` — пересчитать требуемый урон и вклады юнитов.
+/// `TaskKillUnit::UpdateDemand` — recompute the required damage and unit contributions.
 fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut super::KillUnitState) {
     let Some((target_id, position, target_type)) =
         spotted_target(ctx, team, state.spotted_unit.unwrap_or(0))
@@ -165,7 +165,7 @@ fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut supe
     state.required_damage = (i32::from(target.hits) - total).max(0) as u16;
 }
 
-/// `TaskKillUnit::FindVaildTypes` — типы юнитов, способные добить цель.
+/// `TaskKillUnit::FindVaildTypes` — unit types able to finish the target.
 fn kill_unit_find_valid_types(
     world: &crate::game::GameState,
     team: TeamId,
@@ -178,8 +178,8 @@ fn kill_unit_find_valid_types(
         return;
     };
 
-    // Таблица весов C++ строится `AiPlayer::GetExtendedWeightTable(target, flags)`;
-    // здесь — те же типы, что проходят проверку `Access_IsValidAttackTargetType`.
+    // The C++ weight table is built by `AiPlayer::GetExtendedWeightTable(target, flags)`;
+    // here — the same types that pass the `Access_IsValidAttackTargetType` check.
     for unit_type in [
         UnitType::Tank,
         UnitType::AssaultGun,
@@ -213,7 +213,7 @@ fn kill_unit_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
 
     let state = state.as_mut();
 
-    // Цель могла быть уничтожена.
+    // The target may have been destroyed.
     let target_alive = state
         .spotted_unit
         .and_then(|index| spotted_target(ctx, header.team, index))
@@ -236,7 +236,7 @@ fn kill_unit_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         return;
     }
 
-    // `GetNewUnits` — рекрутинг в порядке пяти списков (только мобильные).
+    // `GetNewUnits` — recruiting in the order of the five lists (mobile only).
     let mut recruited = Vec::new();
 
     for kind_list in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
@@ -302,14 +302,14 @@ fn kill_unit_execute(
         return false;
     };
 
-    // `AiAttack_ProcessAttack` — приказ атаки (в т.ч. `ORDER_MOVE_TO_ATTACK`).
+    // `AiAttack_ProcessAttack` — the attack order (including `ORDER_MOVE_TO_ATTACK`).
     let issued = attack::process_attack(ctx.tm, ctx.world, unit, target_id);
 
     if issued {
         return true;
     }
 
-    // Не достаёт: подойти к цели.
+    // Not in range: approach the target.
     let target_position = state.target_position;
     let dx = i32::from(attacker.grid.x) - i32::from(target_position.x);
     let dy = i32::from(attacker.grid.y) - i32::from(target_position.y);
@@ -439,7 +439,7 @@ fn kill_unit_event_enemy_spotted(
 // TaskAttack
 // ---------------------------------------------------------------------------
 
-/// `TaskAttack::ChooseFirstTarget` — первый замеченный юнит целевой команды.
+/// `TaskAttack::ChooseFirstTarget` — the first spotted unit of the target team.
 fn attack_choose_first_target(
     ctx: &mut TaskCtx<'_>,
     team: TeamId,
@@ -463,7 +463,7 @@ fn attack_choose_first_target(
     None
 }
 
-/// `TaskAttack::DetermineLeader` — самый ценный юнит группы.
+/// `TaskAttack::DetermineLeader` — the most valuable unit of the group.
 fn attack_determine_leader(ctx: &TaskCtx<'_>, state: &super::AttackState) -> Option<UnitId> {
     let mut leader: Option<(i32, UnitId)> = None;
 
@@ -504,7 +504,7 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
         state.op_state = attack_state::WAIT;
     }
 
-    // Есть ли живая цель выбранной команды.
+    // Whether there is a live target of the selected team.
     let target_team = state.target_team.unwrap_or(header.team);
 
     let has_target = {
@@ -520,7 +520,7 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
     };
 
     if !has_target {
-        // Все цели уничтожены.
+        // All targets destroyed.
         for task in state.primary_targets.clone() {
             if ctx.tm.has_task(task) {
                 ctx.tm.task_remove_self(ctx.world, task);
@@ -572,7 +572,7 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
     state.defenders_fire = 0;
 }
 
-/// `TaskAttack::GetPriority` — приоритет родителя или атака по умолчанию.
+/// `TaskAttack::GetPriority` — the parent's priority or the default attack.
 fn attack_priority(world: &crate::game::GameState, team: TeamId) -> u16 {
     let _ = world;
     let _ = team;
@@ -614,7 +614,7 @@ pub(crate) fn attack_is_unit_usable(
 }
 
 /// `TaskAttack`/`TaskKillUnit`/`TaskFrontalAttack`/`TaskRetreat` —
-/// `IsUnitTransferable` (`task.cpp:571`) с учётом родителя.
+/// `IsUnitTransferable` (`task.cpp:571`) considering the parent.
 pub(crate) fn is_unit_transferable(
     world: &crate::game::GameState,
     task: &super::super::Task,
@@ -671,7 +671,7 @@ pub(crate) fn defense_reserve_is_unit_usable(
         && (info.is_ground() || info.is_amphibious())
 }
 
-/// `TaskSupportAttack::IsUnitUsable` (`unit_flags` — класс поддерживающих).
+/// `TaskSupportAttack::IsUnitUsable` (`unit_flags` — the support class).
 pub(crate) fn support_attack_is_unit_usable(
     world: &crate::game::GameState,
     header: TaskHeader,
@@ -788,7 +788,7 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         return;
     };
 
-    // Найти сопровождающего нужного типа.
+    // Find an escort of the required type.
     if escort.is_none() {
         let candidate = ctx
             .list(UnitListKind::MobileLandSea)
@@ -831,7 +831,7 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         return;
     }
 
-    // `ORDER_MOVE_TO_UNIT` к цели.
+    // `ORDER_MOVE_TO_UNIT` toward the target.
     if let Some(mut info) = ctx.unit(escort_id) {
         info.parent_unit = Some(target_id);
         ctx.write_unit(escort_id, info);
@@ -848,11 +848,11 @@ fn escort_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 // TaskRetreat
 // ---------------------------------------------------------------------------
 
-/// `TaskRetreat::Search` — безопасная клетка в радиусе.
+/// `TaskRetreat::Search` — a safe cell within the radius.
 ///
-/// C++ перебирает клетки `ZoneWalker`-подобным циклом с `steps_in_direction`
-/// и `direction`; здесь — тот же обход `ZoneWalker` от текущей позиции,
-/// критерий — карта урона ИИ (`GetDamagePotentialMap`) и проходимость.
+/// C++ iterates cells with a `ZoneWalker`-like loop using `steps_in_direction`
+/// and `direction`; here — the same `ZoneWalker` walk from the current position,
+/// the criterion is the AI damage map (`GetDamagePotentialMap`) and passability.
 fn retreat_search(ctx: &TaskCtx<'_>, state: &super::RetreatState) -> Option<Point> {
     let unit_id = state.unit_to_retreat?;
     let info = ctx.unit(unit_id)?;
@@ -966,10 +966,10 @@ fn retreat_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация
+// Dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для combat-классов.
+/// `Init` for combat classes.
 pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Attack(_) => true,
@@ -988,7 +988,7 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
     }
 }
 
-/// `BeginTurn` для combat-классов.
+/// `BeginTurn` for combat classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Attack(_) => {
@@ -1031,7 +1031,7 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
     }
 }
 
-/// `EndTurn` для combat-классов.
+/// `EndTurn` for combat classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Attack(_) => {
@@ -1074,7 +1074,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `TaskSupportAttack::BeginTurn` — собрать поддерживающие юниты.
+/// `TaskSupportAttack::BeginTurn` — gather support units.
 fn support_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::SupportAttack {
         units, unit_flags, ..
@@ -1115,7 +1115,7 @@ fn support_attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
     }
 }
 
-/// `TaskAttackReserve::BeginTurn` — резерв следует за атакующими к сайту.
+/// `TaskAttackReserve::BeginTurn` — the reserve follows the attackers to the site.
 fn attack_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::AttackReserve { units, site, .. } = kind else {
         return;
@@ -1149,7 +1149,7 @@ fn attack_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
     }
 }
 
-/// `TaskDefenseReserve::BeginTurn` — резерв обороны у сайта.
+/// `TaskDefenseReserve::BeginTurn` — the defense reserve at the site.
 fn defense_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::DefenseReserve { units, site } = kind else {
         return;
@@ -1158,7 +1158,7 @@ fn defense_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     units.retain(|unit| ctx.unit(*unit).map(|info| info.hits > 0).unwrap_or(false));
 
     if units.is_empty() {
-        // Рекрутинг: первый подходящий юнит команды.
+        // Recruiting: the first suitable team unit.
         for unit_id in ctx.list(UnitListKind::MobileLandSea) {
             if defense_reserve_is_unit_usable(ctx.world, header, unit_id)
                 && crate::ai::task::task_is_recruitable(
@@ -1200,7 +1200,7 @@ fn defense_reserve_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header
     }
 }
 
-/// `Execute(unit)` для combat-классов.
+/// `Execute(unit)` for combat classes.
 pub fn execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1239,7 +1239,7 @@ pub fn execute(
     }
 }
 
-/// `AddUnit(unit)` для combat-классов.
+/// `AddUnit(unit)` for combat classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::Attack(_) => attack_add_unit(kind, ctx, header, unit),
@@ -1272,7 +1272,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для combat-классов.
+/// `RemoveUnit(unit)` for combat classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::KillUnit(_) => kill_unit_remove_unit(kind, ctx, header, unit),
@@ -1315,7 +1315,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для combat-классов.
+/// `RemoveSelf()` for combat classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::KillUnit(_)
@@ -1335,7 +1335,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` для combat-классов.
+/// `ChildComplete(task)` for combat classes.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1366,7 +1366,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении дочернего `TaskMove`.
+/// Notification about a child `TaskMove` completion.
 pub fn move_finished(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1449,7 +1449,7 @@ pub fn check_reactions(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
     }
 }
 
-/// `ExchangeOperator` — `TaskEscort` (обмен сопровождающего).
+/// `ExchangeOperator` — `TaskEscort` (swapping the escort).
 pub fn exchange_operator(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1491,7 +1491,7 @@ pub fn exchange_operator(
     true
 }
 
-/// `EventUnitDestroyed(unit)` для combat-классов.
+/// `EventUnitDestroyed(unit)` for combat classes.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1536,7 +1536,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `EventEnemyUnitSpotted(unit)` для combat-классов.
+/// `EventEnemyUnitSpotted(unit)` for combat classes.
 pub fn event_enemy_unit_spotted(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1550,7 +1550,7 @@ pub fn event_enemy_unit_spotted(
     }
 }
 
-/// `EventCargoTransfer` — не переопределён.
+/// `EventCargoTransfer` — not overridden.
 pub fn event_cargo_transfer(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1560,7 +1560,7 @@ pub fn event_cargo_transfer(
     false
 }
 
-/// `EventUnitLoaded` — `TaskEscort`/`TaskSupportAttack` (структурно).
+/// `EventUnitLoaded` — `TaskEscort`/`TaskSupportAttack` (structurally).
 pub fn event_unit_loaded(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1574,7 +1574,7 @@ pub fn event_unit_loaded(
     )
 }
 
-/// `EventUnitUnloaded` — структурно.
+/// `EventUnitUnloaded` — structurally.
 pub fn event_unit_unloaded(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1588,7 +1588,7 @@ pub fn event_unit_unloaded(
     )
 }
 
-/// `TaskAttack::GetCautionLevel` — в C++ зависит от роли юнита в группе.
+/// `TaskAttack::GetCautionLevel` — in C++ depends on the unit's role in the group.
 pub fn attack_caution_level(
     world: &crate::game::GameState,
     team: TeamId,

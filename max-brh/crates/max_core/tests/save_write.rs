@@ -1,10 +1,10 @@
-//! Запись V70 из `GameState` (P3): round-trip и побайтовая сверка с эталонами.
+//! V70 writing from `GameState` (P3): round-trip and byte-exact comparison with references.
 //!
-//! Сильнейшая проверка слоя — «загрузить настоящий сейв и записать его обратно
-//! из живого состояния»: `SAVE1.CAM`/`SAVE2.CAM` → [`GameState::from_save`] →
-//! [`GameState::to_save`] → байты обязаны совпасть **побайтово**. Любое
-//! расхождение печатается с полем, к которому оно относится (см.
-//! `first_difference`), поэтому тест работает и как диагностика.
+//! The strongest check of the layer — "load a real save and write it back
+//! from live state": `SAVE1.CAM`/`SAVE2.CAM` → [`GameState::from_save`] →
+//! [`GameState::to_save`] → the bytes must match **byte for byte**. Any
+//! discrepancy is printed with the field it refers to (see
+//! `first_difference`), so the test also works as diagnostics.
 
 use std::collections::BTreeMap;
 
@@ -15,12 +15,12 @@ use max_core::save::{SaveFile, SaveUnit};
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
 
-/// `max-original/SAVE1.CAM` — обучающая кампания «Islands in the Sun».
+/// `max-original/SAVE1.CAM` — the training campaign "Islands in the Sun".
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
-/// `max-original/SAVE2.CAM` — кампания «Heart of the Matter».
+/// `max-original/SAVE2.CAM` — the "Heart of the Matter" campaign.
 const SAVE2: &[u8] = include_bytes!("data/save2_v70.cam");
 
-/// Первое расхождение двух буферов с контекстом.
+/// The first difference between two buffers with context.
 fn first_difference(actual: &[u8], expected: &[u8]) -> String {
     if actual == expected {
         return "идентичны".to_string();
@@ -77,7 +77,7 @@ fn save2_load_to_save_is_byte_identical() {
     assert_eq!(written, SAVE2, "SAVE2.CAM: {}", first_difference(&written, SAVE2));
 }
 
-/// Ключевые поля переживают цикл `SaveFile -> GameState -> SaveFile`.
+/// Key fields survive the `SaveFile -> GameState -> SaveFile` cycle.
 #[test]
 fn round_trip_preserves_key_fields() {
     for (source, tag) in [(SAVE1, "SAVE1"), (SAVE2, "SAVE2")] {
@@ -85,7 +85,7 @@ fn round_trip_preserves_key_fields() {
         let state = GameState::from_save(&original);
         let rebuilt = state.to_save();
 
-        // Заголовок/настройки.
+        // Header/settings.
         assert_eq!(rebuilt.header, original.header, "{tag}: заголовок");
         assert_eq!(rebuilt.ini_options, original.ini_options, "{tag}: IniOptions");
         assert_eq!(
@@ -95,7 +95,7 @@ fn round_trip_preserves_key_fields() {
         assert_eq!(rebuilt.surface_map, original.surface_map, "{tag}: SurfaceMap");
         assert_eq!(rebuilt.cargo_map, original.cargo_map, "{tag}: ResourceMap");
 
-        // Команды, экономика, комплексы.
+        // Teams, economy, complexes.
         for team in 0..4 {
             assert_eq!(
                 rebuilt.teams[team], original.teams[team],
@@ -127,10 +127,10 @@ fn round_trip_preserves_key_fields() {
             }
         }
 
-        // Состояние партии.
+        // Game state.
         assert_eq!(rebuilt.game, original.game, "{tag}: GameManagerState");
 
-        // Юниты: те же id, типы, клетки, приказы, пути, ссылки.
+        // Units: the same ids, types, cells, orders, paths, references.
         assert_eq!(rebuilt.units.len(), original.units.len(), "{tag}: юнитов");
         let mut rebuilt_by_id: BTreeMap<UnitId, &SaveUnit> = BTreeMap::new();
         for unit in &rebuilt.units {
@@ -165,7 +165,7 @@ fn round_trip_preserves_key_fields() {
             assert_eq!(other.info.build_rate, unit.info.build_rate, "{tag}: build_rate");
         }
 
-        // Пять списков: те же юниты в том же порядке.
+        // Five lists: the same units in the same order.
         for kind in max_core::UnitListKind::ALL {
             let original_ids: Vec<UnitId> = original
                 .unit_list(kind)
@@ -188,7 +188,7 @@ fn round_trip_preserves_key_fields() {
             assert_eq!(rebuilt_ids, original_ids, "{tag}: список {kind:?}");
         }
 
-        // Хэши: те же id по ведёркам (порядок внутри ведра — порядок файла).
+        // Hashes: the same ids by bucket (order within a bucket — file order).
         let object_to_id = |save: &SaveFile, object_index: u16| {
             save.unit_by_object_index(object_index)
                 .map(|unit| unit.info.id)
@@ -234,7 +234,7 @@ fn round_trip_preserves_key_fields() {
         };
         assert_eq!(map_cells(&rebuilt), map_cells(&original), "{tag}: MapHash");
 
-        // Тепловые карты: те же (у эталонов нет отрицательных значений).
+        // Heat maps: the same (the references have no negative values).
         for team in 0..4 {
             match (&rebuilt.heat_maps[team], &original.heat_maps[team]) {
                 (None, None) => {}
@@ -253,7 +253,7 @@ fn round_trip_preserves_key_fields() {
             }
         }
 
-        // Журналы сообщений.
+        // Message logs.
         let logs = |save: &SaveFile| -> Vec<Vec<(Vec<u8>, Point, bool, u16)>> {
             save.message_logs
                 .iter()
@@ -274,7 +274,7 @@ fn round_trip_preserves_key_fields() {
         };
         assert_eq!(logs(&rebuilt), logs(&original), "{tag}: журналы");
 
-        // ИИ: состояние игроков.
+        // AI: player states.
         for team in 0..4 {
             match (&rebuilt.ai_players[team], &original.ai_players[team]) {
                 (None, None) => {}
@@ -318,7 +318,7 @@ fn round_trip_preserves_key_fields() {
             }
         }
 
-        // Наш файл читается парсером без ошибок и стабилен при повторной записи.
+        // Our file is parsed without errors and is stable on repeated writing.
         let bytes = rebuilt.to_bytes().expect("writes");
         let reparsed = SaveFile::parse(&bytes).expect("повторный разбор нашего сейва");
         assert_eq!(reparsed.to_bytes().expect("writes"), bytes, "{tag}: стабильность");
@@ -375,7 +375,7 @@ fn save_of_a_fresh_game_parses_and_reloads() {
     assert!(save.ai_players[1].is_some(), "у компьютерной команды есть AiPlayer");
     assert!(save.ai_players[0].is_none());
 
-    // Загрузка сохранённой партии возвращает те же ключевые значения.
+    // Loading the saved game returns the same key values.
     let reloaded = GameState::from_save(&save);
     assert_eq!(reloaded.turn_counter, 3);
     assert_eq!(reloaded.unit_count(), 2);
@@ -389,13 +389,13 @@ fn save_of_a_fresh_game_parses_and_reloads() {
     assert!(reloaded.has_unit(harvester));
     assert_eq!(reloaded.team_units[0].gold, 150);
 
-    // Повторная запись после загрузки даёт те же байты.
+    // Writing again after loading gives the same bytes.
     let again = reloaded.to_save_bytes().expect("writes again");
     assert_eq!(again, bytes, "save -> load -> save стабилен");
 }
 
-/// `map_hash` и `unit_hash` живого `GameState` соответствуют сейву: после
-/// загрузки эталона в состоянии ровно те же клетки и ведёрка.
+/// `map_hash` and `unit_hash` of the live `GameState` correspond to the save: after
+/// loading the reference, the state has exactly the same cells and buckets.
 #[test]
 fn hashes_of_loaded_state_match_the_file() {
     let original = SaveFile::parse(SAVE1).expect("parses");

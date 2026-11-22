@@ -1,15 +1,15 @@
-//! Напоминания ИИ — C++ `class Reminder` и наследники (`reminders.cpp/.hpp`).
+//! AI reminders — C++ `class Reminder` and its subclasses (`reminders.cpp/.hpp`).
 //!
-//! Напоминание — отложенный вызов задачи или юнита. Очередей три
-//! (см. [`crate::ai::task_manager::TaskManager`]): `priority`, `normal`,
-//! `deferred`; `ExecuteReminders` обрабатывает их в детерминированном порядке
-//! 2 priority : 1 normal, а `deferred` в начале каждого вызова переезжают в
-//! `normal` (`reminders` ждут хода юнита, а юниты двигаются только между
-//! вызовами).
+//! A reminder is a deferred call of a task or unit. There are three queues
+//! (see [`crate::ai::task_manager::TaskManager`]): `priority`, `normal`,
+//! `deferred`; `ExecuteReminders` processes them in a deterministic order
+//! 2 priority : 1 normal, while `deferred` reminders move to
+//! `normal` at the start of every call (they wait for the unit's turn, and units move only between
+//! calls).
 //!
-//! Побочные эффекты конструкторов C++ (`RemindTurnStart` ставит флаг
-//! планирования, `RemindMoveFinished`/`RemindRetreat` — биты `ai_state_bits`)
-//! выполняются при постановке в очередь — [`Reminder::on_append`].
+//! Side effects of the C++ constructors (`RemindTurnStart` sets the scheduling
+//! flag, `RemindMoveFinished`/`RemindRetreat` — `ai_state_bits` bits)
+//! are performed when the reminder is enqueued — [`Reminder::on_append`].
 
 use crate::enums::AI_STATE_MOVE_FINISHED_REMINDER;
 use crate::game::GameState;
@@ -33,37 +33,37 @@ pub const REMINDER_TYPE_RETREAT: u8 = 5;
 /// `REMINDER_TYPE_COUNT`.
 pub const REMINDER_TYPE_COUNT: usize = 6;
 
-/// Напоминание задачи или юнита — C++ `class Reminder` (иерархия класса).
+/// A task or unit reminder — C++ `class Reminder` (class hierarchy).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reminder {
-    /// `RemindTurnStart` — начало хода задачи.
+    /// `RemindTurnStart` — start of the task's turn.
     TurnStart {
-        /// Задача.
+        /// Task.
         task: u32,
     },
-    /// `RemindTurnEnd` — конец хода задачи.
+    /// `RemindTurnEnd` — end of the task's turn.
     TurnEnd {
-        /// Задача.
+        /// Task.
         task: u32,
     },
-    /// `RemindAvailable` — юнит освободился, нужна новая задача.
+    /// `RemindAvailable` — the unit became free and needs a new task.
     Available {
-        /// Юнит.
+        /// Unit.
         unit: UnitId,
     },
-    /// `RemindMoveFinished` — юнит завершил ход/движение.
+    /// `RemindMoveFinished` — the unit finished its turn/movement.
     MoveFinished {
-        /// Юнит.
+        /// Unit.
         unit: UnitId,
     },
-    /// `RemindAttack` — юнит может атаковать.
+    /// `RemindAttack` — the unit can attack.
     Attack {
-        /// Юнит.
+        /// Unit.
         unit: UnitId,
     },
-    /// `RemindRetreat` — проверка реакции (отступление).
+    /// `RemindRetreat` — reaction check (retreat).
     Retreat {
-        /// Юнит.
+        /// Unit.
         unit: UnitId,
     },
 }
@@ -81,7 +81,7 @@ impl Reminder {
         }
     }
 
-    /// Побочные эффекты конструктора C++ (выполняются при постановке в очередь).
+    /// Side effects of the C++ constructor (performed when the reminder is enqueued).
     pub fn on_append(&self, manager: &mut TaskManager, world: &mut GameState) {
         match self {
             Self::TurnStart { task } => {
@@ -111,7 +111,7 @@ impl Reminder {
         }
     }
 
-    /// `Reminder::Execute` — действие конкретного напоминания.
+    /// `Reminder::Execute` — the action of a concrete reminder.
     pub fn execute(&self, manager: &mut TaskManager, world: &mut GameState) {
         match self {
             Self::TurnStart { task } => {

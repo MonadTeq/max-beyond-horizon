@@ -1,14 +1,14 @@
-//! Знание ресурсов командой — порт `Survey_SurveyArea` (`survey.cpp:84-121`)
-//! и `Survey_RenderMarkers` (`survey.cpp:123-155`).
+//! Team resource knowledge — a port of `Survey_SurveyArea` (`survey.cpp:84-121`)
+//! and `Survey_RenderMarkers` (`survey.cpp:123-155`).
 //!
-//! C++: `Access_UpdateMapStatus` (`access.cpp:762-768`) при добавлении покрытия
-//! (`mode = true`) зовёт `Survey_SurveyArea(unit, 1)` для `SURVEYOR`/`MINELAYR`/
-//! `SEAMNLYR`/`COMMANDO`. Внутри квадрата `grid ± 1` (3×3) клетки с
-//! поверхностью `AIR` пропускаются, а **разведчик** ставит в
-//! `ResourceManager_CargoMap` бит своей команды (`hash_team_id`): `RED = 0x2000`
-//! (`enums.hpp:40-43`). Знание накопительное — `|=`, поэтому уход разведчика
-//! его не снимает; иконки (`Survey_RenderMarkers`) показываются только на
-//! помеченных клетках, а маска `GameManager_MaxSurvey` (чит `MAXSURVEY`) даёт
+//! C++: `Access_UpdateMapStatus` (`access.cpp:762-768`) on adding coverage
+//! (`mode = true`) calls `Survey_SurveyArea(unit, 1)` for `SURVEYOR`/`MINELAYR`/
+//! `SEAMNLYR`/`COMMANDO`. Inside the square `grid ± 1` (3×3), cells with
+//! surface `AIR` are skipped, and the **surveyor** sets its team's bit in
+//! `ResourceManager_CargoMap` (`hash_team_id`): `RED = 0x2000`
+//! (`enums.hpp:40-43`). Knowledge is cumulative — `|=`, so the surveyor leaving
+//! does not remove it; icons (`Survey_RenderMarkers`) are shown only on
+//! marked cells, and the `GameManager_MaxSurvey` mask (the `MAXSURVEY` cheat) gives
 //! `0xFFFF`.
 
 use max_core::access;
@@ -19,8 +19,8 @@ use max_core::team::TeamId;
 use max_core::team::TeamKind;
 use max_core::GameState;
 
-/// Партия: вся карта — суша, в каждой клетке 8 материалов, RED — человек,
-/// GREEN — компьютер. `UNKNOWN` — ни одна команда не разведала.
+/// Game: the whole map is land, each cell has 8 materials, RED is a human,
+/// GREEN is a computer. `UNKNOWN` — no team has surveyed.
 fn land_state_with_resources() -> GameState {
     let mut state = GameState::new();
 
@@ -42,7 +42,7 @@ fn land_state_with_resources() -> GameState {
     state
 }
 
-/// Разведана ли клетка командой (`ResourceManager_CargoMap & hash_team_id`).
+/// Whether the cell is surveyed by the team (`ResourceManager_CargoMap & hash_team_id`).
 fn known(state: &GameState, x: i16, y: i16, team: u8) -> bool {
     state.map.resources.get(x, y).is_visible_to(team)
 }
@@ -50,21 +50,21 @@ fn known(state: &GameState, x: i16, y: i16, team: u8) -> bool {
 #[test]
 fn surveyor_marks_its_3x3_for_its_own_team_only() {
     let mut state = land_state_with_resources();
-    // Клетка в квадрате разведки с поверхностью AIR — C++ её пропускает.
+    // A cell in the survey square with surface AIR — C++ skips it.
     let _ = state.map.surface.set(21, 21, Surface::AIR);
 
     let surveyor = state
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
         .expect("surveyor");
 
-    // `spawn_unit` → `GameState::update_map_status(id, true)` — как
-    // `Access_UpdateMapStatus` после `DeployUnit`.
+    // `spawn_unit` → `GameState::update_map_status(id, true)` — like
+    // `Access_UpdateMapStatus` after `DeployUnit`.
     let _ = surveyor;
 
     for y in 19..=21 {
         for x in 19..=21 {
             if (x, y) == (20, 20) || (x, y) == (21, 21) {
-                // Своя клетка разведчика разведана, AIR — пропущена.
+                // The surveyor's own cell is surveyed, AIR — skipped.
                 assert_eq!(
                     known(&state, x, y, 0),
                     (x, y) == (20, 20),
@@ -84,12 +84,12 @@ fn surveyor_marks_its_3x3_for_its_own_team_only() {
         }
     }
 
-    // Вне квадрата 3×3 знания нет.
+    // Outside the 3×3 square there is no knowledge.
     for (x, y) in [(22, 20), (18, 20), (20, 22), (20, 18)] {
         assert!(!known(&state, x, y, 0), "клетка ({x},{y}) вне 3×3");
     }
 
-    // Бит RED — `HASH_TEAM_RED = 0x2000` (бит 13), а не младший бит.
+    // The RED bit — `HASH_TEAM_RED = 0x2000` (bit 13), not the low bit.
     assert_eq!(
         state.map.resources.get(19, 19).visibility(),
         0b1000,
@@ -109,18 +109,18 @@ fn survey_knowledge_accumulates_and_is_not_removed_by_movement() {
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
         .expect("surveyor");
 
-    // Разведчик проехал на четыре клетки восточнее: `write_unit` пересчитывает
-    // покрытие старой и новой клетки (`Access_UpdateMapStatus`).
+    // The surveyor drove four cells east: `write_unit` recomputes
+    // the coverage of the old and new cells (`Access_UpdateMapStatus`).
     let mut unit = state.unit(surveyor).expect("surveyor").clone();
     unit.grid = Point::new(24, 20);
     state.write_unit(surveyor, unit);
 
-    // Новое место разведано…
+    // The new place is surveyed…
     for (x, y) in [(23, 19), (24, 20), (25, 21)] {
         assert!(known(&state, x, y, 0), "новая клетка ({x},{y})");
     }
 
-    // …старое осталось разведанным (C++ `|=`, снятия нет).
+    // …the old one remains surveyed (C++ `|=`, no removal).
     for (x, y) in [(19, 19), (20, 20), (21, 21)] {
         assert!(
             known(&state, x, y, 0),
@@ -128,8 +128,8 @@ fn survey_knowledge_accumulates_and_is_not_removed_by_movement() {
         );
     }
 
-    // Промежуточные клетки маршрута не разведаны: C++ помечает только текущий
-    // квадрат `grid ± 1`, телепорта по клеткам нет.
+    // Intermediate route cells are not surveyed: C++ marks only the current
+    // square `grid ± 1`, there is no teleport by cells.
     assert!(
         !known(&state, 22, 20, 0),
         "клетка между позициями не разведана"
@@ -140,8 +140,8 @@ fn survey_knowledge_accumulates_and_is_not_removed_by_movement() {
 fn only_a_surveyor_marks_resources() {
     let mut state = land_state_with_resources();
 
-    // `Access_UpdateMapStatus` зовёт `Survey_SurveyArea` и для мин/коммандо, но
-    // **помечает** клетки только `SURVEYOR` (`survey.cpp:108-117`).
+    // `Access_UpdateMapStatus` calls `Survey_SurveyArea` for mines/commandos too, but
+    // **marks** cells only `SURVEYOR` (`survey.cpp:108-117`).
     for unit_type in [
         UnitType::MineLayer,
         UnitType::SeaMineLayer,
@@ -160,7 +160,7 @@ fn only_a_surveyor_marks_resources() {
         state.destroy_unit(id);
     }
 
-    // А разведчик — помечает.
+    // And the surveyor — marks.
     let _ = state
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(40, 40), 0)
         .expect("surveyor");
@@ -194,7 +194,7 @@ fn knowledge_is_part_of_the_state_and_deterministic() {
         "снапшот включает карту ресурсов с битами знания"
     );
 
-    // Снапшот/CRC меняются вместе со знанием: это не UI-поле.
+    // Snapshot/CRC change together with knowledge: it is not a UI field.
     let mut learned = first.clone();
     let entry = learned.map.resources.get(50, 50).with_team_visible(0);
     learned.map.resources.set(50, 50, entry);
@@ -205,13 +205,13 @@ fn knowledge_is_part_of_the_state_and_deterministic() {
     );
 }
 
-/// Отрисовка иконок (`Survey_RenderMarkers`) — только для помеченных клеток;
-/// маска команды берётся из `hash_team_id`.
+/// Icon rendering (`Survey_RenderMarkers`) — only for marked cells;
+/// the team mask is taken from `hash_team_id`.
 #[test]
 fn render_mask_matches_the_cpp_hash_team_id() {
     let mut state = land_state_with_resources();
 
-    // RED помечает (10,10), GREEN — нет.
+    // RED marks (10,10), GREEN does not.
     let entry = state.map.resources.get(10, 10).with_team_visible(0);
     state.map.resources.set(10, 10, entry);
 
@@ -223,7 +223,7 @@ fn render_mask_matches_the_cpp_hash_team_id() {
     assert!(state.map.resources.get(10, 10).is_visible_to(0));
     assert!(!state.map.resources.get(10, 10).is_visible_to(1));
 
-    // `Survey_RenderMarkers` дополнительно требует `surface != AIR`.
+    // `Survey_RenderMarkers` additionally requires `surface != AIR`.
     let _ = state.map.surface.set(10, 10, Surface::AIR);
     assert_eq!(
         access::modified_surface_type(&state, Point::new(10, 10), false),
@@ -231,10 +231,10 @@ fn render_mask_matches_the_cpp_hash_team_id() {
         "иконка на AIR-клетке не рисуется (проверка в рендере)"
     );
 
-    // Разведчик, стоящий в `ORDER_DISABLE`, не обновляет знание
+    // A surveyor in `ORDER_DISABLE` does not update knowledge
     // (`Access_UpdateMapStatus`: `if (unit->GetOrder() != ORDER_DISABLE)`).
-    // Спавн в (60,60) разведал 3×3; переводим в `ORDER_DISABLE` и двигаем —
-    // новая клетка обязана остаться неразведанной.
+    // Spawning at (60,60) surveyed 3×3; switch to `ORDER_DISABLE` and move —
+    // the new cell must remain unsurveyed.
     let surveyor = state
         .spawn_unit(UnitType::Surveyor, TeamId::GREEN, Point::new(60, 60), 0)
         .expect("surveyor");

@@ -1,57 +1,57 @@
-//! Детерминированная генерация карты при старте партии (фаза P2).
+//! Deterministic map generation at game start (phase P2).
 //!
-//! # Что именно портировано (и откуда)
+//! # What exactly is ported (and from where)
 //!
-//! В оракуле `max-cpp-port/src` **нет** файла `setup.cpp`: генерация карты
-//! разложена по трём местам, и это зафиксировано здесь явно.
+//! The `max-cpp-port/src` oracle has **no** `setup.cpp` file: map generation
+//! is spread across three places, and this is stated explicitly here.
 //!
-//! | Шаг `GameManager_InitGame()` | Файл оракула | Что делает | Порт |
+//! | `GameManager_InitGame()` step | Oracle file | What it does | Port |
 //! |---|---|---|---|
-//! | `ResourceManager_InitInGameAssets(world)` | `world.cpp` (LoadTilesAndMetadata) | строит `SurfaceMap` из `.wrl`-файла планеты: `surface[i] = PassData[pass_table[tile_ids[i]]]` | [`derive_surface_map`] — чистая функция от `tile_ids`/`pass_table` |
-//! | `Ai_SetupStrategy(team)` (для компьютеров) | `aiplayer.cpp` | тратит RNG, но **до** пересеивания | [`crate::ai::ai_setup_strategy`] (P6: только выбор стратегии, без генерации карты) |
-//! | `GameManager_PopulateMapWithResources()` | `game_manager.cpp:4730` + `resource_allocator.cpp` | `Randomizer_SetSeed(Remote_RngSeed)`, 3×`PopulateCargoMap`, `Optimize` у стартовых позиций команд, `SeparateResources`, 3×`ConcentrateResources`, `SettleMinimumResourceLevels` | [`populate_map_with_resources`] |
-//! | `GameManager_PopulateMapWithAlienUnits(...)` | `game_manager.cpp:4942` | сетка точек (RNG), `SpawnAlienDerelicts` (RNG: здание, мосты, юниты) | [`populate_map_with_alien_units`] |
-//! | `GameManager_InitMap()` | `game_manager.cpp:1531` | только UI (зум/рендер) | не портируется |
-//! | `GameManager_ProcessTeamMissionSupplyUnits(team)` | `game_manager.cpp:4967` | высадка юнитов, `Survey_GetTotalResourcesInArea` | вне P2 (нужны таблицы юнитов, P3) |
+//! | `ResourceManager_InitInGameAssets(world)` | `world.cpp` (LoadTilesAndMetadata) | builds `SurfaceMap` from the planet's `.wrl` file: `surface[i] = PassData[pass_table[tile_ids[i]]]` | [`derive_surface_map`] — a pure function of `tile_ids`/`pass_table` |
+//! | `Ai_SetupStrategy(team)` (for computers) | `aiplayer.cpp` | spends RNG, but **before** reseeding | [`crate::ai::ai_setup_strategy`] (P6: strategy selection only, without map generation) |
+//! | `GameManager_PopulateMapWithResources()` | `game_manager.cpp:4730` + `resource_allocator.cpp` | `Randomizer_SetSeed(Remote_RngSeed)`, 3×`PopulateCargoMap`, `Optimize` at team start positions, `SeparateResources`, 3×`ConcentrateResources`, `SettleMinimumResourceLevels` | [`populate_map_with_resources`] |
+//! | `GameManager_PopulateMapWithAlienUnits(...)` | `game_manager.cpp:4942` | point grid (RNG), `SpawnAlienDerelicts` (RNG: building, bridges, units) | [`populate_map_with_alien_units`] |
+//! | `GameManager_InitMap()` | `game_manager.cpp:1531` | UI only (zoom/render) | not ported |
+//! | `GameManager_ProcessTeamMissionSupplyUnits(team)` | `game_manager.cpp:4967` | unit landing, `Survey_GetTotalResourcesInArea` | outside P2 (unit tables are needed, P3) |
 //!
-//! Отдельно про «surfaces по типу планеты»: **процедурной генерации поверхности в
-//! порте нет**. Номер планеты (`settings["world"]`) выбирает ресурс-файл `.wrl`,
-//! из которого `World::LoadTilesAndMetadata()` читает карту tile-id и pass-table и
-//! переводит её в байты `SurfaceMap`. Соответственно в Rust поверхность — вход
-//! [`SurfaceMap`], а портирован только её вывод из tile-data ([`derive_surface_map`]),
-//! который и сверяется векторами. `World::ApplyBugFixes()` (правки конкретных
-//! `.wrl` по SHA-256) — тоже данные ассетов, а не логика генерации.
+//! Separately on "surfaces by planet type": **there is no procedural surface
+//! generation in the port**. The planet number (`settings["world"]`) selects the `.wrl`
+//! resource file from which `World::LoadTilesAndMetadata()` reads the tile-id map and pass table and
+//! converts it into `SurfaceMap` bytes. Accordingly, in Rust the surface is an input
+//! [`SurfaceMap`], and only its derivation from tile data ([`derive_surface_map`]) is ported,
+//! which is verified by vectors. `World::ApplyBugFixes()` (patches of specific
+//! `.wrl`s by SHA-256) is also asset data, not generation logic.
 //!
-//! Про `menu_update_resource_levels()` (`menu.cpp:866`): настройки `raw_resource`,
-//! `fuel_resource`, `gold_resource`, `alien_derelicts` из меню (0–2) разворачиваются
-//! в числовые параметры генерации (`raw_normal_low`…, `max_resources`,
-//! `min_resources`, `alien_seperation`, `alien_unit_value`). Это портировано как
-//! [`GenerationSettings::from_menu_levels`] — иначе «уровни ресурсов 0–2» в
-//! `resource_allocator.cpp` не воспроизвести.
+//! About `menu_update_resource_levels()` (`menu.cpp:866`): the menu settings `raw_resource`,
+//! `fuel_resource`, `gold_resource`, `alien_derelicts` (0–2) are expanded
+//! into numeric generation parameters (`raw_normal_low`…, `max_resources`,
+//! `min_resources`, `alien_seperation`, `alien_unit_value`). This is ported as
+//! [`GenerationSettings::from_menu_levels`] — otherwise the "resource levels 0–2" in
+//! `resource_allocator.cpp` could not be reproduced.
 //!
-//! # Детерминизм
+//! # Determinism
 //!
-//! Все циклы и все обращения к [`Randomizer`] идут в порядке C++ 1:1:
-//! `resource_allocator.cpp` (`GetValue` — два вызова на тайл; `SeparateResources` —
-//! два `Generate(5)` и т.д.), `GameManager_PopulateMapWithAlienUnits` и
-//! `GameManager_SpawnAlienDerelicts` (`Randomizer_Generate(std::size(...))` — ветка
-//! `size_t`, т.е. [`Randomizer::generate_u64`]). Тест `matches_cpp_reference_vectors`
-//! сверяет не только карты, но и **итоговое состояние RNG** — это ловит любое
-//! расхождение в числе/порядке вызовов.
+//! All loops and all [`Randomizer`] accesses follow C++ order 1:1:
+//! `resource_allocator.cpp` (`GetValue` — two calls per tile; `SeparateResources` —
+//! two `Generate(5)` etc.), `GameManager_PopulateMapWithAlienUnits` and
+//! `GameManager_SpawnAlienDerelicts` (`Randomizer_Generate(std::size(...))` — the
+//! `size_t` branch, i.e. [`Randomizer::generate_u64`]). The `matches_cpp_reference_vectors` test
+//! compares not only the maps but also the **final RNG state** — this catches any
+//! discrepancy in the number/order of calls.
 //!
-//! # Ограничения (осознанные)
+//! # Limitations (intentional)
 //!
-//! * Стоимость юнитов (`ATTRIB_TURNS`) для alien-обломков в P2 ещё не портирована
-//!   (таблицы атрибутов — P3): она приходит входом [`AlienUnitCosts`] и берётся из
-//!   векторов. Ветвление и порядок RNG при этом портированы полностью.
-//! * `Access_GetModifiedSurfaceType()` на этапе генерации не видит юнитов: карта
-//!   ещё пуста, поэтому для стартовых позиций она равна `SurfaceMap`. Для
-//!   alien-обломков порт учитывает единственный тип юнита, который меняет
-//!   проходимость, — мосты (`BRIDGE` → клетка воды/побережья становится `LAND`),
-//!   как в `access.cpp:950`.
-//! * `UnitsManager_DeployUnit()` не пишет в `CargoMap`/`SurfaceMap` (проверено по
-//!   `units_manager.cpp:2354` и `unitinfo.cpp:1301`), поэтому расстановка обломков
-//!   портирована как запись [`AlienPlacement`] без остального состояния юнитов.
+//! * Unit cost (`ATTRIB_TURNS`) for alien derelicts is not yet ported in P2
+//!   (attribute tables — P3): it comes in as [`AlienUnitCosts`] input and is taken from
+//!   the vectors. Branching and RNG order are nevertheless fully ported.
+//! * `Access_GetModifiedSurfaceType()` sees no units during generation: the map
+//!   is still empty, so for start positions it equals `SurfaceMap`. For
+//!   alien derelicts the port accounts for the only unit type that changes
+//!   passability — bridges (`BRIDGE` → a water/coast cell becomes `LAND`),
+//!   as in `access.cpp:950`.
+//! * `UnitsManager_DeployUnit()` does not write to `CargoMap`/`SurfaceMap` (verified by
+//!   `units_manager.cpp:2354` and `unitinfo.cpp:1301`), so derelict placement
+//!   is ported as writing [`AlienPlacement`] without the rest of the unit state.
 
 use crate::enums::{Planet, Surface, UnitType, CARGO_GOLD, CARGO_MATERIALS};
 use crate::geo::{Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
@@ -59,7 +59,7 @@ use crate::map::{Map, ResourceKind, ResourceMap, SurfaceMap};
 use crate::rng::Randomizer;
 use crate::team::TeamId;
 
-/// `PassData[]` из `world.cpp:382` — индекс pass-таблицы → бит `SurfaceType`.
+/// `PassData[]` from `world.cpp:382` — pass-table index → `SurfaceType` bit.
 pub const PASS_TABLE_SURFACES: [Surface; 4] =
     [Surface::LAND, Surface::WATER, Surface::COAST, Surface::AIR];
 
@@ -77,22 +77,22 @@ pub const ALIEN_UNITS: [UnitType; 3] = [
     UnitType::AlienPlane,
 ];
 
-/// Уровень ресурсов/обломков из меню — C++ `settings["raw_resource"]` и т.п.
+/// Resource/derelict level from the menu — C++ `settings["raw_resource"]` etc.
 ///
-/// Допустимы только 0, 1, 2 (`menu_update_resource_levels` имеет `switch` без
+/// Only 0, 1, 2 are allowed (`menu_update_resource_levels` has a `switch` without
 /// `default`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResourceLevel(u8);
 
 impl ResourceLevel {
-    /// Уровень 0 (`case 0` в `menu_update_resource_levels`).
+    /// Level 0 (`case 0` in `menu_update_resource_levels`).
     pub const LOW: Self = Self(0);
-    /// Уровень 1 (`case 1`).
+    /// Level 1 (`case 1`).
     pub const NORMAL: Self = Self(1);
-    /// Уровень 2 (`case 2`).
+    /// Level 2 (`case 2`).
     pub const HIGH: Self = Self(2);
 
-    /// Создаёт уровень; `None` вне диапазона 0..=2.
+    /// Creates a level; `None` outside 0..=2.
     #[inline]
     pub const fn new(value: u8) -> Option<Self> {
         if value <= 2 {
@@ -102,14 +102,14 @@ impl ResourceLevel {
         }
     }
 
-    /// Значение уровня (0..=2).
+    /// Level value (0..=2).
     #[inline]
     pub const fn value(self) -> u8 {
         self.0
     }
 }
 
-/// Параметры генерации одного типа ресурса — `settings["raw_normal_low"]` и т.п.
+/// Generation parameters of one resource type — `settings["raw_normal_low"]` etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceKindSettings {
     /// `*_normal_low`.
@@ -120,14 +120,14 @@ pub struct ResourceKindSettings {
     pub concentrate_low: i32,
     /// `*_concentrate_high`.
     pub concentrate_high: i32,
-    /// `*_concentrate_seperation` (так в C++, с опечаткой).
+    /// `*_concentrate_seperation` (spelled this way in C++, with the typo).
     pub concentrate_seperation: i32,
     /// `*_concentrate_diffusion`.
     pub concentrate_diffusion: i32,
 }
 
-/// Числовые параметры генерации — ровно те `Settings->GetNumericValue(...)`,
-/// которые читают `resource_allocator.cpp` и `game_manager.cpp`.
+/// Numeric generation parameters — exactly the `Settings->GetNumericValue(...)`
+/// that `resource_allocator.cpp` and `game_manager.cpp` read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GenerationSettings {
     /// `max_resources`.
@@ -136,11 +136,11 @@ pub struct GenerationSettings {
     pub min_resources: i32,
     /// `mixed_resource_seperation`.
     pub mixed_resource_seperation: i32,
-    /// Параметры материалов (`CARGO_MATERIALS`).
+    /// Materials parameters (`CARGO_MATERIALS`).
     pub raw: ResourceKindSettings,
-    /// Параметры топлива (`CARGO_FUEL`).
+    /// Fuel parameters (`CARGO_FUEL`).
     pub fuel: ResourceKindSettings,
-    /// Параметры золота (`CARGO_GOLD`).
+    /// Gold parameters (`CARGO_GOLD`).
     pub gold: ResourceKindSettings,
     /// `alien_seperation`.
     pub alien_seperation: i32,
@@ -149,22 +149,22 @@ pub struct GenerationSettings {
 }
 
 impl GenerationSettings {
-    /// Порт `menu_update_resource_levels()` (`menu.cpp:866`).
+    /// Port of `menu_update_resource_levels()` (`menu.cpp:866`).
     ///
-    /// Разворачивает четыре настройки меню (0–2) в числовые параметры генерации,
-    /// включая перекрёстную `mixed_resource_seperation` (зависит от `raw + fuel`)
-    /// и итоговые `min_resources`/`max_resources`.
+    /// Expands the four menu settings (0–2) into numeric generation parameters,
+    /// including the cross `mixed_resource_seperation` (depends on `raw + fuel`)
+    /// and the final `min_resources`/`max_resources`.
     ///
-    /// Для дефолтных уровней 1/1/1/0 получаются значения
-    /// `min_resources = 9`, `max_resources = 20` — как в `settings.cpp`.
+    /// For the default levels 1/1/1/0 the values are
+    /// `min_resources = 9`, `max_resources = 20` — as in `settings.cpp`.
     pub fn from_menu_levels(
         raw: ResourceLevel,
         fuel: ResourceLevel,
         gold: ResourceLevel,
         derelicts: ResourceLevel,
     ) -> Self {
-        // `resource_min = 1`, `resource_max = 15` из `menu.cpp`, затем case-ветки
-        // переписывают их (raw) или инкрементируют (fuel, gold).
+        // `resource_min = 1`, `resource_max = 15` from `menu.cpp`, then the case branches
+        // overwrite them (raw) or increment them (fuel, gold).
         let (raw_settings, mut resource_min, mut resource_max) = match raw.value() {
             0 => (
                 ResourceKindSettings {
@@ -308,7 +308,7 @@ impl GenerationSettings {
         }
     }
 
-    /// Параметры конкретного типа ресурса.
+    /// Parameters of a concrete resource type.
     #[inline]
     pub fn kind(&self, kind: ResourceKind) -> &ResourceKindSettings {
         match kind {
@@ -319,31 +319,31 @@ impl GenerationSettings {
     }
 }
 
-/// Стартовая позиция команды — `UnitsManager_TeamMissionSupplies[team].starting_position`.
+/// Team starting position — `UnitsManager_TeamMissionSupplies[team].starting_position`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TeamStart {
-    /// Команда (`PLAYER_TEAM_RED..GRAY`).
+    /// Team (`PLAYER_TEAM_RED..GRAY`).
     pub team: TeamId,
-    /// Стартовая позиция (мутируется `find_valid_starting_position`).
+    /// Starting position (mutated by `find_valid_starting_position`).
     pub position: Point,
 }
 
 impl TeamStart {
-    /// Создаёт запись о стартовой позиции.
+    /// Creates a starting-position record.
     #[inline]
     pub const fn new(team: TeamId, position: Point) -> Self {
         Self { team, position }
     }
 }
 
-/// Стоимость alien-юнитов в ходах — `UnitValues::GetAttribute(ATTRIB_TURNS)`.
+/// Alien unit cost in turns — `UnitValues::GetAttribute(ATTRIB_TURNS)`.
 ///
-/// В P2 таблицы атрибутов (93×14) ещё не портированы, поэтому значения приходят
-/// входом. Для команды пришельцев `current_values == base_values`, поэтому одна
-/// таблица покрывает оба использования в `GameManager_SpawnAlienDerelicts`.
+/// In P2 the attribute tables (93×14) are not yet ported, so the values come
+/// as input. For the alien team `current_values == base_values`, so one
+/// table covers both uses in `GameManager_SpawnAlienDerelicts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlienUnitCosts {
-    /// `ALNTANK` — он же `cost` в `GameManager_SpawnAlienDerelicts`.
+    /// `ALNTANK` — also the `cost` in `GameManager_SpawnAlienDerelicts`.
     pub alien_tank: i32,
     /// `JUGGRNT`.
     pub juggernaut: i32,
@@ -354,8 +354,8 @@ pub struct AlienUnitCosts {
 }
 
 impl AlienUnitCosts {
-    /// `ATTRIB_TURNS` юнита; паникует для типов, которые генерация не запрашивает
-    /// (здание/мост/плита: их стоимость в C++ не читается).
+    /// `ATTRIB_TURNS` of the unit; panics for types the generation does not request
+    /// (building/bridge/slab: their cost is not read in C++).
     #[inline]
     pub fn turns(&self, unit: UnitType) -> i32 {
         match unit {
@@ -368,46 +368,46 @@ impl AlienUnitCosts {
     }
 }
 
-/// Один вызов `UnitsManager_DeployUnit` при генерации alien-обломков.
+/// One `UnitsManager_DeployUnit` call during alien derelict generation.
 ///
-/// Порядок записей — порядок развёртывания в C++ (плита → здание → мосты →
-/// юниты), поэтому он же порядок вызовов RNG.
+/// Entry order — C++ deployment order (slab → building → bridges →
+/// units), hence also the RNG call order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlienPlacement {
-    /// Тип юнита/здания.
+    /// Unit/building type.
     pub unit_type: UnitType,
-    /// Клетка развёртывания.
+    /// Deployment cell.
     pub position: Point,
 }
 
-/// Вход генерации партии: планета, настройки, команды и стоимость обломков.
+/// Game generation input: planet, settings, teams and derelict cost.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameSetup {
-    /// Планета (`settings["world"]`); выбор `.wrl`-ассета — вне крейта.
+    /// Planet (`settings["world"]`); the `.wrl` asset choice is outside the crate.
     pub planet: Planet,
-    /// Числовые параметры генерации (из уровней меню).
+    /// Numeric generation parameters (from menu levels).
     pub settings: GenerationSettings,
-    /// Активные команды **в порядке `PLAYER_TEAM_RED..GRAY`** со стартовыми
-    /// позициями (как `GameManager_InitGame` обходит команды).
+    /// Active teams **in `PLAYER_TEAM_RED..GRAY` order** with starting
+    /// positions (as `GameManager_InitGame` iterates teams).
     pub teams: Vec<TeamStart>,
-    /// Стоимости alien-юнитов.
+    /// Alien unit costs.
     pub alien_costs: AlienUnitCosts,
 }
 
-/// Результат генерации: карта и расстановка alien-обломков.
+/// Generation result: the map and alien derelict placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupOutput {
-    /// Карта: поверхность + ресурсы.
+    /// Map: surface + resources.
     pub map: Map,
-    /// Развёрнутые обломки (в порядке `UnitsManager_DeployUnit`).
+    /// Deployed derelicts (in `UnitsManager_DeployUnit` order).
     pub aliens: Vec<AlienPlacement>,
 }
 
 // ---------------------------------------------------------------------------
-// SurfaceMap из tile-data (.wrl): world.cpp:382-409
+// SurfaceMap from tile data (.wrl): world.cpp:382-409
 // ---------------------------------------------------------------------------
 
-/// Строит [`SurfaceMap`] из tile-id карты и pass-таблицы — дословный порт
+/// Builds [`SurfaceMap`] from the map's tile ids and pass table — a verbatim port
 /// `World::LoadTilesAndMetadata()` (`world.cpp:382-409`).
 ///
 /// ```c
@@ -416,8 +416,8 @@ pub struct SetupOutput {
 /// for (i = 0; i < map_cell_count; ++i) surface[i] = pass_table[tile_ids[i]];
 /// ```
 ///
-/// Некорректные индексы (вне `pass_table`/`PassData`) в C++ — выход за границы
-/// массива; здесь они дают [`Surface::NONE`] и фиксируются `debug_assert`.
+/// Invalid indices (outside `pass_table`/`PassData`) are out-of-bounds accesses
+/// in C++; here they yield [`Surface::NONE`] and are recorded by `debug_assert`.
 pub fn derive_surface_map(tile_ids: &[u16], pass_table: &[u8]) -> SurfaceMap {
     let mut tiles = [Surface::NONE; MAP_TILES];
     let mut table = Vec::with_capacity(pass_table.len());
@@ -440,8 +440,8 @@ pub fn derive_surface_map(tile_ids: &[u16], pass_table: &[u8]) -> SurfaceMap {
     for (index, slot) in tiles.iter_mut().take(cells).enumerate() {
         let tile_id = tile_ids[index] as usize;
 
-        // В C++ `pass_table[tile_ids[i]]` — чтение вне границ pass-таблицы;
-        // здесь такой тайл остаётся `NONE` (данные `.wrl` всегда валидны).
+        // In C++, `pass_table[tile_ids[i]]` reads out of bounds of the pass table;
+        // here such a tile stays `NONE` (the `.wrl` data is always valid).
         *slot = table.get(tile_id).copied().unwrap_or(Surface::NONE);
     }
 
@@ -462,8 +462,8 @@ struct ResourceRange {
 impl ResourceRange {
     /// `((Generate(max-min+1)+min) + (Generate(max-min+1)+min) + 1) / 2`.
     ///
-    /// Порядок двух вызовов RNG в C++ не определён (операнды `+`), но оба
-    /// слагаемых складываются, поэтому сумма от порядка не зависит.
+    /// The order of the two RNG calls in C++ is unspecified (operands of `+`), but both
+    /// terms are summed, so the sum does not depend on the order.
     #[inline]
     fn value(self, rng: &mut Randomizer) -> i32 {
         let span = self.max - self.min + 1;
@@ -489,7 +489,7 @@ struct ResourceAllocator {
 }
 
 impl ResourceAllocator {
-    /// Конструктор `ResourceAllocator(uint16_t material_type)`.
+    /// `ResourceAllocator(uint16_t material_type)` constructor.
     fn new(settings: &GenerationSettings, kind: ResourceKind) -> Self {
         let material_point = match kind {
             ResourceKind::Raw => Point::new(0, 0),
@@ -518,7 +518,7 @@ impl ResourceAllocator {
         }
     }
 
-    /// `GetZoneResoureLevel(grid_x, grid_y)` — сумма `amount` по зоне 2×2.
+    /// `GetZoneResoureLevel(grid_x, grid_y)` — the sum of `amount` over the 2×2 zone.
     fn zone_resource_level(cargo: &ResourceMap, grid_x: i32, grid_y: i32) -> i32 {
         let width = MAP_WIDTH as i32;
         let height = MAP_HEIGHT as i32;
@@ -591,8 +591,8 @@ impl ResourceAllocator {
         let point_y = (((((point.y as i32) + 1) - self.material_point.y as i32) / 2) * 2)
             + self.material_point.y as i32;
 
-        // bounds: uly = lry в C++-структуре Rect; здесь — отдельные локальные
-        // переменные, чтобы не тянуть UI-тип Rect в симуляцию.
+        // bounds: uly = lry in the C++ Rect structure; here separate local
+        // variables so as not to pull the UI type Rect into the simulation.
         let mut bounds_lry = point_y - 4;
 
         if bounds_lry < 0 {
@@ -698,7 +698,7 @@ impl ResourceAllocator {
         }
     }
 
-    /// `PopulateCargoMap()` — нормальные (не концентрированные) залежи.
+    /// `PopulateCargoMap()` — normal (non-concentrated) deposits.
     fn populate_cargo_map(&self, cargo: &mut ResourceMap, rng: &mut Randomizer) {
         let width = MAP_WIDTH as i32;
         let height = MAP_HEIGHT as i32;
@@ -759,8 +759,8 @@ impl ResourceAllocator {
         }
     }
 
-    /// `SeparateResources(ResourceAllocator* allocator)` — размежевание
-    /// материалов и топлива.
+    /// `SeparateResources(ResourceAllocator* allocator)` — separation of
+    /// materials and fuel.
     fn separate_resources(&self, allocator: &Self, cargo: &mut ResourceMap, rng: &mut Randomizer) {
         let width = MAP_WIDTH as i32;
         let height = MAP_HEIGHT as i32;
@@ -801,7 +801,7 @@ impl ResourceAllocator {
         }
     }
 
-    /// `SettleMinimumResourceLevels(int32_t min_level)` (статический в C++).
+    /// `SettleMinimumResourceLevels(int32_t min_level)` (static in C++).
     fn settle_minimum_resource_levels(cargo: &mut ResourceMap, min_level: i32) {
         let width = MAP_WIDTH as i32;
         let height = MAP_HEIGHT as i32;
@@ -823,7 +823,7 @@ impl ResourceAllocator {
 /// `Access_GetApproximateDistance(distance_x, distance_y)` (`access.cpp:386`).
 #[inline]
 pub fn approximate_distance(distance_x: i32, distance_y: i32) -> i32 {
-    // C++: labs(); диапазон координат карты далёк от i32::MIN.
+    // C++: labs(); the map coordinate range is far from i32::MIN.
     let distance_x = distance_x.abs();
     let distance_y = distance_y.abs();
 
@@ -835,14 +835,14 @@ pub fn approximate_distance(distance_x: i32, distance_y: i32) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Стартовые позиции: game_manager.cpp
+// Start positions: game_manager.cpp
 // ---------------------------------------------------------------------------
 
 /// `GameManager_IsValidStartingPosition(grid_x, grid_y)` (`game_manager.cpp:4196`).
 ///
-/// На этапе генерации карта пуста, поэтому
-/// `Access_GetModifiedSurfaceType()` == `World::GetSurfaceType()`, и проверка
-/// сводится к «все 16 клеток 4×4 вокруг — ровно `LAND`».
+/// During generation the map is empty, so
+/// `Access_GetModifiedSurfaceType()` == `World::GetSurfaceType()`, and the check
+/// reduces to "all 16 cells of the surrounding 4×4 are exactly `LAND`".
 pub fn is_valid_starting_position(surface: &SurfaceMap, grid_x: i32, grid_y: i32) -> bool {
     if grid_x < 1
         || grid_y < 1
@@ -863,21 +863,21 @@ pub fn is_valid_starting_position(surface: &SurfaceMap, grid_x: i32, grid_y: i32
     true
 }
 
-/// `Ai_SelectStartingPosition` (`ai.cpp:105`) на готовой поверхности.
+/// `Ai_SelectStartingPosition` (`ai.cpp:105`) on a ready surface.
 ///
-/// Компьютерная команда сама выбирает точку высадки до генерации ресурсов —
-/// ровно как C++ в `GameManager_InitGame` (`Ai_SetupStrategy` → `Ai_SelectStartingPosition`
-/// до `GameManager_PopulateMapWithResources`). Условия те же:
+/// A computer team chooses its landing point itself before resource generation —
+/// exactly as C++ in `GameManager_InitGame` (`Ai_SetupStrategy` → `Ai_SelectStartingPosition`
+/// before `GameManager_PopulateMapWithResources`). The conditions are the same:
 ///
-/// * `random(3 .. size - 3)` по обеим осям (`Randomizer_Generate(size - 6) + 3`);
-/// * площадка 5×5 вокруг точки — только `LAND` (`Ai_IsValidStartingPosition`);
-/// * до уже высаженных команд — не ближе [`crate::ai::AI_SAFE_ENEMY_DISTANCE`]
+/// * `random(3 .. size - 3)` on both axes (`Randomizer_Generate(size - 6) + 3`);
+/// * the 5×5 area around the point is `LAND` only (`Ai_IsValidStartingPosition`);
+/// * to already landed teams — no closer than [`crate::ai::AI_SAFE_ENEMY_DISTANCE`]
 ///   (`Ai_IsSafeStartingPosition`).
 ///
-/// В отличие от C++ (бесконечный `do … while`) число попыток ограничено:
-/// на карте без подходящей площадки функция возвращает последнюю точку, а не
-/// зависает. Возвращаемая точка не гарантирует 4×4-условие
-/// [`is_valid_starting_position`] — его всё равно проверяет высадка.
+/// Unlike C++ (an infinite `do … while`), the number of attempts is limited:
+/// on a map without a suitable area the function returns the last point instead of
+/// hanging. The returned point does not guarantee the 4×4 condition of
+/// [`is_valid_starting_position`] — deployment still checks it.
 pub fn ai_choose_starting_position(
     surface: &SurfaceMap,
     rng: &mut Randomizer,
@@ -897,15 +897,15 @@ pub fn ai_choose_starting_position(
     }
 }
 
-/// `Ai_IsSafeStartingPosition` (`ai.cpp:80`) без состояния `GameState`.
+/// `Ai_IsSafeStartingPosition` (`ai.cpp:80`) without `GameState`.
 ///
-/// `taken` — точки уже высаженных команд (в C++ учитываются только команды,
-/// у которых `units.GetCount() > 0`, то есть прошедшие выбор точки).
+/// `taken` — the points of already landed teams (C++ counts only teams
+/// with `units.GetCount() > 0`, i.e. those that passed point selection).
 pub fn ai_is_safe_starting_position(surface: &SurfaceMap, position: Point, taken: &[Point]) -> bool {
     let grid_x = i32::from(position.x);
     let grid_y = i32::from(position.y);
 
-    // `Ai_IsValidStartingPosition`: 5×5 вокруг точки (x-2 … x+2) — суша.
+    // `Ai_IsValidStartingPosition`: the 5×5 area around the point (x-2 … x+2) is land.
     for y in (grid_y - 2)..=(grid_y + 2) {
         for x in (grid_x - 2)..=(grid_x + 2) {
             let tile = surface.get(x as i16, y as i16);
@@ -933,8 +933,8 @@ pub fn ai_is_safe_starting_position(surface: &SurfaceMap, position: Point, taken
 
 /// `GameManager_FindValidStartingPosition(Point* position)` (`game_manager.cpp:4712`).
 ///
-/// Мутирует позицию; если валидных клеток нет вообще — цикл не завершится
-/// (как в C++). `range` наращивается на 2 каждый виток.
+/// Mutates the position; if there are no valid cells at all, the loop will not terminate
+/// (as in C++). `range` grows by 2 each iteration.
 pub fn find_valid_starting_position(surface: &SurfaceMap, position: &mut Point) {
     if is_valid_starting_position(surface, position.x as i32, position.y as i32) {
         return;
@@ -961,23 +961,23 @@ pub fn find_valid_starting_position(surface: &SurfaceMap, position: &mut Point) 
 }
 
 // ---------------------------------------------------------------------------
-// Ресурсы: GameManager_PopulateMapWithResources
+// Resources: GameManager_PopulateMapWithResources
 // ---------------------------------------------------------------------------
 
-/// Порт `GameManager_PopulateMapWithResources()` (`game_manager.cpp:4730`).
+/// Port of `GameManager_PopulateMapWithResources()` (`game_manager.cpp:4730`).
 ///
-/// Порядок RNG-вызовов 1:1 с C++:
-/// 1. `PopulateCargoMap` для материалов, топлива, золота (в этом порядке);
-/// 2. для каждой активной команды (в порядке возрастания индекса):
-///    `FindValidStartingPosition`, затем `Optimize` материалов (`minimum_materials`,
-///    100) и топлива (`minimum_fuel`, 100);
+/// RNG call order 1:1 with C++:
+/// 1. `PopulateCargoMap` for materials, fuel, gold (in this order);
+/// 2. for each active team (ascending index):
+///    `FindValidStartingPosition`, then `Optimize` of materials (`minimum_materials`,
+///    100) and fuel (`minimum_fuel`, 100);
 /// 3. `materials.SeparateResources(&fuel)`;
-/// 4. `ConcentrateResources` — материалы, топливо, золото;
+/// 4. `ConcentrateResources` — materials, fuel, gold;
 /// 5. `SettleMinimumResourceLevels(min_resources)`.
 ///
-/// C++ пересеивает RNG в начале функции (`Randomizer_SetSeed(Remote_RngSeed)`);
-/// Rust-аналог — вызывающий код создаёт [`Randomizer::new(seed)`] непосредственно
-/// перед вызовом (см. [`generate_map`]).
+/// C++ reseeds the RNG at the start of the function (`Randomizer_SetSeed(Remote_RngSeed)`);
+/// the Rust analog — the caller creates [`Randomizer::new(seed)`] directly
+/// before the call (see [`generate_map`]).
 pub fn populate_map_with_resources(
     settings: &GenerationSettings,
     surface: &SurfaceMap,
@@ -1016,14 +1016,14 @@ pub fn populate_map_with_resources(
 }
 
 // ---------------------------------------------------------------------------
-// Alien-обломки: GameManager_PopulateMapWithAlienUnits / SpawnAlienDerelicts
+// Alien derelicts: GameManager_PopulateMapWithAlienUnits / SpawnAlienDerelicts
 // ---------------------------------------------------------------------------
 
-/// Состояние клеток, покрытых мостами (`BRIDGE`).
+/// State of cells covered by bridges (`BRIDGE`).
 ///
-/// `Access_GetModifiedSurfaceType()` (`access.cpp:950`) сообщает `LAND` для
-/// воды/побережья, на которых стоит мост, — единственный эффект юнитов, который
-/// видит генерация.
+/// `Access_GetModifiedSurfaceType()` (`access.cpp:950`) reports `LAND` for
+/// water/coast on which a bridge stands — the only unit effect that
+/// generation sees.
 struct BridgeCells {
     cells: [bool; MAP_TILES],
 }
@@ -1041,7 +1041,7 @@ impl BridgeCells {
         }
     }
 
-    /// `Access_GetModifiedSurfaceType(x, y, false)` без учёта остальных юнитов.
+    /// `Access_GetModifiedSurfaceType(x, y, false)` ignoring other units.
     fn modified_surface_type(&self, surface: &SurfaceMap, position: Point) -> Surface {
         let surface_type = surface.get(position.x, position.y);
 
@@ -1127,9 +1127,9 @@ fn find_spot(point: &mut Point, surface: &SurfaceMap, teams: &[TeamStart], bridg
 /// `GameManager_SpawnAlienDerelicts(Point point, int32_t alien_unit_value)`
 /// (`game_manager.cpp:4805`).
 ///
-/// `UnitsManager_DeployUnit` здесь заменён записью в `placements` (побочных
-/// эффектов на карту ресурсов у него нет), `BRIDGE` дополнительно помечает
-/// клетку как проходимую сушу для последующих проверок.
+/// `UnitsManager_DeployUnit` is replaced here by a write to `placements` (it has no
+/// side effects on the resource map), and `BRIDGE` additionally marks
+/// the cell as passable land for later checks.
 fn spawn_alien_derelicts(
     point: Point,
     alien_unit_value: i32,
@@ -1150,7 +1150,7 @@ fn spawn_alien_derelicts(
         position: point,
     });
 
-    // `Randomizer_Generate(std::size(GameManager_AlienBuildings))` — ветка `size_t`.
+    // `Randomizer_Generate(std::size(GameManager_AlienBuildings))` — the `size_t` branch.
     let building_index = rng.generate_u64(ALIEN_BUILDINGS.len() as u64) as usize;
 
     placements.push(AlienPlacement {
@@ -1269,12 +1269,12 @@ fn spawn_alien_derelicts(
     }
 }
 
-/// Порт `GameManager_PopulateMapWithAlienUnits(alien_seperation, alien_unit_value)`
+/// Port of `GameManager_PopulateMapWithAlienUnits(alien_seperation, alien_unit_value)`
 /// (`game_manager.cpp:4942`).
 ///
-/// Сетка точек обходится с чередованием `flag` (как в C++), внутри каждой точки —
-/// [`spawn_alien_derelicts`]. При `alien_unit_value == 0` (обломки выключены)
-/// функция не делает ни одного вызова RNG.
+/// The point grid is walked with `flag` alternation (as in C++); inside each point —
+/// [`spawn_alien_derelicts`]. With `alien_unit_value == 0` (derelicts disabled)
+/// the function makes no RNG calls.
 pub fn populate_map_with_alien_units(
     settings: &GenerationSettings,
     surface: &SurfaceMap,
@@ -1329,24 +1329,24 @@ pub fn populate_map_with_alien_units(
 }
 
 // ---------------------------------------------------------------------------
-// Оркестратор
+// Orchestrator
 // ---------------------------------------------------------------------------
 
-/// Полная генерация карты при старте партии — симуляционная часть
-/// `GameManager_InitGame()` (`game_manager.cpp:3056`) в порядке вызовов.
+/// Full map generation at game start — the simulation part of
+/// `GameManager_InitGame()` (`game_manager.cpp:3056`) in call order.
 ///
-/// Соответствие C++:
+/// C++ correspondence:
 /// ```c
-/// GameManager_PopulateMapWithResources();                      // seed ставится внутри
+/// GameManager_PopulateMapWithResources();                      // the seed is set inside
 /// GameManager_PopulateMapWithAlienUnits(alien_seperation, alien_unit_value);
 /// ```
 ///
-/// `rng` должен быть только что сидирован (`Randomizer::new(seed)`) — это
-/// эквивалент `Randomizer_SetSeed(Remote_RngSeed)` в начале
+/// `rng` must be freshly seeded (`Randomizer::new(seed)`) — this is
+/// the equivalent of `Randomizer_SetSeed(Remote_RngSeed)` at the start of
 /// `GameManager_PopulateMapWithResources`.
 ///
-/// Функция чистая: единственные входы — `setup`, `surface` и состояние `rng`;
-/// единственные выходы — [`SetupOutput`] и продвинутый `rng`.
+/// The function is pure: the only inputs are `setup`, `surface` and the `rng` state;
+/// the only outputs are [`SetupOutput`] and the advanced `rng`.
 pub fn generate_map(
     setup: &mut GameSetup,
     surface: &SurfaceMap,
@@ -1367,11 +1367,11 @@ pub fn generate_map(
     }
 }
 
-/// `CARGO_GOLD` в виде `u16` — вспомогательная константа для читаемости тестов.
+/// `CARGO_GOLD` as `u16` — a helper constant for test readability.
 pub const CARGO_GOLD_BITS: u16 = CARGO_GOLD as u16;
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1379,8 +1379,8 @@ mod tests {
     use super::*;
     use crate::map::ResourceMapEntry;
 
-    /// Эталонные векторы, сгенерированные C++-программой
-    /// `max-brh/tools/map_vectors/main.cpp` (см. README рядом с `vectors.txt`).
+    /// Reference vectors generated by the C++ program
+    /// `max-brh/tools/map_vectors/main.cpp` (see the README next to `vectors.txt`).
     const VECTORS: &str = include_str!("../../../tools/map_vectors/vectors.txt");
 
     const MAP_CELLS: usize = MAP_TILES;
@@ -1541,8 +1541,8 @@ mod tests {
         }
     }
 
-    /// Сверка карты поверхности с диагностикой по первой различающейся клетке
-    /// (полный дамп 12 544 байт в сообщении бесполезен).
+    /// Surface-map comparison with diagnostics on the first differing cell
+    /// (a full dump of 12,544 bytes in a message is useless).
     fn assert_surface_matches(case: &str, got: &[u8], want: &[u8]) {
         assert_eq!(
             got.len(),
@@ -1561,8 +1561,8 @@ mod tests {
         }
     }
 
-    /// Полная сверка бит-в-бит с C++: поверхность из tile-data, карта ресурсов,
-    /// расстановка alien-обломков и итоговое состояние RNG.
+    /// Full bit-for-bit comparison with C++: surface from tile data, resource map,
+    /// alien derelict placement and the final RNG state.
     #[test]
     fn matches_cpp_reference_vectors() {
         let cases = parse_cases(VECTORS);
@@ -1590,14 +1590,14 @@ mod tests {
                 case.name
             );
 
-            // 1. SurfaceMap: порт world.cpp (pass table → surface map).
+            // 1. SurfaceMap: port of world.cpp (pass table → surface map).
             let surface = derive_surface_map(&case.tile_ids, &case.pass_table);
 
             assert_surface_matches(&case.name, &surface.to_bytes(), &case.surface);
 
             cmp_tiles += MAP_CELLS;
 
-            // 2. Генерация ресурсов + alien-обломков с тем же сидом.
+            // 2. Resource + alien derelict generation with the same seed.
             let mut setup = build_setup(case);
             let mut rng = Randomizer::new(case.seed);
             let output = generate_map(&mut setup, &surface, &mut rng);
@@ -1624,7 +1624,7 @@ mod tests {
 
             cmp_tiles += MAP_CELLS;
 
-            // 3. Alien-обломки: полный порядок развёртывания.
+            // 3. Alien derelicts: the full deployment order.
             assert_eq!(
                 output.aliens.len(),
                 case.placements.len(),
@@ -1644,7 +1644,7 @@ mod tests {
 
             placements += output.aliens.len();
 
-            // 4. Состояние RNG: ловит расхождение числа/порядка вызовов.
+            // 4. RNG state: catches a discrepancy in the number/order of calls.
             assert_eq!(
                 rng.state(),
                 case.rng_state,
@@ -1657,8 +1657,8 @@ mod tests {
         assert!(placements > 0, "vectors must exercise alien derelicts");
     }
 
-    /// Генерация детерминирована: два прогона с одним сидом дают одно и то же
-    /// состояние (карта, обломки, RNG).
+    /// Generation is deterministic: two runs with one seed give the same
+    /// state (map, derelicts, RNG).
     #[test]
     fn generation_is_deterministic() {
         let cases = parse_cases(VECTORS);
@@ -1682,8 +1682,8 @@ mod tests {
         assert_eq!(first_setup.teams, second_setup.teams);
     }
 
-    /// Ресурсы остаются в границах битфилда: количество ≤ 15 по маске, тип —
-    /// ровно один бит, разведанность генерацией не выставляется.
+    /// Resources stay within the bitfield bounds: amount ≤ 15 by mask, type —
+    /// exactly one bit, visibility is not set by generation.
     #[test]
     fn generated_resources_stay_within_bitfield() {
         let cases = parse_cases(VECTORS);
@@ -1734,8 +1734,8 @@ mod tests {
         }
     }
 
-    /// `derive_surface_map` — дословная семантика `world.cpp:382-409`:
-    /// сначала pass-индексы заменяются на `PassData[]`, затем ими индексируются
+    /// `derive_surface_map` — the verbatim semantics of `world.cpp:382-409`:
+    /// first pass indices are replaced by `PassData[]`, then they index
     /// tile-id.
     #[test]
     fn derive_surface_map_follows_pass_data_order() {
@@ -1777,8 +1777,8 @@ mod tests {
         assert_eq!(surface.get(5, 0), Surface::LAND, "tile id 0 stays LAND");
     }
 
-    /// `from_menu_levels` повторяет `menu_update_resource_levels()`: уровни 1/1/1/0
-    /// дают дефолтные `min_resources = 9`, `max_resources = 20`.
+    /// `from_menu_levels` repeats `menu_update_resource_levels()`: levels 1/1/1/0
+    /// give the default `min_resources = 9`, `max_resources = 20`.
     #[test]
     fn menu_levels_match_cpp_settings() {
         let settings = GenerationSettings::from_menu_levels(
@@ -1797,14 +1797,14 @@ mod tests {
         assert_eq!(settings.alien_seperation, 0);
         assert_eq!(settings.alien_unit_value, 0);
 
-        // Крайние уровни: 0/0/0 и 2/2/2.
+        // Extreme levels: 0/0/0 and 2/2/2.
         let low = GenerationSettings::from_menu_levels(
             ResourceLevel::LOW,
             ResourceLevel::LOW,
             ResourceLevel::LOW,
             ResourceLevel::HIGH,
         );
-        // raw=0 → (4,16); fuel=0 → +2/+1; gold=0 → без изменений.
+        // raw=0 → (4,16); fuel=0 → +2/+1; gold=0 → unchanged.
         assert_eq!((low.min_resources, low.max_resources), (6, 17));
         assert_eq!(low.mixed_resource_seperation, 49);
         assert_eq!((low.alien_seperation, low.alien_unit_value), (50, 30));
@@ -1821,14 +1821,14 @@ mod tests {
         assert_eq!((high.alien_seperation, high.alien_unit_value), (65, 20));
     }
 
-    /// `find_valid_starting_position` двигается ровно по спирали
-    /// `game_manager.cpp:4712` и находит первый LAND-квадрат 4×4.
+    /// `find_valid_starting_position` moves exactly along the spiral
+    /// `game_manager.cpp:4712` and finds the first 4×4 LAND square.
     #[test]
     fn find_valid_starting_position_walks_spiral() {
         let mut surface = SurfaceMap::new();
         let mut position = Point::new(10, 10);
 
-        // Всё — вода, кроме квадрата 4×4 в точке (20, 20).
+        // Everything is water except the 4×4 square at (20, 20).
         for tile in surface.tiles_mut().iter_mut() {
             *tile = Surface::WATER;
         }
@@ -1849,9 +1849,9 @@ mod tests {
         assert_eq!(position, Point::new(20, 20), "spiral order must match C++");
     }
 
-    /// `is_valid_starting_position` требует ровно `LAND` (побережье не годится).
-    /// `Ai_SelectStartingPosition` (`ai.cpp:105`): точка на суше, не ближе
-    /// `AI_SAFE_ENEMY_DISTANCE` к уже выбранным.
+    /// `is_valid_starting_position` requires exactly `LAND` (coast does not qualify).
+    /// `Ai_SelectStartingPosition` (`ai.cpp:105`): a point on land, not closer
+    /// than `AI_SAFE_ENEMY_DISTANCE` to already chosen ones.
     #[test]
     fn ai_starting_position_is_land_and_away_from_taken() {
         let surface = SurfaceMap::from_tiles([Surface::LAND; MAP_TILES]);
@@ -1869,7 +1869,7 @@ mod tests {
             dx * dx + dy * dy >= crate::ai::AI_SAFE_ENEMY_DISTANCE,
             "{second:?} слишком близко к (56,56)"
         );
-        // Тот же seed и тот же `taken` — та же точка (детерминизм).
+        // The same seed and the same `taken` — the same point (determinism).
         let mut rng_a = Randomizer::new(5);
         let mut rng_b = Randomizer::new(5);
 
@@ -1892,7 +1892,7 @@ mod tests {
         assert!(is_valid_starting_position(&surface, 1, 1));
         assert!(is_valid_starting_position(&surface, 108, 108));
         assert!(!is_valid_starting_position(&surface, 0, 1));
-        // C++: `grid_x + 3 > MapSize.x` → 109 всё ещё допустимо, 110 — уже нет.
+        // C++: `grid_x + 3 > MapSize.x` → 109 is still valid, 110 is not.
         assert!(is_valid_starting_position(&surface, 109, 1));
         assert!(!is_valid_starting_position(&surface, 110, 1));
 
@@ -1903,8 +1903,8 @@ mod tests {
         );
     }
 
-    /// Без обломков (`alien_unit_value == 0`) генерация не тратит RNG и не
-    /// разворачивает юнитов.
+    /// Without derelicts (`alien_unit_value == 0`) generation spends no RNG and
+    /// deploys no units.
     #[test]
     fn alien_population_disabled_consumes_no_rng() {
         let settings = GenerationSettings::from_menu_levels(
@@ -1928,8 +1928,8 @@ mod tests {
         assert_eq!(rng.state(), before);
     }
 
-    /// `ResourceMapEntry`/`ResourceMap` сохраняют раскладку после записи
-    /// генератора (`CargoMap[i] = type + amount`).
+    /// `ResourceMapEntry`/`ResourceMap` preserve the layout after the generator
+    /// writes (`CargoMap[i] = type + amount`).
     #[test]
     fn resource_bits_are_written_like_cpp() {
         let settings = GenerationSettings::from_menu_levels(
@@ -1950,24 +1950,24 @@ mod tests {
         let mut rng = Randomizer::new(0);
         let cargo = populate_map_with_resources(&settings, &surface, &mut teams, &mut rng);
 
-        // Материалы пишутся по чётным (x, y) — как m_point (0,0) в C++.
+        // Materials are written at even (x, y) — like m_point (0,0) in C++.
         let entry = cargo.get(20, 20);
 
         assert_eq!(entry.resource_type(), Some(ResourceKind::Raw));
         assert!(entry.amount() > 0);
 
-        // Золото — по нечётным x, чётным y (m_point = (1,0)).
+        // Gold — at odd x, even y (m_point = (1,0)).
         let gold = cargo.get(21, 20);
 
         assert_eq!(gold.resource_type(), Some(ResourceKind::Gold));
         assert_eq!(gold.visibility(), 0);
 
-        // Топливо — по нечётным (x, y) (m_point = (1,1)).
+        // Fuel — at odd (x, y) (m_point = (1,1)).
         let fuel = cargo.get(21, 21);
 
         assert_eq!(fuel.resource_type(), Some(ResourceKind::Fuel));
 
-        // Чётный x, нечётный y не заполняется нормальным распределением.
+        // Even x, odd y is not filled by the normal distribution.
         let untouched = cargo.get(20, 21);
 
         assert_eq!(

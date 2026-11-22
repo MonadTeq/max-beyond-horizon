@@ -1,13 +1,13 @@
-//! Команды: типы, состояние команды (`TeamInfo`), экономика и технологии
-//! (`TeamUnits`), комплексы (`Complex`).
+//! Teams: types, team state (`TeamInfo`), economy and technologies
+//! (`TeamUnits`), complexes (`Complex`).
 //!
-//! Оракул: `max-cpp-port/src/ctinfo.hpp` (`CTInfo`, `ResearchTopic`),
+//! Oracle: `max-cpp-port/src/ctinfo.hpp` (`CTInfo`, `ResearchTopic`),
 //! `teamunits.hpp/.cpp` (`TeamUnits`), `complex.hpp/.cpp` (`Complex`),
 //! `cargo.hpp/.cpp` (`Cargo`), `enums.hpp` (`PlayerTeamType`, `TeamClanType`).
 //!
-//! Проекция `S`/`UI` — по `max-brh-docs/state-model.md` §3.4/§3.6/§3.7 и §6.3: UI-поля
-//! `TeamInfo` (камера, зум, переключатели отображения, маркеры) в симуляцию не
-//! входят; они собраны в [`TeamInfoUi`] и нужны только слою сейвов (V70).
+//! `S`/`UI` projection — per `max-brh-docs/state-model.md` §3.4/§3.6/§3.7 and §6.3: UI
+//! fields of `TeamInfo` (camera, zoom, display toggles, markers) do not
+//! enter the simulation; they are collected in [`TeamInfoUi`] and are needed only by the save layer (V70).
 
 use serde::{Deserialize, Serialize};
 
@@ -15,17 +15,17 @@ use crate::enums::{TeamClan, RESEARCH_TOPIC_COUNT, UNIT_END};
 use crate::geo::Point;
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
-// Листовые типы команд (`TeamId`, `TeamKind`, `Team`, `ResearchTopicInfo`,
+// Leaf team types (`TeamId`, `TeamKind`, `Team`, `ResearchTopicInfo`,
 // `ScreenLocation`, `Complex`/`ComplexId`, `Cargo`, `hash_team_id`,
-// `RESEARCH_TOPICS`) живут в нижнем слое (`max_types`, Ф5.2); здесь —
-// реэкспорт, чтобы путь `max_core::team::…` не менялся.
+// `RESEARCH_TOPICS`) live in the lower layer (`max_types`, F5.2); here they are
+// re-exported so that the path `max_core::team::…` does not change.
 pub use max_types::team::{
     hash_team_id, Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId,
     TeamKind, RESEARCH_TOPICS,
 };
 
-// Коннекторы комплекса и типы груза живут в `enums` (P0); здесь — реэкспорт,
-// чтобы доменные типы команд/комплексов были самодостаточны.
+// Complex connectors and cargo types live in `enums` (P0); here they are re-exported
+// so that the domain team/complex types are self-contained.
 pub use crate::enums::{
     CARGO_FUEL, CARGO_GOLD, CARGO_MASK, CARGO_MATERIALS, CONNECTION_BEING_TESTED,
     CONNECTOR_EAST_BOTTOM, CONNECTOR_EAST_TOP, CONNECTOR_NORTH_LEFT, CONNECTOR_NORTH_RIGHT,
@@ -33,58 +33,58 @@ pub use crate::enums::{
 };
 
 // ---------------------------------------------------------------------------
-// Вспомогательные структуры TeamInfo
+// TeamInfo helper structures
 // ---------------------------------------------------------------------------
 
-/// Сколько ходов графика очков хранится (`score_graph[50]`).
+/// How many turns of the score graph are stored (`score_graph[50]`).
 pub const SCORE_GRAPH_LEN: usize = 50;
 
-/// Количество позиций камеры в V70 (`camera_positions[6]`).
+/// Number of camera positions in V70 (`camera_positions[6]`).
 pub const CAMERA_POSITION_COUNT: usize = 6;
 
-/// Количество маркеров в V70 (`markers[10]`, фича вырезана).
+/// Number of markers in V70 (`markers[10]`, the feature is cut).
 pub const MARKER_COUNT: usize = 10;
 
-/// Количество display-переключателей `TeamInfo` (UI).
+/// Number of `TeamInfo` display toggles (UI).
 pub const DISPLAY_BUTTON_COUNT: usize = 11;
 
-/// Состояние команды — C++ `struct CTInfo` (`ctinfo.hpp`), save.md `TeamInfo`.
+/// Team state — C++ `struct CTInfo` (`ctinfo.hpp`), save.md `TeamInfo`.
 ///
-/// Только `S`-поля (state-model §6.3); UI-поля — в [`TeamInfoUi`].
+/// `S` fields only (state-model §6.3); UI fields are in [`TeamInfoUi`].
 ///
-/// `serde`-производные не выводятся: массивы на 93/50 элементов не
-/// поддерживаются стандартными impl-ами `serde` для массивов. Канонический
-/// байтовый формат состояния — `save.rs`/`crc.rs` (DESIGN §2.3).
+/// `serde` derives are not emitted: arrays of 93/50 elements are not
+/// supported by the standard `serde` array impls. The canonical
+/// byte format of the state is `save.rs`/`crc.rs` (DESIGN §2.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamInfo {
-    /// Тип команды (`team_type`).
+    /// Team type (`team_type`).
     pub team_type: TeamKind,
-    /// Команда закончила ход.
+    /// The team has finished its turn.
     pub finished_turn: bool,
-    /// Клан команды.
+    /// Team clan.
     pub team_clan: TeamClan,
-    /// Прогресс 8 тем исследований.
+    /// Progress of 8 research topics.
     pub research_topics: [ResearchTopicInfo; RESEARCH_TOPIC_COUNT],
-    /// Победные очки.
+    /// Victory points.
     pub team_points: u32,
-    /// Счётчик созданных объектов 1..8191 — база для hash id
+    /// Created-object counter 1..8191 — the basis for the hash id
     /// (`number_of_objects_created`).
     pub number_of_objects_created: u16,
-    /// Счётчики имён по типам (C++ `uint32_t[UNIT_END]`, в V70 — u8[93]).
+    /// Per-type name counters (C++ `uint32_t[UNIT_END]`, in V70 — u8[93]).
     pub unit_counters: [u32; UNIT_COUNT],
-    /// Очки команды за последние 50 ходов.
+    /// Team points for the last 50 turns.
     pub score_graph: [i16; SCORE_GRAPH_LEN],
-    /// Сколько заводов построено.
+    /// How many factories were built.
     pub stats_factories_built: i16,
-    /// Сколько шахт построено.
+    /// How many mines were built.
     pub stats_mines_built: i16,
-    /// Сколько зданий построено.
+    /// How many buildings were built.
     pub stats_buildings_built: i16,
-    /// Сколько мобильных юнитов построено.
+    /// How many mobile units were built.
     pub stats_units_built: i16,
-    /// Потери по типам (V70 — u16[93], C++ — u32[93]).
+    /// Losses by type (V70 — u16[93], C++ — u32[93]).
     pub casualties: [u32; UNIT_COUNT],
-    /// Золото, потраченное на апгрейды (V70 — i16, C++ — u32).
+    /// Gold spent on upgrades (V70 — i16, C++ — u32).
     pub stats_gold_spent_on_upgrades: u32,
 }
 
@@ -95,7 +95,7 @@ impl Default for TeamInfo {
 }
 
 impl TeamInfo {
-    /// Аналог `CTInfo::Reset`: пустой слот, счётчики имён = 1.
+    /// Analog of `CTInfo::Reset`: an empty slot, name counters = 1.
     pub fn new() -> Self {
         Self {
             team_type: TeamKind::None,
@@ -115,41 +115,41 @@ impl TeamInfo {
         }
     }
 
-    /// `CTInfo::Reset` — сброс в состояние пустого слота.
+    /// `CTInfo::Reset` — reset to the empty-slot state.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 
-    /// Счётчик `unit_counters` для типа (C++ — `unit_counters[UNIT_END]`).
+    /// `unit_counters` counter for a type (C++ — `unit_counters[UNIT_END]`).
     #[inline]
     pub fn unit_counter(&self, unit_type: u16) -> u32 {
         self.unit_counters[unit_type as usize]
     }
 
-    /// Потери по типу (используются условиями победы/поражения).
+    /// Losses by type (used by victory/defeat conditions).
     #[inline]
     pub fn casualties_for(&self, unit_type: u16) -> u32 {
         self.casualties[unit_type as usize]
     }
 }
 
-/// UI-поля `TeamInfo` из V70 (state-model §6.3 — в снапшот/симуляцию не входят).
+/// `TeamInfo` UI fields from V70 (state-model §6.3 — they do not enter the snapshot/simulation).
 ///
-/// Нужны только для побайтового round-trip сейва: в оригинале слепок экрана
-/// попал в файл, потому что сохраняется весь процесс.
+/// Needed only for the byte-exact save round-trip: in the original, a snapshot of the screen
+/// ended up in the file because the whole process is saved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamInfoUi {
-    /// Маркеры на карте (`markers[10]`), фича вырезана — всегда {-1,-1}.
+    /// Map markers (`markers[10]`), the feature is cut — always {-1,-1}.
     pub markers: [Point; MARKER_COUNT],
-    /// Сохранённые позиции камеры F5–F8 (`camera_positions[6]`).
+    /// Saved camera positions F5–F8 (`camera_positions[6]`).
     pub screen_locations: [ScreenLocation; CAMERA_POSITION_COUNT],
-    /// Выбранный юнит (`selected_unit`, 0xFFFF = нет).
+    /// Selected unit (`selected_unit`, 0xFFFF = none).
     pub selected_unit: Option<u16>,
-    /// Зум карты 4–64.
+    /// Map zoom 4–64.
     pub zoom_level: u16,
-    /// Центр экрана.
+    /// Screen center.
     pub camera_position: Point,
-    /// 11 переключателей отображения (`display_button_*`).
+    /// 11 display toggles (`display_button_*`).
     pub display_buttons: [i8; DISPLAY_BUTTON_COUNT],
 }
 
@@ -170,24 +170,24 @@ impl Default for TeamInfoUi {
 // TeamUnits
 // ---------------------------------------------------------------------------
 
-/// Экономика и технологии команды — C++ `class TeamUnits` (`teamunits.hpp`).
+/// Team economy and technologies — C++ `class TeamUnits` (`teamunits.hpp`).
 ///
-/// В C++ это глобальные объекты `ResourceManager_TeamUnitsRed/Green/Blue/Gray`;
-/// в `max_core` — элемент `GameState` по индексу команды.
+/// In C++ these are the global objects `ResourceManager_TeamUnitsRed/Green/Blue/Gray`;
+/// in `max_core` — a `GameState` element indexed by team.
 ///
-/// `serde`-производные не выводятся из-за массивов на 93 элемента (см.
-/// [`TeamInfo`]); байтовый формат — `save.rs`.
+/// `serde` derives are not emitted because of the 93-element arrays (see
+/// [`TeamInfo`]); the byte format is `save.rs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamUnits {
-    /// Кредиты команды (C++ `uint32_t`, в V70 — i16/u16).
+    /// Team credits (C++ `uint32_t`, in V70 — i16/u16).
     pub gold: u32,
-    /// Базовые атрибуты (с учётом клана) — 93 типа.
+    /// Base attributes (clan-adjusted) — 93 types.
     pub base_values: [UnitValues; UNIT_COUNT],
-    /// Текущие атрибуты (после исследований) — по ним создаются юниты.
+    /// Current attributes (after research) — units are created from them.
     pub current_values: [UnitValues; UNIT_COUNT],
-    /// Комплексы команды — порядок `SmartList` (по возрастанию id).
+    /// Team complexes — `SmartList` order (ascending id).
     pub complexes: Vec<Complex>,
-    /// `hash_team_id` — служебное поле C++ (не сериализуется).
+    /// `hash_team_id` — a service field of C++ (not serialized).
     pub hash_team_id: u16,
 }
 
@@ -198,7 +198,7 @@ impl Default for TeamUnits {
 }
 
 impl TeamUnits {
-    /// Пустая команда: значения по умолчанию `UnitValues()`.
+    /// Empty team: default `UnitValues()` values.
     pub fn new() -> Self {
         Self {
             gold: 0,
@@ -209,9 +209,9 @@ impl TeamUnits {
         }
     }
 
-    /// Команда, инициализированная таблицей атрибутов с учётом клана —
+    /// A team initialized with the clan-adjusted attribute table —
     /// C++ `TeamUnits::Init` + `ResourceManager_InitClanUnitValues`
-    /// (base и current указывают на одинаковые значения до первых апгрейдов).
+    /// (base and current reference equal values until the first upgrades).
     pub fn with_clan(clan: TeamClan) -> Self {
         let values = crate::unit_values::team_base_values(clan);
         Self {
@@ -259,8 +259,8 @@ impl TeamUnits {
         &mut self.current_values[unit_type as usize]
     }
 
-    /// `TeamUnits::CreateComplex`: вставляет комплекс с минимальным свободным id,
-    /// сохраняя сортировку списка по id (C++ `InsertBefore` первого разрыва).
+    /// `TeamUnits::CreateComplex`: inserts a complex with the lowest free id,
+    /// preserving the id sort of the list (C++ `InsertBefore` at the first gap).
     pub fn create_complex(&mut self) -> ComplexId {
         let mut complex_id: i16 = 1;
         let mut index = 0usize;
@@ -302,7 +302,7 @@ impl TeamUnits {
     }
 }
 
-/// Количество типов юнитов для счётчиков команды (`UNIT_END`).
+/// Number of unit types for team counters (`UNIT_END`).
 pub const TEAM_UNIT_TYPE_COUNT: u16 = UNIT_END;
 
 #[cfg(test)]
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(units.create_complex(), ComplexId(2));
         assert_eq!(units.create_complex(), ComplexId(3));
         units.remove_complex(ComplexId(2));
-        // C++ переиспользует минимальный свободный id.
+        // C++ reuses the lowest free id.
         assert_eq!(units.create_complex(), ComplexId(2));
         let ids: Vec<i16> = units.complexes().iter().map(|complex| complex.id).collect();
         assert_eq!(ids, vec![1, 2, 3]);
@@ -381,12 +381,12 @@ mod tests {
         let plain_turret = base_unit_values(crate::enums::UnitType::GunTurret);
         assert_eq!(turret.attack, plain_turret.attack + 4);
         assert_eq!(turret.armor, plain_turret.armor + 2);
-        // Юнит, которого клан не касается, остаётся табличным.
+        // A unit the clan does not touch stays as in the table.
         assert_eq!(
             units.base_unit_values(crate::enums::UnitType::Radar as u16),
             &base_unit_values(crate::enums::UnitType::Radar)
         );
-        // Для пустого клана таблица совпадает с базовой.
+        // For an empty clan the table matches the base one.
         let random = TeamUnits::with_clan(TeamClan::Random);
         assert_eq!(random.base_values, crate::unit_values::BASE_UNIT_VALUES);
     }

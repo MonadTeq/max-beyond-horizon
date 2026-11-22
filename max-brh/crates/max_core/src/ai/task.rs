@@ -1,23 +1,23 @@
-//! Базовый класс задачи ИИ — C++ `class Task` (`task.cpp`/`task.hpp`).
+//! AI task base class — C++ `class Task` (`task.cpp`/`task.hpp`).
 //!
-//! # Что здесь
+//! # What is here
 //!
-//! * константы типов задач [`TASK_TYPE_*`] и их имена (`Task_TaskNames`);
-//! * шкала приоритетов [`TASK_PRIORITY_*`] (меньше — срочнее; старший байт —
-//!   уровень, младший — смещение внутри уровня, C++ `TASK_PRIORITY_*`);
-//! * [`Task`] — общие поля (`id`, `team`, `base_priority`, `parent`,
-//!   флаги планирования) плюс [`TaskKind`] — состояние конкретного класса
-//!   задачи (структурный аналог полей наследников в `task*.hpp`);
-//! * свободные функции `Task_*` из `task.cpp` (готовность принимать приказы,
-//!   оценка «юнит обречён», отступление, соседство, оценка ходов до конца
-//!   партии) — они нужны и задачам, и `aiattack.cpp`, и `task_manager.cpp`;
-//! * оценки, опирающиеся на ИИ-карты ([`crate::ai::strategy::AiPlayer`]).
+//! * task type constants [`TASK_TYPE_*`] and their names (`Task_TaskNames`);
+//! * the priority scale [`TASK_PRIORITY_*`] (lower is more urgent; the high byte —
+//!   the level, the low one — an offset within the level, C++ `TASK_PRIORITY_*`);
+//! * [`Task`] — common fields (`id`, `team`, `base_priority`, `parent`,
+//!   scheduling flags) plus [`TaskKind`] — the state of a concrete task class
+//!   (a structural analog of subclass fields in `task*.hpp`);
+//! * free `Task_*` functions from `task.cpp` (readiness to accept orders,
+//!   the "unit is doomed" estimate, retreat, adjacency, estimate of turns until
+//!   game end) — they are needed by tasks, `aiattack.cpp` and `task_manager.cpp`;
+//! * estimates relying on AI maps ([`crate::ai::strategy::AiPlayer`]).
 //!
-//! # Детерминизм
+//! # Determinism
 //!
-//! `ComparePriority` (C++ `Task::ComparePriority`) не насыщается за пределами
-//! окна `±TASK_PRIORITY_TOLERANCE` и внутри окна возвращает разность
-//! динамического `GetPriority()` и аргумента — как в C++ (`task.cpp:444`).
+//! `ComparePriority` (C++ `Task::ComparePriority`) does not saturate outside
+//! the `±TASK_PRIORITY_TOLERANCE` window and inside the window returns the difference
+//! of the dynamic `GetPriority()` and the argument — as in C++ (`task.cpp:444`).
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{unit_flags, CautionLevel, Opponent, UnitOrder, UnitOrderState, UnitType};
@@ -29,7 +29,7 @@ use crate::unit::{UnitId, UnitInfo};
 use super::tasks::TaskKind;
 
 // ---------------------------------------------------------------------------
-// Типы задач — C++ `enum TaskType_*` (`task.hpp:33`)
+// Task types — C++ `enum TaskType_*` (`task.hpp:33`)
 // ---------------------------------------------------------------------------
 
 /// `TaskType_TaskActivate`.
@@ -121,7 +121,7 @@ pub const TASK_TYPE_UPGRADE: u8 = 47;
 /// `TaskType_TaskWaitToAttack`.
 pub const TASK_TYPE_WAIT_TO_ATTACK: u8 = 48;
 
-/// Все имена задач в порядке значений типа (`Task_TaskNames`, `task.cpp:43`).
+/// All task names in type-value order (`Task_TaskNames`, `task.cpp:43`).
 pub const TASK_NAMES: [&str; 49] = [
     "Activate",
     "AssistMove",
@@ -183,124 +183,124 @@ pub fn task_get_name(task_type: u8) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Приоритеты — C++ `enum : uint16_t` (`task.hpp:92`)
+// Priorities — C++ `enum : uint16_t` (`task.hpp:92`)
 // ---------------------------------------------------------------------------
 
-/// Окно сравнимости `Task::ComparePriority`; одновременно штраф задачи без
-/// целей в `GetPriority()`.
+/// The `Task::ComparePriority` comparability window; also the penalty of a task without
+/// targets in `GetPriority()`.
 pub const TASK_PRIORITY_TOLERANCE: u16 = 0xFF;
-/// Маска уровня приоритета.
+/// Priority level mask.
 pub const TASK_PRIORITY_MASK: u16 = 0xFF00;
-/// Смещение «полуровня» (дочерняя постройка опережает родителя).
+/// "Half-tier" offset (a child build precedes the parent).
 pub const TASK_PRIORITY_OFFSET_HALF_TIER: u16 = 0x80;
-/// Смещение мостового звена.
+/// Bridge-link offset.
 pub const TASK_PRIORITY_OFFSET_BRIDGE: u16 = 0xC8;
-/// Надбавка к приоритету запроса при переписи ожидающей работы.
+/// Priority bonus of a request when re-censusing pending work.
 pub const TASK_PRIORITY_OFFSET_CENSUS_SLACK: u16 = 0xFA;
 
-/// Аварийные реакции.
+/// Emergency reactions.
 pub const TASK_PRIORITY_EMERGENCY: u16 = 0x0000;
-/// Мониторинг воздушных штурмов.
+/// Air assault monitoring.
 pub const TASK_PRIORITY_CHECK_ASSAULTS: u16 = 0x001E;
-/// Снятие мин на площадке.
+/// Mine removal on a site.
 pub const TASK_PRIORITY_REMOVE_RUBBLE_LOW: u16 = 0x0100;
-/// Расчистка обломков на площадке.
+/// Rubble clearing on a site.
 pub const TASK_PRIORITY_REMOVE_RUBBLE: u16 = 0x0200;
-/// Массированный фронтальный штурм.
+/// Massive frontal assault.
 pub const TASK_PRIORITY_FRONTAL_ATTACK: u16 = 0x0400;
-/// Первая рудная станция новой базы.
+/// First ore station of a new base.
 pub const TASK_PRIORITY_BUILDING_LOW: u16 = 0x0500;
-/// Лёгкий завод.
+/// Light factory.
 pub const TASK_PRIORITY_BUILDING_LIGHT_PLANT: u16 = 0x0700;
-/// Коннектор.
+/// Connector.
 pub const TASK_PRIORITY_BUILDING_CONNECTOR: u16 = 0x0800;
-/// Склад.
+/// Storage.
 pub const TASK_PRIORITY_BUILDING_DUMP: u16 = 0x0A00;
-/// Электростанция/генератор.
+/// Power station/generator.
 pub const TASK_PRIORITY_BUILDING_POWER: u16 = 0x0B00;
-/// Хабитат.
+/// Habitat.
 pub const TASK_PRIORITY_BUILDING_HABITAT: u16 = 0x0C00;
-/// Радар.
+/// Radar.
 pub const TASK_PRIORITY_BUILDING_RADAR: u16 = 0x0D00;
-/// Замена рудной станции.
+/// Ore station replacement.
 pub const TASK_PRIORITY_BUILDING_MEDIUM: u16 = 0x0E00;
-/// Сопровождение.
+/// Escort.
 pub const TASK_PRIORITY_ESCORT: u16 = 0x0F00;
-/// Атака мобильной угрозы.
+/// Mobile threat attack.
 pub const TASK_PRIORITY_ATTACK_MOBILE: u16 = 0x1000;
-/// Ремонт/перезарядка/апгрейд.
+/// Repair/rearm/upgrade.
 pub const TASK_PRIORITY_REPAIR: u16 = 0x1100;
-/// Резерв обороны следует за атакующими.
+/// Defense reserve follows attackers.
 pub const TASK_PRIORITY_FOLLOW_DEFENSE: u16 = 0x1100;
-/// Оборонительная турель.
+/// Defensive turret.
 pub const TASK_PRIORITY_BUILDING_DEFENSE: u16 = 0x1200;
-/// Первый тяжёлый завод и тренировочный зал.
+/// First heavy factory and training hall.
 pub const TASK_PRIORITY_BUILDING_HEAVY_PLANT: u16 = 0x1300;
-/// Порог «просьба достаточно срочная, доступ к земле не важен».
+/// The "request is urgent enough, land access is irrelevant" threshold.
 pub const TASK_PRIORITY_LAND_ACCESS_THRESHOLD: u16 = 0x1300;
-/// Ремонтный цех.
+/// Repair shop.
 pub const TASK_PRIORITY_BUILDING_REPAIR_SHOP: u16 = 0x1400;
-/// Исследовательский центр.
+/// Research center.
 pub const TASK_PRIORITY_BUILDING_UPGRADES: u16 = 0x1500;
-/// Экосфера.
+/// Greenhouse.
 pub const TASK_PRIORITY_BUILDING_GREENHOUSE: u16 = 0x1600;
-/// Атака приоритетной цели лидера.
+/// Attack on the leader's priority target.
 pub const TASK_PRIORITY_ATTACK_PRIORITY_TARGET: u16 = 0x1700;
-/// Расширение заводов по стратегии.
+/// Factory expansion by strategy.
 pub const TASK_PRIORITY_BUILDING_EXPANSION: u16 = 0x1800;
-/// Резерв обороны.
+/// Defense reserve.
 pub const TASK_PRIORITY_DEFENSE_RESERVE: u16 = 0x1900;
-/// Фронтир: добыча и минирование.
+/// Frontier: mining and mine laying.
 pub const TASK_PRIORITY_FRONTIER: u16 = 0x1A00;
-/// Разведка карты.
+/// Map exploration.
 pub const TASK_PRIORITY_EXPLORE: u16 = 0x1B00;
-/// Строительство мостов.
+/// Bridge construction.
 pub const TASK_PRIORITY_BRIDGE_BASE: u16 = 0x1C00;
-/// Управление застройкой.
+/// Construction management.
 pub const TASK_PRIORITY_MANAGE_BUILDINGS: u16 = 0x1D00;
-/// Атака по умолчанию.
+/// Default attack.
 pub const TASK_PRIORITY_ATTACK_DEFAULT: u16 = 0x1F00;
-/// Траление вражеских минных полей.
+/// Sweeping enemy minefields.
 pub const TASK_PRIORITY_FIND_MINES: u16 = 0x2000;
-/// Резерв атаки следует за атакующими этого приоритета.
+/// Attack reserve follows attackers of this priority.
 pub const TASK_PRIORITY_FOLLOW_ATTACK: u16 = 0x2000;
-/// Сбор ресурсов.
+/// Resource scavenging.
 pub const TASK_PRIORITY_SCAVENGE: u16 = 0x2100;
-/// Обследование местности.
+/// Terrain survey.
 pub const TASK_PRIORITY_AUTO_SURVEY: u16 = 0x2200;
-/// Доставка ресурсов по умолчанию.
+/// Default resource delivery.
 pub const TASK_PRIORITY_GET_RESOURCE: u16 = 0x2300;
-/// Поддержка атаки.
+/// Attack support.
 pub const TASK_PRIORITY_SUPPORT_ATTACK: u16 = 0x2500;
-/// Пул резерва атаки.
+/// Attack reserve pool.
 pub const TASK_PRIORITY_ATTACK_RESERVE_POOL: u16 = 0x2600;
-/// Помощь транспортом.
+/// Transport assistance.
 pub const TASK_PRIORITY_ASSIST_MOVE: u16 = 0x2800;
-/// Слабейшая заявка: перемещение.
+/// Weakest request: movement.
 pub const TASK_PRIORITY_MOVE: u16 = 0x2900;
 
 // ---------------------------------------------------------------------------
-// Коды результата TaskMove — C++ `enum` (`taskmove.hpp:33`)
+// TaskMove result codes — C++ `enum` (`taskmove.hpp:33`)
 // ---------------------------------------------------------------------------
 
-/// Успех.
+/// Success.
 pub const TASKMOVE_RESULT_SUCCESS: i8 = 0;
-/// Уже в радиусе.
+/// Already in range.
 pub const TASKMOVE_RESULT_ALREADY_IN_RANGE: i8 = 1;
-/// Заблокировано.
+/// Blocked.
 pub const TASKMOVE_RESULT_BLOCKED: i8 = 2;
-/// Отменено.
+/// Cancelled.
 pub const TASKMOVE_RESULT_CANCELLED: i8 = 3;
 
 // ---------------------------------------------------------------------------
 // Task
 // ---------------------------------------------------------------------------
 
-/// Задача ИИ — C++ `class Task`.
+/// An AI task — C++ `class Task`.
 ///
-/// Общие поля совпадают с `task.hpp`: `m_id`, `m_team`, `m_base_priority`,
+/// The common fields match `task.hpp`: `m_id`, `m_team`, `m_base_priority`,
 /// `m_parent`, `m_needs_processing`, `m_scheduled_for_turn_start/end`.
-/// Состояние конкретного класса — в [`TaskKind`].
+/// The concrete class state is in [`TaskKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
     /// `m_id` (`Task::++task_id`).
@@ -309,7 +309,7 @@ pub struct Task {
     pub team: TeamId,
     /// `m_base_priority`.
     pub base_priority: u16,
-    /// `m_parent` — id родительской задачи.
+    /// `m_parent` — the parent task id.
     pub parent: Option<u32>,
     /// `m_needs_processing`.
     pub needs_processing: bool,
@@ -317,7 +317,7 @@ pub struct Task {
     pub scheduled_for_turn_start: bool,
     /// `m_scheduled_for_turn_end`.
     pub scheduled_for_turn_end: bool,
-    /// Состояние класса задачи.
+    /// The task class state.
     pub kind: TaskKind,
 }
 
@@ -336,7 +336,7 @@ impl Task {
         }
     }
 
-    /// `GetType()` — тип задачи (значения [`TASK_TYPE_*`]).
+    /// `GetType()` — task type ([`TASK_TYPE_*`] values).
     pub fn get_type(&self) -> u8 {
         self.kind.get_type()
     }
@@ -348,8 +348,8 @@ impl Task {
 
     /// `Task::ComparePriority` (`task.cpp:444`).
     ///
-    /// Вне окна `±TASK_PRIORITY_TOLERANCE` — насыщение `±1` по статическому
-    /// приоритету, внутри окна — разность динамического `GetPriority()`.
+    /// Outside the `±TASK_PRIORITY_TOLERANCE` window — saturation `±1` by the static
+    /// priority, inside the window — the difference of the dynamic `GetPriority()`.
     pub fn compare_priority(&self, world: &GameState, task_priority: u16) -> i32 {
         let base = i32::from(self.base_priority);
         let tolerance = i32::from(TASK_PRIORITY_TOLERANCE);
@@ -366,36 +366,36 @@ impl Task {
         }
     }
 
-    /// `GetPriority()` — по умолчанию базовый; переопределяется в потомках.
+    /// `GetPriority()` — base by default; overridden in subclasses.
     pub fn get_priority(&self, world: &GameState) -> u16 {
         self.kind.get_priority(world, self)
     }
 
-    /// `GetCautionLevel(unit)` — по умолчанию `Task::GetCautionLevel`.
+    /// `GetCautionLevel(unit)` — `Task::GetCautionLevel` by default.
     pub fn get_caution_level(&self, world: &GameState, unit: &UnitInfo) -> CautionLevel {
         self.kind
             .get_caution_level(world, self, unit)
             .unwrap_or_else(|| default_caution_level(world, unit))
     }
 
-    /// `DeterminePosition()` — `GetBounds().ul`, если не переопределён.
+    /// `DeterminePosition()` — `GetBounds().ul`, unless overridden.
     pub fn determine_position(&self, world: &GameState) -> Point {
         let bounds = self.kind.get_bounds(world, self.header());
         Point::new(bounds.ulx as i16, bounds.uly as i16)
     }
 
-    /// `Task::IsEndTurnNeeded()` — по умолчанию `true`.
+    /// `Task::IsEndTurnNeeded()` — `true` by default.
     pub fn is_end_turn_needed(&self) -> bool {
         self.kind.is_end_turn_needed_kind()
     }
 
-    /// `Task::IsThinking()` — по умолчанию `false`.
+    /// `Task::IsThinking()` — `false` by default.
     pub fn is_thinking(&self, world: &GameState) -> bool {
         let _ = world;
         self.kind.is_thinking_kind()
     }
 
-    /// `IsNeeded()` — по умолчанию следует за родителем (`task.cpp:613`).
+    /// `IsNeeded()` — follows the parent by default (`task.cpp:613`).
     pub fn is_needed(&self, manager: &super::task_manager::TaskManager) -> bool {
         match self.parent {
             Some(parent) => manager
@@ -407,10 +407,10 @@ impl Task {
     }
 }
 
-/// Копия базовых полей задачи для обработчиков класса задачи.
+/// Copy of the task's base fields for task-class handlers.
 ///
-/// Нужна, чтобы обработчик получал и `&mut TaskKind`, и базовые поля без
-/// двойного заимствования `Task`.
+/// Needed so that the handler receives both `&mut TaskKind` and the base fields without
+/// double-borrowing `Task`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskHeader {
     /// `m_id`.
@@ -426,7 +426,7 @@ pub struct TaskHeader {
 }
 
 impl Task {
-    /// Копия базовых полей.
+    /// Copy of the base fields.
     pub fn header(&self) -> TaskHeader {
         TaskHeader {
             id: self.id,
@@ -437,7 +437,7 @@ impl Task {
         }
     }
 
-    /// `WriteStatusLog()` — краткое описание (для логов и тестов).
+    /// `WriteStatusLog()` — a short description (for logs and tests).
     pub fn write_status_log(&self) -> String {
         self.kind.write_status_log(self)
     }
@@ -466,10 +466,10 @@ pub fn default_caution_level(world: &GameState, unit: &UnitInfo) -> CautionLevel
 }
 
 // ---------------------------------------------------------------------------
-// Свободные функции Task_* (`task.cpp`)
+// Free `Task_*` functions (`task.cpp`)
 // ---------------------------------------------------------------------------
 
-/// `Task_GetUnitList` — список юнитов по флагам типа (`task.cpp:535`).
+/// `Task_GetUnitList` — the unit list by type flags (`task.cpp:535`).
 pub fn task_unit_list_kind(unit_type: UnitType) -> crate::unit::UnitListKind {
     let flags = crate::access::unit_type_flags(unit_type);
 
@@ -525,8 +525,8 @@ pub fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool 
         return false;
     }
 
-    // `Access_GetActiveLoader(unit) == nullptr` — юнит не грузится в транспорт.
-    // Только воздушные транспорты держат `ORDER_LOAD`.
+    // `Access_GetActiveLoader(unit) == nullptr` — the unit is not loaded into a transport.
+    // Only air transports hold `ORDER_LOAD`.
     for id in world.unit_list(crate::unit::UnitListKind::MobileAir) {
         let Some(loader) = world.unit(*id) else {
             continue;
@@ -539,7 +539,7 @@ pub fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool 
     true
 }
 
-/// `Task_IsAdjacent` (`task.cpp:311`) — соседство с учётом футпринта 2×2.
+/// `Task_IsAdjacent` (`task.cpp:311`) — adjacency considering the 2×2 footprint.
 pub fn task_is_adjacent(unit: &UnitInfo, grid_x: i16, grid_y: i16) -> bool {
     let unit_size: i16 = if unit.is_quad() { 2 } else { 1 };
 
@@ -560,11 +560,11 @@ pub fn task_is_repair_due(unit: &UnitInfo, is_lead_unit: bool) -> bool {
 
 /// `Task_EstimateTurnsTillMissionEnd` (`task.cpp:350`).
 ///
-/// Режим победы (`victory_type`/`victory_limit`, state-model §3.1) — настройка
-/// партии, которая в max_core приходит из setup-слоя (P7, DESIGN риск 20):
-/// здесь используется лимит C++ по умолчанию (1000 ходов минус текущий ход).
-/// Формула режима Score (по экосферам) повторяет C++ и вызывается, когда
-/// `victory_type == Score` станет частью `GameState`.
+/// Victory mode (`victory_type`/`victory_limit`, state-model §3.1) — a game
+/// setting that comes from the setup layer in max_core (P7, DESIGN risk 20):
+/// here the C++ default limit is used (1000 turns minus the current turn).
+/// The Score mode formula (by greenhouses) repeats C++ and is called when
+/// `victory_type == Score` becomes part of `GameState`.
 pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
     const VICTORY_LIMIT_DEFAULT: i32 = 1000;
 
@@ -599,7 +599,7 @@ pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
         }
     }
 
-    // Режим Duration (по умолчанию в C++ `victory_type != SCORE`).
+    // Duration mode (`victory_type != SCORE` by default in C++).
     remaining_turns -= world.turn_counter;
     if remaining_turns <= 0 {
         remaining_turns = 1;
@@ -616,8 +616,8 @@ pub fn is_enemy_team(world: &GameState, team: TeamId) -> bool {
     kind != TeamKind::None && kind != TeamKind::Eliminated
 }
 
-/// `Task_IsRecruitable` (`task.cpp:331`) — единственный тест, по которому атаки
-/// забирают юнитов.
+/// `Task_IsRecruitable` (`task.cpp:331`) — the only test by which attacks
+/// take units.
 pub fn task_is_recruitable(
     manager: &super::task_manager::TaskManager,
     world: &GameState,
@@ -653,9 +653,9 @@ pub fn task_is_recruitable(
 
 /// `Task_ShouldReserveShot` (`task.cpp:139`).
 ///
-/// Портирована структура: проверка стелс-карт команд, опасность клетки и
-/// отсутствие угроз с большей дальностью. Цикл по замеченным юнитам идёт в
-/// порядке `AiPlayer::spotted_units` (порядок обнаружения).
+/// The structure is ported: checking team stealth maps, cell danger and
+/// the absence of threats with a longer range. The loop over spotted units goes in
+/// `AiPlayer::spotted_units` order (detection order).
 pub fn task_should_reserve_shot(world: &GameState, unit: &UnitInfo, site: Point) -> bool {
     use crate::unit_values::{
         ATTRIB_ATTACK_RADIUS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED,
@@ -765,9 +765,9 @@ fn access_modified_surface_is_water(world: &GameState, site: Point) -> bool {
 
 /// `Task_IsUnitDoomedToDestruction` (`task.cpp:264`).
 ///
-/// Упрощение: обход `ZoneWalker` использует `Access_IsAccessible`, как C++;
-/// при отсутствии карты урона (`GetDamagePotentialMap` == `None`) результат
-/// `false` (ветка C++).
+/// Simplification: the `ZoneWalker` walk uses `Access_IsAccessible`, as C++;
+/// without a damage map (`GetDamagePotentialMap` == `None`) the result is
+/// `false` (the C++ branch).
 pub fn task_is_unit_doomed_to_destruction(
     world: &mut GameState,
     unit_id: UnitId,
@@ -923,7 +923,7 @@ pub fn task_retreat_if_necessary(
     false
 }
 
-/// Команда юнита.
+/// The unit's team.
 pub fn team_of(world: &GameState, unit_id: UnitId) -> TeamId {
     world
         .unit(unit_id)
@@ -957,7 +957,7 @@ pub fn task_retreat_from_danger(
     }
 }
 
-/// `Task_RemindMoveFinished` (`task.cpp:99`) — обёртка над менеджером.
+/// `Task_RemindMoveFinished` (`task.cpp:99`) — a wrapper over the manager.
 pub fn task_remind_move_finished(
     manager: &mut super::task_manager::TaskManager,
     world: &mut GameState,
@@ -1031,16 +1031,16 @@ mod tests {
             TaskKind::MineAssistant { manager: None },
         );
 
-        // Внутри окна возвращается разность динамического приоритета.
+        // Inside the window the difference of the dynamic priority is returned.
         assert_eq!(
             task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS),
             0
         );
-        // Срочнее аргумента — отрицательное значение.
+        // More urgent than the argument — a negative value.
         assert!(task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS + 0x40) < 0);
-        // Меньше приоритетом (больше число) — положительное.
+        // Less urgent (a larger number) — a positive value.
         assert!(task.compare_priority(&world, TASK_PRIORITY_MANAGE_BUILDINGS - 0x40) > 0);
-        // Вне окна — насыщение.
+        // Outside the window — saturation.
         assert_eq!(task.compare_priority(&world, 0xFFFF), -1);
         assert_eq!(task.compare_priority(&world, 0x0000), 1);
     }
@@ -1058,7 +1058,7 @@ mod tests {
         let base_hits = unit
             .base_values
             .get_attribute(crate::unit_values::ATTRIB_HITS) as u16;
-        // `hits < base_hits / 4` — строго меньше.
+        // `hits < base_hits / 4` — strictly less.
         unit.hits = base_hits / 4;
         assert!(!task_is_repair_due(&unit, false));
         unit.hits = base_hits / 4 - 1;

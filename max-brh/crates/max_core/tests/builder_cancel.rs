@@ -1,22 +1,22 @@
-//! Отмена стройки — только явная (`stop`), увод строителя приказом её не снимает.
+//! Construction cancellation is explicit only (`stop`); moving the builder away by an order does not cancel it.
 //!
-//! Оракул: `game_manager.cpp` `GameManager_GetBuilderUnitCursor` (`:5829-5935`)
-//! и `GameManager_SelectBuildSite` (`:3529`), `units_manager.cpp`
+//! Oracle: `game_manager.cpp` `GameManager_GetBuilderUnitCursor` (`:5829-5935`)
+//! and `GameManager_SelectBuildSite` (`:3529`), `units_manager.cpp`
 //! `UnitsManager_Popup_OnClick_BuildStop` → `UnitsManager_SetNewOrder(unit,
 //! ORDER_BUILD, ORDER_STATE_BUILD_CANCEL)` → `UnitInfo::CancelBuilding`
-//! (`unitinfo.cpp:4231`, ветка `!STATIONARY`).
+//! (`unitinfo.cpp:4231`, the `!STATIONARY` branch).
 //!
-//! В C++ приказ движения по карте строителю в `BUILD_IN_PROGRESS` не отдаётся
-//! вовсе: для всех состояний, кроме `SELECT_SITE` и `UNIT_READY`,
-//! `GameManager_GetBuilderUnitCursor` возвращает `CURSOR_UNIT_NO_GO`
-//! (`:5927-5931`). Приказ, пришедший другим путём (пакет 08/38, ИИ, группа),
-//! стройку **не отменяет**: `CancelBuilding` вызывается только из
-//! `UnitsManager_ProcessOrderHaltBuilding` по явному `stop`
-//! (`units_manager.cpp:3142-3148`). Порт повторяет это поведение — прежняя
-//! «автоотмена при уводе» противоречила оракулу.
+//! In C++ a map movement order is not issued to a builder in `BUILD_IN_PROGRESS`
+//! at all: for all states except `SELECT_SITE` and `UNIT_READY`,
+//! `GameManager_GetBuilderUnitCursor` returns `CURSOR_UNIT_NO_GO`
+//! (`:5927-5931`). An order arriving another way (packet 08/38, AI, group)
+//! **does not cancel** construction: `CancelBuilding` is called only from
+//! `UnitsManager_ProcessOrderHaltBuilding` on an explicit `stop`
+//! (`units_manager.cpp:3142-3148`). The port repeats this behavior — the former
+//! "auto-cancel on move-away" contradicted the oracle.
 //!
-//! Готовая площадка (`ORDER_STATE_UNIT_READY`) — отдельный случай: здание уже
-//! достроено, уход разрешён (`ORDER_ACTIVATE`) и стройку не отменяет.
+//! A completed site (`ORDER_STATE_UNIT_READY`) is a separate case: the building is
+//! already complete, the exit is allowed (`ORDER_ACTIVATE`) and does not cancel construction.
 
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::events::apply_command;
@@ -46,13 +46,13 @@ fn count_type(state: &max_core::GameState, unit_type: UnitType) -> usize {
         .count()
 }
 
-/// Заказ `TRAINHAL` конструктором: площадка стоит, приказ — `ORDER_BUILD`.
+/// `TRAINHAL` order by the constructor: the site stands, the order is `ORDER_BUILD`.
 fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point) {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
-    // Высадка даёт конструктору сырьё (`DEFAULT_MISSION_LOADOUT`, 40);
-    // `UnitsManager_DeployUnit` обнуляет склад нового юнита.
+    // Landing gives the constructor raw material (`DEFAULT_MISSION_LOADOUT`, 40);
+    // `UnitsManager_DeployUnit` zeroes the new unit's storage.
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
     let mut manager = ProductionManager::new(state, TeamId::RED);
@@ -65,7 +65,7 @@ fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point)
     (constructor, report.site)
 }
 
-/// Признаки **живой** стройки: очередь, прогресс и утилиты площадки на месте.
+/// Signs of a **live** construction: queue, progress and site utilities are in place.
 fn assert_build_intact(state: &max_core::GameState, builder: UnitId, site: Point) {
     let unit = state.unit(builder).expect("builder alive");
 
@@ -81,7 +81,7 @@ fn assert_build_intact(state: &max_core::GameState, builder: UnitId, site: Point
     );
 }
 
-/// Признаки отменённой стройки (C++ `CancelBuilding` мобильной ветки).
+/// Signs of a cancelled construction (C++ `CancelBuilding` mobile branch).
 fn assert_build_cancelled(state: &max_core::GameState, builder: UnitId, site: Point) {
     let unit = state.unit(builder).expect("builder alive");
 
@@ -112,7 +112,7 @@ fn assert_build_cancelled(state: &max_core::GameState, builder: UnitId, site: Po
     }
 }
 
-/// `UnitsManager_SetNewOrder` (ИИ, группа, прямой вызов) стройку не отменяет.
+/// `UnitsManager_SetNewOrder` (AI, group, direct call) does not cancel construction.
 #[test]
 fn set_order_move_does_not_cancel_the_unfinished_build() {
     let mut state = state_with_gold(100);
@@ -129,7 +129,7 @@ fn set_order_move_does_not_cancel_the_unfinished_build() {
     assert_build_intact(&state, builder, site);
 }
 
-/// Пакет **38** (движение с путём) — сетевой путь приказа игрока.
+/// Packet **38** (movement with a path) — the network path of a player order.
 #[test]
 fn packet_38_move_does_not_cancel_the_unfinished_build() {
     let mut state = state_with_gold(100);
@@ -156,8 +156,8 @@ fn packet_38_move_does_not_cancel_the_unfinished_build() {
     assert_build_intact(&state, builder, site);
 }
 
-/// Пакет **08** (`UnitsManager_SetNewOrder` удалённого игрока): `prior` из
-/// пакета сохраняется, стройка не снимается.
+/// Packet **08** (`UnitsManager_SetNewOrder` of a remote player): `prior` from
+/// the packet is preserved, construction is not cancelled.
 #[test]
 fn packet_08_move_does_not_cancel_the_unfinished_build() {
     use max_core::input::{OrderPayload, Packet08Order, PayloadP1};
@@ -187,9 +187,9 @@ fn packet_08_move_does_not_cancel_the_unfinished_build() {
     assert_build_intact(&state, builder, site);
 }
 
-/// Достроенная площадка: уход строителя (`UNIT_READY` → `ORDER_ACTIVATE` →
-/// `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT`) **не** отменяет стройку
-/// и не снимает плиту под готовым зданием.
+/// A completed site: the builder's exit (`UNIT_READY` → `ORDER_ACTIVATE` →
+/// `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT`) does **not** cancel construction
+/// and does not remove the slab under the completed building.
 #[test]
 fn leaving_a_finished_site_keeps_the_foundation() {
     let mut state = state_with_gold(100);
@@ -216,14 +216,14 @@ fn leaving_a_finished_site_keeps_the_foundation() {
     };
     assert!(slab_at_site(&state), "плита под зданием стоит");
 
-    // Приказ уйти: `ORDER_ACTIVATE`/`IN_TRANSITION` → `PositionInTape` LEAVE.
+    // Exit order: `ORDER_ACTIVATE`/`IN_TRANSITION` → `PositionInTape` LEAVE.
     state.set_order(builder, UnitOrder::Activate, UnitOrderState::InTransition);
     state.tick();
     let unit = state.unit(builder).expect("builder alive");
     assert_eq!(unit.orders, UnitOrder::AwaitTapePositioning);
     assert_eq!(unit.state, UnitOrderState::TapePositioningDeinit);
 
-    // Новый приказ во время ухода не «отменяет стройку».
+    // A new order during the exit does not "cancel construction".
     state.set_order(builder, UnitOrder::Move, UnitOrderState::Init);
     assert!(
         slab_at_site(&state),
@@ -236,9 +236,9 @@ fn leaving_a_finished_site_keeps_the_foundation() {
     );
 }
 
-/// Явный `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) идёт штатным путём машины
-/// приказов: `ProcessOrderHaltBuilding` → `CancelBuilding` снимает площадку
-/// ровно один раз.
+/// An explicit `stop` (`ORDER_BUILD`/`BUILD_CANCEL`) goes through the normal order
+/// machine path: `ProcessOrderHaltBuilding` → `CancelBuilding` removes the site
+/// exactly once.
 #[test]
 fn explicit_stop_cancels_the_build() {
     let mut state = state_with_gold(100);
@@ -251,7 +251,7 @@ fn explicit_stop_cancels_the_build() {
     assert_eq!(unit.orders, UnitOrder::Build);
     assert_eq!(unit.state, UnitOrderState::BuildCancel);
 
-    // Машина приказов: `ProcessOrderBuild`/`BUILD_CANCEL` → `CancelBuilding`.
+    // Order machine: `ProcessOrderBuild`/`BUILD_CANCEL` → `CancelBuilding`.
     for _ in 0..4 {
         state.tick();
     }

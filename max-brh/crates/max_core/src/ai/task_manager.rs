@@ -1,26 +1,26 @@
-//! Менеджер задач ИИ — C++ `class TaskManager` (`task_manager.cpp`).
+//! AI task manager — C++ `class TaskManager` (`task_manager.cpp`).
 //!
-//! # Что портировано
+//! # What is ported
 //!
-//! * очереди напоминаний `priority` / `normal` / `deferred` и их
-//!   детерминированный разбор `ExecuteReminders`: `deferred` переезжают в
-//!   `normal`, затем 2 priority : 1 normal, пока очереди не опустеют
-//!   (`task_manager.cpp:277`). Тайм-бюджет (`TickTimer_HaveTimeToThink`) не
-//!   портируется — DESIGN §5.1, риск 4: очередь обрабатывается полностью;
-//! * жизненный цикл задач (`AppendTask`, `RemoveTask`, `Clear`,
-//!   `MarkTasksForProcessing`), назначение юнитов (`FindTaskForUnit`,
-//!   `ClearUnitTasksAndRemindAvailable`, `ScheduleDelayedTasks`), запросы
-//!   производства (`CreateBuilding`, `CreateUnit`, `IsUnitNeeded`),
-//!   реакции (`CheckComputerReactions`, `CheckUnitReaction`,
+//! * reminder queues `priority` / `normal` / `deferred` and their
+//!   deterministic processing `ExecuteReminders`: `deferred` move to
+//!   `normal`, then 2 priority : 1 normal until the queues are empty
+//!   (`task_manager.cpp:277`). The time budget (`TickTimer_HaveTimeToThink`) is not
+//!   ported — DESIGN §5.1, risk 4: the queue is processed fully;
+//! * task lifecycle (`AppendTask`, `RemoveTask`, `Clear`,
+//!   `MarkTasksForProcessing`), unit assignment (`FindTaskForUnit`,
+//!   `ClearUnitTasksAndRemindAvailable`, `ScheduleDelayedTasks`), production
+//!   requests (`CreateBuilding`, `CreateUnit`, `IsUnitNeeded`),
+//!   reactions (`CheckComputerReactions`, `CheckUnitReaction`,
 //!   `CollectPotentialAttackTargets`, `EnqueueUnitForReactionCheck`);
-//! * списки задач юнита (`UnitInfo::tasks` в C++ — `PushFront`, поэтому
-//!   индекс 0 — «верхняя» задача, `UnitInfo::GetTask`).
+//! * unit task lists (`UnitInfo::tasks` in C++ — `PushFront`, so
+//!   index 0 is the "top" task, `UnitInfo::GetTask`).
 //!
-//! # Детерминизм
+//! # Determinism
 //!
-//! Все списки — `Vec` в порядке вставки (C++ `SmartList`); обход задач и
-//! напоминаний идёт строго в этом порядке; карт с неупорядоченной итерацией
-//! нет. RNG вызывается только внутри задач и `AiPlayer` (см. `rng.rs`).
+//! All lists are `Vec`s in insertion order (C++ `SmartList`); task and
+//! reminder traversal is strictly in that order; there are no maps with unordered
+//! iteration. RNG is called only inside tasks and `AiPlayer` (see `rng.rs`).
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{unit_flags, Opponent, UnitOrder, UnitOrderState, UnitType};
@@ -38,12 +38,12 @@ use super::task::{
 use super::tasks::{TaskCtx, TaskKind};
 use super::Task;
 
-/// Менеджер задач и напоминаний команды ИИ (один на партию).
+/// Task and reminder manager of an AI team (one per game).
 #[derive(Debug, Clone, Default)]
 pub struct TaskManager {
-    /// `SmartList<Task> tasks` — порядок регистрации.
+    /// `SmartList<Task> tasks` — registration order.
     tasks: Vec<Task>,
-    /// `SmartList<TaskObtainUnits> unit_requests` — id задач (`PushBack`).
+    /// `SmartList<TaskObtainUnits> unit_requests` — task ids (`PushBack`).
     unit_requests: Vec<u32>,
     /// `SmartList<Reminder> normal_reminders`.
     normal_reminders: Vec<Reminder>,
@@ -53,30 +53,30 @@ pub struct TaskManager {
     deferred_reminders: Vec<Reminder>,
     /// `SmartList<UnitInfo> units_awaiting_reaction`.
     units_awaiting_reaction: Vec<UnitId>,
-    /// Задачи юнитов (`UnitInfo::tasks`): `(юнит, [topmost, …])`.
+    /// Unit tasks (`UnitInfo::tasks`): `(unit, [topmost, …])`.
     unit_tasks: Vec<(UnitId, Vec<u32>)>,
-    /// `reminder_counter` — счётчик 2:1.
+    /// `reminder_counter` — the 2:1 counter.
     reminder_counter: u32,
-    /// `Task::task_id` — следующий id задачи.
+    /// `Task::task_id` — the next task id.
     next_task_id: u32,
-    /// Идёт ли разбор очереди (`ExecuteReminders`). Нужен, чтобы задача,
-    /// планирующая себя на начало/конец хода **изнутри** обработчика, не
-    /// образовывала live-lock: такие напоминания уходят в `deferred` и
-    /// выполняются на следующем вызове (в C++ их ограничивал тайм-бюджет,
-    /// DESIGN §5.1 риск 4).
+    /// Whether the queue is being processed (`ExecuteReminders`). Needed so that a task
+    /// scheduling itself for turn start/end **from inside** the handler does not
+    /// create a live-lock: such reminders go to `deferred` and
+    /// run on the next call (in C++ they were limited by the time budget,
+    /// DESIGN §5.1 risk 4).
     executing_reminders: bool,
 }
 
-/// Страховочный лимит напоминаний на один `ExecuteReminders`.
+/// Safety limit of reminders per one `ExecuteReminders`.
 ///
-/// В C++ число напоминаний за кадр ограничено `TickTimer_HaveTimeToThink`;
-/// в детерминированной модели очередь обрабатывается полностью, поэтому
-/// лимит нужен только против патологического самовоспроизведения задач.
-/// Он не должен достигаться: превышение — ошибка в логике задач.
+/// In C++ the number of reminders per frame is limited by `TickTimer_HaveTimeToThink`;
+/// in the deterministic model the queue is processed fully, so
+/// the limit is needed only against pathological self-reproduction of tasks.
+/// It must not be reached: exceeding it is a task logic error.
 pub const MAX_REMINDERS_PER_CALL: usize = 100_000;
 
 impl TaskManager {
-    /// `TaskManager::TaskManager` — пустой менеджер.
+    /// `TaskManager::TaskManager` — an empty manager.
     pub fn new() -> Self {
         Self {
             tasks: Vec::new(),
@@ -93,7 +93,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Доступ к списку задач
+    // Task list access
     // -----------------------------------------------------------------------
 
     /// `TaskManager::GetTaskList`.
@@ -101,40 +101,40 @@ impl TaskManager {
         &self.tasks
     }
 
-    /// Количество задач (`tasks.GetCount()`).
+    /// Number of tasks (`tasks.GetCount()`).
     pub fn task_count(&self) -> usize {
         self.tasks.len()
     }
 
-    /// Задача по id.
+    /// A task by id.
     pub fn task(&self, id: u32) -> Option<&Task> {
         self.tasks.iter().find(|task| task.id == id)
     }
 
-    /// Задача по id (мутабельно).
+    /// A task by id (mutable).
     pub fn task_mut(&mut self, id: u32) -> Option<&mut Task> {
         self.tasks.iter_mut().find(|task| task.id == id)
     }
 
-    /// Есть ли задача с таким id.
+    /// Whether a task with this id exists.
     pub fn has_task(&self, id: u32) -> bool {
         self.tasks.iter().any(|task| task.id == id)
     }
 
-    /// Вносит изменённое состояние класса задачи (базовые поля задачи —
-    /// авторитетны в менеджере, меняются через [`TaskCtx`]).
+    /// Writes the changed task-class state (the task's base fields are
+    /// authoritative in the manager and are changed via [`TaskCtx`]).
     pub fn write_kind(&mut self, task: Task) {
         if let Some(current) = self.tasks.iter_mut().find(|current| current.id == task.id) {
             current.kind = task.kind;
         }
     }
 
-    /// Задачи запроса на юнитов (`unit_requests`).
+    /// Unit request tasks (`unit_requests`).
     pub fn unit_requests(&self) -> &[u32] {
         &self.unit_requests
     }
 
-    /// Все напоминания (для дайджеста/тестов): `(тип, очередь)`.
+    /// All reminders (for the digest/tests): `(type, queue)`.
     pub fn reminder_types(&self) -> Vec<(u8, u8)> {
         let mut result = Vec::new();
         for reminder in &self.priority_reminders {
@@ -154,7 +154,7 @@ impl TaskManager {
         self.normal_reminders.len() + self.priority_reminders.len() + self.deferred_reminders.len()
     }
 
-    /// Количество напоминаний по типам (`REMINDER_TYPE_COUNT`).
+    /// Number of reminders by type (`REMINDER_TYPE_COUNT`).
     pub fn reminders_by_type(&self) -> [usize; REMINDER_TYPE_COUNT] {
         let mut counts = [0usize; REMINDER_TYPE_COUNT];
         for reminder in self
@@ -169,20 +169,20 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Задачи юнита (`UnitInfo::tasks`)
+    // Unit tasks (`UnitInfo::tasks`)
     // -----------------------------------------------------------------------
 
     fn unit_slot(&self, unit: UnitId) -> Option<usize> {
         self.unit_tasks.iter().position(|(id, _)| *id == unit)
     }
 
-    /// `UnitInfo::GetTask` — верхняя задача юнита (индекс 0).
+    /// `UnitInfo::GetTask` — the unit's top task (index 0).
     pub fn unit_task(&self, unit: UnitId) -> Option<u32> {
         self.unit_slot(unit)
             .and_then(|slot| self.unit_tasks[slot].1.first().copied())
     }
 
-    /// Все задачи юнита в порядке `PushFront` (новые первыми).
+    /// All unit tasks in `PushFront` order (newest first).
     pub fn unit_tasks_of(&self, unit: UnitId) -> Vec<u32> {
         self.unit_slot(unit)
             .map(|slot| self.unit_tasks[slot].1.clone())
@@ -217,8 +217,8 @@ impl TaskManager {
         }
     }
 
-    /// `UnitInfo::RemoveTask` (`unitinfo.cpp:3739`) с уведомлением новой
-    /// верхней задачи (если юнит готов принимать приказы и `mode`).
+    /// `UnitInfo::RemoveTask` (`unitinfo.cpp:3739`) with notification of the new
+    /// top task (if the unit is ready to accept orders and `mode`).
     pub fn detach_task_from_unit(
         &mut self,
         world: &mut GameState,
@@ -241,8 +241,8 @@ impl TaskManager {
         }
     }
 
-    /// `UnitInfo::RemoveTasks` (`unitinfo.cpp:1325`) — очистка и уведомление
-    /// каждой задачи (`RemoveUnit`).
+    /// `UnitInfo::RemoveTasks` (`unitinfo.cpp:1325`) — clearing and notifying
+    /// each task (`RemoveUnit`).
     pub fn remove_unit_tasks(&mut self, world: &mut GameState, unit: UnitId) {
         let tasks = self.unit_tasks_of(unit);
         for task_id in tasks {
@@ -282,10 +282,10 @@ impl TaskManager {
 
     /// `UnitInfo::ScheduleDelayedTasks` (`unitinfo.cpp:645`).
     ///
-    /// `delayed_tasks` (отложенные задачи) в max_core не заводятся отдельным
-    /// списком (их ставит только `OrderContext`-слой через
-    /// [`Self::remind_move_finished`]), поэтому портирована вторая половина:
-    /// напоминание «движение завершено» верхней задаче юнита.
+    /// `delayed_tasks` (deferred tasks) are not kept in a separate
+    /// list in max_core (only the `OrderContext` layer sets them via
+    /// [`Self::remind_move_finished`]), so the second half is ported:
+    /// the "movement finished" reminder to the unit's top task.
     pub fn schedule_delayed_tasks(&mut self, world: &mut GameState, unit: UnitId, priority: bool) {
         let enabled = world
             .unit(unit)
@@ -316,7 +316,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Регистрация задач
+    // Task registration
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AppendTask` (`task_manager.cpp:254`).
@@ -356,7 +356,7 @@ impl TaskManager {
             let _ = task_get_name(task.get_type());
         }
 
-        // Снять задачу со всех юнитов (`UnitInfo::RemoveTask` без напоминания).
+        // Remove the task from all units (`UnitInfo::RemoveTask` without a reminder).
         let units: Vec<UnitId> = self
             .unit_tasks
             .iter()
@@ -370,14 +370,14 @@ impl TaskManager {
 
         self.tasks.retain(|task| task.id != task_id);
 
-        // Дочерние задачи теряют родителя (C++: `m_parent` — refcount-указатель).
+        // Child tasks lose their parent (C++: `m_parent` is a refcounted pointer).
         for task in &mut self.tasks {
             if task.parent == Some(task_id) {
                 task.parent = None;
             }
         }
 
-        // Напоминания удалённой задачи больше не исполняются.
+        // Reminders of the removed task are no longer executed.
         self.normal_reminders
             .retain(|reminder| !matches!(reminder, Reminder::TurnStart { task } | Reminder::TurnEnd { task } if *task == task_id));
         self.priority_reminders
@@ -387,7 +387,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Напоминания
+    // Reminders
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AppendReminder` (`task_manager.cpp:266`).
@@ -409,10 +409,10 @@ impl TaskManager {
 
     /// `TaskManager::ExecuteReminders` (`task_manager.cpp:277`).
     ///
-    /// Порядок детерминирован: сначала `deferred` → `normal`, затем выбор из
-    /// `priority`/`normal` по схеме «2 priority, затем 1 normal»
+    /// The order is deterministic: first `deferred` → `normal`, then selection from
+    /// `priority`/`normal` by the "2 priority, then 1 normal" scheme
     /// (`reminder_counter >= 2 || priority_reminders.GetCount() == 0`).
-    /// Берёт следующее напоминание по схеме C++: 2 priority, затем 1 normal
+    /// Takes the next reminder by the C++ scheme: 2 priority, then 1 normal
     /// (`reminder_counter >= 2 || priority_reminders.GetCount() == 0`).
     fn pop_next_reminder(&mut self) -> Option<Reminder> {
         if self.normal_reminders.is_empty() && self.priority_reminders.is_empty() {
@@ -437,7 +437,7 @@ impl TaskManager {
         }
     }
 
-    /// Тайм-бюджет C++ не моделируется (DESIGN §5.1, риск 4).
+    /// The C++ time budget is not modeled (DESIGN §5.1, risk 4).
     pub fn execute_reminders(&mut self, world: &mut GameState) -> bool {
         for reminder in std::mem::take(&mut self.deferred_reminders) {
             self.normal_reminders.push(reminder);
@@ -470,7 +470,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Жизненный цикл хода
+    // Turn lifecycle
     // -----------------------------------------------------------------------
 
     /// `TaskManager::BeginTurn` (`task_manager.cpp:337`).
@@ -538,7 +538,7 @@ impl TaskManager {
         task.scheduled_for_turn_start = true;
         let reminder = Reminder::TurnStart { task: task_id };
 
-        // Изнутри обработчика — на следующий вызов `ExecuteReminders`.
+        // From inside the handler — to the next `ExecuteReminders` call.
         if self.executing_reminders {
             self.deferred_reminders.push(reminder);
         } else if priority {
@@ -589,7 +589,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Реакции
+    // Reactions
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AreTasksThinking` (`task_manager.cpp:131`).
@@ -599,13 +599,13 @@ impl TaskManager {
             .any(|task| task.team == team && task.is_thinking(world))
     }
 
-    /// Есть ли у команды незавершённая работа — **диагностика** (QA/логи), не
-    /// решение о конце хода.
+    /// Whether the team has unfinished work — **diagnostics** (QA/logs), not
+    /// the end-of-turn decision.
     ///
-    /// `AiPlayer::CheckEndTurn` использует не это, а флаг `tasks_pending`
-    /// (`Ai_SetTasksPendingFlag`/`Ai_ClearTasksPendingFlags`): статическая
-    /// проверка «есть незавершённые задачи» держала ход ИИ вечно, если юнит
-    /// израсходовал скорость, а задача ждала следующего хода.
+    /// `AiPlayer::CheckEndTurn` uses not this but the `tasks_pending` flag
+    /// (`Ai_SetTasksPendingFlag`/`Ai_ClearTasksPendingFlags`): the static
+    /// "there are unfinished tasks" check held the AI turn forever if a unit
+    /// ran out of speed and the task waited for the next turn.
     pub fn has_pending_work(&self, world: &GameState, team: TeamId) -> bool {
         if !self.normal_reminders.is_empty()
             || !self.priority_reminders.is_empty()
@@ -811,7 +811,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Производство
+    // Production
     // -----------------------------------------------------------------------
 
     /// `TaskManager::CreateBuilding` (`task_manager.cpp:240`).
@@ -842,10 +842,10 @@ impl TaskManager {
         let priority = self.task(task).map(|task| task.base_priority).unwrap_or(0);
 
         if self.is_unit_needed(world, unit_type, team, priority) {
-            // Строитель, который по типу должен построить сам себя
-            // (`CONSTRCT`/`MASTER_BUILDER`), заводом не производится: запрос
-            // отсекается, иначе цепочка `TaskCreateUnit → TaskObtainUnits →
-            // TaskCreateUnit` не завершится.
+            // A builder that by type must build itself
+            // (`CONSTRCT`/`MASTER_BUILDER`) is not produced by a factory: the request
+            // is cut off, otherwise the chain `TaskCreateUnit → TaskObtainUnits →
+            // TaskCreateUnit` would not terminate.
             if super::tasks::create::builder_type_for(unit_type) == unit_type {
                 return;
             }
@@ -948,7 +948,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Назначение задач юнитам
+    // Assigning tasks to units
     // -----------------------------------------------------------------------
 
     /// `TaskManager::FindTaskForUnit` (`task_manager.cpp:430`).
@@ -984,16 +984,16 @@ impl TaskManager {
             return;
         }
 
-        // Юнит «в трюме» (завод/транспорт: `ORDER_IDLE` + `ORDER_STATE_STORE`)
-        // задач не получает: C++ такие юниты не видит ни в одном цикле выдачи
-        // задач (`GetOrder() != ORDER_IDLE` в `AiPlayer`), а выводит их
-        // `UnitsManager_ActivateUnit` по приказу `TaskCreateUnit`/`TaskActivate`
+        // A unit "in the hold" (factory/transport: `ORDER_IDLE` + `ORDER_STATE_STORE`)
+        // receives no tasks: C++ does not see such units in any task-issuing
+        // cycle (`GetOrder() != ORDER_IDLE` in `AiPlayer`), and they are brought out by
+        // `UnitsManager_ActivateUnit` on the order of `TaskCreateUnit`/`TaskActivate`
         // (`unitinfo.cpp:3489-3520`, `taskcreateunit.cpp:147-155`).
         if info.orders == UnitOrder::Idle && info.state == UnitOrderState::Store {
             return;
         }
 
-        // Отключённый юнит задачу не получает (C++: `ORDER_DISABLE`/`IDLE` после него).
+        // A disabled unit receives no task (C++: `ORDER_DISABLE`/`IDLE` after it).
         if info.orders == UnitOrder::Disable
             || (info.orders == UnitOrder::Idle && info.prior_orders == UnitOrder::Disable)
         {
@@ -1030,7 +1030,7 @@ impl TaskManager {
             return;
         }
 
-        // `ExchangeOperator` — обмен оператора здания/комплекса.
+        // `ExchangeOperator` — swapping the operator of a building/complex.
         if info.environment().is_some() {
             let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
             for task_id in ids {
@@ -1044,7 +1044,7 @@ impl TaskManager {
             }
         }
 
-        // Запросы на юнитов (`unit_requests`): подходящий по типу и срочности.
+        // Unit requests (`unit_requests`): a matching type and urgency.
         let mut obtain_units_task: Option<u32> = None;
         let mut task_priority = u16::MAX;
 
@@ -1073,7 +1073,7 @@ impl TaskManager {
             return;
         }
 
-        // Лучшая задача по расстоянию до её `GetBounds().ul` (порядок задач).
+        // The best task by distance to its `GetBounds().ul` (task order).
         let mut best_task: Option<u32> = None;
         let mut minimum_distance = i32::MAX;
 
@@ -1103,7 +1103,7 @@ impl TaskManager {
     }
 
     // -----------------------------------------------------------------------
-    // Делегирование в классы задач (`ai/tasks/*`)
+    // Delegation to task classes (`ai/tasks/*`)
     // -----------------------------------------------------------------------
 
     fn with_task_kind<R>(
@@ -1144,7 +1144,7 @@ impl TaskManager {
         });
     }
 
-    /// `Task::Execute(unit)` — возвращает `true`, если задача что-то сделала.
+    /// `Task::Execute(unit)` — returns `true` if the task did something.
     pub fn task_execute(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) -> bool {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.execute(ctx, header, unit)
@@ -1181,7 +1181,7 @@ impl TaskManager {
         });
     }
 
-    /// Уведомление родителя о завершении `TaskMove`.
+    /// Notifying the parent about `TaskMove` completion.
     pub fn task_move_finished(
         &mut self,
         world: &mut GameState,
@@ -1286,7 +1286,7 @@ impl TaskManager {
         }
     }
 
-    /// Дайджест состояния ИИ для тестов детерминизма (DESIGN §6, заготовка `crc.rs`).
+    /// AI state digest for determinism tests (DESIGN §6, groundwork for `crc.rs`).
     pub fn digest_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&(self.tasks.len() as u32).to_le_bytes());
         for task in &self.tasks {
@@ -1355,7 +1355,7 @@ mod tests {
         );
         let task_id = manager.append_task(&mut world, task);
 
-        // `append_task` вызывает `Task::Init` → `RemindTurnStart(true)`.
+        // `append_task` calls `Task::Init` → `RemindTurnStart(true)`.
         assert!(manager.reminders_count() > 0);
 
         manager.normal_reminders.clear();
@@ -1393,7 +1393,7 @@ mod tests {
     fn reminder_selection_alternates_two_priority_then_one_normal() {
         let mut manager = TaskManager::new();
 
-        // 4 priority + 3 normal: ожидаемая последовательность P,P,N,P,P,N,N.
+        // 4 priority + 3 normal: the expected sequence is P,P,N,P,P,N,N.
         for _ in 0..4 {
             manager
                 .priority_reminders

@@ -1,10 +1,10 @@
-//! Туман войны: видимость чужих юнитов (`UnitInfo::IsVisibleToTeam`).
+//! Fog of war: visibility of foreign units (`UnitInfo::IsVisibleToTeam`).
 //!
-//! Оракул — `unitinfo.cpp:2796` (`InitStealthStatus`), `unitinfo.cpp:2810`
-//! (`SpotByTeam`), `access.cpp:762` (`Access_UpdateMapStatus`) и
-//! `access.cpp:880` (`Access_UpdateVisibilityStatus`). До фикса `spawn_unit`
-//! помечал обычные юниты видимыми **всем** командам, поэтому на карте и
-//! миникарте были видны чужие базы без разведки.
+//! Oracle — `unitinfo.cpp:2796` (`InitStealthStatus`), `unitinfo.cpp:2810`
+//! (`SpotByTeam`), `access.cpp:762` (`Access_UpdateMapStatus`) and
+//! `access.cpp:880` (`Access_UpdateVisibilityStatus`). Before the fix `spawn_unit`
+//! marked ordinary units visible to **all** teams, so foreign bases were visible
+//! on the map and minimap without reconnaissance.
 
 use max_core::enums::{TeamClan, UnitType};
 use max_core::game::GameState;
@@ -52,10 +52,10 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(80, 80), 0)
         .expect("дальний враг");
 
-    // Скан своей команды не пересчитывается при спавне чужого юнита.
+    // The own team's scan is not recomputed when a foreign unit spawns.
     assert!(!state.unit(near).unwrap().is_visible_to_team(TeamId::RED));
 
-    // `Access_UpdateVisibilityStatus(false)`: заново строит покрытие скана.
+    // `Access_UpdateVisibilityStatus(false)`: rebuilds scan coverage.
     state.update_visibility_status(false);
 
     assert!(
@@ -95,7 +95,7 @@ fn all_visible_marks_every_spawned_unit_visible() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(80, 80), 0)
         .unwrap();
 
-    // `InitStealthStatus`: невидимые типы — нет, обычные — `AllVisible`.
+    // `InitStealthStatus`: invisible types — no, ordinary ones — `AllVisible`.
     assert!(state.unit(enemy).unwrap().is_visible_to_team(TeamId::RED));
     assert!(state.unit(own).unwrap().is_visible_to_team(TeamId::GREEN));
 
@@ -109,7 +109,7 @@ fn stealth_units_stay_hidden_outside_fov() {
     state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 20), 0)
         .unwrap();
-    // `COMMANDO` вне радиуса обзора танка (scan 4) — не виден.
+    // `COMMANDO` outside the tank's scan radius (scan 4) — not visible.
     let commando = state
         .spawn_unit(UnitType::Infiltrator, TeamId::GREEN, Point::new(40, 40), 0)
         .unwrap();
@@ -124,7 +124,7 @@ fn stealth_units_stay_hidden_outside_fov() {
         "COMMANDO вне FOV не обнаруживается"
     );
 
-    // Явное обнаружение (например, провал стелс-действия) делает видимым.
+    // Explicit detection (e.g. a failed stealth action) makes it visible.
     state
         .unit_mut(commando)
         .unwrap()

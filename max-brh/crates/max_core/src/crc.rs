@@ -1,39 +1,39 @@
-//! CRC16 пакета 45 и канонические дайджесты состояния (P7).
+//! Packet 45 CRC16 and canonical state digests (P7).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `max-cpp-port/src/crc16.c` — побайтовый CRC16 (полином `0x1021`, старший
-//!   бит вперёд, без рефлексии, начальное значение выбирает вызывающий);
-//! * `max-cpp-port/src/game_manager.cpp:2315` — `GameManager_GetCrc16`, пословный
-//!   шаг CRC по **16-битному** значению (эквивалент двух побайтовых шагов со
-//!   старшим байтом вперёд — см. [`get_crc16_word`]);
-//! * `game_manager.cpp:2327` — `GameManager_GetUnitListChecksum` (какие поля
-//!   юнита попадают в CRC);
-//! * `game_manager.cpp:2356` — `GameManager_CheckDesync` (порядок списков,
-//!   команд и стартовое значение `0xFFFF`);
+//! * `max-cpp-port/src/crc16.c` — byte-wise CRC16 (polynomial `0x1021`, MSB
+//!   first, no reflection, initial value chosen by the caller);
+//! * `max-cpp-port/src/game_manager.cpp:2315` — `GameManager_GetCrc16`, a word-wise
+//!   CRC step over a **16-bit** value (equivalent to two byte-wise steps with
+//!   the high byte first — see [`get_crc16_word`]);
+//! * `game_manager.cpp:2327` — `GameManager_GetUnitListChecksum` (which unit
+//!   fields enter the CRC);
+//! * `game_manager.cpp:2356` — `GameManager_CheckDesync` (order of lists,
+//!   teams and initial value `0xFFFF`);
 //! * `remote.cpp:1824` (`Remote_CheckDesync`), `remote.cpp:3556`
 //!   (`Remote_SendNetPacket_45`), `remote.cpp:3568`
-//!   (`Remote_ReceiveNetPacket_45`) — только **транспорт** пакета 45
-//!   (счётчик хода + `uint16_t crc_checksum`); сам CRC считает
-//!   `GameManager_CheckDesync` через `crc16()`/`GameManager_GetCrc16`;
-//! * `max-brh-docs/protocol.md` §8.6 — пакет 45 как барьер конца хода.
+//!   (`Remote_ReceiveNetPacket_45`) — only the **transport** of packet 45
+//!   (turn counter + `uint16_t crc_checksum`); the CRC itself is computed by
+//!   `GameManager_CheckDesync` via `crc16()`/`GameManager_GetCrc16`;
+//! * `max-brh-docs/protocol.md` §8.6 — packet 45 as the end-of-turn barrier.
 //!
-//! # Два дайджеста
+//! # Two digests
 //!
-//! * [`state_checksum`] — **сетевой** CRC пакета 45: ровно те поля и тот порядок,
-//!   которые перебирает `GameManager_CheckDesync`. Именно это значение уходит в
-//!   [`crate::input::Packet45CrcBarrier`] и сравнивается пирами.
-//! * [`replay_digest_bytes`] — **канонический** дайджест для сквозных тестов
-//!   паритета (P7): карта (CRC обеих карт), команды, юниты в порядке пяти
-//!   списков и CRC16 всего дайджеста. Поля — симуляционное подмножество
-//!   [`crate::game::GameState::snapshot_bytes`] (без AI-задач/напоминаний P6);
-//!   ровно те же поля печатает C++-генератор
-//!   `max-brh/tools/sim_vectors/main.cpp`, поэтому сравнение идёт бит-в-бит.
-//! * [`state_digest`] — CRC16 «как в пакете 45» от полного
-//!   [`crate::game::GameState::snapshot_bytes`] (десинк-детектор для тестов).
+//! * [`state_checksum`] — the **network** CRC of packet 45: exactly the fields and order
+//!   that `GameManager_CheckDesync` iterates. This is the value sent in
+//!   [`crate::input::Packet45CrcBarrier`] and compared by peers.
+//! * [`replay_digest_bytes`] — the **canonical** digest for end-to-end
+//!   parity tests (P7): map (CRC of both maps), teams, units in the order of the five
+//!   lists and CRC16 of the whole digest. The fields are the simulation subset of
+//!   [`crate::game::GameState::snapshot_bytes`] (without P6 AI tasks/reminders);
+//!   the C++ generator prints exactly the same fields
+//!   `max-brh/tools/sim_vectors/main.cpp`, so the comparison is bit for bit.
+//! * [`state_digest`] — CRC16 "as in packet 45" over the full
+//!   [`crate::game::GameState::snapshot_bytes`] (a desync detector for tests).
 //!
-//! Все функции чистые, порядок обхода фиксирован (DESIGN §6.2): никакой итерации
-//! по `HashMap`.
+//! All functions are pure, traversal order is fixed (DESIGN §6.2): no iteration
+//! over `HashMap`.
 
 use crate::enums::unit_flags::{EXPLODING, STATIONARY};
 use crate::game::{GameState, PLAYER_TEAM_COUNT, TEAM_SLOTS};
@@ -42,12 +42,12 @@ use crate::unit::UnitListKind;
 use crate::unit_values::ATTRIB_COUNT;
 use crate::victory::cargo_type_of;
 
-/// Полином CRC16 (CCITT): `x^16 + x^12 + x^5 + 1` — `crc16.c:38`.
+/// CRC16 polynomial (CCITT): `x^16 + x^12 + x^5 + 1` — `crc16.c:38`.
 pub const CRC16_POLYNOMIAL: u16 = 0x1021;
-/// Начальное значение CRC пакета 45 — `game_manager.cpp:2362` (`0xFFFF`).
+/// Initial CRC value of packet 45 — `game_manager.cpp:2362` (`0xFFFF`).
 pub const CRC16_INITIAL: u16 = 0xFFFF;
 
-/// Один побайтовый шаг CRC16 — дословный порт `crc16()` (`crc16.c:24`).
+/// One byte-wise CRC16 step — a verbatim port of `crc16()` (`crc16.c:24`).
 ///
 /// ```c
 /// for (i = 0; i < 8; i++) {
@@ -59,9 +59,9 @@ pub const CRC16_INITIAL: u16 = 0xFFFF;
 /// }
 /// ```
 ///
-/// Экстраполяция: функция линейна по `crc` и по битам `byte` над GF(2), поэтому
-/// 16 побайтовых шагов с нулевыми байтами дают ровно `L^16(crc)`, а вклад битов
-/// данных — само 16-битное слово (старший бит первым). Это и есть
+/// Extrapolation: the function is linear in `crc` and in the bits of `byte` over GF(2), so
+/// 16 byte-wise steps with zero bytes give exactly `L^16(crc)`, and the contribution of
+/// data bits is the 16-bit word itself (MSB first). This is
 /// [`get_crc16_word`].
 #[inline]
 pub fn crc16_update_byte(mut crc: u16, byte: u8) -> u16 {
@@ -84,7 +84,7 @@ pub fn crc16_update_byte(mut crc: u16, byte: u8) -> u16 {
     crc
 }
 
-/// CRC16 буфера от [`CRC16_INITIAL`] (потоковое применение
+/// CRC16 of a buffer starting from [`CRC16_INITIAL`] (streaming application
 /// [`crc16_update_byte`]).
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc = CRC16_INITIAL;
@@ -96,7 +96,7 @@ pub fn crc16(data: &[u8]) -> u16 {
     crc
 }
 
-/// `GameManager_GetCrc16` (`game_manager.cpp:2315`) — пословный шаг.
+/// `GameManager_GetCrc16` (`game_manager.cpp:2315`) — a word-wise step.
 ///
 /// ```c
 /// for (i = 0; i < 16; ++i) {
@@ -105,8 +105,8 @@ pub fn crc16(data: &[u8]) -> u16 {
 /// return crc ^ data;
 /// ```
 ///
-/// Эквивалент двух вызовов [`crc16_update_byte`] со старшим, затем младшим
-/// байтом `data` (проверяется тестом `word_step_matches_two_byte_steps`).
+/// Equivalent to two [`crc16_update_byte`] calls with the high, then low
+/// byte of `data` (verified by the `word_step_matches_two_byte_steps` test).
 #[inline]
 pub fn get_crc16_word(data: u16, crc_checksum: u16) -> u16 {
     let mut crc = crc_checksum;
@@ -123,18 +123,18 @@ pub fn get_crc16_word(data: u16, crc_checksum: u16) -> u16 {
 }
 
 // ---------------------------------------------------------------------------
-// CRC пакета 45 — сетевой десинк-детектор
+// Packet 45 CRC — the network desync detector
 // ---------------------------------------------------------------------------
 
 /// `GameManager_GetUnitListChecksum` (`game_manager.cpp:2327`).
 ///
-/// Участвуют только юниты с `id != NO_ID`, без флага `EXPLODING` и только
-/// запрошенной команды. Порядок полей — дословно из C++:
-/// `team, unit_type, unit_id, grid_x, grid_y, hits, [speed если не STATIONARY],
-/// shots, [storage если у типа есть тип груза], ammo`.
+/// Only units with `id != NO_ID`, without the `EXPLODING` flag, and only
+/// of the requested team participate. Field order is verbatim from C++:
+/// `team, unit_type, unit_id, grid_x, grid_y, hits, [speed if not STATIONARY],
+/// shots, [storage if the type has a cargo type], ammo`.
 ///
-/// `team`-условие вызывающего (`team_type != NONE || team == ALIEN`) проверяет
-/// [`state_checksum`], как в `GameManager_CheckDesync`.
+/// The caller's `team` condition (`team_type != NONE || team == ALIEN`) is checked by
+/// [`state_checksum`], as in `GameManager_CheckDesync`.
 pub fn get_unit_list_checksum(
     state: &GameState,
     kind: UnitListKind,
@@ -171,11 +171,11 @@ pub fn get_unit_list_checksum(
     crc_checksum
 }
 
-/// `GameManager_CheckDesync` (`game_manager.cpp:2356`) — CRC пакета 45.
+/// `GameManager_CheckDesync` (`game_manager.cpp:2356`) — CRC of packet 45.
 ///
-/// Внешний цикл — команды `RED..ALIEN`, внутренний — четыре списка
-/// (`GroundCover`, `MobileLandSea`, `Stationary`, `MobileAir`); список
-/// `ParticleUnits` в CRC **не входит** (как в C++). Стартовое значение `0xFFFF`.
+/// The outer loop is teams `RED..ALIEN`, the inner loop is the four lists
+/// (`GroundCover`, `MobileLandSea`, `Stationary`, `MobileAir`); the
+/// `ParticleUnits` list does **not** enter the CRC (as in C++). Initial value `0xFFFF`.
 pub fn state_checksum(state: &GameState) -> u16 {
     let mut crc_checksum = CRC16_INITIAL;
 
@@ -198,46 +198,46 @@ pub fn state_checksum(state: &GameState) -> u16 {
     crc_checksum
 }
 
-/// CRC16 полного канонического дайджеста [`GameState::snapshot_bytes`].
+/// CRC16 of the full canonical digest [`GameState::snapshot_bytes`].
 ///
-/// Используется тестами детерминизма как «десинк-детектор»: любое изменение
-/// симуляционного поля меняет значение.
+/// Used by determinism tests as a "desync detector": any change to a
+/// simulation field changes the value.
 pub fn state_digest(state: &GameState) -> u16 {
     crc16(&state.snapshot_bytes())
 }
 
 // ---------------------------------------------------------------------------
-// Канонический дайджест реплея (P7 parity)
+// Canonical replay digest (P7 parity)
 // ---------------------------------------------------------------------------
 
-/// Магия дайджеста реплея (`replay_digest_bytes`).
+/// Replay digest magic (`replay_digest_bytes`).
 pub const REPLAY_DIGEST_MAGIC: &[u8; 8] = b"MAXRPL1\0";
 
-/// Канонический дайджест состояния для сквозных тестов паритета.
+/// Canonical state digest for end-to-end parity tests.
 ///
-/// Формат — явный little-endian writer (DESIGN §6.4: без `serde`, без
-/// `HashMap`-итерации). Порядок полей фиксирован и совпадает с
+/// The format is an explicit little-endian writer (DESIGN §6.4: no `serde`, no
+/// `HashMap` iteration). Field order is fixed and matches
 /// `max-brh/tools/sim_vectors/main.cpp` (`write_state_digest`):
 ///
-/// | Поле | Тип |
+/// | Field | Type |
 /// |---|---|
-/// | `REPLAY_DIGEST_MAGIC` | 8 байт |
+/// | `REPLAY_DIGEST_MAGIC` | 8 bytes |
 /// | CRC16 `SurfaceMap` | u16 |
 /// | CRC16 `ResourceMap` (u16 LE) | u16 |
 /// | `turn_counter` | i32 |
 /// | `game_state`, `active_turn_team`, `player_team`, `play_mode` | u8×4 |
 /// | `unit_id_counter` | u32 |
 /// | `rng.state()` | u32×4 |
-/// | на команду `0..PLAYER_TEAM_MAX`: `team_type`, `finished_turn`, `team_points`, `gold`, 8×(`research_level`,`turns_to_complete`,`allocation`), 93×`unit_counters`, 93×`casualties` | см. код |
+/// | per team `0..PLAYER_TEAM_MAX`: `team_type`, `finished_turn`, `team_points`, `gold`, 8×(`research_level`,`turns_to_complete`,`allocation`), 93×`unit_counters`, 93×`casualties` | see code |
 /// | `unit_count` | u32 |
-/// | юниты в порядке [`GameState::unit_ids_in_order`] (5 списков + вне списков) | см. код |
-/// | CRC16 всех предыдущих байт | u16 |
+/// | units in [`GameState::unit_ids_in_order`] order (5 lists + outside lists) | see code |
+/// | CRC16 of all preceding bytes | u16 |
 ///
-/// Поля юнита: `id, unit_type, team, unit_id, flags, grid_x, grid_y,
+/// Unit fields: `id, unit_type, team, unit_id, flags, grid_x, grid_y,
 /// orders/state/prior_orders/prior_state, hits, speed, group_speed, shots,
 /// move_and_fire, storage, experience, ammo, build_time, total_mining,
 /// raw/fuel/gold_mining, raw/fuel/gold_mining_max, build_rate, ai_state_bits,
-/// connectors, 14 атрибутов base_values, путь (вид + данные), parent/enemy,
+/// connectors, 14 `base_values` attributes, path (kind + data), parent/enemy,
 /// build_list`.
 pub fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 * 1024);
@@ -359,7 +359,7 @@ pub fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
     out
 }
 
-/// CRC16 канонического дайджеста реплея (последние два байта
+/// CRC16 of the canonical replay digest (the last two bytes
 /// [`replay_digest_bytes`]).
 pub fn replay_digest_crc(state: &GameState) -> u16 {
     let bytes = replay_digest_bytes(state);
@@ -382,7 +382,7 @@ fn put_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-/// Число команд, участвующих в сетевых барьерах (`PLAYER_TEAM_MAX - 1`).
+/// Number of teams participating in network barriers (`PLAYER_TEAM_MAX - 1`).
 pub const NETWORK_TEAM_COUNT: usize = PLAYER_TEAM_COUNT;
 
 #[cfg(test)]
@@ -393,8 +393,8 @@ mod tests {
     use crate::geo::Point;
     use crate::team::{TeamKind, TeamUnits};
 
-    /// Векторы `crc`-секции `max-brh/tools/sim_vectors/vectors.txt`
-    /// (сгенерированы C++-генератором из `crc16.c` в ubuntu:24.04).
+    /// Vectors of the `crc` section of `max-brh/tools/sim_vectors/vectors.txt`
+    /// (generated by the C++ generator from `crc16.c` in ubuntu:24.04).
     const VECTORS: &str = include_str!("../../../tools/sim_vectors/vectors.txt");
 
     fn hex_to_bytes(text: &str) -> Vec<u8> {
@@ -410,13 +410,13 @@ mod tests {
             .collect()
     }
 
-    /// `crc16.c` на известных входах.
+    /// `crc16.c` on known inputs.
     ///
-    /// Внимание: это **не** CRC-16/CCITT-FALSE (у неё «123456789» = 0x29B1)
-    /// и не CRC-16/XMODEM: `crc16()` вносит бит данных в младший разряд
-    /// **после** сдвига, поэтому поток отличается от классических вариантов.
-    /// Эталон — C++-векторы из `crc16.c` (см. `crc16_matches_cpp_vectors`),
-    /// а здесь фиксируются базовые свойства (начальное значение и один байт).
+    /// Note: this is **not** CRC-16/CCITT-FALSE (whose "123456789" = 0x29B1)
+    /// and not CRC-16/XMODEM: `crc16()` injects the data bit into the least significant
+    /// bit **after** the shift, so the stream differs from the classical variants.
+    /// The reference is the C++ vectors from `crc16.c` (see `crc16_matches_cpp_vectors`),
+    /// and here the basic properties are pinned (initial value and one byte).
     #[test]
     fn crc16_basics() {
         assert_eq!(crc16(b""), CRC16_INITIAL);
@@ -425,8 +425,8 @@ mod tests {
         assert_eq!(crc16(&[0x01, 0x02, 0x03, 0x04]), 0x94B7);
     }
 
-    /// Пословный шаг `GameManager_GetCrc16` эквивалентен двум побайтовым шагам
-    /// (старший байт первым) — на всех 16-битных входах и на разных состояниях.
+    /// The word-wise `GameManager_GetCrc16` step is equivalent to two byte-wise steps
+    /// (high byte first) — over all 16-bit inputs and different states.
     #[test]
     fn word_step_matches_two_byte_steps() {
         let states = [0x0000u16, 0xFFFF, 0x1234, 0x8000, 0x29B1];
@@ -446,7 +446,7 @@ mod tests {
         }
     }
 
-    /// Сверка с C++-векторами: побайтовые CRC и пословные шаги.
+    /// Comparison with the C++ vectors: byte-wise CRCs and word-wise steps.
     #[test]
     fn crc16_matches_cpp_vectors() {
         let mut checked_bytes = 0;
@@ -478,7 +478,7 @@ mod tests {
                     assert_eq!(get_crc16_word(data, state), expected, "crc_word {line}");
                     checked_words += 1;
                 }
-                // Прочие секции (реплей) проверяются в `tests/p7_replay.rs`.
+                // Other sections (replay) are checked in `tests/p7_replay.rs`.
                 _ => {}
             }
         }
@@ -511,7 +511,7 @@ mod tests {
         let state = replay_state();
         let checksum = state_checksum(&state);
 
-        // Команда красных — CRC считается; пустая команда синих ничего не добавляет.
+        // The red team is counted in the CRC; an empty blue team adds nothing.
         let mut expected = CRC16_INITIAL;
         for kind in [
             UnitListKind::GroundCover,
@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn particle_list_does_not_take_part_in_network_crc() {
         let mut state = replay_state();
-        // Ракета/частица не должна влиять на CRC пакета 45.
+        // A missile/particle must not affect the packet 45 CRC.
         let reference = state_checksum(&state);
         state
             .spawn_unit(UnitType::Rocket, TeamId::RED, Point::new(30, 30), 0)

@@ -1,21 +1,21 @@
-//! Юниты: идентификаторы, пути, `UnitInfo` (симуляционные поля).
+//! Units: identifiers, paths, `UnitInfo` (simulation fields).
 //!
-//! Оракул: `max-cpp-port/src/unitinfo.hpp` / `unitinfo.cpp` (`class UnitInfo`,
+//! Oracle: `max-cpp-port/src/unitinfo.hpp` / `unitinfo.cpp` (`class UnitInfo`,
 //! `FileLoad`/`FileSave`), `unitpath.hpp`, `groundpath.hpp`, `airpath.hpp`,
-//! `builderpath.hpp` (данные путей), `point.hpp` (`PathStep`), `unit.hpp`
-//! (флаги/`SfxType`).
+//! `builderpath.hpp` (path data), `point.hpp` (`PathStep`), `unit.hpp`
+//! (flags/`SfxType`).
 //!
-//! Проекция полей — `max-brh-docs/state-model.md` §3.9/§6.4. В `UnitInfo`
-//! остались поля симуляции (включая кадровое состояние приказов и пиксельные
-//! `x`/`y`). Презентационные поля C++ `UnitInfo` (тень, спрайтовые границы,
-//! яркость, звук, смещения/кадры башни, курсор, покачивание) вынесены в
-//! [`max_types::unit::UnitPresentation`] (Ф5.3) и хранятся параллельно
-//! слотам в `GameState`; `save.rs` читает/пишет их в том же порядке V70, что
-//! и раньше (побайтовый round-trip).
+//! Field projection — `max-brh-docs/state-model.md` §3.9/§6.4. `UnitInfo`
+//! keeps the simulation fields (including the frame state of orders and pixel
+//! `x`/`y`). The presentation fields of C++ `UnitInfo` (shadow, sprite bounds,
+//! brightness, sound, turret offsets/frames, cursor, bobbing) are moved to
+//! [`max_types::unit::UnitPresentation`] (F5.3) and stored in parallel to
+//! the slots in `GameState`; `save.rs` reads/writes them in the same V70 order as
+//! before (byte-exact round-trip).
 //!
-//! Осознанное исключение — пиксельные `x`/`y`: они входят в симуляцию
-//! (пиксельный шаг `AirPath`, проверка линии огня `Access_IsWithinAttackRange`,
-//! `UnitInfo::Move`) и потому остаются в `UnitInfo`.
+//! An intentional exception is the pixel `x`/`y`: they participate in the simulation
+//! (pixel step of `AirPath`, line-of-fire check `Access_IsWithinAttackRange`,
+//! `UnitInfo::Move`) and therefore stay in `UnitInfo`.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,65 +24,65 @@ use crate::geo::{PathStep, Point};
 use crate::team::{ComplexId, TeamId};
 use crate::unit_values::UnitValues;
 
-// `UnitId`, `UnitListKind`, `Rect` и `UnitPresentation` — листовые типы
-// нижнего слоя (`max_types`, Ф5.2/Ф5.3); здесь реэкспорт, чтобы путь
-// `max_core::unit::…` не менялся.
+// `UnitId`, `UnitListKind`, `Rect` and `UnitPresentation` are leaf types
+// of the lower layer (`max_types`, F5.2/F5.3); here they are re-exported so that the path
+// `max_core::unit::…` does not change.
 pub use max_types::unit::{Rect, UnitId, UnitListKind, UnitPresentation};
 
 // ---------------------------------------------------------------------------
-// Пути (UnitPath)
+// Paths (UnitPath)
 // ---------------------------------------------------------------------------
 
-/// Наземный путь — C++ `class GroundPath : UnitPath` (`groundpath.hpp`).
+/// Ground path — C++ `class GroundPath : UnitPath` (`groundpath.hpp`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroundPath {
-    /// Конечная клетка X (`UnitPath::m_end_x`).
+    /// End cell X (`UnitPath::m_end_x`).
     pub end_x: i16,
-    /// Конечная клетка Y (`UnitPath::m_end_y`).
+    /// End cell Y (`UnitPath::m_end_y`).
     pub end_y: i16,
-    /// Индекс текущего шага (в V70 — u16, в C++ — `uint32_t`).
+    /// Current step index (u16 in V70, `uint32_t` in C++).
     pub step_index: u32,
-    /// Шаги пути в порядке следования.
+    /// Path steps in traversal order.
     pub steps: Vec<PathStep>,
 }
 
-/// Воздушный путь — C++ `class AirPath : UnitPath` (`airpath.hpp`) — линейный
-/// отрезок в пиксельных координатах.
+/// Air path — C++ `class AirPath : UnitPath` (`airpath.hpp`) — a straight
+/// segment in pixel coordinates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AirPath {
-    /// Длина (`m_length`).
+    /// Length (`m_length`).
     pub length: i16,
-    /// Угол (`m_angle`, `char` = i8).
+    /// Angle (`m_angle`, `char` = i8).
     pub angle: i8,
-    /// Старт X (`m_start_x`).
+    /// Start X (`m_start_x`).
     pub start_x: i16,
-    /// Старт Y (`m_start_y`).
+    /// Start Y (`m_start_y`).
     pub start_y: i16,
-    /// Конец X.
+    /// End X.
     pub end_x: i16,
-    /// Конец Y.
+    /// End Y.
     pub end_y: i16,
-    /// Шаг X (`m_step_x`).
+    /// Step X (`m_step_x`).
     pub step_x: i32,
-    /// Шаг Y (`m_step_y`).
+    /// Step Y (`m_step_y`).
     pub step_y: i32,
-    /// Дельта X (`m_delta_x`).
+    /// Delta X (`m_delta_x`).
     pub delta_x: i32,
-    /// Дельта Y (`m_delta_y`).
+    /// Delta Y (`m_delta_y`).
     pub delta_y: i32,
 }
 
-/// Путь строителя — C++ `class BuilderPath : UnitPath` (`builderpath.hpp`).
+/// Builder path — C++ `class BuilderPath : UnitPath` (`builderpath.hpp`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuilderPath {
-    /// Направление X (`m_direction_x`).
+    /// Direction X (`m_direction_x`).
     pub direction_x: i16,
-    /// Направление Y (`m_direction_y`).
+    /// Direction Y (`m_direction_y`).
     pub direction_y: i16,
 }
 
 impl Default for BuilderPath {
-    /// C++ `BuilderPath::BuilderPath` — направление (1, 1).
+    /// C++ `BuilderPath::BuilderPath` — direction (1, 1).
     fn default() -> Self {
         Self {
             direction_x: 1,
@@ -91,7 +91,7 @@ impl Default for BuilderPath {
     }
 }
 
-/// Путь юнита — C++ `UnitPath` (три реализации).
+/// Unit path — C++ `UnitPath` (three implementations).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnitPath {
     /// `AirPath`.
@@ -103,7 +103,7 @@ pub enum UnitPath {
 }
 
 impl UnitPath {
-    /// Конечная клетка (`UnitPath::GetEndX/GetEndY`).
+    /// End cell (`UnitPath::GetEndX/GetEndY`).
     #[inline]
     pub fn end(&self) -> (i16, i16) {
         match self {
@@ -113,7 +113,7 @@ impl UnitPath {
         }
     }
 
-    /// Для наземного пути — количество оставшихся шагов.
+    /// For a ground path — the number of remaining steps.
     #[inline]
     pub fn remaining_steps(&self) -> usize {
         match self {
@@ -127,192 +127,192 @@ impl UnitPath {
 // UnitInfo
 // ---------------------------------------------------------------------------
 
-/// Юнит — C++ `class UnitInfo` (`unitinfo.hpp`), симуляционное подмножество
-/// `S`-полей (state-model §3.9).
+/// A unit — C++ `class UnitInfo` (`unitinfo.hpp`), the simulation subset of
+/// `S` fields (state-model §3.9).
 ///
-/// Презентационных полей из списка B.1.2 здесь больше нет: они в
-/// [`max_types::unit::UnitPresentation`] (Ф5.3/B), которое `GameState` держит
-/// параллельно слотам юнитов. V70-раскладка не изменилась — `save.rs` читает
-/// оба объекта в исходном порядке байтов.
+/// Presentation fields from list B.1.2 are no longer here: they are in
+/// [`max_types::unit::UnitPresentation`] (F5.3/B), which `GameState` keeps
+/// in parallel to unit slots. The V70 layout has not changed — `save.rs` reads
+/// both objects in the original byte order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitInfo {
-    // --- идентичность и положение ---
-    /// Тип юнита.
+    // --- identity and position ---
+    /// Unit type.
     pub unit_type: UnitType,
-    /// Уникальный id (`hash_id`; `NO_ID` = 0xFFFF).
+    /// Unique id (`hash_id`; `NO_ID` = 0xFFFF).
     pub id: UnitId,
-    /// Флаги (`unit_flags::*`): класс юнита, поведение, команда-владелец в хэше.
+    /// Flags (`unit_flags::*`): unit class, behavior, owning team in the hash.
     pub flags: u32,
-    /// Пиксельная позиция X. **Симуляционное поле**: `UnitInfo::Move`/
-    /// `AirPath` шагают попиксельно, `Access_IsWithinAttackRange` проверяет
-    /// линию огня по `x/y`; в V70 хранится как есть.
+    /// Pixel position X. **Simulation field**: `UnitInfo::Move`/
+    /// `AirPath` step pixel by pixel, `Access_IsWithinAttackRange` checks
+    /// the line of fire by `x/y`; V70 stores it as is.
     pub x: u16,
-    /// Пиксельная позиция Y. **Симуляционное поле** (см. [`Self::x`]).
+    /// Pixel position Y. **Simulation field** (see [`Self::x`]).
     pub y: u16,
-    /// Клетка карты.
+    /// Map cell.
     pub grid: Point,
-    /// Имя юнита (в V70 — переменной длины, без терминатора).
+    /// Unit name (variable length in V70, without a terminator).
     pub name: String,
-    /// Команда-владелец (в т.ч. [`TeamId::ALIEN`] = 4).
+    /// Owning team (including [`TeamId::ALIEN`] = 4).
     pub team: TeamId,
-    /// Порядковый номер типа в команде (для имён).
+    /// Type sequence number within the team (for names).
     pub unit_id: u8,
-    /// Угол корпуса 0..7 (0 = север, по часовой). **Симуляционное поле**:
-    /// `UnitInfo::Move` шагает в `DIRECTION_OFFSETS[angle]`, угол меняется
-    /// `Paths_UpdateAngle`/`GroundPath::UpdateUnitAngle` 1:1 с C++.
+    /// Hull angle 0..7 (0 = north, clockwise). **Simulation field**:
+    /// `UnitInfo::Move` steps along `DIRECTION_OFFSETS[angle]`, the angle changes
+    /// via `Paths_UpdateAngle`/`GroundPath::UpdateUnitAngle` 1:1 with C++.
     pub angle: u8,
-    /// Видимость для каждой из 5 команд (туман войны).
+    /// Visibility for each of the 5 teams (fog of war).
     pub visible_to_team: [bool; 5],
-    /// Обнаружен командами.
+    /// Detected by teams.
     pub spotted_by_team: [bool; 5],
-    /// Максимальная скорость анимации (UI/V70).
+    /// Maximum animation speed (UI/V70).
     pub max_velocity: u8,
-    /// Текущая скорость анимации (UI/V70).
+    /// Current animation speed (UI/V70).
     pub velocity: u8,
-    /// Масштаб спрайта (UI/V70).
+    /// Sprite scale (UI/V70).
     pub scaler_adjust: u8,
-    /// Угол башни (UI/V70).
+    /// Turret angle (UI/V70).
     pub turret_angle: u8,
-    /// База спрайта (UI/V70).
+    /// Sprite base (UI/V70).
     pub image_base: i16,
-    /// База спрайта башни (UI/V70).
+    /// Turret sprite base (UI/V70).
     pub turret_image_base: i16,
-    /// Текущий кадр (UI/V70).
+    /// Current frame (UI/V70).
     pub image_index: i16,
-    /// Текущий кадр башни (UI/V70).
+    /// Current turret frame (UI/V70).
     pub turret_image_index: i16,
-    /// Максимальный кадр (UI/V70).
+    /// Maximum frame (UI/V70).
     pub image_index_max: i16,
 
-    // --- приказы ---
-    /// Текущий приказ.
+    // --- orders ---
+    /// Current order.
     pub orders: UnitOrder,
-    /// Состояние исполнения приказа.
+    /// Order execution state.
     pub state: UnitOrderState,
-    /// Отложенный приказ (возврат после завершения текущего).
+    /// Deferred order (restored after the current one completes).
     pub prior_orders: UnitOrder,
-    /// Отложенное состояние.
+    /// Deferred state.
     pub prior_state: UnitOrderState,
-    /// Маскировка/постановка мин (подлодка/миноукладчик).
+    /// Camouflage/mine laying (submarine/minelayer).
     pub laying_state: u8,
-    /// Целевая клетка (C++ `move_to_grid_*` = `fire_on_grid_*` в V70).
+    /// Target cell (C++ `move_to_grid_*` = `fire_on_grid_*` in V70).
     pub target_grid: Point,
 
-    // --- постройка и добыча ---
-    /// Осталось ходов до конца постройки.
+    // --- construction and mining ---
+    /// Turns remaining until construction completes.
     pub build_time: u8,
-    /// Суммарная добыча.
+    /// Total mining.
     pub total_mining: u8,
-    /// Добыча материалов.
+    /// Raw material mining.
     pub raw_mining: u8,
-    /// Добыча топлива.
+    /// Fuel mining.
     pub fuel_mining: u8,
-    /// Добыча золота.
+    /// Gold mining.
     pub gold_mining: u8,
-    /// Максимум добычи материалов.
+    /// Maximum raw material mining.
     pub raw_mining_max: u8,
-    /// Максимум добычи золота.
+    /// Maximum gold mining.
     pub gold_mining_max: u8,
-    /// Максимум добычи топлива.
+    /// Maximum fuel mining.
     pub fuel_mining_max: u8,
 
-    // --- боевые/экономические атрибуты ---
-    /// Прочность (C++ u16, в V70 — u8).
+    // --- combat/economic attributes ---
+    /// Hits (C++ u16, u8 in V70).
     pub hits: u16,
-    /// Скорость (C++ u16, в V70 — u8).
+    /// Speed (C++ u16, u8 in V70).
     pub speed: u16,
-    /// Выстрелов в этом ходу.
+    /// Shots this turn.
     pub shots: u8,
-    /// Стрельба на ходу.
+    /// Move and fire.
     pub move_and_fire: u8,
-    /// Груз; у `COMMANDO`/`REGENERATING_UNIT` — опыт (см. [`UnitInfo::experience`]).
+    /// Cargo; for `COMMANDO`/`REGENERATING_UNIT` — experience (see [`UnitInfo::experience`]).
     pub storage: i16,
-    /// Опыт (в V70 хранится в `storage`).
+    /// Experience (stored in `storage` in V70).
     pub experience: i16,
-    /// Переносимый груз (runtime; в V70 — `move_to_grid_x`).
+    /// Transferable cargo (runtime; in V70 — `move_to_grid_x`).
     pub transfer_cargo: i16,
-    /// Бросок стелса (runtime; в V70 — младший байт `move_to_grid_x`).
+    /// Stealth roll (runtime; in V70 — the low byte of `move_to_grid_x`).
     pub stealth_dice_roll: u8,
-    /// Боезапас.
+    /// Ammo.
     pub ammo: u8,
-    /// Режим наведения (u8, не enum).
+    /// Targeting mode (u8, not an enum).
     pub targeting_mode: u8,
-    /// Режим посадки/высадки (u8, не enum).
+    /// Boarding/landing mode (u8, not an enum).
     pub enter_mode: u8,
-    /// Кадры отдачи выстрела (C++; в V70 — единый `recoil_delay`).
+    /// Firing recoil frames (C++; in V70 — the single `recoil_delay`).
     pub firing_recoil_frames: u8,
-    /// Оставшиеся ходы отключения (C++; в V70 — единый `recoil_delay`).
+    /// Remaining disabled turns (C++; in V70 — the single `recoil_delay`).
     pub disabled_turns_remaining: u8,
-    /// Отложенная реакция (сетевая синхронизация).
+    /// Delayed reaction (network synchronization).
     pub delayed_reaction: u8,
-    /// Повреждён в этом ходу.
+    /// Damaged this turn.
     pub damaged_this_turn: bool,
-    /// Тема исследования здания.
+    /// Building research topic.
     pub research_topic: ResearchTopic,
-    /// Счётчик движения (лимит на ход).
+    /// Movement counter (per-turn limit).
     pub moved: u8,
-    /// Эффект тряски (UI/V70).
+    /// Shake effect (UI/V70).
     pub shake_effect_state: u8,
-    /// Состояние анимации двигателя (UI/V70).
+    /// Engine animation state (UI/V70).
     pub engine: u8,
-    /// Состояние анимации оружия (UI/V70).
+    /// Weapon animation state (UI/V70).
     pub weapon: u8,
-    /// Не восстановленное C++-портом поле V70 (сохраняется как есть, §7.6).
+    /// A V70 field not recovered by the C++ port (preserved as is, §7.6).
     pub comm: u8,
-    /// Не восстановленное C++-портом поле V70 (сохраняется как есть).
+    /// A V70 field not recovered by the C++ port (preserved as is).
     pub fuel_distance: u8,
-    /// Доля движения между клетками (UI/V70).
+    /// Movement fraction between cells (UI/V70).
     pub move_fraction: u8,
-    /// Не восстановленное C++-портом поле V70 (сохраняется как есть).
+    /// A V70 field not recovered by the C++ port (preserved as is).
     pub energized: bool,
-    /// Счётчик ожидания движения (лимит `MOVEMENT_WAIT_LIMIT` = 512).
+    /// Movement wait counter (limit `MOVEMENT_WAIT_LIMIT` = 512).
     pub movement_wait_count: u16,
-    /// Повторная постройка (завод) — C++ `uint8_t` с bool-семантикой.
+    /// Repeat build (factory) — C++ `uint8_t` with bool semantics.
     pub repeat_build: bool,
-    /// Скорость постройки (множитель; 0 в файле трактуется как 1).
+    /// Build rate (multiplier; 0 in the file is treated as 1).
     pub build_rate: u16,
-    /// Транзиент: в этом ходу стройке нечем платить (`UpdateProduction` увидел
-    /// `storage < Cargo_GetRawConsumptionRate`), поэтому `GameManager_SpawnNewUnits`
-    /// в C++ всё равно сдвинул бы `build_time`, а порт — нет: ресурс не должен
-    /// уходить в минус (см. `production::charge_units`).
+    /// Transient: this turn the construction cannot pay (`UpdateProduction` saw
+    /// `storage < Cargo_GetRawConsumptionRate`), so `GameManager_SpawnNewUnits`
+    /// in C++ would still advance `build_time`, but the port does not: the resource must not
+    /// go negative (see `production::charge_units`).
     ///
-    /// В сейв/CRC не входит: вычисляется заново каждый ход из `storage`.
+    /// Not part of the save/CRC: recomputed every turn from `storage`.
     pub build_paused: bool,
-    /// Ответный огонь выключен.
+    /// Return fire disabled.
     pub disabled_reaction_fire: bool,
-    /// Авто-разведка.
+    /// Auto survey.
     pub auto_survey: bool,
-    /// AI-состояние (`AI_STATE_*`; в V70 — `field_221`).
+    /// AI state (`AI_STATE_*`; in V70 — `field_221`).
     pub ai_state_bits: u32,
 
-    // --- структура ---
-    /// Маршрут движения.
+    // --- structure ---
+    /// Movement route.
     pub path: Option<UnitPath>,
-    /// Битфилд подключений комплекса (`CONNECTOR_*`).
+    /// Complex connection bitfield (`CONNECTOR_*`).
     pub connectors: u16,
-    /// Атрибуты этого юнита (с апгрейдами) — C++ `base_values` (всегда есть).
+    /// This unit's attributes (with upgrades) — C++ `base_values` (always present).
     pub base_values: UnitValues,
-    /// Принадлежность к комплексу (`None` — автономный).
+    /// Complex membership (`None` — autonomous).
     pub complex: Option<ComplexId>,
-    /// Родитель (здание-завод/транспорт).
+    /// Parent (factory building/transport).
     pub parent_unit: Option<UnitId>,
-    /// Текущая цель-враг.
+    /// Current enemy target.
     pub enemy_unit: Option<UnitId>,
-    /// Очередь постройки завода (`UnitTypeArray`).
+    /// Factory build queue (`UnitTypeArray`).
     pub build_list: Vec<UnitType>,
 
-    // --- runtime-поля C++ (не сериализуются в V70) ---
-    /// Скорость группы.
+    // --- C++ runtime fields (not serialized in V70) ---
+    /// Group speed.
     pub group_speed: u16,
-    /// Номер live-атаки (0 = нет).
+    /// Live attack number (0 = none).
     pub live_attack: u32,
-    /// Юнит «в пути» (перемещается между клетками).
+    /// Unit "in transit" (moving between cells).
     pub in_transit: bool,
-    /// Число «булавок» (пины задач).
+    /// Number of pins (task pins).
     pub pin_count: i16,
-    /// Задачи ИИ включены.
+    /// AI tasks enabled.
     pub tasks_enabled: bool,
-    /// В каком из 5 списков юнит находится.
+    /// Which of the 5 lists the unit is in.
     pub unit_list: UnitListKind,
 }
 
@@ -323,17 +323,17 @@ impl Default for UnitInfo {
 }
 
 impl UnitInfo {
-    /// Минимальный конструктор (C++ `UnitInfo()` в «особых случаях»):
-    /// заказы `AWAIT/EXECUTING_ORDER`, позиция (-1, -1).
+    /// Minimal constructor (C++ `UnitInfo()` in "special cases"):
+    /// orders `AWAIT/EXECUTING_ORDER`, position (-1, -1).
     ///
-    /// Презентационные поля C++-конструктора (`brightness = 255` и нули)
-    /// задаёт [`UnitPresentation::new`] — `GameState` создаёт её рядом.
+    /// The presentation fields of the C++ constructor (`brightness = 255` and zeros)
+    /// are set by [`UnitPresentation::new`] — `GameState` creates it alongside.
     pub fn new(unit_type: UnitType, team: TeamId, id: UnitId) -> Self {
-        // `UnitInfo::UnitInfo` (`unitinfo.cpp:276-294`): кадровые данные типа из
-        // ресурса `D_*` — `image_base`, `turret_image_base`, `image_index =
-        // image_base + angle` и `image_index_max = image_count + image_index - 1`.
-        // `angle` в этом конструкторе ещё 0, как и в `UnitInfo(unit_type, team,
-        // id)` без угла.
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:276-294`): the type's frame data from
+        // the `D_*` resource — `image_base`, `turret_image_base`, `image_index =
+        // image_base + angle` and `image_index_max = image_count + image_index - 1`.
+        // `angle` is still 0 in this constructor, as in `UnitInfo(unit_type, team,
+        // id)` without an angle.
         let frames = crate::frames::frame_info(unit_type);
 
         Self {
@@ -358,11 +358,11 @@ impl UnitInfo {
             image_index: frames.image_base,
             turret_image_index: frames.turret_image_base,
             image_index_max: crate::frames::image_index_max(unit_type, 0),
-            // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): новый юнит рождается
-            // в `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, и `prior` — тот же
-            // (`Await`/`ExecutingOrder`). Раньше порт ставил `Init`, из-за чего
-            // `RestoreOrders` после достройки возвращал здание в
-            // `Await`/`Init` вместо `Await`/`ExecutingOrder`.
+            // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): a new unit is born
+            // in `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`, and `prior` is the same
+            // (`Await`/`ExecutingOrder`). Previously the port set `Init`, which made
+            // `RestoreOrders` after completion return the building to
+            // `Await`/`Init` instead of `Await`/`ExecutingOrder`.
             orders: UnitOrder::Await,
             state: UnitOrderState::ExecutingOrder,
             prior_orders: UnitOrder::Await,
@@ -424,7 +424,7 @@ impl UnitInfo {
         }
     }
 
-    /// Виден ли юнит команде (`UnitInfo::IsVisibleToTeam`).
+    /// Whether the unit is visible to the team (`UnitInfo::IsVisibleToTeam`).
     #[inline]
     pub fn is_visible_to_team(&self, team: TeamId) -> bool {
         self.visible_to_team
@@ -433,7 +433,7 @@ impl UnitInfo {
             .unwrap_or(false)
     }
 
-    /// Пометить видимость команде (`UnitInfo::SetVisibleToTeam`).
+    /// Mark visibility for a team (`UnitInfo::SetVisibleToTeam`).
     #[inline]
     pub fn set_visible_to_team(&mut self, team: TeamId, visible: bool) {
         if let Some(slot) = self.visible_to_team.get_mut(team.0 as usize) {
@@ -441,7 +441,7 @@ impl UnitInfo {
         }
     }
 
-    /// Обнаружен ли юнит командой (`UnitInfo::IsDetectedByTeam`).
+    /// Whether the unit is detected by the team (`UnitInfo::IsDetectedByTeam`).
     #[inline]
     pub fn is_detected_by_team(&self, team: TeamId) -> bool {
         self.spotted_by_team
@@ -450,7 +450,7 @@ impl UnitInfo {
             .unwrap_or(false)
     }
 
-    /// Пометить обнаружение (`UnitInfo::SpotByTeam`).
+    /// Mark detection (`UnitInfo::SpotByTeam`).
     #[inline]
     pub fn spot_by_team(&mut self, team: TeamId) {
         if let Some(slot) = self.spotted_by_team.get_mut(team.0 as usize) {
@@ -464,20 +464,20 @@ impl UnitInfo {
         self.id
     }
 
-    /// Опыт: у `COMMANDO`/`REGENERATING_UNIT` C++ хранит его в `storage`
-    /// (state-model §3.9, DESIGN риск 16).
+    /// Experience: for `COMMANDO`/`REGENERATING_UNIT` C++ stores it in `storage`
+    /// (state-model §3.9, DESIGN risk 16).
     #[inline]
     pub fn experience(&self) -> i16 {
         self.experience
     }
 
-    /// Признак «юнит — член комплекса» (`UnitInfo::IsComplexMember`).
+    /// The "unit is a complex member" predicate (`UnitInfo::IsComplexMember`).
     ///
-    /// Читается бит `BUILDING`, а не `is_building()`: C++ (`unitinfo.hpp:255`)
-    /// включает в комплекс структуры `CONNECTOR_UNIT | BUILDING | STANDALONE`.
-    /// Турель — здание семантически (`Mobility::Building`), но **не** член
-    /// комплекса (`BUILDING`/`CONNECTOR_UNIT`/`STANDALONE` у неё сняты), поэтому
-    /// замена на `is_building()` изменила бы коннекторы — поведение сохранено.
+    /// The `BUILDING` bit is read, not `is_building()`: C++ (`unitinfo.hpp:255`)
+    /// includes structures with `CONNECTOR_UNIT | BUILDING | STANDALONE` in the complex.
+    /// A turret is a building semantically (`Mobility::Building`), but **not** a complex
+    /// member (its `BUILDING`/`CONNECTOR_UNIT`/`STANDALONE` are cleared), so
+    /// replacing it with `is_building()` would change connectors — the behavior is preserved.
     #[inline]
     pub fn is_complex_member(&self) -> bool {
         use crate::enums::unit_flags::{BUILDING, CONNECTOR_UNIT, GROUND_COVER, STANDALONE};
@@ -486,7 +486,7 @@ impl UnitInfo {
             && !self.id.is_no_id()
     }
 
-    /// Признак движущего приказа (`UnitInfo::HasMoveOrder`).
+    /// The moving-order predicate (`UnitInfo::HasMoveOrder`).
     #[inline]
     pub fn has_move_order(&self) -> bool {
         matches!(
@@ -495,7 +495,7 @@ impl UnitInfo {
         )
     }
 
-    /// Список юнитов по флагам (`UnitInfo::GetUnitList`/`AllocateUnitList`).
+    /// Unit list by flags (`UnitInfo::GetUnitList`/`AllocateUnitList`).
     pub fn list_kind_for_flags(flags: u32) -> UnitListKind {
         use crate::enums::unit_flags::{
             GROUND_COVER, MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT, STATIONARY,
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(id.team(), TeamId(2));
         assert_eq!(id.object_index(), 0x034);
         assert_eq!(id.0, (2 << 13) | 0x034);
-        // Младшие 13 бит — индекс объекта: старшие биты отбрасываются.
+        // The low 13 bits are the object index: higher bits are discarded.
         assert_eq!(UnitId::new(TeamId(2), 0x1234).object_index(), 0x1234);
         assert!(UnitId::NO_ID.is_no_id());
         assert_eq!(UnitId::from_v70(0xFFFF), UnitId::NO_ID);
@@ -536,12 +536,12 @@ mod tests {
         let unit = UnitInfo::new(UnitType::Tank, TeamId::GREEN, UnitId::new(TeamId::GREEN, 1));
         assert_eq!(unit.orders, UnitOrder::Await);
         // `UnitInfo::UnitInfo` (`unitinfo.cpp:201-204`): `ORDER_AWAIT`/
-        // `ORDER_STATE_EXECUTING_ORDER`, prior — тот же.
+        // `ORDER_STATE_EXECUTING_ORDER`, prior is the same.
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert_eq!(unit.prior_orders, UnitOrder::Await);
         assert_eq!(unit.prior_state, UnitOrderState::ExecutingOrder);
-        // `brightness = 255` из C++-конструктора теперь в `UnitPresentation`
-        // (Ф5.3/B) — проверяется в `max_types::unit::tests`.
+        // `brightness = 255` from the C++ constructor is now in `UnitPresentation`
+        // (F5.3/B) — checked in `max_types::unit::tests`.
         assert_eq!(unit.grid, Point::new(-1, -1));
         assert_eq!(unit.group_speed, 0);
         assert_eq!(unit.live_attack, 0);

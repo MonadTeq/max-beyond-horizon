@@ -1,20 +1,20 @@
-//! Поиск по карте: `TaskAbstractSearch`, `TaskSurvey`, `TaskExplore`,
+//! Map search: `TaskAbstractSearch`, `TaskSurvey`, `TaskExplore`,
 //! `TaskAutoSurvey`, `TaskFindMines`.
 //!
-//! Оракул: `taskabstractsearch.cpp/.hpp`, `tasksurvey.cpp/.hpp`,
+//! Oracle: `taskabstractsearch.cpp/.hpp`, `tasksurvey.cpp/.hpp`,
 //! `taskexplore.cpp/.hpp`, `taskautosurvey.cpp/.hpp`, `taskfindmines.cpp/.hpp`.
 //!
-//! # Модель
+//! # Model
 //!
-//! `TaskAbstractSearch` — база: держит точку интереса, список юнитов и число
-//! «запросчиков»; `FindDestination(unit, radius)` ищет ближайшую клетку
-//! (`Access_IsAccessible`) и отдаёт `TaskMove`. Наследники переопределяют
-//! `IsVisited(unit, point)`, `ObtainUnit()` и `Execute(unit)`:
+//! `TaskAbstractSearch` is the base: it holds a point of interest, a unit list and
+//! the number of "requesters"; `FindDestination(unit, radius)` searches the nearest
+//! cell (`Access_IsAccessible`) and issues `TaskMove`. Subclasses override
+//! `IsVisited(unit, point)`, `ObtainUnit()` and `Execute(unit)`:
 //!
-//! * `TaskSurvey` — обследование местности (`Surveyor`);
-//! * `TaskExplore` — разведка карты (любые мобильные юниты);
-//! * `TaskAutoSurvey` — обследование вокруг центра расширяющимися кругами;
-//! * `TaskFindMines` — обход замеченных минных полей (`AiPlayer::mine_map`).
+//! * `TaskSurvey` — terrain survey (`Surveyor`);
+//! * `TaskExplore` — map reconnaissance (any mobile units);
+//! * `TaskAutoSurvey` — survey around the center in expanding circles;
+//! * `TaskFindMines` — sweeping spotted minefields (`AiPlayer::mine_map`).
 
 use crate::enums::{CautionLevel, UnitOrder};
 use crate::geo::Point;
@@ -25,10 +25,10 @@ use super::super::task::{
 };
 use super::{TaskCtx, TaskKind};
 
-/// Радиус поиска свободной клетки по умолчанию (`FindDestination`).
+/// Default search radius of a free cell (`FindDestination`).
 pub(crate) const SEARCH_RADIUS: i32 = 6;
 
-/// `TaskAbstractSearch::IsVisited` — клетка уже посещалась этим юнитом.
+/// `TaskAbstractSearch::IsVisited` — the cell was already visited by this unit.
 fn is_visited(state: &super::SearchState, unit: UnitId, point: Point) -> bool {
     state
         .visited
@@ -36,7 +36,7 @@ fn is_visited(state: &super::SearchState, unit: UnitId, point: Point) -> bool {
         .any(|(visited_unit, visited_point)| *visited_unit == unit && *visited_point == point)
 }
 
-/// Отметить клетку посещённой (с ограничением размера истории).
+/// Mark the cell as visited (with a history size limit).
 fn mark_visited(state: &mut super::SearchState, unit: UnitId, point: Point) {
     const MAX_HISTORY: usize = 64;
 
@@ -49,8 +49,8 @@ fn mark_visited(state: &mut super::SearchState, unit: UnitId, point: Point) {
     }
 }
 
-/// `TaskAbstractSearch::FindDestination(unit, radius)` — ближайшая непройденная
-/// проходимая клетка вокруг `point`.
+/// `TaskAbstractSearch::FindDestination(unit, radius)` — the nearest unvisited
+/// passable cell around `point`.
 fn find_destination(
     ctx: &TaskCtx<'_>,
     state: &super::SearchState,
@@ -95,7 +95,7 @@ fn find_destination(
     best.map(|(_, site)| site)
 }
 
-/// Общий цикл `TaskAbstractSearch::BeginTurn`/`EndTurn`.
+/// The common `TaskAbstractSearch::BeginTurn`/`EndTurn` loop.
 pub(crate) fn abstract_search_begin_turn(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -121,7 +121,7 @@ pub(crate) fn abstract_search_begin_turn(
     for unit in state.units.clone() {
         let Some(info) = ctx.unit(unit) else { continue };
 
-        // Юнит занят — не трогаем.
+        // The unit is busy — do not touch it.
         if info.orders != UnitOrder::Await && info.orders != UnitOrder::Sentry {
             continue;
         }
@@ -141,7 +141,7 @@ pub(crate) fn abstract_search_begin_turn(
     }
 }
 
-/// `TaskAutoSurvey::EndTurn` — круги вокруг центра.
+/// `TaskAutoSurvey::EndTurn` — circles around the center.
 fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::AutoSurvey {
         central_site,
@@ -173,7 +173,7 @@ fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     }
 
     if !*location_found {
-        // Спираль: расширяем радиус, пока не найдём свободную клетку.
+        // Spiral: expand the radius until a free cell is found.
         let mut site = Point::new(central_site.x, central_site.y);
 
         let max_radius = (*radius as i16).max(1);
@@ -223,7 +223,7 @@ fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
         return;
     }
 
-    // Дошли — начинаем новый круг.
+    // Arrived — start a new circle.
     let dx = i32::from(info.grid.x) - i32::from(destination.x);
     let dy = i32::from(info.grid.y) - i32::from(destination.y);
 
@@ -233,13 +233,13 @@ fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     }
 }
 
-/// `TaskFindMines::BeginTurn` — есть ли замеченные мины.
+/// `TaskFindMines::BeginTurn` — whether there are spotted mines.
 fn find_mines_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::FindMines { search } = kind else {
         return;
     };
 
-    // `AiPlayer::mine_map > 0` — карта мин команды.
+    // `AiPlayer::mine_map > 0` — the team's mine map.
     let player = &ctx.world.ai.players[header.team.0 as usize];
     let mut site: Option<Point> = None;
 
@@ -266,10 +266,10 @@ fn find_mines_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация
+// Dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для search-классов.
+/// `Init` for search classes.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
         TaskKind::Survey { .. } | TaskKind::Explore { .. } | TaskKind::FindMines { .. } => true,
@@ -278,7 +278,7 @@ pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) ->
     }
 }
 
-/// `BeginTurn` для search-классов.
+/// `BeginTurn` for search classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Survey { .. } | TaskKind::Explore { .. } => {
@@ -297,7 +297,7 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
     }
 }
 
-/// `EndTurn` для search-классов.
+/// `EndTurn` for search classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Survey { .. } | TaskKind::Explore { .. } => {
@@ -316,7 +316,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `Execute(unit)` для search-классов — осмотр клетки.
+/// `Execute(unit)` for search classes — inspecting the cell.
 pub fn execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -346,7 +346,7 @@ pub fn execute(
     }
 }
 
-/// `AddUnit(unit)` для search-классов.
+/// `AddUnit(unit)` for search classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::Survey { search }
@@ -367,7 +367,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для search-классов.
+/// `RemoveUnit(unit)` for search classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::Survey { search }
@@ -388,7 +388,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для search-классов.
+/// `RemoveSelf()` for search classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Survey { search }
@@ -408,7 +408,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` для search-классов.
+/// `ChildComplete(task)` for search classes.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -427,7 +427,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении дочернего `TaskMove`.
+/// Notification about a child `TaskMove` completion.
 pub fn move_finished(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -448,12 +448,12 @@ pub fn move_finished(
     }
 }
 
-/// `CheckReactions` — не переопределён.
+/// `CheckReactions` — not overridden.
 pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     false
 }
 
-/// `ExchangeOperator` — не переопределён.
+/// `ExchangeOperator` — not overridden.
 pub fn exchange_operator(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -463,7 +463,7 @@ pub fn exchange_operator(
     false
 }
 
-/// `EventUnitDestroyed(unit)` — удалить юнита из поиска.
+/// `EventUnitDestroyed(unit)` — remove the unit from the search.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -492,7 +492,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `EventEnemyUnitSpotted` — не переопределён.
+/// `EventEnemyUnitSpotted` — not overridden.
 pub fn event_enemy_unit_spotted(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -502,7 +502,7 @@ pub fn event_enemy_unit_spotted(
     false
 }
 
-/// `EventCargoTransfer` — не переопределён.
+/// `EventCargoTransfer` — not overridden.
 pub fn event_cargo_transfer(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -512,7 +512,7 @@ pub fn event_cargo_transfer(
     false
 }
 
-/// `EventUnitLoaded` — не переопределён.
+/// `EventUnitLoaded` — not overridden.
 pub fn event_unit_loaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -523,7 +523,7 @@ pub fn event_unit_loaded(
     false
 }
 
-/// `EventUnitUnloaded` — не переопределён.
+/// `EventUnitUnloaded` — not overridden.
 pub fn event_unit_unloaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -550,7 +550,7 @@ pub fn explore_is_unit_usable(
         && info.orders != UnitOrder::Idle
 }
 
-/// Приоритеты search-задач (соответствие `task.hpp`).
+/// Search task priorities (matching `task.hpp`).
 pub const SEARCH_PRIORITIES: [u16; 3] = [
     TASK_PRIORITY_FIND_MINES,
     TASK_PRIORITY_AUTO_SURVEY,

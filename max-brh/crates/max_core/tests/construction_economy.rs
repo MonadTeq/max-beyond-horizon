@@ -1,18 +1,18 @@
-//! Экономика стройки в Turn Based — 1:1 по C++-оракулу.
+//! Construction economy in Turn Based — 1:1 by the C++ oracle.
 //!
-//! Оракул:
+//! Oracle:
 //! * `buildmenu.cpp:688` — `BuildMenu_GetTurnsToBuild`;
-//! * `buildmenu.cpp:729` — `BuildMenu_GetMaxPossibleBuildRate` (склад режет 2×/4×);
-//! * `buildmenu.cpp:903-906` — `MobileBuildMenu::Build` не отдаёт приказ, если
-//!   при 1× у строителя нет **всей** стоимости постройки на руках (`_(c529)`);
-//! * `cargo.cpp:140` — `Cargo_GetRawConsumptionRate` (ставка сырья за ход);
-//! * `unitinfo.cpp:2904-2915` — `UnitInfo::UpdateProduction` режет `build_rate`
-//!   по складу и списывает сырьё (`storage -= rate`);
-//! * `game_manager.cpp:8076-8094` — `GameManager_SpawnNewUnits`: при
-//!   `build_time <= build_rate` постройка завершается (`SpawnNewUnit`).
+//! * `buildmenu.cpp:729` — `BuildMenu_GetMaxPossibleBuildRate` (storage cuts 2×/4×);
+//! * `buildmenu.cpp:903-906` — `MobileBuildMenu::Build` does not issue an order if
+//!   at 1× the builder does not have the **whole** construction cost on hand (`_(c529)`);
+//! * `cargo.cpp:140` — `Cargo_GetRawConsumptionRate` (raw rate per turn);
+//! * `unitinfo.cpp:2904-2915` — `UnitInfo::UpdateProduction` cuts `build_rate`
+//!   by storage and charges raw material (`storage -= rate`);
+//! * `game_manager.cpp:8076-8094` — `GameManager_SpawnNewUnits`: with
+//!   `build_time <= build_rate` the construction completes (`SpawnNewUnit`).
 //!
-//! Требование порта: ресурс **не уходит в минус**, а ход без оплаты не двигает
-//! `build_time` (в C++ долг допускается, и стройка «достраивается» из воздуха).
+//! Port requirement: the resource **never goes negative**, and an unpaid turn does not advance
+//! `build_time` (in C++ debt is allowed, and the construction "completes" out of thin air).
 
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -57,10 +57,10 @@ fn constructor(state: &mut GameState, storage: i16) -> max_core::UnitId {
     id
 }
 
-/// Энергия/рабочие для комплекса завода: `POWGEN` (+1), `FDUMP` (топливо) и
-/// `HABITAT` (+3 рабочих) вплотную к заводу. Без них `Cargo_ApplyUnitConsumption`
-/// даёт отрицательный `power`/`life`, и C++ `ValidateIndustry` не даёт заводу
-/// строить (`production_manager.cpp:677-711`).
+/// Power/workers for the factory complex: `POWGEN` (+1), `FDUMP` (fuel) and
+/// `HABITAT` (+3 workers) right next to the factory. Without them `Cargo_ApplyUnitConsumption`
+/// gives negative `power`/`life`, and C++ `ValidateIndustry` does not let the factory
+/// build (`production_manager.cpp:677-711`).
 fn power_the_complex(state: &mut GameState, factory: max_core::UnitId) -> max_core::UnitId {
     let grid = state.unit(factory).expect("factory").grid;
     let generator = state
@@ -114,8 +114,8 @@ fn constructor_pays_raw_material_and_never_goes_negative() {
         .commit(builder)
         .expect("10 ходов × 2 сырья = 20 ≤ 40");
 
-    // C++ `AbstractBuildMenu::Draw`: колонки `Turns`/`Cost` — 10 ходов и 20
-    // единиц сырья при 1×.
+    // C++ `AbstractBuildMenu::Draw`: the `Turns`/`Cost` columns — 10 turns and 20
+    // raw units at 1×.
     assert_eq!(
         production::total_cost(UnitType::Constructor, 10),
         20,
@@ -147,8 +147,8 @@ fn constructor_pays_raw_material_and_never_goes_negative() {
 
 #[test]
 fn short_materials_pause_the_build_without_spending_or_progressing() {
-    // 1 сырья меньше ставки 2: C++ ушёл бы в −1 и всё равно сдвинул бы
-    // `build_time`; порт обязан остановиться, не тратя и не двигая.
+    // 1 raw is less than the rate 2: C++ would go to −1 and still advance
+    // `build_time`; the port must stop without charging or advancing.
     let mut state = economy_state(0);
     let builder = constructor(&mut state, 1);
 
@@ -156,13 +156,13 @@ fn short_materials_pause_the_build_without_spending_or_progressing() {
     manager
         .enqueue(builder, UnitType::TrainingHall)
         .expect("queue");
-    // `BuildMenu::Build` при 1× требует всю стоимость (20) — заказ не отдаётся.
+    // `BuildMenu::Build` at 1× requires the whole cost (20) — the order is not issued.
     assert_eq!(manager.commit(builder), Err(BuildError::NotEnoughMaterials));
     drop(manager);
 
-    // Обходим проверку BuildMenu (как это сделал бы игрок с достаточным
-    // запасом, который затем потратил сырьё на перевозку) — пауза всё равно
-    // должна работать: `UpdateProduction` не списывает в минус.
+    // Bypass the BuildMenu check (as a player with a sufficient
+    // stock would, who then spent the raw material on transport) — the pause must
+    // still work: `UpdateProduction` does not charge into the negative.
     let mut unit = state.unit(builder).expect("builder").clone();
     unit.build_list = vec![UnitType::TrainingHall];
     unit.build_time = 10;
@@ -196,7 +196,7 @@ fn short_materials_pause_the_build_without_spending_or_progressing() {
 #[test]
 fn build_completes_exactly_after_the_paid_turns() {
     let mut state = economy_state(0);
-    // Ровно на 5 ходов по ставке 2 — заказ отклоняется (нужно 20 на все 10).
+    // Exactly 5 turns at rate 2 — the order is rejected (20 is needed for all 10).
     let builder = constructor(&mut state, 20);
     assert_eq!(
         ProductionManager::new(&mut state, TeamId::RED).commit(builder),
@@ -212,7 +212,7 @@ fn build_completes_exactly_after_the_paid_turns() {
     assert_eq!(report.turns, 10);
     drop(manager);
 
-    // После 9 ходов стройка ещё идёт (`build_time` = 2), завершение — на 10-м:
+    // After 9 turns the construction is still running (`build_time` = 2), completion is on the 10th:
     // C++ `GameManager_SpawnNewUnits`: `build_time <= build_rate`.
     for turn in 0..9 {
         production_turn(&mut state);
@@ -246,16 +246,16 @@ fn build_completes_exactly_after_the_paid_turns() {
 #[test]
 fn build_rate_is_capped_by_the_storage_like_cpp() {
     // `BuildMenu_GetMaxPossibleBuildRate(unit_type, build_time, storage)`
-    // (`buildmenu.cpp:729`): при 6 сырья и 8 ходах 2× недостижим.
+    // (`buildmenu.cpp:729`): with 6 raw and 8 turns, 2× is unreachable.
     assert_eq!(
         max_possible_build_rate(UnitType::Constructor, 8, 6),
         1,
         "2× требует 4 × 2 = 8 на первом ходу пары"
     );
-    // Алгоритм C++ (`buildmenu.cpp:756-784`) при 8 ходах и 40 сырья уже
-    // допускает 4×: `turns_2x` набирает 4 пары, и `const_change_4x`
-    // укладывается в склад. Реальный расход при этом превысит 40 — порт
-    // поставит стройку на паузу вместо ухода в минус.
+    // The C++ algorithm (`buildmenu.cpp:756-784`) with 8 turns and 40 raw already
+    // allows 4×: `turns_2x` accumulates 4 pairs, and `const_change_4x`
+    // fits into storage. Actual consumption will then exceed 40 — the port
+    // will pause the construction instead of going negative.
     assert_eq!(max_possible_build_rate(UnitType::Constructor, 8, 40), 4);
     assert_eq!(max_possible_build_rate(UnitType::Constructor, 8, 20), 2);
     assert_eq!(
@@ -269,17 +269,17 @@ fn build_rate_is_capped_by_the_storage_like_cpp() {
 
 #[test]
 fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
-    // Заводы платят материалами **своего комплекса** (`Cargo_GetRawConsumptionRate`
-    // → `UnitInfo::StartBuilding` / `Cargo_GetNetProduction`), а не золотом и не
-    // «котлом всей команды»: при нуле кредитов производство идёт, пока в
-    // объединённом коннекторами комплексе есть сырьё. Нехватка ставит на паузу
-    // без ухода в минус и без потери заказа.
+    // Factories pay with the materials of **their complex** (`Cargo_GetRawConsumptionRate`
+    // → `UnitInfo::StartBuilding` / `Cargo_GetNetProduction`), not with gold and not
+    // from the "whole team pool": at zero credits production runs while the
+    // complex connected by connectors has raw material. A shortage pauses
+    // without going negative and without losing the order.
     let mut state = economy_state(0);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
         .expect("training hall");
-    // Склад вплотную к заводу (`Access_GetTeamBuilding` + `UpdateConnectors`
-    // сливают их в один комплекс: ёмкости складываются).
+    // The storage right next to the factory (`Access_GetTeamBuilding` + `UpdateConnectors`
+    // merge them into one complex: capacities add up).
     let dump = state
         .spawn_unit(
             UnitType::MaterialStorage,
@@ -302,7 +302,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     manager.commit(factory).expect("build");
     drop(manager);
 
-    // Первый ход: 1 материал уходит из общего котла, `build_time` 2 → 1.
+    // First turn: 1 material leaves the common pool, `build_time` 2 → 1.
     let events = production_turn(&mut state);
     assert!(
         events
@@ -318,7 +318,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     assert_eq!(state.unit(factory).expect("factory").build_time, 1);
     assert_eq!(state.team_units[0].gold(), 0, "золото не тратится");
 
-    // Второй ход: платить нечем — пауза, заказ цел.
+    // Second turn: nothing to pay with — pause, the order is intact.
     let events = production_turn(&mut state);
     assert!(
         events
@@ -339,7 +339,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
     );
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
 
-    // Подвоз в тот же котёл: стройка завершается с того же места.
+    // Delivery to the same pool: the construction completes from the same place.
     state.unit_mut(dump).expect("MaterialStorage").storage = 5;
     let events = production_turn(&mut state);
     assert!(
@@ -354,11 +354,11 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
 
 #[test]
 fn factory_without_connected_storage_pauses_even_with_team_materials() {
-    // Оракул: `ValidateIndustry` смотрит только комплекс завода
-    // (`complex == unit->GetComplex()`). Склад, стоящий отдельно (без
-    // коннекторов), в котёл завода не входит — даже если у команды есть сырьё.
-    // Порт проверяет первый ход при старте (`StartBuilding` в C++ списывает
-    // raw/power/workers сразу) и не отдаёт заказ.
+    // Oracle: `ValidateIndustry` looks only at the factory complex
+    // (`complex == unit->GetComplex()`). A storage standing separately (without
+    // connectors) does not enter the factory pool — even if the team has raw material.
+    // The port checks the first turn at start (`StartBuilding` in C++ charges
+    // raw/power/workers at once) and does not issue the order.
     let mut state = economy_state(0);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
@@ -378,7 +378,7 @@ fn factory_without_connected_storage_pauses_even_with_team_materials() {
     );
     drop(manager);
 
-    // Заказ остался в очереди, но стройка не стартовала.
+    // The order stayed in the queue, but the construction did not start.
     assert_eq!(
         state.unit(factory).expect("factory").build_time,
         0,
@@ -403,13 +403,13 @@ fn paused_build_resumes_when_materials_arrive() {
     manager.commit(builder).expect("site");
     drop(manager);
 
-    // Тратим склад искусственно, чтобы поймать паузу посреди стройки.
+    // Spend the storage artificially to catch a pause in the middle of construction.
     state.unit_mut(builder).expect("builder").storage = 1;
     production_turn(&mut state);
     assert_eq!(count_type(&state, UnitType::TrainingHall), 0);
     assert_eq!(state.unit(builder).expect("builder").build_time, 10);
 
-    // Подвоз сырья: стройка продолжается с того же `build_time`.
+    // Raw material delivery: construction continues from the same `build_time`.
     state.unit_mut(builder).expect("builder").storage = 20;
 
     for _ in 0..10 {

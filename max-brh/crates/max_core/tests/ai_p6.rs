@@ -1,25 +1,25 @@
-//! P6: сквозные тесты ИИ (DESIGN.md §7, критерии P6).
+//! P6: end-to-end AI tests (DESIGN.md §7, P6 criteria).
 //!
-//! Проверяются:
+//! Checked:
 //!
-//! 1. ИИ-ход на маленькой карте: один конструктор и руда рядом → ИИ создаёт
+//! 1. AI turn on a small map: one constructor and ore nearby → the AI creates
 //!    `TaskManageBuildings` → `TaskCreateBuilding(MININGST)` →
-//!    `TaskObtainUnits(CONSTRCT)` и отдаёт конструктору `ORDER_BUILD` с
+//!    `TaskObtainUnits(CONSTRCT)` and issues `ORDER_BUILD` to the constructor with
 //!    `build_list = [MININGST]`.
-//! 2. Армия атакует врага: танк ИИ замечает врага, `AiPlayer::DetermineAttack`
-//!    создаёт `TaskAttack`, и враг получает урон.
-//! 3. Детерминизм: два одинаковых прогона дают одинаковый дайджест состояния
-//!    (включая состояние ИИ — задачи, напоминания, карты).
-//! 4. Переходы задачи: `CreateBuilding` проходит состояния
-//!    `INITIALIZING → GETTING_BUILDER → … → BUILDING`, напоминания
-//!    обрабатываются полностью.
+//! 2. The army attacks the enemy: an AI tank spots the enemy, `AiPlayer::DetermineAttack`
+//!    creates `TaskAttack`, and the enemy takes damage.
+//! 3. Determinism: two identical runs give the same state digest
+//!    (including AI state — tasks, reminders, maps).
+//! 4. Task transitions: `CreateBuilding` passes through states
+//!    `INITIALIZING → GETTING_BUILDER → … → BUILDING`, reminders
+//!    are processed fully.
 //!
-//! # Модель хода в тесте
+//! # Turn model in the test
 //!
-//! Сетевой слой (тики, барьеры, `FinishedTurn`) — не часть max_core, поэтому
-//! тест сам проигрывает ход так, как это делает `game.rs`:
-//! `manage_economy` (сброс скорости/выстрелов) → `ai_begin_turn` → N тиков
-//! приказов → `EndTurn` + `finish_turn`.
+//! The network layer (ticks, barriers, `FinishedTurn`) is not part of max_core, so
+//! the test plays a turn itself the way `game.rs` does:
+//! `manage_economy` (speed/shots reset) → `ai_begin_turn` → N order
+//! ticks → `EndTurn` + `finish_turn`.
 
 use max_core::ai::{TaskKind, TASK_TYPE_CREATE_BUILDING, TASK_TYPE_MOVE};
 use max_core::enums::{
@@ -32,7 +32,7 @@ use max_core::team::{TeamId, TeamKind};
 use max_core::victory;
 use max_core::GameState;
 
-/// Маленькая карта: суша 24×24 в левом верхнем углу, остальное — вода.
+/// A small map: land 24×24 in the top-left corner, the rest — water.
 fn small_land_map() -> Map {
     let mut map = Map::new();
 
@@ -51,7 +51,7 @@ fn small_land_map() -> Map {
     map
 }
 
-/// ИИ-компьютер за красных; остальные команды — `None`.
+/// An AI computer for red; the other teams are `None`.
 fn computer_state() -> GameState {
     let map = small_land_map();
     let mut state = GameState::with_setup(
@@ -70,7 +70,7 @@ fn computer_state() -> GameState {
     state
 }
 
-/// Кладёт залежь материалов в клетку.
+/// Places a materials deposit on a cell.
 fn put_ore(state: &mut GameState, site: Point, amount: u8) {
     state.map.resources.set(
         site.x,
@@ -79,7 +79,7 @@ fn put_ore(state: &mut GameState, site: Point, amount: u8) {
     );
 }
 
-/// Задачи команды по типу.
+/// Team tasks by type.
 fn tasks_of_type(state: &GameState, team: TeamId, task_type: u8) -> Vec<u32> {
     state
         .ai
@@ -91,7 +91,7 @@ fn tasks_of_type(state: &GameState, team: TeamId, task_type: u8) -> Vec<u32> {
         .collect()
 }
 
-/// Один ход команды: экономика → `Ai_BeginTurn` → `ticks` тиков → конец хода.
+/// One team turn: economy → `Ai_BeginTurn` → `ticks` ticks → end of turn.
 fn play_turn(state: &mut GameState, ticks: usize) {
     let team = TeamId::RED;
 
@@ -116,7 +116,7 @@ fn ai_constructor_builds_mining_station() {
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor spawned");
 
-    // `Ai_SetupStrategy` — только стратегия (без перегенерации карты).
+    // `Ai_SetupStrategy` — strategy only (without map regeneration).
     assert!(
         max_core::ai_setup_strategy(&mut state, TeamId::RED),
         "strategy must be selected for a viable map"
@@ -126,9 +126,9 @@ fn ai_constructor_builds_mining_station() {
     let mut saw_move = false;
     let mut max_op_state = 0u8;
 
-    // Наблюдение — покадрово: `TaskMove` живёт всего несколько тиков (ИИ
-    // заканчивает ход, как только юниты перестали работать), поэтому проверка
-    // на границе хода его пропускала.
+    // Observation — frame by frame: `TaskMove` lives only a few ticks (the AI
+    // ends the turn as soon as the units stop working), so a check
+    // at the turn boundary missed it.
     for _ in 0..12 {
         state.manage_economy(TeamId::RED);
         state.ai_begin_turn(TeamId::RED);
@@ -206,7 +206,7 @@ fn ai_army_attacks_enemy() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(13, 10), 0)
         .expect("green tank");
 
-    // Врага видно красным: помечаем видимость и сообщаем ИИ.
+    // The enemy is visible to red: mark visibility and notify the AI.
     let mut enemy = state.unit(defender).expect("green tank exists").clone();
     enemy.set_visible_to_team(TeamId::RED, true);
     state.write_unit(defender, enemy);
@@ -232,9 +232,9 @@ fn ai_army_attacks_enemy() {
         attacker.0, hits_before
     );
 
-    // `TaskAttack`/`TaskKillUnit` — для «задачных» целей (ключевые объекты,
-    // конструктор); одиночный танк обрабатывается реакцией `AiAttack_EvaluateAttack`
-    // (напоминание `RemindAttack`), поэтому критерий теста — нанесённый урон.
+    // `TaskAttack`/`TaskKillUnit` — for "task" targets (key objects,
+    // constructor); a single tank is handled by the `AiAttack_EvaluateAttack`
+    // reaction (the `RemindAttack` reminder), so the test criterion is the damage dealt.
     assert!(
         state
             .unit(defender)
@@ -244,18 +244,18 @@ fn ai_army_attacks_enemy() {
     );
 }
 
-/// ИИ уводит строителя с достроенной площадки сам — задачей
-/// `TaskCreateBuilding::Activate`/`TaskActivate`, а не «автовыходом» в
+/// The AI moves the builder away from a completed site itself — by the
+/// `TaskCreateBuilding::Activate`/`TaskActivate` task, not by an "auto-exit" in
 /// `UnitsManager_ProcessOrderBuild`.
 ///
-/// C++ (`taskcreatebuilding.cpp:670`, `taskactivate.cpp:104`): `EndTurn` задачи в
-/// `CREATE_BUILDING_STATE_BUILDING` при `builder->GetOrderState() ==
-/// ORDER_STATE_UNIT_READY` зовёт `Activate()` → `TaskActivate`, тот ищет
-/// проходимую клетку вокруг здания и отдаёт `ORDER_ACTIVATE`/
-/// `ORDER_STATE_IN_TRANSITION`. Дальше `PositionInTape` DEINIT →
-/// `ActivateEngineer` → `ORDER_MOVE`, а `UnitsManager_BuildingReady` раскрывает
-/// здание, когда строитель вышел из габаритов 2×2. Если бы ИИ ждал «игрока»,
-/// его стройка зависла бы навсегда (достроенное здание не рисуется).
+/// C++ (`taskcreatebuilding.cpp:670`, `taskactivate.cpp:104`): the task's `EndTurn` in
+/// `CREATE_BUILDING_STATE_BUILDING` with `builder->GetOrderState() ==
+/// ORDER_STATE_UNIT_READY` calls `Activate()` → `TaskActivate`, which searches
+/// a passable cell around the building and issues `ORDER_ACTIVATE`/
+/// `ORDER_STATE_IN_TRANSITION`. Then `PositionInTape` DEINIT →
+/// `ActivateEngineer` → `ORDER_MOVE`, and `UnitsManager_BuildingReady` unfolds
+/// the building when the builder leaves the 2×2 footprint. If the AI waited for the "player",
+/// its construction would hang forever (the completed building is not drawn).
 #[test]
 fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
     let mut state = computer_state();
@@ -268,12 +268,12 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, site, 0)
         .expect("training hall");
 
-    // Площадка: лента/конусы/плита — как после `StartBuilding`.
+    // The site: tape/cones/slab — as after `StartBuilding`.
     max_core::production::deploy_construction_site(&mut state, builder, UnitType::TrainingHall, site)
         .expect("construction site");
 
-    // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520-3592`): взаимные родители,
-    // здание `ORDER_IDLE`/`BUILDING_READY`, строитель `ORDER_BUILD`/`UNIT_READY`.
+    // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520-3592`): mutual parents,
+    // the building `ORDER_IDLE`/`BUILDING_READY`, the builder `ORDER_BUILD`/`UNIT_READY`.
     let mut builder_unit = state.unit(builder).expect("builder").clone();
     builder_unit.grid = site;
     builder_unit.parent_unit = Some(building);
@@ -293,7 +293,7 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         Some(building)
     );
 
-    // Задача ИИ в состоянии `BUILDING` (как после `BeginBuilding`).
+    // The AI task in state `BUILDING` (as after `BeginBuilding`).
     let task = state.ai_append_task(
         TeamId::RED,
         None,
@@ -312,7 +312,7 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
     state
         .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(builder, task));
 
-    // `TaskCreateBuilding::EndTurn` на ходу команды: `Activate()` → `TaskActivate`.
+    // `TaskCreateBuilding::EndTurn` on the team turn: `Activate()` → `TaskActivate`.
     state.manage_economy(TeamId::RED);
     state.ai_begin_turn(TeamId::RED);
 
@@ -333,8 +333,8 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         "ИИ обязан отдать ORDER_ACTIVATE строителю, получено {activated:?}"
     );
 
-    // Строитель уходит, здание раскрывается (автовыхода нет — уход идёт
-    // приказом задачи, как у игрока кликом).
+    // The builder leaves, the building unfolds (no auto-exit — the exit goes
+    // by the task's order, as for the player by a click).
     let mut expanded = false;
 
     for _ in 0..200 {
@@ -414,8 +414,8 @@ fn ai_turns_advance_and_reminders_are_processed() {
 
     play_turn(&mut state, 8);
 
-    // Очередь напоминаний детерминированно разбирается: `deferred`-хвост
-    // (перенос на следующий вызов `ExecuteReminders`) ограничен числом задач.
+    // The reminder queue is processed deterministically: the `deferred` tail
+    // (carried to the next `ExecuteReminders` call) is limited by the number of tasks.
     assert!(
         state.ai.task_manager.reminders_count() <= state.ai.task_manager.task_count() * 2 + 1,
         "reminder queues must stay bounded ({} reminders, {} tasks)",
@@ -423,7 +423,7 @@ fn ai_turns_advance_and_reminders_are_processed() {
         state.ai.task_manager.task_count()
     );
 
-    // Менеджер застройки и стартовые задачи живы.
+    // The construction manager and starting tasks are alive.
     assert!(
         state
             .ai
@@ -446,20 +446,20 @@ fn ai_turns_advance_and_reminders_are_processed() {
 }
 
 // ---------------------------------------------------------------------------
-// Alien-юниты вне командных структур (C++ `PLAYER_TEAM_ALIEN`)
+// Alien units outside team structures (C++ `PLAYER_TEAM_ALIEN`)
 // ---------------------------------------------------------------------------
 
-/// Спавн от имени `ALIEN` не трогает heat-map/игроков 0..4 и не паникует.
+/// Spawning as `ALIEN` does not touch heat maps/players 0..4 and does not panic.
 ///
-/// C++: `ResourceManager_InitHeatMaps` не создаёт карту для
-/// `PLAYER_TEAM_ALIEN` (`team_type == TEAM_TYPE_NONE`), а `DeployUnit` для
-/// обломков вызывается с `skip_map_status_update = true`.
+/// C++: `ResourceManager_InitHeatMaps` does not create a map for
+/// `PLAYER_TEAM_ALIEN` (`team_type == TEAM_TYPE_NONE`), and `DeployUnit` for
+/// derelicts is called with `skip_map_status_update = true`.
 #[test]
 fn alien_units_stay_outside_team_heat_maps_and_victory() {
     let mut state = computer_state();
 
-    // Ровно тот вызов, что делает `App::new_game_on_surface`: `flags = 0`,
-    // флаги типа (включая `REGENERATING_UNIT`) добавляет `spawn_unit`.
+    // Exactly the call `App::new_game_on_surface` makes: `flags = 0`;
+    // type flags (including `REGENERATING_UNIT`) are added by `spawn_unit`.
     let alien_tank = state
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(12, 12), 0)
         .expect("alien tank deploys");
@@ -476,7 +476,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         .expect("alien building deploys");
 
     // `DeployUnit`: `team == PLAYER_TEAM_ALIEN && flags & REGENERATING_UNIT`
-    // → `ORDER_DISABLE` (флаги берутся из типа, а не только из аргумента).
+    // → `ORDER_DISABLE` (flags are taken from the type, not only from the argument).
     assert_eq!(
         state.unit(alien_tank).map(|unit| unit.orders),
         Some(UnitOrder::Disable)
@@ -486,8 +486,8 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         Some(UnitOrder::Disable)
     );
 
-    // Юниты в списках и в хэше карты; здание занимает 2×2, как
-    // `Hash_MapHash.Add(unit, flags & GROUND_COVER)` в C++.
+    // Units in the lists and in the map hash; the building occupies 2×2, as
+    // `Hash_MapHash.Add(unit, flags & GROUND_COVER)` in C++.
     for id in [alien_tank, alien_gun, alien_building] {
         let unit = state.unit(id).expect("alien unit alive");
         assert_eq!(unit.team, TeamId::ALIEN);
@@ -508,7 +508,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         );
     }
 
-    // Слои реальных команд не получили вклада от alien-юнитов.
+    // The layers of real teams received no contribution from alien units.
     for team in 0..PLAYER_TEAM_COUNT {
         for cell in [Point::new(12, 12), Point::new(13, 12), Point::new(15, 15)] {
             let team = TeamId(team as u8);
@@ -527,15 +527,15 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         }
     }
 
-    // Для `ALIEN` карты нет: C++-проверки `heat_map && …` дают 0/false.
+    // There is no map for `ALIEN`: the C++ checks `heat_map && …` give 0/false.
     assert_eq!(state.ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
     assert_eq!(state.ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12), 0);
     assert_eq!(state.ai_heat_map_stealth_land(TeamId::ALIEN, 12, 12), 0);
     let unit = state.unit(alien_tank).expect("alien tank alive");
     assert!(!state.is_visible_on_heat_map(unit, TeamId::ALIEN));
 
-    // Служебная команда не участвует в условиях победы: раньше `ALIEN` с
-    // `team_type = Computer` попадал в `teams_total`.
+    // The service team does not participate in victory conditions: previously `ALIEN` with
+    // `team_type = Computer` got into `teams_total`.
     let status = victory::evaluate_status(&state, state.turn_counter);
     assert_eq!(status.teams_total, 1, "в партии только красные");
     assert_eq!(
@@ -544,7 +544,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     );
     assert_eq!(status.team_type[TeamId::ALIEN.0 as usize], 0);
 
-    // Тик, смена приказа и уничтожение alien-юнитов не паникуют.
+    // Tick, order change and destruction of alien units do not panic.
     state.tick();
     state.set_order(
         alien_building,
@@ -553,9 +553,9 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     );
     state.tick();
 
-    // Атака alien-юнита: C++ `UnitInfo::AttackUnit` не заводит трекер
-    // реакции для команды с `team_type == NONE`, а `Ai_UnitSpotted` с
-    // `team = ALIEN` не обращается к несуществующему `AiPlayer`.
+    // Attack by an alien unit: C++ `UnitInfo::AttackUnit` does not create a reaction
+    // tracker for a team with `team_type == NONE`, and `Ai_UnitSpotted` with
+    // `team = ALIEN` does not access a nonexistent `AiPlayer`.
     let commando = state
         .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(11, 12), 0)
         .expect("commando deploys");
@@ -574,22 +574,22 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
             "юнит {id:?} должен быть уничтожен"
         );
     }
-    // Взрыв уничтоженного alien-танка — законный юнит-эффект его команды
-    // (`StartExplosion` спавнит `HITEXPLD` с `team` погибшего), поэтому
-    // проверяем только отсутствие самих обломков.
+    // The explosion of a destroyed alien tank is a legitimate unit effect of its team
+    // (`StartExplosion` spawns `HITEXPLD` with the dead unit's `team`), so
+    // we only check the absence of the rubble itself.
 }
 
-/// P2: ИИ доводит заказ до юнита через `ProductionManager`, а не мгновенным
-/// спавном — очередь строителя тикает в конце хода
+/// P2: the AI brings the order to a unit through `ProductionManager`, not by instant
+/// spawning — the builder's queue ticks at the end of the turn
 /// (`GameManager_ProgressBuildState`).
 ///
-/// Ход проигрывается явно (`progress_build_state` после `Ai_BeginTurn`), потому
-/// что «голая» база без армии закрывает партию generic-условиями
-/// (`SC_L0002`) и `finish_turn` до производства не доходит.
+/// The turn is played explicitly (`progress_build_state` after `Ai_BeginTurn`), because
+/// a "bare" base without an army closes the game by generic conditions
+/// (`SC_L0002`) and `finish_turn` does not reach production.
 #[test]
 fn ai_completes_a_build_queue_through_production() {
     let mut state = computer_state();
-    // Золото команды: производство списывает ставку C++ за ход.
+    // Team gold: production charges the C++ rate per turn.
     state.team_units[TeamId::RED.0 as usize].set_gold(500);
     put_ore(&mut state, Point::new(12, 11), 20);
     put_ore(&mut state, Point::new(13, 11), 20);
@@ -597,9 +597,9 @@ fn ai_completes_a_build_queue_through_production() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
-    // Реальная высадка даёт конструктору сырьё (`DEFAULT_MISSION_LOADOUT`);
-    // `UnitsManager_DeployUnit` обнуляет склад нового юнита, поэтому тест
-    // задаёт груз явно — иначе `BuildMenu::Build` откажет (нет 24 единиц).
+    // Real landing gives the constructor raw material (`DEFAULT_MISSION_LOADOUT`);
+    // `UnitsManager_DeployUnit` zeroes the new unit's storage, so the test
+    // sets the cargo explicitly — otherwise `BuildMenu::Build` would refuse (no 24 units).
     state
         .unit_mut(constructor)
         .expect("constructor")
@@ -617,7 +617,7 @@ fn ai_completes_a_build_queue_through_production() {
             state.tick();
         }
 
-        // Ход производства команды (C++ `GameManager_ProgressBuildState`).
+        // Team production turn (C++ `GameManager_ProgressBuildState`).
         max_core::production::progress_build_state(&mut state, TeamId::RED);
 
         if let Some(unit) = state.unit(constructor) {

@@ -1,24 +1,24 @@
-//! Интеграционные тесты V70 на **реальных** сейвах оригинальной игры.
+//! V70 integration tests on **real** saves of the original game.
 //!
-//! Фикстуры — копии файлов из `max-original/` (не сгенерированы):
+//! Fixtures — copies of files from `max-original/` (not generated):
 //!
-//! * `tests/data/save1_v70.cam` — копия `max-original/SAVE1.CAM` (183 047 байт);
-//! * `tests/data/save2_v70.cam` — копия `max-original/SAVE2.CAM` (216 410 байт).
+//! * `tests/data/save1_v70.cam` — a copy of `max-original/SAVE1.CAM` (183,047 bytes);
+//! * `tests/data/save2_v70.cam` — a copy of `max-original/SAVE2.CAM` (216,410 bytes).
 //!
-//! Тесты проверяют, что парсер проходит файл до последнего байта (все секции:
-//! заголовок, `IniOptions`/`IniPreferences`, карты, `TeamInfo`×4, состояние
-//! партии, `TeamUnits`×4, пять списков `UnitInfo`, `UnitHash`, `MapHash`,
-//! тепловые карты, журналы сообщений, `AiPlayer`), что значения заголовка
-//! совпадают с реальными, и что запись возвращает **побайтово** тот же файл.
+//! The tests check that the parser reads the file to the last byte (all sections:
+//! header, `IniOptions`/`IniPreferences`, maps, `TeamInfo`×4, game
+//! state, `TeamUnits`×4, five `UnitInfo` lists, `UnitHash`, `MapHash`,
+//! heat maps, message logs, `AiPlayer`), that the header values
+//! match the real ones, and that writing returns the same file **byte for byte**.
 
 use max_core::enums::{FileType, GameStateType, Opponent, Planet, PlayMode, TeamClan, UnitType};
 use max_core::geo::Point;
 use max_core::save::{SaveError, SaveFile};
 use max_core::team::{TeamId, TeamKind};
 
-/// `max-original/SAVE1.CAM`: обучающая кампания «Islands in the Sun».
+/// `max-original/SAVE1.CAM`: the training campaign "Islands in the Sun".
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
-/// `max-original/SAVE2.CAM`: кампания «Heart of the Matter».
+/// `max-original/SAVE2.CAM`: the "Heart of the Matter" campaign.
 const SAVE2: &[u8] = include_bytes!("data/save2_v70.cam");
 
 #[test]
@@ -26,7 +26,7 @@ fn save1_header_matches_original_file() {
     let save = SaveFile::parse(SAVE1).expect("SAVE1.CAM разбирается целиком");
     let header = &save.header;
 
-    // Реальные значения заголовка SAVE1.CAM:
+    // Real header values of SAVE1.CAM:
     //   version = 70             (V70)
     //   save_game_type = 2       (FileType::Campaign)
     //   save_name = "Islands in the Sun"
@@ -96,14 +96,14 @@ fn save1_header_matches_original_file() {
 fn save1_all_sections_are_present() {
     let save = SaveFile::parse(SAVE1).expect("SAVE1.CAM разбирается целиком");
 
-    // Состояние партии: ход 1, фаза IN_GAME, активные красные.
+    // Game state: turn 1, phase IN_GAME, red active.
     assert_eq!(save.game.active_turn_team, TeamId::RED);
     assert_eq!(save.game.player_team, TeamId::RED);
     assert_eq!(save.game.turn_counter, 1);
     assert_eq!(save.game.game_state, GameStateType::InGame);
     assert_eq!(save.game.turn_timer, 0);
 
-    // TeamInfo: 87 и 288 созданных объектов, 52 золота у красных, 2 комплекса.
+    // TeamInfo: 87 and 288 created objects, 52 gold for red, 2 complexes.
     assert_eq!(save.teams[0].number_of_objects_created, 87);
     assert_eq!(save.teams[1].number_of_objects_created, 288);
     assert_eq!(save.team_units[0].gold, 52);
@@ -113,19 +113,19 @@ fn save1_all_sections_are_present() {
         save.teams[0].unit_counters[UnitType::GoldRefinery as usize],
         2
     );
-    // UI-поля: камера красных (85, 52), зум 35, выбран юнит 0x0057.
+    // UI fields: red camera (85, 52), zoom 35, unit 0x0057 selected.
     assert_eq!(save.team_ui[0].camera_position, Point::new(85, 52));
     assert_eq!(save.team_ui[0].zoom_level, 35);
     assert_eq!(save.team_ui[0].selected_unit, Some(0x0057));
     assert_eq!(save.team_ui[1].camera_position, Point::new(30, 38));
 
-    // Пять списков: ground cover 102, mobile land/sea 60, stationary 132,
-    // mobile air 18, particles 0 — всего 312 юнитов.
+    // Five lists: ground cover 102, mobile land/sea 60, stationary 132,
+    // mobile air 18, particles 0 — 312 units in total.
     let counts: Vec<usize> = save.unit_lists.iter().map(Vec::len).collect();
     assert_eq!(counts, vec![102, 60, 132, 18, 0]);
     assert_eq!(save.units.len(), 312);
 
-    // Хэши: 512 ведёрок у обоих, x_shift = 2; в хэше юнитов все 312 объектов.
+    // Hashes: 512 buckets in both, x_shift = 2; all 312 objects in the unit hash.
     assert_eq!(save.unit_hash.size(), 512);
     assert_eq!(save.map_hash.size(), 512);
     assert_eq!(save.map_hash.x_shift(), 2);
@@ -135,13 +135,13 @@ fn save1_all_sections_are_present() {
         "UnitHash должен содержать все прочитанные юниты"
     );
 
-    // Тепловые карты — только у двух играющих команд.
+    // Heat maps — only for the two playing teams.
     assert!(save.heat_maps[0].is_some());
     assert!(save.heat_maps[1].is_some());
     assert!(save.heat_maps[2].is_none());
     assert!(save.heat_maps[3].is_none());
 
-    // Журналы пусты, состояние ИИ есть только у компьютерной команды 1.
+    // The logs are empty, AI state exists only for computer team 1.
     assert!(save.message_logs.iter().all(Vec::is_empty));
     assert!(save.ai_players[0].is_none());
     let ai = save.ai_players[1].as_deref().expect("AI team 1");
@@ -150,7 +150,7 @@ fn save1_all_sections_are_present() {
     assert_eq!(ai.greenhouse_ratio, -1);
     assert_eq!(ai.target_location, Point::new(1, 1));
 
-    // Карта: 12 544 клетки поверхности и столько же записей ресурсов.
+    // Map: 12,544 surface cells and as many resource entries.
     assert_eq!(save.surface_map.len(), 12_544);
     assert_eq!(save.cargo_map.len(), 12_544);
     assert!(save.surface_map.iter().all(|byte| *byte != 0));
@@ -169,7 +169,7 @@ fn save2_header_matches_original_file() {
     let save = SaveFile::parse(SAVE2).expect("SAVE2.CAM разбирается целиком");
     let header = &save.header;
 
-    // Реальные значения заголовка SAVE2.CAM:
+    // Real header values of SAVE2.CAM:
     //   version = 70, category = 2 (Campaign), name = "Heart of the Matter",
     //   world = 9 (Planet::ValentinesPlanet), mission_index = 2,
     //   team_type = [Player, Computer, Computer, None, None],
@@ -211,33 +211,33 @@ fn save2_header_matches_original_file() {
 fn save2_sections_logs_and_two_ai_players() {
     let save = SaveFile::parse(SAVE2).expect("SAVE2.CAM разбирается целиком");
 
-    // Списки юнитов: 63 + 145 + 76 + 1 + 0 = 285.
+    // Unit lists: 63 + 145 + 76 + 1 + 0 = 285.
     let counts: Vec<usize> = save.unit_lists.iter().map(Vec::len).collect();
     assert_eq!(counts, vec![63, 145, 76, 1, 0]);
     assert_eq!(save.units.len(), 285);
 
-    // Три команды в игре → три тепловые карты.
+    // Three teams in play → three heat maps.
     assert!(save.heat_maps[0].is_some());
     assert!(save.heat_maps[1].is_some());
     assert!(save.heat_maps[2].is_some());
     assert!(save.heat_maps[3].is_none());
 
-    // Журналы сообщений: по одной записи у красных, зелёных и синих.
+    // Message logs: one entry each for red, green and blue.
     let log_counts: Vec<usize> = save.message_logs.iter().map(Vec::len).collect();
     assert_eq!(log_counts, vec![1, 1, 1, 0]);
     for entry in &save.message_logs[0] {
-        // V70 пишет `strlen + 1`, то есть текст с завершающим нулём.
+        // V70 writes `strlen + 1`, i.e. text with a terminating zero.
         assert!(entry.text.last() == Some(&0), "текст с NUL на конце");
         assert!(!entry.text.is_empty());
         assert!(!entry.is_alert_message || entry.point != Point::ZERO || entry.unit.is_some());
     }
 
-    // Два компьютерных игрока — два блока `AiPlayer`.
+    // Two computer players — two `AiPlayer` blocks.
     assert!(save.ai_players[0].is_none());
     assert_eq!(save.ai_players[1].as_deref().map(|ai| ai.player_team), Some(1));
     assert_eq!(save.ai_players[2].as_deref().map(|ai| ai.player_team), Some(2));
 
-    // Кланы влияют на базовые значения: Musashi усиливает танк (+4 атаки).
+    // Clans affect base values: Musashi strengthens the tank (+4 attack).
     let tank = save.team_units[0].base_values[UnitType::Tank as usize].values;
     let plain = max_core::base_unit_values(UnitType::Tank);
     assert_eq!(tank.attack, plain.attack + 4);
@@ -252,14 +252,14 @@ fn save2_round_trip_is_byte_identical() {
 
 #[test]
 fn truncated_files_are_rejected() {
-    // Обрезанный файл не должен «успешно» разбираться.
+    // A truncated file must not parse "successfully".
     for length in [2, 100, 4_000, SAVE1.len() / 2, SAVE1.len() - 1] {
         assert!(
             SaveFile::parse(&SAVE1[..length]).is_err(),
             "обрезка до {length} байт должна давать ошибку"
         );
     }
-    // Лишний байт в конце — тоже ошибка (парсер обязан пройти файл целиком).
+    // An extra byte at the end is also an error (the parser must read the whole file).
     let mut extended = SAVE1.to_vec();
     extended.push(0);
     assert_eq!(

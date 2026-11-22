@@ -1,34 +1,34 @@
-//! Исследования и покупные апгрейды — C++ `researchmenu.cpp`,
+//! Research and purchased upgrades — C++ `researchmenu.cpp`,
 //! `abstractupgrademenu.cpp`, `upgradecontrol.cpp`, `teamunits.cpp`.
 //!
-//! # Оракул и формулы
+//! # Oracle and formulas
 //!
 //! * `ResearchMenu_UpdateResearchProgress` (`researchmenu.cpp:109`):
 //!   `turns = (pow(base + 0.1, 7.5) * 256 / factor) - (pow(base, 7.5) * 256 / factor)`,
-//!   где `base = level / 10.0 + 1.0`, `factor` — настройка темы
+//!   where `base = level / 10.0 + 1.0`, `factor` — the topic setting
 //!   (`attack_factor`=16, `shots_factor`=16, `range_factor`=8, `armor_factor`=32,
 //!   `hits_factor`=32, `speed_factor`=16, `scan_factor`=8, `cost_factor`=8;
 //!   `settings.cpp:70-77`).
 //! * `UpgradeControl_CalculateCost` (`upgradecontrol.cpp:214`):
 //!   `pow((current - factor) / base, 7.5) * UpgradeControl_Factors[id]`
-//!   (`{4, 4, 8, 2, 2, 4, 8, 16, 2}`), для `ATTRIB_TURNS` — обратная дробь
-//!   `base / (current - factor)`; для `base == 0` — 0.
-//! * `ResearchMenu_ApplyUpgrades` (`researchmenu.cpp:137`) — прибавка
-//!   `new - old` к текущим значениям всех 93 типов, где
-//!   `old/new` считаются от **базовых** атрибутов команды и уровня.
+//!   (`{4, 4, 8, 2, 2, 4, 8, 16, 2}`), for `ATTRIB_TURNS` — the inverse fraction
+//!   `base / (current - factor)`; for `base == 0` — 0.
+//! * `ResearchMenu_ApplyUpgrades` (`researchmenu.cpp:137`) — the increment
+//!   `new - old` applied to the current values of all 93 types, where
+//!   `old/new` are computed from the **base** attributes of the team and the level.
 //! * `TeamUnits_UpgradeOffsetFactor` / `TeamUnits_GetUpgradeCost`
-//!   (`teamunits.cpp:189/271`) — шаг 1/2/5/10 и стоимость перехода.
+//!   (`teamunits.cpp:189/271`) — the 1/2/5/10 step and the transition cost.
 //!
-//! # Целочисленный `pow(x, 7.5)`
+//! # Integer `pow(x, 7.5)`
 //!
-//! Симуляции запрещены `f32`/`f64` (DESIGN §6.4), а `std::pow` к тому же
-//! зависит от libm. Поэтому `x^7.5 = x^7 * sqrt(x)` считается в Q48
-//! фиксированной точке (`1 << 48`), а `sqrt` — целочисленным Ньютоном:
-//! `(p/q)^7.5 = p^7 * sqrt(p*q) / q^8`. Результат обрезается к `i32` как
-//! `(int32_t)double` в C++; значения вне `i32` дают `i32::MIN` (поведение
-//! x86 `cvttsd2si`, см. `tools/upgrade_vectors`). Эталонные векторы
-//! (`crates/max_core/tests/data/upgrade_vectors.txt`) сгенерированы из
-//! `std::pow` и сверяются бит-в-бит в `tests/research.rs`.
+//! The simulation forbids `f32`/`f64` (DESIGN §6.4), and `std::pow` also
+//! depends on libm. Therefore `x^7.5 = x^7 * sqrt(x)` is computed in Q48
+//! fixed point (`1 << 48`), and `sqrt` by integer Newton iteration:
+//! `(p/q)^7.5 = p^7 * sqrt(p*q) / q^8`. The result is truncated to `i32` as
+//! `(int32_t)double` in C++; values outside `i32` yield `i32::MIN` (the behavior
+//! of x86 `cvttsd2si`, see `tools/upgrade_vectors`). The reference vectors
+//! (`crates/max_core/tests/data/upgrade_vectors.txt`) are generated from
+//! `std::pow` and compared bit for bit in `tests/research.rs`.
 
 use crate::enums::{ResearchTopic, UnitType, RESEARCH_TOPIC_COUNT, UNIT_END};
 use crate::team::{ResearchTopicInfo, TeamId, TeamInfo, TeamKind, TeamUnits};
@@ -38,31 +38,31 @@ use crate::unit_values::{
     ATTRIB_SCAN, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
 };
 
-/// Множители стоимости апгрейда — C++ `UpgradeControl_Factors`
-/// (`upgradecontrol.cpp:29`), индекс `ATTRIB_*`.
+/// Upgrade cost factors — C++ `UpgradeControl_Factors`
+/// (`upgradecontrol.cpp:29`), index `ATTRIB_*`.
 pub const UPGRADE_CONTROL_FACTORS: [i32; 9] = [4, 4, 8, 2, 2, 4, 8, 16, 2];
 
-/// Верхняя граница показываемой стоимости (`UPGRADECONTROL_UPGRADE_COST_LIMIT`).
+/// Upper bound of the displayed cost (`UPGRADECONTROL_UPGRADE_COST_LIMIT`).
 pub const UPGRADE_COST_LIMIT: i32 = 800;
 
-/// Сколько атрибутов можно покупать (C++ `UPGRADE_CONTROL_COUNT` = 9).
+/// How many attributes can be purchased (C++ `UPGRADE_CONTROL_COUNT` = 9).
 pub const UPGRADE_CONTROL_COUNT: usize = 9;
 
-/// Настройки скорости исследований по умолчанию — `settings.cpp:70-77`
-/// (`attack_factor`, `shots_factor`, …, `cost_factor`), порядок `ResearchTopic`.
+/// Default research rate settings — `settings.cpp:70-77`
+/// (`attack_factor`, `shots_factor`, …, `cost_factor`), `ResearchTopic` order.
 pub const RESEARCH_TOPIC_FACTORS: [i32; RESEARCH_TOPIC_COUNT] = [16, 16, 8, 32, 32, 16, 8, 8];
 
-/// Фиксированная точка для `pow(x, 7.5)` (`2^48`).
+/// Fixed point for `pow(x, 7.5)` (`2^48`).
 const POW_SCALE: u128 = 1 << 48;
 
-/// `UpgradeControl_Factors[id]`; `0` для неизвестного id.
+/// `UpgradeControl_Factors[id]`; `0` for an unknown id.
 #[inline]
 pub fn upgrade_control_factor(id: u8) -> i32 {
     UPGRADE_CONTROL_FACTORS.get(id as usize).copied().unwrap_or(0)
 }
 
-/// `TeamUnits_UpgradeOffsetFactor` (`teamunits.cpp:271`) — шаг атрибута:
-/// `<10 → 1`, `<25 → 2`, `<50 → 5`, иначе `10`.
+/// `TeamUnits_UpgradeOffsetFactor` (`teamunits.cpp:271`) — attribute step:
+/// `<10 → 1`, `<25 → 2`, `<50 → 5`, otherwise `10`.
 #[inline]
 pub fn upgrade_amount_for_base(base_value: i32) -> u16 {
     if base_value < 10 {
@@ -76,8 +76,8 @@ pub fn upgrade_amount_for_base(base_value: i32) -> u16 {
     }
 }
 
-/// `UpgradeControl::Init` (`upgradecontrol.cpp:110`): `ATTRIB_TURNS` всегда
-/// меняется на 1, остальные — шагом `UpgradeOffsetFactor`.
+/// `UpgradeControl::Init` (`upgradecontrol.cpp:110`): `ATTRIB_TURNS` always
+/// changes by 1, the rest — by the `UpgradeOffsetFactor` step.
 #[inline]
 pub fn upgrade_amount(id: u8, team_base_value: i32) -> u16 {
     if id == ATTRIB_TURNS {
@@ -87,12 +87,12 @@ pub fn upgrade_amount(id: u8, team_base_value: i32) -> u16 {
     }
 }
 
-/// Целочисленный `sqrt(n)` (Ньютон, `u128`).
+/// Integer `sqrt(n)` (Newton, `u128`).
 fn isqrt_u128(n: u128) -> u128 {
     if n == 0 {
         return 0;
     }
-    // Начальное приближение строго выше корня: 2^(ceil(bits/2)).
+    // Initial approximation strictly above the root: 2^(ceil(bits/2)).
     let bits = 128 - n.leading_zeros();
     let mut x = 1u128 << ((bits + 1) / 2);
     loop {
@@ -104,8 +104,8 @@ fn isqrt_u128(n: u128) -> u128 {
     }
 }
 
-/// `(p/q)^7.5` в Q48; `None`, если значение заведомо больше `i32`
-/// (промежуточное переполнение `u128`).
+/// `(p/q)^7.5` in Q48; `None` if the value is definitely greater than `i32`
+/// (intermediate `u128` overflow).
 fn pow_7_5_scaled(p: u128, q: u128) -> Option<u128> {
     debug_assert!(q > 0);
 
@@ -114,15 +114,15 @@ fn pow_7_5_scaled(p: u128, q: u128) -> Option<u128> {
         value = value.checked_mul(p)? / q;
     }
 
-    // sqrt(p/q) в Q48: sqrt(p * S^2 / q).
+    // sqrt(p/q) in Q48: sqrt(p * S^2 / q).
     let root_arg = p.checked_mul(POW_SCALE)?.checked_mul(POW_SCALE)? / q;
     let root = isqrt_u128(root_arg);
 
     value.checked_mul(root).map(|product| product / POW_SCALE)
 }
 
-/// Приведение положительного `u128` к `i32` как `(int32_t)(double)` на x86:
-/// вне диапазона — `i32::MIN`.
+/// Conversion of a positive `u128` to `i32` like `(int32_t)(double)` on x86:
+/// out of range — `i32::MIN`.
 #[inline]
 fn truncate_to_i32(value: u128) -> i32 {
     if value > i32::MAX as u128 {
@@ -132,10 +132,10 @@ fn truncate_to_i32(value: u128) -> i32 {
     }
 }
 
-/// `UpgradeControl_CalculateCost` (`upgradecontrol.cpp:214`) — целочисленно.
+/// `UpgradeControl_CalculateCost` (`upgradecontrol.cpp:214`) — with integers.
 ///
-/// `id` — `ATTRIB_*`, `current`/`base` — значения атрибута, `factor` —
-/// `ResearchMenu_CalculateFactor` (прибавка от исследований).
+/// `id` — `ATTRIB_*`, `current`/`base` — attribute values, `factor` —
+/// `ResearchMenu_CalculateFactor` (the research bonus).
 pub fn upgrade_control_cost(id: u8, current: u16, factor: u16, base: u16) -> i32 {
     if id as usize >= UPGRADE_CONTROL_COUNT {
         return 0;
@@ -147,7 +147,7 @@ pub fn upgrade_control_cost(id: u8, current: u16, factor: u16, base: u16) -> i32
         }
         let denominator = i32::from(current) - i32::from(factor);
         if denominator <= 0 {
-            // C++: pow(inf/NaN) → (int32_t) → INT_MIN на x86.
+            // C++: pow(inf/NaN) → (int32_t) → INT_MIN on x86.
             return i32::MIN;
         }
         let Some(value) = pow_7_5_scaled(u128::from(base), denominator as u128) else {
@@ -180,14 +180,14 @@ pub fn upgrade_control_cost(id: u8, current: u16, factor: u16, base: u16) -> i32
     }
 }
 
-/// `UpgradeControl::CalculateCost` (`upgradecontrol.cpp:58`) — разница
-/// стоимостей уровня при шаге `upgrade_amount`, минимум 1.
+/// `UpgradeControl::CalculateCost` (`upgradecontrol.cpp:58`) — the difference
+/// of level costs at step `upgrade_amount`, minimum 1.
 pub fn upgrade_cost_step(id: u8, current: u16, factor: u16, team_base: u16) -> i32 {
     let amount = upgrade_amount(id, i32::from(team_base));
     upgrade_cost_step_with(id, current, factor, team_base, amount)
 }
 
-/// То же с явным шагом (нужно тестам и `TeamUnits_GetUpgradeCost`).
+/// The same with an explicit step (needed by tests and `TeamUnits_GetUpgradeCost`).
 pub fn upgrade_cost_step_with(
     id: u8,
     current: u16,
@@ -214,12 +214,12 @@ pub fn upgrade_cost_step_with(
     }
 }
 
-/// `ResearchMenu_UpdateResearchProgress` (`researchmenu.cpp:109`) без
-/// `std::pow`: `turns_to_complete` для текущего уровня и `factor`.
+/// `ResearchMenu_UpdateResearchProgress` (`researchmenu.cpp:109`) without
+/// `std::pow`: `turns_to_complete` for the current level and `factor`.
 ///
-/// `factor <= 0` в C++ дал бы деление на ноль (inf → `INT_MIN`); в
-/// симуляции настройки всегда положительны (1..128), поэтому возвращаем
-/// `i32::MAX` — «никогда», без паники.
+/// `factor <= 0` would divide by zero in C++ (inf → `INT_MIN`); in
+/// the simulation settings are always positive (1..128), so we return
+/// `i32::MAX` — "never", without panicking.
 pub fn research_turns_to_complete(level: u32, factor: i32) -> i32 {
     if factor <= 0 {
         return i32::MAX;
@@ -241,8 +241,8 @@ pub fn research_turns_to_complete(level: u32, factor: i32) -> i32 {
     truncate_to_i32(scaled / denominator)
 }
 
-/// `ResearchMenu_CalculateFactor` (`researchmenu.cpp:258`): вклад исследований
-/// в стоимость апгрейда — `base_attr * level / 10` (0 без исследований).
+/// `ResearchMenu_CalculateFactor` (`researchmenu.cpp:258`): the research contribution
+/// to the upgrade cost — `base_attr * level / 10` (0 without research).
 pub fn research_factor(base_value: i32, level: u32) -> i32 {
     if level == 0 {
         return 0;
@@ -250,8 +250,8 @@ pub fn research_factor(base_value: i32, level: u32) -> i32 {
     (base_value * level as i32) / 10
 }
 
-/// `ResearchMenu_ApplyUpgrades`: `(old, new)` значения атрибута при переходе
-/// на `level` — точная копия веток `RESEARCH_TOPIC_COST`/остальных.
+/// `ResearchMenu_ApplyUpgrades`: `(old, new)` attribute values when moving
+/// to `level` — an exact copy of the `RESEARCH_TOPIC_COST`/other branches.
 pub fn research_attribute_values(topic: ResearchTopic, base_value: i32, level: u32) -> (i32, i32) {
     let level = level as i64;
     let value = i64::from(base_value);
@@ -275,18 +275,18 @@ pub fn research_attribute_values(topic: ResearchTopic, base_value: i32, level: u
     (old_value as i32, new_value as i32)
 }
 
-/// Атрибут темы исследования (`RESEARCH_TOPIC_*` = `ATTRIB_*`).
+/// Attribute of a research topic (`RESEARCH_TOPIC_*` = `ATTRIB_*`).
 #[inline]
 pub fn research_attribute(topic: ResearchTopic) -> u8 {
     topic as u8
 }
 
-/// `ResearchMenu_ApplyUpgrades` (`researchmenu.cpp:137`): применить один
-/// завершённый уровень темы ко всем 93 текущим значениям команды.
+/// `ResearchMenu_ApplyUpgrades` (`researchmenu.cpp:137`): apply one
+/// completed topic level to all 93 current values of the team.
 ///
-/// C++ копирует текущие значения, прибавляет `new - old`, вызывает
-/// `UpdateVersion()` (только для занятого слота) и `MarkAsNotInUse()`,
-/// затем пишет объект обратно.
+/// C++ copies the current values, adds `new - old`, calls
+/// `UpdateVersion()` (only for an occupied slot) and `MarkAsNotInUse()`,
+/// then writes the object back.
 pub fn apply_research_upgrades(team_units: &mut TeamUnits, topic: ResearchTopic, level: u32) {
     let attribute = research_attribute(topic);
 
@@ -303,25 +303,25 @@ pub fn apply_research_upgrades(team_units: &mut TeamUnits, topic: ResearchTopic,
     }
 }
 
-/// Событие завершения исследования (для журнала/HUD).
+/// Research completion event (for the log/HUD).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResearchEvent {
-    /// Команда.
+    /// Team.
     pub team: TeamId,
-    /// Тема.
+    /// Topic.
     pub topic: ResearchTopic,
-    /// Новый уровень темы.
+    /// New topic level.
     pub level: u32,
 }
 
-/// `ResearchMenu_NewTurn` (`researchmenu.cpp:224`): списать allocation с
-/// `turns_to_complete`, при завершении — уровень и апгрейд.
+/// `ResearchMenu_NewTurn` (`researchmenu.cpp:224`): deduct allocation from
+/// `turns_to_complete`, and on completion — the level and the upgrade.
 ///
-/// Перед списанием инициализируются темы с `allocation > 0` и
-/// `turns_to_complete == 0` (в C++ это делает `GameManager_ManageEconomy`
-/// через `ResearchMenu_UpdateResearchProgress(team, topic, 0)` на старте хода
-/// команды; здесь та же идемпотентная инициализация, чтобы ход исследований
-/// не зависел от порядка вызовов).
+/// Before deduction, topics with `allocation > 0` and
+/// `turns_to_complete == 0` are initialized (C++ does this in `GameManager_ManageEconomy`
+/// via `ResearchMenu_UpdateResearchProgress(team, topic, 0)` at the start of the
+/// team's turn; here the same idempotent initialization is used so that the research turn
+/// does not depend on the call order).
 pub fn research_new_turn(
     team_units: &mut TeamUnits,
     info: &mut TeamInfo,
@@ -362,8 +362,8 @@ pub fn research_new_turn(
     events
 }
 
-/// `ResearchMenu_UpdateResearchProgress` для одной темы (allocation может быть
-/// отрицательным при переназначении центра).
+/// `ResearchMenu_UpdateResearchProgress` for one topic (allocation may be
+/// negative when the center is reassigned).
 pub fn update_research_progress(topic: &mut ResearchTopicInfo, factor: i32, allocation: i32) {
     let turns = research_turns_to_complete(topic.research_level, factor);
     let new_allocation = i64::from(topic.allocation) + i64::from(allocation);
@@ -378,12 +378,12 @@ pub fn update_research_progress(topic: &mut ResearchTopicInfo, factor: i32, allo
     }
 }
 
-/// `TeamUnits_GetUpgradeCost` без множителя сложности: разница стоимостей
-/// `current` и `current ± offset`, минимум 1.
+/// `TeamUnits_GetUpgradeCost` without the difficulty multiplier: the difference
+/// of `current` and `current ± offset` costs, minimum 1.
 ///
-/// В отличие от [`upgrade_cost_step_with`] (UI-контрол), здесь нет проверки
-/// `current > amount`: C++ `TeamUnits_GetUpgradeCost` вычитает шаг безусловно
-/// (`teamunits.cpp:237`), а `uint16_t`-параметр формулы усекает значение.
+/// Unlike [`upgrade_cost_step_with`] (UI control), there is no check of
+/// `current > amount` here: C++ `TeamUnits_GetUpgradeCost` subtracts the step unconditionally
+/// (`teamunits.cpp:237`), and the `uint16_t` formula parameter truncates the value.
 pub fn team_upgrade_cost_step(
     id: u8,
     current: u16,
@@ -402,10 +402,10 @@ pub fn team_upgrade_cost_step(
     second.wrapping_sub(first).max(1)
 }
 
-/// `TeamUnits_GetUpgradeCost` (`teamunits.cpp:189`) — стоимость следующего
-/// покупного апгрейда атрибута с учётом исследований и сложности ИИ.
+/// `TeamUnits_GetUpgradeCost` (`teamunits.cpp:189`) — the cost of the next
+/// purchased attribute upgrade, including research and AI difficulty.
 ///
-/// `opponent` — `Opponent` команды (множитель только для компьютеров).
+/// `opponent` — the team's `Opponent` (the multiplier applies only to computers).
 pub fn team_upgrade_cost(
     team_units: &TeamUnits,
     info: &TeamInfo,
@@ -420,8 +420,8 @@ pub fn team_upgrade_cost(
     let factor = if attribute == ATTRIB_TURNS || attribute as usize >= RESEARCH_TOPIC_COUNT {
         0
     } else {
-        // Темы 0..7 совпадают с ATTRIB 0..7; COST (7) — отдельная тема для
-        // `ATTRIB_TURNS` и в стоимость юнита не входит (C++ default: 0).
+        // Topics 0..7 match ATTRIB 0..7; COST (7) is a separate topic for
+        // `ATTRIB_TURNS` and does not enter the unit cost (C++ default: 0).
         let topic = ResearchTopic::try_from(attribute).ok();
         match topic {
             Some(topic) => {
@@ -461,7 +461,7 @@ fn clamp_u16(value: i32) -> u16 {
     value.clamp(0, i32::from(u16::MAX)) as u16
 }
 
-/// 13 сериализуемых атрибутов пакета 10/20 в порядке C++ —
+/// 13 serializable attributes of packets 10/20 in C++ order —
 /// `turns, hits, armor, attack, speed, range, rounds, move_and_fire, scan,
 /// storage, ammo, attack_radius, agent_adjust`.
 pub const UPGRADE_PACKET_ATTRIBUTES: [u8; 13] = [
@@ -480,7 +480,7 @@ pub const UPGRADE_PACKET_ATTRIBUTES: [u8; 13] = [
     ATTRIB_AGENT_ADJUST,
 ];
 
-/// Значения для пакета 10 из `UnitValues` (порядок C++).
+/// Values for packet 10 from `UnitValues` (C++ order).
 pub fn upgrade_packet_values(values: &UnitValues) -> [u16; 13] {
     let mut result = [0u16; 13];
     for (index, attribute) in UPGRADE_PACKET_ATTRIBUTES.iter().enumerate() {
@@ -490,28 +490,28 @@ pub fn upgrade_packet_values(values: &UnitValues) -> [u16; 13] {
 }
 
 // ---------------------------------------------------------------------------
-// Стоимость в меню апгрейдов (состояние контрола)
+// Cost in the upgrade menu (control state)
 // ---------------------------------------------------------------------------
 
-/// Один контрол покупного апгрейда — C++ `UpgradeControl` без UI-полей.
+/// One purchased-upgrade control — C++ `UpgradeControl` without UI fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpgradeQuote {
     /// `ATTRIB_*`.
     pub attribute: u8,
-    /// Базовое значение типа (знаменатель формулы, `team_base_value`).
+    /// Base value of the type (formula denominator, `team_base_value`).
     pub team_base: u16,
-    /// Текущее значение типа на момент открытия меню (`control_base_value`).
+    /// Current value of the type when the menu was opened (`control_base_value`).
     pub control_base: u16,
-    /// Вклад исследований (`ResearchMenu_CalculateFactor`).
+    /// Research contribution (`ResearchMenu_CalculateFactor`).
     pub research_factor: u16,
-    /// Шаг (`UpgradeOffsetFactor`).
+    /// Step (`UpgradeOffsetFactor`).
     pub amount: u16,
-    /// Текущее (редактируемое) значение.
+    /// Current (editable) value.
     pub actual: u16,
 }
 
 impl UpgradeQuote {
-    /// Создаёт контрол как `UpgradeControl::Init`.
+    /// Creates a control like `UpgradeControl::Init`.
     pub fn new(attribute: u8, team_base: u16, control_base: u16, research_factor: u16) -> Self {
         Self {
             attribute,
@@ -534,8 +534,8 @@ impl UpgradeQuote {
         )
     }
 
-    /// `false`, если `Increase` нельзя (как `UpdateControlState`: цена < лимита,
-    /// золота хватает; для hits/speed — не переполнение).
+    /// `false` if `Increase` is not allowed (as `UpdateControlState`: price < limit,
+    /// enough gold; for hits/speed — no overflow).
     pub fn can_increase(&self, gold: u32) -> bool {
         if self.team_base == 0 {
             return false;
@@ -552,12 +552,12 @@ impl UpgradeQuote {
         true
     }
 
-    /// `false`, если `Decrease` нельзя (ниже базового значения).
+    /// `false` if `Decrease` is not allowed (below the base value).
     pub fn can_decrease(&self) -> bool {
         self.actual > self.control_base
     }
 
-    /// `UpgradeControl::Increase`: списывает золото, увеличивает значение.
+    /// `UpgradeControl::Increase`: deducts gold, increases the value.
     pub fn increase(&mut self, gold: &mut u32) -> bool {
         if !self.can_increase(*gold) {
             return false;
@@ -568,7 +568,7 @@ impl UpgradeQuote {
         true
     }
 
-    /// `UpgradeControl::Decrease`: возвращает золото, уменьшает значение.
+    /// `UpgradeControl::Decrease`: refunds gold, decreases the value.
     pub fn decrease(&mut self, gold: &mut u32) -> bool {
         if !self.can_decrease() {
             return false;

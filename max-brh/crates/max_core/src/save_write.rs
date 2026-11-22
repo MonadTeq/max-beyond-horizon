@@ -1,47 +1,47 @@
-//! Запись V70 из живого состояния — `GameState -> SaveFile` (P3).
+//! Writing V70 from live state — `GameState -> SaveFile` (P3).
 //!
-//! Оракул: `max-cpp-port/src/saveload.cpp` (`SaveLoad_Save`), `teamunits.cpp`
+//! Oracle: `max-cpp-port/src/saveload.cpp` (`SaveLoad_Save`), `teamunits.cpp`
 //! (`TeamUnits::FileSave`), `unitinfo.cpp` (`UnitInfo::FileSave`),
 //! `aiplayer.cpp` (`AiPlayer::FileSave`), `hash.cpp`/`heatmap.cpp`
-//! (`FileSave`), плюс парсер [`crate::save`] — он читает ровно эти же поля.
+//! (`FileSave`), plus the [`crate::save`] parser — it reads exactly these fields.
 //!
-//! # Как строится объектный номер
+//! # How the object number is built
 //!
-//! V70 — граф объектов с номерами по порядку **первого появления** при обходе
-//! (см. [`crate::save`]). Номера в `GameState` не хранятся, поэтому
-//! [`build_save_file`] присваивает их заново, повторяя порядок обхода
-//! C++-писателя:
+//! V70 is an object graph numbered by order of **first appearance** during traversal
+//! (see [`crate::save`]). The numbers are not stored in `GameState`, so
+//! [`build_save_file`] assigns them anew, repeating the traversal order of
+//! the C++ writer:
 //!
-//! 1. `TeamUnits` команд 0..3: 93 базовых `UnitValues`, 93 текущих (если
-//!    текущие совпадают с базовыми — объект общий) и комплексы;
-//! 2. пять списков `UnitInfo` в порядке файла; тело юнита — путь,
-//!    `base_values`, комплекс, `parent_unit`, `enemy_unit` (вложенные юниты
-//!    впервые появляются здесь);
-//! 3. остальные юниты (вне списков) — в конце, чтобы ничего не потерять.
+//! 1. `TeamUnits` of teams 0..3: 93 base `UnitValues`, 93 current (if
+//!    current equals base — the object is shared) and complexes;
+//! 2. the five `UnitInfo` lists in file order; the unit body — path,
+//!    `base_values`, complex, `parent_unit`, `enemy_unit` (nested units
+//!    first appear here);
+//! 3. the remaining units (outside lists) — at the end, so nothing is lost.
 //!
-//! Для эталонного файла, загруженного [`GameState::from_save`], такой обход
-//! повторяет исходные номера **побайтово** — это проверяет
+//! For a reference file loaded by [`GameState::from_save`], such a traversal
+//! repeats the original numbers **byte for byte** — this is checked by
 //! `tests/save_write.rs::save1_load_to_save_is_byte_identical`.
 //!
-//! # Что не восстанавливается из рантайма (честные дефолты)
+//! # What is not recovered from runtime (honest defaults)
 //!
 //! * `markers[10]`, `screen_locations[6]`, `selected_unit`, `zoom_level`,
-//!   `camera_position`, `display_button_*` — UI-поля `TeamInfo` (state-model
-//!   §6.3); C++ держит их в `CTInfo`, наш `GameState` — в
-//!   [`SaveMeta::team_ui`] (переносятся из загруженного сейва, при создании
-//!   партии — дефолты `CTInfo::Reset`).
-//! * `AiPlayer::unused_v70`/`target_team_v70` — V70-поля, которые C++
-//!   **читает и выбрасывает** (`aiplayer.cpp`); значения переносятся через
-//!   [`SaveMeta`], чтобы round-trip был побайтовым.
-//! * `stats_gold_spent_on_upgrades` — C++ клампит ≥ 0 при загрузке, сырое
-//!   `int16_t` лежит в [`SaveMeta::team_gold_spent_raw`].
-//! * Тепловые карты: C++ `HeatMap::LoadV70` клампит отрицательные в 0, а в
-//!   памяти клетка — `uint32_t`; обратно пишется `min(127, value)` как `i8`.
-//! * `MessageLog` — журнал UI; переносится из [`SaveMeta::message_logs`].
-//! * `movement_wait_count` (не входит в V70), `experience` (у
-//!   `COMMANDO`/`REGENERATING_UNIT` пакуется в `storage`), `transfer_cargo` и
-//!   `stealth_dice_roll` (V70 хранит их в `move_to_grid`) — не пишутся, как и
-//!   в C++.
+//!   `camera_position`, `display_button_*` — `TeamInfo` UI fields (state-model
+//!   §6.3); C++ keeps them in `CTInfo`, our `GameState` — in
+//!   [`SaveMeta::team_ui`] (transferred from the loaded save; when creating
+//!   a game — `CTInfo::Reset` defaults).
+//! * `AiPlayer::unused_v70`/`target_team_v70` — V70 fields that C++
+//!   **reads and discards** (`aiplayer.cpp`); the values are transferred via
+//!   [`SaveMeta`] so that the round-trip is byte-exact.
+//! * `stats_gold_spent_on_upgrades` — C++ clamps ≥ 0 on load; the raw
+//!   `int16_t` is in [`SaveMeta::team_gold_spent_raw`].
+//! * Heat maps: C++ `HeatMap::LoadV70` clamps negatives to 0, and in
+//!   memory a cell is `uint32_t`; back it is written as `min(127, value)` as `i8`.
+//! * `MessageLog` — the UI log; transferred from [`SaveMeta::message_logs`].
+//! * `movement_wait_count` (not part of V70), `experience` (for
+//!   `COMMANDO`/`REGENERATING_UNIT` packed into `storage`), `transfer_cargo` and
+//!   `stealth_dice_roll` (V70 stores them in `move_to_grid`) — not written, as
+//!   in C++.
 
 use std::collections::BTreeMap;
 
@@ -58,83 +58,83 @@ use crate::team::{Complex, TeamInfoUi, TeamKind};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
-/// Размер `Hash_UnitHash` в V70-файле (`hash.cpp`: 512 вёдер у SAVE1/SAVE2).
+/// `Hash_UnitHash` size in the V70 file (`hash.cpp`: 512 buckets in SAVE1/SAVE2).
 pub const SAVE_UNIT_HASH_SIZE: u16 = 512;
 
-/// Данные V70, которые симуляция не использует, но которые нужны для записи
-/// сейва 1:1 (P3).
+/// V70 data that the simulation does not use but that is needed to write
+/// a 1:1 save (P3).
 ///
-/// Живёт в [`GameState::save_meta`]. При загрузке заполняется из файла
-/// ([`SaveMeta::from_save`]), при создании партии — из настроек
-/// ([`SaveMeta::default`] + поля `max_app`). В канонический дайджест состояния
-/// (`GameState::snapshot_bytes`) **не входит**: это не игровое состояние.
+/// Lives in [`GameState::save_meta`]. On load it is filled from the file
+/// ([`SaveMeta::from_save`]), when creating a game — from settings
+/// ([`SaveMeta::default`] + `max_app` fields). It does **not** enter the canonical
+/// state digest (`GameState::snapshot_bytes`): it is not game state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveMeta {
-    /// `save_game_type` заголовка (`FileType`).
+    /// Header `save_game_type` (`FileType`).
     pub save_game_type: FileType,
-    /// `save_name[30]` — имя сохранения сырыми байтами.
+    /// `save_name[30]` — the save name as raw bytes.
     pub save_name: [u8; 30],
-    /// `header.world` — планета партии.
+    /// `header.world` — the game's planet.
     pub world: Planet,
-    /// `team_name[4][30]` — имена команд.
+    /// `team_name[4][30]` — team names.
     pub team_names: [[u8; 30]; 4],
-    /// `rng_seed` — зерно ГПСЧ партии (V70 не хранит состояние `Randomizer`).
+    /// `rng_seed` — the game's RNG seed (V70 does not store the `Randomizer` state).
     pub rng_seed: u32,
-    /// `header.opponent` — сложность ИИ.
+    /// `header.opponent` — AI difficulty.
     pub opponent: Opponent,
-    /// `turn_timer_time` — таймер хода, сек.
+    /// `turn_timer_time` — turn timer, seconds.
     pub turn_timer_time: u16,
-    /// `endturn_time` — таймер конца хода, сек.
+    /// `endturn_time` — end-of-turn timer, seconds.
     pub endturn_time: u16,
     /// `IniOptions` (12 × `signed int`).
     pub ini_options: IniOptions,
     /// `IniPreferences` (7 × `signed int`).
     pub ini_preferences: IniPreferences,
-    /// UI-поля `TeamInfo` × 4 (`markers`/`screen_locations`/камера/зум/кнопки).
+    /// `TeamInfo` UI fields × 4 (`markers`/`screen_locations`/camera/zoom/buttons).
     pub team_ui: [TeamInfoUi; 4],
-    /// Сырые `stats_gold_spent_on_upgrades` × 4 (V70 `int16_t`).
+    /// Raw `stats_gold_spent_on_upgrades` × 4 (V70 `int16_t`).
     pub team_gold_spent_raw: [i16; 4],
-    /// `team_type[PLAYER_TEAM_ALIEN]` заголовка (V70 пишет 5-й слот, `CTInfo`
-    /// его не хранит).
+    /// Header `team_type[PLAYER_TEAM_ALIEN]` (V70 writes the 5th slot, `CTInfo`
+    /// does not store it).
     pub alien_team_type: TeamKind,
-    /// `team_clan[PLAYER_TEAM_ALIEN]` заголовка.
+    /// Header `team_clan[PLAYER_TEAM_ALIEN]`.
     pub alien_team_clan: TeamClan,
-    /// `AiPlayer::unused_v70` × 4 — C++ читает и выбрасывает.
+    /// `AiPlayer::unused_v70` × 4 — C++ reads and discards it.
     pub ai_unused_v70: [i16; 4],
-    /// `AiPlayer::target_team` × 4 (V70) — C++ читает и выбрасывает.
+    /// `AiPlayer::target_team` × 4 (V70) — C++ reads and discards it.
     pub ai_target_team_v70: [i16; 4],
-    /// Был ли в файле блок `info_map` у ИИ команды (`ReadObjectCount != 0`).
+    /// Whether the team AI's `info_map` block was in the file (`ReadObjectCount != 0`).
     ///
-    /// У эталонных V70-сейвов карт ИИ нет (C++ пишет `item_count = 0`), а
-    /// рантайм `max_core` всегда держит карту 112×112 — без этого флага запись
-    /// добавила бы 12 544 байта на каждую компьютерную команду.
+    /// Reference V70 saves have no AI maps (C++ writes `item_count = 0`), while
+    /// the `max_core` runtime always keeps a 112×112 map — without this flag writing
+    /// would add 12,544 bytes per computer team.
     pub ai_has_info_map: [bool; 4],
-    /// Был ли в файле блок `mine_map`.
+    /// Whether the `mine_map` block was in the file.
     pub ai_has_mine_map: [bool; 4],
-    /// Порядок `UnitHash` как в файле: вёдра → `UnitId`.
+    /// `UnitHash` order as in the file: buckets → `UnitId`.
     ///
-    /// C++ вставляет юнитов в ведро при создании (`UnitsManager_DeployUnit`),
-    /// поэтому порядок внутри ведра — порядок создания, который в рантайме не
-    /// выводится ни из id, ни из списков. Переносим его из загруженного сейва,
-    /// а новые юниты дописываем в конец ведра.
+    /// C++ inserts units into a bucket on creation (`UnitsManager_DeployUnit`),
+    /// so the order within a bucket is creation order, which at runtime cannot
+    /// be derived from ids or lists. We transfer it from the loaded save,
+    /// and append new units to the end of the bucket.
     pub unit_hash_order: Vec<Vec<UnitId>>,
-    /// Журналы сообщений × 4 (`MessageLogList`).
+    /// Message logs × 4 (`MessageLogList`).
     pub message_logs: [Vec<MessageLogEntry>; 4],
-    /// Остаток таймера хода в `GameManagerState` (сек).
+    /// Remaining turn timer in `GameManagerState` (seconds).
     pub turn_timer: u16,
-    /// Размер `Hash_UnitHash` в файле (C++ 512; в рантайме `max_core` — 8192).
+    /// `Hash_UnitHash` size in the file (C++ 512; in the `max_core` runtime — 8192).
     pub unit_hash_size: u16,
-    /// Размер `Hash_MapHash` в файле (V70-сейвы оригинала — 512).
+    /// `Hash_MapHash` size in the file (original V70 saves — 512).
     pub map_hash_size: u16,
-    /// `x_shift` из заголовка `MapHash` (у 512 вёдер — 2).
+    /// `x_shift` from the `MapHash` header (2 for 512 buckets).
     pub map_hash_x_shift: u16,
-    /// Клетки `MapHash` в порядке файла: `(x, y, юниты)`.
+    /// `MapHash` cells in file order: `(x, y, units)`.
     ///
-    /// C++ при загрузке **перехэширует** таблицу в размер текущей карты
-    /// (`hash.cpp:240`), поэтому из рантайма исходный порядок вёдер не
-    /// выводится; для побайтовой записи он переносится здесь. При сохранении
-    /// порядок сохраняется для неизменившихся клеток, новые дописываются в
-    /// конец ([`build_save_file`]).
+    /// On load C++ **rehashes** the table to the current map size
+    /// (`hash.cpp:240`), so the original bucket order cannot
+    /// be derived from runtime; it is transferred here for byte-exact writing. On save
+    /// the order is preserved for unchanged cells, new ones are appended to
+    /// the end ([`build_save_file`]).
     pub map_hash_cells: Vec<(u16, u16, Vec<UnitId>)>,
 }
 
@@ -171,7 +171,7 @@ impl Default for SaveMeta {
 }
 
 impl SaveMeta {
-    /// Снимает метаданные с разобранного V70-файла.
+    /// Extracts metadata from a parsed V70 file.
     pub fn from_save(save: &SaveFile) -> Self {
         let mut meta = Self::default();
         meta.save_game_type = save.header.save_game_type;
@@ -197,7 +197,7 @@ impl SaveMeta {
             }
             meta.message_logs[team] = save.message_logs[team].clone();
         }
-        // `UnitHash` файла ссылается на объекты → переводим в `UnitId`.
+        // The file's `UnitHash` references objects → convert to `UnitId`.
         let ids: BTreeMap<u16, UnitId> = save
             .units
             .iter()
@@ -236,12 +236,12 @@ impl SaveMeta {
         meta
     }
 
-    /// Имя сохранения строкой.
+    /// Save name as a string.
     pub fn save_name(&self) -> String {
         fixed_name(&self.save_name)
     }
 
-    /// Имя команды строкой.
+    /// Team name as a string.
     pub fn team_name(&self, team: usize) -> String {
         self.team_names
             .get(team)
@@ -249,7 +249,7 @@ impl SaveMeta {
             .unwrap_or_default()
     }
 
-    /// Записывает строку в 30-байтовое поле имени (NUL-терминатор, обрезка).
+    /// Writes a string into a 30-byte name field (NUL terminator, truncation).
     pub fn set_name(field: &mut [u8; 30], value: &str) {
         field.fill(0);
         for (slot, byte) in field.iter_mut().zip(value.as_bytes()) {
@@ -267,54 +267,54 @@ fn fixed_name(bytes: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Объектная раскладка
+// Object layout
 // ---------------------------------------------------------------------------
 
-/// Ключ объекта V70: чем именно является объект в графе.
+/// V70 object key: what exactly the object is in the graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ObjectKey {
-    /// `UnitValues` команды: базовые или текущие значения типа.
+    /// Team `UnitValues`: base or current values of a type.
     TeamValues {
-        /// Команда.
+        /// Team.
         team: u8,
-        /// `false` — текущие значения, `true` — базовые.
+        /// `false` — current values, `true` — base.
         base: bool,
-        /// Индекс типа юнита 0..92.
+        /// Unit type index 0..92.
         unit_type: u16,
     },
-    /// `Complex` из списка `TeamUnits::complexes`.
+    /// A `Complex` from the `TeamUnits::complexes` list.
     TeamComplex {
-        /// Команда.
+        /// Team.
         team: u8,
         /// `Complex::id`.
         id: i16,
     },
-    /// `UnitValues` конкретного юнита (`UnitInfo::base_values`).
+    /// `UnitValues` of a concrete unit (`UnitInfo::base_values`).
     UnitValues {
-        /// `UnitId` юнита.
+        /// The unit's `UnitId`.
         id: u16,
     },
-    /// Путь юнита (`AirPath`/`BuilderPath`/`GroundPath`).
+    /// Unit path (`AirPath`/`BuilderPath`/`GroundPath`).
     UnitPath {
-        /// `UnitId` юнита.
+        /// The unit's `UnitId`.
         id: u16,
     },
-    /// `Complex`, на который ссылается юнит, но которого нет в списке команды
-    /// (битый сейв/рассинхронизация): пишется минимальное тело.
+    /// A `Complex` referenced by a unit but absent from the team list
+    /// (corrupt save/desync): a minimal body is written.
     OrphanComplex {
-        /// Команда.
+        /// Team.
         team: u8,
         /// `Complex::id`.
         id: i16,
     },
     /// `UnitInfo`.
     Unit {
-        /// `UnitId` юнита.
+        /// The unit's `UnitId`.
         id: u16,
     },
 }
 
-/// Присваивание номеров объектов в порядке обхода (C++ `SmartFileWriter`).
+/// Assignment of object numbers in traversal order (C++ `SmartFileWriter`).
 #[derive(Debug, Default)]
 struct Layout {
     next: u16,
@@ -329,7 +329,7 @@ impl Layout {
         }
     }
 
-    /// Номер объекта для ключа; новый объект получает следующий номер.
+    /// Object number for a key; a new object gets the next number.
     fn object(&mut self, key: ObjectKey) -> u16 {
         if let Some(index) = self.objects.get(&key) {
             return *index;
@@ -343,12 +343,12 @@ impl Layout {
         index
     }
 
-    /// Номер уже назначенного объекта.
+    /// Number of an already assigned object.
     fn get(&self, key: ObjectKey) -> Option<u16> {
         self.objects.get(&key).copied()
     }
 
-    /// Номер объекта `UnitInfo` (0 — юнита нет).
+    /// `UnitInfo` object number (0 — no unit).
     fn unit(&self, id: Option<UnitId>) -> u16 {
         id.and_then(|id| self.get(ObjectKey::Unit { id: id.0 }))
             .unwrap_or(0)
@@ -356,19 +356,19 @@ impl Layout {
 }
 
 // ---------------------------------------------------------------------------
-// Сборка SaveFile
+// Assembling SaveFile
 // ---------------------------------------------------------------------------
 
-/// Собирает V70-представление живого состояния.
+/// Assembles the V70 representation of live state.
 ///
-/// Все объекты нумеруются заново в порядке обхода C++-писателя (см. модульную
-/// документацию), поэтому загруженный и сразу сохранённый эталонный сейв
-/// получается побайтово тем же (см. `tests/save_write.rs`).
+/// All objects are renumbered in the C++ writer's traversal order (see the module
+/// documentation), so a reference save loaded and immediately written
+/// comes out byte-identical (see `tests/save_write.rs`).
 pub fn build_save_file(state: &GameState) -> SaveFile {
     let meta = &state.save_meta;
     let mut layout = Layout::new();
 
-    // --- 1. TeamUnits × 4: значения и комплексы ---
+    // --- 1. TeamUnits × 4: values and complexes ---
     let mut team_units: [SaveTeamUnits; SAVE_TEAM_COUNT] = std::array::from_fn(|_| SaveTeamUnits {
         gold: 0,
         base_values: std::array::from_fn(|_| SavedUnitValues {
@@ -397,8 +397,8 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
             }
         });
 
-        // C++ `TeamUnits::FileSave` пишет **сначала все базовые** значения, затем
-        // все текущие — объектные номера присваиваются в этом же порядке.
+        // C++ `TeamUnits::FileSave` writes **all base** values first, then
+        // all current ones — object numbers are assigned in this same order.
         let mut base_index: [u16; UNIT_COUNT] = [0; UNIT_COUNT];
         for unit_type in 0..UNIT_COUNT {
             base_index[unit_type] = layout.object(ObjectKey::TeamValues {
@@ -413,10 +413,10 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         }
 
         for unit_type in 0..UNIT_COUNT {
-            // C++ `TeamUnits` держит `UnitValues*`: пока исследований не было,
-            // current и base — один объект. В рантайме остаются только значения,
-            // поэтому общность восстанавливается по равенству: апгрейд всегда
-            // меняет хотя бы одну характеристику (`upgrade_offset_factor`).
+            // C++ `TeamUnits` holds `UnitValues*`: while there has been no research,
+            // current and base are one object. At runtime only values remain,
+            // so sharing is restored by equality: an upgrade always
+            // changes at least one characteristic (`upgrade_offset_factor`).
             let current_index = if units.current_values[unit_type] == units.base_values[unit_type] {
                 base_index[unit_type]
             } else {
@@ -445,7 +445,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         }
 
         team_units[team] = SaveTeamUnits {
-            // V70 пишет `signed short`; C++ хранит `uint32_t`.
+            // V70 writes `signed short`; C++ stores `uint32_t`.
             gold: units.gold as u16,
             base_values,
             current_values,
@@ -453,7 +453,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         };
     }
 
-    // --- 2-3. Юниты: списки и тела ---
+    // --- 2-3. Units: lists and bodies ---
     let mut units: Vec<SaveUnit> = Vec::with_capacity(state.unit_count());
     let mut unit_lists: [Vec<u16>; 5] = Default::default();
 
@@ -467,20 +467,20 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         unit_lists[kind.index()] = list;
     }
 
-    // Юниты, которых нет ни в одном списке (например, только что созданный и
-    // ещё не добавленный в список): пишем ссылкой 0 в списки не попадают, но
-    // объект обязан быть в файле, иначе он потеряется.
+    // Units that are in no list (for example, just created and
+    // not yet added to a list): written as reference 0 they would not get into the lists, but
+    // the object must be in the file, otherwise it would be lost.
     for id in state.unit_ids_in_order() {
         walk_unit(state, id, &mut layout, &mut units, 0);
     }
 
     units.sort_by_key(|unit| unit.object_index);
 
-    // --- UnitHash: порядок вёдер как в загруженном файле + новые юниты ---
+    // --- UnitHash: bucket order as in the loaded file + new units ---
     //
-    // C++ вставляет юнита в ведро при создании (`UnitsManager_DeployUnit`),
-    // поэтому порядок внутри ведра — порядок создания: он не выводится из
-    // id/списков и переносится через [`SaveMeta::unit_hash_order`].
+    // C++ inserts a unit into a bucket on creation (`UnitsManager_DeployUnit`),
+    // so the order within a bucket is creation order: it is not derived from
+    // ids/lists and is transferred via [`SaveMeta::unit_hash_order`].
     let mut unit_hash: UnitHash<u16> = UnitHash::new(meta.unit_hash_size.max(1));
     let mut hashed: BTreeMap<UnitId, ()> = BTreeMap::new();
     for bucket in &meta.unit_hash_order {
@@ -501,12 +501,12 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         unit_hash.push_at(u32::from(unit.info.id.0), unit.object_index);
     }
 
-    // --- MapHash: порядок клеток как в файле + новые клетки ---
+    // --- MapHash: cell order as in the file + new cells ---
     //
-    // Размер и x_shift берутся из [`SaveMeta`]: C++ при загрузке перехэширует
-    // таблицу в размер карты, поэтому 512 вёдер эталона из рантайма не
-    // восстановить. Клетки, которые были в файле, пишутся в прежнем порядке с
-    // **текущим** составом юнитов; появившиеся в игре клетки — в конец.
+    // Size and x_shift come from [`SaveMeta`]: C++ rehashes on load
+    // the table to the map size, so the reference's 512 buckets cannot
+    // be restored from runtime. Cells that were in the file are written in the old order with
+    // the **current** set of units; cells that appeared in the game — at the end.
     let mut map_hash: MapHash<u16> =
         MapHash::new(meta.map_hash_size.max(crate::hash::HASH_MAP_HASH_SIZE_MIN));
     let mut current_cells: BTreeMap<(u16, u16), Vec<u16>> = BTreeMap::new();
@@ -525,7 +525,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
     }
     for (x, y, _) in &meta.map_hash_cells {
         let Some(mapped) = current_cells.remove(&(*x, *y)) else {
-            // Клетка опустела — объекта в файле нет (C++ удаляет пустые).
+            // The cell became empty — no object in the file (C++ deletes empty ones).
             continue;
         };
         map_hash.bucket_mut(*x, *y).push(MapHashObject {
@@ -538,7 +538,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         map_hash.bucket_mut(x, y).push(MapHashObject { x, y, units });
     }
 
-    // --- тепловые карты × 4 (только у играющих команд) ---
+    // --- heat maps × 4 (playing teams only) ---
     let mut heat_maps: [Option<Box<HeatMap>>; SAVE_TEAM_COUNT] = Default::default();
     for team in 0..SAVE_TEAM_COUNT {
         if state.teams[team].team_type == TeamKind::None {
@@ -558,7 +558,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         heat_maps[team] = Some(map);
     }
 
-    // --- журналы сообщений × 4 ---
+    // --- message logs × 4 ---
     let mut message_logs: [Vec<MessageLogEntry>; SAVE_TEAM_COUNT] =
         std::array::from_fn(|_| Vec::new());
     for (team, logs) in message_logs.iter_mut().enumerate() {
@@ -569,7 +569,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         }
     }
 
-    // --- AiPlayer × 4 (только компьютерные команды) ---
+    // --- AiPlayer × 4 (computer teams only) ---
     let mut ai_players: [Option<Box<AiPlayerState>>; SAVE_TEAM_COUNT] = Default::default();
     for team in 0..SAVE_TEAM_COUNT {
         if state.teams[team].team_type != TeamKind::Computer {
@@ -613,7 +613,7 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
         }));
     }
 
-    // --- заголовок и настройки ---
+    // --- header and settings ---
     let mut team_type = [TeamKind::None; SAVE_TEAM_COUNT + 1];
     let mut team_clan = [TeamClan::Random; SAVE_TEAM_COUNT + 1];
     for team in 0..SAVE_TEAM_COUNT {
@@ -674,13 +674,13 @@ pub fn build_save_file(state: &GameState) -> SaveFile {
     }
 }
 
-/// Клетка тепловой карты → `int8_t` файла (C++ `HeatMap::FileSave` пишет
-/// `legacy`-значение; в памяти клетка — `uint32_t`).
+/// Heat-map cell → the file's `int8_t` (C++ `HeatMap::FileSave` writes
+/// the `legacy` value; in memory a cell is `uint32_t`).
 fn heat_value(value: u32) -> i8 {
     value.min(i8::MAX as u32) as i8
 }
 
-/// `info_map` (112×112) → массив файла; короткая карта дополняется
+/// `info_map` (112×112) → the file array; a short map is padded
 /// `INFO_MAP_NO_INFO` (0).
 fn map_bytes(values: &[u8]) -> Option<Box<[u8; MAP_TILES]>> {
     let mut map = Box::new([0u8; MAP_TILES]);
@@ -690,7 +690,7 @@ fn map_bytes(values: &[u8]) -> Option<Box<[u8; MAP_TILES]>> {
     Some(map)
 }
 
-/// `mine_map` (112×112) → массив файла.
+/// `mine_map` (112×112) → the file array.
 fn mine_map_bytes(values: &[i8]) -> Option<Box<[i8; MAP_TILES]>> {
     let mut map = Box::new([0i8; MAP_TILES]);
     for (slot, value) in map.iter_mut().zip(values.iter()) {
@@ -699,15 +699,15 @@ fn mine_map_bytes(values: &[i8]) -> Option<Box<[i8; MAP_TILES]>> {
     Some(map)
 }
 
-/// Номер объекта `UnitValues` для `base_values` юнита.
+/// `UnitValues` object number for the unit's `base_values`.
 ///
-/// В C++ `UnitInfo::base_values` — указатель на `UnitValues` команды (базовые
-/// или текущие — смотря на момент создания юнита), поэтому объект обычно
-/// **общий** с `TeamUnits`. В рантайме остаются только значения, поэтому
-/// правило восстановления: значения юнита совпали с базовыми команды → базовый
-/// объект, с текущими → текущий, иначе (апгрейд, которого нет в таблице) —
-/// собственный объект юнита. Для SAVE1/SAVE2 правило совпадает с файлом
-/// (проверяет `tests/save_write.rs`).
+/// In C++ `UnitInfo::base_values` is a pointer to the team's `UnitValues` (base
+/// or current — depending on when the unit was created), so the object is usually
+/// **shared** with `TeamUnits`. At runtime only values remain, so
+/// the restoration rule is: the unit's values equal the team's base → the base
+/// object, equal the current → the current, otherwise (an upgrade not in the table) —
+/// the unit's own object. For SAVE1/SAVE2 the rule matches the file
+/// (checked by `tests/save_write.rs`).
 fn unit_values_object(state: &GameState, info: &UnitInfo, layout: &mut Layout) -> u16 {
     let team = info.team.0 as usize;
     let unit_type = info.unit_type as usize;
@@ -733,10 +733,10 @@ fn unit_values_object(state: &GameState, info: &UnitInfo, layout: &mut Layout) -
     layout.object(ObjectKey::UnitValues { id: info.id.0 })
 }
 
-/// Пишет тело юнита и его вложенные объекты; возвращает номер объекта.
+/// Writes a unit body and its nested objects; returns the object number.
 ///
-/// Порядок вложенных объектов — как в C++ `UnitInfo::FileSave`: путь,
-/// `base_values`, комплекс, `parent_unit`, `enemy_unit`.
+/// Nested object order — as in C++ `UnitInfo::FileSave`: path,
+/// `base_values`, complex, `parent_unit`, `enemy_unit`.
 fn walk_unit(
     state: &GameState,
     id: UnitId,
@@ -752,8 +752,8 @@ fn walk_unit(
     }
 
     let info: &UnitInfo = state.unit(id)?;
-    // Презентация хранится рядом с юнитом в `GameState` (Ф5.3/B) и пишется в
-    // V70 в исходном порядке байтов (`save::write_unit_body`).
+    // Presentation is stored next to the unit in `GameState` (F5.3/B) and written to
+    // V70 in the original byte order (`save::write_unit_body`).
     let presentation = state.presentation(id).cloned().unwrap_or_default();
     let object_index = layout.object(ObjectKey::Unit { id: id.0 });
     let team = info.team.0;
@@ -782,8 +782,8 @@ fn walk_unit(
                     complex,
                 ),
                 None => {
-                    // Комплекс потерялся (юнит ссылается на несуществующий id):
-                    // пишем минимальное тело, чтобы ссылка осталась валидной.
+                    // The complex is lost (the unit references a nonexistent id):
+                    // write a minimal body so the reference stays valid.
                     let value = Complex::new(complex_id.0);
                     (
                         layout.object(ObjectKey::OrphanComplex {
@@ -823,34 +823,34 @@ fn walk_unit(
 }
 
 impl GameState {
-    /// V70-представление состояния (P3): объектная нумерация пересобирается
-    /// в порядке C++-писателя, см. [`build_save_file`].
+    /// V70 representation of the state (P3): object numbering is reassembled
+    /// in the C++ writer's order, see [`build_save_file`].
     pub fn to_save(&self) -> SaveFile {
         build_save_file(self)
     }
 
-    /// Байты V70-сейва текущей партии.
+    /// V70 save bytes of the current game.
     pub fn to_save_bytes(&self) -> Result<Vec<u8>, crate::save::SaveError> {
         self.to_save().to_bytes()
     }
 
-    /// Настройки/служебные поля сейва (V70).
+    /// Save settings/service fields (V70).
     pub fn save_meta(&self) -> &SaveMeta {
         &self.save_meta
     }
 
-    /// Заменяет настройки/служебные поля сейва (используется при создании
-    /// партии и при сохранении из UI).
+    /// Replaces the save settings/service fields (used when creating
+    /// a game and when saving from the UI).
     pub fn set_save_meta(&mut self, meta: SaveMeta) {
         self.save_meta = meta;
     }
 
-    /// Дописывает сообщение в журнал команды (`MessageLogList`): попадает в
-    /// V70-сейв, в дайджест состояния не входит.
+    /// Appends a message to the team log (`MessageLogList`): it enters
+    /// the V70 save, not the state digest.
     pub fn push_message(&mut self, team: u8, text: &str, point: Point, unit: Option<UnitId>) {
         let index = usize::from(team).min(SAVE_TEAM_COUNT - 1);
         let mut bytes = text.as_bytes().to_vec();
-        // V70 пишет `strlen + 1` — текст с завершающим NUL.
+        // V70 writes `strlen + 1` — text with a terminating NUL.
         bytes.push(0);
         self.save_meta.message_logs[index].push(MessageLogEntry {
             text: bytes,
@@ -877,7 +877,7 @@ mod tests {
         assert_eq!(reparsed.units.len(), 0);
         assert_eq!(reparsed.game.turn_counter, 0);
         assert_eq!(reparsed.team_units[0].base_values.len(), UNIT_COUNT);
-        // Круг «модель -> файл -> модель» без юнитов стабилен.
+        // The "model -> file -> model" cycle without units is stable.
         assert_eq!(reparsed.to_bytes().expect("writes"), bytes);
     }
 
@@ -913,11 +913,11 @@ mod tests {
         assert_eq!(heat_value(1000), 127);
     }
 
-    /// Порядок объектов писателя: номера идут подряд в порядке обхода.
+    /// Writer object order: numbers are consecutive in traversal order.
     ///
-    /// Ловит регрессию «базовые и текущие значения перемешаны» (C++ пишет
-    /// сначала все базовые `UnitValues`, потом все текущие), из-за которой
-    /// `SaveFile::to_bytes` падал с `ForwardReference`.
+    /// Catches the "base and current values mixed up" regression (C++ writes
+    /// all base `UnitValues` first, then all current ones), which made
+    /// `SaveFile::to_bytes` fail with `ForwardReference`.
     #[test]
     fn object_numbers_follow_writer_order() {
         let save = crate::save::SaveFile::parse(include_bytes!("../tests/data/save1_v70.cam"))
@@ -950,9 +950,9 @@ mod tests {
                 next += 1;
             }
         }
-        // Номера юнитов уникальны, лежат после объектов команд и вместе со
-        // всеми вложенными объектами образуют непрерывный диапазон 1..=N
-        // (этого требует `SmartFileWriter`).
+        // Unit numbers are unique, come after team objects, and together with
+        // all nested objects form a continuous range 1..=N
+        // (required by `SmartFileWriter`).
         let mut indices: Vec<u16> = Vec::new();
         for units in &built.team_units {
             for slot in units.base_values.iter().chain(units.current_values.iter()) {

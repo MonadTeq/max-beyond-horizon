@@ -1,31 +1,31 @@
-//! Перемещение: `TaskMove`, `TaskMoveHome`, `TaskFindPath`,
+//! Movement: `TaskMove`, `TaskMoveHome`, `TaskFindPath`,
 //! `TaskSearchDestination`, `TaskRendezvous`, `TaskAssistMove`,
 //! `TaskTransport`, `TaskDump`.
 //!
-//! Оракул: `taskmove.cpp/.hpp`, `taskmovehome.cpp/.hpp`, `taskfindpath.cpp/.hpp`,
+//! Oracle: `taskmove.cpp/.hpp`, `taskmovehome.cpp/.hpp`, `taskfindpath.cpp/.hpp`,
 //! `tasksearchdestination.cpp/.hpp`, `taskrendezvous.cpp/.hpp`,
 //! `taskassistmove.cpp/.hpp`, `tasktransport.cpp/.hpp`, `taskdump.cpp/.hpp`.
 //!
-//! # Модель движения
+//! # Movement model
 //!
-//! В C++ `TaskMove` асинхронно запрашивает путь (`TaskPathRequest` →
-//! `TaskFindPath`), получает `GroundPath` и отдаёт приказ `ORDER_MOVE` с
-//! готовым путём. В max_core поиск пути синхронный и детерминированный
-//! (`pathfinding::request_path` → `poll_results`), а машина приказов
-//! (`unit_order`) сама ставит запрос и применяет результат. Поэтому `TaskMove`:
+//! In C++ `TaskMove` asynchronously requests a path (`TaskPathRequest` →
+//! `TaskFindPath`), gets a `GroundPath` and issues an `ORDER_MOVE` with
+//! the ready path. In max_core pathfinding is synchronous and deterministic
+//! (`pathfinding::request_path` → `poll_results`), and the order machine
+//! (`unit_order`) places the request and applies the result itself. Therefore `TaskMove`:
 //!
-//! 1. проверяет дистанцию (`minimum_distance`) — как `TaskMove::Search`;
-//! 2. отдаёт `ORDER_MOVE/INIT` с `move_to` (C++ — `ORDER_STATE_IN_PROGRESS` с
-//!    готовым путём; в lockstep-модели это эквивалентно, см. `unit_order`);
-//! 3. ждёт `RemindMoveFinished` и повторяет приказ (`RetryMove`), пока юнит не
-//!    дойдёт или не заблокируется;
-//! 4. по завершении уведомляет родителя кодом [`TASKMOVE_RESULT_*`]
+//! 1. checks the distance (`minimum_distance`) — like `TaskMove::Search`;
+//! 2. issues `ORDER_MOVE/INIT` with `move_to` (C++ — `ORDER_STATE_IN_PROGRESS` with
+//!    a ready path; in the lockstep model this is equivalent, see `unit_order`);
+//! 3. waits for `RemindMoveFinished` and repeats the order (`RetryMove`) until the unit
+//!    arrives or is blocked;
+//! 4. on completion notifies the parent with a [`TASKMOVE_RESULT_*`] code
 //!    (C++ `result_callback`).
 //!
-//! Транспорт (`AttemptTransport`, `TaskTransport`) и мосты/зоны
-//! (`EventZoneCleared`) портированы структурно: их поведение зависит от
-//! `AccessMap`/`ZoneWalker`-очистки зон (P5/P7), поэтому `TaskTransport`
-//! создаётся, но перевозку не начинает.
+//! Transport (`AttemptTransport`, `TaskTransport`) and bridges/zones
+//! (`EventZoneCleared`) are ported structurally: their behavior depends on
+//! `AccessMap`/`ZoneWalker` zone clearing (P5/P7), so `TaskTransport`
+//! is created but does not start transporting.
 
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
@@ -41,7 +41,7 @@ use super::{TaskCtx, TaskKind};
 // ---------------------------------------------------------------------------
 // TaskMove
 // ---------------------------------------------------------------------------
-/// Дошёл ли юнит до точки в пределах `minimum_distance` (квадрат расстояния).
+/// Whether the unit reached the point within `minimum_distance` (squared distance).
 pub(crate) fn is_at_destination(
     ctx: &TaskCtx<'_>,
     unit: UnitId,
@@ -58,7 +58,7 @@ pub(crate) fn is_at_destination(
     dx * dx + dy * dy <= i32::from(minimum_distance)
 }
 
-/// `TaskMove::Finished(result)` — уведомление родителя и удаление задачи.
+/// `TaskMove::Finished(result)` — notify the parent and remove the task.
 pub(crate) fn move_finished_self(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -87,7 +87,7 @@ pub(crate) fn move_finished_self(
     ctx.remove_self(header.id);
 }
 
-/// `TaskMove::Search(mode)` — путь или «уже в радиусе».
+/// `TaskMove::Search(mode)` — path or "already in range".
 pub(crate) fn move_search(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -139,7 +139,7 @@ pub(crate) fn move_search(
     state.started = true;
 }
 
-/// `TaskMove::RetryMove` — повторный приказ к той же точке.
+/// `TaskMove::RetryMove` — repeat the order to the same point.
 fn retry_move(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>) {
     let TaskKind::Move(state) = kind else {
         return;
@@ -157,7 +157,7 @@ fn retry_move(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>) {
     ctx.set_new_order(unit_id, UnitOrder::Move, UnitOrderState::Init);
 }
 
-/// `TaskMove::Execute(unit)` — завершение очередного перегона.
+/// `TaskMove::Execute(unit)` — completing the next leg.
 pub(crate) fn move_execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -181,7 +181,7 @@ pub(crate) fn move_execute(
         return false;
     }
 
-    // Атака по пути (C++ `AiAttack_EvaluateAttack`).
+    // Attack along the way (C++ `AiAttack_EvaluateAttack`).
     let is_computer =
         ctx.world.teams[info.team.0 as usize].team_type == crate::team::TeamKind::Computer;
 
@@ -202,7 +202,7 @@ pub(crate) fn move_execute(
         return true;
     }
 
-    // Резерв выстрела (C++ `Task_ShouldReserveShot`) — ждём, не двигаемся.
+    // Shot reserve (C++ `Task_ShouldReserveShot`) — wait, do not move.
     if state.caution_level != CautionLevel::None {
         let grid = ctx.unit(unit).map(|info| info.grid).unwrap_or(Point::ZERO);
         if let Some(info) = ctx.unit(unit) {
@@ -221,7 +221,7 @@ pub(crate) fn move_execute(
         }
     }
 
-    // `RetryMove` + `RemindMoveFinished` (ждём следующего хода юнита).
+    // `RetryMove` + `RemindMoveFinished` (wait for the unit's next turn).
     retry_move(kind, ctx);
     ctx.remind_move_finished(unit, true);
     let _ = TASK_PRIORITY_MOVE;
@@ -229,7 +229,7 @@ pub(crate) fn move_execute(
     true
 }
 
-/// `TaskMove::RemoveUnit` — отмена.
+/// `TaskMove::RemoveUnit` — cancel.
 fn move_remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     let TaskKind::Move(state) = kind else {
         return;
@@ -246,8 +246,8 @@ fn move_remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHead
 // TaskMoveHome
 // ---------------------------------------------------------------------------
 
-/// Целевое здание для отступления домой (`TaskMoveHome::EndTurn`): ближайшее
-/// здание команды с `storage` или `ORDER_AWAIT`.
+/// Target building for retreating home (`TaskMoveHome::EndTurn`): the nearest
+/// team building with `storage` or `ORDER_AWAIT`.
 fn home_site(ctx: &TaskCtx<'_>, team: crate::team::TeamId, from: Point) -> Option<Point> {
     let mut best: Option<(i32, Point)> = None;
 
@@ -273,10 +273,10 @@ fn home_site(ctx: &TaskCtx<'_>, team: crate::team::TeamId, from: Point) -> Optio
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация
+// Dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для move-классов.
+/// `Init` for move classes.
 pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Move(state) => {
@@ -314,8 +314,8 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
             true
         }
         TaskKind::FindPath { .. } => {
-            // В синхронной модели путь запрашивает машина приказов; задача
-            // завершается сразу и уведомляет родителя.
+            // In the synchronous model the path is requested by the order machine; the task
+            // completes immediately and notifies the parent.
             find_path_run(kind, ctx, header);
             true
         }
@@ -328,7 +328,7 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
     }
 }
 
-/// `TaskFindPath`: в синхронной модели запрос пути выполняет `unit_order`.
+/// `TaskFindPath`: in the synchronous model the path request is performed by `unit_order`.
 fn find_path_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::FindPath {
         unit,
@@ -371,7 +371,7 @@ fn find_path_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader)
     ctx.remove_self(header.id);
 }
 
-/// `BeginTurn` для move-классов.
+/// `BeginTurn` for move classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Move(_) => {
@@ -453,7 +453,7 @@ fn move_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader)
     }
 }
 
-/// `TaskMoveHome::EndTurn` — идти к ближайшему своему зданию.
+/// `TaskMoveHome::EndTurn` — go to the nearest own building.
 fn move_home_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::MoveHome { unit, site } = kind else {
         return;
@@ -484,7 +484,7 @@ fn move_home_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
     ctx.remove_self(header.id);
 }
 
-/// `TaskSearchDestination` — поиск места для юнита (структурно).
+/// `TaskSearchDestination` — finding a place for the unit (structurally).
 fn search_destination_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::SearchDestination {
         unit,
@@ -510,7 +510,7 @@ fn search_destination_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
         return;
     }
 
-    // Спираль поиска (C++ `SearchNextCircle`) сведена к квадрату радиуса.
+    // The search spiral (C++ `SearchNextCircle`) is reduced to a square of the radius.
     let radius = i32::from(*search_radius);
     let mut found = None;
 
@@ -554,7 +554,7 @@ fn search_destination_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
     ctx.remove_self(header.id);
 }
 
-/// `TaskRendezvous` — свести два юнита (структурно).
+/// `TaskRendezvous` — bring two units together (structurally).
 fn rendezvous_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::Rendezvous { unit1, unit2, .. } = kind else {
         return;
@@ -585,7 +585,7 @@ fn rendezvous_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
     ctx.append_task(header.team, Some(header.id), priority, kind_move);
 }
 
-/// `TaskTransport::EndTurn` — структурно: перевозка не начинается (см. шапку).
+/// `TaskTransport::EndTurn` — structurally: transportation does not start (see the header).
 fn transport_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::Transport { move_tasks, .. } = kind else {
         return;
@@ -596,7 +596,7 @@ fn transport_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHe
     }
 }
 
-/// `EndTurn` для move-классов.
+/// `EndTurn` for move classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Move(_) => {
@@ -628,7 +628,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `Execute(unit)` для move-классов.
+/// `Execute(unit)` for move classes.
 pub fn execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -645,7 +645,7 @@ pub fn execute(
     }
 }
 
-/// `AddUnit(unit)` для move-классов.
+/// `AddUnit(unit)` for move classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::Move(state) => {
@@ -678,7 +678,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для move-классов.
+/// `RemoveUnit(unit)` for move classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::Move(_) => move_remove_unit(kind, ctx, header, unit),
@@ -703,7 +703,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для move-классов.
+/// `RemoveSelf()` for move classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Move(state) => {
@@ -730,7 +730,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` для move-классов.
+/// `ChildComplete(task)` for move classes.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -750,7 +750,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении дочернего `TaskMove`.
+/// Notification about a child `TaskMove` completion.
 pub fn move_finished(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -777,12 +777,12 @@ pub fn move_finished(
     }
 }
 
-/// `CheckReactions` — не переопределён.
+/// `CheckReactions` — not overridden.
 pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     false
 }
 
-/// `ExchangeOperator` — не переопределён.
+/// `ExchangeOperator` — not overridden.
 pub fn exchange_operator(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -792,7 +792,7 @@ pub fn exchange_operator(
     false
 }
 
-/// `EventUnitDestroyed` для move-классов.
+/// `EventUnitDestroyed` for move classes.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -830,7 +830,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `EventEnemyUnitSpotted` — не переопределён.
+/// `EventEnemyUnitSpotted` — not overridden.
 pub fn event_enemy_unit_spotted(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -840,7 +840,7 @@ pub fn event_enemy_unit_spotted(
     false
 }
 
-/// `EventCargoTransfer` — не переопределён.
+/// `EventCargoTransfer` — not overridden.
 pub fn event_cargo_transfer(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -850,7 +850,7 @@ pub fn event_cargo_transfer(
     false
 }
 
-/// `EventUnitLoaded` — `TaskAssistMove`/`TaskTransport` (структурно).
+/// `EventUnitLoaded` — `TaskAssistMove`/`TaskTransport` (structurally).
 pub fn event_unit_loaded(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -864,7 +864,7 @@ pub fn event_unit_loaded(
     )
 }
 
-/// `EventUnitUnloaded` — `TaskAssistMove`/`TaskTransport` (структурно).
+/// `EventUnitUnloaded` — `TaskAssistMove`/`TaskTransport` (structurally).
 pub fn event_unit_unloaded(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -878,7 +878,7 @@ pub fn event_unit_unloaded(
     )
 }
 
-/// `TaskAssistMove::IsUnitUsable` — транспортный юнит команды.
+/// `TaskAssistMove::IsUnitUsable` — a transport unit of the team.
 pub fn assist_move_is_unit_usable(
     world: &crate::game::GameState,
     header: TaskHeader,
@@ -897,7 +897,7 @@ pub fn assist_move_is_unit_usable(
         && info.orders != UnitOrder::Idle
 }
 
-/// Код результата для внешних наблюдателей (тесты).
+/// Result code for external observers (tests).
 pub const MOVE_RESULTS: [i8; 4] = [
     TASKMOVE_RESULT_SUCCESS,
     TASKMOVE_RESULT_ALREADY_IN_RANGE,

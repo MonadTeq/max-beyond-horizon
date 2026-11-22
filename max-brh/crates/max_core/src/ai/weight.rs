@@ -1,29 +1,29 @@
-//! `WeightTable` — взвешенный выбор типа юнита ИИ.
+//! `WeightTable` — weighted AI unit-type selection.
 //!
-//! Оракул: `max-cpp-port/src/weighttable.cpp/.hpp`. Порт 1:1: тот же порядок
-//! записей (порядок вставки), тот же `RollUnitType` с одним вызовом
-//! `Randomizer_Generate(total_weight)`, тот же `Disable` (swap-and-pop) и
-//! `Compact` (удаление нулевых весов с сохранением порядка остальных).
+//! Oracle: `max-cpp-port/src/weighttable.cpp/.hpp`. A 1:1 port: the same order
+//! of entries (insertion order), the same `RollUnitType` with one
+//! `Randomizer_Generate(total_weight)` call, the same `Disable` (swap-and-pop) and
+//! `Compact` (removal of zero weights while preserving the order of the rest).
 //!
-//! Детерминизм: итерация — только по `Vec` в порядке вставки; RNG — только
+//! Determinism: iteration is only over a `Vec` in insertion order; RNG — only
 //! [`crate::rng::Randomizer`] (DESIGN §6.2/§6.4).
 
 use crate::enums::UnitType;
 use crate::rng::Randomizer;
 
-/// Запись таблицы весов — C++ `struct UnitWeight`.
+/// A weight-table entry — C++ `struct UnitWeight`.
 ///
-/// В C++ пустая запись кодируется `INVALID_ID`; в Rust — `None`.
+/// In C++ an empty entry is encoded as `INVALID_ID`; in Rust — `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitWeight {
-    /// Тип юнита (`ResourceID`); `None` — `INVALID_ID`.
+    /// Unit type (`ResourceID`); `None` — `INVALID_ID`.
     pub unit_type: Option<UnitType>,
-    /// Вес выбора.
+    /// Selection weight.
     pub weight: u16,
 }
 
 impl UnitWeight {
-    /// Пустая запись (`UnitWeight()` — `INVALID_ID`, вес 0).
+    /// Empty entry (`UnitWeight()` — `INVALID_ID`, weight 0).
     pub const fn empty() -> Self {
         Self {
             unit_type: None,
@@ -32,13 +32,13 @@ impl UnitWeight {
     }
 }
 
-/// Таблица весов — C++ `class WeightTable`.
+/// Weight table — C++ `class WeightTable`.
 ///
-/// `team` используется только для проверки строимости в C++ `Add()`
-/// (`Builder_IsBuildable`). В max_core таблица строимости приходит из данных
-/// юнитов (`SC_UNITS`), поэтому [`WeightTable::add_buildable`] принимает
-/// результат проверки вызывающего слоя, а [`WeightTable::add`] добавляет запись
-/// без проверки (как `PushBack`).
+/// `team` is used only for the buildability check in C++ `Add()`
+/// (`Builder_IsBuildable`). In max_core the buildability table comes from unit
+/// data (`SC_UNITS`), so [`WeightTable::add_buildable`] accepts
+/// the result of the caller-layer check, while [`WeightTable::add`] adds an entry
+/// without a check (like `PushBack`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeightTable {
     entries: Vec<UnitWeight>,
@@ -52,7 +52,7 @@ impl Default for WeightTable {
 }
 
 impl WeightTable {
-    /// Пустая таблица команды `team`.
+    /// An empty table for team `team`.
     pub fn new(team: u8) -> Self {
         Self {
             entries: Vec::new(),
@@ -70,7 +70,7 @@ impl WeightTable {
         self.team
     }
 
-    /// `WeightTable::Add` без проверки строимости (`PushBack(UnitWeight)`).
+    /// `WeightTable::Add` without the buildability check (`PushBack(UnitWeight)`).
     pub fn add(&mut self, unit_type: UnitType, weight: u16) {
         self.entries.push(UnitWeight {
             unit_type: Some(unit_type),
@@ -78,9 +78,9 @@ impl WeightTable {
         });
     }
 
-    /// `WeightTable::Add` с проверкой строимости (`Builder_IsBuildable`).
+    /// `WeightTable::Add` with the buildability check (`Builder_IsBuildable`).
     ///
-    /// Проверка — данные: вызывающий слой передаёт `is_buildable`.
+    /// The check is data: the caller layer passes `is_buildable`.
     pub fn add_buildable(&mut self, unit_type: UnitType, weight: u16, is_buildable: bool) -> bool {
         if is_buildable {
             self.add(unit_type, weight);
@@ -93,17 +93,17 @@ impl WeightTable {
         self.entries.push(entry);
     }
 
-    /// Записи в порядке вставки (C++ `operator[]`/`GetCount`).
+    /// Entries in insertion order (C++ `operator[]`/`GetCount`).
     pub fn entries(&self) -> &[UnitWeight] {
         &self.entries
     }
 
-    /// Мутабельный доступ к записям (C++ `operator[]` — `RebuildWeightTable`).
+    /// Mutable access to the entries (C++ `operator[]` — `RebuildWeightTable`).
     pub fn entries_mut(&mut self) -> &mut [UnitWeight] {
         &mut self.entries
     }
 
-    /// `WeightTable::Disable` — swap-and-pop (порядок остальных меняется, как в C++).
+    /// `WeightTable::Disable` — swap-and-pop (the order of the rest changes, as in C++).
     pub fn disable(&mut self, index: usize) {
         if index < self.entries.len() {
             let last = self.entries.len() - 1;
@@ -114,7 +114,7 @@ impl WeightTable {
         }
     }
 
-    /// `WeightTable::Compact` — удаление записей с весом 0.
+    /// `WeightTable::Compact` — removal of entries with weight 0.
     pub fn compact(&mut self) {
         self.entries.retain(|entry| entry.weight != 0);
     }
@@ -129,15 +129,15 @@ impl WeightTable {
         self.entries.len()
     }
 
-    /// Пустая ли таблица.
+    /// Whether the table is empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// `WeightTable::RollUnitType` — взвешенный выбор через RNG.
+    /// `WeightTable::RollUnitType` — weighted selection via RNG.
     ///
-    /// Возвращает `None` для `INVALID_ID` (нет валидных записей и/или сумма
-    /// весов 0). Один вызов `Randomizer_Generate(total_weight)` — как в C++.
+    /// Returns `None` for `INVALID_ID` (no valid entries and/or the sum of
+    /// weights is 0). One `Randomizer_Generate(total_weight)` call — as in C++.
     pub fn roll_unit_type(&self, rng: &mut Randomizer) -> Option<UnitType> {
         let mut total_weight: i32 = 0;
 
@@ -161,7 +161,7 @@ impl WeightTable {
         None
     }
 
-    /// `WeightTable::GetWeight` — вес типа (0, если нет записи).
+    /// `WeightTable::GetWeight` — weight of a type (0 if there is no entry).
     pub fn get_weight(&self, unit_type: UnitType) -> i32 {
         for entry in &self.entries {
             if entry.unit_type == Some(unit_type) {
@@ -172,7 +172,7 @@ impl WeightTable {
         0
     }
 
-    /// `WeightTable::operator+=` — сложение весов по типу, новые — в конец.
+    /// `WeightTable::operator+=` — add weights by type, new ones at the end.
     pub fn merge(&mut self, other: &WeightTable) {
         for entry in &other.entries {
             match self
@@ -186,7 +186,7 @@ impl WeightTable {
         }
     }
 
-    /// `RebuildWeightTable` (`aiplayer.cpp:70`) — умножение веса типа.
+    /// `RebuildWeightTable` (`aiplayer.cpp:70`) — multiplication of a type's weight.
     pub fn rebuild(&mut self, unit_type: UnitType, factor: u16) {
         for entry in &mut self.entries {
             if entry.unit_type == Some(unit_type) {
@@ -205,7 +205,7 @@ mod tests {
         let mut table = WeightTable::new(0);
         table.add(UnitType::Tank, 1);
         table.add(UnitType::Scout, 3);
-        // Сумма весов 4: rng.generate_i32(4) + 1 ∈ {1..4}.
+        // Total weight 4: rng.generate_i32(4) + 1 ∈ {1..4}.
         let mut rng = Randomizer::new(0);
         let first = table.roll_unit_type(&mut rng);
         let mut rng2 = Randomizer::new(0);

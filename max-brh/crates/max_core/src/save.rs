@@ -1,44 +1,44 @@
-//! Формат сохранений V70: `&[u8]` ⇄ [`SaveFile`].
+//! V70 save format: `&[u8]` ⇄ [`SaveFile`].
 //!
-//! Оракул: `max-cpp-port/src/saveload.cpp` (`SaveLoad_LoadFormatV70`,
-//! `SaveLoad_Save`), `smartfile.cpp/.hpp` (классовый сериализатор: индексы
-//! объектов u16, `ReadObject`/`WriteObject`/`ReadObjectCount`),
-//! `unitinfo.cpp` (`UnitInfo::FileLoad`/`FileSave`, ветка `V70`),
+//! Oracle: `max-cpp-port/src/saveload.cpp` (`SaveLoad_LoadFormatV70`,
+//! `SaveLoad_Save`), `smartfile.cpp/.hpp` (class serializer: u16 object
+//! indices, `ReadObject`/`WriteObject`/`ReadObjectCount`),
+//! `unitinfo.cpp` (`UnitInfo::FileLoad`/`FileSave`, the `V70` branch),
 //! `unitvalues.cpp`, `complex.cpp`, `groundpath.cpp`, `airpath.cpp`,
 //! `builderpath.cpp`, `hash.cpp`, `heatmap.cpp` (`LoadV70`),
-//! `message_manager.cpp` (логи), `aiplayer.cpp` (`AiPlayer::FileLoad`),
-//! плюс `max-brh-docs/state-model.md` §3 и `max-cpp-port-max-brh-docs/save.md`.
+//! `message_manager.cpp` (logs), `aiplayer.cpp` (`AiPlayer::FileLoad`),
+//! plus `max-brh-docs/state-model.md` §3 and `max-cpp-port-max-brh-docs/save.md`.
 //!
-//! ## Объектная модель файла
+//! ## File object model
 //!
-//! V70 — это граф объектов с нумерацией по порядку первого появления:
-//! `u16 index`; `0` — null; `index <= already_read` — ссылка на прочитанный
-//! объект; `index == already_read + 1` — новый объект: далее `u16 type_index`
-//! и тело. `type_index` — **алфавитный** порядок классов
-//! (`RegisterArray` сортирует по имени): `AirPath=1`, `BuilderPath=2`,
+//! V70 is an object graph numbered by order of first appearance:
+//! `u16 index`; `0` — null; `index <= already_read` — a reference to an already read
+//! object; `index == already_read + 1` — a new object: then `u16 type_index`
+//! and the body. `type_index` is the **alphabetical** class order
+//! (`RegisterArray` sorts by name): `AirPath=1`, `BuilderPath=2`,
 //! `Complex=3`, `GroundPath=4`, `UnitInfo=5`, `UnitValues=6`.
 //!
-//! Поэтому юнит может быть впервые сериализован внутри поля `parent_unit` /
-//! `enemy_unit` другого юнита (рекурсивно, целым телом), а позже встретиться
-//! как ссылка в списке/хэше. Модель [`SaveUnit`] хранит `object_index` каждого
-//! объекта, что позволяет воспроизвести байты 1:1.
+//! Therefore a unit may be first serialized inside the `parent_unit` /
+//! `enemy_unit` field of another unit (recursively, as a whole body), and later appear
+//! as a reference in a list/hash. The [`SaveUnit`] model stores the `object_index` of each
+//! object, which allows reproducing the bytes 1:1.
 //!
-//! ## Что покрыто
+//! ## What is covered
 //!
-//! Читается и пишется **весь** файл: заголовок, `IniOptions`, `IniPreferences`,
-//! карты (`SurfaceMap`, `ResourceMap`), `TeamInfo`×4 (+ UI-поля), состояние
-//! партии, `TeamUnits`×4 (93 базовых + 93 текущих `UnitValues` + комплексы),
-//! пять списков `UnitInfo`, `UnitHash`, `MapHash`, тепловые карты ×4, журналы
-//! сообщений ×4, `AiPlayer` компьютерных команд.
+//! The **whole** file is read and written: header, `IniOptions`, `IniPreferences`,
+//! maps (`SurfaceMap`, `ResourceMap`), `TeamInfo`×4 (+ UI fields), game
+//! state, `TeamUnits`×4 (93 base + 93 current `UnitValues` + complexes),
+//! five `UnitInfo` lists, `UnitHash`, `MapHash`, heat maps ×4, message
+//! logs ×4, `AiPlayer` of computer teams.
 //!
-//! ## Что слой сейвов сознательно **не** делает
+//! ## What the save layer deliberately does **not** do
 //!
-//! Порт при загрузке нормализует часть полей (`build_rate == 0 -> 1`,
-//! `state` из `NEW_ORDER`/`MOVE_GETTING_PATH`/`ISSUING_PATH`/`IN_TRANSITION`/
-//! `IN_PROGRESS` -> `EXECUTING_ORDER`, очистка `AI_STATE_*_REMINDER` в
-//! `ai_state_bits`, кламп отрицательных значений тепловых карт). Здесь эти
-//! значения сохраняются как в файле: иначе побайтовый round-trip невозможен.
-//! Нормализации выполняет загрузчик состояния (`GameState`, фаза P4).
+//! On load the port normalizes some fields (`build_rate == 0 -> 1`,
+//! `state` from `NEW_ORDER`/`MOVE_GETTING_PATH`/`ISSUING_PATH`/`IN_TRANSITION`/
+//! `IN_PROGRESS` -> `EXECUTING_ORDER`, clearing `AI_STATE_*_REMINDER` in
+//! `ai_state_bits`, clamping negative heat-map values). Here these
+//! values are preserved as in the file: otherwise a byte-exact round-trip is impossible.
+//! The normalizations are performed by the state loader (`GameState`, phase P4).
 
 use std::fmt;
 
@@ -58,22 +58,22 @@ use crate::unit::{
 };
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
-/// Версия формата V70 (`SmartFileFormat::V70`).
+/// V70 format version (`SmartFileFormat::V70`).
 pub const SAVE_VERSION_V70: u16 = 70;
-/// Сколько команд пишет V70 (red/green/blue/gray, без слота «пришельцев»).
+/// How many teams V70 writes (red/green/blue/gray, without the "alien" slot).
 pub const SAVE_TEAM_COUNT: usize = 4;
-/// Количество списков юнитов.
+/// Number of unit lists.
 pub const UNIT_LIST_COUNT: usize = 5;
-/// Максимальная глубина вложенных `UnitInfo` (parent/enemy сериализуются телом).
+/// Maximum depth of nested `UnitInfo`s (parent/enemy are serialized as bodies).
 pub const MAX_UNIT_DEPTH: usize = 16;
 
-/// Тип объекта в файле (`RegisterArray`-порядок по имени класса).
+/// Object type in the file (`RegisterArray` order by class name).
 ///
-/// Имя с префиксом `Save`, чтобы не путать с
+/// The name has a `Save` prefix to avoid confusion with the
 /// [`classification::ObjectKind`](crate::classification::ObjectKind) —
-/// семантическим видом объекта (юнит/эффект/декорация/сюжетный), с которым
-/// этот тип файла V70 ничего общего не имеет (правило 1.3: формат — не
-/// классификатор).
+/// semantic object kind (unit/effect/decoration/plot prop), with which
+/// this V70 file type has nothing in common (rule 1.3: format is not a
+/// classifier).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SaveObjectKind {
     AirPath,
@@ -134,66 +134,66 @@ const PATH_KINDS: [SaveObjectKind; 3] = [
     SaveObjectKind::GroundPath,
 ];
 
-/// Ошибка разбора/записи V70.
+/// V70 parse/write error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveError {
-    /// Файл оборван: нужно `needed` байт по смещению `offset`.
+    /// The file is truncated: `needed` bytes are required at offset `offset`.
     UnexpectedEof {
-        /// Смещение, на котором потребовались данные.
+        /// The offset at which data was required.
         offset: usize,
-        /// Сколько байт нужно.
+        /// How many bytes are needed.
         needed: usize,
     },
-    /// Неизвестная версия формата (ожидается [`SAVE_VERSION_V70`]).
+    /// Unknown format version ([`SAVE_VERSION_V70`] is expected).
     UnknownVersion(u16),
-    /// Индекс объекта не соответствует порядку сериализации.
+    /// The object index does not match the serialization order.
     InvalidObject {
-        /// Прочитанный/записываемый индекс.
+        /// The read/written index.
         index: u16,
-        /// Ожидаемый следующий индекс.
+        /// The expected next index.
         expected: u16,
-        /// Смещение в файле (0 при записи).
+        /// File offset (0 when writing).
         offset: usize,
     },
-    /// Неизвестный/недопустимый `type_index` объекта.
+    /// Unknown/invalid object `type_index`.
     InvalidObjectKind {
-        /// Индекс типа.
+        /// Type index.
         type_index: u16,
-        /// Смещение в файле.
+        /// File offset.
         offset: usize,
     },
-    /// Ссылка на объект другого типа.
+    /// A reference to an object of another type.
     ObjectKindMismatch {
-        /// Индекс объекта.
+        /// Object index.
         index: u16,
-        /// Ожидаемый тип.
+        /// Expected type.
         expected: &'static str,
-        /// Фактический тип.
+        /// Actual type.
         actual: &'static str,
     },
-    /// Ссылка на объект, который ещё не записан (нарушение порядка записи).
+    /// A reference to an object not yet written (write-order violation).
     ForwardReference {
-        /// Индекс объекта.
+        /// Object index.
         index: u16,
-        /// Следующий свободный индекс.
+        /// The next free index.
         next: u16,
     },
-    /// Значение не укладывается в перечисление формата.
+    /// The value does not fit the format enumeration.
     InvalidEnum {
-        /// Что именно не разобралось.
+        /// What exactly failed to parse.
         what: &'static str,
-        /// Сырое значение.
+        /// Raw value.
         value: u32,
-        /// Смещение в файле (0 при записи).
+        /// File offset (0 when writing).
         offset: usize,
     },
-    /// После разбора остались непрочитанные байты.
+    /// Unread bytes remain after parsing.
     TrailingBytes(usize),
-    /// Некорректная длина строки/массива.
+    /// Invalid string/array length.
     InvalidLength {
-        /// Что читалось.
+        /// What was being read.
         what: &'static str,
-        /// Значение длины.
+        /// Length value.
         length: usize,
     },
 }
@@ -238,55 +238,55 @@ impl fmt::Display for SaveError {
 
 impl std::error::Error for SaveError {}
 
-/// Результат разбора/записи V70.
+/// V70 parse/write result.
 pub type Result<T> = std::result::Result<T, SaveError>;
 
 // ---------------------------------------------------------------------------
-// Заголовок и опции
+// Header and options
 // ---------------------------------------------------------------------------
 
-/// Заголовок сохранения — save.md `SaveFormatHeader`, `saveload.cpp`
+/// Save header — save.md `SaveFormatHeader`, `saveload.cpp`
 /// (`SaveLoad_LoadFormatV70`).
 ///
-/// Строковые поля фиксированной длины хранятся сырыми байтами (30 байт), чтобы
-/// побайтовый round-trip не зависел от кодировки/паддинга.
+/// Fixed-length string fields are stored as raw bytes (30 bytes) so that
+/// the byte-exact round-trip does not depend on encoding/padding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveFormatHeader {
-    /// Версия формата (`version`, V70 = 70).
+    /// Format version (`version`, V70 = 70).
     pub version: u16,
-    /// Категория партии (`save_game_type`).
+    /// Game category (`save_game_type`).
     pub save_game_type: FileType,
-    /// Имя сохранения (`save_name[30]`, сырые байты).
+    /// Save name (`save_name[30]`, raw bytes).
     pub save_name: [u8; 30],
-    /// Индекс планеты (`world_index`).
+    /// Planet index (`world_index`).
     pub world: Planet,
-    /// Индекс миссии (`mission_index`, 1-based; 0 — generic).
+    /// Mission index (`mission_index`, 1-based; 0 — generic).
     pub mission_index: u16,
-    /// Имена команд (`team_name[4][30]`, сырые байты).
+    /// Team names (`team_name[4][30]`, raw bytes).
     pub team_names: [[u8; 30]; 4],
-    /// Типы 4 команд + слот «пришельцев».
+    /// Types of the 4 teams + the "alien" slot.
     pub team_type: [TeamKind; 5],
-    /// Кланы 4 команд + слот «пришельцев».
+    /// Clans of the 4 teams + the "alien" slot.
     pub team_clan: [TeamClan; 5],
-    /// Зерно ГПСЧ (`rng_seed`).
+    /// RNG seed (`rng_seed`).
     pub rng_seed: u32,
-    /// Сложность ИИ (`opponent`, int8).
+    /// AI difficulty (`opponent`, int8).
     pub opponent: Opponent,
-    /// Таймер хода, сек (`turn_timer_time`).
+    /// Turn timer, seconds (`turn_timer_time`).
     pub turn_timer_time: u16,
-    /// Таймер конца хода, сек (`endturn_time`).
+    /// End-of-turn timer, seconds (`endturn_time`).
     pub endturn_time: u16,
-    /// Режим игры (`play_mode`, int8).
+    /// Game mode (`play_mode`, int8).
     pub play_mode: PlayMode,
 }
 
 impl SaveFormatHeader {
-    /// Имя сохранения без завершающих нулей (потеря некорректных байт).
+    /// Save name without trailing zeros (invalid bytes are lost).
     pub fn save_name(&self) -> String {
         fixed_bytes_to_string(&self.save_name)
     }
 
-    /// Имя команды без завершающих нулей.
+    /// Team name without trailing zeros.
     pub fn team_name(&self, team: usize) -> String {
         self.team_names
             .get(team)
@@ -295,32 +295,32 @@ impl SaveFormatHeader {
     }
 }
 
-/// Настройки партии из INI — save.md `IniOptions` (12 × `signed int`).
+/// Game settings from INI — save.md `IniOptions` (12 × `signed int`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IniOptions {
-    /// Планета (`world`), дублирует заголовок.
+    /// Planet (`world`), duplicates the header.
     pub world: i32,
-    /// Таймер хода, сек.
+    /// Turn timer, seconds.
     pub turn_timer: i32,
-    /// Таймер конца хода, сек.
+    /// End-of-turn timer, seconds.
     pub endturn: i32,
-    /// Стартовые кредиты 0–250.
+    /// Starting credits 0–250.
     pub start_gold: i32,
-    /// Режим игры (`PlayMode`).
+    /// Game mode (`PlayMode`).
     pub play_mode: PlayMode,
-    /// Тип победы (`VictoryType`).
+    /// Victory type (`VictoryType`).
     pub victory_type: VictoryType,
-    /// Лимит победы (ходов или очков).
+    /// Victory limit (turns or points).
     pub victory_limit: i32,
-    /// Сложность ИИ.
+    /// AI difficulty.
     pub opponent: Opponent,
-    /// Уровень материалов 0–2.
+    /// Materials level 0–2.
     pub raw_resource: i32,
-    /// Уровень топлива 0–2.
+    /// Fuel level 0–2.
     pub fuel_resource: i32,
-    /// Уровень золота 0–2.
+    /// Gold level 0–2.
     pub gold_resource: i32,
-    /// Обломки пришельцев 0–2.
+    /// Alien derelicts 0–2.
     pub alien_derelicts: i32,
 }
 
@@ -343,39 +343,39 @@ impl Default for IniOptions {
     }
 }
 
-/// Пользовательские предпочтения — save.md `IniPreferences` (7 × `signed int`).
+/// User preferences — save.md `IniPreferences` (7 × `signed int`).
 ///
-/// В симуляции не участвуют (state-model §3.3); хранятся для round-trip.
+/// They do not participate in the simulation (state-model §3.3); stored for the round-trip.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IniPreferences {
-    /// Звуковые эффекты.
+    /// Sound effects.
     pub effects: i32,
-    /// Прокрутка кликом.
+    /// Click scrolling.
     pub click_scroll: i32,
-    /// Быстрая прокрутка.
+    /// Quick scrolling.
     pub quick_scroll: i32,
-    /// Быстрое движение.
+    /// Fast movement.
     pub fast_movement: i32,
-    /// Следование за юнитом.
+    /// Follow unit.
     pub follow_unit: i32,
-    /// Автовыбор.
+    /// Auto select.
     pub auto_select: i32,
-    /// Остановка у врага.
+    /// Enemy halt.
     pub enemy_halt: i32,
 }
 
-/// Глобальное состояние партии — save.md `GameManagerState`.
+/// Global game state — save.md `GameManagerState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameManagerState {
-    /// Чей ход (`GameManager_ActiveTurnTeam`).
+    /// Whose turn (`GameManager_ActiveTurnTeam`).
     pub active_turn_team: TeamId,
-    /// Команда игрока (`GameManager_PlayerTeam`).
+    /// Player team (`GameManager_PlayerTeam`).
     pub player_team: TeamId,
-    /// Номер хода (`GameManager_TurnCounter`).
+    /// Turn number (`GameManager_TurnCounter`).
     pub turn_counter: i32,
-    /// Фаза игры (`game_state`, u16 → `GameStateType`).
+    /// Game phase (`game_state`, u16 → `GameStateType`).
     pub game_state: GameStateType,
-    /// Остаток таймера хода, сек.
+    /// Remaining turn timer, seconds.
     pub turn_timer: u16,
 }
 
@@ -392,42 +392,42 @@ impl Default for GameManagerState {
 }
 
 // ---------------------------------------------------------------------------
-// Слоты объектов в файле
+// Object slots in the file
 // ---------------------------------------------------------------------------
 
-/// Слот `UnitValues` в файле: значение + номер объекта (для идентичности ссылок).
+/// `UnitValues` slot in the file: value + object number (for reference identity).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedUnitValues {
-    /// Номер объекта в файле (`0` — null-ссылка).
+    /// Object number in the file (`0` — null reference).
     pub object_index: u16,
-    /// Значения атрибутов.
+    /// Attribute values.
     pub values: UnitValues,
 }
 
-/// Слот `Complex` в файле.
+/// `Complex` slot in the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedComplex {
-    /// Номер объекта в файле.
+    /// Object number in the file.
     pub object_index: u16,
-    /// Комплекс.
+    /// Complex.
     pub complex: Complex,
 }
 
-/// `TeamUnits` в файле — C++ `TeamUnits::FileLoad`.
+/// `TeamUnits` in the file — C++ `TeamUnits::FileLoad`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveTeamUnits {
-    /// Золото в V70 (`signed short`, C++ хранит u32).
+    /// Gold in V70 (`signed short`, C++ stores u32).
     pub gold: u16,
-    /// 93 базовых `UnitValues`.
+    /// 93 base `UnitValues`.
     pub base_values: [SavedUnitValues; UNIT_COUNT],
-    /// 93 текущих `UnitValues` (могут быть ссылками на базовые).
+    /// 93 current `UnitValues` (may be references to the base ones).
     pub current_values: [SavedUnitValues; UNIT_COUNT],
-    /// Комплексы команды в порядке списка.
+    /// Team complexes in list order.
     pub complexes: Vec<SavedComplex>,
 }
 
 impl SaveTeamUnits {
-    /// Доменная модель команды (`TeamUnits`) из сейва.
+    /// Domain team model (`TeamUnits`) from the save.
     pub fn to_team_units(&self) -> TeamUnits {
         let mut units = TeamUnits::new();
         units.gold = u32::from(self.gold);
@@ -442,31 +442,31 @@ impl SaveTeamUnits {
     }
 }
 
-/// Юнит в файле: значение + номера объектов всех вложенных/ссылочных полей.
+/// A unit in the file: value + object numbers of all nested/reference fields.
 ///
-/// Поля V70 разделены между симуляционной частью ([`SaveUnit::info`]) и
-/// презентационной ([`SaveUnit::presentation`]); читаются/пишутся они в одном
-/// исходном порядке байтов (`read_unit_body`/`write_unit_body`) — Ф5.3/B.
-/// `Eq` нет: [`UnitPresentation`] намеренно реализует только `PartialEq`.
+/// V70 fields are split between the simulation part ([`SaveUnit::info`]) and
+/// the presentation part ([`SaveUnit::presentation`]); they are read/written in one
+/// original byte order (`read_unit_body`/`write_unit_body`) — F5.3/B.
+/// There is no `Eq`: [`UnitPresentation`] intentionally implements only `PartialEq`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveUnit {
-    /// Номер объекта `UnitInfo` в файле.
+    /// `UnitInfo` object number in the file.
     pub object_index: u16,
-    /// Данные юнита.
+    /// Unit data.
     pub info: UnitInfo,
-    /// Презентационные поля юнита (V70, не участвуют в симуляции).
+    /// Unit presentation fields (V70, they do not participate in the simulation).
     pub presentation: UnitPresentation,
-    /// Номер объекта пути (`0` — пути нет).
+    /// Path object number (`0` — no path).
     pub path_object_index: u16,
-    /// Номер объекта `base_values` юнита.
+    /// Unit `base_values` object number.
     pub base_values_object_index: u16,
-    /// Номер объекта `Complex` (`0` — юнит вне комплекса).
+    /// `Complex` object number (`0` — the unit is outside a complex).
     pub complex_object_index: u16,
-    /// Значение комплекса, если объект впервые появился здесь (для записи тела).
+    /// Complex value if the object first appeared here (for writing the body).
     pub complex_value: Complex,
-    /// Номер объекта родителя (`0` — нет).
+    /// Parent object number (`0` — none).
     pub parent_object_index: u16,
-    /// Номер объекта цели (`0` — нет).
+    /// Target object number (`0` — none).
     pub enemy_object_index: u16,
 }
 
@@ -486,28 +486,28 @@ impl SaveUnit {
     }
 }
 
-/// Запись журнала сообщений — `MessageLogEntry` (`message_manager.cpp`).
+/// A message log entry — `MessageLogEntry` (`message_manager.cpp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageLogEntry {
-    /// Текст сообщения: сырые байты как в файле (V70 пишет `strlen + 1` с NUL).
+    /// Message text: raw bytes as in the file (V70 writes `strlen + 1` with NUL).
     pub text: Vec<u8>,
-    /// Номер объекта юнита (`0` — нет).
+    /// Unit object number (`0` — none).
     pub unit_object_index: u16,
-    /// Разрешённая ссылка на юнита.
+    /// Resolved unit reference.
     pub unit: Option<UnitId>,
-    /// Координаты события.
+    /// Event coordinates.
     pub point: Point,
-    /// Алертное сообщение (кликабельное).
+    /// Alert message (clickable).
     pub is_alert_message: bool,
-    /// Иконка/ресурс (`INVALID_ID` = 0xFFFF).
+    /// Icon/resource (`INVALID_ID` = 0xFFFF).
     pub id: u16,
 }
 
-/// Тепловая карта команды (V70: три массива `int8_t[112*112]`).
+/// Team heat map (V70: three `int8_t[112*112]` arrays).
 ///
-/// Значения хранятся **как в файле** (без клампа отрицательных), чтобы
-/// round-trip был побайтовым; доступ — через [`HeatMap::complete`] и т.п.
-/// C++ `HeatMap::LoadV70` клампит отрицательные в 0.
+/// Values are stored **as in the file** (without clamping negatives) so that
+/// the round-trip is byte-exact; access is via [`HeatMap::complete`] etc.
+/// C++ `HeatMap::LoadV70` clamps negatives to 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeatMap {
     /// `heatmap_complete`.
@@ -519,7 +519,7 @@ pub struct HeatMap {
 }
 
 impl HeatMap {
-    /// Значение «полной» карты с клампом как в C++ (`LoadV70`).
+    /// The "complete" map value with clamping as in C++ (`LoadV70`).
     pub fn complete_clamped(&self, index: usize) -> u8 {
         if self.complete[index] < 0 {
             0
@@ -529,43 +529,43 @@ impl HeatMap {
     }
 }
 
-/// Обнаруженный юнит ИИ — `SpottedUnit` (`spottedunit.cpp`).
+/// An AI spotted unit — `SpottedUnit` (`spottedunit.cpp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpottedUnit {
-    /// Номер объекта юнита в файле.
+    /// Unit object number in the file.
     pub unit_object_index: u16,
-    /// Разрешённая ссылка на юнита.
+    /// Resolved unit reference.
     pub unit: Option<UnitId>,
-    /// Команда-наблюдатель (`uint16_t`).
+    /// Observer team (`uint16_t`).
     pub team: u16,
-    /// Виден ли сейчас.
+    /// Whether it is currently visible.
     pub visible_to_team: bool,
-    /// Последняя известная позиция.
+    /// Last known position.
     pub last_position: Point,
 }
 
-/// Состояние ИИ команды — `AiPlayer::FileLoad` (`aiplayer.cpp`).
+/// Team AI state — `AiPlayer::FileLoad` (`aiplayer.cpp`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiPlayerState {
-    /// Команда (`uint16_t`).
+    /// Team (`uint16_t`).
     pub player_team: u16,
-    /// Стратегия (`uint8_t`, `AiStrategyType`).
+    /// Strategy (`uint8_t`, `AiStrategyType`).
     pub strategy: u8,
-    /// Неиспользуемое поле V70 (`int16_t`).
+    /// Unused V70 field (`int16_t`).
     pub unused_v70: i16,
-    /// Доля экосфер (`int16_t`).
+    /// Greenhouse ratio (`int16_t`).
     pub greenhouse_ratio: i16,
-    /// Плотность минных полей (`int16_t`).
+    /// Minefield density (`int16_t`).
     pub minefield_density: i16,
-    /// Целевая команда V70 (`int16_t`).
+    /// V70 target team (`int16_t`).
     pub target_team_v70: i16,
-    /// Обнаруженные юниты.
+    /// Spotted units.
     pub spotted_units: Vec<SpottedUnit>,
-    /// Карта разведки (`info_map`, 112×112, может отсутствовать).
+    /// Reconnaissance map (`info_map`, 112×112, may be absent).
     pub info_map: Option<Box<[u8; MAP_TILES]>>,
-    /// Карта мин (`mine_map`, 112×112, может отсутствовать).
+    /// Mine map (`mine_map`, 112×112, may be absent).
     pub mine_map: Option<Box<[i8; MAP_TILES]>>,
-    /// Целевая точка (`target_location`).
+    /// Target point (`target_location`).
     pub target_location: Point,
 }
 
@@ -573,63 +573,63 @@ pub struct AiPlayerState {
 // SaveFile
 // ---------------------------------------------------------------------------
 
-/// Полное содержимое V70-сохранения.
+/// Full contents of a V70 save.
 ///
-/// `Eq` нет: [`SaveUnit`] содержит [`UnitPresentation`] без `Eq` (Ф5.3/B).
+/// There is no `Eq`: [`SaveUnit`] contains [`UnitPresentation`] without `Eq` (F5.3/B).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveFile {
-    /// Заголовок (настройки партии).
+    /// Header (game settings).
     pub header: SaveFormatHeader,
-    /// Настройки из INI.
+    /// Settings from INI.
     pub ini_options: IniOptions,
-    /// Пользовательские предпочтения.
+    /// User preferences.
     pub ini_preferences: IniPreferences,
-    /// `SurfaceMap` — байт на клетку (`Surface`); сырые байты как в файле.
+    /// `SurfaceMap` — one byte per cell (`Surface`); raw bytes as in the file.
     pub surface_map: [u8; MAP_TILES],
-    /// `ResourceMap` — u16 на клетку (`ResourceMapEntry::from_bits`).
+    /// `ResourceMap` — u16 per cell (`ResourceMapEntry::from_bits`).
     pub cargo_map: [u16; MAP_TILES],
     /// `TeamInfo` × 4 (red, green, blue, gray).
     pub teams: [TeamInfo; SAVE_TEAM_COUNT],
-    /// UI-поля `TeamInfo` × 4 (нужны только для round-trip).
+    /// `TeamInfo` UI fields × 4 (needed only for the round-trip).
     pub team_ui: [TeamInfoUi; SAVE_TEAM_COUNT],
-    /// Сырое поле `stats_gold_spent_on_upgrades` (V70 `int16_t`; C++ клампит
-    /// отрицательные в 0 при загрузке).
+    /// Raw `stats_gold_spent_on_upgrades` field (V70 `int16_t`; C++ clamps
+    /// negatives to 0 on load).
     pub team_gold_spent_raw: [i16; SAVE_TEAM_COUNT],
-    /// Глобальное состояние партии.
+    /// Global game state.
     pub game: GameManagerState,
     /// `TeamUnits` × 4.
     pub team_units: [SaveTeamUnits; SAVE_TEAM_COUNT],
-    /// Пять списков юнитов: номера объектов в порядке списка.
+    /// Five unit lists: object numbers in list order.
     pub unit_lists: [Vec<u16>; UNIT_LIST_COUNT],
-    /// Все объекты `UnitInfo` в порядке появления в файле.
+    /// All `UnitInfo` objects in file appearance order.
     pub units: Vec<SaveUnit>,
-    /// `UnitHash` — ведёрки номеров объектов.
+    /// `UnitHash` — buckets of object numbers.
     pub unit_hash: UnitHash<u16>,
-    /// `MapHash` — ведёрки клеток с номерами объектов.
+    /// `MapHash` — cell buckets with object numbers.
     pub map_hash: MapHash<u16>,
-    /// Тепловые карты (для команд с `team_type != NONE`).
+    /// Heat maps (for teams with `team_type != NONE`).
     pub heat_maps: [Option<Box<HeatMap>>; SAVE_TEAM_COUNT],
-    /// Журналы сообщений × 4.
+    /// Message logs × 4.
     pub message_logs: [Vec<MessageLogEntry>; SAVE_TEAM_COUNT],
-    /// Состояние ИИ (для компьютерных команд).
+    /// AI state (for computer teams).
     pub ai_players: [Option<Box<AiPlayerState>>; SAVE_TEAM_COUNT],
 }
 
 impl SaveFile {
-    /// Разбирает V70-файл целиком.
+    /// Parses a V70 file completely.
     ///
-    /// Гарантирует, что прочитан **весь** буфер (иначе [`SaveError::TrailingBytes`]),
-    /// и что дерево объектов согласовано.
+    /// Guarantees that the **whole** buffer is read (otherwise [`SaveError::TrailingBytes`]),
+    /// and that the object tree is consistent.
     pub fn parse(data: &[u8]) -> Result<Self> {
         Reader::new(data).parse()
     }
 
-    /// Сериализует состояние обратно в V70.
+    /// Serializes the state back to V70.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         Writer::write(self)
     }
 
-    /// Доменные `TeamUnits` четырёх команд.
+    /// Domain `TeamUnits` of the four teams.
     pub fn team_units(&self) -> [TeamUnits; SAVE_TEAM_COUNT] {
         let mut result: [TeamUnits; SAVE_TEAM_COUNT] = Default::default();
         for (index, saved) in self.team_units.iter().enumerate() {
@@ -638,7 +638,7 @@ impl SaveFile {
         result
     }
 
-    /// Юнит по номеру объекта.
+    /// A unit by object number.
     pub fn unit_by_object_index(&self, object_index: u16) -> Option<&SaveUnit> {
         self.units
             .binary_search_by_key(&object_index, |unit| unit.object_index)
@@ -646,17 +646,17 @@ impl SaveFile {
             .map(|index| &self.units[index])
     }
 
-    /// Юнит по `UnitId`.
+    /// A unit by `UnitId`.
     pub fn unit_by_id(&self, id: UnitId) -> Option<&SaveUnit> {
         self.units.iter().find(|unit| unit.info.id == id)
     }
 
-    /// Список юнитов по виду (по номерам объектов, порядок списка).
+    /// Unit list by kind (object numbers, list order).
     pub fn unit_list(&self, kind: UnitListKind) -> &[u16] {
         &self.unit_lists[kind.index()]
     }
 
-    /// `ResourceMap` с типом/количеством/видимостью (state-model §3.10).
+    /// `ResourceMap` with type/amount/visibility (state-model §3.10).
     pub fn resource_map(&self) -> crate::map::ResourceMap {
         let mut tiles = [crate::map::ResourceMapEntry::NONE; MAP_TILES];
         for (index, bits) in self.cargo_map.iter().enumerate() {
@@ -665,7 +665,7 @@ impl SaveFile {
         crate::map::ResourceMap::from_tiles(tiles)
     }
 
-    /// `SurfaceMap` из сырых байтов.
+    /// `SurfaceMap` from raw bytes.
     pub fn surface(&self) -> crate::map::SurfaceMap {
         let mut tiles = [crate::enums::Surface::NONE; MAP_TILES];
         for (index, byte) in self.surface_map.iter().enumerate() {
@@ -697,13 +697,13 @@ struct Reader<'a> {
     paths_by_object: Vec<(u16, UnitPath)>,
 }
 
-/// Результат чтения объектной ссылки.
+/// Result of reading an object reference.
 enum ObjRef {
-    /// `0` — нет объекта.
+    /// `0` — no object.
     Null,
-    /// Ссылка на уже прочитанный объект.
+    /// A reference to an already read object.
     Existing(u16),
-    /// Новый объект: тело идёт сразу за заголовком.
+    /// A new object: the body follows the header immediately.
     New(u16),
 }
 
@@ -720,7 +720,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    // --- примитивы ---
+    // --- primitives ---
 
     fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.pos)
@@ -830,7 +830,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// Читает `signed int` из файла и приводит к перечислению (`IniOptions`).
+    /// Reads a `signed int` from the file and converts it to an enum (`IniOptions`).
     fn enum_i32<T>(&mut self, what: &'static str, convert: impl Fn(i32) -> Option<T>) -> Result<T> {
         let offset = self.pos;
         let raw = self.i32()?;
@@ -841,7 +841,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    // --- объектная таблица ---
+    // --- object table ---
 
     fn object_ref(&mut self, allowed: &[SaveObjectKind]) -> Result<ObjRef> {
         let index = self.u16()?;
@@ -920,7 +920,7 @@ impl<'a> Reader<'a> {
             })
     }
 
-    // --- тела объектов ---
+    // --- object bodies ---
 
     fn read_unit_values_body(&mut self) -> Result<UnitValues> {
         let mut values = UnitValues::new();
@@ -960,7 +960,7 @@ impl<'a> Reader<'a> {
             SaveObjectKind::GroundPath => {
                 let end_x = self.i16()?;
                 let end_y = self.i16()?;
-                // V70: индекс шага — u16 (`GroundPath::FileLoad`).
+                // V70: the step index is u16 (`GroundPath::FileLoad`).
                 let step_index = u32::from(self.u16()?);
                 let count = usize::from(self.u16()?);
                 let mut steps = Vec::with_capacity(count);
@@ -1053,7 +1053,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// Читает `UnitInfo` (заголовок объекта уже прочитан).
+    /// Reads `UnitInfo` (the object header is already read).
     fn read_unit(&mut self, object_index: u16, depth: usize) -> Result<()> {
         if depth > MAX_UNIT_DEPTH {
             return Err(SaveError::InvalidLength {
@@ -1088,8 +1088,8 @@ impl<'a> Reader<'a> {
             String::from_utf8_lossy(self.take(name_length)?).into_owned()
         };
         let mut info = UnitInfo::new(unit_type, TeamId::RED, id);
-        // Презентационная часть V70-объекта — параллельно симуляционной
-        // (Ф5.3/B). Порядок байтов ниже — исходный V70.
+        // The presentation part of the V70 object — alongside the simulation
+        // part (F5.3/B). The byte order below is the original V70.
         let mut presentation = UnitPresentation::new();
         info.flags = flags;
         info.x = x;
@@ -1138,14 +1138,14 @@ impl<'a> Reader<'a> {
         info.raw_mining_max = self.u8()?;
         info.gold_mining_max = self.u8()?;
         info.fuel_mining_max = self.u8()?;
-        // V70: hits/speed — u8 (в C++ u16).
+        // V70: hits/speed are u8 (u16 in C++).
         info.hits = u16::from(self.u8()?);
         info.speed = u16::from(self.u8()?);
         info.shots = self.u8()?;
         info.move_and_fire = self.u8()?;
         info.storage = self.i16()?;
-        // V70: опыт живёт в `storage` у COMMANDO/REGENERATING_UNIT
-        // (`unitinfo.cpp`), `transfer_cargo`/`stealth_dice_roll` — из `move_to_grid_x`.
+        // V70: experience lives in `storage` for COMMANDO/REGENERATING_UNIT
+        // (`unitinfo.cpp`), `transfer_cargo`/`stealth_dice_roll` — from `move_to_grid_x`.
         if info.flags & crate::enums::unit_flags::REGENERATING_UNIT != 0
             || unit_type == UnitType::Infiltrator
         {
@@ -1156,7 +1156,7 @@ impl<'a> Reader<'a> {
         info.targeting_mode = self.u8()?;
         info.enter_mode = self.u8()?;
         presentation.cursor = self.u8()?;
-        // V70: единый recoil_delay → пара полей C++.
+        // V70: a single recoil_delay → a pair of C++ fields.
         let recoil_delay = self.u8()?;
         if info.orders == UnitOrder::Disable || info.prior_orders == UnitOrder::Disable {
             info.disabled_turns_remaining = recoil_delay;
@@ -1173,7 +1173,7 @@ impl<'a> Reader<'a> {
         info.shake_effect_state = self.u8()?;
         info.engine = self.u8()?;
         info.weapon = self.u8()?;
-        // Не восстановленные C++-портом поля V70 (state-model §7.6).
+        // V70 fields not recovered by the C++ port (state-model §7.6).
         info.comm = self.u8()?;
         info.fuel_distance = self.u8()?;
         info.move_fraction = self.u8()?;
@@ -1181,15 +1181,15 @@ impl<'a> Reader<'a> {
         info.movement_wait_count = 0;
         info.repeat_build = self.u8()? != 0;
         info.build_rate = self.u16()?;
-        // C++ `UnitInfo::FileLoad` нормализует 0 в 1; слой сейвов хранит
-        // значение как в файле (иначе побайтовый round-trip невозможен),
-        // нормализация — забота загрузчика состояния (P4).
+        // C++ `UnitInfo::FileLoad` normalizes 0 to 1; the save layer keeps
+        // the value as in the file (otherwise a byte-exact round-trip is impossible),
+        // normalization is the state loader's concern (P4).
         info.disabled_reaction_fire = self.bool()?;
         info.auto_survey = self.bool()?;
         info.ai_state_bits = self.u32()?;
-        // C++ после загрузки очищает `AI_STATE_MOVE_FINISHED_REMINDER` и
-        // `AI_STATE_RETREAT_REMINDER`; здесь биты сохраняются как в файле. В
-        // симуляцию (P4) они попадут уже очищенными.
+        // After loading, C++ clears `AI_STATE_MOVE_FINISHED_REMINDER` and
+        // `AI_STATE_RETREAT_REMINDER`; here the bits are preserved as in the file. In
+        // the simulation (P4) they will already be cleared.
 
         let (path_object_index, path) = self.read_path_slot()?;
         info.path = path;
@@ -1232,7 +1232,7 @@ impl<'a> Reader<'a> {
                 complex_object_index = index;
             }
         }
-        // parent/enemy могут быть сериализованы телом (если объект новый).
+        // parent/enemy may be serialized as bodies (if the object is new).
         let parent_object_index = match self.object_ref(&[SaveObjectKind::UnitInfo])? {
             ObjRef::Null => 0,
             ObjRef::Existing(index) => index,
@@ -1270,7 +1270,7 @@ impl<'a> Reader<'a> {
         })
     }
 
-    /// Читает `TeamInfo` (V70-раскладка: `markers` + UI-поля).
+    /// Reads `TeamInfo` (V70 layout: `markers` + UI fields).
     fn read_team_info(&mut self) -> Result<(TeamInfo, TeamInfoUi, i16)> {
         let mut markers = [Point::ZERO; crate::team::MARKER_COUNT];
         for marker in markers.iter_mut() {
@@ -1320,7 +1320,7 @@ impl<'a> Reader<'a> {
             *slot = u32::from(*value);
         }
         let gold_spent_raw = self.i16()?;
-        // C++: max(0, value), но сырое значение сохраняем для round-trip.
+        // C++: max(0, value), but the raw value is kept for the round-trip.
         info.stats_gold_spent_on_upgrades = gold_spent_raw.max(0) as u32;
         Ok((info, ui, gold_spent_raw))
     }
@@ -1634,7 +1634,7 @@ impl<'a> Reader<'a> {
         let mut unit_lists: [Vec<u16>; UNIT_LIST_COUNT] = Default::default();
         for (index, kind) in UnitListKind::ALL.iter().enumerate() {
             let list = self.read_unit_list()?;
-            // Список, в который попал юнит, отражён в его `unit_list`.
+            // The list the unit landed in is reflected in its `unit_list`.
             for object_index in &list {
                 if let Some(position) = self
                     .units
@@ -1674,9 +1674,9 @@ impl<'a> Reader<'a> {
             return Err(SaveError::TrailingBytes(self.data.len() - self.pos));
         }
 
-        // Сортировка по номеру объекта (для бинарного поиска при записи).
+        // Sort by object number (for binary search on write).
         self.units.sort_by_key(|unit| unit.object_index);
-        // Разрешение ссылок parent/enemy и объектов в журналах/AI.
+        // Resolution of parent/enemy references and objects in logs/AI.
         let mut ids: Vec<(u16, UnitId)> = self
             .units
             .iter()
@@ -1792,8 +1792,8 @@ impl Writer {
         self.out.extend_from_slice(value);
     }
 
-    /// Заголовок объектной ссылки. Возвращает `true`, если тело нужно записать
-    /// сразу после заголовка.
+    /// Object reference header. Returns `true` if the body must be written
+    /// immediately after the header.
     fn object_ref(&mut self, stored: u16, kind: SaveObjectKind) -> Result<bool> {
         if stored == 0 {
             self.u16(0);
@@ -1832,7 +1832,7 @@ impl Writer {
         self.u16(values.attack_radius);
         self.u16(values.agent_adjust);
         self.u16(values.version);
-        // V70: `legacy_units_built` (u8), не bool.
+        // V70: `legacy_units_built` (u8), not bool.
         self.u8(u8::from(values.in_use));
     }
 
@@ -1892,7 +1892,7 @@ impl Writer {
         }
         Ok(())
     }
-    /// Пишет `UnitInfo`: заголовок объекта (если новый) и тело.
+    /// Writes `UnitInfo`: the object header (if new) and the body.
     fn write_unit_body(&mut self, unit: &SaveUnit, all: &[&SaveUnit], depth: usize) -> Result<()> {
         if depth > MAX_UNIT_DEPTH {
             return Err(SaveError::InvalidLength {
@@ -1901,7 +1901,7 @@ impl Writer {
             });
         }
         let info = &unit.info;
-        // Презентационная часть — в исходном V70-порядке вместе с сим-полями.
+        // The presentation part — in the original V70 order together with the sim fields.
         let presentation = &unit.presentation;
         self.u16(info.unit_type as u16);
         self.u16(info.id.to_v70());
@@ -1959,7 +1959,7 @@ impl Writer {
         self.u8(info.speed as u8);
         self.u8(info.shots);
         self.u8(info.move_and_fire);
-        // V70: опыт у COMMANDO/REGENERATING_UNIT хранится в `storage`.
+        // V70: experience of COMMANDO/REGENERATING_UNIT is stored in `storage`.
         if info.flags & crate::enums::unit_flags::REGENERATING_UNIT != 0
             || info.unit_type == UnitType::Infiltrator
         {
@@ -2026,7 +2026,7 @@ impl Writer {
         Ok(())
     }
 
-    /// Пишет ссылку на юнита; если объект новый — его тело (рекурсивно).
+    /// Writes a unit reference; if the object is new — its body (recursively).
     fn write_unit_ref(&mut self, stored: u16, all: &[&SaveUnit], depth: usize) -> Result<()> {
         if self.object_ref(stored, SaveObjectKind::UnitInfo)? {
             let position = all
@@ -2042,8 +2042,8 @@ impl Writer {
     }
 
     fn write_unit_list(&mut self, list: &[u16], all: &[&SaveUnit]) -> Result<()> {
-        // V70: счётчик — u16 (`SmartFileReader::ReadObjectCount`); в V71 C++
-        // пишет u32, поэтому здесь формат V70 воспроизводится явно.
+        // V70: the counter is u16 (`SmartFileReader::ReadObjectCount`); in V71 C++
+        // writes u32, so the V70 format is reproduced explicitly here.
         self.u16(list.len() as u16);
         for object_index in list {
             self.write_unit_ref(*object_index, all, 0)?;
@@ -2087,7 +2087,7 @@ impl Writer {
     }
 
     fn write_body(&mut self, save: &SaveFile) -> Result<()> {
-        // --- заголовок ---
+        // --- header ---
         self.u16(SAVE_VERSION_V70);
         self.u8(save.header.save_game_type as u8);
         self.bytes(&save.header.save_name);
@@ -2122,7 +2122,7 @@ impl Writer {
         self.i32(save.ini_options.gold_resource);
         self.i32(save.ini_options.alien_derelicts);
 
-        // --- карты ---
+        // --- maps ---
         self.bytes(&save.surface_map);
         for entry in &save.cargo_map {
             self.u16(*entry);
@@ -2202,7 +2202,7 @@ impl Writer {
             }
         }
 
-        // --- списки юнитов, хэши ---
+        // --- unit lists, hashes ---
         let mut all: Vec<&SaveUnit> = save.units.iter().collect();
         all.sort_by_key(|unit| unit.object_index);
         for list in &save.unit_lists {
@@ -2211,7 +2211,7 @@ impl Writer {
         self.write_unit_like_hash(&save.unit_hash, &all)?;
         self.write_map_hash(&save.map_hash, &all)?;
 
-        // --- тепловые карты ---
+        // --- heat maps ---
         for index in 0..SAVE_TEAM_COUNT {
             let Some(heat_map) = save.heat_maps[index].as_deref() else {
                 continue;
@@ -2221,7 +2221,7 @@ impl Writer {
             self.bytes(&heat_map.stealth_land.map(|value| value as u8));
         }
 
-        // --- журналы сообщений ---
+        // --- message logs ---
         for logs in &save.message_logs {
             self.u16(logs.len() as u16);
             for entry in logs {
@@ -2234,7 +2234,7 @@ impl Writer {
             }
         }
 
-        // --- ИИ ---
+        // --- AI ---
         for ai in &save.ai_players {
             let Some(ai) = ai.as_deref() else {
                 continue;
@@ -2273,13 +2273,13 @@ mod tests {
     use crate::enums::{UnitOrder, UnitOrderState, UnitType};
     use crate::unit_values::{base_unit_values, ATTRIB_ATTACK};
 
-    /// Реальный V70-сейв из `max-original/SAVE1.CAM` (копия — `tests/data/`).
+    /// A real V70 save from `max-original/SAVE1.CAM` (a copy is in `tests/data/`).
     const SAVE_FIXTURE: &[u8] = include_bytes!("../tests/data/save1_v70.cam");
 
     #[test]
     fn parses_real_v70_save_completely() {
         let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
-        // Значения заголовка реального файла (max-original/SAVE1.CAM):
+        // Header values of the real file (max-original/SAVE1.CAM):
         //   version = 70, category = 2 (Campaign), world = 16, mission = 1,
         //   name = "Islands in the Sun", seed = 0x32A61291, opponent = 3,
         //   play_mode = 1 (simultaneous), teams: human (clan 3) + computer (clan 7).
@@ -2299,7 +2299,7 @@ mod tests {
         assert_eq!(save.header.team_clan[1], TeamClan::SevenKnights);
         assert_eq!(save.header.team_clan[3], TeamClan::AxisInc);
 
-        // IniOptions / IniPreferences реального файла.
+        // IniOptions / IniPreferences of the real file.
         assert_eq!(save.ini_options.world, 16);
         assert_eq!(save.ini_options.start_gold, 200);
         assert_eq!(save.ini_options.victory_limit, 30);
@@ -2307,7 +2307,7 @@ mod tests {
         assert_eq!(save.ini_preferences.effects, 1);
         assert_eq!(save.ini_preferences.quick_scroll, 40);
 
-        // Команды: 87 и 288 созданных объектов, у красных 2 комплекса.
+        // Teams: 87 and 288 created objects, the red team has 2 complexes.
         assert_eq!(save.teams[0].number_of_objects_created, 87);
         assert_eq!(save.teams[1].number_of_objects_created, 288);
         assert_eq!(save.teams[0].team_points, 0);
@@ -2318,13 +2318,13 @@ mod tests {
         assert_eq!(save.team_units[0].complexes.len(), 2);
         assert_eq!(save.team_units[1].complexes.len(), 3);
 
-        // Состояние партии.
+        // Game state.
         assert_eq!(save.game.active_turn_team, TeamId::RED);
         assert_eq!(save.game.player_team, TeamId::RED);
         assert_eq!(save.game.turn_counter, 1);
         assert_eq!(save.game.game_state, GameStateType::InGame);
 
-        // Все пять списков юнитов прочитаны до конца: 312 юнитов.
+        // All five unit lists are read to the end: 312 units.
         let total: usize = save.unit_lists.iter().map(Vec::len).sum();
         assert_eq!(total, 312);
         assert_eq!(save.unit_lists[0].len(), 102);
@@ -2336,26 +2336,26 @@ mod tests {
         assert_eq!(save.unit_hash.size(), 512);
         assert_eq!(save.map_hash.size(), 512);
         assert_eq!(save.map_hash.x_shift(), 2);
-        // Тепловые карты есть только у двух играющих команд.
+        // Heat maps exist only for two playing teams.
         assert!(save.heat_maps[0].is_some());
         assert!(save.heat_maps[1].is_some());
         assert!(save.heat_maps[2].is_none());
         assert!(save.heat_maps[3].is_none());
-        // Журналы пусты, у компьютерной команды есть состояние ИИ.
+        // The logs are empty, the computer team has AI state.
         assert!(save.message_logs.iter().all(|logs| logs.is_empty()));
         let ai = save.ai_players[1].as_deref().expect("AI state of team 1");
         assert_eq!(ai.player_team, 1);
         assert_eq!(ai.target_location, Point::new(1, 1));
         assert!(save.ai_players[0].is_none());
 
-        // Первый юнит списка ground cover: тип WTRPLTFM (33), команда GREEN,
-        // состояние приказа `AWAIT/EXECUTING_ORDER`.
+        // The first unit of the ground cover list: type WTRPLTFM (33), team GREEN,
+        // order state `AWAIT/EXECUTING_ORDER`.
         let first = save.unit_by_object_index(save.unit_lists[0][0]).unwrap();
         assert_eq!(first.info.unit_type, UnitType::WaterPlatform);
         assert_eq!(first.info.team, TeamId::GREEN);
         assert_eq!(first.info.orders, UnitOrder::Await);
         assert_eq!(first.info.state, UnitOrderState::ExecutingOrder);
-        // У юнита есть объект base_values (ссылка в общую таблицу объектов).
+        // The unit has a base_values object (a reference into the shared object table).
         assert_ne!(first.base_values_object_index, 0);
         assert_ne!(first.info.hits, 0);
     }
@@ -2382,17 +2382,17 @@ mod tests {
     #[test]
     fn base_values_match_real_v70_save() {
         let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
-        // База команды в файле = `BASE_UNIT_VALUES` + клановые модификаторы
+        // The team base in the file = `BASE_UNIT_VALUES` + clan modifiers
         // (`TeamUnits::Init` + `ResourceManager_SetClanUpgradesFromClans`).
-        // Исключения — поля, которые оригинал меняет уже в партии:
-        //   * `units_built` — счётчик/флаг «слот занят» (`in_use`), растёт при игре;
-        //   * `LANDPAD.storage` — в реальном сейве 1 при табличном 0 (мутация
-        //     в партии, оригинальный ATTRIBS тоже даёт 0).
+        // Exceptions are fields the original changes during the game:
+        //   * `units_built` — the counter/"slot occupied" flag (`in_use`), grows during play;
+        //   * `LANDPAD.storage` — 1 in the real save vs 0 in the table (a mutation
+        //     during play; the original ATTRIBS also gives 0).
         let mut mismatches: Vec<String> = Vec::new();
         for (team_index, saved) in save.team_units.iter().enumerate() {
-            // У пустых слотов (team_type == NONE) в файле лежат значения от
-            // прошлой партии: клан в заголовке к ним не относится, поэтому
-            // сверяем только играющие команды.
+            // Empty slots (team_type == NONE) contain values from
+            // a previous game: the clan in the header does not apply to them, so
+            // only playing teams are compared.
             if save.teams[team_index].team_type == TeamKind::None {
                 continue;
             }
@@ -2421,8 +2421,8 @@ mod tests {
             }
         }
         assert!(mismatches.is_empty(), "mismatches: {mismatches:?}");
-        // Проверка, что сверка вообще что-то проверила: у играющих команд клан
-        // не Random и таблица отличается от чистой базовой.
+        // Check that the comparison actually checked something: playing teams have a clan
+        // other than Random and the table differs from the pure base.
         assert_ne!(save.teams[0].team_clan, TeamClan::Random);
         assert_ne!(save.teams[1].team_clan, TeamClan::Random);
         assert_ne!(
@@ -2442,7 +2442,7 @@ mod tests {
         let red = &teams[0];
         assert_eq!(red.gold, 52);
         assert_eq!(red.complexes.len(), 2);
-        // Базовые значения = таблица клана.
+        // Base values = the clan table.
         let expected = crate::unit_values::team_base_values(TeamClan::VonGriffin);
         for unit_index in 0..UNIT_COUNT {
             if unit_index == UnitType::LandingPad as usize {
@@ -2452,8 +2452,8 @@ mod tests {
                 panic!("unit {unit_index} hits differ");
             }
         }
-        // Идентичность объектов сохранена: base и current делят объекты там, где
-        // не было апгрейдов (C++ пишет ссылку на тот же `UnitValues`).
+        // Object identity is preserved: base and current share objects where
+        // there were no upgrades (C++ writes a reference to the same `UnitValues`).
         let shared = save.team_units[0]
             .base_values
             .iter()
@@ -2468,7 +2468,7 @@ mod tests {
     #[test]
     fn unit_references_resolve() {
         let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
-        // Все ссылки parent/enemy указывают на существующие юниты.
+        // All parent/enemy references point to existing units.
         for unit in &save.units {
             if let Some(parent) = unit.info.parent_unit {
                 assert!(save.unit_by_id(parent).is_some(), "parent {parent:?}");
@@ -2486,7 +2486,7 @@ mod tests {
                 );
             }
         }
-        // Хэш юнитов содержит ровно те юниты, что в списках (по объектам).
+        // The unit hash contains exactly the units from the lists (by objects).
         let hashed: usize = save.unit_hash.iter_values().count();
         assert_eq!(hashed, save.units.len());
     }
@@ -2498,7 +2498,7 @@ mod tests {
         assert_eq!(surface.to_bytes(), save.surface_map);
         let resources = save.resource_map();
         assert_eq!(resources.bits_at(0), save.cargo_map[0]);
-        // Полная сверка «побайтово» через u16-битфилды карты.
+        // Full byte-exact verification via the map's u16 bitfields.
         for index in [1usize, 100, 5_000, MAP_TILES - 1] {
             assert_eq!(resources.bits_at(index), save.cargo_map[index]);
         }
@@ -2519,8 +2519,8 @@ mod tests {
 
     #[test]
     fn empty_parser_state_round_trips() {
-        // Минимальная структура: только заголовок + пустая карта без объектов.
-        // Проверяем, что writer не падает и парсер читает то, что записал.
+        // Minimal structure: only the header + an empty map without objects.
+        // Check that the writer does not fail and the parser reads what was written.
         let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
         let bytes = save.to_bytes().expect("serializes");
         let again = SaveFile::parse(&bytes).expect("re-parses");
@@ -2529,8 +2529,8 @@ mod tests {
 
     #[test]
     fn modified_state_is_written_and_reparsed() {
-        // Проверка обратного направления: не только «файл -> модель -> файл»,
-        // но и «модель с изменениями -> файл -> модель».
+        // Check of the reverse direction: not only "file -> model -> file",
+        // but also "model with changes -> file -> model".
         let mut save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
         save.team_units[0].gold = 777;
         save.teams[0].team_points = 42;
@@ -2542,10 +2542,10 @@ mod tests {
         assert_eq!(reparsed.teams[0].team_points, 42);
         assert_eq!(reparsed.game.turn_counter, 9);
         assert_eq!(reparsed.team_ui[0].zoom_level, 64);
-        // Всё остальное не изменилось.
+        // Everything else is unchanged.
         assert_eq!(reparsed.units.len(), save.units.len());
         assert_eq!(reparsed.unit_lists, save.unit_lists);
-        // Файл отличается от исходного ровно в изменённых полях.
+        // The file differs from the original exactly in the changed fields.
         assert_ne!(bytes, SAVE_FIXTURE);
         assert_eq!(bytes.len(), SAVE_FIXTURE.len());
     }
@@ -2555,9 +2555,9 @@ mod tests {
         let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
         let slot = &save.team_units[0].base_values[UnitType::Tank as usize];
         let plain = base_unit_values(UnitType::Tank);
-        // Von Griffin не меняет танк: значения совпадают с таблицей.
+        // Von Griffin does not change the tank: the values match the table.
         assert_eq!(slot.values, plain);
-        // Атрибут читается через общий интерфейс.
+        // The attribute is read through the common interface.
         assert_eq!(
             slot.values.get_attribute(ATTRIB_ATTACK),
             plain.get_attribute(ATTRIB_ATTACK)

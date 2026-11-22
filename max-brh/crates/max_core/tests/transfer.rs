@@ -1,6 +1,6 @@
-//! Сквозные тесты переноса груза и учёта запасов комплекса.
+//! End-to-end tests of cargo transfer and complex stock accounting.
 //!
-//! Оракул: `max-cpp-port/src/unitinfo.cpp` (`ProcessTransfer`,
+//! Oracle: `max-cpp-port/src/unitinfo.cpp` (`ProcessTransfer`,
 //! `TransferRaw/Fuel/Gold`, `UpdateProduction`, `Resupply`),
 //! `complex.cpp` (`Transfer`, `TransferCargo`, `GetCargoInfo`),
 //! `access.cpp` (`Access_UpdateResourcesTotal`),
@@ -25,11 +25,11 @@ fn test_state() -> GameState {
     state
 }
 
-/// Спавн здания и **принудительный** перенос его комплекса в `target`.
+/// Spawn a building and **forcibly** move its complex into `target`.
 ///
-/// Боевой путь слияния — `UnitsManager_UpdateConnectors` (см. `complex.rs`):
-/// соседние здания сливаются сами. Хелпер нужен тестам, где здания стоят
-/// далеко друг от друга, а комплекс всё равно должен быть общим.
+/// The combat merge path — `UnitsManager_UpdateConnectors` (see `complex.rs`):
+/// neighboring buildings merge by themselves. The helper is needed by tests where buildings stand
+/// far apart, but the complex must still be shared.
 fn spawn_in_complex(
     state: &mut GameState,
     unit_type: UnitType,
@@ -82,7 +82,7 @@ fn storage(state: &GameState, id: UnitId) -> i16 {
 }
 
 // ---------------------------------------------------------------------------
-// Перенос
+// Transfer
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -105,7 +105,7 @@ fn transfer_menu_info_matches_get_cargo_info_for_own_complex() {
     state.unit_mut(mine).expect("mine").storage = 4;
     state.unit_mut(dump).expect("dump").storage = 11;
 
-    // Цель — юнит вне комплекса: источник показывает весь запас комплекса.
+    // The target is a unit outside the complex: the source shows the whole complex stock.
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(21, 21));
 
     assert_eq!(
@@ -130,8 +130,8 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
     let mine = state
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
         .expect("mine");
-    // Шахта 2×2 (20..=21), `ADUMP` — 1×1 `STANDALONE` вплотную справа:
-    // `UpdateConnectors` сливает их в один комплекс.
+    // 2×2 mine (20..=21), `ADUMP` — a 1×1 `STANDALONE` right next to it:
+    // `UpdateConnectors` merges them into one complex.
     let dump = state
         .spawn_unit(
             UnitType::MaterialStorage,
@@ -154,15 +154,15 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
 
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(23, 20));
 
-    // `TransferMenu_GetUnitCargoInfo`: у источника комплекс, отличный от
-    // комплекса цели (у грузовика его нет) — показывается весь котёл.
+    // `TransferMenu_GetUnitCargoInfo`: the source has a complex different from
+    // the target's (the truck has none) — the whole pool is shown.
     assert_eq!(
         transfer_menu_cargo_info(&state, dump, truck, CargoType::Raw),
         (20, 75),
         "запас комплекса 20, ёмкость 25 (шахта) + 50 (ADUMP)"
     );
 
-    // `ProcessTransfer`: минус — из комплекса в грузовик.
+    // `ProcessTransfer`: minus — from the complex to the truck.
     {
         let unit = state.unit_mut(truck).expect("truck");
         unit.parent_unit = Some(dump);
@@ -210,7 +210,7 @@ fn transfer_to_complex_and_back_changes_both_sides() {
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(21, 21));
     state.unit_mut(truck).expect("truck").storage = 30;
 
-    // Положительное направление: юнит -> родитель (склад).
+    // Positive direction: unit -> parent (storage).
     {
         let unit = state.unit_mut(truck).expect("truck");
         unit.parent_unit = Some(dump);
@@ -228,7 +228,7 @@ fn transfer_to_complex_and_back_changes_both_sides() {
         12
     );
 
-    // Отрицательное: комплекс -> юнит.
+    // Negative: complex -> unit.
     state.unit_mut(truck).expect("truck").transfer_cargo = -5;
     process_transfer(&mut state, truck);
 
@@ -322,7 +322,7 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
         Some(complex),
     );
 
-    // Список стационарных — по y; одинаковый y вставляет новое здание раньше.
+    // The stationary list — by y; equal y inserts the new building earlier.
     let found = find_unit_with_cargo_type(&state, TeamId::RED, complex, CargoType::Raw);
     assert!(found == Some(first) || found == Some(second));
     assert_eq!(
@@ -338,7 +338,7 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
 }
 
 // ---------------------------------------------------------------------------
-// Хранилища: ёмкости и переполнение
+// Storages: capacities and overflow
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -382,7 +382,7 @@ fn mining_income_is_pulled_into_the_mine_and_then_the_dump() {
         Some(complex),
     );
 
-    // 10 сырья за ход; шахта хранит до 25, ADUMP — до 50.
+    // 10 raw per turn; the mine stores up to 25, ADUMP — up to 50.
     let unit = state.unit_mut(mine).expect("mine");
     unit.orders = UnitOrder::PowerOn;
     unit.state = UnitOrderState::ExecutingOrder;
@@ -392,16 +392,16 @@ fn mining_income_is_pulled_into_the_mine_and_then_the_dump() {
     unit.storage = 0;
     state.unit_mut(dump).expect("dump").storage = 0;
 
-    // 1-й ход: доход 10 -> шахта (её очередь раньше в списке).
+    // Turn 1: income 10 -> the mine (its queue is earlier in the list).
     state.manage_economy(TeamId::RED);
     assert_eq!(storage(&state, mine), 10);
     assert_eq!(storage(&state, dump), 0);
 
-    // 2-й ход: 10 (инвентарь) + 10 (добыча) = 20 в комплексе.
+    // Turn 2: 10 (inventory) + 10 (mining) = 20 in the complex.
     state.manage_economy(TeamId::RED);
     assert_eq!(storage(&state, mine), 20);
 
-    // 3-й ход: шахта заполнена до 25, излишки уходят в ADUMP.
+    // Turn 3: the mine is filled to 25, the excess goes to ADUMP.
     state.manage_economy(TeamId::RED);
     assert_eq!(storage(&state, mine), 25);
     assert_eq!(storage(&state, dump), 5);
@@ -420,9 +420,9 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
         Point::new(20, 20),
         None,
     );
-    // Энергия для шахты: `POWGEN` (+1) и топливо в `FDUMP`. Без них
-    // `ProductionManager_OptimizeProduction` выключит включённую шахту
-    // (`OptimizeMiningIndustry`), и добычи не будет вовсе.
+    // Power for the mine: `POWGEN` (+1) and fuel in `FDUMP`. Without them
+    // `ProductionManager_OptimizeProduction` would turn the enabled mine off
+    // (`OptimizeMiningIndustry`), and there would be no mining at all.
     let generator = spawn_in_complex(
         &mut state,
         UnitType::PowerGenerator,
@@ -442,7 +442,7 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
     unit.total_mining = 16;
     unit.storage = 0;
 
-    // Без ADUMP ёмкость комплекса = только склад шахты (25).
+    // Without ADUMP the complex capacity = only the mine storage (25).
     for _ in 0..5 {
         state.manage_economy(TeamId::RED);
     }
@@ -458,8 +458,8 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
     assert_eq!(capacity.raw, 25);
     assert_eq!(materials.raw, 25, "инвентарь не растёт сверх ёмкости");
 
-    // Остаток лежит в кэше комплекса до следующего пересчёта и теряется:
-    // `Access_UpdateResourcesTotal` сбрасывает поле и считает инвентарь.
+    // The remainder lies in the complex cache until the next recomputation and is lost:
+    // `Access_UpdateResourcesTotal` resets the field and counts the inventory.
     update_resources_total(&mut state, TeamId::RED, complex);
     assert_eq!(
         state
@@ -502,14 +502,14 @@ fn fuel_and_gold_income_need_their_own_storage_buildings() {
         unit.storage = 0;
     }
 
-    // У шахты груз RAW: топливо и золото некуда положить.
+    // The mine has RAW cargo: there is nowhere to put fuel and gold.
     state.manage_economy(TeamId::RED);
     assert_eq!(storage(&state, mine), 0);
     let (materials, _) = get_cargo_info(&state, TeamId::RED, complex);
     assert_eq!(materials.fuel, 0);
     assert_eq!(materials.gold, 0);
 
-    // Ставим FDUMP и GOLDSM: доход начинает накапливаться в них.
+    // Add FDUMP and GOLDSM: income starts accumulating in them.
     let fdump = spawn_in_complex(
         &mut state,
         UnitType::FuelStorage,
@@ -642,10 +642,10 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
     let unit = state.unit(dump).expect("dump");
     assert_eq!(unit.storage, 50, "склад не превышает ATTRIB_STORAGE");
 
-    // Точный C++ quirk: `TransferRaw` добавляет `amount` к полю комплекса,
-    // вычитает излишек и снова добавляет его в `Complex::Transfer`. Если
-    // распределить излишек некуда, кэш комплекса раздут (45 + 20 = 65) и
-    // нормализуется на следующем `Access_UpdateResourcesTotal` из инвентаря.
+    // An exact C++ quirk: `TransferRaw` adds `amount` to the complex field,
+    // subtracts the excess and adds it again in `Complex::Transfer`. If
+    // there is nowhere to distribute the excess, the complex cache is inflated (45 + 20 = 65) and
+    // is normalized on the next `Access_UpdateResourcesTotal` from the inventory.
     assert_eq!(
         state
             .complex(TeamId::RED, complex.0 as u16)

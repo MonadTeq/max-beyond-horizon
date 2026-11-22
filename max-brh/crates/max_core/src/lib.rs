@@ -1,73 +1,73 @@
-//! max_core — чистая детерминированная модель M.A.X. без I/O.
+//! max_core — a pure deterministic M.A.X. model without I/O.
 //!
-//! Крейт повторяет поведение C++-порта (`max-cpp-port/src`) бит-в-бит: типы и
-//! константы оригинала (P0), детерминированный RNG (P1), карта и генерация
-//! (P2), далее — юниты, команды, комплексы, экономика (P3), приказы, бой и ИИ
+//! The crate reproduces the C++ port (`max-cpp-port/src`) bit for bit: types and
+//! original constants (P0), deterministic RNG (P1), map and generation
+//! (P2), then units, teams, complexes, economy (P3), orders, combat and AI
 //! (DESIGN.md §7).
 //!
-//! Текущее состояние:
-//! * [`enums`] — все перечисления/битовые маски C++ с точными `#[repr]` и
-//!   `TryFrom`-преобразованиями;
-//! * [`geo`] — `Point`, `PathStep`, `Direction`, `DIRECTION_OFFSETS`, размеры
-//!   карты;
-//! * [`rng`] — `Randomizer` (SplitMix64 + Xoshiro128\*\*) с эталонными
-//!   векторами из C++ (P1);
-//! * [`map`] — `SurfaceMap` (112×112 битмаска `Surface`), `ResourceMapEntry`
-//!   (u16-битфилд количества/типа/видимости) и `Map` (state-model §3.10);
-//! * [`setup`] — детерминированная генерация карты при старте партии: вывод
-//!   `SurfaceMap` из tile-data `.wrl`, ресурсы (`ResourceAllocator`), стартовые
-//!   позиции и alien-обломки, с порядком RNG 1:1 к C++;
-//! * [`deploy`] — развёртывание стартовых армий при создании партии
-//!   (`GameManager_ProcessTeamMissionSupplyUnits`): шахта/генератор/плиты и
-//!   загрузка из `SC_L0001` (`CONSTRCT`/`ENGINEER`/`SURVEYOR`), с двумя
-//!   RNG-вызовами на команду;
-//! * [`unit_values`] — `UnitValues`, индексы `ATTRIB_*`, таблица базовых
-//!   значений 93 типов (`SC_ATTRI`) и клановые модификаторы (`SC_CLANS`);
+//! Current state:
+//! * [`enums`] — all C++ enums/bit masks with exact `#[repr]` and
+//!   `TryFrom` conversions;
+//! * [`geo`] — `Point`, `PathStep`, `Direction`, `DIRECTION_OFFSETS`, map
+//!   dimensions;
+//! * [`rng`] — `Randomizer` (SplitMix64 + Xoshiro128\*\*) with reference
+//!   vectors from C++ (P1);
+//! * [`map`] — `SurfaceMap` (112×112 `Surface` bitmask), `ResourceMapEntry`
+//!   (u16 bitfield of amount/type/visibility) and `Map` (state-model §3.10);
+//! * [`setup`] — deterministic map generation at game start: deriving
+//!   `SurfaceMap` from `.wrl` tile data, resources (`ResourceAllocator`), starting
+//!   positions and alien debris, with RNG order 1:1 to C++;
+//! * [`deploy`] — deployment of starting armies when a game is created
+//!   (`GameManager_ProcessTeamMissionSupplyUnits`): mine/generator/slabs and
+//!   loading from `SC_L0001` (`CONSTRCT`/`ENGINEER`/`SURVEYOR`), with two
+//!   RNG calls per team;
+//! * [`unit_values`] — `UnitValues`, `ATTRIB_*` indices, base value table
+//!   of 93 types (`SC_ATTRI`) and clan modifiers (`SC_CLANS`);
 //! * [`team`] — `TeamInfo`/`ResearchTopicInfo`/`TeamUnits`, `Complex`, `Cargo`;
-//! * [`unit`] — `UnitId`, `UnitInfo` (симуляционные `S`-поля), пути юнита;
-//! * [`hash`] — `UnitHash`/`MapHash` с упорядоченными ведёрками;
-//! * [`save`] — V70 `&[u8]` ⇄ [`save::SaveFile`] (полный разбор и запись);
-//! * [`order`] — каркас клиентских команд (входной API, DESIGN §2.4);
-//! * [`unit_order`] — машина приказов `UnitOrder`×`UnitOrderState` (32×47):
-//!   `SetNewOrderInt`, `RestoreOrders`, `BlockedOnPathRequest`, движение
-//!   (`ExecuteMove`/`Move`), 32 процессора `ProcessOrder*` (P4);
-//! * [`game`] — `GameState`: пять списков юнитов, `ProcessOrders`, тик-цикл,
-//!   конец хода, барьеры, канонический дайджест состояния (P4);
-//! * [`access`] — проходимость клетки (`Access_IsAccessible` с флагами и
-//!   `land_type` 93 типов из `SC_UNITS`), `MapHash`-занятость, цели атаки,
-//!   приём в транспорт, `IsEngaged`, групповые списки (P5);
-//! * [`classification`] — типобезопасный «вид» над флагами (Ф2): классифицирующие
-//!   перечисления (`CombatRole`, `Mobility`, `Footprint`, `Environment`,
-//!   `CargoKind`, `ObjectKind`) для `UnitType` и `UnitInfo` (решение C: маркерные
-//!   типажи не используются). `ObjectKind` отделяет не-юниты (эффекты,
-//!   декорации, сюжетные объекты) без изменения `UnitType` (Ф4). `UnitInfo` (Ф3
-//!   переводит логику на этот слой);
-//! * [`combat`] — `GetAttackDamage`/`AttackUnit`, `Attack` (площадная атака),
-//!   `PrepareFire`/`ProgressFire`/`AimAtTarget`, реактивный огонь
-//!   (`AssessAttacks`), стелс-действия диверсанта (P5);
-//! * [`pathfinding`] — `Paths_RequestPath` (очередь в порядке постановки),
-//!   детерминированный поиск по `AccessMap`, `Paths_GetAirPath`, ракеты,
-//!   `PathFill`, `BuilderPath` (P5, синхронно);
-//! * [`input`] — структуры входящих пакетов (08 с процессорами P0–P5, 38, 41,
-//!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) как чистые данные;
-//! * [`events`] — очередь команд, события юнитов и применение пакетов к
-//!   `GameState` в порядке получения (P4/P5);
-//! * [`frames`] — кадровые данные типов (`Unit::GetFrameInfo` из `D_*`):
-//!   `image_index_max` взрывов/башен/пехоты для `ProgressExplosion`,
-//!   `ProcessOrderSentry` и `ORDER_STATE_ELEVATE`;
-//! * [`ai`] — ИИ: `AiPlayer` (стратегия, карты угроз, приоритеты атак),
-//!   `TaskManager` (очереди напоминаний `priority→normal→deferred`),
-//!   49 классов задач `task*.cpp`, `HeatMap`/`ThreatMap`, `WeightTable`,
-//!   решения `aiattack.cpp` (P6);
-//! * [`victory`] — победа/поражение (P7): generic-правила (`winloss.cpp`,
-//!   `menu_check_end_game_conditions`), предикаты Lua-API `max_*`
-//!   (`scripter.cpp`), правила миссий 1:1 из `assets/PATCHES.RES`
-//!   (`SC_T*`/`SC_S*`/`SC_C*`), сортировка и ранги команд;
-//! * [`crc`] — CRC16 пакета 45 (`crc16.c`, `GameManager_CheckDesync`) и
-//!   канонические дайджесты состояния для сквозных тестов паритета (P7).
+//! * [`unit`] — `UnitId`, `UnitInfo` (simulation `S` fields), unit paths;
+//! * [`hash`] — `UnitHash`/`MapHash` with ordered buckets;
+//! * [`save`] — V70 `&[u8]` ⇄ [`save::SaveFile`] (full parse and write);
+//! * [`order`] — client command skeleton (input API, DESIGN §2.4);
+//! * [`unit_order`] — order machine `UnitOrder`×`UnitOrderState` (32×47):
+//!   `SetNewOrderInt`, `RestoreOrders`, `BlockedOnPathRequest`, movement
+//!   (`ExecuteMove`/`Move`), 32 `ProcessOrder*` processors (P4);
+//! * [`game`] — `GameState`: five unit lists, `ProcessOrders`, tick loop,
+//!   end of turn, barriers, canonical state digest (P4);
+//! * [`access`] — cell passability (`Access_IsAccessible` with flags and
+//!   `land_type` of 93 types from `SC_UNITS`), `MapHash` occupancy, attack targets,
+//!   transport boarding, `IsEngaged`, group lists (P5);
+//! * [`classification`] — type-safe "kind" over flags (F2): classifying
+//!   enums (`CombatRole`, `Mobility`, `Footprint`, `Environment`,
+//!   `CargoKind`, `ObjectKind`) for `UnitType` and `UnitInfo` (decision C: marker
+//!   traits are not used). `ObjectKind` separates non-units (effects,
+//!   decorations, plot objects) without changing `UnitType` (F4). `UnitInfo` (F3
+//!   moves logic onto this layer);
+//! * [`combat`] — `GetAttackDamage`/`AttackUnit`, `Attack` (area attack),
+//!   `PrepareFire`/`ProgressFire`/`AimAtTarget`, reaction fire
+//!   (`AssessAttacks`), saboteur stealth actions (P5);
+//! * [`pathfinding`] — `Paths_RequestPath` (queue in submission order),
+//!   deterministic search over `AccessMap`, `Paths_GetAirPath`, missiles,
+//!   `PathFill`, `BuilderPath` (P5, synchronous);
+//! * [`input`] — incoming packet structs (08 with P0–P5 processors, 38, 41,
+//!   50, 06, 52, 45, 00/01, 10/20, 11/12/13/14/18/43/53) as pure data;
+//! * [`events`] — command queue, unit events and application of packets to
+//!   `GameState` in receive order (P4/P5);
+//! * [`frames`] — per-type frame data (`Unit::GetFrameInfo` from `D_*`):
+//!   `image_index_max` of explosions/turrets/infantry for `ProgressExplosion`,
+//!   `ProcessOrderSentry` and `ORDER_STATE_ELEVATE`;
+//! * [`ai`] — AI: `AiPlayer` (strategy, threat maps, attack priorities),
+//!   `TaskManager` (`priority→normal→deferred` reminder queues),
+//!   49 task classes `task*.cpp`, `HeatMap`/`ThreatMap`, `WeightTable`,
+//!   decisions of `aiattack.cpp` (P6);
+//! * [`victory`] — victory/defeat (P7): generic rules (`winloss.cpp`,
+//!   `menu_check_end_game_conditions`), Lua-API predicates `max_*`
+//!   (`scripter.cpp`), mission rules 1:1 from `assets/PATCHES.RES`
+//!   (`SC_T*`/`SC_S*`/`SC_C*`), team sorting and ranks;
+//! * [`crc`] — packet 45 CRC16 (`crc16.c`, `GameManager_CheckDesync`) and
+//!   canonical state digests for end-to-end parity tests (P7).
 //!
-//! Запрещено (DESIGN.md §1.4, §6.4): файловый I/O, сеть, время, потоки,
-//! `f32`/`f64` в симуляции, итерация по `HashMap`.
+//! Forbidden (DESIGN.md §1.4, §6.4): file I/O, network, time, threads,
+//! `f32`/`f64` in simulation, iteration over `HashMap`.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::float_arithmetic)]
@@ -100,9 +100,9 @@ pub mod unit_order;
 pub mod unit_values;
 pub mod victory;
 
-// Типы нижнего слоя (Infrastructure, Ф5.2) живут в `max_types`; здесь — их
-// реэкспорт, чтобы существующие пути `max_core::enums::…`, `max_core::geo::…`,
-// `max_core::map::…` не менялись.
+// Lower-layer types (Infrastructure, F5.2) live in `max_types`; here they are
+// re-exported so that existing paths `max_core::enums::…`, `max_core::geo::…`,
+// `max_core::map::…` do not change.
 pub use max_types::{enums, geo, input, map};
 
 pub use access::{
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn p3_types_are_visible_from_crate_root() {
-        // Таблица атрибутов, доменные команды и сейв-слой доступны с корня.
+        // Attribute table, domain commands and the save layer are available from the root.
         assert_eq!(crate::BASE_UNIT_VALUES.len(), crate::UNIT_COUNT);
         assert_eq!(crate::UNIT_COUNT, 93);
         let units = crate::TeamUnits::with_clan(crate::TeamClan::Musashi);

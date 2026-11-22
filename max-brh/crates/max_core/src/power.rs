@@ -1,70 +1,70 @@
-//! Энергетика комплекса — порт power-части `production_manager.cpp`.
+//! Complex power system — a port of the power part of `production_manager.cpp`.
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `production_manager.cpp:84-160` — `ProductionManager` собирает по членам
-//!   комплекса `inventory`/`net_production`/`total`, считает активные
+//! * `production_manager.cpp:84-160` — `ProductionManager` collects over complex
+//!   members `inventory`/`net_production`/`total` and computes active
 //!   `POWERSTN`/`POWGEN` (`power_station_active`/`power_generator_active`);
 //! * `production_manager.cpp:164-197` — `UpdateUnitPowerConsumption`:
-//!   лишние включённые генераторы выключаются, недостающие — включаются
+//!   surplus running generators are turned off, missing ones are turned on
 //!   (`UnitsManager_SetNewOrder(ORDER_POWER_ON/OFF, ORDER_STATE_INIT)`);
-//! * `production_manager.cpp:481-549` — `OptimizePowerProduction`: сколько
-//!   станций/генераторов должно работать при текущем дефиците энергии и
-//!   запасе топлива;
-//! * `production_manager.cpp:551-562` — `OptimizePowerConsumption`: применяет
-//!   план к приказам производителей;
-//! * `production_manager.cpp:642-664` — `CheckPowerNeed`: хватает ли энергии и
-//!   топлива на дополнительное потребление;
+//! * `production_manager.cpp:481-549` — `OptimizePowerProduction`: how many
+//!   stations/generators should run at the current power deficit and
+//!   fuel reserve;
+//! * `production_manager.cpp:551-562` — `OptimizePowerConsumption`: applies
+//!   the plan to producer orders;
+//! * `production_manager.cpp:642-664` — `CheckPowerNeed`: whether power and
+//!   fuel suffice for additional consumption;
 //! * `production_manager.cpp:677-727` — `ValidateIndustry`/`OptimizeIndustry`:
-//!   при нехватке ресурсов стройка завода останавливается
-//!   (`ORDER_STATE_BUILD_ABORT`, в порте — пауза без потери очереди);
+//!   when resources are short, factory construction stops
+//!   (`ORDER_STATE_BUILD_ABORT`, in the port — a pause without losing the queue);
 //! * `production_manager.cpp:729-790` — `OptimizeMiningIndustry`,
-//!   `OptimizeAuxilaryIndustry`: порядок отключения потребителей
-//!   (`RESEARCH` → `GREENHSE` → `COMMTWR`, затем стройки, затем `MININGST`);
-//! * `production_manager.cpp:366-380` — `UpdateUnitLifeConsumption`: при
-//!   нехватке рабочих включается `HABITAT` (`life = -3`, то есть +3 рабочих);
+//!   `OptimizeAuxilaryIndustry`: the consumer shutdown order
+//!   (`RESEARCH` → `GREENHSE` → `COMMTWR`, then constructions, then `MININGST`);
+//! * `production_manager.cpp:366-380` — `UpdateUnitLifeConsumption`: when
+//!   workers are short, `HABITAT` is turned on (`life = -3`, i.e. +3 workers);
 //! * `game_manager.cpp:2058-2076` — `GameManager_ManageEconomy` →
-//!   `TeamUnits::OptimizeComplexes` (`teamunits.cpp:170-175`) вызывает
-//!   оптимизацию каждого комплекса каждый ход;
-//! * `game_manager.cpp:8183-8204` — `GameManager_ProgressBuildState`: после
-//!   спавна юнитов ещё раз пересчитывает комплексы и оптимизирует их;
-//! * `game_manager.cpp:2555-2584` — `GameManager_OptimizeProduction`: при
-//!   отрицательном `material/fuel/gold/power/workers` запускает
+//!   `TeamUnits::OptimizeComplexes` (`teamunits.cpp:170-175`) invokes
+//!   optimization of every complex every turn;
+//! * `game_manager.cpp:8183-8204` — `GameManager_ProgressBuildState`: after
+//!   spawning units, it recomputes the complexes once more and optimizes them;
+//! * `game_manager.cpp:2555-2584` — `GameManager_OptimizeProduction`: with a
+//!   negative `material/fuel/gold/power/workers` it starts
 //!   `ProductionManager_OptimizeProduction`;
-//! * `cargo.cpp:70-138` — `Cargo_GetNetProduction` (расход завода:
-//!   raw+power+life) и `Cargo_ApplyUnitConsumption`;
-//! * `cargo.cpp:183-271` — ставки топлива/энергии/рабочих/золота.
+//! * `cargo.cpp:70-138` — `Cargo_GetNetProduction` (factory consumption:
+//!   raw+power+life) and `Cargo_ApplyUnitConsumption`;
+//! * `cargo.cpp:183-271` — fuel/power/workers/gold rates.
 //!
-//! # Модель
+//! # Model
 //!
-//! Энергия — не склад, а **баланс** комплекса: `POWERSTN` даёт +6, `POWGEN`
-//! +1, а включённые `RESEARCH`/`GREENHSE`/`COMMTWR`/`MININGST` и строящийся
-//! завод потребляют по 1 (`cargo_power_consumption_rate`). Рабочие — тоже
-//! баланс: `HABITAT` даёт +3, `TRAINHAL`/`GREENHSE`/`RESEARCH` потребляют по 1.
+//! Power is not a stock but a **balance** of the complex: `POWERSTN` gives +6, `POWGEN`
+//! +1, while enabled `RESEARCH`/`GREENHSE`/`COMMTWR`/`MININGST` and a factory
+//! under construction consume 1 each (`cargo_power_consumption_rate`). Workers are also
+//! a balance: `HABITAT` gives +3, `TRAINHAL`/`GREENHSE`/`RESEARCH` consume 1 each.
 //!
-//! Порт соблюдает контракт `max-brh-docs/architecture/client/game-mechanics.md` §3/§5:
-//! * заказ завода **не стартует**, если комплекс не может оплатить первый ход
+//! The port follows the contract of `max-brh-docs/architecture/client/game-mechanics.md` §3/§5:
+//! * a factory order **does not start** if the complex cannot pay for the first turn
 //!   (raw, power, life) — [`crate::production::BuildError`];
-//! * уже идущая стройка при нехватке **паузится** (`build_paused`, очередь
-//!   сохраняется), а не отменяется как в C++ (`ValidateIndustry` →
-//!   `BUILD_ABORT`); это осознанное требование QA (ресурс не уходит в минус);
-//! * при дефиците энергии выключаются здания в C++-порядке:
-//!   `RESEARCH` → `GREENHSE` → `COMMTWR` → стройки → `MININGST`;
-//! * производители энергии включаются/выключаются автоматически по балансу и
-//!   запасу топлива (C++ `OptimizePowerProduction`/`OptimizePowerConsumption`);
-//! * выключенные из-за дефицита **потребители** C++ обратно сам не включает —
-//!   это делает игрок (`UnitsManager_Popup_OnClick_PowerOn`) или ИИ; порт
-//!   повторяет это правило, а генераторы восстанавливаются автоматически;
-//! * сообщение о нехватке — `ComposeIndustryMessage`/`DrawResourceMessage`
+//! * an already running construction **pauses** on shortage (`build_paused`, the queue
+//!   is preserved), rather than cancelled as in C++ (`ValidateIndustry` →
+//!   `BUILD_ABORT`); this is an intentional QA requirement (a resource never goes negative);
+//! * on a power deficit, buildings are turned off in C++ order:
+//!   `RESEARCH` → `GREENHSE` → `COMMTWR` → constructions → `MININGST`;
+//! * power producers are turned on/off automatically by balance and
+//!   fuel reserve (C++ `OptimizePowerProduction`/`OptimizePowerConsumption`);
+//! * C++ does not turn **consumers** disabled due to a deficit back on itself —
+//!   the player (`UnitsManager_Popup_OnClick_PowerOn`) or the AI does that; the port
+//!   repeats this rule, while generators recover automatically;
+//! * the shortage message — `ComposeIndustryMessage`/`DrawResourceMessage`
 //!   (`production_manager.cpp:308-330/465-479/792-804`): «Adjustments made:»,
 //!   «More power needed, X turned off.», «Cannot turn X on, power needed.».
 //!
-//! Отличие от C++ (документировано в `visual-1to1-status.md` §42): точная
-//! арифметика `OptimizePowerProduction` (формулы с `count`) заменена
-//! эквивалентным по наблюдаемому балансу детерминированным выбором
-//! «станции → генераторы»; перераспределение добычи ради топлива
-//! (`OptimizeCargoProduction`) в этой задаче не портировано — при нехватке
-//! топлива производитель просто не включается.
+//! Difference from C++ (documented in `visual-1to1-status.md` §42): the exact
+//! arithmetic of `OptimizePowerProduction` (formulas with `count`) is replaced
+//! by a deterministic choice equivalent in observed balance:
+//! "stations → generators"; redistribution of production for fuel
+//! (`OptimizeCargoProduction`) is not ported in this task — when
+//! fuel is short, the producer is simply not turned on.
 
 use crate::alloc::{cargo_get_inventory, update_resources_total};
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -76,30 +76,30 @@ use crate::victory::{
     cargo_fuel_consumption_rate, cargo_get_net_production, cargo_power_consumption_rate,
 };
 
-/// Баланс ресурсов комплекса — C++ `Cargo` в `ProductionManager` (`total`).
+/// Resource balance of a complex — C++ `Cargo` in `ProductionManager` (`total`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EnergyTotals {
-    /// Материалы (запас + добыча − расход строящихся заводов).
+    /// Materials (stock + production − consumption of factories under construction).
     pub raw: i32,
-    /// Топливо (запас + добыча − топливо производителей энергии).
+    /// Fuel (stock + production − fuel of power producers).
     pub fuel: i32,
-    /// Золото.
+    /// Gold.
     pub gold: i32,
-    /// Энергия (производство − потребление).
+    /// Power (production − consumption).
     pub power: i32,
-    /// Рабочие (`life`).
+    /// Workers (`life`).
     pub life: i32,
 }
 
 impl EnergyTotals {
-    /// Есть ли хоть один отрицательный баланс (`GameManager_OptimizeProduction`).
+    /// Whether at least one balance is negative (`GameManager_OptimizeProduction`).
     #[inline]
     pub const fn has_deficit(&self) -> bool {
         self.raw < 0 || self.fuel < 0 || self.gold < 0 || self.power < 0 || self.life < 0
     }
 
-    /// Первый дефицит в порядке `ValidateIndustry`/`Cargo_ApplyUnitConsumption`:
-    /// материалы → энергия → рабочие → топливо → золото.
+    /// The first shortage in `ValidateIndustry`/`Cargo_ApplyUnitConsumption` order:
+    /// materials → power → workers → fuel → gold.
     #[inline]
     pub const fn first_shortage(&self) -> Option<Shortage> {
         if self.raw < 0 {
@@ -118,7 +118,7 @@ impl EnergyTotals {
     }
 }
 
-/// Какого ресурса не хватило (`ComposeIndustryMessage`, `material`).
+/// Which resource is short (`ComposeIndustryMessage`, `material`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shortage {
     /// `_(9c91)` / `_(2acf)` — raw material.
@@ -134,7 +134,7 @@ pub enum Shortage {
 }
 
 impl Shortage {
-    /// Строка ресурса в сообщении C++ (`_(...)` из `language.json`).
+    /// The resource string in the C++ message (`_(...)` from `language.json`).
     pub const fn material(self) -> &'static str {
         match self {
             Self::Raw => "raw material",
@@ -146,43 +146,43 @@ impl Shortage {
     }
 }
 
-/// Действие оптимизатора — для сообщения `ComposeIndustryMessage`.
+/// An optimizer action — for the `ComposeIndustryMessage` message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Adjustment {
-    /// Стройка завода поставлена на паузу (`ValidateIndustry`).
+    /// Factory construction is paused (`ValidateIndustry`).
     Paused { unit: UnitId, shortage: Shortage },
-    /// Потребитель выключен (`OptimizeAuxilaryIndustry`/`OptimizeMiningIndustry`).
+    /// A consumer is turned off (`OptimizeAuxilaryIndustry`/`OptimizeMiningIndustry`).
     PowerOff { unit: UnitId, shortage: Shortage },
-    /// Производитель включён (`UpdateUnitPowerConsumption` /
-    /// `UpdateUnitLifeConsumption`); `shortage` — что именно понадобилось
-    /// (`power` у генератора, `workers` у `HABITAT`).
+    /// A producer is turned on (`UpdateUnitPowerConsumption` /
+    /// `UpdateUnitLifeConsumption`); `shortage` — what exactly was needed
+    /// (`power` at a generator, `workers` at `HABITAT`).
     PowerOn { unit: UnitId, shortage: Shortage },
-    /// `PowerOn` не удался из-за топлива (`production_manager.cpp:332-352`):
-    /// строка «Cannot turn X on, fuel needed.» без смены приказа.
+    /// `PowerOn` failed because of fuel (`production_manager.cpp:332-352`):
+    /// the "Cannot turn X on, fuel needed." message without changing the order.
     CannotTurnOn { unit: UnitId, shortage: Shortage },
 }
 
-/// Итог оптимизации комплекса.
+/// Result of complex optimization.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IndustryOutcome {
-    /// Баланс после всех действий.
+    /// Balance after all actions.
     pub totals: EnergyTotals,
-    /// Стройки, поставленные на паузу, и причина.
+    /// Constructions paused, and the reason.
     pub paused: Vec<(UnitId, Shortage)>,
-    /// Выключенные потребители.
+    /// Consumers turned off.
     pub powered_off: Vec<UnitId>,
-    /// Включённые производители энергии.
+    /// Power producers turned on.
     pub powered_on: Vec<UnitId>,
-    /// Сообщение для верхней строки карты (`MESSAGE_BOX_NOTICE`), если
-    /// `show_messages` и были действия.
+    /// Message for the top map line (`MESSAGE_BOX_NOTICE`) if
+    /// `show_messages` and there were actions.
     pub message: Option<String>,
-    /// После всех действий остался отрицательный баланс (C++ `return` из
+    /// A negative balance remains after all actions (C++ `return` from
     /// `ProductionManager_OptimizeProduction`).
     pub unresolved: bool,
 }
 
 impl IndustryOutcome {
-    /// Ошибка `BuildMenu::Build` для отклонённой стройки.
+    /// `BuildMenu::Build` error for a rejected construction.
     pub fn build_error(&self) -> crate::production::BuildError {
         self.paused
             .first()
@@ -191,7 +191,7 @@ impl IndustryOutcome {
     }
 }
 
-/// `Shortage` → `BuildError` (для отказа в старте заказа).
+/// `Shortage` → `BuildError` (for refusing to start an order).
 pub fn shortage_build_error(shortage: Shortage) -> crate::production::BuildError {
     use crate::production::BuildError;
 
@@ -205,17 +205,17 @@ pub fn shortage_build_error(shortage: Shortage) -> crate::production::BuildError
 }
 
 // ---------------------------------------------------------------------------
-// Таблицы
+// Tables
 // ---------------------------------------------------------------------------
 
-/// `Cargo_GetPowerConsumptionRate(...) < 0` — производитель энергии.
+/// `Cargo_GetPowerConsumptionRate(...) < 0` — a power producer.
 #[inline]
 pub fn is_power_producer(unit_type: UnitType) -> bool {
     matches!(unit_type, UnitType::PowerStation | UnitType::PowerGenerator)
 }
 
-/// Здание, у которого есть C++-пункт `power on/off` и которое оптимизатор
-/// может выключить при дефиците энергии (`OptimizeAuxilaryIndustry` +
+/// A building that has a C++ `power on/off` entry and that the optimizer
+/// may turn off on a power deficit (`OptimizeAuxilaryIndustry` +
 /// `OptimizeMiningIndustry`).
 #[inline]
 pub fn is_switchable_consumer(unit_type: UnitType) -> bool {
@@ -228,33 +228,33 @@ pub fn is_switchable_consumer(unit_type: UnitType) -> bool {
     )
 }
 
-/// Порядок принудительного отключения потребителей
+/// Order of forced consumer shutdown
 /// (`ProductionManager_OptimizeProduction`, `production_manager.cpp:877-881`):
-/// `RESEARCH` → `GREENHSE` → `COMMTWR`, затем стройки (`OptimizeIndustry`) и
-/// только потом `MININGST` (`OptimizeMiningIndustry`).
+/// `RESEARCH` → `GREENHSE` → `COMMTWR`, then constructions (`OptimizeIndustry`) and
+/// only then `MININGST` (`OptimizeMiningIndustry`).
 pub const CONSUMER_OFF_ORDER: [UnitType; 3] = [
     UnitType::ResearchCentre,
     UnitType::EcoSphere,
     UnitType::GoldRefinery,
 ];
 
-/// Положительная мощность производителя (`-Cargo_GetPowerConsumptionRate`).
+/// Positive output of a producer (`-Cargo_GetPowerConsumptionRate`).
 #[inline]
 fn producer_power(unit_type: UnitType) -> i32 {
     -cargo_power_consumption_rate(unit_type)
 }
 
-/// Расход топлива производителя (`Cargo_GetFuelConsumptionRate`).
+/// Fuel consumption of a producer (`Cargo_GetFuelConsumptionRate`).
 #[inline]
 fn producer_fuel(unit_type: UnitType) -> i32 {
     cargo_fuel_consumption_rate(unit_type)
 }
 
-/// Имя юнита для сообщения — `ResourceManager_GetUnit(type).GetSingularName()`.
+/// Unit name for a message — `ResourceManager_GetUnit(type).GetSingularName()`.
 ///
-/// В C++ имена лежат в `language.json`; в `max_core` таблицы имён нет
-/// (`max_app::buildmenu::unit_name`), поэтому здесь перечислены только типы,
-/// которые встречаются в энергетических сообщениях.
+/// In C++ the names live in `language.json`; `max_core` has no name table
+/// (`max_app::buildmenu::unit_name`), so only the types that occur in
+/// power messages are listed here.
 pub fn industry_unit_name(unit_type: UnitType) -> &'static str {
     match unit_type {
         UnitType::ResearchCentre => "Research Center",
@@ -274,15 +274,15 @@ pub fn industry_unit_name(unit_type: UnitType) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Члены комплекса и баланс
+// Complex members and balance
 // ---------------------------------------------------------------------------
 
-/// Стационарные члены комплекса в порядке `UnitsManager_StationaryUnits`.
+/// Stationary members of the complex in `UnitsManager_StationaryUnits` order.
 ///
-/// C++ `ProductionManager` сравнивает `complex == (*it).GetComplex()`;
-/// принадлежность команде следует из самого комплекса, но в `max_core`
-/// `ComplexId` уникален только внутри команды, поэтому команда проверяется
-/// явно.
+/// C++ `ProductionManager` compares `complex == (*it).GetComplex()`;
+/// team ownership follows from the complex itself, but in `max_core`
+/// `ComplexId` is unique only within a team, so the team is checked
+/// explicitly.
 pub fn complex_units(state: &GameState, team: TeamId, complex: ComplexId) -> Vec<UnitId> {
     state
         .unit_list(UnitListKind::Stationary)
@@ -296,13 +296,13 @@ pub fn complex_units(state: &GameState, team: TeamId, complex: ComplexId) -> Vec
         .collect()
 }
 
-/// `Cargo_GetNetProduction` + `Cargo_GetInventory`, просуммированные по
-/// комплексу — `total` из `ProductionManager::ProductionManager`
-/// (`production_manager.cpp:97-157`) и `Access_UpdateResourcesTotal`
+/// `Cargo_GetNetProduction` + `Cargo_GetInventory`, summed over
+/// the complex — `total` from `ProductionManager::ProductionManager`
+/// (`production_manager.cpp:97-157`) and `Access_UpdateResourcesTotal`
 /// (`access.cpp:912-934`).
 ///
-/// У паузы (`build_paused`) расход строящегося завода уже исключён самим
-/// [`cargo_get_net_production`], поэтому отдельная фильтрация не нужна.
+/// For a pause (`build_paused`) the consumption of the factory under construction is already excluded by
+/// [`cargo_get_net_production`] itself, so no separate filtering is needed.
 pub fn complex_totals(state: &GameState, team: TeamId, complex: ComplexId) -> EnergyTotals {
     let mut totals = EnergyTotals::default();
 
@@ -324,7 +324,7 @@ pub fn complex_totals(state: &GameState, team: TeamId, complex: ComplexId) -> En
     totals
 }
 
-/// Строящийся завод, который ещё не на паузе (`ValidateIndustry`).
+/// A factory under construction that is not paused yet (`ValidateIndustry`).
 #[inline]
 fn is_building_factory(unit: &UnitInfo) -> bool {
     is_factory(unit.unit_type)
@@ -333,9 +333,9 @@ fn is_building_factory(unit: &UnitInfo) -> bool {
         && !unit.build_paused
 }
 
-/// Потребитель, который C++ может выключить: он **включён** и потребляет
-/// энергию (для `RESEARCH`/`GREENHSE`/`COMMTWR` это `ORDER_POWER_ON`, для
-/// шахты ещё `ORDER_NEW_ALLOCATE`).
+/// A consumer C++ may turn off: it is **on** and consumes
+/// power (for `RESEARCH`/`GREENHSE`/`COMMTWR` that is `ORDER_POWER_ON`, for
+/// a mine also `ORDER_NEW_ALLOCATE`).
 #[inline]
 fn is_active_switchable_consumer(unit: &UnitInfo) -> bool {
     if !is_switchable_consumer(unit.unit_type) {
@@ -350,8 +350,8 @@ fn is_active_switchable_consumer(unit: &UnitInfo) -> bool {
     }
 }
 
-/// Сбрасывает паузу строящихся заводов комплекса: решение принимается заново
-/// на текущих запасах.
+/// Resets the pause of the complex's factories under construction: the decision is made anew
+/// on the current stocks.
 fn reset_pauses(state: &mut GameState, units: &[UnitId]) {
     for id in units {
         if state
@@ -366,11 +366,11 @@ fn reset_pauses(state: &mut GameState, units: &[UnitId]) {
 }
 
 // ---------------------------------------------------------------------------
-// Производители энергии
+// Power producers
 // ---------------------------------------------------------------------------
 
-/// Сколько энергии и топлива даёт/тратит включённый производитель — снимаем
-/// его вклад из `totals`, чтобы получить базу «все производители выключены».
+/// How much power and fuel an enabled producer gives/consumes — its contribution is
+/// subtracted from `totals` to obtain the base "all producers off".
 fn without_producers(state: &GameState, units: &[UnitId], totals: EnergyTotals) -> EnergyTotals {
     let mut baseline = totals;
 
@@ -388,15 +388,15 @@ fn without_producers(state: &GameState, units: &[UnitId], totals: EnergyTotals) 
     baseline
 }
 
-/// Порт `OptimizePowerProduction`/`OptimizePowerConsumption`
-/// (`production_manager.cpp:481-562`): выбрать, сколько `POWERSTN`/`POWGEN`
-/// должно работать, и применить приказы.
+/// Port of `OptimizePowerProduction`/`OptimizePowerConsumption`
+/// (`production_manager.cpp:481-562`): choose how many `POWERSTN`/`POWGEN`
+/// should run, and apply the orders.
 ///
-/// C++ сначала считает целевые `power_station_active`/`power_generator_active`
-/// формулами с `count`, затем `UpdateUnitPowerConsumption` доводит приказы.
-/// Порт делает тот же выбор «станции раньше генераторов» (станция даёт 6
-/// энергии за 6 топлива, генератор — 1 за 2), но без промежуточной арифметики:
-/// наблюдаемый баланс и приказы совпадают на рабочих сценариях (см. шапку).
+/// C++ first computes the target `power_station_active`/`power_generator_active`
+/// with formulas involving `count`, then `UpdateUnitPowerConsumption` adjusts the orders.
+/// The port makes the same "stations before generators" choice (a station gives 6
+/// power for 6 fuel, a generator — 1 for 2), but without intermediate arithmetic:
+/// the observed balance and orders match in working scenarios (see the header).
 fn settle_producers(
     state: &mut GameState,
     team: TeamId,
@@ -428,16 +428,16 @@ fn settle_producers(
 
     let demand = (-baseline.power).max(0);
 
-    // C++-формула выбора станции: `(power + station_rate - count) / station_rate`
-    // с `count = (generator_power * station_fuel) / generator_fuel = 3`.
+    // C++ station selection formula: `(power + station_rate - count) / station_rate`
+    // with `count = (generator_power * station_fuel) / generator_fuel = 3`.
     let mut stations_on = stations.len().min(((demand + 3) / 6) as usize);
     let mut generators_on = generators
         .len()
         .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
 
-    // Топливо: включённый производитель не должен уводить баланс в минус
-    // (`CheckPowerNeed`, `production_manager.cpp:642-664`). Станции дешевле по
-    // топливу на единицу энергии, поэтому режем сначала генераторы.
+    // Fuel: an enabled producer must not drive the balance negative
+    // (`CheckPowerNeed`, `production_manager.cpp:642-664`). Stations are cheaper in
+    // fuel per unit of power, so generators are cut first.
     let fuel_budget = baseline.fuel.max(0);
     let mut cost = stations_on as i32 * 6 + generators_on as i32 * 2;
 
@@ -452,8 +452,8 @@ fn settle_producers(
     }
 
     // `SatisfyPowerDemand` → `PowerOn` (`production_manager.cpp:332-364`):
-    // если производитель нужен, но топлива на него нет — сообщение
-    // «Cannot turn X on, fuel needed.», приказ не меняется.
+    // if a producer is needed but there is no fuel for it — the message
+    // "Cannot turn X on, fuel needed.", the order does not change.
     let produced = stations_on as i32 * 6 + generators_on as i32;
     if produced < demand {
         let candidate = generators
@@ -479,11 +479,11 @@ fn settle_producers(
         set_producer_order(state, *id, want, adjustments);
     }
 
-    // Пересчёт после смены приказов: формулы C++ тоже корректируют `total`.
+    // Recompute after order changes: the C++ formulas also adjust `total`.
     complex_totals(state, team, complex)
 }
 
-/// Включает/выключает производителя (`UpdateUnitPowerConsumption`,
+/// Turns a producer on/off (`UpdateUnitPowerConsumption`,
 /// `production_manager.cpp:164-186`).
 fn set_producer_order(
     state: &mut GameState,
@@ -506,8 +506,8 @@ fn set_producer_order(
     }
 
     if want_on {
-        // `GameState::set_order` возвращает `delete_path`, а не успех —
-        // приказ применяется всегда (C++ `UnitsManager_SetNewOrder`).
+        // `GameState::set_order` returns `delete_path`, not success —
+        // the order is always applied (C++ `UnitsManager_SetNewOrder`).
         let _ = state.set_order(id, UnitOrder::PowerOn, UnitOrderState::Init);
         adjustments.push(Adjustment::PowerOn {
             unit: id,
@@ -523,11 +523,11 @@ fn set_producer_order(
 }
 
 // ---------------------------------------------------------------------------
-// Рабочие
+// Workers
 // ---------------------------------------------------------------------------
 
 /// `Delivery`: `UpdateUnitLifeConsumption` (`production_manager.cpp:366-380`) —
-/// при нехватке рабочих включить `HABITAT` (даёт +3).
+/// on a worker shortage, turn on `HABITAT` (gives +3).
 fn settle_workers(
     state: &mut GameState,
     team: TeamId,
@@ -559,7 +559,7 @@ fn settle_workers(
             unit: *id,
             shortage: Shortage::Workers,
         });
-        // `Cargo_GetLifeConsumptionRate(HABITAT) = -3`, то есть +3 рабочих.
+        // `Cargo_GetLifeConsumptionRate(HABITAT) = -3`, i.e. +3 workers.
         life += 3;
 
         if life >= 0 {
@@ -571,18 +571,18 @@ fn settle_workers(
 }
 
 // ---------------------------------------------------------------------------
-// Оптимизация комплекса
+// Complex optimization
 // ---------------------------------------------------------------------------
 
-/// `ProductionManager_OptimizeProduction` (`production_manager.cpp:830-901`) в
-/// объёме энергии/рабочих/остановки строек.
+/// `ProductionManager_OptimizeProduction` (`production_manager.cpp:830-901`) in
+/// the scope of power/workers/construction stopping.
 ///
-/// `selected` — выделенный юнит игрока (C++ `manager.selected_unit`): его
-/// стройка останавливается первой, его сообщения идут без префикса
-/// «Adjustments made:». `proposal` — завод, которому только предстоит начать
-/// стройку (`BuildMenu::Build` → `StartBuilding`): проверка «влезет ли заказ».
-/// `show_messages` — компоновка [`IndustryOutcome::message`] для верхней
-/// строки карты (C++ `is_player`/`show_messages`).
+/// `selected` — the player's selected unit (C++ `manager.selected_unit`): its
+/// construction is stopped first, its messages go without the
+/// "Adjustments made:" prefix. `proposal` — a factory that is about to start
+/// construction (`BuildMenu::Build` → `StartBuilding`): a check whether the order fits.
+/// `show_messages` — composition of [`IndustryOutcome::message`] for the top
+/// map line (C++ `is_player`/`show_messages`).
 pub fn optimize_complex(
     state: &mut GameState,
     team: TeamId,
@@ -610,8 +610,8 @@ pub fn optimize_complex(
     // `UpdateLifeConsumption`.
     totals = settle_workers(state, team, complex, &units, totals, &mut adjustments);
 
-    // Основной цикл `ProductionManager_OptimizeProduction`: пока есть
-    // отрицательный баланс, гасим стройки, затем потребителей.
+    // Main loop of `ProductionManager_OptimizeProduction`: while there is a
+    // negative balance, we stop constructions, then consumers.
     let mut guard = units.len().saturating_mul(4).saturating_add(16);
 
     while totals.has_deficit() && guard > 0 {
@@ -621,8 +621,8 @@ pub fn optimize_complex(
             break;
         };
 
-        // `ValidateIndustry(selected, true)` — выделенный/заявленный завод
-        // останавливается первым (C++ `production_manager.cpp:877`).
+        // `ValidateIndustry(selected, true)` — the selected/proposed factory
+        // is stopped first (C++ `production_manager.cpp:877`).
         let selected_factory = selected.or(proposal).filter(|id| {
             state
                 .unit(*id)
@@ -638,7 +638,7 @@ pub fn optimize_complex(
 
         if shortage == Shortage::Power {
             // C++ `OptimizeProduction` (`:877-881`): RESEARCH → GREENHSE →
-            // COMMTWR, затем стройки (`OptimizeIndustry`), затем MININGST.
+            // COMMTWR, then constructions (`OptimizeIndustry`), then MININGST.
             if let Some(id) = pick_auxiliary_to_off(state, &units) {
                 let _ = state.set_order(id, UnitOrder::PowerOff, UnitOrderState::Init);
                 adjustments.push(Adjustment::PowerOff {
@@ -673,9 +673,9 @@ pub fn optimize_complex(
                 continue;
             }
         } else if matches!(shortage, Shortage::Raw | Shortage::Workers) {
-            // `OptimizeIndustry(false)` для материалов; для рабочих C++
-            // сначала пробует включить HABITAT (`settle_workers` выше), затем
-            // останавливает стройку.
+            // `OptimizeIndustry(false)` for materials; for workers C++
+            // first tries to turn HABITAT on (`settle_workers` above), then
+            // stops the construction.
             if let Some(id) = pick_factory_to_pause(state, &units, &paused, selected, proposal) {
                 pause_factory(
                     state,
@@ -691,8 +691,8 @@ pub fn optimize_complex(
             }
         }
 
-        // Золото тратит только `COMMTWR` (`Cargo_GetGoldConsumptionRate`); при
-        // его дефиците C++ гасит именно башню, а не RESEARCH.
+        // Only `COMMTWR` spends gold (`Cargo_GetGoldConsumptionRate`); on
+        // its deficit C++ switches off the tower, not RESEARCH.
         if shortage == Shortage::Gold {
             let candidate = units.iter().copied().find(|id| {
                 state.unit(*id).is_some_and(|unit| {
@@ -714,7 +714,7 @@ pub fn optimize_complex(
         break;
     }
 
-    // `Access_UpdateResourcesTotal` в конце оптимизации.
+    // `Access_UpdateResourcesTotal` at the end of optimization.
     update_resources_total(state, team, complex);
 
     let unresolved = totals.has_deficit();
@@ -751,7 +751,7 @@ pub fn optimize_complex(
 }
 
 /// `ValidateIndustry`/`OptimizeIndustry` (`production_manager.cpp:677-727`):
-/// кого из строящихся заводов остановить. Выделенный/заявленный завод — первым.
+/// which factory under construction to stop. The selected/proposed factory is first.
 fn pick_factory_to_pause(
     state: &GameState,
     units: &[UnitId],
@@ -777,8 +777,8 @@ fn pick_factory_to_pause(
     units.iter().copied().find(|id| candidate(*id))
 }
 
-/// `ValidateIndustry` → пауза стройки: флаг `build_paused`, событие и
-/// пересчёт баланса (расход паузы исключается `cargo_get_net_production`).
+/// `ValidateIndustry` → construction pause: the `build_paused` flag, an event and
+/// balance recomputation (pause consumption is excluded by `cargo_get_net_production`).
 #[allow(clippy::too_many_arguments)]
 fn pause_factory(
     state: &mut GameState,
@@ -802,8 +802,8 @@ fn pause_factory(
     *totals = complex_totals(state, team, complex);
 }
 
-/// `OptimizeAuxilaryIndustry` (`production_manager.cpp:776-790`): включённый
-/// `RESEARCH` → `GREENHSE` → `COMMTWR` (шахту не трогает).
+/// `OptimizeAuxilaryIndustry` (`production_manager.cpp:776-790`): an enabled
+/// `RESEARCH` → `GREENHSE` → `COMMTWR` (does not touch the mine).
 fn pick_auxiliary_to_off(state: &GameState, units: &[UnitId]) -> Option<UnitId> {
     for unit_type in CONSUMER_OFF_ORDER {
         if let Some(id) = units.iter().copied().find(|id| {
@@ -818,8 +818,8 @@ fn pick_auxiliary_to_off(state: &GameState, units: &[UnitId]) -> Option<UnitId> 
     None
 }
 
-/// `OptimizeMiningIndustry` (`production_manager.cpp:729-774`): последний
-/// потребитель, которого гасит оптимизатор.
+/// `OptimizeMiningIndustry` (`production_manager.cpp:729-774`): the last
+/// consumer the optimizer turns off.
 fn pick_mine_to_off(state: &GameState, units: &[UnitId]) -> Option<UnitId> {
     units.iter().copied().find(|id| {
         state.unit(*id).is_some_and(|unit| {
@@ -829,13 +829,13 @@ fn pick_mine_to_off(state: &GameState, units: &[UnitId]) -> Option<UnitId> {
 }
 
 // ---------------------------------------------------------------------------
-// Сообщение
+// Message
 // ---------------------------------------------------------------------------
 
 /// `ComposeIndustryMessage`/`ComposeResourceMessage`
 /// (`production_manager.cpp:308-330/465-479`): «Cannot turn X on, Y needed.»,
-/// «More Y needed, X turned off./on.», префикс «Adjustments made:» — только
-/// если первое действие относится **не** к выделенному юниту.
+/// "More Y needed, X turned off./on.", the "Adjustments made:" prefix — only
+/// if the first action concerns a unit **other than** the selected one.
 fn compose_message(
     state: &GameState,
     adjustments: &[Adjustment],
@@ -861,7 +861,7 @@ fn compose_message(
         let name = industry_unit_name(unit_info.unit_type);
         let is_selected = Some(unit) == selected;
 
-        // C++ `PowerOn` пишет строку в буфер напрямую, без префикса
+        // C++ `PowerOn` writes the string to the buffer directly, without the prefix
         // «Adjustments made:» (`production_manager.cpp:341-342`).
         if index == 0 && !is_selected && !cannot_turn_on {
             lines.push("Adjustments made:".to_string());
@@ -950,7 +950,7 @@ mod tests {
             assert_eq!(state.unit(id).unwrap().complex, Some(complex));
         }
 
-        // Спрос 1 (шахта), хватит одного генератора: второй должен выключиться.
+        // Demand 1 (mine), one generator suffices: the second must turn off.
         let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
         assert!(outcome.unresolved == false);
         assert_eq!(
@@ -962,7 +962,7 @@ mod tests {
             "на спрос 1 энергии достаточно одного генератора"
         );
 
-        // Добавили строящийся завод: спрос 2 — включаются оба.
+        // Added a factory under construction: demand 2 — both turn on.
         let plant = spawn(&mut state, UnitType::LightVehiclePlant, Point::new(12, 11));
         assert_eq!(state.unit(plant).unwrap().complex, Some(complex));
         assert_eq!(state.unit(raw).unwrap().complex, Some(complex));

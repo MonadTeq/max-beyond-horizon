@@ -1,35 +1,35 @@
-//! Проходимость, занятость клеток и групповые приказы.
+//! Passability, cell occupancy and group orders.
 //!
-//! Оракул: `max-cpp-port/src/access.cpp` (`Access_IsAccessible`,
+//! Oracle: `max-cpp-port/src/access.cpp` (`Access_IsAccessible`,
 //! `Access_GetModifiedSurfaceType`, `Access_GetAttackTarget`,
 //! `Access_GetAttackTarget2`, `Access_GetTeamUnit`,
 //! `Access_GetActiveUnitWithFlags`, `Access_GetReceiverUnit`,
 //! `Access_CanReceiveUnits`, `Access_GetStoredUnitCount`,
 //! `Access_IsWithinAttackRange`, `Access_GetSquaredDistance`,
 //! `Access_GetApproximateDistance`, `Access_GetValidAttackTargetTypes`,
-//! `Access_IsValidAttackTarget*`, `Access_GetAttackPosition` — последняя живёт в
-//! `units_manager.cpp`, но по смыслу относится к доступу), `Access_SetUnitDestination`,
+//! `Access_IsValidAttackTarget*`, `Access_GetAttackPosition` — the latter lives in
+//! `units_manager.cpp`, but by meaning belongs to access), `Access_SetUnitDestination`,
 //! `Access_TriggerEnemyMine`, `Access_ProcessNewGroupOrder`,
 //! `Access_ProcessGroupAirPath`; `paths.cpp` (`Paths_IsOccupied`); `unitinfo.cpp`
 //! (`UnitInfo::AttemptSideStep`, `UnitInfo::AreTherePins`,
-//! `UnitsManager_IsEngaged`/`IsEngagedByInfiltrator` из `units_manager.cpp`),
-//! `units.cpp` (`SC_UNITS`: флаги и `land_type` 93 типов), DESIGN.md §2.
+//! `UnitsManager_IsEngaged`/`IsEngagedByInfiltrator` from `units_manager.cpp`),
+//! `units.cpp` (`SC_UNITS`: flags and `land_type` of 93 types), DESIGN.md §2.
 //!
-//! # Таблица типов
+//! # Type table
 //!
-//! C++-порт читает флаги и `land_type` юнита из ресурса `SC_UNITS`
-//! (`Units::LoadResource`, `assets/PATCHES.RES`). В `max_core` нет файлового I/O,
-//! поэтому таблица [`UNIT_TYPE_PROPERTIES`] сгенерирована из этого же ресурса и
-//! закоммичена (значения — `UNIT_FLAGS`/`SURFACE_TYPE_*` C++). Порядок строк —
-//! порядок `UnitType` (0x00–0x5C), он же порядок `ResourceID`.
+//! The C++ port reads unit flags and `land_type` from the `SC_UNITS` resource
+//! (`Units::LoadResource`, `assets/PATCHES.RES`). `max_core` has no file I/O,
+//! so the [`UNIT_TYPE_PROPERTIES`] table is generated from the same resource and
+//! committed (values are C++ `UNIT_FLAGS`/`SURFACE_TYPE_*`). Row order —
+//! `UnitType` order (0x00–0x5C), which is also `ResourceID` order.
 //!
-//! # Занятость и группы
+//! # Occupancy and groups
 //!
-//! `GameState` ведёт `MapHash` (`hash.rs`) — точный аналог `Hash_MapHash` C++
-//! (клетка → юниты в порядке вставки; у зданий — 2×2 клетки). Групповые списки
-//! `UnitInfoGroup` C++ моделируются параллельными таблицами `GameState`
-//! (`unit_group`/`groups`): списки не сериализуются в V70, поэтому отдельного
-//! поля в [`crate::unit::UnitInfo`] нет.
+//! `GameState` keeps a `MapHash` (`hash.rs`) — an exact analog of C++ `Hash_MapHash`
+//! (cell → units in insertion order; for buildings — 2×2 cells). C++ `UnitInfoGroup`
+//! group lists are modeled by parallel `GameState` tables
+//! (`unit_group`/`groups`): the lists are not serialized in V70, so there is no
+//! separate field in [`crate::unit::UnitInfo`].
 
 use crate::classification::{Environment, Footprint, UnitTypeClassify};
 use crate::enums::unit_flags::{
@@ -45,7 +45,7 @@ use crate::unit_order;
 use crate::unit_values::{ATTRIB_RANGE, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS};
 
 // ---------------------------------------------------------------------------
-// Константы C++ (access.cpp / enums.hpp)
+// C++ constants (access.cpp / enums.hpp)
 // ---------------------------------------------------------------------------
 
 /// `AccessModifier_NoModifiers`.
@@ -88,10 +88,10 @@ pub const SURFACE_TYPE_AIR: u8 = 0x8;
 pub const SURFACE_TYPE_ALL: u8 = 0x0F;
 
 // ---------------------------------------------------------------------------
-// Таблица свойств типов юнитов (SC_UNITS)
+// Unit-type property table (SC_UNITS)
 // ---------------------------------------------------------------------------
 
-/// Флаги и проходимость типа юнита — поля `Unit` C++ (`units.json`/`SC_UNITS`).
+/// Unit-type flags and passability — C++ `Unit` fields (`units.json`/`SC_UNITS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitTypeProperties {
     /// `Unit::m_flags` (`crate::enums::unit_flags::*`).
@@ -106,8 +106,8 @@ impl UnitTypeProperties {
     }
 }
 
-/// Свойства всех 93 типов — значения из `assets/PATCHES.RES` (`SC_UNITS`),
-/// порядок совпадает с [`UnitType`].
+/// Properties of all 93 types — values from `assets/PATCHES.RES` (`SC_UNITS`),
+/// the order matches [`UnitType`].
 pub const UNIT_TYPE_PROPERTIES: [UnitTypeProperties; 93] = [
     // COMMTWR
     UnitTypeProperties::new(0x0160_4210, 0x1),
@@ -297,37 +297,37 @@ pub const UNIT_TYPE_PROPERTIES: [UnitTypeProperties; 93] = [
     UnitTypeProperties::new(0x0000_0201, 0x1),
 ];
 
-/// Свойства типа юнита (`ResourceManager_GetUnit(type).GetFlags()/GetLandType()`).
+/// Unit-type properties (`ResourceManager_GetUnit(type).GetFlags()/GetLandType()`).
 #[inline]
 pub fn unit_type_properties(unit_type: UnitType) -> UnitTypeProperties {
     UNIT_TYPE_PROPERTIES[unit_type as usize]
 }
 
-/// Флаги типа юнита (`ResourceManager_GetUnit(type).GetFlags()`).
+/// Unit-type flags (`ResourceManager_GetUnit(type).GetFlags()`).
 #[inline]
 pub fn unit_type_flags(unit_type: UnitType) -> u32 {
     unit_type_properties(unit_type).flags
 }
 
-/// Проходимость типа юнита (`ResourceManager_GetUnit(type).GetLandType()`).
+/// Unit-type passability (`ResourceManager_GetUnit(type).GetLandType()`).
 #[inline]
 pub fn unit_type_land_type(unit_type: UnitType) -> u8 {
     unit_type_properties(unit_type).land_type
 }
 
 // ---------------------------------------------------------------------------
-// Поверхность
+// Surface
 // ---------------------------------------------------------------------------
 
-/// `Access_GetSurfaceType` (`access.cpp:936`) — сырая поверхность клетки.
+/// `Access_GetSurfaceType` (`access.cpp:936`) — the raw surface of a cell.
 #[inline]
 pub fn surface_type(state: &GameState, grid: Point) -> u8 {
     state.map.surface_at(grid.x, grid.y).bits()
 }
 
-/// `Access_GetModifiedSurfaceType` (`access.cpp:950`): мост/платформа меняют
-/// поверхность клетки для путей. `mode == true` — точка зрения морского юнита
-/// (мост не скрывает воду), иначе наземного (и мост, и платформа = земля).
+/// `Access_GetModifiedSurfaceType` (`access.cpp:950`): a bridge/platform changes
+/// the cell surface for paths. `mode == true` — from a naval unit's point of view
+/// (a bridge does not hide water), otherwise a ground one (both bridge and platform = land).
 pub fn modified_surface_type(state: &GameState, grid: Point, mode: bool) -> u8 {
     let mut surface = surface_type(state, grid);
 
@@ -354,14 +354,14 @@ pub fn modified_surface_type(state: &GameState, grid: Point, mode: bool) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
-// Доступность клетки
+// Cell accessibility
 // ---------------------------------------------------------------------------
 
-/// `Access_IsAccessible` (`access.cpp:107`) — стоимость входа в клетку
-/// (`0` — непроходима). `unit_type` — тип входящего юнита, `team` — его команда.
+/// `Access_IsAccessible` (`access.cpp:107`) — the cost of entering a cell
+/// (`0` — impassable). `unit_type` — the type of the entering unit, `team` — its team.
 ///
-/// Это точный порт цикла по `Hash_MapHash[Point(grid)]`: порядок юнитов в
-/// клетке — порядок вставки в ведёрко [`crate::hash::MapHash`].
+/// This is an exact port of the loop over `Hash_MapHash[Point(grid)]`: the unit order in
+/// a cell is the insertion order in the [`crate::hash::MapHash`] bucket.
 pub fn is_accessible(
     state: &GameState,
     unit_type: UnitType,
@@ -372,12 +372,12 @@ pub fn is_accessible(
     is_accessible_ignoring(state, unit_type, team, grid, flags, &[])
 }
 
-/// [`is_accessible`] с юнитами, которых **нет** в хэше на время проверки.
+/// [`is_accessible`] with units that are **not** in the hash during the check.
 ///
-/// C++ `UnitsManager_MoveUnitAndParent`/`UnitsManager_IssueBuildOrder` временно
-/// вынимают юнита (и родителя-строителя) из `Hash_MapHash`, иначе собственный
-/// мобильный юнит блокирует 2×2 будущего здания. Здесь тот же приём без
-/// изменения состояния: перечисленные id пропускаются в цикле по клетке.
+/// C++ `UnitsManager_MoveUnitAndParent`/`UnitsManager_IssueBuildOrder` temporarily
+/// remove the unit (and the builder parent) from `Hash_MapHash`, otherwise the unit's own
+/// mobile unit blocks the 2×2 area of the future building. The same technique is used here without
+/// changing state: the listed ids are skipped in the cell loop.
 pub fn is_accessible_ignoring(
     state: &GameState,
     unit_type: UnitType,
@@ -445,7 +445,7 @@ pub fn is_accessible_ignoring(
                         return 0;
                     }
 
-                    // Приземлившийся самолёт (не в полёте) блокирует наземный путь.
+                    // A landed aircraft (not in flight) blocks a ground path.
                     if other.is_air() && other.flags & HOVERING == 0 {
                         return 0;
                     }
@@ -534,7 +534,7 @@ pub fn is_accessible_ignoring(
     result
 }
 
-/// Доступность для конкретного юнита (тип и команда берутся из него).
+/// Accessibility for a concrete unit (type and team are taken from it).
 #[inline]
 pub fn is_accessible_unit(state: &GameState, unit: &UnitInfo, grid: Point, flags: u32) -> u32 {
     is_accessible(state, unit.unit_type, unit.team, grid, flags)
@@ -547,7 +547,7 @@ pub fn is_bridge_elevated(unit: &UnitInfo) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Геометрия и радиус атаки
+// Geometry and attack range
 // ---------------------------------------------------------------------------
 
 /// `Access_GetSquaredDistance` (`access.cpp`).
@@ -558,13 +558,13 @@ pub fn squared_distance(first: Point, second: Point) -> i32 {
     dx * dx + dy * dy
 }
 
-/// `Access_GetTargetClass` (`access.cpp:724`) — класс цели, которым является
-/// сам юнит (не путать с группой атаки `Access_GetAttackTargetGroup`,
+/// `Access_GetTargetClass` (`access.cpp:724`) — the target class that the
+/// unit itself is (not to be confused with the attack group `Access_GetAttackTargetGroup`,
 /// [`crate::game::GameState::attack_target_group`]).
 ///
-/// Нужен `enemy_halt`: `Access_UpdateMapStatus` сравнивает класс обнаруженных
-/// врагов с классом самого юнита (и его группы), чтобы не останавливать
-/// движение из-за цели, которую он всё равно не может атаковать.
+/// Needed by `enemy_halt`: `Access_UpdateMapStatus` compares the class of spotted
+/// enemies with the class of the unit itself (and its group) so as not to stop
+/// movement because of a target it cannot attack anyway.
 pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
     if unit.unit_type == UnitType::Infiltrator || state.is_unit_under_water(unit) {
         for team_index in 0..crate::game::PLAYER_TEAM_COUNT {
@@ -619,8 +619,8 @@ pub fn approximate_distance_points(first: Point, second: Point) -> i32 {
 
 /// `Access_IsWithinAttackRange` (`access.cpp:395`).
 ///
-/// Для подлодок и корветов дополнительно проверяется, что линия огня не
-/// пересекает сушу: C++ идёт по пиксельной линии и смотрит `Access_GetSurfaceType`.
+/// For submarines and corvettes it is additionally checked that the line of fire does not
+/// cross land: C++ walks the pixel line and checks `Access_GetSurfaceType`.
 pub fn is_within_attack_range(state: &GameState, unit: &UnitInfo, grid: Point, range: i32) -> bool {
     let attack_range = (range * 64) * (range * 64);
     let mut distance_x = (i32::from(grid.x) - i32::from(unit.grid.x)) * 64;
@@ -670,7 +670,7 @@ pub fn is_within_attack_range(state: &GameState, unit: &UnitInfo, grid: Point, r
 }
 
 // ---------------------------------------------------------------------------
-// Цели атаки
+// Attack targets
 // ---------------------------------------------------------------------------
 
 /// `Access_GetValidAttackTargetTypes` (`access.cpp:1841`).
@@ -820,8 +820,8 @@ pub fn get_attack_target(
             && is_valid_attack_target_point(state, unit, other, grid)
         {
             if mode {
-                // `mode == true`: SpotByTeam выполняется вызывающим слоем
-                // (C++ делает это здесь; в Rust нужна изменяемая ссылка).
+                // `mode == true`: SpotByTeam is performed by the caller layer
+                // (C++ does it here; Rust needs a mutable reference).
             }
 
             if other.is_visible_to_team(unit.team) {
@@ -844,8 +844,8 @@ pub fn get_attack_target(
     result
 }
 
-/// `Access_GetAttackTarget2` (`access.cpp:2077`) — цель, ещё не видимая
-/// атакующему (обнаружение при выстреле).
+/// `Access_GetAttackTarget2` (`access.cpp:2077`) — a target not yet visible
+/// to the attacker (spotting on fire).
 pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
     if grid.x < 0
         || grid.y < 0
@@ -876,23 +876,23 @@ pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -
     get_team_unit_matching(state, grid, team, |other| other.flags & flags != 0)
 }
 
-/// [`get_team_unit`] с типизированным фильтром сред вместо сырой маски
-/// `MOBILE_*` — тот же `Access_GetTeamUnit` (`access.cpp:1804`).
+/// [`get_team_unit`] with a typed environment filter instead of the raw
+/// `MOBILE_*` mask — the same `Access_GetTeamUnit` (`access.cpp:1804`).
 ///
-/// Юнит подходит, если его среда (классификация экземпляра по `unit.flags`,
-/// [`UnitInfo::environment`]) входит в `environments`. Для флагов из `SC_UNITS`
-/// это бит-в-бит то же, что сырая маска C++: бит `MOBILE_LAND_UNIT` — это
-/// `[Environment::Ground, Environment::Amphibious]` (он включает амфибий),
-/// бит `MOBILE_SEA_UNIT` — `[Environment::Sea, Environment::Amphibious]`, бит
-/// `MOBILE_AIR_UNIT` — `[Environment::Air]`. При этом `[Environment::Ground]`
-/// — **уже** бита: только чистые наземные, без амфибий.
+/// A unit matches if its environment (instance classification by `unit.flags`,
+/// [`UnitInfo::environment`]) is among `environments`. For flags from `SC_UNITS`
+/// this is bit-for-bit the same as the C++ raw mask: the `MOBILE_LAND_UNIT` bit is
+/// `[Environment::Ground, Environment::Amphibious]` (it includes amphibians),
+/// the `MOBILE_SEA_UNIT` bit — `[Environment::Sea, Environment::Amphibious]`, the
+/// `MOBILE_AIR_UNIT` bit — `[Environment::Air]`. At the same time `[Environment::Ground]`
+/// is **narrower** than the bit: pure ground units only, without amphibians.
 ///
-/// Расхождение с сырой маской возможно лишь у вручную собранных
-/// противоречивых флагов (например `MOBILE_AIR_UNIT` вместе с
-/// `MOBILE_LAND_UNIT`): классификация отдаёт приоритет `Air`, а бит
-/// `MOBILE_LAND_UNIT` в C++ сработал бы. В `SC_UNITS` и в runtime таких флагов
-/// нет (`HOVERING` — отдельный бит полёта), поэтому поведение в игре не
-/// меняется.
+/// A divergence from the raw mask is possible only with manually assembled
+/// contradictory flags (for example `MOBILE_AIR_UNIT` together with
+/// `MOBILE_LAND_UNIT`): the classification gives priority to `Air`, while the
+/// `MOBILE_LAND_UNIT` bit would match in C++. In `SC_UNITS` and at runtime such flags
+/// do not occur (`HOVERING` is a separate flight bit), so in-game behavior does not
+/// change.
 pub fn get_team_unit_by_environments(
     state: &GameState,
     grid: Point,
@@ -906,8 +906,8 @@ pub fn get_team_unit_by_environments(
     })
 }
 
-/// Общий обход `Access_GetTeamUnit`: `matches` заменяет проверку
-/// `other.flags & flags != 0`, два прохода и обработка лент — как в C++.
+/// The common `Access_GetTeamUnit` walk: `matches` replaces the
+/// `other.flags & flags != 0` check, two passes and tape handling — as in C++.
 fn get_team_unit_matching(
     state: &GameState,
     grid: Point,
@@ -1004,7 +1004,7 @@ pub fn get_enemy_mine_on_sentry(state: &GameState, team: TeamId, grid: Point) ->
     None
 }
 
-/// `Access_TriggerEnemyMine` (`access.cpp:2068`): обнаруженная мина взрывается.
+/// `Access_TriggerEnemyMine` (`access.cpp:2068`): a detected mine explodes.
 pub fn trigger_enemy_mine(state: &mut GameState, team: TeamId, grid: Point) {
     let Some(mine) = get_enemy_mine_on_sentry(state, team, grid) else {
         return;
@@ -1021,7 +1021,7 @@ pub fn trigger_enemy_mine(state: &mut GameState, team: TeamId, grid: Point) {
 }
 
 // ---------------------------------------------------------------------------
-// Приём юнитов (транспорт/здания)
+// Unit boarding (transport/buildings)
 // ---------------------------------------------------------------------------
 
 /// `Access_CanReceiveUnits` (`access.cpp:2150`).
@@ -1104,7 +1104,7 @@ pub fn get_stored_unit_count(state: &GameState, receiver: &UnitInfo) -> i32 {
 // Engaged / pins / stealth
 // ---------------------------------------------------------------------------
 
-/// `UnitInfo::AreTherePins` (`unitinfo.cpp`): цель держится живой атакой.
+/// `UnitInfo::AreTherePins` (`unitinfo.cpp`): the target is pinned by a live attack.
 #[inline]
 pub fn are_there_pins(unit: &UnitInfo) -> bool {
     unit.pin_count > 0
@@ -1124,8 +1124,8 @@ pub fn is_stealth_action_in_progress(unit: &UnitInfo) -> bool {
                     || prior_order == UnitOrder::AwaitDisableUnit)))
 }
 
-/// `UnitsManager_IsEngagedByInfiltrator` (`units_manager.cpp:1408`): диверсант
-/// держит цель с момента приказа до разрешения действия.
+/// `UnitsManager_IsEngagedByInfiltrator` (`units_manager.cpp:1408`): a saboteur
+/// holds the target from the order until the action resolves.
 pub fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileLandSea) {
         let Some(other) = state.unit(*id) else {
@@ -1149,14 +1149,14 @@ pub fn is_engaged(state: &GameState, unit: &UnitInfo) -> bool {
 /// `UnitsManager_GetAttackPosition` (`units_manager.cpp:4847`).
 pub fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> Point {
     if target.unit_type == UnitType::Constructor && target.orders == UnitOrder::Build {
-        // `Access_GetConstructionUtility` — P5-упрощение: сама стройплощадка.
+        // `Access_GetConstructionUtility` — a P5 simplification: the build site itself.
     }
 
     let mut position = target.grid;
 
-    // 2×2-цель: атакующему нужно встать не в её центр, а за габарит (сдвиг
-    // +1 по осям, где он правее/ниже). Турель (1×1) сюда не попадает —
-    // это лайаут (`is_quad()`), а не «здание» (`is_building()`).
+    // A 2×2 target: the attacker must stand not at its center but past the footprint (offset
+    // +1 along axes where it is to the right/below). A turret (1×1) does not fall here —
+    // this is layout (`is_quad()`), not "building" (`is_building()`).
     if target.is_quad() {
         if attacker.grid.x > position.x {
             position.x += 1;
@@ -1183,9 +1183,9 @@ pub fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &Unit
     position
 }
 
-/// `Paths_IsOccupied` (`paths.cpp:439`): скрытный юнит (подлодка/диверсант/
-/// транспорт) в клетке пути пытается отойти в сторону; иначе он раскрывается и
-/// блокирует движение. Возвращает `true`, если клетка считается занятой.
+/// `Paths_IsOccupied` (`paths.cpp:439`): a stealthy unit (submarine/saboteur/
+/// transport) on a path cell tries to step aside; otherwise it is revealed and
+/// blocks movement. Returns `true` if the cell is considered occupied.
 pub fn paths_is_occupied(state: &mut GameState, grid: Point, angle: i32, team: TeamId) -> bool {
     let Some(ids) = state.units_at_opt(grid).map(|units| units.to_vec()) else {
         return false;
@@ -1211,10 +1211,10 @@ pub fn paths_is_occupied(state: &mut GameState, grid: Point, angle: i32, team: T
     false
 }
 
-/// `UnitInfo::AttemptSideStep` (`unitinfo.cpp:3243`) — сокращённый порт:
-/// проверяются состояния/engagement/скорость, затем выбирается соседняя
-/// клетка по тому же правилу (максимальный угол к направлению движения,
-/// минимальная стоимость; для `CLNTRANS` приоритет — вода).
+/// `UnitInfo::AttemptSideStep` (`unitinfo.cpp:3243`) — an abridged port:
+/// states/engagement/speed are checked, then a neighboring cell is chosen
+/// by the same rule (maximum angle to the movement direction,
+/// minimum cost; for `CLNTRANS` water has priority).
 fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
@@ -1235,9 +1235,9 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
     }
 
     if unit.grid != grid {
-        // C++ проверяет целевую клетку, временно сняв юнита с `Hash_MapHash`, и
-        // при успехе лишь останавливает его (`BlockedOnPathRequest(true)`):
-        // фактическое смещение выполняет его собственный приказ.
+        // C++ checks the destination cell, having temporarily removed the unit from `Hash_MapHash`, and
+        // on success only stops it (`BlockedOnPathRequest(true)`):
+        // the actual sidestep is performed by its own order.
         let flags = unit.flags;
         state.map_hash_remove(id, unit.grid, flags);
         let cost = is_accessible_unit(state, &unit, grid, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
@@ -1354,8 +1354,8 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
 
 /// `Access_SetUnitDestination` (`access.cpp:67`).
 ///
-/// Возвращает `true`, если клетка «уступит» (юнит уедет или есть мост), и
-/// `false`, если путь надо искать заново.
+/// Returns `true` if the cell "yields" (the unit will move away or there is a bridge), and
+/// `false` if the path must be found anew.
 pub fn set_unit_destination(
     state: &mut GameState,
     _unit: &UnitInfo,
@@ -1407,7 +1407,7 @@ pub fn set_unit_destination(
     false
 }
 
-/// `GroundPath::IsInPath` (`groundpath.cpp:146`) для относительной цели.
+/// `GroundPath::IsInPath` (`groundpath.cpp:146`) for a relative target.
 fn path_is_in_path(unit: &UnitInfo, grid: Point) -> bool {
     let Some(crate::unit::UnitPath::Ground(path)) = unit.path.as_ref() else {
         return false;
@@ -1424,10 +1424,10 @@ fn path_is_in_path(unit: &UnitInfo, grid: Point) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Групповые приказы (`UnitInfoGroup`)
+// Group orders (`UnitInfoGroup`)
 // ---------------------------------------------------------------------------
 
-/// `Access_ProcessGroupAirPath` (`access.cpp`): воздушный путь члена группы.
+/// `Access_ProcessGroupAirPath` (`access.cpp`): the air path of a group member.
 pub fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
@@ -1449,9 +1449,9 @@ pub fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
 
 /// `Access_ProcessNewGroupOrder` (`access.cpp:2321`).
 ///
-/// В C++ группа — `SmartList<UnitInfo>`; здесь — `GameState::groups`.
-/// Возвращает `false`, если путь ещё строится (лидер остаётся в
-/// `PendingAirGroupLeader`), `true` — если групповой приказ разрешён.
+/// In C++ a group is a `SmartList<UnitInfo>`; here — `GameState::groups`.
+/// Returns `false` if the path is still being built (the leader stays in
+/// `PendingAirGroupLeader`), `true` if the group order is allowed.
 pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
     let Some(group) = state.group_members(leader) else {
         return false;
@@ -1489,8 +1489,8 @@ pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
     true
 }
 
-/// Приписать юнитов группе с лидером `leader` (`AllocateUnitList` +
-/// `AssignUnitList`). Возвращает номер группы.
+/// Assign units to the group led by `leader` (`AllocateUnitList` +
+/// `AssignUnitList`). Returns the group number.
 pub fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitId]) -> u32 {
     clear_unit_group(state, leader);
     let group_id = state.create_group_with_leader(leader);
@@ -1500,13 +1500,13 @@ pub fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitI
     group_id
 }
 
-/// `UnitInfo::ClearUnitList` — снять юнита с группового списка.
+/// `UnitInfo::ClearUnitList` — remove a unit from a group list.
 pub fn clear_unit_group(state: &mut GameState, id: UnitId) {
     state.clear_group_member(id);
 }
 
-/// `Access_GroupAttackOrder` (`access.cpp`): групповой приказ атаки. В C++
-/// обходит список группы; здесь — только маршруты членов (без `Ai_*`).
+/// `Access_GroupAttackOrder` (`access.cpp`): a group attack order. In C++
+/// it walks the group list; here — only member routes (without `Ai_*`).
 pub fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
     let Some(group) = state.group_members(leader) else {
         return;
@@ -1527,17 +1527,17 @@ pub fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
     }
 }
 
-/// Группа юнита (копия списка).
+/// The unit's group (a copy of the list).
 #[inline]
 pub fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<UnitId>> {
     state.group_members(id)
 }
 
 // ---------------------------------------------------------------------------
-// Вспомогательные величины C++ (`Access_*`)
+// C++ helper values (`Access_*`)
 // ---------------------------------------------------------------------------
 
-/// `Access_IsTeamInUnitLists` (`access.cpp`) — есть ли у команды юнит в списках.
+/// `Access_IsTeamInUnitLists` (`access.cpp`) — whether the team has a unit in the lists.
 pub fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
     for kind in crate::unit::UnitListKind::ALL {
         for id in state.unit_list(kind) {
@@ -1551,13 +1551,13 @@ pub fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
     false
 }
 
-/// `Access_GetUnit2`-подобный поиск: первый живой юнит клетки.
+/// An `Access_GetUnit2`-like search: the first live unit on the cell.
 #[inline]
 pub fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
     state.units_at(grid).first().copied()
 }
 
-/// `Access_IsAnyLandPresent` (`access.cpp:1030`) — есть ли земля в 2×2.
+/// `Access_IsAnyLandPresent` (`access.cpp:1030`) — whether there is land in the 2×2 area.
 pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
@@ -1586,8 +1586,8 @@ pub fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool
     }
 }
 
-/// `UnitInfo::GetAttackRange` (`unitinfo.cpp:3888`) — максимальная дистанция
-/// атаки с учётом оставшегося хода.
+/// `UnitInfo::GetAttackRange` (`unitinfo.cpp:3888`) — the maximum attack
+/// distance given the remaining movement.
 pub fn get_attack_range(unit: &UnitInfo) -> i32 {
     let rounds = unit
         .base_values
@@ -1609,8 +1609,8 @@ pub fn get_attack_range(unit: &UnitInfo) -> i32 {
     }
 }
 
-/// `UnitsManager_IsAccessible` (`units_manager.cpp:4987`): площадка 2×2 для
-/// здания (все четыре клетки проходимы для его типа).
+/// `UnitsManager_IsAccessible` (`units_manager.cpp:4987`): the 2×2 site for
+/// a building (all four cells are passable for its type).
 pub fn is_accessible_for_building(
     state: &GameState,
     unit_type: UnitType,
@@ -1655,8 +1655,8 @@ pub fn is_accessible_for_building(
         ) != 0
 }
 
-/// `Access_IsWithinMovementRange` (`access.cpp`): хватит ли оставшейся скорости
-/// на текущий путь.
+/// `Access_IsWithinMovementRange` (`access.cpp`): whether the remaining speed is enough
+/// for the current path.
 pub fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
     if unit.speed == 0 {
         return false;
@@ -1686,7 +1686,7 @@ pub fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
     }
 }
 
-/// `Access_GetRepairShopClientCount` (`access.cpp:1300`) — для P3-ремонта.
+/// `Access_GetRepairShopClientCount` (`access.cpp:1300`) — for P3 repair.
 pub fn get_repair_shop_client_count(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     use crate::enums::unit_flags::ELECTRONIC_UNIT;
     let (list, flags) = match unit_type {
@@ -1720,22 +1720,22 @@ pub fn get_repair_shop_client_count(state: &GameState, team: TeamId, unit_type: 
     result
 }
 
-/// `Task_IsAdjacent`-подобная проверка для стелс-действий: цель в клетке
-/// по соседству (включая диагонали).
+/// A `Task_IsAdjacent`-like check for stealth actions: the target is on a cell
+/// next to the unit (diagonals included).
 pub fn is_adjacent_to_grid(unit: &UnitInfo, grid: Point) -> bool {
     let dx = (i32::from(unit.grid.x) - i32::from(grid.x)).abs();
     let dy = (i32::from(unit.grid.y) - i32::from(grid.y)).abs();
     dx <= 1 && dy <= 1 && (dx != 0 || dy != 0)
 }
 
-/// Значение атрибута `storage` цели (`ComputeUnitStorage`): используется
-/// `AttemptStealthAction` для проверки заполненности транспорта.
+/// The target's `storage` attribute value (`ComputeUnitStorage`): used by
+/// `AttemptStealthAction` to check whether the transport is full.
 pub fn is_transporter_full(unit: &UnitInfo) -> bool {
     i32::from(unit.storage) >= unit.base_values.get_attribute(ATTRIB_STORAGE)
 }
 
-/// `Access_DestroyUtilities` (`access.cpp`): снимает с клетки утилиты —
-/// ленты/конусы всегда, дорогу/плиты/обломки/коннекторы — по флагам.
+/// `Access_DestroyUtilities` (`access.cpp`): removes utilities from a cell —
+/// tapes/cones always, road/slabs/rubble/connectors — by flags.
 pub fn destroy_utilities(
     state: &mut GameState,
     grid: Point,
@@ -1755,7 +1755,7 @@ pub fn destroy_utilities(
             | UnitType::LargeCones => true,
             UnitType::Road => remove_road,
             UnitType::SmallSlab | UnitType::LargeSlab => remove_slabs,
-            // `UnitsManager_RemoveConnections` — P3-логика комплексов.
+            // `UnitsManager_RemoveConnections` — P3 complex logic.
             UnitType::Connector => remove_connectors,
             UnitType::SmallRubble | UnitType::LargeRubble => remove_rubble,
             _ => false,
@@ -1768,23 +1768,23 @@ pub fn destroy_utilities(
 }
 
 /// `UnitsManager_BuildClearing(unit, mode)` (`units_manager.cpp:3646-3805`) —
-/// уничтожение юнита с оставлением обломков.
+/// destroying a unit while leaving rubble.
 ///
 /// C++:
-/// 1. `rubble_type = LRGRUBLE` для `BUILDING`, иначе `SMLRUBLE`, но только если
-///    `mode` (юнит уничтожен, а не убран), тип не `COMMANDO`/`INFANTRY`, нет
-///    флагов `CONNECTOR_UNIT`/`HOVERING` и клетка **полностью на суше**
+/// 1. `rubble_type = LRGRUBLE` for `BUILDING`, otherwise `SMLRUBLE`, but only if
+///    `mode` (the unit was destroyed, not removed), the type is not `COMMANDO`/`INFANTRY`, there are no
+///    `CONNECTOR_UNIT`/`HOVERING` flags and the cell is **entirely on land**
 ///    (`Access_IsFullyLandCovered`, `access.cpp:1049`);
-/// 2. `cargo_amount = GetNormalRateBuildCost() / 2` (+ `storage` для сырья);
-/// 3. `Access_DestroyGroundCovers(unit)` — дорога/площадка под обломком;
+/// 2. `cargo_amount = GetNormalRateBuildCost() / 2` (+ `storage` for raw materials);
+/// 3. `Access_DestroyGroundCovers(unit)` — road/site under the rubble;
 /// 4. `UnitsManager_DestroyUnit(unit, mode)`;
-/// 5. для зданий — `Access_DestroyUtilities(grid, true, …, false, false)`;
+/// 5. for buildings — `Access_DestroyUtilities(grid, true, …, false, false)`;
 /// 6. `UnitsManager_DeployUnit(rubble_type, team, …, Randomizer_Generate(image_count))`
-///    и `rubble->storage = cargo_amount`.
+///    and `rubble->storage = cargo_amount`.
 ///
-/// Мины обломков не оставляют (`rubble_type = INVALID_ID`, `units_manager.cpp:3720`).
+/// Mines leave no rubble (`rubble_type = INVALID_ID`, `units_manager.cpp:3720`).
 ///
-/// Возвращает id созданного обломка (для тестов/лога).
+/// Returns the id of the created rubble (for tests/log).
 pub fn build_clearing(
     state: &mut GameState,
     unit_id: crate::unit::UnitId,
@@ -1818,7 +1818,7 @@ pub fn build_clearing(
         }
     }
 
-    // `Access_DestroyGroundCovers(unit)` — наземные/стационарные (не HOVERING).
+    // `Access_DestroyGroundCovers(unit)` — ground/stationary (not HOVERING).
     if (unit.is_air() || unit.is_ground() || unit.is_amphibious() || !unit.is_mobile())
         && flags & crate::enums::unit_flags::HOVERING == 0
     {
@@ -1830,8 +1830,8 @@ pub fn build_clearing(
     state.destroy_unit(unit_id);
 
     // `Access_DestroyUtilities(unit_grid, true, !skip_rubble_removal, false, false)`
-    // — плиты/ленты под зданием и недостроенной стройкой. `STANDALONE` — 1×1
-    // структуры со своей площадкой, поэтому условие не сводится к футпринту.
+    // — slabs/tapes under a building and an unfinished construction. `STANDALONE` — 1×1
+    // structures with their own site, so the condition does not reduce to the footprint.
     if unit.is_quad()
         || flags & crate::enums::unit_flags::STANDALONE != 0
         || unit.orders == UnitOrder::Build
@@ -1854,8 +1854,8 @@ pub fn build_clearing(
     Some(rubble)
 }
 
-/// `Access_DestroyGroundCovers` (`access.cpp`): убирает дорогу/площадку/
-/// платформу/мост под юнитом (здание занимает 2×2).
+/// `Access_DestroyGroundCovers` (`access.cpp`): removes the road/site/
+/// platform/bridge under the unit (a building occupies 2×2).
 pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
     let footprint = unit.footprint();
     let positions = if footprint.is_quad() {
@@ -1891,11 +1891,11 @@ pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
     }
 }
 
-/// `UnitsManager_IsUnloadSiteTaken` (`units_manager.cpp:4074`) — занято ли
-/// место высадки другим воздушным транспортом.
+/// `UnitsManager_IsUnloadSiteTaken` (`units_manager.cpp:4074`) — whether the
+/// unload site is taken by another air transport.
 ///
-/// Портировано полностью: обход `UnitsManager_MobileAirUnits` в порядке
-/// вставки.
+/// Ported fully: a walk over `UnitsManager_MobileAirUnits` in
+/// insertion order.
 pub fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileAir) {
         let Some(other) = state.unit(*id) else {
@@ -1917,7 +1917,7 @@ pub fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
     false
 }
 
-/// Число ходов, на которое диверсант отключает цель
+/// Number of turns for which the saboteur disables the target
 /// (`UnitsManager_DisableUnit`, `units_manager.cpp:4395`).
 pub fn disable_turns(infiltrator: &UnitInfo, target: &UnitInfo) -> i32 {
     let target_speed = target.base_values.get_attribute(ATTRIB_SPEED);
@@ -1926,7 +1926,7 @@ pub fn disable_turns(infiltrator: &UnitInfo, target: &UnitInfo) -> i32 {
     let mut turns;
 
     if target_turns == 0 {
-        // C++ делит на `ATTRIB_TURNS` (риск 15); у игровых типов 0 недостижим.
+        // C++ divides by `ATTRIB_TURNS` (risk 15); 0 is unreachable for game types.
         return 1;
     }
 
@@ -2001,13 +2001,13 @@ mod tests {
         let mut state = state();
         let same = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 
-        // Земля: наземный юнит проходит.
+        // Land: a ground unit passes.
         assert_eq!(
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(5, 5), same),
             4
         );
 
-        // Вода: танк — нет, surveyor (LAND|WATER|COAST) — да.
+        // Water: a tank — no, the surveyor (LAND|WATER|COAST) — yes.
         state.map.surface.set(6, 5, Surface::WATER);
         assert_eq!(
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(6, 5), same),
@@ -2023,7 +2023,7 @@ mod tests {
             ),
             4
         );
-        // Воздушный юнит (land_type = ALL) проходит над водой.
+        // An air unit (land_type = ALL) passes over water.
         assert_eq!(
             is_accessible(
                 &state,
@@ -2034,7 +2034,7 @@ mod tests {
             ),
             4
         );
-        // Корабль на земле — нет, амфибия CLNTRANS (0x7) — да.
+        // A ship on land — no, the CLNTRANS amphibian (0x7) — yes.
         assert_eq!(
             is_accessible(
                 &state,
@@ -2056,7 +2056,7 @@ mod tests {
             4
         );
 
-        // Вне карты — 0.
+        // Off the map — 0.
         assert_eq!(
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(-1, 0), same),
             0
@@ -2078,7 +2078,7 @@ mod tests {
         let mut state = state();
         let same = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 
-        // Плита: проезд по ней дешевле (2).
+        // Slab: driving over it is cheaper (2).
         spawn(
             &mut state,
             UnitType::SmallSlab,
@@ -2090,7 +2090,7 @@ mod tests {
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(7, 5), same),
             2
         );
-        // Дорога: колёсному ходу дешевле, второй дороге — нельзя.
+        // Road: cheaper for wheeled movement, a second road is not allowed.
         spawn(
             &mut state,
             UnitType::Road,
@@ -2107,7 +2107,7 @@ mod tests {
             0
         );
 
-        // Обнаруженная мина врага блокирует клетку.
+        // A detected enemy mine blocks the cell.
         let mine = spawn(
             &mut state,
             UnitType::LandMine,
@@ -2123,7 +2123,7 @@ mod tests {
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(9, 5), same),
             0
         );
-        // Своя мина не блокирует.
+        // An own mine does not block.
         assert_ne!(
             is_accessible(
                 &state,
@@ -2149,7 +2149,7 @@ mod tests {
             STATIONARY | GROUND_COVER,
         );
 
-        // Наземный: по мосту (2), поверхность — земля.
+        // Ground: across the bridge (2), the surface is land.
         assert_eq!(
             is_accessible(&state, UnitType::Tank, TeamId::RED, Point::new(10, 5), same),
             2
@@ -2158,7 +2158,7 @@ mod tests {
             modified_surface_type(&state, Point::new(10, 5), false),
             SURFACE_TYPE_LAND
         );
-        // Морской: мост — вода, стоимость 4.
+        // Naval: the bridge is water, cost 4.
         assert_eq!(
             is_accessible(
                 &state,
@@ -2196,7 +2196,7 @@ mod tests {
         unit.orders = UnitOrder::Await;
         state.write_unit(tank, unit);
 
-        // Диверсант, «держащий» цель, тоже блокирует её.
+        // A saboteur "holding" the target blocks it too.
         let commando = spawn(
             &mut state,
             UnitType::Infiltrator,
@@ -2245,7 +2245,7 @@ mod tests {
         );
         assert!(can_receive_units(state.unit(barracks).unwrap()));
 
-        // Танк в казарму не входит.
+        // A tank does not enter the barracks.
         let tank = state
             .spawn_unit(
                 UnitType::Tank,
@@ -2278,7 +2278,7 @@ mod tests {
             Point::new(5, 6),
             MOBILE_LAND_UNIT | SELECTABLE,
         );
-        // Цель видна атакующему (в игре — после сканирования/разведки).
+        // The target is visible to the attacker (in game — after scanning/reconnaissance).
         state.update_visibility_status(false);
         {
             let unit = state.unit_mut(defender).unwrap();
@@ -2291,14 +2291,14 @@ mod tests {
             Some(defender)
         );
 
-        // IDLE-юнит не является целью.
+        // An IDLE unit is not a target.
         state.unit_mut(defender).unwrap().orders = UnitOrder::Idle;
         assert_eq!(
             get_attack_target(&state, &attacker_unit, Point::new(5, 6), false),
             None
         );
 
-        // Пустая/внекартная клетка.
+        // An empty/off-map cell.
         assert_eq!(
             get_attack_target(&state, &attacker_unit, Point::new(9, 9), false),
             None
@@ -2339,8 +2339,8 @@ mod tests {
     fn team_unit_by_environments_is_bit_equivalent_to_raw_mobile_masks() {
         let mut state = state();
 
-        // По юниту на каждую среду `SC_UNITS`; `spawn_unit` добавляет флаги
-        // типа, поэтому биты среды у экземпляров на месте.
+        // One unit per `SC_UNITS` environment; `spawn_unit` adds the type's
+        // flags, so the environment bits of the instances are present.
         let ground = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5), 0);
         let amphibious = spawn(
             &mut state,
@@ -2364,7 +2364,7 @@ mod tests {
             0,
         );
 
-        // `Access_GetTeamUnit` пропускает `ORDER_IDLE`.
+        // `Access_GetTeamUnit` skips `ORDER_IDLE`.
         for id in [ground, amphibious, air, sea] {
             state.unit_mut(id).expect("unit").orders = UnitOrder::Await;
         }
@@ -2377,8 +2377,8 @@ mod tests {
             Point::new(9, 5),
         ];
 
-        // Каждый типизированный фильтр по всему биту — ровно свой сырой бит
-        // C++ (`SC_UNITS`-флаги согласованы: без `MOBILE_AIR` вместе с
+        // Each typed filter over the whole bit band is exactly its raw
+        // C++ bit (`SC_UNITS` flags are consistent: without `MOBILE_AIR` together with
         // `MOBILE_LAND/SEA`).
         for (environments, mask) in [
             (
@@ -2407,8 +2407,8 @@ mod tests {
             get_team_unit_by_environments(&state, grid, TeamId::RED, environments)
         };
 
-        // Бит `MOBILE_LAND_UNIT` включает амфибий, а `Environment::Ground` —
-        // только чистые наземные.
+        // The `MOBILE_LAND_UNIT` bit includes amphibians, while `Environment::Ground` —
+        // only pure ground units.
         assert_eq!(
             found(Point::new(5, 5), &[Environment::Ground]),
             Some(ground)
@@ -2423,7 +2423,7 @@ mod tests {
             Some(amphibious)
         );
 
-        // Воздух и море — свои биты без расширения.
+        // Air and sea have their own bits without expansion.
         assert_eq!(found(Point::new(7, 5), &[Environment::Air]), Some(air));
         assert_eq!(found(Point::new(8, 5), &[Environment::Sea]), Some(sea));
         assert_eq!(found(Point::new(8, 5), &[Environment::Air]), None);

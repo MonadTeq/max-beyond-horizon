@@ -1,45 +1,45 @@
-//! Перенос груза: `TransferMenu` и `UnitInfo::ProcessTransfer`/`TransferRaw`.
+//! Cargo transfer: `TransferMenu` and `UnitInfo::ProcessTransfer`/`TransferRaw`.
 //!
-//! Оракул: `max-cpp-port/src/transfermenu.cpp`,
+//! Oracle: `max-cpp-port/src/transfermenu.cpp`,
 //! `max-cpp-port/src/unitinfo.cpp` (`TransferRaw`/`TransferFuel`/`TransferGold`,
 //! `ProcessTransfer`), `max-cpp-port/src/complex.cpp`
 //! (`Complex::Transfer`/`TransferCargo`/`GetCargoInfo`),
 //! `max-cpp-port/src/game_manager.cpp` (`GameManager_TransferCargo`,
 //! `GameManager_GetUnitWithCargoType`).
 //!
-//! # Модель
+//! # Model
 //!
-//! Комплекс — `(TeamId, ComplexId)`; его запас лежит в
-//! `Complex::{raw,fuel,gold}` и одновременно в `storage` зданий-членов
-//! (см. [`crate::alloc::get_cargo_info`]). Перенос поэтому всегда делает две
-//! вещи, как C++: меняет запас здания (`unit.storage`) и поле комплекса.
+//! A complex is `(TeamId, ComplexId)`; its stock lives in
+//! `Complex::{raw,fuel,gold}` and at the same time in the `storage` of member buildings
+//! (see [`crate::alloc::get_cargo_info`]). A transfer therefore always does two
+//! things, as in C++: changes the building's stock (`unit.storage`) and the complex field.
 //!
-//! * [`find_unit_with_cargo_type`] — `GameManager_GetUnitWithCargoType`: при
-//!   клике по любому стационарному зданию комплекса C++ заменяет цель на
-//!   здание с подходящим типом груза.
-//! * [`transfer_cargo`] — `Complex::TransferCargo`: залить/забрать до
-//!   `amount` единиц в `storage` одного здания (лимит `ATTRIB_STORAGE`).
-//! * [`complex_transfer`] — `Complex::Transfer`: изменить поля комплекса и
-//!   разложить изменение по зданиям-членам **в порядке
-//!   `UnitsManager_StationaryUnits`** (детерминизм: порядок списка — часть
-//!   состояния).
+//! * [`find_unit_with_cargo_type`] — `GameManager_GetUnitWithCargoType`: when
+//!   any stationary complex building is clicked, C++ replaces the target with
+//!   a building of the matching cargo type.
+//! * [`transfer_cargo`] — `Complex::TransferCargo`: pour in/take out up to
+//!   `amount` units to/from one building's `storage` (limit `ATTRIB_STORAGE`).
+//! * [`complex_transfer`] — `Complex::Transfer`: change the complex fields and
+//!   distribute the change over member buildings **in
+//!   `UnitsManager_StationaryUnits` order** (determinism: the list order is part of
+//!   the state).
 //! * [`transfer_cargo_kind`] — `UnitInfo::TransferRaw`/`TransferFuel`/
-//!   `TransferGold`: `storage += amount`, запас комплекса, а излишек сверх
-//!   `ATTRIB_STORAGE` уходит назад в комплекс через `Complex::Transfer`.
+//!   `TransferGold`: `storage += amount`, the complex stock, and the excess over
+//!   `ATTRIB_STORAGE` goes back to the complex via `Complex::Transfer`.
 //! * [`process_transfer`] — `UnitInfo::ProcessTransfer` (`ORDER_TRANSFER`):
-//!   знак `transfer_cargo` задаёт направление (плюс — из юнита в родителя,
-//!   минус — из родителя в юнит), затем `RestoreOrders`.
+//!   the sign of `transfer_cargo` sets the direction (plus — from the unit to the parent,
+//!   minus — from the parent to the unit), then `RestoreOrders`.
 //!
-//! # Переполнение
+//! # Overflow
 //!
-//! Ёмкость склада здания — `ATTRIB_STORAGE` (`ADUMP`/`FDUMP`/`GOLDSM` = 50,
-//! `MININGST` = 25, `CONSTRCT` = 60, `FUELTRCK`/`GOLDTRIK` = 50, …). Когда
-//! `UnitInfo::UpdateProduction` (см. [`crate::game::GameState::update_production`])
-//! переносит запас комплекса в здания, каждое берёт
-//! `min(complex.raw, ATTRIB_STORAGE)`; остаток остаётся в поле комплекса и
-//! на следующем ходу `Access_UpdateResourcesTotal` пересчитывает его из
-//! инвентаря зданий — то есть **излишек за ёмкость складов теряется**, как в
-//! C++ (в `Complex` поля — только кэш на текущий ход).
+//! A building's storage capacity is `ATTRIB_STORAGE` (`ADUMP`/`FDUMP`/`GOLDSM` = 50,
+//! `MININGST` = 25, `CONSTRCT` = 60, `FUELTRCK`/`GOLDTRIK` = 50, …). When
+//! `UnitInfo::UpdateProduction` (see [`crate::game::GameState::update_production`])
+//! moves the complex stock into buildings, each takes
+//! `min(complex.raw, ATTRIB_STORAGE)`; the remainder stays in the complex field and
+//! on the next turn `Access_UpdateResourcesTotal` recomputes it from
+//! the buildings' inventory — i.e. **the excess beyond storage capacity is lost**, as in
+//! C++ (the `Complex` fields are only a cache for the current turn).
 
 use crate::alloc::{get_cargo_info, get_cargo_mining};
 use crate::game::GameState;
@@ -48,12 +48,12 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind};
 use crate::unit_values::ATTRIB_STORAGE;
 use crate::victory::{cargo_type_of, CargoType};
 
-/// `GameManager_GetUnitWithCargoType` (`game_manager.cpp:5964`): первое
-/// стационарное здание комплекса с типом груза `cargo_type`.
+/// `GameManager_GetUnitWithCargoType` (`game_manager.cpp:5964`): the first
+/// stationary complex building with cargo type `cargo_type`.
 ///
-/// Порядок — `UnitsManager_StationaryUnits` (`UnitListKind::Stationary`), как
-/// в C++; команда не проверяется, потому что `ComplexId` уникален только
-/// внутри команды и вызывающий передаёт комплекс уже найденного здания.
+/// The order is `UnitsManager_StationaryUnits` (`UnitListKind::Stationary`), as
+/// in C++; the team is not checked because `ComplexId` is unique only
+/// within a team and the caller passes the complex of an already found building.
 pub fn find_unit_with_cargo_type(
     state: &GameState,
     team: TeamId,
@@ -75,9 +75,9 @@ pub fn find_unit_with_cargo_type(
 
 /// `Complex::TransferCargo(unit, &cargo)` (`complex.cpp:149`).
 ///
-/// `amount` — входной/выходной параметр: сколько удалось перенести. При
-/// `amount >= 0` здание наполняется до `ATTRIB_STORAGE`; при отрицательном —
-/// отдаёт из своего `storage`, пока он не кончится.
+/// `amount` is an in/out parameter: how much was transferred. With
+/// `amount >= 0` the building is filled up to `ATTRIB_STORAGE`; with a negative one it
+/// gives from its `storage` until it runs out.
 pub fn transfer_cargo(
     state: &mut GameState,
     unit_id: UnitId,
@@ -114,13 +114,13 @@ pub fn transfer_cargo(
     }
 
     if let Some(unit) = state.unit_mut(unit_id) {
-        // C++ `int16_t`-поле: присваивание усекает (значения малы, но
-        // поведение сохранено).
+        // C++ `int16_t` field: assignment truncates (the values are small, but
+        // the behavior is preserved).
         unit.storage = new_storage as i16;
     }
 }
 
-/// Поле комплекса, которое меняет ресурс (`Complex::{raw,fuel,gold}`).
+/// The complex field changed by a resource (`Complex::{raw,fuel,gold}`).
 fn complex_field(state: &mut GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> Option<&mut i16> {
     let target = state.complex_mut(team, complex.0 as u16)?;
 
@@ -134,9 +134,9 @@ fn complex_field(state: &mut GameState, team: TeamId, complex: ComplexId, cargo:
 
 /// `Complex::Transfer(raw, fuel, gold)` (`complex.cpp:178`).
 ///
-/// Сначала меняются поля комплекса, затем **в порядке стационарного списка**
-/// каждому зданию-члену с подходящим типом груза достаётся/списывается доля
-/// (`Complex::TransferCargo`). Так же раскладывается излишек `TransferRaw`.
+/// First the complex fields change, then **in stationary-list order**
+/// each member building with the matching cargo type receives/is charged a share
+/// (`Complex::TransferCargo`). The `TransferRaw` excess is distributed the same way.
 pub fn complex_transfer(
     state: &mut GameState,
     team: TeamId,
@@ -178,8 +178,8 @@ pub fn complex_transfer(
 /// `UnitInfo::TransferRaw` / `TransferFuel` / `TransferGold`
 /// (`unitinfo.cpp:990/1056/1124`).
 ///
-/// Публичная обёртка: `cargo` должен совпадать с типом груза юнита, иначе
-/// ничего не происходит (как `if (GetCargoType() == ...)` в C++).
+/// Public wrapper: `cargo` must match the unit's cargo type, otherwise
+/// nothing happens (like `if (GetCargoType() == ...)` in C++).
 pub fn transfer_cargo_kind(
     state: &mut GameState,
     unit_id: UnitId,
@@ -245,17 +245,17 @@ fn unit_storage(state: &GameState, unit_id: UnitId) -> i16 {
     state.unit(unit_id).map_or(0, |unit| unit.storage)
 }
 
-/// `UnitInfo::ProcessTransfer` (`unitinfo.cpp:5294`) — процессор
+/// `UnitInfo::ProcessTransfer` (`unitinfo.cpp:5294`) — the processor
 /// `ORDER_TRANSFER` (`UnitsManager_ProcessOrderTransfer`).
 ///
-/// `unit.transfer_cargo` — знак и количество: `> 0` — из юнита в родителя,
-/// `< 0` — из родителя в юнит. Точная последовательность C++: сначала
-/// `target->Transfer<Kind>(amount)`, затем списание/добавление у источника,
-/// при нехватке `storage` — `Complex::Transfer` (для направления из
-/// комплекса) и компенсация поля комплекса.
+/// `unit.transfer_cargo` — sign and amount: `> 0` — from the unit to the parent,
+/// `< 0` — from the parent to the unit. The exact C++ sequence: first
+/// `target->Transfer<Kind>(amount)`, then deduction/addition at the source,
+/// on a `storage` shortage — `Complex::Transfer` (for the direction from
+/// the complex) and compensation of the complex field.
 ///
-/// В конце — `RestoreOrders`; целевой задаче шлётся `EventCargoTransfer` (в
-/// порту задач это событие не реализовано, см. `ai`).
+/// At the end — `RestoreOrders`; the target task receives `EventCargoTransfer` (in
+/// the task port this event is not implemented, see `ai`).
 pub fn process_transfer(state: &mut GameState, unit_id: UnitId) {
     let Some(unit) = state.unit(unit_id).cloned() else {
         return;
@@ -314,16 +314,16 @@ pub fn process_transfer(state: &mut GameState, unit_id: UnitId) {
         crate::unit_order::restore_orders(unit);
     }
 
-    // `target->GetTask()->EventCargoTransfer(*target)` — задачи ИИ в порту не
-    // хранят событий груза; приказ уже завершён.
+    // `target->GetTask()->EventCargoTransfer(*target)` — AI tasks in the port do not
+    // store cargo events; the order is already complete.
 }
 
 /// `TransferMenu_GetUnitCargoInfo` (`transfermenu.cpp:37`).
 ///
-/// Если у `source` есть комплекс, отличный от комплекса `destination`, меню
-/// показывает **весь запас комплекса** (`Complex::GetCargoInfo`); иначе —
-/// только `storage` здания и его `ATTRIB_STORAGE`. Возвращает
-/// `(materials, capacity)` по типу груза `cargo`.
+/// If `source` has a complex different from the `destination` complex, the menu
+/// shows the **whole complex stock** (`Complex::GetCargoInfo`); otherwise —
+/// only the building's `storage` and its `ATTRIB_STORAGE`. Returns
+/// `(materials, capacity)` for cargo type `cargo`.
 pub fn transfer_menu_cargo_info(
     state: &GameState,
     source: UnitId,
@@ -359,7 +359,7 @@ pub fn transfer_menu_cargo_info(
     )
 }
 
-/// Запас комплекса по типу груза — для QA/отладочных проверок.
+/// Complex stock by cargo type — for QA/debug checks.
 pub fn complex_stored(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
     let (materials, _) = get_cargo_info(state, team, complex);
 
@@ -371,8 +371,8 @@ pub fn complex_stored(state: &GameState, team: TeamId, complex: ComplexId, cargo
     }
 }
 
-/// Свободная ёмкость комплекса по типу груза — сумма `ATTRIB_STORAGE` всех
-/// зданий-членов с этим типом груза минус занятое (`Complex::GetCargoInfo`).
+/// Free complex capacity by cargo type — the sum of `ATTRIB_STORAGE` of all
+/// member buildings with this cargo type minus the occupied amount (`Complex::GetCargoInfo`).
 pub fn complex_free_capacity(
     state: &GameState,
     team: TeamId,
@@ -391,8 +391,8 @@ pub fn complex_free_capacity(
     total - stored
 }
 
-/// Суммарная добыча комплекса за ход по типу груза (для QA лимитов
-/// хранилищ): `Complex::GetCargoMining` → `materials`.
+/// Total complex production per turn by cargo type (for QA of storage
+/// limits): `Complex::GetCargoMining` → `materials`.
 pub fn complex_income(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
     let (materials, _) = get_cargo_mining(state, team, complex);
 
@@ -404,7 +404,7 @@ pub fn complex_income(state: &GameState, team: TeamId, complex: ComplexId, cargo
     }
 }
 
-/// Груз юнита одним `Cargo` (для тестов/QA).
+/// The unit's cargo as one `Cargo` (for tests/QA).
 pub fn unit_cargo(unit: &UnitInfo) -> Cargo {
     crate::alloc::cargo_get_inventory(unit)
 }
@@ -424,8 +424,8 @@ mod tests {
         state
     }
 
-    /// Спавн здания с переносом его комплекса в `complex` (в порте каждое
-    /// здание получает свой комплекс: слияния по коннекторам нет).
+    /// Spawn a building moving its complex into `complex` (in the port each
+    /// building gets its own complex: there is no merging via connectors).
     fn spawn_member(
         state: &mut GameState,
         unit_type: UnitType,
@@ -588,7 +588,7 @@ mod tests {
         );
         state.unit_mut(dump).expect("dump").storage = 0;
 
-        // Мобильный грузовик вне комплекса.
+        // A mobile truck outside a complex.
         let truck = state
             .spawn_unit(
                 UnitType::SupplyTruck,
@@ -613,7 +613,7 @@ mod tests {
             15
         );
 
-        // Обратно: минус — из комплекса в юнит.
+        // Back: minus — from the complex to the unit.
         state.unit_mut(truck).expect("truck").transfer_cargo = -10;
         process_transfer(&mut state, truck);
 
@@ -665,7 +665,7 @@ mod tests {
 
         process_transfer(&mut state, truck);
 
-        // Первое здание отдало 10, затем `Complex::Transfer` взял 25 из второго.
+        // The first building gave 10, then `Complex::Transfer` took 25 from the second.
         assert_eq!(state.unit(first).expect("first").storage, 0);
         assert_eq!(state.unit(second).expect("second").storage, 5);
         assert_eq!(state.unit(truck).expect("truck").storage, 35);
@@ -704,13 +704,13 @@ mod tests {
             .expect("truck");
         state.unit_mut(truck).expect("truck").storage = 11;
 
-        // Чужой (без комплекса) получатель — весь запас/ёмкость комплекса
-        // источника (два ADUMP: 50 + 50).
+        // A foreign (complex-less) receiver — the whole stock/capacity of the source
+        // complex (two ADUMPs: 50 + 50).
         assert_eq!(
             transfer_menu_cargo_info(&state, dump, truck, CargoType::Raw),
             (7, 100)
         );
-        // Свой комплекс — весь запас/ёмкость.
+        // An own complex — the whole stock/capacity.
         assert_eq!(
             transfer_menu_cargo_info(&state, dump, dump, CargoType::Raw),
             (7, 50)

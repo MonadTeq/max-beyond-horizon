@@ -1,6 +1,6 @@
-//! Решения об атаке — порт `aiattack.cpp`.
+//! Attack decisions — a port of `aiattack.cpp`.
 //!
-//! Оракул: `max-cpp-port/src/aiattack.cpp/.hpp`:
+//! Oracle: `max-cpp-port/src/aiattack.cpp/.hpp`:
 //! `AiAttack_GetTargetValue`, `AiAttack_GetReach`, `AiAttack_IsWithinReach`,
 //! `AiAttack_IsValidSabotageTarget`, `AiAttack_ProcessAttack`,
 //! `AiAttack_CanAttack`, `AiAttack_GetAttackPotential`,
@@ -11,22 +11,22 @@
 //! `AiAttack_DecideDesperationAttack`, `AiAttack_FindAttackSupport`,
 //! `AiAttack_ChooseSiteForAttacker`, `AiAttack_ChooseSiteToSabotage`.
 //!
-//! # Порядок RNG
+//! # RNG order
 //!
-//! `AiAttack_EvaluateAttack` потребляет `Randomizer_Generate(2)` (флаг
-//! «учитывать cooldown цели»), `AiAttack_ProcessAttack` для диверсанта —
-//! `Randomizer_Generate(101)` (бросок стелса). Оба вызова стоят на тех же
-//! местах, что и в C++, в том же порядке (DESIGN §4.3).
+//! `AiAttack_EvaluateAttack` consumes `Randomizer_Generate(2)` (the "consider
+//! target cooldown" flag), `AiAttack_ProcessAttack` for the saboteur —
+//! `Randomizer_Generate(101)` (stealth roll). Both calls are at the same
+//! places as in C++, in the same order (DESIGN §4.3).
 //!
-//! # Упрощения
+//! # Simplifications
 //!
-//! * `TransporterMap` (`ChooseSiteForAttacker`, `mode = true`) не портирован:
-//!   достижимость проверяется `Access_IsAccessible` (P5) без учёта
-//!   транспортов;
-//! * `AiPlayer_TerrainDistanceField->GetMinimumRange` заменён евклидовым
-//!   расстоянием по карте (P5 `TerrainDistanceField` в крейте не заведён);
-//! * `Ai_FindAttackSupport` перебирает юнитов в порядке списков
-//!   `MobileAir` → `MobileLandSea`, как в C++.
+//! * `TransporterMap` (`ChooseSiteForAttacker`, `mode = true`) is not ported:
+//!   reachability is checked by `Access_IsAccessible` (P5) without transports;
+//! transports;
+//! * `AiPlayer_TerrainDistanceField->GetMinimumRange` is replaced by the Euclidean
+//!   distance on the map (P5 `TerrainDistanceField` is not set up in the crate);
+//! * `Ai_FindAttackSupport` iterates units in list order
+//!   `MobileAir` → `MobileLandSea`, as in C++.
 
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
@@ -42,7 +42,7 @@ use super::tasks::{TaskCtx, TaskKind};
 use super::AiReactionState;
 
 // ---------------------------------------------------------------------------
-// Стоимость и достижимость цели
+// Target cost and reachability
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_GetTargetValue` (`aiattack.cpp:46`).
@@ -99,7 +99,7 @@ pub fn get_reach(unit: &UnitInfo) -> i32 {
     result
 }
 
-/// `AiAttack_IsWithinReach` (`aiattack.cpp:279`) — есть ли своё здание рядом.
+/// `AiAttack_IsWithinReach` (`aiattack.cpp:279`) — whether there is an own building nearby.
 pub fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::TeamId) -> bool {
     if unit.team == crate::team::TeamId::ALIEN {
         return false;
@@ -185,7 +185,7 @@ pub fn set_attack_target_cooldown(world: &mut GameState, unit: UnitId) {
 }
 
 // ---------------------------------------------------------------------------
-// Оценки прибыльности
+// Profitability estimates
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_EstimateAttackValue` (`aiattack.cpp:506`).
@@ -204,7 +204,7 @@ pub fn estimate_attack_value(unit: &UnitInfo, predicted_damage: i32) -> i32 {
     ((hits + predicted_damage - i32::from(unit.hits)) * turns) / hits
 }
 
-/// `AiAttack_IsAttackProfitable` (`aiattack.cpp:514`) с явным уроном по цели.
+/// `AiAttack_IsAttackProfitable` (`aiattack.cpp:514`) with explicit damage to the target.
 pub fn is_attack_profitable_with(
     world: &GameState,
     friendly_unit: &UnitInfo,
@@ -242,7 +242,7 @@ pub fn is_attack_profitable_with(
     }
 }
 
-/// `AiAttack_IsAttackProfitable` (`aiattack.cpp:546`) — урон по цели считается
+/// `AiAttack_IsAttackProfitable` (`aiattack.cpp:546`) — damage to the target is computed
 /// `GetPredictedAttack`.
 pub fn is_attack_profitable(
     world: &GameState,
@@ -319,7 +319,7 @@ pub fn decide_desperation_attack(world: &mut GameState, attacker: UnitId, target
 }
 
 // ---------------------------------------------------------------------------
-// Ценность цели
+// Target value
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_GetTargetWorth` (`aiattack.cpp:1292`).
@@ -352,7 +352,7 @@ pub fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::tea
             > world.teams[team.0 as usize].team_points
 }
 
-/// `AiAttack_GetTargetFlags` (`aiattack.cpp:1244`) — меньше — лучше.
+/// `AiAttack_GetTargetFlags` (`aiattack.cpp:1244`) — smaller is better.
 pub fn get_target_flags(
     world: &GameState,
     attacker: &UnitInfo,
@@ -417,14 +417,14 @@ pub fn get_target_flags(
 }
 
 // ---------------------------------------------------------------------------
-// Выбор цели
+// Target selection
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_SelectTargetToAttack` (`aiattack.cpp:554`).
 ///
-/// Возвращает индекс `SpottedUnit` в `AiPlayer::spotted_units` — порядок
-/// перебора и правило выбора (`score`, затем `damage_potential`, затем `hits`)
-/// сохранены как в C++.
+/// Returns the `SpottedUnit` index in `AiPlayer::spotted_units` — the
+/// iteration order and the selection rule (`score`, then `damage_potential`, then `hits`)
+/// are preserved as in C++.
 pub fn select_target_to_attack(
     world: &GameState,
     unit: UnitId,
@@ -466,7 +466,7 @@ pub fn select_target_to_attack(
             continue;
         }
 
-        // Цель должна быть в пределах дальности обнаружения/стрельбы.
+        // The target must be within detection/fire range.
         let mut target_position = spotted.last_position;
         if !target.is_visible_to_team(team)
             && world.ai_heat_map_complete(
@@ -512,9 +512,9 @@ pub fn select_target_to_attack(
 
                 if let Some(mut target_copy) = world.unit(target_id).cloned() {
                     target_copy.ai_state_bits = bits;
-                    // Фиксируем изменение через `GameState` (нужен `&mut`),
-                    // поэтому фактическая запись выполняется вызывающим слоем:
-                    // здесь только учитывается «вес» cooldown.
+                    // Record the change through `GameState` (needs `&mut`),
+                    // so the actual write is performed by the caller layer:
+                    // here only the cooldown "weight" is accounted for.
                     let _ = target_copy;
                 }
 
@@ -571,12 +571,12 @@ pub fn select_target_to_attack(
 }
 
 // ---------------------------------------------------------------------------
-// Приказ атаки
+// Attack order
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_ProcessAttack` (`aiattack.cpp:330`).
 ///
-/// Возвращает `true`, если приказ отдан (или поставлена `TaskWaitToAttack`).
+/// Returns `true` if the order was issued (or `TaskWaitToAttack` was set).
 pub fn process_attack(
     tm: &mut TaskManager,
     world: &mut GameState,
@@ -641,7 +641,7 @@ pub fn process_attack(
             && world.ai.settings.opponent >= crate::enums::Opponent::Average as u8
             && attacker_info.shots > 0
         {
-            // `ZoneWalker` вокруг цели: ближайшая клетка в своей дальности.
+            // `ZoneWalker` around the target: the nearest cell within own range.
             let mut walker = super::threat::ZoneWalker::new(target_info.grid, attack_radius);
             let mut found: Option<(i32, Point)> = None;
             let range_squared = attack_range * attack_range;
@@ -807,7 +807,7 @@ pub fn find_attack_support(
     result
 }
 
-/// `AiAttack_ChooseSiteForAttacker` (`aiattack.cpp:176`) — клетка для атаки.
+/// `AiAttack_ChooseSiteForAttacker` (`aiattack.cpp:176`) — the cell to attack from.
 pub fn choose_site_for_attacker(
     world: &GameState,
     unit: &UnitInfo,
@@ -823,7 +823,7 @@ pub fn choose_site_for_attacker(
     let mut minimum_damage = i16::MAX as i32;
     let distance_limit = range * range;
 
-    // Собственная клетка — если цель уже в дальности.
+    // The own cell — if the target is already in range.
     let own_distance = crate::access::squared_distance(unit.grid, target);
     if own_distance <= distance_limit {
         let damage = damage_map
@@ -881,7 +881,7 @@ pub fn choose_site_for_attacker(
     best.map(|(damage, _, site)| (site, damage))
 }
 
-/// `AiAttack_ChooseSiteToSabotage` (`aiattack.cpp:105`) — клетка у цели.
+/// `AiAttack_ChooseSiteToSabotage` (`aiattack.cpp:105`) — a cell near the target.
 pub fn choose_site_to_sabotage(
     world: &GameState,
     unit: &UnitInfo,
@@ -900,8 +900,8 @@ pub fn choose_site_to_sabotage(
         return Some((unit.grid, damage));
     }
 
-    // 2×2-цель обходится по большему радиусу (`Footprint`: лайаут, не
-    // семантика — турель 1×1 идёт по ветке 2).
+    // A 2×2 target is bypassed at a larger radius (`Footprint`: layout, not
+    // semantics — a 1×1 turret goes through branch 2).
     let standing = target.is_quad();
     let range = if standing { 3 } else { 2 };
 
@@ -957,13 +957,13 @@ pub fn choose_site_to_sabotage(
 }
 
 // ---------------------------------------------------------------------------
-// Оценка и выполнение атаки
+// Attack evaluation and execution
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_EvaluateAttack` (`aiattack.cpp:701`).
 ///
-/// `mode` — «атаковать после движения» (C++ `mode = true`); влияет на ветку
-/// подготовки и резерва.
+/// `mode` — "attack after movement" (C++ `mode = true`); it affects the
+/// preparation and reserve branch.
 pub fn evaluate_attack(
     tm: &mut TaskManager,
     world: &mut GameState,
@@ -1026,7 +1026,7 @@ pub fn evaluate_attack(
         0
     };
 
-    // Порядок RNG 1:1 с C++: `Randomizer_Generate(2)`.
+    // RNG order 1:1 with C++: `Randomizer_Generate(2)`.
     let consider_cooldown = world.rng.generate_i32(2) != 0;
 
     let range = info
@@ -1167,10 +1167,10 @@ pub fn evaluate_attack(
     true
 }
 
-/// Вспомогательный доступ к `TaskCtx`-версии `evaluate_attack`.
+/// Helper access to the `TaskCtx` version of `evaluate_attack`.
 pub fn evaluate_attack_ctx(ctx: &mut TaskCtx<'_>, unit: UnitId, mode: bool) -> bool {
     evaluate_attack(ctx.tm, ctx.world, unit, mode)
 }
 
-/// Приоритет для `TaskWaitToAttack`, создаваемой из `evaluate_attack`.
+/// Priority for `TaskWaitToAttack` created from `evaluate_attack`.
 pub const EMERGENCY_PRIORITY: u16 = TASK_PRIORITY_EMERGENCY;

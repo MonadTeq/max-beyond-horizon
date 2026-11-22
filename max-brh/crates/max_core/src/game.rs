@@ -1,68 +1,68 @@
-//! Состояние партии и игровой цикл тика — C++ `GameManager_*` / `UnitsManager_*`.
+//! Game state and the tick loop — C++ `GameManager_*` / `UnitsManager_*`.
 //!
-//! Оракул: `max-cpp-port/src/units_manager.cpp` (`UnitsManager_ProcessOrders`,
+//! Oracle: `max-cpp-port/src/units_manager.cpp` (`UnitsManager_ProcessOrders`,
 //! `UnitsManager_DeployUnit`, `UnitsManager_RemoveUnitFromUnitLists`,
 //! `UnitsManager_EndAttack`), `game_manager.cpp` (`GameManager_ProcessTick`,
 //! `GameManager_ManageEconomy`, `GameManager_UpdateScoreGraph`,
 //! `GameManager_TeamTurnFinish`, `GameManager_AreTeamsFinishedTurn`),
 //! `unitinfo.cpp` (`UnitInfo::AddToDrawList`, `UpdateProduction`).
-//! Порядок фаз — DESIGN.md §5.1-§5.3, `max-brh-docs/state-model.md` §3.
+//! Phase order — DESIGN.md §5.1-§5.3, `max-brh-docs/state-model.md` §3.
 //!
-//! # Что здесь есть и чего нет
+//! # What is here and what is not
 //!
-//! P4 закрывает **машину приказов и цикл хода**: пять списков юнитов,
-//! `ProcessOrders` в фиксированном порядке, конец хода (экономика, график
-//! очков, смена команд), барьеры как факты сети и канонический дайджест
-//! состояния для тестов детерминизма.
+//! P4 covers the **order machine and the turn loop**: five unit lists,
+//! `ProcessOrders` in fixed order, end of turn (economy, score
+//! graph, team switching), barriers as network facts and the canonical state
+//! digest for determinism tests.
 //!
-//! P5 подключает бой (`combat`), проходимость (`access`) и пути
-//! (`pathfinding`): `ProcessOrders` вызывает `AssessAttacks` для отложенных
-//! реакций, `PendingAirGroupLeader` — `Access_ProcessNewGroupOrder`, тик —
-//! синхронный `PollResults`; `MapHash` и `DelayedAttackTargets` входят в
-//! состояние.
+//! P5 connects combat (`combat`), passability (`access`) and paths
+//! (`pathfinding`): `ProcessOrders` calls `AssessAttacks` for delayed
+//! reactions, `PendingAirGroupLeader` — `Access_ProcessNewGroupOrder`, the tick —
+//! synchronous `PollResults`; `MapHash` and `DelayedAttackTargets` enter the
+//! state.
 //!
-//! P6 подключает ИИ (`crate::ai`): `Ai_ClearTasksPendingFlags` в
-//! `ProcessOrders`, `Ai_CheckReactions`/`Ai_CheckEndTurn` в тике, покрытие
-//! сканирования (`Access_UpdateMapStatus`) и `Ai_RemoveUnit` при
-//! спавне/движении/уничтожении юнитов. Состояние ИИ — `GameState.ai` —
-//! входит в канонический дайджест состояния.
+//! P6 connects the AI (`crate::ai`): `Ai_ClearTasksPendingFlags` in
+//! `ProcessOrders`, `Ai_CheckReactions`/`Ai_CheckEndTurn` in the tick, scan
+//! coverage (`Access_UpdateMapStatus`) and `Ai_RemoveUnit` on
+//! unit spawn/movement/destruction. The AI state — `GameState.ai` —
+//! enters the canonical state digest.
 //!
-//! # Создание карты и юнитов
+//! # Map and unit creation
 //!
-//! * `GameManager_InitMap`/генерация карты (`CreateMap`) — в `setup.rs` (P2,
-//!   `generate_map`/`derive_surface_map`); результат кладётся в [`GameState::map`].
-//! * `GameManager_InitUnitsAndGameState`/`CreateUnits` — раскладка стартовых
-//!   юнитов; в P4 её выполняет вызывающий слой через [`GameState::spawn_unit`]
-//!   (порт `UnitsManager_DeployUnit` в объёме P4). Автоматическая выкладка по
-//!   `TeamMissionSupplies` требует таблицы флагов 93 типов юнитов
-//!   (`units.json`, `ResourceManager_InitUnits` — P3-данные) и миссионных
-//!   правил (P7), поэтому пока не портирована.
+//! * `GameManager_InitMap`/map generation (`CreateMap`) — in `setup.rs` (P2,
+//!   `generate_map`/`derive_surface_map`); the result goes into [`GameState::map`].
+//! * `GameManager_InitUnitsAndGameState`/`CreateUnits` — the starting unit
+//!   layout; in P4 it is performed by the caller layer via [`GameState::spawn_unit`]
+//!   (a port of `UnitsManager_DeployUnit` in the P4 scope). Automatic placement by
+//!   `TeamMissionSupplies` requires the flag table of the 93 unit types
+//!   (`units.json`, `ResourceManager_InitUnits` — P3 data) and mission
+//!   rules (P7), so it is not ported yet.
 //!
-//! # Расхождения с C++-портом (осознанные)
+//! # Divergences from the C++ port (intentional)
 //!
-//! 1. Команды применяются в начале тика из очереди [`CommandQueue`] (DESIGN
-//!    §5.1, шаг 1) — в C++ это делает `Remote_Synchronize()` /
-//!    `Remote_ProcessNetPackets()` в те же моменты цикла; сама сеть вынесена в
+//! 1. Commands are applied at the start of the tick from the [`CommandQueue`] (DESIGN
+//!    §5.1, step 1) — in C++ this is done by `Remote_Synchronize()` /
+//!    `Remote_ProcessNetPackets()` at the same points of the loop; the network itself is moved to
 //!    `max_net`.
-//! 2. Тайм-бюджеты (`TickTimer_*`, лимиты `ExecuteReminders`) не портируются
-//!    (DESIGN §5.1, риск 4): очередь обрабатывается полностью.
-//! 3. В C++ `UnitsManager_ProcessOrder` может за один тик провести юнит через
-//!    несколько клеток (цикл `while (state == IN_TRANSITION && !visible)`), а в
-//!    сетевой игре — ровно одна клетка за вызов `Move()` (`if
-//!    (Remote_IsNetworkGame) return;`). `max_core` — это lockstep-симуляция,
-//!    поэтому принята сетевая ветка: один шаг пути за тик, и она
-//!    задокументирована в `unit_order::unit_move`.
-//! 4. `UnitInfo::x/y` — пиксельные координаты. Они симуляционные: `AirPath`
-//!    шагает попиксельно, `Access_IsWithinAttackRange` проверяет линию огня, а
-//!    спавн/движение выводят их из клетки (`x = grid*64 + 32`, +31 у зданий).
+//! 2. Time budgets (`TickTimer_*`, `ExecuteReminders` limits) are not ported
+//!    (DESIGN §5.1, risk 4): the queue is processed fully.
+//! 3. In C++ `UnitsManager_ProcessOrder` may move a unit through
+//!    several cells in one tick (loop `while (state == IN_TRANSITION && !visible)`), while in
+//!    a network game — exactly one cell per `Move()` call (`if
+//!    (Remote_IsNetworkGame) return;`). `max_core` is a lockstep simulation,
+//!    so the network branch is adopted: one path step per tick, and it is
+//!    documented in `unit_order::unit_move`.
+//! 4. `UnitInfo::x/y` are pixel coordinates. They are simulation fields: `AirPath`
+//!    steps pixel by pixel, `Access_IsWithinAttackRange` checks the line of fire, and
+//!    spawn/movement derive them from the cell (`x = grid*64 + 32`, +31 for buildings).
 //!
-//! # Презентация юнита (Ф5.3/B)
+//! # Unit presentation (F5.3/B)
 //!
-//! Поля C++ `UnitInfo`, не участвующие в симуляции (тень, спрайтовые границы,
-//! яркость, звук, смещения/кадры башни, курсор, покачивание), вынесены в
-//! [`UnitPresentation`] и хранятся в `GameState` параллельной таблицей
-//! `presentations` рядом со слотами `units`. V70-байты не изменились:
-//! `save.rs` пишет оба объекта в исходном порядке.
+//! C++ `UnitInfo` fields not participating in the simulation (shadow, sprite bounds,
+//! brightness, sound, turret offsets/frames, cursor, bobbing) are moved to
+//! [`UnitPresentation`] and stored in `GameState` as a parallel table
+//! `presentations` next to the `units` slots. The V70 bytes did not change:
+//! `save.rs` writes both objects in the original order.
 
 use crate::classification::Footprint;
 use crate::enums::{
@@ -87,28 +87,28 @@ use crate::victory::{
     cargo_gold_consumption_rate, cargo_raw_consumption_rate, cargo_type_of, CargoType,
 };
 
-/// `PLAYER_TEAM_MAX`: четыре игровые команды (`RED..GRAY`) + `ALIEN`.
+/// `PLAYER_TEAM_MAX`: four playing teams (`RED..GRAY`) + `ALIEN`.
 pub const PLAYER_TEAM_MAX: u8 = 5;
-/// Количество игровых команд без `ALIEN` (`PLAYER_TEAM_MAX - 1`).
+/// Number of playing teams without `ALIEN` (`PLAYER_TEAM_MAX - 1`).
 pub const PLAYER_TEAM_COUNT: usize = PLAYER_TEAM_MAX as usize - 1;
-/// Размер массива `TeamInfo`/`TeamUnits` (включая `ALIEN`).
+/// Array size of `TeamInfo`/`TeamUnits` (including `ALIEN`).
 pub const TEAM_SLOTS: usize = PLAYER_TEAM_MAX as usize;
-/// `GFX_MAP_TILE_SIZE` — сторона клетки в пикселях.
+/// `GFX_MAP_TILE_SIZE` — the cell side in pixels.
 pub const GFX_MAP_TILE_SIZE: i32 = 64;
-/// Стартовое значение `UnitsManager_UnitIdCounter` (state-model §7.8, DESIGN риск 9).
+/// Initial `UnitsManager_UnitIdCounter` value (state-model §7.8, DESIGN risk 9).
 pub const INITIAL_UNIT_ID_COUNTER: u32 = (PLAYER_TEAM_MAX as u32) << 13;
 
 // ---------------------------------------------------------------------------
-// Данные приказа, которых нет в `UnitInfo`
+// Order data that is not in `UnitInfo`
 // ---------------------------------------------------------------------------
 
-/// Runtime-данные приказа, которые C++ хранит в `UnitInfo`, но V70 — одним
-/// полем `target_grid` (state-model §3.9, §7.6).
+/// Order runtime data that C++ stores in `UnitInfo`, but V70 — as one
+/// `target_grid` field (state-model §3.9, §7.6).
 ///
-/// `move_to` и `fire_on` в C++ — разные поля (`move_to_grid_x/y`,
-/// `fire_on_grid_x/y`), а V70 хранит один `Point`. Поэтому они живут в
-/// параллельной таблице [`GameState`]; `UnitInfo::target_grid` зеркалит
-/// `move_to` (это семантика поля в сейве).
+/// `move_to` and `fire_on` are different fields in C++ (`move_to_grid_x/y`,
+/// `fire_on_grid_x/y`), while V70 stores one `Point`. Therefore they live in
+/// a parallel [`GameState`] table; `UnitInfo::target_grid` mirrors
+/// `move_to` (that is the field's semantics in the save).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OrderData {
     /// `UnitInfo::move_to_grid_*`.
@@ -117,46 +117,46 @@ pub struct OrderData {
     pub fire_on: Point,
 }
 
-/// Живая атака — C++ `UnitsManager_LiveAttacks` (номер → список целей).
+/// A live attack — C++ `UnitsManager_LiveAttacks` (number → target list).
 ///
-/// В C++ это `std::unordered_map<uint32_t, SmartList<UnitInfo>>`; итерация по
-/// карте не выполняется (только поиск по номеру), поэтому детерминизм не
-/// страдает. В Rust — `Vec` с линейным поиском: номеров атак мало, а порядок
-/// вставки целей сохраняется.
+/// In C++ this is `std::unordered_map<uint32_t, SmartList<UnitInfo>>`; iteration over
+/// the map is not performed (only lookup by number), so determinism does not
+/// suffer. In Rust — a `Vec` with linear search: there are few attack numbers, and the
+/// insertion order of targets is preserved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveAttack {
-    /// Номер атаки (`live_attack`).
+    /// Attack number (`live_attack`).
     pub id: u32,
-    /// Захваченные цели (`pin_count` уже увеличен).
+    /// Pinned targets (`pin_count` is already incremented).
     pub targets: Vec<UnitId>,
 }
 
-/// Какой звук юнита проиграть — C++ `Unit::SfxType`
-/// (`unit.hpp:49-68`), в объёме боя.
+/// Which unit sound to play — C++ `Unit::SfxType`
+/// (`unit.hpp:49-68`), in the combat scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnitSoundKind {
     /// `SFX_TYPE_FIRE` — `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`).
     Fire,
-    /// `SFX_TYPE_HIT` — попадание по живому (`units_manager.cpp:3922`).
+    /// `SFX_TYPE_HIT` — a hit on a live target (`units_manager.cpp:3922`).
     Hit,
-    /// `SFX_TYPE_EXPLOAD` — взрыв уничтоженного (`units_manager.cpp:3929`).
+    /// `SFX_TYPE_EXPLOAD` — the explosion of a destroyed unit (`units_manager.cpp:3929`).
     Explode,
 }
 
-/// Одно звуковое событие боя: кто и какой `SfxType`.
+/// One combat sound event: who and which `SfxType`.
 ///
-/// Ресурс `*.SPW` и громкость выбираются на клиенте по таблице `SC_UNITS`
+/// The `*.SPW` resource and volume are chosen on the client by the `SC_UNITS` table
 /// (`SoundManager::PlaySfx(UnitInfo*, Unit::SfxType)`,
-/// `sound_manager.cpp:413-490`): симуляция обязана оставаться без ссылок на
-/// ресурсы (DESIGN §6.1), поэтому событие несёт только id юнита и тип звука.
+/// `sound_manager.cpp:413-490`): the simulation must remain free of references to
+/// resources (DESIGN §6.1), so the event carries only the unit id and the sound type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitSound {
-    /// Юнит, чей звук играет (`PlaySfx(unit, …)`).
+    /// The unit whose sound plays (`PlaySfx(unit, …)`).
     pub unit: UnitId,
-    /// Тип юнита на момент события (`unit->GetUnitType()`): клиент выбирает по
-    /// нему звук из `SC_UNITS`, даже если юнит к моменту чтения уже уничтожен.
+    /// Unit type at event time (`unit->GetUnitType()`): the client picks the sound
+    /// from `SC_UNITS` by it, even if the unit is already destroyed when read.
     pub unit_type: crate::enums::UnitType,
-    /// Тип звука.
+    /// Sound type.
     pub kind: UnitSoundKind,
 }
 
@@ -164,47 +164,47 @@ pub struct UnitSound {
 // GameState
 // ---------------------------------------------------------------------------
 
-/// Состояние партии — аналог глобалов C++ (`UnitsManager_*`, `GameManager_*`,
-/// `UnitEvent_UnitEvents`) в одном объекте (DESIGN §1.4 п.5).
+/// Game state — the analog of the C++ globals (`UnitsManager_*`, `GameManager_*`,
+/// `UnitEvent_UnitEvents`) in one object (DESIGN §1.4 item 5).
 #[derive(Debug, Clone)]
 pub struct GameState {
-    // --- карта и команды ---
-    /// Карта партии.
+    // --- map and teams ---
+    /// The game map.
     pub map: Map,
     /// `UnitsManager_TeamInfo[PLAYER_TEAM_MAX]`.
     pub teams: [TeamInfo; TEAM_SLOTS],
-    /// `CTInfo::team_units` (экономика/технологии, включая `ALIEN`).
+    /// `CTInfo::team_units` (economy/technologies, including `ALIEN`).
     pub team_units: [TeamUnits; TEAM_SLOTS],
-    /// `Randomizer` симуляции (сид — только пакет 13).
+    /// The simulation `Randomizer` (the seed comes only from packet 13).
     pub rng: Randomizer,
 
-    // --- юниты ---
+    // --- units ---
     units: Vec<Option<UnitInfo>>,
-    /// Презентационные поля юнитов (Ф5.3/B) — параллельно слотам `units`.
-    /// В симуляцию/снапшот/CRC не входят; нужны `save.rs` (побайтовый V70) и
-    /// рендеру `max_app`.
+    /// Unit presentation fields (F5.3/B) — parallel to the `units` slots.
+    /// They do not enter the simulation/snapshot/CRC; needed by `save.rs` (byte-exact V70) and
+    /// by the `max_app` renderer.
     presentations: Vec<Option<UnitPresentation>>,
     free_slots: Vec<u16>,
     unit_hash: UnitHash<u16>,
     order_data: Vec<OrderData>,
-    /// Пять списков юнитов в порядке `UnitListKind` (порядок вставки).
+    /// Five unit lists in `UnitListKind` order (insertion order).
     lists: [Vec<UnitId>; 5],
-    /// `Hash_MapHash` — клетка → юниты (`P5`; `access.rs`/`pathfinding.rs`).
+    /// `Hash_MapHash` — cell → units (`P5`; `access.rs`/`pathfinding.rs`).
     pub map_hash: MapHash,
-    /// Групповой список юнита (`UnitInfo::unit_list` в C++ — `UnitInfoGroup`).
-    /// Параллельно слотам `units`/`order_data`.
+    /// The unit's group list (`UnitInfo::unit_list` in C++ — `UnitInfoGroup`).
+    /// Parallel to the `units`/`order_data` slots.
     unit_group: Vec<Option<u32>>,
-    /// Групповые списки (`SmartList<UnitInfo> UnitInfoGroup` C++).
+    /// Group lists (C++ `SmartList<UnitInfo> UnitInfoGroup`).
     pub groups: Vec<Option<Vec<UnitId>>>,
-    /// Очередь запросов путей (`PathsManager::m_pending_requests`).
+    /// Path request queue (`PathsManager::m_pending_requests`).
     pub path_requests: std::collections::VecDeque<PathRequest>,
-    /// `UnitsManager_DelayedAttackTargets[team]` — цели реактивного огня.
+    /// `UnitsManager_DelayedAttackTargets[team]` — reaction fire targets.
     pub delayed_attack_targets: [Vec<UnitId>; TEAM_SLOTS],
-    /// `UnitsManager_DelayedReactionsTeam` — команда, чья очередь проверять
-    /// отложенные реакции.
+    /// `UnitsManager_DelayedReactionsTeam` — the team whose turn it is to check
+    /// delayed reactions.
     pub delayed_reactions_team: TeamId,
 
-    // --- фаза и ход ---
+    // --- phase and turn ---
     /// `GameManager_GameState`.
     pub game_state: GameStateType,
     /// `GameManager_PlayMode`.
@@ -213,15 +213,15 @@ pub struct GameState {
     pub turn_counter: i32,
     /// `GameManager_ActiveTurnTeam`.
     pub active_turn_team: TeamId,
-    /// `GameManager_PlayerTeam` (локальный игрок).
+    /// `GameManager_PlayerTeam` (the local player).
     pub player_team: TeamId,
-    /// `GameManager_UpdateFlag` — чередование `Ai_CheckReactions` (DESIGN риск 14).
+    /// `GameManager_UpdateFlag` — alternation of `Ai_CheckReactions` (DESIGN risk 14).
     pub update_flag: bool,
     /// `UnitsManager_UnitIdCounter`.
     pub unit_id_counter: u32,
     /// `UnitsManager_LiveAttackCounter`.
     pub live_attack_counter: u32,
-    /// `UnitsManager_OrdersPending` — в этом тике кто-то ещё в движении/бою.
+    /// `UnitsManager_OrdersPending` — someone is still moving/fighting this tick.
     pub orders_pending: bool,
     /// `UnitsManager_CombatEffectsActive`.
     pub combat_effects_active: bool,
@@ -229,111 +229,111 @@ pub struct GameState {
     pub bob_effect_quota: i8,
     /// `UnitsManager_ResetBobState`.
     pub reset_bob_state: bool,
-    /// `UnitsManager_PendingAttacks` — порядок вставки.
+    /// `UnitsManager_PendingAttacks` — insertion order.
     pub pending_attacks: Vec<UnitId>,
     /// `UnitsManager_PendingAirGroupLeader`.
     pub pending_air_group_leader: Option<UnitId>,
     /// `UnitEvent_UnitEvents` (`unitevents.cpp`).
     pub unit_events: Vec<crate::events::UnitEvent>,
-    /// `UnitsManager_LiveAttacks` (`live_attack` → цели).
+    /// `UnitsManager_LiveAttacks` (`live_attack` → targets).
     pub live_attacks: Vec<LiveAttack>,
-    /// `UnitsManager_DelayedReactionsPending` (флаг для сети/ИИ).
+    /// `UnitsManager_DelayedReactionsPending` (a flag for the network/AI).
     pub delayed_reactions_pending: bool,
-    /// События последнего хода производства (`GameManager_ProgressBuildState`):
-    /// что выпущено/прервано. Не входит в дайджест — это отчёт для UI/QA.
+    /// Events of the last production turn (`GameManager_ProgressBuildState`):
+    /// what was spawned/interrupted. Not part of the digest — it is a UI/QA report.
     pub production_events: Vec<crate::production::ProductionEvent>,
-    /// События последнего хода исследований (`ResearchMenu_NewTurn`):
-    /// завершённые уровни тем. Не входит в дайджест — отчёт для UI/QA.
+    /// Events of the last research turn (`ResearchMenu_NewTurn`):
+    /// completed topic levels. Not part of the digest — a UI/QA report.
     pub research_events: Vec<crate::research::ResearchEvent>,
-    /// Сообщение энергетики комплекса для верхней строки карты — C++
+    /// Complex power message for the top map line — C++
     /// `ProductionManager::DrawResourceMessage`/`ComposeIndustryMessage`
     /// (`production_manager.cpp:308-330/792-804`), `MESSAGE_BOX_NOTICE`.
     ///
-    /// Отчёт для UI/QA, в снапшот/CRC не входит (как `production_events`).
-    /// Копится за ход производства и забирается
+    /// A UI/QA report, not part of the snapshot/CRC (like `production_events`).
+    /// Accumulated during the production turn and taken
     /// [`Self::take_industry_message`].
     pub industry_message: Option<String>,
-    /// Звуки боя за тик — `SoundManager::PlaySfx(unit, SfxType)`
-    /// (`unitinfo.cpp:4725` — выстрел, `units_manager.cpp:3922/3929` — попадание
-    /// и взрыв). Симуляция только копит события, ресурс/громкость выбирает
-    /// клиент (`max_app::sfx`, таблица `SC_UNITS`). В дайджест/CRC не входит.
+    /// Combat sounds per tick — `SoundManager::PlaySfx(unit, SfxType)`
+    /// (`unitinfo.cpp:4725` — shot, `units_manager.cpp:3922/3929` — hit
+    /// and explosion). The simulation only accumulates events; the resource/volume is chosen by
+    /// the client (`max_app::sfx`, `SC_UNITS` table). Not part of the digest/CRC.
     pub unit_sounds: Vec<UnitSound>,
-    /// `UnitsManager_TeamInfo[*].finished_turn` дублируется в `teams`; здесь —
-    /// счётчики барьеров, чтобы состояние было самодостаточным.
+    /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
+    /// barrier counters so that the state is self-contained.
     pub turn_indices: [u8; TEAM_SLOTS],
-    /// `Remote_NextTurnIndices` (пакет 45).
+    /// `Remote_NextTurnIndices` (packet 45).
     pub next_turn_indices: [u8; TEAM_SLOTS],
-    /// `Remote_TeamDataCrc16` (пакет 45).
+    /// `Remote_TeamDataCrc16` (packet 45).
     pub team_data_crc16: [u16; TEAM_SLOTS],
-    /// `Remote_FrameSyncCounter` (пакет 00).
+    /// `Remote_FrameSyncCounter` (packet 00).
     pub frame_sync_counter: [u8; TEAM_SLOTS],
-    /// `Remote_FrameSyncCounter2values` (пакет 01).
+    /// `Remote_FrameSyncCounter2values` (packet 01).
     pub frame_sync_counter2: [u8; TEAM_SLOTS],
-    /// `Remote_StateSyncIndices` (пакет 54) — индекс последнего **полного**
-    /// (`is_last`) состояния команды, по нему завершается 54-барьер.
+    /// `Remote_StateSyncIndices` (packet 54) — the index of the last **full**
+    /// (`is_last`) team state, which completes the 54 barrier.
     pub state_sync_indices: [u8; TEAM_SLOTS],
-    /// `Remote_StateSyncReceivingIndices` (пакет 54) — индекс чанка, который
-    /// сейчас принимается (сброс `state_sync_unit_ids` при смене индекса).
+    /// `Remote_StateSyncReceivingIndices` (packet 54) — the index of the chunk
+    /// currently being received (resets `state_sync_unit_ids` on index change).
     pub state_sync_receiving_indices: [u8; TEAM_SLOTS],
-    /// `Remote_StateSyncUnitIds` (пакет 54) — id юнитов, присланных владельцем
-    /// в текущем раунде; по ним `Remote_RemoveExtraUnits` чистит лишних.
+    /// `Remote_StateSyncUnitIds` (packet 54) — ids of units sent by the owner
+    /// in the current round; `Remote_RemoveExtraUnits` removes extras by them.
     pub state_sync_unit_ids: [Vec<UnitId>; TEAM_SLOTS],
-    /// Чат в игре (пакет 18) — чистые данные для UI/логов, не влияет на сим.
+    /// In-game chat (packet 18) — pure data for the UI/logs, does not affect the sim.
     pub chat_log: Vec<(TeamId, String)>,
-    /// Снабжение миссии по командам (пакет 12) — входные данные setup'а.
+    /// Mission supplies per team (packet 12) — setup input data.
     pub mission_supplies: [Option<crate::input::Packet12MissionSupply>; TEAM_SLOTS],
-    /// Кэш `UnitsManager_Units[team]` — юнит, для которого в этом проходе
-    /// сработала отложенная реакция (`UnitsManager_PursueEnemy`).
+    /// `UnitsManager_Units[team]` cache — the unit for which a delayed reaction
+    /// fired in this pass (`UnitsManager_PursueEnemy`).
     pub units_active: [Option<UnitId>; TEAM_SLOTS],
-    /// Флаг сетевого режима (`Remote_IsNetworkGame`).
+    /// Network mode flag (`Remote_IsNetworkGame`).
     ///
-    /// `max_core` исполняет **lockstep-симуляцию** (DESIGN §1.1/§5.1), поэтому
-    /// по умолчанию `true`: это включает сетевые ветки C++-кода (один шаг
-    /// движения за тик, `finished_turn`-проверки, применение пакетов в начале
-    /// тика).
+    /// `max_core` runs a **lockstep simulation** (DESIGN §1.1/§5.1), so
+    /// by default `true`: this enables the network branches of the C++ code (one path
+    /// step per tick, `finished_turn` checks, packet application at the start of
+    /// the tick).
     pub network_game: bool,
-    /// Настройка `effects` (`ResourceManager_GetSettings()->"effects"`).
+    /// The `effects` setting (`ResourceManager_GetSettings()->"effects"`).
     ///
-    /// В симуляции она влияет только на счётчик `moved` в `ORDER_BUILD`
-    /// (`UnitsManager_ProcessOrderBuild`); UI-анимации не портируются.
+    /// In the simulation it affects only the `moved` counter in `ORDER_BUILD`
+    /// (`UnitsManager_ProcessOrderBuild`); UI animations are not ported.
     pub settings_effects: bool,
-    /// Настройка `disable_fire` — запрет реактивного огня (DESIGN §6.5).
+    /// The `disable_fire` setting — disable reaction fire (DESIGN §6.5).
     pub disable_fire: bool,
-    /// Настройка `GameManager_RealTime` (`paths.cpp:Paths_CalculateStep`):
-    /// при истине шаг пути не тратит `speed`.
+    /// The `GameManager_RealTime` setting (`paths.cpp:Paths_CalculateStep`):
+    /// when true, a path step does not spend `speed`.
     pub real_time: bool,
-    /// Настройка `enemy_halt` («Halt movement when enemy is detected»).
+    /// The `enemy_halt` setting ("Halt movement when enemy is detected").
     ///
-    /// `Access_UpdateMapStatus` (`access.cpp:827-868`) при обнаружении врага в
-    /// радиусе сканирования ставит `UnitEventEmergencyStop` юниту (или его
-    /// группе), если у него есть активный приказ. Настройка читается из
-    /// `settings` на каждом шаге, поэтому в C++ она не входит в состояние
-    /// партии; здесь — поле `GameState`, чтобы симуляция была самодостаточной.
-    /// `App` пишет его из `Preferences` при старте/загрузке партии.
+    /// `Access_UpdateMapStatus` (`access.cpp:827-868`), on detecting an enemy in
+    /// the scan radius, queues `UnitEventEmergencyStop` for the unit (or its
+    /// group) if it has an active order. The setting is read from
+    /// `settings` on every step, so in C++ it is not part of the game
+    /// state; here it is a `GameState` field so that the simulation is self-contained.
+    /// `App` writes it from `Preferences` at game start/load.
     ///
-    /// По умолчанию `false`: чистое ядро (юнит-тесты) сохраняет прежнее
-    /// поведение; приложение ставит значение из настроек (`settings.cpp`:
+    /// Defaults to `false`: the pure core (unit tests) keeps the previous
+    /// behavior; the application sets the value from settings (`settings.cpp`:
     /// `enemy_halt = 1`).
     pub enemy_halt: bool,
-    /// Очередь входных команд (DESIGN §5.1 шаг 1).
+    /// Input command queue (DESIGN §5.1 step 1).
     pub commands: CommandQueue,
-    /// Состояние ИИ: игроки, менеджер задач, тепловые карты (P6, `ai.cpp`).
+    /// AI state: players, task manager, heat maps (P6, `ai.cpp`).
     pub ai: crate::ai::AiState,
-    /// Данные V70, нужные только для записи сейва (P3): настройки партии,
-    /// UI-поля `TeamInfo`, журналы сообщений, V70-поля `AiPlayer`.
+    /// V70 data needed only for save writing (P3): game settings,
+    /// `TeamInfo` UI fields, message logs, `AiPlayer` V70 fields.
     ///
-    /// В канонический дайджест (`snapshot_bytes`) не входит — это не игровое
-    /// состояние, а «то, что C++ хранит вне `GameState`».
+    /// Not part of the canonical digest (`snapshot_bytes`) — it is not game
+    /// state but "what C++ keeps outside `GameState`".
     pub save_meta: crate::save_write::SaveMeta,
 
-    // --- правила партии (setup-константы; P7) ---
+    // --- game rules (setup constants; P7) ---
     /// `SaveFormatHeader::mission_index` (0 — generic custom game).
     pub mission_index: u16,
     /// `MissionManager::GetMission()->GetCategory()` (`winloss.cpp:57`).
     pub mission_category: crate::victory::MissionCategory,
     /// `ini_setting_victory_type` (`VICTORY_TYPE_DURATION`/`SCORE`).
     pub victory_type: VictoryType,
-    /// `ini_setting_victory_limit` — лимит ходов или очков.
+    /// `ini_setting_victory_limit` — the turn or point limit.
     pub victory_limit: i32,
 }
 
@@ -344,16 +344,16 @@ impl Default for GameState {
 }
 
 impl GameState {
-    /// Пустая партия: карта по умолчанию, команды `None`, 0-й тик.
+    /// Empty game: default map, `None` teams, tick 0.
     pub fn new() -> Self {
         let mut teams = std::array::from_fn(|_| TeamInfo::new());
         for team in teams.iter_mut() {
             team.team_type = TeamKind::None;
         }
         let team_units = std::array::from_fn(|_| TeamUnits::new());
-        // Пустая партия для юнит-тестов: поверхность `LAND`, иначе ни один
-        // наземный юнит не смог бы двигаться (реальная карта приходит из
-        // `setup::generate_map` и подменяет её целиком).
+        // Empty game for unit tests: the surface is `LAND`, otherwise no
+        // ground unit could move (the real map comes from
+        // `setup::generate_map` and replaces it entirely).
         let mut map = Map::new();
         for y in 0..crate::geo::MAP_HEIGHT {
             for x in 0..crate::geo::MAP_WIDTH {
@@ -417,7 +417,7 @@ impl GameState {
             commands: CommandQueue::new(),
             ai: crate::ai::AiState::new(),
             save_meta: crate::save_write::SaveMeta::default(),
-            // `settings.cpp` defaults: generic custom game, duration, лимит 50.
+            // `settings.cpp` defaults: generic custom game, duration, limit 50.
             mission_index: 0,
             mission_category: crate::victory::MissionCategory::Custom,
             victory_type: VictoryType::Duration,
@@ -425,7 +425,7 @@ impl GameState {
         }
     }
 
-    /// Партия с картой и набором команд (`TeamKind` за игровыми командами).
+    /// A game with a map and a set of teams (`TeamKind` per playing team).
     pub fn with_setup(map: Map, team_kinds: [TeamKind; PLAYER_TEAM_COUNT]) -> Self {
         let mut state = Self::new();
         state.map = map;
@@ -439,53 +439,53 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Загрузка V70-сейва (P7): нормализации `saveload.cpp` / `unitinfo.cpp`
+    // V70 save loading (P7): normalizations of `saveload.cpp` / `unitinfo.cpp`
     // -----------------------------------------------------------------------
 
-    /// Партия из V70-сейва: [`Self::new`] + [`Self::load_state`].
+    /// A game from a V70 save: [`Self::new`] + [`Self::load_state`].
     pub fn from_save(save: &crate::save::SaveFile) -> Self {
         let mut state = Self::new();
         state.load_state(save);
         state
     }
 
-    /// Применяет разобранный V70-сейв к состоянию, **с нормализациями C++**,
-    /// чтобы загруженную партию сразу можно было тикать.
+    /// Applies a parsed V70 save to the state, **with the C++ normalizations**,
+    /// so that the loaded game can be ticked immediately.
     ///
-    /// # Порт `SaveLoad_LoadFormatV70` (`saveload.cpp:756`) и
+    /// # Port of `SaveLoad_LoadFormatV70` (`saveload.cpp:756`) and
     /// `UnitInfo::FileLoad` (`unitinfo.cpp:2489`)
     ///
     /// 1. `UnitsManager_UnitIdCounter = PLAYER_TEAM_MAX << 13`
-    ///    (`saveload.cpp:834`) — новые id не пересекаются с V70-диапазоном.
-    /// 2. `unit.movement_wait_count = 0` (V70-ветка `FileLoad`).
+    ///    (`saveload.cpp:834`) — new ids do not overlap the V70 range.
+    /// 2. `unit.movement_wait_count = 0` (the `FileLoad` V70 branch).
     /// 3. `unit.ai_state_bits &= ~(AI_STATE_MOVE_FINISHED_REMINDER |
-    ///    AI_STATE_RETREAT_REMINDER)` (`unitinfo.cpp:2512`) — напоминания ИИ
-    ///    живут только в текущем процессе и в сейв не переносятся.
+    ///    AI_STATE_RETREAT_REMINDER)` (`unitinfo.cpp:2512`) — AI reminders
+    ///    live only in the current process and are not carried into the save.
     /// 4. `build_rate == 0 → 1` (`unitinfo.cpp:2514`).
     /// 5. `state ∈ {NEW_ORDER, MOVE_GETTING_PATH, ISSUING_PATH, IN_TRANSITION,
-    ///    IN_PROGRESS} → EXECUTING_ORDER` (`unitinfo.cpp:2527`): после загрузки
-    ///    незавершённых переходов нет.
-    /// 6. `HeatMap::LoadV70` — отрицательные значения клеток клампятся в 0
-    ///    (`heatmap.cpp:212`) для команд с `team_type != NONE`.
-    /// 7. `stats_gold_spent_on_upgrades` — кламп ≥ 0 (это делает `save.rs` при
-    ///    разборе, `read_team_info`).
-    /// 8. `TeamUnits` и `TeamInfo` переносятся как есть (`TeamUnits::FileLoad`).
+    ///    IN_PROGRESS} → EXECUTING_ORDER` (`unitinfo.cpp:2527`): after loading
+    ///    there are no unfinished transitions.
+    /// 6. `HeatMap::LoadV70` — negative cell values are clamped to 0
+    ///    (`heatmap.cpp:212`) for teams with `team_type != NONE`.
+    /// 7. `stats_gold_spent_on_upgrades` — clamped ≥ 0 (`save.rs` does this when
+    ///    parsing, `read_team_info`).
+    /// 8. `TeamUnits` and `TeamInfo` are transferred as is (`TeamUnits::FileLoad`).
     ///
-    /// # Осознанные расхождения
+    /// # Intentional divergences
     ///
-    /// * `Randomizer` в V70 не сериализуется: C++ читает `rng_seed` заголовка
-    ///   только для лобби и **не** трогает состояние ГПСЧ при загрузке
-    ///   (`saveload.cpp:776`, `Randomizer_SetSeed` вызывается лишь при старте
-    ///   партии). Для детерминизма «загрузил → тикаешь» здесь поток
-    ///   пере-сидируется `header.rng_seed`.
-    /// * `Hash_MapHash`/`Hash_UnitHash` не копируются из файла как объекты: они
-    ///   восстанавливаются по спискам и id (порядок вставки — порядок файла).
-    /// * `MessageLog`, `selected_unit`, камера/зум и прочие UI-поля — вне
+    /// * `Randomizer` is not serialized in V70: C++ reads the header's `rng_seed`
+    ///   only for the lobby and does **not** touch the RNG state on load
+    ///   (`saveload.cpp:776`, `Randomizer_SetSeed` is called only at game
+    ///   start). For "load → tick" determinism the stream here
+    ///   is re-seeded with `header.rng_seed`.
+    /// * `Hash_MapHash`/`Hash_UnitHash` are not copied from the file as objects: they
+    ///   are rebuilt from lists and ids (insertion order — file order).
+    /// * `MessageLog`, `selected_unit`, camera/zoom and other UI fields are outside
     ///   `max_core` (state-model §6).
     pub fn load_state(&mut self, save: &crate::save::SaveFile) {
         use crate::enums::{AI_STATE_MOVE_FINISHED_REMINDER, AI_STATE_RETREAT_REMINDER};
 
-        // --- карта и заголовок партии ---
+        // --- map and game header ---
         self.map = Map::from_parts(save.surface(), save.resource_map());
         self.mission_index = save.header.mission_index;
         self.mission_category =
@@ -493,15 +493,15 @@ impl GameState {
         self.play_mode = save.header.play_mode;
         self.victory_type = save.ini_options.victory_type;
         self.victory_limit = save.ini_options.victory_limit;
-        // Настройки/UI-поля/журналы и V70-поля ИИ — для записи сейва 1:1 (P3).
+        // Settings/UI fields/logs and AI V70 fields — for 1:1 save writing (P3).
         self.save_meta = crate::save_write::SaveMeta::from_save(save);
 
-        // --- глобальное состояние партии ---
+        // --- global game state ---
         self.game_state = save.game.game_state;
         self.turn_counter = save.game.turn_counter;
         self.active_turn_team = save.game.active_turn_team;
         self.player_team = save.game.player_team;
-        // V70 не хранит состояние ГПСЧ (см. «Осознанные расхождения»).
+        // V70 does not store the RNG state (see "Intentional divergences").
         self.rng = Randomizer::new(save.header.rng_seed);
         self.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
         self.live_attack_counter = 0;
@@ -531,21 +531,21 @@ impl GameState {
         }
         self.commands = CommandQueue::new();
 
-        // --- команды: TeamInfo × 4 из файла, ALIEN — служебный слот ---
+        // --- teams: TeamInfo × 4 from the file, ALIEN is a service slot ---
         for team in 0..crate::save::SAVE_TEAM_COUNT {
             self.teams[team] = save.teams[team].clone();
         }
         self.teams[PLAYER_TEAM_COUNT].team_type = TeamKind::Computer;
         self.teams[PLAYER_TEAM_COUNT].team_clan = save.header.team_clan[PLAYER_TEAM_COUNT];
 
-        // --- TeamUnits × 4 из файла; ALIEN — пустые значения ---
+        // --- TeamUnits × 4 from the file; ALIEN — empty values ---
         let saved_team_units = save.team_units();
         for team in 0..crate::save::SAVE_TEAM_COUNT {
             self.team_units[team] = saved_team_units[team].clone();
         }
         self.team_units[PLAYER_TEAM_COUNT] = TeamUnits::new();
 
-        // --- юниты ---
+        // --- units ---
         self.units.clear();
         self.presentations.clear();
         self.free_slots.clear();
@@ -560,7 +560,7 @@ impl GameState {
         for saved in &save.units {
             let mut unit = saved.info.clone();
 
-            // `UnitInfo::FileLoad` (V70-ветка) + нормализации.
+            // `UnitInfo::FileLoad` (V70 branch) + normalizations.
             unit.movement_wait_count = 0;
             unit.ai_state_bits &= !(AI_STATE_MOVE_FINISHED_REMINDER | AI_STATE_RETREAT_REMINDER);
             if unit.build_rate == 0 {
@@ -576,14 +576,14 @@ impl GameState {
             ) {
                 unit.state = UnitOrderState::ExecutingOrder;
             }
-            // Ссылки разрешаются вторым проходом по номеру объекта.
+            // References are resolved in a second pass by object number.
             unit.parent_unit = None;
             unit.enemy_unit = None;
 
             let slot = self.units.len();
             object_ids.push((saved.object_index, unit.id));
             self.units.push(Some(unit.clone()));
-            // Презентация V70-объекта — параллельно слоту (Ф5.3/B).
+            // Presentation of the V70 object — parallel to the slot (F5.3/B).
             self.presentations.push(Some(saved.presentation.clone()));
             self.order_data.push(OrderData {
                 move_to: saved.info.target_grid,
@@ -619,7 +619,7 @@ impl GameState {
             };
         }
 
-        // Пять списков — в порядке файла (`SmartList_UnitInfo_FileLoad`).
+        // Five lists — in file order (`SmartList_UnitInfo_FileLoad`).
         for kind in UnitListKind::ALL {
             let mut members = Vec::new();
             for &object_index in save.unit_list(kind) {
@@ -635,7 +635,7 @@ impl GameState {
             self.lists[kind.index()] = members;
         }
 
-        // `Hash_MapHash` — из файла (порядок ведёрок/клеток/юнитов сохраняется).
+        // `Hash_MapHash` — from the file (bucket/cell/unit order is preserved).
         self.map_hash = MapHash::for_standard_map();
         for bucket in save.map_hash.buckets() {
             for object in bucket {
@@ -656,8 +656,8 @@ impl GameState {
                 }
             }
         }
-        // Страховка: юнит, которого нет в восстановленном хэше, добавляется по
-        // своей клетке (иначе `Access_*` его «не увидит»).
+        // Safety net: a unit absent from the rebuilt hash is added by
+        // its cell (otherwise `Access_*` would "not see" it).
         for id in self.snapshot_unit_ids() {
             let Some(unit) = self.unit(id) else { continue };
             let present = self
@@ -668,7 +668,7 @@ impl GameState {
             }
         }
 
-        // --- тепловые карты: `HeatMap::LoadV70` с клампом отрицательных ---
+        // --- heat maps: `HeatMap::LoadV70` with negative clamping ---
         for team in 0..PLAYER_TEAM_COUNT {
             let Some(saved) = save.heat_maps[team].as_deref() else {
                 continue;
@@ -680,7 +680,7 @@ impl GameState {
             );
         }
 
-        // --- состояние ИИ: игроки из сейва, очереди задач пусты ---
+        // --- AI state: players from the save, task queues empty ---
         self.ai.task_manager = crate::ai::TaskManager::new();
         self.ai.reaction_state = crate::ai::AiReactionState::Idle;
         for team in 0..PLAYER_TEAM_COUNT {
@@ -720,10 +720,10 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Доступ к юнитам
+    // Unit access
     // -----------------------------------------------------------------------
 
-    /// Поиск слота по id через `UnitHash`-ведёрко (`Hash_UnitHash[...]`).
+    /// Slot lookup by id via the `UnitHash` bucket (`Hash_UnitHash[...]`).
     fn lookup(&self, id: UnitId) -> Option<usize> {
         let size = self.unit_hash.size();
         let bucket = self
@@ -735,38 +735,38 @@ impl GameState {
         })
     }
 
-    /// Юнит по id (`Hash_UnitHash[id]`; `None` — юнита нет).
+    /// A unit by id (`Hash_UnitHash[id]`; `None` — no unit).
     #[inline]
     pub fn unit(&self, id: UnitId) -> Option<&UnitInfo> {
         self.lookup(id)
             .and_then(|slot| self.units.get(slot).and_then(Option::as_ref))
     }
 
-    /// Изменяемый юнит по id.
+    /// Mutable unit by id.
     #[inline]
     pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut UnitInfo> {
         let slot = self.lookup(id)?;
         self.units.get_mut(slot).and_then(Option::as_mut)
     }
 
-    /// Презентационные поля юнита (`None` — юнита нет).
+    /// Unit presentation fields (`None` — no unit).
     ///
-    /// Читают только `save.rs` (V70) и рендер `max_app`; в снапшот/CRC не
-    /// входят (Ф5.3/B).
+    /// Read only by `save.rs` (V70) and the `max_app` renderer; not part of the
+    /// snapshot/CRC (F5.3/B).
     #[inline]
     pub fn presentation(&self, id: UnitId) -> Option<&UnitPresentation> {
         let slot = self.lookup(id)?;
         self.presentations.get(slot).and_then(Option::as_ref)
     }
 
-    /// Изменяемая презентация юнита.
+    /// Mutable unit presentation.
     #[inline]
     pub fn presentation_mut(&mut self, id: UnitId) -> Option<&mut UnitPresentation> {
         let slot = self.lookup(id)?;
         self.presentations.get_mut(slot).and_then(Option::as_mut)
     }
 
-    /// Записывает презентацию юнита (слот должен существовать).
+    /// Writes the unit presentation (the slot must exist).
     pub fn write_presentation(&mut self, id: UnitId, presentation: UnitPresentation) {
         if let Some(slot) = self.lookup(id) {
             if let Some(entry) = self.presentations.get_mut(slot) {
@@ -775,25 +775,25 @@ impl GameState {
         }
     }
 
-    /// Есть ли юнит с таким id.
+    /// Whether a unit with this id exists.
     #[inline]
     pub fn has_unit(&self, id: UnitId) -> bool {
         self.lookup(id).is_some()
     }
 
-    /// Число живых юнитов.
+    /// Number of live units.
     pub fn unit_count(&self) -> usize {
         self.units.iter().filter(|slot| slot.is_some()).count()
     }
 
-    /// Данные приказа юнита.
+    /// The unit's order data.
     pub fn order_data(&self, id: UnitId) -> OrderData {
         self.lookup(id)
             .and_then(|slot| self.order_data.get(slot).copied())
             .unwrap_or_default()
     }
 
-    /// Запись данных приказа.
+    /// Order-data write.
     pub fn set_order_data(&mut self, id: UnitId, data: OrderData) {
         if let Some(slot) = self.lookup(id) {
             if let Some(entry) = self.order_data.get_mut(slot) {
@@ -802,13 +802,13 @@ impl GameState {
         }
     }
 
-    /// Записывает изменённую копию юнита обратно (см. `unit_order`).
+    /// Writes the modified unit copy back (see `unit_order`).
     ///
-    /// Если клетка изменилась, обновляется `Hash_MapHash` — аналог
-    /// `Hash_MapHash.Remove/Add` в `UnitInfo::Move`/`UpdateGridPosition`.
+    /// If the cell changed, `Hash_MapHash` is updated — the analog of
+    /// `Hash_MapHash.Remove/Add` in `UnitInfo::Move`/`UpdateGridPosition`.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
-        // Таблица презентаций параллельна слотам `units` (Ф5.3/B): при
-        // добавлении слота снаружи спавна выравниваем длину и даём дефолт.
+        // The presentation table is parallel to the `units` slots (F5.3/B): when
+        // a slot is added outside spawn, we align the length and provide a default.
         if self.presentations.len() < self.units.len() {
             self.presentations.resize(self.units.len(), None);
         }
@@ -838,8 +838,8 @@ impl GameState {
                         false,
                     );
 
-                    // `Access_UpdateMapStatus` — покрытие сканирования
-                    // переезжает вместе с юнитом (P6).
+                    // `Access_UpdateMapStatus` — scan coverage
+                    // moves together with the unit (P6).
                     self.update_map_status_unit(previous, false);
                 }
             }
@@ -856,13 +856,13 @@ impl GameState {
         }
     }
 
-    /// `Hash_MapHash[Point]` — юниты клетки в порядке вставки.
+    /// `Hash_MapHash[Point]` — the cell's units in insertion order.
     #[inline]
     pub fn units_at(&self, grid: Point) -> &[UnitId] {
         self.units_at_opt(grid).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// `Hash_MapHash[Point]`: `None`, если клетка пуста или вне карты.
+    /// `Hash_MapHash[Point]`: `None` if the cell is empty or off the map.
     #[inline]
     pub fn units_at_opt(&self, grid: Point) -> Option<&Vec<UnitId>> {
         if grid.x < 0
@@ -875,8 +875,8 @@ impl GameState {
         self.map_hash.get(grid.x as u16, grid.y as u16)
     }
 
-    /// `Hash_MapHash.Add` для внешних модулей (`MoveInTransitUnitInMapHash`).
-    /// Футпринт вычисляется из флагов (лайаутный API C++ принимает флаги).
+    /// `Hash_MapHash.Add` for external modules (`MoveInTransitUnitInMapHash`).
+    /// The footprint is computed from flags (the C++ layout API takes flags).
     pub fn map_hash_add(&mut self, id: UnitId, grid: Point, flags: u32) {
         if grid.x >= 0 && grid.y >= 0 {
             self.map_hash.add(
@@ -889,7 +889,7 @@ impl GameState {
         }
     }
 
-    /// `Hash_MapHash.Remove` для внешних модулей.
+    /// `Hash_MapHash.Remove` for external modules.
     pub fn map_hash_remove(&mut self, id: UnitId, grid: Point, flags: u32) {
         if grid.x >= 0 && grid.y >= 0 {
             self.map_hash.remove(
@@ -907,23 +907,23 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Групповые списки (`UnitInfoGroup`)
+    // Group lists (`UnitInfoGroup`)
     // -----------------------------------------------------------------------
 
-    /// Список группы юнита (`UnitInfo::GetUnitList`).
+    /// The unit's group list (`UnitInfo::GetUnitList`).
     pub fn group_members(&self, id: UnitId) -> Option<Vec<UnitId>> {
         let slot = self.lookup(id)?;
         let group = self.unit_group.get(slot).copied().flatten()?;
         self.groups.get(group as usize)?.clone()
     }
 
-    /// Номер группы юнита (`None` — юнит вне группы).
+    /// The unit's group number (`None` — the unit is outside a group).
     pub fn group_id_of(&self, id: UnitId) -> Option<u32> {
         let slot = self.lookup(id)?;
         self.unit_group.get(slot).copied().flatten()
     }
 
-    /// `AllocateUnitList` + `AssignUnitList` для лидера: создаёт группу.
+    /// `AllocateUnitList` + `AssignUnitList` for the leader: creates a group.
     pub fn create_group_with_leader(&mut self, leader: UnitId) -> u32 {
         let group_id = self.groups.len() as u32;
         self.groups.push(Some(vec![leader]));
@@ -935,7 +935,7 @@ impl GameState {
         group_id
     }
 
-    /// Приписывает юнита к группе (`UnitInfo::AssignUnitList`).
+    /// Assigns a unit to a group (`UnitInfo::AssignUnitList`).
     pub fn assign_group_member(&mut self, id: UnitId, group_id: u32) {
         if !self.has_unit(id) {
             return;
@@ -951,7 +951,7 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::ClearUnitList` — снимает юнита с группового списка.
+    /// `UnitInfo::ClearUnitList` — removes a unit from the group list.
     pub fn clear_group_member(&mut self, id: UnitId) {
         let Some(slot) = self.lookup(id) else { return };
         let Some(group_id) = self.unit_group.get(slot).copied().flatten() else {
@@ -973,25 +973,25 @@ impl GameState {
         }
     }
 
-    /// Снимает цель из `UnitsManager_DelayedAttackTargets[team]`.
+    /// Removes a target from `UnitsManager_DelayedAttackTargets[team]`.
     pub fn remove_delayed_attack_target(&mut self, team: TeamId, id: UnitId) {
         if let Some(targets) = self.delayed_attack_targets.get_mut(team.0 as usize) {
             targets.retain(|unit| *unit != id);
         }
     }
 
-    /// Снимает юнита из `UnitsManager_PendingAttacks`.
+    /// Removes a unit from `UnitsManager_PendingAttacks`.
     pub fn remove_pending_attack(&mut self, id: UnitId) {
         self.pending_attacks.retain(|unit| *unit != id);
     }
 
-    /// Юниты одного из пяти списков в порядке обхода (`UnitsManager_*Units`).
+    /// Units of one of the five lists in traversal order (`UnitsManager_*Units`).
     #[inline]
     pub fn unit_list(&self, kind: UnitListKind) -> &[UnitId] {
         &self.lists[kind.index()]
     }
 
-    /// Все живые юниты в каноническом порядке обхода пяти списков.
+    /// All live units in the canonical order of the five lists.
     pub fn unit_ids_in_order(&self) -> Vec<UnitId> {
         let mut result = Vec::with_capacity(self.unit_count());
         for kind in UnitListKind::ALL {
@@ -1000,9 +1000,9 @@ impl GameState {
         result
     }
 
-    /// Все живые юниты для дайджеста: пять списков в каноническом порядке,
-    /// затем юниты вне списков (в C++ такие юниты не обрабатываются, но в
-    /// состоянии они есть) в порядке слотов.
+    /// All live units for the digest: the five lists in canonical order,
+    /// then units outside lists (C++ does not process such units, but they
+    /// exist in the state) in slot order.
     fn snapshot_unit_ids(&self) -> Vec<UnitId> {
         let mut result = self.unit_ids_in_order();
         let mut seen: Vec<UnitId> = result.clone();
@@ -1018,17 +1018,17 @@ impl GameState {
         result
     }
 
-    /// Индекс юнита в его списке (`None` — не в списке).
+    /// The unit's index in its list (`None` — not in a list).
     pub fn list_position(&self, id: UnitId) -> Option<usize> {
         let kind = self.unit(id)?.unit_list;
         self.lists[kind.index()].iter().position(|item| *item == id)
     }
 
     // -----------------------------------------------------------------------
-    // Списки юнитов: C++ `UnitInfo::AddToDrawList` / `RemoveUnitFromUnitLists`
+    // Unit lists: C++ `UnitInfo::AddToDrawList` / `RemoveUnitFromUnitLists`
     // -----------------------------------------------------------------------
 
-    /// `UnitInfo::GetDrawLayer` — слой отрисовки ground cover (`unitinfo.cpp:1191`).
+    /// `UnitInfo::GetDrawLayer` — the ground cover draw layer (`unitinfo.cpp:1191`).
     pub fn draw_layer(unit_type: UnitType) -> i32 {
         use UnitType::*;
         match unit_type {
@@ -1041,14 +1041,14 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::AddToDrawList` (`unitinfo.cpp:1230`) — вставка в один из пяти
-    /// списков с сохранением порядка отрисовки.
+    /// `UnitInfo::AddToDrawList` (`unitinfo.cpp:1230`) — insertion into one of the five
+    /// lists while preserving draw order.
     pub fn add_to_draw_list(&mut self, id: UnitId) {
         self.add_to_draw_list_with(id, 0);
     }
 
-    /// `UnitInfo::AddToDrawList(override_flags)` — вариант с переопределением
-    /// флагов (C++ использует его при подъёме моста).
+    /// `UnitInfo::AddToDrawList(override_flags)` — the variant with flag
+    /// override (C++ uses it when raising a bridge).
     pub fn add_to_draw_list_with(&mut self, id: UnitId, override_flags: u32) {
         let Some(unit) = self.unit(id).cloned() else {
             return;
@@ -1118,7 +1118,7 @@ impl GameState {
                 (UnitListKind::Particle, Some(position))
             }
         } else {
-            // Ни один класс не подошёл: в C++ юнит остаётся без списка.
+            // No class matched: in C++ the unit stays without a list.
             (UnitListKind::Particle, None)
         };
 
@@ -1130,7 +1130,7 @@ impl GameState {
         }
     }
 
-    /// Снимает юнита из конкретного списка (`SmartList::Remove`).
+    /// Removes a unit from a concrete list (`SmartList::Remove`).
     pub fn remove_from_list(&mut self, kind: UnitListKind, id: UnitId) -> bool {
         let list = &mut self.lists[kind.index()];
         match list.iter().position(|item| *item == id) {
@@ -1179,8 +1179,8 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`) — перенос в
-    /// начало текущего списка.
+    /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`) — moving to
+    /// the front of the current list.
     pub fn move_to_front_in_unit_list(&mut self, id: UnitId) {
         let Some(kind) = self.unit(id).map(|unit| unit.unit_list) else {
             return;
@@ -1193,23 +1193,23 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Спавн и уничтожение (P3-подмножество, нужное приказам)
+    // Spawn and destruction (the P3 subset needed by orders)
     // -----------------------------------------------------------------------
 
-    /// Выделяет следующий `UnitId` (`UnitsManager_DeployUnit`, `++UnitIdCounter`).
+    /// Allocates the next `UnitId` (`UnitsManager_DeployUnit`, `++UnitIdCounter`).
     fn allocate_unit_id(&mut self, team: TeamId) -> UnitId {
         self.unit_id_counter = self.unit_id_counter.wrapping_add(1);
         let index = (self.unit_id_counter & 0x1FFF_u32) as u16;
         UnitId::new(team, index)
     }
 
-    /// Спавн юнита — `UnitsManager_DeployUnit` (`units_manager.cpp:2354`) в
-    /// объёме P4: id, счётчики имён, стартовые приказы по типу, атрибуты,
-    /// позиция и список.
+    /// Unit spawn — `UnitsManager_DeployUnit` (`units_manager.cpp:2354`) in
+    /// the P4 scope: id, name counters, starting orders by type, attributes,
+    /// position and list.
     ///
-    /// `flags` — дополнительные флаги вызывающего слоя; они объединяются с
-    /// флагами типа из `SC_UNITS` ([`crate::access::unit_type_flags`]), как
-    /// `UnitsManager_DeployUnit` берёт флаги из данных юнита.
+    /// `flags` — extra caller-layer flags; they are merged with the
+    /// type flags from `SC_UNITS` ([`crate::access::unit_type_flags`]), as
+    /// `UnitsManager_DeployUnit` takes flags from the unit data.
     pub fn spawn_unit(
         &mut self,
         unit_type: UnitType,
@@ -1220,28 +1220,28 @@ impl GameState {
         let id = self.allocate_unit_id(team);
         let team_index = team.0 as usize;
         let mut unit = UnitInfo::new(unit_type, team, id);
-        // C++ `UnitInfo::UnitInfo`: презентационные поля (`brightness = 255`,
-        // нули) создаются вместе с юнитом и живут параллельно слоту (Ф5.3/B).
+        // C++ `UnitInfo::UnitInfo`: presentation fields (`brightness = 255`,
+        // zeros) are created with the unit and live parallel to the slot (F5.3/B).
         let presentation = UnitPresentation::new();
-        // Флаги типа — из таблицы `SC_UNITS` (`Unit::m_flags`); явные флаги
-        // вызывающего слоя объединяются с ними (P3-совместимый вход).
-        // C++-код ниже (`DeployUnit`, `UnitInfo::SetPosition`) читает уже
-        // собранные флаги `unit->flags`, поэтому дальше используется
-        // `unit_flags`, а не только входной `flags`.
+        // Type flags — from the `SC_UNITS` table (`Unit::m_flags`); explicit caller
+        // flags are merged with them (a P3-compatible input).
+        // The C++ code below (`DeployUnit`, `UnitInfo::SetPosition`) reads the already
+        // assembled `unit->flags`, so from here on
+        // `unit_flags` is used, not just the input `flags`.
         //
-        // Биты цвета команды (`HASH_TEAM_*`) в C++ добавляет конструктор
-        // `UnitInfo` (`unitinfo.cpp:179`). Порт их в `flags` не пишет: набор
-        // флагов входит в канонический дайджест состояния, и эталонный
-        // C++-вектор (`tools/sim_vectors`) собран без них. Цвет команды
-        // восстанавливается тем же отображением слот→цвет из `unit.team`
-        // (`max_app::overlays::team_color_index`), а если юнит пришёл из сейва
-        // с уже выставленными битами — они honoured.
+        // The team color bits (`HASH_TEAM_*`) are added in C++ by the `UnitInfo`
+        // constructor (`unitinfo.cpp:179`). The port does not write them into `flags`: the
+        // set of flags enters the canonical state digest, and the reference
+        // C++ vector (`tools/sim_vectors`) was built without them. The team color
+        // is restored by the same slot→color mapping from `unit.team`
+        // (`max_app::overlays::team_color_index`), and if the unit came from a save
+        // with the bits already set — they are honoured.
         let merged_flags = flags | crate::access::unit_type_flags(unit_type);
         unit.flags = merged_flags;
 
-        // `UnitsManager_DeployUnit` (`units_manager.cpp:2443-2450`): у башен
-        // `UpdateTurretAngle(angle)`, у вращающейся башни `image_index_max`
-        // считается по кадрам **башни**, а не корпуса.
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2443-2450`): for turrets
+        // `UpdateTurretAngle(angle)`, for a spinning turret `image_index_max`
+        // is computed from the **turret** frames, not the hull.
         if merged_flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
             unit.turret_image_index = unit.turret_image_base.wrapping_add(i16::from(unit.angle));
             if merged_flags & unit_flags::SPINNING_TURRET != 0 {
@@ -1250,7 +1250,7 @@ impl GameState {
             }
         }
 
-        // `UnitInfo::UnitInfo`: атрибуты из current values команды.
+        // `UnitInfo::UnitInfo`: attributes from the team's current values.
         if let Some(values) = self
             .team_units
             .get(team_index)
@@ -1272,26 +1272,26 @@ impl GameState {
             0
         };
 
-        // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`): у нового
-        // юнита склад пуст — `if (GameManager_GameState != GAME_STATE_12_DEPLOYING_UNITS
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`): a new
+        // unit has empty storage — `if (GameManager_GameState != GAME_STATE_12_DEPLOYING_UNITS
         // && !QuickBuild_MenuActive && !is_existing_unit) unit->storage = 0;`.
-        // Раньше порт оставлял `ATTRIB_STORAGE`, и только что построенный
-        // `ADUMP`/`FDUMP`/`GOLDSM` появлялся полным — «бесплатное» сырьё
-        // попадало в котёл комплекса. При высадке (`DeployingUnits`) C++
-        // склад не обнуляет; конкретные грузы задаёт
+        // Previously the port kept `ATTRIB_STORAGE`, and a just-built
+        // `ADUMP`/`FDUMP`/`GOLDSM` appeared full — "free" raw material
+        // entered the complex pool. During landing (`DeployingUnits`) C++
+        // does not zero the storage; concrete cargo is set by
         // `GameManager_ProcessTeamMissionSupplyUnits` (`deploy.rs`).
         if self.game_state != GameStateType::DeployingUnits {
             unit.storage = 0;
         }
 
-        // `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`): мины, коммандос
-        // и подлодки невидимы всем; остальные видны только при
-        // `GameManager_AllVisible`, а своя команда видит всегда. Раньше здесь
-        // все обычные юниты помечались видимыми **всем** командам — из-за
-        // этого на карте и миникарте были видны чужие базы без разведки.
+        // `UnitInfo::InitStealthStatus` (`unitinfo.cpp:2796`): mines, commandos
+        // and submarines are invisible to all; the rest are visible only with
+        // `GameManager_AllVisible`, and the own team always sees them. Previously here
+        // all ordinary units were marked visible to **all** teams — because of
+        // this, foreign bases were visible on the map and minimap without reconnaissance.
         crate::combat::init_stealth_status(&mut unit, self.ai.all_visible);
 
-        // `UnitsManager_DeployUnit`: счётчик имён типа в команде.
+        // `UnitsManager_DeployUnit`: the type name counter in the team.
         if let Some(team_info) = self.teams.get_mut(team_index) {
             let counter = team_info.unit_counter(unit_type as u16);
             unit.unit_id = counter as u8;
@@ -1305,17 +1305,17 @@ impl GameState {
         }
 
         if merged_flags & unit_flags::ANIMATED != 0 {
-            // `UnitInfo::UnitInfo` (`unitinfo.cpp:288-294`) читает `image_index`
-            // из кадровых данных типа и `UnitsManager_DeployUnit`
-            // (`units_manager.cpp:2390`) переводит `ANIMATED` в
-            // `ORDER_EXPLODE/ORDER_STATE_DESTROY`. Флаг берётся из **итоговых**
-            // флагов: вызывающий слой (`UnitsManager_StartExplosion`) передаёт
-            // только класс (MOBILE_LAND/…), а `ANIMATED` приходит из `SC_UNITS`.
+            // `UnitInfo::UnitInfo` (`unitinfo.cpp:288-294`) reads `image_index`
+            // from the type's frame data, and `UnitsManager_DeployUnit`
+            // (`units_manager.cpp:2390`) translates `ANIMATED` into
+            // `ORDER_EXPLODE/ORDER_STATE_DESTROY`. The flag is taken from the **final**
+            // flags: the caller layer (`UnitsManager_StartExplosion`) passes
+            // only the class (MOBILE_LAND/…), while `ANIMATED` comes from `SC_UNITS`.
             unit.orders = UnitOrder::Explode;
             unit.state = UnitOrderState::Destroy;
         }
 
-        // Стартовые приказы по типу (`UnitsManager_DeployUnit`, switch).
+        // Starting orders by type (`UnitsManager_DeployUnit`, switch).
         match unit_type {
             UnitType::SeaTransport
             | UnitType::AirTransport
@@ -1361,23 +1361,23 @@ impl GameState {
             unit.y = unit.y.wrapping_add((GFX_MAP_TILE_SIZE / 2 - 1) as u16);
         }
 
-        // `UnitInfo::UnitInfo` (`unitinfo.cpp:316`): здание сразу получает
-        // **свой** комплекс — `AttachComplex(CreateComplex(team))`, а
-        // `Complex::Grow` ставит `buildings = 1`. Без этого у шахты не было
-        // `unit->GetComplex()`, и диалог `allocate` (`AllocMenu`) не открывался,
-        // а `Access_UpdateResourcesTotal` не видел добычу комплекса.
-        // Слияние с соседями по коннекторам делает
-        // [`crate::complex::update_connectors`] ниже — как
-        // `UnitsManager_UpdateConnectors` после завершения масштабирования
-        // здания (`units_manager.cpp:3166`).
+        // `UnitInfo::UnitInfo` (`unitinfo.cpp:316`): a building immediately gets
+        // **its own** complex — `AttachComplex(CreateComplex(team))`, and
+        // `Complex::Grow` sets `buildings = 1`. Without this the mine had no
+        // `unit->GetComplex()`, the `allocate` dialog (`AllocMenu`) did not open,
+        // and `Access_UpdateResourcesTotal` did not see the complex mining.
+        // Merging with connector neighbors is done by
+        // [`crate::complex::update_connectors`] below — like
+        // `UnitsManager_UpdateConnectors` after the building scaling
+        // completes (`units_manager.cpp:3166`).
         if unit.is_complex_member() {
             unit.complex = self.attach_new_complex(team);
         }
 
-        // Футпринт — до перемещения `unit` в слот (лайаут 2×2 — в `MapHash`).
+        // Footprint — before moving `unit` into the slot (the 2×2 layout goes to `MapHash`).
         let footprint = unit.footprint();
 
-        // Слот: свободный (LIFO, как переиспользование `SmartObjectArray`) или новый.
+        // Slot: free (LIFO, like `SmartObjectArray` reuse) or new.
         let slot = match self.free_slots.pop() {
             Some(slot) => {
                 self.units[slot as usize] = Some(unit);
@@ -1402,27 +1402,27 @@ impl GameState {
                 self.units.len() - 1
             }
         };
-        // `Hash_UnitHash.PushBack(unit)` — ведёрко по `id % hash_size`.
+        // `Hash_UnitHash.PushBack(unit)` — bucket by `id % hash_size`.
         self.unit_hash.push_at(u32::from(id.0), slot as u16);
-        // `Hash_MapHash.Add` (`units_manager.cpp`): клетка (у 2×2-структур — ещё
-        // три клетки).
+        // `Hash_MapHash.Add` (`units_manager.cpp`): the cell (for 2×2 structures —
+        // three more cells).
         self.map_hash
             .add(id, grid.x as u16, grid.y as u16, footprint, false);
 
         self.add_to_draw_list(id);
 
-        // `Access_UpdateMapStatus(unit, true)` — покрытие сканирования (P6).
+        // `Access_UpdateMapStatus(unit, true)` — scan coverage (P6).
         self.update_map_status(id, true);
 
         // `UnitsManager_UpdateConnectors(unit)` (`units_manager.cpp:2051`):
-        // здание ищет соседей по восьми направлениям, сливает комплексы
-        // (`AttachToPrimaryComplex`) и пересчитывает запасы. В C++ вызов идёт
-        // по завершении `ORDER_AWAIT_SCALING`/`EXPAND`; в порте здание уже стоит
-        // на карте, поэтому коннекторы считаются сразу — иначе завод до конца
-        // анимации не видел бы материалов комплекса. Здание в `ORDER_IDLE`
-        // (готовое, но ещё не раскрытое) в комплекс не входит: её приказ
-        // восстановит `UnitsManager_BuildingReady`, и тогда `update_connectors`
-        // вызовется из `process_order_await_scaling`.
+        // the building searches neighbors in eight directions, merges complexes
+        // (`AttachToPrimaryComplex`) and recomputes stocks. In C++ the call happens
+        // after `ORDER_AWAIT_SCALING`/`EXPAND` completes; in the port the building already stands
+        // on the map, so connectors are computed immediately — otherwise the factory would not see
+        // the complex materials until the end of the animation. A building in `ORDER_IDLE`
+        // (ready but not yet unfolded) does not join the complex: its order
+        // is restored by `UnitsManager_BuildingReady`, and then `update_connectors`
+        // is called from `process_order_await_scaling`.
         if self
             .unit(id)
             .is_some_and(|unit| unit.is_complex_member() && unit.orders != UnitOrder::Idle)
@@ -1433,10 +1433,10 @@ impl GameState {
         Some(id)
     }
 
-    /// `UnitInfo::AttachComplex` (`unitinfo.cpp:1978`) в объёме модели:
-    /// новый комплекс команды (`TeamUnits::CreateComplex`) + `Complex::Grow`.
+    /// `UnitInfo::AttachComplex` (`unitinfo.cpp:1978`) in the model scope:
+    /// a new team complex (`TeamUnits::CreateComplex`) + `Complex::Grow`.
     ///
-    /// Возвращает id комплекса; `None`, если у команды нет слота.
+    /// Returns the complex id; `None` if the team has no slot.
     fn attach_new_complex(&mut self, team: TeamId) -> Option<crate::team::ComplexId> {
         let team_units = self.team_units.get_mut(team.0 as usize)?;
         let id = team_units.create_complex();
@@ -1445,38 +1445,38 @@ impl GameState {
         Some(id)
     }
 
-    /// `UnitsManager_RemoveConnections` (`units_manager.cpp:1556`) в объёме
-    /// модели: снятие парных битов у соседей и разделение комплекса
+    /// `UnitsManager_RemoveConnections` (`units_manager.cpp:1556`) in the
+    /// model scope: clearing paired bits on neighbors and splitting the complex
     /// (`UnitInfo::DetachComplex`).
     ///
-    /// C++ вызывает `RemoveConnections` из `UnitsManager_BuildClearing` перед
-    /// `DestroyUnit`; в порте уничтожение идёт через [`Self::destroy_unit`],
-    /// поэтому разделение комплекса делается здесь же.
+    /// C++ calls `RemoveConnections` from `UnitsManager_BuildClearing` before
+    /// `DestroyUnit`; in the port destruction goes through [`Self::destroy_unit`],
+    /// so the complex split is done here too.
     fn remove_connections(&mut self, id: UnitId) {
         crate::complex::remove_connections(self, id);
     }
 
-    /// Уничтожение юнита — подмножество `UnitsManager_DestroyUnit`
-    /// (`units_manager.cpp`), достаточное циклу P4: снятие со списков, из
-    /// хэшей, из атак и событий, покрытия сканирования и задач ИИ.
+    /// Unit destruction — a subset of `UnitsManager_DestroyUnit`
+    /// (`units_manager.cpp`) sufficient for the P4 loop: removal from lists,
+    /// hashes, attacks and events, scan coverage and AI tasks.
     ///
-    /// TODO(P3): комплексы, грузы, следы/обломки, статистика потерь.
+    /// TODO(P3): complexes, cargo, trails/rubble, loss statistics.
     pub fn destroy_unit(&mut self, id: UnitId) {
         let Some(slot) = self.lookup(id) else {
             return;
         };
         let placement = self.unit(id).map(|unit| (unit.grid, unit.footprint()));
-        // Атаку завершаем до удаления из хэша (`UnitsManager_EndAttack` ищет
-        // юнита по id).
+        // End the attack before removing from the hash (`UnitsManager_EndAttack` finds
+        // the unit by id).
         self.end_attack(id);
 
-        // `Access_UpdateMapStatus(unit, false)` и `Ai_RemoveUnit` (P6).
+        // `Access_UpdateMapStatus(unit, false)` and `Ai_RemoveUnit` (P6).
         self.update_map_status(id, false);
         crate::ai::ai_remove_unit(self, id);
 
         // `UnitsManager_RemoveConnections` → `DetachComplex` (`units_manager.cpp:1569`):
-        // здание покидает комплекс, оставшиеся связные группы получают свои
-        // комплексы, у соседей снимаются биты коннекторов.
+        // the building leaves the complex, the remaining connected groups get their
+        // own complexes, connector bits are cleared on neighbors.
         if let Some(unit) = self.unit(id) {
             if unit.is_complex_member() {
                 self.remove_connections(id);
@@ -1515,23 +1515,23 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Приказы: межъюнитные операции (C++ `UnitsManager_SetNewOrderInt` и др.)
+    // Orders: inter-unit operations (C++ `UnitsManager_SetNewOrderInt` etc.)
     // -----------------------------------------------------------------------
 
-    /// `UnitsManager_SetNewOrderInt` для произвольного юнита
-    /// (`units_manager.cpp:1945`); возвращает `true`, если снят запрос пути.
+    /// `UnitsManager_SetNewOrderInt` for an arbitrary unit
+    /// (`units_manager.cpp:1945`); returns `true` if a path request was removed.
     ///
-    /// Новый приказ **не** отменяет стройку: в C++ строителя нельзя увести
-    /// кликом с недостроенной площадки (`CURSOR_UNIT_NO_GO`,
-    /// `game_manager.cpp:5927-5931`), а отмена идёт только явным `stop`
+    /// A new order does **not** cancel construction: in C++ the builder cannot be moved
+    /// by a click from an unfinished site (`CURSOR_UNIT_NO_GO`,
+    /// `game_manager.cpp:5927-5931`), and cancellation goes only through an explicit `stop`
     /// (`ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
     pub fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
         let Some(mut unit) = self.unit(id).cloned() else {
             return false;
         };
-        // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): если
-        // приказ меняется на этапе `EXPAND`, C++ сразу зовёт
-        // `UnitsManager_UpdateConnectors`, не дожидаясь конца анимации.
+        // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): if
+        // the order changes during `EXPAND`, C++ immediately calls
+        // `UnitsManager_UpdateConnectors`, without waiting for the animation to end.
         let connectors_due =
             unit.orders == UnitOrder::AwaitScaling && unit.state == UnitOrderState::Expand;
         let delete_path = unit_order::set_new_order_int(&mut unit, order, state);
@@ -1572,8 +1572,8 @@ impl GameState {
             let targets = self.live_attacks.remove(position).targets;
             for target in targets {
                 if let Some(target_unit) = self.unit_mut(target) {
-                    // C++ `--pin_count` без насыщения; возможный «минус» —
-                    // точное поведение оракула (DESIGN §6.3).
+                    // C++ `--pin_count` without saturation; a possible "minus" is
+                    // the exact oracle behavior (DESIGN §6.3).
                     target_unit.pin_count = target_unit.pin_count.wrapping_sub(1);
                 }
             }
@@ -1585,9 +1585,9 @@ impl GameState {
 
     /// `UnitsManager_PinAttackTargets` (`units_manager.cpp:2542`).
     ///
-    /// Захват целей — `Access_GetAreaAttackTargets` для площадной атаки,
-    /// иначе `Access_GetAttackTarget` по `fire_on`. Каждая цель получает
-    /// `pin_count += 1`; она не может сойти с клетки/карты до `EndAttack`.
+    /// Target pinning — `Access_GetAreaAttackTargets` for an area attack,
+    /// otherwise `Access_GetAttackTarget` by `fire_on`. Each target gets
+    /// `pin_count += 1`; it cannot leave the cell/map until `EndAttack`.
     pub fn pin_attack_targets(&mut self, id: UnitId) {
         self.end_attack(id);
         self.live_attack_counter = self.live_attack_counter.wrapping_add(1);
@@ -1630,7 +1630,7 @@ impl GameState {
 
     /// `UnitsManager_AddToDelayedReactionList` (`units_manager.cpp:3435`).
     pub fn add_to_delayed_reaction_list(&mut self, id: UnitId) {
-        // Настройка `disable_fire` выключает реактивный огонь целиком.
+        // The `disable_fire` setting disables reaction fire entirely.
         if self.disable_fire {
             return;
         }
@@ -1648,7 +1648,7 @@ impl GameState {
     }
 
     /// `UnitsManager_ClearDelayedReactions` (`units_manager.cpp:3456`) —
-    /// сброс флага, `delayed_reaction` живых юнитов и всех списков целей.
+    /// flag reset, `delayed_reaction` of live units and all target lists.
     pub fn clear_delayed_reactions(&mut self) {
         self.delayed_reactions_pending = false;
 
@@ -1674,11 +1674,11 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Обход пяти списков (DESIGN §5.2, `units_manager.cpp:1860`)
+    // Walk over the five lists (DESIGN §5.2, `units_manager.cpp:1860`)
     // -----------------------------------------------------------------------
 
-    /// `UnitsManager_ProcessOrders` (`units_manager.cpp:1860`) — один проход по
-    /// пяти спискам в фиксированном порядке.
+    /// `UnitsManager_ProcessOrders` (`units_manager.cpp:1860`) — one pass over
+    /// the five lists in fixed order.
     pub fn process_orders(&mut self) {
         self.bob_effect_quota = 5;
 
@@ -1695,22 +1695,22 @@ impl GameState {
             self.process_unit_orders(kind);
         }
 
-        // В C++ здесь `Remote_ProcessNetPackets()`; в max_core очередь команд
-        // применяется в начале тика (см. `tick`), поэтому pass.
+        // In C++ this is `Remote_ProcessNetPackets()`; in max_core the command queue
+        // is applied at the start of the tick (see `tick`), hence pass.
 
         if !self.orders_pending {
             self.process_pending_attacks();
         }
 
         // `UnitsManager_PendingAirGroupLeader` → `Access_ProcessNewGroupOrder`:
-        // лидер остаётся в поле, пока путь группы не разрешён (C++).
+        // the leader stays in the field until the group path is allowed (C++).
         if let Some(leader) = self.pending_air_group_leader {
             if crate::access::process_new_group_order(self, leader) {
                 self.pending_air_group_leader = None;
             }
         }
 
-        // `UnitEvent_UnitEvents`: Process() каждого, затем Clear().
+        // `UnitEvent_UnitEvents`: Process() each, then Clear().
         let events = std::mem::take(&mut self.unit_events);
         for event in &events {
             crate::events::process_unit_event(self, event);
@@ -1720,13 +1720,13 @@ impl GameState {
         self.reset_bob_state = self.bob_effect_quota > 0;
     }
 
-    /// `UnitsManager_ProcessUnitOrders` — обход одного списка.
+    /// `UnitsManager_ProcessUnitOrders` — a walk over one list.
     ///
-    /// C++ итерирует `SmartList` от `Begin()` до зафиксированного `End()`;
-    /// здесь — снимок id списка на начало обхода. Юниты, удалённые во время
-    /// обхода, пропускаются (как и в C++: `SmartList`-итератор после
-    /// `Remove` текущего узла не продолжают), добавленные в начало/конец
-    /// списка — не посещаются в этом проходе.
+    /// C++ iterates `SmartList` from `Begin()` to a fixed `End()`;
+    /// here — a snapshot of the list ids at the start of the walk. Units removed during
+    /// the walk are skipped (as in C++: the `SmartList` iterator after
+    /// `Remove` of the current node is not continued), ones added to the start/end
+    /// of the list are not visited in this pass.
     pub fn process_unit_orders(&mut self, kind: UnitListKind) {
         let ids = self.lists[kind.index()].clone();
         for id in ids {
@@ -1736,10 +1736,10 @@ impl GameState {
         }
     }
 
-    /// Голова `UnitsManager_PendingAttacks` (`units_manager.cpp:1884-1930`).
+    /// The head of `UnitsManager_PendingAttacks` (`units_manager.cpp:1884-1930`).
     fn process_pending_attacks(&mut self) {
         if self.pending_attacks.is_empty() {
-            // `UnitsManager_AssessAttacks()` — проверка отложенных реакций.
+            // `UnitsManager_AssessAttacks()` — checking delayed reactions.
             crate::combat::assess_attacks(self);
             return;
         }
@@ -1751,11 +1751,11 @@ impl GameState {
         };
 
         if unit.hits == 0 || unit.state == UnitOrderState::Destroy {
-            // Атакующий умирает — `DestroyUnit` завершает его атаку.
+            // The attacker dies — `DestroyUnit` ends its attack.
             self.pending_attacks.remove(0);
         } else if unit.orders != UnitOrder::Fire {
-            // Анимация попадания лишь приостанавливает огонь; любой другой
-            // приказ атаку отменяет.
+            // The hit animation only pauses fire; any other
+            // order cancels the attack.
             if unit.orders != UnitOrder::Explode || unit.prior_orders != UnitOrder::Fire {
                 self.end_attack(id);
                 self.pending_attacks.remove(0);
@@ -1770,7 +1770,7 @@ impl GameState {
             let mut unit = unit;
             unit_order::restore_orders(&mut unit);
             if unit.orders == UnitOrder::Fire {
-                // Ошибка: отложенным приказом был огонь.
+                // Failure: the deferred order was fire.
                 unit.orders = UnitOrder::Await;
                 unit.state = UnitOrderState::ExecutingOrder;
             }
@@ -1780,18 +1780,18 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Конец хода (DESIGN §5.3, `game_manager.cpp:2042-2087`)
+    // End of turn (DESIGN §5.3, `game_manager.cpp:2042-2087`)
     // -----------------------------------------------------------------------
 
-    /// `GameManager_ManageEconomy` — обновление производства, снабжения и
-    /// исследований команды на начало её хода.
+    /// `GameManager_ManageEconomy` — updating the team's production, supply and
+    /// research at the start of its turn.
     pub fn manage_economy(&mut self, team: TeamId) {
         // `team_units->OptimizeComplexes(team)` (`teamunits.cpp:170`):
-        // `Access_UpdateResourcesTotal(complex)` — запасы комплекса (включая
-        // добычу шахт по их `raw/fuel/gold_mining`) пересчитываются на начало
-        // хода; затем `ProductionManager_OptimizeProduction` — включение
-        // производителей энергии, отключение потребителей при дефиците и
-        // пауза строек (`production_manager.cpp:830-901`).
+        // `Access_UpdateResourcesTotal(complex)` — the complex stocks (including
+        // mine mining by their `raw/fuel/gold_mining`) are recomputed at the start
+        // of the turn; then `ProductionManager_OptimizeProduction` — turning
+        // power producers on, turning consumers off on a deficit and
+        // pausing constructions (`production_manager.cpp:830-901`).
         let complexes: Vec<crate::team::ComplexId> = self
             .team_units
             .get(team.0 as usize)
@@ -1844,17 +1844,17 @@ impl GameState {
             }
         }
 
-        // Повторная оптимизация здесь **не** нужна: `update_production` не
-        // сбрасывает паузу стационарных заводов (её решение принято
-        // `ProductionManager_OptimizeProduction` выше), а
-        // `Access_UpdateResourcesTotal` после раздачи складов вернул бы кэш
-        // комплекса к «инвентарь + добыча» (C++ `ManageEconomy` этого не делает).
+        // Repeated optimization is **not** needed here: `update_production` does not
+        // reset the pause of stationary factories (its decision was made by
+        // `ProductionManager_OptimizeProduction` above), and
+        // `Access_UpdateResourcesTotal` after distributing storages would restore the
+        // complex cache to "inventory + mining" (C++ `ManageEconomy` does not do this).
         if let Some(team_info) = self.teams.get_mut(team.0 as usize) {
             for index in 0..RESEARCH_TOPIC_COUNT {
                 let topic = team_info.research_topics[index];
                 if topic.allocation != 0 && topic.turns_to_complete == 0 {
                     // `ResearchMenu_UpdateResearchProgress(team, i, 0)`:
-                    // посчитать ходы для нового уровня (C++ `manage_economy`).
+                    // compute turns for the new level (C++ `manage_economy`).
                     crate::research::update_research_progress(
                         &mut team_info.research_topics[index],
                         crate::research::RESEARCH_TOPIC_FACTORS[index],
@@ -1866,11 +1866,11 @@ impl GameState {
     }
 
     // -----------------------------------------------------------------------
-    // Исследования (P6: `researchmenu.cpp` / `upgradecontrol.cpp`)
+    // Research (P6: `researchmenu.cpp` / `upgradecontrol.cpp`)
     // -----------------------------------------------------------------------
 
     /// `ResearchMenu_UpdateResearchProgress(team, topic, allocation)` —
-    /// изменить число исследовательских центров темы и пересчитать прогресс.
+    /// change the number of a topic's research centers and recompute progress.
     pub fn update_research_progress(
         &mut self,
         team: TeamId,
@@ -1891,7 +1891,7 @@ impl GameState {
         );
     }
 
-    /// Текущее распределение исследовательских центров по темам (C++
+    /// The current allocation of research centers by topic (C++
     /// `TeamInfo::research_topics[i].allocation`).
     pub fn research_allocation(&self, team: TeamId) -> [u32; RESEARCH_TOPIC_COUNT] {
         let mut result = [0u32; RESEARCH_TOPIC_COUNT];
@@ -1903,16 +1903,16 @@ impl GameState {
         result
     }
 
-    /// `ResearchMenu_OnClick_Done` (`researchmenu.cpp:518`): применить новое
-    /// распределение центров по темам.
+    /// `ResearchMenu_OnClick_Done` (`researchmenu.cpp:518`): apply the new
+    /// allocation of centers by topic.
     ///
-    /// Для каждого включённого `RESEARCH`-центра: если в целевом распределении
-    /// для его темы есть место — оставить; иначе перевести на первую тему с
-    /// местом (обновив allocation `-1/+1`), а если мест нет — выключить
-    /// (`ORDER_POWER_OFF`/`INIT`, как C++).
+    /// For each enabled `RESEARCH` center: if the target allocation
+    /// has room for its topic — keep it; otherwise move it to the first topic with
+    /// room (updating allocation `-1/+1`), and if there is no room — turn it off
+    /// (`ORDER_POWER_OFF`/`INIT`, as in C++).
     ///
-    /// Возвращает фактическое распределение (C++ не гарантирует сумму = числу
-    /// центров, если цель больше числа центров).
+    /// Returns the actual allocation (C++ does not guarantee the sum equals the number
+    /// of centers if the target exceeds the number of centers).
     pub fn set_research_allocation(
         &mut self,
         team: TeamId,
@@ -1961,8 +1961,8 @@ impl GameState {
         self.research_allocation(team)
     }
 
-    /// `ResearchMenu_NewTurn(team)` — ход исследований команды: списать
-    /// allocation, завершить уровни, применить апгрейды к текущим значениям.
+    /// `ResearchMenu_NewTurn(team)` — the team's research turn: deduct
+    /// allocation, complete levels, apply upgrades to current values.
     pub fn advance_research(&mut self, team: TeamId) -> Vec<crate::research::ResearchEvent> {
         let index = team.0 as usize;
         if index >= TEAM_SLOTS {
@@ -1973,47 +1973,47 @@ impl GameState {
         crate::research::research_new_turn(&mut team_units[index], &mut teams[index], team)
     }
 
-    /// Забирает события исследований последнего хода (для HUD-лога).
+    /// Takes the research events of the last turn (for the HUD log).
     pub fn take_research_events(&mut self) -> Vec<crate::research::ResearchEvent> {
         std::mem::take(&mut self.research_events)
     }
 
-    /// Забирает звуковые события боя (для `AudioPlayer`).
+    /// Takes combat sound events (for `AudioPlayer`).
     ///
-    /// Копятся `PrepareFire`/`UnitsManager_StartExplosion`; читает клиент
-    /// (`max_app::App::collect_combat_sounds`) сразу после тика.
+    /// Accumulated by `PrepareFire`/`UnitsManager_StartExplosion`; the client reads
+    /// them (`max_app::App::collect_combat_sounds`) right after the tick.
     pub fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
         std::mem::take(&mut self.unit_sounds)
     }
 
-    /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — сброс скоростей,
-    /// выстрелов, снабжения и **разбор запаса комплекса по складам зданий** на
-    /// начало хода.
+    /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — reset of speeds,
+    /// shots, supply and **distribution of the complex stock over building storages** at
+    /// the start of the turn.
     ///
-    /// Точный порядок C++:
-    /// 1. мобильный строитель в `ORDER_BUILD` платит сырьём
-    ///    (`Cargo_GetRawConsumptionRate`), предварительно урезав `build_rate` до
+    /// The exact C++ order:
+    /// 1. a mobile builder in `ORDER_BUILD` pays with raw material
+    ///    (`Cargo_GetRawConsumptionRate`), having first cut `build_rate` to
     ///    `BuildMenu_GetMaxPossibleBuildRate`;
-    /// 2. `COMMTWR` в `ORDER_POWER_ON` добавляет команде золото
+    /// 2. `COMMTWR` in `ORDER_POWER_ON` adds gold to the team
     ///    (`Cargo_GetGoldConsumptionRate` = 5);
-    /// 3. `GREENHSE` в `ORDER_POWER_ON` — `++storage` и `++team_points`;
-    /// 4. выстрелы/скорость/отключение;
-    /// 5. если у юнита есть комплекс — `storage = min(complex.<field>,
+    /// 3. `GREENHSE` in `ORDER_POWER_ON` — `++storage` and `++team_points`;
+    /// 4. shots/speed/disable;
+    /// 5. if the unit has a complex — `storage = min(complex.<field>,
     ///    ATTRIB_STORAGE)`, `complex.<field> -= storage`.
     ///
-    /// Шаг 5 и есть «добыча шахты → хранилища»: `Access_UpdateResourcesTotal`
-    /// (см. [`Self::update_complex_resources`]) кладёт добычу в поле комплекса,
-    /// а здесь она раскладывается по складам (`ADUMP`/`FDUMP`/`GOLDSM` и т.д.).
-    /// Остаток сверх суммы `ATTRIB_STORAGE` остаётся в поле комплекса и теряется
-    /// на следующем пересчёте — как в C++.
+    /// Step 5 is the "mine mining → storages" transfer: `Access_UpdateResourcesTotal`
+    /// (see [`Self::update_complex_resources`]) puts the mining into the complex field,
+    /// and here it is distributed over storages (`ADUMP`/`FDUMP`/`GOLDSM` etc.).
+    /// The remainder beyond the `ATTRIB_STORAGE` sum stays in the complex field and is lost
+    /// on the next recomputation — as in C++.
     pub fn update_production(&mut self, unit: &mut UnitInfo) {
         let team_index = unit.team.0 as usize;
 
-        // Флаг паузы мобильного строителя пересчитывается каждый ход:
-        // `true` ставит только ветка оплаты ниже. Пауза **стационарного**
-        // завода принадлежит `ProductionManager::progress` (оптимизатор
-        // энергии) и здесь не сбрасывается — иначе решение об отключении
-        // терялось бы между `ManageEconomy` и `ProgressBuildState`.
+        // The mobile builder's pause flag is recomputed every turn:
+        // only the payment branch below sets `true`. The pause of a **stationary**
+        // factory belongs to `ProductionManager::progress` (the power
+        // optimizer) and is not reset here — otherwise the shutdown decision
+        // would be lost between `ManageEconomy` and `ProgressBuildState`.
         if unit.is_ground() || unit.is_amphibious() {
             unit.build_paused = false;
         }
@@ -2053,13 +2053,13 @@ impl GameState {
 
             if !skip_for_ai {
                 // C++ `storage -= Cargo_GetRawConsumptionRate(unit_type,
-                // build_rate)` (`unitinfo.cpp:2914`) списывает сырьё **всегда**
-                // и позволяет складу уйти в минус; `GameManager_SpawnNewUnits`
-                // затем всё равно двигает `build_time`, и постройка
-                // «достраивается долгом». Порт обязан держать ресурс
-                // неотрицательным, поэтому списание идёт только при
-                // достаточном остатке, а неоплаченный ход помечается
-                // `build_paused` — прогресс такого хода не делает
+                // build_rate)` (`unitinfo.cpp:2914`) charges raw material **always**
+                // and lets the storage go negative; `GameManager_SpawnNewUnits`
+                // then advances `build_time` anyway, and the construction
+                // "completes on debt". The port must keep the resource
+                // non-negative, so charging happens only with
+                // a sufficient remainder, and an unpaid turn is marked
+                // `build_paused` — such a turn makes no progress
                 // (`production::spawn_units`).
                 let cost = cargo_raw_consumption_rate(unit.unit_type, i32::from(unit.build_rate));
 
@@ -2112,7 +2112,7 @@ impl GameState {
             || (unit.orders == UnitOrder::Idle && unit.prior_orders == UnitOrder::Disable)
         {
             if unit.team != TeamId::ALIEN {
-                // Отключение, закончившееся на нуле, остаётся нулём.
+                // A disable that ended at zero stays zero.
                 if unit.disabled_turns_remaining > 0 {
                     unit.disabled_turns_remaining -= 1;
                 }
@@ -2124,9 +2124,9 @@ impl GameState {
                     } else {
                         unit_order::restore_orders(unit);
 
-                        // Попадание во время отключения оставило DISABLE
-                        // отложенным приказом; `RestoreOrders` его сохраняет
-                        // для зданий с питанием.
+                        // A hit during disable left DISABLE
+                        // as a deferred order; `RestoreOrders` preserves it
+                        // for powered buildings.
                         if unit.orders == UnitOrder::Disable {
                             unit.prior_orders = UnitOrder::PowerOff;
                             unit.prior_state = UnitOrderState::ExecutingOrder;
@@ -2156,12 +2156,12 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::Resupply` (`unitinfo.cpp:2885`) — пополнение боезапаса из
-    /// запаса комплекса (`Complex::GetCargoInfo` + `Complex::Transfer(-1,0,0)`)
-    /// и регенерация.
+    /// `UnitInfo::Resupply` (`unitinfo.cpp:2885`) — ammo replenishment from
+    /// the complex stock (`Complex::GetCargoInfo` + `Complex::Transfer(-1,0,0)`)
+    /// and regeneration.
     ///
-    /// `Regenerate()` (зелёные юниты пришельцев) в модели отсутствует —
-    /// TODO, как и в остальном порте.
+    /// `Regenerate()` (green alien units) is absent from the model —
+    /// TODO, as in the rest of the port.
     pub fn resupply(&mut self, unit: &mut UnitInfo) {
         if unit.is_complex_member()
             && unit.base_values.get_attribute(ATTRIB_ATTACK) > 0
@@ -2179,8 +2179,8 @@ impl GameState {
         }
     }
 
-    /// `GameManager_UpdateScoreGraph` (`game_manager.cpp:2078`): сдвиг графика
-    /// очков на 1 влево, последний элемент — текущие очки команды.
+    /// `GameManager_UpdateScoreGraph` (`game_manager.cpp:2078`): shift the score
+    /// graph one place left, the last element — the team's current points.
     pub fn update_score_graph(&mut self) {
         for team in 0..PLAYER_TEAM_COUNT {
             let points = self.teams[team].team_points;
@@ -2204,26 +2204,26 @@ impl GameState {
         true
     }
 
-    /// Общий счётчик барьера конца хода (пакет 52), если **все** играющие
-    /// команды прислали одинаковое значение — `Remote_ServerWaitBarrier`
-    /// (`max-brh-docs/protocol.md` §8.6: «ждёт, пока все удалённые команды пришлют
-    /// одинаковое значение счётчика»).
+    /// The common end-of-turn barrier counter (packet 52) if **all** playing
+    /// teams sent the same value — `Remote_ServerWaitBarrier`
+    /// (`max-brh-docs/protocol.md` §8.6: "waits until all remote teams send
+    /// the same counter value").
     ///
-    /// `None` — барьер ещё не собран (или команды разошлись).
+    /// `None` — the barrier is not assembled yet (or the teams diverged).
     pub fn end_turn_barrier(&self) -> Option<u8> {
         self.common_barrier(|state, team| state.turn_indices[team])
     }
 
-    /// Общий счётчик барьера начала хода (пакет 00) — аналог
-    /// [`Self::end_turn_barrier`] по `Remote_FrameSyncCounter`
+    /// The common start-of-turn barrier counter (packet 00) — the analog of
+    /// [`Self::end_turn_barrier`] by `Remote_FrameSyncCounter`
     /// (`Remote_WaitBeginTurnAcknowledge`, `remote.cpp:1876-1933`).
     ///
-    /// `None` — не все играющие команды вошли в раунд с одним счётчиком.
+    /// `None` — not all playing teams entered the round with one counter.
     pub fn begin_turn_barrier(&self) -> Option<u8> {
         self.common_barrier(|state, team| state.frame_sync_counter[team])
     }
 
-    /// `Remote_StateSyncIndices[team]` — последний применённый индекс 54.
+    /// `Remote_StateSyncIndices[team]` — the last applied index of 54.
     #[inline]
     pub fn state_sync_index(&self, team: TeamId) -> u8 {
         self.state_sync_indices
@@ -2232,15 +2232,15 @@ impl GameState {
             .unwrap_or(0)
     }
 
-    /// Общий номер следующего хода CRC-барьера (пакет 45): все играющие
-    /// команды согласны. `None` — барьер не собран (десинк/ожидание).
+    /// The common next-turn number of the CRC barrier (packet 45): all playing
+    /// teams agree. `None` — the barrier is not assembled (desync/waiting).
     pub fn crc_barrier(&self) -> Option<u8> {
         self.common_barrier(|state, team| state.next_turn_indices[team])
     }
 
-    /// Значение общего барьера по командам (`None` — нет согласия).
+    /// The common barrier value by teams (`None` — no agreement).
     ///
-    /// Команды `None`/`Eliminated` не участвуют (как в `Remote_ServerWaitBarrier`).
+    /// `None`/`Eliminated` teams do not participate (as in `Remote_ServerWaitBarrier`).
     fn common_barrier(&self, value: impl Fn(&Self, usize) -> u8) -> Option<u8> {
         let mut common: Option<u8> = None;
 
@@ -2268,14 +2268,14 @@ impl GameState {
             || self.teams[team.0 as usize].team_type == TeamKind::Remote
     }
 
-    /// `GameManager_TeamTurnFinish` (`game_manager.cpp:583`) — закрытие хода:
-    /// проверка победы/поражения (P7), сброс `finished_turn`, график очков,
-    /// счётчик хода.
+    /// `GameManager_TeamTurnFinish` (`game_manager.cpp:583`) — closing the turn:
+    /// victory/defeat check (P7), `finished_turn` reset, score graph,
+    /// turn counter.
     ///
-    /// Возвращает `true`, если партия завершена
-    /// ([`crate::victory::check_end_game_conditions`] — порт
-    /// `menu_check_end_game_conditions`): тогда C++ не сбрасывает
-    /// `finished_turn` и не увеличивает счётчик хода.
+    /// Returns `true` if the game is over
+    /// ([`crate::victory::check_end_game_conditions`] — a port of
+    /// `menu_check_end_game_conditions`): then C++ does not reset
+    /// `finished_turn` and does not increment the turn counter.
     pub fn finish_turn(&mut self) -> bool {
         if self.game_state != GameStateType::EndTurn {
             return false;
@@ -2294,10 +2294,10 @@ impl GameState {
         self.update_score_graph();
         self.turn_counter += 1;
 
-        // `GameManager_ManageEconomy` → `GameManager_ProgressBuildState` для
-        // каждой играющей команды в порядке RED..GRAY (C++ `UpdateGui`): ход
-        // производства идёт сразу после смены хода, до ходов ИИ/игрока.
-        // Порядок вызовов 1:1: списание стоимости хода → `SpawnNewUnits`
+        // `GameManager_ManageEconomy` → `GameManager_ProgressBuildState` for
+        // each playing team in RED..GRAY order (C++ `UpdateGui`): the production
+        // turn runs right after the turn switch, before AI/player turns.
+        // Call order 1:1: turn cost charging → `SpawnNewUnits`
         // (`GroundCover → MobileLandSea → Stationary → MobileAir`).
         self.production_events.clear();
         self.research_events.clear();
@@ -2309,8 +2309,8 @@ impl GameState {
                 continue;
             }
 
-            // `GameManager_ProgressBuildState`: сначала `ResearchMenu_NewTurn`
-            // (P6), затем `SpawnNewUnits` — порядок C++.
+            // `GameManager_ProgressBuildState`: first `ResearchMenu_NewTurn`
+            // (P6), then `SpawnNewUnits` — the C++ order.
             let research = self.advance_research(TeamId(team as u8));
             self.research_events.extend(research);
 
@@ -2321,12 +2321,12 @@ impl GameState {
         false
     }
 
-    /// Забирает события последнего хода производства (для HUD-лога).
+    /// Takes the production events of the last turn (for the HUD log).
     pub fn take_production_events(&mut self) -> Vec<crate::production::ProductionEvent> {
         std::mem::take(&mut self.production_events)
     }
 
-    /// Добавляет строку в сообщение энергетики комплекса — C++
+    /// Appends a line to the complex power message — C++
     /// `ComposeIndustryMessage`/`DrawResourceMessage`
     /// (`production_manager.cpp:308-330/792-804`).
     pub fn push_industry_message(&mut self, message: impl Into<String>) {
@@ -2347,28 +2347,28 @@ impl GameState {
         }
     }
 
-    /// Забирает накопленное сообщение энергетики (для `hud.hint`).
+    /// Takes the accumulated power message (for `hud.hint`).
     pub fn take_industry_message(&mut self) -> Option<String> {
         self.industry_message.take()
     }
 
     // -----------------------------------------------------------------------
-    // Цикл тика (DESIGN §5.1, `GameManager_ProcessTick`, `game_manager.cpp:5144`)
+    // Tick loop (DESIGN §5.1, `GameManager_ProcessTick`, `game_manager.cpp:5144`)
     // -----------------------------------------------------------------------
 
-    /// Один тик симуляции.
+    /// One simulation tick.
     ///
-    /// Порядок (C++ `GameManager_ProcessTick`):
-    /// 1. `PathsManager.PollResults()` — результаты путей (P5);
-    /// 2. применить входные команды (`Remote_Synchronize`/`ProcessNetPackets`);
-    /// 3. если фаза ≠ `TURN_ACTIVE` — `UnitsManager_ProcessOrders()`;
-    /// 4. если фаза ≠ `TURN_ACTIVE` и нет `OrdersPending`: `Ai_CheckReactions`
-    ///    через чередование `update_flag`, `DispatchJobs`, `Ai_CheckReactions`,
+    /// Order (C++ `GameManager_ProcessTick`):
+    /// 1. `PathsManager.PollResults()` — path results (P5);
+    /// 2. apply input commands (`Remote_Synchronize`/`ProcessNetPackets`);
+    /// 3. if the phase ≠ `TURN_ACTIVE` — `UnitsManager_ProcessOrders()`;
+    /// 4. if the phase ≠ `TURN_ACTIVE` and there is no `OrdersPending`: `Ai_CheckReactions`
+    ///    via the `update_flag` alternation, `DispatchJobs`, `Ai_CheckReactions`,
     ///    `Ai_CheckEndTurn`.
     pub fn tick(&mut self) {
-        // Звуки боя копятся до чтения клиентом (`App::collect_combat_sounds`
-        // сразу после тика). Headless-прогоны их не забирают, поэтому очередь
-        // подрезается: события — отчёт для UI, а не состояние партии.
+        // Combat sounds accumulate until the client reads them (`App::collect_combat_sounds`
+        // right after the tick). Headless runs do not take them, so the queue
+        // is trimmed: events are a UI report, not game state.
         const MAX_UNIT_SOUNDS: usize = 256;
         if self.unit_sounds.len() > MAX_UNIT_SOUNDS {
             let excess = self.unit_sounds.len() - MAX_UNIT_SOUNDS;
@@ -2378,15 +2378,15 @@ impl GameState {
         // 1. `ResourceManager_GetPathsManager().PollResults()` — P5.
         self.poll_path_results();
 
-        // 2. Входные команды: в порядке поступления.
+        // 2. Input commands: in arrival order.
         self.apply_pending_commands();
 
-        // 3. Приказы.
+        // 3. Orders.
         if self.game_state != GameStateType::TurnActive {
             self.process_orders();
         }
 
-        // 4. Реакции ИИ и конец хода.
+        // 4. AI reactions and end of turn.
         if self.game_state != GameStateType::TurnActive && !self.orders_pending {
             if self.update_flag {
                 self.check_reactions();
@@ -2400,62 +2400,62 @@ impl GameState {
         }
     }
 
-    /// Применяет все накопленные команды через [`crate::events::apply_command`].
+    /// Applies all accumulated commands via [`crate::events::apply_command`].
     pub fn apply_pending_commands(&mut self) -> usize {
         crate::events::apply_pending(self)
     }
 
-    /// Ставит команду в очередь (в порядке получения).
+    /// Enqueues a command (in receive order).
     pub fn enqueue(&mut self, command: Command) {
         self.commands.push(command);
     }
 
     /// `ResourceManager_GetPathsManager().PollResults()` — P5 pathfinding.
     ///
-    /// Синхронно считает и применяет все запросы в порядке постановки
-    /// (DESIGN риск 2): очередь `GameState::path_requests`.
+    /// Synchronously computes and applies all requests in submission order
+    /// (DESIGN risk 2): the `GameState::path_requests` queue.
     fn poll_path_results(&mut self) {
         crate::pathfinding::poll_results(self);
     }
 
-    /// `ResourceManager_GetPathsManager().DispatchJobs()` — в синхронной модели
-    /// работа выполнена в [`Self::poll_path_results`]; точка вызова сохранена,
-    /// чтобы порядок тика совпадал с C++ (DESIGN §5.1).
+    /// `ResourceManager_GetPathsManager().DispatchJobs()` — in the synchronous model
+    /// the work is done in [`Self::poll_path_results`]; the call site is kept
+    /// so that the tick order matches C++ (DESIGN §5.1).
     fn dispatch_path_jobs(&mut self) {
         crate::pathfinding::dispatch_jobs(self);
     }
 
-    /// `Ai_CheckReactions` (`ai.cpp:407`) — реакции ИИ на замеченные цели,
-    /// разбор очереди напоминаний через чередование `Ai_AiReactionState`.
+    /// `Ai_CheckReactions` (`ai.cpp:407`) — AI reactions to spotted targets,
+    /// processing the reminder queue via the `Ai_AiReactionState` alternation.
     fn check_reactions(&mut self) {
         crate::ai::ai_check_reactions(self);
     }
 
-    /// `Ai_CheckEndTurn` (`ai.cpp:239)` — проверка условий завершения хода.
+    /// `Ai_CheckEndTurn` (`ai.cpp:239)` — checking end-of-turn conditions.
     ///
-    /// Для компьютерных команд решение принимает ИИ-игрок
-    /// (`AiPlayer::CheckEndTurn`); люди и удалённые команды завершают ход
-    /// пакетом 06.
+    /// For computer teams the decision is made by the AI player
+    /// (`AiPlayer::CheckEndTurn`); humans and remote teams finish the turn
+    /// with packet 06.
     pub fn check_end_turn(&mut self) {
         crate::ai::ai_check_end_turn(self);
     }
 
     // -----------------------------------------------------------------------
-    // Канонический дайджест состояния (для тестов детерминизма, задел P7/crc)
+    // Canonical state digest (for determinism tests, groundwork for P7/crc)
     // -----------------------------------------------------------------------
 
-    /// Канонический байтовый дайджест состояния.
+    /// The canonical byte digest of the state.
     ///
-    /// Кодирует **только** симуляционные поля в детерминированном порядке:
-    /// карта (поверхность + ресурсы), настройки, влияющие на сим, пять списков
-    /// юнитов (порядок вставки), `OrderData` юнита, живые атаки, фазу и
-    /// барьеры. Формат — явный little-endian writer без `serde` и без
-    /// map-итерации (DESIGN §6.4): это заготовка `crc.rs` (P7) и снапшот для
-    /// сравнения двух прогонов.
+    /// Encodes **only** simulation fields in a deterministic order:
+    /// map (surface + resources), settings affecting the sim, the five unit
+    /// lists (insertion order), the unit's `OrderData`, live attacks, the phase and
+    /// barriers. The format is an explicit little-endian writer without `serde` and without
+    /// map iteration (DESIGN §6.4): it is the groundwork for `crc.rs` (P7) and a snapshot for
+    /// comparing two runs.
     ///
-    /// Почему не `save.rs`: `save.rs` — V70-формат **файла сейва** реальной
-    /// игры; записи `GameState → V70` пока нет (P7, DESIGN §8.2 п.5), а
-    /// дайджест обязан быть стабильным между прогонами уже на P4.
+    /// Why not `save.rs`: `save.rs` is the V70 format of the real game's **save
+    /// file**; there is no `GameState → V70` writer yet (P7, DESIGN §8.2 item 5), and
+    /// the digest must be stable between runs already at P4.
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(4096 + self.unit_count() * 128);
 
@@ -2511,11 +2511,11 @@ impl GameState {
             out.push(self.frame_sync_counter[team]);
             out.push(self.frame_sync_counter2[team]);
 
-            // Комплексы команды — C++ `TeamUnits::complexes` (порядок по
-            // возрастанию id, который держит `CreateComplex`): id, запасы и
-            // число зданий. Поля `Complex::{raw,fuel,gold,power,workers}`
-            // — кэш `Access_UpdateResourcesTotal`, но он влияет на показ и на
-            // `Complex::Transfer`, поэтому входит в снапшот/CRC (`state_digest`).
+            // Team complexes — C++ `TeamUnits::complexes` (ascending id
+            // order maintained by `CreateComplex`): id, stocks and
+            // building count. The `Complex::{raw,fuel,gold,power,workers}` fields
+            // are the `Access_UpdateResourcesTotal` cache, but they affect the display and
+            // `Complex::Transfer`, so they enter the snapshot/CRC (`state_digest`).
             let complexes = &self.team_units[team].complexes;
             put_u32(&mut out, complexes.len() as u32);
             for complex in complexes {
@@ -2544,7 +2544,7 @@ impl GameState {
         out.push(u8::from(self.pending_air_group_leader.is_some()));
         put_u32(&mut out, self.unit_events.len() as u32);
 
-        // Отложенные реакции (`UnitsManager_DelayedAttackTargets`).
+        // Delayed reactions (`UnitsManager_DelayedAttackTargets`).
         out.push(self.delayed_reactions_team.0);
         for targets in &self.delayed_attack_targets {
             put_u32(&mut out, targets.len() as u32);
@@ -2553,7 +2553,7 @@ impl GameState {
             }
         }
 
-        // Очередь запросов путей (порядок = порядок постановки).
+        // Path request queue (order = submission order).
         put_u32(&mut out, self.path_requests.len() as u32);
         for request in &self.path_requests {
             put_u16(&mut out, request.unit.0);
@@ -2564,7 +2564,7 @@ impl GameState {
             out.push(u8::from(request.board_transport));
         }
 
-        // Групповые списки (`UnitInfoGroup`): номера групп по слотам.
+        // Group lists (`UnitInfoGroup`): group numbers by slot.
         put_u32(&mut out, self.groups.len() as u32);
         for group in &self.groups {
             match group {
@@ -2583,7 +2583,7 @@ impl GameState {
             put_u32(&mut out, group.unwrap_or(u32::MAX));
         }
 
-        // Юниты: канонический порядок — пять списков (+ юниты вне списков).
+        // Units: canonical order — five lists (+ units outside lists).
         let ids = self.snapshot_unit_ids();
         put_u32(&mut out, ids.len() as u32);
         for id in ids {
@@ -2690,13 +2690,13 @@ impl GameState {
                     put_i16(&mut out, path.direction_y);
                 }
             }
-            // Атрибуты юнита (`base_values`) — 14 полей.
+            // Unit attributes (`base_values`) — 14 fields.
             for attribute in 0..crate::unit_values::ATTRIB_COUNT {
                 put_i16(&mut out, unit.base_values.get_attribute(attribute) as i16);
             }
         }
 
-        // Состояние ИИ (P6): задачи, напоминания, игроки, тепловые карты.
+        // AI state (P6): tasks, reminders, players, heat maps.
         self.ai.digest_into(&mut out);
 
         out
@@ -2704,7 +2704,7 @@ impl GameState {
 }
 
 // ---------------------------------------------------------------------------
-// Кодировщики дайджеста
+// Digest encoders
 // ---------------------------------------------------------------------------
 
 fn put_u16(out: &mut Vec<u8>, value: u16) {
@@ -2723,12 +2723,12 @@ fn put_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-/// `UnitInfo::UpdateProduction`, шаг 5: забрать из комплекса до `capacity`
-/// единиц ресурса в склад здания (`storage = min(complex->field, ATTRIB_STORAGE)`,
-/// `complex->field -= storage`). Возвращает новое значение `storage`.
+/// `UnitInfo::UpdateProduction`, step 5: take from the complex up to `capacity`
+/// resource units into the building storage (`storage = min(complex->field, ATTRIB_STORAGE)`,
+/// `complex->field -= storage`). Returns the new `storage` value.
 ///
-/// Поля комплекса — `int16_t` (C++), поэтому присваивание усекается
-/// (`wrapping_*`), даже если `capacity` больше.
+/// Complex fields are `int16_t` (C++), so the assignment truncates
+/// (`wrapping_*`), even if `capacity` is greater.
 fn state_complex_pull(
     state: &mut GameState,
     team: TeamId,
@@ -2761,11 +2761,11 @@ fn state_complex_pull(
 }
 
 // ---------------------------------------------------------------------------
-// Вспомогательное: комплексы
+// Helpers: complexes
 // ---------------------------------------------------------------------------
 
 impl GameState {
-    /// Комплекс команды по id (`TeamUnits::GetComplex`).
+    /// A team complex by id (`TeamUnits::GetComplex`).
     pub fn complex(&self, team: TeamId, complex_id: u16) -> Option<&Complex> {
         self.team_units
             .get(team.0 as usize)?
@@ -2774,7 +2774,7 @@ impl GameState {
             .find(|complex| complex.id == complex_id as i16)
     }
 
-    /// Изменяемый комплекс команды по id.
+    /// Mutable team complex by id.
     pub fn complex_mut(&mut self, team: TeamId, complex_id: u16) -> Option<&mut Complex> {
         self.team_units
             .get_mut(team.0 as usize)?
@@ -2783,17 +2783,17 @@ impl GameState {
             .find(|complex| complex.id == complex_id as i16)
     }
 
-    /// `TeamUnits::OptimizeComplexes(team)` (`teamunits.cpp:170`) в объёме
-    /// экономики: для каждого комплекса команды — `Access_UpdateResourcesTotal`
-    /// (`access.cpp:912`), то есть пересчёт `raw/fuel/gold/power/workers`
-    /// из зданий (`Cargo_GetNetProduction + Cargo_GetInventory`).
+    /// `TeamUnits::OptimizeComplexes(team)` (`teamunits.cpp:170`) in the
+    /// economy scope: for each team complex — `Access_UpdateResourcesTotal`
+    /// (`access.cpp:912`), i.e. recomputation of `raw/fuel/gold/power/workers`
+    /// from buildings (`Cargo_GetNetProduction + Cargo_GetInventory`).
     ///
-    /// Добыча шахты попадает сюда через `raw_mining`/`fuel_mining`/
-    /// `gold_mining` (см. [`crate::alloc`]), поэтому распределение из диалога
-    /// `allocate` напрямую меняет доход комплекса за ход.
+    /// Mine mining enters here via `raw_mining`/`fuel_mining`/
+    /// `gold_mining` (see [`crate::alloc`]), so the allocation from the
+    /// `allocate` dialog directly changes the complex income per turn.
     ///
-    /// Порядок комплексов — порядок `TeamUnits::complexes` (тот же, что в
-    /// C++-списке: по возрастанию id).
+    /// Complex order — the `TeamUnits::complexes` order (the same as in the
+    /// C++ list: ascending id).
     pub fn update_complex_resources(&mut self, team: TeamId) {
         let Some(ids) = self.team_units.get(team.0 as usize).map(|units| {
             units
@@ -2806,8 +2806,8 @@ impl GameState {
         };
 
         for id in ids {
-            // `UpdateResourcesTotal` затрагивает только поля комплекса, состав
-            // зданий и их приказы не меняет — цикл по снимку id безопасен.
+            // `UpdateResourcesTotal` touches only complex fields; the composition
+            // of buildings and their orders does not change — a loop over an id snapshot is safe.
             crate::alloc::update_resources_total(self, team, crate::team::ComplexId(id));
         }
     }
@@ -2855,7 +2855,7 @@ mod tests {
             unit.hits,
             unit.base_values.get_attribute(ATTRIB_HITS) as u16
         );
-        // `CTInfo::Reset` стартует счётчики имён с 1 (`ctinfo.hpp:49-51`).
+        // `CTInfo::Reset` starts name counters at 1 (`ctinfo.hpp:49-51`).
         assert_eq!(unit.unit_id, 1);
         assert_eq!(state.teams[0].unit_counter(UnitType::Tank as u16), 2);
     }
@@ -2925,9 +2925,9 @@ mod tests {
     #[test]
     fn finish_turn_advances_counter_and_resets_flags() {
         let (mut state, _red, _green) = tank_state();
-        // P7: конец хода сначала проверяет победу/поражение
-        // (`menu_check_end_game_conditions`); живая команда + лимит не достигнут →
-        // партия продолжается. Сетевая ветка выключена (локальная семантика).
+        // P7: end of turn first checks victory/defeat
+        // (`menu_check_end_game_conditions`); a live team + the limit not reached →
+        // the game continues. The network branch is disabled (local semantics).
         state.network_game = false;
         state.victory_type = VictoryType::Duration;
         state.victory_limit = 50;
@@ -2943,7 +2943,7 @@ mod tests {
     fn finish_turn_stops_when_victory_condition_met() {
         let (mut state, _red, _green) = tank_state();
         state.network_game = false;
-        // `VICTORY_TYPE_DURATION` с нулевым лимитом: `limit <= turn_counter` → конец.
+        // `VICTORY_TYPE_DURATION` with a zero limit: `limit <= turn_counter` → over.
         state.victory_type = VictoryType::Duration;
         state.victory_limit = 0;
         state.game_state = GameStateType::EndTurn;
@@ -2954,7 +2954,7 @@ mod tests {
     #[test]
     fn pending_attack_head_is_settled_like_cpp() {
         let (mut state, first, _second) = tank_state();
-        // Атакующий с нулевыми hits — просто снимается из очереди.
+        // An attacker with zero hits is simply removed from the queue.
         {
             let unit = state.unit_mut(first).unwrap();
             unit.hits = 0;
@@ -2965,7 +2965,7 @@ mod tests {
         state.process_orders();
         assert!(state.pending_attacks.is_empty());
 
-        // Атакующий с приказом не FIRE — атака отменяется.
+        // An attacker whose order is not FIRE — the attack is cancelled.
         {
             let unit = state.unit_mut(first).unwrap();
             unit.hits = 10;
@@ -2987,7 +2987,7 @@ mod tests {
         state.teams[0].team_type = TeamKind::Player;
         state.team_units[0] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
 
-        // По одному юниту в каждом из пяти списков, в порядке-канарейке
+        // One unit in each of the five lists, in the canary order
         // (DESIGN §5.2: GroundCover → MobileLandSea → Stationary → MobileAir →
         // Particle).
         let ground_cover = state
@@ -3034,9 +3034,9 @@ mod tests {
         let expected = [ground_cover, mobile_land, stationary, mobile_air, particle];
         assert_eq!(state.unit_ids_in_order(), expected);
 
-        // `ORDER_FIRE` в состоянии INIT за один проход добавляет юнита в
-        // `PendingAttacks` и в `LiveAttacks` — порядок вставки и есть порядок
-        // обхода списков.
+        // `ORDER_FIRE` in INIT state adds the unit in one pass to
+        // `PendingAttacks` and `LiveAttacks` — insertion order is the order
+        // of list traversal.
         for unit in expected {
             state.set_order(unit, UnitOrder::Fire, UnitOrderState::Init);
         }
@@ -3050,9 +3050,9 @@ mod tests {
                 "живая атака юнита {unit:?} создана не в каноническом порядке"
             );
         }
-        // Ракета (`MISSILE_UNIT`) в шапке `UnitsManager_ProcessOrder` включает
-        // `OrdersPending`, поэтому очередь атак в этом тике не разбирается —
-        // как в C++.
+        // A missile (`MISSILE_UNIT`) at the head of `UnitsManager_ProcessOrder` sets
+        // `OrdersPending`, so the attack queue is not processed this tick —
+        // as in C++.
         assert!(state.orders_pending);
         assert_eq!(state.pending_attacks, expected.to_vec());
         for unit in expected {
@@ -3092,9 +3092,9 @@ mod tests {
                 )
                 .unwrap();
 
-            // Серия выстрелов: каждый FIRE-приказ — один выстрел (после
-            // выстрела `RestoreOrders` возвращает AWAIT); начало хода
-            // восстанавливает `shots` (`UpdateProduction`).
+            // A series of shots: each FIRE order is one shot (after
+            // the shot `RestoreOrders` returns AWAIT); the start of the turn
+            // restores `shots` (`UpdateProduction`).
             for _ in 0..8 {
                 state.manage_economy(TeamId::RED);
                 let mut data = state.order_data(red);
@@ -3130,8 +3130,8 @@ mod tests {
         let second = run();
         assert_eq!(first.0, second.0, "боевой реплей недетерминирован");
         assert_eq!((first.1, first.2, first.3), (second.1, second.2, second.3));
-        // 4 выстрела по 6 урона (24 hp) уничтожают цель; поведение
-        // зафиксировано, чтобы регрессия формул была видна.
+        // 4 shots of 6 damage (24 hp) destroy the target; the behavior
+        // is pinned so that a formula regression is visible.
         assert_eq!(first.1, 0, "цель должна быть уничтожена");
         assert_eq!(first.2, 10, "израсходовано 4 патрона из 14");
     }
@@ -3164,8 +3164,8 @@ mod tests {
                 )
                 .unwrap();
 
-            // 13: seed; 08: приказ с целями (payload P3); 38: готовый путь;
-            // 50: аварийный стоп; 41: завершение движения; 06/52: конец хода.
+            // 13: seed; 08: order with targets (P3 payload); 38: ready path;
+            // 50: emergency stop; 41: movement finished; 06/52: end of turn.
             state.enqueue(Command::Seed(crate::input::Packet13Seed {
                 seed: 0xDEAD_BEEF,
             }));
@@ -3236,7 +3236,7 @@ mod tests {
     #[test]
     fn end_turn_restores_speed_and_updates_production() {
         let (mut state, id, _second) = tank_state();
-        // Израсходуем скорость и выстрелы.
+        // Spend speed and shots.
         {
             let unit = state.unit_mut(id).unwrap();
             unit.speed = 0;
@@ -3265,8 +3265,8 @@ mod tests {
         state.teams[2].team_type = TeamKind::None;
         state.teams[3].team_type = TeamKind::Eliminated;
 
-        // Барьера ещё нет: значения по умолчанию одинаковы (0), но это и есть
-        // согласие «до начала хода» — как в C++ счётчики стартуют с 0.
+        // The barrier is not there yet: default values are equal (0), but this is
+        // the "before turn start" agreement — as in C++, counters start at 0.
         assert_eq!(state.end_turn_barrier(), Some(0));
 
         state.turn_indices[0] = 3;
@@ -3277,7 +3277,7 @@ mod tests {
         );
         state.turn_indices[1] = 3;
         assert_eq!(state.end_turn_barrier(), Some(3));
-        // ALIEN/пустые слоты в барьере не участвуют.
+        // ALIEN/empty slots do not participate in the barrier.
         state.turn_indices[4] = 9;
         assert_eq!(state.end_turn_barrier(), Some(3));
 
@@ -3301,7 +3301,7 @@ mod tests {
         state.frame_sync_counter[1] = 1;
         assert_eq!(state.begin_turn_barrier(), Some(1));
 
-        // 54-барьер завершается только по полному (`is_last`) состоянию.
+        // The 54 barrier completes only on a full (`is_last`) state.
         assert_eq!(state.state_sync_index(TeamId::GREEN), 0);
         state.state_sync_indices[1] = 4;
         assert_eq!(state.state_sync_index(TeamId::GREEN), 4);
@@ -3311,8 +3311,8 @@ mod tests {
     fn snapshot_is_stable_across_clones() {
         let (state, first, _second) = tank_state();
 
-        // Два независимых прогона одной и той же последовательности команд
-        // дают побайтово одинаковое состояние.
+        // Two independent runs of the same command sequence
+        // give a byte-identical state.
         let mut first_run = state.clone();
         let mut second_run = state.clone();
         for _ in 0..5 {
@@ -3327,7 +3327,7 @@ mod tests {
         }
         assert_eq!(first_run.snapshot_bytes(), second_run.snapshot_bytes());
 
-        // Изменение приказа меняет дайджест.
+        // An order change changes the digest.
         let before = first_run.snapshot_bytes();
         first_run.set_order(first, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
         assert_ne!(before, first_run.snapshot_bytes());

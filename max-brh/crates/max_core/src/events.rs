@@ -1,44 +1,44 @@
-//! Очередь команд, события юнитов и применение пакетов к [`GameState`].
+//! Command queue, unit events and application of packets to [`GameState`].
 //!
-//! Оракул: `max-cpp-port/src/remote.cpp` (`Remote_ProcessNetPackets` и
-//! обработчики `Remote_ReceiveNetPacket_*`, процессоры приказов
+//! Oracle: `max-cpp-port/src/remote.cpp` (`Remote_ProcessNetPackets` and
+//! the `Remote_ReceiveNetPacket_*` handlers, order processors
 //! `Remote_OrderProcessor{0..5}_Read`), `unitevents.cpp`
-//! (`UnitEventEmergencyStop`), DESIGN.md §5.1 (шаг 1) и §6.2.
+//! (`UnitEventEmergencyStop`), DESIGN.md §5.1 (step 1) and §6.2.
 //!
-//! # Модель применения
+//! # Application model
 //!
-//! Сеть в `max_core` нет: команды приходят уже разобранными
-//! ([`crate::input::Command`]) и кладутся в [`CommandQueue`]. Применяются они
-//! **строго в порядке получения** в детерминированной точке цикла — в начале
-//! тика ([`crate::game::GameState::tick`], шаг 2), аналог
+//! There is no network in `max_core`: commands arrive already parsed
+//! ([`crate::input::Command`]) and are put into [`CommandQueue`]. They are applied
+//! **strictly in receive order** at a deterministic point of the loop — at the start
+//! of the tick ([`crate::game::GameState::tick`], step 2), the analog of
 //! `Remote_Synchronize()`/`Remote_ProcessNetPackets()`.
 //!
-//! # Соответствие C++-порту
+//! # Correspondence with the C++ port
 //!
-//! * Пакет **08** повторяет вложенность процессоров: сначала
-//!   `Remote_OrderProcessor1_Read` как предварительная проверка
-//!   (`Remote_ReceiveNetPacket_08` разбирает копию пакета), затем процессор
-//!   уровня приказа (который снова применяет поля `P1`). Оба прохода
-//!   выполняются, как в C++.
-//! * Пакет **50** не меняет юнита сразу: C++ создаёт
-//!   `UnitEventEmergencyStop` и кладёт его в `UnitEvent_UnitEvents`, а событие
-//!   обрабатывается в `UnitsManager_ProcessOrders` — так же и здесь
+//! * Packet **08** repeats the processor nesting: first
+//!   `Remote_OrderProcessor1_Read` as a preliminary check
+//!   (`Remote_ReceiveNetPacket_08` parses a copy of the packet), then the
+//!   order-level processor (which applies the `P1` fields again). Both passes
+//!   are performed, as in C++.
+//! * Packet **50** does not change the unit immediately: C++ creates
+//!   `UnitEventEmergencyStop` and puts it into `UnitEvent_UnitEvents`, and the event
+//!   is processed in `UnitsManager_ProcessOrders` — likewise here
 //!   ([`UnitEvent::EmergencyStop`]).
-//! * Пакеты **00/01/45/52** — барьерные факты: они только записываются в
-//!   поля состояния и не влияют на юнитов (DESIGN §8.4/§8.6).
-//! * Пакеты **10/20** апгрейдят атрибуты через копию `UnitValues`
-//!   (`UpdateVersion`/`MarkAsInUse`), как `Remote_ReceiveNetPacket_10/20`.
-//! * Пакет **14** (высадка) возвращает [`ApplyOutcome::Unsupported`]:
-//!   `UnitsManager_DeployUnit` требует данных миссии/точки высадки, которые
-//!   приходят из setup-слоя (P3); флаги типов уже есть в
-//!   [`crate::access::unit_type_flags`], и вызывающий слой деплоит юнита через
+//! * Packets **00/01/45/52** are barrier facts: they are only recorded in
+//!   state fields and do not affect units (DESIGN §8.4/§8.6).
+//! * Packets **10/20** upgrade attributes via a copy of `UnitValues`
+//!   (`UpdateVersion`/`MarkAsInUse`), like `Remote_ReceiveNetPacket_10/20`.
+//! * Packet **14** (deployment) returns [`ApplyOutcome::Unsupported`]:
+//!   `UnitsManager_DeployUnit` requires mission/landing-point data that
+//!   comes from the setup layer (P3); the type flags are already in
+//!   [`crate::access::unit_type_flags`], and the caller layer deploys the unit via
 //!   [`crate::game::GameState::spawn_unit`].
-//! * Пакет **12** (снабжение миссии) сохраняется как данные
-//!   ([`crate::game::GameState::mission_supplies`]) и обновляет
-//!   `stats_gold_spent_on_upgrades` — как приёмник C++.
-//! * Пакет **54** — не [`Command`], а авторитетное состояние команды:
-//!   [`apply_state_sync`] применяет `Packet23Data` каждого юнита, удаляет
-//!   лишних (`Remote_RemoveExtraUnits`) и выравнивает хвост экономики
+//! * Packet **12** (mission supplies) is stored as data
+//!   ([`crate::game::GameState::mission_supplies`]) and updates
+//!   `stats_gold_spent_on_upgrades` — like the C++ receiver.
+//! * Packet **54** is not a [`Command`] but an authoritative team state:
+//!   [`apply_state_sync`] applies each unit's `Packet23Data`, deletes
+//!   the extra ones (`Remote_RemoveExtraUnits`) and aligns the economy tail
 //!   (`Remote_ReceiveNetPacket_54`).
 
 use crate::enums::{ResearchTopic, UnitOrder, UnitOrderState, UnitType};
@@ -58,23 +58,23 @@ use crate::unit_values::{
 };
 
 // ---------------------------------------------------------------------------
-// События юнитов (C++ `UnitEvent_UnitEvents`)
+// Unit events (C++ `UnitEvent_UnitEvents`)
 // ---------------------------------------------------------------------------
 
-/// Событие юнита — C++ `class UnitEvent` (`unitevents.hpp`).
+/// A unit event — C++ `class UnitEvent` (`unitevents.hpp`).
 ///
-/// Единственный вариант оригинала — аварийный стоп (`UnitEventEmergencyStop`).
+/// The only variant in the original is an emergency stop (`UnitEventEmergencyStop`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnitEvent {
     /// `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`).
     EmergencyStop {
-        /// Юнит, которому пришёл пакет 50.
+        /// The unit that received packet 50.
         unit: UnitId,
     },
 }
 
 impl UnitEvent {
-    /// Юнит, к которому относится событие.
+    /// The unit the event refers to.
     pub const fn unit(&self) -> UnitId {
         match self {
             Self::EmergencyStop { unit } => *unit,
@@ -82,7 +82,7 @@ impl UnitEvent {
     }
 }
 
-/// `UnitEvent::Process` — применяет событие к партии.
+/// `UnitEvent::Process` — applies the event to the game.
 pub fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
     match event {
         UnitEvent::EmergencyStop { unit } => {
@@ -100,13 +100,13 @@ pub fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
 }
 
 // ---------------------------------------------------------------------------
-// Очередь команд
+// Command queue
 // ---------------------------------------------------------------------------
 
-/// Очередь входных команд в порядке получения (DESIGN §5.1 шаг 1).
+/// Queue of input commands in receive order (DESIGN §5.1 step 1).
 ///
-/// `VecDeque` — FIFO без итерации по хэш-таблицам; порядок полностью
-/// определяется порядком поступления пакетов.
+/// `VecDeque` is a FIFO without hash-table iteration; the order is fully
+/// determined by packet arrival order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandQueue {
     pending: std::collections::VecDeque<Command>,
@@ -114,71 +114,71 @@ pub struct CommandQueue {
 }
 
 impl CommandQueue {
-    /// Пустая очередь.
+    /// Empty queue.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Кладёт команду в конец (порядок получения).
+    /// Pushes a command to the back (receive order).
     pub fn push(&mut self, command: Command) {
         self.pending.push_back(command);
     }
 
-    /// Забирает самую старую команду.
+    /// Pops the oldest command.
     pub fn pop_front(&mut self) -> Option<Command> {
         let command = self.pending.pop_front()?;
         self.applied = self.applied.wrapping_add(1);
         Some(command)
     }
 
-    /// Сколько команд ещё не применено.
+    /// How many commands are not applied yet.
     pub fn len(&self) -> usize {
         self.pending.len()
     }
 
-    /// Пуста ли очередь.
+    /// Whether the queue is empty.
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }
 
-    /// Сколько команд применено с момента создания (диагностика).
+    /// How many commands have been applied since creation (diagnostics).
     pub const fn applied(&self) -> u64 {
         self.applied
     }
 
-    /// Очищает очередь (реконнект/новый прогон).
+    /// Clears the queue (reconnect/new run).
     pub fn clear(&mut self) {
         self.pending.clear();
     }
 }
 
 // ---------------------------------------------------------------------------
-// Результат применения
+// Application result
 // ---------------------------------------------------------------------------
 
-/// Результат применения команды.
+/// Command application result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyOutcome {
-    /// Команда применена.
+    /// The command was applied.
     Applied,
-    /// Пакет относится к неизвестному юниту (`Remote_NetErrorUnknownUnit`).
+    /// The packet refers to an unknown unit (`Remote_NetErrorUnknownUnit`).
     UnknownUnit,
-    /// Пакет неверного формата (`NetPacket::SetMalformed` в C++).
+    /// Malformed packet (`NetPacket::SetMalformed` in C++).
     Malformed,
-    /// Пакет валиден, но не применим на этой фазе (см. шапку модуля).
+    /// The packet is valid but not applicable at this phase (see the module header).
     Unsupported,
-    /// Пакет проигнорирован (невалидный индекс команды, неизвестный комплекс).
+    /// The packet was ignored (invalid team index, unknown complex).
     Ignored,
 }
 
 // ---------------------------------------------------------------------------
-// Применение очереди
+// Applying the queue
 // ---------------------------------------------------------------------------
 
-/// Применяет все накопленные команды в порядке получения.
+/// Applies all accumulated commands in receive order.
 ///
-/// Возвращает количество применённых команд (как `Remote_ProcessNetPackets`
-/// вычерпывает очередь до `REMOTE_RECEIVE_EMPTY`).
+/// Returns the number of applied commands (as `Remote_ProcessNetPackets`
+/// drains the queue to `REMOTE_RECEIVE_EMPTY`).
 pub fn apply_pending(state: &mut GameState) -> usize {
     let mut applied = 0;
 
@@ -190,7 +190,7 @@ pub fn apply_pending(state: &mut GameState) -> usize {
     applied
 }
 
-/// Применяет одну команду к состоянию — аналог `Remote_ReceiveNetPacket_*`.
+/// Applies one command to the state — the analog of `Remote_ReceiveNetPacket_*`.
 pub fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
     match command {
         Command::Order(order) => apply_packet_08(state, order),
@@ -209,10 +209,10 @@ pub fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
         Command::UpgradeUnit(upgrade) => apply_packet_20(state, upgrade),
         Command::Rename(rename) => apply_packet_43(state, rename),
         Command::Seed(seed) => {
-            // Пакет 13 — единственная точка сидирования симуляции
-            // (DESIGN §6.1). C++ хранит seed в `Remote_RngSeed` и применяет его
-            // при старте партии; `max_core` применяет сразу — других
-            // потребителей seed'а в симуляции нет.
+            // Packet 13 is the only simulation seeding point
+            // (DESIGN §6.1). C++ stores the seed in `Remote_RngSeed` and applies it
+            // at game start; `max_core` applies it immediately — there are no other
+            // seed consumers in the simulation.
             state.rng.set_seed(seed.seed);
             ApplyOutcome::Applied
         }
@@ -222,7 +222,7 @@ pub fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// 08 — приказ юниту
+// 08 — order to a unit
 // ---------------------------------------------------------------------------
 
 fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcome {
@@ -230,38 +230,38 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
         return ApplyOutcome::UnknownUnit;
     };
 
-    // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): приказ,
-    // пришедший на этапе `EXPAND`, в C++ сразу зовёт
-    // `UnitsManager_UpdateConnectors` — иначе здание, переставленное приказом,
-    // никогда не попало бы в комплекс (анимация уже не завершится).
+    // `UnitsManager_NewOrderWhileScaling` (`units_manager.cpp:2529`): an order
+    // arriving during `EXPAND` immediately calls
+    // `UnitsManager_UpdateConnectors` in C++ — otherwise a building moved by an order
+    // would never join the complex (the animation will not complete).
     let connectors_due =
         unit.orders == UnitOrder::AwaitScaling && unit.state == UnitOrderState::Expand;
 
-    // `Remote_ReceiveNetPacket_08`: предварительный проход `P1` по копии
-    // пакета — валидация приказов до выбора процессора.
+    // `Remote_ReceiveNetPacket_08`: the preliminary `P1` pass over a copy of
+    // the packet — validating orders before processor selection.
     if let Some(p1) = packet.payload.p1() {
         if !is_valid_order(p1.order) || !is_valid_order(p1.prior_order) {
             return ApplyOutcome::Malformed;
         }
-        // Стройку нельзя отменить новым приказом: в C++ увод строителя с
-        // недостроенной площадки через карту невозможен (`game_manager.cpp:5927-5931`
-        // — `CURSOR_UNIT_NO_GO`), а отмена идёт только явным `stop`
+        // Construction cannot be cancelled by a new order: in C++ moving the builder away from
+        // an unfinished site via the map is impossible (`game_manager.cpp:5927-5931`
+        // — `CURSOR_UNIT_NO_GO`), and cancellation goes only through an explicit `stop`
         // (`UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/
         // `ORDER_STATE_BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
         apply_payload_p1(&mut unit, p1);
     }
 
-    // Выбор процессора по *новому* приказу юнита (`Remote_OrderProcessors[...]`).
+    // Processor selection by the unit's *new* order (`Remote_OrderProcessors[...]`).
     let Some(order) = packet.payload.order() else {
-        // `ORDER_17` (P0): пустой payload, менять нечего.
+        // `ORDER_17` (P0): empty payload, nothing to change.
         state.write_unit(packet.unit, unit);
         return ApplyOutcome::Applied;
     };
 
-    // Процессор должен соответствовать приказу (иначе — malformed). В C++
-    // процессор выбирается по уже применённому приказу юнита, поэтому
-    // предварительный проход `P1` к этому моменту уже изменяет юнита — как и
-    // здесь (сначала записываем копию, затем сообщаем о malformed).
+    // The processor must match the order (otherwise malformed). In C++
+    // the processor is chosen by the unit's already applied order, so
+    // the preliminary `P1` pass has already changed the unit by this point — as
+    // here (first we write the copy, then report malformed).
     if packet.payload.level() != PayloadLevel::for_order(order) {
         state.write_unit(packet.unit, unit);
         return ApplyOutcome::Malformed;
@@ -297,12 +297,12 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
         crate::complex::update_connectors(state, packet.unit);
     }
 
-    // Порт ставит площадку в момент заказа (`DeployConstructionSiteUtilities` +
-    // `PrepareConstructionSite`): C++ `StartBuilding` идёт на следующем тике
-    // (`UnitsManager_ProcessOrderBuild`/`INIT`), но порт применяет P4 сразу и
-    // плита (`LRGSLAB`/`SMLSLAB`) обязана появиться на кадре подтверждения
-    // места — без задержки в тик. `deploy_construction_site` идемпотентна,
-    // поэтому `start_building` на следующем тике вторую площадку не ставит.
+    // The port places the site at order time (`DeployConstructionSiteUtilities` +
+    // `PrepareConstructionSite`): C++ `StartBuilding` happens on the next tick
+    // (`UnitsManager_ProcessOrderBuild`/`INIT`), but the port applies P4 immediately and
+    // the slab (`LRGSLAB`/`SMLSLAB`) must appear on the confirmation frame
+    // of the site — without a tick delay. `deploy_construction_site` is idempotent,
+    // so `start_building` on the next tick does not place a second site.
     if let Some(unit) = state.unit(packet.unit) {
         if unit.orders == UnitOrder::Build
             && unit.state == UnitOrderState::Init
@@ -330,7 +330,7 @@ fn apply_payload_p1(unit: &mut UnitInfo, p1: &PayloadP1) {
         return;
     }
 
-    // Сброс незавершённой анимации масштаба до смены приказа.
+    // Reset of the unfinished scaling animation before the order change.
     unit_order::new_order_while_scaling(unit);
 
     unit.disabled_reaction_fire = p1.disabled_reaction_fire;
@@ -356,7 +356,7 @@ fn apply_payload_p3(state: &mut GameState, unit: &mut UnitInfo, p3: &PayloadP3) 
     let mut data = state.order_data(unit.id);
     data.move_to = p3.move_to;
     data.fire_on = p3.fire_on;
-    // V70-поле `target_grid` зеркалит `move_to` (см. `OrderData`).
+    // The V70 field `target_grid` mirrors `move_to` (see `OrderData`).
     unit.target_grid = p3.move_to;
     state.set_order_data(unit.id, data);
 
@@ -388,7 +388,7 @@ fn apply_payload_p5(state: &mut GameState, unit: &mut UnitInfo, p5: &PayloadP5) 
 }
 
 // ---------------------------------------------------------------------------
-// 38 — движение с путём
+// 38 — movement with a path
 // ---------------------------------------------------------------------------
 
 fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -> ApplyOutcome {
@@ -396,16 +396,16 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
         return ApplyOutcome::UnknownUnit;
     };
 
-    // `Remote_ReceiveNetPacket_38`: снять прежний путь, завершить масштаб,
-    // затем выставить приказ/состояние.
+    // `Remote_ReceiveNetPacket_38`: clear the old path, finish scaling,
+    // then set the order/state.
     if unit.path.is_some() {
         unit.path = None;
     }
 
     unit_order::new_order_while_scaling(&mut unit);
 
-    // Приказ движения стройку не отменяет: отмена — только явный `stop`
-    // (`UnitInfo::CancelBuilding`), см. `apply_packet_08`.
+    // A movement order does not cancel construction: cancellation is only an explicit `stop`
+    // (`UnitInfo::CancelBuilding`), see `apply_packet_08`.
 
     unit.orders = packet.order;
     unit.state = packet.state;
@@ -417,9 +417,9 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
 
     unit.group_speed = packet.group_speed;
 
-    // `grid_x/grid_y` (протокол §8.4, `Remote_RelocateUnit`): у получателя
-    // юнит стоит на клетке владельца. C++-порт отправляет 38 без этих полей,
-    // поэтому применяется только реальное расхождение.
+    // `grid_x/grid_y` (protocol §8.4, `Remote_RelocateUnit`): at the receiver
+    // the unit stands on the owner's cell. The C++ port sends 38 without these fields,
+    // so only an actual discrepancy is applied.
     if unit.grid != packet.grid {
         unit.grid = packet.grid;
     }
@@ -481,8 +481,8 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
     state.write_unit(packet.unit, unit);
     state.set_order_data(packet.unit, data);
 
-    // Пакет 38 без шагов (короткая форма C++-порта): путь запрашивается у
-    // синхронного pathfinding, а не строится линейно (DESIGN §5.1, риск 2).
+    // Packet 38 without steps (the C++ port short form): the path is requested from
+    // the synchronous pathfinding instead of being built linearly (DESIGN §5.1, risk 2).
     if path_is_missing && needs_path {
         crate::pathfinding::request_path(
             state,
@@ -494,7 +494,7 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
     ApplyOutcome::Applied
 }
 
-/// Вспомогательная проверка «путь без шагов» (см. ветвление 38).
+/// Helper check "path without steps" (see the 38 branch).
 #[allow(dead_code)]
 fn steps_is_empty(packet: &crate::input::Packet38Move) -> bool {
     match &packet.path {
@@ -505,7 +505,7 @@ fn steps_is_empty(packet: &crate::input::Packet38Move) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 41 / 50 — завершение и аварийный стоп
+// 41 / 50 — completion and emergency stop
 // ---------------------------------------------------------------------------
 
 fn apply_packet_41(
@@ -516,7 +516,7 @@ fn apply_packet_41(
         return ApplyOutcome::UnknownUnit;
     };
 
-    // Поля протокола §8.4 (в короткой форме C++-порта отсутствуют).
+    // Protocol §8.4 fields (absent in the C++ port short form).
     if let Some(grid) = packet.grid {
         unit.grid = grid;
     }
@@ -534,8 +534,8 @@ fn apply_packet_41(
     }
 
     // `Remote_ReceiveNetPacket_41`: `unit->BlockedOnPathRequest(mode, true)`.
-    // `MoveFinished(mode)` добавляет юнита в список отложенных реакций только
-    // при `mode` и включённом ответном огне.
+    // `MoveFinished(mode)` adds the unit to the delayed reaction list only
+    // with `mode` and return fire enabled.
     unit_order::blocked_on_path_request(&mut unit, packet.mode, state.disable_fire);
     state.write_unit(packet.unit, unit);
     if packet.mode && !state.disable_fire {
@@ -549,8 +549,8 @@ fn apply_packet_50(state: &mut GameState, packet: &crate::input::Packet50StopUni
         return ApplyOutcome::UnknownUnit;
     }
 
-    // `Remote_ReceiveNetPacket_50`: событие ставится в очередь и выполняется
-    // в `UnitsManager_ProcessOrders`.
+    // `Remote_ReceiveNetPacket_50`: the event is enqueued and executed
+    // in `UnitsManager_ProcessOrders`.
     state
         .unit_events
         .push(UnitEvent::EmergencyStop { unit: packet.unit });
@@ -558,7 +558,7 @@ fn apply_packet_50(state: &mut GameState, packet: &crate::input::Packet50StopUni
 }
 
 // ---------------------------------------------------------------------------
-// 06 / 52 / 45 / 00 / 01 — конец хода и барьеры
+// 06 / 52 / 45 / 00 / 01 — end of turn and barriers
 // ---------------------------------------------------------------------------
 
 fn apply_packet_06(
@@ -574,8 +574,8 @@ fn apply_packet_06(
     if state.play_mode == crate::enums::PlayMode::TurnBased {
         state.game_state = crate::enums::GameStateType::EndTurn;
     } else {
-        // `GameManager_HandleTurnTimer()` — UI; проверка «есть ли ещё
-        // незавершённые команды» — для логов/сообщений.
+        // `GameManager_HandleTurnTimer()` — UI; the check "are there still
+        // unfinished teams" is for logs/messages.
         let _pending = !state.are_teams_finished_turn();
     }
 
@@ -628,7 +628,7 @@ fn apply_packet_01(
 }
 
 // ---------------------------------------------------------------------------
-// 18 / 11 / 53 — чат, комплексы
+// 18 / 11 / 53 — chat, complexes
 // ---------------------------------------------------------------------------
 
 fn apply_packet_18(state: &mut GameState, packet: &crate::input::Packet18Chat) -> ApplyOutcome {
@@ -668,8 +668,8 @@ fn apply_packet_53(
         return ApplyOutcome::Ignored;
     }
 
-    // Применяем все записи; отсутствующие комплексы пропускаются (как
-    // `TeamUnits::ReadComplexPacket` с `GetComplex(id)` == nullptr в порту).
+    // Apply all entries; missing complexes are skipped (like
+    // `TeamUnits::ReadComplexPacket` with `GetComplex(id)` == nullptr in the port).
     for entry in &packet.complexes {
         if let Some(complex) = state.complex_mut(packet.team, entry.complex_id) {
             complex.raw = entry.values[0];
@@ -685,18 +685,18 @@ fn apply_packet_53(
 }
 
 // ---------------------------------------------------------------------------
-// 54 — авторитетное состояние команды (P23-запись + хвост экономики)
+// 54 — authoritative team state (P23 record + economy tail)
 // ---------------------------------------------------------------------------
 
-// DTO пакета 54 — чистые данные нижнего слоя (`max_types`, Ф5.2); здесь
-// реэкспорт, чтобы путь `max_core::events::…` не менялся, а `apply_unit_state`
-// и `apply_state_sync` (работают с `GameState`) остаются в этом модуле.
+// Packet 54 DTOs are pure lower-layer data (`max_types`, F5.2); here
+// re-exported so that the path `max_core::events::…` does not change, while `apply_unit_state`
+// and `apply_state_sync` (which work with `GameState`) stay in this module.
 pub use max_types::events::{StateSyncPacket, TeamStateSyncTail, UnitStatePacket};
 
-/// Порт `Remote_ApplyUnitState` (`remote.cpp:4383-4512`) для одного юнита.
+/// Port of `Remote_ApplyUnitState` (`remote.cpp:4383-4512`) for one unit.
 ///
-/// Принимает только юнита своей команды и типа; несуществующие/взорванные
-/// юниты и приказы вне `ORDER_COUNT_MAX` игнорируются — как в C++.
+/// Accepts only a unit of its own team and type; nonexistent/exploded
+/// units and orders outside `ORDER_COUNT_MAX` are ignored — as in C++.
 pub fn apply_unit_state(
     state: &mut GameState,
     team: TeamId,
@@ -730,8 +730,8 @@ pub fn apply_unit_state(
     unit.prior_state = prior_state;
     unit.disabled_reaction_fire = data.disabled_reaction_fire;
 
-    // `SetParent`/`SetEnemy` в C++ берут юнита из `Hash_UnitHash`; отсутствующий
-    // id даёт `nullptr`, поэтому здесь — `None`.
+    // `SetParent`/`SetEnemy` in C++ take the unit from `Hash_UnitHash`; a missing
+    // id gives `nullptr`, so here — `None`.
     unit.parent_unit = if data.parent_unit_id == 0 {
         None
     } else {
@@ -761,37 +761,37 @@ pub fn apply_unit_state(
     unit.storage = data.storage;
     unit.ammo = data.ammo;
 
-    // Точки движения/огня в Rust живут в `OrderData` (`unit.target_grid`
-    // зеркалит `move_to`, как в пакете 08 P3).
+    // Movement/fire points in Rust live in `OrderData` (`unit.target_grid`
+    // mirrors `move_to`, as in packet 08 P3).
     let mut order_data = state.order_data(unit_id);
     order_data.move_to = Point::new(data.move_to_grid_x, data.move_to_grid_y);
     order_data.fire_on = Point::new(data.fire_on_grid_x, data.fire_on_grid_y);
     unit.target_grid = order_data.move_to;
     state.set_order_data(unit_id, order_data);
 
-    // `Remote_RelocateUnit`: у получателя юнит встаёт на клетку владельца;
-    // `write_unit` переносит его в `Hash_MapHash`.
+    // `Remote_RelocateUnit`: at the receiver the unit stands on the owner's cell;
+    // `write_unit` moves it into `Hash_MapHash`.
     unit.grid = Point::new(data.grid_x, data.grid_y);
 
     state.write_unit(unit_id, unit);
     ApplyOutcome::Applied
 }
 
-/// Порт `Remote_ReceiveNetPacket_54` (`remote.cpp:4547-4652`).
+/// Port of `Remote_ReceiveNetPacket_54` (`remote.cpp:4547-4652`).
 ///
-/// Применяет авторитетное состояние удалённой команды, удаляет юнитов,
-/// которых нет у владельца (кроме зданий — как `Remote_RemoveExtraUnits`), и
-/// выравнивает счётчики id/золото/исследования на последнем чанке. Индекс
-/// раунда записывается в [`GameState::state_sync_indices`], по нему закрывается
-/// 54-барьер.
+/// Applies the authoritative state of a remote team, deletes units
+/// absent on the owner (except buildings — as `Remote_RemoveExtraUnits`), and
+/// aligns id counters/gold/research on the last chunk. The
+/// round index is written to [`GameState::state_sync_indices`], which closes
+/// the 54 barrier.
 pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> ApplyOutcome {
     if !is_valid_team_index(packet.team) {
         return ApplyOutcome::Ignored;
     }
 
     let slot = packet.team.0 as usize;
-    // «only the owner may dictate the state of its units» — своё состояние и
-    // команды без remote-типа не применяются.
+    // "only the owner may dictate the state of its units" — its own state and
+    // teams without the remote type are not applied.
     if state.teams[slot].team_type != TeamKind::Remote {
         return ApplyOutcome::Ignored;
     }
@@ -811,7 +811,7 @@ pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> Appl
             return ApplyOutcome::Malformed;
         };
 
-        // Счётчики id — до удаления лишних юнитов, как в C++.
+        // Id counters — before deleting extra units, as in C++.
         state.teams[slot].number_of_objects_created = tail.number_of_objects_created;
         state.teams[slot].unit_counters = tail.unit_counters;
 
@@ -827,10 +827,10 @@ pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> Appl
     ApplyOutcome::Applied
 }
 
-/// Порт `Remote_RemoveExtraUnits` (`remote.cpp:4517-4545`).
+/// Port of `Remote_RemoveExtraUnits` (`remote.cpp:4517-4545`).
 ///
-/// Юниты команды, которых нет у владельца, удаляются; здания/наземное
-/// покрытие (`STATIONARY | GROUND_COVER`) не удаляются — как в C++.
+/// Team units absent on the owner are deleted; buildings/ground
+/// cover (`STATIONARY | GROUND_COVER`) are not deleted — as in C++.
 fn remove_extra_units(state: &mut GameState, team: TeamId) {
     use crate::enums::unit_flags::{EXPLODING, GROUND_COVER};
 
@@ -869,12 +869,12 @@ fn remove_extra_units(state: &mut GameState, team: TeamId) {
 }
 
 // ---------------------------------------------------------------------------
-// 10 / 20 / 43 / 12 — апгрейды, имя, снабжение
+// 10 / 20 / 43 / 12 — upgrades, name, supplies
 // ---------------------------------------------------------------------------
 
-/// Порядок 13 атрибутов пакетов 10/20 (`max-brh-docs/protocol.md` §8.4).
+/// Order of the 13 attributes of packets 10/20 (`max-brh-docs/protocol.md` §8.4).
 ///
-/// Совпадает с порядком присваиваний в `Remote_ReceiveNetPacket_10/20`.
+/// Matches the assignment order in `Remote_ReceiveNetPacket_10/20`.
 pub const UPGRADE_ATTRIBUTE_ORDER: [u8; UPGRADE_VALUE_COUNT] = [
     ATTRIB_TURNS,
     ATTRIB_HITS,
@@ -928,8 +928,8 @@ fn apply_packet_20(
         return ApplyOutcome::UnknownUnit;
     };
 
-    // Апгрейд ложится на копию: базовые значения общие для типа до первого
-    // копирования (`Remote_ReceiveNetPacket_20`).
+    // The upgrade lands on a copy: base values are shared per type until the first
+    // copy (`Remote_ReceiveNetPacket_20`).
     let mut values = unit.base_values;
     values.update_version();
     values.mark_as_in_use();
@@ -967,10 +967,10 @@ fn apply_packet_12(
 }
 
 // ---------------------------------------------------------------------------
-// Помощники для тестов и сетевого слоя
+// Helpers for tests and the network layer
 // ---------------------------------------------------------------------------
 
-/// Собирает payload `P1` с приказом, сохранив остальные поля как у `unit`.
+/// Builds a `P1` payload with an order, keeping the other fields as on `unit`.
 pub fn payload_p1_for(
     order: UnitOrder,
     state: UnitOrderState,
@@ -986,7 +986,7 @@ pub fn payload_p1_for(
     }
 }
 
-/// Собирает команду 08 с payload уровня `P1`.
+/// Builds command 08 with a `P1`-level payload.
 pub fn command_order_p1(unit: UnitId, p1: PayloadP1) -> Command {
     Command::Order(Packet08Order {
         unit,
@@ -994,7 +994,7 @@ pub fn command_order_p1(unit: UnitId, p1: PayloadP1) -> Command {
     })
 }
 
-/// Собирает команду 38 «движение по линейному маршруту» (как
+/// Builds command 38 "movement along a linear route" (as
 /// `GroundPath::AppendLinearSteps`).
 pub fn command_move_linear(
     unit: UnitId,
@@ -1026,22 +1026,22 @@ pub fn command_move_linear(
     })
 }
 
-/// Собирает команду 06 (конец хода команды).
+/// Builds command 06 (end of the team's turn).
 pub fn command_finished_turn(team: TeamId) -> Command {
     Command::FinishedTurn(crate::input::Packet06FinishedTurn { team })
 }
 
-/// Собирает команду 52 (барьер конца хода).
+/// Builds command 52 (end-of-turn barrier).
 pub fn command_end_turn_barrier(team: TeamId, counter: u8) -> Command {
     Command::EndTurnBarrier(crate::input::Packet52EndTurnBarrier { team, counter })
 }
 
-/// Порядок данных приказа, пришедших с пакетом (для тестов и отладки).
+/// The order data that came with the packet (for tests and debugging).
 pub fn order_data_of(unit: &UnitInfo, state: &GameState) -> OrderData {
     state.order_data(unit.id)
 }
 
-/// Тема исследования по индексу — проверка формы пакетов 10/20 в тестах.
+/// Research topic by index — checking the shape of packets 10/20 in tests.
 pub fn research_topic_at(index: u8) -> Option<ResearchTopic> {
     RESEARCH_TOPICS.get(index as usize).copied()
 }
@@ -1057,7 +1057,7 @@ const RESEARCH_TOPICS: [ResearchTopic; 8] = [
     ResearchTopic::Cost,
 ];
 
-/// Тип юнита из `u16` (для сборки пакетов) — `None` вне `UNIT_END`.
+/// Unit type from a `u16` (for building packets) — `None` outside `UNIT_END`.
 pub fn unit_type_from_raw(raw: u16) -> Option<UnitType> {
     UnitType::try_from(raw).ok()
 }
@@ -1161,7 +1161,7 @@ mod tests {
         assert_eq!(data.move_to, Point::new(12, 13));
         assert_eq!(data.fire_on, Point::new(14, 15));
 
-        // P3-payload с приказом уровня P1 — malformed.
+        // P3 payload with a P1-level order — malformed.
         let malformed = Command::Order(Packet08Order {
             unit: id,
             payload: OrderPayload::P3(PayloadP3 {
@@ -1249,7 +1249,7 @@ mod tests {
     #[test]
     fn packet_50_creates_emergency_stop_event_processed_by_cycle() {
         let (mut state, id) = state_with_tank();
-        // Начнём движение.
+        // Start moving.
         let command = command_move_linear(
             id,
             Point::new(10, 10),
@@ -1290,7 +1290,7 @@ mod tests {
         assert!(state.teams[0].finished_turn);
         assert_eq!(state.game_state, crate::enums::GameStateType::EndTurn);
 
-        // Невалидный индекс команды (ALIEN=4) отвергается.
+        // An invalid team index (ALIEN=4) is rejected.
         assert_eq!(
             apply_command(&mut state, &command_finished_turn(TeamId::ALIEN)),
             ApplyOutcome::Ignored
@@ -1323,7 +1323,7 @@ mod tests {
     fn upgrade_packets_update_attributes_in_protocol_order() {
         let (mut state, id) = state_with_tank();
         let mut values = [0u16; UPGRADE_VALUE_COUNT];
-        values[1] = 99; // hits — второй атрибут в порядке пакета.
+        values[1] = 99; // hits — the second attribute in packet order.
 
         apply_command(
             &mut state,
@@ -1459,7 +1459,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 54 — применение авторитетного состояния команды
+    // 54 — applying the authoritative team state
     // -----------------------------------------------------------------------
 
     fn state_with_remote_team() -> (GameState, UnitId, UnitId, UnitId) {
@@ -1560,14 +1560,14 @@ mod tests {
         assert_eq!(data.fire_on, Point::new(52, 53));
         assert_eq!(unit.target_grid, Point::new(50, 51));
 
-        // Лишний мобильный юнит удалён, здание — нет (`Remote_RemoveExtraUnits`).
+        // An extra mobile unit is removed, a building is not (`Remote_RemoveExtraUnits`).
         assert!(
             !state.has_unit(scout),
             "scout отсутствует у владельца — удалён"
         );
         assert!(state.has_unit(tower), "здание не удаляется");
 
-        // Хвост последнего чанка выровнял экономику и счётчики id.
+        // The last chunk's tail aligned the economy and id counters.
         let green = TeamId::GREEN.0 as usize;
         assert_eq!(state.team_units[green].gold, 500);
         assert_eq!(state.teams[green].stats_gold_spent_on_upgrades, 60);
@@ -1612,7 +1612,7 @@ mod tests {
 
     #[test]
     fn packet_54_ignores_non_remote_teams_and_out_of_range_orders() {
-        // Своя (Player) команда: пакет 54 не применяется.
+        // An own (Player) team: packet 54 is not applied.
         let (mut state, tank, _scout, _tower) = state_with_remote_team();
         state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
         let packet = StateSyncPacket {
@@ -1625,7 +1625,7 @@ mod tests {
         assert_eq!(apply_state_sync(&mut state, &packet), ApplyOutcome::Ignored);
         assert_eq!(state.state_sync_index(TeamId::RED), 0);
 
-        // Приказ вне ORDER_COUNT_MAX не применяется (`Remote_ApplyUnitState`).
+        // An order outside ORDER_COUNT_MAX is not applied (`Remote_ApplyUnitState`).
         let before = state.unit(tank).expect("tank").orders;
         let mut bad = unit_state_for_tank();
         bad.orders = crate::enums::ORDER_COUNT_MAX;

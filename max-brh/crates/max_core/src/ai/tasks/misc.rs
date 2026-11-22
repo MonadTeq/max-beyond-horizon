@@ -1,25 +1,25 @@
-//! Экономика, ремонт и очистка: `TaskGetResource`/`TaskGetMaterials`,
+//! Economy, repair and clearing: `TaskGetResource`/`TaskGetMaterials`,
 //! `TaskRepair`/`TaskReload`/`TaskUpgrade`, `TaskRemoveRubble`/
 //! `TaskRemoveMines`, `TaskPlaceMines`, `TaskScavenge`, `TaskClearZone`,
 //! `TaskCheckAssaults`.
 //!
-//! Оракул: `taskgetresource.cpp/.hpp`, `taskgetmaterials.cpp/.hpp`,
+//! Oracle: `taskgetresource.cpp/.hpp`, `taskgetmaterials.cpp/.hpp`,
 //! `taskrepair.cpp/.hpp`, `taskreload.cpp/.hpp`, `taskupgrade.cpp/.hpp`,
 //! `taskremoverubble.cpp/.hpp`, `taskremovemines.cpp/.hpp`,
 //! `taskplacemines.cpp/.hpp`, `taskscavenge.cpp/.hpp`,
 //! `taskclearzone.cpp/.hpp`, `taskcheckassaults.cpp/.hpp`.
 //!
-//! # Упрощения P6 (P3-экономика и P5-разметка зон)
+//! # P6 simplifications (P3 economy and P5 zone marking)
 //!
-//! * передача груза (`TaskGetMaterials::DoTransfer`) выполняется приказом
-//!   `ORDER_TRANSFER` — сама передача реализуется экономикой комплексов (P3),
-//!   поэтому здесь только маршрут и приказ;
-//! * ремонт/перезарядка/апгрейд отдают `ORDER_REPAIR`/`ORDER_RELOAD`/
-//!   `ORDER_UPGRADE` ремонтному цеху (P3-производство);
-//! * `TaskClearZone` обходит заявленные сайты и отдаёт `ORDER_CLEAR`
-//!   бульдозеру; полная разметка `Zone` (P5/P7) не портирована;
-//! * `TaskCheckAssaults` контролирует штурмовые группы по приказам
-//!   `ORDER_MOVE_TO_ATTACK` (полные проверки воздушных штурмов — P7).
+//! * cargo transfer (`TaskGetMaterials::DoTransfer`) is performed by the
+//!   `ORDER_TRANSFER` order — the transfer itself is implemented by complex
+//!   economy (P3), so here only the route and the order;
+//! * repair/reload/upgrade issue `ORDER_REPAIR`/`ORDER_RELOAD`/
+//!   `ORDER_UPGRADE` to the repair shop (P3 production);
+//! * `TaskClearZone` walks the claimed sites and issues `ORDER_CLEAR` to
+//!   the bulldozer; full `Zone` marking (P5/P7) is not ported;
+//! * `TaskCheckAssaults` monitors assault groups by `ORDER_MOVE_TO_ATTACK`
+//!   orders (full air assault checks — P7).
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
@@ -34,17 +34,17 @@ use super::super::task::{
 use super::{TaskCtx, TaskKind};
 
 // ---------------------------------------------------------------------------
-// Общие поиски
+// Common searches
 // ---------------------------------------------------------------------------
 
-/// Расстояние в квадрате.
+/// Squared distance.
 fn distance_squared(first: Point, second: Point) -> i32 {
     let dx = i32::from(first.x) - i32::from(second.x);
     let dy = i32::from(first.y) - i32::from(second.y);
     dx * dx + dy * dy
 }
 
-/// Ближайший юнит команды с указанным типом (`FindClosestBuilding`).
+/// The nearest team unit with the given type (`FindClosestBuilding`).
 fn find_closest_unit_of_type(
     ctx: &TaskCtx<'_>,
     team: crate::team::TeamId,
@@ -80,7 +80,7 @@ fn find_closest_unit_of_type(
     best.map(|(_, id)| id)
 }
 
-/// Ремонтный цех для типа юнита (`TaskRepair::GetRepairShopType`).
+/// Repair shop for a unit type (`TaskRepair::GetRepairShopType`).
 fn repair_shop_type(unit_type: UnitType) -> UnitType {
     if unit_type.is_air() {
         UnitType::Hangar
@@ -91,7 +91,7 @@ fn repair_shop_type(unit_type: UnitType) -> UnitType {
     }
 }
 
-/// Склад-источник ресурсов (`TaskGetMaterials::FindBuilding`).
+/// Source storage of resources (`TaskGetMaterials::FindBuilding`).
 fn find_source_building(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<UnitId> {
     for kind in [
         UnitType::MaterialStorage,
@@ -109,7 +109,7 @@ fn find_source_building(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<
     None
 }
 
-/// Грузовик-снабженец (`TaskGetMaterials::FindTruck`).
+/// Supply truck (`TaskGetMaterials::FindTruck`).
 fn find_truck(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<UnitId> {
     for id in ctx.list(UnitListKind::MobileLandSea) {
         let Some(info) = ctx.unit(id) else { continue };
@@ -152,7 +152,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
 
     let team = requestor_info.team;
 
-    // `FindTruck` — назначить грузовик.
+    // `FindTruck` — assign a truck.
     if resource.supplier.is_none() {
         match find_truck(ctx, team) {
             Some(truck) => {
@@ -160,7 +160,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
                 ctx.attach(header.id, truck);
             }
             None => {
-                // Нет грузовика: заказать `SPLYTRCK` через `TaskObtainUnits`.
+                // No truck: order `SPLYTRCK` via `TaskObtainUnits`.
                 if !resource.started {
                     resource.started = true;
                     let mut obtain = TaskKind::obtain_units(requestor_info.grid);
@@ -177,13 +177,13 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         return;
     };
 
-    // `FindBuilding` — источник ресурсов.
+    // `FindBuilding` — the resource source.
     if resource.source.is_none() {
         resource.source = find_source_building(ctx, team);
     }
 
     let Some(source) = resource.source else {
-        // Источника нет — доставить напрямую (структурно).
+        // No source — deliver directly (structurally).
         return;
     };
 
@@ -197,7 +197,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         return;
     };
 
-    // У источника: загрузиться (приказ `ORDER_TRANSFER`).
+    // At the source: load (`ORDER_TRANSFER` order).
     if distance_squared(supplier_info.grid, source_info.grid) <= 2 {
         if i32::from(supplier_info.storage) < i32::from(*materials_needed) {
             if supplier_info.orders == UnitOrder::Await {
@@ -210,7 +210,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
                 ctx.set_new_order(supplier, UnitOrder::Transfer, UnitOrderState::Init);
             }
         } else {
-            // Везём к заказчику.
+            // Transport to the requestor.
             if supplier_info.orders == UnitOrder::Await {
                 let priority = ctx.priority_of(header.id);
                 let move_kind = TaskKind::move_to(
@@ -226,7 +226,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         return;
     }
 
-    // Двигаться к источнику.
+    // Move to the source.
     if supplier_info.orders == UnitOrder::Await || supplier_info.orders == UnitOrder::Sentry {
         let priority = ctx.priority_of(header.id);
         let move_kind = TaskKind::move_to(
@@ -240,7 +240,7 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
 }
 
 fn get_resource_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-    // `TaskGetResource` — база: параметры совпадают с `TaskGetMaterials`.
+    // `TaskGetResource` — base: parameters match `TaskGetMaterials`.
     if matches!(kind, TaskKind::GetMaterials { .. }) {
         get_materials_end_turn(kind, ctx, header);
     }
@@ -249,7 +249,7 @@ fn get_resource_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 // TaskRepair / TaskReload / TaskUpgrade
 // ---------------------------------------------------------------------------
 
-/// `TaskRepair::EndTurn` (база для `Reload`/`Upgrade`): доставить юнит в цех.
+/// `TaskRepair::EndTurn` (base for `Reload`/`Upgrade`): deliver the unit to the shop.
 fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let (repair, issue_order) = match kind {
         TaskKind::Repair { repair } => (repair, UnitOrder::Repair),
@@ -271,14 +271,14 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     let team = target_info.team;
     let shop_type = repair_shop_type(target_info.unit_type);
 
-    // `SelectRepairShop` — цех команды.
+    // `SelectRepairShop` — the team's shop.
     if repair.operator_unit.is_none() {
         match find_closest_unit_of_type(ctx, team, shop_type, target_info.grid) {
             Some(shop) => {
                 repair.operator_unit = Some(shop);
             }
             None => {
-                // Нет цеха: заказать постройку (структурно, через менеджер).
+                // No shop: order a build (structurally, via the manager).
                 ctx.remove_self(header.id);
                 return;
             }
@@ -294,7 +294,7 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         return;
     };
 
-    // Рядом с цехом — отдать приказ цеху.
+    // Next to the shop — issue the order to the shop.
     if distance_squared(target_info.grid, shop_info.grid) <= 2 {
         if shop_info.orders == UnitOrder::Await || shop_info.orders == UnitOrder::Sentry {
             if let Some(mut shop_info) = ctx.unit(shop) {
@@ -305,7 +305,7 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
             ctx.set_new_order(shop, issue_order, UnitOrderState::Init);
         }
 
-        // Цель остаётся в задаче до конца ремонта.
+        // The target stays in the task until the repair ends.
         let finished = match kind {
             TaskKind::Reload { .. } => {
                 target_info.ammo as i32
@@ -326,7 +326,7 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         return;
     }
 
-    // Двигаться к цеху.
+    // Move to the shop.
     if target_info.orders == UnitOrder::Await || target_info.orders == UnitOrder::Sentry {
         let priority = ctx.priority_of(header.id);
         let move_kind = TaskKind::move_to(target, shop_info.grid, 2, CautionLevel::AvoidAllDamage);
@@ -337,7 +337,7 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 // TaskRemoveRubble / TaskRemoveMines
 // ---------------------------------------------------------------------------
 
-/// Тип юнита-уборщика для цели.
+/// The cleaner unit type for the target.
 fn clearer_type_for(target: &crate::unit::UnitInfo) -> UnitType {
     if target.unit_type == UnitType::LandMine || target.unit_type == UnitType::SeaMine {
         UnitType::MineLayer
@@ -422,7 +422,7 @@ fn scavenge_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
 
     units.retain(|unit| ctx.unit(*unit).map(|info| info.hits > 0).unwrap_or(false));
 
-    // Рекрутинг инженеров/бульдозеров.
+    // Recruiting engineers/bulldozers.
     if units.is_empty() {
         for id in ctx.list(UnitListKind::MobileLandSea) {
             let Some(info) = ctx.unit(id) else { continue };
@@ -447,7 +447,7 @@ fn scavenge_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
         }
     }
 
-    // Обломки на карте (`TaskScavenge`).
+    // Rubble on the map (`TaskScavenge`).
     let mut site: Option<Point> = None;
     for id in ctx.list(UnitListKind::Stationary) {
         let Some(info) = ctx.unit(id) else { continue };
@@ -525,7 +525,7 @@ fn place_mines_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     *mine_layer_count = layers;
     *sea_mine_layer_count = sea_layers;
 
-    // Сайт минирования: первый фронт (`INFO_MAP_FRONTIER`) карты информации.
+    // Minelaying site: the first frontier (`INFO_MAP_FRONTIER`) of the info map.
     let player = &ctx.world.ai.players[header.team.0 as usize];
     let mut frontier: Option<Point> = None;
 
@@ -669,10 +669,10 @@ fn check_assaults_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header:
 }
 
 // ---------------------------------------------------------------------------
-// Диспетчеризация
+// Dispatch
 // ---------------------------------------------------------------------------
 
-/// `Init` для misc-классов.
+/// `Init` for misc classes.
 pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     match kind {
         TaskKind::GetMaterials { .. } => true,
@@ -686,7 +686,7 @@ pub fn init(kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) ->
     }
 }
 
-/// `BeginTurn` для misc-классов.
+/// `BeginTurn` for misc classes.
 pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::GetMaterials { .. } => {
@@ -721,7 +721,7 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
     }
 }
 
-/// `EndTurn` для misc-классов.
+/// `EndTurn` for misc classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::GetMaterials { .. } => {
@@ -756,7 +756,7 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     }
 }
 
-/// `Execute(unit)` для misc-классов.
+/// `Execute(unit)` for misc classes.
 pub fn execute(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -787,7 +787,7 @@ pub fn execute(
     }
 }
 
-/// `AddUnit(unit)` для misc-классов.
+/// `AddUnit(unit)` for misc classes.
 pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::GetMaterials { resource, .. } => {
@@ -826,7 +826,7 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
     }
 }
 
-/// `RemoveUnit(unit)` для misc-классов.
+/// `RemoveUnit(unit)` for misc classes.
 pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
     match kind {
         TaskKind::GetMaterials { resource, .. } => {
@@ -871,7 +871,7 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `RemoveSelf()` для misc-классов.
+/// `RemoveSelf()` for misc classes.
 pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::GetMaterials { .. }
@@ -892,7 +892,7 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
     }
 }
 
-/// `ChildComplete(task)` для misc-классов.
+/// `ChildComplete(task)` for misc classes.
 pub fn child_complete(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -917,7 +917,7 @@ pub fn child_complete(
     }
 }
 
-/// Уведомление о завершении дочернего `TaskMove`.
+/// Notification about a child `TaskMove` completion.
 pub fn move_finished(
     kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -945,12 +945,12 @@ pub fn move_finished(
     }
 }
 
-/// `CheckReactions` — не переопределён.
+/// `CheckReactions` — not overridden.
 pub fn check_reactions(_kind: &mut TaskKind, _ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
     false
 }
 
-/// `ExchangeOperator` — `TaskRepair` (обмен цеха).
+/// `ExchangeOperator` — `TaskRepair` (swapping the shop).
 pub fn exchange_operator(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1000,7 +1000,7 @@ pub fn exchange_operator(
     true
 }
 
-/// `EventUnitDestroyed(unit)` для misc-классов.
+/// `EventUnitDestroyed(unit)` for misc classes.
 pub fn event_unit_destroyed(
     kind: &mut TaskKind,
     ctx: &mut TaskCtx<'_>,
@@ -1048,7 +1048,7 @@ pub fn event_unit_destroyed(
     }
 }
 
-/// `EventEnemyUnitSpotted` — не переопределён.
+/// `EventEnemyUnitSpotted` — not overridden.
 pub fn event_enemy_unit_spotted(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1074,7 +1074,7 @@ pub fn event_cargo_transfer(
     }
 }
 
-/// `EventUnitLoaded` — не переопределён.
+/// `EventUnitLoaded` — not overridden.
 pub fn event_unit_loaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1085,7 +1085,7 @@ pub fn event_unit_loaded(
     false
 }
 
-/// `EventUnitUnloaded` — не переопределён.
+/// `EventUnitUnloaded` — not overridden.
 pub fn event_unit_unloaded(
     _kind: &mut TaskKind,
     _ctx: &mut TaskCtx<'_>,
@@ -1096,7 +1096,7 @@ pub fn event_unit_unloaded(
     false
 }
 
-/// Приоритеты, использованные модулем (экспорт для тестов).
+/// Priorities used by the module (exported for tests).
 pub const MISC_PRIORITIES: [u16; 8] = [
     TASK_PRIORITY_EMERGENCY,
     TASK_PRIORITY_REMOVE_RUBBLE,

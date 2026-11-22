@@ -1,40 +1,40 @@
-//! Комплексы зданий и коннекторы — порт `complex.cpp` + коннекторной части
+//! Building complexes and connectors — a port of `complex.cpp` + the connector part
 //! `units_manager.cpp`/`unitinfo.cpp`.
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `units_manager.cpp:2051-2225` — `UnitsManager_UpdateConnectors`: по восьми
-//!   направлениям ищет здания команды (`Access_GetTeamBuilding`,
-//!   `access.cpp:2157`), выставляет биты `CONNECTOR_*` себе и соседу (у
-//!   `CONNECTOR_UNIT`/`STANDALONE` — всегда «левый/верхний» вариант пары),
-//!   затем `AttachToPrimaryComplex` и `Access_UpdateResourcesTotal`;
-//! * `unitinfo.cpp:1978-2052` — `UnitInfo::AttachComplex`: рекурсивно
-//!   перевешивает здание и всё связное подграфство на один `Complex`
+//! * `units_manager.cpp:2051-2225` — `UnitsManager_UpdateConnectors`: in eight
+//!   directions it searches for team buildings (`Access_GetTeamBuilding`,
+//!   `access.cpp:2157`), sets `CONNECTOR_*` bits on itself and the neighbor (for
+//!   `CONNECTOR_UNIT`/`STANDALONE` — always the "left/top" variant of the pair),
+//!   then `AttachToPrimaryComplex` and `Access_UpdateResourcesTotal`;
+//! * `unitinfo.cpp:1978-2052` — `UnitInfo::AttachComplex`: recursively
+//!   moves the building and the whole connected subgraph to one `Complex`
 //!   (`Complex::Grow`/`Shrink`);
-//! * `unitinfo.cpp:2054-2131` — `UnitInfo::AttachToPrimaryComplex`: из
-//!   соседних комплексов выбирается комплекс с **наименьшим id**, иначе
-//!   создаётся новый (`TeamUnits::CreateComplex`);
-//! * `unitinfo.cpp:2133-2203` — `UnitInfo::TestConnections`: обход графа с
-//!   пометкой `CONNECTION_BEING_TESTED`, чтобы не зациклиться;
+//! * `unitinfo.cpp:2054-2131` — `UnitInfo::AttachToPrimaryComplex`: from the
+//!   neighboring complexes the one with the **lowest id** is chosen, otherwise
+//!   a new one is created (`TeamUnits::CreateComplex`);
+//! * `unitinfo.cpp:2133-2203` — `UnitInfo::TestConnections`: graph traversal with
+//!   marking `CONNECTION_BEING_TESTED` to avoid looping;
 //! * `unitinfo.cpp:2205-2273` — `UnitInfo::GetFirstUntestedConnection`;
-//! * `unitinfo.cpp:2275-2313` — `UnitInfo::DetachComplex`: здание выходит из
-//!   комплекса, оставшийся граф распадается на связные группы, каждая получает
-//!   свой `Complex` (`CreateComplex` + `AttachComplex`), запасы пересчитываются
+//! * `unitinfo.cpp:2275-2313` — `UnitInfo::DetachComplex`: the building leaves the
+//!   complex, the remaining graph splits into connected groups, each gets
+//!   its own `Complex` (`CreateComplex` + `AttachComplex`), stocks are recomputed
 //!   `Access_UpdateResourcesTotal` (`access.cpp:912`);
-//! * `units_manager.cpp:1556-1709` — `UnitsManager_RemoveConnections`: снятие
-//!   парных битов у соседей перед уничтожением/переносом здания;
+//! * `units_manager.cpp:1556-1709` — `UnitsManager_RemoveConnections`: clearing
+//!   the paired bits on neighbors before destroying/moving a building;
 //! * `complex.cpp:136-203` — `Complex::GetCargoInfo`/`TransferCargo`/`Transfer`:
-//!   ёмкость и запас комплекса — **сумма** подключённых хранилищ, а списание
-//!   идёт по складам членов в порядке `UnitsManager_StationaryUnits`.
+//!   the capacity and stock of a complex are the **sum** of connected storages, and charging
+//!   goes over member storages in `UnitsManager_StationaryUnits` order.
 //!
-//! # Модель
+//! # Model
 //!
-//! Комплекс — это связная (через коннекторы) группа зданий/`CONNECTOR_UNIT`/
-//! `STANDALONE` одной команды. `UnitInfo::complex` хранит id комплекса, а
-//! `UnitInfo::connectors` — биты `CONNECTOR_*` (они входят в снапшот/CRC).
-//! Запасы и ёмкость комплекса вычисляются из зданий
-//! ([`crate::alloc::get_cargo_info`]), а `Complex::{raw,fuel,gold,power,
-//! workers}` — кэш на текущий ход (`Access_UpdateResourcesTotal`).
+//! A complex is a connected (via connectors) group of buildings/`CONNECTOR_UNIT`/
+//! `STANDALONE` of one team. `UnitInfo::complex` stores the complex id, and
+//! `UnitInfo::connectors` — `CONNECTOR_*` bits (they enter the snapshot/CRC).
+//! The stocks and capacity of a complex are computed from the buildings
+//! ([`crate::alloc::get_cargo_info`]), while `Complex::{raw,fuel,gold,power,
+//! workers}` is a cache for the current turn (`Access_UpdateResourcesTotal`).
 
 use crate::alloc::update_resources_total;
 use crate::classification::Footprint;
@@ -49,7 +49,7 @@ use crate::geo::Point;
 use crate::team::{ComplexId, TeamId};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
 
-/// Порядок обхода коннекторов в C++ (`UnitInfo::AttachComplex`,
+/// Connector traversal order in C++ (`UnitInfo::AttachComplex`,
 /// `TestConnections`, `AttachToPrimaryComplex`).
 pub const CONNECTOR_ORDER: [u16; 8] = [
     CONNECTOR_NORTH_LEFT,
@@ -62,7 +62,7 @@ pub const CONNECTOR_ORDER: [u16; 8] = [
     CONNECTOR_WEST_TOP,
 ];
 
-/// Габарит структуры в клетках по футпринту: `Quad` — 2, `Single` — 1
+/// Structure size in cells by footprint: `Quad` — 2, `Single` — 1
 /// (`units_manager.cpp:2056`: `(flags & BUILDING) ? 2 : 1`).
 #[inline]
 pub fn unit_size(footprint: Footprint) -> i16 {
@@ -73,13 +73,13 @@ pub fn unit_size(footprint: Footprint) -> i16 {
     }
 }
 
-/// `Access_GetTeamBuilding(team, grid_x, grid_y)` (`access.cpp:2157`): первое
-/// здание команды в клетке, которое ещё не в `ORDER_IDLE` и является членом
-/// комплекса (`UnitInfo::IsComplexMember`).
+/// `Access_GetTeamBuilding(team, grid_x, grid_y)` (`access.cpp:2157`): the first
+/// team building on the cell that is not yet in `ORDER_IDLE` and is a complex
+/// member (`UnitInfo::IsComplexMember`).
 ///
-/// `ORDER_IDLE` отсекается намеренно: достроенное здание на площадке
-/// (`ORDER_IDLE`/`BUILDING_READY`) в комплекс не входит, пока
-/// `UnitsManager_BuildingReady` не вернёт ему приказ.
+/// `ORDER_IDLE` is filtered out on purpose: a completed building on a site
+/// (`ORDER_IDLE`/`BUILDING_READY`) does not join the complex until
+/// `UnitsManager_BuildingReady` returns an order to it.
 pub fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
     state.units_at(grid).iter().copied().find(|id| {
         state.unit(*id).is_some_and(|unit| {
@@ -90,8 +90,8 @@ pub fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<
 
 /// `UnitInfo::GetConnectedBuilding(connector)` (`unitinfo.cpp:1938-1976`).
 ///
-/// Смещения — ровно C++-switch: для здания (`grid_size = 2`) юго-восточные
-/// пары сдвинуты на 2 клетки.
+/// Offsets — exactly the C++ switch: for a building (`grid_size = 2`) the south-east
+/// pairs are shifted by 2 cells.
 pub fn connected_building(state: &GameState, unit: &UnitInfo, connector: u16) -> Option<UnitId> {
     let size = unit_size(unit.footprint());
     let x = unit.grid.x;
@@ -113,7 +113,7 @@ pub fn connected_building(state: &GameState, unit: &UnitInfo, connector: u16) ->
 }
 
 // ---------------------------------------------------------------------------
-// Complex::Grow/Shrink через TeamUnits
+// Complex::Grow/Shrink via TeamUnits
 // ---------------------------------------------------------------------------
 
 /// `Complex::Grow` (`complex.cpp:205`).
@@ -125,7 +125,7 @@ fn complex_grow(state: &mut GameState, team: TeamId, complex: ComplexId) {
     }
 }
 
-/// `Complex::Shrink` (`complex.cpp:207`): при нуле зданий комплекс удаляется
+/// `Complex::Shrink` (`complex.cpp:207`): with zero buildings the complex is deleted
 /// (`TeamUnits::RemoveComplex`).
 fn complex_shrink(state: &mut GameState, team: TeamId, complex: ComplexId) {
     let Some(units) = state.team_units.get_mut(team.0 as usize) else {
@@ -148,10 +148,10 @@ fn complex_shrink(state: &mut GameState, team: TeamId, complex: ComplexId) {
 
 /// `UnitInfo::AttachComplex(complex)` (`unitinfo.cpp:1978`).
 ///
-/// Перевешивает здание на `complex` (с `Grow` нового и `Shrink` старого,
-/// пустой старый комплекс удаляется) и рекурсивно — всех связных соседей.
-/// Рекурсия останавливается на здании, уже привязанном к `complex`, поэтому
-/// циклы в графе коннекторов безопасны.
+/// Moves the building to `complex` (with `Grow` of the new and `Shrink` of the old one,
+/// an empty old complex is deleted) and recursively — all connected neighbors.
+/// The recursion stops at a building already attached to `complex`, so
+/// cycles in the connector graph are safe.
 pub fn attach_complex(state: &mut GameState, id: UnitId, complex: ComplexId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -189,10 +189,10 @@ pub fn attach_complex(state: &mut GameState, id: UnitId, complex: ComplexId) {
 
 /// `UnitInfo::AttachToPrimaryComplex()` (`unitinfo.cpp:2054`).
 ///
-/// Из комплексов соседних зданий выбирается комплекс с наименьшим id
-/// (`Complex::GetId`); если соседей нет — создаётся новый
-/// (`TeamUnits::CreateComplex`). Затем [`attach_complex`] сливает всё связное
-/// подграфство в выбранный комплекс.
+/// From the complexes of neighboring buildings the one with the lowest id is chosen
+/// (`Complex::GetId`); if there are no neighbors, a new one is created
+/// (`TeamUnits::CreateComplex`). Then [`attach_complex`] merges the whole connected
+/// subgraph into the chosen complex.
 pub fn attach_to_primary_complex(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -236,8 +236,8 @@ pub fn attach_to_primary_complex(state: &mut GameState, id: UnitId) {
     attach_complex(state, id, target);
 }
 
-/// `UnitInfo::TestConnections()` (`unitinfo.cpp:2133`): пометить
-/// `CONNECTION_BEING_TESTED` всё связное подграфство, начиная с `id`.
+/// `UnitInfo::TestConnections()` (`unitinfo.cpp:2133`): mark
+/// the whole connected subgraph as `CONNECTION_BEING_TESTED`, starting from `id`.
 pub fn test_connections(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -284,9 +284,9 @@ pub fn first_untested_connection(state: &GameState, unit: &UnitInfo) -> Option<U
     None
 }
 
-/// `UnitInfo::DetachComplex()` (`unitinfo.cpp:2275`): здание выходит из
-/// комплекса, а оставшиеся связные группы получают собственные комплексы
-/// (`CreateComplex` + `AttachComplex`) и пересчитанные запасы.
+/// `UnitInfo::DetachComplex()` (`unitinfo.cpp:2275`): the building leaves the
+/// complex, and the remaining connected groups get their own complexes
+/// (`CreateComplex` + `AttachComplex`) and recomputed stocks.
 pub fn detach_complex(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -302,8 +302,8 @@ pub fn detach_complex(state: &mut GameState, id: UnitId) {
         target.complex = None;
     }
 
-    // Первый непроверенный сосед определяет «главную» группу: она остаётся в
-    // прежнем комплексе (C++ `building_complex`).
+    // The first untested neighbor determines the "main" group: it stays in
+    // the old complex (C++ `building_complex`).
     let first = first_untested_connection(state, &unit);
 
     if let Some(target) = state.unit_mut(id) {
@@ -333,12 +333,12 @@ pub fn detach_complex(state: &mut GameState, id: UnitId) {
             break;
         };
 
-        // C++ `DetachComplex` (`unitinfo.cpp:2292-2301`) временно привязывает
-        // **само отделяемое здание** к новому комплексу (`complex = new_complex`)
-        // без `Grow`: рекурсия `AttachComplex` группы натыкается на него,
-        // видит `this->complex == complex` и останавливается — иначе новый
-        // комплекс «захватил» бы через биты отделяемого здания весь прежний
-        // граф. После пересчёта привязка снимается (`complex = nullptr`).
+        // C++ `DetachComplex` (`unitinfo.cpp:2292-2301`) temporarily attaches
+        // **the detached building itself** to the new complex (`complex = new_complex`)
+        // without `Grow`: the group's `AttachComplex` recursion hits it,
+        // sees `this->complex == complex` and stops — otherwise the new
+        // complex would "capture" the whole old graph through the detached building's
+        // bits. After recomputation the attachment is removed (`complex = nullptr`).
         if let Some(target) = state.unit_mut(id) {
             target.complex = Some(new_complex);
         }
@@ -363,12 +363,12 @@ pub fn detach_complex(state: &mut GameState, id: UnitId) {
     }
 }
 
-/// `UnitsManager_RemoveConnections(unit)` (`units_manager.cpp:1556`): снять
-/// парные биты коннекторов у соседей и разделить комплекс, в котором состояло
-/// здание.
+/// `UnitsManager_RemoveConnections(unit)` (`units_manager.cpp:1556`): clear
+/// the paired connector bits on neighbors and split the complex the
+/// building belonged to.
 ///
-/// Вызывается до удаления здания: `DetachComplex` идёт первым (ему нужны биты
-/// самого здания), затем у соседей снимаются биты пары — ровно порядок C++.
+/// Called before the building is deleted: `DetachComplex` goes first (it needs the
+/// building's own bits), then the pair bits are cleared on neighbors — exactly the C++ order.
 pub fn remove_connections(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -389,7 +389,7 @@ pub fn remove_connections(state: &mut GameState, id: UnitId) {
         return;
     };
 
-    // Пары очищаются по тем же правилам, что выставлялись в
+    // Pairs are cleared by the same rules as they were set in
     // `UnitsManager_UpdateConnectors`.
     let clear_neighbor = |state: &mut GameState, building: Option<UnitId>, bit: u16| {
         let Some(building) = building else {
@@ -531,15 +531,15 @@ fn is_standalone_or_connector(state: &GameState, building: UnitId) -> bool {
 
 /// `UnitsManager_UpdateConnectors(unit)` (`units_manager.cpp:2051`).
 ///
-/// Выставляет биты `CONNECTOR_*` юниту и соседям, затем сливает комплексы
-/// (`AttachToPrimaryComplex`) и пересчитывает запасы
+/// Sets `CONNECTOR_*` bits on the unit and neighbors, then merges complexes
+/// (`AttachToPrimaryComplex`) and recomputes stocks
 /// (`Access_UpdateResourcesTotal`).
 ///
-/// Статистика постройки (`stats_factories_built`/`stats_mines_built`/
-/// `stats_buildings_built`) в C++ тоже инкрементируется здесь; порт считает её
-/// при высадке ([`crate::deploy`]), потому что вызовов `UpdateConnectors` в
-/// модели больше одного (спавн + завершение масштабирования), и повторный
-/// инкремент разошёлся бы с оракулом.
+/// Construction statistics (`stats_factories_built`/`stats_mines_built`/
+/// `stats_buildings_built`) are incremented here in C++ too; the port counts it
+/// during deployment ([`crate::deploy`]), because in the model there is more than one
+/// `UpdateConnectors` call (spawn + scaling completion), and a repeated
+/// increment would diverge from the oracle.
 pub fn update_connectors(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
@@ -555,8 +555,8 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
     let grid_y = unit.grid.y;
     let mut connectors = unit.connectors;
 
-    // Пара (бит юнита, «левый/верхний» бит, «правый/нижний» бит) по каждому
-    // направлению — 1:1 C++.
+    // The pair (unit bit, "left/top" bit, "right/bottom" bit) for each
+    // direction — 1:1 C++.
     let mut link = |state: &mut GameState,
                     target: Option<UnitId>,
                     own_bit: u16,
@@ -605,9 +605,9 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
         Point::new(grid_x + 1, grid_y + size),
     );
 
-    // «Правые/нижние» пары есть только у 2×2-структур. Турель — `Mobility::
-    // Building`, но `Footprint::Single` и не член комплекса (`IsComplexMember`),
-    // поэтому эта ветка для неё не выполняется: лайаут `is_quad()`, не семантика.
+    // "Right/bottom" pairs exist only for 2×2 structures. A turret is `Mobility::
+    // Building`, but `Footprint::Single` and not a complex member (`IsComplexMember`),
+    // so this branch does not run for it: layout `is_quad()`, not semantics.
     if unit.is_quad() {
         // `CONNECTOR_NORTH_RIGHT` — `(grid_x + 1, grid_y - 1)`.
         let target = team_building_at(state, team, Point::new(grid_x + 1, grid_y - 1));
@@ -813,7 +813,7 @@ mod tests {
             "ADUMP + два оставшихся коннектора"
         );
 
-        // Соседний коннектор не должен помнить уничтоженный.
+        // The neighboring connector must not remember the destroyed one.
         let neighbor = state
             .unit_ids_in_order()
             .into_iter()
@@ -847,16 +847,16 @@ mod tests {
         let (first, mine, dump) = build();
         let (second, _, _) = build();
 
-        // Два одинаковых прогона — одинаковый снапшот и CRC (`state_digest`
-        // считается по `snapshot_bytes`).
+        // Two identical runs — the same snapshot and CRC (`state_digest`
+        // is computed over `snapshot_bytes`).
         assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
         assert_eq!(
             crate::crc::state_digest(&first),
             crate::crc::state_digest(&second)
         );
 
-        // Связь комплекса (unit.complex) входит в снапшот: разрыв связи меняет
-        // и байты, и CRC.
+        // The complex link (unit.complex) enters the snapshot: breaking the link changes
+        // both the bytes and the CRC.
         let mut detached = first.clone();
         detached.unit_mut(dump).unwrap().complex = None;
         assert_ne!(detached.snapshot_bytes(), first.snapshot_bytes());
@@ -865,7 +865,7 @@ mod tests {
             crate::crc::state_digest(&first)
         );
 
-        // Биты коннекторов тоже входят (C++ `UnitInfo::connectors`).
+        // Connector bits enter too (C++ `UnitInfo::connectors`).
         let mut reconnected = first.clone();
         reconnected.unit_mut(mine).unwrap().connectors ^= CONNECTOR_EAST_TOP;
         assert_ne!(reconnected.snapshot_bytes(), first.snapshot_bytes());
@@ -874,8 +874,8 @@ mod tests {
             crate::crc::state_digest(&first)
         );
 
-        // Запас комплекса (`Complex::raw` как кэш `Access_UpdateResourcesTotal`)
-        // входит в снапшот: `Complex::Transfer` и UI читают именно его.
+        // The complex stock (`Complex::raw` as the `Access_UpdateResourcesTotal` cache)
+        // enters the snapshot: `Complex::Transfer` and the UI read exactly it.
         let mut changed = first.clone();
         let complex = changed.unit(mine).unwrap().complex.expect("complex");
         if let Some(target) = changed.complex_mut(TeamId::RED, complex.0 as u16) {
@@ -890,8 +890,8 @@ mod tests {
 
     #[test]
     fn connector_unit_size_uses_layout_footprint() {
-        // Турель — здание семантически, но 1×1: смещения коннекторов и якорь
-        // не должны раздувать её до 2×2.
+        // A turret is a building semantically, but 1×1: connector offsets and the anchor
+        // must not blow it up to 2×2.
         assert_eq!(unit_size(UnitType::GunTurret.footprint()), 1);
         assert_eq!(unit_size(UnitType::MiningStation.footprint()), 2);
         assert!(UnitType::GunTurret.is_building());
