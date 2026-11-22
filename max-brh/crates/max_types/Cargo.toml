@@ -1,0 +1,14 @@
+[package]
+name = "max_types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "M.A.X. BRH: общие доменные и протокольные типы (Infrastructure)"
+
+# Infrastructure-крейт нижнего слоя (Ф5.2, правило 5): доменные типы
+# (`UnitType`, `TeamId`, `Point`, пакеты протокола) общие для `max_core`,
+# `max_net` и `max_assets`. Зависимостей от этих крейтов здесь быть не должно —
+# только `serde` (derive для снапшотов/дебага). Инвариант проверяется
+# `cargo tree -p max_types`.
+[dependencies]
+serde.workspace = true

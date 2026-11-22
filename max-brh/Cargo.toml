@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    # Infrastructure: общие доменные/протокольные типы (Ф5.2); ниже всех по слою.
+    "crates/max_types",
     "crates/max_core",
     "crates/max_net",
     "crates/max_assets",
