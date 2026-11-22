@@ -2,7 +2,7 @@
 //!
 //! These packets exchange node identities and session settings before the
 //! first game turn: 28 → 44 → 29 → 47/30 → 36 → 35 → 32 → 05 → 34.
-//! They are not [`max_core::input::Command`]s (they never reach the
+//! They are not [`max_types::input::Command`]s (they never reach the
 //! simulation), so `max_net` owns their wire DTOs.
 //!
 //! String flavours follow §8.1: `std::string` (u32 length) in 33/35/36/44,

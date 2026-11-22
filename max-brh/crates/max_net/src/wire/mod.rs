@@ -192,7 +192,7 @@ impl Packet {
     /// Decodes a packet body for `kind` (type byte already consumed).
     pub fn decode_body(kind: u8, r: &mut Reader<'_>) -> WireResult<Self> {
         match kind {
-            // Commands (max_core::input::Command).
+            // Commands (max_types::input::Command).
             0x00 | 0x01 | 0x06 | 0x08 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x12 | 0x14 | 0x26
             | 0x29 | 0x2B | 0x2D | 0x32 | 0x34 | 0x35 => {
                 Ok(Self::Command(command::decode_command(kind, r)?))
