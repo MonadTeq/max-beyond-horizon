@@ -4,9 +4,8 @@
 Детализация — по ссылкам на профильные документы; этот файл — общая картина и
 разделение ответственности по агентам (см. [`AGENTS.md`](AGENTS.md)).
 
-> Исторические планы (`development/PLAN*.md`, `architecture/*`, `analysis/*`)
-> считаются консолидированными сюда; их содержимое не отменяется, но новые
-> задачи фиксируются только в этом документе.
+> Новые задачи фиксируются только в этом документе; детальные рабочие планы —
+> по ссылкам в §6.
 
 ## 1. Состояние проекта
 
@@ -115,4 +114,4 @@
 | Сеть/протокол | [`architecture/client/protocol.md`](architecture/client/protocol.md), [`architecture/client/barrier-flow.md`](architecture/client/barrier-flow.md), [`architecture/server/`](architecture/server/) |
 | Визуал 1:1 | [`analysis/visual-1to1-status.md`](analysis/visual-1to1-status.md), [`analysis/visual-1to1-plan.md`](analysis/visual-1to1-plan.md) |
 | Сборка/CI/релиз | [`development/build.md`](development/build.md), [`development/release-checklist.md`](development/release-checklist.md), `max-brh-cicd/` |
-| Исторические планы (консолидированы) | `development/PLAN.md` (v6), `PLAN-v7-release.md`, `PLAN-production.md`, `PLAN-refactor.md`, `architecture/server/dedicated-server-plan.md` |
+| Исторический (сервер) | `architecture/server/dedicated-server-plan.md` |
