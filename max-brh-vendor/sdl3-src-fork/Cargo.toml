@@ -1,0 +1,7 @@
+[package]
+name = "sdl3-src"
+version = "3.4.20"
+edition = "2021"
+license = "Zlib"
+description = "Source code of the SDL 3 library (vendored fork: SOURCE_DIR points to max-brh-vendor/SDL)"
+repository = "https://github.com/libsdl-org/SDL"

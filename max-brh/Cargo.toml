@@ -10,6 +10,12 @@ members = [
     "crates/max_app",
 ]
 
+# Вендоринг SDL3: локальный форк `sdl3-src` (SOURCE_DIR -> max-brh-vendor/SDL),
+# чтобы `sdl-from-source` собирал SDL из git-сабмодуля, а не из скачанного crate.
+# См. max-brh-vendor/README.md.
+[patch.crates-io]
+sdl3-src = { path = "../max-brh-vendor/sdl3-src-fork" }
+
 [workspace.package]
 version = "1.1.0"
 edition = "2021"
