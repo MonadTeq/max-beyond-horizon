@@ -103,6 +103,9 @@ def _strip_line_strings(ext, line):
                     j += 1
                 for k in range(i, min(j + 1, n)):
                     out[k] = " "
+                if j >= n:
+                    # Unclosed: string continues on the next line (Rust "\" escape).
+                    return "".join(out), '"'
                 i = j + 1
                 continue
 
@@ -164,8 +167,19 @@ def _extract_comments(ext, text):
     """Yield (1-based line number, comment fragment)."""
     in_block = None  # block-comment close delimiter
     in_ml_string = None  # multi-line string close delimiter
+    in_heredoc = None  # shell heredoc delimiter (content is data, not comments)
 
     for lineno, line in enumerate(text.splitlines(), 1):
+        # Continue / open a shell heredoc (<<DELIMITER ... DELIMITER).
+        if ext == ".sh":
+            if in_heredoc is not None:
+                if line.strip() == in_heredoc:
+                    in_heredoc = None
+                continue  # heredoc content is data, not comments
+            m = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)", line)
+            if m:
+                in_heredoc = m.group(1)
+
         # Continue a block comment from a previous line.
         if in_block is not None:
             end = line.find(in_block)
