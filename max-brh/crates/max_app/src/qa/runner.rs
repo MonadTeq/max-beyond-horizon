@@ -3643,9 +3643,7 @@ impl QaRunner {
                     .unit_ids_in_order()
                     .into_iter()
                     .filter_map(|id| self.app.state().unit(id))
-                    .filter(|unit| {
-                        unit.team == team && unit.flags & max_core::enums::unit_flags::BUILDING != 0
-                    })
+                    .filter(|unit| unit.team == team && unit.is_quad())
                     .min_by_key(|unit| {
                         let size: i16 = 2;
                         let dx = (i16::from(unit.grid.x) - i16::from(builder.grid.x)).abs()

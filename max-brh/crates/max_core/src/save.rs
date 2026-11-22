@@ -67,8 +67,14 @@ pub const UNIT_LIST_COUNT: usize = 5;
 pub const MAX_UNIT_DEPTH: usize = 16;
 
 /// Тип объекта в файле (`RegisterArray`-порядок по имени класса).
+///
+/// Имя с префиксом `Save`, чтобы не путать с
+/// [`classification::ObjectKind`](crate::classification::ObjectKind) —
+/// семантическим видом объекта (юнит/эффект/декорация/сюжетный), с которым
+/// этот тип файла V70 ничего общего не имеет (правило 1.3: формат — не
+/// классификатор).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ObjectKind {
+enum SaveObjectKind {
     AirPath,
     BuilderPath,
     Complex,
@@ -77,7 +83,7 @@ enum ObjectKind {
     UnitValues,
 }
 
-impl ObjectKind {
+impl SaveObjectKind {
     const fn type_index(self) -> u16 {
         match self {
             Self::AirPath => 1,
@@ -121,10 +127,10 @@ impl ObjectKind {
     }
 }
 
-const PATH_KINDS: [ObjectKind; 3] = [
-    ObjectKind::AirPath,
-    ObjectKind::BuilderPath,
-    ObjectKind::GroundPath,
+const PATH_KINDS: [SaveObjectKind; 3] = [
+    SaveObjectKind::AirPath,
+    SaveObjectKind::BuilderPath,
+    SaveObjectKind::GroundPath,
 ];
 
 /// Ошибка разбора/записи V70.
@@ -673,7 +679,7 @@ fn fixed_bytes_to_string(bytes: &[u8]) -> String {
 struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
-    kinds: Vec<ObjectKind>,
+    kinds: Vec<SaveObjectKind>,
     units: Vec<SaveUnit>,
     values_by_object: Vec<(u16, UnitValues)>,
     complexes_by_object: Vec<(u16, Complex)>,
@@ -826,7 +832,7 @@ impl<'a> Reader<'a> {
 
     // --- объектная таблица ---
 
-    fn object_ref(&mut self, allowed: &[ObjectKind]) -> Result<ObjRef> {
+    fn object_ref(&mut self, allowed: &[SaveObjectKind]) -> Result<ObjRef> {
         let index = self.u16()?;
         if index == 0 {
             return Ok(ObjRef::Null);
@@ -851,10 +857,11 @@ impl<'a> Reader<'a> {
             });
         }
         let type_index = self.u16()?;
-        let kind = ObjectKind::from_type_index(type_index).ok_or(SaveError::InvalidObjectKind {
-            type_index,
-            offset: self.pos - 2,
-        })?;
+        let kind =
+            SaveObjectKind::from_type_index(type_index).ok_or(SaveError::InvalidObjectKind {
+                type_index,
+                offset: self.pos - 2,
+            })?;
         if !allowed.contains(&kind) {
             return Err(SaveError::ObjectKindMismatch {
                 index,
@@ -937,9 +944,9 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn read_path_body(&mut self, kind: ObjectKind) -> Result<UnitPath> {
+    fn read_path_body(&mut self, kind: SaveObjectKind) -> Result<UnitPath> {
         match kind {
-            ObjectKind::GroundPath => {
+            SaveObjectKind::GroundPath => {
                 let end_x = self.i16()?;
                 let end_y = self.i16()?;
                 // V70: индекс шага — u16 (`GroundPath::FileLoad`).
@@ -956,7 +963,7 @@ impl<'a> Reader<'a> {
                     steps,
                 }))
             }
-            ObjectKind::AirPath => Ok(UnitPath::Air(AirPath {
+            SaveObjectKind::AirPath => Ok(UnitPath::Air(AirPath {
                 length: self.i16()?,
                 angle: self.i8()?,
                 start_x: self.i16()?,
@@ -968,7 +975,7 @@ impl<'a> Reader<'a> {
                 delta_x: self.i32()?,
                 delta_y: self.i32()?,
             })),
-            ObjectKind::BuilderPath => Ok(UnitPath::Builder(BuilderPath {
+            SaveObjectKind::BuilderPath => Ok(UnitPath::Builder(BuilderPath {
                 direction_x: self.i16()?,
                 direction_y: self.i16()?,
             })),
@@ -981,7 +988,7 @@ impl<'a> Reader<'a> {
     }
 
     fn read_unit_values_slot(&mut self) -> Result<SavedUnitValues> {
-        Ok(match self.object_ref(&[ObjectKind::UnitValues])? {
+        Ok(match self.object_ref(&[SaveObjectKind::UnitValues])? {
             ObjRef::Null => SavedUnitValues {
                 object_index: 0,
                 values: UnitValues::new(),
@@ -1015,7 +1022,7 @@ impl<'a> Reader<'a> {
     }
 
     fn read_complex_slot(&mut self) -> Result<SavedComplex> {
-        Ok(match self.object_ref(&[ObjectKind::Complex])? {
+        Ok(match self.object_ref(&[SaveObjectKind::Complex])? {
             ObjRef::Null => SavedComplex {
                 object_index: 0,
                 complex: Complex::new(0),
@@ -1174,7 +1181,7 @@ impl<'a> Reader<'a> {
         info.path = path;
         info.connectors = self.u16()?;
         let base_values_object_index;
-        match self.object_ref(&[ObjectKind::UnitValues])? {
+        match self.object_ref(&[SaveObjectKind::UnitValues])? {
             ObjRef::Null => {
                 base_values_object_index = 0;
                 info.base_values = crate::unit_values::base_unit_values(unit_type);
@@ -1192,7 +1199,7 @@ impl<'a> Reader<'a> {
         }
         let complex_object_index;
         let mut complex_value = Complex::new(0);
-        match self.object_ref(&[ObjectKind::Complex])? {
+        match self.object_ref(&[SaveObjectKind::Complex])? {
             ObjRef::Null => {
                 complex_object_index = 0;
                 info.complex = None;
@@ -1212,7 +1219,7 @@ impl<'a> Reader<'a> {
             }
         }
         // parent/enemy могут быть сериализованы телом (если объект новый).
-        let parent_object_index = match self.object_ref(&[ObjectKind::UnitInfo])? {
+        let parent_object_index = match self.object_ref(&[SaveObjectKind::UnitInfo])? {
             ObjRef::Null => 0,
             ObjRef::Existing(index) => index,
             ObjRef::New(index) => {
@@ -1220,7 +1227,7 @@ impl<'a> Reader<'a> {
                 index
             }
         };
-        let enemy_object_index = match self.object_ref(&[ObjectKind::UnitInfo])? {
+        let enemy_object_index = match self.object_ref(&[SaveObjectKind::UnitInfo])? {
             ObjRef::Null => 0,
             ObjRef::Existing(index) => index,
             ObjRef::New(index) => {
@@ -1338,7 +1345,7 @@ impl<'a> Reader<'a> {
         let count = usize::from(self.u16()?);
         let mut list = Vec::with_capacity(count.min(8192));
         for _ in 0..count {
-            match self.object_ref(&[ObjectKind::UnitInfo])? {
+            match self.object_ref(&[SaveObjectKind::UnitInfo])? {
                 ObjRef::Null => list.push(0),
                 ObjRef::Existing(index) => list.push(index),
                 ObjRef::New(index) => {
@@ -1363,7 +1370,7 @@ impl<'a> Reader<'a> {
             let count = usize::from(self.u16()?);
             let bucket = hash.bucket_mut(bucket_index).expect("bucket in range");
             for _ in 0..count {
-                match self.object_ref(&[ObjectKind::UnitInfo])? {
+                match self.object_ref(&[SaveObjectKind::UnitInfo])? {
                     ObjRef::Null => bucket.push(0),
                     ObjRef::Existing(index) => bucket.push(index),
                     ObjRef::New(index) => {
@@ -1397,7 +1404,7 @@ impl<'a> Reader<'a> {
                 let mut object = MapHashObject::new(x, y);
                 let unit_count = usize::from(self.u16()?);
                 for _ in 0..unit_count {
-                    match self.object_ref(&[ObjectKind::UnitInfo])? {
+                    match self.object_ref(&[SaveObjectKind::UnitInfo])? {
                         ObjRef::Null => object.units.push(0),
                         ObjRef::Existing(index) => object.units.push(index),
                         ObjRef::New(index) => {
@@ -1432,7 +1439,7 @@ impl<'a> Reader<'a> {
                 });
             }
             let text = self.take(length)?.to_vec();
-            let unit_object_index = match self.object_ref(&[ObjectKind::UnitInfo])? {
+            let unit_object_index = match self.object_ref(&[SaveObjectKind::UnitInfo])? {
                 ObjRef::Null => 0,
                 ObjRef::Existing(index) => index,
                 ObjRef::New(index) => {
@@ -1462,7 +1469,7 @@ impl<'a> Reader<'a> {
         let spotted_count = usize::from(self.u16()?);
         let mut spotted_units = Vec::with_capacity(spotted_count.min(4096));
         for _ in 0..spotted_count {
-            let unit_object_index = match self.object_ref(&[ObjectKind::UnitInfo])? {
+            let unit_object_index = match self.object_ref(&[SaveObjectKind::UnitInfo])? {
                 ObjRef::Null => 0,
                 ObjRef::Existing(index) => index,
                 ObjRef::New(index) => {
@@ -1772,7 +1779,7 @@ impl Writer {
 
     /// Заголовок объектной ссылки. Возвращает `true`, если тело нужно записать
     /// сразу после заголовка.
-    fn object_ref(&mut self, stored: u16, kind: ObjectKind) -> Result<bool> {
+    fn object_ref(&mut self, stored: u16, kind: SaveObjectKind) -> Result<bool> {
         if stored == 0 {
             self.u16(0);
             return Ok(false);
@@ -1856,7 +1863,7 @@ impl Writer {
     }
 
     fn write_unit_values_slot(&mut self, slot: &SavedUnitValues) -> Result<()> {
-        if self.object_ref(slot.object_index, ObjectKind::UnitValues)? {
+        if self.object_ref(slot.object_index, SaveObjectKind::UnitValues)? {
             let values = slot.values;
             self.write_unit_values_body(&values);
         }
@@ -1864,7 +1871,7 @@ impl Writer {
     }
 
     fn write_complex_slot(&mut self, slot: &SavedComplex) -> Result<()> {
-        if self.object_ref(slot.object_index, ObjectKind::Complex)? {
+        if self.object_ref(slot.object_index, SaveObjectKind::Complex)? {
             let complex = slot.complex;
             self.write_complex_body(&complex);
         }
@@ -1975,8 +1982,8 @@ impl Writer {
         let path_kind = info
             .path
             .as_ref()
-            .map(ObjectKind::from_path)
-            .unwrap_or(ObjectKind::GroundPath);
+            .map(SaveObjectKind::from_path)
+            .unwrap_or(SaveObjectKind::GroundPath);
         if self.object_ref(unit.path_object_index, path_kind)? {
             let path = info.path.as_ref().ok_or(SaveError::InvalidLength {
                 what: "UnitInfo::path",
@@ -1985,11 +1992,11 @@ impl Writer {
             self.write_path_body(path);
         }
         self.u16(info.connectors);
-        if self.object_ref(unit.base_values_object_index, ObjectKind::UnitValues)? {
+        if self.object_ref(unit.base_values_object_index, SaveObjectKind::UnitValues)? {
             let values = info.base_values;
             self.write_unit_values_body(&values);
         }
-        if self.object_ref(unit.complex_object_index, ObjectKind::Complex)? {
+        if self.object_ref(unit.complex_object_index, SaveObjectKind::Complex)? {
             let complex = unit.complex_value;
             self.write_complex_body(&complex);
         }
@@ -2004,7 +2011,7 @@ impl Writer {
 
     /// Пишет ссылку на юнита; если объект новый — его тело (рекурсивно).
     fn write_unit_ref(&mut self, stored: u16, all: &[&SaveUnit], depth: usize) -> Result<()> {
-        if self.object_ref(stored, ObjectKind::UnitInfo)? {
+        if self.object_ref(stored, SaveObjectKind::UnitInfo)? {
             let position = all
                 .binary_search_by_key(&stored, |unit| unit.object_index)
                 .map_err(|_| SaveError::ForwardReference {

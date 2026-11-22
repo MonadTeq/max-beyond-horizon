@@ -420,7 +420,7 @@ fn has_upgradeable_attributes(state: &GameState, unit: &UnitInfo) -> bool {
 
 /// `UnitInfo::IsUpgradeAvailable` (`unitinfo.cpp:1423`): только стационарные.
 pub fn is_upgrade_available(state: &GameState, unit: &UnitInfo) -> bool {
-    unit.flags & unit_flags::STATIONARY != 0 && has_upgradeable_attributes(state, unit)
+    !unit.is_mobile() && has_upgradeable_attributes(state, unit)
 }
 
 /// Общие пункты — `UnitsManager_Popup_InitCommons` (`units_manager.cpp:543`).
@@ -451,7 +451,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
     }
 
     // `enter`: у подвижных, кроме `CLEAR`/`BUILD`.
-    if unit.flags & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT) != 0
+    if unit.environment().is_some()
         && order != UnitOrder::Clear
         && order != UnitOrder::Build
     {
@@ -493,7 +493,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
     }
 
     // `remove` — самоуничтожение здания (`UnitsManager_SelfDestructMenu`).
-    if unit.flags & unit_flags::STATIONARY != 0 {
+    if !unit.is_mobile() {
         items.push(UnitMenuItem::new(ItemId::RemoveStationary, "remove", '0', false));
     }
 }
@@ -672,7 +672,7 @@ pub fn items_for(state: &GameState, unit: &UnitInfo) -> Vec<UnitMenuItem> {
 /// Условие открытия — C++ `GameManager_InitPopupButtons` (`game_manager.cpp:3576`).
 pub fn can_open(unit: &UnitInfo) -> bool {
     unit.orders != UnitOrder::Disable
-        && (unit.flags & unit_flags::MOBILE_LAND_UNIT == 0
+        && (!(unit.is_ground() || unit.is_amphibious())
             || unit.state != UnitOrderState::UnitReady)
 }
 
@@ -1094,8 +1094,7 @@ pub fn is_valid_stealth_target(
     if target.team == unit.team
         || target.hits == 0
         || target.flags & unit_flags::ELECTRONIC_UNIT == 0
-        || (target.flags & unit_flags::MOBILE_AIR_UNIT != 0
-            && target.flags & unit_flags::HOVERING != 0)
+        || (target.is_air() && target.flags & unit_flags::HOVERING != 0)
         || target_order == UnitOrder::Idle
         || (target_order == UnitOrder::AwaitScaling && target.prior_orders == UnitOrder::Idle)
         || target_order == UnitOrder::Transform
@@ -1114,7 +1113,7 @@ pub fn is_valid_stealth_target(
             UnitType::ArmouredPersonnelCarrier | UnitType::SeaTransport | UnitType::AirTransport
         ) && target.storage != 0;
 
-        target.flags & unit_flags::STATIONARY == 0 && !transport_with_cargo
+        target.is_mobile() && !transport_with_cargo
     } else {        target_order != UnitOrder::Disable
     }
 }
@@ -1213,9 +1212,10 @@ pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
         return false;
     }
 
-    let target_land = target.flags & unit_flags::MOBILE_LAND_UNIT != 0;
-    let target_air = target.flags & unit_flags::MOBILE_AIR_UNIT != 0;
-    let target_sea = target.flags & unit_flags::MOBILE_SEA_UNIT != 0;
+    // Биты `MOBILE_*` включают амфибий: `is_ground()/is_sea()` — только чистые.
+    let target_land = target.is_ground() || target.is_amphibious();
+    let target_air = target.is_air();
+    let target_sea = target.is_sea() || target.is_amphibious();
     let infantry = matches!(target.unit_type, UnitType::Infiltrator | UnitType::Infantry);
 
     match selected.unit_type {

@@ -32,7 +32,7 @@
 //! проверяет панели (включая End Turn, который намеренно заходит на карту).
 
 use max_assets::image::SimpleImage;
-use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType, VictoryType};
+use max_core::enums::{UnitOrder, UnitOrderState, UnitType, VictoryType};
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::{UnitInfo, UnitListKind};
@@ -1437,7 +1437,7 @@ pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<Stri
             .unwrap_or_default();
         let builder = crate::buildmenu::unit_name(unit.unit_type);
 
-        return Some(if unit.flags & unit_flags::STATIONARY != 0 {
+        return Some(if !unit.is_mobile() {
             FINISHED_FACTORY
                 .replace("{building}", &building)
                 .replace("{builder}", &builder)
@@ -1938,7 +1938,7 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
     // Запас комплекса — `_(d28b)` поверх строки 3.
     if own
         && storage_value > 0
-        && unit.flags & unit_flags::STATIONARY != 0
+        && !unit.is_mobile()
         && (cargo_type as u8) >= (CargoType::Raw as u8)
         && (cargo_type as u8) <= (CargoType::Gold as u8)
     {
@@ -2374,7 +2374,7 @@ fn paint_minimap_units(
         let grid_x = i32::from(unit.grid.x);
         let grid_y = i32::from(unit.grid.y);
 
-        if two_x && unit.flags & unit_flags::BUILDING == 0 {
+        if two_x && !unit.is_quad() {
             if grid_x >= 0 && grid_y >= 0 && grid_x < map_width && grid_y < map_height {
                 layer[(grid_y * map_width + grid_x) as usize] = color;
             }

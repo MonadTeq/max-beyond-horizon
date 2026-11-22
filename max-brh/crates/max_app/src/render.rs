@@ -256,11 +256,7 @@ pub fn connector_mask_for(
         return 0;
     }
 
-    let size: i16 = if unit.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
+    let size: i16 = if unit.is_quad() { 2 } else { 1 };
     let (gx, gy) = (unit.grid.x, unit.grid.y);
     let team = unit.team;
     let has = |x: i16, y: i16| team_building_at(state, team, x, y).is_some();
@@ -649,7 +645,7 @@ pub fn unit_anchor_world(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) ->
     let mut x = (visual.0 * 64.0 + 32.0).round() as i32;
     let mut y = (visual.1 * 64.0 + 32.0).round() as i32;
 
-    if unit.flags & unit_flags::BUILDING != 0 {
+    if unit.is_quad() {
         x += BUILDING_ANCHOR_OFFSET;
         y += BUILDING_ANCHOR_OFFSET;
     }
@@ -1533,7 +1529,7 @@ impl App {
                     frame,
                     &selector_palette,
                     anchor,
-                    unit.flags & unit_flags::BUILDING != 0,
+                    unit.is_quad(),
                     viewport.zoom(),
                     self.marker_color_index(),
                 ) > 0
@@ -1730,7 +1726,7 @@ pub fn build_marker_cells(
     let eligible = unit.orders == UnitOrder::Idle
         || (unit.orders == UnitOrder::Build
             && unit.state == UnitOrderState::UnitReady
-            && unit.flags & unit_flags::STATIONARY == 0);
+            && unit.is_mobile());
 
     if !eligible {
         return Vec::new();
@@ -1744,7 +1740,7 @@ pub fn build_marker_cells(
         return Vec::new();
     }
 
-    let building = parent.flags & unit_flags::BUILDING != 0;
+    let building = parent.is_quad();
     let mut position = max_core::geo::Point::new(parent.grid.x - 1, parent.grid.y + 1);
     let limit = if building {
         position.y += 1;

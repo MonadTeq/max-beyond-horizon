@@ -1653,7 +1653,7 @@ impl App {
                 // снимается (`auto_select` в C++).
                 let ready = self.state.unit(unit_id).is_some_and(|unit| {
                     unit.orders == max_core::enums::UnitOrder::Await
-                        && unit.flags & max_core::enums::unit_flags::STATIONARY != 0
+                        && !unit.is_mobile()
                         && unit.state != max_core::enums::UnitOrderState::ReadyToExecuteOrder
                 });
 
@@ -1798,7 +1798,7 @@ impl App {
                 let rubble_is_building = self
                     .state
                     .unit(rubble)
-                    .is_some_and(|unit| unit.flags & max_core::enums::unit_flags::BUILDING != 0);
+                    .is_some_and(|unit| unit.is_quad());
                 let clearing_time = if rubble_is_building { 4 } else { 1 };
 
                 if let Some(unit) = self.state.unit_mut(unit_id) {
@@ -2022,9 +2022,7 @@ impl App {
             return false;
         };
 
-        if unit.team != self.state.player_team
-            || unit.flags & max_core::enums::unit_flags::STATIONARY == 0
-        {
+        if unit.team != self.state.player_team || unit.is_mobile() {
             return false;
         }
 

@@ -72,7 +72,7 @@
 //!   `SetSfx`; общий слой звуков UI — `sfx.rs`, см. §33).
 
 use max_assets::image::{BigImage, SimpleImage};
-use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
@@ -897,9 +897,7 @@ impl BuildMenu {
             return None;
         }
 
-        if max_core::access::unit_type_flags(head) & max_core::enums::unit_flags::BUILDING == 0
-            && !force_path
-        {
+        if !head.is_quad() && !force_path {
             return None;
         }
 
@@ -997,7 +995,7 @@ impl BuildMenu {
         // имя с x=35 (ширина 80), ходы справа (`ReportStats_DrawNumber`).
         let builder_unit = state.unit(self.unit);
         let builder_stationary = builder_unit
-            .map(|unit| unit.flags & unit_flags::STATIONARY != 0)
+            .map(|unit| !unit.is_mobile())
             .unwrap_or(self.factory);
         let builder_storage = builder_unit.map(|unit| unit.storage).unwrap_or(0);
         let consumption_rate = cost_per_turn(self.builder_type, 1);
@@ -1019,8 +1017,7 @@ impl BuildMenu {
             // `ReportStats_DrawListItemIcon`: здания — 1:4 (`divisor = 2`),
             // мобильные — 1:2; перекраска командных слотов как в CargoMenu.
             if let Some(icon) = cargo.and_then(|cargo| cargo.icon(*unit_type)) {
-                let stationary =
-                    max_core::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+                let stationary = !unit_type.is_mobile();
                 let zoom = if stationary { 16 } else { 32 };
 
                 painted += draw_icon(
@@ -1081,8 +1078,7 @@ impl BuildMenu {
                 );
 
                 if let Some(icon) = cargo.and_then(|cargo| cargo.icon(*unit_type)) {
-                    let stationary =
-                        max_core::access::unit_type_flags(*unit_type) & unit_flags::STATIONARY != 0;
+                    let stationary = !unit_type.is_mobile();
                     let zoom = if stationary { 16 } else { 32 };
 
                     painted += draw_icon(

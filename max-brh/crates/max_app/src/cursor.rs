@@ -299,11 +299,7 @@ pub fn cursor_image(
 /// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`): клетка в
 /// окрестности юнита (для здания 2×2 — расширенной на 1 во все стороны).
 pub fn is_unit_next_to_position(unit: &UnitInfo, grid: Point) -> bool {
-    let size = if unit.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
+    let size = if unit.is_quad() { 2 } else { 1 };
 
     i32::from(unit.grid.x) - 1 <= i32::from(grid.x)
         && i32::from(unit.grid.x) + size >= i32::from(grid.x)
@@ -486,7 +482,7 @@ pub fn air_unit_cursor(
                 access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
             ) > 0
         {
-            let inside = unit1.flags & unit_flags::MOBILE_AIR_UNIT != 0
+            let inside = unit1.is_air()
                 && i32::from(parent.grid.x) <= i32::from(grid.x)
                 && i32::from(parent.grid.x) + 1 >= i32::from(grid.x)
                 && i32::from(parent.grid.y) <= i32::from(grid.y)
@@ -531,7 +527,7 @@ pub fn unit_action_cursor(
     ) > 0;
 
     if accessible {
-        if team_unit.is_some_and(|team| team.flags & unit_flags::MOBILE_AIR_UNIT != 0) {
+        if team_unit.is_some_and(|team| team.is_air()) {
             CursorId::Friend
         } else if unit1.orders == UnitOrder::Clear {
             CursorId::UnitNoGo
@@ -640,9 +636,7 @@ fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInf
         return true;
     }
 
-    if unit1.flags & unit_flags::STATIONARY == 0
-        && target.flags & unit_flags::STATIONARY != 0
-    {
+    if unit1.is_mobile() && !target.is_mobile() {
         if let Some(complex) = target.complex {
             return max_core::transfer::find_unit_with_cargo_type(
                 state, target.team, complex, cargo,
@@ -732,7 +726,7 @@ pub fn military_cursor(
         } else {
             CursorId::UnitNoGo
         }
-    } else if selected.flags & unit_flags::STATIONARY != 0 {
+    } else if !selected.is_mobile() {
         CursorId::UnitNoGo
     } else {
         CursorId::FarTarget
@@ -854,7 +848,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     if matches!(
         selected.orders,
         UnitOrder::Build | UnitOrder::AwaitTapePositioning
-    ) && selected.flags & unit_flags::MOBILE_LAND_UNIT != 0
+    ) && (selected.is_ground() || selected.is_amphibious())
     {
         return builder_unit_cursor(state, player_team, selected, grid, team_unit);
     }
@@ -920,13 +914,8 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         };
     }
 
-    let class = selected.flags
-        & (unit_flags::MOBILE_AIR_UNIT
-            | unit_flags::MOBILE_SEA_UNIT
-            | unit_flags::MOBILE_LAND_UNIT
-            | unit_flags::STATIONARY);
-
-    if class == unit_flags::MOBILE_AIR_UNIT {
+    // Класс выбирает ветку курсора (`Environment` + форма); порядок 1:1 C++.
+    if selected.is_air() {
         // Погрузка: транспорт в режиме `load` (`CURSOR_ARROW_SW`) с местом.
         if cursor_mode == crate::unitmenu::CURSOR_LOAD
             && selected.state == UnitOrderState::ExecutingOrder
@@ -966,10 +955,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         };
     }
 
-    if class == unit_flags::MOBILE_LAND_UNIT
-        || class == unit_flags::MOBILE_SEA_UNIT
-        || class == unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT
-    {
+    if selected.is_ground() || selected.is_sea() || selected.is_amphibious() {
         return unit_action_cursor(
             state,
             player_team,
@@ -981,7 +967,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         );
     }
 
-    if class == unit_flags::STATIONARY {
+    if !selected.is_mobile() {
         // Погрузка в здание (`CURSOR_ARROW_SW` = режим `load`).
         if cursor_mode == crate::unitmenu::CURSOR_LOAD
             && i32::from(selected.storage)
@@ -1015,7 +1001,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                     };
 
                     let sea_ok = selected.unit_type != UnitType::Dock
-                        || candidate.flags & unit_flags::MOBILE_LAND_UNIT == 0;
+                        || !(candidate.is_ground() || candidate.is_amphibious());
 
                     if ready && sea_ok && (!only_special || special) {
                         return CursorId::Load;

@@ -15,7 +15,7 @@
 //! `stats_*`, `casualties`), места — из `WinLossStatus.team_rank`, который
 //! считается на момент закрытия раунда ([`crate::local::LocalOutcome`]).
 
-use max_core::enums::{unit_flags, WinLossState, UNIT_END};
+use max_core::enums::{WinLossState, UNIT_END};
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
@@ -97,7 +97,8 @@ pub fn background_index(local: &LocalGame) -> usize {
     (turn + team) % 9
 }
 
-/// Сколько зданий потеряно (`LOST` зданий, как в C++: `flags & BUILDING`).
+/// Сколько зданий потеряно (`LOST` зданий, как в C++: `flags & BUILDING` —
+/// раскладка 2×2, то есть [`max_core::classification::Footprint`]).
 fn building_casualties(state: &GameState, team: TeamId) -> u32 {
     let info = &state.teams[team.0 as usize];
     let mut total = 0;
@@ -107,9 +108,8 @@ fn building_casualties(state: &GameState, team: TeamId) -> u32 {
         let Some(unit_type) = unit_type else {
             continue;
         };
-        let flags = max_core::access::unit_type_flags(unit_type);
 
-        if flags & unit_flags::BUILDING != 0 {
+        if unit_type.is_quad() {
             total += info.casualties_for(index as u16);
         }
     }
@@ -117,7 +117,7 @@ fn building_casualties(state: &GameState, team: TeamId) -> u32 {
     total
 }
 
-/// Потери мобильных юнитов (`MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`).
+/// Потери мобильных юнитов (есть флаг среды — `MOBILE_*`).
 fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
     let info = &state.teams[team.0 as usize];
     let mut total = 0;
@@ -127,14 +127,8 @@ fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
         let Some(unit_type) = unit_type else {
             continue;
         };
-        let flags = max_core::access::unit_type_flags(unit_type);
 
-        if flags
-            & (unit_flags::MOBILE_AIR_UNIT
-                | unit_flags::MOBILE_SEA_UNIT
-                | unit_flags::MOBILE_LAND_UNIT)
-            != 0
-        {
+        if unit_type.environment().is_some() {
             total += info.casualties_for(index as u16);
         }
     }

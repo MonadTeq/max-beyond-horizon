@@ -38,6 +38,7 @@
 //!   `Packet::Command` в сессию — энкодеры `max_net::wire::command`.
 
 use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
+use max_core::classification::Environment;
 use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::command_finished_turn;
 use max_core::game::GameState;
@@ -851,11 +852,7 @@ pub fn build_builder_exit_order(
 /// (`:6879-6890`). Подсказка `_(276c)` зовёт игрока кликнуть «клетку с
 /// символом» — это ровно это кольцо.
 pub fn builder_exit_zone_contains(building: &UnitInfo, cell: Point) -> bool {
-    let size: i16 = if building.flags & unit_flags::BUILDING != 0 {
-        2
-    } else {
-        1
-    };
+    let size: i16 = if building.is_quad() { 2 } else { 1 };
 
     cell.x >= building.grid.x.wrapping_sub(1)
         && cell.x <= building.grid.x.wrapping_add(size)
@@ -928,7 +925,7 @@ pub fn build_activate_order(
     }
 
     // Воздушный юнит внутри 2×2 контейнера — `CURSOR_FRIEND` (не выводим).
-    if unit.flags & unit_flags::MOBILE_AIR_UNIT != 0
+    if unit.is_air()
         && parent.grid.x <= destination.x
         && parent.grid.x + 1 >= destination.x
         && parent.grid.y <= destination.y
@@ -1000,7 +997,7 @@ pub fn build_air_move_order(
         return None;
     }
 
-    if unit.flags & unit_flags::MOBILE_AIR_UNIT == 0 {
+    if !unit.is_air() {
         return None;
     }
 
@@ -1160,8 +1157,10 @@ pub fn unit_at_screen(
 /// `Paths_GetAirPath` с пиксельной геометрией (`MovePathData::Air`), поэтому
 /// HUD их пока не двигает (см. README, «Ограничения»).
 pub fn unit_can_move(unit: &UnitInfo) -> bool {
-    unit.flags & (unit_flags::MOBILE_LAND_UNIT | unit_flags::MOBILE_SEA_UNIT) != 0
-        && unit.flags & unit_flags::MOBILE_AIR_UNIT == 0
+    matches!(
+        unit.environment(),
+        Some(Environment::Ground | Environment::Sea | Environment::Amphibious)
+    )
 }
 
 // ---------------------------------------------------------------------------

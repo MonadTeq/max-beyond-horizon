@@ -240,10 +240,13 @@ impl UpgradeMenu {
             return false;
         }
 
-        let class_matches = (flags & unit_flags::MOBILE_LAND_UNIT != 0 && self.filters[0])
-            || (flags & unit_flags::MOBILE_AIR_UNIT != 0 && self.filters[1])
-            || (flags & unit_flags::MOBILE_SEA_UNIT != 0 && self.filters[2])
-            || (flags & unit_flags::STATIONARY != 0 && self.filters[3]);
+        // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+        let land = unit_type.is_ground() || unit_type.is_amphibious();
+        let sea = unit_type.is_sea() || unit_type.is_amphibious();
+        let class_matches = (land && self.filters[0])
+            || (unit_type.is_air() && self.filters[1])
+            || (sea && self.filters[2])
+            || (!unit_type.is_mobile() && self.filters[3]);
         if !class_matches {
             return false;
         }
@@ -959,24 +962,34 @@ fn in_builder_lists(unit_type: UnitType) -> bool {
 
 /// `AbstractUpgradeMenu::IsBetterUnit` (`abstractupgrademenu.cpp:727`).
 pub fn is_better_unit(unit_type1: UnitType, unit_type2: UnitType) -> bool {
-    let flags1 = unit_type_flags(unit_type1);
-    let flags2 = unit_type_flags(unit_type2);
+    // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+    let land1 = unit_type1.is_ground() || unit_type1.is_amphibious();
+    let land2 = unit_type2.is_ground() || unit_type2.is_amphibious();
 
-    if (flags1 & unit_flags::MOBILE_LAND_UNIT) != (flags2 & unit_flags::MOBILE_LAND_UNIT) {
-        return flags1 & unit_flags::MOBILE_LAND_UNIT == 0;
+    if land1 != land2 {
+        return !land1;
     }
-    if (flags1 & unit_flags::MOBILE_SEA_UNIT) != (flags2 & unit_flags::MOBILE_SEA_UNIT) {
-        return flags1 & unit_flags::MOBILE_SEA_UNIT == 0;
+
+    let sea1 = unit_type1.is_sea() || unit_type1.is_amphibious();
+    let sea2 = unit_type2.is_sea() || unit_type2.is_amphibious();
+
+    if sea1 != sea2 {
+        return !sea1;
     }
-    if (flags1 & unit_flags::MOBILE_AIR_UNIT) != (flags2 & unit_flags::MOBILE_AIR_UNIT) {
-        return flags1 & unit_flags::MOBILE_AIR_UNIT == 0;
+
+    let air1 = unit_type1.is_air();
+    let air2 = unit_type2.is_air();
+
+    if air1 != air2 {
+        return !air1;
     }
 
     let values1 = BASE_UNIT_VALUES[unit_type1 as usize];
     let values2 = BASE_UNIT_VALUES[unit_type2 as usize];
+    let (combat1, combat2) = (unit_type1.is_combat(), unit_type2.is_combat());
 
-    if values1.attack == 0 || values2.attack != 0 {
-        if values1.attack != 0 || values2.attack == 0 {
+    if !combat1 || combat2 {
+        if combat1 || !combat2 {
             if values1.turns == values2.turns {
                 (unit_type1 as u16) > (unit_type2 as u16)
             } else {

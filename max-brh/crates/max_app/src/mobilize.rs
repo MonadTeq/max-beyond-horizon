@@ -106,10 +106,12 @@ use max_core::production::builder_type;
 use max_core::research::UpgradeQuote;
 use max_core::team::TeamId;
 use max_core::unit_values::{
-    base_unit_values, team_base_values, UnitValues, ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK,
+    team_base_values, UnitValues, ATTRIB_AMMO, ATTRIB_ARMOR, ATTRIB_ATTACK,
     ATTRIB_HITS, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED, ATTRIB_STORAGE,
     ATTRIB_TURNS,
 };
+#[cfg(test)]
+use max_core::unit_values::base_unit_values;
 use max_core::victory::{
     cargo_fuel_consumption_rate, cargo_gold_consumption_rate, cargo_life_consumption_rate,
     cargo_power_consumption_rate, cargo_raw_consumption_rate,
@@ -1536,8 +1538,7 @@ pub fn unit_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u
 /// Цена строки списка типов (`PurchaseTypeSelector::Draw`, скобки `if`).
 pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
     let turns = values[unit as usize].get_attribute(ATTRIB_TURNS).max(0) as u32;
-    let flags = unit_type_flags(unit);
-    let rate = if flags & unit_flags::STATIONARY != 0 {
+    let rate = if !unit.is_mobile() {
         cargo_raw_consumption_rate(UnitType::Constructor, 1) as u32
     } else if unit == UnitType::Infiltrator || unit == UnitType::Infantry {
         cargo_raw_consumption_rate(UnitType::TrainingHall, 1) as u32
@@ -1614,17 +1615,18 @@ pub fn is_unit_filtered(unit: UnitType, filters: &[bool; 5]) -> bool {
         return false;
     }
 
-    let class_matches = (flags & unit_flags::MOBILE_LAND_UNIT != 0 && filters[0])
-        || (flags & unit_flags::MOBILE_AIR_UNIT != 0 && filters[1])
-        || (flags & unit_flags::MOBILE_SEA_UNIT != 0 && filters[2])
-        || (flags & unit_flags::STATIONARY != 0 && filters[3]);
+    // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+    let class_matches = ((unit.is_ground() || unit.is_amphibious()) && filters[0])
+        || (unit.is_air() && filters[1])
+        || ((unit.is_sea() || unit.is_amphibious()) && filters[2])
+        || (!unit.is_mobile() && filters[3]);
     if !class_matches {
         return false;
     }
 
     if filters[4] {
         // C++: `UnitsManager_TeamInfo[0].team_units->GetBaseUnitValues(...)`.
-        base_unit_values(unit).get_attribute(ATTRIB_ATTACK) > 0
+        unit.is_combat()
     } else {
         true
     }
@@ -2289,7 +2291,7 @@ impl Mobilization {
             );
 
             if let Some(icon) = cargo.icon(unit) {
-                let stationary = unit_type_flags(unit) & unit_flags::STATIONARY != 0;
+                let stationary = !unit.is_mobile();
                 let zoom = if stationary { 16 } else { 32 };
                 painted += draw_icon(
                     frame,
@@ -2375,7 +2377,7 @@ impl Mobilization {
             );
 
             if let Some(icon) = cargo.icon(supply.unit_type) {
-                let stationary = unit_type_flags(supply.unit_type) & unit_flags::STATIONARY != 0;
+                let stationary = !supply.unit_type.is_mobile();
                 let zoom = if stationary { 16 } else { 32 };
                 painted += draw_icon(
                     frame,
@@ -3183,7 +3185,7 @@ pub(crate) fn draw_icon(
     // `I_*` со сдвигом `angle_offsets[2] >> divisor`.
     if unit_type_flags(unit) & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
         if let Some(turret) = icon.turret.as_ref() {
-            let divisor = if unit_type_flags(unit) & unit_flags::STATIONARY != 0 {
+            let divisor = if !unit.is_mobile() {
                 2
             } else {
                 1

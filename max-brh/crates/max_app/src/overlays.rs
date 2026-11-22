@@ -79,7 +79,7 @@ pub fn grid_color(palette: &UiPalette, surface: Surface) -> Rgba {
 /// `unit_size` 64/32 world px, затем переводит в экранные:
 /// `screen = (world * 65536) / scaling = world * zoom / 64`.
 fn unit_screen_rect(unit: &UnitInfo, visual: (f32, f32), viewport: &Viewport) -> (PixelRect, i32) {
-    let building = unit.flags & unit_flags::BUILDING != 0;
+    let building = unit.is_quad();
     let world_size = if building { 64i32 } else { 32i32 };
     let (world_x, world_y) = crate::render::unit_anchor_world(unit, visual);
     let zoom = viewport.zoom() as i32;
@@ -451,7 +451,7 @@ fn draw_unit_name(
     zoom: i32,
     palette: &UiPalette,
 ) -> u32 {
-    let building = unit.flags & unit_flags::BUILDING != 0;
+    let building = unit.is_quad();
     // `text_area` = габарит юнита, врезанный на 4 px (`drawmap.cpp:707-710`):
     // `ulx = (unit->x - unit_size/2) + 4`, `lrx - ulx = unit_size - 8`, где
     // `unit_size` 128/64 world px.
@@ -550,7 +550,7 @@ pub fn draw_unit_overlays(
             .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
         let (rect, size) = unit_screen_rect(unit, visual, viewport);
 
-        if colors && unit.flags & unit_flags::STATIONARY == 0 {
+        if colors && unit.is_mobile() {
             painted += draw_color_frame(frame, rect, team_frame_color(palette, unit));
         }
 
@@ -626,7 +626,7 @@ pub fn draw_range_scan(
         return 0;
     }
 
-    let world_size = if unit.flags & unit_flags::BUILDING != 0 {
+    let world_size = if unit.is_quad() {
         MAP_TILE_PIXELS
     } else {
         MAP_TILE_PIXELS / 2
