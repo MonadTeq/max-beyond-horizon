@@ -90,3 +90,58 @@ Name = данные вне `max_core` (рекомендуется `max_assets`/`
    представления/данных с сохранением побайтного V70-round-trip.
 
 Ф0 закрыт → передать Разработчику пофазное ТЗ, начиная с Ф1.
+
+## 4. Ф5.3 — граница `max_net → max_core` и `UnitPresentation` (выполнено)
+
+### 4.1 Решение владельца: read-only зависимость (вариант 2)
+
+`max_net → max_core` оставлена осознанно — только как **read-only проекция
+симуляции в провод** (пакеты 23/45/53/54). Разрешены ровно пять функций:
+`UnitState::from_unit`, `state_sync_for`, `state_sync_tail`, `crc_barrier_for`,
+`complex_summary_for` — и импорты данных `max_core::unit::UnitInfo`,
+`max_core::team::TeamUnits`. Вызов `apply_*` или мутация `GameState` из
+`max_net` аннулируют решение. Замок:
+`max-brh-cicd/scripts/check_maxnet_boundary.sh` (шаг 0/4 в `ci.sh`); пометки в
+`wire/mod.rs`, `session.rs`, `max_net/Cargo.toml`.
+
+### 4.2 B0 — верификация полей B.1.2
+
+Правило: поле переносится, только если его не читает ни один сим-путь
+(`snapshot_bytes`, `replay_digest_bytes`, CRC пакета 45, приказы/движение/
+наведение/взрывы). Иначе оно остаётся в `UnitInfo` и фиксируется здесь.
+
+| Поле | Вердикт | Обоснование |
+|---|---|---|
+| `x`, `y` | остались в `UnitInfo` | сим: `Access_IsWithinAttackRange` (линия огня, `access.rs`), попиксельный `AirPath` (`pathfinding.rs`), `unit_order::unit_move` пишет `x`/`y` |
+| `shadow_offset` | → `UnitPresentation` | только `save.rs` + рендер; в симе/CRC нет |
+| `brightness` | → `UnitPresentation` | только `save.rs` + рендер; в симе/CRC нет |
+| `sound` | → `UnitPresentation` | только `save.rs`; звук приложения идёт событиями `UnitSound`, не полем |
+| `sprite_bounds`, `shadow_bounds` | → `UnitPresentation` | только `save.rs` |
+| `turret_offset_x`, `turret_offset_y` | → `UnitPresentation` | только `save.rs` (рендер берёт `turret_offset` из `D_*`) |
+| `total_images` | → `UnitPresentation` | только `save.rs` |
+| `firing_image_base`, `connector_image_base` | → `UnitPresentation` | только `save.rs` (рендер берёт те же поля из `FrameInfo` ассетов) |
+| `cursor` | → `UnitPresentation` | только `save.rs`; UI ведёт `hud.cursor_mode` |
+| `bobbed` | → `UnitPresentation` | только `save.rs` |
+
+`x` значился в задании как презентационное, но B0 показал, что `x`/`y` —
+симуляционные: оставлены в `UnitInfo` (список не «дотягивался»).
+
+### 4.3 Реализация и гейт
+
+* `max_types::unit::UnitPresentation` — только `Clone, Debug, PartialEq` +
+  конструктор `new()`/`Default` (brightness 255 как в C++), без логики;
+  `Rect` переехал в `max_types::unit` (реэкспорт `max_core::unit::Rect`
+  сохранён).
+* `GameState` держит `presentations: Vec<Option<UnitPresentation>>` параллельно
+  слотам `units`: `presentation`/`presentation_mut`/`write_presentation`;
+  спавн, загрузка и уничтожение синхронизируют таблицу.
+* `save.rs::read_unit_body`/`write_unit_body` — единственный владелец
+  V70-порядка: сим-поля из `UnitInfo`, презентационные из `UnitPresentation`;
+  порядок байтов не менялся.
+* Гейт: `save1/save2_round_trip_is_byte_identical` и
+  `round_trip_is_byte_identical` зелёные; `base_values_match_real_v70_save`,
+  `mini_replay_matches_cpp_digest_bit_for_bit`,
+  `demo_save1_five_ticks_matches_reference_digest` зелёные; `snapshot_bytes`,
+  `state_checksum` и `replay_digest` на SAVE1/SAVE2 до и после переноса — 0
+  расхождений (`SAVE1: snapshot=0xfd67, checksum=0x408a, replay=0x5561`;
+  `SAVE2: snapshot=0xd3f1, checksum=0x20eb, replay=0x4bc7`).
