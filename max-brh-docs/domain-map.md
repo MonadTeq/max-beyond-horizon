@@ -225,6 +225,13 @@
 > (`resource_manager.cpp:90-98`); отображаемые имена кланов хранятся в блоке
 > `name` самого ресурса `SC_CLANS` (зашифрован в `PATCHES.RES`).
 
+Короткая сводка бонусов (`description.en-US` из `SC_CLANS`): The Chosen — «Better
+Air Units», Crimson Path — «Better Sea Units», Von Griffin — «Improved
+Espionage», Ayer's Hand — «Better Missile Units», Musashi — «Better Armored
+Vehicles», Sacred Eight — «Better Fast Units», Seven Knights — «Better Defense»,
+Axis Inc. — «Extra constructors and engineers». Полных лор-описаний в `SC_CLANS`
+**нет** — они в мануале (`manual.txt` L700–769, раздел «CLAN ORIGINS»).
+
 ### Команды (TeamKind / TeamIndex / Opponent)
 
 | Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
