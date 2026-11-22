@@ -18,24 +18,10 @@ use crate::geo::{PathStep, Point};
 use crate::team::{ComplexId, TeamId};
 use crate::unit_values::UnitValues;
 
-// `UnitId` и `UnitListKind` — листовые типы нижнего слоя (`max_types`, Ф5.2);
-// здесь реэкспорт, чтобы путь `max_core::unit::…` не менялся.
-pub use max_types::unit::{UnitId, UnitListKind};
-
-/// Прямоугольник в пикселях — C++ `struct Rect` (`point.hpp`/`gnw.h`).
-///
-/// В симуляции не участвует: кэш габаритов спрайта (UI), сохраняется в V70.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rect {
-    /// Левый верхний X.
-    pub ulx: i32,
-    /// Левый верхний Y.
-    pub uly: i32,
-    /// Правый нижний X.
-    pub lrx: i32,
-    /// Правый нижний Y.
-    pub lry: i32,
-}
+// `UnitId`, `UnitListKind`, `Rect` и `UnitPresentation` — листовые типы
+// нижнего слоя (`max_types`, Ф5.2/Ф5.3); здесь реэкспорт, чтобы путь
+// `max_core::unit::…` не менялся.
+pub use max_types::unit::{Rect, UnitId, UnitListKind, UnitPresentation};
 
 // ---------------------------------------------------------------------------
 // Пути (UnitPath)

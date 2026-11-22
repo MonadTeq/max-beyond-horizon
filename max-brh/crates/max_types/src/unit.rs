@@ -1,8 +1,12 @@
-//! Идентификаторы юнитов (Infrastructure).
+//! Идентификаторы юнитов и презентационные данные (Infrastructure).
 //!
-//! Здесь только [`UnitId`] (16-битный id оригинала, старшие биты — команда) и
-//! [`UnitListKind`] — листовые типы без данных `max_core`. Сам юнит
-//! (`UnitInfo`), его пути (`GroundPath`/`AirPath`/`BuilderPath`) и `Rect`
+//! Здесь [`UnitId`] (16-битный id оригинала, старшие биты — команда),
+//! [`UnitListKind`] — листовой тип без данных `max_core`, [`Rect`] —
+//! прямоугольник в пикселях и [`UnitPresentation`] — презентационные поля
+//! юнита (UI/рендер), которые не участвуют в симуляции, но лежат в том же
+//! объекте V70 и потому нужны `max_core::save` для побайтового round-trip.
+//!
+//! Сам юнит (`UnitInfo`), его пути (`GroundPath`/`AirPath`/`BuilderPath`)
 //! остаются в `max_core::unit`: они зависят от атрибутов и кадровых данных.
 //!
 //! Оракул: `max-cpp-port/src/unitinfo.hpp` (`UnitInfo::hash_id`),
@@ -10,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::geo::Point;
 use crate::team::TeamId;
 
 /// Идентификатор юнита (16-битный id оригинала).
@@ -107,5 +112,87 @@ impl UnitListKind {
             4 => Some(Self::Particle),
             _ => None,
         }
+    }
+}
+
+/// Прямоугольник в пикселях — C++ `struct Rect` (`point.hpp`/`gnw.h`).
+///
+/// В симуляции не участвует: кэш габаритов спрайта (UI), сохраняется в V70.
+/// Живёт в нижнем слое (перенесён из `max_core::unit`, Ф5.3), поэтому
+/// [`UnitPresentation`] может ссылаться на него без зависимости вверх.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rect {
+    /// Левый верхний X.
+    pub ulx: i32,
+    /// Левый верхний Y.
+    pub uly: i32,
+    /// Правый нижний X.
+    pub lrx: i32,
+    /// Правый нижний Y.
+    pub lry: i32,
+}
+
+/// Презентационные поля юнита — C++ `class UnitInfo`, UI/V70-подмножество
+/// (`state-model.md` §6.4; Ф5.3, часть B).
+///
+/// Поля не участвуют в симуляции, снапшоте, `replay_digest` и CRC пакета 45:
+/// они читаются только `max_core::save` (побайтовый V70 round-trip) и
+/// клиентским рендером (`max_app`). Проверка каждого поля — отчёт Ф5.3/B0.
+///
+/// Держится параллельно слотам `UnitInfo` в `max_core::game::GameState`
+/// (презентация не входит в `UnitInfo`, чтобы прикладной слой не нёс
+/// UI-данные). Логики нет — только конструктор.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitPresentation {
+    /// Смещение тени (UI/V70).
+    pub shadow_offset: Point,
+    /// Яркость (UI/V70: визуал повреждения).
+    pub brightness: u8,
+    /// Звуковой эффект (C++ `Unit::SfxType`, u8) — UI/V70.
+    pub sound: u8,
+    /// Кэш габаритов спрайта (UI/V70).
+    pub sprite_bounds: Rect,
+    /// Кэш габаритов тени (UI/V70).
+    pub shadow_bounds: Rect,
+    /// Смещение башни X (UI/V70).
+    pub turret_offset_x: i8,
+    /// Смещение башни Y (UI/V70).
+    pub turret_offset_y: i8,
+    /// Всего кадров (UI/V70).
+    pub total_images: i16,
+    /// База спрайта выстрела (UI/V70).
+    pub firing_image_base: i16,
+    /// База спрайта коннектора (UI/V70).
+    pub connector_image_base: i16,
+    /// Курсор над юнитом (UI/V70).
+    pub cursor: u8,
+    /// Покачивание на воде (UI/V70).
+    pub bobbed: bool,
+}
+
+impl UnitPresentation {
+    /// Начальное состояние презентации — C++ `UnitInfo::UnitInfo`
+    /// (`unitinfo.cpp:276-294`): `brightness = 255`, остальные поля нулевые.
+    pub fn new() -> Self {
+        Self {
+            shadow_offset: Point::ZERO,
+            brightness: u8::MAX,
+            sound: 0,
+            sprite_bounds: Rect::default(),
+            shadow_bounds: Rect::default(),
+            turret_offset_x: 0,
+            turret_offset_y: 0,
+            total_images: 0,
+            firing_image_base: 0,
+            connector_image_base: 0,
+            cursor: 0,
+            bobbed: false,
+        }
+    }
+}
+
+impl Default for UnitPresentation {
+    fn default() -> Self {
+        Self::new()
     }
 }

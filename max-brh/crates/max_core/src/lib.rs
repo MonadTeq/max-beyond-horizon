@@ -224,7 +224,10 @@ pub use transfer::{
     find_unit_with_cargo_type, process_transfer, transfer_cargo, transfer_cargo_kind,
     transfer_menu_cargo_info, unit_cargo,
 };
-pub use unit::{AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath};
+pub use unit::{
+    AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
+    UnitPresentation,
+};
 pub use unit_order::{
     blocked_on_path_request, move_finished, restore_orders, set_new_order_int, OrderContext,
     MOVEMENT_WAIT_LIMIT,
