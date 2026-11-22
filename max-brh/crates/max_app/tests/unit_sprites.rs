@@ -17,7 +17,7 @@ use max_core::access::unit_type_flags;
 use max_core::enums::{unit_flags, UnitType, UNIT_END};
 use max_core::geo::Point;
 use max_core::team::TeamId;
-use max_core::unit::{UnitId, UnitInfo};
+use max_core::unit::{UnitId, UnitInfo, UnitPresentation};
 use max_render::buffer::RgbaBuffer;
 
 /// Путь внутри репозитория (`max-brh/crates/max_app/../../..`).
@@ -55,8 +55,15 @@ fn unit_of(unit_type: UnitType, index: usize) -> UnitInfo {
     unit.visible_to_team = [true; 5];
     unit.angle = (index % 8) as u8;
     unit.turret_angle = ((index * 3 + 1) % 8) as u8;
-    unit.brightness = 7;
     unit
+}
+
+/// Презентация для синтетического юнита (Ф5.3/B): яркость 7, как раньше в
+/// `UnitInfo::brightness`.
+fn presentation() -> UnitPresentation {
+    let mut presentation = UnitPresentation::new();
+    presentation.brightness = 7;
+    presentation
 }
 
 fn has_turret(unit_type: UnitType) -> bool {
@@ -83,7 +90,14 @@ fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
             // 512×512: самый большой кадр — 127×127 (`LRGTAPE`/`LRGSLAB`,
             // `S_POWERS` 164×182 у тени), на zoom 128 это 364 px — с запасом.
             let mut frame = RgbaBuffer::new(512, 512);
-            let stats = draw_unit_sprites(&assets, &unit, &mut frame, (256, 256), zoom);
+            let stats = draw_unit_sprites(
+                &assets,
+                &unit,
+                &presentation(),
+                &mut frame,
+                (256, 256),
+                zoom,
+            );
 
             match stats {
                 Some(stats) => {
@@ -250,8 +264,26 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     firing.firing_recoil_frames = 3;
     let mut normal_frame = RgbaBuffer::new(256, 256);
     let mut firing_frame = RgbaBuffer::new(256, 256);
-    draw_unit_sprites_with_angle(&assets, &normal, 0, 2, &mut normal_frame, (128, 128), 64);
-    draw_unit_sprites_with_angle(&assets, &firing, 0, 2, &mut firing_frame, (128, 128), 64);
+    draw_unit_sprites_with_angle(
+        &assets,
+        &normal,
+        &presentation(),
+        0,
+        2,
+        &mut normal_frame,
+        (128, 128),
+        64,
+    );
+    draw_unit_sprites_with_angle(
+        &assets,
+        &firing,
+        &presentation(),
+        0,
+        2,
+        &mut firing_frame,
+        (128, 128),
+        64,
+    );
     assert_ne!(
         normal_frame.pixels(),
         firing_frame.pixels(),
@@ -339,7 +371,14 @@ fn hud_portrait_draws_every_unit_type() {
         let unit = unit_of(unit_type, index);
         let mut portrait = RgbaBuffer::new(320, 200);
 
-        if let Some(stats) = draw_unit_sprites(&assets, &unit, &mut portrait, (160, 100), 64) {
+        if let Some(stats) = draw_unit_sprites(
+            &assets,
+            &unit,
+            &presentation(),
+            &mut portrait,
+            (160, 100),
+            64,
+        ) {
             assert!(stats.unit > 0, "{unit_type:?}: пустой портрет");
         } else {
             assert!(
@@ -368,6 +407,7 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
         let stats = draw_unit_sprites_with_angle(
             &assets,
             unit,
+            &presentation(),
             unit.image_base,
             body_angle,
             &mut frame,
@@ -392,7 +432,15 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
     turned.angle = 3;
     let via_unit_angle = {
         let mut frame = RgbaBuffer::new(256, 256);
-        draw_unit_sprites(&assets, &turned, &mut frame, (128, 128), 64).expect("спрайт Scout");
+        draw_unit_sprites(
+            &assets,
+            &turned,
+            &presentation(),
+            &mut frame,
+            (128, 128),
+            64,
+        )
+        .expect("спрайт Scout");
         frame.pixels().to_vec()
     };
     assert_eq!(

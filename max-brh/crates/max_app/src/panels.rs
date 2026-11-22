@@ -1065,9 +1065,18 @@ impl Panels {
                     .map(|team| team.team_clan),
             );
 
+            // Презентационные поля (тень/яркость) — таблица `GameState`
+            // (Ф5.3/B), не `UnitInfo`.
+            let presentation = app
+                .state()
+                .presentation(unit.id)
+                .cloned()
+                .unwrap_or_default();
+
             if crate::render::draw_unit_sprites_with_base(
                 assets,
                 unit,
+                &presentation,
                 image_base,
                 &mut portrait,
                 anchor,

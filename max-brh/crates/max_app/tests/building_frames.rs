@@ -36,7 +36,7 @@ use max_app::AppConfig;
 use max_core::access::unit_type_flags;
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::team::TeamId;
-use max_core::unit::{UnitId, UnitInfo};
+use max_core::unit::{UnitId, UnitInfo, UnitPresentation};
 use max_render::buffer::RgbaBuffer;
 
 fn repo_path(relative: &str) -> PathBuf {
@@ -71,14 +71,17 @@ fn unit_of(unit_type: UnitType, orders: UnitOrder, angle: u8) -> UnitInfo {
     unit.visible_to_team = [true; 5];
     unit.orders = orders;
     unit.angle = angle;
-    unit.brightness = 7;
     unit
 }
 
 fn render(assets: &Assets, unit: &UnitInfo, base: i16) -> RgbaBuffer {
     let mut frame = RgbaBuffer::new(192, 192);
+    // Презентационные поля (Ф5.3/B) — отдельная таблица `GameState`, здесь
+    // синтетическая: яркость 7, как раньше в `UnitInfo`.
+    let mut presentation = UnitPresentation::new();
+    presentation.brightness = 7;
 
-    draw_unit_sprites_with_base(assets, unit, base, &mut frame, (96, 96), 64)
+    draw_unit_sprites_with_base(assets, unit, &presentation, base, &mut frame, (96, 96), 64)
         .expect("спрайт здания");
 
     frame

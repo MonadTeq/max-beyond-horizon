@@ -29,6 +29,7 @@ use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
+use max_core::unit::UnitPresentation;
 
 use crate::panels::UiPalette;
 use crate::App;
@@ -721,11 +722,12 @@ pub struct UnitSpriteStats {
 pub fn draw_unit_sprites(
     assets: &crate::assets::Assets,
     unit: &max_core::unit::UnitInfo,
+    presentation: &UnitPresentation,
     frame: &mut RgbaBuffer,
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
-    draw_unit_sprites_with_base(assets, unit, unit.image_base, frame, anchor, zoom)
+    draw_unit_sprites_with_base(assets, unit, presentation, unit.image_base, frame, anchor, zoom)
 }
 
 /// [`draw_unit_sprites`] с явной базой кадров корпуса (клан/сейв/степень
@@ -733,12 +735,22 @@ pub fn draw_unit_sprites(
 pub fn draw_unit_sprites_with_base(
     assets: &crate::assets::Assets,
     unit: &max_core::unit::UnitInfo,
+    presentation: &UnitPresentation,
     image_base: i16,
     frame: &mut RgbaBuffer,
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
-    draw_unit_sprites_with_angle(assets, unit, image_base, unit.angle, frame, anchor, zoom)
+    draw_unit_sprites_with_angle(
+        assets,
+        unit,
+        presentation,
+        image_base,
+        unit.angle,
+        frame,
+        anchor,
+        zoom,
+    )
 }
 
 /// [`draw_unit_sprites_with_base`] с явным углом корпуса для кадра.
@@ -752,6 +764,7 @@ pub fn draw_unit_sprites_with_base(
 pub fn draw_unit_sprites_with_angle(
     assets: &crate::assets::Assets,
     unit: &max_core::unit::UnitInfo,
+    presentation: &UnitPresentation,
     image_base: i16,
     body_angle: u8,
     frame: &mut RgbaBuffer,
@@ -762,6 +775,7 @@ pub fn draw_unit_sprites_with_angle(
         assets,
         &assets.system_palette,
         unit,
+        presentation,
         image_base,
         body_angle,
         FrameAnimation::default(),
@@ -792,6 +806,7 @@ pub fn draw_unit_sprites_with_animation(
     assets: &crate::assets::Assets,
     palette: &max_render::palette::Palette,
     unit: &max_core::unit::UnitInfo,
+    presentation: &UnitPresentation,
     image_base: i16,
     body_angle: u8,
     animation: FrameAnimation,
@@ -836,7 +851,7 @@ pub fn draw_unit_sprites_with_animation(
         .get(unit.team.0 as usize)
         .copied()
         .unwrap_or(TeamColors::Derelict);
-    let level = unit.brightness.min(FULL_BRIGHTNESS_LEVEL);
+    let level = presentation.brightness.min(FULL_BRIGHTNESS_LEVEL);
     let renderer = SpriteRenderer::new(
         palette,
         &assets.brightness,
@@ -845,8 +860,8 @@ pub fn draw_unit_sprites_with_animation(
     );
 
     let shadow_offset = (
-        i32::from(unit.shadow_offset.x),
-        i32::from(unit.shadow_offset.y),
+        i32::from(presentation.shadow_offset.x),
+        i32::from(presentation.shadow_offset.y),
     );
     let mut stats = UnitSpriteStats::default();
 
@@ -1503,13 +1518,30 @@ impl App {
             // `units_manager.cpp:2857/3030`) — кадр статичен.
             let effects = self.preferences.effects;
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
+            // Презентационные поля (тень/яркость) — отдельная таблица
+            // `GameState::presentation` (Ф5.3/B), не `UnitInfo`.
+            let presentation = self
+                .state()
+                .presentation(visible[index])
+                .cloned()
+                .unwrap_or_default();
             let drawn = self.assets().and_then(|assets| {
                 // Палитра кадра: снимок с палитровыми циклами или исходная
                 // системная палитра (`dt = 0` — без изменений).
                 let palette = self.animated_palette().unwrap_or(&assets.system_palette);
                 draw_unit_sprites_with_animation(
-                    assets, palette, unit, image_base, body_angle, animation, effects, connectors,
-                    frame, anchor, zoom,
+                    assets,
+                    palette,
+                    unit,
+                    &presentation,
+                    image_base,
+                    body_angle,
+                    animation,
+                    effects,
+                    connectors,
+                    frame,
+                    anchor,
+                    zoom,
                 )
             });
 

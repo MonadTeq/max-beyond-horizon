@@ -54,6 +54,7 @@ use crate::team::{
 };
 use crate::unit::{
     AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
+    UnitPresentation,
 };
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
@@ -442,12 +443,19 @@ impl SaveTeamUnits {
 }
 
 /// Юнит в файле: значение + номера объектов всех вложенных/ссылочных полей.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Поля V70 разделены между симуляционной частью ([`SaveUnit::info`]) и
+/// презентационной ([`SaveUnit::presentation`]); читаются/пишутся они в одном
+/// исходном порядке байтов (`read_unit_body`/`write_unit_body`) — Ф5.3/B.
+/// `Eq` нет: [`UnitPresentation`] намеренно реализует только `PartialEq`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SaveUnit {
     /// Номер объекта `UnitInfo` в файле.
     pub object_index: u16,
     /// Данные юнита.
     pub info: UnitInfo,
+    /// Презентационные поля юнита (V70, не участвуют в симуляции).
+    pub presentation: UnitPresentation,
     /// Номер объекта пути (`0` — пути нет).
     pub path_object_index: u16,
     /// Номер объекта `base_values` юнита.
@@ -467,6 +475,7 @@ impl SaveUnit {
         Self {
             object_index,
             info: UnitInfo::default(),
+            presentation: UnitPresentation::default(),
             path_object_index: 0,
             base_values_object_index: 0,
             complex_object_index: 0,
@@ -565,7 +574,9 @@ pub struct AiPlayerState {
 // ---------------------------------------------------------------------------
 
 /// Полное содержимое V70-сохранения.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Eq` нет: [`SaveUnit`] содержит [`UnitPresentation`] без `Eq` (Ф5.3/B).
+#[derive(Debug, Clone, PartialEq)]
 pub struct SaveFile {
     /// Заголовок (настройки партии).
     pub header: SaveFormatHeader,
@@ -1077,15 +1088,18 @@ impl<'a> Reader<'a> {
             String::from_utf8_lossy(self.take(name_length)?).into_owned()
         };
         let mut info = UnitInfo::new(unit_type, TeamId::RED, id);
+        // Презентационная часть V70-объекта — параллельно симуляционной
+        // (Ф5.3/B). Порядок байтов ниже — исходный V70.
+        let mut presentation = UnitPresentation::new();
         info.flags = flags;
         info.x = x;
         info.y = y;
         info.grid = grid;
         info.name = name;
-        info.shadow_offset = self.point()?;
+        presentation.shadow_offset = self.point()?;
         info.team = TeamId(self.u8()?);
         info.unit_id = self.u8()?;
-        info.brightness = self.u8()?;
+        presentation.brightness = self.u8()?;
         info.angle = self.u8()?;
         for slot in info.visible_to_team.iter_mut() {
             *slot = self.bool()?;
@@ -1095,18 +1109,18 @@ impl<'a> Reader<'a> {
         }
         info.max_velocity = self.u8()?;
         info.velocity = self.u8()?;
-        info.sound = self.u8()?;
+        presentation.sound = self.u8()?;
         info.scaler_adjust = self.u8()?;
-        info.sprite_bounds = self.rect()?;
-        info.shadow_bounds = self.rect()?;
+        presentation.sprite_bounds = self.rect()?;
+        presentation.shadow_bounds = self.rect()?;
         info.turret_angle = self.u8()?;
-        info.turret_offset_x = self.i8()?;
-        info.turret_offset_y = self.i8()?;
-        info.total_images = self.i16()?;
+        presentation.turret_offset_x = self.i8()?;
+        presentation.turret_offset_y = self.i8()?;
+        presentation.total_images = self.i16()?;
         info.image_base = self.i16()?;
         info.turret_image_base = self.i16()?;
-        info.firing_image_base = self.i16()?;
-        info.connector_image_base = self.i16()?;
+        presentation.firing_image_base = self.i16()?;
+        presentation.connector_image_base = self.i16()?;
         info.image_index = self.i16()?;
         info.turret_image_index = self.i16()?;
         info.image_index_max = self.i16()?;
@@ -1141,7 +1155,7 @@ impl<'a> Reader<'a> {
         info.ammo = self.u8()?;
         info.targeting_mode = self.u8()?;
         info.enter_mode = self.u8()?;
-        info.cursor = self.u8()?;
+        presentation.cursor = self.u8()?;
         // V70: единый recoil_delay → пара полей C++.
         let recoil_delay = self.u8()?;
         if info.orders == UnitOrder::Disable || info.prior_orders == UnitOrder::Disable {
@@ -1155,7 +1169,7 @@ impl<'a> Reader<'a> {
         info.damaged_this_turn = self.bool()?;
         info.research_topic = self.enum_u8("ResearchTopic")?;
         info.moved = self.u8()?;
-        info.bobbed = self.bool()?;
+        presentation.bobbed = self.bool()?;
         info.shake_effect_state = self.u8()?;
         info.engine = self.u8()?;
         info.weapon = self.u8()?;
@@ -1246,6 +1260,7 @@ impl<'a> Reader<'a> {
         Ok(SaveUnit {
             object_index,
             info,
+            presentation,
             path_object_index,
             base_values_object_index,
             complex_object_index,
@@ -1886,6 +1901,8 @@ impl Writer {
             });
         }
         let info = &unit.info;
+        // Презентационная часть — в исходном V70-порядке вместе с сим-полями.
+        let presentation = &unit.presentation;
         self.u16(info.unit_type as u16);
         self.u16(info.id.to_v70());
         self.u32(info.flags);
@@ -1895,10 +1912,10 @@ impl Writer {
         self.i16(info.grid.y);
         self.u16(info.name.len() as u16);
         self.bytes(info.name.as_bytes());
-        self.point(info.shadow_offset);
+        self.point(presentation.shadow_offset);
         self.u8(info.team.0);
         self.u8(info.unit_id);
-        self.u8(info.brightness);
+        self.u8(presentation.brightness);
         self.u8(info.angle);
         for visible in info.visible_to_team {
             self.bool(visible);
@@ -1908,18 +1925,18 @@ impl Writer {
         }
         self.u8(info.max_velocity);
         self.u8(info.velocity);
-        self.u8(info.sound);
+        self.u8(presentation.sound);
         self.u8(info.scaler_adjust);
-        self.rect(info.sprite_bounds);
-        self.rect(info.shadow_bounds);
+        self.rect(presentation.sprite_bounds);
+        self.rect(presentation.shadow_bounds);
         self.u8(info.turret_angle);
-        self.i8(info.turret_offset_x);
-        self.i8(info.turret_offset_y);
-        self.i16(info.total_images);
+        self.i8(presentation.turret_offset_x);
+        self.i8(presentation.turret_offset_y);
+        self.i16(presentation.total_images);
         self.i16(info.image_base);
         self.i16(info.turret_image_base);
-        self.i16(info.firing_image_base);
-        self.i16(info.connector_image_base);
+        self.i16(presentation.firing_image_base);
+        self.i16(presentation.connector_image_base);
         self.i16(info.image_index);
         self.i16(info.turret_image_index);
         self.i16(info.image_index_max);
@@ -1953,7 +1970,7 @@ impl Writer {
         self.u8(info.ammo);
         self.u8(info.targeting_mode);
         self.u8(info.enter_mode);
-        self.u8(info.cursor);
+        self.u8(presentation.cursor);
         let recoil_delay =
             if info.orders == UnitOrder::Disable || info.prior_orders == UnitOrder::Disable {
                 info.disabled_turns_remaining
@@ -1965,7 +1982,7 @@ impl Writer {
         self.bool(info.damaged_this_turn);
         self.u8(info.research_topic as u8);
         self.u8(info.moved);
-        self.bool(info.bobbed);
+        self.bool(presentation.bobbed);
         self.u8(info.shake_effect_state);
         self.u8(info.engine);
         self.u8(info.weapon);

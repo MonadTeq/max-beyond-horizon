@@ -5,11 +5,17 @@
 //! `builderpath.hpp` (данные путей), `point.hpp` (`PathStep`), `unit.hpp`
 //! (флаги/`SfxType`).
 //!
-//! Проекция полей — `max-brh-docs/state-model.md` §3.9/§6.4: `S`-поля входят в модель
-//! симуляции; UI-поля (пиксельная позиция, спрайты, углы анимации, курсор)
-//! сохранены только как сырые значения V70, потому что они лежат в том же
-//! сейве и нужны для побайтового round-trip (`save.rs`). Симуляция их не
-//! использует.
+//! Проекция полей — `max-brh-docs/state-model.md` §3.9/§6.4. В `UnitInfo`
+//! остались поля симуляции (включая кадровое состояние приказов и пиксельные
+//! `x`/`y`). Презентационные поля C++ `UnitInfo` (тень, спрайтовые границы,
+//! яркость, звук, смещения/кадры башни, курсор, покачивание) вынесены в
+//! [`max_types::unit::UnitPresentation`] (Ф5.3) и хранятся параллельно
+//! слотам в `GameState`; `save.rs` читает/пишет их в том же порядке V70, что
+//! и раньше (побайтовый round-trip).
+//!
+//! Осознанное исключение — пиксельные `x`/`y`: они входят в симуляцию
+//! (пиксельный шаг `AirPath`, проверка линии огня `Access_IsWithinAttackRange`,
+//! `UnitInfo::Move`) и потому остаются в `UnitInfo`.
 
 use serde::{Deserialize, Serialize};
 
@@ -124,9 +130,10 @@ impl UnitPath {
 /// Юнит — C++ `class UnitInfo` (`unitinfo.hpp`), симуляционное подмножество
 /// `S`-полей (state-model §3.9).
 ///
-/// Поля, помеченные «UI/V70», в симуляции не участвуют: они присутствуют
-/// потому, что лежат в том же сериализованном объекте V70, и нужны для
-/// побайтового round-trip сейва.
+/// Презентационных полей из списка B.1.2 здесь больше нет: они в
+/// [`max_types::unit::UnitPresentation`] (Ф5.3/B), которое `GameState` держит
+/// параллельно слотам юнитов. V70-раскладка не изменилась — `save.rs` читает
+/// оба объекта в исходном порядке байтов.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitInfo {
     // --- идентичность и положение ---
@@ -136,22 +143,20 @@ pub struct UnitInfo {
     pub id: UnitId,
     /// Флаги (`unit_flags::*`): класс юнита, поведение, команда-владелец в хэше.
     pub flags: u32,
-    /// Пиксельная позиция X (UI/V70: анимация).
+    /// Пиксельная позиция X. **Симуляционное поле**: `UnitInfo::Move`/
+    /// `AirPath` шагают попиксельно, `Access_IsWithinAttackRange` проверяет
+    /// линию огня по `x/y`; в V70 хранится как есть.
     pub x: u16,
-    /// Пиксельная позиция Y (UI/V70).
+    /// Пиксельная позиция Y. **Симуляционное поле** (см. [`Self::x`]).
     pub y: u16,
     /// Клетка карты.
     pub grid: Point,
     /// Имя юнита (в V70 — переменной длины, без терминатора).
     pub name: String,
-    /// Смещение тени (UI/V70).
-    pub shadow_offset: Point,
     /// Команда-владелец (в т.ч. [`TeamId::ALIEN`] = 4).
     pub team: TeamId,
     /// Порядковый номер типа в команде (для имён).
     pub unit_id: u8,
-    /// Яркость (UI/V70: визуал повреждения).
-    pub brightness: u8,
     /// Угол корпуса 0..7 (0 = север, по часовой). **Симуляционное поле**:
     /// `UnitInfo::Move` шагает в `DIRECTION_OFFSETS[angle]`, угол меняется
     /// `Paths_UpdateAngle`/`GroundPath::UpdateUnitAngle` 1:1 с C++.
@@ -164,30 +169,14 @@ pub struct UnitInfo {
     pub max_velocity: u8,
     /// Текущая скорость анимации (UI/V70).
     pub velocity: u8,
-    /// Звуковой эффект (C++ `Unit::SfxType`, u8) — UI/V70.
-    pub sound: u8,
     /// Масштаб спрайта (UI/V70).
     pub scaler_adjust: u8,
-    /// Кэш габаритов спрайта (UI/V70).
-    pub sprite_bounds: Rect,
-    /// Кэш габаритов тени (UI/V70).
-    pub shadow_bounds: Rect,
     /// Угол башни (UI/V70).
     pub turret_angle: u8,
-    /// Смещение башни X (UI/V70).
-    pub turret_offset_x: i8,
-    /// Смещение башни Y (UI/V70).
-    pub turret_offset_y: i8,
-    /// Всего кадров (UI/V70).
-    pub total_images: i16,
     /// База спрайта (UI/V70).
     pub image_base: i16,
     /// База спрайта башни (UI/V70).
     pub turret_image_base: i16,
-    /// База спрайта выстрела (UI/V70).
-    pub firing_image_base: i16,
-    /// База спрайта коннектора (UI/V70).
-    pub connector_image_base: i16,
     /// Текущий кадр (UI/V70).
     pub image_index: i16,
     /// Текущий кадр башни (UI/V70).
@@ -250,8 +239,6 @@ pub struct UnitInfo {
     pub targeting_mode: u8,
     /// Режим посадки/высадки (u8, не enum).
     pub enter_mode: u8,
-    /// Курсор над юнитом (UI/V70).
-    pub cursor: u8,
     /// Кадры отдачи выстрела (C++; в V70 — единый `recoil_delay`).
     pub firing_recoil_frames: u8,
     /// Оставшиеся ходы отключения (C++; в V70 — единый `recoil_delay`).
@@ -264,8 +251,6 @@ pub struct UnitInfo {
     pub research_topic: ResearchTopic,
     /// Счётчик движения (лимит на ход).
     pub moved: u8,
-    /// Покачивание на воде (UI/V70).
-    pub bobbed: bool,
     /// Эффект тряски (UI/V70).
     pub shake_effect_state: u8,
     /// Состояние анимации двигателя (UI/V70).
@@ -339,7 +324,10 @@ impl Default for UnitInfo {
 
 impl UnitInfo {
     /// Минимальный конструктор (C++ `UnitInfo()` в «особых случаях»):
-    /// заказы `AWAIT/INIT`, `brightness = 255`, позиция (-1, -1).
+    /// заказы `AWAIT/EXECUTING_ORDER`, позиция (-1, -1).
+    ///
+    /// Презентационные поля C++-конструктора (`brightness = 255` и нули)
+    /// задаёт [`UnitPresentation::new`] — `GameState` создаёт её рядом.
     pub fn new(unit_type: UnitType, team: TeamId, id: UnitId) -> Self {
         // `UnitInfo::UnitInfo` (`unitinfo.cpp:276-294`): кадровые данные типа из
         // ресурса `D_*` — `image_base`, `turret_image_base`, `image_index =
@@ -356,27 +344,17 @@ impl UnitInfo {
             y: 0,
             grid: Point::new(-1, -1),
             name: String::new(),
-            shadow_offset: Point::ZERO,
             team,
             unit_id: 0,
-            brightness: u8::MAX,
             angle: 0,
             visible_to_team: [false; 5],
             spotted_by_team: [false; 5],
             max_velocity: 0,
             velocity: 0,
-            sound: 0,
             scaler_adjust: 0,
-            sprite_bounds: Rect::default(),
-            shadow_bounds: Rect::default(),
             turret_angle: 0,
-            turret_offset_x: 0,
-            turret_offset_y: 0,
-            total_images: 0,
             image_base: frames.image_base,
             turret_image_base: frames.turret_image_base,
-            firing_image_base: 0,
-            connector_image_base: 0,
             image_index: frames.image_base,
             turret_image_index: frames.turret_image_base,
             image_index_max: crate::frames::image_index_max(unit_type, 0),
@@ -410,14 +388,12 @@ impl UnitInfo {
             ammo: 0,
             targeting_mode: 0,
             enter_mode: 0,
-            cursor: 0,
             firing_recoil_frames: 0,
             disabled_turns_remaining: 0,
             delayed_reaction: 0,
             damaged_this_turn: false,
             research_topic: ResearchTopic::Attack,
             moved: 0,
-            bobbed: false,
             shake_effect_state: 0,
             engine: 0,
             weapon: 0,
@@ -564,7 +540,8 @@ mod tests {
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert_eq!(unit.prior_orders, UnitOrder::Await);
         assert_eq!(unit.prior_state, UnitOrderState::ExecutingOrder);
-        assert_eq!(unit.brightness, u8::MAX);
+        // `brightness = 255` из C++-конструктора теперь в `UnitPresentation`
+        // (Ф5.3/B) — проверяется в `max_types::unit::tests`.
         assert_eq!(unit.grid, Point::new(-1, -1));
         assert_eq!(unit.group_speed, 0);
         assert_eq!(unit.live_attack, 0);

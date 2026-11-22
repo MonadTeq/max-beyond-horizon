@@ -752,6 +752,9 @@ fn walk_unit(
     }
 
     let info: &UnitInfo = state.unit(id)?;
+    // Презентация хранится рядом с юнитом в `GameState` (Ф5.3/B) и пишется в
+    // V70 в исходном порядке байтов (`save::write_unit_body`).
+    let presentation = state.presentation(id).cloned().unwrap_or_default();
     let object_index = layout.object(ObjectKey::Unit { id: id.0 });
     let team = info.team.0;
 
@@ -807,6 +810,7 @@ fn walk_unit(
     units.push(SaveUnit {
         object_index,
         info: info.clone(),
+        presentation,
         path_object_index,
         base_values_object_index,
         complex_object_index,

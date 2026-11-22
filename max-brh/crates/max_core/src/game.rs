@@ -52,8 +52,17 @@
 //!    (Remote_IsNetworkGame) return;`). `max_core` — это lockstep-симуляция,
 //!    поэтому принята сетевая ветка: один шаг пути за тик, и она
 //!    задокументирована в `unit_order::unit_move`.
-//! 4. `UnitInfo::x/y` (пиксельные координаты, UI) поддерживаются только как
-//!    производные от клетки: `x = grid*64 + 32` (+31 для зданий).
+//! 4. `UnitInfo::x/y` — пиксельные координаты. Они симуляционные: `AirPath`
+//!    шагает попиксельно, `Access_IsWithinAttackRange` проверяет линию огня, а
+//!    спавн/движение выводят их из клетки (`x = grid*64 + 32`, +31 у зданий).
+//!
+//! # Презентация юнита (Ф5.3/B)
+//!
+//! Поля C++ `UnitInfo`, не участвующие в симуляции (тень, спрайтовые границы,
+//! яркость, звук, смещения/кадры башни, курсор, покачивание), вынесены в
+//! [`UnitPresentation`] и хранятся в `GameState` параллельной таблицей
+//! `presentations` рядом со слотами `units`. V70-байты не изменились:
+//! `save.rs` пишет оба объекта в исходном порядке.
 
 use crate::classification::Footprint;
 use crate::enums::{
@@ -68,7 +77,7 @@ use crate::map::Map;
 use crate::pathfinding::PathRequest;
 use crate::rng::Randomizer;
 use crate::team::{Complex, TeamId, TeamInfo, TeamKind, TeamUnits, SCORE_GRAPH_LEN};
-use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPath};
+use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPath, UnitPresentation};
 use crate::unit_order;
 use crate::unit_values::{
     ATTRIB_AGENT_ADJUST, ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_MOVE_AND_FIRE,
@@ -171,6 +180,10 @@ pub struct GameState {
 
     // --- юниты ---
     units: Vec<Option<UnitInfo>>,
+    /// Презентационные поля юнитов (Ф5.3/B) — параллельно слотам `units`.
+    /// В симуляцию/снапшот/CRC не входят; нужны `save.rs` (побайтовый V70) и
+    /// рендеру `max_app`.
+    presentations: Vec<Option<UnitPresentation>>,
     free_slots: Vec<u16>,
     unit_hash: UnitHash<u16>,
     order_data: Vec<OrderData>,
@@ -353,6 +366,7 @@ impl GameState {
             team_units,
             rng: Randomizer::new(0),
             units: Vec::new(),
+            presentations: Vec::new(),
             free_slots: Vec::new(),
             unit_hash: UnitHash::new(HASH_UNIT_HASH_SIZE),
             order_data: Vec::new(),
@@ -533,6 +547,7 @@ impl GameState {
 
         // --- юниты ---
         self.units.clear();
+        self.presentations.clear();
         self.free_slots.clear();
         self.order_data.clear();
         self.unit_group.clear();
@@ -568,6 +583,8 @@ impl GameState {
             let slot = self.units.len();
             object_ids.push((saved.object_index, unit.id));
             self.units.push(Some(unit.clone()));
+            // Презентация V70-объекта — параллельно слоту (Ф5.3/B).
+            self.presentations.push(Some(saved.presentation.clone()));
             self.order_data.push(OrderData {
                 move_to: saved.info.target_grid,
                 fire_on: Point::ZERO,
@@ -732,6 +749,32 @@ impl GameState {
         self.units.get_mut(slot).and_then(Option::as_mut)
     }
 
+    /// Презентационные поля юнита (`None` — юнита нет).
+    ///
+    /// Читают только `save.rs` (V70) и рендер `max_app`; в снапшот/CRC не
+    /// входят (Ф5.3/B).
+    #[inline]
+    pub fn presentation(&self, id: UnitId) -> Option<&UnitPresentation> {
+        let slot = self.lookup(id)?;
+        self.presentations.get(slot).and_then(Option::as_ref)
+    }
+
+    /// Изменяемая презентация юнита.
+    #[inline]
+    pub fn presentation_mut(&mut self, id: UnitId) -> Option<&mut UnitPresentation> {
+        let slot = self.lookup(id)?;
+        self.presentations.get_mut(slot).and_then(Option::as_mut)
+    }
+
+    /// Записывает презентацию юнита (слот должен существовать).
+    pub fn write_presentation(&mut self, id: UnitId, presentation: UnitPresentation) {
+        if let Some(slot) = self.lookup(id) {
+            if let Some(entry) = self.presentations.get_mut(slot) {
+                *entry = Some(presentation);
+            }
+        }
+    }
+
     /// Есть ли юнит с таким id.
     #[inline]
     pub fn has_unit(&self, id: UnitId) -> bool {
@@ -764,7 +807,15 @@ impl GameState {
     /// Если клетка изменилась, обновляется `Hash_MapHash` — аналог
     /// `Hash_MapHash.Remove/Add` в `UnitInfo::Move`/`UpdateGridPosition`.
     pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
+        // Таблица презентаций параллельна слотам `units` (Ф5.3/B): при
+        // добавлении слота снаружи спавна выравниваем длину и даём дефолт.
+        if self.presentations.len() < self.units.len() {
+            self.presentations.resize(self.units.len(), None);
+        }
         if let Some(slot) = self.lookup(id) {
+            if self.presentations.get(slot).is_some_and(Option::is_none) {
+                self.presentations[slot] = Some(UnitPresentation::new());
+            }
             let previous = self
                 .units
                 .get(slot)
@@ -1169,6 +1220,9 @@ impl GameState {
         let id = self.allocate_unit_id(team);
         let team_index = team.0 as usize;
         let mut unit = UnitInfo::new(unit_type, team, id);
+        // C++ `UnitInfo::UnitInfo`: презентационные поля (`brightness = 255`,
+        // нули) создаются вместе с юнитом и живут параллельно слоту (Ф5.3/B).
+        let presentation = UnitPresentation::new();
         // Флаги типа — из таблицы `SC_UNITS` (`Unit::m_flags`); явные флаги
         // вызывающего слоя объединяются с ними (P3-совместимый вход).
         // C++-код ниже (`DeployUnit`, `UnitInfo::SetPosition`) читает уже
@@ -1327,6 +1381,7 @@ impl GameState {
         let slot = match self.free_slots.pop() {
             Some(slot) => {
                 self.units[slot as usize] = Some(unit);
+                self.presentations[slot as usize] = Some(presentation);
                 self.order_data[slot as usize] = OrderData {
                     move_to: grid,
                     fire_on: Point::ZERO,
@@ -1338,6 +1393,7 @@ impl GameState {
             }
             None => {
                 self.units.push(Some(unit));
+                self.presentations.push(Some(presentation));
                 self.order_data.push(OrderData {
                     move_to: grid,
                     fire_on: Point::ZERO,
@@ -1435,6 +1491,9 @@ impl GameState {
                 .remove(id, grid.x as u16, grid.y as u16, footprint);
         }
         if let Some(entry) = self.units.get_mut(slot) {
+            *entry = None;
+        }
+        if let Some(entry) = self.presentations.get_mut(slot) {
             *entry = None;
         }
         if let Some(entry) = self.unit_group.get_mut(slot) {

@@ -274,9 +274,13 @@ impl BuildSiteSelect {
             (f32::from(self.anchor.x), f32::from(self.anchor.y)),
         );
         let (screen_x, screen_y) = viewport.world_to_screen(world_x, world_y);
+        // Призрак — не юнит состояния: презентация по умолчанию C++
+        // (`brightness = 255`, нули) — Ф5.3/B.
+        let presentation = max_core::unit::UnitPresentation::new();
         let drawn = crate::render::draw_unit_sprites(
             assets,
             &ghost,
+            &presentation,
             frame,
             (screen_x, screen_y),
             viewport.zoom(),
