@@ -1,4 +1,4 @@
-﻿//! Local match setup screen (M-SP) — 1:1 with the C++ port screens.
+//! Local match setup screen (M-SP) — 1:1 with the C++ port screens.
 //!
 //! Three screens, exactly in the order of `menu_custom_game_menu` (`menu.cpp:2115`):
 //!
@@ -727,6 +727,12 @@ impl GameSetupForm {
     }
 
     /// `ClanSelectMenu::EventDone`: save the chosen clan for the team.
+    ///
+    /// The clan is only recorded here: the menu has no `GameState` yet, so there
+    /// are no team complexes and no unit values to rebuild. The C++ initialization
+    /// (`ResourceManager_InitClanUnitValues`: `ClearComplexes()` + `TeamUnits::Init()`
+    /// + clan trade-offs) runs at match start (`GameState::with_setup` /
+    /// `App::new_game_on_surface`).
     fn apply_clan(&mut self) -> SetupTransition {
         let team = self.clan_team.min(LOCAL_TEAM_COUNT - 1);
         self.setup.team_clans[team] = self.clan_selection;

@@ -2465,19 +2465,15 @@ fn land_continents(world: &GameState) -> Vec<Continent> {
 }
 
 /// Applying a clan to the team's unit values (`ResourceManager_InitClanUnitValues`).
+///
+/// Like the C++ function, this is a full re-initialization, not an increment:
+/// `ClearComplexes()` + `TeamUnits::Init()` rebuild the clean `SC_ATTRI` base
+/// before `SetClanUpgradesFromClans` adds the clan deltas, and the result is
+/// written to both base and current values. Calling it again (or with another
+/// clan) therefore cannot stack trade-offs.
 pub fn apply_clan(world: &mut GameState, team: TeamId, clan: TeamClan) {
     let team_index = team.0 as usize;
-
-    for index in 0..crate::unit_values::UNIT_COUNT as u16 {
-        let Some(unit_type) = UnitType::try_from(index).ok() else {
-            continue;
-        };
-
-        let mut values = *world.team_units[team_index].base_unit_values(index);
-        crate::unit_values::apply_clan_tradeoffs(&mut values, clan, unit_type);
-        *world.team_units[team_index].base_unit_values_mut(index) = values;
-        *world.team_units[team_index].current_unit_values_mut(index) = values;
-    }
+    world.team_units[team_index].init_clan_unit_values(clan);
 }
 
 /// `Ai_GetNormalRateBuildCost` (`ai.cpp:54`).
@@ -2487,3 +2483,32 @@ pub fn ai_get_normal_rate_build_cost(world: &GameState, unit_type: UnitType, tea
 
 /// `TaskManager_NeedToReserveRawMaterials` — re-export from the create module.
 pub use super::tasks::create::need_to_reserve_raw_materials;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::team::TeamUnits;
+
+    /// `ResourceManager_InitClanUnitValues` starts from a clean `SC_ATTRI` base:
+    /// a second call (or a clan change) must replace the table, not add to it,
+    /// and the team complexes are dropped (`ClearComplexes`).
+    #[test]
+    fn apply_clan_reinitializes_instead_of_stacking() {
+        let mut world = GameState::new();
+        let team = TeamId::RED;
+        let index = team.0 as usize;
+        world.team_units[index] = TeamUnits::with_clan(TeamClan::Musashi);
+        world.team_units[index].create_complex();
+
+        apply_clan(&mut world, team, TeamClan::VonGriffin);
+        let expected = crate::unit_values::team_base_values(TeamClan::VonGriffin);
+        assert_eq!(world.team_units[index].base_values, expected);
+        assert_eq!(world.team_units[index].current_values, expected);
+        assert!(world.team_units[index].complexes().is_empty());
+
+        // Idempotent: the same clan applied again keeps the same table.
+        apply_clan(&mut world, team, TeamClan::VonGriffin);
+        assert_eq!(world.team_units[index].base_values, expected);
+        assert_eq!(world.team_units[index].current_values, expected);
+    }
+}

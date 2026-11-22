@@ -434,7 +434,12 @@ impl GameState {
             state.team_units[index] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
         }
         state.teams[PLAYER_TEAM_COUNT].team_type = TeamKind::Computer;
-        state.team_units[PLAYER_TEAM_COUNT] = TeamUnits::with_clan(crate::enums::TeamClan::Random);
+        // `ResourceManager_InitClanUnitValues` (`resource_manager.cpp:1275-1277`):
+        // the derelict team (`PLAYER_TEAM_ALIEN`) always gets `TEAM_CLAN_THE_CHOSEN`
+        // regardless of the menu settings — alien units from the debris use it.
+        state.teams[PLAYER_TEAM_COUNT].team_clan = crate::enums::TeamClan::TheChosen;
+        state.team_units[PLAYER_TEAM_COUNT] =
+            TeamUnits::with_clan(crate::enums::TeamClan::TheChosen);
         state
     }
 
@@ -538,12 +543,16 @@ impl GameState {
         self.teams[PLAYER_TEAM_COUNT].team_type = TeamKind::Computer;
         self.teams[PLAYER_TEAM_COUNT].team_clan = save.header.team_clan[PLAYER_TEAM_COUNT];
 
-        // --- TeamUnits × 4 from the file; ALIEN — empty values ---
+        // --- TeamUnits × 4 from the file; ALIEN — the service derelict team ---
         let saved_team_units = save.team_units();
         for team in 0..crate::save::SAVE_TEAM_COUNT {
             self.team_units[team] = saved_team_units[team].clone();
         }
-        self.team_units[PLAYER_TEAM_COUNT] = TeamUnits::new();
+        // The save has no derelict `TeamUnits`: C++ `GameManager_InitUnitsAndGameState`
+        // initializes all five teams (`ResourceManager_InitClanUnitValues`, where
+        // `PLAYER_TEAM_ALIEN` is `TEAM_CLAN_THE_CHOSEN`) before the file is loaded.
+        self.team_units[PLAYER_TEAM_COUNT] =
+            TeamUnits::with_clan(crate::enums::TeamClan::TheChosen);
 
         // --- units ---
         self.units.clear();
@@ -3347,5 +3356,37 @@ mod tests {
             }));
         }
         assert_ne!(before, state.snapshot_bytes());
+    }
+
+    /// `ResourceManager_InitClanUnitValues` (`resource_manager.cpp:1275-1290`):
+    /// the derelict team is always `TEAM_CLAN_THE_CHOSEN`, independent of the
+    /// menu clan settings.
+    #[test]
+    fn derelict_team_uses_the_chosen_clan() {
+        let mut state = GameState::with_setup(
+            crate::map::Map::new(),
+            [
+                TeamKind::Player,
+                TeamKind::None,
+                TeamKind::None,
+                TeamKind::None,
+            ],
+        );
+        let alien = PLAYER_TEAM_COUNT;
+        assert_eq!(
+            state.teams[alien].team_clan,
+            crate::enums::TeamClan::TheChosen
+        );
+        let expected = crate::unit_values::team_base_values(crate::enums::TeamClan::TheChosen);
+        assert_eq!(state.team_units[alien].base_values, expected);
+        assert_eq!(state.team_units[alien].current_values, expected);
+        assert!(state.team_units[alien].complexes().is_empty());
+
+        // The Chosen bonuses touch air units only: alien debris types keep the
+        // `SC_ATTRI` values (the same observable result as in C++).
+        assert_eq!(
+            state.team_units[alien].base_values[UnitType::AlienTank as usize],
+            crate::unit_values::base_unit_values(UnitType::AlienTank)
+        );
     }
 }

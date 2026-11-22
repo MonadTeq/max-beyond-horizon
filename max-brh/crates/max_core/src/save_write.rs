@@ -711,21 +711,28 @@ fn mine_map_bytes(values: &[i8]) -> Option<Box<[i8; MAP_TILES]>> {
 fn unit_values_object(state: &GameState, info: &UnitInfo, layout: &mut Layout) -> u16 {
     let team = info.team.0 as usize;
     let unit_type = info.unit_type as usize;
-    if let Some(units) = state.team_units.get(team) {
-        if unit_type < UNIT_COUNT {
-            if info.base_values == units.base_values[unit_type] {
-                return layout.object(ObjectKey::TeamValues {
-                    team: info.team.0,
-                    base: true,
-                    unit_type: info.unit_type as u16,
-                });
-            }
-            if info.base_values == units.current_values[unit_type] {
-                return layout.object(ObjectKey::TeamValues {
-                    team: info.team.0,
-                    base: false,
-                    unit_type: info.unit_type as u16,
-                });
+    // Only the four playing teams' `TeamUnits` exist in the file. The derelict
+    // team (`PLAYER_TEAM_ALIEN`) is a service team without a `TeamUnits` section,
+    // so sharing a derelict unit's values with its live table would leave a
+    // dangling object number; C++ writes such values as a separate object on
+    // first reference.
+    if team < SAVE_TEAM_COUNT {
+        if let Some(units) = state.team_units.get(team) {
+            if unit_type < UNIT_COUNT {
+                if info.base_values == units.base_values[unit_type] {
+                    return layout.object(ObjectKey::TeamValues {
+                        team: info.team.0,
+                        base: true,
+                        unit_type: info.unit_type as u16,
+                    });
+                }
+                if info.base_values == units.current_values[unit_type] {
+                    return layout.object(ObjectKey::TeamValues {
+                        team: info.team.0,
+                        base: false,
+                        unit_type: info.unit_type as u16,
+                    });
+                }
             }
         }
     }

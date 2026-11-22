@@ -433,3 +433,42 @@ fn all_units_are_reachable_through_lists_and_hash() {
     let hashed = save.unit_hash.iter_values().count();
     assert_eq!(hashed, save.units.len(), "UnitHash содержит всех юнитов");
 }
+
+/// The derelict team (`PLAYER_TEAM_ALIEN`) has no `TeamUnits` section in the
+/// save, so its units cannot share a `TeamValues` object with the live team
+/// table: the values are written as an own object, as C++ does
+/// (`UnitInfo::base_values` points at the derelict `TeamUnits`, whose objects
+/// are not part of the four saved teams).
+#[test]
+fn derelict_units_save_and_reload() {
+    let mut state = GameState::with_setup(
+        max_core::map::Map::new(),
+        [
+            TeamKind::Player,
+            TeamKind::None,
+            TeamKind::None,
+            TeamKind::None,
+        ],
+    );
+    state.player_team = TeamId::RED;
+    let alien = state
+        .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(10, 10), 0)
+        .expect("alien tank spawns");
+    assert_eq!(
+        state.unit(alien).map(|unit| unit.base_values),
+        Some(max_core::unit_values::base_unit_values(UnitType::AlienTank)),
+        "The Chosen does not modify alien debris types"
+    );
+
+    let bytes = state.to_save_bytes().expect("save with a derelict unit writes");
+    let save = SaveFile::parse(&bytes).expect("save with a derelict unit parses");
+    assert!(save.units.iter().any(|unit| unit.info.id == alien));
+
+    let reloaded = GameState::from_save(&save);
+    assert!(reloaded.has_unit(alien));
+    assert_eq!(
+        reloaded.to_save_bytes().expect("writes again"),
+        bytes,
+        "save -> load -> save стабилен с derelict-юнитом"
+    );
+}

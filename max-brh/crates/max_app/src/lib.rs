@@ -2849,12 +2849,13 @@ impl App {
         state.enemy_halt = self.preferences.enemy_halt;
         // Clans from the settings — before deploying units: `deploy_starting_units`
         // takes the attributes from `team_units` (`ResourceManager_InitClanUnitValues`).
+        // The call rebuilds base and current values from `SC_ATTRI` and clears the
+        // team complexes, exactly like the C++ initialization; the derelict slot
+        // (`PLAYER_TEAM_ALIEN`) was already set by `GameState::with_setup`.
         for index in 0..PLAYER_TEAM_COUNT {
             let clan = config.clans.get(index).copied().unwrap_or(TeamClan::Random);
             state.teams[index].team_clan = clan;
-            let values = max_core::unit_values::team_base_values(clan);
-            state.team_units[index].base_values = values;
-            state.team_units[index].current_values = values;
+            state.team_units[index].init_clan_unit_values(clan);
         }
 
         // `CargoMenu::CommitUpgradeChanges`: upgrades bought before landing

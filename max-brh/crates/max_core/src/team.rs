@@ -213,14 +213,24 @@ impl TeamUnits {
     /// C++ `TeamUnits::Init` + `ResourceManager_InitClanUnitValues`
     /// (base and current reference equal values until the first upgrades).
     pub fn with_clan(clan: TeamClan) -> Self {
+        let mut units = Self::new();
+        units.init_clan_unit_values(clan);
+        units
+    }
+
+    /// Rebuilds the team attribute table for a clan —
+    /// C++ `ResourceManager_InitClanUnitValues` (`resource_manager.cpp:1249`).
+    ///
+    /// Repeats the C++ order: `ClearComplexes()` → `TeamUnits::Init()` (a clean
+    /// `SC_ATTRI` base, not the previous table) → `SetClanUpgradesFromClans` →
+    /// the result is written to both `base_values` and `current_values`.
+    /// Because the base is rebuilt from scratch, repeated application is
+    /// idempotent: clan deltas never stack on top of a previous clan.
+    pub fn init_clan_unit_values(&mut self, clan: TeamClan) {
+        self.clear_complexes();
         let values = crate::unit_values::team_base_values(clan);
-        Self {
-            gold: 0,
-            base_values: values,
-            current_values: values,
-            complexes: Vec::new(),
-            hash_team_id: 0,
-        }
+        self.base_values = values;
+        self.current_values = values;
     }
 
     /// `TeamUnits::GetGold`.
@@ -389,6 +399,32 @@ mod tests {
         // For an empty clan the table matches the base one.
         let random = TeamUnits::with_clan(TeamClan::Random);
         assert_eq!(random.base_values, crate::unit_values::BASE_UNIT_VALUES);
+    }
+
+    /// `ResourceManager_InitClanUnitValues` rebuilds the base from `SC_ATTRI`
+    /// first, so a repeated call (or a clan change) never stacks deltas and
+    /// `ClearComplexes()` drops the team complexes.
+    #[test]
+    fn clan_initialization_is_idempotent_and_clears_complexes() {
+        let mut units = TeamUnits::with_clan(TeamClan::Musashi);
+        units.create_complex();
+        assert!(!units.complexes().is_empty());
+
+        units.init_clan_unit_values(TeamClan::VonGriffin);
+        assert!(units.complexes().is_empty(), "ClearComplexes");
+        let expected = crate::unit_values::team_base_values(TeamClan::VonGriffin);
+        assert_eq!(units.base_values, expected);
+        assert_eq!(units.current_values, expected);
+
+        // A second identical call does not add the trade-offs twice.
+        units.init_clan_unit_values(TeamClan::VonGriffin);
+        assert_eq!(units.base_values, expected);
+        assert_eq!(units.current_values, expected);
+
+        // Switching back to a plain clan removes the previous modifiers.
+        units.init_clan_unit_values(TeamClan::Random);
+        assert_eq!(units.base_values, crate::unit_values::BASE_UNIT_VALUES);
+        assert_eq!(units.current_values, crate::unit_values::BASE_UNIT_VALUES);
     }
 
     #[test]
