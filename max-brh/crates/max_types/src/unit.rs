@@ -59,3 +59,53 @@ impl UnitId {
         self.0
     }
 }
+
+/// Один из пяти списков юнитов (`UnitInfo::unit_list`, `units_manager.cpp`).
+///
+/// Порядок вариантов — порядок обхода `UnitsManager_ProcessOrders`
+/// (DESIGN §5.2): ground cover → mobile land/sea → stationary → mobile air →
+/// particles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum UnitListKind {
+    /// Наземное укрытие (`UnitsManager_GroundCoverUnits`).
+    GroundCover = 0,
+    /// Мобильные наземные и морские (`UnitsManager_MobileLandSeaUnits`).
+    MobileLandSea = 1,
+    /// Стационарные (`UnitsManager_StationaryUnits`).
+    Stationary = 2,
+    /// Мобильные воздушные (`UnitsManager_MobileAirUnits`).
+    MobileAir = 3,
+    /// Частицы/ракеты/снаряды (`UnitsManager_ParticleUnits`).
+    Particle = 4,
+}
+
+impl UnitListKind {
+    /// Все пять списков в каноническом порядке обхода.
+    pub const ALL: [Self; 5] = [
+        Self::GroundCover,
+        Self::MobileLandSea,
+        Self::Stationary,
+        Self::MobileAir,
+        Self::Particle,
+    ];
+
+    /// Индекс списка (0..5).
+    #[inline]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Список по индексу.
+    #[inline]
+    pub const fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::GroundCover),
+            1 => Some(Self::MobileLandSea),
+            2 => Some(Self::Stationary),
+            3 => Some(Self::MobileAir),
+            4 => Some(Self::Particle),
+            _ => None,
+        }
+    }
+}

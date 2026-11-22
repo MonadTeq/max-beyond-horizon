@@ -11,14 +11,18 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::enums::{ResearchTopic, TeamClan, RESEARCH_TOPIC_COUNT, UNIT_END};
+use crate::enums::{TeamClan, RESEARCH_TOPIC_COUNT, UNIT_END};
 use crate::geo::Point;
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
-// Листовые типы команд (`TeamId`, `TeamKind`, `Team`) и их конверсии живут в
-// нижнем слое (`max_types`, Ф5.2); здесь — реэкспорт, чтобы путь
-// `max_core::team::…` не менялся.
-pub use max_types::team::{Team, TeamId, TeamKind};
+// Листовые типы команд (`TeamId`, `TeamKind`, `Team`, `ResearchTopicInfo`,
+// `ScreenLocation`, `Complex`/`ComplexId`, `Cargo`, `hash_team_id`,
+// `RESEARCH_TOPICS`) живут в нижнем слое (`max_types`, Ф5.2); здесь —
+// реэкспорт, чтобы путь `max_core::team::…` не менялся.
+pub use max_types::team::{
+    hash_team_id, Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId,
+    TeamKind, RESEARCH_TOPICS,
+};
 
 // Коннекторы комплекса и типы груза живут в `enums` (P0); здесь — реэкспорт,
 // чтобы доменные типы команд/комплексов были самодостаточны.
@@ -28,79 +32,9 @@ pub use crate::enums::{
     CONNECTOR_SOUTH_LEFT, CONNECTOR_SOUTH_RIGHT, CONNECTOR_WEST_BOTTOM, CONNECTOR_WEST_TOP,
 };
 
-/// `TeamUnits::hash_team_id` — бит цвета команды в флагах юнита.
-///
-/// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:179`) собирает флаги как
-/// `unit_flags | UnitsManager_TeamInfo[team].team_units->hash_team_id`, а
-/// `hash_team_id` выставляется слотам в `ResourceManager_InitTeamUnits`
-/// (`resource_manager.cpp:969-981`): RED = `HASH_TEAM_RED` 0x2000,
-/// GREEN = 0x1000, BLUE = 0x800, GRAY = 0x400, ALIEN/derelict = 0x8000.
-/// Именно эти биты читают рамка `COLORS` (`DrawMap_RenderUnitDisplays`,
-/// `drawmap.cpp:581-598`), мини-карта (`drawmap.cpp:844-858`) и перекраска
-/// спрайта (`unitinfo.cpp:3112-3126`), а `team_clan` влияет только на кадры
-/// шахты (`unitinfo.cpp:282`) и торговые модификаторы клана.
-///
-/// Порт **не пишет** эти биты в `UnitInfo::flags` при спавне (набор флагов
-/// входит в канонический дайджест, а эталонный C++-вектор собран без них) —
-/// слой отрисовки получает тот же цвет из этого отображения
-/// (`max_app::overlays::team_color_index`), а биты из загруженных сейвов
-/// honoured напрямую.
-pub const fn hash_team_id(team: TeamId) -> u16 {
-    use crate::enums::unit_flags;
-
-    match team.0 {
-        0 => unit_flags::HASH_TEAM_RED as u16,
-        1 => unit_flags::HASH_TEAM_GREEN as u16,
-        2 => unit_flags::HASH_TEAM_BLUE as u16,
-        3 => unit_flags::HASH_TEAM_GRAY as u16,
-        _ => unit_flags::HASH_TEAM_DERELICT as u16,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Вспомогательные структуры TeamInfo
 // ---------------------------------------------------------------------------
-
-/// Позиция экрана — C++ `struct ScreenLocation` (`ctinfo.hpp`, UI).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScreenLocation {
-    /// Координата X.
-    pub x: i8,
-    /// Координата Y.
-    pub y: i8,
-}
-
-/// Прогресс исследования — C++ `struct ResearchTopic` (`ctinfo.hpp`),
-/// save.md `ResearchTopicInfo`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResearchTopicInfo {
-    /// Завершённых циклов исследования.
-    pub research_level: u32,
-    /// Ходов на цикл при одном исследовательском центре (0 = не начато).
-    pub turns_to_complete: u32,
-    /// Сколько исследовательских центров выделено.
-    pub allocation: u32,
-}
-
-impl ResearchTopicInfo {
-    /// Фактическое число ходов до завершения:
-    /// `ceil(turns_to_complete / allocation)` (`researchmenu.cpp:448`:
-    /// `(allocation + turns_to_complete - 1) / allocation`); 0 при `allocation == 0`.
-    pub fn turns_remaining(&self) -> u32 {
-        if self.allocation == 0 {
-            0
-        } else {
-            (self.allocation + self.turns_to_complete - 1) / self.allocation
-        }
-    }
-
-    /// Прогресс одного хода — C++ `game_manager.cpp:2072` /
-    /// `ResearchMenu_UpdateResearchProgress(team, topic, 0)`: если тема
-    /// выделена, но прогресс не начат — он пересчитывается симуляцией (P4).
-    pub fn is_started(&self) -> bool {
-        self.turns_to_complete > 0
-    }
-}
 
 /// Сколько ходов графика очков хранится (`score_graph[50]`).
 pub const SCORE_GRAPH_LEN: usize = 50;
@@ -228,94 +162,6 @@ impl Default for TeamInfoUi {
             zoom_level: 0,
             camera_position: Point::ZERO,
             display_buttons: [0; DISPLAY_BUTTON_COUNT],
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Комплексы и грузы
-// ---------------------------------------------------------------------------
-
-/// Идентификатор комплекса (`Complex::id`, `int16_t`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ComplexId(pub i16);
-
-/// Комплекс зданий — C++ `class Complex : FileObject` (`complex.hpp`).
-///
-/// Комплекс — связная группа зданий, делящих энергию и грузы.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Complex {
-    /// Материалы (запас + добыча).
-    pub material: i16,
-    /// Топливо.
-    pub fuel: i16,
-    /// Золото.
-    pub gold: i16,
-    /// Излишек энергии.
-    pub power: i16,
-    /// Свободная рабочая сила.
-    pub workers: i16,
-    /// Зданий в комплексе.
-    pub buildings: i16,
-    /// Уникальный индекс комплекса внутри команды.
-    pub id: i16,
-}
-
-impl Complex {
-    /// `Complex::Complex(id)`: все запасы 0, `buildings = 0`.
-    pub const fn new(id: i16) -> Self {
-        Self {
-            material: 0,
-            fuel: 0,
-            gold: 0,
-            power: 0,
-            workers: 0,
-            buildings: 0,
-            id,
-        }
-    }
-
-    /// Идентификатор комплекса.
-    #[inline]
-    pub const fn complex_id(&self) -> ComplexId {
-        ComplexId(self.id)
-    }
-
-    /// `Complex::Grow` — здание подключилось к комплексу.
-    pub fn grow(&mut self) {
-        self.buildings = self.buildings.wrapping_add(1);
-    }
-
-    /// `Complex::Shrink` — здание отключилось; `true`, если комплекс опустел
-    /// (C++ удаляет его из списка команды).
-    pub fn shrink(&mut self) -> bool {
-        self.buildings = self.buildings.wrapping_sub(1);
-        self.buildings == 0
-    }
-}
-
-/// Груз/запас — C++ `class Cargo` (`cargo.hpp`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Cargo {
-    /// Материалы.
-    pub raw: i32,
-    /// Топливо.
-    pub fuel: i32,
-    /// Золото.
-    pub gold: i32,
-    /// Свободная вместимость.
-    pub free_capacity: i32,
-}
-
-impl Cargo {
-    /// `Cargo::Init` — все поля 0.
-    #[inline]
-    pub const fn init() -> Self {
-        Self {
-            raw: 0,
-            fuel: 0,
-            gold: 0,
-            free_capacity: 0,
         }
     }
 }
@@ -455,18 +301,6 @@ impl TeamUnits {
         self.complexes.clear();
     }
 }
-
-/// Темы исследований в порядке `ATTRIB_*` (для итерации по 8 темам).
-pub const RESEARCH_TOPICS: [ResearchTopic; RESEARCH_TOPIC_COUNT] = [
-    ResearchTopic::Attack,
-    ResearchTopic::Shots,
-    ResearchTopic::Range,
-    ResearchTopic::Armor,
-    ResearchTopic::Hits,
-    ResearchTopic::Speed,
-    ResearchTopic::Scan,
-    ResearchTopic::Cost,
-];
 
 /// Количество типов юнитов для счётчиков команды (`UNIT_END`).
 pub const TEAM_UNIT_TYPE_COUNT: u16 = UNIT_END;
