@@ -873,6 +873,47 @@ pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Op
 
 /// `Access_GetTeamUnit` (`access.cpp:1804`).
 pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -> Option<UnitId> {
+    get_team_unit_matching(state, grid, team, |other| other.flags & flags != 0)
+}
+
+/// [`get_team_unit`] с типизированным фильтром сред вместо сырой маски
+/// `MOBILE_*` — тот же `Access_GetTeamUnit` (`access.cpp:1804`).
+///
+/// Юнит подходит, если его среда (классификация экземпляра по `unit.flags`,
+/// [`UnitInfo::environment`]) входит в `environments`. Для флагов из `SC_UNITS`
+/// это бит-в-бит то же, что сырая маска C++: бит `MOBILE_LAND_UNIT` — это
+/// `[Environment::Ground, Environment::Amphibious]` (он включает амфибий),
+/// бит `MOBILE_SEA_UNIT` — `[Environment::Sea, Environment::Amphibious]`, бит
+/// `MOBILE_AIR_UNIT` — `[Environment::Air]`. При этом `[Environment::Ground]`
+/// — **уже** бита: только чистые наземные, без амфибий.
+///
+/// Расхождение с сырой маской возможно лишь у вручную собранных
+/// противоречивых флагов (например `MOBILE_AIR_UNIT` вместе с
+/// `MOBILE_LAND_UNIT`): классификация отдаёт приоритет `Air`, а бит
+/// `MOBILE_LAND_UNIT` в C++ сработал бы. В `SC_UNITS` и в runtime таких флагов
+/// нет (`HOVERING` — отдельный бит полёта), поэтому поведение в игре не
+/// меняется.
+pub fn get_team_unit_by_environments(
+    state: &GameState,
+    grid: Point,
+    team: TeamId,
+    environments: &[Environment],
+) -> Option<UnitId> {
+    get_team_unit_matching(state, grid, team, |other| {
+        other
+            .environment()
+            .is_some_and(|environment| environments.contains(&environment))
+    })
+}
+
+/// Общий обход `Access_GetTeamUnit`: `matches` заменяет проверку
+/// `other.flags & flags != 0`, два прохода и обработка лент — как в C++.
+fn get_team_unit_matching(
+    state: &GameState,
+    grid: Point,
+    team: TeamId,
+    matches: impl Fn(&UnitInfo) -> bool,
+) -> Option<UnitId> {
     if grid.x < 0
         || grid.y < 0
         || grid.x >= crate::geo::MAP_WIDTH
@@ -888,7 +929,7 @@ pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -
             continue;
         };
         if other.team == team
-            && other.flags & flags != 0
+            && matches(other)
             && other.orders != UnitOrder::Idle
             && !other.id.is_no_id()
             && other.unit_type != UnitType::LargeTape
@@ -906,7 +947,7 @@ pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -
                 continue;
             };
             if other.team == team
-                && other.flags & flags != 0
+                && matches(other)
                 && other.orders != UnitOrder::Idle
                 && !other.id.is_no_id()
             {
@@ -2292,5 +2333,99 @@ mod tests {
         assert_eq!(state.group_members(leader), Some(vec![leader]));
         clear_unit_group(&mut state, leader);
         assert_eq!(state.group_members(leader), None);
+    }
+
+    #[test]
+    fn team_unit_by_environments_is_bit_equivalent_to_raw_mobile_masks() {
+        let mut state = state();
+
+        // По юниту на каждую среду `SC_UNITS`; `spawn_unit` добавляет флаги
+        // типа, поэтому биты среды у экземпляров на месте.
+        let ground = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5), 0);
+        let amphibious = spawn(
+            &mut state,
+            UnitType::Scout,
+            TeamId::RED,
+            Point::new(6, 5),
+            0,
+        );
+        let air = spawn(
+            &mut state,
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(7, 5),
+            0,
+        );
+        let sea = spawn(
+            &mut state,
+            UnitType::Corvette,
+            TeamId::RED,
+            Point::new(8, 5),
+            0,
+        );
+
+        // `Access_GetTeamUnit` пропускает `ORDER_IDLE`.
+        for id in [ground, amphibious, air, sea] {
+            state.unit_mut(id).expect("unit").orders = UnitOrder::Await;
+        }
+
+        let grids = [
+            Point::new(5, 5),
+            Point::new(6, 5),
+            Point::new(7, 5),
+            Point::new(8, 5),
+            Point::new(9, 5),
+        ];
+
+        // Каждый типизированный фильтр по всему биту — ровно свой сырой бит
+        // C++ (`SC_UNITS`-флаги согласованы: без `MOBILE_AIR` вместе с
+        // `MOBILE_LAND/SEA`).
+        for (environments, mask) in [
+            (
+                &[Environment::Ground, Environment::Amphibious][..],
+                MOBILE_LAND_UNIT,
+            ),
+            (&[Environment::Air][..], MOBILE_AIR_UNIT),
+            (
+                &[Environment::Sea, Environment::Amphibious][..],
+                MOBILE_SEA_UNIT,
+            ),
+            (&[][..], 0),
+        ] {
+            for grid in grids {
+                assert_eq!(
+                    get_team_unit_by_environments(&state, grid, TeamId::RED, environments),
+                    get_team_unit(&state, grid, TeamId::RED, mask),
+                    "{environments:?} / {mask:#05X} / ({}, {})",
+                    grid.x,
+                    grid.y
+                );
+            }
+        }
+
+        let found = |grid: Point, environments: &[Environment]| {
+            get_team_unit_by_environments(&state, grid, TeamId::RED, environments)
+        };
+
+        // Бит `MOBILE_LAND_UNIT` включает амфибий, а `Environment::Ground` —
+        // только чистые наземные.
+        assert_eq!(
+            found(Point::new(5, 5), &[Environment::Ground]),
+            Some(ground)
+        );
+        assert_eq!(found(Point::new(6, 5), &[Environment::Ground]), None);
+        assert_eq!(found(Point::new(6, 5), &[Environment::Sea]), None);
+        assert_eq!(
+            found(
+                Point::new(6, 5),
+                &[Environment::Ground, Environment::Amphibious],
+            ),
+            Some(amphibious)
+        );
+
+        // Воздух и море — свои биты без расширения.
+        assert_eq!(found(Point::new(7, 5), &[Environment::Air]), Some(air));
+        assert_eq!(found(Point::new(8, 5), &[Environment::Sea]), Some(sea));
+        assert_eq!(found(Point::new(8, 5), &[Environment::Air]), None);
     }
 }

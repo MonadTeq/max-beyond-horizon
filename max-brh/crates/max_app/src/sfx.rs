@@ -235,7 +235,7 @@ pub fn unit_sfx_token(unit_type: UnitType) -> &'static str {
 /// Возвращает `(V_START, статус)`: C++ сначала играет `V_START`/`V_START2`,
 /// затем — голос по состоянию юнита. Условия повторены в порядке C++.
 pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Option<&'static str>) {
-    use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
+    use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS};
 
     let ammo_base = unit.base_values.get_attribute(ATTRIB_AMMO);
@@ -243,26 +243,12 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
 
     let ammo_depleted = ammo_base != 0 && unit.ammo == 0;
     let ammo_low = ammo_base != 0 && i32::from(unit.ammo) <= ammo_base / 4;
-    let movement_exhausted = unit.flags
-        & (unit_flags::MOBILE_AIR_UNIT
-            | unit_flags::MOBILE_SEA_UNIT
-            | unit_flags::MOBILE_LAND_UNIT)
-        != 0
-        && unit.speed == 0;
-    let critical = unit.flags
-        & (unit_flags::MOBILE_AIR_UNIT
-            | unit_flags::MOBILE_SEA_UNIT
-            | unit_flags::MOBILE_LAND_UNIT
-            | unit_flags::STATIONARY)
-        != 0
-        && i32::from(unit.hits) <= hits_base / 4;
-    let damaged = unit.flags
-        & (unit_flags::MOBILE_AIR_UNIT
-            | unit_flags::MOBILE_SEA_UNIT
-            | unit_flags::MOBILE_LAND_UNIT
-            | unit_flags::STATIONARY)
-        != 0
-        && i32::from(unit.hits) <= hits_base / 2;
+    // Класс экземпляра: C++ проверяет биты `MOBILE_AIR|MOBILE_SEA|MOBILE_LAND`
+    // (= среда определена) и `STATIONARY` (= `!is_mobile()`).
+    let mobile = unit.environment().is_some();
+    let movement_exhausted = mobile && unit.speed == 0;
+    let critical = (mobile || !unit.is_mobile()) && i32::from(unit.hits) <= hits_base / 4;
+    let damaged = (mobile || !unit.is_mobile()) && i32::from(unit.hits) <= hits_base / 2;
 
     let status = if ammo_depleted {
         Some("V_M142")
@@ -284,13 +270,7 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
         Some("V_M186")
     } else if unit.orders == UnitOrder::Clear {
         Some("V_M171")
-    } else if unit.orders == UnitOrder::Sentry
-        && unit.flags
-            & (unit_flags::MOBILE_AIR_UNIT
-                | unit_flags::MOBILE_SEA_UNIT
-                | unit_flags::MOBILE_LAND_UNIT)
-            != 0
-    {
+    } else if unit.orders == UnitOrder::Sentry && mobile {
         Some("V_M158")
     } else if unit.orders == UnitOrder::Build {
         match unit.state {
@@ -303,10 +283,7 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
         // живёт в `GameState`, поэтому V_M093 играет при выборе включённого
         // Research Center (см. `App::select_unit`).
         Some("V_M093")
-    } else if unit.flags
-        & (unit_flags::MOBILE_AIR_UNIT | unit_flags::MOBILE_SEA_UNIT | unit_flags::MOBILE_LAND_UNIT)
-        != 0
-    {
+    } else if mobile {
         Some("V_M001")
     } else {
         None

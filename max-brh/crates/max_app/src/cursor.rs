@@ -17,6 +17,7 @@
 
 use max_assets::{CursorSet, CURSOR_RESOURCES};
 use max_core::access;
+use max_core::classification::Environment;
 use max_core::enums::{unit_flags, GameStateType, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
@@ -549,11 +550,11 @@ pub fn unit_action_cursor(
             // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, то есть режим `load`
             // (и `repair`/`reload`/`x-fer` попадают в `else` ниже).
             if cursor == crate::unitmenu::CURSOR_LOAD && i32::from(unit1.storage) < capacity {
-                let land = access::get_team_unit(
+                let land = access::get_team_unit_by_environments(
                     state,
                     grid,
                     player_team,
-                    unit_flags::MOBILE_LAND_UNIT,
+                    &[Environment::Ground, Environment::Amphibious],
                 )
                 .and_then(|id| state.unit(id));
 
@@ -924,17 +925,22 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                     .base_values
                     .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
         {
-            let land = access::get_team_unit(state, grid, player_team, unit_flags::MOBILE_LAND_UNIT)
-                .and_then(|id| state.unit(id));
+            let land = access::get_team_unit_by_environments(
+                state,
+                grid,
+                player_team,
+                &[Environment::Ground, Environment::Amphibious],
+            )
+            .and_then(|id| state.unit(id));
 
             if let Some(land) = land {
                 if land.orders != UnitOrder::Clear
                     && land.orders != UnitOrder::Build
-                    && access::get_team_unit(
+                    && access::get_team_unit_by_environments(
                         state,
                         grid,
                         player_team,
-                        unit_flags::MOBILE_AIR_UNIT,
+                        &[Environment::Air],
                     )
                     .is_none()
                 {
@@ -975,17 +981,20 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                     .base_values
                     .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
         {
-            let (class_flags, only_special) = match selected.unit_type {
-                UnitType::Depot => (unit_flags::MOBILE_LAND_UNIT, false),
-                UnitType::Hangar => (unit_flags::MOBILE_AIR_UNIT, false),
-                UnitType::Dock => (unit_flags::MOBILE_SEA_UNIT, false),
-                UnitType::Barracks => (unit_flags::MOBILE_LAND_UNIT, true),
-                _ => (0, false),
+            // Биты C++: `Depot`/`Barracks` — `MOBILE_LAND_UNIT` (земля +
+            // амфибии), `Hangar` — `MOBILE_AIR_UNIT`, `Dock` —
+            // `MOBILE_SEA_UNIT` (море + амфибии).
+            let (environments, only_special): (&[Environment], bool) = match selected.unit_type {
+                UnitType::Depot => (&[Environment::Ground, Environment::Amphibious], false),
+                UnitType::Hangar => (&[Environment::Air], false),
+                UnitType::Dock => (&[Environment::Sea, Environment::Amphibious], false),
+                UnitType::Barracks => (&[Environment::Ground, Environment::Amphibious], true),
+                _ => (&[], false),
             };
 
-            if class_flags != 0 {
+            if !environments.is_empty() {
                 let candidate =
-                    access::get_team_unit(state, grid, player_team, class_flags)
+                    access::get_team_unit_by_environments(state, grid, player_team, environments)
                         .and_then(|id| state.unit(id));
 
                 if let Some(candidate) = candidate {

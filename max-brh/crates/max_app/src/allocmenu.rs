@@ -1020,6 +1020,9 @@ mod tests {
                 .set(x, y, max_core::map::ResourceMapEntry::new(amount, Some(kind), 0));
         }
 
+        // Данные-контроль, а не чтение классификации: маска — аргумент
+        // `spawn_unit` (флаги экземпляра), поэтому `STATIONARY | BUILDING`
+        // остаются сырыми битами.
         let flags = unit_flags::STATIONARY | unit_flags::BUILDING;
         let id = state
             .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), flags)

@@ -3247,11 +3247,7 @@ fn session_map_right_click(
     // Авиация ходит по `ORDER_MOVE`/`INIT` (пакет 08/P3): путь `AirPath`
     // строит симуляция (`Paths_GetAirPath`), а `unit_can_move` намеренно
     // исключает `MOBILE_AIR_UNIT` (наземный `Packet38Move` ей не подходит).
-    if app
-        .state()
-        .unit(selected)
-        .is_some_and(|unit| unit.flags & max_core::enums::unit_flags::MOBILE_AIR_UNIT != 0)
-    {
+    if app.state().unit(selected).is_some_and(|unit| unit.is_air()) {
         match hud::build_air_move_order(app.state(), selected, destination) {
             Some(command) => {
                 app.hud_mut().preview = None;

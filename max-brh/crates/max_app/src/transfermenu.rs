@@ -504,10 +504,7 @@ impl TransferMenu {
                 let Some(icon) = cargo.icon(unit.unit_type) else {
                     continue;
                 };
-                let stationary =
-                    max_core::access::unit_type_flags(unit.unit_type)
-                        & max_core::enums::unit_flags::STATIONARY
-                        != 0;
+                let stationary = !unit.unit_type.is_mobile();
                 let zoom = if stationary { 16 } else { 32 };
 
                 painted += crate::mobilize::draw_icon(
@@ -785,7 +782,7 @@ pub fn resolve_target(
     }
 
     if let Some(complex) = target_unit.complex {
-        if target_unit.flags & max_core::enums::unit_flags::STATIONARY != 0 {
+        if !target_unit.is_mobile() {
             if let Some(id) =
                 find_unit_with_cargo_type(state, target_unit.team, complex, cargo)
             {

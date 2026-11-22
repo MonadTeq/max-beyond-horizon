@@ -73,7 +73,7 @@
 //!   остальных приказах порта).
 
 use max_core::access;
-use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
 use max_core::geo::{Point, DIRECTION_OFFSETS};
 use max_core::production;
@@ -312,7 +312,7 @@ impl BuildSiteSelect {
 /// (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`). Сетка строителя при
 /// въезде не меняется.
 pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
-    if unit.unit_type != UnitType::Constructor || unit.flags & unit_flags::STATIONARY != 0 {
+    if unit.unit_type != UnitType::Constructor || !unit.is_mobile() {
         return (0, 0);
     }
 
@@ -529,6 +529,7 @@ impl crate::App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use max_core::enums::unit_flags;
     use max_core::enums::Surface;
     use max_core::geo::{MAP_HEIGHT, MAP_WIDTH};
 
