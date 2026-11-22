@@ -21,6 +21,7 @@
 | Плоский образ, строки, каталог функций | `max-original-dasm/{maxrun.flat,01-strings.txt,string-matches.csv,functions-named.csv}` |
 | Форматы (RES/WRL/спрайты/звук) | `max-original-dasm/formats/*.md` + эталонные парсеры `tools/` |
 | Динамический анализ (DOSBox-X) | `max-original-dasm/tools/dosbox/*.md` |
+| Находки по коду (структуры/перечисления) | `max-original-dasm/findings-order-state-cargo.md` (R2: `UnitInfo.state`=0x3E, состояния 0x0A/0x15 не используются; R4: раскладка `Cargo` 6×int16, `power`/`life` — дельты баланса комплекса) |
 | Инструменты и процедуры | `max-original-dasm/TOOLS.md`, `README.md` |
 
 Детали — в указанных файлах; этот документ — только карта.

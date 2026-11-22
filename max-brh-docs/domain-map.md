@@ -142,7 +142,7 @@
 | Поиск пути | `UnitOrderState::IssuingPath` | `ORDER_STATE_ISSUING_PATH` | C++ | 0x07 |
 | Готов к огню | `UnitOrderState::ReadyToFire` | `ORDER_STATE_READY_TO_FIRE` | C++ | 0x08 |
 | Огонь | `UnitOrderState::FireInProgress` | `ORDER_STATE_FIRE_IN_PROGRESS` | C++ | 0x09 |
-| (резерв) | `UnitOrderState::State10` | `ORDER_STATE_10` | — | 0x0A; безымянный в C++, исследуется (RE) |
+| (не используется) | `UnitOrderState::State10` | `ORDER_STATE_10` | C++/RE | 0x0A; не используется ни в C++-порте, ни в оригинале (RE: ни присваивания, ни сравнения) |
 | Строительство | `UnitOrderState::BuildInProgress` | `ORDER_STATE_BUILD_IN_PROGRESS` | C++ | 0x0B |
 | Отмена запроса пути | `UnitOrderState::PathRequestCancel` | `ORDER_STATE_PATH_REQUEST_CANCEL` | C++ | 0x0C |
 | Отмена стройки | `UnitOrderState::BuildCancel` | `ORDER_STATE_BUILD_CANCEL` | C++ | 0x0D |
@@ -153,7 +153,7 @@
 | Выгрузка завершена | `UnitOrderState::FinishUnloading` | `ORDER_STATE_FINISH_UNLOADING` | C++ | 0x12 |
 | Посадка завершена | `UnitOrderState::FinishLanding` | `ORDER_STATE_FINISH_LANDING` | C++ | 0x13 |
 | Взлёт завершён | `UnitOrderState::FinishTakeOff` | `ORDER_STATE_FINISH_TAKE_OFF` | C++ | 0x14 |
-| (резерв) | `UnitOrderState::State21` | `ORDER_STATE_21` | — | 0x15; безымянный в C++, исследуется (RE) |
+| (не используется) | `UnitOrderState::State21` | `ORDER_STATE_21` | C++/RE | 0x15; не используется ни в C++-порте, ни в оригинале (RE: ни присваивания, ни сравнения) |
 | Трансформация | `UnitOrderState::ProgressTransforming` | `ORDER_STATE_PROGRESS_TRANSFORMING` | C++ | 0x16 |
 | Трансформация завершена | `UnitOrderState::FinishTransforming` | `ORDER_STATE_FINISH_TRANSFORMING` | C++ | 0x17 |
 | Расчистка пути | `UnitOrderState::ClearPath` | `ORDER_STATE_CLEAR_PATH` | C++ | 0x18 |
@@ -196,7 +196,9 @@
 > (не путать с ресурсом «топливо»). `ResourceKind` покрывает только 3 рудных
 > ресурса карты; энергия/рабочие/кредиты — отдельные оси. Rust-`Cargo`
 > (`raw/fuel/gold/free_capacity`) сужен относительно C++ `cargo.hpp`
-> (`power`/`life`) — исследуется (R4, RE).
+> (`power`/`life`); **подтверждено RE**: `power`/`life` — дельты баланса комплекса
+> (`Complex.power`/`Complex.workers`), а не груз транспорта — сужение семантически
+> точно. C++-токен `life` в оригинале называется «workers» (рабочие).
 
 ## Команды и кланы
 
