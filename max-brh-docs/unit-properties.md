@@ -1,8 +1,9 @@
 # Свойства юнитов (производственные)
 
 Подробное описание свойств производственных юнитов: потребление, производство
-и режимы. Ведётся аналитиком; данные — из C++-оракула (`cargo.cpp`,
-`Cargo_GetNetProduction`, `Cargo_ApplyUnitConsumption`, ставки `Cargo_Get*Rate`).
+и режимы. Ведётся аналитиком; данные — из оракулов (Оракул Klei: `cargo.cpp`,
+`Cargo_GetNetProduction`, `Cargo_ApplyUnitConsumption`, ставки `Cargo_Get*Rate`;
+сверка с Оракулом Interplay).
 
 ## Модель производственного юнита
 
