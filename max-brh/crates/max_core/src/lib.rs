@@ -84,7 +84,6 @@ pub mod events;
 pub mod frames;
 pub mod game;
 pub mod hash;
-pub mod input;
 pub mod order;
 pub mod pathfinding;
 pub mod power;
@@ -104,7 +103,7 @@ pub mod victory;
 // Типы нижнего слоя (Infrastructure, Ф5.2) живут в `max_types`; здесь — их
 // реэкспорт, чтобы существующие пути `max_core::enums::…`, `max_core::geo::…`,
 // `max_core::map::…` не менялись.
-pub use max_types::{enums, geo, map};
+pub use max_types::{enums, geo, input, map};
 
 pub use access::{
     get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
@@ -171,7 +170,7 @@ pub use max_types::geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
 };
 pub use hash::{MapHash, MapHashObject, UnitHash};
-pub use input::{
+pub use max_types::input::{
     Command, ComplexSummaryEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
     Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet10UpgradeUnitType,
     Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat,

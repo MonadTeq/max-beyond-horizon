@@ -6,8 +6,8 @@
 //!
 //! Сетевое кодирование (ENet, little-endian, `NetPacket`) — **не здесь**: это
 //! `max_net`/`max_app`. `max_core` получает уже разобранные команды и применяет
-//! их к [`GameState`](crate::game::GameState) в порядке поступления
-//! ([`crate::events`]). Поэтому все структуры модуля — plain data: их можно
+//! их к `GameState` (`max_core::game`) в порядке поступления
+//! (`max_core::events`). Поэтому все структуры модуля — plain data: их можно
 //! строить напрямую из тестов, из max_net и из скриптов-реплеев (DESIGN §8.2).
 //!
 //! ## Процессоры пакета 08
@@ -26,7 +26,7 @@
 //!   `grid_x/grid_y/speed/group_speed/shots/move_fraction`. В
 //!   [`Packet41MoveFinished`] эти поля есть (протокол — контракт с max_net), но
 //!   применяются только если отличаются от уже известного состояния; см.
-//!   [`crate::events::apply_command`].
+//!   `max_core::events::apply_command`.
 //! * Пакет **38** в C++-порте не несёт `grid_x/grid_y`, а `max-brh-docs/protocol.md`
 //!   §8.4 их описывает; поле оставлено в структуре для совместимости и
 //!   применяется как «текущая клетка владельца» (C++: `Remote_RelocateUnit`).
@@ -535,7 +535,7 @@ pub enum PacketKind {
 
 /// Одна входная команда — результат разбора одного APPL-пакета.
 ///
-/// Применение — [`crate::events::apply_command`], строго в порядке получения.
+/// Применение — `max_core::events::apply_command`, строго в порядке получения.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// 08.
