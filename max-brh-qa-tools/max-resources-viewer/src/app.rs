@@ -1,9 +1,9 @@
-//! SDL3-хост редактора: окно, ввод, презентация кадра.
+//! SDL3 host of the editor: window, input, frame presentation.
 //!
-//! Это тонкий слой (аналог `max_render::sdl_window`), но с событиями, которые
-//! нужны редактору: колесо мыши, перетаскивание, F-клавиши и текстовый фильтр.
-//! Вся отрисовка — в [`crate::ui::EditorState::compose`], поэтому тот же кадр
-//! сохраняется в PNG по F12/`--shot` без участия SDL.
+//! This is a thin layer (a counterpart of `max_render::sdl_window`), but with the events the
+//! editor needs: mouse wheel, dragging, F-keys and the text filter.
+//! All drawing happens in [`crate::ui::EditorState::compose`], so the same frame
+//! is saved to PNG on F12/`--shot` without SDL involved.
 
 use std::path::Path;
 use std::time::Duration;
@@ -21,18 +21,18 @@ use sdl3::video::{Window, WindowContext};
 
 use crate::ui::{EditorState, FRAME_HEIGHT, FRAME_WIDTH, WINDOW_TITLE};
 
-/// Открывает окно и крутит цикл до Esc/закрытия.
+/// Opens the window and runs the loop until Esc/closing.
 pub fn run(state: EditorState, shot: Option<&Path>) -> Result<()> {
     let sdl = sdl3::init().map_err(|error| anyhow!("SDL_Init: {error}"))?;
 
     run_with_sdl(sdl, state, shot)
 }
 
-/// То же, что [`run`], но с уже инициализированным SDL.
+/// The same as [`run`], but with SDL already initialized.
 ///
-/// Нужно при запуске без аргументов: перед окном показывается нативный диалог
-/// выбора `MAX.RES` (см. `dialog.rs` в бинарнике), и тот же `Sdl` переиспользуется
-/// для окна — без повторной инициализации/остановки SDL.
+/// Needed when starting without arguments: before the window a native dialog
+/// picks `MAX.RES` (see `dialog.rs` in the binary), and the same `Sdl` is reused
+/// for the window — no re-initialization/shutdown of SDL.
 pub fn run_with_sdl(sdl: sdl3::Sdl, mut state: EditorState, shot: Option<&Path>) -> Result<()> {
     let video = sdl.video().map_err(|error| anyhow!("SDL video: {error}"))?;
     let window = video

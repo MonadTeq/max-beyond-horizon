@@ -1,13 +1,13 @@
-//! Рендер настоящих тайлов поверхности из `.WRL` (без SDL).
+//! Renders real surface tiles from `.WRL` (no SDL).
 //!
 //! ```sh
 //! cargo run -p max_render --example terrain -- ../max-original/SNOW_1.WRL /tmp/out
 //! ```
 //!
-//! Пишет два BMP: обзор всей карты (зум 8 → 8 px на клетку) и детальный
-//! фрагмент в центре (зум 64 → 64 px, как `Gfx_ZoomLevel` в оригинале).
-//! Это проверка того, что палитра/тайлы `.WRL` читаются правильно — та же
-//! картинка, что рисует C++-порт (`Gfx_DecodeMapTile`).
+//! Writes two BMPs: an overview of the whole map (zoom 8 → 8 px per cell) and a detailed
+//! fragment in the center (zoom 64 → 64 px, like `Gfx_ZoomLevel` in the original).
+//! This verifies that the `.WRL` palette/tiles are read correctly — the same
+//! image that the C++ port draws (`Gfx_DecodeMapTile`).
 
 use std::env;
 use std::fs::File;
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         atlas.tile_count() as usize * max_assets::wrl::TILE_PIXELS
     );
 
-    // 1. Обзор всей карты: 112×112 клеток по 8 px = 896×896.
+    // 1. Whole-map overview: 112×112 cells at 8 px = 896×896.
     let (w, h) = (atlas.size().0.max(1) as u32, atlas.size().1.max(1) as u32);
     let zoom = 8u32;
     let mut frame = RgbaBuffer::filled(w * zoom, h * zoom, max_render::buffer::Rgba::BLACK);
@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_bmp(&overview, &frame)?;
     println!("overview: {} (клеток {painted})", overview.display());
 
-    // 2. Детальный фрагмент 512×384, зум 1:1 (64 px на клетку). Центр — по
-    //    желанию (по умолчанию центр карты; у SNOW_1 там вода, земля по краям).
+    // 2. Detail fragment 512×384, zoom 1:1 (64 px per cell). The center is
+    //    configurable (by default the map center; for SNOW_1 that is water with land at the edges).
     let center = match (args.next(), args.next()) {
         (Some(x), Some(y)) => (x.parse::<i32>()?, y.parse::<i32>()?),
         _ => (0, 0),
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 24-битный BMP (bottom-up) — без внешних крейтов.
+/// 24-bit BMP (bottom-up) — no external crates.
 fn write_bmp(path: &PathBuf, buffer: &RgbaBuffer) -> io::Result<()> {
     let width = buffer.width();
     let height = buffer.height();

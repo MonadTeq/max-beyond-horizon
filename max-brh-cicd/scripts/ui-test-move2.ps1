@@ -1,21 +1,21 @@
-# ui-test-move2.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
-# LMB-выбор юнита, RMB-приказ (SendInput!), зелёный предпросмотр пути,
-# End Turn и проверка, что юнит реально перешёл в целевую клетку.
+# ui-test-move2.ps1 — LIVE run of the M.A.X. Rust client window:
+# LMB unit selection, RMB order (SendInput!), green path preview,
+# End Turn, and a check that the unit really moved to the target cell.
 #
-# Отличия от старой версии:
-#  * кнопки мыши посылаются через SendInput (MOUSEEVENTF_LEFT/RIGHTDOWN/UP), а
-#    не через устаревший mouse_event;
-#  * перед каждым кликом проверяется фокус (GetForegroundWindow == hwnd);
-#    при потере фокуса окно поднимается (ShowWindow/SW_RESTORE + SetForegroundWindow);
-#  * точка высадки подтверждается клавишей Enter (как QA `key ENTER`), поэтому
-#    база всегда в START_POSITIONS, а не там, куда случайно попал клик по карте;
-#  * базовые клетки шахты/генератора/юнитов берутся из трассы MAX_DEBUG_INPUT,
-#    а не из жёстких пикселей: сценарий работает при любой выбранной точке;
-#  * проверяется, что зелёный предпросмотр (hud::PREVIEW_COLOR) реально
-#    нарисован в кадре окна, и что после End Turn `grid` юнита = цель, а
-#    визуальная позиция `vX.Y` прошла маршрут.
+# Differences from the old version:
+#  * mouse buttons are sent via SendInput (MOUSEEVENTF_LEFT/RIGHTDOWN/UP),
+#    not via the deprecated mouse_event;
+#  * focus is checked before every click (GetForegroundWindow == hwnd);
+#    on focus loss the window is raised (ShowWindow/SW_RESTORE + SetForegroundWindow);
+#  * the landing point is confirmed with Enter (like QA `key ENTER`), so
+#    the base is always at START_POSITIONS instead of wherever a map click happened to land;
+#  * the base cells of the mine/generator/units come from the MAX_DEBUG_INPUT trace,
+#    not from hard-coded pixels: the scenario works at any chosen point;
+#  * it checks that the green preview (hud::PREVIEW_COLOR) is really
+#    drawn in the window frame, and that after End Turn the unit's `grid` = the target while
+#    the visual position `vX.Y` walked the route.
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-move2.ps1
+# Run: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-move2.ps1
 param(
     [string]$Out = "",
     [switch]$KeepProcess
@@ -133,7 +133,7 @@ public static class MaxUi {
 }
 '@
 
-# --- окружение процесса -----------------------------------------------------
+# --- process environment ----------------------------------------------------
 $env:MAX_DEBUG_INPUT = '1'
 $script:trace = Join-Path $Out 'trace.log'
 Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -147,8 +147,8 @@ $process = Start-Process -FilePath $exe `
 function Read-Trace {
     try {
         if (-not (Test-Path $script:trace)) { return '' }
-        # Файл пишет дочерний процесс: открываем с FileShare.ReadWrite, иначе
-        # ReadAllText падает и трасса выглядит пустой во время прогона.
+        # A child process writes the file: we open it with FileShare.ReadWrite, otherwise
+        # ReadAllText fails and the trace looks empty during the run.
         $stream = [System.IO.File]::Open(
             $script:trace,
             [System.IO.FileMode]::Open,
@@ -212,7 +212,7 @@ function Click-Client([int]$cx, [int]$cy, [bool]$right = $false) {
     [MaxUi]::Click($script:hwnd, $cx, $cy, $right) | Out-Null
 }
 
-# --- разбор трассы ----------------------------------------------------------
+# --- trace parsing ----------------------------------------------------------
 function Get-LastTick([string]$text) {
     $lines = @($text -split "`r?`n" | Where-Object { $_ -match '^\[tick ' })
     if ($lines.Count -eq 0) { return $null }
@@ -276,21 +276,21 @@ try {
     Shot '03-planet' | Out-Null
     Click-Client 568 458; Start-Sleep -Milliseconds 800  # Done (Planet)
     Shot '04-players' | Out-Null
-    Click-Client 312 194; Start-Sleep -Milliseconds 400  # слот 1: Human (уже)
+    Click-Client 312 194; Start-Sleep -Milliseconds 400  # slot 1: Human (already)
     Click-Client 568 458; Start-Sleep -Milliseconds 800  # Done (Players)
     Shot '05-mobilize' | Out-Null
     Click-Client 474 463; Start-Sleep -Milliseconds 800  # Done (CargoMenu)
     Shot '06-landing' | Out-Null
 
-    # Точка высадки: Enter подтверждает точку по умолчанию (START_POSITIONS +
-    # FindValidStartingPosition), как `key ENTER` в move-input.qa. Клик по карте
-    # здесь выбрал бы точку под курсором и сломал бы абсолютные координаты.
+    # Landing point: Enter confirms the default point (START_POSITIONS +
+    # FindValidStartingPosition), like `key ENTER` in move-input.qa. A map click
+    # here would pick the point under the cursor and break the absolute coordinates.
     Ensure-Focus | Out-Null
     [MaxUi]::PressEnter() | Out-Null
     Start-Sleep -Seconds 1
 
-    # В окне сессия начинается без ввода: признак — первые тики локальной партии
-    # (`[tick ...]` печатается только при `screen = InSession`).
+    # In the window the session starts without input: the sign is the first ticks of the local match
+    # (`[tick ...]` is printed only when `screen = InSession`).
     if (-not (Wait-Trace '(?m)^\[tick ' 20000)) {
         Fail 'партия не началась: нет тиков InSession'
         throw 'меню не пройдено'
@@ -319,7 +319,7 @@ try {
     Write-Host ("A: mining=40@({0},{1})  generator=2@({2},{3})  large-slab=17@({4},{5})  surveyor=57@({6},{7})" -f `
         $mine.GX, $mine.GY, $generator.GX, $generator.GY, $largeSlab.GX, $largeSlab.GY, $surveyor.GX, $surveyor.GY)
 
-    # (A) Генератор не на клетке шахты; на клетке высадки — шахта и плита.
+    # (A) The generator is not on the mine cell; the landing cell holds the mine and the plate.
     if ($generator.GX -eq $mine.GX -and $generator.GY -eq $mine.GY) {
         Fail "генератор стоит на клетке шахты ($($mine.GX),$($mine.GY))"
     }
@@ -330,9 +330,9 @@ try {
     if (-not ($atBase -contains 17)) { Fail 'на клетке шахты нет LRGSLAB (как C++ DeployUnit)' }
     if ($atBase -contains 2) { Fail 'генератор делит клетку с шахтой' }
 
-    # --- LMB: выбрать Surveyor ------------------------------------------------
+    # --- LMB: select the Surveyor ---------------------------------------------
     Step 'LMB: выбор Surveyor'
-    $centerX = 404; $centerY = 242   # центр MAIN_MAP; камера на шахте
+    $centerX = 404; $centerY = 242   # the center of MAIN_MAP; the camera is on the mine
     $sx = $centerX + 64 * ($surveyor.GX - $mine.GX)
     $sy = $centerY + 64 * ($surveyor.GY - $mine.GY)
     Click-Client $sx $sy
@@ -346,10 +346,10 @@ try {
     $selId = Tick-Selection (Read-Trace)
     if ($null -eq $selId) { Fail 'LMB не выделил юнита (в трассе нет sel=ID)' }
 
-    # --- RMB: приказ на соседнюю клетку --------------------------------------
+    # --- RMB: order to a neighboring cell ------------------------------------
     Step 'RMB: приказ движения (SendInput)'
-    # Сначала цели в 2 клетках: маршрут длиннее одной клетки, поэтому в трассе
-    # видно несколько промежуточных `vX.Y` (визуальный проход маршрута).
+    # First a target 2 cells away: the route is longer than one cell, so the trace
+    # shows several intermediate `vX.Y` (the visual walk of the route).
     $destinations = @(
         @(2, 0), @(0, 2), @(-2, 0), @(0, -2),
         @(2, -2), @(2, 2), @(-2, 2), @(-2, -2),
@@ -365,8 +365,8 @@ try {
         if ($cx -lt 181 -or $cx -gt 626 -or $cy -lt 19 -or $cy -gt 465) { continue }
 
         for ($attempt = 0; $attempt -lt 2; $attempt++) {
-            # Повторный LMB: после неудачного RMB (Cancel/No path) выделение
-            # могло сброситься, а без выделения RMB отвечает no-selection.
+            # A repeated LMB: after an unsuccessful RMB (Cancel/No path) the selection
+            # may have been dropped, and without a selection RMB answers no-selection.
             Click-Client $sx $sy
             Start-Sleep -Milliseconds 350
             $before = ([regex]::Matches((Read-Trace), '\[rclick\] result=')).Count
@@ -381,7 +381,7 @@ try {
                 $destGX = $gx; $destGY = $gy
                 break
             }
-            if ($result) { break }   # событие дошло, но приказ не дал движения — другая цель
+            if ($result) { break }   # the event arrived but the order produced no movement — another target
         }
 
         if ($moved) { break }
@@ -435,7 +435,7 @@ try {
         Fail "визуальная позиция не дошла до цели: $($visuals[-1]) != $finalVisual"
     }
 
-    # --- Выбор юнита уже в новой клетке (следующий ход) ----------------------
+    # --- Selecting the unit on the new cell (next turn) ----------------------
     Step 'LMB по целевой клетке после смены хода'
     $dx = $centerX + 64 * ($destGX - $mine.GX)
     $dy = $centerY + 64 * ($destGY - $mine.GY)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Очистка Docker после CI/сборочных прогонов.
-#   bash max-brh-cicd/scripts/docker-clean.sh          # безопасно: только мусор
-#   bash max-brh-cicd/scripts/docker-clean.sh --all    # агрессивно: все неиспользуемые образы
+# Docker cleanup after CI/build runs.
+#   bash max-brh-cicd/scripts/docker-clean.sh          # safe: garbage only
+#   bash max-brh-cicd/scripts/docker-clean.sh --all    # aggressive: all unused images
 set -e
 
 ALL=0

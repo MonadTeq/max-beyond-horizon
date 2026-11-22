@@ -1,29 +1,29 @@
-//! Нативный диалог выбора `MAX.RES` через SDL3 (только под feature `sdl`).
+//! The native `MAX.RES` selection dialog through SDL3 (only under the `sdl` feature).
 //!
-//! # Почему raw FFI, а не `sdl3::dialog`
+//! # Why raw FFI instead of `sdl3::dialog`
 //!
-//! Крейт `sdl3` 0.22.1 оборачивает только `SDL_ShowOpenFileDialog`, у которого
-//! нет параметра заголовка (заголовок всегда системный «Open File»). Начиная с
-//! SDL 3.2.0 есть `SDL_ShowFileDialogWithProperties` с
-//! `SDL_PROP_FILE_DIALOG_TITLE_STRING`, `..._ACCEPT_STRING` и т. п. — именно он
-//! нужен для заголовка «Укажите файл MAX.RES». Слой `sdl3-sys` 0.7.3
-//! (`SDL 3.4.20`) объявляет эту функцию и константы свойств, а `SDL3.dll`
-//! 3.4.20 экспортирует её (проверено `dumpbin /exports`). Поэтому здесь
-//! небольшой `unsafe`-вызов напрямую через `sdl3::sys`, а не Windows-FFI
-//! `GetOpenFileNameW`: один код работает на Windows и Linux, диалог остаётся
-//! нативным, а `unsafe` изолирован в бинарнике (в библиотеке
-//! `forbid(unsafe_code)` сохраняется).
+//! The `sdl3` 0.22.1 crate wraps only `SDL_ShowOpenFileDialog`, which has
+//! no title parameter (the title is always the system "Open File"). Since
+//! SDL 3.2.0 there is `SDL_ShowFileDialogWithProperties` with
+//! `SDL_PROP_FILE_DIALOG_TITLE_STRING`, `..._ACCEPT_STRING` and so on — exactly what is
+//! needed for the `Укажите файл MAX.RES` title. The `sdl3-sys` 0.7.3 layer
+//! (`SDL 3.4.20`) declares that function and the property constants, and `SDL3.dll`
+//! 3.4.20 exports it (verified with `dumpbin /exports`). That is why there is a
+//! small `unsafe` call directly through `sdl3::sys` here instead of the Windows FFI
+//! `GetOpenFileNameW`: one code path works on Windows and Linux, the dialog stays
+//! native, and the `unsafe` is isolated in the binary (in the library
+//! `forbid(unsafe_code)` stays in place).
 //!
-//! # Асинхронность
+//! # Asynchrony
 //!
-//! SDL-диалог асинхронный: `SDL_ShowFileDialogWithProperties` возвращается
-//! сразу, результат приходит в [`SDL_DialogFileCallback`] — возможно, из
-//! другого потока. Мы держим канал `mpsc`, крутим `poll_iter()` (на Linux это
-//! нужно XDG-порталу) и ждём результата: окно редактора не открывается, пока
-//! пользователь не выберет файл или не отменит диалог.
+//! The SDL dialog is asynchronous: `SDL_ShowFileDialogWithProperties` returns
+//! immediately and the result arrives in [`SDL_DialogFileCallback`] — possibly from
+//! another thread. We keep an `mpsc` channel, pump `poll_iter()` (on Linux this is
+//! required by the XDG portal) and wait for the result: the editor window does not open until
+//! the user picks a file or cancels the dialog.
 //!
-//! Все C-строки и массив фильтров живут до конца функции, то есть дольше
-//! колбэка (SDL требует, чтобы массив фильтров был валиден до колбэка).
+//! All C strings and the filter array live until the end of the function, that is, longer than
+//! the callback (SDL requires the filter array to be valid until the callback).
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -35,47 +35,47 @@ use sdl3::sys;
 
 use max_resources_viewer::startup::PickResult;
 
-/// Заголовок диалога (пункт 1 задачи).
+/// The dialog title (task item 1).
 const DIALOG_TITLE: &str = "Укажите файл MAX.RES";
-/// Подпись фильтра в списке типов файлов.
+/// The filter caption in the file type list.
 const FILTER_NAME: &str = "MAX.RES (*.RES)";
-/// Расширение без точки, как требует SDL.
+/// The extension without a dot, as SDL requires.
 const FILTER_PATTERN: &str = "RES";
 
-/// Как часто просыпаться, чтобы прокачать события SDL, пока диалог открыт.
+/// How often to wake up to pump SDL events while the dialog is open.
 const PUMP_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Владение колбэком: SDL получает указатель на эту структуру и вызывает
-/// колбэк ровно один раз, после чего [`dialog_callback`] освобождает `Box`.
+/// Callback ownership: SDL receives a pointer to this structure and calls
+/// the callback exactly once, after which [`dialog_callback`] frees the `Box`.
 struct CallbackData {
     sender: mpsc::Sender<PickResult>,
 }
 
-/// C-колбэк SDL: разбирает `filelist` и отправляет результат в канал.
+/// The SDL C callback: parses `filelist` and sends the result into the channel.
 ///
 /// # Safety
 ///
-/// `userdata` должен быть указателем на `Box<CallbackData>`, созданный в
-/// [`pick_max_res_file`]; SDL вызывает колбэк один раз на диалог. `filelist`
-/// либо NULL (ошибка), либо указывает на NULL-terminated массив C-строк.
+/// `userdata` must be a pointer to a `Box<CallbackData>` created in
+/// [`pick_max_res_file`]; SDL calls the callback once per dialog. `filelist` is
+/// either NULL (an error) or points to a NULL-terminated array of C strings.
 unsafe extern "C" fn dialog_callback(
     userdata: *mut c_void,
     filelist: *const *const c_char,
     _filter: c_int,
 ) {
-    // SAFETY: см. контракт функции; Box возвращается ровно один раз.
+    // SAFETY: see the function contract; the Box is returned exactly once.
     let data = unsafe { Box::from_raw(userdata as *mut CallbackData) };
 
     let result = if filelist.is_null() {
         PickResult::Failed(format!("SDL: {}", sdl3::get_error()))
     } else {
-        // SAFETY: filelist не NULL и содержит как минимум завершающий NULL.
+        // SAFETY: filelist is not NULL and contains at least the terminating NULL.
         let first = unsafe { *filelist };
 
         if first.is_null() {
             PickResult::Cancelled
         } else {
-            // SAFETY: первый элемент — валидная NULL-terminated C-строка.
+            // SAFETY: the first element is a valid NULL-terminated C string.
             match unsafe { CStr::from_ptr(first) }.to_str() {
                 Ok(path) => PickResult::Picked(PathBuf::from(path)),
                 Err(error) => PickResult::Failed(format!("путь не в UTF-8: {error}")),
@@ -86,14 +86,14 @@ unsafe extern "C" fn dialog_callback(
     let _ = data.sender.send(result);
 }
 
-/// Показывает нативный диалог выбора `MAX.RES` и ждёт решения пользователя.
+/// Shows the native `MAX.RES` selection dialog and waits for the user's decision.
 ///
-/// `sdl` — уже инициализированный контекст (диалог создаётся на главном
-/// потоке). Видеоподсистема нужна платформам, которые привязывают диалог к
-/// активному окну; здесь окна ещё нет, поэтому `window = NULL`.
+/// `sdl` is an already initialized context (the dialog is created on the main
+/// thread). The video subsystem is needed by platforms that attach the dialog to the
+/// active window; here there is no window yet, so `window = NULL`.
 pub fn pick_max_res_file(sdl: &sdl3::Sdl) -> PickResult {
-    // Видео инициализируем до диалога: на части платформ SDL показывает
-    // file dialog только при живом video subsystem. Держим до конца выбора.
+    // We initialize video before the dialog: on some platforms SDL shows a
+    // file dialog only with a live video subsystem. We keep it until the selection ends.
     let _video = match sdl.video() {
         Ok(video) => video,
         Err(error) => return PickResult::Failed(format!("SDL video: {error}")),
@@ -104,8 +104,8 @@ pub fn pick_max_res_file(sdl: &sdl3::Sdl) -> PickResult {
         Err(error) => return PickResult::Failed(format!("SDL event pump: {error}")),
     };
 
-    // C-строки: SDL копирует строковые свойства, но массив фильтров читает
-    // вплоть до колбэка, поэтому всё живёт до конца функции.
+    // C strings: SDL copies the string properties, but it reads the filter array
+    // up to the callback, so everything lives until the end of the function.
     let title = CString::new(DIALOG_TITLE).expect("в заголовке нет NUL");
     let filter_name = CString::new(FILTER_NAME).expect("в имени фильтра нет NUL");
     let filter_pattern = CString::new(FILTER_PATTERN).expect("в шаблоне фильтра нет NUL");
@@ -123,9 +123,9 @@ pub fn pick_max_res_file(sdl: &sdl3::Sdl) -> PickResult {
 
     let (sender, receiver) = mpsc::channel();
 
-    // SAFETY: свойства создаются и уничтожаются в этой функции; указатели на
-    // строки/массив фильтров живут дольше вызова SDL (см. выше). userdata —
-    // Box<CallbackData>, который SDL вернёт ровно один раз в колбэк.
+    // SAFETY: the properties are created and destroyed in this function; the pointers to the
+    // strings/filter array outlive the SDL call (see above). userdata is a
+    // `Box<CallbackData>` that SDL returns exactly once to the callback.
     unsafe {
         let props = sys::properties::SDL_CreateProperties();
 
@@ -177,7 +177,7 @@ pub fn pick_max_res_file(sdl: &sdl3::Sdl) -> PickResult {
             props,
         );
 
-        // Ждём ровно один колбэк; попутно прокачиваем события (Linux/XDG portal).
+        // We wait for exactly one callback; along the way we pump events (Linux/XDG portal).
         let result = loop {
             match receiver.recv_timeout(PUMP_INTERVAL) {
                 Ok(result) => break result,
@@ -196,18 +196,18 @@ pub fn pick_max_res_file(sdl: &sdl3::Sdl) -> PickResult {
     }
 }
 
-/// Выставляет строковое свойство диалога; неудача не критична (платформа может
-/// не поддерживать конкретное свойство, тогда останется системный текст).
+/// Sets a string property of the dialog; a failure is not critical (a platform may
+/// not support a particular property, in which case the system text remains).
 ///
 /// # Safety
 ///
-/// `props` должен быть валидным `SDL_PropertiesID`.
+/// `props` must be a valid `SDL_PropertiesID`.
 unsafe fn set_string_property(
     props: sys::properties::SDL_PropertiesID,
     name: *const c_char,
     value: *const c_char,
 ) {
-    // SAFETY: контракт функции — валидные props и NULL-terminated строки.
+    // SAFETY: the function contract — valid props and NULL-terminated strings.
     unsafe {
         sys::properties::SDL_SetStringProperty(props, name, value);
     }

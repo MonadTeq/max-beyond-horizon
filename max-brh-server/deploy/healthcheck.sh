@@ -1,6 +1,6 @@
 #!/bin/bash
-# M5.3: healthcheck без открытия TCP-соединений (сырой connect засорял бы лог
-# Horizon ошибкой WS-хендшейка). Смотрим LISTEN-сокеты в /proc/net/tcp*.
+# M5.3: healthcheck without opening TCP connections (a raw connect would pollute the
+# Horizon log with a WS handshake error). We look at LISTEN sockets in /proc/net/tcp*.
 set -eu
 
 check_port() {

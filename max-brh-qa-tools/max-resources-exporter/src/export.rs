@@ -1,31 +1,31 @@
-//! Обход всех 93 типов юнитов и запись каталогов `units/<TAG>/`.
+//! Walks all 93 unit types and writes the `units/<TAG>/` directories.
 //!
-//! Один тип — один каталог (`out_root` = `max-brh-assets/units`):
+//! One type — one directory (`out_root` = `max-brh-assets/units`):
 //!
 //! ```text
 //! max-brh-assets/units/TANK/
-//! ├── sprites/          frame_XXX.png (корпус), sheet.png (лента), sprite.json
-//! ├── turret/           кадры башни (если есть)
-//! ├── firing/           кадры выстрела (если есть)
-//! ├── connectors/       кадры коннекторов (если есть)
-//! ├── shadow/           кадры тени S_*
-//! ├── portrait.png      P_* 300×240 (палитра окна) либо fallback из спрайта
-//! ├── animation/        frame_000.png…, animation.gif, копия исходного .FLC
-//! └── unit.json         тип/имя/флаги/источники/размеры/наличие анимации
+//! ├── sprites/          frame_XXX.png (body), sheet.png (strip), sprite.json
+//! ├── turret/           turret frames (if any)
+//! ├── firing/           firing frames (if any)
+//! ├── connectors/       connector frames (if any)
+//! ├── shadow/           shadow frames S_*
+//! ├── portrait.png      P_* 300×240 (window palette) or a fallback from the sprite
+//! ├── animation/        frame_000.png…, animation.gif, a copy of the source .FLC
+//! └── unit.json         type/name/flags/sources/sizes/animation presence
 //! ```
 //!
-//! Плюс два корневых файла в `out_root` (`max-brh-assets/units`):
-//! `manifest.csv` (строка на тип) и `README.md` (что выгружено, как
-//! перегенерировать, статистика).
+//! Plus two root files in `out_root` (`max-brh-assets/units`):
+//! `manifest.csv` (one row per type) and `README.md` (what was exported, how to
+//! regenerate it, statistics).
 //!
-//! ## Идемпотентность
+//! ## Idempotency
 //!
-//! Каталог юнита синхронизируется по **множеству ожидаемых файлов**: заранее
-//! собранные байты пишутся поверх, а файлы вне ожидаемого набора удаляются
-//! вместе с опустевшими подкаталогами. Каталоги типов, которых нет среди 93,
-//! удаляются из `out_root` целиком. Тот же вход → те же байты (PNG-кодек без
-//! времени, GIF без счётчика кадров, JSON с фиксированным порядком ключей),
-//! поэтому повторный прогон только перезаписывает файлы.
+//! The unit directory is synced against the **set of expected files**: the bytes are
+//! built up front and written over the old ones, while files outside the expected set are deleted
+//! together with the emptied subdirectories. Directories of types that are not among the 93
+//! are removed from `out_root` entirely. Same input → same bytes (a PNG codec without
+//! timestamps, a GIF without a frame counter, JSON with a fixed key order),
+//! so a repeated run only rewrites the files.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -49,28 +49,28 @@ use crate::render::{
 };
 use crate::units::{verify_sc_units, CargoUnit, ScUnitsCheck};
 
-/// Где лежат данные игры и куда писать выгрузку.
+/// Where the game data lives and where to write the export.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
-    /// `MAX.RES` (спрайты, тени, портреты, `D_*`, ссылки `F_*`).
+    /// `MAX.RES` (sprites, shadows, portraits, `D_*`, `F_*` references).
     pub max_res: PathBuf,
-    /// `COLOR.PAL` (палитра спрайтов).
+    /// `COLOR.PAL` (sprite palette).
     pub color_pal: PathBuf,
-    /// Каталог с `*.FLC` (обычно рядом с `MAX.RES`).
+    /// Directory with the `*.FLC` files (usually next to `MAX.RES`).
     pub flc_dir: PathBuf,
-    /// `cargo_unit_data.json` — маппинг тип → ресурсы (снимок `SC_UNITS`).
+    /// `cargo_unit_data.json` — the type → resources mapping (a snapshot of `SC_UNITS`).
     pub units_json: PathBuf,
-    /// Корень выгрузки (`max-brh-assets/units`): сюда каталоги `<TAG>/`,
-    /// `manifest.csv`, `README.md`. Уровня `assets-base/` нет.
+    /// Export root (`max-brh-assets/units`): the `<TAG>/` directories go here, along with
+    /// `manifest.csv` and `README.md`. There is no `assets-base/` level.
     pub out_root: PathBuf,
-    /// `PATCHES.RES` для сверки маппинга с `SC_UNITS`; `None` — не сверять.
+    /// `PATCHES.RES` used to cross-check the mapping against `SC_UNITS`; `None` — do not check.
     pub patches: Option<PathBuf>,
-    /// Ограничить набор токенов (отладка/тесты); `None` — все 93.
+    /// Restrict the token set (debugging/tests); `None` — all 93.
     pub only: Option<Vec<String>>,
 }
 
 impl ExportOptions {
-    /// Пути по умолчанию относительно корня репозитория.
+    /// Default paths relative to the repository root.
     pub fn defaults(repo_root: impl AsRef<Path>) -> Self {
         let root = repo_root.as_ref();
 
@@ -86,9 +86,9 @@ impl ExportOptions {
     }
 }
 
-/// `PATCHES.RES` по умолчанию: исторический `assets/` (если ещё есть) либо
-/// общий каталог C++-порта `max-cpp-port/assets/` (как fallback в
-/// `max_app::assets`). `None` — сверять с `SC_UNITS` не с чем.
+/// Default `PATCHES.RES`: the historical `assets/` (if still present) or
+/// the shared C++ port directory `max-cpp-port/assets/` (a fallback in
+/// `max_app::assets`). `None` — there is nothing to check against `SC_UNITS`.
 fn default_patches(root: &Path) -> Option<PathBuf> {
     [
         root.join("assets/PATCHES.RES"),
@@ -98,19 +98,19 @@ fn default_patches(root: &Path) -> Option<PathBuf> {
     .find(|path| path.is_file())
 }
 
-/// Откуда взят портрет.
+/// Where the portrait came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortraitSource {
-    /// `P_*` без изменений (палитра окна).
+    /// `P_*` unchanged (window palette).
     Resource,
-    /// Fallback: первый кадр спрайта, увеличенный целым множителем.
+    /// Fallback: the first sprite frame, upscaled by an integer factor.
     Fallback,
-    /// Портрета нет и спрайта нет (на реальных данных не встречается).
+    /// No portrait and no sprite (does not occur on real data).
     None,
 }
 
 impl PortraitSource {
-    /// Строка для манифеста и `unit.json`.
+    /// Row for the manifest and `unit.json`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Resource => "resource",
@@ -120,76 +120,76 @@ impl PortraitSource {
     }
 }
 
-/// Отчёт по одному типу юнита.
+/// Report for a single unit type.
 #[derive(Debug, Clone)]
 pub struct UnitReport {
-    /// Токен `SC_UNITS` (`TANK`).
+    /// The `SC_UNITS` token (`TANK`).
     pub token: String,
-    /// Индекс `UnitType` (0..92).
+    /// `UnitType` index (0..92).
     pub unit_type: u16,
-    /// Английское имя (или токен для служебных типов).
+    /// English name (or the token for service types).
     pub name: String,
-    /// Тип — здание (`unit_flags::BUILDING`).
+    /// The type is a building (`unit_flags::BUILDING`).
     pub building: bool,
-    /// Тег спрайта корпуса.
+    /// Body sprite tag.
     pub sprite_tag: Option<String>,
-    /// Тег тени `S_*`.
+    /// Shadow tag `S_*`.
     pub shadow_tag: Option<String>,
-    /// Тег портрета `P_*`.
+    /// Portrait tag `P_*`.
     pub portrait_tag: Option<String>,
-    /// Тег FLC `F_*`.
+    /// FLC tag `F_*`.
     pub flc_tag: Option<String>,
-    /// Кадров корпуса выгружено.
+    /// Body frames exported.
     pub body_frames: usize,
-    /// Кадров башни.
+    /// Turret frames.
     pub turret_frames: usize,
-    /// Кадров выстрела.
+    /// Firing frames.
     pub firing_frames: usize,
-    /// Кадров коннекторов.
+    /// Connector frames.
     pub connector_frames: usize,
-    /// Кадров тени.
+    /// Shadow frames.
     pub shadow_frames: usize,
-    /// Источник портрета.
+    /// Portrait source.
     pub portrait_source: PortraitSource,
-    /// Ширина портрета (PNG).
+    /// Portrait width (PNG).
     pub portrait_width: u32,
-    /// Высота портрета.
+    /// Portrait height.
     pub portrait_height: u32,
-    /// Имя скопированного `.FLC`.
+    /// Name of the copied `.FLC`.
     pub flc_file: Option<String>,
-    /// Кадров FLC.
+    /// FLC frames.
     pub flc_frames: usize,
-    /// Ширина кадра корпуса (первый кадр).
+    /// Body frame width (the first frame).
     pub sprite_width: u32,
-    /// Высота кадра корпуса.
+    /// Body frame height.
     pub sprite_height: u32,
-    /// Сколько PNG записано в каталог юнита.
+    /// How many PNGs were written to the unit directory.
     pub pngs: usize,
-    /// Суммарный размер файлов каталога, байт.
+    /// Total size of the directory's files, in bytes.
     pub bytes: u64,
-    /// Замечания (нет тени/портрета/FLC, обрезанные кадры и т.п.).
+    /// Notes (no shadow/portrait/FLC, truncated frames, etc.).
     pub notes: Vec<String>,
 }
 
-/// Итог экспорта.
+/// Export result.
 #[derive(Debug, Clone)]
 pub struct ExportReport {
-    /// Куда писали (`max-brh-assets/units`); каталоги юнитов лежат прямо здесь.
+    /// Where the export went (`max-brh-assets/units`); the unit directories sit right here.
     pub out_root: PathBuf,
-    /// Отчёт по типам в порядке `UnitType`.
+    /// Per-type reports in `UnitType` order.
     pub units: Vec<UnitReport>,
-    /// Всего PNG в выгрузке.
+    /// Total PNGs in the export.
     pub pngs: usize,
-    /// Всего байт в каталогах юнитов.
+    /// Total bytes in the unit directories.
     pub bytes: u64,
-    /// Ошибки (тип пропущен, остальные обработаны).
+    /// Errors (the type was skipped, the rest were processed).
     pub errors: Vec<String>,
-    /// Сверка с `SC_UNITS` (если запрошена).
+    /// Cross-check against `SC_UNITS` (if requested).
     pub sc_units: Option<ScUnitsCheck>,
 }
 
 impl ExportReport {
-    /// Сколько типов с портретом `P_*` (без fallback).
+    /// How many types have a `P_*` portrait (not a fallback).
     pub fn portraits(&self) -> usize {
         self.units
             .iter()
@@ -197,7 +197,7 @@ impl ExportReport {
             .count()
     }
 
-    /// Сколько типов с fallback-портретом.
+    /// How many types have a fallback portrait.
     pub fn portrait_fallbacks(&self) -> usize {
         self.units
             .iter()
@@ -205,7 +205,7 @@ impl ExportReport {
             .count()
     }
 
-    /// Сколько типов с FLC-анимацией.
+    /// How many types have an FLC animation.
     pub fn animations(&self) -> usize {
         self.units
             .iter()
@@ -213,7 +213,7 @@ impl ExportReport {
             .count()
     }
 
-    /// Сколько разных файлов `.FLC` скопировано.
+    /// How many distinct `.FLC` files were copied.
     pub fn flc_files(&self) -> usize {
         self.units
             .iter()
@@ -222,7 +222,7 @@ impl ExportReport {
             .len()
     }
 
-    /// Токены без портрета `P_*`.
+    /// Tokens without a `P_*` portrait.
     pub fn tokens_without_portrait(&self) -> Vec<&str> {
         self.units
             .iter()
@@ -231,7 +231,7 @@ impl ExportReport {
             .collect()
     }
 
-    /// Токены без FLC.
+    /// Tokens without an FLC.
     pub fn tokens_without_animation(&self) -> Vec<&str> {
         self.units
             .iter()
@@ -240,7 +240,7 @@ impl ExportReport {
             .collect()
     }
 
-    /// Токены, у которых нет даже `portrait.png` (нет ни `P_*`, ни спрайта).
+    /// Tokens with no `portrait.png` at all (neither `P_*` nor a sprite).
     pub fn tokens_without_portrait_png(&self) -> Vec<&str> {
         self.units
             .iter()
@@ -249,7 +249,7 @@ impl ExportReport {
             .collect()
     }
 
-    /// `(корпус, башня, выстрел, коннекторы, тень)` — суммарно кадров.
+    /// `(body, turret, firing, connectors, shadow)` — total frame counts.
     pub fn frame_totals(&self) -> (usize, usize, usize, usize, usize) {
         let mut totals = (0, 0, 0, 0, 0);
 
@@ -265,7 +265,7 @@ impl ExportReport {
     }
 }
 
-/// Что писать в каталог юнита и под какими именами.
+/// What to write into the unit directory and under which names.
 struct UnitFiles {
     files: Vec<(String, Vec<u8>)>,
 }
@@ -291,7 +291,7 @@ impl UnitFiles {
     }
 }
 
-/// Экспортирует все типы из `cargo_unit_data.json` в `out_root`.
+/// Exports every type from `cargo_unit_data.json` into `out_root`.
 pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
     let units = crate::units::load_cargo_unit_data(&options.units_json)?;
 
@@ -300,7 +300,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
     let palette = Palette::load(&options.color_pal)
         .with_context(|| format!("палитра {}", options.color_pal.display()))?;
 
-    // Палитра окна (`FRAMEPIC`): ей C++/порт рисуют портреты и кадры FLC.
+    // Window palette (`FRAMEPIC`): the C++ port draws portraits and FLC frames with it.
     let window = match archive.read("FRAMEPIC") {
         Ok(bytes) => {
             let image = BigImage::decode(bytes).map_err(|error| anyhow!("FRAMEPIC: {error}"))?;
@@ -308,7 +308,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
             window_palette(&image)
         }
         Err(_) => {
-            // Резерв: палитра спрайтов (совпадает с P_* почти поэлементно).
+            // Reserve: the sprite palette (matches P_* almost element by element).
             let mut colors = [[0u8; 3]; 256];
 
             for (index, color) in colors.iter_mut().enumerate() {
@@ -338,7 +338,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
         _ => None,
     };
 
-    // `out_root` — уже каталог юнитов (`max-brh-assets/units`): без `assets-base/`.
+    // `out_root` is already the unit directory (`max-brh-assets/units`): no `assets-base/`.
     fs::create_dir_all(&options.out_root)
         .with_context(|| format!("создание {}", options.out_root.display()))?;
 
@@ -373,7 +373,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
         }
     }
 
-    // Каталоги типов, которых нет в наборе (устаревшие/опечатки), убираем.
+    // We drop directories of types that are not in the set (stale ones/typos).
     if only.is_none() {
         remove_stale_unit_dirs(&options.out_root, &report.units)?;
     }
@@ -384,7 +384,7 @@ pub fn export_all(options: &ExportOptions) -> Result<ExportReport> {
     Ok(report)
 }
 
-/// Кадры одного вида (корпус/башня/выстрел/коннекторы) из `D_*`.
+/// Frames of one kind (body/turret/firing/connectors) from `D_*`.
 struct FrameRanges {
     body: std::ops::Range<usize>,
     turret: std::ops::Range<usize>,
@@ -394,10 +394,10 @@ struct FrameRanges {
 }
 
 impl FrameRanges {
-    /// Разбирает [`FrameInfo`] и обрезает диапазоны по числу кадров спрайта.
+    /// Parses [`FrameInfo`] and clamps the ranges to the sprite frame count.
     ///
-    /// `image_count == 0` у корпуса — «весь спрайт» (так ведёт себя `D_*` без
-    /// полей), у башни/выстрела/коннекторов — «кадров нет».
+    /// `image_count == 0` for the body means "the whole sprite" (that is how `D_*` behaves without
+    /// the fields), while for turret/firing/connectors it means "no frames".
     fn new(info: FrameInfo, total: usize) -> Self {
         let body = if info.image_count == 0 {
             0..total
@@ -415,7 +415,7 @@ impl FrameRanges {
     }
 }
 
-/// `base..base + count` с обрезкой по `total`; `count == 0` — пусто.
+/// `base..base + count` clamped to `total`; `count == 0` — empty.
 fn clamp_range(base: u8, count: u8, total: usize) -> std::ops::Range<usize> {
     let start = usize::from(base).min(total);
     let end = (usize::from(base) + usize::from(count)).min(total);
@@ -423,7 +423,7 @@ fn clamp_range(base: u8, count: u8, total: usize) -> std::ops::Range<usize> {
     start..end.max(start)
 }
 
-/// Экспорт одного типа.
+/// Export of a single type.
 fn export_unit(
     archive: &ResArchive,
     palette: &Palette,
@@ -441,7 +441,7 @@ fn export_unit(
     let mut files = UnitFiles::new();
     let mut notes = Vec::new();
 
-    // --- спрайт: корпус, башня, выстрел, коннекторы ---------------------
+    // --- sprite: body, turret, firing, connectors -----------------------
     let mut body_frames = 0;
     let mut turret_frames = 0;
     let mut firing_frames = 0;
@@ -461,8 +461,8 @@ fn export_unit(
                 }
             },
             Err(_) => {
-                // Вырезанные из игры типы (`MASTER`): тег есть в `SC_UNITS`,
-                // а ресурса в `MAX.RES` уже нет — каталог всё равно создаём.
+                // Types cut from the game (`MASTER`): the tag exists in `SC_UNITS`,
+                // but the resource is no longer in `MAX.RES` — we create the directory anyway.
                 notes.push(format!("спрайт {tag}: ресурса нет в MAX.RES"));
 
                 None
@@ -578,7 +578,7 @@ fn export_unit(
         }
     }
 
-    // --- тень -----------------------------------------------------------
+    // --- shadow ---------------------------------------------------------
     let shadow_sheet: Option<ShadowSheet> = match &unit.shadow {
         Some(tag) => match archive.read(tag) {
             Ok(bytes) => match decode_shadow(bytes) {
@@ -628,7 +628,7 @@ fn export_unit(
         json["shadow"] = shadow_json.clone();
     }
 
-    // --- портрет --------------------------------------------------------
+    // --- portrait -------------------------------------------------------
     let mut portrait_source = PortraitSource::None;
     let mut portrait_width = 0;
     let mut portrait_height = 0;
@@ -686,7 +686,7 @@ fn export_unit(
         }
     }
 
-    // --- FLC-анимация ---------------------------------------------------
+    // --- FLC animation --------------------------------------------------
     let mut flc_file = None;
     let mut flc_frames = 0;
 
@@ -723,7 +723,7 @@ fn export_unit(
     } else {
         json!("portrait.png")
     };
-    // Файлы спрайта есть только если спрайт реально выгружен (`MASTER` — нет).
+    // Sprite files exist only if the sprite was really exported (`MASTER` — no).
     let (sheet_file, sprite_json_file) = if sprite_json.is_some() {
         (json!("sprites/sheet.png"), json!("sprites/sprite.json"))
     } else {
@@ -779,7 +779,7 @@ fn export_unit(
 
     files.json("unit.json", &unit_json);
 
-    // --- запись на диск -------------------------------------------------
+    // --- writing to disk ------------------------------------------------
     let dir = options.out_root.join(&unit.token);
     let (pngs, bytes) = sync_unit_dir(&dir, &files)?;
 
@@ -810,7 +810,7 @@ fn export_unit(
     })
 }
 
-/// JSON-записи о выгруженных кадрах всех четырёх видов.
+/// JSON records about the exported frames of all four kinds.
 fn collect_frames_json(sheet: &SpriteSheet, ranges: &FrameRanges) -> Vec<Value> {
     let mut frames = Vec::new();
 
@@ -839,7 +839,7 @@ fn collect_frames_json(sheet: &SpriteSheet, ranges: &FrameRanges) -> Vec<Value> 
     frames
 }
 
-/// Экспорт FLC: кадры PNG, `animation.gif`, копия `.FLC`.
+/// FLC export: PNG frames, `animation.gif`, a copy of the `.FLC`.
 fn export_animation(
     archive: &ResArchive,
     options: &ExportOptions,
@@ -879,7 +879,7 @@ fn export_animation(
 
         files.png(format!("animation/frame_{index:03}.png"), &image);
 
-        // Локальная таблица цветов — только если палитра отличается от кадра 0.
+        // A local color table — only if the palette differs from frame 0.
         local_palettes.push(if frame.palette == frames[0].palette {
             None
         } else {
@@ -917,7 +917,7 @@ fn export_animation(
     Ok((file_name, frames.len()))
 }
 
-/// Ищет файл FLC в каталоге без учёта регистра (`tank03.flc` → `TANK03.FLC`).
+/// Looks up the FLC file in the directory case-insensitively (`tank03.flc` → `TANK03.FLC`).
 pub fn find_flc(dir: &Path, reference: &str) -> Option<PathBuf> {
     let wanted = reference.to_uppercase();
     let direct = dir.join(&wanted);
@@ -936,12 +936,12 @@ pub fn find_flc(dir: &Path, reference: &str) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Запись и синхронизация каталога
+// Writing and syncing the directory
 // ---------------------------------------------------------------------------
 
-/// Пишет файлы юнита и удаляет всё, чего в наборе нет.
+/// Writes the unit files and deletes everything not in the set.
 ///
-/// Возвращает `(сколько PNG, сколько байт)`.
+/// Returns `(how many PNGs, how many bytes)`.
 fn sync_unit_dir(dir: &Path, files: &UnitFiles) -> Result<(usize, u64)> {
     let expected: HashSet<PathBuf> = files
         .files
@@ -978,7 +978,7 @@ fn sync_unit_dir(dir: &Path, files: &UnitFiles) -> Result<(usize, u64)> {
     Ok((pngs, bytes))
 }
 
-/// Удаляет файлы вне `expected` и опустевшие каталоги.
+/// Deletes files outside `expected` and the emptied directories.
 fn remove_stale(dir: &Path, expected: &HashSet<PathBuf>) -> Result<()> {
     let mut stack = vec![dir.to_path_buf()];
     let mut directories = Vec::new();
@@ -1016,8 +1016,8 @@ fn remove_stale(dir: &Path, expected: &HashSet<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Удаляет из `out_root` (`units`) всё, что не является каталогом одного из 93
-/// типов. Корневые `manifest.csv`/`README.md` живут здесь же — их не трогаем.
+/// Removes from `out_root` (`units`) everything that is not a directory of one of the 93
+/// types. The root `manifest.csv`/`README.md` live here too — we do not touch them.
 fn remove_stale_unit_dirs(units_root: &Path, units: &[UnitReport]) -> Result<()> {
     let expected: HashSet<&str> = units.iter().map(|unit| unit.token.as_str()).collect();
     let entries =
@@ -1044,8 +1044,8 @@ fn remove_stale_unit_dirs(units_root: &Path, units: &[UnitReport]) -> Result<()>
     Ok(())
 }
 
-/// Запись файла с повторами: Windows-антивирус/индексатор иногда держит файл
-/// открытым сразу после создания (`os error 1224`).
+/// File writing with retries: Windows antivirus/indexer sometimes keeps a file
+/// open right after it is created (`os error 1224`).
 fn write_with_retry(path: &Path, data: &[u8]) -> Result<()> {
     let mut last = None;
 
@@ -1068,10 +1068,10 @@ fn write_with_retry(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// manifest.csv и README.md
+// manifest.csv and README.md
 // ---------------------------------------------------------------------------
 
-/// Экранирует поле CSV (кавычки — только если внутри есть разделитель).
+/// Escapes a CSV field (quotes only if it contains a separator).
 fn csv_field(value: &str) -> String {
     if value.contains([',', '"', '\n']) {
         format!("\"{}\"", value.replace('"', "\"\""))
@@ -1080,7 +1080,7 @@ fn csv_field(value: &str) -> String {
     }
 }
 
-/// `manifest.csv` — строка на тип юнита.
+/// `manifest.csv` — one row per unit type.
 fn write_manifest(path: &Path, report: &ExportReport) -> Result<()> {
     let mut out = String::from(
         "token,unit_type,name,dir,building,sprite,shadow,portrait,flics,body_frames,turret_frames,firing_frames,connector_frames,shadow_frames,portrait_present,portrait_source,portrait_width,portrait_height,flc_present,flc_frames,flc_file,sprite_width,sprite_height,pngs,bytes,notes\n",
@@ -1123,7 +1123,7 @@ fn write_manifest(path: &Path, report: &ExportReport) -> Result<()> {
     Ok(())
 }
 
-/// `README.md` выгрузки — что выгружено, как перегенерировать, статистика.
+/// The export's `README.md` — what was exported, how to regenerate it, statistics.
 fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     let (body, turret, firing, connectors, shadow) = report.frame_totals();
     let without_portrait = report.tokens_without_portrait();
@@ -1324,7 +1324,7 @@ fn write_readme(path: &Path, report: &ExportReport) -> Result<()> {
     Ok(())
 }
 
-/// Сводка для stdout.
+/// Summary for stdout.
 pub fn summary(report: &ExportReport) -> String {
     let (body, turret, firing, connectors, shadow) = report.frame_totals();
     let mut out = String::new();

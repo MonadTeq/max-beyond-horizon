@@ -1,56 +1,56 @@
 #requires -version 5.1
 <#
 .SYNOPSIS
-  Нативная Windows-сборка консольного бинаря клиента M.A.X. Rust-клиента (max_app) на MSVC,
-  без Docker и без mingw.
+  Native Windows build of the M.A.X. Rust client console binary (max_app) with MSVC,
+  without Docker and without mingw.
 
 .DESCRIPTION
-  Заменяет прежнюю кросс-сборку max-brh-cicd/scripts/build-windows.sh
-  (Docker + mingw-w64, target x86_64-pc-windows-gnu). Здесь всё собирается на
-  Windows-хосте нативным тулчейном:
+  Replaces the previous cross-build max-brh-cicd/scripts/build-windows.sh
+  (Docker + mingw-w64, target x86_64-pc-windows-gnu). Here everything is built on
+  the Windows host with the native toolchain:
 
-    * MSVC x64 + Windows SDK ищутся через vswhere и поднимаются vcvars64.bat;
-    * Rust 1.94.0 (rustup, %USERPROFILE%\.cargo), target по умолчанию —
-      x86_64-pc-windows-msvc (rustup default на Windows);
-    * vcpkg/SDL3 НЕ нужны: сборка идёт с --no-default-features, то есть без
-      фич sdl* (окно SDL3) и без sound (rodio/cpal → WASAPI).
+    * MSVC x64 + Windows SDK are located via vswhere and activated by vcvars64.bat;
+    * Rust 1.94.0 (rustup, %USERPROFILE%\.cargo), the default target is
+      x86_64-pc-windows-msvc (rustup default on Windows);
+    * vcpkg/SDL3 are NOT needed: the build uses --no-default-features, that is, without
+      the sdl* features (SDL3 window) and without sound (rodio/cpal → WASAPI).
 
-  Команда сборки:
+  Build command:
 
     cargo build --release --locked -p max_app --no-default-features
 
-  Сборка не засоряет max-brh/target (там живут Linux/Docker-артефакты):
-  используется CARGO_TARGET_DIR=<repo>\bin\target-console (как у
-  build-windows-ui.ps1, который собирает в <repo>\bin\target).
+  The build does not pollute max-brh/target (where the Linux/Docker artifacts live):
+  it uses CARGO_TARGET_DIR=<repo>\bin\target-console (the same as
+  build-windows-ui.ps1, which builds into <repo>\bin\target).
 
-  Проверки после сборки (нативно, без wine):
-    * PE-заголовок: MZ, PE32+ x64, Subsystem=3 (Console) — консольный бинарь клиента
-      обязан быть консольным, иначе --help/--demo не печатают в терминал/CI;
-    * список импортируемых DLL (dumpbin /dependents): системные + vcruntime140,
-      никакого mingw-рантайма (libgcc_s_*/libwinpthread-1);
-    * max-brh.exe --help печатает справку (ищется «ИСПОЛЬЗОВАНИЕ»);
-    * max-brh.exe --demo max-original\SAVE1.CAM --turns 1 отрабатывает:
-      в выводе ticks=1 и state_digest=0x….
+  Post-build checks (native, no wine):
+    * PE header: MZ, PE32+ x64, Subsystem=3 (Console) — the client's console binary
+      must be a console one, otherwise --help/--demo print nothing to the terminal/CI;
+    * imported DLL list (dumpbin /dependents): system ones + vcruntime140,
+      no mingw runtime of any kind (libgcc_s_*/libwinpthread-1);
+    * max-brh.exe --help prints the help (the "ИСПОЛЬЗОВАНИЕ" banner is searched for);
+    * max-brh.exe --demo max-original\SAVE1.CAM --turns 1 runs through:
+      the output contains ticks=1 and state_digest=0x….
 
-  Упаковка (как у прежнего build-windows.sh):
+  Packaging (the same as the previous build-windows.sh):
     bin\release\max_app-<ver>-windows-x86_64\            max-brh.exe, README.txt,
                                                          LICENSE, CHANGELOG.md,
                                                          SHA256SUMS
-    bin\release\max_app-<ver>-windows-x86_64.zip          архив каталога
-    bin\release\max_app-<ver>-windows-x86_64.zip.sha256   sha256 архива
+    bin\release\max_app-<ver>-windows-x86_64.zip          the directory archive
+    bin\release\max_app-<ver>-windows-x86_64.zip.sha256   sha256 of the archive
 
 .PARAMETER Out
-  Каталог артефактов. По умолчанию <repo>\bin\release.
+  Artifact directory. Defaults to <repo>\bin\release.
 
 .PARAMETER TargetDir
-  CARGO_TARGET_DIR для сборки. По умолчанию <repo>\bin\target-console.
+  CARGO_TARGET_DIR for the build. Defaults to <repo>\bin\target-console.
 
 .PARAMETER NoPackage
-  Только собрать и проверить (--help/--demo), не упаковывать.
+  Only build and verify (--help/--demo), do not package.
 
 .PARAMETER SkipSmoke
-  Не запускать exe (--help/--demo) — только сборка и PE-проверки.
-  Нужен на хосте без данных оригинальной игры.
+  Do not run the exe (--help/--demo) — build and PE checks only.
+  Needed on a host without the original game data.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
@@ -72,10 +72,10 @@ function Fail([string]$message) {
     exit 1
 }
 
-# Нативные команды (cargo, cmd) пишут прогресс в stderr. При
-# $ErrorActionPreference = "Stop" PowerShell 5.1 заворачивает stderr в
-# NativeCommandError и роняет скрипт, хотя сборка идёт нормально. На время
-# запуска нативных процессов переключаемся на Continue и возвращаем код выхода.
+# Native commands (cargo, cmd) write progress to stderr. With
+# $ErrorActionPreference = "Stop" PowerShell 5.1 wraps stderr into
+# NativeCommandError and kills the script even though the build is fine. While
+# running native processes we switch to Continue and restore the exit code.
 function Invoke-Native([scriptblock]$body) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -89,13 +89,13 @@ function Invoke-Native([scriptblock]$body) {
     return $code
 }
 
-# Разбор PE-заголовка: MZ, сигнатура PE\0\0, машина, PE32/PE32+ и Subsystem.
-# Subsystem лежит в Optional Header по смещению 0x44 и для PE32, и для PE32+
-# (в PE32+ нет BaseOfData, но ImageBase шире — смещение не меняется), поэтому
-# абсолютное смещение — e_lfanew + 4 + 20 + 0x44 = e_lfanew + 0x5C.
-# Разбор inline, а не через pe-subsystem.ps1: helper запускается отдельным
-# процессом Windows PowerShell 5.1, который читает .ps1 без BOM как ANSI и
-# спотыкается на русских строках.
+# PE header parsing: MZ, the PE\0\0 signature, machine, PE32/PE32+ and Subsystem.
+# Subsystem sits in the Optional Header at offset 0x44 for both PE32 and PE32+
+# (PE32+ has no BaseOfData, but ImageBase is wider — the offset does not change), so
+# the absolute offset is e_lfanew + 4 + 20 + 0x44 = e_lfanew + 0x5C.
+# Parsing is inline rather than via pe-subsystem.ps1: the helper runs as a separate
+# Windows PowerShell 5.1 process that reads .ps1 without a BOM as ANSI and
+# chokes on Cyrillic strings.
 function Get-PeInfo([string]$file) {
     $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $file).Path)
     if ($bytes.Length -lt 0x40) { Fail "${file}: файл короче DOS-заголовка" }
@@ -125,7 +125,7 @@ elseif (-not [System.IO.Path]::IsPathRooted($Out)) { $Out = Join-Path (Get-Locat
 if (-not $TargetDir) { $TargetDir = Join-Path $root "bin\target-console" }
 elseif (-not [System.IO.Path]::IsPathRooted($TargetDir)) { $TargetDir = Join-Path (Get-Location).Path $TargetDir }
 
-# --- версия workspace -------------------------------------------------------
+# --- workspace version ------------------------------------------------------
 $manifest = Join-Path $root "max-brh\Cargo.toml"
 if (-not (Test-Path $manifest)) { Fail "нет $manifest" }
 $version = (Select-String -Path $manifest -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"').Matches.Groups[1].Value
@@ -147,7 +147,7 @@ if (-not $vsPath) { Fail "не найдена VS с workload 'Desktop developmen
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path $vcvars)) { Fail "нет $vcvars" }
 
-# --- cargo (rustup 1.94.0, target x86_64-pc-windows-msvc по умолчанию) ------
+# --- cargo (rustup 1.94.0, x86_64-pc-windows-msvc target by default) --------
 $cargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
 if (-not (Test-Path $cargo)) {
     $cargoCmd = Get-Command cargo -ErrorAction SilentlyContinue
@@ -177,10 +177,10 @@ Write-Host "  target dir:    $TargetDir"
 Write-Host "  каталог:       $bundle"
 Write-Host "  архив:         $zip"
 
-# vcvars64 нужен линкеру (link.exe), Windows SDK и компилятору C для vendored
-# ENet 1.3.18 (cc → cl.exe). Переменные окружения ставим через .bat: в cmd
-# `set VAR=value && ...` захватывает пробел в значение, поэтому только
-# `set "VAR=value"` (та же грабля, что в build-windows-ui.ps1).
+# vcvars64 is needed by the linker (link.exe), the Windows SDK and the C compiler for the vendored
+# ENet 1.3.18 (cc → cl.exe). Environment variables are set via .bat: in cmd
+# `set VAR=value && ...` captures a trailing space into the value, hence only
+# `set "VAR=value"` (the same pitfall as in build-windows-ui.ps1).
 $bat = Join-Path $root "build\msvc-console-build.bat"
 $batLines = @(
     '@echo off',
@@ -202,9 +202,9 @@ Write-Host "  батник:        $bat"
 Write-Host ""
 Write-Host "== $buildCmd =="
 if (Test-Path $buildLog) { Remove-Item $buildLog -Force }
-# stderr cargo сливаем в stdout на уровне cmd: тогда PowerShell видит обычный
-# поток, а код выхода остаётся кодом cmd (и cargo). Лог пишем сами (не через
-# Tee-Object): у Tee-Object в PowerShell 5.1 нет -Encoding, и файл вышел бы
+# cargo stderr is merged into stdout at the cmd level: then PowerShell sees a regular
+# stream and the exit code stays cmd's (and cargo's). We write the log ourselves (not via
+# Tee-Object): Tee-Object in PowerShell 5.1 has no -Encoding, and the file would come out
 # UTF-16.
 [System.IO.File]::WriteAllText($buildLog, "")
 $buildRc = Invoke-Native {
@@ -224,7 +224,7 @@ $exeHash = (Get-FileHash -Algorithm SHA256 $exePath).Hash.ToLower()
 Write-Host ""
 Write-Host ("exe: {0} ({1:N0} байт), sha256 {2}" -f $exePath, $exeSize, $exeHash)
 
-# --- PE: Console (Subsystem=3) + импорты -----------------------------------
+# --- PE: Console (Subsystem=3) + imports -----------------------------------
 Write-Host ""
 Write-Host "== проверка PE =="
 $pe = Get-PeInfo $exePath
@@ -233,9 +233,9 @@ Write-Host ("PE: {0} — {1} {2}, Subsystem={3} ({4})" -f $exePath, $pe.Magic, $
 if ($pe.Machine -ne "x64") { Fail "ожидался PE x64, получено $($pe.Machine)" }
 if ($pe.Magic -ne "PE32+") { Fail "ожидался PE32+, получено $($pe.Magic)" }
 if ($pe.Subsystem -ne 3) {
-    # Подсистема windows включается только feature sdl (main.rs), а консольная
-    # сборка клиента собирается с --no-default-features — иначе --help/--demo
-    # не печатают в терминал/CI.
+    # The windows subsystem is enabled only by the sdl feature (main.rs), while the console
+    # build of the client uses --no-default-features — otherwise --help/--demo
+    # do not print to the terminal/CI.
     Fail "консольный бинарь клиента должен быть Console (Subsystem=3), получено $($pe.Subsystem) ($peName)"
 }
 
@@ -259,7 +259,7 @@ if ($dlls.Count -eq 0) {
     }
 }
 
-# --- прогон нативно: --help и --demo SAVE1.CAM --turns 1 --------------------
+# --- native run: --help and --demo SAVE1.CAM --turns 1 ----------------------
 $helpOk = $false
 $demoOk = $false
 $demoLine = ""
@@ -299,7 +299,7 @@ if ($SkipSmoke) {
     Write-Host "demo: OK (rc=0)"
     Write-Host "  $demoLine"
 
-    # Единый лог прогона (заменяет build/smoke-logs/windows-wine-smoke.log).
+    # Single run log (replaces build/smoke-logs/windows-wine-smoke.log).
     $smokeLines = @(
         "== M.A.X. Rust client $version — нативный MSVC (консольная сборка клиента) ==",
         "exe:    $exePath",
@@ -326,7 +326,7 @@ if ($NoPackage) {
     exit 0
 }
 
-# --- упаковка ---------------------------------------------------------------
+# --- packaging --------------------------------------------------------------
 Write-Host ""
 Write-Host "== упаковка $bundleName =="
 New-Item -ItemType Directory -Force -Path $Out | Out-Null

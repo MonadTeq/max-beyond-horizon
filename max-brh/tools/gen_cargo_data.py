@@ -33,7 +33,7 @@ XOR_TABLE = bytes([
 
 UNIT_END = 93
 
-# ResourceID 0..92 (max-cpp-port/src/resourcetable.cpp), порядок UnitType.
+# ResourceID 0..92 (max-cpp-port/src/resourcetable.cpp), UnitType order.
 UNIT_TOKENS = """COMMTWR POWERSTN POWGEN BARRACKS SHIELDGN RADAR ADUMP FDUMP GOLDSM DEPOT HANGAR DOCK
 CNCT_4W LRGRUBLE SMLRUBLE LRGTAPE SMLTAPE LRGSLAB SMLSLAB LRGCONES SMLCONES ROAD LANDPAD SHIPYARD
 LIGHTPLT LANDPLT SUPRTPLT AIRPLT HABITAT RESEARCH GREENHSE RECCENTR TRAINHAL WTRPLTFM GUNTURRT
@@ -44,7 +44,7 @@ CORVETTE BATTLSHP SUBMARNE SEATRANS MSSLBOAT SEAMNLYR CARGOSHP FIGHTER BOMBER AI
 ALNTANK ALNASGUN ALNPLANE ROCKET TORPEDO ALNMISSL ALNTBALL ALNABALL RKTSMOKE TRPBUBLE HARVSTER
 WALDO""".split()
 
-# `max_builder_capability_list` (default.game_rules.lua) — порядок строк как в
+# `max_builder_capability_list` (default.game_rules.lua) — row order matches
 # production.rs::BUILDABLE.
 BUILDERS = {
     "CONSTRCT": [
@@ -69,7 +69,7 @@ BUILDERS = {
     "TRAINHAL": ["COMMANDO", "INFANTRY"],
 }
 
-# Флаги (`Unit::Flags`, max-cpp-port/src/unit.cpp).
+# Flags (`Unit::Flags`, max-cpp-port/src/unit.cpp).
 FLAG_GROUND_COVER = 0x1
 FLAG_BUILDING = 0x10
 FLAG_MOBILE_AIR = 0x40
@@ -149,7 +149,7 @@ def main():
             attr["Storage capacity"],
             attr["Ammunition"],
         ]
-        # ATTRIB_* порядок в UnitValues: turns, hits, armor, attack, speed, range,
+        # ATTRIB_* order in UnitValues: turns, hits, armor, attack, speed, range,
         # rounds, scan, storage, ammo.
         lines.append(
             "    {0x%04X, %s}, // %s" % (raw_flags, ", ".join(str(v) for v in fields), token)

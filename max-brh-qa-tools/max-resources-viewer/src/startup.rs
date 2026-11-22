@@ -1,54 +1,54 @@
-//! Поиск `MAX.RES`/`COLOR.PAL` при запуске UI и выбор файла в диалоге.
+//! Finding `MAX.RES`/`COLOR.PAL` at UI startup and picking the file in the dialog.
 //!
-//! Порядок старта (пункты 1–2 задачи):
+//! Startup order (task items 1–2):
 //!
-//! 1. путь из аргумента командной строки (`--res PATH` или позиционный);
-//! 2. дефолтные пути: рядом с `.exe`, в `CWD`, вверх по дереву каталогов
-//!    (`max-original/MAX.RES` — так находится корень репозитория);
-//! 3. нативный диалог `Укажите файл MAX.RES` (SDL3), если ничего не найдено.
+//! 1. the path from the command line argument (`--res PATH` or a positional one);
+//! 2. the default paths: next to the `.exe`, in `CWD`, up the directory tree
+//!    (`max-original/MAX.RES` — that is how the repository root is found);
+//! 3. the native `Укажите файл MAX.RES` dialog (SDL3) if nothing was found.
 //!
-//! Модуль намеренно не зависит от SDL: диалог передаётся замыканием
-//! [`PickResult`], поэтому порядок поиска и отмена проверяются unit-тестами
-//! без окна и без SDL3. Сам SDL-диалог живёт в `src/dialog.rs` бинарника.
+//! The module deliberately does not depend on SDL: the dialog is passed in as a closure
+//! ([`PickResult`]), so the search order and cancellation are covered by unit tests
+//! without a window and without SDL3. The SDL dialog itself lives in the binary's `src/dialog.rs`.
 //!
-//! `COLOR.PAL` ищется рядом с выбранным `MAX.RES`; если файла нет, редактор
-//! продолжает работать с заглушкой-палитрой (градации серого) и предупреждает
-//! об этом в stderr и в статусной строке окна.
+//! `COLOR.PAL` is looked up next to the selected `MAX.RES`; if the file is missing, the editor
+//! keeps working with a stub palette (grayscale) and warns
+//! about it in stderr and in the window's status line.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use max_render::palette::Palette;
 
-/// Имя архива ресурсов.
+/// The resource archive name.
 pub const RES_FILE_NAME: &str = "MAX.RES";
-/// Имя системной палитры.
+/// The system palette name.
 pub const PAL_FILE_NAME: &str = "COLOR.PAL";
-/// Каталог с оригинальными ассетами в репозитории.
+/// The directory with the original assets in the repository.
 pub const ORIGINAL_DIR: &str = "max-original";
 
-/// Результат нативного диалога выбора файла.
+/// The result of the native file dialog.
 ///
-/// SDL-колбэк вызывает [`PickResult::Cancelled`] при отмене и
-/// [`PickResult::Failed`] при ошибке платформы (тогда путь выбрать нельзя).
+/// The SDL callback produces [`PickResult::Cancelled`] on cancellation and
+/// [`PickResult::Failed`] on a platform error (then no path can be chosen).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickResult {
-    /// Пользователь выбрал файл.
+    /// The user picked a file.
     Picked(PathBuf),
-    /// Пользователь закрыл диалог без выбора.
+    /// The user closed the dialog without choosing.
     Cancelled,
-    /// Диалог не удалось показать/получить результат.
+    /// The dialog could not be shown/the result obtained.
     Failed(String),
 }
 
-/// Ошибка старта UI (до открытия окна).
+/// A UI startup error (before the window opens).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupError {
-    /// Диалог отменён — работать не с чем.
+    /// The dialog was cancelled — there is nothing to work with.
     Cancelled,
-    /// Диалог не смог показать файл (SDL/платформа).
+    /// The dialog could not show the file (SDL/platform).
     Dialog(String),
-    /// Диалог вернул путь, которого нет на диске.
+    /// The dialog returned a path that does not exist on disk.
     PickedMissing(PathBuf),
 }
 
@@ -75,10 +75,10 @@ impl fmt::Display for StartupError {
 
 impl std::error::Error for StartupError {}
 
-/// Кандидаты по умолчанию в порядке приоритета.
+/// The default candidates in priority order.
 ///
-/// `exe` — путь к исполняемому файлу, `cwd` — текущий каталог. Оба параметра
-/// нужны для тестируемости; [`default_candidates`] подставляет реальные.
+/// `exe` is the path to the executable, `cwd` the current directory. Both parameters are
+/// needed for testability; [`default_candidates`] substitutes the real ones.
 pub fn default_candidates_for(exe: Option<&Path>, cwd: Option<&Path>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -103,7 +103,7 @@ pub fn default_candidates_for(exe: Option<&Path>, cwd: Option<&Path>) -> Vec<Pat
     dedup(candidates)
 }
 
-/// Кандидаты по умолчанию для текущего процесса (`current_exe` + `current_dir`).
+/// The default candidates for the current process (`current_exe` + `current_dir`).
 pub fn default_candidates() -> Vec<PathBuf> {
     let exe = std::env::current_exe().ok();
     let cwd = std::env::current_dir().ok();
@@ -123,17 +123,17 @@ fn dedup(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     unique
 }
 
-/// Первый существующий кандидат (проверка — [`Path::is_file`] у вызывающего).
+/// The first existing candidate (the caller checks it with [`Path::is_file`]).
 pub fn resolve_max_res(candidates: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     candidates.iter().find(|path| exists(path)).cloned()
 }
 
-/// Полный порядок старта UI: аргумент → дефолты → диалог.
+/// The full UI startup order: argument → defaults → dialog.
 ///
-/// `pick` вызывается только если аргумента нет и ни один кандидат не найден.
-/// Отмена/ошибка диалога возвращаются как [`StartupError`] — вызывающий код
-/// печатает сообщение и завершается с кодом 1. Путь из аргумента не
-/// проверяется здесь: ошибку чтения архива покажет загрузка `MAX.RES`.
+/// `pick` is called only if there is no argument and no candidate was found.
+/// Cancellation/dialog errors are returned as [`StartupError`]; the calling code
+/// prints a message and exits with code 1. The path from the argument is not
+/// checked here: a failure to read the archive will be shown when `MAX.RES` is loaded.
 pub fn resolve_startup_res<F>(
     arg: Option<&Path>,
     candidates: &[PathBuf],
@@ -164,36 +164,36 @@ where
     }
 }
 
-/// Путь к `COLOR.PAL` рядом с выбранным `MAX.RES`.
+/// The path to `COLOR.PAL` next to the selected `MAX.RES`.
 pub fn palette_path(res: &Path) -> PathBuf {
     res.parent()
         .unwrap_or_else(|| Path::new("."))
         .join(PAL_FILE_NAME)
 }
 
-/// Результат поиска/загрузки палитры.
+/// The result of the palette search/load.
 #[derive(Debug)]
 pub struct PaletteLoad {
-    /// Палитра для рендера: настоящая или [`stub_palette`].
+    /// The palette for rendering: the real one or [`stub_palette`].
     pub palette: Palette,
-    /// Откуда прочитана палитра (`None` — заглушка).
+    /// Where the palette was read from (`None` — the stub).
     pub path: Option<PathBuf>,
-    /// Предупреждение для stderr/статусной строки, если палитры нет.
+    /// A warning for stderr/the status line if there is no palette.
     pub warning: Option<String>,
 }
 
-/// Загружает палитру: явный `--pal` → `COLOR.PAL` рядом с `MAX.RES` → заглушка.
+/// Loads the palette: an explicit `--pal` → `COLOR.PAL` next to `MAX.RES` → the stub.
 ///
-/// Явно заданная палитра имеет приоритет; если её не удалось прочитать,
-/// пробуем соседнюю с `MAX.RES`. Любая неудача — предупреждение, но не ошибка:
-/// редактор остаётся работоспособным.
+/// An explicitly given palette has priority; if it could not be read,
+/// we try the one next to `MAX.RES`. Any failure is a warning, not an error:
+/// the editor stays usable.
 pub fn load_palette(explicit: Option<&Path>, res: &Path) -> PaletteLoad {
     load_palette_with(explicit, res, |path| {
         Palette::load(path).map_err(|error| error.to_string())
     })
 }
 
-/// Тестируемая часть [`load_palette`]: загрузчик подменяется замыканием.
+/// The testable part of [`load_palette`]: the loader is replaced by a closure.
 pub fn load_palette_with<F>(explicit: Option<&Path>, res: &Path, mut load: F) -> PaletteLoad
 where
     F: FnMut(&Path) -> Result<Palette, String>,
@@ -252,10 +252,10 @@ where
     }
 }
 
-/// Заглушка-палитра: 256 градаций серого (6-битные компоненты, как в COLOR.PAL).
+/// The stub palette: 256 grayscale steps (6-bit components, as in COLOR.PAL).
 ///
-/// Нужна, чтобы превью simple/спрайтов не падало без `COLOR.PAL`. Индекс
-/// `i` даёт `rgb = (i / 4) * 4`: от чёрного до почти белого.
+/// Needed so that the simple/sprite previews do not fail without `COLOR.PAL`. Index
+/// `i` gives `rgb = (i / 4) * 4`: from black to almost white.
 pub fn stub_palette() -> Palette {
     let mut bytes = [0u8; 768];
 

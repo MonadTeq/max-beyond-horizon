@@ -1,8 +1,8 @@
 #!/bin/sh
-# M5.3: рендер конфига Horizon из deploy/horizon.toml.template и запуск бинаря.
+# M5.3: render the Horizon config from deploy/horizon.toml.template and launch the binary.
 #
-# Все пути/адреса задаются окружением docker-compose.yml — так один и тот же
-# образ работает и локально (127.0.0.1), и на публичном сервере (announce_host).
+# All paths/addresses come from the docker-compose.yml environment — so the same
+# image runs both locally (127.0.0.1) and on a public server (announce_host).
 set -eu
 
 CONFIG_TEMPLATE="${HORIZON_CONFIG_TEMPLATE:-/opt/horizon/horizon.toml.template}"
@@ -30,7 +30,7 @@ if [ ! -f /opt/horizon/horizon ]; then
     exit 1
 fi
 
-# sed-escape для '&', '|' и '\' в секретах/путях.
+# sed escape for '&', '|' and '\' in secrets/paths.
 sed_escape() {
     printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
@@ -54,7 +54,7 @@ sed \
 
 echo "entrypoint: конфиг $CONFIG_PATH (announce_host=$HORIZON_ANNOUNCE_HOST, UDP $MAX_PORT_START-$MAX_PORT_END)" >&2
 
-# Копия бинаря: bind-mount с Windows не всегда сохраняет exec-бит.
+# Binary copy: a bind-mount from Windows does not always preserve the exec bit.
 cp /opt/horizon/horizon /tmp/horizon-bin
 chmod +x /tmp/horizon-bin
 

@@ -1,19 +1,19 @@
-# ui-test-allocate.ps1 — ЖИВОЙ прогон окна M.A.X. Rust-клиента:
-# распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`), TC-0627–0629.
+# ui-test-allocate.ps1 — LIVE run of the M.A.X. Rust client window:
+# mine output allocation (C++ `AllocMenu`, window `ALLOCFRM`), TC-0627–0629.
 #
-# Что проверяется в реальном окне (клики через SendInput, фокус проверяется):
-#  * пункт `allocate` меню команд шахты **включён** и открывает диалог
-#    (`alloc=open` в трассе `MAX_DEBUG_INPUT`);
-#  * диалог полноэкранный: в кадре окна зелёный заголовок `Allocation Menu`
-#    и зелёные подписи секций (`COLOR_GREEN` = 0x00FF00);
-#  * модальность: клик по карте не закрывает диалог и не даёт приказа;
-#  * стрелка `RTARO_OF` меняет значение, `Done` закрывает окно (`alloc=closed`)
-#    и возвращает игру;
-#  * кадры `00-menu` … `06-alloc-done` — в `build/ui-test-allocate/`.
+# What is checked in the real window (clicks via SendInput, focus is verified):
+#  * the mine command menu's `allocate` item is **enabled** and opens the dialog
+#    (`alloc=open` in the `MAX_DEBUG_INPUT` trace);
+#  * the dialog is full-screen: the window frame shows the green `Allocation Menu` title
+#    and green section labels (`COLOR_GREEN` = 0x00FF00);
+#  * modality: a click on the map neither closes the dialog nor issues an order;
+#  * the `RTARO_OF` arrow changes the value, `Done` closes the window (`alloc=closed`)
+#    and returns to the game;
+#  * frames `00-menu` … `06-alloc-done` go to `build/ui-test-allocate/`.
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-allocate.ps1
+# Run: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-allocate.ps1
 #
-# Нужен собранный клиент:
+# A built client is required:
 #   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1 -NoPackage
 param(
     [string]$Out = "",
@@ -112,14 +112,14 @@ public static class MaxUi {
 }
 '@
 
-# --- сценарий: распределение добычи шахты (AllocMenu, ALLOCFRM) -------------
+# --- scenario: mine output allocation (AllocMenu, ALLOCFRM) -----------------
 $ErrorActionPreference = 'Stop'
 $root = 'D:\dev\max-port-debug'
 if (-not $Out) { $Out = Join-Path $root 'build\ui-test-allocate' }
 New-Item -ItemType Directory -Force $Out | Out-Null
 Get-ChildItem $Out -Filter '*.png' -ErrorAction SilentlyContinue | Remove-Item -Force
 
-# Цвет одного пикселя кадра — чтобы отличить «полоса залита» от «полоса пустая».
+# Color of one frame pixel — to tell "the bar is filled" from "the bar is empty".
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System.Drawing;
 public static class MaxUiPixel {
@@ -220,10 +220,10 @@ function Find-Line([string]$text, [string]$pattern) {
     @($text -split "`r?`n" | Where-Object { $_ -match $pattern }) | Select-Object -Last 1
 }
 
-# Двигает курсор без нажатия: приложение получает `MouseMove`, а трасса
-# печатает состояние модальных окон в момент события. Так `alloc=open`/
-# `alloc=closed` видно уже после действия (строка `[in]` пишется ДО применения
-# ввода, поэтому сразу после клика она ещё показывает прежнее состояние).
+# Moves the cursor without a click: the app receives `MouseMove`, and the trace
+# prints the modal window state at the moment of the event. So `alloc=open`/
+# `alloc=closed` becomes visible right after the action (the `[in]` line is written BEFORE the
+# input is applied, so right after the click it still shows the previous state).
 function Move-Client([int]$cx, [int]$cy) {
     Ensure-Focus | Out-Null
     $p = New-Object MaxUi+POINT
@@ -268,9 +268,9 @@ try {
     }
     Shot '01-game' | Out-Null
 
-    # После высадки камера центрирована на шахте (`focus_player`), поэтому
-    # экранные координаты клетки/меню постоянны (так же считает
-    # `App::open_unit_menu`: якорь `unit->x + 32`, пункты по 24 px).
+    # After the landing the camera is centered on the mine (`focus_player`), so
+    # the screen coordinates of the cell/menu are constant (the same way
+    # `App::open_unit_menu` computes them: anchor `unit->x + 32`, items 24 px apart).
     $centerX = 404; $centerY = 242
 
     Step 'LMB x2: выделение шахты и меню команд'
@@ -285,8 +285,8 @@ try {
     Write-Host "A: $clickLine"
 
     Step 'пункт allocate -> диалог ALLOCFRM'
-    # 4 пункта (`allocate`, `x-fer`, `stop`, `remove`), окно 48x99, allocate
-    # первым (символ позиции '1'): центр кнопки (460, 206).
+    # 4 items (`allocate`, `x-fer`, `stop`, `remove`), window 48x99, allocate
+    # first (position character '1'): button center (460, 206).
     Click-Client 460 206
     Start-Sleep -Milliseconds 900
     Shot '03-alloc-menu' | Out-Null
@@ -324,7 +324,7 @@ try {
     Write-Host "D: green label pixels: $greenLabels"
     if ($greenLabels -lt 30) { Fail "подписи секций не нарисованы (зелёных пикселей: $greenLabels)" }
 
-    # Вернуть значение обратно правой стрелкой (RTARO_OF): полоса снова полная.
+    # Return the value with the right arrow (RTARO_OF): the bar is full again.
     Click-Client 435 84
     Start-Sleep -Milliseconds 600
     Move-Client 400 430

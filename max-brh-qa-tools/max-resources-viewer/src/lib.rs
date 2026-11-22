@@ -1,15 +1,15 @@
-//! M.A.X. MAX.RES: классификатор ресурсов, растеризация и PNG-экспорт.
+//! M.A.X. MAX.RES: resource classifier, rasterization and PNG export.
 //!
-//! Библиотека отделена от бинарника (`main.rs`), чтобы интеграционные тесты
-//! могли проверять классификатор и экспорт на реальном `MAX.RES`.
+//! The library is separated from the binary (`main.rs`) so that integration tests
+//! can check the classifier and the export on a real `MAX.RES`.
 //!
-//! * [`model`] — kind/category/метаданные, не-изображения;
-//! * [`render`] — RGBA-растеризация (палитра, прозрачность, ленты кадров);
-//! * [`export`] — пакетный экспорт PNG + `manifest.csv`;
-//! * [`png`] — PNG-кодек без внешних зависимостей (копия QA-кодека с RGBA);
-//! * [`ui`] — чистое состояние/отрисовка редактора (без SDL);
-//! * [`startup`] — поиск `MAX.RES`/`COLOR.PAL`, заглушка-палитра;
-//! * `app` — SDL3-окно под feature `sdl`.
+//! * [`model`] — kind/category/metadata, non-images;
+//! * [`render`] — RGBA rasterization (palette, transparency, frame strips);
+//! * [`export`] — batch PNG export + `manifest.csv`;
+//! * [`png`] — a PNG codec without external dependencies (a copy of the QA codec with RGBA);
+//! * [`ui`] — the editor's pure state/drawing (no SDL);
+//! * [`startup`] — finding `MAX.RES`/`COLOR.PAL`, the stub palette;
+//! * `app` — the SDL3 window under the `sdl` feature.
 #![forbid(unsafe_code)]
 
 pub mod export;

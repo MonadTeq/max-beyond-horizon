@@ -51,7 +51,7 @@ def extract_block(source: str) -> list[str]:
 
 
 def decode_literal(text: str) -> str:
-    # C++-литералы в таблице простые: экранируются только кавычки и слэши.
+    # C++ literals in the table are simple: only quotes and slashes are escaped.
     return text.replace('\\"', '"').replace("\\\\", "\\")
 
 

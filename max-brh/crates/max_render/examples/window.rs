@@ -1,17 +1,17 @@
-//! Демо-окно `max_render`: карта + танк на ней (SDL3).
+//! `max_render` demo window: a map with a tank on it (SDL3).
 //!
-//! Запуск (нужен SDL3 — см. `src/sdl_window.rs`):
+//! Run (SDL3 required — see `src/sdl_window.rs`):
 //!
 //! ```text
 //! cargo run -p max_render --features sdl --example window
 //! cargo run -p max_render --features sdl-from-source --example window
 //! ```
 //!
-//! Демо не требует данных игры: карта строится процедурно, а спрайт танка
-//! подхватывается из `max-original/MAX.RES` (+ `COLOR.PAL`), если файлы есть
-//! рядом с рабочим каталогом. Иначе рисуется цветной маркер юнита.
+//! The demo needs no game data: the map is built procedurally, and the tank sprite
+//! is picked up from `max-original/MAX.RES` (+ `COLOR.PAL`) if the files are
+//! next to the working directory. Otherwise a colored unit marker is drawn.
 //!
-//! Управление: Esc или закрытие окна — выход.
+//! Controls: Esc or closing the window — exit.
 
 use std::path::Path;
 
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let viewport = Viewport::new(SCREEN_WIDTH, SCREEN_HEIGHT);
     let mut frame = RgbaBuffer::filled(SCREEN_WIDTH, SCREEN_HEIGHT, style.unknown);
 
-    // Данные игры опциональны: без них демо всё равно показывает карту.
+    // Game data is optional: without it the demo still shows the map.
     let game = GameAssets::load().ok();
 
     println!(
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             None => {
-                // Заглушка юнита: красный ромб 12×12.
+                // Unit placeholder: a red 12×12 diamond.
                 for offset in 0..12 {
                     frame.set(anchor.0 - 6 + offset, anchor.1 - 6, Rgba::rgb(220, 40, 40));
                     frame.set(anchor.0 - 6, anchor.1 - 6 + offset, Rgba::rgb(220, 40, 40));
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Палитра, таблицы яркости и (если есть) спрайты из данных игры.
+/// Palette, brightness tables and (if present) sprites from the game data.
 struct GameAssets {
     palette: Palette,
     brightness: BrightnessLut,
@@ -125,7 +125,7 @@ impl GameAssets {
     }
 }
 
-/// Процедурная карта: остров суши в воде, немного побережья и ресурсов.
+/// Procedural map: an island of land in water, a bit of coastline and resources.
 fn demo_map() -> Map {
     let mut surface = SurfaceMap::new();
     let mut resources = ResourceMap::new();
@@ -149,7 +149,7 @@ fn demo_map() -> Map {
         }
     }
 
-    // Ресурсы: детерминированная «псевдослучайная» сетка.
+    // Resources: a deterministic "pseudo-random" grid.
     let mut seed = 0x1234_5678u32;
 
     for _ in 0..24 {

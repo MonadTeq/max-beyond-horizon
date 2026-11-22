@@ -1,13 +1,13 @@
-//! Маппинг «тип юнита → ресурсы»: `cargo_unit_data.json` + проверка по
-//! `SC_UNITS` из `PATCHES.RES`.
+//! The "unit type → resources" mapping: `cargo_unit_data.json` plus a check against
+//! `SC_UNITS` from `PATCHES.RES`.
 //!
-//! `max-brh/crates/max_app/data/cargo_unit_data.json` — сгенерированный
-//! (`max-brh/tools/gen_cargo_unit_data.py`) снимок `SC_UNITS`: 93 записи в
-//! порядке [`max_core::enums::UnitType`], поля `sprite`/`shadow`/`portrait`/
-//! `data`/`flics`, `INVALID_ID` → `null`. Экспорт читает готовый JSON (это тот
-//! же маппинг, что использует `CargoMenu` порта), а [`verify_sc_units`]
-//! дополнительно сверяет его с архивом `PATCHES.RES`: если JSON устарел, экспорт
-//! падает с внятной ошибкой, а не пишет каталоги по неверным тегам.
+//! `max-brh/crates/max_app/data/cargo_unit_data.json` is a generated
+//! (`max-brh/tools/gen_cargo_unit_data.py`) snapshot of `SC_UNITS`: 93 records in
+//! [`max_core::enums::UnitType`] order, with the fields `sprite`/`shadow`/`portrait`/
+//! `data`/`flics`, where `INVALID_ID` → `null`. The export reads the ready JSON (the same
+//! mapping the port's `CargoMenu` uses), and [`verify_sc_units`]
+//! additionally checks it against the `PATCHES.RES` archive: if the JSON is stale, the export
+//! fails with a clear error instead of writing directories under wrong tags.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,56 +16,56 @@ use anyhow::{bail, Context, Result};
 use max_assets::ResArchive;
 use serde::Deserialize;
 
-/// Сколько игровых типов юнитов (`UNIT_END` в C++ / `UnitType::COUNT`).
+/// How many in-game unit types there are (`UNIT_END` in C++ / `UnitType::COUNT`).
 pub const UNIT_COUNT: usize = 93;
 
-/// Ключ XOR-шифрования ресурсов `SC_UNITS`/`ATTRIBS`
+/// The XOR key for the `SC_UNITS`/`ATTRIBS` resources
 /// (`ResourceManager_GenericTable`, `resource_manager.cpp:156`).
 const XOR_TABLE: [u8; 32] = [
     0x6c, 0x57, 0x36, 0xe6, 0x81, 0xe0, 0x72, 0x8a, 0xd3, 0xd9, 0xff, 0x54, 0x48, 0x3a, 0xcd, 0x75,
     0xd5, 0x0d, 0xe9, 0xe7, 0x7a, 0x57, 0xae, 0xeb, 0x61, 0x16, 0xb0, 0x35, 0x55, 0x62, 0xed, 0xd1,
 ];
 
-/// Запись `cargo_unit_data.json` — один тип юнита.
+/// A `cargo_unit_data.json` record — one unit type.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct CargoUnit {
-    /// Токен `SC_UNITS`/`UnitType` (`TANK`, `MININGST`, …) — он же имя каталога.
+    /// The `SC_UNITS`/`UnitType` token (`TANK`, `MININGST`, …) — also the directory name.
     pub token: String,
-    /// Тег спрайта корпуса (`Unit::GetSprite()`).
+    /// The body sprite tag (`Unit::GetSprite()`).
     #[serde(default)]
     pub sprite: Option<String>,
-    /// Тег тени `S_*` (`Unit::GetShadow`); `null` — тени нет.
+    /// The shadow tag `S_*` (`Unit::GetShadow`); `null` — there is no shadow.
     #[serde(default)]
     pub shadow: Option<String>,
-    /// Тег портрета `P_*` (`Unit::GetPortrait`); `null` — 22 типа без портрета.
+    /// The portrait tag `P_*` (`Unit::GetPortrait`); `null` — 22 types have no portrait.
     #[serde(default)]
     pub portrait: Option<String>,
-    /// Тег FLC-анимации `F_*` (`Unit::GetFlicsAnimation()`); `null` — без анимации.
+    /// The FLC animation tag `F_*` (`Unit::GetFlicsAnimation()`); `null` — no animation.
     #[serde(default)]
     pub flics: Option<String>,
-    /// Тег `D_*` — [`max_assets::sprite::FrameInfo`] (`Unit::GetFrameInfo()`).
+    /// The `D_*` tag — [`max_assets::sprite::FrameInfo`] (`Unit::GetFrameInfo()`).
     #[serde(default)]
     pub data: Option<String>,
-    /// Английское описание из `language.json` (в экспорт не попадает).
+    /// The English description from `language.json` (not included in the export).
     #[serde(default)]
     pub description: Option<String>,
 }
 
 impl CargoUnit {
-    /// Каталог юнита в выгрузке — токен `SC_UNITS` (`TANK`, `MININGST`).
+    /// The unit directory in the export — the `SC_UNITS` token (`TANK`, `MININGST`).
     pub fn tag(&self) -> &str {
         &self.token
     }
 }
 
-/// Корень `cargo_unit_data.json`.
+/// Root of `cargo_unit_data.json`.
 #[derive(Debug, Clone, Deserialize)]
 struct CargoUnitFile {
     units: Vec<CargoUnit>,
 }
 
-/// Читает `cargo_unit_data.json` и проверяет, что типов ровно 93 и токены
-/// уникальны.
+/// Reads `cargo_unit_data.json` and checks that there are exactly 93 types and that the tokens
+/// are unique.
 pub fn load_cargo_unit_data(path: impl AsRef<Path>) -> Result<Vec<CargoUnit>> {
     let path = path.as_ref();
     let text = std::fs::read_to_string(path)
@@ -103,12 +103,12 @@ pub fn load_cargo_unit_data(path: impl AsRef<Path>) -> Result<Vec<CargoUnit>> {
     Ok(file.units)
 }
 
-/// `SC_UNITS` из `PATCHES.RES`: токен → сырая запись JSON.
+/// `SC_UNITS` from `PATCHES.RES`: token → raw JSON record.
 ///
-/// Ресурс XOR-зашифрован таблицей [`XOR_TABLE`] и содержит
-/// `{"units": {"<TOKEN>": {...}}}`. Порядок ключей в `serde_json::Map` без
-/// фичи `preserve_order` — алфавитный, поэтому здесь важен только **набор**
-/// токенов (порядок задаёт `cargo_unit_data.json`).
+/// The resource is XOR-encrypted with [`XOR_TABLE`] and contains
+/// `{"units": {"<TOKEN>": {...}}}`. Key order in `serde_json::Map` without
+/// the `preserve_order` feature is alphabetical, so only the **set** of tokens
+/// matters here (the order comes from `cargo_unit_data.json`).
 pub fn read_sc_units_tokens(path: impl AsRef<Path>) -> Result<BTreeMap<String, serde_json::Value>> {
     let path = path.as_ref();
     let archive = ResArchive::open(path)?;
@@ -132,25 +132,25 @@ pub fn read_sc_units_tokens(path: impl AsRef<Path>) -> Result<BTreeMap<String, s
     Ok(units.iter().map(|(key, value)| (key.clone(), value.clone())).collect())
 }
 
-/// Результат сверки маппинга с `SC_UNITS`.
+/// The result of checking the mapping against `SC_UNITS`.
 #[derive(Debug, Clone, Default)]
 pub struct ScUnitsCheck {
-    /// Сколько записей в `SC_UNITS`.
+    /// How many records are in `SC_UNITS`.
     pub units: usize,
-    /// Сколько полей сверено (`sprite`/`shadow`/`portrait`/`data`/`flics`).
+    /// How many fields were compared (`sprite`/`shadow`/`portrait`/`data`/`flics`).
     pub fields: usize,
-    /// Расхождения (`токен.поле: JSON … / SC_UNITS …`).
+    /// Mismatches (`token.field: JSON … / SC_UNITS …`).
     pub mismatches: Vec<String>,
 }
 
 impl ScUnitsCheck {
-    /// Сверка прошла без расхождений.
+    /// The check passed with no mismatches.
     pub fn is_ok(&self) -> bool {
         self.mismatches.is_empty()
     }
 }
 
-/// Сверяет `cargo_unit_data.json` с `SC_UNITS` из архива.
+/// Checks `cargo_unit_data.json` against `SC_UNITS` from the archive.
 pub fn verify_sc_units(
     path: impl AsRef<Path>,
     units: &[CargoUnit],
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn cargo_unit_data_has_93_unique_tokens_in_unit_type_order() {
         if !unit_json_path().exists() {
-            return; // рабочий каталог без данных игры — тест пропускается
+            return; // working directory without game data — the test is skipped
         }
 
         let units = load_cargo_unit_data(unit_json_path()).expect("JSON читается");
@@ -266,8 +266,8 @@ mod tests {
         });
         let unit: CargoUnit = serde_json::from_value(raw).expect("разбор");
 
-        // `INVALID_ID` — строка, а не null: генератор превращает её в null,
-        // поэтому здесь проверяем только форму записи `None`.
+        // `INVALID_ID` is a string, not null: the generator turns it into null,
+        // so here we only check the shape of the `None` record.
         assert_eq!(unit.portrait.as_deref(), Some("INVALID_ID"));
         assert_eq!(unit.flics, None);
         assert_eq!(unit.shadow, None);

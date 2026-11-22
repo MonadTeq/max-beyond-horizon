@@ -1,7 +1,7 @@
-//! Интеграционные тесты на реальном `MAX.RES`/`PATCHES.RES`.
+//! Integration tests on the real `MAX.RES`/`PATCHES.RES`.
 //!
-//! Файлы игры лежат в репозитории (`max-original/`, `assets/`); если их нет,
-//! тесты пропускаются с сообщением, а не падают — как в `max_assets`.
+//! The game files live in the repository (`max-original/`, `assets/`); if they are absent,
+//! the tests are skipped with a message instead of failing — as in `max_assets`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -214,7 +214,7 @@ fn export_of_selected_images_has_expected_dimensions_and_is_idempotent() {
         .collect();
     assert_eq!(files.len(), 3);
 
-    // TANK: лента 24 кадров, 44x45 первый кадр.
+    // TANK: a strip of 24 frames, first frame 44x45.
     let tank_name = first
         .files
         .iter()
@@ -253,7 +253,7 @@ fn export_of_selected_images_has_expected_dimensions_and_is_idempotent() {
     let snow = max_resources_viewer::png::read(dir.join(snow_name)).expect("SNOW_PIC PNG читается");
     assert_eq!((snow.width, snow.height), (128, 128));
 
-    // Повторный экспорт в тот же каталог — те же байты.
+    // Re-exporting into the same directory — the same bytes.
     let second = export_archive(&archive, &palette, &dir, &infos, &options).expect("export #2");
     assert_eq!(second.exported, 3);
     for (relative, expected) in &files {

@@ -1,7 +1,7 @@
 #requires -version 5.1
-# Хелперы для управления окнами max_app (SDL3) из PowerShell:
-# фокус, клики по клиентским координатам, клавиши, скриншот окна.
-# Только для тестовых прогонов: build/** в .gitignore.
+# Helpers for controlling max_app (SDL3) windows from PowerShell:
+# focus, clicks in client coordinates, keys, window screenshot.
+# Test runs only: build/** is in .gitignore.
 Add-Type -AssemblyName System.Drawing
 if (-not ('UiWin' -as [type])) {
 Add-Type -TypeDefinition @'

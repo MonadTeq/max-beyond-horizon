@@ -1,26 +1,26 @@
 ﻿#requires -version 5.1
 <#
 .SYNOPSIS
-  Проверка подсистемы PE-файла (Subsystem из IMAGE_OPTIONAL_HEADER) без dumpbin.
+  Check the subsystem of a PE file (Subsystem from IMAGE_OPTIONAL_HEADER) without dumpbin.
 
 .DESCRIPTION
-  Значения Subsystem: 2 = Windows GUI (окно без консоли), 3 = Windows Console
-  (stdout/stderr в терминале). Поле лежит в Optional Header по смещению 0x44 (68)
-  и для PE32, и для PE32+ (в PE32+ отсутствует BaseOfData, но ImageBase шире —
-  смещение Subsystem не меняется). Optional Header начинается после сигнатуры
-  «PE\0\0» (4 байта) и IMAGE_FILE_HEADER (20 байт), поэтому абсолютное смещение:
+  Subsystem values: 2 = Windows GUI (window without a console), 3 = Windows Console
+  (stdout/stderr in the terminal). The field sits in the Optional Header at offset 0x44 (68)
+  for both PE32 and PE32+ (PE32+ has no BaseOfData, but ImageBase is wider —
+  the Subsystem offset does not change). The Optional Header starts after the
+  "PE\0\0" signature (4 bytes) and IMAGE_FILE_HEADER (20 bytes), so the absolute offset is:
 
-      e_lfanew (по DOS-смещению 0x3C) + 4 + 20 + 0x44 = e_lfanew + 0x5C
+      e_lfanew (at DOS offset 0x3C) + 4 + 20 + 0x44 = e_lfanew + 0x5C
 
-  Скрипт годится и для запуска отдельно, и для подключения из сборочных
-  скриптов (dot-source): после проверки функция Get-PeSubsystem остаётся
-  доступна вызывающему.
+  The script works both standalone and when dot-sourced from build
+  scripts: after the check the Get-PeSubsystem function stays
+  available to the caller.
 
 .PARAMETER Path
-  Один или несколько PE-файлов (.exe/.dll).
+  One or more PE files (.exe/.dll).
 
 .PARAMETER Expected
-  Ожидаемая подсистема: 2 (GUI) или 3 (Console). Несовпадение — ошибка (exit 1).
+  Expected subsystem: 2 (GUI) or 3 (Console). A mismatch is an error (exit 1).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\pe-subsystem.ps1 `

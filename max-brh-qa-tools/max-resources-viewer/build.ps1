@@ -1,7 +1,7 @@
-# Сборка max-resources-viewer (Windows) с автокопированием SDL3.dll.
-# Ищет SDL3: vcpkg ($env:VCPKG_ROOT или D:\dev\toolchain\vcpkg / C:\vcpkg),
-# затем локальную копию bin\sdl3-3.4.20, затем бандл клиента.
-# Использование: powershell -ExecutionPolicy Bypass -File build.ps1 [-Debug] [-NoPackage]
+# Build of max-resources-viewer (Windows) with automatic SDL3.dll copying.
+# Looks for SDL3: vcpkg ($env:VCPKG_ROOT or D:\dev\toolchain\vcpkg / C:\vcpkg),
+# then the local copy bin\sdl3-3.4.20, then the client bundle.
+# Usage: powershell -ExecutionPolicy Bypass -File build.ps1 [-Debug] [-NoPackage]
 param(
     [switch]$Debug,
     [switch]$NoPackage
@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 function Fail([string]$m) { Write-Host "ОШИБКА: $m" -ForegroundColor Red; exit 1 }
 
 $root = Split-Path -Parent $PSScriptRoot            # tools/
-$repo = Split-Path -Parent $root                    # корень репозитория
+$repo = Split-Path -Parent $root                    # repository root
 $here = Join-Path $root 'max-resources-viewer'
 $profile = if ($Debug) { 'debug' } else { 'release' }
 $flags = if ($Debug) { '' } else { '--release' }
@@ -24,7 +24,7 @@ if (-not $vsPath) { Fail 'не найдена VS с workload Desktop development
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path $vcvars)) { Fail "нет $vcvars" }
 
-# --- SDL3 (lib для линковки + dll для запуска) ------------------------------
+# --- SDL3 (lib for linking + dll for running) -------------------------------
 $candidates = @()
 if ($env:VCPKG_ROOT) { $candidates += $env:VCPKG_ROOT }
 $candidates += "D:\dev\toolchain\vcpkg", "C:\vcpkg"
@@ -56,7 +56,7 @@ Write-Host "  VS:    $vsPath"
 Write-Host "  SDL3:  $(if ($sdlLib) { $sdlLib } else { 'НЕ НАЙДЕН' })"
 Write-Host "  cargo: $cargo"
 
-# vcvars64 через .bat (set "VAR=value" — без пробела в значении)
+# vcvars64 via .bat (set "VAR=value" — no space in the value)
 $bat = Join-Path $env:TEMP 'max-res-viewer-build.bat'
 $libLine = if ($sdlLib) { "set `"LIB=%LIB%;$sdlLib`"" } else { 'rem no-sdl-lib' }
 $vcpkgLine = if ($vcpkg) { "set `"VCPKG_ROOT=$vcpkg`"" } else { 'rem no-vcpkg' }
@@ -74,14 +74,14 @@ Set-Content -Path $bat -Value $batLines -Encoding ASCII
 cmd /c "`"$bat`""
 if ($LASTEXITCODE -ne 0) { Fail "cargo build: exit $LASTEXITCODE" }
 
-# --- подсистема PE: GUI (2), иначе двойной клик по .exe откроет консоль ------
+# --- PE subsystem: GUI (2), otherwise a double-click on the .exe opens a console ---
 $exePath = Join-Path $here "target\$profile\max-resources-viewer.exe"
 if (-not (Test-Path $exePath)) { Fail "после сборки нет $exePath" }
 $peScript = Join-Path $repo 'max-brh-cicd\scripts\pe-subsystem.ps1'
 & powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
 if ($LASTEXITCODE -ne 0) { Fail "PE-подсистема $exePath не GUI (ожидалось Subsystem=2)" }
 
-# --- DLL рядом с exe + пакет -------------------------------------------------
+# --- DLL next to the exe + package -------------------------------------------
 $targetDir = Join-Path $here "target\$profile"
 if ($sdlDll -and (Test-Path $sdlDll)) {
     Copy-Item $sdlDll (Join-Path $targetDir 'SDL3.dll') -Force

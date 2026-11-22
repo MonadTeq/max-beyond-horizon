@@ -1,4 +1,4 @@
-# UI-тест одиночной игры: главное меню -> New Game -> Options/Planet/Players -> партия с ИИ.
+# UI test of a single game: main menu -> New Game -> Options/Planet/Players -> a match with AI.
 $ErrorActionPreference = 'Stop'
 $root = 'D:\dev\max-port-debug'
 $out = "$root\build\ui-test-sp"
@@ -43,8 +43,8 @@ function RightClick-Client([IntPtr]$hwnd, [int]$cx, [int]$cy) {
 function Shot([string]$name) {
     $proc = Get-Process max-brh -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if (-not $proc) { Write-Host "shot ${name}: no window"; return }
-    # Скриншот снимается с экрана: окно должно быть сверху, иначе в кадр
-    # попадает браузер/терминал, а клики уходят не в игру.
+    # The screenshot is taken from the screen: the window must be on top, otherwise the frame
+    # catches the browser/terminal and the clicks go outside the game.
     [Win32.Mouse]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null
     [Win32.Mouse]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
     Start-Sleep -Milliseconds 250
@@ -63,7 +63,7 @@ function Shot([string]$name) {
 
 Get-Process max-brh -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
-# Без --ui: клиент по умолчанию открывает GUI (окно SDL3).
+# Without --ui: the client opens the GUI (SDL3 window) by default.
 Start-Process -FilePath "$root\release\max_app-1.0.0-windows-x86_64-ui\max-brh.exe" -ArgumentList '--scale','1','--data-dir',"$root\max-original",'--assets-dir',"$root\assets" -WorkingDirectory $root
 Start-Sleep -Seconds 6
 $proc = Get-Process max-brh | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
@@ -89,15 +89,15 @@ Shot '05-players-green-computer'
 Click-Client $hwnd 568 458    # Done -> start
 Start-Sleep -Seconds 4
 Shot '06-game-start'
-# Выделение Surveyor (верхний правый мобильный юнит) и приказ движения вниз.
-# Координаты — как в кадре build/ui-test-sp/06-game-start.png (640×480).
+# Select the Surveyor (the top-right mobile unit) and order it to move down.
+# Coordinates as in the build/ui-test-sp/06-game-start.png frame (640×480).
 Click-Client $hwnd 532 114
 Start-Sleep -Seconds 1
 Shot '07-selected'
 RightClick-Client $hwnd 540 350    # RMB: move
 Start-Sleep -Seconds 1
 Shot '08-move-order'
-# End Turn -> ход ИИ -> снова ход игрока
+# End Turn -> AI turn -> the player's turn again
 Click-Client $hwnd 426 12
 Start-Sleep -Seconds 6
 Shot '09-after-ai-turn'

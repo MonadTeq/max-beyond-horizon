@@ -1,46 +1,46 @@
-//! Классификация записей MAX.RES: kind, категория, метаданные, не-изображения.
+//! Classification of MAX.RES records: kind, category, metadata, non-images.
 //!
-//! Порядок проб декодеров (с учётом тегов, чтобы не путать форматы, которые
-//! структурно похожи):
+//! Order of the decoder probes (tag-aware, so that formats which are structurally
+//! similar are not confused):
 //!
-//! 1. курсор — только теги [`max_assets::CURSOR_RESOURCES`] и точный размер
-//!    `8 + w*h*frames` (иначе `HANDPTR` неотличим от simple image);
-//! 2. тень — только `S_*`, декодер [`max_assets::decode_shadow`];
-//! 3. simple image — [`SimpleImage`] и **точный** размер `8 + w*h`
-//!    (декодер допускает хвост, но в реальном MAX.RES все 649 simple-картинок
-//!    укладываются ровно);
-//! 4. sprite — [`max_assets::decode_sprite`] (сам проверяет все кадры/строки);
-//! 5. big image — [`BigImage`] (RLE; собственный палитровый заголовок 776 байт);
-//! 6. shadow/курсор — fallback для нестандартных тегов.
+//! 1. cursor — only the [`max_assets::CURSOR_RESOURCES`] tags and the exact size
+//!    `8 + w*h*frames` (otherwise `HANDPTR` is indistinguishable from a simple image);
+//! 2. shadow — only `S_*`, the [`max_assets::decode_shadow`] decoder;
+//! 3. simple image — [`SimpleImage`] and the **exact** size `8 + w*h`
+//!    (the decoder tolerates a tail, but in the real MAX.RES all 649 simple images
+//!    fit exactly);
+//! 4. sprite — [`max_assets::decode_sprite`] (it checks every frame/row itself);
+//! 5. big image — [`BigImage`] (RLE; its own 776-byte palette header);
+//! 6. shadow/cursor — a fallback for non-standard tags.
 //!
-//! Если ни один декодер не подошёл — `NonImage`: ASCIIZ-ссылка на файл
-//! (`*.spw`/`*.wrl`/`*.flc`/`*.msc`/`*.mve`), TTF (`FONT_*`), текст/скрипт
-//! (`ATTRIBS`, `CLANATRB`, `TIPS`, …) или двоичные данные (`D_*`).
+//! If no decoder fits — `NonImage`: an ASCIIZ file reference
+//! (`*.spw`/`*.wrl`/`*.flc`/`*.msc`/`*.mve`), a TTF (`FONT_*`), text/a script
+//! (`ATTRIBS`, `CLANATRB`, `TIPS`, …) or binary data (`D_*`).
 
 use max_assets::cursor::{CursorDescriptor, CURSOR_RESOURCES};
 use max_assets::image::{BigImage, SimpleImage};
 use max_assets::res::{parse_file_ref, ResArchive, ResEntry};
 use max_assets::sprite::{decode_shadow, decode_sprite};
 
-/// Что за изображение (или не-изображение) лежит в записи.
+/// What kind of image (or non-image) the record holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
-    /// `ImageSimpleHeader`: палитра COLOR.PAL, без RLE.
+    /// `ImageSimpleHeader`: the COLOR.PAL palette, no RLE.
     Simple,
-    /// `ImageBigHeader`: своя палитра + RLE по строкам.
+    /// `ImageBigHeader`: its own palette + per-row RLE.
     Big,
-    /// Мультикадровый спрайт (юниты/здания/иконки).
+    /// A multi-frame sprite (units/buildings/icons).
     Sprite,
-    /// Мультикадровая тень `S_*` — маска затемнения.
+    /// A multi-frame `S_*` shadow — a darkening mask.
     Shadow,
-    /// `Cursor_Descriptor`: кадры уложены вертикально.
+    /// `Cursor_Descriptor`: the frames are stacked vertically.
     Cursor,
-    /// Не изображение: ссылка, TTF, текст, данные.
+    /// Not an image: a reference, TTF, text, data.
     NonImage,
 }
 
 impl Kind {
-    /// Короткое имя для UI/манифеста.
+    /// A short name for the UI/manifest.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Simple => "simple",
@@ -52,27 +52,27 @@ impl Kind {
         }
     }
 
-    /// Это изображение (есть что экспортировать).
+    /// It is an image (there is something to export).
     pub const fn is_image(self) -> bool {
         !matches!(self, Self::NonImage)
     }
 }
 
-/// Категория экспорта.
+/// Export category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
-    /// Интерфейс: фон окна, панели, кнопки, поля, счётчики.
+    /// Interface: window background, panels, buttons, fields, counters.
     Ui,
-    /// Спрайты юнитов/зданий и их тени (COMMTWR…WALDO, S_*).
+    /// Unit/building sprites and their shadows (COMMTWR…WALDO, S_*).
     Units,
-    /// Иконки, портреты, маркеры, логотипы, курсоры, прочее.
+    /// Icons, portraits, markers, logos, cursors, etc.
     Misc,
-    /// Не изображение (в images/ не попадает).
+    /// Not an image (does not go into images/).
     NonImage,
 }
 
 impl Category {
-    /// Имя подкаталога `images/…` (`None` у не-изображений).
+    /// The `images/…` subdirectory name (`None` for non-images).
     pub const fn dir(self) -> Option<&'static str> {
         match self {
             Self::Ui => Some("ui"),
@@ -82,7 +82,7 @@ impl Category {
         }
     }
 
-    /// Подпись для UI/README.
+    /// A caption for the UI/README.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ui => "ui",
@@ -93,31 +93,31 @@ impl Category {
     }
 }
 
-/// Вид не-изображения.
+/// The kind of non-image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NonImageKind {
-    /// ASCIIZ-ссылка на `*.spw` (RIFF/WAVE рядом с MAX.RES).
+    /// An ASCIIZ reference to `*.spw` (RIFF/WAVE next to MAX.RES).
     WavRef,
-    /// ASCIIZ-ссылка на `*.wrl` (карта).
+    /// An ASCIIZ reference to `*.wrl` (map).
     WrlRef,
-    /// ASCIIZ-ссылка на `*.flc` (анимация).
+    /// An ASCIIZ reference to `*.flc` (animation).
     FlcRef,
-    /// ASCIIZ-ссылка на `*.msc` (музыка).
+    /// An ASCIIZ reference to `*.msc` (music).
     MscRef,
-    /// ASCIIZ-ссылка на `*.mve` (видео).
+    /// An ASCIIZ reference to `*.mve` (video).
     MveRef,
-    /// TrueType/OpenType шрифт (`FONT_*` в PATCHES.RES).
+    /// A TrueType/OpenType font (`FONT_*` in PATCHES.RES).
     Ttf,
-    /// Текстовый скрипт/INI (`;`/`[` в начале).
+    /// A text script/INI (`;`/`[` at the start).
     Script,
-    /// Текст (справка/подсказки).
+    /// Text (help/hints).
     Text,
-    /// Двоичные данные (`D_*` — таблицы, SC_* в PATCHES.RES).
+    /// Binary data (`D_*` — tables, SC_* in PATCHES.RES).
     Data,
 }
 
 impl NonImageKind {
-    /// Короткое имя для UI/отчёта.
+    /// A short name for the UI/report.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::WavRef => "wav-ref",
@@ -133,32 +133,32 @@ impl NonImageKind {
     }
 }
 
-/// Метаданные одного кадра.
+/// Metadata of a single frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameMeta {
-    /// Ширина кадра.
+    /// Frame width.
     pub width: u16,
-    /// Высота кадра.
+    /// Frame height.
     pub height: u16,
-    /// Горячая точка/якорь по x.
+    /// Hotspot/anchor along x.
     pub hot_x: i16,
-    /// Горячая точка/якорь по y.
+    /// Hotspot/anchor along y.
     pub hot_y: i16,
 }
 
-/// Источник палитры.
+/// Palette source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteSource {
-    /// Системная палитра `COLOR.PAL`.
+    /// The system palette `COLOR.PAL`.
     ColorPal,
-    /// Палитра внутри big image (768 байт).
+    /// The palette inside the big image (768 bytes).
     Own,
-    /// У не-изображения палитры нет.
+    /// A non-image has no palette.
     None,
 }
 
 impl PaletteSource {
-    /// Подпись для UI.
+    /// A caption for the UI.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ColorPal => "COLOR.PAL",
@@ -168,47 +168,47 @@ impl PaletteSource {
     }
 }
 
-/// Полная классификация одной записи.
+/// The full classification of one record.
 #[derive(Debug, Clone)]
 pub struct ResourceInfo {
-    /// Порядковый номер в таблице (0-based).
+    /// The ordinal number in the table (0-based).
     pub index: usize,
-    /// Тег (C-строка из 8-байтного поля).
+    /// The tag (a C string from the 8-byte field).
     pub name: String,
-    /// Смещение данных от начала файла.
+    /// Data offset from the start of the file.
     pub offset: u32,
-    /// Размер данных в байтах.
+    /// Data size in bytes.
     pub size: u32,
-    /// Формат.
+    /// The format.
     pub kind: Kind,
-    /// Категория экспорта.
+    /// Export category.
     pub category: Category,
-    /// Ширина (первый кадр / картинка).
+    /// Width (first frame / image).
     pub width: i32,
-    /// Высота (первый кадр / картинка).
+    /// Height (first frame / image).
     pub height: i32,
-    /// Число кадров (1 у простых картинок).
+    /// Frame count (1 for simple images).
     pub frame_count: usize,
-    /// Кадры (для strip-экспорта); у big/simple — один.
+    /// Frames (for the strip export); one for big/simple.
     pub frames: Vec<FrameMeta>,
-    /// Палитра.
+    /// The palette.
     pub palette: PaletteSource,
-    /// Прозрачный индекс (simple/big/cursor), если он есть.
+    /// The transparent index (simple/big/cursor), if there is one.
     pub transparent: Option<u8>,
-    /// `ulx` заголовка simple/big (для курсора — hotspot x).
+    /// The `ulx` of the simple/big header (hotspot x for a cursor).
     pub ulx: i16,
-    /// `uly` заголовка simple/big (для курсора — hotspot y).
+    /// The `uly` of the simple/big header (hotspot y for a cursor).
     pub uly: i16,
-    /// Подвид не-изображения.
+    /// The non-image subtype.
     pub non_image: Option<NonImageKind>,
-    /// Имя файла из тела ссылки (`tank1.spw`).
+    /// The file name from the link body (`tank1.spw`).
     pub file_ref: Option<String>,
-    /// Первые байты тела (hex-метаданные в UI).
+    /// The first bytes of the body (hex metadata in the UI).
     pub first_bytes: Vec<u8>,
 }
 
 impl ResourceInfo {
-    /// Имя файла экспорта (`TANK_44x45_24f.png`).
+    /// The export file name (`TANK_44x45_24f.png`).
     pub fn file_name(&self) -> String {
         let mut name = sanitize_tag(&self.name);
         name.push('_');
@@ -226,13 +226,13 @@ impl ResourceInfo {
         name
     }
 
-    /// Путь относительно корня экспорта (`images/ui/...`).
+    /// Path relative to the export root (`images/ui/...`).
     pub fn relative_path(&self) -> Option<String> {
         let dir = self.category.dir()?;
         Some(format!("images/{dir}/{}", self.file_name()))
     }
 
-    /// Подпись для списка UI.
+    /// A caption for the UI list.
     pub fn list_label(&self) -> String {
         if let Some(non_image) = self.non_image {
             format!(
@@ -255,7 +255,7 @@ impl ResourceInfo {
         }
     }
 
-    /// Диапазон размеров кадров (`44x45..56x57`) или `—`.
+    /// The frame size range (`44x45..56x57`) or `—`.
     pub fn frame_size_range(&self) -> String {
         if self.frames.is_empty() {
             return "-".to_string();
@@ -281,7 +281,7 @@ impl ResourceInfo {
         }
     }
 
-    /// Первые байты как `74 61 6E 6B …`.
+    /// The first bytes as `74 61 6E 6B …`.
     pub fn first_bytes_hex(&self) -> String {
         self.first_bytes
             .iter()
@@ -292,11 +292,11 @@ impl ResourceInfo {
     }
 }
 
-/// Список спрайтов юнитов/зданий/эффектов M.A.X. (`COMMTWR`…`WALDO`).
+/// The list of M.A.X. unit/building/effect sprites (`COMMTWR`…`WALDO`).
 ///
-/// Это `SPRITE`-записи `MAX.RES` без `I_*`-иконок: 92 имени, включая
-/// взрывы/ракеты/мины (они тоже `UnitType` в оригинале). `S_*`-тени
-/// классифицируются в ту же категорию отдельно.
+/// These are the `SPRITE` records of `MAX.RES` without the `I_*` icons: 92 names, including
+/// explosions/rockets/mines (they are `UnitType`s in the original too). `S_*` shadows
+/// are classified into the same category separately.
 pub const UNIT_SPRITES: [&str; 92] = [
     "RADAR", "GUNTURRT", "ARTYTRRT", "ANTIMSSL", "ANTIAIR", "POWERSTN", "LIGHTPLT", "LANDPLT",
     "MININGST", "DEPOT", "WTRPLTFM", "CNCT_4W", "ADUMP", "FDUMP", "POWGEN", "LRGSLAB", "SMLSLAB",
@@ -312,13 +312,13 @@ pub const UNIT_SPRITES: [&str; 92] = [
     "SEAMINE", "HARVSTER", "WALDO",
 ];
 
-/// Теги-маркеры ресурсов/месторождений (`misc`).
+/// Resource/deposit marker tags (`misc`).
 const MARKER_PREFIXES: [&str; 6] = ["RAWMSK", "FUELMK", "GOLDMK", "SMRWMK", "SMFLMK", "SMGDMK"];
 
-/// Картинки планет/звёзд (`misc`, 128×128 big image).
+/// Planet/star images (`misc`, 128×128 big image).
 const PLANET_PICTURES: [&str; 5] = ["SNOW_PIC", "CRTR_PIC", "GREN_PIC", "DSRT_PIC", "STAR_PIC"];
 
-/// Классифицирует все записи архива (в файловом порядке, с дубликатами).
+/// Classifies all archive records (in file order, with duplicates).
 pub fn classify_archive(archive: &ResArchive) -> Vec<ResourceInfo> {
     archive
         .list()
@@ -327,7 +327,7 @@ pub fn classify_archive(archive: &ResArchive) -> Vec<ResourceInfo> {
         .collect()
 }
 
-/// Классифицирует одну запись.
+/// Classifies a single record.
 pub fn classify_entry(archive: &ResArchive, entry: &ResEntry) -> ResourceInfo {
     let bytes = entry_bytes(archive, entry);
     let name = entry.name.as_str();
@@ -419,9 +419,9 @@ pub fn classify_entry(archive: &ResArchive, entry: &ResEntry) -> ResourceInfo {
     }
 
     if info.kind == Kind::NonImage {
-        // `BigImage::decode` очень терпим к короткому RLE и читает transparent
-        // по смещению 776; без проверки заголовка он «декодирует» даже текст
-        // (ATTRIBS/TIPS: первые байты ASCII дают width/height в тысячи).
+        // `BigImage::decode` is very tolerant of short RLE and reads transparent
+        // at offset 776; without a header check it "decodes" even text
+        // (ATTRIBS/TIPS: the first ASCII bytes give width/height in the thousands).
         if big_header_plausible(bytes) {
             if let Ok(image) = BigImage::decode(bytes) {
                 info.kind = Kind::Big;
@@ -533,8 +533,8 @@ fn big_header_plausible(bytes: &[u8]) -> bool {
 }
 
 fn decode_simple(bytes: &[u8]) -> Option<SimpleImage> {
-    // Ровно 8 байт — заголовок без пикселей; `SimpleImage::decode` читает
-    // `bytes[8]` как transparent_color и на таком срезе паникует.
+    // Exactly 8 bytes — a header without pixels; `SimpleImage::decode` reads
+    // `bytes[8]` as transparent_color and panics on such a slice.
     if bytes.len() < 9 {
         return None;
     }
@@ -554,7 +554,7 @@ fn decode_cursor(name: &str, bytes: &[u8]) -> Option<CursorDescriptor> {
 }
 
 fn decode_cursor_any(bytes: &[u8]) -> Option<CursorDescriptor> {
-    // `CursorDescriptor::decode` тоже читает 9-й байт (transparent).
+    // `CursorDescriptor::decode` also reads the 9th byte (transparent).
     if bytes.len() < 9 {
         return None;
     }
@@ -565,7 +565,7 @@ fn decode_cursor_any(bytes: &[u8]) -> Option<CursorDescriptor> {
     (bytes.len() == expected).then_some(cursor)
 }
 
-/// Категория изображения по тегу/формату.
+/// The image category by tag/format.
 pub fn image_category(name: &str, kind: Kind) -> Category {
     if kind == Kind::NonImage {
         return Category::NonImage;
@@ -583,7 +583,7 @@ pub fn image_category(name: &str, kind: Kind) -> Category {
     Category::Ui
 }
 
-/// Тег относится к `misc` (иконки, портреты, маркеры, логотипы, курсоры…).
+/// The tag belongs to `misc` (icons, portraits, markers, logos, cursors…).
 pub fn is_misc(name: &str) -> bool {
     if CURSOR_RESOURCES.contains(&name) {
         return true;
@@ -614,7 +614,7 @@ pub fn is_misc(name: &str) -> bool {
     false
 }
 
-/// Подвид не-изображения и имя файла ссылки.
+/// The non-image subtype and the reference file name.
 pub fn classify_non_image(name: &str, bytes: &[u8]) -> (NonImageKind, Option<String>) {
     if name.starts_with("FONT_") || looks_like_ttf(bytes) {
         return (NonImageKind::Ttf, None);
@@ -655,7 +655,7 @@ pub fn classify_non_image(name: &str, bytes: &[u8]) -> (NonImageKind, Option<Str
     (NonImageKind::Data, None)
 }
 
-/// Первые 4 байта TTF/OTF (`00 01 00 00`) или таблица `FFTM` в заголовке.
+/// The first 4 bytes of a TTF/OTF (`00 01 00 00`) or an `FFTM` table in the header.
 fn looks_like_ttf(bytes: &[u8]) -> bool {
     if bytes.len() < 12 {
         return false;
@@ -669,7 +669,7 @@ fn looks_like_ttf(bytes: &[u8]) -> bool {
         .any(|window| window == b"FFTM")
 }
 
-/// Срез выглядит как текст: 95 % печатных ASCII/CR/LF/TAB, без NUL.
+/// The slice looks like text: 95% printable ASCII/CR/LF/TAB, with no NUL.
 fn looks_like_text(bytes: &[u8]) -> bool {
     let sample = &bytes[..bytes.len().min(512)];
 
@@ -687,7 +687,7 @@ fn looks_like_text(bytes: &[u8]) -> bool {
     printable * 100 >= sample.len() * 95
 }
 
-/// Безопасное имя файла из 8-байтного тега.
+/// A safe file name from the 8-byte tag.
 pub fn sanitize_tag(tag: &str) -> String {
     let mut out = String::with_capacity(tag.len());
 
@@ -706,20 +706,20 @@ pub fn sanitize_tag(tag: &str) -> String {
     }
 }
 
-/// Сводная статистика по архиву.
+/// Summary statistics for the archive.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClassificationStats {
-    /// Всего записей.
+    /// Total records.
     pub entries: usize,
-    /// Изображений.
+    /// Images.
     pub images: usize,
     /// UI.
     pub ui: usize,
-    /// Юниты/здания/тени.
+    /// Units/buildings/shadows.
     pub units: usize,
-    /// Прочее.
+    /// Other.
     pub misc: usize,
-    /// Не-изображений.
+    /// Non-images.
     pub non_images: usize,
     /// simple.
     pub simple: usize,
@@ -731,12 +731,12 @@ pub struct ClassificationStats {
     pub shadow: usize,
     /// cursor.
     pub cursor: usize,
-    /// Не-изображения по подтипам.
+    /// Non-images by subtype.
     pub non_image_kinds: Vec<(NonImageKind, usize)>,
 }
 
 impl ClassificationStats {
-    /// Считает статистику по уже классифицированным записям.
+    /// Computes statistics over the already classified records.
     pub fn from_infos(infos: &[ResourceInfo]) -> Self {
         let mut stats = Self {
             entries: infos.len(),
@@ -779,7 +779,7 @@ impl ClassificationStats {
         stats
     }
 
-    /// Число не-изображений данного подтипа.
+    /// The number of non-images of the given subtype.
     pub fn non_image_count(&self, kind: NonImageKind) -> usize {
         self.non_image_kinds
             .iter()

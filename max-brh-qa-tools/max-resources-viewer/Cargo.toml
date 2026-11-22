@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "M.A.X. MAX.RES viewer/classifier and PNG batch exporter"
 
-# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-brh.
+# A separate Cargo project (its own Cargo.lock), not part of the max-brh workspace.
 [workspace]
 
 [dependencies]
@@ -16,8 +16,8 @@ sdl3 = { version = "0.22", optional = true, default-features = false }
 
 [features]
 default = []
-# SDL3-окно. Системный SDL3 (libsdl3-dev / vcpkg) ищется линковщиком через
-# LIB/PATH (Windows) или pkg-config (Linux). Для vcpkg: --features sdl-vcpkg.
+# SDL3 window. The system SDL3 (libsdl3-dev / vcpkg) is located by the linker via
+# LIB/PATH (Windows) or pkg-config (Linux). For vcpkg: --features sdl-vcpkg.
 sdl = ["dep:sdl3", "sdl3/use-pkg-config"]
 sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]
 sdl-from-source = ["sdl", "sdl3/build-from-source"]

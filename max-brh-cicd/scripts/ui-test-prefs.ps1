@@ -1,18 +1,18 @@
-# ui-test-prefs.ps1 — ЖИВОЙ прогон окна: диалог Preferences/Setup
+# ui-test-prefs.ps1 — LIVE window run: the Preferences/Setup dialog
 # (C++ `OptionsMenu`), TC-0108/TC-0935.
 #
-# Проверяется в реальном окне (SendInput + фокус, кадры в build/ui-test-prefs):
-#  * пункт `Setup` главного меню открывает диалог `SETUPPIC` поверх меню
-#    (зелёный заголовок в (228,41) 184×17, кадр 01-setup-dialog);
-#  * `Cancel` закрывает его и возвращает главное меню (трасса `prefs=closed`);
-#  * в игре кнопка `Preferences` панели открывает `PREFSPIC`
-#    (кадр 05-prefs-dialog), а `Animate Effects` реально выключает эффекты
-#    (`effects=0` в трассе `MAX_DEBUG_INPUT`) и `Done` их сохраняет;
-#  * `FX Disabled` доходит до звука (`sound=0` в трассе).
+# Checked in the real window (SendInput + focus, frames in build/ui-test-prefs):
+#  * the main menu's `Setup` item opens the `SETUPPIC` dialog over the menu
+#    (green title at (228,41) 184×17, frame 01-setup-dialog);
+#  * `Cancel` closes it and returns to the main menu (`prefs=closed` in the trace);
+#  * in game the panel's `Preferences` button opens `PREFSPIC`
+#    (frame 05-prefs-dialog), and `Animate Effects` really turns the effects off
+#    (`effects=0` in the `MAX_DEBUG_INPUT` trace), and `Done` saves it;
+#  * `FX Disabled` reaches the sound (`sound=0` in the trace).
 #
-# Запуск: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-prefs.ps1
-# Нужен собранный клиент (build-windows-ui.ps1; exe ищется в
-# build\win-msvc-target\release и release\*-ui).
+# Run: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-prefs.ps1
+# A built client is required (build-windows-ui.ps1; the exe is looked up in
+# build\win-msvc-target\release and release\*-ui).
 param(
     [string]$Out = "",
     [switch]$KeepProcess
@@ -218,7 +218,7 @@ try {
     Write-Host "A: главное меню, зелёный заголовок: $green px"
     if ($green -lt 20) { Fail 'главное меню не нарисовано' }
 
-    # 1. Setup в главном меню (SETUPPIC).
+    # 1. Setup in the main menu (SETUPPIC).
     Click-Client 485 294
     Move-Client 400 200
     if (-not (Wait-Trace 'prefs=open' 5000)) { Fail 'Setup не открыл диалог (нет prefs=open)' }
@@ -228,7 +228,7 @@ try {
     Write-Host "B: заголовок Setup: $green px"
     if ($green -lt 20) { Fail 'заголовок Setup не нарисован (PREFSPIC)' }
 
-    # 2. Cancel возвращает меню.
+    # 2. Cancel returns to the menu.
     Click-Client 156 394
     Move-Client 400 200
     if (-not (Wait-Trace 'prefs=closed' 5000)) { Fail 'Cancel не закрыл диалог' }
@@ -236,7 +236,7 @@ try {
     if ($line -notmatch 'screen=MainMenu') { Fail "Cancel не вернул меню: $line" }
     Shot '02-cancelled' | Out-Null
 
-    # 3. Партия: New Game -> Options/Planet/Players/Cargo -> Enter (landing).
+    # 3. Match: New Game -> Options/Planet/Players/Cargo -> Enter (landing).
     Click-Client 485 189; Start-Sleep -Milliseconds 900
     Click-Client 568 458; Start-Sleep -Milliseconds 700
     Click-Client 568 458; Start-Sleep -Milliseconds 700
@@ -248,7 +248,7 @@ try {
     Start-Sleep -Milliseconds 800
     Shot '03-game' | Out-Null
 
-    # 4. Кнопка Preferences панели (67x18 в (86,4) -> центр 119,13).
+    # 4. The panel's Preferences button (67x18 at (86,4) -> center 119,13).
     Click-Client 119 13
     Move-Client 400 360
     if (-not (Wait-Trace 'prefs=open' 5000)) { Fail 'кнопка Preferences не открыла диалог' }
@@ -258,7 +258,7 @@ try {
     Write-Host "C: заголовок Preferences: $green px"
     if ($green -lt 20) { Fail 'заголовок Preferences не нарисован' }
 
-    # 5. Animate Effects (PREFSPIC, локальные (25,213) -> клик 154,250).
+    # 5. Animate Effects (PREFSPIC, local (25,213) -> click 154,250).
     Click-Client 154 250
     Move-Client 400 360
     Start-Sleep -Milliseconds 300
@@ -267,7 +267,7 @@ try {
     if ($line -notmatch 'effects=0') { Fail "effects не выключился: $line" }
     Shot '05-effects-off' | Out-Null
 
-    # 6. FX Disabled (210,73) -> клик 339,110: звук выключается сразу.
+    # 6. FX Disabled (210,73) -> click 339,110: the sound turns off at once.
     Click-Client 339 110
     Move-Client 400 360
     Start-Sleep -Milliseconds 300
@@ -276,7 +276,7 @@ try {
     if ($line -notmatch 'sound=0') { Fail "sound не выключился: $line" }
     Shot '06-fx-disabled' | Out-Null
 
-    # 7. Done (215,383,62x23) -> клик 366,423: диалог закрыт, значения живы.
+    # 7. Done (215,383,62x23) -> click 366,423: the dialog is closed, the values are live.
     Click-Client 366 423
     Move-Client 400 360
     if (-not (Wait-Trace 'prefs=closed' 5000)) { Fail 'Done не закрыл диалог' }
@@ -288,7 +288,7 @@ try {
     }
     Shot '07-done' | Out-Null
 
-    # 8. Повторное открытие: значения сохранились (`preferences.ini` + App).
+    # 8. Reopening: the values persisted (`preferences.ini` + App).
     Click-Client 119 13
     Move-Client 400 360
     if (-not (Wait-Trace 'prefs=open' 5000)) { Fail 'повторное открытие не удалось' }

@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-//! Чистый слой редактора: состояние выбора/фильтра/зума и отрисовка кадра.
+//! The editor's pure layer: selection/filter/zoom state and frame drawing.
 //!
-//! Здесь нет SDL: [`EditorState::compose`] рисует весь интерфейс в
-//! [`RgbaBuffer`], поэтому тот же код используется окном (`app.rs`) и
-//! headless-снимком (`--shot`). Виджеты списка/поля — из `max_render::ui`.
+//! There is no SDL here: [`EditorState::compose`] draws the whole interface into
+//! [`RgbaBuffer`], so the same code is used by the window (`app.rs`) and by the
+//! headless snapshot (`--shot`). The list/field widgets come from `max_render::ui`.
 
 use std::path::Path;
 
@@ -19,11 +19,11 @@ use crate::model::{classify_archive, Category, Kind, ResourceInfo};
 use crate::png::RgbaImage;
 use crate::render::render_resource;
 
-/// Логическая ширина кадра.
+/// The logical frame width.
 pub const FRAME_WIDTH: u32 = 1280;
-/// Логическая высота кадра.
+/// The logical frame height.
 pub const FRAME_HEIGHT: u32 = 800;
-/// Заголовок окна.
+/// The window title.
 pub const WINDOW_TITLE: &str = "M.A.X. - MAX.RES resource editor";
 
 const HEADER_HEIGHT: i32 = 56;
@@ -41,40 +41,40 @@ const ACCENT: Rgba = Rgba::rgb(240, 196, 96);
 const CHECKER_A: Rgba = Rgba::rgb(200, 204, 210);
 const CHECKER_B: Rgba = Rgba::rgb(232, 235, 240);
 
-/// Состояние редактора.
+/// The editor state.
 pub struct EditorState {
-    /// Архив (нужен для повторного декодирования выбранного ресурса).
+    /// The archive (needed to re-decode the selected resource).
     pub archive: ResArchive,
-    /// Классифицированные записи.
+    /// The classified records.
     pub infos: Vec<ResourceInfo>,
-    /// Системная палитра COLOR.PAL.
+    /// The system COLOR.PAL palette.
     pub palette: Palette,
-    /// Строка фильтра.
+    /// The filter string.
     pub filter: String,
-    /// Фокус в поле поиска.
+    /// Focus in the search field.
     pub search_focus: bool,
-    /// Список (items — подписи отфильтрованных строк).
+    /// The list (items — captions of the filtered rows).
     pub list: ListBox,
-    /// Индексы `infos`, соответствующие строкам списка.
+    /// The `infos` indices corresponding to the list rows.
     pub rows: Vec<usize>,
-    /// Масштаб превью (1..=8).
+    /// The preview scale (1..=8).
     pub zoom: i32,
-    /// Сдвиг превью в пикселях экрана.
+    /// The preview offset in screen pixels.
     pub pan: (i32, i32),
-    /// Кэш растрированного выбранного ресурса.
+    /// The cache of the rasterized selected resource.
     preview: Option<(usize, RgbaImage)>,
-    /// Последняя позиция мыши в координатах кадра.
+    /// The last mouse position in frame coordinates.
     pub mouse: Point,
-    /// Идёт перетаскивание превью.
+    /// A preview drag is in progress.
     pub dragging: bool,
-    /// Последняя точка перетаскивания.
+    /// The last drag point.
     drag_last: Point,
-    /// Сообщение внизу (ошибки/сохранение скриншота).
+    /// The message at the bottom (errors/screenshot saving).
     pub status: String,
 }
 
 impl EditorState {
-    /// Классифицирует архив и выбирает `select` (или первый образ).
+    /// Classifies the archive and selects `select` (or the first image).
     pub fn new(archive: ResArchive, palette: Palette, select: Option<&str>) -> Self {
         let infos = classify_archive(&archive);
         let mut state = Self {
@@ -107,12 +107,12 @@ impl EditorState {
         state
     }
 
-    /// Полная статистика по архиву.
+    /// Full archive statistics.
     pub fn stats(&self) -> crate::model::ClassificationStats {
         crate::model::ClassificationStats::from_infos(&self.infos)
     }
 
-    /// Пересобирает строки списка по фильтру (подстрока, без регистра).
+    /// Rebuilds the list rows by the filter (substring, case-insensitive).
     pub fn refresh_rows(&mut self) {
         let previous = self.selected_info().map(|info| info.name.clone());
         let needle = self.filter.to_ascii_uppercase();
@@ -150,7 +150,7 @@ impl EditorState {
         self.pan = (0, 0);
     }
 
-    /// Текущая запись.
+    /// The current record.
     pub fn selected_info(&self) -> Option<&ResourceInfo> {
         let row = self.list.selected?;
         let index = *self.rows.get(row)?;
@@ -158,7 +158,7 @@ impl EditorState {
         self.infos.get(index)
     }
 
-    /// Выбирает запись по её индексу в `infos`.
+    /// Selects the record by its index in `infos`.
     pub fn select_entry(&mut self, entry_index: usize) {
         if let Some(row) = self.rows.iter().position(|&index| index == entry_index) {
             self.list.select(row);
@@ -168,7 +168,7 @@ impl EditorState {
         }
     }
 
-    /// Сдвиг выбора (Up/Down).
+    /// Shift the selection (Up/Down).
     pub fn select_delta(&mut self, delta: isize) {
         self.list.select_next(delta);
         self.preview = None;
@@ -176,7 +176,7 @@ impl EditorState {
         self.pan = (0, 0);
     }
 
-    /// Сдвиг выбора на страницу (PgUp/PgDn).
+    /// Shift the selection by a page (PgUp/PgDn).
     pub fn select_page(&mut self, direction: isize) {
         let page = self.list.visible_rows().max(1) as isize;
         self.select_delta(direction * page);
@@ -193,7 +193,7 @@ impl EditorState {
         self.pan = (0, 0);
     }
 
-    /// Текст в фильтр (печатный ASCII). Автоматически включает поиск.
+    /// Text into the filter (printable ASCII). Automatically enables the search.
     pub fn push_filter_char(&mut self, ch: char) {
         if !(ch.is_ascii_graphic() || ch == ' ') {
             return;
@@ -204,24 +204,24 @@ impl EditorState {
         self.refresh_rows();
     }
 
-    /// Backspace в фильтре.
+    /// Backspace in the filter.
     pub fn filter_backspace(&mut self) {
         if self.filter.pop().is_some() {
             self.refresh_rows();
         }
     }
 
-    /// F3 — фокус/расфокус поиска.
+    /// F3 — focus/unfocus the search.
     pub fn toggle_search(&mut self) {
         self.search_focus = !self.search_focus;
     }
 
-    /// Enter — применить фильтр и вернуть фокус списку.
+    /// Enter — apply the filter and return the focus to the list.
     pub fn apply_filter(&mut self) {
         self.search_focus = false;
     }
 
-    /// Очистить фильтр (Esc в поле поиска).
+    /// Clear the filter (Esc in the search field).
     pub fn clear_filter(&mut self) {
         if !self.filter.is_empty() {
             self.filter.clear();
@@ -229,12 +229,12 @@ impl EditorState {
         }
     }
 
-    /// Увеличить/уменьшить масштаб.
+    /// Zoom in/out.
     pub fn zoom_by(&mut self, delta: i32) {
         self.zoom = (self.zoom + delta).clamp(1, 8);
     }
 
-    /// Вписать выбранное изображение в окно превью.
+    /// Fit the selected image into the preview window.
     pub fn fit_zoom(&mut self) {
         let Some((width, height)) = self.preview_size() else {
             return;
@@ -251,20 +251,20 @@ impl EditorState {
         self.pan = (0, 0);
     }
 
-    /// Сброс масштаба/панорамы.
+    /// Reset the zoom/pan.
     pub fn reset_view(&mut self) {
         self.zoom = 1;
         self.pan = (0, 0);
     }
 
-    /// Сдвиг превью (колесо/перетаскивание).
+    /// Shift the preview (wheel/dragging).
     pub fn pan_by(&mut self, dx: i32, dy: i32) {
         self.pan.0 += dx;
         self.pan.1 += dy;
         self.clamp_pan();
     }
 
-    /// Клик мышью: список, поле фильтра, начало перетаскивания превью.
+    /// A mouse click: the list, the filter field, the start of a preview drag.
     pub fn click(&mut self, x: i32, y: i32) {
         let point = Point::new(x, y);
 
@@ -289,12 +289,12 @@ impl EditorState {
         }
     }
 
-    /// Отпускание мыши.
+    /// Mouse release.
     pub fn release(&mut self) {
         self.dragging = false;
     }
 
-    /// Движение мыши.
+    /// Mouse movement.
     pub fn mouse_move(&mut self, x: i32, y: i32) {
         let point = Point::new(x, y);
         self.mouse = point;
@@ -305,7 +305,7 @@ impl EditorState {
         }
     }
 
-    /// Колесо: прокрутка превью или списка.
+    /// The wheel: scrolling the preview or the list.
     pub fn wheel(&mut self, x: f32, y: f32, ctrl: bool) {
         if ctrl {
             self.zoom_by(if y > 0.0 { 1 } else { -1 });
@@ -330,7 +330,7 @@ impl EditorState {
         }
     }
 
-    /// Размер выбранного изображения (ленты/картинки), без декодирования.
+    /// The size of the selected image (strip/image), without decoding.
     pub fn preview_size(&self) -> Option<(u32, u32)> {
         let info = self.selected_info()?;
         if !info.kind.is_image() {
@@ -352,12 +352,12 @@ impl EditorState {
         }
     }
 
-    /// Кэшированное RGBA выбранного изображения (после `compose`).
+    /// The cached RGBA of the selected image (after `compose`).
     pub fn preview_image(&self) -> Option<&RgbaImage> {
         self.preview.as_ref().map(|(_, image)| image)
     }
 
-    /// У выбранного ресурса есть превью.
+    /// The selected resource has a preview.
     pub fn has_preview(&self) -> bool {
         self.selected_info()
             .map(|info| info.kind.is_image())
@@ -407,14 +407,14 @@ impl EditorState {
         Rect::new(380, 12, 420, 26)
     }
 
-    /// Полный кадр интерфейса.
+    /// The complete interface frame.
     pub fn compose(&mut self) -> RgbaBuffer {
         let _ = self.ensure_preview();
 
         let mut frame = RgbaBuffer::filled(FRAME_WIDTH, FRAME_HEIGHT, BG);
         let stats = self.stats();
 
-        // Заголовок.
+        // The title.
         draw_text_line(&mut frame, 12, 8, "M.A.X.  MAX.RES resource editor", ACCENT);
         draw_text_line(
             &mut frame,
@@ -446,7 +446,7 @@ impl EditorState {
             DIM,
         );
 
-        // Поле фильтра и список — виджетами max_render::ui.
+        // The filter field and the list — with max_render::ui widgets.
         let filter = TextBox::with_value(
             "Filter",
             self.filter.clone(),
@@ -479,7 +479,7 @@ impl EditorState {
 
         self.draw_scrollbar(&mut frame);
 
-        // Превью.
+        // The preview.
         frame.fill_rect(PREVIEW_RECT.into(), PANEL);
         stroke_rect(&mut frame, PREVIEW_RECT, BORDER);
         let view = PREVIEW_RECT.inset(4, 4);
@@ -489,12 +489,12 @@ impl EditorState {
         );
         self.draw_preview(&mut frame);
 
-        // Метаданные.
+        // Metadata.
         frame.fill_rect(META_RECT.into(), PANEL);
         stroke_rect(&mut frame, META_RECT, BORDER);
         self.draw_metadata(&mut frame);
 
-        // Подсказка/статус.
+        // The hint/status.
         let hint = "Up/Down select | PgUp/PgDn page | +/- zoom | 0 reset | F5 fit | F3 search | wheel/drag pan | F12 screenshot | Esc quit";
         draw_text_line(
             &mut frame,
@@ -678,13 +678,13 @@ impl EditorState {
             }
         }
 
-        // Рамка вокруг картинки.
+        // A border around the image.
         let bounds = Rect::new(base_x, base_y, scaled_width, scaled_height);
         if bounds.right() > view.x && bounds.x < view.right() {
             stroke_rect(frame, bounds, Rgba::rgb(70, 84, 104));
         }
 
-        // Заголовок рисуется последним, чтобы кадры его не перекрывали.
+        // The title is drawn last so that the frames do not cover it.
         draw_text_line(
             frame,
             PREVIEW_RECT.x + 8,
@@ -788,7 +788,7 @@ impl EditorState {
         }
     }
 
-    /// Сохраняет текущий кадр в PNG (F12).
+    /// Saves the current frame to PNG (F12).
     pub fn save_screenshot(&mut self, path: &Path) -> Result<()> {
         let frame = self.compose();
         let image = RgbaImage {
@@ -803,7 +803,7 @@ impl EditorState {
         Ok(())
     }
 
-    /// Категория выбранного (для заголовка окна).
+    /// The category of the selection (for the window title).
     pub fn selected_title(&self) -> String {
         match self.selected_info() {
             Some(info) => format!("{} — {} {}", WINDOW_TITLE, info.name, info.kind.as_str()),
@@ -871,19 +871,19 @@ fn fit(text: &str, width: i32) -> String {
     }
 }
 
-/// Список избранных тегов для тестов/скриншота.
+/// The list of favorite tags for the tests/screenshot.
 pub fn find_info<'a>(infos: &'a [ResourceInfo], name: &str) -> Option<&'a ResourceInfo> {
     infos.iter().find(|info| info.name == name)
 }
 
-/// Проверка, что запись — изображение из категории `category`.
+/// A check that the record is an image of the `category` category.
 pub fn first_in_category(infos: &[ResourceInfo], category: Category) -> Option<&ResourceInfo> {
     infos
         .iter()
         .find(|info| info.kind.is_image() && info.category == category)
 }
 
-/// Кнопки зума (для отрисовки; клики обрабатываются в app).
+/// Zoom buttons (for drawing; clicks are handled in app).
 pub fn zoom_buttons() -> [Button; 2] {
     [
         Button::new(
@@ -897,7 +897,7 @@ pub fn zoom_buttons() -> [Button; 2] {
     ]
 }
 
-/// Дополнительная проверка: запись не изображение.
+/// An extra check: the record is not an image.
 pub fn is_non_image(info: &ResourceInfo) -> bool {
     info.kind == Kind::NonImage
 }

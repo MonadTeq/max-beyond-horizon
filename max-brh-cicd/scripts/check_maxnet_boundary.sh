@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# CI-замок Ф5.3 (часть A): зависимость max_net → max_core — осознанная
-# read-only проекция симуляции в провод (решение владельца, вариант 2).
+# CI lock for Phase 5.3 (part A): the max_net → max_core dependency is a deliberate
+# read-only projection of the simulation into the wire (owner decision, option 2).
 #
-# Проверяется, что в `max-brh/crates/max_net/src` нет обращений к `max_core::`
-# вне белого списка:
+# It verifies that `max-brh/crates/max_net/src` has no `max_core::` accesses
+# outside the allowlist:
 #
-#   * пять проекций: `UnitState::from_unit`, `state_sync_for`,
+#   * five projections: `UnitState::from_unit`, `state_sync_for`,
 #     `state_sync_tail`, `crc_barrier_for`, `complex_summary_for`;
-#   * импорты данных: `use max_core::unit::UnitInfo`,
+#   * data imports: `use max_core::unit::UnitInfo`,
 #     `use max_core::team::TeamUnits`.
 #
-# Всё остальное (особенно `max_core::events::apply_*`, мутации `GameState`)
-# аннулирует решение: см. `max-brh-docs/development/PLAN-refactor.md` Ф5.3 и
+# Everything else (especially `max_core::events::apply_*`, `GameState` mutations)
+# voids the decision: see `max-brh-docs/development/PLAN-refactor.md` Phase 5.3 and
 # `architect-rules.md`.
 #
-# Как читается файл:
-#   * строки-комментарии (`//`, `///`, `//!`) пропускаются — они не вызовы;
-#   * содержимое `#[cfg(test)] mod tests { ... }` (хвост файла) пропускается:
-#     тесты не поставляются в прод-путь;
-#   * отслеживается текущая функция, поэтому многострочные сигнатуры
+# How the file is read:
+#   * comment lines (`//`, `///`, `//!`) are skipped — they are not calls;
+#   * the contents of `#[cfg(test)] mod tests { ... }` (the file tail) are skipped:
+#     tests do not ship in the production path;
+#   * the current function is tracked, so multi-line signatures
 #     (`pub fn state_sync_for(\n    state: &max_core::game::GameState, ...)`)
-#     относятся к своей функции, а не к предыдущей.
+#     belong to their own function rather than to the previous one.
 #
-# Запуск: bash max-brh-cicd/scripts/check_maxnet_boundary.sh
-# Код возврата: 0 — граница соблюдена, 1 — есть запрещённые обращения.
+# Run: bash max-brh-cicd/scripts/check_maxnet_boundary.sh
+# Exit code: 0 — the boundary holds, 1 — forbidden accesses found.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -34,7 +34,7 @@ if [ ! -d "$SRC" ]; then
     exit 2
 fi
 
-# awk-сканер: печатает нарушения и завершается 1, если они есть.
+# awk scanner: prints violations and exits 1 if there are any.
 scan() {
     awk '
         BEGIN {
@@ -49,7 +49,7 @@ scan() {
         {
             line = $0
 
-            # Тесты в хвосте файла не входят в прод-путь max_net.
+            # Tests in the file tail are not part of the max_net production path.
             if (in_test) {
                 next
             }
@@ -58,17 +58,17 @@ scan() {
                 next
             }
 
-            # Комментарии (в т.ч. doc-комментарии) — не вызовы.
+            # Comments (including doc comments) are not calls.
             if (line ~ /^[ \t]*\/\//) {
                 next
             }
 
-            # Конец функции/impl: сбрасываем контекст на отступе 0..4.
+            # End of a function/impl: drop the context at indentation 0..4.
             if (line ~ /^[ ]{0,4}\}[ ]*$/) {
                 current = ""
             }
 
-            # Начало функции: `fn name(` с любыми квалификаторами.
+            # Start of a function: `fn name(` with any qualifiers.
             if (match(line, /(^|[ \t])(pub([ \t]*\([^)]*\))?[ \t]+)?(const[ \t]+)?(async[ \t]+)?(unsafe[ \t]+)?fn[ \t]+[A-Za-z0-9_]+/)) {
                 name = line
                 sub(/.*fn[ \t]+/, "", name)
@@ -80,12 +80,12 @@ scan() {
                 next
             }
 
-            # Разрешённые импорты данных симуляции.
+            # Allowed imports of simulation data.
             if (line ~ /^[ \t]*(pub[ \t]+)?use[ \t]+max_core::(unit::UnitInfo|team::TeamUnits)([;{ \t]|$)/) {
                 next
             }
 
-            # Разрешённые five read-only projections.
+            # Allowed five read-only projections.
             if (current in allowed) {
                 next
             }

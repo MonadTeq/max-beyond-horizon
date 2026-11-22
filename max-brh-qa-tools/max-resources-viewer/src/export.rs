@@ -1,6 +1,6 @@
-//! Пакетный экспорт изображений MAX.RES в PNG + манифест.
+//! Batch export of MAX.RES images to PNG + a manifest.
 //!
-//! Раскладка:
+//! Layout:
 //! ```text
 //! <out_root>/images/ui/*.png
 //! <out_root>/images/sprites/units/*.png
@@ -9,9 +9,9 @@
 //! <out_root>/images/EXPORT-REPORT.txt
 //! ```
 //!
-//! Имена файлов: `<TAG>_<W>x<H>[_<N>f][_ownpal|_mask].png`. Для спрайтов/теней
-//! `WxH` — первый кадр, `N` — число кадров; сами кадры лежат горизонтальной
-//! лентой. `_ownpal` — big image со своей палитрой, `_mask` — тень.
+//! File names: `<TAG>_<W>x<H>[_<N>f][_ownpal|_mask].png`. For sprites/shadows
+//! `WxH` is the first frame and `N` the frame count; the frames themselves form a horizontal
+//! strip. `_ownpal` — a big image with its own palette, `_mask` — a shadow.
 
 use std::collections::HashSet;
 use std::fs;
@@ -24,17 +24,17 @@ use max_render::palette::Palette;
 use crate::model::{ClassificationStats, ResourceInfo};
 use crate::render::render_resource;
 
-/// Что и куда экспортировать.
+/// What to export and where.
 #[derive(Debug, Clone, Default)]
 pub struct ExportOptions {
-    /// Ограничить набор тегов (для тестов/избранного).
+    /// Restrict the tag set (for tests/favorites).
     pub only: Option<HashSet<String>>,
-    /// Писать manifest.csv и EXPORT-REPORT.txt.
+    /// Write manifest.csv and EXPORT-REPORT.txt.
     pub manifest: bool,
 }
 
 impl ExportOptions {
-    /// Полный экспорт.
+    /// Full export.
     pub fn all() -> Self {
         Self {
             only: None,
@@ -42,7 +42,7 @@ impl ExportOptions {
         }
     }
 
-    /// Только перечисленные теги (манифест не нужен).
+    /// Only the listed tags (no manifest needed).
     pub fn only(names: &[&str]) -> Self {
         Self {
             only: Some(names.iter().map(|name| (*name).to_string()).collect()),
@@ -51,28 +51,28 @@ impl ExportOptions {
     }
 }
 
-/// Результат экспорта.
+/// Export result.
 #[derive(Debug, Clone, Default)]
 pub struct ExportReport {
-    /// Полная статистика архива (включая не-изображения).
+    /// Full archive statistics (including non-images).
     pub stats: ClassificationStats,
-    /// Записей-изображений в архиве.
+    /// Image records in the archive.
     pub images: usize,
-    /// Реально записано PNG (без дубликатов путей).
+    /// PNGs actually written (no duplicate paths).
     pub exported: usize,
-    /// Дубликаты тега/имени файла (в MAX.RES — `PRFDNE_D`).
+    /// Duplicates of tag/file name (in MAX.RES — `PRFDNE_D`).
     pub duplicate_paths: usize,
-    /// Суммарный размер PNG в байтах.
+    /// Total PNG size in bytes.
     pub bytes: u64,
-    /// Относительные пути записанных файлов.
+    /// Relative paths of the written files.
     pub files: Vec<String>,
-    /// Ошибки рендера/записи (экспорт продолжается).
+    /// Render/write errors (the export continues).
     pub errors: Vec<String>,
-    /// Корень экспорта.
+    /// Export root.
     pub out_root: PathBuf,
 }
 
-/// Экспортирует изображения архива.
+/// Exports the archive's images.
 pub fn export_archive(
     archive: &ResArchive,
     palette: &Palette,
@@ -137,8 +137,8 @@ pub fn export_archive(
     Ok(report)
 }
 
-/// Запись PNG с повтором: Windows-антивирус/индексатор иногда держит файл
-/// открытым (`os error 1224`, user-mapped section) сразу после создания.
+/// PNG writing with a retry: Windows antivirus/indexer sometimes keeps a file
+/// open (`os error 1224`, user-mapped section) right after it is created.
 fn write_with_retry(path: &Path, image: &crate::png::RgbaImage) -> Result<(), String> {
     let mut last = String::new();
 
@@ -155,7 +155,7 @@ fn write_with_retry(path: &Path, image: &crate::png::RgbaImage) -> Result<(), St
     Err(last)
 }
 
-/// CSV-манифест всех записей (включая не-изображения и не экспортированные).
+/// CSV manifest of all records (including non-images and non-exported ones).
 pub fn write_manifest(
     path: &Path,
     infos: &[ResourceInfo],
@@ -240,7 +240,7 @@ fn write_report(path: &Path, report: &ExportReport) -> Result<()> {
     Ok(())
 }
 
-/// Человекочитаемая сводка для stdout.
+/// A human-readable summary for stdout.
 pub fn summary(report: &ExportReport) -> String {
     let stats = &report.stats;
     let mut out = String::new();

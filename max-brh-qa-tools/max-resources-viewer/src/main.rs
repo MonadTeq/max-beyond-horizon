@@ -1,28 +1,28 @@
-//! M.A.X. resource editor: просмотр MAX.RES и пакетный экспорт изображений.
+//! M.A.X. resource editor: browsing MAX.RES and batch image export.
 //!
 //! ```text
-//! max-resources-viewer                      # UI (нужен --features sdl)
+//! max-resources-viewer                      # UI (needs --features sdl)
 //! max-resources-viewer --export MAX.RES COLOR.PAL max-brh-assets
 //! max-resources-viewer --report MAX.RES
 //! ```
 //!
-//! Без флагов открывается окно; `--export` работает headless и не требует SDL.
+//! Without flags a window opens; `--export` works headless and needs no SDL.
 //!
-//! Редактор — GUI-инструмент, поэтому бинарь всегда собирается с подсистемой
-//! `windows`: двойной клик не открывает консоль. Плата за это — у `.exe` нет
-//! stdout/stderr в консоли, поэтому headless-режимы дублируют итог в файл:
+//! The editor is a GUI tool, so the binary is always built with the `windows`
+//! subsystem: a double-click does not open a console. The price is that the `.exe` has no
+//! stdout/stderr in a console, so the headless modes duplicate the result into a file:
 //! `--export` → `<OUT_ROOT>/export-log.txt`, `--report` → `./report.txt`,
-//! сообщения об ошибках (включая UI-режим) → `./max-resources-viewer-error.txt`.
+//! error messages (including the UI mode) → `./max-resources-viewer-error.txt`.
 //!
-//! При запуске UI путь к `MAX.RES` ищется в порядке: аргумент (`--res` или
-//! позиционный) → рядом с `.exe` → `CWD` → вверх по дереву каталогов
-//! (`max-original/MAX.RES`). Если ничего не найдено, показывается нативный
-//! диалог «Укажите файл MAX.RES»; отмена — сообщение и код возврата 1.
-//! `COLOR.PAL` ищется рядом с выбранным `MAX.RES`, его отсутствие — только
-//! предупреждение (превью рисуется заглушкой-палитрой).
+//! At UI startup the path to `MAX.RES` is searched in this order: an argument (`--res` or a
+//! positional one) → next to the `.exe` → `CWD` → up the directory tree
+//! (`max-original/MAX.RES`). If nothing is found, the native
+//! `Укажите файл MAX.RES` dialog is shown; cancel — a message and exit code 1.
+//! `COLOR.PAL` is searched next to the selected `MAX.RES`; its absence is only a
+//! warning (the preview is drawn with a stub palette).
 
-// GUI-подсистема без условий: редактор — оконный инструмент. Headless-вывод
-// (`--export`/`--report`) и ошибки смотри в файлах, см. `FileLog`.
+// The GUI subsystem unconditionally: the editor is a windowed tool. For the headless output
+// (`--export`/`--report`) and errors see the files, see `FileLog`.
 #![windows_subsystem = "windows"]
 
 #[cfg(feature = "sdl")]
@@ -47,19 +47,19 @@ use max_render::palette::Palette;
 use crate::export::ExportOptions;
 use crate::model::ClassificationStats;
 
-/// Лог `--export`: рядом с результатом экспорта (`<OUT_ROOT>/export-log.txt`).
+/// The `--export` log: next to the export result (`<OUT_ROOT>/export-log.txt`).
 const EXPORT_LOG_NAME: &str = "export-log.txt";
-/// Лог `--report`: в текущем каталоге (`./report.txt`).
+/// The `--report` log: in the current directory (`./report.txt`).
 const REPORT_LOG_NAME: &str = "report.txt";
-/// Ошибки (в том числе UI-режима, где консоли нет): в текущем каталоге.
+/// Errors (including the UI mode, where there is no console): in the current directory.
 const ERROR_LOG_NAME: &str = "max-resources-viewer-error.txt";
 
-/// Журнал headless-режима: дублирует stdout в файл.
+/// The headless mode log: duplicates stdout into a file.
 ///
-/// С подсистемой `windows` у `.exe` нет консоли, поэтому `println!`/`eprintln!`
-/// пользователь не увидит: итог `--export`/`--report` (и ошибки) пишется в
-/// файл, путь к которому знает README. Вывод в stdout оставлен: под
-/// `cargo run`, перенаправлением или wine он по-прежнему виден.
+/// With the `windows` subsystem the `.exe` has no console, so `println!`/`eprintln!`
+/// would not be seen by the user: the result of `--export`/`--report` (and errors) is written to a
+/// file whose path the README knows. Output to stdout is kept: under
+/// `cargo run`, a redirect or wine it is still visible.
 struct FileLog {
     path: PathBuf,
     text: String,
@@ -73,7 +73,7 @@ impl FileLog {
         }
     }
 
-    /// Строка — в stdout и в файл.
+    /// A line — to stdout and to the file.
     fn line(&mut self, line: impl AsRef<str>) {
         let line = line.as_ref();
         println!("{line}");
@@ -81,13 +81,13 @@ impl FileLog {
         self.text.push('\n');
     }
 
-    /// Готовый многострочный текст (со своими `\n`) — в stdout и в файл.
+    /// Finished multi-line text (with its own `\n`) — to stdout and to the file.
     fn raw(&mut self, text: &str) {
         print!("{text}");
         self.text.push_str(text);
     }
 
-    /// Ошибка — в stderr и в файл.
+    /// An error — to stderr and to the file.
     fn error(&mut self, error: &anyhow::Error) {
         let message = format!("error: {error:#}");
         eprintln!("{message}");
@@ -95,7 +95,7 @@ impl FileLog {
         self.text.push('\n');
     }
 
-    /// Пишет файл (создавая каталог) и печатает его путь в stdout.
+    /// Writes the file (creating the directory) and prints its path to stdout.
     fn write(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -117,8 +117,8 @@ fn main() -> ExitCode {
         Err(error) => {
             let message = format!("error: {error:#}");
             eprintln!("{message}");
-            // Консоли у GUI-подсистемы нет — ошибку дублируем в файл, чтобы
-            // пользователь мог её прочитать (Message-бокс не нужен).
+            // The GUI subsystem has no console — we duplicate the error into a file so that
+            // the user can read it (no message box needed).
             if let Err(write_error) = std::fs::write(ERROR_LOG_NAME, format!("{message}\n")) {
                 eprintln!("error: не удалось записать {ERROR_LOG_NAME}: {write_error}");
             }
@@ -144,7 +144,7 @@ fn run() -> Result<ExitCode> {
     ui_command(&args)
 }
 
-/// `--export`: лог — `<OUT_ROOT>/export-log.txt` (рядом с PNG и manifest.csv).
+/// `--export`: the log is `<OUT_ROOT>/export-log.txt` (next to the PNGs and manifest.csv).
 fn run_export(args: &[String]) -> Result<ExitCode> {
     let log_path = args
         .get(2)
@@ -166,7 +166,7 @@ fn run_export(args: &[String]) -> Result<ExitCode> {
     }
 }
 
-/// `--report`: лог — `./report.txt` (в текущем каталоге).
+/// `--report`: the log is `./report.txt` (in the current directory).
 fn run_report(args: &[String]) -> Result<ExitCode> {
     let mut log = FileLog::new(PathBuf::from(REPORT_LOG_NAME));
 
@@ -263,11 +263,11 @@ fn report_text(stats: &ClassificationStats) -> String {
     out
 }
 
-/// Аргументы UI-режима.
+/// UI mode arguments.
 struct UiOptions {
-    /// `--res` или позиционный путь; `None` — искать дефолты/открыть диалог.
+    /// `--res` or a positional path; `None` — look for defaults/open the dialog.
     res: Option<PathBuf>,
-    /// `--pal`; `None` — искать `COLOR.PAL` рядом с `MAX.RES`.
+    /// `--pal`; `None` — look for `COLOR.PAL` next to `MAX.RES`.
     pal: Option<PathBuf>,
     select: Option<String>,
     shot: Option<PathBuf>,
@@ -330,7 +330,7 @@ fn ui_command(args: &[String]) -> Result<ExitCode> {
     open_ui(&options)
 }
 
-/// Запуск UI: поиск `MAX.RES` (аргумент → дефолты → диалог), палитра, окно.
+/// UI launch: searching for `MAX.RES` (argument → defaults → dialog), the palette, the window.
 #[cfg(feature = "sdl")]
 fn open_ui(options: &UiOptions) -> Result<ExitCode> {
     let sdl = sdl3::init().map_err(|error| anyhow!("SDL_Init: {error}"))?;
@@ -352,8 +352,8 @@ fn open_ui(options: &UiOptions) -> Result<ExitCode> {
 
     let mut state = ui::EditorState::new(archive, palette.palette, options.select.as_deref());
 
-    // В окне шрифт только ASCII, поэтому короткая английская строка; подробное
-    // русское предупреждение с путями уже ушло в stderr выше.
+    // The window font is ASCII only, hence a short English string; the detailed
+    // Russian warning with the paths has already gone to stderr above.
     if palette.warning.is_some() {
         state.status =
             "WARN: COLOR.PAL not found near MAX.RES - preview uses grayscale stub palette"
@@ -365,7 +365,7 @@ fn open_ui(options: &UiOptions) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Без SDL UI недоступно: те же поиск/диалог собрать нельзя.
+/// Without SDL there is no UI: the same search/dialog cannot be assembled.
 #[cfg(not(feature = "sdl"))]
 fn open_ui(_options: &UiOptions) -> Result<ExitCode> {
     bail!(

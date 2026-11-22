@@ -1,41 +1,41 @@
 #requires -version 5.1
 <#
 .SYNOPSIS
-  Нативная Windows-сборка M.A.X. Rust-клиента (max_app) с окном SDL3 и звуком,
-  упаковка в bin/bin/release/max_app-<ver>-windows-x86_64-ui/.
+  Native Windows build of the M.A.X. Rust client (max_app) with the SDL3 window and sound,
+  packaged into bin/bin/release/max_app-<ver>-windows-x86_64-ui/.
 
 .DESCRIPTION
-  Нативный двойник build-windows-console.ps1 (тот собирает headless на MSVC,
-  без SDL3 и звука): этот скрипт собирает ИНТЕРАКТИВНЫЙ клиент на Windows-хосте —
-  SDL3 берётся из vcpkg и линкуется MSVC, звук — rodio/cpal (WASAPI, отдельных
-  DLL не нужно).
+  The native twin of build-windows-console.ps1 (that one builds headless with MSVC,
+  without SDL3 and sound): this script builds the INTERACTIVE client on the Windows host —
+  SDL3 comes from vcpkg and is linked by MSVC, sound is rodio/cpal (WASAPI, no separate
+  DLLs needed).
 
-  Требуется (всё ставится без прав администратора, кроме самого Visual Studio):
-    * Visual Studio (Build Tools или Community) с workload "Desktop development
-      with C++": MSVC x64, Windows SDK, CMake — ищется через vswhere;
+  Required (everything installs without admin rights except Visual Studio itself):
+    * Visual Studio (Build Tools or Community) with the "Desktop development
+      with C++" workload: MSVC x64, Windows SDK, CMake — located via vswhere;
     * Rust 1.94.0 (rustup, %USERPROFILE%\.cargo) — target x86_64-pc-windows-msvc;
-    * vcpkg с установленным sdl3:x64-windows
+    * vcpkg with sdl3:x64-windows installed
       (git clone https://github.com/microsoft/vcpkg D:\dev\toolchain\vcpkg;
        D:\dev\toolchain\vcpkg\bootstrap-vcpkg.bat;
        D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows).
 
-  Сборка не засоряет max-brh/target (там живут Linux/Docker-артефакты):
-  используется CARGO_TARGET_DIR=<repo>\bin\target.
+  The build does not pollute max-brh/target (where the Linux/Docker artifacts live):
+  it uses CARGO_TARGET_DIR=<repo>\bin\target.
 
 .PARAMETER VcpkgRoot
-  Каталог vcpkg. По умолчанию $env:VCPKG_ROOT, затем D:\dev\toolchain\vcpkg,
-  затем C:\vcpkg.
+  vcpkg directory. Defaults to $env:VCPKG_ROOT, then D:\dev\toolchain\vcpkg,
+  then C:\vcpkg.
 
 .PARAMETER Out
-  Каталог артефактов. По умолчанию <repo>\bin\release.
+  Artifact directory. Defaults to <repo>\bin\release.
 
 .PARAMETER Features
-  Набор features max_app. По умолчанию "sdl-vcpkg,sound". Скрипт собирает с
-  --no-default-features: иначе к явным фичам добавился бы default
-  `sdl-from-source` (сборка SDL3 через CMake) вместо vcpkg.
+  max_app feature set. Defaults to "sdl-vcpkg,sound". The script builds with
+  --no-default-features: otherwise the default
+  `sdl-from-source` (building SDL3 via CMake) would be added to the explicit features instead of vcpkg.
 
 .PARAMETER NoPackage
-  Только собрать (и проверить --help), не упаковывать.
+  Only build (and check --help), do not package.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
@@ -61,7 +61,7 @@ function Fail([string]$message) {
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Out) { $Out = Join-Path $root "bin\release" }
 
-# --- версия workspace -------------------------------------------------------
+# --- workspace version ------------------------------------------------------
 $manifest = Join-Path $root "max-brh\Cargo.toml"
 if (-not (Test-Path $manifest)) { Fail "нет $manifest" }
 $version = (Select-String -Path $manifest -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"').Matches.Groups[1].Value
@@ -75,7 +75,7 @@ if (-not $vsPath) { Fail "не найдена VS с workload 'Desktop developmen
 $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path $vcvars)) { Fail "нет $vcvars" }
 
-# --- vcpkg с SDL3 -----------------------------------------------------------
+# --- vcpkg with SDL3 --------------------------------------------------------
 $candidates = @()
 if ($VcpkgRoot) { $candidates += $VcpkgRoot }
 elseif ($env:VCPKG_ROOT) { $candidates += $env:VCPKG_ROOT }
@@ -120,9 +120,9 @@ Write-Host "  cargo:         $cargo"
 Write-Host "  features:      $Features"
 Write-Host "  target dir:    $targetDir"
 
-# vcvars64 нужен линкеру (link.exe) и Windows SDK; переменные окружения ставим
-# через .bat: в cmd `set VAR=value && ...` захватывает пробел в значение,
-# поэтому только `set "VAR=value"`.
+# vcvars64 is needed by the linker (link.exe) and the Windows SDK; environment variables are set
+# via .bat: in cmd `set VAR=value && ...` captures a trailing space into the value,
+# so only `set "VAR=value"`.
 $bat = Join-Path $root "build\win-msvc-build.bat"
 $batLines = @(
     '@echo off',
@@ -145,21 +145,21 @@ $buildRc = $LASTEXITCODE
 if ($buildRc -ne 0) { Fail "cargo build завершился с кодом $buildRc (лог выше)" }
 if (-not (Test-Path $exePath)) { Fail "после сборки нет $exePath" }
 
-# --- DLL рядом с exe, подсистема PE и проверка --help ----------------------
+# --- DLLs next to the exe, PE subsystem and the --help check ---------------
 $exeDir = Split-Path -Parent $exePath
 Copy-Item $sdlDll $exeDir -Force
 $exeSize = (Get-Item $exePath).Length
 Write-Host ("exe: {0} ({1:N0} байт), SDL3.dll рядом" -f $exePath, $exeSize)
 
-# Gигровая сборка обязана иметь подсистему windows (Subsystem=2), иначе двойной клик
-# откроет консоль. Проверяем PE-заголовок напрямую (без dumpbin/vcvars).
+# The game build must have the windows subsystem (Subsystem=2), otherwise a double-click
+# opens a console. We check the PE header directly (no dumpbin/vcvars).
 $peScript = Join-Path $PSScriptRoot "pe-subsystem.ps1"
 & powershell -NoProfile -ExecutionPolicy Bypass -File $peScript -Path $exePath -Expected 2
 if ($LASTEXITCODE -ne 0) { Fail "PE-подсистема $exePath не GUI (ожидалось Subsystem=2)" }
 
-# Подсистема windows не подключается к консоли: `& $exe --help` в PowerShell не
-# дождётся процесса и не соберёт вывод. cmd ждёт дочерний процесс, а
-# перенаправление `>` всё равно отдаёт GUI-exe stdout — читаем справку из файла.
+# The windows subsystem does not attach to a console: `& $exe --help` in PowerShell does not
+# wait for the process and collects no output. cmd waits for the child process, and
+# a `>` redirect still hands over the GUI exe's stdout — so we read the help from a file.
 $helpFile = Join-Path $targetDir "max-brh-help.txt"
 if (Test-Path $helpFile) { Remove-Item $helpFile -Force }
 & cmd.exe /c "`"$exePath`" --help > `"$helpFile`" 2>&1"
@@ -177,7 +177,7 @@ if ($NoPackage) {
     exit 0
 }
 
-# --- упаковка ---------------------------------------------------------------
+# --- packaging --------------------------------------------------------------
 Write-Host ""
 Write-Host "== упаковка $bundleName =="
 New-Item -ItemType Directory -Force -Path $Out | Out-Null

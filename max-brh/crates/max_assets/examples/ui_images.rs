@@ -1,4 +1,4 @@
-//! Разбор UI-картинок из `MAX.RES` (FRAMEPIC/PANELTOP/PANELBTM) и дамп в BMP.
+//! Parses UI images from `MAX.RES` (FRAMEPIC/PANELTOP/PANELBTM) and dumps them to BMP.
 //!
 //! ```sh
 //! cargo run -p max_assets --example ui_images -- ../max-original/MAX.RES /tmp/ui

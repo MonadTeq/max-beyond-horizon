@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Прогон всех QA-сценариев + golden (для docker: rust:1.94.0-bookworm).
+# Runs all QA scenarios + golden (for docker: rust:1.94.0-bookworm).
 set -u
 cd /src/max-brh
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}

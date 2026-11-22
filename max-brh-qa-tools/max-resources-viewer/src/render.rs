@@ -1,13 +1,13 @@
-//! Растеризация ресурсов в RGBA: палитра, прозрачность, ленты кадров.
+//! Rasterization of resources into RGBA: palette, transparency, frame strips.
 //!
-//! Соглашения экспорта (подробно — в `max-brh-assets/README.md`):
-//! * simple/sprite/cursor → `COLOR.PAL` (компоненты уже умножены на 4);
-//! * big image → собственная палитра из заголовка (8-битные компоненты);
-//! * прозрачные индексы (поле `transparent`) → альфа 0;
-//! * тень — маска: затемняемые пиксели чёрные с альфой 160, остальные
-//!   прозрачные;
-//! * кадры спрайта/курсора/тени укладываются в горизонтальную ленту по
-//!   горячей точке (`hot_x/hot_y`), поэтому анимация не «прыгает».
+//! Export conventions (in detail — in `max-brh-assets/README.md`):
+//! * simple/sprite/cursor → `COLOR.PAL` (the components are already multiplied by 4);
+//! * big image → its own palette from the header (8-bit components);
+//! * transparent indices (the `transparent` field) → alpha 0;
+//! * a shadow is a mask: the shaded pixels are black with alpha 160, the rest are
+//!   transparent;
+//! * sprite/cursor/shadow frames are laid out into a horizontal strip by the
+//!   hotspot (`hot_x/hot_y`), so the animation does not "jump".
 
 use anyhow::{anyhow, Result};
 use max_assets::cursor::CursorDescriptor;
@@ -19,13 +19,13 @@ use max_render::palette::Palette;
 use crate::model::{Kind, ResourceInfo};
 use crate::png::RgbaImage;
 
-/// Цвет пикселя.
+/// The pixel color.
 #[inline]
 fn rgba(rgb: [u8; 3], alpha: u8) -> [u8; 4] {
     [rgb[0], rgb[1], rgb[2], alpha]
 }
 
-/// Общий якорь ленты: максимум положительных горячих точек.
+/// The strip's common anchor: the maximum of the positive hotspots.
 fn anchor(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     let x = frames
         .iter()
@@ -41,16 +41,16 @@ fn anchor(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     (x, y)
 }
 
-/// Насколько ячейка шире/выше кадра из-за общего якоря.
+/// How much wider/taller a cell is than the frame because of the common anchor.
 fn extra(anchor: u32, hot: i16) -> u32 {
     (i64::from(anchor) - i64::from(hot)).max(0) as u32
 }
 
-/// Габариты ленты кадров.
+/// Frame strip dimensions.
 ///
-/// Каждый кадр занимает ячейку `width + anchor_x - hot_x`; общая ширина —
-/// сумма ячеек, высота — максимум `anchor_y - hot_y + height`. Отрицательные
-/// горячие точки (`BLDEXPLD`: `hotx = -13`) увеличивают ячейку и не обрезаются.
+/// Each frame occupies a cell `width + anchor_x - hot_x`; the total width is the
+/// sum of the cells, the height is the maximum of `anchor_y - hot_y + height`. Negative
+/// hotspots (`BLDEXPLD`: `hotx = -13`) enlarge the cell and are not clipped.
 pub fn strip_dimensions(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     if frames.is_empty() {
         return (0, 0);
@@ -70,7 +70,7 @@ pub fn strip_dimensions(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     (width, height)
 }
 
-/// Габариты ленты кадров конкретного спрайта/тени.
+/// Frame strip dimensions of a specific sprite/shadow.
 pub fn sprite_strip_dimensions(frames: &[SpriteFrame]) -> (u32, u32) {
     let meta: Vec<_> = frames
         .iter()
@@ -80,7 +80,7 @@ pub fn sprite_strip_dimensions(frames: &[SpriteFrame]) -> (u32, u32) {
     strip_dimensions(&meta)
 }
 
-/// Габариты ленты кадров тени.
+/// Frame strip dimensions of a shadow.
 pub fn shadow_strip_dimensions(frames: &[ShadowFrame]) -> (u32, u32) {
     let meta: Vec<_> = frames
         .iter()
@@ -90,7 +90,7 @@ pub fn shadow_strip_dimensions(frames: &[ShadowFrame]) -> (u32, u32) {
     strip_dimensions(&meta)
 }
 
-/// Раскладка кадра `index`: `(cell_x, origin_x, origin_y)`.
+/// The layout of frame `index`: `(cell_x, origin_x, origin_y)`.
 fn layout(frames: &[(u16, u16, i16, i16)], index: usize) -> (u32, u32, u32) {
     let (anchor_x, anchor_y) = anchor(frames);
     let mut cell_x = 0u32;
@@ -112,7 +112,7 @@ fn layout(frames: &[(u16, u16, i16, i16)], index: usize) -> (u32, u32, u32) {
     (0, 0, 0)
 }
 
-/// Simple image (`ImageSimpleHeader`) → RGBA по `COLOR.PAL`.
+/// Simple image (`ImageSimpleHeader`) → RGBA via `COLOR.PAL`.
 pub fn simple_image(image: &SimpleImage, palette: &Palette) -> RgbaImage {
     let width = u32::from(image.width as u16);
     let height = u32::from(image.height as u16);
@@ -131,7 +131,7 @@ pub fn simple_image(image: &SimpleImage, palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Big image (`ImageBigHeader`) → RGBA по собственной палитре.
+/// Big image (`ImageBigHeader`) → RGBA via its own palette.
 pub fn big_image(image: &BigImage) -> RgbaImage {
     let width = u32::from(image.width as u16);
     let height = u32::from(image.height as u16);
@@ -150,7 +150,7 @@ pub fn big_image(image: &BigImage) -> RgbaImage {
     out
 }
 
-/// Мультикадровый спрайт → горизонтальная лента RGBA по `COLOR.PAL`.
+/// A multi-frame sprite → a horizontal RGBA strip via `COLOR.PAL`.
 pub fn sprite_sheet(frames: &[SpriteFrame], palette: &Palette) -> RgbaImage {
     let meta: Vec<_> = frames
         .iter()
@@ -176,7 +176,7 @@ pub fn sprite_sheet(frames: &[SpriteFrame], palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Мультикадровая тень → горизонтальная лента: чёрный с альфой 160.
+/// A multi-frame shadow → a horizontal strip: black with alpha 160.
 pub fn shadow_sheet(frames: &[ShadowFrame]) -> RgbaImage {
     let meta: Vec<_> = frames
         .iter()
@@ -200,7 +200,7 @@ pub fn shadow_sheet(frames: &[ShadowFrame]) -> RgbaImage {
     out
 }
 
-/// Курсор → горизонтальная лента RGBA по `COLOR.PAL`.
+/// A cursor → a horizontal RGBA strip via `COLOR.PAL`.
 pub fn cursor_strip(cursor: &CursorDescriptor, palette: &Palette) -> RgbaImage {
     let frame_width = u32::try_from(cursor.width).unwrap_or(0);
     let frame_height = u32::try_from(cursor.height).unwrap_or(0);
@@ -238,7 +238,7 @@ pub fn cursor_strip(cursor: &CursorDescriptor, palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Декодирует и растеризует запись архива.
+/// Decodes and rasterizes an archive record.
 pub fn render_resource(
     info: &ResourceInfo,
     archive: &ResArchive,
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn strip_packs_frames_by_hot_spot() {
-        // Два TANK-подобных кадра: ячейки 44+6=50 и 56, высота max(50,57)=57.
+        // Two TANK-like frames: cells 44+6=50 and 56, height max(50,57)=57.
         let frames = [(44, 45, 20, 23), (56, 57, 26, 28)];
         let (width, height) = strip_dimensions(&frames);
 

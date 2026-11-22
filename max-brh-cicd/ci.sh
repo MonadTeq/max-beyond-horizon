@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# M6.3: локальный CI (то же, что .github/workflows/ci.yml) в Docker.
+# M6.3: local CI (the same as .github/workflows/ci.yml) in Docker.
 #
 #   bash ci.sh                 # cargo check/test max-brh + cargo test --workspace Horizon
-#                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) и golden
-#                              # + SOAK: soak_headless 120 ходов
-#   bash ci.sh --smoke         # плюс живой live-smoke (2 клиента × N ходов)
-#   bash ci.sh --smoke3        # плюс live-smoke-3 (3 клиента × N ходов)
-#   bash ci.sh --smoke-mixed   # плюс live-smoke-mixed (Rust×2 + C++ desync-оракул)
+#                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) and golden
+#                              # + SOAK: soak_headless 120 turns
+#   bash ci.sh --smoke         # plus a real live-smoke (2 clients × N turns)
+#   bash ci.sh --smoke3        # plus live-smoke-3 (3 clients × N turns)
+#   bash ci.sh --smoke-mixed   # plus live-smoke-mixed (Rust×2 + C++ desync oracle)
 #   bash ci.sh --smoke --turns 10
 #
-# Требования: Docker с Linux-контейнерами; для --smoke — собранные
-# max-brh-server/target/release/horizon и bin/linux-server-template/max-port.
-# Запускать из любой оболочки: bash/ Git Bash/ WSL/ Linux.
+# Requirements: Docker with Linux containers; for --smoke — built
+# max-brh-server/target/release/horizon and bin/linux-server-template/max-port.
+# Run it from any shell: bash/ Git Bash/ WSL/ Linux.
 set -euo pipefail
 
-# Git Bash (MSYS2/Cygwin) переписывает POSIX-пути в аргументах прямо в
-# Windows-пути: `docker run -w /src/max-brh` превращался в
-# `-w C:/Program Files/Git/src/max-brh` и docker падал с «working directory is
-# invalid». Пути внутри контейнера обязаны остаться POSIX — конверсию отключаем
-# (на Linux/macOS эти переменные игнорируются).
+# Git Bash (MSYS2/Cygwin) rewrites POSIX paths in arguments straight into
+# Windows paths: `docker run -w /src/max-brh` turned into
+# `-w C:/Program Files/Git/src/max-brh` and docker failed with "working directory is
+# invalid". Paths inside the container must stay POSIX — we disable the conversion
+# (on Linux/macOS these variables are ignored).
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS_NO_PATHCONV=1
     export MSYS2_ARG_CONV_EXCL='*'
 fi
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-# Docker Desktop для Windows ждёт путь вида D:/..., а не /d/...
+# Docker Desktop for Windows expects a path like D:/..., not /d/...
 if command -v cygpath >/dev/null 2>&1; then
     ROOT="$(cygpath -m "$ROOT")"
 fi
@@ -99,24 +99,24 @@ step() {
 
 started=$(date +%s)
 
-# Ф5.3/A: замок границы max_net → max_core. Зависимость разрешена только как
-# read-only проекция симуляции в провод (пять функций + два импорта данных);
-# любые новые вызовы max_core, apply_* или мутации GameState падают здесь.
+# Phase 5.3/A: the max_net → max_core boundary lock. The dependency is allowed only as
+# a read-only projection of the simulation into the wire (five functions + two data imports);
+# any new max_core calls, apply_* or GameState mutations fail here.
 step "0/4 max_net boundary lock: check_maxnet_boundary.sh"
 bash "$ROOT/max-brh-cicd/scripts/check_maxnet_boundary.sh"
 
 step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
-# default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
-# через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux
-# CMake собирает SDL3 с теми драйверами, чьи dev-заголовки видит, поэтому ставим
-# полный набор из max-brh-docs/development/release-checklist.md §2.3: X11
+# default max_app = ["sdl-from-source"]: SDL3 3.4.20 is built from source
+# via CMake (vendored sdl3-src) — no system SDL3/vcpkg needed. On Linux
+# CMake builds SDL3 with those drivers whose dev headers it can see, so we install
+# the full set from max-brh-docs/development/release-checklist.md §2.3: X11
 # (x11/xext/xrender/xcursor/xi/xrandr/xinerama/xss/xtst/xfixes), Wayland
-# (wayland/xkbcommon/libdecor), EGL/GLES/GL, KMSDRM (drm/gbm), ALSA (звук SDL и
-# feature sound), dbus-1 и libudev. Без них SDL3 соберётся с dummy-драйверами —
-# окно на Linux не откроется.
-# libSDL3.so.0 после сборки лежит в target/debug (sdl3-sys копирует её из
-# CMake-каталога) и линкуется динамически — тестовым бинарям нужен
-# LD_LIBRARY_PATH на target/debug (в артефактах это делает run.sh).
+# (wayland/xkbcommon/libdecor), EGL/GLES/GL, KMSDRM (drm/gbm), ALSA (SDL sound and
+# the sound feature), dbus-1 and libudev. Without them SDL3 builds with dummy drivers —
+# no window opens on Linux.
+# after the build libSDL3.so.0 sits in target/debug (sdl3-sys copies it from the
+# CMake directory) and is linked dynamically — test binaries need
+# LD_LIBRARY_PATH pointing at target/debug (run.sh does that in the artifacts).
 SDL_DEPS='gcc g++ cmake pkg-config libasound2-dev libx11-dev libxext-dev libxrender-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libgl-dev libgbm-dev libdrm-dev libdbus-1-dev libudev-dev'
 docker run --rm \
     -v "$ROOT:/src" \
@@ -137,11 +137,11 @@ docker run --rm \
     "$RUST_IMAGE" bash -c \
     'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
 
-# Слои 2–3 QA (max-brh-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
-# Каталог вывода пересоздаётся, чтобы старые кадры не маскировали регресс.
-# Примеры собираются с --no-default-features: QA-драйвер in-process, окно ему не
-# нужно, а default GUI потянул бы CMake-сборку SDL3 и X11-заголовки.
-# Сценарии и эталоны лежат в ../max-brh-qa/ (рабочий каталог — /src/max-brh).
+# QA layers 2–3 (max-brh-qa/plans/qa-plan.md): a scripted UI driver without SDL + golden frames.
+# The output directory is recreated so that stale frames do not mask a regression.
+# The examples are built with --no-default-features: the QA driver is in-process, it does not
+# need a window, while the default GUI would pull in the CMake SDL3 build and X11 headers.
+# Scenarios and references live in ../max-brh-qa/ (working directory — /src/max-brh).
 step "3/4 QA: qa_run (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb, missile-line, build-cancel, panels) + golden"
 docker run --rm \
     -v "$ROOT:/src" \
@@ -192,9 +192,9 @@ docker run --rm \
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/panels ../max-brh-qa/golden/panels
      cargo run -q -p max_app --no-default-features --example qa_golden_check -- qa-out/research-help ../max-brh-qa/golden/research-help'
 
-# P4: soak — отдельная стадия (не быстрая QA): 100 ходов UI-партии с ходами ИИ
-# + 120 ходов headless ИИ×ИИ с профилем тика (MAX_TICK_PROFILE=1) и RSS.
-# Каталог qa-out/ уже создан стадией 3/4; soak-логи дописываются рядом.
+# P4: soak — a separate stage (not fast QA): 100 turns of a UI match with AI turns
+# + 120 turns of headless AI×AI with the tick profile (MAX_TICK_PROFILE=1) and RSS.
+# The qa-out/ directory is already created by stage 3/4; soak logs are appended next to it.
 step "4/4 SOAK: soak-100.qa (100 ходов, память+профиль) + soak_headless (120 ходов)"
 docker run --rm \
     -v "$ROOT:/src" \
@@ -226,8 +226,8 @@ fi
 
 step "CI OK за $(( $(date +%s) - started )) с"
 
-# Очистка мусора после прогонов (остановленные контейнеры, dangling-образы,
-# build-cache). Отключается: DOCKER_CLEAN=0 bash ci.sh
+# Garbage cleanup after the runs (stopped containers, dangling images,
+# build cache). Disabled with: DOCKER_CLEAN=0 bash ci.sh
 if [ "${DOCKER_CLEAN:-1}" = "1" ]; then
     step "DOCKER-CLEAN: max-brh-cicd/scripts/docker-clean.sh"
     bash "$ROOT/max-brh-cicd/scripts/docker-clean.sh"

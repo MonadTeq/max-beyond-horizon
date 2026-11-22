@@ -1,42 +1,42 @@
-//! Минимальный GIF89a-кодировщик (только std): палитра + LZW.
+//! A minimal GIF89a encoder (std only): palette + LZW.
 //!
-//! Зачем свой: PNG-кодек уже есть, а для превью FLC-анимации нужен именно GIF
-//! (индексированные кадры с задержкой и зацикливанием), и тащить внешний крейт
-//! ради этого не хочется — формат простой:
+//! Why our own: the PNG codec already exists, but an FLC animation preview needs GIF
+//! (indexed frames with a delay and looping), and pulling in an external crate
+//! for that is undesirable — the format is simple:
 //!
-//! * глобальная таблица цветов на 256 записей (палитра первого кадра FLC);
-//! * при смене палитры в кадре — **локальная** таблица (GIF её допускает),
-//!   поэтому цвета кадров остаются 1:1 с индексным буфером FLC;
-//! * сжатие — LZW с минимальным размером кода 8 (`clear = 256`, `EOI = 257`),
-//!   подблоки по ≤255 байт;
-//! * `NETSCAPE2.0` — бесконечное зацикливание (как `flicsmgr_construct` в игре).
+//! * a global color table with 256 entries (the first FLC frame's palette);
+//! * when a frame changes the palette — a **local** table (GIF allows it),
+//!   so the frame colors stay 1:1 with the FLC index buffer;
+//! * compression — LZW with a minimum code size of 8 (`clear = 256`, `EOI = 257`),
+//!   sub-blocks of ≤255 bytes;
+//! * `NETSCAPE2.0` — infinite looping (like `flicsmgr_construct` in the game).
 //!
-//! Кодировщик детерминирован: одинаковые кадры дают одинаковые байты, никакого
-//! времени/случайности в файле нет — это важно для идемпотентности экспорта.
+//! The encoder is deterministic: identical frames give identical bytes, no
+//! timestamps/randomness end up in the file — that matters for an idempotent export.
 
-/// Размер таблицы цветов GIF (`2^8`).
+/// The GIF color table size (`2^8`).
 pub const PALETTE_SIZE: usize = 256;
 
-/// Минимальный размер LZW-кода для 8-битных индексов.
+/// The minimum LZW code size for 8-bit indices.
 const MIN_CODE_SIZE: u32 = 8;
-/// Код «сбросить словарь».
+/// The "reset dictionary" code.
 const CLEAR_CODE: u16 = 1 << MIN_CODE_SIZE; // 256
-/// Код «конец данных».
+/// The "end of data" code.
 const EOI_CODE: u16 = CLEAR_CODE + 1; // 257
-/// Предел кодов LZW до принудительного сброса словаря.
+/// The LZW code limit before the dictionary is forcibly reset.
 const MAX_CODE: u16 = 4096;
 
-/// Один кадр GIF.
+/// One GIF frame.
 pub struct GifFrame<'a> {
-    /// Индексы палитры, `width * height` байт.
+    /// Palette indices, `width * height` bytes.
     pub indices: &'a [u8],
-    /// Локальная палитра кадра; `None` — используется глобальная.
+    /// The frame's local palette; `None` — the global one is used.
     pub local_palette: Option<&'a [[u8; 3]; PALETTE_SIZE]>,
-    /// Задержка перед следующим кадром в сотых долях секунды.
+    /// The delay before the next frame in hundredths of a second.
     pub delay_cs: u16,
 }
 
-/// Писатель битов GIF: байты заполняются с младшего бита (как требует LZW GIF).
+/// The GIF bit writer: bytes fill from the low bit (as GIF LZW requires).
 struct BitWriter {
     out: Vec<u8>,
     bits: u32,
@@ -52,7 +52,7 @@ impl BitWriter {
         }
     }
 
-    /// Записать `size` бит кода (младшим битом вперёд).
+    /// Write `size` bits of a code (low bit first).
     fn code(&mut self, value: u16, size: u32) {
         self.bits |= u32::from(value) << self.count;
         self.count += size;
@@ -73,10 +73,10 @@ impl BitWriter {
     }
 }
 
-/// LZW-сжатие индексного буфера (вариант GIF: коды переменной длины).
+/// LZW compression of the index buffer (the GIF variant: variable-length codes).
 ///
-/// Словарь — `prefix << 8 | byte`; при переполнении 4096 кодов словарь
-/// сбрасывается `clear`-кодом, как предписывает спецификация.
+/// The dictionary key is `prefix << 8 | byte`; when it overflows 4096 codes the dictionary
+/// is reset with a `clear` code, as the specification prescribes.
 fn lzw_compress(indices: &[u8]) -> Vec<u8> {
     let mut writer = BitWriter::new();
     let mut code_size = MIN_CODE_SIZE + 1;
@@ -107,11 +107,11 @@ fn lzw_compress(indices: &[u8]) -> Vec<u8> {
             dictionary.insert(key, next);
             next += 1;
 
-            // Ширина кода растёт, когда СЛЕДУЮЩИЙ свободный код уже не влезает
-            // в текущую ширину. Порог именно `2^size + 1`, а не `2^size`:
-            // декодер заводит запись на один код позже кодера (первый код
-            // после clear записи не создаёт), поэтому «ранний» порог даёт
-            // испорченный поток (проверено независимым декодером Pillow).
+            // The code width grows when the NEXT free code no longer fits
+            // the current width. The threshold is exactly `2^size + 1`, not `2^size`:
+            // the decoder creates an entry one code later than the encoder (the first code
+            // after clear does not create an entry), so an "early" threshold produces
+            // a corrupted stream (verified with the independent Pillow decoder).
             if next == (1 << code_size) + 1 && code_size < 12 {
                 code_size += 1;
             }
@@ -131,7 +131,7 @@ fn lzw_compress(indices: &[u8]) -> Vec<u8> {
     writer.finish()
 }
 
-/// Нарезает поток на GIF-подблоки (`[len][len байт]…`, терминатор `0x00`).
+/// Splits the stream into GIF sub-blocks (`[len][len bytes]…`, terminated by `0x00`).
 fn push_blocks(out: &mut Vec<u8>, data: &[u8]) {
     for chunk in data.chunks(255) {
         out.push(chunk.len() as u8);
@@ -141,7 +141,7 @@ fn push_blocks(out: &mut Vec<u8>, data: &[u8]) {
     out.push(0);
 }
 
-/// Заголовок + логический дескриптор экрана + глобальная палитра + цикл.
+/// Header + logical screen descriptor + global palette + the loop.
 fn push_header(
     out: &mut Vec<u8>,
     width: u16,
@@ -151,27 +151,27 @@ fn push_header(
     out.extend_from_slice(b"GIF89a");
     out.extend_from_slice(&width.to_le_bytes());
     out.extend_from_slice(&height.to_le_bytes());
-    // GCT есть (0x80), 8 бит на канал (0x70), размер таблицы 2^8 = 256 (0x07).
+    // GCT present (0x80), 8 bits per channel (0x70), table size 2^8 = 256 (0x07).
     out.push(0x80 | 0x70 | 0x07);
-    out.push(0); // индекс фона
-    out.push(0); // соотношение сторон
+    out.push(0); // background index
+    out.push(0); // aspect ratio
 
     for color in global_palette {
         out.extend_from_slice(color);
     }
 
-    // NETSCAPE2.0 — зацикливание без счётчика.
+    // NETSCAPE2.0 — looping without a counter.
     out.extend_from_slice(&[0x21, 0xFF, 0x0B]);
     out.extend_from_slice(b"NETSCAPE2.0");
     out.extend_from_slice(&[0x03, 0x01, 0x00, 0x00, 0x00]);
 }
 
-/// Собирает GIF89a из кадров одного размера.
+/// Builds a GIF89a from frames of the same size.
 ///
-/// * `global_palette` — таблица цветов по умолчанию (обычно палитра первого
-///   кадра); кадр со своей палитрой пишет локальную таблицу;
-/// * пустой список кадров — валидный GIF с нулём изображений (не используется
-///   экспортом, но кодировщик остаётся тотальным).
+/// * `global_palette` — the default color table (usually the first frame's
+///   palette); a frame with its own palette writes a local table;
+/// * an empty frame list — a valid GIF with zero images (unused by the
+///   export, but the encoder stays total).
 pub fn encode(
     width: u16,
     height: u16,
@@ -183,12 +183,12 @@ pub fn encode(
     push_header(&mut out, width, height, global_palette);
 
     for frame in frames {
-        // Graphic Control Extension: задержка, без прозрачности.
+        // Graphic Control Extension: the delay, no transparency.
         out.extend_from_slice(&[0x21, 0xF9, 0x04, 0x00]);
         out.extend_from_slice(&frame.delay_cs.to_le_bytes());
         out.extend_from_slice(&[0x00, 0x00]);
 
-        // Image Descriptor (+ локальная палитра, если кадр её принёс).
+        // Image Descriptor (+ a local palette if the frame brought one).
         out.push(0x2C);
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
@@ -197,7 +197,7 @@ pub fn encode(
 
         match frame.local_palette {
             Some(palette) => {
-                out.push(0x80 | 0x07); // LCT, 256 цветов
+                out.push(0x80 | 0x07); // LCT, 256 colors
 
                 for color in palette {
                     out.extend_from_slice(color);
@@ -215,11 +215,11 @@ pub fn encode(
     out
 }
 
-/// Задержка GIF (в сотых долях секунды) по длительности кадра FLC, мс.
+/// The GIF delay (in hundredths of a second) from an FLC frame duration in ms.
 ///
-/// GIF хранит задержку в 1/100 с, поэтому 70 мс → 7 (≈ 14.3 FPS). Значение
-/// зажимается в `1..=1000`, чтобы плееры не «съедали» кадр (0 = «как можно
-/// быстрее» и часто трактуется как 1/10 с).
+/// GIF stores the delay in 1/100 s, so 70 ms → 7 (≈ 14.3 FPS). The value
+/// is clamped to `1..=1000` so players do not swallow the frame (0 = "as fast
+/// as possible" and is often treated as 1/10 s).
 pub fn delay_from_ms(speed_ms: u32) -> u16 {
     let centiseconds = (speed_ms + 5) / 10;
 
@@ -230,7 +230,7 @@ pub fn delay_from_ms(speed_ms: u32) -> u16 {
 mod tests {
     use super::*;
 
-    /// Обратный LZW (только для тестов): проверяем, что поток декодируется.
+    /// Inverse LZW (tests only): we check that the stream decodes.
     struct BitReader<'a> {
         data: &'a [u8],
         pos: usize,
@@ -261,7 +261,7 @@ mod tests {
     fn lzw_decompress(data: &[u8], min_code_size: u32, expected: usize) -> Vec<u8> {
         let clear = 1u16 << min_code_size;
         let eoi = clear + 1;
-        // Начальная таблица — 258 записей: индексы 0..=255, clear и EOI.
+        // The initial table has 258 entries: indices 0..=255, clear and EOI.
         let mut table: Vec<Vec<u8>> =
             (0..=(u16::from(clear) + 1)).map(|code| vec![code as u8]).collect();
         let mut reader = BitReader {
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(u16::from_le_bytes([gif[6], gif[7]]), 8);
         assert_eq!(u16::from_le_bytes([gif[8], gif[9]]), 4);
         assert_eq!(*gif.last().unwrap(), 0x3B, "trailer");
-        // 2 кадра — два разделителя изображений (0x2C) и два GCE.
+        // 2 frames — two image separators (0x2C) and two GCEs.
         assert!(gif.iter().filter(|byte| **byte == 0x2C).count() >= 2);
         assert!(gif.windows(11).any(|window| window == b"NETSCAPE2.0"));
     }

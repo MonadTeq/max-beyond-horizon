@@ -1,6 +1,6 @@
-//! Печатает FNV-1a хеши первых N кадров MVE (по умолчанию — `maxint.mve`).
+//! Prints FNV-1a hashes of the first N MVE frames (default — `maxint.mve`).
 //!
-//! Используется для сверки с C-обвязкой над `nfPkDecomp` оракула:
+//! Used to cross-check the C harness over the oracle's `nfPkDecomp`:
 //!
 //! ```sh
 //! cargo run -p max_assets --example mve_hashes -- ../max-original/MAXINT.MVE 300

@@ -5,16 +5,16 @@ edition = "2021"
 license = "MIT"
 description = "M.A.X. per-unit asset exporter: sprites, turrets, shadows, connectors, portraits and FLC animations"
 
-# Отдельный Cargo-проект (свой Cargo.lock), не входит в workspace max-brh —
-# как max-brh-qa-tools/max-resources-viewer. Зависимости — только крейты порта (path).
+# A separate Cargo project (its own Cargo.lock), not part of the max-brh workspace —
+# like max-brh-qa-tools/max-resources-viewer. Dependencies are port crates only (path).
 [workspace]
 
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-# Без `preserve_order` (фича тянет indexmap/foldhash, которых нет в офлайн-кэше):
-# ключи JSON идут по алфавиту — это детерминированно, что и нужно для
-# идемпотентности выгрузки.
+# Without `preserve_order` (the feature pulls in indexmap/foldhash, which are not in the offline cache):
+# JSON keys go alphabetically — that is deterministic, which is exactly what
+# an idempotent export needs.
 serde_json = "1"
 max_assets = { path = "../../max-brh/crates/max_assets" }
 max_core = { path = "../../max-brh/crates/max_core" }

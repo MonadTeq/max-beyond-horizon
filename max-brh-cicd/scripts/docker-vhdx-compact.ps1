@@ -1,4 +1,4 @@
-# Компакция docker_data.vhdx (Docker Desktop + WSL2).
+# Compaction of docker_data.vhdx (Docker Desktop + WSL2).
 #   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\docker-vhdx-compact.ps1 [-NoRestart]
 param(
     [string]$Vhdx = "C:\Users\Solo Sovey\AppData\Local\Docker\wsl\disk\docker_data.vhdx",
@@ -35,8 +35,8 @@ $free = $false
 $attempt = 0
 while ((Get-Date) -lt $deadline) {
     $attempt++
-    # Вывод wsl -l -v приходит в UTF-16-подобном виде (с NUL между символами) —
-    # без очистки regex никогда не совпадёт (баг прежней версии скрипта).
+    # The wsl -l -v output arrives in a UTF-16-like form (with NUL between characters) —
+    # without cleanup the regex never matches (a bug in the previous script version).
     $table = ((wsl -l -v 2>&1 | Out-String) -replace "`0", '')
     $stopped = $table -match 'docker-desktop\s+Stopped'
     $locked = -not (TryLockFree $Vhdx)
@@ -44,8 +44,8 @@ while ((Get-Date) -lt $deadline) {
         Write-Host ("  t+{0}s: distro_stopped={1} file_locked={2} vmmem={3}" -f (($attempt - 1) * 3), $stopped, $locked, (Get-Process vmmem* -ErrorAction SilentlyContinue | Measure-Object).Count)
     }
     if (-not $locked -and $stopped) { $free = $true; break }
-    # WSLService может удерживать виртуальный диск, даже когда дистрибутивы
-    # остановлены: пробуем перезапустить службу (требует прав администратора).
+    # WSLService may hold the virtual disk even when the distributions are
+    # stopped: we try to restart the service (requires admin rights).
     if ($attempt -eq 20) {
         Write-Host '  служба WSLService всё ещё держит файл — перезапуск службы'
         try { Restart-Service WSLService -Force -ErrorAction Stop; Start-Sleep -Seconds 5 } catch { Write-Host ("  не удалось перезапустить WSLService: {0}" -f $_.Exception.Message) }

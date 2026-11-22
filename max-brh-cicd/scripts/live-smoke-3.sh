@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Живой smoke P5: Horizon (WS+gRPC) + C++-headless + ТРИ Rust-клиента × N ходов.
+# Live smoke P5: Horizon (WS+gRPC) + C++ headless + THREE Rust clients × N turns.
 #
 #   bash max-brh-cicd/scripts/live-smoke-3.sh [turns]
 #
-# Проверяет то, чего не проверял двухклиентный live-smoke.sh:
-#   * третий клиент занимает BLUE (--min-players 3), а не компьютерный слот;
-#   * у каждого клиента ровно два пира и все барьеры 00/52/54/45 проходят;
-#   * релей доходит до всех: каждый клиент видит 00 команд двух других;
-#   * state_checksum совпадает у всех трёх (CRC-барьер 45 сошёлся);
-#   * barrier_timeouts=0, в логах нет десинка/ошибок сессии.
+# Checks what the two-client live-smoke.sh did not:
+#   * the third client takes BLUE (--min-players 3), not a computer slot;
+#   * every client has exactly two peers and all barriers 00/52/54/45 pass;
+#   * the relay reaches everyone: each client sees 00 from the two other teams;
+#   * state_checksum matches for all three (CRC barrier 45 agreed);
+#   * barrier_timeouts=0, no desync/session errors in the logs.
 #
-# Требования: Docker; workspace смонтирован как /src; собраны
-#   max-brh-server/target/release/horizon и bin/linux-server-template/max-port.
-# Клиенты собираются один раз (--no-default-features) и запускаются прямо из
-# target/debug, поэтому три параллельных `cargo run` не конкурируют за lock.
+# Requirements: Docker; the workspace is mounted as /src; built
+#   max-brh-server/target/release/horizon and bin/linux-server-template/max-port.
+# The clients are built once (--no-default-features) and launched straight from
+# target/debug, so three parallel `cargo run`s do not compete for the lock.
 set -euo pipefail
 
 TURNS="${1:-5}"
@@ -43,7 +43,7 @@ mkdir -p "$LOGS"
 : > "$LOGS/${PREFIX}-b.log"
 : > "$LOGS/${PREFIX}-c.log"
 
-# 0. Один раз собираем клиент и gRPC-пробу без SDL (headless --connect).
+# 0. Build the client and the gRPC probe once, without SDL (headless --connect).
 echo "== build: max_app + horizon_probe (no-default-features) =="
 docker run --rm -v "$HOST_ROOT:/src" -w "$WS/max-brh" rust:1.94.0-bookworm bash -c \
   "apt-get update -qq && apt-get install -y -qq gcc g++ cmake >/dev/null && \
@@ -51,8 +51,8 @@ docker run --rm -v "$HOST_ROOT:/src" -w "$WS/max-brh" rust:1.94.0-bookworm bash 
 CLIENT_BIN="$WS/max-brh/target/debug/max-brh"
 PROBE_BIN="$WS/max-brh/target/debug/examples/horizon_probe"
 
-# 1. Horizon. Порты наружу не публикуем: probe и клиенты живут в его network
-#    namespace, поэтому занятые хостом 8080/8082 не мешают прогону.
+# 1. Horizon. We do not publish ports: the probe and the clients live in its network
+#    namespace, so 8080/8082 being busy on the host does not disturb the run.
 echo "== horizon =="
 docker run -d --name "${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS/max-brh-server" \
   ubuntu:24.04 bash -c \
@@ -71,7 +71,7 @@ if ! docker ps --filter "name=^/${PREFIX}-horizon$" --format '{{.Names}}' | grep
   exit 1
 fi
 
-# 2. Создать игру на 3 игрока, забрать id. Проба сразу выходит, слот не занимает.
+# 2. Create a 3-player game, grab the id. The probe exits at once and takes no slot.
 echo "== create game (min_players=$CLIENTS) =="
 docker run --rm --network="container:${PREFIX}-horizon" -v "$HOST_ROOT:/src" -w "$WS" \
   rust:1.94.0-bookworm bash -c \
@@ -84,10 +84,10 @@ if [ -z "$GAME_ID" ]; then
 fi
 echo "GAME_ID=$GAME_ID"
 
-# 3. Три клиента одновременно: сессия стартует только после третьего READY,
-#    поэтому BLUE гарантированно занимает реальный клиент, а не компьютер.
-#    MAX_LOG=debug нужен для проверки релея (00 от двух других команд) и
-#    прохождения 52/54/45.
+# 3. Three clients at once: the session starts only after the third READY,
+#    so BLUE is guaranteed to be taken by a real client, not a computer.
+#    MAX_LOG=debug is needed to verify the relay (00 from the two other teams) and
+#    the 52/54/45 passes.
 for index in 0 1 2; do
   name="${NAMES[$index]}"
   team="${TEAMS[$index]}"
@@ -99,7 +99,7 @@ for index in 0 1 2; do
        --turns $TURNS > $WS/build/smoke-logs/${PREFIX}-${letter}.log 2>&1" >/dev/null
 done
 
-# 4. Ждём все три процесса и сохраняем коды выхода.
+# 4. Wait for all three processes and keep the exit codes.
 echo "== wait clients (max ~15 мин) =="
 for name in "${NAMES[@]}"; do
   docker wait "$name" > "$LOGS/${PREFIX}-${name}.exit" 2>/dev/null || true
@@ -116,8 +116,8 @@ for index in 0 1 2; do
   fi
 done
 
-# 5. Проверки. Порядок как в live-smoke.sh: сначала грубые ошибки, затем
-#    инварианты трёхклиентной сессии.
+# 5. Checks. Same order as in live-smoke.sh: gross errors first, then
+#    the three-client session invariants.
 echo "== checks =="
 state_checksums=()
 for index in 0 1 2; do
@@ -147,7 +147,7 @@ for index in 0 1 2; do
     exit 1
   fi
 
-  # Каждый барьер реально пройден (52/54/45 — debug-строки).
+  # Every barrier actually passed (52/54/45 — debug lines).
   for barrier in 'барьер 00' 'барьер 52' 'барьер 54' 'барьер 45'; do
     if ! grep -q "$barrier" "$log"; then
       echo "live-smoke-3: $log: не найден проход '$barrier'" >&2
@@ -155,7 +155,7 @@ for index in 0 1 2; do
     fi
   done
 
-  # Релей: клиент видит 00 от каждой из двух других команд (team из payload).
+  # Relay: the client sees 00 from each of the two other teams (team from the payload).
   for other in 0 1 2; do
     [ "$other" = "$index" ] && continue
     if ! grep -q "00: команда $other " "$log"; then
@@ -179,7 +179,7 @@ if [ "${state_checksums[0]}" != "${state_checksums[1]}" ] || \
   exit 1
 fi
 
-# 6. Серверные логи сессии: нет desync, все три команды дошли до 45.
+# 6. Server session logs: no desync, all three teams reached 45.
 docker logs "${PREFIX}-horizon" > "$LOGS/${PREFIX}-horizon.log" 2>&1 || true
 if grep -q 'Desync check failed' "$LOGS/${PREFIX}-horizon.log"; then
   echo "live-smoke-3: сервер зафиксировал desync" >&2

@@ -1,19 +1,19 @@
-# UI-тест перемещения юнита в ЖИВОМ окне (SDL3): регресс «юнит не двигается».
+# UI test of unit movement in the LIVE window (SDL3): the "unit does not move" regression.
 #
 #   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-move.ps1
 #
-# Путь тот же, что у игрока мышью: New Game → Options Done → Planet Done →
-# Players (Green = Computer) Done → мобилизация Done → высадка Enter → в игре:
-# клик по своему Surveyor'у (портрет в панели), RMB на соседнюю клетку
-# (зелёный предпросмотр), End Turn → юнит в новой клетке.
+# The same mouse path as the player's: New Game → Options Done → Planet Done →
+# Players (Green = Computer) Done → mobilization Done → landing Enter → in game:
+# click your own Surveyor (the portrait in the panel), RMB on a neighboring cell
+# (green preview), End Turn → the unit is in the new cell.
 #
-# Координаты — кадр 640×480 (окно --scale 1). После фикса камеры
-# (`GameManager_GetFirstRelevantUnit` → шахта (22,22) в центре области карты)
-# Surveyor стоит в (23,21) → пиксель (468,178), соседняя клетка (24,21) →
-# (532,178), кнопка End Turn — около (426,12).
+# Coordinates are for a 640×480 frame (window --scale 1). After the camera lock
+# (`GameManager_GetFirstRelevantUnit` → the mine (22,22) in the center of the map area)
+# the Surveyor stands at (23,21) → pixel (468,178), the neighboring cell (24,21) →
+# (532,178), the End Turn button is near (426,12).
 #
-# Скриншоты: build/ui-test-move/*.png. Скрипт завершается кодом 1, если
-# портрет не заполнился после клика или предпросмотр не нарисован.
+# Screenshots: build/ui-test-move/*.png. The script exits with code 1 if
+# the portrait is not filled after the click or the preview is not drawn.
 
 param(
     [string]$Exe = "",
@@ -99,7 +99,7 @@ function Shot([string]$name) {
     return $path
 }
 
-# Считает «непустые» пиксели в прямоугольнике (яркость > 24) — портрет/панель.
+# Counts "non-empty" pixels in a rectangle (brightness > 24) — portrait/panel.
 function Count-Lit([string]$path, [int]$x, [int]$y, [int]$w, [int]$h) {
     $bmp = New-Object System.Drawing.Bitmap($path)
     $lit = 0
@@ -113,7 +113,7 @@ function Count-Lit([string]$path, [int]$x, [int]$y, [int]$w, [int]$h) {
     return $lit
 }
 
-# Зелёный предпросмотр маршрута (HUD PREVIEW_COLOR = 120,255,152).
+# Green route preview (HUD PREVIEW_COLOR = 120,255,152).
 function Count-Preview([string]$path) {
     $bmp = New-Object System.Drawing.Bitmap($path)
     $count = 0
@@ -157,7 +157,7 @@ Click-Client $hwnd 474 463        # Mobilize: Done (447,452,54x23)
 Start-Sleep -Seconds 2
 Shot '06-landing' | Out-Null
 
-# Высадка: Enter подтверждает точку по умолчанию (курсор = (22,22)).
+# Landing: Enter confirms the default point (cursor = (22,22)).
 [Win32.Mouse]::SetForegroundWindow($hwnd) | Out-Null
 Start-Sleep -Milliseconds 300
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
@@ -166,7 +166,7 @@ $start = Shot '07-game-start'
 
 $portraitBefore = Count-Lit $start 10 29 127 127
 
-# Клик по своему Surveyor'у (23,21) -> (468,178).
+# Click your own Surveyor (23,21) -> (468,178).
 Click-Client $hwnd 468 178
 Start-Sleep -Milliseconds 700
 $selected = Shot '08-selected'
@@ -177,7 +177,7 @@ if ($portraitAfter -le ($portraitBefore + 40)) {
     exit 1
 }
 
-# RMB на соседнюю клетку (24,21) -> (532,178): зелёный маршрут.
+# RMB on the neighboring cell (24,21) -> (532,178): a green route.
 RightClick-Client $hwnd 532 178
 Start-Sleep -Milliseconds 500
 $preview = Shot '09-move-preview'
@@ -187,12 +187,12 @@ if ($green -lt 20) {
     exit 1
 }
 
-# End Turn -> ход ИИ -> новый раунд.
+# End Turn -> AI turn -> a new round.
 Click-Client $hwnd 426 12
 Start-Sleep -Seconds 5
 Shot '10-after-turn' | Out-Null
 
-# Юнит сдвинулся в (24,21): выделяем его на новой клетке.
+# The unit moved to (24,21): we select it on the new cell.
 Click-Client $hwnd 532 178
 Start-Sleep -Milliseconds 700
 $moved = Shot '11-unit-moved'

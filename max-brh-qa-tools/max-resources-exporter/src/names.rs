@@ -1,14 +1,14 @@
-//! Английские имена юнитов по индексу `UnitType` (0..93).
+//! English unit names by `UnitType` index (0..93).
 //!
-//! Источник — таблица `unit_name` из `max-brh/crates/max_app/src/buildmenu.rs`
-//! (в C++ это `ResourceManager_GetUnit(...).GetSingularName()`). В порте имена
-//! есть только у 61 «настоящего» типа; для служебных (эффекты, ракеты, обломки,
-//! инопланетная техника) `None` — в манифесте и `unit.json` берётся токен
-//! `SC_UNITS`. Порядок совпадает с [`max_core::enums::UnitType::ALL`], значения
-//! индексов — `ResourceID` из `SC_UNITS`.
+//! Source — the `unit_name` table from `max-brh/crates/max_app/src/buildmenu.rs`
+//! (in C++ it is `ResourceManager_GetUnit(...).GetSingularName()`). In the port the names
+//! exist only for the 61 "real" types; for the service ones (effects, rockets, debris,
+//! alien hardware) it is `None` — the manifest and `unit.json` use the
+//! `SC_UNITS` token instead. The order matches [`max_core::enums::UnitType::ALL`], and the
+//! index values are the `ResourceID`s from `SC_UNITS`.
 #![allow(clippy::unreadable_literal)]
 
-/// Имя типа или `None`, если в порте его нет.
+/// The type name, or `None` if the port does not have one.
 pub const UNIT_NAMES: [Option<&str>; 93] = [
     Some("Comm Tower"),
     Some("Power Station"),
@@ -105,7 +105,7 @@ pub const UNIT_NAMES: [Option<&str>; 93] = [
     None,
 ];
 
-/// Имя типа по индексу `UnitType`; для служебных типов — сам токен.
+/// The type name by `UnitType` index; for service types — the token itself.
 pub fn display_name<'a>(index: usize, token: &'a str) -> &'a str {
     UNIT_NAMES.get(index).copied().flatten().unwrap_or(token)
 }
@@ -121,7 +121,7 @@ mod tests {
         assert_eq!(display_name(0x33, "TANK"), "Tank");
         assert_eq!(display_name(0x00, "COMMTWR"), "Comm Tower");
         assert_eq!(display_name(49, "CONSTRCT"), "Constructor");
-        // Служебный тип — имени нет, отдаётся токен.
+        // Service type — there is no name, the token is returned.
         assert_eq!(display_name(0x2B, "LNDEXPLD"), "LNDEXPLD");
         assert_eq!(display_name(200, "OUT_OF_RANGE"), "OUT_OF_RANGE");
     }

@@ -1,22 +1,22 @@
-//! Растеризация ресурсов в RGBA: палитры, прозрачность, лента кадров.
+//! Rasterization of resources into RGBA: palettes, transparency, frame strips.
 //!
-//! Соглашения — те же, что у `max-brh-assets` (`max-brh-qa-tools/max-resources-viewer`), чтобы
-//! выгрузка юнитов стыковалась с уже существующей:
+//! The conventions are the same as in `max-brh-assets` (`max-brh-qa-tools/max-resources-viewer`), so
+//! the unit export stays compatible with the existing one:
 //!
-//! * спрайты (`COMMTWR`…`WALDO`) индексируются `COLOR.PAL`, у которого
-//!   компоненты уже умножены на 4 (`Palette::rgb`);
-//! * структурная прозрачность спрайта (пропущенные RLE-пиксели) → альфа 0;
-//! * тень `S_*` — маска: затемняемый пиксель чёрный с альфой 160, остальное
-//!   прозрачно;
-//! * `sheet.png` — горизонтальная лента кадров, выровненная по горячей точке
-//!   (`hotx/hoty`), поэтому анимация не «прыгает» (раскладка 1:1 с
-//!   `max-brh-assets/README.md`, §«Лента кадров»);
-//! * портрет `P_*` — big image 300×240: индексы картинки переводятся
-//!   **палитрой окна** (`FRAMEPIC`), как это делает `CargoMenu`/`BuildMenu`
-//!   (`WindowManager_LoadBigImage(..., palette_from_image = false)`), кадр
-//!   полностью непрозрачен;
-//! * кадры FLC — индексы кадра + палитра `COLOR_256` этого FLC, компоненты
-//!   хранятся 6-битными, при выводе умножаются на 4.
+//! * sprites (`COMMTWR`…`WALDO`) are indexed by `COLOR.PAL`, whose
+//!   components are already multiplied by 4 (`Palette::rgb`);
+//! * structural sprite transparency (skipped RLE pixels) → alpha 0;
+//! * the `S_*` shadow is a mask: the shaded pixel is black with alpha 160, everything else
+//!   is transparent;
+//! * `sheet.png` — a horizontal frame strip aligned by the hotspot
+//!   (`hotx/hoty`), so the animation does not "jump" (the layout is 1:1 with
+//!   `max-brh-assets/README.md`, the "Frame strip" section);
+//! * the `P_*` portrait is a 300×240 big image: its indices are mapped through
+//!   the **window palette** (`FRAMEPIC`), which is what `CargoMenu`/`BuildMenu` do
+//!   (`WindowManager_LoadBigImage(..., palette_from_image = false)`); the frame
+//!   is fully opaque;
+//! * FLC frames — the frame indices + this FLC's `COLOR_256` palette; the components
+//!   are stored as 6-bit and multiplied by 4 on output.
 
 use max_assets::flic::FlicFrame;
 use max_assets::image::BigImage;
@@ -25,29 +25,29 @@ use max_render::palette::Palette;
 
 use crate::png::RgbaImage;
 
-/// Альфа тени в выгрузке (как в `max-brh-assets`: `_mask`-PNG).
+/// Shadow alpha in the export (as in `max-brh-assets`: a `_mask` PNG).
 pub const SHADOW_ALPHA: u8 = 160;
 
-/// Множитель 6-битной палитры в 8-битную (`Palette::SIX_BIT_SCALE`).
+/// The factor from the 6-bit palette to 8-bit (`Palette::SIX_BIT_SCALE`).
 pub const SIX_BIT_SCALE: u16 = 4;
 
-/// Размер портрета `P_*` в игре (big image, `CargoMenu`/`BuildMenu`).
+/// The `P_*` portrait size in the game (big image, `CargoMenu`/`BuildMenu`).
 pub const PORTRAIT_WIDTH: u32 = 300;
-/// Высота портрета `P_*`.
+/// The `P_*` portrait height.
 pub const PORTRAIT_HEIGHT: u32 = 240;
 
-/// 8-битный цвет из 6-битного компонента палитры (`×4`, с насыщением).
+/// An 8-bit color from a 6-bit palette component (`×4`, saturating).
 #[inline]
 pub fn six_bit(value: u8) -> u8 {
     (u16::from(value) * SIX_BIT_SCALE).min(255) as u8
 }
 
-/// Палитра окна (`FRAMEPIC`) → 256 цветов RGB.
+/// The window palette (`FRAMEPIC`) → 256 RGB colors.
 ///
-/// В C++ системная палитра окна — палитра фоновой big image (`UiPalette` в
-/// порте); портреты `P_*` и кадры FLC рисуются именно ей (`palette_from_image =
-/// false`). Своя палитра `P_*` отличается от неё на единицы в младших битах,
-/// поэтому картинка совпадает (проверено на всех 71 портрете).
+/// In C++ the system window palette is the background big image's palette (`UiPalette` in
+/// the port); the `P_*` portraits and FLC frames are drawn with exactly it (`palette_from_image =
+/// false`). A `P_*`'s own palette differs from it by units in the low bits,
+/// so the image matches (verified on all 71 portraits).
 pub fn window_palette(image: &BigImage) -> [[u8; 3]; 256] {
     let mut colors = [[0u8; 3]; 256];
 
@@ -58,7 +58,7 @@ pub fn window_palette(image: &BigImage) -> [[u8; 3]; 256] {
     colors
 }
 
-/// 6-битная палитра FLC → 8-битная таблица цветов.
+/// A 6-bit FLC palette → an 8-bit color table.
 pub fn flic_palette(palette: &[[u8; 3]; 256]) -> [[u8; 3]; 256] {
     let mut colors = [[0u8; 3]; 256];
 
@@ -70,7 +70,7 @@ pub fn flic_palette(palette: &[[u8; 3]; 256]) -> [[u8; 3]; 256] {
     colors
 }
 
-/// Один кадр обычного спрайта → RGBA-картинка `width × height`.
+/// One frame of a regular sprite → an RGBA image `width × height`.
 pub fn sprite_frame_image(frame: &SpriteFrame, palette: &Palette) -> RgbaImage {
     let width = u32::from(frame.width);
     let height = u32::from(frame.height);
@@ -90,7 +90,7 @@ pub fn sprite_frame_image(frame: &SpriteFrame, palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Один кадр тени → RGBA-маска (чёрный, альфа [`SHADOW_ALPHA`]).
+/// One shadow frame → an RGBA mask (black, alpha [`SHADOW_ALPHA`]).
 pub fn shadow_frame_image(frame: &ShadowFrame) -> RgbaImage {
     let width = u32::from(frame.width);
     let height = u32::from(frame.height);
@@ -107,7 +107,7 @@ pub fn shadow_frame_image(frame: &ShadowFrame) -> RgbaImage {
     out
 }
 
-/// Кадр FLC → RGBA по 8-битной таблице цветов (все пиксели непрозрачны).
+/// An FLC frame → RGBA via the 8-bit color table (all pixels are opaque).
 pub fn flic_frame_image(frame: &FlicFrame, colors: &[[u8; 3]; 256]) -> RgbaImage {
     let width = frame.width as u32;
     let height = frame.height as u32;
@@ -125,7 +125,7 @@ pub fn flic_frame_image(frame: &FlicFrame, colors: &[[u8; 3]; 256]) -> RgbaImage
     out
 }
 
-/// Big image (`P_*`) → RGBA по палитре окна; кадр полностью непрозрачен.
+/// A big image (`P_*`) → RGBA via the window palette; the frame is fully opaque.
 pub fn big_image_image(image: &BigImage, colors: &[[u8; 3]; 256]) -> RgbaImage {
     let width = u32::from(image.width as u16);
     let height = u32::from(image.height as u16);
@@ -146,10 +146,10 @@ pub fn big_image_image(image: &BigImage, colors: &[[u8; 3]; 256]) -> RgbaImage {
 }
 
 // ---------------------------------------------------------------------------
-// Лента кадров (как `max-brh-assets/README.md`, §«Лента кадров»)
+// Frame strip (as in `max-brh-assets/README.md`, the "Frame strip" section)
 // ---------------------------------------------------------------------------
 
-/// Общий якорь ленты: максимум положительных горячих точек по каждой оси.
+/// The strip's common anchor: the maximum of the positive hotspots per axis.
 fn anchor(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     let x = frames
         .iter()
@@ -165,12 +165,12 @@ fn anchor(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     (x, y)
 }
 
-/// Насколько ячейка шире/выше кадра из-за общего якоря (≥ 0).
+/// How much wider/taller a cell is than the frame because of the common anchor (≥ 0).
 fn extra(anchor: u32, hot: i16) -> u32 {
     (i64::from(anchor) - i64::from(hot)).max(0) as u32
 }
 
-/// Габариты ленты кадров: сумма ячеек по X, максимум высот по Y.
+/// Frame strip dimensions: the sum of cells along X, the maximum height along Y.
 pub fn strip_dimensions(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     if frames.is_empty() {
         return (0, 0);
@@ -190,7 +190,7 @@ pub fn strip_dimensions(frames: &[(u16, u16, i16, i16)]) -> (u32, u32) {
     (width, height)
 }
 
-/// Метаданные кадров спрайта для раскладки.
+/// Sprite frame metadata for the layout.
 pub fn sprite_meta(frames: &[&SpriteFrame]) -> Vec<(u16, u16, i16, i16)> {
     frames
         .iter()
@@ -198,7 +198,7 @@ pub fn sprite_meta(frames: &[&SpriteFrame]) -> Vec<(u16, u16, i16, i16)> {
         .collect()
 }
 
-/// Лента кадров спрайта (RGBA, выравнивание по горячей точке).
+/// The sprite's frame strip (RGBA, aligned by the hotspot).
 pub fn sprite_strip(frames: &[&SpriteFrame], palette: &Palette) -> RgbaImage {
     let meta = sprite_meta(frames);
     let (width, height) = strip_dimensions(&meta);
@@ -227,16 +227,16 @@ pub fn sprite_strip(frames: &[&SpriteFrame], palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Fallback-портрет: первый кадр спрайта, увеличенный целым множителем и
-/// вписанный в 300×240 на чёрном фоне (как `FillOrRestoreWindow(..., BLACK)`).
+/// Fallback portrait: the first sprite frame, upscaled by an integer factor and
+/// fitted into 300×240 on a black background (like `FillOrRestoreWindow(..., BLACK)`).
 ///
-/// Множитель — наибольший целый, при котором кадр влезает в портрет
+/// The factor is the largest integer with which the frame fits into the portrait
 /// (`max(1, min(300 / w, 240 / h))`).
 pub fn portrait_fallback(frame: &SpriteFrame, palette: &Palette) -> RgbaImage {
     let source = sprite_frame_image(frame, palette);
     let mut out = RgbaImage::new(PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
 
-    // Чёрный фон окна портрета.
+    // The portrait window's black background.
     for pixel in out.rgba.chunks_exact_mut(4) {
         pixel.copy_from_slice(&[0, 0, 0, 255]);
     }
@@ -266,7 +266,7 @@ pub fn portrait_fallback(frame: &SpriteFrame, palette: &Palette) -> RgbaImage {
     out
 }
 
-/// Множитель fallback-портрета для кадра (для `unit.json`).
+/// The fallback portrait factor for a frame (for `unit.json`).
 pub fn fallback_scale(frame: &SpriteFrame) -> u32 {
     (PORTRAIT_WIDTH / u32::from(frame.width).max(1))
         .min(PORTRAIT_HEIGHT / u32::from(frame.height).max(1))
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn strip_packs_frames_by_hot_spot() {
-        // Как в тесте max-resources-viewer: ячейки 44+6=50 и 56, высота max(50,57).
+        // As in the max-resources-viewer test: cells 44+6=50 and 56, height max(50,57).
         let (width, height) = strip_dimensions(&[(44, 45, 20, 23), (56, 57, 26, 28)]);
 
         assert_eq!(width, 50 + 56);
@@ -340,7 +340,7 @@ mod tests {
         let portrait = portrait_fallback(&source, &palette);
 
         assert_eq!((portrait.width, portrait.height), (300, 240));
-        assert_eq!(fallback_scale(&source), 5); // 44*5=220, 45*5=225 — влезает
+        assert_eq!(fallback_scale(&source), 5); // 44*5=220, 45*5=225 — it fits
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
         let frames = [frame(10, 4, 2, 2), frame(12, 6, 6, 3)];
         let strip = sprite_strip(&[&frames[0], &frames[1]], &palette);
 
-        // Ячейки: 10 + (6-2) = 14 и 12 + 0 = 12.
+        // Cells: 10 + (6-2) = 14 and 12 + 0 = 12.
         assert_eq!(strip.width, 26);
         assert_eq!(strip.height, 6);
     }

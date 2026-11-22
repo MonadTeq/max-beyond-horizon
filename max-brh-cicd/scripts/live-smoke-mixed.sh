@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# P5: смешанная сессия Rust + C++ и проверка кросс-имплементационного паритета.
+# P5: mixed Rust + C++ session and a cross-implementation parity check.
 #
 #   bash max-brh-cicd/scripts/live-smoke-mixed.sh [turns]
-#   MIXED_REQUIRE_CPP=1 bash max-brh-cicd/scripts/live-smoke-mixed.sh  # падать без C++
+#   MIXED_REQUIRE_CPP=1 bash max-brh-cicd/scripts/live-smoke-mixed.sh  # fail without C++
 #
-# ЧЕСТНЫЙ СТАТУС C++-КЛИЕНТА:
-#   консольная сборка клиента `src/` умеет ТОЛЬКО `--server` (`src/main.cpp:37-44`,
-#   `CMakeLists.txt: MAX_HEADLESS` -> `Server_Main`). Клиентской ветки
-#   `--client`/`--connect` нет: обычный `max-port` — SDL GUI, которому нужен
-#   дисплей и ручной проход меню. Поэтому mixed-сессия Rust+C++ этим скриптом
-#   НЕ запускается; скрипт делает доступную часть паритета:
-#     * два Rust-клиента в одной сессии, N ходов, CRC/state_checksum бит-в-бит;
-#     * C++-сервер (эталонная реализация `state_checksum`/`GameManager_CheckDesync`)
-#       на каждом 45-барьере сверяет CRC и не пишет `Desync check failed` /
-#       desync-отчёт — значит, состояние Rust-клиентов совпало с C++-симуляцией.
-#   Без изменения `src/` (добавления headless client mode) полноценная
-#   Rust+C++-сессия невозможна; см. max-brh-docs/architecture/client/protocol.md §12 и
+# HONEST STATUS OF THE C++ CLIENT:
+#   the console build of the `src/` client supports ONLY `--server` (`src/main.cpp:37-44`,
+#   `CMakeLists.txt: MAX_HEADLESS` -> `Server_Main`). There is no client branch
+#   `--client`/`--connect`: the regular `max-port` is an SDL GUI that needs a
+#   display and a manual menu walk. That is why this script does NOT launch a mixed
+#   Rust+C++ session; the script covers the part of parity that is available:
+#     * two Rust clients in one session, N turns, CRC/state_checksum bit-for-bit;
+#     * the C++ server (the reference implementation of `state_checksum`/`GameManager_CheckDesync`)
+#       compares the CRC at every 45 barrier and never logs `Desync check failed` /
+#       a desync report — meaning the Rust clients' state matched the C++ simulation.
+#   Without changing `src/` (adding a headless client mode) a full-fledged
+#   Rust+C++ session is impossible; see max-brh-docs/architecture/client/protocol.md §12 and
 #   max-brh-cicd/scripts/README.md.
 set -euo pipefail
 
@@ -42,7 +42,7 @@ mkdir -p "$LOGS"
 : > "$LOGS/${PREFIX}-a.log"
 : > "$LOGS/${PREFIX}-b.log"
 
-# Блокер фиксируем по исходнику, а не по догадке.
+# We pin the blocker to the source, not to a guess.
 CPP_CLIENT_BLOCKER=""
 if ! grep -q -- '--client' "$HOST_ROOT/src/main.cpp" 2>/dev/null; then
   CPP_CLIENT_BLOCKER="src/main.cpp headless: только --server (Server_Main); --client/--connect отсутствует, GUI-клиенту нужен X11 и ручной ввод"
@@ -89,8 +89,8 @@ if [ -z "$GAME_ID" ]; then
 fi
 echo "GAME_ID=$GAME_ID"
 
-# Rust×2 — доступная половина mixed-сессии. C++-сторона — сервер-арбитр:
-# он сверяет присланные клиентами CRC на 45 и знает свою симуляцию.
+# Rust×2 — the available half of the mixed session. The C++ side is the arbiter server:
+# it compares the CRCs sent by the clients at 45 and knows its own simulation.
 for index in 0 1; do
   name="${NAMES[$index]}"
   letter="$(printf '%s' "ab" | cut -c$((index + 1)))"

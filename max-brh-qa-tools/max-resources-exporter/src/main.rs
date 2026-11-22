@@ -1,14 +1,14 @@
-//! CLI экспорта ресурсов по юнитам.
+//! CLI for exporting resources per unit.
 //!
-//! Запуск из `max-brh-qa-tools/max-resources-exporter` (пути по умолчанию — относительно корня
-//! репозитория):
+//! Run from `max-brh-qa-tools/max-resources-exporter` (the default paths are relative to the repository
+//! root):
 //!
 //! ```sh
 //! cargo run --release
 //! cargo run --release -- --out ../../max-brh-assets/units --only TANK,MININGST
 //! ```
 //!
-//! Флаги: `--res`, `--pal`, `--flc-dir`, `--units`, `--out`, `--patches`,
+//! Flags: `--res`, `--pal`, `--flc-dir`, `--units`, `--out`, `--patches`,
 //! `--no-patches-check`, `--only TAG[,TAG…]`, `--help`.
 
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-/// Разбирает аргументы; `None` — `--help` (уже всё напечатано).
+/// Parses the arguments; `None` — `--help` (everything has already been printed).
 fn parse_args() -> Result<Option<ExportOptions>> {
     let repo_root = repo_root();
     let mut options = ExportOptions::defaults(&repo_root);
@@ -102,7 +102,7 @@ fn parse_args() -> Result<Option<ExportOptions>> {
     Ok(Some(options))
 }
 
-/// Корень репозитория: `max-brh-qa-tools/max-resources-exporter` → `max-brh-qa-tools` → корень.
+/// Repository root: `max-brh-qa-tools/max-resources-exporter` → `max-brh-qa-tools` → root.
 fn repo_root() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
 

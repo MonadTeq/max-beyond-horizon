@@ -1,4 +1,4 @@
-# Очистка рабочих артефактов (сборки/логи/скриншоты). Повторяемая.
+# Cleanup of working artifacts (builds/logs/screenshots). Repeatable.
 #   powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\workspace-clean.ps1 [-DryRun]
 param([switch]$DryRun)
 $ErrorActionPreference = 'Continue'
@@ -20,20 +20,20 @@ function Remove-Target([string]$rel) {
 $before = (Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
 Write-Host ("== workspace: {0:N1} GB ==" -f ($before / 1GB))
 
-# --- cargo-сборки -----------------------------------------------------------
+# --- cargo builds -----------------------------------------------------------
 Remove-Target 'max-brh\target'
 Remove-Target 'max-brh-server\target'
 Remove-Target 'max-brh-qa-tools\max-resources-viewer\target'
-# Windows-сборки нативным MSVC: UI (build-windows-ui.ps1) и headless
-# (build-windows-console.ps1) держат target отдельно от max-brh\target, чтобы
-# MSVC-артефакты не смешивались с Linux/Docker-сборками.
+# Windows builds with native MSVC: UI (build-windows-ui.ps1) and headless
+# (build-windows-console.ps1) keep their target separate from max-brh\target so that
+# MSVC artifacts do not mix with the Linux/Docker builds.
 Remove-Target 'bin\target'
 Remove-Target 'bin\target-console'
-# CARGO_HOME для Linux/Docker-сборок (ci.sh, release.sh); Windows-сборки его не
-# используют — они берут ~\.cargo.
+# CARGO_HOME for the Linux/Docker builds (ci.sh, release.sh); the Windows builds do not
+# use it — they take ~\.cargo.
 Remove-Target 'build\cargo-home'
 
-# --- устаревшие/кросс-сборки и временные каталоги build\ -------------------
+# --- legacy/cross builds and temporary build\ directories ------------------
 $buildDirs = @(
     'bin\release',
     'build\msvc-console',
@@ -51,15 +51,15 @@ $buildDirs = @(
 )
 foreach ($d in $buildDirs) { Remove-Target $d }
 
-# --- DOS-эксперимент: удаляем захваты, оставляем proof/ и скрипты ----------
+# --- DOS experiment: delete the captures, keep proof/ and the scripts ------
 Remove-Target 'build\anim-dos\captures'
 Remove-Target 'build\anim-dos\game'
 if (Test-Path 'build\anim-dos\dosextract') { Remove-Target 'build\anim-dos\dosextract' }
 
-# --- ad-hoc логи/скриншоты/одноразовые скрипты в корне build\ -------------
-# Reusable-скрипты перенесены в max-brh-cicd/scripts/ (git-tracked); артефакты —
-# в bin/ (bin/linux-server-template, bin/sdl3-3.4.20, bin/release, bin/target).
-# В корне build/ остаются только транзиентные логи/кэши.
+# --- ad-hoc logs/screenshots/one-off scripts in the build\ root -----------
+# Reusable scripts were moved to max-brh-cicd/scripts/ (git-tracked); artifacts go
+# to bin/ (bin/linux-server-template, bin/sdl3-3.4.20, bin/release, bin/target).
+# Only transient logs/caches remain in the build/ root.
 Get-ChildItem 'build' -File -ErrorAction SilentlyContinue | ForEach-Object {
     Write-Host ("build\{0}" -f $_.Name)
     if (-not $DryRun) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Continue }
