@@ -102,8 +102,13 @@ started=$(date +%s)
 # Phase 5.3/A: the max_net → max_core boundary lock. The dependency is allowed only as
 # a read-only projection of the simulation into the wire (five functions + two data imports);
 # any new max_core calls, apply_* or GameState mutations fail here.
-step "0/4 max_net boundary lock: check_maxnet_boundary.sh"
+step "0/4 locks: max_net boundary + English code comments"
 bash "$ROOT/max-brh-cicd/scripts/check_maxnet_boundary.sh"
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$ROOT/max-brh-cicd/scripts/check_comments_language.py"
+else
+    echo "WARN: python3 not found — check_comments_language.py skipped"
+fi
 
 step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 is built from source
