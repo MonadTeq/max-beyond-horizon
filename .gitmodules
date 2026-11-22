@@ -3,4 +3,4 @@
 	url = https://github.com/klei1984/max.git
 [submodule "max-brh-vendor/SDL"]
 	path = max-brh-vendor/SDL
-	url = https://github.com/libsdl-org/SDL.git
+	url = https://github.com/MonadTeq/mtq-sdl.git
