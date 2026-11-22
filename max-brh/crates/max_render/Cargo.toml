@@ -9,22 +9,22 @@ max_core = { path = "../max_core" }
 max_assets = { path = "../max_assets" }
 tracing.workspace = true
 
-# SDL3-обвязка — только под feature `sdl`, чтобы чистая часть крейта
-# собиралась и тестировалась без системного SDL3 (см. src/sdl_window.rs).
+# SDL3 wrapper — only under the `sdl` feature, so that the clean part of the crate
+# builds and is tested without a system SDL3 (see src/sdl_window.rs).
 sdl3 = { version = "0.22", optional = true, default-features = false }
 
 [features]
 default = []
-# Окно и вывод кадра: требует установленного SDL3 (libsdl3-dev / vcpkg).
+# Window and frame output: requires an installed SDL3 (libsdl3-dev / vcpkg).
 sdl = ["dep:sdl3"]
-# То же, но SDL3 собирается из исходников (нужен cmake) — путь для CI/docker и
-# default `max_app`. Самодостаточно: `sdl3-sys` собирает vendored SDL3 3.4.20
-# (`sdl3-src`) через CMake, системный SDL3 и vcpkg не нужны. Крейт `sdl3`
-# тянет sdl3-sys ещё и со своими default-фичами (`use-pkg-config`/`use-vcpkg`),
-# но при включённом `build-from-source` build.rs использует ТОЛЬКО CMake-ветку —
-# pkg-config/vcpkg не вызываются вовсе.
+# The same, but SDL3 is built from source (cmake needed) — the path for CI/docker and
+# default `max_app`. Self-contained: `sdl3-sys` builds vendored SDL3 3.4.20
+# (`sdl3-src`) via CMake, system SDL3 and vcpkg are not needed. The `sdl3` crate
+# also pulls sdl3-sys with its own default features (`use-pkg-config`/`use-vcpkg`),
+# but with `build-from-source` enabled build.rs uses the CMake branch ONLY —
+# pkg-config/vcpkg are not invoked at all.
 sdl-from-source = ["sdl", "sdl3/build-from-source"]
-# SDL3 из vcpkg (Windows: vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
+# SDL3 from vcpkg (Windows: vcpkg install sdl3:x64-windows, VCPKG_ROOT in env).
 sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]
 
 [[example]]

@@ -1,23 +1,23 @@
-//! Кадры-доказательства M-SP и M-HS: настройка, партия с ИИ, победа, hot-seat.
+//! Proof frames for M-SP and M-HS: setup, game with AI, victory, hot-seat.
 //!
 //! ```sh
 //! cargo run -p max_app --example sp_frames -- ../max-original ../build
 //! ```
 //!
-//! Пишет PPM (P6) в каталог вывода:
+//! Writes PPM (P6) into the output directory:
 //!
-//! * `sp-options.ppm` — `GameConfigMenu` (фон `OPTNFRM`);
-//! * `sp-planets.ppm` — `PlanetSelectMenu` (фон `PLANETSE`, 3×2 мини-карты);
-//! * `sp-players.ppm` — `ChoosePlayerMenu` (фон `CHOSPLYR`, 4 команды);
-//! * `sp-game.ppm` — партия после хода ИИ (карта + хром 1:1);
-//! * `sp-victory.ppm` — экран победы (`ENDGAME*` + статистика);
-//! * `sp-defeat.ppm` — экран поражения;
-//! * `hs-players.ppm` — `Hot Seat Menu` (2 человека + 1 компьютер);
-//! * `hs-turn.ppm` — окно перехода хода `DialogMenu` (`HELPFRAM`, «Red Team:
-//!   Begin turn.»);
-//! * `hs-game.ppm` — ход второго человека (GREEN) после подтверждения: камера,
-//!   туман и панели уже его команды;
-//! * `hs-ai.ppm` — окно перехода к RED после хода компьютера (ИИ между людьми).
+//! * `sp-options.ppm` — `GameConfigMenu` (background `OPTNFRM`);
+//! * `sp-planets.ppm` — `PlanetSelectMenu` (background `PLANETSE`, 3×2 minimaps);
+//! * `sp-players.ppm` — `ChoosePlayerMenu` (background `CHOSPLYR`, 4 teams);
+//! * `sp-game.ppm` — the game after the AI turn (map + chrome 1:1);
+//! * `sp-victory.ppm` — victory screen (`ENDGAME*` + statistics);
+//! * `sp-defeat.ppm` — defeat screen;
+//! * `hs-players.ppm` — `Hot Seat Menu` (2 humans + 1 computer);
+//! * `hs-turn.ppm` — turn transition window `DialogMenu` (`HELPFRAM`, "Red Team:
+//!   Begin turn.");
+//! * `hs-game.ppm` — the second human's turn (GREEN) after confirmation: camera,
+//!   fog and panels already belong to that team;
+//! * `hs-ai.ppm` — the transition window to RED after the computer's turn (AI between humans).
 
 use std::path::PathBuf;
 
@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_ppm(&path, &buffer)?;
     println!("{}: выбор команд", path.display());
 
-    // --- 4. Партия с ИИ ----------------------------------------------------
+    // --- 4. AI game -----------------------------------------------------
     let setup = LocalSetup {
         player_name: "Commander".to_string(),
         world: 4,
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     app.start_local_game(&setup)?;
 
-    // Ход игрока → ход ИИ → возврат к игроку (2 раунда).
+    // Player turn → AI turn → back to the player (2 rounds).
     for _ in 0..2 {
         app.local_end_turn();
         for _ in 0..40_000 {
@@ -144,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Немного тиков хода игрока, чтобы юниты встали на места.
+    // A few ticks of the player's turn so that the units settle into place.
     for _ in 0..6 {
         app.local_update(0.0);
     }
@@ -169,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.state().unit_count()
     );
 
-    // --- 5. Победа ---------------------------------------------------------
+    // --- 5. Victory -------------------------------------------------------
     let ai_units: Vec<_> = app
         .state()
         .unit_ids_in_order()
@@ -207,8 +207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|outcome| outcome.victory)
     );
 
-    // --- 6. Поражение ------------------------------------------------------
-    // Новая партия, гибнут юниты игрока: статус «Lost» → поражение.
+    // --- 6. Defeat --------------------------------------------------------
+    // New game, the player's units die: status "Lost" → defeat.
     app.start_local_game(&setup)?;
     let player = app.state().player_team;
     let own_units: Vec<_> = app
@@ -248,10 +248,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|outcome| outcome.victory)
     );
 
-    // Проверка команд партии (не печатаем «Alien»).
+    // Check of the game's teams (we do not print "Alien").
     let _ = TeamId::RED;
 
-    // --- 7. M-HS: экран команд Hot Seat ------------------------------------
+    // --- 7. M-HS: Hot Seat team screen -----------------------------------
     let mut hs_form = GameSetupForm::hot_seat();
     hs_form.setup.player_name = "Commander".to_string();
     hs_form.screen = SetupScreen::Players;
@@ -270,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_ppm(&path, &buffer)?;
     println!("{}: Hot Seat Menu (2 человека + ИИ)", path.display());
 
-    // --- 8. M-HS: партия, окно перехода хода --------------------------------
+    // --- 8. M-HS: game, turn transition window ------------------------------
     let hs_setup = LocalSetup {
         player_name: "Commander".to_string(),
         world: 4,
@@ -322,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.local_notice().map(|notice| notice.team)
     );
 
-    // Подтверждаем «Begin turn» и закрываем ход RED — ход переходит к GREEN.
+    // Confirm "Begin turn" and end the RED turn — the turn passes to GREEN.
     app.local_acknowledge_turn();
     app.local_end_turn();
 
@@ -338,7 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.local_notice().map(|notice| notice.team)
     );
 
-    // Второй человек подтверждает ход — играем несколько тиков его команды.
+    // The second human confirms the turn — we play a few ticks of his team.
     app.local_acknowledge_turn();
     for _ in 0..6 {
         app.local_update(0.0);
@@ -357,7 +357,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.state().turn_counter
     );
 
-    // GREEN заканчивает ход → компьютер BLUE ходит сам → снова RED.
+    // GREEN ends the turn → the BLUE computer plays on its own → RED again.
     app.local_end_turn();
     for _ in 0..60_000 {
         if app.local_notice().is_some() || app.local().is_none_or(|local| local.finished()) {
@@ -382,7 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Заглушка клиента Horizon: кадрам M-SP сеть не нужна.
+/// Horizon client stub: M-SP frames do not need the network.
 struct NullClient;
 
 impl max_app::ui::MenuClient for NullClient {

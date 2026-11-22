@@ -1,18 +1,18 @@
-//! Headless-кадры палитровых циклов и коннекторов зданий (артефакт сессии).
+//! Headless frames of palette cycles and building connectors (session artifact).
 //!
-//! Собирает сцену «шахта + `POWGEN` вплотную» и сохраняет пять кадров:
-//! `dt = 0` (исходная палитра, статичный корпус) и четыре фазы палитрового
-//! цикла 13–16 @6 fps — ровно то, что DOS-съёмка сняла в AVI
-//! (`max-original-dasm/formats/unit-animation.md` §7.3: жёлтый → оранжевый →
-//! красный → оранжевый, 166.7 мс на фазу, 666.7 мс полный цикл).
+//! Builds the scene "mine + `POWGEN` adjacent" and saves five frames:
+//! `dt = 0` (original palette, static body) and four phases of the palette
+//! cycle 13–16 @6 fps — exactly what the DOS capture recorded in AVI
+//! (`max-original-dasm/formats/unit-animation.md` §7.3: yellow → orange →
+//! red → orange, 166.7 ms per phase, 666.7 ms full cycle).
 //!
 //! ```sh
 //! cargo run -q -p max_app --no-default-features --example building_cycles -- qa-out/building-cycles
 //! ```
 //!
-//! Каталог по умолчанию — `qa-out/building-cycles`. Файлы — PNG 640×480
-//! (`qa::png`), плюс в stdout печатается число изменившихся пикселей между
-//! фазами и цвета пикселей-маяков.
+//! The default directory is `qa-out/building-cycles`. The files are PNG 640×480
+//! (`qa::png`), plus the number of changed pixels between the phases and the
+//! colors of the beacon pixels are printed to stdout.
 
 use std::path::{Path, PathBuf};
 
@@ -64,8 +64,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.state_mut().teams[0].team_type = TeamKind::Player;
     app.state_mut().team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
 
-    // Шахта 2×2 в (30,22) и POWGEN 1×1 в (32,22): у шахты восточные
-    // коннекторы, у генератора — западная труба (`D_SMLBLD` кадр 5).
+    // Mine 2×2 at (30,22) and POWGEN 1×1 at (32,22): the mine has east
+    // connectors, the generator has the west pipe (`D_SMLBLD` frame 5).
     let mine = app
         .state_mut()
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(30, 22), 0)
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.viewport_mut().set_zoom(64);
     app.viewport_mut().center_on_grid(31, 23);
 
-    // `dt = 0`: статичный кадр C++ (`image_base + 1`), палитра исходная.
+    // `dt = 0`: static C++ frame (`image_base + 1`), original palette.
     app.update_visual_units(0.0);
     let static_frame = app.render_frame();
     save(&out, "mine-phase-0-static", &static_frame)?;
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frames = Vec::new();
 
     for phase in 1..=4 {
-        // Шаг 6 fps: 166.7 мс на фазу; четыре шага — полный цикл.
+        // 6 fps step: 166.7 ms per phase; four steps — the full cycle.
         app.update_visual_units(1.0 / 6.0 + 0.001);
         let frame = app.render_frame();
 
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         changed_pixels(&frames[3], &static_frame)
     );
 
-    // `dt = 0` возвращает ровно статичный кадр (golden не дрейфуют).
+    // `dt = 0` returns exactly the static frame (goldens do not drift).
     app.update_visual_units(0.0);
     println!(
         "после dt = 0: изменённых пикселей к статичному кадру = {}",

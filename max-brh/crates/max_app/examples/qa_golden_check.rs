@@ -1,22 +1,22 @@
-//! Слой 3 QA: сверка golden-кадров (попиксельно, без внешних крейтов).
+//! QA layer 3: golden frame comparison (per pixel, without external crates).
 //!
 //! ```sh
-//! # сверка после прогона visual-screens.qa
+//! # comparison after running visual-screens.qa
 //! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden
 //!
-//! # перегенерация эталонов после осознанного визуального изменения
+//! # regeneration of the goldens after a deliberate visual change
 //! cargo run -p max_app --example qa_golden_check -- qa-out/visual-screens ../max-brh-qa/golden --update
 //! ```
 //!
-//! Критерий дрейфа (тот же, что в `max-brh-qa/plans/qa-plan.md` и `ci.sh`): кадр считается
-//! изменившимся, если больше **1 %** пикселей отличаются хотя бы одним каналом
-//! больше чем на **30**. Для каждого такого кадра пишется `diff-<name>.png`
-//! (белый фон, красные — разошедшиеся пиксели), а код выхода — 1.
+//! Drift criterion (the same as in `max-brh-qa/plans/qa-plan.md` and `ci.sh`): a frame counts as
+//! changed if more than **1 %** of the pixels differ in at least one channel
+//! by more than **30**. For each such frame `diff-<name>.png` is written
+//! (white background, red — the diverged pixels), and the exit code is 1.
 //!
-//! Эталоны сравниваются по имени файла: `golden/<name>.png` ↔
-//! `<shots>/<name>.png`. Лишние кадры в `<shots>` (новый `shot` в скрипте)
-//! печатаются как предупреждение — эталон нужно добавить через `--update`;
-//! пропавший кадр (эталон есть, скриншота нет) — ошибка.
+//! Goldens are compared by file name: `golden/<name>.png` ↔
+//! `<shots>/<name>.png`. Extra frames in `<shots>` (a new `shot` in the script)
+//! are printed as a warning — the golden has to be added via `--update`;
+//! a missing frame (the golden exists, there is no screenshot) — an error.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -24,9 +24,9 @@ use std::process::ExitCode;
 
 use max_app::qa::png;
 
-/// Порог дельты канала (`max|Δканал| > 30` — изменение пикселя).
+/// Channel delta threshold (`max|Δchannel| > 30` — a pixel change).
 const DELTA_THRESHOLD: u8 = 30;
-/// Допустимая доля изменившихся пикселей (1 %).
+/// Allowed fraction of changed pixels (1 %).
 const CHANGED_RATIO: f64 = 0.01;
 
 const USAGE: &str = "\
@@ -111,7 +111,7 @@ fn png_files(dir: &Path) -> Result<BTreeSet<String>, String> {
 
         if path.extension().is_some_and(|extension| extension == "png") {
             if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
-                // `diff-*.png` — карты различий прошлых прогонов, не кадры.
+                // `diff-*.png` — difference maps of previous runs, not frames.
                 if !stem.starts_with("diff-") {
                     names.insert(stem.to_string());
                 }

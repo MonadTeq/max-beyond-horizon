@@ -1,10 +1,10 @@
 name: CI
 
-# M6.3: то же, что ./ci.sh, но на GitHub-hosted ubuntu.
-# Стадии: max-brh (check/test), horizon (workspace-тесты), qa (слои 2–3:
-# qa_run-сценарии + golden-кадры, см. max-brh-qa/plans/qa-plan.md).
-# Живой live-smoke здесь не запускается: ему нужен собранный C++-headless.
-# Локально:
+# M6.3: the same as ./ci.sh, but on GitHub-hosted ubuntu.
+# Stages: max-brh (check/test), horizon (workspace tests), qa (layers 2–3:
+# qa_run scenarios + golden frames, see max-brh-qa/plans/qa-plan.md).
+# The live live-smoke is not run here: it needs the built C++ headless.
+# Locally:
 #   ./max-brh-cicd/ci.sh --smoke            (Windows/Git Bash/WSL/Linux, Docker Desktop)
 
 on:
@@ -29,10 +29,10 @@ jobs:
           toolchain: 1.94.0
 
       - name: Install build deps (gcc/cmake for vendored SDL3/ENet, X11/Wayland/ALSA/GL for GUI default)
-        # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из
-        # исходников через CMake; dev-заголовки включают настоящие драйверы
-        # (X11, Wayland, KMSDRM, ALSA) — без них SDL3 соберётся с dummy.
-        # Набор — как в max-brh-docs/development/release-checklist.md §2.3.
+        # default max_app = ["sdl-from-source"]: SDL3 3.4.20 is built from
+        # source via CMake; the dev headers enable the real drivers
+        # (X11, Wayland, KMSDRM, ALSA) — without them SDL3 is built with dummy.
+        # The set matches max-brh-docs/development/release-checklist.md §2.3.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -49,8 +49,8 @@ jobs:
 
       - name: cargo test
         working-directory: max-brh
-        # libSDL3.so.0 копируется из CMake-каталога в target/debug; тестовым
-        # бинарям она нужна в LD_LIBRARY_PATH (в артефактах это делает run.sh).
+        # libSDL3.so.0 is copied from the CMake directory into target/debug; the test
+        # binaries need it in LD_LIBRARY_PATH (in artifacts run.sh does this).
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
         run: cargo test
@@ -64,8 +64,8 @@ jobs:
           cargo test --features sound
 
       - name: cargo test (headless, --no-default-features)
-        # Консольная сборка клиента (без SDL) — отдельный cfg-набор: проверяет
-        # `main.rs`-ветки без feature `sdl` (понятная ошибка GUI, --sdl).
+        # Console build of the client (no SDL) — a separate cfg set: checks the
+        # `main.rs` branches without the `sdl` feature (clear GUI error, --sdl).
         working-directory: max-brh
         run: cargo test --no-default-features
 
@@ -90,9 +90,9 @@ jobs:
         working-directory: max-brh-server
         run: cargo test --workspace
 
-  # Слои 2–3 QA (max-brh-qa/plans/qa-plan.md): скриптовый UI-драйвер без SDL + golden-кадры.
-  # Те же команды, что в ci.sh (стадия 3/3): один сценарий = один процесс
-  # qa_run, падение любого assert → exit 1 → красный CI.
+  # QA layers 2–3 (max-brh-qa/plans/qa-plan.md): scripted UI driver without SDL + golden frames.
+  # The same commands as in ci.sh (stage 3/3): one scenario = one
+  # qa_run process, any failing assert → exit 1 → red CI.
   qa:
     name: qa (scripts + golden frames)
     runs-on: ubuntu-latest
@@ -111,9 +111,9 @@ jobs:
 
       - name: QA scenarios (sp-full, hs-2, visual-screens, victory, production, save-load, upgrade, research, edge-cases, cargo-full, move-input, research-help, unit-menu, allocate, preferences, xfer, ai-turn, sp-tb, combat-tb)
         working-directory: max-brh
-        # --no-default-features: QA-драйверу окно не нужно, иначе примеры
-        # потянут default GUI (CMake-сборка SDL3 + X11-заголовки).
-        # Сценарии/эталоны — в ../max-brh-qa/ (рабочий каталог max-brh).
+        # --no-default-features: the QA driver does not need a window, otherwise the examples
+        # would pull in the default GUI (CMake build of SDL3 + X11 headers).
+        # Scenarios/goldens live in ../max-brh-qa/ (working directory max-brh).
         run: |
           set -e
           rm -rf qa-out
@@ -167,9 +167,9 @@ jobs:
             max-brh/qa-out/**/soak.txt
           if-no-files-found: warn
 
-  # P4: soak — 100 ходов QA-партии с ходами ИИ + 120 ходов headless ИИ×ИИ
-  # с профилем тика (`MAX_TICK_PROFILE=1`) и замером RSS. Отдельный job:
-  # длинный прогон не должен задерживать PR, поэтому только push/ручной запуск.
+  # P4: soak — 100 turns of a QA game with AI turns + 120 turns of headless AI×AI
+  # with a tick profile (`MAX_TICK_PROFILE=1`) and RSS measurement. A separate job:
+  # the long run must not delay PRs, hence push/manual dispatch only.
   soak:
     name: soak (soak-100.qa + soak_headless 120 turns)
     runs-on: ubuntu-latest

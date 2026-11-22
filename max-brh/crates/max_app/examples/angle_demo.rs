@@ -1,18 +1,18 @@
-//! Headless-артефакт TC-0933: спрайт юнита всегда смотрит по ходу движения.
+//! Headless artifact TC-0933: the unit sprite always faces the direction of movement.
 //!
-//! Гоняет L-маршрут разведчика `Scout` (без башни — кадр корпуса читается
-//! однозначно): 2 клетки на восток, затем 2 на север, в том же оконном цикле,
-//! что и `main.rs` (`tick` + `update_visual_units(dt)`), и снимает кадры
-//! 640×480 с хромом/панелями:
+//! Runs the L-shaped route of the `Scout` (no turret — the body frame reads
+//! unambiguously): 2 cells east, then 2 north, in the same window loop
+//! as `main.rs` (`tick` + `update_visual_units(dt)`), and captures
+//! 640×480 frames with chrome/panels:
 //!
-//! * `01-east-with-sim-ne.png` — симуляция уже начала поворот к северу
-//!   (на границе клетки, `angle=1`, NE), а спрайт ещё едет на восток и смотрит
-//!   на восток (`visual_angle=2`);
-//! * `02-turn.png` — спрайт дошёл до клетки поворота и повернул на север;
-//! * `03-stopped-north.png` — маршрут завершён, угол = последнему направлению.
+//! * `01-east-with-sim-ne.png` — the simulation has already started turning north
+//!   (at the cell boundary, `angle=1`, NE), while the sprite still moves east and faces
+//!   east (`visual_angle=2`);
+//! * `02-turn.png` — the sprite reached the turn cell and turned north;
+//! * `03-stopped-north.png` — the route is complete, the angle equals the last direction.
 //!
-//! Проверки (падение — exit 1): пока спрайт смещается по оси, `visual_angle`
-//! равен направлению смещения; после остановки `visual_angle == unit.angle`.
+//! Checks (failure — exit 1): while the sprite moves along an axis, `visual_angle`
+//! equals the direction of movement; after stopping `visual_angle == unit.angle`.
 //!
 //! ```sh
 //! cargo run -p max_app --no-default-features --example angle_demo -- qa-out/angle
@@ -85,7 +85,7 @@ fn run(out: &Path) -> Result<(), String> {
         .ok_or("юнит не найден")?
         .visible_to_team = [true; 5];
 
-    // L-маршрут: 2 клетки на восток, затем 2 на север. Стартовый угол — восток.
+    // L-shaped route: 2 cells east, then 2 north. The starting angle is east.
     let mut unit = app.state().unit(id).ok_or("юнит не найден")?.clone();
     unit.angle = 2;
     unit.orders = UnitOrder::Move;
@@ -120,9 +120,9 @@ fn run(out: &Path) -> Result<(), String> {
         let visual = app.visual_position(id).ok_or("юнит не найден")?;
         let visual_angle = app.visual_angle(id).ok_or("юнит не найден")?;
 
-        // Пока спрайт идёт по осевому отрезку, угол кадра обязан совпадать с
-        // направлением смещения. Переход через клетку поворота за один кадр
-        // (оба dx и dy) не проверяем — направление там неоднозначно.
+        // While the sprite travels along an axial segment, the frame angle must match the
+        // direction of movement. We do not check the transition through the turn cell within
+        // one frame (both dx and dy) — the direction is ambiguous there.
         let dx = visual.0 - previous.0;
         let dy = visual.1 - previous.1;
         let step_x = i32::from(dx > 1e-4) - i32::from(dx < -1e-4);

@@ -6,11 +6,11 @@ license.workspace = true
 
 [dependencies]
 max_core = { path = "../max_core" }
-# Infrastructure: доменные/протокольные типы (enums/geo/input/team/unit/events/
-# victory/UNIT_COUNT) — из нижнего слоя (Ф5.2). Зависимость от `max_core` —
-# намеренная read-only проекция симуляции в провод (Ф5.3, вариант 2): только
-# `game`, `crc`, `unit::UnitInfo`, `team::TeamUnits`. `apply_*` и мутации
-# GameState из max_net запрещены; CI-замок —
+# Infrastructure: domain/protocol types (enums/geo/input/team/unit/events/
+# victory/UNIT_COUNT) — from the lower layer (phase 5.2). The dependency on `max_core` is
+# a deliberate read-only projection of the simulation onto the wire (phase 5.3, option 2): only
+# `game`, `crc`, `unit::UnitInfo`, `team::TeamUnits`. `apply_*` and mutations
+# of GameState from max_net are forbidden; the CI lock is
 # max-brh-cicd/scripts/check_maxnet_boundary.sh.
 max_types = { path = "../max_types" }
 anyhow.workspace = true
@@ -53,13 +53,13 @@ cc = "1"
 
 [features]
 default = []
-# TLS для Horizon (`https://`) — только по явному запросу.
+# TLS for Horizon (`https://`) — explicit request only.
 #
-# Зачем фича: Horizon сейчас plaintext (`http://`, см. src/horizon.rs), а
-# rustls/ring/aws-lc — C/asm-зависимости, из-за которых кросс-сборка под
-# Windows-GNU и лёгкие headless-сборки обрастают тулчейном. По умолчанию их
-# нет в графе; `--features tls` (ring + webpki-roots, чистый Rust) включает
-# TLS, если Horizon когда-нибудь переедет на https.
+# Why this feature: Horizon is plaintext right now (`http://`, see src/horizon.rs), while
+# rustls/ring/aws-lc are C/asm dependencies that make the Windows-GNU cross build
+# and lightweight headless builds pull in a toolchain. By default they are
+# absent from the graph; `--features tls` (ring + webpki-roots, pure Rust) enables
+# TLS should Horizon ever move to https.
 tls = ["tonic/tls-ring", "tonic/tls-webpki-roots"]
 
 [dev-dependencies]

@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 description = "M.A.X. Rust client: core + net + assets + render in one headless-capable application loop"
 
-# Крейт остаётся `max_app` (библиотеку используют примеры qa_run/qa_golden_check),
-# а исполняемый файл клиента называется `max-brh` (max-brh.exe на Windows).
+# The crate stays `max_app` (the library is used by the qa_run/qa_golden_check examples),
+# while the client executable is named `max-brh` (max-brh.exe on Windows).
 [[bin]]
 name = "max-brh"
 path = "src/main.rs"
@@ -20,42 +20,42 @@ anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-# Данные `CargoMenu` (93 описания/портрета, `data/cargo_unit_data.json`):
-# читаются `include_str!` + serde_json (как ресурс, а не код).
+# `CargoMenu` data (93 descriptions/portraits, `data/cargo_unit_data.json`):
+# read via `include_str!` + serde_json (as a resource, not as code).
 serde.workspace = true
 serde_json.workspace = true
-# M-NET-доводки: JoinAttemptError (ретрай первого подключения).
+# M-NET refinements: JoinAttemptError (retry of the first connection).
 thiserror = "2"
 
-# Звук (M6.2): только под feature `sound`, чтобы базовые сборки/CI/докер не
-# тянули ALSA/CPAL. Декодер WAV живёт в max_assets и работает всегда.
+# Sound (M6.2): only under the `sound` feature, so that base builds/CI/docker do not
+# pull in ALSA/CPAL. The WAV decoder lives in max_assets and always works.
 rodio = { version = "0.19", optional = true, default-features = false }
 
 [features]
-# GUI по умолчанию: `cargo run -p max_app` (и обычная сборка) открывает игру.
-# `sdl-from-source` самодостаточен — SDL3 3.4.20 собирается из исходников
-# (vendored `sdl3-src`) через CMake, без системного SDL3 и без vcpkg; нужны
-# только C-компилятор и cmake. Headless-сборки (CI, сервер, `--demo`) собираются
-# с `--no-default-features` — тогда SDL не тянется вовсе.
+# GUI by default: `cargo run -p max_app` (and a regular build) opens the game.
+# `sdl-from-source` is self-contained — SDL3 3.4.20 is built from source
+# (vendored `sdl3-src`) via CMake, without system SDL3 and without vcpkg; only
+# a C compiler and cmake are needed. Headless builds (CI, server, `--demo`) are built
+# with `--no-default-features` — then SDL is not pulled in at all.
 default = ["sdl-from-source"]
-# Horizon по TLS (https://) — прокидывает `tls` в max_net. Обычные сборки
-# (в т.ч. кросс-сборка Windows) TLS не тянут: Horizon — plaintext http://.
+# Horizon over TLS (https://) — forwards `tls` to max_net. Regular builds
+# (including the Windows cross build) do not pull in TLS: Horizon is plaintext http://.
 tls = ["max_net/tls"]
-# Воспроизведение WAV через rodio/cpal. На Linux нужен libasound2-dev при
-# сборке и libasound2 в рантайме; без фичи — тихий no-op backend. НЕ входит в
-# default: звук тянет ALSA/WASAPI, а GUI должен собираться и без него.
-# Включается явно: `--features sound`.
+# WAV playback via rodio/cpal. On Linux libasound2-dev is needed at
+# build time and libasound2 at runtime; without the feature — a silent no-op backend. NOT part of
+# default: sound pulls in ALSA/WASAPI, while the GUI must build without it.
+# Enabled explicitly: `--features sound`.
 sound = ["dep:rodio"]
-# Окно SDL3 (интерактивный режим) с системным SDL3 (libsdl3-dev / vcpkg).
+# SDL3 window (interactive mode) with system SDL3 (libsdl3-dev / vcpkg).
 sdl = ["max_render/sdl"]
-# Окно SDL3, собранное из исходников (нужен cmake) — default и путь для CI.
+# SDL3 window built from source (cmake needed) — default and the path for CI.
 sdl-from-source = ["sdl", "max_render/sdl-from-source"]
-# Windows: SDL3 из vcpkg (vcpkg install sdl3:x64-windows, VCPKG_ROOT в env).
-# С явными features собирать с `--no-default-features`, иначе к vcpkg
-# добавится ещё и default `sdl-from-source`.
+# Windows: SDL3 from vcpkg (vcpkg install sdl3:x64-windows, VCPKG_ROOT in env).
+# With explicit features build with `--no-default-features`, otherwise the default
+# `sdl-from-source` is added to vcpkg as well.
 sdl-vcpkg = ["sdl", "max_render/sdl-vcpkg"]
 
 [dev-dependencies]
-# `start_paused` для тайм-контролируемого теста ретрая первого подключения
-# (в обычную сборку не входит: фича включается только в тестовом профиле).
+# `start_paused` for the time-controlled test of the first connection retry
+# (not part of a regular build: the feature is enabled only in the test profile).
 tokio = { workspace = true, features = ["test-util"] }

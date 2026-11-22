@@ -1,4 +1,4 @@
-//! Слой 2 QA: интерпретатор `.qa`-скриптов (in-process UI-драйвер без SDL).
+//! QA layer 2: interpreter for `.qa` scripts (in-process UI driver without SDL).
 //!
 //! ```sh
 //! cargo run -p max_app --example qa_run -- <script.qa> <out_dir>
@@ -6,17 +6,17 @@
 //!     --data-dir ../max-original --assets-dir ../assets
 //! ```
 //!
-//! Пишет в `<out_dir>`:
+//! Writes into `<out_dir>`:
 //!
-//! * `log.txt` — каждый шаг, фактическое состояние после ассертов, итог;
-//! * `<name>.png` — кадры команд `shot` (640×480, окно оригинала);
-//! * `*.mxs` — контейнеры команд `save`.
+//! * `log.txt` — every step, the actual state after the asserts, the result;
+//! * `<name>.png` — frames of `shot` commands (640×480, the original window);
+//! * `*.mxs` — containers of `save` commands.
 //!
-//! Код выхода: `0` — все шаги выполнились, `1` — упал `assert`/команда (текст
-//! печатается в stderr и попадает в `log.txt`), `2` — неверные аргументы.
+//! Exit code: `0` — all steps ran, `1` — an `assert`/command failed (the text
+//! is printed to stderr and lands in `log.txt`), `2` — invalid arguments.
 //!
-//! Пути данных по умолчанию — из корня репозитория (`max-original/`,
-//! `assets/`), поэтому пример работает и из любого каталога, и в Docker
+//! The default data paths come from the repository root (`max-original/`,
+//! `assets/`), so the example works both from any directory and in Docker
 //! (`-w /src/max-brh`).
 
 use std::path::PathBuf;

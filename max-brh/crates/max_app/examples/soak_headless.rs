@@ -1,21 +1,21 @@
-//! P4 soak: headless AI×AI партия на 100+ ходов с метриками времени и памяти.
+//! P4 soak: headless AI×AI game for 100+ turns with time and memory metrics.
 //!
 //! ```sh
-//! # 120 ходов, RED (человек) ничего не делает, GREEN+BLUE — компьютеры
+//! # 120 turns, RED (human) does nothing, GREEN+BLUE are computers
 //! cargo run -q -p max_app --no-default-features --example soak_headless -- \
 //!     --turns 120 --out qa-out/soak-headless
 //!
-//! # профиль тика и память попадают и в stdout, и в qa-out/soak-headless/soak.txt
+//! # the tick profile and memory go both to stdout and to qa-out/soak-headless/soak.txt
 //! ```
 //!
-//! Что делает: поднимает `App` с настоящими данными игры, играет локальную
-//! партию `LocalSetup` (RED — человек, N компьютеров, Duration 200, таймер
-//! выключен, сложность `--opponent`), закрывая каждый ход
-//! `App::local_end_turn` и прокручивая ходы ИИ `App::local_update(1/60)` —
-//! ровно как десктопный цикл. Возвращает `0`, если партия дошла до
-//! запрошенного хода и память не разошлась (см. [`max_app::SoakReport`]).
+//! What it does: brings up `App` with the real game data, plays a local
+//! `LocalSetup` game (RED is human, N computers, Duration 200, the timer
+//! is off, difficulty `--opponent`), closing every turn with
+//! `App::local_end_turn` and running the AI turns through `App::local_update(1/60)` —
+//! exactly like the desktop loop. Returns `0` if the game reached the
+//! requested turn and the memory did not diverge (see [`max_app::SoakReport`]).
 //!
-//! Код выхода: `0` — PASS, `1` — ранний конец/утечка/ошибка, `2` — аргументы.
+//! Exit code: `0` — PASS, `1` — early end/leak/error, `2` — arguments.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

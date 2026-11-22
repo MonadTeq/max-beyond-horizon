@@ -1,9 +1,9 @@
-//! Кадр окна 1:1 с выбранным юнитом — доказательство пункта A.
+//! 1:1 window frame with a selected unit — proof of item A.
 //!
-//! Грузит данные игры из репозитория, создаёт партию P2, выбирает первого
-//! юнита игрока (чтобы заполнились портрет, статистика и описание) и пишет
-//! кадр 640×480 в PPM. Дальше PPM → PNG любым конвертером
-//! (`build/ppm2png.ps1` на Windows или Pillow).
+//! Loads the game data from the repository, creates a P2 game, selects the first
+//! player unit (so that the portrait, stats and description are filled) and writes
+//! a 640×480 frame to PPM. Then PPM → PNG with any converter
+//! (`build/ppm2png.ps1` on Windows or Pillow).
 //!
 //! ```sh
 //! cargo run -p max_app --example panel_frame -- ../build/frame-panels.ppm
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
 
     app.hud_mut().select(Some(unit.0));
     app.viewport_mut().center_on_grid(unit.1.x, unit.1.y);
-    // Панель координат показывает клетку под курсором, если мышь на карте.
+    // The coordinate panel shows the cell under the cursor when the mouse is on the map.
     app.hud_mut().panels.cursor_grid = Some((unit.1.x, unit.1.y));
 
     let (frame, stats) = app.render_frame_with_stats();

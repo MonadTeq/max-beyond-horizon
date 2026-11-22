@@ -1,16 +1,16 @@
-//! Кадры-доказательства пунктов C/D: миникарта с FOV/2x, маркеры ресурсов,
-//! экран выбора планеты и курсоры.
+//! Proof frames for items C/D: the minimap with FOV/2x, resource markers,
+//! the planet selection screen and the cursors.
 //!
 //! ```sh
 //! cargo run -p max_app --example visual_cd -- ../build/frame-cd
 //! ```
 //!
-//! Пишет три PPM:
-//! * `<prefix>-game.ppm` — окно 1:1: карта с маркерами ресурсов, миникарта
-//!   (FOV-маска, рамка камеры, точки юнитов), панели;
-//! * `<prefix>-planets.ppm` — форма создания игры с сеткой 24 планет
-//!   (`SNOW_PIC + world/6`) и подсветкой выбранной;
-//! * `<prefix>-cursors.ppm` — контактный лист всех 30 курсоров из `MAX.RES`.
+//! Writes three PPM files:
+//! * `<prefix>-game.ppm` — 1:1 window: map with resource markers, minimap
+//!   (FOV mask, camera frame, unit dots), panels;
+//! * `<prefix>-planets.ppm` — game creation form with a 24-planet grid
+//!   (`SNOW_PIC + world/6`) and the selected one highlighted;
+//! * `<prefix>-cursors.ppm` — contact sheet of all 30 cursors from `MAX.RES`.
 
 use std::path::{Path, PathBuf};
 
@@ -61,8 +61,8 @@ fn main() -> anyhow::Result<()> {
         ..NewGameConfig::p2_reference()
     })?;
 
-    // FOV: помечаем исследованной левую часть карты — на миникарте виден
-    // перепад «исследовано/тёмная маска» (`Access_UpdateMinimapFogOfWar`).
+    // FOV: mark the left part of the map as explored — the minimap then shows
+    // the "explored/dark mask" contrast (`Access_UpdateMinimapFogOfWar`).
     let mut complete = [0i8; MAP_TILES];
     for y in 0..112 {
         for x in 0..112 {
@@ -74,8 +74,8 @@ fn main() -> anyhow::Result<()> {
     let team_index = usize::from(app.player_team().0);
     app.state_mut().ai.heat_maps[team_index].load_v70(&complete, &[0; MAP_TILES], &[0; MAP_TILES]);
 
-    // Выбираем юнита и центрируем камеру на клетке с ресурсом: так в кадр
-    // попадают и маркеры, и точки юнитов на миникарте.
+    // Select a unit and center the camera on the resource cell: this way both the
+    // markers and the unit dots on the minimap get into the frame.
     let selected = app
         .state()
         .unit_ids_in_order()
@@ -97,7 +97,7 @@ fn main() -> anyhow::Result<()> {
         app.hud_mut().panels.cursor_grid = Some((grid.x, grid.y));
     }
 
-    // SURVEY: показать маркеры всех клеток (как кнопка SURVEY в оригинале).
+    // SURVEY: show the markers of all cells (like the SURVEY button in the original).
     app.hud_mut().panels.survey = true;
     let _ = target;
     let (frame, stats) = app.render_frame_with_stats();
@@ -113,7 +113,7 @@ fn main() -> anyhow::Result<()> {
         game_path.display()
     );
 
-    // 2x-миникарта (`MIN2X_ON`): область 56×56 вокруг центра камеры.
+    // 2x minimap (`MIN2X_ON`): a 56×56 area around the camera center.
     app.hud_mut().panels.minimap_2x = true;
     let (frame_2x, _) = app.render_frame_with_stats();
     let game_2x_path = with_suffix(&prefix, "-game-2x.ppm");
@@ -121,7 +121,7 @@ fn main() -> anyhow::Result<()> {
     println!("game 2x: -> {}", game_2x_path.display());
     app.hud_mut().panels.minimap_2x = false;
 
-    // Экран выбора планеты: 24 картинки `SNOW_PIC + world/6` в сетке 8×3.
+    // Planet selection screen: 24 `SNOW_PIC + world/6` pictures in an 8×3 grid.
     let form = CreateForm {
         world: 12,
         ..Default::default()
@@ -143,7 +143,7 @@ fn main() -> anyhow::Result<()> {
     write_ppm(&planets_path, &planets)?;
     println!("planets: {} -> {}", PLANET_COUNT, planets_path.display());
 
-    // Контактный лист курсоров: все 30 ресурсов, первые кадры.
+    // Cursor contact sheet: all 30 resources, first frames.
     let cursors = render_cursor_sheet(&app);
     let cursors_path = with_suffix(&prefix, "-cursors.ppm");
     write_ppm(&cursors_path, &cursors)?;
@@ -158,7 +158,7 @@ fn with_suffix(prefix: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Лист 8×4: каждый курсор в ячейке 80×110, подпись — имя ресурса.
+/// 8×4 sheet: each cursor in an 80×110 cell, the caption is the resource name.
 fn render_cursor_sheet(app: &App) -> RgbaBuffer {
     use max_app::CursorId;
 

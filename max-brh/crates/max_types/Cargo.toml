@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "M.A.X. BRH: общие доменные и протокольные типы (Infrastructure)"
 
-# Infrastructure-крейт нижнего слоя (Ф5.2, правило 5): доменные типы
-# (`UnitType`, `TeamId`, `Point`, пакеты протокола) общие для `max_core`,
-# `max_net` и `max_assets`. Зависимостей от этих крейтов здесь быть не должно —
-# только `serde` (derive для снапшотов/дебага). Инвариант проверяется
+# Lower-layer Infrastructure crate (phase 5.2, rule 5): domain types
+# (`UnitType`, `TeamId`, `Point`, protocol packets) shared by `max_core`,
+# `max_net` and `max_assets`. There must be no dependencies on these crates here —
+# only `serde` (derive for snapshots/debug). The invariant is checked by
 # `cargo tree -p max_types`.
 [dependencies]
 serde.workspace = true

@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
-# Сборка релизного Linux-бинаря Rust-клиента M.A.X. (M6.4).
+# Build of the release Linux binary of the M.A.X. Rust client (M6.4).
 #
-#   bash release.sh --dry-run          # показать план, ничего не собирать
-#   bash release.sh                    # собрать + упаковать bin/release/
-#   bash release.sh --tag              # то же + аннотированный тег v<version>
-#   bash release.sh --features sdl-vcpkg,sound   # свой набор features (по
-#                                      # умолчанию sdl-from-source,sound;
-#                                      # явные фичи сочетаются с
+#   bash release.sh --dry-run          # show the plan, build nothing
+#   bash release.sh                    # build + package bin/release/
+#   bash release.sh --tag              # the same + annotated tag v<version>
+#   bash release.sh --features sdl-vcpkg,sound   # a custom feature set (by
+#                                      # default sdl-from-source,sound;
+#                                      # explicit features are combined with
 #                                      # --no-default-features)
-#   bash release.sh --out /tmp/rel     # другой каталог артефактов
+#   bash release.sh --out /tmp/rel     # a different artifact directory
 #
-# Требования: Docker с Linux-контейнерами; сеть для apt-get (cmake,
-# pkg-config, libasound2-dev) и crates.io. Сборка идёт в
-# rust:1.94.0-bookworm, хост-тулчейн не нужен.
+# Requirements: Docker with Linux containers; network for apt-get (cmake,
+# pkg-config, libasound2-dev) and crates.io. The build runs in
+# rust:1.94.0-bookworm, no host toolchain needed.
 #
-# Артефакты:
-#   bin/bin/release/max_app-<version>-linux-x86_64/        каталог (бинарь + run.sh +
+# Artifacts:
+#   bin/bin/release/max_app-<version>-linux-x86_64/        directory (binary + run.sh +
 #                                                  README.txt + LICENSE +
 #                                                  CHANGELOG.md + lib/ + SHA256SUMS)
-#   bin/release/max_app-<version>-linux-x86_64.tar.gz  архив
+#   bin/release/max_app-<version>-linux-x86_64.tar.gz  archive
 #   bin/release/max_app-<version>-linux-x86_64.tar.gz.sha256
 #
-# Тег создаётся только по --tag и только на чистом рабочем дереве; пуш тега —
-# отдельное осознанное действие (см. max-brh-docs/development/release-checklist.md §8).
+# The tag is created only with --tag and only on a clean working tree; pushing the tag is
+# a separate deliberate action (see max-brh-docs/development/release-checklist.md §8).
 set -euo pipefail
 
-# Git Bash (MSYS2) переписывает POSIX-пути в аргументах (`-w /src/max-brh` →
-# `C:/Program Files/Git/src/max-brh`) — конверсию отключаем.
-# Windows-бинарь этот скрипт не собирает: headless — нативно на MSVC
+# Git Bash (MSYS2) rewrites POSIX paths in arguments (`-w /src/max-brh` →
+# `C:/Program Files/Git/src/max-brh`) — we disable the conversion.
+# This script does not build the Windows binary: headless is native on MSVC
 # (max-brh-cicd/scripts/build-windows-console.ps1), UI — build-windows-ui.ps1.
 if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
     export MSYS_NO_PATHCONV=1
@@ -35,7 +35,7 @@ if [ -n "${MSYSTEM:-}" ] || command -v cygpath >/dev/null 2>&1; then
 fi
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Docker Desktop для Windows ждёт D:/..., а не /d/...
+# Docker Desktop for Windows expects D:/..., not /d/...
 if command -v cygpath >/dev/null 2>&1; then
     ROOT="$(cygpath -m "$ROOT")"
 fi
@@ -134,9 +134,9 @@ for required in "$ROOT/LICENSE" "$ROOT/CHANGELOG.md" "$ROOT/max-brh-docs/develop
     }
 done
 
-# default max_app = ["sdl-from-source"], поэтому набор features задаём явно, а
-# default-фичи отключаем: иначе `--features sdl-vcpkg` добавил бы ещё и
-# sdl-from-source, а headless-релиз (`--features ''`) неожиданно получил бы окно.
+# default max_app = ["sdl-from-source"], so we set the feature set explicitly and
+# disable the default features: otherwise `--features sdl-vcpkg` would also add
+# sdl-from-source, and the headless release (`--features ''`) would unexpectedly get a window.
 if [ -n "$FEATURES" ]; then
     BUILD_CMD="cargo build --release -p max_app --no-default-features --features $FEATURES"
 else
@@ -208,9 +208,9 @@ chmod +x "$BUNDLE/max-brh"
 cp "$ROOT/LICENSE" "$BUNDLE/LICENSE"
 cp "$ROOT/CHANGELOG.md" "$BUNDLE/CHANGELOG.md"
 
-# SDL3 из sdl-from-source — динамическая библиотека; кладём рядом с бинарём,
-# чтобы артефакт не зависел от системного SDL3. Если сборка статическая,
-# каталог lib останется пустым (это нормально).
+# SDL3 from sdl-from-source is a dynamic library; we place it next to the binary
+# so that the artifact does not depend on the system SDL3. If the build is static,
+# the lib directory stays empty (this is fine).
 shopt -s nullglob
 SDL_LIBS=("$ROOT"/max-brh/target/release/libSDL3.so*)
 shopt -u nullglob
@@ -220,7 +220,7 @@ fi
 
 cat > "$BUNDLE/run.sh" <<'EOF'
 #!/usr/bin/env bash
-# Запуск M.A.X. Rust client из распакованного архива.
+# Launch M.A.X. Rust client from the unpacked archive.
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
