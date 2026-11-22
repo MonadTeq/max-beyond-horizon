@@ -23,7 +23,7 @@
 | Электростанция | `PowerStation` | `POWERSTN` | — |
 | Энергогенератор | `PowerGenerator` | `POWGEN` | — |
 | Казарма | `Barracks` | `BARRACKS` | — |
-| Щитовой генератор | `ShieldGenerator` | `SHIELDGN` | — |
+| Монопольная шахта | `MonopoleMine` | `SHIELDGN` | переименовать `ShieldGenerator`; рудимент Interplay (alien derelict); токен/ассет `SHLDGEN.FLC` — пережиток «Shield GeNerator» |
 | Радар | `Radar` | `RADAR` | — |
 | Склад материалов | `MaterialStorage` | `ADUMP` | переименовать `ADump` |
 | Склад топлива | `FuelStorage` | `FDUMP` | переименовать `FDump` |
@@ -37,12 +37,12 @@
 | Верфь | `Shipyard` | `SHIPYARD` | — |
 | Завод лёгкой техники | `LightVehiclePlant` | `LIGHTPLT` | — |
 | Завод тяжёлой техники | `HeavyVehiclePlant` | `LANDPLT` | — |
-| Завод поддержки | `SupportPlant` | `SUPRTPLT` | — |
+| Завод поддержки | `SupportPlant` | `SUPRTPLT` | рудимент Interplay (alien derelict); каноничного имени нет, намек на Life Support (`I_LIFESP`) |
 | Авиазавод | `AirUnitsPlant` | `AIRPLT` | — |
 | Жилище | `Habitat` | `HABITAT` | — |
 | Исследовательский центр | `ResearchCentre` | `RESEARCH` | переименовать `ResearchCenter` |
 | Экосфера | `EcoSphere` | `GREENHSE` | переименовать `Greenhouse` |
-| Центр отдыха | `RecreationCenter` | `RECCENTR` | — |
+| Центр отдыха | `RecreationCenter` | `RECCENTR` | рудимент Interplay (alien derelict) |
 | Тренировочный зал | `TrainingHall` | `TRAINHAL` | — |
 | Водная платформа | `WaterPlatform` | `WTRPLTFM` | — |
 | Орудийная башня | `GunTurret` | `GUNTURRT` | — |

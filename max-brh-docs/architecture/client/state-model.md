@@ -198,7 +198,7 @@ Rust: `#[repr(u16)] enum UnitType { ... }` с 93 вариантами.
 | 1 | `POWERSTN` | `POWER_STATION` | Power Station |
 | 2 | `POWGEN` | `POWER_GENERATOR` | Power Generator |
 | 3 | `BARRACKS` | `BARRACKS` | Barracks |
-| 4 | `SHIELDGN` | `ALIEN_BUILDING_1` | Shield Generator |
+| 4 | `SHIELDGN` | `ALIEN_BUILDING_1` | Monopole Mine (alien derelict) |
 | 5 | `RADAR` | `RADAR` | Radar |
 | 6 | `ADUMP` | `STORAGE_UNIT` | хранилище материалов (raw dump) |
 | 7 | `FDUMP` | `FUEL_TANK` | топливный бак (fuel dump) |

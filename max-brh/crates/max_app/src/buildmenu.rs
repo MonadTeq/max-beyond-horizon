@@ -1567,7 +1567,7 @@ mod tests {
 
     /// Интерфейс показывает UFN, а не прежние строки `unit_name`.
     ///
-    /// 9 переименованных и 3 ранее отсутствовавших типа (`ShieldGenerator`,
+    /// 9 переименованных и 3 ранее отсутствовавших типа (`MonopoleMine`,
     /// `SupportPlant`, `RecreationCenter` отдавались как «Unit») сверены с
     /// `data/unit_names.json` (`max-brh-docs/unit-name-review.md`).
     #[test]
@@ -1593,7 +1593,7 @@ mod tests {
                 UnitType::ArmouredPersonnelCarrier,
                 "Armoured Personnel Carrier",
             ),
-            (UnitType::ShieldGenerator, "Shield Generator"),
+            (UnitType::MonopoleMine, "Monopole Mine"),
             (UnitType::SupportPlant, "Support Plant"),
             (UnitType::RecreationCenter, "Recreation Center"),
         ] {

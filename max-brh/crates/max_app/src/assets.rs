@@ -357,7 +357,7 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     (UnitType::PowerStation, "POWERSTN", Some("S_POWERS")),
     (UnitType::PowerGenerator, "POWGEN", Some("S_POWGEN")),
     (UnitType::Barracks, "BARRACKS", Some("S_BARRAC")),
-    (UnitType::ShieldGenerator, "SHIELDGN", Some("S_SHIELD")),
+    (UnitType::MonopoleMine, "SHIELDGN", Some("S_SHIELD")),
     (UnitType::Radar, "RADAR", Some("S_RADAR")),
     (UnitType::MaterialStorage, "ADUMP", Some("S_ADUMP")),
     (UnitType::FuelStorage, "FDUMP", Some("S_FDUMP")),
@@ -1251,7 +1251,7 @@ mod tests {
             UnitType::AlienPlane,
             UnitType::LargeSlab,
             UnitType::Bridge,
-            UnitType::ShieldGenerator,
+            UnitType::MonopoleMine,
             UnitType::SupportPlant,
             UnitType::RecreationCenter,
         ] {

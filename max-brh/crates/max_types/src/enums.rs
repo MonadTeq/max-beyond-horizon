@@ -519,7 +519,7 @@ enum_u16! {
         /// `BARRACKS` / `BARRACKS`.
         Barracks = 0x03,
         /// `SHIELDGN` / `ALIEN_BUILDING_1`.
-        ShieldGenerator = 0x04,
+        MonopoleMine = 0x04,
         /// `RADAR` / `RADAR`.
         Radar = 0x05,
         /// `ADUMP` / `STORAGE_UNIT`.
@@ -725,7 +725,7 @@ impl UnitType {
             UnitType::PowerStation => "POWERSTN",
             UnitType::PowerGenerator => "POWGEN",
             UnitType::Barracks => "BARRACKS",
-            UnitType::ShieldGenerator => "SHIELDGN",
+            UnitType::MonopoleMine => "SHIELDGN",
             UnitType::Radar => "RADAR",
             UnitType::MaterialStorage => "ADUMP",
             UnitType::FuelStorage => "FDUMP",

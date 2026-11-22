@@ -45,10 +45,12 @@
     │   ├── Производящее (заводы юнитов): TRAINHAL, LIGHTPLT, LANDPLT, AIRPLT, SHIPYARD
     │   ├── Производящее ресурсы/рабочих: POWERSTN, POWGEN, COMMTWR, HABITAT,
     │   │                                GREENHSE, RESEARCH, MININGST
-    │   ├── Непроизводящее: SHIELDGN, RADAR, ADUMP, FDUMP, GOLDSM, DEPOT, HANGAR,
-    │   │                   DOCK, BARRACKS, SUPRTPLT, RECCENTR, LANDPAD, WTRPLTFM,
+    │   ├── Непроизводящее: RADAR, ADUMP, FDUMP, GOLDSM, DEPOT, HANGAR,
+    │   │                   DOCK, BARRACKS, LANDPAD, WTRPLTFM,
     │   │                   ROAD, BRIDGE, BLOCK
     │   └── Коннектор (инфраструктура комплекса): CNCT_4W
+    └── Alien derelict (рудименты Interplay, не строятся игроком)
+        └── SHIELDGN (Monopole Mine), SUPRTPLT (Support Plant), RECCENTR (Recreation Center)
     └── Небоевой мобильный
         ├── Строитель: CONSTRCT, ENGINEER (амфибийные), BULLDOZR, MINELAYR (наземные), SEAMNLYR (морской)
         ├── Разведчик/наблюдение: SURVEYOR (амфибийный), SCANNER (наземный), AWAC (воздушный)

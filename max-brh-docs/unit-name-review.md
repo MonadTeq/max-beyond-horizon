@@ -18,7 +18,7 @@ doc-комментариев `UnitType` (`/// TOKEN / C++_NAME`); мануал �
 | 2 | POWERSTN | PowerStation | POWER_STATION | Power Stations | Power Station |
 | 3 | POWGEN | PowerGenerator | POWER_GENERATOR | Power Generators | Power Generator |
 | 4 | BARRACKS | Barracks | BARRACKS | Barracks | Barracks |
-| 5 | SHIELDGN | ShieldGenerator | ALIEN_BUILDING_1 | — | Shield Generator |
+| 5 | SHIELDGN | MonopoleMine | ALIEN_BUILDING_1 | — | Monopole Mine |
 | 6 | RADAR | Radar | RADAR | Radar | Radar |
 | 7 | ADUMP | MaterialStorage | STORAGE_UNIT | Material Storage | Material Storage |
 | 8 | FDUMP | FuelStorage | FUEL_TANK | Fuel Storage | Fuel Storage |
@@ -108,12 +108,20 @@ doc-комментариев `UnitType` (`/// TOKEN / C++_NAME`); мануал �
 
 ## Открытые вопросы (требуют решения владельца)
 
-- `SHIELDGN` / `SUPRTPLT` / `RECCENTR`: C++-идентификаторы — `ALIEN_BUILDING_1/2/3`.
-  Требуется уточнить каноничные имена (сейчас `ShieldGenerator` / `SupportPlant` /
-  `RecreationCenter`).
+— (все вопросы решены)
 
 ## Решения владельца
 
+- `SHIELDGN` (C++ `ALIEN_BUILDING_1`): Rust-имя `MonopoleMine`, User-Friendly Name —
+  «Monopole Mine» (рудимент Interplay; токен/ассет `SHLDGEN.FLC` — пережиток
+  аббревиатуры «Shield GeNerator», а не «Shield Generator»).
+- `SUPRTPLT` (C++ `ALIEN_BUILDING_2`): Rust-имя `SupportPlant`, User-Friendly Name —
+  «Support Plant» (рудимент Interplay, намек на недоделанный Life Support;
+  каноничного имени в оригинале нет).
+- `RECCENTR` (C++ `ALIEN_BUILDING_3`): Rust-имя `RecreationCenter`, User-Friendly Name —
+  «Recreation Center» (рудимент Interplay).
+- Все три — «alien derelict buildings»: не строятся игроком, не в мануале;
+  спавнятся только опцией «Alien Derelicts» командой `PLAYER_TEAM_ALIEN`.
 - `BOMBER`: Rust-имя `Bomber`, User-Friendly Name — «Ground Attack Plane».
 - `SEATRANS`: User-Friendly Name — «Sea Transport» (морской транспорт).
 - `CARGOSHP`: User-Friendly Name — «Cargo Ship» (грузовое судно).

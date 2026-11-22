@@ -1906,7 +1906,7 @@ pub const UNIT_ICONS: [(UnitType, &str); 71] = [
     (UnitType::PowerStation, "I_POWSTN"),
     (UnitType::PowerGenerator, "I_POWGEN"),
     (UnitType::Barracks, "I_BARRCK"),
-    (UnitType::ShieldGenerator, "I_SHIELD"),
+    (UnitType::MonopoleMine, "I_SHIELD"),
     (UnitType::Radar, "I_RADAR"),
     (UnitType::MaterialStorage, "I_SMSTOR"),
     (UnitType::FuelStorage, "I_SMFUEL"),

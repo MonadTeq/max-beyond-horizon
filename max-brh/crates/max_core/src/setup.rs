@@ -65,7 +65,7 @@ pub const PASS_TABLE_SURFACES: [Surface; 4] =
 
 /// `GameManager_AlienBuildings[]` (`game_manager.cpp:136`).
 pub const ALIEN_BUILDINGS: [UnitType; 3] = [
-    UnitType::ShieldGenerator,
+    UnitType::MonopoleMine,
     UnitType::SupportPlant,
     UnitType::RecreationCenter,
 ];
