@@ -215,11 +215,11 @@
 | Избранные | `TeamClan::TheChosen` | `TEAM_CLAN_THE_CHOSEN` (id `"Clan A"`) | enums.rs:216 / manual.txt:700 | EN «The Chosen»; авиация |
 | Багровый путь | `TeamClan::CrimsonPath` | `TEAM_CLAN_CRIMSON_PATH` (id `"Clan B"`) | enums.rs:217 / manual.txt:708 | EN «Crimson Path»; флот |
 | Фон Гриффин | `TeamClan::VonGriffin` | `TEAM_CLAN_VON_GRIFFIN` (id `"Clan C"`) | enums.rs:218 / manual.txt:717 | EN «Von Griffin»; разведка/скрытность |
-| Рука Айера | `TeamClan::AyersHand` | `TEAM_CLAN_AYERS_HAND` (id `"Clan D"`) | enums.rs:219 / manual.txt:729 | EN «Ayer’s Hand»; ракетные юниты |
+| Рука Айера | `TeamClan::AyersHand` | `TEAM_CLAN_AYERS_HAND` (id `"Clan D"`) | enums.rs:219 / manual.txt:729 | EN «Ayers Hand» (без апострофа; в мануале — «Ayer’s Hand»); ракетные юниты |
 | Мусаси | `TeamClan::Musashi` | `TEAM_CLAN_MUSASHI` (id `"Clan E"`) | enums.rs:220 / manual.txt:736 | EN «Musashi»; тяжёлая броня |
-| Священная восьмёрка | `TeamClan::SacredEights` | `TEAM_CLAN_SACRED_EIGHTS` (id `"Clan F"`) | enums.rs:221 / manual.txt:745 | EN «Sacred Eight» (ед. ч.); быстрая атака |
+| Священная восьмёрка | `TeamClan::SacredEight` | `TEAM_CLAN_SACRED_EIGHTS` (id `"Clan F"`) | enums.rs:221 / manual.txt:745 | EN «Sacred Eight» (ед. ч.); быстрая атака |
 | Семь рыцарей | `TeamClan::SevenKnights` | `TEAM_CLAN_7_KNIGHTS` (id `"Clan G"`) | enums.rs:222 / manual.txt:756 | EN «Seven Knights»; стационарная оборона |
-| Ось | `TeamClan::AxisInc` | `TEAM_CLAN_AXIS_INC` (id `"Clan H"`) | enums.rs:223 / manual.txt:763 | EN «Axis» / «Axis Inc.»; производство |
+| Ось | `TeamClan::AxisInc` | `TEAM_CLAN_AXIS_INC` (id `"Clan H"`) | enums.rs:223 / manual.txt:763 | EN «Axis Inc.»; производство |
 
 > Идентификаторы `"Clan A"…"Clan H"` — ключи ресурса `SC_CLANS`
 > (`resource_manager.cpp:90-98`); отображаемые имена кланов хранятся в блоке
@@ -286,7 +286,7 @@
 | Избранные (The Chosen) | авиация | `AIRPLT` −5 ходов постройки; `Bomber` +4 атака, −1 ход; `Fighter` +1 дальность, −1 ход; `AirTransport` +4 скорость; `AWAC` +2 скан |
 | Багровый путь (Crimson Path) | флот | `SHIPYARD` −5 ходов; `Submarine` +4 атака, +2 скорость, −1 ход; `Gunboat` +2 броня, +4 прочность, +1 дальность; `Escort`/`Corvette`/`SeaTransport`/`CargoShip` +2 скорость; `MissileCruiser` +1 дальность, −1 ход |
 | Фон Гриффин (Von Griffin) | разведка | `Radar` +6 скан; `Scout` +2 атака/скорость/скан; `Scanner` +4 скан, +1 скорость; `AWAC` +4 скан, +2 скорость; `Submarine` +4 атака, +2 скорость, +2 скан; `Infiltrator` +1 скан/скорость, +2 опыт, −1 ход; `APC` +1 броня, +2 прочность, +2 скорость |
-| Рука Айера (Ayer’s Hand) | ракеты | `RocketLauncher`, `MissileCrawler`, `MissileLauncher` (турель), `MissileCruiser`: +2 атака, +1 дальность, −2 хода |
+| Рука Айера (Ayers Hand) | ракеты | `RocketLauncher`, `MissileCrawler`, `MissileLauncher` (турель), `MissileCruiser`: +2 атака, +1 дальность, −2 хода |
 | Мусаси (Musashi) | тяжёлая броня | `Tank` +4 атака, +2 броня, +4 прочность, +1 скорость; `GunTurret` +4/+2/+4; `Gunboat` +4 атака, +2 броня, +8 прочность, +1 дальность; `APC` +2 броня, +4 прочность, +1 скорость |
 | Священная восьмёрка (Sacred Eight) | быстрая атака | `AssaultGun` +4 атака, +2 скорость, +1 дальность, −2 хода; `Scout` +2 атака, +2 скорость; `Bomber` +2 атака, +2 скорость; `MobileAntiAir` +1 дальность, +2 скорость; `Escort` +1 дальность, +2 скорость; `Corvette` +2 атака, +2 скорость |
 | Семь рыцарей (Seven Knights) | оборона | `GunTurret` +4 атака, +2 броня, +4 прочность; `Artillery` +2 атака, +1 дальность; `AntiAir` +2 атака, +1 дальность; `MissileLauncher` +2 атака, +1 дальность, −1 ход; `LandMine` +8 атака; `SeaMine` +8 атака; `Radar` +2 скан |

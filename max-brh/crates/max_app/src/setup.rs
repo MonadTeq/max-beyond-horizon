@@ -362,9 +362,9 @@ pub const CLAN_NAMES: [&str; 8] = [
     "The Chosen",
     "Crimson Path",
     "Von Griffin",
-    "Ayer's Hand",
+    "Ayers Hand",
     "Musashi",
-    "Sacred Eights",
+    "Sacred Eight",
     "Seven Knights",
     "Axis Inc.",
 ];

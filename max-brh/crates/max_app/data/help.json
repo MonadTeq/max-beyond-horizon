@@ -939,7 +939,7 @@
     "uy": 34,
     "lx": 620,
     "ly": 172,
-    "text": "Clicking on this button selects \"Ayer's Hand\" and displays the upgrades they provide."
+    "text": "Clicking on this button selects \"Ayers Hand\" and displays the upgrades they provide."
    },
    {
     "name": "MUSASHI_BUTTON",
@@ -955,7 +955,7 @@
     "uy": 184,
     "lx": 315,
     "ly": 322,
-    "text": "Clicking on this button selects \"Sacred Eights\" and displays the upgrades they provide."
+    "text": "Clicking on this button selects \"Sacred Eight\" and displays the upgrades they provide."
    },
    {
     "name": "7KNIGHTS_BUTTON",

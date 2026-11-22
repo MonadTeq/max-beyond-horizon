@@ -1003,9 +1003,9 @@ impl AiPlayer {
                     TeamClan::AxisInc
                 }
             }
-            AiStrategy::ScoutHorde => TeamClan::SacredEights,
+            AiStrategy::ScoutHorde => TeamClan::SacredEight,
             AiStrategy::TankHorde => TeamClan::Musashi,
-            AiStrategy::FastAttack => TeamClan::SacredEights,
+            AiStrategy::FastAttack => TeamClan::SacredEight,
             AiStrategy::CombinedArms => {
                 if world.rng.generate_i32(7) != 0 {
                     let offset = world.rng.generate_i32(3) as u8;
@@ -1233,7 +1233,7 @@ impl AiPlayer {
                 TeamClan::TheChosen => AiStrategy::Air,
                 TeamClan::CrimsonPath => AiStrategy::Sea,
                 TeamClan::AyersHand => AiStrategy::Missiles,
-                TeamClan::SacredEights => AiStrategy::FastAttack,
+                TeamClan::SacredEight => AiStrategy::FastAttack,
                 TeamClan::SevenKnights => AiStrategy::Defensive,
                 _ => AiStrategy::CombinedArms,
             };

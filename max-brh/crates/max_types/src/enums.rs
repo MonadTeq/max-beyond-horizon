@@ -157,7 +157,7 @@ impl_conversions!(
 
 /// Alias of the C++/save.md `TeamType` / `PlayerType`.
 ///
-/// Values: `None=0`, `Player=1` (`TEAM_TYPE_HUMAN`), `Computer=2`,
+/// Values: `None=0`, `Player=1` (`TEAM_TYPE_PLAYER`), `Computer=2`,
 /// `Remote=3`, `Eliminated=4`.
 pub type TeamType = TeamKind;
 
@@ -218,7 +218,8 @@ enum_u8! {
         VonGriffin = 0x03,
         AyersHand = 0x04,
         Musashi = 0x05,
-        SacredEights = 0x06,
+        /// `TEAM_CLAN_SACRED_EIGHTS` (0x06); canon name is «Sacred Eight» (singular).
+        SacredEight = 0x06,
         SevenKnights = 0x07,
         AxisInc = 0x08,
     }

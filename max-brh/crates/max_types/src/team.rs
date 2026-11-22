@@ -25,7 +25,7 @@ pub struct TeamId(pub u8);
 pub enum TeamKind {
     /// Empty slot.
     None = 0,
-    /// Local player (`TEAM_TYPE_HUMAN`).
+    /// Local player (`TEAM_TYPE_PLAYER`).
     Player = 1,
     /// Computer (the AI is simulated by the server).
     Computer = 2,
