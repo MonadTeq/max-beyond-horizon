@@ -15,7 +15,8 @@
 
 ## Общие правила (для всех агентов)
 
-1. Следовать каноничным документам: `max-brh-docs/glossary.md`,
+1. Следовать каноничным документам: `max-brh-docs/PLAN.md` (единый план),
+   `max-brh-docs/glossary.md`,
    `max-brh-docs/style-guide.md`, `max-brh-docs/domain-map.md`,
    `max-brh-docs/object-classifier.md`, `max-brh-docs/unit-properties.md`,
    `max-brh-docs/unit-name-review.md`.

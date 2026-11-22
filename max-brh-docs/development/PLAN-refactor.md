@@ -1,5 +1,8 @@
 # План рефакторинга BRH под новые стандарты
 
+> **Выполнен (Ф0–Ф5.3).** Результаты консолидированы в [`../PLAN.md`](../PLAN.md)
+> §3 и `../../CHANGELOG.md`; ниже — история и решения владельца.
+
 Результат gap-анализа (Аналитик v4 Pro) и плана рефакторинга (Архитектор v4 Pro).
 Источник канонов: `rust-programming-rules.md`, `architect-rules.md`,
 `object-classifier.md`, `domain-map.md`, `unit-name-review.md`.

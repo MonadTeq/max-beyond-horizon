@@ -1,5 +1,40 @@
 ## [Unreleased]
 
+### Рефакторинг
+
+- **Рефакторинг кода под новые стандарты (фазы Ф0–Ф5.3).** Внутренняя
+  перестройка без изменения поведения: CRC/детерминизм/V70 — бит-в-бит с
+  C++-оракулом (подтверждено на каждом шаге `mini_replay_matches_cpp_digest_bit_for_bit`,
+  `demo_save1_five_ticks_matches_reference_digest`, побайтным V70-round-trip и
+  снимками snapshot/checksum/replay). Ключевые изменения:
+  - **Имена:** 14 вариантов `UnitType` переименованы в каноничные
+    (`CommTower`→`GoldRefinery`, `Greenhouse`→`EcoSphere`, `ADump`→`MaterialStorage`,
+    `FDump`→`FuelStorage`, `GoldSmelter`→`GoldVault`, `ResearchCenter`→`ResearchCentre`,
+    `ArtilleryTurret`→`Artillery`, `AntiMissile`→`MissileLauncher`, `Block`→`ConcreteBlock`,
+    `PersonnelCarrier`→`ArmouredPersonnelCarrier`, `Commando`→`Infiltrator`,
+    `FastBoat`→`Escort`, `Battleship`→`Gunboat`, `MissileBoat`→`MissileCruiser`);
+    добавлены `UnitType::tag()` (ресурсный токен) и слой User-Friendly Name вне
+    `max_core` (`max_app/data/unit_names.json` + `unit_user_friendly_name()`),
+    интерфейс переведён на UFN.
+  - **Классификация типобезопасными enum** (решение владельца «вариант C» —
+    enum как единственный источник истины, маркерные типажи не используются):
+    `CombatRole`, `Mobility`, `Environment`, `Footprint`, `ObjectKind`, `CargoKind`
+    + помощники `is_*`; ~230 проверок `flags & …` в `max_core`/`max_app`
+    мигрированы на enum-методы; оси выверены по оракулу (амфибийные юниты,
+    `HOVERING` — runtime-состояние, турели — здания, `BARRACKS`/`SUPRTPLT` —
+    не производящие, футпринт 2×2 — отдельная ось).
+  - **Слои:** выделен нижний crate `max_types` (Infrastructure, только `serde`)
+    с чистыми доменными/протокольными типами; устранена восходящая зависимость
+    `max_assets → max_core`; `max_net` переведён на `max_types` для чистых типов
+    (осталась осознанная read-only связь `max_net → max_core` — 5 проекций
+    «симуляция → провод», зафиксирована и защищена CI-замком
+    `check_maxnet_boundary.sh`); презентационные поля `UnitInfo` вынесены в
+    `max_types::unit::UnitPresentation` (12 полей; `x`/`y` остались сим-состоянием),
+    `save.rs` остался единственным владельцем байтового порядка V70.
+  - **Документация:** каноны `unit-name-review.md`/`domain-map.md`/`object-classifier.md`
+    согласованы с оракулом и решениями владельца; добавлен `AGENTS.md` (карта
+    агентов и порядок эскалации).
+
 ### Изменено
 
 - **Windows-сборки переведены на нативный MSVC: Docker/mingw-w64 и wine для
