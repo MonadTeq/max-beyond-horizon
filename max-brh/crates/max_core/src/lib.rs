@@ -83,10 +83,8 @@ pub mod deploy;
 pub mod events;
 pub mod frames;
 pub mod game;
-pub mod geo;
 pub mod hash;
 pub mod input;
-pub mod map;
 pub mod order;
 pub mod pathfinding;
 pub mod power;
@@ -104,8 +102,9 @@ pub mod unit_values;
 pub mod victory;
 
 // Типы нижнего слоя (Infrastructure, Ф5.2) живут в `max_types`; здесь — их
-// реэкспорт, чтобы существующие пути `max_core::enums::…` не менялись.
-pub use max_types::enums;
+// реэкспорт, чтобы существующие пути `max_core::enums::…`, `max_core::geo::…`,
+// `max_core::map::…` не менялись.
+pub use max_types::{enums, geo, map};
 
 pub use access::{
     get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
@@ -168,7 +167,7 @@ pub use game::{
     GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT,
     PLAYER_TEAM_MAX, TEAM_SLOTS,
 };
-pub use geo::{
+pub use max_types::geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
 };
 pub use hash::{MapHash, MapHashObject, UnitHash};
@@ -180,7 +179,7 @@ pub use input::{
     Packet50StopUnit, Packet52EndTurnBarrier, Packet53ComplexSummary, PacketKind, PayloadLevel,
     PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
 };
-pub use map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
+pub use max_types::map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;
 pub use pathfinding::{
     find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,

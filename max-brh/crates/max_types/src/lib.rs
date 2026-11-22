@@ -36,5 +36,7 @@
 #![deny(clippy::float_arithmetic)]
 
 pub mod enums;
+pub mod geo;
+pub mod map;
 pub mod team;
 pub mod unit;
