@@ -15,6 +15,11 @@ use crate::enums::{ResearchTopic, TeamClan, RESEARCH_TOPIC_COUNT, UNIT_END};
 use crate::geo::Point;
 use crate::unit_values::{UnitValues, UNIT_COUNT};
 
+// Листовые типы команд (`TeamId`, `TeamKind`, `Team`) и их конверсии живут в
+// нижнем слое (`max_types`, Ф5.2); здесь — реэкспорт, чтобы путь
+// `max_core::team::…` не менялся.
+pub use max_types::team::{Team, TeamId, TeamKind};
+
 // Коннекторы комплекса и типы груза живут в `enums` (P0); здесь — реэкспорт,
 // чтобы доменные типы команд/комплексов были самодостаточны.
 pub use crate::enums::{
@@ -22,10 +27,6 @@ pub use crate::enums::{
     CONNECTOR_EAST_BOTTOM, CONNECTOR_EAST_TOP, CONNECTOR_NORTH_LEFT, CONNECTOR_NORTH_RIGHT,
     CONNECTOR_SOUTH_LEFT, CONNECTOR_SOUTH_RIGHT, CONNECTOR_WEST_BOTTOM, CONNECTOR_WEST_TOP,
 };
-
-/// Идентификатор команды (0-3 у оригинала, 4 = пришельцы).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TeamId(pub u8);
 
 /// `TeamUnits::hash_team_id` — бит цвета команды в флагах юнита.
 ///
@@ -53,56 +54,6 @@ pub const fn hash_team_id(team: TeamId) -> u16 {
         2 => unit_flags::HASH_TEAM_BLUE as u16,
         3 => unit_flags::HASH_TEAM_GRAY as u16,
         _ => unit_flags::HASH_TEAM_DERELICT as u16,
-    }
-}
-
-/// Кем управляется команда (C++ `PlayerType`, save.md `TeamType`).
-///
-/// Значения зафиксированы как в C++/V70: `None=0`, `Player=1` (HUMAN),
-/// `Computer=2`, `Remote=3`, `Eliminated=4`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum TeamKind {
-    /// Пустой слот.
-    None = 0,
-    /// Локальный игрок (`TEAM_TYPE_HUMAN`).
-    Player = 1,
-    /// Компьютер (ИИ симулируется сервером).
-    Computer = 2,
-    /// Удалённый игрок (другой клиент).
-    Remote = 3,
-    /// Выбыла.
-    Eliminated = 4,
-}
-
-/// Команда — минимальный каркас для потребителей (`max_net`, `max_render`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Team {
-    /// Индекс команды.
-    pub id: TeamId,
-    /// Тип команды.
-    pub kind: TeamKind,
-    /// Имя команды.
-    pub name: String,
-    /// Клан команды (сырое значение `TeamClan`).
-    pub clan: u8,
-    /// Золото команды.
-    pub gold: i32,
-    /// Стартовые кредиты.
-    pub start_gold: i32,
-}
-
-impl Team {
-    /// Создаёт команду с настройками по умолчанию.
-    pub fn new(id: TeamId, kind: TeamKind) -> Self {
-        Self {
-            id,
-            kind,
-            name: String::new(),
-            clan: 0,
-            gold: 0,
-            start_gold: 0,
-        }
     }
 }
 

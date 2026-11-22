@@ -45,6 +45,7 @@
 //!   только факт конца партии и (для не-сетевой ветки) команда помечается
 //!   `TeamKind::Eliminated` — как `menu.cpp:605`.
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{
     unit_flags, FileType, Opponent, ResearchTopic, UnitOrder, UnitOrderState, UnitType,
     VictoryType, WinLossState,

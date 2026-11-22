@@ -100,6 +100,9 @@ use max_assets::image::{BigImage, SimpleImage};
 use max_assets::res::ResArchive;
 use max_assets::sprite::{decode_sprite, SpriteFrame};
 use max_core::access::unit_type_flags;
+// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
+// max_core); глоб-реэкспортов нет (Ф5.2).
+use max_core::UnitTypeClassify;
 use max_core::deploy::{TeamSupply, DEFAULT_MISSION_LOADOUT};
 use max_core::enums::{unit_flags, TeamClan, UnitType, UNIT_END};
 use max_core::production::builder_type;

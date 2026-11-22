@@ -39,6 +39,9 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::access::unit_type_flags;
+// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
+// max_core); глоб-реэкспортов нет (Ф5.2).
+use max_core::UnitTypeClassify;
 use max_core::enums::{unit_flags, ResearchTopic, UnitType, UNIT_END};
 use max_core::game::GameState;
 use max_core::production::BUILDABLE;

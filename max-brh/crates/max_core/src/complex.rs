@@ -695,6 +695,7 @@ pub fn update_connectors(state: &mut GameState, id: UnitId) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::classification::UnitTypeClassify;
     use crate::enums::{TeamClan, UnitType};
     use crate::team::TeamUnits;
 

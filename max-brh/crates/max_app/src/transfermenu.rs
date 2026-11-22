@@ -55,6 +55,9 @@ use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState};
 use max_core::game::GameState;
 use max_core::team::TeamId;
+// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
+// max_core); глоб-реэкспортов нет (Ф5.2).
+use max_core::UnitTypeClassify;
 use max_core::transfer::{find_unit_with_cargo_type, transfer_menu_cargo_info};
 use max_core::unit::UnitId;
 use max_core::victory::{cargo_type_of, CargoType};

@@ -18,6 +18,9 @@
 use max_core::enums::{WinLossState, UNIT_END};
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
+// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
+// max_core); глоб-реэкспортов нет (Ф5.2).
+use max_core::UnitTypeClassify;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw_shadowed, GnwFontId};
 

@@ -33,6 +33,7 @@
 //!    соответствующие состояния остаются «блокирующими», как в C++ при
 //!    отказе запроса.
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
 use crate::team::TeamId;

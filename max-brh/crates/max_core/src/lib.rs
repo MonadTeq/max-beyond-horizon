@@ -80,7 +80,6 @@ pub mod combat;
 pub mod complex;
 pub mod crc;
 pub mod deploy;
-pub mod enums;
 pub mod events;
 pub mod frames;
 pub mod game;
@@ -103,6 +102,10 @@ pub mod unit;
 pub mod unit_order;
 pub mod unit_values;
 pub mod victory;
+
+// Типы нижнего слоя (Infrastructure, Ф5.2) живут в `max_types`; здесь — их
+// реэкспорт, чтобы существующие пути `max_core::enums::…` не менялись.
+pub use max_types::enums;
 
 pub use access::{
     get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
@@ -129,8 +132,8 @@ pub use alloc::{
 };
 pub use classification::{
     is_turret, CargoKind, CombatRole, Environment, Footprint, Mobility, ObjectKind,
-    DECORATION_UNIT_TYPES, EFFECT_UNIT_TYPES, PLOT_PROP_UNIT_TYPES, PRODUCING_UNIT_TYPES,
-    TURRET_UNIT_TYPES,
+    UnitTypeClassify, DECORATION_UNIT_TYPES, EFFECT_UNIT_TYPES, PLOT_PROP_UNIT_TYPES,
+    PRODUCING_UNIT_TYPES, TURRET_UNIT_TYPES,
 };
 pub use combat::{
     aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
@@ -153,7 +156,7 @@ pub use deploy::{
     DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD, DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT,
     SMALL_SLAB_IMAGE_COUNT,
 };
-pub use enums::{
+pub use max_types::enums::{
     AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
     Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
     TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType,

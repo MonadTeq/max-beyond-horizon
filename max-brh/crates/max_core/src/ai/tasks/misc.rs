@@ -21,6 +21,7 @@
 //! * `TaskCheckAssaults` контролирует штурмовые группы по приказам
 //!   `ORDER_MOVE_TO_ATTACK` (полные проверки воздушных штурмов — P7).
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
 use crate::unit::{UnitId, UnitListKind};

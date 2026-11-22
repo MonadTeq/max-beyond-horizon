@@ -398,7 +398,7 @@ enum_u8! {
 enum_u8! {
     /// Внутренний приказ юнита — C++ `UnitOrderType` / save.md `OrderType`.
     ///
-    /// Не путать с [`crate::order::Order`] — клиентской командой серверу.
+    /// Не путать с `Order` (`max_core::order`) — клиентской командой серверу.
     UnitOrder {
         Await = 0x00,
         Transform = 0x01,

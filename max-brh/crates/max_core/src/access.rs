@@ -1,4 +1,4 @@
-﻿//! Проходимость, занятость клеток и групповые приказы.
+//! Проходимость, занятость клеток и групповые приказы.
 //!
 //! Оракул: `max-cpp-port/src/access.cpp` (`Access_IsAccessible`,
 //! `Access_GetModifiedSurfaceType`, `Access_GetAttackTarget`,
@@ -31,7 +31,7 @@
 //! (`unit_group`/`groups`): списки не сериализуются в V70, поэтому отдельного
 //! поля в [`crate::unit::UnitInfo`] нет.
 
-use crate::classification::{Environment, Footprint};
+use crate::classification::{Environment, Footprint, UnitTypeClassify};
 use crate::enums::unit_flags::{
     GROUND_COVER, HOVERING, MOBILE_AIR_UNIT, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT, SELECTABLE,
     STATIONARY,

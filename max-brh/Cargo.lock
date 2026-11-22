@@ -767,6 +767,7 @@ dependencies = [
 name = "max_core"
 version = "1.1.0"
 dependencies = [
+ "max_types",
  "serde",
 ]
 

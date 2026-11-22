@@ -504,123 +504,83 @@ impl ObjectKind {
 // Классификация типа юнита (per-type)
 // ---------------------------------------------------------------------------
 
-impl UnitType {
+/// Приватный супертип-модуль sealed-типажа: реализовать [`Sealed`] (а значит и
+/// [`UnitTypeClassify`]) можно только внутри этого крейта.
+mod sealed {
+    /// Маркер «свой» для `UnitType` (см. [`super::UnitTypeClassify`]).
+    pub trait Sealed {}
+
+    impl Sealed for max_types::enums::UnitType {}
+}
+
+/// Классификация [`UnitType`] — extension-типаж (правило сироты, Ф5.2).
+///
+/// `UnitType` объявлен в нижнем слое (`max_types::enums`), а эти методы читают
+/// данные `max_core` (`UNIT_TYPE_PROPERTIES`, `BASE_UNIT_VALUES`, списки
+/// `TURRET_`/`PRODUCING_`/`EFFECT_`/`DECORATION_`/`PLOT_PROP_UNIT_TYPES`),
+/// поэтому они не могут остаться inherent-`impl` этого крейта.
+///
+/// Типаж **sealed** ([`sealed::Sealed`] — приватный супертип): downstream
+/// крейты могут вызывать методы, но не могут реализовать типаж для своих типов.
+///
+/// Импорт — **явный**, в месте вызова (`use max_core::UnitTypeClassify;`),
+/// никаких глоб-реэкспортов. `UnitType::tag()` остаётся inherent и едет с типом.
+pub trait UnitTypeClassify: sealed::Sealed {
     /// Боевая роль типа ([`CombatRole::classify`]).
-    #[inline]
-    pub fn combat_role(self) -> CombatRole {
-        CombatRole::classify(self)
-    }
+    fn combat_role(self) -> CombatRole;
 
     /// Форма типа ([`Mobility::classify`]).
-    #[inline]
-    pub fn mobility(self) -> Mobility {
-        Mobility::classify(self)
-    }
+    fn mobility(self) -> Mobility;
 
     /// Футпринт типа ([`Footprint::classify`]): 1×1 или 2×2.
-    #[inline]
-    pub fn footprint(self) -> Footprint {
-        Footprint::classify(self)
-    }
+    fn footprint(self) -> Footprint;
 
     /// Занимает ли тип 2×2 (`BUILDING`). Лайаут, см. [`Footprint`].
-    #[inline]
-    pub fn is_quad(self) -> bool {
-        self.footprint().is_quad()
-    }
+    fn is_quad(self) -> bool;
 
     /// Среда типа ([`Environment::classify`]).
-    #[inline]
-    pub fn environment(self) -> Option<Environment> {
-        Environment::classify(self)
-    }
+    fn environment(self) -> Option<Environment>;
 
     /// Вид груза типа ([`CargoKind::classify`]).
-    #[inline]
-    pub fn cargo_kind(self) -> CargoKind {
-        CargoKind::classify(self)
-    }
+    fn cargo_kind(self) -> CargoKind;
 
     /// Вид объекта типа ([`ObjectKind::classify`]): юнит / эффект / декорация /
     /// сюжетная декорация. `UnitType` при этом не меняется (Ф4).
-    #[inline]
-    pub fn object_kind(self) -> ObjectKind {
-        ObjectKind::classify(self)
-    }
+    fn object_kind(self) -> ObjectKind;
 
     /// Реальный юнит или здание (`ObjectKind::Unit`, 70 типов).
-    #[inline]
-    pub fn is_unit(self) -> bool {
-        self.object_kind() == ObjectKind::Unit
-    }
+    fn is_unit(self) -> bool;
 
     /// Эффект (`ObjectKind::Effect`): снаряд, взрыв, обломок, след (14).
-    #[inline]
-    pub fn is_effect(self) -> bool {
-        self.object_kind() == ObjectKind::Effect
-    }
+    fn is_effect(self) -> bool;
 
     /// Декорация/стройплощадка (`ObjectKind::Decoration`, 6).
-    #[inline]
-    pub fn is_decoration(self) -> bool {
-        self.object_kind() == ObjectKind::Decoration
-    }
+    fn is_decoration(self) -> bool;
 
     /// Сюжетная декорация (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
     /// `WALDO`.
-    #[inline]
-    pub fn is_plot_prop(self) -> bool {
-        self.object_kind() == ObjectKind::PlotProp
-    }
+    fn is_plot_prop(self) -> bool;
 
     /// Производящий ли тип (`Cargo_GetNetProduction`, [`PRODUCING_UNIT_TYPES`]).
-    #[inline]
-    pub fn is_producing(self) -> bool {
-        PRODUCING_UNIT_TYPES.contains(&self)
-    }
+    fn is_producing(self) -> bool;
 
     /// Воздушная среда (`MOBILE_AIR_UNIT`) — [`Environment::Air`].
-    ///
-    /// Точный эквивалент проверки бита `flags & MOBILE_AIR_UNIT != 0`:
-    /// `Environment::classify_flags` ставит `Air` первым и только по этому
-    /// биту, поэтому других источников `Environment::Air` нет.
-    #[inline]
-    pub fn is_air(self) -> bool {
-        self.environment() == Some(Environment::Air)
-    }
+    fn is_air(self) -> bool;
 
     /// Наземная среда (`MOBILE_LAND_UNIT` без `MOBILE_SEA_UNIT`) —
     /// [`Environment::Ground`].
-    ///
-    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_LAND_UNIT`
-    /// (включая амфибии) условие — `is_ground() || is_amphibious()`.
-    #[inline]
-    pub fn is_ground(self) -> bool {
-        self.environment() == Some(Environment::Ground)
-    }
+    fn is_ground(self) -> bool;
 
     /// Морская среда (`MOBILE_SEA_UNIT` без `MOBILE_LAND_UNIT`) —
     /// [`Environment::Sea`].
-    ///
-    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_SEA_UNIT`
-    /// (включая амфибии) условие — `is_sea() || is_amphibious()`.
-    #[inline]
-    pub fn is_sea(self) -> bool {
-        self.environment() == Some(Environment::Sea)
-    }
+    fn is_sea(self) -> bool;
 
     /// Наземно-морская среда (`MOBILE_SEA_UNIT | MOBILE_LAND_UNIT`) —
     /// [`Environment::Amphibious`].
-    #[inline]
-    pub fn is_amphibious(self) -> bool {
-        self.environment() == Some(Environment::Amphibious)
-    }
+    fn is_amphibious(self) -> bool;
 
     /// Мобильный (`STATIONARY` снят) — [`Mobility::Mobile`].
-    #[inline]
-    pub fn is_mobile(self) -> bool {
-        self.mobility() == Mobility::Mobile
-    }
+    fn is_mobile(self) -> bool;
 
     /// Здание — [`Mobility::Building`] (`BUILDING` либо турель).
     ///
@@ -628,24 +588,148 @@ impl UnitType {
     /// владельца, хотя флаг `BUILDING` (`0x10`, «2×2-структура») у них снят.
     /// Там, где проверяется именно раскладка 2×2, используется [`Footprint`]
     /// ([`is_quad()`](Self::is_quad)).
-    #[inline]
-    pub fn is_building(self) -> bool {
-        self.mobility() == Mobility::Building
-    }
+    fn is_building(self) -> bool;
 
     /// Стационарный-прочий ([`Mobility::Stationary`]): `STATIONARY` без
     /// `BUILDING`, не турель.
     ///
     /// Не путать с «неподвижным вообще» (здание или стационарный-прочий): для
     /// этого — `!is_mobile()`, что эквивалентно биту `STATIONARY`.
+    fn is_stationary(self) -> bool;
+
+    /// Боевой ([`CombatRole::Combat`]): `attack > 0`.
+    fn is_combat(self) -> bool;
+}
+
+impl UnitTypeClassify for UnitType {
+    /// Боевая роль типа — [`CombatRole::classify`].
     #[inline]
-    pub fn is_stationary(self) -> bool {
+    fn combat_role(self) -> CombatRole {
+        CombatRole::classify(self)
+    }
+
+    /// Форма типа — [`Mobility::classify`].
+    #[inline]
+    fn mobility(self) -> Mobility {
+        Mobility::classify(self)
+    }
+
+    /// Футпринт типа — [`Footprint::classify`].
+    #[inline]
+    fn footprint(self) -> Footprint {
+        Footprint::classify(self)
+    }
+
+    /// Занимает ли тип 2×2 (`BUILDING`).
+    #[inline]
+    fn is_quad(self) -> bool {
+        self.footprint().is_quad()
+    }
+
+    /// Среда типа — [`Environment::classify`].
+    #[inline]
+    fn environment(self) -> Option<Environment> {
+        Environment::classify(self)
+    }
+
+    /// Вид груза типа — [`CargoKind::classify`].
+    #[inline]
+    fn cargo_kind(self) -> CargoKind {
+        CargoKind::classify(self)
+    }
+
+    /// Вид объекта типа — [`ObjectKind::classify`].
+    #[inline]
+    fn object_kind(self) -> ObjectKind {
+        ObjectKind::classify(self)
+    }
+
+    /// Реальный юнит или здание (`ObjectKind::Unit`, 70 типов).
+    #[inline]
+    fn is_unit(self) -> bool {
+        self.object_kind() == ObjectKind::Unit
+    }
+
+    /// Эффект (`ObjectKind::Effect`): снаряд, взрыв, обломок, след (14).
+    #[inline]
+    fn is_effect(self) -> bool {
+        self.object_kind() == ObjectKind::Effect
+    }
+
+    /// Декорация/стройплощадка (`ObjectKind::Decoration`, 6).
+    #[inline]
+    fn is_decoration(self) -> bool {
+        self.object_kind() == ObjectKind::Decoration
+    }
+
+    /// Сюжетная декорация (`ObjectKind::PlotProp`): `MASTER`, `HARVSTER`,
+    /// `WALDO`.
+    #[inline]
+    fn is_plot_prop(self) -> bool {
+        self.object_kind() == ObjectKind::PlotProp
+    }
+
+    /// Производящий ли тип (`Cargo_GetNetProduction`).
+    #[inline]
+    fn is_producing(self) -> bool {
+        PRODUCING_UNIT_TYPES.contains(&self)
+    }
+
+    /// Воздушная среда — [`Environment::Air`].
+    ///
+    /// Точный эквивалент проверки бита `flags & MOBILE_AIR_UNIT != 0`:
+    /// `Environment::classify_flags` ставит `Air` первым и только по этому
+    /// биту, поэтому других источников `Environment::Air` нет.
+    #[inline]
+    fn is_air(self) -> bool {
+        self.environment() == Some(Environment::Air)
+    }
+
+    /// Наземная среда — [`Environment::Ground`].
+    ///
+    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_LAND_UNIT`
+    /// (включая амфибии) условие — `is_ground() || is_amphibious()`.
+    #[inline]
+    fn is_ground(self) -> bool {
+        self.environment() == Some(Environment::Ground)
+    }
+
+    /// Морская среда — [`Environment::Sea`].
+    ///
+    /// Амфибийные типы сюда **не** входят: для бита `MOBILE_SEA_UNIT`
+    /// (включая амфибии) условие — `is_sea() || is_amphibious()`.
+    #[inline]
+    fn is_sea(self) -> bool {
+        self.environment() == Some(Environment::Sea)
+    }
+
+    /// Наземно-морская среда — [`Environment::Amphibious`].
+    #[inline]
+    fn is_amphibious(self) -> bool {
+        self.environment() == Some(Environment::Amphibious)
+    }
+
+    /// Мобильный (`STATIONARY` снят) — [`Mobility::Mobile`].
+    #[inline]
+    fn is_mobile(self) -> bool {
+        self.mobility() == Mobility::Mobile
+    }
+
+    /// Здание — [`Mobility::Building`] (`BUILDING` либо турель).
+    #[inline]
+    fn is_building(self) -> bool {
+        self.mobility() == Mobility::Building
+    }
+
+    /// Стационарный-прочий — [`Mobility::Stationary`].
+    #[inline]
+    fn is_stationary(self) -> bool {
         self.mobility() == Mobility::Stationary
     }
 
-    /// Боевой ([`CombatRole::Combat`]): `attack > 0`.
+    /// Боевой — [`CombatRole::Combat`] (`attack > 0`).
     #[inline]
-    pub fn is_combat(self) -> bool {
+    fn is_combat(self) -> bool {
         self.combat_role().is_combat()
     }
 }

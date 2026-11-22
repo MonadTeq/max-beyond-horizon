@@ -22,6 +22,7 @@
 //! напоминаний идёт строго в этом порядке; карт с неупорядоченной итерацией
 //! нет. RNG вызывается только внутри задач и `AiPlayer` (см. `rng.rs`).
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{unit_flags, Opponent, UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::geo::Point;

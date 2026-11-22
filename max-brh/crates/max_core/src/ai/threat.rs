@@ -30,6 +30,7 @@
 //! вставки). RNG не используется.
 
 use crate::access::{self, TARGET_CLASS_AIR, TARGET_CLASS_LAND, TARGET_CLASS_LAND_STEALTH};
+use crate::classification::UnitTypeClassify;
 use crate::enums::{unit_flags, UnitOrder, UnitType};
 use crate::game::GameState;
 use crate::geo::{Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_TILES, MAP_WIDTH};

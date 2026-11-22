@@ -40,6 +40,7 @@
 //!    чтение не требует `&mut`. Это не меняет результат (карта — чистая
 //!    функция состояния), но может стоить дороже на больших картах.
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{
     unit_flags, AiStrategy, CautionLevel, Opponent, ResearchTopic, TeamClan, UnitOrder,
     UnitOrderState, UnitType, AI_STRATEGY_MAX, INFO_MAP_EXPLORED, INFO_MAP_MINE_FIELD,

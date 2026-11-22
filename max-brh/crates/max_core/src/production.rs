@@ -109,6 +109,7 @@
 //!   в симуляции, но кадр рендера её пока не масштабирует.
 
 use crate::access;
+use crate::classification::UnitTypeClassify;
 use crate::deploy::{LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT};
 use crate::enums::unit_flags;
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};

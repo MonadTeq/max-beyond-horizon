@@ -391,6 +391,7 @@ mod tests {
 
     #[test]
     fn map_hash_places_turret_in_single_cell() {
+        use crate::classification::UnitTypeClassify;
         use crate::enums::UnitType;
 
         // Турель — `Mobility::Building`, но `Footprint::Single`: в `MapHash` она

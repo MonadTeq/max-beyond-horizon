@@ -19,6 +19,7 @@
 //! окна `±TASK_PRIORITY_TOLERANCE` и внутри окна возвращает разность
 //! динамического `GetPriority()` и аргумента — как в C++ (`task.cpp:444`).
 
+use crate::classification::UnitTypeClassify;
 use crate::enums::{unit_flags, CautionLevel, Opponent, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::Point;

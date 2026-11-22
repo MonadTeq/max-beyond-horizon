@@ -75,6 +75,9 @@ use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
+// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
+// max_core); глоб-реэкспортов нет (Ф5.2).
+use max_core::UnitTypeClassify;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
 use max_core::production::{
     buildable_units, can_build, cost_per_turn, find_build_site, is_factory,
