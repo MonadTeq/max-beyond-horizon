@@ -1,8 +1,8 @@
-//! Экран `Introduction`: MVE-видео `INTROFLC` → `maxint.mve`.
+//! `Introduction` screen: MVE video `INTROFLC` → `maxint.mve`.
 //!
-//! Тест грузит настоящие `MAX.RES`/`MAXINT.MVE` (если данных нет — пропуск):
-//! кадр 0 декодируется при входе, масштабируется в 640×480 с letterbox,
-//! повторный рендер детерминирован, Esc возвращает в главное меню.
+//! The test loads the real `MAX.RES`/`MAXINT.MVE` (skipped if there is no data):
+//! frame 0 is decoded on entry, scaled to 640×480 with letterbox,
+//! a repeated render is deterministic, Esc returns to the main menu.
 
 use std::path::{Path, PathBuf};
 
@@ -71,12 +71,12 @@ fn intro_decodes_frame_zero_and_scales_to_letterbox() {
     let mut frame = RgbaBuffer::new(640, 480);
     let painted = screen.draw(&mut frame, menu);
 
-    // Видео 432×320 масштабируется в 640×474, поля сверху/снизу по 3 px.
+    // The 432×320 video is scaled to 640×474, 3 px bars at the top/bottom.
     assert!(painted > 640 * 400, "видео заполняет кадр: {painted}");
     assert_eq!(frame.get(320, 1), Some(Rgba::rgb(0, 0, 0)), "letterbox");
     assert_ne!(frame.get(320, 240), Some(Rgba::rgb(0, 0, 0)));
 
-    // dt = 0 — стоп-кадр: повторный рендер пиксель-в-пиксель.
+    // dt = 0 — freeze-frame: a repeated render is pixel-for-pixel.
     let mut again = RgbaBuffer::new(640, 480);
     screen.draw(&mut again, menu);
     assert_eq!(frame.pixels(), again.pixels());
@@ -89,7 +89,7 @@ fn intro_advances_by_real_time_and_esc_closes() {
     };
     let mut screen = IntroScreen::new(assets.intro_mve.clone());
 
-    // 15 FPS: одного кадра 1/60 с недостаточно, 0.5 с — несколько кадров.
+    // 15 FPS: one 1/60 s frame is not enough, 0.5 s — several frames.
     assert!(!screen.advance(1.0 / 60.0));
     assert_eq!(screen.frame_index(), 1);
     assert!(!screen.advance(0.5));
@@ -99,7 +99,7 @@ fn intro_advances_by_real_time_and_esc_closes() {
         screen.frame_index()
     );
 
-    // Esc на экране Introduction — назад в MainMenu (как `mve_cb_ctl`).
+    // Esc on the Introduction screen — back to MainMenu (like `mve_cb_ctl`).
     let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
     let mut state = Screen::Introduction(screen);
     let transition = state.handle_input(&mut ctx, InputEvent::Key(Key::Escape));

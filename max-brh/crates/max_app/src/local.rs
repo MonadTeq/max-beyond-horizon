@@ -1,30 +1,30 @@
-//! M-SP: локальная партия (1 человек + 1–3 компьютера) без сети.
+//! M-SP: local match (1 human + 1–3 computers) without the network.
 //!
-//! # Что это порт чего
+//! # What this is a port of
 //!
-//! Цикл повторяет `GameManager_GameLoop` + `GameManager_TeamTurnTurnBased`
+//! The loop repeats `GameManager_GameLoop` + `GameManager_TeamTurnTurnBased`
 //! (`max-cpp-port/src/game_manager.cpp:463`):
 //!
-//! 1. раунд идёт по командам `RED → GREEN → BLUE → GRAY`; команды `None` и
-//!    `Eliminated` пропускаются;
-//! 2. на начале хода команды вызывается `GameManager_ManageEconomy(team)`
-//!    ([`max_core::GameState::manage_economy`]) и `GameManager_ProgressBuildState`
-//!    (в max_core от него пока только экономика — производство это P3/TODO);
-//! 3. компьютерная команда: `Ai_BeginTurn(team)` и ход «крутится» тиками, пока
-//!    `AiPlayer::CheckEndTurn` не дойдёт до `end_turn_retry_counter > 120` — в
-//!    C++ именно на этом пороге `GameManager_RefreshOrders` выставляет
-//!    `finished_turn` и `GAME_STATE_9_END_TURN`;
-//! 4. человеческая команда: ожидание ввода; **End Turn** шлёт пакет `06` и
-//!    закрывает ход;
-//! 5. после последней команды раунда — `GameState::finish_turn()`
-//!    (`GameManager_TeamTurnFinish`): условия победы/поражения, сброс флагов,
+//! 1. a round goes over the teams `RED → GREEN → BLUE → GRAY`; `None` and
+//!    `Eliminated` teams are skipped;
+//! 2. at the start of a team's turn `GameManager_ManageEconomy(team)` is called
+//!    ([`max_core::GameState::manage_economy`]) and `GameManager_ProgressBuildState`
+//!    (in max_core only the economy exists so far — production is P3/TODO);
+//! 3. a computer team: `Ai_BeginTurn(team)` and the turn "spins" with ticks until
+//!    `AiPlayer::CheckEndTurn` reaches `end_turn_retry_counter > 120` — in
+//!    C++ it is at this threshold that `GameManager_RefreshOrders` sets
+//!    `finished_turn` and `GAME_STATE_9_END_TURN`;
+//! 4. a human team: wait for input; **End Turn** sends packet `06` and
+//!    closes the turn;
+//! 5. after the last team of the round — `GameState::finish_turn()`
+//!    (`GameManager_TeamTurnFinish`): victory/defeat conditions, flag reset,
 //!    `turn_counter += 1`.
 //!
-//! Таймер хода — `settings["timer"]` (`GameManager_UpdateTurnTimer`); `0` —
-//! без ограничения. Пауза (`PauseMenu`) останавливает и тики, и таймер.
+//! Turn timer — `settings["timer"]` (`GameManager_UpdateTurnTimer`); `0` —
+//! no limit. Pause (`PauseMenu`) stops both the ticks and the timer.
 //!
-//! Победа/поражение — [`max_core::victory::evaluate_status`]
-//! (`WinLoss_EvaluateStatus`) в момент закрытия раунда; по нему рисуется экран
+//! Victory/defeat — [`max_core::victory::evaluate_status`]
+//! (`WinLoss_EvaluateStatus`) at the moment the round is closed; the screen is drawn from it
 //! [`crate::winloss`].
 
 use max_core::enums::{GameStateType, PlayMode, WinLossState};
@@ -37,23 +37,23 @@ use max_core::victory::{self, MissionCategory, WinLossStatus};
 use crate::hotseat::TurnNotice;
 use crate::{App, NewGameConfig};
 
-/// Сколько игровых команд в партии (`PLAYER_TEAM_COUNT`).
+/// How many game teams are in a match (`PLAYER_TEAM_COUNT`).
 pub const LOCAL_TEAM_COUNT: usize = 4;
 
-/// Предел тиков одного хода ИИ — страховка от «зависшего» ИИ.
+/// Tick limit of one AI turn — a guard against a "hung" AI.
 ///
-/// C++ завершает ход по `end_turn_retry_counter > 120` **только когда у ИИ нет
-/// незавершённой работы** (`tasks_pending`/`has_pending_work`), поэтому в
-/// партии с живыми задачами ход может длиться долго. Предел — как
-/// `while (Access_AreTaskEventsPending())` + аварийный `force ENDTURN` из
-/// `Ai_CheckEndTurn` (concurrent-ветка): после него ход закрывается принудительно.
+/// C++ ends the turn on `end_turn_retry_counter > 120` **only when the AI has no
+/// unfinished work** (`tasks_pending`/`has_pending_work`), so in a
+/// match with live tasks the turn may last long. The limit is like
+/// `while (Access_AreTaskEventsPending())` + the emergency `force ENDTURN` from
+/// `Ai_CheckEndTurn` (concurrent branch): after it the turn is closed forcibly.
 pub const LOCAL_AI_TICK_LIMIT: u32 = 12_000;
 
-/// Стартовые позиции команд: четыре четверти карты 112×112.
+/// Starting positions of the teams: the four quarters of the 112×112 map.
 ///
-/// В C++ позиции приходят из миссии (`UnitsManager_TeamMissionSupplies`);
-/// у сгенерированной custom-партии миссии нет, поэтому берутся четверти карты,
-/// а `setup::find_valid_starting_position` двигает их на ближайшую сушу.
+/// In C++ the positions come from the mission (`UnitsManager_TeamMissionSupplies`);
+/// a generated custom match has no mission, so the map quarters are taken,
+/// and `setup::find_valid_starting_position` moves them to the nearest land.
 pub const START_POSITIONS: [Point; LOCAL_TEAM_COUNT] = [
     Point::new(22, 22),
     Point::new(88, 88),
@@ -61,70 +61,70 @@ pub const START_POSITIONS: [Point; LOCAL_TEAM_COUNT] = [
     Point::new(22, 88),
 ];
 
-/// Параметры локальной партии — то, что отдаёт экран настройки.
+/// Local match parameters — what the setup screen returns.
 ///
-/// Значения по умолчанию — `settings.cpp` (`timer=180`, `endturn=45`,
+/// Default values — `settings.cpp` (`timer=180`, `endturn=45`,
 /// `start_gold=150`, `play_mode=1`, `victory_type=0`, `victory_limit=50`,
-/// `opponent=1`, уровни ресурсов `1/1/1/0`).
+/// `opponent=1`, resource levels `1/1/1/0`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalSetup {
-    /// Имя человека (команда-игрок).
+    /// Human name (the player team).
     pub player_name: String,
-    /// Планета `0..=23` (`settings["world"]`).
+    /// Planet `0..=23` (`settings["world"]`).
     pub world: i64,
-    /// Сложность ИИ (`settings["opponent"]`, 0..=5).
+    /// AI difficulty (`settings["opponent"]`, 0..=5).
     pub opponent: u8,
-    /// Секунды на ход человека (0 — без таймера).
+    /// Seconds per human turn (0 — no timer).
     pub timer: u32,
-    /// Секунды на завершение хода ИИ (`settings["endturn"]`).
+    /// Seconds to finish the AI turn (`settings["endturn"]`).
     pub endturn: u32,
-    /// Режим игры (`settings["play_mode"]`).
+    /// Game mode (`settings["play_mode"]`).
     pub play_mode: max_core::enums::PlayMode,
-    /// Стартовые кредиты (`settings["start_gold"]`, 0..=250).
+    /// Starting credits (`settings["start_gold"]`, 0..=250).
     pub start_gold: u32,
-    /// Уровень материалов (`raw_resource` 0–2).
+    /// Raw material level (`raw_resource` 0–2).
     pub raw: u8,
-    /// Уровень топлива.
+    /// Fuel level.
     pub fuel: u8,
-    /// Уровень золота.
+    /// Gold level.
     pub gold: u8,
-    /// Уровень обломков пришельцев.
+    /// Alien debris level.
     pub derelicts: u8,
-    /// Условие победы (`victory_type`).
+    /// Victory condition (`victory_type`).
     pub victory_type: max_core::enums::VictoryType,
-    /// Лимит победы (`victory_limit`).
+    /// Victory limit (`victory_limit`).
     pub victory_limit: i32,
-    /// Кто кем управляет: 4 слота (`menu_team_player_setting`).
+    /// Who controls whom: 4 slots (`menu_team_player_setting`).
     pub team_types: [TeamKind; LOCAL_TEAM_COUNT],
-    /// Клан каждой команды (`menu_team_clan_setting`); `Random` — 0.
+    /// Clan of each team (`menu_team_clan_setting`); `Random` — 0.
     pub team_clans: [max_core::enums::TeamClan; LOCAL_TEAM_COUNT],
-    /// M-HS: партия **hot-seat** (`MISSION_CATEGORY_HOT_SEAT`).
+    /// M-HS: **hot-seat** match (`MISSION_CATEGORY_HOT_SEAT`).
     ///
-    /// В C++ режим задаётся не настройкой партии, а выбранным пунктом меню:
-    /// `menu_custom_game_menu(is_single_player)` (`menu.cpp:2115`) загружает
-    /// миссию категории `MISSION_CATEGORY_HOT_SEAT`, и от этого зависят правила
-    /// `ChoosePlayerMenu` (сколько людей допустимо) и имена команд. Здесь флаг
-    /// хранится рядом с `team_types`, чтобы те же правила можно было проверить
-    /// без UI (`LocalSetup::validate`).
+    /// In C++ the mode is set not by a match setting but by the chosen menu item:
+    /// `menu_custom_game_menu(is_single_player)` (`menu.cpp:2115`) loads
+    /// a mission of the `MISSION_CATEGORY_HOT_SEAT` category, and the rules of
+    /// `ChoosePlayerMenu` (how many humans are allowed) and the team names depend on it. Here the
+    /// flag is stored next to `team_types`, so that the same rules can be checked
+    /// without the UI (`LocalSetup::validate`).
     pub hot_seat: bool,
-    /// Seed генерации карты (`Remote_RngSeed`).
+    /// Map generation seed (`Remote_RngSeed`).
     pub seed: u32,
-    /// Точки высадки, выбранные в фазе site select (`GameManager_SelectSite`).
+    /// Landing points chosen in the site select phase (`GameManager_SelectSite`).
     ///
-    /// `None` — команда не проходила выбор (ИИ или старый путь): берётся
-    /// [`START_POSITIONS`] и `setup::find_valid_starting_position`.
+    /// `None` — the team did not go through the selection (AI or the old path):
+    /// [`START_POSITIONS`] and `setup::find_valid_starting_position` are used.
     pub start_positions: [Option<Point>; LOCAL_TEAM_COUNT],
-    /// Загрузка после мобилизации (`CargoMenu`): бесплатный `SC_L0001` плюс
-    /// купленные юниты. `None` — [`max_core::deploy::DEFAULT_MISSION_LOADOUT`].
+    /// Loadout after mobilization (`CargoMenu`): the free `SC_L0001` plus
+    /// the purchased units. `None` — [`max_core::deploy::DEFAULT_MISSION_LOADOUT`].
     pub team_loadouts: [Option<Vec<max_core::deploy::TeamSupply>>; LOCAL_TEAM_COUNT],
-    /// Остаток кредитов после мобилизации (`TeamMissionSupplies::team_gold`).
+    /// Credits left after mobilization (`TeamMissionSupplies::team_gold`).
     /// `None` — `start_gold`.
     pub team_gold: [Option<u32>; LOCAL_TEAM_COUNT],
-    /// Апгрейды атрибутов, купленные в `CargoMenu`
-    /// (`unitvalues_actual` → `TeamUnits.current_values` до высадки).
+    /// Attribute upgrades purchased in `CargoMenu`
+    /// (`unitvalues_actual` → `TeamUnits.current_values` before landing).
     pub team_upgrades: [Option<Vec<(max_core::enums::UnitType, max_core::unit_values::UnitValues)>>;
         LOCAL_TEAM_COUNT],
-    /// `stats_gold_spent_on_upgrades` команды (`CargoMenu::CommitUpgradeChanges`).
+    /// The team's `stats_gold_spent_on_upgrades` (`CargoMenu::CommitUpgradeChanges`).
     pub team_gold_spent: [Option<u32>; LOCAL_TEAM_COUNT],
 }
 
@@ -144,8 +144,8 @@ impl Default for LocalSetup {
             derelicts: 0,
             victory_type: max_core::enums::VictoryType::Duration,
             victory_limit: 50,
-            // `menu_choose_player_menu_loop`: RED — человек, GREEN — компьютер,
-            // BLUE/GRAY — пусто.
+            // `menu_choose_player_menu_loop`: RED — human, GREEN — computer,
+            // BLUE/GRAY — empty.
             team_types: [
                 TeamKind::Player,
                 TeamKind::Computer,
@@ -165,7 +165,7 @@ impl Default for LocalSetup {
 }
 
 impl LocalSetup {
-    /// Команда-человек (первая `Player`); `None` — недопустимая настройка.
+    /// The human team (the first `Player`); `None` — an invalid setup.
     pub fn human_team(&self) -> Option<TeamId> {
         self.team_types
             .iter()
@@ -173,12 +173,12 @@ impl LocalSetup {
             .map(|index| TeamId(index as u8))
     }
 
-    /// Все человеческие команды в порядке слотов (`GameManager_UpdateHumanPlayerCount`).
+    /// All human teams in slot order (`GameManager_UpdateHumanPlayerCount`).
     pub fn human_teams(&self) -> Vec<TeamId> {
         crate::hotseat::human_teams(&self.team_types)
     }
 
-    /// Сколько людей играет (`GameManager_HumanPlayerCount`).
+    /// How many humans play (`GameManager_HumanPlayerCount`).
     pub fn human_count(&self) -> usize {
         self.team_types
             .iter()
@@ -186,27 +186,27 @@ impl LocalSetup {
             .count()
     }
 
-    /// Партия hot-seat: людей больше одного
+    /// Hot-seat match: more than one human
     /// (`GameManager_HumanPlayerCount > 1`, `game_manager.cpp:3276`).
     ///
-    /// Именно от этого числа C++ включает turn-based, показывает окно
-    /// «Begin turn» и берёт имена `Red Team`/`Green Team`/…
+    /// It is this count that makes C++ enable turn-based, show the
+    /// «Begin turn» window and take the names `Red Team`/`Green Team`/…
     pub fn is_hot_seat(&self) -> bool {
         self.human_count() > 1
     }
 
-    /// Настройка выполнена через `Hot Seat Game`
-    /// (`menu_custom_game_menu(false)`), даже если людей пока меньше двух.
+    /// The setup was made via `Hot Seat Game`
+    /// (`menu_custom_game_menu(false)`), even if there are fewer than two humans yet.
     ///
-    /// Нужна правилам `ChoosePlayerMenu::EventDone`: hot-seat требует двух
-    /// людей, одиночная игра — одного человека и компьютер.
+    /// Needed by the `ChoosePlayerMenu::EventDone` rules: hot-seat requires two
+    /// humans, a single game — one human and a computer.
     pub fn hot_seat_settings(&self) -> bool {
         self.hot_seat || self.is_hot_seat()
     }
 
-    /// Режим игры с учётом `GameManager_UpdateHumanPlayerCount`: hot-seat всегда
-    /// turn-based (`GameManager_PlayMode = PLAY_MODE_TURN_BASED`), настройка
-    /// «Simultaneous Moves» в нём не действует.
+    /// Game mode taking `GameManager_UpdateHumanPlayerCount` into account: hot-seat is always
+    /// turn-based (`GameManager_PlayMode = PLAY_MODE_TURN_BASED`), the
+    /// "Simultaneous Moves" setting does not apply in it.
     pub fn effective_play_mode(&self) -> PlayMode {
         if self.is_hot_seat() {
             PlayMode::TurnBased
@@ -215,11 +215,11 @@ impl LocalSetup {
         }
     }
 
-    /// Имя команды в партии (`menu_team_name_setting`).
+    /// Team name in the match (`menu_team_name_setting`).
     ///
-    /// В одиночной игре человек получает `player_name` (`menu.cpp:1944`), в
-    /// hot-seat все команды называются `Red Team`/`Green Team`/… — имя игрока
-    /// там одно на всех и не подставляется.
+    /// In a single game the human gets `player_name` (`menu.cpp:1944`), in
+    /// hot-seat all teams are called `Red Team`/`Green Team`/… — the player name
+    /// there is one for all and is not substituted.
     pub fn display_name(&self, team: TeamId) -> String {
         if !self.is_hot_seat() && Some(team) == self.human_team() {
             self.player_name.clone()
@@ -228,7 +228,7 @@ impl LocalSetup {
         }
     }
 
-    /// Компьютерные команды в порядке слотов.
+    /// Computer teams in slot order.
     pub fn ai_teams(&self) -> Vec<TeamId> {
         self.team_types
             .iter()
@@ -238,7 +238,7 @@ impl LocalSetup {
             .collect()
     }
 
-    /// Играющие команды (не `None`) в порядке слотов.
+    /// Playing teams (not `None`) in slot order.
     pub fn playing_teams(&self) -> Vec<TeamId> {
         self.team_types
             .iter()
@@ -248,16 +248,16 @@ impl LocalSetup {
             .collect()
     }
 
-    /// Проверка настроек по `ChoosePlayerMenu::EventDone` (`chooseplayermenu.cpp:212`).
+    /// Setup validation by `ChoosePlayerMenu::EventDone` (`chooseplayermenu.cpp:212`).
     ///
-    /// Одиночная игра (`is_single_player = true`): минимум два участника
-    /// (человек + компьютер), при этом «Human» на другом слоте в UI переносит
-    /// флаг — двух людей там не бывает.
+    /// Single game (`is_single_player = true`): at least two participants
+    /// (human + computer), while «Human» on another slot in the UI copies
+    /// the flag — there are never two humans there.
     ///
     /// Hot-seat (`is_single_player = false`): `human_player_count < 2` —
-    /// ошибка `_(06ec)`; компьютеры в смеси допустимы (в C++ `EventDone`
-    /// считает людей и компьютеров раздельно, а `GameManager_UpdateHumanPlayerCount`
-    /// просто принудительно включает turn-based).
+    /// error `_(06ec)`; computers in the mix are allowed (in C++ `EventDone`
+    /// counts humans and computers separately, and `GameManager_UpdateHumanPlayerCount`
+    /// simply force-enables turn-based).
     pub fn validate(&self) -> Result<(), String> {
         let humans = self.human_count();
         let playing = self.playing_teams().len();
@@ -293,13 +293,13 @@ impl LocalSetup {
         Ok(())
     }
 
-    /// `NewGameConfig` для [`App::start_local_game`].
+    /// `NewGameConfig` for [`App::start_local_game`].
     ///
-    /// Если фазы старта уже отработали (мобилизация и/или выбор точки), их
-    /// результат уходит в [`NewGameConfig::deployments`]: точки высадки — из
-    /// [`Self::start_positions`], кредиты — из [`Self::team_gold`], загрузка —
-    /// из [`Self::team_loadouts`]. Без фаз поведение прежнее (одна загрузка
-    /// `SC_L0001` и `start_gold` на всех).
+    /// If the start phases have already run (mobilization and/or site selection), their
+    /// result goes into [`NewGameConfig::deployments`]: landing points — from
+    /// [`Self::start_positions`], credits — from [`Self::team_gold`], loadout —
+    /// from [`Self::team_loadouts`]. Without the phases the behavior is the former
+    /// (one `SC_L0001` loadout and `start_gold` for all).
     pub fn new_game_config(&self) -> NewGameConfig {
         let level = |value: u8| ResourceLevel::new(value).unwrap_or(ResourceLevel::NORMAL);
         let human = self.human_team().unwrap_or(TeamId::RED);
@@ -357,27 +357,27 @@ impl LocalSetup {
     }
 }
 
-/// Планета по индексу `0..=23` (как `Planet::try_from`, с клампом).
+/// Planet by index `0..=23` (like `Planet::try_from`, with clamping).
 pub fn planet_for_world(world: i64) -> max_core::enums::Planet {
     max_core::enums::Planet::try_from(world.clamp(0, 23) as u8)
         .unwrap_or(max_core::enums::Planet::Snowcrab)
 }
 
-/// Фаза локальной партии.
+/// Local match phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalPhase {
-    /// Ход человека: ждём ввод (или таймер).
+    /// Human turn: waiting for input (or the timer).
     PlayerTurn,
-    /// Ход компьютера `team`.
+    /// Computer turn of `team`.
     AiTurn(TeamId),
-    /// Раунд закончился, идёт переход (`finish_turn`/следующая команда).
+    /// The round is over, a transition is in progress (`finish_turn`/the next team).
     Advancing,
-    /// Партия окончена (победа/поражение).
+    /// The match is over (victory/defeat).
     Finished,
 }
 
 impl LocalPhase {
-    /// Подпись фазы для строки статуса.
+    /// Phase caption for the status line.
     pub fn caption(self) -> String {
         match self {
             Self::PlayerTurn => "Your turn".to_string(),
@@ -387,59 +387,59 @@ impl LocalPhase {
         }
     }
 }
-/// Итог партии — данные экрана победы/поражения.
+/// Match result — data of the victory/defeat screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalOutcome {
-    /// Победила ли команда человека (`menu_wrap_up_game`: `is_winner`).
+    /// Whether the human team won (`menu_wrap_up_game`: `is_winner`).
     pub victory: bool,
-    /// Команда, на чьём ходу закрылся раунд (`GameManager_PlayerTeam`).
+    /// The team on whose turn the round closed (`GameManager_PlayerTeam`).
     ///
-    /// В одиночной игре это единственный человек; в hot-seat — тот, кто ходил
-    /// последним (C++ тоже передаёт в экран `GameManager_PlayerTeam`).
+    /// In a single game this is the only human; in hot-seat — the one who moved
+    /// last (C++ also passes `GameManager_PlayerTeam` to the screen).
     pub team: TeamId,
-    /// `WinLoss_EvaluateStatus` на момент закрытия раунда.
+    /// `WinLoss_EvaluateStatus` at the moment the round is closed.
     pub status: WinLossStatus,
-    /// Номер хода, на котором закончилась партия.
+    /// The turn number at which the match ended.
     pub turn_counter: i32,
-    /// Имя команды человека (для заголовка экрана).
+    /// Human team name (for the screen title).
     pub player_name: String,
 }
 
-/// Состояние локальной партии.
+/// Local match state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalGame {
-    /// Настройки, с которыми начата партия.
+    /// Settings the match was started with.
     pub setup: LocalSetup,
-    /// Фаза.
+    /// Phase.
     pub phase: LocalPhase,
-    /// Команда, которая ходит сейчас.
+    /// The team that is moving now.
     pub active_team: TeamId,
-    /// Остаток таймера хода, секунды (`GameManager_TurnTimerValue`).
+    /// Remaining turn timer, seconds (`GameManager_TurnTimerValue`).
     pub timer_left: f32,
-    /// Пауза (`PauseMenu`): тики и таймер стоят.
+    /// Pause (`PauseMenu`): ticks and the timer are stopped.
     pub paused: bool,
-    /// Тиков в текущем ходу ИИ.
+    /// Ticks in the current AI turn.
     pub ai_ticks: u32,
-    /// Индекс команды в раунде (`0..LOCAL_TEAM_COUNT`).
+    /// Team index in the round (`0..LOCAL_TEAM_COUNT`).
     pub round_team: usize,
-    /// Итог партии.
+    /// Match result.
     pub outcome: Option<LocalOutcome>,
-    /// M-HS: человеческие команды в порядке слотов (`GameManager_UpdateHumanPlayerCount`).
+    /// M-HS: human teams in slot order (`GameManager_UpdateHumanPlayerCount`).
     pub human_teams: Vec<TeamId>,
-    /// M-HS: окно перехода хода (`GameManager_UpdateGuiControl`), пока оно
-    /// открыто, таймер хода стоит и ввод принимает только подтверждение.
+    /// M-HS: the turn-transition window (`GameManager_UpdateGuiControl`); while it is
+    /// open, the turn timer is stopped and input accepts only confirmation.
     pub notice: Option<TurnNotice>,
-    /// Имена команд, переименованных игроком в игре (`Preferences` →
-    /// «Player Name»). C++ `OptionsMenu` в `PREFSPIC` правит
-    /// `menu_team_name_setting[team]` (`optionsmenu.cpp:177,552`), а не только
-    /// глобальный `player_name`; `None` — имя по умолчанию из
-    /// [`LocalSetup::display_name`]. Не входит в CRC симуляции: это UI-имя
-    /// (как `Settings` в C++).
+    /// Team names renamed by the player in game (`Preferences` →
+    /// «Player Name»). C++ `OptionsMenu` in `PREFSPIC` edits
+    /// `menu_team_name_setting[team]` (`optionsmenu.cpp:177,552`), not only
+    /// the global `player_name`; `None` — the default name from
+    /// [`LocalSetup::display_name`]. Not part of the simulation CRC: it is a UI
+    /// name (like `Settings` in C++).
     pub team_names: [Option<String>; LOCAL_TEAM_COUNT],
 }
 
 impl LocalGame {
-    /// Новая партия по настройкам.
+    /// A new match by the settings.
     pub fn new(setup: LocalSetup) -> Self {
         let human = setup.human_team().unwrap_or(TeamId::RED);
         let human_teams = setup.human_teams();
@@ -459,7 +459,7 @@ impl LocalGame {
         }
     }
 
-    /// Имя команды в игре: переименование из Preferences или
+    /// Team name in game: the rename from Preferences or
     /// [`LocalSetup::display_name`] (`menu_team_name_setting` C++).
     pub fn display_name(&self, team: TeamId) -> String {
         self.team_names
@@ -468,11 +468,11 @@ impl LocalGame {
             .unwrap_or_else(|| self.setup.display_name(team))
     }
 
-    /// Переименовывает команду (`OptionsMenu` `PREFSPIC` → `player_name`).
+    /// Renames a team (`OptionsMenu` `PREFSPIC` → `player_name`).
     ///
-    /// В одиночной игре имя команды человека совпадает с `player_name`
-    /// (`menu.cpp:1944`), поэтому обновляется и `setup.player_name` — иначе
-    /// имя разъехалось бы между экраном победы и V70-сейвом.
+    /// In a single game the human team name coincides with `player_name`
+    /// (`menu.cpp:1944`), so `setup.player_name` is updated too — otherwise
+    /// the name would diverge between the victory screen and the V70 save.
     pub fn rename_team(&mut self, team: TeamId, name: impl Into<String>) {
         let name = name.into();
 
@@ -485,49 +485,49 @@ impl LocalGame {
         }
     }
 
-    /// Партия окончена.
+    /// The match is over.
     pub fn finished(&self) -> bool {
         self.outcome.is_some()
     }
 
-    /// Победил ли человек (для экрана).
+    /// Whether the human won (for the screen).
     pub fn victory(&self) -> bool {
         self.outcome.as_ref().is_some_and(|outcome| outcome.victory)
     }
 
-    /// Партия hot-seat (`GameManager_HumanPlayerCount > 1`).
+    /// Hot-seat match (`GameManager_HumanPlayerCount > 1`).
     pub fn is_hot_seat(&self) -> bool {
         self.human_teams.len() > 1
     }
 
-    /// Открыто окно перехода хода.
+    /// The turn-transition window is open.
     pub fn notice(&self) -> Option<&TurnNotice> {
         self.notice.as_ref()
     }
 
-    /// Подтверждение окна перехода хода (`DialogMenu`: клик по `OK`, Enter, Esc).
+    /// Confirmation of the turn-transition window (`DialogMenu`: a click on `OK`, Enter, Esc).
     ///
-    /// Возвращает `true`, если окно действительно закрылось.
+    /// Returns `true` if the window actually closed.
     pub fn dismiss_notice(&mut self) -> bool {
         self.notice.take().is_some()
     }
 
-    /// Идёт ход человека (`LocalPhase::PlayerTurn`).
+    /// The human turn is in progress (`LocalPhase::PlayerTurn`).
     pub fn is_human_turn(&self) -> bool {
         self.phase == LocalPhase::PlayerTurn
     }
 
-    /// Ввод приказов заблокирован: ход ИИ, переход или открытое окно перехода.
+    /// Order input is blocked: AI turn, transition or the open transition window.
     ///
-    /// В C++ во время хода компьютера карта не перерисовывается
-    /// (`game_manager.cpp:1179`) и приказы чужим/неактивным командам
-    /// отбрасываются (`GameManager_ActiveTurnTeam`), а пока открыт `DialogMenu`,
-    /// цикл вообще стоит в `Run()`.
+    /// In C++ during the computer turn the map is not redrawn
+    /// (`game_manager.cpp:1179`) and orders to foreign/inactive teams are
+    /// discarded (`GameManager_ActiveTurnTeam`), and while `DialogMenu` is open,
+    /// the loop sits in `Run()` at all.
     pub fn input_blocked(&self) -> bool {
         self.notice.is_some() || self.phase != LocalPhase::PlayerTurn
     }
 
-    /// Подпись фазы с учётом команды (hot-seat: чей ход).
+    /// Phase caption taking the team into account (hot-seat: whose turn).
     pub fn phase_caption(&self) -> String {
         match self.phase {
             LocalPhase::PlayerTurn => {
@@ -546,7 +546,7 @@ impl LocalGame {
         }
     }
 
-    /// Строка статуса партии (фаза, ход, таймер).
+    /// Match status line (phase, turn, timer).
     pub fn status_line(&self, turn_counter: i32) -> String {
         let timer = if self.setup.timer == 0 {
             String::new()
@@ -573,20 +573,20 @@ impl LocalGame {
     }
 }
 
-/// Что сделал [`App::local_update`] за вызов.
+/// What [`App::local_update`] did per call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LocalUpdate {
-    /// Тик симуляции прошёл.
+    /// The simulation tick ran.
     pub ticked: bool,
-    /// Закрылся ход (человека или ИИ).
+    /// A turn was closed (human or AI).
     pub turn_closed: bool,
-    /// Начался ход компьютера.
+    /// The computer turn started.
     pub ai_started: bool,
-    /// Партия закончилась в этом вызове.
+    /// The match ended in this call.
     pub finished: bool,
 }
 
-/// Имя команды для логов/экрана (`menu_team_names`).
+/// Team name for logs/the screen (`menu_team_names`).
 pub fn team_name(team: TeamId) -> &'static str {
     match team.0 {
         0 => "Red",
@@ -598,24 +598,24 @@ pub fn team_name(team: TeamId) -> &'static str {
 }
 
 impl App {
-    /// Начинает локальную партию (`menu_custom_game_menu` → `GameManager_InitGame`).
+    /// Starts a local match (`menu_custom_game_menu` → `GameManager_InitGame`).
     ///
-    /// Ставит `team_types` из настроек (`TeamKind`), `network_game = false`
-    /// (`Remote_IsNetworkGame`), режим игры, таймеры и условие победы, затем
-    /// выбирает стратегии ИИ (`Ai_SetupStrategy` для каждой компьютерной
-    /// команды — `GameManager_InitGame`) и передаёт первый ход.
+    /// Sets `team_types` from the settings (`TeamKind`), `network_game = false`
+    /// (`Remote_IsNetworkGame`), the game mode, timers and the victory condition, then
+    /// chooses AI strategies (`Ai_SetupStrategy` for each computer
+    /// team — `GameManager_InitGame`) and passes the first turn.
     pub fn start_local_game(&mut self, setup: &LocalSetup) -> Result<(), String> {
         setup.validate()?;
 
-        // `GameConfigMenu` `Done` пишет те же `settings["timer"]`/`["endturn"]`
-        // (`gameconfigmenu.cpp:134-141,273-274`), что показывает и правит
-        // `OptionsMenu`; дальше партия читает их при каждом начале хода
+        // `GameConfigMenu` `Done` writes the same `settings["timer"]`/`["endturn"]`
+        // (`gameconfigmenu.cpp:134-141,273-274`) that `OptionsMenu` shows and edits;
+        // afterwards the match reads them at every turn start
         // (`GameManager_UpdateGui`, `game_manager.cpp:2416-2471`).
         self.preferences.turn_timer = setup.timer.min(i32::MAX as u32) as i32;
         self.preferences.endturn = setup.endturn.min(i32::MAX as u32) as i32;
-        // Имя тоже приходит из настроек (`settings["player_name"]`,
-        // `menu.cpp:1944`): поле на экране настройки пишет его обратно тем же
-        // путём, что `GameConfigMenu` — в `settings`.
+        // The name also comes from the settings (`settings["player_name"]`,
+        // `menu.cpp:1944`): the field on the setup screen writes it back the same
+        // way as `GameConfigMenu` — into `settings`.
         if !setup.player_name.is_empty() {
             self.preferences.player_name = setup.player_name.clone();
         }
@@ -629,12 +629,12 @@ impl App {
         let enemy_halt = self.preferences.enemy_halt;
         let state = self.state_mut();
 
-        // `Remote_IsNetworkGame = false` — локальная партия, а не lockstep.
+        // `Remote_IsNetworkGame = false` — a local match, not lockstep.
         state.network_game = false;
         // `GameManager_InitGame`: `GameManager_FastMovement`/`enemy_halt` —
-        // живые настройки; в симуляции порта вторая — поле состояния.
+        // live settings; in the port simulation the second is a state field.
         state.enemy_halt = enemy_halt;
-        // `GameManager_UpdateHumanPlayerCount`: hot-seat всегда turn-based.
+        // `GameManager_UpdateHumanPlayerCount`: hot-seat is always turn-based.
         state.play_mode = setup.effective_play_mode();
         state.victory_type = setup.victory_type;
         state.victory_limit = setup.victory_limit;
@@ -647,8 +647,8 @@ impl App {
         state.mission_index = 0;
         state.player_team = human;
         // `GameManager_InitGame`: `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN`
-        // (или первая компьютерная команда). В hot-seat из этого следует, что
-        // окно «Begin turn» показывается и первой человеческой команде —
+        // (or the first computer team). In hot-seat it follows that the
+        // «Begin turn» window is shown to the first human team too —
         // `GameManager_PlayerTeam != team` (`game_manager.cpp:3076`, `:2440`).
         if setup.is_hot_seat() {
             state.player_team = TeamId::ALIEN;
@@ -656,8 +656,8 @@ impl App {
         state.active_turn_team = human;
         state.game_state = GameStateType::InGame;
         state.turn_counter = 1;
-        // `new_game` ставит `Player` только первой команде; в hot-seat людей
-        // несколько (`GameManager_InitGame`: тип каждой команды из настроек).
+        // `new_game` sets `Player` only for the first team; in hot-seat there are
+        // several humans (`GameManager_InitGame`: each team's type from the settings).
         for team in setup.human_teams() {
             state.teams[team.0 as usize].team_type = TeamKind::Player;
         }
@@ -668,7 +668,7 @@ impl App {
         state.ai.settings.opponent = setup.opponent;
         state.ai.all_visible = false;
 
-        // `Ai_Init` + `Ai_SetupStrategy` для компьютерных команд
+        // `Ai_Init` + `Ai_SetupStrategy` for computer teams
         // (`GameManager_InitGame`).
         max_core::ai_init(state);
         for team in setup.ai_teams() {
@@ -691,8 +691,8 @@ impl App {
         );
 
         self.local = Some(local);
-        // P3: настройки партии для записи V70 (`SaveFormatHeader`/`IniOptions`),
-        // плюс текущие `IniPreferences` игрока (7 × `signed int`).
+        // P3: match settings for the V70 write (`SaveFormatHeader`/`IniOptions`),
+        // plus the player's current `IniPreferences` (7 × `signed int`).
         let meta =
             crate::saveload::save_meta_for_local_game_with(setup, &self.preferences.to_ini());
         self.state_mut().set_save_meta(meta);
@@ -716,28 +716,28 @@ impl App {
         Ok(())
     }
 
-    /// Продолжает локальную партию из контейнера сохранения (см.
+    /// Continues a local match from a save container (see
     /// [`max_app::session_save`]).
     pub fn set_local_game(&mut self, local: LocalGame) {
         self.local = Some(local);
     }
 
-    /// Текущая локальная партия.
+    /// Current local match.
     pub fn local(&self) -> Option<&LocalGame> {
         self.local.as_ref()
     }
 
-    /// Изменяемая локальная партия.
+    /// Editable local match.
     pub fn local_mut(&mut self) -> Option<&mut LocalGame> {
         self.local.as_mut()
     }
 
-    /// Идёт ли локальная партия.
+    /// Whether a local match is in progress.
     pub fn local_active(&self) -> bool {
         self.local.is_some()
     }
 
-    /// Выход в меню: локальная партия забывается.
+    /// Exit to the menu: the local match is forgotten.
     pub fn leave_local_game(&mut self) {
         self.local = None;
         self.close_build_menu();
@@ -748,8 +748,8 @@ impl App {
         self.hud.clear();
     }
 
-    /// `GameManager_TeamTurnTurnBased` для начала раунда: идём по командам
-    /// от `RED`, пропуская пустые/выбитые; человек — ждём ввод, компьютер —
+    /// `GameManager_TeamTurnTurnBased` for the round start: we go over the teams
+    /// from `RED`, skipping empty/eliminated ones; a human — wait for input, a computer —
     /// `Ai_BeginTurn`.
     fn local_begin_round(&mut self) {
         let mut local = self.local.take().expect("local game must exist");
@@ -759,7 +759,7 @@ impl App {
         self.local_next_team();
     }
 
-    /// Следующая команда раунда (или закрытие раунда).
+    /// Next team of the round (or closing the round).
     fn local_next_team(&mut self) {
         loop {
             let Some(local) = self.local.as_ref() else {
@@ -786,9 +786,9 @@ impl App {
                 continue;
             }
 
-            // `GameManager_ManageEconomy(team)` в начале хода команды.
-            // `GameManager_TeamTurnTurnBased` (`game_manager.cpp:472`): перед
-            // `UpdateGui` команде сбрасывается `finished_turn`.
+            // `GameManager_ManageEconomy(team)` at the start of the team turn.
+            // `GameManager_TeamTurnTurnBased` (`game_manager.cpp:472`): before
+            // `UpdateGui` the team's `finished_turn` is reset.
             self.state_mut().teams[round_team].finished_turn = false;
             self.state_mut().manage_economy(team);
             self.state_mut().active_turn_team = team;
@@ -806,13 +806,13 @@ impl App {
                     0.0
                 } else {
                     // C++: `ini_timer_setting == 0 && player is computer → 45`,
-                    // для человека 0 значит «без таймера».
+                    // for a human 0 means "no timer".
                     setup_timer as f32
                 };
 
-                // `GameManager_UpdateGui`: окно «Begin turn» показывается, если
-                // сменилась человеческая команда (`GameManager_PlayerTeam != team`)
-                // и людей больше одного (`GameManager_HumanPlayerCount`).
+                // `GameManager_UpdateGui`: the «Begin turn» window is shown if
+                // the human team changed (`GameManager_PlayerTeam != team`)
+                // and there is more than one human (`GameManager_HumanPlayerCount`).
                 let previous_player_team = self.state().player_team;
                 let notice =
                     (hot_seat && previous_player_team != team).then(|| TurnNotice::new(team));
@@ -832,17 +832,17 @@ impl App {
                 let hot_seat = local.is_hot_seat();
                 self.local = Some(local);
 
-                // Выделение не переезжает между игроками: иначе новый игрок
-                // приказал бы чужому юниту (`GameManager_UpdateGuiControl`).
+                // The selection does not move between players: otherwise the new player
+                // would order a foreign unit (`GameManager_UpdateGuiControl`).
                 self.hud.clear_interaction();
-                // Сообщение энергетики (`ProductionManager::DrawResourceMessage`)
-                // переустанавливается после смены хода: `clear_interaction`
-                // снимает `hint` вместе с выделением.
+                // The power message (`ProductionManager::DrawResourceMessage`)
+                // is re-established after the turn change: `clear_interaction`
+                // removes `hint` together with the selection.
                 if let Some(message) = self.state().industry_message.clone() {
                     self.hud.set_hint(message);
                 }
-                // Попап команд принадлежит прежнему выделению
-                // (`GameManager_DeinitPopupButtons` на смене хода).
+                // The command popup belongs to the previous selection
+                // (`GameManager_DeinitPopupButtons` on the turn change).
                 self.close_unit_menu();
                 self.focus_player();
 
@@ -863,18 +863,18 @@ impl App {
                 return;
             }
 
-            // Компьютерная команда: `Ai_BeginTurn(team)`.
+            // Computer team: `Ai_BeginTurn(team)`.
             self.state_mut().ai_begin_turn(team);
 
             let mut local = self.local.take().expect("local game");
             local.phase = LocalPhase::AiTurn(team);
             local.active_team = team;
             local.ai_ticks = 0;
-            // `GameManager_UpdateGui` для `TEAM_TYPE_COMPUTER`:
+            // `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER`:
             // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` —
-            // таймер хода ИИ стартует с этого значения (панель показывает его
-            // тем же `GameManager_DrawTurnTimer`), поэтому он виден и на ходе
-            // компьютера (в QA — 00:45).
+            // the AI turn timer starts from this value (the panel shows it
+            // with the same `GameManager_DrawTurnTimer`), so it is visible also during the
+            // computer turn (in QA — 00:45).
             local.timer_left = local.setup.endturn.max(45) as f32;
             self.local = Some(local);
             self.hud.push_log(format!(
@@ -886,24 +886,24 @@ impl App {
         }
     }
 
-    /// `GameManager_TeamTurnFinish`: проверка победы, следующий раунд.
+    /// `GameManager_TeamTurnFinish`: victory check, the next round.
     fn local_finish_round(&mut self) {
-        // C++ считает `WinLoss_Status` **до** `menu_check_end_game_conditions` и
-        // передаёт его на экран; `finish_turn` внутри делает ту же проверку.
+        // C++ computes `WinLoss_Status` **before** `menu_check_end_game_conditions` and
+        // passes it to the screen; `finish_turn` does the same check inside.
         let status = victory::evaluate_status(self.state(), self.state().turn_counter);
         let turn_counter = self.state().turn_counter;
-        // P4: замер `GameManager_TeamTurnFinish` (победа/поражение, очки,
-        // производство всех команд). Замер не меняет порядок вызовов —
-        // `finish_turn` вызывается ровно один раз в той же точке.
+        // P4: measurement of `GameManager_TeamTurnFinish` (victory/defeat, points,
+        // production of all teams). The measurement does not change the call order —
+        // `finish_turn` is called exactly once at the same point.
         let over = {
             let _profile = crate::profile::finish_turn_scope(turn_counter);
 
             self.state_mut().finish_turn()
         };
 
-        // События хода производства (`GameManager_ReportNewUnitsMessage`):
-        // только для локального игрока, чтобы журнал не забивался чужими
-        // заводами.
+        // Production turn events (`GameManager_ReportNewUnitsMessage`):
+        // only for the local player, so that the log is not flooded with foreign
+        // factories.
         if !over {
             let player = self.state().player_team;
             let events = self.state_mut().take_production_events();
@@ -945,7 +945,7 @@ impl App {
                 }
             }
 
-            // `ResearchMenu_NewTurn`: завершённые темы (P6).
+            // `ResearchMenu_NewTurn`: completed topics (P6).
             let research = self.state_mut().take_research_events();
             for event in research.iter().filter(|event| event.team == player) {
                 self.hud.push_log(format!(
@@ -955,9 +955,9 @@ impl App {
             }
 
             // `ProductionManager::DrawResourceMessage` (`production_manager.cpp:792-804`):
-            // «Adjustments made: …» над картой (`MESSAGE_BOX_NOTICE`).
-            // Сообщение живёт в состоянии до конца раунда и переустанавливается
-            // при входе в ход человека (смена хода чистит `hint`).
+            // «Adjustments made: …» over the map (`MESSAGE_BOX_NOTICE`).
+            // The message lives in the state until the end of the round and is re-established
+            // on entering the human turn (the turn change clears `hint`).
             if let Some(message) = self.state().industry_message.clone() {
                 self.hud.set_hint(message);
             }
@@ -999,17 +999,17 @@ impl App {
 
         self.hud
             .push_log(format!("Turn {} begins", self.state().turn_counter));
-        // C++ `GameManager_UpdateGui(team, …, enable_autosave = true)` для первой
-        // команды раунда: автосейв (слот 10) при включённом `SETUP.auto_save`.
+        // C++ `GameManager_UpdateGui(team, …, enable_autosave = true)` for the first
+        // team of the round: autosave (slot 10) with `SETUP.auto_save` enabled.
         self.autosave();
         self.local_next_team();
     }
 
-    /// End Turn человека: пакет `06` (`GameManager_RefreshOrders` →
-    /// `Remote_SendNetPacket_06`) и переход к следующей команде раунда.
+    /// Human End Turn: packet `06` (`GameManager_RefreshOrders` →
+    /// `Remote_SendNetPacket_06`) and the transition to the next team of the round.
     ///
-    /// Пока открыто окно перехода хода (`notice`), ход не закрывается: сначала
-    /// игрок подтверждает «Begin turn» (`DialogMenu::Run` в C++ стоит в цикле).
+    /// While the turn-transition window is open (`notice`), the turn is not closed: first
+    /// the player confirms «Begin turn» (`DialogMenu::Run` in C++ loops).
     pub fn local_end_turn(&mut self) {
         let Some(local) = self.local.as_ref() else {
             return;
@@ -1036,12 +1036,12 @@ impl App {
         self.local_next_team();
     }
 
-    /// Подтверждение окна перехода хода M-HS (`DialogMenu`: клик по `OK`,
-    /// Enter или Esc). Возвращает `true`, если окно было открыто.
+    /// Confirmation of the M-HS turn-transition window (`DialogMenu`: a click on `OK`,
+    /// Enter or Esc). Returns `true` if the window was open.
     ///
-    /// После закрытия начинается настоящий ход команды: таймер
-    /// (`GameManager_UpdateTurnTimer`) запускается только теперь — ровно как в
-    /// `GameManager_UpdateGui`, где окно показывается до `IsTurnTimerActive`.
+    /// After closing, the real team turn begins: the timer
+    /// (`GameManager_UpdateTurnTimer`) starts only now — exactly as in
+    /// `GameManager_UpdateGui`, where the window is shown before `IsTurnTimerActive`.
     pub fn local_acknowledge_turn(&mut self) -> bool {
         let Some(local) = self.local.as_mut() else {
             return false;
@@ -1057,19 +1057,19 @@ impl App {
         true
     }
 
-    /// Окно перехода хода, если оно открыто.
+    /// The turn-transition window, if it is open.
     pub fn local_notice(&self) -> Option<&TurnNotice> {
         self.local.as_ref().and_then(|local| local.notice())
     }
 
-    /// Приказы/выделение заблокированы (ход ИИ, переход, окно перехода).
+    /// Orders/selection are blocked (AI turn, transition, transition window).
     pub fn local_input_blocked(&self) -> bool {
         self.local
             .as_ref()
             .is_some_and(|local| local.input_blocked())
     }
 
-    /// Пауза/продолжение. Возвращает новое состояние (`true` — на паузе).
+    /// Pause/resume. Returns the new state (`true` — paused).
     pub fn local_toggle_pause(&mut self) -> bool {
         let Some(local) = self.local.as_mut() else {
             return false;
@@ -1080,23 +1080,23 @@ impl App {
         paused
     }
 
-    /// Один кадр локальной партии: тик симуляции, таймер, ходы ИИ.
+    /// One frame of the local match: simulation tick, timer, AI turns.
     ///
-    /// `dt` — секунды с прошлого кадра (таймер хода и видимое движение юнитов).
-    /// Детерминизм симуляции от `dt` не зависит: тики идут по одному за кадр,
-    /// как в `GameManager_ProcessTick`.
+    /// `dt` — seconds since the last frame (the turn timer and the visible unit movement).
+    /// Simulation determinism does not depend on `dt`: ticks go one per frame,
+    /// as in `GameManager_ProcessTick`.
     ///
-    /// Пока открыто окно перехода хода (M-HS), симуляция не тикает (в C++ цикл
-    /// стоит в `DialogMenu::Run()`), но визуальный маршрут уже сдвинутых юнитов
-    /// доигрывается — иначе движение обрывалось бы на смене хода.
+    /// While the turn-transition window is open (M-HS), the simulation does not tick (in C++
+    /// the loop sits in `DialogMenu::Run()`), but the visual route of the already moved units
+    /// finishes — otherwise movement would break on the turn change.
     pub fn local_update(&mut self, dt: f32) -> LocalUpdate {
         let mut update = LocalUpdate::default();
 
         let Some(local) = self.local.as_ref() else {
             return update;
         };
-        // `OptionsMenu::Run` в C++ блокирует игровой цикл: пока диалог
-        // `Preferences` открыт, симуляция и таймер хода стоят.
+        // `OptionsMenu::Run` in C++ blocks the game loop: while the `Preferences`
+        // dialog is open, the simulation and the turn timer are stopped.
         if self.preferences_dialog.is_some() {
             return update;
         }
@@ -1111,27 +1111,27 @@ impl App {
             self.update_visual_units(dt);
             return update;
         }
-        // P4: время кадра локальной партии (`MAX_TICK_PROFILE=1`). `dt` не
-        // влияет на симуляцию — тик по-прежнему один за кадр.
+        // P4: frame time of the local match (`MAX_TICK_PROFILE=1`). `dt` does not
+        // affect the simulation — still one tick per frame.
         let _profile = crate::profile::local_update_scope();
 
-        // Краевой скролл камеры (`Preferences`: `click_scroll`/`quick_scroll`)
-        // идёт тем же кадром, что и игра: `GameManager_ProcessInput` →
+        // Edge camera scrolling (`Preferences`: `click_scroll`/`quick_scroll`)
+        // goes in the same frame as the game: `GameManager_ProcessInput` →
         // `GameManager_ScrollMainMapView`.
         self.update_scroll(dt);
 
         match phase {
             LocalPhase::PlayerTurn => {
-                // `GameManager_AutoSelectNext` после завершения приказа
-                // (`UnitInfo::MoveFinished`): снимок приказа — до тика.
+                // `GameManager_AutoSelectNext` after an order completes
+                // (`UnitInfo::MoveFinished`): the order snapshot — before the tick.
                 let before = self.selected_order_snapshot();
                 self.state.tick();
-                // Звуки боя этого тика (`UnitInfo::PrepareFire`/
-                // `StartExplosion`): очередь забирает `main.rs` (`AudioPlayer`).
+                // Combat sounds of this tick (`UnitInfo::PrepareFire`/
+                // `StartExplosion`): the queue is taken by `main.rs` (`AudioPlayer`).
                 self.collect_combat_sounds();
-                // `App::tick` считает тики для диагностики/дайджеста; локальный
-                // цикл тикает здесь же, поэтому счётчик обязан расти и в окне,
-                // иначе трасса `MAX_DEBUG_INPUT` показывает вечный `tick 0`.
+                // `App::tick` counts ticks for diagnostics/the digest; the local
+                // loop ticks right here, so the counter must grow in the window too,
+                // otherwise the `MAX_DEBUG_INPUT` trace shows an eternal `tick 0`.
                 self.ticks += 1;
                 self.auto_select_after_tick(before);
                 self.follow_selected_unit();
@@ -1159,8 +1159,8 @@ impl App {
             LocalPhase::AiTurn(team) => {
                 let before = self.selected_order_snapshot();
                 self.state.tick();
-                // Бой ИИ слышен игроку так же, как свой (`PlaySfx` в C++ не
-                // зависит от владельца юнита) — очередь кадра.
+                // AI combat is heard by the player the same as own (`PlaySfx` in C++ does not
+                // depend on the unit owner) — the frame queue.
                 self.collect_combat_sounds();
                 self.ticks += 1;
                 self.auto_select_after_tick(before);
@@ -1173,9 +1173,9 @@ impl App {
                     local.ai_ticks + 1 >= LOCAL_AI_TICK_LIMIT
                 };
 
-                // `AiPlayer::CheckEndTurn` тикает сам (`GameState::tick` →
-                // `ai_check_end_turn`); здесь читаем его счётчик повторов:
-                // C++ `GameManager_RefreshOrders` на `> 120` закрывает ход.
+                // `AiPlayer::CheckEndTurn` ticks itself (`GameState::tick` →
+                // `ai_check_end_turn`); here we read its retry counter:
+                // C++ `GameManager_RefreshOrders` closes the turn at `> 120`.
                 let finished = self
                     .state()
                     .ai
@@ -1187,10 +1187,10 @@ impl App {
 
                 if let Some(local) = self.local.as_mut() {
                     local.ai_ticks += 1;
-                    // `GameManager_SyncTurnTimer` тикает и на ходе ИИ —
-                    // `GameManager_TurnTimerValue` уменьшается на секунды
-                    // (`game_manager.cpp:5033-5063`). Истечение таймера ход ИИ
-                    // не закрывает: его закрывает `AiPlayer::CheckEndTurn`
+                    // `GameManager_SyncTurnTimer` ticks during the AI turn too —
+                    // `GameManager_TurnTimerValue` decreases by seconds
+                    // (`game_manager.cpp:5033-5063`). Timer expiry does not close the AI turn:
+                    // it is closed by `AiPlayer::CheckEndTurn`
                     // (`GameManager_RefreshOrders`).
                     local.timer_left = (local.timer_left - dt.max(0.0)).max(0.0);
                 }
@@ -1201,9 +1201,9 @@ impl App {
                         team_name(team),
                         LOCAL_AI_TICK_LIMIT
                     ));
-                    // Диагностика «зависшего» хода: `orders_pending`/
-                    // `tasks_pending` объясняют, почему `Ai_CheckEndTurn` не
-                    // вызывался (снаряд/взрыв в `Destroy`, движущийся юнит).
+                    // Diagnostics of a "hung" turn: `orders_pending`/
+                    // `tasks_pending` explain why `Ai_CheckEndTurn` was not
+                    // called (a projectile/explosion in `Destroy`, a moving unit).
                     tracing::warn!(
                         "AI turn timeout: team={team:?} orders_pending={} \
                          tasks_pending={} counter={} finished_turn={}",
@@ -1237,8 +1237,8 @@ impl App {
                 }
             }
             LocalPhase::Advancing => {
-                // Визуальный маршрут проходит и в фазе перехода между
-                // командами, пока не открыто окно перехода хода.
+                // The visual route also runs in the transition phase between
+                // teams, until the turn-transition window opens.
                 self.update_visual_units(dt);
                 self.local_next_team();
                 update.ai_started = matches!(
@@ -1258,65 +1258,65 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
-// РЎРѕС…СЂР°РЅРµРЅРёРµ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё
+// Local match saving
 // ---------------------------------------------------------------------------
 
-/// РњР°РіРёСЏ РєРѕРЅС‚РµР№РЅРµСЂР° Р»РѕРєР°Р»СЊРЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ (`M.A.X. Local Session`).
+/// The magic of the local session container (`M.A.X. Local Session`).
 pub const LOCAL_SAVE_MAGIC: [u8; 4] = *b"MXLS";
-/// Версия контейнера.
+/// Container version.
 ///
-/// `2` — добавлен флаг `LocalSetup::hot_seat` (M-HS); `3` — кланы команд;
-/// `4` — имена команд, переименованных в игре (`LocalGame::team_names`).
-/// Файлы версий 1 отклоняются, контейнер локальный и переживает только одну
-/// сборку.
+/// `2` — added the `LocalSetup::hot_seat` flag (M-HS); `3` — team clans;
+/// `4` — team names renamed in game (`LocalGame::team_names`).
+/// Version 1 files are rejected; the container is local and survives only one
+/// build.
 pub const LOCAL_SAVE_VERSION: u16 = 4;
-/// РРјСЏ С„Р°Р№Р»Р° Р±С‹СЃС‚СЂРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё.
+/// Local match quick-save file name.
 pub const LOCAL_SAVE_FILE: &str = "max-local.mxs";
 
-/// РљРѕРЅС‚РµР№РЅРµСЂ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё: РЅР°СЃС‚СЂРѕР№РєРё + С„Р°Р·Р° + СЃРЅРёРјРѕРє СЃРѕСЃС‚РѕСЏРЅРёСЏ.
+/// Local match save container: settings + phase + state snapshot.
 ///
-/// # РџРѕС‡РµРјСѓ РЅРµ V70
+/// # Why not V70
 ///
-/// V70 **С‡РёС‚Р°РµС‚СЃСЏ** (`max_core::save::SaveFile::parse` в†’ `GameState::from_save`,
-/// РІ С‚РѕРј С‡РёСЃР»Рµ РІ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё вЂ” [`App::start_local_game_from_save`]), РЅРѕ
-/// Р·Р°РїРёСЃРё `GameState в†’ SaveFile` РІ РїРѕСЂС‚Рµ РЅРµС‚: V70 С…СЂР°РЅРёС‚ РѕР±СЉРµРєС‚РЅРѕРµ РґРµСЂРµРІРѕ
-/// (`SaveUnit` + `HeatMap` + `AiPlayerState` + С…СЌС€Рё), РєРѕС‚РѕСЂРѕРіРѕ РІ `GameState`
-/// РЅРµС‚ РІ С‚Р°РєРѕРј РІРёРґРµ. РљРѕРЅС‚РµР№РЅРµСЂ `MXLS` РєР»Р°РґС‘С‚ `GameState::snapshot_bytes()`
-/// (РєР°РЅРѕРЅРёС‡РµСЃРєРёР№ РґР°Р№РґР¶РµСЃС‚ РІСЃРµР№ СЃРёРјСѓР»СЏС†РёРё) Рё РјРµС‚Р°РґР°РЅРЅС‹Рµ РїР°СЂС‚РёРё; РѕРЅ РїСЂРѕРІРµСЂСЏРµС‚
-/// С†РµР»РѕСЃС‚РЅРѕСЃС‚СЊ СЃРѕС…СЂР°РЅРµРЅРёСЏ (CRC СЃРЅРёРјРєР°), РЅРѕ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ СЃРёРјСѓР»СЏС†РёРё РёР· РЅРµРіРѕ
-/// С‚СЂРµР±СѓРµС‚ РґРµСЃРµСЂРёР°Р»РёР·Р°С‚РѕСЂР° СЃРѕСЃС‚РѕСЏРЅРёСЏ вЂ” РѕС‚РєСЂС‹С‚С‹Р№ РїСѓРЅРєС‚ (`max-brh-docs/plan-modes.md`).
+/// V70 **is readable** (`max_core::save::SaveFile::parse` → `GameState::from_save`,
+/// including in a local match — [`App::start_local_game_from_save`]), but
+/// there is no `GameState → SaveFile` write in the port: V70 stores an object tree
+/// (`SaveUnit` + `HeatMap` + `AiPlayerState` + hashes) that `GameState`
+/// does not have in that form. The `MXLS` container stores `GameState::snapshot_bytes()`
+/// (the canonical digest of the whole simulation) and the match metadata; it checks
+/// the save integrity (snapshot CRC), but restoring the simulation from it
+/// requires a state deserializer — an open item (`max-brh-docs/plan-modes.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalSave {
-    /// РќР°СЃС‚СЂРѕР№РєРё РїР°СЂС‚РёРё.
+    /// Match settings.
     pub setup: LocalSetup,
-    /// Р¤Р°Р·Р°.
+    /// Phase.
     pub phase: LocalPhase,
-    /// РђРєС‚РёРІРЅР°СЏ РєРѕРјР°РЅРґР°.
+    /// Active team.
     pub active_team: TeamId,
-    /// РћСЃС‚Р°С‚РѕРє С‚Р°Р№РјРµСЂР° РІ РјРёР»Р»РёСЃРµРєСѓРЅРґР°С….
+    /// Remaining timer in milliseconds.
     pub timer_left_ms: u32,
-    /// РџР°СѓР·Р°.
+    /// Pause.
     pub paused: bool,
-    /// РРЅРґРµРєСЃ РєРѕРјР°РЅРґС‹ РІ СЂР°СѓРЅРґРµ.
+    /// Team index in the round.
     pub round_team: u8,
-    /// РўРёРєРѕРІ РІ С‚РµРєСѓС‰РµРј С…РѕРґСѓ РР.
+    /// Ticks in the current AI turn.
     pub ai_ticks: u32,
-    /// РџР°СЂС‚РёСЏ РѕРєРѕРЅС‡РµРЅР°.
+    /// The match is over.
     pub finished: bool,
-    /// РџРѕР±РµРґР° С‡РµР»РѕРІРµРєР°.
+    /// Human victory.
     pub victory: bool,
-    /// РќРѕРјРµСЂ С…РѕРґР°.
+    /// Turn number.
     pub turn_counter: i32,
-    /// РЎРЅРёРјРѕРє СЃРѕСЃС‚РѕСЏРЅРёСЏ (`GameState::snapshot_bytes`).
+    /// State snapshot (`GameState::snapshot_bytes`).
     pub snapshot: Vec<u8>,
-    /// CRC16 СЃРЅРёРјРєР° (`max_core::crc::crc16`).
+    /// Snapshot CRC16 (`max_core::crc::crc16`).
     pub snapshot_crc: u16,
-    /// Имена команд из Preferences (`LocalGame::team_names`).
+    /// Team names from Preferences (`LocalGame::team_names`).
     pub team_names: [Option<String>; LOCAL_TEAM_COUNT],
 }
 
 impl LocalSave {
-    /// РЎРѕР±РёСЂР°РµС‚ РєРѕРЅС‚РµР№РЅРµСЂ РёР· С‚РµРєСѓС‰РµРіРѕ СЃРѕСЃС‚РѕСЏРЅРёСЏ РїСЂРёР»РѕР¶РµРЅРёСЏ.
+    /// Assembles the container from the current application state.
     pub fn capture(app: &App) -> Option<Self> {
         let local = app.local()?;
         let snapshot = app.state().snapshot_bytes();
@@ -1339,7 +1339,7 @@ impl LocalSave {
         })
     }
 
-    /// РЎРµСЂРёР°Р»РёР·СѓРµС‚ РєРѕРЅС‚РµР№РЅРµСЂ РІ Р±Р°Р№С‚С‹.
+    /// Serializes the container into bytes.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64 + self.snapshot.len());
 
@@ -1366,7 +1366,7 @@ impl LocalSave {
         out.extend(self.setup.team_clans.iter().map(|clan| *clan as u8));
         out.push(u8::from(self.setup.hot_seat));
         out.extend_from_slice(&self.setup.seed.to_le_bytes());
-        // v4: имена команд (`LocalGame::team_names`).
+        // v4: team names (`LocalGame::team_names`).
         for name in &self.team_names {
             match name {
                 Some(name) => {
@@ -1377,7 +1377,7 @@ impl LocalSave {
             }
         }
 
-        // С„Р°Р·Р°
+        // phase
         match self.phase {
             LocalPhase::PlayerTurn => out.push(0),
             LocalPhase::AiTurn(team) => {
@@ -1403,7 +1403,7 @@ impl LocalSave {
         out
     }
 
-    /// Р Р°Р·Р±РёСЂР°РµС‚ РєРѕРЅС‚РµР№РЅРµСЂ Рё РїСЂРѕРІРµСЂСЏРµС‚ CRC СЃРЅРёРјРєР°.
+    /// Parses the container and checks the snapshot CRC.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let mut reader = SaveReader::new(bytes);
 
@@ -1524,7 +1524,7 @@ impl LocalSave {
         })
     }
 
-    /// РћСЃС‚Р°С‚РѕРє С‚Р°Р№РјРµСЂР° РІ СЃРµРєСѓРЅРґР°С….
+    /// Remaining timer in seconds.
     pub fn timer_left(&self) -> f32 {
         self.timer_left_ms as f32 / 1000.0
     }
@@ -1536,7 +1536,7 @@ fn put_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(bytes);
 }
 
-/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ little-endian С‡РёС‚Р°С‚РµР»СЊ РєРѕРЅС‚РµР№РЅРµСЂР°.
+/// Minimal little-endian container reader.
 struct SaveReader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -1583,11 +1583,11 @@ impl<'a> SaveReader<'a> {
 }
 
 impl App {
-    /// РќР°С‡РёРЅР°РµС‚ Р»РѕРєР°Р»СЊРЅСѓСЋ РїР°СЂС‚РёСЋ **РёР· V70-СЃРµР№РІР°** (`SaveLoad_Load` + Р»РѕРєР°Р»СЊРЅС‹Р№ С†РёРєР»).
+    /// Starts a local match **from a V70 save** (`SaveLoad_Load` + the local loop).
     ///
-    /// Р—Р°РіСЂСѓР·РєР° V70 РІ Р»РѕРєР°Р»СЊРЅРѕРј СЂРµР¶РёРјРµ: СЃРѕСЃС‚РѕСЏРЅРёРµ РёР· С„Р°Р№Р»Р°, `network_game = false`,
-    /// РєРѕРјР°РЅРґС‹ Рё `player_team` вЂ” РёР· СЃРµР№РІР°, СЂРµР¶РёРј РёРіСЂС‹ Рё С‚Р°Р№РјРµСЂС‹ вЂ” РёР· РЅР°СЃС‚СЂРѕРµРє
-    /// СЌРєСЂР°РЅР°. РџРѕСЃР»Рµ Р·Р°РіСЂСѓР·РєРё РёРґС‘С‚ РѕР±С‹С‡РЅС‹Р№ С†РёРєР» M-SP (С…РѕРґС‹ РР, End Turn).
+    /// Loading V70 in local mode: the state from the file, `network_game = false`,
+    /// the teams and `player_team` — from the save, the game mode and timers — from the setup
+    /// screen. After loading the usual M-SP loop runs (AI turns, End Turn).
     pub fn start_local_game_from_save(
         &mut self,
         setup: &LocalSetup,
@@ -1596,17 +1596,17 @@ impl App {
         self.load_save_bytes(bytes)
             .map_err(|error| format!("V70 load: {error:#}"))?;
 
-        // `SaveLoad_Load` (`saveload.cpp:920-934`): `IniPreferences` файла
-        // применяются к настройкам игрока — `effects` снова управляет кадрами.
+        // `SaveLoad_Load` (`saveload.cpp:920-934`): the file's `IniPreferences`
+        // are applied to the player settings — `effects` controls the frames again.
         let saved_preferences = self.state().save_meta.ini_preferences;
         self.preferences.apply_ini(saved_preferences);
-        // `SaveLoad_Load` (`saveload.cpp:1175-1176`): таймеры из файла снова
-        // становятся `settings["timer"]`/`["endturn"]`.
+        // `SaveLoad_Load` (`saveload.cpp:1175-1176`): the timers from the file become
+        // `settings["timer"]`/`["endturn"]` again.
         let saved_timer = self.state().save_meta.ini_options.turn_timer.max(0);
         let saved_endturn = self.state().save_meta.ini_options.endturn.max(0);
         self.preferences.turn_timer = saved_timer;
         self.preferences.endturn = saved_endturn;
-        // `settings`-настройки, которые читает симуляция (`enemy_halt`).
+        // `settings` settings the simulation reads (`enemy_halt`).
         self.state_mut().enemy_halt = self.preferences.enemy_halt;
 
         let state = self.state_mut();
@@ -1616,7 +1616,7 @@ impl App {
         state.victory_limit = setup.victory_limit;
         state.ai.settings.opponent = setup.opponent;
 
-        // РРіСЂР°СЋС‰РёРµ РєРѕРјР°РЅРґС‹ вЂ” РёР· СЃРµР№РІР°; `player_team` СЃРµР№РІР° вЂ” С‡РµР»РѕРІРµРє.
+        // Playing teams — from the save; the save's `player_team` — human.
         let mut team_types = [TeamKind::None; LOCAL_TEAM_COUNT];
         for (index, slot) in team_types.iter_mut().enumerate() {
             *slot = match state.teams[index].team_type {
@@ -1649,7 +1649,7 @@ impl App {
         loaded.team_types = team_types;
         loaded.timer = saved_timer as u32;
         loaded.endturn = saved_endturn as u32;
-        // Сейв с несколькими человеческими командами играется как hot-seat.
+        // A save with several human teams is played as hot-seat.
         loaded.hot_seat = loaded.is_hot_seat();
 
         self.state_mut().mission_category = if loaded.is_hot_seat() {
@@ -1657,9 +1657,9 @@ impl App {
         } else {
             MissionCategory::Custom
         };
-        // P3: если настройки экрана перекрыли режим/победу из файла, приводим
-        // `SaveMeta` к тому же виду — иначе повторный сейв «поехал» бы
-        // относительно только что загруженного.
+        // P3: if the screen settings overrode the mode/victory from the file, we bring
+        // `SaveMeta` to the same form — otherwise a repeated save would "drift"
+        // relative to the just loaded one.
         {
             let state = self.state_mut();
             let meta = &mut state.save_meta;
@@ -1687,12 +1687,12 @@ impl App {
         Ok(())
     }
 
-    /// РЎРѕС…СЂР°РЅРµРЅРёРµ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё РІ Р±Р°Р№С‚С‹ РєРѕРЅС‚РµР№РЅРµСЂР° `MXLS`.
+    /// Saves the local match into the bytes of the `MXLS` container.
     pub fn local_save_bytes(&self) -> Option<Vec<u8>> {
         LocalSave::capture(self).map(|save| save.encode())
     }
 
-    /// Р—Р°РїРёСЃСЊ Р»РѕРєР°Р»СЊРЅРѕР№ РїР°СЂС‚РёРё РІ С„Р°Р№Р» (`.mxs`).
+    /// Writes the local match to a file (`.mxs`).
     pub fn write_local_save(&self, path: impl AsRef<std::path::Path>) -> Result<usize, String> {
         let bytes = self
             .local_save_bytes()
@@ -1702,7 +1702,7 @@ impl App {
         Ok(bytes.len())
     }
 
-    /// Р§С‚РµРЅРёРµ Рё РїСЂРѕРІРµСЂРєР° РєРѕРЅС‚РµР№РЅРµСЂР° Р»РѕРєР°Р»СЊРЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ.
+    /// Reading and checking the local save container.
     pub fn read_local_save(path: impl AsRef<std::path::Path>) -> Result<LocalSave, String> {
         let bytes = std::fs::read(path.as_ref())
             .map_err(|error| format!("read {}: {error}", path.as_ref().display()))?;

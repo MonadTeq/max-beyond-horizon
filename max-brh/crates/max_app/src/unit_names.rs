@@ -1,18 +1,18 @@
-//! User-Friendly Name (UFN) типов юнитов — слой представления.
+//! User-Friendly Name (UFN) of unit types — the presentation layer.
 //!
-//! Решение владельца Ф0 п.4 (`max-brh-docs/development/PLAN-refactor.md` §3):
-//! UFN-строки **не** входят в `max_core` — там только ресурсный токен
-//! ([`UnitType::tag`]). Таблица UFN — данные приложения:
-//! [`UNIT_NAMES_JSON`] (`crates/max_app/data/unit_names.json`), ключ — токен.
+//! Owner decision, phase 0 item 4 (`max-brh-docs/development/PLAN-refactor.md` §3):
+//! UFN strings are **not** part of `max_core` — only the resource token lives there
+//! ([`UnitType::tag`]). The UFN table is application data:
+//! [`UNIT_NAMES_JSON`] (`crates/max_app/data/unit_names.json`), the key is the token.
 //!
-//! Канон значений — `max-brh-docs/unit-name-review.md`, колонка
-//! «User-Friendly Name» (английская строка, как в оригинальном мануале/игре).
-//! Покрыты 70 юнитов/зданий/alien-типов; 23 не-юнита (эффекты, снаряды, следы,
-//! обломки, декорации, `MASTER_BUILDER`, `HARVSTER`, `WALDO`) в интерфейсе игры
-//! не отображаются — для них [`unit_user_friendly_name`] возвращает `tag()`.
+//! The canon of values is `max-brh-docs/unit-name-review.md`, column
+//! «User-Friendly Name» (an English string, as in the original manual/game).
+//! 70 units/buildings/alien types are covered; 23 non-units (effects, projectiles, trails,
+//! debris, decorations, `MASTER_BUILDER`, `HARVSTER`, `WALDO`) are not shown in the game
+//! UI — for them [`unit_user_friendly_name`] returns `tag()`.
 //!
 //! C++: `ResourceManager_GetUnit(...).GetSingularName()`/`GetPluralName()`
-//! (`resourcetable.hpp`, ресурс `SC_UNITS`); строки — `assets/language.json`.
+//! (`resourcetable.hpp`, resource `SC_UNITS`); the strings are `assets/language.json`.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -20,31 +20,31 @@ use std::sync::OnceLock;
 use max_core::enums::UnitType;
 use serde::Deserialize;
 
-/// JSON-ресурс UFN (70 записей; генерируется/сверяется по канону вручную).
+/// UFN JSON resource (70 records; generated/verified against the canon manually).
 pub const UNIT_NAMES_JSON: &str = include_str!("../data/unit_names.json");
 
-/// Содержимое [`UNIT_NAMES_JSON`]: метаданные (`$comment`/`$nonUnits`) и таблица
-/// «токен → UFN».
+/// Contents of [`UNIT_NAMES_JSON`]: metadata (`$comment`/`$nonUnits`) and the
+/// «token → UFN» table.
 #[derive(Debug, Default, Deserialize)]
 struct UnitNamesFile {
-    /// Токен [`UnitType::tag`] → User-Friendly Name.
+    /// [`UnitType::tag`] token → User-Friendly Name.
     #[serde(default)]
     units: HashMap<String, String>,
 }
 
-/// Разобранная таблица (единожды; ошибка разбора — пустая таблица).
+/// Parsed table (once; a parse error yields an empty table).
 fn unit_names() -> &'static UnitNamesFile {
     static FILE: OnceLock<UnitNamesFile> = OnceLock::new();
 
     FILE.get_or_init(|| serde_json::from_str::<UnitNamesFile>(UNIT_NAMES_JSON).unwrap_or_default())
 }
 
-/// User-Friendly Name типа — строка для интерфейса игры.
+/// User-Friendly Name of a type — the string for the game UI.
 ///
 /// `GoldRefinery` → `"Gold Refinery"`, `MiningStation` → `"Mining Station"`.
-/// Для 23 не-юнитов (эффекты/декорации) записи нет — возвращается
-/// [`UnitType::tag`] (`"LNDEXPLD"`, `"WALDO"`, …), чтобы функция была тотальной
-/// и вызов из отладочного UI никогда не показывал пустую строку.
+/// For the 23 non-units (effects/decorations) there is no record — it returns
+/// [`UnitType::tag`] (`"LNDEXPLD"`, `"WALDO"`, …) so that the function is total
+/// and a call from the debug UI never shows an empty string.
 pub fn unit_user_friendly_name(unit: UnitType) -> &'static str {
     unit_names()
         .units
@@ -56,8 +56,8 @@ pub fn unit_user_friendly_name(unit: UnitType) -> &'static str {
 mod tests {
     use super::*;
 
-    /// 23 не-юнита: эффекты, снаряды/следы, обломки/декорации, служебные типы.
-    /// Мануал их не описывает, в интерфейсе они не отображаются (UFN нет).
+    /// 23 non-units: effects, projectiles/trails, debris/decorations, service types.
+    /// The manual does not describe them, they are not shown in the UI (no UFN).
     const NON_UNITS: [UnitType; 23] = [
         UnitType::LargeRubble,
         UnitType::SmallRubble,
@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(table.units.len(), 70);
         assert_eq!(NON_UNITS.len() + table.units.len(), UnitType::COUNT);
 
-        // Каждый ключ — токен существующего типа (без «висячих» записей).
+        // Every key is a token of an existing type (no "dangling" records).
         for token in table.units.keys() {
             assert!(
                 UnitType::ALL.iter().any(|unit_type| unit_type.tag() == token),
@@ -154,8 +154,8 @@ mod tests {
             );
         }
 
-        // Юниты: запись есть, UFN непустая (`Awac` — исключение по канону:
-        // его User-Friendly Name «AWAC» совпадает с токеном `AWAC`).
+        // Units: a record exists, the UFN is non-empty (`Awac` is a canon exception:
+        // its User-Friendly Name «AWAC» coincides with the `AWAC` token).
         for unit_type in UnitType::ALL {
             if NON_UNITS.contains(unit_type) {
                 continue;
@@ -169,7 +169,7 @@ mod tests {
             assert!(!name.is_empty(), "{unit_type:?}: пустая UFN");
         }
 
-        // Не-юниты: записи нет, функция отдаёт tag().
+        // Non-units: no record, the function returns tag().
         for unit_type in NON_UNITS {
             assert!(
                 !table.units.contains_key(unit_type.tag()),

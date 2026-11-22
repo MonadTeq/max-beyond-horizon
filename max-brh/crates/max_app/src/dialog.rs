@@ -1,27 +1,27 @@
-//! Диалог `DialogMenu` — порт `dialogmenu.cpp` (окно `HELPFRAM` + `OK`).
+//! `DialogMenu` dialog — a port of `dialogmenu.cpp` (the `HELPFRAM` window + `OK`).
 //!
-//! В C++ `DialogMenu` — универсальное модальное окно с текстом:
-//! `PauseMenu_Menu` (`menu.cpp:1747`) открывает его с `_(f9bb)` («Game Paused.
-//! Click OK to continue.») по `Alt+P` (`GNW_KB_KEY_LALT_P`,
-//! `game_manager.cpp:5542`), а `DialogMenu_Menu(_(4556))` — для предупреждения о
-//! конце игры.
+//! In C++ `DialogMenu` is a universal modal window with text:
+//! `PauseMenu_Menu` (`menu.cpp:1747`) opens it with `_(f9bb)` («Game Paused.
+//! Click OK to continue.») on `Alt+P` (`GNW_KB_KEY_LALT_P`,
+//! `game_manager.cpp:5542`), and `DialogMenu_Menu(_(4556))` — for the end-of-game
+//! warning.
 //!
-//! # Раскладка (оракул `dialogmenu.cpp:148-204`)
+//! # Layout (oracle `dialogmenu.cpp:148-204`)
 //!
-//! * окно `HELPFRAM` 301×231 по центру области карты — `(253,126)`;
-//! * текст — `GNW_TEXT_FONT_5`, область `(20,14)` 265×175; блок центрируется по
-//!   вертикали, пока выше 175 px; строки центрируются по горизонтали
-//!   (`center_align_text`), когда режим включён (пауза — включён);
-//! * `OK` — `HELPOK_U/D` 65×24 в `(120,193)`, подпись `_(ae0b)` = "OK",
-//!   sfx `NDONE0`; `Enter`/`Esc`/клик закрывают;
-//! * прокрутка (`BLDUP__`/`BLDDWN` 18×17 в `(20,197)`/`(40,197)`) — только если
-//!   строк больше `175 / 10 = 17`.
+//! * `HELPFRAM` window 301×231 in the center of the map area — `(253,126)`;
+//! * text — `GNW_TEXT_FONT_5`, area `(20,14)` 265×175; the block is centered
+//!   vertically while it is above 175 px; the lines are centered horizontally
+//!   (`center_align_text`) when the mode is on (pause — on);
+//! * `OK` — `HELPOK_U/D` 65×24 at `(120,193)`, label `_(ae0b)` = "OK",
+//!   sfx `NDONE0`; `Enter`/`Esc`/click close it;
+//! * scrolling (`BLDUP__`/`BLDDWN` 18×17 at `(20,197)`/`(40,197)`) — only if
+//!   there are more than `175 / 10 = 17` lines.
 //!
-//! # Осознанные отличия
+//! # Deliberate differences
 //!
-//! * C++ крутит цикл `Run()`/`RunMenu()` и продолжает `GameManager_ProcessState`;
-//!   порт держит диалог открытым в обычном UI-цикле, а тики локальной партии на
-//!   это время останавливаются (`PauseMenu`: «игра на паузе»).
+//! * C++ runs the `Run()`/`RunMenu()` loop and continues `GameManager_ProcessState`;
+//!   the port keeps the dialog open in the regular UI loop, and the local game ticks
+//!   stop during this time (`PauseMenu`: «the game is paused»).
 
 use max_assets::image::BigImage;
 use max_render::buffer::{PixelRect, RgbaBuffer};
@@ -32,44 +32,44 @@ use crate::menu::{blit_simple, draw_big_image_at, draw_image_button, wrap_gnw_te
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 
-/// Текст паузы — `_(f9bb)` (`language.json`, en-US).
+/// Pause text — `_(f9bb)` (`language.json`, en-US).
 pub const PAUSE_TEXT: &str = "Game Paused.\nClick OK to continue.";
 
-/// Область текста `DialogMenu` (`Image(20, 14, 265, 175)`).
+/// `DialogMenu` text area (`Image(20, 14, 265, 175)`).
 pub const TEXT_AREA: PixelRect = PixelRect::new(20, 14, 265, 175);
 /// `max_row_count = 175 / Text_GetHeight()` (`FONT5` — 10).
 pub const MAX_ROWS: usize = 17;
-/// Кнопка `OK` (`HELPOK_U/D`, 65×24) в (120,193).
+/// `OK` button (`HELPOK_U/D`, 65×24) at (120,193).
 pub const OK_RECT: PixelRect = PixelRect::new(120, 193, 65, 24);
-/// Прокрутка вверх (`BLDUP__U/D`, 18×17) в (20,197).
+/// Scroll up (`BLDUP__U/D`, 18×17) at (20,197).
 pub const SCROLL_UP: PixelRect = PixelRect::new(20, 197, 18, 17);
-/// Прокрутка вниз (`BLDDWN_U/D`) в (40,197).
+/// Scroll down (`BLDDWN_U/D`) at (40,197).
 pub const SCROLL_DOWN: PixelRect = PixelRect::new(40, 197, 18, 17);
 
-/// Что делать с вводом диалога.
+/// What to do with dialog input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogAction {
-    /// Окно остаётся открытым.
+    /// The window stays open.
     None,
-    /// `OK`/`Enter`/`Esc`/клик по кнопке — закрыть.
+    /// `OK`/`Enter`/`Esc`/button click — close.
     Close,
 }
 
-/// Модальное окно с текстом (`DialogMenu`).
+/// Modal window with text (`DialogMenu`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DialogMenu {
-    /// Строки текста после переноса по 265 px.
+    /// Text lines after wrapping at 265 px.
     lines: Vec<String>,
-    /// Первая видимая строка.
+    /// First visible line.
     row_index: usize,
-    /// Центрировать строки по горизонтали (`center_align_text`).
+    /// Center the lines horizontally (`center_align_text`).
     center: bool,
-    /// Позиция окна.
+    /// Window position.
     placement: HelpPlacement,
 }
 
 impl DialogMenu {
-    /// Диалог с текстом; `center` — `center_align_text` (`PauseMenu` — `true`).
+    /// Dialog with text; `center` — `center_align_text` (`PauseMenu` — `true`).
     pub fn new(text: &str, placement: HelpPlacement, center: bool) -> Self {
         Self {
             lines: wrap_gnw_text(text, TEXT_AREA.width),
@@ -79,37 +79,37 @@ impl DialogMenu {
         }
     }
 
-    /// Диалог паузы (`PauseMenu_Menu`).
+    /// Pause dialog (`PauseMenu_Menu`).
     pub fn pause() -> Self {
         Self::new(PAUSE_TEXT, HelpPlacement::Game, true)
     }
 
-    /// Строки текста.
+    /// Text lines.
     pub fn lines(&self) -> &[String] {
         &self.lines
     }
 
-    /// Первая видимая строка.
+    /// First visible line.
     pub const fn row_index(&self) -> usize {
         self.row_index
     }
 
-    /// Нужна ли прокрутка (`row_count > max_row_count`).
+    /// Whether scrolling is needed (`row_count > max_row_count`).
     pub fn is_scrollable(&self) -> bool {
         self.lines.len() > MAX_ROWS
     }
 
-    /// Окно в кадре — `Window(HELPFRAM, GameManager_GetDialogWindowCenterMode())`.
+    /// The window in the frame — `Window(HELPFRAM, GameManager_GetDialogWindowCenterMode())`.
     pub fn window_rect(&self) -> PixelRect {
         self.placement.rect()
     }
 
-    /// `OK` в кадре.
+    /// `OK` in the frame.
     pub fn ok_rect(&self) -> PixelRect {
         offset(self.ok_local(), self.window_rect())
     }
 
-    /// Кнопки прокрутки в кадре (если текст длиннее страницы).
+    /// Scroll buttons in the frame (if the text is longer than a page).
     pub fn scroll_rects(&self) -> Option<(PixelRect, PixelRect)> {
         if !self.is_scrollable() {
             return None;
@@ -123,19 +123,19 @@ impl DialogMenu {
         OK_RECT
     }
 
-    /// `PageUp`: `row_index -= max_row_count`, не ниже 0.
+    /// `PageUp`: `row_index -= max_row_count`, not below 0.
     pub fn page_up(&mut self) {
         self.row_index = self.row_index.saturating_sub(MAX_ROWS);
     }
 
-    /// `PageDown`: только пока `row_index + max_row_count < row_count`.
+    /// `PageDown`: only while `row_index + max_row_count < row_count`.
     pub fn page_down(&mut self) {
         if self.row_index + MAX_ROWS < self.lines.len() {
             self.row_index += MAX_ROWS;
         }
     }
 
-    /// Ввод: клавиши/клик.
+    /// Input: keys/click.
     pub fn input(&mut self, event: InputEvent) -> DialogAction {
         match event {
             InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Escape) => DialogAction::Close,
@@ -164,7 +164,7 @@ impl DialogMenu {
         }
     }
 
-    /// Рисует окно (C++ `DialogMenu::DrawText`).
+    /// Draws the window (C++ `DialogMenu::DrawText`).
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -196,7 +196,7 @@ impl DialogMenu {
             painted += 1;
         }
 
-        // `text_full_height = row_count * height`; блок центрируется, пока < 175.
+        // `text_full_height = row_count * height`; the block is centered while < 175.
         let block = font.height() * self.visible_lines().count() as i32;
         let mut y = window.uly + TEXT_AREA.uly;
 
@@ -261,7 +261,7 @@ impl DialogMenu {
     }
 }
 
-/// Локальный прямоугольник окна → координаты кадра.
+/// Local window rectangle → frame coordinates.
 fn offset(rect: PixelRect, window: PixelRect) -> PixelRect {
     PixelRect::new(
         window.ulx + rect.ulx,
@@ -271,28 +271,28 @@ fn offset(rect: PixelRect, window: PixelRect) -> PixelRect {
     )
 }
 
-/// Ассеты диалога — те же, что у `HelpMenu` (`HELPFRAM`/`HELPOK`/`BLDUP/BLDDWN`).
+/// Dialog assets — the same as `HelpMenu` (`HELPFRAM`/`HELPOK`/`BLDUP/BLDDWN`).
 pub type DialogAssets = crate::helpmenu::HelpMenuAssets;
 
-/// `HELPFRAM` 301×231 и центр окна карты (для тестов).
+/// `HELPFRAM` 301×231 and the map window center (for tests).
 pub const fn window_size() -> (i32, i32) {
     HELPFRAM_SIZE
 }
 
-/// Стандартное окно паузы в кадре (центр `WINDOW_MAIN_MAP`).
+/// Standard pause window in the frame (center of `WINDOW_MAIN_MAP`).
 pub const fn pause_window() -> PixelRect {
     GAME_RECT
 }
 
-/// Фон диалога (для тестов/предупреждений о ресурсах).
+/// Dialog background (for tests/resource warnings).
 pub type Background = BigImage;
 
-/// Перенос текста по ширине окна — для тестов.
+/// Text wrapping by the window width — for tests.
 pub fn wrap(text: &str) -> Vec<String> {
     wrap_gnw_text(text, TEXT_AREA.width)
 }
 
-/// Текстовая область в кадре (для тестов).
+/// Text area in the frame (for tests).
 pub fn text_rect(placement: HelpPlacement) -> PixelRect {
     let window = placement.rect();
 
@@ -304,7 +304,7 @@ pub fn text_rect(placement: HelpPlacement) -> PixelRect {
     )
 }
 
-/// `TEXT_RECT` из `helpmenu` (общий с окном помощи) — для сверки раскладок.
+/// `TEXT_RECT` from `helpmenu` (shared with the help window) — for comparing layouts.
 pub const HELP_TEXT_RECT: PixelRect = TEXT_RECT;
 
 #[cfg(test)]
@@ -345,7 +345,7 @@ mod tests {
             dialog.input(InputEvent::MouseClick(ok.ulx + 2, ok.uly + 2)),
             DialogAction::Close
         );
-        // Клик мимо кнопки ничего не делает.
+        // A click outside the button does nothing.
         assert_eq!(
             dialog.input(InputEvent::MouseClick(0, 0)),
             DialogAction::None

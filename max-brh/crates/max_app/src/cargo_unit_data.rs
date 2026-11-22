@@ -1,53 +1,53 @@
-//! Паспортные данные юнитов для экрана мобилизации (`CargoMenu`).
+//! Unit record data for the mobilization screen (`CargoMenu`).
 //!
-//! Оракул: `cargomenu.cpp`/`abstractupgrademenu.cpp` —
-//! `Unit::GetPortrait()` (`P_*` big image 300×240) и
-//! `Unit::GetDescription()` (`language.json` по hex-ключу из `SC_UNITS`).
-//! C++-порт не держит эти данные в коде: они читаются из ресурса
-//! `SC_UNITS` (`assets/PATCHES.RES`, `Units::LoadResource`) и каталога
-//! `assets/language.json` (`Language::GetEntry`; `0xffff` → пустая строка).
+//! Oracle: `cargomenu.cpp`/`abstractupgrademenu.cpp` —
+//! `Unit::GetPortrait()` (`P_*` big image 300×240) and
+//! `Unit::GetDescription()` (`language.json` by the hex key from `SC_UNITS`).
+//! The C++ port does not keep this data in code: it is read from the `SC_UNITS`
+//! resource (`assets/PATCHES.RES`, `Units::LoadResource`) and the
+//! `assets/language.json` catalog (`Language::GetEntry`; `0xffff` → empty string).
 //!
-//! Генератор `max-brh/tools/gen_cargo_unit_data.py` расшифровывает
-//! `SC_UNITS` (XOR-таблица `ResourceManager_GenericTable`) и складывает
-//! 93 записи в [`CARGO_UNIT_DATA_JSON`] (файл
-//! `crates/max_app/data/cargo_unit_data.json`, коммитится). Таблица идёт в
-//! порядке [`UnitType`] (ResourceID 0..92), поэтому запись типа — это
+//! The generator `max-brh/tools/gen_cargo_unit_data.py` decodes
+//! `SC_UNITS` (the XOR table `ResourceManager_GenericTable`) and puts
+//! 93 records into [`CARGO_UNIT_DATA_JSON`] (the file
+//! `crates/max_app/data/cargo_unit_data.json`, committed). The table goes in
+//! [`UnitType`] order (ResourceID 0..92), so a type record is
 //! `units[unit as usize]`.
 //!
-//! Тексты — `en-US`, как и прочие подписи клиента (`assets/language.json`,
-//! локаль по умолчанию). 24 типа без описания в оригинале — обломки,
-//! взрывы, ракеты, `HARVSTER`, `WALDO` — в `CargoMenu` недостижимы
-//! (`IsUnitFiltered`: нет `UPGRADABLE`/не строятся), т.е. у каждого
-//! открываемого игроком типа описание непустое.
+//! Texts — `en-US`, like the other client labels (`assets/language.json`,
+//! the default locale). 24 types have no description in the original — debris,
+//! explosions, missiles, `HARVSTER`, `WALDO` — and are unreachable in `CargoMenu`
+//! (`IsUnitFiltered`: no `UPGRADABLE`/not buildable), i.e. every type
+//! openable by the player has a non-empty description.
 
 use std::sync::OnceLock;
 
 use max_core::enums::{UnitType, UNIT_END};
 use serde::Deserialize;
 
-/// JSON-ресурс с 93 записями (сгенерирован из `SC_UNITS` + `language.json`).
+/// JSON resource with 93 records (generated from `SC_UNITS` + `language.json`).
 pub const CARGO_UNIT_DATA_JSON: &str = include_str!("../data/cargo_unit_data.json");
 
-/// Одна запись `SC_UNITS`: токен C++, спрайт/тень, портрет, кадры башни и
-/// описание (en-US).
+/// One `SC_UNITS` record: the C++ token, sprite/shadow, portrait, turret frames and
+/// the description (en-US).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CargoUnitData {
-    /// C++-токен ресурса (`TANK`, `LANDPLT`, …) — для сверки порядка.
+    /// C++ resource token (`TANK`, `LANDPLT`, …) — for order verification.
     pub token: String,
-    /// Ресурс корпуса — `Unit::GetSprite()` (`TANK`, `GUNTURRT`, …);
-    /// `None` — `INVALID_ID` (в оригинале у всех 93 типов задан).
+    /// Body resource — `Unit::GetSprite()` (`TANK`, `GUNTURRT`, …);
+    /// `None` — `INVALID_ID` (in the original it is set for all 93 types).
     pub sprite: Option<String>,
-    /// Ресурс тени `S_*` — `Unit::GetShadow()`; `None` — `INVALID_ID`
-    /// (у ракет, взрывов, плёнок и `WALDO` тени нет).
+    /// Shadow resource `S_*` — `Unit::GetShadow()`; `None` — `INVALID_ID`
+    /// (missiles, explosions, films and `WALDO` have no shadow).
     pub shadow: Option<String>,
-    /// Ресурс портрета `P_*` (`Unit::GetPortrait`); `None` — `INVALID_ID`.
+    /// Portrait resource `P_*` (`Unit::GetPortrait`); `None` — `INVALID_ID`.
     pub portrait: Option<String>,
-    /// Текст описания (`Unit::GetDescription`); пусто, если в оригинале нет.
+    /// Description text (`Unit::GetDescription`); empty if there is none in the original.
     pub description: String,
-    /// Ресурс `D_*` — `Unit::GetFrameInfo()`: базы кадров корпуса/башни,
-    /// число кадров и `angle_offsets` для наложения башни.
+    /// `D_*` resource — `Unit::GetFrameInfo()`: body/turret frame bases,
+    /// the frame count and `angle_offsets` for the turret overlay.
     pub data: Option<String>,
-    /// Ресурс `F_*` — `Unit::GetFlicsAnimation()`: FLC-анимация портрета
+    /// `F_*` resource — `Unit::GetFlicsAnimation()`: the portrait FLC animation
     /// `WINDOW_CORNER_FLIC` (`GameManager_MenuCreateFlic`); `None` — `INVALID_ID`.
     pub flics: Option<String>,
 }
@@ -57,7 +57,7 @@ struct CargoUnitFile {
     units: Vec<CargoUnitData>,
 }
 
-/// Разобранные данные (индекс — [`UnitType`] как `usize`).
+/// Parsed data (index — [`UnitType`] as `usize`).
 fn units() -> &'static [CargoUnitData] {
     static UNITS: OnceLock<Vec<CargoUnitData>> = OnceLock::new();
 
@@ -70,58 +70,58 @@ fn units() -> &'static [CargoUnitData] {
         .as_slice()
 }
 
-/// Запись типа; `None`, если ресурс не разобрался или индекс вне таблицы.
+/// Type record; `None` if the resource did not parse or the index is outside the table.
 pub fn unit_data(unit: UnitType) -> Option<&'static CargoUnitData> {
     units().get(unit as usize)
 }
 
-/// C++-токен типа (`TANK`, …); `""`, если данных нет.
+/// C++ type token (`TANK`, …); `""` if there is no data.
 pub fn unit_token(unit: UnitType) -> &'static str {
     unit_data(unit).map_or("", |data| data.token.as_str())
 }
 
-/// `Unit::GetSprite()` — имя ресурса корпуса (`TANK`, `GUNTURRT`, …).
+/// `Unit::GetSprite()` — the body resource name (`TANK`, `GUNTURRT`, …).
 ///
-/// Источник — `SC_UNITS`, а не догадка: `UNIT_SPRITES` сверяется с этой
-/// функцией тестом. `None` — `INVALID_ID` в оригинале.
+/// The source is `SC_UNITS`, not a guess: `UNIT_SPRITES` is checked against this
+/// function by a test. `None` — `INVALID_ID` in the original.
 pub fn unit_sprite(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.sprite.as_deref())
 }
 
-/// `Unit::GetShadow()` — имя ресурса тени `S_*`; `None` — тени нет.
+/// `Unit::GetShadow()` — the `S_*` shadow resource name; `None` — no shadow.
 pub fn unit_shadow(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.shadow.as_deref())
 }
 
-/// `Unit::GetDescription()` для `CargoMenu`; `""` — описания нет.
+/// `Unit::GetDescription()` for `CargoMenu`; `""` — no description.
 ///
-/// Соответствует `ResourceManager_GetLanguageEntry(0xffff)` → `std::string()`
-/// и `Language::GetEntry` для hex-ключа из `SC_UNITS`.
+/// Corresponds to `ResourceManager_GetLanguageEntry(0xffff)` → `std::string()`
+/// and `Language::GetEntry` for the hex key from `SC_UNITS`.
 pub fn unit_description(unit: UnitType) -> &'static str {
     unit_data(unit).map_or("", |data| data.description.as_str())
 }
 
-/// `Unit::GetPortrait()` — имя ресурса `P_*` (big image 300×240).
+/// `Unit::GetPortrait()` — the `P_*` resource name (big image 300×240).
 pub fn unit_portrait(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.portrait.as_deref())
 }
 
-/// `Unit::GetFrameInfo()` — имя ресурса `D_*` (кадры корпуса/башни,
+/// `Unit::GetFrameInfo()` — the `D_*` resource name (body/turret frames,
 /// `angle_offsets`); `None` — `INVALID_ID`.
 pub fn unit_frame_data(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.data.as_deref())
 }
 
-/// `Unit::GetFlicsAnimation()` — тег ресурса `F_*` с FLC-анимацией портрета
-/// (`WINDOW_CORNER_FLIC`, 128×128); `None` — у типа нет анимации (`INVALID_ID`).
+/// `Unit::GetFlicsAnimation()` — the `F_*` resource tag with the portrait FLC animation
+/// (`WINDOW_CORNER_FLIC`, 128×128); `None` — the type has no animation (`INVALID_ID`).
 ///
-/// Сам ресурс — ASCIIZ-имя `*.FLC` рядом с `MAX.RES`: файл грузит
-/// [`crate::assets::Assets`], кадры декодирует `max_assets::flic`.
+/// The resource itself is an ASCIIZ name of a `*.FLC` next to `MAX.RES`: the file is loaded by
+/// [`crate::assets::Assets`], the frames are decoded by `max_assets::flic`.
 pub fn unit_flic(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.flics.as_deref())
 }
 
-/// Разобрались ли все [`UNIT_END`] записей (диагностика/тесты).
+/// Whether all [`UNIT_END`] records parsed (diagnostics/tests).
 pub fn is_loaded() -> bool {
     units().len() == UNIT_END as usize
 }
@@ -130,7 +130,7 @@ pub fn is_loaded() -> bool {
 mod tests {
     use super::*;
 
-    /// Все 93 типа присутствуют в ресурсе, порядок совпадает с `UnitType`.
+    /// All 93 types are present in the resource, the order matches `UnitType`.
     #[test]
     fn resource_carries_all_unit_types_in_enum_order() {
         assert!(is_loaded(), "JSON не разобрался: {} записей", units().len());
@@ -141,14 +141,14 @@ mod tests {
             assert!(!data.token.is_empty(), "{unit:?}");
         }
 
-        // C++-токены особых типов (сверка порядка `SC_UNITS`/`UnitType`).
+        // C++ tokens of special types (verification of `SC_UNITS`/`UnitType` order).
         assert_eq!(unit_token(UnitType::GoldRefinery), "COMMTWR");
         assert_eq!(unit_token(UnitType::HeavyVehiclePlant), "LANDPLT");
         assert_eq!(unit_token(UnitType::MineLayer), "MINELAYR");
         assert_eq!(unit_token(UnitType::DeadWaldo), "WALDO");
     }
 
-    /// Портрет есть у всех, кроме 22 не-юнитов оригинала (`INVALID_ID`).
+    /// A portrait exists for all except the 22 non-units of the original (`INVALID_ID`).
     #[test]
     fn portraits_match_sc_units() {
         let with_portrait = (0..UNIT_END)
@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(unit_portrait(UnitType::GoldRefinery), Some("P_TRANSP"));
         assert_eq!(unit_portrait(UnitType::HeavyVehiclePlant), Some("P_HVYPLT"));
         assert_eq!(unit_portrait(UnitType::Constructor), Some("P_CONTRC"));
-        // Не-юниты: `portrait` = `INVALID_ID` в `SC_UNITS`.
+        // Non-units: `portrait` = `INVALID_ID` in `SC_UNITS`.
         for unit in [
             UnitType::Rocket,
             UnitType::Torpedo,
@@ -173,7 +173,7 @@ mod tests {
         }
     }
 
-    /// Описания: 69 непустых; каждый тип, достижимый в `CargoMenu`, описан.
+    /// Descriptions: 69 non-empty; every type reachable in `CargoMenu` is described.
     #[test]
     fn descriptions_cover_every_cargo_menu_unit() {
         let described = (0..UNIT_END)
@@ -182,7 +182,7 @@ mod tests {
             .count();
         assert_eq!(described, 69, "69 описаний в language.json");
 
-        // Тексты — дословно `language.json` (en-US).
+        // The texts are verbatim `language.json` (en-US).
         assert!(unit_description(UnitType::Tank).starts_with("Heavily armored fighting vehicle."));
         assert!(unit_description(UnitType::Scout)
             .starts_with("High speed scouting vehicle for exploration and spotting enemy units."));
@@ -191,8 +191,8 @@ mod tests {
             "Units move twice as fast over road squares."
         );
 
-        // 24 типа без описания — обломки/взрывы/снаряды/`HARVSTER`/`WALDO`;
-        // ни один не проходит `IsUnitFiltered` (проверяется в `mobilize`).
+        // 24 types without a description — debris/explosions/projectiles/`HARVSTER`/`WALDO`;
+        // none passes `IsUnitFiltered` (checked in `mobilize`).
         for unit in [
             UnitType::Rocket,
             UnitType::Torpedo,
@@ -207,8 +207,8 @@ mod tests {
         }
     }
 
-    /// `Unit::GetSprite()`/`GetShadow()`: у всех 93 типов задан корпус,
-    /// тень — у 77 (у ракет/взрывов/плёнок/`WALDO` в `SC_UNITS` `INVALID_ID`).
+    /// `Unit::GetSprite()`/`GetShadow()`: all 93 types have a body,
+    /// shadow — for 77 (missiles/explosions/films/`WALDO` have `INVALID_ID` in `SC_UNITS`).
     #[test]
     fn sprite_and_shadow_follow_sc_units() {
         let sprites = (0..UNIT_END)
@@ -229,10 +229,10 @@ mod tests {
         assert_eq!(unit_shadow(UnitType::GunTurret), Some("S_GUNTUR"));
         assert_eq!(unit_sprite(UnitType::MasterBuilder), Some("MASTER"));
         assert_eq!(unit_shadow(UnitType::MasterBuilder), Some("S_MASTER"));
-        // Субмарина: `SC_UNITS` ссылается на `S_SUBMAR`, которого нет в
-        // MAX.RES/PATCHES.RES — ресурс проверяет загрузчик ассетов.
+        // Submarine: `SC_UNITS` references `S_SUBMAR`, which is absent from
+        // MAX.RES/PATCHES.RES — the asset loader checks the resource.
         assert_eq!(unit_shadow(UnitType::Submarine), Some("S_SUBMAR"));
-        // Плёнки/ракеты/взрывы и `WALDO` — без тени в оригинале.
+        // Films/missiles/explosions and `WALDO` — without a shadow in the original.
         for unit in [
             UnitType::LargeTape,
             UnitType::SmallTape,
@@ -245,8 +245,8 @@ mod tests {
         }
     }
 
-    /// `Unit::GetFrameInfo()`: у всех 93 типов есть ресурс `D_*`; у танка,
-    /// мобильной зенитки и эскорта — отдельная башня.
+    /// `Unit::GetFrameInfo()`: all 93 types have a `D_*` resource; the tank,
+    /// the mobile AA and the escort — a separate turret.
     #[test]
     fn frame_data_covers_all_units() {
         let with_data = (0..UNIT_END)
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(unit_frame_data(UnitType::Scanner), Some("D_SCANNR"));
     }
 
-    /// Таблица непустая даже при сбое JSON — но тогда `is_loaded()` ложен.
+    /// The table is non-empty even on a JSON failure — but then `is_loaded()` is false.
     #[test]
     fn json_resource_is_the_generated_file() {
         assert!(CARGO_UNIT_DATA_JSON.contains("\"COMMTWR\""));

@@ -1,62 +1,62 @@
-//! Экран X-FER — C++ `TransferMenu` (`max-cpp-port/src/transfermenu.cpp`).
+//! X-FER screen — C++ `TransferMenu` (`max-cpp-port/src/transfermenu.cpp`).
 //!
-//! # Что это
+//! # What this is
 //!
-//! Пункт `x-fer` меню команд включает курсорный режим (`unit->cursor = 3`,
-//! `UnitsManager_Popup_OnClick_Transfer`). Клик по своему юниту вызывает
-//! `GameManager_TransferCargo` (`game_manager.cpp:4634`): он проверяет типы
-//! груза, при необходимости подменяет цель на здание комплекса с подходящим
-//! складом (`GameManager_GetUnitWithCargoType`), ставит `SetParent` и
-//! открывает это окно. `Done`/`Enter` отдаёт `ORDER_TRANSFER` (пакет **08**,
-//! процессор **P3** — `transfer_cargo`), `Esc`/`Cancel` — ничего.
+//! The `x-fer` item of the command menu enables cursor mode (`unit->cursor = 3`,
+//! `UnitsManager_Popup_OnClick_Transfer`). A click on an own unit calls
+//! `GameManager_TransferCargo` (`game_manager.cpp:4634`): it checks the cargo
+//! types, if necessary replaces the target with a complex building with a suitable
+//! stock (`GameManager_GetUnitWithCargoType`), calls `SetParent` and
+//! opens this window. `Done`/`Enter` issues `ORDER_TRANSFER` (packet **08**,
+//! processor **P3** — `transfer_cargo`), `Esc`/`Cancel` — nothing.
 //!
-//! # Раскладка (`Window(XFERPIC, WINDOW_MAIN_MAP)`)
+//! # Layout (`Window(XFERPIC, WINDOW_MAIN_MAP)`)
 //!
-//! `XFERPIC` 308×162 центрируется в окне карты (448×448 при (180,18)); C++
-//! `Window::Window(ResourceID, win_id)` считает по **включающим** границам
-//! (`lrx - ulx = 447`), поэтому окно встаёт в `(249,160)`, а не `(250,161)`.
+//! `XFERPIC` 308×162 is centered in the map window (448×448 at (180,18)); C++
+//! `Window::Window(ResourceID, win_id)` computes by **inclusive** bounds
+//! (`lrx - ulx = 447`), so the window lands at `(249,160)`, not `(250,161)`.
 //!
-//! Внутри окна (`transfermenu.cpp:196-266`):
+//! Inside the window (`transfermenu.cpp:196-266`):
 //!
-//! | Элемент | Прямоугольник/точка |
+//! | Element | Rectangle/point |
 //! |---|---|
-//! | количество (`xfer_amount`) | (141,15,29,20), `FONT5`, `0xFF`, по центру |
-//! | запас источника | (28,28,60,16) |
-//! | запас цели | (223,28,60,16) |
-//! | иконки юнитов | центры (104,36) и (207,36), `ReportStats_DrawListItemIcon` |
-//! | подписи | (10,52,110,30) и (191,52,110,30), `COLOR_BLACK` |
-//! | стрелка направления | (141,43) `XFRLFARO`/`XFRRTARO` (31×16) |
-//! | левая кнопка | (17,89) `XFRLFT_U/D` (18×17) |
-//! | правая кнопка | (278,89) `XFRRGT_U/D` (18×17) |
-//! | полоса | (44,89,223,16), `SMBRRAW`/`SMBRFUEL`/`SMBRGOLD` |
+//! | amount (`xfer_amount`) | (141,15,29,20), `FONT5`, `0xFF`, centered |
+//! | source stock | (28,28,60,16) |
+//! | target stock | (223,28,60,16) |
+//! | unit icons | centers (104,36) and (207,36), `ReportStats_DrawListItemIcon` |
+//! | labels | (10,52,110,30) and (191,52,110,30), `COLOR_BLACK` |
+//! | direction arrow | (141,43) `XFRLFARO`/`XFRRTARO` (31×16) |
+//! | left button | (17,89) `XFRLFT_U/D` (18×17) |
+//! | right button | (278,89) `XFRRGT_U/D` (18×17) |
+//! | bar | (44,89,223,16), `SMBRRAW`/`SMBRFUEL`/`SMBRGOLD` |
 //! | Cancel | (82,125) `XFRCAN_U/D` (64×24) |
 //! | Help | (147,125) `XFRHLP_U/D` (26×24) |
 //! | Done | (174,125) `XFRDNE_U/D` (57×24) |
 //!
-//! # Значение полосы
+//! # Bar value
 //!
-//! `LimitedScrollbar` (`scrollbar.cpp:298`) с `free_capacity = target_capacity
+//! `LimitedScrollbar` (`scrollbar.cpp:298`) with `free_capacity = target_capacity
 //! − target_materials`, `zero_offset = -target_materials`, `xfer_give_max =
 //! min(target_free, source_materials)`, `xfer_take_max = -min(source_capacity −
-//! source_materials, target_materials)`, `value = give_max`. Положительное
-//! значение — из юнита в цель, отрицательное — обратно. Клик по полосе:
-//! `new = (w/2 + capacity·x)/w + zero_offset`, затем обрезка
-//! `[zero_offset, free_capacity]` и `[take_max, give_max]` (`scrollbar.cpp:327`).
-//! Заливка: `fill = (value − zero_offset)·223 / (free_capacity − zero_offset)`,
-//! `LoadHorizontalBar` копирует **правые** `fill` пикселей текстуры по строкам.
+//! source_materials, target_materials)`, `value = give_max`. A positive
+//! value — from the unit into the target, a negative one — back. A click on the bar:
+//! `new = (w/2 + capacity·x)/w + zero_offset`, then clipping
+//! `[zero_offset, free_capacity]` and `[take_max, give_max]` (`scrollbar.cpp:327`).
+//! Fill: `fill = (value − zero_offset)·223 / (free_capacity − zero_offset)`,
+//! `LoadHorizontalBar` copies the **right** `fill` pixels of the texture per row.
 //!
-//! # Клавиши (`TransferMenu::ProcessKey`)
+//! # Keys (`TransferMenu::ProcessKey`)
 //!
 //! `Enter` — Done, `Esc`/`Ctrl+Esc` — Cancel (`value = 0`), `Shift+/`/`?` —
-//! `HelpMenu_Menu("TRANSFER_SETUP")`, `←/→` (`PageUp/PageDown`) — шаг полосы.
-//! `KP_Enter` в C++ привязан к Done (`SetRValue`).
+//! `HelpMenu_Menu("TRANSFER_SETUP")`, `←/→` (`PageUp/PageDown`) — the bar step.
+//! `KP_Enter` in C++ is bound to Done (`SetRValue`).
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState};
 use max_core::game::GameState;
 use max_core::team::TeamId;
-// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
-// max_core); глоб-реэкспортов нет (Ф5.2).
+// Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
+// max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::transfer::{find_unit_with_cargo_type, transfer_menu_cargo_info};
 use max_core::unit::UnitId;
@@ -69,34 +69,34 @@ use crate::menu::{blit_simple, draw_big_image_at, MenuButtonPair};
 use crate::panels::UiPalette;
 use crate::ui::Key;
 
-/// Размер окна `XFERPIC`.
+/// `XFERPIC` window size.
 pub const WINDOW_SIZE: (i32, i32) = (308, 162);
 
-/// Прямоугольник количества (141,15,29,20).
+/// Amount rectangle (141,15,29,20).
 pub const AMOUNT_RECT: PixelRect = PixelRect::new(141, 15, 29, 20);
-/// Запас источника (28,28,60,16).
+/// Source stock (28,28,60,16).
 pub const SOURCE_RECT: PixelRect = PixelRect::new(28, 28, 60, 16);
-/// Запас цели (223,28,60,16).
+/// Target stock (223,28,60,16).
 pub const TARGET_RECT: PixelRect = PixelRect::new(223, 28, 60, 16);
-/// Иконка источника — центр (104,36).
+/// Source icon — center (104,36).
 pub const SOURCE_ICON: (i32, i32) = (104, 36);
-/// Иконка цели — центр (207,36).
+/// Target icon — center (207,36).
 pub const TARGET_ICON: (i32, i32) = (207, 36);
 
-/// Подпись источника (10,52,110,30).
+/// Source label (10,52,110,30).
 pub const SOURCE_NAME_RECT: PixelRect = PixelRect::new(10, 52, 110, 30);
-/// Подпись цели (191,52,110,30).
+/// Target label (191,52,110,30).
 pub const TARGET_NAME_RECT: PixelRect = PixelRect::new(191, 52, 110, 30);
 
-/// Стрелка направления (141,43) 31×16.
+/// Direction arrow (141,43) 31×16.
 pub const ARROW_RECT: PixelRect = PixelRect::new(141, 43, 31, 16);
-/// Левая кнопка (17,89) 18×17.
+/// Left button (17,89) 18×17.
 pub const LEFT_RECT: PixelRect = PixelRect::new(17, 89, 18, 17);
-/// Правая кнопка (278,89) 18×17.
+/// Right button (278,89) 18×17.
 pub const RIGHT_RECT: PixelRect = PixelRect::new(278, 89, 18, 17);
-/// Полоса (44,89,267,105) — 223×16.
+/// Bar (44,89,267,105) — 223×16.
 pub const SLIDER_RECT: PixelRect = PixelRect::new(44, 89, 223, 16);
-/// Кнопка полосы — `Rect(ulx-3, uly, width+6, height)` (`scrollbar.cpp:145`).
+/// Bar button — `Rect(ulx-3, uly, width+6, height)` (`scrollbar.cpp:145`).
 pub const SLIDER_BUTTON_RECT: PixelRect = PixelRect::new(41, 89, 229, 16);
 
 /// Cancel (82,125) 64×24.
@@ -106,18 +106,18 @@ pub const HELP_RECT: PixelRect = PixelRect::new(147, 125, 26, 24);
 /// Done (174,125) 57×24.
 pub const DONE_RECT: PixelRect = PixelRect::new(174, 125, 57, 24);
 
-/// `Fonts_GoldColor` — подписи `Cancel`/`Done` (palette indices).
+/// `Fonts_GoldColor` — `Cancel`/`Done` labels (palette indices).
 pub const GOLD: (u8, u8, u8) = (165, 175, 199);
 
-/// Ресурсы окна X-FER из `MAX.RES` (`TransferMenu`).
+/// X-FER window resources from `MAX.RES` (`TransferMenu`).
 #[derive(Debug, Clone)]
 pub struct TransferMenuAssets {
-    /// Фон `XFERPIC` 308×162 (big image; рисуется системной палитрой окна,
-    /// потому что `Window` создан с `palette_from_image = false`).
+    /// `XFERPIC` background 308×162 (big image; drawn with the window system palette,
+    /// because `Window` is created with `palette_from_image = false`).
     pub background: Option<BigImage>,
     /// `Cancel` (`XFRCAN_U/D`, 64×24).
     pub cancel: Option<MenuButtonPair>,
-    /// `?` (`XFRHLP_U/D`, 26×24) — картинка уже с вопросительным знаком.
+    /// `?` (`XFRHLP_U/D`, 26×24) — the picture already has the question mark.
     pub help: Option<MenuButtonPair>,
     /// `Done` (`XFRDNE_U/D`, 57×24).
     pub done: Option<MenuButtonPair>,
@@ -125,23 +125,23 @@ pub struct TransferMenuAssets {
     pub left: Option<MenuButtonPair>,
     /// `+` (`XFRRGT_U/D`, 18×17).
     pub right: Option<MenuButtonPair>,
-    /// `XFRLFARO` 31×16 — стрелка **влево**, `total < 0` (`button_arrow`
-    /// отжата: `rest_state = total >= 0` = `false`, рисуется `up`-кадр).
+    /// `XFRLFARO` 31×16 — the **left** arrow, `total < 0` (`button_arrow`
+    /// released: `rest_state = total >= 0` = `false`, the `up` frame is drawn).
     pub arrow_left: Option<SimpleImage>,
-    /// `XFRRTARO` 31×16 — стрелка **вправо**, `total >= 0` (нажатый
-    /// `rest_state`: `win_set_button_rest_state` рисует `down`-кадр кнопки,
-    /// а `down` у `Button(XFRLFARO, XFRRTARO, …)` — это `XFRRTARO`).
+    /// `XFRRTARO` 31×16 — the **right** arrow, `total >= 0` (pressed
+    /// `rest_state`: `win_set_button_rest_state` draws the `down` frame of the button,
+    /// and `down` of `Button(XFRLFARO, XFRRTARO, …)` is `XFRRTARO`).
     pub arrow_right: Option<SimpleImage>,
-    /// `SMBRRAW` 285×16 — полоса сырья.
+    /// `SMBRRAW` 285×16 — the raw bar.
     pub bar_raw: Option<SimpleImage>,
-    /// `SMBRFUEL` 342×17 — полоса топлива.
+    /// `SMBRFUEL` 342×17 — the fuel bar.
     pub bar_fuel: Option<SimpleImage>,
-    /// `SMBRGOLD` 342×17 — полоса золота.
+    /// `SMBRGOLD` 342×17 — the gold bar.
     pub bar_gold: Option<SimpleImage>,
 }
 
 impl TransferMenuAssets {
-    /// Грузит ресурсы; отсутствие части — не ошибка (окно не рисуется).
+    /// Loads resources; a missing part is not an error (the window is not drawn).
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             archive
@@ -174,7 +174,7 @@ impl TransferMenuAssets {
         }
     }
 
-    /// Фон и основные кнопки на месте.
+    /// The background and the main buttons are in place.
     pub fn is_ready(&self) -> bool {
         self.background.is_some()
             && self.cancel.is_some()
@@ -182,7 +182,7 @@ impl TransferMenuAssets {
             && self.bar_raw.is_some()
     }
 
-    /// Полоса по типу груза (`material_id` из `TransferMenu`).
+    /// The bar by cargo type (`material_id` from `TransferMenu`).
     pub fn bar(&self, cargo: CargoType) -> Option<&SimpleImage> {
         match cargo {
             CargoType::Raw => self.bar_raw.as_ref(),
@@ -193,30 +193,30 @@ impl TransferMenuAssets {
     }
 }
 
-/// Что сделать после ввода в окне.
+/// What to do after input in the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferAction {
-    /// Ничего не менять.
+    /// Change nothing.
     None,
-    /// `Done`/`Enter` — отдать `ORDER_TRANSFER`.
+    /// `Done`/`Enter` — issue `ORDER_TRANSFER`.
     Confirm,
-    /// `Cancel`/`Esc` — закрыть без приказа (`value = 0`).
+    /// `Cancel`/`Esc` — close without an order (`value = 0`).
     Cancel,
     /// `Help`/`?` — `TRANSFER_SETUP`.
     Help,
 }
 
-/// Открытое окно переноса.
+/// Open transfer window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferMenu {
-    /// Юнит, из чьего меню открыт x-fer (`source_unit` в C++ до возможного
-    /// обмена местами — обмен идёт только внутри `ProcessTransfer`).
+    /// The unit from whose menu x-fer was opened (`source_unit` in C++ before the possible
+    /// swap — the swap happens only inside `ProcessTransfer`).
     pub unit: UnitId,
-    /// Цель (`unit->GetParent()`).
+    /// Target (`unit->GetParent()`).
     pub target: UnitId,
-    /// Команда (обе стороны свои).
+    /// Team (both sides are own).
     pub team: TeamId,
-    /// Тип груза (`ResourceManager_GetUnit(...).GetCargoType()`).
+    /// Cargo type (`ResourceManager_GetUnit(...).GetCargoType()`).
     pub cargo: CargoType,
     /// `source_unit_materials`.
     pub source_materials: i32,
@@ -226,21 +226,21 @@ pub struct TransferMenu {
     pub target_materials: i32,
     /// `target_unit_capacity`.
     pub target_capacity: i32,
-    /// `source_unit_free_capacity` — минимум свободного у источника и запаса цели.
+    /// `source_unit_free_capacity` — the minimum of the source's free capacity and the target's stock.
     pub source_free: i32,
     /// `target_unit_free_capacity` — `xfer_give_max`.
     pub give_max: i32,
-    /// `xfer_take_max` (отрицательное).
+    /// `xfer_take_max` (negative).
     pub take_max: i32,
-    /// `total_materials_transferred` — текущее значение полосы.
+    /// `total_materials_transferred` — the current bar value.
     pub amount: i32,
 }
 
 impl TransferMenu {
     /// `TransferMenu::TransferMenu` (`transfermenu.cpp:148`).
     ///
-    /// `None`, если нет одной из сторон, груз не `RAW/FUEL/GOLD` или стороны
-    /// разных команд (C++ в `Run` закрывает такое окно сразу).
+    /// `None` if one of the sides is missing, the cargo is not `RAW/FUEL/GOLD`, or the sides
+    /// are of different teams (C++ closes such a window immediately in `Run`).
     pub fn new(state: &GameState, source: UnitId, target: UnitId) -> Option<Self> {
         let source_unit = state.unit(source)?;
         let target_unit = state.unit(target)?;
@@ -282,7 +282,7 @@ impl TransferMenu {
         })
     }
 
-    /// Положение окна в кадре: центр `WINDOW_MAIN_MAP` по включающим границам
+    /// Window position in the frame: center of `WINDOW_MAIN_MAP` by inclusive bounds
     /// (`Window(ResourceID, WINDOW_MAIN_MAP)`).
     pub fn layout(area: PixelRect) -> PixelRect {
         let ulx = area.ulx + (area.width - 1 - WINDOW_SIZE.0) / 2;
@@ -291,22 +291,22 @@ impl TransferMenu {
         PixelRect::new(ulx, uly, WINDOW_SIZE.0, WINDOW_SIZE.1)
     }
 
-    /// Прямоугольник окна в кадре 640×480.
+    /// Window rectangle in the 640×480 frame.
     pub fn window_rect(&self) -> PixelRect {
         Self::layout(MAIN_MAP)
     }
 
-    /// Сколько ресурса показывается у источника: `source_materials − amount`.
+    /// How much resource is shown for the source: `source_materials − amount`.
     pub fn source_shown(&self) -> i32 {
         self.source_materials - self.amount
     }
 
-    /// Сколько ресурса показывается у цели: `target_materials + amount`.
+    /// How much resource is shown for the target: `target_materials + amount`.
     pub fn target_shown(&self) -> i32 {
         self.target_materials + self.amount
     }
 
-    /// Пределы значения: `[max(take_max, zero_offset), min(give_max, free_capacity)]`.
+    /// Value limits: `[max(take_max, zero_offset), min(give_max, free_capacity)]`.
     pub fn value_limits(&self) -> (i32, i32) {
         let zero_offset = -self.target_materials;
         let free_capacity = self.target_capacity - self.target_materials;
@@ -317,8 +317,8 @@ impl TransferMenu {
         )
     }
 
-    /// Установить значение с обрезкой — как `LimitedScrollbar::ProcessKey`
-    /// после клика по полосе.
+    /// Sets the value with clipping — like `LimitedScrollbar::ProcessKey`
+    /// after a click on the bar.
     pub fn set_amount(&mut self, value: i32) {
         let zero_offset = -self.target_materials;
         let free_capacity = self.target_capacity - self.target_materials;
@@ -335,8 +335,8 @@ impl TransferMenu {
         self.amount = value;
     }
 
-    /// Значение по клику в точке кадра: формула `LimitedScrollbar` для
-    /// горизонтальной полосы.
+    /// Value by a click at a frame point: the `LimitedScrollbar` formula for
+    /// a horizontal bar.
     pub fn click_value(&self, window_x: i32) -> i32 {
         let capacity = self.target_capacity - self.target_materials;
         let width = SLIDER_RECT.width;
@@ -352,7 +352,7 @@ impl TransferMenu {
         value
     }
 
-    /// Один шаг полосы (`Scrollbar::ProcessKey` с `1000`/`1001`).
+    /// One bar step (`Scrollbar::ProcessKey` with `1000`/`1001`).
     pub fn adjust(&mut self, increase: bool) -> bool {
         let before = self.amount;
 
@@ -371,7 +371,7 @@ impl TransferMenu {
         self.amount != before
     }
 
-    /// Клик мышью в координатах кадра.
+    /// Mouse click in frame coordinates.
     pub fn click(&mut self, x: i32, y: i32) -> TransferAction {
         let window = self.window_rect();
         let local_x = x - window.ulx;
@@ -403,7 +403,7 @@ impl TransferMenu {
         TransferAction::None
     }
 
-    /// Клавиша: `TransferMenu::ProcessKey`.
+    /// Key: `TransferMenu::ProcessKey`.
     pub fn key(&mut self, key: Key) -> TransferAction {
         match key {
             Key::Enter => TransferAction::Confirm,
@@ -426,7 +426,7 @@ impl TransferMenu {
         }
     }
 
-    /// Событие ввода ([`crate::ui::InputEvent`]).
+    /// Input event ([`crate::ui::InputEvent`]).
     pub fn input(&mut self, event: crate::ui::InputEvent) -> TransferAction {
         match event {
             crate::ui::InputEvent::MouseClick(x, y) => self.click(x, y),
@@ -435,7 +435,7 @@ impl TransferMenu {
         }
     }
 
-    /// Длина заливки полосы в пикселях (`Scrollbar::RefreshScreen`).
+    /// Length of the bar fill in pixels (`Scrollbar::RefreshScreen`).
     pub fn bar_fill(&self) -> i32 {
         let zero_offset = -self.target_materials;
         let denominator = self.target_capacity - self.target_materials;
@@ -448,23 +448,23 @@ impl TransferMenu {
             .clamp(0, SLIDER_RECT.width)
     }
 
-    /// Куда смотрит стрелка направления: `true` — вправо (от источника к
-    /// приёмнику), `false` — влево (из приёмника в источник).
+    /// Which way the direction arrow points: `true` — right (from source to
+    /// receiver), `false` — left (from receiver to source).
     ///
-    /// Оракул — `TransferMenu::UpdateIndicators` (`transfermenu.cpp:94-96`):
-    /// `button_arrow->SetRestState(total_materials_transferred >= 0)`. Кнопка
-    /// создана как `Button(XFRLFARO, XFRRTARO, 141, 43)`
-    /// (`transfermenu.cpp:239`), то есть `up = XFRLFARO` (стрелка влево) и
-    /// `down = XFRRTARO` (стрелка вправо). `win_set_button_rest_state`
-    /// (`button.c:1022`) при `rest_down != 0` рисует `b->down` — значит при
-    /// `total >= 0` (перенос из источника в приёмник) видна стрелка **вправо**.
-    /// Раньше порт рисовал наоборот (`amount >= 0` → `XFRLFARO`), то есть
-    /// направление было перевёрнуто.
+    /// Oracle — `TransferMenu::UpdateIndicators` (`transfermenu.cpp:94-96`):
+    /// `button_arrow->SetRestState(total_materials_transferred >= 0)`. The button
+    /// is created as `Button(XFRLFARO, XFRRTARO, 141, 43)`
+    /// (`transfermenu.cpp:239`), i.e. `up = XFRLFARO` (left arrow) and
+    /// `down = XFRRTARO` (right arrow). `win_set_button_rest_state`
+    /// (`button.c:1022`) with `rest_down != 0` draws `b->down` — so with
+    /// `total >= 0` (transfer from source to receiver) the **right** arrow is visible.
+    /// Earlier the port drew the opposite (`amount >= 0` → `XFRLFARO`), i.e.
+    /// the direction was inverted.
     pub fn arrow_points_right(&self) -> bool {
         self.amount >= 0
     }
 
-    /// Рисует окно поверх кадра.
+    /// Draws the window over the frame.
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &crate::Assets, state: &GameState) -> u32 {
         let Some(menu_assets) = assets.transfer.as_ref() else {
             return 0;
@@ -478,7 +478,7 @@ impl TransferMenu {
         let window = self.window_rect();
         let mut painted = 0;
 
-        // `Window(XFERPIC, WINDOW_MAIN_MAP)`: фон окна.
+        // `Window(XFERPIC, WINDOW_MAIN_MAP)`: the window background.
         if let Some(background) = menu_assets.background.as_ref() {
             painted += draw_big_image_at(
                 frame,
@@ -497,8 +497,8 @@ impl TransferMenu {
         let gold_shadow = palette.rgba(GOLD.2);
         let team_lut = crate::mobilize::team_lut(self.team);
 
-        // Иконки юнитов (`ReportStats_DrawListItemIcon`): здания — 1:4,
-        // мобильные — 1:2 (те же `I_*`, что в `BuildMenu`).
+        // Unit icons (`ReportStats_DrawListItemIcon`): buildings — 1:4,
+        // mobile — 1:2 (the same `I_*` as in `BuildMenu`).
         if let Some(cargo) = assets.cargo.as_ref() {
             for (unit_id, anchor) in [(self.unit, SOURCE_ICON), (self.target, TARGET_ICON)] {
                 let Some(unit) = state.unit(unit_id) else {
@@ -522,7 +522,7 @@ impl TransferMenu {
             }
         }
 
-        // Подписи `SingularName`, `COLOR_BLACK`, `FONT5`.
+        // `SingularName` labels, `COLOR_BLACK`, `FONT5`.
         for (unit_id, rect) in [
             (self.unit, SOURCE_NAME_RECT),
             (self.target, TARGET_NAME_RECT),
@@ -542,7 +542,7 @@ impl TransferMenu {
             }
         }
 
-        // `UpdateIndicators`: количество и запасы.
+        // `UpdateIndicators`: the amount and the stocks.
         painted += draw_text_hcentered(
             frame,
             window.ulx + AMOUNT_RECT.ulx,
@@ -571,7 +571,7 @@ impl TransferMenu {
             white,
         );
 
-        // Полоса `SMBR*`: `LoadHorizontalBar` — правые `fill` пикселей строки.
+        // The `SMBR*` bar: `LoadHorizontalBar` — the right `fill` pixels of the row.
         if let Some(bar) = menu_assets.bar(self.cargo) {
             painted += draw_horizontal_bar(
                 frame,
@@ -584,7 +584,7 @@ impl TransferMenu {
             );
         }
 
-        // Кнопки: картинка + подпись `Fonts_GoldColor` (`SetCaption(c,1,2)`).
+        // Buttons: picture + `Fonts_GoldColor` label (`SetCaption(c,1,2)`).
         for (pair, rect, caption) in [
             (&menu_assets.cancel, CANCEL_RECT, "Cancel"),
             (&menu_assets.help, HELP_RECT, ""),
@@ -625,14 +625,14 @@ impl TransferMenu {
             );
         }
 
-        // Стрелка направления: `Button::SetRestState(total_materials_transferred
-        // >= 0)` (`transfermenu.cpp:95`). Кнопка создана как
-        // `Button(XFRLFARO, XFRRTARO, 141, 43)` (`transfermenu.cpp:239`), то есть
-        // `up = XFRLFARO` (стрелка влево), `down = XFRRTARO` (стрелка вправо), а
-        // `win_set_button_rest_state` (`button.c:1022`) при `rest_down != 0`
-        // рисует именно `b->down`. Значит положительная сумма (перенос из
-        // источника в приёмник, источник нарисован слева, приёмник справа)
-        // показывает стрелку **вправо**, отрицательная — влево.
+        // Direction arrow: `Button::SetRestState(total_materials_transferred
+        // >= 0)` (`transfermenu.cpp:95`). The button is created as
+        // `Button(XFRLFARO, XFRRTARO, 141, 43)` (`transfermenu.cpp:239`), i.e.
+        // `up = XFRLFARO` (left arrow), `down = XFRRTARO` (right arrow), and
+        // `win_set_button_rest_state` (`button.c:1022`) with `rest_down != 0`
+        // draws exactly `b->down`. So a positive sum (transfer from
+        // source to receiver, source drawn on the left, receiver on the right)
+        // shows the **right** arrow, a negative one — the left.
         let arrow = if self.arrow_points_right() {
             menu_assets.arrow_right.as_ref()
         } else {
@@ -653,8 +653,8 @@ impl TransferMenu {
     }
 }
 
-/// `Text_TextBox(..., horizontal_align = true)` без вертикального центрирования:
-/// строка на `y`, по центру ширины `width`.
+/// `Text_TextBox(..., horizontal_align = true)` without vertical centering:
+/// the line at `y`, centered within `width`.
 fn draw_text_hcentered(
     frame: &mut RgbaBuffer,
     x: i32,
@@ -670,8 +670,8 @@ fn draw_text_hcentered(
     draw_text_gnw(frame, x + spacing, y, font, text, color).max(0) as u32
 }
 
-/// `Button::SetCaption(caption, 1, 2)`: прямоугольник `{0,0,w-1,h-2}` с
-/// `Fonts_GoldColor` (палитровые индексы 165/175/199).
+/// `Button::SetCaption(caption, 1, 2)`: rectangle `{0,0,w-1,h-2}` with
+/// `Fonts_GoldColor` (palette indices 165/175/199).
 fn draw_caption(
     frame: &mut RgbaBuffer,
     rect: PixelRect,
@@ -693,8 +693,8 @@ fn draw_caption(
 
     let mut painted = 0;
     if x < frame.width() as i32 && y < frame.height() as i32 {
-        // `draw_text_gnw_centered_shadowed` центрирует и по вертикали, поэтому
-        // рисуем тень вручную: та же ячейка, вычисленная по C++.
+        // `draw_text_gnw_centered_shadowed` centers vertically too, so
+        // we draw the shadow manually: the same cell computed per C++.
         let cell = PixelRect::new(x, y, text_width, font.height());
         painted += draw_text_gnw_centered_shadowed(
             frame,
@@ -711,9 +711,9 @@ fn draw_caption(
     painted
 }
 
-/// `LoadHorizontalBar` (`scrollbar.cpp:36`): `height` строк, каждая — правые
-/// `fill` пикселей текстуры (`src_x = width - fill + column`), прозрачные
-/// пиксели пропускаются.
+/// `LoadHorizontalBar` (`scrollbar.cpp:36`): `height` rows, each — the right
+/// `fill` pixels of the texture (`src_x = width - fill + column`), transparent
+/// pixels are skipped.
 fn draw_horizontal_bar(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -748,13 +748,13 @@ fn draw_horizontal_bar(
     painted
 }
 
-/// `GameManager_TransferCargo` (`game_manager.cpp:4634`) в объёме выбора цели.
+/// `GameManager_TransferCargo` (`game_manager.cpp:4634`) as far as target selection goes.
 ///
-/// * цель в `ORDER_DISABLE` — `Err` (C++ показывает `NCANC0` и сообщение);
-/// * тип груза совпадает — цель как есть;
-/// * цель — стационарное здание комплекса, у которого есть здание с нужным
-///   грузом, — цель подменяется на это здание (`GetUnitWithCargoType`);
-/// * иначе `Ok(None)` — C++ молча ничего не делает.
+/// * the target is in `ORDER_DISABLE` — `Err` (C++ shows `NCANC0` and a message);
+/// * the cargo type matches — the target as is;
+/// * the target is a stationary complex building that has a building with the
+///   needed cargo — the target is replaced with that building (`GetUnitWithCargoType`);
+/// * otherwise `Ok(None)` — C++ silently does nothing.
 pub fn resolve_target(
     state: &GameState,
     source: UnitId,
@@ -800,9 +800,9 @@ pub fn resolve_target(
 /// `GameManager_TransferCargo` → `unit1->transfer_cargo = cargo_transferred;
 /// UnitsManager_SetNewOrder(unit1, ORDER_TRANSFER, ORDER_STATE_INIT)`.
 ///
-/// Пакет **08/P3** (`max-brh-docs/architecture/client/protocol.md` §8.4): `parent_unit` —
-/// цель, `transfer_cargo` — знаковое количество. `prior_order`/`prior_state`
-/// берутся из юнита, как `Remote_SendNetPacket_08` после `SetNewOrder`.
+/// Packet **08/P3** (`max-brh-docs/architecture/client/protocol.md` §8.4): `parent_unit` —
+/// the target, `transfer_cargo` — a signed amount. `prior_order`/`prior_state`
+/// are taken from the unit, like `Remote_SendNetPacket_08` after `SetNewOrder`.
 pub fn transfer_order(
     state: &GameState,
     unit_id: UnitId,
@@ -837,12 +837,12 @@ pub fn transfer_order(
     ))
 }
 
-/// `UTILITY`: знаковое количество переноса из состояния окна.
+/// `UTILITY`: the signed transfer amount from the window state.
 pub fn amount_to_transfer(menu: &TransferMenu) -> i16 {
     menu.amount.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
-/// Проверка QA: цель допустима для x-fer (для тестов/журнала).
+/// QA check: the target is valid for x-fer (for tests/log).
 pub fn can_transfer_between(
     state: &GameState,
     source: UnitId,
@@ -854,12 +854,12 @@ pub fn can_transfer_between(
         .is_some()
 }
 
-/// Груз юнита по типу (для QA/журнала).
+/// Unit cargo by type (for QA/log).
 pub fn unit_storage_of(state: &GameState, unit_id: UnitId) -> i32 {
     state.unit(unit_id).map_or(0, |unit| i32::from(unit.storage))
 }
 
-/// Единицы груза в комплексе по типу — обёртка для QA-строк.
+/// Cargo units in the complex by type — a wrapper for QA lines.
 pub fn stored_in_complex(
     state: &GameState,
     team: TeamId,
@@ -869,7 +869,7 @@ pub fn stored_in_complex(
     max_core::transfer::complex_stored(state, team, complex, cargo)
 }
 
-// Для тестов и будущего «перетаскивания» полосы: тип ресурса-иконки.
+// For tests and the future bar "dragging": the icon resource type.
 
 #[cfg(test)]
 mod tests {
@@ -933,7 +933,7 @@ mod tests {
         let (state, truck, dump) = state_with_transfer();
         let menu = TransferMenu::new(&state, truck, dump).expect("menu");
 
-        // источник — грузовик: 30/50; цель — весь комплекс: 10/75.
+        // source — a truck: 30/50; target — the whole complex: 10/75.
         assert_eq!((menu.source_materials, menu.source_capacity), (30, 50));
         assert_eq!((menu.target_materials, menu.target_capacity), (10, 75));
 
@@ -955,12 +955,12 @@ mod tests {
         // zero_offset = -10, capacity = 75-10 = 65, width = 223.
         // x = 0 → (111 + 0)/223 - 10 = -10.
         assert_eq!(menu.click_value(44), -10);
-        // x = 223 → (111 + 65*223)/223 - 10 = 65 - 10 = 55 → clamp до give_max 30.
+        // x = 223 → (111 + 65*223)/223 - 10 = 65 - 10 = 55 → clamp to give_max 30.
         assert_eq!(menu.click_value(44 + 223), 55);
         menu.set_amount(menu.click_value(44 + 223));
         assert_eq!(menu.amount, 30);
 
-        // Середина: (111 + 65*111)/223 - 10 = 32 - 10 = 22.
+        // Middle: (111 + 65*111)/223 - 10 = 32 - 10 = 22.
         assert_eq!(menu.click_value(44 + 111), 22);
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
         let (x, y) = centre(LEFT_RECT);
         menu.click(x, y);
         assert_eq!(menu.amount, before - 1);
-        // Клик мимо кнопок — ничего.
+        // A click outside the buttons — nothing.
         assert_eq!(menu.click(window.ulx + 2, window.uly + 2), TransferAction::None);
     }
 
@@ -1039,18 +1039,18 @@ mod tests {
         let (state, truck, dump) = state_with_transfer();
         let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
 
-        // `SetRestState(total >= 0)` → нажата → `down` = `XFRRTARO` (вправо):
-        // перенос идёт из юнита (источник, слева) в приёмник (справа).
+        // `SetRestState(total >= 0)` → pressed → `down` = `XFRRTARO` (right):
+        // the transfer goes from the unit (source, left) into the receiver (right).
         menu.set_amount(5);
         assert!(menu.arrow_points_right(), "give: стрелка к приёмнику");
         assert_eq!(menu.amount, 5);
 
-        // Ноль — тоже `total >= 0`, C++ оставляет кнопку нажатой.
+        // Zero is also `total >= 0`, C++ leaves the button pressed.
         menu.set_amount(0);
         assert!(menu.arrow_points_right());
 
-        // Отрицательное значение — обратный перенос: кнопка отжата, `up` =
-        // `XFRLFARO` (влево).
+        // A negative value — a reverse transfer: the button is released, `up` =
+        // `XFRLFARO` (left).
         menu.set_amount(-5);
         assert!(!menu.arrow_points_right(), "take: стрелка обратно к юниту");
     }
@@ -1071,7 +1071,7 @@ mod tests {
     #[test]
     fn resolve_target_swaps_to_a_storage_building() {
         let (state, truck, dump) = state_with_transfer();
-        // Клик по шахте (RAW, но это склад 25) — тип совпадает, цель она.
+        // A click on the mine (RAW, but this is a 25 storage) — the type matches, it is the target.
         let mine = state
             .unit_ids_in_order()
             .into_iter()
@@ -1083,8 +1083,8 @@ mod tests {
             .expect("mine");
         assert_eq!(resolve_target(&state, truck, mine), Ok(Some(mine)));
 
-        // Грузовик с топливом на комплекс с ADUMP: C++ подменяет цель на
-        // здание с топливом — его нет, значит `None` (никакой передачи).
+        // A truck with fuel to a complex with ADUMP: C++ replaces the target with
+        // the building with fuel — there is none, so `None` (no transfer).
         let cargo_state = state;
         let fuel_truck = cargo_state
             .unit_ids_in_order()

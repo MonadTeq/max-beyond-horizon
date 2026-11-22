@@ -1,10 +1,10 @@
-//! Отрисовка `CargoMenu` (мобилизация): иконки списков, полосы золота/cargo,
-//! стрелки апгрейдов, переключатель режима.
+//! `CargoMenu` rendering (mobilization): list icons, gold/cargo bars,
+//! upgrade arrows, the mode toggle.
 //!
-//! Тест грузит настоящий `MAX.RES`/`PATCHES.RES` (если данных нет — пропуск) и
-//! сверяет изменившиеся пиксели областей кадра с эталонными прямоугольниками
-//! C++ (`cargomenu.cpp`): иконка строки 32×32, полоса `VERTGOLD` (361,276),
-//! cargo-слайдер (421,301), стрелки `UPGLFT`/`UPGRGT` (283/301), `CRGTOG`
+//! The test loads the real `MAX.RES`/`PATCHES.RES` (skipped if there is no data) and
+//! compares the changed pixels of frame areas with the reference C++
+//! rectangles (`cargomenu.cpp`): the 32×32 row icon, the `VERTGOLD` bar (361,276),
+//! the cargo slider (421,301), the `UPGLFT`/`UPGRGT` arrows (283/301), `CRGTOG`
 //! (542,446).
 
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ fn assets() -> Option<Assets> {
     Assets::load(&config).ok()
 }
 
-/// Сколько пикселей области различаются между двумя кадрами.
+/// How many pixels of the area differ between two frames.
 fn changed(before: &RgbaBuffer, after: &RgbaBuffer, rect: PixelRect) -> usize {
     let mut count = 0;
 
@@ -92,7 +92,7 @@ fn cargo_assets_carry_icons_for_every_purchase_type() {
     for unit in PURCHASE_UNITS {
         assert!(cargo.icon(unit).is_some(), "нет иконки {unit:?}");
     }
-    // Иконки зданий и техники из полного списка.
+    // Icons of buildings and vehicles from the full list.
     for unit in [
         UnitType::PowerGenerator,
         UnitType::Tank,
@@ -102,7 +102,7 @@ fn cargo_assets_carry_icons_for_every_purchase_type() {
     ] {
         assert!(cargo.icon(unit).is_some(), "нет иконки {unit:?}");
     }
-    // Полосы: VERTRAW/VERTFUEL/VERTGOLD.
+    // Bars: VERTRAW/VERTFUEL/VERTGOLD.
     assert!(cargo.bars.iter().all(Option::is_some), "VERT*");
 }
 
@@ -113,8 +113,8 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
     };
     let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
 
-    // `ReportStats_DrawListItemIcon`: кадр 0 — корпус, кадр 1 — башня,
-    // сдвиг — `angle_offsets[2]` ресурса `D_*` (см. `units.cpp`).
+    // `ReportStats_DrawListItemIcon`: frame 0 — body, frame 1 — turret,
+    // the shift — `angle_offsets[2]` of the `D_*` resource (see `units.cpp`).
     let tank = cargo.icon(UnitType::Tank).expect("I_TANK");
     assert!(tank.has_turret(), "танк: отдельный кадр башни");
     assert_eq!(tank.turret_offset, (-8, 0), "D_TANK angle_offsets[2]");
@@ -129,8 +129,8 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
     assert!(escort.has_turret(), "эскорт");
     assert_eq!(escort.turret_offset, (4, 0), "D_ESCORT angle_offsets[2]");
 
-    // Все 11 типов с `TURRET_SPRITE`/`SPINNING_TURRET` (`SC_UNITS`): у каждого
-    // в `I_*` есть второй кадр, а в `D_*` — сдвиг башни для angle 2.
+    // All 11 types with `TURRET_SPRITE`/`SPINNING_TURRET` (`SC_UNITS`): each
+    // has a second frame in `I_*` and a turret shift for angle 2 in `D_*`.
     for unit in [
         UnitType::GunTurret,
         UnitType::AntiAir,
@@ -155,7 +155,7 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
         assert!(icon.has_turret(), "{unit:?}: второй кадр башни");
         let turret = icon.turret.as_ref().unwrap();
         assert!(turret.width > 0 && turret.height > 0, "{unit:?}");
-        // Сдвиг `angle_offsets[2]` берётся из `D_*`, а не из спрайта `.SPW`.
+        // The `angle_offsets[2]` shift is taken from `D_*`, not from the `.SPW` sprite.
         let frame_data = max_app::cargo_unit_data::unit_frame_data(unit)
             .and_then(|data| assets.max_res.read(data).ok())
             .and_then(|bytes| max_assets::sprite::FrameInfo::decode(&bytes))
@@ -167,7 +167,7 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
         );
     }
 
-    // Без башни: у Constructor в `I_CONTRC` один кадр.
+    // Without a turret: the Constructor has one frame in `I_CONTRC`.
     assert!(!cargo.icon(UnitType::Constructor).unwrap().has_turret());
 }
 
@@ -178,8 +178,8 @@ fn turret_is_painted_over_the_tank_icon_in_the_list() {
     };
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
 
-    // Тот же кадр, но у иконки танка убран второй кадр: разница в строке
-    // Tank — это ровно башня.
+    // The same frame, but the second frame is removed from the tank icon: the difference in the
+    // Tank row — is exactly the turret.
     let mut without_turret = assets.clone();
     if let Some(cargo) = without_turret.cargo.as_mut() {
         for (unit, icon) in cargo.icons.iter_mut() {
@@ -192,12 +192,12 @@ fn turret_is_painted_over_the_tank_icon_in_the_list() {
     let (_, with) = draw(&mobilization, &assets);
     let (_, without) = draw(&mobilization, &without_turret);
 
-    // `CargoMenu::unit_types1`: Tank — 6-я строка (индекс 5).
+    // `CargoMenu::unit_types1`: Tank — the 6th row (index 5).
     let tank_row = PixelRect::new(482, 80 + 5 * 32, 32, 32);
     let turret_pixels = changed(&without, &with, tank_row);
     assert!(turret_pixels > 20, "башня танка в списке: {turret_pixels} px");
 
-    // Соседняя строка не меняется — рисуется только вторая иконка.
+    // The neighboring row does not change — only the second icon is drawn.
     let constructor_row = PixelRect::new(482, 80, 32, 32);
     assert_eq!(changed(&without, &with, constructor_row), 0);
 }
@@ -232,8 +232,8 @@ fn sprite_renderer_draws_the_tank_turret_as_a_separate_frame() {
         64,
     );
 
-    // `angle_offsets[0]` у `D_TANK` = (0, 7): башня смещается вниз и добавляет
-    // непрозрачные пиксели поверх корпуса.
+    // `angle_offsets[0]` of `D_TANK` = (0, 7): the turret shifts down and adds
+    // opaque pixels over the body.
     assert_eq!(sprite.turret_offset(0), (0, 7));
     assert!(
         changed(&without, &with, PixelRect::new(0, 0, 160, 160)) > 100,
@@ -249,7 +249,7 @@ fn purchase_screen_draws_icons_bars_and_buttons() {
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
     let (background, frame) = draw(&mobilization, &assets);
 
-    // Иконка строки списка «Available» (первая строка, Constructor).
+    // The "Available" list row icon (the first row, Constructor).
     let available_icon = PixelRect::new(482, 80, 32, 32);
     assert!(
         changed(&background, &frame, available_icon) > 40,
@@ -257,11 +257,11 @@ fn purchase_screen_draws_icons_bars_and_buttons() {
         changed(&background, &frame, available_icon)
     );
 
-    // Иконка первой строки «Purchased» (бесплатный Constructor).
+    // The icon of the first "Purchased" row (the free Constructor).
     let purchased_icon = PixelRect::new(337, 45, 32, 32);
     assert!(changed(&background, &frame, purchased_icon) > 40);
 
-    // Полоса золота: заливка `VERTGOLD` — нижняя часть (start_gold = credits).
+    // Gold bar: the `VERTGOLD` fill — the lower part (start_gold = credits).
     let gold_fill = PixelRect::new(GOLD_BAR.ulx + 10, GOLD_BAR.lry() - 20, 20, 20);
     assert!(
         changed(&background, &frame, gold_fill) > 100,
@@ -269,18 +269,18 @@ fn purchase_screen_draws_icons_bars_and_buttons() {
         changed(&background, &frame, gold_fill)
     );
 
-    // Cargo-слайдер: у бесплатного конструктора cargo 40/60 — заливка снизу.
+    // Cargo slider: the free constructor has cargo 40/60 — the fill from the bottom.
     let cargo_fill = PixelRect::new(CARGO_BAR.ulx, CARGO_BAR.lry() - 40, CARGO_BAR.width, 40);
     assert!(changed(&background, &frame, cargo_fill) > 100);
 
-    // Стрелки апгрейдов (Constructor: armor/hits/scan/speed после двух пропусков).
+    // Upgrade arrows (Constructor: armor/hits/scan/speed after two skips).
     let arrows = PixelRect::new(283, 331, 36, 17);
     assert!(changed(&background, &frame, arrows) > 20);
 
-    // Переключатель режима.
+    // Mode toggle.
     assert!(changed(&background, &frame, TOGGLE_BUTTON) > 500);
 
-    // Кнопки Buy/Delete/Cancel/Done.
+    // Buy/Delete/Cancel/Done buttons.
     for rect in [
         PixelRect::new(590, 386, 41, 22),
         PixelRect::new(412, 240, 53, 23),
@@ -290,7 +290,7 @@ fn purchase_screen_draws_icons_bars_and_buttons() {
         assert!(changed(&background, &frame, rect) > 100);
     }
 
-    // Название и цена первой строки (шрифт 5).
+    // Name and price of the first row (font 5).
     assert!(changed(&background, &frame, PixelRect::new(482, 80, 123, 32)) > 100);
 }
 
@@ -300,25 +300,25 @@ fn upgrade_screen_shows_more_of_the_frame() {
         return;
     };
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
-    mobilization.select_type(5); // Tank — 4 военных апгрейда
+    mobilization.select_type(5); // Tank — 4 military upgrades
     let (background, buy_frame) = draw(&mobilization, &assets);
 
     mobilization.toggle_mode();
     assert!(mobilization.types.len() > PURCHASE_UNITS.len());
     let (_, upgrade_frame) = draw(&mobilization, &assets);
 
-    // Список модернизации — другой набор строк (62 типа против 15), а не
-    // просто «больше пикселей»: иконки обеих страниц теперь с башнями.
+    // The upgrade list — a different set of rows (62 types vs 15), not
+    // just "more pixels": the icons of both pages now have turrets.
     assert!(
         changed(&buy_frame, &upgrade_frame, AVAILABLE_AREA) > 1_000,
         "список модернизации отличается от списка покупки"
     );
 
-    // Фильтры домена в режиме модернизации рисуются активными (`_D`).
+    // Domain filters in upgrade mode are drawn active (`_D`).
     let filter = PixelRect::new(467, 411, 32, 31);
     assert!(changed(&background, &upgrade_frame, filter) > 50);
 
-    // Стрелки всех строк Tank: attack/rounds/range/ammo/armor/hits/scan/speed.
+    // Arrows of all Tank rows: attack/rounds/range/ammo/armor/hits/scan/speed.
     assert_eq!(mobilization.controls.len(), 8, "Tank: 8 строк");
     let (left, right) = mobilization.control_arrows(7).expect("speed");
     assert!(changed(&background, &upgrade_frame, left) > 5);
@@ -343,12 +343,12 @@ fn upgrade_costs_are_shown_within_the_limit() {
         );
     }
 
-    // Числа цен и иконка золота в колонке (321..361).
+    // Price numbers and the gold icon in the column (321..361).
     let (background, frame) = draw(&mobilization, &assets);
     let column = PixelRect::new(321, 331, 40, 100);
     assert!(changed(&background, &frame, column) > 100);
 
-    // Заголовки Cost/Credit/Cargo и значения над ними.
+    // Cost/Credit/Cargo headings and the values above them.
     let font = GnwFontId::Font5.font();
     assert_eq!(font.height(), 10);
     let values = PixelRect::new(320, 267, 137, 30);
@@ -362,8 +362,8 @@ fn full_purchase_list_fits_nine_rows_with_scroll() {
     };
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 1000);
 
-    // Список покупки — 15 типов, видно 9; последняя строка достигается
-    // прокруткой (стрелка `BLDDWN`).
+    // The buy list — 15 types, 9 visible; the last row is reached
+    // by scrolling (the `BLDDWN` arrow).
     assert_eq!(mobilization.types.len(), 15);
     assert!(mobilization.types.len() > 9);
 
@@ -379,7 +379,7 @@ fn full_purchase_list_fits_nine_rows_with_scroll() {
         "прокрутка списка меняет кадр"
     );
 
-    // Стрелка вверх появляется, когда страница не первая.
+    // The up arrow appears when the page is not the first.
     let up = LIST_UP;
     let (background, scrolled) = (background, scrolled);
     assert!(changed(&background, &scrolled, up) > 5);
@@ -399,8 +399,8 @@ fn portrait_is_the_p_star_big_image_for_every_selectable_type() {
 
     assert!(all.len() >= 60, "типов: {}", all.len());
 
-    // `CargoMenuAssets::portrait` читает `P_*` из `MAX.RES` — ресурс есть у
-    // каждого открываемого типа (`Unit::GetPortrait()`).
+    // `CargoMenuAssets::portrait` reads `P_*` from `MAX.RES` — the resource exists for
+    // every openable type (`Unit::GetPortrait()`).
     for unit in all {
         let portrait = cargo.portrait(&assets.max_res, unit);
         assert!(portrait.is_some(), "{unit:?}: P_* портрет");
@@ -408,7 +408,7 @@ fn portrait_is_the_p_star_big_image_for_every_selectable_type() {
         assert_eq!((portrait.width, portrait.height), (300, 240), "{unit:?}");
     }
 
-    // Не-юниты без портрета (`INVALID_ID`) — пусто.
+    // Non-units without a portrait (`INVALID_ID`) — empty.
     for unit in [UnitType::Rocket, UnitType::Harvester, UnitType::LargeRubble] {
         assert!(cargo.portrait(&assets.max_res, unit).is_none(), "{unit:?}");
     }
@@ -422,8 +422,8 @@ fn purchase_screen_draws_portrait_description_and_stat_pips() {
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
     let (background, frame) = draw(&mobilization, &assets);
 
-    // Портрет `P_CONTRC` 300×240 в (11,13): окно 280×240 почти всё занято
-    // картинкой (фон `CARGOPIC` тёмный, портрет — сцена).
+    // The `P_CONTRC` portrait 300×240 at (11,13): the 280×240 window is almost entirely
+    // taken by the picture (the `CARGOPIC` background is dark, the portrait is a scene).
     let portrait = PixelRect::new(11, 13, 280, 240);
     let portrait_pixels = changed(&background, &frame, portrait);
     assert!(
@@ -431,8 +431,8 @@ fn purchase_screen_draws_portrait_description_and_stat_pips() {
         "портрет нарисован: {portrait_pixels} px"
     );
 
-    // Описание рисуется поверх портрета (`GetDescription()` + `BLDDES`):
-    // с выключенным флагом область описания отличается только текстом.
+    // The description is drawn over the portrait (`GetDescription()` + `BLDDES`):
+    // with the flag off, the description area differs only in the text.
     let mut without_description = mobilization.clone();
     without_description.description = false;
     let (_, no_description) = draw(&without_description, &assets);
@@ -441,13 +441,13 @@ fn purchase_screen_draws_portrait_description_and_stat_pips() {
         description_pixels > 300,
         "описание видно: {description_pixels} px"
     );
-    // Вне области описания (левее кнопки `BLDDES` 292,264) кадр тот же —
-    // переключается только текст.
+    // Outside the description area (left of the `BLDDES` button 292,264) the frame is the same —
+    // only the text toggles.
     let below = PixelRect::new(DESCRIPTION.ulx, DESCRIPTION.lry(), 260, 10);
     assert_eq!(changed(&no_description, &frame, below), 0);
 
-    // Иконки статистики (`UnitStats_DrawIcons`) — колонка от x=76:
-    // у Constructor заполнены Cargo/Uses/Armor/Hits/Scan/Speed/Cost.
+    // Statistics icons (`UnitStats_DrawIcons`) — the column from x=76:
+    // the Constructor has Cargo/Uses/Armor/Hits/Scan/Speed/Cost filled.
     let pips = PixelRect::new(
         STATS.ulx + STAT_ICON_X,
         STATS.uly,
@@ -457,12 +457,12 @@ fn purchase_screen_draws_portrait_description_and_stat_pips() {
     let pip_pixels = changed(&background, &frame, pips);
     assert!(pip_pixels > 500, "pips нарисованы: {pip_pixels} px");
 
-    // Числа и подписи слева от pips (x=24/28).
+    // Numbers and labels left of the pips (x=24/28).
     let labels = PixelRect::new(STATS.ulx, STATS.uly, STAT_ICON_X, 140);
     assert!(changed(&background, &frame, labels) > 300);
 
-    // Красные линии-разделители под строками (`draw_line(2,18 — 248,18)`):
-    // строка y = 293 + 18 = 311 отличается от фона на всю ширину блока.
+    // Red separator lines under the rows (`draw_line(2,18 — 248,18)`):
+    // the row y = 293 + 18 = 311 differs from the background across the block width.
     let separator = PixelRect::new(STATS.ulx + 2, STATS.uly + 18, STATS.width - 4, 1);
     let separator_pixels = changed(&background, &frame, separator);
     assert!(
@@ -497,6 +497,6 @@ fn stat_rows_change_with_the_selected_unit() {
         "сетка статистики зависит от типа"
     );
 
-    // Портрет тоже другой (`P_TANK` против `P_CONTRC`).
+    // The portrait is different too (`P_TANK` vs `P_CONTRC`).
     assert!(changed(&constructor, &tank, PixelRect::new(11, 13, 280, 240)) > 10_000);
 }

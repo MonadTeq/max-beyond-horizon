@@ -1,46 +1,46 @@
-//! Экран покупных апгрейдов — C++ `AbstractUpgradeMenu` / `UpgradeMenu`
+//! Purchasable upgrades screen — C++ `AbstractUpgradeMenu` / `UpgradeMenu`
 //! (`abstractupgrademenu.cpp`, `upgrademenu.cpp`, `upgradecontrol.cpp`).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! Фон `UPGRADE` 640×480 (own palette), кнопки — те же ресурсы, что в C++:
+//! `UPGRADE` background 640×480 (own palette), the buttons are the same resources as in C++:
 //! `BLDONE`, `BLDHLP`, `BLDCAN` (y=452), `BLDUP__`/`BLDDWN` (471/491, 387),
 //! `BLDDES` (292,264), `SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`
-//! (467/500/533/565/598, 411), `UPGLFT`/`UPGRGT` (283/301, ряд 293+19·i),
-//! иконка `I_GOLD`.
+//! (467/500/533/565/598, 411), `UPGLFT`/`UPGRGT` (283/301, row 293+19·i),
+//! and the `I_GOLD` icon.
 //!
-//! Раскладка:
-//! * портрет юнита — область (11,13) 280×240 (в C++ — `GetPortrait()`, FLIC;
-//!   здесь — спрайт 2×, как в `BuildMenu`);
-//! * статистика — (11,293) 250×174; цена — (321,293) 40×174; стрелки
-//!   апгрейдов — x=283/301; золото — (361,276) 40×140;
-//! * список типов команды — (482,80) 143×290, 9 строк по 32 px
-//!   (`UnitTypeSelector`: `max_item_count = height/32`), выбранная строка —
-//!   `page_max_index` (в C++ `GetLast()` = `unit_types[page_max_index]`);
-//! * заголовок `_(0b85)` («Unit Upgrades») — `Text_TextBox(327,7,158,18)`,
-//!   подписи `Cost`/`Gold` — (320,283)/(358,284).
+//! Layout:
+//! * unit portrait — area (11,13) 280×240 (in C++ — `GetPortrait()`, FLIC;
+//!   here — a 2× sprite, as in `BuildMenu`);
+//! * statistics — (11,293) 250×174; price — (321,293) 40×174; upgrade
+//!   arrows — x=283/301; gold — (361,276) 40×140;
+//! * team type list — (482,80) 143×290, 9 rows of 32 px
+//!   (`UnitTypeSelector`: `max_item_count = height/32`), the selected row —
+//!   `page_max_index` (in C++ `GetLast()` = `unit_types[page_max_index]`);
+//! * the title `_(0b85)` («Unit Upgrades») — `Text_TextBox(327,7,158,18)`,
+//!   the `Cost`/`Gold` labels — (320,283)/(358,284).
 //!
-//! # Отличия (осознанные)
+//! # Differences (deliberate)
 //!
-//! * `UnitStats_DrawStats` рисует сетку иконок `EI_*`; здесь — текстовая
-//!   таблица тех же 13 атрибутов (шрифт 5) в той же области. Значения и
-//!   формулы совпадают, картинка — нет; golden-кадр фиксирует нашу версию.
-//! * Описание юнита (`BLDDES`/`GetDescription`) не портировано — кнопка есть,
-//!   текста в данных Rust-клиента нет.
-//! * Звуки `KCARG0`/`NDONE0`/`NCANC0` не проигрываются (аудио-слой отдельный).
-//! * Меню открывается пунктом `buy upg` меню команд юнита (C++
-//!   `UnitsManager_Popup_OnClick_BuyUpgrade`, `units_manager.cpp:956`) или
-//!   клавишей `U` как быстрым путём для выделенного юнита своей команды.
-//! * Сеть: C++ на `CommitUpgradeChanges` шлёт пакет 09 (состояние команды) и по
-//!   пакету 10 на каждый изменённый тип. Пакета 09 в Rust-протоколе нет,
-//!   поэтому в сети отправляются только пакеты **10** (`Command::UpgradeUnitType`),
-//!   а золото/`gold_spent` синхронизируются локально — ограничение
-//!   задокументировано в `max-brh-docs/architecture/client/protocol.md` §8.4.
+//! * `UnitStats_DrawStats` draws a grid of `EI_*` icons; here — a textual
+//!   table of the same 13 attributes (font 5) in the same area. The values and
+//!   formulas match, the picture does not; the golden frame records our version.
+//! * The unit description (`BLDDES`/`GetDescription`) is not ported — the button
+//!   exists, but there is no text in the Rust client data.
+//! * The `KCARG0`/`NDONE0`/`NCANC0` sounds are not played (the audio layer is separate).
+//! * The menu is opened by the `buy upg` item of the unit command menu (C++
+//!   `UnitsManager_Popup_OnClick_BuyUpgrade`, `units_manager.cpp:956`) or
+//!   by the `U` key as a shortcut for a selected unit of own team.
+//! * Network: in C++, `CommitUpgradeChanges` sends packet 09 (team state) and
+//!   packet 10 for each changed type. Packet 09 does not exist in the Rust protocol,
+//!   so in the network only packets **10** are sent (`Command::UpgradeUnitType`),
+//!   while gold/`gold_spent` are synchronized locally — the limitation is
+//!   documented in `max-brh-docs/architecture/client/protocol.md` §8.4.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::access::unit_type_flags;
-// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
-// max_core); глоб-реэкспортов нет (Ф5.2).
+// Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
+// max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::enums::{unit_flags, ResearchTopic, UnitType, UNIT_END};
 use max_core::game::GameState;
@@ -67,32 +67,32 @@ use crate::menu::{blit_simple, draw_image_button, MenuButtonPair};
 use crate::panels::UiPalette;
 use crate::ui::Key;
 
-/// Ширина кадра оригинала.
+/// Original frame width.
 pub const SCREEN_WIDTH: i32 = 640;
-/// Высота кадра оригинала.
+/// Original frame height.
 pub const SCREEN_HEIGHT: i32 = 480;
 
-/// Портрет (C++ `unit_portrait_window` 11,13 + 280×240).
+/// Portrait (C++ `unit_portrait_window` 11,13 + 280×240).
 pub const PORTRAIT: PixelRect = PixelRect::new(11, 13, 280, 240);
-/// Область статистики (`stats_background` 11,293,250,174).
+/// Statistics area (`stats_background` 11,293,250,174).
 pub const STATS: PixelRect = PixelRect::new(11, 293, 250, 174);
-/// Колонка цен (`cost_background` 321,293,40,174).
+/// Price column (`cost_background` 321,293,40,174).
 pub const COST: PixelRect = PixelRect::new(321, 293, 40, 174);
-/// Колонка стрелок апгрейдов (`button_background` 283,293,38,174).
+/// Upgrade arrows column (`button_background` 283,293,38,174).
 pub const CONTROL_BUTTONS: PixelRect = PixelRect::new(283, 293, 38, 174);
-/// Полоса золота (`gold_background` 361,276,40,140).
+/// Gold bar (`gold_background` 361,276,40,140).
 pub const GOLD_BAR: PixelRect = PixelRect::new(361, 276, 40, 140);
-/// Список типов (`wininfo` 482,80 — 625,370).
+/// Type list (`wininfo` 482,80 — 625,370).
 pub const LIST_AREA: PixelRect = PixelRect::new(482, 80, 143, 290);
-/// Высота строки списка (`UnitTypeSelector`: 32 px).
+/// List row height (`UnitTypeSelector`: 32 px).
 pub const LIST_ROW: i32 = 32;
-/// Число видимых строк списка (`height / 32`).
+/// Number of visible list rows (`height / 32`).
 pub const LIST_ROWS: i32 = 9;
-/// Скролл вверх (`BLDUP__U`, 18×17).
+/// Scroll up (`BLDUP__U`, 18×17).
 pub const SCROLL_UP: PixelRect = PixelRect::new(471, 387, 18, 17);
-/// Скролл вниз (`BLDDWN_U`, 18×17).
+/// Scroll down (`BLDDWN_U`, 18×17).
 pub const SCROLL_DOWN: PixelRect = PixelRect::new(491, 387, 18, 17);
-/// Описание (`BLDDES_U`, 17×17).
+/// Description (`BLDDES_U`, 17×17).
 pub const DESCRIPTION: PixelRect = PixelRect::new(292, 264, 17, 17);
 /// `Done` (`BLDONE_U`, 54×23).
 pub const DONE: PixelRect = PixelRect::new(447, 452, 54, 23);
@@ -100,27 +100,27 @@ pub const DONE: PixelRect = PixelRect::new(447, 452, 54, 23);
 pub const HELP: PixelRect = PixelRect::new(420, 452, 26, 23);
 /// `Cancel` (`BLDCAN_U`, 62×23).
 pub const CANCEL: PixelRect = PixelRect::new(357, 452, 62, 23);
-/// Заголовок (`Text_TextBox` 327,7,158,18).
+/// Title (`Text_TextBox` 327,7,158,18).
 pub const TITLE: PixelRect = PixelRect::new(327, 7, 158, 18);
 
-/// Фильтры списка (C++ static rest-state: земля/воздух/море/здания вкл,
-/// боевые выкл.).
+/// List filters (C++ static rest-state: land/air/sea/buildings on,
+/// combat off).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradeFilter {
-    /// Наземные мобильные.
+    /// Ground mobile.
     Ground,
-    /// Воздушные.
+    /// Air.
     Air,
-    /// Морские.
+    /// Sea.
     Sea,
-    /// Стационарные здания.
+    /// Stationary buildings.
     Building,
-    /// Только юниты с атакой (C++ `button_combat_rest_state`).
+    /// Only units with an attack (C++ `button_combat_rest_state`).
     Combat,
 }
 
 impl UpgradeFilter {
-    /// Прямоугольник кнопки (32×31).
+    /// Button rectangle (32×31).
     pub const fn rect(self) -> PixelRect {
         match self {
             Self::Ground => PixelRect::new(467, 411, 32, 31),
@@ -132,51 +132,51 @@ impl UpgradeFilter {
     }
 }
 
-/// Действие меню.
+/// Menu action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradeAction {
-    /// Ничего.
+    /// Nothing.
     None,
     /// `Cancel`/Esc.
     Cancel,
-    /// `Done`/Enter — изменения зафиксированы.
+    /// `Done`/Enter — changes committed.
     Commit,
-    /// `Help`/`?` — открыть `UPGRADES_SETUP` (`HelpMenu_Menu`).
+    /// `Help`/`?` — open `UPGRADES_SETUP` (`HelpMenu_Menu`).
     Help,
 }
 
-/// Состояние открытого меню апгрейдов.
+/// State of the open upgrade menu.
 #[derive(Debug, Clone)]
 pub struct UpgradeMenu {
-    /// Команда.
+    /// Team.
     pub team: TeamId,
-    /// Доступные типы (отфильтрованы, порядок C++ `IsBetterUnit`).
+    /// Available types (filtered, C++ `IsBetterUnit` order).
     pub unit_types: Vec<UnitType>,
-    /// Выбранный индекс (`page_max_index`).
+    /// Selected index (`page_max_index`).
     pub selected: usize,
-    /// Первая видимая строка (`page_min_index`).
+    /// First visible row (`page_min_index`).
     pub page_min: usize,
-    /// Текущие значения на момент открытия (`unitvalues_base`).
+    /// Current values at the moment of opening (`unitvalues_base`).
     pub base: [UnitValues; UNIT_END as usize],
-    /// Редактируемые значения (`unitvalues_actual`).
+    /// Editable values (`unitvalues_actual`).
     pub actual: [UnitValues; UNIT_END as usize],
-    /// Золото команды в меню.
+    /// Team gold in the menu.
     pub gold: u32,
-    /// Золото на момент открытия.
+    /// Gold at the moment of opening.
     pub start_gold: u32,
-    /// Фильтры (C++ static rest-state).
+    /// Filters (C++ static rest-state).
     pub filters: [bool; 5],
-    /// Кнопка описания.
+    /// Description button.
     pub description: bool,
-    /// Строки апгрейдов выбранного типа: `(ATTRIB_*, uly)`.
+    /// Upgrade rows of the selected type: `(ATTRIB_*, uly)`.
     pub controls: Vec<(u8, i32)>,
-    /// Строка статуса (ошибки).
+    /// Status line (errors).
     pub status: String,
 }
 
 impl UpgradeMenu {
-    /// Открывает меню для команды — C++ `UpgradeMenu::UpgradeMenu(team, complex)`
-    /// (complex не используется и в C++).
+    /// Opens the menu for a team — C++ `UpgradeMenu::UpgradeMenu(team, complex)`
+    /// (complex is not used in C++ either).
     pub fn new(state: &GameState, team: TeamId) -> Option<Self> {
         let team_index = team.0 as usize;
         let units = state.team_units.get(team_index)?;
@@ -201,8 +201,8 @@ impl UpgradeMenu {
         Some(menu)
     }
 
-    /// Пересобирает список доступных типов (`PopulateTeamUnitsList`), сохраняя
-    /// выбранный тип, если он остался.
+    /// Rebuilds the list of available types (`PopulateTeamUnitsList`), keeping
+    /// the selected type if it remains.
     pub fn rebuild_list(&mut self, state: &GameState, keep: Option<UnitType>) {
         let previous = keep.or_else(|| self.selected_type());
 
@@ -211,7 +211,7 @@ impl UpgradeMenu {
             .filter(|unit_type| self.is_unit_filtered(state, *unit_type))
             .collect();
 
-        // C++ `PopulateTeamUnitsList`: пузырьковая сортировка, обмен при
+        // C++ `PopulateTeamUnitsList`: bubble sort, swap when
         // `IsBetterUnit(unit_types[i], unit_types[j])`.
         if types.len() > 1 {
             for i in 0..types.len() - 1 {
@@ -231,7 +231,7 @@ impl UpgradeMenu {
         self.rebuild_controls(state);
     }
 
-    /// Выбранный тип.
+    /// Selected type.
     pub fn selected_type(&self) -> Option<UnitType> {
         self.unit_types.get(self.selected).copied()
     }
@@ -243,7 +243,7 @@ impl UpgradeMenu {
             return false;
         }
 
-        // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+        // `MOBILE_*` bits include amphibians (see `Environment`).
         let land = unit_type.is_ground() || unit_type.is_amphibious();
         let sea = unit_type.is_sea() || unit_type.is_amphibious();
         let class_matches = (land && self.filters[0])
@@ -255,7 +255,7 @@ impl UpgradeMenu {
         }
 
         if self.filters[4] {
-            // C++: `UnitsManager_TeamInfo[0]` base values, а не команда меню.
+            // C++: `UnitsManager_TeamInfo[0]` base values, not the menu team.
             let base = state
                 .team_units
                 .first()
@@ -279,7 +279,7 @@ impl UpgradeMenu {
         }
     }
 
-    /// Прокрутка выбора (`UnitTypeSelector::ProcessKeys` UP/DOWN).
+    /// Selection scrolling (`UnitTypeSelector::ProcessKeys` UP/DOWN).
     pub fn step(&mut self, delta: i32, state: &GameState) {
         if self.unit_types.is_empty() {
             return;
@@ -290,19 +290,19 @@ impl UpgradeMenu {
         self.rebuild_controls(state);
     }
 
-    /// Прокрутка страницы (PageUp/PageDown — `max_item_count` строк).
+    /// Page scrolling (PageUp/PageDown — `max_item_count` rows).
     pub fn page(&mut self, delta: i32, state: &GameState) {
         self.step(delta * LIST_ROWS, state);
     }
 
-    /// Переключает фильтр и пересобирает список.
+    /// Toggles the filter and rebuilds the list.
     pub fn toggle_filter(&mut self, filter: UpgradeFilter, state: &GameState) {
         let index = filter as usize;
         self.filters[index] = !self.filters[index];
         self.rebuild_list(state, None);
     }
 
-    /// Собирает контролы апгрейдов для выбранного типа — C++
+    /// Builds the upgrade controls for the selected type — C++
     /// `DrawUnitInfo` → `AddUpgradeMilitary/AdjustRow*/AddUpgradeGeneric/Mobile`.
     pub fn rebuild_controls(&mut self, state: &GameState) {
         self.controls.clear();
@@ -385,7 +385,7 @@ impl UpgradeMenu {
         self.controls = rows;
     }
 
-    /// Контрол-цитата строки для выбранного типа.
+    /// Control quote row for the selected type.
     pub fn quote(&self, state: &GameState, row: usize) -> Option<UpgradeQuote> {
         let (attribute, _) = *self.controls.get(row)?;
         let unit_type = self.selected_type()?;
@@ -415,7 +415,7 @@ impl UpgradeMenu {
         Some(quote)
     }
 
-    /// Строка (ATTRIB) -> индекс контрола.
+    /// Line (ATTRIB) -> control index.
     pub fn control_at(&self, x: i32, y: i32) -> Option<(usize, bool)> {
         for (row, (_, uly)) in self.controls.iter().enumerate() {
             let left = PixelRect::new(CONTROL_BUTTONS.ulx, *uly, 18, 17);
@@ -430,7 +430,7 @@ impl UpgradeMenu {
         None
     }
 
-    /// Нажатие на стрелку апгрейда: `false`, если изменение невозможно.
+    /// Click on an upgrade arrow: `false` if the change is impossible.
     pub fn adjust(&mut self, state: &GameState, row: usize, increase: bool) -> bool {
         let Some(unit_type) = self.selected_type() else {
             return false;
@@ -452,7 +452,7 @@ impl UpgradeMenu {
         changed
     }
 
-    /// Обрабатывает клик; возвращает действие.
+    /// Handles a click; returns the action.
     pub fn click(&mut self, state: &GameState, x: i32, y: i32) -> UpgradeAction {
         if DONE.contains(x, y) {
             return UpgradeAction::Commit;
@@ -519,7 +519,7 @@ impl UpgradeMenu {
         UpgradeAction::None
     }
 
-    /// Клавиатура.
+    /// Keyboard.
     pub fn key(&mut self, state: &GameState, key: Key) -> UpgradeAction {
         match key {
             Key::Escape => UpgradeAction::Cancel,
@@ -540,17 +540,17 @@ impl UpgradeMenu {
                 self.page(1, state);
                 UpgradeAction::None
             }
-            // `UpgradeMenu::ProcessKey`: `GNW_KB_KEY_SHIFT_DIVIDE` (`?`) и код
-            // кнопки Help (1001) открывают `UPGRADES_SETUP`.
+            // `UpgradeMenu::ProcessKey`: `GNW_KB_KEY_SHIFT_DIVIDE` (`?`) and the Help
+            // button code (1001) open `UPGRADES_SETUP`.
             Key::Char('?') => UpgradeAction::Help,
             _ => UpgradeAction::None,
         }
     }
 
-    /// `CommitUpgradeChanges`: записать изменённые типы в `TeamUnits`, списать
-    /// золото и `stats_gold_spent_on_upgrades`.
+    /// `CommitUpgradeChanges`: write the changed types into `TeamUnits`, debit
+    /// gold and `stats_gold_spent_on_upgrades`.
     ///
-    /// Возвращает список изменённых типов для пакета 10 (сеть).
+    /// Returns the list of changed types for packet 10 (network).
     pub fn commit(&mut self, state: &mut GameState) -> Vec<(UnitType, [u16; 13])> {
         let mut changed = Vec::new();
         let team_index = self.team.0 as usize;
@@ -577,7 +577,7 @@ impl UpgradeMenu {
         changed
     }
 
-    /// Рисует экран поверх кадра (C++ `DrawUnitStats` + `win_draw`).
+    /// Draws the screen over the frame (C++ `DrawUnitStats` + `win_draw`).
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: &GameState) -> u32 {
         if frame.width() != SCREEN_WIDTH as u32 || frame.height() != SCREEN_HEIGHT as u32 {
             return 0;
@@ -608,12 +608,12 @@ impl UpgradeMenu {
         let yellow = palette.rgba(crate::setup::YELLOW.0);
         let dim = palette.rgba(0x5A);
 
-        // Заголовок.
+        // Title.
         painted += draw_text_gnw_centered(frame, TITLE, font, "Unit Upgrades", green).max(0) as u32;
         painted += draw_text_gnw(frame, COST.ulx - 1, 283, font, "Cost", text).max(0) as u32;
         painted += draw_text_gnw(frame, GOLD_BAR.ulx - 3, 284, font, "Gold", text).max(0) as u32;
 
-        // Портрет 2× (C++ `GetPortrait`, FLIC не портирован).
+        // Portrait 2× (C++ `GetPortrait`, FLIC not ported).
         if let Some(unit_type) = self.selected_type() {
             if let Some(sprite) = assets.sprite(unit_type) {
                 if let Some(sprite_frame) = sprite.frame_for(0, 0) {
@@ -636,8 +636,8 @@ impl UpgradeMenu {
                         128,
                     );
 
-                    // Башня/пушка отдельным кадром (как на карте): C++
-                    // `GetPortrait()` — big image, где техника уже с башней.
+                    // Turret/gun as a separate frame (as on the map): C++
+                    // `GetPortrait()` — a big image where the vehicle already has the turret.
                     if let Some(turret) = sprite.turret_frame(0) {
                         renderer.draw_turret_scaled(
                             frame,
@@ -664,7 +664,7 @@ impl UpgradeMenu {
             )
             .max(0) as u32;
 
-            // Таблица атрибутов (C++ `UnitStats_DrawStats`, здесь текстом).
+            // Attribute table (C++ `UnitStats_DrawStats`, here as text).
             let values = &self.actual[unit_type as usize];
             let labels: [(u8, &str); 13] = [
                 (ATTRIB_ATTACK, "Attack"),
@@ -694,7 +694,7 @@ impl UpgradeMenu {
             }
         }
 
-        // Строки апгрейдов: стрелки, цена.
+        // Upgrade rows: arrows, price.
         for (row, (attribute, uly)) in self.controls.iter().enumerate() {
             let quote = self.quote(state, row);
             let left_rect = PixelRect::new(CONTROL_BUTTONS.ulx, *uly, 18, 17);
@@ -745,8 +745,8 @@ impl UpgradeMenu {
                 }
             }
 
-            // Подпись атрибута (в C++ колонка уже; здесь помогает
-            // ориентироваться между таблицей и строками цен).
+            // Attribute label (in C++ the column already does it; here it helps
+            // navigate between the table and the price rows).
             let label = match *attribute {
                 ATTRIB_ATTACK => "ATK",
                 ATTRIB_ROUNDS => "RND",
@@ -762,7 +762,7 @@ impl UpgradeMenu {
                 draw_text_gnw(frame, STATS.ulx + 140, *uly + 4, font, label, dim).max(0) as u32;
         }
 
-        // Список типов команды.
+        // Team type list.
         for row in 0..LIST_ROWS as usize {
             let index = self.page_min + row;
             let Some(unit_type) = self.unit_types.get(index).copied() else {
@@ -775,7 +775,7 @@ impl UpgradeMenu {
             painted += draw_text_gnw(frame, LIST_AREA.ulx + 3, y, font, &name, color).max(0) as u32;
         }
 
-        // Фильтры.
+        // Filters.
         for (filter, pair) in [
             (UpgradeFilter::Ground, menu_assets.filter_ground.as_ref()),
             (UpgradeFilter::Air, menu_assets.filter_air.as_ref()),
@@ -799,7 +799,7 @@ impl UpgradeMenu {
             }
         }
 
-        // Кнопка описания.
+        // Description button.
         if let Some(pair) = menu_assets.description.as_ref() {
             painted += blit_simple(
                 frame,
@@ -811,7 +811,7 @@ impl UpgradeMenu {
             );
         }
 
-        // Кнопки Done/Help/Cancel.
+        // Done/Help/Cancel buttons.
         if let Some(pair) = menu_assets.done.as_ref() {
             painted += draw_image_button(
                 frame,
@@ -838,7 +838,7 @@ impl UpgradeMenu {
             painted += blit_simple(frame, &palette, pair.image(false), HELP.ulx, HELP.uly, true);
         }
 
-        // Стрелки списка.
+        // List arrows.
         if let Some(pair) = menu_assets.scroll_up.as_ref() {
             painted += blit_simple(
                 frame,
@@ -860,7 +860,7 @@ impl UpgradeMenu {
             );
         }
 
-        // Полоса золота: C++ `LoadVerticalBar(..., VERTGOLD)`.
+        // Gold bar: C++ `LoadVerticalBar(..., VERTGOLD)`.
         let bar_top = GOLD_BAR.uly + 25;
         let bar_height = GOLD_BAR.height - 25;
         let fill = if self.start_gold > 0 {
@@ -912,7 +912,7 @@ impl UpgradeMenu {
     }
 }
 
-/// Стрелка `UPGLFT`/`UPGRGT` (disabled-вариант `UPGLFT_X`/`UPGRGT_X`).
+/// `UPGLFT`/`UPGRGT` arrow (disabled variant `UPGLFT_X`/`UPGRGT_X`).
 fn draw_upgrade_arrow(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -928,7 +928,7 @@ fn draw_upgrade_arrow(
     }
 }
 
-/// Обрезка длинной подписи (как `buildmenu::fit_label`).
+/// Clipping of a long label (like `buildmenu::fit_label`).
 fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
@@ -947,8 +947,8 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 
 /// `AbstractUpgradeMenu::IsBuildable` (`abstractupgrademenu.cpp:681`).
 ///
-/// Игровые правила `max_is_buildable` не зависят от команды; мины — особый
-/// случай: они не строятся, но апгрейдятся, если строится их постановщик.
+/// Game rules `max_is_buildable` do not depend on the team; mines are a special
+/// case: they are not built but are upgraded if their deployer is buildable.
 pub fn is_buildable(unit_type: UnitType) -> bool {
     match unit_type {
         UnitType::LandMine => is_buildable(UnitType::MineLayer),
@@ -965,7 +965,7 @@ fn in_builder_lists(unit_type: UnitType) -> bool {
 
 /// `AbstractUpgradeMenu::IsBetterUnit` (`abstractupgrademenu.cpp:727`).
 pub fn is_better_unit(unit_type1: UnitType, unit_type2: UnitType) -> bool {
-    // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+    // `MOBILE_*` bits include amphibians (see `Environment`).
     let land1 = unit_type1.is_ground() || unit_type1.is_amphibious();
     let land2 = unit_type2.is_ground() || unit_type2.is_amphibious();
 
@@ -1006,20 +1006,20 @@ pub fn is_better_unit(unit_type1: UnitType, unit_type2: UnitType) -> bool {
     }
 }
 
-/// Ассеты экрана апгрейдов из `MAX.RES`.
+/// Upgrade screen assets from `MAX.RES`.
 #[derive(Debug, Clone)]
 pub struct UpgradeMenuAssets {
-    /// Фон `UPGRADE` 640×480.
+    /// `UPGRADE` background 640×480.
     pub background: Option<BigImage>,
-    /// Стрелка влево `UPGLFT_U/D`.
+    /// Left arrow `UPGLFT_U/D`.
     pub left: Option<SimpleImage>,
-    /// `UPGLFT_X` — недоступна.
+    /// `UPGLFT_X` — unavailable.
     pub left_disabled: Option<SimpleImage>,
-    /// Стрелка вправо `UPGRGT_U/D`.
+    /// Right arrow `UPGRGT_U/D`.
     pub right: Option<SimpleImage>,
     /// `UPGRGT_X`.
     pub right_disabled: Option<SimpleImage>,
-    /// Иконка золота `I_GOLD`.
+    /// Gold icon `I_GOLD`.
     pub gold_icon: Option<SimpleImage>,
     /// `BLDUP__U/D`.
     pub scroll_up: Option<MenuButtonPair>,
@@ -1046,7 +1046,7 @@ pub struct UpgradeMenuAssets {
 }
 
 impl UpgradeMenuAssets {
-    /// Грузит ресурсы; отсутствие части — предупреждение, не ошибка.
+    /// Loads the resources; a missing part is a warning, not an error.
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             let bytes = archive.read(name).ok()?;
@@ -1080,7 +1080,7 @@ impl UpgradeMenuAssets {
         }
     }
 
-    /// Есть ли фон и ключевые кнопки.
+    /// Whether the background and the key buttons are present.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.done.is_some() && self.cancel.is_some()
     }

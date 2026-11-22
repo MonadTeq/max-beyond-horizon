@@ -1,31 +1,31 @@
-//! Слои 2–4 QA-стратегии (`max-brh-qa/plans/qa-plan.md`): скриптовый
-//! UI-драйвер, запись ручной игры и golden-кадры — без SDL, окна и сети.
+//! Layers 2–4 of the QA strategy (`max-brh-qa/plans/qa-plan.md`): the scripted
+//! UI driver, manual game recording and golden frames — without SDL, a window or the network.
 //!
-//! | Модуль | Что делает |
+//! | Module | What it does |
 //! |---|---|
-//! | [`script`] | парсер `.qa`-скриптов: строка → [`script::Command`] |
-//! | [`runner`] | исполнитель: те же `InputEvent`, что у мыши/клавиатуры, кадры в PNG, ассерты |
-//! | [`recorder`] | запись ручной игры в `.qa`-скрипт (`--ui --record`) |
-//! | [`png`] | PNG-кодек и попиксельная сверка (без внешних крейтов) |
+//! | [`script`] | `.qa` script parser: line → [`script::Command`] |
+//! | [`runner`] | executor: the same `InputEvent`s as the mouse/keyboard, frames to PNG, asserts |
+//! | [`recorder`] | records a manual game into a `.qa` script (`--ui --record`) |
+//! | [`png`] | PNG codec and per-pixel comparison (no external crates) |
 //!
-//! Точки входа — примеры `max_app`:
+//! The entry points are the `max_app` examples:
 //!
 //! ```sh
-//! # слой 2: прогнать сценарий, получить log.txt + PNG (SDL не нужен)
+//! # layer 2: run a scenario, get log.txt + PNG (SDL not needed)
 //! cargo run -p max_app --no-default-features --example qa_run -- max-brh-qa/scripts/sp-full.qa qa-out/sp-full
 //!
-//! # слой 3: сверить кадры с эталонами (порог 1 % пикселей, Δ > 30)
+//! # layer 3: compare frames with the references (threshold 1% of pixels, Δ > 30)
 //! cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/visual-screens max-brh-qa/golden
 //!
-//! # слой 2.5: записать ручную игру в .qa (из max-brh/; GUI — default)
+//! # layer 2.5: record a manual game into .qa (from max-brh/; GUI — default)
 //! cargo run -p max_app -- --ui --record ../max-brh-qa/scripts/my.qa
 //! ```
 //!
-//! Почему это возможно без окна: экраны и игровой цикл `max_app` — чистые
-//! функции от [`crate::ui::InputEvent`] (`Screen::handle_input`,
-//! `ui::handle_session_input`, `local::App::local_update`). Драйвер держит те
-//! же `App`/`Screen`/`UiContext`, что `main.rs`, и крутит тот же игровой цикл,
-//! поэтому скрипт проверяет настоящий путь игрока, а не обходные вызовы.
+//! Why this is possible without a window: the screens and the `max_app` game loop are pure
+//! functions of [`crate::ui::InputEvent`] (`Screen::handle_input`,
+//! `ui::handle_session_input`, `local::App::local_update`). The driver holds the same
+//! `App`/`Screen`/`UiContext` as `main.rs` and runs the same game loop,
+//! so the script exercises the real player path, not workaround calls.
 
 pub mod png;
 pub mod recorder;

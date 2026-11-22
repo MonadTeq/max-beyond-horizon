@@ -1,82 +1,82 @@
-//! `BuildMenu` — экран заказа юнитов/зданий (P2).
+//! `BuildMenu` — the unit/building order screen (P2).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `buildmenu.cpp` — два режима одного экрана: `FactoryBuildMenu`
-//!   (фон `FACBUILD`, очередь завода) и `MobileBuildMenu` (фон `CONBUILD`,
-//!   строитель ставит одно здание); координаты списков и кнопок — из
-//!   конструкторов C++ (`buildmenu.cpp:821-1045`);
-//! * `unittypeselector.cpp` — список: 32 px строка, `max_item_count =
-//!   (lry - uly) / 32` строк, прокрутка `page_min_index`/`page_max_index`;
-//! * `Builder_GetBuildableUnits` — состав списка (`max_core::production::BUILDABLE`);
-//! * `BuildMenu_GetTurnsToBuild`/`BuildMenu_GetMaxPossibleBuildRate` — цифры
-//!   «ходов» и «цены» (порт в `max_core::production`).
+//! * `buildmenu.cpp` — two modes of one screen: `FactoryBuildMenu`
+//!   (`FACBUILD` background, factory queue) and `MobileBuildMenu` (`CONBUILD` background,
+//!   the builder places one building); the list and button coordinates — from the
+//!   C++ constructors (`buildmenu.cpp:821-1045`);
+//! * `unittypeselector.cpp` — the list: 32 px row, `max_item_count =
+//!   (lry - uly) / 32` rows, scrolling `page_min_index`/`page_max_index`;
+//! * `Builder_GetBuildableUnits` — the list composition (`max_core::production::BUILDABLE`);
+//! * `BuildMenu_GetTurnsToBuild`/`BuildMenu_GetMaxPossibleBuildRate` — the "turns" and
+//!   "price" numbers (port in `max_core::production`).
 //!
-//! # Раскладка (640×480, пиксели кадра)
+//! # Layout (640×480, frame pixels)
 //!
-//! | Элемент | C++ | Прямоугольник |
+//! | Element | C++ | Rectangle |
 //! |---|---|---|
-//! | список доступного | `window_info` 483,60–598,429 | 483,60 115×369 (11 строк) |
-//! | очередь завода | `cargo_selector` 337,60–453,280 | 337,60 116×220 (6 строк) |
-//! | стрелки списка | `BLDUP__U/BLDDWN_U` 471,441/491,441 | 18×17 |
-//! | стрелки очереди | 327,293/347,293 | 18×17 |
-//! | `Build` (в очередь) | 548,441 | 78×23 |
+//! | available list | `window_info` 483,60–598,429 | 483,60 115×369 (11 rows) |
+//! | factory queue | `cargo_selector` 337,60–453,280 | 337,60 116×220 (6 rows) |
+//! | list arrows | `BLDUP__U/BLDDWN_U` 471,441/491,441 | 18×17 |
+//! | queue arrows | 327,293/347,293 | 18×17 |
+//! | `Build` (to queue) | 548,441 | 78×23 |
 //! | `Delete` | 412,293 | 53×23 |
 //! | `Repeat` | 447,322 | 17×17 |
-//! | скорости 1×/2×/4× | `BLDBLD_U`/`BLD2X_U`/`BLD4X_U` | mobile 292,345/369/394; factory 292,371/396/421 |
+//! | 1×/2×/4× speeds | `BLDBLD_U`/`BLD2X_U`/`BLD4X_U` | mobile 292,345/369/394; factory 292,371/396/421 |
 //! | `Done` | 397,452 | 54×23 |
 //! | `Cancel` | 307,452 | 62×23 |
-//! | описание | `BLDDES_U` 292,264 | 17×17 |
+//! | description | `BLDDES_U` 292,264 | 17×17 |
 //!
-//! # Ввод (как C++)
+//! # Input (like C++)
 //!
-//! * `Done`/Enter (`GNW_KB_KEY_KP_ENTER` → `Build()`) — зафиксировать заказ;
-//! * `Cancel`/Esc — закрыть без заказа;
+//! * `Done`/Enter (`GNW_KB_KEY_KP_ENTER` → `Build()`) — commit the order;
+//! * `Cancel`/Esc — close without an order;
 //! * `Build` (factory) — `AddSelection`, `Delete` — `RemoveSelection`;
-//! * строки списков — выбор (`UnitSelectEvent`);
-//! * `1`/`2`/`3` — скорости 1×/2×/4× (`1101..1103`).
+//! * list rows — selection (`UnitSelectEvent`);
+//! * `1`/`2`/`3` — 1×/2×/4× speeds (`1101..1103`).
 //!
-//! Заказ уходит **тем же путём**, что в сети: `Command::Order` с `PayloadP4`
+//! The order goes **the same way** as in the network: `Command::Order` with `PayloadP4`
 //! (`max-brh-docs/architecture/client/protocol.md` §8: `repeat_build`, `build_time`,
-//! `build_rate`, `build_count × unit_type`) — локально применяется
-//! `apply_command`, в сети отправляется пакетом 08.
+//! `build_rate`, `build_count × unit_type`) — locally applied by
+//! `apply_command`, in the network sent as packet 08.
 //!
-//! # Иконки и портрет
+//! # Icons and portrait
 //!
-//! * строки списка/очереди — иконки `I_*` (`ReportStats_DrawListItemIcon`):
-//!   здания 1:4 (`divisor = 2`), турельные типы — второй кадр со сдвигом
-//!   `angle_offsets[2] >> divisor`, перекраска командных слотов; имя с x=+35,
-//!   ходы справа (`0xA2`/`COLOR_RED`), выделение — белые уголки
-//!   `GameManager_DrawUnitSelector`. Рисуется тем же `mobilize::draw_icon`, что
-//!   и списки `CargoMenu` (`I_*` из `CargoMenuAssets`).
-//! * портрет — big image `P_*` 300×240 в (11,13) (`AbstractBuildMenu::Draw`,
-//!   `buildmenu.cpp:509-529`), палитра окна, для выбранной строки (у завода —
-//!   активного селектора: список или очередь). Кэш `P_*` —
+//! * list/queue rows — `I_*` icons (`ReportStats_DrawListItemIcon`):
+//!   buildings 1:4 (`divisor = 2`), turret types — the second frame with an offset
+//!   `angle_offsets[2] >> divisor`, recoloring of team slots; the name from x=+35,
+//!   turns on the right (`0xA2`/`COLOR_RED`), selection — white corners
+//!   `GameManager_DrawUnitSelector`. Drawn by the same `mobilize::draw_icon` as
+//!   the `CargoMenu` lists (`I_*` from `CargoMenuAssets`).
+//! * portrait — big image `P_*` 300×240 at (11,13) (`AbstractBuildMenu::Draw`,
+//!   `buildmenu.cpp:509-529`), window palette, for the selected row (for a factory —
+//!   the active selector: list or queue). The `P_*` cache —
 //!   `CargoMenuAssets::portrait`.
-//! * характеристики — `UnitStats_DrawStats` в `stats_background`
-//!   (11,293,250,174) с иконками `I_*` и строкой `Cost` (`I_GOLD`/`I_GOLDE`):
-//!   тот же `mobilize::{stats_rows_for, draw_stats}`, что в `CargoMenu`;
-//!   база/текущие значения команды (клановые модификаторы и апгрейды уже внутри).
+//! * characteristics — UnitStats_DrawStats in stats_background
+//!   (11,293,250,174) with `I_*` icons and a `Cost` row (`I_GOLD`/`I_GOLDE`):
+//!   the same `mobilize::{stats_rows_for, draw_stats}` as in `CargoMenu`;
+//!   base/current team values (clan modifiers and upgrades are already inside).
 //! * `Turns`/`Cost` — `UnitInfo::GetTurnsToBuild` (`turns_and_consumption`):
-//!   для 2×/4× это не «ставка за ход», а полная сумма с учётом падения
-//!   скорости при нехватке склада; 1× — `turns` и `turns * rate1`. У Training
-//!   Hall 2×/4× выключены, у мобильного строителя скрыты, если `max_rate`
-//!   меньше.
+//!   for 2×/4× this is not a "rate per turn" but the total amount taking into account the fall
+//!   of speed when the storage is short; 1× — `turns` and `turns * rate1`. For a Training
+//!   Hall 2×/4× are off, for a mobile builder hidden if `max_rate`
+//!   is less.
 //!
-//! # Осознанные упрощения
+//! # Deliberate simplifications
 //!
-//! * подсказка `Help` (`BLDHLP_U`) не портирована; кнопка `Path` инженера
-//!   (`BLDPTH_U`, 63×23 в (347,427)) **портирована** (B3): `Build()` с
-//!   принудительным выбором места 1×1 (`buildmenu.cpp:343-346`, `:921`);
-//! * звуки кнопок самого `BuildMenu` не проигрываются (в C++ у кнопок есть
-//!   `SetSfx`; общий слой звуков UI — `sfx.rs`, см. §33).
+//! * the `Help` hint (`BLDHLP_U`) is not ported; the engineer's `Path` button
+//!   (`BLDPTH_U`, 63×23 at (347,427)) **is ported** (B3): `Build()` with
+//!   a forced 1×1 site selection (`buildmenu.cpp:343-346`, `:921`);
+//! * the button sounds of `BuildMenu` itself are not played (in C++ the buttons have
+//!   `SetSfx`; the common UI sound layer — `sfx.rs`, see §33).
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
-// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
-// max_core); глоб-реэкспортов нет (Ф5.2).
+// Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
+// max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
 use max_core::production::{
@@ -94,95 +94,95 @@ use crate::mobilize::{center_y, draw_icon, draw_text_right, team_lut};
 use crate::panels::UiPalette;
 use crate::Assets;
 
-/// Логическая ширина экрана (окно оригинала).
+/// Screen logical width (the original window).
 pub const SCREEN_WIDTH: i32 = 640;
-/// Логическая высота экрана (окно оригинала).
+/// Screen logical height (the original window).
 pub const SCREEN_HEIGHT: i32 = 480;
 
-/// Список доступного (`buildmenu.cpp:1008`): 483,60 — 598,429.
+/// Available list (`buildmenu.cpp:1008`): 483,60 — 598,429.
 pub const LIST_AREA: PixelRect = PixelRect::new(483, 60, 115, 369);
-/// Высота строки списка (`unittypeselector.cpp:64`, `* 32`).
+/// List row height (`unittypeselector.cpp:64`, `* 32`).
 pub const LIST_ROW: i32 = 32;
-/// Сколько строк в списке: `(429 - 60) / 32`.
+/// How many rows in the list: `(429 - 60) / 32`.
 pub const LIST_ROWS: usize = 11;
 
-/// Очередь завода (`buildmenu.cpp:1020`): 337,60 — 453,280.
+/// Factory queue (`buildmenu.cpp:1020`): 337,60 — 453,280.
 pub const QUEUE_AREA: PixelRect = PixelRect::new(337, 60, 116, 220);
-/// Сколько строк в очереди: `(280 - 60) / 32`.
+/// How many rows in the queue: `(280 - 60) / 32`.
 pub const QUEUE_ROWS: usize = 6;
 
-/// Стрелка вверх списка (`BLDUP__U`, 18×17).
+/// List up arrow (`BLDUP__U`, 18×17).
 pub const LIST_UP: PixelRect = PixelRect::new(471, 441, 18, 17);
-/// Стрелка вниз списка (`BLDDWN_U`).
+/// List down arrow (`BLDDWN_U`).
 pub const LIST_DOWN: PixelRect = PixelRect::new(491, 441, 18, 17);
-/// Стрелка вверх очереди.
+/// Queue up arrow.
 pub const QUEUE_UP: PixelRect = PixelRect::new(327, 293, 18, 17);
-/// Стрелка вниз очереди.
+/// Queue down arrow.
 pub const QUEUE_DOWN: PixelRect = PixelRect::new(347, 293, 18, 17);
-/// `Delete` очереди завода (`BLDDEL_U`, 53×23).
+/// Factory queue `Delete` (`BLDDEL_U`, 53×23).
 pub const QUEUE_DELETE: PixelRect = PixelRect::new(412, 293, 53, 23);
-/// `Repeat` завода (`BLDREP_U`, 17×17).
+/// Factory `Repeat` (`BLDREP_U`, 17×17).
 pub const QUEUE_REPEAT: PixelRect = PixelRect::new(447, 322, 17, 17);
-/// `Build` (добавить в очередь) завода (`BLDBLD_U`, 78×23).
+/// Factory `Build` (add to the queue) (`BLDBLD_U`, 78×23).
 pub const FACTORY_ADD: PixelRect = PixelRect::new(548, 441, 78, 23);
 /// `Done` (`BLDONE_U`, 54×23).
 pub const DONE: PixelRect = PixelRect::new(397, 452, 54, 23);
 /// `Cancel` (`BLDCAN_U`, 62×23).
 pub const CANCEL: PixelRect = PixelRect::new(307, 452, 62, 23);
-/// Кнопка описания (`BLDDES_U`, 17×17).
+/// Description button (`BLDDES_U`, 17×17).
 pub const DESCRIPTION: PixelRect = PixelRect::new(292, 264, 17, 17);
-/// Кнопка `Path` (`BLDPTH_U/D`, 63×23) — только у `ENGINEER`
-/// (`buildmenu.cpp:836-839`): «поставить площадку 1×1 вручную»
-/// (`event_click_path_build` → `Build()` с `ORDER_STATE_SELECT_SITE`).
+/// `Path` button (`BLDPTH_U/D`, 63×23) — only for `ENGINEER`
+/// (`buildmenu.cpp:836-839`): "place the 1×1 site manually"
+/// (`event_click_path_build` → `Build()` with `ORDER_STATE_SELECT_SITE`).
 pub const PATH_BUILD: PixelRect = PixelRect::new(347, 427, 63, 23);
-/// Скорости 1×/2×/4× мобильного меню.
+/// 1×/2×/4× speeds of the mobile menu.
 pub const MOBILE_RATES: [PixelRect; 3] = [
     PixelRect::new(292, 345, 78, 23),
     PixelRect::new(292, 369, 78, 23),
     PixelRect::new(292, 394, 78, 23),
 ];
-/// Скорости 1×/2×/4× меню завода.
+/// 1×/2×/4× speeds of the factory menu.
 pub const FACTORY_RATES: [PixelRect; 3] = [
     PixelRect::new(292, 371, 78, 23),
     PixelRect::new(292, 396, 78, 23),
     PixelRect::new(292, 421, 78, 23),
 ];
-/// Заголовок меню (`Text_TextBox(…, 327, 7, 158, 18, COLOR_GREEN, true)`).
+/// Menu title (`Text_TextBox(…, 327, 7, 158, 18, COLOR_GREEN, true)`).
 pub const HEADER: PixelRect = PixelRect::new(327, 7, 158, 18);
-/// Подпись «Unit» (`209,264,80,17`).
+/// The "Unit" label (`209,264,80,17`).
 pub const UNIT_LABEL: PixelRect = PixelRect::new(209, 264, 80, 17);
 
-/// Окно портрета `BuildMenu` (`AbstractBuildMenu::Draw`,
+/// `BuildMenu` portrait window (`AbstractBuildMenu::Draw`,
 /// `buildmenu.cpp:522-529`): `local_window.buffer = &window.buffer[11 + 640*13]`
-/// — big image `P_*` 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`),
-/// **без** обрезки 280×240, как в `CargoMenu` (там своё окно портрета).
+/// — big image `P_*` 300×240 at (11,13), window palette (`CONBUILD`/`FACBUILD`),
+/// **without** the 280×240 clipping, as in `CargoMenu` (it has its own portrait window).
 pub const PORTRAIT: PixelRect = PixelRect::new(11, 13, 300, 240);
 
-/// Центр иконки строки списка: `ReportStats_DrawListItem(..., ulx, uly)` рисует
+/// Center of the list row icon: `ReportStats_DrawListItem(..., ulx, uly)` draws
 /// `ReportStats_DrawListItemIcon(..., ulx + 16, uly + 16)`.
 pub const LIST_ICON: i32 = 16;
-/// X текста строки: `Text_TextBox(..., ulx + 35, uly, full - 35, 32, ...)`.
+/// Text x of the row: `Text_TextBox(..., ulx + 35, uly, full - 35, 32, ...)`.
 pub const LIST_TEXT_X: i32 = 35;
-/// Правая граница цифр ходов: `ReportStats_DrawNumber(buffer + 135, turns, 20)`
-/// в буфере списка, начатом в `LIST_AREA.ulx` (483 + 135 = 618).
+/// Right boundary of the turns numbers: `ReportStats_DrawNumber(buffer + 135, turns, 20)`
+/// in the list buffer started at `LIST_AREA.ulx` (483 + 135 = 618).
 pub const LIST_TURNS_RIGHT: i32 = 618;
 
-/// Доступные скорости (кнопки 1×/2×/4×).
+/// Available speeds (1×/2×/4× buttons).
 pub const BUILD_RATES: [u16; 3] = [1, 2, 4];
 
 // ---------------------------------------------------------------------------
-// Ресурсы BuildMenu
+// BuildMenu resources
 // ---------------------------------------------------------------------------
 
-/// Картинки `BuildMenu` из `MAX.RES`.
+/// `BuildMenu` pictures from `MAX.RES`.
 ///
-/// Грузятся один раз в [`Assets::load`]; отсутствие любого ресурса — не
-/// ошибка (кнопка/фон рисуются рамкой, как в `mobilize.rs`).
+/// Loaded once in [`Assets::load`]; the absence of any resource is not an
+/// error (the button/background are drawn with a frame, as in `mobilize.rs`).
 #[derive(Debug, Clone)]
 pub struct BuildMenuAssets {
-    /// Фон меню завода (`FACBUILD`, 640×480).
+    /// Factory menu background (`FACBUILD`, 640×480).
     pub facbuild: Option<BigImage>,
-    /// Фон меню строителя (`CONBUILD`, 640×480).
+    /// Builder menu background (`CONBUILD`, 640×480).
     pub conbuild: Option<BigImage>,
     /// `Build` / `BLDBLD_U/D` (78×23).
     pub build: Option<MenuButtonPair>,
@@ -194,22 +194,22 @@ pub struct BuildMenuAssets {
     pub done: Option<MenuButtonPair>,
     /// `Cancel` (`BLDCAN_U/D`).
     pub cancel: Option<MenuButtonPair>,
-    /// Стрелка вверх (`BLDUP__U/D`).
+    /// Up arrow (`BLDUP__U/D`).
     pub up: Option<MenuButtonPair>,
-    /// Стрелка вниз (`BLDDWN_U/D`).
+    /// Down arrow (`BLDDWN_U/D`).
     pub down: Option<MenuButtonPair>,
     /// `Delete` (`BLDDEL_U/D`).
     pub delete: Option<MenuButtonPair>,
     /// `Repeat` (`BLDREP_U/D`).
     pub repeat: Option<MenuButtonPair>,
-    /// Описание (`BLDDES_U/D`).
+    /// Description (`BLDDES_U/D`).
     pub description: Option<MenuButtonPair>,
-    /// `Path` (`BLDPTH_U/D`) — только у инженера (`buildmenu.cpp:836`).
+    /// `Path` (`BLDPTH_U/D`) — only for the engineer (`buildmenu.cpp:836`).
     pub path_build: Option<MenuButtonPair>,
 }
 
 impl BuildMenuAssets {
-    /// Грузит ресурсы из архива (отсутствующие — `None`).
+    /// Loads resources from the archive (missing — `None`).
     pub fn load(max_res: &max_assets::ResArchive) -> Self {
         let read_big = |name: &str| -> Option<BigImage> {
             let bytes = max_res.read(name).ok()?;
@@ -238,19 +238,19 @@ impl BuildMenuAssets {
         }
     }
 
-    /// Есть ли фон и кнопки (для предупреждения в отчёте ассетов).
+    /// Whether the background and buttons are present (for the asset report warning).
     pub fn is_ready(&self) -> bool {
         self.facbuild.is_some() && self.conbuild.is_some() && self.done.is_some()
     }
 }
 
-/// Отображаемое имя типа юнита — User-Friendly Name (UFN).
+/// Displayed unit type name — User-Friendly Name (UFN).
 ///
-/// Единственный источник строк интерфейса для юнитов и зданий: список/очередь
-/// [`BuildMenu`], `CargoMenu`, `AbstractUpgradeMenu`, `TransferMenu`, портрет и
-/// подсказки HUD, журнал. Значения — [`crate::unit_names::unit_user_friendly_name`]
-/// (таблица `data/unit_names.json`; канон —
-/// `max-brh-docs/unit-name-review.md`, колонка «User-Friendly Name»).
+/// The only source of UI strings for units and buildings: the list/queue of
+/// [`BuildMenu`], `CargoMenu`, `AbstractUpgradeMenu`, `TransferMenu`, the portrait and
+/// HUD hints, the log. Values — [`crate::unit_names::unit_user_friendly_name`]
+/// (the `data/unit_names.json` table; the canon —
+/// max-brh-docs/unit-name-review.md, column «User-Friendly Name»).
 ///
 /// C++: `ResourceManager_GetUnit(...).GetSingularName()`.
 pub fn unit_name(unit_type: UnitType) -> &'static str {
@@ -258,16 +258,16 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Пакет заказа
+// Order packet
 // ---------------------------------------------------------------------------
 
-/// `Command::Order` с `PayloadP4` — тот же пакет 08, что уходит в сеть.
+/// `Command::Order` with `PayloadP4` — the same packet 08 that goes to the network.
 ///
-/// Общий путь `BuildMenu::Build` и подтверждения места стройки
-/// (`GameManager_PathBuild`): C++ в обоих случаях заканчивает
-/// `UnitInfo::BuildOrder` → `ORDER_BUILD`/`ORDER_STATE_INIT` с клеткой в
-/// `move_to`. `build_list` — очередь (у мобильного строителя ровно один тип,
-/// у завода — вся очередь), `build_time` считается по голове.
+/// The common path of `BuildMenu::Build` and build site confirmation
+/// (`GameManager_PathBuild`): in both cases C++ ends with
+/// `UnitInfo::BuildOrder` → `ORDER_BUILD`/`ORDER_STATE_INIT` with the cell in
+/// `move_to`. `build_list` — the queue (for a mobile builder exactly one type,
+/// for a factory — the whole queue), `build_time` is computed by the head.
 pub fn build_order_command(
     state: &GameState,
     unit_id: UnitId,
@@ -311,61 +311,61 @@ pub fn build_order_command(
 }
 
 // ---------------------------------------------------------------------------
-// Состояние экрана
+// Screen state
 // ---------------------------------------------------------------------------
 
-/// Что делать после клика/клавиши.
+/// What to do after a click/key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildMenuAction {
-    /// Экран остаётся открытым.
+    /// The screen stays open.
     None,
-    /// `Build()` — заказ подтверждён (Enter/`Done`).
+    /// `Build()` — the order is confirmed (Enter/`Done`).
     Commit,
-    /// `Esc`/`Cancel` — закрыть без заказа.
+    /// `Esc`/`Cancel` — close without an order.
     Close,
-    /// `Path` (`BLDPTH_U`, 1106) — `Build()` с принудительным выбором места:
-    /// `MobileBuildMenu::Build` (`buildmenu.cpp:921`) ставит `SELECT_SITE` и для
-    /// 1×1-постройки инженера (`event_click_path_build`).
+    /// `Path` (`BLDPTH_U`, 1106) — `Build()` with a forced site selection:
+    /// `MobileBuildMenu::Build` (`buildmenu.cpp:921`) sets `SELECT_SITE` also for
+    /// the engineer's 1×1 build (`event_click_path_build`).
     PathBuild,
 }
 
-/// Состояние открытого `BuildMenu` для одного юнита.
+/// State of the open `BuildMenu` for one unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildMenu {
-    /// Команда юнита.
+    /// Unit team.
     pub team: TeamId,
-    /// Юнит-строитель.
+    /// Builder unit.
     pub unit: UnitId,
-    /// Тип строителя.
+    /// Builder type.
     pub builder_type: UnitType,
-    /// Стационарный завод (иначе мобильный строитель).
+    /// Stationary factory (otherwise a mobile builder).
     pub factory: bool,
-    /// Доступные к постройке типы (`Builder_GetBuildableUnits`).
+    /// Types available to build (`Builder_GetBuildableUnits`).
     pub unit_types: &'static [UnitType],
-    /// Очередь заказа (у мобильного строителя — максимум один элемент).
+    /// Order queue (for a mobile builder — at most one element).
     pub queue: Vec<UnitType>,
-    /// Выбранная строка основного списка (`UnitTypeSelector::page_max_index`).
+    /// Selected row of the main list (`UnitTypeSelector::page_max_index`).
     pub selected: usize,
-    /// Первая видимая строка основного списка (`page_min_index`).
+    /// First visible row of the main list (`page_min_index`).
     pub page_min: usize,
-    /// Выбранная строка очереди (для `Delete`).
+    /// Selected queue row (for `Delete`).
     pub queue_selected: usize,
-    /// Первая видимая строка очереди.
+    /// First visible queue row.
     pub queue_page: usize,
-    /// Активна очередь (клик по очереди) — для `Delete`.
+    /// The queue is active (a click on the queue) — for `Delete`.
     pub queue_active: bool,
-    /// Скорость постройки (`build_rate`).
+    /// Build speed (`build_rate`).
     pub build_rate: u16,
-    /// `Repeat` (только завод).
+    /// `Repeat` (factory only).
     pub repeat: bool,
-    /// Показывать описание (`button_description_rest_state`).
+    /// Show the description (`button_description_rest_state`).
     pub show_description: bool,
-    /// Строка статуса (ошибки `Build`).
+    /// Status line (`Build` errors).
     pub status: String,
 }
 
 impl BuildMenu {
-    /// Открывает меню для юнита; `None` — юнит не строитель.
+    /// Opens the menu for a unit; `None` — the unit is not a builder.
     pub fn new(state: &GameState, unit_id: UnitId) -> Option<Self> {
         let unit = state.unit(unit_id)?;
         let unit_types = buildable_units(unit.unit_type);
@@ -399,27 +399,27 @@ impl BuildMenu {
             status: String::new(),
         };
 
-        // `AbstractBuildMenu::Draw` клампит `build_rate` по
-        // `BuildMenu_GetMaxPossibleBuildRate`; для Training Hall скорость 1×.
+        // `AbstractBuildMenu::Draw` clamps `build_rate` by
+        // `BuildMenu_GetMaxPossibleBuildRate`; for a Training Hall the speed is 1×.
         menu.build_rate = menu.build_rate.min(menu.max_rate(state).max(1));
 
         Some(menu)
     }
 
-    /// Тип в выбранной строке списка.
+    /// Type in the selected list row.
     pub fn selected_type(&self) -> Option<UnitType> {
         self.unit_types.get(self.selected).copied()
     }
 
-    /// Тип в выбранной строке очереди.
+    /// Type in the selected queue row.
     pub fn queue_type(&self) -> Option<UnitType> {
         self.queue.get(self.queue_selected).copied()
     }
 
-    /// Тип активного селектора — `selector->GetLast()` в C++
-    /// (`AbstractBuildMenu::Select`/`FactoryBuildMenu::Select`): у завода это
-    /// либо выбранная строка списка, либо выбранная строка очереди (если
-    /// очередь активна). От него зависят портрет, характеристики и колонки
+    /// Type of the active selector — `selector->GetLast()` in C++
+    /// (`AbstractBuildMenu::Select`/`FactoryBuildMenu::Select`): for a factory it is
+    /// either the selected list row or the selected queue row (if the
+    /// queue is active). The portrait, characteristics and the `Turns`/`Cost`
     /// `Turns`/`Cost`.
     pub fn active_type(&self) -> Option<UnitType> {
         if self.queue_active {
@@ -429,31 +429,31 @@ impl BuildMenu {
         }
     }
 
-    /// Сколько строк списка видно.
+    /// How many list rows are visible.
     pub const fn rows(&self) -> usize {
         LIST_ROWS
     }
 
-    /// Первая видимая строка списка.
+    /// First visible list row.
     pub const fn first_row(&self) -> usize {
         self.page_min
     }
 
-    /// Ходов на выбранный тип (цифра в списке).
+    /// Turns for the selected type (the number in the list).
     pub fn turns_for(&self, state: &GameState, unit_type: UnitType) -> i32 {
         production_turns_to_build(state, self.team, unit_type).max(0)
     }
 
-    /// Максимальная скорость для головы очереди (или выбранного типа).
+    /// Maximum speed for the queue head (or the selected type).
     pub fn max_rate(&self, state: &GameState) -> u16 {
         let Some(unit) = state.unit(self.unit) else {
             return 1;
         };
 
-        // C++ `AbstractBuildMenu::Draw`: у Training Hall кнопки 2×/4×
-        // безусловно выключены (`unit->GetUnitType() == TRAINHAL`), поэтому
-        // скорость ограничена 1×, хотя `BuildMenu_GetMaxPossibleBuildRate`
-        // формально вернул бы 4.
+        // C++ `AbstractBuildMenu::Draw`: for a Training Hall the 2×/4× buttons
+        // are unconditionally off (`unit->GetUnitType() == TRAINHAL`), so the
+        // speed is limited to 1×, although `BuildMenu_GetMaxPossibleBuildRate`
+        // would formally return 4.
         if unit.unit_type == UnitType::TrainingHall {
             return 1;
         }
@@ -469,26 +469,26 @@ impl BuildMenu {
         max_possible_build_rate(unit.unit_type, turns, storage).max(1) as u16
     }
 
-    /// Ходы и **полная** стоимость для скорости `rate` — C++
+    /// Turns and the **total** cost for the speed `rate` — C++
     /// `UnitInfo::GetTurnsToBuild(unit_type, rate, &turns)`
-    /// (`unitinfo.cpp:3393`) и `AbstractBuildMenu::Draw` (`buildmenu.cpp:545-660`).
+    /// (`unitinfo.cpp:3393`) and `AbstractBuildMenu::Draw` (`buildmenu.cpp:545-660`).
     ///
-    /// `unit_type` — активная строка (`selector->GetLast()`): список у мобильного
-    /// строителя, активный список/очередь у завода.
+    /// `unit_type` — the active row (`selector->GetLast()`): the list for a mobile
+    /// builder, the active list/queue for a factory.
     ///
-    /// Для 1× C++ печатает `GetTurnsToBuild(unit_type)` и
-    /// `turns * Cargo_GetRawConsumptionRate(builder, 1)`; для 2×/4× — результат
-    /// [`turns_and_consumption`]: на каждом ходу скорость ограничивается
-    /// `BuildMenu_GetMaxPossibleBuildRate` по остатку и складу, поэтому цена —
-    /// не «ставка за ход», а сумма всех ходов (и ходы могут не делиться на
-    /// скорость). В `ATTRIB_TURNS` уже входят клановые модификаторы и
-    /// исследования (`current_unit_values`).
+    /// For 1× C++ prints `GetTurnsToBuild(unit_type)` and
+    /// `turns * Cargo_GetRawConsumptionRate(builder, 1)`; for 2×/4× — the result of
+    /// [`turns_and_consumption`]: on each turn the speed is limited by
+    /// `BuildMenu_GetMaxPossibleBuildRate` by the remainder and the storage, so the price is
+    /// not a "rate per turn" but the sum of all turns (and the turns may not divide by the
+    /// speed). `ATTRIB_TURNS` already includes the clan modifiers and
+    /// research (`current_unit_values`).
     pub fn rate_numbers(&self, state: &GameState, rate: u16) -> (i32, i32) {
         let Some(unit) = state.unit(self.unit) else {
             return (0, 0);
         };
-        // `Draw(selector->GetLast())`: активная строка, а не обязательно голова
-        // очереди завода.
+        // `Draw(selector->GetLast())`: the active row, not necessarily the head
+        // of the factory queue.
         let Some(unit_type) = self.active_type() else {
             return (0, 0);
         };
@@ -496,7 +496,7 @@ impl BuildMenu {
         turns_and_consumption(state, unit, unit_type, i32::from(rate.max(1)))
     }
 
-    /// `AddSelection` — добавить выбранный тип в очередь (завод).
+    /// `AddSelection` — add the selected type to the queue (factory).
     pub fn add_to_queue(&mut self) -> bool {
         let Some(unit_type) = self.selected_type() else {
             return false;
@@ -525,7 +525,7 @@ impl BuildMenu {
         true
     }
 
-    /// `RemoveSelection` — убрать выбранный элемент очереди.
+    /// `RemoveSelection` — remove the selected queue element.
     pub fn remove_from_queue(&mut self) -> bool {
         if self.queue.is_empty() {
             return false;
@@ -543,7 +543,7 @@ impl BuildMenu {
         true
     }
 
-    /// `Repeat` (только завод).
+    /// `Repeat` (factory only).
     pub fn toggle_repeat(&mut self) -> bool {
         if !self.factory {
             return false;
@@ -553,13 +553,13 @@ impl BuildMenu {
         true
     }
 
-    /// `1101..1103` — кнопки 1×/2×/4×.
+    /// `1101..1103` — the 1×/2×/4× buttons.
     pub fn set_rate(&mut self, state: &GameState, rate: u16) -> bool {
         let max_rate = self.max_rate(state);
 
         if rate > max_rate {
-            // C++ `AbstractBuildMenu::Draw`: у Training Hall кнопки 2×/4×
-            // выключены, а у мобильного строителя скорость ограничена складом.
+            // C++ `AbstractBuildMenu::Draw`: for a Training Hall the 2×/4× buttons
+            // are off, and for a mobile builder the speed is limited by the storage.
             self.status = if self.builder_type == UnitType::TrainingHall {
                 format!("{rate}x is not available for Training Hall")
             } else {
@@ -573,7 +573,7 @@ impl BuildMenu {
         true
     }
 
-    /// Выбор строки основного списка.
+    /// Selection of the main list row.
     pub fn select(&mut self, index: usize) {
         if index < self.unit_types.len() {
             self.selected = index;
@@ -583,7 +583,7 @@ impl BuildMenu {
         }
     }
 
-    /// Выбор строки очереди.
+    /// Selection of the queue row.
     pub fn select_queue(&mut self, index: usize) {
         if index < self.queue.len() {
             self.queue_selected = index;
@@ -593,7 +593,7 @@ impl BuildMenu {
         }
     }
 
-    /// Прокрутка списка (`UnitTypeSelector::ScrollTo`).
+    /// List scrolling (`UnitTypeSelector::ScrollTo`).
     fn scroll_to_selection(&mut self) {
         if self.selected < self.page_min {
             self.page_min = self.selected;
@@ -608,7 +608,7 @@ impl BuildMenu {
         }
     }
 
-    /// Прокрутка очереди.
+    /// Queue scrolling.
     fn scroll_queue_to_selection(&mut self) {
         if self.queue_selected < self.queue_page {
             self.queue_page = self.queue_selected;
@@ -623,7 +623,7 @@ impl BuildMenu {
         }
     }
 
-    /// Стрелка вверх/вниз списка.
+    /// List up/down arrow.
     pub fn page_list(&mut self, down: bool) {
         if down {
             if self.selected + 1 < self.unit_types.len() {
@@ -636,7 +636,7 @@ impl BuildMenu {
         self.scroll_to_selection();
     }
 
-    /// Стрелка вверх/вниз очереди.
+    /// Queue up/down arrow.
     pub fn page_queue(&mut self, down: bool) {
         if self.queue.is_empty() {
             return;
@@ -653,9 +653,9 @@ impl BuildMenu {
         self.scroll_queue_to_selection();
     }
 
-    /// Клик по экрану — те же кнопки, что в C++.
+    /// Click on the screen — the same buttons as in C++.
     pub fn click(&mut self, state: &GameState, x: i32, y: i32) -> BuildMenuAction {
-        // Строки списков — первыми: они перекрывают фон, но не кнопки.
+        // List rows — first: they overlap the background but not the buttons.
         if LIST_AREA.contains(x, y) {
             let row = ((y - LIST_AREA.uly) / LIST_ROW) as usize;
             let index = self.page_min + row;
@@ -731,7 +731,7 @@ impl BuildMenu {
             return BuildMenuAction::None;
         }
 
-        // `Path` — только у инженера (`buildmenu.cpp:836-839`).
+        // `Path` — only for the engineer (`buildmenu.cpp:836-839`).
         if self.builder_type == UnitType::Engineer && PATH_BUILD.contains(x, y) {
             return BuildMenuAction::PathBuild;
         }
@@ -747,7 +747,7 @@ impl BuildMenu {
         BuildMenuAction::None
     }
 
-    /// Клавиши C++ (`1/2/3`, Enter `Build()`, Esc `Cancel`).
+    /// C++ keys (`1/2/3`, Enter `Build()`, Esc `Cancel`).
     pub fn key(&mut self, state: &GameState, key: crate::ui::Key) -> BuildMenuAction {
         use crate::ui::Key;
 
@@ -808,23 +808,23 @@ impl BuildMenu {
         }
     }
 
-    /// Приказ заказа — `Command::Order` с `PayloadP4` (как в сети).
+    /// Order command — `Command::Order` with `PayloadP4` (as in the network).
     ///
-    /// Возвращает `None` при пустой очереди/отсутствии площадки (текст в
+    /// Returns `None` for an empty queue/no site (the text is in
     /// [`Self::status`]).
     pub fn command(&mut self, state: &GameState) -> Option<Command> {
         self.command_at(state, None)
     }
 
-    /// То же, но с явной клеткой площадки (режим выбора места, `PathBuild`).
+    /// The same, but with an explicit site cell (site selection mode, `PathBuild`).
     ///
-    /// `site == None` — запасной путь ИИ/тестов: площадка ищется
-    /// [`find_build_site`] (C++ `TaskCreateBuilding::FindBuildSite`); для
-    /// мобильного строителя **не-здания** — его собственная клетка
+    /// `site == None` — the fallback path of the AI/tests: the site is searched by
+    /// [`find_build_site`] (C++ `TaskCreateBuilding::FindBuildSite`); for a
+    /// mobile builder of **non-buildings** — its own cell
     /// (`UnitsManager_IssueBuildOrder`).
     pub fn command_at(&mut self, state: &GameState, site: Option<Point>) -> Option<Command> {
         let unit = state.unit(self.unit)?;
-        // Завод строит из очереди; мобильный строитель — ровно выбранный тип
+        // A factory builds from the queue; a mobile builder — exactly the selected type
         // (`MobileBuildMenu::Build`: `selector->GetLast()`).
         let head = if self.factory {
             self.queue.first().copied()
@@ -874,13 +874,13 @@ impl BuildMenu {
         )
     }
 
-    /// Нужен ли режим выбора места (`MobileBuildMenu::Build`, C++
+    /// Whether the site selection mode is needed (`MobileBuildMenu::Build`, C++
     /// `(base_unit.GetFlags() & BUILDING) || event_click_path_build`).
     ///
-    /// `force_path` — нажата кнопка `Path` (1106): тогда место выбирается и для
-    /// 1×1-постройки инженера (`buildmenu.cpp:921-925`, `SMLTAPE`).
+    /// `force_path` — the `Path` button was pressed (1106): then the site is chosen also for
+    /// the engineer's 1×1 build (`buildmenu.cpp:921-925`, `SMLTAPE`).
     ///
-    /// Возвращает голову очереди (что строим) и скорость постройки.
+    /// Returns the queue head (what we build) and the build speed.
     pub fn site_selection_target(
         &self,
         state: &GameState,
@@ -909,7 +909,7 @@ impl BuildMenu {
         Some((head, build_rate))
     }
 
-    /// Рисует экран поверх кадра 640×480.
+    /// Draws the screen over the 640×480 frame.
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -929,8 +929,8 @@ impl BuildMenu {
         } else {
             menu.conbuild.as_ref()
         };
-        // Прозрачные пиксели фона C++ показывает поверх игры; здесь под ними
-        // чёрный кадр — иначе сквозь меню просвечивает HUD-строка партии.
+        // The transparent pixels of the C++ background show the game; here under them
+        // is a black frame — otherwise the match HUD line shows through the menu.
         frame.fill_rect(
             PixelRect::new(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
             max_render::buffer::Rgba::rgb(0, 0, 0),
@@ -952,7 +952,7 @@ impl BuildMenu {
         let yellow = palette.rgba(crate::setup::YELLOW.0);
         let dim = palette.rgba(0x5A);
 
-        // Заголовок окна: `_(3a76)`/`_(faaf)` — «Build»/«Factory Build».
+        // Window title: `_(3a76)`/`_(faaf)` — "Build"/"Factory Build".
         painted += draw_text_gnw_centered(
             frame,
             HEADER,
@@ -966,11 +966,11 @@ impl BuildMenu {
         )
         .max(0) as u32;
 
-        // Портрет выбранного типа (`AbstractBuildMenu::Draw(unit_type)`,
+        // Portrait of the selected type (`AbstractBuildMenu::Draw(unit_type)`,
         // `buildmenu.cpp:509-529`): `base_unit.GetPortrait()` — big image `P_*`
-        // 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`). C++ берёт
-        // `selector->GetLast()` — выбранную строку списка (у завода — активного
-        // селектора: список или очередь).
+        // 300×240 at (11,13), window palette (`CONBUILD`/`FACBUILD`). C++ takes
+        // `selector->GetLast()` — the selected list row (for a factory — the active
+        // selector: list or queue).
         let portrait_type = self.active_type();
 
         if let Some(unit_type) = portrait_type {
@@ -993,9 +993,9 @@ impl BuildMenu {
             }
         }
 
-        // Список доступного (`BuildUnitTypeSelector::Draw` /
-        // `UnitTypeSelector::Draw`): иконка `I_*` в центре (16,16) строки,
-        // имя с x=35 (ширина 80), ходы справа (`ReportStats_DrawNumber`).
+        // Available list (`BuildUnitTypeSelector::Draw` /
+        // `UnitTypeSelector::Draw`): the `I_*` icon at the center (16,16) of the row,
+        // the name from x=35 (width 80), the turns on the right (`ReportStats_DrawNumber`).
         let builder_unit = state.unit(self.unit);
         let builder_stationary = builder_unit
             .map(|unit| !unit.is_mobile())
@@ -1017,8 +1017,8 @@ impl BuildMenu {
                 font,
             );
 
-            // `ReportStats_DrawListItemIcon`: здания — 1:4 (`divisor = 2`),
-            // мобильные — 1:2; перекраска командных слотов как в CargoMenu.
+            // `ReportStats_DrawListItemIcon`: buildings — 1:4 (`divisor = 2`),
+            // mobile — 1:2; recoloring of team slots as in CargoMenu.
             if let Some(icon) = cargo.and_then(|cargo| cargo.icon(*unit_type)) {
                 let stationary = !unit_type.is_mobile();
                 let zoom = if stationary { 16 } else { 32 };
@@ -1045,8 +1045,8 @@ impl BuildMenu {
             )
             .max(0) as u32;
 
-            // Цвет ходов — `0xA2`, если строитель стационарный или ему хватает
-            // склада (`unit->storage >= turns * consumption_rate`), иначе
+            // Turns color — `0xA2` if the builder is stationary or has enough
+            // storage (`unit->storage >= turns * consumption_rate`), otherwise
             // `COLOR_RED` (C++ `BuildUnitTypeSelector::Draw`).
             let turns = self.turns_for(state, *unit_type);
             let affordable =
@@ -1061,13 +1061,13 @@ impl BuildMenu {
             );
 
             if index == self.selected {
-                // `GameManager_DrawUnitSelector`: белые уголки 8 px вокруг
-                // иконки выбранной строки (не заливка и не цвет текста).
+                // `GameManager_DrawUnitSelector`: white 8 px corners around
+                // the icon of the selected row (not a fill or text color).
                 draw_item_selector(frame, white, LIST_AREA.ulx, y);
             }
         }
 
-        // Очередь завода — тот же `UnitTypeSelector::Draw`: иконка + имя.
+        // Factory queue — the same `UnitTypeSelector::Draw`: icon + name.
         if self.factory {
             for row in 0..QUEUE_ROWS {
                 let index = self.queue_page + row;
@@ -1112,11 +1112,11 @@ impl BuildMenu {
             }
         }
 
-        // Характеристики выбранного типа с иконками — `UnitStats_DrawStats`
-        // в `stats_background` (11,293,250,174), как в
-        // `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`): база/текущие
-        // значения команды (клановые модификаторы и апгрейды уже внутри),
-        // `I_RAW`/`I_RAWE` для строки `Cost`. Это тот же код, что в CargoMenu.
+        // Characteristics of the selected type with icons — `UnitStats_DrawStats`
+        // in `stats_background` (11,293,250,174), as in
+        // `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`): base/current
+        // team values (clan modifiers and upgrades are already inside),
+        // `I_RAW`/`I_RAWE` for the `Cost` row. This is the same code as in CargoMenu.
         if let Some(unit_type) = portrait_type {
             if let (Some(cargo), Some(team_units)) = (
                 assets.cargo.as_ref(),
@@ -1131,7 +1131,7 @@ impl BuildMenu {
             }
         }
 
-        // Описание выбранного типа — поверх портрета (`Text_TextBox` 16,17,
+        // Description of the selected type — over the portrait (`Text_TextBox` 16,17,
         // 290×230, `button_description_rest_state`).
         if self.show_description {
             if let Some(unit_type) = portrait_type {
@@ -1139,7 +1139,7 @@ impl BuildMenu {
             }
         }
 
-        // Цифры ходов/цены под списком (C++ `turns_background_*`).
+        // Turns/price numbers under the list (C++ `turns_background_*`).
         let labels_y = if self.factory { 357 } else { 330 };
         let first_y = if self.factory { 376 } else { 349 };
         let max_rate = self.max_rate(state);
@@ -1149,9 +1149,9 @@ impl BuildMenu {
         painted += draw_text_gnw(frame, 410, labels_y - 2, font, "Cost", dim).max(0) as u32;
 
         for (index, rate) in BUILD_RATES.iter().enumerate() {
-            // C++ `AbstractBuildMenu::Draw`: строки 2×/4× не рисуются, если
-            // скорость недоступна (`max_build_rate < rate`) или это Training
-            // Hall (кнопки выключены безусловно).
+            // C++ `AbstractBuildMenu::Draw`: the 2×/4× rows are not drawn if
+            // the speed is unavailable (`max_build_rate < rate`) or this is a Training
+            // Hall (the buttons are off unconditionally).
             if *rate > 1 && (self.builder_type == UnitType::TrainingHall || *rate > max_rate) {
                 continue;
             }
@@ -1178,7 +1178,7 @@ impl BuildMenu {
             .max(0) as u32;
         }
 
-        // Статус/ошибка — нижняя строка (до кнопок `Cancel`, x=307).
+        // Status/error — the bottom line (before the `Cancel` buttons, x=307).
         let status = if self.status.is_empty() {
             "Enter: build  Esc: cancel  1/2/3: speed"
         } else {
@@ -1194,7 +1194,7 @@ impl BuildMenu {
         )
         .max(0) as u32;
 
-        // Кнопки.
+        // Buttons.
         let rates = if self.factory {
             FACTORY_RATES
         } else {
@@ -1274,7 +1274,7 @@ impl BuildMenu {
             mouse,
             false,
         );
-        // `Path` (`_(62fa)`) — только у инженера (`buildmenu.cpp:836-839`).
+        // `Path` (`_(62fa)`) — only for the engineer (`buildmenu.cpp:836-839`).
         if self.builder_type == UnitType::Engineer {
             painted += draw_button(
                 frame,
@@ -1291,21 +1291,21 @@ impl BuildMenu {
     }
 }
 
-/// Маркер выбранной строки — `GameManager_DrawUnitSelector`
-/// (`game_manager.cpp`): белые уголки длиной 8 px вокруг 32×32-иконки. В C++
-/// `offsetx = 0`, `item_height = 32`, `scaled_size2 = 30`, поэтому уголки
-/// стоят по x/y 0..8 и 22..30, а не по всей строке.
+/// Selected row marker — `GameManager_DrawUnitSelector`
+/// (`game_manager.cpp`): white corners 8 px long around the 32×32 icon. In C++
+/// `offsetx = 0`, `item_height = 32`, `scaled_size2 = 30`, so the corners
+/// stand at x/y 0..8 and 22..30, not over the whole row.
 fn draw_item_selector(frame: &mut RgbaBuffer, color: Rgba, x: i32, y: i32) {
     const SIZE: i32 = 8;
     const EDGE: i32 = 30;
 
     for offset in 0..SIZE {
-        // Верхний левый и верхний правый.
+        // Top left and top right.
         frame.set(x + offset, y, color);
         frame.set(x, y + offset, color);
         frame.set(x + EDGE - offset, y, color);
         frame.set(x + EDGE, y + offset, color);
-        // Нижний левый и нижний правый.
+        // Bottom left and bottom right.
         frame.set(x + offset, y + EDGE, color);
         frame.set(x, y + EDGE - offset, color);
         frame.set(x + EDGE - offset, y + EDGE, color);
@@ -1313,7 +1313,7 @@ fn draw_item_selector(frame: &mut RgbaBuffer, color: Rgba, x: i32, y: i32) {
     }
 }
 
-/// Кнопка: картинка C++ или честная рамка с подписью (как `mobilize.rs`).
+/// Button: the C++ picture or an honest frame with a label (like `mobilize.rs`).
 fn draw_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -1354,7 +1354,7 @@ fn draw_button(
     painted
 }
 
-/// Обрезка длинного имени по ширине (как `mobilize::fit_label`).
+/// Clipping of a long name by width (like `mobilize::fit_label`).
 fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
@@ -1370,14 +1370,14 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 }
 
 // ---------------------------------------------------------------------------
-// Интеграция с приложением
+// Integration with the application
 // ---------------------------------------------------------------------------
 
 impl crate::App {
-    /// Модальный ввод `BuildMenu` (C++ `AbstractBuildMenu::Run`).
+    /// Modal input of `BuildMenu` (C++ `AbstractBuildMenu::Run`).
     ///
-    /// `None` — экран не открыт (ввод идёт в HUD). Пока экран открыт, карта и
-    /// панели приказов не получают: `GameManager_DisableMainMenu`.
+    /// `None` — the screen is not open (input goes to the HUD). While the screen is open, the map and
+    /// the order panels do not receive input: `GameManager_DisableMainMenu`.
     pub fn build_menu_input(
         &mut self,
         event: crate::ui::InputEvent,
@@ -1390,8 +1390,8 @@ impl crate::App {
                 BuildMenuAction::None
             }
             crate::ui::InputEvent::MouseClick(x, y) => menu.click(&self.state, x, y),
-            // В C++ правый клик в меню не назначен (`ProcessKey` не ловит
-            // `RMB`); здесь он закрывает экран, как `Esc`.
+            // In C++ the right click is not assigned in the menu (`ProcessKey` does not catch
+            // `RMB`); here it closes the screen, like `Esc`.
             crate::ui::InputEvent::RightClick(..) => BuildMenuAction::Close,
             crate::ui::InputEvent::Key(key) => menu.key(&self.state, key),
         };
@@ -1400,32 +1400,32 @@ impl crate::App {
         Some(action)
     }
 
-    /// `Build()` — зафиксировать заказ (`Done`/Enter).
+    /// `Build()` — commit the order (`Done`/Enter).
     ///
-    /// Возвращает строку для журнала HUD: что построить или почему нельзя.
+    /// Returns a line for the HUD log: what to build or why it is impossible.
     ///
-    /// Мобильный строитель и здание (`MobileBuildMenu::Build`, C++
-    /// `(base_unit.GetFlags() & BUILDING)`) — заказ **ещё не уходит**:
-    /// открывается режим выбора места (`ORDER_STATE_SELECT_SITE`), площадку
-    /// ставит [`crate::App::confirm_build_site`] по LMB. Завод (и не-здания
-    /// инженера) идут прежним путём — сразу в очередь.
+    /// A mobile builder and a building (`MobileBuildMenu::Build`, C++
+    /// `(base_unit.GetFlags() & BUILDING)`) — the order **does not go yet**:
+    /// the site selection mode opens (`ORDER_STATE_SELECT_SITE`), the site is placed by
+    /// [`crate::App::confirm_build_site`] on LMB. A factory (and the engineer's
+    /// non-buildings) go the former way — straight into the queue.
     pub fn commit_build_menu(&mut self, online: bool) -> Option<String> {
         self.commit_build_menu_with(online, false)
     }
 
-    /// `Build()` с признаком `event_click_path_build` (`Path` у инженера):
-    /// `force_path` открывает выбор места и для 1×1-постройки.
+    /// `Build()` with the `event_click_path_build` flag (`Path` for the engineer):
+    /// `force_path` opens the site selection also for the 1×1 build.
     pub fn commit_build_menu_path(&mut self, online: bool) -> Option<String> {
         self.commit_build_menu_with(online, true)
     }
 
-    /// Общий путь `MobileBuildMenu::Build`/`AbstractBuildMenu::Build`.
+    /// The common path `MobileBuildMenu::Build`/`AbstractBuildMenu::Build`.
     pub fn commit_build_menu_with(&mut self, online: bool, force_path: bool) -> Option<String> {
         let mut menu = self.build_menu.take()?;
 
-        // `UnitsManager_IssueBuildOrder`: рядом со строителем должен быть
-        // проходимый якорь 2×2, иначе `BuildMenu` остаётся открытым с
-        // сообщением «Invalid square» (`_(1031)`).
+        // `UnitsManager_IssueBuildOrder`: there must be a passable 2×2
+        // anchor next to the builder, otherwise `BuildMenu` stays open with
+        // the message "Invalid square" (`_(1031)`).
         if let Some((unit_type, build_rate)) = menu.site_selection_target(&self.state, force_path)
         {
             self.build_menu = Some(menu);
@@ -1477,7 +1477,7 @@ impl crate::App {
         }
     }
 
-    /// Выбор строки списка в открытом меню (QA/мышь).
+    /// Selection of a list row in the open menu (QA/mouse).
     pub fn build_menu_select(&mut self, index: usize) -> bool {
         let Some(menu) = self.build_menu.as_mut() else {
             return false;
@@ -1487,7 +1487,7 @@ impl crate::App {
         menu.selected != before || index < menu.unit_types.len()
     }
 
-    /// `AddSelection` (`Build` у завода).
+    /// `AddSelection` (`Build` for a factory).
     pub fn build_menu_add(&mut self) -> bool {
         let Some(mut menu) = self.build_menu.take() else {
             return false;
@@ -1507,7 +1507,7 @@ impl crate::App {
         removed
     }
 
-    /// Выбор скорости 1×/2×/4×.
+    /// 1×/2×/4× speed selection.
     pub fn build_menu_set_rate(&mut self, rate: u16) -> bool {
         let Some(mut menu) = self.build_menu.take() else {
             return false;
@@ -1517,7 +1517,7 @@ impl crate::App {
         applied
     }
 
-    /// `Repeat` (только завод).
+    /// `Repeat` (factory only).
     pub fn build_menu_toggle_repeat(&mut self) -> bool {
         let Some(menu) = self.build_menu.as_mut() else {
             return false;
@@ -1525,7 +1525,7 @@ impl crate::App {
         menu.toggle_repeat()
     }
 
-    /// Стрелки списка (`true` — вниз).
+    /// List arrows (`true` — down).
     pub fn build_menu_step(&mut self, down: bool) -> bool {
         let Some(menu) = self.build_menu.as_mut() else {
             return false;
@@ -1534,7 +1534,7 @@ impl crate::App {
         true
     }
 
-    /// Стрелки очереди (`true` — вниз).
+    /// Queue arrows (`true` — down).
     pub fn build_menu_queue_step(&mut self, down: bool) -> bool {
         let Some(menu) = self.build_menu.as_mut() else {
             return false;
@@ -1543,7 +1543,7 @@ impl crate::App {
         true
     }
 
-    /// Очередь открытого меню (копия).
+    /// Queue of the open menu (a copy).
     pub fn build_menu_queue(&self) -> Vec<UnitType> {
         self.build_menu
             .as_ref()
@@ -1565,10 +1565,10 @@ mod tests {
         state
     }
 
-    /// Интерфейс показывает UFN, а не прежние строки `unit_name`.
+    /// The UI shows the UFN, not the former `unit_name` strings.
     ///
-    /// 9 переименованных и 3 ранее отсутствовавших типа (`MonopoleMine`,
-    /// `SupportPlant`, `RecreationCenter` отдавались как «Unit») сверены с
+    /// 9 renamed and 3 previously missing types (`MonopoleMine`,
+    /// `SupportPlant`, `RecreationCenter` were returned as "Unit") verified against
     /// `data/unit_names.json` (`max-brh-docs/unit-name-review.md`).
     #[test]
     fn unit_name_is_the_user_friendly_name() {
@@ -1613,7 +1613,7 @@ mod tests {
         assert_eq!(menu.unit_types.len(), 15);
         assert_eq!(menu.selected_type(), Some(UnitType::MiningStation));
 
-        // Выбор TRAINHAL (индекс 13 в списке CONSTRCT).
+        // Selection of TRAINHAL (index 13 in the CONSTRCT list).
         let index = menu
             .unit_types
             .iter()
@@ -1623,7 +1623,7 @@ mod tests {
         assert!(menu.add_to_queue());
         assert_eq!(menu.queue, vec![UnitType::TrainingHall]);
 
-        // Второй выбор заменяет (MobileBuildMenu::Build: Clear + PushBack).
+        // The second selection replaces (MobileBuildMenu::Build: Clear + PushBack).
         menu.select(0);
         assert!(menu.add_to_queue());
         assert_eq!(menu.queue, vec![UnitType::MiningStation]);
@@ -1690,8 +1690,8 @@ mod tests {
             menu.key(&state, crate::ui::Key::Escape),
             BuildMenuAction::Close
         );
-        // Cancel сам по себе не меняет выбор: заказ существует только после
-        // `Done` (C++ `event_click_cancel` не вызывает `Build()`).
+        // Cancel alone does not change the selection: the order exists only after
+        // `Done` (C++ `event_click_cancel` does not call `Build()`).
         assert!(menu.queue.is_empty());
         let command = menu.command(&state).expect("выбранный тип — это заказ");
         let Command::Order(packet) = command else {
@@ -1761,8 +1761,8 @@ mod tests {
             .expect("TANK in HVP list");
         menu.select(tank);
 
-        // TANK = 4 хода; завод 3/ход на 1×, 12 на 2×, 36 на 4×. Второе число —
-        // полная стоимость (сумма ходов), а не ставка за ход.
+        // TANK = 4 turns; factory 3/turn at 1×, 12 at 2×, 36 at 4×. The second number —
+        // the total cost (sum of turns), not the rate per turn.
         assert_eq!(menu.max_rate(&state), 4);
         assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
         assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
@@ -1785,7 +1785,7 @@ mod tests {
 
         // C++ `AbstractBuildMenu::Draw`: `build_rate_x2/x4->Enable(false)`.
         assert_eq!(menu.max_rate(&state), 1);
-        // INFANTRY = 2 хода, ставка TRAINHAL 1/ход.
+        // INFANTRY = 2 turns, TRAINHAL rate 1/turn.
         assert_eq!(menu.rate_numbers(&state, 1), (2, 2));
     }
 
@@ -1795,7 +1795,7 @@ mod tests {
         let builder = random
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
             .expect("constructor");
-        // В реальной партии `deploy_starting_units` ставит `storage = cargo`.
+        // In a real match `deploy_starting_units` sets `storage = cargo`.
         random.unit_mut(builder).unwrap().storage = 0;
         let mut menu = BuildMenu::new(&random, builder).expect("menu");
         let shipyard = menu
@@ -1807,7 +1807,7 @@ mod tests {
         assert_eq!(menu.max_rate(&random), 1);
         assert_eq!(menu.rate_numbers(&random, 1), (20, 40));
 
-        // CrimsonPath: SHIPYARD -5 ходов (`CLAN_TRADEOFFS`), цена 15 × 2.
+        // CrimsonPath: SHIPYARD -5 turns (`CLAN_TRADEOFFS`), price 15 × 2.
         random.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
         random.unit_mut(builder).unwrap().storage = 0;
         let mut menu = BuildMenu::new(&random, builder).expect("menu");
@@ -1838,9 +1838,9 @@ mod tests {
             .position(|unit| *unit == UnitType::RocketLauncher)
             .expect("ROCKET in HVP list");
 
-        // В очереди TANK, но выбран ROCKET: C++ `Draw(selector->GetLast())`
-        // показывает цифры выбранной строки (4 хода TANK — только когда
-        // активна очередь).
+        // TANK is in the queue, but ROCKET is selected: C++ `Draw(selector->GetLast())`
+        // shows the numbers of the selected row (4 TANK turns — only when
+        // the queue is active).
         menu.queue.push(UnitType::Tank);
         menu.select(launcher);
         let turns = menu.turns_for(&state, UnitType::RocketLauncher);
@@ -1852,7 +1852,7 @@ mod tests {
         assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
         assert_eq!(menu.rate_numbers(&state, 4), (1, 36));
 
-        // Возврат к списку — снова выбранная строка.
+        // Back to the list — the selected row again.
         menu.queue_active = false;
         menu.select(tank);
         assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
@@ -1873,7 +1873,7 @@ mod tests {
         assert!(labels.contains(&"Armor"), "характеристики: {labels:?}");
         assert_eq!(labels.last(), Some(&"Cost"), "строка Cost последняя");
 
-        // `UnitStats_DrawCost`: ставка строителя CONSTRCT (2) × ATTRIB_TURNS (10).
+        // `UnitStats_DrawCost`: CONSTRCT builder rate (2) × ATTRIB_TURNS (10).
         let cost = rows.last().expect("cost row");
         assert_eq!(cost.value, Some(20));
         assert_eq!(cost.icons.len(), 1);

@@ -1,41 +1,41 @@
-//! HUD (M4.2): миникарта, панель выбранного юнита, журнал сообщений, полоса
-//! ресурсов и кнопки **поверх** кадра карты.
+//! HUD (M4.2): minimap, selected unit panel, message log, resource bar
+//! and buttons **over** the map frame.
 //!
-//! Всё здесь — чистые функции от состояния (`max_core::game::GameState`) и
-//! небольшого [`HudState`], который принадлежит [`App`] и **не входит** в
-//! снапшот/CRC: выделенный юнит, предпросмотр пути, журнал и исходящие
-//! приказы — это UI, а не симуляция (`AppDigest` их не видит, детерминизм
-//! тика не меняется).
+//! Everything here — pure functions of the state (`max_core::game::GameState`) and
+//! a small [`HudState`] that belongs to [`App`] and **is not part of**
+//! the snapshot/CRC: the selected unit, the path preview, the log and outgoing
+//! orders — this is UI, not simulation (`AppDigest` does not see them, tick
+//! determinism does not change).
 //!
-//! # Что рисуется
+//! # What is drawn
 //!
-//! | Элемент | Источник | Где |
+//! | Element | Source | Where |
 //! |---|---|---|
-//! | миникарта 112×112 → маленький буфер | [`SurfaceMap`], юниты своей команды | [`draw_minimap`] |
-//! | панель юнита (имя/тип, HP, ammo, приказ) | [`UnitInfo`] + `base_values` | [`unit_panel_lines`] |
-//! | журнал сообщений (кольцевой буфер) | [`MessageLog`] | [`draw_log`] |
-//! | строка ввода чата (пакет 18) | [`ChatInput`] | [`draw_chat_input`] |
-//! | полоса ресурсов команды | [`TeamUnits`] (gold + комплексы) | [`resources_line`] |
-//! | кнопки End Turn / Menu | `max_render::ui::Button` | [`hud_ui`] |
-//! | предпросмотр пути | [`PathPreview`] (линия по клеткам) | [`draw_path_preview`] |
+//! | minimap 112×112 → small buffer | [`SurfaceMap`], own team units | [`draw_minimap`] |
+//! | unit panel (name/type, HP, ammo, order) | [`UnitInfo`] + `base_values` | [`unit_panel_lines`] |
+//! | message log (ring buffer) | [`MessageLog`] | [`draw_log`] |
+//! | chat input line (packet 18) | [`ChatInput`] | [`draw_chat_input`] |
+//! | team resource bar | [`TeamUnits`] (gold + complexes) | [`resources_line`] |
+//! | End Turn / Menu buttons | `max_render::ui::Button` | [`hud_ui`] |
+//! | path preview | [`PathPreview`] (line by cells) | [`draw_path_preview`] |
 //!
 //! [`SurfaceMap`]: max_core::map::SurfaceMap
 //! [`UnitInfo`]: max_core::unit::UnitInfo
 //! [`TeamUnits`]: max_core::team::TeamUnits
 //!
-//! # Приказы
+//! # Orders
 //!
-//! [`build_move_order`] собирает пакет **38** (`Command::Move`, путь
-//! `GroundPath`) через `max_core::pathfinding::find_ground_path` — тот же
-//! поиск, что и `Paths_RequestPath` у получателя; [`build_attack_order`] —
-//! пакет **08** с процессором `P3` (`ORDER_MOVE_TO_ATTACK` + цель). Оба
-//! возвращают готовые [`Command`], которые:
+//! [`build_move_order`] assembles packet **38** (`Command::Move`, path
+//! `GroundPath`) via `max_core::pathfinding::find_ground_path` — the same
+//! search as `Paths_RequestPath` at the receiver; [`build_attack_order`] —
+//! packet **08** with processor `P3` (`ORDER_MOVE_TO_ATTACK` + target). Both
+//! return ready [`Command`]s that:
 //!
-//! * в демо-режиме (без сети) применяются локально — [`App::flush_orders`]
-//!   вызывает `max_core::events::apply_command`;
-//! * в сетевой сессии уходят в `SessionHandle` (`net::flush_hud_orders`):
-//!   сначала локальное применение (как в C++ перед multicast), затем
-//!   `Packet::Command` в сессию — энкодеры `max_net::wire::command`.
+//! * in demo mode (without the network) are applied locally — [`App::flush_orders`]
+//!   calls `max_core::events::apply_command`;
+//! * in a network session go to `SessionHandle` (`net::flush_hud_orders`):
+//!   first the local application (as in C++ before multicast), then
+//!   `Packet::Command` into the session — the `max_net::wire::command` encoders.
 
 use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
@@ -59,31 +59,31 @@ use max_render::viewport::Viewport;
 
 use crate::App;
 
-/// Ёмкость журнала сообщений по умолчанию (строк).
+/// Default message log capacity (lines).
 pub const MESSAGE_LOG_CAPACITY: usize = 8;
 
-/// Внутренний отступ панелей HUD, пиксели.
+/// Inner HUD panel padding, pixels.
 pub const HUD_MARGIN: i32 = 4;
-/// Высота полосы ресурсов сверху.
+/// Height of the resource bar at the top.
 pub const HUD_TOP_BAR_HEIGHT: i32 = 14;
-/// Высота строки статуса внизу.
+/// Height of the status line at the bottom.
 pub const HUD_STATUS_HEIGHT: i32 = 12;
-/// Максимальная сторона миникарты: 112 клеток по 1 пикселю.
+/// Maximum minimap side: 112 cells of 1 px.
 pub const MINIMAP_MAX_SIDE: i32 = 112;
-/// Ширина кнопки HUD.
+/// HUD button width.
 pub const HUD_BUTTON_WIDTH: i32 = 96;
-/// Высота кнопки HUD.
+/// HUD button height.
 pub const HUD_BUTTON_HEIGHT: i32 = 20;
-/// Зазор между кнопками.
+/// Gap between buttons.
 pub const HUD_BUTTON_GAP: i32 = 4;
 
-/// Предел шагов пути в пакете 38 (`REMOTE_MAX_VECTOR_LENGTH` в `max_net`).
+/// Path step limit in packet 38 (`REMOTE_MAX_VECTOR_LENGTH` in `max_net`).
 ///
-/// Длиннее — `WireError::VectorTooLong` при кодировании, поэтому заказ
-/// отклоняется ещё в HUD.
+/// Longer — `WireError::VectorTooLong` when encoding, so the order
+/// is rejected already in the HUD.
 pub const MAX_PATH_STEPS: usize = 1024;
 
-/// Цвета команд (порядок оригинала: `RED, GREEN, BLUE, GRAY, ALIEN`).
+/// Team colors (original order: `RED, GREEN, BLUE, GRAY, ALIEN`).
 pub const TEAM_COLORS: [Rgba; 5] = [
     Rgba::rgb(224, 48, 48),
     Rgba::rgb(48, 192, 72),
@@ -92,18 +92,18 @@ pub const TEAM_COLORS: [Rgba; 5] = [
     Rgba::rgb(212, 168, 64),
 ];
 
-/// Цвет предпросмотра пути (не пересекается с цветами панелей и команд).
+/// Path preview color (does not overlap the panel and team colors).
 pub const PREVIEW_COLOR: Rgba = Rgba::rgb(120, 255, 152);
-/// Фон панелей HUD.
+/// HUD panel background.
 pub const HUD_PANEL: Rgba = Rgba::rgb(14, 18, 26);
-/// Рамка панелей HUD.
+/// HUD panel frame.
 pub const HUD_BORDER: Rgba = Rgba::rgb(96, 116, 148);
-/// Основной текст HUD.
+/// Main HUD text.
 pub const HUD_TEXT: Rgba = Rgba::rgb(232, 236, 244);
-/// Приглушённый текст HUD.
+/// Muted HUD text.
 pub const HUD_TEXT_DIM: Rgba = Rgba::rgb(148, 156, 168);
 
-/// Цвет команды (индекс клампится, `ALIEN` — для всего не-игрового).
+/// Team color (the index is clamped, `ALIEN` — for everything non-game).
 pub fn team_color(team: TeamId) -> Rgba {
     TEAM_COLORS
         .get(usize::from(team.0))
@@ -112,10 +112,10 @@ pub fn team_color(team: TeamId) -> Rgba {
 }
 
 // ---------------------------------------------------------------------------
-// Журнал сообщений
+// Message log
 // ---------------------------------------------------------------------------
 
-/// Кольцевой буфер строк журнала: старые записи вытесняются новыми.
+/// Ring buffer of log lines: old records are evicted by new ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageLog {
     lines: Vec<String>,
@@ -129,12 +129,12 @@ impl Default for MessageLog {
 }
 
 impl MessageLog {
-    /// Журнал стандартной ёмкости ([`MESSAGE_LOG_CAPACITY`]).
+    /// Log of the standard capacity ([`MESSAGE_LOG_CAPACITY`]).
     pub fn new() -> Self {
         Self::with_capacity(MESSAGE_LOG_CAPACITY)
     }
 
-    /// Журнал ёмкости `capacity` (минимум 1).
+    /// Log of capacity `capacity` (minimum 1).
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             lines: Vec::new(),
@@ -142,7 +142,7 @@ impl MessageLog {
         }
     }
 
-    /// Добавляет строку, вытесняя самую старую при переполнении.
+    /// Adds a line, evicting the oldest on overflow.
     pub fn push(&mut self, line: impl Into<String>) {
         if self.lines.len() >= self.capacity {
             self.lines.remove(0);
@@ -150,49 +150,49 @@ impl MessageLog {
         self.lines.push(line.into());
     }
 
-    /// Очищает журнал.
+    /// Clears the log.
     pub fn clear(&mut self) {
         self.lines.clear();
     }
 
-    /// Строки от старой к новой.
+    /// Lines from oldest to newest.
     pub fn lines(&self) -> &[String] {
         &self.lines
     }
 
-    /// Число строк.
+    /// Number of lines.
     pub fn len(&self) -> usize {
         self.lines.len()
     }
 
-    /// Журнал пуст.
+    /// The log is empty.
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
 
-    /// Ёмкость журнала.
+    /// Log capacity.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 }
 
 // ---------------------------------------------------------------------------
-// Чат (пакет 18)
+// Chat (packet 18)
 // ---------------------------------------------------------------------------
 
-/// Максимальная длина сообщения чата в символах.
+/// Maximum chat message length in characters.
 ///
-/// В C++ буфер строки ввода — `char chat_input_buffer[150]`
-/// (`networkmenu.hpp:171`), поэтому 149 символов + NUL всегда помещаются в
-/// `SmartString` пакета 18 (`remote.cpp:2656-2685`).
+/// In C++ the input line buffer is `char chat_input_buffer[150]`
+/// (`networkmenu.hpp:171`), so 149 characters + NUL always fit into
+/// the `SmartString` of packet 18 (`remote.cpp:2656-2685`).
 pub const CHAT_MAX_CHARS: usize = 149;
 
-/// Имена команд по умолчанию (порядок оригинала: `RED, GREEN, BLUE, GRAY`).
+/// Default team names (original order: `RED, GREEN, BLUE, GRAY`).
 pub const TEAM_NAMES: [&str; 5] = ["RED", "GREEN", "BLUE", "GRAY", "ALIEN"];
 
-/// Имя команды для журнала/чата (`Remote_ReceiveNetPacket_18` берёт имя из
-/// настроек игры; в Rust-состоянии имён нет, поэтому используются имена слотов
-/// по умолчанию).
+/// Team name for the log/chat (`Remote_ReceiveNetPacket_18` takes the name from
+/// the game settings; the Rust state has no names, so the default slot names
+/// are used).
 pub fn team_name(team: TeamId) -> &'static str {
     TEAM_NAMES
         .get(usize::from(team.0))
@@ -200,29 +200,29 @@ pub fn team_name(team: TeamId) -> &'static str {
         .unwrap_or(TEAM_NAMES[TEAM_NAMES.len() - 1])
 }
 
-/// Строка журнала для сообщения чата: `<имя команды>: <текст>`.
+/// Log line for a chat message: `<team name>: <text>`.
 ///
-/// Ровно тот формат, что собирает `Remote_ReceiveNetPacket_18`:
+/// Exactly the format that `Remote_ReceiveNetPacket_18` assembles:
 /// `message = team_name; message += ": "; message += text`.
 pub fn chat_line(sender: TeamId, message: &str) -> String {
     format!("{}: {message}", team_name(sender))
 }
 
-/// Состояние строки ввода чата (M4.4).
+/// State of the chat input line (M4.4).
 ///
-/// Живёт в [`HudState`] и, как весь HUD, **не входит** в снапшот/CRC: набор
-/// текста не должен менять детерминизм симуляции. Пока [`Self::is_active`],
-/// `ui::handle_session_input` отдаёт клавиатуру чату, а не приказам.
+/// Lives in [`HudState`] and, like the whole HUD, **is not part of** the snapshot/CRC: typing
+/// text must not change the simulation determinism. While [`Self::is_active`],
+/// `ui::handle_session_input` gives the keyboard to the chat, not to the orders.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChatInput {
-    /// Строка ввода открыта (Enter/T в сессии).
+    /// The input line is open (Enter/T in a session).
     active: bool,
-    /// Набранный ASCII-текст (до [`CHAT_MAX_CHARS`] символов).
+    /// The typed ASCII text (up to [`CHAT_MAX_CHARS`] characters).
     buffer: String,
 }
 
 impl ChatInput {
-    /// Закрытая пустая строка ввода.
+    /// Closed empty input line.
     pub const fn new() -> Self {
         Self {
             active: false,
@@ -230,30 +230,30 @@ impl ChatInput {
         }
     }
 
-    /// Открывает ввод с пустым буфером (Enter/T).
+    /// Opens the input with an empty buffer (Enter/T).
     pub fn open(&mut self) {
         self.active = true;
         self.buffer.clear();
     }
 
-    /// Закрывает ввод, отбрасывая набранное (Esc/отправка).
+    /// Closes the input, discarding what was typed (Esc/send).
     pub fn close(&mut self) {
         self.active = false;
         self.buffer.clear();
     }
 
-    /// Строка ввода открыта.
+    /// The input line is open.
     pub const fn is_active(&self) -> bool {
         self.active
     }
 
-    /// Набранный текст.
+    /// The typed text.
     pub fn message(&self) -> &str {
         &self.buffer
     }
 
-    /// Добавляет печатный ASCII-символ; `false` — символ отклонён
-    /// (не ASCII/буфер полон/ввод закрыт).
+    /// Adds a printable ASCII character; `false` — the character was rejected
+    /// (not ASCII/buffer full/input closed).
     pub fn push_char(&mut self, ch: char) -> bool {
         if !self.active
             || self.buffer.chars().count() >= CHAT_MAX_CHARS
@@ -266,15 +266,15 @@ impl ChatInput {
         true
     }
 
-    /// Удаляет последний символ (Backspace); `false` — удалять нечего.
+    /// Deletes the last character (Backspace); `false` — nothing to delete.
     pub fn backspace(&mut self) -> bool {
         self.active && self.buffer.pop().is_some()
     }
 
-    /// Забирает сообщение и закрывает ввод.
+    /// Takes the message and closes the input.
     ///
-    /// `None` — буфер пуст: C++ `Remote_SendNetPacket_18` такие сообщения не
-    /// отправляет, поэтому Enter по пустой строке просто закрывает ввод.
+    /// `None` — the buffer is empty: C++ `Remote_SendNetPacket_18` does not send such
+    /// messages, so Enter on an empty line simply closes the input.
     pub fn take_message(&mut self) -> Option<String> {
         self.active = false;
         let message = std::mem::take(&mut self.buffer);
@@ -284,24 +284,24 @@ impl ChatInput {
 }
 
 // ---------------------------------------------------------------------------
-// Предпросмотр пути
+// Path preview
 // ---------------------------------------------------------------------------
 
-/// Предпросмотр маршрута выбранного юнита: линия по клеткам.
+/// Route preview of the selected unit: a line by cells.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathPreview {
-    /// Юнит, для которого построен маршрут.
+    /// The unit the route was built for.
     pub unit: UnitId,
-    /// Стартовая клетка.
+    /// Starting cell.
     pub from: Point,
-    /// Клетка назначения (совпадает с `move_to` пакета 38).
+    /// Destination cell (coincides with `move_to` of packet 38).
     pub to: Point,
-    /// Шаги пути в порядке следования (`PathStep`, как в `GroundPath`).
+    /// Path steps in order (`PathStep`, as in `GroundPath`).
     pub steps: Vec<PathStep>,
 }
 
 impl PathPreview {
-    /// Предпросмотр из готового списка шагов.
+    /// Preview from a ready list of steps.
     pub fn new(unit: UnitId, from: Point, to: Point, steps: Vec<PathStep>) -> Self {
         Self {
             unit,
@@ -311,7 +311,7 @@ impl PathPreview {
         }
     }
 
-    /// Клетки маршрута: старт и каждая следующая после шага (длина `steps + 1`).
+    /// Route cells: the start and each next one after a step (length `steps + 1`).
     pub fn points(&self) -> Vec<Point> {
         let mut points = Vec::with_capacity(self.steps.len() + 1);
         let mut current = self.from;
@@ -325,40 +325,40 @@ impl PathPreview {
         points
     }
 
-    /// Длина маршрута в шагах.
+    /// Route length in steps.
     pub fn len(&self) -> usize {
         self.steps.len()
     }
 
-    /// Маршрут без шагов (юнит уже на месте).
+    /// Route without steps (the unit is already in place).
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }
 
-    /// Конечная клетка фактического маршрута (сумма шагов), а не `to`.
+    /// End cell of the actual route (the sum of steps), not `to`.
     pub fn last_point(&self) -> Point {
         self.points().pop().unwrap_or(self.from)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Состояние HUD (не входит в снапшот/CRC)
+// HUD state (not part of the snapshot/CRC)
 // ---------------------------------------------------------------------------
 
-/// Кнопка HUD под курсором/нажатием.
+/// HUD button under the cursor/press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HudButton {
-    /// End Turn: тот же путь, что и таймер (`06` + `52`/`finish_turn`).
+    /// End Turn: the same path as the timer (`06` + `52`/`finish_turn`).
     EndTurn,
-    /// Menu: выход из сессии в главное меню.
+    /// Menu: exit the session to the main menu.
     Menu,
 }
 
 impl HudButton {
-    /// Все кнопки HUD в порядке индексов [`hud_ui`].
+    /// All HUD buttons in [`hud_ui`] index order.
     pub const ALL: [Self; 2] = [Self::EndTurn, Self::Menu];
 
-    /// Индекс кнопки в [`hud_ui`].
+    /// Button index in [`hud_ui`].
     pub const fn index(self) -> usize {
         match self {
             Self::EndTurn => 0,
@@ -366,7 +366,7 @@ impl HudButton {
         }
     }
 
-    /// Подпись кнопки.
+    /// Button label.
     pub const fn label(self) -> &'static str {
         match self {
             Self::EndTurn => "End Turn",
@@ -375,60 +375,60 @@ impl HudButton {
     }
 }
 
-/// UI-состояние сессии: выделение, журнал, предпросмотр и исходящие приказы.
+/// Session UI state: selection, log, preview and outgoing orders.
 ///
-/// Хранится в [`App`], но **не входит** в `GameState::snapshot_bytes` и
-/// `AppDigest`: выделенный юнит и журнал — это UI, они не влияют на тик и
-/// CRC-барьер 45.
+/// Stored in [`App`] but **not part of** `GameState::snapshot_bytes` and
+/// `AppDigest`: the selected unit and the log are UI, they do not affect the tick and
+/// the CRC barrier 45.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HudState {
-    /// Выбранный юнит (может устареть — проверяйте [`App::selected_unit`]).
+    /// Selected unit (may become stale — check [`App::selected_unit`]).
     pub selected: Option<UnitId>,
-    /// Предпросмотр маршрута (последний `RMB`-приказ).
+    /// Route preview (the last `RMB` order).
     pub preview: Option<PathPreview>,
-    /// Журнал сообщений (кольцевой буфер).
+    /// Message log (ring buffer).
     pub log: MessageLog,
-    /// Строка ввода чата (пакет 18): активна, пока игрок набирает сообщение.
+    /// Chat input line (packet 18): active while the player types a message.
     pub chat: ChatInput,
-    /// Приказы, ещё не переданные сети/симуляции (38/08/18 из ввода).
+    /// Orders not yet passed to the network/simulation (38/08/18 from input).
     pub pending: Vec<Command>,
-    /// Кнопка HUD под курсором.
+    /// HUD button under the cursor.
     pub hover_button: Option<HudButton>,
-    /// Кнопка панелей 1:1 под курсором (когда активен хром).
+    /// 1:1 panel button under the cursor (when the chrome is active).
     pub hover_panel: Option<crate::panels::PanelButton>,
-    /// Локальное состояние панелей окна 1:1: переключатели, таймер, курсор.
+    /// Local state of the 1:1 window panels: toggles, timer, cursor.
     pub panels: crate::panels::PanelState,
-    /// Нажата End Turn в сетевой сессии (закрытие хода делает игровой цикл).
+    /// End Turn pressed in a network session (the turn is closed by the game loop).
     pub end_turn_requested: bool,
-    /// Позиция курсора в пикселях кадра (модальные экраны: `BuildMenu`).
+    /// Cursor position in frame pixels (modal screens: `BuildMenu`).
     pub mouse_position: Option<(i32, i32)>,
-    /// Курсорный режим выделенного юнита — C++ `UnitInfo::cursor` (`3` x-fer,
-    /// `4` repair, `6` reload, `7` load, `8` steal, `9` disable). `0` — нет.
+    /// Cursor mode of the selected unit — C++ `UnitInfo::cursor` (`3` x-fer,
+    /// `4` repair, `6` reload, `7` load, `8` steal, `9` disable). `0` — none.
     ///
-    /// UI-состояние: в снапшот/CRC не входит (в C++ поле живёт в `UnitInfo`,
-    /// но у нас — чтобы переключение режима не меняло дайджест). Сбрасывается
-    /// при смене выделения, как `GameManager_MenuUnitSelect` в C++.
+    /// UI state: not part of the snapshot/CRC (in C++ the field lives in `UnitInfo`,
+    /// but here — so that switching the mode does not change the digest). Reset
+    /// on selection change, like `GameManager_MenuUnitSelect` in C++.
     pub cursor_mode: u8,
-    /// Режим «войти в транспорт» — C++ `UnitInfo::enter_mode`; UI-состояние.
+    /// "Board the transport" mode — C++ `UnitInfo::enter_mode`; UI state.
     pub enter_mode: bool,
-    /// Режим наведения — C++ `UnitInfo::targeting_mode`: клик по врагу/пустой
-    /// клетке в радиусе даёт `ORDER_MOVE_TO_ATTACK`/`ORDER_FIRE`
+    /// Targeting mode — C++ `UnitInfo::targeting_mode`: a click on an enemy/empty
+    /// cell within range gives `ORDER_MOVE_TO_ATTACK`/`ORDER_FIRE`
     /// (`GameManager_GetWindowCursor`/`SetUnitOrder`, `game_manager.cpp:4384`).
     pub targeting_mode: bool,
-    /// Нажат ли `Shift` — C++ `GameManager_IsShiftKeyPressed`. Включает
-    /// `CURSOR_WAY` (маршрут по точкам) в `GameManager_GetWindowCursor`
-    /// (`game_manager.cpp:4459`/`:5989`). Слой ввода порта модификаторы пока не
-    /// передаёт, поэтому флаг выставляется через [`App::set_shift_pressed`]
-    /// (SDL-слой/QA); по умолчанию `false`.
+    /// Whether `Shift` is pressed — C++ `GameManager_IsShiftKeyPressed`. Enables
+    /// `CURSOR_WAY` (route by points) in `GameManager_GetWindowCursor`
+    /// (`game_manager.cpp:4459`/`:5989`). The port's input layer does not pass modifiers
+    /// yet, so the flag is set via [`App::set_shift_pressed`]
+    /// (SDL layer/QA); by default `false`.
     pub shift_pressed: bool,
-    /// Подсказка сверху карты — C++ `MessageManager_DrawMessage`
-    /// (`MESSAGE_BOX_INFO`, `MESSAGE_BOX_MODELESS`) из
-    /// `GameManager_DrawUnitStatusMessage`. Для строящего юнита:
-    /// «Currently building: X. / Turns to completion: N.», для готового —
+    /// Hint above the map — C++ `MessageManager_DrawMessage`
+    /// (`MESSAGE_BOX_INFO`, `MESSAGE_BOX_MODELESS`) from
+    /// `GameManager_DrawUnitStatusMessage`. For a building unit:
+    /// «Currently building: X. / Turns to completion: N.», for a ready one —
     /// «Finished building X.  To move the Y out of the construction site, …».
     ///
-    /// UI-состояние: в снапшот/CRC не входит. Живёт до клика по карте/смены
-    /// выделения, как `MessageManager_ClearMessageBox` в C++.
+    /// UI state: not part of the snapshot/CRC. Lives until a click on the map/selection
+    /// change, like `MessageManager_ClearMessageBox` in C++.
     pub hint: Option<String>,
 }
 
@@ -439,7 +439,7 @@ impl Default for HudState {
 }
 
 impl HudState {
-    /// Пустое состояние HUD.
+    /// Empty HUD state.
     pub fn new() -> Self {
         Self {
             selected: None,
@@ -460,16 +460,16 @@ impl HudState {
         }
     }
 
-    /// Сбрасывает всё (новая партия/загрузка сейва).
+    /// Resets everything (new match/save load).
     pub fn clear(&mut self) {
         *self = Self::new();
     }
 
-    /// Выделяет юнита (`None` — снять выделение).
+    /// Selects a unit (`None` — clear the selection).
     ///
-    /// Как `GameManager_MenuUnitSelect` в C++: у вновь выделенного юнита
-    /// `targeting_mode`/`enter_mode`/`cursor` сбрасываются, поэтому здесь
-    /// сбрасываются и наши UI-режимы.
+    /// Like `GameManager_MenuUnitSelect` in C++: the newly selected unit's
+    /// `targeting_mode`/`enter_mode`/`cursor` are reset, so our UI modes are
+    /// reset here too.
     pub fn select(&mut self, id: Option<UnitId>) {
         if self.selected != id {
             self.cursor_mode = 0;
@@ -479,12 +479,12 @@ impl HudState {
         self.selected = id;
     }
 
-    /// Пишет строку в журнал.
+    /// Writes a line to the log.
     pub fn push_log(&mut self, line: impl Into<String>) {
         self.log.push(line);
     }
 
-    /// Снимает выделение и предпросмотр (Esc/правый клик по юниту).
+    /// Clears the selection and the preview (Esc/right click on the unit).
     pub fn clear_interaction(&mut self) {
         self.selected = None;
         self.preview = None;
@@ -494,54 +494,54 @@ impl HudState {
         self.hint = None;
     }
 
-    /// Показывает подсказку сверху карты (`MessageManager_DrawMessage`).
+    /// Shows a hint above the map (`MessageManager_DrawMessage`).
     pub fn set_hint(&mut self, text: impl Into<String>) {
         self.hint = Some(text.into());
     }
 
-    /// `MessageManager_ClearMessageBox`: убирает подсказку.
+    /// `MessageManager_ClearMessageBox`: removes the hint.
     pub fn clear_hint(&mut self) {
         self.hint = None;
     }
 
-    /// Просит закрыть ход (кнопка End Turn в сетевой сессии).
+    /// Requests to close the turn (the End Turn button in a network session).
     pub fn request_end_turn(&mut self) {
         self.end_turn_requested = true;
     }
 
-    /// Забирает флаг «End Turn нажат».
+    /// Takes the "End Turn pressed" flag.
     pub fn take_end_turn_request(&mut self) -> bool {
         std::mem::take(&mut self.end_turn_requested)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Раскладка HUD
+// HUD layout
 // ---------------------------------------------------------------------------
 
-/// Прямоугольники HUD в пикселях кадра.
+/// HUD rectangles in frame pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HudLayout {
-    /// Полоса ресурсов сверху.
+    /// Resource bar at the top.
     pub top_bar: PixelRect,
-    /// Панель журнала сообщений (под полосой ресурсов).
+    /// Message log panel (under the resource bar).
     pub log_panel: PixelRect,
-    /// Нижняя панель целиком.
+    /// The whole bottom panel.
     pub bar: PixelRect,
-    /// Миникарта.
+    /// Minimap.
     pub minimap: PixelRect,
-    /// Панель выбранного юнита.
+    /// Selected unit panel.
     pub unit_panel: PixelRect,
-    /// Строка статуса внизу кадра.
+    /// Status line at the bottom of the frame.
     pub status: PixelRect,
-    /// Кнопка End Turn.
+    /// End Turn button.
     pub end_turn: Rect,
-    /// Кнопка Menu.
+    /// Menu button.
     pub menu: Rect,
 }
 
 impl HudLayout {
-    /// Прямоугольник кнопки.
+    /// Button rectangle.
     pub fn button(self, button: HudButton) -> Rect {
         match button {
             HudButton::EndTurn => self.end_turn,
@@ -550,11 +550,11 @@ impl HudLayout {
     }
 }
 
-/// Раскладка HUD для кадра `width × height`.
+/// HUD layout for a `width × height` frame.
 ///
-/// Панели не перекрываются и не выходят за кадр; на маленьких экранах
-/// (например 64×48) элементы вырождаются в пустые прямоугольники, а
-/// отрисовка их пропускает — HUD никогда не паникует.
+/// The panels do not overlap and stay inside the frame; on small screens
+/// (e.g. 64×48) the elements degenerate into empty rectangles, and
+/// drawing skips them — the HUD never panics.
 pub fn hud_layout(width: u32, height: u32) -> HudLayout {
     let w = width.max(1) as i32;
     let h = height.max(1) as i32;
@@ -562,7 +562,7 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
 
     let top_bar = PixelRect::new(0, 0, w, HUD_TOP_BAR_HEIGHT.min(h));
 
-    // Нижняя панель: четверть кадра, но не меньше 72 px (и не больше кадра).
+    // Bottom panel: a quarter of the frame, but at least 72 px (and no more than the frame).
     let bar_height = (h / 4).clamp(72, 148).min(h);
     let bar_y = h - bar_height;
     let bar = PixelRect::new(0, bar_y, w, bar_height);
@@ -575,7 +575,7 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
         status_height,
     );
 
-    // Миникарта: квадрат, вписанный между верхом панели и строкой статуса.
+    // Minimap: a square fitted between the top of the panel and the status line.
     let inner_top = bar_y + margin;
     let inner_bottom = (h - status_height - margin).max(inner_top);
     let side = (inner_bottom - inner_top)
@@ -583,8 +583,8 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
         .min((w / 3).max(1));
     let minimap = PixelRect::new(margin, inner_top, side, side);
 
-    // Кнопки справа: End Turn и Menu столбиком (не шире трети кадра, чтобы не
-    // налезать на миникарту на маленьких экранах).
+    // Buttons on the right: End Turn and Menu in a column (no wider than a third of the frame so as not to
+    // overlap the minimap on small screens).
     let button_width = HUD_BUTTON_WIDTH.min((w / 3).max(0)).max(0);
     let button_height = HUD_BUTTON_HEIGHT
         .min((side - HUD_BUTTON_GAP).max(0) / 2)
@@ -598,12 +598,12 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
         button_height,
     );
 
-    // Панель юнита — между миникартой и кнопками.
+    // Unit panel — between the minimap and the buttons.
     let unit_x = minimap.lrx() + margin;
     let unit_width = (buttons_x - margin - unit_x).max(0);
     let unit_panel = PixelRect::new(unit_x, inner_top, unit_width, side);
 
-    // Журнал: над нижней панелью слева, высотой под ёмкость буфера.
+    // Log: above the bottom panel on the left, as high as the buffer capacity.
     let log_wanted = (h - bar_height - HUD_TOP_BAR_HEIGHT - margin * 2).max(0);
     let log_height = (MESSAGE_LOG_CAPACITY as i32 * GLYPH_HEIGHT + 10)
         .min(log_wanted)
@@ -632,7 +632,7 @@ pub fn hud_layout(width: u32, height: u32) -> HudLayout {
     }
 }
 
-/// Кнопка HUD под точкой экрана (учёт наложения — кнопки выше панелей).
+/// HUD button under the screen point (overlap considered — buttons are above the panels).
 pub fn hud_button_at(width: u32, height: u32, x: i32, y: i32) -> Option<HudButton> {
     let layout = hud_layout(width, height);
 
@@ -643,7 +643,7 @@ pub fn hud_button_at(width: u32, height: u32, x: i32, y: i32) -> Option<HudButto
     })
 }
 
-/// Клетка миникарты под точкой экрана (клик по миникарте двигает камеру).
+/// Minimap cell under the screen point (a click on the minimap moves the camera).
 pub fn minimap_grid_at(layout: &HudLayout, x: i32, y: i32) -> Option<Point> {
     let rect = layout.minimap;
 
@@ -660,28 +660,28 @@ pub fn minimap_grid_at(layout: &HudLayout, x: i32, y: i32) -> Option<Point> {
 }
 
 // ---------------------------------------------------------------------------
-// Приказы из HUD
+// Orders from the HUD
 // ---------------------------------------------------------------------------
 
-/// Готовый приказ движения: пакет 38 + предпросмотр маршрута.
+/// Ready move order: packet 38 + route preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveOrder {
-    /// `Command::Move` (38) для сессии/симуляции.
+    /// `Command::Move` (38) for the session/simulation.
     pub command: Command,
-    /// Линия маршрута для HUD.
+    /// Route line for the HUD.
     pub preview: PathPreview,
 }
 
-/// Строит приказ движения (пакет **38**) для `id` в клетку `destination`.
+/// Builds a move order (packet **38**) for `id` into the cell `destination`.
 ///
-/// Путь считается [`find_ground_path`] с тем же модификатором доступа, что и
-/// `PathRequest` получателя (`ACCESS_MODIFIER_SAME_CLASS_BLOCKS`), поэтому
-/// маршрут совпадает с тем, что построил бы `Paths_RequestPath`. Состояние
-/// приказа — `InProgress`: путь уже готов, получателю не нужно запрашивать
-/// его повторно (`apply_packet_38` не ставит запрос для `InProgress`).
+/// The path is computed by [`find_ground_path`] with the same access modifier as
+/// the receiver's `PathRequest` (`ACCESS_MODIFIER_SAME_CLASS_BLOCKS`), so the
+/// route matches what `Paths_RequestPath` would build. The order state —
+/// `InProgress`: the path is ready, the receiver does not need to request
+/// it again (`apply_packet_38` does not set a request for `InProgress`).
 ///
-/// `None` — юнита нет, он уничтожен, уже стоит в целевой клетке, путь не
-/// найден или длиннее [`MAX_PATH_STEPS`].
+/// `None` — no unit, it is destroyed, already in the target cell, the path is not
+/// found or is longer than [`MAX_PATH_STEPS`].
 pub fn build_move_order(state: &GameState, id: UnitId, destination: Point) -> Option<MoveOrder> {
     let unit = state.unit(id)?;
 
@@ -723,11 +723,11 @@ pub fn build_move_order(state: &GameState, id: UnitId, destination: Point) -> Op
     Some(MoveOrder { command, preview })
 }
 
-/// Строит приказ атаки (пакет **08**, процессор `P3`) по врагу `target`.
+/// Builds an attack order (packet **08**, processor `P3`) on the enemy `target`.
 ///
-/// `P3 ⊃ P2 ⊃ P1`: новый приказ `ORDER_MOVE_TO_ATTACK`, состояние `Init`,
-/// цель в `move_to`/`fire_on`/`enemy_unit`. Путь к позиции атаки строит
-/// получатель (`Paths_RequestPath` в `process_order_move`) — как в C++.
+/// `P3 ⊃ P2 ⊃ P1`: the new order `ORDER_MOVE_TO_ATTACK`, state `Init`,
+/// the target in `move_to`/`fire_on`/`enemy_unit`. The path to the attack position is built
+/// by the receiver (`Paths_RequestPath` in `process_order_move`) — as in C++.
 pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Option<Command> {
     let unit = state.unit(id)?;
     let enemy = state.unit(target)?;
@@ -761,11 +761,11 @@ pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Opti
     }))
 }
 
-/// Приказ стрельбы по клетке без цели — C++ `GameManager_SetUnitOrder`
-/// (`game_manager.cpp:6360-6370`): в `targeting_mode` клик по пустой клетке в
-/// радиусе даёт `fire_on_grid = (x, y)` и `ORDER_FIRE`/`ORDER_STATE_INIT`.
+/// Fire-at-cell order without a target — C++ `GameManager_SetUnitOrder`
+/// (`game_manager.cpp:6360-6370`): in `targeting_mode` a click on an empty cell within
+/// range gives `fire_on_grid = (x, y)` and `ORDER_FIRE`/`ORDER_STATE_INIT`.
 ///
-/// `None` — у юнита нет выстрелов или он не может стрелять.
+/// `None` — the unit has no shots or cannot fire.
 pub fn build_ground_fire_order(state: &GameState, id: UnitId, grid: Point) -> Option<Command> {
     let unit = state.unit(id)?;
 
@@ -796,20 +796,20 @@ pub fn build_ground_fire_order(state: &GameState, id: UnitId, grid: Point) -> Op
     }))
 }
 
-/// Приказ на уход строителя с достроенной площадки — пакет **08**, процессор
+/// Order for the builder to leave a completed site — packet **08**, processor
 /// `P3` (`ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`).
 ///
-/// Дословный C++-путь игрока (`game_manager.cpp:6879-6890`): выделенный юнит в
-/// `ORDER_STATE_UNIT_READY` получает `move_to_grid` = клетка под курсором, затем
+/// The literal C++ player path (`game_manager.cpp:6879-6890`): the selected unit in
+/// ORDER_STATE_UNIT_READY receives move_to_grid = the cell under the cursor, then
 /// `UnitsManager_SetNewOrder(selected, ORDER_ACTIVATE,
-/// ORDER_STATE_IN_TRANSITION)` (в сети — `Remote_SendNetPacket_08`). Путь при
-/// этом **не строится**: `PositionInTape` DEINIT отвозит строителя на край ленты
-/// по направлению на `move_to`, `ActivateEngineer` снимает ленту и конусы и
-/// отдаёт `ORDER_MOVE` (путь запросит симуляция), а здание раскрывается
-/// `UnitsManager_BuildingReady`, когда строитель выйдет из габаритов 2×2.
+/// `ORDER_STATE_IN_TRANSITION)` (in the network — `Remote_SendNetPacket_08`). The path is
+/// **not built** here: `PositionInTape` DEINIT takes the builder to the tape edge
+/// toward `move_to`, `ActivateEngineer` removes the tape and cones and
+/// issues `ORDER_MOVE` (the simulation will request the path), and the building opens
+/// via `UnitsManager_BuildingReady` when the builder leaves the 2×2 bounds.
 ///
-/// `None` — юнит не «достроивший строитель» (нет родителя-здания в
-/// `ORDER_IDLE`/`BUILDING_READY`): клик остаётся обычным приказом движения.
+/// `None` — the unit is not a "completed builder" (no parent building in
+/// `ORDER_IDLE`/`BUILDING_READY`): the click remains a regular move order.
 pub fn build_builder_exit_order(
     state: &GameState,
     id: UnitId,
@@ -842,15 +842,15 @@ pub fn build_builder_exit_order(
     }))
 }
 
-/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`) — клетка
-/// попадает в прямоугольник `grid-1 .. grid+size` (границы включительно).
+/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`) — the cell
+/// falls into the rectangle `grid-1 .. grid+size` (bounds inclusive).
 ///
-/// Для 2×2-здания это 4×4: сами клетки площадки и кольцо `BLDMRK*` вокруг неё.
-/// C++ использует проверку в `GameManager_GetBuilderUnitCursor`
-/// (`:5832-5843`): пока строитель в `ORDER_STATE_UNIT_READY`, курсор над такой
-/// клеткой — `CURSOR_UNIT_GO`, и клик отдаёт `ORDER_ACTIVATE`
-/// (`:6879-6890`). Подсказка `_(276c)` зовёт игрока кликнуть «клетку с
-/// символом» — это ровно это кольцо.
+/// For a 2×2 building this is 4×4: the site cells themselves and the `BLDMRK*` ring around it.
+/// C++ uses the check in `GameManager_GetBuilderUnitCursor`
+/// (`:5832-5843`): while the builder is in `ORDER_STATE_UNIT_READY`, the cursor over such
+/// a cell — `CURSOR_UNIT_GO`, and the click gives `ORDER_ACTIVATE`
+/// (`:6879-6890`). The hint `_(276c)` asks the player to click "the cell with the
+/// symbol" — this is exactly this ring.
 pub fn builder_exit_zone_contains(building: &UnitInfo, cell: Point) -> bool {
     let size: i16 = if building.is_quad() { 2 } else { 1 };
 
@@ -860,14 +860,14 @@ pub fn builder_exit_zone_contains(building: &UnitInfo, cell: Point) -> bool {
         && cell.y <= building.grid.y.wrapping_add(size)
 }
 
-/// Клик **левой** кнопкой по клетке рядом с достроенным зданием —
+/// **Left** click on a cell next to a completed building —
 /// `CURSOR_UNIT_GO` → `ORDER_ACTIVATE`/`IN_TRANSITION`
 /// (`game_manager.cpp:5832-5843` + `:6879-6890`).
 ///
-/// Отличие от [`build_builder_exit_order`] только в проверке зоны: C++ отдаёт
-/// этот приказ лишь когда курсор над клеткой «рядом со зданием» (4×4), иначе
-/// курсор — `CURSOR_UNIT_NO_GO` и `GameManager_ManagePlayerAction` снимает
-/// выделение.
+/// The difference from [`build_builder_exit_order`] is only the zone check: C++ gives
+/// this order only when the cursor is over a cell "next to the building" (4×4), otherwise
+/// the cursor — `CURSOR_UNIT_NO_GO` and `GameManager_ManagePlayerAction` clears
+/// the selection.
 pub fn build_builder_exit_click_order(
     state: &GameState,
     id: UnitId,
@@ -883,28 +883,28 @@ pub fn build_builder_exit_click_order(
     build_builder_exit_order(state, id, destination)
 }
 
-/// Приказ вывода готового юнита из завода/транспорта — C++ `CURSOR_ACTIVATE`
-/// (`game_manager.cpp:6918-6926`), пакет **08/P3**.
+/// Order to bring a ready unit out of a factory/transport — C++ `CURSOR_ACTIVATE`
+/// (`game_manager.cpp:6918-6926`), packet **08/P3**.
 ///
-/// C++ в `GameManager_ManagePlayerAction` для выделенного юнита с
-/// `GetOrder() == ORDER_IDLE` (готовый юнит стоит **в** контейнере) считает
-/// курсор `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937-5962`):
-/// клик по клетке рядом с контейнером — `CURSOR_ACTIVATE`, и тогда:
+/// C++ in `GameManager_ManagePlayerAction` for a selected unit with
+/// `GetOrder() == ORDER_IDLE` (the ready unit stands **inside** the container) computes
+/// the cursor `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937-5962`):
+/// a click on a cell next to the container — `CURSOR_ACTIVATE`, and then:
 ///
 /// ```text
 /// UnitInfo* parent = GameManager_SelectedUnit->GetParent();
-/// parent->move_to_grid_x/y = GameManager_MousePosition;   // клетка клика
+/// parent->move_to_grid_x/y = GameManager_MousePosition;   // the click cell
 /// parent->SetParent(&*GameManager_SelectedUnit);
 /// UnitsManager_SetNewOrder(parent, ORDER_ACTIVATE, ORDER_STATE_EXECUTING_ORDER);
 /// ```
 ///
-/// `parent` — контейнер (завод, чей `parent_unit` — готовый юнит, или транспорт
-/// с пассажиром); приказ получает **он**, а `UnitsManager_ActivateUnit`
-/// (`units_manager.cpp:3826`) переставляет/выпускает юнита. Клетка внутри 2×2
-/// контейнера — `CURSOR_FRIEND`, приказа нет.
+/// `parent` — the container (a factory whose `parent_unit` is the ready unit, or a transport
+/// with a passenger); **it** receives the order, and `UnitsManager_ActivateUnit`
+/// (`units_manager.cpp:3826`) moves/releases the unit. A cell inside the container's
+/// 2×2 — `CURSOR_FRIEND`, no order.
 ///
-/// `None` — выделенный юнит не «в контейнере» (`ORDER_IDLE` без родителя),
-/// клик не рядом с контейнером или клетка непроходима для него.
+/// `None` — the selected unit is not "in a container" (`ORDER_IDLE` without a parent),
+/// the click is not next to the container or the cell is impassable for it.
 pub fn build_activate_order(
     state: &GameState,
     id: UnitId,
@@ -924,7 +924,7 @@ pub fn build_activate_order(
         return None;
     }
 
-    // Воздушный юнит внутри 2×2 контейнера — `CURSOR_FRIEND` (не выводим).
+    // An air unit inside the container's 2×2 — `CURSOR_FRIEND` (not launched).
     if unit.is_air()
         && parent.grid.x <= destination.x
         && parent.grid.x + 1 >= destination.x
@@ -968,15 +968,15 @@ pub fn build_activate_order(
     }))
 }
 
-/// Приказ движения воздушного юнита — пакет **08/P3**
+/// Air unit move order — packet **08/P3**
 /// (`ORDER_MOVE`/`ORDER_STATE_INIT`).
 ///
-/// В C++ воздушный юнит получает приказ тем же
-/// `GameManager_SetUnitOrder(ORDER_MOVE, …)` (`game_manager.cpp:6898`), а путь
-/// строит получатель: `UnitsManager_InitUnitPath` →
-/// `Paths_GetAirPath` (`paths.cpp:97`) по прямой в пикселях. Порт не гоняет
-/// авиацию через наземный `Packet38Move` (`build_move_order`), поэтому здесь
-/// только `move_to`: симуляция сама посчитает `AirPath` и взлёт
+/// In C++ the air unit receives the order through the same
+/// `GameManager_SetUnitOrder(ORDER_MOVE, …)` (`game_manager.cpp:6898`), and the path
+/// is built by the receiver: `UnitsManager_InitUnitPath` →
+/// `Paths_GetAirPath` (`paths.cpp:97`) in a straight line in pixels. The port does not
+/// run aviation through the ground `Packet38Move` (`build_move_order`), so here
+/// only `move_to`: the simulation itself will compute `AirPath` and the takeoff
 /// (`ExecuteMove` → `ORDER_TAKE_OFF`).
 pub fn build_air_move_order(
     state: &GameState,
@@ -1024,11 +1024,11 @@ pub fn build_air_move_order(
     }))
 }
 
-/// Строит приказ включения/выключения питания (попап `Power On`/`Power Off`
-/// в C++, пакет **08**, процессор `P1`).
+/// Builds a power on/off order (the `Power On`/`Power Off` popup
+/// in C++, packet **08**, processor `P1`).
 ///
-/// Для `RESEARCH` включение питания запускает исследование темы по умолчанию
-/// (C++ `ResearchMenu_UpdateResearchProgress(team, topic, +1)` в
+/// For `RESEARCH`, powering on starts research of the default topic
+/// (C++ `ResearchMenu_UpdateResearchProgress(team, topic, +1)` in
 /// `UnitsManager_ProcessOrderPowerOn`).
 pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
     let unit = state.unit(id)?;
@@ -1054,36 +1054,36 @@ pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
     }))
 }
 
-/// Юнит под точкой экрана: `viewport.screen_to_grid` + `Access_GetTeamUnit`
+/// Unit under the screen point: `viewport.screen_to_grid` + `Access_GetTeamUnit`
 /// (`access.cpp:1804`) / `Access_GetEnemyUnit` (`:1731`).
 ///
-/// Порядок C++:
-/// 1. `Access_GetTeamUnit(x, y, team, SELECTABLE)` — свой юнит: `team`,
-///    `flags & SELECTABLE`, `order != ORDER_IDLE`; первый проход **без**
-///    `GROUND_COVER` и лент (плита `LRGSLAB`/`SMLSLAB` лежит под каждым
-///    зданием и клик не забирает), второй — любой `SELECTABLE` (лента
-///    стройплощадки тоже: она `GROUND_COVER`, но `SELECTABLE`);
-/// 2. если своих нет — `Access_GetEnemyUnit`: `team != team`, `SELECTABLE`,
-///    не `ORDER_IDLE`/`ORDER_EXPLODE`/`DESTROY`, снова сперва без
-///    `GROUND_COVER` (кроме мин), затем любой;
-/// 3. если найденный юнит — лента стройплощадки, возвращается её **родитель**
-///    (`unit = unit->GetParent()`), то есть строитель: `DrawMap_RenderBuildMarker`
-///    и `UnitsManager_Popup` работают с ним, а не с декалью.
+/// C++ order:
+/// 1. `Access_GetTeamUnit(x, y, team, SELECTABLE)` — own unit: `team`,
+///    `flags & SELECTABLE`, `order != ORDER_IDLE`; the first pass **without**
+///    `GROUND_COVER` and tapes (the `LRGSLAB`/`SMLSLAB` slab lies under every
+///    building and the click does not take it), the second — any `SELECTABLE` (the
+///    construction site tape too: it is `GROUND_COVER`, but `SELECTABLE`);
+/// 2. if there are no own ones — `Access_GetEnemyUnit`: `team != team`, `SELECTABLE`,
+///    not `ORDER_IDLE`/`ORDER_EXPLODE`/`DESTROY`, again first without
+///    `GROUND_COVER` (except mines), then any;
+/// 3. if the found unit is a construction site tape, its **parent** is returned
+///    (`unit = unit->GetParent()`), i.e. the builder: `DrawMap_RenderBuildMarker`
+///    and `UnitsManager_Popup` work with it, not with the decal.
 ///
-/// Пункты 1 и 3 — не косметика: на достроенной площадке строитель стоит в
-/// центре ленты (`PositionInTape`/`tape_center_offset` ±32 px), его спрайт
-/// нарисован в угле четырёх клеток, и игрок кликает по **соседней** клетке
-/// площадки. Без `SELECTABLE`/`tape → parent` клик доставался конусам/плите
-/// (они не `SELECTABLE`, второй проход порта их всё равно брал), из-за чего не
-/// было ни маркеров `BLDMRK*`, ни подсказки «Finished building …», а правый
-/// клик отменял приказ («Unit cannot move (air/stationary)») — строитель не мог
-/// уйти с площадки и здание не раскрывалось.
+/// Points 1 and 3 are not cosmetic: on a completed site the builder stands in
+/// the tape center (`PositionInTape`/`tape_center_offset` ±32 px), its sprite
+/// is drawn at the corner of four cells, and the player clicks the **adjacent**
+/// site cell. Without `SELECTABLE`/`tape → parent` the click went to the cones/slab
+/// (they are not `SELECTABLE`, the port's second pass took them anyway), so there were
+/// neither `BLDMRK*` markers nor the "Finished building …" hint, and a right
+/// click canceled the order ("Unit cannot move (air/stationary)") — the builder could not
+/// leave the site and the building did not open.
 ///
-/// Видимость (`is_visible_to_team`, туман войны) — порт: сначала юниты,
-/// видимые команде, затем скрытые (в C++ `Access_GetEnemyUnit` требует
-/// `IsVisibleToTeam`, но в порте невидимых командой юнитов тоже можно
-/// выделить — это существующее упрощение, на нём держатся бой и клик по
-/// врагу). Точка вне карты — `None`.
+/// Visibility (`is_visible_to_team`, fog of war) — a port feature: first the units
+/// visible to the team, then hidden ones (in C++ `Access_GetEnemyUnit` requires
+/// `IsVisibleToTeam`, but in the port units invisible to the team can also be
+/// selected — this is an existing simplification that combat and clicking an
+/// enemy rely on). A point outside the map — `None`.
 pub fn unit_at_screen(
     state: &GameState,
     viewport: &Viewport,
@@ -1099,7 +1099,7 @@ pub fn unit_at_screen(
 
     let grid = Point::new(grid_x, grid_y);
     let ids = state.units_at(grid);
-    // `((*it).flags & flags)` + `GetOrder() != ORDER_IDLE` из C++.
+    // `((*it).flags & flags)` + `GetOrder() != ORDER_IDLE` from C++.
     let selectable = |id: &UnitId, own: bool| {
         state.unit(*id).is_some_and(|unit| {
             (unit.team == team) == own
@@ -1131,13 +1131,13 @@ pub fn unit_at_screen(
 
     let pick = |predicate: &dyn Fn(&UnitId) -> bool| ids.iter().copied().find(predicate);
 
-    // `Access_GetTeamUnit`: свои, сперва видимые и не `GROUND_COVER`.
+    // `Access_GetTeamUnit`: own ones, first visible and not `GROUND_COVER`.
     let own = pick(&|id| visible(id) && plain(id, true))
         .or_else(|| pick(&|id| visible(id) && selectable(id, true)))
         .or_else(|| pick(&|id| plain(id, true)))
         .or_else(|| pick(&|id| selectable(id, true)));
 
-    // `Access_GetEnemyUnit`: чужие; мины — исключение из `GROUND_COVER`.
+    // `Access_GetEnemyUnit`: foreign ones; mines — an exception to `GROUND_COVER`.
     let enemy = pick(&|id| selectable(id, false) && (plain(id, false) || is_mine(id)))
         .or_else(|| pick(&|id| selectable(id, false)));
 
@@ -1151,11 +1151,11 @@ pub fn unit_at_screen(
     Some(found)
 }
 
-/// Может ли юнит получить приказ движения от HUD.
+/// Whether the unit can receive a move order from the HUD.
 ///
-/// Наземные и морские — да (маршрут `find_ground_path`). Воздушным нужен
-/// `Paths_GetAirPath` с пиксельной геометрией (`MovePathData::Air`), поэтому
-/// HUD их пока не двигает (см. README, «Ограничения»).
+/// Ground and sea — yes (`find_ground_path` route). Air ones need
+/// `Paths_GetAirPath` with pixel geometry (`MovePathData::Air`), so the
+/// HUD does not move them yet (see README, "Limitations").
 pub fn unit_can_move(unit: &UnitInfo) -> bool {
     matches!(
         unit.environment(),
@@ -1164,48 +1164,48 @@ pub fn unit_can_move(unit: &UnitInfo) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Методы App: выделение, приказы, End Turn
+// App methods: selection, orders, End Turn
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Состояние HUD (выделение, журнал, предпросмотр).
+    /// HUD state (selection, log, preview).
     pub fn hud(&self) -> &HudState {
         &self.hud
     }
 
-    /// Изменяемое состояние HUD.
+    /// Editable HUD state.
     pub fn hud_mut(&mut self) -> &mut HudState {
         &mut self.hud
     }
 
-    /// Нажат ли `Shift` — C++ `GameManager_IsShiftKeyPressed` (курсор
-    /// `CURSOR_WAY`, маршрут по точкам).
+    /// Whether `Shift` is pressed — C++ `GameManager_IsShiftKeyPressed` (cursor
+    /// `CURSOR_WAY`, route by points).
     pub fn shift_pressed(&self) -> bool {
         self.hud.shift_pressed
     }
 
-    /// Установить состояние `Shift` (SDL-слой модификаторов/QA).
+    /// Sets the `Shift` state (SDL modifier layer/QA).
     pub fn set_shift_pressed(&mut self, pressed: bool) {
         self.hud.shift_pressed = pressed;
     }
 
-    /// Команда локального игрока (`player_team` партии).
+    /// Local player team (`player_team` of the match).
     pub fn player_team(&self) -> TeamId {
         self.state().player_team
     }
 
-    /// Остаток таймера хода в секундах — `GameManager_TurnTimerValue`.
+    /// Remaining turn timer in seconds — `GameManager_TurnTimerValue`.
     ///
-    /// C++ хранит его целым числом секунд и уменьшает на 1 в секунду
-    /// (`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`); панель показывает
-    /// `"%2.2i:%2.2i"` от этого значения (`GameManager_DrawTurnTimer`). В порте
-    /// локальная партия считает `f32`-секунды ([`crate::local::LocalGame`]),
-    /// поэтому здесь берётся `ceil` — ровно то число, которое C++ показал бы в
-    /// текущую секунду (`180.0 → «03:00»`, `179.4 → «03:00»`, `178.9 → «02:59»`).
+    /// C++ stores it as an integer number of seconds and decreases it by 1 per second
+    /// (`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`); the panel shows
+    /// `"%2.2i:%2.2i"` of this value (`GameManager_DrawTurnTimer`). In the port
+    /// the local match counts `f32` seconds ([`crate::local::LocalGame`]),
+    /// so `ceil` is taken here — exactly the number C++ would show in
+    /// the current second (`180.0 → «03:00»`, `179.4 → «03:00»`, `178.9 → «02:59»`).
     ///
-    /// Сетевые партии таймер хода не моделируют (в C++ он живёт в
-    /// `Remote_UpdatePauseTimer`): там остаётся значение панели, по умолчанию 0 —
-    /// `GameManager_DrawTurnTimer(0)` → «00:00» цветом `COLOR_RED`.
+    /// Network matches do not model the turn timer (in C++ it lives in
+    /// `Remote_UpdatePauseTimer`): there the panel value remains, by default 0 —
+    /// `GameManager_DrawTurnTimer(0)` → «00:00» in `COLOR_RED`.
     pub fn turn_timer_seconds(&self) -> u32 {
         if let Some(local) = self.local() {
             let seconds = local.timer_left.ceil();
@@ -1216,28 +1216,28 @@ impl App {
         self.hud().panels.timer_seconds
     }
 
-    /// Выбранный юнит, если он ещё существует.
+    /// The selected unit, if it still exists.
     pub fn selected_unit(&self) -> Option<&UnitInfo> {
         self.hud.selected.and_then(|id| self.state().unit(id))
     }
 
-    /// Выделяет юнита (устаревший id игнорируется при чтении).
+    /// Selects a unit (a stale id is ignored on read).
     pub fn select_unit(&mut self, id: Option<UnitId>) {
         self.hud.select(id);
-        // Портрет `WINDOW_CORNER_FLIC`: у нового юнита сразу кадр 0 его FLC
+        // `WINDOW_CORNER_FLIC` portrait: the new unit immediately gets frame 0 of its FLC
         // (`GameManager_MenuUnitSelect` → `MenuCreateFlic`).
         self.refresh_portrait();
     }
 
-    /// Забирает накопленные HUD-приказы для отправки в сессию.
+    /// Takes the accumulated HUD orders for sending to the session.
     pub fn take_outgoing_orders(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.hud.pending)
     }
 
-    /// Применяет HUD-приказы локально (демо-режим без сети).
+    /// Applies HUD orders locally (demo mode without the network).
     ///
-    /// Возвращает число применённых команд. Каждая проходит через
-    /// `max_core::events::apply_command` — ровно как пакет из сети.
+    /// Returns the number of applied commands. Each goes through
+    /// `max_core::events::apply_command` — exactly like a packet from the network.
     pub fn flush_orders(&mut self) -> usize {
         let pending = std::mem::take(&mut self.hud.pending);
         let mut applied = 0;
@@ -1251,13 +1251,13 @@ impl App {
         applied
     }
 
-    /// End Turn: тот же путь, что и таймер в сетевом цикле (`06` + `52`).
+    /// End Turn: the same path as the timer in the network loop (`06` + `52`).
     ///
-    /// * пакет **06** (`Command::FinishedTurn`) — команда закончила ход;
-    /// * фаза `EndTurn` (в `TurnBased` её выставляет сам 06) и
-    ///   [`GameState::finish_turn`] — аналог закрытия 52-барьера.
+    /// * packet **06** (`Command::FinishedTurn`) — the team finished the turn;
+    /// * the `EndTurn` phase (in `TurnBased` 06 sets it itself) and
+    ///   [`GameState::finish_turn`] — the analog of closing the 52 barrier.
     ///
-    /// `true` — партия завершена (`check_end_game_conditions`).
+    /// `true` — the match is over (`check_end_game_conditions`).
     pub fn end_turn(&mut self) -> bool {
         let team = self.state().player_team;
         let _ = self.apply(command_finished_turn(team));
@@ -1279,30 +1279,30 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
-// Отрисовка
+// Drawing
 // ---------------------------------------------------------------------------
 
-/// Всё, что нужно [`render_hud`]: состояние партии + UI-состояние.
+/// Everything [`render_hud`] needs: match state + UI state.
 #[derive(Clone, Copy)]
 pub struct HudView<'a> {
-    /// Состояние партии (юниты, карта, ресурсы).
+    /// Match state (units, map, resources).
     pub state: &'a GameState,
-    /// Выделение, журнал, предпросмотр, кнопки.
+    /// Selection, log, preview, buttons.
     pub hud: &'a HudState,
-    /// Камера: миникарта/линия пути в экранных координатах.
+    /// Camera: minimap/route line in screen coordinates.
     pub viewport: &'a Viewport,
-    /// Команда локального игрока.
+    /// Local player team.
     pub team: TeamId,
-    /// Строка статуса (сессия/подключение/ошибка).
+    /// Status line (session/connection/error).
     pub status: &'a str,
 }
 
-/// Рисует HUD поверх готового кадра карты.
+/// Draws the HUD over the ready map frame.
 ///
-/// Порядок: предпросмотр пути → полоса ресурсов → журнал → нижняя панель
-/// (миникарта, панель юнита, кнопки) → строка статуса. Ничего не паникует:
-/// все прямоугольники клампятся по кадру, вне кадра `RgbaBuffer::set`
-/// возвращает `false`.
+/// Order: path preview → resource bar → log → bottom panel
+/// (minimap, unit panel, buttons) → status line. Nothing panics:
+/// all rectangles are clamped to the frame, outside the frame `RgbaBuffer::set`
+/// returns `false`.
 pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
     let layout = hud_layout(buffer.width(), buffer.height());
 
@@ -1310,7 +1310,7 @@ pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
         draw_path_preview(buffer, view.viewport, preview);
     }
 
-    // Полоса ресурсов.
+    // Resource bar.
     if !layout.top_bar.is_empty() {
         buffer.fill_rect(layout.top_bar, HUD_PANEL);
         buffer.fill_rect(
@@ -1334,7 +1334,7 @@ pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
 
     draw_log(buffer, &layout, view.hud);
 
-    // Нижняя панель.
+    // Bottom panel.
     if !layout.bar.is_empty() {
         buffer.fill_rect(layout.bar, HUD_PANEL);
         buffer.fill_rect(
@@ -1368,9 +1368,9 @@ pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
     draw_chat_input(buffer, &layout, view.hud);
 }
 
-/// Прямоугольник строки ввода чата: полоса над нижней панелью HUD.
+/// Chat input line rectangle: the bar above the HUD bottom panel.
 ///
-/// Отдельная функция, чтобы тесты и отрисовка видели один и тот же rect.
+/// A separate function so that tests and drawing see the same rect.
 pub fn chat_input_rect(width: u32, height: u32, layout: &HudLayout) -> PixelRect {
     let bar_width = width.max(1) as i32;
     let bar_height = height.max(1) as i32;
@@ -1383,10 +1383,10 @@ pub fn chat_input_rect(width: u32, height: u32, layout: &HudLayout) -> PixelRect
     PixelRect::new(HUD_MARGIN, y, rect_width, rect_height)
 }
 
-/// Строка ввода чата поверх HUD: `Say: <текст>_`.
+/// Chat input line over the HUD: `Say: <text>_`.
 ///
-/// Рисуется последней, поэтому не перекрывается журналом/кнопками; пока ввод
-/// закрыт, не занимает ни одного пикселя.
+/// Drawn last, so it is not overlapped by the log/buttons; while the input
+/// is closed, it takes not a single pixel.
 fn draw_chat_input(buffer: &mut RgbaBuffer, layout: &HudLayout, hud: &HudState) {
     if !hud.chat.is_active() {
         return;
@@ -1413,10 +1413,10 @@ fn draw_chat_input(buffer: &mut RgbaBuffer, layout: &HudLayout, hud: &HudState) 
     );
 }
 
-/// UI-состояние кнопок HUD (End Turn / Menu) для [`render_ui`].
+/// UI state of the HUD buttons (End Turn / Menu) for [`render_ui`].
 ///
-/// Тема — с прозрачным фоном: `render_ui` не заливает кадр и рисует только
-/// сами кнопки поверх карты.
+/// The theme has a transparent background: `render_ui` does not fill the frame and draws only
+/// the buttons themselves over the map.
 pub fn hud_ui(layout: &HudLayout, hud: &HudState) -> UiState {
     let theme = UiTheme {
         background: Rgba::TRANSPARENT,
@@ -1433,7 +1433,7 @@ pub fn hud_ui(layout: &HudLayout, hud: &HudState) -> UiState {
     ui
 }
 
-/// Строка ресурсов команды: gold + суммарные запасы комплексов.
+/// Team resource line: gold + total complex stocks.
 pub fn resources_line(state: &GameState, team: TeamId) -> String {
     let index = usize::from(team.0);
     let units = state.team_units.get(index);
@@ -1461,7 +1461,7 @@ pub fn resources_line(state: &GameState, team: TeamId) -> String {
     )
 }
 
-/// Строки панели выбранного юнита: имя/тип, HP, ammo, приказ, клетка.
+/// Panel lines of the selected unit: name/type, HP, ammo, order, cell.
 pub fn unit_panel_lines(state: &GameState, id: UnitId) -> Vec<String> {
     let Some(unit) = state.unit(id) else {
         return vec!["(unit gone)".to_string()];
@@ -1484,15 +1484,15 @@ pub fn unit_panel_lines(state: &GameState, id: UnitId) -> Vec<String> {
     ]
 }
 
-/// Цвет клетки миникарты по её поверхности.
+/// Minimap cell color by its surface.
 pub fn surface_color(surface: Surface) -> Rgba {
     TileStyle::default().base_color(surface).darken(5)
 }
 
-/// Рисует миникарту 112×112 → `rect`: поверхность, камера, юниты своей команды.
+/// Draws the minimap 112×112 → `rect`: surface, camera, own team units.
 ///
-/// Клетки сэмплируются (`px * 112 / width`), поэтому миникарта работает при
-/// любом размере панели, а не только 112×112.
+/// Cells are sampled (`px * 112 / width`), so the minimap works at
+/// any panel size, not only 112×112.
 pub fn draw_minimap(
     buffer: &mut RgbaBuffer,
     rect: PixelRect,
@@ -1515,7 +1515,7 @@ pub fn draw_minimap(
         }
     }
 
-    // Рамка видимой области камеры.
+    // Camera view rectangle.
     if let Some(range) = viewport.visible_tiles() {
         let x0 = rect.ulx + range.x0 as i32 * rect.width / i32::from(MAP_WIDTH);
         let y0 = rect.uly + range.y0 as i32 * rect.height / i32::from(MAP_HEIGHT);
@@ -1531,7 +1531,7 @@ pub fn draw_minimap(
         stroke(buffer, view, HUD_TEXT_DIM);
     }
 
-    // Юниты своей команды (и выделенный — крупнее и в цвет команды).
+    // Own team units (and the selected one — larger and in the team color).
     for id in state.unit_ids_in_order() {
         let Some(unit) = state.unit(id) else {
             continue;
@@ -1555,7 +1555,7 @@ pub fn draw_minimap(
     stroke(buffer, rect, HUD_BORDER);
 }
 
-/// Рисует предпросмотр маршрута: линия по центрам клеток + маркер назначения.
+/// Draws the route preview: a line through cell centers + the destination marker.
 pub fn draw_path_preview(buffer: &mut RgbaBuffer, viewport: &Viewport, preview: &PathPreview) {
     let points = preview.points();
 
@@ -1574,14 +1574,14 @@ pub fn draw_path_preview(buffer: &mut RgbaBuffer, viewport: &Viewport, preview: 
     }
 }
 
-/// Центр клетки на экране (в пикселях кадра).
+/// Cell center on the screen (in frame pixels).
 pub fn tile_center(viewport: &Viewport, grid: Point) -> (i32, i32) {
     let rect = viewport.tile_rect(grid.x, grid.y);
 
     (rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
 }
 
-/// Линия Брезенхема (включительно) цветом `color`; вне кадра — игнорируется.
+/// Bresenham line (inclusive) in `color`; outside the frame — ignored.
 pub fn draw_line(buffer: &mut RgbaBuffer, from: (i32, i32), to: (i32, i32), color: Rgba) {
     let (mut x, mut y) = from;
     let dx = (to.0 - from.0).abs();
@@ -1610,7 +1610,7 @@ pub fn draw_line(buffer: &mut RgbaBuffer, from: (i32, i32), to: (i32, i32), colo
     }
 }
 
-/// Рамка 1 px по краям прямоугольника.
+/// 1 px frame along the rectangle edges.
 fn stroke(buffer: &mut RgbaBuffer, rect: PixelRect, color: Rgba) {
     if rect.is_empty() {
         return;
@@ -1628,7 +1628,7 @@ fn stroke(buffer: &mut RgbaBuffer, rect: PixelRect, color: Rgba) {
     );
 }
 
-/// Строка текста, обрезанная по ширине `max_width` (шрифт моноширинный).
+/// A text line clipped to `max_width` (monospace font).
 fn draw_line_limited(
     buffer: &mut RgbaBuffer,
     x: i32,
@@ -1648,7 +1648,7 @@ fn draw_line_limited(
     draw_text_line(buffer, x, y, &line, color);
 }
 
-/// Панель журнала: последние строки, влезающие в прямоугольник.
+/// Log panel: the last lines that fit into the rectangle.
 fn draw_log(buffer: &mut RgbaBuffer, layout: &HudLayout, hud: &HudState) {
     let panel = layout.log_panel;
 
@@ -1675,7 +1675,7 @@ fn draw_log(buffer: &mut RgbaBuffer, layout: &HudLayout, hud: &HudState) {
     }
 }
 
-/// Панель выбранного юнита (или подсказка по управлению без выделения).
+/// Selected unit panel (or a control hint without a selection).
 fn draw_unit_panel(buffer: &mut RgbaBuffer, layout: &HudLayout, view: &HudView<'_>) {
     let panel = layout.unit_panel;
 
@@ -1736,7 +1736,7 @@ mod tests {
     use crate::ui::{handle_session_input, InputEvent};
     use crate::{App, AppConfig, Transition};
 
-    /// Приложение с танком RED (10,10), танком BLUE (14,10) и золотом команды.
+    /// Application with a RED tank (10,10), a BLUE tank (14,10) and team gold.
     fn test_app() -> (App, UnitId, UnitId) {
         let mut app = App::new(AppConfig::default().with_screen(512, 384));
 
@@ -1745,8 +1745,8 @@ mod tests {
             state.player_team = TeamId::RED;
             state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
             state.teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Computer;
-            // Атрибуты юнитов берутся из `current_values` команды (как в
-            // `GameState::with_setup`), иначе `hits`/`ammo` были бы нулевыми.
+            // Unit attributes are taken from the team `current_values` (as in
+            // `GameState::with_setup`), otherwise `hits`/`ammo` would be zero.
             state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
             state.team_units[TeamId::BLUE.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
             state.team_units[TeamId::RED.0 as usize].set_gold(1500);
@@ -1761,13 +1761,13 @@ mod tests {
             (tank, enemy)
         };
 
-        // Камера на середину между юнитами: обе клетки в кадре 512×384.
+        // Camera on the middle between the units: both cells in the 512×384 frame.
         app.viewport_mut().center_on_grid(12, 10);
 
         (app, tank, enemy)
     }
 
-    /// Экранная точка центра клетки.
+    /// Screen point of the cell center.
     fn screen_of(app: &App, grid: Point) -> (i32, i32) {
         tile_center(app.viewport(), grid)
     }
@@ -1786,7 +1786,7 @@ mod tests {
 
         log.clear();
         assert!(log.is_empty());
-        // Ёмкость 0 трактуется как 1 — журнал не теряет последнюю строку.
+        // Capacity 0 is treated as 1 — the log does not lose the last line.
         let mut one = MessageLog::with_capacity(0);
         one.push("a");
         one.push("b");
@@ -1795,11 +1795,11 @@ mod tests {
 
     #[test]
     fn ground_cover_slab_under_a_building_does_not_steal_the_click() {
-        // C++ `Access_GetTeamUnit` (`access.cpp:1804`) первым ищет
-        // `SELECTABLE` и не `GROUND_COVER`; плита `LRGSLAB` лежит под каждым
-        // зданием, но клик должен достаться зданию. Порт раньше брал первый
-        // юнит в `Hash_MapHash`, а после стройки плита вставлена раньше
-        // здания — выделялся `LargeSlab`.
+        // C++ `Access_GetTeamUnit` (`access.cpp:1804`) first looks for
+        // `SELECTABLE` and not `GROUND_COVER`; the `LRGSLAB` slab lies under every
+        // building, but the click must go to the building. The port earlier took the first
+        // unit in `Hash_MapHash`, and after construction the slab was inserted before
+        // the building — `LargeSlab` was selected.
         let (mut app, _tank, _enemy) = test_app();
         let grid = Point::new(11, 10);
 
@@ -1825,7 +1825,7 @@ mod tests {
 
     #[test]
     fn hud_renders_on_empty_state_without_panics() {
-        // Пустая партия: ни юнитов, ни команд, минимальный кадр и обычный.
+        // Empty match: no units, no teams, a minimal frame and a normal one.
         for (width, height) in [(320, 240), (512, 384), (64, 48)] {
             let app = App::new(AppConfig::default().with_screen(width, height));
             let mut buffer = RgbaBuffer::new(width, height);
@@ -1864,7 +1864,7 @@ mod tests {
             Some(tank),
         );
 
-        // Клетка миникарты внутри карты — цвет поверхности (LAND), не прозрачная.
+        // A minimap cell inside the map — the surface color (LAND), not transparent.
         let center = (
             layout.minimap.ulx + layout.minimap.width / 2,
             layout.minimap.uly + layout.minimap.height / 2,
@@ -1874,7 +1874,7 @@ mod tests {
         assert_eq!(pixel.a, 255);
         assert_ne!(pixel, Rgba::TRANSPARENT);
 
-        // Есть пиксели цвета команды (точка юнита, выделенный — 3×3).
+        // There are pixels of the team color (the unit dot, the selected one — 3×3).
         let team_pixels = buffer
             .pixels()
             .chunks_exact(4)
@@ -1898,7 +1898,7 @@ mod tests {
 
         assert!((50..=60).contains(&grid.x), "центр карты по x: {grid:?}");
         assert!((50..=60).contains(&grid.y), "центр карты по y: {grid:?}");
-        // Вне миникарты — None.
+        // Outside the minimap — None.
         assert_eq!(minimap_grid_at(&layout, -5, -5), None);
     }
 
@@ -1914,10 +1914,10 @@ mod tests {
             assert_eq!(hud_button_at(width, height, point.0, point.1), Some(button));
         }
 
-        // Кнопки не перекрываются и лежат в кадре.
+        // The buttons do not overlap and lie inside the frame.
         assert!(layout.end_turn.bottom() <= layout.menu.y);
         assert!(layout.menu.bottom() <= height as i32);
-        // Центр карты — не кнопка.
+        // The map center is not a button.
         assert_eq!(hud_button_at(width, height, 100, 100), None);
     }
 
@@ -1937,19 +1937,19 @@ mod tests {
             .iter()
             .any(|line| line.contains("Selected")));
 
-        // Клик по врагу при выделенном своём юните — приказ атаки (08).
+        // A click on an enemy with an own unit selected — an attack order (08).
         let (ex, ey) = screen_of(&app, Point::new(14, 10));
         handle_session_input(&mut app, InputEvent::MouseClick(ex, ey), false);
 
-        // Демо-режим применил пакет локально через `apply_command`.
+        // Demo mode applied the packet locally via `apply_command`.
         let unit = app.state().unit(tank).expect("tank");
 
         assert_eq!(unit.orders, UnitOrder::MoveToAttack);
         assert_eq!(unit.enemy_unit, Some(enemy));
         assert_eq!(app.hud().selected, Some(tank));
         assert!(app.hud().pending.is_empty(), "демо-режим не копит приказы");
-        // Путь к позиции атаки запросит сам юнит на тике
-        // (`process_order_move` → `Paths_RequestPath`), пакет 08 его не несёт.
+        // The path to the attack position will be requested by the unit itself on the tick
+        // (`process_order_move` → `Paths_RequestPath`), packet 08 does not carry it.
         assert!(app.state().path_requests.is_empty());
     }
 
@@ -1961,7 +1961,7 @@ mod tests {
         handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
         assert_eq!(app.hud().selected, Some(tank));
 
-        // Правый клик по любому юниту — отмена (как Esc).
+        // A right click on any unit — cancel (like Esc).
         handle_session_input(&mut app, InputEvent::RightClick(x, y), false);
 
         assert_eq!(app.hud().selected, None);
@@ -1986,11 +1986,11 @@ mod tests {
         assert_eq!(order.preview.to, destination);
         assert_eq!(order.preview.len(), order.preview.steps.len());
         assert!(order.preview.len() >= 3, "3 клетки — минимум 3 шага");
-        // Конец фактического маршрута совпадает с целью.
+        // The end of the actual route coincides with the target.
         assert_eq!(order.preview.last_point(), destination);
 
-        // Линия рисуется: до рендера кадр прозрачный, после — есть пиксели цвета
-        // предпросмотра.
+        // The line is drawn: before rendering the frame is transparent, after — there are pixels of the
+        // preview color.
         let mut buffer = RgbaBuffer::new(512, 384);
         draw_path_preview(&mut buffer, app.viewport(), &order.preview);
 
@@ -2009,7 +2009,7 @@ mod tests {
     #[test]
     fn move_order_packet_38_matches_the_wire_layout() {
         let (app, tank, _enemy) = test_app();
-        // Соседняя клетка: путь из одного шага, байты полностью предсказуемы.
+        // Adjacent cell: a one-step path, the bytes are fully predictable.
         let order = build_move_order(app.state(), tank, Point::new(11, 10)).expect("route");
         let bytes = Packet::Command(order.command.clone())
             .encode()
@@ -2019,7 +2019,7 @@ mod tests {
         let high = (tank.0 >> 8) as u8;
         let expected = [
             0x76, low, high, // type 0x26|APPL, unit_id
-            0x02, 0x05, // order Move, state InProgress (путь готов)
+            0x02, 0x05, // order Move, state InProgress (the path is ready)
             0x0A, 0x00, 0x0A, 0x00, // grid (10,10)
             0x0B, 0x00, 0x0A, 0x00, // move_to (11,10)
             0x00, 0x00, // group_speed
@@ -2029,7 +2029,7 @@ mod tests {
 
         assert_eq!(bytes, expected);
 
-        // Обратно декодируется в тот же `Command` (сверка с wire-энкодером).
+        // Decodes back into the same `Command` (checked against the wire encoder).
         let decoded = Packet::decode(&bytes).expect("38 decoded");
 
         assert_eq!(decoded, Packet::Command(order.command));
@@ -2049,13 +2049,13 @@ mod tests {
         let enemy_high = (enemy.0 >> 8) as u8;
         let expected = [
             0x58, low, high, // type 0x08|APPL, unit_id
-            // MoveToAttack/Init; prior — `Await`/`ExecutingOrder`: новый юнит
-            // рождается в `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`
-            // (`unitinfo.cpp:201-204`), а `SetNewOrderInt` сохраняет его в prior
+            // MoveToAttack/Init; prior — `Await`/`ExecutingOrder`: the new unit
+            // is born in `ORDER_AWAIT`/`ORDER_STATE_EXECUTING_ORDER`
+            // (`unitinfo.cpp:201-204`), and `SetNewOrderInt` saves it in prior
             // (`units_manager.cpp:1970-1971`).
             0x1E, 0x00, 0x00, 0x01, 0x00, // no disabled
             0x00, 0x00, 0x00, 0x00, // parent_unit, experience
-            0x0E, 0x00, 0x0A, 0x00, // move_to (14,10) — клетка врага
+            0x0E, 0x00, 0x0A, 0x00, // move_to (14,10) — the enemy cell
             0x0E, 0x00, 0x0A, 0x00, // fire_on (14,10)
             enemy_low, enemy_high, // enemy_unit
             0x00, 0x00, // transfer_cargo
@@ -2089,13 +2089,13 @@ mod tests {
             app.hud().preview.as_ref().map(|preview| preview.to),
             Some(Point::new(11, 10))
         );
-        // Локально приказ ещё не применён — это сделает сетевой цикл.
+        // Locally the order is not applied yet — the network loop will do it.
         assert_eq!(
             app.state().unit(tank).expect("tank").orders,
             UnitOrder::Await
         );
 
-        // Забираем: сессия отправила бы это в `SessionHandle`.
+        // We take them: the session would send this to `SessionHandle`.
         let outgoing = app.take_outgoing_orders();
         assert_eq!(outgoing.len(), 1);
         assert!(app.hud().pending.is_empty());
@@ -2136,7 +2136,7 @@ mod tests {
 
         let over = app.end_turn();
 
-        // 06 применён (как `Remote_ReceiveNetPacket_06`), ход закрыт.
+        // 06 applied (as `Remote_ReceiveNetPacket_06`), the turn is closed.
         assert_eq!(app.applied_commands(), 1);
         assert!(app
             .hud()
@@ -2146,8 +2146,8 @@ mod tests {
             .any(|line| line.contains("End Turn")));
 
         if over {
-            // `check_end_game_conditions` завершил партию: `finish_turn` не
-            // сбрасывает фазу и не двигает счётчик хода.
+            // `check_end_game_conditions` ended the match: `finish_turn` does not
+            // reset the phase and does not advance the turn counter.
             assert_eq!(app.state().game_state, GameStateType::EndTurn);
             assert_eq!(app.state().turn_counter, before);
         } else {
@@ -2174,8 +2174,8 @@ mod tests {
         assert!(lines[4].contains("GRID 10,10"), "{lines:?}");
     }
 
-    /// Панель юнита (нижние строки, не `STAT_WINDOW`) не показывает Speed —
-    /// ни у танка, ни у здания (в C++ `Speed` вообще нет в этой панели).
+    /// The unit panel (bottom lines, not `STAT_WINDOW`) does not show Speed —
+    /// neither for a tank nor for a building (in C++ `Speed` is not in this panel at all).
     #[test]
     fn unit_panel_lines_never_show_speed() {
         let (mut app, tank, _enemy) = test_app();
@@ -2209,7 +2209,7 @@ mod tests {
             Transition::None
         );
         assert_eq!(app.hud().selected, None);
-        // Повторный Esc — выход из сессии.
+        // A second Esc — exit the session.
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
             Transition::LeaveSession
@@ -2254,7 +2254,7 @@ mod tests {
         assert!(!chat.is_active());
         assert_eq!(chat.message(), "");
 
-        // Пустой Enter закрывает ввод и ничего не возвращает.
+        // An empty Enter closes the input and returns nothing.
         chat.open();
         assert_eq!(chat.take_message(), None);
         assert!(!chat.is_active());
@@ -2305,7 +2305,7 @@ mod tests {
     fn typing_a_chat_message_logs_and_applies_it_in_demo_mode() {
         let (mut app, _tank, _enemy) = test_app();
 
-        // Enter открывает строку ввода.
+        // Enter opens the input line.
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
             Transition::None
@@ -2329,7 +2329,7 @@ mod tests {
         }
         assert_eq!(app.hud().chat.message(), "Hello");
 
-        // Enter отправляет: в демо-режиме — сразу через apply_command.
+        // Enter sends: in demo mode — immediately via apply_command.
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
             Transition::None
@@ -2356,7 +2356,7 @@ mod tests {
     fn online_chat_is_queued_as_packet_18_for_the_session() {
         let (mut app, _tank, _enemy) = test_app();
 
-        // T тоже открывает строку ввода.
+        // T also opens the input line.
         handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('T')), true);
         assert!(app.hud().chat.is_active());
 
@@ -2384,7 +2384,7 @@ mod tests {
             })]
         );
 
-        // Очередь — это ровно пакет 18 на проводе.
+        // The queue is exactly packet 18 on the wire.
         let bytes = Packet::Command(outgoing[0].clone())
             .encode()
             .expect("18 encoded");
@@ -2419,7 +2419,7 @@ mod tests {
             .iter()
             .any(|line| line == "Chat cancelled"));
 
-        // Следующий Esc — уже обычное поведение сессии.
+        // The next Esc — the usual session behavior already.
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
             Transition::LeaveSession

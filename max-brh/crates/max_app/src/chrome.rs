@@ -1,33 +1,33 @@
-//! Хром окна игры 1:1: `FRAMEPIC` (фон 640×480 со своей палитрой) и половинки
-//! левой панели `PANELTOP`/`PANELBTM` (171×239/241, системная палитра).
+//! 1:1 game window chrome: `FRAMEPIC` (640×480 background with its own palette) and the halves
+//! of the left panel `PANELTOP`/`PANELBTM` (171×239/241, system palette).
 //!
-//! Оригинал (`ResourceManager_InitInGameAssets`) делает
+//! The original (`ResourceManager_InitInGameAssets`) does
 //! `WindowManager_LoadBigImage(FRAMEPIC, window, …, palette_from_image=true)` —
-//! то есть весь интерфейс партии (панели, кнопки, рамки) уже нарисован в
-//! `FRAMEPIC`, а карта выводится в прямоугольник [`crate::layout::MAIN_MAP`].
-//! Здесь это воспроизведено: [`Chrome::draw`] заливает фон, [`blit_map`]
-//! кладёт карту в область карты.
+//! that is, the whole in-game UI (panels, buttons, frames) is already drawn in
+//! `FRAMEPIC`, and the map is rendered into the [`crate::layout::MAIN_MAP`] rectangle.
+//! This is reproduced here: [`Chrome::draw`] fills the background, [`blit_map`]
+//! puts the map into the map area.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
 
-/// Загруженный хром окна.
+/// Loaded window chrome.
 #[derive(Debug, Clone)]
 pub struct Chrome {
-    /// Фон окна 640×480 (своя палитра, RLE).
+    /// 640×480 window background (own palette, RLE).
     pub frame: BigImage,
-    /// Верхняя половина левой панели (для отчёта/проверок).
+    /// Top half of the left panel (for reporting/checks).
     pub panel_top: Option<SimpleImage>,
-    /// Нижняя половина левой панели.
+    /// Bottom half of the left panel.
     pub panel_bottom: Option<SimpleImage>,
 }
 
 impl Chrome {
-    /// Собирает хром из архива `MAX.RES`.
+    /// Assembles the chrome from the `MAX.RES` archive.
     ///
-    /// `FRAMEPIC` обязателен (без него нет 1:1 окна), панели — опционально:
-    /// они нужны только для экранов высадки, в партии всё уже в `FRAMEPIC`.
+    /// `FRAMEPIC` is mandatory (without it there is no 1:1 window), the panels are optional:
+    /// they are needed only for the landing screens; in-game everything is already in `FRAMEPIC`.
     pub fn load(max_res: &max_assets::ResArchive) -> Option<Self> {
         let frame = max_res
             .read("FRAMEPIC")
@@ -48,15 +48,15 @@ impl Chrome {
         })
     }
 
-    /// `true`, если фон окна пригоден для 1:1 (640×480).
+    /// `true` if the window background is suitable for 1:1 (640×480).
     pub fn is_ready(&self) -> bool {
         self.frame.width as i32 == layout::WINDOW_WIDTH
             && self.frame.height as i32 == layout::WINDOW_HEIGHT
     }
 
-    /// Заливает `dst` фоном окна (палитра берётся из самой картинки).
+    /// Fills `dst` with the window background (the palette is taken from the picture itself).
     ///
-    /// Возвращает число закрашенных пикселей.
+    /// Returns the number of filled pixels.
     pub fn draw(&self, dst: &mut RgbaBuffer) -> u32 {
         if !self.is_ready() {
             return 0;
@@ -79,17 +79,17 @@ impl Chrome {
         painted
     }
 
-    /// Пиксель фона (для тестов/диагностики).
+    /// Background pixel (for tests/diagnostics).
     pub fn frame_rgb(&self, x: u32, y: u32) -> Option<[u8; 3]> {
         self.frame.rgb(x, y)
     }
 }
 
-/// Копирует буфер карты в область [`layout::MAIN_MAP`] окна.
+/// Copies the map buffer into the [`layout::MAIN_MAP`] area of the window.
 ///
-/// Карта рисуется в собственный буфер размером 448×448 (7×7 клеток), поэтому
-/// она автоматически обрезается краями области — как `WINDOW_MAIN_MAP` в
-/// оригинале. Возвращает число скопированных пикселей.
+/// The map is drawn into its own 448×448 buffer (7×7 cells), so
+/// it is clipped automatically by the area edges — like `WINDOW_MAIN_MAP` in
+/// the original. Returns the number of copied pixels.
 pub fn blit_map(dst: &mut RgbaBuffer, map: &RgbaBuffer) -> u32 {
     let area = layout::MAIN_MAP;
     let mut painted = 0;
@@ -109,7 +109,7 @@ pub fn blit_map(dst: &mut RgbaBuffer, map: &RgbaBuffer) -> u32 {
     painted
 }
 
-/// Прямоугольник области карты (для перевода координат мыши).
+/// Map area rectangle (for translating mouse coordinates).
 pub fn map_area() -> PixelRect {
     layout::MAIN_MAP
 }
@@ -118,7 +118,7 @@ pub fn map_area() -> PixelRect {
 mod tests {
     use super::*;
 
-    /// Мини-кадр 640×480: по одному цвету, чтобы проверить блит.
+    /// 640×480 mini-frame: one color each, to check the blit.
     fn fake_frame() -> BigImage {
         let width = max_render::layout::WINDOW_WIDTH as i16;
         let height = max_render::layout::WINDOW_HEIGHT as i16;
@@ -132,7 +132,7 @@ mod tests {
         palette[3..6].copy_from_slice(&[1, 2, 3]);
         bytes.extend_from_slice(&palette);
 
-        // Каждая строка: литерал из width байт индекса 1 (RLE с n > 0).
+        // Each row: a literal of `width` bytes of index 1 (RLE with n > 0).
         let row = vec![1u8; width as usize];
         for _ in 0..height {
             bytes.extend_from_slice(&(width).to_le_bytes());

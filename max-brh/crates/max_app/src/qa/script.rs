@@ -1,25 +1,25 @@
-//! Парсер `.qa`-скриптов (слой 2 QA): строки → [`Command`].
+//! `.qa` script parser (QA layer 2): lines → [`Command`].
 //!
-//! Формат описан в `max-brh-qa/scripts/README.md` и `max-brh-qa/plans/qa-plan.md`. Строка —
-//! одна команда; `#` начинает комментарий (внутри `"…"` — не начинает);
-//! пустые строки игнорируются. Координаты — в пикселях кадра **640×480**
-//! (окно оригинала), поэтому одна и та же точка означает одно и то же на
-//! любом хосте и в CI.
+//! The format is described in `max-brh-qa/scripts/README.md` and `max-brh-qa/plans/qa-plan.md`. A line —
+//! one command; `#` starts a comment (inside `"…"` it does not);
+//! empty lines are ignored. Coordinates are in **640×480** frame pixels
+//! (the original window), so the same point means the same thing on
+//! any host and in CI.
 //!
-//! Парсер ничего не исполняет: он только проверяет синтаксис и диапазоны,
-//! чтобы опечатка в скрипте падала с номером строки, а не «молча кликом в
-//! пустоту». Исполнение — [`crate::qa::runner`].
+//! The parser executes nothing: it only checks syntax and ranges,
+//! so that a typo in the script fails with a line number instead of "silently clicking into
+//! the void". Execution — [`crate::qa::runner`].
 
 use max_core::team::TeamKind;
 
 use crate::ui::Key;
 
-/// Ширина кадра QA (окно оригинала).
+/// QA frame width (the original window).
 pub const FRAME_WIDTH: i32 = 640;
-/// Высота кадра QA.
+/// QA frame height.
 pub const FRAME_HEIGHT: i32 = 480;
 
-/// Оператор сравнения в `assert`.
+/// Comparison operator in `assert`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cmp {
     /// `=`
@@ -35,7 +35,7 @@ pub enum Cmp {
 }
 
 impl Cmp {
-    /// Проверка `left <op> right`.
+    /// Check `left <op> right`.
     pub fn test(self, left: i64, right: i64) -> bool {
         match self {
             Self::Eq => left == right,
@@ -46,7 +46,7 @@ impl Cmp {
         }
     }
 
-    /// Символ оператора (для лога/сообщений об ошибке).
+    /// Operator character (for the log/error messages).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Eq => "=",
@@ -58,7 +58,7 @@ impl Cmp {
     }
 }
 
-/// Имя экрана в `assert screen=…`.
+/// Screen name in `assert screen=…`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenName {
     /// `Screen::MainMenu`.
@@ -69,36 +69,36 @@ pub enum ScreenName {
     CreateForm,
     /// `Screen::MultiplayerMenu`.
     MultiplayerMenu,
-    /// `Screen::Introduction` (заглушка MVE-видео).
+    /// `Screen::Introduction` (MVE video placeholder).
     Introduction,
-    /// `Screen::Credits` (прокрутка титров).
+    /// `Screen::Credits` (credits scrolling).
     Credits,
-    /// `Screen::LocalSetup` на экране Options.
+    /// `Screen::LocalSetup` on the Options screen.
     Options,
-    /// `Screen::LocalSetup` на экране Planet.
+    /// `Screen::LocalSetup` on the Planet screen.
     Planet,
-    /// `Screen::LocalSetup` на экране Players.
+    /// `Screen::LocalSetup` on the Players screen.
     Players,
-    /// `Screen::LocalSetup` на экране Clan.
+    /// `Screen::LocalSetup` on the Clan screen.
     Clan,
-    /// Любой экран `Screen::LocalSetup` (не важно, какой из трёх).
+    /// Any `Screen::LocalSetup` screen (whichever of the three).
     LocalSetup,
-    /// `Screen::PreGame` — мобилизация (`CargoMenu`).
+    /// `Screen::PreGame` — mobilization (`CargoMenu`).
     Mobilize,
-    /// `Screen::PreGame` — выбор точки высадки (`GameManager_SelectSite`).
+    /// `Screen::PreGame` — landing point selection (`GameManager_SelectSite`).
     Landing,
     /// `Screen::GameOver`.
     GameOver,
-    /// `Screen::Preferences` — диалог `OptionsMenu` в меню (`Setup`).
+    /// `Screen::Preferences` — the `OptionsMenu` dialog in the menu (`Setup`).
     Preferences,
-    /// `Screen::InSession` (идёт партия).
+    /// `Screen::InSession` (a match is in progress).
     InGame,
-    /// `Screen::Help` — модальное окно помощи.
+    /// `Screen::Help` — the modal help window.
     Help,
 }
 
 impl ScreenName {
-    /// Разбор имени (регистр не важен).
+    /// Name parsing (case does not matter).
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
             "mainmenu" | "main_menu" | "main" => Some(Self::MainMenu),
@@ -122,7 +122,7 @@ impl ScreenName {
         }
     }
 
-    /// Каноническое имя (как в логе).
+    /// Canonical name (as in the log).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::MainMenu => "MainMenu",
@@ -146,21 +146,21 @@ impl ScreenName {
     }
 }
 
-/// Фаза локальной партии в `assert phase=…`.
+/// Local match phase in `assert phase=…`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseName {
-    /// Ход человека.
+    /// Human turn.
     PlayerTurn,
-    /// Ход компьютера (не важно, какой команды).
+    /// Computer turn (whichever team).
     AiTurn,
-    /// Переход к следующей команде.
+    /// Transition to the next team.
     Advancing,
-    /// Партия окончена.
+    /// The match is over.
     Finished,
 }
 
 impl PhaseName {
-    /// Разбор имени (регистр не важен).
+    /// Name parsing (case does not matter).
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
             "playerturn" | "player_turn" | "player" => Some(Self::PlayerTurn),
@@ -171,7 +171,7 @@ impl PhaseName {
         }
     }
 
-    /// Каноническое имя.
+    /// Canonical name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PlayerTurn => "PlayerTurn",
@@ -182,305 +182,305 @@ impl PhaseName {
     }
 }
 
-/// Проверка состояния в `assert`.
+/// State check in `assert`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Assertion {
-    /// `assert turn=N` / `turn>=N`: счётчик хода.
+    /// `assert turn=N` / `turn>=N`: the turn counter.
     Turn(Cmp, i32),
-    /// `assert team=N|RED|GREEN|BLUE|GRAY`: чья сейчас ход (`active_turn_team`).
+    /// `assert team=N|RED|GREEN|BLUE|GRAY`: whose turn it is (`active_turn_team`).
     Team(u8),
-    /// `assert units>=N`: число юнитов в состоянии.
+    /// `assert units>=N`: the number of units in the state.
     Units(Cmp, u32),
-    /// `assert screen=NAME`: текущий экран.
+    /// `assert screen=NAME`: the current screen.
     Screen(ScreenName),
-    /// `assert phase=NAME`: фаза локальной партии.
+    /// `assert phase=NAME`: the local match phase.
     Phase(PhaseName),
-    /// `assert notice=TEAM|none`: окно «Begin turn» (M-HS) открыто для команды.
+    /// `assert notice=TEAM|none`: the «Begin turn» window (M-HS) is open for the team.
     Notice(Option<u8>),
-    /// `assert victory`: партия окончена победой человека.
+    /// `assert victory`: the match ended with a human victory.
     Victory,
-    /// `assert defeat`: партия окончена поражением.
+    /// `assert defeat`: the match ended with a defeat.
     Defeat,
-    /// `assert selected`: выделен подвижный юнит игрока.
+    /// `assert selected`: a mobile player unit is selected.
     Selected,
-    /// `assert preview`: у выделенного юнита есть непустой предпросмотр пути
-    /// (зелёный маршрут HUD после RMB).
+    /// `assert preview`: the selected unit has a non-empty path preview
+    /// (the green HUD route after RMB).
     Preview,
-    /// `assert missile-line`: летящий снаряд (`MISSILE_UNIT` с `AirPath`) стоит
-    /// на **пиксельной прямой** от точки пуска к цели
-    /// (`AirPath::Execute`, `airpath.cpp:219-242`; отклонение ≤ 1.5 px).
-    /// Ловит регресс «снаряд идёт по клеткам 8-дирекционным маршрутом».
+    /// `assert missile-line`: a flying projectile (`MISSILE_UNIT` with `AirPath`) stands
+    /// on the **pixel line** from the launch point to the target
+    /// (`AirPath::Execute`, `airpath.cpp:219-242`; deviation ≤ 1.5 px).
+    /// Catches the "projectile goes by cells in an 8-direction route" regression.
     MissileLine,
-    /// `assert log=ТЕКСТ`: в журнале HUD есть строка с `ТЕКСТ` (например,
-    /// `assert log=Move:` после RMB-приказа).
+    /// `assert log=TEXT`: the HUD log has a line with `TEXT` (e.g.
+    /// `assert log=Move:` after an RMB order).
     Log(String),
-    /// `assert unit-pos=X,Y`: выделенный юнит стоит в клетке `(X, Y)`.
+    /// `assert unit-pos=X,Y`: the selected unit stands in cell `(X, Y)`.
     UnitPos(i16, i16),
-    /// `assert angle=N`: угол корпуса выделенного юнита (0..7, 0 = север).
+    /// `assert angle=N`: the hull angle of the selected unit (0..7, 0 = north).
     ///
-    /// Это симуляционное поле (`UnitInfo::angle`): при движении оно меняется
-    /// на шагах маршрута по `Paths_GetAngle` (см. `GroundPath::Execute` /
+    /// This is a simulation field (`UnitInfo::angle`): when moving it changes
+    /// at route steps via `Paths_GetAngle` (see `GroundPath::Execute` /
     /// `GroundPath::UpdateUnitAngle`).
     Angle(u8),
-    /// `assert build=open|closed`: открыт ли `BuildMenu` (P2).
+    /// `assert build=open|closed`: whether `BuildMenu` is open (P2).
     BuildOpen(bool),
-    /// `assert build-site=open|closed`: идёт ли выбор места стройки
+    /// `assert build-site=open|closed`: whether build site selection is in progress
     /// (`ORDER_STATE_SELECT_SITE`).
     BuildSiteOpen(bool),
-    /// `assert build-site=valid|invalid`: валидна ли клетка под курсором в
-    /// режиме выбора места (`CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`).
+    /// `assert build-site=valid|invalid`: whether the cell under the cursor is valid in
+    /// the site selection mode (`CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`).
     BuildSiteValid(bool),
-    /// `assert build-center=yes|no`: стоит ли спрайт строителя ровно в центре
-    /// ленты 2×2 (`PositionInTape` + `OffsetDrawZones`, 32 px).
+    /// `assert build-center=yes|no`: whether the builder sprite stands exactly in the center
+    /// of the 2×2 tape (`PositionInTape` + `OffsetDrawZones`, 32 px).
     BuildCenter(bool),
-    /// `assert site-pos=X,Y`: клетка ленты стройплощадки (`LRG/SMLTAPE`).
+    /// `assert site-pos=X,Y`: the cell of the construction site tape (`LRG/SMLTAPE`).
     SitePos(i16, i16),
-    /// `assert builder=inside|outside`: стоит ли строитель (его клетка) внутри
-    /// габаритов своего родителя-здания. `inside` — площадка ещё занята
-    /// строителем, `outside` — он сошёл с неё (`PositionInTape` LEAVE +
+    /// `assert builder=inside|outside`: whether the builder (its cell) stands inside
+    /// the bounds of its parent building. `inside` — the site is still occupied
+    /// by the builder, `outside` — it has left it (`PositionInTape` LEAVE +
     /// `ActivateEngineer` → `ORDER_MOVE`).
     BuilderInside(bool),
-    /// `assert build-ready=yes|no`: есть ли у игрока достроенное здание,
-    /// ждущее ухода строителя (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`).
+    /// `assert build-ready=yes|no`: whether the player has a completed building
+    /// waiting for the builder to leave (`ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`).
     BuildReady(bool),
-    /// `assert factory-ready=yes|no`: выделенный завод ждёт вывода готового
-    /// юнита (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, `SpawnNewUnit`,
+    /// `assert factory-ready=yes|no`: the selected factory waits for a ready
+    /// unit to be brought out (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, `SpawnNewUnit`,
     /// `unitinfo.cpp:3489-3520`).
     FactoryReady(bool),
-    /// `assert unit-stored=NAME|none`: у выделенного завода **внутри** стоит
-    /// юнит этого типа (`ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — завод);
-    /// `none` — готового юнита в заводе нет.
+    /// `assert unit-stored=NAME|none`: the selected factory has a unit of this
+    /// type **inside** (`ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — the factory);
+    /// `none` — there is no ready unit in the factory.
     UnitStored(Option<String>),
-    /// `assert endturn=pressed|normal`: вид кнопки End Turn.
+    /// `assert endturn=pressed|normal`: the look of the End Turn button.
     ///
-    /// C++ `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) зовёт
-    /// `GameManager_MenuClickEndTurnButton(rest_state)` по типу активной команды:
-    /// `TEAM_TYPE_PLAYER` → отжата, `TEAM_TYPE_COMPUTER` → нажата
-    /// (`SetRestState(true)`) до конца ходов оппонентов.
+    /// C++ `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) calls
+    /// `GameManager_MenuClickEndTurnButton(rest_state)` by the active team type:
+    /// `TEAM_TYPE_PLAYER` → released, `TEAM_TYPE_COMPUTER` → pressed
+    /// (`SetRestState(true)`) until the end of the opponents' turns.
     EndTurnPressed(bool),
-    /// `assert endturn-frames<N`: сколько кадров занял последний `end_turn`
-    /// (переход хода + ходы ИИ). Зависший ход ИИ упирается в
-    /// `LOCAL_AI_TICK_LIMIT` (12 000) — порог ловит такой регресс.
+    /// `assert endturn-frames<N`: how many frames the last `end_turn` took
+    /// (turn transition + AI turns). A hung AI turn hits
+    /// `LOCAL_AI_TICK_LIMIT` (12 000) — the threshold catches such a regression.
     EndTurnFrames(Cmp, u32),
-    /// `assert hint=TEXT|none`: подсказка сверху карты
-    /// (`MessageManager_DrawMessage` для выделенного строителя); сравнение —
-    /// подстрока без учёта регистра.
+    /// `assert hint=TEXT|none`: the hint above the map
+    /// (`MessageManager_DrawMessage` for the selected builder); the comparison is a
+    /// substring, case-insensitive.
     Hint(Option<String>),
-    /// `assert upgrade=open|closed`: открыт ли экран апгрейдов (P6).
+    /// `assert upgrade=open|closed`: whether the upgrades screen is open (P6).
     UpgradeOpen(bool),
-    /// `assert research-menu=open|closed`: открыт ли экран исследований (P7).
+    /// `assert research-menu=open|closed`: whether the research screen is open (P7).
     ResearchMenuOpen(bool),
-    /// `assert unit-menu=open|closed`: открыто ли меню команд юнита (C++
+    /// `assert unit-menu=open|closed`: whether the unit command menu is open (C++
     /// `GameManager_PopupButtons`).
     UnitMenuOpen(bool),
-    /// `assert unit-menu-item=NAME`: пункт есть в меню и включён.
+    /// `assert unit-menu-item=NAME`: the item is in the menu and enabled.
     UnitMenuItem(String),
-    /// `assert unit-menu-disabled=NAME`: пункт есть, но отключён (механика не
-    /// портирована).
+    /// `assert unit-menu-disabled=NAME`: the item exists but is disabled (the mechanics are
+    /// not ported).
     UnitMenuDisabled(String),
-    /// `assert unit-menu-enabled=NAME`: пункт меню есть и включён.
+    /// `assert unit-menu-enabled=NAME`: the menu item exists and is enabled.
     UnitMenuEnabled(String),
-    /// `assert cursor=load|steal|disable|repair|reload|transfer|none`: курсорный
-    /// режим выделенного юнита (C++ `UnitInfo::cursor`).
+    /// `assert cursor=load|steal|disable|repair|reload|transfer|none`: the cursor
+    /// mode of the selected unit (C++ `UnitInfo::cursor`).
     CursorMode(String),
-    /// `assert targeting=on|off`: режим наведения (`targeting_mode`).
+    /// `assert targeting=on|off`: the targeting mode (`targeting_mode`).
     Targeting(bool),
-    /// `assert self-destruct=open|closed`: диалог `UnitsManager_SelfDestructMenu`.
+    /// `assert self-destruct=open|closed`: the `UnitsManager_SelfDestructMenu` dialog.
     SelfDestructOpen(bool),
-    /// `assert pause=open|closed`: диалог паузы `Alt+P` (`PauseMenu_Menu`).
+    /// `assert pause=open|closed`: the `Alt+P` pause dialog (`PauseMenu_Menu`).
     PauseOpen(bool),
-    /// `assert unit-order=NAME`: приказ выделенного юнита (`ORDER_*`).
+    /// `assert unit-order=NAME`: the selected unit's order (`ORDER_*`).
     UnitOrder(max_core::enums::UnitOrder),
-    /// `assert research-alloc attack=N`: сколько центров закреплено за темой.
+    /// `assert research-alloc attack=N`: how many centers are assigned to the topic.
     ResearchAlloc(max_core::enums::ResearchTopic, Cmp, u32),
-    /// `assert help=open|closed`: открыто ли окно помощи (P7).
+    /// `assert help=open|closed`: whether the help window is open (P7).
     HelpOpen(bool),
-    /// `assert help-section=cargo|planet|newgame|options|…`: секция окна.
+    /// `assert help-section=cargo|planet|newgame|options|…`: the window section.
     HelpSection(crate::helpmenu::HelpSection),
-    /// `assert help-entry=NAME`: запись `help.json`, показанная в окне.
+    /// `assert help-entry=NAME`: the `help.json` entry shown in the window.
     HelpEntry(String),
-    /// `assert help-row>=N`: первая видимая строка окна помощи.
+    /// `assert help-row>=N`: the first visible line of the help window.
     HelpRow(Cmp, u32),
-    /// `assert gold>=N`: золото локальной команды.
+    /// `assert gold>=N`: the local team's gold.
     Gold(Cmp, u32),
-    /// `assert research attack>=1`: уровень темы исследований (P6).
+    /// `assert research attack>=1`: the research topic level (P6).
     ResearchLevel(max_core::enums::ResearchTopic, Cmp, u32),
-    /// `assert unit=NAME`: у игрока есть юнит с таким именем (P2: юнит/здание
-    /// появились после ходов производства).
+    /// `assert unit=NAME`: the player has a unit with this name (P2: the unit/building
+    /// appeared after production turns).
     UnitType(String),
-    /// `assert unit-count NAME>=N`: юнитов такого типа на карте (имя — как у
+    /// `assert unit-count NAME>=N`: units of this type on the map (the name is as in
     /// `spawn`: `RocketSmoke`, `Rocket`, `TorpedoBubble`, …).
     UnitCount(String, Cmp, u32),
-    /// `assert firing=on|off`: выделенный юнит показывает кадр выстрела
+    /// `assert firing=on|off`: the selected unit shows the firing frame
     /// (`UnitInfo::PrepareFire`/`ProgressFire`, `firing_recoil_frames > 0`).
     Firing(bool),
-    /// `assert building=on|off`: у выделенного мобильного строителя идёт
-    /// стройка (`ORDER_BUILD`, площадка на карте).
+    /// `assert building=on|off`: the selected mobile builder has construction
+    /// in progress (`ORDER_BUILD`, a site on the map).
     Building(bool),
-    /// `assert trail=on|off`: на карте есть юниты-частицы следа снаряда
+    /// `assert trail=on|off`: the map has projectile trail particle units
     /// (`RKTSMOKE`/`TRPBUBLE`, `Paths_DrawMissile`).
     Trail(bool),
-    /// `assert site=large|small|none`: стройплощадка в мире — лента+конусы
-    /// (+плита) в одной клетке; `none` — ни ленты, ни конусов у команды
-    /// игрока (после достройки плита под зданием остаётся и не мешает).
+    /// `assert site=large|small|none`: the construction site in the world — tape+cones
+    /// (+slab) in one cell; `none` — neither tape nor cones for the player
+    /// team (after completion the slab under the building remains and does not interfere).
     ConstructionSite(Option<bool>),
-    /// `assert site=drawn`: декали площадки **нарисованы** в текущем кадре —
-    /// каждая (лента, конусы, плита) даёт свои пиксели. Проверка `IsRelevant`
-    /// (`unitinfogroup.cpp:59`): юнит с `ORDER_IDLE` не рисуется.
+    /// `assert site=drawn`: the site decals **are drawn** in the current frame —
+    /// each (tape, cones, slab) yields its pixels. The `IsRelevant` check
+    /// (`unitinfogroup.cpp:59`): a unit with `ORDER_IDLE` is not drawn.
     ConstructionSiteDrawn,
-    /// `assert digest=HEX`: CRC16 снапшота состояния (`App::digest`).
+    /// `assert digest=HEX`: CRC16 of the state snapshot (`App::digest`).
     Digest(u16),
-    /// `assert resource-icons=N`: сколько клеток с иконкой ресурса нарисовано
-    /// (`Survey_RenderMarkers`): только разведанные клетки.
+    /// `assert resource-icons=N`: how many cells with the resource icon are drawn
+    /// (`Survey_RenderMarkers`): only surveyed cells.
     ResourceIcons(Cmp, u32),
-    /// `assert survey-overlay=yes|no`: включён ли показ иконок ресурсов
-    /// (`GameManager_RenderSurveyIndicator`: кнопка SURVEY или выделенный
-    /// разведчик).
+    /// `assert survey-overlay=yes|no`: whether showing resource icons is enabled
+    /// (`GameManager_RenderSurveyIndicator`: the SURVEY button or the selected
+    /// scout).
     SurveyOverlay(bool),
-    /// `assert unit-selector=yes|no`: нарисован ли индикатор выделенного юнита
+    /// `assert unit-selector=yes|no`: whether the selected unit indicator is drawn
     /// (`GameManager_DrawUnitSelector`).
     UnitSelector(bool),
-    /// `assert panel=NAME:on|off`: переключатель 3×3 левой панели
+    /// `assert panel=NAME:on|off`: a 3×3 toggle of the left panel
     /// (`CTInfo::display_button_*`, `GameManager_MenuClick*Button`,
     /// `game_manager.cpp:3800-3990`). `NAME` — `survey`, `status`, `colors`,
     /// `hits`, `ammo`, `range`, `scan`, `grid`, `names`.
     PanelToggle(crate::panels::PanelButton, bool),
-    /// `assert overlay>=N`: сколько пикселей оверлеев кнопок 3×3 нарисовано в
-    /// текущем кадре (`crate::overlays`, `RenderStats::overlay_pixels`).
+    /// `assert overlay>=N`: how many pixels of the 3×3 button overlays are drawn in
+    /// the current frame (`crate::overlays`, `RenderStats::overlay_pixels`).
     OverlayPixels(Cmp, u32),
-    /// `assert cargo-mode=buy|upgrade`: режим списка `CargoMenu`.
+    /// `assert cargo-mode=buy|upgrade`: the `CargoMenu` list mode.
     CargoMode(bool),
-    /// `assert cargo-types=N`: длина списка типов (15 в покупке).
+    /// `assert cargo-types=N`: the length of the type list (15 in buy mode).
     CargoTypes(Cmp, u32),
-    /// `assert cargo-credits>=N`: остаток кредитов в `CargoMenu`.
+    /// `assert cargo-credits>=N`: the remaining credits in `CargoMenu`.
     CargoCredits(Cmp, u32),
-    /// `assert cargo-description>=N`: длина описания выбранного типа
-    /// (`Unit::GetDescription()`, символы).
+    /// `assert cargo-description>=N`: the description length of the selected type
+    /// (`Unit::GetDescription()`, characters).
     CargoDescription(Cmp, u32),
-    /// `assert cargo-stat-icons>=N`: число pips-иконок в таблице статистики
-    /// выбранного типа (`UnitStats_DrawStats`).
+    /// `assert cargo-stat-icons>=N`: the number of pips icons in the statistics table
+    /// of the selected type (`UnitStats_DrawStats`).
     CargoStatIcons(Cmp, u32),
-    /// `assert cargo-portrait=yes|no`: есть ли у выбранного типа big image
-    /// портрета `P_*` (`Unit::GetPortrait()`).
+    /// `assert cargo-portrait=yes|no`: whether the selected type has a big image
+    /// portrait `P_*` (`Unit::GetPortrait()`).
     CargoPortrait(bool),
-    /// `assert alloc=open|closed`: открыт ли диалог распределения добычи
+    /// `assert alloc=open|closed`: whether the extraction allocation dialog is open
     /// (C++ `AllocMenu`).
     AllocOpen(bool),
-    /// `assert alloc-raw=N`: добыча сырья в комплексе шахты (`production.raw`).
+    /// `assert alloc-raw=N`: raw extraction in the mine complex (`production.raw`).
     AllocRaw(Cmp, i32),
     /// `assert alloc-fuel=N`.
     AllocFuel(Cmp, i32),
     /// `assert alloc-gold=N`.
     AllocGold(Cmp, i32),
-    /// `assert alloc-free=N`: свободные единицы добычи
+    /// `assert alloc-free=N`: free extraction units
     /// (`production.free_capacity`).
     AllocFree(Cmp, i32),
-    /// `assert complex-raw=N`: запас сырья комплекса (`Complex::raw`).
+    /// `assert complex-raw=N`: the complex raw stock (`Complex::raw`).
     ComplexRaw(Cmp, i32),
-    /// `assert complex-fuel=N`: запас топлива комплекса.
+    /// `assert complex-fuel=N`: the complex fuel stock.
     ComplexFuel(Cmp, i32),
-    /// `assert complex-gold=N`: запас золота комплекса.
+    /// `assert complex-gold=N`: the complex gold stock.
     ComplexGold(Cmp, i32),
-    /// `assert transfer=open|closed`: открыто ли окно X-FER (`TransferMenu`).
+    /// `assert transfer=open|closed`: whether the X-FER window is open (`TransferMenu`).
     TransferOpen(bool),
-    /// `assert transfer-amount=N`: текущее значение полосы (знаковое; плюс —
-    /// из юнита в комплекс, минус — обратно).
+    /// `assert transfer-amount=N`: the current bar value (signed; plus —
+    /// from the unit into the complex, minus — back).
     TransferAmount(Cmp, i32),
-    /// `assert unit-storage=N`: `storage` выделенного юнита (груз по его типу).
+    /// `assert unit-storage=N`: the `storage` of the selected unit (cargo by its type).
     UnitStorage(Cmp, i32),
-    /// `assert prefs=open|closed`: диалог `Preferences`/`Setup` открыт (в меню —
-    /// `Screen::Preferences`, в игре — модальное окно `App::preferences_dialog`).
+    /// `assert prefs=open|closed`: the `Preferences`/`Setup` dialog is open (in the menu —
+    /// `Screen::Preferences`, in game — the modal window `App::preferences_dialog`).
     PrefsOpen(bool),
-    /// `assert prefs-value NAME=N`: значение опции в открытом диалоге.
+    /// `assert prefs-value NAME=N`: the option value in the open dialog.
     PrefsValue(crate::preferences::PrefKey, Cmp, i32),
-    /// `assert prefs-text NAME=VALUE`: строковое значение опции в диалоге
+    /// `assert prefs-text NAME=VALUE`: the string option value in the dialog
     /// (`player_name`, `host_address`).
     PrefsText(crate::preferences::PrefKey, String),
-    /// `assert prefs-effects=on|off`: `settings["effects"]` приложения.
+    /// `assert prefs-effects=on|off`: the application `settings["effects"]`.
     PrefsEffects(bool),
-    /// `assert prefs-sound=on|off`: флаг звука (`!disable_fx`).
+    /// `assert prefs-sound=on|off`: the sound flag (`!disable_fx`).
     PrefsSound(bool),
-    /// `assert prefs-audio=on|off`: фактическое состояние аудио-слоя
-    /// (`AudioPlayer::enabled`), то есть флаг дошёл до аудио.
+    /// `assert prefs-audio=on|off`: the actual state of the audio layer
+    /// (`AudioPlayer::enabled`), i.e. the flag reached the audio.
     PrefsAudio(bool),
 }
 
-/// Куда идти высокоуровневой командой `menu`.
+/// Where the high-level `menu` command goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuTarget {
-    /// `New Game` главного меню → настройка M-SP.
+    /// `New Game` of the main menu → M-SP setup.
     NewGame,
     /// `Multiplayer Game` → `Multiplayer Menu`.
     Multiplayer,
-    /// `Hot Seat Game` → настройка M-HS.
+    /// `Hot Seat Game` → M-HS setup.
     HotSeat,
-    /// `Join Network Game` → список игр лобби.
+    /// `Join Network Game` → the lobby game list.
     Join,
-    /// `Introduction` главного меню (MVE-заглушка).
+    /// `Introduction` of the main menu (MVE placeholder).
     Introduction,
-    /// `Credits` главного меню (прокрутка титров).
+    /// `Credits` of the main menu (credits scrolling).
     Credits,
-    /// `Setup` главного меню (`OptionsMenu`, `SETUPPIC`).
+    /// `Setup` of the main menu (`OptionsMenu`, `SETUPPIC`).
     Setup,
 }
 
-/// Действие на экране настройки (`setup`).
+/// Action on the setup screen (`setup`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupAction {
-    /// Кнопка `Done` (Options → Planet → Players → старт партии).
+    /// `Done` button (Options → Planet → Players → match start).
     Done,
-    /// Кнопка `Cancel`.
+    /// `Cancel` button.
     Cancel,
-    /// Кнопка `Random` (только на экране планет).
+    /// `Random` button (planets screen only).
     Random,
 }
 
-/// Действие на экране мобилизации (`CargoMenu`).
+/// Action on the mobilization screen (`CargoMenu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobilizeAction {
-    /// `buy` — купить выбранный юнит.
+    /// `buy` — buy the selected unit.
     Buy,
-    /// `buy N` — выбрать строку N и купить её.
+    /// `buy N` — select row N and buy it.
     BuyIndex(u32),
-    /// `delete` — продать выбранный купленный юнит.
+    /// `delete` — sell the selected purchased unit.
     Delete,
-    /// `step N` — сдвинуть выбор по списку (может быть отрицательным).
+    /// `step N` — move the selection along the list (may be negative).
     Step(i32),
-    /// `mode buy|upgrade` — переключатель `CRGTOG`.
+    /// `mode buy|upgrade` — the `CRGTOG` toggle.
     Mode(bool),
-    /// `filter ground|air|sea|building|combat` — кнопка `SEL*`.
+    /// `filter ground|air|sea|building|combat` — the `SEL*` button.
     Filter(FilterName),
-    /// `select N` — строка N списка типов.
+    /// `select N` — row N of the type list.
     Select(u32),
-    /// `loadout N` — строка N списка «Purchased».
+    /// `loadout N` — row N of the "Purchased" list.
     Loadout(u32),
-    /// `row N up|down` — стрелка апгрейда строки N.
+    /// `row N up|down` — the upgrade arrow of row N.
     Adjust { row: u32, increase: bool },
-    /// `cargo N` — поставить слайдер cargo в N блоков (5·N единиц).
+    /// `cargo N` — set the cargo slider to N blocks (5·N units).
     Cargo(u32),
-    /// `done` — `Done` (закрыть мобилизацию).
+    /// `done` — `Done` (close mobilization).
     Done,
     /// `cancel` — `Cancel`.
     Cancel,
 }
 
-/// Фильтр домена списка модернизации.
+/// Domain filter of the upgrade list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterName {
-    /// Наземные (`SELGRD`).
+    /// Ground (`SELGRD`).
     Ground,
-    /// Воздушные (`SELAIR`).
+    /// Air (`SELAIR`).
     Air,
-    /// Морские (`SELSEA`).
+    /// Sea (`SELSEA`).
     Sea,
-    /// Здания (`SELBLD`).
+    /// Buildings (`SELBLD`).
     Building,
-    /// Только боевые (`SELCBT`).
+    /// Combat only (`SELCBT`).
     Combat,
 }
 
 impl FilterName {
-    /// Индекс в `Mobilization::filters`.
+    /// Index in `Mobilization::filters`.
     pub const fn index(self) -> usize {
         match self {
             Self::Ground => 0,
@@ -491,7 +491,7 @@ impl FilterName {
         }
     }
 
-    /// Разбор имени (регистр не важен).
+    /// Name parsing (case does not matter).
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
             "ground" | "grd" | "land" => Some(Self::Ground),
@@ -504,265 +504,265 @@ impl FilterName {
     }
 }
 
-/// Действие экрана `BuildMenu` (P2).
+/// `BuildMenu` screen action (P2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildCommand {
-    /// `open` — открыть меню для выделенного строителя (клавиша `B`).
+    /// `open` — open the menu for the selected builder (the `B` key).
     Open,
-    /// `select N` — выбрать строку списка.
+    /// `select N` — select a list row.
     Select(u32),
-    /// `add` — `Build` завода: добавить выбранный тип в очередь.
+    /// `add` — factory `Build`: add the selected type to the queue.
     Add,
-    /// `delete` — `Delete`: убрать выбранный элемент очереди.
+    /// `delete` — `Delete`: remove the selected queue element.
     Delete,
-    /// `rate N` — скорость 1/2/4.
+    /// `rate N` — speed 1/2/4.
     Rate(u16),
-    /// `repeat` — кнопка `Repeat` (только завод).
+    /// `repeat` — the `Repeat` button (factory only).
     Repeat,
-    /// `step N` — стрелки списка (N > 0 — вниз).
+    /// `step N` — list arrows (N > 0 — down).
     Step(i32),
-    /// `queue step N` — стрелки очереди.
+    /// `queue step N` — queue arrows.
     QueueStep(i32),
-    /// `done` — `Done`/Enter: заказ (`Build()`).
+    /// `done` — `Done`/Enter: the order (`Build()`).
     Done,
-    /// `path` — кнопка `Path` инженера (`BLDPTH_U`, `buildmenu.cpp:343-346`):
-    /// `Build()` с принудительным выбором места 1×1 (`event_click_path_build`).
+    /// `path` — the engineer's `Path` button (`BLDPTH_U`, `buildmenu.cpp:343-346`):
+    /// `Build()` with a forced 1×1 site selection (`event_click_path_build`).
     Path,
-    /// `cancel` — `Cancel`/Esc: закрыть без заказа.
+    /// `cancel` — `Cancel`/Esc: close without an order.
     Cancel,
-    /// `place X Y` — подтвердить место стройки в клетке `X,Y` левым кликом по
-    /// карте (`GameManager_PathBuild`); `X Y` — клетка, куда указывает игрок.
+    /// `place X Y` — confirm the build site in cell `X,Y` with a left click on
+    /// the map (`GameManager_PathBuild`); `X Y` — the cell the player points to.
     Place(i16, i16),
-    /// `place near` — подтвердить место в клетке выделенного строителя.
+    /// `place near` — confirm the site in the selected builder's cell.
     PlaceNear,
-    /// `cursor X Y` — навести мышь на клетку без клика: призрак переезжает,
-    /// заказ не отдаётся (`GameManager_GetBuilderUnitCursor`).
+    /// `cursor X Y` — hover the mouse over a cell without a click: the ghost moves,
+    /// no order is issued (`GameManager_GetBuilderUnitCursor`).
     Cursor(i16, i16),
 }
 
-/// Действие экрана апгрейдов (P6).
+/// Upgrades screen action (P6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradeCommand {
-    /// `open` — открыть для выделенного юнита (клавиша `U`).
+    /// `open` — open for the selected unit (the `U` key).
     Open,
-    /// `select N` — выбрать строку списка типов.
+    /// `select N` — select a row of the type list.
     Select(u32),
-    /// `row N up|down` — нажать стрелку апгрейда строки N.
+    /// `row N up|down` — press the upgrade arrow of row N.
     Adjust { row: u32, increase: bool },
     /// `done` — `CommitUpgradeChanges`.
     Done,
-    /// `cancel` — закрыть без изменений.
+    /// `cancel` — close without changes.
     Cancel,
 }
 
-/// Действие экрана исследований (P7, `ResearchMenu`).
+/// Research screen action (P7, `ResearchMenu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchCommand {
-    /// `open` — открыть для выделенного включённого `RESEARCH`-центра.
+    /// `open` — open for the selected powered-on `RESEARCH` center.
     Open,
-    /// `select N` — выбрать тему (клавиатура).
+    /// `select N` — select a topic (keyboard).
     Select(u32),
-    /// `row N up|down` — стрелка `UPGRGT`/`UPGLFT` строки N.
+    /// `row N up|down` — the `UPGRGT`/`UPGLFT` arrow of row N.
     Row { row: u32, increase: bool },
-    /// `done` — `ResearchMenu_OnClick_Done` (распределение применяется).
+    /// `done` — `ResearchMenu_OnClick_Done` (the allocation is applied).
     Done,
-    /// `cancel` — закрыть без изменений.
+    /// `cancel` — close without changes.
     Cancel,
 }
 
-/// Действие диалога `Preferences`/`Setup` (`OptionsMenu`).
+/// `Preferences`/`Setup` dialog action (`OptionsMenu`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrefsCommand {
-    /// `open` — открыть диалог как игрок: в игре кликом по кнопке `Preferences`
-    /// панели, в главном меню — пунктом `Setup`.
+    /// `open` — open the dialog like a player: in game by clicking the panel
+    /// `Preferences` button, in the main menu — by the `Setup` item.
     Open,
-    /// `toggle NAME` — клик по чекбоксу (`effects`, `disable_fx`, …).
+    /// `toggle NAME` — a click on a checkbox (`effects`, `disable_fx`, …).
     Toggle(String),
-    /// `set NAME VALUE` — слайдер (клик в позицию) или поле ввода
-    /// (`timer`/`endturn`/`player_name`): клик по полю, очистка, ввод, Enter.
+    /// `set NAME VALUE` — a slider (click at the position) or an input field
+    /// (`timer`/`endturn`/`player_name`): click on the field, clear, type, Enter.
     Set {
-        /// Имя опции (`music_level`, `quick_scroll`, `timer`, `player_name`, …).
+        /// Option name (`music_level`, `quick_scroll`, `timer`, `player_name`, …).
         name: String,
-        /// Значение в текстовом виде.
+        /// Value as text.
         value: String,
     },
-    /// `done` — кнопка `Done` (сохраняет).
+    /// `done` — the `Done` button (saves).
     Done,
-    /// `cancel` — кнопка `Cancel` (возвращает снимок).
+    /// `cancel` — the `Cancel` button (restores the snapshot).
     Cancel,
-    /// `help` — кнопка `Help` (`?`).
+    /// `help` — the `Help` button (`?`).
     Help,
 }
 
-/// Действие окна помощи (`HelpMenu`).
+/// Help window action (`HelpMenu`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelpCommand {
-    /// `open SECTION` — открыть кнопкой `?`/`Help` текущего экрана: входит в
-    /// режим помощи (`HelpMenu_Menu`), окна ещё нет.
+    /// `open SECTION` — open with the `?`/`Help` button of the current screen: it enters
+    /// the help mode (`HelpMenu_Menu`), there is no window yet.
     Open(crate::helpmenu::HelpSection),
-    /// `entry NAME` — клик по центру записи `NAME` из `help.json` (реальный
-    /// путь выбора записи по координатам).
+    /// `entry NAME` — a click on the center of the `NAME` entry from `help.json` (the real
+    /// path of choosing an entry by coordinates).
     Entry(String),
-    /// `click X Y` — клик по точке кадра в режиме помощи.
+    /// `click X Y` — a click on a frame point in help mode.
     Click(i32, i32),
     /// `page up|down` — `PageUp`/`PageDown`.
     PageUp,
     /// `page down`.
     PageDown,
-    /// `up`/`down` — одна строка.
+    /// `up`/`down` — one line.
     Up,
-    /// `down` — одна строка.
+    /// `down` — one line.
     Down,
-    /// `keys` — кнопка `Keys` (`GAME_SCREEN_SETUP`).
+    /// `keys` — the `Keys` button (`GAME_SCREEN_SETUP`).
     Keys,
-    /// `done`/`ok` — `Done`/`Enter`: закрыть окно, вернуться в режим.
+    /// `done`/`ok` — `Done`/`Enter`: close the window, return to the mode.
     Done,
-    /// `close`/`cancel` — выйти из режима помощи (`Esc` в режиме/`Ctrl-Esc`).
+    /// `close`/`cancel` — exit the help mode (`Esc` in the mode/`Ctrl-Esc`).
     Close,
 }
 
-/// Действие диалога распределения добычи шахты (C++ `AllocMenu`, `ALLOCFRM`).
+/// Mine extraction allocation dialog action (C++ `AllocMenu`, `ALLOCFRM`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocateCommand {
-    /// `open` — открыть диалог для выделенной шахты (пункт `allocate` меню).
+    /// `open` — open the dialog for the selected mine (the `allocate` menu item).
     Open,
-    /// `select raw|fuel|gold` — выбрать секцию (клавиатура Rust-клиента).
+    /// `select raw|fuel|gold` — select a section (Rust client keyboard).
     Select(max_core::alloc::MiningKind),
-    /// `set N` / `set raw|fuel|gold N` — абсолютный уровень добычи (клик по
-    /// полосе, `OnClick*Bar`).
+    /// `set N` / `set raw|fuel|gold N` — the absolute extraction level (a click on
+    /// the bar, `OnClick*Bar`).
     Set {
-        /// Ресурс; `None` — выбранный в диалоге.
+        /// Resource; `None` — the one selected in the dialog.
         kind: Option<max_core::alloc::MiningKind>,
-        /// Целевое число единиц добычи в комплексе.
+        /// Target number of extraction units in the complex.
         level: i32,
     },
-    /// `row raw|fuel|gold up|down` (или `up`/`down` для выбранной секции) —
-    /// стрелки `LFARO_OF`/`RTARO_OF`.
+    /// `row raw|fuel|gold up|down` (or `up`/`down` for the selected section) —
+    /// the `LFARO_OF`/`RTARO_OF` arrows.
     Adjust {
-        /// Ресурс; `None` — выбранный в диалоге.
+        /// Resource; `None` — the one selected in the dialog.
         kind: Option<max_core::alloc::MiningKind>,
-        /// `+1` (стрелка вправо) или `−1` (влево).
+        /// `+1` (right arrow) or `−1` (left).
         increase: bool,
     },
-    /// `done` — `Done`/`Enter`: закрыть (значения уже применены) и разослать
+    /// `done` — `Done`/`Enter`: close (the values are already applied) and broadcast
     /// `ORDER_NEW_ALLOCATE` (08/P5).
     Done,
-    /// `cancel`/`close` — `Esc`: то же, что `done` (в C++ отдельного `Cancel`
-    /// нет, `Esc` и `KP_Enter` — один и тот же выход `AllocMenu::Run`).
+    /// `cancel`/`close` — `Esc`: the same as `done` (in C++ there is no separate `Cancel`,
+    /// `Esc` and `KP_Enter` are the same exit of `AllocMenu::Run`).
     Cancel,
 }
 
-/// Действие окна X-FER (C++ `TransferMenu`).
+/// X-FER window action (C++ `TransferMenu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferCommand {
-    /// `amount N` — установить значение полосы (как клик по полосе).
+    /// `amount N` — set the bar value (like a click on the bar).
     Amount(i32),
-    /// `right`/`inc` — `+1` (кнопка `XFRRGT`).
+    /// `right`/`inc` — `+1` (the `XFRRGT` button).
     Right,
-    /// `left`/`dec` — `−1` (кнопка `XFRLFT`).
+    /// `left`/`dec` — `−1` (the `XFRLFT` button).
     Left,
-    /// `done` — `Done`/`Enter` (приказ 08/P3 `ORDER_TRANSFER`).
+    /// `done` — `Done`/`Enter` (order 08/P3 `ORDER_TRANSFER`).
     Done,
-    /// `cancel` — `Esc` (без приказа).
+    /// `cancel` — `Esc` (without an order).
     Cancel,
     /// `help` — `?`/`Shift+/` (`TRANSFER_SETUP`).
     Help,
 }
 
-/// Действие меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
+/// Action of the selected unit command menu (C++ `GameManager_PopupButtons`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnitMenuCommand {
-    /// `open` — повторный клик по выделенному юниту (реальный триггер).
+    /// `open` — a repeated click on the selected unit (the real trigger).
     Open,
-    /// `item NAME` — клик по кнопке пункта (подпись или символ позиции).
+    /// `item NAME` — a click on the item button (label or position character).
     Item(String),
-    /// `key CHAR` — горячая клавиша пункта (`GameManager_ProcessPopupMenuInput`).
+    /// `key CHAR` — the item hotkey (`GameManager_ProcessPopupMenuInput`).
     Key(char),
     /// `close` — `Esc`.
     Close,
 }
 
-/// Действие вывода готового юнита из завода/транспорта (`launch`).
+/// Action of bringing a ready unit out of a factory/transport (`launch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchCommand {
-    /// `near` — клетка рядом с контейнером (`TaskActivate`-порядок перебора).
+    /// `near` — a cell next to the container (`TaskActivate` iteration order).
     Near,
-    /// `grid X Y` — ровно указанная клетка карты.
+    /// `grid X Y` — exactly the specified map cell.
     Grid(i16, i16),
 }
 
-/// Действие диалога самоуничтожения здания (`UnitsManager_SelfDestructMenu`).
+/// Building self-destruct dialog action (`UnitsManager_SelfDestructMenu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfDestructCommand {
-    /// `arm` — нажать `Arm` (старт `SLFDOPN1..6`).
+    /// `arm` — press `Arm` (start `SLFDOPN1..6`).
     Arm,
-    /// `ok` — нажать `OK` после анимации (`ORDER_EXPLODE`).
+    /// `ok` — press `OK` after the animation (`ORDER_EXPLODE`).
     Ok,
-    /// `cancel` — `Cancel`/`Esc` (приказа нет).
+    /// `cancel` — `Cancel`/`Esc` (no order).
     Cancel,
-    /// `advance N` — прокрутить визуальные часы на N мс.
+    /// `advance N` — advance the visual clock by N ms.
     Advance(u32),
 }
 
-/// Действие на экране выбора точки высадки (`GameManager_SelectSite`).
+/// Landing point selection screen action (`GameManager_SelectSite`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LandingCommand {
-    /// `click X Y` — клик по кадру (двигает курсор).
+    /// `click X Y` — a click on the frame (moves the cursor).
     Click(i32, i32),
-    /// `grid X Y` — клик по клетке карты 112×112.
+    /// `grid X Y` — a click on a cell of the 112×112 map.
     Grid(i16, i16),
-    /// `done` — подтвердить точку (Enter/`Done`).
+    /// `done` — confirm the point (Enter/`Done`).
     Done,
-    /// `cancel` — отменить выбор (Esc).
+    /// `cancel` — cancel the selection (Esc).
     Cancel,
 }
 
-/// Одна команда скрипта.
+/// One script command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// `click X Y` — левая кнопка в пикселях кадра.
+    /// `click X Y` — the left button in frame pixels.
     Click(i32, i32),
-    /// `click unit NAME` — левый клик по юниту игрока с таким именем **без**
-    /// проверки выделения (курсорные режимы x-fer/repair/reload).
+    /// `click unit NAME` — a left click on a player unit with this name **without**
+    /// checking the selection (cursor modes x-fer/repair/reload).
     ClickUnit(String),
-    /// `click enemy NAME` — левый клик по чужому юниту с таким именем: при
-    /// выделенном своём юните это приказ атаки (`GameManager_ClickUnit`).
+    /// `click enemy NAME` — a left click on a foreign unit with this name: with
+    /// an own unit selected it is an attack order (`GameManager_ClickUnit`).
     ClickEnemy(String),
-    /// `rclick X Y` — правая кнопка (приказ движения/отмена).
+    /// `rclick X Y` — the right button (move order/cancel).
     RightClick(i32, i32),
-    /// `key NAME` — клавиша (`ENTER`, `ESC`, `T`, …).
+    /// `key NAME` — a key (`ENTER`, `ESC`, `T`, …).
     Key(Key),
-    /// `type "text"` — печатные символы в текущий экран/строку.
+    /// `type "text"` — printable characters into the current screen/line.
     Type(String),
-    /// `wait N` — до N кадров, пока игра не будет готова к вводу.
+    /// `wait N` — up to N frames until the game is ready for input.
     Wait(u32),
-    /// `wait firing` — крутить кадры, пока выделенный юнит не покажет кадр
-    /// выстрела (`firing_recoil_frames > 0`, `UnitInfo::PrepareFire`), иначе
-    /// ошибка. Убирает зависимость сценария от точного числа тиков наведения:
-    /// отдача длится всего 3 кадра (`firing_recoil_frames`), и фиксированный
-    /// `tick N` попадает в неё только при неизменном числе шагов `AimAtTarget`.
+    /// `wait firing` — run frames until the selected unit shows the firing
+    /// frame (`firing_recoil_frames > 0`, `UnitInfo::PrepareFire`), otherwise
+    /// an error. Removes the scenario's dependence on the exact number of aiming ticks:
+    /// the recoil lasts only 3 frames (`firing_recoil_frames`), and a fixed
+    /// `tick N` hits it only with an unchanged number of `AimAtTarget` steps.
     WaitFiring,
-    /// `tick N` — ровно N кадров игрового цикла.
+    /// `tick N` — exactly N game loop frames.
     Tick(u32),
-    /// `anim N` — прокрутить только **визуальные** часы на N мс реального
-    /// времени (покадровая анимация строителя, «вырастание» постройки) без
-    /// тиков симуляции. Нужен, чтобы снимать детерминированные кадры анимации
-    /// (`dt > 0`), тогда как `tick`/`wait` всегда идут с `dt = 0`.
+    /// `anim N` — advance only the **visual** clock by N ms of real
+    /// time (frame-by-frame builder animation, building "growth") without
+    /// simulation ticks. Needed to take deterministic animation frames
+    /// (`dt > 0`), while `tick`/`wait` always go with `dt = 0`.
     Anim(u32),
-    /// `mem` — записать текущий RSS процесса в лог (P4 soak, TC-1108).
+    /// `mem` — write the current process RSS into the log (P4 soak, TC-1108).
     Mem,
-    /// `shot NAME` — PNG кадра в каталог вывода.
+    /// `shot NAME` — a PNG of the frame into the output directory.
     Shot(String),
     /// `assert …`.
     Assert(Assertion),
-    /// `save FILE` — контейнер `MXLS` (`App::write_local_save`).
+    /// `save FILE` — the `MXLS` container (`App::write_local_save`).
     Save(String),
-    /// `save_v70 FILE` — настоящий V70-сейв текущей партии
+    /// `save_v70 FILE` — a real V70 save of the current match
     /// (`GameState::to_save_bytes`, P3).
     SaveV70(String),
-    /// `load FILE` — локальная партия из V70-сейва (`App::start_local_game_from_save`).
+    /// `load FILE` — a local match from a V70 save (`App::start_local_game_from_save`).
     Load(String),
-    /// `exit` — остановить скрипт (успех).
+    /// `exit` — stop the script (success).
     Exit,
     /// `menu new_game|multiplayer|hot_seat|join`.
     Menu(MenuTarget),
@@ -770,37 +770,37 @@ pub enum Command {
     Setup(SetupAction),
     /// `players SLOT human|computer|none`.
     Players {
-        /// Слот команды `0..=3`.
+        /// Team slot `0..=3`.
         slot: u8,
-        /// Кем управляется.
+        /// Who controls it.
         kind: TeamKind,
     },
-    /// `select X Y` — левый клик по точке кадра + проверка выделения.
+    /// `select X Y` — a left click at a frame point + selection check.
     Select(i32, i32),
-    /// `select unit N` — левый клик по N-му подвижному юниту игрока.
+    /// `select unit N` — a left click on the N-th mobile player unit.
     SelectUnit(u32),
-    /// `select last` — клик по самому новому юниту игрока (например, только что
-    /// достроенному заводу — он не «подвижный», поэтому `select unit` не
-    /// подходит).
+    /// `select last` — a click on the newest player unit (e.g. a factory just
+    /// completed — it is not "mobile", so `select unit` does not
+    /// fit).
     SelectLast,
-    /// `select type NAME` — клик по юниту игрока с таким именем (`BuildMenu`
-    /// показывает те же имена: «Training Hall», «Mining Station», …).
+    /// `select type NAME` — a click on a player unit with this name (`BuildMenu`
+    /// shows the same names: «Training Hall», «Mining Station», …).
     SelectType(String),
-    /// `move X Y` — правый клик по точке кадра + проверка приказа.
+    /// `move X Y` — a right click at a frame point + order check.
     Move(i32, i32),
-    /// `move grid X Y` — правый клик по клетке карты.
+    /// `move grid X Y` — a right click on a map cell.
     MoveGrid(i16, i16),
-    /// `move near` — приказ в соседнюю свободную клетку выделенного юнита.
+    /// `move near` — an order to an adjacent free cell of the selected unit.
     MoveNear,
-    /// `move near refused` — правый клик по соседней клетке **без** приказа:
-    /// ожидается отказ (`CURSOR_UNIT_NO_GO`, строитель в `BUILD_IN_PROGRESS`).
+    /// `move near refused` — a right click on an adjacent cell **without** an order:
+    /// a refusal is expected (`CURSOR_UNIT_NO_GO`, a builder in `BUILD_IN_PROGRESS`).
     MoveNearRefused,
-    /// `launch near` / `launch grid X Y` — вывод готового юнита из завода:
-    /// правый клик по клетке рядом даёт `ORDER_ACTIVATE` **заводу**
-    /// (`CURSOR_ACTIVATE`, `game_manager.cpp:6918-6926`), и
-    /// `UnitsManager_ActivateUnit` выпускает юнита.
+    /// `launch near` / `launch grid X Y` — bringing a ready unit out of a factory:
+    /// a right click on the adjacent cell gives `ORDER_ACTIVATE` **to the factory**
+    /// (`CURSOR_ACTIVATE`, `game_manager.cpp:6918-6926`), and
+    /// `UnitsManager_ActivateUnit` launches the unit.
     Launch(LaunchCommand),
-    /// `end_turn` — кнопка End Turn + ходы ИИ до готовности к вводу.
+    /// `end_turn` — the End Turn button + AI turns until ready for input.
     EndTurn,
     /// `mobilize buy|buy N|delete|step N|done|cancel`.
     Mobilize(MobilizeAction),
@@ -814,75 +814,75 @@ pub enum Command {
     Research(ResearchCommand),
     /// `help SECTION|page up|page down|up|down|keys|done|close`.
     Help(HelpCommand),
-    /// `unit-menu open|item NAME|key CHAR|close` — меню команд юнита.
+    /// `unit-menu open|item NAME|key CHAR|close` — the unit command menu.
     UnitMenu(UnitMenuCommand),
-    /// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
-    /// распределения добычи шахты (C++ `AllocMenu`).
+    /// `allocate open|select R|set N|row R up|down|done|cancel` — the mine
+    /// extraction allocation dialog (C++ `AllocMenu`).
     Allocate(AllocateCommand),
-    /// `transfer amount N|right|left|done|cancel|help` — окно X-FER
+    /// `transfer amount N|right|left|done|cancel|help` — the X-FER window
     /// (C++ `TransferMenu`).
     Transfer(TransferCommand),
-    /// `prefs open|toggle NAME|set NAME N|done|cancel|help` — диалог
+    /// `prefs open|toggle NAME|set NAME N|done|cancel|help` — the
     /// `Preferences`/`Setup` (C++ `OptionsMenu`).
     Prefs(PrefsCommand),
-    /// `spawn NAME` / `spawn enemy NAME` — поставить юнита на свободную клетку
-    /// рядом с выделенным (или в центре карты). QA-only: проверка пунктов меню
-    /// (`load`/`steal`/`disable`/`remove`/бульдозер), которые требуют юнитов,
-    /// недоступных в мобилизации.
+    /// `spawn NAME` / `spawn enemy NAME` — place a unit on a free cell
+    /// next to the selected one (or in the map center). QA-only: checking menu items
+    /// (`load`/`steal`/`disable`/`remove`/bulldozer) that require units
+    /// unavailable in mobilization.
     Spawn {
-        /// Чужая команда (по умолчанию — команда игрока).
+        /// Foreign team (by default — the player team).
         enemy: bool,
-        /// Имя типа — UFN (`Tank`, `Armoured Personnel Carrier`, …) или
-        /// `Debug`-имя варианта (`Tank`, `ArmouredPersonnelCarrier`).
+        /// Type name — the UFN (`Tank`, `Armoured Personnel Carrier`, …) or the
+        /// variant's `Debug` name (`Tank`, `ArmouredPersonnelCarrier`).
         name: String,
     },
-    /// `spawn at X Y NAME` — QA-only: поставить юнита **в указанную клетку**
-    /// (для проверки слияния комплексов коннекторами: `ADUMP` вплотную к
-    /// шахте).
+    /// `spawn at X Y NAME` — QA-only: place a unit **in the specified cell**
+    /// (to check complex merging by connectors: `ADUMP` right next to
+    /// a mine).
     SpawnAt {
-        /// Клетка карты.
+        /// Map cell.
         x: i16,
-        /// Клетка карты.
+        /// Map cell.
         y: i16,
-        /// Имя типа.
+        /// Type name.
         name: String,
     },
-    /// `selfdestruct arm|ok|cancel` — диалог `UnitsManager_SelfDestructMenu`.
+    /// `selfdestruct arm|ok|cancel` — the `UnitsManager_SelfDestructMenu` dialog.
     SelfDestruct(SelfDestructCommand),
-    /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита
-    /// (нужен для проверки `Upg. All`).
+    /// `complex raw N` — QA-only: raw stock of the selected unit's complex
+    /// (needed to check `Upg. All`).
     ComplexRaw(i32),
-    /// `complex fuel N` — QA-only: запас топлива комплекса выделенного юнита
-    /// (C++ `Complex::Transfer(0, N, 0)`), например чтобы проверить
-    /// энергоснабжение `POWGEN`/`POWERSTN`.
+    /// `complex fuel N` — QA-only: fuel stock of the selected unit's complex
+    /// (C++ `Complex::Transfer(0, N, 0)`), e.g. to check the
+    /// power supply of `POWGEN`/`POWERSTN`.
     ComplexFuel(i32),
-    /// `complex gold N` — QA-only: запас золота комплекса
+    /// `complex gold N` — QA-only: the complex gold stock
     /// (`Complex::Transfer(0, 0, N)`).
     ComplexGold(i32),
-    /// `teamvalues NAME ATTR VALUE` — QA-only: текущее значение атрибута команды
-    /// (апгрейд доступен, когда `current` выше `base`).
+    /// `teamvalues NAME ATTR VALUE` — QA-only: the current value of a team attribute
+    /// (the upgrade is available when `current` is above `base`).
     TeamValues {
-        /// Имя типа (`Power Station`, …).
+        /// Type name (`Power Station`, …).
         name: String,
-        /// Имя атрибута (`hits`, `attack`, …).
+        /// Attribute name (`hits`, `attack`, …).
         attribute: String,
-        /// Новое значение.
+        /// New value.
         value: i32,
     },
 }
 
-/// Строка скрипта с разобранной командой.
+/// A script line with the parsed command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
-    /// Номер строки в файле (1-based).
+    /// Line number in the file (1-based).
     pub line: usize,
-    /// Исходный текст без комментария.
+    /// Source text without the comment.
     pub source: String,
-    /// Команда.
+    /// Command.
     pub command: Command,
 }
 
-/// Разбирает весь скрипт.
+/// Parses the whole script.
 pub fn parse_script(text: &str) -> Result<Vec<Step>, String> {
     let mut steps = Vec::new();
 
@@ -908,7 +908,7 @@ pub fn parse_script(text: &str) -> Result<Vec<Step>, String> {
     Ok(steps)
 }
 
-/// Отрезает комментарий `#…`, не трогая содержимое кавычек.
+/// Cuts the `#…` comment without touching the contents of quotes.
 fn strip_comment(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut quoted = false;
@@ -934,7 +934,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
 
     match name.as_str() {
         "click" => {
-            // `click unit NAME` — клик по конкретному юниту (курсорные режимы).
+            // `click unit NAME` — a click on a specific unit (cursor modes).
             if let Some(name) = rest
                 .strip_prefix("unit ")
                 .or_else(|| rest.strip_prefix("UNIT "))
@@ -949,7 +949,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
 
                 return Ok(Command::ClickUnit(name.to_string()));
             }
-            // `click enemy NAME` — клик по чужому юниту (приказ атаки).
+            // `click enemy NAME` — a click on a foreign unit (attack order).
             if let Some(name) = rest
                 .strip_prefix("enemy ")
                 .or_else(|| rest.strip_prefix("ENEMY "))
@@ -974,7 +974,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
         "key" => Ok(Command::Key(parse_key(rest)?)),
         "type" => Ok(Command::Type(parse_text(rest)?)),
         "wait" => {
-            // `wait firing` — кадры до кадра выстрела выделенного юнита.
+            // `wait firing` — frames until the firing frame of the selected unit.
             if rest.eq_ignore_ascii_case("firing") {
                 Ok(Command::WaitFiring)
             } else {
@@ -1035,7 +1035,7 @@ fn parse_command(source: &str) -> Result<Command, String> {
     }
 }
 
-/// Первое слово и остаток строки.
+/// The first word and the rest of the line.
 fn split_word(source: &str) -> (&str, &str) {
     match source.find(char::is_whitespace) {
         Some(index) => (&source[..index], &source[index..]),
@@ -1048,7 +1048,7 @@ pub(crate) fn parse_i32(text: &str, what: &str) -> Result<i32, String> {
         .map_err(|_| format!("{what}: ожидалось целое число, получено «{text}»"))
 }
 
-/// Координата клетки (`i16`) с проверкой диапазона.
+/// Cell coordinate (`i16`) with a range check.
 fn parse_i16(text: &str, what: &str) -> Result<i16, String> {
     let value = parse_i32(text, what)?;
 
@@ -1060,7 +1060,7 @@ fn parse_u32(text: &str, what: &str) -> Result<u32, String> {
         .map_err(|_| format!("{what}: ожидалось неотрицательное число, получено «{text}»"))
 }
 
-/// Пара клеток карты `X,Y` / `X Y` (для `assert unit-pos`).
+/// Map cell pair `X,Y` / `X Y` (for `assert unit-pos`).
 fn parse_grid_pair(text: &str, what: &str) -> Result<(i16, i16), String> {
     let parts: Vec<&str> = text
         .split(|character: char| character == ',' || character == ':' || character.is_whitespace())
@@ -1091,7 +1091,7 @@ fn parse_grid_pair(text: &str, what: &str) -> Result<(i16, i16), String> {
     Ok((x, y))
 }
 
-/// Пара координат кадра 640×480.
+/// 640×480 frame coordinate pair.
 fn parse_point(rest: &str) -> Result<(i32, i32), String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
@@ -1121,7 +1121,7 @@ fn parse_count(rest: &str, what: &str) -> Result<u32, String> {
     parse_u32(rest, what)
 }
 
-/// Имя файла кадра/сохранения: без путей и пробелов.
+/// Frame/save file name: no paths and no spaces.
 fn parse_name(rest: &str, what: &str) -> Result<String, String> {
     let rest = rest.trim();
 
@@ -1184,7 +1184,7 @@ fn parse_key(rest: &str) -> Result<Key, String> {
     Ok(key)
 }
 
-/// Текст для `type`: в кавычках — как есть (пробелы разрешены), иначе слово.
+/// Text for `type`: in quotes — as is (spaces allowed), otherwise a word.
 fn parse_text(rest: &str) -> Result<String, String> {
     let rest = rest.trim();
 
@@ -1270,8 +1270,8 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         _ => {}
     }
 
-    // `prefs-value NAME=N` содержит собственный `=`; иначе общий разбор
-    // оператора принял бы «prefs-value NAME» за имя проверки.
+    // `prefs-value NAME=N` contains its own `=`; otherwise the generic operator
+    // parsing would take "prefs-value NAME" for the check name.
     if lowered.starts_with("prefs-value ") {
         let body = &rest["prefs-value ".len()..];
         let (name, cmp, expected) = if let Some((name, value)) = body.split_once(">=") {
@@ -1295,10 +1295,10 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         ));
     }
 
-    // `prefs-text NAME=VALUE` — строковая опция (`player_name`).
+    // `prefs-text NAME=VALUE` — a string option (`player_name`).
     if lowered.starts_with("prefs-text ") {
-        // Префикс тот же по длине в нижнем регистре, поэтому берём тело из
-        // исходной строки — значение имени чувствительно к регистру.
+        // The prefix is the same length in lowercase, so we take the body from
+        // the source line — the name value is case-sensitive.
         let body = &rest["prefs-text ".len()..];
         let (name, expected) = body
             .split_once('=')
@@ -1316,7 +1316,7 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
         return Ok(Assertion::PrefsText(key, expected.trim().to_string()));
     }
 
-    // Оператор ищем от самого длинного, иначе «>=» распадётся на «>» и «=».
+    // We search the operator from the longest, otherwise ">=" would split into ">" and "=".
     let (key, operator, value) = if let Some(index) = rest.find(">=") {
         (&rest[..index], Cmp::Ge, &rest[index + 2..])
     } else if let Some(index) = rest.find("<=") {
@@ -1743,7 +1743,7 @@ fn parse_on_off(value: &str, what: &str) -> Result<bool, String> {
     }
 }
 
-/// Имя переключателя левой панели (`assert panel=NAME:on|off`).
+/// Left panel toggle name (`assert panel=NAME:on|off`).
 fn parse_panel_button(name: &str) -> Result<crate::panels::PanelButton, String> {
     use crate::panels::PanelButton;
 
@@ -2001,7 +2001,7 @@ fn parse_build(rest: &str) -> Result<Command, String> {
     Ok(Command::Build(command))
 }
 
-/// `spawn [enemy] NAME` — QA-only юнит на свободной клетке.
+/// `spawn [enemy] NAME` — QA-only unit on a free cell.
 fn parse_spawn(rest: &str) -> Result<Command, String> {
     let rest = rest.trim();
 
@@ -2010,9 +2010,9 @@ fn parse_spawn(rest: &str) -> Result<Command, String> {
     }
 
     if let Some(rest) = rest.strip_prefix("at ") {
-        // `spawn at X Y [enemy] NAME` — имя типа может состоять из нескольких
-        // слов («Missile Crawler», «Training Hall»), поэтому режем только первые
-        // два числа, а остаток считаем именем (с необязательным `enemy`).
+        // `spawn at X Y [enemy] NAME` — the type name may consist of several
+        // words («Missile Crawler», «Training Hall»), so we cut only the first
+        // two numbers, and treat the rest as the name (with an optional `enemy`).
         let mut parts = rest.splitn(3, char::is_whitespace);
         let x = parts.next().unwrap_or_default();
         let y = parts.next().unwrap_or_default();
@@ -2072,7 +2072,7 @@ fn parse_selfdestruct(rest: &str) -> Result<Command, String> {
     Ok(Command::SelfDestruct(command))
 }
 
-/// `complex raw N` — QA-only запас сырья комплекса.
+/// `complex raw N` — QA-only complex raw stock.
 fn parse_complex(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
@@ -2086,7 +2086,7 @@ fn parse_complex(rest: &str) -> Result<Command, String> {
     }
 }
 
-/// `teamvalues NAME ATTR VALUE` — QA-only текущее значение атрибута команды.
+/// `teamvalues NAME ATTR VALUE` — QA-only current value of a team attribute.
 fn parse_teamvalues(rest: &str) -> Result<Command, String> {
     let value_start = rest.trim_end().rsplit_once(' ').ok_or_else(|| {
         format!("teamvalues: ожидалось «teamvalues NAME ATTR VALUE», получено «{rest}»")
@@ -2351,8 +2351,8 @@ fn parse_unit_menu(rest: &str) -> Result<Command, String> {
     Ok(Command::UnitMenu(command))
 }
 
-/// `allocate open|select R|set N|row R up|down|done|cancel` — диалог
-/// распределения добычи (C++ `AllocMenu`).
+/// `allocate open|select R|set N|row R up|down|done|cancel` — the
+/// extraction allocation dialog (C++ `AllocMenu`).
 fn parse_allocate(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
     let Some(first) = parts.first().map(|part| part.to_ascii_lowercase()) else {
@@ -2372,7 +2372,7 @@ fn parse_allocate(rest: &str) -> Result<Command, String> {
         ("done", [_]) => AllocateCommand::Done,
         ("cancel", [_]) | ("close", [_]) => AllocateCommand::Cancel,
         ("select", [_, kind]) => AllocateCommand::Select(mining(kind)?),
-        // `allocate set N` — выбранный ресурс; `allocate set raw N` — явный.
+        // `allocate set N` — the selected resource; `allocate set raw N` — explicit.
         ("set", [_, level]) => AllocateCommand::Set {
             kind: None,
             level: parse_i32(level, "allocate set")?.clamp(0, 16),
@@ -2410,7 +2410,7 @@ fn parse_allocate(rest: &str) -> Result<Command, String> {
     Ok(Command::Allocate(command))
 }
 
-/// `transfer amount N|right|left|done|cancel|help` — окно X-FER.
+/// `transfer amount N|right|left|done|cancel|help` — the X-FER window.
 fn parse_transfer(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
@@ -2451,7 +2451,7 @@ fn parse_direction(text: &str) -> Result<bool, String> {
     }
 }
 
-/// Имя приказа (`ORDER_SENTRY`, `Sentry`, `sentry`) → [`max_core::enums::UnitOrder`].
+/// Order name (`ORDER_SENTRY`, `Sentry`, `sentry`) → [`max_core::enums::UnitOrder`].
 fn parse_unit_order(text: &str) -> Result<max_core::enums::UnitOrder, String> {
     use max_core::enums::UnitOrder;
 
@@ -2547,7 +2547,7 @@ fn parse_select(rest: &str) -> Result<Command, String> {
     Ok(Command::Select(x, y))
 }
 
-/// `launch near` / `launch grid X Y` — вывод готового юнита из завода.
+/// `launch near` / `launch grid X Y` — bringing a ready unit out of a factory.
 fn parse_launch(rest: &str) -> Result<Command, String> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
@@ -2640,7 +2640,7 @@ mod tests {
         );
         assert_eq!(one("wait 40"), Command::Wait(40));
         assert_eq!(one("tick 3"), Command::Tick(3));
-        // `anim N` — только визуальные часы (dt > 0), без тиков симуляции.
+        // `anim N` — visual clock only (dt > 0), without simulation ticks.
         assert_eq!(one("anim 150"), Command::Anim(150));
         assert_eq!(one("anim 0"), Command::Anim(0));
         assert!(parse_script("anim -5\n").is_err());
@@ -2748,7 +2748,7 @@ mod tests {
             Command::Assert(Assertion::ConstructionSiteDrawn)
         );
         assert!(parse_script("assert site=huge\n").is_err());
-        // A4–A9: кадровые проверки оверлея SURVEY и селектора.
+        // A4–A9: frame checks of the SURVEY overlay and the selector.
         assert_eq!(
             one("assert resource-icons>=1"),
             Command::Assert(Assertion::ResourceIcons(Cmp::Ge, 1))
@@ -2774,7 +2774,7 @@ mod tests {
             Command::Assert(Assertion::UnitSelector(false))
         );
         assert!(parse_script("assert survey-overlay=maybe\n").is_err());
-        // P9: диалог Preferences/Setup.
+        // P9: the Preferences/Setup dialog.
         assert_eq!(
             one("assert prefs=open"),
             Command::Assert(Assertion::PrefsOpen(true))
@@ -3166,7 +3166,7 @@ type \"a#b\"  # решётка в кавычках — часть текста
             Command::Assert(Assertion::HelpRow(Cmp::Ge, 16))
         );
 
-        // Опечатки падают с номером строки, а не «молча».
+        // Typos fail with a line number instead of "silently".
         for source in [
             "research nope",
             "research row 0 sideways",
@@ -3194,7 +3194,7 @@ type \"a#b\"  # решётка в кавычках — часть текста
             one("allocate select gold"),
             Command::Allocate(AllocateCommand::Select(MiningKind::Gold))
         );
-        // `set N` — выбранный ресурс; `set raw N` — явный.
+        // `set N` — the selected resource; `set raw N` — explicit.
         assert_eq!(
             one("allocate set 4"),
             Command::Allocate(AllocateCommand::Set {
@@ -3209,7 +3209,7 @@ type \"a#b\"  # решётка в кавычках — часть текста
                 level: 2
             })
         );
-        // Уровень обрезается по ёмкости шахты (16 единиц).
+        // The level is clipped by the mine capacity (16 units).
         assert_eq!(
             one("allocate set raw 99"),
             Command::Allocate(AllocateCommand::Set {
@@ -3335,8 +3335,8 @@ type \"a#b\"  # решётка в кавычках — часть текста
             "prefs nope",
             "prefs toggle",
             "prefs toggle bogus",
-            "prefs toggle quick_scroll", // слайдер, не чекбокс
-            "prefs set effects 1",       // чекбокс, не слайдер
+            "prefs toggle quick_scroll", // slider, not a checkbox
+            "prefs set effects 1",       // checkbox, not a slider
             "prefs set quick_scroll nope",
             "prefs set quick_scroll",
         ] {

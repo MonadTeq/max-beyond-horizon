@@ -1,25 +1,25 @@
-//! Экран победы/поражения — порт `menu_draw_game_over_screen` (`menu.cpp:165`).
+//! Victory/defeat screen — a port of `menu_draw_game_over_screen` (`menu.cpp:165`).
 //!
-//! Раскладка 1:1:
-//! * фон — один из `ENDGAME1`…`ENDGAME9` (`menu_briefing_backgrounds`);
-//! * заголовок **Game Over** (`_(71f1)`) в (100,10), ширина 440, серебряный;
-//! * колонки команд: `ulx` начинается с 80 и растёт на 110; номер команды
-//!   (1…4) в (ulx,44), имя команды (`*_team_name`) в (ulx,61) высотой 55;
-//! * строки статистики: `Points` (116), `Factories Built` (166),
-//!   `Mines Built` (198), `Buildings Built` (230), `Lost` зданий (246),
-//!   `Units Built` (278), `Lost` мобильных (294), `Upgrades` (326);
-//! * места (`1st place`…`Eliminated`) — в строке очков, для generic-партии;
-//! * `ENDARM` в (273, 480−22) и кнопка `ENDOK` в (293, 458) с подписью **OK**.
+//! 1:1 layout:
+//! * background — one of `ENDGAME1`…`ENDGAME9` (`menu_briefing_backgrounds`);
+//! * the **Game Over** title (`_(71f1)`) at (100,10), width 440, silver;
+//! * team columns: `ulx` starts at 80 and grows by 110; the team number
+//!   (1…4) at (ulx,44), the team name (`*_team_name`) at (ulx,61) with height 55;
+//! * statistics rows: `Points` (116), `Factories Built` (166),
+//!   `Mines Built` (198), `Buildings Built` (230), `Lost` buildings (246),
+//!   `Units Built` (278), `Lost` mobile (294), `Upgrades` (326);
+//! * places (`1st place`…`Eliminated`) — in the points row, for a generic game;
+//! * `ENDARM` at (273, 480−22) and the `ENDOK` button at (293, 458) labelled **OK**.
 //!
-//! Числа берутся из `GameState::teams` (`TeamInfo.team_points`,
-//! `stats_*`, `casualties`), места — из `WinLossStatus.team_rank`, который
-//! считается на момент закрытия раунда ([`crate::local::LocalOutcome`]).
+//! The numbers come from `GameState::teams` (`TeamInfo.team_points`,
+//! `stats_*`, `casualties`), the places — from `WinLossStatus.team_rank`, which
+//! is computed when the round is closed ([`crate::local::LocalOutcome`]).
 
 use max_core::enums::{WinLossState, UNIT_END};
 use max_core::team::{TeamId, TeamKind};
 use max_core::GameState;
-// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
-// max_core); глоб-реэкспортов нет (Ф5.2).
+// Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
+// max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw_shadowed, GnwFontId};
@@ -27,9 +27,9 @@ use max_render::text::{draw_text_gnw_shadowed, GnwFontId};
 use crate::local::{team_name, LocalGame, LOCAL_TEAM_COUNT};
 use crate::menu::{blit_simple, draw_big_image, MenuAssets};
 
-/// Цвет текста `Fonts_BrightSilverColor` (`fonts.cpp`).
+/// Text color `Fonts_BrightSilverColor` (`fonts.cpp`).
 pub const SILVER: (u8, u8, u8) = (162, 172, 199);
-/// Цвета номеров команд: `team_fonts[]` (`menu.cpp:169`).
+/// Team number colors: `team_fonts[]` (`menu.cpp:169`).
 pub const TEAM_FONTS: [(u8, u8, u8); LOCAL_TEAM_COUNT] = [
     (165, 230, 199),
     (165, 238, 199),
@@ -37,7 +37,7 @@ pub const TEAM_FONTS: [(u8, u8, u8); LOCAL_TEAM_COUNT] = [
     (165, 214, 199),
 ];
 
-/// Тексты мест (`menu_game_over_screen_places`).
+/// Place texts (`menu_game_over_screen_places`).
 pub const PLACES: [&str; 5] = [
     "Eliminated",
     "1st place",
@@ -46,9 +46,9 @@ pub const PLACES: [&str; 5] = [
     "4th place",
 ];
 
-/// Заголовок экрана.
+/// Screen title.
 pub const TITLE_RECT: PixelRect = PixelRect::new(100, 10, 440, 16);
-/// Строки статистики: (подпись, y).
+/// Statistics rows: (label, y).
 pub const ROWS: [(&str, i32); 7] = [
     ("Points", 116),
     ("Factories Built", 166),
@@ -58,31 +58,31 @@ pub const ROWS: [(&str, i32); 7] = [
     ("Units Built", 278),
     ("Lost", 294),
 ];
-/// Строка `Upgrades` (рисуется отдельно — текст с числом кредитов).
+/// The `Upgrades` row (drawn separately — text with the credits amount).
 pub const UPGRADES_ROW_Y: i32 = 326;
-/// Ширина левой колонки подписей.
+/// Width of the label column on the left.
 pub const LABEL_WIDTH: i32 = 172;
-/// Кнопка OK — `ENDOK`, (293,458).
+/// OK button — `ENDOK`, (293,458).
 pub const OK_RECT: PixelRect = PixelRect::new(293, 458, 72, 19);
 /// `ENDARM` — (273, 480−22).
 pub const ARM_POSITION: (i32, i32) = (273, 458);
 
-/// Имя команды для экрана: у человека — имя из настроек, у ИИ — `*_team_name`.
+/// Team name for the screen: for a human — the name from the settings, for the AI — `*_team_name`.
 ///
-/// В hot-seat имя игрока одно на всех, поэтому там все команды — `Red Team`,
-/// `Green Team`, … (`menu.cpp:1941`: `player_name` подставляется только в
-/// одиночной игре). Переименование в игре (`OptionsMenu` `PREFSPIC`) хранится в
-/// [`crate::local::LocalGame::team_names`], поэтому имя берётся из партии, а не
-/// из статичных настроек.
+/// In hot-seat the player name is the same for everyone, so all teams there are `Red Team`,
+/// `Green Team`, … (`menu.cpp:1941`: `player_name` is substituted only in
+/// a single game). Renaming in game (`OptionsMenu` `PREFSPIC`) is stored in
+/// [`crate::local::LocalGame::team_names`], so the name is taken from the game
+/// rather than from the static settings.
 pub fn display_name(local: &LocalGame, team: TeamId) -> String {
     local.display_name(team)
 }
 
-/// Индекс фона `ENDGAME1..9`.
+/// `ENDGAME1..9` background index.
 ///
-/// C++: `Randomizer_Generate(9)`. Глобальный ГПСЧ трогать нельзя (он часть
-/// симуляции и CRC), поэтому фон детерминированно выбирается по ходу и
-/// команде игрока — визуально так же, но без влияния на детерминизм.
+/// C++: `Randomizer_Generate(9)`. The global RNG must not be touched (it is part of
+/// the simulation and the CRC), so the background is chosen deterministically by turn and
+/// player team — visually the same, but without affecting determinism.
 pub fn background_index(local: &LocalGame) -> usize {
     let turn = local
         .outcome
@@ -100,8 +100,8 @@ pub fn background_index(local: &LocalGame) -> usize {
     (turn + team) % 9
 }
 
-/// Сколько зданий потеряно (`LOST` зданий, как в C++: `flags & BUILDING` —
-/// раскладка 2×2, то есть [`max_core::classification::Footprint`]).
+/// How many buildings were lost (`LOST` buildings, as in C++: `flags & BUILDING` —
+/// a 2×2 footprint, i.e. [`max_core::classification::Footprint`]).
 fn building_casualties(state: &GameState, team: TeamId) -> u32 {
     let info = &state.teams[team.0 as usize];
     let mut total = 0;
@@ -120,7 +120,7 @@ fn building_casualties(state: &GameState, team: TeamId) -> u32 {
     total
 }
 
-/// Потери мобильных юнитов (есть флаг среды — `MOBILE_*`).
+/// Losses of mobile units (there is an environment flag — `MOBILE_*`).
 fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
     let info = &state.teams[team.0 as usize];
     let mut total = 0;
@@ -139,7 +139,7 @@ fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
     total
 }
 
-/// Рисует экран победы/поражения.
+/// Draws the victory/defeat screen.
 pub fn draw_game_over(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -150,7 +150,7 @@ pub fn draw_game_over(
     let palette = &menu.palette;
     let font = GnwFontId::Font5.font();
 
-    // Фон: ENDGAME1..9; если ресурсов нет — FRAMEPIC/MAINPIC (честный fallback).
+    // Background: ENDGAME1..9; if resources are missing — FRAMEPIC/MAINPIC (honest fallback).
     let index = background_index(local);
     let mut painted = if let Some(background) = menu.endgame_backgrounds.get(index) {
         draw_big_image(frame, background)
@@ -183,7 +183,7 @@ pub fn draw_game_over(
         )
     };
 
-    // Заголовок `_(71f1)` = "Game Over".
+    // Title `_(71f1)` = "Game Over".
     silver(
         frame,
         TITLE_RECT.ulx,
@@ -193,8 +193,8 @@ pub fn draw_game_over(
         TITLE_RECT.width,
     );
 
-    // C++ передаёт в `menu_draw_game_over_screen` статус **команды игрока**
-    // (`status.team_status[GameManager_PlayerTeam]`), а не каждой команды.
+    // C++ passes the status of the **player's team** to `menu_draw_game_over_screen`
+    // (`status.team_status[GameManager_PlayerTeam]`), not of each team.
     let player_team = local
         .outcome
         .as_ref()
@@ -203,7 +203,7 @@ pub fn draw_game_over(
         .unwrap_or(TeamId::RED);
     let generic = outcome.status.team_status[player_team.0 as usize] == WinLossState::Generic;
 
-    // Колонки команд: только `team_type != NONE`.
+    // Team columns: only `team_type != NONE`.
     let mut ulx = 80;
 
     for team in 0..LOCAL_TEAM_COUNT {
@@ -217,7 +217,7 @@ pub fn draw_game_over(
         let number = format!("{}", team + 1);
         let color = TEAM_FONTS[team];
 
-        // Номер команды (165/230/199, 165/238/199, …).
+        // Team number (165/230/199, 165/238/199, …).
         let number_width = font.text_width(&number);
         draw_text_gnw_shadowed(
             frame,
@@ -230,14 +230,14 @@ pub fn draw_game_over(
             palette.rgba(color.2),
         );
 
-        // Имя команды — `Text_TextBox(..., horizontal_align = true)`.
+        // Team name — `Text_TextBox(..., horizontal_align = true)`.
         let name = display_name(local, team_id);
         silver(frame, ulx, 61, &name, 2, lrx - ulx);
 
         let info = &state.teams[team];
         let rank = outcome.status.team_rank[team];
 
-        // Очки, затем место (generic) или Mission Success/Failed (скрипт).
+        // Points, then the place (generic) or Mission Success/Failed (script).
         if generic {
             silver(frame, ulx, 116, &info.team_points.to_string(), 2, lrx - ulx);
 
@@ -313,14 +313,14 @@ pub fn draw_game_over(
         );
     }
 
-    // Подписи строк слева (x=0, ширина 172, выравнивание вправо).
-    // «Lost» встречается дважды: потери зданий (246) и мобильных юнитов (294).
+    // Row labels on the left (x=0, width 172, right-aligned).
+    // «Lost» occurs twice: building losses (246) and mobile unit losses (294).
     for (label, y) in ROWS {
         silver(frame, 0, y, label, 1, LABEL_WIDTH);
     }
     silver(frame, 0, UPGRADES_ROW_Y, "Upgrades", 1, LABEL_WIDTH);
 
-    // `ENDARM` (273, 480−22) и кнопка `ENDOK` (293,458) с подписью "OK".
+    // `ENDARM` (273, 480−22) and the `ENDOK` button (293,458) labelled "OK".
     if let Some(arm) = menu.endarm.as_ref() {
         painted += blit_simple(frame, palette, arm, ARM_POSITION.0, ARM_POSITION.1, true);
     }
@@ -339,12 +339,12 @@ pub fn draw_game_over(
     painted
 }
 
-/// Попадание в кнопку OK.
+/// Hit on the OK button.
 pub fn ok_at(x: i32, y: i32) -> bool {
     OK_RECT.contains(x, y)
 }
 
-/// Имя победившей команды для журнала (по рангам).
+/// Name of the winning team for the log (by ranks).
 pub fn winner_line(local: &LocalGame) -> String {
     let Some(outcome) = local.outcome.as_ref() else {
         return String::new();
@@ -362,7 +362,7 @@ pub fn winner_line(local: &LocalGame) -> String {
     )
 }
 
-/// Цвет серебряного текста в палитре окна (`Rgba` индекса 162).
+/// Silver text color in the window palette (`Rgba` of index 162).
 pub fn silver_color(palette: &crate::panels::UiPalette) -> Rgba {
     palette.rgba(SILVER.0)
 }

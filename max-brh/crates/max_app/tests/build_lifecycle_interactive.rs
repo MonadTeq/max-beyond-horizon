@@ -1,27 +1,27 @@
-//! Интерактивный путь достройки здания с **реальным** `dt > 0`
-//! (`App::local_update(1.0 / 60.0)`) — тот же цикл, что крутит окно
-//! (`main.rs`: `local_update(frame_dt)`), а не QA-сценарии с `dt = 0`.
+//! Interactive building completion path with **real** `dt > 0`
+//! (`App::local_update(1.0 / 60.0)`) — the same loop the window runs
+//! (`main.rs`: `local_update(frame_dt)`), not QA scenarios with `dt = 0`.
 //!
-//! Регрессия после A1/A4 (`builder stays on site` + `tape_center_offset` ±32 px):
-//! QA `production.qa` выделяет строителя командой `select type Constructor` и
-//! поэтому не видит проблемы клика. В живой игре строитель после достройки
-//! стоит в **центре ленты**: `PositionInTape` сдвигает спрайт на ±32 px, то есть
-//! ровно в угол четырёх клеток 2×2. Игрок кликает по нарисованному строителю —
-//! и попадает в соседнюю клетку площадки, где лежат декали (`LRGCONES`/
-//! `LRGTAPE`/`LRGSLAB`). Порт `hud::unit_at_screen` брал **любого**
-//! не-`ORDER_IDLE` юнита клетки, поэтому выделялись конусы/плита:
+//! Regression after A1/A4 (`builder stays on site` + `tape_center_offset` ±32 px):
+//! QA `production.qa` selects the builder with `select type Constructor` and
+//! therefore does not see the click problem. In a live game the builder after completion
+//! stands in the **center of the tape**: `PositionInTape` shifts the sprite by ±32 px, i.e.
+//! exactly to the corner of four 2×2 cells. The player clicks the drawn builder —
+//! and hits the neighboring site cell with the decals (`LRGCONES`/
+//! `LRGTAPE`/`LRGSLAB`). The port's `hud::unit_at_screen` took **any**
+//! non-`ORDER_IDLE` unit of the cell, so the cones/slab were selected:
 //!
-//! * маркеры `BLDMRK1..5` не рисуются (`render::build_marker_cells` требует
-//!   выделенного строителя в `ORDER_BUILD`/`UNIT_READY`), подсказки
-//!   «Finished building …» тоже нет (`builder_status_message`);
-//! * правый клик по карте с выделенной декалью отменял приказ («Unit cannot
-//!   move (air/stationary)»), поэтому строитель не мог уйти с площадки, а
-//!   `UnitsManager_BuildingReady` не раскрывал здание.
+//! * the `BLDMRK1..5` markers are not drawn (`render::build_marker_cells` requires
+//!   a selected builder in `ORDER_BUILD`/`UNIT_READY`), and the hint
+//!   «Finished building …» is absent too (`builder_status_message`);
+//! * a right click on the map with a decal selected canceled the order («Unit cannot
+//!   move (air/stationary)»), so the builder could not leave the site,
+//!   and `UnitsManager_BuildingReady` did not open the building.
 //!
-//! C++ (`Access_GetTeamUnit`, `access.cpp:1804`) требует `SELECTABLE` и
-//! возвращает **родителя** ленты (строителя), поэтому клик по любой клетке
-//! площадки — это клик по строителю. Тесты ниже закрепляют оба пункта на
-//! кадрах с `dt > 0`.
+//! C++ (`Access_GetTeamUnit`, `access.cpp:1804`) requires `SELECTABLE` and
+//! returns the **parent** of the tape (the builder), so a click on any site
+//! cell is a click on the builder. The tests below lock both points on
+//! frames with `dt > 0`.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,7 @@ fn repo_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// Приложение с настоящими ассетами (нужны спрайты `BLDMRK1..5`).
+/// Application with real assets (`BLDMRK1..5` sprites are needed).
 fn local_app() -> Option<App> {
     let data = repo_path("max-original");
 
@@ -90,7 +90,7 @@ fn setup_vs_one_ai() -> LocalSetup {
     }
 }
 
-/// Один кадр интерактивного цикла — `main.rs`: `local_update(frame_dt)`.
+/// One interactive loop frame — `main.rs`: `local_update(frame_dt)`.
 const FRAME: f32 = 1.0 / 60.0;
 
 fn run_until_player_turn(app: &mut App, limit: usize) -> bool {
@@ -107,7 +107,7 @@ fn run_until_player_turn(app: &mut App, limit: usize) -> bool {
     app.local().map(|local| local.phase) == Some(LocalPhase::PlayerTurn)
 }
 
-/// Экранная точка центра клетки (окно 1:1: карта рисуется в `MAIN_MAP`).
+/// Screen point of the cell center (1:1 window: the map is drawn in `MAIN_MAP`).
 fn cell_screen(app: &App, cell: Point) -> (i32, i32) {
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), cell);
 
@@ -117,8 +117,8 @@ fn cell_screen(app: &App, cell: Point) -> (i32, i32) {
     )
 }
 
-/// Экранная точка, где **нарисован** строитель: центр ленты 2×2
-/// (`PositionInTape`/`tape_center_offset`), а не его `grid`.
+/// Screen point where the builder is **drawn**: the center of the 2×2 tape
+/// (`PositionInTape`/`tape_center_offset`), not its `grid`.
 fn builder_sprite_screen(app: &App, unit_type: UnitType, anchor: Point) -> (i32, i32) {
     let (world_x, world_y) = max_app::buildsite::site_center_world(unit_type, anchor);
     let (x, y) = app.map_viewport().world_to_screen(world_x, world_y);
@@ -158,16 +158,16 @@ fn has_slab(app: &App, team: max_core::TeamId) -> bool {
         })
 }
 
-/// Как игрок уводит строителя: LMB по «клетке с символом» (C++ `CURSOR_UNIT_GO`,
-/// `game_manager.cpp:5832/6879`) или RMB (конвенция порта).
+/// How a player takes the builder away: LMB on the "cell with the symbol" (C++ `CURSOR_UNIT_GO`,
+/// `game_manager.cpp:5832/6879`) or RMB (the port convention).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ExitClick {
     Left,
     Right,
 }
 
-/// Полный интерактивный цикл: заказ → стройка → достройка → маркеры →
-/// уход строителя → появление здания. Все шаги — на кадрах `dt = 1/60`.
+/// Full interactive cycle: order → construction → completion → markers →
+/// builder leaves → building appears. All steps — on frames with `dt = 1/60`.
 fn run_build_cycle(exit: ExitClick) {
     let Some(mut app) = local_app() else {
         return;
@@ -195,8 +195,8 @@ fn run_build_cycle(exit: ExitClick) {
         .expect("у RED есть конструктор");
     let builder_grid = app.state().unit(builder).expect("builder").grid;
 
-    // Заказ здания ровно как в UI: призрак 2×2 привязан к строителю
-    // (`GameManager_GetBuilderUnitCursor`), приказ — пакет 08/P4.
+    // A building order exactly as in the UI: the 2×2 ghost is bound to the builder
+    // (`GameManager_GetBuilderUnitCursor`), the order — packet 08/P4.
     let anchor = max_core::production::initial_build_site(
         app.state(),
         team,
@@ -216,7 +216,7 @@ fn run_build_cycle(exit: ExitClick) {
     .expect("пакет заказа");
     app.apply(command);
 
-    // `PositionInTape` ENTER: строитель въезжает в ленту (четыре шага + доворот).
+    // `PositionInTape` ENTER: the builder drives into the tape (four steps + a turn).
     for _ in 0..60 {
         app.local_update(FRAME);
         if app
@@ -234,11 +234,11 @@ fn run_build_cycle(exit: ExitClick) {
         "строитель должен стоять в ORDER_BUILD"
     );
 
-    // Ускорение прогресса напрямую через состояние: остался один ход.
+    // Accelerate progress directly through the state: one turn left.
     app.state_mut().unit_mut(builder).expect("builder").build_time = 1;
 
-    // Ход закрывается интерактивно: `finish_turn` → `progress_build_state`
-    // (`SpawnNewUnit`) на границе раунда, затем ход ИИ и снова ход человека.
+    // The turn closes interactively: `finish_turn` → `progress_build_state`
+    // (`SpawnNewUnit`) at the round boundary, then the AI turn and the human turn again.
     app.local_end_turn();
     assert!(
         run_until_player_turn(&mut app, 8000),
@@ -280,9 +280,9 @@ fn run_build_cycle(exit: ExitClick) {
     );
     assert_eq!(site_units(&app, team), 2, "лента и конусы ещё на площадке");
 
-    // --- (1) Подсветка/сообщение о готовом здании ------------------------
-    // Игрок кликает по НАРИСОВАННОМУ строителю — он в центре ленты, спрайт
-    // стоит в угле четырёх клеток, а не в своей `grid`.
+    // --- (1) Highlight/message about the finished building ------------------------
+    // The player clicks the DRAWN builder — it is in the tape center, the sprite
+    // stands at the corner of four cells, not in its `grid`.
     let (click_x, click_y) = builder_sprite_screen(&app, UnitType::TrainingHall, building_unit.grid);
     handle_session_input(&mut app, InputEvent::MouseClick(click_x, click_y), false);
 
@@ -304,8 +304,8 @@ fn run_build_cycle(exit: ExitClick) {
         "маркеры BLDMRK1..5 обязаны рисоваться вокруг достроенной площадки"
     );
 
-    // --- (2) Уход строителя → здание появляется --------------------------
-    // Клетка кольца `BLDMRK*` вокруг здания, свободная от юнитов.
+    // --- (2) The builder leaves → the building appears --------------------------
+    // A cell of the `BLDMRK*` ring around the building, free of units.
     let ring = max_app::render::build_marker_cells(app.state(), &builder_unit)
         .into_iter()
         .find(|cell| app.state().units_at(*cell).is_empty())
@@ -371,7 +371,7 @@ fn run_build_cycle(exit: ExitClick) {
         "плита остаётся фундаментом (`remove_slabs = false`)"
     );
 
-    // Маркеры гаснут: строитель больше не ждёт приказа.
+    // The markers go out: the builder no longer waits for an order.
     let (_, stats) = app.render_frame_with_stats();
     assert_eq!(
         stats.build_markers, 0,
@@ -379,13 +379,13 @@ fn run_build_cycle(exit: ExitClick) {
     );
 }
 
-/// Клик по другой клетке во время стройки **не** отдаёт приказ движения.
+/// A click on another cell during construction does **not** give a move order.
 ///
-/// Оракул: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5927-5931`) —
-/// для строителя в `BUILD_IN_PROGRESS` курсор `CURSOR_UNIT_NO_GO`; отмена
-/// стройки — только явный `stop` попапа (`UnitsManager_Popup_OnClick_BuildStop`
-/// → `ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`). Порт не
-/// отменяет стройку при попытке увода и не тратит заказ.
+/// Oracle: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5927-5931`) —
+/// for a builder in `BUILD_IN_PROGRESS` the cursor is `CURSOR_UNIT_NO_GO`; cancelling
+/// construction — only an explicit popup `stop` (`UnitsManager_Popup_OnClick_BuildStop`
+/// → `ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`). The port does not
+/// cancel construction on an attempted move and does not waste the order.
 #[test]
 fn right_click_while_building_is_no_go_and_keeps_the_site() {
     let Some(mut app) = local_app() else {
@@ -461,7 +461,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     };
     assert!(slab_at_site(&app), "плита стоит на площадке");
 
-    // Свободная достижимая клетка рядом: клик по ней в C++ — `UNIT_NO_GO`.
+    // A free reachable cell nearby: a click on it in C++ — `UNIT_NO_GO`.
     let destination = (0..=4)
         .flat_map(|radius| {
             (-radius..=radius).flat_map(move |dy| (-radius..=radius).map(move |dx| (dx, dy)))
@@ -478,7 +478,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     let (click_x, click_y) = cell_screen(&app, destination);
     app.hud_mut().select(Some(builder));
 
-    // Курсор C++ для `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`.
+    // The C++ cursor for `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`.
     assert_eq!(
         max_app::cursor::window_cursor(&app, destination),
         max_app::cursor::CursorId::UnitNoGo,
@@ -522,9 +522,9 @@ fn interactive_build_cycle_with_real_dt_marks_and_reveals_on_right_click() {
     run_build_cycle(ExitClick::Right);
 }
 
-/// Клик по клетке площадки (даже если там лежат конусы/плита) обязан отдавать
-/// **строителя** — `Access_GetTeamUnit` (`access.cpp:1804`): `SELECTABLE`
-/// в обоих проходах и `unit = unit->GetParent()` для ленты.
+/// A click on a site cell (even if the cones/slab lie there) must give
+/// **the builder** — `Access_GetTeamUnit` (`access.cpp:1804`): `SELECTABLE`
+/// in both passes and `unit = unit->GetParent()` for the tape.
 #[test]
 fn clicking_the_site_decal_returns_the_builder() {
     use max_core::enums::unit_flags;
@@ -536,7 +536,7 @@ fn clicking_the_site_decal_returns_the_builder() {
 
     let site = Point::new(40, 40);
     let team = max_core::TeamId::RED;
-    // Строитель в правой нижней клетке площадки 2×2 (как после `PositionInTape`).
+    // The builder in the bottom-right cell of the 2×2 site (as after `PositionInTape`).
     let builder = app
         .state_mut()
         .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
@@ -567,8 +567,8 @@ fn clicking_the_site_decal_returns_the_builder() {
 
     app.viewport_mut().center_on_grid(site.x, site.y);
 
-    // Конусы/плита не `SELECTABLE` — C++ их клик не берёт; лента `SELECTABLE`,
-    // но возвращает родителя-строителя.
+    // The cones/slab are not `SELECTABLE` — C++ does not take their click; the tape is `SELECTABLE`,
+    // but returns the builder parent.
     for decal in [site_units.cones, site_units.slab, Some(site_units.tape)] {
         let decal = decal.expect("декаль на площадке");
         let unit = app.state().unit(decal).expect("decal");
@@ -587,7 +587,7 @@ fn clicking_the_site_decal_returns_the_builder() {
         );
         let cell = unit.grid;
         let (x, y) = cell_screen(&app, cell);
-        // Экранная точка центра клетки декали в кадре 512×384 (без хрома).
+        // Screen point of the decal cell center in a 512×384 frame (without chrome).
         let (x, y) = (x - max_render::layout::MAIN_MAP.ulx, y - max_render::layout::MAIN_MAP.uly);
         let picked = max_app::hud::unit_at_screen(app.state(), app.viewport(), team, x, y);
 
@@ -599,8 +599,8 @@ fn clicking_the_site_decal_returns_the_builder() {
         );
     }
 
-    // Кольцо вокруг площадки — пусто (там игрок и кликает, чтобы увести
-    // строителя: `CURSOR_UNIT_GO`, `IsUnitNextToPosition`).
+    // The ring around the site is empty (the player clicks there to take the
+    // builder away: `CURSOR_UNIT_GO`, `IsUnitNextToPosition`).
     let (x, y) = cell_screen(&app, Point::new(38, 40));
     let (x, y) = (x - max_render::layout::MAIN_MAP.ulx, y - max_render::layout::MAIN_MAP.uly);
     assert_eq!(
@@ -609,7 +609,7 @@ fn clicking_the_site_decal_returns_the_builder() {
         "в кольце маркеров юнитов нет"
     );
 
-    // Флаги деки: `GROUND_COVER` есть у всех трёх, `SELECTABLE` — только у ленты.
+    // Decal flags: `GROUND_COVER` is present on all three, `SELECTABLE` — only on the tape.
     assert_ne!(
         app.state().unit(site_units.tape).unwrap().flags & unit_flags::SELECTABLE,
         0,
@@ -626,8 +626,8 @@ fn clicking_the_site_decal_returns_the_builder() {
     let _ = building;
 }
 
-/// Зона клика `CURSOR_UNIT_GO` — `GameManager_IsUnitNextToPosition`
-/// (`game_manager.cpp:3208`): 4×4 вокруг 2×2-здания, границы включительно.
+/// `CURSOR_UNIT_GO` click zone — `GameManager_IsUnitNextToPosition`
+/// (`game_manager.cpp:3208`): 4×4 around a 2×2 building, bounds inclusive.
 #[test]
 fn builder_exit_click_zone_is_a_four_by_four_block_around_the_site() {
     use max_core::enums::unit_flags;

@@ -1,20 +1,20 @@
-//! M-HS: сквозные тесты hot-seat (2–4 человека на одном ПК).
+//! M-HS: end-to-end hot-seat tests (2–4 humans on one PC).
 //!
-//! Проверяется:
+//! Checked:
 //!
-//! 1. настройка: `ChoosePlayerMenu` в режиме hot-seat не переносит флаг
-//!    человека, `EventDone` требует двух людей (`_(06ec)`), стартовые типы
-//!    команд — `RED`/`GREEN` люди (`menu.cpp:1883`);
-//! 2. переход хода: окно `DialogMenu` («<Команда>: Begin turn.») открывается на
-//!    смене человеческой команды и **первому** игроку тоже (C++ ставит
-//!    `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN`), таймер хода при этом стоит;
-//! 3. управление: команда `player_team` переключается на активного человека,
-//!    выделение сбрасывается, клик по чужому юниту не выделяет его, приказ
-//!    чужому юниту не уходит; во время хода ИИ ввод заблокирован;
-//! 4. ходы: 2 человека чередуются RED → GREEN; 4 человека — RED → GREEN →
-//!    BLUE → GRAY; ИИ между людьми ходит сам;
-//! 5. кадр: окно перехода рисуется поверх партии (фон `HELPFRAM`, кнопка
-//!    `HELPOK`, текст «Begin turn») и не паникует.
+//! 1. setup: `ChoosePlayerMenu` in hot-seat mode does not copy the human
+//!    flag, `EventDone` requires two humans (`_(06ec)`), the starting team
+//!    types — `RED`/`GREEN` humans (`menu.cpp:1883`);
+//! 2. turn transition: the `DialogMenu` window («<Team>: Begin turn.») opens on
+//!    a human team change and for the **first** player too (C++ sets
+//!    `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN`), while the turn timer is stopped;
+//! 3. control: the `player_team` switches to the active human,
+//!    the selection is cleared, a click on a foreign unit does not select it, an order
+//!    to a foreign unit does not go; during the AI turn input is blocked;
+//! 4. turns: 2 humans alternate RED → GREEN; 4 humans — RED → GREEN →
+//!    BLUE → GRAY; the AI between humans moves itself;
+//! 5. frame: the transition window is drawn over the match (`HELPFRAM` background, the
+//!    `HELPOK` button, the text "Begin turn") and does not panic.
 
 use std::path::{Path, PathBuf};
 
@@ -65,7 +65,7 @@ fn local_app() -> Option<App> {
     Some(app)
 }
 
-/// Настройки hot-seat: `team_types` — как передал бы экран команд.
+/// Hot-seat settings: `team_types` — as the team screen would pass.
 fn hot_seat_setup(team_types: [TeamKind; 4]) -> LocalSetup {
     LocalSetup {
         player_name: "Commander".to_string(),
@@ -93,14 +93,14 @@ fn hot_seat_setup(team_types: [TeamKind; 4]) -> LocalSetup {
     }
 }
 
-/// Подтверждает окно перехода, если оно открыто.
+/// Confirms the transition window if it is open.
 fn acknowledge(app: &mut App) -> Option<TeamId> {
     let team = app.local_notice().map(|notice| notice.team);
     app.local_acknowledge_turn();
     team
 }
 
-/// Экранная точка центра клетки с учётом хрома 1:1 (`WINDOW_MAIN_MAP` 180,18).
+/// Screen point of the cell center with 1:1 chrome (`WINDOW_MAIN_MAP` 180,18).
 fn chrome_screen_of(app: &App, grid: Point) -> (i32, i32) {
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
 
@@ -110,7 +110,7 @@ fn chrome_screen_of(app: &App, grid: Point) -> (i32, i32) {
     )
 }
 
-/// Свободная соседняя клетка (без юнитов) — цель приказа движения.
+/// A free adjacent cell (without units) — the target of a move order.
 fn free_neighbour(app: &App, grid: Point) -> Option<Point> {
     for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1)] {
         let candidate = Point::new(grid.x + dx, grid.y + dy);
@@ -127,14 +127,14 @@ fn free_neighbour(app: &App, grid: Point) -> Option<Point> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Настройка
+// 1. Setup
 // ---------------------------------------------------------------------------
 
 #[test]
 fn hot_seat_form_keeps_multiple_humans_and_titles_the_screen() {
     let mut form = GameSetupForm::hot_seat();
 
-    // `menu_choose_player_menu_loop(false)`: RED и GREEN — люди.
+    // `menu_choose_player_menu_loop(false)`: RED and GREEN — humans.
     assert_eq!(
         form.setup.team_types,
         [
@@ -147,13 +147,13 @@ fn hot_seat_form_keeps_multiple_humans_and_titles_the_screen() {
     assert!(form.setup.is_hot_seat());
     assert_eq!(form.players_title(), "Hot Seat Menu");
 
-    // «Human» на BLUE не отбирает флаг у RED (`EventSelectHuman`).
+    // «Human» on BLUE does not take the flag from RED (`EventSelectHuman`).
     form.select_team_type(2, TeamKind::Player);
     assert_eq!(form.setup.team_types[0], TeamKind::Player);
     assert_eq!(form.setup.team_types[2], TeamKind::Player);
     assert_eq!(form.setup.human_count(), 3);
 
-    // Одиночная форма по-прежнему переносит флаг.
+    // The single-player form still copies the flag.
     let mut single = GameSetupForm::default();
     single.setup.team_types = [
         TeamKind::Player,
@@ -184,7 +184,7 @@ fn hot_seat_requires_two_humans() {
     assert_eq!(transition, SetupTransition::None);
     assert_eq!(form.status, hotseat::MSG_TWO_HUMANS);
 
-    // Два человека — партия стартует.
+    // Two humans — the match starts.
     form.setup.team_types[1] = TeamKind::Player;
     let transition =
         form.handle_input(InputEvent::MouseClick(done.ulx + 2, done.uly + 2), 640, 480);
@@ -208,7 +208,7 @@ fn hot_seat_forces_turn_based_mode() {
     ]);
     setup.play_mode = PlayMode::SimultaneousMoves;
 
-    // `GameManager_UpdateHumanPlayerCount`: >1 человека → turn-based.
+    // `GameManager_UpdateHumanPlayerCount`: >1 human → turn-based.
     assert_eq!(setup.effective_play_mode(), PlayMode::TurnBased);
 
     setup.team_types[1] = TeamKind::Computer;
@@ -216,7 +216,7 @@ fn hot_seat_forces_turn_based_mode() {
 }
 
 // ---------------------------------------------------------------------------
-// 2–4. Локальный цикл: переход хода, управление, чередование
+// 2–4. Local loop: turn transition, control, alternation
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -233,8 +233,8 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     ]))
     .expect("hot-seat партия стартует");
 
-    // Первому человеку окно тоже показывается (C++: `PlayerTeam = ALIEN` до
-    // первого хода), хотя `player_team` уже переключён на него.
+    // The first human is shown the window too (C++: `PlayerTeam = ALIEN` until
+    // the first turn), although `player_team` is already switched to them.
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
         Some(TeamId::RED)
@@ -247,10 +247,10 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     assert_eq!(app.state().teams[0].team_type, TeamKind::Player);
     assert_eq!(app.state().teams[1].team_type, TeamKind::Player);
     assert_eq!(app.state().teams[2].team_type, TeamKind::None);
-    // Hot-seat всегда turn-based.
+    // Hot-seat is always turn-based.
     assert_eq!(app.state().play_mode, PlayMode::TurnBased);
 
-    // Ход не закрывается, пока окно не подтверждено.
+    // The turn does not close until the window is confirmed.
     app.local_end_turn();
     assert_eq!(app.state().turn_counter, 1);
     assert_eq!(
@@ -261,7 +261,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     assert_eq!(acknowledge(&mut app), Some(TeamId::RED));
     assert!(app.local_notice().is_none());
 
-    // RED: ходим и закрываем ход → окно GREEN.
+    // RED: we move and close the turn → the GREEN window.
     app.local_end_turn();
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
@@ -276,7 +276,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     assert_eq!(acknowledge(&mut app), Some(TeamId::GREEN));
     app.local_end_turn();
 
-    // Оба человека раунда отыграли — счётчик хода вырос, снова RED.
+    // Both humans of the round have played — the turn counter grew, RED again.
     assert_eq!(app.state().turn_counter, 2);
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
@@ -284,7 +284,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     );
     assert_eq!(app.state().player_team, TeamId::RED);
 
-    // Ещё три раунда подряд: порядок и переключение управления устойчивы.
+    // Three more rounds in a row: the order and control switching are stable.
     for round in 2..=4 {
         for expected in [TeamId::RED, TeamId::GREEN] {
             assert_eq!(
@@ -348,7 +348,7 @@ fn ai_plays_between_two_humans() {
         return;
     };
 
-    // RED — человек, GREEN — компьютер, BLUE — человек.
+    // RED — human, GREEN — computer, BLUE — human.
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
         TeamKind::Computer,
@@ -360,7 +360,7 @@ fn ai_plays_between_two_humans() {
     acknowledge(&mut app);
     app.local_end_turn();
 
-    // Ход компьютера RED → GREEN идёт сам (`Ai_BeginTurn`).
+    // The computer turn RED → GREEN goes itself (`Ai_BeginTurn`).
     assert!(
         matches!(
             app.local().map(|local| local.phase),
@@ -416,7 +416,7 @@ fn notice_freezes_the_turn_timer_until_acknowledged() {
 
     let ticks_before = app.ticks();
 
-    // Окно открыто: кадры ничего не делают (C++ стоит в `DialogMenu::Run`).
+    // The window is open: the frames do nothing (C++ sits in `DialogMenu::Run`).
     for _ in 0..10 {
         let update = app.local_update(1.0);
         assert!(!update.ticked);
@@ -425,7 +425,7 @@ fn notice_freezes_the_turn_timer_until_acknowledged() {
     assert_eq!(app.ticks(), ticks_before, "на окне перехода тиков нет");
     assert_eq!(app.local().map(|local| local.timer_left), Some(5.0));
 
-    // После подтверждения таймер пошёл и закрывает ход сам.
+    // After confirmation the timer runs and closes the turn itself.
     acknowledge(&mut app);
     app.local_update(1.0);
     assert!(
@@ -461,7 +461,7 @@ fn only_the_active_human_controls_their_units() {
     assert!(app.chrome_active(), "кадр 640×480 с хромом FRAMEPIC");
     acknowledge(&mut app);
 
-    // Находим по юниту каждой команды и ставим камеру на юнит RED.
+    // We find a unit of each team and put the camera on the RED unit.
     let red_unit = app
         .state()
         .unit_ids_in_order()
@@ -500,8 +500,8 @@ fn only_the_active_human_controls_their_units() {
         "в журнале нет выделения чужого юнита"
     );
 
-    // Свой юнит выделяется (на клетке старта стоят несколько юнитов — важен
-    // не конкретный id, а команда).
+    // An own unit is selected (several units stand on the start cell — what matters is
+    // not the specific id but the team).
     app.viewport_mut().center_on_grid(red_grid.x, red_grid.y);
     let (rx, ry) = chrome_screen_of(&app, red_grid);
     handle_session_input(&mut app, InputEvent::MouseClick(rx, ry), false);
@@ -513,8 +513,8 @@ fn only_the_active_human_controls_their_units() {
         "выделен юнит RED"
     );
 
-    // Правый клик по свободной клетке — приказ движения выделенному юниту:
-    // в демо-режиме (`online = false`) он применяется сразу.
+    // A right click on a free cell — a move order to the selected unit:
+    // in demo mode (`online = false`) it is applied immediately.
     let green_orders: Vec<_> = app
         .state()
         .unit_ids_in_order()
@@ -555,7 +555,7 @@ fn only_the_active_human_controls_their_units() {
         "приказы чужой команды не меняются"
     );
 
-    // Ход GREEN: окно, подтверждение, выделение RED сброшено.
+    // GREEN turn: the window, confirmation, the RED selection is cleared.
     app.local_end_turn();
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
@@ -569,7 +569,7 @@ fn only_the_active_human_controls_their_units() {
         "выделение прошлого игрока не переезжает"
     );
 
-    // Клик по юниту RED теперь не выделяет его (он чужой для GREEN).
+    // A click on a RED unit now does not select it (it is foreign to GREEN).
     app.viewport_mut().center_on_grid(red_grid.x, red_grid.y);
     let (rx, ry) = chrome_screen_of(&app, red_grid);
     handle_session_input(&mut app, InputEvent::MouseClick(rx, ry), false);
@@ -661,7 +661,7 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
         "окно модально: клик по карте — нет"
     );
 
-    // Enter закрывает окно (`DialogMenu::ProcessKey`).
+    // Enter closes the window (`DialogMenu::ProcessKey`).
     handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Enter), false);
     assert!(app.local_notice().is_none());
 
@@ -674,7 +674,7 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Кадр с окном перехода
+// 5. Frame with the transition window
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -704,15 +704,15 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
         },
     };
 
-    // Кадр без окна: партия, окно ещё не подтверждено — оно и должно быть.
+    // A frame without the window: the match, the window is not confirmed yet — it should be there.
     let mut buffer = RgbaBuffer::new(640, 480);
     screen.render(&mut buffer, ctx.view(Some(&app)));
 
     let dialog = hotseat::dialog_rect_frame();
     assert_eq!(dialog, PixelRect::new(253, 126, 301, 231));
 
-    // Фон `HELPFRAM` нарисован: в окне диалога есть пиксели, отличные от
-    // чёрного, и они не совпадают с кадром карты под ним.
+    // The `HELPFRAM` background is drawn: in the dialog window there are pixels different from
+    // black, and they do not match the map frame under it.
     let painted = (dialog.ulx..dialog.ulx + dialog.width)
         .flat_map(|x| (dialog.uly..dialog.uly + dialog.height).map(move |y| (x, y)))
         .filter(|(x, y)| {
@@ -723,7 +723,7 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
         .count();
     assert!(painted > 40_000, "окно HELPFRAM заполнено: {painted}");
 
-    // Кнопка `HELPOK` нарисована в (373,319) 65×24.
+    // The `HELPOK` button is drawn at (373,319) 65×24.
     let ok = hotseat::ok_rect_frame();
     let ok_pixels = (ok.ulx..ok.ulx + ok.width)
         .flat_map(|x| (ok.uly..ok.uly + ok.height).map(move |y| (x, y)))
@@ -731,7 +731,7 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
         .count();
     assert!(ok_pixels > 500, "кнопка OK видна: {ok_pixels}");
 
-    // Текст `Begin turn` — светлые пиксели цвета 0xFF (`Fonts`-палитра).
+    // The text `Begin turn` — light pixels of color 0xFF (`Fonts` palette).
     let palette = app
         .assets()
         .and_then(|assets| max_app::panels::UiPalette::from_assets(assets))
@@ -743,7 +743,7 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
         .count();
     assert!(text_pixels > 30, "текст окна: {text_pixels} пикселей");
 
-    // Вне окна кадр — партия (карта/панели), а не пустота.
+    // Outside the window the frame is the match (map/panels), not emptiness.
     assert!(buffer.get(10, 400).is_some());
 }
 
@@ -773,7 +773,7 @@ fn screens_and_setup_render_with_hot_seat_forms() {
         .and_then(|assets| assets.menu.as_ref())
         .expect("меню загружено");
 
-    // Фон `CHOSPLYR` и заголовок «Hot Seat Menu» (пиксели `COLOR_GREEN`).
+    // The `CHOSPLYR` background and the «Hot Seat Menu» title (pixels of `COLOR_GREEN`).
     assert_eq!(
         buffer.get(10, 10),
         menu.chosplyr
@@ -790,7 +790,7 @@ fn screens_and_setup_render_with_hot_seat_forms() {
         .count();
     assert!(title_pixels > 20, "заголовок Hot Seat Menu: {title_pixels}");
 
-    // `Multiplayer Menu` рисуется на `MAINPIC` без паник.
+    // `Multiplayer Menu` is drawn on `MAINPIC` without panics.
     let screen = Screen::MultiplayerMenu;
     screen.render(&mut buffer, ctx.view(Some(&app)));
     assert_eq!(
@@ -798,7 +798,7 @@ fn screens_and_setup_render_with_hot_seat_forms() {
         menu.mainpic.rgb(10, 10).map(Rgba::from_rgb)
     );
 
-    // Заголовок и кнопки: подпись `Hot Seat Game` лежит в (385,280) 200×29.
+    // The title and buttons: the `Hot Seat Game` label lies at (385,280) 200×29.
     let button = max_app::menu::MULTIPLAYER_BUTTONS[2];
     assert_eq!(button.rect, PixelRect::new(385, 280, 200, 29));
     assert_eq!(button.label, "Hot Seat Game");

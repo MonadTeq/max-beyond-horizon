@@ -1,35 +1,35 @@
-//! Наполнение панелей окна игры 1:1 (пункт A `max-brh-docs/visual-1to1-status.md`).
+//! Filling the 1:1 game window panels (item A of `max-brh-docs/visual-1to1-status.md`).
 //!
-//! Поверх `FRAMEPIC` оригинал (`game_manager.cpp`) дорисовывает картинки
-//! кнопок/панелей из `MAX.RES` и текст шрифтами GNW. Здесь это собрано в
+//! Over `FRAMEPIC` the original (`game_manager.cpp`) draws the pictures of the
+//! buttons/panels from `MAX.RES` and text with the GNW fonts. Here this is collected in
 //! [`Panels`]:
 //!
-//! * верх: `FILES_OF/ON` (17,4) 67×18, `PREF_OFF/ON` (86,4) 67×18,
+//! * top: `FILES_OF/ON` (17,4) 67×18, `PREF_OFF/ON` (86,4) 67×18,
 //!   `ENDTRN_U` (390,2) 72×21, `TURNS` (468,2) 61×21, `TIMER` (534,2) 61×21;
-//! * портрет `CORNER_FLIC` (10,29) 128×128 — FLC-анимация юнита
-//!   (`max_assets::flic`, 15 FPS, см. [`crate::portrait`]); без FLC/выделения —
-//!   чёрный фон (или статичный спрайт ×2 как fallback);
-//! * статистика `STAT_WINDOW` (10,173) 153×48 — четыре строки шрифтом
-//!   `GNW_TEXT_FONT_2`, состав зависит от юнита ([`rows_for`], порт
-//!   `GameManager_UpdateInfoDisplay`): у мобильных — `Hits/Ammo/Speed/Shots`,
-//!   у зданий — `Hits/Cargo` и строки `Usage`/`Power`/`Total` экономики
-//!   комплекса (никакого `Speed` у шахты);
-//! * сетка переключателей `SURV_OFF/ON`…`NAMES_UP/DN` (9 кнопок 55×16/18);
-//! * зум `ZOOMPNL1` + `ZOOMPTR` в (20,275) 130×19;
-//! * низ: `XYPOS` (242,456) 90×21 и `UNITNAME` (338,456) 222×21;
-//! * миникарта `WINDOW_MINIMAP` (15,356) 112×112 из `minimap`-слоя `.WRL`.
+//! * the `CORNER_FLIC` portrait (10,29) 128×128 — the unit FLC animation
+//!   (`max_assets::flic`, 15 FPS, see [`crate::portrait`]); without FLC/selection —
+//!   a black background (or a static sprite ×2 as a fallback);
+//! * statistics `STAT_WINDOW` (10,173) 153×48 — four lines in
+//!   `GNW_TEXT_FONT_2`, the composition depends on the unit ([`rows_for`], a port of
+//!   `GameManager_UpdateInfoDisplay`): mobile — `Hits/Ammo/Speed/Shots`,
+//!   buildings — `Hits/Cargo` and the `Usage`/`Power`/`Total` lines of the complex
+//!   economy (no `Speed` for a mine);
+//! * the toggle grid `SURV_OFF/ON`…`NAMES_UP/DN` (9 buttons 55×16/18);
+//! * zoom `ZOOMPNL1` + `ZOOMPTR` at (20,275) 130×19;
+//! * bottom: `XYPOS` (242,456) 90×21 and `UNITNAME` (338,456) 222×21;
+//! * minimap `WINDOW_MINIMAP` (15,356) 112×112 from the `minimap` layer of `.WRL`.
 //!
-//! Координаты — из `window_manager.cpp::windows[]` (см. [`max_render::layout`]),
-//! подписи — из `language.json` (`Files`, `Preferences`, `End Turn`, `Survey`,
-//! …), цвета — индексы палитры ровно как в `game_manager.cpp`/`button.cpp`
-//! (`FontColor(0xA2, 0xA7, 0xE6)` для подписей, `(0xA0, 0xA2, 0xE6)` для
+//! Coordinates — from `window_manager.cpp::windows[]` (see [`max_render::layout`]),
+//! labels — from `language.json` (`Files`, `Preferences`, `End Turn`, `Survey`,
+//! …), colors — palette indices exactly as in `game_manager.cpp`/`button.cpp`
+//! (`FontColor(0xA2, 0xA7, 0xE6)` for labels, `(0xA0, 0xA2, 0xE6)` for
 //! End Turn).
 //!
-//! ## Координаты мыши
+//! ## Mouse coordinates
 //!
-//! Карта занимает [`layout::MAIN_MAP`] = (180,18) 448×448. [`screen_to_map`]
-//! переводит точку окна в локальные координаты карты, а [`panel_button_at`]
-//! проверяет панели (включая End Turn, который намеренно заходит на карту).
+//! The map occupies [`layout::MAIN_MAP`] = (180,18) 448×448. [`screen_to_map`]
+//! converts a window point into local map coordinates, and [`panel_button_at`]
+//! checks the panels (including End Turn, which deliberately extends onto the map).
 
 use max_assets::image::SimpleImage;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType, VictoryType};
@@ -50,44 +50,44 @@ use max_render::viewport::Viewport;
 
 use crate::assets::Assets;
 
-/// Цвет обычного текста панелей (`0xA2`).
+/// Regular panel text color (`0xA2`).
 pub const TEXT: u8 = 0xA2;
-/// `COLOR_GREEN` (`0x02`) — имя юнита в портрете
+/// `COLOR_GREEN` (`0x02`) — the unit name in the portrait
 /// (`GameManager_MenuUnitSelect`: `win_print(..., COLOR_GREEN)`).
 pub const GREEN: u8 = 0x02;
-/// `COLOR_RED` (`0x01`) — значение ≤ 1/4 базы (`GameManager_DrawInfoDisplayRow`).
+/// `COLOR_RED` (`0x01`) — value ≤ 1/4 of the base (`GameManager_DrawInfoDisplayRow`).
 pub const RED: u8 = 0x01;
-/// `COLOR_YELLOW` (`0x04`) — значение ≤ 1/2 базы.
+/// `COLOR_YELLOW` (`0x04`) — value ≤ 1/2 of the base.
 pub const YELLOW: u8 = 0x04;
-/// Обводка подписей кнопок (`0xA7`).
+/// Button label outline (`0xA7`).
 pub const CAPTION_OUTLINE: u8 = 0xA7;
-/// Тень подписей кнопок и текста (`0xE6`).
+/// Shadow of button labels and text (`0xE6`).
 pub const SHADOW: u8 = 0xE6;
-/// Светлый текст End Turn (`0xA0`).
+/// End Turn light text (`0xA0`).
 pub const END_TURN_TEXT: u8 = 0xA0;
-/// Кнопка End Turn нажата (не используется в статичном кадре).
+/// End Turn button pressed (not used in a static frame).
 pub const END_TURN_OUTLINE: u8 = 0xA2;
-/// Тень подписи нажатой кнопки End Turn (`FontColor(color, color, 0x3F)`,
+/// Shadow of the pressed End Turn label (`FontColor(color, color, 0x3F)`,
 /// `game_manager.cpp:7882`).
 pub const TEAM_TEXT_SHADOW: u8 = 0x3F;
-/// Индекс палитры серой команды в запечённой подписи (`game_manager.cpp:7876`:
+/// Palette index of the gray team in the baked caption (`game_manager.cpp:7876`:
 /// `if (i == PLAYER_TEAM_GRAY) color = 0xFF;`).
 pub const GRAY_TEAM_TEXT: u8 = 0xFF;
 
-/// Палитра окна игры.
+/// Game window palette.
 ///
-/// В партии системная палитра — это палитра `FRAMEPIC` (C++:
-/// `WindowManager_LoadBigImage(FRAMEPIC, …, palette_from_image=true)`), а не
-/// `COLOR.PAL` спрайтов. Индексы 0x01/0x02/0x04 в ней — яркие красный,
-/// зелёный и жёлтый, а 0xA2/0xA7/0xE6 — цвета текста и тени; `COLOR.PAL` для
-/// этих индексов даёт другие цвета.
+/// In a match the system palette is the `FRAMEPIC` palette (C++:
+/// `WindowManager_LoadBigImage(FRAMEPIC, …, palette_from_image=true)`), not
+/// the sprite `COLOR.PAL`. Indices 0x01/0x02/0x04 in it are bright red,
+/// green and yellow, while 0xA2/0xA7/0xE6 are the text and shadow colors; `COLOR.PAL`
+/// gives different colors for these indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UiPalette {
     colors: [[u8; 3]; 256],
 }
 
 impl UiPalette {
-    /// Палитра из `FRAMEPIC` (8-битные каналы, без `*4`).
+    /// Palette from `FRAMEPIC` (8-bit channels, without `*4`).
     pub fn from_big_image(image: &max_assets::image::BigImage) -> Self {
         let mut colors = [[0u8; 3]; 256];
 
@@ -98,14 +98,14 @@ impl UiPalette {
         Self { colors }
     }
 
-    /// Палитра из готовых цветов (для тестов и синтетических кадров).
+    /// Palette from ready colors (for tests and synthetic frames).
     pub const fn from_colors(colors: [[u8; 3]; 256]) -> Self {
         Self { colors }
     }
 
-    /// Системная палитра окна после загрузки мира: индексы 64…159 берутся из
+    /// Window system palette after loading the world: indices 64…159 are taken from
     /// `.WRL` (`World::Load` → `WindowManager_ColorPalette[i] = palette[i]/4`
-    /// в C++; здесь — уже 8-битные цвета `TerrainAtlas`).
+    /// in C++; here — already 8-bit `TerrainAtlas` colors).
     pub fn with_wrl_palette(mut self, wrl: &max_render::terrain::PaletteRgba) -> Self {
         for (index, color) in wrl.iter().enumerate().skip(64).take(96) {
             self.colors[index] = [color[0], color[1], color[2]];
@@ -114,7 +114,7 @@ impl UiPalette {
         self
     }
 
-    /// Палитра из загруженного хрома; `None`, если `FRAMEPIC` не загружен.
+    /// Palette from the loaded chrome; `None` if `FRAMEPIC` is not loaded.
     pub fn from_assets(assets: &Assets) -> Option<Self> {
         assets
             .chrome
@@ -122,24 +122,24 @@ impl UiPalette {
             .map(|chrome| Self::from_big_image(&chrome.frame))
     }
 
-    /// Цвет по индексу палитры.
+    /// Color by palette index.
     pub fn rgba(&self, index: u8) -> Rgba {
         Rgba::from_rgb(self.colors[usize::from(index)])
     }
 
-    /// Вся палитра в формате рендера (`[[u8; 4]; 256]`) — для simple image
-    /// (маркеры ресурсов, курсоры), которые индексируются системной палитрой
-    /// окна, а не палитрой `.WRL`/`COLOR.PAL`.
+    /// The whole palette in the render format (`[[u8; 4]; 256]`) — for simple images
+    /// (resource markers, cursors) indexed by the window system palette,
+    /// not by the `.WRL`/`COLOR.PAL` palette.
     pub fn palette_rgba(&self) -> max_render::terrain::PaletteRgba {
         self.colors.map(|color| [color[0], color[1], color[2], 255])
     }
 
-    /// Ближайший цвет палитры — дословный `Color_MapColor(palette, r, g, b, true)`
-    /// (`color.cpp:79`): перебор всех 256 цветов по сумме квадратов разностей,
-    /// первый минимальный выигрывает.
+    /// Nearest palette color — the literal `Color_MapColor(palette, r, g, b, true)`
+    /// (`color.cpp:79`): a scan of all 256 colors by the sum of squared differences,
+    /// the first minimum wins.
     ///
-    /// Нужен для мини-карт планет: `Menu_LoadPlanetMinimap` переводит цвета
-    /// `.WRL` (делённые на 4) в палитру окна этим вызовом.
+    /// Needed for planet minimaps: `Menu_LoadPlanetMinimap` converts the `.WRL`
+    /// colors (divided by 4) into the window palette with this call.
     pub fn map_color(&self, rgb: [u8; 3]) -> Rgba {
         let mut best = 0usize;
         let mut best_distance = i32::MAX;
@@ -163,16 +163,16 @@ impl UiPalette {
         Rgba::from_rgb(self.colors[best])
     }
 
-    /// Цвет палитры по индексу как `[r, g, b]`.
+    /// Palette color by index as `[r, g, b]`.
     pub fn color_rgb(&self, index: u8) -> [u8; 3] {
         self.colors[usize::from(index)]
     }
 
-    /// Индекс палитры по точному цвету кадра (`None`, если цвета нет —
-    /// например, пиксель пришёл не из этой палитры).
+    /// Palette index by the exact frame color (`None` if the color is absent —
+    /// e.g. the pixel did not come from this palette).
     ///
-    /// Нужен `Color_RecolorPixels`: перекраска подложки идёт по **индексам**
-    /// палитры, а кадр хранит уже RGB.
+    /// Needed by `Color_RecolorPixels`: the backing is recolored by palette
+    /// **indices**, while the frame stores RGB already.
     pub fn index_of(&self, color: Rgba) -> Option<u8> {
         self.colors
             .iter()
@@ -183,12 +183,12 @@ impl UiPalette {
     }
 
     /// `Color_GenerateIntensityTable1(red, green, blue, factor1, factor2, table)`
-    /// (`color.cpp:132`): таблица «приглушения» палитры — каждый цвет палитры
-    /// смешивается с уровнем и заменяется ближайшим цветом палитры
-    /// (`Color_MapColor` с полным перебором, первый минимальный выигрывает).
+    /// (`color.cpp:132`): the palette "dimming" table — each palette color
+    /// is blended with the level and replaced by the nearest palette color
+    /// (Color_MapColor with a full scan, the first minimum wins).
     ///
-    /// Диалог распределения шахты (`AllocMenu`) строит такую таблицу
-    /// `(0, 0, 25, 1, 1)` и ею перекрашивает подложку под числом на полосе
+    /// The mine allocation dialog (`AllocMenu`) builds such a table
+    /// `(0, 0, 25, 1, 1)` and recolors the backing under the bar number with it
     /// (`Color_RecolorPixels`).
     pub fn intensity_table(
         &self,
@@ -209,8 +209,8 @@ impl UiPalette {
                 (i32::from(color[2]) * factor2 + blue_level * factor1) / factor_sum,
             ];
 
-            // `Color_GetColorDistance` до собственного цвета; при нулевом
-            // расстоянии C++ цикл поиска не выполняется вовсе.
+            // `Color_GetColorDistance` to its own color; at zero
+            // distance the C++ search loop does not run at all.
             let mut best = index;
             let mut best_distance = palette_distance(self.colors[index], target);
 
@@ -232,7 +232,7 @@ impl UiPalette {
     }
 }
 
-/// `Color_GetColorDistance` (`color.cpp:120`) — сумма квадратов разностей.
+/// `Color_GetColorDistance` (`color.cpp:120`) — the sum of squared differences.
 fn palette_distance(color: [u8; 3], target: [i32; 3]) -> i32 {
     let red = i32::from(color[0]) - target[0];
     let green = i32::from(color[1]) - target[1];
@@ -241,14 +241,14 @@ fn palette_distance(color: [u8; 3], target: [i32; 3]) -> i32 {
     red * red + green * green + blue * blue
 }
 
-/// Переключатель панели или кнопка, обрабатываемая хромом.
+/// A panel toggle or a button handled by the chrome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelButton {
-    /// Кнопка Files (17,4) 67×18.
+    /// Files button (17,4) 67×18.
     Files,
-    /// Кнопка Preferences (86,4) 67×18.
+    /// Preferences button (86,4) 67×18.
     Preferences,
-    /// Кнопка End Turn (390,2) 72×21 (заходит на карту).
+    /// End Turn button (390,2) 72×21 (extends onto the map).
     EndTurn,
     /// Play (146,123) 19×18.
     Play,
@@ -270,38 +270,38 @@ pub enum PanelButton {
     Reports,
     /// Chat (102,252) 48×19.
     Chat,
-    /// Кнопка `2x` миникарты (136,387) 27×26.
+    /// Minimap `2x` button (136,387) 27×26.
     Minimap2x,
-    /// Кнопка `TNT` миникарты (136,413) 27×27.
+    /// Minimap `TNT` button (136,413) 27×27.
     MinimapTnt,
-    /// Кнопка `+` зума (2,275) 18×14.
+    /// Zoom `+` button (2,275) 18×14.
     ZoomPlus,
-    /// Ползунок зума (20,275) 130×14.
+    /// Zoom slider (20,275) 130×14.
     ZoomSlider,
-    /// Кнопка `−` зума (150,275) 20×14.
+    /// Zoom `−` button (150,275) 20×14.
     ZoomMinus,
-    /// Переключатель Survey.
+    /// Survey toggle.
     Survey,
-    /// Переключатель Status.
+    /// Status toggle.
     Status,
-    /// Переключатель Colors.
+    /// Colors toggle.
     Colors,
-    /// Переключатель Hits.
+    /// Hits toggle.
     Hits,
-    /// Переключатель Ammo.
+    /// Ammo toggle.
     Ammo,
-    /// Переключатель Range.
+    /// Range toggle.
     Range,
-    /// Переключатель Scan.
+    /// Scan toggle.
     Scan,
-    /// Переключатель Grid.
+    /// Grid toggle.
     Grid,
-    /// Переключатель Names.
+    /// Names toggle.
     Names,
 }
 
 impl PanelButton {
-    /// Все кнопки в порядке проверки попадания.
+    /// All buttons in hit-test order.
     pub const ALL: [Self; 27] = [
         Self::Files,
         Self::Preferences,
@@ -332,7 +332,7 @@ impl PanelButton {
         Self::Names,
     ];
 
-    /// Девять переключателей сетки (левый столбец → правый).
+    /// The nine grid toggles (left column → right).
     pub const TOGGLES: [Self; 9] = [
         Self::Survey,
         Self::Status,
@@ -345,7 +345,7 @@ impl PanelButton {
         Self::Names,
     ];
 
-    /// Прямоугольник кнопки в окне (inclusive-координаты `windows[]` → размеры).
+    /// Button rectangle in the window (inclusive `windows[]` coordinates → sizes).
     pub const fn rect(self) -> PixelRect {
         match self {
             Self::Files => layout::FILES_BUTTON,
@@ -378,7 +378,7 @@ impl PanelButton {
         }
     }
 
-    /// Подпись кнопки (`language.json`, en-US), если она есть у оригинала.
+    /// Button label (`language.json`, en-US), if the original has one.
     pub const fn caption(self) -> Option<&'static str> {
         match self {
             Self::Files => Some("Files"),
@@ -411,7 +411,7 @@ impl PanelButton {
         }
     }
 
-    /// Шрифт подписи: End Turn — FONT_5, остальные — FONT_2
+    /// Label font: End Turn — FONT_5, the rest — FONT_2
     /// (`GameManager_MenuInitButtons`).
     pub const fn caption_font(self) -> GnwFontId {
         match self {
@@ -420,14 +420,14 @@ impl PanelButton {
         }
     }
 
-    /// Смещение подписи `(x, y)` — `GameManager_MenuItemLabelOffsets`
-    /// (`game_manager.cpp:275-278`), 1:1 по индексу `GameManager_MenuItems`.
+    /// Label offset `(x, y)` — `GameManager_MenuItemLabelOffsets`
+    /// (game_manager.cpp:275-278), 1:1 by the GameManager_MenuItems index.
     ///
-    /// C++ `Button::SetCaption(caption, x, y, …)` (`button.cpp:412`) строит
-    /// прямоугольник `{0, 0, width - x, height - y}` и центрирует текст **в
-    /// нём**: горизонталь — `Text_TextLine` (`text.cpp:772`) по `width - x`,
-    /// вертикаль — `uly_caption = ((height - y) - Text_GetHeight()) / 2 + y`.
-    /// Поэтому оба смещения уменьшают область центровки, а не сдвигают её.
+    /// C++ `Button::SetCaption(caption, x, y, …)` (`button.cpp:412`) builds
+    /// the rectangle `{0, 0, width - x, height - y}` and centers the text **in
+    /// it**: horizontal — `Text_TextLine` (`text.cpp:772`) by `width - x`,
+    /// vertical — `uly_caption = ((height - y) - Text_GetHeight()) / 2 + y`.
+    /// So both offsets shrink the centering area rather than shifting it.
     pub const fn caption_offset(self) -> (i32, i32) {
         match self {
             Self::Files | Self::Preferences => (0, 2),
@@ -440,17 +440,17 @@ impl PanelButton {
         }
     }
 
-    /// Вертикальный сдвиг подписи (`GameManager_MenuItemLabelOffsets[i].y`).
+    /// Vertical label offset (`GameManager_MenuItemLabelOffsets[i].y`).
     pub const fn caption_offset_y(self) -> i32 {
         self.caption_offset().1
     }
 
-    /// Позиция подписи в кадре — `Button::SetCaption` (`button.cpp:412-449`).
+    /// Label position in the frame — `Button::SetCaption` (`button.cpp:412-449`).
     ///
-    /// `SetCaption(caption, x, y, …)` строит `Rect bounds = {0, 0, width - x,
-    /// height - y}`, затем `Text_TextLine` (`text.cpp:772-783`) центрирует
-    /// строку в `bounds`: `spacing = (swidth - (Text_GetWidth + 1)) / 2`
-    /// (сдвиг только при `spacing > 0`), `uly_caption = ((height - y) -
+    /// `SetCaption(caption, x, y, …)` builds `Rect bounds = {0, 0, width - x,
+    /// height - y}`, then `Text_TextLine` (`text.cpp:772-783`) centers
+    /// the line in `bounds`: `spacing = (swidth - (Text_GetWidth + 1)) / 2`
+    /// (a shift only if `spacing > 0`), `uly_caption = ((height - y) -
     /// Text_GetHeight()) / 2 + y`.
     pub fn caption_position(self) -> (i32, i32) {
         let rect = self.rect();
@@ -470,7 +470,7 @@ impl PanelButton {
         )
     }
 
-    /// Переключатель HUD (`PanelButton::is_toggle`).
+    /// HUD toggle (`PanelButton::is_toggle`).
     pub const fn is_toggle(self) -> bool {
         matches!(
             self,
@@ -487,34 +487,34 @@ impl PanelButton {
     }
 }
 
-/// Локальное состояние панелей (`HudState::panels`).
+/// Local panel state (`HudState::panels`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelState {
-    /// Нажат Survey.
+    /// Survey pressed.
     pub survey: bool,
-    /// Нажат Status.
+    /// Status pressed.
     pub status: bool,
-    /// Нажат Colors.
+    /// Colors pressed.
     pub colors: bool,
-    /// Нажат Hits.
+    /// Hits pressed.
     pub hits: bool,
-    /// Нажат Ammo.
+    /// Ammo pressed.
     pub ammo: bool,
-    /// Нажат Range.
+    /// Range pressed.
     pub range: bool,
-    /// Нажат Scan.
+    /// Scan pressed.
     pub scan: bool,
-    /// Нажат Grid.
+    /// Grid pressed.
     pub grid: bool,
-    /// Нажат Names.
+    /// Names pressed.
     pub names: bool,
-    /// Миникарта в режиме `2x`.
+    /// Minimap in `2x` mode.
     pub minimap_2x: bool,
-    /// Миникарта в режиме `TNT`.
+    /// Minimap in `TNT` mode.
     pub minimap_tnt: bool,
-    /// Клетка под курсором (для координат/описания внизу), если мышь на карте.
+    /// Cell under the cursor (for the coordinates/description at the bottom), if the mouse is on the map.
     pub cursor_grid: Option<(i16, i16)>,
-    /// Остаток времени хода в секундах (таймер в верхней строке).
+    /// Remaining turn time in seconds (the timer in the top row).
     pub timer_seconds: u32,
 }
 
@@ -539,7 +539,7 @@ impl Default for PanelState {
 }
 
 impl PanelState {
-    /// Включён ли переключатель.
+    /// Whether the toggle is on.
     pub fn get(&self, button: PanelButton) -> bool {
         match button {
             PanelButton::Survey => self.survey,
@@ -555,7 +555,7 @@ impl PanelState {
         }
     }
 
-    /// Переключает состояние; возвращает новое значение.
+    /// Toggles the state; returns the new value.
     pub fn toggle(&mut self, button: PanelButton) -> bool {
         let slot = match button {
             PanelButton::Survey => &mut self.survey,
@@ -576,39 +576,39 @@ impl PanelState {
     }
 }
 
-/// Иконки оверлея `STATUS` — `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444`).
+/// `STATUS` overlay icons — `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444`).
 ///
-/// C++ грузит их из `MAX.RES` по требованию через `ResourceManager_LoadResource`
-/// (`IL_DSBLD`, `IL_SPEED`, `IL_SHOTS`); порт держит их рядом с панелями и
-/// рисует при включённой кнопке STATUS (см. [`crate::overlays`]).
+/// C++ loads them from `MAX.RES` on demand via `ResourceManager_LoadResource`
+/// (`IL_DSBLD`, `IL_SPEED`, `IL_SHOTS`); the port keeps them next to the panels and
+/// draws them with the STATUS button enabled (see [`crate::overlays`]).
 #[derive(Debug, Clone, Default)]
 pub struct StatusIcons {
-    /// `IL_DSBLD` — юнит в `ORDER_DISABLE`.
+    /// `IL_DSBLD` — the unit is in `ORDER_DISABLE`.
     pub disabled: Option<SimpleImage>,
-    /// `IL_SPEED` — есть скорость (`unit->speed != 0`).
+    /// `IL_SPEED` — has speed (`unit->speed != 0`).
     pub speed: Option<SimpleImage>,
-    /// `IL_SHOTS` — есть выстрелы (`unit->shots > 0`).
+    /// `IL_SHOTS` — has shots (`unit->shots > 0`).
     pub shots: Option<SimpleImage>,
 }
 
 impl StatusIcons {
-    /// Есть ли хоть одна иконка (иначе оверлей STATUS нечего рисовать).
+    /// Whether there is at least one icon (otherwise the STATUS overlay has nothing to draw).
     pub fn is_empty(&self) -> bool {
         self.disabled.is_none() && self.speed.is_none() && self.shots.is_none()
     }
 }
 
-/// Пара картинок «отжата/нажата».
+/// The "released/pressed" picture pair.
 #[derive(Debug, Clone)]
 pub struct ButtonPair {
     up: SimpleImage,
     down: SimpleImage,
 }
 
-/// Цвет текста таймера — `GameManager_DrawTurnTimer`
+/// Timer text color — `GameManager_DrawTurnTimer`
 /// (`game_manager.cpp:2197-2213`): `turn_time <= 20` → `COLOR_RED` (`0x01`),
-/// иначе `0xA2`. Ноль тоже красный: при выключенном таймере C++ рисует «00:00»
-/// красным.
+/// otherwise `0xA2`. Zero is red too: with the timer off C++ draws «00:00»
+/// in red.
 pub fn timer_color_index(seconds: u32) -> u8 {
     if seconds <= 20 {
         RED
@@ -617,21 +617,21 @@ pub fn timer_color_index(seconds: u32) -> u8 {
     }
 }
 
-/// Нажата ли кнопка End Turn на этом ходу.
+/// Whether the End Turn button is pressed on this turn.
 ///
-/// `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) зовёт
-/// `GameManager_MenuClickEndTurnButton(rest_state)` по типу команды:
-/// `TEAM_TYPE_PLAYER` → `true` (кнопка отжата), `TEAM_TYPE_COMPUTER` → `0`
-/// (кнопка нажата, `SetRestState(true)`), `TEAM_TYPE_REMOTE` — не зовёт вовсе
-/// (состояние остаётся от предыдущей команды; в порте ход удалённой команды
-/// показывается отжатой, как после своего хода).
+/// `GameManager_UpdateGui` (`game_manager.cpp:2437-2481`) calls
+/// `GameManager_MenuClickEndTurnButton(rest_state)` by the team type:
+/// `TEAM_TYPE_PLAYER` → `true` (the button is released), `TEAM_TYPE_COMPUTER` → `0`
+/// (the button is pressed, `SetRestState(true)`), `TEAM_TYPE_REMOTE` — does not call it at all
+/// (the state remains from the previous team; in the port a remote team's turn is
+/// shown released, as after one's own turn).
 pub fn end_turn_pressed(active_team_kind: TeamKind) -> bool {
     active_team_kind == TeamKind::Computer
 }
 
-/// Индекс палитры подписи нажатой кнопки End Turn — `FontColor(color, color,
-/// 0x3F)` из `GameManager_MenuInitButtons` (`game_manager.cpp:7860-7883`):
-/// `color = team + 1`, для серой команды `0xFF`.
+/// Palette index of the pressed End Turn label — `FontColor(color, color,
+/// 0x3F)` from `GameManager_MenuInitButtons` (`game_manager.cpp:7860-7883`):
+/// `color = team + 1`, for the gray team `0xFF`.
 pub fn end_turn_caption_color(team: TeamId) -> u8 {
     if team.0 == 3 {
         GRAY_TEAM_TEXT
@@ -640,23 +640,23 @@ pub fn end_turn_caption_color(team: TeamId) -> u8 {
     }
 }
 
-/// Текст таймера хода — `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
+/// Turn timer text — `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
 /// (`GameManager_DrawTurnTimer`, `game_manager.cpp:2215`).
 ///
-/// `%2.2i` — ширина 2 и **точность** 2, то есть минимум две цифры с нулём слева
-/// (`1 → "01"`, `0 → "00"`); `{:02}` в Rust даёт ту же строку для любого
-/// значения. Показывается **остаток времени хода** в минутах:секундах, не ходы.
+/// `%2.2i` — width 2 and **precision** 2, i.e. at least two digits with a leading zero
+/// (`1 → "01"`, `0 → "00"`); `{:02}` in Rust gives the same string for any
+/// value. It shows the **remaining turn time** in minutes:seconds, not turns.
 pub fn timer_text(seconds: u32) -> String {
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
-/// Загруженные картинки панелей.
+/// Loaded panel pictures.
 #[derive(Debug, Clone)]
 pub struct Panels {
     files: ButtonPair,
     preferences: ButtonPair,
     end_turn: SimpleImage,
-    /// Нажатая кнопка End Turn для команды `RED/GREEN/BLUE/GRAY` —
+    /// Pressed End Turn button for the team `RED/GREEN/BLUE/GRAY` —
     /// `R_ENDT_D`/`G_ENDT_D`/`B_ENDT_D`/`W_ENDT_D`
     /// (`GameManager_MenuClickEndTurnButton`: `CopyDown(R_ENDT_D + team)`).
     end_turn_down: [SimpleImage; 4],
@@ -669,18 +669,18 @@ pub struct Panels {
     toggles: [ButtonPair; 9],
     minimap_2x: ButtonPair,
     minimap_tnt: ButtonPair,
-    /// Прочие кнопки: готовая картинка и положение в окне.
+    /// Other buttons: a ready picture and its position in the window.
     aux: Vec<(SimpleImage, PixelRect)>,
-    /// Иконки оверлея `STATUS` (`IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`).
+    /// `STATUS` overlay icons (`IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`).
     pub status_icons: StatusIcons,
 }
 
 impl Panels {
-    /// Грузит картинки панелей из `MAX.RES`.
+    /// Loads the panel pictures from `MAX.RES`.
     ///
-    /// Обязательны картинки верхних кнопок/счётчиков, нижней строки, зума и
-    /// девяти переключателей. Если чего-то нет, возвращается `None` — хром
-    /// продолжает рисовать только `FRAMEPIC`.
+    /// The pictures of the top buttons/counters, the bottom row, zoom and
+    /// the nine toggles are mandatory. If something is missing, `None` is returned — the chrome
+    /// keeps drawing only `FRAMEPIC`.
     pub fn load(max_res: &max_assets::ResArchive) -> Option<Self> {
         let simple = |name: &str| -> Option<SimpleImage> {
             let bytes = max_res.read(name).ok()?;
@@ -743,7 +743,7 @@ impl Panels {
             minimap_2x: pair("MIN2X_OF", "MIN2X_ON")?,
             minimap_tnt: pair("MINFL_OF", "MINFL_ON")?,
             aux,
-            // Необязательные (C++ грузит их только при включённом STATUS).
+            // Optional (C++ loads them only with STATUS enabled).
             status_icons: StatusIcons {
                 disabled: simple("IL_DSBLD"),
                 speed: simple("IL_SPEED"),
@@ -752,9 +752,9 @@ impl Panels {
         })
     }
 
-    /// Рисует панели поверх кадра (после `FRAMEPIC` и карты).
+    /// Draws the panels over the frame (after `FRAMEPIC` and the map).
     ///
-    /// Возвращает число закрашенных пикселей.
+    /// Returns the number of filled pixels.
     pub fn draw(&self, frame: &mut RgbaBuffer, app: &crate::App) -> u32 {
         let Some(assets) = app.assets() else {
             return 0;
@@ -769,7 +769,7 @@ impl Panels {
         let palette = &palette;
         let mut painted = 0;
 
-        // Верхние кнопки.
+        // Top buttons.
         self.draw_pair(
             frame,
             palette,
@@ -789,16 +789,16 @@ impl Panels {
         );
         self.draw_caption(frame, palette, PanelButton::Preferences);
 
-        // End Turn (заходит на карту — рисуется поверх).
+        // End Turn (extends onto the map — drawn over it).
         //
         // `GameManager_MenuClickEndTurnButton` (`game_manager.cpp:3977`):
         // `CopyDown(R_ENDT_D + ActiveTurnTeam)` + `SetRestState(!rest_state)`,
-        // а `GameManager_UpdateGui` зовёт её с `rest_state = true` для
-        // `TEAM_TYPE_PLAYER` (кнопка отжата) и `rest_state = 0` для
-        // `TEAM_TYPE_COMPUTER` (кнопка нажата до конца ходов оппонентов).
-        // Подпись нажатой кнопки — `_(aeb0)` «End Turn», запечённая в ресурс
-        // цветом команды: `FontColor(team + 1, team + 1, 0x3F)`
-        // (`game_manager.cpp:7860-7883`; у GRAY — `0xFF`).
+        // while `GameManager_UpdateGui` calls it with `rest_state = true` for
+        // `TEAM_TYPE_PLAYER` (the button is released) and `rest_state = 0` for
+        // `TEAM_TYPE_COMPUTER` (the button is pressed until the end of the opponents' turns).
+        // The pressed button label — `_(aeb0)` "End Turn", baked into the resource
+        // in the team color: `FontColor(team + 1, team + 1, 0x3F)`
+        // (`game_manager.cpp:7860-7883`; for GRAY — `0xFF`).
         let active_team = state.active_turn_team;
         let active_kind = state
             .teams
@@ -840,7 +840,7 @@ impl Panels {
             self.draw_caption(frame, palette, PanelButton::EndTurn);
         }
 
-        // Номер хода и таймер.
+        // Turn number and timer.
         painted += self.blit(
             frame,
             palette,
@@ -867,9 +867,9 @@ impl Panels {
         // `GameManager_DrawTurnTimer` (`game_manager.cpp:2193`):
         // `color = (turn_time <= 20) ? COLOR_RED : 0xA2;`
         // `sprintf(text, "%2.2i:%2.2i", turn_time / 60, turn_time % 60);`
-        // `%2.2i` — точность 2 цифры (нули слева: `1 → «01»`, `0 → «00»`),
-        // поэтому `{:02}` в Rust даёт ровно ту же строку. Красный включается и
-        // при `turn_time == 0` (таймер выключен), как в C++.
+        // `%2.2i` — precision 2 digits (leading zeros: `1 → «01»`, `0 → «00»`),
+        // so `{:02}` in Rust gives exactly the same string. Red is enabled also
+        // at `turn_time == 0` (the timer is off), as in C++.
         let timer_seconds = app.turn_timer_seconds();
         let timer_color = palette.rgba(timer_color_index(timer_seconds));
         draw_centered(
@@ -880,7 +880,7 @@ impl Panels {
             timer_color,
         );
 
-        // Прочие кнопки (Play/Pause/Center/Prev/Done/Next/Help/Reports/Chat).
+        // Other buttons (Play/Pause/Center/Prev/Done/Next/Help/Reports/Chat).
         for (image, rect) in &self.aux {
             painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
         }
@@ -894,7 +894,7 @@ impl Panels {
             self.draw_caption(frame, palette, button);
         }
 
-        // Сетка переключателей.
+        // Toggle grid.
         for (index, button) in PanelButton::TOGGLES.into_iter().enumerate() {
             let pair = &self.toggles[index];
             let active = panel.get(button);
@@ -902,10 +902,10 @@ impl Panels {
             self.draw_caption(frame, palette, button);
         }
 
-        // Кнопки миникарты. В оригинале их отжатое состояние уже нарисовано в
-        // `FRAMEPIC` (как и весь хром), а ресурс `MIN2X_OF`/`MINFL_OF` лежит на
-        // несколько пикселей ниже — при отрисовке поверх получался бы дубль.
-        // Поэтому `*_OF` рисуется только без хрома, `*_ON` — всегда.
+        // Minimap buttons. In the original their released state is already drawn in
+        // `FRAMEPIC` (like the whole chrome), and the `MIN2X_OF`/`MINFL_OF` resource lies
+        // a few pixels lower — drawing it over would produce a duplicate.
+        // Therefore `*_OF` is drawn only without chrome, `*_ON` — always.
         self.draw_minimap_button(
             frame,
             palette,
@@ -925,7 +925,7 @@ impl Panels {
             &mut painted,
         );
 
-        // Зум: фон и указатель (смещение — `GameManager_UpdateZoomSlider`).
+        // Zoom: background and pointer (the offset — `GameManager_UpdateZoomSlider`).
         painted += self.blit(
             frame,
             palette,
@@ -945,14 +945,14 @@ impl Panels {
             layout::ZOOM_SLIDER,
         );
 
-        // Миникарта из `minimap`-слоя `.WRL`.
+        // Minimap from the `minimap` layer of `.WRL`.
         painted += draw_minimap(frame, app, assets, palette);
 
-        // Портрет и статистика.
+        // Portrait and statistics.
         painted += self.draw_portrait(frame, app, assets, palette);
         painted += draw_stats(frame, state, app.selected_unit(), palette);
 
-        // Нижняя строка: координаты и описание юнита.
+        // Bottom row: coordinates and the unit description.
         painted += self.blit(
             frame,
             palette,
@@ -1023,7 +1023,7 @@ impl Panels {
         let mut painted = 0u32;
         let area = layout::CORNER_FLIC;
 
-        // Чёрный фон окна портрета (как `FillOrRestoreWindow(CORNER_FLIC, BLACK)`).
+        // Black background of the portrait window (like `FillOrRestoreWindow(CORNER_FLIC, BLACK)`).
         frame.fill_rect(area, Rgba::BLACK);
         painted += (area.width * area.height) as u32;
 
@@ -1031,9 +1031,9 @@ impl Panels {
             return painted;
         };
 
-        // Основной путь — FLC-анимация (`GameManager_MenuCreateFlic` +
-        // `AdvanceFlic`): кадр 1:1 в окно 128×128, индексы — палитрой окна
-        // (`FRAMEPIC`), как C++ (`load_flic_palette = 0`).
+        // The main path — FLC animation (`GameManager_MenuCreateFlic` +
+        // `AdvanceFlic`): the frame 1:1 into the 128×128 window, indices — by the window
+        // palette (`FRAMEPIC`), like C++ (`load_flic_palette = 0`).
         let animation = app
             .portrait()
             .filter(|portrait| portrait.unit() == unit.id && !portrait.frames().is_empty());
@@ -1053,7 +1053,7 @@ impl Panels {
 
             painted += (width * height) as u32;
         } else {
-            // Fallback: FLC нет (22 типа) или файл не загрузился — спрайт ×2.
+            // Fallback: no FLC (22 types) or the file did not load — sprite ×2.
             let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
             let anchor = (area.width / 2, area.height / 2);
 
@@ -1065,8 +1065,8 @@ impl Panels {
                     .map(|team| team.team_clan),
             );
 
-            // Презентационные поля (тень/яркость) — таблица `GameState`
-            // (Ф5.3/B), не `UnitInfo`.
+            // Presentation fields (shadow/brightness) — the `GameState` table
+            // (phase 5.3/B), not `UnitInfo`.
             let presentation = app
                 .state()
                 .presentation(unit.id)
@@ -1102,11 +1102,11 @@ impl Panels {
             }
         }
 
-        // Имя и статус в верхней части портрета (`GameManager_MenuUnitSelect`:
-        // `win_print` именем `COLOR_GREEN`, затем `GameManager_UpdateInfoDisplay`
-        // — статус `0xA2` строкой ниже). Оригинал рисует их поверх кадра FLC и
-        // при анимации перерисовывает только строки ниже `text_height` — у нас
-        // панель рисуется целиком, поэтому текст просто наносится последним.
+        // Name and status in the upper part of the portrait (`GameManager_MenuUnitSelect`:
+        // `win_print` with the name in `COLOR_GREEN`, then `GameManager_UpdateInfoDisplay`
+        // — the status `0xA2` one line lower). The original draws them over the FLC frame and
+        // during animation repaints only the lines below `text_height` — here
+        // the panel is drawn entirely, so the text is simply applied last.
         let font = GnwFontId::Font2.font();
         draw_text_gnw(
             frame,
@@ -1146,8 +1146,8 @@ impl Panels {
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
     }
 
-    /// Кнопка миникарты: `*_ON` всегда, `*_OF` — только если хрома нет
-    /// (в `FRAMEPIC` отжатое состояние уже нарисовано).
+    /// Minimap button: `*_ON` always, `*_OF` — only if there is no chrome
+    /// (the released state is already drawn in `FRAMEPIC`).
     #[allow(clippy::too_many_arguments)]
     fn draw_minimap_button(
         &self,
@@ -1178,17 +1178,17 @@ impl Panels {
         self.draw_caption_colored(frame, palette, button, base, outline, shadow);
     }
 
-    /// Подпись кнопки заданными индексами палитры — `Button::SetCaption`
-    /// (`button.cpp:412-449`) и запечённая в ресурс подпись End Turn
+    /// Button label with the given palette indices — `Button::SetCaption`
+    /// (utton.cpp:412-449) and the End Turn label baked into the resource
     /// (`Text_TextBox(..., 0, 0, w, h, true, true, FontColor(...))`).
     ///
-    /// Геометрия 1:1 C++: `SetCaption(caption, x, y, …)` уменьшает область
-    /// центровки до `width - x` / `height - y`, затем `Text_TextLine`
-    /// (`text.cpp:772`) центрирует строку в этой области:
-    /// `x = (swidth - (Text_GetWidth + 1)) / 2` (сдвиг только если > 0),
-    /// `y = ((height - y) - Text_GetHeight()) / 2 + y`. Раньше порт центровал
-    /// в полном прямоугольнике кнопки — подписи 3×3 уезжали на 1-2 px вниз и
-    /// на 1 px вправо.
+    /// C++ 1:1 geometry: `SetCaption(caption, x, y, …)` shrinks the
+    /// centering area to `width - x` / `height - y`, then `Text_TextLine`
+    /// (`text.cpp:772`) centers the line in this area:
+    /// `x = (swidth - (Text_GetWidth + 1)) / 2` (a shift only if > 0),
+    /// `y = ((height - y) - Text_GetHeight()) / 2 + y`. Earlier the port centered
+    /// in the full button rectangle — the 3×3 labels drifted 1-2 px down and
+    /// 1 px right.
     fn draw_caption_colored(
         &self,
         frame: &mut RgbaBuffer,
@@ -1216,7 +1216,7 @@ impl Panels {
         );
     }
 
-    /// Копирует `SimpleImage` с прозрачностью (индекс `image.transparent`).
+    /// Copies a `SimpleImage` with transparency (the `image.transparent` index).
     fn blit(
         &self,
         frame: &mut RgbaBuffer,
@@ -1229,7 +1229,7 @@ impl Panels {
         self.blit_clipped(frame, palette, image, ulx, uly, transparent, frame.bounds())
     }
 
-    /// То же, но с обрезкой по `clip` (окно панели).
+    /// The same, but clipped by `clip` (the panel window).
     #[allow(clippy::too_many_arguments)]
     fn blit_clipped(
         &self,
@@ -1270,17 +1270,17 @@ impl Panels {
     }
 }
 
-/// Смещение указателя зума.
+/// Zoom pointer offset.
 ///
-/// C++-формула (`GameManager_UpdateZoomSlider`): `((130-28) * (64-zoom)) / 60 +
-/// 14` для диапазона 4…64. Наш `Viewport` держит 8…64, поэтому знаменатель —
-/// `56`; при `zoom == 64` указатель стоит на 14, при `zoom == 8` — на 116.
+/// C++ formula (`GameManager_UpdateZoomSlider`): `((130-28) * (64-zoom)) / 60 +
+/// 14` for the 4…64 range. Our `Viewport` keeps 8…64, so the denominator is
+/// `56`; at `zoom == 64` the pointer stands at 14, at `zoom == 8` — at 116.
 pub fn zoom_slider_offset(zoom: u32) -> i32 {
     let zoom = zoom.clamp(8, 64);
     ((102 * (64 - zoom) as i32) / 56) + 14
 }
 
-/// Обратное преобразование: x ползунка → масштаб (`8..=64`).
+/// The inverse conversion: slider x → scale (`8..=64`).
 pub fn zoom_from_slider_x(x: i32) -> u32 {
     let relative = (x - layout::ZOOM_SLIDER.ulx - 14).clamp(0, 102);
     let zoom = 64 - (relative * 56 / 102);
@@ -1288,14 +1288,14 @@ pub fn zoom_from_slider_x(x: i32) -> u32 {
     zoom.clamp(8, 64) as u32
 }
 
-/// Кнопка панели под точкой окна (`None` — точка не на кнопке).
+/// Panel button under the window point (`None` — the point is not on a button).
 pub fn panel_button_at(x: i32, y: i32) -> Option<PanelButton> {
     PanelButton::ALL
         .into_iter()
         .find(|button| button.rect().contains(x, y))
 }
 
-/// Точка окна → локальные координаты карты (`None` — не в [`layout::MAIN_MAP`]).
+/// Window point → local map coordinates (`None` — not in [`layout::MAIN_MAP`]).
 pub fn screen_to_map(x: i32, y: i32) -> Option<(i32, i32)> {
     if !layout::MAIN_MAP.contains(x, y) {
         return None;
@@ -1304,7 +1304,7 @@ pub fn screen_to_map(x: i32, y: i32) -> Option<(i32, i32)> {
     Some((x - layout::MAIN_MAP.ulx, y - layout::MAIN_MAP.uly))
 }
 
-/// Камера окна карты 448×448: тот же центр/зум, что у приложения.
+/// 448×448 map window camera: the same center/zoom as the application's.
 pub fn map_viewport(viewport: &Viewport) -> Viewport {
     Viewport::with_center(
         layout::MAIN_MAP.width as u32,
@@ -1314,11 +1314,11 @@ pub fn map_viewport(viewport: &Viewport) -> Viewport {
     )
 }
 
-/// Имя юнита для панелей (`UnitInfo::GetDisplayName`): имя или User-Friendly Name.
+/// Unit name for the panels (`UnitInfo::GetDisplayName`): the name or the User-Friendly Name.
 ///
-/// Если у юнита не задано собственное имя (`unit.name`), панель показывает UFN
-/// типа — [`crate::unit_names::unit_user_friendly_name`], а не `Debug`-имя
-/// варианта (`MiningStation` → «Mining Station»).
+/// If the unit has no own name (`unit.name`), the panel shows the type
+/// UFN — [`crate::unit_names::unit_user_friendly_name`], not the variant's `Debug`
+/// name (`MiningStation` → «Mining Station»).
 pub fn unit_name(unit: &UnitInfo) -> String {
     if unit.name.is_empty() {
         crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
@@ -1327,38 +1327,38 @@ pub fn unit_name(unit: &UnitInfo) -> String {
     }
 }
 
-/// Подпись строки статистики — `_(id)` из `game_manager.cpp` (`language.json`).
+/// Statistics row label — `_(id)` from `game_manager.cpp` (`language.json`).
 ///
-/// Идентификаторы C++ → строки en-US: `c02c` Hits, `5027` Ammo, `1274` Cargo,
+/// C++ identifiers → en-US strings: `c02c` Hits, `5027` Ammo, `1274` Cargo,
 /// `c372` Speed, `2bce` Shots, `8d59`/`3aea`/`81c5`/`160c` Usage, `848e` Power,
 /// `1e1a` Teams, `d28b`/`c9b3`/`d4ca`/`7be8`/`5f25` Total, `c54a` points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatLabel {
-    /// Строка 1 — `_(c02c)`.
+    /// Row 1 — `_(c02c)`.
     Hits,
-    /// Строка 2 у вооружённых — `_(5027)`.
+    /// Row 2 for armed units — `_(5027)`.
     Ammo,
-    /// Строка 2 у складов/транспорта — `_(1274)`.
+    /// Row 2 for storages/transport — `_(1274)`.
     Cargo,
-    /// Строка 3 у мобильных — `_(c372)`.
+    /// Row 3 for mobile units — `_(c372)`.
     Speed,
-    /// Строка 4 — `_(2bce)`.
+    /// Row 4 — `_(2bce)`.
     Shots,
     /// `DrawInfoDisplayType1/2` — `_(8d59)`/`_(3aea)`/`_(81c5)`/`_(160c)`.
     Usage,
-    /// `DrawInfoDisplayType2` у генератора — `_(848e)`.
+    /// `DrawInfoDisplayType2` for a generator — `_(848e)`.
     Power,
-    /// `DrawInfoDisplayType1` у генератора рабочих — `_(1e1a)`.
+    /// `DrawInfoDisplayType1` for a worker generator — `_(1e1a)`.
     Teams,
-    /// `DrawInfoDisplayType1/2/3` и запас комплекса — `_(d28b)`/`_(c9b3)`/
+    /// `DrawInfoDisplayType1/2/3` and the complex stock — `_(d28b)`/`_(c9b3)`/
     /// `_(d4ca)`/`_(7be8)`/`_(5f25)`.
     Total,
-    /// `DrawInfoDisplayType3` (теплица) — `_(c54a)`.
+    /// `DrawInfoDisplayType3` (greenhouse) — `_(c54a)`.
     Points,
 }
 
 impl StatLabel {
-    /// Подпись строки (значение `en-US` из `language.json` — как в игре).
+    /// Row label (the `en-US` value from `language.json` — as in the game).
     pub const fn caption(self) -> &'static str {
         match self {
             Self::Hits => "Hits",
@@ -1375,27 +1375,27 @@ impl StatLabel {
     }
 }
 
-/// Одна нарисованная строка статистики (`GameManager_DrawInfoDisplayRow`).
+/// One drawn statistics row (`GameManager_DrawInfoDisplayRow`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatRow {
-    /// Подпись (левый бокс 45…75 px).
+    /// Label (the left box 45…75 px).
     pub label: StatLabel,
-    /// Текущее значение (`current_value` после `std::min(current, base)`).
+    /// Current value (`current_value` after `std::min(current, base)`).
     pub current: i32,
-    /// База (`base_value`); строка рисуется только при `base != 0`.
+    /// Base (`base_value`); the row is drawn only if `base != 0`.
     pub base: i32,
-    /// Шаг pips-иконок C++ (`factor`); `0` — C++ не рисует строку вовсе.
+    /// Step of the C++ pips icons (`factor`); `0` — C++ does not draw the row at all.
     pub factor: i32,
 }
 
 impl StatRow {
-    /// Текст значения: `sprintf(text, "%i/%i", current_value, base_value)`.
+    /// Value text: `sprintf(text, "%i/%i", current_value, base_value)`.
     pub fn text(&self) -> String {
         format!("{}/{}", self.current, self.base)
     }
 
-    /// Цвет значения — `GameManager_DrawInfoDisplayRow`:
-    /// красный `≤ base/4`, жёлтый `≤ base/2`, иначе зелёный.
+    /// Value color — `GameManager_DrawInfoDisplayRow`:
+    /// red `≤ base/4`, yellow `≤ base/2`, otherwise green.
     pub fn color(&self) -> u8 {
         if self.base <= 0 {
             return TEXT;
@@ -1410,19 +1410,19 @@ impl StatRow {
     }
 }
 
-/// Строка «Finished building …» — `language.json` `1200`/`276c` (три варианта
-/// по роду здания; в оригинале все три совпадают по тексту).
+/// The "Finished building …" line — `language.json` `1200`/`276c` (three variants
+/// by the building gender; in the original all three coincide in text).
 const FINISHED_CONSTRUCTION: &str =
     "Finished building {building}.  To move the {builder} out of the construction site, click on a square with a symbol in it.";
-/// `FinishedBuilding` (`1200`/`74d3`/`8c62`) — завод: юнит выходит из завода.
+/// `FinishedBuilding` (`1200`/`74d3`/`8c62`) — factory: the unit leaves the factory.
 const FINISHED_FACTORY: &str =
     "Finished building {building}.  To move the {building} out of the factory, click on a square with a symbol in it.";
 
-/// Текст подсказки выделенного юнита — `GameManager_DrawUnitStatusMessage` +
+/// Selected unit hint text — `GameManager_DrawUnitStatusMessage` +
 /// `GameManager_DrawBuilderUnitStatusMessage` (`game_manager.cpp:7893/8038`).
 ///
-/// Возвращает `None`, если для юнита подсказки нет (C++ рисует сообщение
-/// только для `ORDER_BUILD`/`CLEAR`/`HALT_BUILDING`/`HALT_BUILDING_2`).
+/// Returns `None` if there is no hint for the unit (C++ draws the message
+/// only for `ORDER_BUILD`/`CLEAR`/`HALT_BUILDING`/`HALT_BUILDING_2`).
 pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<String> {
     if !matches!(
         unit.orders,
@@ -1475,14 +1475,14 @@ pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<Stri
     ))
 }
 
-/// Окно сообщения над картой — `MessageManager_DrawMessage` +
+/// Message window above the map — `MessageManager_DrawMessage` +
 /// `MessageManager_DrawMessageBox` (`message_manager.cpp:144/206`).
 ///
-/// Фон — таблица затемнения `MESSAGE_BOX_INFO` (`ResourceManager_
-/// DarkeningColorIndexTable`: `max(7, c/4)*31/63` и ближайший цвет палитры),
-/// текст — `Font5` цветом `0xFF` с обводкой/тенью. Прямоугольник: `(area.ulx,
-/// area.uly + 10)`, ширина = самая длинная строка + 20, высота = `20 + 10 *
-/// строк`.
+/// Background — the `MESSAGE_BOX_INFO` darkening table (`ResourceManager_
+/// DarkeningColorIndexTable`: `max(7, c/4)*31/63` and the nearest palette color),
+/// text — `Font5` in color `0xFF` with an outline/shadow. Rectangle: `(area.ulx,
+/// area.uly + 10)`, width = the longest line + 20, height = `20 + 10 *
+/// lines.
 pub fn draw_status_message(
     frame: &mut RgbaBuffer,
     area: PixelRect,
@@ -1494,7 +1494,7 @@ pub fn draw_status_message(
     }
 
     let font = GnwFontId::Font5.font();
-    // `MessageManager_WrapText(text, width - 20)`: строки переносятся по словам.
+    // `MessageManager_WrapText(text, width - 20)`: lines wrap by words.
     let max_line = (area.width - 20).max(20);
     let mut lines: Vec<String> = Vec::new();
 
@@ -1575,8 +1575,8 @@ pub fn draw_status_message(
     painted
 }
 
-/// Строка C++: `if (base_value && factor)` — иначе `DrawInfoDisplayRow`
-/// не рисует ничего, и строка остаётся пустой (фон `FRAMEPIC`).
+/// C++ line: `if (base_value && factor)` — otherwise `DrawInfoDisplayRow`
+/// draws nothing, and the row remains empty (`FRAMEPIC` background).
 fn make_row(label: StatLabel, current: i32, base: i32, factor: i32) -> Option<StatRow> {
     if base == 0 || factor == 0 {
         return None;
@@ -1590,17 +1590,17 @@ fn make_row(label: StatLabel, current: i32, base: i32, factor: i32) -> Option<St
     })
 }
 
-/// Наложение строки поверх уже нарисованной (C++ рисует поверх буфера
-/// `WINDOW_STAT_ROW_N`; пропущенный вызов оставляет прежнее содержимое).
+/// Overlay of a line over the already drawn one (C++ draws over the buffer
+/// `WINDOW_STAT_ROW_N`; a skipped call leaves the previous content).
 fn assign_row(rows: &mut [Option<StatRow>; 4], index: usize, row: Option<StatRow>) {
     if let Some(row) = row {
         rows[index] = Some(row);
     }
 }
 
-/// `Cargo_GetNetProduction(unit)` в цикле `DrawInfoDisplayType1/2`: у юнита в
-/// `ORDER_UPGRADE` C++ считает производство по **предыдущему** приказу
-/// (временно `SetOrder(prior)`), поэтому клонируем с `prior_orders`.
+/// `Cargo_GetNetProduction(unit)` in the `DrawInfoDisplayType1/2` loop: for a unit in
+/// `ORDER_UPGRADE` C++ computes production by the **previous** order
+/// (temporarily `SetOrder(prior)`), so we clone with `prior_orders`.
 fn net_production_of(state: &GameState, unit: &UnitInfo) -> NetProduction {
     if unit.orders == UnitOrder::Upgrade && unit.state == UnitOrderState::ExecutingOrder {
         let mut simulated = unit.clone();
@@ -1613,8 +1613,8 @@ fn net_production_of(state: &GameState, unit: &UnitInfo) -> NetProduction {
     }
 }
 
-/// `GameManager_DrawInfoDisplayType2` — энергия: строка 2 `Usage`/`Power`,
-/// строки 3/4 — `Total`/`Usage` по комплексу (только свои юниты).
+/// `GameManager_DrawInfoDisplayType2` — power: row 2 `Usage`/`Power`,
+/// rows 3/4 — `Total`/`Usage` by the complex (own units only).
 fn power_rows(
     state: &GameState,
     unit: &UnitInfo,
@@ -1634,14 +1634,14 @@ fn power_rows(
     let current_power_need = cargo.power;
 
     if power_need >= 0 {
-        // `_(8d59)` «Usage»: сколько энергии юнит потребит.
+        // `_(8d59)` «Usage»: how much power the unit consumes.
         assign_row(
             rows,
             1,
             make_row(StatLabel::Usage, -current_power_need, power_need, 1),
         );
     } else {
-        // `_(848e)` «Power»: сколько энергии юнит даёт.
+        // `_(848e)` «Power»: how much power the unit produces.
         assign_row(
             rows,
             1,
@@ -1700,8 +1700,8 @@ fn power_rows(
     }
 }
 
-/// `GameManager_DrawInfoDisplayType1` — рабочие: строка 2 `Usage`/`Teams`,
-/// строки 3/4 — `Total`/`Usage` по комплексу (только свои юниты).
+/// `GameManager_DrawInfoDisplayType1` — workers: row 2 `Usage`/`Teams`,
+/// rows 3/4 — `Total`/`Usage` by the complex (own units only).
 fn life_rows(
     state: &GameState,
     unit: &UnitInfo,
@@ -1782,7 +1782,7 @@ fn life_rows(
     }
 }
 
-/// `GameManager_DrawInfoDisplayType3` — теплица игрока: очки партии.
+/// `GameManager_DrawInfoDisplayType3` — the player's greenhouse: match points.
 fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRow>; 4]) {
     let mut current_value = if state.victory_type == VictoryType::Score {
         state.victory_limit
@@ -1824,9 +1824,9 @@ fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRo
     );
 }
 
-/// Запас комплекса — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
-/// `Cargo_GetCargoCapacity`: сумма `storage` и `ATTRIB_STORAGE` стационарных
-/// юнитов того же комплекса с тем же типом груза (строка `_(d28b)` «Total»).
+/// Complex stock — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
+/// `Cargo_GetCargoCapacity`: the sum of `storage` and `ATTRIB_STORAGE` of stationary
+/// units of the same complex with the same cargo type (the `_(d28b)` «Total» row).
 fn complex_cargo(state: &GameState, unit: &UnitInfo, cargo_type: CargoType) -> (i32, i32) {
     let mut value = 0;
     let mut capacity = 0;
@@ -1847,29 +1847,29 @@ fn complex_cargo(state: &GameState, unit: &UnitInfo, cargo_type: CargoType) -> (
     (value, capacity)
 }
 
-/// Четыре строки статистики выбранного юнита — порт `GameManager_UpdateInfoDisplay`
-/// (`game_manager.cpp:7667`), порядок вызовов сохранён:
+/// Four statistics lines of the selected unit — a port of `GameManager_UpdateInfoDisplay`
+/// (game_manager.cpp:7667), the call order preserved:
 ///
-/// 1. строка 1 — `Hits` (`unit->hits` / `ATTRIB_HITS`, factor 4);
-/// 2. строка 2 — `Ammo` при `ATTRIB_ATTACK != 0` (база `ATTRIB_AMMO` только
-///    для своей команды), иначе `Cargo` (`unit->storage` / `ATTRIB_STORAGE` с
-///    масштабом по типу груза; чужому юниту — factor 0, строка не рисуется);
-/// 3. строка 3 — `Speed` (`unit->speed` / `ATTRIB_SPEED`);
-/// 4. строка 4 — `Shots` (`unit->shots` / `min(ROUNDS, AMMO)`).
+/// 1. row 1 — `Hits` (`unit->hits` / `ATTRIB_HITS`, factor 4);
+/// 2. row 2 — `Ammo` if `ATTRIB_ATTACK != 0` (the base `ATTRIB_AMMO` only
+///    for own team), otherwise `Cargo` (`unit->storage` / `ATTRIB_STORAGE` scaled
+///    by the cargo type; for a foreign unit — factor 0, the row is not drawn);
+/// 3. row 3 — `Speed` (`unit->speed` / `ATTRIB_SPEED`);
+/// 4. row 4 — `Shots` (`unit->shots` / `min(ROUNDS, AMMO)`).
 ///
-/// Затем поверх (как C++, только для `player_team`):
-/// [`power_rows`] при `ATTRIB_STORAGE == 0`, [`greenhouse_rows`] для `GREENHSE`
-/// либо [`life_rows`], и строка запаса комплекса [`complex_cargo`] для своих
-/// стационарных складов (`RAW`/`FUEL`/`GOLD`).
+/// Then over them (like C++, only for `player_team`):
+/// [`power_rows`] if `ATTRIB_STORAGE == 0`, [`greenhouse_rows`] for `GREENHSE`
+/// or [`life_rows`], and the complex stock row [`complex_cargo`] for own
+/// stationary storages (`RAW`/`FUEL`/`GOLD`).
 ///
-/// Строка с нулевой базой или нулевым factor остаётся пустой — ровно как
+/// A row with a zero base or zero factor remains empty — exactly like
 /// `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`).
 pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Option<StatRow>; 4] {
     let values = &unit.base_values;
     let own = unit.team == player_team;
     let mut rows: [Option<StatRow>; 4] = [None; 4];
 
-    // Строка 1: `Hits` — при ненулевой базе (factor 4).
+    // Row 1: `Hits` — with a non-zero base (factor 4).
     rows[0] = make_row(
         StatLabel::Hits,
         i32::from(unit.hits),
@@ -1877,13 +1877,13 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
         4,
     );
 
-    // Строка 2: `Ammo` у вооружённых / `Cargo` у остальных.
+    // Row 2: `Ammo` for armed units / `Cargo` for the others.
     let storage_value = values.get_attribute(ATTRIB_STORAGE);
     let cargo_type = cargo_type_of(unit.unit_type);
     let mut scaling_factor = 0;
 
     if values.get_attribute(ATTRIB_ATTACK) != 0 {
-        // Врагу боезапас не показываем (`ammo = 0` в C++).
+        // We do not show ammo to the enemy (`ammo = 0` in C++).
         let ammo = if own {
             values.get_attribute(ATTRIB_AMMO)
         } else {
@@ -1916,7 +1916,7 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
         );
     }
 
-    // Строка 3: `Speed`, строка 4: `Shots` (`min(ROUNDS, AMMO)`).
+    // Row 3: `Speed`, row 4: `Shots` (`min(ROUNDS, AMMO)`).
     rows[2] = make_row(
         StatLabel::Speed,
         i32::from(unit.speed),
@@ -1932,19 +1932,19 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
         1,
     );
 
-    // `GameManager_DrawInfoDisplayType2` — только если `ATTRIB_STORAGE == 0`.
+    // `GameManager_DrawInfoDisplayType2` — only if `ATTRIB_STORAGE == 0`.
     if storage_value == 0 {
         power_rows(state, unit, player_team, &mut rows);
     }
 
-    // Теплица игрока — Type3 вместо Type1.
+    // The player's greenhouse — Type3 instead of Type1.
     if unit.unit_type == UnitType::EcoSphere && own {
         greenhouse_rows(state, unit, &mut rows);
     } else {
         life_rows(state, unit, player_team, &mut rows);
     }
 
-    // Запас комплекса — `_(d28b)` поверх строки 3.
+    // Complex stock — `_(d28b)` over row 3.
     if own
         && storage_value > 0
         && !unit.is_mobile()
@@ -1963,8 +1963,8 @@ pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Opt
     rows
 }
 
-/// Одна нарисованная строка (`GameManager_DrawInfoDisplayRow`): значение
-/// `current/base` цветом порога и подпись `0xA2`, шрифт `GNW_TEXT_FONT_2`.
+/// One drawn row (`GameManager_DrawInfoDisplayRow`): the `current/base` value
+/// in the threshold color and the label `0xA2`, font `GNW_TEXT_FONT_2`.
 fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette: &UiPalette) {
     let font = GnwFontId::Font2.font();
     let value_rect = PixelRect::new(row.ulx, row.uly, 45, row.height);
@@ -1986,9 +1986,9 @@ fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette
     );
 }
 
-/// Четыре строки статистики выбранного юнита ([`rows_for`]).
+/// Four statistics lines of the selected unit ([`rows_for`]).
 ///
-/// Строки, которые C++ не рисует, остаются фоном окна — [``None``].
+/// Rows that C++ does not draw remain the window background — [``None``].
 fn draw_stats(
     frame: &mut RgbaBuffer,
     state: &GameState,
@@ -2016,26 +2016,26 @@ fn draw_stats(
     (layout::STAT_WINDOW.width * layout::STAT_WINDOW.height) as u32
 }
 
-/// Размер окна миникарты (`WINDOW_MINIMAP`, 112×112).
+/// Minimap window size (`WINDOW_MINIMAP`, 112×112).
 const MINIMAP_SLOT: i32 = layout::MINIMAP.width;
 
-/// Масштабирование карты в окно миникарты — `World::CalculateMinimapScaling`
+/// Map scaling into the minimap window — `World::CalculateMinimapScaling`
 /// (`world.cpp:917`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimapView {
-    /// Смещение нарисованной карты внутри окна (пиксели миникарты).
+    /// Offset of the drawn map inside the window (minimap pixels).
     pub offset_x: i32,
-    /// Смещение по y.
+    /// Offset by y.
     pub offset_y: i32,
-    /// Ширина нарисованной карты в окне.
+    /// Width of the drawn map in the window.
     pub width: i32,
-    /// Высота нарисованной карты в окне.
+    /// Height of the drawn map in the window.
     pub height: i32,
-    /// Масштаб карта → окно (`ResourceManager_MinimapWindowScale`).
+    /// Map → window scale (`ResourceManager_MinimapWindowScale`).
     pub scale: f64,
 }
 
-/// Считает масштаб и смещение карты в окне 112×112 (порт
+/// Computes the scale and offset of the map in the 112×112 window (a port of
 /// `World::CalculateMinimapScaling`).
 pub fn minimap_view(map_width: i32, map_height: i32) -> MinimapView {
     let slot = MINIMAP_SLOT;
@@ -2082,9 +2082,9 @@ pub fn minimap_view(map_width: i32, map_height: i32) -> MinimapView {
     }
 }
 
-/// `GameManager_GridCenterOffset`: левый верхний угол области 2x-миникарты.
+/// `GameManager_GridCenterOffset`: the top-left corner of the 2x minimap area.
 ///
-/// В C++ смещение обновляется инкрементально (±4), здесь берётся его предел:
+/// In C++ the offset is updated incrementally (±4); here its limit is taken:
 /// `clamp(view_center - map/4, 0, map/2)`.
 pub fn minimap_center_offset(viewport: &Viewport, map_width: i32, map_height: i32) -> (i32, i32) {
     let (center_x, center_y) = viewport.center();
@@ -2097,11 +2097,11 @@ pub fn minimap_center_offset(viewport: &Viewport, map_width: i32, map_height: i3
     )
 }
 
-/// Точка окна → клетка миникарты (`GameManager_GetMinimapPosition`).
+/// Window point → minimap cell (`GameManager_GetMinimapPosition`).
 ///
-/// Учитывает `2x`-режим: в нём показывается область 56×56 вокруг центра
-/// камеры, поэтому координата делится на 2 и смещается на
-/// [`minimap_center_offset`]. `None` — точка вне окна миникарты.
+/// Takes the `2x` mode into account: it shows a 56×56 area around the camera
+/// center, so the coordinate is divided by 2 and shifted by
+/// [`minimap_center_offset`]. `None` — the point is outside the minimap window.
 pub fn minimap_grid_at(
     x: i32,
     y: i32,
@@ -2137,8 +2137,8 @@ pub fn minimap_grid_at(
     Some((grid_x as i16, grid_y as i16))
 }
 
-/// Палитра индексов миникарты: системная палитра окна, в которой индексы
-/// 64…159 заменены палитрой `.WRL` (`World::ApplyPaletteAndTints`).
+/// Minimap index palette: the window system palette in which indices
+/// 64…159 are replaced by the `.WRL` palette (`World::ApplyPaletteAndTints`).
 fn minimap_palette(ui: &UiPalette, wrl: &[u8; 768]) -> max_render::terrain::PaletteRgba {
     let mut palette = ui.palette_rgba();
     let wrl_palette = max_render::terrain::palette_from_wrl(wrl);
@@ -2149,9 +2149,9 @@ fn minimap_palette(ui: &UiPalette, wrl: &[u8; 768]) -> max_render::terrain::Pale
 
 /// `ResourceManager_DarkeningColorIndexTable` (`world.cpp:493-508`).
 ///
-/// Цвет индекса затемняется вдвое (`max(7, c/4) * 31 / 63`), затем ищется
-/// ближайший индекс палитры (`Color_MapColor`, диапазоны 9..31 и 96..127
-/// пропускаются). Таблица применяется к неисследованным клеткам FOV.
+/// The index color is dimmed by half (`max(7, c/4) * 31 / 63`), then the
+/// nearest palette index is searched (`Color_MapColor`, the 9..31 and 96..127 ranges
+/// are skipped). The table is applied to unexplored FOV cells.
 pub fn darkening_table(palette: &max_render::terrain::PaletteRgba) -> [u8; 256] {
     let mut palette6 = [[0u8; 3]; 256];
 
@@ -2179,14 +2179,14 @@ pub fn darkening_table(palette: &max_render::terrain::PaletteRgba) -> [u8; 256] 
     table
 }
 
-/// `Color_MapColor(..., full_scan = false)` — ближайший цвет палитры.
+/// `Color_MapColor(..., full_scan = false)` — the nearest palette color.
 fn map_color(palette: &[[u8; 3]; 256], target: [u8; 3]) -> u8 {
     let mut best = 0u8;
     let mut best_distance = i32::MAX;
 
     for (index, color) in palette.iter().enumerate() {
-        // C++ пропускает диапазоны 9..=31 и 96..=127 (в байтовых смещениях —
-        // те же индексы после /3).
+        // C++ skips the 9..=31 and 96..=127 ranges (in byte offsets —
+        // the same indices after /3).
         if (9..=31).contains(&index) || (96..=127).contains(&index) {
             continue;
         }
@@ -2209,18 +2209,18 @@ fn map_color(palette: &[[u8; 3]; 256], target: [u8; 3]) -> u8 {
     best
 }
 
-/// Индекс цвета точки юнита на миникарте (`DrawMap_RenderMiniMapUnitList`).
+/// Color index of the unit dot on the minimap (`DrawMap_RenderMiniMapUnitList`).
 fn minimap_unit_color(team: max_core::TeamId) -> u8 {
     match team.0 {
         0 => 0x01, // COLOR_RED
         1 => 0x02, // COLOR_GREEN
         2 => 0x03, // COLOR_BLUE
-        3 => 0xFF, // «серый» — белый
-        _ => 0x04, // COLOR_YELLOW (пришельцы/прочее)
+        3 => 0xFF, // "gray" — white
+        _ => 0x04, // COLOR_YELLOW (aliens/other)
     }
 }
 
-/// Миникарта из `minimap`-слоя `.WRL` (112×112 у стандартных планет).
+/// Minimap from the `minimap` layer of `.WRL` (112×112 for standard planets).
 fn draw_minimap(
     frame: &mut RgbaBuffer,
     app: &crate::App,
@@ -2242,7 +2242,7 @@ fn draw_minimap(
     let combined = minimap_palette(palette, world.palette());
     let dark = darkening_table(&combined);
 
-    // 1. FOV: `Access_UpdateMinimapFogOfWar` — неисследованные клетки темнее.
+    // 1. FOV: `Access_UpdateMinimapFogOfWar` — unexplored cells are darker.
     let all_visible = state.ai.all_visible;
     let heat = state
         .ai
@@ -2262,7 +2262,7 @@ fn draw_minimap(
         });
     }
 
-    // 2. Точки юнитов (`DrawMap_RenderMiniMapUnitList`).
+    // 2. Unit dots (`DrawMap_RenderMiniMapUnitList`).
     paint_minimap_units(
         &mut layer,
         state,
@@ -2272,7 +2272,7 @@ fn draw_minimap(
         panel.minimap_2x,
     );
 
-    // 3. Карта в окно 112×112 (`GameManager_RenderMinimap` + `cscale`).
+    // 3. Map into the 112×112 window (`GameManager_RenderMinimap` + `cscale`).
     let view = minimap_view(map_width, map_height);
     let mut window = vec![0u8; (MINIMAP_SLOT * MINIMAP_SLOT) as usize];
     let inner_width = MINIMAP_SLOT - view.offset_x * 2;
@@ -2292,8 +2292,8 @@ fn draw_minimap(
         }
     }
 
-    // 4. Рамка камеры (`draw_box(..., COLOR_RED)`); в 2x-режиме C++ затирает её
-    //    масштабированием, поэтому рисуем до 2x.
+    // 4. Camera frame (`draw_box(..., COLOR_RED)`); in 2x mode C++ overwrites it
+    //    by scaling, so we draw it before 2x.
     let map_view = map_viewport(viewport);
 
     if let Some(range) = map_view.visible_tiles() {
@@ -2306,8 +2306,8 @@ fn draw_minimap(
         draw_box_indexed(&mut window, MINIMAP_SLOT, (x0, y0, x1, y1), 0x01);
     }
 
-    // 5. 2x-режим (`GameManager_RenderMinimap`): область 56×56 вокруг центра
-    //    камеры растягивается на всё окно.
+    // 5. 2x mode (`GameManager_RenderMinimap`): the 56×56 area around the camera
+    //    center is stretched over the whole window.
     if panel.minimap_2x {
         let (center_x, center_y) = minimap_center_offset(&map_view, map_width, map_height);
         let start_x = view.offset_x / 2 + (f64::from(center_x) * view.scale) as i32;
@@ -2331,7 +2331,7 @@ fn draw_minimap(
         window = scaled;
     }
 
-    // 6. Индексы → RGBA в окно `WINDOW_MINIMAP`.
+    // 6. Indices → RGBA into `WINDOW_MINIMAP`.
     let area = layout::MINIMAP;
     let mut painted = 0u32;
 
@@ -2349,7 +2349,7 @@ fn draw_minimap(
     painted
 }
 
-/// Точки юнитов на слое миникарты (ровно условия C++).
+/// Unit dots on the minimap layer (exactly the C++ conditions).
 fn paint_minimap_units(
     layer: &mut [u8],
     state: &GameState,
@@ -2398,7 +2398,7 @@ fn paint_minimap_units(
     }
 }
 
-/// `draw_box` по индексированному буферу (рамка камеры).
+/// `draw_box` over an indexed buffer (the camera frame).
 fn draw_box_indexed(buffer: &mut [u8], stride: i32, rect: (i32, i32, i32, i32), color: u8) {
     let (x0, y0, x1, y1) = rect;
 
@@ -2426,7 +2426,7 @@ fn set_indexed(buffer: &mut [u8], stride: i32, x: i32, y: i32, color: u8) {
     }
 }
 
-/// Рисует строку по центру прямоугольника шрифтом GNW.
+/// Draws a line centered in a rectangle with the GNW font.
 fn draw_centered(
     frame: &mut RgbaBuffer,
     rect: PixelRect,
@@ -2445,7 +2445,7 @@ fn draw_centered(
 mod tests {
     use super::*;
 
-    /// Палитра, в которой текст (`0xA2`) и красный (`0x01`) отличимы от фона.
+    /// A palette in which the text (`0xA2`) and red (`0x01`) are distinguishable from the background.
     fn test_palette() -> UiPalette {
         let mut colors = [[0u8, 0, 0]; 256];
         colors[usize::from(TEXT)] = [252, 248, 244];
@@ -2457,7 +2457,7 @@ mod tests {
         UiPalette::from_colors(colors)
     }
 
-    /// Границы «чернил» цвета `color` внутри прямоугольника (включительно).
+    /// "Ink" bounds of the color `color` inside the rectangle (inclusive).
     fn ink_bounds(frame: &RgbaBuffer, rect: PixelRect, color: Rgba) -> Option<(i32, i32, i32, i32)> {
         let mut bounds: Option<(i32, i32, i32, i32)> = None;
 
@@ -2478,7 +2478,7 @@ mod tests {
     }
 
     /// `GameManager_DrawTurnTimer`: `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
-    /// — нули слева, минуты:секунды (`%2.2i` = ширина 2, точность 2).
+    /// — leading zeros, minutes:seconds (`%2.2i` = width 2, precision 2).
     #[test]
     fn timer_text_matches_cpp_printf() {
         assert_eq!(timer_text(0), "00:00");
@@ -2492,8 +2492,8 @@ mod tests {
         assert_eq!(timer_text(3599), "59:59");
     }
 
-    /// Цвет таймера: `turn_time <= 20` → `COLOR_RED`, иначе `0xA2`
-    /// (`game_manager.cpp:2197-2213`). Ноль — тоже красный.
+    /// Timer color: `turn_time <= 20` → `COLOR_RED`, otherwise `0xA2`
+    /// (`game_manager.cpp:2197-2213`). Zero is red too.
     #[test]
     fn timer_is_red_at_twenty_seconds_or_less() {
         assert_eq!(timer_color_index(0), RED);
@@ -2504,10 +2504,10 @@ mod tests {
         assert_eq!(timer_color_index(180), TEXT);
     }
 
-    /// Геометрия текста таймера в окне `WINDOW_TURN_TIMER_DISPLAY`
-    /// (`windows[]`: 534,2…594,22) — сверено с кадром DOS-оригинала
-    /// (`build/anim-dos/avicap/f1/f_0001.png`, таймер «01:41»): чернила
-    /// занимают x 551…575, y 9…15.
+    /// Timer text geometry in the `WINDOW_TURN_TIMER_DISPLAY` window
+    /// (`windows[]`: 534,2…594,22) — checked against the DOS original frame
+    /// (`build/anim-dos/avicap/f1/f_0001.png`, timer «01:41»): the ink
+    /// occupies x 551…575, y 9…15.
     #[test]
     fn timer_text_geometry_matches_the_dos_frame() {
         let palette = test_palette();
@@ -2532,7 +2532,7 @@ mod tests {
         );
     }
 
-    /// Кнопка End Turn нажата только на ходу компьютера.
+    /// The End Turn button is pressed only on the computer turn.
     #[test]
     fn end_turn_is_pressed_only_on_a_computer_turn() {
         assert!(end_turn_pressed(TeamKind::Computer));
@@ -2542,8 +2542,8 @@ mod tests {
         assert!(!end_turn_pressed(TeamKind::Eliminated));
     }
 
-    /// Цвет подписи нажатой кнопки — `FontColor(team + 1, team + 1, 0x3F)`,
-    /// у серой команды `0xFF` (`game_manager.cpp:7876-7882`).
+    /// Label color of the pressed button — `FontColor(team + 1, team + 1, 0x3F)`,
+    /// for the gray team `0xFF` (`game_manager.cpp:7876-7882`).
     #[test]
     fn end_turn_caption_uses_the_active_team_color() {
         assert_eq!(end_turn_caption_color(TeamId::RED), 1);
@@ -2577,7 +2577,7 @@ mod tests {
     #[test]
     fn captions_are_centered_inside_the_inset_button_rect() {
         // `Button::SetCaption` (`button.cpp:412-449`) + `Text_TextLine`
-        // (`text.cpp:772`): центровка внутри `width - x` / `height - y`.
+        // (`text.cpp:772`): centering inside `width - x` / `height - y`.
         for button in PanelButton::ALL {
             let Some(caption) = button.caption() else {
                 continue;
@@ -2602,7 +2602,7 @@ mod tests {
             assert_eq!(x, expected_x, "{button:?}: горизонтальная центровка");
         }
 
-        // Точные значения для верхней строки 3×3 (`FONT_2` — 9 px, height 16):
+        // Exact values for the top 3×3 row (`FONT_2` — 9 px, height 16):
         // C++ `((16 - 2) - 9) / 2 + 2 = 4`.
         assert_eq!(PanelButton::Survey.caption_position().1, 298 + 4);
         assert_eq!(PanelButton::Hits.caption_position().1, 298 + 4);
@@ -2694,7 +2694,7 @@ mod tests {
         );
         assert_eq!(layer[20 * 112 + 20], 0, "чужой вне FOV не рисуется");
 
-        // Разведан (попал в FOV/радар) — точка появляется.
+        // Surveyed (got into the FOV/radar) — the dot appears.
         state
             .unit_mut(enemy)
             .unwrap()
@@ -2768,7 +2768,7 @@ mod tests {
         assert_eq!(unit_name(&unit), "AVENGER");
     }
 
-    /// Панели грузятся из настоящего `MAX.RES`, и каждая зона меняет пиксели.
+    /// The panels load from the real `MAX.RES`, and every zone changes pixels.
     #[test]
     fn minimap_view_matches_calculate_minimap_scaling() {
         let view = minimap_view(112, 112);
@@ -2776,13 +2776,13 @@ mod tests {
         assert_eq!((view.width, view.height), (112, 112));
         assert_eq!(view.scale, 1.0);
 
-        // Широкая карта 224×112: масштаб 0.5, по y — центрирование.
+        // A wide map 224×112: scale 0.5, centered by y.
         let view = minimap_view(224, 112);
         assert_eq!(view.scale, 0.5);
         assert_eq!((view.width, view.height), (112, 56));
         assert_eq!(view.offset_y, 28);
 
-        // Высокая карта 56×112: по x — центрирование.
+        // A tall map 56×112: centered by x.
         let view = minimap_view(56, 112);
         assert_eq!((view.width, view.height), (56, 112));
         assert_eq!(view.offset_x, 28);
@@ -2805,8 +2805,8 @@ mod tests {
             Some((111, 111))
         );
 
-        // 2x: центр камеры (56,56) → offset 28, левый верхний угол показывает
-        // клетку 28, центр — 56.
+        // 2x: camera center (56,56) → offset 28, the top-left corner shows
+        // cell 28, the center — 56.
         assert_eq!(
             minimap_grid_at(15, 356, 112, 112, &viewport, true),
             Some((28, 28))
@@ -2827,7 +2827,7 @@ mod tests {
         palette[128] = [48, 48, 48, 255];
         let table = darkening_table(&palette);
 
-        // `max(7,100/4)*31/63 = 12`; ближайший цвет палитры — индекс 128.
+        // `max(7,100/4)*31/63 = 12`; the nearest palette color — index 128.
         assert_eq!(table[2], 128);
         assert_eq!(table[0], 0, "чёрный остаётся чёрным");
     }
@@ -2851,11 +2851,11 @@ mod tests {
         let mut layer = vec![0u8; 112 * 112];
         paint_minimap_units(&mut layer, &state, 112, 112, false, false);
 
-        // Точка юнита 2×2, цвет RED (индекс 1).
+        // 2×2 unit dot, RED color (index 1).
         assert_eq!(layer[10 * 112 + 10], 1);
         assert_eq!(layer[11 * 112 + 11], 1);
 
-        // TNT-фильтр: у юнита нет стреляющего спрайта — точка пропадает.
+        // TNT filter: the unit has no firing sprite — the dot disappears.
         {
             let unit = state.unit_mut(id).expect("юнит");
             unit.flags &= !(unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES);
@@ -2864,7 +2864,7 @@ mod tests {
         paint_minimap_units(&mut filtered, &state, 112, 112, true, false);
         assert_eq!(filtered[10 * 112 + 10], 0);
 
-        // В 2x не-здание рисуется одной клеткой.
+        // In 2x a non-building is drawn as one cell.
         let mut zoomed = vec![0u8; 112 * 112];
         paint_minimap_units(&mut zoomed, &state, 112, 112, false, true);
         assert_eq!(zoomed[10 * 112 + 10], 1);
@@ -2935,10 +2935,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Строки статистики (`GameManager_UpdateInfoDisplay`)
+    // Statistics rows (`GameManager_UpdateInfoDisplay`)
     // -----------------------------------------------------------------------
 
-    /// Партия с настоящими атрибутами команды (`TeamUnits::with_clan(Random)`).
+    /// A match with real team attributes (`TeamUnits::with_clan(Random)`).
     fn stats_state() -> GameState {
         use max_core::enums::TeamClan;
         use max_core::team::TeamUnits;
@@ -2950,7 +2950,7 @@ mod tests {
         state
     }
 
-    /// Юнит в партии: `spawn_unit` + `DeployUnit` (у нового юнита `storage = 0`).
+    /// A unit in the match: `spawn_unit` + `DeployUnit` (a new unit has `storage = 0`).
     fn deployed(state: &mut GameState, unit_type: UnitType) -> UnitInfo {
         let id = state
             .spawn_unit(unit_type, TeamId::RED, max_core::geo::Point::new(20, 20), 0)
@@ -2965,7 +2965,7 @@ mod tests {
         rows.map(|row| row.map(|row| row.label.caption()))
     }
 
-    /// Шахта (свой стационарный склад `RAW`): `Hits/Cargo/Total`, без `Speed`.
+    /// A mine (own stationary `RAW` storage): `Hits/Cargo/Total`, without `Speed`.
     #[test]
     fn mining_station_panel_shows_hits_cargo_total_without_speed() {
         let mut state = stats_state();
@@ -2990,11 +2990,11 @@ mod tests {
         assert_eq!(rows[0].expect("Hits").color(), GREEN);
         assert_eq!(rows[1].expect("Cargo").color(), RED);
         assert_eq!(rows[2].expect("Total").color(), RED);
-        // Строка 4 (Shots) пустая: `min(ROUNDS, AMMO) == 0`.
+        // Row 4 (Shots) is empty: `min(ROUNDS, AMMO) == 0`.
         assert_eq!(rows[3], None);
     }
 
-    /// Танк (мобильный наземный с атакой): `Hits/Ammo/Speed/Shots`.
+    /// A tank (mobile ground with an attack): `Hits/Ammo/Speed/Shots`.
     #[test]
     fn tank_panel_keeps_speed_ammo_and_shots() {
         let mut state = stats_state();
@@ -3012,7 +3012,7 @@ mod tests {
         assert!(rows.iter().flatten().all(|row| row.color() == GREEN));
     }
 
-    /// Турель (стационарная, с атакой): `Hits/Ammo/Shots`, `Speed` нет.
+    /// A turret (stationary, with an attack): `Hits/Ammo/Shots`, no `Speed`.
     #[test]
     fn turret_panel_shows_ammo_and_shots_without_speed() {
         let mut state = stats_state();
@@ -3030,7 +3030,7 @@ mod tests {
         assert_eq!(rows[3].expect("Shots").text(), "2/2");
     }
 
-    /// Разведчик: `Hits/Speed`, пустые `Ammo` и `Shots` (ATTACK = 0, ROUNDS = 0).
+    /// A scout: `Hits/Speed`, empty `Ammo` and `Shots` (ATTACK = 0, ROUNDS = 0).
     #[test]
     fn surveyor_panel_skips_empty_attribute_rows() {
         let mut state = stats_state();
@@ -3046,7 +3046,7 @@ mod tests {
         assert_eq!(rows[2].expect("Speed").text(), "7/7");
     }
 
-    /// Завод: `Hits/Usage/Total` рабочих (`DrawInfoDisplayType1`), без `Speed`.
+    /// A factory: `Hits/Usage/Total` of workers (`DrawInfoDisplayType1`), without `Speed`.
     #[test]
     fn training_hall_panel_shows_worker_usage_and_total() {
         let mut state = stats_state();
@@ -3062,13 +3062,13 @@ mod tests {
             .iter()
             .flatten()
             .all(|row| row.label != StatLabel::Speed));
-        // `Cargo_GetNetProduction` без приказа = 0; база life_need = 1.
+        // `Cargo_GetNetProduction` without an order = 0; the base life_need = 1.
         assert_eq!(rows[1].expect("Usage").text(), "0/1");
         assert_eq!(rows[1].expect("Usage").color(), RED);
         assert_eq!(rows[2].expect("Total").text(), "0/1");
     }
 
-    /// Электростанция: `Hits/Power/Total` (`DrawInfoDisplayType2`).
+    /// A power plant: `Hits/Power/Total` (`DrawInfoDisplayType2`).
     #[test]
     fn power_station_panel_shows_power_and_total() {
         let mut state = stats_state();
@@ -3085,7 +3085,7 @@ mod tests {
         assert_eq!(rows[3], None, "Usage: база (потребление) 0 — строка пустая");
     }
 
-    /// Жилой блок: `Hits/Teams/Total` рабочих (`life = -3`).
+    /// A habitat: `Hits/Teams/Total` of workers (`life = -3`).
     #[test]
     fn habitat_panel_shows_teams_and_total() {
         let mut state = stats_state();
@@ -3101,7 +3101,7 @@ mod tests {
         assert_eq!(rows[1].expect("Teams").color(), GREEN);
     }
 
-    /// Чужой юнит: `Ammo`/`Cargo` не рисуются (`factor == 0` в C++).
+    /// A foreign unit: `Ammo`/`Cargo` are not drawn (`factor == 0` in C++).
     #[test]
     fn enemy_unit_hides_ammo_and_cargo_rows() {
         let mut state = stats_state();
@@ -3117,7 +3117,7 @@ mod tests {
         );
     }
 
-    /// Цвета — пороги `GameManager_DrawInfoDisplayRow` (1/4 и 1/2 базы).
+    /// Colors — the `GameManager_DrawInfoDisplayRow` thresholds (1/4 and 1/2 of the base).
     #[test]
     fn stat_row_colors_follow_the_cpp_thresholds() {
         let row = |current, base, factor| StatRow {
@@ -3133,7 +3133,7 @@ mod tests {
         assert_eq!(row(0, 1, 1).color(), RED);
         assert_eq!(row(1, 1, 1).color(), GREEN);
         assert_eq!(row(0, 0, 1).color(), TEXT);
-        // `%i/%i` и `std::min(current, base)` как в C++.
+        // `%i/%i` and `std::min(current, base)` as in C++.
         assert_eq!(
             make_row(StatLabel::Hits, 99, 56, 4).expect("строка").text(),
             "56/56"
@@ -3142,7 +3142,7 @@ mod tests {
         assert_eq!(make_row(StatLabel::Cargo, 0, 25, 0), None);
     }
 
-    /// `Speed`-строка есть ровно у типов с `ATTRIB_SPEED > 0` (все 93 типа).
+    /// The `Speed` row exists exactly for types with `ATTRIB_SPEED > 0` (all 93 types).
     #[test]
     fn speed_row_appears_only_with_a_speed_attribute() {
         use max_core::unit_values::base_unit_values;

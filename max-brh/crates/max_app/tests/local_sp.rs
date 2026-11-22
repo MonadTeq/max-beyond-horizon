@@ -1,16 +1,16 @@
-//! M-SP: сквозные тесты одиночной партии против ИИ.
+//! M-SP: end-to-end single-player match tests against the AI.
 //!
-//! Проверяются:
+//! Checked:
 //!
-//! 1. настройка из UI (`GameSetupForm` → `LocalSetup.team_types`, планета,
-//!    таймер) и переход `StartLocal`;
-//! 2. локальный цикл: 5 ходов против ИИ — ходы чередуются, ИИ ходит сам
-//!    (`Ai_BeginTurn` + задачи), `turn_counter` растёт;
-//! 3. победа при уничтожении ИИ — `evaluate_status`/`finish_turn` дают исход,
-//!    экран победы рисуется без паник;
-//! 4. сохранение локальной партии (контейнер `MXLS`) после хода — round-trip;
-//! 5. загрузка V70-сейва в локальную партию — состояние играется локальным
-//!    циклом.
+//! 1. setup from the UI (`GameSetupForm` → `LocalSetup.team_types`, planet,
+//!    timer) and the `StartLocal` transition;
+//! 2. the local loop: 5 turns against the AI — turns alternate, the AI moves itself
+//!    (`Ai_BeginTurn` + tasks), `turn_counter` grows;
+//! 3. victory on destroying the AI — `evaluate_status`/`finish_turn` give the outcome,
+//!    the victory screen is drawn without panics;
+//! 4. saving the local match (the `MXLS` container) after a turn — round-trip;
+//! 5. loading a V70 save into a local match — the state is played by the local
+//!    loop.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ use max_render::buffer::PixelRect;
 
 const V70_SAVE: &[u8] = include_bytes!("data/save1_v70.cam");
 
-/// Клиент лобби-заглушки: настройке M-SP сеть не нужна.
+/// Lobby client stub: M-SP setup needs no network.
 struct NoNetwork;
 
 impl MenuClient for NoNetwork {
@@ -47,7 +47,7 @@ fn repo_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// Приложение с настоящими ассетами (иначе карту не сгенерировать).
+/// Application with real assets (otherwise the map cannot be generated).
 fn local_app() -> Option<App> {
     let data = repo_path("max-original");
 
@@ -70,7 +70,7 @@ fn context() -> UiContext {
     UiContext::new(Box::new(NoNetwork), 640, 480)
 }
 
-/// Турбо-прогон до хода игрока: не больше `limit` кадров.
+/// Turbo run to the player's turn: at most `limit` frames.
 fn run_until_player_turn(app: &mut App, limit: usize) -> bool {
     for _ in 0..limit {
         if app.local().map(|local| local.phase) == Some(LocalPhase::PlayerTurn) {
@@ -99,7 +99,7 @@ fn run_until_finished(app: &mut App, limit: usize) -> bool {
     app.local().is_some_and(|local| local.finished())
 }
 
-/// Настройка: 1 человек (RED) + 1 компьютер (GREEN), остальные — пусто.
+/// Setup: 1 human (RED) + 1 computer (GREEN), the rest — empty.
 fn setup_vs_one_ai() -> LocalSetup {
     LocalSetup {
         player_name: "Tester".to_string(),
@@ -133,12 +133,12 @@ fn setup_vs_one_ai() -> LocalSetup {
 }
 
 // ---------------------------------------------------------------------------
-// Интерактивный цикл: видимое движение при реальном dt
+// Interactive loop: visible movement with real dt
 // ---------------------------------------------------------------------------
 
-/// `local_update(dt > 0)` — тот же путь, что в окне: тик симуляции + кадр
-/// визуального маршрута. Юнит с приказом `Move` обязан проходить маршрут
-/// клетка за клеткой (позиции кадров различаются), а не телепортироваться.
+/// `local_update(dt > 0)` — the same path as in the window: a simulation tick + a
+/// visual route frame. A unit with a `Move` order must pass the route
+/// cell by cell (frame positions differ), not teleport.
 #[test]
 fn local_update_with_real_dt_animates_move_orders() {
     let Some(mut app) = local_app() else {
@@ -213,7 +213,7 @@ fn local_update_with_real_dt_animates_move_orders() {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Настройка из UI
+// 1. Setup from the UI
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -232,15 +232,15 @@ fn clan_choice_changes_starting_team_values() {
         max_core::enums::TeamClan::VonGriffin,
         "клан человека сохраняется"
     );
-    // Компьютерный игрок выбирает клан сам (`AiPlayer::SelectTeamClan`), как в
-    // C++ — его слот может отличаться от настройки.
+    // The computer player chooses the clan itself (`AiPlayer::SelectTeamClan`), as in
+    // C++ — its slot may differ from the setup.
     assert_ne!(
         app.state().teams[1].team_clan,
         max_core::enums::TeamClan::Random,
         "ИИ получает конкретный клан"
     );
 
-    // Von Griffin даёт Scout +2 атаки (`clan_tradeoffs_apply` в max_core).
+    // Von Griffin gives the Scout +2 attack (`clan_tradeoffs_apply` in max_core).
     let expected =
         max_core::unit_values::team_base_values(max_core::enums::TeamClan::VonGriffin)
             [max_core::UnitType::Scout as usize]
@@ -284,7 +284,7 @@ fn setup_form_produces_team_types_planet_and_timer() {
     let mut form = GameSetupForm::default();
     form.setup.player_name = "Alice".to_string();
 
-    // Options: таймер 180 (строка "180"), конец хода 45.
+    // Options: timer 180 (row "180"), end of turn 45.
     let timer_row = max_app::setup::CONFIG_ITEMS[18].rect;
     let transition = form.handle_input(
         InputEvent::MouseClick(timer_row.ulx + 2, timer_row.uly + 2),
@@ -307,7 +307,7 @@ fn setup_form_produces_team_types_planet_and_timer() {
     form.handle_input(InputEvent::MouseClick(done.ulx + 2, done.uly + 2), 640, 480);
     assert_eq!(form.screen, SetupScreen::Planet);
 
-    // Планета 8 (slot 2 группы 6).
+    // Planet 8 (slot 2 of group 6).
     let slot = max_app::setup::PLANET_SLOTS[2];
     form.handle_input(InputEvent::MouseClick(slot.ulx + 4, slot.uly + 4), 640, 480);
     assert_eq!(form.setup.world, 2);
@@ -337,7 +337,7 @@ fn setup_form_produces_team_types_planet_and_timer() {
     );
     assert_eq!(form.setup.human_team(), Some(TeamId::RED));
 
-    // Done на экране команд → Start с этими настройками.
+    // Done on the team screen → Start with these settings.
     let transition =
         form.handle_input(InputEvent::MouseClick(done.ulx + 2, done.uly + 2), 640, 480);
 
@@ -363,15 +363,15 @@ fn screen_routes_setup_to_start_local_and_back() {
     );
     assert!(matches!(screen, Screen::LocalSetup(_)));
 
-    // Esc с первого экрана — назад в меню.
+    // Esc from the first screen — back to the menu.
     assert_eq!(
         screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape)),
         Transition::None
     );
     assert_eq!(screen, Screen::MainMenu);
 
-    // Экран команд с готовыми настройками открывает фазы старта
-    // (мобилизация), а `StartLocal` отдаёт уже последняя фаза.
+    // The team screen with ready settings opens the start phases
+    // (mobilization), and `StartLocal` is given by the last phase.
     let mut form = GameSetupForm::default();
     form.screen = SetupScreen::Players;
     form.setup.team_types = [
@@ -421,7 +421,7 @@ fn players_screen_rejects_a_game_without_opponent() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Локальный цикл: 5 ходов против ИИ
+// 2. Local loop: 5 turns against the AI
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -468,7 +468,7 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
 
         app.local_end_turn();
 
-        // Ход ИИ: фаза AiTurn и возврат к игроку.
+        // AI turn: the AiTurn phase and the return to the player.
         if app.local().map(|local| local.phase) == Some(LocalPhase::AiTurn(TeamId::GREEN)) {
             saw_ai_turn = true;
         }
@@ -482,7 +482,7 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
     assert!(saw_ai_turn, "ИИ должен ходить сам (AiTurn)");
     assert_eq!(app.state().turn_counter, 6, "5 ходов отыграно");
 
-    // ИИ работал: у него есть задачи, а его юниты получали приказы.
+    // The AI worked: it has tasks, and its units received orders.
     assert!(
         app.state().ai.task_manager.task_count() > 0,
         "у ИИ должны быть задачи (TaskManager)"
@@ -549,7 +549,7 @@ fn turn_timer_expires_and_closes_the_turn() {
 
     let before = app.state().turn_counter;
 
-    // 3 секунды кадрами по 1 с: таймер 2 с истекает и закрывает ход.
+    // 3 seconds in 1 s frames: the 2 s timer expires and closes the turn.
     app.local_update(1.0);
     app.local_update(1.0);
     app.local_update(1.0);
@@ -591,7 +591,7 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
         return;
     };
 
-    // Человек — GREEN (слот 1), RED — компьютер: раунд начинается с хода ИИ.
+    // The human is GREEN (slot 1), RED is the computer: the round starts with the AI turn.
     let mut setup = setup_vs_one_ai();
     setup.team_types = [
         TeamKind::Computer,
@@ -611,7 +611,7 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
         "первым ходит компьютер RED"
     );
 
-    // Доходим до хода человека: RED отыграл, дальше GREEN.
+    // We reach the human turn: RED has played, next GREEN.
     assert!(run_until_player_turn(&mut app, 40_000));
     assert_eq!(
         app.local().map(|local| local.phase),
@@ -628,7 +628,7 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Победа при элиминации ИИ
+// 3. Victory on AI elimination
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -640,7 +640,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
 
-    // Уничтожаем все юниты ИИ — как будто его выбили в бою.
+    // We destroy all AI units — as if it had been wiped out in battle.
     let ai_units: Vec<_> = app
         .state()
         .unit_ids_in_order()
@@ -657,7 +657,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
         app.state_mut().destroy_unit(id);
     }
 
-    // Закрываем раунд: ход игрока → ход ИИ (без юнитов) → finish_turn.
+    // We close the round: player turn → AI turn (no units) → finish_turn.
     app.local_end_turn();
     assert!(
         run_until_finished(&mut app, 40_000),
@@ -675,7 +675,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
     );
     assert!(outcome.turn_counter >= 1);
 
-    // Экран победы рисуется без паник и рисует текст/картинки.
+    // The victory screen is drawn without panics and draws text/images.
     let mut buffer = max_render::buffer::RgbaBuffer::new(640, 480);
     let mut ctx = context();
     let screen = Screen::GameOver;
@@ -691,7 +691,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
         .count();
     assert!(painted > 100_000, "фон экрана победы закрашен: {painted}");
 
-    // Серебряный текст (`Fonts_BrightSilverColor`) присутствует.
+    // The silver text (`Fonts_BrightSilverColor`) is present.
     let palette = app
         .assets()
         .and_then(|assets| assets.menu.as_ref())
@@ -704,7 +704,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
         .count();
     assert!(silver_pixels > 50, "текст экрана: {silver_pixels} пикселей");
 
-    // Клик по OK — выход из экрана.
+    // A click on OK — exit the screen.
     let ok = max_app::winloss::OK_RECT;
     let mut screen = Screen::GameOver;
     let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(ok.ulx + 4, ok.uly + 4));
@@ -712,7 +712,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Сохранение локальной партии после хода
+// 4. Saving the local match after a turn
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -741,7 +741,7 @@ fn local_save_roundtrips_after_a_turn() {
     );
     assert_eq!(save.snapshot_crc, app.digest().state_digest);
 
-    // Файл: запись и чтение с проверкой CRC.
+    // File: write and read with CRC verification.
     let dir = std::env::temp_dir().join(format!("max_sp_save_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let path = dir.join(max_app::local::LOCAL_SAVE_FILE);
@@ -752,7 +752,7 @@ fn local_save_roundtrips_after_a_turn() {
     let loaded = App::read_local_save(&path).expect("файл прочитан");
     assert_eq!(loaded, save);
 
-    // Испорченный контейнер отклоняется.
+    // A corrupted container is rejected.
     let mut broken = bytes.clone();
     let last = broken.len() - 1;
     broken[last] ^= 0xFF;
@@ -765,7 +765,7 @@ fn local_save_roundtrips_after_a_turn() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. V70-сейв в локальной партии
+// 5. V70 save in a local match
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -788,7 +788,7 @@ fn v70_save_loads_into_the_local_game() {
     assert!(app.state().turn_counter >= 1);
     assert!(!app.state().unit_ids_in_order().is_empty());
 
-    // Первый ход: доходим до игрока и закрываем ход.
+    // First turn: we reach the player and close the turn.
     assert!(
         run_until_player_turn(&mut app, 40_000),
         "локальный цикл доходит до хода игрока"

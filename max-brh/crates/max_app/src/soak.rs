@@ -1,19 +1,19 @@
-//! Headless soak-прогон (P4, `max-brh-docs/development/PLAN-production.md`).
+//! Headless soak run (P4, `max-brh-docs/development/PLAN-production.md`).
 //!
-//! Идея: одна локальная партия «человек (RED, ничего не делает) + N
-//! компьютеров», где каждый раунд закрывается `local_end_turn` человека, а ходы
-//! ИИ прокручиваются [`App::local_update`] с настоящим `dt = 1/60` — ровно как
-//! кадры десктопного цикла (`main.rs`). Задача — прогнать 100+ ходов и снять
-//! метрики:
+//! Idea: one local match "human (RED, does nothing) + N
+//! computers", where each round is closed by the human's `local_end_turn`, and AI
+//! turns are advanced by [`App::local_update`] with the real `dt = 1/60` — exactly like
+//! the frames of the desktop loop (`main.rs`). The goal is to run 100+ turns and take
+//! the metrics:
 //!
-//! * время каждого раунда и каждого кадра (`profile`);
-//! * RSS процесса на старте/в конце и каждые `sample_every` ходов (`mem`);
-//! * факт, что партия дошла до запрошенного хода (без паник и `Game over`).
+//! * the time of each round and each frame (`profile`);
+//! * process RSS at the start/end and every `sample_every` turns (`mem`);
+//! * the fact that the match reached the requested turn (without panics and `Game over`).
 //!
-//! Модуль — библиотечная часть, поэтому его же использует пример
-//! `examples/soak_headless.rs` (CLI в CI) и интеграционный тест (короткий
-//! прогон). Детерминизм: `dt` используется только для таймера/интерполяции
-//! кадра, симуляция по-прежнему делает один тик за кадр.
+//! The module is the library part, so it is also used by the
+//! `examples/soak_headless.rs` example (CLI in CI) and the integration test (a short
+//! run). Determinism: `dt` is used only for the frame timer/interpolation,
+//! the simulation still does one tick per frame.
 
 use std::time::{Duration, Instant};
 
@@ -24,34 +24,34 @@ use crate::mem::{process_memory, ProcessMemory};
 use crate::profile::{self, ProfileSnapshot};
 use crate::{App, LocalPhase, LocalSetup};
 
-/// Параметры soak-прогона.
+/// Soak run parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoakOptions {
-    /// Сколько раундов (ходов) сыграть.
+    /// How many rounds (turns) to play.
     pub turns: u32,
-    /// `dt` кадра: `1/60` — десктопный интерактив; `0.0` — headless как QA.
+    /// Frame `dt`: `1/60` — desktop interactive; `0.0` — headless like QA.
     pub dt: f32,
-    /// Сколько компьютеров играет (1..=3).
+    /// How many computers play (1..=3).
     pub ai_teams: u8,
-    /// Планета (`settings["world"]`).
+    /// Planet (`settings["world"]`).
     pub world: i64,
-    /// Seed генерации карты.
+    /// Map generation seed.
     pub seed: u32,
-    /// Сложность ИИ (`settings["opponent"]`, 0 — самый простой).
+    /// AI difficulty (`settings["opponent"]`, 0 — the easiest).
     pub opponent: u8,
-    /// Лимит ходов условия победы (должен быть больше `turns`, иначе Duration
-    /// закроет партию раньше).
+    /// Turn limit of the victory condition (must be greater than `turns`, otherwise Duration
+    /// will close the match earlier).
     pub victory_limit: i32,
-    /// Стартовые кредиты.
+    /// Starting credits.
     pub start_gold: u32,
-    /// Сколько кадров «ходит» человек перед End Turn (активность в его ход).
+    /// How many frames the human "plays" before End Turn (activity during their turn).
     pub human_ticks: u32,
-    /// Режим игры (`settings["play_mode"]`): `TurnBased` — как пункт Options
-    /// «Turn Based», `SimultaneousMoves` — прежний режим soak.
+    /// Game mode (`settings["play_mode"]`): `TurnBased` — like the Options item
+    /// «Turn Based», `SimultaneousMoves` — the former soak mode.
     pub play_mode: max_core::enums::PlayMode,
-    /// Период снятия RSS в ходах (`0` — только старт/конец).
+    /// RSS sampling period in turns (`0` — start/end only).
     pub sample_every: u32,
-    /// Предохранитель: максимум кадров на один раунд.
+    /// Safety fuse: maximum frames per round.
     pub frame_limit_per_turn: u32,
 }
 
@@ -64,11 +64,11 @@ impl Default for SoakOptions {
             world: 0,
             seed: 0,
             opponent: 0,
-            // Duration 200: 120 ходов soak не должны закрывать партию лимитом.
+            // Duration 200: a 120-turn soak must not close the match with the limit.
             victory_limit: 200,
             start_gold: 150,
             human_ticks: 5,
-            // Пользовательское указание: приоритет — Turn Based.
+            // Owner instruction: priority — Turn Based.
             play_mode: max_core::enums::PlayMode::TurnBased,
             sample_every: 10,
             frame_limit_per_turn: 50_000,
@@ -76,50 +76,50 @@ impl Default for SoakOptions {
     }
 }
 
-/// Один завершённый раунд.
+/// One completed round.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoakTurn {
-    /// Номер закрытого хода (`GameState::turn_counter` на момент закрытия).
+    /// Number of the closed turn (`GameState::turn_counter` at closing time).
     pub turn: i32,
-    /// Время раунда (ход человека + ходы ИИ + `finish_turn`).
+    /// Round time (human turn + AI turns + `finish_turn`).
     pub wall: Duration,
-    /// Кадров `local_update` за раунд.
+    /// `local_update` frames per round.
     pub frames: u64,
-    /// Юнитов в состоянии на конец раунда.
+    /// Units in the state at the end of the round.
     pub units: usize,
-    /// RSS после раунда (если снимали).
+    /// RSS after the round (if sampled).
     pub rss_kb: Option<u64>,
 }
 
-/// Итог soak-прогона.
+/// Result of the soak run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SoakReport {
-    /// С какими параметрами шли.
+    /// With what parameters it was run.
     pub options: SoakOptions,
-    /// Сколько раундов реально закрыто.
+    /// How many rounds were actually closed.
     pub turns_played: u32,
-    /// Всего кадров `local_update`.
+    /// Total `local_update` frames.
     pub frames: u64,
-    /// Общее время прогона.
+    /// Total run time.
     pub total: Duration,
-    /// Раунды (по одному на закрытый ход).
+    /// Rounds (one per closed turn).
     pub turns: Vec<SoakTurn>,
-    /// Память на старте.
+    /// Memory at the start.
     pub mem_start: Option<ProcessMemory>,
-    /// Память в конце.
+    /// Memory at the end.
     pub mem_end: Option<ProcessMemory>,
-    /// Снимок профиля тика.
+    /// Tick profile snapshot.
     pub profile: ProfileSnapshot,
-    /// Партия закончилась раньше запрошенного хода (победа/поражение).
+    /// The match ended before the requested turn (victory/defeat).
     pub finished_early: bool,
-    /// Итоговый `turn_counter`.
+    /// Final `turn_counter`.
     pub final_turn: i32,
-    /// Итоговое число юнитов.
+    /// Final number of units.
     pub final_units: usize,
 }
 
 impl SoakReport {
-    /// Среднее время раунда.
+    /// Average round time.
     pub fn avg_turn(&self) -> Duration {
         if self.turns_played == 0 {
             return Duration::ZERO;
@@ -128,12 +128,12 @@ impl SoakReport {
         self.total / self.turns_played
     }
 
-    /// Партия дошла до запрошенного хода (главный критерий soak).
+    /// The match reached the requested turn (the main soak criterion).
     pub fn passed(&self) -> bool {
         !self.finished_early && self.turns_played >= self.options.turns
     }
 
-    /// Рост RSS «конец − старт», КиБ (0, если замеры недоступны).
+    /// RSS growth "end − start", KiB (0 if the measurements are unavailable).
     pub fn memory_growth_kb(&self) -> i64 {
         match (self.mem_start, self.mem_end) {
             (Some(start), Some(end)) => end.growth_kb(start),
@@ -141,16 +141,16 @@ impl SoakReport {
         }
     }
 
-    /// Память не разошлась: рост не больше 64 МиБ (грубая защита от утечки).
+    /// Memory did not run away: growth is not more than 64 MiB (a rough leak guard).
     ///
-    /// Порог намеренно щедрый: 120 ходов живой партии — это десятки тысяч
-    /// тиков, и аллокатор вправе держать свободные страницы. Линейная утечка
-    /// даже в 100 КиБ/ход дала бы 12 МиБ, реальный рост — единицы МиБ.
+    /// The threshold is deliberately generous: 120 turns of a live match is tens of
+    /// thousands of ticks, and the allocator is entitled to keep free pages. A linear leak
+    /// even of 100 KiB/turn would give 12 MiB, the real growth is a few MiB.
     pub fn memory_stable(&self) -> bool {
         self.memory_growth_kb() <= 64 * 1024
     }
 
-    /// Текст лога (`soak.txt`): по строке на раунд, память и итог.
+    /// Log text (`soak.txt`): one line per round, memory and the result.
     pub fn log(&self) -> String {
         let options = self.options;
         let mut text = String::new();
@@ -227,11 +227,11 @@ fn memory_text(memory: Option<ProcessMemory>) -> String {
         .unwrap_or_else(|| "rss=unavailable".to_string())
 }
 
-/// Играет soak-партию на уже подготовленном [`App`].
+/// Plays a soak match on an already prepared [`App`].
 ///
-/// Ассеты должны грузиться (как у `qa_run`/`main.rs`): `start_local_game`
-/// генерирует карту планеты. Профиль включается принудительно и обнуляется —
-/// метрики этого прогона не смешиваются с предыдущими.
+/// The assets must load (like `qa_run`/`main.rs`): `start_local_game`
+/// generates the planet map. The profile is force-enabled and reset —
+/// the metrics of this run are not mixed with the previous ones.
 pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, String> {
     if options.turns == 0 {
         return Err("soak: turns должен быть > 0".to_string());
@@ -283,8 +283,8 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
 
         match phase {
             Some(LocalPhase::PlayerTurn) => {
-                // Окно перехода хода в одиночной игре не открывается, но
-                // закрываем его на всякий случай — иначе цикл встанет.
+                // The turn-transition window is not opened in a single game, but
+                // close it just in case — otherwise the loop would stall.
                 if app
                     .local()
                     .is_some_and(|local| local.notice.is_some())
@@ -307,7 +307,7 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
                 if app.local().is_some_and(|local| local.finished())
                     || app.state().turn_counter != before
                 {
-                    // End Turn мгновенно закрыл раунд (одна команда в раунде).
+                    // End Turn instantly closed the round (one team in the round).
                     turns_played += 1;
                     push_turn(
                         &mut turns,
@@ -413,7 +413,7 @@ fn push_turn(
     });
 }
 
-/// Доля времени кадра от бюджета 60 Гц (`avg/local_update`), проценты.
+/// Frame time share of the 60 Hz budget (`avg/local_update`), percent.
 pub fn budget_used_percent(report: &SoakReport) -> f64 {
     let avg = report.profile.local_update.avg_ns();
 

@@ -1,67 +1,67 @@
-//! Профилирование тика (P4, `max-brh-docs/development/PLAN-production.md`).
+//! Tick profiling (P4, `max-brh-docs/development/PLAN-production.md`).
 //!
-//! Зачем: на 60 Гц кадр обязан укладываться в бюджет ~16.7 мс, а `finish_turn`
-//! (`GameManager_TeamTurnFinish`) — самая тяжёлая точка хода (победа/поражение,
-//! очки, производство всех команд). Модуль считает **только время**, не меняя
-//! порядок и арифметику симуляции: `GameState::tick`/`finish_turn` вызываются
-//! ровно там же, где раньше, а замер — это пара `Instant::now()` вокруг вызова.
-//! Поэтому детерминизм (`AppDigest`, снапшоты) не затрагивается.
+//! Why: at 60 Hz a frame must fit into a budget of ~16.7 ms, and `finish_turn`
+//! (`GameManager_TeamTurnFinish`) is the heaviest point of a turn (victory/defeat,
+//! points, production of all teams). The module measures **only time**, without changing
+//! the order or arithmetic of the simulation: `GameState::tick`/`finish_turn` are called
+//! exactly where they were before, and the measurement is a pair of `Instant::now()` around the call.
+//! Determinism (`AppDigest`, snapshots) is therefore unaffected.
 //!
-//! Включение: переменная окружения `MAX_TICK_PROFILE=1` (или `true`/`yes`/`on`)
-//! либо явный [`enable`] (так делает пример `soak_headless`, чтобы его лог
-//! всегда содержал метрики). Когда профилирование выключено, [`scope`] не
-//! читает часы и не трогает счётчики — обычный ход стоит один branch.
+//! Enabling: the `MAX_TICK_PROFILE=1` environment variable (or `true`/`yes`/`on`)
+//! or an explicit [`enable`] (as the `soak_headless` example does, so that its log
+//! always contains the metrics). When profiling is off, [`scope`] does not
+//! read the clock and does not touch the counters — a regular turn costs one branch.
 //!
-//! Итог отдаёт [`summary`] — строка вида
+//! The result is produced by [`summary`] — a line like
 //! `PROFILE: local_update n=… avg=… max=… over_16.67ms=…; finish_turn n=… …`.
-//! Её пишут в `log.txt` QA-драйвер (`qa::runner`) и `soak_headless`.
+//! It is written to `log.txt` by the QA driver (`qa::runner`) and `soak_headless`.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-/// Бюджет кадра при 60 Гц, наносекунды (16.666… мс).
+/// Frame budget at 60 Hz, nanoseconds (16.666… ms).
 pub const FRAME_BUDGET_NS: u64 = 16_666_667;
 
-/// Что замеряем.
+/// What we measure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Meter {
-    /// `App::local_update` — один кадр локальной партии (тик + интерполяция).
+    /// `App::local_update` — one frame of a local game (tick + interpolation).
     LocalUpdate,
-    /// `GameState::finish_turn` — закрытие раунда.
+    /// `GameState::finish_turn` — closing a round.
     FinishTurn,
 }
 
-/// Счётчики одного замера.
+/// Counters of one measurement.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MeterStats {
-    /// Сколько раз вызывали.
+    /// How many times it was called.
     pub count: u64,
-    /// Суммарное время, наносекунды.
+    /// Total time, nanoseconds.
     pub total_ns: u64,
-    /// Максимальное время, наносекунды.
+    /// Maximum time, nanoseconds.
     pub max_ns: u64,
-    /// Сколько вызовов дольше бюджета кадра 60 Гц (только для `local_update`).
+    /// How many calls are longer than the 60 Hz frame budget (only for `local_update`).
     pub over_budget: u64,
 }
 
 impl MeterStats {
-    /// Среднее время, наносекунды (`0` при `count == 0`).
+    /// Average time, nanoseconds (`0` when `count == 0`).
     pub fn avg_ns(self) -> u64 {
         self.total_ns.checked_div(self.count).unwrap_or(0)
     }
 
-    /// Среднее в миллисекундах.
+    /// Average in milliseconds.
     pub fn avg_ms(self) -> f64 {
         self.avg_ns() as f64 / 1_000_000.0
     }
 
-    /// Максимум в миллисекундах.
+    /// Maximum in milliseconds.
     pub fn max_ms(self) -> f64 {
         self.max_ns as f64 / 1_000_000.0
     }
 
-    /// Доля вызовов дольше бюджета кадра `0.0..=1.0`.
+    /// Fraction of calls longer than the frame budget `0.0..=1.0`.
     pub fn over_budget_ratio(self) -> f64 {
         if self.count == 0 {
             0.0
@@ -71,23 +71,23 @@ impl MeterStats {
     }
 }
 
-/// Снимок всех счётчиков.
+/// Snapshot of all counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProfileSnapshot {
     /// `App::local_update`.
     pub local_update: MeterStats,
     /// `GameState::finish_turn`.
     pub finish_turn: MeterStats,
-    /// Номер хода последнего `finish_turn` (`-1` — не было).
+    /// Turn number of the last `finish_turn` (`-1` — none).
     pub last_finish_turn: i32,
-    /// Время последнего `finish_turn`, наносекунды.
+    /// Time of the last `finish_turn`, nanoseconds.
     pub last_finish_ns: u64,
-    /// Номер хода самого долгого `finish_turn` (`-1` — не было).
+    /// Turn number of the longest `finish_turn` (`-1` — none).
     pub max_finish_turn: i32,
 }
 
 // ---------------------------------------------------------------------------
-// Глобальные счётчики
+// Global counters
 // ---------------------------------------------------------------------------
 
 static FORCED: AtomicBool = AtomicBool::new(false);
@@ -119,20 +119,20 @@ fn env_enabled() -> bool {
     })
 }
 
-/// Включено ли профилирование (env `MAX_TICK_PROFILE` или [`enable`]).
+/// Whether profiling is enabled (env `MAX_TICK_PROFILE` or [`enable`]).
 pub fn enabled() -> bool {
     FORCED.load(Ordering::Relaxed) || env_enabled()
 }
 
-/// Принудительно включает профилирование для текущего процесса.
+/// Force-enables profiling for the current process.
 ///
-/// Нужно примерам/тестам, которым метрики нужны всегда, независимо от env.
+/// Needed by examples/tests that require the metrics always, regardless of env.
 pub fn enable() {
     FORCED.store(true, Ordering::Relaxed);
 }
 
-/// Замер вокруг одного вызова. Пока профилирование выключено, часы не читаются,
-/// а [`Drop`] ничего не пишет.
+/// Measurement around one call. While profiling is off the clock is not read,
+/// and [`Drop`] writes nothing.
 #[must_use = "замер пишется при Drop — держите Scope живым до конца вызова"]
 pub struct Scope {
     meter: Meter,
@@ -160,9 +160,9 @@ impl Drop for Scope {
                 FT_LAST_NS.store(elapsed, Ordering::Relaxed);
                 FT_LAST_TURN.store(self.turn, Ordering::Relaxed);
 
-                // Максимум и его ход обновляем вместе: `fetch_max` здесь не
-                // подходит, иначе к моменту чтения `FT_MAX` уже равен
-                // `elapsed`, и номер хода максимума терялся бы.
+                // Update the maximum and its turn together: `fetch_max` does not
+                // work here, otherwise by the time `FT_MAX` is read it already equals
+                // `elapsed`, and the turn number of the maximum would be lost.
                 let mut current = FT_MAX.load(Ordering::Relaxed);
                 loop {
                     if elapsed <= current {
@@ -192,7 +192,7 @@ fn record(count: &AtomicU64, total: &AtomicU64, max: &AtomicU64, elapsed: u64) {
     max.fetch_max(elapsed, Ordering::Relaxed);
 }
 
-/// Замер `App::local_update` (один кадр локальной партии).
+/// Measurement of `App::local_update` (one frame of a local game).
 pub fn local_update_scope() -> Scope {
     Scope {
         meter: Meter::LocalUpdate,
@@ -201,7 +201,7 @@ pub fn local_update_scope() -> Scope {
     }
 }
 
-/// Замер `GameState::finish_turn`; `turn` — номер закрываемого хода.
+/// Measurement of `GameState::finish_turn`; `turn` is the number of the turn being closed.
 pub fn finish_turn_scope(turn: i32) -> Scope {
     Scope {
         meter: Meter::FinishTurn,
@@ -210,7 +210,7 @@ pub fn finish_turn_scope(turn: i32) -> Scope {
     }
 }
 
-/// Снимок счётчиков.
+/// Counters snapshot.
 pub fn snapshot() -> ProfileSnapshot {
     ProfileSnapshot {
         local_update: MeterStats {
@@ -231,7 +231,7 @@ pub fn snapshot() -> ProfileSnapshot {
     }
 }
 
-/// Обнуляет счётчики (тесты/повторные прогоны в одном процессе).
+/// Resets the counters (tests/repeated runs in one process).
 pub fn reset() {
     LU_COUNT.store(0, Ordering::Relaxed);
     LU_TOTAL.store(0, Ordering::Relaxed);
@@ -245,7 +245,7 @@ pub fn reset() {
     FT_MAX_TURN.store(-1, Ordering::Relaxed);
 }
 
-/// Человекочитаемая длительность: `123ns`, `1.23us`, `12.3ms`.
+/// Human-readable duration: `123ns`, `1.23us`, `12.3ms`.
 pub fn format_ns(ns: u64) -> String {
     if ns < 1_000 {
         format!("{ns}ns")
@@ -256,10 +256,10 @@ pub fn format_ns(ns: u64) -> String {
     }
 }
 
-/// Одна строка со всеми метриками (для `log.txt`).
+/// One line with all metrics (for `log.txt`).
 ///
-/// Пустая строка, если профилирование выключено и счётчики нулевые —
-/// вызывающий решает, писать ли её.
+/// An empty string if profiling is off and the counters are zero —
+/// the caller decides whether to write it.
 pub fn summary() -> String {
     let snapshot = snapshot();
     let lu = snapshot.local_update;
@@ -297,7 +297,7 @@ pub fn summary() -> String {
 mod tests {
     use super::*;
 
-    /// Счётчики глобальные: тесты, трогающие их, идут по одному.
+    /// The counters are global: tests that touch them run one at a time.
     fn lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -307,12 +307,12 @@ mod tests {
     #[test]
     fn scope_without_enable_is_free_and_records_nothing() {
         let _guard = lock();
-        // `enabled()` может быть true из env другого теста — сбрасываем.
+        // `enabled()` may be true from another test's env — reset it.
         FORCED.store(false, Ordering::Relaxed);
         reset();
 
         if enabled() {
-            // env MAX_TICK_PROFILE задан в этом окружении — тест не показателен.
+            // MAX_TICK_PROFILE env is set in this environment — the test is not representative.
             return;
         }
 
@@ -338,7 +338,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         {
-            // Быстрый `finish_turn` не должен перебивать максимум и его ход.
+            // A fast `finish_turn` must not override the maximum and its turn.
             let _scope = finish_turn_scope(101);
         }
 

@@ -1,12 +1,12 @@
-//! Интеграционные тесты `max_app`: demo-прогон, локальная партия, команды.
+//! `max_app` integration tests: demo run, local match, commands.
 //!
-//! Фикстура `tests/data/save1_v70.cam` — копия
-//! `max-brh/crates/max_core/tests/data/save1_v70.cam` (кампания 1, 312 юнитов).
+//! The fixture `tests/data/save1_v70.cam` — a copy of
+//! `max-brh/crates/max_core/tests/data/save1_v70.cam` (campaign 1, 312 units).
 //!
-//! Тесты не требуют сети и SDL: demo-режим и `apply` работают на чистом
-//! `max_core`, новый кадр — на чистых частях `max_render`. Единственный
-//! «живой» тест (`assets_integration_smoke`) сам пропускается, если данных игры
-//! (`max-original/MAX.RES`) нет рядом с репозиторием.
+//! The tests require no network and no SDL: demo mode and `apply` work on pure
+//! `max_core`, a new frame — on the pure parts of `max_render`. The only
+//! "live" test (`assets_integration_smoke`) skips itself if there is no game data
+//! (`max-original/MAX.RES`) next to the repository.
 
 use std::path::{Path, PathBuf};
 
@@ -22,10 +22,10 @@ use max_core::{TeamId, UnitListKind, UnitOrder, UnitOrderState};
 
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 
-/// Эталон `--demo tests/data/save1_v70.cam --turns 5`, получен прогоном.
+/// Reference `--demo tests/data/save1_v70.cam --turns 5`, obtained by a run.
 ///
-/// Фиксируется в тесте, чтобы любое изменение симуляции/загрузки сейва
-/// (регрессия паритета) падало явно, а не «тихо» меняло дайджест.
+/// Fixed in the test so that any change of the simulation/save loading
+/// (a parity regression) fails explicitly instead of "quietly" changing the digest.
 const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xDBD0;
 const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0x408A;
 const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0x5561;
@@ -44,7 +44,7 @@ fn repo_path(relative: &str) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Demo на SAVE1.CAM: load → 5 тиков → эталонный digest
+// 1. Demo on SAVE1.CAM: load → 5 ticks → the reference digest
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -77,7 +77,7 @@ fn demo_save1_five_ticks_matches_reference_digest() {
         "длина снапшота разошлась: {digest}"
     );
 
-    // Digest снимается в любой момент и не зависит от предыдущих вызовов.
+    // The digest is taken at any moment and does not depend on previous calls.
     let again = app.digest();
     assert_eq!(again, digest);
 }
@@ -93,7 +93,7 @@ fn demo_is_bit_identical_across_two_runs() {
 
     assert_eq!(first, second, "demo недетерминирован: {first} != {second}");
 
-    // Полный снапшот тоже обязан совпасть (тест паритета, а не только digest).
+    // The full snapshot must match too (a parity test, not only the digest).
     let mut left = App::new(AppConfig::default());
     left.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
     let mut right = App::new(AppConfig::default());
@@ -112,10 +112,10 @@ fn demo_is_bit_identical_across_two_runs() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. new_game по параметрам P2-вектора `p00_l111_d0_s0`
+// 2. new_game by the P2 vector parameters `p00_l111_d0_s0`
 // ---------------------------------------------------------------------------
 
-/// Первое поле записи `case p00_l111_d0_s0` из `tools/map_vectors/vectors.txt`.
+/// The first field of the `case p00_l111_d0_s0` record from `tools/map_vectors/vectors.txt`.
 fn p2_reference_field(field: &str) -> String {
     const VECTORS: &str = include_str!("../../../tools/map_vectors/vectors.txt");
     const CASE: &str = "p00_l111_d0_s0";
@@ -157,8 +157,8 @@ fn hex_u16_le(text: &str) -> Vec<u16> {
 
 #[test]
 fn new_game_with_p2_parameters_is_deterministic_and_renders() {
-    // Вход P2-вектора: та же поверхность, что синтезирует генератор векторов
-    // (`build_world_input`: tile_ids + pass_table для planet 0).
+    // The P2 vector input: the same surface the vector generator synthesizes
+    // (`build_world_input`: tile_ids + pass_table for planet 0).
     let pass_table = hex_bytes(&p2_reference_field("pass_table"));
     let tile_ids = hex_u16_le(&p2_reference_field("tile_ids"));
     let expected_surface = hex_bytes(&p2_reference_field("surface"));
@@ -170,8 +170,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         "вход поверхности разошёлся с P2-вектором"
     );
 
-    // Ресурсная фаза идёт до alien-фазы и не зависит от таблицы стоимости
-    // обломков, поэтому карта ресурсов обязана совпасть с вектором бит-в-бит.
+    // The resource phase goes before the alien phase and does not depend on the debris
+    // cost table, so the resource map must match the vector bit for bit.
     let expected_resources = hex_u16_le(&p2_reference_field("resources"));
     let expected_resources_bytes: Vec<u8> = expected_resources
         .iter()
@@ -195,37 +195,37 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         crc::crc16(&expected_surface),
         "surface_crc должен совпадать с P2-вектором"
     );
-    // M3.2: `GameManager_InitGame` высаживает стартовые армии обеих команд
-    // (шахта, генератор, две плиты и загрузка SC_L0001), иначе условия
-    // победы/поражения считают команду выбитой на первом же ходу.
+    // M3.2: `GameManager_InitGame` lands the starting armies of both teams
+    // (mine, generator, two slabs and the SC_L0001 loadout), otherwise the victory/defeat
+    // conditions consider the team eliminated on the very first turn.
     let per_team = 4 + max_core::DEFAULT_MISSION_LOADOUT.len();
     assert_eq!(report.start_units, 2 * per_team);
     assert_eq!(
         report.units, report.start_units,
         "derelicts=0 не должен создавать alien-юнитов, только стартовые армии"
     );
-    // У P2-вектора `p00_l111_d0_s0` уровень обломков 0 — размещений нет
-    // (в самом векторе тоже 0 строк `placement`).
+    // The P2 vector `p00_l111_d0_s0` has debris level 0 — no placements
+    // (the vector itself has 0 `placement` rows too).
     assert_eq!(
         report.aliens, 0,
         "derelicts=0 не должен разворачивать обломки"
     );
 
-    // Тот же вход в другом App — тот же отчёт и тот же digest.
+    // The same input in another App — the same report and the same digest.
     let mut replay = App::new(AppConfig::default().with_screen(320, 240));
     let replay_report = replay.new_game_on_surface(&config, &surface);
     assert_eq!(report, replay_report);
     assert_eq!(app.digest(), replay.digest());
 
-    // render_frame: размеры буфера и отсутствие паник (карта + маркеры/спрайты).
+    // render_frame: the buffer size and the absence of panics (map + markers/sprites).
     let (frame, stats) = app.render_frame_with_stats();
     assert_eq!(frame.width(), 320);
     assert_eq!(frame.height(), 240);
     assert_eq!(frame.pixels().len(), 320 * 240 * 4);
     assert_eq!(frame.stride(), 320 * 4);
     assert!(stats.map_tiles > 0);
-    // Камера центрируется на стартовой базе игрока, поэтому на кадр попадает
-    // только часть юнитов (остальные — вне вьюпорта).
+    // The camera is centered on the player's start base, so only part of the units
+    // gets into the frame (the rest are outside the viewport).
     assert!(
         stats.units() > 0 && stats.units() <= report.units,
         "на кадре должны быть юниты: {stats:?} при {} в состоянии",
@@ -233,8 +233,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     );
     assert!(frame.pixels().chunks_exact(4).all(|pixel| pixel[3] == 255));
 
-    // M3.2: стартовые армии не дают партии завершиться на первом ходу —
-    // `menu_check_end_game_conditions` больше не видит команды «выбитыми».
+    // M3.2: the starting armies do not let the match end on the first turn —
+    // `menu_check_end_game_conditions` no longer sees the teams as "eliminated".
     for turn in 0..3 {
         app.state_mut().game_state = GameStateType::EndTurn;
         assert!(
@@ -248,8 +248,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         "ходы не элиминируют команду"
     );
 
-    // Уровень обломков 2 даёт непустую расстановку из setup, и все размещения
-    // разворачиваются в GameState от имени ALIEN (C++ `DeployUnit`).
+    // Debris level 2 gives a non-empty setup placement, and all placements
+    // are deployed into GameState on behalf of ALIEN (C++ `DeployUnit`).
     let mut with_aliens = config.clone();
     with_aliens.derelicts = ResourceLevel::HIGH;
 
@@ -275,8 +275,8 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     );
     assert_eq!(app_aliens.digest().units, aliens_report.units);
 
-    // Юниты — в списках, хэше карты и с корректной командой; у зданий заняты
-    // все четыре клетки 2×2 (`Hash_MapHash.Add`).
+    // Units — in the lists, the map hash and with a correct team; buildings occupy
+    // all four 2×2 cells (`Hash_MapHash.Add`).
     {
         let state = app_aliens.state();
         let alien_ids: Vec<_> = state
@@ -323,7 +323,7 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
         }
     }
 
-    // Тик не паникует, дайджест стабилен между одинаковыми прогонами.
+    // The tick does not panic, the digest is stable between identical runs.
     let mut replay_aliens = App::new(AppConfig::default().with_screen(320, 240));
     let replay_aliens_report = replay_aliens.new_game_on_surface(&with_aliens, &surface);
     assert_eq!(aliens_report, replay_aliens_report);
@@ -342,13 +342,13 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
 
     let (aliens_frame, aliens_stats) = app_aliens.render_frame_with_stats();
     assert_eq!((aliens_frame.width(), aliens_frame.height()), (320, 240));
-    // В камеру 320×240 попадает лишь часть карты, поэтому рисуется не больше
-    // юнитов, чем есть в состоянии (обломки обычно вне стартового вида).
+    // Only part of the map gets into the 320×240 camera, so no more units are drawn
+    // than there are in the state (debris is usually outside the start view).
     assert!(aliens_stats.units() <= aliens_report.units);
 }
 
 // ---------------------------------------------------------------------------
-// 3. Move-команда max_core через App (пакет 38)
+// 3. Move command of max_core through App (packet 38)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -372,7 +372,7 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
     app.apply(command);
 
-    // Без dt — снимок: визуальная позиция равна симуляционной.
+    // Without dt — a snapshot: the visual position equals the simulation one.
     app.update_visual_units(0.0);
     assert_eq!(
         app.visual_position(id),
@@ -420,7 +420,7 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         )
         .expect("танк");
 
-    // L-маршрут: 2 клетки на восток, затем 2 на север.
+    // L route: 2 cells east, then 2 north.
     let mut unit = app.state().unit(id).expect("танк").clone();
     unit.angle = 2;
     unit.orders = UnitOrder::Move;
@@ -440,16 +440,16 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     app.update_visual_units(0.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
-    // Первый тик: шаг на восток; следующий шаг тоже на восток — спрайт и
-    // симуляция смотрят на восток.
+    // The first tick: a step east; the next step is east too — the sprite and
+    // the simulation face east.
     app.tick();
     assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(11, 10));
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
-    // Второй тик: шаг на (12,10); на границе клетки симуляция уже начала
-    // поворот к северу (`GroundPath::UpdateUnitAngle`: E → NE), но спрайт
-    // ещё идёт по восточному отрезку и обязан смотреть на восток.
+    // The second tick: a step to (12,10); at the cell boundary the simulation has already started
+    // turning north (`GroundPath::UpdateUnitAngle`: E → NE), but the sprite
+    // still walks the east segment and must face east.
     app.tick();
     assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(12, 10));
     assert_eq!(app.state().unit(id).expect("танк").angle, 1);
@@ -460,8 +460,8 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         "спрайт движется на восток — кадр обязан смотреть на восток, а не NE"
     );
 
-    // Сим и кадр идут вместе: пока спрайт смещается по оси, его угол равен
-    // направлению смещения (осевые отрезки этого маршрута).
+    // The simulation and the frame move together: while the sprite shifts along an axis, its angle equals
+    // the shift direction (axial segments of this route).
     let mut previous = app.visual_position(id).expect("танк");
     for frame in 0..40 {
         app.tick();
@@ -472,8 +472,8 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         let step_x = i32::from(dx > 1e-4) - i32::from(dx < -1e-4);
         let step_y = i32::from(dy > 1e-4) - i32::from(dy < -1e-4);
 
-        // Кадр не может пересечь угол маршрута; если это случилось (диагональ
-        // интерполяции/переход), направление смещения неоднозначно — пропуск.
+        // The frame cannot cross a route corner; if it did (interpolation/transition
+        // diagonal), the shift direction is ambiguous — skip.
         if step_x != 0 && step_y != 0 {
             previous = now;
             continue;
@@ -489,8 +489,8 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         previous = now;
     }
 
-    // Доигрываем кадр без тиков симуляции: спрайт доходит до последней клетки,
-    // после чего угол снова берётся из симуляции (последнее направление).
+    // We finish the frame without simulation ticks: the sprite reaches the last cell,
+    // after which the angle is taken from the simulation again (the last direction).
     for _ in 0..300 {
         app.update_visual_units(1.0 / 60.0);
     }
@@ -532,13 +532,13 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         UnitOrderState::Init,
     ));
 
-    // `dt = 0` — стартовый снимок (ровно симуляционная клетка).
+    // `dt = 0` — the starting snapshot (exactly the simulation cell).
     app.update_visual_units(0.0);
     let start = app.visual_position(id).expect("юнит жив");
     assert_eq!(start, (f32::from(from.x), f32::from(from.y)));
 
-    // Ждём тик, на котором симуляция делает первый шаг маршрута: приказ
-    // `Init` может сначала запросить путь (`NEW_ORDER`/`ISSUING_PATH`).
+    // We wait for the tick on which the simulation takes the first route step: the `Init`
+    // order may first request a path (`NEW_ORDER`/`ISSUING_PATH`).
     let mut ticks = 0;
     while app.state().unit(id).map(|unit| unit.grid) == Some(from) && ticks < 120 {
         app.tick();
@@ -550,14 +550,14 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "юнит не сдвинулся за {ticks} тиков"
     );
 
-    // Кадр с реальным `dt` идёт по маршруту: два последовательных кадра
-    // различаются позицией спрайта (видимое движение, а не телепорт).
+    // A frame with real `dt` walks the route: two consecutive frames
+    // differ in the sprite position (visible movement, not a teleport).
     app.update_visual_units(1.0 / 60.0);
     let first = app.visual_position(id).expect("юнит жив");
     assert_ne!(first, start, "после шага кадр обязан сдвинуться: {first:?}");
 
-    // Пиксельная проверка: два кадра подряд различаются (маркер/спрайт
-    // сдвинулся), без тика симуляции между ними.
+    // Pixel check: two consecutive frames differ (the marker/sprite
+    // moved) without a simulation tick between them.
     app.viewport_mut().center_on_grid(from.x, from.y);
     let first_frame = app.render_frame();
 
@@ -575,7 +575,7 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "кадр карты должен измениться: спрайт юнита сместился"
     );
 
-    // Визуальное состояние — только кадр: CRC/снапшот не меняются.
+    // The visual state is frame-only: the CRC/snapshot do not change.
     let snapshot = app.snapshot();
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(
@@ -584,7 +584,7 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "update_visual_units не должен менять симуляцию"
     );
 
-    // Доводим маршрут: 2 клетки при 4 клетках/с — ~30 кадров, берём запас.
+    // We finish the route: 2 cells at 4 cells/s — ~30 frames, we take a margin.
     for _ in 0..300 {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
@@ -618,7 +618,7 @@ fn move_command_replays_through_app() {
         let from = app.state().unit(id).expect("юнит существует").grid;
         let to = Point::new((from.x + 3).min(MAP_WIDTH - 2), from.y);
 
-        // Ровно тот же помощник, что в тестах max_core (`packet_38_builds_ground_path`).
+        // Exactly the same helper as in the max_core tests (`packet_38_builds_ground_path`).
         let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
 
         assert_eq!(app.apply(command), ApplyOutcome::Applied);
@@ -644,7 +644,7 @@ fn move_command_replays_through_app() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Живой smoke на настоящих данных игры (если они есть рядом)
+// 4. Live smoke on real game data (if present nearby)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -682,9 +682,9 @@ fn assets_integration_smoke() {
 
     app.load_save(fixture_save_path()).expect("SAVE1.CAM");
 
-    // Центрируем камеру на юните локального игрока, для типа которого спрайт
-    // реально загружен из MAX.RES: иначе в маленькое окно может не попасть ни
-    // один рисуемый спрайт (всё зависит от того, где стоит первый юнит).
+    // We center the camera on a local player unit whose sprite
+    // is really loaded from MAX.RES: otherwise not a single drawn sprite may get into
+    // the small window (all depends on where the first unit stands).
     let mut player_types: Vec<u16> = Vec::new();
     for id in app.state().unit_ids_in_order() {
         let Some(unit) = app.state().unit(id) else {
@@ -727,8 +727,8 @@ fn assets_integration_smoke() {
         stats.units_marker
     );
 
-    // `App::new_game` (путь с настоящими ассетами): карта планеты из .WRL.
-    // NewLuzon (индекс 12) — это GREEN_1.WRL.
+    // `App::new_game` (the path with real assets): the planet map from .WRL.
+    // NewLuzon (index 12) — that is GREEN_1.WRL.
     let report = app
         .new_game(&NewGameConfig {
             planet: Planet::NewLuzon,
@@ -749,10 +749,10 @@ fn assets_integration_smoke() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Хром 1:1: координаты мыши и клики по панелям
+// 4. 1:1 chrome: mouse coordinates and panel clicks
 // ---------------------------------------------------------------------------
 
-/// Загружает приложение с ассетами игры; `None`, если данных нет рядом.
+/// Loads the application with game assets; `None` if there is no data nearby.
 fn chrome_app() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
@@ -795,8 +795,8 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
 
-    // Клик в центр клетки на экране: карта начинается с (180,18), и без
-    // пересчёта координат клик попадал бы в (0,0) области карты (риск 4).
+    // A click at the cell center on the screen: the map starts at (180,18), and without
+    // coordinate conversion the click would hit (0,0) of the map area (risk 4).
     let map_view = app.map_viewport();
     let tile = map_view.tile_rect(grid.x, grid.y);
     let x = max_render::layout::MAIN_MAP.ulx + tile.ulx + tile.width / 2;
@@ -851,10 +851,10 @@ fn chrome_end_turn_click_is_a_button_not_a_map_click() {
 }
 
 // ---------------------------------------------------------------------------
-// 4b. A2/A3: таймер хода и кнопка End Turn на настоящем кадре
+// 4b. A2/A3: turn timer and End Turn button on a real frame
 // ---------------------------------------------------------------------------
 
-/// Цвет «чернил» внутри прямоугольника (пиксели ровно этого RGBA).
+/// Ink color inside the rectangle (pixels of exactly this RGBA).
 fn count_color(
     frame: &max_render::buffer::RgbaBuffer,
     rect: max_render::buffer::PixelRect,
@@ -873,13 +873,13 @@ fn count_color(
     count
 }
 
-/// Прямоугольник кнопки End Turn из `windows[]` (`WINDOW_ENDTURN_BUTTON`).
+/// End Turn button rectangle from `windows[]` (`WINDOW_ENDTURN_BUTTON`).
 const END_TURN_RECT: max_render::buffer::PixelRect =
     max_render::buffer::PixelRect::new(390, 2, 72, 21);
 
-/// A2: таймер показывает `GameManager_TurnTimerValue` в окне
+/// A2: the timer shows `GameManager_TurnTimerValue` in the
 /// `WINDOW_TURN_TIMER_DISPLAY` (534,2…594,22), `FONT5`, `"%2.2i:%2.2i"`,
-/// цвет `COLOR_RED` при `<= 20` и `0xA2` иначе (`GameManager_DrawTurnTimer`).
+/// color `COLOR_RED` at `<= 20` and `0xA2` otherwise (`GameManager_DrawTurnTimer`).
 #[test]
 fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     let Some(mut app) = chrome_app() else {
@@ -889,12 +889,12 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
         .expect("палитра FRAMEPIC");
 
-    // Внутренняя часть окна таймера, без бевела: в ней только цифры.
+    // The inner part of the timer window, without the bevel: only digits in it.
     let inner = max_render::buffer::PixelRect::new(536, 5, 54, 14);
     let tan_color = palette.rgba(max_app::panels::TEXT);
     let red_color = palette.rgba(max_app::panels::RED);
 
-    // 01:41 — ровно как в кадре DOS-оригинала.
+    // 01:41 — exactly as in the DOS original frame.
     app.hud_mut().panels.timer_seconds = 101;
     let (frame, _) = app.render_frame_with_stats();
     let tan_101 = count_color(&frame, inner, tan_color);
@@ -906,7 +906,7 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     );
     assert_eq!(red_101, 0, "101 с — не красный");
 
-    // 15 с — красный (`turn_time <= 20`).
+    // 15 s — red (`turn_time <= 20`).
     app.hud_mut().panels.timer_seconds = 15;
     let (frame, _) = app.render_frame_with_stats();
     let tan_15 = count_color(&frame, inner, tan_color);
@@ -915,7 +915,7 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     assert!(red_15 > 50, "15 с — COLOR_RED: {red_15}");
     assert_eq!(tan_15, 0, "меньше 20 с — только красный");
 
-    // Таймер выключен: C++ рисует «00:00» **красным** (`DrawTurnTimer(0)`).
+    // The timer is off: C++ draws «00:00» **in red** (`DrawTurnTimer(0)`).
     app.hud_mut().panels.timer_seconds = 0;
     let (frame, _) = app.render_frame_with_stats();
 
@@ -925,8 +925,8 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
     );
 }
 
-/// A3: на ходу компьютера кнопка End Turn нажата и подписана цветом активной
-/// команды; на ходу человека — отжата с обычной подписью
+/// A3: on the computer turn the End Turn button is pressed and labeled in the active
+/// team color; on the human turn — released with the usual label
 /// (`GameManager_UpdateGui` → `MenuClickEndTurnButton`).
 #[test]
 fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
@@ -938,7 +938,7 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
         .expect("палитра FRAMEPIC");
     let tan = palette.rgba(max_app::panels::END_TURN_TEXT);
 
-    // Мой ход (RED, человек): отжатая кнопка, обычная подпись.
+    // My turn (RED, human): the button is released, the usual label.
     app.state_mut().active_turn_team = max_core::TeamId::RED;
     app.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
     let (human, _) = app.render_frame_with_stats();
@@ -948,7 +948,7 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
         "на ходу человека подпись обычная (0xA0)"
     );
 
-    // Ход компьютера GREEN: кнопка нажата, подпись — цвет команды (индекс 2).
+    // Computer GREEN turn: the button is pressed, the label — the team color (index 2).
     app.state_mut().active_turn_team = max_core::TeamId::GREEN;
     app.state_mut().teams[1].team_type = max_core::team::TeamKind::Computer;
     let (ai, _) = app.render_frame_with_stats();
@@ -964,8 +964,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
         "обычной подписи на нажатой кнопке нет"
     );
 
-    // Бевл нажатой кнопки — ресурс `R_ENDT_D + team`, а не `ENDTRN_U`:
-    // кадры различаются внутри кнопки.
+    // The bevel of the pressed button — the `R_ENDT_D + team` resource, not `ENDTRN_U`:
+    // the frames differ inside the button.
     let mut changed = 0;
 
     for y in END_TURN_RECT.uly..END_TURN_RECT.lry() {
@@ -981,7 +981,7 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
         "нажатая кнопка отличается от отжатой (пикселей: {changed})"
     );
 
-    // HOT-SEAT: второй человек ходит — кнопка снова отжата.
+    // HOT-SEAT: the second human moves — the button is released again.
     app.state_mut().active_turn_team = max_core::TeamId::GREEN;
     app.state_mut().teams[1].team_type = max_core::team::TeamKind::Player;
     let (hotseat, _) = app.render_frame_with_stats();
@@ -997,8 +997,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 }
 
-/// A1: маркеры стройки `BLDMRK1..5` рисуются вокруг достроенной площадки, пока
-/// строитель ждёт приказа игрока (`DrawMap_RenderBuildMarker`).
+/// A1: construction markers `BLDMRK1..5` are drawn around a completed site while
+/// the builder waits for a player order (`DrawMap_RenderBuildMarker`).
 #[test]
 fn chrome_build_markers_are_drawn_around_the_finished_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -1058,7 +1058,7 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
         cells.len()
     );
 
-    // Снимаем выделение — маркеры исчезают.
+    // We clear the selection — the markers disappear.
     app.hud_mut().select(None);
     let (_, stats) = app.render_frame_with_stats();
     assert_eq!(stats.build_markers, 0, "без выделения маркеров нет");
@@ -1095,17 +1095,17 @@ fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. TC-1112: повторный запуск/выход (`App::new` дважды) — без залипаний
+// 6. TC-1112: repeated launch/exit (`App::new` twice) — without sticking
 // ---------------------------------------------------------------------------
 
-/// TC-1112: приложение создаётся, играет, пишет сейв, выходит — и всё это
-/// дважды подряд в одном процессе. Проверяет, что нет залипшего состояния,
-/// блокировок файлов сейва и «второй `App` видит первый».
+/// TC-1112: the application is created, plays, writes a save, exits — and all this
+/// twice in a row in one process. Checks that there is no stuck state,
+/// save file locks and "the second `App` sees the first".
 ///
-/// Это ровно сценарий «игрок закрыл игру и запустил снова» без перезапуска
-/// процесса: `App::new` не трогает глобальные ресурсы, а `leave_local_game`
-/// освобождает партию. Файл сейва намеренно один и тот же — на Windows
-/// открытый дескриптор дал бы ошибку записи во втором раунде.
+/// This is exactly the "player closed the game and started again" scenario without restarting
+/// the process: `App::new` does not touch global resources, and `leave_local_game`
+/// frees the match. The save file is deliberately the same — on Windows
+/// an open descriptor would give a write error in the second round.
 #[test]
 fn app_can_be_created_twice_and_start_exit_twice() {
     let config = || AppConfig {
@@ -1153,8 +1153,8 @@ fn app_can_be_created_twice_and_start_exit_twice() {
         assert!(app.build_menu().is_none());
     }
 
-    // Оба раунда начинаются с одного и того же состояния (seed по умолчанию):
-    // второй App не «помнит» первый.
+    // Both rounds start from the same state (default seed):
+    // the second App does not "remember" the first.
     assert_eq!(digests[0].state_digest, digests[1].state_digest);
     assert_eq!(digests[0].snapshot_len, digests[1].snapshot_len);
 
@@ -1165,13 +1165,13 @@ fn app_can_be_created_twice_and_start_exit_twice() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. TC-1111: не-ASCII в отрисовке — fallback-глиф '?' (без паники)
+// 7. TC-1111: non-ASCII in rendering — the fallback '?' glyph (without panic)
 // ---------------------------------------------------------------------------
 
-/// Кадр HUD локальной партии с заданным именем игрока (имя видно в журнале).
+/// HUD frame of a local match with the given player name (the name is visible in the log).
 ///
-/// Рисуем именно HUD (`render_hud`), а не `render_frame`: журнал сообщений и
-/// строка «Local game: <имя> vs …» — часть HUD-слоя.
+/// We draw exactly the HUD (`render_hud`), not `render_frame`: the message log and
+/// the line «Local game: <name> vs …» are part of the HUD layer.
 fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
     let config = AppConfig {
         max_res: repo_path("max-original/MAX.RES"),
@@ -1214,12 +1214,12 @@ fn non_ascii_player_name_renders_with_the_fallback_glyph() {
     let ascii = frame_for_player_name("A").expect("кадр с ASCII-именем");
     let cyrillic = frame_for_player_name("Ж").expect("кадр с не-ASCII именем");
 
-    // Имя действительно попадает в кадр (иначе сравнение ниже ничего не значит).
+    // The name really gets into the frame (otherwise the comparison below means nothing).
     assert_ne!(
         question, ascii,
         "имя игрока должно рисоваться в HUD (журнал локальной партии)"
     );
-    // Не-ASCII символ заменяется тем же '?', поэтому кадры совпадают побитово.
+    // The non-ASCII character is replaced with the same '?', so the frames match bitwise.
     assert_eq!(
         question, cyrillic,
         "не-ASCII имя должно рисоваться fallback-глифом '?' без паники"
@@ -1227,13 +1227,13 @@ fn non_ascii_player_name_renders_with_the_fallback_glyph() {
 }
 
 // ---------------------------------------------------------------------------
-// A4–A9: центр ленты, маркеры стройки, знание ресурсов, селектор, радар
+// A4–A9: tape center, construction markers, resource knowledge, selector, radar
 // ---------------------------------------------------------------------------
 
-/// Пустая суша без ресурсов и юнитов: RED — человек с золотом.
+/// Empty land without resources and units: RED — a human with gold.
 ///
-/// Готовит управляемую карту для кадровых тестов: без чужих юнитов, знания
-/// ресурсов и палитровых «маяков», которые могли бы изменить пиксели.
+/// Prepares a controlled map for frame tests: without foreign units, resource
+/// knowledge and palette "beacons" that could change pixels.
 fn empty_land_state() -> max_core::GameState {
     let mut state = max_core::GameState::new();
 
@@ -1249,7 +1249,7 @@ fn empty_land_state() -> max_core::GameState {
     state
 }
 
-/// `App` с ассетами игры и пустой сушей (без `new_game`).
+/// `App` with game assets and empty land (without `new_game`).
 fn assets_app_with_land() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
@@ -1273,8 +1273,8 @@ fn assets_app_with_land() -> Option<App> {
     Some(app)
 }
 
-/// Сколько пикселей клетки `cell` изменилось между кадрами (в оконном режиме
-/// карта сдвинута на `MAIN_MAP.ulx/uly`).
+/// How many pixels of cell `cell` changed between frames (in windowed mode
+/// the map is shifted by `MAIN_MAP.ulx/uly`).
 fn changed_pixels_in_cell(
     before: &max_render::buffer::RgbaBuffer,
     after: &max_render::buffer::RgbaBuffer,
@@ -1299,13 +1299,13 @@ fn changed_pixels_in_cell(
     changed
 }
 
-/// A4: строитель остаётся в **центре ленты** и после достройки
-/// (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`), пока игрок не прикажет уйти.
+/// A4: the builder stays in the **tape center** after completion too
+/// (`ORDER_BUILD`/`ORDER_STATE_UNIT_READY`) until the player orders it to leave.
 ///
-/// C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) не двигает `x`/`y` строителя:
-/// пиксель остаётся там, куда его свёл `PositionInTape` (32 px к центру 2×2), а
-/// сдвиг снимается только в `TAPE_POSITIONING_DEINIT`/`LEAVE`. Порт раньше
-/// обнулял сдвиг на `UNIT_READY` и «выталкивал» спрайт в угол площадки.
+/// C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) does not move the builder's `x`/`y`:
+/// the pixel stays where `PositionInTape` brought it (32 px to the 2×2 center), and
+/// the shift is removed only in `TAPE_POSITIONING_DEINIT`/`LEAVE`. The port earlier
+/// zeroed the shift at `UNIT_READY` and "pushed" the sprite into the site corner.
 #[test]
 fn the_builder_stays_in_the_tape_centre_after_completion() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -1329,8 +1329,8 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
         .spawn_unit(UnitType::LargeTape, team, site, 0)
         .expect("large tape");
     {
-        // Только лента (без конусов/плиты): в кадре должен быть ровно один
-        // маркер — строитель, иначе центроид смешается с декалями площадки.
+        // Only the tape (without cones/slab): the frame must have exactly one
+        // marker — the builder, otherwise the centroid would mix with the site decals.
         let mut t = app.state().unit(tape).expect("tape").clone();
         t.parent_unit = Some(builder);
         t.orders = UnitOrder::Await;
@@ -1356,7 +1356,7 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
 
     app.viewport_mut().center_on_grid(site.x, site.y);
 
-    // Без ассетов строитель рисуется маркером команды 6×6 в своём якоре.
+    // Without assets the builder is drawn with a 6×6 team marker at its anchor.
     let (frame, stats) = app.render_frame_with_stats();
     assert_eq!(stats.units_marker, 2, "строитель и лента — маркеры");
 
@@ -1373,12 +1373,12 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
         count
     };
 
-    // Центр ленты 2×2 — `grid*64 + 64` (C++ `OffsetDrawZones` ×4 по 8 px).
+    // The center of the 2×2 tape — `grid*64 + 64` (C++ `OffsetDrawZones` ×4 of 8 px).
     let (ex, ey) = app
         .viewport()
         .world_to_screen(site.x as i32 * 64 + 64, site.y as i32 * 64 + 64);
-    // Угол ленты, где строитель стоял бы **без** сдвига (старое поведение):
-    // центр его клетки (41,41) — `grid*64 + 32`.
+    // The tape corner where the builder would stand **without** the shift (the old behavior):
+    // the center of its cell (41,41) — `grid*64 + 32`.
     let (corner_x, corner_y) = app.viewport().world_to_screen(41 * 64 + 32, 41 * 64 + 32);
 
     assert!(
@@ -1391,8 +1391,8 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
         "строитель не «вытолкнут» в угол площадки ({corner_x},{corner_y})"
     );
 
-    // Приказ игрока уйти — единственное, что снимает центрирование: после
-    // `TAPE_POSITIONING_DEINIT`/`LEAVE` сдвиг включает шаги съезда.
+    // The player's order to leave — the only thing that removes the centering: after
+    // `TAPE_POSITIONING_DEINIT`/`LEAVE` the shift includes the exit steps.
     let mut unit = app.state().unit(builder).expect("builder").clone();
     unit.orders = UnitOrder::AwaitTapePositioning;
     unit.state = UnitOrderState::TapePositioningLeave;
@@ -1406,8 +1406,8 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
     );
 }
 
-/// A5: клетки маркеров стройки — ровно кольцо `DrawMap_RedrawUnit`
-/// (`drawmap.cpp:304-337`): 12 клеток вокруг 2×2-площадки, **не** её клетки.
+/// A5: construction marker cells — exactly the `DrawMap_RedrawUnit` ring
+/// (`drawmap.cpp:304-337`): 12 cells around a 2×2 site, **not** its cells.
 #[test]
 fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -1444,8 +1444,8 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     let cells =
         max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
 
-    // C++: старт `(parent.x - 1, parent.y + 1)`, для здания `+1` по y, затем
-    // N/E/S/W по три шага накопительно; фильтр `Access_IsAccessible`.
+    // C++: start `(parent.x - 1, parent.y + 1)`, for a building `+1` in y, then
+    // N/E/S/W for three steps cumulatively; the `Access_IsAccessible` filter.
     let expected: Vec<Point> = [
         (29, 21),
         (29, 20),
@@ -1483,9 +1483,9 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
         );
     }
 
-    // Кадр: каждый marker — картинка 62×62 по центру своей клетки
-    // (`DrawMap_Callback2`: `ulx * 64 + 32`), поэтому число маркеров совпадает
-    // с числом клеток кольца.
+    // Frame: each marker — a 62×62 picture at the center of its cell
+    // (`DrawMap_Callback2`: `ulx * 64 + 32`), so the number of markers equals
+    // the number of ring cells.
     app.hud_mut().select(Some(builder));
     app.viewport_mut().center_on_grid(site.x, site.y);
     let (_, stats) = app.render_frame_with_stats();
@@ -1496,8 +1496,8 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     );
 }
 
-/// A6/A7: иконки ресурсов — только на разведанных клетках, только при
-/// SURVEY/выделенном разведчике и **поверх** зданий.
+/// A6/A7: resource icons — only on surveyed cells, only with
+/// SURVEY/a selected scout and **over** buildings.
 #[test]
 fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -1510,7 +1510,7 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     let known_cell = Point::new(40, 40);
     let unknown_cell = Point::new(42, 40);
 
-    // RED разведал золото в `known_cell`, вторая клетка не разведана.
+    // RED surveyed gold in `known_cell`, the second cell is not surveyed.
     app.state_mut().map.resources.set(
         known_cell.x,
         known_cell.y,
@@ -1540,13 +1540,13 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
 
     app.viewport_mut().center_on_grid(40, 40);
 
-    // 1. Ни SURVEY, ни разведчик не выбраны — иконок нет вовсе.
+    // 1. Neither SURVEY nor a scout is selected — there are no icons at all.
     app.hud_mut().select(None);
     let (base, stats) = app.render_frame_with_stats();
     assert!(!app.survey_overlay_active(), "оверлей SURVEY выключен");
     assert_eq!(stats.resource_icon_cells, 0, "без оверлея иконок нет");
 
-    // 2. Выделен разведчик (приказ не IDLE) → иконка только на разведанной.
+    // 2. A scout is selected (the order is not IDLE) → the icon only on the surveyed one.
     app.hud_mut().select(Some(surveyor));
     let (surveyor_frame, stats) = app.render_frame_with_stats();
     assert!(app.survey_overlay_active(), "разведчик включает оверлей");
@@ -1564,7 +1564,7 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
         "неразведанная клетка остаётся без иконки"
     );
 
-    // 3. Кнопка SURVEY — та же маска знания, а не «весь мир».
+    // 3. The SURVEY button — the same knowledge mask, not "the whole world".
     app.hud_mut().select(None);
     app.hud_mut().panels.survey = true;
     let (button_frame, stats) = app.render_frame_with_stats();
@@ -1579,8 +1579,8 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     );
 }
 
-/// A8: `GameManager_DrawUnitSelector` (`game_manager.cpp:744`) — три вложенные
-/// рамки-уголка вокруг выделенного юнита с мигающим `GameManager_MarkerColor`.
+/// A8: `GameManager_DrawUnitSelector` (`game_manager.cpp:744`) — three nested
+/// corner frames around the selected unit with the blinking `GameManager_MarkerColor`.
 #[test]
 fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
     use max_core::enums::UnitType;
@@ -1595,7 +1595,7 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
         .expect("tank");
     app.viewport_mut().center_on_grid(cell.x, cell.y);
 
-    // Без выделения рамки нет.
+    // Without a selection there is no frame.
     let (base, stats) = app.render_frame_with_stats();
     assert_eq!(stats.selector_units, 0, "без выделения селектора нет");
 
@@ -1603,8 +1603,8 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
     let (selected, stats) = app.render_frame_with_stats();
     assert_eq!(stats.selector_units, 1, "у выделенного юнита есть селектор");
 
-    // Геометрия `DrawUnitSelector` при 1:1 и `double_marker = true`:
-    // `size1 = 16`, `size2 = 64*64/64 - 2 = 62`, полуразмер 32.
+    // `DrawUnitSelector` geometry at 1:1 and `double_marker = true`:
+    // `size1 = 16`, `size2 = 64*64/64 - 2 = 62`, half-size 32.
     let (ax, ay) = app
         .viewport()
         .world_to_screen(cell.x as i32 * 64 + 32, cell.y as i32 * 64 + 32);
@@ -1628,8 +1628,8 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
         "до выделения в этом пикселе рамки не было"
     );
 
-    // Мигание: `GameManager_MarkerColor ^= 0xFF` каждые 210 мс. Часы кадра
-    // клампят один шаг до 0.1 с (реальный кадр ~16 мс), поэтому идём тремя.
+    // Blinking: `GameManager_MarkerColor ^= 0xFF` every 210 ms. The frame clock
+    // clamps one step to 0.1 s (a real frame ~16 ms), so we take three.
     for _ in 0..3 {
         app.update_visual_units(0.07);
     }
@@ -1647,21 +1647,21 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
         "средняя рамка стала белой (цвет ^ 0xFF)"
     );
 
-    // `dt = 0` (QA/headless) — снова белая рамка, кадры детерминированы.
+    // `dt = 0` (QA/headless) — the white frame again, the frames are deterministic.
     app.update_visual_units(0.0);
     assert_eq!(app.marker_color_index(), 0xFF);
 
-    // Снятие выделения убирает рамку.
+    // Clearing the selection removes the frame.
     app.hud_mut().select(None);
     let (_, stats) = app.render_frame_with_stats();
     assert_eq!(stats.selector_units, 0);
 }
 
-/// A9: построенный `RADAR` возвращается в `ORDER_SENTRY` и его кадры снова
-/// листаются `ProcessOrderSentry` (16 кадров `D_RADAR`).
+/// A9: a built `RADAR` returns to `ORDER_SENTRY` and its frames are advanced again
+/// by `ProcessOrderSentry` (16 `D_RADAR` frames).
 ///
-/// Раньше `SpawnNewUnit` терял `prior_orders`: радар оставался в `ORDER_AWAIT`,
-/// и `ANIMATED`-цикл не запускался — «анимация радара сломана».
+/// Earlier `SpawnNewUnit` lost `prior_orders`: the radar remained in `ORDER_AWAIT`,
+/// and the `ANIMATED` cycle did not start — "radar animation broken".
 #[test]
 fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -1676,7 +1676,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
         .state_mut()
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(30, 30), 0)
         .expect("engineer");
-    // `UnitsManager_DeployUnit` обнуляет склад нового юнита; высадка даёт 40.
+    // `UnitsManager_DeployUnit` zeroes the new unit's storage; landing gives 40.
     app.state_mut()
         .unit_mut(engineer)
         .expect("engineer")
@@ -1689,8 +1689,8 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
         let report = manager.commit(engineer).expect("site");
         drop(manager);
 
-        // `commit` выбирает якорь площадки сам (`PathBuild`): дальше ищем
-        // здание именно в нём, а не в исходной клетке инженера.
+        // `commit` chooses the site anchor itself (`PathBuild`): then we look for
+        // the building exactly in it, not in the engineer's original cell.
         site = report.site;
 
         let mut unit = state.unit(engineer).expect("engineer").clone();
@@ -1738,7 +1738,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
         );
     }
 
-    // Уход строителя по приказу (A1) → `BuildingReady`/`RestoreOrders`.
+    // The builder leaves by order (A1) → `BuildingReady`/`RestoreOrders`.
     assert!(max_core::unit_order::issue_builder_exit(
         app.state_mut(),
         engineer
@@ -1764,7 +1764,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     assert_eq!(app.unit_animation(radar).sentry_step, 0);
     let static_frame = app.render_frame();
 
-    // Один тик C++ (~1/30 с) — следующий кадр блока; 16 кадров — оборот.
+    // One C++ tick (~1/30 s) — the next block frame; 16 frames — a revolution.
     app.update_visual_units(max_app::SENTRY_ANIM_FRAME_SECONDS + 0.0005);
     assert_eq!(app.unit_animation(radar).sentry_step, 1);
     let rotated = app.render_frame();
@@ -1789,7 +1789,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     );
 }
 
-/// Число различающихся пикселей двух кадров.
+/// The number of differing pixels of two frames.
 fn changed_pixels(
     left: &max_render::buffer::RgbaBuffer,
     right: &max_render::buffer::RgbaBuffer,

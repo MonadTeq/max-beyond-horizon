@@ -1,17 +1,17 @@
-﻿//! Таблица курсоров — 1:1 `GameManager_GetWindowCursor` (`game_manager.cpp:4215`).
+﻿//! Cursor table — 1:1 `GameManager_GetWindowCursor` (`game_manager.cpp:4215`).
 //!
-//! Проверяется каждый режим из оракула:
-//! * пустая карта без выделения → `UNIT_NGO` (`SelectedUnit == nullptr`);
-//! * свой юнит → `FRND_PTR`;
-//! * X-FER (`unit->cursor = CURSOR_ARROW_NE`) → `FRND_XFR` над совместимым
-//!   грузом, иначе `FRND_PTR` (`game_manager.cpp:6031-6047`);
+//! Every mode from the oracle is checked:
+//! * an empty map without selection → `UNIT_NGO` (`SelectedUnit == nullptr`);
+//! * an own unit → `FRND_PTR`;
+//! * X-FER (`unit->cursor = CURSOR_ARROW_NE`) → `FRND_XFR` over compatible
+//!   cargo, otherwise `FRND_PTR` (`game_manager.cpp:6031-6047`);
 //! * repair (`CURSOR_ARROW_E`) → `FRND_FIX` (`:6049-6056`);
 //! * reload (`CURSOR_ARROW_S`) → `PTR_RLD` (`:6058-6065`);
 //! * load (`CURSOR_ARROW_SW`) → `FRND_LOD` (`:5997-6021`);
 //! * targeting_mode → `ENMY_PTR`/`UNIT_NGO` (`:4384-4414`);
 //! * military cursor → `ENMY_PTR`/`PTR_FTRG`/`UNIT_NGO` (`:6150`);
-//! * воздух → `UNIT_GO`, Shift → `WAY_PTR` (`:4441-4465`);
-//! * строитель в `ORDER_BUILD` → `UNIT_NGO` (`:5927-5931`).
+//! * air → `UNIT_GO`, Shift → `WAY_PTR` (`:4441-4465`);
+//! * a builder in `ORDER_BUILD` → `UNIT_NGO` (`:5927-5931`).
 
 use max_app::cursor::{window_cursor, CursorId};
 use max_app::{App, AppConfig};
@@ -86,8 +86,8 @@ fn cursor_ids_match_the_cpp_enum() {
 
 #[test]
 fn empty_map_without_selection_is_unit_no_go() {
-    // C++ `GameManager_GetWindowCursor` не имеет ветки `MAP_PTR`: без
-    // выделения пустая клетка даёт `CURSOR_UNIT_NO_GO` (`game_manager.cpp:4330-4335`).
+    // C++ `GameManager_GetWindowCursor` has no `MAP_PTR` branch:
+    // selection, an empty cell gives `CURSOR_UNIT_NO_GO` (`game_manager.cpp:4330-4335`).
     let app = app();
 
     assert_eq!(
@@ -193,7 +193,7 @@ fn repair_mode_over_damaged_unit_is_repair() {
 fn reload_mode_over_empty_ammo_is_reload() {
     let mut app = app();
     let depot = spawn(&mut app, UnitType::Depot, TeamId::RED, Point::new(40, 40)).expect("depot");
-    // 2×2-здание занимает 40..41 по обеим осям, танк — на соседней клетке 42.
+    // the 2×2 building occupies 40..41 on both axes, the tank — on the adjacent cell 42.
     let tank = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(42, 40)).expect("tank");
     ready(&mut app, depot);
     ready(&mut app, tank);

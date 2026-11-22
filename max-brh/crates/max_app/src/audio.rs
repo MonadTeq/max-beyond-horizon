@@ -1,33 +1,33 @@
-//! Звук приложения (M6.2): WAV → PCM-буфер → воспроизведение.
+//! Application sound (M6.2): WAV → PCM buffer → playback.
 //!
-//! Задача модуля — не «звуковой движок», а минимальный неблокирующий слой над
-//! уже разобранными звуками:
+//! The module's job is not a "sound engine" but a minimal non-blocking layer over
+//! already decoded sounds:
 //!
-//! * [`max_assets::wav`] декодирует `*.SPW` (PCM16) в [`WavClip`] — это
-//!   работает **всегда**, без внешних зависимостей;
-//! * [`AudioPlayer`] кэширует клипы, разрешает имена через ресурсы-ссылки
+//! * [`max_assets::wav`] decodes `*.SPW` (PCM16) into [`WavClip`] — this
+//!   works **always**, without external dependencies;
+//! * [`AudioPlayer`] caches clips, resolves names through the reference resources
 //!   `MAX.RES` (`TANK1` → `"tank1.spw"`, `max-original-dasm/formats/spw.md` §1)
-//!   и отдаёт их backend'у;
-//! * [`AudioBackend`] — точка подключения вывода. Всегда есть тихий
-//!   [`NoopBackend`]; за feature `sound` — [`RodioBackend`] (rodio/cpal).
+//!   and hands them to the backend;
+//! * [`AudioBackend`] — the output connection point. There is always a silent
+//!   [`NoopBackend`]; behind the `sound` feature — [`RodioBackend`] (rodio/cpal).
 //!
 //! # Feature `sound`
 //!
-//! Базовые сборки (`cargo check`/`cargo test`/docker) не тянут ALSA/CPAL:
-//! rodio — optional-зависимость, а `AudioPlayer::new()` создаёт no-op backend.
-//! Только `AudioPlayer::with_default_backend()` в сборке с `--features sound`
-//! пытается открыть аудиоустройство. Если устройства нет (headless/CI), игрок
-//! остаётся на no-op и пишет причину в [`AudioPlayer::errors`] — падения нет.
+//! Base builds (`cargo check`/`cargo test`/docker) do not pull ALSA/CPAL:
+//! rodio is an optional dependency, and `AudioPlayer::new()` creates a no-op backend.
+//! Only `AudioPlayer::with_default_backend()` in a build with `--features sound`
+//! tries to open an audio device. If there is no device (headless/CI), the player
+//! stays on no-op and writes the reason to [`AudioPlayer::errors`] — there is no crash.
 //!
-//! Воспроизведение не блокирует: rodio проигрывает сэмплы в своём потоке,
-//! а вызов [`AudioPlayer::play`] только ставит клип в очередь.
+//! Playback does not block: rodio plays samples in its own thread,
+//! and the [`AudioPlayer::play`] call only queues the clip.
 //!
-//! # Имена
+//! # Names
 //!
-//! [`AudioPlayer::play`] принимает либо тег ресурса (`"KBUY0"`, `"TANK1"`),
-//! либо имя файла (`"kbuy0.spw"`). Поиск файла регистронезависимый: на Linux
-//! ссылка из `MAX.RES` — строчная (`tank1.spw`), а файл в каталоге игры —
-//! заглавный (`TANK1.SPW`), поэтому каталог индексируется по нижнему регистру.
+//! [`AudioPlayer::play`] accepts either a resource tag (`"KBUY0"`, `"TANK1"`),
+//! or a file name (`"kbuy0.spw"`). The file lookup is case-insensitive: on Linux
+//! the reference from `MAX.RES` is lowercase (`tank1.spw`), while the file in the game directory
+//! is uppercase (`TANK1.SPW`), so the directory is indexed by lowercase.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -37,48 +37,48 @@ use std::sync::Arc;
 
 use max_assets::{parse_file_ref, ResArchive, WavClip};
 
-/// Тег ресурса клика меню (`KBUY0` → `kbuy0.spw`).
+/// Menu click resource tag (`KBUY0` → `kbuy0.spw`).
 ///
-/// `spw.md` §8.3: `KBUY0`/`KCARG0` — звук нажатия кнопки; используется в
-/// `ui.rs` на кликах меню.
+/// `spw.md` §8.3: `KBUY0`/`KCARG0` — the button press sound; used in
+/// `ui.rs` on menu clicks.
 pub const MENU_CLICK: &str = "KBUY0";
 
-/// Сколько роликов одновременно держит rodio (защита от «залипания» кликов).
+/// How many clips rodio holds at once (protection against "stuck" clicks).
 #[cfg(feature = "sound")]
 const MAX_CONCURRENT_SINKS: usize = 16;
-/// Предел диагностических сообщений (ошибки не должны расти бесконечно).
+/// Limit of diagnostic messages (errors must not grow indefinitely).
 const MAX_ERRORS: usize = 16;
 
-/// Как проигрывать клип.
+/// How to play the clip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayMode {
-    /// Один раз.
+    /// Once.
     Once,
-    /// Зацикленно (фон/двигатель).
+    /// Looped (background/engine).
     Loop,
 }
 
-/// Вывод звука. Реализации: [`NoopBackend`] и (за feature `sound`)
+/// Sound output. Implementations: [`NoopBackend`] and (behind the `sound` feature)
 /// [`RodioBackend`].
 ///
-/// Трейт не требует `Send`: cpal-поток (`OutputStream`) не является `Send`, а
-/// плеер живёт в UI-потоке. Клипы передаются как `Arc<WavClip>` и клонируются
-/// только в момент постановки в очередь.
+/// The trait does not require `Send`: the cpal stream (`OutputStream`) is not
+/// `Send`, while the player lives in the UI thread. Clips are passed as `Arc<WavClip>` and cloned
+/// only at the moment of queueing.
 pub trait AudioBackend: fmt::Debug {
-    /// Имя backend'а для логов/отчётов (`"noop"`, `"rodio/cpal"`).
+    /// Backend name for logs/reports (`"noop"`, `"rodio/cpal"`).
     fn name(&self) -> &'static str;
 
-    /// Ставит клип в очередь. Не блокирует.
+    /// Queues the clip. Does not block.
     fn play(&mut self, clip: Arc<WavClip>, mode: PlayMode) -> Result<(), String> {
         self.play_scaled(clip, mode, 1.0)
     }
 
-    /// Ставит клип в очередь с дополнительным усилением `gain` (0..1+).
+    /// Queues the clip with additional gain `gain` (0..1+).
     ///
-    /// Нужно для звуков юнитов: `SC_UNITS` задаёт громкость на эффект
-    /// (`SoundManager::PlaySfx`: `volume / 100`), а общая громкость `FX`
-    /// остаётся в [`AudioPlayer::set_volume`]. Реализация по умолчанию
-    /// делегирует в [`AudioBackend::play`] (усиление игнорируется).
+    /// Needed for unit sounds: `SC_UNITS` sets the volume per effect
+    /// (`SoundManager::PlaySfx`: `volume / 100`), while the overall `FX` volume
+    /// stays in [`AudioPlayer::set_volume`]. The default implementation
+    /// delegates to [`AudioBackend::play`] (the gain is ignored).
     fn play_scaled(
         &mut self,
         clip: Arc<WavClip>,
@@ -88,17 +88,17 @@ pub trait AudioBackend: fmt::Debug {
         self.play(clip, mode)
     }
 
-    /// Останавливает всё, что играет.
+    /// Stops everything that is playing.
     fn stop_all(&mut self) {}
 
-    /// Громкость 0.0..=1.0 (реализация может игнорировать).
+    /// Volume 0.0..=1.0 (the implementation may ignore it).
     fn set_volume(&mut self, _volume: f32) {}
 }
 
-/// Тихий backend: принимает клипы и ничего не делает.
+/// Silent backend: accepts clips and does nothing.
 ///
-/// Это поведение по умолчанию для сборок без feature `sound` и для тестов:
-/// хуки UI остаются на месте, но ALSA/CPAL не нужны.
+/// This is the default behavior for builds without the `sound` feature and for tests:
+/// the UI hooks remain in place, but ALSA/CPAL is not needed.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopBackend;
 
@@ -112,15 +112,15 @@ impl AudioBackend for NoopBackend {
     }
 }
 
-/// Проигрыватель: кэш клипов, ссылки `MAX.RES` и backend.
+/// Player: clip cache, `MAX.RES` references and backend.
 pub struct AudioPlayer {
     backend: Box<dyn AudioBackend>,
     sound_dir: Option<PathBuf>,
-    /// имя файла в нижнем регистре → реальный путь (регистр ФС не важен).
+    /// lowercase file name → real path (FS case does not matter).
     files: HashMap<String, PathBuf>,
-    /// тег ресурса в верхнем регистре → имя `.spw` в нижнем регистре.
+    /// uppercase resource tag → lowercase `.spw` name.
     references: BTreeMap<String, String>,
-    /// имя файла в нижнем регистре → разобранный клип.
+    /// lowercase file name → decoded clip.
     cache: HashMap<String, Arc<WavClip>>,
     errors: Vec<String>,
     last_error: Option<String>,
@@ -130,12 +130,12 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    /// Плеер с тихим backend'ом и без данных.
+    /// Player with a silent backend and no data.
     pub fn new() -> Self {
         Self::with_backend(Box::new(NoopBackend))
     }
 
-    /// Плеер с произвольным backend'ом (тесты, другой звуковой движок).
+    /// Player with an arbitrary backend (tests, another sound engine).
     pub fn with_backend(backend: Box<dyn AudioBackend>) -> Self {
         Self {
             backend,
@@ -151,10 +151,10 @@ impl AudioPlayer {
         }
     }
 
-    /// Плеер для реального запуска: rodio за feature `sound`, иначе no-op.
+    /// Player for a real launch: rodio behind the `sound` feature, otherwise no-op.
     ///
-    /// Если аудиоустройство не открылось, возвращается no-op плеер с причиной
-    /// в [`Self::errors`] — клиент продолжает работать без звука.
+    /// If the audio device did not open, a no-op player is returned with the reason
+    /// in [`Self::errors`] — the client keeps working without sound.
     pub fn with_default_backend() -> Self {
         #[cfg(feature = "sound")]
         {
@@ -174,22 +174,22 @@ impl AudioPlayer {
         }
     }
 
-    /// Имя активного backend'а.
+    /// Name of the active backend.
     pub fn backend_name(&self) -> &'static str {
         self.backend.name()
     }
 
-    /// Есть ли реальный вывод (не [`NoopBackend`]).
+    /// Whether there is a real output (not [`NoopBackend`]).
     pub fn is_audible(&self) -> bool {
         self.backend.name() != "noop"
     }
 
-    /// Включён ли звук (хуки UI всё равно вызываются).
+    /// Whether sound is enabled (UI hooks are still called).
     pub fn enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Включает/выключает звук; при выключении останавливает очередь.
+    /// Enables/disables sound; disabling stops the queue.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
 
@@ -198,26 +198,26 @@ impl AudioPlayer {
         }
     }
 
-    /// Громкость 0.0..=1.0.
+    /// Volume 0.0..=1.0.
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
         self.backend.set_volume(self.volume);
     }
 
-    /// Текущая громкость.
+    /// Current volume.
     pub fn volume(&self) -> f32 {
         self.volume
     }
 
-    /// Каталог звуков (рядом с `MAX.RES`).
+    /// Sound directory (next to `MAX.RES`).
     pub fn sound_dir(&self) -> Option<&Path> {
         self.sound_dir.as_deref()
     }
 
-    /// Индексирует каталог звуков (`*.SPW`/`*.WAV`, регистр не важен).
+    /// Indexes the sound directory (`*.SPW`/`*.WAV`, case does not matter).
     ///
-    /// Возвращает `true`, если найден хотя бы один файл. Отсутствие каталога —
-    /// не ошибка: клиент просто останется без звука.
+    /// Returns `true` if at least one file was found. A missing directory is
+    /// not an error: the client will simply be left without sound.
     pub fn set_sound_dir(&mut self, dir: impl Into<PathBuf>) -> bool {
         let dir = dir.into();
         let mut files = HashMap::new();
@@ -246,16 +246,16 @@ impl AudioPlayer {
         found
     }
 
-    /// Собирает ссылки `тег → файл` из `MAX.RES` (только `*.spw`).
+    /// Collects `tag → file` references from `MAX.RES` (only `*.spw`).
     ///
-    /// Тело ресурса-ссылки — ASCIIZ-имя файла (`TANK1` → `"tank1.spw"`); обычные
-    /// ресурсы (спрайты/карты) отбрасываются [`parse_file_ref`].
+    /// The body of a reference resource is an ASCIIZ file name (`TANK1` → `"tank1.spw"`); regular
+    /// resources (sprites/maps) are discarded by [`parse_file_ref`].
     pub fn attach_res(&mut self, res: &ResArchive) -> usize {
         let mut added = 0;
 
         for entry in res.list() {
-            // Ссылки крошечные (10–16 байт); 256 — с запасом, чтобы не читать
-            // тела спрайтов/карт.
+            // References are tiny (10–16 bytes); 256 is a margin so as not to read
+            // the bodies of sprites/maps.
             if entry.size == 0 || entry.size > 256 {
                 continue;
             }
@@ -280,63 +280,63 @@ impl AudioPlayer {
         added
     }
 
-    /// Привязывает `MAX.RES` и каталог звуков одной операцией.
+    /// Binds `MAX.RES` and the sound directory in one operation.
     pub fn load_from(&mut self, res: &ResArchive, sound_dir: impl Into<PathBuf>) -> &mut Self {
         self.attach_res(res);
         self.set_sound_dir(sound_dir);
         self
     }
 
-    /// Сколько тегов-ссылок собрано из `MAX.RES`.
+    /// How many tag references were collected from `MAX.RES`.
     pub fn reference_count(&self) -> usize {
         self.references.len()
     }
 
-    /// Сколько звуковых файлов проиндексировано.
+    /// How many sound files were indexed.
     pub fn file_count(&self) -> usize {
         self.files.len()
     }
 
-    /// Сколько клипов разобрано и закэшировано.
+    /// How many clips were decoded and cached.
     pub fn cached_count(&self) -> usize {
         self.cache.len()
     }
 
-    /// Сколько клипов успешно отправлено backend'у.
+    /// How many clips were successfully sent to the backend.
     pub fn plays(&self) -> u64 {
         self.plays
     }
 
-    /// Диагностика (битые WAV, нет файла, нет устройства).
+    /// Diagnostics (broken WAV, missing file, no device).
     pub fn errors(&self) -> &[String] {
         &self.errors
     }
 
-    /// Последняя ошибка.
+    /// The last error.
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
 
-    /// Кладёт клип в кэш заранее (встроенные звуки, тесты).
+    /// Puts a clip into the cache in advance (built-in sounds, tests).
     pub fn preload(&mut self, name: impl AsRef<str>, clip: WavClip) {
         let key = Self::file_key(name.as_ref());
         self.cache.insert(key, Arc::new(clip));
     }
 
-    /// Есть ли клип для имени (без чтения файла).
+    /// Whether there is a clip for the name (without reading the file).
     pub fn has_clip(&self, name: &str) -> bool {
         self.resolve(name).is_some()
     }
 
-    /// Проигрывает звук по тегу/имени; `true` — клип поставлен в очередь.
+    /// Plays a sound by tag/name; `true` — the clip was queued.
     ///
-    /// Не блокирует и не возвращает ошибку наружу: причина попадает в
-    /// [`Self::errors`], а UI продолжает работать (звук — не блокер).
+    /// Does not block and does not return an error to the caller: the reason goes to
+    /// [`Self::errors`], and the UI keeps working (sound is not a blocker).
     pub fn play(&mut self, name: &str, mode: PlayMode) -> bool {
         self.play_gain(name, mode, 1.0)
     }
 
-    /// [`AudioPlayer::play`] с усилением (звуки юнитов: `volume / 100`).
+    /// [`AudioPlayer::play`] with gain (unit sounds: `volume / 100`).
     pub fn play_gain(&mut self, name: &str, mode: PlayMode, gain: f32) -> bool {
         if !self.enabled {
             return false;
@@ -364,22 +364,22 @@ impl AudioPlayer {
         }
     }
 
-    /// Один раз.
+    /// Once.
     pub fn play_once(&mut self, name: &str) -> bool {
         self.play(name, PlayMode::Once)
     }
 
-    /// Зацикленно.
+    /// Looped.
     pub fn play_loop(&mut self, name: &str) -> bool {
         self.play(name, PlayMode::Loop)
     }
 
-    /// Останавливает всё, что играет.
+    /// Stops everything that is playing.
     pub fn stop_all(&mut self) {
         self.backend.stop_all();
     }
 
-    /// `тег/имя` → имя файла в нижнем регистре, если он есть в кэше/каталоге.
+    /// `tag/name` → lowercase file name, if it is in the cache/directory.
     fn resolve(&self, name: &str) -> Option<String> {
         let lower = name.to_ascii_lowercase();
         let tag = name.to_ascii_uppercase();
@@ -397,7 +397,7 @@ impl AudioPlayer {
         }
     }
 
-    /// Имя файла в нижнем регистре: короткое имя получает расширение `.spw`.
+    /// Lowercase file name: a short name gets the `.spw` extension.
     fn file_key(name: &str) -> String {
         let lower = name.to_ascii_lowercase();
 
@@ -408,7 +408,7 @@ impl AudioPlayer {
         }
     }
 
-    /// Достаёт клип из кэша или читает файл (с кэшированием).
+    /// Gets the clip from the cache or reads the file (with caching).
     fn clip_for(&mut self, file_name: &str) -> Option<Arc<WavClip>> {
         if let Some(clip) = self.cache.get(file_name) {
             return Some(clip.clone());
@@ -461,7 +461,7 @@ impl fmt::Debug for AudioPlayer {
     }
 }
 
-/// Реализация вывода через rodio/cpal (только с feature `sound`).
+/// Output implementation via rodio/cpal (only with the `sound` feature).
 #[cfg(feature = "sound")]
 mod rodio_backend {
     use std::fmt;
@@ -472,9 +472,9 @@ mod rodio_backend {
 
     use super::{AudioBackend, PlayMode, MAX_CONCURRENT_SINKS};
 
-    /// Неблокирующий backend rodio: один `Sink` на клип.
+    /// Non-blocking rodio backend: one `Sink` per clip.
     pub struct RodioBackend {
-        /// Держит cpal-поток живым; при `Drop` воспроизведение прекращается.
+        /// Keeps the cpal stream alive; on `Drop` playback stops.
         _stream: OutputStream,
         handle: OutputStreamHandle,
         sinks: Vec<Sink>,
@@ -491,7 +491,7 @@ mod rodio_backend {
     }
 
     impl RodioBackend {
-        /// Открывает устройство вывода по умолчанию.
+        /// Opens the default output device.
         pub fn new() -> Result<Self, String> {
             let (stream, handle) =
                 OutputStream::try_default().map_err(|error| error.to_string())?;
@@ -520,8 +520,8 @@ mod rodio_backend {
             mode: PlayMode,
             gain: f32,
         ) -> Result<(), String> {
-            // Завершившиеся клипы не держим; очередь ограничена, чтобы частые
-            // клики не копили потоки.
+            // Do not keep finished clips; the queue is limited so that frequent
+            // clicks do not accumulate threads.
             self.sinks.retain(|sink| !sink.empty());
 
             if self.sinks.len() >= MAX_CONCURRENT_SINKS {
@@ -529,8 +529,8 @@ mod rodio_backend {
             }
 
             let sink = Sink::try_new(&self.handle).map_err(|error| error.to_string())?;
-            // rodio принимает `Vec`; клип в `Arc`, поэтому клонируем PCM-буфер
-            // (клипы M.A.X. короткие — единицы–сотни КБ).
+            // rodio accepts a `Vec`; the clip is in an `Arc`, so we clone the PCM buffer
+            // (M.A.X. clips are short — units to hundreds of KB).
             let source = SamplesBuffer::new(clip.channels, clip.sample_rate, clip.samples.clone());
 
             if mode == PlayMode::Loop {
@@ -570,7 +570,7 @@ mod tests {
     use max_assets::ResArchive;
     use std::sync::Mutex;
 
-    /// Backend, запоминающий вызовы (без аудиоустройства).
+    /// Backend that remembers calls (without an audio device).
     #[derive(Debug)]
     struct RecordingBackend {
         calls: Arc<Mutex<Vec<PlayMode>>>,
@@ -634,7 +634,7 @@ mod tests {
         dir
     }
 
-    /// Минимальный WAV PCM16 (моно).
+    /// Minimal WAV PCM16 (mono).
     fn wav_bytes(samples: &[i16]) -> Vec<u8> {
         let data_len = samples.len() * 2;
         let mut out = Vec::new();
@@ -656,7 +656,7 @@ mod tests {
         out
     }
 
-    /// Минимальный RES-архив с одной ссылкой (`tag` → `file`).
+    /// Minimal RES archive with one reference (`tag` → `file`).
     fn res_with_ref(tag: &str, file: &str) -> ResArchive {
         let mut tag_field = [0u8; 8];
         tag_field[..tag.len()].copy_from_slice(tag.as_bytes());
@@ -689,7 +689,7 @@ mod tests {
             *calls.lock().expect("lock"),
             vec![PlayMode::Once, PlayMode::Loop]
         );
-        // Обычные звуки играют с усилением 1.0 (`play` → `play_scaled`).
+        // Regular sounds play with gain 1.0 (`play` → `play_scaled`).
         assert_eq!(*gains.lock().expect("lock"), vec![1.0, 1.0]);
     }
 
@@ -698,7 +698,7 @@ mod tests {
         let (mut player, _calls, gains) = recording_player();
         player.preload("TANK14", clip());
 
-        // `SoundManager::PlaySfx`: `volume / 100` из таблицы юнита.
+        // `SoundManager::PlaySfx`: `volume / 100` from the unit table.
         assert!(player.play_gain("TANK14", PlayMode::Once, 0.6));
         assert!(player.play_gain("TANK14", PlayMode::Once, 0.8));
         assert_eq!(player.plays(), 2);
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn resolves_res_reference_to_case_insensitive_file() {
         let dir = temp_dir("ref");
-        // Ссылка строчная, файл — заглавный, как в оригинальном каталоге.
+        // The reference is lowercase, the file is uppercase, as in the original directory.
         std::fs::write(dir.join("TANK1.SPW"), wav_bytes(&[1, 2, 3, 4])).expect("wav");
         let res = res_with_ref("TANK1", "tank1.spw");
         let (mut player, calls, _gains) = recording_player();
@@ -733,7 +733,7 @@ mod tests {
         assert!(player.errors().iter().any(|error| error.contains("NOPE")));
         assert!(player.last_error().is_some());
 
-        // Выключенный звук не трогает backend и не считается ошибкой.
+        // Disabled sound does not touch the backend and is not considered an error.
         player.preload("KBUY0", clip());
         player.set_enabled(false);
         assert!(!player.play_once(MENU_CLICK));
@@ -751,12 +751,12 @@ mod tests {
             assert!(!player.is_audible());
         }
 
-        // С feature sound backend может быть и noop (нет устройства в CI), и
-        // rodio; оба варианта корректны, паники быть не должно.
+        // With the sound feature the backend can be either noop (no device in CI) or
+        // rodio; both variants are valid, no panic must occur.
         let _ = player.is_audible();
     }
 
-    /// Реальные `MAX.RES` + каталог игры: ссылки и регистр файлов сходятся.
+    /// Real `MAX.RES` + game directory: references and file case agree.
     #[test]
     fn real_game_data_resolves_menu_click_and_unit_sounds() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");

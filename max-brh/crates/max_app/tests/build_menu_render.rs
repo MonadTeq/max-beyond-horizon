@@ -1,11 +1,11 @@
-//! Отрисовка `BuildMenu`: иконки `I_*` в строках списка (1:4 у зданий, как
-//! `ReportStats_DrawListItemIcon`), портрет выбранного здания — big image
-//! `P_*` 300×240 в (11,13) и таблица характеристик `UnitStats_DrawStats` с
-//! иконками (оба — `AbstractBuildMenu::Draw`, `buildmenu.cpp:509-536`).
+//! `BuildMenu` rendering: `I_*` icons in the list rows (1:4 for buildings, like
+//! `ReportStats_DrawListItemIcon`), the selected building portrait — big image
+//! `P_*` 300×240 at (11,13) and the `UnitStats_DrawStats` characteristics table with
+//! icons (both — `AbstractBuildMenu::Draw`, `buildmenu.cpp:509-536`).
 //!
-//! Тест грузит настоящий `MAX.RES`/`PATCHES.RES` (если данных нет — пропуск) и
-//! сравнивает кадр меню с чистым фоном `CONBUILD`/`FACBUILD` в прямоугольниках
-//! C++: иконка строки 32×32 при `LIST_AREA`, окно портрета `PORTRAIT`, таблица
+//! The test loads the real `MAX.RES`/`PATCHES.RES` (skipped if there is no data) and
+//! compares the menu frame with the clean `CONBUILD`/`FACBUILD` background in the C++
+//! rectangles: the 32×32 row icon at `LIST_AREA`, the `PORTRAIT` window, the
 //! `STATS` (11,293,250,174).
 
 use std::path::{Path, PathBuf};
@@ -45,12 +45,12 @@ fn assets() -> Option<Assets> {
     Assets::load(&config).ok()
 }
 
-/// Партия с одним конструктором RED — владельцем `BuildMenu`.
+/// A match with one RED constructor — the owner of `BuildMenu`.
 fn build_state() -> (GameState, max_core::unit::UnitId) {
     let mut state = GameState::new();
     state.teams[0].team_type = TeamKind::Player;
-    // Атрибуты из `SC_ATTRI` (как в реальной партии): без них `ATTRIB_TURNS`
-    // = 0, и таблица характеристик/ходы пусты.
+    // Attributes from `SC_ATTRI` (as in a real match): without them `ATTRIB_TURNS`
+    // = 0, and the characteristics table/turns are empty.
     state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     let flags = max_core::access::unit_type_flags(UnitType::Constructor);
     let builder = state
@@ -65,7 +65,7 @@ fn build_state() -> (GameState, max_core::unit::UnitId) {
     (state, builder)
 }
 
-/// Чистый фон меню — то, с чем сравниваются добавленные элементы.
+/// The clean menu background — what the added elements are compared against.
 fn background(assets: &Assets, factory: bool) -> RgbaBuffer {
     let mut frame = RgbaBuffer::new(640, 480);
     let menu = assets.build_menu.as_ref().expect("BuildMenuAssets");
@@ -81,7 +81,7 @@ fn background(assets: &Assets, factory: bool) -> RgbaBuffer {
     frame
 }
 
-/// Сколько пикселей области различаются между двумя кадрами.
+/// How many pixels of the area differ between two frames.
 fn changed(before: &RgbaBuffer, after: &RgbaBuffer, rect: PixelRect) -> usize {
     let mut count = 0;
 
@@ -109,8 +109,8 @@ fn list_rows_draw_the_i_star_icons_of_every_visible_building() {
     let painted = menu.draw(&mut frame, &assets, &state, None);
     assert!(painted > 10_000, "экран BuildMenu нарисован: {painted}");
 
-    // Первая строка выбранная — на ней белые уголки `GameManager_DrawUnitSelector`
-    // (они тоже меняют пиксели). Для иконок берём невыделенные строки: в
+    // The first row is selected — it has the white corners of `GameManager_DrawUnitSelector`
+    // (they change pixels too). For the icons we take non-selected rows: in
     // C++ `ReportStats_DrawListItemIcon(..., ulx + 16, uly + 16)` — 32×32.
     for row in 1..11 {
         if row >= menu.unit_types.len() {
@@ -127,8 +127,8 @@ fn list_rows_draw_the_i_star_icons_of_every_visible_building() {
         );
     }
 
-    // Иконка отрисована именно в центре (16,16) строки, а не текстом/именем:
-    // в этой точке у зданий есть непрозрачный пиксель (граница/корпус).
+    // The icon is drawn exactly at the center (16,16) of the row, not as text/name:
+    // at this point buildings have an opaque pixel (border/body).
     let row_zero = PixelRect::new(LIST_AREA.ulx, LIST_AREA.uly, 32, 32);
     assert!(
         changed(&background, &frame, row_zero) > 20,
@@ -150,9 +150,9 @@ fn list_icons_are_recolored_for_the_team_like_cargo_menu() {
     menu.team = TeamId::GREEN;
     menu.draw(&mut green, &assets, &state, None);
 
-    // Иконки перекрашиваются LUT команды (`ReportStats_DrawListItemIcon` →
-    // `color_index_table`), как списки `CargoMenu`; значит кадры RED/GREEN
-    // обязаны отличаться в области иконок.
+    // The icons are recolored by the team LUT (`ReportStats_DrawListItemIcon` →
+    // `color_index_table`), like the `CargoMenu` lists; so the RED/GREEN frames
+    // must differ in the icon area.
     let mut icon_diff = 0;
     for row in 0..11.min(menu.unit_types.len()) {
         let y = LIST_AREA.uly + row as i32 * 32;
@@ -181,7 +181,7 @@ fn portrait_is_the_selected_buildings_p_star_big_image() {
     assert_eq!(selected, UnitType::MiningStation, "первая строка списка");
 
     // `AbstractBuildMenu::Draw`: `WindowManager_LoadBigImage(GetPortrait(), ...)`
-    // в `window.buffer[11 + width*13]`, big image 300×240, палитра окна.
+    // in `window.buffer[11 + width*13]`, big image 300×240, window palette.
     let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
     let portrait = cargo
         .portrait(&assets.max_res, selected)
@@ -202,8 +202,8 @@ fn portrait_is_the_selected_buildings_p_star_big_image() {
             .unwrap(),
     );
 
-    // Пиксели кадра в окне портрета совпадают с индексами P_*, пропущенными
-    // через палитру окна: это именно big image, а не спрайт юнита.
+    // The frame pixels in the portrait window match the P_* indices passed
+    // through the window palette: this is exactly the big image, not the unit sprite.
     let mut matches = 0;
     let mut total = 0;
     for y in 0..240u32 {
@@ -225,8 +225,8 @@ fn portrait_is_the_selected_buildings_p_star_big_image() {
         "портрет в кадре — P_* ({matches}/{total} пикселей совпали)"
     );
 
-    // Портрет отличается от чистого фона окна (то есть он нарисован, а не
-    // остался фоном `CONBUILD`).
+    // The portrait differs from the clean window background (i.e. it is drawn, not
+    // left as the `CONBUILD` background).
     let diff = changed(&background, &frame, PORTRAIT);
     assert!(diff > 10_000, "портрет нарисован (diff={diff})");
 }
@@ -238,8 +238,8 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
     };
     let (mut state, builder) = build_state();
 
-    // У завода очередь выбирается кликом; портрет — `selector->GetLast()`
-    // активного селектора (список или очередь).
+    // For a factory the queue is selected by a click; the portrait — `selector->GetLast()`
+    // of the active selector (list or queue).
     state.unit_mut(builder).unwrap().unit_type = UnitType::TrainingHall;
     let mut menu = BuildMenu::new(&state, builder).expect("меню завода");
     assert!(menu.factory);
@@ -247,7 +247,7 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
     let mut first = RgbaBuffer::new(640, 480);
     menu.draw(&mut first, &assets, &state, None);
 
-    // Другая строка списка — другой P_* в окне портрета.
+    // Another list row — another P_* in the portrait window.
     menu.selected = 1;
     let mut second = RgbaBuffer::new(640, 480);
     menu.draw(&mut second, &assets, &state, None);
@@ -257,7 +257,7 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
         "портрет сменился вместе с выбранной строкой"
     );
 
-    // Очередь: `queue_active` + выбранный элемент → портрет из очереди.
+    // Queue: `queue_active` + the selected element → the portrait from the queue.
     menu.queue.push(UnitType::Infantry);
     menu.queue_selected = 0;
     menu.queue_active = true;
@@ -289,8 +289,8 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
     menu.draw(&mut frame, &assets, &state, None);
 
     // C++ `AbstractBuildMenu::Draw`: `stats_background->Write(&window)` +
-    // `UnitStats_DrawStats(...)` в (11,293,250,174); иконки I_* — те же, что
-    // в CargoMenu (pips `I_HITS`, `I_ARMOR`, `I_GOLD`).
+    // `UnitStats_DrawStats(...)` in (11,293,250,174); the I_* icons — the same as
+    // in CargoMenu (pips `I_HITS`, `I_ARMOR`, `I_GOLD`).
     let diff = changed(&background, &frame, STATS);
     assert!(diff > 1_000, "таблица характеристик нарисована (diff={diff})");
 
@@ -305,8 +305,8 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
         assert!(labels.contains(&needed), "нет строки {needed}: {labels:?}");
     }
 
-    // Строка `Cost` (последняя) реально видна в кадре: её полоса отличается от
-    // фона, и это ровно `UnitStats_DrawCost` — 2 × 10 ходов = 20.
+    // The `Cost` row (the last) is really visible in the frame: its bar differs from
+    // the background, and it is exactly `UnitStats_DrawCost` — 2 × 10 turns = 20.
     let cost = rows.last().expect("cost row");
     assert_eq!(cost.value, Some(20));
     let cost_rect = PixelRect::new(STATS.ulx, cost.y, STATS.width, 19);

@@ -1,20 +1,20 @@
-//! Анимация стройки: покадровый цикл строителя и «вырастание» постройки.
+//! Construction animation: the builder frame cycle and the building "growth".
 //!
-//! Оракул:
-//! * `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`) — у
-//!   конструктора во время `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS` кадр
-//!   листается `+8`, а при `image_index + 8 >= 40` берётся `-16`, то есть
-//!   `+16 → +24 → +32 → +16`; инженер держит рабочую позу `+16`
+//! Oracle:
+//! * `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`) — for the
+//!   constructor during `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS` the frame
+//!   advances `+8`, and when `image_index + 8 >= 40` it takes `-16`, i.e.
+//!   `+16 → +24 → +32 → +16`; the engineer keeps the working pose `+16`
 //!   (`UnitInfo::StartBuilding`, `unitinfo.cpp:2789`);
 //! * `UnitsManager_ProcessOrderAwaitScaling` (`units_manager.cpp:3150`) —
-//!   `scaler_adjust` уменьшается до 0, а `UnitInfo::RenderSprite`
-//!   (`unitinfo.cpp:3085`) рисует юнита с `2^-scaler_adjust` (1/16 … 1).
+//!   `scaler_adjust` decreases to 0, and `UnitInfo::RenderSprite`
+//!   (`unitinfo.cpp:3085`) draws the unit with `2^-scaler_adjust` (1/16 … 1).
 //!
-//! В порте «время» кадра — реальный `dt` (`App::update_visual_units`), а не
-//! тик симуляции: `dt = 0` (QA/headless) обязан давать детерминированный кадр —
-//! рабочую позу `+16` и полный размер постройки.
+//! In the port the frame "time" is real `dt` (`App::update_visual_units`), not
+//! the simulation tick: `dt = 0` (QA/headless) must give a deterministic frame —
+//! the working pose `+16` and the full building size.
 //!
-//! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
+//! Tests are skipped if there is no game data (`max-original/`) nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -46,7 +46,7 @@ fn app_with_assets() -> Option<App> {
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
         .with_assets_dir(repo_path("assets"))
-        // 640×640 — полноэкранный fallback без `FRAMEPIC`; карта целиком наша.
+        // 640×640 — the full-screen fallback without `FRAMEPIC`; the map is entirely ours.
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -66,8 +66,8 @@ fn changed_pixels(left: &RgbaBuffer, right: &RgbaBuffer) -> usize {
         .count()
 }
 
-/// Две кадра с `dt > 0` различаются кадром спрайта строителя; `dt = 0` даёт
-/// рабочую позу `+16` — детерминированный кадр.
+/// Two frames with `dt > 0` differ in the builder sprite frame; `dt = 0` gives
+/// the working pose `+16` — a deterministic frame.
 #[test]
 fn builder_sprite_cycles_through_work_frames_with_real_dt() {
     let Some(mut app) = app_with_assets() else {
@@ -86,11 +86,11 @@ fn builder_sprite_cycles_through_work_frames_with_real_dt() {
         unit.state = UnitOrderState::BuildInProgress;
     }
 
-    // `dt = 0` (QA/headless): рабочая поза +16, шаг цикла 0.
+    // `dt = 0` (QA/headless): working pose +16, cycle step 0.
     let start = app.render_frame();
     assert_eq!(app.build_animation_step(builder), 0);
 
-    // 0.15 с > BUILDER_ANIM_FRAME_SECONDS (0.1) — следующий кадр цикла.
+    // 0.15 s > BUILDER_ANIM_FRAME_SECONDS (0.1) — the next cycle frame.
     app.update_visual_units(0.15);
     assert_eq!(app.build_animation_step(builder), 1, "цикл сдвинулся на +8");
     let second = app.render_frame();
@@ -111,7 +111,7 @@ fn builder_sprite_cycles_through_work_frames_with_real_dt() {
         "третий кадр обязан отличаться от второго"
     );
 
-    // dt = 0 снова: поза начала стройки, идентичная первому кадру.
+    // dt = 0 again: the construction start pose, identical to the first frame.
     app.update_visual_units(0.0);
     assert_eq!(app.build_animation_step(builder), 0);
     let reset = app.render_frame();
@@ -122,9 +122,9 @@ fn builder_sprite_cycles_through_work_frames_with_real_dt() {
     );
 }
 
-/// «Вырастание» постройки: в первом кадре с `dt > 0` юнит меньше полного
-/// (`2^-scaler_adjust`), через [`max_app::GROWTH_ANIM_SECONDS`] — полный
-/// размер; `dt = 0` сразу даёт полный.
+/// Building "growth": in the first frame with `dt > 0` the unit is smaller than full
+/// (`2^-scaler_adjust`), after [`max_app::GROWTH_ANIM_SECONDS`] — full
+/// size; `dt = 0` immediately gives the full one.
 #[test]
 fn scaling_unit_grows_to_full_size_over_real_time() {
     let Some(mut app) = app_with_assets() else {
@@ -146,13 +146,13 @@ fn scaling_unit_grows_to_full_size_over_real_time() {
         unit.state = UnitOrderState::Expand;
     }
 
-    // dt = 0: полный размер, независимо от `scaler_adjust` (детерминизм QA).
+    // dt = 0: full size regardless of `scaler_adjust` (QA determinism).
     let full = app.render_frame();
     let full_pixels = changed_pixels(&background, &full);
     assert!(full_pixels > 0, "плита не нарисована");
     assert_eq!(app.unit_growth_scale(slab), 1.0);
 
-    // dt > 0: старт от 2^-4 = 1/16 — плита заметно меньше полной.
+    // dt > 0: start from 2^-4 = 1/16 — the slab is noticeably smaller than full.
     app.update_visual_units(1.0 / 60.0);
     let growing = app.render_frame();
     let growing_pixels = changed_pixels(&background, &growing);
@@ -161,7 +161,7 @@ fn scaling_unit_grows_to_full_size_over_real_time() {
         "первый кадр роста обязан быть меньше полного: {growing_pixels} против {full_pixels}"
     );
 
-    // Ещё ~1 секунда реального времени — полный размер (как конечный шаг C++).
+    // Another ~1 second of real time — full size (like the final C++ step).
     for _ in 0..15 {
         app.update_visual_units(0.1);
     }
@@ -174,8 +174,8 @@ fn scaling_unit_grows_to_full_size_over_real_time() {
     );
 }
 
-/// Готовый юнит без `scaler_adjust` не «вырастает»: масштаб 1 и кадр не
-/// зависит от `dt`.
+/// A ready unit without `scaler_adjust` does not "grow": scale 1 and the frame does not
+/// depend on `dt`.
 #[test]
 fn unit_without_scaler_is_never_scaled() {
     let Some(mut app) = app_with_assets() else {

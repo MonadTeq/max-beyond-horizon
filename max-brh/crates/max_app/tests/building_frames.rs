@@ -1,29 +1,29 @@
-//! Кадры включённых зданий, их коннекторы и клановые варианты шахты.
+//! Frames of powered-on buildings, their connectors and the mine clan variants.
 //!
-//! Оракул — C++ `UnitInfo::Render` (`unitinfo.cpp:3138`),
+//! Oracle — C++ `UnitInfo::Render` (`unitinfo.cpp:3138`),
 //! `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`),
-//! `UnitInfo::PowerDown` (`unitinfo.cpp:5123`) и
+//! `UnitInfo::PowerDown` (`unitinfo.cpp:5123`) and
 //! `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:3151`):
 //!
-//! * у зданий в спрайте ровно два кадра состояния — `image_base`
-//!   (выключено) и `image_base + 1` (включено);
-//! * `ORDER_POWER_ON` рисует `image_base + 1`, `PowerDown` — `image_base`;
-//! * у шахты `image_base = (team_clan - 1) * sizeof(uint16_t)` — восемь
-//!   клановых пар кадров;
-//! * кадры после корпуса — **коннекторы комплекса**, а не анимация:
+//! * buildings have exactly two state frames in the sprite — `image_base`
+//!   (off) and `image_base + 1` (on);
+//! * `ORDER_POWER_ON` draws `image_base + 1`, `PowerDown` — `image_base`;
+//! * for a mine `image_base = (team_clan - 1) * sizeof(uint16_t)` — eight
+//!   clan frame pairs;
+//! * the frames after the body are **complex connectors**, not animation:
 //!   `D_MINING.connector_image_base = 16 / count = 8`, `D_SMLBLD` (POWGEN)
-//!   `base = 2 / count = 4`; рисуются по маске `UnitInfo::connectors`
-//!   (DOS-съёмка приняла их за «8 частиц»/«4 дымовых клуба»,
+//!   `base = 2 / count = 4`; they are drawn by the `UnitInfo::connectors` mask
+//!   (the DOS capture took them for "8 particles"/"4 smoke puffs",
 //!   `max-original-dasm/formats/unit-animation.md` §7.1/§7.3);
-//! * покадровой анимации по времени у зданий в C++ нет: `UnitInfo::Animate`
-//!   только добавляет draw bounds; шахта в idle статична (DOS §7.2).
+//! * C++ has no time-based frame animation for buildings: `UnitInfo::Animate`
+//!   only adds draw bounds; an idle mine is static (DOS §7.2).
 //!
-//! Порт **не листает кадры зданий по времени**: у завода кадр `image_base + 1`
-//! держится весь `ORDER_BUILD` (`UnitInfo::StartBuilding`), после
-//! `SpawnNewUnit`/`CancelBuilding` — `image_base`; мигание включённого завода
-//! дают палитровые циклы (`max_render::palette::ColorCycles`).
+//! The port does **not** advance building frames by time: for a factory the frame `image_base + 1`
+//! is held for the whole `ORDER_BUILD` (`UnitInfo::StartBuilding`), after
+//! `SpawnNewUnit`/`CancelBuilding` — `image_base`; the blinking of a powered-on factory
+//! comes from palette cycles (`max_render::palette::ColorCycles`).
 //!
-//! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
+//! Tests are skipped if there is no game data (`max-original/`) nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -76,8 +76,8 @@ fn unit_of(unit_type: UnitType, orders: UnitOrder, angle: u8) -> UnitInfo {
 
 fn render(assets: &Assets, unit: &UnitInfo, base: i16) -> RgbaBuffer {
     let mut frame = RgbaBuffer::new(192, 192);
-    // Презентационные поля (Ф5.3/B) — отдельная таблица `GameState`, здесь
-    // синтетическая: яркость 7, как раньше в `UnitInfo`.
+    // Presentation fields (phase 5.3/B) — a separate `GameState` table, here
+    // synthetic: brightness 7, as before in `UnitInfo`.
     let mut presentation = UnitPresentation::new();
     presentation.brightness = 7;
 
@@ -133,8 +133,8 @@ fn powered_generator_uses_the_on_frame_and_power_off_uses_the_off_frame() {
         "кадр включённого генератора обязан отличаться от выключенного"
     );
 
-    // Оракул: пока приказ не меняется, кадр не меняется от времени — у здания
-    // нет покадровой анимации (`UnitInfo::Animate` рисует только draw bounds).
+    // Oracle: while the order does not change, the frame does not change with time — a building
+    // has no frame-by-frame animation (`UnitInfo::Animate` draws only draw bounds).
     for _ in 0..120 {
         assert_eq!(
             unit_frame_index(&on, base, sprite.sheet.len()),
@@ -151,7 +151,7 @@ fn powered_mining_station_uses_its_clan_variant_and_on_frame() {
     };
 
     let mut unit = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
-    // Клан 7 (SevenKnights): C++ `image_base = (7 - 1) * 2 = 12`.
+    // Clan 7 (SevenKnights): C++ `image_base = (7 - 1) * 2 = 12`.
     let base = image_base_for(&unit, Some(TeamClan::SevenKnights));
 
     assert_eq!(base, 12, "MININGST: image_base = (team_clan - 1) * 2");
@@ -181,8 +181,8 @@ fn powered_mining_station_uses_its_clan_variant_and_on_frame() {
 
 #[test]
 fn random_clan_falls_back_to_clan_one_frame_pair() {
-    // `TeamClan::Random` (0) в max_core не разрешается в конкретный клан;
-    // раньше шахта и так рисовалась кадром 0/1, это поведение сохраняем.
+    // `TeamClan::Random` (0) is not resolved to a specific clan in max_core;
+    // earlier the mine was drawn with frame 0/1 anyway, we keep this behavior.
     let unit = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
 
     assert_eq!(image_base_for(&unit, None), 0);
@@ -190,13 +190,13 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
 }
 
-/// Шахта в idle **не листает кадры** — DOS-съёмка §7.2
-/// (`max-original-dasm/formats/unit-animation.md`): включённая стоит на
-/// `image_base + 1`, выключенная — на `image_base`. Восемь кадров `16..23` —
-/// не «частицы бурения», а коннекторы
+/// An idle mine **does not advance frames** — DOS capture §7.2
+/// (`max-original-dasm/formats/unit-animation.md`): a powered-on one stands on
+/// `image_base + 1`, a powered-off one — on `image_base`. The eight frames `16..23` —
+/// not "drilling particles" but connectors
 /// (`D_MINING.connector_image_base = 16`, `connector_image_count = 8`):
-/// рисуются по маске `connectors`, в плотной базе — все восемь сразу
-/// (это и засняла DOS-съёмка, §7.1).
+/// drawn by the `connectors` mask, in a dense base — all eight at once
+/// (this is what the DOS capture recorded, §7.1).
 #[test]
 fn mining_station_body_is_static_and_connectors_are_mask_driven() {
     use max_app::render::connector_frame_indices;
@@ -208,7 +208,7 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
         "шахта в idle статична (DOS-съёмка §7.2)"
     );
 
-    // Кадр корпуса не зависит от времени: у здания нет кадровых часов.
+    // The body frame does not depend on time: a building has no frame clock.
     for _ in 0..16 {
         assert_eq!(
             unit_frame_index_with_animation(
@@ -225,14 +225,14 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
         );
     }
 
-    // Выключенная — кадр 0.
+    // Powered off — frame 0.
     mine.orders = UnitOrder::PowerOff;
     assert_eq!(
         unit_frame_index_with_animation(&mine, 0, 24, 16, 0, FrameAnimation::default(), true),
         0,
         "выключенная шахта статична"
     );
-    // Клановый сдвиг сохраняется (кадры состояния клана: 12/13, 14/15).
+    // The clan shift is preserved (clan state frames: 12/13, 14/15).
     mine.orders = UnitOrder::PowerOn;
     assert_eq!(
         unit_frame_index_with_animation(&mine, 12, 24, 16, 0, FrameAnimation::default(), true),
@@ -240,7 +240,7 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
         "клан 7: включённый кадр = 12 + 1"
     );
 
-    // Коннекторы: все восемь битов — кадры 16..23 в порядке C++.
+    // Connectors: all eight bits — frames 16..23 in C++ order.
     let Some(assets) = game_assets() else {
         return;
     };
@@ -270,8 +270,8 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
     );
 }
 
-/// `POWGEN` (`D_SMLBLD`: база 2, 4 коннектора) — четыре «дымовых клуба» из
-/// DOS-съёмки (§7.3), на самом деле трубы N/E/S/W; корпус статичен (0/1).
+/// `POWGEN` (`D_SMLBLD`: base 2, 4 connectors) — four "smoke puffs" from
+/// the DOS capture (§7.3), actually N/E/S/W pipes; the body is static (0/1).
 #[test]
 fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
     use max_app::render::connector_frame_indices;
@@ -296,7 +296,7 @@ fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
         0,
         "выключенный POWGEN — кадр 0"
     );
-    // Покадровой анимации по времени у корпуса нет — ни одного лишнего кадра.
+    // The body has no frame-by-frame animation by time — not a single extra frame.
     assert_eq!(sprite.sheet.len(), 6, "2 корпуса + 4 трубы");
 
     let full = max_core::enums::CONNECTOR_NORTH_LEFT
@@ -311,11 +311,11 @@ fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
     );
 }
 
-/// Работающий завод держит кадр `image_base + 1` (`UnitInfo::StartBuilding`,
-/// `unitinfo.cpp:2789`), готовый/остановленный — `image_base`
-/// (`SpawnNewUnit`/`CancelBuilding`). Кадры по времени не листаются: у
-/// `TRAINHAL` 10 кадров (2 корпуса + 8 коннекторов), повторный проход
-/// `unit_frame_index` при любом dt даёт тот же кадр.
+/// A working factory holds frame `image_base + 1` (`UnitInfo::StartBuilding`,
+/// `unitinfo.cpp:2789`), a ready/stopped one — `image_base`
+/// (`SpawnNewUnit`/`CancelBuilding`). Frames are not advanced by time: a
+/// `TRAINHAL` has 10 frames (2 bodies + 8 connectors), a repeated
+/// `unit_frame_index` call at any dt gives the same frame.
 #[test]
 fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
     let Some(assets) = game_assets() else {
@@ -343,7 +343,7 @@ fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
         "C++ StartBuilding: DrawSpriteFrame(image_base + 1)"
     );
 
-    // Никакого листания: кадр тот же при любом числе «тиков».
+    // No advancing at all: the frame is the same at any number of "ticks".
     for _ in 0..30 {
         assert_eq!(
             unit_frame_index_with_animation(
@@ -360,7 +360,7 @@ fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
         );
     }
 
-    // Готовый завод (`UNIT_READY`) — C++ `DrawSpriteFrame(image_base)`.
+    // A ready factory (`UNIT_READY`) — C++ `DrawSpriteFrame(image_base)`.
     factory.state = UnitOrderState::UnitReady;
     assert!(!factory_on_frame_active(&factory));
     assert_eq!(
@@ -377,7 +377,7 @@ fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
         "SpawnNewUnit: DrawSpriteFrame(image_base)"
     );
 
-    // Остановленный (`CancelBuilding` → HALT_BUILDING) — тоже кадр 0.
+    // Stopped (`CancelBuilding` → HALT_BUILDING) — also frame 0.
     factory.orders = UnitOrder::HaltBuilding;
     factory.state = UnitOrderState::ExecutingOrder;
     assert_eq!(
@@ -394,7 +394,7 @@ fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
         "CancelBuilding: DrawSpriteFrame(image_base)"
     );
 
-    // Кадры `+1` и `0` действительно разные (два кадра состояния).
+    // The `+1` and `0` frames really differ (two state frames).
     let on = render(&assets, &{
         let mut unit = factory.clone();
         unit.orders = UnitOrder::Build;
@@ -409,10 +409,10 @@ fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
     );
 }
 
-/// `RADAR` — единственное здание с флагом `ANIMATED`: C++
-/// `UnitsManager_ProcessOrderSentry` каждый тик делает `image_index + 1` и после
-/// последнего кадра возвращается к `image_base`. `D_RADAR.image_count = 16`,
-/// хотя в спрайте 20 кадров (4 коннектора), поэтому цикл — ровно 16.
+/// `RADAR` — the only building with the `ANIMATED` flag: C++
+/// `UnitsManager_ProcessOrderSentry` does `image_index + 1` every tick and after
+/// the last frame returns to `image_base`. `D_RADAR.image_count = 16`,
+/// although the sprite has 20 frames (4 connectors), so the cycle is exactly 16.
 #[test]
 fn radar_sentry_animation_cycles_its_cpp_frame_block() {
     let radar = unit_of(UnitType::Radar, UnitOrder::Sentry, 0);
@@ -440,14 +440,14 @@ fn radar_sentry_animation_cycles_its_cpp_frame_block() {
     assert_eq!(frame(16), 0, "после последнего кадра — image_base");
     assert_eq!(frame(20), 4);
 
-    // Не-ANIMATED здание не получает sentry-цикл.
+    // A non-ANIMATED building gets no sentry cycle.
     let gen = unit_of(UnitType::PowerGenerator, UnitOrder::Sentry, 0);
     assert!(!sentry_animation_active(&gen));
 }
 
-/// Во время стройки C++ рисует рабочую позу строителя — `image_index + 16`
-/// (`unitinfo.cpp:2789` для `ENGINEER`, `4451` для `CONSTRCT`). Кадр обязан
-/// возвращаться к базовому после `ORDER_AWAIT` (C++ `SpawnNewUnit`:
+/// During construction C++ draws the builder working pose — `image_index + 16`
+/// (`unitinfo.cpp:2789` for `ENGINEER`, `4451` for `CONSTRCT`). The frame must
+/// return to the base after `ORDER_AWAIT` (C++ `SpawnNewUnit`:
 /// `DrawSpriteFrame(image_index - 16)`).
 #[test]
 fn working_builder_uses_the_plus_sixteen_frame() {
@@ -490,9 +490,9 @@ fn working_builder_uses_the_plus_sixteen_frame() {
     }
 }
 
-/// Декали стройплощадки — настоящие спрайты C++ (`LRGTAPE` 127×127,
-/// `LRGSLAB` 127×127, `LRGCONES` 117×117): каждая рисуется на карте, а не
-/// маркером. `SMLTAPE`/`SMLCONES`/`SMLSLAB` — малые версии 1×1.
+/// Construction site decals — the real C++ sprites (`LRGTAPE` 127×127,
+/// `LRGSLAB` 127×127, `LRGCONES` 117×117): each is drawn on the map, not as
+/// a marker. `SMLTAPE`/`SMLCONES`/`SMLSLAB` — the small 1×1 versions.
 #[test]
 fn construction_site_decals_have_sprites() {
     let Some(assets) = game_assets() else {

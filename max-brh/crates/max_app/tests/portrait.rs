@@ -1,14 +1,14 @@
-//! Портрет `WINDOW_CORNER_FLIC`: маппинг тип → FLC, кадр 0, анимация 15 FPS,
-//! остановка на `dt = 0` и fallback на спрайт.
+//! Portrait `WINDOW_CORNER_FLIC`: type → FLC mapping, frame 0, 15 FPS animation,
+//! stopping at `dt = 0` and falling back to the sprite.
 //!
-//! Оракул — `max-cpp-port/src/game_manager.cpp`:
+//! Oracle — `max-cpp-port/src/game_manager.cpp`:
 //!
 //! * `GameManager_MenuUnitSelect` → `GameManager_MenuCreateFlic(unit_type)`:
-//!   FLC из `Unit::GetFlicsAnimation()` (`F_*`-ресурс MAX.RES → `*.FLC`);
-//! * `GameManager_AdvanceFlic`: смена кадра раз в `TIMER_FPS_TO_MS(15)`;
-//! * снятие выделения — `GameManager_MenuDeleteFlic` + чёрное окно.
+//!   FLC from `Unit::GetFlicsAnimation()` (`F_*` resource of MAX.RES → `*.FLC`);
+//! * `GameManager_AdvanceFlic`: frame change once per `TIMER_FPS_TO_MS(15)`;
+//! * clearing the selection — `GameManager_MenuDeleteFlic` + a black window.
 //!
-//! Тесты пропускаются, если данных игры рядом нет (как `unit_sprites.rs`).
+//! Tests are skipped if there is no game data nearby (like `unit_sprites.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -44,7 +44,7 @@ fn config() -> Option<AppConfig> {
     )
 }
 
-/// `App` с загруженными ассетами.
+/// `App` with loaded assets.
 fn app() -> Option<App> {
     let mut app = App::new(config()?);
 
@@ -57,7 +57,7 @@ fn assets(app: &App) -> &Assets {
     app.assets().expect("ассеты загружены")
 }
 
-/// Спавнит юнита и выделяет его.
+/// Spawns a unit and selects it.
 fn select(app: &mut App, unit_type: UnitType) -> max_core::unit::UnitId {
     let id = app
         .state_mut()
@@ -69,7 +69,7 @@ fn select(app: &mut App, unit_type: UnitType) -> max_core::unit::UnitId {
     id
 }
 
-/// Пиксели области портрета из кадра 640×480.
+/// Pixels of the portrait area from the 640×480 frame.
 fn portrait_region(frame: &RgbaBuffer) -> Vec<[u8; 4]> {
     let area = layout::CORNER_FLIC;
     let mut out = Vec::with_capacity((area.width * area.height) as usize);
@@ -85,7 +85,7 @@ fn portrait_region(frame: &RgbaBuffer) -> Vec<[u8; 4]> {
     out
 }
 
-/// Рисует кадр с панелями (как `App::render_frame` в окне 1:1).
+/// Draws the frame with panels (like `App::render_frame` in a 1:1 window).
 fn render(app: &App) -> RgbaBuffer {
     let mut frame = RgbaBuffer::new(layout::WINDOW_WIDTH as u32, layout::WINDOW_HEIGHT as u32);
 
@@ -137,8 +137,8 @@ fn every_unit_type_with_flics_maps_to_a_loaded_128x128_animation() {
 
     assert_eq!(with_flic, 70, "70 типов получают FLC-анимацию портрета");
     assert_eq!(tags.len(), 70, "70 различных F_*-ресурсов");
-    // Единственный пробел данных: `MASTER` ссылается на `F_MASTER`, которого
-    // нет в MAX.RES (как и спрайта корпуса — `UNIT_TYPES_WITHOUT_SPRITE_DATA`).
+    // The only data gap: `MASTER` references `F_MASTER`, which is
+    // absent from MAX.RES (as well as the body sprite — `UNIT_TYPES_WITHOUT_SPRITE_DATA`).
     assert_eq!(
         missing,
         vec![(UnitType::MasterBuilder, "F_MASTER")],
@@ -147,7 +147,7 @@ fn every_unit_type_with_flics_maps_to_a_loaded_128x128_animation() {
     assert!(assets.flic(UnitType::MasterBuilder).is_none());
     assert_eq!(assets.flic_count(), 70, "загружены 70 FLC портретов");
 
-    // Остальные 22 типа — без анимации (обломки, взрывы, ракеты, HARVSTER, WALDO).
+    // The other 22 types — without animation (debris, explosions, missiles, HARVSTER, WALDO).
     let without = (0..UNIT_END)
         .map(|index| UnitType::try_from(index).unwrap())
         .filter(|unit_type| cargo_unit_data::unit_flic(*unit_type).is_none())
@@ -169,7 +169,7 @@ fn portrait_draws_the_flc_first_frame_and_dt_zero_keeps_it_still() {
     assert_eq!(portrait.unit_type(), UnitType::Tank);
     assert_eq!(portrait.frame_index(), 0, "выделили — кадр 0");
     assert!(portrait.is_animated(), "у TANK.FLC 30 кадров");
-    // Кадр не пустой: индекс 0 — чёрный фон FLC, но танк занимает сотни пикселей.
+    // The frame is not empty: index 0 — the black FLC background, but the tank takes hundreds of pixels.
     assert!(
         portrait
             .frame()
@@ -181,7 +181,7 @@ fn portrait_draws_the_flc_first_frame_and_dt_zero_keeps_it_still() {
         "кадр 0 пустой"
     );
 
-    // QA-кадры: `dt = 0` не двигает анимацию (детерминизм golden).
+    // QA frames: `dt = 0` does not move the animation (golden determinism).
     for _ in 0..600 {
         app.update_portrait(0.0);
     }
@@ -189,15 +189,15 @@ fn portrait_draws_the_flc_first_frame_and_dt_zero_keeps_it_still() {
     assert_eq!(app.portrait().unwrap().frame_index(), 0);
     assert_eq!(app.portrait().unwrap().elapsed(), 0.0);
 
-    // Кадр панели совпадает с кадром FLC, покрашенным палитрой окна
-    // (C++: `win_draw_rect` переводит индексы системной палитрой).
+    // The panel frame matches the FLC frame colored by the window palette
+    // (C++: `win_draw_rect` translates indices with the system palette).
     let frame = render(&app);
     let region = portrait_region(&frame);
     let palette = UiPalette::from_assets(assets(&app)).unwrap();
     let flc = app.portrait().unwrap().frame();
     let area = layout::CORNER_FLIC;
 
-    // Строки 0..19 занимает имя/статус (рисуются поверх кадра) — сверяем ниже.
+    // Rows 0..19 are taken by the name/status (drawn over the frame) — we compare below.
     for y in 20..area.height {
         for x in 0..area.width {
             let index = flc.pixels[y as usize * flc.width + x as usize];
@@ -221,20 +221,20 @@ fn portrait_advances_at_fifteen_fps_and_loops() {
 
     select(&mut app, UnitType::Tank);
 
-    // Один кадр FLC = 1/15 с (`GameManager_AdvanceFlic`).
+    // One FLC frame = 1/15 s (`GameManager_AdvanceFlic`).
     app.update_portrait(1.0 / 15.0);
     assert_eq!(app.portrait().unwrap().frame_index(), 1);
 
     app.update_portrait(1.0 / 15.0);
     assert_eq!(app.portrait().unwrap().frame_index(), 2);
 
-    // Зацикливание: 30 кадров — снова 0 (`animate = 2`).
+    // Looping: 30 frames — 0 again (`animate = 2`).
     for _ in 0..28 {
         app.update_portrait(1.0 / 15.0);
     }
     assert_eq!(app.portrait().unwrap().frame_index(), 0);
 
-    // Второй кадр действительно отличается (анимация, а не статика).
+    // The second frame really differs (animation, not a static image).
     let first = app.portrait().unwrap().frame().pixels.clone();
 
     app.update_portrait(1.0 / 15.0);
@@ -267,7 +267,7 @@ fn type_without_flic_falls_back_to_the_sprite() {
         return;
     };
 
-    // У обломков (LRGRUBLE) нет `F_*`, но есть спрайт — рисуется ×2.
+    // Debris (LRGRUBLE) has no `F_*`, but has a sprite — drawn ×2.
     select(&mut app, UnitType::LargeRubble);
 
     assert!(app.portrait().is_none(), "FLC у обломков нет");

@@ -1,18 +1,18 @@
-//! Ассеты приложения: `MAX.RES`, `PATCHES.RES`, `COLOR.PAL` и спрайты юнитов.
+//! Application assets: `MAX.RES`, `PATCHES.RES`, `COLOR.PAL` and unit sprites.
 //!
-//! Модуль — единственное место `max_app`, которое знает о файлах игры. Он
-//! собирает из них [`Assets`]:
+//! The module is the only place in `max_app` that knows about the game files. It
+//! assembles [`Assets`] from them:
 //!
-//! * [`ResArchive`] для `MAX.RES` и `PATCHES.RES` (карты, спрайты, данные);
-//! * [`WrlMap`] планеты из `MAX.RES` (в архиве оригинальной игры лежат
-//!   `SNOW_1`…`DESERT_6`, а не отдельные `.WRL`-файлы);
-//! * [`Palette`] + [`BrightnessLut`] из `COLOR.PAL` (рендер [`max_render`]);
-//! * [`SpriteSheet`] и [`ShadowSheet`] для типов юнитов из [`UNIT_SPRITES`].
+//! * [`ResArchive`] for `MAX.RES` and `PATCHES.RES` (maps, sprites, data);
+//! * the planet [`WrlMap`] from `MAX.RES` (the original game archive contains
+//!   `SNOW_1`…`DESERT_6`, not separate `.WRL` files);
+//! * [`Palette`] + [`BrightnessLut`] from `COLOR.PAL` (rendering [`max_render`]);
+//! * [`SpriteSheet`] and [`ShadowSheet`] for unit types from [`UNIT_SPRITES`].
 //!
-//! Ошибкой считается только отсутствие/битость обязательных файлов и карты
-//! планеты. Отдельный спрайт, которого нет в архиве, — предупреждение в
-//! [`Assets::warnings`]: клиент должен показывать карту и юнитов-маркеры даже на
-//! неполном наборе данных.
+//! Only the absence/corruption of the mandatory files and the planet map is
+//! considered an error. An individual sprite missing from the archive is a warning in
+//! [`Assets::warnings`]: the client must show the map and marker units even on
+//! an incomplete data set.
 
 use anyhow::{Context, Result};
 use max_assets::flic::Flic;
@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use crate::AppConfig;
 
-/// Имена ресурсов `MAX.RES` для 24 планет — `SNOW_1 + world_index`
+/// `MAX.RES` resource names for the 24 planets — `SNOW_1 + world_index`
 /// (`resource_manager.cpp:1183`, `ResourceID` 0x76E…0x785).
 pub const WORLD_ASSETS: [&str; 24] = [
     "SNOW_1", "SNOW_2", "SNOW_3", "SNOW_4", "SNOW_5", "SNOW_6", "CRATER_1", "CRATER_2", "CRATER_3",
@@ -38,48 +38,48 @@ pub const WORLD_ASSETS: [&str; 24] = [
     "GREEN_6", "DESERT_1", "DESERT_2", "DESERT_3", "DESERT_4", "DESERT_5", "DESERT_6",
 ];
 
-/// Картинки планет по группам из 6 (`SNOW_PIC + world/6`,
+/// Planet pictures by groups of 6 (`SNOW_PIC + world/6`,
 /// `planetselectmenu.cpp:94`, `resourcetable.hpp:1925-1928`).
 pub const PLANET_GROUP_PICTURES: [&str; 4] = ["SNOW_PIC", "CRTR_PIC", "GREN_PIC", "DSRT_PIC"];
 
-/// Имя `.WRL`-ресурса планеты (`settings["world"]`).
+/// Planet `.WRL` resource name (`settings["world"]`).
 ///
-/// Порядок [`Planet`] совпадает с порядком ресурсов C++ (`SNOW_1 + index`),
-/// поэтому это просто индексация таблицы.
+/// The [`Planet`] order matches the C++ resource order (`SNOW_1 + index`),
+/// so this is simply table indexing.
 pub fn world_asset_name(planet: Planet) -> &'static str {
     WORLD_ASSETS[planet as usize]
 }
 
-/// Где искать `PATCHES.RES`, если [`AppConfig::patches_res`] не существует.
+/// Where to look for `PATCHES.RES` if [`AppConfig::patches_res`] does not exist.
 ///
-/// Пути относительны: корня репозитория, текущего каталога и каталога
-/// [`AppConfig::max_res`]. Первый — шаблон headless-сервера, из которого
-/// запускается живой smoke; второй — обычный `assets/` репозитория; третий —
-/// общий каталог C++-порта (`max-cpp-port/assets/`), где `PATCHES.RES`
-/// лежит в этом checkout'е.
+/// The paths are relative: to the repository root, the current directory and the
+/// [`AppConfig::max_res`] directory. The first — the headless server template the live
+/// smoke is launched from; the second — the repository's usual `assets/`; the third —
+/// the C++ port's shared directory (`max-cpp-port/assets/`), where `PATCHES.RES`
+/// lies in this checkout.
 pub const PATCHES_RES_FALLBACKS: [&str; 3] = [
     "bin/linux-server-template/PATCHES.RES",
     "assets/PATCHES.RES",
     "max-cpp-port/assets/PATCHES.RES",
 ];
 
-/// Имя каталога данных игры в корне поставки (`max-original/`).
+/// Game data directory name at the delivery root (`max-original/`).
 pub const DATA_DIR_NAME: &str = "max-original";
-/// Имя основного архива данных.
+/// Main data archive name.
 pub const MAX_RES_NAME: &str = "MAX.RES";
-/// Имя палитры.
+/// Palette name.
 pub const COLOR_PAL_NAME: &str = "COLOR.PAL";
 
-/// Корни поиска данных игры в порядке приоритета (дефект **TC-1109**).
+/// Game data search roots in priority order (defect **TC-1109**).
 ///
-/// Порядок:
-/// 1. каталог [`AppConfig::max_res`] и его родитель (данные рядом с конфигом);
-/// 2. текущий каталог и его родитель (историческое поведение, запуск из `max-brh/`);
-/// 3. каталог запущенного **exe** ([`std::env::current_exe`]) и вверх по дереву
-///    до ближайшего каталога с `max-original` включительно.
+/// Order:
+/// 1. the [`AppConfig::max_res`] directory and its parent (data next to the config);
+/// 2. the current directory and its parent (historical behavior, launch from `max-brh/`);
+/// 3. the directory of the running **exe** ([`std::env::current_exe`]) and up the tree
+///    to the nearest directory with `max-original` inclusive.
 ///
-/// Пункт 3 — фикс TC-1109: `bin\release\max_app.exe` (или `target\debug\…` в
-/// checkout'е) находит данные, даже если CWD — чужой каталог.
+/// Point 3 is the TC-1109 fix: `bin\release\max_app.exe` (or `target\debug\…` in the
+/// checkout) finds the data even if the CWD is a foreign directory.
 pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().ok();
     let exe = std::env::current_exe().ok();
@@ -87,7 +87,7 @@ pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
     data_search_roots_from(config, cwd.as_deref(), exe.as_deref())
 }
 
-/// [`data_search_roots`] с явными CWD/exe — для тестов с временными каталогами.
+/// [`data_search_roots`] with explicit CWD/exe — for tests with temporary directories.
 fn data_search_roots_from(
     config: &AppConfig,
     cwd: Option<&std::path::Path>,
@@ -124,11 +124,11 @@ fn data_search_roots_from(
     roots
 }
 
-/// Каталог exe и вверх до ближайшего каталога с `max-original` (включительно).
+/// The exe directory and up to the nearest directory with `max-original` (inclusive).
 ///
-/// Если `max-original` рядом нет, остаётся только сам каталог exe: подниматься
-/// выше без признака данных опасно — этим можно случайно найти `assets/`
-/// чужого репозитория (см. тест `absent_everywhere_keeps_the_configured_path`).
+/// If there is no `max-original` nearby, only the exe directory remains: climbing
+/// higher without a data marker is dangerous — this could accidentally find another
+/// repository's `assets/` (see the test `absent_everywhere_keeps_the_configured_path`).
 fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let Some(dir) = exe.parent() else {
@@ -147,11 +147,11 @@ fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
     roots
 }
 
-/// Находит `MAX.RES` для **загрузки ассетов**, если путь конфига отсутствует.
+/// Finds `MAX.RES` for **asset loading** if the config path is missing.
 ///
-/// Дефект TC-1109: относительный `max-original/MAX.RES` не резолвился при
-/// запуске из другого каталога, хотя данные лежат рядом с exe. Возвращает
-/// выбранный путь и предупреждение (путь конфига при этом не меняется).
+/// TC-1109 defect: the relative `max-original/MAX.RES` did not resolve when
+/// launched from another directory, although the data lies next to the exe. Returns
+/// the chosen path and a warning (the config path itself is not changed).
 pub fn resolve_max_res(config: &AppConfig) -> (PathBuf, Option<String>) {
     let configured = &config.max_res;
 
@@ -162,7 +162,7 @@ pub fn resolve_max_res(config: &AppConfig) -> (PathBuf, Option<String>) {
     resolve_max_res_at(config, &data_search_roots(config))
 }
 
-/// [`resolve_max_res`] по заданным корням поиска (для тестов).
+/// [`resolve_max_res`] over the given search roots (for tests).
 fn resolve_max_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
     let configured = &config.max_res;
 
@@ -190,17 +190,17 @@ fn resolve_max_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option
     (configured.clone(), None)
 }
 
-/// Находит `PATCHES.RES` для **загрузки ассетов** (SC_*/таблицы, спрайты).
+/// Finds `PATCHES.RES` for **asset loading** (SC_*/tables, sprites).
 ///
-/// Хэндшейк (`data_hash`) этот путь не использует: `net.rs` берёт
-/// [`AppConfig::handshake_patches_path`], поэтому «серверный» пустой
-/// `PATCHES.RES` и реальные ассеты могут расходиться. Возвращает выбранный
-/// путь и предупреждение, если сработал fallback.
+/// The handshake (`data_hash`) does not use this path: `net.rs` takes
+/// [`AppConfig::handshake_patches_path`], so the "server's" empty
+/// `PATCHES.RES` and the real assets may diverge. Returns the chosen
+/// path and a warning if the fallback fired.
 pub fn resolve_patches_res(config: &AppConfig) -> (PathBuf, Option<String>) {
     resolve_patches_res_at(config, &data_search_roots(config))
 }
 
-/// [`resolve_patches_res`] по заданным корням поиска (для тестов).
+/// [`resolve_patches_res`] over the given search roots (for tests).
 fn resolve_patches_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
     let configured = &config.patches_res;
 
@@ -227,17 +227,17 @@ fn resolve_patches_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Op
     (configured.clone(), None)
 }
 
-/// Находит `COLOR.PAL` для **загрузки ассетов**, если путь конфига отсутствует.
+/// Finds `COLOR.PAL` for **asset loading** if the config path is missing.
 ///
-/// Палитра — часть тех же данных, что и `MAX.RES`; `--max-res` без
-/// `--data-dir`/`--palette` (как в живом smoke) оставлял относительный путь
-/// `max-original/COLOR.PAL` нерезолвимым, и мир не генерировался. Хэндшейк
-/// `COLOR.PAL` не использует, поэтому подмена безопасна.
+/// The palette is part of the same data as `MAX.RES`; `--max-res` without
+/// `--data-dir`/`--palette` (as in the live smoke) left the relative path
+/// `max-original/COLOR.PAL` unresolved, and the world was not generated. The handshake
+/// does not use `COLOR.PAL`, so the substitution is safe.
 pub fn resolve_color_pal(config: &AppConfig) -> (PathBuf, Option<String>) {
     resolve_color_pal_at(config, &data_search_roots(config))
 }
 
-/// [`resolve_color_pal`] по заданным корням поиска (для тестов).
+/// [`resolve_color_pal`] over the given search roots (for tests).
 fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
     let configured = &config.color_pal;
 
@@ -267,12 +267,12 @@ fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Opti
     (configured.clone(), None)
 }
 
-/// Индекс `*.FLC` в каталоге данных: имя в нижнем регистре → путь.
+/// Index of `*.FLC` in the data directory: lowercase name → path.
 ///
-/// Регистр не важен: в репозитории файлы в верхнем (`AGT.FLC`), а ссылки в
-/// `MAX.RES` — в нижнем (`agt.flc`); на Linux файловая система регистр
-/// различает, поэтому ищем по индексу, а не по прямому пути.
-/// Индекс `*.MVE`-файлов рядом с `MAX.RES` (имена в нижнем регистре).
+/// Case does not matter: in the repository the files are uppercase (`AGT.FLC`), while the
+/// references in `MAX.RES` are lowercase (`agt.flc`); on Linux the file system distinguishes
+/// case, so we look up by index rather than by a direct path.
+/// Index of `*.MVE` files next to `MAX.RES` (lowercase names).
 fn mve_index(dir: &Path) -> BTreeMap<String, PathBuf> {
     let mut index = BTreeMap::new();
 
@@ -327,32 +327,32 @@ fn flc_index(dir: &Path) -> BTreeMap<String, PathBuf> {
     index
 }
 
-/// Какие типы юнитов грузятся из `MAX.RES` в [`Assets`].
+/// Which unit types are loaded from `MAX.RES` into [`Assets`].
 ///
-/// Это построчный порт `SC_UNITS` (`assets/PATCHES.RES`,
-/// `Units::LoadResource`): поле `sprite` (`Unit::GetSprite()`) и `shadow`
-/// (`Unit::GetShadow()`; `None` — `INVALID_ID`). Порядок — [`UnitType`]
-/// (0x00–0x5C, все 93 типа `UNIT_END`), поэтому **каждый** юнит оригинала
-/// рисуется на карте спрайтом: корпус + тень + отдельная башня из `D_*`
-/// (`Unit::GetFrameInfo()`), а не маркером команды. HUD-портрет
-/// (`panels::draw_portrait`), `BuildMenu` и `UpgradeMenu` берут те же записи
-/// через [`Assets::sprite`].
+/// This is a line-by-line port of `SC_UNITS` (`assets/PATCHES.RES`,
+/// `Units::LoadResource`): the `sprite` field (`Unit::GetSprite()`) and `shadow`
+/// (`Unit::GetShadow()`; `None` — `INVALID_ID`). Order — [`UnitType`]
+/// (0x00–0x5C, all 93 `UNIT_END` types), so **every** original unit
+/// is drawn on the map with a sprite: body + shadow + a separate turret from `D_*`
+/// (`Unit::GetFrameInfo()`), not with a team marker. The HUD portrait
+/// (`panels::draw_portrait`), `BuildMenu` and `UpgradeMenu` take the same records
+/// through [`Assets::sprite`].
 ///
-/// Формат: `(тип, имя спрайта, имя тени)`. Тени в оригинале обрезаны до 8
-/// символов (`S_` + первые 6 букв имени), поэтому имена заданы явно.
+/// Format: `(type, sprite name, shadow name)`. In the original the shadows are truncated to 8
+/// characters (`S_` + the first 6 letters of the name), so the names are given explicitly.
 ///
-/// Список покрывает не только подвижные юниты, но и **здания**, обломки,
-/// мины, взрывы и снаряды: в M.A.X. это тоже `UnitType` со спрайтом из
+/// The list covers not only mobile units but also **buildings**, debris,
+/// mines, explosions and projectiles: in M.A.X. these are also `UnitType`s with a sprite from
 /// `MAX.RES`.
 ///
-/// Два расхождения самих данных игры (не таблицы) — см.
-/// [`UNIT_TYPES_WITHOUT_SPRITE_DATA`] и [`UNIT_TYPES_WITHOUT_SHADOW_DATA`]:
-/// у `MASTER` нет ресурса корпуса ни в `MAX.RES`, ни в `PATCHES.RES`, у
-/// `SUBMARNE` — тени `S_SUBMAR`. Оригинал в этих случаях просто ничего не
-/// рисует (`UnitInfo::RenderSprite`/`RenderShadow` проверяют указатель на
-/// данные); Rust-клиент для `MASTER` оставляет маркер команды.
+/// Two discrepancies of the game data itself (not of the table) — see
+/// [`UNIT_TYPES_WITHOUT_SPRITE_DATA`] and [`UNIT_TYPES_WITHOUT_SHADOW_DATA`]:
+/// `MASTER` has no body resource either in `MAX.RES` or `PATCHES.RES`, and
+/// `SUBMARNE` — the `S_SUBMAR` shadow. The original in these cases simply draws
+/// nothing (`UnitInfo::RenderSprite`/`RenderShadow` check the data pointer);
+/// the Rust client keeps the team marker for `MASTER`.
 pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
-    // --- здания и стационарные объекты -----------------------------------
+    // --- buildings and stationary objects ---------------------------------
     (UnitType::GoldRefinery, "COMMTWR", Some("S_COMMTW")),
     (UnitType::PowerStation, "POWERSTN", Some("S_POWERS")),
     (UnitType::PowerGenerator, "POWGEN", Some("S_POWGEN")),
@@ -368,7 +368,7 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     (UnitType::Connector, "CNCT_4W", Some("S_CNCT4W")),
     (UnitType::LargeRubble, "LRGRUBLE", Some("S_LRGRBL")),
     (UnitType::SmallRubble, "SMLRUBLE", Some("S_SMLRBL")),
-    // Плёнки — плоские декали, тени в SC_UNITS нет (`INVALID_ID`).
+    // Films — flat decals, no shadow in SC_UNITS (`INVALID_ID`).
     (UnitType::LargeTape, "LRGTAPE", None),
     (UnitType::SmallTape, "SMLTAPE", None),
     (UnitType::LargeSlab, "LRGSLAB", Some("S_LRGSLA")),
@@ -388,7 +388,7 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     (UnitType::RecreationCenter, "RECCENTR", Some("S_RECCEN")),
     (UnitType::TrainingHall, "TRAINHAL", Some("S_TRAINH")),
     (UnitType::WaterPlatform, "WTRPLTFM", Some("S_WTRPLT")),
-    // --- оборонительные турели, мины, взрывы -----------------------------
+    // --- defensive turrets, mines, explosions -----------------------------
     (UnitType::GunTurret, "GUNTURRT", Some("S_GUNTUR")),
     (UnitType::AntiAir, "ANTIAIR", Some("S_ANTIAI")),
     (UnitType::Artillery, "ARTYTRRT", Some("S_ARTYTR")),
@@ -397,15 +397,15 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     (UnitType::Bridge, "BRIDGE", Some("S_BRIDGE")),
     (UnitType::MiningStation, "MININGST", Some("S_MINING")),
     (UnitType::LandMine, "LANDMINE", Some("S_LANDMI")),
-    // Мина/взрывы — без тени в SC_UNITS (`INVALID_ID`).
+    // Mine/explosions — no shadow in SC_UNITS (`INVALID_ID`).
     (UnitType::SeaMine, "SEAMINE", None),
     (UnitType::LandExplosion, "LNDEXPLD", None),
     (UnitType::AirExplosion, "AIREXPLD", None),
     (UnitType::SeaExplosion, "SEAEXPLD", None),
     (UnitType::BuildingExplosion, "BLDEXPLD", None),
     (UnitType::HitExplosion, "HITEXPLD", None),
-    // --- наземная техника и пехота ---------------------------------------
-    // `MASTER` — единственный тип без ресурса корпуса (см. ниже).
+    // --- ground vehicles and infantry -------------------------------------
+    // `MASTER` — the only type without a body resource (see below).
     (UnitType::MasterBuilder, "MASTER", Some("S_MASTER")),
     (UnitType::Constructor, "CONSTRCT", Some("S_CONSTR")),
     (UnitType::Scout, "SCOUT", Some("S_SCOUT")),
@@ -430,27 +430,27 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     ),
     (UnitType::Infiltrator, "COMMANDO", Some("S_COMMAN")),
     (UnitType::Infantry, "INFANTRY", Some("S_INFANT")),
-    // --- флот -------------------------------------------------------------
+    // --- navy -------------------------------------------------------------
     (UnitType::Escort, "FASTBOAT", Some("S_FASTBO")),
     (UnitType::Corvette, "CORVETTE", Some("S_CORVET")),
     (UnitType::Gunboat, "BATTLSHP", Some("S_BATTLS")),
-    // `S_SUBMAR` объявлена в SC_UNITS, но ресурса нет в данных игры.
+    // `S_SUBMAR` is declared in SC_UNITS, but there is no resource in the game data.
     (UnitType::Submarine, "SUBMARNE", Some("S_SUBMAR")),
     (UnitType::SeaTransport, "SEATRANS", Some("S_SEATRA")),
     (UnitType::MissileCruiser, "MSSLBOAT", Some("S_MSSLBO")),
     (UnitType::SeaMineLayer, "SEAMNLYR", Some("S_SEAMNL")),
     (UnitType::CargoShip, "CARGOSHP", Some("S_CARGOS")),
-    // --- авиация ----------------------------------------------------------
+    // --- aviation ---------------------------------------------------------
     (UnitType::Fighter, "FIGHTER", Some("S_FIGHTE")),
     (UnitType::Bomber, "BOMBER", Some("S_BOMBER")),
     (UnitType::AirTransport, "AIRTRANS", Some("S_AIRTRA")),
     (UnitType::Awac, "AWAC", Some("S_AWAC")),
-    // --- пришельцы --------------------------------------------------------
+    // --- aliens -----------------------------------------------------------
     (UnitType::Juggernaut, "JUGGRNT", Some("S_JUGGRN")),
     (UnitType::AlienTank, "ALNTANK", Some("S_ALNTAN")),
     (UnitType::AlienAssaultGun, "ALNASGUN", Some("S_ALNASG")),
     (UnitType::AlienPlane, "ALNPLANE", Some("S_ALNPLA")),
-    // --- снаряды и следы (юниты `MISSILE_UNIT`, без теней) ---------------
+    // --- projectiles and trails (`MISSILE_UNIT` units, without shadows) ---
     (UnitType::Rocket, "ROCKET", None),
     (UnitType::Torpedo, "TORPEDO", None),
     (UnitType::AlienMissile, "ALNMISSL", None),
@@ -458,60 +458,60 @@ pub const UNIT_SPRITES: [(UnitType, &str, Option<&str>); 93] = [
     (UnitType::AlienArtilleryBall, "ALNABALL", None),
     (UnitType::RocketSmoke, "RKTSMOKE", None),
     (UnitType::TorpedoBubble, "TRPBUBLE", None),
-    // --- добыча и декор ---------------------------------------------------
+    // --- extraction and decor ---------------------------------------------
     (UnitType::Harvester, "HARVSTER", Some("S_HARVST")),
     (UnitType::DeadWaldo, "WALDO", None),
 ];
 
-/// Типы, для которых `SC_UNITS` задаёт спрайт, но ресурса нет в данных игры.
+/// Types for which `SC_UNITS` defines a sprite but the game data has no resource.
 ///
-/// `MASTER` (Master Builder): в `MAX.RES` и `PATCHES.RES` нет ни `MASTER`, ни
-/// `S_MASTER` (в каталоге игры лежит осиротевший `MASTR17.SPW`, но ссылки на
-/// него в архивах нет). C++ `UnitInfo::RenderSprite` проверяет
-/// `sprite_data != null` и в этом случае не рисует ничего; Rust-клиент
-/// оставляет маркер команды — это **единственный** тип на карте без спрайта.
+/// `MASTER` (Master Builder): neither `MAX.RES` nor `PATCHES.RES` has `MASTER` or
+/// `S_MASTER` (the game directory contains an orphaned `MASTR17.SPW`, but there is no
+/// reference to it in the archives). C++ `UnitInfo::RenderSprite` checks
+/// `sprite_data != null` and in this case draws nothing; the Rust client
+/// keeps the team marker — this is the **only** type on the map without a sprite.
 pub const UNIT_TYPES_WITHOUT_SPRITE_DATA: [UnitType; 1] = [UnitType::MasterBuilder];
 
-/// Типы, у которых `SC_UNITS` ссылается на тень `S_*`, отсутствующую в данных
-/// игры (нет ни в `MAX.RES`, ни в `PATCHES.RES`).
+/// Types whose `SC_UNITS` references an `S_*` shadow missing from the game
+/// data (neither in `MAX.RES` nor in `PATCHES.RES`).
 ///
-/// `SUBMARNE` → `S_SUBMAR`: оригинал рисует подлодку без тени, порт — тоже
-/// (`LoadedSprite::shadow` остаётся `None`).
+/// `SUBMARNE` → `S_SUBMAR`: the original draws the submarine without a shadow, the port too
+/// (`LoadedSprite::shadow` remains `None`).
 pub const UNIT_TYPES_WITHOUT_SHADOW_DATA: [UnitType; 1] = [UnitType::Submarine];
 
-/// Загруженный спрайт одного типа юнита.
+/// Loaded sprite of one unit type.
 #[derive(Debug, Clone)]
 pub struct LoadedSprite {
-    /// Тип юнита (ключ поиска).
+    /// Unit type (the lookup key).
     pub unit_type: UnitType,
-    /// Имя ресурса в `MAX.RES` (`TANK`, `INFANTRY`, …).
+    /// Resource name in `MAX.RES` (`TANK`, `INFANTRY`, …).
     pub sprite_name: String,
-    /// Имя ресурса тени, если тень была в архиве и разобралась.
+    /// Shadow resource name, if the shadow was in the archive and parsed.
     pub shadow_name: Option<String>,
-    /// Кадры обычного спрайта.
+    /// Normal sprite frames.
     pub sheet: SpriteSheet,
-    /// Кадры тени (затемнение уже нарисованной карты).
+    /// Shadow frames (darkening of the already drawn map).
     pub shadow: Option<ShadowSheet>,
-    /// `Unit::GetFrameInfo()` из ресурса `D_*`: база кадров башни и
-    /// `angle_offsets` для её наложения (`None` — ресурса нет/не разобрался).
+    /// `Unit::GetFrameInfo()` from the `D_*` resource: the turret frame base and
+    /// `angle_offsets` for its overlay (`None` — no resource/not parsed).
     pub frame_info: Option<FrameInfo>,
 }
 
 impl LoadedSprite {
-    /// Кадр корпуса по явному индексу (`GetSpriteFrame`).
+    /// Body frame by an explicit index (`GetSpriteFrame`).
     ///
-    /// Нужен, когда индекс кадра выбирает вызывающий слой (например,
-    /// включённое здание рисует `image_base + 1`, см.
-    /// `render::unit_frame_index`). Если индекс за пределами спрайта,
-    /// возвращается кадр 0 — как fallback [`Self::frame_for`].
+    /// Needed when the frame index is chosen by the calling layer (e.g.
+    /// a powered-on building draws `image_base + 1`, see
+    /// `render::unit_frame_index`). If the index is outside the sprite,
+    /// frame 0 is returned — like the [`Self::frame_for`] fallback.
     pub fn frame_at(&self, index: usize) -> Option<&max_assets::sprite::SpriteFrame> {
         self.sheet.frame(index).or_else(|| self.sheet.frame(0))
     }
 
-    /// Кадр тени по тому же индексу, что и [`Self::frame_at`].
+    /// Shadow frame by the same index as [`Self::frame_at`].
     ///
-    /// У тени может быть меньше кадров, чем у корпуса (или её нет вовсе) —
-    /// тогда берётся последний доступный/кадр 0.
+    /// The shadow may have fewer frames than the body (or none at all) —
+    /// then the last available/frame 0 is taken.
     pub fn shadow_at(&self, index: usize) -> Option<&max_assets::sprite::ShadowFrame> {
         let shadow = self.shadow.as_ref()?;
         let last = shadow.len().checked_sub(1)?;
@@ -519,12 +519,12 @@ impl LoadedSprite {
         shadow.frame(index.min(last)).or_else(|| shadow.frame(0))
     }
 
-    /// Кадр для юнита: `image_base + angle` с обёрткой в `frame(0)`.
+    /// Frame for a unit: `image_base + angle` wrapped in `frame(0)`.
     ///
-    /// Раскладка оригинала — «фаза × 8 + угол» (`max-brh-docs/formats/spw.md` §5.3), а
-    /// в V70-сейве `image_base`/`angle` уже хранятся по юниту. Индекс
-    /// клампится по числу кадров, потому что у зданий/техники разное число
-    /// фаз.
+    /// The original layout — "phase × 8 + angle" (`max-brh-docs/formats/spw.md` §5.3), and
+    /// in a V70 save `image_base`/`angle` are already stored per unit. The index
+    /// is clamped by the frame count because buildings/vehicles have a different number of
+    /// phases.
     pub fn frame_for(
         &self,
         image_base: i16,
@@ -539,7 +539,7 @@ impl LoadedSprite {
             .or_else(|| self.sheet.frame(0))
     }
 
-    /// Кадр тени, соответствующий [`Self::frame_for`] (по возможности).
+    /// Shadow frame corresponding to [`Self::frame_for`] (where possible).
     pub fn shadow_for(
         &self,
         image_base: i16,
@@ -553,10 +553,10 @@ impl LoadedSprite {
         shadow.frame(index).or_else(|| shadow.frame(0))
     }
 
-    /// Кадр башни/пушки — `turret_image_base + turret_angle`
+    /// Turret/gun frame — `turret_image_base + turret_angle`
     /// (`Unit::GetFrameInfo()`; `UnitInfo::RenderWithConnectors`).
     ///
-    /// `None`, если у типа нет `D_*` или кадров башни.
+    /// `None` if the type has no `D_*` or turret frames.
     pub fn turret_frame(&self, turret_angle: u8) -> Option<&SpriteFrame> {
         let info = self.frame_info?;
 
@@ -569,7 +569,7 @@ impl LoadedSprite {
         self.sheet.frame(index)
     }
 
-    /// Кадр тени башни (`ShadowSheet`, тот же индекс, что у спрайта).
+    /// Turret shadow frame (`ShadowSheet`, the same index as the sprite).
     pub fn turret_shadow(&self, turret_angle: u8) -> Option<&ShadowFrame> {
         let info = self.frame_info?;
         let shadow = self.shadow.as_ref()?;
@@ -584,7 +584,7 @@ impl LoadedSprite {
         shadow.frame(index.min(last))
     }
 
-    /// Куда рисовать башню относительно якоря корпуса:
+    /// Where to draw the turret relative to the body anchor:
     /// `angle_offsets[body_angle]` (`UnitInfo::UpdateTurretAngle`).
     pub fn turret_offset(&self, body_angle: u8) -> (i32, i32) {
         self.frame_info
@@ -592,145 +592,145 @@ impl LoadedSprite {
     }
 }
 
-/// Краткая информация о загруженном спрайте (для отчёта CLI).
+/// Brief information about the loaded sprite (for the CLI report).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteInfo {
-    /// Тип юнита.
+    /// Unit type.
     pub unit_type: UnitType,
-    /// Имя ресурса в `MAX.RES`.
+    /// Resource name in `MAX.RES`.
     pub name: String,
-    /// Число кадров.
+    /// Number of frames.
     pub frames: usize,
-    /// Число кадров тени (0 — тени нет).
+    /// Number of shadow frames (0 — no shadow).
     pub shadow_frames: usize,
 }
 
-/// Отчёт [`Assets::load`] — то, что печатает CLI и проверяют smoke-тесты.
+/// [`Assets::load`] report — what the CLI prints and the smoke tests check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetsReport {
-    /// Число записей в `MAX.RES`.
+    /// Number of records in `MAX.RES`.
     pub max_res_entries: usize,
-    /// Число записей в `PATCHES.RES`.
+    /// Number of records in `PATCHES.RES`.
     pub patches_res_entries: usize,
-    /// Планета и её `.WRL`-ресурс.
+    /// Planet and its `.WRL` resource.
     pub planet: Planet,
-    /// Имя ресурса карты (`GREEN_1`, …).
+    /// Map resource name (`GREEN_1`, …).
     pub world: String,
-    /// Откуда загружена карта: путь к `.WRL` или `MAX.RES:<имя>`.
+    /// Where the map was loaded from: the `.WRL` path or `MAX.RES:<name>`.
     pub world_source: String,
-    /// Размер карты в клетках.
+    /// Map size in cells.
     pub world_size: (i16, i16),
-    /// Загруженные спрайты.
+    /// Loaded sprites.
     pub sprites: Vec<SpriteInfo>,
-    /// Сколько FLC-анимаций портретов загрузилось (эталон — 71).
+    /// How many portrait FLC animations were loaded (the reference — 71).
     pub flics: usize,
-    /// Некритичные проблемы (нет спрайта, битая тень, …).
+    /// Non-critical problems (no sprite, broken shadow, …).
     pub warnings: Vec<String>,
 }
 
 impl AssetsReport {
-    /// Число загруженных спрайтов.
+    /// Number of loaded sprites.
     pub fn sprite_count(&self) -> usize {
         self.sprites.len()
     }
 }
 
-/// Все данные игры, нужные приложению.
+/// All game data the application needs.
 #[derive(Debug, Clone)]
 pub struct Assets {
-    /// Архив `MAX.RES`.
+    /// `MAX.RES` archive.
     pub max_res: ResArchive,
-    /// Архив `PATCHES.RES` (правила миссий, `SC_*`).
+    /// `PATCHES.RES` archive (mission rules, `SC_*`).
     pub patches_res: ResArchive,
-    /// Палитра `COLOR.PAL`.
+    /// `COLOR.PAL` palette.
     pub palette: Palette,
-    /// Системная палитра игры, которой рисуются спрайты и которую вращают
-    /// палитровые циклы (`World::InitColorCycles`): `FRAMEPIC` для слотов
-    /// 0..63/160..255 + палитра `.WRL` для 64..159.
+    /// The game system palette used to draw sprites and rotated by
+    /// the palette cycles (`World::InitColorCycles`): `FRAMEPIC` for slots
+    /// 0..63/160..255 + the `.WRL` palette for 64..159.
     pub system_palette: Palette,
-    /// Таблицы яркости, построенные из палитры.
+    /// Brightness tables built from the palette.
     pub brightness: BrightnessLut,
-    /// Планета, для которой загружена карта.
+    /// The planet the map was loaded for.
     pub planet: Planet,
-    /// Имя `.WRL`-ресурса планеты.
+    /// Planet `.WRL` resource name.
     pub world_name: String,
-    /// Откуда загружена карта (`путь` или `MAX.RES:<имя>`).
+    /// Where the map was loaded from (`path` or `MAX.RES:<name>`).
     pub world_source: String,
-    /// Разобранная карта планеты.
+    /// Parsed planet map.
     pub world: WrlMap,
-    /// Настоящие тайлы поверхности (палитра + 64×64 из `.WRL`) для рендера 1:1.
+    /// Real surface tiles (palette + 64×64 from `.WRL`) for 1:1 rendering.
     pub terrain: max_render::terrain::TerrainAtlas,
-    /// Хром окна 1:1 (`FRAMEPIC` + панели), если он есть в `MAX.RES`.
+    /// 1:1 window chrome (`FRAMEPIC` + panels), if present in `MAX.RES`.
     pub chrome: Option<crate::chrome::Chrome>,
-    /// Наполнение панелей поверх `FRAMEPIC` (кнопки, счётчики, сетка, зум).
+    /// Panel contents over `FRAMEPIC` (buttons, counters, grid, zoom).
     pub panels: Option<crate::panels::Panels>,
-    /// Меню на оригинальных ресурсах (`MAINPIC`/`PLANETSE`/`MULTGAME` +
-    /// `BLANK_*`/`MNUBTN*`/`BTNHIDE`), пункт E.
+    /// Menu on the original resources (`MAINPIC`/`PLANETSE`/`MULTGAME` +
+    /// `BLANK_*`/`MNUBTN*`/`BTNHIDE`), item E.
     pub menu: Option<crate::menu::MenuAssets>,
-    /// Экран заказа юнитов/зданий (`FACBUILD`/`CONBUILD` + `BLD*`), P2.
+    /// Unit/building order screen (`FACBUILD`/`CONBUILD` + `BLD*`), P2.
     pub build_menu: Option<crate::buildmenu::BuildMenuAssets>,
-    /// Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*` + `MNUBTN*`), P3.
+    /// V70 save/load window (`LOADPIC` + `FILE*` + `MNUBTN*`), P3.
     pub save_load: Option<crate::saveload::SaveLoadAssets>,
-    /// Экран покупных апгрейдов (`UPGRADE` + `UPG*`/`BLD*`/`SEL*`), P6.
+    /// Purchasable upgrades screen (`UPGRADE` + `UPG*`/`BLD*`/`SEL*`), P6.
     pub upgrade: Option<crate::upgrademenu::UpgradeMenuAssets>,
-    /// Экран исследований (`RSRCHPIC` + `I_*` + `UPG*` + `PRFSLIDE`), P7.
+    /// Research screen (`RSRCHPIC` + `I_*` + `UPG*` + `PRFSLIDE`), P7.
     pub research: Option<crate::researchmenu::ResearchMenuAssets>,
-    /// Окно помощи (`HELPFRAM` + `HELPOK` + `BLDUP__`/`BLDDWN`).
+    /// Help window (`HELPFRAM` + `HELPOK` + `BLDUP__`/`BLDDWN`).
     pub help: Option<crate::helpmenu::HelpMenuAssets>,
-    /// Диалог `Preferences`/`Setup` (`PREFSPIC` + `PRF*` + `UNCHKED`/`CHECKED`
+    /// `Preferences`/`Setup` dialog (`PREFSPIC` + `PRF*` + `UNCHKED`/`CHECKED`
     /// + `PREFEDIT`/`PREFNAME`), C++ `OptionsMenu`.
     pub preferences: Option<crate::preferences::PreferencesAssets>,
-    /// Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21) — попап
+    /// Unit command menu (`UNTBTN_U`/`UNTBTN_D`, 42×21) — the
     /// `GameManager_PopupButtons`.
     pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
-    /// Диалог самоуничтожения здания (`SELFDSTR`/`SLFDAR`/`SLFDCN`/
+    /// Building self-destruct dialog (`SELFDSTR`/`SLFDAR`/`SLFDCN`/
     /// `SLFDOPN1..6`/`SLFDOK`), C++ `UnitsManager_SelfDestructMenu`.
     pub self_destruct: Option<crate::selfdestruct::SelfDestructAssets>,
-    /// Диалог распределения добычи шахты (`ALLOCFRM` + `BARRAW`/`BARFUEL`/
+    /// Mine extraction allocation dialog (`ALLOCFRM` + `BARRAW`/`BARFUEL`/
     /// `BARGOLD` + `BARTAPE` + `LFARO_OF`/`RTARO_OF` + `MNUBTN*`), C++
     /// `AllocMenu`.
     pub alloc: Option<crate::allocmenu::AllocMenuAssets>,
-    /// Окно X-FER (`XFERPIC` + `XFR*` + `SMBRRAW/FUEL/GOLD`), C++ `TransferMenu`.
+    /// X-FER window (`XFERPIC` + `XFR*` + `SMBRRAW/FUEL/GOLD`), C++ `TransferMenu`.
     pub transfer: Option<crate::transfermenu::TransferMenuAssets>,
-    /// Экран мобилизации (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
+    /// Mobilization screen (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
-    /// Видео интро: путь к `maxint.mve` (ресурс `INTROFLC` — ASCIIZ-ссылка).
+    /// Intro video: path to `maxint.mve` (the `INTROFLC` resource is an ASCIIZ reference).
     ///
-    /// Сам 71-МБ файл здесь не читается: `max_app::intro` открывает его при
-    /// входе в `Introduction`, чтобы не платить за это на старте и в QA.
+    /// The 71 MB file itself is not read here: `max_app::intro` opens it when
+    /// entering `Introduction`, so as not to pay for it at the start and in QA.
     pub intro_mve: Option<std::path::PathBuf>,
-    /// Курсоры мыши (`Cursor_Descriptor`, 30 ресурсов).
+    /// Mouse cursors (`Cursor_Descriptor`, 30 resources).
     pub cursors: Option<CursorSet>,
-    /// Маркеры ресурсов на карте (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + малые).
+    /// Resource markers on the map (`RAWMSK*`/`FUELMK*`/`GOLDMK*` + small ones).
     pub resource_markers: ResourceMarkers,
-    /// Мигающие маркеры стройки `BLDMRK1..5` (`DrawMap_BuildMarkImages`,
-    /// `drawmap.cpp:49`) — подсказка игроку, куда увести строителя с площадки
+    /// Blinking construction markers `BLDMRK1..5` (`DrawMap_BuildMarkImages`,
+    /// `drawmap.cpp:49`) — a hint to the player where to take the builder off the site
     /// (`_(276c)`: «click on a square with a symbol in it»).
     pub build_markers: Vec<SimpleImage>,
-    /// Картинки планет по группам (4 × 128×128 big image, `SNOW_PIC + world/6`).
+    /// Planet pictures by groups (4 × 128×128 big image, `SNOW_PIC + world/6`).
     pub planet_pictures: Vec<BigImage>,
-    /// FLC-анимации портретов: тег ресурса `F_*` → разобранный файл
+    /// Portrait FLC animations: resource tag `F_*` → parsed file
     /// (`Unit::GetFlicsAnimation`, `GameManager_MenuCreateFlic`).
     ///
-    /// Файлов 71 (столько `flc-ref` записей в `MAX.RES`); `Arc`, чтобы
-    /// [`Assets::clone`] не копировал ~13 МБ сырых байтов FLC.
+    /// There are 71 files (that many `flc-ref` records in `MAX.RES`); `Arc` so that
+    /// [`Assets::clone`] does not copy ~13 MB of raw FLC bytes.
     flics: BTreeMap<String, Arc<Flic>>,
     sprites: Vec<LoadedSprite>,
     warnings: Vec<String>,
 }
 
 impl Assets {
-    /// Грузит обязательные данные и спрайты из [`UNIT_SPRITES`].
+    /// Loads the mandatory data and sprites from [`UNIT_SPRITES`].
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` не читаются или нет карты планеты
-    /// (ни `.WRL`-файла, ни ресурса в архиве) — [`Err`] с контекстом
-    /// (путь/имя ресурса). Отсутствующий спрайт — только запись в
+    /// `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` are unreadable or there is no planet map
+    /// (neither a `.WRL` file nor an archive resource) — [`Err`] with context
+    /// (path/resource name). A missing sprite — only a record in
     /// [`Self::warnings`].
     pub fn load(config: &AppConfig) -> Result<Self> {
-        // TC-1109: `MAX.RES` тоже ищется от каталога exe/вверх, а не только по
-        // конфигу (запуск `bin\release\max_app.exe` из чужого CWD).
+        // TC-1109: `MAX.RES` is also searched from the exe directory/upwards, not only by
+        // the config (launching `bin\release\max_app.exe` from a foreign CWD).
         let (max_res_path, max_res_warning) = resolve_max_res(config);
         let max_res = ResArchive::open(&max_res_path).with_context(|| {
             format!(
@@ -738,9 +738,9 @@ impl Assets {
                 max_res_path.display()
             )
         })?;
-        // Ассеты и data_hash разделены: `config.patches_res` может намеренно
-        // отсутствовать (сервер без PATCHES.RES), тогда архив берётся из
-        // fallback, а хэш по-прежнему считается по пути хендшейка.
+        // Assets and data_hash are separate: `config.patches_res` may deliberately be
+        // missing (a server without PATCHES.RES), then the archive is taken from the
+        // fallback, while the hash is still computed by the handshake path.
         let (patches_path, patches_warning) = resolve_patches_res(config);
         let patches_res = ResArchive::open(&patches_path)
             .with_context(|| format!("не удалось открыть {}", patches_path.display()))?;
@@ -750,10 +750,10 @@ impl Assets {
         let brightness = BrightnessLut::build(&palette);
 
         let world_name = world_asset_name(config.planet);
-        // Оригинальная игра держит `.WRL` отдельными файлами рядом с `MAX.RES`
-        // (в архиве лежат только строки `snow_1.w`/`green_1.` — имена файлов).
-        // Но некоторые сборки пакуют `.WRL` внутрь `MAX.RES`, поэтому порядок
-        // такой: файл в `world_dir` → ресурс архива.
+        // The original game keeps `.WRL` as separate files next to `MAX.RES`
+        // (the archive contains only `snow_1.w`/`green_1.` strings — file names).
+        // But some builds pack `.WRL` inside `MAX.RES`, so the order is
+        // this: a file in `world_dir` → an archive resource.
         let world_dir = config
             .world_dir
             .clone()
@@ -834,18 +834,18 @@ impl Assets {
             });
         }
 
-        // Хром окна 1:1 (`FRAMEPIC` + панели) — необязателен: без него рендер
-        // работает в прежнем полноэкранном режиме.
+        // 1:1 window chrome (`FRAMEPIC` + panels) — optional: without it the renderer
+        // works in the former full-screen mode.
         let chrome = crate::chrome::Chrome::load(&max_res);
 
-        // Системная палитра игры: слоты 0..63 и 160..255 — палитра окна
+        // Game system palette: slots 0..63 and 160..255 — the window palette
         // (`FRAMEPIC`; C++ `WindowManager_LoadBigImage(..., palette_from_image=true)`),
-        // слоты 64..159 — палитра мира (`World::ApplyPaletteAndTints`,
-        // `world.cpp:329`: компоненты `.WRL` делятся на 4, то есть остаются
-        // 6-битными). Именно эти слоты вращают палитровые циклы
-        // (`World::InitColorCycles`), поэтому спрайты рисуются системной
-        // палитрой, а `COLOR.PAL` остаётся источником таблиц яркости.
-        // Без `FRAMEPIC` (например, синтетические тесты) берётся `COLOR.PAL`.
+        // slots 64..159 — the world palette (`World::ApplyPaletteAndTints`,
+        // `world.cpp:329`: the `.WRL` components are divided by 4, i.e. remain
+        // 6-bit). It is these slots that the palette cycles rotate
+        // (`World::InitColorCycles`), so sprites are drawn with the system
+        // palette, while `COLOR.PAL` remains the source of the brightness tables.
+        // Without `FRAMEPIC` (e.g. synthetic tests) `COLOR.PAL` is taken.
         let system_palette = {
             let ui_palette = chrome
                 .as_ref()
@@ -878,25 +878,25 @@ impl Assets {
         let panels = crate::panels::Panels::load(&max_res);
         let menu = crate::menu::MenuAssets::load(&max_res);
         let build_menu = crate::buildmenu::BuildMenuAssets::load(&max_res);
-        // Окно сохранения/загрузки V70 (`LOADPIC` + `FILE*_UP/DN` + кнопки), P3.
+        // V70 save/load window (`LOADPIC` + `FILE*_UP/DN` + buttons), P3.
         let save_load = crate::saveload::SaveLoadAssets::load(&max_res);
-        // Экран апгрейдов (`UPGRADE` + `UPG*` + `BLD*` + `SEL*`), P6.
+        // Upgrades screen (`UPGRADE` + `UPG*` + `BLD*` + `SEL*`), P6.
         let upgrade = crate::upgrademenu::UpgradeMenuAssets::load(&max_res);
-        // Экран исследований (`RSRCHPIC` + иконки `I_*` + стрелки + слайдер).
+        // Research screen (`RSRCHPIC` + `I_*` icons + arrows + slider).
         let research = crate::researchmenu::ResearchMenuAssets::load(&max_res);
-        // Окно помощи (`HELPFRAM` + `HELPOK` + прокрутка) — все Help-экраны.
+        // Help window (`HELPFRAM` + `HELPOK` + scrolling) — all Help screens.
         let help = crate::helpmenu::HelpMenuAssets::load(&max_res);
-        // Диалог `Preferences`/`Setup` (`PREFSPIC` + `PRF*` + чекбоксы + поля).
+        // `Preferences`/`Setup` dialog (`PREFSPIC` + `PRF*` + checkboxes + fields).
         let preferences = crate::preferences::PreferencesAssets::load(&max_res);
-        // Меню команд юнита (`UNTBTN_U`/`UNTBTN_D`, 42×21).
+        // Unit command menu (`UNTBTN_U`/`UNTBTN_D`, 42×21).
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
-        // Диалог самоуничтожения (`SELFDSTR` + `SLFDAR`/`SLFDCN`/`SLFDOPN`/`SLFDOK`).
+        // Self-destruct dialog (`SELFDSTR` + `SLFDAR`/`SLFDCN`/`SLFDOPN`/`SLFDOK`).
         let self_destruct = crate::selfdestruct::SelfDestructAssets::load(&max_res);
-        // Диалог распределения добычи шахты (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
+        // Mine extraction allocation dialog (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
         let alloc = crate::allocmenu::AllocMenuAssets::load(&max_res);
-        // Окно X-FER (`XFERPIC` + `XFR*` + `SMBR*`), C++ `TransferMenu`.
+        // X-FER window (`XFERPIC` + `XFR*` + `SMBR*`), C++ `TransferMenu`.
         let transfer = crate::transfermenu::TransferMenuAssets::load(&max_res);
-        // Экран мобилизации (`CARGOPIC` + `CRG*` + полосы + иконки `I_*`).
+        // Mobilization screen (`CARGOPIC` + `CRG*` + bars + `I_*` icons).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
         if !cargo.is_ready() {
@@ -980,7 +980,7 @@ impl Assets {
             );
         }
 
-        // Курсоры: 30 ресурсов `Cursor_ResourceLut` (`cursor.cpp:55-58`).
+        // Cursors: 30 `Cursor_ResourceLut` resources (`cursor.cpp:55-58`).
         let cursors = CursorSet::load(&max_res);
         if cursors.loaded() < max_assets::CURSOR_COUNT {
             warnings.push(format!(
@@ -991,14 +991,14 @@ impl Assets {
             ));
         }
 
-        // Маркеры ресурсов: настоящие спрайты карты вместо цветных точек.
+        // Resource markers: real map sprites instead of colored dots.
         let resource_markers = ResourceMarkers::load(&max_res);
         if !resource_markers.is_ready() {
             warnings.push("маркеры ресурсов (RAWMSK*/FUELMK*/GOLDMK*) не загрузились".to_string());
         }
 
-        // Маркеры стройки `BLDMRK1..5` (`DrawMap_BuildMarkImages`): 62×62,
-        // рисуются в центре клетки (hotspot `ulx/uly` из заголовка ресурса).
+        // Construction markers `BLDMRK1..5` (`DrawMap_BuildMarkImages`): 62×62,
+        // drawn at the cell center (hotspot `ulx/uly` from the resource header).
         let mut build_markers = Vec::with_capacity(5);
         for index in 1..=5 {
             let name = format!("BLDMRK{index}");
@@ -1013,7 +1013,7 @@ impl Assets {
             }
         }
 
-        // Картинки планет `SNOW_PIC + world/6` — для экрана выбора планеты.
+        // Planet pictures `SNOW_PIC + world/6` — for the planet selection screen.
         let mut planet_pictures = Vec::with_capacity(PLANET_GROUP_PICTURES.len());
         for name in PLANET_GROUP_PICTURES {
             match max_res.read(name) {
@@ -1035,9 +1035,9 @@ impl Assets {
             ));
         }
 
-        // FLC-анимации портретов (`WINDOW_CORNER_FLIC`, 128×128). В `MAX.RES`
-        // 71 запись `F_*`, тело которой — ASCIIZ-имя `*.FLC` рядом с архивом
-        // (как `*.SPW`-ссылки): файл грузим с диска, кадры декодирует
+        // Portrait FLC animations (`WINDOW_CORNER_FLIC`, 128×128). In `MAX.RES`
+        // 71 `F_*` records, whose body is an ASCIIZ name of a `*.FLC` next to the archive
+        // (like the `*.SPW` references): we load the file from disk, the frames are decoded by
         // `max_assets::flic`.
         let flic_dir = max_res_path
             .parent()
@@ -1083,8 +1083,8 @@ impl Assets {
             ));
         }
 
-        // Видео интро: `INTROFLC` — ссылка на `maxint.mve` рядом с MAX.RES.
-        // Файл не читаем здесь (71 МБ); экран `Introduction` откроет его сам.
+        // Intro video: `INTROFLC` — a reference to `maxint.mve` next to MAX.RES.
+        // The file is not read here (71 MB); the `Introduction` screen will open it itself.
         let mve_files = mve_index(&flic_dir);
         let intro_mve = max_res
             .file_reference("INTROFLC")
@@ -1130,48 +1130,48 @@ impl Assets {
         })
     }
 
-    /// Спрайт для типа юнита (если он был в архиве и разобрался).
+    /// Sprite for a unit type (if it was in the archive and parsed).
     pub fn sprite(&self, unit_type: UnitType) -> Option<&LoadedSprite> {
         self.sprites
             .iter()
             .find(|sprite| sprite.unit_type == unit_type)
     }
 
-    /// FLC-анимация портрета типа юнита (`Unit::GetFlicsAnimation`).
+    /// FLC portrait animation of a unit type (`Unit::GetFlicsAnimation`).
     ///
-    /// `None` — у типа нет `F_*`-ресурса (22 типа: обломки, взрывы, ракеты,
-    /// `HARVSTER`, `WALDO`) или файл не загрузился; тогда `panels::draw_portrait`
-    /// рисует статичный спрайт (fallback).
+    /// `None` — the type has no `F_*` resource (22 types: debris, explosions, missiles,
+    /// `HARVSTER`, `WALDO`) or the file did not load; then `panels::draw_portrait`
+    /// draws a static sprite (fallback).
     pub fn flic(&self, unit_type: UnitType) -> Option<&Arc<Flic>> {
         let tag = crate::cargo_unit_data::unit_flic(unit_type)?;
 
         self.flics.get(tag)
     }
 
-    /// Сколько FLC-анимаций загрузилось (эталон — 71).
+    /// How many FLC animations were loaded (the reference — 71).
     pub fn flic_count(&self) -> usize {
         self.flics.len()
     }
 
-    /// Картинка группы планет `SNOW_PIC + world/6` (`planetselectmenu.cpp:94`).
+    /// Planet group picture `SNOW_PIC + world/6` (`planetselectmenu.cpp:94`).
     ///
-    /// У планет одной группы (6 подряд) общая картинка 128×128; её собственные
-    /// `ulx/uly` (26,98 у `SNOW_PIC`) — позиция на экране выбора.
+    /// Planets of one group (6 in a row) share a 128×128 picture; its own
+    /// `ulx/uly` (26,98 for `SNOW_PIC`) — the position on the selection screen.
     pub fn planet_picture(&self, planet: Planet) -> Option<&BigImage> {
         self.planet_pictures.get(planet as usize / 6)
     }
 
-    /// Все загруженные спрайты в порядке [`UNIT_SPRITES`].
+    /// All loaded sprites in [`UNIT_SPRITES`] order.
     pub fn sprites(&self) -> &[LoadedSprite] {
         &self.sprites
     }
 
-    /// Некритичные проблемы загрузки.
+    /// Non-critical load problems.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
-    /// Отчёт о загруженных данных (без повторного чтения файлов).
+    /// Report on the loaded data (without re-reading the files).
     pub fn report(&self) -> AssetsReport {
         AssetsReport {
             max_res_entries: self.max_res.len(),
@@ -1201,7 +1201,7 @@ mod tests {
     use super::*;
     use max_core::enums::{unit_flags, Planet, UnitType, UNIT_END};
 
-    /// Ассеты игры из репозитория; `None`, если данных рядом нет.
+    /// Game assets from the repository; `None` if the data is not nearby.
     fn real_assets() -> Option<Assets> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let max_res = root.join("max-original/MAX.RES");
@@ -1244,7 +1244,7 @@ mod tests {
         };
         let assets = Assets::load(&config).expect("ассеты игры");
 
-        // Обломки alien-базы: три юнита (`ALN*`) + плита/мост и здания.
+        // Alien base debris: three units (`ALN*`) + slab/bridge and buildings.
         for unit_type in [
             UnitType::AlienTank,
             UnitType::AlienAssaultGun,
@@ -1261,9 +1261,9 @@ mod tests {
             assert!(!sprite.sheet.is_empty(), "{unit_type:?}: нет кадров");
         }
 
-        // `RADAR` — это спрайт здания-радара (20 кадров 64×64, 60 449 Б), а не
-        // рамка миникарты: рамка нарисована в `FRAMEPIC`
-        // (`ResourceManager_MinimapBgImage` — снимок окна миникарты).
+        // `RADAR` is the radar building sprite (20 frames 64×64, 60 449 B), not
+        // the minimap frame: the frame is drawn in `FRAMEPIC`
+        // (`ResourceManager_MinimapBgImage` — a snapshot of the minimap window).
         let radar = assets.sprite(UnitType::Radar).expect("RADAR");
         assert_eq!(radar.sheet.len(), 20);
         assert_eq!(
@@ -1338,8 +1338,8 @@ mod tests {
         assert_eq!(UNIT_SPRITES.len(), UNIT_END as usize);
     }
 
-    /// Таблица — построчный порт `SC_UNITS`: тип, спрайт и тень каждого из
-    /// 93 типов совпадают с `cargo_unit_data` (генератор из `SC_UNITS`).
+    /// The table is a line-by-line port of `SC_UNITS`: the type, sprite and shadow of
+    /// each of the 93 types match `cargo_unit_data` (the generator from `SC_UNITS`).
     #[test]
     fn unit_sprite_table_mirrors_sc_units() {
         assert_eq!(UNIT_SPRITES.len(), UNIT_END as usize);
@@ -1359,7 +1359,7 @@ mod tests {
             );
         }
 
-        // Документированные дыры данных игры (не таблицы).
+        // Documented holes in the game data (not the table).
         assert_eq!(
             UNIT_TYPES_WITHOUT_SPRITE_DATA,
             [UnitType::MasterBuilder],
@@ -1372,8 +1372,8 @@ mod tests {
         );
     }
 
-    /// Все 92 типа с данными грузятся: корпус, 8 углов, тень (если в
-    /// `SC_UNITS`), и `MASTER` — единственный маркер.
+    /// All 92 types with data load: body, 8 angles, shadow (if in
+    /// `SC_UNITS`), and `MASTER` — the only marker.
     #[test]
     fn every_unit_type_loads_its_body_and_shadow() {
         let Some(assets) = real_assets() else {
@@ -1461,9 +1461,9 @@ mod tests {
         );
     }
 
-    /// Башня есть ровно у типов с `TURRET_SPRITE`/`SPINNING_TURRET` в
-    /// `SC_UNITS` (11 типов), кадры `D_*` покрывают все 8 углов, а сдвиг
-    /// совпадает с `angle_offsets`.
+    /// A turret exists exactly for the types with `TURRET_SPRITE`/`SPINNING_TURRET` in
+    /// `SC_UNITS` (11 types), the `D_*` frames cover all 8 angles, and the offset
+    /// matches `angle_offsets`.
     #[test]
     fn turret_frames_cover_every_flagged_type() {
         let Some(assets) = real_assets() else {
@@ -1534,12 +1534,12 @@ mod tests {
         }
     }
 
-    /// Флаги типа из `SC_UNITS` (`access::unit_type_flags`).
+    /// Type flags from `SC_UNITS` (`access::unit_type_flags`).
     fn access_flags_for_tests(unit_type: UnitType) -> u32 {
         max_core::access::unit_type_flags(unit_type)
     }
 
-    /// Уникальный временный каталог теста.
+    /// Unique temporary directory of the test.
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "max_app_assets_{tag}_{}_{}",
@@ -1553,7 +1553,7 @@ mod tests {
         dir
     }
 
-    /// Путь внутри репозитория (`max-brh/crates/max_app/../../..`).
+    /// Path inside the repository (`max-brh/crates/max_app/../../..`).
     fn repo_path(relative: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
@@ -1638,9 +1638,9 @@ mod tests {
 
     #[test]
     fn absent_everywhere_keeps_the_configured_path() {
-        // Тест герметичен: с TC-1109 ambient-резолвер ищет ещё и рядом с exe,
-        // а тестовый бинарь лежит внутри checkout'а, где `assets/PATCHES.RES`
-        // реально существует. «Нигде нет» проверяется на пустых корнях.
+        // The test is hermetic: with TC-1109 the ambient resolver also looks next to the exe,
+        // and the test binary lies inside the checkout, where `assets/PATCHES.RES`
+        // really exists. "Nowhere" is checked on empty roots.
         let dir = temp_dir("nowhere");
         let config = AppConfig {
             max_res: dir.join("missing/MAX.RES"),
@@ -1665,8 +1665,8 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
-    /// TC-1109: `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` находятся от каталога exe,
-    /// когда CWD — чужой пустой каталог (запуск `bin\release\max_app.exe`).
+    /// TC-1109: `MAX.RES`/`PATCHES.RES`/`COLOR.PAL` are found from the exe directory
+    /// when the CWD is a foreign empty directory (launching `bin\release\max_app.exe`).
     #[test]
     fn exe_dir_resolves_game_data_when_cwd_is_elsewhere() {
         let root = temp_dir("exe");
@@ -1708,14 +1708,14 @@ mod tests {
         assert_eq!(path, patches, "PATCHES.RES от каталога exe");
         assert!(warning.is_some());
 
-        // Конфиг не мутируется: хэндшейк считает путь из `config`.
+        // The config is not mutated: the handshake computes the path from `config`.
         assert_eq!(config.max_res, cwd.join("max-original/MAX.RES"));
 
         std::fs::remove_dir_all(root).ok();
     }
 
-    /// TC-1109: если exe лежит глубже (`bin/`), данные ищутся вверх до корня
-    /// с `max-original/` — но не выше него (без находки выше не поднимаемся).
+    /// TC-1109: if the exe lies deeper (`bin/`), the data is searched upward to the root
+    /// with `max-original/` — but not above it (without a find we do not go up).
     #[test]
     fn exe_ancestors_are_searched_up_to_the_data_root() {
         let root = temp_dir("exe-up");
@@ -1768,10 +1768,10 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
-    /// Ассеты грузятся из fallback, а `patches_res` остаётся путём хэндшейка.
+    /// Assets load from the fallback, while `patches_res` remains the handshake path.
     ///
-    /// Пропускается, если данных игры нет рядом с репозиторием (как
-    /// `assets_integration_smoke` в `tests/app.rs`).
+    /// Skipped if there is no game data next to the repository (like
+    /// `assets_integration_smoke` in `tests/app.rs`).
     #[test]
     fn assets_load_from_fallback_when_configured_patches_res_is_missing() {
         let max_res = repo_path("max-original/MAX.RES");

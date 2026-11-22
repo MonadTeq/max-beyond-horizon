@@ -1,30 +1,30 @@
-//! Портрет юнита в `WINDOW_CORNER_FLIC` — FLC-анимация (`GameManager_Flic`).
+//! Unit portrait in `WINDOW_CORNER_FLIC` — an FLC animation (`GameManager_Flic`).
 //!
-//! Оракул (`max-cpp-port/src/game_manager.cpp`):
+//! Oracle (`max-cpp-port/src/game_manager.cpp`):
 //!
 //! * `GameManager_MenuUnitSelect` → `GameManager_MenuCreateFlic(unit_type, …)`:
-//!   окно `WINDOW_CORNER_FLIC` 128×128, анимация берётся из
-//!   `Unit::GetFlicsAnimation()` (тег `F_*`), файл — `*.FLC` рядом с `MAX.RES`;
-//!   `flicsmgr_construct(…, animate = 2, load_flic_palette = 0)` — зацикленная
-//!   анимация, палитра окна (не палитра FLC);
-//! * `GameManager_AdvanceFlic`: кадр меняется раз в `TIMER_FPS_TO_MS(15)` —
-//!   **15 кадров в секунду** (поле `speed` заголовка FLC не используется);
+//!   the `WINDOW_CORNER_FLIC` 128×128 window, the animation is taken from
+//!   `Unit::GetFlicsAnimation()` (tag `F_*`), the file is `*.FLC` next to `MAX.RES`;
+//!   `flicsmgr_construct(…, animate = 2, load_flic_palette = 0)` — a looping
+//!   animation, the window palette (not the FLC palette);
+//! * `GameManager_AdvanceFlic`: the frame changes once per `TIMER_FPS_TO_MS(15)` —
+//!   **15 frames per second** (the `speed` field of the FLC header is not used);
 //! * `GameManager_MenuUnitSelect(nullptr)` → `GameManager_MenuDeleteFlic` +
-//!   `FillOrRestoreWindow(WINDOW_CORNER_FLIC, COLOR_BLACK)` — чёрный фон;
-//! * если FLC нет (`INVALID_ID` у 22 типов) — `flicsmgr_construct` не рисует
-//!   ничего; Rust-клиент в этом случае показывает статичный спрайт ×2
-//!   (см. `panels::draw_portrait`).
+//!   `FillOrRestoreWindow(WINDOW_CORNER_FLIC, COLOR_BLACK)` — black background;
+//! * if there is no FLC (`INVALID_ID` for 22 types), `flicsmgr_construct` draws
+//!   nothing; the Rust client in this case shows a static sprite ×2
+//!   (see `panels::draw_portrait`).
 //!
-//! # Детерминизм
+//! # Determinism
 //!
-//! Кадр выводится из накопленного времени: `floor(elapsed * 15) % frames`.
-//! В headless/QA кадры рисуются с `dt = 0` ([`crate::App::local_update`]),
-//! поэтому `elapsed` не растёт и портрет стоит на кадре 0 — golden-кадры
-//! стабильны. В GUI `dt = 1/60` (`main.rs`), анимация идёт с 15 FPS.
+//! The frame is derived from accumulated time: `floor(elapsed * 15) % frames`.
+//! In headless/QA frames are drawn with `dt = 0` ([`crate::App::local_update`]),
+//! so `elapsed` does not grow and the portrait stays on frame 0 — golden frames
+//! are stable. In the GUI `dt = 1/60` (`main.rs`), the animation runs at 15 FPS.
 //!
-//! Кадры декодируются один раз при выделении ([`max_assets::flic::Flic::decode_all`]),
-//! поэтому отрисовка не зависит от истории проигрывания и не может «разъехаться»
-//! с эталоном.
+//! Frames are decoded once on selection ([`max_assets::flic::Flic::decode_all`]),
+//! so rendering does not depend on the playback history and cannot "drift"
+//! from the reference.
 
 use max_assets::flic::{Flic, FlicError, FlicFrame};
 use max_core::enums::UnitType;
@@ -32,11 +32,11 @@ use max_core::unit::UnitId;
 
 use crate::App;
 
-/// Частота смены кадров портрета (`GameManager_AdvanceFlic`,
+/// Portrait frame rate (`GameManager_AdvanceFlic`,
 /// `TIMER_FPS_TO_MS(15)`).
 pub const PORTRAIT_FPS: u32 = 15;
 
-/// Анимация портрета выделенного юнита: все кадры FLC + фаза анимации.
+/// Animation of the selected unit's portrait: all FLC frames + the animation phase.
 #[derive(Debug, Clone)]
 pub struct PortraitAnim {
     unit: UnitId,
@@ -46,11 +46,11 @@ pub struct PortraitAnim {
 }
 
 impl PortraitAnim {
-    /// Декодирует все кадры FLC (как `flicsmgr_construct` + `AdvanceFlic`).
+    /// Decodes all FLC frames (like `flicsmgr_construct` + `AdvanceFlic`).
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// [`FlicError`] — битые кадры; вызывающий откатывается на спрайт.
+    /// [`FlicError`] — corrupted frames; the caller falls back to the sprite.
     pub fn load(unit: UnitId, unit_type: UnitType, flic: &Flic) -> Result<Self, FlicError> {
         let frames = flic.decode_all()?;
 
@@ -62,45 +62,45 @@ impl PortraitAnim {
         })
     }
 
-    /// Выделенный юнит, к которому относится анимация.
+    /// Selected unit the animation belongs to.
     #[inline]
     pub fn unit(&self) -> UnitId {
         self.unit
     }
 
-    /// Тип юнита (владелец `F_*`-ресурса).
+    /// Unit type (owner of the `F_*` resource).
     #[inline]
     pub fn unit_type(&self) -> UnitType {
         self.unit_type
     }
 
-    /// Все декодированные кадры.
+    /// All decoded frames.
     #[inline]
     pub fn frames(&self) -> &[FlicFrame] {
         &self.frames
     }
 
-    /// Число кадров (1 — статичный FLC).
+    /// Number of frames (1 — static FLC).
     #[inline]
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
 
-    /// Анимируется ли FLC (`frames > 1`, как `frame_count > 1` в C++).
+    /// Whether the FLC is animated (`frames > 1`, like `frame_count > 1` in C++).
     #[inline]
     pub fn is_animated(&self) -> bool {
         self.frames.len() > 1
     }
 
-    /// Накопленное время анимации, секунды.
+    /// Accumulated animation time, seconds.
     #[inline]
     pub fn elapsed(&self) -> f64 {
         self.elapsed
     }
 
-    /// Номер кадра: `floor(elapsed * 15)`, зациклено.
+    /// Frame number: `floor(elapsed * 15)`, wrapped.
     ///
-    /// При `elapsed == 0` (headless/QA, `dt = 0`) всегда 0.
+    /// With `elapsed == 0` (headless/QA, `dt = 0`) always 0.
     pub fn frame_index(&self) -> usize {
         if self.frames.len() <= 1 {
             return 0;
@@ -112,17 +112,17 @@ impl PortraitAnim {
         index % self.frames.len()
     }
 
-    /// Текущий кадр.
+    /// Current frame.
     pub fn frame(&self) -> &FlicFrame {
         let index = self.frame_index().min(self.frames.len().saturating_sub(1));
 
         &self.frames[index]
     }
 
-    /// Продвигает анимацию на `dt` секунд.
+    /// Advances the animation by `dt` seconds.
     ///
-    /// `dt <= 0` (headless/QA) — стоит на месте: golden-кадры детерминированы.
-    /// Отрицательные и NaN значения игнорируются (как `dt.max(0.0)` в
+    /// `dt <= 0` (headless/QA) — stays in place: golden frames are deterministic.
+    /// Negative and NaN values are ignored (like `dt.max(0.0)` in
     /// `update_visual_units`).
     pub fn advance(&mut self, dt: f32) {
         if !self.is_animated() || !(dt > 0.0) {
@@ -132,29 +132,29 @@ impl PortraitAnim {
         self.elapsed += f64::from(dt);
     }
 
-    /// Сбрасывает фазу (для тестов/golden: «портрет только что выделили»).
+    /// Resets the phase (for tests/golden: "the portrait was just selected").
     pub fn reset(&mut self) {
         self.elapsed = 0.0;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Интеграция с App
+// Integration with App
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Текущая FLC-анимация портрета (`None` — нет выделения/FLC).
+    /// Current FLC portrait animation (`None` — no selection/FLC).
     #[inline]
     pub fn portrait(&self) -> Option<&PortraitAnim> {
         self.portrait.as_ref()
     }
 
-    /// Синхронизирует анимацию с выделением: при смене юнита декодирует его FLC
-    /// (кадр 0), при снятии выделения — освобождает.
+    /// Synchronizes the animation with the selection: when the unit changes it decodes its FLC
+    /// (frame 0); when the selection is cleared it frees it.
     ///
-    /// Вызывается из [`App::update_portrait`] и [`App::select_unit`], поэтому
-    /// портрет всегда соответствует выделенному юниту (в т.ч. в QA-кадрах,
-    /// которые рисуются без игрового кадра).
+    /// Called from [`App::update_portrait`] and [`App::select_unit`], so
+    /// the portrait always corresponds to the selected unit (including in QA frames,
+    /// which are drawn without a game frame).
     pub fn refresh_portrait(&mut self) {
         let selected = self.selected_unit().map(|unit| (unit.id, unit.unit_type));
 
@@ -180,9 +180,9 @@ impl App {
         }
     }
 
-    /// Один шаг анимации портрета: синхронизация с выделением + `dt` секунд.
+    /// One step of the portrait animation: synchronization with the selection + `dt` seconds.
     ///
-    /// `dt = 0` (headless/QA) не двигает кадр — портрет стоит на кадре 0.
+    /// `dt = 0` (headless/QA) does not advance the frame — the portrait stays on frame 0.
     pub fn update_portrait(&mut self, dt: f32) {
         self.refresh_portrait();
 
@@ -219,7 +219,7 @@ mod tests {
     fn dt_zero_keeps_the_portrait_on_frame_zero() {
         let mut portrait = animation(30);
 
-        // 600 кадров по dt = 0 — как `local_update(0.0)` в QA.
+        // 600 frames with dt = 0 — like `local_update(0.0)` in QA.
         for _ in 0..600 {
             portrait.advance(0.0);
         }
@@ -233,18 +233,18 @@ mod tests {
     fn fifteen_fps_advances_one_frame_per_sixty_seventh_of_a_second() {
         let mut portrait = animation(3);
 
-        // 1/15 с — ровно следующий кадр (в пределах float-погрешности dt).
+        // 1/15 s — exactly the next frame (within float error of dt).
         portrait.advance(1.0 / 15.0);
         assert_eq!(portrait.frame_index(), 1);
 
         portrait.advance(1.0 / 15.0);
         assert_eq!(portrait.frame_index(), 2);
 
-        // Зацикливание: после 3-го кадра — снова 0.
+        // Wrapping: after the 3rd frame — 0 again.
         portrait.advance(1.0 / 15.0);
         assert_eq!(portrait.frame_index(), 0);
 
-        // 60 кадров по 1/60 с = секунда = 15 кадров анимации (модуло 3).
+        // 60 frames of 1/60 s = one second = 15 animation frames (modulo 3).
         let mut portrait = animation(30);
 
         for _ in 0..60 {

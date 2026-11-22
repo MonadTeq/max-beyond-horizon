@@ -1,38 +1,38 @@
-//! Самоуничтожение здания — порт `UnitsManager_SelfDestructMenu`
-//! (`units_manager.cpp:292-357`) и `UnitsManager_SelfDestructActiveMenu`
+//! Building self-destruct — a port of `UnitsManager_SelfDestructMenu`
+//! (`units_manager.cpp:292-357`) and `UnitsManager_SelfDestructActiveMenu`
 //! (`:233-290`).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! Окно `SELFDSTR` (174×82) по центру области карты
+//! The `SELFDSTR` window (174×82) in the center of the map area
 //! (`Window(SELFDSTR, GameManager_GetDialogWindowCenterMode())` →
 //! `(180 + (448-174)/2, 18 + (448-82)/2) = (317, 201)`).
 //!
-//! * `Arm` — `Button(SLFDAR_U, SLFDAR_D, 89, 14)`, подпись `_(d5cb)` = "Arm",
+//! * `Arm` — `Button(SLFDAR_U, SLFDAR_D, 89, 14)`, label `_(d5cb)` = "Arm",
 //!   sfx `MBUTT0`;
-//! * `Cancel` — `Button(SLFDCN_U, SLFDCN_D, 89, 46)`, подпись `_(ef77)` =
+//! * `Cancel` — `Button(SLFDCN_U, SLFDCN_D, 89, 46)`, label `_(ef77)` =
 //!   "Cancel", sfx `NCANC0`, `Esc`;
-//! * `Enter` нажимает `Arm` (`SetPValue(GNW_KB_KEY_RETURN)` /
-//!   `SetRValue`), после чего C++ проигрывает кадры `SLFDOPN1..6` по
-//!   `TIMER_FPS_TO_MS(48)` и показывает кнопку `SLFDOK_U/D` (61×58 в (13,11),
+//! * `Enter` presses `Arm` (`SetPValue(GNW_KB_KEY_RETURN)` /
+//!   `SetRValue`), after which C++ plays frames `SLFDOPN1..6` every
+//!   `TIMER_FPS_TO_MS(48)` and shows the `SLFDOK_U/D` button (61×58 at (13,11),
 //!   `SetRValue(GNW_KB_KEY_RETURN)`, sfx `NDONE0`);
-//! * подтверждение (`Enter`/клик по `OK`) возвращает `true`, отмена — `false`;
-//!   `Esc` в любом окне — отмена (`NCANC0`).
+//! * confirmation (`Enter`/click on `OK`) returns `true`, cancel — `false`;
+//!   `Esc` in any window — cancel (`NCANC0`).
 //!
-//! # Что портировано
+//! # What is ported
 //!
-//! Оба окна и их ввод; анимация `SLFDOPN1..6` идёт по визуальным часам
-//! (`App::update_visual_units`, шаг 1/60 с), а не по `SDL_Delay`, поэтому кадры
-//! детерминированы (golden/QA). Приказ — `ORDER_EXPLODE`/`ORDER_STATE_EXPLODE`
+//! Both windows and their input; the `SLFDOPN1..6` animation runs on the visual
+//! clock (`App::update_visual_units`, 1/60 s step), not on `SDL_Delay`, so the
+//! frames are deterministic (golden/QA). The order is `ORDER_EXPLODE`/`ORDER_STATE_EXPLODE`
 //! (`UnitsManager_Popup_OnClick_Remove`, `units_manager.cpp:506`).
 //!
-//! # Осознанные отличия
+//! # Deliberate differences
 //!
-//! * C++ блокирует поток на 6×48 мс внутри `SelfDestructActiveMenu`; порт
-//!   держит окно открытым и принимает `Esc`/`OK` после анимации (как игрок и
-//!   ожидает), а не «проглатывает» ввод.
-//! * Второе окно (`GNW_INPUT_PRESS`) в C++ только подсвечивает кнопку; звук
-//!   отпускания здесь не моделируется.
+//! * C++ blocks the thread for 6×48 ms inside `SelfDestructActiveMenu`; the port
+//!   keeps the window open and accepts `Esc`/`OK` after the animation (as the player
+//!   expects), instead of "swallowing" the input.
+//! * The second window (`GNW_INPUT_PRESS`) in C++ only highlights the button; the
+//!   release sound is not modeled here.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_render::buffer::{PixelRect, RgbaBuffer};
@@ -43,56 +43,56 @@ use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 use max_core::unit::UnitId;
 
-/// Окно `SELFDSTR`: 174×82 (`MAX.RES`).
+/// `SELFDSTR` window: 174×82 (`MAX.RES`).
 pub const DIALOG_SIZE: (i32, i32) = (174, 82);
-/// Окно в кадре — центр `WINDOW_MAIN_MAP` (180,18,448,448).
+/// The window in the frame — center of `WINDOW_MAIN_MAP` (180,18,448,448).
 pub const DIALOG_RECT: PixelRect = PixelRect::new(317, 201, 174, 82);
-/// `Arm` (`SLFDAR_U/D`, 74×23) в (89,14).
+/// `Arm` (`SLFDAR_U/D`, 74×23) at (89,14).
 pub const ARM_RECT: PixelRect = PixelRect::new(89, 14, 74, 23);
-/// `Cancel` (`SLFDCN_U/D`, 74×23) в (89,46).
+/// `Cancel` (`SLFDCN_U/D`, 74×23) at (89,46).
 pub const CANCEL_RECT: PixelRect = PixelRect::new(89, 46, 74, 23);
-/// `OK` (`SLFDOK_U/D`, 61×58) в (13,11).
+/// `OK` (`SLFDOK_U/D`, 61×58) at (13,11).
 pub const OK_RECT: PixelRect = PixelRect::new(13, 11, 61, 58);
-/// Сколько кадров `SLFDOPN1..6` (`units_manager.cpp:239`).
+/// Number of frames `SLFDOPN1..6` (`units_manager.cpp:239`).
 pub const OPEN_FRAMES: usize = 6;
-/// `TIMER_FPS_TO_MS(48)` — шаг кадра.
+/// `TIMER_FPS_TO_MS(48)` — frame step.
 pub const FRAME_SECONDS: f32 = 0.048;
 
-/// Стадия диалога.
+/// Dialog stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
-    /// Первое окно: `Arm`/`Cancel`.
+    /// First window: `Arm`/`Cancel`.
     Confirm,
-    /// Второе окно: анимация `SLFDOPN` и `OK`.
+    /// Second window: `SLFDOPN` animation and `OK`.
     Armed,
 }
 
-/// Что делать с вводом.
+/// What to do with input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfDestructAction {
-    /// Окно остаётся открытым.
+    /// The window stays open.
     None,
-    /// Отмена: приказа нет.
+    /// Cancel: no order.
     Cancel,
-    /// Подтверждение: `ORDER_EXPLODE`.
+    /// Confirmation: `ORDER_EXPLODE`.
     Explode,
 }
 
-/// Открытый диалог самоуничтожения.
+/// Open self-destruct dialog.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfDestructMenu {
-    /// Здание, которое уничтожается.
+    /// Building being destroyed.
     pub unit: UnitId,
-    /// Стадия.
+    /// Stage.
     pub stage: Stage,
-    /// Номер кадра анимации `SLFDOPN1..6` (0..=6; 6 — кнопка `OK`).
+    /// Animation frame number `SLFDOPN1..6` (0..=6; 6 — the `OK` button).
     pub frame: usize,
-    /// Накопленное время кадра.
+    /// Accumulated frame time.
     elapsed: f32,
 }
 
 impl SelfDestructMenu {
-    /// Открывает первое окно (`UnitsManager_SelfDestructMenu`).
+    /// Opens the first window (`UnitsManager_SelfDestructMenu`).
     pub fn new(unit: UnitId) -> Self {
         Self {
             unit,
@@ -102,7 +102,7 @@ impl SelfDestructMenu {
         }
     }
 
-    /// Имя картинки кадра анимации (`SLFDOPN1..6`).
+    /// Image name of the animation frame (`SLFDOPN1..6`).
     pub fn frame_image(&self) -> &'static str {
         match self.frame {
             0 => "SLFDOPN1",
@@ -114,12 +114,12 @@ impl SelfDestructMenu {
         }
     }
 
-    /// Анимация доиграла — показывается `OK`.
+    /// The animation has finished — `OK` is shown.
     pub fn is_armed(&self) -> bool {
         self.stage == Stage::Armed && self.frame + 1 >= OPEN_FRAMES
     }
 
-    /// Прямоугольники кнопок в кадре.
+    /// Button rectangles in the frame.
     pub fn arm_rect(&self) -> PixelRect {
         rect_at(ARM_RECT)
     }
@@ -129,12 +129,12 @@ impl SelfDestructMenu {
         rect_at(CANCEL_RECT)
     }
 
-    /// `OK` второго окна.
+    /// `OK` of the second window.
     pub fn ok_rect(&self) -> PixelRect {
         rect_at(OK_RECT)
     }
 
-    /// Визуальные часы (`TIMER_FPS_TO_MS(48)` на кадр).
+    /// Visual clock (`TIMER_FPS_TO_MS(48)` per frame).
     pub fn advance(&mut self, dt: f32) {
         if self.stage != Stage::Armed || self.is_armed() {
             return;
@@ -148,14 +148,14 @@ impl SelfDestructMenu {
         }
     }
 
-    /// Нажатие `Arm`/`Enter`.
+    /// Press of `Arm`/`Enter`.
     pub fn arm(&mut self) {
         self.stage = Stage::Armed;
         self.frame = 0;
         self.elapsed = 0.0;
     }
 
-    /// Ввод: клик по кнопке или клавиша.
+    /// Input: button click or key.
     pub fn input(&mut self, event: InputEvent) -> SelfDestructAction {
         match event {
             InputEvent::MouseClick(x, y) => {
@@ -175,8 +175,8 @@ impl SelfDestructMenu {
                         SelfDestructAction::None
                     }
                 } else {
-                    // Анимация `SLFDOPN1..6` ещё играет — ввод игнорируется
-                    // (C++ крутит цикл кадров до появления `OK`).
+                    // The `SLFDOPN1..6` animation is still playing — input is ignored
+                    // (C++ runs the frame loop until `OK` appears).
                     SelfDestructAction::None
                 }
             }
@@ -195,7 +195,7 @@ impl SelfDestructMenu {
         }
     }
 
-    /// Рисует окно (`Window(SELFDSTR)` + кнопки).
+    /// Draws the window (`Window(SELFDSTR)` + buttons).
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -286,7 +286,7 @@ impl SelfDestructMenu {
     }
 }
 
-/// Прямоугольник окна в кадре.
+/// Window rectangle in the frame.
 fn rect_at(rect: PixelRect) -> PixelRect {
     PixelRect::new(
         DIALOG_RECT.ulx + rect.ulx,
@@ -296,23 +296,23 @@ fn rect_at(rect: PixelRect) -> PixelRect {
     )
 }
 
-/// Ассеты диалога: `SELFDSTR`, `SLFDAR`, `SLFDCN`, `SLFDOPN1..6`, `SLFDOK`.
+/// Dialog assets: `SELFDSTR`, `SLFDAR`, `SLFDCN`, `SLFDOPN1..6`, `SLFDOK`.
 #[derive(Debug, Clone)]
 pub struct SelfDestructAssets {
-    /// Фон `SELFDSTR` 174×82.
+    /// `SELFDSTR` background 174×82.
     pub background: Option<BigImage>,
     /// `Arm` (`SLFDAR_U/D`).
     pub arm: Option<MenuButtonPair>,
     /// `Cancel` (`SLFDCN_U/D`).
     pub cancel: Option<MenuButtonPair>,
-    /// Кадры `SLFDOPN1..6`.
+    /// Frames `SLFDOPN1..6`.
     pub open_frames: Vec<SimpleImage>,
     /// `OK` (`SLFDOK_U/D`).
     pub ok: Option<MenuButtonPair>,
 }
 
 impl SelfDestructAssets {
-    /// Грузит ресурсы; отсутствующие — `None`.
+    /// Loads the resources; missing ones are `None`.
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             let bytes = archive.read(name).ok()?;
@@ -341,12 +341,12 @@ impl SelfDestructAssets {
         }
     }
 
-    /// Кадр анимации `index` (`SLFDOPN1..6`).
+    /// Animation frame `index` (`SLFDOPN1..6`).
     pub fn open(&self, index: usize) -> Option<&SimpleImage> {
         self.open_frames.get(index.min(OPEN_FRAMES - 1))
     }
 
-    /// Все обязательные ресурсы загрузились.
+    /// All mandatory resources were loaded.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.arm.is_some() && self.cancel.is_some()
     }
@@ -412,14 +412,14 @@ mod tests {
             SelfDestructAction::Cancel
         );
 
-        // Enter на первом окне — Arm (C++ `SetPValue(GNW_KB_KEY_RETURN)`).
+        // Enter on the first window — Arm (C++ `SetPValue(GNW_KB_KEY_RETURN)`).
         let mut menu = SelfDestructMenu::new(UnitId(3));
         assert_eq!(
             menu.input(InputEvent::Key(Key::Enter)),
             SelfDestructAction::None
         );
         assert_eq!(menu.stage, Stage::Armed);
-        // Пока анимация не доиграла, Enter не подтверждает.
+        // Until the animation finishes, Enter does not confirm.
         assert_eq!(
             menu.input(InputEvent::Key(Key::Enter)),
             SelfDestructAction::None

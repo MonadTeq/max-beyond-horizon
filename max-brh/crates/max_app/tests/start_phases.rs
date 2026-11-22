@@ -1,13 +1,13 @@
-//! Тесты фаз старта (M-SP): мобилизация и выбор точки высадки.
+//! Start phase tests (M-SP): mobilization and landing point selection.
 //!
-//! Проверяется то, что обещает задача B:
+//! What task B promises is checked:
 //!
-//! * выбранная точка реально двигает базу (`deploy_starting_units_with`
-//!   получает `TeamDeployment.position` и `FindValidStartingPosition`-совместима);
-//! * покупка юнитов меняет состав (`TeamMissionSupplies::units`) и кредиты
-//!   (`TeamUnits::SetGold`) ровно по формулам `CargoMenu`;
-//! * порядок фаз hot-seat — как в C++ (`for (i = MAX-1; i >= RED; --i)`);
-//! * ИИ выбирает свою точку до генерации ресурсов (`Ai_SelectStartingPosition`).
+//! * the chosen point really moves the base (`deploy_starting_units_with`
+//!   receives `TeamDeployment.position` and is `FindValidStartingPosition`-compatible);
+//! * buying units changes the composition (`TeamMissionSupplies::units`) and credits
+//!   (`TeamUnits::SetGold`) exactly by the `CargoMenu` formulas;
+//! * the hot-seat phase order — as in C++ (`for (i = MAX-1; i >= RED; --i)`);
+//! * the AI chooses its point before resource generation (`Ai_SelectStartingPosition`).
 
 use max_app::local::{LocalSetup, START_POSITIONS};
 use max_app::mobilize::{unit_cost, Mobilization, PURCHASE_UNITS};
@@ -83,7 +83,7 @@ fn landing_position_moves_the_base() {
         "база должна стоять у выбранной точки ({chosen:?}), а не {base:?}"
     );
 
-    // «FindValidStartingPosition-совместимо»: точка — 4×4 чистой суши.
+    // "FindValidStartingPosition-compatible": the point is 4×4 of pure land.
     assert!(is_valid_starting_position(
         &land_surface(),
         i32::from(base.x),
@@ -236,8 +236,8 @@ fn ai_teams_get_their_own_starting_positions() {
 
 #[test]
 fn landing_surface_is_loaded_from_wrl_only_when_present() {
-    // `LandingScreen::load_surface` — поверхность планеты из `*.WRL`; без
-    // данных игры фаза честно пропускается.
+    // `LandingScreen::load_surface` — the planet surface from `*.WRL`; without
+    // game data the phase is honestly skipped.
     let missing = max_app::landing::LandingScreen::load_surface(0, std::path::Path::new("."));
     assert!(missing.is_none(), "в текущем каталоге нет SNOW_1.WRL");
 
@@ -255,8 +255,8 @@ fn landing_surface_is_loaded_from_wrl_only_when_present() {
     assert!(landing.cursor_valid(), "стартовый курсор — валидная точка");
 }
 
-/// Партия с фазами старта детерминирована: ИИ-точки и карта зависят только от
-/// seed и выбранных людьми точек (C++ пересеивает ГПСЧ перед генерацией карты).
+/// A match with start phases is deterministic: the AI points and the map depend only on
+/// the seed and the points chosen by humans (C++ reseeds the RNG before map generation).
 #[test]
 fn phased_start_is_deterministic() {
     let mut setup = single_human();
@@ -287,8 +287,8 @@ fn default_config_keeps_the_old_behavior() {
     );
 }
 
-/// `CargoMenu` модернизация: апгрейд атрибута до высадки меняет
-/// `TeamUnits.current_values`, поэтому стартовые юниты типа получают новые
+/// `CargoMenu` upgrade: an attribute upgrade before landing changes
+/// `TeamUnits.current_values`, so the starting units of the type get the new
 /// `UnitValues` (`GameManager_CargoSelection` → `CommitUpgradeChanges`).
 #[test]
 fn mobilization_upgrades_reach_the_deployed_units() {
@@ -296,7 +296,7 @@ fn mobilization_upgrades_reach_the_deployed_units() {
     setup.start_positions[0] = Some(Point::new(40, 40));
 
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, setup.start_gold);
-    mobilization.select_loadout(0); // бесплатный Constructor — строка 0
+    mobilization.select_loadout(0); // free Constructor — row 0
     assert!(mobilization.buy(0), "второй Constructor — проверяем оба");
 
     let base_armor = mobilization.base[UnitType::Constructor as usize].armor;

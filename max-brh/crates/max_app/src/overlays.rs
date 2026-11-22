@@ -1,25 +1,25 @@
-//! Оверлеи кнопок 3×3 в левой панели — 1:1 по C++-оракулу.
+//! 3×3 button overlays in the left panel — 1:1 per the C++ oracle.
 //!
-//! Каждая кнопка ряда включает свой слой отрисовки карты (`game_manager.cpp`):
+//! Each button of the row enables its own map rendering layer (`game_manager.cpp`):
 //!
-//! | Кнопка | C++-флаг | Где рисуется |
+//! | Button | C++ flag | Where it is drawn |
 //! |---|---|---|
-//! | SURVEY | `GameManager_DisplayButtonSurvey` | `GameManager_RenderSurveyIndicator` → `DrawMap_RenderSurveyDisplay` (`survey.cpp`) — уже портировано в [`crate::render`] |
-//! | STATUS | `GameManager_DisplayButtonStatus` | `DrawMap_RenderUnitDisplays` → `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444`): иконки `IL_DSBLD`/`IL_SPEED`/`IL_SHOTS` |
-//! | COLORS | `GameManager_DisplayButtonColors` | `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581`): рамка цвета команды вокруг **не**-стационарных юнитов |
-//! | HITS | `GameManager_DisplayButtonHits` | `DrawMap_RenderUnitDisplays` (`drawmap.cpp:605-669`): полоска `hits` под юнитом |
-//! | AMMO | `GameManager_DisplayButtonAmmo` | там же: вторая полоска `ammo` только для своей команды |
-//! | RANGE | `GameManager_DisplayButtonRange` | `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:947`): круг радиуса `ATTRIB_RANGE` |
-//! | SCAN | `GameManager_DisplayButtonScan` | там же (`:956`): круг радиуса `ATTRIB_SCAN` |
+//! | SURVEY | `GameManager_DisplayButtonSurvey` | `GameManager_RenderSurveyIndicator` → `DrawMap_RenderSurveyDisplay` (`survey.cpp`) — already ported in [`crate::render`] |
+//! | STATUS | `GameManager_DisplayButtonStatus` | `DrawMap_RenderUnitDisplays` → `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444`): `IL_DSBLD`/`IL_SPEED`/`IL_SHOTS` icons |
+//! | COLORS | `GameManager_DisplayButtonColors` | `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581`): team color frame around **non**-stationary units |
+//! | HITS | `GameManager_DisplayButtonHits` | `DrawMap_RenderUnitDisplays` (`drawmap.cpp:605-669`): a `hits` bar under the unit |
+//! | AMMO | `GameManager_DisplayButtonAmmo` | the same place: a second `ammo` bar only for own team |
+//! | RANGE | `GameManager_DisplayButtonRange` | `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:947`): a circle of radius `ATTRIB_RANGE` |
+//! | SCAN | `GameManager_DisplayButtonScan` | the same place (`:956`): a circle of radius `ATTRIB_SCAN` |
 //! | GRID | `GameManager_DisplayButtonGrid` | `DrawMap_RenderMapTiles(..., display_button_grid)` → `DrawMap_RenderSimpleGridOverlay` / `DrawMap_RenderComplexGridOverlay` (`drawmap.cpp:922/956`) |
-//! | NAME | `GameManager_DisplayButtonNames` | `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747`): имя юнита над ним |
+//! | NAME | `GameManager_DisplayButtonNames` | `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747`): the unit name above it |
 //!
-//! Все флаги — обычные переключатели `CTInfo::display_button_*`
-//! (`GameManager_MenuClick*Button`, `game_manager.cpp:3800-3990`): нажатие
-//! меняет флаг и переключает картинку `*_ON` (`SetRestState`), а
-//! `UpdateDrawBounds` перерисовывает карту. В порте флаги живут в
-//! [`crate::panels::PanelState`], клик по кнопке уже их переключает
-//! ([`crate::ui`]) — здесь только отрисовка.
+//! All flags are regular `CTInfo::display_button_*` toggles
+//! (`GameManager_MenuClick*Button`, `game_manager.cpp:3800-3990`): a press
+//! changes the flag and toggles the `*_ON` picture (`SetRestState`), and
+//! `UpdateDrawBounds` redraws the map. In the port the flags live in
+//! [`crate::panels::PanelState`], a button click already toggles them
+//! ([`crate::ui`]) — here there is only drawing.
 
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState};
 use max_core::unit::UnitInfo;
@@ -30,7 +30,7 @@ use max_render::viewport::{Viewport, MAP_TILE_PIXELS};
 use crate::panels::UiPalette;
 use crate::App;
 
-/// Индексы палитры окна (`color.h:36-43`).
+/// Window palette indices (`color.h:36-43`).
 pub const COLOR_BLACK: u8 = 0x00;
 /// `COLOR_RED`.
 pub const COLOR_RED: u8 = 0x01;
@@ -42,19 +42,19 @@ pub const COLOR_BLUE: u8 = 0x03;
 pub const COLOR_YELLOW: u8 = 0x04;
 /// `COLOR_CHROME_YELLOW`.
 pub const COLOR_CHROME_YELLOW: u8 = 0x05;
-/// Цвет «derelict» (`drawmap.cpp:595`).
+/// «derelict» color (`drawmap.cpp:595`).
 pub const COLOR_DERELICT: u8 = 0xA9;
-/// Цвет серой команды (`drawmap.cpp:592`).
+/// Gray team color (`drawmap.cpp:592`).
 pub const COLOR_GRAY: u8 = 0xFF;
 
-/// Цвета сетки по типу поверхности — `World::Init`
-/// (`world.cpp:536-539`): RGB **делённый на 4**, затем `Color_MapColor`.
+/// Grid colors by surface type — `World::Init`
+/// (`world.cpp:536-539`): RGB **divided by 4**, then `Color_MapColor`.
 pub const GRID_RGB_LAND: [u8; 3] = [49 / 4, 97 / 4, 8 / 4];
-/// Сетка по воде (`world.cpp:537`).
+/// Water grid (`world.cpp:537`).
 pub const GRID_RGB_WATER: [u8; 3] = [58 / 4, 81 / 4, 173 / 4];
-/// Сетка по побережью (`world.cpp:538`).
+/// Coast grid (`world.cpp:538`).
 pub const GRID_RGB_COAST: [u8; 3] = [82 / 4, 158 / 4, 20 / 4];
-/// Сетка по воздуху (`world.cpp:539`).
+/// Air grid (`world.cpp:539`).
 pub const GRID_RGB_AIR: [u8; 3] = [206 / 4, 32 / 4, 0 / 4];
 
 /// `World::GetGridOverlayColor(surface_type)` (`world.cpp:1040`).
@@ -72,11 +72,11 @@ pub fn grid_color(palette: &UiPalette, surface: Surface) -> Rgba {
     palette.map_color(rgb)
 }
 
-/// Экранный прямоугольник юнита — как в `DrawMap_RenderUnitDisplays`
+/// Screen rectangle of a unit — as in `DrawMap_RenderUnitDisplays`
 /// (`drawmap.cpp:543-577`).
 ///
-/// C++ считает от `unit->x/y` (центр спрайта в мировых пикселях) и
-/// `unit_size` 64/32 world px, затем переводит в экранные:
+/// C++ computes from `unit->x/y` (sprite center in world pixels) and
+/// `unit_size` 64/32 world px, then converts to screen:
 /// `screen = (world * 65536) / scaling = world * zoom / 64`.
 fn unit_screen_rect(unit: &UnitInfo, visual: (f32, f32), viewport: &Viewport) -> (PixelRect, i32) {
     let building = unit.is_quad();
@@ -90,8 +90,8 @@ fn unit_screen_rect(unit: &UnitInfo, visual: (f32, f32), viewport: &Viewport) ->
     (PixelRect::new(ulx, uly, size, size), size)
 }
 
-/// `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`): рамка 1 px из четырёх
-/// линий по габариту юнита.
+/// `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`): a 1 px frame of four
+/// lines along the unit bounds.
 fn draw_color_frame(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba) -> u32 {
     let mut painted = 0u32;
 
@@ -108,15 +108,15 @@ fn draw_color_frame(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba) -> u32
     painted
 }
 
-/// Индекс палитры цвета команды по её слоту — `TeamUnits::hash_team_id`
+/// Palette index of the team color by its slot — `TeamUnits::hash_team_id`
 /// (`resource_manager.cpp:969-981`).
 ///
-/// C++ хранит цвет команды битом в `unit->flags` (`UnitInfo::UnitInfo`,
-/// `unitinfo.cpp:179`), а `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`)
-/// выбирает по нему `COLOR_RED/GREEN/BLUE/0xFF`. Порт те же биты при спавне не
-/// пишет (набор флагов входит в эталонный дайджест) и восстанавливает цвет тем
-/// же отображением слот→цвет из `unit.team`
-/// ([`max_core::team::hash_team_id`]); биты из сейвов honoured напрямую.
+/// C++ stores the team color as a bit in `unit->flags` (`UnitInfo::UnitInfo`,
+/// `unitinfo.cpp:179`), and `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`)
+/// picks `COLOR_RED/GREEN/BLUE/0xFF` from it. The port does not write the same bits at
+/// spawn (the flag set is part of the reference digest) and restores the color with the
+/// same slot→color mapping from `unit.team`
+/// ([`max_core::team::hash_team_id`]); bits from saves are honoured directly.
 pub const fn team_color_index(team: max_core::team::TeamId) -> u8 {
     let hash = max_core::team::hash_team_id(team);
 
@@ -133,14 +133,14 @@ pub const fn team_color_index(team: max_core::team::TeamId) -> u8 {
     }
 }
 
-/// Цвет рамки `COLORS` по флагам команды (`drawmap.cpp:581-598`), как в C++.
+/// `COLORS` frame color by the team flags (`drawmap.cpp:581-598`), as in C++.
 ///
-/// Биты `HASH_TEAM_*` — цвет **команды** (слота RED/GREEN/BLUE/GRAY), а не
-/// `team_clan`: `team_clan` в C++ задаёт только клановые кадры шахты
-/// (`unitinfo.cpp:282`) и торговые модификаторы, к цвету рамки отношения не
-/// имеет. Если битов в `flags` нет (новые юниты порта, синтетические тесты) —
-/// берётся то же отображение `unit.team → цвет` ([`team_color_index`]); юнит
-/// без команды (ALIEN/derelict) рисуется `COLOR_DERELICT`.
+/// `HASH_TEAM_*` bits are the **team** color (RED/GREEN/BLUE/GRAY slot), not
+/// `team_clan`: in C++ `team_clan` defines only the mine clan frames
+/// (`unitinfo.cpp:282`) and trade modifiers, it has nothing to do with the frame
+/// color. If there are no bits in `flags` (new port units, synthetic tests) —
+/// the same `unit.team → color` mapping is taken ([`team_color_index`]); a unit
+/// without a team (ALIEN/derelict) is drawn with `COLOR_DERELICT`.
 pub fn team_frame_color(palette: &UiPalette, unit: &UnitInfo) -> Rgba {
     let index = if unit.flags & unit_flags::HASH_TEAM_RED != 0 {
         COLOR_RED
@@ -159,7 +159,7 @@ pub fn team_frame_color(palette: &UiPalette, unit: &UnitInfo) -> Rgba {
     palette.rgba(index)
 }
 
-/// `Gfx_RenderCircle` (`gfx.cpp:536`): контур круга по восьми октантам.
+/// `Gfx_RenderCircle` (`gfx.cpp:536`): a circle outline over eight octants.
 fn draw_circle(frame: &mut RgbaBuffer, xc: i32, yc: i32, radius: i32, color: Rgba) -> u32 {
     if radius <= 0 {
         return 0;
@@ -209,7 +209,7 @@ fn draw_circle(frame: &mut RgbaBuffer, xc: i32, yc: i32, radius: i32, color: Rgb
     painted
 }
 
-/// `DrawMap_RenderBarDisplay` (`drawmap.cpp:429`) — заливка прямоугольника.
+/// `DrawMap_RenderBarDisplay` (`drawmap.cpp:429`) — rectangle fill.
 fn fill_bar(frame: &mut RgbaBuffer, ulx: i32, uly: i32, lrx: i32, lry: i32, color: Rgba) -> u32 {
     let width = lrx - ulx + 1;
     let height = lry - uly + 1;
@@ -221,7 +221,7 @@ fn fill_bar(frame: &mut RgbaBuffer, ulx: i32, uly: i32, lrx: i32, lry: i32, colo
     frame.fill_rect(PixelRect::new(ulx, uly, width, height), color)
 }
 
-/// Копирует `SimpleImage` с прозрачностью (индекс `image.transparent`).
+/// Copies a `SimpleImage` with transparency (the `image.transparent` index).
 fn blit_simple(
     frame: &mut RgbaBuffer,
     image: &max_assets::image::SimpleImage,
@@ -250,7 +250,7 @@ fn blit_simple(
     painted
 }
 
-/// `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444-509`): иконки состояния.
+/// `DrawMap_RenderStatusDisplay` (`drawmap.cpp:444-509`): status icons.
 fn draw_status_icons(
     frame: &mut RgbaBuffer,
     rect: PixelRect,
@@ -258,7 +258,7 @@ fn draw_status_icons(
     palette: &UiPalette,
     icons: &crate::panels::StatusIcons,
 ) -> u32 {
-    // C++ зовёт `DrawMap_RenderStatusDisplay(unit, ulx - 1, uly - 1, lrx + 2, lry + 2)`.
+    // C++ calls `DrawMap_RenderStatusDisplay(unit, ulx - 1, uly - 1, lrx + 2, lry + 2)`.
     let ulx = rect.ulx - 1;
     let uly = rect.uly - 1;
     let mut width = rect.lrx() + 2;
@@ -353,8 +353,8 @@ fn draw_status_icons(
     painted
 }
 
-/// `DrawMap_RenderUnitDisplays` (`drawmap.cpp:605-669`): две полоски —
-/// `hits` и `ammo` — под юнитом.
+/// `DrawMap_RenderUnitDisplays` (`drawmap.cpp:605-669`): two bars —
+/// `hits` and `ammo` — under the unit.
 #[allow(clippy::too_many_arguments)]
 fn draw_hit_ammo_bars(
     frame: &mut RgbaBuffer,
@@ -441,9 +441,9 @@ fn draw_hit_ammo_bars(
 
 /// `DrawMap_RenderNamesDisplay` + `DrawMap_RenderTextBox` (`drawmap.cpp:692-777`).
 ///
-/// Шрифт по масштабу: `zoom_level = Gfx_ZoomLevel`, для не-зданий `/ 2`;
-/// `>= 42` — `FONT_1`, `>= 24` — `FONT_5`, иначе `FONT_2`. Цвет C++ —
-/// `GNW_TEXT_OUTLINE | COLOR_YELLOW`; порт пишет жёлтым с чёрной обводкой.
+/// Font by scale: `zoom_level = Gfx_ZoomLevel`, for non-buildings `/ 2`;
+/// `>= 42` — `FONT_1`, `>= 24` — `FONT_5`, otherwise `FONT_2`. The C++ color —
+/// `GNW_TEXT_OUTLINE | COLOR_YELLOW`; the port writes yellow with a black outline.
 fn draw_unit_name(
     frame: &mut RgbaBuffer,
     unit: &UnitInfo,
@@ -452,8 +452,8 @@ fn draw_unit_name(
     palette: &UiPalette,
 ) -> u32 {
     let building = unit.is_quad();
-    // `text_area` = габарит юнита, врезанный на 4 px (`drawmap.cpp:707-710`):
-    // `ulx = (unit->x - unit_size/2) + 4`, `lrx - ulx = unit_size - 8`, где
+    // `text_area` = unit bounds, inset by 4 px (`drawmap.cpp:707-710`):
+    // `ulx = (unit->x - unit_size/2) + 4`, `lrx - ulx = unit_size - 8`, where
     // `unit_size` 128/64 world px.
     let text_area = PixelRect::new(rect.ulx + 4, rect.uly + 4, (rect.width - 6).max(1), (rect.height - 6).max(1));
     let text = crate::panels::unit_name(unit);
@@ -494,10 +494,10 @@ fn draw_unit_name(
 }
 
 /// `DrawMap_RenderUnitDisplays` (`drawmap.cpp:543`) — COLORS/STATUS/HITS/AMMO
-/// поверх спрайта юнита, затем `DrawMap_RenderNamesDisplay` (`:747`).
+/// over the unit sprite, then `DrawMap_RenderNamesDisplay` (`:747`).
 ///
-/// Вызывается после [`crate::App::draw_units`], как в C++: `DrawMap_RenderUnit`
-/// рисует спрайт, а сразу за ним — индикаторы этого юнита.
+/// Called after [`crate::App::draw_units`], as in C++: `DrawMap_RenderUnit`
+/// draws the sprite, and immediately after it — the indicators of this unit.
 pub fn draw_unit_overlays(
     frame: &mut RgbaBuffer,
     app: &App,
@@ -533,8 +533,8 @@ pub fn draw_unit_overlays(
             continue;
         }
 
-        // `UnitInfoGroup::IsRelevant` — idle-юниты не рисуются, значит и
-        // индикаторов у них нет.
+        // `UnitInfoGroup::IsRelevant` — idle units are not drawn, so they have
+        // no indicators either.
         if unit.orders == UnitOrder::Idle
             || (unit.flags & unit_flags::GROUND_COVER != 0 && viewport.zoom() < 8)
         {
@@ -583,11 +583,11 @@ pub fn draw_unit_overlays(
 }
 
 /// `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:933-960`):
-/// круги радиуса `ATTRIB_RANGE` (RANGE) и `ATTRIB_SCAN` (SCAN) вокруг
-/// выделенного юнита.
+/// circles of radius `ATTRIB_RANGE` (RANGE) and `ATTRIB_SCAN` (SCAN) around
+/// the selected unit.
 ///
-/// Цвет RANGE — `COLOR_RED`, но `COLOR_CHROME_YELLOW`, если юнит может бить
-/// воздух (`Access_GetValidAttackTargetTypes(type) & MOBILE_AIR_UNIT`);
+/// The RANGE color is `COLOR_RED`, but `COLOR_CHROME_YELLOW` if the unit can hit
+/// air (`Access_GetValidAttackTargetTypes(type) & MOBILE_AIR_UNIT`);
 /// SCAN — `COLOR_YELLOW`.
 pub fn draw_range_scan(
     frame: &mut RgbaBuffer,
@@ -614,7 +614,7 @@ pub fn draw_range_scan(
         return 0;
     }
 
-    // Состояния, в которых C++ рисует индикаторы.
+    // States in which C++ draws the indicators.
     let drawable = matches!(
         unit.state,
         UnitOrderState::ExecutingOrder
@@ -631,7 +631,7 @@ pub fn draw_range_scan(
     } else {
         MAP_TILE_PIXELS / 2
     };
-    // `bounds.ulx = grid_x * GFX_MAP_TILE_SIZE + unit_size` (мировые пиксели).
+    // `bounds.ulx = grid_x * GFX_MAP_TILE_SIZE + unit_size` (world pixels).
     let center_world_x = i32::from(unit.grid.x) * MAP_TILE_PIXELS + world_size;
     let center_world_y = i32::from(unit.grid.y) * MAP_TILE_PIXELS + world_size;
     let (cx, cy) = viewport.world_to_screen(center_world_x, center_world_y);
@@ -678,12 +678,12 @@ pub fn draw_range_scan(
 }
 
 /// `DrawMap_RenderMapTiles(..., display_button_grid)` (`drawmap.cpp:1050-1060`):
-/// сетка клеток поверх тайлов, под юнитами.
+/// grid of cells over the tiles, under the units.
 ///
-/// * `complex_grid_overlay = 0` → `DrawMap_RenderSimpleGridOverlay`: линии
-///   цветом **суши** (`GetGridOverlayColor(SURFACE_TYPE_LAND)`);
-/// * `complex_grid_overlay = 1` → `DrawMap_RenderComplexGridOverlay`: верхняя и
-///   левая границы каждой клетки цветом её поверхности.
+/// * `complex_grid_overlay = 0` → `DrawMap_RenderSimpleGridOverlay`: lines
+///   in the **land** color (`GetGridOverlayColor(SURFACE_TYPE_LAND)`);
+/// * `complex_grid_overlay = 1` → `DrawMap_RenderComplexGridOverlay`: the top and
+///   left border of each cell in the color of its surface.
 pub fn draw_grid(
     frame: &mut RgbaBuffer,
     app: &App,
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn grid_colors_follow_the_world_overlay_table() {
-        // `world.cpp:536-539`: RGB / 4 (целочисленно), затем `Color_MapColor`.
+        // `world.cpp:536-539`: RGB / 4 (integer), then `Color_MapColor`.
         assert_eq!(GRID_RGB_LAND, [12, 24, 2]);
         assert_eq!(GRID_RGB_WATER, [14, 20, 43]);
         assert_eq!(GRID_RGB_COAST, [20, 39, 5]);

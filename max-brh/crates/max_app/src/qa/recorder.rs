@@ -1,52 +1,52 @@
-//! Запись `.qa`-сценария вручную (слой 2.5 QA): ввод игрока в окне → команды
-//! драйвера [`crate::qa::runner`].
+//! Recording a `.qa` scenario manually (QA layer 2.5): player input in the window → driver
+//! commands of [`crate::qa::runner`].
 //!
-//! Идея: в `main.rs` SDL-событие уже переведено в [`InputEvent`] **в пикселях
-//! кадра 640×480** (`SdlWindow::poll_input` делает обратный пересчёт масштаба
-//! окна), поэтому рекордеру не нужен ни SDL, ни знание о раскладке окна. Он
-//! получает тот же поток событий, что уходит в `Screen::handle_input` /
-//! `handle_session_input`, и превращает его в строки языка `.qa`:
+//! Idea: in `main.rs` the SDL event is already translated into [`InputEvent`] **in pixels
+//! of the 640×480 frame** (`SdlWindow::poll_input` does the reverse window scale
+//! conversion), so the recorder needs neither SDL nor knowledge of the window layout. It
+//! receives the same event stream that goes to `Screen::handle_input` /
+//! `handle_session_input`, and turns it into `.qa` language lines:
 //!
-//! | Ввод | Команда |
+//! | Input | Command |
 //! |---|---|
-//! | LMB по точке кадра | `click X Y` |
-//! | RMB по точке кадра | `rclick X Y` |
-//! | Enter/Esc/Tab/Backspace/стрелки | `key ENTER`, `key ESC`, … |
-//! | печатный символ вне текстового ввода | `key A` (ровно нажатие) |
-//! | символы внутри открытого текстового ввода (чат: T/Enter в сессии) | одна `type "…"` |
-//! | пауза между событиями | `wait N`, `N = min(кадров, cap)` |
+//! | LMB at a frame point | `click X Y` |
+//! | RMB at a frame point | `rclick X Y` |
+//! | Enter/Esc/Tab/Backspace/arrows | `key ENTER`, `key ESC`, … |
+//! | printable character outside text input | `key A` (exactly the press) |
+//! | characters inside an open text input (chat: T/Enter in a session) | one `type "…"` |
+//! | pause between events | `wait N`, `N = min(frames, cap)` |
 //!
-//! # Почему запись воспроизводима
+//! # Why the recording is reproducible
 //!
-//! Координаты — пиксели кадра, а не окна: при `--scale 3` клик в окне
-//! 1920×1440 всё равно запишется как точка 640×480. Скрипт запускается тем же
-//! `qa_run` и тем же стартовым состоянием (та же планета/seed/настройки),
-//! поэтому проходит тот же путь игрока.
+//! Coordinates are frame pixels, not window pixels: with `--scale 3` a click in the
+//! 1920×1440 window is still recorded as a 640×480 point. The script is run by the same
+//! `qa_run` and the same initial state (same planet/seed/settings),
+//! so it goes through the same player path.
 //!
-//! # Ограничения (осознанные)
+//! # Limitations (deliberate)
 //!
-//! * **`type` — только вставка символов**: Backspace не входит в грамматику
-//!   `type`. Рекордер сбрасывает накопленный текст отдельной `type`, а сам
-//!   Backspace пишет как `key BACKSPACE`; порядок ввода сохраняется, но
-//!   удаление «в середине» воспроизводится как отдельная команда, а не как
-//!   правка внутри `type`.
-//! * **Движение мыши не пишется**: `MouseMove` не влияет на состояние игры
-//!   (только подсветка), иначе скрипт распух бы на тысячу строк.
-//! * **`Key::Other`** (модификаторы, F-клавиши) не имеет команды в языке —
-//!   пропускается.
-//! * **Пробел и управляющие символы вне текстового ввода** не выражаются
-//!   однобуквенным `key` — пропускаются (внутри `type` пробел пишется).
-//! * **Клик вне кадра** (чёрные поля при масштабировании) даёт `(-1, -1)`
-//!   от `poll_input` и не пишется — парсер такие координаты отклонил бы.
-//! * **Сетевую сессию** записать можно, но `qa_run` не поднимает сеть:
-//!   воспроизводимы локальные партии (`--ui` → New Game). Для сети запись —
-//!   справочный артефакт.
-//! * Если выход случился при открытом текстовом вводе, файл заканчивается
-//!   `type` без закрывающего `key` — на реплее строка останется открытой;
-//!   QA-инженер дописывает `key ENTER`/`key ESC` вручную.
+//! * **`type` is only insertion of characters**: Backspace is not part of the `type`
+//!   grammar. The recorder flushes the accumulated text as a separate `type`, and
+//!   Backspace itself is written as `key BACKSPACE`; the input order is preserved, but
+//!   a deletion "in the middle" is reproduced as a separate command rather than as
+//!   an edit inside `type`.
+//! * **Mouse movement is not recorded**: `MouseMove` does not affect the game state
+//!   (only highlighting), otherwise the script would swell by a thousand lines.
+//! * **`Key::Other`** (modifiers, F-keys) has no command in the language —
+//!   it is skipped.
+//! * **Space and control characters outside text input** are not expressible
+//!   by a single-letter `key` — they are skipped (inside `type` a space is written).
+//! * **A click outside the frame** (black bars when scaling) yields `(-1, -1)`
+//!   from `poll_input` and is not written — the parser would reject such coordinates.
+//! * **A network session** can be recorded, but `qa_run` does not bring up the network:
+//!   local matches are reproducible (`--ui` → New Game). For the network the recording is
+//!   a reference artifact.
+//! * If the exit happened with an open text input, the file ends with
+//!   `type` without a closing `key` — on replay the line will stay open;
+//!   the QA engineer adds `key ENTER`/`key ESC` manually.
 //!
-//! Заголовок файла — комментарии (`#`), поэтому `qa::script` разбирает файл
-//! целиком, без предварительной обработки.
+//! The file header is comments (`#`), so `qa::script` parses the file
+//! as a whole, without preprocessing.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -56,32 +56,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::qa::script::{FRAME_HEIGHT, FRAME_WIDTH};
 use crate::ui::{InputEvent, Key};
 
-/// Сколько кадров паузы максимум пишется в `wait N`.
+/// How many pause frames at most are written into `wait N`.
 ///
-/// Игрок «думает» секундами, а прогон CI не должен растягиваться: 120 кадров —
-/// примерно 2 секунды при 60 FPS. Всё, что дольше, режется до этого значения.
+/// The player "thinks" in seconds, while a CI run must not stretch: 120 frames is
+/// about 2 seconds at 60 FPS. Anything longer is clipped to this value.
 pub const DEFAULT_PAUSE_CAP: u32 = 120;
 
-/// Что рекордер знает о состоянии UI на момент события.
+/// What the recorder knows about the UI state at the moment of the event.
 ///
-/// `text_open` — авторитетный признак открытого текстового ввода
-/// (`App::hud().chat.is_active()` в сессии). Пока он `true`, печатные символы
-/// копятся в одну команду `type`; открытие/закрытие ввода (`T`/`Enter`/`Esc`)
-/// остаётся отдельными `key`.
+/// `text_open` — the authoritative sign of an open text input
+/// (`App::hud().chat.is_active()` in a session). While it is `true`, printable
+/// characters accumulate into one `type` command; opening/closing the input (`T`/`Enter`/`Esc`)
+/// remains separate `key`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RecordContext {
-    /// Идёт партия (`Screen::InSession` / сетевой `FrameSink`).
+    /// A match is in progress (`Screen::InSession` / network `FrameSink`).
     pub in_session: bool,
-    /// Текстовый ввод открыт **до** этого события.
+    /// The text input was open **before** this event.
     pub text_open: bool,
 }
 
-/// Запись действий игрока в `.qa`-файл.
+/// Recording of player actions into a `.qa` file.
 ///
-/// Пишет построчно и сбрасывает буфер на диск после каждой команды: если
-/// приложение упадёт, уже записанные шаги останутся в файле. [`Recorder::finish`]
-/// дописывает хвост (незакрытый `type`, паузу после последнего события,
-/// финальный комментарий).
+/// Writes line by line and flushes the buffer to disk after each command: if the
+/// application crashes, the already recorded steps remain in the file. [`Recorder::finish`]
+/// appends the tail (an unclosed `type`, the pause after the last event,
+/// the final comment).
 pub struct Recorder {
     path: Option<PathBuf>,
     out: Option<BufWriter<File>>,
@@ -111,11 +111,11 @@ impl std::fmt::Debug for Recorder {
 }
 
 impl Recorder {
-    /// Создаёт файл записи.
+    /// Creates the recording file.
     ///
-    /// Если `path` уже существует, берётся свободное имя с суффиксом:
-    /// `run.qa` → `run-1.qa` → `run-2.qa` … (существующий файл никогда не
-    /// перезаписывается без явного согласия пользователя).
+    /// If `path` already exists, a free name with a suffix is taken:
+    /// `run.qa` → `run-1.qa` → `run-2.qa` … (an existing file is never
+    /// overwritten without explicit user consent).
     pub fn new(path: impl Into<PathBuf>) -> io::Result<Self> {
         let requested = path.into();
         let path = unique_path(&requested);
@@ -130,7 +130,7 @@ impl Recorder {
         Ok(recorder)
     }
 
-    /// Рекордер в память (для тестов и API без файла).
+    /// Recorder into memory (for tests and APIs without a file).
     pub fn in_memory() -> Self {
         Self::with_path(None, None)
     }
@@ -153,60 +153,60 @@ impl Recorder {
         }
     }
 
-    /// Другой cap паузы (кадры; `0` — паузы не писать).
+    /// Another pause cap (frames; `0` — do not write pauses).
     pub fn with_pause_cap(mut self, cap: u32) -> Self {
         self.pause_cap = cap;
         self
     }
 
-    /// Файл, в который идёт запись (`None` — запись в память).
+    /// The file being recorded into (`None` — recording into memory).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
-    /// Заголовок файла (строки-комментарии без завершающего `\n`).
+    /// File header (comment lines without a trailing `\n`).
     pub fn header(&self) -> &[String] {
         &self.header
     }
 
-    /// Записанные команды (без заголовка и финального комментария).
+    /// Recorded commands (without the header and the final comment).
     pub fn commands(&self) -> &[String] {
         &self.commands
     }
 
-    /// Сколько значимых событий увидел рекордер.
+    /// How many significant events the recorder has seen.
     pub fn events(&self) -> usize {
         self.events
     }
 
-    /// Текущий номер кадра (для диагностики/тестов).
+    /// Current frame number (for diagnostics/tests).
     pub fn frame(&self) -> u64 {
         self.frame
     }
 
-    /// Ошибка записи на диск, если она была (первая).
+    /// The disk write error, if any (the first one).
     pub fn write_error(&self) -> Option<&str> {
         self.write_error.as_deref()
     }
 
-    /// Начался новый кадр приложения.
+    /// A new application frame has started.
     ///
-    /// Вызывается ровно один раз за итерацию игрового цикла: паузы в `wait`
-    /// считаются как разница номеров кадров между событиями.
+    /// Called exactly once per game loop iteration: pauses in `wait`
+    /// are computed as the difference of frame numbers between events.
     pub fn begin_frame(&mut self) {
         self.frame = self.frame.saturating_add(1);
     }
 
-    /// Записывает одно событие ввода.
+    /// Records one input event.
     ///
-    /// `context` должен отражать состояние UI **до** применения события
-    /// (в `main.rs` — `app.hud().chat.is_active()`). Незначимые события
-    /// (движение мыши, клик вне кадра, `Key::Other`) не создают команд и не
-    /// сдвигают отсчёт паузы.
+    /// `context` must reflect the UI state **before** the event is applied
+    /// (in `main.rs` — `app.hud().chat.is_active()`). Insignificant events
+    /// (mouse movement, a click outside the frame, `Key::Other`) create no commands and do not
+    /// shift the pause countdown.
     pub fn record(&mut self, event: InputEvent, context: RecordContext) {
         match event {
             InputEvent::MouseMove(..) => {}
-            // Пока открыт чат, мышь игнорируется самим UI — не пишем её и мы.
+            // While the chat is open, the UI itself ignores the mouse — so we do not write it either.
             InputEvent::MouseClick(..) | InputEvent::RightClick(..) if context.text_open => {}
             InputEvent::MouseClick(x, y) => self.record_click("click", x, y),
             InputEvent::RightClick(x, y) => self.record_click("rclick", x, y),
@@ -215,10 +215,10 @@ impl Recorder {
         }
     }
 
-    /// Завершает запись: сбрасывает открытый `type`, пишет паузу после
-    /// последнего события и финальный комментарий.
+    /// Finishes the recording: flushes the open `type`, writes the pause after
+    /// the last event and the final comment.
     ///
-    /// Возвращает путь записанного файла (`None` для записи в память).
+    /// Returns the path of the recorded file (`None` for recording into memory).
     pub fn finish(&mut self) -> io::Result<Option<PathBuf>> {
         if !self.finished {
             self.flush_text();
@@ -247,7 +247,7 @@ impl Recorder {
     }
 
     // -----------------------------------------------------------------------
-    // Команды
+    // Commands
     // -----------------------------------------------------------------------
 
     fn record_click(&mut self, name: &str, x: i32, y: i32) {
@@ -313,11 +313,11 @@ impl Recorder {
         self.events += 1;
     }
 
-    /// Сбрасывает накопленный текст в `type "…"`.
+    /// Flushes the accumulated text into `type "…"`.
     ///
-    /// Пауза перед началом набора пишется **перед** `type`, а пауза после
-    /// последнего символа останется у следующей команды — так реплей
-    /// сохраняет и «долго думал перед вводом», и «долго думал после».
+    /// The pause before typing starts is written **before** `type`, and the pause after
+    /// the last character stays with the next command — this way the replay
+    /// preserves both "thought for a long time before typing" and "thought for a long time after".
     fn flush_text(&mut self) {
         if self.text.is_empty() {
             return;
@@ -330,8 +330,8 @@ impl Recorder {
         let end = self.text_last_frame.take().unwrap_or(start);
 
         self.push_wait_to(start);
-        // Кавычки внутри текста parse_text сохраняет: он срезает только
-        // внешние, поэтому `type "…"` кодирует любой ASCII из чата.
+        // parse_text keeps quotes inside the text: it strips only the
+        // outer ones, so `type "…"` encodes any ASCII from the chat.
         self.push_line(format!("type \"{text}\""));
         self.last_command_frame = Some(end);
     }
@@ -361,7 +361,7 @@ impl Recorder {
     }
 
     // -----------------------------------------------------------------------
-    // Файл
+    // File
     // -----------------------------------------------------------------------
 
     fn write_header(&mut self) -> io::Result<()> {
@@ -379,7 +379,7 @@ impl Recorder {
         self.push_comment(line);
     }
 
-    /// Комментарий/заголовок: пишется в файл, но не в [`Self::commands`].
+    /// Comment/header: written to the file but not to [`Self::commands`].
     fn push_comment(&mut self, line: String) {
         if self.write_error.is_none() {
             if let Err(error) = self.write_raw(&line) {
@@ -407,7 +407,7 @@ impl Drop for Recorder {
     }
 }
 
-/// Строка `key` для клавиши или `None`, если язык её не выражает.
+/// The `key` line for a key, or `None` if the language does not express it.
 fn key_line(key: Key) -> Option<String> {
     let name = match key {
         Key::Enter => "ENTER",
@@ -429,12 +429,12 @@ fn key_line(key: Key) -> Option<String> {
     Some(format!("key {name}"))
 }
 
-/// Символ можно записать внутрь `type "…"`: печатный ASCII (пробел включён).
+/// The character can be written inside `type "…"`: printable ASCII (space included).
 fn is_typeable(character: char) -> bool {
     character.is_ascii() && !character.is_ascii_control()
 }
 
-/// Свободное имя: существующий файл не перезаписывается, добавляется `-N`.
+/// A free name: an existing file is not overwritten, `-N` is appended.
 fn unique_path(path: &Path) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
@@ -486,7 +486,7 @@ fn build_label() -> String {
     )
 }
 
-/// UTC-время `YYYY-MM-DD HH:MM:SS UTC` без внешних крейтов.
+/// UTC time `YYYY-MM-DD HH:MM:SS UTC` without external crates.
 fn utc_timestamp() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -504,7 +504,7 @@ fn utc_timestamp() -> String {
     )
 }
 
-/// Дни от 1970-01-01 → (год, месяц, день) по алгоритму Говарда Хиннанта.
+/// Days from 1970-01-01 → (year, month, day) by Howard Hinnant's algorithm.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let days = days + 719_468;
     let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
@@ -561,7 +561,7 @@ mod tests {
                 "rclick 0 0"
             ]
         );
-        // Первое событие — без wait: паузы пишутся только между событиями.
+        // The first event — without wait: pauses are written only between events.
         assert_eq!(recorder.events(), 3);
     }
 
@@ -597,7 +597,7 @@ mod tests {
         ] {
             record(&mut recorder, InputEvent::Key(key));
         }
-        // Вне текстового ввода пробел и прочие клавиши не выражаются.
+        // Outside text input the space and other keys are not expressible.
         record(&mut recorder, InputEvent::Key(Key::Char(' ')));
         record(&mut recorder, InputEvent::Key(Key::Other));
 
@@ -626,7 +626,7 @@ mod tests {
             text_open: false,
         };
 
-        // Enter в сессии открывает чат — это отдельный key.
+        // Enter in a session opens the chat — this is a separate key.
         recorder.record(InputEvent::Key(Key::Enter), session);
         let open = RecordContext {
             in_session: true,
@@ -637,7 +637,7 @@ mod tests {
             recorder.record(InputEvent::Key(Key::Char(character)), open);
         }
 
-        // Enter отправляет сообщение: type закрывается, затем key ENTER.
+        // Enter sends the message: type is closed, then key ENTER.
         recorder.record(InputEvent::Key(Key::Enter), open);
 
         assert_eq!(
@@ -757,7 +757,7 @@ mod tests {
     fn typical_session_reads_like_a_qa_script() {
         let mut recorder = Recorder::in_memory();
 
-        // Главное меню → New Game.
+        // Main menu → New Game.
         click(&mut recorder, 485, 189);
         for _ in 0..2 {
             recorder.begin_frame();
@@ -774,14 +774,14 @@ mod tests {
         for _ in 0..2 {
             recorder.begin_frame();
         }
-        // Players: RED — человек, GREEN — компьютер, Done.
+        // Players: RED — human, GREEN — computer, Done.
         click(&mut recorder, 202, 102);
         click(&mut recorder, 312, 194);
         click(&mut recorder, 516, 440);
         for _ in 0..2 {
             recorder.begin_frame();
         }
-        // В партии: выделение, приказ движения, End Turn.
+        // In a match: selection, move order, End Turn.
         click(&mut recorder, 404, 242);
         for _ in 0..3 {
             recorder.begin_frame();
@@ -843,7 +843,7 @@ mod tests {
         assert_eq!(second_path, dir.join("run-1.qa"));
         assert!(second_path.is_file());
 
-        // Оба файла — валидные скрипты для qa::script.
+        // Both files are valid scripts for qa::script.
         for file in [&first_path, &second_path] {
             let text = std::fs::read_to_string(file).expect("read");
             let steps = crate::qa::script::parse_script(&text).expect("parse");

@@ -1,24 +1,24 @@
-//! `max-brh` — CLI клиента M.A.X. (крейт/библиотека — `max_app`).
+//! `max-brh` — M.A.X. client CLI (the crate/library is `max_app`).
 //!
-//! Режимы:
+//! Modes:
 //!
-//! * без флагов (или `--ui`) — интерактивное меню (создать/выбрать игру) и
-//!   сессия в окне SDL3: это режим по умолчанию, feature `sdl` входит в
-//!   default (`sdl-from-source`), т.е. `cargo run -p max_app` сразу открывает
-//!   игру;
-//! * `--demo <save> [--turns N]` — headless: V70-сейв → N тиков → digest;
-//! * `--new-game` — локальная партия на карте планеты + кадр в PPM (`--out`);
-//! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet-сессия;
-//!   без `--sdl` цикл headless, с `--sdl` — окно SDL3 (feature `sdl`).
+//! * without flags (or `--ui`) — the interactive menu (create/select a game) and
+//!   a session in an SDL3 window: this is the default mode, the `sdl` feature is part of
+//!   default (`sdl-from-source`), i.e. `cargo run -p max_app` immediately opens
+//!   the game;
+//! * `--demo <save> [--turns N]` — headless: V70 save → N ticks → digest;
+//! * `--new-game` — a local match on the planet map + a frame in PPM (`--out`);
+//! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet session;
+//!   without `--sdl` the loop is headless, with `--sdl` — an SDL3 window (feature `sdl`).
 //!
-//! Вся игровая логика — в библиотеке (`max_app`), здесь только разбор
-//! аргументов и SDL-обвязка. Примеры — в `README.md` крейта.
+//! All game logic is in the library (`max_app`); here there is only argument
+//! parsing and the SDL glue. Examples — in the crate's `README.md`.
 
-// Windows: GUI-сборки (`--features sdl*`) — подсистема `windows`, поэтому
-// двойной клик по `max-brh.exe` не открывает консоль. Консольная сборка клиента без
-// `sdl` остаётся console: `--demo`/`--new-game`/`--connect` печатают в stdout
-// терминала и CI. `sdl-vcpkg` и `sdl-from-source` включают `sdl` (см.
-// Cargo.toml), поэтому одного cfg достаточно для всех оконных фич.
+// Windows: GUI builds (`--features sdl*`) — the `windows` subsystem, so
+// double-clicking `max-brh.exe` does not open a console. A console build of the client without
+// `sdl` remains console: `--demo`/`--new-game`/`--connect` print to the terminal's
+// stdout and CI. `sdl-vcpkg` and `sdl-from-source` enable `sdl` (see
+// Cargo.toml), so one cfg is enough for all windowed features.
 #![cfg_attr(feature = "sdl", windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -48,7 +48,7 @@ use max_render::sdl_window::{WindowInput, WindowKey};
 const DEFAULT_SAVE: &str = "max-original/SAVE1.CAM";
 const DEFAULT_GRPC_PORT: u16 = 8082;
 
-/// Что запускать.
+/// What to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Demo,
@@ -57,7 +57,7 @@ enum Mode {
     Ui,
 }
 
-/// Разобранные аргументы CLI.
+/// Parsed CLI arguments.
 #[derive(Debug)]
 struct Cli {
     mode: Mode,
@@ -73,20 +73,20 @@ struct Cli {
     fuel: Option<u8>,
     gold: Option<u8>,
     derelicts: Option<u8>,
-    /// Попытки переподключения при разрыве (0 — выключить).
+    /// Reconnect attempts on a disconnect (0 — disable).
     reconnect_attempts: Option<u32>,
-    /// Таймаут одной попытки переподключения в секундах.
+    /// Timeout of one reconnect attempt in seconds.
     reconnect_timeout_secs: Option<u32>,
-    /// Сколько попыток первого подключения (Create game → Join → start).
+    /// How many first-connection attempts (Create game → Join → start).
     join_retry_attempts: Option<u32>,
-    /// Таймаут одной попытки первого подключения в секундах.
+    /// Timeout of one first-connection attempt in seconds.
     join_retry_timeout_secs: Option<u32>,
-    /// Окно ввода в фазе PLAY сессии, секунды (`0`/нет — headless: ход
-    /// закрывается сразу; см. `max_app::net::NetworkOptions::turn_wait`).
+    /// Input window in the session PLAY phase, seconds (`0`/absent — headless: the turn
+    /// closes immediately; see `max_app::net::NetworkOptions::turn_wait`).
     turn_wait_secs: Option<u32>,
-    /// Масштаб окна UI: `0`/нет — подобрать под рабочий стол (пункт F).
+    /// UI window scale: `0`/absent — fit to the desktop (item F).
     window_scale: Option<u32>,
-    /// Куда писать `.qa`-сценарий ручной игры (`--ui --record`).
+    /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
 }
 
@@ -97,8 +97,8 @@ impl Cli {
         Ok(cli)
     }
 
-    /// Разбор аргументов без проверки наличия SDL-фичи (её проверяет
-    /// [`Cli::parse`]): так CLI-тесты не зависят от feature-набора сборки.
+    /// Argument parsing without checking for the SDL feature (it is checked by
+    /// [`Cli::parse`]): this way CLI tests do not depend on the build's feature set.
     fn parse_from(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut cli = Self {
             mode: Mode::Ui,
@@ -298,16 +298,16 @@ impl Cli {
         cli.config.save = cli.save.clone();
         cli.config.demo_turns = cli.turns.unwrap_or(5);
 
-        // Каталоги по умолчанию — от корня репозитория; если не заданы явно и
-        // относительный путь не существует, пробуем запуск из `max-brh/`.
+        // Default directories — from the repository root; if not set explicitly and
+        // the relative path does not exist, try running from `max-brh/`.
         if !data_dir_set && !cli.config.max_res.exists() {
             if let Some(root) = repository_root() {
                 cli.config = cli.config.with_data_dir(root.join("max-original"));
             }
         }
-        // Явный --patches отключает fallback: клиент может намеренно указать
-        // несуществующий файл, повторяя семантику C++-сервера (отсутствующий
-        // файл даёт пустую часть data_hash в хендшейке).
+        // An explicit --patches disables the fallback: the client may deliberately point
+        // to a nonexistent file, repeating the semantics of the C++ server (a missing
+        // file gives an empty data_hash part in the handshake).
         if !assets_dir_set && !patches_explicit && !cli.config.patches_res.exists() {
             if let Some(root) = repository_root() {
                 cli.config = cli.config.with_assets_dir(root.join("assets"));
@@ -317,10 +317,10 @@ impl Cli {
         Ok(cli)
     }
 
-    /// GUI (режим по умолчанию, он же `--ui`) требует feature `sdl` — она в
-    /// default (`sdl-from-source`), поэтому сюда попадаем только у сборки с
-    /// `--no-default-features`. Headless-режимы (`--demo`/`--new-game`/
-    /// `--connect` без `--sdl`) SDL не требуют.
+    /// GUI (default mode, also `--ui`) requires the `sdl` feature — it is in
+    /// default (`sdl-from-source`), so we get here only with a build using
+    /// `--no-default-features`. Headless modes (`--demo`/`--new-game`/
+    /// `--connect` without `--sdl`) do not require SDL.
     #[cfg(not(feature = "sdl"))]
     fn ensure_gui_available(&self) -> Result<()> {
         if self.mode == Mode::Ui {
@@ -365,12 +365,12 @@ impl Cli {
     }
 }
 
-/// Уровень логов из `MAX_LOG`/`RUST_LOG`.
+/// Log level from `MAX_LOG`/`RUST_LOG`.
 ///
-/// `tracing-subscriber` собран без `env-filter`, поэтому `RUST_LOG` сам по
-/// себе не работает. Для smoke-логов (прохождение 52/54/45 и релей)
-/// принимаем простой уровень (`debug`, `trace`, …); `target=level` тоже
-/// принимается, но target игнорируется — уровень применяется глобально.
+/// `tracing-subscriber` is built without `env-filter`, so `RUST_LOG` by
+/// itself does not work. For smoke logs (passing 52/54/45 and the relay)
+/// we accept a simple level (`debug`, `trace`, …); `target=level` is also
+/// accepted, but the target is ignored — the level is applied globally.
 fn log_level() -> tracing_subscriber::filter::LevelFilter {
     for name in ["MAX_LOG", "RUST_LOG"] {
         let Ok(value) = std::env::var(name) else {
@@ -421,7 +421,7 @@ fn run(cli: Cli) -> Result<()> {
     })
 }
 
-/// `--demo <save> [--turns N]`: headless-прогон сейва.
+/// `--demo <save> [--turns N]`: headless run of a save.
 fn run_demo(cli: &Cli) -> Result<()> {
     let explicit = cli.save.is_some() || cli.config.save.is_some();
     let mut save = cli
@@ -430,8 +430,8 @@ fn run_demo(cli: &Cli) -> Result<()> {
         .or_else(|| cli.config.save.clone())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_SAVE));
 
-    // Путь по умолчанию задан от корня репозитория: пробуем тот же файл рядом
-    // с MAX.RES (каталог данных уже найден). Явно указанный путь не подменяем.
+    // The default path is set from the repository root: we try the same file next to
+    // MAX.RES (the data directory is already found). An explicitly given path is not substituted.
     if !explicit && !save.is_file() {
         if let Some(candidate) = cli
             .config
@@ -461,7 +461,7 @@ fn run_demo(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// `--new-game`: локальная генерация карты, кадр в PPM (`--out`).
+/// `--new-game`: local map generation, frame in PPM (`--out`).
 fn run_new_game(cli: &Cli) -> Result<()> {
     let mut app = App::new(cli.config.clone());
 
@@ -476,9 +476,9 @@ fn run_new_game(cli: &Cli) -> Result<()> {
     let report = app.new_game(&cli.new_game_config())?;
     print_new_game(&report);
 
-    // Как в оригинале: к началу партии выбран первый боеспособный юнит игрока
-    // со спрайтом — тогда кадр `--new-game` сразу показывает портрет,
-    // статистику и описание, а не пустые панели.
+    // As in the original: at the start of the match the first combat-capable unit of the player
+    // with a sprite is selected — then the `--new-game` frame immediately shows the portrait,
+    // statistics and description rather than empty panels.
     let selected = app
         .state()
         .unit_ids_in_order()
@@ -551,7 +551,7 @@ async fn run_connect(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// Политика ретрая первого подключения из CLI (`--join-retry-*`).
+/// First-connection retry policy from the CLI (`--join-retry-*`).
 fn join_retry_policy(cli: &Cli) -> JoinRetryPolicy {
     let mut policy = JoinRetryPolicy::default();
     if let Some(attempts) = cli.join_retry_attempts {
@@ -623,9 +623,9 @@ fn print_network(report: &NetworkReport) {
     println!("digest: {}", report.digest);
 }
 
-/// Один SDL-ввод окна → [`InputEvent`] UI.
+/// One SDL window input → the UI [`InputEvent`].
 ///
-/// Левая кнопка — выбор/атака, правая — приказ движения/отмена (M4.3).
+/// Left button — select/attack, right — move order/cancel (M4.3).
 #[cfg(feature = "sdl")]
 fn input_event(input: WindowInput) -> InputEvent {
     match input {
@@ -648,7 +648,7 @@ fn input_event(input: WindowInput) -> InputEvent {
     }
 }
 
-/// Окно SDL3: кадр библиотеки → текстура → экран.
+/// SDL3 window: library frame → texture → screen.
 #[cfg(feature = "sdl")]
 struct WindowSink {
     window: max_render::SdlWindow,
@@ -669,7 +669,7 @@ impl max_app::net::FrameSink for WindowSink {
     }
 }
 
-/// Запуск `--connect --sdl`: сетевой цикл рисует кадры в окно.
+/// Launch of `--connect --sdl`: the network loop draws frames into the window.
 async fn connect_interactive(
     app: &mut App,
     options: &NetworkOptions,
@@ -710,7 +710,7 @@ async fn connect_interactive(
 }
 
 // ---------------------------------------------------------------------------
-// --ui: интерактивное меню в окне SDL3
+// --ui: interactive menu in an SDL3 window
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "sdl")]
@@ -721,7 +721,7 @@ fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
         .context("tokio runtime (UI)")
 }
 
-/// SDL-цикл UI: события окна → [`InputEvent`] → [`Screen`] → кадр.
+/// SDL UI loop: window events → [`InputEvent`] → [`Screen`] → frame.
 #[cfg(feature = "sdl")]
 fn run_ui(cli: &Cli) -> Result<()> {
     use max_render::buffer::RgbaBuffer;
@@ -739,8 +739,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
             tracing::warn!("UI: данные игры не загружены ({error:#}); карта будет упрощённой");
         }
     }
-    // `settings.json` C++ (`FilePathGamePref`): настройки игрока переживают
-    // перезапуск. QA-драйвер файл не читает — там значения по умолчанию.
+    // C++ `settings.json` (`FilePathGamePref`): the player settings survive
+    // a restart. The QA driver does not read the file — there the values are default.
     if app.load_preferences_from_disk() {
         println!("UI: настройки загружены из {}", app.preferences_path().display());
     }
@@ -760,12 +760,12 @@ fn run_ui(cli: &Cli) -> Result<()> {
         config.screen_width,
         config.screen_height,
     );
-    // `Introduction`: INTROFLC → maxint.mve рядом с MAX.RES (см. Assets::load).
+    // `Introduction`: INTROFLC → maxint.mve next to MAX.RES (see Assets::load).
     ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
     ctx.preferences = app.preferences().clone();
-    // M6.2: звук меню. `with_default_backend` за feature `sound` поднимает
-    // rodio/cpal; без фичи (или без устройства) — тихий no-op. Ссылки на
-    // файлы берутся из MAX.RES, сами файлы — рядом с MAX.RES.
+    // M6.2: menu sound. `with_default_backend` behind the `sound` feature brings up
+    // rodio/cpal; without the feature (or without a device) — a silent no-op. The references to
+    // files are taken from MAX.RES, the files themselves — next to MAX.RES.
     ctx.audio = AudioPlayer::with_default_backend();
     if let Some(assets) = app.assets() {
         let sound_dir = config
@@ -789,9 +789,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut mouse: Option<(i32, i32)> = None;
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
-    // M-SP: имя игрока и каталог карт для настройки и мини-карт планет.
-    // `player_name` — из `settings` (`preferences.ini`), как в C++ `OptionsMenu`
-    // `SETUP`; CLI `--player` остаётся именем сетевого клиента (`config`).
+    // M-SP: the player name and the map directory for setup and planet minimaps.
+    // `player_name` — from `settings` (`preferences.ini`), like C++ `OptionsMenu`
+    // `SETUP`; the CLI `--player` remains the network client name (`config`).
     ctx.player_name = app.preferences().player_name.clone();
     ctx.world_dir = config
         .world_dir
@@ -799,7 +799,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
         .or_else(|| config.max_res.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_default();
     let mut last_frame = std::time::Instant::now();
-    // Политика реконнекта, общая для `--connect` и `--ui`.
+    // The reconnect policy shared by `--connect` and `--ui`.
     let mut reconnect = ReconnectPolicy::default();
     if let Some(attempts) = cli.reconnect_attempts {
         reconnect.attempts = attempts;
@@ -807,8 +807,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
     if let Some(seconds) = cli.reconnect_timeout_secs {
         reconnect.timeout = Duration::from_secs(u64::from(seconds));
     }
-    // Create game → InSession: сессия headless греется 10–15 с, поэтому первый
-    // `SessionHandle::start` повторяется с backoff, а не падает в меню.
+    // Create game → InSession: the headless session warms up for 10–15 s, so the first
+    // `SessionHandle::start` is repeated with backoff instead of failing into the menu.
     let join_retry = join_retry_policy(cli);
 
     println!(
@@ -821,9 +821,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
         window.frame_scale().scale()
     );
 
-    // Слой 2.5 QA: запись ручной игры в `.qa`-сценарий. Пишем тот же
-    // `InputEvent` (уже в пикселях кадра 640×480), который получают экраны;
-    // старт — сразу, с главного меню, финал — при выходе.
+    // QA layer 2.5: recording a manual game into a `.qa` script. We write the same
+    // `InputEvent` (already in 640×480 frame pixels) that the screens receive;
+    // the start — immediately, from the main menu, the finish — on exit.
     let mut recorder = match cli.record.as_ref() {
         Some(path) => {
             let recorder = Recorder::new(path.as_path())
@@ -864,30 +864,30 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     Screen::Help { .. } => "Help",
                     _ => "Other",
                 };
-                // Модальные окна партии: по этим полям живой UI-тест
-                // (`max-brh-cicd/scripts/ui-test-allocate.ps1`) понимает, что диалог
-                // распределения добычи открылся/закрылся.
+                // Match modal windows: by these fields the live UI test
+                // (`max-brh-cicd/scripts/ui-test-allocate.ps1`) understands that the extraction
+                // allocation dialog opened/closed.
                 let alloc = if app.alloc_menu().is_some() {
                     "alloc=open"
                 } else {
                     "alloc=closed"
                 };
-                // X-FER (`TransferMenu`, `XFERPIC`) — для живого UI-теста.
+                // X-FER (`TransferMenu`, `XFERPIC`) — for the live UI test.
                 let transfer = if app.transfer_menu().is_some() {
                     "xfer=open"
                 } else {
                     "xfer=closed"
                 };
-                // `BuildMenu` (`buildmenu`): по нему живой тест строительства
-                // (`max-brh-cicd/scripts/ui-probe-build.ps1`) видит, что экран открылся.
+                // `BuildMenu` (`buildmenu`): the live construction test uses it
+                // (`max-brh-cicd/scripts/ui-probe-build.ps1`) to see that the screen opened.
                 let build = if app.build_menu().is_some() {
                     "build=open"
                 } else {
                     "build=closed"
                 };
-                // Режим выбора места (`ORDER_STATE_SELECT_SITE`): живой тест
-                // проверяет по этой строке, что якорь призрака всегда накрывает
-                // клетку строителя (C++ `GameManager_GetBuilderUnitCursor`).
+                // Site selection mode (`ORDER_STATE_SELECT_SITE`): the live test
+                // checks by this line that the ghost anchor always covers
+                // the builder's cell (C++ `GameManager_GetBuilderUnitCursor`).
                 let site = match app.build_site() {
                     Some(site) => format!(
                         "site=open@{},{} cursor={},{} valid={}",
@@ -899,8 +899,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     ),
                     None => "site=closed".to_string(),
                 };
-                // `Preferences`/`Setup` (`OptionsMenu`): живой тест
-                // (`max-brh-cicd/scripts/ui-test-prefs.ps1`) проверяет открытие/закрытие.
+                // `Preferences`/`Setup` (`OptionsMenu`): the live test
+                // (`max-brh-cicd/scripts/ui-test-prefs.ps1`) checks opening/closing.
                 let preferences = if app.preferences_dialog().is_some()
                     || matches!(screen, Screen::Preferences(_))
                 {
@@ -928,13 +928,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
             if let InputEvent::MouseMove(x, y) = input {
                 mouse = Some((x, y));
-                // Позиция нужна и отрисовке (подсветка кнопок меню и окна
-                // перехода хода M-HS), а не только вводу.
+                // The position is needed both for drawing (menu button and M-HS turn-transition
+                // window highlighting) and not only for input.
                 ctx.mouse = Some(max_render::ui::Point::new(x, y));
             }
 
-            // Внутри сессии ввод идёт в HUD (`handle_session_input`): выделение,
-            // приказы 38/08, кнопки End Turn/Menu. В меню — машина экранов.
+            // Inside a session input goes to the HUD (`handle_session_input`): selection,
+            // orders 38/08, End Turn/Menu buttons. In the menu — the screen machine.
             let in_session = matches!(screen, Screen::InSession { .. });
             let transition = if in_session {
                 handle_session_input(&mut app, input, false)
@@ -942,8 +942,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 screen.handle_input(&mut ctx, input)
             };
 
-            // Звуки UI (`Sfx`): голоса — по `disable_voice`, эффекты — по
-            // `disable_fx`/громкости (C++ `SoundManager::PlaySfx`).
+            // UI sounds (`Sfx`): voices — by `disable_voice`, effects — by
+            // `disable_fx`/volume (C++ `SoundManager::PlaySfx`).
             for sfx in app.take_sounds() {
                 let enabled = if sfx.is_voice() {
                     app.preferences().voice_enabled()
@@ -956,9 +956,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 }
             }
 
-            // Звуки боя (`UnitInfo::PrepareFire` → `SFX_TYPE_FIRE`,
+            // Combat sounds (`UnitInfo::PrepareFire` → `SFX_TYPE_FIRE`,
             // `UnitsManager_StartExplosion` → `SFX_TYPE_HIT`/`SFX_TYPE_EXPLOAD`):
-            // тег и громкость — из `SC_UNITS` (`max_app::sfx`), выключатель —
+            // the tag and volume — from `SC_UNITS` (`max_app::sfx`), the switch —
             // `disable_fx` (`Preferences::sound_enabled`).
             for sound in app.take_unit_sounds() {
                 if app.sound_enabled() {
@@ -980,8 +980,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     ctx.status = "Left the session".to_string();
                 }
                 Transition::ApplyPreferences(preferences) => {
-                    // `OptionsMenu` `Done`: значения уже сохранены в
-                    // `preferences.ini`; применяем к приложению и аудио-слою.
+                    // `OptionsMenu` `Done`: the values are already saved in
+                    // `preferences.ini`; we apply them to the application and the audio layer.
                     ctx.player_name = preferences.player_name.clone();
                     app.set_preferences(*preferences);
                     app.persist_preferences();
@@ -990,7 +990,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     ctx.audio.set_volume(app.preferences().sound_volume());
                 }
                 Transition::StartLocal(setup) => {
-                    // M-SP: старт локальной партии (Options → Planet → Players).
+                    // M-SP: start of a local match (Options → Planet → Players).
                     match app.start_local_game(&setup) {
                         Ok(()) => {
                             ctx.status = String::new();
@@ -1004,9 +1004,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
                         Err(error) => {
                             eprintln!("max-brh: local game: {error}");
                             ctx.status = format!("Local game: {error}");
-                            // Старт не удался (например, нет данных планеты для
-                            // фаз) — возвращаемся в меню, а не остаёмся на
-                            // пустом экране PreGame.
+                            // The start failed (e.g., no planet data for the
+                            // phases) — we return to the menu instead of staying on the
+                            // empty PreGame screen.
                             screen = Screen::MainMenu;
                         }
                     }
@@ -1018,12 +1018,12 @@ fn run_ui(cli: &Cli) -> Result<()> {
             }
         }
 
-        // M-SP: тик локальной партии, таймер хода и ходы ИИ.
+        // M-SP: local match tick, turn timer and AI turns.
         let frame_dt = last_frame.elapsed().as_secs_f32().clamp(0.0, 0.25);
         last_frame = std::time::Instant::now();
 
-        // Анимация экранов меню (`Credits`): прокрутка титров идёт с реальным
-        // `dt`, а когда доходит до верха области — экран закрывается сам
+        // Menu screen animation (`Credits`): the credits scroll with the real
+        // `dt`, and when it reaches the top of the area the screen closes itself
         // (`menu_credits_menu_loop`).
         if screen.advance(frame_dt) {
             let was_intro = matches!(screen, Screen::Introduction(_));
@@ -1051,8 +1051,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                         .filter(|u| u.team == player)
                         .take(12)
                         .map(|u| {
-                            // `vX.Y` — визуальная позиция спрайта: при `dt > 0`
-                            // она догоняет `grid` по фактическому маршруту.
+                            // `vX.Y` — the visual position of the sprite: with `dt > 0`
+                            // it catches up with `grid` along the actual route.
                             let (vx, vy) = app
                                 .visual_position(u.id)
                                 .unwrap_or((f32::from(u.grid.x), f32::from(u.grid.y)));
@@ -1096,8 +1096,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
             }
         }
 
-        // Мини-карты планет для экрана настройки (`.WRL` грузятся один раз).
-        // Окно помощи может быть открыто поверх экрана настройки.
+        // Planet minimaps for the setup screen (`.WRL` is loaded once).
+        // The help window can be open over the setup screen.
         let setup_screen = match &mut screen {
             Screen::Help { screen, .. } => screen.as_mut(),
             other => other,
@@ -1111,13 +1111,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
             form.ensure_minimaps(palette.as_ref());
         }
 
-        // Курсор мыши: меню/панели — HANDPTR, карта — MAP_PTR/приказы/юниты
-        // (`Cursor_SetCursor` + `GameManager_GetWindowCursor`). Без SDL-курсоров
-        // (или без загруженных ресурсов) остаётся системный курсор.
+        // Mouse cursor: menu/panels — HANDPTR, map — MAP_PTR/orders/units
+        // (`Cursor_SetCursor` + `GameManager_GetWindowCursor`). Without SDL cursors
+        // (or without loaded resources) the system cursor remains.
         update_window_cursor(&mut window, &app, &screen, mouse);
 
-        // `settings["disable_fx"]`/`fx_sound_level` C++: флаг доходит до
-        // аудио-слоя в том же кадре, в котором его изменили в Preferences.
+        // C++ `settings["disable_fx"]`/`fx_sound_level`: the flag reaches
+        // the audio layer in the same frame in which it was changed in Preferences.
         ctx.audio.set_enabled(app.sound_enabled());
         ctx.audio.set_volume(app.preferences().sound_volume());
 
@@ -1127,7 +1127,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
             }
             let runtime = runtime.as_mut().expect("runtime создан выше");
 
-            // Кадр «подключение»: пока идут Horizon/лобби, окно не пустое.
+            // "Connecting" frame: while Horizon/the lobby run, the window is not empty.
             ctx.status = format!("Connecting to {}…", request.game_id);
             screen.render(&mut buffer, ctx.view(Some(&app)));
             let _ = window.present(&buffer);
@@ -1174,8 +1174,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// Дописывает `.qa`-файл при выходе (хвостовой `type`/`wait`, финальный
-/// комментарий) и печатает итоговый путь. Без `--record` — no-op.
+/// Appends to the `.qa` file on exit (trailing `type`/`wait`, final
+/// comment) and prints the resulting path. Without `--record` — no-op.
 #[cfg(feature = "sdl")]
 fn finish_recording(recorder: &mut Option<Recorder>) -> Result<()> {
     let Some(recorder) = recorder.as_mut() else {
@@ -1189,8 +1189,8 @@ fn finish_recording(recorder: &mut Option<Recorder>) -> Result<()> {
     Ok(())
 }
 
-/// GUI (запуск без флагов или `--ui`) без feature `sdl` (сборка с
-/// `--no-default-features`): понятная ошибка вместо «окна нет».
+/// GUI (launch without flags or `--ui`) without the `sdl` feature (a build with
+/// `--no-default-features`): a clear error instead of "no window".
 #[cfg(not(feature = "sdl"))]
 fn run_ui(_cli: &Cli) -> Result<()> {
     bail!(
@@ -1200,11 +1200,11 @@ fn run_ui(_cli: &Cli) -> Result<()> {
     )
 }
 
-/// Ставит курсор окна по контексту (`Cursor_SetCursor`).
+/// Sets the window cursor by context (`Cursor_SetCursor`).
 ///
-/// Меню/форма/список игр — `HANDPTR`; в партии — [`max_app::cursor::session_cursor`]
-/// (карта/панель/юнит/приказ). Ресурсы курсоров грузятся из `MAX.RES`
-/// (`CursorSet`), палитра — системная палитра окна (`FRAMEPIC`).
+/// Menu/form/game list — `HANDPTR`; in a match — [`max_app::cursor::session_cursor`]
+/// (map/panel/unit/order). Cursor resources are loaded from `MAX.RES`
+/// (`CursorSet`), the palette — the window system palette (`FRAMEPIC`).
 #[cfg(feature = "sdl")]
 fn update_window_cursor(
     window: &mut max_render::sdl_window::SdlWindow,
@@ -1220,7 +1220,7 @@ fn update_window_cursor(
     };
 
     let (cursor, frame) = if app.help_screen().is_some() {
-        // `Cursor_SetCursor(CURSOR_HELP)` в `HelpMenu_Menu`.
+        // `Cursor_SetCursor(CURSOR_HELP)` in `HelpMenu_Menu`.
         (max_app::CursorId::Help, 0)
     } else if app.research_menu().is_some() {
         // `ResearchMenu::ResearchMenu`: `Cursor_SetCursor(CURSOR_HAND)`.
@@ -1231,10 +1231,10 @@ fn update_window_cursor(
     } else {
         match screen {
             Screen::InSession { .. } => max_app::cursor::session_cursor(app, mouse),
-            // `Cursor_SetCursor(CURSOR_HELP)` в `HelpMenu_Menu`.
+            // `Cursor_SetCursor(CURSOR_HELP)` in `HelpMenu_Menu`.
             Screen::Help { .. } => (max_app::CursorId::Help, 0),
-            // `GameManager_GetWindowCursor` на экране высадки: UNIT_GO над
-            // валидной клеткой, UNIT_NO_GO над невалидной, HANDPTR вне карты.
+            // `GameManager_GetWindowCursor` on the landing screen: UNIT_GO over
+            // a valid cell, UNIT_NO_GO over an invalid one, HANDPTR outside the map.
             Screen::PreGame(flow) => match &flow.stage {
                 max_app::PreGameStage::Landing(landing) => match mouse {
                     Some((x, y)) => {
@@ -1303,12 +1303,12 @@ fn run_ui_session(
     runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
 }
 
-/// Кадры сессии: ввод (мышь/клавиши) → HUD, карта + HUD → окно.
+/// Session frames: input (mouse/keys) → HUD, map + HUD → window.
 ///
-/// Ввод обрабатывает [`handle_session_input`]: клик по своему юниту — выбор,
-/// RMB — приказ движения (пакет 38), клик по врагу — атака (08), кнопки
-/// End Turn/Menu. Собранные приказы сетевой цикл забирает и отправляет сам
-/// (`net::flush_hud_orders`), поэтому здесь достаточно `online = true`.
+/// Input is handled by [`handle_session_input`]: a click on an own unit — selection,
+/// RMB — a move order (packet 38), a click on an enemy — attack (08), the buttons
+/// End Turn/Menu. The network loop collects and sends the accumulated orders itself
+/// (`net::flush_hud_orders`), so `online = true` is enough here.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
     window: &'a mut max_render::SdlWindow,
@@ -1316,7 +1316,7 @@ struct UiSessionSink<'a> {
     buffer: max_render::buffer::RgbaBuffer,
     status: String,
     game_id: String,
-    /// Слой 2.5 QA: тот же поток событий, что уходит в HUD.
+    /// QA layer 2.5: the same event stream that goes to the HUD.
     recorder: Option<&'a mut Recorder>,
 }
 
@@ -1325,7 +1325,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn frame(&mut self, app: &mut App) -> bool {
         app.update_visual_units(1.0 / 60.0);
 
-        // 1. Ввод этого кадра → HUD (выделение, приказы, кнопки).
+        // 1. This frame's input → HUD (selection, orders, buttons).
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.begin_frame();
         }
@@ -1361,14 +1361,14 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             return false;
         }
 
-        // Preferences, действующие в любой партии (в т.ч. сетевой):
-        // краевой скролл (`click_scroll`/`quick_scroll`) и камера за
-        // выделенным (`follow_unit`). Авто-выделение (`auto_select`) включено
-        // в `App::tick`, который крутит сетевой цикл.
+        // Preferences active in any match (including network):
+        // edge scrolling (`click_scroll`/`quick_scroll`) and the camera following
+        // the selection (`follow_unit`). Auto-selection (`auto_select`) is enabled
+        // in `App::tick`, which the network loop runs.
         app.update_scroll(1.0 / 60.0);
         app.follow_selected_unit();
 
-        // 2. Кадр: карта + HUD поверх неё.
+        // 2. Frame: map + HUD over it.
         self.status = format!(
             "IN SESSION · {} · tick={} turn={} · LMB select · RMB move · Esc cancel",
             self.game_id,
@@ -1394,8 +1394,8 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         true
     }
 
-    /// Строка «сессия разогревается… попытка N» поверх окна: пока
-    /// `SessionHandle::start` повторяется, кадров партии ещё нет.
+    /// The "session is warming up… attempt N" line over the window: while
+    /// `SessionHandle::start` is repeated, there are no match frames yet.
     fn join_status(&mut self, message: &str) -> bool {
         self.status = message.to_string();
         let view = ScreenView {
@@ -1418,10 +1418,10 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// Разбор значений
+// Value parsing
 // ---------------------------------------------------------------------------
 
-/// `--scale`: `None`/`0` — подобрать под рабочий стол, иначе 1..=8.
+/// `--scale`: `None`/`0` — fit to the desktop, otherwise 1..=8.
 #[cfg(feature = "sdl")]
 fn normalized_window_scale(scale: Option<u32>) -> Option<u32> {
     match scale {
@@ -1470,7 +1470,7 @@ fn parse_level(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u8
     Ok(value)
 }
 
-/// Корень репозитория, если `cargo run` запущен из `max-brh/` или корня.
+/// Repository root, if `cargo run` is launched from `max-brh/` or the root.
 fn repository_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
 
@@ -1562,7 +1562,7 @@ max-brh — клиент M.A.X. (core + net + assets + render)
 mod tests {
     use super::*;
 
-    /// Разбор без `std::env::args` и без проверки feature `sdl`.
+    /// Parsing without `std::env::args` and without checking the `sdl` feature.
     fn parse(args: &[&str]) -> Result<Cli> {
         Cli::parse_from(args.iter().map(|arg| (*arg).to_string()))
     }

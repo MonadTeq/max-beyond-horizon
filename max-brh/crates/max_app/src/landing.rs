@@ -1,68 +1,67 @@
-//! Фаза выбора точки высадки — порт `GameManager_SelectSite`
-//! (`game_manager.cpp:1324`, состояние `GAME_STATE_7_SITE_SELECT`).
+//! Landing point selection phase — a port of `GameManager_SelectSite`
+//! (`game_manager.cpp:1324`, state `GAME_STATE_7_SITE_SELECT`).
 //!
-//! # Что делает оригинал
+//! # What the original does
 //!
-//! После мобилизации (если у команды были кредиты) C++ открывает карту в
-//! состоянии `GAME_STATE_7_SITE_SELECT` на зуме 4: вся карта 112×112 клеток
-//! занимает область карты `448×448` (клетка 4 px). Игрок водит курсор и
-//! подтверждает точку; `GameManager_IsValidStartingPosition` требует, чтобы
-//! 4×4 клетки вокруг (`x-1 … x+2`) были **ровно сушей**. Esc отменяет старт
+//! After mobilization (if the team had credits) C++ opens the map in
+//! the `GAME_STATE_7_SITE_SELECT` state at zoom 4: the whole 112×112 cell map
+//! occupies the `448×448` map area (4 px per cell). The player moves the cursor and
+//! confirms the point; `GameManager_IsValidStartingPosition` requires that
+//! the 4×4 cells around it (`x-1 … x+2`) be **exactly land**. Esc cancels the start
 //! (`GAME_STATE_14_EXIT_SITE_SELECT`).
 //!
-//! # Что рисуется на карте (C++)
+//! # What is drawn on the map (C++)
 //!
-//! * `GameManager_RenderMap` (`game_manager.cpp:1096`) при
-//!   `GAME_STATE_7_SITE_SELECT`: `DrawMap_RenderMapTiles` → настоящие тайлы
-//!   `.WRL` через `Gfx_DecodeMapTile` (`gfx.cpp:125`) — 64×64 пикселя тайла
-//!   сводятся к 4×4 экранным (зум 4). Сетка по умолчанию выключена
-//!   (`GameManager_DisplayButtonGrid = false`), поэтому линий клеток нет.
-//! * `DrawMap_RenderUnits` рисует только **видимых** юнитов
-//!   (`UnitInfoGroup::IsRelevant`: `IsVisibleToTeam(PlayerTeam)`). На этой
-//!   фазе армий ещё нет: они высаживаются после выбора всех точек
-//!   (`GameManager_ProcessTeamMissionSupplyUnits`), а временный `MASTER`
-//!   спавнится лишь в ветке проверки близости — не в интерактивном цикле.
+//! * `GameManager_RenderMap` (`game_manager.cpp:1096`) in
+//!   `GAME_STATE_7_SITE_SELECT`: `DrawMap_RenderMapTiles` → real `.WRL` tiles
+//!   via `Gfx_DecodeMapTile` (`gfx.cpp:125`) — the 64×64 pixels of a tile
+//!   are reduced to 4×4 screen pixels (zoom 4). The grid is off by default
+//!   (`GameManager_DisplayButtonGrid = false`), so there are no cell lines.
+//! * `DrawMap_RenderUnits` draws only **visible** units
+//!   (`UnitInfoGroup::IsRelevant`: `IsVisibleToTeam(PlayerTeam)`). At this
+//!   phase there are no armies yet: they land after all points are chosen
+//!   (`GameManager_ProcessTeamMissionSupplyUnits`), and the temporary `MASTER`
+//!   is spawned only in the proximity check branch — not in the interactive loop.
 //! * `GameManager_DrawUnitSelector`/`GameManager_RenderScanRangeIndicators`/
-//!   `DrawMap_RenderBuildMarker` **в обычном выборе не рисуются**: `MASTER`
-//!   спавнится только в ветке `GameManager_SelectSite` для проверки
-//!   близости (`proximity_alert_ack` 1/2/3), а интерактивный цикл
-//!   `GameManager_ProgressTurn` идёт до него. Поэтому у `MASTER` нет ни
-//!   маркера 3×3, ни жёлтого круга обзора, ни `BLDMRK*`; выделение точки —
-//!   только курсор мыши. (Кадр-оракул `build/tmp/oracle-MAX0002.png` C++-порта
-//!   это подтверждает: на карте только зелёный `CURSOR_UNIT_GO`.)
-//! * Сообщение — `MessageManager_DrawMessage` (`_(dfe1)` =
-//!   "Select starting location."): окно в левом верхнем углу области карты
-//!   (`+0,+10`), фон — затемнение пикселей карты по палитре
-//!   (`ResourceManager_DarkeningColorIndexTable`), одна строка `Font5` с
-//!   обводкой.
-//! * Валидность точки передаётся **курсором мыши**
-//!   (`GameManager_GetWindowCursor`): `CURSOR_UNIT_GO` над валидной клеткой,
-//!   `CURSOR_UNIT_NO_GO` над невалидной, `CURSOR_HAND` вне карты. Отдельной
-//!   зелёной/красной рамки в оригинале нет.
+//!   `DrawMap_RenderBuildMarker` **are not drawn in normal selection**: `MASTER`
+//!   is spawned only in the `GameManager_SelectSite` branch for the proximity
+//!   check (`proximity_alert_ack` 1/2/3), and the interactive loop
+//!   `GameManager_ProgressTurn` runs before it. Therefore `MASTER` has neither
+//!   a 3×3 marker, nor a yellow scan circle, nor `BLDMRK*`; the point is selected
+//!   by the mouse cursor only. (The oracle frame `build/tmp/oracle-MAX0002.png` of the C++ port
+//!   confirms this: only the green `CURSOR_UNIT_GO` is on the map.)
+//! * The message — `MessageManager_DrawMessage` (`_(dfe1)` =
+//!   "Select starting location."): a window in the top-left corner of the map area
+//!   (`+0,+10`), the background is a darkening of the map pixels by palette
+//!   (`ResourceManager_DarkeningColorIndexTable`), one `Font5` line with an outline.
+//! * The validity of the point is conveyed **by the mouse cursor**
+//!   (`GameManager_GetWindowCursor`): `CURSOR_UNIT_GO` over a valid cell,
+//!   `CURSOR_UNIT_NO_GO` over an invalid one, `CURSOR_HAND` outside the map. There is no separate
+//!   green/red frame in the original.
 //!
-//! # Что портировано
+//! # What is ported
 //!
-//! * Настоящие тайлы `.WRL` ([`max_render::terrain::TerrainAtlas`]) с точной
-//!   выборкой `Gfx_DecodeMapTile` ([`TerrainAtlas::render_tile_cpp_into`]).
-//! * Окно сообщения C++ (одна строка, затемнение по палитре).
-//! * Курсор `CURSOR_UNIT_GO`/`NO_GO`/`HAND` — и в SDL-слое (`main.rs`), и в
-//!   кадре (для headless QA-снимков, как `Cursor_RenderToBuffer` в
+//! * Real `.WRL` tiles ([`max_render::terrain::TerrainAtlas`]) with the exact
+//!   `Gfx_DecodeMapTile` sampling ([`TerrainAtlas::render_tile_cpp_into`]).
+//! * The C++ message window (one line, palette darkening).
+//! * The cursor `CURSOR_UNIT_GO`/`NO_GO`/`HAND` — both in the SDL layer (`main.rs`) and in
+//!   the frame (for headless QA shots, like `Cursor_RenderToBuffer` in
 //!   `screendump.cpp`).
-//! * Проверка точки — [`max_core::setup::is_valid_starting_position`]
-//!   (`GameManager_IsValidStartingPosition`): 4×4 вокруг выбранной клетки.
-//! * `Enter`/`Done` — подтверждение, `Esc`/`Cancel` — отмена.
-//! * Стрелки двигают точку на клетку.
+//! * The point check — [`max_core::setup::is_valid_starting_position`]
+//!   (`GameManager_IsValidStartingPosition`): 4×4 around the selected cell.
+//! * `Enter`/`Done` — confirm, `Esc`/`Cancel` — cancel.
+//! * The arrows move the point by one cell.
 //!
-//! # Отличия от C++ (осознанные)
+//! # Differences from C++ (deliberate)
 //!
-//! * Клик по валидной клетке сразу подтверждает выбор (как C++), но в QA
-//!   драйвере `landing grid` двигает точку без клика, чтобы снять кадр.
-//! * Кнопки `Cancel`/`Done` нижней строки убраны — их нет в C++.
-//! * `GameManager_HandleProximityOverlaps`/`GameManager_CheckLandingZones` не
-//!   портированы (вместе с ними не нужны `MASTER`-маркер, круг обзора и
-//!   `BLDMRK*`).
-//! * Если данных `.WRL` нет (headless-тесты), карта рисуется упрощённо
-//!   цветами [`TileStyle`] — единственный оставшийся fallback.
+//! * A click on a valid cell immediately confirms the choice (like C++), but in the QA
+//!   driver `landing grid` moves the point without a click, to take a shot.
+//! * The `Cancel`/`Done` buttons of the bottom row are removed — they are not in C++.
+//! * `GameManager_HandleProximityOverlaps`/`GameManager_CheckLandingZones` are not
+//!   ported (together with them the `MASTER` marker, the scan circle and
+//!   `BLDMRK*` are not needed).
+//! * If there is no `.WRL` data (headless tests), the map is drawn in a simplified way
+//!   with [`TileStyle`] colors — the only remaining fallback.
 
 use max_assets::CursorSet;
 use max_core::enums::Surface;
@@ -78,68 +77,68 @@ use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFontId};
 
 use crate::menu::MenuAssets;
 
-/// Размер клетки на экране выбора точки — зум 4 оригинала
+/// Cell size on the point-selection screen — zoom 4 of the original
 /// (`GameManager_UpdateMainMapView(MAP_VIEW_ZOOM, 4, …)`).
 pub const LANDING_CELL: i32 = 4;
 
-/// Область карты на экране: 112 × 4 = 448 — ровно `MAIN_MAP`.
+/// Map area on the screen: 112 × 4 = 448 — exactly `MAIN_MAP`.
 pub const LANDING_AREA: PixelRect = MAIN_MAP;
 
-/// Вертикальный отступ окна сообщения от верха области карты (`offset_y = 10`
-/// в `MessageManager_DrawMessage`).
+/// Vertical offset of the message window from the top of the map area (`offset_y = 10`
+/// in `MessageManager_DrawMessage`).
 pub const MESSAGE_TOP_OFFSET: i32 = 10;
-/// Горизонтальный отступ текста в окне сообщения (10).
+/// Horizontal offset of the text in the message window (10).
 pub const MESSAGE_TEXT_LEFT: i32 = 10;
-/// Вертикальный отступ текста в окне сообщения (10).
+/// Vertical offset of the text in the message window (10).
 pub const MESSAGE_TEXT_TOP: i32 = 10;
-/// Высота строки `Text_GetHeight()` для `Font5` (10).
+/// Height of the `Text_GetHeight()` line for `Font5` (10).
 pub const MESSAGE_LINE_HEIGHT: i32 = 10;
-/// Начальная высота окна сообщения (`MessageManager_MessageBox_Height = 20`).
+/// Initial height of the message window (`MessageManager_MessageBox_Height = 20`).
 pub const MESSAGE_BASE_HEIGHT: i32 = 20;
-/// Цвет текста окна сообщения (`GNW_TEXT_OUTLINE | 0xFF`).
+/// Text color of the message window (`GNW_TEXT_OUTLINE | 0xFF`).
 pub const MESSAGE_TEXT_COLOR: u8 = 0xFF;
 
-/// Текст сообщения C++ (`_(dfe1)` в `GameManager_SelectSite`).
+/// The C++ message text (`_(dfe1)` in `GameManager_SelectSite`).
 pub const MESSAGE_TEXT: &str = "Select starting location.";
 
-/// Итог ввода на экране высадки.
+/// Result of input on the landing screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LandingAction {
-    /// Ничего не произошло.
+    /// Nothing happened.
     None,
-    /// Точка выбрана и подтверждена.
+    /// The point was chosen and confirmed.
     Confirm,
-    /// Игрок отменил выбор.
+    /// The player cancelled the choice.
     Cancel,
 }
 
-/// Экран выбора точки высадки одной команды.
+/// Landing point selection screen of one team.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LandingScreen {
-    /// Чья высадка.
+    /// Whose landing.
     pub team: TeamId,
-    /// Планета `0..=23` (для подписи).
+    /// Planet `0..=23` (for the caption).
     pub world: i64,
-    /// Поверхность карты.
+    /// Map surface.
     pub surface: SurfaceMap,
-    /// Настоящие тайлы `.WRL` (если данные планеты загружены).
+    /// Real `.WRL` tiles (if the planet data is loaded).
     pub terrain: Option<TerrainAtlas>,
-    /// Текущая точка под курсором (`starting_position`).
+    /// Current point under the cursor (`starting_position`).
     pub cursor: Point,
-    /// Строка статуса.
+    /// Status line.
     pub status: String,
 }
 
 impl LandingScreen {
-    /// Экран с курсором в стартовой точке команды (`START_POSITIONS`).
+    /// Screen with the cursor at the team's starting point (`START_POSITIONS`).
     ///
-    /// Если точка невалидна, [`find_valid_starting_position`] двигает её по
-    /// спирали — ровно как C++ при инициализации миссии.
+    /// If the point is invalid, [`find_valid_starting_position`] moves it in
+    /// a spiral — exactly as C++ does when initializing a mission.
     pub fn new(team: TeamId, world: i64, surface: SurfaceMap) -> Self {
         Self::new_with_terrain(team, world, surface, None)
     }
 
-    /// То же, но с готовым атласом тайлов `.WRL` для настоящего рендера.
+    /// The same, but with a ready `.WRL` tile atlas for real rendering.
     pub fn new_with_terrain(
         team: TeamId,
         world: i64,
@@ -159,7 +158,7 @@ impl LandingScreen {
         }
     }
 
-    /// Путь к `.WRL` планеты (`None` — имени/файла нет).
+    /// Path to the planet `.WRL` (`None` — no name/file).
     fn world_path(world: i64, world_dir: &std::path::Path) -> Option<std::path::PathBuf> {
         let index = usize::try_from(world.clamp(0, 23)).ok()?;
         let name = crate::assets::WORLD_ASSETS.get(index)?;
@@ -168,10 +167,10 @@ impl LandingScreen {
         path.is_file().then_some(path)
     }
 
-    /// Загружает поверхность планеты из `world_dir` (`*.WRL`).
+    /// Loads the planet surface from `world_dir` (`*.WRL`).
     ///
-    /// `None` — данных планеты нет; UI тогда пропускает фазу выбора точки и
-    /// оставляет стандартную стартовую позицию.
+    /// `None` — no planet data; the UI then skips the point-selection phase and
+    /// keeps the standard starting position.
     pub fn load_surface(world: i64, world_dir: &std::path::Path) -> Option<SurfaceMap> {
         let path = Self::world_path(world, world_dir)?;
         let map = max_assets::wrl::WrlMap::open(path).ok()?;
@@ -179,7 +178,7 @@ impl LandingScreen {
         Some(map.surface_map())
     }
 
-    /// Загружает настоящие тайлы планеты (`WRL` → [`TerrainAtlas`]).
+    /// Loads the real planet tiles (`WRL` → [`TerrainAtlas`]).
     pub fn load_terrain(world: i64, world_dir: &std::path::Path) -> Option<TerrainAtlas> {
         let path = Self::world_path(world, world_dir)?;
         let map = max_assets::wrl::WrlMap::open(path).ok()?;
@@ -187,7 +186,7 @@ impl LandingScreen {
         Some(TerrainAtlas::from_wrl(&map))
     }
 
-    /// Загружает поверхность и настоящие тайлы из одного разбора `*.WRL`.
+    /// Loads the surface and real tiles from one `*.WRL` parse.
     pub fn load_parts(
         world: i64,
         world_dir: &std::path::Path,
@@ -198,16 +197,16 @@ impl LandingScreen {
         Some((map.surface_map(), TerrainAtlas::from_wrl(&map)))
     }
 
-    /// Загружает поверхность и тайлы из одного разбора `*.WRL` и создаёт экран.
+    /// Loads the surface and tiles from one `*.WRL` parse and creates the screen.
     ///
-    /// `None` — данных планеты нет; UI тогда показывает честную ошибку.
+    /// `None` — no planet data; the UI then shows an honest error.
     pub fn load(team: TeamId, world: i64, world_dir: &std::path::Path) -> Option<Self> {
         let (surface, terrain) = Self::load_parts(world, world_dir)?;
 
         Some(Self::new_with_terrain(team, world, surface, Some(terrain)))
     }
 
-    /// Валидна ли текущая точка (`GameManager_IsValidStartingPosition`).
+    /// Whether the current point is valid (`GameManager_IsValidStartingPosition`).
     pub fn cursor_valid(&self) -> bool {
         is_valid_starting_position(
             &self.surface,
@@ -216,19 +215,19 @@ impl LandingScreen {
         )
     }
 
-    /// Валидна ли произвольная клетка.
+    /// Whether an arbitrary cell is valid.
     pub fn is_valid_at(&self, grid: Point) -> bool {
         is_valid_starting_position(&self.surface, i32::from(grid.x), i32::from(grid.y))
     }
 
-    /// Двигает курсор (с клампом по карте).
+    /// Moves the cursor (clamped to the map).
     pub fn step(&mut self, dx: i32, dy: i32) {
         self.cursor.x = (i32::from(self.cursor.x) + dx).clamp(1, i32::from(MAP_WIDTH) - 4) as i16;
         self.cursor.y = (i32::from(self.cursor.y) + dy).clamp(1, i32::from(MAP_HEIGHT) - 4) as i16;
         self.status.clear();
     }
 
-    /// Переводит точку кадра в клетку карты (область [`LANDING_AREA`]).
+    /// Converts a frame point into a map cell ([`LANDING_AREA`] area).
     pub fn screen_to_grid(x: i32, y: i32) -> Option<Point> {
         if !LANDING_AREA.contains(x, y) {
             return None;
@@ -240,12 +239,12 @@ impl LandingScreen {
         ))
     }
 
-    /// Обработка клика по карте.
+    /// Handling of a click on the map.
     ///
-    /// Как C++ (`game_manager.cpp:6718-6727`): клик по валидной клетке сразу
-    /// подтверждает выбор (`CURSOR_UNIT_GO`), клик по невалидной только
-    /// двигает точку и пишет статус (`CURSOR_UNIT_NO_GO`). Клики вне области
-    /// карты игнорируются.
+    /// Like C++ (`game_manager.cpp:6718-6727`): a click on a valid cell immediately
+    /// confirms the choice (`CURSOR_UNIT_GO`), a click on an invalid one only
+    /// moves the point and writes the status (`CURSOR_UNIT_NO_GO`). Clicks outside the map
+    /// area are ignored.
     pub fn click(&mut self, x: i32, y: i32) -> LandingAction {
         let Some(point) = Self::screen_to_grid(x, y) else {
             return LandingAction::None;
@@ -262,7 +261,7 @@ impl LandingScreen {
         }
     }
 
-    /// Подтверждение текущей точки (`Enter`/`Done`).
+    /// Confirmation of the current point (`Enter`/`Done`).
     pub fn confirm(&mut self) -> LandingAction {
         if self.cursor_valid() {
             self.status = format!("Landing site: {},{}", self.cursor.x + 1, self.cursor.y + 1);
@@ -273,7 +272,7 @@ impl LandingScreen {
         }
     }
 
-    /// Отрисовка кадра: тайлы `.WRL`, маркеры C++, окно сообщения.
+    /// Frame drawing: `.WRL` tiles, C++ markers, message window.
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -283,8 +282,8 @@ impl LandingScreen {
         status: &str,
         mouse: Option<(i32, i32)>,
     ) -> u32 {
-        // Системная палитра окна: 64…159 приходят из `.WRL`
-        // (`World::Load`), остальные — из палитры меню (`MAINPIC`).
+        // System window palette: 64…159 come from `.WRL`
+        // (`World::Load`), the rest — from the menu palette (`MAINPIC`).
         let palette = match &self.terrain {
             Some(terrain) if !terrain.is_empty() => {
                 menu.palette.with_wrl_palette(terrain.palette())
@@ -305,18 +304,18 @@ impl LandingScreen {
 
         painted += self.draw_map(frame);
 
-        // `MessageManager_DrawMessage` — единственный элемент поверх карты в
-        // обычном выборе точки (MASTER/маркеры появляются только в ветке
-        // проверки близости, которую мы не портировали).
+        // `MessageManager_DrawMessage` is the only element over the map in
+        // normal point selection (MASTER/markers appear only in the proximity
+        // check branch, which we did not port).
         painted += self.draw_message(frame, palette);
 
-        // Курсор C++ (`Cursor_RenderToBuffer` в `screendump.cpp`): в live-UI его
-        // ставит SDL-слой, а в кадр он попадает для headless QA-снимков.
+        // C++ cursor (`Cursor_RenderToBuffer` in `screendump.cpp`): in the live UI it
+        // is set by the SDL layer, and it gets into the frame for headless QA shots.
         if let (Some(cursors), Some((x, y))) = (cursors, mouse) {
             painted += self.draw_cursor(frame, cursors, palette, x, y);
         }
 
-        // Строка статуса в нижней панели (наш chrome; в C++ — координаты/лог).
+        // Status line in the bottom panel (our chrome; in C++ — coordinates/log).
         let team = crate::hotseat::team_display_name(self.team);
         let line = if status.is_empty() {
             self.status.as_str()
@@ -341,7 +340,7 @@ impl LandingScreen {
         painted
     }
 
-    /// Карта: настоящие тайлы `.WRL` либо (без данных) `TileStyle`.
+    /// Map: real `.WRL` tiles or (without data) `TileStyle`.
     fn draw_map(&self, frame: &mut RgbaBuffer) -> u32 {
         match &self.terrain {
             Some(terrain) if !terrain.is_empty() => draw_terrain(frame, terrain),
@@ -349,7 +348,7 @@ impl LandingScreen {
         }
     }
 
-    /// Упрощённая карта цветами поверхности — только без данных `.WRL`.
+    /// Simplified map with surface colors — only without `.WRL` data.
     fn draw_flat_map(&self, frame: &mut RgbaBuffer) -> u32 {
         let style = TileStyle::default();
         let mut painted = 0;
@@ -378,8 +377,8 @@ impl LandingScreen {
         painted
     }
 
-    /// Окно сообщения `MessageManager_DrawMessage`: затемнение карты по
-    /// палитре и одна строка `Select starting location.`
+    /// `MessageManager_DrawMessage` message window: map darkening by
+    /// palette and one line `Select starting location.`
     fn draw_message(&self, frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette) -> u32 {
         let font = GnwFontId::Font5.font();
         let width = font.text_width(MESSAGE_TEXT) + MESSAGE_TEXT_LEFT * 2;
@@ -393,9 +392,9 @@ impl LandingScreen {
         let mut painted = 0;
 
         // `ResourceManager_DarkeningColorIndexTable`: `max(7, c/4)*31/63`
-        // и ближайший цвет палитры (`Color_MapColor`) — как в C++, где карта
-        // хранится индексами, а не RGB. Кэш по исходному цвету: в области окна
-        // всего несколько десятков цветов палитры, а `map_color` — перебор 256.
+        // and the nearest palette color (`Color_MapColor`) — as in C++, where the map
+        // is stored as indices rather than RGB. Cache by source color: in the window area
+        // there are only a few dozen palette colors, while `map_color` is a 256-entry scan.
         let mut cache: std::collections::HashMap<[u8; 3], Rgba> = std::collections::HashMap::new();
 
         for y in rect.uly..rect.lry() {
@@ -434,7 +433,7 @@ impl LandingScreen {
         painted + drawn.max(0) as u32
     }
 
-    /// Курсор `GameManager_GetWindowCursor` в кадре (`Cursor_RenderToBuffer`).
+    /// `GameManager_GetWindowCursor` cursor in the frame (`Cursor_RenderToBuffer`).
     fn draw_cursor(
         &self,
         frame: &mut RgbaBuffer,
@@ -481,8 +480,8 @@ impl LandingScreen {
     }
 }
 
-/// Тайлы `.WRL` на карте высадки — выборка `Gfx_DecodeMapTile`
-/// (зум 4: 64×64 → 4×4).
+/// `.WRL` tiles on the landing map — `Gfx_DecodeMapTile` sampling
+/// (zoom 4: 64×64 → 4×4).
 pub fn draw_terrain(frame: &mut RgbaBuffer, terrain: &TerrainAtlas) -> u32 {
     let (width, height) = terrain.size();
     let mut painted = 0;
@@ -503,12 +502,12 @@ pub fn draw_terrain(frame: &mut RgbaBuffer, terrain: &TerrainAtlas) -> u32 {
     painted
 }
 
-/// Курсор окна для точки кадра на экране высадки —
+/// Window cursor for a frame point on the landing screen —
 /// `GameManager_GetWindowCursor` (`game_manager.cpp:4263`).
 ///
-/// * вне области карты — `HANDPTR`;
-/// * валидная клетка — `CURSOR_UNIT_GO`;
-/// * невалидная — `CURSOR_UNIT_NO_GO`.
+/// * outside the map area — `HANDPTR`;
+/// * a valid cell — `CURSOR_UNIT_GO`;
+/// * an invalid one — `CURSOR_UNIT_NO_GO`.
 pub fn cursor_for_screen_point(
     landing: &LandingScreen,
     x: i32,
@@ -527,7 +526,7 @@ pub fn cursor_for_screen_point(
 mod tests {
     use super::*;
 
-    /// Карта: всё суша, кроме вертикальной полосы воды в колонках 50..52.
+    /// Map: all land except a vertical water strip in columns 50..52.
     fn surface() -> SurfaceMap {
         let mut surface = SurfaceMap::new();
 
@@ -582,17 +581,17 @@ mod tests {
         let x = LANDING_AREA.ulx + 30 * LANDING_CELL + 2;
         let y = LANDING_AREA.uly + 22 * LANDING_CELL + 2;
 
-        // Валидная клетка — C++ подтверждает выбор сразу.
+        // A valid cell — C++ confirms the choice immediately.
         assert_eq!(landing.click(x, y), LandingAction::Confirm);
         assert_eq!(landing.cursor, Point::new(30, 22));
 
-        // Невалидная — только двигает точку.
+        // An invalid one — only moves the point.
         let water_x = LANDING_AREA.ulx + 51 * LANDING_CELL + 2;
         assert_eq!(landing.click(water_x, y), LandingAction::None);
         assert_eq!(landing.cursor, Point::new(51, 22));
         assert!(landing.status.contains("Invalid"));
 
-        // Вне области карты — игнор.
+        // Outside the map area — ignore.
         assert_eq!(landing.click(0, 0), LandingAction::None);
         assert_eq!(landing.cursor, Point::new(51, 22));
     }
@@ -663,7 +662,7 @@ mod tests {
         let painted = landing.draw_message(&mut frame, &palette);
 
         assert!(painted > 0);
-        // Высота ровно одна строка: `20 + 10` (`MessageManager_MessageBox_Height`).
+        // Exactly one line high: `20 + 10` (`MessageManager_MessageBox_Height`).
         let rect = PixelRect::new(
             LANDING_AREA.ulx,
             LANDING_AREA.uly + MESSAGE_TOP_OFFSET,

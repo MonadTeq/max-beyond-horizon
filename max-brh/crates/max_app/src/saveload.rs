@@ -1,39 +1,39 @@
-//! Сохранение и загрузка V70 в игре — C++ `saveloadmenu.cpp` (P3).
+//! Saving and loading V70 in game — C++ `saveloadmenu.cpp` (P3).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `saveload.cpp` — имена файлов (`SaveLoad_GetSaveFileName`: `save<slot>.<ext>`,
-//!   расширение зависит от категории миссии: `dta`/`tra`/`cam`/`hot`/`mlt`/`dmo`/
-//!   `sce`/`mps`), каталог (`FilePathGamePref` для custom/hot-seat/multi,
-//!   `FilePathGameData` для кампаний) и автосейв (`game_manager.cpp:2500`:
-//!   слот **10**, включён настройкой `SETUP.auto_save`, имя — «(Turn N)»);
-//! * `saveloadmenu.cpp` — окно: фон `LOADPIC` 640×480, заголовок в (229,5)
-//!   181×21, десять слотов 200×70 (`FILE1_UP`…`FILE9_UP`, `FILE10UP`) в две
-//!   колонки: `x = 402*(i/5)+16`, `y = 76*(i%5)+44`, до 10 слотов на страницу,
-//!   номера слотов с 1, страница сдвигается на 10 (`SaveLoadMenu_SaveSlotLimit`
-//!   = 991 — первый слот последней страницы);
-//! * кнопки в нижней строке y=438: `Cancel` (`MNUBTN6U`, 514), `Load`
-//!   (`MNUBTN4U`, 354), `Save` (`MNUBTN2U`, 132, только в режиме сохранения),
-//!   страницы `MNUUAROU`/`MNUDAROU` (33/63), `Help` (`MNUBTN5U`, 465) и
+//! * `saveload.cpp` — file names (`SaveLoad_GetSaveFileName`: `save<slot>.<ext>`,
+//!   the extension depends on the mission category: `dta`/`tra`/`cam`/`hot`/`mlt`/`dmo`/
+//!   `sce`/`mps`), the directory (`FilePathGamePref` for custom/hot-seat/multi,
+//!   `FilePathGameData` for campaigns) and autosave (`game_manager.cpp:2500`:
+//!   slot **10**, enabled by the `SETUP.auto_save` setting, the name — «(Turn N)»);
+//! * `saveloadmenu.cpp` — the window: `LOADPIC` background 640×480, title at (229,5)
+//!   181×21, ten slots 200×70 (`FILE1_UP`…`FILE9_UP`, `FILE10UP`) in two
+//!   columns: `x = 402*(i/5)+16`, `y = 76*(i%5)+44`, up to 10 slots per page,
+//!   slot numbers from 1, the page shifts by 10 (`SaveLoadMenu_SaveSlotLimit`
+//!   = 991 — the first slot of the last page);
+//! * buttons in the bottom row y=438: `Cancel` (`MNUBTN6U`, 514), `Load`
+//!   (`MNUBTN4U`, 354), `Save` (`MNUBTN2U`, 132, only in save mode),
+//!   pages `MNUUAROU`/`MNUDAROU` (33/63), `Help` (`MNUBTN5U`, 465) and
 //!   `Quit to menu` (`MNUBTN3U`, 243);
-//! * имя сохранения — `char[30]` с text edit в выбранном слоте.
+//! * the save name — `char[30]` with a text edit in the selected slot.
 //!
-//! # Что реализовано, а что нет
+//! # What is implemented and what is not
 //!
-//! Реализованы: сетка слотов с превью-инфо (имя, ход, планета, команды, число
-//! юнитов), ввод имени (30 байт как в V70), страницы, `Save`/`Load`/`Cancel`,
-//! автосейв. Не реализованы (осознанно, чтобы не тащить неотносящиеся экраны):
-//! `Help` (`MNUBTN5U`) и `Quit to menu` (`MNUBTN3U`) — это переходы в другие
-//! меню, а не часть сохранения; `FILESFLC`-анимация окна.
+//! Implemented: the slot grid with preview info (name, turn, planet, teams, number of
+//! units), name input (30 bytes as in V70), pages, `Save`/`Load`/`Cancel`,
+//! autosave. Not implemented (deliberately, so as not to drag in unrelated screens):
+//! `Help` (`MNUBTN5U`) and `Quit to menu` (`MNUBTN3U`) — these are transitions to other
+//! menus, not part of saving; the `FILESFLC` window animation.
 //!
-//! # Сеть
+//! # Network
 //!
-//! В оригинале сохранение в сети **разрешено**: `SaveLoadMenu_Save` рассылает
-//! пакет 16 (`Remote_SendNetPacket_16`) и пишет файл, а загрузка запрещена
+//! In the original saving in the network is **allowed**: `SaveLoadMenu_Save` broadcasts
+//! packet 16 (`Remote_SendNetPacket_16`) and writes the file, while loading is forbidden
 //! («Save/Load is not available in a network game», `saveloadmenu.cpp:461`).
-//! В нашем протоколе пакета 16 нет (`max-brh-docs/architecture/client/protocol.md`), поэтому
-//! меню в сетевой сессии **не открывается** и пишет в журнал, что сохранение
-//! сети не поддержано — иначе клиенты разошлись бы (см. [`crate::App::open_save_menu`]).
+//! In our protocol there is no packet 16 (`max-brh-docs/architecture/client/protocol.md`), so
+//! the menu **does not open** in a network session and writes to the log that network
+//! saving is not supported — otherwise the clients would diverge (see [`crate::App::open_save_menu`]).
 
 use std::path::{Path, PathBuf};
 
@@ -51,60 +51,60 @@ use crate::menu::{draw_image_button, MenuButtonPair};
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 
-/// Логическая ширина экрана (окно оригинала).
+/// Screen logical width (the original window).
 pub const SCREEN_WIDTH: i32 = 640;
-/// Логическая высота экрана.
+/// Screen logical height.
 pub const SCREEN_HEIGHT: i32 = 480;
 
-/// Слотов на страницу (`SaveLoadMenu_SaveSlotsPerPage`).
+/// Slots per page (`SaveLoadMenu_SaveSlotsPerPage`).
 pub const SLOTS_PER_PAGE: i32 = 10;
-/// Первый слот (`SaveLoadMenu_FirstSaveSlot`).
+/// First slot (`SaveLoadMenu_FirstSaveSlot`).
 pub const FIRST_SLOT: i32 = 1;
-/// Первый слот последней страницы (`SaveLoadMenu_SaveSlotLimit`).
+/// First slot of the last page (`SaveLoadMenu_SaveSlotLimit`).
 pub const SLOT_LIMIT: i32 = 991;
-/// Последний достижимый слот (`SaveLoadMenu_LastSaveSlot`).
+/// Last reachable slot (`SaveLoadMenu_LastSaveSlot`).
 pub const LAST_SLOT: i32 = SLOT_LIMIT + SLOTS_PER_PAGE - 1;
-/// Слот автосейва (`game_manager.cpp:2503`).
+/// Autosave slot (`game_manager.cpp:2503`).
 pub const AUTOSAVE_SLOT: i32 = 10;
 
-/// Прямоугольник заголовка (`Text_TextBox(…, 229, 5, 181, 21, …)`).
+/// Title rectangle (`Text_TextBox(…, 229, 5, 181, 21, …)`).
 pub const TITLE: PixelRect = PixelRect::new(229, 5, 181, 21);
-/// Поле имени сохранения (V70 `save_name[30]`); в C++ — text edit слота.
+/// Save name field (V70 `save_name[30]`); in C++ — the slot's text edit.
 pub const NAME_FIELD: PixelRect = PixelRect::new(16, 8, 200, 26);
-/// Сетка слотов: две колонки по пять строк (C++ `402*(i/5)+16`, `76*(i%5)+44`).
+/// Slot grid: two columns of five rows (C++ `402*(i/5)+16`, `76*(i%5)+44`).
 pub const SLOT_WIDTH: i32 = 200;
-/// Высота слота (картинка `FILE*_UP` — 200×70).
+/// Slot height (the `FILE*_UP` picture is 200×70).
 pub const SLOT_HEIGHT: i32 = 70;
-/// Кнопка `Save` (`MNUBTN2U`, 109×40) — только в режиме сохранения.
+/// `Save` button (`MNUBTN2U`, 109×40) — only in save mode.
 pub const SAVE_BUTTON: PixelRect = PixelRect::new(132, 438, 109, 40);
-/// Кнопка `Cancel` (`MNUBTN4U`, 109×40): C++ `r_value = 1000` → выход без записи.
+/// `Cancel` button (`MNUBTN4U`, 109×40): C++ `r_value = 1000` → exit without writing.
 pub const CANCEL_BUTTON: PixelRect = PixelRect::new(354, 438, 109, 40);
-/// Кнопка `Load` (`MNUBTN6U`, 109×40) — доступна в обоих режимах.
+/// `Load` button (`MNUBTN6U`, 109×40) — available in both modes.
 pub const LOAD_BUTTON: PixelRect = PixelRect::new(514, 438, 109, 40);
-/// Страница вверх (`MNUUAROU`, 28×29).
+/// Page up (`MNUUAROU`, 28×29).
 pub const PAGE_UP: PixelRect = PixelRect::new(33, 438, 28, 29);
-/// Страница вниз (`MNUDAROU`, 28×29).
+/// Page down (`MNUDAROU`, 28×29).
 pub const PAGE_DOWN: PixelRect = PixelRect::new(63, 438, 28, 29);
-/// Строка статуса под кнопками.
+/// Status line under the buttons.
 pub const STATUS: PixelRect = PixelRect::new(16, 414, 600, 18);
 
-/// Прямоугольник слота на странице (`i` = 0..9).
+/// Slot rectangle on the page (`i` = 0..9).
 pub fn slot_rect(index: usize) -> PixelRect {
     let i = index as i32;
     PixelRect::new(402 * (i / 5) + 16, 76 * (i % 5) + 44, SLOT_WIDTH, SLOT_HEIGHT)
 }
 
-/// Режим окна: сохранение или загрузка.
+/// Window mode: save or load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveLoadMode {
-    /// `is_saving_allowed = true` — можно писать файл и править имя.
+    /// `is_saving_allowed = true` — the file can be written and the name edited.
     Save,
-    /// Только выбор существующего сейва.
+    /// Selection of an existing save only.
     Load,
 }
 
 impl SaveLoadMode {
-    /// Заголовок окна (`_(5426)`/`_(63e7)`).
+    /// Window title (`_(5426)`/`_(63e7)`).
     pub const fn title(self) -> &'static str {
         match self {
             Self::Save => "Save Game",
@@ -113,84 +113,84 @@ impl SaveLoadMode {
     }
 }
 
-/// Превью слота: то, что C++ показывает в `SaveSlot::DrawSaveSlot`.
+/// Slot preview: what C++ shows in `SaveSlot::DrawSaveSlot`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotPreview {
-    /// Имя сохранения (`save_name` заголовка).
+    /// Save name (the header `save_name`).
     pub save_name: String,
-    /// Номер хода.
+    /// Turn number.
     pub turn: i32,
-    /// Планета.
+    /// Planet.
     pub world: Planet,
-    /// Сколько юнитов в сейве.
+    /// How many units are in the save.
     pub units: usize,
-    /// «Имена команд через запятую» для строки превью.
+    /// «Team names separated by commas» for the preview line.
     pub teams: String,
-    /// Версия формата.
+    /// Format version.
     pub version: u16,
 }
 
-/// Один слот страницы.
+/// One page slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotInfo {
-    /// Номер слота в терминах C++ (с 1).
+    /// Slot number in C++ terms (from 1).
     pub slot: i32,
-    /// Имя файла (`save3.hot`).
+    /// File name (`save3.hot`).
     pub file_name: String,
-    /// Полный путь.
+    /// Full path.
     pub path: PathBuf,
-    /// Файл существует и разбирается.
+    /// The file exists and parses.
     pub in_use: bool,
-    /// Превью, если файл прочитан.
+    /// Preview, if the file was read.
     pub preview: Option<SlotPreview>,
 }
 
-/// Что нажали в окне.
+/// What was pressed in the window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveLoadAction {
-    /// Ничего (перерисовать).
+    /// Nothing (redraw).
     None,
-    /// Сохранить в слот с таким именем.
+    /// Save into the slot with this name.
     Save {
-        /// Номер слота (с 1).
+        /// Slot number (from 1).
         slot: i32,
-        /// Имя сохранения (≤ 29 символов).
+        /// Save name (≤ 29 characters).
         name: String,
     },
-    /// Загрузить слот.
+    /// Load the slot.
     Load {
-        /// Номер слота (с 1).
+        /// Slot number (from 1).
         slot: i32,
     },
-    /// Закрыть окно.
+    /// Close the window.
     Cancel,
 }
 
-/// Экран сохранения/загрузки.
+/// Save/load screen.
 #[derive(Debug, Clone)]
 pub struct SaveLoadMenu {
-    /// Режим.
+    /// Mode.
     pub mode: SaveLoadMode,
-    /// Категория партии (задаёт расширение файлов и каталог).
+    /// Match category (defines the file extension and directory).
     pub category: MissionCategory,
-    /// Каталог сейвов.
+    /// Save directory.
     pub dir: PathBuf,
-    /// Первый слот страницы.
+    /// First slot of the page.
     pub first_slot: i32,
-    /// Слоты текущей страницы (всегда [`SLOTS_PER_PAGE`]).
+    /// Slots of the current page (always [`SLOTS_PER_PAGE`]).
     pub slots: Vec<SlotInfo>,
-    /// Выбранный слот страницы (0..9).
+    /// Selected page slot (0..9).
     pub selected: Option<usize>,
-    /// Редактируемое имя (`char[30]`, как в V70).
+    /// Editable name (`char[30]`, as in V70).
     pub name: String,
-    /// Имя редактируется (в режиме сохранения).
+    /// The name is being edited (in save mode).
     pub editing: bool,
-    /// Строка статуса/ошибки.
+    /// Status/error line.
     pub status: String,
 }
 
 impl SaveLoadMenu {
-    /// Открывает окно на первой странице (C++ `SaveLoadMenu_MenuLoop`).
+    /// Opens the window on the first page (C++ `SaveLoadMenu_MenuLoop`).
     pub fn new(mode: SaveLoadMode, category: MissionCategory, dir: impl Into<PathBuf>) -> Self {
         let mut menu = Self {
             mode,
@@ -207,7 +207,7 @@ impl SaveLoadMenu {
         menu
     }
 
-    /// Расширение файлов категории (`SaveLoad_GetSaveFileName`).
+    /// File extension of the category (`SaveLoad_GetSaveFileName`).
     pub fn extension(category: MissionCategory) -> &'static str {
         match category {
             MissionCategory::Custom => "dta",
@@ -221,17 +221,17 @@ impl SaveLoadMenu {
         }
     }
 
-    /// Имя файла слота (`save<slot>.<ext>`).
+    /// Slot file name (`save<slot>.<ext>`).
     pub fn file_name(category: MissionCategory, slot: i32) -> String {
         format!("save{slot}.{}", Self::extension(category))
     }
 
-    /// Полный путь слота (сначала нижний регистр, как `SaveLoad_GetFilePath`).
+    /// Full path of the slot (lowercase first, like `SaveLoad_GetFilePath`).
     pub fn file_path(dir: &Path, category: MissionCategory, slot: i32) -> PathBuf {
         dir.join(Self::file_name(category, slot))
     }
 
-    /// Перечитывает слоты страницы.
+    /// Re-reads the page slots.
     pub fn reload(&mut self) {
         self.slots.clear();
         for index in 0..SLOTS_PER_PAGE {
@@ -272,9 +272,9 @@ impl SaveLoadMenu {
             self.slots.push(info);
         }
         if self.selected.is_none() {
-            // C++ не выбирает слот сам (`save_slot_index = -1`); для клавиатуры
-            // выбираем полезный по умолчанию: свободный слот при сохранении и
-            // первый занятый при загрузке.
+            // C++ does not select a slot itself (`save_slot_index = -1`); for the keyboard
+            // we choose a useful default: a free slot when saving and
+            // the first occupied one when loading.
             self.selected = if self.mode == SaveLoadMode::Save {
                 self.slots.iter().position(|slot| !slot.in_use)
             } else {
@@ -284,12 +284,12 @@ impl SaveLoadMenu {
         }
     }
 
-    /// Выбранный слот целиком.
+    /// The selected slot as a whole.
     pub fn selected_slot(&self) -> Option<&SlotInfo> {
         self.selected.and_then(|index| self.slots.get(index))
     }
 
-    /// Меняет страницу (`GNW_KB_KEY_PAGEUP`/`PAGEDOWN`); `false` — уже край.
+    /// Changes the page (`GNW_KB_KEY_PAGEUP`/`PAGEDOWN`); `false` — already at the edge.
     pub fn page(&mut self, delta: i32) -> bool {
         if delta < 0 {
             if self.first_slot <= FIRST_SLOT {
@@ -307,8 +307,8 @@ impl SaveLoadMenu {
         true
     }
 
-    /// Выбирает слот по индексу страницы; при сохранении подставляет имя
-    /// существующего сейва (перезапись), у пустого слота имя не трогает.
+    /// Selects a slot by page index; when saving, substitutes the name of the
+    /// existing save (overwrite), and leaves the name of an empty slot alone.
     pub fn select(&mut self, index: usize) {
         if index >= self.slots.len() {
             return;
@@ -321,7 +321,7 @@ impl SaveLoadMenu {
         }
     }
 
-    /// Действие «Сохранить» для текущего слота.
+    /// The "Save" action for the current slot.
     pub fn save_action(&mut self) -> SaveLoadAction {
         let Some(index) = self.selected else {
             self.status = "Select a save slot first".to_string();
@@ -339,7 +339,7 @@ impl SaveLoadMenu {
         }
     }
 
-    /// Действие «Загрузить» для текущего слота.
+    /// The "Load" action for the current slot.
     pub fn load_action(&mut self) -> SaveLoadAction {
         let Some(index) = self.selected else {
             self.status = "Select a save slot first".to_string();
@@ -353,7 +353,7 @@ impl SaveLoadMenu {
         SaveLoadAction::Load { slot: slot.slot }
     }
 
-    /// Обрабатывает клик мыши в пикселях кадра.
+    /// Handles a mouse click in frame pixels.
     pub fn click(&mut self, x: i32, y: i32) -> SaveLoadAction {
         if PAGE_UP.contains(x, y) {
             self.page(-1);
@@ -386,7 +386,7 @@ impl SaveLoadMenu {
         SaveLoadAction::None
     }
 
-    /// Обрабатывает клавишу.
+    /// Handles a key.
     pub fn key(&mut self, key: Key) -> SaveLoadAction {
         match key {
             Key::Escape => return SaveLoadAction::Cancel,
@@ -423,7 +423,7 @@ impl SaveLoadMenu {
         SaveLoadAction::None
     }
 
-    /// Обрабатывает событие ввода целиком.
+    /// Handles an input event as a whole.
     pub fn input(&mut self, event: InputEvent) -> SaveLoadAction {
         match event {
             InputEvent::Key(key) => self.key(key),
@@ -443,14 +443,14 @@ impl SaveLoadMenu {
         self.select(index.min(self.slots.len().saturating_sub(1)));
     }
 
-    /// Рисует окно поверх кадра.
+    /// Draws the window over the frame.
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets) -> u32 {
         if frame.width() != SCREEN_WIDTH as u32 || frame.height() != SCREEN_HEIGHT as u32 {
             return 0;
         }
 
-        // Под окном — чёрный кадр: прозрачные пиксели `LOADPIC` в C++ показывают
-        // игру, но проще (и стабильнее для golden-кадров) залить чёрным.
+        // The frame under the window is black: in C++ the transparent pixels of `LOADPIC`
+        // show the game, but it is simpler (and more stable for golden frames) to fill black.
         frame.fill_rect(
             PixelRect::new(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
             max_render::buffer::Rgba::rgb(0, 0, 0),
@@ -479,7 +479,7 @@ impl SaveLoadMenu {
         painted += draw_text_gnw_centered(frame, TITLE, font5, self.mode.title(), green).max(0)
             as u32;
 
-        // Поле имени (V70 `char save_name[30]`).
+        // Name field (V70 `char save_name[30]`).
         frame.fill_rect(NAME_FIELD, palette.rgba(0x00));
         let label = if self.name.is_empty() {
             "Name: ".to_string()
@@ -508,7 +508,7 @@ impl SaveLoadMenu {
             painted += 1;
         }
 
-        // Десять слотов.
+        // Ten slots.
         for index in 0..self.slots.len() {
             let rect = slot_rect(index);
             let selected = self.selected == Some(index);
@@ -535,7 +535,7 @@ impl SaveLoadMenu {
                 }
             }
 
-            // Номер слота (C++ `Text_TextBox(..., "%d", 0, 0, 40, 70)`).
+            // Slot number (C++ `Text_TextBox(..., "%d", 0, 0, 40, 70)`).
             painted += draw_text_gnw(
                 frame,
                 rect.ulx + 6,
@@ -603,8 +603,8 @@ impl SaveLoadMenu {
             }
         }
 
-        // Кнопки в порядке C++ (`saveloadmenu.cpp:248-265`): страницы слева,
-        // Save (только сохранение), Cancel, Load.
+        // Buttons in C++ order (`saveloadmenu.cpp:248-265`): pages on the left,
+        // Save (save mode only), Cancel, Load.
         painted += draw_button(
             frame,
             &palette,
@@ -667,16 +667,16 @@ impl SaveLoadMenu {
     }
 }
 
-/// Ресурсы окна сохранения/загрузки из `MAX.RES`.
+/// Save/load window resources from `MAX.RES`.
 #[derive(Debug, Clone)]
 pub struct SaveLoadAssets {
-    /// Фон `LOADPIC` 640×480.
+    /// `LOADPIC` background 640×480.
     pub background: Option<BigImage>,
-    /// Пары `FILE1_UP/DN`…`FILE10UP/DN` (индекс — слот страницы 0..9).
+    /// `FILE1_UP/DN`…`FILE10UP/DN` pairs (index — page slot 0..9).
     pub slots: [Option<MenuButtonPair>; 10],
-    /// Страница вверх (`MNUUAROU/D`).
+    /// Page up (`MNUUAROU/D`).
     pub page_up: Option<MenuButtonPair>,
-    /// Страница вниз (`MNUDAROU/D`).
+    /// Page down (`MNUDAROU/D`).
     pub page_down: Option<MenuButtonPair>,
     /// `Save` (`MNUBTN2U/D`).
     pub save: Option<MenuButtonPair>,
@@ -687,7 +687,7 @@ pub struct SaveLoadAssets {
 }
 
 impl SaveLoadAssets {
-    /// Грузит ресурсы из архива `MAX.RES`; отсутствие части — не ошибка.
+    /// Loads resources from the `MAX.RES` archive; a missing part is not an error.
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let pair = |up: &str, down: &str| -> Option<MenuButtonPair> {
             let up = SimpleImage::decode(archive.read(up).ok()?).ok()?;
@@ -696,7 +696,7 @@ impl SaveLoadAssets {
         };
         let mut slots: [Option<MenuButtonPair>; 10] = Default::default();
         for (index, slot) in slots.iter_mut().enumerate() {
-            // C++ `FILE1_UP + i`: у десятого ресурса имя без подчёркивания.
+            // C++ `FILE1_UP + i`: the tenth resource has no underscore in its name.
             *slot = if index < 9 {
                 pair(
                     &format!("FILE{}_UP", index + 1),
@@ -720,18 +720,18 @@ impl SaveLoadAssets {
         }
     }
 
-    /// Пара картинок слота страницы.
+    /// Slot picture pair of a page.
     pub fn slot_pair(&self, index: usize) -> Option<&MenuButtonPair> {
         self.slots.get(index).and_then(Option::as_ref)
     }
 
-    /// Есть ли фон или картинки слотов (иначе окно рисуется рамками).
+    /// Whether there is a background or slot pictures (otherwise the window is drawn with frames).
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.slots.iter().any(Option::is_some)
     }
 }
 
-/// Кнопка: картинка C++ или честная рамка с подписью (как `buildmenu`).
+/// Button: the C++ picture or an honest frame with a label (like `buildmenu`).
 fn draw_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -764,7 +764,7 @@ fn draw_button(
     painted
 }
 
-/// Обрезка длинного имени по ширине (как `mobilize::fit_label`).
+/// Clipping of a long name by width (like `mobilize::fit_label`).
 fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
@@ -777,12 +777,12 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 }
 
 // ---------------------------------------------------------------------------
-// Интеграция с приложением
+// Integration with the application
 // ---------------------------------------------------------------------------
 
 impl crate::App {
-    /// Каталог сейвов: `--save-dir`, иначе каталог `MAX.RES` (`max-original`),
-    /// как `FilePathGameData` для кампаний и `FilePathGamePref` для custom.
+    /// Save directory: `--save-dir`, otherwise the `MAX.RES` directory (`max-original`),
+    /// like `FilePathGameData` for campaigns and `FilePathGamePref` for custom.
     pub fn save_dir(&self) -> PathBuf {
         self.config()
             .save_dir
@@ -796,7 +796,7 @@ impl crate::App {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    /// Категория партии для имён файлов/слотов.
+    /// Match category for file/slot names.
     pub fn save_category(&self) -> MissionCategory {
         if self.local().is_some_and(|local| local.is_hot_seat()) {
             MissionCategory::HotSeat
@@ -805,25 +805,25 @@ impl crate::App {
         }
     }
 
-    /// Открытое окно сохранения/загрузки.
+    /// Open save/load window.
     pub fn save_load(&self) -> Option<&SaveLoadMenu> {
         self.save_load.as_ref()
     }
 
-    /// Изменяемое окно.
+    /// The editable window.
     pub fn save_load_mut(&mut self) -> Option<&mut SaveLoadMenu> {
         self.save_load.as_mut()
     }
 
-    /// Закрывает окно.
+    /// Closes the window.
     pub fn close_save_load(&mut self) {
         self.save_load = None;
     }
 
-    /// Открывает окно сохранения (`File`-кнопка, `Alt+F` в C++).
+    /// Opens the save window (`File` button, `Alt+F` in C++).
     ///
-    /// В сетевой сессии возвращает `false` и пишет в журнал объяснение: в
-    /// оригинале сохранение рассылает пакет 16, которого в нашем протоколе нет.
+    /// In a network session returns `false` and writes the explanation to the log: in
+    /// the original saving broadcasts packet 16, which does not exist in our protocol.
     pub fn open_save_menu(&mut self, online: bool) -> bool {
         if online {
             self.hud
@@ -843,7 +843,7 @@ impl crate::App {
             .unwrap_or_else(|| "Save".to_string());
         let mut menu = SaveLoadMenu::new(SaveLoadMode::Save, category, dir);
         menu.name = default.chars().take(29).collect();
-        // Клавиатурный сценарий «S → Enter» пишет в первый свободный слот.
+        // The keyboard scenario "S → Enter" writes into the first free slot.
         if let Some(index) = menu.slots.iter().position(|slot| !slot.in_use) {
             menu.selected = Some(index);
         }
@@ -851,9 +851,9 @@ impl crate::App {
         true
     }
 
-    /// Открывает окно загрузки (C++ `Alt+L`).
+    /// Opens the load window (C++ `Alt+L`).
     ///
-    /// В сети загрузка запрещена и в оригинале (`saveloadmenu.cpp:461`).
+    /// In the network loading is forbidden in the original too (`saveloadmenu.cpp:461`).
     pub fn open_load_menu(&mut self, online: bool) -> bool {
         if online {
             self.hud
@@ -871,7 +871,7 @@ impl crate::App {
         true
     }
 
-    /// Сохраняет партию в слот (`save<slot>.<ext>`).
+    /// Saves the match into a slot (`save<slot>.<ext>`).
     pub fn save_game_to_slot(&mut self, slot: i32, save_name: &str) -> Result<PathBuf, String> {
         let category = self.save_category();
         let path = SaveLoadMenu::file_path(&self.save_dir(), category, slot);
@@ -879,7 +879,7 @@ impl crate::App {
         Ok(path)
     }
 
-    /// Записывает V70-сейв текущей партии по пути.
+    /// Writes the V70 save of the current match to the path.
     pub fn save_v70_to(
         &mut self,
         path: impl AsRef<Path>,
@@ -892,7 +892,7 @@ impl crate::App {
         Ok(bytes.len())
     }
 
-    /// Байты V70-сейва текущей партии (с обновлением [`SaveMeta`]).
+    /// V70 save bytes of the current match (with [`SaveMeta`] updated).
     pub fn save_v70_bytes(&mut self, save_name: &str) -> Result<Vec<u8>, String> {
         self.sync_save_meta(save_name);
         self.state
@@ -900,8 +900,8 @@ impl crate::App {
             .map_err(|error| format!("V70-запись: {error}"))
     }
 
-    /// Обновляет «внешние» поля сейва перед записью: имя, таймер хода, UI-поля
-    /// игрока и журнал сообщений команды.
+    /// Updates the "external" fields of the save before writing: name, turn timer,
+    /// the player's UI fields and the team message log.
     fn sync_save_meta(&mut self, save_name: &str) {
         let team = usize::from(self.state().player_team.0).min(3);
         let timer_left = self
@@ -917,10 +917,10 @@ impl crate::App {
         let zoom_level = zoom.min(u32::from(u16::MAX)) as u16;
 
         let preferences = self.preferences().to_ini();
-        // `SaveLoad_Save` (`saveload.cpp:426,502-511`): имя команды —
-        // `menu_team_name_setting` (его правит `OptionsMenu` в игре), таймеры —
-        // текущие `settings["timer"]`/`["endturn"]` (их мог изменить
-        // `Preferences` после старта партии).
+        // `SaveLoad_Save` (`saveload.cpp:426,502-511`): the team name —
+        // `menu_team_name_setting` (edited by the in-game `OptionsMenu`), the timers —
+        // the current `settings["timer"]`/`["endturn"]` (they could have been changed by
+        // `Preferences` after the match started).
         let live_names: Vec<(usize, String)> = self
             .local()
             .map(|local| {
@@ -949,13 +949,13 @@ impl crate::App {
         for (team, name) in live_names {
             SaveMeta::set_name(&mut meta.team_names[team], &name);
         }
-        // `IniPreferences` (7 × `signed int`): текущие настройки игрока, как
+        // `IniPreferences` (7 × `signed int`): the current player settings, as
         // `SaveLoad_Save` (`saveload.cpp:547` — `settings->GetNumericValue`).
         meta.ini_preferences = preferences;
-        // Камера/зум игрока — как `GameManager_GuiSwitchTeam` + `CTInfo`.
+        // Camera/zoom of the player — like `GameManager_GuiSwitchTeam` + `CTInfo`.
         meta.team_ui[team].camera_position = max_core::geo::Point::new(camera_x, camera_y);
         meta.team_ui[team].zoom_level = zoom_level;
-        // Журнал UI → `MessageLogList` команды (V70): только новые строки.
+        // UI log → the team's `MessageLogList` (V70): only new lines.
         for line in messages.iter().skip(existing.min(messages.len())) {
             let mut text = line.chars().take(120).collect::<String>().into_bytes();
             text.push(0);
@@ -970,10 +970,10 @@ impl crate::App {
         }
     }
 
-    /// Автосейв конца хода (C++ `SETUP.auto_save`, слот 10).
+    /// End-of-turn autosave (C++ `SETUP.auto_save`, slot 10).
     ///
-    /// C++ пишет его при входе в `GameManager_UpdateGui` первой команды раунда
-    /// (`game_manager.cpp:2500`) — см. `local::local_finish_round`.
+    /// C++ writes it on entering `GameManager_UpdateGui` of the round's first team
+    /// (`game_manager.cpp:2500`) — see `local::local_finish_round`.
     pub fn autosave(&mut self) -> Option<PathBuf> {
         if !self.config().autosave || !self.preferences().auto_save || !self.local_active() {
             return None;
@@ -991,9 +991,9 @@ impl crate::App {
         Some(path)
     }
 
-    /// Загружает V70-сейв в текущую сессию: локальная партия перезапускается с
-    /// сохранённого хода (C++ `GameManager_LoadGame`), иначе состояние просто
-    /// заменяется.
+    /// Loads a V70 save into the current session: a local match restarts from
+    /// the saved turn (C++ `GameManager_LoadGame`), otherwise the state is simply
+    /// replaced.
     pub fn load_game_slot(&mut self, slot: i32) -> Result<PathBuf, String> {
         let category = self.save_category();
         let path = SaveLoadMenu::file_path(&self.save_dir(), category, slot);
@@ -1001,7 +1001,7 @@ impl crate::App {
         Ok(path)
     }
 
-    /// Загружает V70-файл по пути.
+    /// Loads a V70 file by path.
     pub fn load_v70_path(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
         let path = path.as_ref();
         let bytes = std::fs::read(path)
@@ -1021,9 +1021,9 @@ impl crate::App {
     }
 }
 
-/// Заполняет [`SaveMeta`] настройками новой локальной партии.
+/// Fills [`SaveMeta`] with the settings of a new local match.
 ///
-/// Дефолты `IniPreferences` — из `SETUP` (как в `SAVE1.CAM`: effects=1,
+/// `IniPreferences` defaults — from `SETUP` (as in `SAVE1.CAM`: effects=1,
 /// quick_scroll=40, fast_movement=1, enemy_halt=1).
 pub fn save_meta_for_local_game(setup: &crate::local::LocalSetup) -> SaveMeta {
     save_meta_for_local_game_with(
@@ -1040,8 +1040,8 @@ pub fn save_meta_for_local_game(setup: &crate::local::LocalSetup) -> SaveMeta {
     )
 }
 
-/// То же, но с текущими настройками игрока (`Preferences::to_ini`): именно они
-/// попадают в `SaveMeta::ini_preferences` новой партии, как `SaveLoad_Save`
+/// The same, but with the current player settings (`Preferences::to_ini`): they are
+/// what goes into `SaveMeta::ini_preferences` of a new match, like `SaveLoad_Save`
 /// (`saveload.cpp:547`).
 pub fn save_meta_for_local_game_with(
     setup: &crate::local::LocalSetup,
@@ -1091,8 +1091,8 @@ pub fn save_meta_for_local_game_with(
         }
         SaveMeta::set_name(&mut meta.team_names[team], &setup.display_name(max_core::TeamId(team as u8)));
     }
-    // Наш ИИ всегда держит карты 112×112 (`AiPlayer::new`), поэтому в сейв они
-    // попадают — в отличие от V70-сейвов DOS-оригинала.
+    // Our AI always keeps 112×112 maps (`AiPlayer::new`), so they get into the save —
+    // unlike the V70 saves of the DOS original.
     meta.ai_has_info_map = [true; 4];
     meta.ai_has_mine_map = [true; 4];
     meta

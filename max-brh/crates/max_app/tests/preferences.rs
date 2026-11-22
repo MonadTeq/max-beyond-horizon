@@ -1,9 +1,9 @@
-//! `Preferences`/`Setup`: диалог из меню и из игры, реальные эффекты и звук,
-//! сохранение в `IniPreferences` (V70) и `preferences.ini`.
+//! `Preferences`/`Setup`: the dialog from the menu and from the game, real effects and sound,
+//! saving to `IniPreferences` (V70) and `preferences.ini`.
 //!
-//! Оракул — `max-cpp-port/src/optionsmenu.cpp`, `menu.cpp:2325/2331`,
-//! `settings.cpp`, `saveload.cpp:920-934`. Тесты, которым нужны данные игры,
-//! пропускаются, если `max-original/MAX.RES` рядом нет.
+//! Oracle — `max-cpp-port/src/optionsmenu.cpp`, `menu.cpp:2325/2331`,
+//! `settings.cpp`, `saveload.cpp:920-934`. Tests that need game data are
+//! skipped if there is no `max-original/MAX.RES` nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -91,8 +91,8 @@ fn changed_pixels(left: &max_render::buffer::RgbaBuffer, right: &max_render::buf
         .count()
 }
 
-/// Клик по кнопке `Preferences` панели открывает диалог; клик по чекбоксу и
-/// `Done` применяют и сохраняют настройку (C++ `GameManager_MenuClickPreferencesButton`
+/// A click on the panel `Preferences` button opens the dialog; a click on a checkbox and
+/// `Done` apply and save the setting (C++ `GameManager_MenuClickPreferencesButton`
 /// → `OptionsMenu(PREFSPIC)`).
 #[test]
 fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
@@ -110,8 +110,8 @@ fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
     assert_eq!(transition, Transition::None);
     assert!(app.preferences_dialog().is_some(), "диалог Preferences открыт");
 
-    // Пока диалог открыт, панель/карта ввода не получают: клик по карте ничего
-    // не выделяет (модальность `OptionsMenu::Run`).
+    // While the dialog is open, the panel/map receive no input: a click on the map selects
+    // nothing (modality of `OptionsMenu::Run`).
     let selected_before = app.hud().selected;
     max_app::ui::handle_session_input(&mut app, InputEvent::MouseClick(404, 242), false);
     assert_eq!(app.hud().selected, selected_before);
@@ -153,8 +153,8 @@ fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `effects = false` останавливает покадровые анимации: `RADAR` (`ANIMATED`)
-/// не листает кадры, кадр статичен (`settings["effects"]` в C++).
+/// `effects = false` stops frame-by-frame animations: `RADAR` (`ANIMATED`)
+/// does not advance frames, the frame is static (`settings["effects"]` in C++).
 #[test]
 fn effects_off_freezes_building_animation_frames() {
     let dir = temp_dir("effects");
@@ -181,7 +181,7 @@ fn effects_off_freezes_building_animation_frames() {
         "effects = on: ANIMATED-здание листает кадр"
     );
 
-    // Выключаем эффекты — часы сбрасываются, кадры больше не идут.
+    // Disable the effects — the clock resets, frames no longer advance.
     app.set_preferences(Preferences {
         effects: false,
         ..app.preferences().clone()
@@ -203,7 +203,7 @@ fn effects_off_freezes_building_animation_frames() {
         );
     }
 
-    // Включаем обратно — анимация продолжается.
+    // Enable them back — the animation continues.
     app.set_preferences(Preferences {
         effects: true,
         ..app.preferences().clone()
@@ -215,8 +215,8 @@ fn effects_off_freezes_building_animation_frames() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `FX Disabled` (`disable_fx`) — «звук вкл/выкл»: флаг доходит до
-/// `AudioPlayer::set_enabled` и `play` больше не ставит клип в очередь.
+/// `FX Disabled` (`disable_fx`) — "sound on/off": the flag reaches
+/// `AudioPlayer::set_enabled` and `play` no longer queues the clip.
 #[test]
 fn sound_flag_reaches_the_audio_layer() {
     let dir = temp_dir("sound");
@@ -238,7 +238,7 @@ fn sound_flag_reaches_the_audio_layer() {
     assert!(audio.play_once("KBUY0"));
     assert_eq!(audio.plays(), 1);
 
-    // Клик по `FX Disabled` в диалоге (PREFSPIC).
+    // A click on `FX Disabled` in the dialog (PREFSPIC).
     assert!(app.open_preferences());
     let fx = app
         .preferences_dialog()
@@ -252,7 +252,7 @@ fn sound_flag_reaches_the_audio_layer() {
     .expect("dialog");
     assert!(!app.sound_enabled(), "disable_fx = 1");
 
-    // `.runtime`-синхронизация как `main.rs`/QA: флаг → AudioPlayer.
+    // `.runtime` synchronization like `main.rs`/QA: flag → AudioPlayer.
     audio.set_enabled(app.sound_enabled());
     audio.set_volume(app.preferences().sound_volume());
     assert!(!audio.enabled());
@@ -262,8 +262,8 @@ fn sound_flag_reaches_the_audio_layer() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `IniPreferences` пишутся в настоящий V70-сейв (`SaveLoad_Save`,
-/// `saveload.cpp:547`) и читаются обратно (как `SaveLoad_Load` применяет их).
+/// `IniPreferences` are written into a real V70 save (`SaveLoad_Save`,
+/// `saveload.cpp:547`) and read back (as `SaveLoad_Load` applies them).
 #[test]
 fn preferences_are_written_to_and_read_from_v70_ini_preferences() {
     let dir = temp_dir("v70");
@@ -289,7 +289,7 @@ fn preferences_are_written_to_and_read_from_v70_ini_preferences() {
     let save = SaveFile::parse(&std::fs::read(&path).expect("файл")).expect("parses");
     assert_eq!(save.ini_preferences, prefs.to_ini());
 
-    // Загрузка применяет ini_preferences к настройкам (C++ `SaveLoad_Load`).
+    // Loading applies ini_preferences to the settings (C++ `SaveLoad_Load`).
     let mut fresh = app_with_assets(&dir).expect("assets");
     fresh.load_v70_path(&path).expect("load");
     assert_eq!(fresh.preferences().to_ini(), prefs.to_ini());
@@ -298,8 +298,8 @@ fn preferences_are_written_to_and_read_from_v70_ini_preferences() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Пункт `Setup` главного меню открывает `OptionsMenu(SETUPPIC)`; `Done`
-/// отдаёт значения переходом `ApplyPreferences` (`menu_setup_window`).
+/// The main menu `Setup` item opens `OptionsMenu(SETUPPIC)`; `Done`
+/// returns the values via the `ApplyPreferences` transition (`menu_setup_window`).
 #[test]
 fn main_menu_setup_opens_dialog_and_done_applies_preferences() {
     struct DummyClient;
@@ -330,11 +330,11 @@ fn main_menu_setup_opens_dialog_and_done_applies_preferences() {
         panic!("Setup должен открыть Screen::Preferences, сейчас {screen:?}");
     };
     assert_eq!(dialog.variant(), PreferencesVariant::Setup);
-    // `SETUPPIC` заканчивается на секции `preferences`.
+    // `SETUPPIC` ends at the `preferences` section.
     assert!(dialog.row(PrefKey::Effects).is_none());
     assert!(dialog.row(PrefKey::DisableFx).is_some());
 
-    // `FX Disabled` виден и переключается: `Changed` обновляет `ctx`.
+    // `FX Disabled` is visible and toggles: `Changed` updates `ctx`.
     let fx = dialog.screen_rect(PrefKey::DisableFx).expect("fx");
     let transition = screen.handle_input(
         &mut ctx,
@@ -343,7 +343,7 @@ fn main_menu_setup_opens_dialog_and_done_applies_preferences() {
     assert_eq!(transition, Transition::None);
     assert!(ctx.preferences.disable_fx, "Changed обновляет контекст");
 
-    // `Enter` — Done: переход с готовыми настройками и возврат в меню.
+    // `Enter` — Done: the transition with the ready settings and return to the menu.
     let transition = screen.handle_input(&mut ctx, InputEvent::Key(Key::Enter));
     match transition {
         Transition::ApplyPreferences(prefs) => {
@@ -354,8 +354,8 @@ fn main_menu_setup_opens_dialog_and_done_applies_preferences() {
     assert!(matches!(screen, Screen::MainMenu));
 }
 
-/// `Esc`/`Cancel` возвращает `Cancel`, а вызывающий откатывает снимок
-/// (`last_rest_state` в C++).
+/// `Esc`/`Cancel` returns `Cancel`, and the caller rolls back the snapshot
+/// (`last_rest_state` in C++).
 #[test]
 fn cancel_reverts_the_draft() {
     let mut dialog = max_app::preferences::PreferencesDialog::new(
@@ -374,6 +374,6 @@ fn cancel_reverts_the_draft() {
         dialog.input(InputEvent::Key(Key::Escape)),
         PreferencesAction::Cancel
     );
-    // Откат делает приложение по `initial` — здесь проверяем сам снимок.
+    // The application does the rollback via `initial` — here we check the snapshot itself.
     assert!(dialog.initial.effects, "initial не меняется");
 }

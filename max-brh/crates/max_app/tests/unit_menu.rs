@@ -1,9 +1,9 @@
-//! Меню команд выделенного юнита (C++ `GameManager_PopupButtons`): триггер
-//! повторным кликом, состав пунктов по типу, модальность, `Esc` и вызов
-//! существующих обработчиков.
+//! Selected unit command menu (C++ `GameManager_PopupButtons`): the trigger
+//! by a repeated click, the item composition by type, modality, `Esc` and calls
+//! of the existing handlers.
 //!
-//! Тесты с настоящими кадрами (`Assets`/`.WRL`) пропускаются, если данных игры
-//! нет рядом с репозиторием — как `move_input.rs` и `tests/app.rs`.
+//! Tests with real frames (`Assets`/`.WRL`) are skipped if there is no game
+//! data next to the repository — like `move_input.rs` and `tests/app.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ fn repo_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// Одна человеческая команда RED, остальное — ИИ/пусто.
+/// One human RED team, the rest — AI/empty.
 fn single_human() -> LocalSetup {
     let mut setup = LocalSetup::default();
     setup.world = 0;
@@ -57,7 +57,7 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
-/// Партия через настоящие фазы старта: мобилизация → высадка → `InGame`.
+/// A match through the real start phases: mobilization → landing → `InGame`.
 fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
@@ -83,7 +83,7 @@ fn game_app() -> Option<App> {
     Some(app)
 }
 
-/// Свободная клетка рядом с шахтой RED.
+/// A free cell next to the RED mine.
 fn free_grid(app: &App) -> Point {
     for radius in 1..6 {
         for dy in -radius..=radius {
@@ -108,7 +108,7 @@ fn free_grid(app: &App) -> Point {
     Point::new(23, 23)
 }
 
-/// Добавляет юнита RED в свободную клетку и ставит камеру на него.
+/// Adds a RED unit to a free cell and puts the camera on it.
 fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
     let grid = free_grid(app);
     let flags = max_core::access::unit_type_flags(unit_type);
@@ -121,8 +121,8 @@ fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
     id
 }
 
-/// Юнит RED в клетке, вокруг которой свободен 2×2 (для заказа здания:
-/// площадка привязана к строителю, `UnitsManager_IssueBuildOrder`).
+/// A RED unit in a cell with a free 2×2 around it (for a building order:
+/// the site is bound to the builder, `UnitsManager_IssueBuildOrder`).
 fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
     let land = max_core::enums::Surface::LAND.bits();
     let free = |app: &App, cell: Point| {
@@ -157,7 +157,7 @@ fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
     id
 }
 
-/// Экранная точка центра клетки (кадр 640×480 с хромом).
+/// Screen point of the cell center (640×480 frame with chrome).
 fn screen_point(app: &App, grid: Point) -> (i32, i32) {
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
 
@@ -172,10 +172,10 @@ fn key(app: &mut App, key: Key) -> Transition {
     handle_session_input(app, InputEvent::Key(key), false)
 }
 
-/// Двойной клик по юниту (выделение + повторный клик = меню) через ввод.
+/// Double click on the unit (selection + repeated click = menu) through input.
 ///
-/// Выделение заранее снимается: после пункта меню юнит остаётся выделенным, и
-/// одиночный клик по нему снова открыл бы меню (как в C++).
+/// The selection is cleared beforehand: after a menu item the unit remains selected, and
+/// a single click on it would open the menu again (as in C++).
 fn open_menu(app: &mut App, id: UnitId) {
     app.close_unit_menu();
     app.hud_mut().select(None);
@@ -201,12 +201,12 @@ fn repeat_click_on_selected_unit_opens_menu() {
     let grid = app.state().unit(id).expect("танк").grid;
     let point = screen_point(&app, grid);
 
-    // Первый клик — только выделение (как C++ `GameManager_ClickUnit` с unit1 != unit2).
+    // The first click — selection only (like C++ `GameManager_ClickUnit` with unit1 != unit2).
     let _ = click(&mut app, point);
     assert_eq!(app.hud().selected, Some(id));
     assert!(app.unit_menu().is_none(), "первый клик меню не открывает");
 
-    // Второй клик по тому же юниту — меню команд.
+    // The second click on the same unit — the command menu.
     let _ = click(&mut app, point);
     let menu = app.unit_menu().expect("меню открыто повторным кликом");
     assert_eq!(menu.unit, id);
@@ -219,7 +219,7 @@ fn menu_items_follow_unit_type() {
         return;
     };
 
-    // Танк: `attack` (не портирован) → `enter` → `sentry` → `Done`.
+    // Tank: `attack` (not ported) → `enter` → `sentry` → `Done`.
     let tank = spawn(&mut app, UnitType::Tank);
     open_menu(&mut app, tank);
 
@@ -234,7 +234,7 @@ fn menu_items_follow_unit_type() {
 
     let _ = key(&mut app, Key::Escape);
 
-    // Строитель: `Build` первым пунктом.
+    // Builder: `Build` as the first item.
     let builder = spawn(&mut app, UnitType::Constructor);
     open_menu(&mut app, builder);
     let menu = app.unit_menu().expect("меню строителя");
@@ -242,8 +242,8 @@ fn menu_items_follow_unit_type() {
     assert!(menu.items[0].enabled);
     let _ = key(&mut app, Key::Escape);
 
-    // Транспорт: `load` включён (курсорный режим 7), `activate` — нет
-    // (`RepairShopMenu` не портирован).
+    // Transport: `load` is enabled (cursor mode 7), `activate` — not
+    // (RepairShopMenu is not ported).
     let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, transport);
     let menu = app.unit_menu().expect("меню транспорта");
@@ -273,7 +273,7 @@ fn escape_closes_menu_and_does_not_leave_session() {
     assert!(app.unit_menu().is_none());
     assert_eq!(app.hud().selected, Some(tank), "выделение сохраняется");
 
-    // Второй Esc — обычное поведение сессии (снять выделение).
+    // A second Esc — the usual session behavior (clear the selection).
     let _ = key(&mut app, Key::Escape);
     assert_eq!(app.hud().selected, None);
 }
@@ -288,8 +288,8 @@ fn menu_is_modal_for_the_map() {
     let other = spawn(&mut app, UnitType::Scout);
     open_menu(&mut app, tank);
 
-    // Клик по другому своему юниту: меню закрывается, выделение не меняется,
-    // приказов не появилось (C++: попап модален для карты).
+    // A click on another own unit: the menu closes, the selection does not change,
+    // no orders appeared (C++: the popup is modal for the map).
     let point = screen_point(&app, app.state().unit(other).expect("scout").grid);
     let _ = click(&mut app, point);
 
@@ -297,7 +297,7 @@ fn menu_is_modal_for_the_map() {
     assert_eq!(app.hud().selected, Some(tank), "карта приказ не получила");
     assert!(app.hud().pending.is_empty(), "приказов нет");
 
-    // И повторный клик по танку снова открывает меню (не перевыделяет).
+    // And a repeated click on the tank opens the menu again (does not re-select).
     open_menu(&mut app, tank);
     assert!(app.unit_menu().is_some());
 }
@@ -317,7 +317,7 @@ fn hotkey_and_click_activate_sentry() {
         .expect("sentry в меню");
     let rect = app.unit_menu().expect("меню").button_rect(index);
 
-    // Клик по кнопке пункта — как настоящая мышь.
+    // A click on the item button — like a real mouse.
     let _ = click(&mut app, (rect.ulx + rect.width / 2, rect.uly + rect.height / 2));
 
     assert!(app.unit_menu().is_none(), "пункт закрывает меню");
@@ -325,13 +325,13 @@ fn hotkey_and_click_activate_sentry() {
     assert_eq!(unit.orders, UnitOrder::Sentry);
     assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
 
-    // Повторное открытие: пункт `sentry` нажат (`state[i]` в C++).
+    // Reopening: the `sentry` item is pressed (`state[i]` in C++).
     open_menu(&mut app, tank);
     let menu = app.unit_menu().expect("меню");
     let sentry = &menu.items[menu.index_of(ItemId::Sentry).expect("sentry")];
     assert!(sentry.pressed, "sentry уже включён — нажатый вид");
 
-    // Горячая клавиша '8' снимает sentry (`ORDER_AWAIT`).
+    // The '8' hotkey clears sentry (`ORDER_AWAIT`).
     let _ = key(&mut app, Key::Char('8'));
     assert_eq!(
         app.state().unit(tank).expect("танк").orders,
@@ -365,7 +365,7 @@ fn disabled_item_does_not_act() {
         return;
     };
 
-    // Единственный оставшийся отключённый пункт — `activate` ремонтного цеха.
+    // The only remaining disabled item — the repair shop `activate`.
     let carrier = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, carrier);
 
@@ -391,7 +391,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
 
     let builder = spawn_with_free_2x2(&mut app, UnitType::Constructor);
 
-    // Заказ постройки: меню команд → Build → `BuildMenu` → Done (как игрок).
+    // Building order: command menu → Build → `BuildMenu` → Done (like a player).
     open_menu(&mut app, builder);
     let index = app
         .unit_menu()
@@ -403,9 +403,9 @@ fn builder_stop_cancels_the_build_and_build_returns() {
 
     let ordered = app.build_menu_select(0) && app.commit_build_menu(false).is_some();
     assert!(ordered, "заказ постройки применён");
-    // Здание у мобильного строителя (`MobileBuildMenu::Build`): `Done`
-    // открывает выбор места (`ORDER_STATE_SELECT_SITE`), приказ уходит только
-    // по подтверждению клетки (`GameManager_PathBuild`).
+    // A building for a mobile builder (`MobileBuildMenu::Build`): `Done`
+    // opens the site selection (`ORDER_STATE_SELECT_SITE`), the order goes only
+    // on cell confirmation (`GameManager_PathBuild`).
     assert!(
         app.build_site().is_some(),
         "после Done открыт режим выбора места"
@@ -421,7 +421,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
         "строитель в приказе Build"
     );
 
-    // Во время стройки в меню только `stop` (как C++).
+    // During construction the menu has only `stop` (like C++).
     open_menu(&mut app, builder);
     assert!(
         app.unit_menu()
@@ -440,7 +440,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     let rect = app.unit_menu().expect("меню").button_rect(index);
     let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
     app.flush_orders();
-    // `CancelBuilding` исполняется процессором приказа на следующем тике
+    // `CancelBuilding` is executed by the order processor on the next tick
     // (`UnitsManager_ProcessOrderBuild` → `ORDER_STATE_BUILD_CANCEL`).
     app.tick();
 
@@ -453,7 +453,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     assert!(unit.build_list.is_empty(), "очередь постройки очищена");
     assert_eq!(unit.build_time, 0, "срок постройки сброшен");
 
-    // Строитель снова может строить: `Build` вернулся в меню и включён.
+    // The builder can build again: `Build` returned to the menu and is enabled.
     open_menu(&mut app, builder);
     let build = app
         .unit_menu()
@@ -493,8 +493,8 @@ fn frame_shows_menu_over_map() {
 
 #[test]
 fn unit_menu_actions_are_orders_on_the_wire() {
-    // Приказы меню идут тем же путём, что остальные (пакет 08): проверяем
-    // уровни процессоров C++ (`Remote_Init`).
+    // Menu orders go the same way as the others (packet 08): we check
+    // the C++ processor levels (`Remote_Init`).
     use max_core::enums::{UnitOrder, UnitOrderState};
     use max_core::input::PayloadLevel;
 
@@ -559,19 +559,19 @@ fn cursor_mode_repairs_own_unit() {
 
     assert_eq!(app.hud().cursor_mode, unitmenu::CURSOR_REPAIR);
 
-    // Клик по своему танку — приказ `ORDER_REPAIR` с родителем-танком.
+    // A click on an own tank — the `ORDER_REPAIR` order with the tank as parent.
     let point = screen_point(&app, app.state().unit(tank).expect("танк").grid);
     let _ = click(&mut app, point);
 
     let unit = app.state().unit(repair).expect("repair");
     assert_eq!(unit.orders, UnitOrder::Repair);
     assert_eq!(unit.parent_unit, Some(tank));
-    // C++ не сбрасывает `unit->cursor` после клика — режим остаётся, пока
-    // игрок не выключит его пунктом меню (или не сменит выделение).
+    // C++ does not reset `unit->cursor` after a click — the mode remains until
+    // the player turns it off with a menu item (or changes the selection).
     assert_eq!(app.hud().cursor_mode, unitmenu::CURSOR_REPAIR);
 
-    // Пункт меню выключает режим (C++ `cursor = 0`): юнит всё ещё выделен,
-    // поэтому одиночный клик по нему снова открывает меню.
+    // The menu item turns the mode off (C++ `cursor = 0`): the unit is still selected,
+    // so a single click on it opens the menu again.
     let repair_grid = app.state().unit(repair).expect("repair").grid;
     let point = screen_point(&app, repair_grid);
     let _ = click(&mut app, point);

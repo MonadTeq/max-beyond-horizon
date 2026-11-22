@@ -1,12 +1,12 @@
-//! Пункты меню юнита B1, звуки D1 и пауза D3 — интеграционные проверки.
+//! Unit menu items B1, sounds D1 and pause D3 — integration checks.
 //!
-//! Оракул — `max-cpp-port`: `units_manager.cpp` (`Popup_OnClick_*`),
+//! Oracle — `max-cpp-port`: `units_manager.cpp` (`Popup_OnClick_*`),
 //! `game_manager.cpp` (`ProcessMouse`, `SetUnitOrder`, `StealUnit`,
 //! `DisableUnit`, `PlayUnitStatusVoice`), `repairshopmenu.cpp` (activate),
-//! `menu.cpp`/`dialogmenu.cpp` (пауза).
+//! `menu.cpp`/`dialogmenu.cpp` (pause).
 //!
-//! Все проверки идут через публичный API `max_app::App`/`max_core`, то есть
-//! тем же путём, что и ввод игрока.
+//! All checks go through the public `max_app::App`/`max_core` API, i.e.
+//! the same path as player input.
 
 use max_app::sfx::{self, Sfx};
 use max_app::ui::{handle_session_input, InputEvent, Key, Transition};
@@ -21,8 +21,8 @@ fn local_app() -> (App, TeamId) {
     let setup = LocalSetup::default();
 
     if app.start_local_game(&setup).is_err() {
-        // Без данных карты локальную партию не поднять — тест пропускается,
-        // как остальные интеграционные тесты репозитория.
+        // Without map data a local match cannot be set up — the test is skipped,
+        // like the other integration tests of the repository.
         return (app, TeamId::RED);
     }
 
@@ -31,7 +31,7 @@ fn local_app() -> (App, TeamId) {
     (app, team)
 }
 
-/// Свободная клетка рядом с центром карты.
+/// A free cell near the map center.
 fn free_point(app: &App, near: Point) -> Point {
     for radius in 0..12 {
         for dy in -radius..=radius {
@@ -57,7 +57,7 @@ fn spawn(app: &mut App, unit_type: UnitType, team: TeamId, near: Point) -> Optio
     app.state_mut().spawn_unit(unit_type, team, point, flags)
 }
 
-/// `attack` — тумблер `targeting_mode` (`UnitsManager_Popup_OnClick_TargetingMode`).
+/// `attack` — the `targeting_mode` toggle (`UnitsManager_Popup_OnClick_TargetingMode`).
 #[test]
 fn attack_item_toggles_targeting_mode() {
     let (mut app, team) = local_app();
@@ -91,8 +91,8 @@ fn attack_item_toggles_targeting_mode() {
     assert!(!app.hud().targeting_mode, "повторный клик выключает режим");
 }
 
-/// `load` — курсорный режим 7 (`UnitsManager_Popup_OnClick_Load`), а клик по
-/// пассажиру отдаёт `ORDER_MOVE_TO_UNIT` в клетку транспорта
+/// `load` — cursor mode 7 (`UnitsManager_Popup_OnClick_Load`), and a click on
+/// the passenger gives `ORDER_MOVE_TO_UNIT` into the transport cell
 /// (`GameManager_ProcessMouse`, CURSOR_LOAD).
 #[test]
 fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
@@ -133,7 +133,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
         "load включает курсорный режим 7"
     );
 
-    // Клик по своему пехотинцу: приказ получает **он** (C++ `GameManager_Unit`).
+    // A click on an own infantryman: **it** gets the order (C++ `GameManager_Unit`).
     let state = app.state().clone();
     let command = max_app::unitmenu::load_mode_click(&state, carrier, infantry)
         .expect("load click")
@@ -153,8 +153,8 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
         other => panic!("ожидался Order, получен {other:?}"),
     }
 
-    // Второй клик, когда пассажир уже в клетке транспорта и готов:
-    // `ORDER_LAND`/`INIT` с `parent = транспорт` (`game_manager.cpp:6824`).
+    // The second click, when the passenger is already in the transport cell and ready:
+    // `ORDER_LAND`/`INIT` with `parent = transport` (`game_manager.cpp:6824`).
     let mut same_cell = app.state().clone();
     let carrier_grid = same_cell.unit(carrier).expect("транспорт").grid;
     if let Some(unit) = same_cell.unit_mut(infantry) {
@@ -183,8 +183,8 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     }
 }
 
-/// `steal`/`disable` — курсорные режимы 8/9: приказ `ORDER_AWAIT_STEAL_UNIT`/
-/// `AWAIT_DISABLE_UNIT`/INIT с родителем-целью и броском
+/// `steal`/`disable` — cursor modes 8/9: the `ORDER_AWAIT_STEAL_UNIT`/
+/// `AWAIT_DISABLE_UNIT`/INIT with the target as parent and a roll
 /// (`GameManager_StealUnit`/`DisableUnit`).
 #[test]
 fn infiltrator_orders_steal_and_disable_with_parent() {
@@ -216,7 +216,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
         )
         .expect("цель");
 
-    // Цель должна быть валидной: электронный юнит, не в `IDLE`, видима.
+    // The target must be valid: an electronic unit, not in `IDLE`, visible.
     if let Some(unit) = state.unit_mut(target) {
         unit.set_visible_to_team(team, true);
         unit.orders = UnitOrder::Await;
@@ -254,7 +254,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
         }
     }
 
-    // Без выстрелов — сообщение C++ (`_(f37a)`/`_(3e56)`).
+    // Without shots — the C++ message (`_(f37a)`/`_(3e56)`).
     let mut empty = state.clone();
     if let Some(unit) = empty.unit_mut(commando) {
         unit.shots = 0;
@@ -270,7 +270,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
     assert!(error.contains("Infiltrator"));
 }
 
-/// Бульдозер: `Access_GetRemovableRubble` + `ORDER_CLEAR` с `build_time` 4/1
+/// Bulldozer: `Access_GetRemovableRubble` + `ORDER_CLEAR` with `build_time` 4/1
 /// (`UnitsManager_Popup_OnClick_StopRemove`).
 #[test]
 fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
@@ -287,7 +287,7 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
     let Some(_bulldozer) = spawn(&mut app, UnitType::Bulldozer, team, center) else {
         return;
     };
-    // Мелкие обломки — в клетке бульдозера (C++ берёт их из `Hash_MapHash`).
+    // Small rubble — in the bulldozer cell (C++ takes it from `Hash_MapHash`).
     let bulldozer = app
         .hud()
         .selected
@@ -332,8 +332,8 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
         Some(rubble)
     );
 
-    // `Popup_OnClick_StopRemove` — `ORDER_CLEAR`/`INIT` с родителем уходит в
-    // очередь приказов (UI-путь: применит `flush_orders`/сеть).
+    // `Popup_OnClick_StopRemove` — `ORDER_CLEAR`/`INIT` with a parent goes into
+    // the order queue (the UI path: applied by `flush_orders`/the network).
     let has_clear = app.hud().pending.iter().any(|command| {
         matches!(command, max_core::input::Command::Order(packet)
             if matches!(&packet.payload, max_core::input::OrderPayload::P3(p3)
@@ -344,7 +344,7 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
     assert!(has_clear, "ORDER_CLEAR в очереди приказов");
 }
 
-/// `Upg. All` — `ORDER_UPGRADE`/`EXECUTING_ORDER` и списание материалов
+/// `Upg. All` — `ORDER_UPGRADE`/`EXECUTING_ORDER` and debiting materials
 /// (`UnitsManager_Popup_OnClick_UpgradeAll`).
 #[test]
 fn upgrade_all_spends_complex_materials_and_sends_orders() {
@@ -362,13 +362,13 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
         return;
     };
 
-    // Улучшение доступно: текущие значения выше базы.
+    // The upgrade is available: the current values are above the base.
     if let Some(team_units) = app.state_mut().team_units.get_mut(team.0 as usize) {
         let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
         let hits = values.get_attribute(max_core::unit_values::ATTRIB_HITS);
         values.set_attribute(max_core::unit_values::ATTRIB_HITS, hits + 10);
     }
-    // В комплексе есть материалы (C++ `GetCargoInfo`).
+    // The complex has materials (C++ `GetCargoInfo`).
     if let Some(complex) = app.state().unit(station).and_then(|unit| unit.complex) {
         if let Some(complex) = app.state_mut().complex_mut(team, complex.0 as u16) {
             complex.raw = 120;
@@ -393,7 +393,7 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
     }
 }
 
-/// `remove` — диалог `SelfDestructMenu`: `Arm`, кадры `SLFDOPN`, `OK` →
+/// `remove` — the `SelfDestructMenu` dialog: `Arm`, `SLFDOPN` frames, `OK` →
 /// `ORDER_EXPLODE`/`EXPLODE`.
 #[test]
 fn self_destruct_dialog_arms_and_orders_explode() {
@@ -421,7 +421,7 @@ fn self_destruct_dialog_arms_and_orders_explode() {
 
     assert!(app.self_destruct().is_some(), "диалог открылся");
 
-    // `Arm` → анимация; без прокрутки часов `OK` не подтверждает.
+    // `Arm` → animation; without advancing the clock `OK` does not confirm.
     app.self_destruct_input(InputEvent::Key(Key::Enter));
     assert_eq!(
         app.self_destruct().map(|menu| menu.stage),
@@ -434,7 +434,7 @@ fn self_destruct_dialog_arms_and_orders_explode() {
         Some(max_app::selfdestruct::SelfDestructAction::None)
     );
 
-    // `advance` проигрывает 6 кадров по 48 мс.
+    // `advance` plays 6 frames of 48 ms.
     app.advance_self_destruct(0.5);
     assert!(app.self_destruct().is_some_and(|menu| menu.is_armed()));
 
@@ -446,7 +446,7 @@ fn self_destruct_dialog_arms_and_orders_explode() {
     );
     assert!(app.self_destruct().is_none());
 
-    // Приказ `ORDER_EXPLODE` попал в очередь.
+    // The `ORDER_EXPLODE` order got into the queue.
     let has_explode = app.hud().pending.iter().any(|command| {
         matches!(command, max_core::input::Command::Order(packet)
             if matches!(&packet.payload, max_core::input::OrderPayload::P1(p1)
@@ -455,7 +455,7 @@ fn self_destruct_dialog_arms_and_orders_explode() {
     assert!(has_explode, "ORDER_EXPLODE в очереди приказов");
 }
 
-/// `Alt+P` — `PauseMenu_Menu`: диалог «Game Paused» и пауза тиков.
+/// `Alt+P` — `PauseMenu_Menu`: the "Game Paused" dialog and the tick pause.
 #[test]
 fn alt_p_opens_pause_dialog_and_resumes() {
     let (mut app, _team) = local_app();
@@ -474,7 +474,7 @@ fn alt_p_opens_pause_dialog_and_resumes() {
         "тики локальной партии стоят"
     );
 
-    // Клик по `OK` закрывает и возвращает игру.
+    // A click on `OK` closes it and returns the game.
     let ok = app.pause_dialog().expect("диалог").ok_rect();
     handle_session_input(
         &mut app,
@@ -485,8 +485,8 @@ fn alt_p_opens_pause_dialog_and_resumes() {
     assert!(!app.local().map(|local| local.paused).unwrap_or(true));
 }
 
-/// D1: клик по карте/панели/попапу даёт C++-звуки; `disable_fx` и
-/// `disable_voice` учитываются.
+/// D1: a click on the map/panel/popup gives C++ sounds; `disable_fx` and
+/// `disable_voice` are taken into account.
 #[test]
 fn ui_events_queue_cpp_sounds() {
     let (mut app, team) = local_app();
@@ -502,11 +502,11 @@ fn ui_events_queue_cpp_sounds() {
     let _ = spawn(&mut app, UnitType::Tank, team, center);
 
     app.take_sounds();
-    // Клик по карте — `KCARG0` (`game_manager.cpp:6711`).
+    // A click on the map — `KCARG0` (`game_manager.cpp:6711`).
     let _ = handle_session_input(&mut app, InputEvent::MouseClick(300, 200), false);
     assert_eq!(app.take_sounds(), vec![Sfx::Click]);
 
-    // Кнопка панели — `MBUTT0`.
+    // A panel button — `MBUTT0`.
     let zoom = max_render::layout::ZOOM_PLUS;
     let _ = handle_session_input(
         &mut app,
@@ -515,13 +515,13 @@ fn ui_events_queue_cpp_sounds() {
     );
     assert_eq!(app.take_sounds(), vec![Sfx::Button]);
 
-    // Пауза: `Alt+P` (MBUTT0) и `Esc` (NCANC0).
+    // Pause: `Alt+P` (MBUTT0) and `Esc` (NCANC0).
     let _ = handle_session_input(&mut app, InputEvent::Key(Key::Alt('p')), false);
     assert_eq!(app.take_sounds(), vec![Sfx::Button]);
     let _ = handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
     assert_eq!(app.take_sounds(), vec![Sfx::Cancel]);
 
-    // Голоса отключаются `disable_voice`, эффекты — `disable_fx`.
+    // Voices are disabled by `disable_voice`, effects — by `disable_fx`.
     let mut prefs = app.preferences().clone();
     prefs.disable_voice = true;
     app.set_preferences(prefs);
@@ -534,8 +534,8 @@ fn ui_events_queue_cpp_sounds() {
     assert!(!app.sound_enabled());
 }
 
-/// Голос статуса юнита — `GameManager_PlayUnitStatusVoice`, включая `V_M093`
-/// для включённого Research Center.
+/// The unit status voice — `GameManager_PlayUnitStatusVoice`, including `V_M093`
+/// for a powered-on Research Center.
 #[test]
 fn unit_status_voice_matches_cpp_chain() {
     let mut unit = max_core::unit::UnitInfo::new(UnitType::ResearchCentre, TeamId::RED, UnitId(1));

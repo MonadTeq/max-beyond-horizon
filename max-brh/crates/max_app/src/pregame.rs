@@ -1,40 +1,40 @@
-//! Две фазы старта партии между экраном Players и собственно партией.
+//! Two match-start phases between the Players screen and the match itself.
 //!
-//! # Цепочка C++
+//! # C++ chain
 //!
-//! `menu_custom_game_menu` (`menu.cpp:2115`) после `ChoosePlayerMenu` вызывает
+//! `menu_custom_game_menu` (`menu.cpp:2115`) after `ChoosePlayerMenu` calls
 //! `GameManager_GameLoop(GAME_STATE_6_GAME_SETUP)` → `GameManager_GameSetup` →
-//! `GameManager_InitGame` (`game_manager.cpp:3056`). Там, **до** генерации
-//! ресурсов и высадки, для каждой человеческой команды в порядке убывания
-//! индекса (`for (i = PLAYER_TEAM_MAX - 1; i >= PLAYER_TEAM_RED; --i)`)
-//! выполняется `GameManager_PlayerMissionSetup(team)`:
+//! `GameManager_InitGame` (`game_manager.cpp:3056`). There, **before** generating
+//! resources and landing, for each human team in descending
+//! index order (`for (i = PLAYER_TEAM_MAX - 1; i >= PLAYER_TEAM_RED; --i)`)
+//! it runs `GameManager_PlayerMissionSetup(team)`:
 //!
-//! 1. `GameManager_CargoSelection(team)` — `CargoMenu`, мобилизация: покупка
-//!    стартовых юнитов за `start_gold` (если бюджет не ноль);
-//! 2. `GameManager_SelectSite(team)` — выбор точки высадки на карте
-//!    (`GAME_STATE_7_SITE_SELECT`, `Enter`/клик — подтвердить, `Esc` — отмена);
-//! 3. проверка близости высадок (`GameManager_HandleProximityOverlaps`).
+//! 1. `GameManager_CargoSelection(team)` — `CargoMenu`, mobilization: purchase of
+//!    starting units for `start_gold` (if the budget is not zero);
+//! 2. `GameManager_SelectSite(team)` — choosing a landing point on the map
+//!    (`GAME_STATE_7_SITE_SELECT`, `Enter`/click — confirm, `Esc` — cancel);
+//! 3. landing proximity check (`GameManager_HandleProximityOverlaps`).
 //!
-//! Затем компьютерные команды выбирают точки сами (`Ai_SelectStartingPosition`)
-//! и покупают состав (`AiPlayer::RollTeamMissionSupplies`), после чего
-//! `GameManager_PopulateMapWithResources` генерирует ресурсы и
-//! `GameManager_ProcessTeamMissionSupplyUnits` высаживает армии.
+//! Then the computer teams choose their points themselves (`Ai_SelectStartingPosition`)
+//! and buy their roster (`AiPlayer::RollTeamMissionSupplies`), after which
+//! `GameManager_PopulateMapWithResources` generates resources and
+//! `GameManager_ProcessTeamMissionSupplyUnits` lands the armies.
 //!
-//! # Что делает этот модуль
+//! # What this module does
 //!
-//! Держит очередь фаз для людей (мобилизация → точка высадки на каждую
-//! команду), копит результаты в [`LocalSetup`] и отдаёт готовые настройки в
-//! [`crate::App::start_local_game`]. ИИ-команды фаз не проходят: их точки
-//! выбирает `App::new_game_on_surface` (`Ai_SelectStartingPosition`), состав —
-//! стандартная загрузка (см. упрощения в [`crate::mobilize`]).
+//! It keeps the phase queue for humans (mobilization → landing point for each
+//! team), accumulates the results in [`LocalSetup`] and hands the ready settings to
+//! [`crate::App::start_local_game`]. AI teams do not go through the phases: their points
+//! are chosen by `App::new_game_on_surface` (`Ai_SelectStartingPosition`), the roster —
+//! by the standard loading (see the simplifications in [`crate::mobilize`]).
 //!
-//! # Отличия от C++
+//! # Differences from C++
 //!
-//! * Мобилизация — минимальная (список покупки + кредиты), см. [`crate::mobilize`].
-//! * `Esc`/`Cancel` возвращает на экран `Players` (в C++ отмена фазы прерывает
-//!   старт и возвращает в главное меню) — так настройки не теряются.
-//! * `GameManager_HandleProximityOverlaps` и предупреждения о близких высадках
-//!   не портированы.
+//! * Mobilization is minimal (purchase list + credits), see [`crate::mobilize`].
+//! * `Esc`/`Cancel` returns to the `Players` screen (in C++ cancelling a phase interrupts
+//!   the start and returns to the main menu) — this way the settings are not lost.
+//! * `GameManager_HandleProximityOverlaps` and the close-landing warnings
+//!   are not ported.
 
 use std::path::Path;
 
@@ -46,47 +46,47 @@ use crate::local::LocalSetup;
 use crate::mobilize::Mobilization;
 use crate::setup::{GameSetupForm, SetupScreen};
 
-/// Фаза одной команды.
+/// Phase of one team.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreGameStep {
-    /// `CargoMenu` — покупка стартовых юнитов.
+    /// `CargoMenu` — purchase of starting units.
     Mobilize(TeamId),
-    /// `GameManager_SelectSite` — точка высадки.
+    /// `GameManager_SelectSite` — landing point.
     Landing(TeamId),
 }
 
-/// Текущий экран фазы.
+/// Current phase screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreGameStage {
-    /// Идёт мобилизация команды.
+    /// Team mobilization is in progress.
     Mobilize(Mobilization),
-    /// Идёт выбор точки высадки.
+    /// Landing point selection is in progress.
     Landing(LandingScreen),
-    /// Все фазы пройдены — можно начинать партию.
+    /// All phases are completed — the match can start.
     Finished,
 }
 
-/// Очередь фаз старта и накопленные результаты.
+/// Start phase queue and accumulated results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreGameFlow {
-    /// Настройки партии (результаты фаз пишутся сюда же).
+    /// Match settings (phase results are written here as well).
     pub setup: LocalSetup,
-    /// Форма настройки — чтобы `Cancel` вернул на `Players`.
+    /// Settings form — so that `Cancel` returns to `Players`.
     pub form: GameSetupForm,
-    /// Оставшиеся шаги (первый — текущий).
+    /// Remaining steps (the first one is current).
     pub pending: Vec<PreGameStep>,
-    /// Текущий экран.
+    /// Current screen.
     pub stage: PreGameStage,
-    /// Поверхность планеты (одна на все фазы выбора точки).
+    /// Planet surface (one for all point-selection phases).
     pub surface: Option<SurfaceMap>,
-    /// Настоящие тайлы `.WRL` для рендера экрана высадки.
+    /// Real `.WRL` tiles for rendering the landing screen.
     pub terrain: Option<max_render::terrain::TerrainAtlas>,
-    /// Строка статуса между экранами.
+    /// Status line between screens.
     pub status: String,
 }
 
-/// План фаз старта для людей: порядок убывания слота (как C++), для каждого —
-/// мобилизация (если есть кредиты), затем точка высадки.
+/// Start phase plan for humans: slot descending order (as in C++), for each —
+/// mobilization (if there are credits), then the landing point.
 pub fn phase_plan(setup: &LocalSetup) -> Vec<PreGameStep> {
     let mut pending = Vec::new();
 
@@ -101,8 +101,8 @@ pub fn phase_plan(setup: &LocalSetup) -> Vec<PreGameStep> {
 }
 
 impl PreGameFlow {
-    /// Создаёт очередь фаз: люди в порядке убывания слота (как C++), для
-    /// каждого — мобилизация (если есть кредиты), затем точка высадки.
+    /// Creates the phase queue: humans in slot descending order (as in C++), for
+    /// each — mobilization (if there are credits), then the landing point.
     pub fn start(
         form: GameSetupForm,
         setup: LocalSetup,
@@ -127,7 +127,7 @@ impl PreGameFlow {
         flow
     }
 
-    /// Переходит к следующему шагу очереди (или в [`PreGameStage::Finished`]).
+    /// Moves to the next step of the queue (or to [`PreGameStage::Finished`]).
     fn advance(&mut self) {
         while let Some(step) = self.pending.first().copied() {
             match step {
@@ -164,9 +164,9 @@ impl PreGameFlow {
                             return;
                         }
                         None => {
-                            // Нет данных планеты — точка остаётся стандартной
-                            // (`START_POSITIONS` + FindValidStartingPosition при
-                            // генерации). Фаза честно пропускается.
+                            // No planet data — the point remains the default one
+                            // (`START_POSITIONS` + FindValidStartingPosition during
+                            // generation). The phase is skipped honestly.
                             self.status = "No planet data: default landing site used".to_string();
                         }
                     }
@@ -177,12 +177,12 @@ impl PreGameFlow {
         self.stage = PreGameStage::Finished;
     }
 
-    /// Все фазы пройдены.
+    /// All phases are completed.
     pub fn finished(&self) -> bool {
         matches!(self.stage, PreGameStage::Finished)
     }
 
-    /// Кто проходит фазу сейчас.
+    /// Who is passing the phase now.
     pub fn current_team(&self) -> Option<TeamId> {
         match &self.stage {
             PreGameStage::Mobilize(mobilization) => Some(mobilization.team),
@@ -191,8 +191,8 @@ impl PreGameFlow {
         }
     }
 
-    /// Завершает мобилизацию: кредиты, загрузка и купленные апгрейды уходят в
-    /// настройки партии (`CargoMenu::CommitUpgradeChanges`).
+    /// Completes mobilization: credits, loading and purchased upgrades go into
+    /// the match settings (`CargoMenu::CommitUpgradeChanges`).
     pub fn commit_mobilization(&mut self) {
         if let PreGameStage::Mobilize(mobilization) = &self.stage {
             let index = usize::from(mobilization.team.0) % 4;
@@ -206,7 +206,7 @@ impl PreGameFlow {
         self.advance();
     }
 
-    /// Завершает выбор точки: клетка уходит в настройки партии.
+    /// Completes point selection: the cell goes into the match settings.
     pub fn commit_landing(&mut self) {
         if let PreGameStage::Landing(landing) = &self.stage {
             let index = usize::from(landing.team.0) % 4;
@@ -217,14 +217,14 @@ impl PreGameFlow {
         self.advance();
     }
 
-    /// Отмена всей цепочки: возвращает форму на экран `Players`.
+    /// Cancels the whole chain: returns the form to the `Players` screen.
     pub fn cancel(&mut self) {
         self.form.screen = SetupScreen::Players;
         self.form.status.clear();
     }
 }
 
-/// Сколько людей проходят фазы (для логов/тестов).
+/// How many humans pass the phases (for logs/tests).
 pub fn phase_team_order(setup: &LocalSetup) -> Vec<TeamId> {
     setup
         .team_types

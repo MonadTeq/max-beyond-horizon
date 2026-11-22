@@ -1,9 +1,9 @@
-//! Сквозной путь игрока мышью: старт партии, камера на базе, выделение своего
-//! юнита кликом, RMB-приказ (зелёный предпросмотр + журнал `Move: N steps`) и
-//! фактическое перемещение после End Turn.
+//! The player's end-to-end mouse path: match start, camera on the base, selecting an own
+//! unit with a click, an RMB order (green preview + log `Move: N steps`) and
+//! the actual movement after End Turn.
 //!
-//! Тесты с настоящими кадрами (`Assets`/`.WRL`) пропускаются, если данных игры
-//! нет рядом с репозиторием — как `unit_sprites.rs` и `tests/app.rs`.
+//! Tests with real frames (`Assets`/`.WRL`) are skipped if there is no game data
+//! next to the repository — like `unit_sprites.rs` and `tests/app.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,7 @@ use max_core::unit::UnitListKind;
 use max_net::{CreateGameParams, GameInfo};
 use max_render::layout::MAIN_MAP;
 
-/// Путь внутри репозитория (`max-brh/crates/max_app/../../..`).
+/// Path inside the repository (`max-brh/crates/max_app/../../..`).
 fn repo_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -33,7 +33,7 @@ fn land_surface() -> SurfaceMap {
     SurfaceMap::from_tiles([Surface::LAND; MAP_TILES])
 }
 
-/// Одна человеческая команда RED, остальное — ИИ/пусто.
+/// One human RED team, the rest — AI/empty.
 fn single_human() -> LocalSetup {
     let mut setup = LocalSetup::default();
     setup.world = 0;
@@ -65,8 +65,8 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
-/// Партия через настоящие фазы старта (`PreGameFlow`): мобилизация → высадка
-/// (Enter подтверждает точку по умолчанию) → `new_game_on_surface`.
+/// A match through the real start phases (`PreGameFlow`): mobilization → landing
+/// (Enter confirms the default point) → `new_game_on_surface`.
 fn phased_app() -> Option<(App, max_core::unit::UnitId)> {
     let world_dir = repo_path("max-original");
 
@@ -106,22 +106,22 @@ fn phased_app() -> Option<(App, max_core::unit::UnitId)> {
     Some((app, surveyor))
 }
 
-/// Экранная точка центра клетки в кадре 640×480 с хромом.
+/// Screen point of the cell center in a 640×480 frame with chrome.
 fn screen_point(app: &App, grid: Point) -> (i32, i32) {
     let (x, y) = hud::tile_center(&app.map_viewport(), grid);
 
     (x + MAIN_MAP.ulx, y + MAIN_MAP.uly)
 }
 
-/// `GameManager_ProcessTeamMissionSupplyUnits`: генератор стоит в отдельной
-/// клетке от шахты, а спрайты зданий не накладываются друг на друга.
+/// `GameManager_ProcessTeamMissionSupplyUnits`: the generator stands in a separate
+/// cell from the mine, and the building sprites do not overlap each other.
 ///
-/// Это регресс «генератор пересекается с шахтой»: координаты в `deploy.rs`
-/// совпадают с C++ (шахта — `start_position_mining_station`, генератор —
-/// `starting_position_power_generator`), но C++ `UnitInfo::SetPosition`
-/// сдвигает якорь здания (`flags & BUILDING`) на +31 px от центра клетки.
-/// Без этого сдвига 2×2-спрайт шахты рисовался на полклетки вверх-влево и
-/// заходил на клетку генератора.
+/// This is the "generator overlaps the mine" regression: the coordinates in `deploy.rs`
+/// match C++ (the mine — `start_position_mining_station`, the generator —
+/// `starting_position_power_generator`), but C++ `UnitInfo::SetPosition`
+/// shifts the building anchor (`flags & BUILDING`) by +31 px from the cell center.
+/// Without this shift the 2×2 mine sprite was drawn half a cell up-left and
+/// intruded into the generator cell.
 #[test]
 fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() {
     let Some((app, _surveyor)) = phased_app() else {
@@ -172,8 +172,8 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
         "спрайты шахты {mine:?} и генератора {power:?} пересекаются"
     );
 
-    // Шахта — `BUILDING` 2×2: якорь на +31 px от центра клетки, как `unit.x/y`
-    // в `UnitInfo::SetPosition`; генератор — 1×1, якорь в центре клетки.
+    // The mine — `BUILDING` 2×2: the anchor +31 px from the cell center, like `unit.x/y`
+    // in `UnitInfo::SetPosition`; the generator — 1×1, the anchor in the cell center.
     assert_ne!(
         u32::from(mining_station.flags) & max_core::enums::unit_flags::BUILDING,
         0,
@@ -199,7 +199,7 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
         "unit.x шахты уже содержит сдвиг здания"
     );
 
-    // У обоих зданий приказ PowerOn: рисуется второй кадр пары (включено).
+    // Both buildings have the PowerOn order: the second frame of the pair is drawn (on).
     for (unit, label) in [(mining_station, "шахта"), (generator, "генератор")] {
         assert_eq!(unit.orders, max_core::enums::UnitOrder::PowerOn, "{label}");
         let sprite = assets.sprite(unit.unit_type).expect("спрайт");
@@ -249,7 +249,7 @@ fn camera_centers_on_the_mining_station_like_cpp() {
 
 #[test]
 fn enter_confirms_the_landing_site_and_starts_the_game() {
-    // Мок клиента лобби: фазе высадки сеть не нужна.
+    // The lobby client mock: the landing phase needs no network.
     struct DummyClient;
 
     impl MenuClient for DummyClient {
@@ -326,10 +326,10 @@ fn start_units_are_drawn_after_landing() {
     );
 }
 
-/// Регресс «юнит не двигается»: камера обязана стоять на шахте
-/// (`GameManager_GetFirstRelevantUnit` → `Access_GetFirstMiningStation`), иначе
-/// клики, рассчитанные от базы, попадают на клетку вниз-влево — там стоит
-/// стационарная шахта, RMB отвечает «Unit cannot move», ход ничего не двигает.
+/// The "unit does not move" regression: the camera must stand on the mine
+/// (`GameManager_GetFirstRelevantUnit` → `Access_GetFirstMiningStation`), otherwise
+/// clicks computed from the base hit the cell down-left — a
+/// stationary mine stands there, RMB answers «Unit cannot move», and the turn moves nothing.
 #[test]
 fn base_is_centred_and_the_qa_click_lands_on_the_surveyor() {
     let Some((app, surveyor)) = phased_app() else {
@@ -354,9 +354,9 @@ fn base_is_centred_and_the_qa_click_lands_on_the_surveyor() {
         "камера центрирована на шахте, а не на первый GROUND_COVER"
     );
 
-    // `move-input.qa` кликает по (468,178): при камере на шахте это клетка
-    // Surveyor'а. Если камера уедет, координаты сценария обязаны быть
-    // пересчитаны — тест это поймает.
+    // `move-input.qa` clicks (468,178): with the camera on the mine this is the Surveyor's
+    // cell. If the camera moves, the scenario coordinates must be
+    // recomputed — the test will catch it.
     let surveyor_grid = app.state().unit(surveyor).expect("Surveyor").grid;
     assert_eq!(
         surveyor_grid,
@@ -372,8 +372,8 @@ fn base_is_centred_and_the_qa_click_lands_on_the_surveyor() {
     );
 }
 
-/// Приказ движения доходит до симуляции: после тиков юнит стоит в целевой
-/// клетке (пакет 38 исполняет `process_order_move`).
+/// The move order reaches the simulation: after the ticks the unit stands in the target
+/// cell (packet 38 executes `process_order_move`).
 #[test]
 fn move_order_moves_the_unit_on_following_ticks() {
     let Some((mut app, surveyor)) = phased_app() else {
@@ -418,7 +418,7 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
         "клик по клетке своего юнита выделяет его (портрет/панель заполняются)"
     );
 
-    // Соседняя клетка без юнитов, в которую есть наземный маршрут.
+    // An adjacent cell without units, reachable by a ground route.
     let mut destination = None;
     for dy in -1..=1 {
         for dx in -1..=1 {
@@ -460,8 +460,8 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
         app.hud().log.lines()
     );
 
-    // Зелёный маршрут должен попасть в кадр и в оконном режиме (хром):
-    // `render_hud` там не вызывается, предпросмотр рисуется в буфер карты.
+    // The green route must get into the frame in windowed mode too (chrome):
+    // `render_hud` is not called there, the preview is drawn into the map buffer.
     let (frame, _) = app.render_frame_with_stats();
     let green = hud::PREVIEW_COLOR.to_rgba();
     let painted = frame
@@ -476,8 +476,8 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
     );
 }
 
-/// Партия через `App::start_local_game` — тот же интерактивный цикл, что в окне
-/// (`local_update`, `local_end_turn`, HUD-приказы).
+/// A match through `App::start_local_game` — the same interactive loop as in the window
+/// (`local_update`, `local_end_turn`, HUD orders).
 fn local_game_app() -> Option<App> {
     let mut app = app_with_assets()?;
     let mut setup = LocalSetup::default();
@@ -494,19 +494,19 @@ fn local_game_app() -> Option<App> {
     Some(app)
 }
 
-/// Регресс «генератор на клетке шахты» для **интерактивного** потока.
+/// The "generator on the mine cell" regression for the **interactive** flow.
 ///
-/// Точка приходит из фазы высадки (`PreGameFlow::commit_landing` →
-/// `LocalSetup::start_positions` → `TeamDeployment`) и уходит в
-/// `deploy_starting_units_with`, а не в прямой `deploy_starting_units`.
+/// The point comes from the landing phase (`PreGameFlow::commit_landing` →
+/// `LocalSetup::start_positions` → `TeamDeployment`) and goes into
+/// `deploy_starting_units_with`, and not into the direct `deploy_starting_units`.
 ///
-/// На клетке высадки действительно стоят **два** юнита — шахта `MININGST` и её
-/// плита `LRGSLAB` (`UnitsManager_DeployUnit(LRGSLAB, …, mining_station_location)`
-/// в `GameManager_ProcessTeamMissionSupplyUnits`). Генератор же ставится
+/// On the landing cell there really stand **two** units — the `MININGST` mine and its
+/// `LRGSLAB` slab (`UnitsManager_DeployUnit(LRGSLAB, …, mining_station_location)`
+/// in `GameManager_ProcessTeamMissionSupplyUnits`). The generator is placed
 /// `GameManager_GetStartingPositionPowerGenerator`: `point.x -= 1; point.y += 2`,
-/// затем первый доступный кандидат на север, т.е. `(mining.x - 1, mining.y + 1)`
-/// — **другая** клетка. Трасса `[tick]` с типами `17`/`40` на одной клетке —
-/// это плита и шахта, а не генератор (`2`).
+/// then the first available candidate to the north, i.e. `(mining.x - 1, mining.y + 1)`
+/// — a **different** cell. The `[tick]` trace with types `17`/`40` on one cell —
+/// is the slab and the mine, not the generator (`2`).
 #[test]
 fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
     let surface = land_surface();
@@ -549,7 +549,7 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
     let large_slab = find(UnitType::LargeSlab);
     let small_slab = find(UnitType::SmallSlab);
 
-    // Шахта осталась в выбранной точке (она валидна), генератор — по C++.
+    // The mine remained at the chosen point (it is valid), the generator — per C++.
     assert_eq!(mining.grid, Point::new(20, 20));
     assert_eq!(
         generator.grid,
@@ -562,11 +562,11 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
         "генератор не должен занимать клетку шахты"
     );
 
-    // Плиты — по клеткам своих зданий, как `UnitsManager_DeployUnit`.
+    // Slabs — by the cells of their buildings, like `UnitsManager_DeployUnit`.
     assert_eq!(large_slab.grid, mining.grid);
     assert_eq!(small_slab.grid, generator.grid);
 
-    // На клетке высадки ровно шахта и плита; генератора там нет.
+    // On the landing cell there is exactly the mine and the slab; the generator is not there.
     let types_at_base: Vec<UnitType> = app
         .state()
         .units_at(mining.grid)
@@ -586,10 +586,10 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
     );
 }
 
-/// Сквозной интерактивный путь после RMB: приказ применяется, кадр проходит
-/// маршрут (видимые промежуточные позиции), юнит оказывается в целевой клетке,
-/// а **End Turn** (настоящая кнопка панели) не теряет приказ и не откатывает
-/// позицию.
+/// The end-to-end interactive path after RMB: the order is applied, the frame passes
+/// the route (visible intermediate positions), the unit ends up in the target cell,
+/// and **End Turn** (the real panel button) does not lose the order and does not roll back
+/// the position.
 #[test]
 fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     let Some(mut app) = local_game_app() else {
@@ -614,13 +614,13 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         .expect("Surveyor высажен");
     let start = app.state().unit(surveyor).expect("Surveyor").grid;
 
-    // LMB по клетке Surveyor'а: камера уже на шахте (`focus_player`), клик
-    // приходит в той же системе координат, что и окно.
+    // LMB on the Surveyor cell: the camera is already on the mine (`focus_player`), the click
+    // arrives in the same coordinate system as the window.
     let (x, y) = screen_point(&app, start);
     handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
     assert_eq!(app.hud().selected, Some(surveyor));
 
-    // Соседняя проходимая клетка без юнитов — цель RMB.
+    // An adjacent passable cell without units — the RMB target.
     let mut destination = None;
     'search: for dy in -1..=1 {
         for dx in -1..=1 {
@@ -656,8 +656,8 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         app.hud().log.lines()
     );
 
-    // Оконный кадр: зелёный путь нарисован в chrome-режиме (как C++
-    // `Paths_DrawMarker` COLOR_GREEN в `GameManager_DrawMainMap`).
+    // Window frame: the green path is drawn in chrome mode (like C++
+    // `Paths_DrawMarker` COLOR_GREEN in `GameManager_DrawMainMap`).
     let (frame, _) = app.render_frame_with_stats();
     let green = hud::PREVIEW_COLOR.to_rgba();
     let painted = frame
@@ -670,9 +670,9 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         "зелёный предпросмотр должен быть в кадре окна, пикселей: {painted}"
     );
 
-    // Кадры интерактивного цикла (dt > 0): симуляция ставит юнита в цель, а
-    // визуальный маршрут проходит промежуточные позиции и заканчивается ровно
-    // в целевой клетке.
+    // Frames of the interactive loop (dt > 0): the simulation puts the unit on the target, and
+    // the visual route passes the intermediate positions and ends exactly
+    // in the target cell.
     app.update_visual_units(0.0);
     let mut seen: Vec<(f32, f32)> = Vec::new();
 
@@ -709,7 +709,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         "в конце маршрута визуальная позиция — целевая клетка: {seen:?}"
     );
 
-    // End Turn настоящей кнопкой панели (`WINDOW_ENDTURN`, (390,2)-(462,23)).
+    // End Turn with the real panel button (`WINDOW_ENDTURN`, (390,2)-(462,23)).
     let end_turn = max_render::layout::END_TURN_BUTTON;
     let button = (
         end_turn.ulx + end_turn.width / 2,
@@ -723,8 +723,8 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         "End Turn закрывает ход человека"
     );
 
-    // Ход закрыт, но приказ уже исполнен: после тиков ИИ юнит остаётся в цели,
-    // а визуальная позиция догоняет её.
+    // The turn is closed, but the order is already executed: after the AI ticks the unit remains on the target,
+    // and the visual position catches up with it.
     for _ in 0..600 {
         app.local_update(1.0 / 60.0);
     }
@@ -755,7 +755,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         "визуальный маршрут доигран после смены хода"
     );
 
-    // Юнит действительно стоит в цели: LMB по этой клетке выделяет его.
+    // The unit really stands on the target: LMB on this cell selects it.
     let (x, y) = screen_point(&app, destination);
     handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
     assert_eq!(app.hud().selected, Some(surveyor));

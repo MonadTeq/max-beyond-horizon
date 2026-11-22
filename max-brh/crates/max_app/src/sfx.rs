@@ -1,46 +1,46 @@
-//! Звуки UI — порт `SoundManager::PlaySfx` вызовов C++-порта.
+//! UI sounds — a port of the `SoundManager::PlaySfx` calls of the C++ port.
 //!
-//! Задача модуля — дать **одно** место, где событие интерфейса превращается в
-//! имя звукового ресурса `MAX.RES`. Проигрывает их [`crate::audio::AudioPlayer`]
-//! (в headless/CI — тихий `NoopBackend`), а `App` лишь копит очередь событий:
-//! так тесты проверяют «какой звук по какому событию» без аудиоустройства.
+//! The module's job is to provide **one** place where a UI event turns into
+//! the name of a `MAX.RES` sound resource. They are played by [`crate::audio::AudioPlayer`]
+//! (in headless/CI — the silent `NoopBackend`), and `App` only accumulates the event queue:
+//! this way tests check "which sound for which event" without an audio device.
 //!
-//! # Таблица (оракул — C++-порт)
+//! # Table (oracle — the C++ port)
 //!
-//! | Событие | Ресурс | Где в C++ |
+//! | Event | Resource | Where in C++ |
 //! |---|---|---|
-//! | клик по карте/пункту попапа (клавишей)/элементу помощи/строкам меню | `KCARG0` | `game_manager.cpp:6711`, `:2689`; `helpmenu.cpp:331`; `gameconfigmenu.hpp` |
-//! | `Done`/подтверждение | `NDONE0` | `game_manager.cpp:6727`; `helpmenu.cpp:91`; `menu.cpp:2182+` (кнопки `MBUTT0`, `Exit` — `NCANC0`) |
-//! | `Cancel`/`Esc`/отказ | `NCANC0` | `units_manager.cpp:278`; `game_manager.cpp:4612`; `menu.cpp:2188` |
-//! | кнопки панелей/главного меню | `MBUTT0` | `game_manager.cpp:5446/5692/5713`; `menu.cpp:2182` |
-//! | кнопка `Help` экранов настройки | `NHELP0` | `gamesetupmenu.hpp:77`, `networkmenu.hpp` |
-//! | `Human`/`Computer`/`None`/`Clan` игрока | `NHUMN0`/`NCOMP0`/`NNONE0`/`NCLAN0` | `chooseplayermenu.hpp:59-74` |
-//! | `Arm` самоуничтожения | `MBUTT0` | `units_manager.cpp:312` |
-//! | постановка площадки | `V_M049` | `game_manager.cpp:4569` (`PlayVoice`) |
-//! | ремонт/дозаправка/передача груза | `V_M210`/`V_M085`/`V_M224` | `game_manager.cpp:4609/4626/4675` |
+//! | click on the map/popup item (by key)/help item/menu rows | `KCARG0` | `game_manager.cpp:6711`, `:2689`; `helpmenu.cpp:331`; `gameconfigmenu.hpp` |
+//! | `Done`/confirmation | `NDONE0` | `game_manager.cpp:6727`; `helpmenu.cpp:91`; `menu.cpp:2182+` (buttons `MBUTT0`, `Exit` — `NCANC0`) |
+//! | `Cancel`/`Esc`/refusal | `NCANC0` | `units_manager.cpp:278`; `game_manager.cpp:4612`; `menu.cpp:2188` |
+//! | panel/main menu buttons | `MBUTT0` | `game_manager.cpp:5446/5692/5713`; `menu.cpp:2182` |
+//! | `Help` button of the setup screens | `NHELP0` | `gamesetupmenu.hpp:77`, `networkmenu.hpp` |
+//! | player `Human`/`Computer`/`None`/`Clan` | `NHUMN0`/`NCOMP0`/`NNONE0`/`NCLAN0` | `chooseplayermenu.hpp:59-74` |
+//! | self-destruct `Arm` | `MBUTT0` | `units_manager.cpp:312` |
+//! | placing a build site | `V_M049` | `game_manager.cpp:4569` (`PlayVoice`) |
+//! | repair/refuel/cargo transfer | `V_M210`/`V_M085`/`V_M224` | `game_manager.cpp:4609/4626/4675` |
 //!
-//! Голоса (`V_*`) — тоже `.spw`-ресурсы, поэтому идут через тот же плеер; они
-//! отключаются настройкой `disable_voice`, эффекты — `disable_fx`
+//! Voices (`V_*`) are also `.spw` resources, so they go through the same player; they
+//! are disabled by the `disable_voice` setting, the effects — by `disable_fx`
 //! (`Preferences`).
 //!
-//! # Звуки боя (`SC_UNITS`)
+//! # Combat sounds (`SC_UNITS`)
 //!
-//! Выстрел, попадание и взрыв берут ресурс **из таблицы юнита**:
+//! The shot, hit and explosion take their resource **from the unit table**:
 //! `SoundManager::PlaySfx(UnitInfo*, Unit::SfxType)` (`sound_manager.cpp:413-490`)
-//! ищет `Unit::SoundEffectInfo` в
+//! and looks up `Unit::SoundEffectInfo` in
 //! `Unit::m_sound_effects` (`units.cpp` `ParseSoundEffects`, `units.cpp:228-290`):
-//! сначала `units[TOKEN].sound_effects`, иначе `default_sound_effects`. Таблица
-//! сгенерирована в `data/unit_sfx.json` (`tools/gen_unit_sfx.py`) и читается
-//! [`unit_sound`]; события копит симуляция (`max_core::UnitSound`), а
-//! [`combat_sound`] превращает их в `(тег, громкость)`.
+//! first `units[TOKEN].sound_effects`, otherwise `default_sound_effects`. The table
+//! is generated into `data/unit_sfx.json` (`tools/gen_unit_sfx.py`) and read by
+//! [`unit_sound`]; the events are accumulated by the simulation (`max_core::UnitSound`), and
+//! [`combat_sound`] turns them into `(tag, volume)`.
 //!
-//! Вызовы C++:
-//! * выстрел — `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`), `SFX_TYPE_FIRE`;
-//! * попадание — `UnitsManager_StartExplosion` при `hits > 0`
+//! C++ calls:
+//! * shot — `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`), `SFX_TYPE_FIRE`;
+//! * hit — `UnitsManager_StartExplosion` when `hits > 0`
 //!   (`units_manager.cpp:3922`), `SFX_TYPE_HIT`;
-//! * взрыв — там же при `hits == 0` (`units_manager.cpp:3929`),
-//!   `SFX_TYPE_EXPLOAD` (у `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/
-//!   `HITEXPLD` своего звука нет — играет `GEN_XPLD`, как в C++).
+//! * explosion — in the same place when `hits == 0` (`units_manager.cpp:3929`),
+//!   `SFX_TYPE_EXPLOAD` (`LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/
+//!   `HITEXPLD` have no sound of their own — `GEN_XPLD` plays, as in C++).
 
 use std::sync::OnceLock;
 
@@ -48,39 +48,39 @@ use max_core::enums::{UnitType, UNIT_END};
 use max_core::game::{UnitSound, UnitSoundKind};
 use serde::Deserialize;
 
-/// Звуковое событие UI.
+/// UI sound event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sfx {
-    /// `KCARG0` — клик по карте, строке меню, элементу помощи.
+    /// `KCARG0` — click on the map, menu row, help item.
     Click,
-    /// `NDONE0` — `Done`/`Enter`/подтверждение.
+    /// `NDONE0` — `Done`/`Enter`/confirmation.
     Done,
-    /// `NCANC0` — `Cancel`/`Esc`/недоступное действие.
+    /// `NCANC0` — `Cancel`/`Esc`/unavailable action.
     Cancel,
-    /// `MBUTT0` — кнопка панели/главного меню.
+    /// `MBUTT0` — panel/main menu button.
     Button,
-    /// `NHELP0` — кнопка `Help` экрана настройки.
+    /// `NHELP0` — `Help` button of the setup screen.
     Help,
-    /// `NHUMN0` — выбор «Human» в слоте игрока.
+    /// `NHUMN0` — choosing «Human» in the player slot.
     PlayerHuman,
-    /// `NCOMP0` — выбор «Computer».
+    /// `NCOMP0` — choosing «Computer».
     PlayerComputer,
-    /// `NNONE0` — выбор «None».
+    /// `NNONE0` — choosing «None».
     PlayerNone,
-    /// `NCLAN0` — открытие выбора клана.
+    /// `NCLAN0` — opening the clan selection.
     PlayerClan,
-    /// `V_M049` — постановка стройплощадки (`GameManager_PathBuild`).
+    /// `V_M049` — placing a build site (`GameManager_PathBuild`).
     BuildSitePlaced,
-    /// `V_M210` — ремонт (`GameManager_RepairUnit`).
+    /// `V_M210` — repair (`GameManager_RepairUnit`).
     Repair,
-    /// `V_M085` — дозаправка/дозарядка (`GameManager_ReloadUnit`).
+    /// `V_M085` — refuel/recharge (`GameManager_ReloadUnit`).
     Reload,
-    /// `V_M224` — передача груза (`GameManager_TransferCargo`).
+    /// `V_M224` — cargo transfer (`GameManager_TransferCargo`).
     Transfer,
 }
 
 impl Sfx {
-    /// Имя ресурса в `MAX.RES` (`AudioPlayer::play_once`).
+    /// Resource name in `MAX.RES` (`AudioPlayer::play_once`).
     pub const fn tag(self) -> &'static str {
         match self {
             Self::Click => "KCARG0",
@@ -99,7 +99,7 @@ impl Sfx {
         }
     }
 
-    /// Это голос (`V_*`), а не SFX: управляется `disable_voice`.
+    /// This is a voice (`V_*`), not an SFX: controlled by `disable_voice`.
     pub const fn is_voice(self) -> bool {
         matches!(
             self,
@@ -109,32 +109,32 @@ impl Sfx {
 }
 
 // ---------------------------------------------------------------------------
-// Звуки юнитов (боевые) — SC_UNITS
+// Unit sounds (combat) — SC_UNITS
 // ---------------------------------------------------------------------------
 
-/// JSON-таблица звуков (`tools/gen_unit_sfx.py` из `SC_UNITS`).
+/// Sound JSON table (`tools/gen_unit_sfx.py` from `SC_UNITS`).
 pub const UNIT_SFX_JSON: &str = include_str!("../data/unit_sfx.json");
 
-/// `Unit::SoundEffectInfo` (`unit.hpp:64-70`) для одного `SfxType`.
+/// `Unit::SoundEffectInfo` (`unit.hpp:64-70`) for one `SfxType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitSfxInfo {
-    /// Тег ресурса `MAX.RES` (`TANK14` → `tank14.spw`).
+    /// `MAX.RES` resource tag (`TANK14` → `tank14.spw`).
     pub tag: &'static str,
-    /// Громкость 0..100 из `SC_UNITS` (`SoundManager::PlaySfx`: `volume / 100`).
+    /// Volume 0..100 from `SC_UNITS` (`SoundManager::PlaySfx`: `volume / 100`).
     pub volume: u8,
-    /// `is_default` C++: юнит своего звука не задавал и сыграл
+    /// `is_default` C++: the unit did not define its own sound and played
     /// `default_sound_effects` (`units.cpp:288`).
     pub is_default: bool,
 }
 
-/// Готовый к проигрыванию звук боя: тег ресурса и усиление 0..1.
+/// A combat sound ready to play: the resource tag and gain 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CombatSfx {
-    /// Тег ресурса (`AudioPlayer::play_gain`).
+    /// Resource tag (`AudioPlayer::play_gain`).
     pub tag: &'static str,
-    /// Громкость из таблицы юнита (`volume / 100`).
+    /// Volume from the unit table (`volume / 100`).
     pub gain: f32,
-    /// `is_default` (диагностика/тесты).
+    /// `is_default` (diagnostics/tests).
     pub is_default: bool,
 }
 
@@ -159,7 +159,7 @@ struct UnitSfxFile {
     units: Vec<UnitSfxRecord>,
 }
 
-/// Разобранная таблица (индекс — [`UnitType`] как `usize`).
+/// Parsed table (index — [`UnitType`] as `usize`).
 fn unit_sfx_table() -> &'static [UnitSfxRecord] {
     static TABLE: OnceLock<Vec<UnitSfxRecord>> = OnceLock::new();
 
@@ -172,10 +172,10 @@ fn unit_sfx_table() -> &'static [UnitSfxRecord] {
         .as_slice()
 }
 
-/// `Unit::GetSoundEffect(SfxType)` (`unit.hpp`, `units.cpp`): ресурс и громкость
-/// звука юнита, как их выбрал `ParseSoundEffects` (`units.cpp:228-290`).
+/// `Unit::GetSoundEffect(SfxType)` (`unit.hpp`, `units.cpp`): the resource and volume
+/// of the unit sound as chosen by `ParseSoundEffects` (`units.cpp:228-290`).
 ///
-/// `None` — тип вне таблицы или `INVALID_ID` (звука нет).
+/// `None` — the type is outside the table or `INVALID_ID` (no sound).
 pub fn unit_sound(unit_type: UnitType, kind: UnitSoundKind) -> Option<UnitSfxInfo> {
     let record = unit_sfx_table().get(unit_type as usize)?;
 
@@ -192,12 +192,12 @@ pub fn unit_sound(unit_type: UnitType, kind: UnitSoundKind) -> Option<UnitSfxInf
     })
 }
 
-/// Событие симуляции → звук боя (`SoundManager::PlaySfx`).
+/// Simulation event → combat sound (`SoundManager::PlaySfx`).
 ///
-/// Громкость — `volume / 100` из `SC_UNITS` (`sound_manager.cpp:479-482`:
-/// `const float volume = sfx_info.volume / 100.0f`). Затухание по расстоянию и
-/// панорама C++ (`GetDistanceAttenuation`/`GetPanning`) в порте не
-/// моделируются: камера одна, а громкость эффекта уже задана настройкой `FX`.
+/// Volume — `volume / 100` from `SC_UNITS` (`sound_manager.cpp:479-482`:
+/// `const float volume = sfx_info.volume / 100.0f`). Distance attenuation and
+/// panning in C++ (`GetDistanceAttenuation`/`GetPanning`) are not
+/// modeled in the port: there is one camera, and the effect volume is already set by the `FX` setting.
 pub fn combat_sound(event: UnitSound) -> Option<CombatSfx> {
     let info = unit_sound(event.unit_type, event.kind)?;
 
@@ -208,7 +208,7 @@ pub fn combat_sound(event: UnitSound) -> Option<CombatSfx> {
     })
 }
 
-/// Размер таблицы звуков (диагностика/тесты): должно быть [`UNIT_END`].
+/// Size of the sound table (diagnostics/tests): must be [`UNIT_END`].
 pub fn unit_sfx_count() -> usize {
     let count = unit_sfx_table().len();
 
@@ -222,18 +222,18 @@ pub fn unit_sfx_count() -> usize {
     count
 }
 
-/// C++-токен типа (`TANK`, …) в таблице звуков; `""` — записи нет.
+/// C++ type token (`TANK`, …) in the sound table; `""` — no record.
 pub fn unit_sfx_token(unit_type: UnitType) -> &'static str {
     unit_sfx_table()
         .get(unit_type as usize)
         .map_or("", |record| record.token.as_str())
 }
 
-/// Голос статуса выделенного юнита — `GameManager_PlayUnitStatusVoice`
+/// Status voice of the selected unit — `GameManager_PlayUnitStatusVoice`
 /// (`game_manager.cpp:7943-8036`).
 ///
-/// Возвращает `(V_START, статус)`: C++ сначала играет `V_START`/`V_START2`,
-/// затем — голос по состоянию юнита. Условия повторены в порядке C++.
+/// Returns `(V_START, status)`: C++ first plays `V_START`/`V_START2`,
+/// then — the voice by the unit state. The conditions are repeated in C++ order.
 pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Option<&'static str>) {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS};
@@ -243,8 +243,8 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
 
     let ammo_depleted = ammo_base != 0 && unit.ammo == 0;
     let ammo_low = ammo_base != 0 && i32::from(unit.ammo) <= ammo_base / 4;
-    // Класс экземпляра: C++ проверяет биты `MOBILE_AIR|MOBILE_SEA|MOBILE_LAND`
-    // (= среда определена) и `STATIONARY` (= `!is_mobile()`).
+    // Instance class: C++ checks the bits `MOBILE_AIR|MOBILE_SEA|MOBILE_LAND`
+    // (= the domain is defined) and `STATIONARY` (= `!is_mobile()`).
     let mobile = unit.environment().is_some();
     let movement_exhausted = mobile && unit.speed == 0;
     let critical = (mobile || !unit.is_mobile()) && i32::from(unit.hits) <= hits_base / 4;
@@ -279,9 +279,9 @@ pub fn unit_status_voice(unit: &max_core::unit::UnitInfo) -> (&'static str, Opti
             _ => Some("V_M284"),
         }
     } else if unit.unit_type == UnitType::ResearchCentre && unit.orders == UnitOrder::PowerOn {
-        // C++ дополнительно проверяет `turns_to_complete == 0`; в порте счётчик
-        // живёт в `GameState`, поэтому V_M093 играет при выборе включённого
-        // Research Center (см. `App::select_unit`).
+        // C++ additionally checks `turns_to_complete == 0`; in the port the counter
+        // lives in `GameState`, so V_M093 plays when a powered-on
+        // Research Center is selected (see `App::select_unit`).
         Some("V_M093")
     } else if mobile {
         Some("V_M001")
@@ -309,7 +309,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Звуки боя: таблица `SC_UNITS` (`ParseSoundEffects`, units.cpp:228-290)
+    // Combat sounds: the `SC_UNITS` table (`ParseSoundEffects`, units.cpp:228-290)
     // -----------------------------------------------------------------------
 
     #[test]
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn unit_fire_hit_explosion_come_from_the_unit_tables() {
-        // `TANK` задаёт свои звуки: fire = TANK14, hit = TANK15, expload = TANK16.
+        // `TANK` defines its own sounds: fire = TANK14, hit = TANK15, expload = TANK16.
         let fire = unit_sound(UnitType::Tank, UnitSoundKind::Fire).expect("fire");
         assert_eq!(fire.tag, "TANK14");
         assert_eq!(fire.volume, 60);
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(explosion.volume, 80);
         assert!(!explosion.is_default);
 
-        // Пехота (`INFANTRY`) — `INFAN14/15/16`.
+        // Infantry (`INFANTRY`) — `INFAN14/15/16`.
         assert_eq!(
             unit_sound(UnitType::Infantry, UnitSoundKind::Fire)
                 .expect("infantry fire")
@@ -351,7 +351,7 @@ mod tests {
             "INFAN14"
         );
 
-        // `FIGHTER` — `FIGHT14/15/16` (авиация).
+        // `FIGHTER` — `FIGHT14/15/16` (aircraft).
         assert_eq!(
             unit_sound(UnitType::Fighter, UnitSoundKind::Explode)
                 .expect("fighter expload")
@@ -362,9 +362,9 @@ mod tests {
 
     #[test]
     fn units_without_own_sound_fall_back_to_default_table() {
-        // У `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD` своего `sound_effects`
-        // нет — `ParseSoundEffects` берёт `default_sound_effects` и помечает
-        // `is_default` (`units.cpp:288`). `GEN_XPLD` — громкость 80.
+        // `LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD` have no `sound_effects`
+        // of their own — `ParseSoundEffects` takes `default_sound_effects` and marks
+        // `is_default` (`units.cpp:288`). `GEN_XPLD` — volume 80.
         for unit_type in [
             UnitType::LandExplosion,
             UnitType::AirExplosion,
@@ -378,7 +378,7 @@ mod tests {
             assert!(explosion.is_default, "{unit_type:?}: звук по умолчанию");
         }
 
-        // Ракета/след тоже без своих звуков — дефолтные.
+        // The missile/trail also has no sounds of its own — defaults.
         assert_eq!(
             unit_sound(UnitType::Rocket, UnitSoundKind::Fire)
                 .expect("rocket fire")
@@ -430,15 +430,15 @@ mod tests {
             .base_values
             .get_attribute(max_core::unit_values::ATTRIB_SPEED) as u16;
 
-        // Танк без повреждений в AWAIT — `V_M001`.
+        // A tank without damage in AWAIT — `V_M001`.
         unit.orders = UnitOrder::Await;
         assert_eq!(unit_status_voice(&unit), ("V_START", Some("V_M001")));
 
-        // Без боезапаса — `V_M142` (первым в цепочке).
+        // Without ammo — `V_M142` (first in the chain).
         unit.ammo = 0;
         assert_eq!(unit_status_voice(&unit).1, Some("V_M142"));
 
-        // Разведчик — `V_M191`, если всё в порядке.
+        // Scout — `V_M191`, if everything is fine.
         let mut surveyor = max_core::unit::UnitInfo::new(
             UnitType::Surveyor,
             TeamId::RED,

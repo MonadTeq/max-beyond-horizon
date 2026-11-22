@@ -1,58 +1,58 @@
-﻿//! Экран исследований `ResearchMenu` — C++ `researchmenu.cpp` (окно `RSRCHPIC`).
+﻿//! Research screen `ResearchMenu` — C++ `researchmenu.cpp` (window `RSRCHPIC`).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * окно `RSRCHPIC` 360×331, отцентрованное в области карты
+//! * `RSRCHPIC` window 360×331, centered in the map area
 //!   (`Window(RSRCHPIC, GameManager_GetDialogWindowCenterMode())` → `(223,76)`);
-//! * заголовок `Research Topics` (`GNW_TEXT_FONT_5`, `COLOR_GREEN`,
-//!   `Text_TextBox(95,19,170,13)`, по центру);
-//! * подписи колонок `Labs`/`Topics`/`Turns` шрифтом FONT1 в (23,52)/(184,52)/
-//!   (282,52) — по центру своих ширин 125/90/60;
-//! * восемь строк тем (шаг 28 px, первая `uly = 70`), порядок C++:
+//! * title `Research Topics` (`GNW_TEXT_FONT_5`, `COLOR_GREEN`,
+//!   `Text_TextBox(95,19,170,13)`, centered);
+//! * column labels `Labs`/`Topics`/`Turns` in FONT1 at (23,52)/(184,52)/
+//!   (282,52) — centered in their widths 125/90/60;
+//! * eight topic rows (step 28 px, the first `uly = 70`), C++ order:
 //!   Attack (`I_HRDATK`), Shots, Range, Armor, Hits, Speed, Scan, Cost
-//!   (`I_GOLD`); у каждой:
-//!   - стрелки `UPGLFT_U/D` (72,uly) и `UPGRGT_U/D` (143,uly) 18×17, у
-//!     недоступной — `UPGLFT_X`/`UPGRGT_X`;
-//!   - счётчик центров темы (число справа в окне `Image(28,uly+3,32,10)`);
-//!   - «ходов до завершения» (`Image(293,uly+3,40,10)`): C++ считает
-//!     `turns = (centers + turns_to_complete − 1) / centers` по формуле
-//!     `ResearchMenu_UpdateResearchProgress` (без изменения состояния);
-//!   - слайдер `PRFSLIDE` 14×17 в слоте `Image(91,uly,48,17)`: позиция
-//!     `(48−14) * centers / active_centers`; клик по слоту — пересчёт
-//!     `((x−91)·active + 24) / 48` центров темы;
-//!   - подпись темы (185,uly,49,15) и иконка по центру (170,uly+7);
-//!   - `+N%` (`research_level * 10`) справа у x=278;
-//! * `Cancel`/`Help`/`Done` — `DPTBAYUP/DN` (75×25) в (92,294)/(194,294) с
-//!   подписями и `DPTHP_UP/DN` (31×26) в (167,294).
+//!   (`I_GOLD`); each has:
+//!   - arrows `UPGLFT_U/D` (72,uly) and `UPGRGT_U/D` (143,uly) 18×17, and for an
+//!     unavailable one — `UPGLFT_X`/`UPGRGT_X`;
+//!   - a counter of topic centers (the number on the right in `Image(28,uly+3,32,10)`);
+//!   - "turns to completion" (`Image(293,uly+3,40,10)`): C++ computes
+//!     `turns = (centers + turns_to_complete − 1) / centers` by the
+//!     `ResearchMenu_UpdateResearchProgress` formula (without changing the state);
+//!   - the `PRFSLIDE` slider 14×17 in the `Image(91,uly,48,17)` slot: position
+//!     `(48−14) * centers / active_centers`; a click on the slot recomputes
+//!     `((x−91)·active + 24) / 48` topic centers;
+//!   - the topic label (185,uly,49,15) and the icon at the center (170,uly+7);
+//!   - `+N%` (`research_level * 10`) on the right at x=278;
+//! * `Cancel`/`Help`/`Done` — `DPTBAYUP/DN` (75×25) at (92,294)/(194,294) with
+//!   labels and `DPTHP_UP/DN` (31×26) at (167,294).
 //!
-//! # Распределение
+//! # Allocation
 //!
-//! `free_capacity` — «свободные» центры: в C++ он стартует с 0, потому что все
-//! включённые центры уже закреплены за темами. Уменьшение темы освобождает
-//! центры (`free_capacity += old − new`), увеличение — тратит их. Поэтому
-//! перераспределение идёт «сначала вниз у одной темы, потом вверх у другой»;
-//! если закрыть экран с ненулевым `free_capacity`, лишние центры выключаются —
-//! ровно так работает `ResearchMenu_OnClick_Done` (см.
+//! `free_capacity` — "free" centers: in C++ it starts at 0 because all
+//! enabled centers are already assigned to topics. Decreasing a topic frees
+//! centers (`free_capacity += old − new`), increasing spends them. Therefore
+//! redistribution goes "first down on one topic, then up on another";
+//! if the screen is closed with a non-zero `free_capacity`, the extra centers are turned off —
+//! this is exactly how `ResearchMenu_OnClick_Done` works (see
 //! [`GameState::set_research_allocation`]).
 //!
-//! # Клавиатура (Rust-клиент)
+//! # Keyboard (Rust client)
 //!
-//! В C++ у экрана только кнопки (клавиши — лишь `Esc` для выхода и `Enter`
-//! через кнопки). Здесь добавлены `↑/↓` (выбор темы), `←/→` и `−/+`
-//! (изменить выбранную тему), `PageUp/PageDown`, `Enter` = `Done`, `Esc` =
-//! `Cancel`, `H`/`?` = помощь. Это задокументированное отличие: без него
-//! headless-QA и клавиатурный игрок не могут распределить центры.
+//! In C++ the screen has only buttons (the keys are just `Esc` to exit and `Enter`
+//! through the buttons). Here `↑/↓` (topic selection), `←/→` and `−/+`
+//! (change the selected topic), `PageUp/PageDown`, `Enter` = `Done`, `Esc` =
+//! `Cancel`, `H`/`?` = help are added. This is a documented difference: without it
+//! headless QA and the keyboard player cannot distribute centers.
 //!
-//! # Подключение
+//! # Wiring
 //!
-//! В C++ экран открывается из popup'а исследовательского центра
-//! (`UnitsManager_Popup_OnClick_Research`) при `ORDER_POWER_ON`. В Rust-клиенте
-//! popup-меню юнита нет, поэтому экран открывается клавишей `R` для
-//! выделенного включённого `RESEARCH`-центра своей команды (как `U` для
-//! апгрейдов). `Done` пишет распределение в `GameState`, а
-//! `ResearchMenu_NewTurn` (порт `max_core::research::research_new_turn`) уже
-//! вызывается из `GameState::finish_turn` — экран и тик используют одни и те
-//! же `research_topics`.
+//! In C++ the screen is opened from the research center popup
+//! (`UnitsManager_Popup_OnClick_Research`) with `ORDER_POWER_ON`. In the Rust client
+//! there is no unit popup menu, so the screen is opened with the `R` key for the
+//! selected powered-on `RESEARCH` center of own team (like `U` for
+//! upgrades). `Done` writes the allocation into `GameState`, and
+//! `ResearchMenu_NewTurn` (port `max_core::research::research_new_turn`) is already
+//! called from `GameState::finish_turn` — the screen and the tick use the same
+//! `research_topics`.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitType, RESEARCH_TOPIC_COUNT};
@@ -69,99 +69,99 @@ use crate::ui::{InputEvent, Key};
 
 /// `RSRCHPIC` 360×331.
 pub const WINDOW_SIZE: (i32, i32) = (360, 331);
-/// Окно в кадре: центр `WINDOW_MAIN_MAP` (180,18,448,448).
+/// Window in the frame: center of `WINDOW_MAIN_MAP` (180,18,448,448).
 pub const WINDOW_RECT: PixelRect = PixelRect::new(223, 76, 360, 331);
-/// Заголовок `Text_TextBox(95,19,170,13)`.
+/// Title `Text_TextBox(95,19,170,13)`.
 pub const TITLE_RECT: PixelRect = PixelRect::new(95, 19, 170, 13);
-/// Подпись `Labs` (`Text_TextLine(23,52,125)`).
+/// `Labs` label (`Text_TextLine(23,52,125)`).
 pub const LABS_LABEL: PixelRect = PixelRect::new(23, 52, 125, 10);
-/// Подпись `Topics` (`Text_TextLine(184,52,90)`).
+/// `Topics` label (`Text_TextLine(184,52,90)`).
 pub const TOPICS_LABEL: PixelRect = PixelRect::new(184, 52, 90, 10);
-/// Подпись `Turns` (`Text_TextLine(282,52,60)`).
+/// `Turns` label (`Text_TextLine(282,52,60)`).
 pub const TURNS_LABEL: PixelRect = PixelRect::new(282, 52, 60, 10);
-/// Первая строка тем (`uly_slider = topic_index * 28 + 70`).
+/// First topic row (`uly_slider = topic_index * 28 + 70`).
 pub const FIRST_ROW_Y: i32 = 70;
-/// Шаг строк.
+/// Row step.
 pub const ROW_HEIGHT: i32 = 28;
-/// Стрелка влево (`Button(UPGLFT_U, UPGLFT_D, 72, uly)`).
+/// Left arrow (`Button(UPGLFT_U, UPGLFT_D, 72, uly)`).
 pub const LEFT_ARROW: (i32, i32) = (72, 0);
-/// Стрелка вправо (`Button(UPGRGT_U, UPGRGT_D, 143, uly)`).
+/// Right arrow (`Button(UPGRGT_U, UPGRGT_D, 143, uly)`).
 pub const RIGHT_ARROW: (i32, i32) = (143, 0);
-/// Размер стрелки (18×17).
+/// Arrow size (18×17).
 pub const ARROW_SIZE: (i32, i32) = (18, 17);
-/// Поле счётчика центров (`Image(28, uly+3, 32, 10)`).
+/// Centers counter field (`Image(28, uly+3, 32, 10)`).
 pub const LABS_COUNT_BG: PixelRect = PixelRect::new(28, 3, 32, 10);
-/// Поле «ходов» (`Image(293, uly+3, 40, 10)`).
+/// "turns" field (`Image(293, uly+3, 40, 10)`).
 pub const TURNS_BG: PixelRect = PixelRect::new(293, 3, 40, 10);
-/// Слот слайдера (`Image(91, uly, 48, 17)`).
+/// Slider slot (`Image(91, uly, 48, 17)`).
 pub const SLIDER_BG: PixelRect = PixelRect::new(91, 0, 48, 17);
-/// Размер `PRFSLIDE` (14×17).
+/// `PRFSLIDE` size (14×17).
 pub const SLIDER_SIZE: (i32, i32) = (14, 17);
-/// Подпись темы (`Text_TextBox(185, uly, 49, 15)`).
+/// Topic label (`Text_TextBox(185, uly, 49, 15)`).
 pub const TOPIC_LABEL: PixelRect = PixelRect::new(185, 0, 49, 15);
-/// Точка центра иконки (`WindowManager_DecodeSimpleImage(image, 170-w/2, uly+7-h/2)`).
+/// Icon center point (`WindowManager_DecodeSimpleImage(image, 170-w/2, uly+7-h/2)`).
 pub const TOPIC_ICON: (i32, i32) = (170, 7);
-/// Правый край текста `+N%` (`278 - Text_GetWidth`).
+/// Right edge of the `+N%` text (`278 - Text_GetWidth`).
 pub const PERCENT_RIGHT: i32 = 278;
-/// `Cancel` (`DPTBAYUP/DN` 75×25 в 92,294).
+/// `Cancel` (`DPTBAYUP/DN` 75×25 at 92,294).
 pub const CANCEL_RECT: PixelRect = PixelRect::new(92, 294, 75, 25);
-/// `Help` (`DPTHP_UP/DN` 31×26 в 167,294).
+/// `Help` (`DPTHP_UP/DN` 31×26 at 167,294).
 pub const HELP_RECT: PixelRect = PixelRect::new(167, 294, 31, 26);
-/// `Done` (`DPTBAYUP/DN` 75×25 в 194,294).
+/// `Done` (`DPTBAYUP/DN` 75×25 at 194,294).
 pub const DONE_RECT: PixelRect = PixelRect::new(194, 294, 75, 25);
-/// Цвет заголовка `COLOR_GREEN`.
+/// Title color `COLOR_GREEN`.
 pub const GREEN: u8 = 0x02;
-/// Цвет обычного текста (`0xA2`).
+/// Regular text color (`0xA2`).
 pub const TEXT: u8 = 0xA2;
-/// Цвет подписи кнопок/заголовков — `Fonts_GoldColor (165,175,199)`.
+/// Button label/heading color — `Fonts_GoldColor (165,175,199)`.
 pub const GOLD: (u8, u8, u8) = (165, 175, 199);
 
-/// Подписи тем в порядке C++ `ResearchMenu_TopicLabels`.
+/// Topic labels in C++ `ResearchMenu_TopicLabels` order.
 pub const TOPIC_LABELS: [&str; RESEARCH_TOPIC_COUNT] = [
     "Attack", "Shots", "Range", "Armor", "Hits", "Speed", "Scan", "Cost",
 ];
 
-/// Иконки тем в порядке C++ `ResearchMenu_TopicIcons`.
+/// Topic icons in C++ `ResearchMenu_TopicIcons` order.
 pub const TOPIC_ICONS: [&str; RESEARCH_TOPIC_COUNT] = [
     "I_HRDATK", "I_SHOTS", "I_RANGE", "I_ARMOR", "I_HITS", "I_SPEED", "I_SCAN", "I_GOLD",
 ];
 
-/// Действие экрана.
+/// Screen action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResearchAction {
-    /// Ничего.
+    /// Nothing.
     None,
-    /// `Cancel`/`Esc` — закрыть без изменений.
+    /// `Cancel`/`Esc` — close without changes.
     Cancel,
-    /// `Done`/`Enter` — применить распределение.
+    /// `Done`/`Enter` — apply the allocation.
     Done,
-    /// `Help`/`H` — открыть `RESEARCH_SETUP`.
+    /// `Help`/`H` — open `RESEARCH_SETUP`.
     Help,
 }
 
-/// Открытый экран исследований.
+/// Open research screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchMenu {
-    /// Команда.
+    /// Team.
     pub team: TeamId,
-    /// Число включённых исследовательских центров (`active_research_centers`).
+    /// Number of enabled research centers (`active_research_centers`).
     pub active_centers: u16,
-    /// Сколько центров ещё не закреплено (`free_capacity`).
+    /// How many centers are not assigned yet (`free_capacity`).
     pub free_capacity: u16,
-    /// Центры по темам (`topics[i].topic_value`, стартовое значение).
+    /// Centers per topic (`topics[i].topic_value`, starting value).
     pub values: [u16; RESEARCH_TOPIC_COUNT],
-    /// Выбранная тема (только клавиатура Rust-клиента).
+    /// Selected topic (Rust client keyboard only).
     pub selected: usize,
-    /// Строка статуса (ошибки/подсказки).
+    /// Status line (errors/hints).
     pub status: String,
 }
 
 impl ResearchMenu {
-    /// Открывает экран для команды — C++ `ResearchMenu::ResearchMenu(team)`.
+    /// Opens the screen for a team — C++ `ResearchMenu::ResearchMenu(team)`.
     ///
-    /// `None`, если у команды нет ни одного включённого `RESEARCH`-центра:
-    /// в C++ popup `Research` есть только у `ORDER_POWER_ON`, так что экран с
-    /// нулём центров недостижим.
+    /// `None` if the team has no enabled `RESEARCH` center:
+    /// in C++ the `Research` popup exists only with `ORDER_POWER_ON`, so a screen with
+    /// zero centers is unreachable.
     pub fn new(state: &GameState, team: TeamId) -> Option<Self> {
         let mut values = [0u16; RESEARCH_TOPIC_COUNT];
         let mut active_centers = 0u16;
@@ -202,10 +202,10 @@ impl ResearchMenu {
         self.values.get(index).copied().unwrap_or(0)
     }
 
-    /// `ResearchControl::Update(value)` для темы `index`.
+    /// `ResearchControl::Update(value)` for topic `index`.
     ///
-    /// `value` обрезается снизу нулём и сверху `topic_value + free_capacity`;
-    /// `free_capacity` меняется на `old − new` (C++ `UpdateTopics`).
+    /// `value` is clamped below by zero and above by `topic_value + free_capacity`;
+    /// `free_capacity` changes by `old − new` (C++ `UpdateTopics`).
     pub fn update(&mut self, index: usize, value: i32) -> bool {
         let Some(topic_value) = self.values.get(index).copied() else {
             return false;
@@ -235,7 +235,7 @@ impl ResearchMenu {
         self.update(index, value + if increase { 1 } else { -1 })
     }
 
-    /// Клик по слайдеру темы `index` в координатах **кадра** 640×480.
+    /// Click on the slider of topic `index` in 640×480 **frame** coordinates.
     ///
     /// C++ `ResearchMenu_OnClick_Slider`:
     /// `((mouse_x − slider_ulx) * active + width/2) / width`.
@@ -249,13 +249,13 @@ impl ResearchMenu {
         (mouse_x * i32::from(self.active_centers) + width / 2) / width
     }
 
-    /// Установка слайдера темы `index` кликом по кадру.
+    /// Sets the slider of topic `index` by a click on the frame.
     pub fn slider(&mut self, index: usize, x: i32) -> bool {
         let value = self.slider_value(index, x);
         self.update(index, value)
     }
 
-    /// Позиция `PRFSLIDE` внутри слота (`offset = (48−14)·value/active`).
+    /// Position of `PRFSLIDE` inside the slot (`offset = (48−14)·value/active`).
     pub fn slider_offset(&self, index: usize) -> i32 {
         let range = i32::from(SLIDER_BG.width) - SLIDER_SIZE.0;
 
@@ -266,7 +266,7 @@ impl ResearchMenu {
         }
     }
 
-    /// Уровень темы в процентах (`research_level * 10`).
+    /// Topic level in percent (`research_level * 10`).
     pub fn topic_percent(&self, state: &GameState, index: usize) -> u32 {
         state
             .teams
@@ -276,13 +276,13 @@ impl ResearchMenu {
             .unwrap_or(0)
     }
 
-    /// «Ходов до завершения» для текущего числа центров темы.
+    /// "Turns to completion" for the current number of topic centers.
     ///
-    /// Повторяет `ResearchControl::RefreshScreen`: временно применяет
-    /// `ResearchMenu_UpdateResearchProgress(team, topic, +1)`, считает
-    /// `(centers + turns_to_complete − 1) / centers` и откатывает `−1`. Здесь
-    /// изменение считается на копии `ResearchTopic` — состояние игры не
-    /// трогается.
+    /// Repeats `ResearchControl::RefreshScreen`: temporarily applies
+    /// `ResearchMenu_UpdateResearchProgress(team, topic, +1)`, computes
+    /// `(centers + turns_to_complete − 1) / centers` and rolls back `−1`. Here
+    /// the change is computed on a copy of `ResearchTopic` — the game state is not
+    /// touched.
     pub fn turns_to_complete(&self, state: &GameState, index: usize) -> Option<u32> {
         let centers = i32::from(self.value(index));
         if centers <= 0 || index >= RESEARCH_TOPIC_COUNT {
@@ -300,10 +300,10 @@ impl ResearchMenu {
         Some(turns.max(0) as u32)
     }
 
-    /// `ResearchMenu_OnClick_Done`: применяет распределение к `GameState`.
+    /// `ResearchMenu_OnClick_Done`: applies the allocation to `GameState`.
     ///
-    /// Возвращает фактическое распределение (C++ тоже может выключить центры,
-    /// если в цели меньше мест, чем включённых центров).
+    /// Returns the actual allocation (C++ may also turn centers off
+    /// if the target has fewer slots than enabled centers).
     pub fn commit(&mut self, state: &mut GameState) -> [u32; RESEARCH_TOPIC_COUNT] {
         let target = self.values.map(u32::from);
         let actual = state.set_research_allocation(self.team, target);
@@ -320,7 +320,7 @@ impl ResearchMenu {
         actual
     }
 
-    /// Обрабатывает клик в кадре; возвращает действие.
+    /// Handles a click in the frame; returns the action.
     pub fn click(&mut self, x: i32, y: i32) -> ResearchAction {
         let window_x = x - WINDOW_RECT.ulx;
         let window_y = y - WINDOW_RECT.uly;
@@ -367,7 +367,7 @@ impl ResearchMenu {
         ResearchAction::None
     }
 
-    /// Клавиатура (Rust-клиент; см. шапку модуля).
+    /// Keyboard (Rust client; see the module header).
     pub fn key(&mut self, key: Key) -> ResearchAction {
         match key {
             Key::Escape => ResearchAction::Cancel,
@@ -404,7 +404,7 @@ impl ResearchMenu {
         }
     }
 
-    /// Ввод события.
+    /// Input event.
     pub fn input(&mut self, event: InputEvent) -> ResearchAction {
         match event {
             InputEvent::MouseClick(x, y) => self.click(x, y),
@@ -413,7 +413,7 @@ impl ResearchMenu {
         }
     }
 
-    /// Рисует экран поверх кадра 640×480 (`ResearchControl::Init/RefreshScreen`
+    /// Draws the screen over the 640×480 frame (`ResearchControl::Init/RefreshScreen`
     /// + `win_draw`).
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: &GameState) -> u32 {
         if frame.width() != 640 || frame.height() != 480 {
@@ -469,7 +469,7 @@ impl ResearchMenu {
         )
         .max(0) as u32;
 
-        // Подписи колонок: `Text_TextLine` с Fonts_GoldColor.
+        // Column labels: `Text_TextLine` with Fonts_GoldColor.
         for (rect, label) in [
             (LABS_LABEL, "Labs"),
             (TOPICS_LABEL, "Topics"),
@@ -495,7 +495,7 @@ impl ResearchMenu {
         for index in 0..RESEARCH_TOPIC_COUNT {
             let y = window.uly + FIRST_ROW_Y + index as i32 * ROW_HEIGHT;
 
-            // `UPGLFT`/`UPGRGT`: левая доступна при centers > 0, правая при
+            // `UPGLFT`/`UPGRGT`: the left one is available when centers > 0, the right one when
             // `free_capacity > 0` (`UpdateButtons`).
             painted += draw_arrow(
                 frame,
@@ -542,7 +542,7 @@ impl ResearchMenu {
                 .max(0) as u32;
             }
 
-            // Слайдер: слот уже нарисован фоном, поверх — `PRFSLIDE`.
+            // Slider: the slot is already drawn by the background, `PRFSLIDE` on top.
             if let Some(slide) = menu_assets.slider.as_ref() {
                 painted += blit_simple(
                     frame,
@@ -554,7 +554,7 @@ impl ResearchMenu {
                 );
             }
 
-            // Подпись темы: по центру 49×15, `vertical_align=true` → y+2.
+            // Topic label: centered 49×15, `vertical_align=true` → y+2.
             painted += draw_text_gnw_centered_shadowed(
                 frame,
                 PixelRect::new(
@@ -571,7 +571,7 @@ impl ResearchMenu {
             )
             .max(0) as u32;
 
-            // Иконка: `WindowManager_DecodeSimpleImage(image, 170−w/2, uly+7−h/2)`.
+            // Icon: `WindowManager_DecodeSimpleImage(image, 170−w/2, uly+7−h/2)`.
             if let Some(icon) = menu_assets.icons[index].as_ref() {
                 painted += blit_simple(
                     frame,
@@ -583,7 +583,7 @@ impl ResearchMenu {
                 );
             }
 
-            // `+N%` у правого края 278, цвет 0xA2, без обводки.
+            // `+N%` at the right edge 278, color 0xA2, no outline.
             let percent = format!("+{}%", self.topic_percent(state, index));
             let width = font.text_width(&percent);
             painted += draw_text_gnw(
@@ -597,7 +597,7 @@ impl ResearchMenu {
             .max(0) as u32;
         }
 
-        // Кнопки `Cancel`/`Help`/`Done`.
+        // `Cancel`/`Help`/`Done` buttons.
         if let Some(pair) = menu_assets.cancel.as_ref() {
             painted += draw_image_button(
                 frame,
@@ -635,7 +635,7 @@ impl ResearchMenu {
     }
 }
 
-/// Прямоугольник кнопки в координатах кадра.
+/// Button rectangle in frame coordinates.
 fn frame_rect(rect: PixelRect) -> PixelRect {
     PixelRect::new(
         WINDOW_RECT.ulx + rect.ulx,
@@ -645,7 +645,7 @@ fn frame_rect(rect: PixelRect) -> PixelRect {
     )
 }
 
-/// Стрелка с disabled-вариантом (`UPGLFT_X`/`UPGRGT_X` 16×16).
+/// Arrow with a disabled variant (`UPGLFT_X`/`UPGRGT_X` 16×16).
 fn draw_arrow(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -666,12 +666,12 @@ fn draw_arrow(
     }
 }
 
-/// Ассеты экрана исследований.
+/// Research screen assets.
 #[derive(Debug, Clone)]
 pub struct ResearchMenuAssets {
-    /// Фон `RSRCHPIC` 360×331.
+    /// `RSRCHPIC` background 360×331.
     pub background: Option<BigImage>,
-    /// Иконки `I_HRDATK`/`I_SHOTS`/`I_RANGE`/`I_ARMOR`/`I_HITS`/`I_SPEED`/
+    /// `I_HRDATK`/`I_SHOTS`/`I_RANGE`/`I_ARMOR`/`I_HITS`/`I_SPEED`/
     /// `I_SCAN`/`I_GOLD`.
     pub icons: [Option<SimpleImage>; RESEARCH_TOPIC_COUNT],
     /// `UPGLFT_U/D` 18×17.
@@ -686,14 +686,14 @@ pub struct ResearchMenuAssets {
     pub slider: Option<SimpleImage>,
     /// `DPTBAYUP/DN` 75×25 (Cancel/Done).
     pub cancel: Option<MenuButtonPair>,
-    /// `DPTBAYUP/DN` 75×25 (Done; в C++ тот же ресурс).
+    /// `DPTBAYUP/DN` 75×25 (Done; the same resource in C++).
     pub done: Option<MenuButtonPair>,
     /// `DPTHP_UP/DN` 31×26.
     pub help: Option<MenuButtonPair>,
 }
 
 impl ResearchMenuAssets {
-    /// Грузит ресурсы; отсутствие части — предупреждение, не ошибка.
+    /// Loads the resources; a missing part is a warning, not an error.
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             let bytes = archive.read(name).ok()?;
@@ -720,7 +720,7 @@ impl ResearchMenuAssets {
         }
     }
 
-    /// Есть ли фон и ключевые кнопки.
+    /// Whether the background and the key buttons are present.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.done.is_some() && self.slider.is_some()
     }
@@ -751,7 +751,7 @@ mod tests {
     #[test]
     fn layout_matches_the_oracle() {
         assert_eq!(WINDOW_RECT, PixelRect::new(223, 76, 360, 331));
-        // `180 + (448-360)/2 = 224`? C++ целочисленно: (447-360)/2 = 43 → 223.
+        // `180 + (448-360)/2 = 224`? C++ integer: (447-360)/2 = 43 → 223.
         assert_eq!(WINDOW_RECT.ulx, 180 + (447 - 360) / 2);
         assert_eq!(WINDOW_RECT.uly, 18 + (447 - 331) / 2);
         assert_eq!(FIRST_ROW_Y, 70);
@@ -809,16 +809,16 @@ mod tests {
         let (state, team) = state_with_center(ResearchTopic::Attack, 0);
         let mut menu = ResearchMenu::new(&state, team).expect("menu");
 
-        // Наверх нельзя: свободных центров нет.
+        // Cannot go up: there are no free centers.
         assert!(!menu.adjust(ResearchTopic::Shots as usize, true));
         assert_eq!(menu.values[ResearchTopic::Shots as usize], 0);
 
-        // Вниз по Attack освобождает центр...
+        // Down on Attack frees a center...
         assert!(menu.adjust(ResearchTopic::Attack as usize, false));
         assert_eq!(menu.free_capacity, 1);
         assert_eq!(menu.values[ResearchTopic::Attack as usize], 0);
 
-        // ...и его можно отдать Shots.
+        // ...and it can be given to Shots.
         assert!(menu.adjust(ResearchTopic::Shots as usize, true));
         assert_eq!(menu.free_capacity, 0);
         assert_eq!(menu.values[ResearchTopic::Shots as usize], 1);
@@ -879,8 +879,8 @@ mod tests {
             .expect("center");
         assert_eq!(unit.orders, UnitOrder::PowerOff);
 
-        // На следующем тике `process_order_power_off` спишет allocation
-        // (`ResearchMenu_UpdateResearchProgress(-1)`), как в C++.
+        // On the next tick `process_order_power_off` writes off the allocation
+        // (`ResearchMenu_UpdateResearchProgress(-1)`), as in C++.
         state.tick();
         assert_eq!(state.research_allocation(team).iter().sum::<u32>(), 0);
     }
@@ -898,7 +898,7 @@ mod tests {
             research_turns_to_complete(0, RESEARCH_TOPIC_FACTORS[0]) as u32
         );
 
-        // Второй центр: скорость темы меняется (детерминированная формула).
+        // Second center: the topic speed changes (a deterministic formula).
         let second = state
             .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(21, 20), 0)
             .expect("second center");
@@ -924,8 +924,8 @@ mod tests {
         menu.adjust(ResearchTopic::Shots as usize, true);
         menu.commit(&mut state);
 
-        // `finish_turn`/`advance_research` тикают ровно ту тему, на которую
-        // перераспределили центры: Attack остаётся 0, Shots растёт.
+        // `finish_turn`/`advance_research` tick exactly the topic to which
+        // the centers were redistributed: Attack stays 0, Shots grows.
         for _ in 0..16 {
             state.advance_research(team);
         }
@@ -950,8 +950,8 @@ mod tests {
         assert_eq!(menu.key(Key::Escape), ResearchAction::Cancel);
         assert_eq!(menu.key(Key::Char('h')), ResearchAction::Help);
 
-        // Кнопки в координатах кадра: Help (167..198) перекрывает левый край
-        // Done (194..269), поэтому кликаем по центрам кнопок.
+        // Buttons in frame coordinates: Help (167..198) overlaps the left edge of
+        // Done (194..269), so we click the button centers.
         assert_eq!(
             menu.click(WINDOW_RECT.ulx + 92 + 37, WINDOW_RECT.uly + 294 + 12),
             ResearchAction::Cancel
@@ -965,7 +965,7 @@ mod tests {
             ResearchAction::Done
         );
 
-        // Правая стрелка Attack при free_capacity = 0 ничего не делает.
+        // The right arrow of Attack does nothing at free_capacity = 0.
         let right = PixelRect::new(
             WINDOW_RECT.ulx + RIGHT_ARROW.0,
             WINDOW_RECT.uly + FIRST_ROW_Y,
@@ -978,7 +978,7 @@ mod tests {
         );
         assert_eq!(menu.values[0], 1);
 
-        // Левая стрелка освобождает центр.
+        // The left arrow frees a center.
         let left = PixelRect::new(
             WINDOW_RECT.ulx + LEFT_ARROW.0,
             WINDOW_RECT.uly + FIRST_ROW_Y,

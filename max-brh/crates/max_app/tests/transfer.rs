@@ -1,9 +1,9 @@
-//! X-FER (`TransferMenu`) в живом приложении: пункт меню включён, окно
-//! открывается кликом по цели в курсорном режиме, `Done` отдаёт `ORDER_TRANSFER`
-//! (08/P3), запасы меняются, `Esc` ничего не меняет, кадр рисует окно.
+//! X-FER (`TransferMenu`) in the live application: the menu item is enabled, the window
+//! opens by clicking the target in cursor mode, `Done` gives `ORDER_TRANSFER`
+//! (08/P3), the stocks change, `Esc` changes nothing, the frame draws the window.
 //!
-//! Тесты с настоящими ассетами пропускаются, если данных игры нет рядом с
-//! репозиторием (как `alloc_menu.rs`/`unit_menu.rs`).
+//! Tests with real assets are skipped if there is no game data next to
+//! the repository (like `alloc_menu.rs`/`unit_menu.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -55,7 +55,7 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
-/// Партия через настоящие фазы старта: мобилизация → высадка → `InGame`.
+/// A match through the real start phases: mobilization → landing → `InGame`.
 fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
@@ -109,7 +109,7 @@ fn frame_point(app: &mut App, id: UnitId) -> (i32, i32) {
     (x + MAIN_MAP.ulx, y + MAIN_MAP.uly)
 }
 
-/// Выделяет юнит и открывает меню команд повторным кликом.
+/// Selects the unit and opens the command menu with a repeated click.
 fn select_and_open_menu(app: &mut App, id: UnitId) {
     let point = frame_point(app, id);
     app.close_unit_menu();
@@ -120,8 +120,8 @@ fn select_and_open_menu(app: &mut App, id: UnitId) {
     assert!(app.unit_menu().is_some(), "повторный клик открывает меню");
 }
 
-/// Готовит перенос шахта → конструктор с известными запасами:
-/// `source` (шахта) 10 из 25, цель (конструктор) 40 из 60.
+/// Prepares a mine → constructor transfer with known stocks:
+/// `source` (mine) 10 of 25, target (constructor) 40 of 60.
 fn prepare_transfer(app: &mut App) -> (UnitId, UnitId) {
     let mine = unit_of_type(app, UnitType::MiningStation);
     let constructor = unit_of_type(app, UnitType::Constructor);
@@ -147,7 +147,7 @@ fn prepare_transfer(app: &mut App) -> (UnitId, UnitId) {
     (mine, constructor)
 }
 
-/// Открывает окно X-FER как игрок: меню → x-fer → клик по цели.
+/// Opens the X-FER window as a player: menu → x-fer → click on the target.
 fn open_transfer(app: &mut App, source: UnitId, target: UnitId) -> UnitId {
     select_and_open_menu(app, source);
 
@@ -226,7 +226,7 @@ fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
     let _ = key(&mut app, Key::Enter);
     assert!(app.transfer_menu().is_none(), "Done закрывает окно");
 
-    // Приказ применён (офлайн — сразу), но `ProcessTransfer` идёт на тике.
+    // The order is applied (offline — immediately), but `ProcessTransfer` runs on the tick.
     assert_eq!(
         app.state().unit(mine).expect("mine").orders,
         UnitOrder::Transfer
@@ -287,7 +287,7 @@ fn xfer_cancel_and_zero_amount_do_not_change_storage() {
         UnitOrder::PowerOn
     );
 
-    // Нулевое количество: `Done` закрывает окно без приказа.
+    // Zero amount: `Done` closes the window without an order.
     open_transfer(&mut app, mine, constructor);
     assert!(app.transfer_set_amount(0));
     let _ = key(&mut app, Key::Enter);
@@ -304,7 +304,7 @@ fn xfer_help_opens_transfer_setup() {
     let (mine, constructor) = prepare_transfer(&mut app);
     open_transfer(&mut app, mine, constructor);
 
-    // `?` — `TransferMenu::ProcessKey`: режим помощи C++ (`HelpMenu_Menu`).
+    // `?` — `TransferMenu::ProcessKey`: the C++ help mode (`HelpMenu_Menu`).
     let _ = key(&mut app, Key::Char('?'));
     assert!(
         app.help_screen().is_none(),
@@ -315,7 +315,7 @@ fn xfer_help_opens_transfer_setup() {
         Some(max_app::helpmenu::HelpSection::Transfer)
     );
 
-    // Клик по элементу `TRANSFERER` (335..371, 177..213) открывает запись.
+    // A click on the `TRANSFERER` element (335..371, 177..213) opens the entry.
     let _ = max_app::ui::handle_session_input(
         &mut app,
         max_app::ui::InputEvent::MouseClick(353, 195),
@@ -326,8 +326,8 @@ fn xfer_help_opens_transfer_setup() {
         Some("TRANSFERER")
     );
 
-    // `Esc` закрывает окно, второй `Esc` — режим; окно X-FER остаётся под ним
-    // (C++ `HelpMenu::Run` возвращает в `TransferMenu`).
+    // `Esc` closes the window, a second `Esc` — the mode; the X-FER window remains under it
+    // (C++ `HelpMenu::Run` returns to `TransferMenu`).
     let _ = key(&mut app, Key::Escape);
     assert!(app.help_screen().is_none(), "Esc закрывает окно помощи");
     assert!(app.help_mode().is_some(), "режим помощи ещё активен");
@@ -369,8 +369,8 @@ fn xfer_frame_draws_the_window_over_the_map() {
         "окно XFERPIC 308×162 нарисовано поверх карты (изменилось {changed} px)"
     );
 
-    // Полоса `SMBRRAW` видна в своём прямоугольнике (пиксели бара отличаются
-    // от фона XFERPIC) — окно рисуется с ассетами, а не рамкой.
+    // The `SMBRRAW` bar is visible in its rectangle (bar pixels differ
+    // from the XFERPIC background) — the window is drawn with assets, not a frame.
     let frame_rect = max_app::transfermenu::TransferMenu::layout(MAIN_MAP);
     let slider = max_app::transfermenu::SLIDER_RECT;
     let any_bar_pixel = (slider.uly..slider.lry()).any(|y| {

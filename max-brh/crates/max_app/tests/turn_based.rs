@@ -1,15 +1,15 @@
-//! Turn Based (PlayMode::TurnBased) — сквозные сценарии локальной партии.
+//! Turn Based (PlayMode::TurnBased) — end-to-end local match scenarios.
 //!
-//! Пользовательское указание: всё QA и soak — в Turn Based. Здесь:
+//! User instruction: all QA and soak — in Turn Based. Here:
 //!
-//! 1. **Регресс зависания первого хода**: игрок стреляет ракетой и сразу жмёт
-//!    End Turn; снаряд летит уже на ходу ИИ. Раньше `ROCKET` (speed = 0)
-//!    навсегда застревал в `ORDER_MOVE`, `OrdersPending` не сбрасывался,
-//!    `Ai_CheckEndTurn` не вызывался — ход ИИ висел до аварийных 12 000 кадров.
-//! 2. **Горячий-seat в Turn Based**: два человека + компьютер; окна перехода
-//!    хода, ход ИИ и возврат к человеку.
-//! 3. **SP в Turn Based**: несколько раундов подряд без зависаний, счётчик
-//!    хода растёт.
+//! 1. **First-turn hang regression**: the player fires a rocket and immediately presses
+//!    End Turn; the projectile flies during the AI turn. Previously `ROCKET` (speed = 0)
+//!    got stuck in `ORDER_MOVE` forever, `OrdersPending` was not reset,
+//!    `Ai_CheckEndTurn` was not called — the AI turn hung until the emergency 12 000 frames.
+//! 2. **Hot-seat in Turn Based**: two humans + a computer; turn-transition
+//!    windows, the AI turn and the return to a human.
+//! 3. **SP in Turn Based**: several rounds in a row without hangs, the turn
+//!    counter grows.
 
 use std::path::{Path, PathBuf};
 
@@ -107,8 +107,8 @@ fn combat_effect(unit_type: UnitType) -> bool {
     )
 }
 
-/// Зависание первого хода: ракета игрока, выпущенная перед End Turn, не должна
-/// держать ход ИИ. Проверяются и снаряды, и взрывы (не остаются на карте).
+/// First-turn hang: the player's rocket fired before End Turn must not
+/// hold the AI turn. Both projectiles and explosions are checked (they do not remain on the map).
 #[test]
 fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     let Some(mut app) = local_app() else {
@@ -123,7 +123,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
         "первый ход — человек"
     );
 
-    // Цель видна стрелку (в партии — разведка): детерминированный выстрел.
+    // The target is visible to the shooter (in the match — survey): a deterministic shot.
     app.state_mut().ai.all_visible = true;
     app.state_mut().update_visibility_status(false);
 
@@ -168,7 +168,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     app.state_mut()
         .set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
 
-    // Игрок жмёт End Turn, не дожидаясь попадания.
+    // The player presses End Turn without waiting for the hit.
     app.local_end_turn();
     assert!(
         matches!(
@@ -237,7 +237,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     );
 }
 
-/// Горячий-seat в Turn Based: два человека + компьютер, окна перехода хода.
+/// Hot-seat in Turn Based: two humans + a computer, turn-transition windows.
 #[test]
 fn hot_seat_turn_based_covers_humans_and_the_computer() {
     let Some(mut app) = local_app() else {
@@ -254,7 +254,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
     ];
     app.start_local_game(&setup).expect("hot-seat партия");
 
-    // Первому человеку C++ тоже показывает окно (`PlayerTeam = ALIEN`).
+    // The first human is shown the window by C++ too (`PlayerTeam = ALIEN`).
     assert_eq!(
         app.local()
             .and_then(|local| local.notice.map(|notice| notice.team)),
@@ -272,7 +272,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
 
         app.local_end_turn();
 
-        // Второй человек: окно перехода хода, затем его ход.
+        // The second human: the turn-transition window, then their turn.
         assert_eq!(
             app.local()
                 .and_then(|local| local.notice.map(|notice| notice.team)),
@@ -287,7 +287,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
 
         app.local_end_turn();
 
-        // Компьютер BLUE: ход ИИ и возврат к первому человеку (окно RED).
+        // Computer BLUE: the AI turn and the return to the first human (RED window).
         assert!(
             run_until_player_turn(&mut app, 5_000),
             "ход {turn}: компьютер должен закрыть ход"
@@ -304,7 +304,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
     assert!(app.state().turn_counter >= 4, "раунды закрываются");
 }
 
-/// SP в Turn Based: несколько раундов подряд, ход ИИ закрывается штатно.
+/// SP in Turn Based: several rounds in a row, the AI turn closes normally.
 #[test]
 fn several_turn_based_rounds_close_without_hanging() {
     let Some(mut app) = local_app() else {

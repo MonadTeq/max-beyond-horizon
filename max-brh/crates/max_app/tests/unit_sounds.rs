@@ -1,17 +1,17 @@
-//! Звуки боя: выстрел/попадание/взрыв юнита через `sfx`-таблицу `SC_UNITS` и
-//! мок `AudioPlayer` (без аудиоустройства).
+//! Combat sounds: unit shot/hit/explosion via the `SC_UNITS` `sfx` table and
+//! the `AudioPlayer` mock (without an audio device).
 //!
-//! Оракул:
+//! Oracle:
 //! * `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`) — `PlaySfx(this, SFX_TYPE_FIRE)`;
 //! * `UnitsManager_StartExplosion` (`units_manager.cpp:3922/3929`) —
-//!   `SFX_TYPE_HIT` (юнит жив) / `SFX_TYPE_EXPLOAD` (уничтожен);
+//!   `SFX_TYPE_HIT` (the unit is alive) / `SFX_TYPE_EXPLOAD` (destroyed);
 //! * `SoundManager::PlaySfx(UnitInfo*, SfxType)` (`sound_manager.cpp:413-490`) —
-//!   ресурс и громкость из таблицы юнита: `units[TOKEN].sound_effects`, иначе
+//!   the resource and volume from the unit table: `units[TOKEN].sound_effects`, otherwise
 //!   `default_sound_effects` (`ParseSoundEffects`, `units.cpp:228-290`).
 //!
-//! Симуляция только копит события `max_core::UnitSound` (без ссылок на
-//! ресурсы), клиент превращает их в теги (`max_app::sfx::combat_sound`) и
-//! проигрывает через `AudioPlayer::play_gain` (`volume / 100`).
+//! The simulation only accumulates `max_core::UnitSound` events (without references to
+//! resources), the client turns them into tags (`max_app::sfx::combat_sound`) and
+//! plays them via `AudioPlayer::play_gain` (`volume / 100`).
 
 use std::sync::{Arc, Mutex};
 
@@ -25,7 +25,7 @@ use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::GameState;
 
-/// Мок плеера: запоминает теги с усилением (`play_scaled`), без устройства.
+/// Player mock: remembers tags with gain (`play_scaled`), without a device.
 #[derive(Debug, Default)]
 struct MockBackend {
     played: Arc<Mutex<Vec<(String, f32)>>>,
@@ -63,7 +63,7 @@ fn clip() -> WavClip {
     }
 }
 
-/// Мини-партия: танк стрелка (RED) и танк-цель (GREEN) рядом.
+/// Mini-match: a shooter tank (RED) and a target tank (GREEN) next to each other.
 fn duel_state(fire_on: Point) -> (GameState, max_core::UnitId, max_core::UnitId) {
     let mut state = GameState::new();
     state.teams[0].team_type = TeamKind::Player;
@@ -97,7 +97,7 @@ fn duel_state(fire_on: Point) -> (GameState, max_core::UnitId, max_core::UnitId)
     (state, attacker, target)
 }
 
-/// Собирает звуки боя партии: события `UnitSound` → `sfx::combat_sound`.
+/// Collects the match combat sounds: `UnitSound` events → `sfx::combat_sound`.
 fn collect(state: &mut GameState) -> Vec<CombatSfx> {
     state
         .take_unit_sounds()
@@ -123,7 +123,7 @@ fn tank_fire_and_explosion_use_the_sc_units_sound_table() {
         }
     }
 
-    // `PrepareFire` → `SFX_TYPE_FIRE` танка = `TANK14` (volume 60 → gain 0.6).
+    // `PrepareFire` → `SFX_TYPE_FIRE` of the tank = `TANK14` (volume 60 → gain 0.6).
     let fire = sounds
         .iter()
         .find(|sound| sound.tag == "TANK14")
@@ -131,8 +131,8 @@ fn tank_fire_and_explosion_use_the_sc_units_sound_table() {
     assert!((fire.gain - 0.6).abs() < 1e-6, "volume 60 → 0.6");
     assert!(!fire.is_default);
 
-    // Попадание/взрыв цели: `TANK15` (hit) при выжившем танке или `TANK16`
-    // (expload, volume 80) при уничтоженном — та же таблица SC_UNITS.
+    // Hit/explosion of the target: `TANK15` (hit) if the tank survived or `TANK16`
+    // (expload, volume 80) if destroyed — the same SC_UNITS table.
     assert!(
         sounds
             .iter()
@@ -160,7 +160,7 @@ fn sounds_reach_the_player_through_the_mock_audio_backend() {
         played: played.clone(),
     }));
 
-    // Клипы «есть» — тег зарегистрирован вручную: в тесте не нужен каталог игры.
+    // The clips "exist" — the tag is registered manually: the test needs no game directory.
     for sound in &sounds {
         player.preload(sound.tag, clip());
     }
@@ -178,7 +178,7 @@ fn sounds_reach_the_player_through_the_mock_audio_backend() {
     let calls = played.lock().expect("lock");
     assert_eq!(calls.len(), sounds.len());
 
-    // Усиление — `volume / 100` из SC_UNITS (fire танка: 60 → 0.6).
+    // Gain — `volume / 100` from SC_UNITS (tank fire: 60 → 0.6).
     let expected = sounds[0].gain;
     assert!((calls[0].1 - expected).abs() < 1e-6);
 }
@@ -211,13 +211,13 @@ fn disabled_sound_does_not_reach_the_backend() {
 
 #[test]
 fn app_collects_combat_sounds_into_the_frame_queue() {
-    // `App::tick` → `collect_combat_sounds`: очередь кадра заполняется тегами
-    // SC_UNITS, `take_unit_sounds` её отдаёт (`main.rs` играет через
+    // `App::tick` → `collect_combat_sounds`: the frame queue is filled with SC_UNITS
+    // tags, `take_unit_sounds` returns it (`main.rs` plays via
     // `AudioPlayer::play_gain`).
     let mut app = App::new(AppConfig::default());
 
-    // Атрибуты танков берутся из `current_values` команды, а стрельба идёт на
-    // активном ходу — как в реальной партии (`ResourceManager_InitTeamUnits`).
+    // Tank attributes are taken from the team `current_values`, and firing happens on
+    // the active turn — like in a real match (`ResourceManager_InitTeamUnits`).
     app.state_mut().teams[0].team_type = TeamKind::Player;
     app.state_mut().teams[1].team_type = TeamKind::Computer;
     app.state_mut().team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
@@ -273,14 +273,14 @@ fn app_collects_combat_sounds_into_the_frame_queue() {
         collected.iter().all(|sound| sound.gain > 0.0),
         "громкость из SC_UNITS всегда > 0"
     );
-    // Очередь отдаётся один раз (кадр не проигрывает звуки дважды).
+    // The queue is returned once (the frame does not play sounds twice).
     assert!(app.unit_sounds().is_empty());
 }
 
 #[test]
 fn unit_sound_kind_covers_fire_hit_explode() {
-    // Таблица покрывает все три боевых `SfxType` для каждого из 93 типов
-    // (`INVALID_ID` в SC_UNITS нет ни у одного: дефолты всегда заданы).
+    // The table covers all three combat `SfxType`s for each of the 93 types
+    // (none has `INVALID_ID` in SC_UNITS: the defaults are always set).
     for index in 0..max_core::enums::UNIT_END {
         let unit_type = UnitType::try_from(index).expect("тип 0..92");
         for kind in [

@@ -1,32 +1,32 @@
-//! Анимация зданий: кадровые часы юнитов (`dt`) и палитровые циклы.
+//! Building animation: the unit frame clock (`dt`) and palette cycles.
 //!
-//! Оракул — C++ + DOS-съёмка
+//! Oracle — C++ + DOS capture
 //! (`max-original-dasm/formats/unit-animation.md` §7):
 //!
-//! * `UnitsManager_ProcessOrderSentry` (`units_manager.cpp:3029-3041`) — у
-//!   юнитов с флагом `ANIMATED` (из зданий это `RADAR`) каждый тик
-//!   `image_index + 1`, после последнего кадра — `image_index = image_base`;
-//! * у шахт/заводов покадровой анимации в C++ **нет**: есть кадры состояния,
-//!   `image_base` (выключено) и `image_base + 1` (включено), которые
-//!   выставляются приказами (`UnitInfo::StartBuilding`/`SpawnNewUnit`/
+//! * `UnitsManager_ProcessOrderSentry` (`units_manager.cpp:3029-3041`) — for
+//!   units with the `ANIMATED` flag (of buildings that is `RADAR`) every tick
+//!   `image_index + 1`, after the last frame — `image_index = image_base`;
+//! * mines/factories have **no** frame-by-frame animation in C++: there are state frames,
+//!   `image_base` (off) and `image_base + 1` (on), which are
+//!   set by orders (`UnitInfo::StartBuilding`/`SpawnNewUnit`/
 //!   `PowerDown`);
-//! * **шахта в idle статична** (§7.2: за ~118 с игрового времени корпус
-//!   всегда кадр 0, включённая — `+1`), а мигают маяки и индикатор дрели —
-//!   палитровые циклы (`World::InitColorCycles`: диапазоны 13–16 и 21–24
+//! * **an idle mine is static** (§7.2: over ~118 s of game time the body
+//!   is always frame 0, a powered-on one — `+1`), while the beacons and the drill indicator blink —
+//!   palette cycles (`World::InitColorCycles`: ranges 13–16 and 21–24
 //!   @6 fps, §7.3);
-//! * у заводов `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/`AIRPLT`/`SHIPYARD` в `MAX.RES`
-//!   ровно **два** кадра корпуса (`image_base`, `image_base + 1`) и 8 кадров
-//!   коннекторов; кадр `+1` (`StartBuilding`) использует слоты палитровых
-//!   циклов 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6), 25–30 (2) — это и
-//!   есть «мигание» включённого завода;
-//! * у конструктора `UnitsManager_ProcessOrderBuild` (`+8`, при
-//!   `image_index + 8 >= 40` — `-16`), инженер держит `+16`.
+//! * factories `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/`AIRPLT`/`SHIPYARD` in `MAX.RES`
+//!   have exactly **two** body frames (`image_base`, `image_base + 1`) and 8 connector
+//!   frames; frame `+1` (`StartBuilding`) uses the slots of palette
+//!   cycles 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6), 25–30 (2) — this is
+//!   the "blinking" of a powered-on factory;
+//! * for the constructor `UnitsManager_ProcessOrderBuild` (`+8`, when
+//!   `image_index + 8 >= 40` — `-16`), the engineer keeps `+16`.
 //!
-//! Порт не листает кадры зданий по времени: `dt` двигает только палитровые
-//! циклы и визуальные часы `ANIMATED`/строителя; `dt = 0` даёт статичный кадр
-//! C++, поэтому golden-кадры не дрейфуют.
+//! The port does not advance building frames by time: `dt` moves only the palette
+//! cycles and the visual clock of `ANIMATED`/the builder; `dt = 0` gives the static
+//! C++ frame, so golden frames do not drift.
 //!
-//! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
+//! Tests are skipped if there is no game data (`max-original/`) nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -74,10 +74,10 @@ fn changed_pixels(left: &RgbaBuffer, right: &RgbaBuffer) -> usize {
         .count()
 }
 
-/// Шахта в idle **не листает корпус** (DOS-съёмка §7.2): включённая стоит на
-/// кадре `image_base + 1`, выключенная — на `image_base`, и `dt` это не меняет.
-/// Меняются только пиксели маяков/индикатора — их вращает палитровый цикл
-/// (§7.3): 4 фазы по 166.7 мс (6 fps), полный цикл 666.7 мс.
+/// An idle mine **does not advance the body** (DOS capture §7.2): a powered-on one stands on
+/// frame `image_base + 1`, a powered-off one — on `image_base`, and `dt` does not change this.
+/// Only beacon/indicator pixels change — they are rotated by the palette cycle
+/// (§7.3): 4 phases of 166.7 ms (6 fps), a full cycle of 666.7 ms.
 #[test]
 fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
     let Some(mut app) = app_with_assets() else {
@@ -95,7 +95,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         unit.state = UnitOrderState::ExecutingOrder;
     }
 
-    // `dt = 0` — статичный кадр C++ (`image_base + 1`), палитра исходная.
+    // `dt = 0` — the static C++ frame (`image_base + 1`), the palette original.
     let statically_powered = app.render_frame();
     assert!(
         !max_app::render::factory_on_frame_active(app.state().unit(mine).expect("mine")),
@@ -105,7 +105,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         app.animated_palette().is_none(),
         "dt = 0 не вращает палитру"
     );
-    // Один шаг 6 fps — маяки (слоты 13..16) получают следующий цвет.
+    // One step of 6 fps — the beacons (slots 13..16) get the next color.
     app.update_visual_units(1.0 / 6.0 + 0.001);
     assert_eq!(app.color_cycles().step_counts()[1], 1);
     assert!(
@@ -118,7 +118,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         "маяки шахты обязаны менять цвет от палитрового цикла"
     );
 
-    // Второй шаг — ещё одна фаза. Корпус при этом не листается.
+    // The second step — another phase. The body is not advanced.
     app.update_visual_units(1.0 / 6.0);
     assert_eq!(app.color_cycles().step_counts()[1], 2);
     let blink_2 = app.render_frame();
@@ -126,7 +126,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         changed_pixels(&blink_1, &blink_2) > 0,
         "вторая фаза маяков"
     );
-    // Четыре шага (666.7 мс) — полный цикл, цвет маяков снова исходный.
+    // Four steps (666.7 ms) — a full cycle, the beacon color is original again.
     app.update_visual_units(2.0 / 6.0);
     assert_eq!(app.color_cycles().step_counts()[1], 4);
     let full_cycle = app.render_frame();
@@ -136,7 +136,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         "4 шага по 6 fps возвращают цвета маяков"
     );
 
-    // Корпус шахты не листается ни на одном dt: кадровые часы здания пусты.
+    // The mine body is not advanced at any dt: the building frame clock is empty.
     for _ in 0..10 {
         app.update_visual_units(1.0 / 30.0 + 0.0005);
         assert_eq!(
@@ -146,7 +146,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         );
     }
 
-    // `dt = 0` снова — в точности исходный статичный кадр.
+    // `dt = 0` again — exactly the original static frame.
     app.update_visual_units(0.0);
     assert!(app.animated_palette().is_none());
     assert_eq!(
@@ -155,7 +155,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
         "dt = 0 — детерминированный статичный кадр C++"
     );
 
-    // Выключенная шахта не анимируется даже при большом dt (кадр 0).
+    // A powered-off mine is not animated even at a large dt (frame 0).
     {
         let unit = app.state_mut().unit_mut(mine).expect("mine");
         unit.orders = UnitOrder::PowerOff;
@@ -185,12 +185,12 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
     }
 }
 
-/// Завод с непустой очередью (`ORDER_BUILD`) **не листает кадры корпуса**:
-/// C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) рисует `image_base + 1`
-/// и держит его до `SpawnNewUnit`/`CancelBuilding`. Мигание включённого
-/// завода — палитровые циклы `World::InitColorCycles` (`world.cpp:542`):
-/// кадр `+1` использует слоты 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6),
-/// 25–30 (2) — это ровно те диапазоны, которые вращает `ColorCycles`.
+/// A factory with a non-empty queue (`ORDER_BUILD`) **does not advance body frames**:
+/// C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) draws `image_base + 1`
+/// and holds it until `SpawnNewUnit`/`CancelBuilding`. The blinking of a powered-on
+/// factory — palette cycles `World::InitColorCycles` (`world.cpp:542`):
+/// frame `+1` uses slots 9–12 (9 fps), 13–16 (6), 17–20 (9), 21–24 (6),
+/// 25–30 (2) — exactly those ranges that `ColorCycles` rotates.
 #[test]
 fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
     let Some(mut app) = app_with_assets() else {
@@ -212,12 +212,12 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
         app.state().unit(factory).expect("factory")
     ));
 
-    // `dt = 0` — кадр C++ `image_base + 1` (работающий завод), палитра исходная.
+    // `dt = 0` — the C++ frame `image_base + 1` (working factory), the palette original.
     let working_static = app.render_frame();
 
-    // Один тик оригинала (1/30 с) в C++ **не** меняет кадр корпуса: минимум
-    // палитрового периода — 100 мс (10 fps), поэтому и пиксели те же. До
-    // правки порт листал кадры завода за 1/30 с — это и было «слишком быстро».
+    // One original tick (1/30 s) in C++ does **not** change the body frame: the minimum
+    // palette period is 100 ms (10 fps), so the pixels are the same. Before
+    // the fix the port advanced factory frames per 1/30 s — that was "too fast".
     app.update_visual_units(1.0 / 30.0 + 0.0005);
     assert_eq!(
         changed_pixels(&working_static, &app.render_frame()),
@@ -225,7 +225,7 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
         "за 1/30 с корпус и палитра завода не меняются"
     );
 
-    // Через 1/6 с палитровые циклы 6 fps делают шаг — завод мигает.
+    // After 1/6 s the 6 fps palette cycles take a step — the factory blinks.
     app.update_visual_units(1.0 / 6.0 + 0.0005);
     assert!(
         app.color_cycles().step_counts()[1] >= 1,
@@ -237,8 +237,8 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
         "включённый завод мигает палитровыми циклами"
     );
 
-    // Корпус при этом остаётся кадром `image_base + 1`: кадровых часов завода
-    // нет вообще, поэтому любые dt дают `FrameAnimation::default()`.
+    // The body remains frame `image_base + 1`: there is no factory frame clock
+    // at all, so any dt gives `FrameAnimation::default()`.
     for _ in 0..30 {
         app.update_visual_units(1.0 / 30.0);
         assert_eq!(
@@ -247,10 +247,10 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
         );
     }
 
-    // Периоды палитровых циклов за 1 с — ровно `TIMER_FPS_TO_MS` C++
-    // (`World::InitColorCycles`): 9/6/9/6/2/6/8/8/10/6/6 шагов. Часы кадра
-    // двигаются шагами по 0.1 с (реальный кадр ~16 мс), поэтому считаем 10
-    // шагов; допуск ±1 — округление накопленного dt.
+    // Palette cycle periods per 1 s — exactly C++ `TIMER_FPS_TO_MS`
+    // (`World::InitColorCycles`): 9/6/9/6/2/6/8/8/10/6/6 steps. The frame clock
+    // moves in 0.1 s steps (a real frame ~16 ms), so we count 10
+    // steps; tolerance ±1 — rounding of the accumulated dt.
     app.update_visual_units(0.0);
     for _ in 0..10 {
         app.update_visual_units(0.1);
@@ -269,8 +269,8 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
         );
     }
 
-    // Очередь опустела + `UNIT_READY` — C++ `SpawnNewUnit` рисует `image_base`
-    // (кадр 0), завод статичен.
+    // The queue is empty + `UNIT_READY` — C++ `SpawnNewUnit` draws `image_base`
+    // (frame 0), the factory is static.
     {
         let unit = app.state_mut().unit_mut(factory).expect("factory");
         unit.build_list.clear();
@@ -289,8 +289,8 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
     );
 }
 
-/// `RADAR` — единственное здание с флагом `ANIMATED`; C++ листает его кадры в
-/// `ProcessOrderSentry` (16 кадров из `D_RADAR`, не 20 кадров спрайта).
+/// `RADAR` — the only building with the `ANIMATED` flag; C++ advances its frames in
+/// `ProcessOrderSentry` (16 frames from `D_RADAR`, not 20 sprite frames).
 #[test]
 fn radar_sentry_animation_advances_with_real_dt() {
     let Some(mut app) = app_with_assets() else {
@@ -311,7 +311,7 @@ fn radar_sentry_animation_advances_with_real_dt() {
     let static_frame = app.render_frame();
     assert_eq!(app.unit_animation(radar).sentry_step, 0);
 
-    // Один тик C++ (~1/30 с) = следующий кадр блока.
+    // One C++ tick (~1/30 s) = the next block frame.
     app.update_visual_units(1.0 / 30.0 + 0.001);
     assert_eq!(app.unit_animation(radar).sentry_step, 1);
     let next = app.render_frame();
@@ -320,7 +320,7 @@ fn radar_sentry_animation_advances_with_real_dt() {
         "ANIMATED-здание обязано менять кадр"
     );
 
-    // Полный оборот 16 кадров — снова кадр `image_base`.
+    // A full revolution of 16 frames — `image_base` again.
     for _ in 0..15 {
         app.update_visual_units(1.0 / 30.0 + 0.0001);
     }
@@ -334,8 +334,8 @@ fn radar_sentry_animation_advances_with_real_dt() {
     );
 }
 
-/// Визуальные кадровые часы не попадают в снапшот/CRC: dt двигает только
-/// кадры (и палитровые циклы), а состояние партии остаётся байт-в-байт тем же.
+/// The visual frame clock is not part of the snapshot/CRC: dt moves only
+/// frames (and palette cycles), while the match state remains byte-for-byte the same.
 #[test]
 fn animation_clock_does_not_change_the_snapshot() {
     let Some(mut app) = app_with_assets() else {
@@ -359,8 +359,8 @@ fn animation_clock_does_not_change_the_snapshot() {
     let after = app.state().snapshot_bytes();
 
     assert_eq!(before, after, "визуальная анимация не меняет состояние");
-    // 12 × 0.1 с = 1.2 с → палитровые циклы шагнули (маяки мигают), тело
-    // шахты при этом статично, а состояние — байт-в-байт то же.
+    // 12 × 0.1 s = 1.2 s → the palette cycles stepped (the beacons blink), the mine
+    // body is static, and the state is byte-for-byte the same.
     assert_eq!(
         app.unit_animation(mine),
         max_app::render::FrameAnimation::default(),
@@ -373,11 +373,11 @@ fn animation_clock_does_not_change_the_snapshot() {
     assert!(app.animated_palette().is_some(), "палитра кадра повёрнута");
 }
 
-/// Коннекторы зданий — `UnitInfo::RenderWithConnectors`: кадры
-/// `connector_image_base + n` по маске `connectors`. У шахты (`D_MINING`:
-/// база 16, 8 кадров) в плотной базе DOS-съёмка видела все восемь
-/// одновременно (§7.1 — «8 частиц»), у `POWGEN` (`D_SMLBLD`: база 2, 4 кадра) —
-/// четыре «дымовых клуба», на самом деле трубы N/E/S/W.
+/// Building connectors — `UnitInfo::RenderWithConnectors`: frames
+/// `connector_image_base + n` by the `connectors` mask. For a mine (`D_MINING`:
+/// base 16, 8 frames) in a dense base the DOS capture saw all eight
+/// at once (§7.1 — "8 particles"), for `POWGEN` (`D_SMLBLD`: base 2, 4 frames) —
+/// four "smoke puffs", actually N/E/S/W pipes.
 #[test]
 fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     use max_app::render::{connector_frame_indices, connector_mask_for};
@@ -402,8 +402,8 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
         unit.state = UnitOrderState::ExecutingOrder;
     }
 
-    // Шахта 2×2 в (40,40) и POWGEN 1×1 в (42,40): у шахты восточный коннектор
-    // (`EAST_TOP`), у POWGEN — западный (`WEST_TOP`, он же у 1×1-здания).
+    // Mine 2×2 at (40,40) and POWGEN 1×1 at (42,40): the mine has the east connector
+    // (`EAST_TOP`), POWGEN — the west one (`WEST_TOP`, also for a 1×1 building).
     let mine_mask = connector_mask_for(app.state(), app.state().unit(mine).unwrap());
     assert_eq!(
         mine_mask,
@@ -417,7 +417,7 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
         "POWGEN: сосед слева"
     );
 
-    // Одиночная шахта коннекторов не имеет.
+    // A lone mine has no connectors.
     let isolated = max_app::render::connector_mask_for(app.state(), &{
         let mut unit = app.state().unit(mine).unwrap().clone();
         unit.grid = Point::new(80, 80);
@@ -425,7 +425,7 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     });
     assert_eq!(isolated, 0, "одиночное здание без соседей");
 
-    // В окружении POWGEN рисует все 4 трубы (N/E/S/W = 2/3/4/5).
+    // Surrounded, POWGEN draws all 4 pipes (N/E/S/W = 2/3/4/5).
     for (x, y) in [(42, 39), (43, 40), (42, 41)] {
         let id = app
             .state_mut()
@@ -444,8 +444,8 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
         "POWGEN: все четыре стороны"
     );
 
-    // Кадры — из настоящего спрайта (`D_*`): последний шаг, после всех
-    // заимствований состояния.
+    // The frames are from a real sprite (`D_*`): the last step, after all
+    // state borrowings.
     let assets = app.assets().expect("ассеты");
     let mine_frames = connector_frame_indices(
         assets.sprite(UnitType::MiningStation).unwrap(),

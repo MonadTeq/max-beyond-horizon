@@ -1,97 +1,97 @@
-//! Предвысадочный экран мобилизации — полный порт `CargoMenu`.
+//! Pre-landing mobilization screen — a full port of `CargoMenu`.
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `cargomenu.cpp` — `CargoMenu` (фон `CARGOPIC`): списки «Available» и
-//!   «Purchased», загрузка cargo слайдером, покупка/продажа, полоса золота,
-//!   переключатель `CRGTOG` (покупка ↔ модернизация), фильтры
-//!   `SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`, кнопки `CRGBUY`, `CRGDEL`,
-//!   `BLDONE`, `BLDCAN`, `BLDHLP`, `BLDDES`, стрелки списков;
-//! * `abstractupgrademenu.cpp` — колонка апгрейдов (`UpgradeControl`),
-//!   `IsUnitFiltered`/`IsBetterUnit`, `DrawUnitStats` (полоса золота
+//! * `cargomenu.cpp` — `CargoMenu` (`CARGOPIC` background): the "Available" and
+//!   "Purchased" lists, cargo loading with a slider, buy/sell, the gold bar,
+//!   the `CRGTOG` toggle (buy ↔ upgrade), the filters
+//!   `SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`, the buttons `CRGBUY`, `CRGDEL`,
+//!   `BLDONE`, `BLDCAN`, `BLDHLP`, `BLDDES`, the list arrows;
+//! * `abstractupgrademenu.cpp` — the upgrades column (`UpgradeControl`),
+//!   `IsUnitFiltered`/`IsBetterUnit`, `DrawUnitStats` (the `VERTGOLD` gold bar),
 //!   `VERTGOLD`), `CommitUpgradeChanges`;
-//! * `purchaseTypeSelector.cpp` — цены в списке типов
+//! * `purchaseTypeSelector.cpp` — prices in the type list
 //!   (`Cargo_GetRawConsumptionRate(CONSTRCT|TRAINHAL|LANDPLT, 1) * turns`);
-//! * `cargoselector.cpp` — строки «Purchased» (иконка `I_*`, «Имя N (Full)»);
-//! * `unittypeselector.cpp`/`scrollbar.cpp` — строки по 32 px, `max_item_count`,
-//!   `LoadVerticalBar` (полосы `VERTRAW`/`VERTFUEL`/`VERTGOLD`);
-//! * `reportstats.cpp` — `ReportStats_DrawListItemIcon` (иконка 32×32, масштаб
-//!   1/2 у мобильных и 1/4 у стационарных), `DrawNumber`/`DrawText` (число
-//!   выравнивается по правому краю колонки).
+//! * `cargoselector.cpp` — "Purchased" rows (`I_*` icon, "Name N (Full)");
+//! * `unittypeselector.cpp`/`scrollbar.cpp` — 32 px rows, `max_item_count`,
+//!   `LoadVerticalBar` (the `VERTRAW`/`VERTFUEL`/`VERTGOLD` bars);
+//! * `reportstats.cpp` — `ReportStats_DrawListItemIcon` (32×32 icon, scale
+//!   1/2 for mobile and 1/4 for stationary), `DrawNumber`/`DrawText` (the number
+//!   is right-aligned in the column).
 //!
-//! # Раскладка (координаты `cargomenu.cpp`)
+//! # Layout (`cargomenu.cpp` coordinates)
 //!
-//! | Область | Координаты | Источник |
+//! | Area | Coordinates | Source |
 //! |---|---|---|
-//! | Портрет | (11,13) 280×240 | `unit_portrait_window` |
-//! | Описание | (11+16,13+17) 280×230 | `Text_TextBox` поверх портрета |
-//! | Иконка лота / список `Purchased` | (337,45) 118×185, строки 32 px (5) | `wininfo2` |
-//! | Список `Available` | (482,80) 123×290, строки 32 px (9) | `wininfo1` |
-//! | Колонка цен списка | x 610..625, по правому краю 625 | `PurchaseTypeSelector` |
-//! | Статистика | (11,293) 250×174 | `stats_background` |
-//! | Колонка апгрейдов | (283,293) 38×174, ряд 19 px | `button_background` |
-//! | Колонка цен апгрейдов | (321,293) 40×174, число + `I_GOLD` | `cost_background` |
-//! | Полоса золота | (361,276) 40×140, заливка `VERTGOLD` снизу | `gold_background` |
-//! | Cargo-слайдер | (421,301) 20×115, значение 5·N | `LimitedScrollbar` |
-//! | Счётчик cargo | (421,276) 20×10 | `xfer_amount_background` |
-//! | Заголовок | (473,7) 158×18 | `_(eb71)` «Purchase Menu» |
+//! | Portrait | (11,13) 280×240 | `unit_portrait_window` |
+//! | Description | (11+16,13+17) 280×230 | `Text_TextBox` over the portrait |
+//! | Lot icon / `Purchased` list | (337,45) 118×185, rows 32 px (5) | `wininfo2` |
+//! | `Available` list | (482,80) 123×290, rows 32 px (9) | `wininfo1` |
+//! | List price column | x 610..625, right edge 625 | `PurchaseTypeSelector` |
+//! | Statistics | (11,293) 250×174 | `stats_background` |
+//! | Upgrades column | (283,293) 38×174, row 19 px | `button_background` |
+//! | Upgrade price column | (321,293) 40×174, number + `I_GOLD` | `cost_background` |
+//! | Gold bar | (361,276) 40×140, `VERTGOLD` fill from the bottom | `gold_background` |
+//! | Cargo slider | (421,301) 20×115, value 5·N | `LimitedScrollbar` |
+//! | Cargo counter | (421,276) 20×10 | `xfer_amount_background` |
+//! | Title | (473,7) 158×18 | `_(eb71)` «Purchase Menu» |
 //! | `Buy` / `Delete` / `Cancel` / `Done` / `Help` / `Description` / `CRGTOG` | (590,386) 41×22; (412,240) 53×23; (357,452) 62×23; (447,452) 54×23; (420,452) 26×23; (292,264) 17×17; (542,446) 81×32 |
 //!
-//! # Поведение
+//! # Behavior
 //!
-//! * `CargoMenu::unit_types1` — 15 покупаемых типов (список покупки); режим
-//!   модернизации показывает **полный** отфильтрованный список
-//!   (`IsUnitFiltered`: `UPGRADABLE`, строится командой, домен включён,
-//!   опционально «только боевые»), отсортированный `IsBetterUnit`.
-//! * Цена покупки — `3 * ATTRIB_TURNS` **текущих** значений
-//!   (`unitvalues_actual`, после апгрейдов), возврат при продаже — та же цена
-//!   плюс `cargo / 5`.
-//! * Cargo: 1 кредит за 5 единиц, ёмкость `ATTRIB_STORAGE / 5` (у `GOLDTRCK`
-//!   ёмкость 0 — как `Select` в C++); бесплатный cargo миссии (`SC_L0001`)
-//!   нельзя уменьшить ниже стартового (`xfer_take_max`).
-//! * Апгрейды (`UpgradeControl`): `ATTRIB_ATTACK`, `ROUNDS`, `RANGE`, `AMMO`
-//!   (только если базовая атака), `ARMOR`, `HITS`, `SCAN`, `SPEED`; цена —
-//!   [`max_core::research::UpgradeQuote`] (целочисленный
-//!   `UpgradeControl_CalculateCost`, сверен с C++-векторами), шаг — 1/2/5/10,
-//!   лимит показа — `UPGRADECONTROL_UPGRADE_COST_LIMIT` (800). `ATTRIB_TURNS`
-//!   в C++-порте контролом не добавляется (`UPGRADE_CONTROL_9` не
-//!   используется) — `CargoMenu::UpdateTeamGold` там мёртвый код.
-//! * `Done` фиксирует кредиты/загрузку/изменённые `UnitValues`
-//!   (`CommitUpgradeChanges`): они уходят в `LocalSetup` и применяются к
-//!   `TeamUnits.current_values` до высадки.
+//! * `CargoMenu::unit_types1` — 15 purchasable types (the buy list); the upgrade
+//!   mode shows the **full** filtered list
+//!   (`IsUnitFiltered`: `UPGRADABLE`, built by the team, domain on,
+//!   optionally "combat only"), sorted by `IsBetterUnit`.
+//! * Buy price — `3 * ATTRIB_TURNS` of the **current** values
+//!   (`unitvalues_actual`, after upgrades), the sale refund — the same price
+//!   plus `cargo / 5`.
+//! * Cargo: 1 credit per 5 units, capacity `ATTRIB_STORAGE / 5` (for `GOLDTRCK`
+//!   capacity 0 — like `Select` in C++); the free mission cargo (`SC_L0001`)
+//!   cannot be reduced below the starting one (`xfer_take_max`).
+//! * Upgrades (`UpgradeControl`): `ATTRIB_ATTACK`, `ROUNDS`, `RANGE`, `AMMO`
+//!   (only if there is a base attack), `ARMOR`, `HITS`, `SCAN`, `SPEED`; the price —
+//!   [`max_core::research::UpgradeQuote`] (the integer
+//!   `UpgradeControl_CalculateCost`, checked against the C++ vectors), the step — 1/2/5/10,
+//!   the display limit — `UPGRADECONTROL_UPGRADE_COST_LIMIT` (800). `ATTRIB_TURNS`
+//!   is not added by a control in the C++ port (`UPGRADE_CONTROL_9` is not
+//!   used) — `CargoMenu::UpdateTeamGold` is dead code there.
+//! * `Done` commits the credits/loadout/changed `UnitValues`
+//!   (`CommitUpgradeChanges`): they go into `LocalSetup` and are applied to
+//!   `TeamUnits.current_values` before landing.
 //!
-//! # Осознанные отличия
+//! # Deliberate differences
 //!
-//! * Иконки списков — ресурсы `I_*` (спрайт-формат): корпус (кадр 0) и
-//!   отдельный кадр башни/пушки (кадр 1) для `TURRET_SPRITE`/
-//!   `SPINNING_TURRET`, как `ReportStats_DrawListItemIcon`. Сдвиг башни —
-//!   `angle_offsets[2]` из `D_*` (`Unit::GetFrameInfo()`), делённый на
-//!   `divisor` (1 у мобильных, 2 у стационарных).
-//! * Портрет — big image `P_*` 300×240 1:1, как `WindowManager_LoadBigImage`
-//!   (`palette_from_image=false`, `ulx/uly` из ресурса = 0): индексы читаются
-//!   палитрой окна `CARGOPIC`. C++-порт пишет 300 px в буфер диалога **без
-//!   клипа**, поэтому его 20 правых пикселей залезают на фон; здесь портрет
-//!   обрезается окном `unit_portrait_window` (280×240) — как окно оригинала.
-//! * Описание — `Unit::GetDescription()`: тексты `language.json` (en-US) по
-//!   hex-ключу из `SC_UNITS`, 93 записи в `data/cargo_unit_data.json`
-//!   ([`crate::cargo_unit_data`]). Рисуется поверх портрета
-//!   (`Text_TextBox(16,17,280,230, GNW_TEXT_OUTLINE|0xA2)`, шрифт 5, перенос
-//!   `Text_SplitText`). У 24 служебных типов (обломки, взрывы, снаряды,
-//!   `HARVSTER`, `WALDO`) описания в оригинале нет, но они и не достижимы в
-//!   `CargoMenu` (нет `UPGRADABLE`/не строятся).
-//! * `UnitStats_DrawStats` — 1:1: сетка иконок `I_*` (`I_HRDATK`, `I_SHOTS`,
+//! * The list icons — `I_*` resources (sprite format): body (frame 0) and
+//!   a separate turret/gun frame (frame 1) for `TURRET_SPRITE`/
+//!   `SPINNING_TURRET`, like `ReportStats_DrawListItemIcon`. The turret shift —
+//!   `angle_offsets[2]` from `D_*` (`Unit::GetFrameInfo()`), divided by
+//!   `divisor` (1 for mobile, 2 for stationary).
+//! * Portrait — big image `P_*` 300×240 1:1, like `WindowManager_LoadBigImage`
+//!   (`palette_from_image=false`, `ulx/uly` from the resource = 0): the indices are read
+//!   with the `CARGOPIC` window palette. The C++ port writes 300 px into the dialog buffer **without
+//!   clipping**, so its 20 right pixels spill onto the background; here the portrait
+//!   is clipped by the `unit_portrait_window` window (280×240) — like the original window.
+//! * Description — `Unit::GetDescription()`: the `language.json` (en-US) texts by
+//!   the hex key from `SC_UNITS`, 93 records in `data/cargo_unit_data.json`
+//!   ([`crate::cargo_unit_data`]). Drawn over the portrait
+//!   (`Text_TextBox(16,17,280,230, GNW_TEXT_OUTLINE|0xA2)`, font 5, wrapping
+//!   `Text_SplitText`). 24 service types (debris, explosions, projectiles,
+//!   `HARVSTER`, `WALDO`) have no description in the original, but they are also unreachable in
+//!   `CargoMenu` (no `UPGRADABLE`/not buildable).
+//! * `UnitStats_DrawStats` — 1:1: the `I_*` icon grid (`I_HRDATK`, `I_SHOTS`,
 //!   `I_RANGE`, `I_AMMO`, `I_RAW`/`I_FUEL`/`I_GOLD`, `I_POWER`, `I_LIFE`,
-//!   `I_ARMOR`, `I_HITS`, `I_SCAN`, `I_SPEED`, `I_GOLD`/`I_GOLDE`), шаг pips
-//!   `UnitStats_DrawIcons`, красные линии строк, числа/подписи
-//!   `ReportStats_DrawNumber`/`Text_Blit` (x=24/28, клип 49 px).
-//! * Числа `Cost`/`Credit`/`Cargo` под списками: в C++-порте нарисованы только
-//!   подписи (числа потеряны при портировании), здесь значения выводятся над
-//!   подписями (как в оригинальной игре).
-//! * `Help` (`BLDHLP`) открывает окно `CARGO_SETUP` (`HelpMenu_Menu`,
-//!   `HELPFRAM`, P8) поверх `CARGOPIC`; `?` делает то же.
-//! * Звуки (`KCARG0`/`NDONE0`/…) не проигрываются (аудио-слой отдельный).
-//! * ИИ по-прежнему получает стандартную загрузку `SC_L0001`
-//!   (`RollTeamMissionSupplies` не портирован) — это не менялось.
+//!   `I_ARMOR`, `I_HITS`, `I_SCAN`, `I_SPEED`, `I_GOLD`/`I_GOLDE`), the pips step
+//!   `UnitStats_DrawIcons`, the red row lines, the numbers/labels
+//!   `ReportStats_DrawNumber`/`Text_Blit` (x=24/28, clip 49 px).
+//! * The `Cost`/`Credit`/`Cargo` numbers under the lists: in the C++ port only the
+//!   labels are drawn (the numbers were lost during porting), here the values are output over
+//!   the labels (as in the original game).
+//! * `Help` (`BLDHLP`) opens the `CARGO_SETUP` window (`HelpMenu_Menu`,
+//!   `HELPFRAM`, P8) over `CARGOPIC`; `?` does the same.
+//! * Sounds (`KCARG0`/`NDONE0`/…) are not played (the audio layer is separate).
+//! * The AI still gets the standard `SC_L0001` loadout
+//!   (`RollTeamMissionSupplies` is not ported) — this has not changed.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -100,8 +100,8 @@ use max_assets::image::{BigImage, SimpleImage};
 use max_assets::res::ResArchive;
 use max_assets::sprite::{decode_sprite, SpriteFrame};
 use max_core::access::unit_type_flags;
-// Явный импорт extension-типажа классификации (`UnitTypeClassify` — sealed в
-// max_core); глоб-реэкспортов нет (Ф5.2).
+// Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
+// max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::deploy::{TeamSupply, DEFAULT_MISSION_LOADOUT};
 use max_core::enums::{unit_flags, TeamClan, UnitType, UNIT_END};
@@ -134,63 +134,63 @@ use crate::ui::Key;
 use crate::upgrademenu::{is_better_unit, is_buildable, UpgradeFilter};
 
 // ---------------------------------------------------------------------------
-// Раскладка CargoMenu (cargomenu.cpp)
+// CargoMenu layout (cargomenu.cpp)
 // ---------------------------------------------------------------------------
 
-/// Ширина кадра оригинала.
+/// Original frame width.
 pub const SCREEN_WIDTH: i32 = 640;
-/// Высота кадра оригинала.
+/// Original frame height.
 pub const SCREEN_HEIGHT: i32 = 480;
 
-/// Портрет (`unit_portrait_window`, 11,13 + 280×240).
+/// Portrait (`unit_portrait_window`, 11,13 + 280×240).
 pub const PORTRAIT: PixelRect = PixelRect::new(11, 13, 280, 240);
-/// Список «Available» (`wininfo1` 482,80 — 605,370).
+/// "Available" list (`wininfo1` 482,80 — 605,370).
 pub const AVAILABLE_AREA: PixelRect = PixelRect::new(482, 80, 123, 290);
-/// Высота строки списков (`unittypeselector.cpp:64`, `* 32`).
+/// List row height (`unittypeselector.cpp:64`, `* 32`).
 pub const LIST_ROW: i32 = 32;
-/// Строк в «Available»: `(370 - 80) / 32`.
+/// Rows in "Available": `(370 - 80) / 32`.
 pub const AVAILABLE_ROWS: usize = 9;
-/// Колонка цен списка «Available» (`PurchaseTypeSelector`, x = 482 + 128, 15 px,
-/// число выровнено по правому краю 625).
+/// Price column of the "Available" list (`PurchaseTypeSelector`, x = 482 + 128, 15 px,
+/// the number right-aligned to 625).
 pub const PRICE_COLUMN: PixelRect = PixelRect::new(610, 80, 15, 288);
-/// Список «Purchased» (`wininfo2` 337,45 — 455,230).
+/// "Purchased" list (`wininfo2` 337,45 — 455,230).
 pub const PURCHASED_AREA: PixelRect = PixelRect::new(337, 45, 118, 185);
-/// Строк в «Purchased»: `(230 - 45) / 32`.
+/// Rows in "Purchased": `(230 - 45) / 32`.
 pub const PURCHASED_ROWS: usize = 5;
-/// Заголовок «Purchased» (`Text_TextBox(337,22,118,10)`).
+/// "Purchased" title (`Text_TextBox(337,22,118,10)`).
 pub const PURCHASED_HEADER: PixelRect = PixelRect::new(337, 22, 118, 10);
-/// Разделитель под «Purchased» (`draw_line(337,34 — 455,34)`).
+/// Separator under "Purchased" (`draw_line(337,34 — 455,34)`).
 pub const PURCHASED_LINE_Y: i32 = 34;
-/// Заголовок «Available» (`Text_TextBox(482,57,143,10)`).
+/// "Available" title (`Text_TextBox(482,57,143,10)`).
 pub const AVAILABLE_HEADER: PixelRect = PixelRect::new(482, 57, 143, 10);
-/// Разделитель под «Available» (`draw_line(482,69 — 625,69)`).
+/// Separator under "Available" (`draw_line(482,69 — 625,69)`).
 pub const AVAILABLE_LINE_Y: i32 = 69;
-/// Заголовок «Cost» над колонкой цен (`Text_TextBox(625 - w, 57, w, 10)`).
+/// "Cost" title above the price column (`Text_TextBox(625 - w, 57, w, 10)`).
 pub const COST_HEADER: PixelRect = PixelRect::new(610, 57, 15, 10);
-/// Заголовок окна (`Text_TextBox(473,7,158,18, COLOR_GREEN)`).
+/// Window title (`Text_TextBox(473,7,158,18, COLOR_GREEN)`).
 pub const TITLE: PixelRect = PixelRect::new(473, 7, 158, 18);
 
-/// Блок статистики (`stats_background` 11,293,250,174).
+/// Statistics block (`stats_background` 11,293,250,174).
 pub const STATS: PixelRect = PixelRect::new(11, 293, 250, 174);
-/// Строка статистики: `UnitStats_DrawText` — 19 px, число/подпись по центру.
+/// Statistics row: `UnitStats_DrawText` — 19 px, the number/label centered.
 pub const STAT_ROW: i32 = 19;
-/// Где начинаются pips (`UnitStats_DrawStats`: `&buffer[76]`).
+/// Where the pips start (`UnitStats_DrawStats`: `&buffer[76]`).
 pub const STAT_ICON_X: i32 = 76;
-/// Сколько пикселей отводится под подпись (`Text_Blit(..., 49, ...)`).
+/// How many pixels are allotted to the label (`Text_Blit(..., 49, ...)`).
 pub const STAT_LABEL_WIDTH: i32 = 49;
-/// Область описания: `Text_TextBox(unit_portrait_window.buffer, ..., 16, 17,
-/// 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)` — от (11,13).
+/// Description area: `Text_TextBox(unit_portrait_window.buffer, ..., 16, 17,
+/// 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)` — from (11,13).
 pub const DESCRIPTION: PixelRect = PixelRect::new(PORTRAIT.ulx + 16, PORTRAIT.uly + 17, 280, 230);
-/// `ReportStats_DrawNumber`/`Text_Blit` в строке статистики: `COLOR_YELLOW`.
+/// `ReportStats_DrawNumber`/`Text_Blit` in a statistics row: `COLOR_YELLOW`.
 pub const STAT_COLOR_NUMBER: u8 = 0x04;
-/// `UnitStats_DrawText(..., 0xA2)` — цвет подписи и числа описания.
+/// `UnitStats_DrawText(..., 0xA2)` — the label and description number color.
 pub const STAT_COLOR_LABEL: u8 = 0xA2;
-/// `COLOR_RED` — линии-разделители строк и дельта апгрейда.
+/// `COLOR_RED` — row separator lines and the upgrade delta.
 pub const STAT_COLOR_LINE: u8 = 0x01;
-/// `COLOR_BLACK` — обводка описания (`GNW_TEXT_OUTLINE` → `Color_RGB2Color(0)`).
+/// `COLOR_BLACK` — description outline (`GNW_TEXT_OUTLINE` → `Color_RGB2Color(0)`).
 pub const STAT_COLOR_OUTLINE: u8 = 0x00;
 
-/// Подписи строк статистики — `language.json` en-US, как `_(...)` в
+/// Statistics row labels — `language.json` en-US, like `_(...)` in
 /// `unitstats.cpp` (`Attack` `_(98a8)`, `Shots` `_(5e40)`, `Range` `_(2540)`,
 /// `Ammo` `_(d510)`, `Cargo` `_(054b)`, `Prod.` `_(527f)`/`_(3641)`,
 /// `Uses` `_(9e61)`, `Armor` `_(49d1)`, `Hits` `_(6e4e)`, `Scan` `_(d10e)`,
@@ -204,9 +204,9 @@ pub const STAT_RANGE: &str = "Range";
 pub const STAT_AMMO: &str = "Ammo";
 /// `_(054b)`.
 pub const STAT_CARGO: &str = "Cargo";
-/// `_(527f)` (выработка) и `_(3641)` (жизнеобеспечение).
+/// `_(527f)` (production) and `_(3641)` (life support).
 pub const STAT_PROD: &str = "Prod.";
-/// `_(9e61)` — расход ресурсов.
+/// `_(9e61)` — resource consumption.
 pub const STAT_USES: &str = "Uses";
 /// `_(49d1)`.
 pub const STAT_ARMOR: &str = "Armor";
@@ -218,55 +218,55 @@ pub const STAT_SCAN: &str = "Scan";
 pub const STAT_SPEED: &str = "Speed";
 /// `_(7dfb)`.
 pub const STAT_COST: &str = "Cost";
-/// Колонка цен апгрейдов (`cost_background` 321,293,40,174).
+/// Upgrade price column (`cost_background` 321,293,40,174).
 pub const COST: PixelRect = PixelRect::new(321, 293, 40, 174);
-/// Колонка стрелок апгрейдов (`button_background` 283,293,38,174).
+/// Upgrade arrows column (`button_background` 283,293,38,174).
 pub const CONTROL_BUTTONS: PixelRect = PixelRect::new(283, 293, 38, 174);
-/// Шаг строки апгрейда (`upgrade_control_next_uly += 19`).
+/// Upgrade row step (`upgrade_control_next_uly += 19`).
 pub const CONTROL_ROW: i32 = 19;
-/// Полоса золота (`gold_background` 361,276,40,140).
+/// Gold bar (`gold_background` 361,276,40,140).
 pub const GOLD_BAR: PixelRect = PixelRect::new(361, 276, 40, 140);
-/// Cargo-слайдер (`Scrollbar` 421,301 — 441,416).
+/// Cargo slider (`Scrollbar` 421,301 — 441,416).
 pub const CARGO_BAR: PixelRect = PixelRect::new(421, 301, 20, 115);
-/// Счётчик cargo над слайдером (`xfer_amount_bounds` 421,276 — 441,286).
+/// Cargo counter above the slider (`xfer_amount_bounds` 421,276 — 441,286).
 pub const CARGO_AMOUNT: PixelRect = PixelRect::new(421, 276, 20, 10);
 
-/// Подпись «Description» (`Text_TextBox(209,264,80,17)`).
+/// "Description" label (`Text_TextBox(209,264,80,17)`).
 pub const DESCRIPTION_LABEL: PixelRect = PixelRect::new(209, 264, 80, 17);
-/// Подпись «Cost» (`Text_TextBox(320,283,48,16)`).
+/// "Cost" label (`Text_TextBox(320,283,48,16)`).
 pub const COST_LABEL: PixelRect = PixelRect::new(320, 283, 48, 16);
-/// Подпись «Credit» (`Text_TextBox(358,283,48,16)`).
+/// "Credit" label (`Text_TextBox(358,283,48,16)`).
 pub const CREDIT_LABEL: PixelRect = PixelRect::new(358, 283, 48, 16);
-/// Подпись «Cargo» (`Text_TextBox(409,283,48,16)`).
+/// "Cargo" label (`Text_TextBox(409,283,48,16)`).
 pub const CARGO_LABEL: PixelRect = PixelRect::new(409, 283, 48, 16);
 
-/// Кнопка `Buy` (`CRGBUY_U`, 41×22).
+/// `Buy` button (`CRGBUY_U`, 41×22).
 pub const BUY_BUTTON: PixelRect = PixelRect::new(590, 386, 41, 22);
-/// Кнопка `Delete` (`CRGDEL_U`, 53×23).
+/// `Delete` button (`CRGDEL_U`, 53×23).
 pub const DELETE_BUTTON: PixelRect = PixelRect::new(412, 240, 53, 23);
-/// Кнопка `Cancel` (`BLDCAN_U`, 62×23).
+/// `Cancel` button (`BLDCAN_U`, 62×23).
 pub const CANCEL_BUTTON: PixelRect = PixelRect::new(357, 452, 62, 23);
-/// Кнопка `Done` (`BLDONE_U`, 54×23).
+/// `Done` button (`BLDONE_U`, 54×23).
 pub const DONE_BUTTON: PixelRect = PixelRect::new(447, 452, 54, 23);
-/// Кнопка `Help` (`BLDHLP_U`, 26×23).
+/// `Help` button (`BLDHLP_U`, 26×23).
 pub const HELP_BUTTON: PixelRect = PixelRect::new(420, 452, 26, 23);
-/// Кнопка описания (`BLDDES_U`, 17×17).
+/// Description button (`BLDDES_U`, 17×17).
 pub const DESCRIPTION_BUTTON: PixelRect = PixelRect::new(292, 264, 17, 17);
-/// Переключатель «Buy Units»/«Upgrades» (`CRGTOG_U`, 81×32).
+/// "Buy Units"/"Upgrades" toggle (`CRGTOG_U`, 81×32).
 pub const TOGGLE_BUTTON: PixelRect = PixelRect::new(542, 446, 81, 32);
-/// Скролл списка «Available» вверх (`BLDUP__U`, 18×17).
+/// "Available" list scroll up (`BLDUP__U`, 18×17).
 pub const LIST_UP: PixelRect = PixelRect::new(471, 387, 18, 17);
-/// Скролл списка «Available» вниз (`BLDDWN_U`).
+/// "Available" list scroll down (`BLDDWN_U`).
 pub const LIST_DOWN: PixelRect = PixelRect::new(491, 387, 18, 17);
-/// Скролл списка «Purchased» вверх (`BLDUP__U`).
+/// "Purchased" list scroll up (`BLDUP__U`).
 pub const PURCHASE_UP: PixelRect = PixelRect::new(327, 240, 18, 17);
-/// Скролл списка «Purchased» вниз (`BLDDWN_U`).
+/// "Purchased" list scroll down (`BLDDWN_U`).
 pub const PURCHASE_DOWN: PixelRect = PixelRect::new(348, 240, 18, 17);
-/// Размер иконки строки (`ReportStats_DrawListItemIcon`, 32×32).
+/// Row icon size (`ReportStats_DrawListItemIcon`, 32×32).
 pub const ICON_BOX: i32 = 32;
 
-/// `CargoMenu::unit_types1` (`cargomenu.cpp:176`) — список покупки, порядок
-/// строк списка.
+/// `CargoMenu::unit_types1` (`cargomenu.cpp:176`) — the buy list, the order of
+/// the list rows.
 pub const PURCHASE_UNITS: [UnitType; 15] = [
     UnitType::Constructor,
     UnitType::Engineer,
@@ -287,60 +287,60 @@ pub const PURCHASE_UNITS: [UnitType; 15] = [
 
 /// `Cargo_GetRawConsumptionRate(LANDPLT, 1)` (`cargo.cpp:168`).
 pub const LANDPLT_RAW_CONSUMPTION: u32 = 3;
-/// Верхняя граница показываемой стоимости (`UPGRADECONTROL_UPGRADE_COST_LIMIT`).
+/// Upper bound of the displayed cost (`UPGRADECONTROL_UPGRADE_COST_LIMIT`).
 pub const UPGRADE_COST_LIMIT: i32 = 800;
 
 // ---------------------------------------------------------------------------
-// Состояние экрана
+// Screen state
 // ---------------------------------------------------------------------------
 
-/// Режим списка типов (переключатель `CRGTOG`).
+/// Type list mode (the `CRGTOG` toggle).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CargoMode {
-    /// Список покупки — `CargoMenu::unit_types1`.
+    /// Buy list — `CargoMenu::unit_types1`.
     Buy,
-    /// Полный список модернизации (`AbstractUpgradeMenu::PopulateTeamUnitsList`).
+    /// Full upgrade list (`AbstractUpgradeMenu::PopulateTeamUnitsList`).
     Upgrade,
 }
 
-/// Какой список принимает стрелки/PageUp/PageDown (`active_selector`).
+/// Which list receives the arrows/PageUp/PageDown (`active_selector`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveList {
-    /// «Available» (типы).
+    /// "Available" (types).
     Types,
-    /// «Purchased» (купленные и бесплатная загрузка).
+    /// "Purchased" (bought plus the free loadout).
     Loadout,
 }
 
-/// Действие экрана после клика/клавиши.
+/// Screen action after a click/key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CargoAction {
-    /// Экран остаётся открытым.
+    /// The screen stays open.
     None,
-    /// `Cancel`/`Esc` — отмена старта.
+    /// `Cancel`/`Esc` — cancel the start.
     Cancel,
-    /// `Done`/`Enter` — зафиксировать и продолжить.
+    /// `Done`/`Enter` — commit and continue.
     Done,
-    /// `Help`/`?` — открыть окно `CARGO_SETUP` (`HelpMenu_Menu`).
+    /// `Help`/`?` — open the `CARGO_SETUP` window (`HelpMenu_Menu`).
     Help,
 }
 
-/// Группа иконок (pips) строки статистики — порт `UnitStats_DrawIcons`.
+/// Icon (pips) group of a statistics row — a port of `UnitStats_DrawIcons`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatIcon {
-    /// Ресурс `I_*` (simple image), которым рисуются «заполненные» pips.
+    /// `I_*` resource (simple image) used to draw the "filled" pips.
     pub resource: &'static str,
-    /// Ресурс «пустых» pips (`I_*E`); у всех строк кроме `Cost` — тот же.
+    /// "Empty" pips resource (`I_*E`); for all rows except `Cost` — the same.
     pub empty_resource: &'static str,
-    /// `current` в `UnitStats_DrawIcons` — сколько pips рисуется `resource`.
+    /// `current` in `UnitStats_DrawIcons` — how many pips are drawn with `resource`.
     pub current: i32,
-    /// `original` — сколько всего; `original - current` рисуется
-    /// `empty_resource` за красной чертой (дельта апгрейда).
+    /// `original` — the total; `original - current` is drawn with
+    /// `empty_resource` after the red line (the upgrade delta).
     pub original: i32,
 }
 
 impl StatIcon {
-    /// Пара одинаковых иконок (`UnitStats_DrawIcons(id, id, ...)`).
+    /// A pair of identical icons (`UnitStats_DrawIcons(id, id, ...)`).
     pub const fn same(resource: &'static str, current: i32, original: i32) -> Self {
         Self {
             resource,
@@ -350,84 +350,84 @@ impl StatIcon {
         }
     }
 
-    /// Сколько всего pips нарисует группа (`max(0, current) + max(0, delta)`).
+    /// How many pips the group will draw (`max(0, current) + max(0, delta)`).
     pub fn count(&self) -> usize {
         self.current.max(0) as usize + (self.original - self.current).max(0) as usize
     }
 }
 
-/// Строка таблицы статистики — порт `UnitStats_DrawText` + `UnitStats_DrawIcons`.
+/// A statistics table row — a port of `UnitStats_DrawText` + `UnitStats_DrawIcons`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatRow {
-    /// `y` строки (тот же шаг 19 px, что у колонки апгрейдов).
+    /// Row `y` (the same 19 px step as the upgrades column).
     pub y: i32,
-    /// Подпись из `language.json` (`_(98a8)` → `Attack`, …).
+    /// Label from `language.json` (`_(98a8)` → `Attack`, …).
     pub label: &'static str,
-    /// Число (`ReportStats_DrawNumber`); `None` — строке число не нужно
+    /// The number (`ReportStats_DrawNumber`); `None` — the row needs no number
     /// (`_(9e61)`: `resource_count == 0`).
     pub value: Option<i32>,
-    /// Группы иконок после числа; смещаются на `STAT_ICON_X` и дальше.
+    /// Icon groups after the number; shifted by `STAT_ICON_X` and further.
     pub icons: Vec<StatIcon>,
-    /// Красная линия под строкой (`draw_line(2,18 — 248,18)`); у `Cost` — нет.
+    /// Red line under the row (`draw_line(2,18 — 248,18)`); not for `Cost`.
     pub separator: bool,
 }
 
 impl StatRow {
-    /// Сколько pips в строке (для QA/тестов).
+    /// How many pips are in the row (for QA/tests).
     pub fn icon_count(&self) -> usize {
         self.icons.iter().map(StatIcon::count).sum()
     }
 }
 
-/// Состояние экрана мобилизации одной команды.
+/// Mobilization screen state of one team.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mobilization {
-    /// Чья мобилизация.
+    /// Whose mobilization.
     pub team: TeamId,
-    /// Клан команды (значения и цены).
+    /// Team clan (values and prices).
     pub clan: TeamClan,
-    /// Кредиты на входе (`CargoMenu::start_gold`).
+    /// Credits at entry (`CargoMenu::start_gold`).
     pub credits_start: u32,
-    /// Остаток кредитов (`CargoMenu::team_gold`).
+    /// Remaining credits (`CargoMenu::team_gold`).
     pub credits: u32,
-    /// Бесплатная загрузка миссии (`SC_L0001`), удалять/уменьшать нельзя.
+    /// Free mission loadout (`SC_L0001`), cannot be deleted/reduced.
     pub free: Vec<TeamSupply>,
-    /// Купленные юниты (в порядке покупки).
+    /// Purchased units (in purchase order).
     pub bought: Vec<TeamSupply>,
-    /// Режим списка типов.
+    /// Type list mode.
     pub mode: CargoMode,
-    /// Типы в списке «Available» (в режиме `Buy` — 15).
+    /// Types in the "Available" list (`Buy` mode — 15).
     pub types: Vec<UnitType>,
-    /// Выбранная строка списка типов (`page_max_index`).
+    /// Selected row of the type list (`page_max_index`).
     pub type_selected: usize,
-    /// Первая видимая строка списка типов (`page_min_index`).
+    /// First visible row of the type list (`page_min_index`).
     pub type_page: usize,
-    /// Выбранная строка списка «Purchased» (0..free+bought).
+    /// Selected "Purchased" row (0..free+bought).
     pub loadout_selected: usize,
-    /// Первая видимая строка «Purchased».
+    /// First visible "Purchased" row.
     pub loadout_page: usize,
-    /// Какой список активен для стрелок.
+    /// Which list is active for the arrows.
     pub active: ActiveList,
-    /// Тип, чей портрет/статистика/апгрейды показаны (`unit_type`).
+    /// The type whose portrait/statistics/upgrades are shown (`unit_type`).
     pub info: Option<UnitType>,
-    /// Базовые значения на момент открытия (`unitvalues_base`).
+    /// Base values at the moment of opening (`unitvalues_base`).
     pub base: [UnitValues; UNIT_END as usize],
-    /// Редактируемые значения (`unitvalues_actual`).
+    /// Editable values (`unitvalues_actual`).
     pub actual: [UnitValues; UNIT_END as usize],
-    /// Строки апгрейдов выбранного типа: `(ATTRIB_*, uly)`.
+    /// Upgrade rows of the selected type: `(ATTRIB_*, uly)`.
     pub controls: Vec<(u8, i32)>,
-    /// Фильтры домена (`button_*_rest_state`): ground, air, sea, building, combat.
+    /// Domain filters (`button_*_rest_state`): ground, air, sea, building, combat.
     pub filters: [bool; 5],
-    /// Показывать описание (`button_description_rest_state`); текста в данных нет.
+    /// Show the description (`button_description_rest_state`); there is no text in the data.
     pub description: bool,
-    /// Строка статуса.
+    /// Status line.
     pub status: String,
 }
 
 impl Mobilization {
     /// `CargoMenu::CargoMenu(team)`: `start_gold + Clans::GetCredits(clan)`
-    /// (у всех кланов `SC_CLANS` кредиты 0), базовые значения команды и
-    /// бесплатная загрузка миссии.
+    /// (all `SC_CLANS` clans have 0 credits), the base team values and
+    /// the free mission loadout.
     pub fn new(team: TeamId, clan: TeamClan, start_gold: u32) -> Self {
         let base = team_base_values(clan);
         let free = DEFAULT_MISSION_LOADOUT.to_vec();
@@ -460,37 +460,37 @@ impl Mobilization {
         mobilization
     }
 
-    /// Нужна ли фаза: в C++ `CargoMenu` не открывается при нулевом бюджете
-    /// (`if (team_gold)` в `GameManager_PlayerMissionSetup`).
+    /// Whether the phase is needed: in C++ `CargoMenu` does not open at a zero budget
+    /// (`if (team_gold)` in `GameManager_PlayerMissionSetup`).
     pub fn needed(start_gold: u32) -> bool {
         start_gold > 0
     }
 
-    /// Итоговая загрузка `TeamMissionSupplies::units` (бесплатная + купленная).
+    /// Final loadout `TeamMissionSupplies::units` (free + purchased).
     pub fn loadout(&self) -> Vec<TeamSupply> {
         let mut loadout = self.free.clone();
         loadout.extend(self.bought.iter().copied());
         loadout
     }
 
-    /// Все строки списка «Purchased» (`unit_types2`).
+    /// All "Purchased" list rows (`unit_types2`).
     pub fn loadout_rows(&self) -> Vec<TeamSupply> {
         self.loadout()
     }
 
-    /// `CargoMenu::DrawUnitInfo`: цена текущих значений, `3 * turns`.
+    /// `CargoMenu::DrawUnitInfo`: the price of the current values, `3 * turns`.
     pub fn price(&self, unit: UnitType) -> u32 {
         unit_price(&self.actual, unit)
     }
 
-    /// Цена строки списка типов (`PurchaseTypeSelector::Draw`):
-    /// `STATIONARY` → `CONSTRCT`-ставка (2), `COMMANDO`/`INFANTRY` →
-    /// `TRAINHAL`-ставка (1), иначе `LANDPLT` (3); умножить на `turns`.
+    /// Type list row price (`PurchaseTypeSelector::Draw`):
+    /// `STATIONARY` → `CONSTRCT` rate (2), `COMMANDO`/`INFANTRY` →
+    /// `TRAINHAL` rate (1), otherwise `LANDPLT` (3); multiply by `turns`.
     pub fn list_price(&self, unit: UnitType) -> u32 {
         list_price(&self.actual, unit)
     }
 
-    /// Цена выбранной строки списка типов (для подписи `Cost`).
+    /// Price of the selected type list row (for the `Cost` label).
     pub fn selected_cost(&self) -> u32 {
         self.types
             .get(self.type_selected)
@@ -498,12 +498,12 @@ impl Mobilization {
             .unwrap_or(0)
     }
 
-    /// Выбранный тип списка «Available».
+    /// Selected type of the "Available" list.
     pub fn selected_type(&self) -> Option<UnitType> {
         self.types.get(self.type_selected).copied()
     }
 
-    /// Строка «Purchased» по индексу.
+    /// "Purchased" row by index.
     pub fn loadout_row(&self, index: usize) -> Option<TeamSupply> {
         if index < self.free.len() {
             self.free.get(index).copied()
@@ -512,17 +512,17 @@ impl Mobilization {
         }
     }
 
-    /// Сколько единиц cargo в строке `index`.
+    /// How many cargo units are in row `index`.
     pub fn cargo(&self, index: usize) -> u16 {
         self.loadout_row(index).map_or(0, |supply| supply.cargo)
     }
 
-    /// Строка, которой можно управлять слайдером (выбранная в «Purchased»).
+    /// The row the slider can control (selected in "Purchased").
     fn cargo_row(&self) -> usize {
         self.loadout_selected
     }
 
-    /// Ёмкость cargo в блоках по 5 (`Select`: `ATTRIB_STORAGE / 5`, у
+    /// Cargo capacity in blocks of 5 (`Select`: `ATTRIB_STORAGE / 5`, for
     /// `GOLDTRCK` — 0).
     pub fn cargo_capacity(&self) -> i32 {
         let Some(supply) = self.loadout_row(self.cargo_row()) else {
@@ -531,13 +531,13 @@ impl Mobilization {
         cargo_capacity(&self.actual, supply.unit_type)
     }
 
-    /// Значение слайдера (`cargos[index] / 5`).
+    /// Slider value (`cargos[index] / 5`).
     pub fn cargo_value(&self) -> i32 {
         i32::from(self.cargo(self.cargo_row())) / 5
     }
 
-    /// `xfer_take_max`: бесплатный cargo миссии нельзя уменьшить, у купленных —
-    /// можно до нуля.
+    /// `xfer_take_max`: the free mission cargo cannot be reduced, the purchased ones —
+    /// can be reduced to zero.
     fn cargo_take_max(&self) -> i32 {
         let index = self.cargo_row();
         if index < self.free.len() {
@@ -552,7 +552,7 @@ impl Mobilization {
         self.cargo_value() + self.credits as i32
     }
 
-    /// Материал полосы cargo (`VERTFUEL`/`VERTGOLD`/`VERTRAW`).
+    /// Cargo bar material (`VERTFUEL`/`VERTGOLD`/`VERTRAW`).
     pub fn cargo_bar_kind(&self) -> CargoBarKind {
         match self
             .loadout_row(self.cargo_row())
@@ -564,24 +564,24 @@ impl Mobilization {
         }
     }
 
-    /// Может ли `Delete` продать выбранную строку (`index >= unit_count`).
+    /// Whether `Delete` can sell the selected row (`index >= unit_count`).
     pub fn can_delete(&self) -> bool {
         self.loadout_selected >= self.free.len()
             && self.loadout_selected < self.loadout_rows().len()
     }
 
-    /// Может ли `Buy` купить выбранный тип (`DrawUnitInfo`).
+    /// Whether `Buy` can buy the selected type (`DrawUnitInfo`).
     pub fn can_buy(&self) -> bool {
         self.selected_type()
             .is_some_and(|unit| PURCHASE_UNITS.contains(&unit) && self.price(unit) <= self.credits)
     }
 
     // -----------------------------------------------------------------------
-    // Списки
+    // Lists
     // -----------------------------------------------------------------------
 
-    /// `CargoMenu::PopulateTeamUnitsList`: режим `Buy` — `unit_types1`, режим
-    /// `Upgrade` — отфильтрованный полный список `IsBetterUnit`-порядка.
+    /// `CargoMenu::PopulateTeamUnitsList`: `Buy` mode — `unit_types1`, `Upgrade`
+    /// mode — the filtered full list in `IsBetterUnit` order.
     pub fn rebuild_types(&mut self) {
         let previous = self.selected_type();
         self.types = match self.mode {
@@ -602,7 +602,7 @@ impl Mobilization {
         }
     }
 
-    /// `UnitTypeSelector::ScrollTo` для списка типов.
+    /// `UnitTypeSelector::ScrollTo` for the type list.
     fn ensure_type_visible(&mut self) {
         let count = self.types.len() as i64;
         let visible = AVAILABLE_ROWS as i64;
@@ -625,7 +625,7 @@ impl Mobilization {
         self.type_page = page.max(0) as usize;
     }
 
-    /// То же для списка «Purchased».
+    /// The same for the "Purchased" list.
     fn ensure_loadout_visible(&mut self) {
         let count = self.loadout_rows().len() as i64;
         let visible = PURCHASED_ROWS as i64;
@@ -648,7 +648,7 @@ impl Mobilization {
         self.loadout_page = page.max(0) as usize;
     }
 
-    /// `PopulateTeamUnitsList` по переключателю (`1100`/`1101`).
+    /// `PopulateTeamUnitsList` by the toggle (`1100`/`1101`).
     pub fn toggle_mode(&mut self) {
         self.mode = match self.mode {
             CargoMode::Buy => CargoMode::Upgrade,
@@ -661,8 +661,8 @@ impl Mobilization {
         };
     }
 
-    /// Переключает фильтр домена (`1003`…`1012`); в режиме покупки кнопки
-    /// выключены (C++ `Disable`).
+    /// Toggles the domain filter (`1003`…`1012`); in buy mode the buttons
+    /// are off (C++ `Disable`).
     pub fn toggle_filter(&mut self, index: usize) {
         if self.mode != CargoMode::Upgrade || index >= self.filters.len() {
             return;
@@ -681,10 +681,10 @@ impl Mobilization {
     }
 
     // -----------------------------------------------------------------------
-    // Выбор и загрузка
+    // Selection and loading
     // -----------------------------------------------------------------------
 
-    /// `CargoMenu::Select(index)` для списка «Purchased».
+    /// `CargoMenu::Select(index)` for the "Purchased" list.
     pub fn select_loadout(&mut self, index: usize) {
         let count = self.loadout_rows().len();
         if index >= count {
@@ -700,7 +700,7 @@ impl Mobilization {
         }
     }
 
-    /// Выбор строки списка «Available» (клик по ней).
+    /// Selecting an "Available" list row (a click on it).
     pub fn select_type(&mut self, index: usize) {
         if index >= self.types.len() {
             return;
@@ -713,7 +713,7 @@ impl Mobilization {
         self.rebuild_controls();
     }
 
-    /// Стрелка/PageUp/PageDown по активному списку.
+    /// Arrow/PageUp/PageDown over the active list.
     pub fn step(&mut self, delta: i32) {
         match self.active {
             ActiveList::Types => {
@@ -743,7 +743,7 @@ impl Mobilization {
         }
     }
 
-    /// Страница списка (по `max_item_count` строк).
+    /// List page (by `max_item_count` rows).
     pub fn page(&mut self, delta: i32) {
         let rows = match self.active {
             ActiveList::Types => AVAILABLE_ROWS as i32,
@@ -752,7 +752,7 @@ impl Mobilization {
         self.step(delta * rows);
     }
 
-    /// Прокрутка списка без смены выбора (стрелки `BLDUP__`/`BLDDWN`).
+    /// List scrolling without changing the selection (the `BLDUP__`/`BLDDWN` arrows).
     pub fn scroll(&mut self, list: ActiveList, delta: i32) {
         match list {
             ActiveList::Types => {
@@ -767,12 +767,12 @@ impl Mobilization {
         }
     }
 
-    /// `CargoMenu::BuyUnit`: купить выбранный тип.
+    /// `CargoMenu::BuyUnit`: buy the selected type.
     pub fn buy_selected(&mut self) -> bool {
         self.buy(self.type_selected)
     }
 
-    /// Покупка по индексу списка «Available».
+    /// Buying by the "Available" list index.
     pub fn buy(&mut self, index: usize) -> bool {
         let Some(&unit) = self.types.get(index) else {
             return false;
@@ -802,8 +802,8 @@ impl Mobilization {
         true
     }
 
-    /// `CargoMenu::DeleteUnit`: продать выбранную строку «Purchased» (кроме
-    /// бесплатной загрузки миссии).
+    /// `CargoMenu::DeleteUnit`: sell the selected "Purchased" row (except
+    /// the free mission loadout).
     pub fn delete_selected(&mut self) -> bool {
         if !self.can_delete() {
             self.status = if self.loadout_selected < self.free.len() {
@@ -829,7 +829,7 @@ impl Mobilization {
         true
     }
 
-    /// Клик по слайдеру cargo (`Scrollbar::ProcessKey`, `pcode 1106`).
+    /// Click on the cargo slider (`Scrollbar::ProcessKey`, `pcode 1106`).
     pub fn click_cargo(&mut self, x: i32, y: i32) -> bool {
         if !CARGO_BAR.contains(x, y) {
             return false;
@@ -850,8 +850,8 @@ impl Mobilization {
         true
     }
 
-    /// Ставит значение слайдера (`cargos[index] = value * 5`), списывая
-    /// `new - old` кредитов (1 кредит за 5 единиц).
+    /// Sets the slider value (`cargos[index] = value * 5`), debiting
+    /// `new - old` credits (1 credit per 5 units).
     pub fn set_cargo_value(&mut self, value: i32) {
         let capacity = self.cargo_capacity();
         if capacity < 0 {
@@ -881,13 +881,13 @@ impl Mobilization {
     }
 
     // -----------------------------------------------------------------------
-    // Апгрейды
+    // Upgrades
     // -----------------------------------------------------------------------
 
     /// `AbstractUpgradeMenu::DrawUnitInfo` → `AddUpgradeMilitary`,
     /// `AdjustRowStorage`, `AdjustRowConsumptions`, `AddUpgradeGeneric`,
-    /// `AddUpgradeMobile`. `ATTRIB_TURNS` контролом не добавляется (в C++-порте
-    /// `UPGRADE_CONTROL_9` нигде не используется).
+    /// `AddUpgradeMobile`. `ATTRIB_TURNS` is not added by a control (in the C++ port
+    /// `UPGRADE_CONTROL_9` is not used anywhere).
     pub fn rebuild_controls(&mut self) {
         self.controls.clear();
         let Some(unit) = self.info else {
@@ -963,10 +963,10 @@ impl Mobilization {
         self.controls = rows;
     }
 
-    /// Контрол строки (порт `UpgradeControl::Init`): `team_base_value` —
-    /// базовое значение типа, `control_base_value` — значение на входе в меню,
-    /// вклад исследований до старта партии нулевой
-    /// (`ResearchMenu_CalculateFactor` при level 0).
+    /// Row control (a port of `UpgradeControl::Init`): `team_base_value` —
+    /// the type base value, `control_base_value` — the value at menu entry,
+    /// the research contribution before the match start is zero
+    /// (`ResearchMenu_CalculateFactor` at level 0).
     pub fn quote(&self, row: usize) -> Option<UpgradeQuote> {
         let (attribute, _) = *self.controls.get(row)?;
         let unit = self.info?;
@@ -977,7 +977,7 @@ impl Mobilization {
         Some(quote)
     }
 
-    /// `UpgradeControl::Increase`/`Decrease`; `true`, если значение изменилось.
+    /// `UpgradeControl::Increase`/`Decrease`; `true` if the value changed.
     pub fn adjust_upgrade(&mut self, row: usize, increase: bool) -> bool {
         let Some(mut quote) = self.quote(row) else {
             return false;
@@ -1011,7 +1011,7 @@ impl Mobilization {
         changed
     }
 
-    /// Прямоугольники стрелок строки `row` (левая/правая).
+    /// Arrow rectangles of row `row` (left/right).
     pub fn control_arrows(&self, row: usize) -> Option<(PixelRect, PixelRect)> {
         let (_, y) = *self.controls.get(row)?;
         Some((
@@ -1020,10 +1020,10 @@ impl Mobilization {
         ))
     }
 
-    /// Ресурс иконки строки `Cargo` — switch `UnitStats_DrawCargo`.
+    /// `Cargo` row icon resource — the `UnitStats_DrawCargo` switch.
     ///
-    /// Для остальных типов C++ не рисует строку вовсе (`default: return
-    /// buffer`), даже если `ATTRIB_STORAGE` > 0 (казармы, док, ремонт, …).
+    /// For other types C++ does not draw the row at all (`default: return
+    /// buffer`), even if `ATTRIB_STORAGE` > 0 (barracks, dock, repair, …).
     fn storage_icon(unit: UnitType) -> Option<&'static str> {
         match unit {
             UnitType::MaterialStorage
@@ -1038,33 +1038,33 @@ impl Mobilization {
     }
 
     /// `Cargo_GetRawConsumptionRate(Builder_GetBuilderType(team, unit), 1)` —
-    /// ставка строки `Cost` (`UnitStats_DrawCost`). У мин и нестроящихся
-    /// `Builder_GetBuilderType` = `INVALID_ID`, ставка 0 (как default в C++).
+    /// rate of the `Cost` row (`UnitStats_DrawCost`). For mines and non-buildings
+    /// `Builder_GetBuilderType` = `INVALID_ID`, rate 0 (like the C++ default).
     pub fn build_rate(&self, unit: UnitType) -> i32 {
         build_rate_for(unit)
     }
 
-    /// `Unit::GetDescription()` выбранного типа (`""` — описания нет).
+    /// `Unit::GetDescription()` of the selected type (`""` — no description).
     pub fn description(&self) -> &'static str {
         self.info.map_or("", cargo_unit_data::unit_description)
     }
 
-    /// Есть ли у выбранного типа портрет `P_*` (`Unit::GetPortrait()`).
+    /// Whether the selected type has a portrait `P_*` (`Unit::GetPortrait()`).
     pub fn has_portrait(&self) -> bool {
         self.info.and_then(cargo_unit_data::unit_portrait).is_some()
     }
 
-    /// Сколько pips-иконок в таблице статистики (для QA-проверок).
+    /// How many pips icons are in the statistics table (for QA checks).
     pub fn stats_icon_count(&self) -> usize {
         self.stats_rows().iter().map(StatRow::icon_count).sum()
     }
 
-    /// Строки таблицы статистики — порт блоков `UnitStats_DrawStats`.
+    /// Statistics table rows — a port of the `UnitStats_DrawStats` blocks.
     ///
-    /// Порядок ровно как в C++: military (`Attack`/`Shots`/`Range`/`Ammo`),
-    /// cargo (`Cargo`), расход (`Prod.`/`Uses`), общие (`Armor`/`Hits`/`Scan`),
-    /// `Speed`, `Cost`. Условия показа — по **базовым** значениям
-    /// (`unit_values2 = team_units->GetBaseUnitValues`), числа — по текущим.
+    /// The order is exactly as in C++: military (`Attack`/`Shots`/`Range`/`Ammo`),
+    /// cargo (`Cargo`), consumption (`Prod.`/`Uses`), common (`Armor`/`Hits`/`Scan`),
+    /// `Speed`, `Cost`. The display conditions — by the **base** values
+    /// (`unit_values2 = team_units->GetBaseUnitValues`), the numbers — by the current ones.
     pub fn stats_rows(&self) -> Vec<StatRow> {
         let Some(unit) = self.info else {
             return Vec::new();
@@ -1073,10 +1073,10 @@ impl Mobilization {
         Self::stats_rows_for(&self.base, &self.actual, unit)
     }
 
-    /// [`Self::stats_rows`] по явным наборам значений — нужен `BuildMenu`:
-    /// C++ `AbstractBuildMenu::Draw` зовёт `UnitStats_DrawStats` с
-    /// `team_units->GetCurrentUnitValues(team, unit_type)` и теми же
-    /// `base_values` (клановые модификаторы и апгрейды уже внутри).
+    /// [`Self::stats_rows`] by explicit value sets — needed by `BuildMenu`:
+    /// C++ `AbstractBuildMenu::Draw` calls `UnitStats_DrawStats` with
+    /// `team_units->GetCurrentUnitValues(team, unit_type)` and the same
+    /// `base_values` (clan modifiers and upgrades are already inside).
     pub fn stats_rows_for(
         base_values: &[UnitValues],
         current_values: &[UnitValues],
@@ -1118,7 +1118,7 @@ impl Mobilization {
             );
 
             if base.get_attribute(ATTRIB_ROUNDS) > 0 {
-                // Число выстрелов ограничено боезапасом (`std::min(ROUNDS, AMMO)`).
+                // The number of shots is limited by ammo (`std::min(ROUNDS, AMMO)`).
                 let shots = actual
                     .get_attribute(ATTRIB_ROUNDS)
                     .min(actual.get_attribute(ATTRIB_AMMO));
@@ -1210,8 +1210,8 @@ impl Mobilization {
         }
 
         if raw > 0 || fuel > 0 || power > 0 || life > 0 {
-            // `UnitStats_DrawUsage`: число не рисуется (resource_count = 0),
-            // иконки расходов идут подряд в одной строке.
+            // `UnitStats_DrawUsage`: the number is not drawn (resource_count = 0),
+            // the consumption icons go in a row one after another.
             let mut icons = Vec::new();
 
             for (resource, value) in [
@@ -1286,8 +1286,8 @@ impl Mobilization {
             );
         }
         if base.get_attribute(ATTRIB_TURNS) > 0 {
-            // `UnitStats_DrawCost`: уровень = ставка строителя * ходы, минимум 1;
-            // заполнены текущие ходы, «пустые» — базовые (дельта апгрейда).
+            // `UnitStats_DrawCost`: level = builder rate * turns, minimum 1;
+            // filled — the current turns, "empty" — the base ones (the upgrade delta).
             let rate = build_rate_for(unit);
             let base_level = (rate * base.get_attribute(ATTRIB_TURNS)).max(1);
             let actual_level = (rate * actual.get_attribute(ATTRIB_TURNS)).max(1);
@@ -1311,10 +1311,10 @@ impl Mobilization {
     }
 
     // -----------------------------------------------------------------------
-    // Фиксация (CommitUpgradeChanges + CommitUpgradeChanges override)
+    // Commit (CommitUpgradeChanges + CommitUpgradeChanges override)
     // -----------------------------------------------------------------------
 
-    /// Изменённые `UnitValues` (`*unitvalues_actual != *unitvalues_base`).
+    /// Changed `UnitValues` (`*unitvalues_actual != *unitvalues_base`).
     pub fn changed_upgrades(&self) -> Vec<(UnitType, UnitValues)> {
         let mut changed = Vec::new();
 
@@ -1335,7 +1335,7 @@ impl Mobilization {
     }
 
     /// `units_built`/`stats_gold_spent_on_upgrades`: `(start_gold - team_gold)`
-    /// минус текущие цены купленных юнитов и платного cargo
+    /// minus the current prices of the purchased units and paid cargo
     /// (`CargoMenu::CommitUpgradeChanges`).
     pub fn gold_spent_on_upgrades(&self) -> u32 {
         let mut spent = self.credits_start.wrapping_sub(self.credits);
@@ -1354,10 +1354,10 @@ impl Mobilization {
     }
 
     // -----------------------------------------------------------------------
-    // Ввод
+    // Input
     // -----------------------------------------------------------------------
 
-    /// Клик по экрану (те же прямоугольники, что у кнопок C++).
+    /// Click on the screen (the same rectangles as the C++ buttons).
     pub fn handle_click(&mut self, x: i32, y: i32) -> CargoAction {
         self.status.clear();
 
@@ -1430,7 +1430,7 @@ impl Mobilization {
             let row = ((y - AVAILABLE_AREA.uly) / LIST_ROW) as usize;
             let index = self.type_page + row;
             if index < self.types.len() {
-                // Повторный клик по выбранной строке — `Select(1)` →
+                // A repeated click on the selected row — `Select(1)` →
                 // `OnUnitTypeConfirmed` → `BuyUnit`.
                 if index == self.type_selected && self.info == self.selected_type() {
                     self.buy(index);
@@ -1459,7 +1459,7 @@ impl Mobilization {
         CargoAction::None
     }
 
-    /// Клавиатура (`CargoMenu::ProcessKey`/`AbstractUpgradeMenu::ProcessKey`).
+    /// Keyboard (`CargoMenu::ProcessKey`/`AbstractUpgradeMenu::ProcessKey`).
     pub fn handle_key(&mut self, key: Key) -> CargoAction {
         match key {
             Key::Escape => CargoAction::Cancel,
@@ -1490,7 +1490,7 @@ impl Mobilization {
                     }
                     'u' => self.toggle_mode(),
                     // `CargoMenu::ProcessKey`: `GNW_KB_KEY_SHIFT_DIVIDE` (`?`)
-                    // и код кнопки Help (1001) открывают `CARGO_SETUP`.
+                    // and the Help button code (1001) open `CARGO_SETUP`.
                     '?' => return CargoAction::Help,
                     _ => {}
                 }
@@ -1500,7 +1500,7 @@ impl Mobilization {
         }
     }
 
-    /// Строка апгрейда под точкой (`(row, increase)`).
+    /// Upgrade row under the point (`(row, increase)`).
     pub fn control_at(&self, x: i32, y: i32) -> Option<(usize, bool)> {
         for row in 0..self.controls.len() {
             let (left, right) = self.control_arrows(row)?;
@@ -1515,7 +1515,7 @@ impl Mobilization {
     }
 }
 
-/// Материал полосы cargo (`Select`: `SetMaterialBar(vbar)`).
+/// Cargo bar material (`Select`: `SetMaterialBar(vbar)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CargoBarKind {
     /// `VERTRAW`.
@@ -1527,18 +1527,18 @@ pub enum CargoBarKind {
 }
 
 // ---------------------------------------------------------------------------
-// Формулы (сверены с C++-векторами, tools/cargo_vectors)
+// Formulas (checked against the C++ vectors, tools/cargo_vectors)
 // ---------------------------------------------------------------------------
 
-/// Цена юнита — `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1)`
-/// (3) × `ATTRIB_TURNS` **текущих** значений.
+/// Unit price — `CargoMenu::BuyUnit`: `Cargo_GetRawConsumptionRate(LANDPLT, 1)`
+/// (3) × `ATTRIB_TURNS` of the **current** values.
 pub fn unit_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
     let turns = values[unit as usize].get_attribute(ATTRIB_TURNS).max(0) as u32;
 
     LANDPLT_RAW_CONSUMPTION * turns
 }
 
-/// Цена строки списка типов (`PurchaseTypeSelector::Draw`, скобки `if`).
+/// Type list row price (`PurchaseTypeSelector::Draw`, the `if` parentheses).
 pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u32 {
     let turns = values[unit as usize].get_attribute(ATTRIB_TURNS).max(0) as u32;
     let rate = if !unit.is_mobile() {
@@ -1552,7 +1552,7 @@ pub fn list_price(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> u
     rate * turns
 }
 
-/// Ёмкость cargo в блоках по 5 (`CargoMenu::Select`): `storage / 5`, у
+/// Cargo capacity in blocks of 5 (`CargoMenu::Select`): `storage / 5`, for
 /// `GOLDTRCK` — 0.
 pub fn cargo_capacity(values: &[UnitValues; UNIT_END as usize], unit: UnitType) -> i32 {
     if unit == UnitType::GoldTruck {
@@ -1561,18 +1561,18 @@ pub fn cargo_capacity(values: &[UnitValues; UNIT_END as usize], unit: UnitType) 
     values[unit as usize].get_attribute(ATTRIB_STORAGE) / 5
 }
 
-/// Цена покупки для исходных (неапгрейженных) значений — обёртка для тестов и
-/// `CargoMenu` без состояния.
+/// Buy price for the original (non-upgraded) values — a wrapper for tests and
+/// `CargoMenu` without state.
 pub fn unit_cost(unit: UnitType, clan: TeamClan) -> u32 {
     unit_price(&team_base_values(clan), unit)
 }
 
-/// Отображаемое имя типа — User-Friendly Name (`ResourceManager_GetUnit(...).GetSingularName()`).
+/// Displayed type name — User-Friendly Name (`ResourceManager_GetUnit(...).GetSingularName()`).
 pub fn unit_label(unit: UnitType) -> &'static str {
     crate::buildmenu::unit_name(unit)
 }
 
-/// Имя атрибута `ATTRIB_*` (для статуса).
+/// `ATTRIB_*` attribute name (for the status).
 pub fn attribute_name(attribute: u8) -> &'static str {
     match attribute {
         ATTRIB_ATTACK => "attack",
@@ -1589,8 +1589,8 @@ pub fn attribute_name(attribute: u8) -> &'static str {
     }
 }
 
-/// Полный список модернизации: `AbstractUpgradeMenu::PopulateTeamUnitsList` —
-/// `IsUnitFiltered` по всем 93 типам и сортировка `IsBetterUnit`.
+/// Full upgrade list: `AbstractUpgradeMenu::PopulateTeamUnitsList` —
+/// `IsUnitFiltered` over all 93 types and `IsBetterUnit` sorting.
 pub fn upgrade_types(filters: &[bool; 5]) -> Vec<UnitType> {
     let mut types: Vec<UnitType> = (0..UNIT_END)
         .filter_map(|index| UnitType::try_from(index).ok())
@@ -1618,7 +1618,7 @@ pub fn is_unit_filtered(unit: UnitType, filters: &[bool; 5]) -> bool {
         return false;
     }
 
-    // Биты `MOBILE_*` включают амфибий (см. `Environment`).
+    // `MOBILE_*` bits include amphibians (see `Environment`).
     let class_matches = ((unit.is_ground() || unit.is_amphibious()) && filters[0])
         || (unit.is_air() && filters[1])
         || ((unit.is_sea() || unit.is_amphibious()) && filters[2])
@@ -1635,7 +1635,7 @@ pub fn is_unit_filtered(unit: UnitType, filters: &[bool; 5]) -> bool {
     }
 }
 
-/// Строка кланового бонуса (для подсказки на экране мобилизации).
+/// Clan bonus row (for the hint on the mobilization screen).
 pub fn clan_summary(clan: TeamClan) -> String {
     if clan == TeamClan::Random {
         return "Clan: random".to_string();
@@ -1677,39 +1677,39 @@ pub fn clan_summary(clan: TeamClan) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Ресурсы экрана
+// Screen resources
 // ---------------------------------------------------------------------------
 
-/// Иконка типа в списках (`I_*`): корпус и отдельный кадр башни/пушки.
+/// Type icon in the lists (`I_*`): body and a separate turret/gun frame.
 ///
-/// В C++ `ReportStats_DrawListItemIcon` рисует кадр 0, а для
-/// `TURRET_SPRITE`/`SPINNING_TURRET` — ещё кадр 1 со сдвигом
-/// `angle_offsets[2] >> divisor` (`divisor` = 1 у мобильных, 2 у стационарных).
+/// In C++ `ReportStats_DrawListItemIcon` draws frame 0, and for
+/// `TURRET_SPRITE`/`SPINNING_TURRET` — also frame 1 with the shift
+/// `angle_offsets[2] >> divisor` (`divisor` = 1 for mobile, 2 for stationary).
 #[derive(Debug, Clone)]
 pub struct UnitIcon {
-    /// Корпус — кадр 0 ресурса `I_*`.
+    /// Body — frame 0 of the `I_*` resource.
     pub body: SpriteFrame,
-    /// Башня/пушка — кадр 1 (у турельных типов).
+    /// Turret/gun — frame 1 (for turret types).
     pub turret: Option<SpriteFrame>,
-    /// `angle_offsets[2]` из `D_*` — сдвиг башни до масштабирования.
+    /// `angle_offsets[2]` from `D_*` — the turret shift before scaling.
     pub turret_offset: (i32, i32),
 }
 
 impl UnitIcon {
-    /// Есть ли отдельный кадр башни.
+    /// Whether there is a separate turret frame.
     pub fn has_turret(&self) -> bool {
         self.turret.is_some()
     }
 }
 
-/// Ресурсы `CargoMenu` из `MAX.RES`.
+/// `CargoMenu` resources from `MAX.RES`.
 #[derive(Debug, Clone)]
 pub struct CargoMenuAssets {
-    /// Фон `CARGOPIC` 640×480.
+    /// `CARGOPIC` background 640×480.
     pub background: Option<BigImage>,
     /// `Buy` (`CRGBUY_U/D`).
     pub buy: Option<MenuButtonPair>,
-    /// `CRGBUY_X` — недоступна.
+    /// `CRGBUY_X` — unavailable.
     pub buy_disabled: Option<SimpleImage>,
     /// `Delete` (`CRGDEL_U/D`).
     pub delete: Option<MenuButtonPair>,
@@ -1721,47 +1721,47 @@ pub struct CargoMenuAssets {
     pub done: Option<MenuButtonPair>,
     /// `Help` (`BLDHLP_U/D`).
     pub help: Option<MenuButtonPair>,
-    /// Переключатель (`CRGTOG_U/D`).
+    /// Toggle (`CRGTOG_U/D`).
     pub toggle: Option<MenuButtonPair>,
-    /// Описание (`BLDDES_U/D`).
+    /// Description (`BLDDES_U/D`).
     pub description: Option<MenuButtonPair>,
-    /// Скролл вверх (`BLDUP__U/D`).
+    /// Scroll up (`BLDUP__U/D`).
     pub scroll_up: Option<MenuButtonPair>,
     /// `BLDUP__X`.
     pub scroll_up_disabled: Option<SimpleImage>,
-    /// Скролл вниз (`BLDDWN_U/D`).
+    /// Scroll down (`BLDDWN_U/D`).
     pub scroll_down: Option<MenuButtonPair>,
     /// `BLDDWN_X`.
     pub scroll_down_disabled: Option<SimpleImage>,
-    /// Стрелка апгрейда влево (`UPGLFT_U/D`).
+    /// Upgrade left arrow (`UPGLFT_U/D`).
     pub left: Option<SimpleImage>,
     /// `UPGLFT_X`.
     pub left_disabled: Option<SimpleImage>,
-    /// Стрелка апгрейда вправо (`UPGRGT_U/D`).
+    /// Upgrade right arrow (`UPGRGT_U/D`).
     pub right: Option<SimpleImage>,
     /// `UPGRGT_X`.
     pub right_disabled: Option<SimpleImage>,
-    /// Иконка золота `I_GOLD` (колонка цен апгрейдов).
+    /// Gold icon `I_GOLD` (upgrade price column).
     pub gold_icon: Option<SimpleImage>,
-    /// Недоступный фильтр (`CRGSELDX`).
+    /// Unavailable filter (`CRGSELDX`).
     pub filter_disabled: Option<SimpleImage>,
-    /// Фильтры домена (`SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`).
+    /// Domain filters (`SELGRD`/`SELAIR`/`SELSEA`/`SELBLD`/`SELCBT`).
     pub filters: [Option<MenuButtonPair>; 5],
-    /// Полосы `VERTRAW`/`VERTFUEL`/`VERTGOLD` (индекс — [`CargoBarKind`]).
+    /// `VERTRAW`/`VERTFUEL`/`VERTGOLD` bars (index — [`CargoBarKind`]).
     pub bars: [Option<SimpleImage>; 3],
-    /// Иконки типов (`I_*`): корпус (кадр 0) и башня (кадр 1).
+    /// Type icons (`I_*`): body (frame 0) and turret (frame 1).
     pub icons: Vec<(UnitType, UnitIcon)>,
-    /// Иконки строк статистики (`I_*` simple images, `UnitStats_DrawStats`).
+    /// Statistics row icons (`I_*` simple images, `UnitStats_DrawStats`).
     pub stat_icons: Vec<(&'static str, SimpleImage)>,
-    /// Кэш портретов `P_*` (`Unit::GetPortrait`, big image 300×240).
+    /// Portrait cache `P_*` (`Unit::GetPortrait`, big image 300×240).
     ///
-    /// Грузится лениво при выборе типа: 71 big image в старте не нужен.
-    /// `Arc<Mutex<…>>` — `CargoMenuAssets` остаётся `Clone`/`Sync`.
+    /// Loaded lazily when a type is selected: 71 big images are not needed at start.
+    /// `Arc<Mutex<…>>` — `CargoMenuAssets` remains `Clone`/`Sync`.
     pub portraits: Arc<Mutex<HashMap<UnitType, Option<Arc<BigImage>>>>>,
 }
 
 impl CargoMenuAssets {
-    /// Грузит ресурсы; отсутствие части — не ошибка (кнопка рисуется рамкой).
+    /// Loads resources; a missing part is not an error (the button is drawn with a frame).
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             archive
@@ -1777,7 +1777,7 @@ impl CargoMenuAssets {
             let sheet = decode_sprite(bytes).ok()?;
             let body = sheet.frame(0)?.clone();
             let turret = sheet.frame(1).cloned();
-            // `ReportStats_DrawListItemIcon`: сдвиг башни — `angle_offsets[2]`.
+            // `ReportStats_DrawListItemIcon`: the turret shift — `angle_offsets[2]`.
             let turret_offset = cargo_unit_data::unit_frame_data(unit)
                 .and_then(|data| archive.read(data).ok())
                 .and_then(|bytes| max_assets::sprite::FrameInfo::decode(&bytes))
@@ -1846,7 +1846,7 @@ impl CargoMenuAssets {
         }
     }
 
-    /// Иконка типа (`I_*`, кадр 0).
+    /// Type icon (`I_*`, frame 0).
     pub fn icon(&self, unit: UnitType) -> Option<&UnitIcon> {
         self.icons
             .iter()
@@ -1854,7 +1854,7 @@ impl CargoMenuAssets {
             .map(|(_, icon)| icon)
     }
 
-    /// Иконка строки статистики (`I_*` simple image).
+    /// Statistics row icon (`I_*` simple image).
     pub fn stat_icon(&self, resource: &str) -> Option<&SimpleImage> {
         self.stat_icons
             .iter()
@@ -1862,11 +1862,11 @@ impl CargoMenuAssets {
             .map(|(_, image)| image)
     }
 
-    /// Портрет типа (`Unit::GetPortrait()` → big image `P_*` 300×240).
+    /// Type portrait (`Unit::GetPortrait()` → big image `P_*` 300×240).
     ///
-    /// Лениво читает и декодирует ресурс, кэширует результат (включая
-    /// отсутствие ресурса). Возвращает `Arc`, чтобы не копировать 72 КиБ кадра
-    /// на каждый вызов отрисовки.
+    /// Lazily reads and decodes the resource, caches the result (including
+    /// the absence of the resource). Returns `Arc` so as not to copy 72 KiB of the frame
+    /// on every draw call.
     pub fn portrait(&self, archive: &ResArchive, unit: UnitType) -> Option<Arc<BigImage>> {
         let mut cache = self
             .portraits
@@ -1886,21 +1886,21 @@ impl CargoMenuAssets {
         image
     }
 
-    /// Есть ли фон и ключевые кнопки.
+    /// Whether the background and key buttons are present.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.done.is_some() && self.cancel.is_some()
     }
 }
 
-/// Иконки строк `UnitStats_DrawStats`: атака/выстрелы/дальность/боезапас,
-/// груз, расход, броня/прочность/обзор/скорость и золото цены.
+/// `UnitStats_DrawStats` row icons: attack/shots/range/ammo,
+/// cargo, consumption, armor/hits/scan/speed and the price gold.
 pub const STAT_ICONS: [&str; 14] = [
     "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_FUEL", "I_GOLD", "I_GOLDE", "I_POWER",
     "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
 ];
 
-/// `Unit::GetIcon()` — ресурсы `I_*` из `SC_UNITS` (units.json), в порядке
-/// [`UnitType`]; типы без иконки (`INVALID_ID`) пропущены.
+/// `Unit::GetIcon()` — `I_*` resources from `SC_UNITS` (units.json), in [`UnitType`]
+/// order; types without an icon (`INVALID_ID`) are skipped.
 pub const UNIT_ICONS: [(UnitType, &str); 71] = [
     (UnitType::GoldRefinery, "I_TRANSP"),
     (UnitType::PowerStation, "I_POWSTN"),
@@ -1976,11 +1976,11 @@ pub const UNIT_ICONS: [(UnitType, &str); 71] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Отрисовка
+// Drawing
 // ---------------------------------------------------------------------------
 
 impl Mobilization {
-    /// Рисует экран (1:1 координаты `cargomenu.cpp`) в кадр 640×480.
+    /// Draws the screen (1:1 `cargomenu.cpp` coordinates) into the 640×480 frame.
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -2008,7 +2008,7 @@ impl Mobilization {
         let chrome = palette.rgba(0x05);
         let gold_font = palette.rgba(165);
 
-        // Заголовки и подписи.
+        // Titles and labels.
         painted += draw_text_gnw_centered(frame, TITLE, font, "Purchase Menu", green).max(0) as u32;
         painted += draw_text_gnw(
             frame,
@@ -2050,26 +2050,26 @@ impl Mobilization {
             painted += draw_text_gnw_centered(frame, rect, font, label, gold_font).max(0) as u32;
         }
 
-        // Значения Cost/Credit/Cargo в C++-порте не рисуются (остались только
-        // подписи); счётчик кредитов — число на полосе золота (`gold_background`),
-        // счётчик cargo — над слайдером. Добавлять числа над подписями нельзя:
-        // они попадают на полосу золота (361,276) и счётчик cargo (421,276).
+        // The Cost/Credit/Cargo values are not drawn in the C++ port (only the
+        // labels remain); the credits counter — the number on the gold bar (`gold_background`),
+        // the cargo counter — above the slider. Adding numbers over the labels is impossible:
+        // they fall onto the gold bar (361,276) and the cargo counter (421,276).
 
-        // Портрет/статистика выбранного типа.
+        // Portrait/statistics of the selected type.
         painted += self.draw_info(frame, assets, cargo, &palette);
 
-        // Списки.
+        // Lists.
         painted += self.draw_type_list(frame, cargo, &palette);
         painted += self.draw_loadout_list(frame, cargo, &palette);
 
-        // Колонка апгрейдов: стрелки + цены.
+        // Upgrades column: arrows + prices.
         painted += self.draw_controls(frame, cargo, &palette);
 
-        // Cargo-слайдер и полоса золота.
+        // Cargo slider and gold bar.
         painted += self.draw_gold_bar(frame, cargo, &palette);
         painted += self.draw_cargo_bar(frame, cargo, &palette);
 
-        // Кнопки.
+        // Buttons.
         painted += draw_button(
             frame,
             &palette,
@@ -2128,12 +2128,12 @@ impl Mobilization {
             self.description,
         );
 
-        // Переключатель режима: обе подписи, цвет зависит от состояния
-        // (`SetCaption(834a, 20,0,80,15, DarkOrange, Gold)` и
+        // Mode toggle: both labels, the color depends on the state
+        // (`SetCaption(834a, 20,0,80,15, DarkOrange, Gold)` and
         // `SetCaption(e02a, 20,15,80,31)`).
         painted += self.draw_toggle(frame, cargo, &palette);
 
-        // Фильтры домена.
+        // Domain filters.
         for (index, filter) in [
             UpgradeFilter::Ground,
             UpgradeFilter::Air,
@@ -2155,7 +2155,7 @@ impl Mobilization {
             );
         }
 
-        // Стрелки списков.
+        // List arrows.
         painted += draw_scroll(
             frame,
             cargo.scroll_up.as_ref(),
@@ -2193,7 +2193,7 @@ impl Mobilization {
             mouse,
         );
 
-        // Клановые бонусы (наше дополнение) и строка статуса.
+        // Clan bonuses (our addition) and the status line.
         let clan_line = clan_summary(self.clan);
         painted += draw_text_gnw(frame, 11, 466, font, &clan_line, green).max(0) as u32;
 
@@ -2215,7 +2215,7 @@ impl Mobilization {
         painted
     }
 
-    /// Портрет + описание + таблица статистики (`AbstractUpgradeMenu::DrawUnitInfo`).
+    /// Portrait + description + statistics table (`AbstractUpgradeMenu::DrawUnitInfo`).
     fn draw_info(
         &self,
         frame: &mut RgbaBuffer,
@@ -2228,9 +2228,9 @@ impl Mobilization {
         };
         let mut painted = 0;
 
-        // Портрет: `WindowManager_LoadBigImage(GetPortrait(), ...)` — big image
-        // `P_*` 300×240, `ulx/uly` = 0, масштаб 1:1, палитра окна (`CARGOPIC`).
-        // Окно `unit_portrait_window` 280×240 обрезает правые 20 px.
+        // Portrait: `WindowManager_LoadBigImage(GetPortrait(), ...)` — big image
+        // `P_*` 300×240, `ulx/uly` = 0, scale 1:1, window palette (`CARGOPIC`).
+        // The `unit_portrait_window` window 280×240 clips the right 20 px.
         if let Some(portrait) = cargo.portrait(&assets.max_res, unit) {
             painted += draw_big_image_at(
                 frame,
@@ -2244,7 +2244,7 @@ impl Mobilization {
             frame.fill_rect(PORTRAIT, palette.rgba(STAT_COLOR_OUTLINE));
         }
 
-        // Описание — поверх портрета, `button_description_rest_state`.
+        // Description — over the portrait, `button_description_rest_state`.
         if self.description {
             painted += draw_description(frame, palette, unit);
         }
@@ -2254,7 +2254,7 @@ impl Mobilization {
         painted
     }
 
-    /// Список «Available» с иконками и ценами.
+    /// "Available" list with icons and prices.
     fn draw_type_list(
         &self,
         frame: &mut RgbaBuffer,
@@ -2323,7 +2323,7 @@ impl Mobilization {
         painted
     }
 
-    /// Список «Purchased» (`CargoSelector::Draw`).
+    /// "Purchased" list (`CargoSelector::Draw`).
     fn draw_loadout_list(
         &self,
         frame: &mut RgbaBuffer,
@@ -2409,7 +2409,7 @@ impl Mobilization {
         painted
     }
 
-    /// Колонка апгрейдов: стрелки и цены (`AbstractUpgradeMenu::DrawUnitStats`).
+    /// Upgrades column: arrows and prices (`AbstractUpgradeMenu::DrawUnitStats`).
     fn draw_controls(
         &self,
         frame: &mut RgbaBuffer,
@@ -2451,8 +2451,8 @@ impl Mobilization {
             if let Some(quote) = quote {
                 let cost = quote.cost();
                 if cost > 0 && cost < UPGRADE_COST_LIMIT {
-                    // `ReportStats_DrawNumber` в `cost_background`: число
-                    // выровнено по правому краю x=345, иконка — x=346.
+                    // `ReportStats_DrawNumber` in `cost_background`: the number
+                    // is right-aligned at x=345, the icon — x=346.
                     painted += draw_text_right(
                         frame,
                         COST.ulx + 24,
@@ -2472,7 +2472,7 @@ impl Mobilization {
         painted
     }
 
-    /// Полоса золота (`gold_background` + `VERTGOLD`).
+    /// Gold bar (`gold_background` + `VERTGOLD`).
     fn draw_gold_bar(
         &self,
         frame: &mut RgbaBuffer,
@@ -2514,7 +2514,7 @@ impl Mobilization {
         painted
     }
 
-    /// Cargo-слайдер (`LimitedScrollbar::RefreshScreen`).
+    /// Cargo slider (`LimitedScrollbar::RefreshScreen`).
     fn draw_cargo_bar(
         &self,
         frame: &mut RgbaBuffer,
@@ -2558,7 +2558,7 @@ impl Mobilization {
         painted
     }
 
-    /// Переключатель `CRGTOG`: обе подписи, цвета — как `SetCaption` C++.
+    /// `CRGTOG` toggle: both labels, the colors — like C++ `SetCaption`.
     fn draw_toggle(
         &self,
         frame: &mut RgbaBuffer,
@@ -2581,7 +2581,7 @@ impl Mobilization {
         }
 
         // up: Buy Units — DarkOrange (5), Upgrades — Gold (165);
-        // down: наоборот.
+        // down: the opposite.
         let (buy_color, upgrade_color) = if down {
             (palette.rgba(165), palette.rgba(0x05))
         } else {
@@ -2609,10 +2609,10 @@ impl Mobilization {
 }
 
 // ---------------------------------------------------------------------------
-// Помощники отрисовки
+// Drawing helpers
 // ---------------------------------------------------------------------------
 
-/// Цвет команды (LUT перекраски командных слотов).
+/// Team color (the team-slot recolor LUT).
 pub(crate) fn team_lut(team: TeamId) -> ColorLut {
     ColorLut::for_team(
         TeamColors::ALL
@@ -2623,25 +2623,25 @@ pub(crate) fn team_lut(team: TeamId) -> ColorLut {
 }
 
 /// `Cargo_GetRawConsumptionRate(Builder_GetBuilderType(team, unit), 1)` —
-/// ставка строки `Cost` (`UnitStats_DrawCost`); см. [`Mobilization::build_rate`].
+/// rate of the `Cost` row (`UnitStats_DrawCost`); see [`Mobilization::build_rate`].
 pub(crate) fn build_rate_for(unit: UnitType) -> i32 {
     builder_type(unit).map_or(0, |builder| cargo_raw_consumption_rate(builder, 1))
 }
 
-/// Вертикальная координата однострочного текста по центру прямоугольника
+/// Vertical coordinate of single-line text centered in the rectangle
 /// (`Text_TextBox`: `((height + 1) - font_height) / 2`).
 pub(crate) fn center_y(rect: PixelRect, font: &max_render::text::GnwFont) -> i32 {
     rect.uly + ((rect.height + 1) - font.height()).max(0) / 2
 }
 
-/// Горизонтальная линия (C++ `draw_line`).
+/// Horizontal line (C++ `draw_line`).
 fn draw_hline(frame: &mut RgbaBuffer, color: Rgba, x1: i32, x2: i32, y: i32) {
     for x in x1..=x2 {
         frame.set(x, y, color);
     }
 }
 
-/// Текст, выровненный по правому краю `right` (`ReportStats_DrawText`).
+/// Text right-aligned to `right` (`ReportStats_DrawText`).
 pub(crate) fn draw_text_right(
     frame: &mut RgbaBuffer,
     right: i32,
@@ -2654,8 +2654,8 @@ pub(crate) fn draw_text_right(
     draw_text_gnw(frame, right - width, y, font, text, color).max(0) as u32
 }
 
-/// Обрезает строку по ширине как `Text_Blit` (`swidth`): глиф рисуется, пока
-/// его конец не вышел за границу.
+/// Clips a string by width like `Text_Blit` (`swidth`): the glyph is drawn while
+/// its end has not crossed the boundary.
 fn clip_gnw_text<'a>(text: &'a str, max_width: i32, font: &GnwFont) -> &'a str {
     let mut width = 0;
 
@@ -2670,8 +2670,8 @@ fn clip_gnw_text<'a>(text: &'a str, max_width: i32, font: &GnwFont) -> &'a str {
     text
 }
 
-/// `ReportStats_DrawNumber`: `> 1e6` → `%.1fM`, `> 1000` → `%.1fk`, иначе
-/// целое (`%lld`).
+/// `ReportStats_DrawNumber`: `> 1e6` → `%.1fM`, `> 1000` → `%.1fk`, otherwise
+/// an integer (`%lld`).
 fn report_stats_number(value: i32) -> String {
     let number = i64::from(value);
 
@@ -2684,12 +2684,12 @@ fn report_stats_number(value: i32) -> String {
     }
 }
 
-/// Описание юнита поверх портрета.
+/// Unit description over the portrait.
 ///
 /// `Text_TextBox(unit_portrait_window.buffer, dialog_window.width, description,
 /// 16, 17, 280, 230, GNW_TEXT_OUTLINE | 0xA2, false, false)`:
-/// шрифт 5, межстрочный интервал `Text_GetHeight + 1` (обводка), 20 строк,
-/// чёрная копия в `(x+1, y+1)` (`Text_BlitTTF` + `GNW_TEXT_OUTLINE`).
+/// font 5, line spacing `Text_GetHeight + 1` (outline), 20 lines,
+/// a black copy at `(x+1, y+1)` (`Text_BlitTTF` + `GNW_TEXT_OUTLINE`).
 pub(crate) fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit: UnitType) -> u32 {
     let text = cargo_unit_data::unit_description(unit);
 
@@ -2716,8 +2716,8 @@ pub(crate) fn draw_description(frame: &mut RgbaBuffer, palette: &UiPalette, unit
     painted
 }
 
-/// Таблица статистики (`UnitStats_DrawStats`): строки по 19 px, число справа
-/// от x=24, подпись с x=28 (клип 49 px), pips с x=76, красная линия под строкой.
+/// Statistics table (`UnitStats_DrawStats`): rows of 19 px, the number to the right
+/// from x=24, the label from x=28 (clip 49 px), the pips from x=76, the red line under the row.
 pub(crate) fn draw_stats(
     frame: &mut RgbaBuffer,
     cargo: &CargoMenuAssets,
@@ -2771,8 +2771,8 @@ pub(crate) fn draw_stats(
     painted
 }
 
-/// Одна группа pips — `UnitStats_DrawIcons`: масштаб шага под ширину, дельта
-/// апгрейда (`original - current`) рисуется пустыми иконками за красной чертой.
+/// One pips group — `UnitStats_DrawIcons`: the step scale fits the width, the upgrade
+/// delta (`original - current`) is drawn with empty icons after the red line.
 #[allow(clippy::too_many_arguments)]
 fn draw_stat_icons(
     frame: &mut RgbaBuffer,
@@ -2788,7 +2788,7 @@ fn draw_stat_icons(
     };
     let empty = cargo.stat_icon(icons.empty_resource).unwrap_or(normal);
 
-    // `original -= current` — дельта апгрейда (может быть отрицательной).
+    // `original -= current` — the upgrade delta (may be negative).
     let original = icons.original - icons.current;
     let mut max_width = max_width;
 
@@ -2814,8 +2814,8 @@ fn draw_stat_icons(
 
     max_width -= image_width * full_scaled;
 
-    // `var_2C` — суммарная ширина шагов, которая осталась бы при полном
-    // масштабе иконки.
+    // `var_2C` — the total width of the steps that would remain at the full
+    // icon scale.
     let mut full_step_width = full_scaled * 4 - (5 - current_offset);
 
     if original_scaled != 0 {
@@ -2858,7 +2858,7 @@ fn draw_stat_icons(
 
     if original != 0 {
         // `draw_line(&buffer[var_24 + 2], sw, 0, 2, 0, 16, COLOR_RED)` —
-        // вертикальная черта на всю высоту строки.
+        // a vertical line over the full row height.
         let x = base_x + advance + 2;
 
         for y in (row_y + 2)..=(row_y + 16) {
@@ -2882,8 +2882,8 @@ fn draw_stat_icons(
     advance
 }
 
-/// `UnitStats_DrawIcon`: до `count` иконок блоками по 5, со сдвигом
-/// `reminder * row_step` по вертикали.
+/// `UnitStats_DrawIcon`: up to `count` icons in blocks of 5, with the shift
+/// `reminder * row_step` vertically.
 #[allow(clippy::too_many_arguments)]
 fn draw_stat_pips(
     frame: &mut RgbaBuffer,
@@ -2914,8 +2914,8 @@ fn draw_stat_pips(
     i32::from(image.width) + offset
 }
 
-/// `UnitStats_DrawImage`: копирует пиксели `SimpleImage`, пропуская
-/// прозрачный индекс (первый пиксель ресурса).
+/// `UnitStats_DrawImage`: copies `SimpleImage` pixels, skipping the
+/// transparent index (the first pixel of the resource).
 fn draw_stat_image(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -2944,8 +2944,8 @@ fn draw_stat_image(
     painted
 }
 
-/// Текст по центру прямоугольника с переносом и вертикальным центрированием
-/// (`Text_TextBox`), не больше `max_rows` строк.
+/// Text centered in a rectangle with wrapping and vertical centering
+/// (`Text_TextBox`), at most `max_rows` lines.
 fn draw_wrapped(
     frame: &mut RgbaBuffer,
     rect: PixelRect,
@@ -2973,8 +2973,8 @@ fn draw_wrapped(
     painted
 }
 
-/// Рамка выбранной строки (порт `GameManager_DrawUnitSelector`: 1 px, цвет
-/// 0xFF; у списка «Purchased» — двойная).
+/// Selected row frame (a port of `GameManager_DrawUnitSelector`: 1 px, color
+/// 0xFF; for the "Purchased" list — double).
 fn draw_selection(
     frame: &mut RgbaBuffer,
     color: Rgba,
@@ -3013,7 +3013,7 @@ fn draw_selection(
     painted
 }
 
-/// Кнопка: картинка (или честная рамка), при недоступности — `_X`.
+/// Button: picture (or an honest frame), when unavailable — `_X`.
 #[allow(clippy::too_many_arguments)]
 fn draw_button(
     frame: &mut RgbaBuffer,
@@ -3054,7 +3054,7 @@ fn draw_button(
     }
 }
 
-/// Фильтр домена: `_D` (нажат) для активного, `CRGSELDX` в режиме покупки.
+/// Domain filter: `_D` (pressed) for the active one, `CRGSELDX` in buy mode.
 fn draw_filter(
     frame: &mut RgbaBuffer,
     cargo: &CargoMenuAssets,
@@ -3079,7 +3079,7 @@ fn draw_filter(
     }
 }
 
-/// Кнопка-переключатель (`BLDDES`): `_D`, когда описание включено.
+/// Toggle button (`BLDDES`): `_D` when the description is on.
 fn draw_filter_button(
     frame: &mut RgbaBuffer,
     pair: Option<&MenuButtonPair>,
@@ -3093,7 +3093,7 @@ fn draw_filter_button(
     }
 }
 
-/// Стрелка скролла списка с `_X`-вариантом.
+/// List scroll arrow with an `_X` variant.
 fn draw_scroll(
     frame: &mut RgbaBuffer,
     pair: Option<&MenuButtonPair>,
@@ -3115,7 +3115,7 @@ fn draw_scroll(
     }
 }
 
-/// Стрелка апгрейда (`UPGLFT`/`UPGRGT`, недоступная — `*_X`).
+/// Upgrade arrow (`UPGLFT`/`UPGRGT`, the unavailable one — `*_X`).
 fn draw_upgrade_arrow(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -3131,7 +3131,7 @@ fn draw_upgrade_arrow(
     }
 }
 
-/// Полоса (`LoadVerticalBar`): 20-пиксельная текстура снизу вверх.
+/// Bar (`LoadVerticalBar`): a 20-pixel texture from bottom to top.
 #[allow(clippy::too_many_arguments)]
 fn draw_vertical_bar(
     frame: &mut RgbaBuffer,
@@ -3171,8 +3171,8 @@ fn draw_vertical_bar(
     painted
 }
 
-/// Иконка юнита (`ReportStats_DrawListItemIcon`): кадр с горячей точкой в
-/// центре, масштаб `zoom` (64 — 1:1), перекраска командных слотов.
+/// Unit icon (`ReportStats_DrawListItemIcon`): the frame with the hotspot in
+/// the center, scale `zoom` (64 — 1:1), team slot recoloring.
 pub(crate) fn draw_icon(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -3184,8 +3184,8 @@ pub(crate) fn draw_icon(
 ) -> u32 {
     let mut painted = draw_icon_frame(frame, palette, &icon.body, anchor, zoom, lut);
 
-    // `ReportStats_DrawListItemIcon`: для турельных типов — второй кадр
-    // `I_*` со сдвигом `angle_offsets[2] >> divisor`.
+    // `ReportStats_DrawListItemIcon`: for turret types — the second `I_*` frame
+    // with the `angle_offsets[2] >> divisor` shift.
     if unit_type_flags(unit) & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
         if let Some(turret) = icon.turret.as_ref() {
             let divisor = if !unit.is_mobile() {
@@ -3212,7 +3212,7 @@ pub(crate) fn draw_icon(
     painted
 }
 
-/// Один кадр иконки `I_*` с масштабом `zoom` (64 — 1:1) и перекраской команд.
+/// One `I_*` icon frame with the `zoom` scale (64 — 1:1) and team recoloring.
 fn draw_icon_frame(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -3246,7 +3246,7 @@ fn draw_icon_frame(
     painted
 }
 
-/// Обрезка имени по ширине (как `Text_Blit` с `swidth`).
+/// Name clipping by width (like `Text_Blit` with `swidth`).
 fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
@@ -3324,7 +3324,7 @@ mod tests {
     fn list_prices_follow_unit_flags() {
         let mobilization = mobilization();
 
-        // Мобильные — ставка LANDPLT (3), здания — CONSTRCT (2), пехота —
+        // Mobile — LANDPLT rate (3), buildings — CONSTRCT (2), infantry —
         // TRAINHAL (1).
         assert_eq!(mobilization.list_price(UnitType::Tank), 12);
         assert_eq!(mobilization.list_price(UnitType::Infiltrator), 9);
@@ -3365,7 +3365,7 @@ mod tests {
             "список модернизации шире списка покупки: {}",
             upgrade.types.len()
         );
-        // Строится командой и апгрейдится.
+        // Built by the team and upgradeable.
         for unit in [
             UnitType::Constructor,
             UnitType::Tank,
@@ -3379,8 +3379,8 @@ mod tests {
         ] {
             assert!(upgrade.types.contains(&unit), "{unit:?}");
         }
-        // Road не UPGRADABLE, мины — через постановщика (уже включены), а
-        // ракеты/взрывы/обломки не строятся.
+        // Road is not UPGRADABLE, mines — through the deployer (already included), and
+        // missiles/explosions/debris are not built.
         for unit in [
             UnitType::Road,
             UnitType::Rocket,
@@ -3403,13 +3403,13 @@ mod tests {
         mobilization.toggle_mode();
         let all = mobilization.types.len();
 
-        // Только наземные.
+        // Ground only.
         mobilization.filters = [true, false, false, false, false];
         mobilization.rebuild_types();
         let ground = mobilization.types.len();
         assert!(ground > 0 && ground < all, "ground {ground} из {all}");
 
-        // Только боевые (с атакой).
+        // Combat only (with an attack).
         mobilization.filters = [true, true, true, true, true];
         mobilization.rebuild_types();
         assert!(mobilization
@@ -3418,7 +3418,7 @@ mod tests {
             .all(|unit| { base_unit_values(*unit).get_attribute(ATTRIB_ATTACK) > 0 }));
         assert!(mobilization.types.len() < all);
 
-        // Все домены выключены — пусто (C++: class_matches ложно).
+        // All domains off — empty (C++: class_matches false).
         mobilization.filters = [false, false, false, false, true];
         mobilization.rebuild_types();
         assert!(mobilization.types.is_empty());
@@ -3434,8 +3434,8 @@ mod tests {
         assert_eq!(mobilization.loadout_selected, 3);
         assert_eq!(mobilization.info, Some(UnitType::Constructor));
 
-        // Cargo покупается по 1 кредиту за 5 единиц: Constructor (storage 60)
-        // может взять 12 блоков.
+        // Cargo is bought at 1 credit per 5 units: Constructor (storage 60)
+        // can take 12 blocks.
         let cargo_row = mobilization.loadout_selected;
         assert_eq!(mobilization.cargo(cargo_row), 0);
         mobilization.set_cargo_value(4);
@@ -3443,7 +3443,7 @@ mod tests {
         assert_eq!(mobilization.credits, 122);
 
         assert!(mobilization.delete_selected());
-        // Возврат: цена (24) + cargo/5 (4).
+        // Refund: price (24) + cargo/5 (4).
         assert_eq!(mobilization.credits, 150);
         assert!(mobilization.bought.is_empty());
         assert_eq!(
@@ -3526,13 +3526,13 @@ mod tests {
     #[test]
     fn cargo_slider_click_matches_scrollbar_formula() {
         let mut mobilization = mobilization();
-        mobilization.select_loadout(0); // Constructor, cargo 40/60 (8/12 блоков)
+        mobilization.select_loadout(0); // Constructor, cargo 40/60 (8/12 blocks)
 
-        // Клик у самого низа — 0 блоков, но бесплатный cargo не снимается.
+        // A click at the very bottom — 0 blocks, but the free cargo is not removed.
         assert!(mobilization.click_cargo(CARGO_BAR.ulx + 2, CARGO_BAR.lry() - 1));
         assert_eq!(mobilization.cargo(0), 40);
 
-        // Клик у самого верха — ёмкость (12 блоков).
+        // A click at the very top — capacity (12 blocks).
         assert!(mobilization.click_cargo(CARGO_BAR.ulx + 2, CARGO_BAR.uly));
         assert_eq!(mobilization.cargo(0), 60);
         assert_eq!(mobilization.credits, 150 - 4, "4 блока * 1 кредит");
@@ -3543,8 +3543,8 @@ mod tests {
         let mut mobilization = mobilization();
         mobilization.select_loadout(0); // Constructor
 
-        // Конструктор: armor, hits, scan, speed (после пропусков storage и
-        // расхода).
+        // Constructor: armor, hits, scan, speed (after skipping storage and
+        // consumption).
         let rows: Vec<u8> = mobilization
             .controls
             .iter()
@@ -3554,8 +3554,8 @@ mod tests {
             rows,
             vec![ATTRIB_ARMOR, ATTRIB_HITS, ATTRIB_SCAN, ATTRIB_SPEED]
         );
-        // Две пропущенные строки до блока Common: storage (Constructor в
-        // списке `AdjustRowStorage`) и расход (`AdjustRowConsumptions`).
+        // Two skipped rows before the Common block: storage (Constructor in
+        // the `AdjustRowStorage` list) and consumption (`AdjustRowConsumptions`).
         assert_eq!(mobilization.controls[0].1, COST.uly + 2 * CONTROL_ROW);
         assert_eq!(mobilization.controls[1].1, COST.uly + 3 * CONTROL_ROW);
 
@@ -3570,7 +3570,7 @@ mod tests {
             "шаг 1 при базе < 10"
         );
 
-        // Возврат — обратное изменение.
+        // Refund — the inverse change.
         assert!(mobilization.adjust_upgrade(0, false));
         assert_eq!(mobilization.credits, before);
         assert_eq!(
@@ -3578,8 +3578,8 @@ mod tests {
             armor_base
         );
 
-        // Апгрейд, затем покупка: цена берётся из текущих turns.
-        mobilization.adjust_upgrade(1, true); // hits (+2 при базе 24)
+        // Upgrade, then buy: the price is taken from the current turns.
+        mobilization.adjust_upgrade(1, true); // hits (+2 at base 24)
         let changed = mobilization.changed_upgrades();
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].0, UnitType::Constructor);
@@ -3612,9 +3612,9 @@ mod tests {
     #[test]
     fn upgrades_raise_purchase_prices_of_the_type() {
         let mut mobilization = mobilization();
-        // Апгрейд «ходов» в CargoMenu недоступен, но цена покупки зависит от
-        // текущих turns: проверим через прямое изменение actual (как это делает
-        // апгрейд атрибута turns в других меню).
+        // The "turns" upgrade is unavailable in CargoMenu, but the buy price depends on
+        // the current turns: check it via a direct change of actual (as the
+        // turns attribute upgrade does in other menus).
         assert_eq!(mobilization.price(UnitType::Tank), 12);
         mobilization.actual[UnitType::Tank as usize].turns = 8;
         assert_eq!(mobilization.price(UnitType::Tank), 24, "3 * turns");
@@ -3655,15 +3655,15 @@ mod tests {
             vec!["Cargo", "Uses", "Armor", "Hits", "Scan", "Speed", "Cost"],
             "UnitStats_DrawStats: cargo, usage, common, speed, cost"
         );
-        // Шаг тот же, что у колонки апгрейдов (`UnitStats_DrawText` — 19 px).
+        // The step is the same as the upgrades column (`UnitStats_DrawText` — 19 px).
         for (index, row) in rows.iter().enumerate() {
             assert_eq!(row.y, STATS.uly + STAT_ROW * index as i32);
         }
 
-        // `Cargo`: число — текущая вместимость, pips — `storage / 10`.
+        // `Cargo`: the number — the current capacity, the pips — `storage / 10`.
         assert_eq!(rows[0].value, Some(60));
         assert_eq!(rows[0].icons, vec![StatIcon::same("I_RAW", 6, 6)]);
-        // `Uses`: числа нет (`resource_count == 0`), raw-расход 2 — два pips.
+        // `Uses`: no number (`resource_count == 0`), raw consumption 2 — two pips.
         assert_eq!(rows[1].value, None);
         assert_eq!(rows[1].icons, vec![StatIcon::same("I_RAW", 2, 2)]);
         // `Armor`/`Hits`/`Scan`/`Speed` — 6/24/3/6.
@@ -3673,7 +3673,7 @@ mod tests {
         assert_eq!(rows[4].value, Some(3));
         assert_eq!(rows[5].value, Some(6));
         // `Cost`: `Cargo_GetRawConsumptionRate(LANDPLT,1) * turns = 3 * 8 = 24`,
-        // иконки — `I_GOLD`/`I_GOLDE` (`interface_icon_full/empty`), без линии.
+        // icons — `I_GOLD`/`I_GOLDE` (`interface_icon_full/empty`), without a line.
         assert_eq!(rows[6].value, Some(24));
         assert_eq!(
             rows[6].icons,
@@ -3707,7 +3707,7 @@ mod tests {
         assert_eq!(rows[1].value, Some(2));
         assert_eq!(rows[2].value, Some(4));
         assert_eq!(rows[3].value, Some(14));
-        // Военных строк у Constructora нет (ATTACK = 0).
+        // Constructo has no military rows (ATTACK = 0).
         mobilization.info = Some(UnitType::Constructor);
         assert!(mobilization
             .stats_rows()
@@ -3719,7 +3719,7 @@ mod tests {
     fn usage_and_storage_rows_follow_unit_stats_switches() {
         let mut mobilization = mobilization();
 
-        // `POWGEN`: выработка -1 (`Prod.` + `I_POWER`), `Cost` 2 * 4.
+        // `POWGEN`: production -1 (`Prod.` + `I_POWER`), `Cost` 2 * 4.
         mobilization.info = Some(UnitType::PowerGenerator);
         let rows = mobilization.stats_rows();
         assert_eq!(rows[0].label, "Prod.");
@@ -3728,23 +3728,23 @@ mod tests {
         assert_eq!(rows.last().unwrap().label, "Cost");
         assert_eq!(rows.last().unwrap().value, Some(8), "CONSTRCT 2 * 4 turns");
 
-        // `HABITAT`: жизнеобеспечение -3 (`Prod.` + `I_LIFE`); выработки нет —
-        // `Cargo_GetPowerConsumptionRate` для HABITAT = 0.
+        // `HABITAT`: life support -3 (`Prod.` + `I_LIFE`); no production —
+        // `Cargo_GetPowerConsumptionRate` for HABITAT = 0.
         mobilization.info = Some(UnitType::Habitat);
         let rows = mobilization.stats_rows();
         assert_eq!(rows[0].label, "Prod.");
         assert_eq!(rows[0].icons, vec![StatIcon::same("I_LIFE", 3, 3)]);
 
-        // `MINELAYR`: storage 16, но `UnitStats_DrawCargo` его не рисует
-        // (default switch) — строки `Cargo` нет; ставка LIGHTPLT 3 * 3.
+        // `MINELAYR`: storage 16, but `UnitStats_DrawCargo` does not draw it
+        // (default switch) — there is no `Cargo` row; LIGHTPLT rate 3 * 3.
         mobilization.info = Some(UnitType::MineLayer);
         let rows = mobilization.stats_rows();
         assert!(rows.iter().all(|row| row.label != "Cargo"));
         assert_eq!(rows.last().unwrap().value, Some(9));
         assert_eq!(rows.last().unwrap().icons[0].resource, "I_GOLD");
 
-        // `LANDMINE`: `Builder_GetBuilderType` = INVALID_ID → ставка 0,
-        // уровень зажимается в 1 (`UnitStats_DrawCost`).
+        // `LANDMINE`: `Builder_GetBuilderType` = INVALID_ID → rate 0,
+        // the level is clamped to 1 (`UnitStats_DrawCost`).
         mobilization.info = Some(UnitType::LandMine);
         let rows = mobilization.stats_rows();
         assert_eq!(rows.last().unwrap().value, Some(1));
@@ -3752,9 +3752,9 @@ mod tests {
         assert_eq!(mobilization.build_rate(UnitType::LandMine), 0);
     }
 
-    /// `UnitStats_DrawStats`: `Speed` — только при `ATTRIB_SPEED > 0`
-    /// (`if (unit_values2->GetAttribute(ATTRIB_SPEED))`), поэтому здания
-    /// (шахта/завод/турель) в `CargoMenu` строку `Speed` не показывают.
+    /// `UnitStats_DrawStats`: `Speed` — only if `ATTRIB_SPEED > 0`
+    /// (`if (unit_values2->GetAttribute(ATTRIB_SPEED))`), so buildings
+    /// (mine/factory/turret) do not show the `Speed` row in `CargoMenu`.
     #[test]
     fn cargo_menu_buildings_never_show_speed() {
         let mut mobilization = mobilization();
@@ -3794,8 +3794,8 @@ mod tests {
         let rows = mobilization.stats_rows();
         let attack = &rows[0];
 
-        // `UnitStats_DrawIcons(current = base, original = actual)`: 4 пустых
-        // pips дельты (`original - current`) за красной чертой.
+        // `UnitStats_DrawIcons(current = base, original = actual)`: 4 empty
+        // delta pips (`original - current`) after the red line.
         assert_eq!(attack.value, Some(20), "число — текущее значение");
         assert_eq!(attack.icons[0].current, 16);
         assert_eq!(attack.icons[0].original, 20);
@@ -3803,8 +3803,8 @@ mod tests {
         assert_eq!(attack.icon_count(), 20);
         assert_eq!(base_rows[0].icon_count(), 16);
 
-        // Уменьшение turns: текущая цена ниже базовой — `original > current`,
-        // поэтому 3 «пустых» pips показывают базовую стоимость.
+        // Decreasing turns: the current price is below the base — `original > current`,
+        // so 3 "empty" pips show the base cost.
         mobilization.actual[UnitType::Tank as usize].turns = 3;
         let rows = mobilization.stats_rows();
         let cost = rows.last().unwrap();
@@ -3813,7 +3813,7 @@ mod tests {
         assert_eq!(cost.icons[0].original, 12);
         assert_eq!(cost.icons[0].count(), 12, "9 заполненных + 3 пустых");
 
-        // Увеличение turns: `original < current` — пустых pips нет.
+        // Increasing turns: `original < current` — no empty pips.
         mobilization.actual[UnitType::Tank as usize].turns = 5;
         let rows = mobilization.stats_rows();
         let cost = rows.last().unwrap();
@@ -3834,8 +3834,8 @@ mod tests {
             .starts_with("Large construction vehicle"));
         assert!(mobilization.has_portrait());
 
-        // Каждый тип списка покупки и режима модернизации описан и имеет
-        // портрет — у каждого открываемого в `CargoMenu` типа.
+        // Every type of the buy and upgrade lists is described and has a
+        // portrait — for every type openable in `CargoMenu`.
         let mut all = PURCHASE_UNITS.to_vec();
         all.extend(upgrade_types(&[true, true, true, true, false]));
         all.sort_by_key(|unit| *unit as u16);
@@ -3864,9 +3864,9 @@ mod tests {
             let unit = UnitType::try_from(index).expect("UnitType 0..92");
 
             if cargo_unit_data::unit_description(unit).is_empty() {
-                // 24 служебных типа (обломки, взрывы, снаряды, HARVSTER,
-                // WALDO) — без описания и в оригинале; в `CargoMenu` их не
-                // открыть, поэтому `assert cargo-description` всегда видит текст.
+                // 24 service types (debris, explosions, projectiles, HARVSTER,
+                // WALDO) — without a description in the original too; in `CargoMenu` they cannot
+                // be opened, so `assert cargo-description` always sees text.
                 assert!(
                     !reachable.contains(&unit),
                     "{unit:?}: без описания, но достижим в CargoMenu"
@@ -3882,14 +3882,14 @@ mod tests {
 
     #[test]
     fn stat_icon_resource_names_match_unitstats_resources() {
-        // `UnitStats_DrawStats`: ровно те `I_*`, что читает C++.
+        // `UnitStats_DrawStats`: exactly the `I_*` that C++ reads.
         for name in [
             "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_FUEL", "I_GOLD", "I_POWER",
             "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
         ] {
             assert!(STAT_ICONS.contains(&name), "{name}");
         }
-        // `CargoMenu` передаёт `interface_icon_full/empty = I_GOLD/I_GOLDE`.
+        // `CargoMenu` passes `interface_icon_full/empty = I_GOLD/I_GOLDE`.
         assert!(STAT_ICONS.contains(&"I_GOLDE"));
 
         let mut mobilization = mobilization();
@@ -3914,7 +3914,7 @@ mod tests {
     fn clicks_follow_cargo_menu_buttons_and_double_click() {
         let mut mobilization = mobilization();
 
-        // Клик по уже выбранной строке списка — `Select(1)` → `BuyUnit`.
+        // A click on the already selected list row — `Select(1)` → `BuyUnit`.
         assert_eq!(
             mobilization.handle_click(AVAILABLE_AREA.ulx + 4, AVAILABLE_AREA.uly + 4),
             CargoAction::None
@@ -3922,21 +3922,21 @@ mod tests {
         assert_eq!(mobilization.bought.len(), 1, "двойной клик покупает");
         assert_eq!(mobilization.credits, 126);
 
-        // Клик по строке купленного юнита: после `BuyUnit` она уже выбрана
-        // (`PushBack` → `Select`), поэтому повторный клик — продажа.
+        // A click on a purchased unit row: after `BuyUnit` it is already selected
+        // (`PushBack` → `Select`), so a repeated click — a sale.
         let bought_row = mobilization.free.len();
         let y = PURCHASED_AREA.uly + bought_row as i32 * LIST_ROW + 4;
         mobilization.handle_click(PURCHASED_AREA.ulx + 4, y);
         assert!(mobilization.bought.is_empty(), "повторный клик продаёт");
         assert_eq!(mobilization.credits, 150);
 
-        // Выбор строк бесплатной загрузки — информация следует за списком.
+        // Selecting the free loadout rows — the information follows the list.
         mobilization.handle_click(PURCHASED_AREA.ulx + 4, PURCHASED_AREA.uly + 4);
         assert_eq!(mobilization.info, Some(UnitType::Constructor));
         mobilization.handle_click(PURCHASED_AREA.ulx + 4, PURCHASED_AREA.uly + LIST_ROW + 4);
         assert_eq!(mobilization.info, Some(UnitType::Engineer));
 
-        // Кнопки Done/Cancel.
+        // Done/Cancel buttons.
         assert_eq!(
             mobilization.handle_click(DONE_BUTTON.ulx + 2, DONE_BUTTON.uly + 2),
             CargoAction::Done
@@ -3946,7 +3946,7 @@ mod tests {
             CargoAction::Cancel
         );
 
-        // Переключатель режима и стрелка апгрейда.
+        // Mode toggle and upgrade arrow.
         assert_eq!(
             mobilization.handle_click(TOGGLE_BUTTON.ulx + 2, TOGGLE_BUTTON.uly + 2),
             CargoAction::None
@@ -3957,7 +3957,7 @@ mod tests {
         mobilization.handle_click(right.ulx + 2, right.uly + 2);
         assert!(mobilization.credits < before, "правая стрелка — Increase");
 
-        // Клавиши.
+        // Keys.
         assert_eq!(mobilization.handle_key(Key::Enter), CargoAction::Done);
         assert_eq!(mobilization.handle_key(Key::Escape), CargoAction::Cancel);
         mobilization.handle_key(Key::Char('u'));

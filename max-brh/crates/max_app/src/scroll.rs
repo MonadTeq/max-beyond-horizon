@@ -1,45 +1,45 @@
-//! Скролл карты по краям экрана — порт C++ `GameManager_ProcessInput`
-//! (`game_manager.cpp:6351-6563`) и `GameManager_ScrollMainMapView`
+//! Map scrolling at the screen edges — a port of C++ `GameManager_ProcessInput`
+//! (`game_manager.cpp:6351-6563`) and `GameManager_ScrollMainMapView`
 //! (`:1652-1677`).
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * `window_manager.cpp:90-101` — двенадцать окон `WINDOW_SCROLL_*` (8 px по
-//!   краям кадра, 50×50 в углах). `GameManager_ProcessInput` выбирает **первое**
-//!   окно под мышью в порядке таблицы `windows[]`, поэтому прямоугольники
-//!   проверяются в том же порядке (углы раньше сторон, `End Turn`/`Files`/
-//!   `Preferences` — раньше скролла, они в таблице выше);
-//! * `GameManager_SetGridOffset` (`:6351`) — при `click_scroll=1` смещение
-//!   принимается, только пока зажата ЛКМ (или идёт мультивыделение
-//!   `RenderState == 2`); при `click_scroll=0` — по одному наведению;
-//! * `GameManager_ScrollMainMapView` (`:1652`) — накопление
-//!   `ScrollRate += GridStepLevel * ScrollRateLimit`, шаг — целая часть;
+//! * `window_manager.cpp:90-101` — twelve `WINDOW_SCROLL_*` windows (8 px at
+//!   the frame edges, 50×50 in the corners). `GameManager_ProcessInput` picks the **first**
+//!   window under the mouse in the order of the `windows[]` table, so the rectangles
+//!   are checked in the same order (corners before sides, `End Turn`/`Files`/
+//!   `Preferences` — before scrolling, they are higher in the table);
+//! * `GameManager_SetGridOffset` (`:6351`) — with `click_scroll=1` the offset is
+//!   accepted only while the LMB is held (or multi-selection
+//!   `RenderState == 2` is in progress); with `click_scroll=0` — on each hover;
+//! * `GameManager_ScrollMainMapView` (`:1652`) — accumulation of
+//!   `ScrollRate += GridStepLevel * ScrollRateLimit`, the step is the integer part;
 //!   `GridStepLevel = (MapScalingFactor * quick_scroll) / GFX_SCALE_DENOMINATOR`
-//!   (`:1711-1718`), что в **экранных** пикселях ровно `quick_scroll`
-//!   (перевод мир↔экран сокращается), поэтому здесь шаг — `quick_scroll` px;
-//! * `GameManager_UpdateScrollRateLimit` (`:1636`) — ограничитель `1.5` кадра на
-//!   случай подвисания.
+//!   (`:1711-1718`), which in **screen** pixels is exactly `quick_scroll`
+//!   (the world↔screen conversion cancels out), so here the step is `quick_scroll` px;
+//! * `GameManager_UpdateScrollRateLimit` (`:1636`) — a limit of `1.5` frames in
+//!   case of a hang.
 //!
-//! # Отличие ввода
+//! # Input difference
 //!
-//! Оконный слой Rust-клиента (`max_render::sdl_window::poll_input`) отдаёт
-//! только `MouseButtonDown`, без `MouseButtonUp`. Поэтому «зажатая ЛКМ»
-//! моделируется импульсом [`ScrollState::press`] длиной
-//! [`CLICK_HOLD_SECONDS`]: один клик по краю прокручивает карту на несколько
-//! кадров, а не до отпускания. При `click_scroll=1` это единственный способ
-//! скролла; при `click_scroll=0` работает чистое наведение, как в C++.
+//! The window layer of the Rust client (`max_render::sdl_window::poll_input`) provides
+//! only `MouseButtonDown`, without `MouseButtonUp`. Therefore "LMB held" is
+//! modeled by a [`ScrollState::press`] pulse of length
+//! [`CLICK_HOLD_SECONDS`]: a single click on an edge scrolls the map by several
+//! frames, not until release. With `click_scroll=1` this is the only way to
+//! scroll; with `click_scroll=0` pure hovering works, as in C++.
 
-/// Кадров в секунду, к которым привязан `GridStepLevel` оригинала
+/// Frames per second the original's `GridStepLevel` is tied to
 /// (`SVGA_DEFAULT_REFRESH_RATE = 30`, `svga.cpp:32`).
 pub const REFRESH_RATE: f32 = 30.0;
 
-/// Максимум `ScrollRateLimit` (`game_manager.cpp:1643`).
+/// Maximum `ScrollRateLimit` (`game_manager.cpp:1643`).
 pub const MAX_RATE_LIMIT: f32 = 1.5;
 
-/// Сколько «держится» ЛКМ после клика (см. отличие ввода в шапке модуля).
+/// How long the LMB "stays held" after a click (see the input difference in the module header).
 pub const CLICK_HOLD_SECONDS: f32 = 0.12;
 
-/// Одно из двенадцати окон прокрутки (`WINDOW_SCROLL_*`).
+/// One of the twelve scroll windows (`WINDOW_SCROLL_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollZone {
     /// `WINDOW_SCROLL_UP_WINDOW` — (50,0)…(590,8).
@@ -69,8 +69,8 @@ pub enum ScrollZone {
 }
 
 impl ScrollZone {
-    /// Все зоны в порядке таблицы `windows[]` (важно: пересечения углов и
-    /// сторон разрешаются первым совпадением, как в `GameManager_ProcessInput`).
+    /// All zones in the order of the `windows[]` table (important: intersections of corners and
+    /// sides are resolved by the first match, as in `GameManager_ProcessInput`).
     pub const ALL: [Self; 12] = [
         Self::Up,
         Self::UpRight,
@@ -86,7 +86,7 @@ impl ScrollZone {
         Self::UpLeft,
     ];
 
-    /// Прямоугольник окна в кадре 640×480 — **включающие** координаты C++
+    /// Window rectangle in the 640×480 frame — **inclusive** C++ coordinates
     /// `WINDOW_RECT(ulx, uly, lrx, lry)`.
     pub const fn rect(self) -> (i32, i32, i32, i32) {
         match self {
@@ -105,14 +105,14 @@ impl ScrollZone {
         }
     }
 
-    /// Точка внутри окна (включающие границы, как `WINDOW_RECT`).
+    /// Point inside the window (inclusive bounds, like `WINDOW_RECT`).
     pub fn contains(self, x: i32, y: i32) -> bool {
         let (ulx, uly, lrx, lry) = self.rect();
 
         x >= ulx && x <= lrx && y >= uly && y <= lry
     }
 
-    /// Направление прокрутки в клетках: `GameManager_SetGridOffset(±1, ±1)`.
+    /// Scroll direction in cells: `GameManager_SetGridOffset(±1, ±1)`.
     pub const fn direction(self) -> (i32, i32) {
         match self {
             Self::Up | Self::UpLeft | Self::RightUp => (0, -1),
@@ -127,18 +127,18 @@ impl ScrollZone {
     }
 }
 
-/// Зона прокрутки под точкой окна (`None` — точка не в полосе скролла).
+/// Scroll zone under the window point (`None` — the point is not in a scroll strip).
 ///
-/// Порядок — как обход `windows[]` в `GameManager_ProcessInput`: первое
-/// совпадение выигрывает, поэтому угловые окна перекрывают стороны ровно так
-/// же, как в C++ (`UpRight` раньше `RightUp` и т. д.).
+/// The order is like the `windows[]` traversal in `GameManager_ProcessInput`: the first
+/// match wins, so the corner windows overlap the sides exactly
+/// as in C++ (`UpRight` before `RightUp`, etc.).
 pub fn zone_at(x: i32, y: i32) -> Option<ScrollZone> {
     ScrollZone::ALL
         .into_iter()
         .find(|zone| zone.contains(x, y))
 }
 
-/// Состояние прокрутки: указатель, «зажатая» ЛКМ и накопитель шага.
+/// Scroll state: pointer, "held" LMB and the step accumulator.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScrollState {
     pointer: Option<(i32, i32)>,
@@ -148,35 +148,35 @@ pub struct ScrollState {
 }
 
 impl ScrollState {
-    /// Пустое состояние (мышь вне кадра, кнопка не нажата).
+    /// Empty state (mouse outside the frame, button not pressed).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Запоминает позицию указателя (`MouseMove`).
+    /// Remembers the pointer position (`MouseMove`).
     pub fn set_pointer(&mut self, x: i32, y: i32) {
         self.pointer = Some((x, y));
     }
 
-    /// Указатель покинул кадр (`MouseMove(-1,-1)` вне поля).
+    /// The pointer left the frame (`MouseMove(-1,-1)` outside the field).
     pub fn clear_pointer(&mut self) {
         self.pointer = None;
     }
 
-    /// Клик ЛКМ: начинает импульс «удержания» (`click_scroll`).
+    /// LMB click: starts the "hold" pulse (`click_scroll`).
     pub fn press(&mut self, x: i32, y: i32) {
         self.pointer = Some((x, y));
         self.hold = true;
         self.hold_left = CLICK_HOLD_SECONDS;
     }
 
-    /// Отпускание ЛКМ (если появится в оконном слое).
+    /// LMB release (if it appears in the window layer).
     pub fn release(&mut self) {
         self.hold = false;
         self.hold_left = 0.0;
     }
 
-    /// Считает импульс удержания (`dt` секунд).
+    /// Advances the hold pulse (`dt` seconds).
     pub fn tick(&mut self, dt: f32) {
         if self.hold {
             self.hold_left -= dt.max(0.0);
@@ -188,28 +188,28 @@ impl ScrollState {
         }
     }
 
-    /// ЛКМ считается зажатой (клик ещё «держится»).
+    /// The LMB is considered held (the click is still "held").
     pub fn is_held(&self) -> bool {
         self.hold
     }
 
-    /// Текущий указатель.
+    /// Current pointer.
     pub fn pointer(&self) -> Option<(i32, i32)> {
         self.pointer
     }
 
-    /// Зона под указателем.
+    /// Zone under the pointer.
     pub fn zone(&self) -> Option<ScrollZone> {
         self.pointer.and_then(|(x, y)| zone_at(x, y))
     }
 
-    /// Один шаг прокрутки: `Some((dx, dy))` в **экранных** пикселях.
+    /// One scrolling step: `Some((dx, dy))` in **screen** pixels.
     ///
-    /// `click_scroll` — настройка «Click to Scroll»: при `true` прокрутка идёт
-    /// только при зажатой ЛКМ, при `false` — по наведению. `quick_scroll` —
-    /// «Scroll Speed» (4…128). Шаг накапливается как
-    /// `GameManager_ScrollMainMapView`: дробная часть переносится на следующий
-    /// кадр, поэтому скорость не зависит от частоты кадров.
+    /// `click_scroll` — the "Click to Scroll" setting: with `true` scrolling happens
+    /// only while the LMB is held, with `false` — on hover. `quick_scroll` —
+    /// "Scroll Speed" (4…128). The step accumulates like
+    /// `GameManager_ScrollMainMapView`: the fractional part is carried over to the next
+    /// frame, so the speed does not depend on the frame rate.
     pub fn step(
         &mut self,
         dt: f32,
@@ -248,29 +248,29 @@ impl ScrollState {
         Some((dx * step, dy * step))
     }
 
-    /// Сбрасывает накопитель (смена зоны/остановка).
+    /// Resets the accumulator (zone change/stop).
     pub fn reset_rate(&mut self) {
         self.rate = 0.0;
     }
 }
 
-/// Прямоугольник полосы прокрутки в координатах `PixelRect` (для отрисовки/
-/// тестов): `(ulx, uly, width, height)`.
+/// Scroll strip rectangle in `PixelRect` coordinates (for drawing/
+/// tests): `(ulx, uly, width, height)`.
 pub fn zone_rect(zone: ScrollZone) -> (i32, i32, i32, i32) {
     let (ulx, uly, lrx, lry) = zone.rect();
 
     (ulx, uly, lrx - ulx + 1, lry - uly + 1)
 }
 
-/// Полоса прокрутки не должна перекрывать кликабельные кнопки панели: в C++
-/// `WINDOW_ENDTURN_BUTTON`/`FILES`/`PREFS` стоят в таблице раньше скролла,
-/// поэтому `GameManager_ProcessInput` отдаёт клик им. Проверка вынесена сюда,
-/// чтобы её использовал и клиент (`App`), и тесты.
+/// The scroll strip must not overlap the clickable panel buttons: in C++
+/// `WINDOW_ENDTURN_BUTTON`/`FILES`/`PREFS` are earlier in the table than scrolling,
+/// so `GameManager_ProcessInput` gives the click to them. The check is extracted here
+/// so that both the client (`App`) and the tests use it.
 pub fn panel_button_blocks(x: i32, y: i32) -> bool {
     crate::panels::panel_button_at(x, y).is_some()
 }
 
-/// Точка в полосе прокрутки с учётом приоритета кнопок панели.
+/// Point in the scroll strip taking the panel button priority into account.
 pub fn active_zone_at(x: i32, y: i32) -> Option<ScrollZone> {
     if panel_button_blocks(x, y) {
         return None;
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn zones_match_the_cpp_window_table() {
-        // Середины сторон и диагональные сектора.
+        // Side middles and diagonal sectors.
         assert_eq!(zone_at(300, 4), Some(ScrollZone::Up));
         assert_eq!(zone_at(600, 4), Some(ScrollZone::UpRight));
         assert_eq!(zone_at(636, 20), Some(ScrollZone::RightUp));
@@ -305,8 +305,8 @@ mod tests {
         assert_eq!(zone_at(300, 200), None);
         assert_eq!(zone_at(100, 100), None);
         assert_eq!(zone_at(300, 30), None);
-        // End Turn заходит на карту, но клик всё равно принадлежит кнопке
-        // (`WINDOW_ENDTURN_BUTTON` раньше `WINDOW_SCROLL_UP_WINDOW` в C++).
+        // End Turn extends onto the map, but the click still belongs to the button
+        // (`WINDOW_ENDTURN_BUTTON` before `WINDOW_SCROLL_UP_WINDOW` in C++).
         assert_eq!(zone_at(400, 4), Some(ScrollZone::Up));
         assert_eq!(active_zone_at(400, 4), None);
         assert_eq!(active_zone_at(300, 4), Some(ScrollZone::Up));
@@ -356,11 +356,11 @@ mod tests {
         let mut scroll = ScrollState::new();
         scroll.set_pointer(300, 4);
 
-        // «Scroll Speed» 1 при 60 Гц: 1 * (1/60 * 30) = 0.5 px за кадр —
-        // целого шага ещё нет, дробная часть переносится.
+        // "Scroll Speed" 1 at 60 Hz: 1 * (1/60 * 30) = 0.5 px per frame —
+        // no whole step yet, the fractional part is carried over.
         assert_eq!(scroll.step(1.0 / 60.0, false, 1), None);
 
-        // Ещё полкадра — накопился ровно 1 px.
+        // Another half-frame — exactly 1 px has accumulated.
         assert_eq!(scroll.step(1.0 / 60.0, false, 1), Some((0, -1)));
     }
 

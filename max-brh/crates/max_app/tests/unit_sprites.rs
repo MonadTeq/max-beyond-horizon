@@ -1,13 +1,13 @@
-//! Покрытие спрайтов юнитов: все 93 типа `SC_UNITS` на карте и в портрете.
+//! Unit sprite coverage: all 93 `SC_UNITS` types on the map and in the portrait.
 //!
-//! Проверяет то, чего не видно в обычных QA-кадрах: у каждого типа из
-//! `UNIT_SPRITES` есть непустой кадр корпуса (не маркер), башня рисуется
-//! ровно у типов с `TURRET_SPRITE`/`SPINNING_TURRET`, а полный кадр карты с
-//! юнитами всех 93 типов не падает и не оставляет маркеров, кроме
-//! задокументированного `MASTER`.
+//! Checks what is not visible in regular QA frames: each type from
+//! `UNIT_SPRITES` has a non-empty body frame (not a marker), a turret is drawn
+//! exactly for types with `TURRET_SPRITE`/`SPINNING_TURRET`, and a full map frame with
+//! units of all 93 types does not panic and leaves no markers except
+//! the documented `MASTER`.
 //!
-//! Тесты пропускаются, если данных игры (`max-original/`) рядом нет — как
-//! `assets_integration_smoke` в `tests/app.rs`.
+//! Tests are skipped if there is no game data (`max-original/`) nearby — like
+//! `assets_integration_smoke` in `tests/app.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -20,14 +20,14 @@ use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo, UnitPresentation};
 use max_render::buffer::RgbaBuffer;
 
-/// Путь внутри репозитория (`max-brh/crates/max_app/../../..`).
+/// Path inside the repository (`max-brh/crates/max_app/../../..`).
 fn repo_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .join(relative)
 }
 
-/// Ассеты игры; `None`, если данных рядом нет.
+/// Game assets; `None` if there is no data nearby.
 fn game_assets() -> Option<Assets> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
@@ -48,7 +48,7 @@ fn game_assets() -> Option<Assets> {
     Some(Assets::load(&config).expect("ассеты игры"))
 }
 
-/// Синтетический юнит типа `unit_type` с флагами из `SC_UNITS`.
+/// A synthetic unit of type `unit_type` with the flags from `SC_UNITS`.
 fn unit_of(unit_type: UnitType, index: usize) -> UnitInfo {
     let mut unit = UnitInfo::new(unit_type, TeamId::RED, UnitId(1));
     unit.flags = unit_type_flags(unit_type);
@@ -58,7 +58,7 @@ fn unit_of(unit_type: UnitType, index: usize) -> UnitInfo {
     unit
 }
 
-/// Презентация для синтетического юнита (Ф5.3/B): яркость 7, как раньше в
+/// Presentation for the synthetic unit (phase 5.3/B): brightness 7, as before in
 /// `UnitInfo::brightness`.
 fn presentation() -> UnitPresentation {
     let mut presentation = UnitPresentation::new();
@@ -70,8 +70,8 @@ fn has_turret(unit_type: UnitType) -> bool {
     unit_type_flags(unit_type) & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0
 }
 
-/// Для каждого из 93 типов (кроме `MASTER`) кадр отрисовки не пуст, а башня
-/// рисуется ровно там, где её объявляет `SC_UNITS`.
+/// For each of the 93 types (except `MASTER`) the render frame is non-empty, and the
+/// turret is drawn exactly where `SC_UNITS` declares it.
 #[test]
 fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
     let Some(assets) = game_assets() else {
@@ -87,8 +87,8 @@ fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
         let unit = unit_of(unit_type, index);
 
         for zoom in [32u32, 64, 128] {
-            // 512×512: самый большой кадр — 127×127 (`LRGTAPE`/`LRGSLAB`,
-            // `S_POWERS` 164×182 у тени), на zoom 128 это 364 px — с запасом.
+            // 512×512: the largest frame is 127×127 (`LRGTAPE`/`LRGSLAB`,
+            // `S_POWERS` 164×182 for the shadow), at zoom 128 that is 364 px — with a margin.
             let mut frame = RgbaBuffer::new(512, 512);
             let stats = draw_unit_sprites(
                 &assets,
@@ -128,8 +128,8 @@ fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
                 }
             }
 
-            // На пустом кадре должен появиться хотя бы один непрозрачный
-            // пиксель — иначе это «пустой» спрайт вместо маркера.
+            // On an empty frame at least one opaque pixel must appear —
+            // otherwise it is an "empty" sprite instead of a marker.
             let painted = frame
                 .pixels()
                 .chunks_exact(4)
@@ -165,14 +165,14 @@ fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
     );
 }
 
-/// Вспышка выстрела: кадры `firing_image_base` из `D_*` (и особая очередь
-/// `COMMANDO`/`INFANTRY`), пока `firing_recoil_frames > 0`.
+/// Shot flash: the `firing_image_base` frames from `D_*` (and the special
+/// `COMMANDO`/`INFANTRY` queue) while `firing_recoil_frames > 0`.
 ///
-/// Оракул: `UnitInfo::PrepareFire` (`unitinfo.cpp:4709-4747`) — тело
-/// `DrawSpriteFrame(unit_angle + firing_image_base)`, башня
-/// `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, у
-/// `ANTIAIR`/`SP_FLAK`/`FASTBOAT` — переключение `±8` каждый `ProgressFire`
-/// (`:4824-4833`); пехота — `104 + angle`, затем `+8` за тик.
+/// Oracle: `UnitInfo::PrepareFire` (`unitinfo.cpp:4709-4747`) — the body
+/// `DrawSpriteFrame(unit_angle + firing_image_base)`, the turret
+/// `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, for
+/// `ANTIAIR`/`SP_FLAK`/`FASTBOAT` — a `±8` toggle on each `ProgressFire`
+/// (`:4824-4833`); infantry — `104 + angle`, then `+8` per tick.
 #[test]
 fn firing_frames_come_from_the_d_star_firing_block() {
     use max_app::render::{
@@ -183,7 +183,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         return;
     };
 
-    // Танк: корпус не меняется, башня — `firing_image_base + turret_angle`.
+    // Tank: the body does not change, the turret — `firing_image_base + turret_angle`.
     let sprite = assets.sprite(UnitType::Tank).expect("TANK");
     let info = sprite.frame_info.expect("D_TANK");
     let mut tank = unit_of(UnitType::Tank, 0);
@@ -198,7 +198,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         "туррель: `DrawSpriteTurretFrame(turret_angle + firing_image_base)`"
     );
 
-    // Артиллерия (без башни): кадр корпуса `firing_image_base + angle`.
+    // Artillery (no turret): the body frame `firing_image_base + angle`.
     let sprite = assets.sprite(UnitType::AssaultGun).expect("ARTILLRY");
     let info = sprite.frame_info.expect("D_ARTILLRY");
     let mut artillery = unit_of(UnitType::AssaultGun, 0);
@@ -209,7 +209,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         Some(usize::from(info.firing_image_base) + 5)
     );
 
-    // ANTIAIR: 15 кадров отдачи; первый тик — кадр выстрела, далее ±8.
+    // ANTIAIR: 15 recoil frames; the first tick — the firing frame, then ±8.
     let sprite = assets.sprite(UnitType::AntiAir).expect("ANTIAIR");
     let info = sprite.frame_info.expect("D_ANTIAI");
     let mut aa = unit_of(UnitType::AntiAir, 0);
@@ -224,7 +224,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         );
     }
 
-    // SP_FLAK: 6 кадров; первый тик — выстрел, затем чередование с обычным.
+    // SP_FLAK: 6 frames; the first tick — firing, then alternating with the normal one.
     let sprite = assets.sprite(UnitType::MobileAntiAir).expect("SP_FLAK");
     let info = sprite.frame_info.expect("D_SP_FLAK");
     let mut flak = unit_of(UnitType::MobileAntiAir, 0);
@@ -239,7 +239,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         );
     }
 
-    // Пехота: `104 + angle`, затем +8 за каждый тик отдачи.
+    // Infantry: `104 + angle`, then +8 for each recoil tick.
     let sprite = assets.sprite(UnitType::Infantry).expect("INFANTRY");
     let info = sprite.frame_info.expect("D_INFANT");
     let mut infantry = unit_of(UnitType::Infantry, 0);
@@ -252,12 +252,12 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         );
     }
 
-    // После отдачи (`firing_recoil_frames == 0`) кадр обычный.
+    // After recoil (`firing_recoil_frames == 0`) the frame is normal.
     infantry.firing_recoil_frames = 0;
     assert!(!firing_frame_active(&infantry));
     assert_eq!(firing_body_frame_index(&info, &infantry, 0), None);
 
-    // Отрисовка: кадр выстрела отличается от обычного.
+    // Drawing: the firing frame differs from the normal one.
     let mut normal = unit_of(UnitType::AssaultGun, 0);
     normal.angle = 2;
     let mut firing = normal.clone();
@@ -291,8 +291,8 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     );
 }
 
-/// Полный кадр карты с юнитами всех 93 типов: 92 спрайта и 1 маркер
-/// (`MASTER`), без паники на любом типе.
+/// A full map frame with units of all 93 types: 92 sprites and 1 marker
+/// (`MASTER`), without panics on any type.
 #[test]
 fn map_render_loop_covers_all_93_unit_types() {
     let max_res = repo_path("max-original/MAX.RES");
@@ -306,12 +306,12 @@ fn map_render_loop_covers_all_93_unit_types() {
     let config = AppConfig::default()
         .with_data_dir(&repo_path("max-original"))
         .with_assets_dir(repo_path("assets"))
-        // 10×10 клеток при zoom 64 — ровно под 93 юнита в одном кадре.
+        // 10×10 cells at zoom 64 — exactly under 93 units in one frame.
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
 
-    // Плотный блок 10×10 в центре карты: все юниты попадают в кадр.
+    // A dense 10×10 block in the map center: all units get into the frame.
     let mut ids = Vec::with_capacity(UNIT_END as usize);
     for index in 0..UNIT_END as usize {
         let unit_type = UnitType::try_from(index as u16).expect("тип 0..92");
@@ -323,8 +323,8 @@ fn map_render_loop_covers_all_93_unit_types() {
         ids.push(id);
     }
 
-    // Мины/коммандос/подлодка в оригинале скрыты от всех команд
-    // (`InitStealthStatus`); для теста отрисовки делаем их видимыми.
+    // Mines/commandos/submarine are hidden from all teams in the original
+    // (`InitStealthStatus`); for the render test we make them visible.
     for id in &ids {
         if let Some(unit) = app.state_mut().unit_mut(*id) {
             unit.visible_to_team = [true; 5];
@@ -356,9 +356,9 @@ fn map_render_loop_covers_all_93_unit_types() {
     );
 }
 
-/// HUD-портрет берёт ту же запись `UNIT_SPRITES` и рисует непустой кадр для
-/// всех 93 типов (турели, флот, авиация, инженеры — в том числе те, которых не
-/// было в старой таблице из 43): `panels::draw_portrait` вызывает тот же
+/// The HUD portrait takes the same `UNIT_SPRITES` record and draws a non-empty frame for
+/// all 93 types (turrets, navy, aviation, engineers — including those that were not
+/// in the old table of 43): `panels::draw_portrait` calls the same
 /// `draw_unit_sprites`.
 #[test]
 fn hud_portrait_draws_every_unit_type() {
@@ -389,16 +389,16 @@ fn hud_portrait_draws_every_unit_type() {
     }
 }
 
-/// Кадр корпуса выбирается по переданному углу (`image_base + angle`): явный
-/// угол даёт ровно тот же кадр, что и `unit.angle`, а разные углы — разные
-/// кадры. Это контракт `App::visual_angle` → `draw_unit_sprites_with_angle`.
+/// The body frame is chosen by the passed angle (`image_base + angle`): an explicit
+/// angle gives exactly the same frame as `unit.angle`, and different angles — different
+/// frames. This is the contract `App::visual_angle` → `draw_unit_sprites_with_angle`.
 #[test]
 fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
     let Some(assets) = game_assets() else {
         return;
     };
 
-    // Scout — без башни: сравнивается только кадр корпуса.
+    // Scout — without a turret: only the body frame is compared.
     let mut unit = unit_of(UnitType::Scout, 0);
     unit.angle = 0;
 
@@ -426,8 +426,8 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
         "кадры 0 и 3 (восток) должны различаться"
     );
 
-    // Явный угол эквивалентен `unit.angle` — рендер карты и HUD используют
-    // один и тот же селектор кадра.
+    // The explicit angle is equivalent to `unit.angle` — the map renderer and HUD use
+    // the same frame selector.
     let mut turned = unit.clone();
     turned.angle = 3;
     let via_unit_angle = {
@@ -450,14 +450,14 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
 }
 
 // ---------------------------------------------------------------------------
-// Кадровые данные симуляции (`Unit::GetFrameInfo` → `image_index_max`)
+// Simulation frame data (`Unit::GetFrameInfo` → `image_index_max`)
 // ---------------------------------------------------------------------------
 
-/// Таблица `max_core::frames` — те же байты `D_*`, что читает C++
-/// (`Unit::FileLoad`, `unit.cpp:51-64`). Значения не подбирались: сверяем все
-/// загруженные типы с декодером реальных ресурсов. `MASTER` пропускается —
-/// у него в архивах нет спрайта корпуса (`D_MOBILE` читается отдельно и
-/// зафиксирован в `frames.rs`).
+/// The `max_core::frames` table — the same `D_*` bytes that C++ reads
+/// (`Unit::FileLoad`, `unit.cpp:51-64`). The values were not picked: we compare all
+/// loaded types with the real resource decoder. `MASTER` is skipped —
+/// it has no body sprite in the archives (`D_MOBILE` is read separately and
+/// fixed in `frames.rs`).
 #[test]
 fn frame_info_table_matches_game_data() {
     let Some(assets) = game_assets() else {

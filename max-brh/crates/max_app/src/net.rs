@@ -1,64 +1,64 @@
-//! Сетевой режим: Horizon (gRPC) → ENet-сессия → внутриигровое лобби → игра.
+//! Network mode: Horizon (gRPC) → ENet session → in-game lobby → game.
 //!
-//! Последовательность соответствует `max-brh-docs/protocol.md` §2/§7/§8:
+//! The sequence matches `max-brh-docs/protocol.md` §2/§7/§8:
 //!
-//! 1. [`connect_horizon`] — `Hello` + `JoinGame`; ответ [`GameJoined`] несёт
-//!    `host`/`port`/`ticket` UDP-сессии (`max-brh-docs/protocol-grpc.md` §4).
-//! 2. [`SessionConfig::from_joined`] + [`SessionHandle::start`] — ENet-подключение
-//!    и `TP 00`/`TP 03` (канал 0).
-//! 3. Внутриигровое лобби (канал 1): `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`
-//!    (§8.2). Эту часть выполняет [`run_lobby`].
-//! 4. Игровой цикл ([`run_network_with_sink`]): мир/seed/типы команд из
-//!    `LobbyGameSettings` (пакет 30), затем FSM хода
-//!    `00 → 53 → тики → 06 → 52 → 54 → 45 → finish_turn`
+//! 1. [`connect_horizon`] — `Hello` + `JoinGame`; the [`GameJoined`] response carries
+//!    the `host`/`port`/`ticket` of the UDP session (`max-brh-docs/protocol-grpc.md` §4).
+//! 2. [`SessionConfig::from_joined`] + [`SessionHandle::start`] — ENet connection
+//!    and `TP 00`/`TP 03` (channel 0).
+//! 3. In-game lobby (channel 1): `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`
+//!    (§8.2). [`run_lobby`] performs this part.
+//! 4. Game loop ([`run_network_with_sink`]): world/seed/team types from
+//!    `LobbyGameSettings` (packet 30), then the turn FSM
+//!    `00 → 53 → ticks → 06 → 52 → 54 → 45 → finish_turn`
 //!    (`max-brh-docs/barrier-flow.md` §3) → [`max_core::game::GameState::finish_turn`].
 //!
-//! # Барьеры
+//! # Barriers
 //!
-//! Сервер-арбитр не эхо-шлёт барьеры клиента: барьер завершён, когда **каждая
-//! удалённая команда** прислала счётчик, равный своему (`Remote_Wait*`,
-//! `remote.cpp`). Поэтому:
+//! The arbiter server does not echo the client's barriers: a barrier is complete when **each
+//! remote team** has sent a counter equal to its own (`Remote_Wait*`,
+//! `remote.cpp`). Therefore:
 //!
-//! * [`TurnBarrierFsm`] держит отдельные счётчики 00/52/54/45, все
-//!   pre-increment (первый отчёт — **1**, как `++Remote_FrameSyncCounter` в C++);
-//! * каждый барьер реально ожидается (`wait_barrier`) с повтором через 3 с и
-//!   таймаутом 30 с; после прохода счётчики/трекер очищаются;
-//! * повторы идут через [`SessionHandle::send_untracked`], чтобы сессионный
-//!   трекер не получал вторую запись на каждый ретрансмит
+//! * [`TurnBarrierFsm`] keeps separate counters 00/52/54/45, all
+//!   pre-increment (the first report is **1**, like `++Remote_FrameSyncCounter` in C++);
+//! * each barrier is actually awaited (`wait_barrier`) with a retry every 3 s and
+//!   a 30 s timeout; after passing, the counters/tracker are cleared;
+//! * retries go through [`SessionHandle::send_untracked`] so that the session
+//!   tracker does not get a second record for each retransmission
 //!   (`max-brh-docs/barrier-flow.md` §6.8);
-//! * входящий 54 применяется к [`max_core::game::GameState`]
-//!   (`max_core::events::apply_state_sync`), после 45-барьера CRC команды
-//!   сверяются с собственным (`Remote_TeamDataCrc16`).
+//! * the incoming 54 is applied to [`max_core::game::GameState`]
+//!   (`max_core::events::apply_state_sync`), after the 45 barrier the team CRCs
+//!   are compared with its own (`Remote_TeamDataCrc16`).
 //!
-//! # Реконнект
+//! # Reconnect
 //!
-//! `SessionEvent::Disconnected` запускает [`ReconnectPolicy`]: клиент заново
-//! делает ENet connect + `TP 00` тем же тикетом (с таймаутом и числом попыток
-//! из `--reconnect-attempts`/`--reconnect-timeout`), без повторного лобби.
-//! Локальное lockstep-состояние не сбрасывается: пока клиент был offline,
-//! пиры/сервер ждали его барьер. После `TP 00` [`TurnBarrierFsm::resume_state_sync`]
-//! публикует 54 своей команды (юниты+экономика, последний `sync_index`),
-//! встречные 54 пиров исправляют удалённые команды, затем доигрываются
-//! 52/54/45 и `finish_turn`; `reconnect_pending_state=false`.
+//! `SessionEvent::Disconnected` starts [`ReconnectPolicy`]: the client again
+//! does an ENet connect + `TP 00` with the same ticket (with the timeout and number of
+//! attempts from `--reconnect-attempts`/`--reconnect-timeout`), without a second lobby.
+//! The local lockstep state is not reset: while the client was offline,
+//! the peers/server waited for its barrier. After `TP 00` [`TurnBarrierFsm::resume_state_sync`]
+//! publishes its team's 54 (units+economy, the last `sync_index`),
+//! the peers' 54 correct the remote teams, then 52/54/45 and `finish_turn`
+//! are replayed; `reconnect_pending_state=false`.
 //!
-//! Пределы (`max-brh-docs/protocol.md` §9): SNAP-пакета нет, 54 покрывает только
-//! юнитов/экономику одной команды, пропущенные приказы других не
-//! replay-ятся, C++-пиры исключают команду через 30 с. Лобби-реконнект не
-//! поддерживается (сервер уже не в `Remote_GameState=1`).
+//! Limits (`max-brh-docs/protocol.md` §9): there is no SNAP packet, 54 covers only
+//! one team's units/economy, missed orders of other teams are not
+//! replayed, C++ peers exclude the team after 30 s. Lobby reconnect is not
+//! supported (the server is already not in `Remote_GameState=1`).
 //!
-//! # Ретрай первого подключения и `data_hash` (M-NET-доводки)
+//! # First-connection retry and `data_hash` (M-NET follow-ups)
 //!
-//! После `Create game` сессия headless поднимается 10–15 с, и первый
-//! `ENet connect` падает (`connect timed out after 10s`). [`open_network_session`]
-//! повторяет `SessionHandle::start` по [`JoinRetryPolicy`] (backoff
-//! 1,2,3,5,8,11 с, окно ~30 с), не возвращая игрока в список игр; прогресс
-//! уходит в [`FrameSink::join_status`] («Session warming up — attempt N/M»).
+//! After `Create game` the headless session takes 10–15 s to come up, and the first
+//! `ENet connect` fails (`connect timed out after 10s`). [`open_network_session`]
+//! repeats `SessionHandle::start` per [`JoinRetryPolicy`] (backoff
+//! 1,2,3,5,8,11 s, window ~30 s), without returning the player to the game list; progress
+//! goes to [`FrameSink::join_status`] ("Session warming up — attempt N/M").
 //!
-//! `data_hash` согласуется без `--handshake-patches`: [`handshake_data_hashes`]
-//! даёт полный хэш (`MAX.RES` + `PATCHES.RES`), затем хэш только `MAX.RES`;
-//! после `TP 03 reason=GameData` клиент один раз переподключается со вторым
-//! вариантом (тикет тот же — Horizon `JoinGame` не повторяется). Любой другой
-//! `TP 03` (`Version`, `SessionTicket`) fallback не запускает.
+//! `data_hash` is negotiated without `--handshake-patches`: [`handshake_data_hashes`]
+//! gives the full hash (`MAX.RES` + `PATCHES.RES`), then the `MAX.RES`-only hash;
+//! after `TP 03 reason=GameData` the client reconnects once with the second
+//! variant (same ticket — Horizon `JoinGame` is not repeated). Any other
+//! `TP 03` (`Version`, `SessionTicket`) does not start the fallback.
 
 use std::time::Duration;
 
@@ -84,40 +84,40 @@ use tokio::time::Instant;
 
 use crate::{App, AppConfig, AppDigest, NewGameConfig, WORLD_ASSETS};
 
-/// Сколько ждать одно событие сессии, прежде чем тикать симуляцию.
+/// How long to wait for one session event before ticking the simulation.
 pub const DEFAULT_EVENT_WAIT: Duration = Duration::from_millis(2);
-/// Пауза между тиками сетевого цикла (клиент не должен крутить CPU в 100 %).
+/// Pause between network loop ticks (the client must not spin the CPU at 100%).
 pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_millis(20);
-/// Сколько ждать полного лобби (28 → 34).
+/// How long to wait for a complete lobby (28 → 34).
 pub const DEFAULT_LOBBY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Параметры сетевого режима (`--connect`).
+/// Network mode parameters (`--connect`).
 #[derive(Debug, Clone)]
 pub struct NetworkOptions {
-    /// `game_id` из лобби Horizon (`--join`).
+    /// `game_id` from the Horizon lobby (`--join`).
     pub game_id: String,
-    /// Пароль игры (опционально).
+    /// Game password (optional).
     pub password: Option<String>,
-    /// Сколько ходов сыграть; `0` — до разрыва/остановки.
+    /// How many turns to play; `0` — until a disconnect/stop.
     pub max_turns: u32,
-    /// Таймаут лобби.
+    /// Lobby timeout.
     pub lobby_timeout: Duration,
-    /// Пауза между тиками.
+    /// Pause between ticks.
     pub tick_interval: Duration,
-    /// Ожидание события сессии за итерацию.
+    /// Session event wait per iteration.
     pub event_wait: Duration,
-    /// Политика переподключения при разрыве ENet-сессии.
+    /// Reconnect policy on ENet session disconnect.
     pub reconnect: ReconnectPolicy,
-    /// Политика ретрая **первого** подключения (Create game → Join → start):
-    /// сессия headless греется 10–15 с, и ENet connect в это окно падает.
+    /// Retry policy of the **first** connection (Create game → Join → start):
+    /// the headless session warms up for 10–15 s, and the ENet connect fails in this window.
     pub join_retry: JoinRetryPolicy,
-    /// Сколько ждать ввода игрока в фазе PLAY, прежде чем закрыть ход.
+    /// How long to wait for player input in the PLAY phase before closing the turn.
     ///
-    /// `Duration::ZERO` (по умолчанию) — headless-поведение: тик, кадр и сразу
-    /// `06 + 52`, ход не ждёт человека (так работают `--connect`, live-smoke и
-    /// тесты). `--turn-wait N` включает интерактивное окно: с SDL-окном цикл
-    /// крутит тики/кадры и держит ход открытым до нажатия **End Turn** или до
-    /// истечения `N` секунд.
+    /// `Duration::ZERO` (default) — headless behavior: tick, frame and immediately
+    /// `06 + 52`, the turn does not wait for a human (this is how `--connect`, live smoke and
+    /// tests work). `--turn-wait N` enables the interactive window: with an SDL window the loop
+    /// runs ticks/frames and keeps the turn open until **End Turn** is pressed or
+    /// `N` seconds expire.
     pub turn_wait: Duration,
 }
 
@@ -138,7 +138,7 @@ impl Default for NetworkOptions {
 }
 
 impl NetworkOptions {
-    /// Параметры для игры `game_id` и таймаутами по умолчанию.
+    /// Parameters for the game `game_id` with default timeouts.
     pub fn new(game_id: impl Into<String>) -> Self {
         Self {
             game_id: game_id.into(),
@@ -147,26 +147,26 @@ impl NetworkOptions {
     }
 }
 
-/// Сколько попыток переподключения делать по умолчанию.
+/// How many reconnect attempts to make by default.
 pub const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
-/// Таймаут одной попытки: ENet connect + `TP 00`.
+/// Timeout of one attempt: ENet connect + `TP 00`.
 pub const DEFAULT_RECONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Пауза между неудачными попытками.
+/// Pause between failed attempts.
 pub const DEFAULT_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 
-/// Политика переподключения после разрыва ENet-сессии.
+/// Reconnect policy after an ENet session disconnect.
 ///
-/// `attempts = 0` выключает автоматический реконнект. Транспорт
-/// восстанавливается через ENet connect + `TP 00`; игровое состояние
-/// продолжается с локальной точки lockstep и догоняется resume-54
-/// (`max-brh-docs/protocol.md` §9). SNAP/полного снимка по-прежнему нет.
+/// `attempts = 0` disables automatic reconnect. The transport is
+/// restored via an ENet connect + `TP 00`; the game state
+/// continues from the local lockstep point and catches up via resume-54
+/// (`max-brh-docs/protocol.md` §9). There is still no SNAP/full snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconnectPolicy {
-    /// Максимальное число попыток (`0` — не переподключаться).
+    /// Maximum number of attempts (`0` — do not reconnect).
     pub attempts: u32,
-    /// Таймаут одной попытки (ENet connect + `TP 00`).
+    /// Timeout of one attempt (ENet connect + `TP 00`).
     pub timeout: Duration,
-    /// Пауза между неудачными попытками.
+    /// Pause between failed attempts.
     pub backoff: Duration,
 }
 
@@ -180,19 +180,19 @@ impl Default for ReconnectPolicy {
     }
 }
 
-/// Сколько попыток первого подключения делать по умолчанию.
+/// How many first-connection attempts to make by default.
 ///
-/// Это **не** реконнект: после `Create game` сессия headless поднимается
-/// 10–15 с, и `ENet connect` до этого просто не отвечает
-/// (`connect timed out after 10s`). Ретрай делает Create → InSession
-/// самодостаточным, без «создать → подождать → Join из списка».
+/// This is **not** a reconnect: after `Create game` the headless session comes up in
+/// 10–15 s, and `ENet connect` simply does not answer before that
+/// (`connect timed out after 10s`). The retry makes Create → InSession
+/// self-sufficient, without "create → wait → Join from the list".
 pub const DEFAULT_JOIN_RETRY_ATTEMPTS: u32 = 6;
-/// Таймаут одной попытки первого подключения (ENet connect + `TP 00`).
+/// Timeout of one first-connection attempt (ENet connect + `TP 00`).
 pub const DEFAULT_JOIN_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
-/// Общее окно ретраев: новые попытки после него не начинаются.
+/// Total retry window: new attempts do not start after it.
 pub const DEFAULT_JOIN_RETRY_BUDGET: Duration = Duration::from_secs(30);
 
-/// Задержки перед повторными попытками: 1, 2, 3, 5, 8, 11 с (сумма 30 с).
+/// Delays before retries: 1, 2, 3, 5, 8, 11 s (sum 30 s).
 pub const JOIN_RETRY_BACKOFF: [Duration; 6] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -202,19 +202,19 @@ pub const JOIN_RETRY_BACKOFF: [Duration; 6] = [
     Duration::from_secs(11),
 ];
 
-/// Политика ретрая первого подключения к сессии (`Create game → Join → start`).
+/// Retry policy of the first connection to the session (`Create game → Join → start`).
 ///
-/// `attempts` — **всего** попыток (`0` трактуется как одна попытка без
-/// ретраев); `timeout` — таймаут одной попытки (`ENet connect + TP 00`);
-/// `budget` — окно, после которого новые попытки не начинаются (по умолчанию
-/// 30 с). Задержки между попытками — [`JOIN_RETRY_BACKOFF`].
+/// `attempts` — **total** attempts (`0` is treated as one attempt without
+/// retries); `timeout` — the timeout of one attempt (`ENet connect + TP 00`);
+/// `budget` — the window after which new attempts do not start (by default
+/// 30 s). Delays between attempts — [`JOIN_RETRY_BACKOFF`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JoinRetryPolicy {
-    /// Всего попыток подключения (`0` — одна, без ретраев).
+    /// Total connection attempts (`0` — one, without retries).
     pub attempts: u32,
-    /// Таймаут одной попытки (ENet connect + `TP 00`).
+    /// Timeout of one attempt (ENet connect + `TP 00`).
     pub timeout: Duration,
-    /// Общее окно ретраев; `Duration::ZERO` — без ограничения.
+    /// Total retry window; `Duration::ZERO` — no limit.
     pub budget: Duration,
 }
 
@@ -229,7 +229,7 @@ impl Default for JoinRetryPolicy {
 }
 
 impl JoinRetryPolicy {
-    /// Задержка перед следующей попыткой после `failures` неудач.
+    /// Delay before the next attempt after `failures` failures.
     pub fn backoff_after(failures: u32) -> Duration {
         if failures == 0 {
             return Duration::ZERO;
@@ -241,34 +241,34 @@ impl JoinRetryPolicy {
             .unwrap_or_else(|| *JOIN_RETRY_BACKOFF.last().expect("непустая таблица задержек"))
     }
 
-    /// Всего попыток с учётом `0` = «одна, без ретраев».
+    /// Total attempts, where `0` = "one, without retries".
     pub fn total_attempts(self) -> u32 {
         self.attempts.max(1)
     }
 }
 
-/// Прогресс первого подключения — для строки статуса UI и лога.
+/// First-connection progress — for the UI status line and the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinProgress {
-    /// Очередная попытка `attempt` из `total` (сессия греется).
+    /// The next attempt `attempt` out of `total` (the session is warming up).
     Attempt {
-        /// Номер попытки (1-based).
+        /// Attempt number (1-based).
         attempt: u32,
-        /// Всего попыток по политике.
+        /// Total attempts by the policy.
         total: u32,
     },
-    /// Сервер отверг `data_hash` (`TP 03`, reason `GameData`) — клиент
-    /// переподключается с fallback-хэшем (только `MAX.RES`).
+    /// The server rejected `data_hash` (`TP 03`, reason `GameData`) — the client
+    /// reconnects with the fallback hash (`MAX.RES` only).
     FallbackDataHash {
-        /// Номер варианта хэша (1-based), с которым сейчас подключаемся.
+        /// Hash variant number (1-based) currently being connected with.
         hash: u32,
-        /// Сколько вариантов всего.
+        /// How many variants in total.
         hashes: u32,
     },
 }
 
 impl JoinProgress {
-    /// Строка статуса для окна/меню (английский — как весь UI оригинала).
+    /// Status line for the window/menu (English — like the whole original UI).
     pub fn status_text(self) -> String {
         match self {
             Self::Attempt { attempt, total } => {
@@ -281,30 +281,30 @@ impl JoinProgress {
     }
 }
 
-/// Ошибка одной попытки подключения (Horizon JoinGame или ENet + `TP 00`).
+/// Error of one connection attempt (Horizon JoinGame or ENet + `TP 00`).
 #[derive(Debug, thiserror::Error)]
 pub enum JoinAttemptError {
-    /// Horizon `JoinGame` не ответил/ответил ошибкой.
+    /// Horizon `JoinGame` did not answer/answered with an error.
     #[error("Horizon JoinGame: {0}")]
     Horizon(String),
     /// ENet connect / `TP 00`.
     #[error(transparent)]
     Session(#[from] SessionError),
-    /// Внешний таймаут попытки ([`JoinRetryPolicy::timeout`]).
+    /// External attempt timeout ([`JoinRetryPolicy::timeout`]).
     #[error("join timed out after {0:?}")]
     Timeout(Duration),
 }
 
 impl JoinAttemptError {
-    /// Стоит ли повторять попытку: таймаут/транспорт — да, `TP 03` — нет.
+    /// Whether the attempt is worth retrying: timeout/transport — yes, `TP 03` — no.
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::Horizon(_) | Self::Timeout(_) => true,
             Self::Session(error) => match error {
-                // Версия/тикет/данные и битый TP 00 — ответ сервера, повтор
-                // ничего не изменит.
+                // Version/ticket/data and a broken TP 00 — a server response, retrying
+                // will change nothing.
                 SessionError::Handshake(_) | SessionError::Closed | SessionError::Wire(_) => false,
-                // Таймаут connect/handshake, разрыв, ENet, DNS — транспортные.
+                // Connect/handshake timeout, disconnect, ENet, DNS — transport.
                 SessionError::Timeout { .. }
                 | SessionError::Disconnected { .. }
                 | SessionError::Enet(_)
@@ -313,7 +313,7 @@ impl JoinAttemptError {
         }
     }
 
-    /// `TP 03` с `reason = GameData` (сервер ждёт другой `data_hash`).
+    /// `TP 03` with `reason = GameData` (the server expects a different `data_hash`).
     pub fn is_game_data_reject(&self) -> bool {
         matches!(
             self,
@@ -325,37 +325,37 @@ impl JoinAttemptError {
     }
 }
 
-/// Итог ретрая одного этапа подключения.
+/// Outcome of retrying one connection stage.
 enum JoinRetryOutcome<T> {
-    /// Подключение прошло на попытке `attempts`.
+    /// The connection succeeded on attempt `attempts`.
     Connected {
-        /// Результат коннектора.
+        /// Connector result.
         value: T,
-        /// Номер успешной попытки.
+        /// Number of the successful attempt.
         attempts: u32,
     },
-    /// Попытки кончились (ошибки были retryable).
+    /// The attempts ran out (the errors were retryable).
     Exhausted {
-        /// Последняя ошибка.
+        /// The last error.
         error: JoinAttemptError,
-        /// Сколько попыток сделано.
+        /// How many attempts were made.
         attempts: u32,
     },
-    /// Ошибка, которую повторять бессмысленно (`TP 03` и т.п.).
+    /// An error that is pointless to retry (`TP 03` etc.).
     Rejected {
-        /// Ошибка сервера.
+        /// Server error.
         error: JoinAttemptError,
-        /// Сколько попыток сделано.
+        /// How many attempts were made.
         attempts: u32,
     },
 }
 
-/// Выполняет попытки подключения с backoff и общим окном.
+/// Performs connection attempts with backoff and the total window.
 ///
-/// Функция не знает, что именно подключается: тесты передают мок-коннектор, а
-/// боевой код — Horizon `JoinGame` и [`SessionHandle::start`]. Каждая попытка
-/// ограничена [`JoinRetryPolicy::timeout`], паузы — [`JOIN_RETRY_BACKOFF`],
-/// новые попытки после [`JoinRetryPolicy::budget`] не начинаются.
+/// The function does not know what is being connected: tests pass a mock connector,
+/// production code — Horizon `JoinGame` and [`SessionHandle::start`]. Each attempt
+/// is bounded by [`JoinRetryPolicy::timeout`], pauses — [`JOIN_RETRY_BACKOFF`],
+/// new attempts do not start after [`JoinRetryPolicy::budget`].
 async fn retry_join<T, F, Fut>(
     policy: JoinRetryPolicy,
     mut notify: impl FnMut(JoinProgress),
@@ -419,18 +419,18 @@ where
     }
 }
 
-/// Варианты `data_hash` для хендшейка — в порядке попыток.
+/// `data_hash` variants for the handshake — in attempt order.
 ///
-/// Явный `--handshake-patches` — ровно один вариант (поведение до M-NET-
-/// доводок). Без него:
+/// Explicit `--handshake-patches` — exactly one variant (the behavior before
+/// M-NET follow-ups). Without it:
 ///
-/// 1. полный хэш `SHA256(MAX.RES) ‖ SHA256(PATCHES.RES)` (assets-путь);
-/// 2. только `SHA256(MAX.RES)` — сервер, чей `game_data` не содержит
-///    `PATCHES.RES`, ждёт 64-символьный `data_hash`
-///    (`DataHash::from_files`: отсутствующий файл = пустая часть).
+/// 1. full hash `SHA256(MAX.RES) ‖ SHA256(PATCHES.RES)` (assets path);
+/// 2. only `SHA256(MAX.RES)` — a server whose `game_data` has no
+///    `PATCHES.RES` expects a 64-character `data_hash`
+///    (`DataHash::from_files`: a missing file = an empty part).
 ///
-/// Второй вариант добавляется только если локальный `PATCHES.RES`
-/// существует и хэши действительно различаются.
+/// The second variant is added only if a local `PATCHES.RES`
+/// exists and the hashes really differ.
 pub fn handshake_data_hashes(config: &AppConfig) -> Result<Vec<DataHash>> {
     let patches = config.handshake_patches_path().to_path_buf();
     let full = DataHash::from_files(&config.max_res, &patches).with_context(|| {
@@ -452,12 +452,12 @@ pub fn handshake_data_hashes(config: &AppConfig) -> Result<Vec<DataHash>> {
     Ok(hashes)
 }
 
-/// Подключается к сессии, перебирая варианты `data_hash` после `TP 03`.
+/// Connects to the session, iterating `data_hash` variants after `TP 03`.
 ///
-/// Логика: [`retry_join`] по каждому варианту. Отказ `GameData` — повод взять
-/// следующий вариант (тикет тот же, повторный `JoinGame` не нужен); любой
-/// другой отказ (`Version`, `SessionTicket`, `Unknown`) — сразу ошибка, как и
-/// исчерпание ретраев.
+/// Logic: [`retry_join`] for each variant. A `GameData` refusal is a reason to take
+/// the next variant (the ticket is the same, a repeated `JoinGame` is not needed); any
+/// other refusal (`Version`, `SessionTicket`, `Unknown`) — an immediate error, as is
+/// exhaustion of the retries.
 async fn start_with_hash_fallback<T, F, Fut>(
     base_config: &SessionConfig,
     hashes: &[DataHash],
@@ -512,10 +512,10 @@ where
     })))
 }
 
-/// Ретрай `Horizon JoinGame`: сервер мог ещё не зарегистрировать игру.
+/// Retry of `Horizon JoinGame`: the server may not have registered the game yet.
 ///
-/// Прогресс в окно не идёт (JoinGame — gRPC, а не «прогрев ENet»): строка
-/// `Session warming up — attempt N/M` описывает попытки `SessionHandle::start`.
+/// Progress does not go to the window (JoinGame is gRPC, not "warming up ENet"): the line
+/// `Session warming up — attempt N/M` describes `SessionHandle::start` attempts.
 async fn join_horizon_with_retry(
     config: &AppConfig,
     options: &NetworkOptions,
@@ -549,7 +549,7 @@ async fn join_horizon_with_retry(
     }
 }
 
-/// Ошибка первого подключения с подсказкой про `--handshake-patches`.
+/// First-connection error with a hint about `--handshake-patches`.
 fn join_failure(error: JoinAttemptError, tried_hashes: usize) -> anyhow::Error {
     if error.is_game_data_reject() && tried_hashes > 1 {
         anyhow!(
@@ -567,7 +567,7 @@ fn join_failure(error: JoinAttemptError, tried_hashes: usize) -> anyhow::Error {
     }
 }
 
-/// Сообщает прогресс подключения в лог и в окно (если есть [`FrameSink`]).
+/// Reports connection progress to the log and to the window (if there is a [`FrameSink`]).
 fn report_join_progress(sink: &mut Option<&mut dyn FrameSink>, progress: JoinProgress) {
     match progress {
         JoinProgress::Attempt { attempt, total } => {
@@ -586,7 +586,7 @@ fn report_join_progress(sink: &mut Option<&mut dyn FrameSink>, progress: JoinPro
     }
 }
 
-/// Открывает сессию: Horizon `JoinGame` + ENet/TP00, с ретраем и fallback.
+/// Opens the session: Horizon `JoinGame` + ENet/TP00, with retry and fallback.
 async fn open_network_session(
     config: &AppConfig,
     options: &NetworkOptions,
@@ -612,8 +612,8 @@ async fn open_network_session(
             .await
             .map_err(|error| join_failure(error, hashes.len()))?;
 
-    // Реконнект (`--reconnect-*`) должен повторять хэндшейк тем же хэшем,
-    // которым сервер принял клиента.
+    // Reconnect (`--reconnect-*`) must repeat the handshake with the same hash
+    // the server accepted the client with.
     let mut session_config = base_config;
     session_config.data_hash = hash;
 
@@ -621,10 +621,10 @@ async fn open_network_session(
 }
 
 
-/// Учёт попыток переподключения — чистая логика без сети.
+/// Reconnect attempt accounting — pure logic without the network.
 ///
-/// Отделяет «сколько и как долго пытаться» от [`SessionHandle::start`], чтобы
-/// retry-политику можно было покрыть тестами с мок-коннектором.
+/// Separates "how many and how long to try" from [`SessionHandle::start`] so that
+/// the retry policy can be covered by tests with a mock connector.
 #[derive(Debug, Clone)]
 pub struct ReconnectTracker {
     policy: ReconnectPolicy,
@@ -633,7 +633,7 @@ pub struct ReconnectTracker {
 }
 
 impl ReconnectTracker {
-    /// Новый трекер (до разрыва — `attempts == 0`).
+    /// A new tracker (before a disconnect — `attempts == 0`).
     pub fn new(policy: ReconnectPolicy) -> Self {
         Self {
             policy,
@@ -642,35 +642,35 @@ impl ReconnectTracker {
         }
     }
 
-    /// Политика, с которой создан трекер.
+    /// The policy the tracker was created with.
     pub fn policy(&self) -> ReconnectPolicy {
         self.policy
     }
 
-    /// Сколько попыток уже сделано.
+    /// How many attempts have already been made.
     pub fn attempts(&self) -> u32 {
         self.attempts
     }
 
-    /// Сколько попыток ещё осталось.
+    /// How many attempts are left.
     pub fn remaining(&self) -> u32 {
         self.policy.attempts.saturating_sub(self.attempts)
     }
 
-    /// Текст последней ошибки (для итогового репорта).
+    /// Text of the last error (for the final report).
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
 
-    /// Начинает раунд после [`SessionEvent::Disconnected`].
+    /// Starts a round after [`SessionEvent::Disconnected`].
     ///
-    /// Сбрасывает счётчик прошлого раунда и последнюю ошибку.
+    /// Resets the previous round's counter and the last error.
     pub fn note_disconnect(&mut self) {
         self.attempts = 0;
         self.last_error = None;
     }
 
-    /// Номер следующей попытки или `None`, когда попытки исчерпаны/выключены.
+    /// Number of the next attempt or `None` when the attempts are exhausted/disabled.
     pub fn next_attempt(&mut self) -> Option<u32> {
         if self.attempts >= self.policy.attempts {
             return None;
@@ -679,35 +679,35 @@ impl ReconnectTracker {
         Some(self.attempts)
     }
 
-    /// Запоминает причину неудачи текущей попытки.
+    /// Records the failure reason of the current attempt.
     pub fn record_failure(&mut self, error: impl std::fmt::Display) {
         self.last_error = Some(error.to_string());
     }
 }
 
-/// Итог попытки переподключения.
+/// Outcome of a reconnect attempt.
 pub enum ReconnectOutcome<T> {
-    /// Транспорт восстановлен (новая сессия в `value`).
+    /// The transport was restored (a new session in `value`).
     Restored {
-        /// Новая ENet-сессия (для трекера — `()`).
+        /// A new ENet session (for the tracker — `()`).
         value: T,
-        /// Номер успешной попытки.
+        /// Number of the successful attempt.
         attempts: u32,
     },
-    /// Все попытки неудачны; `attempts` — сколько сделано.
+    /// All attempts failed; `attempts` — how many were made.
     Exhausted {
-        /// Число сделанных попыток.
+        /// Number of attempts made.
         attempts: u32,
     },
     /// `ReconnectPolicy::attempts == 0`.
     Disabled,
 }
 
-/// Выполняет попытки переподключения через произвольный `connect`.
+/// Performs reconnect attempts through an arbitrary `connect`.
 ///
-/// Функция не знает про сеть: тесты передают мок-коннектор, боевой код —
-/// [`SessionHandle::start`]. Каждая попытка ограничена
-/// [`ReconnectPolicy::timeout`], между неудачами — [`ReconnectPolicy::backoff`].
+/// The function knows nothing about the network: tests pass a mock connector, production
+/// code — [`SessionHandle::start`]. Each attempt is bounded by
+/// [`ReconnectPolicy::timeout`], between failures — [`ReconnectPolicy::backoff`].
 async fn reconnect_with<T, F, Fut>(
     tracker: &mut ReconnectTracker,
     mut connect: F,
@@ -781,10 +781,10 @@ where
     }
 }
 
-/// Переподключает существующую сессию: ENet connect + `TP 00` заново.
+/// Reconnects an existing session: ENet connect + `TP 00` again.
 ///
-/// При успехе заменяет `handle` новой сессией. Состояние игры не сбрасывается;
-/// [`pump_events`] после возврата публикует resume-54 и продолжает барьеры
+/// On success it replaces `handle` with a new session. The game state is not reset;
+/// [`pump_events`] after returning publishes resume-54 and continues the barriers
 /// (`max-brh-docs/protocol.md` §9).
 async fn reconnect_session(
     handle: &mut SessionHandle,
@@ -813,70 +813,70 @@ async fn reconnect_session(
     }
 }
 
-/// Приёмник кадров сетевого цикла.
+/// Frame sink of the network loop.
 ///
-/// Библиотека не знает про SDL: бинарник под feature `sdl` передаёт сюда
-/// обёртку над [`max_render::SdlWindow`], тесты — счётчик кадров. `false`
-/// означает «закрыть окно» и корректно завершить сессию.
+/// The library knows nothing about SDL: the binary behind the `sdl` feature passes
+/// a wrapper over [`max_render::SdlWindow`], tests — a frame counter. `false`
+/// means "close the window" and finish the session correctly.
 ///
-/// Кадр получает `&mut App`, потому что интерактивный клиент (`--ui`) здесь же
-/// обрабатывает мышь: выделение юнита и приказы живут в
-/// [`crate::hud::HudState`] (вне `GameState`), а собранные пакеты `38`/`08`/`18`
-/// забирает и отправляет [`flush_hud_orders`].
+/// The frame gets `&mut App` because the interactive client (`--ui`) handles the mouse
+/// right here: unit selection and orders live in
+/// [`crate::hud::HudState`] (outside `GameState`), and the assembled packets `38`/`08`/`18`
+/// are taken and sent by [`flush_hud_orders`].
 pub trait FrameSink {
-    /// Показать кадр текущего состояния; `false` — выйти из цикла.
+    /// Show a frame of the current state; `false` — exit the loop.
     fn frame(&mut self, app: &mut App) -> bool;
 
-    /// Статус первого подключения (ретрай/fallback `data_hash`).
+    /// First-connection status (retry/fallback `data_hash`).
     ///
-    /// Вызывается до первого кадра партии, пока `SessionHandle::start`
-    /// повторяется. `false` означает «закрыть окно»; по умолчанию — no-op,
-    /// поэтому headless-смоук и тестовые приёмники ничего не меняют.
+    /// Called before the first match frame, while `SessionHandle::start`
+    /// is repeated. `false` means "close the window"; by default — no-op,
+    /// so the headless smoke and test sinks change nothing.
     fn join_status(&mut self, _message: &str) -> bool {
         true
     }
 }
 
-/// Результат сетевого прогона (`--connect`).
+/// Result of the network run (`--connect`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkReport {
-    /// `game_id` сессии.
+    /// Session `game_id`.
     pub game_id: String,
-    /// `TP 00` прошёл.
+    /// `TP 00` passed.
     pub handshake: bool,
-    /// Лобби дошло до пакета 34.
+    /// The lobby reached packet 34.
     pub lobby_complete: bool,
-    /// Локальная команда (слот из [`AppConfig::team_slot`]).
+    /// Local team (slot from [`AppConfig::team_slot`]).
     pub local_team: TeamId,
-    /// Сколько тиков симуляции прокручено.
+    /// How many simulation ticks were run.
     pub ticks: u64,
-    /// Сколько команд применено.
+    /// How many commands were applied.
     pub commands_applied: u64,
-    /// Сколько ходов закрыто барьером 52.
+    /// How many turns were closed by barrier 52.
     pub turns_finished: u32,
-    /// Сколько раз барьер не дождался пиров.
+    /// How many times the barrier did not wait for the peers.
     pub barrier_timeouts: u32,
-    /// Сколько раз транспорт восстанавливался после разрыва.
+    /// How many times the transport was restored after a disconnect.
     pub reconnects: u32,
-    /// Сколько попыток переподключения сделано суммарно.
+    /// How many reconnect attempts were made in total.
     pub reconnect_attempts: u32,
-    /// Транспорт восстановлен, но продолжить партию не удалось (например,
-    /// исчерпаны попытки/реконнект выключен). `false` после успешного
-    /// resume-54 — прогон продолжился.
+    /// The transport was restored, but the match could not be continued (e.g.
+    /// attempts exhausted/reconnect disabled). `false` after a successful
+    /// resume-54 — the run continued.
     pub reconnect_pending_state: bool,
-    /// `data_hash`, с которым сервер принял клиента (hex; 64 символа — сервер
-    /// без `PATCHES.RES`, 128 — полный).
+    /// `data_hash` the server accepted the client with (hex; 64 characters — a server
+    /// without `PATCHES.RES`, 128 — full).
     pub data_hash: String,
-    /// Сколько попыток первого подключения (`Create game → Join → start`)
-    /// понадобилось; `1` — сессия уже была готова.
+    /// How many first-connection attempts (`Create game → Join → start`)
+    /// were needed; `1` — the session was already ready.
     pub join_attempts: u32,
-    /// Дайджест итогового состояния.
+    /// Digest of the final state.
     pub digest: AppDigest,
 }
 
-/// Подключается к Horizon и входит в игру (`Hello` → `JoinGame`).
+/// Connects to Horizon and joins the game (`Hello` → `JoinGame`).
 ///
-/// Возвращает [`GameJoined`]: адрес UDP-сессии, тикет и `game_id`.
+/// Returns [`GameJoined`]: the UDP session address, ticket and `game_id`.
 pub async fn connect_horizon(
     config: &AppConfig,
     game_id: &str,
@@ -911,22 +911,22 @@ pub async fn connect_horizon(
     Ok(joined)
 }
 
-/// Внутриигровое лобби (§8.2): возвращает идентификаторы нод и настройки.
+/// In-game lobby (§8.2): returns node identifiers and settings.
 #[derive(Debug, Clone, Default)]
 struct LobbyInfo {
     handshake: bool,
     player_node: u16,
     host_node: u16,
-    /// `Welcome.team_nodes` — какие ноды заняли слоты команд.
+    /// `Welcome.team_nodes` — which nodes took the team slots.
     team_nodes: [u16; 4],
     settings: Option<LobbyGameSettings>,
 }
 
-/// Проходит лобби `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`.
+/// Runs the lobby `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`.
 ///
-/// Пока лобби не завершено, приходящие игровые команды (например, 13 seed,
-/// который сервер шлёт сразу после старта) уже применяются к [`App`] в порядке
-/// получения.
+/// While the lobby is not finished, incoming game commands (e.g. 13 seed,
+/// which the server sends right after the start) are already applied to [`App`] in the
+/// order of receipt.
 async fn run_lobby(
     app: &mut App,
     handle: &mut SessionHandle,
@@ -986,7 +986,7 @@ async fn run_lobby(
 
                     let team_slot = config.team_slot.min(3);
                     let team_name = format!("{}#{team_slot}", config.player_name);
-                    // Свой слот известен локально: `Welcome` приходит до нашего 35.
+                    // The own slot is known locally: `Welcome` arrives before our 35.
                     if info.player_node > 4 {
                         info.team_nodes[team_slot as usize] = info.player_node;
                     }
@@ -1023,7 +1023,7 @@ async fn run_lobby(
                     team_slot,
                     ..
                 } => {
-                    // Если сервер релеит чужие 35 — обновляем карту слотов.
+                    // If the server relays foreign 35s — we update the slot map.
                     let slot = team_slot as usize;
                     if slot < info.team_nodes.len() {
                         info.team_nodes[slot] = player_node;
@@ -1082,38 +1082,38 @@ async fn run_lobby(
     }
 }
 
-/// Сетевой прогон без окна: [`run_network_with_sink`] с `sink = None`.
+/// Network run without a window: [`run_network_with_sink`] with `sink = None`.
 pub async fn run_network(app: &mut App, options: &NetworkOptions) -> Result<NetworkReport> {
     run_network_with_sink(app, options, None).await
 }
 
-/// Полный сетевой режим: Horizon → ENet → лобби → игровой цикл.
+/// Full network mode: Horizon → ENet → lobby → game loop.
 ///
-/// `sink` получает кадр после каждого хода (SDL-окно в бинарнике). Если
-/// [`FrameSink::frame`] вернул `false`, цикл завершается и сессия закрывается
-/// штатно.
+/// `sink` gets a frame after each turn (an SDL window in the binary). If
+/// [`FrameSink::frame`] returned `false`, the loop ends and the session closes
+/// cleanly.
 pub async fn run_network_with_sink(
     app: &mut App,
     options: &NetworkOptions,
     mut sink: Option<&mut dyn FrameSink>,
 ) -> Result<NetworkReport> {
     let config = app.config().clone();
-    // Хэндшейк считает PATCHES.RES по своему пути: серверный `game_data` может
-    // не содержать файла, и тогда его часть хэша пуста. Ассеты грузятся
-    // отдельно (`App::init_assets` → `assets::resolve_patches_res`), поэтому
-    // несуществующий `--handshake-patches` не оставляет игру без карты.
+    // The handshake counts PATCHES.RES at its own path: the server's `game_data` may
+    // not contain the file, and then its hash part is empty. Assets are loaded
+    // separately (`App::init_assets` → `assets::resolve_patches_res`), so
+    // a nonexistent `--handshake-patches` does not leave the game without a map.
     //
-    // Без явного `--handshake-patches` пробуем два варианта (полный → только
-    // MAX.RES): так Create game работает против сервера без PATCHES.RES без
-    // обходного флага.
+    // Without an explicit `--handshake-patches` we try two variants (full → MAX.RES
+    // only): this way Create game works against a server without PATCHES.RES without
+    // a workaround flag.
     let hashes = handshake_data_hashes(&config)?;
     let (joined, session_config, mut handle, data_hash, join_attempts) =
         open_network_session(&config, options, &hashes, &mut sink).await?;
 
     let lobby = run_lobby(app, &mut handle, &session_config, &config, options).await?;
 
-    // Локальная команда: слот, который в `Welcome.team_nodes` занят нашей нодой
-    // (обычно `--team`), иначе — запрошенный слот.
+    // Local team: the slot occupied by our node in `Welcome.team_nodes`
+    // (usually `--team`), otherwise — the requested slot.
     let local_team = lobby
         .team_nodes
         .iter()
@@ -1169,18 +1169,18 @@ pub async fn run_network_with_sink(
     })
 }
 
-/// Инициализирует мир, seed и типы команд из `LobbyGameSettings` (пакет 30).
+/// Initializes the world, seed and team types from `LobbyGameSettings` (packet 30).
 ///
-/// Порт той части `GameManager_InitGame`/`Remote_SetupPlayers`, без которой
-/// CRC-барьер 45 сравнивает пустую карту с серверной и «честно» показывает
-/// десинк:
+/// A port of the part of `GameManager_InitGame`/`Remote_SetupPlayers` without which
+/// the CRC barrier 45 compares an empty map with the server's and "honestly" shows
+/// a desync:
 ///
-/// * `team_nodes[team] > 4` → своя нода = [`TeamKind::Player`], чужая =
-///   [`TeamKind::Remote`], незанятый слот = [`TeamKind::None`]
+/// * `team_nodes[team] > 4` → own node = [`TeamKind::Player`], foreign =
+///   [`TeamKind::Remote`], unoccupied slot = [`TeamKind::None`]
 ///   (`Remote_SetupPlayers`, `remote.cpp:672-734`);
-/// * `world`/`seed`/уровни ресурсов и `ini_*` — из настроек лобби; карта
-///   генерируется `setup::generate_map` (детерминированно, как на сервере);
-/// * `ini_play_mode` решает, нужен ли 00-барьер каждый ход.
+/// * `world`/`seed`/resource levels and `ini_*` — from the lobby settings; the map
+///   is generated by `setup::generate_map` (deterministically, as on the server);
+/// * `ini_play_mode` decides whether the 00 barrier is needed every turn.
 fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     let Some(settings) = lobby.settings.as_ref() else {
         return;
@@ -1195,9 +1195,9 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     let level =
         |raw: i32| ResourceLevel::new(raw.clamp(0, 2) as u8).unwrap_or(ResourceLevel::NORMAL);
 
-    // Команды, пришедшие в лобби (12 — снабжение миссии), относятся к «старому»
-    // состоянию; после генерации мира их нужно вернуть, иначе позиции команд
-    // потеряются. Точка старта из 12 (если уже пришла) идёт в генерацию.
+    // Commands that arrived in the lobby (12 — mission supplies) belong to the "old"
+    // state; after the world generation they must be returned, otherwise the team positions
+    // would be lost. The starting point from 12 (if it has already arrived) goes into the generation.
     let supplies = app.state().mission_supplies.clone();
 
     let teams = (0..PLAYER_TEAM_COUNT)
@@ -1222,8 +1222,8 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
         clans: [max_core::enums::TeamClan::Random; PLAYER_TEAM_COUNT],
         player_team: local_team,
         start_gold: settings.ini_start_gold.max(0) as u32,
-        // Сетевая игра стартует без фаз мобилизации/высадки — точки приходят
-        // из пакета 30 (`supplies`), состав — стандартный.
+        // A network game starts without mobilization/landing phases — the points come
+        // from packet 30 (`supplies`), the composition is standard.
         deployments: Vec::new(),
     };
 
@@ -1277,11 +1277,11 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     );
 }
 
-/// `Remote_SetupPlayers` (`remote.cpp:705-729`): тип команды по её ноде.
+/// `Remote_SetupPlayers` (`remote.cpp:705-729`): the team type by its node.
 ///
-/// `team_nodes[team] > 4` — слот занят клиентом; своя нода → `Player`, чужая →
-/// `Remote`. Незанятый слот остаётся `None` (AI-команды сервера клиент не
-/// симулирует и в барьерах не ждёт).
+/// `team_nodes[team] > 4` — the slot is occupied by a client; own node → `Player`, foreign →
+/// `Remote`. An unoccupied slot stays `None` (the client does not simulate the server's
+/// AI teams and does not wait for them in the barriers).
 fn team_kinds_from_nodes(player_node: u16, team_nodes: &[u16; 4]) -> [TeamKind; PLAYER_TEAM_COUNT] {
     std::array::from_fn(|team| {
         let node = team_nodes.get(team).copied().unwrap_or(0);
@@ -1297,7 +1297,7 @@ fn team_kinds_from_nodes(player_node: u16, team_nodes: &[u16; 4]) -> [TeamKind; 
     })
 }
 
-/// Планета из настроек лобби: `ini_world_index`, иначе имя `.WRL`-ресурса.
+/// Planet from the lobby settings: `ini_world_index`, otherwise the `.WRL` resource name.
 fn planet_from_settings(settings: &LobbyGameSettings) -> Option<Planet> {
     if let Ok(index) = u8::try_from(settings.ini_world_index) {
         if let Ok(planet) = Planet::try_from(index) {
@@ -1317,7 +1317,7 @@ fn planet_from_settings(settings: &LobbyGameSettings) -> Option<Planet> {
         .and_then(|index| Planet::try_from(index as u8).ok())
 }
 
-/// Стартовая клетка команды по умолчанию (до пакета 12 с точной позицией).
+/// Default starting cell of a team (until packet 12 with the exact position).
 fn default_team_start(team: usize) -> Point {
     const STARTS: [(i16, i16); 4] = [(20, 20), (90, 20), (20, 90), (90, 90)];
     let (x, y) = STARTS[team % STARTS.len()];
@@ -1328,34 +1328,34 @@ fn default_team_start(team: usize) -> Point {
 struct GameLoopStats {
     turns_finished: u32,
     barrier_timeouts: u32,
-    /// Разрывов ENet-сессии за прогон.
+    /// ENet session disconnects per run.
     disconnects: u32,
-    /// Сделанных попыток переподключения.
+    /// Reconnect attempts made.
     reconnect_attempts: u32,
-    /// Успешных восстановлений транспорта и продолжений партии.
+    /// Successful transport restorations and match continuations.
     reconnects: u32,
-    /// Транспорт восстановлен, но состояние партии не удалось восстановить
-    /// (сейчас `false` после успешного resume-54; поле оставлено для отчёта).
+    /// The transport was restored, but the match state could not be restored
+    /// (currently `false` after a successful resume-54; the field is kept for the report).
     reconnect_pending_state: bool,
 }
 
-/// Повтор барьера (`REMOTE_PING_TIME_PERIOD`).
+/// Barrier repeat (`REMOTE_PING_TIME_PERIOD`).
 const BARRIER_RETRY: Duration = DEFAULT_BARRIER_REPEAT;
-/// Таймаут ожидания пиров (`REMOTE_RESPONSE_TIMEOUT`).
+/// Peer wait timeout (`REMOTE_RESPONSE_TIMEOUT`).
 const BARRIER_TIMEOUT: Duration = DEFAULT_BARRIER_TIMEOUT;
 
-/// Фаза барьерного FSM текущего хода (`max-brh-docs/barrier-flow.md` §3).
+/// Barrier FSM phase of the current turn (`max-brh-docs/barrier-flow.md` §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BarrierPhase {
-    /// 00 — вход в раунд.
+    /// 00 — entering the round.
     Begin,
-    /// 53 — итоги баз на начало хода.
+    /// 53 — base totals at the start of the turn.
     Play,
-    /// 52 — конец хода.
+    /// 52 — end of the turn.
     End,
-    /// 54 — синхронизация состояния команды.
+    /// 54 — team state sync.
     Sync,
-    /// 45 — CRC-барьер.
+    /// 45 — CRC barrier.
     Crc,
 }
 
@@ -1371,30 +1371,30 @@ impl BarrierPhase {
     }
 }
 
-/// Клиентский FSM барьеров хода: `00 → 53 → 06 → 52 → 54 → 45`.
+/// Client barrier FSM of a turn: `00 → 53 → 06 → 52 → 54 → 45`.
 ///
-/// Счётчики — отдельные (`Remote_FrameSyncCounter`, `Remote_TurnIndices`,
-/// `Remote_StateSyncIndex`, `Remote_NextTurnIndices`), все pre-increment: первый
-/// отчёт равен **1**. `GameManager_TurnCounter` в C++ стартует с 1, а
-/// `GameState::turn_counter` — с 0, поэтому 53 несёт `turn_counter + 1`.
+/// The counters are separate (`Remote_FrameSyncCounter`, `Remote_TurnIndices`,
+/// `Remote_StateSyncIndex`, `Remote_NextTurnIndices`), all pre-increment: the first
+/// report is **1**. `GameManager_TurnCounter` in C++ starts at 1, while
+/// `GameState::turn_counter` — at 0, so 53 carries `turn_counter + 1`.
 #[derive(Debug)]
 struct TurnBarrierFsm {
     local_team: TeamId,
-    /// В `SimultaneousMoves` 00-барьер нужен каждый ход, в `TurnBased` — один
-    /// раз на старте (`game_manager.cpp:496`).
+    /// In `SimultaneousMoves` the 00 barrier is needed every turn, in `TurnBased` — once
+    /// at the start (`game_manager.cpp:496`).
     simultaneous: bool,
     phase: BarrierPhase,
     begin_counter: u8,
     end_counter: u8,
     sync_index: u8,
     crc_index: u8,
-    /// `GameManager_TurnCounter` для 53 (1-based).
+    /// `GameManager_TurnCounter` for 53 (1-based).
     complex_turn: i32,
-    /// Какой `turn` последней 53 прислала каждая команда.
+    /// Which `turn` the last 53 came with for each team.
     received_complex: [Option<i32>; PLAYER_TEAM_COUNT],
-    /// CRC собственного мира в текущем 45-раунде.
+    /// Own world CRC in the current 45 round.
     crc_checksum: u16,
-    /// 06 отправлен один раз за ход.
+    /// 06 sent once per turn.
     local_finished_sent: bool,
 }
 
@@ -1415,12 +1415,12 @@ impl TurnBarrierFsm {
         }
     }
 
-    /// C++-номер текущего хода (`GameManager_TurnCounter`, с 1).
+    /// C++ turn number (1-based `GameManager_TurnCounter`).
     fn cxx_turn(state: &GameState) -> i32 {
         state.turn_counter + 1
     }
 
-    /// Команды-пиры: те, чьи барьеры нужно ждать (`TEAM_TYPE_REMOTE`).
+    /// Peer teams: those whose barriers must be awaited (`TEAM_TYPE_REMOTE`).
     fn remote_teams<'a>(&'a self, state: &'a GameState) -> impl Iterator<Item = usize> + 'a {
         (0..PLAYER_TEAM_COUNT).filter(move |&team| state.teams[team].team_type == TeamKind::Remote)
     }
@@ -1444,7 +1444,7 @@ impl TurnBarrierFsm {
             .all(|team| state.frame_sync_counter[team] == self.begin_counter)
     }
 
-    /// `Remote_WaitComplexTotals`: 53 своей команды за текущий ход.
+    /// `Remote_WaitComplexTotals`: own team's 53 for the current turn.
     fn complex(&mut self, state: &GameState) -> Vec<Packet> {
         self.complex_turn = Self::cxx_turn(state);
         self.phase = BarrierPhase::Play;
@@ -1456,7 +1456,7 @@ impl TurnBarrierFsm {
         )]
     }
 
-    /// Запоминает входящую 53 (вызывается для всех команд, включая свою).
+    /// Remembers an incoming 53 (called for all teams, including own).
     fn note_complex(&mut self, team: TeamId, turn: i32) {
         if let Some(slot) = self.received_complex.get_mut(team.0 as usize) {
             *slot = Some(turn);
@@ -1505,15 +1505,15 @@ impl TurnBarrierFsm {
             .all(|team| state.state_sync_indices[team] == self.sync_index)
     }
 
-    /// Состояние своей команды для восстановления после реконнекта.
+    /// Own team state for restoration after a reconnect.
     ///
-    /// Пакет 54 — единственный «снимок» в протоколе (`max-brh-docs/protocol.md` §8.5,
-    /// §9): он несёт юнитов, золото, исследования и счётчики id одной
-    /// команды. После разрыва клиент повторно публикует **своё** состояние с
-    /// последним завершённым `sync_index`: сервер и пиры применяют его как
-    /// авторитетное (`Remote_ReceiveNetPacket_54`), а встречные 54 пиров
-    /// корректируют удалённые команды у нас. Полной карты/SNAP в протоколе
-    /// нет — см. §9 protocol.md о пределах.
+    /// Packet 54 is the only "snapshot" in the protocol (`max-brh-docs/protocol.md` §8.5,
+    /// §9): it carries the units, gold, research and id counters of one
+    /// team. After a disconnect the client re-publishes **its own** state with
+    /// the last completed `sync_index`: the server and peers apply it as
+    /// authoritative (`Remote_ReceiveNetPacket_54`), while the peers' 54
+    /// correct the remote teams on our side. There is no full map/SNAP in the
+    /// protocol — see §9 of protocol.md about the limits.
     fn resume_state_sync(&self, state: &GameState) -> Vec<Packet> {
         state_sync_for(state, self.local_team, self.sync_index)
             .into_iter()
@@ -1538,13 +1538,13 @@ impl TurnBarrierFsm {
             .all(|team| state.next_turn_indices[team] == self.crc_index)
     }
 
-    /// Сверка CRC после 45-барьера: у всех пиров тот же `crc16`.
+    /// CRC comparison after the 45 barrier: all peers have the same `crc16`.
     fn crc_matches(&self, state: &GameState) -> bool {
         self.remote_teams(state)
             .all(|team| state.team_data_crc16[team] == self.crc_checksum)
     }
 
-    /// Текущая фаза завершена (все пиры прислали ожидаемое значение).
+    /// The current phase is complete (all peers sent the expected value).
     fn reached(&self, state: &GameState) -> bool {
         match self.phase {
             BarrierPhase::Begin => self.begin_reached(state),
@@ -1563,8 +1563,8 @@ impl TurnBarrierFsm {
         self.local_finished_sent
     }
 
-    /// Ход закрыт (`GameManager_TeamTurnFinish`): сброс локального флага,
-    /// следующий 00 — только в `SimultaneousMoves`.
+    /// The turn is closed (`GameManager_TeamTurnFinish`): reset the local flag,
+    /// the next 00 — only in `SimultaneousMoves`.
     fn on_turn_finished(&mut self) {
         self.local_finished_sent = false;
         self.phase = if self.simultaneous {
@@ -1575,19 +1575,19 @@ impl TurnBarrierFsm {
     }
 }
 
-/// Исход ожидания барьера.
+/// Outcome of waiting for a barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WaitOutcome {
-    /// Барьер собран.
+    /// The barrier is complete.
     Reached,
-    /// Сессия завершилась.
+    /// The session ended.
     Stopped,
 }
 
-/// Отложенная отправка барьера: повтор каждые 3 с, лог таймаута через 30 с.
+/// Deferred barrier send: retry every 3 s, timeout log after 30 s.
 ///
-/// В отличие от [`max_net::BarrierTracker`] запись **не** исчезает после
-/// таймаута: C++ продолжает пинговать отстающую команду, Rust логирует и ждёт
+/// Unlike [`max_net::BarrierTracker`], the record does **not** disappear after
+/// the timeout: C++ keeps pinging the lagging team, Rust logs and waits
 /// (`max-brh-docs/barrier-flow.md` §3).
 struct BarrierPending {
     packets: Vec<Packet>,
@@ -1627,7 +1627,7 @@ enum BarrierPoll {
     TimedOut,
 }
 
-/// Вычерпывает события сессии; `false` — сессия/цикл завершены.
+/// Drains session events; `false` — the session/loop is finished.
 async fn pump_events(
     app: &mut App,
     handle: &mut SessionHandle,
@@ -1638,9 +1638,9 @@ async fn pump_events(
 ) -> Result<bool> {
     loop {
         match handle.next_event_timeout(options.event_wait).await {
-            // Разрыв не завершает прогон молча: сначала автоматический
-            // ENet connect + TP 00 по ReconnectPolicy, затем resume-54 и
-            // продолжение барьеров.
+            // A disconnect does not end the run silently: first an automatic
+            // ENet connect + TP 00 per ReconnectPolicy, then resume-54 and
+            // continuation of the barriers.
             Ok(Some(SessionEvent::Disconnected)) => {
                 stats.disconnects = stats.disconnects.saturating_add(1);
                 tracing::warn!("reconnect: сервер разорвал ENet-сессию");
@@ -1652,12 +1652,12 @@ async fn pump_events(
                         stats.reconnects = stats.reconnects.saturating_add(1);
                         stats.reconnect_pending_state = false;
 
-                        // Состояние не сбрасываем: lockstep-барьеры не дают
-                        // партии уйти вперёд без нашей команды, поэтому
-                        // локальный turn/units — точка продолжения. Свой 54
-                        // публикуем заново (сервер и пиры применяют состояние
-                        // владельца), встречные 54 исправят удалённые команды
-                        // на ближайшем SYNC; 53/52/45 догоняются повторами.
+                        // We do not reset the state: lockstep barriers prevent
+                        // the match from moving ahead without our team, so
+                        // the local turn/units are the continuation point. We re-publish
+                        // our 54 (the server and peers apply the owner's state),
+                        // the peers' 54 will correct the remote teams
+                        // at the nearest SYNC; 53/52/45 are caught up by repeats.
                         let packets = fsm.resume_state_sync(app.state());
                         send_barrier(handle, &packets)
                             .await
@@ -1687,10 +1687,10 @@ async fn pump_events(
                         return Ok(false);
                     }
                 }
-                // Продолжаем вычерпывать события уже из новой сессии; барьер
-                // в wait_barrier повторит свой пакет, как только истечёт
-                // трёхсекундный интервал (для него время идёт с прошлой
-                // отправки).
+                // We continue draining events from the new session already; the barrier
+                // in wait_barrier will repeat its packet as soon as the
+                // three-second interval expires (for it, time runs from the last
+                // send).
             }
             Ok(Some(event)) => {
                 if !handle_session_event(app, event, stats, fsm)? {
@@ -1704,8 +1704,8 @@ async fn pump_events(
     }
 }
 
-/// Отправляет пакеты барьера без регистрации в трекере сессии (повторы делает
-/// [`BarrierPending`], поэтому двойного трекинга нет).
+/// Sends barrier packets without registering in the session tracker (the retries are done by
+/// [`BarrierPending`], so there is no double tracking).
 async fn send_barrier(handle: &SessionHandle, packets: &[Packet]) -> Result<()> {
     for packet in packets {
         handle
@@ -1716,16 +1716,16 @@ async fn send_barrier(handle: &SessionHandle, packets: &[Packet]) -> Result<()> 
     Ok(())
 }
 
-/// Отправляет приказы/чат, собранные вводом HUD (M4.3/M4.4), в сессию.
+/// Sends the orders/chat collected by HUD input (M4.3/M4.4) into the session.
 ///
-/// Порядок как в C++: сначала локальное применение (`Remote_ReceiveNetPacket_*`
-/// для собственной команды), затем multicast — `Packet::Command` через
-/// [`SessionHandle::send`]. Пакеты 38/08/18 барьерами не являются, поэтому
-/// трекер повторов сессии их не регистрирует (там только 00/45/52).
+/// The order is as in C++: first the local application (`Remote_ReceiveNetPacket_*`
+/// for the own team), then multicast — `Packet::Command` via
+/// [`SessionHandle::send`]. Packets 38/08/18 are not barriers, so the
+/// session retry tracker does not register them (it has only 00/45/52).
 ///
-/// Источник — [`crate::hud::HudState::pending`]: их собирает
-/// [`crate::ui::handle_session_input`] из кликов (38 — движение с путём,
-/// 08 — атака) и из строки ввода чата (18 — `Command::Chat`).
+/// Source — [`crate::hud::HudState::pending`]: they are collected by
+/// [`crate::ui::handle_session_input`] from clicks (38 — movement with a path,
+/// 08 — attack) and from the chat input line (18 — `Command::Chat`).
 async fn flush_hud_orders(app: &mut App, handle: &SessionHandle) -> Result<()> {
     for command in app.take_outgoing_orders() {
         let kind = format!("{:?}", command.kind());
@@ -1741,7 +1741,7 @@ async fn flush_hud_orders(app: &mut App, handle: &SessionHandle) -> Result<()> {
     Ok(())
 }
 
-/// Покадровый барьер 01 (real-time pacing, §8.6).
+/// Per-frame barrier 01 (real-time pacing, §8.6).
 async fn send_frame_barrier(
     app: &mut App,
     handle: &SessionHandle,
@@ -1760,11 +1760,11 @@ async fn send_frame_barrier(
         .context("отправка барьера 01")
 }
 
-/// Ждёт, пока все пиры пришлют значения текущего барьера.
+/// Waits until all peers send the values of the current barrier.
 ///
-/// Пока ждёт: вычерпывает события (применяя команды/54), повторяет пакеты
-/// барьера через [`SessionHandle::send_untracked`] раз в 3 с, шлёт 01 и по
-/// истечении 30 с логирует таймаут (но продолжает ждать, как Rust-клиент в
+/// While waiting: drains events (applying commands/54), repeats the barrier
+/// packets via [`SessionHandle::send_untracked`] every 3 s, sends 01 and after
+/// 30 s logs the timeout (but keeps waiting, like the Rust client in
 /// `max-brh-docs/barrier-flow.md` §3).
 async fn wait_barrier(
     app: &mut App,
@@ -1813,7 +1813,7 @@ async fn wait_barrier(
     }
 }
 
-/// Игровой цикл lockstep-клиента по FSM `max-brh-docs/barrier-flow.md` §3.
+/// Game loop of the lockstep client per the FSM `max-brh-docs/barrier-flow.md` §3.
 async fn run_game_loop(
     app: &mut App,
     handle: &mut SessionHandle,
@@ -1835,7 +1835,7 @@ async fn run_game_loop(
             .count()
     );
 
-    // BEGIN (00): загрузка партии и каждый ход в SimultaneousMoves.
+    // BEGIN (00): loading the match and every turn in SimultaneousMoves.
     let packets = fsm.begin(app.state_mut());
     send_barrier(handle, &packets).await?;
     if wait_barrier(
@@ -1858,7 +1858,7 @@ async fn run_game_loop(
     tracing::info!("барьер 00 (начало хода) пройден");
 
     loop {
-        // PLAY (53): итоги баз на начало хода, затем один тик и 06.
+        // PLAY (53): base totals at the start of the turn, then one tick and 06.
         let packets = fsm.complex(app.state());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
@@ -1880,11 +1880,11 @@ async fn run_game_loop(
         handle.clear_barriers().await?;
         tracing::debug!("барьер 53 (итоги баз) пройден: turn={}", fsm.complex_turn);
 
-        // Тики хода. Headless (без окна или без `--turn-wait`) — один тик и
-        // сразу 06: ход закрывается, как только разобрана очередь команд.
-        // С окном и `--turn-wait N` — интерактивное окно: крутим тики и кадры,
-        // пока игрок не нажмёт End Turn (или не истечёт N секунд), иначе
-        // человек не успевает ничего сделать — ход длится один кадр.
+        // Turn ticks. Headless (no window or no `--turn-wait`) — one tick and
+        // immediately 06: the turn closes as soon as the command queue is drained.
+        // With a window and `--turn-wait N` — an interactive window: we run ticks and frames
+        // until the player presses End Turn (or N seconds expire), otherwise
+        // the human has no time to do anything — the turn lasts one frame.
         let interactive = sink.is_some() && !options.turn_wait.is_zero();
         let play_deadline = Instant::now() + options.turn_wait;
 
@@ -1902,8 +1902,8 @@ async fn run_game_loop(
                 }
             }
 
-            // Приказы, собранные вводом в этом кадре (38 — движение, 08 — атака):
-            // локальное применение + multicast в сессию (M4.3).
+            // Orders collected by input in this frame (38 — movement, 08 — attack):
+            // local application + multicast into the session (M4.3).
             flush_hud_orders(app, handle).await?;
 
             let end_requested = app.hud_mut().take_end_turn_request();
@@ -1920,7 +1920,7 @@ async fn run_game_loop(
             tokio::time::sleep(options.tick_interval).await;
         }
 
-        // 06 — ровно один раз за ход, когда локальная команда закончила.
+        // 06 — exactly once per turn, when the local team has finished.
         if !fsm.local_finished_sent() {
             let finish = Command::FinishedTurn(Packet06FinishedTurn { team: local_team });
             app.apply(finish.clone());
@@ -1953,7 +1953,7 @@ async fn run_game_loop(
         handle.clear_barriers().await?;
         tracing::debug!("барьер 52 (конец хода) пройден");
 
-        // SYNC (54): авторитетное состояние своей команды.
+        // SYNC (54): the authoritative state of the own team.
         let packets = fsm.sync(app.state());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
@@ -1975,7 +1975,7 @@ async fn run_game_loop(
         handle.clear_barriers().await?;
         tracing::debug!("барьер 54 (состояние команды) пройден");
 
-        // CRC (45): свой CRC после 54-коррекции, затем сверка с пирами.
+        // CRC (45): the own CRC after the 54 correction, then the comparison with the peers.
         let packets = fsm.crc(app.state_mut());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
@@ -2010,7 +2010,7 @@ async fn run_game_loop(
             );
         }
 
-        // finish_turn: 52 закрыт, все пиры переходят на следующий ход.
+        // finish_turn: 52 is closed, all peers move to the next turn.
         if app.state().game_state != GameStateType::EndTurn {
             app.state_mut().game_state = GameStateType::EndTurn;
         }
@@ -2033,7 +2033,7 @@ async fn run_game_loop(
             break;
         }
 
-        // 00 следующего хода — только в SimultaneousMoves.
+        // 00 of the next turn — only in SimultaneousMoves.
         if fsm.simultaneous {
             let packets = fsm.begin(app.state_mut());
             send_barrier(handle, &packets).await?;
@@ -2063,7 +2063,7 @@ async fn run_game_loop(
     Ok(stats)
 }
 
-/// Обрабатывает одно событие сессии; `false` — сессия завершена.
+/// Handles one session event; `false` — the session has ended.
 fn handle_session_event(
     app: &mut App,
     event: SessionEvent,
@@ -2072,30 +2072,30 @@ fn handle_session_event(
 ) -> Result<bool> {
     match event {
         SessionEvent::Packet(Packet::Command(command)) => {
-            // Пакет 13 — `Remote_RngSeed`. Мир уже сгенерирован с этим seed из
-            // настроек 30 (`initialize_game`), а `GameManager_PopulateMapWithResources`
-            // в C++ пере-сидирует ГПСЧ и продолжает поток. Повторное
-            // `Randomizer_SetSeed` посреди партии сбросило бы поток и разошлось
-            // бы с симуляцией сервера.
+            // Packet 13 — `Remote_RngSeed`. The world is already generated with this seed from
+            // the settings 30 (`initialize_game`), and `GameManager_PopulateMapWithResources`
+            // in C++ re-seeds the RNG and continues the stream. A repeated
+            // `Randomizer_SetSeed` in the middle of a match would reset the stream and diverge
+            // from the server simulation.
             if matches!(command, Command::Seed(_)) {
                 tracing::debug!("13: seed уже применён при инициализации мира");
                 return Ok(true);
             }
 
-            // 53 — не только применение итогов баз, но и факт для барьера.
+            // 53 — not only applying the base totals but also a fact for the barrier.
             if let Command::ComplexSummary(summary) = &command {
                 fsm.note_complex(summary.team, summary.turn);
             }
-            // 18 — чат: `apply_command` пишет в `GameState::chat_log`, но
-            // игрок видит журнал HUD, поэтому дублируем строку туда же в
-            // формате C++ (`Remote_ReceiveNetPacket_18`: `<team>: <text>`).
+            // 18 — chat: `apply_command` writes to `GameState::chat_log`, but
+            // the player sees the HUD log, so we duplicate the line there too in
+            // the C++ format (`Remote_ReceiveNetPacket_18`: `<team>: <text>`).
             if let Command::Chat(chat) = &command {
                 let line = crate::hud::chat_line(chat.sender, &chat.message);
                 app.hud_mut().push_log(line);
             }
-            // 00 — команда ВСЕГДА из поля `team` payload'а, а не из
-            // ENet-отправителя: релейная копия приходит от сервера, у которого
-            // своей команды нет (`max-brh-docs/barrier-flow.md` §1, `remote.cpp:2313`).
+            // 00 — the team is ALWAYS taken from the payload `team` field, not from the
+            // ENet sender: the relay copy comes from the server, which has
+            // no team of its own (`max-brh-docs/barrier-flow.md` §1, `remote.cpp:2313`).
             if let Command::TurnBarrier(barrier) = &command {
                 tracing::debug!(
                     "00: команда {} счётчик {} (team из payload)",
@@ -2106,9 +2106,9 @@ fn handle_session_event(
             app.apply(command);
         }
         SessionEvent::Packet(Packet::StateSync(sync)) => {
-            // Порт `Remote_ReceiveNetPacket_54`: применяем авторитетное
-            // состояние команды, иначе миры расходятся и CRC-барьер честно
-            // покажет десинк.
+            // A port of `Remote_ReceiveNetPacket_54`: we apply the authoritative
+            // team state, otherwise the worlds diverge and the CRC barrier honestly
+            // shows a desync.
             let packet = sync.to_core();
             let outcome = apply_state_sync(app.state_mut(), &packet);
             tracing::debug!(
@@ -2162,7 +2162,7 @@ fn handle_session_event(
     Ok(true)
 }
 
-/// Диагностический текст для `TicketKind` (короткий, для логов).
+/// Diagnostic text for `TicketKind` (short, for logs).
 trait TicketKindShort {
     fn kind_short(&self) -> String;
 }
@@ -2184,7 +2184,7 @@ mod tests {
     use max_core::input::{Packet18Chat, Packet45CrcBarrier};
     use max_core::team::TeamUnits;
 
-    /// Синтетический мир: local RED (Player), пиры GREEN/BLUE (Remote).
+    /// Synthetic world: local RED (Player), peers GREEN/BLUE (Remote).
     fn synthetic_state(local: TeamId, remotes: &[TeamId]) -> GameState {
         let mut state = GameState::new();
         for team in 0..PLAYER_TEAM_COUNT {
@@ -2218,7 +2218,7 @@ mod tests {
         assert_eq!(begin.len(), 1);
         assert_eq!(barrier_counter(&begin[0]), 1, "первый 00 = 1");
         assert_eq!(state.frame_sync_counter[local.0 as usize], 1);
-        // Собственный счётчик ещё не согласован с пирами.
+        // The own counter is not yet agreed with the peers.
         assert!(!fsm.begin_reached(&state));
         state.frame_sync_counter[TeamId::GREEN.0 as usize] = 1;
         assert!(!fsm.begin_reached(&state), "нужны все пиры");
@@ -2289,7 +2289,7 @@ mod tests {
         fsm.note_complex(TeamId::GREEN, 1);
         assert!(fsm.reached(&state));
 
-        // 06 — локальный конец хода (ровно один раз).
+        // 06 — local end of the turn (exactly once).
         fsm.mark_local_finished();
         assert!(fsm.local_finished_sent());
 
@@ -2316,7 +2316,7 @@ mod tests {
         assert!(fsm.reached(&state));
         assert!(fsm.crc_matches(&state));
 
-        // finish_turn → следующий ход начинается с чистого 06.
+        // finish_turn → the next turn starts with a clean 06.
         fsm.on_turn_finished();
         assert!(!fsm.local_finished_sent());
     }
@@ -2336,7 +2336,7 @@ mod tests {
         assert_eq!(fsm.sync_index, 1);
         assert_eq!(fsm.crc_index, 1);
 
-        // Следующий ход: у каждого счётчика свой pre-increment (2).
+        // Next turn: each counter has its own pre-increment (2).
         fsm.on_turn_finished();
         let begin = fsm.begin(&mut state);
         assert_eq!(barrier_counter(&begin[0]), 2);
@@ -2350,7 +2350,7 @@ mod tests {
         let crc = fsm.crc(&mut state);
         assert_eq!(barrier_counter(&crc[0]), 2);
 
-        // 52 и 45 — разные массивы C++, а не общий счётчик.
+        // 52 and 45 are different C++ arrays, not a shared counter.
         assert_eq!(state.turn_indices[local.0 as usize], 2);
         assert_eq!(state.next_turn_indices[local.0 as usize], 2);
         assert_eq!(state.frame_sync_counter[local.0 as usize], 2);
@@ -2374,7 +2374,7 @@ mod tests {
         fsm.note_complex(TeamId::BLUE, 1);
         assert!(fsm.complex_reached(&state));
 
-        // 53 за прошлый ход не закрывает новый.
+        // 53 of the previous turn does not close the new one.
         state.turn_counter = 1;
         let packet = fsm.complex(&state);
         assert!(matches!(
@@ -2435,7 +2435,7 @@ mod tests {
         fsm.mark_local_finished();
         assert!(fsm.local_finished_sent());
 
-        // Новый ход сбрасывает флаг: 06 отправится снова.
+        // A new turn resets the flag: 06 will be sent again.
         fsm.on_turn_finished();
         assert!(!fsm.local_finished_sent(), "новый ход — новый 06");
     }
@@ -2462,8 +2462,8 @@ mod tests {
         ));
         assert_eq!(pending.attempts, 2);
 
-        // Таймаут логируется один раз, но запись не исчезает — барьер
-        // продолжает повторяться, как C++-пинг.
+        // The timeout is logged once, but the record does not disappear — the barrier
+        // keeps repeating, like a C++ ping.
         assert!(matches!(
             pending.poll(start + Duration::from_secs(30)),
             Some(BarrierPoll::TimedOut)
@@ -2486,7 +2486,7 @@ mod tests {
 
     #[test]
     fn team_kinds_ignore_nodes_at_or_below_four() {
-        // Ноды 0..=4 — не клиенты (`Remote_SetupPlayers`: `> 4`).
+        // Nodes 0..=4 are not clients (`Remote_SetupPlayers`: `> 4`).
         assert_eq!(
             team_kinds_from_nodes(1, &[1, 2, 3, 4]),
             [TeamKind::None; PLAYER_TEAM_COUNT]
@@ -2511,14 +2511,14 @@ mod tests {
         );
     }
 
-    /// Релейная копия приходит от сервера, у которого нет команды: событие
-    /// сессии несёт только payload. Кадр проходит через настоящий wire-кодек.
+    /// The relay copy comes from the server that has no team: the session
+    /// event carries only the payload. The frame goes through the real wire codec.
     fn relayed(packet: &Packet) -> SessionEvent {
         let frame = packet.encode().expect("encode barrier");
         SessionEvent::Packet(Packet::decode(&frame).expect("decode relayed frame"))
     }
 
-    /// Пакет 00 от сервера с `team = 1` учитывается как команда 1.
+    /// Packet 00 from the server with `team = 1` is counted as team 1.
     #[test]
     fn relayed_00_from_the_server_counts_for_the_payload_team() {
         let local = TeamId::RED;
@@ -2547,8 +2547,8 @@ mod tests {
         assert!(fsm.reached(app.state()), "00-барьер проходит по team=1");
     }
 
-    /// Входящий 18 применяется (`GameState::chat_log`) и попадает в журнал
-    /// HUD в формате C++ (`Remote_ReceiveNetPacket_18`).
+    /// The incoming 18 is applied (`GameState::chat_log`) and gets into the HUD
+    /// log in the C++ format (`Remote_ReceiveNetPacket_18`).
     #[test]
     fn incoming_18_chat_goes_to_the_simulation_and_hud_logs() {
         let local = TeamId::RED;
@@ -2576,8 +2576,8 @@ mod tests {
         assert_eq!(app.applied_commands(), 1);
     }
 
-    /// Состояние для трёхклиентного сценария: одинаковый мир, по танку на
-    /// команду. Клиенты получают клон и меняют только `TeamKind`.
+    /// State for a three-client scenario: the same world, one tank per
+    /// team. Clients get a clone and change only `TeamKind`.
     fn three_team_state() -> (GameState, [max_core::UnitId; 3]) {
         use max_core::geo::Point;
 
@@ -2625,7 +2625,7 @@ mod tests {
         }
     }
 
-    /// Релей в «звезде»: пакет отправителя получают все остальные клиенты.
+    /// Relay in a "star": the sender's packet is received by all other clients.
     fn relay(
         packets: &[Vec<Packet>],
         senders: &[usize],
@@ -2662,13 +2662,13 @@ mod tests {
         packets
     }
 
-    /// P5: три клиента, разрыв B, восстановление через 54 и продолжение хода.
+    /// P5: three clients, B disconnects, recovery via 54 and the turn continues.
     ///
-    /// Мок-транспорт — детерминированный релей без сети: пока B отключён, его
-    /// пакеты не доставляются; A/C успевают «сходить» и испортить копию юнита
-    /// B (как пропущенный приказ). После реконнекта B публикует свой 54 —
-    /// A/C принимают состояние владельца; встречный 54 A исправляет копию
-    /// юнита A у B. Ход доходит до 45, CRC и turn_counter совпадают.
+    /// Mock transport — a deterministic relay without the network: while B is disconnected,
+    /// its packets are not delivered; A/C have time to "move" and spoil B's unit
+    /// copy (like a missed order). After reconnecting, B publishes its 54 —
+    /// A/C accept the owner's state; the peer 54 of A corrects the copy
+    /// of A's unit at B. The turn reaches 45, the CRC and turn_counter match.
     #[test]
     fn three_clients_survive_disconnect_and_converge_via_state_sync() {
         let (base, ids) = three_team_state();
@@ -2683,7 +2683,7 @@ mod tests {
             GameLoopStats::default(),
         ];
 
-        // 00: все трое.
+        // 00: all three.
         send_all(&mut clients, &mut stats, |client| {
             client.fsm.begin(client.app.state_mut())
         });
@@ -2691,7 +2691,7 @@ mod tests {
             .fsm
             .reached(client.app.state())), "00 с 3 участниками");
 
-        // 53: все трое.
+        // 53: all three.
         send_all(&mut clients, &mut stats, |client| {
             client.fsm.complex(client.app.state())
         });
@@ -2699,7 +2699,7 @@ mod tests {
             .fsm
             .reached(client.app.state())), "53 с 3 участниками");
 
-        // 06: локальный конец хода, релей остальным.
+        // 06: local end of the turn, relay to the others.
         let mut finish_packets = Vec::new();
         for client in &mut clients {
             let finish = Command::FinishedTurn(Packet06FinishedTurn {
@@ -2712,8 +2712,8 @@ mod tests {
         let senders: Vec<usize> = (0..clients.len()).collect();
         relay(&finish_packets, &senders, &mut clients, &mut stats);
 
-        // B (GREEN) пропадает: A и C шлют 52, но B не получает их, а его 52
-        // теряется. Без B барьер не закрывается — это и есть lockstep.
+        // B (GREEN) disappears: A and C send 52, but B does not receive them, and its 52
+        // is lost. Without B the barrier does not close — this is lockstep.
         let mut packets: Vec<Vec<Packet>> = Vec::new();
         for client in &mut clients {
             packets.push(client.fsm.end(client.app.state_mut()));
@@ -2722,7 +2722,7 @@ mod tests {
         assert!(!clients[0].fsm.reached(clients[0].app.state()));
         assert!(!clients[2].fsm.reached(clients[2].app.state()));
 
-        // Пока B нет, A/C меняют копию танка B (пропущенный приказ атаки).
+        // While B is away, A/C change the copy of B's tank (a missed attack order).
         for index in [0usize, 2] {
             clients[index]
                 .app
@@ -2731,7 +2731,7 @@ mod tests {
                 .expect("tank B")
                 .hits = 1;
         }
-        // И у B устарела копия танка A.
+        // And B's copy of A's tank is stale.
         clients[1]
             .app
             .state_mut()
@@ -2751,7 +2751,7 @@ mod tests {
             .expect("tank A")
             .hits;
 
-        // Реконнект: B публикует свой 54 (sync_index ещё 0), A/C применяют.
+        // Reconnect: B publishes its 54 (sync_index still 0), A/C apply it.
         let resume = clients[1].fsm.resume_state_sync(clients[1].app.state());
         assert!(
             resume.iter().any(
@@ -2775,8 +2775,8 @@ mod tests {
             );
         }
 
-        // B повторяет свой потерянный 52 (тот же счётчик, без нового
-        // pre-increment); A/C уже ждут именно его.
+        // B repeats its lost 52 (the same counter, without a new
+        // pre-increment); A/C were already waiting for exactly it.
         let mut end_packets = vec![Vec::new(); clients.len()];
         end_packets[1] = packets[1].clone();
         relay(&end_packets, &[1], &mut clients, &mut stats);
@@ -2795,7 +2795,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        // 54 всех команд: B получает актуальное состояние A/C, A/C — B.
+        // 54 of all teams: B gets the current state of A/C, A/C — of B.
         send_all(&mut clients, &mut stats, |client| {
             client.fsm.sync(client.app.state())
         });
@@ -2808,7 +2808,7 @@ mod tests {
             "54 A исправил устаревшую копию танка A у B"
         );
 
-        // 45: CRC каждого клиента сходится со всеми.
+        // 45: each client's CRC matches everyone's.
         send_all(&mut clients, &mut stats, |client| {
             client.fsm.crc(client.app.state_mut())
         });
@@ -2837,8 +2837,8 @@ mod tests {
         assert_eq!(turns, vec![1, 1, 1], "turn_counter догнал у всех");
     }
 
-    /// Resume-54 после реконнекта: своя команда, последний sync_index и полный
-    /// набор юнитов команды (включая хвост экономики в last-чанке).
+    /// Resume-54 after a reconnect: own team, the last sync_index and the full
+    /// set of team units (including the economy tail in the last chunk).
     #[test]
     fn resume_state_sync_publishes_the_last_completed_index() {
         let (base, ids) = three_team_state();
@@ -2860,7 +2860,7 @@ mod tests {
         }
     }
 
-    /// Два пира, релейные пакеты приходят от сервера — барьер 00 сходится.
+    /// Two peers, the relay packets come from the server — barrier 00 converges.
     #[test]
     fn two_peers_pass_the_relayed_begin_barrier() {
         let mut apps = [
@@ -2881,7 +2881,7 @@ mod tests {
         assert_eq!(barrier_counter(&red[0]), 1);
         assert_eq!(barrier_counter(&green[0]), 1);
 
-        // Сервер релеит 00(RED) пиру GREEN и 00(GREEN) пиру RED.
+        // The server relays 00(RED) to peer GREEN and 00(GREEN) to peer RED.
         handle_session_event(&mut apps[1], relayed(&red[0]), &mut stats, &mut fsms[1])
             .expect("00 RED → GREEN");
         handle_session_event(&mut apps[0], relayed(&green[0]), &mut stats, &mut fsms[0])
@@ -2905,8 +2905,8 @@ mod tests {
         );
     }
 
-    /// Разрыв в обработчике событий сам по себе не паникует и завершает
-    /// прогон (retry выполняет `pump_events`, здесь проверяется fallback).
+    /// A disconnect in the event handler alone does not panic and ends
+    /// the run (the retry is done by `pump_events`; the fallback is checked here).
     #[test]
     fn disconnect_event_stops_the_handler_without_panicking() {
         let local = TeamId::RED;
@@ -2934,15 +2934,15 @@ mod tests {
         assert_eq!(tracker.next_attempt(), None, "лимит попыток");
         tracker.record_failure("boom");
 
-        // Новый разрыв — новый раунд, ошибка прошлого не тащится.
+        // A new disconnect — a new round, the previous error is not carried over.
         tracker.note_disconnect();
         assert_eq!(tracker.attempts(), 0);
         assert!(tracker.last_error().is_none());
         assert_eq!(tracker.next_attempt(), Some(1));
     }
 
-    /// Мок-сессия: первая попытка падает, вторая проходит — retry-логика
-    /// восстанавливает транспорт и сообщает номер успешной попытки.
+    /// Mock session: the first attempt fails, the second succeeds — the retry logic
+    /// restores the transport and reports the number of the successful attempt.
     #[tokio::test]
     async fn disconnect_retry_reconnects_on_the_second_attempt() {
         let mut tracker = ReconnectTracker::new(ReconnectPolicy {
@@ -2978,7 +2978,7 @@ mod tests {
         assert_eq!(tracker.attempts(), 2);
     }
 
-    /// Все попытки неудачны: `Exhausted` с числом попыток, без паник.
+    /// All attempts fail: `Exhausted` with the attempt count, without panics.
     #[tokio::test]
     async fn disconnect_retry_reports_exhaustion_without_panicking() {
         let mut tracker = ReconnectTracker::new(ReconnectPolicy {
@@ -3003,7 +3003,7 @@ mod tests {
         assert_eq!(tracker.last_error(), Some("session channel is closed"));
     }
 
-    /// `attempts = 0` — реконнект выключен, коннектор не вызывается.
+    /// `attempts = 0` — reconnect is disabled, the connector is not called.
     #[tokio::test]
     async fn reconnect_zero_attempts_is_disabled_without_connecting() {
         let mut tracker = ReconnectTracker::new(ReconnectPolicy {
@@ -3025,7 +3025,7 @@ mod tests {
         assert_eq!(tracker.attempts(), 0);
     }
 
-    /// Таймаут попытки не вешает прогон и попадает в `last_error`.
+    /// An attempt timeout does not hang the run and goes into `last_error`.
     #[tokio::test]
     async fn reconnect_attempt_timeout_is_reported() {
         let mut tracker = ReconnectTracker::new(ReconnectPolicy {
@@ -3053,7 +3053,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // M-NET-доводки: ретрай первого подключения и fallback data_hash
+    // M-NET follow-ups: first-connection retry and data_hash fallback
     // -----------------------------------------------------------------------
 
     fn reject(reason: RejectReason) -> JoinAttemptError {
@@ -3119,8 +3119,8 @@ mod tests {
         );
     }
 
-    /// Мок-коннектор: первая попытка падает, вторая проходит. Время
-    /// контролируется `start_paused`: между попытками ровно backoff (1 с).
+    /// Mock connector: the first attempt fails, the second succeeds. Time is
+    /// controlled by `start_paused`: between attempts exactly backoff (1 s).
     #[tokio::test(start_paused = true)]
     async fn join_retry_succeeds_on_the_second_attempt_after_backoff() {
         let started = tokio::time::Instant::now();
@@ -3156,8 +3156,8 @@ mod tests {
         );
     }
 
-    /// Таймаут попытки ограничен политикой и не вешает прогон: 2 с + 1 с
-    /// backoff + 2 с = 5 с виртуального времени на две попытки.
+    /// The attempt timeout is bounded by the policy and does not hang the run: 2 s + 1 s
+    /// backoff + 2 s = 5 s of virtual time for two attempts.
     #[tokio::test(start_paused = true)]
     async fn join_retry_attempt_timeout_is_bounded_by_the_policy() {
         let started = tokio::time::Instant::now();
@@ -3180,8 +3180,8 @@ mod tests {
         assert_eq!(started.elapsed(), Duration::from_secs(5));
     }
 
-    /// `TP 03 GameData` → один переподключ с хэшем только MAX.RES (тикет тот
-    /// же), сессия стартует. Отвергается именно полный хэш.
+    /// `TP 03 GameData` → one reconnect with the MAX.RES-only hash (the same
+    /// ticket), the session starts. It is the full hash that is rejected.
     #[tokio::test]
     async fn game_data_reject_falls_back_to_the_max_only_hash() {
         let hashes = max_patches_hashes();
@@ -3220,7 +3220,7 @@ mod tests {
         );
     }
 
-    /// Отказ по другой причине (`Version`) — без fallback и без ретрая.
+    /// A refusal for another reason (`Version`) — no fallback and no retry.
     #[tokio::test]
     async fn version_reject_is_neither_retried_nor_fallen_back() {
         let hashes = max_patches_hashes();
@@ -3244,7 +3244,7 @@ mod tests {
         assert!(!outcome.unwrap_err().is_game_data_reject());
     }
 
-    /// Сетевой цикл ждёт `PATCHES.RES`-вариант только без явного флага.
+    /// The network loop waits for the `PATCHES.RES` variant only without an explicit flag.
     #[test]
     fn handshake_hashes_try_full_then_max_only_by_default() {
         let dir = std::env::temp_dir().join(format!(
@@ -3272,7 +3272,7 @@ mod tests {
         assert_eq!(hashes[1].to_hex().len(), 64);
         assert_eq!(hashes[0].max_res, hashes[1].max_res);
 
-        // Явный --handshake-patches — ровно один вариант, без угадывания.
+        // Explicit --handshake-patches — exactly one variant, no guessing.
         let explicit = AppConfig {
             handshake_patches: Some(dir.join("nonexistent.res")),
             ..config.clone()
@@ -3281,7 +3281,7 @@ mod tests {
         assert_eq!(explicit_hashes.len(), 1);
         assert!(explicit_hashes[0].patches_res.is_none());
 
-        // Локального PATCHES.RES нет — полный вариант уже MAX-only.
+        // No local PATCHES.RES — the full variant is already MAX-only.
         let without_patches = AppConfig {
             patches_res: dir.join("nonexistent.res"),
             ..config

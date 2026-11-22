@@ -1,20 +1,20 @@
-//! AIRPLT: вывод построенного самолёта приказом игрока.
+//! AIRPLT: bringing out a built aircraft by a player order.
 //!
-//! Оракул:
-//! * `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`) — юнит рождается на
-//!   клетке завода в `ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — завод,
-//!   `scaler_adjust = 4`, у завода `parent` — юнит и `storage = 1`
-//!   (проверяется в `max-core/tests/production.rs`);
+//! Oracle:
+//! * `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`) — the unit is born on
+//!   the factory cell in `ORDER_IDLE`/`ORDER_STATE_STORE`, `parent` — the factory,
+//!   `scaler_adjust = 4`, the factory's `parent` — the unit and `storage = 1`
+//!   (checked in `max-core/tests/production.rs`);
 //! * `UnitsManager_Popup_InitFactories` (`units_manager.cpp:869-872`):
-//!   повторный клик по заводу в `UNIT_READY` **не** открывает меню, а выбирает
-//!   готового юнита (`PlaceNewUnit` → `GameManager_EnableMainMenu(parent)`);
+//!   a repeated click on a factory in `UNIT_READY` does **not** open the menu but selects
+//!   the ready unit (`PlaceNewUnit` → `GameManager_EnableMainMenu(parent)`);
 //! * `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937-5962`) +
-//!   `GameManager_ManagePlayerAction` (`:6918-6926`): клик по клетке рядом с
-//!   заводом — `CURSOR_ACTIVATE`, приказ `ORDER_ACTIVATE` получает **завод**;
-//! * `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`): самолёт
-//!   получает `ORDER_MOVE`/`INIT` и `ScaleUnit(EXPAND)`, затем взлетает
-//!   (`ExecuteMove` → `ORDER_TAKE_OFF`), завод отдаёт `--storage` и запускает
-//!   следующий заказ.
+//!   `GameManager_ManagePlayerAction` (`:6918-6926`): a click on a cell next to
+//!   the factory — `CURSOR_ACTIVATE`, the `ORDER_ACTIVATE` order goes to the **factory**;
+//! * `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`): the aircraft
+//!   gets `ORDER_MOVE`/`INIT` and `ScaleUnit(EXPAND)`, then takes off
+//!   (`ExecuteMove` → `ORDER_TAKE_OFF`), the factory gives `--storage` and starts
+//!   the next order.
 
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -35,7 +35,7 @@ fn state() -> GameState {
     state
 }
 
-/// AIRPLT в `(10,10)` с готовым истребителем «внутри» — состояние после
+/// AIRPLT at `(10,10)` with a ready fighter "inside" — the state after
 /// `UnitInfo::SpawnNewUnit`.
 fn plant_with_fighter(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
     let plant = state
@@ -71,7 +71,7 @@ fn activate_order_targets_the_plant_and_carries_the_fighter_as_parent() {
     let mut state = state();
     let (plant, fighter) = plant_with_fighter(&mut state);
 
-    // Клетка рядом с заводом (2×2 в (10,10)-(11,11)) — `9,10`.
+    // A cell next to the factory (2×2 at (10,10)-(11,11)) — `9,10`.
     let command = hud::build_activate_order(&state, fighter, Point::new(9, 10))
         .expect("CURSOR_ACTIVATE: приказ вывода");
 
@@ -97,11 +97,11 @@ fn clicking_the_plant_footprint_does_not_launch() {
     let mut state = state();
     let (_plant, fighter) = plant_with_fighter(&mut state);
 
-    // Внутри 2×2 завода C++ отдаёт `CURSOR_FRIEND` — приказа нет.
+    // Inside the factory 2×2 C++ gives `CURSOR_FRIEND` — no order.
     assert!(hud::build_activate_order(&state, fighter, Point::new(10, 10)).is_none());
     assert!(hud::build_activate_order(&state, fighter, Point::new(11, 11)).is_none());
 
-    // Слишком далеко — не «рядом с контейнером».
+    // Too far — not "next to the container".
     assert!(hud::build_activate_order(&state, fighter, Point::new(20, 20)).is_none());
 }
 
@@ -149,7 +149,7 @@ fn air_move_order_is_a_packet_08_move_with_init_state() {
         other => panic!("ожидался Order, получен {other:?}"),
     }
 
-    // Наземному юниту воздушный приказ не строится.
+    // A ground unit is not given an air order.
     let tank = state
         .spawn_unit(
             UnitType::Tank,
@@ -167,7 +167,7 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
     *app.state_mut() = state();
     let (_plant, fighter) = plant_with_fighter(app.state_mut());
 
-    // Игрок: выделен готовый юнит (после `PlaceNewUnit`), клик рядом с заводом.
+    // Player: the ready unit is selected (after `PlaceNewUnit`), a click next to the factory.
     app.hud_mut().select(Some(fighter));
     let command = hud::build_activate_order(app.state(), fighter, Point::new(9, 10))
         .expect("приказ вывода");
@@ -203,9 +203,9 @@ fn unit_menu_on_a_ready_plant_selects_the_stored_fighter() {
     *app.state_mut() = state();
     let (plant, fighter) = plant_with_fighter(app.state_mut());
 
-    // Первый клик по заводу — выделение.
+    // The first click on the factory — selection.
     app.hud_mut().select(Some(plant));
-    // Повторный клик (меню команд) — `Popup_InitFactories` → `PlaceNewUnit`.
+    // A repeated click (command menu) — `Popup_InitFactories` → `PlaceNewUnit`.
     assert!(app.open_unit_menu(), "клик по заводу обработан");
     assert!(app.unit_menu().is_none(), "меню не открывается");
     assert_eq!(

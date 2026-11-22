@@ -1,9 +1,9 @@
-//! Поведенческие тесты настроек `Preferences`, которые раньше только
-//! сохранялись (пункт B4 плана `max-brh-docs/analysis/visual-1to1-plan.md`).
+//! Behavioral tests of the `Preferences` settings that previously were only
+//! saved (item B4 of the `max-brh-docs/analysis/visual-1to1-plan.md` plan).
 //!
-//! Каждая настройка проверяется «вкл/выкл меняет поведение»:
+//! Each setting is checked "on/off changes behavior":
 //!
-//! | Настройка | Тест |
+//! | Setting | Test |
 //! |---|---|
 //! | `click_scroll` | [`click_scroll_controls_whether_hover_scrolls`] |
 //! | `quick_scroll` | [`quick_scroll_sets_the_camera_step`] |
@@ -36,7 +36,7 @@ fn temp_save_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// Приложение с настоящими ассетами (для партии нужна карта планеты).
+/// Application with real assets (the match needs a planet map).
 fn local_app(save_dir: &Path) -> Option<App> {
     let data = repo_path("max-original");
 
@@ -90,8 +90,8 @@ fn setup_vs_one_ai() -> LocalSetup {
     }
 }
 
-/// Первый юнит команды с очками движения (`speed > 0`) — им можно приказать
-/// движение в этом ходу.
+/// The first team unit with movement points (`speed > 0`) — it can be ordered
+/// to move this turn.
 fn mobile_unit(app: &App) -> Option<max_core::unit::UnitId> {
     let team = app.state().player_team;
 
@@ -111,7 +111,7 @@ fn mobile_unit(app: &App) -> Option<max_core::unit::UnitId> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. click_scroll / quick_scroll — камера
+// 1. click_scroll / quick_scroll — camera
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -124,7 +124,7 @@ fn click_scroll_controls_whether_hover_scrolls() {
     prefs.quick_scroll = 16;
     app.set_preferences(prefs);
 
-    // Наведение на верхнюю полосу прокрутки (окно 50..590 × 0..8).
+    // Hovering the top scroll strip (window 50..590 × 0..8).
     app.note_mouse_move(300, 4);
 
     let before = app.viewport().center();
@@ -137,7 +137,7 @@ fn click_scroll_controls_whether_hover_scrolls() {
         "камера уехала вверх на quick_scroll пикселей"
     );
 
-    // Включаем «Click to Scroll»: наведение больше не скроллит.
+    // Enable "Click to Scroll": hovering no longer scrolls.
     let mut prefs = app.preferences().clone();
     prefs.click_scroll = true;
     app.set_preferences(prefs);
@@ -146,7 +146,7 @@ fn click_scroll_controls_whether_hover_scrolls() {
     assert_eq!(app.update_scroll(1.0 / 30.0), None, "без нажатой ЛКМ скролла нет");
     assert_eq!(app.viewport().center(), before);
 
-    // Клик по полосе — «удержание», как `GameManager_SetGridOffset`.
+    // A click on the strip — a "hold", like `GameManager_SetGridOffset`.
     app.note_mouse_click(300, 4);
     assert_eq!(
         app.update_scroll(1.0 / 30.0),
@@ -154,7 +154,7 @@ fn click_scroll_controls_whether_hover_scrolls() {
         "клик по верхней полосе прокручивает карту"
     );
 
-    // Кнопки панели важнее скролла (в C++ `WINDOW_ENDTURN_BUTTON` раньше
+    // Panel buttons are more important than scrolling (in C++ `WINDOW_ENDTURN_BUTTON` before
     // `WINDOW_SCROLL_UP_WINDOW`): End Turn (390,2) 72×21.
     let before = app.viewport().center();
     app.note_mouse_move(400, 4);
@@ -162,7 +162,7 @@ fn click_scroll_controls_whether_hover_scrolls() {
     assert_eq!(app.update_scroll(1.0 / 30.0), None);
     assert_eq!(app.viewport().center(), before);
 
-    // Вне полос — скролла нет.
+    // Outside the strips there is no scrolling.
     app.note_mouse_move(300, 200);
     assert_eq!(app.update_scroll(1.0 / 30.0), None);
 }
@@ -188,7 +188,7 @@ fn quick_scroll_sets_the_camera_step() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. fast_movement — скорость спрайта
+// 2. fast_movement — sprite speed
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -201,7 +201,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     };
 
     let setup = setup_vs_one_ai();
-    // Настройка выставляется до старта, как Preferences главного меню.
+    // The setting is set before the start, like the main menu Preferences.
     let mut prefs = slow.preferences().clone();
     prefs.fast_movement = false;
     slow.set_preferences(prefs);
@@ -215,7 +215,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     let id = mobile_unit(&slow).expect("мобильный юнит");
     assert!(mobile_unit(&fast).is_some());
 
-    // Один и тот же приказ: соседняя проходимая клетка.
+    // The same order: an adjacent passable cell.
     let from = slow.state().unit(id).expect("юнит").grid;
     let mut destination = None;
 
@@ -244,8 +244,8 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 
     let start = slow.visual_position(id).expect("юнит");
 
-    // Кадр проходит маршрут: симуляция тикает (клетка за тик), спрайт
-    // догоняет её с реальной скоростью. 10 кадров при 60 Гц — 1/6 с.
+    // The frame passes the route: the simulation ticks (a cell per tick), the sprite
+    // catches up with it at real speed. 10 frames at 60 Hz — 1/6 s.
     for _ in 0..10 {
         slow.local_update(1.0 / 60.0);
         fast.local_update(1.0 / 60.0);
@@ -271,7 +271,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. follow_unit — камера за выделенным
+// 3. follow_unit — the camera follows the selection
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -297,7 +297,7 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
     let grid = app.state().unit(id).expect("юнит").grid;
 
     app.select_unit(Some(id));
-    // Уводим камеру далеко, чтобы юнит был вне окна карты.
+    // Move the camera far away so that the unit is outside the map window.
     app.viewport_mut().center_on_grid(5, 5);
 
     let mut prefs = app.preferences().clone();
@@ -321,12 +321,12 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
         "центр камеры — клетка выделенного юнита (`UnitInfo::FollowUnit`)"
     );
 
-    // Юнит уже в окне карты — повторно камера не двигается.
+    // The unit is already in the map window — the camera does not move again.
     assert!(!app.follow_selected_unit());
 }
 
 // ---------------------------------------------------------------------------
-// 4. auto_select — следующий юнит после приказа
+// 4. auto_select — the next unit after an order
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -339,7 +339,7 @@ fn auto_select_picks_the_next_unit_after_a_move() {
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
 
-    // --- выключено: выделение остаётся на юните после завершения приказа ---
+    // --- off: the selection remains on the unit after the order completes ---
     let mut prefs = app.preferences().clone();
     prefs.auto_select = false;
     app.set_preferences(prefs);
@@ -356,7 +356,7 @@ fn auto_select_picks_the_next_unit_after_a_move() {
         "auto_select выключен — выделение не меняется"
     );
 
-    // --- включено: после завершения приказа выделяется следующий юнит ---
+    // --- on: after the order completes the next unit is selected ---
     let mut prefs = app.preferences().clone();
     prefs.auto_select = true;
     app.set_preferences(prefs);
@@ -407,14 +407,14 @@ fn issue_short_move(app: &mut App, id: max_core::unit::UnitId) {
     app.update_visual_units(0.0);
 }
 
-/// Ставит юнита в состояние «последний шаг маршрута, очки движения кончились».
+/// Puts the unit into the "last route step, movement points exhausted" state.
 ///
-/// Так выглядит завершение приказа в C++: `GroundPath::Execute` на исчерпанном
-/// шаге вызывает `BlockedOnPathRequest` → `MoveFinished` → `AutoSelectNext`, а
-/// `GameManager_IsInteractable` (`game_manager.cpp:3241`) при `speed == 0`
-/// больше не держит выделение на юните.
+/// This is how an order completion looks in C++: `GroundPath::Execute` on an exhausted
+/// step calls `BlockedOnPathRequest` → `MoveFinished` → `AutoSelectNext`, and
+/// `GameManager_IsInteractable` (`game_manager.cpp:3241`) at `speed == 0`
+/// no longer keeps the selection on the unit.
 fn finish_path_next_tick(app: &mut App, id: max_core::unit::UnitId) {
-    // Один тик — чтобы симуляция выдала путь (`Paths_RequestPath`).
+    // One tick — so that the simulation issues the path (`Paths_RequestPath`).
     app.local_update(1.0 / 60.0);
 
     if let Some(mut unit) = app.state().unit(id).cloned() {
@@ -432,8 +432,8 @@ fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..60
         });
 
         if done {
-            // Ещё два кадра: `auto_select_after_tick` отрабатывает в тике
-            // завершения приказа.
+            // Two more frames: `auto_select_after_tick` runs in the order
+            // completion tick.
             app.local_update(1.0 / 60.0);
             app.local_update(1.0 / 60.0);
             return;
@@ -446,7 +446,7 @@ fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..60
 }
 
 // ---------------------------------------------------------------------------
-// 5. enemy_halt — настройка доходит до симуляции
+// 5. enemy_halt — the setting reaches the simulation
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -491,13 +491,13 @@ fn turn_timers_from_preferences_apply_to_the_local_game() {
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup).expect("локальная партия");
 
-    // `GameConfigMenu` `Done` пишет таймеры в те же `settings`
-    // (`gameconfigmenu.cpp:134-141`), поэтому старт партии их синхронизирует.
+    // `GameConfigMenu` `Done` writes the timers into the same `settings`
+    // (`gameconfigmenu.cpp:134-141`), so the match start synchronizes them.
     assert_eq!(app.preferences().turn_timer, 180);
     assert_eq!(app.preferences().endturn, 45);
     assert_eq!(app.local().expect("партия").timer_left, 180.0);
 
-    // Preferences в игре — со следующего хода (`GameManager_UpdateGui`).
+    // Preferences in game — from the next turn (`GameManager_UpdateGui`).
     let mut prefs = app.preferences().clone();
     prefs.turn_timer = 60;
     prefs.endturn = 50;
@@ -541,7 +541,7 @@ fn player_name_applies_to_the_game_and_the_v70_save() {
     setup.player_name = "Alice".to_string();
     app.start_local_game(&setup).expect("локальная партия");
 
-    // Имя уже в журнале HUD (`Local game: <имя> vs …`).
+    // The name is already in the HUD log (`Local game: <name> vs …`).
     assert!(
         app.hud()
             .log
@@ -552,7 +552,7 @@ fn player_name_applies_to_the_game_and_the_v70_save() {
         app.hud().log.lines()
     );
 
-    // В игре `PREFSPIC` показывает имя команды (`menu_team_name_setting`).
+    // In game `PREFSPIC` shows the team name (`menu_team_name_setting`).
     assert!(app.open_preferences());
     assert_eq!(
         app.preferences_dialog().expect("диалог").draft.player_name,
@@ -578,7 +578,7 @@ fn player_name_applies_to_the_game_and_the_v70_save() {
         "экран победы показывает имя из настроек (`menu.cpp:189`)"
     );
 
-    // V70-сейв: `SaveLoad_Save` пишет `menu_team_name_setting` в заголовок.
+    // V70 save: `SaveLoad_Save` writes `menu_team_name_setting` into the header.
     let bytes = app.save_v70_bytes("Bob save").expect("V70-сейв");
     let save = max_core::save::SaveFile::parse(&bytes).expect("V70 разбирается");
     assert_eq!(save.header.team_name(0), "Bob");

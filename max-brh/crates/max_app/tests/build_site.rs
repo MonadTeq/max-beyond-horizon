@@ -1,13 +1,13 @@
-//! Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`) — сквозные тесты
-//! через ввод игрока: призрак-лента, валидность клетки, LMB/Esc, движение
-//! строителя в центр площадки (`PositionInTape`).
+//! Build site selection mode (`ORDER_STATE_SELECT_SITE`) — end-to-end tests
+//! through player input: the ghost tape, cell validity, LMB/Esc, the builder
+//! moving to the site center (`PositionInTape`).
 //!
-//! Оракул: `buildmenu.cpp:921` (`MobileBuildMenu::Build` → `SELECT_SITE` +
+//! Oracle: `buildmenu.cpp:921` (`MobileBuildMenu::Build` → `SELECT_SITE` +
 //! `GameManager_TempTape`), `game_manager.cpp:4566` (`PathBuild`),
 //! `game_manager.cpp:5829` (`GetBuilderUnitCursor`),
 //! `unitinfo.cpp:4414` (`PositionInTape`).
 //!
-//! Тесты пропускаются, если данных игры нет рядом с репозиторием (как
+//! Tests are skipped if there is no game data next to the repository (like
 //! `unit_menu.rs`/`construction_site.rs`).
 
 use std::path::{Path, PathBuf};
@@ -57,7 +57,7 @@ fn single_human() -> LocalSetup {
     setup
 }
 
-/// Партия через настоящие фазы старта (мобилизация → высадка → `InGame`).
+/// A match through the real start phases (mobilization → landing → `InGame`).
 fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
@@ -85,8 +85,8 @@ fn game_app() -> Option<App> {
     Some(app)
 }
 
-/// Конструктор RED в клетке, вокруг которой свободны 2×2 (иначе
-/// `UnitsManager_IssueBuildOrder` не даст поставить здание).
+/// A RED constructor in a cell with a free 2×2 around it (otherwise
+/// `UnitsManager_IssueBuildOrder` will not allow placing the building).
 fn spawn_builder(app: &mut App) -> (UnitId, Point) {
     let land = max_core::enums::Surface::LAND.bits();
     let free = |app: &App, cell: Point| {
@@ -122,14 +122,14 @@ fn spawn_builder(app: &mut App) -> (UnitId, Point) {
     (id, grid)
 }
 
-/// Кадровая точка центра клетки (окно 640×480 с хромом).
+/// Frame point of the cell center (640×480 window with chrome).
 fn screen_point(app: &App, grid: Point) -> (i32, i32) {
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
 
     (x + MAIN_MAP.ulx, y + MAIN_MAP.uly)
 }
 
-/// Индекс `TrainingHall` в списке конструктора (`BUILDABLE`), здание 2×2.
+/// The `TrainingHall` index in the constructor's list (`BUILDABLE`), a 2×2 building.
 fn training_hall_index() -> usize {
     max_core::production::buildable_units(UnitType::Constructor)
         .iter()
@@ -137,7 +137,7 @@ fn training_hall_index() -> usize {
         .expect("Training Hall в списке конструктора")
 }
 
-/// Выделяет строителя и открывает для него `BuildMenu`.
+/// Selects the builder and opens `BuildMenu` for it.
 fn open_build_menu(app: &mut App, builder: UnitId) {
     app.hud_mut().select(Some(builder));
     assert!(app.open_build_menu(), "BuildMenu открылся");
@@ -147,7 +147,7 @@ fn open_build_menu(app: &mut App, builder: UnitId) {
     );
 }
 
-/// `Done`: для здания у мобильного строителя открывается выбор места.
+/// `Done`: for a building at a mobile builder the site selection opens.
 fn order_site_selection(app: &mut App, builder: UnitId) -> Point {
     open_build_menu(app, builder);
     let line = app.commit_build_menu(false).expect("Done обработан");
@@ -160,21 +160,21 @@ fn order_site_selection(app: &mut App, builder: UnitId) -> Point {
     app.build_site().expect("режим выбора").anchor
 }
 
-/// Наводит мышь на клетку кадра (как игрок) — `GameManager_GetBuilderUnitCursor`.
+/// Moves the mouse onto a frame cell (like a player) — `GameManager_GetBuilderUnitCursor`.
 fn move_cursor(app: &mut App, grid: Point) -> Transition {
     let (x, y) = screen_point(app, grid);
 
     handle_session_input(app, InputEvent::MouseMove(x, y), false)
 }
 
-/// Клик по клетке (LMB — подтверждение, невалидная — отмена как в C++).
+/// A click on a cell (LMB — confirmation, invalid — cancel as in C++).
 fn click_cell(app: &mut App, grid: Point) -> Transition {
     let (x, y) = screen_point(app, grid);
 
     handle_session_input(app, InputEvent::MouseClick(x, y), false)
 }
 
-/// Открывает `BuildMenu` клавишей `B` — быстрый путь (`ui.rs`).
+/// Opens `BuildMenu` with the `B` key — a shortcut (`ui.rs`).
 fn open_build_menu_via_key(app: &mut App, builder: UnitId) {
     app.hud_mut().select(Some(builder));
 
@@ -184,10 +184,10 @@ fn open_build_menu_via_key(app: &mut App, builder: UnitId) {
     assert!(app.unit_menu().is_none(), "попап не открывался");
 }
 
-/// Открывает `BuildMenu` через попап юнита — путь игрока
-/// (`GameManager_ClickUnit` → `GameManager_InitPopupButtons` → пункт `Build`).
+/// Opens `BuildMenu` through the unit popup — the player path
+/// (`GameManager_ClickUnit` → `GameManager_InitPopupButtons` → the `Build` item).
 ///
-/// Клик по уже выделенному юниту открывает попап, затем клик по кнопке
+/// A click on the already selected unit opens the popup, then a click on the
 /// `Build` (`unitmenu::ItemId::Build`) — `open_build_menu`.
 fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
     app.hud_mut().select(Some(builder));
@@ -221,9 +221,9 @@ fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
     );
 }
 
-/// Выбор места через указанный путь открытия `BuildMenu`.
+/// Site selection through the specified `BuildMenu` opening path.
 ///
-/// `popup == false` — клавиша `B`; `popup == true` — пункт `Build` попапа.
+/// `popup == false` — the `B` key; `popup == true` — the popup `Build` item.
 fn order_site_selection_via(app: &mut App, builder: UnitId, popup: bool) -> Point {
     if popup {
         open_build_menu_via_popup(app, builder);
@@ -257,7 +257,7 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
     assert_eq!(anchor, builder_grid, "первый якорь C++ — клетка строителя");
     assert!(app.build_site().expect("режим").valid(app.state()));
 
-    // Курсор левее/выше строителя уводит призрак 2×2 на соседний якорь.
+    // The cursor left/above the builder moves the 2×2 ghost to the neighboring anchor.
     let target = Point::new(builder_grid.x - 1, builder_grid.y - 1);
     let _ = move_cursor(&mut app, target);
 
@@ -271,7 +271,7 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
         "CURSOR_MAP2 над валидной клеткой"
     );
 
-    // Вода под 2×2 — невалидно (`CURSOR_UNIT_NO_GO`).
+    // Water under the 2×2 — invalid (`CURSOR_UNIT_NO_GO`).
     for dy in 0..2 {
         for dx in 0..2 {
             *app.state_mut()
@@ -300,15 +300,15 @@ fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
     };
     let (builder, builder_grid) = spawn_builder(&mut app);
 
-    // Кадр без режима — эталон для сравнения.
+    // A frame without the mode — the reference for comparison.
     let before = app.render_frame();
     let anchor = order_site_selection(&mut app, builder);
     let after = app.render_frame();
 
     assert_eq!(anchor, builder_grid);
 
-    // Призрак — та же декаль `LRGTAPE`, что C++ спавнит в `GameManager_TempTape`:
-    // сравнение кадров различает её пиксели в клетке якоря.
+    // The ghost is the same `LRGTAPE` decal that C++ spawns in `GameManager_TempTape`:
+    // the frame comparison distinguishes its pixels in the anchor cell.
     let (cx, cy) = screen_point(&app, anchor);
     let changed = count_changed_in_rect(&before, &after, cx - 64, cy - 64, 128, 128);
     assert!(
@@ -316,7 +316,7 @@ fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
         "призрак площадки нарисован в кадре ({changed} px)"
     );
 
-    // Esc — отмена без заказа (приказ не уходит, площадки в мире нет).
+    // Esc — cancel without an order (the order does not go, there is no site in the world).
     let _ = handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Escape), false);
 
     assert!(app.build_site().is_none(), "режим закрыт");
@@ -341,8 +341,8 @@ fn lmb_places_the_site_in_the_chosen_cell_and_the_builder_works_at_its_center() 
     place_and_assert_centered(&mut app, builder, builder_grid, false);
 }
 
-/// Тот же сценарий, но `BuildMenu` открыт пользовательским путём — пунктом
-/// `Build` попапа юнита (`unitmenu`), а не клавишей `B`.
+/// The same scenario, but `BuildMenu` is opened via the user path — the unit popup
+/// `Build` item (`unitmenu`), not the `B` key.
 #[test]
 fn popup_build_places_the_site_and_centers_the_builder() {
     let Some(mut app) = game_app() else {
@@ -353,16 +353,16 @@ fn popup_build_places_the_site_and_centers_the_builder() {
     place_and_assert_centered(&mut app, builder, builder_grid, true);
 }
 
-/// Призрак нарисован в кадре после `Done` независимо от пути открытия
-/// `BuildMenu` (клавиша `B` или попап юнита).
+/// The ghost is drawn in the frame after `Done` regardless of the `BuildMenu`
+/// opening path (the `B` key or the unit popup).
 #[test]
 fn ghost_is_drawn_after_both_build_menu_paths() {
     for popup in [false, true] {
         let Some(mut app) = game_app() else {
             return;
         };
-        // Кадр 640×480 с загруженным `FRAMEPIC` идёт через
-        // `render_with_chrome` — призрак обязан рисоваться именно там.
+        // A 640×480 frame with `FRAMEPIC` loaded goes through
+        // `render_with_chrome` — the ghost must be drawn exactly there.
         assert!(app.chrome_active(), "кадр идёт через render_with_chrome");
         let (builder, _builder_grid) = spawn_builder(&mut app);
         let before = app.render_frame();
@@ -381,12 +381,12 @@ fn ghost_is_drawn_after_both_build_menu_paths() {
     }
 }
 
-/// Общий сценарий: выбор места → LMB → 5 тиков → строитель в центре ленты.
+/// Common scenario: site selection → LMB → 5 ticks → the builder in the tape center.
 fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point, popup: bool) {
     order_site_selection_via(app, builder, popup);
 
-    // Игрок указывает на клетку левее/выше строителя: площадка ставится
-    // ТУДА (2×2, накрывающий эту клетку), а не в автоматически найденное место.
+    // The player points at a cell left/above the builder: the site is placed
+    // THERE (2×2 covering this cell), not at an automatically found place.
     let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
     let _ = move_cursor(app, chosen);
     assert_eq!(app.build_site().expect("режим").anchor, chosen);
@@ -400,7 +400,7 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         "ORDER_BUILD с клеткой площадки"
     );
 
-    // Площадку ставит `UnitInfo::StartBuilding` на следующем тике.
+    // The site is placed by `UnitInfo::StartBuilding` on the next tick.
     app.tick();
     let site = max_core::production::construction_utility(app.state(), TeamId::RED, chosen)
         .expect("лента площадки в выбранной клетке");
@@ -424,12 +424,12 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         "якорь 2×2 всегда накрывает клетку строителя (C++ GetBuilderUnitCursor)"
     );
 
-    // `PositionInTape` + `OffsetDrawZones`: сначала строитель доворачивается к
-    // ленте (`Paths_UpdateAngle`), затем четыре шага по 8 px ставят спрайт в
-    // центр ленты 2×2 — 32 px (половина клетки) от центра своей клетки. Первый
-    // тик после подтверждения — `StartBuilding`
-    // (`AWAIT_TAPE_POSITIONING`/`INIT`), затем `INIT → ENTER`, доворот и четыре
-    // шага `moved`; на следующем тике `moved >= 4` → `RestoreOrders`.
+    // `PositionInTape` + `OffsetDrawZones`: first the builder turns toward the
+    // tape (`Paths_UpdateAngle`), then four steps of 8 px put the sprite in
+    // the 2×2 tape center — 32 px (half a cell) from its cell center. The first
+    // tick after confirmation — `StartBuilding`
+    // (`AWAIT_TAPE_POSITIONING`/`INIT`), then `INIT → ENTER`, the turn and four
+    // `moved` steps; on the next tick `moved >= 4` → `RestoreOrders`.
     app.tick();
     app.tick();
     app.tick();
@@ -456,9 +456,9 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         "после позиционирования — рабочий кадр"
     );
 
-    // Кадровый тест: пиксели спрайта строителя стоят в центре площадки.
-    // Кадр со строителем против кадра без него (видимость команде снята) —
-    // центр различающихся пикселей должен совпасть с центром 2×2.
+    // Frame test: the builder sprite pixels stand in the site center.
+    // A frame with the builder versus a frame without it (visibility to the team disabled) —
+    // the center of the differing pixels must coincide with the 2×2 center.
     let with_builder = app.render_frame();
     app.state_mut()
         .unit_mut(builder)
@@ -483,8 +483,8 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     );
 }
 
-/// Центр (x,y) пикселей спрайта строителя в кадре: кадр с юнитом против кадра
-/// с выключенной видимостью. Так измеряется именно спрайт, без разметки ленты.
+/// Center (x,y) of the builder sprite pixels in the frame: a frame with the unit versus a frame
+/// with visibility disabled. This measures exactly the sprite, without the tape markup.
 fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
     let with_builder = app.render_frame();
     app.state_mut()
@@ -503,10 +503,10 @@ fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
     ((x0 + x1) / 2, (y0 + y1) / 2)
 }
 
-/// Скольжение под углом: C++ перед въездом в ленту доворачивает строителя
-/// (`Paths_UpdateAngle` в `PositionInTape`), и `OffsetDrawZones` двигает спрайт
-/// по `DIRECTION_OFFSETS[angle] * 8` — по диагонали/направлению его взгляда, а
-/// не «прямо». Кадры «до/после»: угол и bbox спрайта на каждом тике.
+/// Sliding at an angle: C++ turns the builder before driving into the tape
+/// (`Paths_UpdateAngle` in `PositionInTape`), and `OffsetDrawZones` moves the sprite
+/// along `DIRECTION_OFFSETS[angle] * 8` — diagonally/in the direction it looks, and
+/// not "straight". "Before/after" frames: the angle and bbox of the sprite on each tick.
 #[test]
 fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     let Some(mut app) = game_app() else {
@@ -514,18 +514,18 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     };
     let (builder, builder_grid) = spawn_builder(&mut app);
 
-    // Якорь ленты — на клетку левее/выше строителя: он стоит в SE-углу 2×2,
-    // `GetTargetUnitAngle` даёт NW(7), доворот 0 → 7 за один тик (8 направлений).
+    // The tape anchor is one cell left/above the builder: it stands in the SE corner of the 2×2,
+    // `GetTargetUnitAngle` gives NW(7), the turn 0 → 7 in one tick (8 directions).
     let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
     order_site_selection(&mut app, builder);
     let _ = move_cursor(&mut app, chosen);
     let _ = click_cell(&mut app, chosen);
-    app.tick(); // `StartBuilding`: площадка и `AWAIT_TAPE_POSITIONING`/`INIT`
+    app.tick(); // `StartBuilding`: the site and `AWAIT_TAPE_POSITIONING`/`INIT`
 
     let initial_angle = app.state().unit(builder).expect("строитель").angle;
     assert_eq!(initial_angle, 0, "конструктор смотрит на север");
 
-    // Тик доворота: `Paths_UpdateAngle` поворачивает на месте, `moved` = 0.
+    // The turn tick: `Paths_UpdateAngle` turns in place, `moved` = 0.
     app.tick();
     let unit = app.state().unit(builder).expect("строитель").clone();
     assert_eq!(
@@ -542,14 +542,14 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     let turn_center = builder_pixel_center(&mut app, builder);
     let cell_center = screen_point(&app, builder_grid);
 
-    // От поворота на месте bbox спрайта остаётся в своей клетке (допуск на
-    // асимметрию спрайта/тени).
+    // From the turn in place the sprite bbox stays in its cell (with a tolerance for
+    // sprite/shadow asymmetry).
     assert!(
         (turn_center.0 - cell_center.0).abs() <= 16 && (turn_center.1 - cell_center.1).abs() <= 16,
         "после доворота спрайт ещё в своей клетке: {turn_center:?} vs {cell_center:?}"
     );
 
-    // Четыре тика скольжения: ровно `DIRECTION_OFFSETS[NW] * 8 * step`.
+    // Four sliding ticks: exactly `DIRECTION_OFFSETS[NW] * 8 * step`.
     let mut centers = vec![turn_center];
     for step in 1..=4u8 {
         app.tick();
@@ -567,8 +567,8 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
         centers.push(builder_pixel_center(&mut app, builder));
     }
 
-    // Центр спрайта идёт ровно по диагонали: каждый тик −8 px по обеим осям
-    // (спрайт не поворачивается, поэтому bbox смещается целиком).
+    // The sprite center goes exactly diagonally: each tick −8 px on both axes
+    // (the sprite does not rotate, so the bbox shifts entirely).
     for pair in centers.windows(2) {
         let (dx, dy) = (pair[1].0 - pair[0].0, pair[1].1 - pair[0].1);
 
@@ -578,7 +578,7 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
         );
     }
 
-    // Кадр с завершённым позиционированием: спрайт в центре ленты 2×2.
+    // A frame with completed positioning: the sprite in the center of the 2×2 tape.
     let site_center = max_app::buildsite::site_center_world(UnitType::TrainingHall, chosen);
     let viewport = app.map_viewport();
     let (sx, sy) = viewport.world_to_screen(site_center.0, site_center.1);
@@ -590,8 +590,8 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
         "после четырёх шагов спрайт в центре ленты: ({bx},{by}) vs ({sx},{sy})"
     );
 
-    // Следующий тик — `RestoreOrders` и доворот `(angle + 1) & 7`: NW(7) → N(0),
-    // сдвиг остаётся полным (рабочая поза в центре ленты).
+    // The next tick — `RestoreOrders` and a turn `(angle + 1) & 7`: NW(7) → N(0),
+    // the shift remains full (the working pose in the tape center).
     app.tick();
     let unit = app.state().unit(builder).expect("строитель").clone();
     assert_eq!(unit.orders, UnitOrder::Build);
@@ -603,7 +603,7 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     );
 }
 
-/// Границы (x0,y0,x1,y1) различающихся пикселей двух кадров внутри `area`.
+/// Bounds (x0,y0,x1,y1) of the differing pixels of two frames inside `area`.
 fn changed_bounds(
     left: &max_render::buffer::RgbaBuffer,
     right: &max_render::buffer::RgbaBuffer,
@@ -638,8 +638,8 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
 
     order_site_selection(&mut app, builder);
 
-    // Уводим призрак на занятую/непроходимую клетку и убеждаемся, что она
-    // невалидна (в C++ — `CURSOR_UNIT_NO_GO`).
+    // We move the ghost onto an occupied/impassable cell and make sure that it
+    // is invalid (in C++ — `CURSOR_UNIT_NO_GO`).
     let mut target = Point::new(builder_grid.x + 1, builder_grid.y);
     let mut attempts = 0;
 
@@ -650,13 +650,13 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
     }
 
     if app.build_site().expect("режим").valid(app.state()) {
-        // Вся округа свободна — сценарий нечего проверять (карта генератора).
+        // The whole neighborhood is free — the scenario has nothing to check (generator map).
         return;
     }
 
     let _ = click_cell(&mut app, target);
 
-    // C++ `ManagePlayerAction`: клик по невалидной клетке отменяет выбор.
+    // C++ `ManagePlayerAction`: a click on an invalid cell cancels the selection.
     assert!(app.build_site().is_none(), "выбор отменён");
     assert_eq!(
         app.state().unit(builder).expect("строитель").orders,
@@ -711,7 +711,7 @@ fn same_input_gives_the_same_site_and_digest() {
     assert_eq!(left, right, "та же последовательность — тот же результат");
 }
 
-/// Сколько пикселей области различаются (любой канал больше порога).
+/// How many pixels of the area differ (any channel above the threshold).
 fn count_changed_in_rect(
     left: &max_render::buffer::RgbaBuffer,
     right: &max_render::buffer::RgbaBuffer,

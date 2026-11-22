@@ -1,20 +1,20 @@
-//! Исполнитель `.qa`-скриптов (слой 2 QA): in-process UI-драйвер без SDL.
+//! `.qa` script executor (QA layer 2): an in-process UI driver without SDL.
 //!
-//! Драйвер держит те же объекты, что `main.rs`: [`App`] (состояние партии,
-//! ассеты, камера) и [`Screen`] + [`UiContext`] (машина экранов). Каждая
-//! команда скрипта превращается в **тот же** `InputEvent`, который пришёл бы
-//! от мыши/клавиатуры:
+//! The driver holds the same objects as `main.rs`: [`App`] (match state,
+//! assets, camera) and [`Screen`] + [`UiContext`] (the screen machine). Each
+//! script command turns into **the same** `InputEvent` that would come
+//! from the mouse/keyboard:
 //!
-//! * меню/настройка → [`Screen::handle_input`];
-//! * партия → [`crate::ui::handle_session_input`] (выделение, приказы,
-//!   кнопка End Turn, окно перехода хода);
-//! * игровой цикл → [`crate::App::local_update`] ровно так, как его крутит
-//!   главный цикл `main.rs` (тик, ход ИИ, переход на экран победы).
+//! * menu/setup → [`Screen::handle_input`];
+//! * match → [`crate::ui::handle_session_input`] (selection, orders,
+//!   the End Turn button, the turn-transition window);
+//! * game loop → [`crate::App::local_update`] exactly as the `main.rs` main
+//!   loop runs it (tick, AI turn, transition to the victory screen).
 //!
-//! Поэтому скрипт проверяет не «внутренние функции», а полный путь игрока.
-//! Шаги пишутся в `log.txt`, кадры `shot` — в PNG, падение любого `assert`
-//! возвращает [`QaReport::passed`] = `false` (CLI-обёртка `qa_run` в этом
-//! случае завершает процесс кодом 1).
+//! Therefore the script checks not "internal functions" but the full player path.
+//! Steps are written to `log.txt`, `shot` frames — to PNG, a failure of any `assert`
+//! sets [`QaReport::passed`] = `false` (the `qa_run` CLI wrapper in this
+//! case exits the process with code 1).
 
 use std::path::{Path, PathBuf};
 
@@ -45,28 +45,28 @@ use crate::ui::{
 use crate::upgrademenu::UpgradeFilter;
 use crate::{App, AppConfig, AppMode};
 
-/// Корень репозитория (от `crates/max_app` три уровня вверх).
+/// Repository root (three levels up from `crates/max_app`).
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .to_path_buf()
 }
 
-/// Настройки прогона QA-скрипта.
+/// QA script run settings.
 #[derive(Debug, Clone)]
 pub struct QaConfig {
-    /// Каталог `max-original` (`MAX.RES`, `COLOR.PAL`, `.WRL`).
+    /// `max-original` directory (`MAX.RES`, `COLOR.PAL`, `.WRL`).
     pub data_dir: PathBuf,
-    /// Каталог `assets` (`PATCHES.RES`).
+    /// `assets` directory (`PATCHES.RES`).
     pub assets_dir: PathBuf,
-    /// Куда писать `log.txt` и PNG кадров.
+    /// Where to write `log.txt` and the frame PNGs.
     pub out_dir: PathBuf,
-    /// Предел кадров на одну команду `wait`/`end_turn` (защита от зависания).
+    /// Frame limit per `wait`/`end_turn` command (hang protection).
     pub frame_limit: usize,
 }
 
 impl QaConfig {
-    /// Настройки по умолчанию: данные из корня репозитория, вывод — `out_dir`.
+    /// Default settings: data from the repository root, output — `out_dir`.
     pub fn new(out_dir: impl Into<PathBuf>) -> Self {
         let root = repo_root();
 
@@ -78,42 +78,42 @@ impl QaConfig {
         }
     }
 
-    /// Другой каталог данных игры.
+    /// Another game data directory.
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = dir.into();
         self
     }
 
-    /// Другой каталог ассетов.
+    /// Another assets directory.
     pub fn with_assets_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.assets_dir = dir.into();
         self
     }
 
-    /// Другой предел кадров.
+    /// Another frame limit.
     pub fn with_frame_limit(mut self, limit: usize) -> Self {
         self.frame_limit = limit;
         self
     }
 }
 
-/// Итог прогона скрипта.
+/// Result of a script run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QaReport {
-    /// Все команды выполнились (и `assert` не падали).
+    /// All commands executed (and the `assert`s did not fail).
     pub passed: bool,
-    /// Тексты падений (по одному на первый сбой шага).
+    /// Failure texts (one per first step failure).
     pub failures: Vec<String>,
-    /// Полный лог шагов.
+    /// Full step log.
     pub log: String,
-    /// Записанные кадры.
+    /// Recorded frames.
     pub shots: Vec<PathBuf>,
-    /// Сколько кадров игрового цикла прокручено.
+    /// How many game loop frames were run.
     pub frames: usize,
 }
 
 impl QaReport {
-    /// Пишет `log.txt` в каталог и возвращает путь.
+    /// Writes `log.txt` into the directory and returns the path.
     pub fn write_log(&self, dir: impl AsRef<Path>) -> Result<PathBuf, String> {
         let path = dir.as_ref().join("log.txt");
 
@@ -123,7 +123,7 @@ impl QaReport {
         Ok(path)
     }
 
-    /// Одна строка для stdout/CI.
+    /// One line for stdout/CI.
     pub fn summary(&self) -> String {
         if self.passed {
             format!(
@@ -142,17 +142,17 @@ impl QaReport {
     }
 }
 
-/// Что делать после команды.
+/// What to do after a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flow {
     Continue,
     Exit,
 }
 
-/// Детерминированный клиент лобби: скриншот `JoinList` без Horizon.
+/// Deterministic lobby client: a `JoinList` screenshot without Horizon.
 ///
-/// Сеть в QA-драйвере не поднимается (слой 2 headless), поэтому `list_games`
-/// возвращает фиксированный список — кадр `join-list` воспроизводим.
+/// The network is not brought up in the QA driver (layer 2 is headless), so `list_games`
+/// returns a fixed list — the `join-list` frame is reproducible.
 #[derive(Debug, Clone, Copy)]
 pub struct QaMenuClient;
 
@@ -184,7 +184,7 @@ impl MenuClient for QaMenuClient {
     }
 }
 
-/// In-process драйвер UI: приложение + машина экранов + кадровый буфер.
+/// In-process UI driver: application + screen machine + frame buffer.
 pub struct QaRunner {
     app: App,
     ctx: UiContext,
@@ -195,12 +195,12 @@ pub struct QaRunner {
     shots: Vec<PathBuf>,
     frames: usize,
     detail: Option<String>,
-    /// Кадров, которые занял последний `end_turn` (переход + ходы ИИ).
+    /// Frames taken by the last `end_turn` (transition + AI turns).
     last_end_turn_frames: u32,
 }
 
 impl QaRunner {
-    /// Готовит приложение с настоящими ассетами (`MAX.RES`, `PATCHES.RES`).
+    /// Prepares the application with real assets (`MAX.RES`, `PATCHES.RES`).
     pub fn new(config: QaConfig) -> Result<Self, String> {
         std::fs::create_dir_all(&config.out_dir)
             .map_err(|error| format!("каталог {}: {error}", config.out_dir.display()))?;
@@ -209,8 +209,8 @@ impl QaRunner {
             .with_data_dir(&config.data_dir)
             .with_assets_dir(&config.assets_dir)
             .with_mode(AppMode::Ui)
-            // P3: сейвы (в т.ч. автосейв) пишутся в каталог вывода QA, а не в
-            // `max-original`: прогон не оставляет мусора в данных игры.
+            // P3: saves (including autosave) go to the QA output directory, not to
+            // `max-original`: the run leaves no garbage in the game data.
             .with_save_dir(&config.out_dir);
 
         let mut app = App::new(app_config);
@@ -219,9 +219,9 @@ impl QaRunner {
 
         let mut ctx = UiContext::new(Box::new(QaMenuClient), 640, 480);
         ctx.player_name = "Commander".to_string();
-        // `Settings`: имя игрока в Preferences — то же, что видит сценарий
-        // (`App` и `ctx` должны совпадать, иначе форма настройки возьмёт
-        // `player_name` из дефолтов и кадры поменяются).
+        // `Settings`: the player name in Preferences — the same that the scenario sees
+        // (`App` and `ctx` must match, otherwise the setup form takes
+        // `player_name` from the defaults and the frames change).
         ctx.preferences.player_name = "Commander".to_string();
         ctx.world_dir = config.data_dir.clone();
         ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
@@ -241,27 +241,27 @@ impl QaRunner {
         })
     }
 
-    /// Приложение (для тестов и диагностики).
+    /// Application (for tests and diagnostics).
     pub fn app(&self) -> &App {
         &self.app
     }
 
-    /// Текущий экран.
+    /// Current screen.
     pub fn screen(&self) -> &Screen {
         &self.screen
     }
 
-    /// Записанные кадры.
+    /// Recorded frames.
     pub fn shots(&self) -> &[PathBuf] {
         &self.shots
     }
 
-    /// Прокрученные кадры игрового цикла.
+    /// Game loop frames run.
     pub fn frames(&self) -> usize {
         self.frames
     }
 
-    /// Разбирает и прогоняет файл скрипта.
+    /// Parses and runs a script file.
     pub fn run_file(&mut self, path: impl AsRef<Path>) -> QaReport {
         let path = path.as_ref();
 
@@ -294,7 +294,7 @@ impl QaRunner {
         }
     }
 
-    /// Прогоняет разобранные шаги.
+    /// Runs the parsed steps.
     pub fn run(&mut self, steps: &[Step], title: &str) -> QaReport {
         self.log.clear();
         self.shots.clear();
@@ -303,8 +303,8 @@ impl QaRunner {
 
         self.log
             .push_str(&format!("# qa_run: {title} ({} шагов)\n", steps.len()));
-        // P4 (TC-1108): память на старте прогона — чтобы soak-лог показывал
-        // рост RSS между «до» и «после», а не только абсолютное значение.
+        // P4 (TC-1108): memory at the start of the run — so that the soak log shows the
+        // RSS growth between "before" and "after", not only the absolute value.
         let mem_start = crate::mem::process_memory();
         self.log
             .push_str(&format!("# mem start: {}\n", crate::mem::memory_line()));
@@ -348,8 +348,8 @@ impl QaRunner {
             "# mem end: {}{delta}\n",
             crate::mem::memory_line()
         ));
-        // P4: профиль тика — только когда включён `MAX_TICK_PROFILE=1`
-        // (иначе счётчики пусты и строка была бы шумом).
+        // P4: tick profile — only when `MAX_TICK_PROFILE=1` is enabled
+        // (otherwise the counters are empty and the line would be noise).
         if crate::profile::enabled() {
             self.log.push_str(&crate::profile::summary());
             self.log.push('\n');
@@ -372,9 +372,9 @@ impl QaRunner {
     }
 
     fn execute(&mut self, command: &Command) -> Result<Flow, String> {
-        // `main.rs` каждый кадр проводит `settings["disable_fx"]`/громкость в
-        // аудио-слой; QA-драйвер делает то же перед каждой командой, чтобы
-        // `assert prefs-audio` видел эффект `prefs toggle disable_fx`.
+        // `main.rs` passes `settings["disable_fx"]`/volume to the audio layer every
+        // frame; the QA driver does the same before each command so that
+        // `assert prefs-audio` sees the effect of `prefs toggle disable_fx`.
         self.sync_audio();
 
         match command {
@@ -444,11 +444,11 @@ impl QaRunner {
         }
     }
 
-    /// `spawn [enemy] NAME` — QA-only: поставить юнита на свободную клетку.
+    /// `spawn [enemy] NAME` — QA-only: place a unit on a free cell.
     ///
-    /// Нужен для пунктов меню, которые в мобилизации недоступны (диверсант,
-    /// транспорт, бульдозер, обломки, здание под `remove`): скрипт ставит
-    /// юнита рядом с выделенным или в центре карты, не трогая партию иначе.
+    /// Needed for menu items unavailable in mobilization (commando,
+    /// transport, bulldozer, rubble, a building for `remove`): the script places
+    /// the unit next to the selected one or in the map center without touching the match otherwise.
     fn spawn(&mut self, enemy: bool, name: &str) -> Result<Flow, String> {
         let wanted = name.trim().to_ascii_lowercase();
         let unit_type = max_core::UnitType::ALL
@@ -531,14 +531,14 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `spawn at X Y NAME` — QA-only: юнит **в указанной клетке**.
+    /// `spawn at X Y NAME` — QA-only: a unit **in the specified cell**.
     ///
-    /// Нужен для проверки слияния комплексов коннекторами (например, поставить
-    /// `ADUMP` вплотную к шахте): `spawn NAME` ищет свободную клетку сам и может
-    /// поставить склад по диагонали, где связи нет.
+    /// Needed to check complex merging by connectors (e.g. place
+    /// `ADUMP` right next to a mine): `spawn NAME` searches for a free cell itself and may
+    /// place a storage diagonally, where there is no link.
     fn spawn_at(&mut self, x: i16, y: i16, name: &str) -> Result<Flow, String> {
-        // `spawn at X Y enemy NAME` — чужой юнит (для сценариев с известной
-        // геометрией: диагональный выстрел, комплекс и т.п.).
+        // `spawn at X Y enemy NAME` — a foreign unit (for scenarios with known
+        // geometry: a diagonal shot, a complex, etc.).
         let (enemy, name) = match name.trim().strip_prefix("enemy ") {
             Some(name) => (true, name.trim()),
             None => (false, name.trim()),
@@ -602,7 +602,7 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `selfdestruct arm|ok|cancel|advance N` — диалог `SelfDestructMenu`.
+    /// `selfdestruct arm|ok|cancel|advance N` — the `SelfDestructMenu` dialog.
     fn self_destruct_command(
         &mut self,
         action: crate::qa::script::SelfDestructCommand,
@@ -635,9 +635,9 @@ impl QaRunner {
                     rect.uly + rect.height / 2,
                 ));
 
-                // Приказ `ORDER_EXPLODE` лежит в очереди (`HudState::pending`):
-                // офлайн-путь применяет его `App::flush_orders`, как `ui.rs`
-                // (`apply_pending_orders`) после пункта меню.
+                // The `ORDER_EXPLODE` order lies in the queue (`HudState::pending`):
+                // the offline path applies it in `App::flush_orders`, like `ui.rs`
+                // (`apply_pending_orders`) after a menu item.
                 self.app.flush_orders();
 
                 format!("ok: {action:?}")
@@ -667,15 +667,15 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `complex raw N` — QA-only: запас сырья комплекса выделенного юнита.
+    /// `complex raw N` — QA-only: raw material stock of the selected unit's complex.
     ///
-    /// Как `Complex::Transfer(raw, 0, 0)` (`complex.cpp:178`): меняет кэш
-    /// комплекса **и раскладывает** разницу по складам членов в порядке
-    /// `UnitsManager_StationaryUnits`. Это важно для производства: завод
-    /// тратит `storage` подключённых хранилищ
-    /// (`production::complex_raw_materials`), а не поле-кэш.
+    /// Like `Complex::Transfer(raw, 0, 0)` (`complex.cpp:178`): changes the complex
+    /// cache **and spreads** the difference over the members' storages in the order
+    /// `UnitsManager_StationaryUnits`. This matters for production: a factory
+    /// spends the `storage` of connected storages
+    /// (`production::complex_raw_materials`), not the cache field.
     /// `complex raw|fuel|gold N` — QA-only `Complex::Transfer(raw, fuel, gold)`
-    /// для комплекса выделенного юнита (или первого комплекса команды).
+    /// for the complex of the selected unit (or the first team complex).
     fn complex_transfer(
         &mut self,
         raw: Option<i32>,
@@ -705,9 +705,9 @@ impl QaRunner {
             return Err("complex: комплекс не найден".to_string());
         };
 
-        // Абсолютные значения, как у прежнего `complex raw N`: считаем дельту
-        // к текущему полю и зовём `Complex::Transfer`. Не указанные ресурсы не
-        // трогаем.
+        // Absolute values, like the former `complex raw N`: we compute the delta
+        // to the current field and call `Complex::Transfer`. Unspecified resources are not
+        // touched.
         let delta_raw = raw.map_or(0, |value| value - i32::from(target.raw));
         let delta_fuel = fuel.map_or(0, |value| value - i32::from(target.fuel));
         let delta_gold = gold.map_or(0, |value| value - i32::from(target.gold));
@@ -732,7 +732,7 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `teamvalues NAME ATTR VALUE` — QA-only: текущее значение атрибута команды.
+    /// `teamvalues NAME ATTR VALUE` — QA-only: the current value of a team attribute.
     fn team_values(&mut self, name: &str, attribute: &str, value: i32) -> Result<Flow, String> {
         let wanted = name.trim().to_ascii_lowercase();
         let unit_type = max_core::UnitType::ALL
@@ -780,8 +780,8 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `allocate …` — диалог распределения добычи шахты (C++ `AllocMenu`,
-    /// окно `ALLOCFRM`).
+    /// `allocate …` — the mine extraction allocation dialog (C++ `AllocMenu`,
+    /// the `ALLOCFRM` window).
     fn allocate(&mut self, action: crate::qa::script::AllocateCommand) -> Result<Flow, String> {
         use crate::qa::script::AllocateCommand;
 
@@ -789,8 +789,8 @@ impl QaRunner {
 
         let detail = match action {
             AllocateCommand::Open => {
-                // Диалог открывается тем же путём, что у игрока
-                // (`App::open_alloc_menu` — обработчик пункта `allocate`).
+                // The dialog opens the same way as for the player
+                // (`App::open_alloc_menu` — the `allocate` item handler).
                 if app.open_alloc_menu() {
                     let (complex, free) = app
                         .alloc_menu()
@@ -849,8 +849,8 @@ impl QaRunner {
                 if app.alloc_menu().is_none() {
                     return Err("allocate done: меню не открыто".to_string());
                 }
-                // `Remote_SendNetPacket_11`: `ORDER_NEW_ALLOCATE` (08/P5) на
-                // каждую шахту комплекса, затем закрытие.
+                // `Remote_SendNetPacket_11`: `ORDER_NEW_ALLOCATE` (08/P5) to
+                // each mine of the complex, then closing.
                 let queued = app.queue_alloc_orders();
                 app.flush_orders();
                 let line = app
@@ -873,8 +873,8 @@ impl QaRunner {
             .set_volume(self.app.preferences().sound_volume());
     }
 
-    /// Текущий диалог `Preferences` (в меню — `Screen::Preferences`, в игре —
-    /// модальное окно `App::preferences_dialog`).
+    /// Current `Preferences` dialog (in the menu — `Screen::Preferences`, in game —
+    /// the modal window `App::preferences_dialog`).
     fn prefs_dialog(&self) -> Option<&crate::preferences::PreferencesDialog> {
         match &self.screen {
             Screen::Preferences(dialog) => Some(dialog),
@@ -894,7 +894,7 @@ impl QaRunner {
         }
     }
 
-    /// `prefs …` — диалог `Preferences`/`Setup` (C++ `OptionsMenu`).
+    /// `prefs …` — the `Preferences`/`Setup` dialog (C++ `OptionsMenu`).
     fn prefs(&mut self, action: PrefsCommand) -> Result<Flow, String> {
         use crate::preferences::{
             PrefKey, CANCEL_BUTTON, DONE_BUTTON, HELP_BUTTON, WINDOW_ULX, WINDOW_ULY,
@@ -966,9 +966,9 @@ impl QaRunner {
                     .ok_or_else(|| format!("prefs set: неизвестная опция «{name}»"))?;
 
                 if key.is_edit() {
-                    // Поле ввода: клик по нему начинает редактирование,
-                    // Backspace чистит текущее значение, печатные символы
-                    // набирают новое, `Enter` фиксирует (как
+                    // Input field: a click on it starts editing,
+                    // Backspace clears the current value, printable characters
+                    // type a new one, `Enter` commits (like
                     // `ProcessTextEditKeyPress`).
                     let dialog = self.prefs_dialog().expect("prefs открыт");
                     let old = dialog.edit_text(key).ok_or_else(|| {
@@ -1065,8 +1065,8 @@ impl QaRunner {
 
                 self.send(InputEvent::MouseClick(x, y))?;
 
-                // C++ `OptionsMenu` -> `HelpMenu_Menu`: включается **режим**
-                // помощи (`_HelpMode`), окно откроется кликом по элементу.
+                // C++ `OptionsMenu` -> `HelpMenu_Menu`: **help mode** is enabled
+                // (`_HelpMode`), the window opens on a click on an element.
                 if self.app.help_mode().is_none()
                     && !matches!(self.screen, Screen::Help { .. })
                     && self.app.help_screen().is_none()
@@ -1081,9 +1081,9 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `unit-menu …` — меню команд выделенного юнита (C++
-    /// `GameManager_PopupButtons`): открытие тем же повторным кликом, выбор
-    /// пункта кликом по его кнопке или горячей клавишей, закрытие `Esc`.
+    /// `unit-menu …` — the command menu of the selected unit (C++
+    /// `GameManager_PopupButtons`): opening by the same repeated click, choosing
+    /// an item by clicking its button or a hotkey, closing with `Esc`.
     fn unit_menu(&mut self, action: UnitMenuCommand) -> Result<Flow, String> {
         match action {
             UnitMenuCommand::Open => {
@@ -1097,7 +1097,7 @@ impl QaRunner {
                     .map(|unit| unit.grid)
                     .ok_or_else(|| "unit-menu open: юнит исчез".to_string())?;
 
-                // Триггер — повторный клик по уже выделенному юниту
+                // Trigger — a repeated click on the already selected unit
                 // (`GameManager_ClickUnit`).
                 self.app.viewport_mut().center_on_grid(grid.x, grid.y);
                 let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
@@ -1108,9 +1108,9 @@ impl QaRunner {
 
                 let Some(menu) = self.app.unit_menu() else {
                     // `UnitsManager_Popup_InitFactories` (`units_manager.cpp:869-872`):
-                    // у завода в `ORDER_STATE_UNIT_READY` меню не открывается —
-                    // `Popup_PlaceNewUnit` выбирает готового юнита, и следующий
-                    // клик по клетке рядом выводит его (`ORDER_ACTIVATE`).
+                    // for a factory in `ORDER_STATE_UNIT_READY` the menu does not open —
+                    // `Popup_PlaceNewUnit` selects the ready unit, and the next
+                    // click on the adjacent cell brings it out (`ORDER_ACTIVATE`).
                     let now_selected = self.app.hud().selected;
                     let released = now_selected != Some(id)
                         && self.app.state().unit(id).is_some_and(|unit| {
@@ -1190,9 +1190,9 @@ impl QaRunner {
         }
     }
 
-    /// `click unit NAME` — левый клик по юниту команды игрока без проверки
-    /// выделения (курсорные режимы: x-fer/repair/reload). Камера
-    /// центрируется, поэтому клик всегда попадает в клетку юнита.
+    /// `click unit NAME` — a left click on a player team unit without checking
+    /// the selection (cursor modes: x-fer/repair/reload). The camera
+    /// is centered, so the click always hits the unit cell.
     fn click_unit(&mut self, name: &str) -> Result<Flow, String> {
         let team = self.app.player_team();
         let wanted = name.trim().to_ascii_lowercase();
@@ -1229,10 +1229,10 @@ impl QaRunner {
         ))
     }
 
-    /// `click enemy NAME` — левый клик по чужому юниту: при выделенном своём
-    /// юните это приказ атаки (`GameManager_ClickUnit` →
-    /// `GameManager_MenuClickEvent` → `hud::build_attack_order`). Камера
-    /// центрируется на цели, поэтому клик всегда попадает в её клетку.
+    /// `click enemy NAME` — a left click on a foreign unit: with an own unit selected
+    /// it is an attack order (`GameManager_ClickUnit` →
+    /// `GameManager_MenuClickEvent` → `hud::build_attack_order`). The camera
+    /// is centered on the target, so the click always hits its cell.
     fn click_enemy(&mut self, name: &str) -> Result<Flow, String> {
         let team = self.app.player_team();
         let wanted = name.trim().to_ascii_lowercase();
@@ -1272,8 +1272,8 @@ impl QaRunner {
         ))
     }
 
-    /// `transfer …` — окно X-FER (C++ `TransferMenu`): значение полосы,
-    /// кнопки `±1`, `Done` (Enter → 08/P3 `ORDER_TRANSFER`) и `Esc`.
+    /// `transfer …` — the X-FER window (C++ `TransferMenu`): the bar value,
+    /// the `±1` buttons, `Done` (Enter → 08/P3 `ORDER_TRANSFER`) and `Esc`.
     fn transfer(&mut self, action: TransferCommand) -> Result<Flow, String> {
         if self.app.transfer_menu().is_none() {
             return Err("transfer: окно X-FER не открыто".to_string());
@@ -1317,8 +1317,8 @@ impl QaRunner {
                     .map(|menu| menu.amount)
                     .unwrap_or(0);
                 self.detail = Some(format!("Done: {amount}"));
-                // Через ввод — тот же путь, что Enter у игрока (и офлайн
-                // приказ сразу применяется).
+                // Through input — the same path as the player's Enter (and offline the
+                // order is applied immediately).
                 self.send(InputEvent::Key(Key::Enter))
             }
             TransferCommand::Cancel => {
@@ -1332,8 +1332,8 @@ impl QaRunner {
         }
     }
 
-    /// `build …`: экран `BuildMenu` (P2) — те же действия, что у игрока
-    /// (клавиша `B`, клики по строкам списка, кнопки Build/Delete/Done).
+    /// `build …`: the `BuildMenu` screen (P2) — the same actions as for the player
+    /// (the `B` key, clicks on list rows, the Build/Delete/Done buttons).
     fn build(&mut self, action: BuildCommand) -> Result<Flow, String> {
         let app = &mut self.app;
 
@@ -1474,8 +1474,8 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `build cursor X Y` — навести мышь на клетку без клика: призрак-лента
-    /// переезжает (`GameManager_GetBuilderUnitCursor`), заказ не отдаётся.
+    /// `build cursor X Y` — hover the mouse over a cell without a click: the tape ghost
+    /// moves (`GameManager_GetBuilderUnitCursor`), no order is issued.
     fn build_cursor(&mut self, grid: Point) -> Result<Flow, String> {
         if self.app.build_site().is_none() {
             return Err("build cursor: режим выбора места не открыт".to_string());
@@ -1518,12 +1518,12 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `build place X Y|near` — подтверждение места стройки левым кликом по
-    /// карте (C++ `GameManager_PathBuild`).
+    /// `build place X Y|near` — confirmation of the build site with a left click on
+    /// the map (C++ `GameManager_PathBuild`).
     ///
-    /// Клик идёт тем же путём, что у игрока: камера наводится на клетку, затем
-    /// `MouseClick` в её центр, поэтому проверяется и попадание клика в клетку,
-    /// и весь путь ввода.
+    /// The click goes the same way as for the player: the camera is aimed at the cell, then
+    /// `MouseClick` into its center, so both the click hitting the cell and
+    /// the whole input path are checked.
     fn build_place(&mut self, target: Option<Point>) -> Result<Flow, String> {
         let app = &mut self.app;
 
@@ -1592,7 +1592,7 @@ impl QaRunner {
 
         Ok(Flow::Continue)
     }
-    /// `upgrade …`: экран покупных апгрейдов (P6).
+    /// `upgrade …`: the purchasable upgrades screen (P6).
     fn upgrade(&mut self, action: UpgradeCommand) -> Result<Flow, String> {
         let app = &mut self.app;
 
@@ -1659,7 +1659,7 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `research …`: экран исследований (P7, `ResearchMenu`).
+    /// `research …`: the research screen (P7, `ResearchMenu`).
     fn research(&mut self, action: ResearchCommand) -> Result<Flow, String> {
         let app = &mut self.app;
 
@@ -1743,7 +1743,7 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `help …`: окно помощи (`HelpMenu`) — четыре экрана меню/мобилизации,
+    /// `help …`: the help window (`HelpMenu`) — four menu/mobilization screens,
     /// `GAME_SCREEN_SETUP`, `RESEARCH_SETUP`, `UPGRADES_SETUP`.
     fn help(&mut self, action: HelpCommand) -> Result<Flow, String> {
         let detail = match action {
@@ -1779,8 +1779,8 @@ impl QaRunner {
                             ))?;
                         }
                         crate::helpmenu::HelpSection::GameScreen => {
-                            // Панель `HELP_OF` (`GameManager_MenuClickHelpButton`).
-                            // Без хрома панели нет — открываем как `?`.
+                            // The `HELP_OF` panel (`GameManager_MenuClickHelpButton`).
+                            // Without the panel chrome there is no panel — we open it like `?`.
                             if self.app.chrome_active() {
                                 let rect = max_render::layout::HELP_BUTTON;
                                 self.send(InputEvent::MouseClick(
@@ -1817,7 +1817,7 @@ impl QaRunner {
                                     form.screen
                                 ));
                             }
-                            // `?` в нижней строке всех экранов настройки.
+                            // `?` in the bottom row of all setup screens.
                             self.send(InputEvent::MouseClick(489, 458))?;
                         }
                         Screen::PreGame(flow) => {
@@ -1945,7 +1945,7 @@ impl QaRunner {
                 "окно закрыто (режим помощи активен)".to_string()
             }
             HelpCommand::Close => {
-                // Выход из режима: в игре — прямо, в меню — `Esc` в режиме.
+                // Exiting the mode: in game — directly, in the menu — `Esc` in the mode.
                 if matches!(self.screen, Screen::InSession { .. }) {
                     if self.app.help_mode().is_none() {
                         return Err("help close: режим помощи не открыт".to_string());
@@ -1970,7 +1970,7 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// Секция открытого окна помощи (в игре — `App::help_screen`, в меню —
+    /// Section of the open help window (in game — `App::help_screen`, in the menu —
     /// `Screen::Help`).
     fn current_help_section(&self) -> Option<crate::helpmenu::HelpSection> {
         if let Some(help) = self.app.help_screen() {
@@ -1988,7 +1988,7 @@ impl QaRunner {
         }
     }
 
-    /// Открыто ли **окно** помощи (а не только режим выбора элемента).
+    /// Whether the help **window** is open (and not only the element selection mode).
     fn current_help_window_section(&self) -> Option<crate::helpmenu::HelpSection> {
         if let Some(help) = self.app.help_screen() {
             return Some(help.section());
@@ -2001,7 +2001,7 @@ impl QaRunner {
         }
     }
 
-    /// Имя записи, показанной в окне.
+    /// Name of the entry shown in the window.
     fn current_help_entry(&self) -> Option<&'static str> {
         self.app
             .help_screen()
@@ -2059,9 +2059,9 @@ impl QaRunner {
                     ));
                 }
 
-                // Повторный клик по выбранной строке в C++ — `BuyUnit`, поэтому
-                // если строка уже выбрана, сразу жмём `Buy` (иначе купили бы
-                // дважды).
+                // A repeated click on the selected row in C++ — `BuyUnit`, so
+                // if the row is already selected, we press `Buy` at once (otherwise we would buy
+                // twice).
                 if !self.type_row_selected(index) {
                     self.click_type_row(index)?;
                 }
@@ -2174,8 +2174,8 @@ impl QaRunner {
         }
     }
 
-    /// Клик по строке `index` списка типов (с учётом прокрутки: если строка не
-    /// видна, скрипт нажимает стрелки списка, как игрок).
+    /// Click on row `index` of the type list (taking scrolling into account: if the row is not
+    /// visible, the script presses the list arrows, like the player).
     fn click_type_row(&mut self, index: usize) -> Result<Flow, String> {
         let mut guard = 0;
         loop {
@@ -2210,7 +2210,7 @@ impl QaRunner {
         }
     }
 
-    /// Клик по строке `index` списка «Purchased».
+    /// Click on row `index` of the "Purchased" list.
     fn click_loadout_row(&mut self, index: usize) -> Result<Flow, String> {
         let mut guard = 0;
         loop {
@@ -2245,7 +2245,7 @@ impl QaRunner {
         }
     }
 
-    /// Выбрана ли строка `index` списка типов и совпадает ли с панелью информации.
+    /// Whether row `index` of the type list is selected and matches the info panel.
     fn type_row_selected(&self, index: usize) -> bool {
         self.mobilization().is_some_and(|mobilization| {
             mobilization.type_selected == index
@@ -2253,7 +2253,7 @@ impl QaRunner {
         })
     }
 
-    /// Выбрана ли строка `index` списка «Purchased».
+    /// Whether row `index` of the "Purchased" list is selected.
     fn loadout_row_selected(&self, index: usize) -> bool {
         self.mobilization().is_some_and(|mobilization| {
             mobilization.loadout_selected == index
@@ -2264,14 +2264,14 @@ impl QaRunner {
         })
     }
 
-    /// `landing …`: выбор точки высадки через клики по кадру и `Enter`/`Esc`.
+    /// `landing …`: landing point selection via frame clicks and `Enter`/`Esc`.
     fn landing(&mut self, action: LandingCommand) -> Result<Flow, String> {
         match action {
             LandingCommand::Click(x, y) => self.send(InputEvent::MouseClick(x, y)),
             LandingCommand::Grid(grid_x, grid_y) => {
-                // Детерминированно ставим точку без клика: в C++ клик по
-                // валидной клетке сразу подтверждает выбор, а сценарию нужно
-                // снять кадр с курсором до подтверждения.
+                // Set the point deterministically without a click: in C++ a click on
+                // a valid cell immediately confirms the choice, while the scenario needs
+                // to take a frame with the cursor before confirmation.
                 if let Screen::PreGame(flow) = &mut self.screen {
                     if let crate::pregame::PreGameStage::Landing(landing) = &mut flow.stage {
                         landing.cursor = max_core::geo::Point::new(grid_x, grid_y);
@@ -2279,8 +2279,8 @@ impl QaRunner {
                     }
                 }
 
-                // Курсор C++ (`Cursor_RenderToBuffer`) попадает в кадр: ставим
-                // его в центр выбранной клетки, как реальная мышь.
+                // The C++ cursor (`Cursor_RenderToBuffer`) gets into the frame: we place
+                // it in the center of the selected cell, like a real mouse.
                 self.ctx.mouse = Some(max_render::ui::Point::new(
                     crate::landing::LANDING_AREA.ulx
                         + i32::from(grid_x) * crate::landing::LANDING_CELL
@@ -2298,10 +2298,10 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Ввод
+    // Input
     // -----------------------------------------------------------------------
 
-    /// Отправляет событие в текущий экран и исполняет переход.
+    /// Sends an event to the current screen and executes the transition.
     fn send(&mut self, event: InputEvent) -> Result<Flow, String> {
         if matches!(self.screen, Screen::InSession { .. }) {
             return match handle_session_input(&mut self.app, event, false) {
@@ -2363,12 +2363,12 @@ impl QaRunner {
         }
     }
 
-    /// Один кадр игрового цикла — как блок `main.rs` после обработки ввода.
+    /// One game loop frame — like the `main.rs` block after input processing.
     fn frame(&mut self) {
-        // Анимация экранов меню (`Credits`): фиксированный `dt = 1/60`, поэтому
-        // кадр — чистая функция от числа шагов сценария. Когда прокрутка
-        // доходит до верха области, оригинал выходит из цикла — возвращаемся
-        // в главное меню.
+        // Menu screen animation (`Credits`): a fixed `dt = 1/60`, so the
+        // frame is a pure function of the scenario step count. When the scrolling
+        // reaches the top of the area, the original exits the loop — we return
+        // to the main menu.
         if self.screen.advance(1.0 / 60.0) {
             let was_intro = matches!(self.screen, Screen::Introduction(_));
 
@@ -2397,10 +2397,10 @@ impl QaRunner {
         self.frames += 1;
     }
 
-    /// Подготовка кадра к отрисовке (мини-карты планет грузятся один раз).
+    /// Frame preparation for drawing (planet minimaps are loaded once).
     fn prepare(&mut self) {
-        // Портрет `CORNER_FLIC`: синхронизация с выделением без продвижения
-        // анимации (`dt = 0`) — кадр `shot` не зависит от числа кадров до него.
+        // `CORNER_FLIC` portrait: synchronization with the selection without advancing
+        // the animation (`dt = 0`) — the `shot` frame does not depend on the number of frames before it.
         self.app.update_portrait(0.0);
 
         let palette = self
@@ -2409,8 +2409,8 @@ impl QaRunner {
             .and_then(|assets| assets.menu.as_ref())
             .map(|menu| menu.palette);
 
-        // Окно помощи может быть открыто поверх экрана настройки: мини-карты
-        // планет всё равно должны быть готовы к кадру.
+        // The help window can be open over the setup screen: the planet
+        // minimaps must still be ready for the frame.
         let screen = match &mut self.screen {
             Screen::Help { screen, .. } => screen.as_mut(),
             screen => screen,
@@ -2421,7 +2421,7 @@ impl QaRunner {
         }
     }
 
-    /// Игра готова принять ввод (или уже окончена / показывает окно перехода).
+    /// The game is ready to accept input (or already over / shows the transition window).
     fn ready(&self) -> bool {
         match self.app.local() {
             None => true,
@@ -2429,7 +2429,7 @@ impl QaRunner {
         }
     }
 
-    /// `wait N`: до N кадров, пока игра не будет готова к вводу.
+    /// `wait N`: up to N frames until the game is ready for input.
     fn wait(&mut self, limit: usize) -> Result<Flow, String> {
         let mut frames = 0usize;
 
@@ -2450,13 +2450,13 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `wait firing`: кадры до кадра выстрела выделенного юнита.
+    /// `wait firing`: frames until the firing frame of the selected unit.
     ///
-    /// `UnitInfo::PrepareFire` держит отдачу всего 3 кадра
-    /// (`firing_recoil_frames`), поэтому фиксированный `tick N` попадает в неё
-    /// лишь при неизменном числе тиков наведения (`AimAtTarget`). Команда
-    /// убирает эту хрупкость: крутит кадры, пока `firing_frame_active`
-    /// (`firing_recoil_frames > 0` и `HAS_FIRING_SPRITE`) не станет истинным.
+    /// `UnitInfo::PrepareFire` keeps recoil for only 3 frames
+    /// (`firing_recoil_frames`), so a fixed `tick N` hits it
+    /// only with an unchanged number of aiming ticks (`AimAtTarget`). The command
+    /// removes this fragility: it runs frames until `firing_frame_active`
+    /// (`firing_recoil_frames > 0` and `HAS_FIRING_SPRITE`) becomes true.
     fn wait_firing(&mut self) -> Result<Flow, String> {
         const LIMIT: usize = 240;
 
@@ -2484,19 +2484,19 @@ impl QaRunner {
         ))
     }
 
-    /// `mem`: текущий RSS процесса в лог шага (P4 soak, TC-1108).
+    /// `mem`: the current process RSS into the step log (P4 soak, TC-1108).
     fn mem(&mut self) -> Result<Flow, String> {
         self.detail = Some(crate::mem::memory_line());
 
         Ok(Flow::Continue)
     }
 
-    /// `anim N`: прокрутить визуальные часы на `N` мс реального `dt`.
+    /// `anim N`: advance the visual clock by `N` ms of real `dt`.
     ///
-    /// Симуляция не тикает (`GameState::tick` не вызывается), поэтому кадры
-    /// анимации детерминированы: `anim` идёт фиксированными шагами 1/60 с
-    /// ровно как `main.rs` в интерактиве. `dt = 0` у `tick`/`wait` наоборот
-    /// даёт статичный кадр (рабочая поза `+16`, полный размер постройки).
+    /// The simulation does not tick (`GameState::tick` is not called), so the animation
+    /// frames are deterministic: `anim` goes in fixed 1/60 s steps
+    /// exactly like `main.rs` in interactive mode. `dt = 0` in `tick`/`wait`, on the contrary,
+    /// gives a static frame (the working pose `+16`, the full building size).
     fn anim(&mut self, millis: u32) -> Result<Flow, String> {
         let total = f64::from(millis) / 1000.0;
         let step = 1.0f64 / 60.0;
@@ -2513,7 +2513,7 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Кадры
+    // Frames
     // -----------------------------------------------------------------------
 
     fn shot(&mut self, name: &str) -> Result<Flow, String> {
@@ -2542,7 +2542,7 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Высокоуровневые команды
+    // High-level commands
     // -----------------------------------------------------------------------
 
     fn menu(&mut self, target: MenuTarget) -> Result<Flow, String> {
@@ -2612,8 +2612,8 @@ impl QaRunner {
         }
     }
 
-    /// Клик по кнопке главного меню `index` (0..=6) с проверкой, что экран
-    /// действительно сменился (для `menu intro`/`menu credits`).
+    /// Click on main menu button `index` (0..=6) checking that the screen
+    /// actually changed (for `menu intro`/`menu credits`).
     fn click_main_menu_button(&mut self, index: usize, what: &str) -> Result<(), String> {
         if !matches!(self.screen, Screen::MainMenu) {
             return Err(format!(
@@ -2780,8 +2780,8 @@ impl QaRunner {
             .map(|unit| unit.grid)
             .ok_or_else(|| "select unit: юнит исчез".to_string())?;
 
-        // Камера на юните: точка клика всегда внутри области карты, независимо
-        // от того, куда игрок увёл камеру раньше.
+        // Camera on the unit: the click point is always inside the map area, regardless
+        // of where the player moved the camera before.
         self.app.viewport_mut().center_on_grid(grid.x, grid.y);
 
         let (x, y) = hud::tile_center(&self.app.map_viewport(), grid);
@@ -2789,8 +2789,8 @@ impl QaRunner {
         self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
     }
 
-    /// `select last`: самый новый юнит игрока (в т.ч. стационарный — только что
-    /// достроенный завод). Камера центрируется, клик идёт по клетке.
+    /// `select last`: the newest player unit (including a stationary one — a factory
+    /// just completed). The camera is centered, the click goes to the cell.
     fn select_last(&mut self) -> Result<Flow, String> {
         let team = self.app.player_team();
         let id = self
@@ -2821,9 +2821,9 @@ impl QaRunner {
         self.select_point(x + layout::MAIN_MAP.ulx, y + layout::MAIN_MAP.uly)
     }
 
-    /// `select type NAME`: юнит игрока с таким именем — UFN
-    /// ([`crate::buildmenu::unit_name`]) или `Debug`-имя варианта, без учёта
-    /// регистра. Берётся самый новый подходящий.
+    /// `select type NAME`: a player unit with this name — the UFN
+    /// ([`crate::buildmenu::unit_name`]) or the variant's `Debug` name, case-insensitive.
+    /// The newest matching one is taken.
     fn select_type(&mut self, name: &str) -> Result<Flow, String> {
         let team = self.app.player_team();
         let wanted = name.trim().to_ascii_lowercase();
@@ -2963,11 +2963,11 @@ impl QaRunner {
         self.move_point(frame_x, frame_y, &format!("move grid {x} {y}"))
     }
 
-    /// Приказ в соседнюю свободную клетку (как игрок мышью).
+    /// Order to an adjacent free cell (like a player with the mouse).
     ///
-    /// Перебирает соседей выделенного юнита в детерминированном порядке и
-    /// оставляет первый, который принял приказ: так скрипт не зависит от
-    /// точных координат стартовой позиции на карте.
+    /// Iterates the neighbors of the selected unit in a deterministic order and
+    /// keeps the first one that accepted the order: this way the script does not depend on
+    /// the exact coordinates of the starting position on the map.
     fn move_near(&mut self) -> Result<Flow, String> {
         let Some(id) = self.app.hud().selected else {
             return Err("move near: нет выделенного юнита (сначала select)".to_string());
@@ -3042,10 +3042,10 @@ impl QaRunner {
         ))
     }
 
-    /// `move near refused` — правый клик по свободной соседней клетке, который
-    /// **обязан** не дать приказа: C++ `GameManager_GetBuilderUnitCursor`
-    /// (`game_manager.cpp:5927-5931`) для строителя в `BUILD_IN_PROGRESS`
-    /// возвращает `CURSOR_UNIT_NO_GO`, и ввод приказа не создаёт.
+    /// `move near refused` — a right click on a free adjacent cell that
+    /// **must not** give an order: C++ `GameManager_GetBuilderUnitCursor`
+    /// (`game_manager.cpp:5927-5931`) for a builder in `BUILD_IN_PROGRESS`
+    /// returns `CURSOR_UNIT_NO_GO`, and the input creates no order.
     fn move_near_refused(&mut self) -> Result<Flow, String> {
         let Some(id) = self.app.hud().selected else {
             return Err("move near refused: нет выделенного юнита (сначала select)".to_string());
@@ -3127,13 +3127,13 @@ impl QaRunner {
         ))
     }
 
-    /// `launch near` / `launch grid X Y` — вывод готового юнита из завода.
+    /// `launch near` / `launch grid X Y` — bringing a ready unit out of a factory.
     ///
-    /// Игрок: выделен готовый юнит (`Popup_InitFactories` → `PlaceNewUnit`
-    /// выбирает его при повторном клике по заводу), затем правый клик по клетке
-    /// рядом с заводом — `CURSOR_ACTIVATE` → приказ `ORDER_ACTIVATE` **заводу**
-    /// (`game_manager.cpp:6918-6926`). Проверка: контейнер получил `Activate`
-    /// (или юнит уже выпущен).
+    /// Player: the ready unit is selected (`Popup_InitFactories` → `PlaceNewUnit`
+    /// selects it on a repeated click on the factory), then a right click on the cell
+    /// next to the factory — `CURSOR_ACTIVATE` → the `ORDER_ACTIVATE` order **to the factory**
+    /// (`game_manager.cpp:6918-6926`). Check: the container received `Activate`
+    /// (or the unit has already been launched).
     fn launch(&mut self, action: LaunchCommand) -> Result<Flow, String> {
         let Some(id) = self.app.hud().selected else {
             return Err("launch: нет выделенного юнита (сначала select)".to_string());
@@ -3142,8 +3142,8 @@ impl QaRunner {
             return Err("launch: выделенный юнит исчез".to_string());
         };
 
-        // Контейнер и готовый юнит: либо выделен завод (`ORDER_BUILD`+`UNIT_READY`),
-        // либо сам юнит «в трюме» (`ORDER_IDLE` с родителем).
+        // The container and the ready unit: either the factory is selected (`ORDER_BUILD`+`UNIT_READY`),
+        // or the unit itself "in the hold" (`ORDER_IDLE` with a parent).
         let (container_id, client_id) = if selected.orders == max_core::enums::UnitOrder::Idle {
             let parent = selected
                 .parent_unit
@@ -3194,8 +3194,8 @@ impl QaRunner {
 
         self.send(InputEvent::RightClick(frame_x, frame_y))?;
 
-        // Приказ применён локально сразу (`apply_pending_orders`): контейнер
-        // должен быть в `ORDER_ACTIVATE`/`EXECUTING_ORDER`.
+        // The order is applied locally immediately (`apply_pending_orders`): the container
+        // must be in `ORDER_ACTIVATE`/`EXECUTING_ORDER`.
         let container_now = self.app.state().unit(container_id);
         let activated = container_now.is_some_and(|unit| {
             unit.orders == max_core::enums::UnitOrder::Activate
@@ -3252,8 +3252,8 @@ impl QaRunner {
         self.wait(self.config.frame_limit)?;
         self.last_end_turn_frames = (self.frames - before) as u32;
 
-        // Диагностика зависания: ход ИИ, который крутился дольше обычного
-        // (121 тик `AiPlayer::CheckEndTurn` + ходы), печатает состояние.
+        // Hang diagnostics: an AI turn that ran longer than usual
+        // (121 `AiPlayer::CheckEndTurn` ticks + turns) prints the state.
         if self.frames - before > 2_000 {
             eprintln!(
                 "qa_run: WARN end_turn занял {} кадров (turn={}, phase={:?}, counters={:?})",
@@ -3308,7 +3308,7 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Сохранения
+    // Saves
     // -----------------------------------------------------------------------
 
     fn save(&mut self, name: &str) -> Result<Flow, String> {
@@ -3322,11 +3322,11 @@ impl QaRunner {
         Ok(Flow::Continue)
     }
 
-    /// `save_v70 FILE` — настоящий V70-сейв (P3, `GameState::to_save_bytes`).
+    /// `save_v70 FILE` — a real V70 save (P3, `GameState::to_save_bytes`).
     ///
-    /// В отличие от `save` (контейнер `MXLS` с настройками и снапшотом) это
-    /// файл формата оригинала: его можно загрузить обратно командой `load`
-    /// (и открыть в C++-порте).
+    /// Unlike `save` (the `MXLS` container with settings and a snapshot) this is
+    /// an original-format file: it can be loaded back with the `load` command
+    /// (and opened in the C++ port).
     fn save_v70(&mut self, name: &str) -> Result<Flow, String> {
         let path = self.config.out_dir.join(name);
         let name = path
@@ -3386,7 +3386,7 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Ассерты
+    // Asserts
     // -----------------------------------------------------------------------
 
     fn check(&mut self, assertion: Assertion) -> Result<Flow, String> {
@@ -3554,8 +3554,8 @@ impl QaRunner {
                     });
                 let centered = match tape {
                     Some(tape) => {
-                        // Центр ленты: половина её габарита (2×2 — 64 px,
-                        // 1×1 — 32 px) от якоря.
+                        // Tape center: half of its size (2×2 — 64 px,
+                        // 1×1 — 32 px) from the anchor.
                         let half = if tape.unit_type == max_core::enums::UnitType::LargeTape {
                             64
                         } else {
@@ -3633,10 +3633,10 @@ impl QaRunner {
                         "строителя нет".to_string(),
                     );
                 };
-                // Здание — ближайшее своё `BUILDING` (достроенное или ещё
-                // ждущее ухода строителя: `SpawnNewUnit` уже поставил его на
-                // площадку). Родитель строителя после `ActivateEngineer`
-                // сбрасывается, поэтому опора — габариты здания.
+                // Building — the nearest own `BUILDING` (completed or still
+                // waiting for the builder to leave: `SpawnNewUnit` has already placed it on
+                // the site). The builder's parent is reset after `ActivateEngineer`,
+                // so the reference is the building size.
                 let building = self
                     .app
                     .state()
@@ -3707,9 +3707,9 @@ impl QaRunner {
                 )
             }
             Assertion::FactoryReady(waiting) => {
-                // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`): завод в
-                // `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` держит готовый юнит
-                // «внутри» (`parent_unit` — он) и ждёт приказа игрока.
+                // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`): a factory in
+                // `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` holds the ready unit
+                // "inside" (`parent_unit` — it) and waits for the player's order.
                 let found = self.app.hud().selected.and_then(|id| {
                     self.app.state().unit(id).and_then(|unit| {
                         (unit.orders == max_core::enums::UnitOrder::Build
@@ -3767,8 +3767,8 @@ impl QaRunner {
                 )
             }
             Assertion::EndTurnPressed(pressed) => {
-                // Та же функция, что рисует кнопку (`panels::end_turn_pressed`):
-                // ход компьютера — нажата, ход человека — отжата.
+                // The same function that draws the button (`panels::end_turn_pressed`):
+                // computer turn — pressed, human turn — released.
                 let active = self.app.state().active_turn_team;
                 let kind = self
                     .app
@@ -4170,9 +4170,9 @@ impl QaRunner {
                 )
             }
             Assertion::MissileLine => {
-                // `AirPath::Execute` (`airpath.cpp:219-242`): пиксельная позиция
-                // снаряда (`unit->x/y` после `OffsetDrawZones`) обязана лежать на
-                // прямой «центр клетки пуска → центр клетки цели».
+                // `AirPath::Execute` (`airpath.cpp:219-242`): the pixel position
+                // of the projectile (`unit->x/y` after `OffsetDrawZones`) must lie on
+                // the line "launch cell center → target cell center".
                 let found = self
                     .app
                     .state()
@@ -4371,9 +4371,9 @@ impl QaRunner {
                     max_core::enums::UnitType::SmallCones,
                     max_core::enums::UnitType::SmallSlab,
                 ];
-                // Только декали **стройплощадки**: клетка ленты (`LRG/SMLTAPE`)
-                // и всё, что в ней лежит. Постоянные плиты-фундаменты базы под
-                // это не попадают.
+                // Only the **construction site** decals: the tape cell (`LRG/SMLTAPE`)
+                // and everything in it. The permanent base foundation plates do
+                // not fall under this.
                 let mut decals: Vec<(max_core::unit::UnitId, max_core::enums::UnitType)> =
                     Vec::new();
 
@@ -4409,9 +4409,9 @@ impl QaRunner {
                     );
                 }
 
-                // Кадр со всеми декалями против кадра без одной: если декаль
-                // реально нарисована, её пиксели исчезнут (`IsRelevant`:
-                // `ORDER_IDLE` не рисуется).
+                // A frame with all decals against a frame without one: if the decal
+                // is actually drawn, its pixels will disappear (`IsRelevant`:
+                // `ORDER_IDLE` is not drawn).
                 let full = self.app.render_frame();
                 let mut ok = true;
                 let mut parts = Vec::new();
@@ -4480,8 +4480,8 @@ impl QaRunner {
                 )
             }
             Assertion::PrefsEffects(on) => {
-                // Пока диалог открыт, действует его черновик (как
-                // `settings->SetNumericValue` в C++ применяет клик сразу).
+                // While the dialog is open, its draft applies (like
+                // `settings->SetNumericValue` in C++ applies a click immediately).
                 let actual = self
                     .prefs_dialog()
                     .map(|dialog| dialog.draft.effects)
@@ -4504,7 +4504,7 @@ impl QaRunner {
                 )
             }
             Assertion::PrefsAudio(on) => {
-                // Флаг `disable_fx` доходит до аудио-слоя (`AudioPlayer::enabled`).
+                // The `disable_fx` flag reaches the audio layer (`AudioPlayer::enabled`).
                 let actual = self.ctx.audio.enabled();
                 self.expect(
                     actual == on,
@@ -4635,8 +4635,8 @@ impl QaRunner {
                 )
             }
             Assertion::ResourceIcons(cmp, expected) => {
-                // Кадровый счётчик: сколько клеток с иконкой ресурса нарисовано
-                // (`Survey_RenderMarkers`) — только разведанные клетки.
+                // Frame counter: how many cells with the resource icon are drawn
+                // (`Survey_RenderMarkers`) — only surveyed cells.
                 let (_, stats) = self.app.render_frame_with_stats();
                 let actual = i64::from(stats.resource_icon_cells);
                 let expected = i64::from(expected);
@@ -4688,8 +4688,8 @@ impl QaRunner {
                 )
             }
             Assertion::OverlayPixels(cmp, expected) => {
-                // Кнопка «работает», если её слой действительно нарисован:
-                // `crate::overlays` возвращает число закрашенных пикселей.
+                // The button "works" if its layer is actually drawn:
+                // `crate::overlays` returns the number of filled pixels.
                 let (_, stats) = self.app.render_frame_with_stats();
                 let actual = i64::from(stats.overlay_pixels);
                 let expected = i64::from(expected);
@@ -4788,7 +4788,7 @@ impl QaRunner {
         }
     }
 
-    /// Состояние экрана мобилизации, если он сейчас открыт.
+    /// State of the mobilization screen, if it is open now.
     fn mobilization(&self) -> Option<&crate::mobilize::Mobilization> {
         match &self.screen {
             Screen::PreGame(flow) => match &flow.stage {
@@ -4808,7 +4808,7 @@ impl QaRunner {
         }
     }
 
-    /// Проверка числа из открытого диалога распределения добычи.
+    /// Check of the number from the open extraction allocation dialog.
     fn check_alloc_value(
         &mut self,
         label: &str,
@@ -4828,11 +4828,11 @@ impl QaRunner {
         }
     }
 
-    /// Проверка запаса комплекса (`Complex::raw/...`).
+    /// Check of the complex stock (`Complex::raw/...`).
     ///
-    /// Комплекс — выделенного юнита, иначе первый комплекс команды игрока
-    /// ([`crate::App::economy_complex`]): после смены хода выделение снимается,
-    /// а запас комплекса шахты всё равно нужно проверить.
+    /// The complex — of the selected unit, otherwise the first complex of the player team
+    /// ([`crate::App::economy_complex`]): after the turn change the selection is cleared,
+    /// but the mine complex stock still needs to be checked.
     fn check_complex_value(
         &mut self,
         label: &str,
@@ -4873,7 +4873,7 @@ impl QaRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Диагностика состояния
+    // State diagnostics
     // -----------------------------------------------------------------------
 
     fn setup_screen(&self) -> Option<SetupScreen> {
@@ -4883,11 +4883,11 @@ impl QaRunner {
         }
     }
 
-    /// Показывает ли выделенный юнит кадр выстрела.
+    /// Whether the selected unit shows the firing frame.
     ///
-    /// Проверяется не только счётчик отдачи (`UnitInfo::PrepareFire`,
-    /// `firing_recoil_frames`), но и то, что рендер выбрал именно кадр
-    /// `firing_image_base` из `D_*` — то есть в текущем кадре видна вспышка.
+    /// Not only the recoil counter is checked (`UnitInfo::PrepareFire`,
+    /// `firing_recoil_frames`), but also that the renderer chose exactly the frame
+    /// `firing_image_base` from `D_*` — i.e. the flash is visible in the current frame.
     fn firing_frame_drawn(&self) -> bool {
         let Some(unit) = self
             .app

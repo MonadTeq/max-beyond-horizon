@@ -1,21 +1,21 @@
-//! M-HS: hot-seat (2–4 человека на одном ПК) — экран перехода хода и тексты.
+//! M-HS: hot-seat (2–4 humans on one PC) — the turn-transition screen and texts.
 //!
-//! # Что делает оригинал (`max-cpp-port/src/game_manager.cpp`)
+//! # What the original does (`max-cpp-port/src/game_manager.cpp`)
 //!
-//! Hot-seat в C++ — это не отдельный режим симуляции, а следствие того, что
-//! «человеческих» команд больше одной:
+//! Hot-seat in C++ is not a separate simulation mode but a consequence of there being
+//! more than one «human» team:
 //!
-//! 1. `GameManager_UpdateHumanPlayerCount` (`:3267`) считает команды с
-//!    `TEAM_TYPE_PLAYER`; если их `> 1`, счётчик остаётся ненулевым и
-//!    `GameManager_PlayMode` **принудительно** становится `PLAY_MODE_TURN_BASED`
-//!    (в одиночной игре счётчик обнуляется);
-//! 2. `GameManager_TeamTurnTurnBased` (`:451`) идёт по командам RED → GREEN →
-//!    BLUE → GRAY и на каждую играющую команду вызывает
+//! 1. `GameManager_UpdateHumanPlayerCount` (`:3267`) counts teams with
+//!    `TEAM_TYPE_PLAYER`; if there are `> 1`, the counter stays non-zero and
+//!    `GameManager_PlayMode` **forcibly** becomes `PLAY_MODE_TURN_BASED`
+//!    (in a single game the counter is zeroed);
+//! 2. `GameManager_TeamTurnTurnBased` (`:451`) walks the teams RED → GREEN →
+//!    BLUE → GRAY and for each playing team calls
 //!    `GameManager_UpdateGui(team, ...)` (`:2407`);
-//! 3. в ветке `TEAM_TYPE_PLAYER` (`:2437`) при смене команды
-//!    (`GameManager_PlayerTeam != team`) и ненулевом `GameManager_HumanPlayerCount`
-//!    вызывается `GameManager_UpdateGuiControl(team)` (`:2262`). Он
-//!    **показывает модальное сообщение**:
+//! 3. in the `TEAM_TYPE_PLAYER` branch (`:2437`), when the team changes
+//!    (`GameManager_PlayerTeam != team`) and `GameManager_HumanPlayerCount` is non-zero,
+//!    it calls `GameManager_UpdateGuiControl(team)` (`:2262`). It
+//!    **shows a modal message**:
 //!
 //!    ```c
 //!    sprintf(message, _(c2eb), menu_team_names[team]);
@@ -24,48 +24,48 @@
 //!
 //!    `_(c2eb)` = `"%s:\nBegin turn."`, `menu_team_names[]` (`_(f394)`, `_(a8a6)`,
 //!    `_(a3ee)`, `_(319d)`) = `Red Team`, `Green Team`, `Blue Team`, `Gray Team`.
-//!    Модальный (`MESSAGE_BOX_MODAL`) путь `MessageManager_DrawMessage`
-//!    (`message_manager.cpp:144`) — это `DialogMenu dialog(text, true); dialog.Run()`;
-//! 4. `DialogMenu` (`dialogmenu.cpp:145`) рисует окно `HELPFRAM` (301×231),
-//!    отцентрованное в `WINDOW_MAIN_MAP` (`GameManager_GetDialogWindowCenterMode`,
-//!    `dialog_center_mode = 0` по умолчанию → `(253,126)`), текст `GNW_TEXT_FONT_5`
-//!    цветом `GNW_TEXT_OUTLINE | 0xFF` в области `(20,14)` 265×175 (по центру
-//!    по горизонтали, блок — по центру по вертикали), кнопку `HELPOK_U/D` 65×24
-//!    в `(120,193)` с подписью `OK`; выход — клик по кнопке, **Enter** или **Esc**
-//!    (`ProcessKey`, `:103`). Пока диалог открыт, игровой цикл стоит в
-//!    `DialogMenu::Run()`, а таймер хода ещё не запущен
-//!    (`GameManager_UpdateGui` включает его после возврата из `UpdateGuiControl`,
+//!    The modal (`MESSAGE_BOX_MODAL`) path of `MessageManager_DrawMessage`
+//!    (`message_manager.cpp:144`) is `DialogMenu dialog(text, true); dialog.Run();`;
+//! 4. `DialogMenu` (`dialogmenu.cpp:145`) draws the `HELPFRAM` window (301×231),
+//!    centered in `WINDOW_MAIN_MAP` (`GameManager_GetDialogWindowCenterMode`,
+//!    `dialog_center_mode = 0` by default → `(253,126)`), text `GNW_TEXT_FONT_5`
+//!    in the color `GNW_TEXT_OUTLINE | 0xFF` in the area `(20,14)` 265×175 (centered
+//!    horizontally, the block — vertically centered), the `HELPOK_U/D` 65×24 button
+//!    at `(120,193)` labeled `OK`; exit — button click, **Enter** or **Esc**
+//!    (`ProcessKey`, `:103`). While the dialog is open, the game loop sits in
+//!    `DialogMenu::Run()`, and the turn timer is not started yet
+//!    (`GameManager_UpdateGui` starts it after returning from `UpdateGuiControl`,
 //!    `:2490`);
-//! 5. после подтверждения `GameManager_PlayerTeam = team`, `Access_UpdateMinimapFogOfWar(team, …)`
-//!    и `GameManager_UpdatePanelButtons(team)` — ввод и панели переключаются на
-//!    нового игрока.
+//! 5. after confirmation `GameManager_PlayerTeam = team`, `Access_UpdateMinimapFogOfWar(team, …)`
+//!    and `GameManager_UpdatePanelButtons(team)` — input and panels switch to the
+//!    new player.
 //!
-//! Другими словами: **в оригинале экран перехода есть**, но это не отдельный
-//! экран, а модальное окно `DialogMenu` с текстом «<Команда>: Begin turn.».
-//! Здесь оно воспроизведено 1:1 (ресурсы, координаты, шрифт, цвет, клавиши);
-//! отличий от оракула — только отсутствие прокрутки (`BLDUP/BLDDWN`) для
-//! текстов длиннее 17 строк: сообщение — две строки.
+//! In other words: **the original does have a turn-transition screen**, but it is not
+//! a separate screen but a `DialogMenu` modal window with the text «<Team>: Begin turn.».
+//! Here it is reproduced 1:1 (resources, coordinates, font, color, keys);
+//! the only difference from the oracle is the absence of scrolling (`BLDUP/BLDDWN`) for
+//! texts longer than 17 lines: the message is two lines.
 //!
-//! # Настройка
+//! # Setup
 //!
-//! `menu_custom_game_menu(false)` (`menu.cpp:2115`) — hot-seat вариант меню
-//! настройки: те же три экрана (`GameConfigMenu` → `PlanetSelectMenu` →
-//! `ChoosePlayerMenu`), но `ChoosePlayerMenu` получает `is_single_player =
-//! false`, поэтому:
+//! `menu_custom_game_menu(false)` (`menu.cpp:2115`) — the hot-seat variant of the
+//! setup menu: the same three screens (`GameConfigMenu` → `PlanetSelectMenu` →
+//! `ChoosePlayerMenu`), but `ChoosePlayerMenu` gets `is_single_player =
+//! false`, therefore:
 //!
-//! * заголовок экрана — `_(55c8)` = `Hot Seat Menu` (вместо `_(5512)` =
+//! * the screen title — `_(55c8)` = `Hot Seat Menu` (instead of `_(5512)` =
 //!   `Custom Game Menu`);
-//! * «Human» на другом слоте **не переносит** флаг человека
-//!   (`EventSelectHuman`, `:79`), так что людей можно выбрать несколько;
-//! * стартовые значения `menu_choose_player_menu_loop` (`menu.cpp:1883`):
-//!   RED — человек, GREEN — человек, BLUE/GRAY — пусто;
-//! * `EventDone` (`:212`) требует минимум **двух людей**: `_(06ec)` =
+//! * «Human» on another slot does **not** copy the human flag
+//!   (`EventSelectHuman`, `:79`), so several humans can be selected;
+//! * initial values of `menu_choose_player_menu_loop` (`menu.cpp:1883`):
+//!   RED — human, GREEN — human, BLUE/GRAY — empty;
+//! * `EventDone` (`:212`) requires at least **two humans**: `_(06ec)` =
 //!   `There must be at least two human players to begin a hot seat game.`;
-//! * имена команд в партии — `Red Team`/`Green Team`/… (`menu.cpp:1941`:
-//!   `player_name` подставляется только в одиночной игре).
+//! * team names in the match — `Red Team`/`Green Team`/… (`menu.cpp:1941`:
+//!   `player_name` is substituted only in a single game).
 //!
-//! Точка входа в оригинале — `Multiplayer Menu` (`menu_multiplayer_menu_loop`,
-//! `:2361`) → кнопка `Hot Seat Game` (`_(f731)`).
+//! The entry point in the original is `Multiplayer Menu` (`menu_multiplayer_menu_loop`,
+//! `:2361`) → the `Hot Seat Game` button (`_(f731)`).
 
 use max_core::team::{TeamId, TeamKind};
 use max_render::buffer::{PixelRect, RgbaBuffer};
@@ -75,58 +75,58 @@ use crate::local::LOCAL_TEAM_COUNT;
 use crate::menu::{blit_simple, draw_big_image_at, wrap_gnw_text, MenuAssets};
 use crate::panels::UiPalette;
 
-/// Заголовок экрана команд в одиночной игре (`_(5512)`).
+/// Team screen title in a single game (`_(5512)`).
 pub const TITLE_SINGLE: &str = "Custom Game Menu";
-/// Заголовок экрана команд в hot-seat (`_(55c8)`).
+/// Team screen title in hot-seat (`_(55c8)`).
 pub const TITLE_HOT_SEAT: &str = "Hot Seat Menu";
 
-/// `_(bc94)`: нужно минимум два участника (`ChoosePlayerMenu::EventDone`).
+/// `_(bc94)`: at least two participants are required (`ChoosePlayerMenu::EventDone`).
 pub const MSG_TWO_PLAYERS: &str = "There must be at least two players to begin a new game.";
-/// `_(06ec)`: нужно минимум два человека (hot-seat).
+/// `_(06ec)`: at least two humans are required (hot-seat).
 pub const MSG_TWO_HUMANS: &str =
     "There must be at least two human players to begin a hot seat game.";
 
-/// Имена команд в hot-seat — `menu_team_names[]` (`_(f394)`, `_(a8a6)`, `_(a3ee)`,
+/// Team names in hot-seat — `menu_team_names[]` (`_(f394)`, `_(a8a6)`, `_(a3ee)`,
 /// `_(319d)`).
 pub const TEAM_NAMES: [&str; LOCAL_TEAM_COUNT] =
     ["Red Team", "Green Team", "Blue Team", "Gray Team"];
 
-/// Сообщение перехода хода (`_(c2eb)` = `"%s:\nBegin turn."`).
+/// Turn-transition message (`_(c2eb)` = `"%s:\nBegin turn."`).
 pub fn turn_message(team: TeamId) -> String {
     format!("{}:\nBegin turn.", team_display_name(team))
 }
 
-/// Имя команды для сообщения/экрана.
+/// Team name for the message/screen.
 pub fn team_display_name(team: TeamId) -> &'static str {
     TEAM_NAMES.get(usize::from(team.0)).copied().unwrap_or("")
 }
 
 // ---------------------------------------------------------------------------
-// Раскладка DialogMenu (`HELPFRAM` + `HELPOK`)
+// DialogMenu layout (`HELPFRAM` + `HELPOK`)
 // ---------------------------------------------------------------------------
 
-/// `HELPFRAM` — фон диалога 301×231 (`MAX.RES`; в C++ `DLG_...`/`HELPFRM`).
+/// `HELPFRAM` — dialog background 301×231 (`MAX.RES`; in C++ `DLG_...`/`HELPFRM`).
 pub const HELPFRAM_SIZE: (i32, i32) = (301, 231);
-/// `WINDOW_MAIN_MAP` — область карты 448×448 в окне 640×480 (`window_manager.cpp`).
+/// `WINDOW_MAIN_MAP` — the 448×448 map area in the 640×480 window (`window_manager.cpp`).
 pub const MAIN_MAP_RECT: PixelRect = PixelRect::new(180, 18, 448, 448);
-/// Окно диалога: `HELPFRAM`, отцентрованный в `WINDOW_MAIN_MAP`
+/// Dialog window: `HELPFRAM` centered in `WINDOW_MAIN_MAP`
 /// (`Window(HELPFRM, GameManager_GetDialogWindowCenterMode())`).
 pub const DIALOG_RECT: PixelRect = PixelRect::new(253, 126, 301, 231);
-/// Область текста: `canvas = Image(20, 14, 265, 175)` (`dialogmenu.cpp:159`).
+/// Text area: `canvas = Image(20, 14, 265, 175)` (`dialogmenu.cpp:159`).
 pub const TEXT_RECT: PixelRect = PixelRect::new(20, 14, 265, 175);
-/// Кнопка `OK` (`new Button(HELPOK_U, HELPOK_D, 120, 193)`, `:162`) в координатах окна.
+/// `OK` button (`new Button(HELPOK_U, HELPOK_D, 120, 193)`, `:162`) in window coordinates.
 pub const OK_RECT: PixelRect = PixelRect::new(120, 193, 65, 24);
-/// Текст `GNW_TEXT_OUTLINE | 0xFF` (`MessageManager_DrawMessageBoxText`).
+/// Text `GNW_TEXT_OUTLINE | 0xFF` (`MessageManager_DrawMessageBoxText`).
 pub const TEXT_COLOR: u8 = 0xFF;
-/// Цвет подписи кнопки `OK` — `Fonts_GoldColor` (`SetCaption` по умолчанию).
+/// `OK` button label color — `Fonts_GoldColor` (`SetCaption` default).
 pub const CAPTION_GOLD: (u8, u8, u8) = (165, 175, 199);
 
-/// Окно диалога в координатах кадра.
+/// Dialog window in frame coordinates.
 pub const fn dialog_rect_frame() -> PixelRect {
     DIALOG_RECT
 }
 
-/// Область текста в координатах кадра.
+/// Text area in frame coordinates.
 pub fn text_rect_frame() -> PixelRect {
     PixelRect::new(
         DIALOG_RECT.ulx + TEXT_RECT.ulx,
@@ -136,7 +136,7 @@ pub fn text_rect_frame() -> PixelRect {
     )
 }
 
-/// Кнопка `OK` в координатах кадра.
+/// `OK` button in frame coordinates.
 pub fn ok_rect_frame() -> PixelRect {
     PixelRect::new(
         DIALOG_RECT.ulx + OK_RECT.ulx,
@@ -146,49 +146,49 @@ pub fn ok_rect_frame() -> PixelRect {
     )
 }
 
-/// Попадание в кнопку `OK` (координаты кадра 640×480).
+/// Hit on the `OK` button (640×480 frame coordinates).
 pub fn ok_at(x: i32, y: i32) -> bool {
     ok_rect_frame().contains(x, y)
 }
 
 // ---------------------------------------------------------------------------
-// Экран перехода хода
+// Turn-transition screen
 //
-// «Модальное окно» состояния: `LocalGame::notice` хранит запись `TurnNotice`,
-// игровой цикл её не тикает, а ввод принимает только подтверждение.
+// The state's «modal window»: `LocalGame::notice` stores a `TurnNotice` record,
+// the game loop does not tick it, and input accepts only confirmation.
 // ---------------------------------------------------------------------------
 
-/// Экран перехода хода: «<Команда>: Begin turn.» (`GameManager_UpdateGuiControl`).
+/// Turn-transition screen: «<Team>: Begin turn.» (`GameManager_UpdateGuiControl`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TurnNotice {
-    /// Чья команда начинает ход.
+    /// Which team starts the turn.
     pub team: TeamId,
 }
 
 impl TurnNotice {
-    /// Запись для команды `team`.
+    /// Record for team `team`.
     pub const fn new(team: TeamId) -> Self {
         Self { team }
     }
 
-    /// Текст окна (`_(c2eb)` + `menu_team_names[team]`).
+    /// Window text (`_(c2eb)` + `menu_team_names[team]`).
     pub fn message(&self) -> String {
         turn_message(self.team)
     }
 
-    /// Строки окна: `Text_SplitText` режет по `\n`, затем по ширине 265.
+    /// Window lines: `Text_SplitText` splits by `\n`, then by width 265.
     pub fn lines(&self) -> Vec<String> {
         wrap_gnw_text(&self.message(), TEXT_RECT.width)
     }
 }
 
-/// Рисует окно перехода хода поверх кадра.
+/// Draws the turn-transition window over the frame.
 ///
-/// Раскладка — 1:1 `DialogMenu::DrawText` (`dialogmenu.cpp:31`):
-/// * фон `HELPFRAM` в `(253,126)`;
-/// * строки шрифтом `GNW_TEXT_FONT_5`, цвет `0xFF` с чёрной обводкой,
-///   шаг 10 px, блок по центру области 265×175, каждая строка — по центру;
-/// * кнопка `HELPOK_U/D` 65×24 в `(373,319)` с подписью `OK`.
+/// Layout — 1:1 `DialogMenu::DrawText` (`dialogmenu.cpp:31`):
+/// * `HELPFRAM` background at `(253,126)`;
+/// * lines in `GNW_TEXT_FONT_5`, color `0xFF` with a black outline,
+///   step 10 px, the block centered in the 265×175 area, each line — centered;
+/// * `HELPOK_U/D` button 65×24 at `(373,319)` labeled `OK`.
 pub fn draw_turn_notice(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -207,7 +207,7 @@ pub fn draw_turn_notice(
             DIALOG_RECT,
         );
     } else {
-        // Ресурса нет (урезанный `MAX.RES`): честная рамка вместо окна.
+        // No resource (trimmed `MAX.RES`): an honest frame instead of the window.
         frame.fill_rect(DIALOG_RECT, palette.rgba(0x22));
     }
 
@@ -236,7 +236,7 @@ pub fn draw_turn_notice(
         y += row_height;
     }
 
-    // Кнопка `OK`: `HELPOK_U`/`HELPOK_D`, подпись `_(ae0b)` = "OK".
+    // `OK` button: `HELPOK_U`/`HELPOK_D`, label `_(ae0b)` = "OK".
     let ok = ok_rect_frame();
 
     if let Some(pair) = menu.helpok.as_ref() {
@@ -245,8 +245,8 @@ pub fn draw_turn_notice(
         frame.fill_rect(ok, palette.rgba(0x17));
     }
 
-    // `Button::SetCaption(caption, 2, 2)` → область (0,0) 63×22, текст по центру
-    // на `((22 - 10) / 2) = 6` от верха кнопки.
+    // `Button::SetCaption(caption, 2, 2)` → area (0,0) 63×22, text centered
+    // at `((22 - 10) / 2) = 6` from the top of the button.
     let caption_rect = PixelRect::new(ok.ulx, ok.uly + 6, ok.width - 2, font.height());
     let (base, outline, shadow) = CAPTION_GOLD;
 
@@ -264,7 +264,7 @@ pub fn draw_turn_notice(
     painted
 }
 
-/// Команды-люди в порядке слотов (`GameManager_UpdateHumanPlayerCount`).
+/// Human teams in slot order (`GameManager_UpdateHumanPlayerCount`).
 pub fn human_teams(team_types: &[TeamKind; LOCAL_TEAM_COUNT]) -> Vec<TeamId> {
     team_types
         .iter()
@@ -274,7 +274,7 @@ pub fn human_teams(team_types: &[TeamKind; LOCAL_TEAM_COUNT]) -> Vec<TeamId> {
         .collect()
 }
 
-/// Строка перехода для журнала/статуса.
+/// Transition line for the log/status.
 pub fn notice_log_line(notice: &TurnNotice) -> String {
     format!("{}: begin turn", team_display_name(notice.team))
 }
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn ok_button_matches_the_dialog_menu_controls() {
-        // `Button(HELPOK_U, HELPOK_D, 120, 193)` 65×24 внутри окна диалога.
+        // `Button(HELPOK_U, HELPOK_D, 120, 193)` 65×24 inside the dialog window.
         assert_eq!(OK_RECT, PixelRect::new(120, 193, 65, 24));
         assert_eq!(ok_rect_frame(), PixelRect::new(373, 319, 65, 24));
         assert!(ok_at(380, 325));
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn text_block_is_vertically_centered() {
-        // Две строки по 10 px → `(175 - 20) / 2 = 77` от верха области текста.
+        // Two lines of 10 px → `(175 - 20) / 2 = 77` from the top of the text area.
         let text = text_rect_frame();
         let block = 10 * TurnNotice::new(TeamId::RED).lines().len() as i32;
         let y = text.uly + (TEXT_RECT.height - block).max(0) / 2;

@@ -1,11 +1,11 @@
-//! P4: интеграционный тест headless soak-прогона (`max_app::run_soak`).
+//! P4: integration test of the headless soak run (`max_app::run_soak`).
 //!
-//! Короткий прогон (6 ходов, 2 компьютера) проверяет то же, что CI-стадия
-//! soak на 120 ходах, но быстро: партия доходит до конца, метрики заполнены,
-//! профиль видит каждый кадр, а два одинаковых прогона дают один digest
-//! (профилирование и оптимизация интерполяции не меняют симуляцию).
+//! A short run (6 turns, 2 computers) checks the same as the CI soak stage
+//! at 120 turns, but fast: the match reaches the end, the metrics are filled,
+//! the profile sees every frame, and two identical runs give one digest
+//! (profiling and interpolation optimization do not change the simulation).
 //!
-//! Тест пропускается, если данных игры нет рядом с репозиторием.
+//! The test is skipped if there is no game data next to the repository.
 
 use std::path::{Path, PathBuf};
 
@@ -22,8 +22,8 @@ fn config() -> AppConfig {
         .with_autosave(false)
 }
 
-/// `profile` — счётчики процесса (как и задумано для soak-лога), поэтому
-/// тесты, которые их сбрасывают и читают, идут по одному.
+/// `profile` — process counters (as intended for the soak log), so
+/// the tests that reset and read them run one at a time.
 fn soak_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -78,7 +78,7 @@ fn short_headless_soak_completes_and_is_deterministic() {
         left_report.log()
     );
 
-    // Память: на поддерживаемых ОС замер есть; рост в коротком прогоне мал.
+    // Memory: on supported OSes there is a measurement; the growth in a short run is small.
     if cfg!(any(target_os = "linux", windows)) {
         assert!(left_report.mem_start.is_some(), "RSS на старте");
         assert!(left_report.mem_end.is_some(), "RSS в конце");
@@ -89,7 +89,7 @@ fn short_headless_soak_completes_and_is_deterministic() {
         left_report.memory_growth_kb()
     );
 
-    // Лог содержит те же метрики, что уходят в qa-out/soak-headless/soak.txt.
+    // The log contains the same metrics that go to qa-out/soak-headless/soak.txt.
     let log = left_report.log();
     assert!(log.contains("SOAK RESULT: PASS"), "{log}");
     assert!(log.contains("PROFILE: local_update n="), "{log}");

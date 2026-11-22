@@ -1,38 +1,38 @@
-//! Экран помощи `HelpMenu` — C++ `helpmenu.cpp` + `help.json`/`language.json`.
+//! Help screen `HelpMenu` — C++ `helpmenu.cpp` + `help.json`/`language.json`.
 //!
-//! # Оракул
+//! # Oracle
 //!
-//! * окно `HELPFRAM` 301×231: `Window(HELPFRAM, GameManager_GetDialogWindowCenterMode())`,
-//!   то есть в игре/`CargoMenu` — по центру области карты `(253,126)`, в меню
-//!   настройки (`GameConfigMenu`/`PlanetSelectMenu`/`ChoosePlayerMenu`) — по
-//!   центру окна `(169,124)`;
-//! * текст — `GNW_TEXT_FONT_5` (высота 10), `GNW_TEXT_OUTLINE | 0xFF` в области
-//!   `Image(20, 20, 265, 160)`; `rows_per_page = 160 / 10 = 16`; если текст
-//!   короче страницы, блок центрируется по вертикали (`DrawText`);
-//! * прокрутка — `PageUp`/`PageDown` и кнопки `BLDUP__U`/`BLDDWN_U` 18×17 в
-//!   (20,197)/(40,197) шагом `rows_per_page` строк; кнопки создаются только
-//!   если строк больше страницы;
-//! * `Done` — `HELPOK_U/D` 65×24 в (120,193), подпись `_(4bfa)`, клавиши
-//!   `Enter`/`Esc` закрывают окно; для секции `GAME_SCREEN_SETUP` в C++ есть
-//!   вторая кнопка `Keys` (`_(f0d6)`) в (155,193), а `Done` сдвинут в (85,193):
-//!   она переключает текст на подсказку по клавишам `_(ceb6)`;
-//! * C++ входит в «режим помощи» (`HelpMenu_Menu`): игрок кликает по элементу
-//!   экрана, и окно показывает **один** абзац, привязанный к координатам.
+//! * `HELPFRAM` window 301×231: `Window(HELPFRAM, GameManager_GetDialogWindowCenterMode())`,
+//!   i.e. in game/`CargoMenu` — centered in the map area `(253,126)`, in the setup
+//!   menu (`GameConfigMenu`/`PlanetSelectMenu`/`ChoosePlayerMenu`) — centered
+//!   in the window `(169,124)`;
+//! * text — `GNW_TEXT_FONT_5` (height 10), `GNW_TEXT_OUTLINE | 0xFF` in the area
+//!   `Image(20, 20, 265, 160)`; `rows_per_page = 160 / 10 = 16`; if the text
+//!   is shorter than a page, the block is centered vertically (`DrawText`);
+//! * scrolling — `PageUp`/`PageDown` and the `BLDUP__U`/`BLDDWN_U` buttons 18×17 at
+//!   (20,197)/(40,197) with a step of `rows_per_page` lines; the buttons are created only
+//!   if there are more lines than a page;
+//! * `Done` — `HELPOK_U/D` 65×24 at (120,193), label `_(4bfa)`, the keys
+//!   `Enter`/`Esc` close the window; for the `GAME_SCREEN_SETUP` section C++ has
+//!   a second `Keys` button (`_(f0d6)`) at (155,193), and `Done` is shifted to (85,193):
+//!   it switches the text to the key hint `_(ceb6)`;
+//! * C++ enters the "help mode" (`HelpMenu_Menu`): the player clicks an element
+//!   of the screen, and the window shows **one** paragraph bound to the coordinates.
 //!
-//! # Что делает Rust-клиент
+//! # What the Rust client does
 //!
-//! Портирован режим C++ (`HelpMenu_Menu`): кнопка `?`/`Help` включает режим
-//! выбора элемента (`HelpMode`), клик по элементу переводит точку
-//! `HelpMenu_ScaleCursor` (`helpmenu.cpp:412`) и берёт запись `help.json`
-//! (`Help::GetEntry`, `help.cpp:140`) — окно показывает **один** абзац, как в
-//! оригинале (а не весь текст секции). Скролл, кнопки `BLDUP__/BLDDWN`,
-//! `Done`/`Keys` — 1:1; `Esc` закрывает окно и возвращает в режим, повторный
-//! `Esc`/RMB/`?` выключает режим. Подробности — §33
+//! The C++ mode is ported (`HelpMenu_Menu`): the `?`/`Help` button enables the
+//! element selection mode (`HelpMode`), a click on an element converts the point
+//! `HelpMenu_ScaleCursor` (`helpmenu.cpp:412`) and takes the `help.json` entry
+//! (`Help::GetEntry`, `help.cpp:140`) — the window shows **one** paragraph, as in
+//! the original (not the whole section text). Scrolling, the `BLDUP__/BLDDWN` buttons,
+//! `Done`/`Keys` — 1:1; `Esc` closes the window and returns to the mode, a repeated
+//! `Esc`/RMB/`?` disables the mode. Details — §33
 //! `max-brh-docs/analysis/visual-1to1-status.md`.
 //!
-//! Палитра окна — собственная палитра `HELPFRAM` (как у остальных big image
-//! Rust-клиента); C++-порт рисует `HELPFRAM` системной палитрой, но индексы
-//! UI-цветов в ней те же.
+//! The window palette is the `HELPFRAM` own palette (like the other big images
+//! of the Rust client); the C++ port draws `HELPFRAM` with the system palette, but the indices
+//! of the UI colors are the same in it.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -50,42 +50,42 @@ use crate::menu::{
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 
-/// JSON с текстами помощи (генератор `max-brh/tools/gen_help_data.py`).
+/// JSON with the help texts (generator `max-brh/tools/gen_help_data.py`).
 pub const HELP_JSON: &str = include_str!("../data/help.json");
 
 /// `HELPFRAM` 301×231 (`Window(HELPFRAM, …)`).
 pub const HELPFRAM_SIZE: (i32, i32) = (301, 231);
-/// Окно помощи в меню настройки: `((639-301)/2, (479-231)/2)`.
+/// Help window in the setup menu: `((639-301)/2, (479-231)/2)`.
 pub const MENU_RECT: PixelRect = PixelRect::new(169, 124, 301, 231);
-/// Окно помощи в игре/мобилизации: центр `WINDOW_MAIN_MAP` (180,18,448,448).
+/// Help window in game/mobilization: center of `WINDOW_MAIN_MAP` (180,18,448,448).
 pub const GAME_RECT: PixelRect = PixelRect::new(253, 126, 301, 231);
-/// Область текста: `Image(20, 20, 265, 160)` (`HelpMenu` constructor).
+/// Text area: `Image(20, 20, 265, 160)` (`HelpMenu` constructor).
 pub const TEXT_RECT: PixelRect = PixelRect::new(20, 20, 265, 160);
-/// `rows_per_page = 160 / Text_GetHeight()`; высота `FONT5` — 10.
+/// `rows_per_page = 160 / Text_GetHeight()`; the `FONT5` height is 10.
 pub const ROWS_PER_PAGE: usize = 16;
-/// Цвет текста: `GNW_TEXT_OUTLINE | 0xFF`.
+/// Text color: `GNW_TEXT_OUTLINE | 0xFF`.
 pub const TEXT_COLOR: u8 = 0xFF;
-/// Цвет обводки/тени `Text_Blit` с outline — чёрный (индекс 0).
+/// Outline/shadow color of `Text_Blit` with outline — black (index 0).
 pub const OUTLINE_COLOR: u8 = 0x00;
-/// `Done` (не `GAME_SCREEN_SETUP`): `Button(HELPOK_U, HELPOK_D, 120, 193)`.
+/// `Done` (not `GAME_SCREEN_SETUP`): `Button(HELPOK_U, HELPOK_D, 120, 193)`.
 pub const DONE_RECT: PixelRect = PixelRect::new(120, 193, 65, 24);
-/// `Done` у `GAME_SCREEN_SETUP`: (85,193).
+/// `Done` for `GAME_SCREEN_SETUP`: (85,193).
 pub const DONE_KEYS_RECT: PixelRect = PixelRect::new(85, 193, 65, 24);
-/// `Keys` у `GAME_SCREEN_SETUP`: `Button(HELPOK_U, HELPOK_D, 155, 193)`.
+/// `Keys` for `GAME_SCREEN_SETUP`: `Button(HELPOK_U, HELPOK_D, 155, 193)`.
 pub const KEYS_RECT: PixelRect = PixelRect::new(155, 193, 65, 24);
-/// Прокрутка вверх: `Button(BLDUP__U, BLDUP__D, 20, 197)`.
+/// Scroll up: `Button(BLDUP__U, BLDUP__D, 20, 197)`.
 pub const SCROLL_UP_RECT: PixelRect = PixelRect::new(20, 197, 18, 17);
-/// Прокрутка вниз: `Button(BLDDWN_U, BLDDWN_D, 40, 197)`.
+/// Scroll down: `Button(BLDDWN_U, BLDDWN_D, 40, 197)`.
 pub const SCROLL_DOWN_RECT: PixelRect = PixelRect::new(40, 197, 18, 17);
 
-/// Секция помощи (значение `section` в `HelpMenu_Menu`).
+/// Help section (the `section` value in `HelpMenu_Menu`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HelpSection {
-    /// `CARGO_SETUP` (`CargoMenu::ProcessKey`, клавиша `?`).
+    /// `CARGO_SETUP` (`CargoMenu::ProcessKey`, the `?` key).
     Cargo,
     /// `PLANET_SETUP` (`PlanetSelectMenu::EventHelp`).
     Planet,
-    /// `NEW_GAME_SETUP` (`ChoosePlayerMenu::EventHelp`, одиночная игра).
+    /// `NEW_GAME_SETUP` (`ChoosePlayerMenu::EventHelp`, single game).
     NewGame,
     /// `HOT_SEAT_SETUP` (`ChoosePlayerMenu::EventHelp`, hot-seat).
     HotSeat,
@@ -97,20 +97,20 @@ pub enum HelpSection {
     Research,
     /// `UPGRADES_SETUP` (`UpgradeMenu::ProcessKey`).
     Upgrades,
-    /// `GAME_SCREEN_SETUP` (панель `HELP_OF`, `GameManager_MenuClickHelpButton`).
+    /// `GAME_SCREEN_SETUP` (the `HELP_OF` panel, `GameManager_MenuClickHelpButton`).
     GameScreen,
-    /// `ALLOCATE_SETUP` (`AllocMenu::Run`, кнопка `?`/`Shift-/`).
+    /// `ALLOCATE_SETUP` (`AllocMenu::Run`, the `?`/`Shift-/` button).
     Allocate,
     /// `TRANSFER_SETUP` (`TransferMenu::ProcessKey`, `Shift-/`).
     Transfer,
-    /// `PREFS_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, вариант `PREFSPIC`).
+    /// `PREFS_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, the `PREFSPIC` variant).
     Preferences,
-    /// `SETUP_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, вариант `SETUPPIC`).
+    /// `SETUP_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, the `SETUPPIC` variant).
     Setup,
 }
 
 impl HelpSection {
-    /// Имя секции в `help.json`/C++.
+    /// Section name in `help.json`/C++.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Cargo => "CARGO_SETUP",
@@ -129,7 +129,7 @@ impl HelpSection {
         }
     }
 
-    /// Разбор короткого имени (QA/`help cargo`).
+    /// Parsing of the short name (QA/`help cargo`).
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
             "cargo" | "cargo_setup" => Some(Self::Cargo),
@@ -150,17 +150,17 @@ impl HelpSection {
     }
 }
 
-/// Где открыто окно: меняет только позицию (`GameManager_GetDialogWindowCenterMode`).
+/// Where the window is opened: changes only the position (`GameManager_GetDialogWindowCenterMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpPlacement {
-    /// Меню настройки/главное меню — `(169,124)`.
+    /// Setup/main menu — `(169,124)`.
     Menu,
-    /// Игра/`CargoMenu` — `(253,126)`.
+    /// Game/`CargoMenu` — `(253,126)`.
     Game,
 }
 
 impl HelpPlacement {
-    /// Прямоугольник окна в кадре 640×480.
+    /// Window rectangle in the 640×480 frame.
     pub const fn rect(self) -> PixelRect {
         match self {
             Self::Menu => MENU_RECT,
@@ -168,7 +168,7 @@ impl HelpPlacement {
         }
     }
 
-    /// Позиция для `Screen::LocalSetup`/`CargoMenu`/игры.
+    /// Position for `Screen::LocalSetup`/`CargoMenu`/the game.
     pub const fn for_screen(in_game: bool) -> Self {
         if in_game {
             Self::Game
@@ -178,25 +178,25 @@ impl HelpPlacement {
     }
 }
 
-/// Действие окна помощи.
+/// Help window action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpAction {
-    /// Окно остаётся открытым.
+    /// The window stays open.
     None,
-    /// `Done`/`Enter`/`Esc` — закрыть.
+    /// `Done`/`Enter`/`Esc` — close.
     Close,
 }
 
 // ---------------------------------------------------------------------------
-// Данные help.json
+// help.json data
 // ---------------------------------------------------------------------------
 
-/// Один абзац/запись помощи из `help.json`.
+/// One help paragraph/entry from `help.json`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct HelpEntry {
-    /// Имя записи (`UNIT_PICT`, `CANCEL_BUTTON`, …).
+    /// Entry name (`UNIT_PICT`, `CANCEL_BUTTON`, …).
     pub name: String,
-    /// `coordinates.ux` (C++ help cursor hit test; Rust-клиенту нужен тестам).
+    /// `coordinates.ux` (C++ help cursor hit test; needed by the Rust client for tests).
     pub ux: i32,
     /// `coordinates.uy`.
     pub uy: i32,
@@ -204,7 +204,7 @@ pub struct HelpEntry {
     pub lx: i32,
     /// `coordinates.ly`.
     pub ly: i32,
-    /// Текст `en-US`.
+    /// Text `en-US`.
     pub text: String,
 }
 
@@ -214,7 +214,7 @@ struct HelpFile {
     sections: BTreeMap<String, Vec<HelpEntry>>,
 }
 
-/// Загруженный `help.json` (один раз).
+/// Loaded `help.json` (once).
 fn help_file() -> &'static HelpFile {
     static FILE: OnceLock<HelpFile> = OnceLock::new();
 
@@ -224,7 +224,7 @@ fn help_file() -> &'static HelpFile {
     })
 }
 
-/// Записи секции (пусто, если секции нет в `help.json`).
+/// Section entries (empty if the section is not in `help.json`).
 pub fn section_entries(section: HelpSection) -> &'static [HelpEntry] {
     help_file()
         .sections
@@ -233,7 +233,7 @@ pub fn section_entries(section: HelpSection) -> &'static [HelpEntry] {
         .unwrap_or(&[])
 }
 
-/// Индекс записи по имени (`UNIT_PICT`, …).
+/// Entry index by name (`UNIT_PICT`, …).
 pub fn entry_by_name(section: HelpSection, name: &str) -> Option<usize> {
     let wanted = name.trim();
 
@@ -242,14 +242,14 @@ pub fn entry_by_name(section: HelpSection, name: &str) -> Option<usize> {
         .position(|entry| entry.name.eq_ignore_ascii_case(wanted))
 }
 
-/// Имя записи `index`.
+/// Name of entry `index`.
 pub fn entry_name(section: HelpSection, index: usize) -> Option<&'static str> {
     section_entries(section)
         .get(index)
         .map(|entry| entry.name.as_str())
 }
 
-/// Текст записи `index` (en-US).
+/// Text of entry `index` (en-US).
 pub fn entry_text(section: HelpSection, index: usize) -> &'static str {
     section_entries(section)
         .get(index)
@@ -257,15 +257,15 @@ pub fn entry_text(section: HelpSection, index: usize) -> &'static str {
         .unwrap_or("")
 }
 
-/// `HelpMenu_ScaleCursor` (`helpmenu.cpp:412-471`): экранная точка клика →
-/// координаты в системе `help.json`.
+/// `HelpMenu_ScaleCursor` (`helpmenu.cpp:412-471`): screen click point →
+/// coordinates in the `help.json` system.
 ///
-/// Для окон настройки/`CargoMenu` (`WINDOW_MAIN_WINDOW`) координаты совпадают с
-/// кадром. В игре (`WINDOW_MAIN_MAP`) C++ сначала переводит клики по
-/// инструментам в фиксированные точки записей (`COORDINATES` → 250/297,473;
+/// For the setup/`CargoMenu` windows (`WINDOW_MAIN_WINDOW`) the coordinates coincide with
+/// the frame. In game (`WINDOW_MAIN_MAP`) C++ first converts clicks on
+/// the tools into fixed entry points (`COORDINATES` → 250/297,473;
 /// `UNIT_DESCRIPTION` → 448,473; `TURN_COUNTER` → 498,11; `TURN_TIMER` →
-/// 565,11; `ENDTURN_BUTTON` → 426,11; правый верхний инструмент → 610,11), а
-/// клики по карте оставляет как есть (в исходном масштабе 640×480).
+/// 565,11; `ENDTURN_BUTTON` → 426,11; the top-right tool → 610,11), and
+/// leaves clicks on the map as is (in the original 640×480 scale).
 pub fn scale_cursor(section: HelpSection, x: i32, y: i32) -> (i32, i32) {
     if section != HelpSection::GameScreen {
         return (x, y);
@@ -307,8 +307,8 @@ pub fn scale_cursor(section: HelpSection, x: i32, y: i32) -> (i32, i32) {
     (x, y)
 }
 
-/// Запись секции под точкой кадра — `Help::GetEntry` (`help.cpp:140-167`):
-/// первая запись, чьи координаты накрывают точку (порядок — порядок файла).
+/// Section entry under the frame point — `Help::GetEntry` (`help.cpp:140-167`):
+/// the first entry whose coordinates cover the point (the order is the file order).
 pub fn entry_at(section: HelpSection, x: i32, y: i32) -> Option<usize> {
     let (x, y) = scale_cursor(section, x, y);
 
@@ -317,23 +317,23 @@ pub fn entry_at(section: HelpSection, x: i32, y: i32) -> Option<usize> {
     })
 }
 
-/// Режим помощи — C++ `HelpMenu_Menu` (`helpmenu.cpp:315`): курсор `CURSOR_HELP`,
-/// клик по элементу открывает окно с записью под точкой.
+/// Help mode — C++ `HelpMenu_Menu` (`helpmenu.cpp:315`): the cursor `CURSOR_HELP`,
+/// a click on an element opens the window with the entry under the point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HelpMode {
-    /// Секция.
+    /// Section.
     pub section: HelpSection,
-    /// Где открыт режим (меню/игра) — для позиции окна.
+    /// Where the mode is opened (menu/game) — for the window position.
     pub placement: HelpPlacement,
 }
 
 impl HelpMode {
-    /// Режим для секции.
+    /// Mode for a section.
     pub const fn new(section: HelpSection, placement: HelpPlacement) -> Self {
         Self { section, placement }
     }
 
-    /// Клик по элементу: `None` — записи нет (режим остаётся, как C++).
+    /// Click on an element: `None` — no entry (the mode stays, as in C++).
     pub fn click(&self, x: i32, y: i32) -> Option<HelpScreen> {
         let index = entry_at(self.section, x, y)?;
 
@@ -341,7 +341,7 @@ impl HelpMode {
     }
 }
 
-/// Текст секции: все непустые абзацы через пустую строку.
+/// Section text: all non-empty paragraphs separated by an empty line.
 pub fn section_text(section: HelpSection) -> String {
     section_entries(section)
         .iter()
@@ -350,21 +350,21 @@ pub fn section_text(section: HelpSection) -> String {
         .join("\n\n")
 }
 
-/// Текст подсказки по клавишам (`_(ceb6)`, кнопка `Keys`).
+/// Key hint text (`_(ceb6)`, the `Keys` button).
 pub fn keys_text() -> &'static str {
     &help_file().keys
 }
 
-/// Сколько строк занимает секция при ширине окна 265 px.
+/// How many lines the section occupies at the window width of 265 px.
 pub fn section_line_count(section: HelpSection) -> usize {
     wrap_gnw_text(&section_text(section), TEXT_RECT.width).len()
 }
 
 // ---------------------------------------------------------------------------
-// Экран
+// Screen
 // ---------------------------------------------------------------------------
 
-/// Открытое окно помощи.
+/// Open help window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelpScreen {
     section: HelpSection,
@@ -372,18 +372,18 @@ pub struct HelpScreen {
     keys_mode: bool,
     lines: Vec<String>,
     row_index: usize,
-    /// Индекс показанной записи `help.json`.
+    /// Index of the shown `help.json` entry.
     entry: usize,
 }
 
 impl HelpScreen {
-    /// Окно для первой записи секции (страховка для вызовов без координат).
+    /// Window for the first section entry (a safeguard for calls without coordinates).
     pub fn new(section: HelpSection, placement: HelpPlacement) -> Self {
         Self::for_entry(section, placement, 0)
     }
 
-    /// Окно для записи `index` — C++ `HelpMenu(section, cursor_x, cursor_y)`
-    /// показывает **одну** запись (`ResourceManager_GetHelpEntry`).
+    /// Window for entry `index` — C++ `HelpMenu(section, cursor_x, cursor_y)`
+    /// shows **one** entry (`ResourceManager_GetHelpEntry`).
     pub fn for_entry(section: HelpSection, placement: HelpPlacement, index: usize) -> Self {
         let text = entry_text(section, index);
 
@@ -397,7 +397,7 @@ impl HelpScreen {
         }
     }
 
-    /// Окно для записи под точкой; `None` — записи нет (C++ закрывает окно).
+    /// Window for the entry under the point; `None` — no entry (C++ closes the window).
     pub fn for_point(
         section: HelpSection,
         placement: HelpPlacement,
@@ -409,57 +409,57 @@ impl HelpScreen {
         Some(Self::for_entry(section, placement, index))
     }
 
-    /// Секция.
+    /// Section.
     pub const fn section(&self) -> HelpSection {
         self.section
     }
 
-    /// Индекс записи.
+    /// Entry index.
     pub const fn entry(&self) -> usize {
         self.entry
     }
 
-    /// Имя записи (`UNIT_PICT`, …).
+    /// Entry name (`UNIT_PICT`, …).
     pub fn entry_name(&self) -> Option<&'static str> {
         entry_name(self.section, self.entry)
     }
 
-    /// Позиция окна.
+    /// Window position.
     pub const fn placement(&self) -> HelpPlacement {
         self.placement
     }
 
-    /// Показывается ли подсказка по клавишам (`GAME_SCREEN_SETUP`).
+    /// Whether the key hint is shown (`GAME_SCREEN_SETUP`).
     pub const fn keys_mode(&self) -> bool {
         self.keys_mode
     }
 
-    /// Первая видимая строка (0-based).
+    /// First visible line (0-based).
     pub const fn row_index(&self) -> usize {
         self.row_index
     }
 
-    /// Сколько всего строк.
+    /// Total number of lines.
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 
-    /// Строки текста (для тестов).
+    /// Text lines (for tests).
     pub fn lines(&self) -> &[String] {
         &self.lines
     }
 
-    /// Есть ли что прокручивать (`string_row_count > rows_per_page`).
+    /// Whether there is anything to scroll (`string_row_count > rows_per_page`).
     pub fn is_scrollable(&self) -> bool {
         self.lines.len() > ROWS_PER_PAGE
     }
 
-    /// Прямоугольник окна в кадре.
+    /// Window rectangle in the frame.
     pub fn window_rect(&self) -> PixelRect {
         self.placement.rect()
     }
 
-    /// Область текста в кадре.
+    /// Text area in the frame.
     pub fn text_rect(&self) -> PixelRect {
         let window = self.window_rect();
 
@@ -471,7 +471,7 @@ impl HelpScreen {
         )
     }
 
-    /// Кнопка `Done` в кадре (для `GAME_SCREEN_SETUP` — сдвинута влево).
+    /// `Done` button in the frame (for `GAME_SCREEN_SETUP` — shifted left).
     pub fn done_rect(&self) -> PixelRect {
         let rect = if self.section == HelpSection::GameScreen {
             DONE_KEYS_RECT
@@ -488,7 +488,7 @@ impl HelpScreen {
         )
     }
 
-    /// Кнопка `Keys` в кадре (`GAME_SCREEN_SETUP`).
+    /// `Keys` button in the frame (`GAME_SCREEN_SETUP`).
     pub fn keys_rect(&self) -> Option<PixelRect> {
         if self.section != HelpSection::GameScreen {
             return None;
@@ -503,7 +503,7 @@ impl HelpScreen {
         ))
     }
 
-    /// Кнопки прокрутки в кадре (если текст длиннее страницы).
+    /// Scroll buttons in the frame (if the text is longer than a page).
     pub fn scroll_rects(&self) -> Option<(PixelRect, PixelRect)> {
         if !self.is_scrollable() {
             return None;
@@ -526,12 +526,12 @@ impl HelpScreen {
         ))
     }
 
-    /// Строка `row` после `row_index` (в пределах `rows_per_page`).
+    /// Line `row` after `row_index` (within `rows_per_page`).
     pub fn visible_lines(&self) -> impl Iterator<Item = &String> {
         self.lines.iter().skip(self.row_index).take(ROWS_PER_PAGE)
     }
 
-    /// Переключает текст `Keys` ↔ текст секции — кнопка `Keys`
+    /// Toggles the `Keys` text ↔ the section text — the `Keys` button
     /// (`HelpMenu::ProcessKey`, `case 1000`).
     pub fn toggle_keys(&mut self) {
         if self.section != HelpSection::GameScreen {
@@ -547,8 +547,8 @@ impl HelpScreen {
         self.row_index = 0;
     }
 
-    /// `PageUp`: `row_index -= rows_per_page`, не ниже 0 (C++ анимирует по
-    /// строке, итог тот же).
+    /// `PageUp`: `row_index -= rows_per_page`, not below 0 (C++ animates line
+    /// by line, the result is the same).
     pub fn page_up(&mut self) {
         if self.row_index == 0 {
             return;
@@ -556,7 +556,7 @@ impl HelpScreen {
         self.row_index = self.row_index.saturating_sub(ROWS_PER_PAGE);
     }
 
-    /// `PageDown`: C++ увеличивает `row_index` на страницу только пока
+    /// `PageDown`: C++ increases `row_index` by a page only while
     /// `row_index + rows_per_page < row_count`.
     pub fn page_down(&mut self) {
         if self.row_index + ROWS_PER_PAGE < self.lines.len() {
@@ -564,7 +564,7 @@ impl HelpScreen {
         }
     }
 
-    /// Одна строка вверх/вниз (клавиши ↑/↓; в C++ только страницы).
+    /// One line up/down (↑/↓ keys; in C++ only pages).
     pub fn scroll(&mut self, delta: i32) {
         let max = self.lines.len().saturating_sub(1);
         let next = (self.row_index as i64 + i64::from(delta)).clamp(0, max as i64);
@@ -572,7 +572,7 @@ impl HelpScreen {
         self.row_index = next as usize;
     }
 
-    /// Клавиша окна (`HelpMenu::ProcessKey`).
+    /// Window key (`HelpMenu::ProcessKey`).
     pub fn key(&mut self, key: Key) -> HelpAction {
         match key {
             Key::Escape | Key::Enter => HelpAction::Close,
@@ -601,7 +601,7 @@ impl HelpScreen {
         }
     }
 
-    /// Ввод события (клик/клавиша). Мышь двигается без эффекта.
+    /// Input event (click/key). The mouse moves without effect.
     pub fn input(&mut self, event: InputEvent) -> HelpAction {
         match event {
             InputEvent::Key(key) => self.key(key),
@@ -610,7 +610,7 @@ impl HelpScreen {
         }
     }
 
-    /// Клик по окну в координатах кадра 640×480.
+    /// Click on the window in 640×480 frame coordinates.
     pub fn click(&mut self, x: i32, y: i32) -> HelpAction {
         if self.done_rect().contains(x, y) {
             return HelpAction::Close;
@@ -630,7 +630,7 @@ impl HelpScreen {
         HelpAction::None
     }
 
-    /// Рисует окно поверх кадра (C++ `HelpMenu::DrawText`).
+    /// Draws the window over the frame (C++ `HelpMenu::DrawText`).
     pub fn draw(
         &self,
         frame: &mut RgbaBuffer,
@@ -662,7 +662,7 @@ impl HelpScreen {
             painted += 1;
         }
 
-        // Пустая строка-разделитель абзацев (`\n\n`) занимает место, как в C++.
+        // An empty paragraph separator line (`\n\n`) takes space, as in C++.
         let text = self.text_rect();
         let block = font.height() * self.visible_lines().count() as i32;
         let mut y = text.uly;
@@ -687,7 +687,7 @@ impl HelpScreen {
             y += font.height();
         }
 
-        // Кнопки прокрутки — только когда строк больше страницы.
+        // Scroll buttons — only when there are more lines than a page.
         if let Some((up, down)) = self.scroll_rects() {
             if let Some(pair) = assets.and_then(|assets| assets.up.as_ref()) {
                 painted += blit_simple(frame, &palette, pair.image(false), up.ulx, up.uly, true);
@@ -725,7 +725,7 @@ impl HelpScreen {
             .max(0) as u32;
         }
 
-        // `Keys` (`_(f0d6)`) — только `GAME_SCREEN_SETUP`.
+        // `Keys` (`_(f0d6)`) — only `GAME_SCREEN_SETUP`.
         if let Some(keys) = self.keys_rect() {
             if let Some(pair) = assets.and_then(|assets| assets.done.as_ref()) {
                 painted += draw_image_button(
@@ -753,8 +753,8 @@ impl HelpScreen {
             }
         }
 
-        // Строка состояния Rust-клиента: в C++ её нет, но она помогает
-        // отличить «нет текста в help.json» от пустого окна.
+        // Status line of the Rust client: C++ does not have it, but it helps
+        // distinguish "no text in help.json" from an empty window.
         if self.lines.is_empty() {
             painted += draw_text_gnw(
                 frame,
@@ -771,12 +771,12 @@ impl HelpScreen {
     }
 }
 
-/// Ассеты окна помощи (`HELPFRAM` + `HELPOK` + `BLDUP__/BLDDWN`).
+/// Help window assets (`HELPFRAM` + `HELPOK` + `BLDUP__/BLDDWN`).
 #[derive(Debug, Clone)]
 pub struct HelpMenuAssets {
-    /// Фон `HELPFRAM` 301×231.
+    /// `HELPFRAM` background 301×231.
     pub background: Option<BigImage>,
-    /// Кнопка `HELPOK_U/D` 65×24 (Done/Keys).
+    /// `HELPOK_U/D` button 65×24 (Done/Keys).
     pub done: Option<MenuButtonPair>,
     /// `BLDUP__U/D` 18×17.
     pub up: Option<MenuButtonPair>,
@@ -785,7 +785,7 @@ pub struct HelpMenuAssets {
 }
 
 impl HelpMenuAssets {
-    /// Грузит ресурсы; отсутствие части — предупреждение, не ошибка.
+    /// Loads resources; a missing part is a warning, not an error.
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let simple = |name: &str| -> Option<SimpleImage> {
             let bytes = archive.read(name).ok()?;
@@ -806,7 +806,7 @@ impl HelpMenuAssets {
         }
     }
 
-    /// Есть ли фон и кнопка `Done`.
+    /// Whether the background and the `Done` button are present.
     pub fn is_ready(&self) -> bool {
         self.background.is_some() && self.done.is_some()
     }
@@ -816,7 +816,7 @@ impl HelpMenuAssets {
 mod tests {
     use super::*;
 
-    /// Запись с самым длинным текстом — для проверки прокрутки.
+    /// The entry with the longest text — for the scrolling check.
     fn longest_entry(section: HelpSection) -> HelpScreen {
         let index = section_entries(section)
             .iter()
@@ -847,7 +847,7 @@ mod tests {
 
     #[test]
     fn help_shows_one_entry_per_click_not_the_whole_section() {
-        // Все секции имеют записи с координатами: окно показывает ровно одну.
+        // All sections have entries with coordinates: the window shows exactly one.
         for section in [
             HelpSection::Cargo,
             HelpSection::Planet,
@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn entry_is_selected_by_point_like_cpp_get_entry() {
-        // `Help::GetEntry`: первая запись, чьи координаты накрывают точку.
+        // `Help::GetEntry`: the first entry whose coordinates cover the point.
         let entries = section_entries(HelpSection::Options);
 
         for (index, entry) in entries.iter().enumerate() {
@@ -895,15 +895,15 @@ mod tests {
             );
         }
 
-        // Точка вне всех записей — `None` (C++ закрывает окно).
+        // A point outside all entries — `None` (C++ closes the window).
         assert_eq!(entry_at(HelpSection::Options, 0, 0), None);
         assert_eq!(entry_at(HelpSection::Cargo, 639, 479), None);
     }
 
     #[test]
     fn game_screen_panels_map_to_their_entries() {
-        // `HelpMenu_ScaleCursor`: клики по инструментам переводятся в точки
-        // записей `GAME_SCREEN_SETUP`.
+        // `HelpMenu_ScaleCursor`: clicks on the tools are converted into
+        // `GAME_SCREEN_SETUP` entry points.
         assert_eq!(
             entry_at(HelpSection::GameScreen, 242 + 10, 456 + 10).map(entry_name_of),
             entry_at(HelpSection::GameScreen, 250, 473).map(entry_name_of)
@@ -921,7 +921,7 @@ mod tests {
             entry_at(HelpSection::GameScreen, 426, 11).map(entry_name_of)
         );
 
-        // Клик по карте не переводится: карта — общая запись `MAIN_MAP`.
+        // A click on the map is not converted: the map is the common `MAIN_MAP` entry.
         assert_eq!(
             entry_at(HelpSection::GameScreen, 300, 200).map(entry_name_of),
             entry_at(HelpSection::GameScreen, 300, 200).map(entry_name_of)
@@ -934,8 +934,8 @@ mod tests {
 
     #[test]
     fn entries_show_their_own_text_and_scroll_only_when_longer_than_a_page() {
-        // Окно показывает ровно текст записи; кнопки прокрутки — только если
-        // строк больше страницы (C++ `ProcessText`: `string_row_count >
+        // The window shows exactly the entry text; scroll buttons — only if
+        // there are more lines than a page (C++ `ProcessText`: `string_row_count >
         // rows_per_page`).
         for section in [
             HelpSection::Cargo,
@@ -962,7 +962,7 @@ mod tests {
             }
         }
 
-        // А подсказка `Keys` (`_(ceb6)`) длиннее страницы и прокручивается.
+        // And the `Keys` hint (`_(ceb6)`) is longer than a page and scrolls.
         let mut keys = HelpScreen::new(HelpSection::GameScreen, HelpPlacement::Game);
         keys.toggle_keys();
         assert!(keys.is_scrollable());
@@ -980,7 +980,7 @@ mod tests {
 
     #[test]
     fn short_text_is_centered_by_the_draw_rule() {
-        // C++ `DrawText`: блок центрируется по вертикали, пока высота < 160.
+        // C++ `DrawText`: the block is centered vertically while the height < 160.
         let mut planet = HelpScreen::for_entry(HelpSection::Planet, HelpPlacement::Menu, 0);
         planet.lines = vec!["line".to_string(); 5];
         planet.row_index = 0;
@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn window_is_centered_like_dialog_menu() {
-        // `Window(HELPFRAM, WINDOW_MAIN_WINDOW)`; окно 639×479 (lrx/lry включительно).
+        // `Window(HELPFRAM, WINDOW_MAIN_WINDOW)`; the window is 639×479 (lrx/lry inclusive).
         assert_eq!(MENU_RECT.ulx, (639 - HELPFRAM_SIZE.0) / 2);
         assert_eq!(MENU_RECT.uly, (479 - HELPFRAM_SIZE.1) / 2);
         // `WINDOW_MAIN_MAP` 180,18 — 448×448: `180 + (448-301)/2`.
@@ -1023,8 +1023,8 @@ mod tests {
             Some(PixelRect::new(253 + 155, 126 + 193, 65, 24))
         );
 
-        // `Keys` (`_(ceb6)`) длиннее любой записи и прокручивается; переключение
-        // возвращает наверх и обратно к записи.
+        // `Keys` (`_(ceb6)`) is longer than any entry and scrolls; toggling
+        // returns to the top and back to the entry.
         let mut screen = screen;
         screen.toggle_keys();
         assert!(screen.keys_mode());
@@ -1042,8 +1042,8 @@ mod tests {
 
     #[test]
     fn keys_close_and_scroll() {
-        // Запись может не прокручиваться — страничная навигация проверяется на
-        // `Keys` (FONT5, 265 px, строк больше страницы).
+        // The entry may not scroll — page navigation is checked on
+        // `Keys` (FONT5, 265 px, more lines than a page).
         let mut screen = HelpScreen::new(HelpSection::GameScreen, HelpPlacement::Menu);
         screen.toggle_keys();
         assert_eq!(screen.key(Key::PageDown), HelpAction::None);
@@ -1073,7 +1073,7 @@ mod tests {
         let done = screen.done_rect();
         assert_eq!(screen.click(done.ulx + 1, done.uly + 1), HelpAction::Close);
 
-        // Клик мимо кнопок ничего не делает.
+        // A click outside the buttons does nothing.
         let mut screen = HelpScreen::new(HelpSection::Planet, HelpPlacement::Menu);
         assert_eq!(screen.click(0, 0), HelpAction::None);
         assert_eq!(screen.row_index(), 0);

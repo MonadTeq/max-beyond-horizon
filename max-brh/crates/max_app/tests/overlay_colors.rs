@@ -1,24 +1,24 @@
-//! Кнопка `COLORS` — рамка цвета **команды** (красный/зелёный/синий/серый),
-//! 1:1 по C++-оракулу.
+//! The `COLORS` button — the **team** color frame (red/green/blue/gray),
+//! 1:1 per the C++ oracle.
 //!
-//! Оракул:
-//! * `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`): при
-//!   `GameManager_DisplayButtonColors` и `!(flags & STATIONARY)` вокруг юнита
-//!   рисуется `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`) цветом
-//!   `COLOR_RED`/`COLOR_GREEN`/`COLOR_BLUE`/`0xFF`/`COLOR_DERELICT` — по битам
-//!   `HASH_TEAM_*` в `unit->flags`;
+//! Oracle:
+//! * `DrawMap_RenderUnitDisplays` (`drawmap.cpp:581-598`): with
+//!   `GameManager_DisplayButtonColors` and `!(flags & STATIONARY)` around the unit
+//!   `DrawMap_RenderColorsDisplay` (`drawmap.cpp:511`) is drawn in
+//!   `COLOR_RED`/`COLOR_GREEN`/`COLOR_BLUE`/`0xFF`/`COLOR_DERELICT` — by the bits
+//!   `HASH_TEAM_*` in `unit->flags`;
 //! * `UnitInfo::UnitInfo` (`unitinfo.cpp:179`):
 //!   `flags = unit_flags | team_units->hash_team_id`;
 //! * `ResourceManager_InitTeamUnits` (`resource_manager.cpp:969-981`):
 //!   RED = `HASH_TEAM_RED` 0x2000, GREEN = 0x1000, BLUE = 0x800, GRAY = 0x400.
 //!
-//! `team_clan` в C++ на цвет рамки не влияет: он задаёт клановые кадры шахты
-//! (`unitinfo.cpp:282`) и торговые модификаторы клана. «Цвет клана» в смысле
-//! полосы COLORS — это цвет слота команды из `hash_team_id`. Порт не хранит
-//! эти биты в `flags` (они входят в эталонный дайджест) и восстанавливает тот
-//! же цвет из отображения `unit.team → цвет`, а биты из сейвов honoured.
+//! `team_clan` in C++ does not affect the frame color: it defines the mine clan frames
+//! (`unitinfo.cpp:282`) and the clan trade modifiers. The "clan color" in the sense
+//! of the COLORS bar is the team slot color from `hash_team_id`. The port does not store
+//! these bits in `flags` (they are part of the reference digest) and restores the same
+//! color from the `unit.team → color` mapping, while bits from saves are honoured.
 //!
-//! Тесты пропускаются, если данных игры (`max-original/`) рядом нет.
+//! Tests are skipped if there is no game data (`max-original/`) nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -68,7 +68,7 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
-/// Сколько пикселей кадра ровно такого цвета (рамка `COLORS` — 1 px).
+/// How many pixels of the frame are exactly this color (the `COLORS` frame — 1 px).
 fn color_pixel_count(frame: &RgbaBuffer, color: max_render::buffer::Rgba) -> usize {
     frame
         .pixels()
@@ -97,7 +97,7 @@ fn colors_frame_uses_the_team_color() {
                 0,
             )
             .expect("tank");
-        // Визуально видимый игроку (RED) — иначе карта его не рисует.
+        // Visually visible to the player (RED) — otherwise the map does not draw it.
         if let Some(unit) = app.state_mut().unit_mut(id) {
             unit.visible_to_team = [true; 5];
         }
@@ -112,7 +112,7 @@ fn colors_frame_uses_the_team_color() {
 
     let palette = UiPalette::from_assets(app.assets().expect("assets")).expect("палитра окна");
 
-    // Без кнопки COLORS рамок нет.
+    // Without the COLORS button there are no frames.
     let without = app.render_frame();
     app.hud_mut().panels.colors = true;
     let (with, stats) = app.render_frame_with_stats();
@@ -150,8 +150,8 @@ fn colors_frame_uses_the_team_color() {
             expected[index]
         );
 
-        // Рамка — 4 линии по периметру: пикселей цвета команды в кадре с
-        // включённым COLORS становится больше (и их хотя бы на рамку хватает).
+        // The frame is 4 perimeter lines: there are pixels of the team color in the frame with
+        // COLORS enabled more (and there are at least enough for the frame).
         let before = color_pixel_count(&without, color);
         let after = color_pixel_count(&with, color);
         assert!(
@@ -162,8 +162,8 @@ fn colors_frame_uses_the_team_color() {
         );
     }
 
-    // Загруженный сейв несёт биты `HASH_TEAM_*` прямо в `flags` — они honoured
-    // так же, как в C++ (`DrawMap_RenderUnitDisplays`).
+    // The loaded save carries the `HASH_TEAM_*` bits directly in `flags` — they are honoured
+    // the same way as in C++ (`DrawMap_RenderUnitDisplays`).
     let mut flagged = app.state().unit(ids[0]).expect("unit").clone();
     flagged.flags |= max_core::enums::unit_flags::HASH_TEAM_BLUE;
     assert_eq!(
@@ -198,7 +198,7 @@ fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
         "пришельцы/derelict — 0xA9"
     );
 
-    // C++ рисует COLORS только для **не**-стационарных (`!(flags & STATIONARY)`).
+    // C++ draws COLORS only for **non**-stationary (`!(flags & STATIONARY)`).
     app.state_mut()
         .spawn_unit(UnitType::LightVehiclePlant, TeamId::RED, Point::new(60, 60), 0)
         .expect("factory");

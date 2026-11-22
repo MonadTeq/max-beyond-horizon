@@ -1,4 +1,4 @@
-//! P6: экран покупных апгрейдов — связка UI → `TeamUnits` → новые юниты.
+//! P6: purchasable upgrades screen — the chain UI → `TeamUnits` → new units.
 
 use max_core::enums::{TeamClan, UnitType};
 use max_core::game::GameState;
@@ -53,7 +53,7 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     select_constructor(&mut app);
     assert!(app.open_upgrade_menu());
 
-    // «Infantry» — боевой тип, строка 0 — атака.
+    // «Infantry» — a combat type, row 0 — attack.
     let infantry_index = app
         .upgrade_menu()
         .unwrap()
@@ -83,7 +83,7 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     );
     assert!(gold_after < gold_before, "золото списано: {gold_after}");
 
-    // Новый юнит этого типа создаётся с текущими значениями (C++
+    // A new unit of this type is created with the current values (C++
     // `UnitInfo::UnitInfo` → `GetCurrentUnitValues`).
     let spawned = app
         .state_mut()
@@ -114,7 +114,7 @@ fn cancel_rolls_back_gold_and_values() {
     let gold = app.state().team_units[TeamId::RED.0 as usize].gold;
 
     assert!(app.upgrade_menu_adjust(0, true));
-    // Меню меняет только свою копию золота.
+    // The menu changes only its own copy of gold.
     assert_eq!(app.state().team_units[TeamId::RED.0 as usize].gold, gold);
     app.close_upgrade_menu();
 
@@ -156,12 +156,12 @@ fn upgrade_menu_is_modal_for_session_input() {
     select_constructor(&mut app);
     assert!(app.open_upgrade_menu());
 
-    // Esc закрывает меню, но не выходит из партии.
+    // Esc closes the menu but does not leave the match.
     let transition = handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
     assert_eq!(transition, Transition::None);
     assert!(app.upgrade_menu().is_none());
 
-    // Клик по карте, пока меню открыто, не меняет выделение (меню модально).
+    // A click on the map while the menu is open does not change the selection (the menu is modal).
     assert!(app.open_upgrade_menu());
     let selected = app.hud().selected;
     let transition = handle_session_input(&mut app, InputEvent::MouseClick(300, 300), false);

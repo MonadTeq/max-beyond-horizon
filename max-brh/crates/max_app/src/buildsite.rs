@@ -1,76 +1,76 @@
-//! Режим выбора места стройки — порт `ORDER_STATE_SELECT_SITE` конструктора
+//! Build site selection mode — a port of the `ORDER_STATE_SELECT_SITE` constructor
 //! (`buildmenu.cpp:921`, `game_manager.cpp:4566/5829`).
 //!
-//! # Что делает C++ (оракул)
+//! # What C++ does (oracle)
 //!
-//! 1. `MobileBuildMenu::Build` (`buildmenu.cpp:872`): игрок выбрал здание
-//!    (`Unit::GetFlags() & BUILDING`) и нажал `Done` → `Build`
-//!    (`UnitsManager_IssueBuildOrder`) проверяет четыре якоря 2×2 вокруг
-//!    строителя, затем `UnitsManager_SetNewOrderInt(unit, ORDER_BUILD,
-//!    ORDER_STATE_SELECT_SITE)` и **спавнит временную «ленту»**
+//! 1. `MobileBuildMenu::Build` (`buildmenu.cpp:872`): the player chose a building
+//!    (`Unit::GetFlags() & BUILDING`) and pressed `Done` → `Build`
+//!    (`UnitsManager_IssueBuildOrder`) checks four 2×2 anchors around
+//!    the builder, then `UnitsManager_SetNewOrderInt(unit, ORDER_BUILD,
+//!    ORDER_STATE_SELECT_SITE)` and **spawns a temporary "tape"**
 //!    `GameManager_TempTape = UnitsManager_SpawnUnit(LRGTAPE, …, grid_x,
-//!    grid_y, unit)` — это и есть призрак площадки (не призрак здания и не
-//!    рамка). Сообщение — `_(06cb)`.
-//! 2. `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`) на каждом
-//!    движении мыши: для конструктора 2×2-лента привязывается к строителю
-//!    (`site_anchor_for_cursor`) и двигается `UnitsManager_MoveUnit`;
-//!    `CURSOR_MAP2` — если `UnitsManager_MoveUnitAndParent` вернул
-//!    проходимость **и** курсор попал внутрь 2×2, иначе `CURSOR_UNIT_NO_GO`.
-//! 3. `GameManager_PathBuild` (`game_manager.cpp:4566`) по LMB:
-//!    `move_to = TempTape->grid`, лента уничтожается, `UnitsManager_StartBuild`
-//!    → `ORDER_BUILD`/`INIT`; на следующем тике `UnitInfo::StartBuilding`
-//!    ставит настоящую площадку (`LRGTAPE`+`LRGCONES`+`LRGSLAB`) в `move_to`.
-//! 4. Отмена — `GameManager_ManagePlayerAction` → `GameManager_SelectBuildSite`:
-//!    лента уничтожается, `BuildList` очищается, приказы восстанавливаются.
-//!    Так работают RMB и (в C++) клик по невалидной клетке.
-//! 5. После `StartBuilding` конструктор проходит `ORDER_AWAIT_TAPE_POSITIONING`
-//!    (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414`). Сначала
-//!    `Paths_UpdateAngle` доворачивает его к `GetTargetUnitAngle` (для 2×2 —
-//!    диагональ к центру, `unitinfo.cpp:4147`); пока поворот не закончен,
-//!    `moved` не растёт. Затем четыре тика `OffsetDrawZones` по 8 px двигают
-//!    **спрайт** строителя по `DIRECTION_OFFSETS[angle]` на 32 px (половину
-//!    клетки) — в центр ленты, лицом по ходу. На завершении C++ доворачивает
-//!    юнита на шаг `(angle + 1) & 7` под рабочую позу. Сетка (`grid_x/grid_y`)
-//!    при этом не меняется.
+//!    grid_y, unit)` — this is the site ghost (not a building ghost and not
+//!    a frame). The message is `_(06cb)`.
+//! 2. `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`) on every
+//!    mouse move: for the constructor the 2×2 tape is bound to the builder
+//!    (`site_anchor_for_cursor`) and moved by `UnitsManager_MoveUnit`;
+//!    `CURSOR_MAP2` — if `UnitsManager_MoveUnitAndParent` returned
+//!    passability **and** the cursor fell inside the 2×2, otherwise `CURSOR_UNIT_NO_GO`.
+//! 3. `GameManager_PathBuild` (`game_manager.cpp:4566`) on LMB:
+//!    `move_to = TempTape->grid`, the tape is destroyed, `UnitsManager_StartBuild`
+//!    → `ORDER_BUILD`/`INIT`; on the next tick `UnitInfo::StartBuilding`
+//!    places the real site (`LRGTAPE`+`LRGCONES`+`LRGSLAB`) at `move_to`.
+//! 4. Cancel — `GameManager_ManagePlayerAction` → `GameManager_SelectBuildSite`:
+//!    the tape is destroyed, `BuildList` is cleared, the orders are restored.
+//!    This is how RMB and (in C++) a click on an invalid cell work.
+//! 5. After `StartBuilding` the constructor goes through `ORDER_AWAIT_TAPE_POSITIONING`
+//!    (`UnitInfo::PositionInTape`, `unitinfo.cpp:4414`). First
+//!    `Paths_UpdateAngle` turns it toward `GetTargetUnitAngle` (for 2×2 —
+//!    the diagonal to the center, `unitinfo.cpp:4147`); while the turn is not finished,
+//!    `moved` does not grow. Then four ticks of `OffsetDrawZones` by 8 px move
+//!    the **sprite** of the builder along `DIRECTION_OFFSETS[angle]` by 32 px (half
+//!    a cell) — to the center of the tape, facing the direction of travel. On completion C++ turns
+//!    the unit by a step `(angle + 1) & 7` into the working pose. The grid (`grid_x/grid_y`)
+//!    does not change.
 //!
-//! # Что портировано
+//! # What is ported
 //!
-//! * Привязка якоря 2×2 к строителю и валидация клетки — `max_core::production`
+//! * Binding the 2×2 anchor to the builder and validating the cell — `max_core::production`
 //!   ([`max_core::production::initial_build_site`],
 //!   [`max_core::production::site_anchor_for_cursor`],
 //!   [`max_core::production::site_covers`],
 //!   [`max_core::production::is_site_accessible`]).
-//! * Призрак — **та же декаль** `LRGTAPE`/`SMLTAPE`, что спавнит C++ (рисуется
-//!   общим спрайтовым циклом), курсор `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`
-//!   (SDL-слой, как `Cursor_SetCursor`).
-//! * LMB — заказ 08/P4 с `move_to` = якорь призрака; площадку
-//!   (`LRGTAPE`+`LRGCONES`+`LRGSLAB`) ставит `events::apply_command` в момент
-//!   применения пакета — плита видна уже на кадре подтверждения. C++ ставит её
-//!   на следующем тике (`StartBuilding`/`INIT`), что в 60 fps незаметно; в
-//!   порте `unit_order::start_building` идемпотентен и на следующем тике
-//!   только переводит строителя в `PositionInTape`.
-//! * RMB/Esc — отмена без заказа (приказ не уходит).
-//! * Сдвиг в центр ленты — [`tape_center_offset`]: доворот к ленте
-//!   (`unit_order::position_in_tape`), затем 8 px × 4 тика = 32 px по
-//!   `DIRECTION_OFFSETS[unit.angle]` (`OffsetDrawZones`), применяется рендером
-//!   к якорю спрайта; для `DEINIT`/`LEAVE` — те же 32 px плюс 8 px за тик в
-//!   сторону `move_to` (строитель съезжает с площадки перед `ActivateEngineer`).
+//! * The ghost is **the same decal** `LRGTAPE`/`SMLTAPE` that C++ spawns (drawn by
+//!   the common sprite loop), the cursor `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`
+//!   (SDL layer, like `Cursor_SetCursor`).
+//! * LMB — order 08/P4 with `move_to` = the ghost anchor; the site
+//!   (`LRGTAPE`+`LRGCONES`+`LRGSLAB`) is placed by `events::apply_command` at the moment
+//!   the packet is applied — the slab is visible already on the confirmation frame. C++ places it
+//!   on the next tick (`StartBuilding`/`INIT`), which is invisible at 60 fps; in
+//!   the port `unit_order::start_building` is idempotent and on the next tick
+//!   only switches the builder to `PositionInTape`.
+//! * RMB/Esc — cancel without an order (the order is not sent).
+//! * Shift to the tape center — [`tape_center_offset`]: turning toward the tape
+//!   (`unit_order::position_in_tape`), then 8 px × 4 ticks = 32 px along
+//!   DIRECTION_OFFSETS[unit.angle] (OffsetDrawZones), applied by the renderer
+//!   to the sprite anchor; for `DEINIT`/`LEAVE` — the same 32 px plus 8 px per tick
+//!   toward `move_to` (the builder moves off the site before `ActivateEngineer`).
 //!
-//! # Осознанные отличия
+//! # Deliberate differences
 //!
-//! * C++ спавнит временную ленту в мире (`GameManager_TempTape`); порт рисует
-//!   её как UI-призрак — состояние партии, счётчик юнитов, CRC и сейв не
-//!   меняются, пока игрок выбирает место.
-//! * `GetBuilderUnitCursor` для `ENGINEER` (`game_manager.cpp:5854-5909`)
-//!   портирован: лента 1×1 стоит в клетке курсора, только в строке/столбце
-//!   инженера; включается кнопкой `Path` (`BLDPTH_U`, `buildmenu.cpp:836`).
-//!   C++ `UnitsManager_StartBuild` (`units_manager.cpp:1516`) сбрасывает
-//!   `move_to` инженера в его клетку — это обнулило бы выбор `Path`, поэтому
-//!   порт ставит площадку в выбранную клетку (см. §33).
-//! * C++ открывает по Esc меню выхода (`OKCancelMenu`); здесь Esc отменяет
-//!   выбор, как просит постановка.
-//! * `GameManager_AutoSelectNext` после подтверждения не вызывается (как и в
-//!   остальных приказах порта).
+//! * C++ spawns a temporary tape in the world (`GameManager_TempTape`); the port draws
+//!   it as a UI ghost — the match state, the unit counter, the CRC and the save do not
+//!   change while the player chooses a place.
+//! * `GetBuilderUnitCursor` for `ENGINEER` (`game_manager.cpp:5854-5909`)
+//!   is ported: the 1×1 tape stands in the cursor cell, only in the row/column of
+//!   the engineer; enabled by the `Path` button (`BLDPTH_U`, `buildmenu.cpp:836`).
+//!   C++ `UnitsManager_StartBuild` (`units_manager.cpp:1516`) resets
+//!   the engineer's `move_to` to its cell — that would nullify the `Path` choice, so
+//!   the port places the site in the chosen cell (see §33).
+//! * C++ opens an exit menu on Esc (`OKCancelMenu`); here Esc cancels the
+//!   choice, as the specification asks.
+//! * `GameManager_AutoSelectNext` is not called after confirmation (as in
+//!   the other port orders).
 
 use max_core::access;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -84,37 +84,37 @@ use max_render::viewport::Viewport;
 
 use crate::cursor::CursorId;
 
-/// Сдвиг спрайта строителя за один тик `PositionInTape`
+/// Builder sprite shift per one `PositionInTape` tick
 /// (`OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)`, `unitinfo.cpp:4478`).
 pub const TAPE_STEP_PIXELS: i32 = 8;
-/// Сколько тиков идёт позиционирование (`moved >= 4`).
+/// How many ticks the positioning takes (`moved >= 4`).
 pub const TAPE_STEPS: u8 = 4;
-/// Полный сдвиг в центр ленты: `8 * 4 = 32` px — половина клетки (64 px).
+/// Total shift to the tape center: `8 * 4 = 32` px — half a cell (64 px).
 pub const TAPE_CENTER_PIXELS: i32 = TAPE_STEP_PIXELS * TAPE_STEPS as i32;
 
-/// Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`).
+/// Build site selection mode (`ORDER_STATE_SELECT_SITE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildSiteSelect {
-    /// Строитель (конструктор).
+    /// Builder (constructor).
     pub builder: UnitId,
-    /// Команда строителя.
+    /// Builder team.
     pub team: TeamId,
-    /// Тип строителя (`CONSTRCT`).
+    /// Builder type (`CONSTRCT`).
     pub builder_type: UnitType,
-    /// Что строим (голова очереди).
+    /// What we build (the head of the queue).
     pub unit_type: UnitType,
-    /// Скорость постройки (1/2/4), выбранная в `BuildMenu`.
+    /// Build speed (1/2/4) chosen in `BuildMenu`.
     pub build_rate: u16,
-    /// Якорь 2×2 (клетка ленты `GameManager_TempTape`).
+    /// 2×2 anchor (the tape cell `GameManager_TempTape`).
     pub anchor: Point,
-    /// Клетка под курсором (для статуса и проверки попадания).
+    /// Cell under the cursor (for status and the hit check).
     pub cursor: Point,
-    /// Строка статуса (валидна ли клетка).
+    /// Status line (whether the cell is valid).
     pub status: String,
 }
 
 impl BuildSiteSelect {
-    /// Входит в режим с якорем `anchor` (`UnitsManager_IssueBuildOrder`).
+    /// Enters the mode with the anchor `anchor` (`UnitsManager_IssueBuildOrder`).
     pub fn new(
         builder: UnitId,
         team: TeamId,
@@ -136,23 +136,23 @@ impl BuildSiteSelect {
         }
     }
 
-    /// Тип временной ленты (`DeployConstructionSiteUtilities`):
-    /// здание — `LRGTAPE`, иначе `SMLTAPE`.
+    /// Temporary tape type (`DeployConstructionSiteUtilities`):
+    /// a building — `LRGTAPE`, otherwise `SMLTAPE`.
     pub fn tape_type(&self) -> UnitType {
         production::construction_utility_types(self.unit_type).0
     }
 
-    /// Инженер (`ENGINEER`) ставит 1×1-площадку — `GameManager_GetBuilderUnitCursor`,
-    /// ветка `unit1->GetUnitType() == ENGINEER` (`game_manager.cpp:5854`).
+    /// The engineer (`ENGINEER`) places a 1×1 site — `GameManager_GetBuilderUnitCursor`,
+    /// the `unit1->GetUnitType() == ENGINEER` branch (`game_manager.cpp:5854`).
     pub fn is_engineer(&self) -> bool {
         self.builder_type == UnitType::Engineer
     }
 
-    /// Двигает призрак за курсором — `GameManager_GetBuilderUnitCursor`.
+    /// Moves the ghost after the cursor — `GameManager_GetBuilderUnitCursor`.
     ///
-    /// Якорь пересчитывается по каждой оси отдельно и сохраняется, когда
-    /// курсор ровно на линии строителя (как C++). У инженера лента 1×1 стоит
-    /// прямо в клетке курсора (`target_grid_x = grid_x` в C++).
+    /// The anchor is recomputed per axis separately and kept when the
+    /// cursor is exactly on the builder's line (as in C++). For the engineer the 1×1 tape stands
+    /// right in the cursor cell (`target_grid_x = grid_x` in C++).
     pub fn update_cursor(&mut self, state: &GameState, cursor: Point) {
         self.cursor = cursor;
 
@@ -167,9 +167,9 @@ impl BuildSiteSelect {
         self.status.clear();
     }
 
-    /// Якорь для произвольной клетки курсора (C++
-    /// `GameManager_GetBuilderUnitCursor`): привязка к строителю с сохранением
-    /// прежней оси, когда курсор ровно на его линии; у инженера — сама клетка.
+    /// Anchor for an arbitrary cursor cell (C++
+    /// `GameManager_GetBuilderUnitCursor`): binding to the builder keeping the
+    /// previous axis when the cursor is exactly on its line; for the engineer — the cell itself.
     pub fn anchor_at(&self, state: &GameState, cursor: Point) -> Point {
         if self.is_engineer() {
             return cursor;
@@ -181,7 +181,7 @@ impl BuildSiteSelect {
         }
     }
 
-    /// Валидна ли произвольная клетка курсора при якоре `anchor`.
+    /// Whether an arbitrary cursor cell is valid with the anchor `anchor`.
     pub fn is_valid_at(&self, state: &GameState, anchor: Point, cursor: Point) -> bool {
         let Some(unit) = state.unit(self.builder) else {
             return false;
@@ -193,8 +193,8 @@ impl BuildSiteSelect {
 
         if self.is_engineer() {
             // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5901-5909`):
-            // 1×1-лента только в строке/столбце инженера и только на
-            // проходимой клетке (`UnitsManager_MoveUnitAndParent`).
+            // the 1×1 tape only in the engineer's row/column and only on
+            // a passable cell (`UnitsManager_MoveUnitAndParent`).
             return anchor == cursor
                 && production::engineer_site_covers(unit.grid, cursor)
                 && production::is_site_accessible_ignoring(
@@ -206,10 +206,10 @@ impl BuildSiteSelect {
                 );
         }
 
-        // C++ `GetBuilderUnitCursor` привязывает 2×2 к строителю: якорь всегда
-        // один из четырёх, накрывающих его клетку. Проверка не даёт поставить
-        // площадку «вдали» и строить дистанционно, даже если состояние режима
-        // пришло из другого места.
+        // C++ `GetBuilderUnitCursor` binds the 2×2 to the builder: the anchor is always
+        // one of the four covering its cell. The check prevents placing
+        // the site "far away" and building remotely, even if the mode state
+        // came from another place.
         if !production::site_covers(self.unit_type, anchor, unit.grid) {
             return false;
         }
@@ -224,14 +224,14 @@ impl BuildSiteSelect {
             )
     }
 
-    /// Валидна ли текущая клетка: курсор внутри 2×2 и площадка проходима
-    /// (`UnitsManager_MoveUnitAndParent` в C++).
+    /// Whether the current cell is valid: the cursor is inside the 2×2 and the site is passable
+    /// (`UnitsManager_MoveUnitAndParent` in C++).
     pub fn valid(&self, state: &GameState) -> bool {
         self.is_valid_at(state, self.anchor, self.cursor)
     }
 
-    /// Курсор окна: `CURSOR_MAP2` над валидной клеткой, `CURSOR_UNIT_NO_GO`
-    /// над невалидной (`GameManager_GetBuilderUnitCursor`).
+    /// Window cursor: `CURSOR_MAP2` over a valid cell, `CURSOR_UNIT_NO_GO`
+    /// over an invalid one (`GameManager_GetBuilderUnitCursor`).
     pub fn cursor_id(&self, state: &GameState) -> CursorId {
         if self.valid(state) {
             CursorId::Map2
@@ -240,7 +240,7 @@ impl BuildSiteSelect {
         }
     }
 
-    /// Текст строки статуса для HUD/лога.
+    /// Status line text for the HUD/log.
     pub fn status_line(&self, state: &GameState) -> String {
         let (x, y) = (self.anchor.x, self.anchor.y);
 
@@ -251,10 +251,10 @@ impl BuildSiteSelect {
         }
     }
 
-    /// Рисует призрак ленты в кадр (`GameManager_TempTape`).
+    /// Draws the tape ghost into the frame (`GameManager_TempTape`).
     ///
-    /// Спрайт — тот же, что у настоящей площадки: `LRGTAPE`/`SMLTAPE` с цветами
-    /// команды; кадр `0` (лента не анимируется).
+    /// The sprite is the same as the real site: `LRGTAPE`/`SMLTAPE` with the team
+    /// colors; frame `0` (the tape is not animated).
     pub fn draw_ghost(
         &self,
         frame: &mut RgbaBuffer,
@@ -264,7 +264,7 @@ impl BuildSiteSelect {
         let tape_type = self.tape_type();
         let mut ghost = UnitInfo::new(tape_type, self.team, UnitId::NO_ID);
         ghost.flags = access::unit_type_flags(tape_type);
-        // `IsRelevant` (`unitinfogroup.cpp:59`) рисует только не-`ORDER_IDLE`.
+        // `IsRelevant` (`unitinfogroup.cpp:59`) draws only non-`ORDER_IDLE`.
         ghost.orders = UnitOrder::Await;
         ghost.state = UnitOrderState::ExecutingOrder;
         ghost.set_visible_to_team(self.team, true);
@@ -274,8 +274,8 @@ impl BuildSiteSelect {
             (f32::from(self.anchor.x), f32::from(self.anchor.y)),
         );
         let (screen_x, screen_y) = viewport.world_to_screen(world_x, world_y);
-        // Призрак — не юнит состояния: презентация по умолчанию C++
-        // (`brightness = 255`, нули) — Ф5.3/B.
+        // The ghost is not a state unit: default C++ presentation
+        // (`brightness = 255`, zeros) — phase 5.3/B.
         let presentation = max_core::unit::UnitPresentation::new();
         let drawn = crate::render::draw_unit_sprites(
             assets,
@@ -290,37 +290,37 @@ impl BuildSiteSelect {
     }
 }
 
-/// Сдвиг спрайта строителя относительно центра его клетки — порт
+/// Builder sprite shift relative to the center of its cell — a port of
 /// `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`) + `OffsetDrawZones`.
 ///
-/// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_{INIT,ENTER}` — `8 px` за тик
-///   (`moved` 0..4, как счётчик C++), **по текущему углу корпуса**
-///   (`DIRECTION_OFFSETS[angle]`): C++ сначала доворачивает строителя к ленте
-///   (`Paths_UpdateAngle`), поэтому спрайт скользит туда, куда смотрит;
-/// * `ORDER_BUILD`/`BUILD_IN_PROGRESS` после восстановления приказов —
-///   полные `32 px` к центру ленты (рабочая поза уже в центре);
-/// * `ORDER_BUILD`/`UNIT_READY` (здание достроено, строитель **ждёт приказа
-///   игрока**) — те же `32 px`: C++ не двигает `x`/`y` при смене приказа, поэтому
-///   конструктор остаётся в центре площадки, пока его не отправят (`TAPE_
-///   POSITIONING_DEINIT` — первый сдвиг);
-/// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT` — строитель ещё в
-///   центре ленты (`32 px` въезда), `TAPE_POSITIONING_LEAVE` — те же `32 px`
-///   плюс `8 px × moved` в сторону `move_to` (`move_to_grid_*`): так C++
-///   съезжает с площадки перед `ActivateEngineer`;
-/// * остальные состояния (достройка, `CancelBuilding`, после съезда) — `0`:
-///   спрайт в центре своей клетки, как `UnitInfo::Redraw`.
+/// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_{INIT,ENTER}` — `8 px` per tick
+///   (`moved` 0..4, like the C++ counter), **by the current hull angle**
+///   (`DIRECTION_OFFSETS[angle]`): C++ first turns the builder toward the tape
+///   (`Paths_UpdateAngle`), so the sprite slides where it faces;
+/// * `ORDER_BUILD`/`BUILD_IN_PROGRESS` after the orders are restored —
+///   the full `32 px` to the tape center (the working pose is already in the center);
+/// * `ORDER_BUILD`/`UNIT_READY` (the building is finished, the builder **waits for a player
+///   order**) — the same `32 px`: C++ does not move `x`/`y` when the order changes, so
+///   the constructor stays in the site center until it is sent (`TAPE_
+///   POSITIONING_DEINIT` — the first shift);
+/// * `AWAIT_TAPE_POSITIONING`/`TAPE_POSITIONING_DEINIT` — the builder is still in
+///   the tape center (`32 px` of entry), `TAPE_POSITIONING_LEAVE` — the same `32 px`
+///   plus `8 px × moved` toward `move_to` (`move_to_grid_*`): this is how C++
+///   moves off the site before `ActivateEngineer`;
+/// * the other states (completion, `CancelBuilding`, after leaving) — `0`:
+///   the sprite in the center of its cell, like `UnitInfo::Redraw`.
 ///
-/// Направление въезда — угол на центр ленты (у 2×2 это одна из четырёх
-/// диагоналей), поэтому сдвиг считается от геометрии площадки, а не от
-/// текущего угла корпуса: угол мог быть довёрнут на рабочую позу
-/// (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`). Сетка строителя при
-/// въезде не меняется.
+/// The entry direction is the angle to the tape center (for 2×2 it is one of the four
+/// diagonals), so the shift is computed from the site geometry rather than from
+/// the current hull angle: the angle could have been turned to the working pose
+/// (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`). The builder's grid does not
+/// change on entry.
 pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
     if unit.unit_type != UnitType::Constructor || !unit.is_mobile() {
         return (0, 0);
     }
 
-    // Лента площадки — та, чей родитель этот строитель
+    // The site tape is the one whose parent is this builder
     // (`DeployConstructionSiteUtilities`: `tape->SetParent(this)`).
     let tape = state
         .unit_ids_in_order()
@@ -338,14 +338,14 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
         return (0, 0);
     };
 
-    // Центр ленты — только если строитель стоит внутри её 2×2. Иначе сдвиг
-    // увёл бы спрайт от центра площадки (старый/повреждённый якорь).
+    // The tape center — only if the builder stands inside its 2×2. Otherwise the shift
+    // would take the sprite away from the site center (a stale/damaged anchor).
     if !production::site_covers(tape.unit_type, tape.grid, unit.grid) {
         return (0, 0);
     }
 
-    // Въезд: строитель в одной из четырёх клеток 2×2, центр ленты — на 32 px
-    // в сторону её центра по каждой оси.
+    // Entry: the builder is in one of the four cells of the 2×2, the tape center is 32 px
+    // toward its center on each axis.
     let (enter_x, enter_y) = if tape.unit_type == UnitType::LargeTape {
         (
             if unit.grid.x == tape.grid.x { 1 } else { -1 },
@@ -384,23 +384,23 @@ pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
             )
         }
         (UnitOrder::Build, UnitOrderState::BuildInProgress) => (enter_px_x, enter_px_y),
-        // Достройка: C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) переводит
-        // строителя в `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, но его пиксель
-        // (`x`/`y`) остаётся там, куда его свёл `PositionInTape` — в центре
-        // ленты. Сдвиг не снимается до приказа игрока: первый сброс происходит
-        // только в `TAPE_POSITIONING_DEINIT`/`LEAVE`. Раньше здесь был `0`, и
-        // спрайт «выталкивало» в угол площадки сразу после достройки.
+        // Completion: C++ `SpawnNewUnit` (`unitinfo.cpp:3440-3592`) switches
+        // the builder to `ORDER_BUILD`/`ORDER_STATE_UNIT_READY`, but its pixel
+        // (`x`/`y`) stays where `PositionInTape` brought it — in the center of
+        // the tape. The shift is not removed until the player's order: the first reset happens
+        // only in `TAPE_POSITIONING_DEINIT`/`LEAVE`. Previously there was `0` here, and
+        // the sprite was "pushed" into the site corner right after completion.
         (UnitOrder::Build, UnitOrderState::UnitReady) => (enter_px_x, enter_px_y),
-        // Клик игрока по клетке: C++ ставит `ORDER_ACTIVATE`/
-        // `ORDER_STATE_IN_TRANSITION`, но пиксель строителя ещё в центре ленты.
+        // The player's click on the cell: C++ sets `ORDER_ACTIVATE`/
+        // `ORDER_STATE_IN_TRANSITION`, but the builder pixel is still in the tape center.
         (UnitOrder::Activate, UnitOrderState::InTransition) => (enter_px_x, enter_px_y),
         _ => (0, 0),
     }
 }
 
-/// `GetTargetUnitAngle` для съезда (`state != TAPE_POSITIONING_ENTER`) —
-/// знак разницы до `move_to` по каждой оси; диагонали кодируются углами
-/// `NE/SE/SW/NW` ровно как в C++.
+/// `GetTargetUnitAngle` for leaving (`state != TAPE_POSITIONING_ENTER`) —
+/// the sign of the difference to `move_to` on each axis; the diagonals are encoded by the angles
+/// `NE/SE/SW/NW` exactly as in C++.
 fn leave_angle(grid: Point, move_to: Point) -> u8 {
     let target_x = i32::from(move_to.x);
     let target_y = i32::from(move_to.y);
@@ -418,7 +418,7 @@ fn leave_angle(grid: Point, move_to: Point) -> u8 {
     }
 }
 
-/// Мировая точка центра ленты 2×2 с якорем `anchor` (для тестов/ассертов).
+/// World point of the 2×2 tape center with the anchor `anchor` (for tests/asserts).
 pub fn site_center_world(unit_type: UnitType, anchor: Point) -> (i32, i32) {
     let size = i32::from(production::footprint(unit_type));
 
@@ -429,20 +429,20 @@ pub fn site_center_world(unit_type: UnitType, anchor: Point) -> (i32, i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Интеграция с приложением
+// Integration with the application
 // ---------------------------------------------------------------------------
 
 impl crate::App {
-    /// Открытый режим выбора места стройки; `None` — обычная партия.
+    /// Open build site selection mode; `None` — a regular match.
     pub fn build_site(&self) -> Option<&BuildSiteSelect> {
         self.build_site.as_ref()
     }
 
-    /// Начинает выбор места (`MobileBuildMenu::Build` → `SELECT_SITE`).
+    /// Starts the site selection (`MobileBuildMenu::Build` → `SELECT_SITE`).
     ///
-    /// `false` — рядом со строителем нет проходимого якоря 2×2
-    /// (`UnitsManager_IssueBuildOrder` вернул `false`, `BuildMenu` остаётся
-    /// открытым с сообщением об ошибке).
+    /// `false` — there is no passable 2×2 anchor next to the builder
+    /// (`UnitsManager_IssueBuildOrder` returned `false`, `BuildMenu` stays
+    /// open with an error message).
     pub fn open_build_site(&mut self, unit_type: UnitType, build_rate: u16) -> bool {
         let Some(menu) = self.build_menu.as_ref() else {
             return false;
@@ -473,7 +473,7 @@ impl crate::App {
         true
     }
 
-    /// Отменяет выбор места (`GameManager_SelectBuildSite`): приказ не уходит.
+    /// Cancels the site selection (`GameManager_SelectBuildSite`): the order is not sent.
     pub fn cancel_build_site(&mut self) -> Option<String> {
         let site = self.build_site.take()?;
 
@@ -483,10 +483,10 @@ impl crate::App {
         ))
     }
 
-    /// Подтверждает выбор места (`GameManager_PathBuild` → `ORDER_BUILD`).
+    /// Confirms the site selection (`GameManager_PathBuild` → `ORDER_BUILD`).
     ///
-    /// Возвращает строку журнала; `None` — режима нет. Невалидная клетка
-    /// отменяет выбор, как в C++ (`CURSOR_UNIT_NO_GO` → `ManagePlayerAction`).
+    /// Returns a log line; `None` — no mode. An invalid cell
+    /// cancels the selection, as in C++ (`CURSOR_UNIT_NO_GO` → `ManagePlayerAction`).
     pub fn confirm_build_site(&mut self, online: bool) -> Option<String> {
         let (valid, anchor) = {
             let site = self.build_site.as_ref()?;
@@ -524,7 +524,7 @@ impl crate::App {
         ))
     }
 
-    /// Закрывает режим без сообщения (выход из партии/загрузка).
+    /// Closes the mode without a message (exit from the match/load).
     pub fn close_build_site(&mut self) {
         self.build_site = None;
     }
@@ -568,26 +568,26 @@ mod tests {
     fn anchor_is_pinned_to_the_builder_and_covers_the_cursor() {
         let builder = Point::new(30, 20);
 
-        // Курсор на клетке строителя — якорь не двигается.
+        // Cursor on the builder's cell — the anchor does not move.
         assert_eq!(
             production::site_anchor_for_cursor(builder, builder, Point::new(29, 19)),
             Point::new(29, 19),
             "равенство по обеим осям сохраняет прежний якорь (как C++)"
         );
 
-        // Курсор правее/ниже — якорь = клетка строителя.
+        // Cursor to the right/below — the anchor = the builder's cell.
         assert_eq!(
             production::site_anchor_for_cursor(builder, Point::new(31, 21), Point::new(0, 0)),
             builder
         );
 
-        // Курсор левее/выше — якорь на клетку влево/вверх.
+        // Cursor to the left/above — the anchor one cell left/up.
         assert_eq!(
             production::site_anchor_for_cursor(builder, Point::new(29, 19), Point::new(0, 0)),
             Point::new(29, 19)
         );
 
-        // 2×2 всегда накрывает строителя для любого курсора из этих четырёх.
+        // The 2×2 always covers the builder for any cursor from these four.
         for cursor in [(30, 20), (31, 20), (30, 21), (31, 21), (29, 19)] {
             let anchor = production::site_anchor_for_cursor(
                 builder,
@@ -651,17 +651,17 @@ mod tests {
             anchor,
         );
 
-        // Курсор на клетке строителя — валидно, `CURSOR_MAP2`.
+        // Cursor on the builder's cell — valid, `CURSOR_MAP2`.
         assert!(select.valid(&state));
         assert_eq!(select.cursor_id(&state), CursorId::Map2);
         assert_eq!(select.anchor, grid);
 
-        // Курсор влево — якорь уезжает влево вместе с призраком.
+        // Cursor to the left — the anchor moves left together with the ghost.
         select.update_cursor(&state, Point::new(grid.x - 1, grid.y));
         assert_eq!(select.anchor, Point::new(grid.x - 1, grid.y));
         assert!(select.valid(&state));
 
-        // Вода под площадкой — невалидно, `CURSOR_UNIT_NO_GO`.
+        // Water under the site — invalid, `CURSOR_UNIT_NO_GO`.
         for dy in 0..2 {
             for dx in 0..2 {
                 *state
@@ -683,8 +683,8 @@ mod tests {
     fn anchor_far_from_the_builder_is_never_valid() {
         let (state, builder) = land_state();
         let builder_grid = state.unit(builder).unwrap().grid;
-        // Якорь в трёх клетках от строителя — такого не бывает у
-        // `GetBuilderUnitCursor`; подтверждение обязано быть невалидным.
+        // An anchor three cells away from the builder — that never happens with
+        // `GetBuilderUnitCursor`; confirmation must be invalid.
         let far = Point::new(builder_grid.x + 3, builder_grid.y);
         let select = BuildSiteSelect::new(
             builder,
@@ -728,14 +728,14 @@ mod tests {
     #[test]
     fn tape_center_offset_moves_the_builder_to_the_tape_center() {
         let (mut state, builder) = land_state();
-        // Строитель в правом нижнем углу 2×2, якорь на клетку левее/выше:
-        // въезд идёт на NW (−32, −32) — в центр ленты.
+        // The builder is in the bottom-right corner of the 2×2, the anchor one cell left/up:
+        // the entry goes to NW (−32, −32) — to the tape center.
         let anchor = Point::new(29, 19);
         state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
         state.unit_mut(builder).unwrap().orders = UnitOrder::Build;
         state.unit_mut(builder).unwrap().state = UnitOrderState::BuildInProgress;
         state.unit_mut(builder).unwrap().moved = 0;
-        // C++ при завершении позиционирования доворачивает NW(7) на шаг → N(0).
+        // C++ on finishing the positioning turns NW(7) by a step → N(0).
         state.unit_mut(builder).unwrap().angle = 0;
 
         let tape = max_core::production::deploy_construction_site(
@@ -761,8 +761,8 @@ mod tests {
             "спрайт строителя встаёт ровно в центр ленты 2×2"
         );
 
-        // Пока идёт позиционирование — сдвиг растёт по 8 px за тик вдоль угла
-        // строителя. Угол уже довёрнут к ленте (`Paths_UpdateAngle`), NW = 7.
+        // While positioning is in progress the shift grows by 8 px per tick along the
+        // builder's angle. The angle is already turned toward the tape (`Paths_UpdateAngle`), NW = 7.
         state.unit_mut(builder).unwrap().orders = UnitOrder::AwaitTapePositioning;
         state.unit_mut(builder).unwrap().state = UnitOrderState::TapePositioningEnter;
         state.unit_mut(builder).unwrap().angle = 7;
@@ -791,17 +791,17 @@ mod tests {
         )
         .expect("площадка поставлена");
 
-        // Строитель западнее центра, смотрит на восток — сдвиг строго (1,0)*8.
+        // The builder is west of the center, facing east — the shift is exactly (1,0)*8.
         state.unit_mut(builder).unwrap().angle = 2;
         let unit = state.unit(builder).unwrap();
         assert_eq!(tape_center_offset(&state, unit), (8, 0));
 
-        // Диагональный случай: смотрит NW — (1,1)-диагональ.
+        // Diagonal case: facing NW — the (1,1) diagonal.
         state.unit_mut(builder).unwrap().angle = 7;
         let unit = state.unit(builder).unwrap();
         assert_eq!(tape_center_offset(&state, unit), (-8, -8));
 
-        // Остальные направления — ровно `DIRECTION_OFFSETS[angle] * 8`.
+        // The other directions — exactly `DIRECTION_OFFSETS[angle] * 8`.
         for angle in 0..8u8 {
             state.unit_mut(builder).unwrap().angle = angle;
             let unit = state.unit(builder).unwrap();
@@ -829,13 +829,13 @@ mod tests {
         )
         .expect("площадка поставлена");
 
-        // `GetTargetUnitAngle`/`TAPE_POSITIONING_ENTER`: четыре угла 2×2 дают
-        // четыре диагонали (SE/NE/SW/NW); сетка строителя не меняется.
+        // `GetTargetUnitAngle`/`TAPE_POSITIONING_ENTER`: the four corners of the 2×2 give
+        // four diagonals (SE/NE/SW/NW); the builder's grid does not change.
         let cases = [
-            (Point::new(29, 19), 3, (1, 1)),   // NW-угол ленты → SE
-            (Point::new(30, 19), 5, (-1, 1)),  // NE-угол → SW
-            (Point::new(29, 20), 1, (1, -1)),  // SW-угол → NE
-            (Point::new(30, 20), 7, (-1, -1)), // SE-угол → NW
+            (Point::new(29, 19), 3, (1, 1)),   // NW corner of the tape → SE
+            (Point::new(30, 19), 5, (-1, 1)),  // NE corner → SW
+            (Point::new(29, 20), 1, (1, -1)),  // SW corner → NE
+            (Point::new(30, 20), 7, (-1, -1)), // SE corner → NW
         ];
 
         for (grid, angle, step) in cases {
@@ -849,7 +849,7 @@ mod tests {
                 "клетка {grid:?}: C++ GetTargetUnitAngle"
             );
 
-            // `DIRECTION_OFFSETS[angle] * 32` из центра клетки — центр ленты.
+            // `DIRECTION_OFFSETS[angle] * 32` from the cell center — the tape center.
             let offset = (step.0 * 32, step.1 * 32);
             let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
 
@@ -877,22 +877,22 @@ mod tests {
         )
         .expect("площадка поставлена");
 
-        // `ORDER_AWAIT_TAPE_POSITIONING`/`DEINIT` (`PositionInTape`): строитель
-        // ещё в центре ленты — сдвиг въезда (строитель в SE-углу 2×2, якорь
-        // NW-углом, значит въезд NW: −32,−32).
+        // `ORDER_AWAIT_TAPE_POSITIONING`/`DEINIT` (`PositionInTape`): the builder
+        // is still in the tape center — the entry shift (the builder is in the SE corner of the 2×2,
+        // the anchor is the NW corner, so the entry is NW: −32,−32).
         let mut unit = state.unit(builder).unwrap().clone();
         unit.orders = UnitOrder::AwaitTapePositioning;
         unit.state = UnitOrderState::TapePositioningDeinit;
         unit.moved = 0;
         assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
 
-        // `ORDER_BUILD`/`BUILD_IN_PROGRESS`: рабочая поза в центре ленты.
+        // `ORDER_BUILD`/`BUILD_IN_PROGRESS`: the working pose in the tape center.
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::BuildInProgress;
         assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
 
-        // `ORDER_BUILD`/`UNIT_READY`: здание достроено, строитель ждёт приказа
-        // игрока — C++ не двигает его `x`/`y`, значит спрайт остаётся в центре.
+        // `ORDER_BUILD`/`UNIT_READY`: the building is finished, the builder waits for a player
+        // order — C++ does not move its `x`/`y`, so the sprite stays in the center.
         unit.state = UnitOrderState::UnitReady;
         assert_eq!(
             tape_center_offset(&state, &unit),
@@ -900,9 +900,9 @@ mod tests {
             "после достройки строитель остаётся в центре ленты"
         );
 
-        // `ORDER_ACTIVATE`/`IN_TRANSITION` — приказ игрока начать уход: C++ ещё
-        // не двигал `x`/`y`, поэтому кадр между кликом и тиком обработки остаётся
-        // в центре (сдвиг снимается только в `TAPE_POSITIONING_LEAVE`).
+        // `ORDER_ACTIVATE`/`IN_TRANSITION` — the player's order to start leaving: C++ has not
+        // moved `x`/`y` yet, so the frame between the click and the processing tick stays
+        // in the center (the shift is removed only in `TAPE_POSITIONING_LEAVE`).
         unit.orders = UnitOrder::Activate;
         unit.state = UnitOrderState::InTransition;
         assert_eq!(
@@ -911,13 +911,13 @@ mod tests {
             "кадр после клика игрока не «прыгает» в угол площадки"
         );
 
-        // `ORDER_ACTIVATE`/`BUILD_IN_PROGRESS` — состояние **после** съезда:
-        // `PositionInTape` пересчитал клетку, спрайт снова в центре своей клетки.
+        // `ORDER_ACTIVATE`/`BUILD_IN_PROGRESS` — the state **after** leaving:
+        // `PositionInTape` recomputed the cell, the sprite is again in the center of its cell.
         unit.state = UnitOrderState::BuildInProgress;
         assert_eq!(tape_center_offset(&state, &unit), (0, 0));
 
-        // `TAPE_POSITIONING_LEAVE`: те же 32 px плюс 8 px за тик в сторону
-        // `move_to` (C++ `move_to_grid_*`): цель западнее-севернее — NW.
+        // `TAPE_POSITIONING_LEAVE`: the same 32 px plus 8 px per tick toward
+        // `move_to` (C++ `move_to_grid_*`): the target is west-north — NW.
         state.set_order_data(
             builder,
             max_core::game::OrderData {
@@ -937,8 +937,8 @@ mod tests {
             );
         }
 
-        // После четырёх шагов пиксель ровно в центре клетки-якоря (28,19):
-        // `PositionInTape` пересчитывает `grid_x = x / 64` в ту же клетку.
+        // After four steps the pixel is exactly in the anchor cell center (28,19):
+        // `PositionInTape` recomputes `grid_x = x / 64` into the same cell.
         unit.moved = 4;
         let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
         assert_eq!(
@@ -970,12 +970,12 @@ mod tests {
         unit.prior_orders = UnitOrder::Build;
         unit.prior_state = UnitOrderState::BuildInProgress;
         unit.moved = 0;
-        unit.angle = 0; // смотрит на север, лента — на северо-запад
+        unit.angle = 0; // faces north, the tape — north-west
         let move_to = unit.target_grid;
 
-        // Тик 1: INIT → ENTER и первый (единственный) шаг поворота 0 → NW(7).
-        // C++: `if (moved || !Paths_UpdateAngle(...))` — пока поворот не
-        // закончен, `moved` не растёт и спрайт не сдвигается.
+        // Tick 1: INIT → ENTER and the first (only) turn step 0 → NW(7).
+        // C++: `if (moved || !Paths_UpdateAngle(...))` — while the turn is not
+        // finished, `moved` does not grow and the sprite does not move.
         max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
         assert_eq!(unit.state, UnitOrderState::TapePositioningEnter);
         assert_eq!(unit.angle, 7, "строитель довернулся к ленте (NW)");
@@ -983,13 +983,13 @@ mod tests {
         state.write_unit(builder, unit.clone());
         assert_eq!(tape_center_offset(&state, &unit), (0, 0));
 
-        // Тик 2: угол уже целевой — первый шаг скольжения (−8,−8).
+        // Tick 2: the angle is already the target — the first sliding step (−8,−8).
         max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
         assert_eq!(unit.moved, 1);
         state.write_unit(builder, unit.clone());
         assert_eq!(tape_center_offset(&state, &unit), (-8, -8));
 
-        // Тики 3–5: ещё три шага по 8 px — ровно в центр ленты.
+        // Ticks 3–5: three more steps of 8 px — exactly to the tape center.
         for step in 2..=4u8 {
             max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
             assert_eq!(unit.moved, step);
@@ -1012,7 +1012,7 @@ mod tests {
             "четыре шага по 8 px ставят спрайт в центр ленты"
         );
 
-        // Тик 6: `moved >= 4` — `RestoreOrders` в ORDER_BUILD и доворот на шаг
+        // Tick 6: `moved >= 4` — `RestoreOrders` into ORDER_BUILD and a turn by a step
         // (`Paths_UpdateAngle(this, (angle + 1) & 7)`): NW(7) → N(0).
         max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
         assert_eq!(unit.orders, UnitOrder::Build);

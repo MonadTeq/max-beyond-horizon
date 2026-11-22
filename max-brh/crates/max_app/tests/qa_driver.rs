@@ -1,15 +1,15 @@
-//! Слой 2–3 QA: тесты скриптового драйвера (`qa_run`) и golden-сверки.
+//! QA layers 2–3: tests of the script driver (`qa_run`) and golden comparison.
 //!
-//! Проверяется:
+//! Checked:
 //!
-//! 1. парсер `.qa` понимает **все** команды языка (и отклоняет опечатки);
-//! 2. скрипт `max-brh-qa/scripts/sp-full.qa` проходит целиком теми же
-//!    обработчиками, что у мыши/клавиатуры (экраны настройки → партия → ходы
-//!    ИИ → сохранение);
-//! 3. упавший `assert` даёт `passed = false` и текст с номером строки —
-//!    именно это превращается в exit 1 у `qa_run` в `ci.sh`;
-//! 4. `load <V70>` поднимает локальную партию из настоящего сейва игры;
-//! 5. PNG-кодек и компаратор golden-кадров работают без внешних крейтов.
+//! 1. the `.qa` parser understands **all** language commands (and rejects typos);
+//! 2. the `max-brh-qa/scripts/sp-full.qa` script passes entirely through the same
+//!    handlers as the mouse/keyboard (setup screens → match → AI turns →
+//!    saving);
+//! 3. a failed `assert` gives `passed = false` and a text with the line number —
+//!    exactly this turns into exit 1 in `qa_run` in `ci.sh`;
+//! 4. `load <V70>` raises a local match from a real game save;
+//! 5. the PNG codec and the golden frame comparator work without external crates.
 
 use std::path::{Path, PathBuf};
 
@@ -57,7 +57,7 @@ fn steps(source: &str) -> Vec<Step> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Парсер
+// 1. Parser
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -155,7 +155,7 @@ fn parser_reports_the_line_of_a_typo() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Скрипт sp-full.qa проходит целиком
+// 2. The sp-full.qa script passes entirely
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -179,7 +179,7 @@ fn sp_full_script_passes_through_the_real_input_path() {
         report.frames
     );
 
-    // Кадры ключевых шагов на месте.
+    // Frames of the key steps are in place.
     for name in [
         "main-menu",
         "options",
@@ -193,17 +193,17 @@ fn sp_full_script_passes_through_the_real_input_path() {
         assert!(path.is_file(), "нет кадра {name}: {}", path.display());
     }
 
-    // Сохранение локальной партии (MXLS) записано рядом с кадрами.
+    // The local match save (MXLS) is written next to the frames.
     assert!(dir.join("sp-full.mxs").is_file(), "save sp-full.mxs");
 
-    // Состояние действительно доиграно: три хода и ходы ИИ позади.
+    // The state is really played: three turns and the AI turns are behind.
     assert!(
         runner.app().state().turn_counter >= 3,
         "turn_counter={}",
         runner.app().state().turn_counter
     );
 
-    // log.txt пишется и содержит итог.
+    // log.txt is written and contains the result.
     let log = report.write_log(&dir).expect("лог записан");
     let text = std::fs::read_to_string(log).expect("лог читается");
     assert!(text.contains("RESULT: PASS"), "{text}");
@@ -211,8 +211,8 @@ fn sp_full_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// Полный `CargoMenu` (P7) проходит реальный путь ввода: полный список
-/// покупки, cargo-слайдер, режим модернизации, фильтры, апгрейд, `Done`.
+/// The full `CargoMenu` (P7) passes the real input path: the full purchase
+/// list, the cargo slider, the upgrade mode, filters, an upgrade, `Done`.
 #[test]
 fn cargo_full_script_passes_through_the_real_input_path() {
     if !has_game_data() {
@@ -239,7 +239,7 @@ fn cargo_full_script_passes_through_the_real_input_path() {
         assert!(path.is_file(), "нет кадра {name}: {}", path.display());
     }
 
-    // Партия началась после Done, кредиты потрачены на покупки/cargo/апгрейд.
+    // The match started after Done, the credits were spent on purchases/cargo/upgrade.
     assert!(runner.app().state().turn_counter >= 1);
     assert!(
         runner.app().state().team_units[max_core::team::TeamId::RED.0 as usize].gold < 150,
@@ -249,9 +249,9 @@ fn cargo_full_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// Сквозной путь игрока мышью (TC-0601/0603/0604): камера на базе, выделение
-/// своего юнита кликом, RMB-приказ с предпросмотром, `End Turn` и фактическое
-/// перемещение юнита в новую клетку.
+/// The player's end-to-end mouse path (TC-0601/0603/0604): the camera on the base,
+/// selecting an own unit with a click, an RMB order with a preview, `End Turn`
+/// and the actual movement of the unit to a new cell.
 #[test]
 fn move_input_script_passes_through_the_real_input_path() {
     if !has_game_data() {
@@ -279,8 +279,8 @@ fn move_input_script_passes_through_the_real_input_path() {
         assert!(path.is_file(), "нет кадра {name}: {}", path.display());
     }
 
-    // Surveyor высажен в (23,21); после RMB и End Turn'а он в (24,21) —
-    // приказ реально исполнен симуляцией, а не только записан в журнал.
+    // The Surveyor is landed at (23,21); after RMB and End Turn it is at (24,21) —
+    // the order is really executed by the simulation, not just written to the log.
     let surveyor = runner
         .app()
         .state()
@@ -302,9 +302,9 @@ fn move_input_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// P7: ResearchMenu + четыре Help-экрана (`research-help.qa`) — открытие
-/// кнопками `?`/`Help`, прокрутка, `Done`; распределение центров меняет
-/// allocation и скорость темы на тике.
+/// P7: ResearchMenu + four Help screens (`research-help.qa`) — opening
+/// with the `?`/`Help` buttons, scrolling, `Done`; the center allocation changes
+/// the allocation and the topic speed on the tick.
 #[test]
 fn research_help_script_passes_through_the_real_input_path() {
     if !has_game_data() {
@@ -336,8 +336,8 @@ fn research_help_script_passes_through_the_real_input_path() {
         assert!(path.is_file(), "нет кадра {name}: {}", path.display());
     }
 
-    // Центры перераспределены с Attack на Shots, и за 16 ходов тик поднял
-    // уровень Shots (Attack остался 0) — экран действительно влияет на
+    // The centers were redistributed from Attack to Shots, and over 16 turns the tick raised
+    // the Shots level (Attack remained 0) — the screen really affects
     // `finish_turn`.
     let team = runner.app().player_team();
     let topics = &runner.app().state().teams[team.0 as usize].research_topics;
@@ -351,14 +351,14 @@ fn research_help_script_passes_through_the_real_input_path() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Упавший ассерт — это провал прогона (в CLI → exit 1)
+// 3. A failed assert is a run failure (in the CLI → exit 1)
 // ---------------------------------------------------------------------------
 #[test]
 fn failing_assert_fails_the_run_and_names_the_line() {
     let dir = temp_dir("assert_fail");
     let mut runner = runner(&dir);
 
-    // Стартовый экран — MainMenu: проверка InGame обязана упасть.
+    // The start screen — MainMenu: the InGame check must fail.
     let report = runner.run(
         &steps("assert screen=InGame\nassert screen=MainMenu\n"),
         "inline",
@@ -377,7 +377,7 @@ fn failing_assert_fails_the_run_and_names_the_line() {
         report.failures
     );
     assert!(report.log.contains("FAIL"), "{}", report.log);
-    // После падения шаги не выполняются: второго ассерта в логе нет.
+    // After the failure the steps are not executed: there is no second assert in the log.
     assert!(!report.log.contains("screen=MainMenu:"), "{}", report.log);
 
     std::fs::remove_dir_all(dir).ok();
@@ -404,7 +404,7 @@ fn unknown_command_is_a_script_error_not_a_panic() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. load V70 → локальная партия
+// 4. load V70 → local match
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -430,7 +430,7 @@ fn v70_save_is_loaded_by_the_script_command() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. PNG и golden-сверка
+// 5. PNG and golden comparison
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -447,7 +447,7 @@ fn golden_pngs_roundtrip_and_compare_without_drift() {
     assert_eq!((image.width, image.height), (640, 480));
     assert!(std::fs::metadata(&shot).expect("метаданные").len() < 300_000);
 
-    // Повторный encode → decode не меняет пиксели.
+    // Repeated encode → decode does not change the pixels.
     let again = png::decode(&png::encode(&image)).expect("round trip");
     assert_eq!(pixel_hash(&again), pixel_hash(&image));
 
@@ -463,15 +463,15 @@ fn pixel_hash(image: &png::Image) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Слой 2.5: запись ручной игры → .qa → qa_run до того же состояния
+// 6. Layer 2.5: manual game recording → .qa → qa_run to the same state
 // ---------------------------------------------------------------------------
 
 fn click_rect(rect: max_render::buffer::PixelRect) -> InputEvent {
     InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
 }
 
-/// Гоняет тот же путь игрока, что `QaRunner`, но с ручным `InputEvent`-потоком,
-/// который одновременно уходит в [`Recorder`].
+/// Runs the same player path as `QaRunner`, but with a manual `InputEvent` stream
+/// that simultaneously goes into the [`Recorder`].
 struct ManualPlay {
     app: App,
     ctx: UiContext,
@@ -512,7 +512,7 @@ impl ManualPlay {
         }
     }
 
-    /// Ровно `main.rs`: запись → экран/HUD → переход.
+    /// Exactly `main.rs`: recording → screen/HUD → transition.
     fn send(&mut self, event: InputEvent) {
         self.recorder.record(event, self.context());
 
@@ -560,7 +560,7 @@ impl ManualPlay {
         }
     }
 
-    /// Кадр игрового цикла и счётчик рекордера (`main.rs`).
+    /// A game loop frame and the recorder counter (`main.rs`).
     fn frame(&mut self) {
         self.recorder.begin_frame();
 
@@ -589,7 +589,7 @@ impl ManualPlay {
         }
     }
 
-    /// `wait` в языке `.qa`: крутим кадры, пока игра не готова к вводу.
+    /// `wait` in the `.qa` language: we run frames until the game is ready for input.
     fn wait_ready(&mut self) {
         while !self.ready() {
             self.frame();
@@ -609,8 +609,8 @@ fn visible_point(app: &App, grid: Point) -> Option<(i32, i32)> {
         .then_some((x, y))
 }
 
-/// Юнит игрока, который виден при текущей камере (камеру не двигаем, иначе
-/// записанный клик не совпадёт с реплеем).
+/// A player unit visible with the current camera (we do not move the camera, otherwise
+/// the recorded click would not match the replay).
 fn visible_player_unit(app: &App) -> Option<((i32, i32), Point)> {
     let team = app.player_team();
 
@@ -622,7 +622,7 @@ fn visible_player_unit(app: &App) -> Option<((i32, i32), Point)> {
         .find_map(|unit| visible_point(app, unit.grid).map(|point| (point, unit.grid)))
 }
 
-/// Свободная соседняя клетка, видимая в текущей камере (порт `move near`).
+/// A free adjacent cell visible in the current camera (the `move near` port).
 fn visible_neighbor(app: &App, grid: Point) -> Option<(i32, i32)> {
     for (dx, dy) in [
         (1, 0),
@@ -659,11 +659,11 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     let dir = temp_dir("record_roundtrip");
     let mut play = ManualPlay::new(&dir);
 
-    // --- Главное меню → New Game → Options/Planet/Players --------------------
+    // --- Main menu → New Game → Options/Planet/Players --------------------
     play.send(click_rect(menu::MAIN_MENU_BUTTONS[0].rect));
     assert!(matches!(&play.screen, Screen::LocalSetup(_)));
 
-    // Options: No Limit + Turn Based (те же точки, что в sp-full.qa), Done.
+    // Options: No Limit + Turn Based (the same points as in sp-full.qa), Done.
     play.send(InputEvent::MouseClick(240, 110));
     play.send(InputEvent::MouseClick(500, 100));
     play.send(InputEvent::MouseClick(516, 440));
@@ -673,7 +673,7 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     play.send(InputEvent::MouseClick(516, 440));
     assert!(matches!(&play.screen, Screen::LocalSetup(_)));
 
-    // Players: RED — человек, GREEN — компьютер, Done → мобилизация.
+    // Players: RED — human, GREEN — computer, Done → mobilization.
     play.send(click_rect(setup::player_type_button_rect(0, 0)));
     play.send(click_rect(setup::player_type_button_rect(1, 1)));
     play.send(InputEvent::MouseClick(516, 440));
@@ -683,14 +683,14 @@ fn recorded_manual_session_round_trips_through_qa_run() {
         play.ctx.status
     );
 
-    // Мобилизация: `Done` (`BLDONE_U` 54×23 в 447,452).
+    // Mobilization: `Done` (`BLDONE_U` 54×23 at 447,452).
     play.send(InputEvent::MouseClick(447 + 27, 452 + 11));
     assert!(
         matches!(&play.screen, Screen::PreGame(_)),
         "после мобилизации — выбор точки высадки"
     );
 
-    // Выбор точки: клетка 22,22 (суша Snowcrab) и `Done` (514,438,109,40).
+    // Point selection: cell 22,22 (Snowcrab land) and `Done` (514,438,109,40).
     play.send(InputEvent::MouseClick(180 + 22 * 4 + 2, 18 + 22 * 4 + 2));
     play.send(InputEvent::MouseClick(568, 458));
     assert!(
@@ -701,7 +701,7 @@ fn recorded_manual_session_round_trips_through_qa_run() {
 
     play.wait_ready();
 
-    // --- Партия: select → move → end_turn -----------------------------------
+    // --- Match: select → move → end_turn -----------------------------------
     let ((select_x, select_y), grid) =
         visible_player_unit(&play.app).expect("в стартовой камере есть юнит RED");
     play.send(InputEvent::MouseClick(select_x, select_y));
@@ -715,7 +715,7 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     }
 
     play.send(click_rect(max_render::layout::END_TURN_BUTTON));
-    // Ход ИИ: ровно те кадры, которые реплей прокрутит командой wait.
+    // AI turn: exactly the frames that the replay will run with the wait command.
     play.wait_ready();
 
     let recorded_digest = play.app.digest();
@@ -752,7 +752,7 @@ fn recorded_manual_session_round_trips_through_qa_run() {
         "в записи должен быть wait хода ИИ:\n{script}"
     );
 
-    // --- Реплей тем же qa_run-харнессом -------------------------------------
+    // --- Replay with the same qa_run harness -------------------------------------
     let replay_dir = temp_dir("record_replay");
     let mut runner =
         QaRunner::new(QaConfig::new(&replay_dir).with_frame_limit(40_000)).expect("qa_run");
@@ -779,7 +779,7 @@ fn recorded_manual_session_round_trips_through_qa_run() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. P4: soak/edge-сценарии и команда `mem`
+// 7. P4: soak/edge scenarios and the `mem` command
 // ---------------------------------------------------------------------------
 
 #[test]

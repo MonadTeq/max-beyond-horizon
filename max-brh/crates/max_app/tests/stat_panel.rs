@@ -1,13 +1,13 @@
-//! Кадровые тесты панели статистики `WINDOW_STAT_WINDOW` (10,173) 153×48.
+//! Frame tests of the `WINDOW_STAT_WINDOW` statistics panel (10,173) 153×48.
 //!
-//! Оракул — `max-cpp-port/src/game_manager.cpp`: `GameManager_UpdateInfoDisplay`
-//! + `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`). Строки с
-//! нулевой базой C++ не рисует, поэтому у шахты (нет `SPEED`, `SHOTS`) видны
-//! только `Hits`, `Cargo` и запас комплекса (`Total`), а у танка — все четыре
+//! Oracle — `max-cpp-port/src/game_manager.cpp`: `GameManager_UpdateInfoDisplay`
+//! + `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`). Rows with
+//! a zero base are not drawn by C++, so for a mine (no `SPEED`, `SHOTS`) only
+//! `Hits`, `Cargo` and the complex stock (`Total`) are visible, and for a tank — all four
 //! (`Hits/Ammo/Speed/Shots`).
 //!
-//! Тесты используют настоящие `MAX.RES`/`PATCHES.RES` (как `portrait.rs`) и
-//! пропускаются, если данных игры рядом с репозиторием нет.
+//! The tests use the real `MAX.RES`/`PATCHES.RES` (like `portrait.rs`) and
+//! are skipped if there is no game data next to the repository.
 
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,7 @@ fn repo_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// `App` с загруженными ассетами и значениями команды RED из `SC_ATTRI`.
+/// `App` with loaded assets and the RED team values from `SC_ATTRI`.
 fn app() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
@@ -52,7 +52,7 @@ fn app() -> Option<App> {
     Some(app)
 }
 
-/// Юнит в партии: `spawn_unit` + `DeployUnit` (у нового юнита `storage = 0`).
+/// A unit in the match: `spawn_unit` + `DeployUnit` (a new unit has `storage = 0`).
 fn spawn(app: &mut App, unit_type: UnitType, grid: Point) -> UnitId {
     let id = app
         .state_mut()
@@ -64,7 +64,7 @@ fn spawn(app: &mut App, unit_type: UnitType, grid: Point) -> UnitId {
     id
 }
 
-/// Пиксели цвета текста (`0x01/0x02/0x04/0xA2`) внутри прямоугольника.
+/// Text color pixels (`0x01/0x02/0x04/0xA2`) inside the rectangle.
 fn text_pixels(frame: &RgbaBuffer, palette: &UiPalette, rect: PixelRect) -> usize {
     let colors = [
         palette.rgba(0x01),
@@ -85,7 +85,7 @@ fn text_pixels(frame: &RgbaBuffer, palette: &UiPalette, rect: PixelRect) -> usiz
     count
 }
 
-/// Четыре строки `WINDOW_STAT_ROW_1..4` кадра: сколько в каждой текста.
+/// The four `WINDOW_STAT_ROW_1..4` lines of the frame: how much text is in each.
 fn row_counts(frame: &RgbaBuffer, palette: &UiPalette) -> [usize; 4] {
     [
         layout::STAT_ROW_1,
@@ -103,11 +103,11 @@ fn mine_panel_frame_skips_speed_and_empty_rows_tank_keeps_them() {
     };
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
-    // Без выделения строки статистики — фон окна: эталон «пустой строки».
+    // Without a selection the statistics lines are the window background — the "empty line" reference.
     app.select_unit(None);
     let baseline = row_counts(&app.render_frame(), &palette);
 
-    // Шахта: C++ рисует Hits, Cargo и запас комплекса (строка 3), строка 4 пуста.
+    // Mine: C++ draws Hits, Cargo and the complex stock (row 3), row 4 is empty.
     let mine = spawn(&mut app, UnitType::MiningStation, Point::new(22, 22));
     app.select_unit(Some(mine));
     let mine_rows = row_counts(&app.render_frame(), &palette);
@@ -129,7 +129,7 @@ fn mine_panel_frame_skips_speed_and_empty_rows_tank_keeps_them() {
         "строка 4 (Shots) у шахты пуста: SPEED/SHOTS не рисуются: {mine_rows:?}"
     );
 
-    // Танк: все четыре строки (Hits/Ammo/Speed/Shots).
+    // Tank: all four rows (Hits/Ammo/Speed/Shots).
     let tank = spawn(&mut app, UnitType::Tank, Point::new(24, 22));
     app.select_unit(Some(tank));
     let tank_rows = row_counts(&app.render_frame(), &palette);
@@ -142,7 +142,7 @@ fn mine_panel_frame_skips_speed_and_empty_rows_tank_keeps_them() {
         );
     }
 
-    // Панели разные: у шахты 3 строки, у танка 4.
+    // The panels differ: the mine has 3 rows, the tank 4.
     let filled = |rows: &[usize; 4]| {
         rows.iter()
             .zip(baseline.iter())
@@ -164,7 +164,7 @@ fn training_hall_panel_frame_replaces_speed_with_usage_and_total() {
     app.select_unit(None);
     let baseline = row_counts(&app.render_frame(), &palette);
 
-    // Завод: Type1 (`life = 1`) — Hits/Usage/Total, строка 4 пуста.
+    // Factory: Type1 (`life = 1`) — Hits/Usage/Total, row 4 is empty.
     let hall = spawn(&mut app, UnitType::TrainingHall, Point::new(26, 22));
     app.select_unit(Some(hall));
     let rows = row_counts(&app.render_frame(), &palette);

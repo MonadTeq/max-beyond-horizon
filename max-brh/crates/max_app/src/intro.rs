@@ -1,30 +1,30 @@
-//! Экран `Introduction` главного меню — настоящее MVE-видео (`INTROFLC`).
+//! `Introduction` main menu screen — a real MVE video (`INTROFLC`).
 //!
-//! Что делает оригинал (`max-cpp-port/src/menu.cpp:2666` →
+//! What the original does (`max-cpp-port/src/menu.cpp:2666` →
 //! `Movie_PlayIntro`, `movie.cpp`):
 //!
-//! * `Movie_PlayIntro()` читает настройку `intro_movie` (0 — выключено) и
-//!   вызывает `movie_run(INTROFLC, track, INTROSUB)`;
-//! * ресурс `INTROFLC` в `MAX.RES` — не видео, а ASCIIZ-ссылка на файл
-//!   (`maxint.mve`, 11 байт), поэтому `ResourceManager_OpenFileResource`
-//!   открывает `.MVE`-контейнер рядом с архивом;
-//! * `movie_run` крутит `MVE_rmStepMovie()` из `mvelib32.c` (Interplay MVE:
-//!   собственный видеокодек + звуковые дорожки по языкам), кадр выводится
-//!   `movie_cb_show_frame` с масштабированием под окно (letterbox: 432×320 →
-//!   640×474 в кадре 640×480); любая клавиша прерывает (`mve_cb_ctl`).
+//! * `Movie_PlayIntro()` reads the `intro_movie` setting (0 — off) and
+//!   calls `movie_run(INTROFLC, track, INTROSUB)`;
+//! * the `INTROFLC` resource in `MAX.RES` is not a video but an ASCIIZ reference to a file
+//!   (`maxint.mve`, 11 bytes), so `ResourceManager_OpenFileResource`
+//!   opens the `.MVE` container next to the archive;
+//! * `movie_run` runs `MVE_rmStepMovie()` from `mvelib32.c` (Interplay MVE:
+//!   its own video codec + audio tracks by language), the frame is output by
+//!   `movie_cb_show_frame` scaled to the window (letterbox: 432×320 →
+//!   640×474 in a 640×480 frame); any key interrupts (`mve_cb_ctl`).
 //!
-//! В Rust-клиенте видео декодирует [`max_assets::mve`] (точный порт
-//! `nfPkDecomp`: 4391 кадр, 15 FPS, 432×320). Экран:
+//! In the Rust client the video is decoded by [`max_assets::mve`] (an exact port of
+//! `nfPkDecomp`: 4391 frames, 15 FPS, 432×320). The screen:
 //!
-//! * при входе открывает `maxint.mve` и декодирует кадр 0 — поэтому `shot`
-//!   в QA детерминирован, а `dt = 0` оставляет стоп-кадр;
-//! * в GUI продвигает кадры по реальному `dt` (15 FPS, как `TIMER_FPS_TO_MS`);
-//! * по концу видео и по Esc/клику возвращает в главное меню;
-//! * если данных нет (юнит-тесты без `MAX.RES`), показывает прежнюю
-//!   заглушку с фоном `MLOGO`/`MAINPIC`, чтобы экран не был пустым.
+//! * on entry it opens `maxint.mve` and decodes frame 0 — so `shot`
+//!   in QA is deterministic, and `dt = 0` keeps a freeze-frame;
+//! * in the GUI it advances frames by the real `dt` (15 FPS, like `TIMER_FPS_TO_MS`);
+//! * at the end of the video and on Esc/click it returns to the main menu;
+//! * if there is no data (unit tests without `MAX.RES`), it shows the former
+//!   placeholder with the `MLOGO`/`MAINPIC` background, so the screen is not empty.
 //!
-//! Аудио и субтитры (`INTROSUB`, `moviesubtitle.cpp`) не портированы — это
-//! честно отмечено в `max-brh-docs/analysis/visual-1to1-status.md`.
+//! Audio and subtitles (`INTROSUB`, `moviesubtitle.cpp`) are not ported — this is
+//! honestly noted in `max-brh-docs/analysis/visual-1to1-status.md`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -37,14 +37,14 @@ use max_render::text::{draw_text_gnw_centered, draw_text_gnw_centered_shadowed, 
 use crate::menu::{draw_big_image, MenuAssets, TEXT};
 use crate::panels::UiPalette;
 
-/// Заголовок экрана (как подпись кнопки главного меню).
+/// Screen title (like the main menu button label).
 pub const INTRO_TITLE: &str = "Introduction";
-/// Область заголовка: по центру, верхняя четверть кадра.
+/// Title area: centered, in the upper quarter of the frame.
 pub const INTRO_TITLE_RECT: PixelRect = PixelRect::new(120, 120, 400, 20);
-/// Область текста-заглушки.
+/// Placeholder text area.
 pub const INTRO_TEXT_RECT: PixelRect = PixelRect::new(90, 176, 460, 150);
 
-/// Строки заглушки: что играет оригинал и почему здесь не видео.
+/// Placeholder lines: what the original plays and why this is not a video here.
 pub const INTRO_TEXT: [&str; 5] = [
     "The original plays an MVE movie: INTROFLC -> maxint.mve",
     "with subtitles from INTROSUB (Interplay MVE container).",
@@ -53,30 +53,30 @@ pub const INTRO_TEXT: [&str; 5] = [
     "the video screen needs the original game files.",
 ];
 
-/// Цвет заголовка: золото меню (`Fonts_GoldColor` 165/175/199).
+/// Title color: menu gold (`Fonts_GoldColor` 165/175/199).
 pub const TITLE_COLORS: (u8, u8, u8) = (165, 175, 199);
-/// Цвет основного текста: зелёный `COLOR_GREEN` (0x02) палитры меню.
+/// Body text color: green `COLOR_GREEN` (0x02) of the menu palette.
 pub const TEXT_COLOR: u8 = crate::menu::GREEN;
 
-/// Состояние проигрывателя (общее у клонов [`IntroScreen`]).
+/// Player state (shared by [`IntroScreen`] clones).
 #[derive(Debug)]
 struct Playback {
-    /// Декодер MVE (если файл открылся и первый кадр декодирован).
+    /// MVE decoder (if the file opened and the first frame was decoded).
     decoder: Option<MveDecoder>,
-    /// Текущий индексированный кадр (пусто до загрузки/при ошибке).
+    /// Current indexed frame (empty before loading/on error).
     frame: Vec<u8>,
-    /// Палитра текущего кадра.
+    /// Palette of the current frame.
     palette: [[u8; 3]; 256],
-    /// Ширина/высота видео в пикселях.
+    /// Video width/height in pixels.
     width: u32,
     height: u32,
-    /// Сколько кадров уже декодировано (для статуса/тестов).
+    /// How many frames have been decoded (for status/tests).
     frame_index: usize,
-    /// Накопленное время с последнего показанного кадра.
+    /// Accumulated time since the last shown frame.
     elapsed: f32,
-    /// Видео закончилось.
+    /// The video has ended.
     finished: bool,
-    /// Ошибка открытия/декодирования (тогда рисуется заглушка).
+    /// Open/decode error (the placeholder is drawn then).
     error: Option<String>,
 }
 
@@ -95,7 +95,7 @@ impl Playback {
         }
     }
 
-    /// Открывает MVE и декодирует кадр 0.
+    /// Opens the MVE and decodes frame 0.
     fn load(&mut self, path: &Path) {
         let mve = match Mve::open(path) {
             Ok(mve) => mve,
@@ -127,10 +127,10 @@ impl Playback {
         }
     }
 
-    /// Продвигает видео на `dt` секунд. `true` — видео закончилось.
+    /// Advances the video by `dt` seconds. `true` — the video has ended.
     fn advance(&mut self, dt: f32) -> bool {
-        // Ошибка декодирования — показываем заглушку/последний кадр, но не
-        // выкидываем игрока из экрана автоматически.
+        // Decoding error — show the placeholder/last frame, but do not
+        // automatically kick the player off the screen.
         if self.error.is_some() {
             return false;
         }
@@ -147,8 +147,8 @@ impl Playback {
             return false;
         }
 
-        // Не догоняем больше 8 кадров за один вызов (как пропуск кадров в
-        // `sync_late`): иначе после паузы окно «прыгнет» через полфильма.
+        // Do not catch up more than 8 frames per call (like frame skipping in
+        // `sync_late`): otherwise after a pause the window would "jump" through half the movie.
         self.elapsed += dt.min(0.5);
         let frame_delay = decoder.info().frame_delay_seconds().max(1.0 / 120.0);
         let mut decoded = 0;
@@ -185,7 +185,7 @@ fn mve_error_line(error: MveError) -> String {
     format!("MVE: {error}")
 }
 
-/// Экран `Introduction` с ленивым проигрывателем MVE.
+/// `Introduction` screen with a lazy MVE player.
 #[derive(Debug, Clone)]
 pub struct IntroScreen {
     path: Option<PathBuf>,
@@ -201,10 +201,10 @@ impl PartialEq for IntroScreen {
 impl Eq for IntroScreen {}
 
 impl IntroScreen {
-    /// Создаёт экран и сразу декодирует кадр 0 (если файл есть).
+    /// Creates the screen and immediately decodes frame 0 (if the file exists).
     ///
-    /// `path` — путь к `maxint.mve` рядом с `MAX.RES` (см.
-    /// [`crate::assets::Assets::intro_mve`]); `None` — заглушка.
+    /// `path` — path to `maxint.mve` next to `MAX.RES` (see
+    /// [`crate::assets::Assets::intro_mve`]); `None` — placeholder.
     pub fn new(path: Option<PathBuf>) -> Self {
         let state = Arc::new(Mutex::new(Playback::new()));
 
@@ -218,12 +218,12 @@ impl IntroScreen {
         Self { path, state }
     }
 
-    /// Путь к открытому MVE (для тестов/диагностики).
+    /// Path to the opened MVE (for tests/diagnostics).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
-    /// Есть ли декодированный кадр (MVE открылся).
+    /// Whether there is a decoded frame (the MVE opened).
     pub fn is_loaded(&self) -> bool {
         let state = self
             .state
@@ -233,7 +233,7 @@ impl IntroScreen {
         state.decoder.is_some() && !state.frame.is_empty()
     }
 
-    /// Сколько кадров декодировано (0 — только заглушка).
+    /// How many frames were decoded (0 — placeholder only).
     pub fn frame_index(&self) -> usize {
         self.state
             .lock()
@@ -241,7 +241,7 @@ impl IntroScreen {
             .frame_index
     }
 
-    /// Ошибка открытия/декодирования (для статуса/тестов).
+    /// Open/decode error (for status/tests).
     pub fn error(&self) -> Option<String> {
         self.state
             .lock()
@@ -250,9 +250,9 @@ impl IntroScreen {
             .clone()
     }
 
-    /// Один шаг видео (`dt` секунд; `dt <= 0` — стоп-кадр).
+    /// One video step (`dt` seconds; `dt <= 0` — freeze-frame).
     ///
-    /// `true` — видео закончилось, экран должен вернуться в меню.
+    /// `true` — the video has ended, the screen should return to the menu.
     pub fn advance(&mut self, dt: f32) -> bool {
         self.state
             .lock()
@@ -260,7 +260,7 @@ impl IntroScreen {
             .advance(dt)
     }
 
-    /// Рисует текущий кадр видео (или заглушку, если данных нет).
+    /// Draws the current video frame (or the placeholder if there is no data).
     pub fn draw(&self, frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
         let state = self
             .state
@@ -275,9 +275,9 @@ impl IntroScreen {
     }
 }
 
-/// Масштабирует индексированный кадр в 640×480 с letterbox, как
-/// `movie_cb_show_frame` + `cscale` (целочисленный nearest-neighbor без
-/// сглаживания; фон вокруг кадра чёрный).
+/// Scales the indexed frame to 640×480 with letterbox, like
+/// `movie_cb_show_frame` + `cscale` (integer nearest-neighbor without
+/// smoothing; the background around the frame is black).
 fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> u32 {
     frame.fill(Rgba::rgb(0, 0, 0));
 
@@ -331,14 +331,14 @@ fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> u32 {
     painted
 }
 
-/// Прежняя заглушка: фон `MLOGO`/`MAINPIC` + заголовок и честный текст.
+/// The former placeholder: `MLOGO`/`MAINPIC` background + title and honest text.
 fn draw_placeholder(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
     let background: &BigImage = menu.mlogo.as_ref().unwrap_or(&menu.mainpic);
     let painted = draw_big_image(frame, background);
     let palette = UiPalette::from_big_image(&menu.mainpic);
 
-    // Затемнение области текста, чтобы надпись читалась на любом фоне
-    // (в оригинале здесь кадр видео — заглушке нужна подложка).
+    // Darken the text area so that the caption is readable on any background
+    // (in the original this is the video frame — the placeholder needs a backing).
     let shade = Rgba::rgb(8, 10, 14);
     let box_rect = PixelRect::new(80, 108, 480, 240);
 

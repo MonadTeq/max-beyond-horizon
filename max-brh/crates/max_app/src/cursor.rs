@@ -1,19 +1,19 @@
-//! Курсоры мыши: контекст (`Cursor_SetCursor`) и отрисовка/подготовка для SDL.
+//! Mouse cursors: context (`Cursor_SetCursor`) and drawing/preparation for SDL.
 //!
-//! Формат и загрузка 30 ресурсов — [`max_assets::cursor`] (`Cursor_Descriptor`,
-//! `Cursor_ResourceLut` из `cursor.cpp:55-58`). Здесь — то, что зависит от
-//! состояния игры:
+//! The format and loading of the 30 resources — [`max_assets::cursor`] (`Cursor_Descriptor`,
+//! `Cursor_ResourceLut` from `cursor.cpp:55-58`). Here — what depends on
+//! the game state:
 //!
-//! * [`CursorId`] — индексы ровно как `enum` в `cursor.hpp`;
-//! * [`CursorContext`] — упрощённый `Cursor_GetDefaultWindowCursor` +
-//!   `GameManager_GetWindowCursor`: меню/панель/миникарта → `HANDPTR`, карта без
-//!   выделенного юнита → `MAP_PTR`, карта с приказом → `UNIT_GO`/`UNIT_NGO`,
-//!   над своим/чужим юнитом → `FRND_PTR`/`ENMY_PTR`;
-//! * [`CursorImage`] — RGBA-кадр с hotspot для SDL-слоя (`Cursor::
-//!   from_surface`), headless-тесты работают без SDL.
+//! * [`CursorId`] — indices exactly as the `enum` in `cursor.hpp`;
+//! * [`CursorContext`] — a simplified `Cursor_GetDefaultWindowCursor` +
+//!   `GameManager_GetWindowCursor`: menu/panel/minimap → `HANDPTR`, map without
+//!   a selected unit → `MAP_PTR`, map with an order → `UNIT_GO`/`UNIT_NGO`,
+//!   over an own/foreign unit → `FRND_PTR`/`ENMY_PTR`;
+//! * [`CursorImage`] — an RGBA frame with a hotspot for the SDL layer (`Cursor::
+//!   from_surface`), headless tests work without SDL.
 //!
-//! Анимация (`PTR_PATH`, 10 кадров) отдаётся покадрово: SDL-слой сам решает,
-//! когда переключать кадр (`Cursor_AnimationTick`, 200 мс в C++).
+//! The animation (`PTR_PATH`, 10 frames) is provided frame by frame: the SDL layer itself decides
+//! when to switch the frame (`Cursor_AnimationTick`, 200 ms in C++).
 
 use max_assets::{CursorSet, CURSOR_RESOURCES};
 use max_core::access;
@@ -25,13 +25,13 @@ use max_core::unit::{UnitId, UnitInfo, UnitListKind};
 use max_core::GameState;
 use max_render::terrain::PaletteRgba;
 
-/// Индекс курсора (`CursorId` из `cursor.hpp:34-65`).
+/// Cursor index (`CursorId` from `cursor.hpp:34-65`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CursorId {
-    /// `CURSOR_HIDDEN` — курсор скрыт.
+    /// `CURSOR_HIDDEN` — the cursor is hidden.
     Hidden = 0,
-    /// `CURSOR_HAND` — обычная стрелка-рука (меню, панели).
+    /// `CURSOR_HAND` — the usual hand arrow (menus, panels).
     Hand = 1,
     /// `CURSOR_ARROW_N`.
     ArrowN = 2,
@@ -49,9 +49,9 @@ pub enum CursorId {
     ArrowW = 8,
     /// `CURSOR_ARROW_NW`.
     ArrowNw = 9,
-    /// `CURSOR_MAP` — карта без выделения.
+    /// `CURSOR_MAP` — the map without selection.
     Map = 10,
-    /// `CURSOR_MINI` — миникарта (в оригинале не используется, LUT даёт HANDPTR).
+    /// `CURSOR_MINI` — the minimap (not used in the original, the LUT gives HANDPTR).
     Mini = 11,
     /// `CURSOR_REPAIR`.
     Repair = 12,
@@ -63,36 +63,36 @@ pub enum CursorId {
     Reload = 15,
     /// `CURSOR_LOAD`.
     Load = 16,
-    /// `CURSOR_FRIEND` — над своим юнитом.
+    /// `CURSOR_FRIEND` — over an own unit.
     Friend = 17,
-    /// `CURSOR_ENEMY` — над врагом (с полоской силы удара).
+    /// `CURSOR_ENEMY` — over an enemy (with an attack power bar).
     Enemy = 18,
     /// `CURSOR_FAR_TARGET`.
     FarTarget = 19,
-    /// `CURSOR_UNIT_GO` — приказ возможен.
+    /// `CURSOR_UNIT_GO` — the order is possible.
     UnitGo = 20,
-    /// `CURSOR_UNIT_NO_GO` — приказ невозможен.
+    /// `CURSOR_UNIT_NO_GO` — the order is impossible.
     UnitNoGo = 21,
-    /// `CURSOR_WAY` — точка маршрута.
+    /// `CURSOR_WAY` — a route point.
     Way = 22,
     /// `CURSOR_GROUP`.
     Group = 23,
     /// `CURSOR_ACTIVATE`.
     Activate = 24,
-    /// `CURSOR_MAP2` (второй `MAP_PTR` в LUT).
+    /// `CURSOR_MAP2` (the second `MAP_PTR` in the LUT).
     Map2 = 25,
     /// `CURSOR_STEAL`.
     Steal = 26,
     /// `CURSOR_DISABLE`.
     Disable = 27,
-    /// `CURSOR_PATH` — анимированный путь (10 кадров).
+    /// `CURSOR_PATH` — an animated path (10 frames).
     Path = 28,
     /// `CURSOR_HELP`.
     Help = 29,
 }
 
 impl CursorId {
-    /// Все курсоры в порядке `Cursor_ResourceLut`.
+    /// All cursors in `Cursor_ResourceLut` order.
     pub const ALL: [Self; 30] = [
         Self::Hidden,
         Self::Hand,
@@ -126,84 +126,84 @@ impl CursorId {
         Self::Help,
     ];
 
-    /// Индекс в массиве ресурсов.
+    /// Index in the resource array.
     pub const fn index(self) -> usize {
         self as usize
     }
 
-    /// Курсор по индексу (`None` вне 0..30).
+    /// Cursor by index (`None` outside 0..30).
     pub fn from_index(index: usize) -> Option<Self> {
         Self::ALL.get(index).copied()
     }
 
-    /// Имя ресурса в `MAX.RES`.
+    /// Resource name in `MAX.RES`.
     pub fn resource_name(self) -> &'static str {
         CURSOR_RESOURCES[self.index()]
     }
 }
 
-/// Что происходит под курсором на карте (`GameManager_GetWindowCursor`).
+/// What is under the cursor on the map (`GameManager_GetWindowCursor`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorHover {
-    /// Свой юнит (`CURSOR_FRIEND`).
+    /// Own unit (`CURSOR_FRIEND`).
     Friend,
-    /// Видимый враг (`CURSOR_ENEMY`).
+    /// Visible enemy (`CURSOR_ENEMY`).
     Enemy,
-    /// Пустая клетка.
+    /// Empty cell.
     Empty,
 }
 
-/// Контекст курсора.
+/// Cursor context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorContext {
-    /// Меню/форма создания (обычная стрелка).
+    /// Menu/creation form (the usual arrow).
     Menu,
-    /// Карта без выделенного юнита (`CURSOR_MAP`).
+    /// Map without a selected unit (`CURSOR_MAP`).
     MapIdle,
-    /// Карта, выделен юнит: наведение на юнит/пустую клетку.
+    /// Map with a unit selected: hovering over a unit/an empty cell.
     MapSelected(CursorHover),
-    /// Панель/кнопка (`HANDPTR`).
+    /// Panel/button (`HANDPTR`).
     Panel,
-    /// Миникарта (в C++ default — `HANDPTR`).
+    /// Minimap (in C++ default — `HANDPTR`).
     Minimap,
-    /// Приказ возможен/невозможен.
+    /// The order is possible/impossible.
     Order {
-        /// Можно ли выполнить приказ.
+        /// Whether the order can be executed.
         valid: bool,
     },
-    /// Курсорный режим `load` (`unit->cursor = 7`): `CURSOR_LOAD` над целью,
-    /// которая может сесть в транспорт (`GameManager_GetWindowCursor`).
+    /// Cursor mode `load` (`unit->cursor = 7`): `CURSOR_LOAD` over a target
+    /// that can board a transport (`GameManager_GetWindowCursor`).
     Load {
-        /// Цель под курсором принимается транспортом.
+        /// The target under the cursor is accepted by the transport.
         valid: bool,
     },
-    /// Курсорный режим диверсанта «захват» (`cursor = 8`) — `CURSOR_STEAL`.
+    /// Commando "capture" cursor mode (`cursor = 8`) — `CURSOR_STEAL`.
     Steal {
-        /// Цель — валидная цель захвата.
+        /// The target is a valid capture target.
         valid: bool,
     },
-    /// Курсорный режим диверсанта «отключение» (`cursor = 9`) — `CURSOR_DISABLE`.
+    /// Commando "disable" cursor mode (`cursor = 9`) — `CURSOR_DISABLE`.
     Disable {
-        /// Цель — валидная цель отключения.
+        /// The target is a valid disable target.
         valid: bool,
     },
-    /// Режим наведения (`targeting_mode`): `CURSOR_ENEMY` над целью,
-    /// `CURSOR_UNIT_NO_GO` вне радиуса/без выстрелов.
+    /// Targeting mode (`targeting_mode`): `CURSOR_ENEMY` over the target,
+    /// `CURSOR_UNIT_NO_GO` outside the radius/without shots.
     Targeting {
-        /// Попадает ли клетка в радиус и есть ли выстрелы.
+        /// Whether the cell is within the radius and whether there are shots.
         valid: bool,
     },
-    /// Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`):
+    /// Build site selection mode (`ORDER_STATE_SELECT_SITE`):
     /// `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO` (`GameManager_GetBuilderUnitCursor`).
     BuildSite {
-        /// Попадает ли курсор в 2×2 и проходима ли площадка.
+        /// Whether the cursor is inside the 2×2 and whether the site is passable.
         valid: bool,
     },
-    /// Справка (`CURSOR_HELP`).
+    /// Help (`CURSOR_HELP`).
     Help,
 }
 
-/// Курсор для контекста — как `Cursor_SetCursor` в `game_manager.cpp:6449-6468`.
+/// Cursor for a context — like `Cursor_SetCursor` in `game_manager.cpp:6449-6468`.
 pub const fn cursor_for_context(context: CursorContext) -> CursorId {
     match context {
         CursorContext::Menu | CursorContext::Panel | CursorContext::Minimap => CursorId::Hand,
@@ -227,23 +227,23 @@ pub const fn cursor_for_context(context: CursorContext) -> CursorId {
     }
 }
 
-/// RGBA-кадр курсора с hotspot — для `Cursor::from_surface` (SDL3).
+/// RGBA cursor frame with a hotspot — for `Cursor::from_surface` (SDL3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorImage {
-    /// Ширина кадра.
+    /// Frame width.
     pub width: u32,
-    /// Высота кадра.
+    /// Frame height.
     pub height: u32,
-    /// Hotspot по x (`Cursor_Descriptor::ulx`).
+    /// Hotspot x (`Cursor_Descriptor::ulx`).
     pub hot_x: i32,
-    /// Hotspot по y (`Cursor_Descriptor::uly`).
+    /// Hotspot y (`Cursor_Descriptor::uly`).
     pub hot_y: i32,
-    /// RGBA8-пиксели (`width * height * 4`), прозрачные — alpha 0.
+    /// RGBA8 pixels (`width * height * 4`), transparent — alpha 0.
     pub rgba: Vec<u8>,
 }
 
 impl CursorImage {
-    /// Пиксель RGBA по координатам кадра.
+    /// RGBA pixel by frame coordinates.
     pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         if x >= self.width || y >= self.height {
             return None;
@@ -257,9 +257,9 @@ impl CursorImage {
     }
 }
 
-/// Готовит кадр курсора к SDL: индексы палитры окна → RGBA.
+/// Prepares the cursor frame for SDL: window palette indices → RGBA.
 ///
-/// Возвращает `None`, если курсор не загрузился или кадра нет.
+/// Returns `None` if the cursor was not loaded or there is no frame.
 pub fn cursor_image(
     cursors: &CursorSet,
     palette: &PaletteRgba,
@@ -297,8 +297,8 @@ pub fn cursor_image(
     })
 }
 
-/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`): клетка в
-/// окрестности юнита (для здания 2×2 — расширенной на 1 во все стороны).
+/// `GameManager_IsUnitNextToPosition` (`game_manager.cpp:3208`): a cell in
+/// the neighborhood of a unit (for a 2×2 building — expanded by 1 in all directions).
 pub fn is_unit_next_to_position(unit: &UnitInfo, grid: Point) -> bool {
     let size = if unit.is_quad() { 2 } else { 1 };
 
@@ -310,9 +310,9 @@ pub fn is_unit_next_to_position(unit: &UnitInfo, grid: Point) -> bool {
 
 /// `Task_IsReadyToTakeOrders` (`task.cpp:105`).
 ///
-/// `Access_GetActiveLoader(unit) == nullptr` в порте моделируется
-/// [`max_core::access::is_engaged`] (юнит, которого грузят/ведут, приказов не
-/// принимает).
+/// `Access_GetActiveLoader(unit) == nullptr` is modeled in the port by
+/// [`max_core::access::is_engaged`] (a unit that is being loaded/led does not accept
+/// orders).
 pub fn ready_to_take_orders(state: &GameState, unit: &UnitInfo) -> bool {
     if unit.hits == 0 {
         return false;
@@ -325,8 +325,8 @@ pub fn ready_to_take_orders(state: &GameState, unit: &UnitInfo) -> bool {
     order_ok && !access::is_engaged(state, unit)
 }
 
-/// `Access_GetEnemyUnit(team, x, y, flags)` (`access.cpp:1731`): видимый враг в
-/// клетке (сначала обычные юниты, затем ground cover/мины).
+/// `Access_GetEnemyUnit(team, x, y, flags)` (`access.cpp:1731`): a visible enemy in
+/// the cell (first regular units, then ground cover/mines).
 pub fn get_enemy_unit(
     state: &GameState,
     team: TeamId,
@@ -366,8 +366,8 @@ pub fn get_enemy_unit(
     fallback.and_then(|id| resolve_tape_parent(state, id))
 }
 
-/// Хвост `Access_GetTeamUnit`/`Access_GetEnemyUnit`: лента принадлежит
-/// строителю (`unit = unit->GetParent()`).
+/// The tail of `Access_GetTeamUnit`/`Access_GetEnemyUnit`: the tape belongs to
+/// the builder (`unit = unit->GetParent()`).
 fn resolve_tape_parent(state: &GameState, id: UnitId) -> Option<UnitId> {
     let unit = state.unit(id)?;
 
@@ -401,8 +401,8 @@ pub fn is_valid_transfer_target(state: &GameState, unit1: &UnitInfo, unit2: &Uni
     }
 }
 
-/// `GameManager_IsGroupOrderInterrupted` (`access.cpp:2390`): в группе есть
-/// юнит, который ещё идёт.
+/// `GameManager_IsGroupOrderInterrupted` (`access.cpp:2390`): the group has
+/// a unit that is still moving.
 pub fn is_group_order_interrupted(state: &GameState, unit: &UnitInfo) -> bool {
     let Some(members) = access::group_members_of(state, unit.id) else {
         return false;
@@ -423,9 +423,9 @@ pub fn is_group_order_interrupted(state: &GameState, unit: &UnitInfo) -> bool {
 
 /// `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5829`).
 ///
-/// Ветка выбора площадки (`SELECT_SITE`) приходит сюда только из
-/// `GameManager_GetWindowCursor`; в порте призрак площадки живёт в
-/// [`crate::buildsite`] и проверяется до вызова этой функции
+/// The site selection branch (`SELECT_SITE`) comes here only from
+/// `GameManager_GetWindowCursor`; in the port the site ghost lives in
+/// [`crate::buildsite`] and is checked before this function is called
 /// ([`session_cursor`]).
 pub fn builder_unit_cursor(
     state: &GameState,
@@ -462,8 +462,8 @@ pub fn builder_unit_cursor(
     }
 }
 
-/// `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937`): приказ
-/// `ORDER_IDLE` у юнита (лента/внутри здания) — `CURSOR_ACTIVATE`.
+/// `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937`): the order
+/// `ORDER_IDLE` of the unit (tape/inside a building) — `CURSOR_ACTIVATE`.
 pub fn air_unit_cursor(
     state: &GameState,
     player_team: TeamId,
@@ -504,12 +504,12 @@ pub fn air_unit_cursor(
     }
 }
 
-/// `GameManager_GetUnitActionCursor` (`game_manager.cpp:5976`): курсор для
-/// наземного/морского юнита — движение, X-FER (`CURSOR_TRANSFER`),
+/// `GameManager_GetUnitActionCursor` (`game_manager.cpp:5976`): the cursor for
+/// a ground/sea unit — movement, X-FER (`CURSOR_TRANSFER`),
 /// `repair` (`CURSOR_REPAIR`), `reload` (`CURSOR_RELOAD`), `load` (`CURSOR_LOAD`).
 ///
-/// `cursor` — режим `unit->cursor` C++; в порте он живёт в
-/// [`crate::hud::HudState::cursor_mode`] и передаётся сюда явно.
+/// `cursor` — the C++ `unit->cursor` mode; in the port it lives in
+/// [`crate::hud::HudState::cursor_mode`] and is passed here explicitly.
 pub fn unit_action_cursor(
     state: &GameState,
     player_team: TeamId,
@@ -547,8 +547,8 @@ pub fn unit_action_cursor(
             || cursor == crate::unitmenu::CURSOR_REPAIR
             || cursor == crate::unitmenu::CURSOR_RELOAD
         {
-            // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, то есть режим `load`
-            // (и `repair`/`reload`/`x-fer` попадают в `else` ниже).
+            // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, i.e. the `load` mode
+            // (and `repair`/`reload`/`x-fer` fall into `else` below).
             if cursor == crate::unitmenu::CURSOR_LOAD && i32::from(unit1.storage) < capacity {
                 let land = access::get_team_unit_by_environments(
                     state,
@@ -576,8 +576,8 @@ pub fn unit_action_cursor(
             }
 
             if cursor != crate::unitmenu::CURSOR_LOAD {
-                // Общая ветка C++: `CURSOR_ARROW_NE` — X-FER, `E` — repair,
-                // `S` — reload; проверяются только для соседней цели.
+                // The common C++ branch: `CURSOR_ARROW_NE` — X-FER, `E` — repair,
+                // `S` — reload; checked only for an adjacent target.
                 if is_unit_next_to_position(unit1, grid)
                     && unit1.id != team_unit.id
                     && team_unit.hits > 0
@@ -624,9 +624,9 @@ pub fn unit_action_cursor(
     }
 }
 
-/// Проверка `CURSOR_ARROW_NE` (`x-fer`) из `GameManager_GetUnitActionCursor`:
-/// та же категория груза, цель не в `CLEAR`/`BUILD`, либо у цели-здания в
-/// комплексе есть приёмник нужного груза.
+/// `CURSOR_ARROW_NE` (`x-fer`) check from `GameManager_GetUnitActionCursor`:
+/// the same cargo category, the target is not in `CLEAR`/`BUILD`, or the target building
+/// has a receiver of the needed cargo in the complex.
 fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInfo) -> bool {
     let cargo = max_core::victory::cargo_type_of(unit1.unit_type);
 
@@ -649,9 +649,9 @@ fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInf
     false
 }
 
-/// `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`): курсор по
-/// валидной цели — `CURSOR_ENEMY`, `CURSOR_FAR_TARGET`, `CURSOR_DISABLE`,
-/// `CURSOR_STEAL`, иначе `CURSOR_UNIT_NO_GO`.
+/// `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`): the cursor on
+/// a valid target — `CURSOR_ENEMY`, `CURSOR_FAR_TARGET`, `CURSOR_DISABLE`,
+/// `CURSOR_STEAL`, otherwise `CURSOR_UNIT_NO_GO`.
 pub fn military_cursor(
     state: &GameState,
     selected: &UnitInfo,
@@ -679,7 +679,7 @@ pub fn military_cursor(
         return CursorId::UnitNoGo;
     };
 
-    // Диверсант без режима наведения: рядом — steal/disable по направлению.
+    // A commando without targeting mode: nearby — steal/disable by direction.
     if selected.unit_type == UnitType::Infiltrator && selected.targeting_mode == 0 {
         if is_unit_next_to_position(selected, grid) {
             let disable = cursor == crate::unitmenu::CURSOR_DISABLE || cursor == 0;
@@ -734,32 +734,32 @@ pub fn military_cursor(
     }
 }
 
-/// `GameManager_GetWindowCursor` (`game_manager.cpp:4215-4564`) — точная
-/// таблица курсоров по контексту карты.
+/// `GameManager_GetWindowCursor` (`game_manager.cpp:4215-4564`) — the exact
+/// table of cursors by map context.
 ///
-/// Порядок веток 1:1 C++ (первая подходящая выигрывает):
-/// 1. клетка вне карты → `HANDPTR`;
-/// 2. конец хода или ход не игрока → `FRND_PTR`/`UNIT_NGO`;
-/// 3. юнит не «готов к приказам» (нет выбора, движется, стреляет, взрывается,
-///    отключён, грузится, масштабируется, чужой) → `FRND_PTR`/`UNIT_NGO`;
-/// 4. прерванный групповой приказ → `FRND_PTR`/`UNIT_NGO`;
-/// 5. `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING` наземного строителя →
+/// The branch order is 1:1 C++ (the first suitable one wins):
+/// 1. a cell outside the map → `HANDPTR`;
+/// 2. end of turn or not the player's turn → `FRND_PTR`/`UNIT_NGO`;
+/// 3. the unit is not "ready for orders" (no selection, moving, firing, exploding,
+///    disabled, loading, scaling, foreign) → `FRND_PTR`/`UNIT_NGO`;
+/// 4. an interrupted group order → `FRND_PTR`/`UNIT_NGO`;
+/// 5. `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING` of a ground builder →
 ///    [`builder_unit_cursor`];
 /// 6. `ORDER_IDLE` → [`air_unit_cursor`] (`ACTVTPTR`);
-/// 7. `ORDER_STATE_EXECUTING_ORDER` и валидная цель → [`military_cursor`];
+/// 7. `ORDER_STATE_EXECUTING_ORDER` and a valid target → [`military_cursor`];
 /// 8. `targeting_mode` → `FRND_PTR`/`UNIT_NGO`/`ENMY_PTR`;
 /// 9. `enter_mode` → `UNIT_GO`/`UNIT_NGO`;
-/// 10. по классу: воздух — `LOAD`/`FRND_PTR`/`WAY`/`UNIT_GO`;
-///     земля/море — [`unit_action_cursor`]; стационарные — `LOAD` (по типу
-///     здания), `TRANSFER`/`RELOAD` по курсорному режиму, иначе
+/// 10. by class: air — `LOAD`/`FRND_PTR`/`WAY`/`UNIT_GO`;
+///     ground/sea — [`unit_action_cursor`]; stationary — `LOAD` (by the building
+///     type), `TRANSFER`/`RELOAD` by the cursor mode, otherwise
 ///     `FRND_PTR`/`UNIT_NGO`.
 pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     let state = app.state();
     let player_team = state.player_team;
-    // `unit->cursor` C++ (режимы X-FER/repair/reload/load/steal/disable).
+    // C++ `unit->cursor` (X-FER/repair/reload/load/steal/disable modes).
     let cursor_mode = app.hud().cursor_mode;
-    // `targeting_mode`/`enter_mode` C++ живут в `UnitInfo`; в порте — в HUD
-    // (`HudState::targeting_mode`/`enter_mode`, `unitmenu` их переключает).
+    // C++ `targeting_mode`/`enter_mode` live in `UnitInfo`; in the port — in the HUD
+    // (`HudState::targeting_mode`/`enter_mode`, `unitmenu` toggles them).
     let targeting_mode = app.hud().targeting_mode;
     let enter_mode = app.hud().enter_mode;
     let team_unit_id = access::get_team_unit(state, grid, player_team, unit_flags::SELECTABLE);
@@ -797,7 +797,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         return CursorId::UnitNoGo;
     };
 
-    // Ветка 3 C++: юнит не принимает приказы.
+    // C++ branch 3: the unit does not accept orders.
     let not_ready = matches!(
         selected.orders,
         UnitOrder::Fire
@@ -899,7 +899,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             }
         }
 
-        // `Cursor_DrawAttackPowerCursor` в SDL-слое (полоска силы удара).
+        // `Cursor_DrawAttackPowerCursor` in the SDL layer (the attack power bar).
         return CursorId::Enemy;
     }
 
@@ -915,9 +915,9 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         };
     }
 
-    // Класс выбирает ветку курсора (`Environment` + форма); порядок 1:1 C++.
+    // The class selects the cursor branch (`Environment` + shape); the order is 1:1 C++.
     if selected.is_air() {
-        // Погрузка: транспорт в режиме `load` (`CURSOR_ARROW_SW`) с местом.
+        // Loading: a transport in `load` mode (`CURSOR_ARROW_SW`) with room.
         if cursor_mode == crate::unitmenu::CURSOR_LOAD
             && selected.state == UnitOrderState::ExecutingOrder
             && i32::from(selected.storage)
@@ -974,16 +974,16 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     }
 
     if !selected.is_mobile() {
-        // Погрузка в здание (`CURSOR_ARROW_SW` = режим `load`).
+        // Loading into a building (`CURSOR_ARROW_SW` = `load` mode).
         if cursor_mode == crate::unitmenu::CURSOR_LOAD
             && i32::from(selected.storage)
                 < selected
                     .base_values
                     .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
         {
-            // Биты C++: `Depot`/`Barracks` — `MOBILE_LAND_UNIT` (земля +
-            // амфибии), `Hangar` — `MOBILE_AIR_UNIT`, `Dock` —
-            // `MOBILE_SEA_UNIT` (море + амфибии).
+            // C++ bits: `Depot`/`Barracks` — `MOBILE_LAND_UNIT` (land +
+            // amphibians), `Hangar` — `MOBILE_AIR_UNIT`, `Dock` —
+            // `MOBILE_SEA_UNIT` (sea + amphibians).
             let (environments, only_special): (&[Environment], bool) = match selected.unit_type {
                 UnitType::Depot => (&[Environment::Ground, Environment::Amphibious], false),
                 UnitType::Hangar => (&[Environment::Air], false),
@@ -1062,21 +1062,21 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     CursorId::UnitNoGo
 }
 
-/// Курсор для точки окна в партии — `GameManager_ProcessInput`
-/// (`game_manager.cpp:6359-6468`): меню/панель/миникарта — `HANDPTR`
-/// (`Cursor_GetDefaultWindowCursor`), карта — [`window_cursor`].
+/// Cursor for a window point in the match — `GameManager_ProcessInput`
+/// (`game_manager.cpp:6359-6468`): menu/panel/minimap — `HANDPTR`
+/// (`Cursor_GetDefaultWindowCursor`), map — [`window_cursor`].
 ///
-/// Перед таблицей карты стоят две портовые ветки, которых нет в C++ в таком
-/// виде: режим помощи (`HelpMenu_Menu`, `helpmenu.cpp:318`) и призрак
-/// стройплощадки (`GameManager_TempTape`; в C++ его обрабатывает
-/// `GameManager_GetBuilderUnitCursor`/`SELECT_SITE`, в порте — [`crate::buildsite`],
-/// т.к. приказ ещё не отдан).
+/// Before the map table there are two port branches that C++ does not have in this
+/// form: the help mode (`HelpMenu_Menu`, `helpmenu.cpp:318`) and the build site
+/// ghost (`GameManager_TempTape`; in C++ it is handled by
+/// `GameManager_GetBuilderUnitCursor`/`SELECT_SITE`, in the port — [`crate::buildsite`],
+/// because the order has not been issued yet).
 pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId, usize) {
     let Some((x, y)) = mouse else {
         return (CursorId::Hand, 0);
     };
 
-    // Режим помощи (`HelpMenu_Menu`): `Cursor_SetCursor(CURSOR_HELP)`
+    // Help mode (`HelpMenu_Menu`): `Cursor_SetCursor(CURSOR_HELP)`
     // (`helpmenu.cpp:318`).
     if app.help_mode().is_some() {
         return (CursorId::Help, 0);
@@ -1094,8 +1094,8 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
     let viewport = crate::panels::map_viewport(app.viewport());
     let (grid_x, grid_y) = viewport.screen_to_grid(map_x, map_y);
 
-    // Режим выбора места стройки важнее наведения на юнитов:
-    // `GameManager_GetBuilderUnitCursor` возвращает `CURSOR_MAP2`/`UNIT_NO_GO`.
+    // The build site selection mode is more important than hovering over units:
+    // `GameManager_GetBuilderUnitCursor` returns `CURSOR_MAP2`/`UNIT_NO_GO`.
     if let Some(site) = app.build_site() {
         let hovered = Point::new(grid_x, grid_y);
         let anchor = site.anchor_at(app.state(), hovered);
@@ -1110,14 +1110,14 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
     )
 }
 
-/// Есть ли у курсора анимация (для SDL-тика).
+/// Whether the cursor has an animation (for the SDL tick).
 pub fn frame_count(cursors: &CursorSet, id: CursorId) -> usize {
     cursors
         .get(id.index())
         .map_or(0, |cursor| usize::from(cursor.frame_count))
 }
 
-/// Условие TNT-фильтра миникарты — вынесено для тестов и переиспользования.
+/// The minimap TNT filter condition — extracted for tests and reuse.
 pub fn has_firing_sprite(flags: u32) -> bool {
     flags & (unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES) != 0
 }
@@ -1172,12 +1172,12 @@ mod tests {
         let app = crate::App::new(crate::AppConfig::default());
 
         assert_eq!(session_cursor(&app, None).0, CursorId::Hand);
-        // Миникарта (15,356) — HANDPTR, как default-window-cursor C++.
+        // Minimap (15,356) — HANDPTR, like the C++ default-window-cursor.
         assert_eq!(session_cursor(&app, Some((20, 360))).0, CursorId::Hand);
-        // Карта без выделения — `CURSOR_UNIT_NO_GO`: `GameManager_GetWindowCursor`
-        // (`game_manager.cpp:4305-4335`) не имеет ветки `MAP_PTR`; `CURSOR_MAP`
-        // остаётся только записью `Cursor_DefaultWindowCursorLut`, которую
-        // `GameManager_ProcessInput` всегда перекрывает.
+        // Map without selection — `CURSOR_UNIT_NO_GO`: `GameManager_GetWindowCursor`
+        // (`game_manager.cpp:4305-4335`) has no `MAP_PTR` branch; `CURSOR_MAP`
+        // remains only as a `Cursor_DefaultWindowCursorLut` record that
+        // `GameManager_ProcessInput` always overrides.
         assert_eq!(
             session_cursor(&app, Some((300, 200))).0,
             CursorId::UnitNoGo
@@ -1212,7 +1212,7 @@ mod tests {
         assert_eq!(frame_count(&cursors, CursorId::Path), 10);
         assert_eq!(frame_count(&cursors, CursorId::Hand), 1);
 
-        // Прозрачный индекс не попадает в кадр как цвет.
+        // The transparent index does not get into the frame as a color.
         assert!(frame_count(&cursors, CursorId::Hidden) == 1);
         assert!(cursor_image(&cursors, &palette, CursorId::Hidden, 1).is_none());
     }

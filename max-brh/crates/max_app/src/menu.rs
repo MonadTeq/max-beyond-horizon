@@ -1,39 +1,39 @@
-//! Меню на оригинальных ресурсах `MAX.RES` (пункт E `max-brh-docs/visual-1to1-status.md`).
+//! Menu on the original `MAX.RES` resources (item E of `max-brh-docs/visual-1to1-status.md`).
 //!
-//! C++-порт рисует меню не процедурно, а готовыми картинками и растровым
-//! шрифтом GNW:
+//! The C++ port draws the menu not procedurally but with ready-made pictures and the raster
+//! GNW font:
 //!
-//! * **главное меню** (`menu.cpp::main_menu`) — фон `MAINPIC` 640×480 (в нём уже
-//!   нарисован логотип M.A.X.), заголовок `Main Menu` шрифтом `FONT5` в
-//!   (236,145) 172×15, «портрет» `P_*` 300×240 в (16,182) в рамках
-//!   `BGRSCRNL`/`BGRSCRNR` (6,173)/(166,173), шесть кнопок `BLANK_UP` 200×29 на
-//!   x=385 с шагом 35 от y=175 и `Exit` `SBLNK_UP` 100×30 в (435,420),
-//!   копирайт внизу;
-//! * **меню настройки/выбора планеты** (`gamesetupmenu.cpp`,
-//!   `planetselectmenu.cpp`) — фон `PLANETSE`/`MAINPIC`, кнопки `MNUBTN4U`/
-//!   `MNUBTN5U`/`MNUBTN6U` 109×40/48×40 в нижней строке y=438;
-//! * **список игр** (`networkmenu.cpp`) — фон `MULTGAME`, строки хостов
-//!   (359,28) 209×160, по 20 px, разделители `COLOR_GREEN`, кнопки
-//!   `MNUBTN3U`/`MNUBTN4U`/`MNUBTN5U`/`MNUBTN6U` в (243/354/465/514, 438).
+//! * **main menu** (`menu.cpp::main_menu`) — `MAINPIC` background 640×480 (it already has
+//!   the M.A.X. logo drawn), the `Main Menu` title in `FONT5` at
+//!   (236,145) 172×15, the `P_*` "portrait" 300×240 at (16,182) in the
+//!   `BGRSCRNL`/`BGRSCRNR` frames (6,173)/(166,173), six `BLANK_UP` 200×29 buttons at
+//!   x=385 with a step of 35 from y=175 and `Exit` `SBLNK_UP` 100×30 at (435,420),
+//!   the copyright at the bottom;
+//! * **setup/planet selection menu** (`gamesetupmenu.cpp`,
+//!   `planetselectmenu.cpp`) — `PLANETSE`/`MAINPIC` background, `MNUBTN4U`/
+//!   `MNUBTN5U`/`MNUBTN6U` 109×40/48×40 buttons in the bottom row y=438;
+//! * **game list** (`networkmenu.cpp`) — `MULTGAME` background, host rows
+//!   (359,28) 209×160, 20 px each, `COLOR_GREEN` separators, `MNUBTN3U`/
+//!   `MNUBTN4U`/`MNUBTN5U`/`MNUBTN6U` buttons at (243/354/465/514, 438).
 //!
-//! Подписи кнопок — `GNW_TEXT_FONT_1`, цвета `Fonts_GoldColor (165,175,199)` и
-//! `Fonts_DarkOrageColor (5,56,199)`; простые картинки индексируются системной
-//! палитрой окна, то есть палитрой `MAINPIC` (C++ загружает её с
+//! Button labels — `GNW_TEXT_FONT_1`, the colors `Fonts_GoldColor (165,175,199)` and
+//! `Fonts_DarkOrageColor (5,56,199)`; simple images are indexed by the system
+//! window palette, i.e. the `MAINPIC` palette (C++ loads it with
 //! `palette_from_image=true`).
 //!
-//! # Отличия от C++
+//! # Differences from C++
 //!
-//! * Главное меню показывает все семь кнопок оригинала; действия, которых в
-//!   Rust-клиенте ещё нет (`Load Game`, `Setup`, `Introduction`, `Credits`),
-//!   пишут строку статуса «экран не портирован» — как кнопки панелей в
+//! * The main menu shows all seven buttons of the original; the actions that
+//!   the Rust client does not have yet (`Load Game`, `Setup`, `Introduction`, `Credits`)
+//!   write the status line "screen not ported" — like the panel buttons in
 //!   `panels.rs`.
-//! * Наведение мыши **не** переключает кнопку на `*D`: нажатая картинка
-//!   остаётся только у выбранных radio/toggle-кнопок (как `Button::SetRestState`
-//!   в C++); у обычных кнопок `*D` — лишь на время реального нажатия.
-//! * Сетка планет 8×3 оставлена из Rust-клиента (в оригинале 3×2 на экране
-//!   `PLANETSE`), но вписана в область 3×2-слотов `PLANETSE` (192,51) 388×249.
-//! * `BTNHIDE` в C++-порте не используется (проверено `grep`); здесь он —
-//!   кнопка «скрыть список» в правом верхнем углу рамки списка игр.
+//! * Mouse hover does **not** switch the button to `*D`: the pressed picture
+//!   remains only for the selected radio/toggle buttons (like `Button::SetRestState`
+//!   in C++); for regular buttons `*D` — only while actually pressed.
+//! * The 8×3 planet grid is kept from the Rust client (the original has 3×2 on the
+//!   `PLANETSE` screen), but is fitted into the 3×2 slot area of `PLANETSE` (192,51) 388×249.
+//! * `BTNHIDE` is not used in the C++ port (checked with `grep`); here it is
+//!   the "hide list" button in the top-right corner of the game list frame.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
@@ -47,19 +47,19 @@ use crate::panels::UiPalette;
 use crate::ui::{planet_name, CreateField, CreateForm, PLANET_COUNT};
 use crate::Assets;
 
-/// Логический размер меню (окно оригинала).
+/// Menu logical size (the original window).
 pub const MENU_WIDTH: i32 = 640;
-/// Логический размер меню (окно оригинала).
+/// Menu logical size (the original window).
 pub const MENU_HEIGHT: i32 = 480;
 
-/// Индекс обычного текста в палитре `MAINPIC` (`0xA2`).
+/// Regular text index in the `MAINPIC` palette (`0xA2`).
 pub const TEXT: u8 = 0xA2;
-/// Индекс зелёного текста/линий (`COLOR_GREEN`).
+/// Green text/line index (`COLOR_GREEN`).
 pub const GREEN: u8 = 0x02;
-/// Копирайт — чёрный (`COLOR_BLACK`).
+/// Copyright — black (`COLOR_BLACK`).
 pub const BLACK: u8 = 0x00;
 
-/// Пара «отжата/нажата».
+/// The "released/pressed" pair.
 #[derive(Debug, Clone)]
 pub struct MenuButtonPair {
     up: SimpleImage,
@@ -67,8 +67,8 @@ pub struct MenuButtonPair {
 }
 
 impl MenuButtonPair {
-    /// Пара из готовых картинок (для экранов, которые грузят свои ресурсы —
-    /// например `BuildMenu` с `BLDBLD_U`/`BLD2X_U`/`BLD4X_U`).
+    /// A pair of ready-made pictures (for screens that load their own resources —
+    /// e.g. `BuildMenu` with `BLDBLD_U`/`BLD2X_U`/`BLD4X_U`).
     pub fn new(up: SimpleImage, down: SimpleImage) -> Self {
         Self { up, down }
     }
@@ -81,50 +81,50 @@ impl MenuButtonPair {
         }
     }
 
-    /// Размер картинки (ширина, высота).
+    /// Picture size (width, height).
     pub fn size(&self) -> (i32, i32) {
         (self.up.width as i32, self.up.height as i32)
     }
 
-    /// Пиксель отжатой/нажатой картинки (для тестов).
+    /// Pixel of the released/pressed picture (for tests).
     pub fn pixel(&self, down: bool, x: u32, y: u32) -> Option<u8> {
         self.image(down).pixel(x, y)
     }
 }
 
-/// Кнопка главного меню.
+/// Main menu button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainMenuAction {
-    /// Создать игру (`New Game`).
+    /// Create a game (`New Game`).
     Create,
-    /// Список игр (`Multiplayer Game`).
+    /// Game list (`Multiplayer Game`).
     Join,
-    /// Выход (`Exit`).
+    /// Exit (`Exit`).
     Quit,
-    /// Экран титров (`Credits` → `menu_credits_menu_loop`).
+    /// Credits screen (`Credits` → `menu_credits_menu_loop`).
     Credits,
-    /// Вступление (`Introduction` → `Movie_PlayIntro`, MVE `maxint.mve`).
+    /// Introduction (`Introduction` → `Movie_PlayIntro`, MVE `maxint.mve`).
     Introduction,
-    /// Экран настроек (`menu_setup_window` → `OptionsMenu(SETUPPIC)`).
+    /// Setup screen (`menu_setup_window` → `OptionsMenu(SETUPPIC)`).
     Setup,
-    /// Экран, который ещё не портирован.
+    /// A screen not ported yet.
     Unported(&'static str),
 }
 
-/// Одна кнопка главного меню в координатах C++.
+/// One main menu button in C++ coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct MainMenuButton {
-    /// Прямоугольник в окне 640×480.
+    /// Rectangle in the 640×480 window.
     pub rect: PixelRect,
-    /// Подпись из `language.json` (en-US).
+    /// Label from `language.json` (en-US).
     pub label: &'static str,
-    /// Действие.
+    /// Action.
     pub action: MainMenuAction,
-    /// Большая (`BLANK_UP` 200×29) или маленькая (`SBLNK_UP` 100×30).
+    /// Big (`BLANK_UP` 200×29) or small (`SBLNK_UP` 100×30).
     pub big: bool,
 }
 
-/// Кнопки главного меню (`menu.cpp::main_menu`, `MENU_BUTTON_DEF`).
+/// Main menu buttons (`menu.cpp::main_menu`, `MENU_BUTTON_DEF`).
 pub const MAIN_MENU_BUTTONS: [MainMenuButton; 7] = [
     MainMenuButton {
         rect: PixelRect::new(385, 175, 200, 29),
@@ -170,24 +170,24 @@ pub const MAIN_MENU_BUTTONS: [MainMenuButton; 7] = [
     },
 ];
 
-/// Заголовок главного меню (`draw_menu_title(window, _(35f9))`).
+/// Main menu title (`draw_menu_title(window, _(35f9))`).
 pub const MAIN_TITLE: PixelRect = PixelRect::new(236, 145, 172, 15);
-/// «Портрет» главного меню (`P_*` 300×240).
+/// Main menu "portrait" (`P_*` 300×240).
 pub const MAIN_PORTRAIT: PixelRect = PixelRect::new(16, 182, 300, 240);
-/// Левая рамка портрета `BGRSCRNL`.
+/// Left portrait frame `BGRSCRNL`.
 pub const MAIN_PORTRAIT_LEFT: (i32, i32) = (6, 173);
-/// Правая рамка портрета `BGRSCRNR`.
+/// Right portrait frame `BGRSCRNR`.
 pub const MAIN_PORTRAIT_RIGHT: (i32, i32) = (166, 173);
-/// Копирайт: (10,469) 620×10 (`draw_copyright_label`).
+/// Copyright: (10,469) 620×10 (`draw_copyright_label`).
 pub const COPYRIGHT: PixelRect = PixelRect::new(10, 469, 620, 10);
-/// Строка статуса Rust-клиента (в оригинале её нет).
+/// Rust client status line (the original does not have it).
 pub const MAIN_STATUS: PixelRect = PixelRect::new(10, 452, 370, 12);
 
 // ---------------------------------------------------------------------------
 // Multiplayer Menu (`menu_multiplayer_menu_loop`, `menu.cpp:2361`)
 // ---------------------------------------------------------------------------
 
-/// Кнопка `Multiplayer Menu`.
+/// `Multiplayer Menu` button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MultiplayerAction {
     /// `Host Network Game` (`_(c7a9)`).
@@ -204,23 +204,23 @@ pub enum MultiplayerAction {
     Cancel,
 }
 
-/// Кнопка `Multiplayer Menu` в координатах C++.
+/// `Multiplayer Menu` button in C++ coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct MultiplayerButton {
-    /// Прямоугольник (200×29 `BLANK_UP`, либо 100×30 `SBLNK_UP` для `Cancel`).
+    /// Rectangle (200×29 `BLANK_UP`, or 100×30 `SBLNK_UP` for `Cancel`).
     pub rect: PixelRect,
-    /// Подпись (`language.json`, en-US).
+    /// Label (`language.json`, en-US).
     pub label: &'static str,
-    /// Действие.
+    /// Action.
     pub action: MultiplayerAction,
-    /// Большая кнопка (`BLANK_*`) или маленькая (`SBLNK_*`).
+    /// Big button (`BLANK_*`) or small (`SBLNK_*`).
     pub big: bool,
 }
 
-/// Заголовок `Multiplayer Menu` (`draw_menu_title(window, _(f2b3))`).
+/// `Multiplayer Menu` title (`draw_menu_title(window, _(f2b3))`).
 pub const MULTIPLAYER_TITLE: PixelRect = PixelRect::new(236, 145, 172, 15);
 
-/// Шесть кнопок `network_game_menu_buttons` (`menu.cpp:2372`).
+/// Six `network_game_menu_buttons` buttons (`menu.cpp:2372`).
 pub const MULTIPLAYER_BUTTONS: [MultiplayerButton; 6] = [
     MultiplayerButton {
         rect: PixelRect::new(385, 175, 200, 29),
@@ -260,7 +260,7 @@ pub const MULTIPLAYER_BUTTONS: [MultiplayerButton; 6] = [
     },
 ];
 
-/// Кнопка `Multiplayer Menu` под точкой `(x, y)`.
+/// `Multiplayer Menu` button under the point `(x, y)`.
 pub fn multiplayer_button_at(x: i32, y: i32) -> Option<MultiplayerAction> {
     MULTIPLAYER_BUTTONS
         .iter()
@@ -268,33 +268,33 @@ pub fn multiplayer_button_at(x: i32, y: i32) -> Option<MultiplayerAction> {
         .map(|button| button.action)
 }
 
-/// Кнопка нижней строки меню настройки/планет.
+/// Bottom row button of the setup/planets menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButtonAction {
-    /// Случайная планета.
+    /// Random planet.
     Random,
-    /// Назад/отмена.
+    /// Back/cancel.
     Cancel,
-    /// Помощь (экран не портирован).
+    /// Help (screen not ported).
     Help,
-    /// Готово/создать.
+    /// Done/create.
     Done,
 }
 
-/// Кнопка нижней строки в координатах экрана.
+/// Bottom row button in screen coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct ActionButton {
-    /// Прямоугольник.
+    /// Rectangle.
     pub rect: PixelRect,
-    /// Подпись.
+    /// Label.
     pub label: &'static str,
-    /// Действие.
+    /// Action.
     pub action: MenuButtonAction,
-    /// Номер ресурса `MNUBTNnU` (1..=6).
+    /// `MNUBTNnU` resource number (1..=6).
     pub resource: usize,
 }
 
-/// Кнопки `PlanetSelectMenu` (`planetselectmenu.hpp`, y=438).
+/// `PlanetSelectMenu` buttons (`planetselectmenu.hpp`, y=438).
 pub const PLANET_BUTTONS: [ActionButton; 4] = [
     ActionButton {
         rect: PixelRect::new(243, 438, 109, 40),
@@ -322,18 +322,18 @@ pub const PLANET_BUTTONS: [ActionButton; 4] = [
     },
 ];
 
-/// Заголовок экрана планет (`_(f7c8)` = "Planet Select Menu").
+/// Planet screen title (`_(f7c8)` = "Planet Select Menu").
 pub const PLANET_TITLE: PixelRect = PixelRect::new(230, 6, 180, 20);
-/// Имя выбранной планеты (16,61) 149×19.
+/// Selected planet name (16,61) 149×19.
 pub const PLANET_NAME: PixelRect = PixelRect::new(16, 61, 149, 19);
-/// Область 3×2 слотов `PLANETSE`, в которую вписана сетка 8×3.
+/// `PLANETSE` 3×2 slot area the 8×3 grid is fitted into.
 pub const PLANET_GRID: PixelRect = PixelRect::new(192, 51, 388, 249);
-/// Описание/поля формы (41,350) 559×59.
+/// Description/form fields (41,350) 559×59.
 pub const PLANET_DESCRIPTION: PixelRect = PixelRect::new(41, 350, 559, 59);
-/// Строка статуса формы.
+/// Form status line.
 pub const PLANET_STATUS: PixelRect = PixelRect::new(41, 412, 559, 12);
 
-/// Прямоугольники шести полей формы (3×2 внутри описания `PLANETSE`).
+/// Rectangles of the six form fields (3×2 inside the `PLANETSE` description).
 pub const CREATE_FIELD_RECTS: [(CreateField, PixelRect); 6] = [
     (CreateField::Name, PixelRect::new(48, 352, 180, 24)),
     (CreateField::Timer, PixelRect::new(237, 352, 180, 24)),
@@ -343,22 +343,22 @@ pub const CREATE_FIELD_RECTS: [(CreateField, PixelRect); 6] = [
     (CreateField::World, PixelRect::new(426, 378, 174, 24)),
 ];
 
-/// Кнопка списка игр.
+/// Game list button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinButton {
-    /// Обновить список (`Options` в C++).
+    /// Refresh the list (`Options` in C++).
     Refresh,
-    /// Назад (`Cancel`).
+    /// Back (`Cancel`).
     Back,
-    /// Помощь (не портирована).
+    /// Help (not ported).
     Help,
-    /// Войти (`Ready`).
+    /// Enter (`Ready`).
     Join,
-    /// Скрыть список (`BTNHIDE`).
+    /// Hide the list (`BTNHIDE`).
     Hide,
 }
 
-/// Кнопки `NetworkMenu` (243/354/465/514, 438).
+/// `NetworkMenu` buttons (243/354/465/514, 438).
 pub const JOIN_BUTTONS: [ActionButton; 4] = [
     ActionButton {
         rect: PixelRect::new(243, 438, 109, 40),
@@ -386,28 +386,28 @@ pub const JOIN_BUTTONS: [ActionButton; 4] = [
     },
 ];
 
-/// Рамка/область списка игр (`MENU_ITEM_JOIN_TEXT_WINDOW`, (359,28) 209×160).
+/// Game list frame/area (`MENU_ITEM_JOIN_TEXT_WINDOW`, (359,28) 209×160).
 pub const JOIN_LIST: PixelRect = PixelRect::new(359, 28, 209, 160);
-/// Высота строки списка (20 px).
+/// List row height (20 px).
 pub const JOIN_ROW_HEIGHT: i32 = 20;
-/// Панель под списком (на 4 px шире — «рамка»).
+/// Panel under the list (4 px wider — the "frame").
 pub const JOIN_PANEL: PixelRect = PixelRect::new(355, 24, 217, 168);
-/// Кнопка `BTNHIDE` в правом верхнем углу списка.
+/// `BTNHIDE` button in the top-right corner of the list.
 pub const JOIN_HIDE: PixelRect = PixelRect::new(528, 4, 38, 21);
-/// Заголовок списка игр.
+/// Game list title.
 pub const JOIN_TITLE: PixelRect = PixelRect::new(359, 4, 190, 16);
-/// Строка статуса списка.
+/// List status line.
 pub const JOIN_STATUS: PixelRect = PixelRect::new(150, 400, 462, 15);
 
-/// Сколько строк списка видно одновременно.
+/// How many list rows are visible at once.
 pub const JOIN_VISIBLE_ROWS: usize = 8;
 
-/// Первая видимая строка при выборе `selected`.
+/// First visible row when `selected` is chosen.
 pub fn join_scroll(selected: usize) -> usize {
     selected.saturating_sub(JOIN_VISIBLE_ROWS - 1)
 }
 
-/// Прямоугольник строки списка (0 — первая видимая).
+/// List row rectangle (0 — the first visible).
 pub fn join_row_rect(row: usize) -> PixelRect {
     if row >= JOIN_VISIBLE_ROWS {
         return PixelRect::new(0, 0, 0, 0);
@@ -421,7 +421,7 @@ pub fn join_row_rect(row: usize) -> PixelRect {
     )
 }
 
-/// Строка списка под точкой (с учётом прокрутки); `None` — вне списка.
+/// List row under the point (taking scrolling into account); `None` — outside the list.
 pub fn join_row_at(x: i32, y: i32, games: usize, selected: usize) -> Option<usize> {
     if !JOIN_LIST.contains(x, y) {
         return None;
@@ -433,87 +433,87 @@ pub fn join_row_at(x: i32, y: i32, games: usize, selected: usize) -> Option<usiz
     (row < JOIN_VISIBLE_ROWS && index < games).then_some(index)
 }
 
-/// Загруженные ресурсы меню.
+/// Loaded menu resources.
 #[derive(Debug, Clone)]
 pub struct MenuAssets {
-    /// Фон главного меню 640×480 (`MAINPIC`).
+    /// Main menu background 640×480 (`MAINPIC`).
     pub mainpic: BigImage,
-    /// Фон экрана планет (`PLANETSE`).
+    /// Planet screen background (`PLANETSE`).
     pub planetse: Option<BigImage>,
-    /// Фон списка игр (`MULTGAME`).
+    /// Game list background (`MULTGAME`).
     pub multgame: Option<BigImage>,
-    /// Фон окна игры (`FRAMEPIC`) — fallback, если чего-то из меню нет.
+    /// Game window background (`FRAMEPIC`) — fallback if something of the menu is missing.
     pub framepic: Option<BigImage>,
-    /// Фон экрана настройки партии (`OPTNFRM`, `GameConfigMenu`).
+    /// Match setup screen background (`OPTNFRM`, `GameConfigMenu`).
     pub optnfrm: Option<BigImage>,
-    /// Фон экрана выбора команд (`CHOSPLYR`, `ChoosePlayerMenu`).
+    /// Team selection screen background (`CHOSPLYR`, `ChoosePlayerMenu`).
     pub chosplyr: Option<BigImage>,
-    /// Картинки планет по группам (`SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC`).
+    /// Planet pictures by groups (`SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC`).
     pub planet_group_pictures: [Option<BigImage>; 4],
-    /// Стрелки смены группы планет (`MNULAROU`, `MNURAROU`).
+    /// Planet group switch arrows (`MNULAROU`, `MNURAROU`).
     pub planet_arrows: Option<(SimpleImage, SimpleImage)>,
-    /// Кнопки выбора типа команды: `CH_HUM_U/D`, `CH_CMP_U/D`, `CH_NON_U/D`.
+    /// Team type selection buttons: `CH_HUM_U/D`, `CH_CMP_U/D`, `CH_NON_U/D`.
     pub team_kind_buttons: [Option<MenuButtonPair>; 3],
-    /// Флаги команд `CH_TM1_U/D` … `CH_TM4_U/D`.
+    /// Team flags `CH_TM1_U/D` … `CH_TM4_U/D`.
     pub team_banners: [Option<MenuButtonPair>; 4],
-    /// Эмблема клана `CLN0LOGO` (42×65): `ChoosePlayerMenu::ButtonInit`
-    /// копирует её на флаг команды в (41,40).
+    /// Clan emblem `CLN0LOGO` (42×65): `ChoosePlayerMenu::ButtonInit`
+    /// copies it onto the team flag at (41,40).
     pub clan_logo: Option<SimpleImage>,
-    /// Эмблемы кланов `CLN0LOGO`…`CLN8LOGO` (0 — Random).
+    /// Clan emblems `CLN0LOGO`…`CLN8LOGO` (0 — Random).
     pub clan_logos: [Option<SimpleImage>; 9],
-    /// Карточки `CH_CN1_U/D`…`CH_CN8_U/D` (91×86) экрана `ClanSelectMenu`.
+    /// `CH_CN1_U/D`…`CH_CN8_U/D` cards (91×86) of the `ClanSelectMenu` screen.
     pub clan_buttons: [Option<MenuButtonPair>; 8],
-    /// Фон экрана выбора клана (`CLANSEL`).
+    /// Clan selection screen background (`CLANSEL`).
     pub clansel: Option<BigImage>,
-    /// Фон экрана мобилизации (`CARGOPIC`, 640×480) — `CargoMenu`.
+    /// Mobilization screen background (`CARGOPIC`, 640×480) — `CargoMenu`.
     pub cargopic: Option<BigImage>,
-    /// Кнопка `Buy` экрана мобилизации (`CRGBUY_U/D`, 41×22).
+    /// `Buy` button of the mobilization screen (`CRGBUY_U/D`, 41×22).
     pub cargo_buy: Option<MenuButtonPair>,
-    /// Кнопка `Delete` (`CRGDEL_U/D`, 53×23).
+    /// `Delete` button (`CRGDEL_U/D`, 53×23).
     pub cargo_delete: Option<MenuButtonPair>,
-    /// Кнопка `Cancel` (`BLDCAN_U/D`, 62×23).
+    /// `Cancel` button (`BLDCAN_U/D`, 62×23).
     pub cargo_cancel: Option<MenuButtonPair>,
-    /// Кнопка `Done` (`BLDONE_U/D`, 54×23).
+    /// `Done` button (`BLDONE_U/D`, 54×23).
     pub cargo_done: Option<MenuButtonPair>,
-    /// Фоны экрана победы/поражения (`ENDGAME1`…`ENDGAME9`).
+    /// Victory/defeat screen backgrounds (`ENDGAME1`…`ENDGAME9`).
     pub endgame_backgrounds: Vec<BigImage>,
-    /// `ENDARM` — картинка в правом нижнем углу экрана победы.
+    /// `ENDARM` — the picture in the bottom-right corner of the victory screen.
     pub endarm: Option<SimpleImage>,
-    /// Кнопка `OK` экрана победы (`ENDOK_U/D`).
+    /// `OK` button of the victory screen (`ENDOK_U/D`).
     pub endok: Option<MenuButtonPair>,
-    /// `HELPFRAM` — фон окна `DialogMenu` 301×231 (экран перехода хода M-HS).
+    /// `HELPFRAM` — `DialogMenu` window background 301×231 (M-HS turn-transition screen).
     pub helpfram: Option<BigImage>,
-    /// Кнопка `OK` окна `DialogMenu` (`HELPOK_U/D`, 65×24).
+    /// `OK` button of the `DialogMenu` window (`HELPOK_U/D`, 65×24).
     pub helpok: Option<MenuButtonPair>,
-    /// «Портрет» главного меню (`P_TANK` 300×240).
+    /// Main menu "portrait" (`P_TANK` 300×240).
     pub portrait: Option<BigImage>,
-    /// Большие кнопки `BLANK_UP/DN` 200×29.
+    /// Big buttons `BLANK_UP/DN` 200×29.
     pub blank: MenuButtonPair,
-    /// Маленькие кнопки `SBLNK_UP/DN` 100×30.
+    /// Small buttons `SBLNK_UP/DN` 100×30.
     pub small_blank: MenuButtonPair,
-    /// `MNUBTN1U/D` … `MNUBTN6U/D` (индекс 0 — ресурс 1).
+    /// `MNUBTN1U/D` … `MNUBTN6U/D` (index 0 — resource 1).
     pub mnubtn: [MenuButtonPair; 6],
-    /// Кнопка `BTNHIDE` 38×21.
+    /// `BTNHIDE` button 38×21.
     pub btnhide: Option<SimpleImage>,
-    /// Левая рамка портрета `BGRSCRNL` 160×259.
+    /// Left portrait frame `BGRSCRNL` 160×259.
     pub portrait_frame_left: Option<SimpleImage>,
-    /// Правая рамка портрета `BGRSCRNR` 160×259.
+    /// Right portrait frame `BGRSCRNR` 160×259.
     pub portrait_frame_right: Option<SimpleImage>,
-    /// Фон экрана титров `CREDITS` 640×480 (big image со своей палитрой,
+    /// Credits screen background `CREDITS` 640×480 (big image with its own palette,
     /// `menu_credits_menu_loop`).
     pub credits: Option<BigImage>,
-    /// Фон заглушки `Introduction`: `MLOGO` 640×480 (big image), если есть.
+    /// `Introduction` placeholder background: `MLOGO` 640×480 (big image), if present.
     pub mlogo: Option<BigImage>,
-    /// Системная палитра окна (из `MAINPIC`).
+    /// Window system palette (from `MAINPIC`).
     pub palette: UiPalette,
 }
 
 impl MenuAssets {
-    /// Грузит ресурсы меню из `MAX.RES`.
+    /// Loads the menu resources from `MAX.RES`.
     ///
-    /// Возвращает `None`, только если нет `MAINPIC`/`FRAMEPIC` или основных
-    /// кнопок: без них меню не собрать. Остальное (`PLANETSE`, `MULTGAME`,
-    /// портрет, рамки, `BTNHIDE`) — опционально.
+    /// Returns `None` only if `MAINPIC`/`FRAMEPIC` or the main
+    /// buttons are missing: without them the menu cannot be assembled. The rest (`PLANETSE`, `MULTGAME`,
+    /// portrait, frames, `BTNHIDE`) — optional.
     pub fn load(max_res: &max_assets::ResArchive) -> Option<Self> {
         let read_big = |name: &str| {
             max_res
@@ -550,7 +550,7 @@ impl MenuAssets {
             .iter()
             .find_map(|name| read_big(name))
             .or_else(|| {
-                // Любая `P_*` 300×240, если привычных имён нет.
+                // Any `P_*` 300×240, if the usual names are missing.
                 max_res
                     .list()
                     .iter()
@@ -622,7 +622,7 @@ impl MenuAssets {
         })
     }
 
-    /// Фон экрана планет (`PLANETSE`, иначе `FRAMEPIC`, иначе `MAINPIC`).
+    /// Planet screen background (`PLANETSE`, else `FRAMEPIC`, else `MAINPIC`).
     pub fn planet_background(&self) -> &BigImage {
         self.planetse
             .as_ref()
@@ -630,7 +630,7 @@ impl MenuAssets {
             .unwrap_or(&self.mainpic)
     }
 
-    /// Фон списка игр (`MULTGAME`, иначе `PLANETSE`, иначе `MAINPIC`).
+    /// Game list background (`MULTGAME`, else `PLANETSE`, else `MAINPIC`).
     pub fn join_background(&self) -> &BigImage {
         self.multgame
             .as_ref()
@@ -639,13 +639,13 @@ impl MenuAssets {
             .unwrap_or(&self.mainpic)
     }
 
-    /// Пара `MNUBTNnU/D` по номеру ресурса (1..=6).
+    /// `MNUBTNnU/D` pair by resource number (1..=6).
     pub fn mnubtn_pair(&self, resource: usize) -> Option<&MenuButtonPair> {
         self.mnubtn.get(resource.checked_sub(1)?)
     }
 }
 
-/// Рисует big image в кадр с учётом `ulx/uly` картинки.
+/// Draws a big image into the frame taking the picture's `ulx/uly` into account.
 pub fn draw_big_image(frame: &mut RgbaBuffer, image: &BigImage) -> u32 {
     let offset_x = i32::from(image.ulx);
     let offset_y = i32::from(image.uly);
@@ -666,9 +666,9 @@ pub fn draw_big_image(frame: &mut RgbaBuffer, image: &BigImage) -> u32 {
     painted
 }
 
-/// Копирует simple image в кадр палитрой окна.
+/// Copies a simple image into the frame with the window palette.
 ///
-/// `transparent` — пропускать пиксели индекса `image.transparent` (C++
+/// `transparent` — skip pixels of the `image.transparent` index (C++
 /// `WindowManager_LoadSimpleImage(..., has_transparency)`).
 pub fn blit_simple(
     frame: &mut RgbaBuffer,
@@ -699,19 +699,19 @@ pub fn blit_simple(
     painted
 }
 
-/// Копирует simple image с учётом её собственного `ulx/uly` — точка «якоря».
+/// Copies a simple image taking its own `ulx/uly` into account — the "anchor" point.
 ///
-/// Это дословно `WindowManager_DecodeSimpleImage` (`window_manager.cpp:784`):
+/// This is `WindowManager_DecodeSimpleImage` (`window_manager.cpp:784`) verbatim:
 ///
 /// ```c
 /// ulx -= image->ulx;
 /// uly -= image->uly;
 /// ```
 ///
-/// Именно так рисуются эмблемы кланов: `Button::Copy(CLNnLOGO, 41, 40)` кладёт
-/// картинку в точку `(41,40)` **якоря**, а собственные `ulx/uly` ресурса
-/// (`CLN0LOGO` — 21,32; `CLN1LOGO` — 37,28; …) сдвигают её так, что логотип
-/// оказывается по центру кнопки. Без этой поправки картинка уезжает вправо-вниз.
+/// This is how clan emblems are drawn: `Button::Copy(CLNnLOGO, 41, 40)` puts
+/// the picture at the **anchor** point `(41,40)`, and the resource's own `ulx/uly`
+/// (`CLN0LOGO` — 21,32; `CLN1LOGO` — 37,28; …) shift it so that the logo
+/// ends up in the center of the button. Without this correction the picture drifts right-down.
 pub fn blit_simple_anchored(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -730,11 +730,11 @@ pub fn blit_simple_anchored(
     )
 }
 
-/// Перенос текста по словам шириной GNW-шрифта `FONT5` (`Text_SplitText`).
+/// Word wrapping by the width of the GNW `FONT5` font (`Text_SplitText`).
 ///
-/// Используется экранами настройки (`GameConfigMenu`/`PlanetSelectMenu`) и
-/// окном перехода хода M-HS (`DialogMenu::DrawText`): обещанная ширина — в
-/// пикселях, перенос — по пробелам, `\n` — жёсткий перевод строки.
+/// Used by the setup screens (`GameConfigMenu`/`PlanetSelectMenu`) and
+/// the M-HS turn-transition window (`DialogMenu::DrawText`): the promised width is in
+/// pixels, wrapping is by spaces, `\n` — a hard line break.
 pub fn wrap_gnw_text(text: &str, width: i32) -> Vec<String> {
     let font = GnwFontId::Font5.font();
     let mut lines = Vec::new();
@@ -763,8 +763,8 @@ pub fn wrap_gnw_text(text: &str, width: i32) -> Vec<String> {
     lines
 }
 
-/// Заменяет типографские символы, которых нет в GNW-шрифтах (`—`, `…`), на
-/// ASCII: иначе `draw_text_gnw` рисует вместо них `?`.
+/// Replaces typographic characters that the GNW fonts do not have (`—`, `…`) with
+/// ASCII: otherwise `draw_text_gnw` draws `?` instead of them.
 pub fn clean_status(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
 
@@ -781,7 +781,7 @@ pub fn clean_status(text: &str) -> String {
     output
 }
 
-/// Заголовок меню: `GNW_TEXT_FONT_5`, `COLOR_GREEN`, по центру прямоугольника.
+/// Menu title: `GNW_TEXT_FONT_5`, `COLOR_GREEN`, centered in the rectangle.
 pub fn draw_title(frame: &mut RgbaBuffer, palette: &UiPalette, rect: PixelRect, text: &str) -> i32 {
     draw_text_gnw_centered(
         frame,
@@ -792,13 +792,13 @@ pub fn draw_title(frame: &mut RgbaBuffer, palette: &UiPalette, rect: PixelRect, 
     )
 }
 
-/// Кнопка меню с картинкой `up/down` и подписью `GNW_TEXT_FONT_1`.
+/// Menu button with an `up/down` picture and a `GNW_TEXT_FONT_1` label.
 ///
-/// В оригинале `*D` показывается только пока кнопка **нажата** (`Button` в
-/// `GNW`/`Button::Run`). Наведение мыши не является нажатием, поэтому здесь
-/// всегда рисуется `up`; нажатое состояние оставлено для radio/toggle-кнопок,
-/// которые передают `down` явно. `_down_image` и `_pressed` сохранены в
-/// сигнатуре, чтобы не менять все вызовы.
+/// In the original `*D` is shown only while the button is **pressed** (`Button` in
+/// `GNW`/`Button::Run`). Mouse hover is not a press, so here
+/// `up` is always drawn; the pressed state is left for the radio/toggle buttons
+/// that pass `down` explicitly. `_down_image` and `_pressed` are kept in the
+/// signature so as not to change all calls.
 pub fn draw_image_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -828,7 +828,7 @@ pub fn draw_image_button(
     painted
 }
 
-/// «Портрет» с рамками `BGRSCRNL`/`BGRSCRNR` — общий для главного меню и
+/// "Portrait" with the `BGRSCRNL`/`BGRSCRNR` frames — shared by the main menu and
 /// `Multiplayer Menu` (`menu_draw_menu_portrait`).
 fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
     let palette = &menu.palette;
@@ -867,8 +867,8 @@ fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
     painted
 }
 
-/// Рисует `Multiplayer Menu` (`menu_multiplayer_menu_loop`): `MAINPIC`, заголовок
-/// `_(f2b3)`, портрет и шесть кнопок (`Host/Join/Hot Seat/…/Cancel`).
+/// Draws `Multiplayer Menu` (`menu_multiplayer_menu_loop`): `MAINPIC`, title
+/// `_(f2b3)`, portrait and six buttons (`Host/Join/Hot Seat/…/Cancel`).
 pub fn draw_multiplayer_menu(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -915,7 +915,7 @@ pub fn draw_multiplayer_menu(
     painted
 }
 
-/// Рисует главное меню (`menu.cpp::main_menu`).
+/// Draws the main menu (`menu.cpp::main_menu`).
 pub fn draw_main_menu(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -970,8 +970,8 @@ pub fn draw_main_menu(
     painted
 }
 
-/// Рисует экран создания игры/выбора планеты (`planetselectmenu.cpp` +
-/// сетка 8×3 Rust-клиента).
+/// Draws the game creation/planet selection screen (`planetselectmenu.cpp` +
+/// the 8×3 grid of the Rust client).
 pub fn draw_create_form(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -987,15 +987,15 @@ pub fn draw_create_form(
     let selected_planet = planet_for_world(form.world);
     draw_title(frame, palette, PLANET_NAME, planet_name(selected_planet));
 
-    // Большая картинка выбранной планеты — ровно как
+    // A big picture of the selected planet — exactly like
     // `WindowManager_LoadBigImage(SNOW_PIC + world/6, ..., ulx, uly)`:
-    // `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` имеют `ulx=26, uly=98`.
+    // `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` have `ulx=26, uly=98`.
     if let Some(picture) = assets.and_then(|a| a.planet_picture(selected_planet)) {
         let picture_rect = PixelRect::new(26, 98, 128, 128);
         painted += draw_big_image_at(frame, picture, palette, (26, 98), picture_rect);
     }
 
-    // Сетка 8×3 внутри области 3×2 слотов PLANETSE.
+    // The 8×3 grid inside the 3×2 slot area of PLANETSE.
     let name_font = GnwFontId::Font5.font();
 
     for index in 0..PLANET_COUNT {
@@ -1008,8 +1008,8 @@ pub fn draw_create_form(
         let picture = planet.and_then(|planet| assets.and_then(|a| a.planet_picture(planet)));
         let selected = form.world == index as i64;
 
-        // Тёмная подложка ячейки: сетка 8×3 ложится на 3×2 чёрных слота
-        // `PLANETSE` ровным «полотном», а не рваными кусками фона.
+        // Dark backing of the cell: the 8×3 grid lies on the 3×2 black slots
+        // of `PLANETSE` as an even "canvas" rather than ragged pieces of the background.
         frame.fill_rect(cell, palette.rgba(BLACK));
 
         if let (Some(picture), Some(planet)) = (picture, planet) {
@@ -1037,7 +1037,7 @@ pub fn draw_create_form(
         draw_border(frame, cell, border, if selected { 2 } else { 1 });
     }
 
-    // Поля формы внутри описания PLANETSE.
+    // Form fields inside the PLANETSE description.
     for (field, rect) in CREATE_FIELD_RECTS {
         let focused = form.focus == field;
         let mut line = format!("{}: {}", field.label(), form.value(field));
@@ -1092,7 +1092,7 @@ pub fn draw_create_form(
     painted
 }
 
-/// Рисует список игр (`networkmenu.cpp::DrawJoinScreen`).
+/// Draws the game list (`networkmenu.cpp::DrawJoinScreen`).
 pub fn draw_join_list(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1104,13 +1104,13 @@ pub fn draw_join_list(
     let palette = &menu.palette;
     let mut painted = draw_big_image(frame, menu.join_background());
 
-    // Рамка списка: чёрная панель с бежевой обводкой (на `MULTGAME` строки
-    // хостов лежат на тёмном окне; панель делает их читаемыми и на светлой
-    // части фона).
+    // List frame: a black panel with a beige outline (host rows on `MULTGAME`
+    // lie on a dark window; the panel makes them readable on the light
+    // part of the background too).
     frame.fill_rect(JOIN_PANEL, Rgba::BLACK);
     draw_border(frame, JOIN_PANEL, palette.rgba(TEXT), 1);
-    // Заголовок — на чёрной плашке: на бежевой части `MULTGAME` зелёный
-    // GNW-текст почти не читается.
+    // The title — on a black plate: on the beige part of `MULTGAME` the green
+    // GNW text is almost unreadable.
     frame.fill_rect(
         PixelRect::new(
             JOIN_TITLE.ulx,
@@ -1126,8 +1126,8 @@ pub fn draw_join_list(
         let hovered = mouse.is_some_and(|(x, y)| JOIN_HIDE.contains(x, y));
         painted += blit_simple(frame, palette, btnhide, JOIN_HIDE.ulx, JOIN_HIDE.uly, true);
         if hovered {
-            // Подсветка рамки `BTNHIDE`: C++ ресурс не использует, поведение
-            // (скрыть/назад) — наше.
+            // `BTNHIDE` frame highlight: the C++ resource does not use it, the behavior
+            // (hide/back) is ours.
             draw_border(frame, JOIN_HIDE, palette.rgba(GREEN), 1);
         }
     }
@@ -1179,7 +1179,7 @@ pub fn draw_join_list(
             palette.rgba(GREEN),
         );
 
-        // Разделитель строк — `draw_line(..., COLOR_GREEN)` как в C++.
+        // Row separator — `draw_line(..., COLOR_GREEN)` as in C++.
         if row + 1 < JOIN_VISIBLE_ROWS {
             let line_y = rect.uly + JOIN_ROW_HEIGHT - 1;
             for x in JOIN_LIST.ulx..JOIN_LIST.ulx + JOIN_LIST.width {
@@ -1228,7 +1228,7 @@ pub fn draw_join_list(
     painted
 }
 
-/// Кнопка главного меню под точкой.
+/// Main menu button under the point.
 pub fn main_menu_at(x: i32, y: i32) -> Option<MainMenuAction> {
     MAIN_MENU_BUTTONS
         .iter()
@@ -1236,7 +1236,7 @@ pub fn main_menu_at(x: i32, y: i32) -> Option<MainMenuAction> {
         .map(|button| button.action)
 }
 
-/// Прямоугольник кнопки главного меню по действию.
+/// Main menu button rectangle by action.
 pub fn main_menu_rect(action: MainMenuAction) -> Option<PixelRect> {
     MAIN_MENU_BUTTONS
         .iter()
@@ -1244,7 +1244,7 @@ pub fn main_menu_rect(action: MainMenuAction) -> Option<PixelRect> {
         .map(|button| button.rect)
 }
 
-/// Кнопка нижней строки формы под точкой.
+/// Bottom row form button under the point.
 pub fn create_button_at(x: i32, y: i32) -> Option<ActionButton> {
     PLANET_BUTTONS
         .iter()
@@ -1252,7 +1252,7 @@ pub fn create_button_at(x: i32, y: i32) -> Option<ActionButton> {
         .find(|b| b.rect.contains(x, y))
 }
 
-/// Поле формы под точкой.
+/// Form field under the point.
 pub fn create_field_at(x: i32, y: i32) -> Option<CreateField> {
     CREATE_FIELD_RECTS
         .iter()
@@ -1260,7 +1260,7 @@ pub fn create_field_at(x: i32, y: i32) -> Option<CreateField> {
         .map(|(field, _)| *field)
 }
 
-/// Кнопка списка игр под точкой.
+/// Game list button under the point.
 pub fn join_button_at(x: i32, y: i32) -> Option<JoinButton> {
     if JOIN_HIDE.contains(x, y) {
         return Some(JoinButton::Hide);
@@ -1277,7 +1277,7 @@ pub fn join_button_at(x: i32, y: i32) -> Option<JoinButton> {
         })
 }
 
-/// Сетка планет 8×3 в координатах `PLANETSE`.
+/// 8×3 planet grid in `PLANETSE` coordinates.
 pub fn planet_cell(index: i32) -> PixelRect {
     let columns = 8;
     let rows = 3;
@@ -1292,13 +1292,13 @@ pub fn planet_cell(index: i32) -> PixelRect {
     )
 }
 
-/// Планета по индексу `0..24` (`Planet::try_from`).
+/// Planet by index `0..24` (`Planet::try_from`).
 fn planet_for_world(world: i64) -> max_core::enums::Planet {
     crate::ui::planet_from_index(world.clamp(0, (PLANET_COUNT - 1) as i64) as usize)
         .unwrap_or(max_core::enums::Planet::Snowcrab)
 }
 
-/// Обрезает строку по ширине в пикселях (шрифт GNW).
+/// Trims a string by width in pixels (GNW font).
 pub fn truncate_to_width(text: &str, max_width: i32, font: &max_render::GnwFont) -> String {
     let mut out = text.to_string();
 
@@ -1307,7 +1307,7 @@ pub fn truncate_to_width(text: &str, max_width: i32, font: &max_render::GnwFont)
     out
 }
 
-/// Рамка `thickness` внутри прямоугольника.
+/// `thickness` frame inside the rectangle.
 fn draw_border(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: i32) {
     for inset in 0..thickness.max(1) {
         let x = rect.ulx + inset;
@@ -1330,17 +1330,17 @@ fn draw_border(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: 
     }
 }
 
-/// Рисует big image в точку `origin`, обрезая по `clip`, **палитрой окна**.
+/// Draws a big image at `origin`, clipped by `clip`, with the **window palette**.
 ///
-/// C++ `WindowManager_LoadBigImage(..., palette_from_image=false)` не меняет
-/// системную палитру: индексы `P_*` интерпретируются палитрой `MAINPIC`. У
-/// `P_TANK` собственная палитра отличается (индекс 19 — маджента), поэтому
-/// рисовать портрет его палитрой нельзя.
-/// Рисует big image палитрой окна в точку `origin` (с обрезкой по `clip`).
+/// C++ `WindowManager_LoadBigImage(..., palette_from_image=false)` does not change
+/// the system palette: `P_*` indices are interpreted by the `MAINPIC` palette. For
+/// `P_TANK` its own palette differs (index 19 is magenta), so
+/// drawing the portrait with its palette is impossible.
+/// Draws a big image with the window palette at `origin` (clipped by `clip`).
 ///
-/// Так C++ рисует картинки без собственной палитры: `palette_from_image =
-/// false` → индексы берутся из палитры окна (`WindowManager_LoadBigImage`).
-/// Нужно и меню (`PLANETSE`, портрет), и окну перехода хода M-HS (`HELPFRAM`).
+/// This is how C++ draws pictures without their own palette: `palette_from_image =
+/// false` → the indices are taken from the window palette (`WindowManager_LoadBigImage`).
+/// Needed both by the menu (`PLANETSE`, portrait) and by the M-HS turn-transition window (`HELPFRAM`).
 pub fn draw_big_image_at(
     frame: &mut RgbaBuffer,
     image: &BigImage,
@@ -1372,12 +1372,12 @@ pub fn draw_big_image_at(
     painted
 }
 
-/// Масштабирует big image в `rect` (nearest): картинки планет 128×128 в ячейку.
+/// Scales a big image into `rect` (nearest): planet pictures 128×128 into a cell.
 ///
-/// `crop_top` — сколько верхних строк картинки пропустить: у `SNOW_PIC` и
-/// соседних групп первые 2–10 строк — служебная цветовая полоса ресурса, а не
-/// планета. В большой картинке (26,98) она остаётся как в оригинале, а в
-/// миниатюрах 8×3 только мешает.
+/// `crop_top` — how many top rows of the picture to skip: for `SNOW_PIC` and
+/// the neighboring groups the first 2–10 rows are the service color strip of the resource, not
+/// the planet. In the big picture (26,98) it remains as in the original, but in the
+/// 8×3 thumbnails it only gets in the way.
 fn blit_big_scaled(
     frame: &mut RgbaBuffer,
     image: &BigImage,
@@ -1415,10 +1415,10 @@ fn blit_big_scaled(
     painted
 }
 
-/// Верхняя служебная полоса картинки группы планет.
+/// Top service strip of the planet group picture.
 ///
-/// Замер по `MAX.RES`: `SNOW_PIC` — 10 строк, `CRTR_PIC` — 3, `GREN_PIC` — 2,
-/// `DSRT_PIC` — 9 (дальше начинается сама планета).
+/// Measurement on `MAX.RES`: `SNOW_PIC` — 10 rows, `CRTR_PIC` — 3, `GREN_PIC` — 2,
+/// `DSRT_PIC` — 9 (the planet itself starts after that).
 pub fn planet_picture_crop(planet: max_core::enums::Planet) -> u32 {
     match planet as usize / 6 {
         0 => 10,
@@ -1429,7 +1429,7 @@ pub fn planet_picture_crop(planet: max_core::enums::Planet) -> u32 {
     }
 }
 
-/// Прямоугольник сетки планет в терминах `max_render::ui::Rect`.
+/// Planet grid rectangle in `max_render::ui::Rect` terms.
 pub const fn planet_grid_rect() -> Rect {
     Rect::new(
         PLANET_GRID.ulx,
@@ -1466,8 +1466,8 @@ mod tests {
 
     #[test]
     fn main_menu_layout_matches_the_cpp_oracle() {
-        // `menu.cpp::main_menu`: 6 больших кнопок 200×29 на x=385 с шагом 35,
-        // Exit 100×30 в (435,420).
+        // `menu.cpp::main_menu`: 6 big buttons 200×29 at x=385 with a step of 35,
+        // Exit 100×30 at (435,420).
         for (index, button) in MAIN_MENU_BUTTONS.iter().take(6).enumerate() {
             assert_eq!(
                 button.rect,
@@ -1485,7 +1485,7 @@ mod tests {
         assert_eq!(MAIN_MENU_BUTTONS[2].label, "Multiplayer Game");
         assert_eq!(MAIN_MENU_BUTTONS[6].label, "Exit");
 
-        // Кнопки нижней строки — `planetselectmenu.hpp` / `networkmenu.hpp`.
+        // Bottom row buttons — `planetselectmenu.hpp` / `networkmenu.hpp`.
         assert_eq!(PLANET_BUTTONS[0].rect, PixelRect::new(243, 438, 109, 40));
         assert_eq!(PLANET_BUTTONS[3].rect, PixelRect::new(514, 438, 109, 40));
         assert_eq!(JOIN_LIST, PixelRect::new(359, 28, 209, 160));
@@ -1500,15 +1500,15 @@ mod tests {
         };
 
         let logo = menu.clan_logos[1].as_ref().expect("CLN1LOGO");
-        // CLN1LOGO: 74×57, ulx=37, uly=28 — якорь внутри картинки.
+        // CLN1LOGO: 74×57, ulx=37, uly=28 — the anchor inside the picture.
         assert_eq!((logo.width, logo.height), (74, 57));
         assert_eq!((logo.ulx, logo.uly), (37, 28));
 
         let mut frame = RgbaBuffer::filled(640, 480, Rgba::rgb(0, 0, 0));
         blit_simple_anchored(&mut frame, &menu.palette, logo, 41, 40, true);
 
-        // Прямоугольник нарисованного: от (41-37, 40-28) = (4, 12) и не шире
-        // картинки — иначе (как было до фикса) логотип уезжал за кнопку.
+        // Rectangle of the drawn area: from (41-37, 40-28) = (4, 12) and no wider
+        // than the picture — otherwise (as before the fix) the logo went beyond the button.
         let mut xs = Vec::new();
         let mut ys = Vec::new();
         for y in 0..480 {
@@ -1563,9 +1563,9 @@ mod tests {
         }
 
         assert_eq!(xs.iter().min().copied(), Some(expected_x));
-        // «Чернила» '?' начинаются со второй строки ячейки (ink bbox y0 = 1).
+        // The '?' "ink" starts from the second row of the cell (ink bbox y0 = 1).
         assert_eq!(ys.iter().min().copied(), Some(expected_y + 1));
-        // По горизонтали знак действительно внутри кнопки, а не у края.
+        // Horizontally the sign is indeed inside the button, not at the edge.
         assert!(xs.iter().max().copied().unwrap() < 513);
         assert!(ys.iter().max().copied().unwrap() < 478);
     }
@@ -1611,7 +1611,7 @@ mod tests {
 
         draw_main_menu(&mut frame, &menu, "", Some((390, 180)));
 
-        // Фон — MAINPIC (0,0 в его палитре).
+        // Background — MAINPIC (0,0 in its palette).
         assert_eq!(
             frame.get(0, 0),
             menu.mainpic.rgb(0, 0).map(Rgba::from_rgb),
@@ -1634,8 +1634,8 @@ mod tests {
             "подписи кнопок — Fonts_GoldColor: {gold_pixels}"
         );
 
-        // Наведение мыши не нажимает кнопку: кадр с курсором побитово равен
-        // кадру без курсора (в оригинале `*D` — только пока кнопка нажата).
+        // Mouse hover does not press the button: the frame with the cursor is bitwise equal to
+        // the frame without the cursor (in the original `*D` — only while the button is pressed).
         let mut idle = RgbaBuffer::new(640, 480);
         draw_main_menu(&mut idle, &menu, "", None);
         assert_eq!(
@@ -1658,7 +1658,7 @@ mod tests {
 
         draw_create_form(&mut frame, &menu, None, &form, "status", None);
 
-        // Фон — PLANETSE (если он есть в MAX.RES).
+        // Background — PLANETSE (if it exists in MAX.RES).
         if let Some(ref planetse) = menu.planetse {
             assert_eq!(
                 frame.get(600, 300),
@@ -1667,8 +1667,8 @@ mod tests {
             );
         }
 
-        // Кнопка Done — MNUBTN6U в (514,438). Первый пиксель картинки —
-        // прозрачный (C++ `Image::Blend`), поэтому берём пиксель рамки (2,2).
+        // Done button — MNUBTN6U at (514,438). The first pixel of the picture —
+        // transparent (C++ `Image::Blend`), so we take the frame pixel (2,2).
         let pair = menu.mnubtn_pair(6).expect("MNUBTN6");
         let source = pair
             .pixel(false, 2, 2)
@@ -1678,7 +1678,7 @@ mod tests {
             assert_eq!(frame.get(514 + 2, 438 + 2), Some(source));
         }
 
-        // Выбранная планета обведена красным.
+        // The selected planet is outlined in red.
         let cell = planet_cell(12);
         let red = Rgba::rgb(252, 0, 0);
         assert_eq!(frame.get(cell.ulx, cell.uly), Some(red));
@@ -1723,7 +1723,7 @@ mod tests {
             );
         }
 
-        // Строки — зелёным GNW-шрифтом.
+        // Rows — in the green GNW font.
         let green = menu.palette.rgba(GREEN);
         let mut green_pixels = 0;
         for y in JOIN_LIST.uly..JOIN_LIST.uly + JOIN_LIST.height {
@@ -1738,7 +1738,7 @@ mod tests {
             "строки/разделители списка: {green_pixels}"
         );
 
-        // Кнопка Ready — MNUBTN6U (рамка в (2,2), первый пиксель прозрачный).
+        // Ready button — MNUBTN6U (frame at (2,2), the first pixel is transparent).
         let pair = menu.mnubtn_pair(6).expect("MNUBTN6");
         if let Some(source) = pair
             .pixel(false, 2, 2)
@@ -1747,7 +1747,7 @@ mod tests {
             assert_eq!(frame.get(514 + 2, 438 + 2), Some(source));
         }
 
-        // BTNHIDE нарисован в правом верхнем углу.
+        // BTNHIDE is drawn in the top-right corner.
         let hide = menu.btnhide.as_ref().expect("BTNHIDE");
         if let Some(source) = hide.pixel(5, 5).map(|index| menu.palette.rgba(index)) {
             assert_eq!(
@@ -1792,7 +1792,7 @@ mod tests {
             Some(JoinButton::Hide)
         );
 
-        // Строки: 8 видимых, 20 px.
+        // Rows: 8 visible, 20 px.
         assert_eq!(
             join_row_at(JOIN_LIST.ulx + 5, JOIN_LIST.uly + 5, 3, 0),
             Some(0)
@@ -1805,8 +1805,8 @@ mod tests {
             join_row_at(JOIN_LIST.ulx + 5, JOIN_LIST.uly + 200, 3, 0),
             None
         );
-        // Прокрутка: при выборе 9-й строки видимы 2..=9, клик по 0-й строке
-        // выбирает 2-ю, по 7-й — 9-ю.
+        // Scrolling: with the 9th row selected, 2..=9 are visible, a click on row 0
+        // selects the 2nd, on the 7th — the 9th.
         assert_eq!(
             join_row_at(JOIN_LIST.ulx + 5, JOIN_LIST.uly + 5, 10, 9),
             Some(2)

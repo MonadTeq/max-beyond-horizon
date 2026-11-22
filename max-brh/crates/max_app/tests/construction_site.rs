@@ -1,13 +1,13 @@
-//! Стройплощадка на карте: реальные декали C++ (`LRGTAPE`/`LRGCONES`/
-//! `LRGSLAB`) видны в кадре сразу после заказа.
+//! The construction site on the map: the real C++ decals (`LRGTAPE`/`LRGCONES`/
+//! `LRGSLAB`) are visible in the frame right after the order.
 //!
-//! Оракул — `unitinfo.cpp:3802` (`DeployConstructionSiteUtilities`) и
-//! `unitinfo.cpp:4122` (`PrepareConstructionSite`): площадка — это не
-//! «процент прогресса», а три настоящих юнита-декали в клетке постройки.
-//! `App::draw_units` рисует их общим циклом спрайтов (они `ORDER_AWAIT`, не
-//! `ORDER_IDLE`), поэтому кадр обязан измениться ещё до первого хода.
+//! Oracle — `unitinfo.cpp:3802` (`DeployConstructionSiteUtilities`) and
+//! `unitinfo.cpp:4122` (`PrepareConstructionSite`): the site is not a
+//! "progress percentage" but three real decal units in the construction cell.
+//! `App::draw_units` draws them in the common sprite loop (they are `ORDER_AWAIT`, not
+//! `ORDER_IDLE`), so the frame must change before the first turn.
 //!
-//! Тест пропускается, если данных игры (`max-original/`) рядом нет.
+//! The test is skipped if there is no game data (`max-original/`) nearby.
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +37,7 @@ fn app_with_assets() -> Option<App> {
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
         .with_assets_dir(repo_path("assets"))
-        // 640×640 — полноэкранный fallback без `FRAMEPIC`; карта целиком наша.
+        // 640×640 — the full-screen fallback without `FRAMEPIC`; the map is entirely ours.
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -45,7 +45,7 @@ fn app_with_assets() -> Option<App> {
     Some(app)
 }
 
-/// Сколько пикселей отличается между двумя кадрами (RGBA, точное сравнение).
+/// How many pixels differ between two frames (RGBA, exact comparison).
 fn changed_pixels(
     left: &max_render::buffer::RgbaBuffer,
     right: &max_render::buffer::RgbaBuffer,
@@ -57,9 +57,9 @@ fn changed_pixels(
         .count()
 }
 
-/// Кадр «до заказа» против кадра «после заказа»: площадка обязана появиться на
-/// карте (а не только в состоянии), а после достройки — исчезнуть вместе с
-/// лентой/конусами, оставив плиту и готовое здание.
+/// The "before the order" frame vs the "after the order" frame: the site must appear on
+/// the map (and not only in the state), and after completion — disappear together with
+/// the tape/cones, leaving the slab and the finished building.
 #[test]
 fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
     let Some(mut app) = app_with_assets() else {
@@ -114,10 +114,10 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         "площадка должна быть видна в кадре: изменено {changed} пикселей"
     );
 
-    // Каждая декаль обязана давать **свои** пиксели: если лента, конусы или
-    // плита не рисуются (например, декаль осталась `ORDER_IDLE` или её нет в
-    // кадре), кадр без неё не изменится. Проверяем по очереди, как `IsRelevant`
-    // для каждого юнита (`unitinfogroup.cpp:59`).
+    // Each decal must give **its own** pixels: if the tape, cones or
+    // slab are not drawn (e.g. the decal remained `ORDER_IDLE` or is absent
+    // in the frame), the frame without it will not change. We check them in turn, like `IsRelevant`
+    // for each unit (`unitinfogroup.cpp:59`).
     let site_units = app.state().units_at(site);
     let find_site_unit = |unit_type: UnitType| {
         site_units.iter().copied().find(|id| {
@@ -162,9 +162,9 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         );
     }
 
-    // Достройка (`UnitInfo::SpawnNewUnit`): здание встаёт на площадку в
-    // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`, поэтому его **не видно**
-    // (`IsRelevant`), а лента/конусы и строитель — на месте.
+    // Completion (`UnitInfo::SpawnNewUnit`): the building stands on the site in
+    // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`, so it is **not visible**
+    // (`IsRelevant`), while the tape/cones and the builder are in place.
     for _ in 0..report.turns {
         max_core::production::progress_build_state(app.state_mut(), TeamId::RED);
     }
@@ -198,8 +198,8 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         "кадр не должен меняться, пока строитель не ушёл с площадки"
     );
 
-    // Уход строителя + `UnitsManager_BuildingReady`: здание раскрывается, и
-    // только теперь лента/конусы снимаются, а плита остаётся фундаментом.
+    // The builder leaves + `UnitsManager_BuildingReady`: the building opens, and
+    // only now the tape/cones are removed, while the slab remains as the foundation.
     for _ in 0..40 {
         app.tick();
     }

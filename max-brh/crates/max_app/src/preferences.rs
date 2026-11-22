@@ -1,110 +1,110 @@
-//! Диалог `Preferences`/`Setup` — порт C++ `OptionsMenu` (P8).
+//! `Preferences`/`Setup` dialog — a port of C++ `OptionsMenu` (P8).
 //!
-//! # Оракул
+//! # Oracle
 //!
 //! * `menu.cpp:2325` `menu_preferences_window(team)` → `OptionsMenu(team,
-//!   PREFSPIC).Run()` (кнопка `Preferences` игровой панели,
+//!   PREFSPIC).Run()` (the game panel `Preferences` button,
 //!   `GameManager_MenuClickPreferencesButton`, `game_manager.cpp:3918`);
 //! * `menu.cpp:2331` `menu_setup_window()` → `OptionsMenu(PLAYER_TEAM_RED,
-//!   SETUPPIC).Run()` (пункт `Setup` главного меню);
-//! * `optionsmenu.hpp/.cpp` — таблица опций, раскладка и поведение;
-//! * `settings.cpp` — значения по умолчанию и секции `SETUP`/`PREFERENCES`/
+//!   SETUPPIC).Run() (the Setup item of the main menu);
+//! * `optionsmenu.hpp/.cpp` — the options table, layout and behavior;
+//! * `settings.cpp` — default values and the `SETUP`/`PREFERENCES`/
 //!   `OPTIONS`; `IniPreferences` (7 × `signed int`) — `save.md`.
 //!
-//! # Окно
+//! # Window
 //!
-//! Обе версии рисуются **одной** панелью `PREFSPIC` 400×422 (`Window(id)` в C++
-//! центрирует её: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2 = 29`).
-//! Заголовок — `GNW_TEXT_FONT_5` в (108,12) 184×17 зелёным (`COLOR_GREEN`), текст
-//! `Setup` (`7013`) или `Preferences` (`f70f`). Кнопки в нижней строке
-//! (`PRFDNE_U/D` 62×23 в (215,383), `PRFCAN_U/D` 62×23 в (125,383),
-//! `PRFHLP_U/D` 25×23 в (188,383)); подписи `Done`/`Cancel` — `FONT5`,
-//! `Fonts_GoldColor (165,175,199)`, как `Button::SetCaption` (в конструкторе
-//! `Text_SetFont(GNW_TEXT_FONT_5)` стоит до создания кнопок).
+//! Both variants are drawn by **one** `PREFSPIC` panel 400×422 (`Window(id)` in C++
+//! centers it: `ulx = (640−400)/2 = 120`, `uly = (480−422)/2 = 29`).
+//! Title — `GNW_TEXT_FONT_5` at (108,12) 184×17 in green (`COLOR_GREEN`), the text
+//! `Setup` (`7013`) or `Preferences` (`f70f`). Buttons in the bottom row
+//! (`PRFDNE_U/D` 62×23 at (215,383), `PRFCAN_U/D` 62×23 at (125,383),
+//! `PRFHLP_U/D` 25×23 at (188,383)); the `Done`/`Cancel` labels — `FONT5`,
+//! `Fonts_GoldColor (165,175,199)`, like `Button::SetCaption` (in the constructor
+//! `Text_SetFont(GNW_TEXT_FONT_5)` comes before the buttons are created).
 //!
-//! # Раскладка (дословно `OptionsMenu::Init`)
+//! # Layout (verbatim `OptionsMenu::Init`)
 //!
-//! `window_uly` стартует с 20; каждая секция даёт `+20`, каждая опция с
-//! `ulx == 25` — `+20`; `LABEL` после отрисовки отнимает
-//! `20 − (Text_GetHeight() + 3) = 7` (`FONT5` — 10 px). Скрытые контролы
-//! (`IsControlVisible`) не занимают строку. Для `SETUPPIC` `Init` выходит на
-//! секции `preferences`, поэтому главное меню показывает только `SETUP`-часть
-//! (звук/видео/автосейв/сеть/имя); для `PREFSPIC` — все секции до `invalid`
-//! (`debug`-контролы не портированы).
+//! `window_uly` starts at 20; each section gives `+20`, each option with
+//! `ulx == 25` — `+20`; a `LABEL` after drawing subtracts
+//! `20 − (Text_GetHeight() + 3) = 7` (`FONT5` — 10 px). Hidden controls
+//! (`IsControlVisible`) do not take a row. For `SETUPPIC` `Init` stops at
+//! the `preferences` section, so the main menu shows only the `SETUP` part
+//! (sound/video/autosave/network/name); for `PREFSPIC` — all sections up to `invalid`
+//! (the `debug` controls are not ported).
 //!
-//! | Секция | Контролы |
+//! | Section | Controls |
 //! |---|---|
-//! | `setup` | `Volume:` (label), `Enhanced graphics` (только Setup), громкости Music/FX/Voice/Video + `Disable…`, `Auto-Save Enabled`, `Host Address:`/`Host Port:` (только Setup), `Player Name:` |
+//! | `setup` | `Volume:` (label), `Enhanced graphics` (Setup only), Music/FX/Voice/Video volumes + `Disable…`, `Auto-Save Enabled`, `Host Address:`/`Host Port:` (Setup only), `Player Name:` |
 //! | `preferences` | `Animate Effects`, `Click to Scroll`, `Double Unit Steps`, `Track Selected Unit`, `Halt movement when enemy is detected`, `Auto-Select Next Unit`, `Scroll Speed` |
 //! | `options` | `Turn Time:`/`End Turn Time:` (edit int), `Play Mode: %s`, `Computer Player(s): %s`, `Game ends at %i %s.` (read-only) |
 //!
-//! Слайдер: подпись `Text_TextBox(ulx, uly, 185, 20)`, жёлоб `PRFSLIT` 57×3 в
-//! `x = ulx + Text_GetWidth(caption) + 10`, `y = uly + 8`; ползунок `PRFSLIDE`
-//! 14×17 в `x = track_x + value·57/range_max − 7`, `y = uly + 1`; клик по
-//! области `x + width(caption), uly, 77×20` задаёт
+//! Slider: the label `Text_TextBox(ulx, uly, 185, 20)`, the `PRFSLIT` groove 57×3 at
+//! `x = ulx + Text_GetWidth(caption) + 10`, `y = uly + 8`; the `PRFSLIDE` thumb
+//! 14×17 at `x = track_x + value·57/range_max − 7`, `y = uly + 1`; a click on
+//! the area `x + width(caption), uly, 77×20` sets
 //! `value = (x − track_x)·range_max / 57` (`OptionsMenu::UpdateSlider`).
-//! Чекбокс — `UNCHKED`/`CHECKED` 18×17 в `(ulx, uly)`, подпись в
-//! `(ulx+25, uly−2) 155×24`. Поле — `PREFEDIT` 60×19 (`PREFNAME` 187×17 для
-//! имени) в `(ulx + width(caption) + 10, uly + (20−h)/2)`, значение по центру
-//! цветом `0xA2`.
+//! Checkbox — `UNCHKED`/`CHECKED` 18×17 at `(ulx, uly)`, the label at
+//! `(ulx+25, uly−2) 155×24`. Field — `PREFEDIT` 60×19 (`PREFNAME` 187×17 for
+//! the name) at `(ulx + width(caption) + 10, uly + (20−h)/2)`, the value centered
+//! in color `0xA2`.
 //!
-//! # Поведение
+//! # Behavior
 //!
-//! * Мышь: клик по чекбоксу переключает значение, по слайдеру — ставит его по
-//!   позиции, по полю — начинает ввод; `Done`/`Cancel`/`Help`.
-//! * Клавиатура: `Enter` — Done, `Esc` — Cancel, `/`/`?` — Help (как
-//!   `GNW_KB_KEY_SHIFT_DIVIDE`), `Tab`/`Up`/`Down` — фокус, `Space` —
-//!   переключить чекбокс, `Left`/`Right` — слайдер. В C++ клавиатурной
-//!   навигации нет; она добавлена как доступность и не меняет вид.
-//!   У поля ввода `Enter` фиксирует значение, `Esc` — тоже (как
-//!   `ProcessTextEditKeyPress`: первое нажатие Esc при активном поле только
-//!   выходит из редактирования), `Backspace`/печатные символы — правка.
-//! * `Done` пишет значения в `App::preferences`, сохраняет их в
-//!   `<save_dir>/preferences.ini` и в `SaveMeta::ini_preferences` (V70);
-//!   `Cancel` возвращает снимок значений на момент открытия (как
-//!   `last_rest_state` в C++). Изменения эффектов/звука применяются сразу —
-//!   как `SetVolume`/`Halt*Playback` в C++.
+//! * Mouse: a click on a checkbox toggles the value, on a slider sets it by
+//!   position, on a field starts editing; `Done`/`Cancel`/`Help`.
+//! * Keyboard: `Enter` — Done, `Esc` — Cancel, `/`/`?` — Help (like
+//!   `GNW_KB_KEY_SHIFT_DIVIDE`), `Tab`/`Up`/`Down` — focus, `Space` —
+//!   toggle a checkbox, `Left`/`Right` — slider. In C++ there is no keyboard
+//!   navigation; it was added for accessibility and does not change the look.
+//!   For the input field `Enter` commits the value, `Esc` — too (like
+//!   `ProcessTextEditKeyPress`: the first Esc while a field is active only
+//!   leaves editing), `Backspace`/printable characters — editing.
+//! * `Done` writes the values into `App::preferences`, saves them to
+//!   `<save_dir>/preferences.ini` and into `SaveMeta::ini_preferences` (V70);
+//!   `Cancel` restores the snapshot of the values at the moment of opening (like
+//!   `last_rest_state` in C++). Changes to effects/sound are applied immediately —
+//!   like `SetVolume`/`Halt*Playback` in C++.
 //!
-//! # Что реально действует (B4)
+//! # What actually works (B4)
 //!
-//! * `Animate Effects` (`effects`) — выключает покадровые анимации:
-//!   `App::update_unit_animations` не листает кадры строителя, `ANIMATED`-зданий
-//!   (`RADAR`) и работающих заводов, `render::unit_frame_index_with_animation`
-//!   получает `effects = false` (кадр статичен), как `settings["effects"]` в
-//!   `units_manager.cpp:2857/3030` и `unitinfo.cpp:5057`;
-//! * `FX Disabled` (`disable_fx`) — **звук (SFX) вкл/выкл**: `AudioPlayer::
-//!   set_enabled(!disable_fx)`; `FX` — громкость `AudioPlayer::set_volume`
-//!   (`fx_sound_level/100`), как `AUDIO_TYPE_SFX2` в C++;
-//! * `Auto-Save Enabled` (`auto_save`) — `App::autosave` (слот 10);
-//! * `Click to Scroll` (`click_scroll`) — `App::update_scroll` строит смещение
-//!   только при «зажатой» ЛКМ, иначе скролл идёт по наведению
+//! * `Animate Effects` (`effects`) — disables frame-by-frame animations:
+//!   `App::update_unit_animations` does not advance the builder frames, `ANIMATED` buildings
+//!   (`RADAR`) and working factories, `render::unit_frame_index_with_animation`
+//!   gets `effects = false` (the frame is static), like `settings["effects"]` in
+//!   `units_manager.cpp:2857/3030` and `unitinfo.cpp:5057`;
+//! * `FX Disabled` (`disable_fx`) — **SFX sound on/off**: `AudioPlayer::
+//!   set_enabled(!disable_fx)`; `FX` — the `AudioPlayer::set_volume` volume
+//!   (`fx_sound_level/100`), like `AUDIO_TYPE_SFX2` in C++;
+//! * `Auto-Save Enabled` (`auto_save`) — `App::autosave` (slot 10);
+//! * `Click to Scroll` (`click_scroll`) — `App::update_scroll` builds the offset
+//!   only while the LMB is "held", otherwise scrolling goes by hover
 //!   (`GameManager_SetGridOffset`, `game_manager.cpp:6351`);
-//! * `Scroll Speed` (`quick_scroll`) — шаг камеры в экранных пикселях за кадр
-//!   30 Гц (`GameManager_ZoomMainMapView`/`ScrollMainMapView`,
+//! * `Scroll Speed` (`quick_scroll`) — the camera step in screen pixels per 30 Hz
+//!   frame (`GameManager_ZoomMainMapView`/`ScrollMainMapView`,
 //!   `game_manager.cpp:1711/1652`);
-//! * `Double Unit Steps` (`fast_movement`) — скорость спрайта юнитов ×2
+//! * `Double Unit Steps` (`fast_movement`) — the unit sprite speed ×2
 //!   (`UnitInfo::Move`: `velocity += 2`, `unitinfo.cpp:1742`);
-//! * `Track Selected Unit` (`follow_unit`) — камера центрируется на выделенном
-//!   юните, когда он выходит за окно карты (`UnitInfo::FollowUnit`,
+//! * `Track Selected Unit` (`follow_unit`) — the camera centers on the selected
+//!   unit when it leaves the map window (`UnitInfo::FollowUnit`,
 //!   `unitinfo.cpp:3597`);
-//! * `Auto-Select Next Unit` (`auto_select`) — после завершения приказа или
-//!   постройки выделяется следующий юнит команды (`GameManager_AutoSelectNext`,
+//! * `Auto-Select Next Unit` (`auto_select`) — after an order or construction
+//!   completes, the next unit of the team is selected (`GameManager_AutoSelectNext`,
 //!   `game_manager.cpp:1779`);
-//! * `Halt movement when enemy is detected` (`enemy_halt`) — симуляция ставит
-//!   `UnitEventEmergencyStop` при обнаружении врага (`access.cpp:827`);
-//! * `Turn Time`/`End Turn Time` (`timer`/`endturn`) — те же `settings`, что
-//!   читает `GameManager_UpdateGui` в начале каждого хода; старт партии берёт
-//!   их с экрана настройки, `Preferences` меняет со следующего хода;
-//! * `Player Name` (`player_name`) — в одиночной игре имя команды
-//!   (`menu.cpp:1944`); в игре `PREFSPIC` правит имя текущей команды
-//!   (`menu_team_name_setting`, `optionsmenu.cpp:177/552`) — оно видно в
-//!   журнале HUD, на экране победы и в V70-сейве.
+//! * `Halt movement when enemy is detected` (`enemy_halt`) — the simulation sets
+//!   `UnitEventEmergencyStop` when an enemy is detected (`access.cpp:827`);
+//! * `Turn Time`/`End Turn Time` (`timer`/`endturn`) — the same `settings` that
+//!   `GameManager_UpdateGui` reads at the start of each turn; the match start takes
+//!   them from the setup screen, `Preferences` changes them from the next turn;
+//! * `Player Name` (`player_name`) — in a single game the team name
+//!   (`menu.cpp:1944`); in game `PREFSPIC` edits the current team name
+//!   (`menu_team_name_setting`, `optionsmenu.cpp:177/552`) — it is visible in the
+//!   HUD log, on the victory screen and in the V70 save.
 //!
-//! Сохраняются, но пока не действуют: `disable_music`/`disable_voice`/
-//! `disable_movie` и уровни Music/Voice/Video (музыки/голоса/видео в звуковом
-//! слое нет — D2/C3), `enhanced_graphics`, `host_address`/`host_port` (сеть
-//! задаётся CLI). Отличия ввода: у оконного слоя нет `MouseButtonUp`, поэтому
-//! «удержание» ЛКМ для `click_scroll` — импульс
+//! Saved but not active yet: `disable_music`/`disable_voice`/
+//! `disable_movie` and the Music/Voice/Video levels (there is no music/voice/video in the
+//! sound layer — D2/C3), `enhanced_graphics`, `host_address`/`host_port` (the network
+//! is set by the CLI). Input differences: the window layer has no `MouseButtonUp`, so
+//! the LMB "hold" for `click_scroll` — a pulse of
 //! [`crate::scroll::CLICK_HOLD_SECONDS`].
 
 use std::path::{Path, PathBuf};
@@ -120,62 +120,62 @@ use crate::menu::{blit_simple, draw_big_image_at, wrap_gnw_text, MenuButtonPair}
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 
-/// Ширина панели `PREFSPIC`.
+/// `PREFSPIC` panel width.
 pub const WINDOW_WIDTH: i32 = 400;
-/// Высота панели `PREFSPIC`.
+/// `PREFSPIC` panel height.
 pub const WINDOW_HEIGHT: i32 = 422;
-/// Позиция окна в кадре 640×480 (`Window(id)` центрирует ресурс).
+/// Window position in the 640×480 frame (`Window(id)` centers the resource).
 pub const WINDOW_ULX: i32 = (640 - WINDOW_WIDTH) / 2;
-/// Позиция окна в кадре 640×480.
+/// Window position in the 640×480 frame.
 pub const WINDOW_ULY: i32 = (480 - WINDOW_HEIGHT) / 2;
 
-/// Заголовок: `Text_TextBox(..., 108, 12, 184, 17, COLOR_GREEN, true, true)`.
+/// Title: `Text_TextBox(..., 108, 12, 184, 17, COLOR_GREEN, true, true)`.
 pub const TITLE: PixelRect = PixelRect::new(108, 12, 184, 17);
-/// Кнопка `Done` (`PRFDNE_U/D`, 62×23).
+/// `Done` button (`PRFDNE_U/D`, 62×23).
 pub const DONE_BUTTON: PixelRect = PixelRect::new(215, 383, 62, 23);
-/// Кнопка `Cancel` (`PRFCAN_U/D`, 62×23).
+/// `Cancel` button (`PRFCAN_U/D`, 62×23).
 pub const CANCEL_BUTTON: PixelRect = PixelRect::new(125, 383, 62, 23);
-/// Кнопка `Help` (`PRFHLP_U/D`, 25×23).
+/// `Help` button (`PRFHLP_U/D`, 25×23).
 pub const HELP_BUTTON: PixelRect = PixelRect::new(188, 383, 25, 23);
 
-/// `FONT5` (`Text_SetFont(GNW_TEXT_FONT_5)` в конструкторе).
+/// `FONT5` (`Text_SetFont(GNW_TEXT_FONT_5)` in the constructor).
 const LABEL_FONT: GnwFontId = GnwFontId::Font5;
-/// Высота строки подписи в `Text_TextBox` (`Text_GetHeight() + 1`).
+/// Label row height in `Text_TextBox` (`Text_GetHeight() + 1`).
 const LINE_HEIGHT: i32 = 11;
-/// Ширина жёлоба слайдера (`PRFSLIT`, 57×3).
+/// Slider groove width (`PRFSLIT`, 57×3).
 pub const SLIDER_SLIT_WIDTH: i32 = 57;
-/// Высота области слайдера (`Text_TextBox` 20 px).
+/// Slider area height (`Text_TextBox` 20 px).
 const SLIDER_ROW_HEIGHT: i32 = 20;
 
-/// `COLOR_GREEN` заголовка.
+/// Title `COLOR_GREEN`.
 const GREEN: u8 = 0x02;
-/// `Fonts_GoldColor` — подписи/кнопки.
+/// `Fonts_GoldColor` — labels/buttons.
 const GOLD: (u8, u8, u8) = (165, 175, 199);
-/// `Fonts_BrightYellowColor` — read-only значения секции `options`.
+/// `Fonts_BrightYellowColor` — read-only values of the `options` section.
 const BRIGHT_YELLOW: (u8, u8, u8) = (162, 8, 199);
-/// Цвет значения в поле ввода (`0xA2`).
+/// Value color in the input field (`0xA2`).
 const EDIT_TEXT: u8 = 0xA2;
 
-/// Размер поля ввода по ключу контрола.
+/// Input field size by control key.
 const EDIT_W: i32 = 60;
-/// Высота `PREFEDIT`.
+/// `PREFEDIT` height.
 const EDIT_H: i32 = 19;
-/// Ширина `PREFNAME`.
+/// `PREFNAME` width.
 const NAME_W: i32 = 187;
-/// Высота `PREFNAME`.
+/// `PREFNAME` height.
 const NAME_H: i32 = 17;
 
-/// Вариант диалога: `SETUPPIC` (главное меню) или `PREFSPIC` (игра).
+/// Dialog variant: `SETUPPIC` (main menu) or `PREFSPIC` (game).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferencesVariant {
-    /// `menu_setup_window()`: только секция `setup`.
+    /// `menu_setup_window()`: only the `setup` section.
     Setup,
-    /// `menu_preferences_window()`: все секции (кроме `debug`).
+    /// `menu_preferences_window()`: all sections (except `debug`).
     InGame,
 }
 
 impl PreferencesVariant {
-    /// Заголовок окна (`_(7013)`/`_(f70f)`).
+    /// Window title (`_(7013)`/`_(f70f)`).
     pub const fn title(self) -> &'static str {
         match self {
             Self::Setup => "Setup",
@@ -183,7 +183,7 @@ impl PreferencesVariant {
         }
     }
 
-    /// Секция помощи (`SETUP_MENU_SETUP`/`PREFS_MENU_SETUP`).
+    /// Help section (`SETUP_MENU_SETUP`/`PREFS_MENU_SETUP`).
     pub const fn help_section(self) -> crate::helpmenu::HelpSection {
         match self {
             Self::Setup => crate::helpmenu::HelpSection::Setup,
@@ -192,16 +192,16 @@ impl PreferencesVariant {
     }
 }
 
-/// Ключ опции (имя настройки C++ / наше поле `Preferences`).
+/// Option key (the C++ setting name / our `Preferences` field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrefKey {
-    /// Секция `setup`.
+    /// `setup` section.
     SectionSetup,
-    /// Подпись `Volume:` (label, `music_level`).
+    /// `Volume:` label (label, `music_level`).
     MusicVolumeLabel,
-    /// `enhanced_graphics` (только `SETUPPIC`).
+    /// `enhanced_graphics` (only `SETUPPIC`).
     EnhancedGraphics,
-    /// `music_level` (слайдер 0..100).
+    /// `music_level` (slider 0..100).
     MusicLevel,
     /// `disable_music`.
     DisableMusic,
@@ -219,13 +219,13 @@ pub enum PrefKey {
     DisableMovie,
     /// `auto_save`.
     AutoSave,
-    /// `host_address` (только `SETUPPIC`).
+    /// `host_address` (only `SETUPPIC`).
     HostAddress,
-    /// `host_port` (только `SETUPPIC`).
+    /// `host_port` (only `SETUPPIC`).
     HostPort,
     /// `player_name`.
     PlayerName,
-    /// Секция `preferences`.
+    /// `preferences` section.
     SectionPreferences,
     /// `effects`.
     Effects,
@@ -239,9 +239,9 @@ pub enum PrefKey {
     EnemyHalt,
     /// `auto_select`.
     AutoSelect,
-    /// `quick_scroll` (слайдер 4..128).
+    /// `quick_scroll` (slider 4..128).
     QuickScroll,
-    /// Секция `options`.
+    /// `options` section.
     SectionOptions,
     /// `timer`.
     TurnTimer,
@@ -253,12 +253,12 @@ pub enum PrefKey {
     OpponentLabel,
     /// `victory_limit` (label).
     VictoryLabel,
-    /// Секция `invalid` (debug-контролы; порт останавливается).
+    /// `invalid` section (debug controls; the port stops there).
     SectionInvalid,
 }
 
 impl PrefKey {
-    /// Имя настройки для QA/логов (`effects`, `disable_fx`, …).
+    /// Setting name for QA/logs (`effects`, `disable_fx`, …).
     pub const fn name(self) -> &'static str {
         match self {
             Self::SectionSetup => "setup",
@@ -294,7 +294,7 @@ impl PrefKey {
         }
     }
 
-    /// Разбор имени (QA `prefs toggle …`); регистр и `-`/`_` не важны.
+    /// Parsing of the name (QA `prefs toggle …`); case and `-`/`_` do not matter.
     pub fn parse(text: &str) -> Option<Self> {
         let name = text.trim().to_ascii_lowercase().replace('-', "_");
         let key = match name.as_str() {
@@ -329,7 +329,7 @@ impl PrefKey {
         Some(key)
     }
 
-    /// Контрол переключается кликом/`Space` (чекбокс).
+    /// The control toggles on click/`Space` (checkbox).
     pub const fn is_checkbox(self) -> bool {
         matches!(
             self,
@@ -348,7 +348,7 @@ impl PrefKey {
         )
     }
 
-    /// Контрол — слайдер.
+    /// The control is a slider.
     pub const fn is_slider(self) -> bool {
         matches!(
             self,
@@ -356,7 +356,7 @@ impl PrefKey {
         )
     }
 
-    /// Контрол — поле ввода.
+    /// The control is an input field.
     pub const fn is_edit(self) -> bool {
         matches!(
             self,
@@ -364,7 +364,7 @@ impl PrefKey {
         )
     }
 
-    /// Границы слайдера/числового поля (`range_min`, `range_max` из C++).
+    /// Slider/number field bounds (`range_min`, `range_max` from C++).
     pub const fn range(self) -> (i32, i32) {
         match self {
             Self::QuickScroll => (4, 128),
@@ -375,24 +375,24 @@ impl PrefKey {
     }
 }
 
-/// Тип контрола (`OptionsType`).
+/// Control type (`OptionsType`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlKind {
-    /// Секция-разделитель (не рисуется).
+    /// Section separator (not drawn).
     Section,
-    /// Только подпись/значение.
+    /// Label/value only.
     Label,
-    /// Чекбокс `UNCHKED`/`CHECKED`.
+    /// Checkbox `UNCHKED`/`CHECKED`.
     Checkbox,
-    /// Слайдер с жёлобом `PRFSLIT` и ползунком `PRFSLIDE`.
+    /// Slider with the `PRFSLIT` groove and `PRFSLIDE` thumb.
     Slider,
-    /// Числовое поле `PREFEDIT`.
+    /// Number field `PREFEDIT`.
     EditInt,
-    /// Строковое поле `PREFEDIT`/`PREFNAME`.
+    /// String field `PREFEDIT`/`PREFNAME`.
     EditStr,
 }
 
-/// Опция таблицы `options_menu_buttons` (в порядке C++).
+/// An option of the `options_menu_buttons` table (in C++ order).
 #[derive(Debug, Clone, Copy)]
 struct Def {
     key: PrefKey,
@@ -410,7 +410,7 @@ const fn def(key: PrefKey, kind: ControlKind, caption: &'static str, ulx: i32) -
     }
 }
 
-/// Дословная таблица `OptionsMenu::options_menu_buttons` (36 строк).
+/// Verbatim `OptionsMenu::options_menu_buttons` table (36 rows).
 const DEFS: [Def; 36] = [
     def(PrefKey::SectionSetup, ControlKind::Section, "", 0),
     def(PrefKey::MusicVolumeLabel, ControlKind::Label, "Volume:", 25),
@@ -457,7 +457,7 @@ const DEFS: [Def; 36] = [
     ),
     def(PrefKey::VictoryLabel, ControlKind::Label, "Game ends at %i %s.", 25),
     def(PrefKey::SectionInvalid, ControlKind::Section, "", 0),
-    // debug-секция (`invalid`) в порт не входит: 6 контролов ниже.
+    // the debug section (`invalid`) is not part of the port: 6 controls below.
     def(PrefKey::SectionInvalid, ControlKind::Checkbox, "", 25),
     def(PrefKey::SectionInvalid, ControlKind::Checkbox, "", 210),
     def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 25),
@@ -466,16 +466,16 @@ const DEFS: [Def; 36] = [
     def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 210),
 ];
 
-/// Значения `play_mode`/`opponent`/`victory_*` для read-only подписей.
+/// `play_mode`/`opponent`/`victory_*` values for the read-only labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreferencesInfo {
-    /// Режим игры (`PlayMode`).
+    /// Game mode (`PlayMode`).
     pub play_mode: PlayMode,
-    /// Сложность ИИ (`Opponent`).
+    /// AI difficulty (`Opponent`).
     pub opponent: Opponent,
-    /// Лимит победы (`victory_limit`).
+    /// Victory limit (`victory_limit`).
     pub victory_limit: i32,
-    /// Тип победы (`victory_type`).
+    /// Victory type (`victory_type`).
     pub victory_type: VictoryType,
 }
 
@@ -491,7 +491,7 @@ impl Default for PreferencesInfo {
 }
 
 impl PreferencesInfo {
-    /// Подпись `Play Mode: %s` (`d0a7`/`ee25`).
+    /// `Play Mode: %s` label (`d0a7`/`ee25`).
     pub fn play_mode_text(self) -> String {
         let value = match self.play_mode {
             PlayMode::TurnBased => "Turn Based",
@@ -502,7 +502,7 @@ impl PreferencesInfo {
         format!("Play Mode: {value}")
     }
 
-    /// Подпись `Computer Player(s): %s` (`a24d`…`c7e3`).
+    /// `Computer Player(s): %s` label (`a24d`…`c7e3`).
     pub fn opponent_text(self) -> String {
         let value = match self.opponent {
             Opponent::Clueless => "Clueless",
@@ -516,7 +516,7 @@ impl PreferencesInfo {
         format!("Computer Player(s): {value}")
     }
 
-    /// Подпись `Game ends at %i %s.` (`b542`/`c303`).
+    /// `Game ends at %i %s.` label (`b542`/`c303`).
     pub fn victory_text(self) -> String {
         let unit = match self.victory_type {
             VictoryType::Duration => "turns",
@@ -527,11 +527,11 @@ impl PreferencesInfo {
     }
 }
 
-/// Пользовательские настройки (`SETUP` + `PREFERENCES` + часть `OPTIONS`).
+/// User settings (`SETUP` + `PREFERENCES` + part of `OPTIONS`).
 ///
-/// Значения по умолчанию — `settings.cpp`: `effects=1`, `click_scroll=1`,
+/// Default values — `settings.cpp`: `effects=1`, `click_scroll=1`,
 /// `quick_scroll=16`, `fast_movement=1`, `follow_unit=0`, `auto_select=0`,
-/// `enemy_halt=1`; громкости 100, `auto_save=1`, `enhanced_graphics=1`,
+/// `enemy_halt=1`; volumes 100, `auto_save=1`, `enhanced_graphics=1`,
 /// `player_name="Player 1"`, `timer=180`, `endturn=45`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preferences {
@@ -575,9 +575,9 @@ pub struct Preferences {
     pub host_address: String,
     /// `host_port`, 1024..=65535.
     pub host_port: i32,
-    /// `timer` (сек).
+    /// `timer` (sec).
     pub turn_timer: i32,
-    /// `endturn` (сек).
+    /// `endturn` (sec).
     pub endturn: i32,
 }
 
@@ -611,7 +611,7 @@ impl Default for Preferences {
 }
 
 impl Preferences {
-    /// `IniPreferences` (7 полей V70: `effects`, `click_scroll`,
+    /// `IniPreferences` (7 V70 fields: `effects`, `click_scroll`,
     /// `quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`,
     /// `enemy_halt`).
     pub fn to_ini(&self) -> IniPreferences {
@@ -626,8 +626,8 @@ impl Preferences {
         }
     }
 
-    /// Применяет `IniPreferences` из сейва (как `SaveLoad_Load`:
-    /// `settings->SetNumericValue(...)` для семи полей).
+    /// Applies `IniPreferences` from a save (like `SaveLoad_Load`:
+    /// `settings->SetNumericValue(...)` for the seven fields).
     pub fn apply_ini(&mut self, ini: IniPreferences) {
         self.effects = ini.effects != 0;
         self.click_scroll = ini.click_scroll != 0;
@@ -638,22 +638,22 @@ impl Preferences {
         self.enemy_halt = ini.enemy_halt != 0;
     }
 
-    /// Звук SFX включён (`!disable_fx`).
+    /// SFX sound enabled (`!disable_fx`).
     pub fn sound_enabled(&self) -> bool {
         !self.disable_fx
     }
 
-    /// Голоса включены (`!disable_voice`) — C++ `AUDIO_TYPE_VOICE`.
+    /// Voices enabled (`!disable_voice`) — C++ `AUDIO_TYPE_VOICE`.
     pub fn voice_enabled(&self) -> bool {
         !self.disable_voice
     }
 
-    /// Громкость SFX 0.0..=1.0 (`fx_sound_level / 100`).
+    /// SFX volume 0.0..=1.0 (`fx_sound_level / 100`).
     pub fn sound_volume(&self) -> f32 {
         self.fx_sound_level.clamp(0, 100) as f32 / 100.0
     }
 
-    /// Значение чекбокса по ключу.
+    /// Checkbox value by key.
     pub fn bool_value(&self, key: PrefKey) -> Option<bool> {
         Some(match key {
             PrefKey::EnhancedGraphics => self.enhanced_graphics,
@@ -672,7 +672,7 @@ impl Preferences {
         })
     }
 
-    /// Числовое значение по ключу.
+    /// Numeric value by key.
     pub fn int_value(&self, key: PrefKey) -> Option<i32> {
         Some(match key {
             PrefKey::MusicLevel => self.music_level,
@@ -687,7 +687,7 @@ impl Preferences {
         })
     }
 
-    /// Строковое значение по ключу.
+    /// String value by key.
     pub fn string_value(&self, key: PrefKey) -> Option<&str> {
         match key {
             PrefKey::PlayerName => Some(&self.player_name),
@@ -696,7 +696,7 @@ impl Preferences {
         }
     }
 
-    /// Устанавливает чекбокс; `false` — ключ не чекбокс.
+    /// Sets a checkbox; `false` — the key is not a checkbox.
     pub fn set_bool(&mut self, key: PrefKey, value: bool) -> bool {
         match key {
             PrefKey::EnhancedGraphics => self.enhanced_graphics = value,
@@ -717,7 +717,7 @@ impl Preferences {
         true
     }
 
-    /// Устанавливает число с приведением к границам контрола.
+    /// Sets a number clamped to the control bounds.
     pub fn set_int(&mut self, key: PrefKey, value: i32) -> bool {
         let (min, max) = key.range();
         let value = value.clamp(min, max);
@@ -737,7 +737,7 @@ impl Preferences {
         true
     }
 
-    /// Строковое значение по ключу (для commit поля ввода).
+    /// String value by key (for committing the input field).
     pub fn set_string(&mut self, key: PrefKey, value: &str) -> bool {
         match key {
             PrefKey::PlayerName => self.player_name = value.to_string(),
@@ -748,8 +748,8 @@ impl Preferences {
         true
     }
 
-    /// Читает `preferences.ini` (неизвестные ключи игнорируются); `None` —
-    /// файла нет/не читается.
+    /// Reads `preferences.ini` (unknown keys are ignored); `None` —
+    /// no file/not readable.
     pub fn load_file(path: &Path) -> Option<Self> {
         let text = std::fs::read_to_string(path).ok()?;
         let mut prefs = Self::default();
@@ -812,7 +812,7 @@ impl Preferences {
         Some(prefs)
     }
 
-    /// Пишет `preferences.ini` (создаёт каталог).
+    /// Writes `preferences.ini` (creates the directory).
     pub fn save_file(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -863,68 +863,68 @@ fn parse_int(text: &str) -> Option<i32> {
     text.trim().parse::<i32>().ok()
 }
 
-/// Одна строка диалога (координаты — локальные, внутри `PREFSPIC`).
+/// One dialog row (coordinates are local, inside `PREFSPIC`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    /// Ключ настройки.
+    /// Setting key.
     pub key: PrefKey,
-    /// Тип контрола.
+    /// Control type.
     pub kind: ControlKind,
-    /// Подпись (с `%s` для read-only подписей).
+    /// Label (with `%s` for read-only labels).
     pub caption: String,
-    /// Локальный `x` контрола (`options_menu_buttons[i].ulx`).
+    /// Local `x` of the control (`options_menu_buttons[i].ulx`).
     pub x: i32,
-    /// Локальный `y` контрола (`window_uly`).
+    /// Local `y` of the control (`window_uly`).
     pub y: i32,
-    /// Прямоугольник подписи (`Text_TextBox`).
+    /// Label rectangle (`Text_TextBox`).
     pub label: PixelRect,
-    /// Прямоугольник клика/контрола.
+    /// Click/control rectangle.
     pub rect: PixelRect,
-    /// Жёлоб слайдера (`PRFSLIT`), если это слайдер.
+    /// Slider groove (`PRFSLIT`), if this is a slider.
     pub slider: Option<PixelRect>,
-    /// Поле ввода (`PREFEDIT`/`PREFNAME`), если это edit.
+    /// Input field (`PREFEDIT`/`PREFNAME`), if this is an edit.
     pub field: Option<PixelRect>,
 }
 
-/// Действие диалога.
+/// Dialog action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferencesAction {
-    /// Ничего не изменилось.
+    /// Nothing changed.
     None,
-    /// Значение изменилось: применить к `App::preferences` сразу (эффекты/звук).
+    /// The value changed: apply to `App::preferences` immediately (effects/sound).
     Changed,
-    /// `Done`/`Enter`: сохранить.
+    /// `Done`/`Enter`: save.
     Done,
-    /// `Cancel`/`Esc`: вернуть значения на момент открытия.
+    /// `Cancel`/`Esc`: restore the values at the moment of opening.
     Cancel,
-    /// `?`: окно помощи.
+    /// `?`: help window.
     Help,
 }
 
-/// Открытый диалог `Preferences` с редактируемой копией значений.
+/// Open `Preferences` dialog with an editable copy of the values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreferencesDialog {
-    /// `SETUPPIC` или `PREFSPIC`.
+    /// `SETUPPIC` or `PREFSPIC`.
     variant: PreferencesVariant,
-    /// Редактируемые значения.
+    /// Editable values.
     pub draft: Preferences,
-    /// Снимок для `Cancel`.
+    /// Snapshot for `Cancel`.
     pub initial: Preferences,
-    /// Значения read-only подписей.
+    /// Values of the read-only labels.
     pub info: PreferencesInfo,
     rows: Vec<Row>,
-    /// Индекс строки в фокусе (клавиатура).
+    /// Index of the focused row (keyboard).
     pub focus: Option<usize>,
-    /// Индекс редактируемой строки.
+    /// Index of the row being edited.
     editing: Option<usize>,
-    /// Буфер редактирования (`char text_buffer[64]`).
+    /// Edit buffer (`char text_buffer[64]`).
     edit_buffer: String,
-    /// Исходное значение редактируемой строки.
+    /// Original value of the edited row.
     edit_initial: String,
 }
 
 impl PreferencesDialog {
-    /// Создаёт диалог с раскладкой `OptionsMenu::Init` для варианта.
+    /// Creates the dialog with the `OptionsMenu::Init` layout for the variant.
     pub fn new(variant: PreferencesVariant, prefs: Preferences, info: PreferencesInfo) -> Self {
         let rows = layout(variant);
 
@@ -941,32 +941,32 @@ impl PreferencesDialog {
         }
     }
 
-    /// Вариант диалога.
+    /// Dialog variant.
     pub const fn variant(&self) -> PreferencesVariant {
         self.variant
     }
 
-    /// Видимые строки (в порядке C++).
+    /// Visible rows (in C++ order).
     pub fn rows(&self) -> &[Row] {
         &self.rows
     }
 
-    /// Строка по ключу.
+    /// Row by key.
     pub fn row(&self, key: PrefKey) -> Option<&Row> {
         self.rows.iter().find(|row| row.key == key)
     }
 
-    /// Индекс редактируемой строки (для тестов/QA).
+    /// Index of the row being edited (for tests/QA).
     pub fn editing(&self) -> Option<usize> {
         self.editing
     }
 
-    /// Текст в поле ввода (для тестов).
+    /// Text in the input field (for tests).
     pub fn edit_buffer(&self) -> &str {
         &self.edit_buffer
     }
 
-    /// Текст read-only подписи (с подставленными значениями).
+    /// Read-only label text (with the values substituted).
     pub fn label_text(&self, key: PrefKey) -> Option<String> {
         Some(match key {
             PrefKey::PlayModeLabel => self.info.play_mode_text(),
@@ -977,7 +977,7 @@ impl PreferencesDialog {
         })
     }
 
-    /// Значение контрола числом (чекбокс — 0/1) для `assert prefs-value`.
+    /// Control value as a number (checkbox — 0/1) for `assert prefs-value`.
     pub fn value(&self, key: PrefKey) -> Option<i32> {
         if let Some(value) = self.draft.bool_value(key) {
             return Some(i32::from(value));
@@ -985,7 +985,7 @@ impl PreferencesDialog {
         self.draft.int_value(key)
     }
 
-    /// Строковое значение контрола (для тестов/логов).
+    /// String control value (for tests/logs).
     pub fn string_value(&self, key: PrefKey) -> Option<String> {
         if let Some(value) = self.draft.string_value(key) {
             return Some(value.to_string());
@@ -993,8 +993,8 @@ impl PreferencesDialog {
         None
     }
 
-    /// Текст поля ввода в том виде, в котором его видит `Enter`
-    /// (`timer`/`endturn` — число, `player_name`/`host_address` — строка).
+    /// The input field text as `Enter` sees it
+    /// (`timer`/`endturn` — a number, `player_name`/`host_address` — a string).
     pub fn edit_text(&self, key: PrefKey) -> Option<String> {
         if !key.is_edit() || !self.rows.iter().any(|row| row.key == key) {
             return None;
@@ -1003,7 +1003,7 @@ impl PreferencesDialog {
         Some(self.current_string(key))
     }
 
-    /// Переключает чекбокс (клавиатура/QA-тест). `false` — ключ не чекбокс.
+    /// Toggles a checkbox (keyboard/QA test). `false` — the key is not a checkbox.
     pub fn toggle(&mut self, key: PrefKey) -> bool {
         let Some(row) = self.rows.iter().find(|row| row.key == key) else {
             return false;
@@ -1016,7 +1016,7 @@ impl PreferencesDialog {
         self.draft.set_bool(key, !current)
     }
 
-    /// Ставит слайдер (клик/QA). `false` — ключ не слайдер.
+    /// Sets a slider (click/QA). `false` — the key is not a slider.
     pub fn set_slider(&mut self, key: PrefKey, value: i32) -> bool {
         let Some(row) = self.rows.iter().find(|row| row.key == key) else {
             return false;
@@ -1028,7 +1028,7 @@ impl PreferencesDialog {
         self.draft.set_int(key, value)
     }
 
-    /// Экранный прямоугольник контрола (для QA-кликов/тестов).
+    /// Screen rectangle of the control (for QA clicks/tests).
     pub fn screen_rect(&self, key: PrefKey) -> Option<PixelRect> {
         let row = self.row(key)?;
 
@@ -1040,7 +1040,7 @@ impl PreferencesDialog {
         ))
     }
 
-    /// Экранная `x`-координата слайдера для значения `value` (для QA).
+    /// Screen `x` of the slider for the value `value` (for QA).
     pub fn slider_screen_x(&self, key: PrefKey, value: i32) -> Option<i32> {
         let row = self.row(key)?;
         let slider = row.slider?;
@@ -1051,7 +1051,7 @@ impl PreferencesDialog {
         Some(WINDOW_ULX + x)
     }
 
-    /// Значение слайдера, которое даст клик в экранную точку `screen_x`
+    /// The slider value that a click at the screen point `screen_x` gives
     /// (`OptionsMenu::UpdateSlider`: `((x − track)·max) / 57`).
     pub fn slider_value_at(&self, key: PrefKey, screen_x: i32) -> Option<i32> {
         let row = self.row(key)?;
@@ -1062,7 +1062,7 @@ impl PreferencesDialog {
         Some(value.clamp(min, max))
     }
 
-    /// Обрабатывает ввод.
+    /// Handles input.
     pub fn input(&mut self, event: InputEvent) -> PreferencesAction {
         match event {
             InputEvent::Key(key) => self.key(key),
@@ -1093,8 +1093,8 @@ impl PreferencesDialog {
             .iter()
             .position(|row| row.rect.contains(lx, ly));
 
-        // Клик мимо активного поля фиксирует его значение — как
-        // `ProcessTextEditKeyPress(GNW_KB_KEY_RETURN)` перед обработкой контрола.
+        // A click outside the active field commits its value — like
+        // `ProcessTextEditKeyPress(GNW_KB_KEY_RETURN)` before processing the control.
         let mut changed = false;
 
         if let Some(editing) = self.editing {
@@ -1158,8 +1158,8 @@ impl PreferencesDialog {
         if let Some(index) = self.editing {
             return match key {
                 Key::Escape => {
-                    // C++: первое Esc при активном поле только выходит из
-                    // редактирования (`ProcessTextEditKeyPress(ESC)`).
+                    // C++: the first Esc while a field is active only leaves
+                    // editing (`ProcessTextEditKeyPress(ESC)`).
                     if self.commit_edit() {
                         PreferencesAction::Changed
                     } else {
@@ -1294,7 +1294,7 @@ impl PreferencesDialog {
         String::new()
     }
 
-    /// Фиксирует значение поля ввода. `true` — значение изменилось.
+    /// Commits the input field value. `true` — the value changed.
     fn commit_edit(&mut self) -> bool {
         let Some(index) = self.editing.take() else {
             return false;
@@ -1338,7 +1338,7 @@ impl PreferencesDialog {
         }
     }
 
-    /// Рисует диалог поверх кадра 640×480.
+    /// Draws the dialog over the 640×480 frame.
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets) -> u32 {
         if frame.width() != 640 || frame.height() != 480 {
             return 0;
@@ -1377,7 +1377,7 @@ impl PreferencesDialog {
             }
         }
 
-        // Заголовок (`COLOR_GREEN`, FONT5, по центру 184×17).
+        // Title (`COLOR_GREEN`, FONT5, centered 184×17).
         painted += draw_text_gnw_centered(
             frame,
             PixelRect::new(
@@ -1578,7 +1578,7 @@ impl PreferencesDialog {
     }
 }
 
-/// Раскладка `OptionsMenu::Init` для варианта.
+/// `OptionsMenu::Init` layout for the variant.
 fn layout(variant: PreferencesVariant) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut y = 20;
@@ -1590,8 +1590,8 @@ fn layout(variant: PreferencesVariant) -> Vec<Row> {
         }
 
         if def.kind == ControlKind::Section {
-            // `SETUPPIC` завершает список на секции `preferences`,
-            // `PREFSPIC` — на `invalid` (debug-секция не портирована).
+            // `SETUPPIC` ends the list at the `preferences` section,
+            // `PREFSPIC` — at `invalid` (the debug section is not ported).
             let stop = match def.key {
                 PrefKey::SectionPreferences => variant == PreferencesVariant::Setup,
                 PrefKey::SectionInvalid => true,
@@ -1676,7 +1676,7 @@ fn build_row(def: &Def, y: i32) -> Row {
     }
 }
 
-/// `IsControlVisible`: графика и сеть — только в `SETUPPIC`.
+/// `IsControlVisible`: graphics and network — only in `SETUPPIC`.
 fn is_visible(variant: PreferencesVariant, key: PrefKey) -> bool {
     if matches!(
         key,
@@ -1688,7 +1688,7 @@ fn is_visible(variant: PreferencesVariant, key: PrefKey) -> bool {
     true
 }
 
-/// Подпись `Text_TextBox` с `FontColor`: перенос по словам, вертикальное центрирование.
+/// `Text_TextBox` label with `FontColor`: word wrap, vertical centering.
 fn draw_label_box(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -1727,7 +1727,7 @@ fn draw_label_box(
     1
 }
 
-/// Кнопка диалога: картинка `up` + подпись `FONT5` (`Button::SetCaption`).
+/// Dialog button: `up` picture + `FONT5` label (`Button::SetCaption`).
 fn draw_dialog_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
@@ -1779,7 +1779,7 @@ fn draw_dialog_button(
     painted
 }
 
-/// Обрезка длинного значения по ширине поля.
+/// Clipping of a long value by the field width.
 fn fit_text(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> String {
     if font.text_width(text) <= max_width {
         return text.to_string();
@@ -1794,7 +1794,7 @@ fn fit_text(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> Str
     out
 }
 
-/// Ресурсы диалога из `MAX.RES`.
+/// Dialog resources from `MAX.RES`.
 #[derive(Debug, Clone)]
 pub struct PreferencesAssets {
     /// `PREFSPIC` 400×422.
@@ -1820,7 +1820,7 @@ pub struct PreferencesAssets {
 }
 
 impl PreferencesAssets {
-    /// Грузит ресурсы; отсутствие части — не ошибка (рисуются рамки).
+    /// Loads resources; a missing part is not an error (frames are drawn).
     pub fn load(archive: &max_assets::res::ResArchive) -> Self {
         let pair = |up: &str, down: &str| -> Option<MenuButtonPair> {
             let up = SimpleImage::decode(archive.read(up).ok()?).ok()?;
@@ -1848,7 +1848,7 @@ impl PreferencesAssets {
         }
     }
 
-    /// Все обязательные картинки загрузились.
+    /// All mandatory pictures were loaded.
     pub fn is_ready(&self) -> bool {
         self.background.is_some()
             && self.unchecked.is_some()
@@ -1861,30 +1861,30 @@ impl PreferencesAssets {
 }
 
 // ---------------------------------------------------------------------------
-// Интеграция с приложением
+// Integration with the application
 // ---------------------------------------------------------------------------
 
 impl crate::App {
-    /// Текущие пользовательские настройки.
+    /// Current user settings.
     pub fn preferences(&self) -> &Preferences {
         &self.preferences
     }
 
-    /// Заменяет настройки (эффекты/звук применяются отрисовкой/аудио-слоем).
+    /// Replaces the settings (effects/sound are applied by rendering/the audio layer).
     pub fn set_preferences(&mut self, preferences: Preferences) {
         self.preferences = preferences;
         self.sync_preferences_to_game();
     }
 
-    /// Применяет настройки, которые живут в партии, к текущей сессии.
+    /// Applies the settings that live in a match to the current session.
     ///
-    /// * `timer`/`endturn` — `GameManager_UpdateGui` читает их из `settings` в
-    ///   начале каждого хода (`game_manager.cpp:2416-2471`), поэтому новая
-    ///   партия получает их при старте, а смена в игре действует со следующего
-    ///   хода;
-    /// * `enemy_halt` — `Access_UpdateMapStatus` читает настройку на каждом
-    ///   шаге юнита (`access.cpp:830`), поэтому поле состояния обновляется
-    ///   сразу.
+    /// * `timer`/`endturn` — `GameManager_UpdateGui` reads them from `settings` at
+    ///   the start of each turn (`game_manager.cpp:2416-2471`), so a new
+    ///   match gets them at start, and a change in game takes effect from the next
+    ///   turn;
+    /// * `enemy_halt` — `Access_UpdateMapStatus` reads the setting on every
+    ///   unit step (`access.cpp:830`), so the state field is updated
+    ///   immediately.
     fn sync_preferences_to_game(&mut self) {
         self.state.enemy_halt = self.preferences.enemy_halt;
 
@@ -1894,23 +1894,23 @@ impl crate::App {
         }
     }
 
-    /// Включены ли визуальные эффекты (`settings["effects"]`).
+    /// Whether visual effects are enabled (`settings["effects"]`).
     pub fn effects_enabled(&self) -> bool {
         self.preferences.effects
     }
 
-    /// Включён ли звук SFX (`!disable_fx`).
+    /// Whether SFX sound is enabled (`!disable_fx`).
     pub fn sound_enabled(&self) -> bool {
         self.preferences.sound_enabled()
     }
 
-    /// Файл настроек: `<save_dir>/preferences.ini` (C++ `settings.json` в
+    /// Settings file: `<save_dir>/preferences.ini` (C++ `settings.json` in
     /// `FilePathGamePref`).
     pub fn preferences_path(&self) -> PathBuf {
         self.save_dir().join("preferences.ini")
     }
 
-    /// Сохраняет настройки на диск; ошибка — в журнал HUD (не падение).
+    /// Saves the settings to disk; an error goes to the HUD log (no crash).
     pub fn persist_preferences(&mut self) {
         let path = self.preferences_path();
 
@@ -1920,7 +1920,7 @@ impl crate::App {
         }
     }
 
-    /// Загружает `preferences.ini`, если он есть (только интерактивный запуск).
+    /// Loads `preferences.ini`, if present (interactive launch only).
     pub fn load_preferences_from_disk(&mut self) -> bool {
         let path = self.preferences_path();
         let Some(preferences) = Preferences::load_file(&path) else {
@@ -1931,17 +1931,17 @@ impl crate::App {
         true
     }
 
-    /// Открытый диалог `Preferences`; `None` — закрыт.
+    /// Open `Preferences` dialog; `None` — closed.
     pub fn preferences_dialog(&self) -> Option<&PreferencesDialog> {
         self.preferences_dialog.as_ref()
     }
 
-    /// Открытый диалог для ввода/QA.
+    /// Open dialog for input/QA.
     pub fn preferences_dialog_mut(&mut self) -> Option<&mut PreferencesDialog> {
         self.preferences_dialog.as_mut()
     }
 
-    /// Значения read-only подписей (`Play Mode`, `Computer Player(s)`, …).
+    /// Values of the read-only labels (`Play Mode`, `Computer Player(s)`, …).
     pub fn preferences_info(&self) -> PreferencesInfo {
         match self.local() {
             Some(local) => PreferencesInfo {
@@ -1954,10 +1954,10 @@ impl crate::App {
         }
     }
 
-    /// Открывает `Preferences` (кнопка панели, `PREFSPIC`).
+    /// Opens `Preferences` (panel button, `PREFSPIC`).
     ///
-    /// Возвращает `false`, если диалог уже открыт или открыт другой модальный
-    /// экран (в C++ главное меню в это время выключено
+    /// Returns `false` if the dialog is already open or another modal
+    /// screen is open (in C++ the main menu is disabled at that time
     /// `GameManager_DisableMainMenu`).
     pub fn open_preferences(&mut self) -> bool {
         if self.preferences_dialog.is_some()
@@ -1973,10 +1973,10 @@ impl crate::App {
         }
 
         let info = self.preferences_info();
-        // C++ `PREFSPIC`: поле `Player Name:` привязано к
-        // `menu_team_name_setting[team]` — имени команды, за которую играет
-        // открывший диалог (`optionsmenu.cpp:172-181`), а не к глобальному
-        // `player_name` из главного меню.
+        // C++ `PREFSPIC`: the `Player Name:` field is bound to
+        // `menu_team_name_setting[team]` — the name of the team the dialog
+        // opener plays (`optionsmenu.cpp:172-181`), not to the global
+        // `player_name` from the main menu.
         let mut draft = self.preferences.clone();
 
         if let Some(local) = self.local.as_ref() {
@@ -1984,34 +1984,34 @@ impl crate::App {
         }
 
         let mut dialog = PreferencesDialog::new(PreferencesVariant::InGame, draft, info);
-        // `Cancel` возвращает значения приложения на момент открытия: поле
-        // имени показывает имя команды, но глобальный `player_name` меняется
-        // только по `Done` (как `SetStringValue` в `OptionsMenu::Run`).
+        // `Cancel` restores the application values at the moment of opening: the name
+        // field shows the team name, but the global `player_name` changes
+        // only on `Done` (like `SetStringValue` in `OptionsMenu::Run`).
         dialog.initial = self.preferences.clone();
         self.preferences_dialog = Some(dialog);
         true
     }
 
-    /// Закрывает диалог (без сохранения).
+    /// Closes the dialog (without saving).
     pub fn close_preferences(&mut self) {
         self.preferences_dialog = None;
     }
 
-    /// Ввод в открытом диалоге; `None` — диалог закрыт.
+    /// Input in the open dialog; `None` — the dialog is closed.
     ///
-    /// `Changed` сразу применяет черновик (как `SetNumericValue`/`SetVolume` в
-    /// C++), `Done` сохраняет в файл, `Cancel` возвращает снимок открытия.
+    /// `Changed` applies the draft immediately (like `SetNumericValue`/`SetVolume` in
+    /// C++), `Done` saves to the file, `Cancel` restores the opening snapshot.
     pub fn preferences_input(&mut self, event: InputEvent) -> Option<PreferencesAction> {
         let mut dialog = self.preferences_dialog.take()?;
         let action = dialog.input(event);
 
         match action {
             PreferencesAction::Changed => {
-                // C++ `OptionsMenu`: чекбоксы и слайдеры пишут `settings` сразу
-                // (`SetVolume`/`SetNumericValue`), а EDIT_STR/EDIT_INT — только
-                // по `Done` (`optionsmenu.cpp:533-560`). Поэтому черновик
-                // применяется весь, кроме полей ввода: иначе имя/таймер
-                // менялись бы при уходе из поля без «Done».
+                // C++ `OptionsMenu`: checkboxes and sliders write `settings` immediately
+                // (`SetVolume`/`SetNumericValue`), while EDIT_STR/EDIT_INT — only
+                // on `Done` (`optionsmenu.cpp:533-560`). Therefore the draft is
+                // applied entirely except for the input fields: otherwise the name/timer
+                // would change on leaving the field without "Done".
                 let mut applied = dialog.draft.clone();
                 applied.player_name = self.preferences.player_name.clone();
                 applied.host_address = self.preferences.host_address.clone();
@@ -2028,9 +2028,9 @@ impl crate::App {
             }
             PreferencesAction::Done => {
                 self.preferences = dialog.draft.clone();
-                // C++ `OptionsMenu` `PREFSPIC` по `Done` пишет введённое имя и
-                // в `player_name`, и в `menu_team_name_setting[team]`
-                // (`optionsmenu.cpp:548-560`): имя команды меняется сразу.
+                // C++ `OptionsMenu` `PREFSPIC` on `Done` writes the entered name
+                // both to `player_name` and to `menu_team_name_setting[team]`
+                // (`optionsmenu.cpp:548-560`): the team name changes immediately.
                 if let Some(local) = self.local.as_mut() {
                     local.rename_team(self.state.player_team, dialog.draft.player_name.clone());
                 }
@@ -2048,7 +2048,7 @@ impl crate::App {
     }
 }
 
-/// `PathBuf` для `Cargo.toml`/тестов: путь к файлу настроек рядом с сейвами.
+/// `PathBuf` for `Cargo.toml`/tests: the settings file path next to the saves.
 pub fn preferences_path_for(save_dir: &Path) -> PathBuf {
     save_dir.join("preferences.ini")
 }
@@ -2061,10 +2061,10 @@ mod tests {
         PreferencesDialog::new(variant, Preferences::default(), PreferencesInfo::default())
     }
 
-    /// Раскладка `OptionsMenu::Init` для `PREFSPIC` (без debug-секции).
+    /// `OptionsMenu::Init` layout for `PREFSPIC` (without the debug section).
     ///
-    /// `window_uly` = 20; секция +20; каждая опция с `ulx == 25` +20; label
-    /// после отрисовки `−7` (`20 − (10 + 3)`).
+    /// `window_uly` = 20; section +20; each option with `ulx == 25` +20; label
+    /// after drawing `−7` (`20 − (10 + 3)`).
     #[test]
     fn in_game_layout_matches_the_cpp_window_uly_algorithm() {
         let dialog = dialog(PreferencesVariant::InGame);
@@ -2090,21 +2090,21 @@ mod tests {
         assert_eq!(y(PrefKey::OpponentLabel), Some(346));
         assert_eq!(y(PrefKey::VictoryLabel), Some(359));
 
-        // `enhanced_graphics`/`host_address`/`host_port` — только `SETUPPIC`.
+        // `enhanced_graphics`/`host_address`/`host_port` — only `SETUPPIC`.
         assert!(dialog.row(PrefKey::EnhancedGraphics).is_none());
         assert!(dialog.row(PrefKey::HostAddress).is_none());
         assert!(dialog.row(PrefKey::HostPort).is_none());
         assert_eq!(dialog.rows().len(), 23);
     }
 
-    /// `SETUPPIC`: `Init` выходит на секции `preferences`.
+    /// `SETUPPIC`: `Init` ends at the `preferences` section.
     #[test]
     fn setup_layout_stops_at_the_preferences_section() {
         let dialog = dialog(PreferencesVariant::Setup);
         let y = |key| dialog.row(key).map(|row| row.y);
 
         assert_eq!(y(PrefKey::MusicVolumeLabel), Some(60));
-        // Label отнимает 7: чекбокс справа рисуется на 53.
+        // Label subtracts 7: the checkbox on the right is drawn at 53.
         assert_eq!(y(PrefKey::EnhancedGraphics), Some(53));
         assert_eq!(y(PrefKey::HostAddress), Some(173));
         assert_eq!(y(PrefKey::HostPort), Some(193));
@@ -2113,7 +2113,7 @@ mod tests {
         assert_eq!(dialog.rows().len(), 14);
     }
 
-    /// Клик по чекбоксу переключает значение (как `win_button_down` в C++),
+    /// A click on a checkbox toggles the value (like `win_button_down` in C++),
     /// `Enter` — `Done`, `Esc` — `Cancel`.
     #[test]
     fn checkbox_click_toggles_and_enter_is_done() {
@@ -2128,8 +2128,8 @@ mod tests {
         );
         assert!(!dialog.draft.effects);
 
-        // `Tab`/`Space`: фокус начинается с первого контрола (`Volume:` label),
-        // второй `Tab` — слайдер `Music`; `Space` на слайдере ничего не делает.
+        // `Tab`/`Space`: focus starts from the first control (`Volume:` label),
+        // the second `Tab` — the `Music` slider; `Space` on a slider does nothing.
         dialog.focus = None;
         assert_eq!(dialog.input(InputEvent::Key(Key::Tab)), PreferencesAction::None);
         assert_eq!(dialog.input(InputEvent::Key(Key::Tab)), PreferencesAction::None);
@@ -2145,7 +2145,7 @@ mod tests {
         assert_eq!(dialog.input(InputEvent::Key(Key::Escape)), PreferencesAction::Cancel);
     }
 
-    /// Клик по слайдеру ставит значение по формуле `UpdateSlider`.
+    /// A click on a slider sets the value by the `UpdateSlider` formula.
     #[test]
     fn slider_click_sets_the_value_by_track_position() {
         let mut dialog = dialog(PreferencesVariant::InGame);
@@ -2163,7 +2163,7 @@ mod tests {
         assert_eq!(dialog.draft.quick_scroll, expected);
         assert!((expected - 36).abs() <= 1, "квантование жёлоба: {expected}");
 
-        // Клавиатура: Right/Left двигают слайдер в фокусе.
+        // Keyboard: Right/Left move the focused slider.
         dialog.focus = dialog
             .rows()
             .iter()
@@ -2172,7 +2172,7 @@ mod tests {
         assert_eq!(dialog.draft.quick_scroll, expected + 4);
     }
 
-    /// Поле имени: клик, ввод, `Enter` — значение в черновике (`TextEdit` C++).
+    /// Name field: click, input, `Enter` — the value into the draft (C++ `TextEdit`).
     #[test]
     fn player_name_edit_accepts_typing_and_enter() {
         let mut dialog = dialog(PreferencesVariant::Setup);
@@ -2194,7 +2194,7 @@ mod tests {
         assert!(dialog.editing().is_none());
     }
 
-    /// `IniPreferences` — ровно 7 полей V70.
+    /// `IniPreferences` — exactly 7 V70 fields.
     #[test]
     fn ini_preferences_roundtrip() {
         let mut prefs = Preferences::default();
@@ -2236,7 +2236,7 @@ mod tests {
         );
     }
 
-    /// Файл настроек переживает запись/чтение (C++ `settings.json`).
+    /// The settings file survives write/read (C++ `settings.json`).
     #[test]
     fn preferences_file_roundtrip() {
         let dir = std::env::temp_dir().join(format!(
@@ -2261,7 +2261,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// По умолчанию эффекты и звук включены (`settings.cpp`: `effects = 1`,
+    /// By default effects and sound are on (`settings.cpp`: `effects = 1`,
     /// `disable_fx = 0`).
     #[test]
     fn defaults_match_settings_cpp() {
@@ -2275,7 +2275,7 @@ mod tests {
         assert_eq!(prefs.endturn, 45);
     }
 
-    /// `PrefKey::parse` понимает имена QA-команд.
+    /// `PrefKey::parse` understands the QA command names.
     #[test]
     fn prefs_key_names_roundtrip() {
         for key in [

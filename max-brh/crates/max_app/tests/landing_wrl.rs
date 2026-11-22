@@ -1,10 +1,10 @@
-//! Экран высадки рисует **настоящие** тайлы `.WRL`, а не плоские цвета
+//! The landing screen draws the **real** `.WRL` tiles, not flat `TileStyle` colors.
 //! `TileStyle`.
 //!
-//! Оракул — `DrawMap_RenderMapTiles`/`Gfx_DecodeMapTile` (`gfx.cpp:125-210`):
-//! на зуме 4 каждый тайл 64×64 сводится к 4×4 пикселям с выборкой
-//! `0, 21, 42, 63`. Тест сверяет кадр с `WrlMap`/`TerrainAtlas` напрямую
-//! (`tile_pixel`), не вызывая рендер-функцию экрана.
+//! Oracle — `DrawMap_RenderMapTiles`/`Gfx_DecodeMapTile` (`gfx.cpp:125-210`):
+//! at zoom 4 each 64×64 tile is reduced to 4×4 pixels sampled at
+//! `0, 21, 42, 63`. The test compares the frame with `WrlMap`/`TerrainAtlas` directly
+//! (`tile_pixel`), without calling the screen render function.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -51,8 +51,8 @@ fn landing_frame_contains_real_wrl_tiles() {
 
     assert!(painted > 0, "кадр нарисован");
 
-    // 1. Плоская карта `TileStyle` дала бы единицы цветов; настоящие тайлы —
-    //    десятки оттенков палитры `.WRL`.
+    // 1. A flat `TileStyle` map would give single-digit color counts; the real tiles —
+    //    dozens of `.WRL` palette shades.
     let mut colors = HashSet::new();
 
     for y in LANDING_AREA.uly..LANDING_AREA.lry() {
@@ -69,13 +69,13 @@ fn landing_frame_contains_real_wrl_tiles() {
         colors.len()
     );
 
-    // 2. Пиксели конкретных клеток совпадают с выборкой `Gfx_DecodeMapTile`
-    //    из сырого `.WRL` (палитра + tile_id).
+    // 2. The pixels of specific cells match the `Gfx_DecodeMapTile` sampling
+    //    from the raw `.WRL` (palette + tile_id).
     let wrl = max_assets::wrl::WrlMap::open(data.join("SNOW_1.WRL")).expect("WRL");
     let atlas = TerrainAtlas::from_wrl(&wrl);
     let offsets = cpp_tile_sample_offsets(LANDING_CELL);
 
-    // Клетки вне окна сообщения/маркеров/круга.
+    // Cells outside the message window/markers/circle.
     for (grid_x, grid_y) in [(100i16, 100i16), (60, 90), (90, 30), (5, 90)] {
         let tile_id = atlas.tile_id_at(grid_x, grid_y).expect("tile id");
 
@@ -98,8 +98,8 @@ fn landing_frame_contains_real_wrl_tiles() {
         }
     }
 
-    // 3. Курсор C++ (`Cursor_RenderToBuffer`) попадает в кадр: кадр с мышью
-    //    над валидной клеткой отличается от кадра без курсора.
+    // 3. The C++ cursor (`Cursor_RenderToBuffer`) gets into the frame: a frame with the mouse
+    //    over a valid cell differs from a frame without the cursor.
     let (mouse_x, mouse_y) = (
         LANDING_AREA.ulx + i32::from(landing.cursor.x) * LANDING_CELL + LANDING_CELL / 2,
         LANDING_AREA.uly + i32::from(landing.cursor.y) * LANDING_CELL + LANDING_CELL / 2,
@@ -128,8 +128,8 @@ fn landing_frame_contains_real_wrl_tiles() {
 
 #[test]
 fn landing_without_wrl_falls_back_to_flat_map() {
-    // Без тайлов (headless-тесты) остаётся документированный fallback: кадр
-    // всё равно рисуется и не паникует.
+    // Without tiles (headless tests) the documented fallback remains: the frame
+    // is still drawn and does not panic.
     let surface = max_core::map::SurfaceMap::from_tiles(
         [max_core::enums::Surface::LAND; max_core::geo::MAP_TILES],
     );

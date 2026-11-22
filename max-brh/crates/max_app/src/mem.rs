@@ -1,30 +1,30 @@
-//! Память процесса для soak-прогонов (P4).
+//! Process memory for soak runs (P4).
 //!
-//! Нужен ровно один показатель — **resident set size** (RSS) и его пик, чтобы
-//! доказать, что 100+ ходов не дают линейного роста памяти. Внешних крейтов
-//! нет: на Linux читаем `/proc/self/status` (`VmRSS`/`VmHWM`), на Windows —
-//! `GetProcessMemoryInfo` (psapi). На прочих платформах [`process_memory`]
-//! возвращает `None`, а логи пишут «unavailable» — это не ошибка.
+//! Exactly one metric is required — **resident set size** (RSS) and its peak — to
+//! prove that 100+ turns do not cause linear memory growth. There are no external
+//! crates: on Linux we read `/proc/self/status` (`VmRSS`/`VmHWM`), on Windows —
+//! `GetProcessMemoryInfo` (psapi). On other platforms [`process_memory`]
+//! returns `None`, and the logs print «unavailable» — this is not an error.
 //!
-//! Значения в **килобайтах** (как `VmRSS`), чтобы лог совпадал с `/proc`.
+//! Values are in **kilobytes** (like `VmRSS`) so that the log matches `/proc`.
 
-/// Снимок памяти процесса.
+/// Process memory snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessMemory {
-    /// Текущий RSS, КиБ.
+    /// Current RSS, KiB.
     pub rss_kb: u64,
-    /// Пиковый RSS за жизнь процесса, КиБ (0 — платформа не сообщает).
+    /// Peak RSS over the process lifetime, KiB (0 — platform does not report it).
     pub peak_kb: u64,
 }
 
 impl ProcessMemory {
-    /// Рост RSS относительно `start`, КиБ (может быть отрицательным — память
-    /// вернулась ОС).
+    /// RSS growth relative to `start`, KiB (may be negative — memory was
+    /// returned to the OS).
     pub fn growth_kb(self, start: Self) -> i64 {
         self.rss_kb as i64 - start.rss_kb as i64
     }
 
-    /// Строка для лога: `rss=12345 KiB peak=23456 KiB`.
+    /// Log line: `rss=12345 KiB peak=23456 KiB`.
     pub fn line(self) -> String {
         let peak = if self.peak_kb == 0 {
             "peak=n/a".to_string()
@@ -36,12 +36,12 @@ impl ProcessMemory {
     }
 }
 
-/// Текущая память процесса; `None` — платформа/источник недоступны.
+/// Current process memory; `None` — platform/source unavailable.
 pub fn process_memory() -> Option<ProcessMemory> {
     platform::read()
 }
 
-/// Строка памяти для лога (`rss=… KiB peak=… KiB` либо `rss=unavailable`).
+/// Memory log line (`rss=… KiB peak=… KiB` or `rss=unavailable`).
 pub fn memory_line() -> String {
     process_memory()
         .map(|memory| memory.line())
@@ -70,12 +70,12 @@ mod platform {
 }
 
 #[cfg(windows)]
-#[allow(unsafe_code)] // единственное исключение из `#![deny(unsafe_code)]`: OS-статистика памяти
+#[allow(unsafe_code)] // the only exception to `#![deny(unsafe_code)]`: OS memory statistics
 mod platform {
     use super::ProcessMemory;
 
-    /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`): поля идут подряд, `cb` — размер
-    /// структуры. Значения в байтах.
+    /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`): the fields follow consecutively, `cb` is the
+    /// size of the structure. Values are in bytes.
     #[repr(C)]
     #[allow(non_snake_case)]
     struct ProcessMemoryCounters {
@@ -115,9 +115,9 @@ mod platform {
             PeakPagefileUsage: 0,
         };
 
-        // SAFETY: `GetCurrentProcess` возвращает псевдо-дескриптор текущего
-        // процесса (его не нужно закрывать), `counters` — валидная структура
-        // нужного размера, `cb` соответствует её размеру.
+        // SAFETY: `GetCurrentProcess` returns a pseudo-handle of the current
+        // process (it must not be closed), `counters` is a valid structure
+        // of the required size, `cb` matches its size.
         let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
 
         if ok == 0 {
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn current_process_memory_is_readable_when_the_platform_supports_it() {
-        // Linux/Windows обязаны вернуть ненулевой RSS; другие ОС — `None`.
+        // Linux/Windows must return a non-zero RSS; other OSes — `None`.
         match process_memory() {
             Some(memory) => {
                 #[cfg(any(target_os = "linux", windows))]

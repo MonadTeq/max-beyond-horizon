@@ -1,48 +1,48 @@
-//! UI-каркас клиента: экраны меню, переходы и отрисовка.
+//! Client UI framework: menu screens, transitions and drawing.
 //!
-//! Модуль — **чистое ядро** поверх [`max_render::ui`]:
+//! The module is a **pure core** over [`max_render::ui`]:
 //!
-//! * [`Screen`] — состояние экрана: главное меню, список игр, форма создания
-//!   игры и активная сессия;
-//! * [`InputEvent`] — то, что SDL-слой превращает в клавишу/клик;
-//! * [`Screen::handle_input`] — машина переходов: `MainMenu → CreateForm`,
-//!   `MainMenu → JoinList` (через `list_games`), `CreateForm → create_game →
+//! * [`Screen`] — screen state: main menu, game list, game creation form
+//!   and the active session;
+//! * [`InputEvent`] — what the SDL layer turns into a key/click;
+//! * [`Screen::handle_input`] — the transition machine: `MainMenu → CreateForm`,
+//!   `MainMenu → JoinList` (via `list_games`), `CreateForm → create_game →
 //!   InSession`, `JoinList → InSession`;
-//! * [`UiContext`] — размер экрана, позиция мыши, строка статуса, клиент
-//!   Horizon за трейтом [`MenuClient`] и [`AudioPlayer`] для кликов (M6.2);
-//! * [`Screen::render`] — кадр без SDL: `render_ui` для меню и карта
-//!   (`App::render_frame` → `max_render::map_render`) + строка статуса для
+//! * [`UiContext`] — screen size, mouse position, status line, the Horizon client
+//!   behind the [`MenuClient`] trait and [`AudioPlayer`] for clicks (M6.2);
+//! * [`Screen::render`] — the frame without SDL: `render_ui` for menus and the map
+//!   (`App::render_frame` → `max_render::map_render`) + the status line for
 //!   [`Screen::InSession`].
 //!
-//! # Тестируемость без сети
+//! # Testability without the network
 //!
-//! Сеть скрыта за трейтом [`MenuClient`]. Тесты передают мок-клиент с
-//! заранее заданными [`GameInfo`] и проверяют переходы; настоящий клиент —
-//! [`HorizonMenuClient`] — синхронная обёртка над асинхронным
-//! [`max_net::HorizonClient`] (каждый вызов поднимает короткоживущий
-//! `tokio` runtime). Вход в игру — [`Transition::StartSession`]: исполнение
-//! сетевого цикла остаётся в `main.rs` и переиспользует
+//! The network is hidden behind the [`MenuClient`] trait. Tests pass a mock client with
+//! predefined [`GameInfo`] and check the transitions; the real client —
+//! [`HorizonMenuClient`] — is a synchronous wrapper over the asynchronous
+//! [`max_net::HorizonClient`] (each call brings up a short-lived
+//! `tokio` runtime). Entering the game — [`Transition::StartSession`]: the network
+//! loop execution remains in `main.rs` and reuses
 //! [`crate::run_network`].
 //!
-//! # Клавиши
+//! # Keys
 //!
-//! | Экран | Управление |
+//! | Screen | Controls |
 //! |---|---|
-//! | MainMenu | Up/Down/Tab, Enter, мышь; `c`/`j`/`i`/`r`/`q`; Esc — выход |
-//! | JoinList | Up/Down, Enter — войти, `r` — обновить, Esc — назад, мышь |
-//! | CreateForm | Tab/Up/Down — поле, ввод, Left/Right — числа, Enter — создать, Esc — назад |
-//! | InSession | LMB — выбрать юнита, RMB — приказ движения, LMB по врагу — атака, Enter/T — чат (пакет 18), End Turn/Menu, Esc — отмена (дважды — выход) |
+//! | MainMenu | Up/Down/Tab, Enter, mouse; `c`/`j`/`i`/`r`/`q`; Esc — exit |
+//! | JoinList | Up/Down, Enter — join, `r` — refresh, Esc — back, mouse |
+//! | CreateForm | Tab/Up/Down — field, input, Left/Right — numbers, Enter — create, Esc — back |
+//! | InSession | LMB — select a unit, RMB — move order, LMB on an enemy — attack, Enter/T — chat (packet 18), End Turn/Menu, Esc — cancel (twice — exit) |
 //!
-//! # Ввод в сессии (M4.3)
+//! # Session input (M4.3)
 //!
-//! Меню живёт в [`Screen::handle_input`], а ввод внутри партии — в
-//! [`handle_session_input`]: он работает с [`App`] (выделение и приказы в
-//! [`crate::hud::HudState`], а не в `GameState`), поэтому выделение юнита не
-//! попадает в снапшот/CRC. Приказы (`38`/`08`) собирает
-//! [`crate::hud::build_move_order`]/[`crate::hud::build_attack_order`] и кладёт
-//! в `App::hud().pending`: в сетевой сессии их отправляет `net.rs`
-//! (`flush_hud_orders`), в демо-режиме (`online = false`) они применяются
-//! локально через `events::apply_command`.
+//! The menu lives in [`Screen::handle_input`], and the input inside a match — in
+//! [`handle_session_input`]: it works with [`App`] (selection and orders in
+//! [`crate::hud::HudState`], not in `GameState`), so selecting a unit does not
+//! get into the snapshot/CRC. Orders (`38`/`08`) are assembled by
+//! [`crate::hud::build_move_order`]/[`crate::hud::build_attack_order`] and put
+//! into `App::hud().pending`: in a network session they are sent by `net.rs`
+//! (`flush_hud_orders`), in demo mode (`online = false`) they are applied
+//! locally via `events::apply_command`.
 
 use std::fmt;
 
@@ -79,14 +79,14 @@ use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::winloss;
 use crate::App;
 
-/// Имя игры по умолчанию, если поле «Name» пустое.
+/// Default game name if the «Name» field is empty.
 pub const DEFAULT_GAME_NAME: &str = "M.A.X. Rust game";
-/// Последний допустимый индекс планеты (`0..=23`, как `--world`).
+/// Last valid planet index (`0..=23`, like `--world`).
 pub const MAX_WORLD: i64 = 23;
 
-/// Уровни/индексы виджетов, на которые опирается обработка мыши.
+/// Widget levels/indices the mouse handling relies on.
 ///
-/// Порядок как в `menu.cpp::main_menu`: `New Game`, `Load Game`,
+/// The order as in `menu.cpp::main_menu`: `New Game`, `Load Game`,
 /// `Multiplayer Game`, `Setup`, `Introduction`, `Credits`, `Exit`.
 const MAIN_CREATE: usize = 0;
 const MAIN_JOIN: usize = 2;
@@ -95,10 +95,10 @@ const MAIN_INTRO: usize = 4;
 const MAIN_CREDITS: usize = 5;
 const MAIN_QUIT: usize = 6;
 
-/// Действия Rust-клиента в порядке фокуса (`ctx.focus`).
+/// Rust client actions in focus order (`ctx.focus`).
 ///
-/// `Load Game` остаётся непортированным (`Unported`); `Setup` открывает диалог
-/// `OptionsMenu(SETUPPIC)`, остальные действия — как в C++.
+/// `Load Game` remains unported (`Unported`); `Setup` opens the
+/// `OptionsMenu(SETUPPIC)` dialog, the other actions — as in C++.
 const MAIN_ACTIONS: [usize; 6] = [
     MAIN_CREATE,
     MAIN_JOIN,
@@ -115,13 +115,13 @@ const JOIN_JOIN: usize = 4;
 const JOIN_HIDE: usize = 5;
 const JOIN_HELP: usize = 6;
 
-/// Кнопки формы создания игры (индексы виджетов).
+/// Game creation form buttons (widget indices).
 const CREATE_BACK: usize = 7;
 const CREATE_SUBMIT: usize = 8;
 const CREATE_RANDOM: usize = 9;
 const CREATE_HELP: usize = 10;
 
-/// Клавиша UI (SDL-слой переводит в неё `WindowKey`).
+/// UI key (the SDL layer translates `WindowKey` into it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     /// Esc.
@@ -132,84 +132,84 @@ pub enum Key {
     Tab,
     /// Backspace.
     Backspace,
-    /// Стрелка вверх.
+    /// Up arrow.
     Up,
-    /// Стрелка вниз.
+    /// Down arrow.
     Down,
-    /// Стрелка влево.
+    /// Left arrow.
     Left,
-    /// Стрелка вправо.
+    /// Right arrow.
     Right,
-    /// Page Up (страницы списков, как `GNW_KB_KEY_PAGEUP`).
+    /// Page Up (list pages, like `GNW_KB_KEY_PAGEUP`).
     PageUp,
     /// Page Down (`GNW_KB_KEY_PAGEDOWN`).
     PageDown,
-    /// Печатный символ.
+    /// Printable character.
     Char(char),
-    /// Печатный символ с зажатым Alt (`Alt+P` — пауза, `GNW_KB_KEY_LALT_P`).
+    /// Printable character with Alt held (`Alt+P` — pause, `GNW_KB_KEY_LALT_P`).
     Alt(char),
-    /// Прочая клавиша (игнорируется).
+    /// Other key (ignored).
     Other,
 }
 
-/// Входное событие UI.
+/// UI input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
-    /// Клавиша.
+    /// Key.
     Key(Key),
-    /// Клик левой кнопкой в пикселях окна.
+    /// Left click in window pixels.
     MouseClick(i32, i32),
-    /// Клик правой кнопкой в пикселях окна (RMB — приказ движения/отмена).
+    /// Right click in window pixels (RMB — move order/cancel).
     RightClick(i32, i32),
-    /// Движение мыши в пикселях окна.
+    /// Mouse move in window pixels.
     MouseMove(i32, i32),
 }
 
-/// Параметры входа в сетевую сессию — результат выбора в меню.
+/// Network session entry parameters — the result of the menu choice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRequest {
-    /// `game_id` из Horizon.
+    /// `game_id` from Horizon.
     pub game_id: String,
-    /// Пароль игры, если он был задан/известен.
+    /// Game password, if it was set/known.
     pub password: Option<String>,
 }
 
-/// Переход, который должно исполнить приложение.
+/// The transition the application must execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transition {
-    /// Экран изменился/статус обновился — просто перерисовать.
+    /// The screen changed/the status updated — just redraw.
     None,
-    /// Войти в игру: `main.rs` запускает существующий `run_network`.
+    /// Enter the game: `main.rs` launches the existing `run_network`.
     StartSession(SessionRequest),
-    /// Начать локальную партию (M-SP) с этими настройками.
+    /// Start a local match (M-SP) with these settings.
     StartLocal(Box<LocalSetup>),
-    /// Выйти из сессии (Esc в SDL-цикле).
+    /// Exit the session (Esc in the SDL loop).
     LeaveSession,
-    /// Применить настройки из диалога `Preferences`/`Setup` (главное меню).
+    /// Apply the settings from the `Preferences`/`Setup` dialog (main menu).
     ApplyPreferences(Box<Preferences>),
-    /// Закрыть приложение.
+    /// Close the application.
     Quit,
 }
 
-/// Поле формы создания игры.
+/// Game creation form field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateField {
-    /// Название игры.
+    /// Game name.
     Name,
-    /// Планета (`0..=23`).
+    /// Planet (`0..=23`).
     World,
-    /// Секунды на ход.
+    /// Seconds per turn.
     Timer,
-    /// Секунды на завершение хода.
+    /// Seconds to finish the turn.
     EndTurn,
-    /// Число противников (`1..=3`).
+    /// Number of opponents (`1..=3`).
     Opponent,
-    /// Пароль (пусто — открытая игра).
+    /// Password (empty — open game).
     Password,
 }
 
 impl CreateField {
-    /// Все поля в порядке Tab.
+    /// All fields in Tab order.
     pub const ALL: [Self; 6] = [
         Self::Name,
         Self::World,
@@ -219,7 +219,7 @@ impl CreateField {
         Self::Password,
     ];
 
-    /// Индекс поля в [`CreateField::ALL`].
+    /// Field index in [`CreateField::ALL`].
     pub const fn index(self) -> usize {
         match self {
             Self::Name => 0,
@@ -231,17 +231,17 @@ impl CreateField {
         }
     }
 
-    /// Следующее поле (по кругу).
+    /// Next field (cyclic).
     pub const fn next(self) -> Self {
         Self::ALL[(self.index() + 1) % Self::ALL.len()]
     }
 
-    /// Предыдущее поле (по кругу).
+    /// Previous field (cyclic).
     pub const fn prev(self) -> Self {
         Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 
-    /// Подпись поля.
+    /// Field label.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Name => "Name",
@@ -253,7 +253,7 @@ impl CreateField {
         }
     }
 
-    /// Поле числовое (редактируется цифрами и стрелками).
+    /// The field is numeric (edited with digits and arrows).
     pub const fn is_numeric(self) -> bool {
         matches!(
             self,
@@ -262,22 +262,22 @@ impl CreateField {
     }
 }
 
-/// Состояние формы создания игры.
+/// Game creation form state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateForm {
-    /// Название игры.
+    /// Game name.
     pub name: String,
-    /// Планета.
+    /// Planet.
     pub world: i64,
-    /// Секунды на ход.
+    /// Seconds per turn.
     pub timer: i64,
-    /// Секунды на завершение хода.
+    /// Seconds to finish the turn.
     pub endturn: i64,
-    /// Число противников.
+    /// Number of opponents.
     pub opponent: i64,
-    /// Пароль.
+    /// Password.
     pub password: String,
-    /// Поле в фокусе.
+    /// Focused field.
     pub focus: CreateField,
 }
 
@@ -296,7 +296,7 @@ impl Default for CreateForm {
 }
 
 impl CreateForm {
-    /// Текущее значение поля строкой (для отрисовки).
+    /// Current field value as a string (for drawing).
     pub fn value(&self, field: CreateField) -> String {
         match field {
             CreateField::Name => self.name.clone(),
@@ -308,7 +308,7 @@ impl CreateForm {
         }
     }
 
-    /// Вводит символ в поле в фокусе.
+    /// Enters a character into the focused field.
     pub fn push_char(&mut self, ch: char) {
         match self.focus {
             CreateField::Name => {
@@ -333,7 +333,7 @@ impl CreateForm {
         }
     }
 
-    /// Backspace в текущем поле.
+    /// Backspace in the current field.
     pub fn backspace(&mut self) {
         match self.focus {
             CreateField::Name => {
@@ -349,7 +349,7 @@ impl CreateForm {
         }
     }
 
-    /// Меняет числовое поле на `delta` (стрелки Left/Right).
+    /// Changes the numeric field by `delta` (Left/Right arrows).
     pub fn adjust(&mut self, delta: i64) {
         if self.focus.is_numeric() {
             let value = self.numeric(self.focus).saturating_add(delta);
@@ -357,7 +357,7 @@ impl CreateForm {
         }
     }
 
-    /// Параметры `CreateGame`.
+    /// `CreateGame` parameters.
     pub fn create_params(&self) -> CreateGameParams {
         let name = self.name.trim();
 
@@ -383,7 +383,7 @@ impl CreateForm {
         }
     }
 
-    /// Пароль для `JoinGame`, если игра защищена.
+    /// Password for `JoinGame`, if the game is protected.
     pub fn password_value(&self) -> Option<String> {
         (!self.password.is_empty()).then(|| self.password.clone())
     }
@@ -409,75 +409,75 @@ impl CreateForm {
     }
 }
 
-/// Экран клиента.
+/// Client screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
-    /// Главное меню.
+    /// Main menu.
     MainMenu,
-    /// Список игр из `list_games`.
+    /// Game list from `list_games`.
     JoinList {
-        /// Игры лобби.
+        /// Lobby games.
         games: Vec<GameInfo>,
-        /// Выбранная игра.
+        /// Selected game.
         selected: usize,
     },
-    /// Форма создания игры.
+    /// Game creation form.
     CreateForm(CreateForm),
-    /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): хост/join/hot-seat.
+    /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): host/join/hot-seat.
     MultiplayerMenu,
-    /// `Introduction` (`Movie_PlayIntro`): MVE-видео `INTROFLC` (`maxint.mve`).
+    /// `Introduction` (`Movie_PlayIntro`): MVE video `INTROFLC` (`maxint.mve`).
     Introduction(intro::IntroScreen),
-    /// `Credits` (`menu_credits_menu_loop`): прокрутка титров по `CREDITS`.
+    /// `Credits` (`menu_credits_menu_loop`): credits scrolling over `CREDITS`.
     Credits(credits::CreditsScreen),
-    /// Настройка локальной партии (M-SP/M-HS): Options → Planet → Players.
+    /// Local match setup (M-SP/M-HS): Options → Planet → Players.
     LocalSetup(GameSetupForm),
-    /// Диалог `Preferences`/`Setup` (`OptionsMenu`, `PREFSPIC`/`SETUPPIC`).
+    /// `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`/`SETUPPIC`).
     ///
-    /// Модален, как `OptionsMenu::Run` в C++: пока открыт, остальные экраны
-    /// ввод не получают. Закрытие (`Done`/`Cancel`) возвращает в главное меню.
+    /// Modal, like `OptionsMenu::Run` in C++: while open, the other screens
+    /// receive no input. Closing (`Done`/`Cancel`) returns to the main menu.
     Preferences(Box<PreferencesDialog>),
-    /// Фазы старта после `Players`: мобилизация (`CargoMenu`) и выбор точки
-    /// высадки (`GameManager_SelectSite`).
+    /// Start phases after `Players`: mobilization (`CargoMenu`) and landing point
+    /// selection (`GameManager_SelectSite`).
     PreGame(PreGameFlow),
-    /// Экран победы/поражения локальной партии.
+    /// Victory/defeat screen of the local match.
     GameOver,
-    /// Модальное окно помощи поверх предыдущего экрана (`HelpMenu`).
+    /// Modal help window over the previous screen (`HelpMenu`).
     ///
-    /// В C++ `HelpMenu` тоже модально: оно рисуется поверх меню/`CargoMenu`, а
-    /// после закрытия управление возвращается прежнему экрану. Вложенный
-    /// `screen` хранит именно его.
+    /// In C++ `HelpMenu` is modal too: it is drawn over the menu/`CargoMenu`, and
+    /// after closing control returns to the previous screen. The nested
+    /// `screen` stores exactly it.
     Help {
-        /// Экран под окном помощи.
+        /// The screen under the help window.
         screen: Box<Screen>,
-        /// Открытое окно помощи; `None` — активен режим выбора элемента
+        /// Open help window; `None` — the element selection mode is active
         /// (`HelpMenu_Menu`, `helpmenu.cpp:315`).
         help: Option<helpmenu::HelpScreen>,
-        /// Секция режима помощи.
+        /// Help mode section.
         mode: helpmenu::HelpMode,
     },
-    /// Игра идёт: карта + статус; сетевой цикл запускает `main.rs`.
+    /// The game is running: map + status; the network loop is launched by `main.rs`.
     InSession {
-        /// Куда подключаться.
+        /// Where to connect.
         request: SessionRequest,
     },
 }
 
-/// Минимальный клиент Horizon, нужный меню.
+/// Minimal Horizon client the menu needs.
 ///
-/// Синхронный, чтобы [`Screen::handle_input`] оставался чистой функцией без
-/// `async`: сеть вызывается только по явному действию (Join/Refresh/Create).
+/// Synchronous, so that [`Screen::handle_input`] remains a pure function without
+/// `async`: the network is called only on an explicit action (Join/Refresh/Create).
 pub trait MenuClient {
-    /// `ListGames` лобби.
+    /// `ListGames` of the lobby.
     fn list_games(&mut self) -> Result<Vec<GameInfo>, String>;
-    /// `CreateGame`; возвращает созданную игру.
+    /// `CreateGame`; returns the created game.
     fn create_game(&mut self, params: CreateGameParams) -> Result<GameInfo, String>;
 }
 
-/// Настоящий клиент Horizon: синхронная обёртка над `max_net::HorizonClient`.
+/// Real Horizon client: a synchronous wrapper over `max_net::HorizonClient`.
 ///
-/// Каждый вызов поднимает короткоживущий `tokio` runtime и закрывает gRPC
-/// канал после ответа — для операций меню (список/создание) этого достаточно,
-/// а долгая сессия идёт через [`crate::run_network`].
+/// Each call brings up a short-lived `tokio` runtime and closes the gRPC
+/// channel after the response — that is enough for menu operations (list/create),
+/// while the long session goes through [`crate::run_network`].
 #[derive(Debug, Clone)]
 pub struct HorizonMenuClient {
     host: String,
@@ -485,7 +485,7 @@ pub struct HorizonMenuClient {
 }
 
 impl HorizonMenuClient {
-    /// Клиент для Horizon `host:port`.
+    /// Client for Horizon `host:port`.
     pub fn new(host: impl Into<String>, port: u16) -> Self {
         Self {
             host: host.into(),
@@ -541,34 +541,34 @@ impl MenuClient for HorizonMenuClient {
     }
 }
 
-/// Контекст UI: экранные размеры, мышь, статус и клиент Horizon.
+/// UI context: screen sizes, mouse, status and the Horizon client.
 pub struct UiContext {
-    /// Клиент лобби (в тестах — мок).
+    /// Lobby client (a mock in tests).
     pub client: Box<dyn MenuClient>,
-    /// Ширина кадра.
+    /// Frame width.
     pub width: u32,
-    /// Высота кадра.
+    /// Frame height.
     pub height: u32,
-    /// Строка статуса/ошибки под списком кнопок.
+    /// Status/error line under the button row.
     pub status: String,
-    /// Позиция мыши (для hover).
+    /// Mouse position (for hover).
     pub mouse: Option<Point>,
-    /// Фокус главного меню (`0..=2`).
+    /// Main menu focus (`0..=2`).
     pub focus: usize,
-    /// Имя игрока по умолчанию (`--player`) для настройки M-SP.
+    /// Default player name (`--player`) for M-SP setup.
     pub player_name: String,
-    /// Каталог `.WRL`-карт для мини-карт экрана планет.
+    /// `.WRL` map directory for the planet screen minimaps.
     pub world_dir: std::path::PathBuf,
-    /// Звук (M6.2): клики меню. Без feature `sound` — тихий no-op.
+    /// Sound (M6.2): menu clicks. Without the `sound` feature — a silent no-op.
     pub audio: AudioPlayer,
-    /// Путь к видео интро (`INTROFLC` → `maxint.mve`); `None` — заглушка.
+    /// Intro video path (`INTROFLC` → `maxint.mve`); `None` — placeholder.
     pub intro_mve_path: Option<std::path::PathBuf>,
-    /// Текущие пользовательские настройки (для диалога `Setup`).
+    /// Current user settings (for the `Setup` dialog).
     pub preferences: Preferences,
 }
 
 impl UiContext {
-    /// Контекст размера окна с пустым статусом.
+    /// Window size context with an empty status.
     pub fn new(client: Box<dyn MenuClient>, width: u32, height: u32) -> Self {
         Self {
             client,
@@ -585,7 +585,7 @@ impl UiContext {
         }
     }
 
-    /// Контекст с готовым статусом.
+    /// Context with a ready status.
     pub fn with_status(
         client: Box<dyn MenuClient>,
         width: u32,
@@ -598,7 +598,7 @@ impl UiContext {
         }
     }
 
-    /// Параметры отрисовки (без заимствования клиента).
+    /// Drawing parameters (without borrowing the client).
     pub fn view<'a>(&'a self, app: Option<&'a App>) -> ScreenView<'a> {
         ScreenView {
             width: self.width,
@@ -610,10 +610,10 @@ impl UiContext {
         }
     }
 
-    /// Звук клика меню (`KBUY0` → `kbuy0.spw`).
+    /// Menu click sound (`KBUY0` → `kbuy0.spw`).
     ///
-    /// Вызывается на активации кнопок/строк меню. Ошибка/отсутствие файла не
-    /// меняют состояние UI: звук — не блокер (M6.2).
+    /// Called on button/row activation in the menu. An error/missing file do not
+    /// change the UI state: sound is not a blocker (M6.2).
     pub fn click(&mut self) {
         let _ = self.audio.play_once(MENU_CLICK);
     }
@@ -632,56 +632,56 @@ impl fmt::Debug for UiContext {
     }
 }
 
-/// Всё, что нужно [`Screen::render`] помимо самого экрана.
+/// Everything [`Screen::render`] needs besides the screen itself.
 #[derive(Clone, Copy)]
 pub struct ScreenView<'a> {
-    /// Ширина кадра.
+    /// Frame width.
     pub width: u32,
-    /// Высота кадра.
+    /// Frame height.
     pub height: u32,
-    /// Строка статуса.
+    /// Status line.
     pub status: &'a str,
-    /// Позиция мыши.
+    /// Mouse position.
     pub mouse: Option<Point>,
-    /// Фокус главного меню.
+    /// Main menu focus.
     pub focus: usize,
-    /// Состояние партии для [`Screen::InSession`].
+    /// Match state for [`Screen::InSession`].
     pub app: Option<&'a App>,
 }
 
-/// Действие ввода на экранах фаз старта.
+/// Input action on the start phase screens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreGameInput {
-    /// Ничего.
+    /// Nothing.
     None,
-    /// Отмена всей цепочки (назад на `Players`).
+    /// Cancel the whole chain (back to `Players`).
     Cancel,
-    /// Клик на экране мобилизации (`CargoMenu`).
+    /// Click on the mobilization screen (`CargoMenu`).
     MobilizeClick(i32, i32),
-    /// Клавиша на экране мобилизации.
+    /// Key on the mobilization screen.
     MobilizeKey(Key),
-    /// Подтвердить точку высадки.
+    /// Confirm the landing point.
     LandingConfirm,
-    /// Сдвинуть курсор высадки.
+    /// Move the landing cursor.
     LandingStep(i32, i32),
-    /// Клик по экрану высадки.
+    /// Click on the landing screen.
     LandingClick(i32, i32),
 }
 
 impl Screen {
-    /// Обрабатывает ввод и двигает машину состояний.
+    /// Handles input and advances the state machine.
     ///
-    /// Возвращает [`Transition::StartSession`], когда игра создана/выбрана:
-    /// сетевой цикл исполняет вызывающий (`main.rs`), а не UI-ядро. Ошибки
-    /// сети остаются в [`UiContext::status`], экран при этом не меняется.
+    /// Returns [`Transition::StartSession`] when the game is created/selected:
+    /// the caller (`main.rs`) executes the network loop, not the UI core. Network
+    /// errors remain in [`UiContext::status`], the screen does not change.
     pub fn handle_input(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         if let InputEvent::MouseMove(x, y) = event {
             ctx.mouse = Some(Point::new(x, y));
         }
 
-        // Режим/окно помощи (`HelpMenu_Menu` + `HelpMenu`): ввод получает
-        // только он. Клик по элементу с записью `help.json` открывает окно;
-        // `Esc`/RMB/`?` закрывают окно (возврат в режим) или сам режим.
+        // Help mode/window (`HelpMenu_Menu` + `HelpMenu`): only it receives
+        // input. A click on an element with a `help.json` entry opens the window;
+        // `Esc`/RMB/`?` close the window (return to the mode) or the mode itself.
         if matches!(self, Self::Help { .. }) {
             let mut exit = false;
 
@@ -762,8 +762,8 @@ impl Screen {
             };
         }
         if matches!(self, Self::Introduction(_)) {
-            // MVE: как `mve_cb_ctl` в оригинале — любая клавиша/клик
-            // прерывает и возвращает в главное меню.
+            // MVE: like `mve_cb_ctl` in the original — any key/click
+            // interrupts and returns to the main menu.
             return match event {
                 InputEvent::MouseMove(..) => Transition::None,
                 _ => {
@@ -783,11 +783,11 @@ impl Screen {
         }
     }
 
-    /// Один шаг анимации экрана (`dt` секунд; `dt <= 0` — экран стоит).
+    /// One screen animation step (`dt` seconds; `dt <= 0` — the screen stands still).
     ///
-    /// Анимируется только [`Screen::Credits`] (прокрутка титров). Возвращает
-    /// `true`, если показ закончился и экран должен вернуться в главное меню
-    /// (в C++ `menu_credits_menu_loop` выходит по `height_offset <= bounds.uly`).
+    /// Only [`Screen::Credits`] is animated (credits scrolling). Returns
+    /// `true` if the show is over and the screen should return to the main menu
+    /// (in C++ `menu_credits_menu_loop` exits on `height_offset <= bounds.uly`).
     pub fn advance(&mut self, dt: f32) -> bool {
         if let Self::Credits(screen) = self {
             screen.advance(dt);
@@ -802,8 +802,8 @@ impl Screen {
         false
     }
 
-    /// Ввод на экране титров: `KP-`/`KP+` меняют скорость (в клиенте — `-`/`+`),
-    /// любая другая клавиша или клик закрывает экран (`menu_credits_menu_loop`).
+    /// Input on the credits screen: `KP-`/`KP+` change the speed (in the client — `-`/`+`),
+    /// any other key or click closes the screen (`menu_credits_menu_loop`).
     fn handle_credits(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let Self::Credits(screen) = self else {
             return Transition::None;
@@ -818,7 +818,7 @@ impl Screen {
         }
 
         if close {
-            // Возврат в главное меню (в C++ цикл титров просто завершается).
+            // Return to the main menu (in C++ the credits loop simply ends).
             ctx.status = "Credits closed".to_string();
             *self = Self::MainMenu;
         }
@@ -826,7 +826,7 @@ impl Screen {
         Transition::None
     }
 
-    /// Ввод на экране настройки M-SP (`Options` → `Planet` → `Players`).
+    /// Input on the M-SP setup screen (`Options` → `Planet` → `Players`).
     fn handle_local_setup(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let Self::LocalSetup(form) = self else {
             return Transition::None;
@@ -838,9 +838,9 @@ impl Screen {
         match transition {
             SetupTransition::None => Transition::None,
             SetupTransition::Back => {
-                // Esc/Cancel возвращает туда, откуда пришли: в `Multiplayer
-                // Menu` для hot-seat (как `menu_custom_game_menu`), иначе в
-                // главное меню.
+                // Esc/Cancel returns where it came from: to `Multiplayer
+                // Menu` for hot-seat (like `menu_custom_game_menu`), otherwise to
+                // the main menu.
                 let back = if hot_seat {
                     Self::MultiplayerMenu
                 } else {
@@ -851,8 +851,8 @@ impl Screen {
                 Transition::None
             }
             SetupTransition::Start(setup) => {
-                // Фазы старта: мобилизация и выбор точки высадки — до партии,
-                // как `GameManager_PlayerMissionSetup` в C++.
+                // Start phases: mobilization and landing point selection — before the match,
+                // like `GameManager_PlayerMissionSetup` in C++.
                 let flow = PreGameFlow::start(form.clone(), *setup, &ctx.world_dir);
                 let finished = flow.finished();
                 let ready = flow.setup.clone();
@@ -867,8 +867,8 @@ impl Screen {
                 }
             }
             SetupTransition::Help(section) => {
-                // Кнопка `?` меню настройки: окно `HELPFRAM` поверх экрана
-                // (`HelpMenu_Menu`); позиция — центр окна 640×480.
+                // The setup menu `?` button: the `HELPFRAM` window over the screen
+                // (`HelpMenu_Menu`); the position — the center of the 640×480 window.
                 let inner = std::mem::replace(self, Self::MainMenu);
                 *self = Self::Help {
                     screen: Box::new(inner),
@@ -881,13 +881,13 @@ impl Screen {
         }
     }
 
-    /// Ввод на экранах фаз старта (`CargoMenu` и выбор точки высадки).
+    /// Input on the start phase screens (`CargoMenu` and landing point selection).
     fn handle_pregame(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let Self::PreGame(flow) = self else {
             return Transition::None;
         };
 
-        // Действие считается по текущему экрану, применяется уже без borrow.
+        // The action is computed from the current screen, applied already without borrow.
         let action = match &mut flow.stage {
             PreGameStage::Mobilize(_) => match event {
                 InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
@@ -988,9 +988,9 @@ impl Screen {
         }
 
         if open_help {
-            // `CargoMenu` фазы старта — состояние `GAME_STATE_6_GAME_SETUP`:
-            // `GameManager_GetDialogWindowCenterMode()` даёт `WINDOW_MAIN_MAP`,
-            // поэтому окно стоит в (253,126), как `HelpMenu` в игре.
+            // `CargoMenu` of the start phase — state `GAME_STATE_6_GAME_SETUP`:
+            // `GameManager_GetDialogWindowCenterMode()` gives `WINDOW_MAIN_MAP`,
+            // so the window stands at (253,126), like `HelpMenu` in game.
             let inner = std::mem::replace(self, Self::MainMenu);
             *self = Self::Help {
                 screen: Box::new(inner),
@@ -1003,12 +1003,12 @@ impl Screen {
         Transition::None
     }
 
-    /// Ввод `Multiplayer Menu` (`menu_multiplayer_menu_loop`).
+    /// `Multiplayer Menu` input (`menu_multiplayer_menu_loop`).
     ///
-    /// Работают: `Join Network Game` (список игр Horizon), `Hot Seat Game`
-    /// (M-HS — те же три экрана настройки, но `is_single_player = false`) и
-    /// `Cancel`. `Host Network Game`, `Hot Seat Scenarios` и
-    /// `Load Hot Seat Game` пока не портированы — пишут строку статуса.
+    /// Working: `Join Network Game` (Horizon game list), `Hot Seat Game`
+    /// (M-HS — the same three setup screens, but `is_single_player = false`) and
+    /// `Cancel`. `Host Network Game`, `Hot Seat Scenarios` and
+    /// `Load Hot Seat Game` are not ported yet — they write a status line.
     fn handle_multiplayer_menu(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let mut action = None;
 
@@ -1019,8 +1019,8 @@ impl Screen {
                 action = menu::multiplayer_button_at(x, y);
             }
             InputEvent::Key(Key::Escape) => action = Some(menu::MultiplayerAction::Cancel),
-            // Горячие клавиши оригинала (`menu_multiplayer_menu_loop`):
-            // Shift+H/J/O/T/L/C — хост, join, hot seat, сценарии, загрузка, отмена.
+            // Original hotkeys (`menu_multiplayer_menu_loop`):
+            // Shift+H/J/O/T/L/C — host, join, hot seat, scenarios, load, cancel.
             InputEvent::Key(Key::Char('h' | 'H')) => action = Some(menu::MultiplayerAction::Host),
             InputEvent::Key(Key::Char('j' | 'J')) => action = Some(menu::MultiplayerAction::Join),
             InputEvent::Key(Key::Char('o' | 'O')) => {
@@ -1042,8 +1042,8 @@ impl Screen {
 
         match action {
             Some(menu::MultiplayerAction::Host) => {
-                // Создание игры в Horizon (в оригинале — `Host Network Game`
-                // через `Remote_Lobby`).
+                // Game creation in Horizon (in the original — `Host Network Game`
+                // via `Remote_Lobby`).
                 *self = Self::CreateForm(CreateForm::default());
                 ctx.status = "Create a network game (Enter creates, Esc back)".to_string();
                 Transition::None
@@ -1054,8 +1054,8 @@ impl Screen {
             }
             Some(menu::MultiplayerAction::HotSeat) => {
                 let mut form = GameSetupForm::hot_seat();
-                // C++ `menu_choose_player_menu_loop`: имя человека берётся из
-                // `settings["player_name"]` (`menu.cpp:1944`), а не из CLI.
+                // C++ `menu_choose_player_menu_loop`: the human name is taken from
+                // `settings["player_name"]` (`menu.cpp:1944`), not from the CLI.
                 form.setup.player_name = ctx.preferences.player_name.clone();
                 form.world_dir = ctx.world_dir.clone();
                 *self = Self::LocalSetup(form);
@@ -1079,13 +1079,13 @@ impl Screen {
         }
     }
 
-    /// Отрисовка экрана в кадр.
+    /// Draws the screen into the frame.
     ///
-    /// Для [`Screen::InSession`] карта берётся из [`crate::App::render_frame`]
-    /// (а он рисует `max_render::map_render`), сверху — строка статуса.
+    /// For [`Screen::InSession`] the map is taken from [`crate::App::render_frame`]
+    /// (which draws `max_render::map_render`), with the status line on top.
     pub fn render(&self, buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
-        // Меню на оригинальных ресурсах (пункт E) — только в кадре 640×480:
-        // все координаты и картинки взяты из C++-порта для окна оригинала.
+        // The menu on the original resources (item E) — only in a 640×480 frame:
+        // all coordinates and pictures are taken from the C++ port for the original window.
         let menu_assets = view
             .app
             .and_then(|app| app.assets())
@@ -1096,7 +1096,7 @@ impl Screen {
 
         match self {
             Self::Help { screen, help, .. } => {
-                // Окно помощи модально: сначала экран под ним, затем `HELPFRAM`.
+                // The help window is modal: first the screen under it, then `HELPFRAM`.
                 screen.render(buffer, view);
 
                 let assets = view.app.and_then(|app| app.assets());
@@ -1215,8 +1215,8 @@ impl Screen {
                 if let (Some(menu_assets), true) = (menu_assets, native_frame) {
                     match &flow.stage {
                         PreGameStage::Mobilize(mobilization) => {
-                            // `CargoMenu` рисует иконки `I_*` и полосы — нужен
-                            // полный набор ассетов, а не только меню.
+                            // `CargoMenu` draws `I_*` icons and bars — a
+                            // full asset set is needed, not just the menu.
                             if let Some(assets) = view.app.and_then(|app| app.assets()) {
                                 mobilization.draw(buffer, assets, view.status, mouse);
                                 return;
@@ -1251,8 +1251,8 @@ impl Screen {
                     return;
                 }
 
-                // Кадр не 640×480: экраны настройки нарисованы в координатах
-                // оригинала, поэтому показываем честную подсказку.
+                // The frame is not 640×480: the setup screens are drawn in the original
+                // coordinates, so we show an honest hint.
                 buffer.fill(Rgba::rgb(12, 14, 18));
                 draw_text_line(
                     buffer,
@@ -1263,8 +1263,8 @@ impl Screen {
                 );
             }
             Self::Preferences(dialog) => {
-                // `OptionsMenu` — отдельное окно поверх главного меню: в C++
-                // фон меню остаётся видимым вокруг `PREFSPIC`.
+                // `OptionsMenu` — a separate window over the main menu: in C++
+                // the menu background remains visible around `PREFSPIC`.
                 if let (Some(menu_assets), Some(app), true) = (menu_assets, view.app, native_frame) {
                     menu::draw_main_menu(buffer, menu_assets, view.status, mouse);
 
@@ -1314,8 +1314,8 @@ impl Screen {
                         ctx.focus = action_index;
                         activate = Some(index);
                     } else if let Some(button) = menu::MAIN_MENU_BUTTONS.get(index) {
-                        // Кнопки оригинала, которых в Rust-клиенте ещё нет
-                        // (`Load Game`, `Setup`, …): не молчим, а пишем статус.
+                        // Original buttons the Rust client does not have yet
+                        // (`Load Game`, `Setup`, …): we do not stay silent, we write the status.
                         ctx.status = format!("{}: screen is not ported yet", button.label);
                         ctx.click();
                     }
@@ -1350,7 +1350,7 @@ impl Screen {
 
         match activate {
             Some(MAIN_CREATE) => {
-                // M-SP: «New Game» открывает настройку локальной партии
+                // M-SP: «New Game» opens the local match setup
                 // (`menu_custom_game_menu`: Options → Planet → Players).
                 let mut form = GameSetupForm::default();
                 form.setup.player_name = ctx.preferences.player_name.clone();
@@ -1368,8 +1368,8 @@ impl Screen {
             }
             Some(MAIN_SETUP) => {
                 // `menu_setup_window()` (`menu.cpp:2331`) → `OptionsMenu(SETUPPIC)`:
-                // только секция `setup` (звук/видео/автосейв/сеть/имя), поверх
-                // главного меню, как отдельное окно `PREFSPIC`.
+                // only the `setup` section (sound/video/autosave/network/name), over
+                // the main menu, as a separate `PREFSPIC` window.
                 let dialog = PreferencesDialog::new(
                     PreferencesVariant::Setup,
                     ctx.preferences.clone(),
@@ -1380,9 +1380,9 @@ impl Screen {
                 Transition::None
             }
             Some(MAIN_INTRO) => {
-                // `Movie_PlayIntro` (`menu.cpp:2666`): MVE-видео `INTROFLC`
-                // (файл `maxint.mve`). Кадр 0 декодируется сразу, чтобы
-                // `shot`/`dt = 0` были детерминированы; Esc/клик — в меню.
+                // `Movie_PlayIntro` (`menu.cpp:2666`): the MVE video `INTROFLC`
+                // (file `maxint.mve`). Frame 0 is decoded immediately so that
+                // `shot`/`dt = 0` are deterministic; Esc/click — back to the menu.
                 let screen = intro::IntroScreen::new(ctx.intro_mve_path.clone());
                 ctx.status = if screen.is_loaded() {
                     format!("Introduction: maxint.mve — кадр {} (Esc)", screen.frame_index())
@@ -1395,8 +1395,8 @@ impl Screen {
                 Transition::None
             }
             Some(MAIN_CREDITS) => {
-                // `menu_credits_menu_loop` (`menu.cpp:1332`) — прокрутка титров
-                // по `CREDITS` 640×480; Esc/любая клавиша закрывает экран.
+                // `menu_credits_menu_loop` (`menu.cpp:1332`) — credits scrolling
+                // over `CREDITS` 640×480; Esc/any key closes the screen.
                 *self = Self::Credits(credits::CreditsScreen::new());
                 ctx.status = "Credits: Esc returns to the menu".to_string();
                 Transition::None
@@ -1406,11 +1406,11 @@ impl Screen {
         }
     }
 
-    /// Ввод в диалоге `Preferences`/`Setup` (`OptionsMenu`).
+    /// Input in the `Preferences`/`Setup` dialog (`OptionsMenu`).
     ///
-    /// `Done` сохраняет значения и возвращает в главное меню; `Cancel` их
-    /// отбрасывает; `?` открывает окно помощи `SETUP_MENU_SETUP` поверх диалога
-    /// (`HelpMenu_Menu` в `OptionsMenu::ProcessKeyPress`).
+    /// `Done` saves the values and returns to the main menu; `Cancel` discards
+    /// them; `?` opens the `SETUP_MENU_SETUP` help window over the dialog
+    /// (`HelpMenu_Menu` in `OptionsMenu::ProcessKeyPress`).
     fn handle_preferences(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let Self::Preferences(dialog) = self else {
             return Transition::None;
@@ -1436,7 +1436,7 @@ impl Screen {
             preferences::PreferencesAction::Done => {
                 let prefs = dialog.draft.clone();
                 ctx.preferences = prefs.clone();
-                // Следующая партия начнётся с этим именем (`menu.cpp:1944`).
+                // The next match will start with this name (`menu.cpp:1944`).
                 ctx.player_name = prefs.player_name.clone();
                 ctx.status = "Preferences saved".to_string();
                 *self = Self::MainMenu;
@@ -1541,8 +1541,8 @@ impl Screen {
             InputEvent::Key(Key::Enter) => action = Some(Action::Join),
             InputEvent::Key(Key::Escape) => action = Some(Action::Back),
             InputEvent::Key(Key::Char('r' | 'R')) => action = Some(Action::Refresh),
-            // Создание сетевой игры (форма `CreateForm`) — с экрана списка игр:
-            // в главном меню эта кнопка теперь открывает настройку M-SP.
+            // Network game creation (the `CreateForm`) — from the game list screen:
+            // in the main menu this button now opens the M-SP setup.
             InputEvent::Key(Key::Char('c' | 'C')) => action = Some(Action::Create),
             _ => {}
         }
@@ -1614,9 +1614,9 @@ impl Screen {
             InputEvent::MouseMove(..) => {}
             InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
-                // Сетка планет: клик по картинке/имени выбирает планету. Это
-                // делается до `hit_test`, потому что подписи планет — обычные
-                // Label'ы, а числовое поле остаётся fallback'ом по Tab.
+                // Planet grid: a click on the picture/name selects the planet. This is
+                // done before `hit_test`, because the planet labels are regular
+                // Labels, while the numeric field remains a Tab fallback.
                 let planet = (ctx.height >= PLANET_GRID_MIN_HEIGHT)
                     .then(|| planet_cell_at(ctx.width, ctx.height, x, y))
                     .flatten();
@@ -1628,7 +1628,7 @@ impl Screen {
                     }
                     clicked = true;
                 } else if native_frame {
-                    // Оригинальные прямоугольники PLANETSE / кнопок MNUBTN.
+                    // Original PLANETSE rectangles / MNUBTN buttons.
                     if let Some(button) = menu::create_button_at(x, y) {
                         clicked = true;
 
@@ -1752,45 +1752,45 @@ impl Screen {
     }
 }
 
-/// Ввод внутри сессии: карта, HUD, приказы (M4.3).
+/// Input inside a session: map, HUD, orders (M4.3).
 ///
-/// Работает с [`App`] напрямую (а не через [`Screen`]): выделение и приказы
-/// живут в [`crate::hud::HudState`], которому нужен доступ к `GameState` и
-/// камере. Чистая функция: ни сети, ни SDL, ни времени — всё тестируется
+/// Works with [`App`] directly (not via [`Screen`]): selection and orders
+/// live in [`crate::hud::HudState`], which needs access to `GameState` and
+/// the camera. A pure function: no network, no SDL, no time — everything is tested
 /// headless.
 ///
-/// * **LMB по своему юниту** — выделение (`App::hud().selected`);
-/// * **LMB по врагу** — приказ атаки (пакет `08`, процессор `P3`);
-/// * **RMB по свободной клетке** — маршрут `Paths_RequestPath` +
-///   предпросмотр линии + пакет `38` (`Command::Move`);
-/// * **RMB по юниту / Esc** — отмена (второй Esc — выход из сессии);
-/// * **End Turn** — тот же путь, что и таймер (`06` + `52`/`finish_turn`);
-/// * **Menu** — выход в главное меню.
+/// * **LMB on an own unit** — selection (`App::hud().selected`);
+/// * **LMB on an enemy** — attack order (packet `08`, processor `P3`);
+/// * **RMB on a free cell** — the `Paths_RequestPath` route +
+///   the line preview + packet `38` (`Command::Move`);
+/// * **RMB on a unit / Esc** — cancel (a second Esc — exit the session);
+/// * **End Turn** — the same path as the timer (`06` + `52`/`finish_turn`);
+/// * **Menu** — exit to the main menu.
 ///
-/// # Чат (M4.4)
+/// # Chat (M4.4)
 ///
-/// **Enter** или **T** открывают строку ввода (`ChatInput`): печатные ASCII-
-/// символы идут в буфер, **Backspace** удаляет последний, **Enter** отправляет
-/// `Command::Chat` (пакет **18**), **Esc** закрывает ввод без отправки. Пока
-/// строка открыта, мышь и остальные клавиши игнорируются.
+/// **Enter** or **T** open the input line (`ChatInput`): printable ASCII
+/// characters go into the buffer, **Backspace** deletes the last one, **Enter** sends
+/// `Command::Chat` (packet **18**), **Esc** closes the input without sending. While
+/// the line is open, the mouse and other keys are ignored.
 ///
-/// `online = true` — приказы и чат копятся в `App::hud().pending` и уходят в
-/// сессию (`net::flush_hud_orders`); `false` — демо-режим, команды применяются
-/// сразу через `max_core::events::apply_command` ([`App::flush_orders`]).
+/// `online = true` — orders and chat accumulate in `App::hud().pending` and go to
+/// the session (`net::flush_hud_orders`); `false` — demo mode, commands are applied
+/// immediately via `max_core::events::apply_command` ([`App::flush_orders`]).
 pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let (width, height) = app.viewport().screen();
     let chrome = app.chrome_active();
 
-    // Мышь для краевого скролла камеры (`Preferences`: `click_scroll`):
-    // `GameManager_ProcessInput` помнит позицию и кнопки между кадрами.
+    // Mouse for edge camera scrolling (`Preferences`: `click_scroll`):
+    // `GameManager_ProcessInput` remembers the position and buttons between frames.
     match event {
         InputEvent::MouseMove(x, y) => app.note_mouse_move(x, y),
         InputEvent::MouseClick(x, y) => app.note_mouse_click(x, y),
         _ => {}
     }
 
-    // `Alt+P` — `PauseMenu_Menu` (`game_manager.cpp:5542`): диалог «Game Paused»
-    // поверх всего, тики локальной партии останавливаются.
+    // `Alt+P` — `PauseMenu_Menu` (`game_manager.cpp:5542`): the "Game Paused" dialog
+    // over everything, local match ticks stop.
     if matches!(event, InputEvent::Key(Key::Alt('p' | 'P'))) {
         if app.pause_dialog().is_some() {
             return Transition::None;
@@ -1805,9 +1805,9 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_pause_input(app, event);
     }
 
-    // M-HS: окно перехода хода модально — как `DialogMenu::Run()` в C++, оно
-    // принимает только подтверждение (клик по `OK`, Enter, Esc). Мышь двигается
-    // (подсветка кнопки), всё остальное игнорируется, включая чат и приказы.
+    // M-HS: the turn-transition window is modal — like `DialogMenu::Run()` in C++, it
+    // accepts only confirmation (a click on `OK`, Enter, Esc). The mouse moves
+    // (button highlight), everything else is ignored, including chat and orders.
     if app.local_notice().is_some() {
         return match event {
             InputEvent::Key(Key::Enter) | InputEvent::Key(Key::Escape) => {
@@ -1822,45 +1822,45 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         };
     }
 
-    // Модальные окна: помощь (`HelpMenu`) — самое верхнее, затем экран
-    // исследований, затем `BuildMenu` (как `GameManager_DisableMainMenu` в C++):
-    // карта/панели/чат приказов не получают ввод, пока они открыты.
+    // Modal windows: help (`HelpMenu`) — topmost, then the research
+    // screen, then `BuildMenu` (like `GameManager_DisableMainMenu` in C++):
+    // the map/panels/chat receive no order input while they are open.
     if app.help_screen().is_some() {
         return session_help_input(app, event);
     }
 
-    // Режим помощи C++ (`HelpMenu_Menu`): модален, клик по элементу с записью
-    // `help.json` открывает окно; `Esc`/RMB/`?` выключают режим.
+    // C++ help mode (`HelpMenu_Menu`): modal, a click on an element with a
+    // `help.json` entry opens the window; `Esc`/RMB/`?` disable the mode.
     if app.help_mode().is_some() {
         return session_help_mode_input(app, event);
     }
 
-    // Самоуничтожение здания (`UnitsManager_SelfDestructMenu`) — модальное окно
-    // поверх всего, включая меню команд (`GameManager_DeinitPopupButtons`
-    // вызывается до открытия).
+    // Building self-destruct (`UnitsManager_SelfDestructMenu`) — a modal window
+    // over everything, including the command menu (`GameManager_DeinitPopupButtons`
+    // is called before opening).
     if app.self_destruct().is_some() {
         return session_self_destruct_input(app, event, online);
     }
 
-    // `Preferences` (`OptionsMenu::Run`, `PREFSPIC`) — модальный диалог: карта и
-    // панели ввода не получают (`GameManager_DisableMainMenu`).
+    // `Preferences` (`OptionsMenu::Run`, `PREFSPIC`) — a modal dialog: the map and
+    // panels receive no input (`GameManager_DisableMainMenu`).
     if app.preferences_dialog().is_some() {
         return session_preferences_input(app, event);
     }
 
-    // Экран исследований (P7) — модальный, как `ResearchMenu::Run`.
+    // Research screen (P7) — modal, like `ResearchMenu::Run`.
     if app.research_menu().is_some() {
         return session_research_menu_input(app, event);
     }
 
-    // Распределение добычи шахты (C++ `AllocMenu`, окно `ALLOCFRM`) —
-    // модальный диалог: карта/панели ввода не получают.
+    // Mine extraction allocation (C++ `AllocMenu`, window `ALLOCFRM`) —
+    // a modal dialog: the map/panels receive no input.
     if app.alloc_menu().is_some() {
         return session_alloc_menu_input(app, event, online);
     }
 
-    // X-FER (C++ `TransferMenu`, окно `XFERPIC`) — модальное окно количества:
-    // `GameManager_DisableMainMenu` вокруг `TransferMenu::Run`.
+    // X-FER (C++ `TransferMenu`, window `XFERPIC`) — a modal quantity window:
+    // `GameManager_DisableMainMenu` around `TransferMenu::Run`.
     if app.transfer_menu().is_some() {
         return session_transfer_menu_input(app, event, online);
     }
@@ -1869,32 +1869,32 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         return session_build_menu_input(app, event, online);
     }
 
-    // Экран покупных апгрейдов (P6) — модальный, как `UpgradeMenu::Run`.
+    // Purchasable upgrades screen (P6) — modal, like `UpgradeMenu::Run`.
     if app.upgrade_menu().is_some() {
         return session_upgrade_menu_input(app, event, online);
     }
 
-    // Окно сохранения/загрузки V70 (P3) тоже модально: пока оно открыто,
-    // карта/панели/чат приказов не получают (`GameManager_DisableMainMenu`).
+    // The V70 save/load window (P3) is modal too: while it is open,
+    // the map/panels/order chat receive no input (`GameManager_DisableMainMenu`).
     if app.save_load().is_some() {
         return session_saveload_input(app, event);
     }
 
-    // Меню команд выделенного юнита (C++ `GameManager_PopupButtons`) — модально:
-    // пока оно открыто, карта/панели/чат приказ не получают, а клик вне меню
-    // или Esc его закрывают (как `GameManager_DeinitPopupButtons`).
+    // Selected unit command menu (C++ `GameManager_PopupButtons`) — modal:
+    // while it is open, the map/panels/chat receive no orders, and a click outside the menu
+    // or Esc closes it (like `GameManager_DeinitPopupButtons`).
     if app.unit_menu().is_some() {
         return session_unit_menu_input(app, event, online);
     }
 
-    // Пока ходит компьютер/идёт переход, приказы и выделение невозможны:
-    // в C++ карта в это время не перерисовывается (`game_manager.cpp:1179`),
-    // а приказы отбрасываются по `GameManager_ActiveTurnTeam`.
+    // While the computer moves/a transition runs, orders and selection are impossible:
+    // in C++ the map is not redrawn at this time (`game_manager.cpp:1179`),
+    // and orders are discarded by `GameManager_ActiveTurnTeam`.
     let blocked = app.local_active() && app.local_input_blocked();
 
-    // Пока открыта строка чата (M4.4), клавиатура принадлежит ей: печатные
-    // ASCII-символы идут в буфер, Backspace/Enter/Esc управляют вводом. Мышь
-    // игнорируется, чтобы клик во время набора не отдал приказ.
+    // While the chat line is open (M4.4), the keyboard belongs to it: printable
+    // ASCII characters go into the buffer, Backspace/Enter/Esc control the input. The mouse
+    // is ignored so that a click during typing does not give an order.
     if app.hud().chat.is_active() {
         return match event {
             InputEvent::Key(key) => session_chat_key(app, key, online),
@@ -1902,11 +1902,11 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         };
     }
 
-    // Режим выбора места стройки (`ORDER_STATE_SELECT_SITE`) — порт
+    // Build site selection mode (`ORDER_STATE_SELECT_SITE`) — a port of
     // `GameManager_GetBuilderUnitCursor`/`PathBuild`/`ManagePlayerAction`:
-    // LMB ставит площадку в клетку под курсором, Esc/RMB отменяют. Панели C++
-    // в это время остаются включёнными, поэтому клики мимо карты уходят
-    // обычным путём (`None`). Модальные экраны и чат выше важнее.
+    // LMB places the site in the cell under the cursor, Esc/RMB cancel. The C++ panels
+    // remain enabled at this time, so clicks outside the map go
+    // the usual way (`None`). Modal screens and the chat above take precedence.
     if app.build_site().is_some() && !blocked {
         if let Some(transition) = session_build_site_input(app, event, online, chrome) {
             return transition;
@@ -1916,8 +1916,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     match event {
         InputEvent::MouseMove(x, y) => {
             if chrome {
-                // Панели: подпись/подсветка и клетка под курсором для нижней
-                // строки координат.
+                // Panels: label/highlight and the cell under the cursor for the bottom
+                // coordinates line.
                 app.hud_mut().hover_button = None;
                 app.hud_mut().hover_panel = panels::panel_button_at(x, y);
                 let grid = panels::screen_to_map(x, y).and_then(|(map_x, map_y)| {
@@ -1936,8 +1936,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
         }
         InputEvent::MouseClick(x, y) => {
             if chrome {
-                // Панели/миникарта — только просмотр, когда ход не наш; карта
-                // (выделение/атака) заблокирована.
+                // Panels/minimap — view only when it is not our turn; the map
+                // (selection/attack) is blocked.
                 if blocked && panels::panel_button_at(x, y).is_none() {
                     return Transition::None;
                 }
@@ -1959,12 +1959,12 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
         }
         InputEvent::Key(Key::Char('p' | 'P')) if app.local_active() => {
-            // Пауза локальной партии (`PauseMenu`): тики и таймер стоят.
+            // Local match pause (`PauseMenu`): ticks and the timer are stopped.
             app.local_toggle_pause();
             Transition::None
         }
-        // `B` — кнопка `Build` панели юнита (`GameManager_MenuClickBuildButton`
-        // → `BuildMenu_Menu`): открывает заказ для выделенного строителя.
+        // `B` — the unit panel `Build` button (`GameManager_MenuClickBuildButton`
+        // → `BuildMenu_Menu`): opens the order screen for the selected builder.
         InputEvent::Key(Key::Char('b' | 'B')) if !blocked => {
             if app.open_build_menu() {
                 app.hud_mut().mouse_position = None;
@@ -1975,8 +1975,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `O` — питание выделенного юнита (попап `Power On`/`Power Off` в C++;
-        // для `RESEARCH` включается исследование темы по умолчанию).
+        // `O` — power of the selected unit (the `Power On`/`Power Off` popup in C++;
+        // for `RESEARCH` the default topic research is started).
         InputEvent::Key(Key::Char('o' | 'O')) if !blocked => {
             let Some(id) = app.hud().selected else {
                 app.hud_mut().push_log("Power: select a unit first");
@@ -1994,8 +1994,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `U` — экран апгрейдов (`UpgradeMenu`): пункт `buy upg` меню команд
-        // (C++ `UnitsManager_Popup_OnClick_BuyUpgrade`); клавиша — быстрый путь.
+        // `U` — upgrades screen (`UpgradeMenu`): the `buy upg` item of the command menu
+        // (C++ `UnitsManager_Popup_OnClick_BuyUpgrade`); the key is a shortcut.
         InputEvent::Key(Key::Char('u' | 'U')) if !blocked => {
             if app.open_upgrade_menu() {
                 app.hud_mut().mouse_position = None;
@@ -2006,8 +2006,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `R` — экран исследований (`ResearchMenu`): пункт `resrch` меню команд
-        // (C++ `UnitsManager_Popup_OnClick_Research`); клавиша — быстрый путь.
+        // `R` — research screen (`ResearchMenu`): the `resrch` item of the command menu
+        // (C++ `UnitsManager_Popup_OnClick_Research`); the key is a shortcut.
         InputEvent::Key(Key::Char('r' | 'R')) if !blocked => {
             if app.open_research_menu() {
                 app.hud_mut().mouse_position = None;
@@ -2019,8 +2019,8 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
             }
             Transition::None
         }
-        // `?` — режим помощи C++ (`GNW_KB_KEY_SHIFT_DIVIDE`): окно
-        // `GAME_SCREEN_SETUP` поверх игры (панель `HELP_OF` делает то же).
+        // `?` — the C++ help mode (`GNW_KB_KEY_SHIFT_DIVIDE`): the `GAME_SCREEN_SETUP`
+        // window over the game (the `HELP_OF` panel does the same).
         InputEvent::Key(Key::Char('?')) if !blocked => {
             app.open_help(HelpSection::GameScreen);
             app.hud_mut().push_log("Help: game screen");
@@ -2041,10 +2041,10 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 Transition::LeaveSession
             }
         }
-        // `S` — сохранение партии, `L` — загрузка (C++ `Alt+F`/`Alt+L`,
-        // `GameManager_MenuClickFileButton`). В сети сохранение/загрузка
-        // недоступны (пакет 16 не портирован) — `App::open_*_menu` пишет
-        // объяснение в журнал.
+        // `S` — save the match, `L` — load (C++ `Alt+F`/`Alt+L`,
+        // `GameManager_MenuClickFileButton`). In the network save/load are
+        // unavailable (packet 16 is not ported) — `App::open_*_menu` writes
+        // the explanation to the log.
         InputEvent::Key(Key::Char('s' | 'S')) if !blocked => {
             app.open_save_menu(online);
             Transition::None
@@ -2057,11 +2057,11 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
     }
 }
 
-/// Ввод в диалоге самоуничтожения (`UnitsManager_SelfDestructMenu`).
+/// Input in the self-destruct dialog (`UnitsManager_SelfDestructMenu`).
 ///
-/// Окно модально: `Arm`/`Enter` запускает анимацию `SLFDOPN1..6`, после неё
-/// `OK`/`Enter` отдаёт `ORDER_EXPLODE`, `Esc`/`Cancel` закрывает без приказа
-/// (C++ `UnitsManager_SelfDestructMenu` возвращает `false`).
+/// The window is modal: `Arm`/`Enter` starts the `SLFDOPN1..6` animation, after it
+/// `OK`/`Enter` gives `ORDER_EXPLODE`, `Esc`/`Cancel` closes without an order
+/// (C++ `UnitsManager_SelfDestructMenu` returns `false`).
 fn session_self_destruct_input(
     app: &mut App,
     event: InputEvent,
@@ -2106,7 +2106,7 @@ fn session_self_destruct_input(
     Transition::None
 }
 
-/// Ввод в диалоге паузы (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
+/// Input in the pause dialog (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
 fn session_pause_input(app: &mut App, event: InputEvent) -> Transition {
     match app.pause_dialog_input(event) {
         Some(crate::dialog::DialogAction::Close) => {
@@ -2118,13 +2118,13 @@ fn session_pause_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
-/// Ввод в открытом меню команд выделенного юнита (C++ `GameManager_PopupButtons`).
+/// Input in the open selected unit command menu (C++ `GameManager_PopupButtons`).
 ///
-/// Меню модально: `Esc`/клик вне/правый клик закрывают его
-/// (`GameManager_DeinitPopupButtons`), клик по пункту и его горячая клавиша
-/// (`GameManager_ProcessPopupMenuInput`) вызывают обработчик пункта
-/// (`App::activate_unit_menu_item`). Стрелки и Enter в меню C++ не работают —
-/// здесь тоже (они уходят в `MenuEvent::None`).
+/// The menu is modal: `Esc`/a click outside/a right click close it
+/// (`GameManager_DeinitPopupButtons`), a click on an item and its hotkey
+/// (`GameManager_ProcessPopupMenuInput`) invoke the item handler
+/// (`App::activate_unit_menu_item`). Arrows and Enter do not work in the C++ menu —
+/// neither here (they go to `MenuEvent::None`).
 fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let Some(outcome) = app.unit_menu_input(event) else {
         return Transition::None;
@@ -2138,7 +2138,7 @@ fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Tr
         }
         crate::unitmenu::MenuEvent::Item(index) => {
             // `GameManager_ProcessPopupMenuInput` (`game_manager.cpp:2689`):
-            // пункт попапа — `PlaySfx(KCARG0)`.
+            // a popup item — `PlaySfx(KCARG0)`.
             app.play_sfx(Sfx::Click);
 
             if let Some(line) = app.activate_unit_menu_item(index) {
@@ -2154,13 +2154,13 @@ fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Tr
     Transition::None
 }
 
-/// Ввод в открытом диалоге распределения добычи шахты (C++ `AllocMenu`).
+/// Input in the open mine extraction allocation dialog (C++ `AllocMenu`).
 ///
-/// Диалог модальный (C++ `GameManager_DisableMainMenu` вокруг `AllocMenu::Run`):
-/// клики по карте/панелям приказов не дают. `Done`/`Esc`/`KP_Enter` закрывают
-/// окно — значения уже применены кликами (`UpdateRawAllocation`), а на выходе
-/// C++ рассылает `Remote_SendNetPacket_11` → `ORDER_NEW_ALLOCATE` (08/P5) на
-/// каждую шахту комплекса ([`App::queue_alloc_orders`]).
+/// The dialog is modal (C++ `GameManager_DisableMainMenu` around `AllocMenu::Run`):
+/// clicks on the map/panels give no orders. `Done`/`Esc`/`KP_Enter` close
+/// the window — the values are already applied by clicks (`UpdateRawAllocation`), and on exit
+/// C++ broadcasts `Remote_SendNetPacket_11` → `ORDER_NEW_ALLOCATE` (08/P5) to
+/// each mine of the complex ([`App::queue_alloc_orders`]).
 fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let Some(action) = app.alloc_menu_input(event) else {
         return Transition::None;
@@ -2187,12 +2187,12 @@ fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
     Transition::None
 }
 
-/// Ввод в открытом окне X-FER (C++ `TransferMenu::Run`).
+/// Input in the open X-FER window (C++ `TransferMenu::Run`).
 ///
-/// Окно модально (`GameManager_DisableMainMenu`): карта приказ не получает.
-/// `Done`/`Enter` отдаёт `ORDER_TRANSFER` (08/**P3**, `transfer_cargo`),
-/// `Esc`/`Cancel` закрывает без приказа, `?` открывает `TRANSFER_SETUP`
-/// поверх окна (в C++ `HelpMenu_Menu` возвращается в `TransferMenu`).
+/// The window is modal (`GameManager_DisableMainMenu`): the map receives no order.
+/// `Done`/`Enter` gives `ORDER_TRANSFER` (08/**P3**, `transfer_cargo`),
+/// `Esc`/`Cancel` closes without an order, `?` opens `TRANSFER_SETUP`
+/// over the window (in C++ `HelpMenu_Menu` returns to `TransferMenu`).
 fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let Some(action) = app.transfer_menu_input(event) else {
         return Transition::None;
@@ -2213,8 +2213,8 @@ fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -
             if let Some((line, queued)) = app.confirm_transfer() {
                 app.hud_mut().push_log(line);
 
-                // Офлайн приказ исполняется сразу (как остальные приказы из
-                // меню); в сети он уходит пакетом 08/P3.
+                // Offline the order is executed immediately (like the other orders from
+                // the menu); in the network it goes as packet 08/P3.
                 if queued && !online {
                     apply_pending_orders(app);
                 }
@@ -2225,9 +2225,9 @@ fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -
     Transition::None
 }
 ///
-/// Действия окна — [`crate::SaveLoadAction`]: записать слот, загрузить слот или
-/// закрыть. Ошибки файлового I/O остаются в строке статуса окна, чтобы игрок
-/// видел причину, а не молчаливое закрытие.
+/// Window actions — [`crate::SaveLoadAction`]: write a slot, load a slot or
+/// close. File I/O errors remain in the window status line so that the player
+/// sees the reason instead of a silent close.
 fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
     let Some(menu) = app.save_load_mut() else {
         return Transition::None;
@@ -2272,11 +2272,11 @@ fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
     }
 }
 
-/// Ввод в открытый `BuildMenu` (модальный экран P2).
+/// Input in the open `BuildMenu` (modal screen P2).
 ///
-/// `Done`/Enter — `Build()`: заказ уходит `Command::Order` с `PayloadP4`
-/// (пакет 08) — локально применяется сразу, в сети уходит в очередь HUD.
-/// `Cancel`/Esc — закрыть без заказа.
+/// `Done`/Enter — `Build()`: the order goes as `Command::Order` with `PayloadP4`
+/// (packet 08) — applied locally immediately, in the network it goes to the HUD queue.
+/// `Cancel`/Esc — close without an order.
 fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let action = app.build_menu_input(event);
 
@@ -2286,8 +2286,8 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().push_log(line);
             }
             // `UnitsManager_Popup_OnClick_Build` → `GameManager_AutoSelectNext`
-            // (`units_manager.cpp:825-826`): после заказа постройки C++ снимает
-            // выделение со строителя, если он больше не интерактивен.
+            // (`units_manager.cpp:825-826`): after a construction order C++ clears
+            // the selection from the builder if it is no longer interactive.
             app.auto_select_after_order();
         }
         Some(crate::buildmenu::BuildMenuAction::PathBuild) => {
@@ -2306,28 +2306,28 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
     Transition::None
 }
 
-/// Ввод в режиме выбора места стройки (`ORDER_STATE_SELECT_SITE`).
+/// Input in the build site selection mode (`ORDER_STATE_SELECT_SITE`).
 ///
-/// Повторяет C++:
-/// * **движение мыши** — `GameManager_GetBuilderUnitCursor`: призрак-лента
-///   переставляется под курсор (якорь 2×2 привязан к строителю), курсор окна
-///   становится `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`;
-/// * **LMB по карте** — `GameManager_PathBuild`: приказ `ORDER_BUILD` с
-///   клеткой площадки; по невалидной клетке C++ (`CURSOR_UNIT_NO_GO` →
-///   `ManagePlayerAction`) отменяет выбор;
-/// * **RMB по карте / Esc** — отмена (`GameManager_SelectBuildSite`): приказ не
-///   уходит, очередь строителя не меняется.
+/// Repeats C++:
+/// * **mouse move** — `GameManager_GetBuilderUnitCursor`: the tape ghost
+///   is moved under the cursor (the 2×2 anchor is bound to the builder), the window cursor
+///   becomes `CURSOR_MAP2`/`CURSOR_UNIT_NO_GO`;
+/// * **LMB on the map** — `GameManager_PathBuild`: the `ORDER_BUILD` order with
+///   the site cell; on an invalid cell C++ (`CURSOR_UNIT_NO_GO` →
+///   `ManagePlayerAction`) cancels the selection;
+/// * **RMB on the map / Esc** — cancel (`GameManager_SelectBuildSite`): the order does not
+///   go, the builder queue does not change.
 ///
-/// `None` — событие не наше (клик по панели/клавиша не Esc): вызывающий
-/// обработает его обычным путём, как C++ с включённым главным меню.
+/// `None` — the event is not ours (a click on a panel/a key other than Esc): the caller
+/// will handle it the usual way, like C++ with the main menu enabled.
 fn session_build_site_input(
     app: &mut App,
     event: InputEvent,
     online: bool,
     chrome: bool,
 ) -> Option<Transition> {
-    // Клетка карты под точкой кадра — та же проекция, что у обычных кликов
-    // (`session_map_left_click`: `screen_to_map` при хроме).
+    // The map cell under the frame point — the same projection as for regular clicks
+    // (`session_map_left_click`: `screen_to_map` with chrome).
     let grid_at = |app: &App, x: i32, y: i32| -> Option<max_core::geo::Point> {
         let (gx, gy) = if chrome {
             let (map_x, map_y) = panels::screen_to_map(x, y)?;
@@ -2350,7 +2350,7 @@ fn session_build_site_input(
                 }
             }
 
-            // Дальше обычная обработка движения (подпись панели, координаты).
+            // Then the usual movement handling (panel label, coordinates).
             None
         }
         InputEvent::MouseClick(x, y) => {
@@ -2368,14 +2368,14 @@ fn session_build_site_input(
             };
 
             let line = if valid {
-                // `GameManager_PathBuild` (`game_manager.cpp:4569`): голос
-                // `V_M049`, затем `UnitsManager_StartBuild`.
+                // `GameManager_PathBuild` (`game_manager.cpp:4569`): the voice
+                // `V_M049`, then `UnitsManager_StartBuild`.
                 app.play_sfx(Sfx::Done);
                 app.play_sfx(Sfx::BuildSitePlaced);
                 app.confirm_build_site(online)
             } else {
                 // C++: `CURSOR_UNIT_NO_GO` → `GameManager_ManagePlayerAction` —
-                // выбор отменяется целиком.
+                // the selection is canceled entirely.
                 app.play_sfx(Sfx::Cancel);
                 app.cancel_build_site()
                     .map(|line| format!("{line} (invalid cell {},{} )", grid.x, grid.y))
@@ -2391,7 +2391,7 @@ fn session_build_site_input(
             Some(Transition::None)
         }
         InputEvent::RightClick(x, y) => {
-            // RMB по карте отменяет выбор; по панели — обычная обработка.
+            // RMB on the map cancels the selection; on a panel — the usual handling.
             grid_at(app, x, y)?;
 
             if let Some(line) = app.cancel_build_site() {
@@ -2411,12 +2411,12 @@ fn session_build_site_input(
     }
 }
 
-/// Ввод в открытом экране апгрейдов (модальный экран P6).
+/// Input in the open upgrades screen (modal screen P6).
 ///
-/// `Done`/Enter — `CommitUpgradeChanges`: изменённые типы пишутся в
-/// `TeamUnits` (пакеты 10 в сети), золото списывается. `Cancel`/Esc — закрыть
-/// без изменений (C++ `UpgradeMenu::Run` возвращает `false`). `Help` —
-/// `UPGRADES_SETUP` поверх экрана (`HelpMenu_Menu`).
+/// `Done`/Enter — `CommitUpgradeChanges`: the changed types are written into
+/// `TeamUnits` (packets 10 in the network), gold is debited. `Cancel`/Esc — close
+/// without changes (C++ `UpgradeMenu::Run` returns `false`). `Help` —
+/// `UPGRADES_SETUP` over the screen (`HelpMenu_Menu`).
 fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
     let action = app.upgrade_menu_input(event);
 
@@ -2440,13 +2440,13 @@ fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) ->
     Transition::None
 }
 
-/// Ввод в окне помощи поверх игры (`HelpMenu`).
+/// Input in the help window over the game (`HelpMenu`).
 ///
-/// Окно модально; `Done`/`Enter`/`Esc` закрывают его (`event_click_cancel`), а
-/// экран под ним (игра/`ResearchMenu`/`UpgradeMenu`) продолжает работать с тем
-/// же состоянием.
+/// The window is modal; `Done`/`Enter`/`Esc` close it (`event_click_cancel`), and
+/// the screen under it (game/`ResearchMenu`/`UpgradeMenu`) keeps working with the same
+/// state.
 fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
-    // Кнопки окна: `Done` — `NDONE0`, прокрутка/`Keys` — `KCARG0`
+    // Window buttons: `Done` — `NDONE0`, scrolling/`Keys` — `KCARG0`
     // (`helpmenu.cpp:91/131/135`).
     match event {
         InputEvent::MouseClick(x, y) => {
@@ -2473,17 +2473,17 @@ fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
-/// Ввод в режиме помощи (`HelpMenu_Menu`, `helpmenu.cpp:315`).
+/// Input in help mode (`HelpMenu_Menu`, `helpmenu.cpp:315`).
 ///
-/// Клик по элементу с записью `help.json` открывает окно (`HelpMenu`); клик по
-/// пустому месту окно не открывает и режим не выключает (C++: пустой текст —
-/// окно не создаётся). `Esc`, правая кнопка или повторный `?` выключают режим
+/// A click on an element with a `help.json` entry opens the window (`HelpMenu`); a click on
+/// an empty place does not open the window and does not disable the mode (C++: empty text —
+/// the window is not created). `Esc`, the right button or a repeated `?` disable the mode
 /// (`MOUSE_RELEASE_RIGHT`/`GNW_KB_KEY_CTRL_ESCAPE`/`GNW_KB_KEY_SHIFT_DIVIDE`).
 fn session_help_mode_input(app: &mut App, event: InputEvent) -> Transition {
     match event {
         InputEvent::MouseClick(x, y) => {
             if app.help_mode_click(x, y) {
-                // `HelpMenu_Menu` (`helpmenu.cpp:331`): выбор элемента — `KCARG0`.
+                // `HelpMenu_Menu` (`helpmenu.cpp:331`): choosing an element — `KCARG0`.
                 app.play_sfx(Sfx::Click);
                 let entry = app
                     .help_screen()
@@ -2507,16 +2507,16 @@ fn session_help_mode_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
-/// Ввод в диалоге `Preferences` поверх игры (C++ `OptionsMenu::Run`, `PREFSPIC`).
+/// Input in the `Preferences` dialog over the game (C++ `OptionsMenu::Run`, `PREFSPIC`).
 ///
-/// `Done`/`Enter` применяют и сохраняют настройки, `Esc` возвращает снимок
-/// открытия, `?` открывает окно помощи `PREFS_MENU_SETUP`. Пока диалог открыт,
-/// `App::local_update` не тикает (C++ цикл стоит в `Run`).
+/// `Done`/`Enter` apply and save the settings, `Esc` restores the opening
+/// snapshot, `?` opens the `PREFS_MENU_SETUP` help window. While the dialog is open,
+/// `App::local_update` does not tick (the C++ loop sits in `Run`).
 fn session_preferences_input(app: &mut App, event: InputEvent) -> Transition {
     match app.preferences_input(event) {
         Some(preferences::PreferencesAction::Done) => {
-            // Значения уже в `App::preferences`; для следующего кадра кадровые
-            // часы читают новый `effects`.
+            // The values are already in `App::preferences`; for the next frame the frame
+            // clock reads the new `effects`.
         }
         Some(preferences::PreferencesAction::Cancel) => {
             app.hud_mut().push_log("Preferences cancelled");
@@ -2535,12 +2535,12 @@ fn session_preferences_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
-/// Ввод в открытом экране исследований (модальный экран P7).
+/// Input in the open research screen (modal screen P7).
 ///
-/// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: распределение центров пишется
-/// в `GameState` ([`max_core::game::GameState::set_research_allocation`]) и
-/// подхватывается `finish_turn` (`ResearchMenu_NewTurn`). `Cancel`/`Esc` —
-/// закрыть без изменений. `Help` — `RESEARCH_SETUP`.
+/// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: the center allocation is written
+/// into `GameState` ([`max_core::game::GameState::set_research_allocation`]) and
+/// picked up by `finish_turn` (`ResearchMenu_NewTurn`). `Cancel`/`Esc` —
+/// close without changes. `Help` — `RESEARCH_SETUP`.
 fn session_research_menu_input(app: &mut App, event: InputEvent) -> Transition {
     let action = app.research_menu_input(event);
 
@@ -2564,17 +2564,17 @@ fn session_research_menu_input(app: &mut App, event: InputEvent) -> Transition {
     Transition::None
 }
 
-/// Клавиша в открытой строке ввода чата.
+/// Key in the open chat input line.
 ///
-/// * печатный ASCII (включая пробел) — в буфер (до [`hud::CHAT_MAX_CHARS`]);
-/// * Backspace — удалить последний символ;
-/// * Enter — отправить [`Packet18Chat`] (`Command::Chat`): в сети — в очередь
-///   `App::hud().pending` (её отправляет `net::flush_hud_orders`), в демо —
-///   сразу в `apply_command`; строка журнала пишется в обоих режимах;
-/// * Esc — закрыть ввод без отправки.
+/// * printable ASCII (including space) — into the buffer (up to [`hud::CHAT_MAX_CHARS`]);
+/// * Backspace — delete the last character;
+/// * Enter — send [`Packet18Chat`] (`Command::Chat`): in the network — to the
+///   `App::hud().pending` queue (sent by `net::flush_hud_orders`), in demo —
+///   immediately to `apply_command`; the log line is written in both modes;
+/// * Esc — close the input without sending.
 ///
-/// Остальные клавиши (стрелки/Tab) в чате игнорируются, чтобы случайно не
-/// открыть меню/приказ.
+/// The other keys (arrows/Tab) are ignored in the chat so as not to
+/// accidentally open a menu/order.
 fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
     match key {
         Key::Char(character) => {
@@ -2601,10 +2601,10 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
     Transition::None
 }
 
-/// Отправка строки чата: журнал + [`Command::Chat`] (пакет **18**).
+/// Sends the chat line: log + [`Command::Chat`] (packet **18**).
 ///
-/// Пустая строка не отправляется (как `Remote_SendNetPacket_18`, который
-/// возвращается на `message[0] == '\0'`), ввод просто закрывается.
+/// An empty line is not sent (like `Remote_SendNetPacket_18`, which
+/// returns on `message[0] == '\0'`), the input is simply closed.
 fn submit_chat(app: &mut App, online: bool) -> Transition {
     let Some(message) = app.hud_mut().chat.take_message() else {
         return Transition::None;
@@ -2625,7 +2625,7 @@ fn submit_chat(app: &mut App, online: bool) -> Transition {
     Transition::None
 }
 
-/// Левая кнопка без хрома: кнопки процедурного HUD → миникарта → карта.
+/// Left button without chrome: procedural HUD buttons → minimap → map.
 fn session_left_click(
     app: &mut App,
     width: u32,
@@ -2644,7 +2644,7 @@ fn session_left_click(
         };
     }
 
-    // Клик по миникарте — центрирование камеры (как в оригинале).
+    // A click on the minimap — camera centering (as in the original).
     let layout = hud::hud_layout(width, height);
 
     if let Some(grid) = hud::minimap_grid_at(&layout, x, y) {
@@ -2657,19 +2657,19 @@ fn session_left_click(
     session_map_left_click(app, &viewport, x, y, online)
 }
 
-/// Левая кнопка с хромом 1:1: панели → миникарта → карта.
+/// Left button with 1:1 chrome: panels → minimap → map.
 ///
-/// Экранные координаты окна переводятся в координаты области карты
-/// ([`panels::screen_to_map`]) до `screen_to_grid` — иначе клик уезжает на
-/// (180,18) (риск 4 в `max-brh-docs/visual-1to1-status.md`).
+/// The window screen coordinates are converted into map area coordinates
+/// ([`panels::screen_to_map`]) before `screen_to_grid` — otherwise the click drifts by
+/// (180,18) (risk 4 in `max-brh-docs/visual-1to1-status.md`).
 fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
     if let Some(button) = panels::panel_button_at(x, y) {
         return session_panel_button(app, button, x, online);
     }
 
-    // Миникарта: 112×112 клеток мира в окне (15,356). В 2x-режиме клик
-    // переводится через `GameManager_GetMinimapPosition` (область 56×56 вокруг
-    // центра камеры), иначе клик уезжает.
+    // Minimap: 112×112 world cells in the window (15,356). In 2x mode the click
+    // is converted via `GameManager_GetMinimapPosition` (the 56×56 area around
+    // the camera center), otherwise the click drifts.
     let minimap = max_render::layout::MINIMAP;
 
     if minimap.contains(x, y) {
@@ -2687,7 +2687,7 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
         return Transition::None;
     }
 
-    // Клик вне карты (рамка/прокрутка) — не приказ.
+    // A click outside the map (frame/scrolling) — not an order.
     let Some((map_x, map_y)) = panels::screen_to_map(x, y) else {
         return Transition::None;
     };
@@ -2696,9 +2696,9 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
     session_map_left_click(app, &viewport, map_x, map_y, online)
 }
 
-/// Кнопка панели 1:1: End Turn, переключатели, зум, миникарта, меню.
+/// 1:1 panel button: End Turn, toggles, zoom, minimap, menu.
 fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool) -> Transition {
-    // Кнопки панелей — `PlaySfx(MBUTT0)` (`game_manager.cpp:5446/5692/5713`).
+    // Panel buttons — `PlaySfx(MBUTT0)` (`game_manager.cpp:5446/5692/5713`).
     app.play_sfx(Sfx::Button);
 
     match button {
@@ -2739,13 +2739,13 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
             return Transition::None;
         }
         PanelButton::Pause if app.local_active() => {
-            // Пауза M-SP: `PauseMenu` — тики и таймер хода останавливаются.
+            // M-SP pause: `PauseMenu` — ticks and the turn timer stop.
             app.local_toggle_pause();
             return Transition::None;
         }
         PanelButton::Help => {
             // `GameManager_MenuClickHelpButton` → `HelpMenu_Menu("GAME_SCREEN_SETUP")`
-            // (`WINDOW_MAIN_MAP`); `?`/Shift+/ в игре делает то же самое.
+            // (`WINDOW_MAIN_MAP`); `?`/Shift+/ in game does the same.
             app.open_help(HelpSection::GameScreen);
             app.hud_mut().push_log("Help: game screen");
             return Transition::None;
@@ -2762,7 +2762,7 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
             return Transition::None;
         }
         PanelButton::Files => {
-            // `GameManager_MenuClickFileButton` (`Alt+F`) — окно V70.
+            // `GameManager_MenuClickFileButton` (`Alt+F`) — the V70 window.
             app.open_save_menu(online);
             return Transition::None;
         }
@@ -2774,7 +2774,7 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
         | PanelButton::Next
         | PanelButton::Reports
         | PanelButton::Chat => {
-            // Экраны этих кнопок ещё не портированы (пункты C/E плана).
+            // The screens of these buttons are not ported yet (items C/E of the plan).
             app.hud_mut()
                 .push_log(format!("{button:?}: screen is not ported yet"));
             return Transition::None;
@@ -2792,15 +2792,15 @@ fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool
     Transition::None
 }
 
-/// `MAX_DEBUG_INPUT=1` — трассировать ввод сессии в stderr (диагностика).
+/// `MAX_DEBUG_INPUT=1` — trace session input to stderr (diagnostics).
 ///
-/// Без переменной окружения ни одна ветка ничего не печатает: вывод не
-/// попадает ни в обычный запуск, ни в QA/golden.
+/// Without the environment variable no branch prints anything: the output does not
+/// get into a normal run or QA/golden.
 fn debug_input() -> bool {
     std::env::var_os("MAX_DEBUG_INPUT").is_some()
 }
 
-/// Выделение/атака по точке **камеры карты** (448×448 при хроме).
+/// Selection/attack by a **map camera** point (448×448 with chrome).
 fn session_map_left_click(
     app: &mut App,
     viewport: &Viewport,
@@ -2808,8 +2808,8 @@ fn session_map_left_click(
     y: i32,
     online: bool,
 ) -> Transition {
-    // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6711`): отпускание LMB
-    // по карте — `PlaySfx(KCARG0)`.
+    // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6711`): releasing LMB
+    // on the map — `PlaySfx(KCARG0)`.
     app.play_sfx(Sfx::Click);
 
     let team = app.player_team();
@@ -2827,11 +2827,11 @@ fn session_map_left_click(
     }
     let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
         // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5832-5843`):
-        // выделенный строитель в `ORDER_STATE_UNIT_READY` + клетка рядом с
-        // достроенным зданием (кольцо `BLDMRK*`) — курсор `CURSOR_UNIT_GO`, и
-        // LMB отдаёт `ORDER_ACTIVATE`/`IN_TRANSITION` (`:6879-6890`), а не
-        // снимает выделение. Подсказка `_(276c)` зовёт именно кликнуть «клетку
-        // с символом».
+        // the selected builder in `ORDER_STATE_UNIT_READY` + a cell next to the
+        // completed building (the `BLDMRK*` ring) — cursor `CURSOR_UNIT_GO`, and
+        // LMB gives `ORDER_ACTIVATE`/`IN_TRANSITION` (`:6879-6890`) instead of
+        // clearing the selection. The hint `_(276c)` asks to click exactly "the cell
+        // with the symbol".
         let exit_cell = max_core::geo::Point::new(grid.0, grid.1);
         if let Some(selected) = app.hud().selected {
             if let Some(command) =
@@ -2852,13 +2852,13 @@ fn session_map_left_click(
             }
         }
 
-        // `GameManager_ProcessPlayerInput`: клик по карте закрывает окно
-        // сообщения (`MessageManager_ClearMessageBox`).
+        // `GameManager_ProcessPlayerInput`: a click on the map closes the message
+        // window (`MessageManager_ClearMessageBox`).
         app.hud_mut().clear_hint();
 
-        // `targeting_mode` и пустая клетка: `GameManager_SetUnitOrder`
-        // (`game_manager.cpp:6360`) — если цель не найдена, а выстрелы есть,
-        // `fire_on = (x,y)` и `ORDER_FIRE`/`INIT` (стрельба по площади).
+        // `targeting_mode` and an empty cell: `GameManager_SetUnitOrder`
+        // (`game_manager.cpp:6360`) — if the target is not found and there are shots,
+        // `fire_on = (x,y)` and `ORDER_FIRE`/`INIT` (area fire).
         if app.hud().targeting_mode {
             if let Some(selected) = app.hud().selected {
                 let cell = max_core::geo::Point::new(grid.0, grid.1);
@@ -2908,8 +2908,8 @@ fn session_map_left_click(
     if unit_team == team {
         let selected = app.hud().selected;
 
-        // Курсорный режим выделенного юнита (C++ `UnitInfo::cursor` 4/6, меню
-        // команд): клик по своему юниту отдаёт `ORDER_REPAIR`/`ORDER_RELOAD`
+        // Cursor mode of the selected unit (C++ `UnitInfo::cursor` 4/6, command
+        // menu): a click on an own unit gives `ORDER_REPAIR`/`ORDER_RELOAD`
         // (`GameManager_RepairUnit`/`GameManager_ReloadUnit`).
         let cursor = app.hud().cursor_mode;
         if cursor != 0 {
@@ -2932,8 +2932,8 @@ fn session_map_left_click(
                             }
                         }
                         Ok(None) => {
-                            // C++ молча ничего не делает: у цели нет
-                            // совместимого склада/типа груза.
+                            // C++ silently does nothing: the target has no
+                            // compatible storage/cargo type.
                         }
                         Err(message) => app.hud_mut().push_log(message),
                     }
@@ -2962,7 +2962,7 @@ fn session_map_left_click(
                     }
                     Ok(None) => {}
                     Err(message) => {
-                        // Недоступное действие — `NCANC0` (`game_manager.cpp:4612`).
+                        // Unavailable action — `NCANC0` (`game_manager.cpp:4612`).
                         app.play_sfx(Sfx::Cancel);
                         app.hud_mut().push_log(message);
                         return Transition::None;
@@ -2970,10 +2970,10 @@ fn session_map_left_click(
                 }
 
                 // `load` (`cursor = 7`) — `GameManager_ProcessMouse`,
-                // ветка `CURSOR_LOAD` (`game_manager.cpp:6807`).
+                // `CURSOR_LOAD` branch (`game_manager.cpp:6807`).
                 if cursor == crate::unitmenu::CURSOR_LOAD {
-                    // C++ отдаёт приказ только когда курсор — `CURSOR_LOAD`
-                    // (`load_mode_applies`); иначе цель не принимается.
+                    // C++ gives the order only when the cursor is `CURSOR_LOAD`
+                    // (`load_mode_applies`); otherwise the target is not accepted.
                     let applies = match (app.state().unit(selected), app.state().unit(id)) {
                         (Some(transport), Some(passenger)) => {
                             crate::unitmenu::load_mode_applies(transport, passenger)
@@ -3008,8 +3008,8 @@ fn session_map_left_click(
             }
         }
 
-        // `enter_mode` (C++ `UnitsManager_Popup_OnClick_Enter`): клик по своему
-        // юниту — `ORDER_MOVE_TO_UNIT` в его клетку (посадка в транспорт).
+        // `enter_mode` (C++ `UnitsManager_Popup_OnClick_Enter`): a click on an own
+        // unit — `ORDER_MOVE_TO_UNIT` into its cell (boarding a transport).
         if app.hud().enter_mode {
             if let Some(selected) = selected.filter(|selected| *selected != id) {
                 if let Some(command) = crate::unitmenu::enter_mode_click(app.state(), selected, id)
@@ -3026,7 +3026,7 @@ fn session_map_left_click(
             app.hud_mut().enter_mode = false;
         }
 
-        // Повторный клик по уже выделенному юниту открывает меню команд —
+        // A repeated click on the already selected unit opens the command menu —
         // C++ `GameManager_ClickUnit` (`unit1 == unit2` → `InitPopupButtons`).
         if selected == Some(id) {
             app.hud_mut().preview = None;
@@ -3035,8 +3035,8 @@ fn session_map_left_click(
             let line = if app.open_unit_menu() {
                 match app.unit_menu() {
                     Some(menu) => format!("Unit menu: {label} ({})", menu.items.len()),
-                    // `Popup_InitFactories`: у завода с готовым юнитом меню не
-                    // открывается — `PlaceNewUnit` выбрал готового юнита.
+                    // `Popup_InitFactories`: for a factory with a ready unit the menu does not
+                    // open — `PlaceNewUnit` selected the ready unit.
                     None => format!("Launch {label}: click a cell next to it"),
                 }
             } else {
@@ -3051,12 +3051,12 @@ fn session_map_left_click(
         app.hud_mut().preview = None;
         app.hud_mut().push_log(format!("Selected {label}"));
         // `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage`:
-        // подсказка сверху карты о текущей стройке выделенного строителя.
+        // the hint above the map about the current construction of the selected builder.
         session_show_unit_status(app, id);
         return Transition::None;
     }
 
-    // Враг: диверсант (курсорные режимы 8/9) или атака (пакет 08, P3).
+    // Enemy: commando (cursor modes 8/9) or attack (packet 08, P3).
     let Some(selected) = app.hud().selected else {
         app.hud_mut()
             .push_log("Enemy unit — select your unit first");
@@ -3069,8 +3069,8 @@ fn session_map_left_click(
         crate::unitmenu::CURSOR_STEAL | crate::unitmenu::CURSOR_DISABLE
     ) {
         // `GameManager_StealUnit`/`GameManager_DisableUnit`
-        // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` уходит в
-        // пакет 08/P3 (`stealth_dice_roll`), поэтому ролл генерируется здесь.
+        // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` goes into
+        // packet 08/P3 (`stealth_dice_roll`), so the roll is generated here.
         let roll = app.state_mut().rng.generate(101i32) as u8;
 
         match crate::unitmenu::stealth_mode_click(app.state(), selected, id, cursor, roll) {
@@ -3081,7 +3081,7 @@ fn session_map_left_click(
                 } else {
                     "disable"
                 };
-                // `GameManager_StealUnit`/`DisableUnit` — выбор цели как KCARG0.
+                // `GameManager_StealUnit`/`DisableUnit` — target selection like KCARG0.
                 app.play_sfx(Sfx::Click);
                 app.hud_mut().push_log(format!("{label}: действие назначено"));
                 if !online {
@@ -3117,13 +3117,13 @@ fn session_map_left_click(
     Transition::None
 }
 
-/// `GameManager_DrawUnitStatusMessage` (`game_manager.cpp:8038`): подсказка
-/// сверху карты для выделенного строителя.
+/// `GameManager_DrawUnitStatusMessage` (`game_manager.cpp:8038`): the hint
+/// above the map for the selected builder.
 ///
-/// Для строящего (`ORDER_BUILD`) — «Currently building: X. / Turns to
-/// completion: N.» (`ee24`), для достроившего (`ORDER_STATE_UNIT_READY`) —
-/// «Finished building X. …» (`276c`). Для остальных юнитов окно сообщения
-/// закрывается, как `MessageManager_ClearMessageBox` в `GameManager_UnitSelect`.
+/// For a building unit (`ORDER_BUILD`) — «Currently building: X. / Turns to
+/// completion: N.» (`ee24`), for a completed one (`ORDER_STATE_UNIT_READY`) —
+/// «Finished building X. …» (`276c`). For other units the message window
+/// is closed, like `MessageManager_ClearMessageBox` in `GameManager_UnitSelect`.
 fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
     let message = app
         .state()
@@ -3136,14 +3136,14 @@ fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
     }
 }
 
-/// Правая кнопка без хрома.
+/// Right button without chrome.
 fn session_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
     let viewport = *app.viewport();
 
     session_map_right_click(app, &viewport, x, y, online)
 }
 
-/// Правая кнопка с хромом: сначала панели (они не дают приказ), затем карта.
+/// Right button with chrome: first the panels (they give no order), then the map.
 fn session_chrome_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
     if panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y) {
         return Transition::None;
@@ -3156,7 +3156,7 @@ fn session_chrome_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Tr
     session_map_right_click(app, &viewport, map_x, map_y, online)
 }
 
-/// Правая кнопка по карте: отмена по юниту, иначе приказ движения в клетку.
+/// Right click on the map: cancel on a unit, otherwise a move order to the cell.
 fn session_map_right_click(
     app: &mut App,
     viewport: &Viewport,
@@ -3178,7 +3178,7 @@ fn session_map_right_click(
         );
     }
 
-    // «Отмена — Esc/правый клик по юниту».
+    // «Cancel — Esc/right click on the unit».
     if let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) {
         let label = app
             .state()
@@ -3217,11 +3217,11 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    // Готовый юнит в контейнере (завод/транспорт: `ORDER_IDLE`, родитель —
-    // контейнер): клик по клетке рядом — `CURSOR_ACTIVATE`, приказ
-    // `ORDER_ACTIVATE` получает контейнер (`game_manager.cpp:6918-6926`),
-    // `UnitsManager_ActivateUnit` выводит юнита. Проверяется **до**
-    // `unit_can_move`: готовый самолёт в AIRPLT тоже `ORDER_IDLE`.
+    // A ready unit in a container (factory/transport: `ORDER_IDLE`, the parent — the
+    // container): a click on the adjacent cell — `CURSOR_ACTIVATE`, the `ORDER_ACTIVATE`
+    // order goes to the container (`game_manager.cpp:6918-6926`),
+    // `UnitsManager_ActivateUnit` brings the unit out. Checked **before**
+    // `unit_can_move`: a ready aircraft in AIRPLT is also `ORDER_IDLE`.
     if let Some(command) = hud::build_activate_order(app.state(), selected, destination) {
         app.hud_mut().preview = None;
         app.hud_mut().pending.push(command);
@@ -3244,9 +3244,9 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    // Авиация ходит по `ORDER_MOVE`/`INIT` (пакет 08/P3): путь `AirPath`
-    // строит симуляция (`Paths_GetAirPath`), а `unit_can_move` намеренно
-    // исключает `MOBILE_AIR_UNIT` (наземный `Packet38Move` ей не подходит).
+    // Aviation moves via `ORDER_MOVE`/`INIT` (packet 08/P3): the `AirPath` is built
+    // by the simulation (`Paths_GetAirPath`), and `unit_can_move` deliberately
+    // excludes `MOBILE_AIR_UNIT` (the ground `Packet38Move` does not suit it).
     if app.state().unit(selected).is_some_and(|unit| unit.is_air()) {
         match hud::build_air_move_order(app.state(), selected, destination) {
             Some(command) => {
@@ -3279,11 +3279,11 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    // Достроивший строитель стоит на площадке (`ORDER_BUILD`/`UNIT_READY`,
-    // здание `ORDER_IDLE`/`BUILDING_READY`): клик отдаёт `ORDER_ACTIVATE`/
-    // `IN_TRANSITION` — ровно `game_manager.cpp:6879-6890`. Путь не строится
-    // (C++ ставит только `move_to`), поэтому `build_move_order` здесь не
-    // вызывается.
+    // A completed builder stands on the site (`ORDER_BUILD`/`UNIT_READY`,
+    // building `ORDER_IDLE`/`BUILDING_READY`): the click gives `ORDER_ACTIVATE`/
+    // `IN_TRANSITION` — exactly `game_manager.cpp:6879-6890`. The path is not built
+    // (C++ sets only `move_to`), so `build_move_order` is not called
+    // here.
     if let Some(command) = hud::build_builder_exit_order(app.state(), selected, destination) {
         app.hud_mut().preview = None;
         app.hud_mut().pending.push(command);
@@ -3306,10 +3306,10 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    // Строитель на недостроенной площадке: C++ не даёт приказ движения
+    // A builder on an unfinished site: C++ gives no move order
     // (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931` —
-    // `CURSOR_UNIT_NO_GO` для всех состояний, кроме `UNIT_READY`/`SELECT_SITE`).
-    // Увести его можно только явной отменой `stop` в попапе
+    // `CURSOR_UNIT_NO_GO` for all states except `UNIT_READY`/`SELECT_SITE`).
+    // It can only be taken away by an explicit `stop` in the popup
     // (`UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/`BUILD_CANCEL`).
     if let Some(site) = app
         .state()
@@ -3370,8 +3370,8 @@ fn session_map_right_click(
     Transition::None
 }
 
-/// End Turn: в локальной партии — ход ИИ, в сети — флаг для игрового цикла
-/// (`06`+`52` там же), в демо — локальный проход [`App::end_turn`].
+/// End Turn: in a local match — the AI turn, in the network — a flag for the game loop
+/// (`06`+`52` there), in demo — a local pass of [`App::end_turn`].
 fn session_end_turn(app: &mut App, online: bool) {
     if app.local_active() {
         app.local_end_turn();
@@ -3383,7 +3383,7 @@ fn session_end_turn(app: &mut App, online: bool) {
     }
 }
 
-/// Применяет накопленные приказы локально (демо-режим) и пишет об этом в журнал.
+/// Applies the accumulated orders locally (demo mode) and writes about it to the log.
 fn apply_pending_orders(app: &mut App) {
     let applied = app.flush_orders();
 
@@ -3393,10 +3393,10 @@ fn apply_pending_orders(app: &mut App) {
     }
 }
 
-/// Подпись юнита для журнала: имя (если задано) и тип.
+/// Unit caption for the log: the name (if set) and the type.
 ///
-/// Без собственного имени (`unit.name`) подпись — User-Friendly Name типа
-/// ([`crate::unit_names::unit_user_friendly_name`]), а не `Debug`-имя варианта.
+/// Without an own name (`unit.name`) the caption is the type UFN
+/// ([`crate::unit_names::unit_user_friendly_name`]), not the variant's `Debug` name.
 fn unit_label(unit: &UnitInfo) -> String {
     if unit.name.is_empty() {
         crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
@@ -3405,13 +3405,13 @@ fn unit_label(unit: &UnitInfo) -> String {
     }
 }
 
-/// Кадр сессии: карта из [`App::render_frame`] + HUD (M4.2) поверх неё.
+/// Session frame: the map from [`App::render_frame`] + the HUD (M4.2) over it.
 ///
-/// Если загружен хром окна 1:1 (`FRAMEPIC`) и кадр 640×480, HUD оригинала уже
-/// нарисован в самой картинке — процедурный HUD не рисуется, поверх области
-/// карты выводится только строка статуса. Без хрома — прежний вид.
+/// If the 1:1 window chrome (`FRAMEPIC`) is loaded and the frame is 640×480, the original HUD is already
+/// drawn in the picture itself — the procedural HUD is not drawn, only the status line is output
+/// over the map area. Without chrome — the former look.
 ///
-/// Без `App` (headless-рендер до сети) остаётся прежний фон со строкой статуса.
+/// Without `App` (headless rendering before the network) the former background with the status line remains.
 fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
     if let Some(app) = view.app {
         let frame = app.render_frame();
@@ -3420,18 +3420,18 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
         let chrome_active = app.chrome_active();
 
         if chrome_active {
-            // Область карты уже содержит тайлы, юнитов и панели; пишем только
-            // строку сообщений в верхнем левом углу карты — шрифтом GNW, как
+            // The map area already contains tiles, units and panels; we write only
+            // the message line in the top-left corner of the map — in the GNW font, like
             // `MessageManager_DrawMessage`.
             let area = max_render::layout::MAIN_MAP;
             let status: String = view.status.chars().take(70).collect();
 
-            // Открытый `BuildMenu` — модальный экран поверх кадра: строка
-            // статуса партии его не перекрывает (как `GameManager_DisableMainMenu`).
-            // Окно сохранения/загрузки (P3) — такое же модальное.
-            // Диалог распределения добычи (`AllocMenu`) занимает весь кадр
-            // 640×480 (`ALLOCFRM`), поэтому строка статуса не рисуется поверх
-            // него — как модальное окно C++.
+            // Open `BuildMenu` — a modal screen over the frame: the match status
+            // line does not cover it (like `GameManager_DisableMainMenu`).
+            // The save/load window (P3) — the same modal.
+            // The extraction allocation dialog (`AllocMenu`) occupies the whole 640×480
+            // frame (`ALLOCFRM`), so the status line is not drawn over
+            // it — like a modal C++ window.
             if app.build_menu().is_none()
                 && app.save_load().is_none()
                 && app.alloc_menu().is_none()
@@ -3450,7 +3450,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
                 }
             }
 
-            // M-HS: окно перехода хода поверх кадра — модальное, как `DialogMenu`.
+            // M-HS: the turn-transition window over the frame — modal, like `DialogMenu`.
             draw_local_notice(buffer, app, view.mouse);
             return;
         }
@@ -3484,10 +3484,10 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
     }
 }
 
-/// Окно перехода хода M-HS поверх кадра сессии (`DialogMenu`).
+/// M-HS turn-transition window over the session frame (`DialogMenu`).
 ///
-/// Рисуется только когда открыт `LocalGame::notice` — то есть в hot-seat на
-/// смене человеческой команды (`GameManager_UpdateGuiControl`).
+/// Drawn only when `LocalGame::notice` is open — i.e. in hot-seat on
+/// a human team change (`GameManager_UpdateGuiControl`).
 fn draw_local_notice(buffer: &mut RgbaBuffer, app: &App, mouse: Option<Point>) {
     let Some(notice) = app.local_notice() else {
         return;
@@ -3511,7 +3511,7 @@ fn draw_local_notice(buffer: &mut RgbaBuffer, app: &App, mouse: Option<Point>) {
     );
 }
 
-/// Копирует кадр `src` в `dst` с обрезкой по меньшему размеру.
+/// Copies the `src` frame into `dst` clipped by the smaller size.
 fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {
     let width = dst.width().min(src.width()) as usize;
     let height = dst.height().min(src.height()) as usize;
@@ -3535,7 +3535,7 @@ fn blit(dst: &mut RgbaBuffer, src: &RgbaBuffer) {
 }
 
 // ---------------------------------------------------------------------------
-// Раскладка экранов
+// Screen layout
 // ---------------------------------------------------------------------------
 
 fn horizontal_margin(width: i32) -> i32 {
@@ -3556,7 +3556,7 @@ fn build_main_menu(
     let mut widgets = Vec::with_capacity(12);
 
     if native_frame {
-        // Семь кнопок оригинала: индексы 0..=6, из них действия Rust-клиента —
+        // Seven original buttons: indices 0..=6, of which the Rust client actions are —
         // 0 (New Game), 2 (Multiplayer Game), 6 (Exit).
         for button in &menu::MAIN_MENU_BUTTONS {
             widgets.push(Widget::Button(Button::new(
@@ -3596,8 +3596,8 @@ fn build_main_menu(
         let rects = layout(Rect::new(x, top, content, total), &heights, gap);
         let empty = Rect::new(0, 0, 0, 0);
 
-        // Индексы обязаны совпадать с оригинальным порядком (`MAIN_*`):
-        // 0 — Create, 1 — Load, 2 — Join, 3..=5 — не портированы, 6 — Exit.
+        // The indices must match the original order (`MAIN_*`):
+        // 0 — Create, 1 — Load, 2 — Join, 3..=5 — not ported, 6 — Exit.
         let buttons = [
             ("New Game", rects[2]),
             ("Load Game", empty),
@@ -3763,16 +3763,16 @@ fn build_join_list(
     ui
 }
 
-/// Число планет в оригинале (`PlanetSelectMenu` — 24, `PlanetType`).
+/// Number of planets in the original (`PlanetSelectMenu` — 24, `PlanetType`).
 pub const PLANET_COUNT: usize = 24;
-/// Колонок в сетке планет.
+/// Columns in the planet grid.
 pub const PLANET_COLUMNS: i32 = 8;
-/// Строк в сетке планет.
+/// Rows in the planet grid.
 pub const PLANET_ROWS: i32 = 3;
-/// Минимальная высота окна, при которой показывается сетка планет.
+/// Minimum window height at which the planet grid is shown.
 pub const PLANET_GRID_MIN_HEIGHT: u32 = 320;
 
-/// Имена 24 планет — `_(e43b)`…`_(ba99)` из `planetselectmenu.cpp:120-122`
+/// Names of the 24 planets — `_(e43b)`…`_(ba99)` from `planetselectmenu.cpp:120-122`
 /// (`language.json`, en-US).
 pub const PLANET_NAMES: [&str; PLANET_COUNT] = [
     "Snowcrab",
@@ -3801,7 +3801,7 @@ pub const PLANET_NAMES: [&str; PLANET_COUNT] = [
     "Bottleneck",
 ];
 
-/// Имя планеты (`planetselectmenu.cpp:138`).
+/// Planet name (`planetselectmenu.cpp:138`).
 pub fn planet_name(planet: Planet) -> &'static str {
     PLANET_NAMES
         .get(planet as usize)
@@ -3809,22 +3809,22 @@ pub fn planet_name(planet: Planet) -> &'static str {
         .unwrap_or("Unknown")
 }
 
-/// Планета по индексу сетки `0..24` (`Planet::try_from`).
+/// Planet by grid index `0..24` (`Planet::try_from`).
 pub fn planet_from_index(index: usize) -> Option<Planet> {
     (index < PLANET_COUNT)
         .then(|| Planet::try_from(index as u8).ok())
         .flatten()
 }
 
-/// Следующая «случайная» планета для кнопки `Random`.
+/// Next "random" planet for the `Random` button.
 ///
-/// Оригинал берёт `Randomizer_Generate(24)`; в Rust-клиенте выбор детерминирован
-/// (без общего ГПСЧ UI), чтобы кадры и тесты были воспроизводимы.
+/// The original takes `Randomizer_Generate(24)`; in the Rust client the choice is deterministic
+/// (without a shared UI RNG), so that frames and tests are reproducible.
 pub fn random_planet(current: i64) -> i64 {
     ((current.clamp(0, MAX_WORLD) * 7 + 5) % (MAX_WORLD + 1)).clamp(0, MAX_WORLD)
 }
 
-/// Горизонтальные поля формы.
+/// Horizontal form margins.
 fn form_content(width: i32) -> (i32, i32) {
     let margin = horizontal_margin(width);
     let content = (width - margin * 2).max(60);
@@ -3833,10 +3833,10 @@ fn form_content(width: i32) -> (i32, i32) {
     (x, content)
 }
 
-/// Прямоугольник сетки планет внутри формы (24 ячейки 8×3).
+/// Planet grid rectangle inside the form (24 cells 8×3).
 ///
-/// В кадре 640×480 — точная область 3×2 слотов `PLANETSE` (`192,51 388×249`),
-/// иначе — прежняя адаптивная раскладка для тестов/малых кадров.
+/// In a 640×480 frame — the exact 3×2 `PLANETSE` slot area (`192,51 388×249`),
+/// otherwise — the former adaptive layout for tests/small frames.
 pub fn planet_grid_rect(width: u32, height: u32) -> Rect {
     if width as i32 == menu::MENU_WIDTH && height as i32 == menu::MENU_HEIGHT {
         return menu::planet_grid_rect();
@@ -3850,7 +3850,7 @@ pub fn planet_grid_rect(width: u32, height: u32) -> Rect {
     Rect::new(x, 24, content, cell_height * PLANET_ROWS)
 }
 
-/// Прямоугольник поля формы (оригинальная раскладка 3×2 в описании PLANETSE).
+/// Form field rectangle (the original 3×2 layout in the PLANETSE description).
 pub fn create_field_rect(field: CreateField) -> Rect {
     menu::CREATE_FIELD_RECTS
         .iter()
@@ -3859,7 +3859,7 @@ pub fn create_field_rect(field: CreateField) -> Rect {
         .unwrap_or(Rect::new(0, 0, 0, 0))
 }
 
-/// Прямоугольник одной планеты в сетке.
+/// Rectangle of one planet in the grid.
 pub fn planet_cell_rect(width: u32, height: u32, index: usize) -> Rect {
     let grid = planet_grid_rect(width, height);
     let cell_width = (grid.width / PLANET_COLUMNS).max(1);
@@ -3875,7 +3875,7 @@ pub fn planet_cell_rect(width: u32, height: u32, index: usize) -> Rect {
     )
 }
 
-/// Планета под точкой (`None` — точка вне сетки).
+/// Planet under the point (`None` — the point is outside the grid).
 pub fn planet_cell_at(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
     for index in 0..PLANET_COUNT {
         let rect = planet_cell_rect(width, height, index);
@@ -3998,9 +3998,9 @@ fn build_create_form(
         Button::new("?", help).with_enabled(!help.is_empty()),
     ));
 
-    // Подписи планет рисуются в `draw_planet_picker` шрифтом GNW Font5
-    // (в C++ имена планет — `GNW_TEXT_FONT_5`), а не 8×8 Label'ами: иначе
-    // «Valentine's Planet» обрезается до 8 символов.
+    // Planet labels are drawn in `draw_planet_picker` with the GNW Font5
+    // (in C++ the planet names are `GNW_TEXT_FONT_5`), not 8×8 Labels: otherwise
+    // «Valentine's Planet» is truncated to 8 characters.
 
     widgets.push(Widget::Label(Label::colored(
         if native_frame {
@@ -4025,11 +4025,11 @@ fn build_create_form(
     ui
 }
 
-/// Рисует картинки планет в сетку формы (`SNOW_PIC + world/6`).
+/// Draws planet pictures into the form grid (`SNOW_PIC + world/6`).
 ///
-/// `render_ui` заливает фон и подписи, поэтому картинки кладутся поверх — в
-/// область над подписью, которую виджеты не занимают. Без ассетов рисуются
-/// рамки-заглушки, чтобы сетка была видна и в headless-тестах.
+/// `render_ui` fills the background and labels, so the pictures are put on top — in
+/// the area above the label that the widgets do not occupy. Without assets, placeholder
+/// frames are drawn so that the grid is visible in headless tests too.
 fn draw_planet_picker(
     buffer: &mut RgbaBuffer,
     assets: Option<&crate::Assets>,
@@ -4045,8 +4045,8 @@ fn draw_planet_picker(
 
     for index in 0..PLANET_COUNT {
         let cell = planet_cell_rect(width, height, index);
-        // Квадратная миниатюра: `SNOW_PIC` — 128×128, растягивать её по ширине
-        // ячейки нельзя (планета превращается в блин).
+        // A square thumbnail: `SNOW_PIC` — 128×128, stretching it by the cell
+        // width is impossible (the planet turns into a pancake).
         let size = (cell.width - 4).min(cell.height - 12).max(1);
         let image_rect = Rect::new(cell.x + (cell.width - size) / 2, cell.y + 1, size, size);
         let planet = Planet::try_from(index as u8).ok();
@@ -4066,8 +4066,8 @@ fn draw_planet_picker(
             );
         }
 
-        // Имя планеты — GNW Font5 (как `planetselectmenu.cpp:124-138`),
-        // по центру под миниатюрой; длинное имя обрезается по ширине ячейки.
+        // Planet name — GNW Font5 (like `planetselectmenu.cpp:124-138`),
+        // centered under the thumbnail; a long name is clipped to the cell width.
         if let Some(planet) = planet {
             let font = GnwFontId::Font5.font();
             let max_width = (cell.width - 2).max(1);
@@ -4097,7 +4097,7 @@ fn draw_planet_picker(
     }
 }
 
-/// Рамка толщиной `thickness` внутри `rect`.
+/// `thickness` frame inside `rect`.
 fn draw_rect_border(buffer: &mut RgbaBuffer, rect: Rect, color: Rgba, thickness: i32) {
     let thickness = thickness.max(1);
 
@@ -4122,8 +4122,8 @@ fn draw_rect_border(buffer: &mut RgbaBuffer, rect: Rect, color: Rgba, thickness:
     }
 }
 
-/// Масштабирует big image в `rect` (nearest neighbor), пропуская прозрачный
-/// индекс — картинки планет 128×128 в ячейку 56×40.
+/// Scales a big image into `rect` (nearest neighbor), skipping the transparent
+/// index — planet pictures 128×128 into a 56×40 cell.
 fn blit_big_image_scaled(buffer: &mut RgbaBuffer, image: &max_assets::BigImage, rect: Rect) {
     if rect.width <= 0 || rect.height <= 0 || image.width <= 0 || image.height <= 0 {
         return;
@@ -4225,7 +4225,7 @@ mod tests {
         }
     }
 
-    /// Backend, считающий вызовы `play` (звук в тестах без устройства).
+    /// Backend that counts `play` calls (sound in tests without a device).
     #[derive(Debug)]
     struct CountingBackend {
         calls: std::sync::Arc<std::sync::Mutex<usize>>,
@@ -4268,14 +4268,14 @@ mod tests {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::MainMenu;
 
-        // M-SP: «New Game» открывает настройку локальной партии (Options).
+        // M-SP: «New Game» opens the local match setup (Options).
         assert_eq!(key(&mut screen, &mut ctx, Key::Enter), Transition::None);
         assert!(matches!(screen, Screen::LocalSetup(_)));
         if let Screen::LocalSetup(form) = &screen {
             assert_eq!(form.screen, crate::setup::SetupScreen::Options);
         }
 
-        // Enter ведёт к следующему экрану (Planet).
+        // Enter leads to the next screen (Planet).
         key(&mut screen, &mut ctx, Key::Enter);
         if let Screen::LocalSetup(form) = &screen {
             assert_eq!(form.screen, crate::setup::SetupScreen::Planet);
@@ -4290,11 +4290,11 @@ mod tests {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::MainMenu;
 
-        // Главное меню → «Multiplayer Game» (`menu.cpp:2361`).
+        // Main menu → «Multiplayer Game» (`menu.cpp:2361`).
         char(&mut screen, &mut ctx, 'j');
         assert_eq!(screen, Screen::MultiplayerMenu);
 
-        // Кнопка `Hot Seat Game` (385,280) 200×29.
+        // The `Hot Seat Game` button (385,280) 200×29.
         let button = menu::MULTIPLAYER_BUTTONS[2];
         let transition = screen.handle_input(
             &mut ctx,
@@ -4315,15 +4315,15 @@ mod tests {
             other => panic!("ожидалась настройка hot-seat, получено {other:?}"),
         }
 
-        // Esc с первого экрана возвращает в `Multiplayer Menu`, а не в главное.
+        // Esc from the first screen returns to `Multiplayer Menu`, not to the main one.
         key(&mut screen, &mut ctx, Key::Escape);
         assert_eq!(screen, Screen::MultiplayerMenu);
 
-        // Горячая клавиша оригинала `Shift+O` (`GNW_KB_KEY_SHIFT_O`).
+        // Original hotkey `Shift+O` (`GNW_KB_KEY_SHIFT_O`).
         char(&mut screen, &mut ctx, 'o');
         assert!(matches!(screen, Screen::LocalSetup(_)));
 
-        // `Cancel` (`Shift+C`) возвращает в главное меню.
+        // `Cancel` (`Shift+C`) returns to the main menu.
         key(&mut screen, &mut ctx, Key::Escape);
         key(&mut screen, &mut ctx, Key::Escape);
         assert_eq!(screen, Screen::MainMenu);
@@ -4334,7 +4334,7 @@ mod tests {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::CreateForm(CreateForm::default());
 
-        // Клик по 13-й планете (индекс 12) выбирает её.
+        // A click on the 13th planet (index 12) selects it.
         let cell = planet_cell_rect(ctx.width, ctx.height, 12);
         let transition = screen.handle_input(
             &mut ctx,
@@ -4349,7 +4349,7 @@ mod tests {
             panic!("ожидалась форма создания");
         }
 
-        // Числовой fallback: Tab до поля World и цифры по-прежнему работают.
+        // Numeric fallback: Tab to the World field and digits still work.
         if let Screen::CreateForm(form) = &mut screen {
             form.focus = CreateField::Name;
             form.world = 0;
@@ -4361,7 +4361,7 @@ mod tests {
             assert_eq!(form.world, 7, "цифровой ввод — fallback");
         }
 
-        // Клик по имени планеты (низ ячейки) тоже выбирает.
+        // A click on the planet name (bottom of the cell) also selects it.
         let cell = planet_cell_rect(ctx.width, ctx.height, 23);
         screen.handle_input(
             &mut ctx,
@@ -4450,8 +4450,8 @@ mod tests {
         let (mut ctx, log) = context(Vec::new(), Some(created.clone()));
         let mut screen = Screen::MainMenu;
 
-        // Сетевая форма доступна из `Multiplayer Menu`: «Multiplayer Game» →
-        // `Join Network Game` (список игр) → `c` (создать игру).
+        // The network form is available from `Multiplayer Menu`: «Multiplayer Game» →
+        // `Join Network Game` (game list) → `c` (create a game).
         char(&mut screen, &mut ctx, 'j');
         char(&mut screen, &mut ctx, 'j');
         char(&mut screen, &mut ctx, 'c');
@@ -4459,7 +4459,7 @@ mod tests {
             char(&mut screen, &mut ctx, c);
         }
 
-        // World 0 по умолчанию; проверим переключение поля и числовой ввод.
+        // World 0 by default; check field switching and numeric input.
         key(&mut screen, &mut ctx, Key::Tab);
         char(&mut screen, &mut ctx, '1');
         char(&mut screen, &mut ctx, '2');
@@ -4526,12 +4526,12 @@ mod tests {
         let (mut ctx, log) = context(vec![game("g1", "Alpha"), game("g2", "Beta")], None);
         let mut screen = Screen::MainMenu;
 
-        // MainMenu: «Multiplayer Game» открывает `Multiplayer Menu` (`menu.cpp:2361`).
+        // MainMenu: «Multiplayer Game» opens `Multiplayer Menu` (`menu.cpp:2361`).
         key(&mut screen, &mut ctx, Key::Down);
         key(&mut screen, &mut ctx, Key::Enter);
         assert_eq!(screen, Screen::MultiplayerMenu);
 
-        // `Join Network Game` — список игр Horizon.
+        // `Join Network Game` — the Horizon game list.
         char(&mut screen, &mut ctx, 'j');
 
         assert_eq!(
@@ -4618,14 +4618,14 @@ mod tests {
         key(&mut screen, &mut ctx, Key::Enter);
         char(&mut screen, &mut ctx, 'j');
 
-        // Ошибка сети не уводит из меню: остаёмся в `Multiplayer Menu` со
-        // строкой статуса (список игр тоже доступен по повторному `j`).
+        // A network error does not leave the menu: we stay in `Multiplayer Menu` with
+        // the status line (the game list is also available by a repeated `j`).
         assert_eq!(screen, Screen::MultiplayerMenu);
         assert!(ctx.status.contains("no horizon"));
     }
 
-    /// Пункт E: в кадре 640×480 меню рисуется из ресурсов `MAX.RES`, а не
-    /// процедурно.
+    /// Item E: in a 640×480 frame the menu is drawn from `MAX.RES` resources, not
+    /// procedurally.
     #[test]
     fn native_frame_menus_are_drawn_from_max_res() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -4658,7 +4658,7 @@ mod tests {
             app: Some(&app),
         };
 
-        // Главное меню: фон — MAINPIC.
+        // Main menu: background — MAINPIC.
         let mut buffer = RgbaBuffer::new(640, 480);
         Screen::MainMenu.render(&mut buffer, view);
         assert_eq!(
@@ -4667,7 +4667,7 @@ mod tests {
             "фон главного меню — MAINPIC"
         );
 
-        // Форма создания: фон — PLANETSE, кнопки MNUBTN внизу.
+        // Creation form: background — PLANETSE, MNUBTN buttons at the bottom.
         let mut buffer = RgbaBuffer::new(640, 480);
         Screen::CreateForm(CreateForm::default()).render(&mut buffer, view);
         assert_eq!(
@@ -4676,7 +4676,7 @@ mod tests {
             "фон формы — PLANETSE"
         );
 
-        // Список игр: фон — MULTGAME.
+        // Game list: background — MULTGAME.
         let mut buffer = RgbaBuffer::new(640, 480);
         Screen::JoinList {
             games: vec![game("g1", "Alpha")],
@@ -4690,8 +4690,8 @@ mod tests {
         );
     }
 
-    /// Пункт E: клики по кнопкам главного меню попадают в оригинальные
-    /// прямоугольники `menu.cpp` (а не в процедурную раскладку).
+    /// Item E: clicks on the main menu buttons hit the original
+    /// `menu.cpp` rectangles (not the procedural layout).
     #[test]
     fn main_menu_clicks_use_the_cpp_button_rectangles() {
         let (mut ctx, _log) = context(Vec::new(), None);
@@ -4722,8 +4722,8 @@ mod tests {
         );
     }
 
-    /// Пункт F: клик в окне 1280×960 (масштаб 2) переводится в кадр 640×480 и
-    /// попадает в ту же клетку карты, что и клик в кадре.
+    /// Item F: a click in the 1280×960 window (scale 2) is converted to the 640×480 frame and
+    /// hits the same map cell as a click in the frame.
     #[test]
     fn window_click_at_2x_lands_in_the_same_map_cell() {
         use max_render::frame_scale::FrameScale;
@@ -4733,7 +4733,7 @@ mod tests {
         assert_eq!(scale.scale(), 2);
 
         let viewport = panels::map_viewport(&Viewport::new(640, 480));
-        // Точка в области карты: (180,18) + 3.5 клетки по x и 2.5 по y.
+        // A point in the map area: (180,18) + 3.5 cells by x and 2.5 by y.
         let frame_click = (
             layout::MAIN_MAP.ulx + 3 * 64 + 32,
             layout::MAIN_MAP.uly + 2 * 64 + 32,
@@ -4754,7 +4754,7 @@ mod tests {
         assert_eq!(grid, expected_grid);
         assert_eq!(grid, (56, 55), "клетка под точкой (180+224, 18+160)");
 
-        // Клик по чёрному полю окна 1000×700 (letterbox) не приходит в кадр.
+        // A click on the black field of the 1000×700 window (letterbox) does not reach the frame.
         let letterboxed = FrameScale::native(1000, 700);
         assert_eq!(letterboxed.window_to_frame(10, 10), None);
     }
@@ -4767,7 +4767,7 @@ mod tests {
         key(&mut screen, &mut ctx, Key::Enter);
         assert!(matches!(screen, Screen::LocalSetup(_)));
 
-        // Кнопка `?` (465,438 48×40) на экране Options.
+        // The `?` button (465,438 48×40) on the Options screen.
         let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(489, 458));
         assert_eq!(transition, Transition::None);
 
@@ -4775,8 +4775,8 @@ mod tests {
             Screen::Help {
                 screen, help, mode, ..
             } => {
-                // C++ `HelpMenu_Menu`: кнопка `?` включает режим помощи, окна
-                // ещё нет; запись выбирается кликом по элементу.
+                // C++ `HelpMenu_Menu`: the `?` button enables help mode, the window
+                // does not exist yet; an entry is chosen by clicking an element.
                 assert!(help.is_none(), "режим помощи: окна ещё нет");
                 assert_eq!(mode.section, HelpSection::Options);
                 assert_eq!(mode.placement, HelpPlacement::Menu);
@@ -4788,7 +4788,7 @@ mod tests {
             other => panic!("ожидалось окно помощи, получено {other:?}"),
         }
 
-        // Клик по элементу `PLAY_MODE` (426..632, 39..227) открывает запись.
+        // A click on the `PLAY_MODE` element (426..632, 39..227) opens the entry.
         screen.handle_input(&mut ctx, InputEvent::MouseClick(529, 133));
         if let Screen::Help { help: Some(help), .. } = &screen {
             assert_eq!(help.section(), HelpSection::Options);
@@ -4797,8 +4797,8 @@ mod tests {
             panic!("клик по элементу не открыл запись");
         }
 
-        // `PageDown` прокручивает запись; `Esc` закрывает окно и возвращает в
-        // режим (C++ `HelpMenu::Run` возвращает в `HelpMenu_Menu`).
+        // `PageDown` scrolls the entry; `Esc` closes the window and returns to the
+        // mode (C++ `HelpMenu::Run` returns to `HelpMenu_Menu`).
         let rows_before = match &screen {
             Screen::Help { help: Some(help), .. } => help.line_count(),
             _ => 0,
@@ -4818,7 +4818,7 @@ mod tests {
             "Esc закрывает окно, режим остаётся"
         );
 
-        // Второй `Esc` выключает режим и возвращает экран Options.
+        // A second `Esc` disables the mode and returns the Options screen.
         screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape));
         assert!(matches!(
             screen,
@@ -4849,13 +4849,13 @@ mod tests {
         assert!(app.open_research_menu(), "меню открывается для центра");
         assert_eq!(app.research_menu().map(|menu| menu.active_centers), Some(1));
 
-        // Клавишей `R` меню не открывается повторно (уже открыто).
+        // The `R` key does not open the menu again (already open).
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(Key::Char('r')), false),
             Transition::None
         );
 
-        // `←`/`→` и `Done` через тот же путь ввода, что у игрока.
+        // `←`/`→` and `Done` through the same input path as the player.
         assert_eq!(
             handle_session_input(&mut app, InputEvent::Key(Key::Down), false),
             Transition::None
@@ -4888,8 +4888,8 @@ mod tests {
         unit.orders = UnitOrder::Await;
         app.state_mut().write_unit(id, unit);
 
-        // `?`/кнопка HELP_OF включает режим помощи (`HelpMenu_Menu`): окна нет,
-        // запись выбирается кликом по элементу.
+        // `?`/the HELP_OF button enables help mode (`HelpMenu_Menu`): there is no window,
+        // an entry is chosen by clicking an element.
         assert!(app.open_help(HelpSection::GameScreen));
         assert_eq!(
             app.help_mode().map(|mode| mode.section),
@@ -4897,7 +4897,7 @@ mod tests {
         );
         assert!(app.help_screen().is_none());
 
-        // Клик по панели `FILES` — запись `FILES_BUTTON` (17..83, 4..20).
+        // A click on the `FILES` panel — the `FILES_BUTTON` entry (17..83, 4..20).
         assert_eq!(
             handle_session_input(&mut app, InputEvent::MouseClick(50, 12), false),
             Transition::None
@@ -4907,12 +4907,12 @@ mod tests {
             Some("FILES_BUTTON")
         );
 
-        // `Esc` закрывает окно и возвращает в режим (C++ `HelpMenu::Run`).
+        // `Esc` closes the window and returns to the mode (C++ `HelpMenu::Run`).
         handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
         assert!(app.help_screen().is_none());
         assert!(app.help_mode().is_some());
 
-        // Второй `Esc` выключает режим.
+        // A second `Esc` disables the mode.
         handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
         assert!(app.help_mode().is_none());
     }
@@ -4964,7 +4964,7 @@ mod tests {
             );
         }
 
-        // Без App (headless-рендер до сети) сессия всё равно рисует статус.
+        // Without App (headless rendering before the network) the session still draws the status.
         let mut ctx2 = UiContext::new(Box::new(MockClient::new(Vec::new(), None).0), 64, 32);
         ctx2.status = "offline".to_string();
         let screen = Screen::InSession {
@@ -4998,10 +4998,10 @@ mod tests {
         assert_eq!(form.password_value().as_deref(), Some("sesame"));
     }
 
-    /// M6.2: клик по кнопке меню вызывает `AudioPlayer::play_once(KBUY0)`.
+    /// M6.2: a click on a menu button calls `AudioPlayer::play_once(KBUY0)`.
     ///
-    /// Клип кладётся в кэш (`preload`), поэтому тесту не нужны ни игровые
-    /// данные, ни аудиоустройство — проверяется именно хук UI.
+    /// The clip is put into the cache (`preload`), so the test needs neither game
+    /// data nor an audio device — exactly the UI hook is checked.
     #[test]
     fn menu_button_click_triggers_menu_sound() {
         let calls = std::sync::Arc::new(std::sync::Mutex::new(0usize));

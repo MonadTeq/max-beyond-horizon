@@ -1,25 +1,25 @@
-﻿//! Экран настройки локальной партии (M-SP) — 1:1 с экранами C++-порта.
+﻿//! Local match setup screen (M-SP) — 1:1 with the C++ port screens.
 //!
-//! Три экрана, ровно в порядке `menu_custom_game_menu` (`menu.cpp:2115`):
+//! Three screens, exactly in the order of `menu_custom_game_menu` (`menu.cpp:2115`):
 //!
-//! | # | Экран | Оракул |
+//! | # | Screen | Oracle |
 //! |---|---|---|
-//! | 1 | `Options` — `GameConfigMenu` (фон `OPTNFRM`) | `gameconfigmenu.cpp/.hpp` |
-//! | 2 | `Planet` — `PlanetSelectMenu` (фон `PLANETSE`) | `planetselectmenu.cpp/.hpp` |
-//! | 3 | `Players` — `ChoosePlayerMenu` (фон `CHOSPLYR`) | `chooseplayermenu.cpp/.hpp` |
+//! | 1 | `Options` — `GameConfigMenu` (`OPTNFRM` background) | `gameconfigmenu.cpp/.hpp` |
+//! | 2 | `Planet` — `PlanetSelectMenu` (`PLANETSE` background) | `planetselectmenu.cpp/.hpp` |
+//! | 3 | `Players` — `ChoosePlayerMenu` (`CHOSPLYR` background) | `chooseplayermenu.cpp/.hpp` |
 //!
-//! Раскладка (координаты, картинки кнопок, тексты) взята из C++-таблиц
+//! The layout (coordinates, button pictures, texts) is taken from the C++ tables
 //! `game_config_menu_items` / `game_config_menu_controls`,
-//! `planet_select_menu_controls` и `choose_player_menu_controls`; английские
-//! строки — из `assets/language.json` (`_(hash)` → `en-US`).
+//! `planet_select_menu_controls` and `choose_player_menu_controls`; the English
+//! strings — from `assets/language.json` (`_(hash)` → `en-US`).
 //!
-//! # Отличие от оригинала
+//! # Difference from the original
 //!
-//! Поле **Name** (имя игрока) в C++ задаётся в Preferences (`PREFSPIC`), а не в
-//! настройке партии. В Rust-клиенте оно вынесено на свободное место нижней
-//! строки экрана `Options` (слева от кнопок `Cancel`/`?`/`Done`): играть
-//! локально без имени нельзя, а экран Preferences ещё не портирован. Это
-//! единственное дополнение к раскладке оригинала; сами панели и кнопки —
+//! The **Name** field (player name) in C++ is set in Preferences (`PREFSPIC`), not in
+//! the match setup. In the Rust client it is placed in the free space of the bottom
+//! row of the `Options` screen (to the left of the `Cancel`/`?`/`Done` buttons): playing
+//! locally without a name is impossible, and the Preferences screen is not ported yet. This
+//! is the only addition to the original layout; the panels and buttons themselves are
 //! 1:1.
 
 use std::path::{Path, PathBuf};
@@ -37,9 +37,9 @@ use crate::menu::{
     truncate_to_width, wrap_gnw_text, MenuAssets,
 };
 
-/// Цвет текста (в палитре окна) — `COLOR_GREEN`.
+/// Text color (in the window palette) — `COLOR_GREEN`.
 pub const GREEN: u8 = 0x02;
-/// `TEXT` — цвет обычного текста меню.
+/// `TEXT` — the regular menu text color.
 pub const TEXT: u8 = 0xA2;
 /// `Fonts_BrightBrownColor` (`fonts.cpp`).
 pub const BROWN: (u8, u8, u8) = (164, 173, 199);
@@ -49,15 +49,15 @@ pub const YELLOW: (u8, u8, u8) = (162, 8, 199);
 pub const SILVER: (u8, u8, u8) = (162, 172, 199);
 
 // ---------------------------------------------------------------------------
-// GameConfigMenu: панели и заголовки
+// GameConfigMenu: panels and titles
 // ---------------------------------------------------------------------------
 
-/// Фон экрана опций — `OPTNFRM`.
+/// Options screen background — `OPTNFRM`.
 pub const OPTIONS_BACKGROUND: &str = "OPTNFRM";
-/// Фон выбора команд — `CHOSPLYR`.
+/// Team selection background — `CHOSPLYR`.
 pub const PLAYERS_BACKGROUND: &str = "CHOSPLYR";
 
-/// Шесть панелей `bg_panels` (`gameconfigmenu.cpp:93`): 200×190.
+/// Six `bg_panels` panels (`gameconfigmenu.cpp:93`): 200×190.
 pub const CONFIG_PANELS: [PixelRect; 6] = [
     PixelRect::new(6, 38, 200, 190),
     PixelRect::new(216, 38, 200, 190),
@@ -67,12 +67,12 @@ pub const CONFIG_PANELS: [PixelRect; 6] = [
     PixelRect::new(426, 233, 200, 190),
 ];
 
-/// Один заголовок `game_config_menu_items[i]` (`gameconfigmenu.hpp:61`).
+/// One `game_config_menu_items[i]` title (`gameconfigmenu.hpp:61`).
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigItem {
-    /// Прямоугольник `bounds`.
+    /// `bounds` rectangle.
     pub rect: PixelRect,
-    /// Текст (английский `en-US`).
+    /// Text (English `en-US`).
     pub text: &'static str,
 }
 
@@ -85,7 +85,7 @@ macro_rules! ci {
     };
 }
 
-/// 71 заголовок экрана опций — дословный перенос таблицы
+/// 71 options screen titles — a verbatim transfer of the
 /// `game_config_menu_items`.
 pub const CONFIG_ITEMS: [ConfigItem; 71] = [
     ci!(230, 5, 409, 25, "Options Menu"),
@@ -161,8 +161,8 @@ pub const CONFIG_ITEMS: [ConfigItem; 71] = [
     ci!(551, 390, 611, 410, "points"),
 ];
 
-/// Описания сложности — `game_config_menu_difficulty_descriptions`
-/// (`gameconfigmenu.cpp:155`), рисуются в `(19,170)` 180×60.
+/// Difficulty descriptions — `game_config_menu_difficulty_descriptions`
+/// (`gameconfigmenu.cpp:155`), drawn at `(19,170)` 180×60.
 pub const DIFFICULTY_DESCRIPTIONS: [&str; 6] = [
     "Very easy opponent with no advanced tactics or strategies, and a 25% penalty to building.",
     "Basic opponent with some advanced tactics, and no building penalty.",
@@ -172,49 +172,49 @@ pub const DIFFICULTY_DESCRIPTIONS: [&str; 6] = [
     "Merciless opponent with a 50% bonus to production.",
 ];
 
-/// Описание сложности: прямоугольник.
+/// Difficulty description: rectangle.
 pub const DIFFICULTY_DESCRIPTION: PixelRect = PixelRect::new(19, 170, 180, 60);
 
-/// Значения таймера хода (`game_config_menu_controls[6..13]`, строки 15..21).
+/// Turn timer values (`game_config_menu_controls[6..13]`, rows 15..21).
 pub const TIMER_VALUES: [u32; 7] = [0, 60, 120, 180, 240, 300, 360];
-/// Значения таймера конца хода (строки 22..28).
+/// End-of-turn timer values (rows 22..28).
 pub const ENDTURN_VALUES: [u32; 7] = [0, 15, 30, 45, 60, 75, 90];
-/// Стартовые кредиты (строки 37..42).
+/// Starting credits (rows 37..42).
 pub const CREDIT_VALUES: [u32; 6] = [0, 50, 100, 150, 200, 250];
-/// Условие победы по ходам (строки 61..63) → (тип, лимит).
+/// Victory condition by turns (rows 61..63) → (type, limit).
 pub const VICTORY_DURATION_VALUES: [(VictoryType, i32); 3] = [
     (VictoryType::Duration, 100),
     (VictoryType::Duration, 200),
     (VictoryType::Duration, 400),
 ];
-/// Условие победы по очкам (строки 64..66) → (тип, лимит).
+/// Victory condition by score (rows 64..66) → (type, limit).
 pub const VICTORY_SCORE_VALUES: [(VictoryType, i32); 3] = [
     (VictoryType::Score, 200),
     (VictoryType::Score, 400),
     (VictoryType::Score, 800),
 ];
 
-/// Поле имени игрока — свободное место нижней строки `OPTNFRM`.
+/// Player name field — the free space of the `OPTNFRM` bottom row.
 pub const NAME_FIELD: PixelRect = PixelRect::new(16, 444, 320, 22);
 
 // ---------------------------------------------------------------------------
 // PlanetSelectMenu
 // ---------------------------------------------------------------------------
 
-/// Заголовок экрана (`planet_select_menu_screen_title`).
+/// Screen title (`planet_select_menu_screen_title`).
 pub const PLANET_TITLE: PixelRect = PixelRect::new(230, 6, 180, 20);
-/// Имя выбранной планеты (`planet_select_menu_planet_name`).
+/// Selected planet name (`planet_select_menu_planet_name`).
 pub const PLANET_NAME: PixelRect = PixelRect::new(16, 61, 150, 20);
-/// Описание планеты (`planet_select_menu_planet_description`).
+/// Planet description (`planet_select_menu_planet_description`).
 pub const PLANET_DESCRIPTION: PixelRect = PixelRect::new(41, 350, 561, 60);
-/// Большая картинка планеты — `WindowManager_LoadBigImage(SNOW_PIC + world/6)`,
-/// у `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` origin (26, 98).
+/// Big planet picture — `WindowManager_LoadBigImage(SNOW_PIC + world/6)`,
+/// for `SNOW_PIC`/`CRTR_PIC`/`GREN_PIC`/`DSRT_PIC` the origin is (26, 98).
 pub const PLANET_PICTURE: (i32, i32) = (26, 98);
-/// Стрелки смены группы планет (`MNULAROU`/`MNURAROU`), (60,248)/(92,248).
+/// Planet group switch arrows (`MNULAROU`/`MNURAROU`), (60,248)/(92,248).
 pub const PLANET_ARROW_LEFT: PixelRect = PixelRect::new(60, 248, 30, 22);
-/// Правая стрелка.
+/// Right arrow.
 pub const PLANET_ARROW_RIGHT: PixelRect = PixelRect::new(92, 248, 30, 22);
-/// Шесть слотов мини-карт (`planet_select_menu_controls[0..6]`, 112×112).
+/// Six minimap slots (`planet_select_menu_controls[0..6]`, 112×112).
 pub const PLANET_SLOTS: [PixelRect; 6] = [
     PixelRect::new(192, 51, 112, 112),
     PixelRect::new(330, 51, 112, 112),
@@ -224,7 +224,7 @@ pub const PLANET_SLOTS: [PixelRect; 6] = [
     PixelRect::new(469, 189, 112, 112),
 ];
 
-/// Кнопки нижней строки экрана планет (`planet_select_menu_controls[8..12]`).
+/// Bottom row buttons of the planet screen (`planet_select_menu_controls[8..12]`).
 pub const PLANET_BUTTONS: [(PixelRect, &str, usize); 4] = [
     (PixelRect::new(243, 438, 109, 40), "Random", 4),
     (PixelRect::new(354, 438, 109, 40), "Cancel", 4),
@@ -232,7 +232,7 @@ pub const PLANET_BUTTONS: [(PixelRect, &str, usize); 4] = [
     (PixelRect::new(514, 438, 109, 40), "Done", 6),
 ];
 
-/// Имена 24 планет — `menu_planet_names` (`planetselectmenu.cpp:120`).
+/// Names of the 24 planets — `menu_planet_names` (`planetselectmenu.cpp:120`).
 pub const PLANET_NAMES: [&str; 24] = [
     "Snowcrab",
     "Frigia",
@@ -260,7 +260,7 @@ pub const PLANET_NAMES: [&str; 24] = [
     "Bottleneck",
 ];
 
-/// Описания 24 планет — `menu_planet_descriptions` (`planetselectmenu.cpp:116`).
+/// Descriptions of the 24 planets — `menu_planet_descriptions` (`planetselectmenu.cpp:116`).
 pub const PLANET_DESCRIPTIONS: [&str; 24] = [
     "This world is named for the shape of its only landmass. If participants on this world are placed too close together, a production strategy is unlikely to work.\nNumber of Participants: Two to three participants is preferable.\nGame Time: Games on this land mass can be very short unless the combatants are well separated.",
     "This area is likely to need a full deployment of land, sea, and air forces. A force starting on the same land mass as another might abandon their base camp and striking out for another land mass to start over.\nNumber of Participants: two to four can be easily accommodated.\nGame Time: Games in this area are likely to be long.",
@@ -292,10 +292,10 @@ pub const PLANET_DESCRIPTIONS: [&str; 24] = [
 // ChoosePlayerMenu
 // ---------------------------------------------------------------------------
 
-/// Заголовок экрана выбора команд (`choose_player_menu_titles[0]`).
+/// Team selection screen title (`choose_player_menu_titles[0]`).
 pub const PLAYERS_TITLE: PixelRect = PixelRect::new(230, 6, 180, 20);
 
-/// Заголовки колонок `choose_player_menu_titles[1..6]`.
+/// Column titles `choose_player_menu_titles[1..6]`.
 pub const PLAYER_HEADERS: [(PixelRect, &str); 5] = [
     (PixelRect::new(61, 31, 80, 20), "Team"),
     (PixelRect::new(162, 31, 79, 20), "Human"),
@@ -304,8 +304,8 @@ pub const PLAYER_HEADERS: [(PixelRect, &str); 5] = [
     (PixelRect::new(497, 31, 79, 20), "Clan"),
 ];
 
-/// Кнопки выбора типа команды: (x, y) — `choose_player_menu_controls[0..12]`,
-/// `y` строк 67/159/251/343.
+/// Team type selection buttons: (x, y) — `choose_player_menu_controls[0..12]`,
+/// `y` of rows 67/159/251/343.
 pub fn player_type_button_rect(row: usize, column: usize) -> PixelRect {
     let x = [175, 285, 394][column.min(2)];
     let y = 67 + 92 * row as i32;
@@ -313,12 +313,12 @@ pub fn player_type_button_rect(row: usize, column: usize) -> PixelRect {
     PixelRect::new(x, y, 55, 71)
 }
 
-/// Прямоугольники флагов команд (`CH_TM1_U`…`CH_TM4_U`).
+/// Team flag rectangles (`CH_TM1_U`…`CH_TM4_U`).
 pub fn player_banner_rect(row: usize) -> PixelRect {
     PixelRect::new(495, 61 + 92 * row as i32, 93, 89)
 }
 
-/// Кнопки нижней строки экрана команд (`choose_player_menu_controls[16..19]`).
+/// Bottom row buttons of the team screen (`choose_player_menu_controls[16..19]`).
 pub const PLAYER_BUTTONS: [(PixelRect, &str, usize); 3] = [
     (PixelRect::new(354, 438, 109, 40), "Cancel", 4),
     (PixelRect::new(465, 438, 48, 40), "?", 5),
@@ -329,13 +329,13 @@ pub const PLAYER_BUTTONS: [(PixelRect, &str, usize); 3] = [
 // ClanSelectMenu
 // ---------------------------------------------------------------------------
 
-/// Фон экрана выбора клана (`CLANSEL`).
+/// Clan selection screen background (`CLANSEL`).
 pub const CLAN_BACKGROUND: &str = "CLANSEL";
-/// Заголовок `clan_select_menu_screen_title`.
+/// Title `clan_select_menu_screen_title`.
 pub const CLAN_TITLE: PixelRect = PixelRect::new(230, 6, 180, 20);
-/// Восемь карточек `CH_CN1_U`…`CH_CN8_U` 91×86
-/// (`clan_select_menu_controls[0..8]`; `lrx/lry` в C++ нулевые, размер берётся
-/// из картинки — 91×86).
+/// Eight `CH_CN1_U`…`CH_CN8_U` cards 91×86
+/// (`clan_select_menu_controls[0..8]`; `lrx/lry` in C++ are zero, the size is taken
+/// from the picture — 91×86).
 pub const CLAN_SLOTS: [PixelRect; 8] = [
     PixelRect::new(46, 44, 91, 86),
     PixelRect::new(201, 44, 91, 86),
@@ -346,7 +346,7 @@ pub const CLAN_SLOTS: [PixelRect; 8] = [
     PixelRect::new(355, 194, 91, 86),
     PixelRect::new(510, 194, 91, 86),
 ];
-/// Подписи кланов под карточками (`clan_select_menu_clan_icons`).
+/// Clan labels under the cards (`clan_select_menu_clan_icons`).
 pub const CLAN_NAME_RECTS: [PixelRect; 8] = [
     PixelRect::new(32, 140, 110, 20),
     PixelRect::new(188, 140, 110, 20),
@@ -357,7 +357,7 @@ pub const CLAN_NAME_RECTS: [PixelRect; 8] = [
     PixelRect::new(344, 290, 110, 20),
     PixelRect::new(497, 290, 110, 20),
 ];
-/// Имена кланов в порядке `TeamClan` (1 — The Chosen … 8 — Axis Inc.).
+/// Clan names in `TeamClan` order (1 — The Chosen … 8 — Axis Inc.).
 pub const CLAN_NAMES: [&str; 8] = [
     "The Chosen",
     "Crimson Path",
@@ -368,7 +368,7 @@ pub const CLAN_NAMES: [&str; 8] = [
     "Seven Knights",
     "Axis Inc.",
 ];
-/// Нижняя строка `ClanSelectMenu` (`clan_select_menu_controls[8..12]`).
+/// `ClanSelectMenu` bottom row (`clan_select_menu_controls[8..12]`).
 pub const CLAN_BUTTONS: [(PixelRect, &str, usize); 4] = [
     (PixelRect::new(243, 438, 109, 40), "Random", 3),
     (PixelRect::new(354, 438, 109, 40), "Cancel", 4),
@@ -376,14 +376,14 @@ pub const CLAN_BUTTONS: [(PixelRect, &str, usize); 4] = [
     (PixelRect::new(514, 438, 109, 40), "Done", 6),
 ];
 
-/// Сообщения `ChoosePlayerMenu::EventDone`.
+/// `ChoosePlayerMenu::EventDone` messages.
 ///
-/// `_(bc94)` — нужно два участника; `_(06ec)` — hot-seat требует двух людей.
+/// `_(bc94)` — two participants are required; `_(06ec)` — hot-seat requires two humans.
 pub const MSG_TWO_PLAYERS: &str = crate::hotseat::MSG_TWO_PLAYERS;
-/// Сообщение hot-seat: нужно минимум два человека (`_(06ec)`).
+/// Hot-seat message: at least two humans are required (`_(06ec)`).
 pub const MSG_HOT_SEAT_TWO_HUMANS: &str = MSG_TWO_HUMANS;
 
-/// Экран настройки.
+/// Setup screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupScreen {
     /// `GameConfigMenu`.
@@ -392,17 +392,17 @@ pub enum SetupScreen {
     Planet,
     /// `ChoosePlayerMenu`.
     Players,
-    /// `ClanSelectMenu` — выбор клана команды.
+    /// `ClanSelectMenu` — team clan selection.
     Clan,
 }
 
-/// Клан по индексу карточки `0..8` (`CLN1`…`CLN8`).
+/// Clan by card index `0..8` (`CLN1`…`CLN8`).
 pub fn clan_from_index(index: usize) -> max_core::enums::TeamClan {
     max_core::enums::TeamClan::try_from((index + 1).min(8) as u8)
         .unwrap_or(max_core::enums::TeamClan::Random)
 }
 
-/// Имя клана для подписи (`Random` — «No clan chosen»).
+/// Clan name for the label (`Random` — «No clan chosen»).
 pub fn clan_name(clan: max_core::enums::TeamClan) -> &'static str {
     let index = clan as usize;
     if index == 0 {
@@ -412,8 +412,8 @@ pub fn clan_name(clan: max_core::enums::TeamClan) -> &'static str {
     }
 }
 
-/// Стартовые типы команд hot-seat (`menu_choose_player_menu_loop`, `menu.cpp:1883`):
-/// `menu_custom_game_menu(false)` ставит RED и GREEN людьми, BLUE/GRAY — пустыми.
+/// Hot-seat initial team types (`menu_choose_player_menu_loop`, `menu.cpp:1883`):
+/// `menu_custom_game_menu(false)` sets RED and GREEN as humans, BLUE/GRAY — as empty.
 pub fn hot_seat_default_teams() -> [TeamKind; LOCAL_TEAM_COUNT] {
     [
         TeamKind::Player,
@@ -423,43 +423,43 @@ pub fn hot_seat_default_teams() -> [TeamKind; LOCAL_TEAM_COUNT] {
     ]
 }
 
-/// Переход из формы настройки.
+/// Transition from the setup form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetupTransition {
-    /// Просто перерисовать.
+    /// Just redraw.
     None,
-    /// Назад в меню/на предыдущий экран.
+    /// Back to the menu/to the previous screen.
     Back,
-    /// Открыть окно помощи (`HelpMenu`) поверх экрана настройки.
+    /// Open the help window (`HelpMenu`) over the setup screen.
     Help(crate::helpmenu::HelpSection),
-    /// Начать партию с этими настройками.
+    /// Start the match with these settings.
     Start(Box<LocalSetup>),
 }
 
-/// Состояние формы настройки (все три экрана).
+/// Setup form state (all three screens).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameSetupForm {
-    /// Текущий экран.
+    /// Current screen.
     pub screen: SetupScreen,
-    /// Настройки партии (таймер, планета, типы команд…).
+    /// Match settings (timer, planet, team types…).
     pub setup: LocalSetup,
-    /// M-HS: форма открыта пунктом `Hot Seat Game` (`is_single_player = false`).
+    /// M-HS: the form is opened by the `Hot Seat Game` item (`is_single_player = false`).
     pub hot_seat: bool,
-    /// Идёт редактирование имени.
+    /// Name editing is in progress.
     pub editing_name: bool,
-    /// Редактируется поле условия победы (какой тип: `Duration`/`Score`).
+    /// The victory condition field is being edited (which type: `Duration`/`Score`).
     pub editing_victory: Option<VictoryType>,
-    /// Буфер редактирования условия победы.
+    /// Victory condition edit buffer.
     pub victory_text: String,
-    /// Строка статуса/ошибки.
+    /// Status/error line.
     pub status: String,
-    /// Кэш мини-карт планет (112×112 RGBA).
+    /// Planet minimap cache (112×112 RGBA).
     pub minimaps: Vec<Option<Vec<u8>>>,
-    /// Откуда грузить `.WRL` (каталог данных игры).
+    /// Where to load `.WRL` from (game data directory).
     pub world_dir: PathBuf,
-    /// Команда, для которой открыт `ClanSelectMenu`.
+    /// The team for which `ClanSelectMenu` is open.
     pub clan_team: usize,
-    /// Выбранный в `ClanSelectMenu` клан (применяется по Done/Random).
+    /// The clan chosen in `ClanSelectMenu` (applied on Done/Random).
     pub clan_selection: max_core::enums::TeamClan,
 }
 
@@ -482,7 +482,7 @@ impl Default for GameSetupForm {
 }
 
 impl GameSetupForm {
-    /// Форма с каталогом данных (для мини-карт планет).
+    /// Form with the data directory (for planet minimaps).
     pub fn with_world_dir(world_dir: impl Into<PathBuf>) -> Self {
         Self {
             world_dir: world_dir.into(),
@@ -490,10 +490,10 @@ impl GameSetupForm {
         }
     }
 
-    /// Форма **hot-seat** (`menu_custom_game_menu(false)`).
+    /// **Hot-seat** form (`menu_custom_game_menu(false)`).
     ///
-    /// Стартовые значения `menu_choose_player_menu_loop` (`menu.cpp:1883`):
-    /// RED — человек, GREEN — человек, BLUE/GRAY — пусто.
+    /// Initial values of `menu_choose_player_menu_loop` (`menu.cpp:1883`):
+    /// RED — human, GREEN — human, BLUE/GRAY — empty.
     pub fn hot_seat() -> Self {
         let mut form = Self {
             hot_seat: true,
@@ -505,12 +505,12 @@ impl GameSetupForm {
         form
     }
 
-    /// Экраны какого режима настраиваются (`ChoosePlayerMenu::is_single_player`).
+    /// Which mode's screens are configured (`ChoosePlayerMenu::is_single_player`).
     pub fn is_single_player(&self) -> bool {
         !self.hot_seat
     }
 
-    /// Заголовок экрана команд: `_(5512)` / `_(55c8)`.
+    /// Team screen title: `_(5512)` / `_(55c8)`.
     pub fn players_title(&self) -> &'static str {
         if self.hot_seat {
             TITLE_HOT_SEAT
@@ -519,17 +519,17 @@ impl GameSetupForm {
         }
     }
 
-    /// Индекс выбранной планеты (`0..23`).
+    /// Selected planet index (`0..23`).
     pub fn world(&self) -> usize {
         self.setup.world.clamp(0, 23) as usize
     }
 
-    /// Первая планета текущей группы (`(world / 6) * 6`).
+    /// First planet of the current group (`(world / 6) * 6`).
     pub fn world_group_first(&self) -> usize {
         (self.world() / 6) * 6
     }
 
-    /// Индекс выбранной строки таймера хода (`timer` → строка).
+    /// Index of the selected turn timer row (`timer` → row).
     pub fn timer_index(&self) -> usize {
         TIMER_VALUES
             .iter()
@@ -537,7 +537,7 @@ impl GameSetupForm {
             .unwrap_or(0)
     }
 
-    /// Индекс строки таймера конца хода.
+    /// End-of-turn timer row index.
     pub fn endturn_index(&self) -> usize {
         ENDTURN_VALUES
             .iter()
@@ -545,7 +545,7 @@ impl GameSetupForm {
             .unwrap_or(0)
     }
 
-    /// Индекс строки стартовых кредитов.
+    /// Starting credits row index.
     pub fn credit_index(&self) -> usize {
         CREDIT_VALUES
             .iter()
@@ -553,7 +553,7 @@ impl GameSetupForm {
             .unwrap_or(0)
     }
 
-    /// Индекс условия победы в группе `Duration` (0..2).
+    /// Victory condition index in the `Duration` group (0..2).
     pub fn duration_index(&self) -> usize {
         VICTORY_DURATION_VALUES
             .iter()
@@ -565,7 +565,7 @@ impl GameSetupForm {
             .unwrap_or(0)
     }
 
-    /// Индекс условия победы в группе `Score` (0..2).
+    /// Victory condition index in the `Score` group (0..2).
     pub fn score_index(&self) -> usize {
         VICTORY_SCORE_VALUES
             .iter()
@@ -577,23 +577,23 @@ impl GameSetupForm {
             .unwrap_or(0)
     }
 
-    /// Применить настройки по умолчанию из `--player` и каталога данных.
+    /// Apply the default settings from `--player` and the data directory.
     pub fn with_player_name(mut self, name: impl Into<String>) -> Self {
         self.setup.player_name = name.into();
         self
     }
 
-    /// Ставит `team_types` (для тестов/повторного входа).
+    /// Sets `team_types` (for tests/re-entry).
     pub fn with_team_types(mut self, team_types: [TeamKind; LOCAL_TEAM_COUNT]) -> Self {
         self.setup.team_types = team_types;
         self
     }
 
-    /// Загружает мини-карты текущей группы планет (если `.WRL` есть на диске).
+    /// Loads the minimaps of the current planet group (if `.WRL` is on disk).
     ///
-    /// Порядок рендера повторяет `Menu_LoadPlanetMinimap` (`menu.cpp:663`):
-    /// палитра `.WRL` делится на 4, каждый индекс переводится в палитру окна
-    /// (`Color_MapColor` с полным перебором).
+    /// The render order repeats `Menu_LoadPlanetMinimap` (`menu.cpp:663`):
+    /// the `.WRL` palette is divided by 4, each index is translated into the window palette
+    /// (`Color_MapColor` with a full scan).
     pub fn ensure_minimaps(&mut self, window_palette: Option<&crate::panels::UiPalette>) {
         let Some(palette) = window_palette else {
             return;
@@ -614,13 +614,13 @@ impl GameSetupForm {
         }
     }
 
-    /// Статус партии: обновляет поле и отдаёт переход.
+    /// Match status: updates the field and returns the transition.
     fn fail(&mut self, message: &str) -> SetupTransition {
         self.status = message.to_string();
         SetupTransition::None
     }
 
-    /// Ввод (клавиша/клик). Координаты мыши — экрана оригинала 640×480.
+    /// Input (key/click). Mouse coordinates — the original 640×480 screen.
     pub fn handle_input(
         &mut self,
         event: crate::ui::InputEvent,
@@ -696,7 +696,7 @@ impl GameSetupForm {
         }
     }
 
-    /// Переход на следующий экран (Enter без редактирования).
+    /// Transition to the next screen (Enter without editing).
     fn next_screen(&mut self) -> SetupTransition {
         match self.screen {
             SetupScreen::Options => {
@@ -726,7 +726,7 @@ impl GameSetupForm {
         }
     }
 
-    /// `ClanSelectMenu::EventDone`: сохранить выбранный клан команде.
+    /// `ClanSelectMenu::EventDone`: save the chosen clan for the team.
     fn apply_clan(&mut self) -> SetupTransition {
         let team = self.clan_team.min(LOCAL_TEAM_COUNT - 1);
         self.setup.team_clans[team] = self.clan_selection;
@@ -745,9 +745,9 @@ impl GameSetupForm {
         SetupTransition::None
     }
 
-    /// `ChoosePlayerMenu::EventDone` + запуск партии.
+    /// `ChoosePlayerMenu::EventDone` + starting the match.
     fn done(&mut self) -> SetupTransition {
-        // Режим — часть настроек партии (`MISSION_CATEGORY_HOT_SEAT`).
+        // Mode — part of the match settings (`MISSION_CATEGORY_HOT_SEAT`).
         self.setup.hot_seat = self.hot_seat || self.setup.human_count() > 1;
 
         if let Err(error) = self.setup.validate() {
@@ -775,7 +775,7 @@ impl GameSetupForm {
     }
 
     fn click_options(&mut self, x: i32, y: i32) -> SetupTransition {
-        // Имя: клик по свободному полю — редактирование.
+        // Name: a click on the free field — editing.
         if Self::inside(NAME_FIELD, x, y) {
             self.editing_name = true;
             self.editing_victory = None;
@@ -789,7 +789,7 @@ impl GameSetupForm {
             self.editing_victory = None;
         }
 
-        // Сложность (`game_config_menu_controls[0..6]`).
+        // Difficulty (`game_config_menu_controls[0..6]`).
         for row in 0..6 {
             if Self::inside(CONFIG_ITEMS[7 + row].rect, x, y) {
                 self.setup.opponent = row as u8;
@@ -827,7 +827,7 @@ impl GameSetupForm {
             }
         }
 
-        // Уровни ресурсов: четыре строки по три значения.
+        // Resource levels: four rows of three values.
         let resource_rows = [
             (47usize, 0usize), // raw
             (50, 1),           // fuel
@@ -848,7 +848,7 @@ impl GameSetupForm {
             }
         }
 
-        // Условие победы: Duration/Score + шесть вариантов.
+        // Victory condition: Duration/Score + six variants.
         for (index, (kind, limit)) in VICTORY_DURATION_VALUES.iter().enumerate() {
             if Self::inside(CONFIG_ITEMS[61 + index].rect, x, y) {
                 self.setup.victory_type = *kind;
@@ -863,8 +863,8 @@ impl GameSetupForm {
                 return SetupTransition::None;
             }
         }
-        // Поля ввода лимита (строки 67/68): `EventVictoryConditionPrefs`.
-        // Клик по полю активирует и тип условия: 67 — ходы, 68 — очки
+        // Limit input fields (rows 67/68): `EventVictoryConditionPrefs`.
+        // A click on a field activates the condition type too: 67 — turns, 68 — points
         // (`active_text_edit_index == 46/47`).
         if Self::inside(CONFIG_ITEMS[67].rect, x, y) {
             self.editing_victory = Some(VictoryType::Duration);
@@ -879,7 +879,7 @@ impl GameSetupForm {
             return SetupTransition::None;
         }
 
-        // Кнопки `Cancel`/`?`/`Done`.
+        // `Cancel`/`?`/`Done` buttons.
         if Self::inside(PixelRect::new(354, 438, 109, 40), x, y) {
             return SetupTransition::Back;
         }
@@ -895,8 +895,8 @@ impl GameSetupForm {
         SetupTransition::None
     }
 
-    /// Текст → лимит победы (`GameConfigMenu::UpdateTextEdit`):
-    /// `victory_type = active_text_edit_index - 46`, `victory_limit` — число.
+    /// Text → victory limit (`GameConfigMenu::UpdateTextEdit`):
+    /// `victory_type = active_text_edit_index - 46`, `victory_limit` — the number.
     fn apply_victory_text(&mut self) {
         if let Some(kind) = self.editing_victory.take() {
             if let Ok(value) = self.victory_text.trim().parse::<i32>() {
@@ -921,7 +921,7 @@ impl GameSetupForm {
         }
 
         if Self::inside(PLANET_ARROW_LEFT, x, y) {
-            // `EventWorld(direction=false)`: группа −6, <0 → 18.
+            // `EventWorld(direction=false)`: group −6, <0 → 18.
             let group = (self.world() / 6) * 6;
             let world = if group < 6 { 18 } else { group - 6 };
             self.setup.world = world as i64;
@@ -940,7 +940,7 @@ impl GameSetupForm {
             }
             return match label {
                 "Random" => {
-                    // `EventRandom`: случайная планета и сразу Done.
+                    // `EventRandom`: a random planet and immediately Done.
                     let seed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|value| value.subsec_nanos())
@@ -983,8 +983,8 @@ impl GameSetupForm {
             }
 
             if Self::inside(player_banner_rect(row), x, y) {
-                // `ChoosePlayerMenu::EventSelectClan`: открыть `ClanSelectMenu`
-                // для этой команды, сохранив текущий выбор.
+                // `ChoosePlayerMenu::EventSelectClan`: open `ClanSelectMenu`
+                // for this team, keeping the current choice.
                 self.clan_team = row;
                 self.clan_selection = self.setup.team_clans[row];
                 self.screen = SetupScreen::Clan;
@@ -1004,8 +1004,8 @@ impl GameSetupForm {
                 }
                 "Done" => self.done(),
                 _ => {
-                    // `ChoosePlayerMenu::EventHelp`: `NEW_GAME_SETUP` в одиночной
-                    // игре и `HOT_SEAT_SETUP` в hot-seat.
+                    // `ChoosePlayerMenu::EventHelp`: `NEW_GAME_SETUP` in a single
+                    // game and `HOT_SEAT_SETUP` in hot-seat.
                     SetupTransition::Help(if self.hot_seat {
                         crate::helpmenu::HelpSection::HotSeat
                     } else {
@@ -1018,7 +1018,7 @@ impl GameSetupForm {
         SetupTransition::None
     }
 
-    /// `ClanSelectMenu`: восемь карточек, Random/Cancel/?/Done.
+    /// `ClanSelectMenu`: eight cards, Random/Cancel/?/Done.
     fn click_clan(&mut self, x: i32, y: i32) -> SetupTransition {
         for (index, rect) in CLAN_SLOTS.iter().enumerate() {
             if Self::inside(*rect, x, y) {
@@ -1050,11 +1050,11 @@ impl GameSetupForm {
         SetupTransition::None
     }
 
-    /// `ChoosePlayerMenu::EventSelectHuman` для одиночной игры: «Human» на
-    /// другом слоте переносит флаг, прежний человек получает тип нового слота.
+    /// `ChoosePlayerMenu::EventSelectHuman` for a single game: «Human» on
+    /// another slot copies the flag, the previous human gets the new slot's type.
     ///
-    /// В hot-seat (`is_single_player = false`) переноса нет: людей можно
-    /// выбрать сколько угодно (`chooseplayermenu.cpp:79`).
+    /// In hot-seat (`is_single_player = false`) there is no copy: humans can be
+    /// chosen as many as desired (`chooseplayermenu.cpp:79`).
     pub fn select_team_type(&mut self, row: usize, kind: TeamKind) {
         if kind == TeamKind::Player && self.is_single_player() {
             let previous = self
@@ -1076,13 +1076,13 @@ impl GameSetupForm {
 }
 
 // ---------------------------------------------------------------------------
-// Отрисовка
+// Drawing
 // ---------------------------------------------------------------------------
 
-/// Рисует текущий экран настройки.
+/// Draws the current setup screen.
 ///
-/// `status` — строка контекста UI; если форма выставила свою строку
-/// (`GameSetupForm::status`, например «нужно два игрока»), показывается она.
+/// `status` — the UI context line; if the form has set its own line
+/// (`GameSetupForm::status`, e.g. "two players required"), it is shown.
 pub fn draw_setup(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1104,7 +1104,7 @@ pub fn draw_setup(
     }
 }
 
-/// Фон экрана: `OPTNFRM`/`PLANETSE`/`CHOSPLYR` (fallback — `MAINPIC`).
+/// Screen background: `OPTNFRM`/`PLANETSE`/`CHOSPLYR` (fallback — `MAINPIC`).
 fn draw_background(frame: &mut RgbaBuffer, menu: &MenuAssets, background: &str) -> u32 {
     match background {
         OPTIONS_BACKGROUND => menu
@@ -1121,7 +1121,7 @@ fn draw_background(frame: &mut RgbaBuffer, menu: &MenuAssets, background: &str) 
     }
 }
 
-/// Заголовок панели: `GNW_TEXT_OUTLINE | COLOR_GREEN` (зелёный + чёрная тень).
+/// Panel title: `GNW_TEXT_OUTLINE | COLOR_GREEN` (green + black shadow).
 fn draw_panel_title(frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette, item: &ConfigItem) {
     let font = GnwFontId::Font5.font();
     let rect = item.rect;
@@ -1141,7 +1141,7 @@ fn draw_panel_title(frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette, 
     );
 }
 
-/// Подпись `FontColor` (жёлтая/коричневая), по центру или слева.
+/// `FontColor` label (yellow/brown), centered or left.
 fn draw_caption(
     frame: &mut RgbaBuffer,
     palette: &crate::panels::UiPalette,
@@ -1151,8 +1151,8 @@ fn draw_caption(
     centered: bool,
 ) {
     let font = GnwFontId::Font5.font();
-    // `Text_TextBox` с `FontColor`: текст переносится по словам внутри
-    // прямоугольника (`Simultaneous Moves` — две строки в (480,115,100,30)).
+    // `Text_TextBox` with `FontColor`: the text is wrapped by words inside
+    // the rectangle (`Simultaneous Moves` — two lines in (480,115,100,30)).
     let lines = wrap_text(text, rect.width);
     let line_height = font.height() + 1;
     let block = line_height * lines.len() as i32;
@@ -1179,7 +1179,7 @@ fn draw_caption(
     }
 }
 
-/// Многострочная подпись `FontColor` в прямоугольнике (`Text_TextBox`).
+/// Multiline `FontColor` label in a rectangle (`Text_TextBox`).
 fn draw_wrapped(
     frame: &mut RgbaBuffer,
     palette: &crate::panels::UiPalette,
@@ -1208,7 +1208,7 @@ fn draw_wrapped(
     }
 }
 
-/// Рамка выбора (`GameConfigMenu::DrawSelector` — `draw_box` цветом 0xFF).
+/// Selection frame (`GameConfigMenu::DrawSelector` — `draw_box` in color 0xFF).
 fn draw_selector(frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette, rect: PixelRect) {
     let color = palette.rgba(0xFF);
     let x0 = rect.ulx - 1;
@@ -1226,7 +1226,7 @@ fn draw_selector(frame: &mut RgbaBuffer, palette: &crate::panels::UiPalette, rec
     }
 }
 
-/// Экран `GameConfigMenu` (1:1).
+/// `GameConfigMenu` screen (1:1).
 fn draw_options(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1237,12 +1237,12 @@ fn draw_options(
     let palette = &menu.palette;
     let mut painted = draw_background(frame, menu, OPTIONS_BACKGROUND);
 
-    // Заголовки панелей (индексы 0..6).
+    // Panel titles (indices 0..6).
     for item in CONFIG_ITEMS.iter().take(7) {
         draw_panel_title(frame, palette, item);
     }
 
-    // Сложность ИИ: значения + описание.
+    // AI difficulty: values + description.
     for row in 0..6 {
         let item = CONFIG_ITEMS[7 + row];
         draw_caption(frame, palette, item.rect, item.text, BROWN, true);
@@ -1259,7 +1259,7 @@ fn draw_options(
         YELLOW,
     );
 
-    // Таймеры: заголовки (жёлтые) + строки (коричневые) + выбор.
+    // Timers: titles (yellow) + rows (brown) + selection.
     draw_caption(
         frame,
         palette,
@@ -1291,7 +1291,7 @@ fn draw_options(
         }
     }
 
-    // Режим игры.
+    // Game mode.
     let play_items = [CONFIG_ITEMS[29], CONFIG_ITEMS[30]];
     for (index, item) in play_items.iter().enumerate() {
         draw_caption(frame, palette, item.rect, item.text, BROWN, true);
@@ -1305,7 +1305,7 @@ fn draw_options(
         }
     }
 
-    // Стартовые кредиты.
+    // Starting credits.
     for index in 0..6 {
         let item = CONFIG_ITEMS[31 + index];
         draw_caption(frame, palette, item.rect, item.text, YELLOW, true);
@@ -1316,7 +1316,7 @@ fn draw_options(
         }
     }
 
-    // Уровни ресурсов.
+    // Resource levels.
     for (caption, index) in [(43usize, 0usize), (44, 1), (45, 2), (46, 3)] {
         let item = CONFIG_ITEMS[caption];
         draw_caption(frame, palette, item.rect, item.text, YELLOW, false);
@@ -1338,7 +1338,7 @@ fn draw_options(
         }
     }
 
-    // Условие победы.
+    // Victory condition.
     draw_caption(
         frame,
         palette,
@@ -1370,8 +1370,8 @@ fn draw_options(
         }
     }
 
-    // Числовые поля лимита: 67 — Duration, 68 — Score (Text_TypeWriter_TextBox,
-    // цвет `GNW_TEXT_OUTLINE | 0xFF`).
+    // Numeric limit fields: 67 — Duration, 68 — Score (Text_TypeWriter_TextBox,
+    // color `GNW_TEXT_OUTLINE | 0xFF`).
     let limit = if form.editing_victory.is_some() {
         form.victory_text.clone()
     } else {
@@ -1406,7 +1406,7 @@ fn draw_options(
         true,
     );
 
-    // Поле имени игрока (расширение Rust-клиента, свободная область).
+    // Player name field (a Rust client extension, free area).
     frame.fill_rect(NAME_FIELD, Rgba::BLACK);
     let name = if form.editing_name {
         format!("Name: {}_", form.setup.player_name)
@@ -1422,7 +1422,7 @@ fn draw_options(
         palette.rgba(GREEN),
     );
 
-    // Нижняя строка кнопок: Cancel (MNUBTN4U), ? (MNUBTN5U), Done (MNUBTN6U).
+    // Bottom row of buttons: Cancel (MNUBTN4U), ? (MNUBTN5U), Done (MNUBTN6U).
     for (rect, label, resource) in [
         (PixelRect::new(354, 438, 109, 40), "Cancel", 4usize),
         (PixelRect::new(465, 438, 48, 40), "?", 5),
@@ -1447,7 +1447,7 @@ fn draw_options(
     painted
 }
 
-/// Экран `PlanetSelectMenu` (1:1): 3×2 мини-карты, стрелки, имя и описание.
+/// `PlanetSelectMenu` screen (1:1): 3×2 minimaps, arrows, name and description.
 fn draw_planet(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1459,7 +1459,7 @@ fn draw_planet(
     let mut painted = draw_background(frame, menu, "PLANETSE");
     let font = GnwFontId::Font5.font();
 
-    // Заголовок экрана и имя выбранной планеты.
+    // Screen title and the selected planet name.
     draw_text_gnw_centered(
         frame,
         PLANET_TITLE,
@@ -1475,12 +1475,12 @@ fn draw_planet(
         palette.rgba(GREEN),
     );
 
-    // Большая картинка планеты (SNOW_PIC + world/6, origin 26,98).
+    // Big planet picture (SNOW_PIC + world/6, origin 26,98).
     if let Some(Some(picture)) = menu.planet_group_pictures.get(form.world() / 6) {
         painted += draw_big_image_at(frame, picture, palette, PLANET_PICTURE);
     }
 
-    // Шесть слотов: мини-карты планет текущей группы.
+    // Six slots: minimaps of the current group's planets.
     let first = form.world_group_first();
     for (slot, rect) in PLANET_SLOTS.iter().enumerate() {
         let world = first + slot;
@@ -1489,7 +1489,7 @@ fn draw_planet(
             if let Some(image) = form.minimaps.get(world).and_then(|entry| entry.as_ref()) {
                 painted += blit_minimap(frame, *rect, image);
             } else {
-                // `.WRL` нет — честная заглушка вместо мини-карты.
+                // No `.WRL` — an honest placeholder instead of a minimap.
                 frame.fill_rect(*rect, palette.rgba(0x14));
                 draw_text_gnw_centered(
                     frame,
@@ -1502,12 +1502,12 @@ fn draw_planet(
         }
 
         if world == form.world() {
-            // `DrawTexts`: красная рамка в 2 пикселя вокруг выбранного слота.
+            // `DrawTexts`: a red 2-pixel frame around the selected slot.
             draw_box(frame, *rect, Rgba::rgb(252, 0, 0), 2);
         }
     }
 
-    // Стрелки групп.
+    // Group arrows.
     if let Some((left, right)) = menu.planet_arrows.as_ref() {
         painted += blit_simple(
             frame,
@@ -1527,7 +1527,7 @@ fn draw_planet(
         );
     }
 
-    // Описание планеты: многострочный текст, зелёный.
+    // Planet description: multiline text, green.
     let description = PLANET_DESCRIPTIONS[form.world()];
     let mut y = PLANET_DESCRIPTION.uly + 2;
 
@@ -1546,7 +1546,7 @@ fn draw_planet(
         y += font.height() + 1;
     }
 
-    // Кнопки Random/Cancel/?/Done.
+    // Random/Cancel/?/Done buttons.
     for (rect, label, resource) in PLANET_BUTTONS {
         let Some(pair) = menu.mnubtn_pair(resource) else {
             continue;
@@ -1567,7 +1567,7 @@ fn draw_planet(
     painted
 }
 
-/// Экран `ChoosePlayerMenu` (1:1): 4 команды × 3 типа + флаги команд.
+/// `ChoosePlayerMenu` screen (1:1): 4 teams × 3 types + team flags.
 fn draw_players(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1612,15 +1612,15 @@ fn draw_players(
             painted += blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
         }
 
-        // Флаг команды (`CH_TM1_U`…): клик — выбор клана.
+        // Team flag (`CH_TM1_U`…): a click — clan selection.
         let rect = player_banner_rect(row);
         if let Some(pair) = menu.team_banners[row].as_ref() {
             painted += blit_simple(frame, palette, pair.image(false), rect.ulx, rect.uly, true);
         }
 
-        // Эмблема выбранного клана на флаге команды: C++ `Copy(clan_logo_id,
-        // 41, 40)` (`CLN0LOGO + clan`). Точка (41,40) — якорь картинки, поэтому
-        // её собственные `ulx/uly` вычитаются (`WindowManager_DecodeSimpleImage`).
+        // Emblem of the selected clan on the team flag: C++ `Copy(clan_logo_id,
+        // 41, 40)` (`CLN0LOGO + clan`). The point (41,40) is the picture anchor, so
+        // its own `ulx/uly` are subtracted (`WindowManager_DecodeSimpleImage`).
         let clan_index = form.setup.team_clans[row] as usize;
         let logo = menu
             .clan_logos
@@ -1653,13 +1653,13 @@ fn draw_players(
     painted
 }
 
-/// Экран `ClanSelectMenu` (`clanselectmenu.cpp`): 8 кланов, логотипы на
-/// карточках, имена, Random/Cancel/?/Done.
+/// `ClanSelectMenu` screen (`clanselectmenu.cpp`): 8 clans, logos on
+/// the cards, names, Random/Cancel/?/Done.
 ///
-/// Полные описания кланов и таблица бонусов из `SC_CLANS`/`clans.json` в
-/// Rust-клиент ещё не загружаются, поэтому здесь показываются имя выбранного
-/// клана и подсказка; сама механика (выбор + применение к `team_clans`)
-/// реализована и влияет на стартовые атрибуты юнитов.
+/// Full clan descriptions and the bonus table from `SC_CLANS`/`clans.json` are not
+/// loaded into the Rust client yet, so here only the name of the selected
+/// clan and a hint are shown; the mechanics themselves (selection + application to `team_clans`)
+/// are implemented and affect the starting unit attributes.
 fn draw_clan(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1698,13 +1698,13 @@ fn draw_clan(
         }
         if let Some(logo) = menu.clan_logos[index + 1].as_ref() {
             // `ClanSelectMenu::ButtonInit`: `Copy(CLN1LOGO + index, 41, 40)` —
-            // якорь (41,40) внутри карточки 91×86.
+            // anchor (41,40) inside the 91×86 card.
             painted +=
                 blit_simple_anchored(frame, palette, logo, rect.ulx + 41, rect.uly + 40, true);
         }
 
-        // Наведение: подсветка рамкой (в C++ hover не рисуется, но клик по
-        // карточке — основной способ выбора; подсветка не двигает логотип).
+        // Hover: highlight with a frame (C++ does not draw hover, but a click on
+        // the card is the main way to select; the highlight does not move the logo).
         if mouse.is_some_and(|(x, y)| rect.contains(x, y)) && !selected {
             draw_box(frame, rect, Rgba::rgb(252, 252, 252), 1);
         }
@@ -1766,7 +1766,7 @@ fn draw_clan(
     painted
 }
 
-/// Строка статуса зелёным с тенью (`Text_TextLine`, `Fonts_BrightSilverColor`-стиль).
+/// Status line in green with a shadow (`Text_TextLine`, `Fonts_BrightSilverColor` style).
 fn draw_status(
     frame: &mut RgbaBuffer,
     palette: &crate::panels::UiPalette,
@@ -1791,7 +1791,7 @@ fn draw_status(
     );
 }
 
-/// Рамка `thickness` внутри прямоугольника.
+/// `thickness` frame inside the rectangle.
 fn draw_box(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: i32) {
     for inset in 0..thickness.max(1) {
         let x = rect.ulx + inset;
@@ -1814,7 +1814,7 @@ fn draw_box(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba, thickness: i32
     }
 }
 
-/// Рисует big image в точку `origin` палитрой окна.
+/// Draws a big image at `origin` with the window palette.
 fn draw_big_image_at(
     frame: &mut RgbaBuffer,
     image: &max_assets::image::BigImage,
@@ -1840,7 +1840,7 @@ fn draw_big_image_at(
     painted
 }
 
-/// Копирует 112×112 мини-карту (RGBA) в слот.
+/// Copies a 112×112 minimap (RGBA) into the slot.
 fn blit_minimap(frame: &mut RgbaBuffer, rect: PixelRect, rgba: &[u8]) -> u32 {
     let size = 112usize;
     let mut painted = 0;
@@ -1860,17 +1860,17 @@ fn blit_minimap(frame: &mut RgbaBuffer, rect: PixelRect, rgba: &[u8]) -> u32 {
     painted
 }
 
-/// Разбивает текст по ширине (по словам) — `Text_SplitText`
-/// (общий с окном перехода хода, см. [`crate::menu::wrap_gnw_text`]).
+/// Splits text by width (by words) — `Text_SplitText`
+/// (shared with the turn-transition window, see [`crate::menu::wrap_gnw_text`]).
 fn wrap_text(text: &str, width: i32) -> Vec<String> {
     wrap_gnw_text(text, width)
 }
 
-/// Загружает мини-карту планеты из `.WRL` так же, как
+/// Loads a planet minimap from `.WRL` the same way as
 /// `Menu_LoadPlanetMinimap` (`menu.cpp:663`).
 ///
-/// Возвращает 112×112 RGBA: палитра `.WRL` делится на 4 (`palette[i] /= 4`),
-/// затем каждый цвет отображается в палитру окна (`Color_MapColor(..., true)`).
+/// Returns 112×112 RGBA: the `.WRL` palette is divided by 4 (`palette[i] /= 4`),
+/// then each color is mapped into the window palette (`Color_MapColor(..., true)`).
 pub fn load_minimap(
     world_dir: &Path,
     world: usize,
@@ -1957,8 +1957,8 @@ mod tests {
     #[test]
     fn radio_indices_map_settings_to_cpp_rows() {
         let mut form = GameSetupForm::default();
-        assert_eq!(form.timer_index(), 3); // 180 → строка "180"
-        assert_eq!(form.endturn_index(), 3); // 45 → строка "45"
+        assert_eq!(form.timer_index(), 3); // 180 → the string "180"
+        assert_eq!(form.endturn_index(), 3); // 45 → the string "45"
         assert_eq!(form.credit_index(), 3); // 150 → "150"
 
         form.setup.timer = 0;

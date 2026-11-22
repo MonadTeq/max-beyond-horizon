@@ -1,94 +1,94 @@
-//! Меню команд выделенного юнита (попап `UNTBTN_U/D`) — 1:1 к C++-порту.
+//! Command menu of the selected unit (popup `UNTBTN_U/D`) — 1:1 with the C++ port.
 //!
-//! Оракул: `max-cpp-port/src/game_manager.cpp`
+//! Oracle: `max-cpp-port/src/game_manager.cpp`
 //!
 //! * `GameManager_InitPopupButtons` (`game_manager.cpp:3568`) —
-//!   условия открытия, раскладка, картинки/подписи кнопок;
-//! * `GameManager_DeinitPopupButtons` (`:3664`) — закрытие;
-//! * `GameManager_ProcessPopupMenuInput` (`:2607`) — клавиши: символ позиции
-//!   или первая буква подписи;
+//!   opening conditions, layout, button pictures/labels;
+//! * `GameManager_DeinitPopupButtons` (`:3664`) — closing;
+//! * `GameManager_ProcessPopupMenuInput` (`:2607`) — keys: the position character
+//!   or the first letter of the label;
 //! * `GameManager_ClickUnit` (`:6265`) / `GameManager_UnitSelect` (`:6246`) —
-//!   триггер (повторный клик по уже выделенному юниту);
-//! * `game_manager.cpp:5455` (`Esc`) — закрытие меню;
-//! * `units_manager.cpp:543-1352` — состав пунктов:
-//!   `UnitsManager_Popup_InitCommons` и `UnitsManager_Popup_Init*` по типу
-//!   юнита (`UnitInfo::Init`, `unitinfo.cpp:454-582` — таблица
+//!   trigger (a repeated click on an already selected unit);
+//! * `game_manager.cpp:5455` (`Esc`) — closing the menu;
+//! * `units_manager.cpp:543-1352` — the composition of the items:
+//!   `UnitsManager_Popup_InitCommons` and `UnitsManager_Popup_Init*` by unit
+//!   type (`UnitInfo::Init`, `unitinfo.cpp:454-582` — the table
 //!   `UnitsManager_PopupCallbacks[0..22]`).
 //!
-//! # Триггер (точный, из C++)
+//! # Trigger (exact, from C++)
 //!
-//! Меню открывается **повторным кликом по уже выделенному своему юниту**:
-//! `GameManager_ClickUnit` получает `unit1 == unit2` (клик по тому же юниту) и
-//! вызывает `GameManager_InitPopupButtons`; если меню уже открыто — закрывает
-//! (`DeinitPopupButtons`). Левая кнопка по другому своему юниту только
-//! перевыделяет. Правая кнопка меню **не** открывает: по выделенному юниту она
-//! открывает статистику (`UnitStats_Menu`), по другому — выделяет.
+//! The menu opens on a **repeated click on an already selected own unit**:
+//! `GameManager_ClickUnit` gets `unit1 == unit2` (a click on the same unit) and
+//! calls `GameManager_InitPopupButtons`; if the menu is already open — closes it
+//! (`DeinitPopupButtons`). The left button on another own unit only
+//! re-selects. The right button does **not** open the menu: on the selected unit it
+//! opens statistics (`UnitStats_Menu`), on another — selects it.
 //!
-//! `GameManager_InitPopupButtons` требует:
+//! `GameManager_InitPopupButtons` requires:
 //!
 //! * `unit->GetOrder() != ORDER_DISABLE`;
-//! * юнит внутри видимой области карты;
-//! * для `MOBILE_LAND_UNIT` — состояние не `ORDER_STATE_UNIT_READY`;
-//! * `popup->init` зарегистрировал хотя бы один пункт.
+//! * the unit is inside the visible map area;
+//! * for `MOBILE_LAND_UNIT` — the state is not `ORDER_STATE_UNIT_READY`;
+//! * `popup->init` registered at least one item.
 //!
-//! # Раскладка (по C++)
+//! # Layout (per C++)
 //!
-//! Вертикальный список кнопок `UNTBTN_U` (42×21, `BUTTON_WIDTH`×`BUTTON_HEIGHT`)
-//! с шагом `height + 3`; окно — `image.width + 6` × `image.height * count +
-//! (count + 1) * 3`, то есть 3 px поля и 3 px между кнопками. Якорь:
-//! `ulx = unit->x + 32` (правый край клетки юнита), `uly = unit->y - height/2`
-//! (центр клетки по Y; `unit->x/y` — центр клетки, `UnitInfo::SetPosition`).
-//! Если меню вылезает за правый край окна карты — сдвиг влево на
-//! `width + Gfx_ZoomLevel` (одна клетка); по вертикали — в пределах окна карты.
+//! A vertical list of `UNTBTN_U` buttons (42×21, `BUTTON_WIDTH`×`BUTTON_HEIGHT`)
+//! with a step of `height + 3`; the window is `image.width + 6` × `image.height * count +
+//! (count + 1) * 3`, i.e. 3 px of margin and 3 px between buttons. Anchor:
+//! `ulx = unit->x + 32` (the right edge of the unit cell), `uly = unit->y - height/2`
+//! (the cell center by Y; `unit->x/y` — the cell center, `UnitInfo::SetPosition`).
+//! If the menu goes beyond the right edge of the map window — shift left by
+//! `width + Gfx_ZoomLevel` (one cell); vertically — within the map window.
 //!
-//! Подпись — `Button::SetCaption(caption, -1, 2)`: шрифт `GNW_TEXT_FONT_2`,
-//! цвет `COLOR_GREEN` (`0x02`), по центру кнопки; нажатый пункт рисуется
-//! картинкой `UNTBTN_D` (C++: `state[i]` → `image_up = UNTBTN_D`).
+//! Label — `Button::SetCaption(caption, -1, 2)`: the `GNW_TEXT_FONT_2` font,
+//! color `COLOR_GREEN` (`0x02`), centered in the button; the pressed item is drawn
+//! with the `UNTBTN_D` picture (C++: `state[i]` → `image_up = UNTBTN_D`).
 //!
-//! # Ввод
+//! # Input
 //!
-//! * мышь: клик по кнопке — пункт (C++ `Button` с `r_func`);
-//! * клавиатура: `toupper(позиция)` или `toupper(первая буква подписи)`
-//!   (`GameManager_ProcessPopupMenuInput`); стрелки/Enter в C++ **не**
-//!   работают — здесь тоже;
-//! * `Esc` — закрыть (C++ `game_manager.cpp:5469`);
-//! * второй клик по юниту — закрыть (C++ `GameManager_ClickUnit`);
-//! * клик вне меню — закрыть (меню модально: карта приказ не получает).
+//! * mouse: a click on a button — the item (C++ `Button` with `r_func`);
+//! * keyboard: `toupper(position)` or `toupper(first letter of the label)`
+//!   (`GameManager_ProcessPopupMenuInput`); arrows/Enter in C++ **do not**
+//!   work — neither here;
+//! * `Esc` — close (C++ `game_manager.cpp:5469`);
+//! * a second click on the unit — close (C++ `GameManager_ClickUnit`);
+//! * a click outside the menu — close (the menu is modal: the map receives no order).
 //!
-//! # Состав пунктов
+//! # Item composition
 //!
-//! Порядок пунктов — не порядок регистрации, а `UnitsManager_RegisterButton`:
-//! вставка по возрастанию `key_code` (символ позиции, `'0'` → `':'`, чтобы
-//! «remove»/«place» оказались последними); равные позиции сохраняют порядок
-//! регистрации (устойчивая вставка). Поэтому у танка меню идёт
-//! `attack → x-fer → enter → stop → sentry → Done`, а у строителя —
+//! The order of the items is not the registration order but `UnitsManager_RegisterButton`:
+//! insertion by ascending `key_code` (the position character, `'0'` → `':'`, so that
+//! "remove"/"place" come last); equal positions keep the registration order
+//! (stable insertion). Therefore the tank menu goes
+//! `attack → x-fer → enter → stop → sentry → Done`, and the builder —
 //! `Build → …`.
 //!
-//! # Реализовано / отключено
+//! # Implemented / disabled
 //!
-//! Пункт, механика которого в нашем стеке не портирована, остаётся в списке
-//! (как в C++), но рисуется серым и не срабатывает — причина в
-//! [`UnitMenuItem::note`]. С 2026-11-20 (B1) включены `attack` (targeting_mode),
-//! `load` (курсорный режим 7), `disable`/`steal` (режимы 9/8), бульдозер
-//! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) и `Upg. All`.
-//! Отключён только `activate` (`RepairShopMenu` не портирован); мастер-строитель
-//! пункт не регистрирует (`FindValidPowerGeneratorPosition`). Список причин и
-//! ссылки — `max-brh-docs/analysis/visual-1to1-status.md` §33.
+//! An item whose mechanics are not ported in our stack remains in the list
+//! (as in C++), but is drawn gray and does not trigger — the reason is in
+//! [`UnitMenuItem::note`]. Since 2026-11-20 (B1) `attack` (targeting_mode),
+//! `load` (cursor mode 7), `disable`/`steal` (modes 9/8), bulldozer
+//! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) and `Upg. All` are enabled.
+//! Only `activate` is disabled (`RepairShopMenu` is not ported); the master builder
+//! does not register the item (`FindValidPowerGeneratorPosition`). The list of reasons and
+//! references — `max-brh-docs/analysis/visual-1to1-status.md` §33.
 //!
-//! # Осознанные расхождения
+//! # Deliberate divergences
 //!
-//! 1. У стационарного юнита C++ открывает меню уже при выделении
-//!    (`GameManager_UnitSelect` → `InitPopupButtons`). У нас выделение кадр не
-//!    меняет (golden `mine-selected` и др.), поэтому меню открывается только
-//!    повторным кликом — как `GameManager_ClickUnit`, см. триггер выше.
-//! 2. `Done` (`UnitsManager_PerformAction`) — приказы в нашем стеке
-//!    исполняются сразу при выдаче, отдельного шага «подтвердить» нет: пункт
-//!    закрывает меню и снимает выделение (плюс переводит `Await` +
-//!    `STATIONARY` в `ORDER_STATE_READY_TO_EXECUTE_ORDER`, как C++).
-//! 3. Курсорные режимы C++ (`unit->cursor`: x-fer 3, repair 4, reload 6,
-//!    load 7) живут в UI-состоянии ([`crate::hud::HudState`]), а не в
-//!    `UnitInfo`: `UnitInfo::cursor` не входит в снапшот, но и не должен
-//!    влиять на дайджест. Переключение режима — как C++ (`cursor = N`).
+//! 1. For a stationary unit C++ opens the menu already on selection
+//!    (`GameManager_UnitSelect` → `InitPopupButtons`). Here selection does not
+//!    change the frame (golden `mine-selected` and others), so the menu opens only
+//!    on a repeated click — like `GameManager_ClickUnit`, see the trigger above.
+//! 2. `Done` (`UnitsManager_PerformAction`) — orders in our stack are
+//!    executed immediately when issued, there is no separate "confirm" step: the item
+//!    closes the menu and clears the selection (plus switches `Await` +
+//!    `STATIONARY` to `ORDER_STATE_READY_TO_EXECUTE_ORDER`, like C++).
+//! 3. C++ cursor modes (`unit->cursor`: x-fer 3, repair 4, reload 6,
+//!    load 7) live in the UI state ([`crate::hud::HudState`]), not in
+//!    `UnitInfo`: `UnitInfo::cursor` is not part of the snapshot, but must not
+//!    affect the digest either. Switching a mode — like C++ (`cursor = N`).
 
 use max_assets::image::SimpleImage;
 use max_core::enums::{unit_flags, PlayMode, UnitOrder, UnitOrderState, UnitType};
@@ -107,96 +107,96 @@ use crate::panels::UiPalette;
 use crate::ui::Key;
 use crate::Assets;
 
-/// Ширина кнопки попала (`UNTBTN_U`/`UNTBTN_D`, `MAX.RES`): 42.
+/// Popup button width (`UNTBTN_U`/`UNTBTN_D`, `MAX.RES`): 42.
 pub const BUTTON_WIDTH: i32 = 42;
-/// Высота кнопки попапа (`UNTBTN_U`/`UNTBTN_D`, `MAX.RES`): 21.
+/// Popup button height (`UNTBTN_U`/`UNTBTN_D`, `MAX.RES`): 21.
 pub const BUTTON_HEIGHT: i32 = 21;
-/// Поле окна и зазор между кнопками (`(count + 1) * 3` в C++): 3.
+/// Window margin and gap between buttons (`(count + 1) * 3` in C++): 3.
 pub const MARGIN: i32 = 3;
 
-/// Цвет подписи — `COLOR_GREEN` (`color.h:38`, `SetCaption(..., -1, 2)`).
+/// Label color — `COLOR_GREEN` (`color.h:38`, `SetCaption(..., -1, 2)`).
 pub const CAPTION_GREEN: u8 = 0x02;
-/// Цвет отключённого пункта (в C++ выключенная кнопка не реагирует и рисуется
-/// той же картинкой; нам нужен видимый признак — серый `0xA2`).
+/// Color of a disabled item (in C++ a disabled button does not react and is drawn
+/// with the same picture; we need a visible sign — gray `0xA2`).
 pub const CAPTION_DISABLED: u8 = 0xA2;
 
-/// Курсорный режим `x-fer` — C++ `unit->cursor = 3` (`CURSOR_TRANSFER`).
+/// Cursor mode `x-fer` — C++ `unit->cursor = 3` (`CURSOR_TRANSFER`).
 pub const CURSOR_TRANSFER: u8 = 3;
-/// Курсорный режим `repair` — C++ `unit->cursor = 4` (`CURSOR_REPAIR`).
+/// Cursor mode `repair` — C++ `unit->cursor = 4` (`CURSOR_REPAIR`).
 pub const CURSOR_REPAIR: u8 = 4;
-/// Курсорный режим `reload` — C++ `unit->cursor = 6` (`CURSOR_RELOAD`).
+/// Cursor mode `reload` — C++ `unit->cursor = 6` (`CURSOR_RELOAD`).
 pub const CURSOR_RELOAD: u8 = 6;
-/// Курсорный режим `load` — C++ `unit->cursor = 7` (`CURSOR_LOAD`).
+/// Cursor mode `load` — C++ `unit->cursor = 7` (`CURSOR_LOAD`).
 pub const CURSOR_LOAD: u8 = 7;
 
-/// Идентификатор пункта меню (все пункты C++ попапа).
+/// Menu item identifier (all items of the C++ popup).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
-    /// `Manual` (`_(b0b9)`) — тумблер ответного огня в simultaneous moves.
+    /// `Manual` (`_(b0b9)`) — the return fire toggle in simultaneous moves.
     Manual,
-    /// `x-fer` (`_(886b)`) — курсорный режим переноса груза.
+    /// `x-fer` (`_(886b)`) — the cargo transfer cursor mode.
     Transfer,
-    /// `enter` (`_(e08d)`) — режим посадки в транспорт/на платформу.
+    /// `enter` (`_(e08d)`) — the boarding mode into a transport/platform.
     Enter,
-    /// `stop` (`_(6c45)`) — отмена маршрута (`ORDER_AWAIT` + `CLEAR_PATH`).
+    /// `stop` (`_(6c45)`) — cancels the route (`ORDER_AWAIT` + `CLEAR_PATH`).
     Stop,
-    /// `upgrade` (`_(7fef)`) — приказ `ORDER_UPGRADE`.
+    /// `upgrade` (`_(7fef)`) — the `ORDER_UPGRADE` order.
     Upgrade,
-    /// `Upg. All` (`_(97a2)`) — апгрейд всех зданий комплекса.
+    /// `Upg. All` (`_(97a2)`) — upgrade all buildings of the complex.
     UpgradeAll,
     /// `sentry` (`_(0cf6)`/`_(524e)`) — `ORDER_SENTRY` / `ORDER_AWAIT`.
     Sentry,
     /// `Done` (`_(2b7d)`) — `UnitsManager_PerformAction`.
     Done,
-    /// `remove` (`_(7e56)`) — самоуничтожение здания (`SelfDestructMenu`).
+    /// `remove` (`_(7e56)`) — building self-destruct (`SelfDestructMenu`).
     RemoveStationary,
-    /// `Auto` (`_(0286)`) — авто-разведка сюрвейера.
+    /// `Auto` (`_(0286)`) — surveyor auto-survey.
     Auto,
-    /// `attack` (`_(e183)`/`_(5f6b)`) — режим наведения.
+    /// `attack` (`_(e183)`/`_(5f6b)`) — the targeting mode.
     Attack,
-    /// `disable` (`_(6d6a)`) — диверсант: отключение цели.
+    /// `disable` (`_(6d6a)`) — commando: disable the target.
     Disable,
-    /// `steal` (`_(a0fd)`) — диверсант: захват цели.
+    /// `steal` (`_(a0fd)`) — commando: capture the target.
     Steal,
-    /// `reload` (`_(9d39)`) — курсорный режим дозаправки/дозарядки.
+    /// `reload` (`_(9d39)`) — the refuel/recharge cursor mode.
     Reload,
-    /// `place` (`_(81df)`) — постановка мины.
+    /// `place` (`_(81df)`) — placing a mine.
     PlaceMine,
-    /// `remove` (`_(bfe6)`) — снятие мины.
+    /// `remove` (`_(bfe6)`) — removing a mine.
     RemoveMine,
-    /// `repair` (`_(a1a1)`) — курсорный режим ремонта.
+    /// `repair` (`_(a1a1)`) — the repair cursor mode.
     Repair,
-    /// `Build` (`_(7b6d)`/`_(b3ef)`) — экран заказа.
+    /// `Build` (`_(7b6d)`/`_(b3ef)`) — the order screen.
     Build,
-    /// `stop` (`_(bf85)`/`_(bcf7)`) — отмена стройки (`GameManager_SelectBuildSite`).
+    /// `stop` (`_(bf85)`/`_(bcf7)`) — cancels construction (`GameManager_SelectBuildSite`).
     StopBuild,
-    /// `start` (`_(cced)`) — продолжение стройки завода (`BuildOrder`).
+    /// `start` (`_(cced)`) — resumes factory construction (`BuildOrder`).
     StartBuild,
     /// `start` (`_(e7b6)`/`_(283e)`/`_(98c9)`/`_(53c3)`/`_(bd97)`/`_(5fe9)`).
     PowerOn,
     /// `stop` (`_(7a07)`/`_(6889)`/`_(d9c8)`/`_(3f13)`/`_(df26)`).
     PowerOff,
-    /// `resrch` (`_(2e00)`) — экран исследований.
+    /// `resrch` (`_(2e00)`) — the research screen.
     Research,
-    /// `buy upg` (`_(1da0)`) — экран апгрейдов.
+    /// `buy upg` (`_(1da0)`) — the upgrades screen.
     BuyUpgrade,
-    /// `allocate` (`_(33b7)`) — распределение шахты (`AllocMenu`).
+    /// `allocate` (`_(33b7)`) — mine allocation (`AllocMenu`).
     Allocate,
     /// `activate` (`_(200c)`/`_(cec1)`) — `RepairShopMenu`.
     Activate,
-    /// `load` (`_(8452)`) — курсорный режим погрузки в транспорт.
+    /// `load` (`_(8452)`) — the boarding cursor mode into a transport.
     Load,
-    /// `stop` (`_(bc20)`) — отмена расчистки бульдозером.
+    /// `stop` (`_(bc20)`) — cancels bulldozer clearing.
     StopRemove,
-    /// `remove` (`_(9737)`) — расчистка завалов бульдозером.
+    /// `remove` (`_(9737)`) — clears rubble with a bulldozer.
     RemoveRubble,
-    /// `start` (`_(2c2a)`) — мастер-строитель (`UnitsManager_FindValidPowerGeneratorPosition`).
+    /// `start` (`_(2c2a)`) — master builder (`UnitsManager_FindValidPowerGeneratorPosition`).
     StartMaster,
 }
 
 impl ItemId {
-    /// Имя пункта для журнала/QA (совпадает с подписью в en-US, кроме
-    /// `Upg. All`/`buy upg` — там пробел заменён `_`).
+    /// Item name for the log/QA (coincides with the en-US label, except
+    /// `Upg. All`/`buy upg` — there the space is replaced with `_`).
     pub const fn name(self) -> &'static str {
         match self {
             Self::Manual => "Manual",
@@ -233,20 +233,20 @@ impl ItemId {
     }
 }
 
-/// Пункт меню — кнопка `UNTBTN_U/D` с подписью.
+/// A menu item — the `UNTBTN_U/D` button with a label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitMenuItem {
-    /// Что делает пункт.
+    /// What the item does.
     pub id: ItemId,
-    /// Подпись (en-US из `language.json`, как в C++ `_(...)`).
+    /// Label (en-US from `language.json`, like `_(...)` in C++).
     pub caption: String,
-    /// Символ позиции для клавиатуры (`UnitsManager_RegisterButton::position`).
+    /// Position character for the keyboard (`UnitsManager_RegisterButton::position`).
     pub hotkey: char,
-    /// C++ `state[i]`: нажатый вид (`UNTBTN_D`) — режим включён.
+    /// C++ `state[i]`: the pressed look (`UNTBTN_D`) — the mode is on.
     pub pressed: bool,
-    /// Пункт срабатывает; `false` — механика не портирована (серый).
+    /// The item triggers; `false` — the mechanics are not ported (gray).
     pub enabled: bool,
-    /// Почему пункт отключён (для журнала/документации); `""` — включён.
+    /// Why the item is disabled (for the log/documentation); `""` — enabled.
     pub note: &'static str,
 }
 
@@ -269,7 +269,7 @@ impl UnitMenuItem {
     }
 }
 
-/// Стабильный ключ сортировки C++ (`'0'` → `':'`, чтобы «remove» был последним).
+/// C++ stable sort key (`'0'` → `':'`, so that "remove" is last).
 pub fn key_code(position: char) -> char {
     if position == '0' {
         ':'
@@ -279,20 +279,20 @@ pub fn key_code(position: char) -> char {
 }
 
 // ---------------------------------------------------------------------------
-// Ресурсы
+// Resources
 // ---------------------------------------------------------------------------
 
-/// Картинки меню: `UNTBTN_U` (отжатая) и `UNTBTN_D` (нажатая), 42×21.
+/// Menu pictures: `UNTBTN_U` (released) and `UNTBTN_D` (pressed), 42×21.
 #[derive(Debug, Clone)]
 pub struct UnitMenuAssets {
-    /// Отжатая кнопка.
+    /// Released button.
     pub up: Option<SimpleImage>,
-    /// Нажатая кнопка (C++: `state[i]` → `image_up = UNTBTN_D`).
+    /// Pressed button (C++: `state[i]` → `image_up = UNTBTN_D`).
     pub down: Option<SimpleImage>,
 }
 
 impl UnitMenuAssets {
-    /// Грузит `UNTBTN_U/D` из `MAX.RES` (отсутствие — `None`, меню не рисуется).
+    /// Loads `UNTBTN_U/D` from `MAX.RES` (missing — `None`, the menu is not drawn).
     pub fn load(max_res: &max_assets::ResArchive) -> Self {
         Self {
             up: max_res
@@ -306,20 +306,20 @@ impl UnitMenuAssets {
         }
     }
 
-    /// Обе картинки загружены.
+    /// Both pictures are loaded.
     pub fn is_ready(&self) -> bool {
         self.up.is_some() && self.down.is_some()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Состав пунктов
+// Item composition
 // ---------------------------------------------------------------------------
 
-/// Набор пунктов по типу юнита — C++ `UnitsManager_PopupCallbacks[i].init`.
+/// The set of items by unit type — C++ `UnitsManager_PopupCallbacks[i].init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InitKind {
-    /// `UnitsManager_Popup_InitCommons` — только общие пункты.
+    /// `UnitsManager_Popup_InitCommons` — common items only.
     Commons,
     /// `InitSurveyor` — `Auto`.
     Surveyor,
@@ -337,28 +337,28 @@ enum InitKind {
     Builders,
     /// `InitFactories` — `Build`, `start`/`stop`.
     Factories,
-    /// `InitRecreationCenter` — `start` при выключенном питании.
+    /// `InitRecreationCenter` — `start` when the power is off.
     RecreationCenter,
     /// `InitMiningStation` — `allocate`/`start` + `stop`.
     MiningStation,
     /// `InitEcoSphere` — `start`/`stop`.
     EcoSphere,
-    /// `InitResearch` — `resrch` + `stop`, либо `start`.
+    /// `InitResearch` — `resrch` + `stop`, or `start`.
     Research,
     /// `InitPowerGenerators` — `start`/`stop`.
     PowerGenerators,
-    /// `InitRemove` — `remove`/`stop` (бульдозер).
+    /// `InitRemove` — `remove`/`stop` (bulldozer).
     Remove,
-    /// `InitMaster` — `start` мастер-строителя.
+    /// `InitMaster` — the master builder `start`.
     Master,
-    /// `InitGoldRefinery` — `start`/`stop` + `buy upg` (у `COMMTWR` — та же
-    /// функция, `unitinfo.cpp:456`).
+    /// `InitGoldRefinery` — `start`/`stop` + `buy upg` (for `COMMTWR` — the same
+    /// function, `unitinfo.cpp:456`).
     GoldRefinery,
     /// `InitRepairShops` — `activate` + `load`.
     RepairShops,
 }
 
-/// Таблица `UnitInfo::Init` (`unitinfo.cpp:454-582`): тип → набор пунктов.
+/// The `UnitInfo::Init` table (`unitinfo.cpp:454-582`): type → item set.
 fn init_kind(unit_type: UnitType) -> InitKind {
     use UnitType::*;
 
@@ -413,21 +413,21 @@ fn has_upgradeable_attributes(state: &GameState, unit: &UnitInfo) -> bool {
         || better(ATTRIB_ROUNDS)
         || better(ATTRIB_SCAN)
         || better(ATTRIB_AMMO)
-        // Меньше ходов на постройку — тоже апгрейд (`ATTRIB_TURNS`).
+        // Fewer turns to build is also an upgrade (`ATTRIB_TURNS`).
         || (base.get_attribute(ATTRIB_TURNS) > current.get_attribute(ATTRIB_TURNS)
             && current.get_attribute(ATTRIB_TURNS) >= 1)
 }
 
-/// `UnitInfo::IsUpgradeAvailable` (`unitinfo.cpp:1423`): только стационарные.
+/// `UnitInfo::IsUpgradeAvailable` (`unitinfo.cpp:1423`): stationary only.
 pub fn is_upgrade_available(state: &GameState, unit: &UnitInfo) -> bool {
     !unit.is_mobile() && has_upgradeable_attributes(state, unit)
 }
 
-/// Общие пункты — `UnitsManager_Popup_InitCommons` (`units_manager.cpp:543`).
+/// Common items — `UnitsManager_Popup_InitCommons` (`units_manager.cpp:543`).
 fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>) {
     let order = unit.orders;
 
-    // `Manual`: только simultaneous moves, с боезапасом и не диверсант.
+    // `Manual`: simultaneous moves only, with ammo and not a commando.
     if state.play_mode == PlayMode::SimultaneousMoves
         && unit.base_values.get_attribute(ATTRIB_AMMO) > 0
         && unit.unit_type != UnitType::Infiltrator
@@ -440,7 +440,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         ));
     }
 
-    // `x-fer`: у юнитов с грузом `RAW..GOLD`, кроме `CLEAR`/`BUILD`.
+    // `x-fer`: for units with cargo `RAW..GOLD`, except `CLEAR`/`BUILD`.
     let cargo = cargo_type_of(unit.unit_type);
     if (cargo as u8) > (CargoType::None as u8)
         && (cargo as u8) <= (CargoType::Gold as u8)
@@ -450,7 +450,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         items.push(UnitMenuItem::new(ItemId::Transfer, "x-fer", '3', false));
     }
 
-    // `enter`: у подвижных, кроме `CLEAR`/`BUILD`.
+    // `enter`: for mobile ones, except `CLEAR`/`BUILD`.
     if unit.environment().is_some()
         && order != UnitOrder::Clear
         && order != UnitOrder::Build
@@ -458,7 +458,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         items.push(UnitMenuItem::new(ItemId::Enter, "enter", '5', false));
     }
 
-    // `stop`: только когда есть маршрут.
+    // `stop`: only when there is a route.
     if unit.path.is_some() && order != UnitOrder::Clear && order != UnitOrder::Build {
         items.push(UnitMenuItem::new(ItemId::Stop, "stop", '7', false));
     }
@@ -492,7 +492,7 @@ fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem
         items.push(UnitMenuItem::new(ItemId::Done, "Done", '9', false));
     }
 
-    // `remove` — самоуничтожение здания (`UnitsManager_SelfDestructMenu`).
+    // `remove` — building self-destruct (`UnitsManager_SelfDestructMenu`).
     if !unit.is_mobile() {
         items.push(UnitMenuItem::new(ItemId::RemoveStationary, "remove", '0', false));
     }
@@ -506,10 +506,10 @@ fn power_items(unit: &UnitInfo, on_caption: &str, items: &mut Vec<UnitMenuItem>)
     }
 }
 
-/// Пункты по типу юнита (`UnitsManager_Popup_Init*`).
+/// Items by unit type (`UnitsManager_Popup_Init*`).
 ///
-/// `false` — общие пункты не добавлять: в C++ `UnitsManager_Popup_InitFactories`
-/// у завода с готовым юнитом вызывает `PlaceNewUnit` и выходит, не строя попап.
+/// `false` — do not add the common items: in C++ `UnitsManager_Popup_InitFactories`
+/// for a factory with a ready unit calls `PlaceNewUnit` and exits without building the popup.
 fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>) -> bool {
     match kind {
         InitKind::Commons => {}
@@ -522,7 +522,7 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
         }
         InitKind::Infiltrator => {
             // `UnitsManager_Popup_InitInfiltrator` (`units_manager.cpp:932`):
-            // `disable`/`steal` — курсорные режимы 9/8, `attack` — наведение.
+            // `disable`/`steal` — cursor modes 9/8, `attack` — targeting.
             items.push(UnitMenuItem::new(
                 ItemId::Disable,
                 "disable",
@@ -558,18 +558,18 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
                 && unit.state != UnitOrderState::BuildAbort
             {
                 // C++ `UnitsManager_Popup_OnClick_SelectBuildSite` →
-                // `GameManager_SelectBuildSite`: отмена текущей стройки —
+                // `GameManager_SelectBuildSite`: cancels the current construction —
                 // `ORDER_BUILD` + `ORDER_STATE_BUILD_CANCEL`
-                // (`UnitInfo::CancelBuilding` у мобильного строителя очищает
-                // `build_list`/`build_time` и возвращает `ORDER_AWAIT`).
+                // (`UnitInfo::CancelBuilding` for a mobile builder clears
+                // `build_list`/`build_time` and returns `ORDER_AWAIT`).
                 items.push(UnitMenuItem::new(ItemId::StopBuild, "stop", '7', false));
             } else {
                 items.push(UnitMenuItem::new(ItemId::Build, "Build", '1', false));
             }
         }
         InitKind::Factories => {
-            // C++: у завода с готовым юнитом попап не строится вовсе —
-            // `UnitsManager_Popup_PlaceNewUnit` ставит юнита сразу.
+            // C++: for a factory with a ready unit the popup is not built at all —
+            // `UnitsManager_Popup_PlaceNewUnit` places the unit immediately.
             if unit.state == UnitOrderState::UnitReady {
                 return false;
             }
@@ -578,8 +578,8 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
 
             if unit.orders == UnitOrder::HaltBuilding || unit.orders == UnitOrder::HaltBuilding2 {
                 // C++ `UnitsManager_Popup_OnClick_BuildOrder` → `UnitInfo::BuildOrder`:
-                // `ORDER_BUILD` + `ORDER_STATE_INIT` (очередь и `build_time`
-                // сохранены остановкой), затем `StartBuilding`.
+                // `ORDER_BUILD` + `ORDER_STATE_INIT` (the queue and `build_time`
+                // are preserved by the stop), then `StartBuilding`.
                 items.push(UnitMenuItem::new(ItemId::StartBuild, "start", '2', false));
             } else if unit.orders == UnitOrder::Build
                 && unit.state != UnitOrderState::BuildCancel
@@ -613,7 +613,7 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
         InitKind::PowerGenerators => power_items(unit, "start", items),
         InitKind::Remove => {
             // `UnitsManager_Popup_InitRemove` (`units_manager.cpp:1123`):
-            // в `ORDER_CLEAR` — `stop` (`_(bc20)`), иначе `remove` (`_(9737)`).
+            // in `ORDER_CLEAR` — `stop` (`_(bc20)`), otherwise `remove` (`_(9737)`).
             if unit.orders == UnitOrder::Clear {
                 items.push(UnitMenuItem::new(ItemId::StopRemove, "stop", '7', false));
             } else {
@@ -626,8 +626,8 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             }
         }
         InitKind::Master => {
-            // `UnitsManager_FindValidPowerGeneratorPosition` (проверка площадки
-            // мастер-строителя) не портирована — пункта нет, как при
+            // `UnitsManager_FindValidPowerGeneratorPosition` (the master builder site
+            // check) is not ported — there is no item, as with
             // `is_placeable == false`.
         }
         InitKind::GoldRefinery => {
@@ -645,7 +645,7 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
                     .disabled("RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141"),
             );
             // `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`):
-            // тумблер курсорного режима 7; погрузка — `GameManager_ProcessMouse`
+            // mode 7 toggle; boarding — `GameManager_ProcessMouse`
             // (CURSOR_LOAD, `game_manager.cpp:6807-6842`).
             items.push(UnitMenuItem::new(ItemId::Load, "load", '2', false));
         }
@@ -654,22 +654,22 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
     true
 }
 
-/// Список пунктов меню юнита — C++ `popup->init(unit, &GameManager_PopupButtons)`.
+/// Menu item list of a unit — C++ `popup->init(unit, &GameManager_PopupButtons)`.
 ///
-/// Пустой список — меню не открывается (C++ `popup_count == 0`).
+/// An empty list — the menu does not open (C++ `popup_count == 0`).
 pub fn items_for(state: &GameState, unit: &UnitInfo) -> Vec<UnitMenuItem> {
     let mut items = Vec::new();
 
     if init_for_kind(init_kind(unit.unit_type), unit, &mut items) {
         init_commons(state, unit, &mut items);
     }
-    // `UnitsManager_RegisterButton`: устойчивая вставка по возрастанию ключа.
+    // `UnitsManager_RegisterButton`: stable insertion by ascending key.
     items.sort_by_key(|item| key_code(item.hotkey));
 
     items
 }
 
-/// Условие открытия — C++ `GameManager_InitPopupButtons` (`game_manager.cpp:3576`).
+/// Opening condition — C++ `GameManager_InitPopupButtons` (`game_manager.cpp:3576`).
 pub fn can_open(unit: &UnitInfo) -> bool {
     unit.orders != UnitOrder::Disable
         && (!(unit.is_ground() || unit.is_amphibious())
@@ -677,28 +677,28 @@ pub fn can_open(unit: &UnitInfo) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Меню
+// Menu
 // ---------------------------------------------------------------------------
 
-/// Открытое меню команд одного юнита.
+/// Open command menu of one unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitMenu {
-    /// Чей юнит.
+    /// Whose unit.
     pub unit: UnitId,
-    /// Пункты в порядке отрисовки (сверху вниз).
+    /// Items in drawing order (top to bottom).
     pub items: Vec<UnitMenuItem>,
-    /// Окно меню в пикселях кадра (`GameManager_PopupButtons` ulx/uly/width/height).
+    /// Menu window in frame pixels (`GameManager_PopupButtons` ulx/uly/width/height).
     pub rect: PixelRect,
-    /// Индекс пункта под курсором (подсветки в C++ нет, нужен QA/отладке).
+    /// Index of the item under the cursor (C++ has no highlight, needed for QA/debug).
     pub hover: Option<usize>,
 }
 
 impl UnitMenu {
-    /// Раскладка меню — `GameManager_InitPopupButtons` (`game_manager.cpp:3586-3617`).
+    /// Menu layout — `GameManager_InitPopupButtons` (`game_manager.cpp:3586-3617`).
     ///
-    /// `anchor` — `(unit->x + 32, unit->y)` в пикселях области карты, то есть
-    /// правый край клетки юнита по X и её центр по Y; `area` — окно карты,
-    /// `zoom` — `Gfx_ZoomLevel` (пикселей на клетку).
+    /// `anchor` — `(unit->x + 32, unit->y)` in map area pixels, i.e.
+    /// the right edge of the unit cell by X and its center by Y; `area` — the map window,
+    /// `zoom` — `Gfx_ZoomLevel` (pixels per cell).
     pub fn layout(anchor: (i32, i32), count: usize, area: PixelRect, zoom: u32) -> PixelRect {
         let count = count.max(1) as i32;
         let width = BUTTON_WIDTH + 2 * MARGIN;
@@ -722,9 +722,9 @@ impl UnitMenu {
         PixelRect::new(ulx, uly, width, height)
     }
 
-    /// Открывает меню для юнита; `None` — пунктов нет/меню не положено.
+    /// Opens the menu for a unit; `None` — no items/the menu is not allowed.
     ///
-    /// `anchor`/`area` — в пикселях кадра (уже со смещением окна карты).
+    /// `anchor`/`area` — in frame pixels (already with the map window offset).
     pub fn new(
         state: &GameState,
         unit: &UnitInfo,
@@ -752,7 +752,7 @@ impl UnitMenu {
         })
     }
 
-    /// Прямоугольник кнопки `index` (C++: `ulx += 3`, `uly += image->height + 3`).
+    /// Rectangle of button `index` (C++: `ulx += 3`, `uly += image->height + 3`).
     pub fn button_rect(&self, index: usize) -> PixelRect {
         PixelRect::new(
             self.rect.ulx + MARGIN,
@@ -762,19 +762,19 @@ impl UnitMenu {
         )
     }
 
-    /// Индекс пункта под точкой кадра.
+    /// Index of the item under the frame point.
     pub fn item_at(&self, x: i32, y: i32) -> Option<usize> {
         (0..self.items.len()).find(|index| self.button_rect(*index).contains(x, y))
     }
 
-    /// Индекс пункта по идентификатору.
+    /// Index of the item by identifier.
     pub fn index_of(&self, id: ItemId) -> Option<usize> {
         self.items.iter().position(|item| item.id == id)
     }
 
-    /// Индекс пункта по подписи (без учёта регистра) или по символу позиции.
+    /// Index of the item by label (case-insensitive) or by the position character.
     ///
-    /// Так же ищет и C++: `toupper(position)` или `toupper(caption[0])`.
+    /// C++ searches the same way: `toupper(position)` or `toupper(caption[0])`.
     pub fn index_by_text(&self, text: &str) -> Option<usize> {
         let wanted = text.trim().to_ascii_lowercase();
         let mut chars = wanted.chars();
@@ -795,10 +795,10 @@ impl UnitMenu {
         })
     }
 
-    /// Клавиша в открытом меню — `GameManager_ProcessPopupMenuInput`.
+    /// Key in the open menu — `GameManager_ProcessPopupMenuInput`.
     ///
-    /// Сначала сравнение с символом позиции, затем с первой буквой подписи
-    /// (`toupper`); стрелки/Enter не обрабатываются, `Esc` — закрытие.
+    /// First the comparison with the position character, then with the first letter of
+    /// the label (`toupper`); arrows/Enter are not handled, `Esc` — close.
     pub fn key(&self, key: Key) -> Option<MenuKey> {
         match key {
             Key::Escape => Some(MenuKey::Close),
@@ -823,7 +823,7 @@ impl UnitMenu {
         }
     }
 
-    /// Рисует меню поверх кадра (`UNTBTN_U/D` + подпись `FONT2` цветом `GREEN`).
+    /// Draws the menu over the frame (`UNTBTN_U/D` + `FONT2` label in `GREEN`).
     pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, palette: &UiPalette) -> u32 {
         let Some(menu_assets) = assets.unit_menu.as_ref() else {
             return 0;
@@ -856,31 +856,31 @@ impl UnitMenu {
     }
 }
 
-/// Результат клавиши в меню.
+/// Result of a key in the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuKey {
-    /// `Esc` — закрыть.
+    /// `Esc` — close.
     Close,
-    /// Пункт `index` (позиция или первая буква подписи).
+    /// Item `index` (position or first letter of the label).
     Item(usize),
 }
 
-/// Что делать с событием ввода в открытом меню.
+/// What to do with an input event in the open menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuEvent {
-    /// Событие меню не касается (движение мыши и т.п.).
+    /// The event does not concern the menu (mouse movement etc.).
     None,
-    /// Наведение на пункт (для отладки/подсветки кадра).
+    /// Hover over an item (for debug/frame highlight).
     Hover(Option<usize>),
-    /// Закрыть меню (Esc, клик вне, повторный клик по юниту).
+    /// Close the menu (Esc, click outside, repeated click on the unit).
     Close,
-    /// Активировать пункт `index`.
+    /// Activate item `index`.
     Item(usize),
 }
 
-/// Событие ввода в открытом меню — как C++ `Button` в окне `WINDOW_MAIN_MAP`.
+/// Input event in the open menu — like C++ `Button` in the `WINDOW_MAIN_MAP` window.
 ///
-/// Клик **вне** меню закрывает его (модальность: карта приказ не получает).
+/// A click **outside** the menu closes it (modality: the map receives no order).
 pub fn menu_event(menu: &UnitMenu, event: crate::ui::InputEvent) -> MenuEvent {
     match event {
         crate::ui::InputEvent::MouseMove(x, y) => MenuEvent::Hover(menu.item_at(x, y)),
@@ -905,10 +905,10 @@ pub fn menu_event(menu: &UnitMenu, event: crate::ui::InputEvent) -> MenuEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Приказы из меню (пакеты 08, процессоры P1/P2/P3)
+// Orders from the menu (packets 08, processors P1/P2/P3)
 // ---------------------------------------------------------------------------
 
-/// Приказ `P1` (пакет 08) — C++ `Remote_SendNetPacket_08` с процессором 1.
+/// `P1` order (packet 08) — C++ `Remote_SendNetPacket_08` with processor 1.
 pub fn p1_order(
     state: &GameState,
     id: UnitId,
@@ -931,7 +931,7 @@ pub fn p1_order(
     ))
 }
 
-/// Приказ `P2` (пакет 08) — с родителем (`ORDER_REPAIR`/`ORDER_RELOAD`).
+/// `P2` order (packet 08) — with a parent (`ORDER_REPAIR`/`ORDER_RELOAD`).
 pub fn p2_order(
     state: &GameState,
     id: UnitId,
@@ -959,7 +959,7 @@ pub fn p2_order(
     ))
 }
 
-/// Приказ `P3` (пакет 08) — с клеткой назначения (`ORDER_AWAIT`/`MOVE_TO_UNIT`).
+/// `P3` order (packet 08) — with a destination cell (`ORDER_AWAIT`/`MOVE_TO_UNIT`).
 pub fn p3_order(
     state: &GameState,
     id: UnitId,
@@ -996,17 +996,17 @@ pub fn p3_order(
     ))
 }
 
-/// Курсорный клик по своему юниту при активном режиме `cursor` (C++ `CURSOR_*`
-/// ветки `GameManager_ProcessMouse`).
+/// Cursor click on an own unit with an active `cursor` mode (C++ `CURSOR_*`
+/// branches of `GameManager_ProcessMouse`).
 ///
-/// `repair` (`game_manager.cpp:4617`) и `reload` (`:4600`): нужен груз у
-/// выделенного (`unit1->storage`), цель не `ORDER_DISABLE`; родителем
-/// становится цель, приказ — `ORDER_REPAIR`/`ORDER_RELOAD`, состояние `INIT`.
+/// `repair` (`game_manager.cpp:4617`) and `reload` (`:4600`): cargo is required on
+/// the selected one (`unit1->storage`), the target is not `ORDER_DISABLE`; the parent
+/// becomes the target, the order — `ORDER_REPAIR`/`ORDER_RELOAD`, state `INIT`.
 ///
-/// `x-fer` (`cursor = 3`) обрабатывается в UI окном
+/// `x-fer` (`cursor = 3`) is handled in the UI by the
 /// [`crate::transfermenu`] (`GameManager_TransferCargo` → `TransferMenu_Menu`):
-/// здесь он не превращается в приказ. `load` — [`load_mode_click`],
-/// `steal`/`disable` — [`stealth_mode_click`] (клик по врагу, см. `ui.rs`).
+/// here it does not turn into an order. `load` — [`load_mode_click`],
+/// `steal`/`disable` — [`stealth_mode_click`] (a click on an enemy, see `ui.rs`).
 pub fn cursor_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1047,8 +1047,8 @@ pub fn cursor_mode_click(
     ))
 }
 
-/// Приказ «войти в транспорт» по клику (C++ `CURSOR_UNIT_GO` + `enter_mode`):
-/// `ORDER_MOVE_TO_UNIT` в клетку цели, как `GameManager_SetUnitOrder`.
+/// "Board the transport" order by click (C++ `CURSOR_UNIT_GO` + `enter_mode`):
+/// `ORDER_MOVE_TO_UNIT` into the target cell, like `GameManager_SetUnitOrder`.
 pub fn enter_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1071,18 +1071,18 @@ pub fn enter_mode_click(
     )
 }
 
-/// Курсорный режим диверсанта «захват» — C++ `unit->cursor = 8`
+/// Commando "capture" cursor mode — C++ `unit->cursor = 8`
 /// (`CURSOR_ARROW_W`, `UnitsManager_Popup_OnClick_Steal`).
 pub const CURSOR_STEAL: u8 = 8;
-/// Курсорный режим диверсанта «отключение» — C++ `unit->cursor = 9`
+/// Commando "disable" cursor mode — C++ `unit->cursor = 9`
 /// (`CURSOR_ARROW_NW`, `UnitsManager_Popup_OnClick_Disable`).
 pub const CURSOR_DISABLE: u8 = 9;
 
-/// `UnitsManager_IsValidStealthTarget` (`units_manager.cpp:1370`) — что вообще
-/// может быть целью диверсанта: электронный юнит, не свой, живой, не в полёте,
-/// не `IDLE`/`TRANSFORM`/`FIRE`/`EXPLODE`, по соседству и валиден как цель
-/// атаки. Для `ORDER_AWAIT_STEAL_UNIT` — ещё и не стационарный/не занятый
-/// транспортом с грузом.
+/// `UnitsManager_IsValidStealthTarget` (`units_manager.cpp:1370`) — what in general
+/// can be a commando target: an electronic unit, not own, alive, not in flight,
+/// not `IDLE`/`TRANSFORM`/`FIRE`/`EXPLODE`, adjacent and valid as an attack
+/// target. For `ORDER_AWAIT_STEAL_UNIT` — also not stationary/not occupied
+/// by a transport with cargo.
 pub fn is_valid_stealth_target(
     state: &GameState,
     unit: &UnitInfo,
@@ -1118,13 +1118,13 @@ pub fn is_valid_stealth_target(
     }
 }
 
-/// Клик по чужому юниту в курсорном режиме диверсанта (8/9) —
+/// Click on an enemy unit in commando cursor mode (8/9) —
 /// `GameManager_ProcessMouse` → `GameManager_StealUnit`/`GameManager_DisableUnit`
 /// (`game_manager.cpp:4680/4696`).
 ///
-/// Ставит `parent = цель`, `stealth_dice_roll = Randomizer_Generate(101)` и
-/// `ORDER_AWAIT_STEAL_UNIT`/`ORDER_AWAIT_DISABLE_UNIT` + `INIT` (пакет 08/P3).
-/// `Err` — у диверсанта не осталось действия на этот ход (`_(f37a)`/`_(3e56)`).
+/// Sets `parent = target`, `stealth_dice_roll = Randomizer_Generate(101)` and
+/// `ORDER_AWAIT_STEAL_UNIT`/`ORDER_AWAIT_DISABLE_UNIT` + `INIT` (packet 08/P3).
+/// `Err` — the commando has no action left for this turn (`_(f37a)`/`_(3e56)`).
 pub fn stealth_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1151,7 +1151,7 @@ pub fn stealth_mode_click(
         return Err(message.to_string());
     }
 
-    // `Access_GetAttackTarget(unit1, target->grid)` (напр. цель-платформа).
+    // `Access_GetAttackTarget(unit1, target->grid)` (e.g. a platform target).
     let Some(target_unit) = state.unit(target) else {
         return Ok(None);
     };
@@ -1199,9 +1199,9 @@ pub fn stealth_mode_click(
     )))
 }
 
-/// Условия показа `CURSOR_LOAD` над целью — `GameManager_GetWindowCursor`
-/// (`game_manager.cpp:4416-4518`): у выделенного есть место, а цель — тот тип,
-/// который этот транспорт/цех принимает.
+/// Conditions for showing `CURSOR_LOAD` over the target — `GameManager_GetWindowCursor`
+/// (`game_manager.cpp:4416-4518`): the selected one has room, and the target is the type
+/// that this transport/bay accepts.
 pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
     if selected.id == target.id || selected.team != target.team || target.hits == 0 {
         return false;
@@ -1212,7 +1212,7 @@ pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
         return false;
     }
 
-    // Биты `MOBILE_*` включают амфибий: `is_ground()/is_sea()` — только чистые.
+    // `MOBILE_*` bits include amphibians: `is_ground()/is_sea()` — pure ones only.
     let target_land = target.is_ground() || target.is_amphibious();
     let target_air = target.is_air();
     let target_sea = target.is_sea() || target.is_amphibious();
@@ -1230,15 +1230,15 @@ pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
     }
 }
 
-/// Клик в курсорном режиме `load` (`cursor = 7`) —
-/// `GameManager_ProcessMouse`, ветка `CURSOR_LOAD` (`game_manager.cpp:6807-6842`).
+/// Click in cursor mode `load` (`cursor = 7`) —
+/// `GameManager_ProcessMouse`, the `CURSOR_LOAD` branch (`game_manager.cpp:6807-6842`).
 ///
-/// * `AIRTRANS`: транспорт летит в клетку цели (`parent = цель`);
-/// * цель отключена — сообщение `_(9897)`;
-/// * цель уже в клетке транспорта и готова — `ORDER_LAND`/`INIT` с
-///   `parent = транспорт` (пассажир «складывается» в груз);
-/// * иначе — **цель** получает `ORDER_MOVE_TO_UNIT` в клетку транспорта
-///   (`GameManager_Unit` в C++, не выделенный юнит).
+/// * `AIRTRANS`: the transport flies to the target cell (`parent = target`);
+/// * the target is disabled — message `_(9897)`;
+/// * the target is already in the transport cell and ready — `ORDER_LAND`/`INIT` with
+///   `parent = transport` (the passenger "folds" into cargo);
+/// * otherwise — the **target** gets `ORDER_MOVE_TO_UNIT` into the transport cell
+///   (`GameManager_Unit` in C++, not the selected unit).
 pub fn load_mode_click(
     state: &GameState,
     selected: UnitId,
@@ -1314,9 +1314,9 @@ pub fn load_mode_click(
     ))
 }
 
-/// `Access_GetRemovableRubble` (`access.cpp:1817`): обломки в клетке, которые
-/// бульдозер может убрать. `LRGRUBLE` требует, чтобы остальные три клетки 2×2
-/// были проходимы для `BULLDOZR` (`Access_IsAccessible` с
+/// `Access_GetRemovableRubble` (`access.cpp:1817`): rubble in the cell that
+/// the bulldozer can remove. `LRGRUBLE` requires the other three cells of the 2×2
+/// to be passable for `BULLDOZR` (`Access_IsAccessible` with
 /// `AccessModifier_SameClassBlocks`).
 pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: Point) -> Option<UnitId> {
     for id in state.units_at(grid).iter().copied() {
@@ -1355,9 +1355,9 @@ pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: P
     None
 }
 
-/// Приказ `ORDER_CLEAR` бульдозеру — `UnitsManager_Popup_OnClick_StopRemove`
-/// (`units_manager.cpp:1082-1121`): родитель — обломки, `build_time` = 4 для
-/// здания и 1 для прочих обломков.
+/// `ORDER_CLEAR` order for the bulldozer — `UnitsManager_Popup_OnClick_StopRemove`
+/// (`units_manager.cpp:1082-1121`): the parent is the rubble, `build_time` = 4 for
+/// a building and 1 for other rubble.
 pub fn clear_order(
     state: &GameState,
     selected: UnitId,
@@ -1373,8 +1373,8 @@ pub fn clear_order(
     )
 }
 
-/// Строка «номер марки» — `UnitInfo::GetVersion` (`unitinfo.cpp:2930`):
-/// римские цифры версии `UnitValues` (`Mk I`, `Mk II`, …).
+/// The "mark number" line — `UnitInfo::GetVersion` (`unitinfo.cpp:2930`):
+/// Roman numerals of the `UnitValues` version (`Mk I`, `Mk II`, …).
 pub fn roman_version(mut version: u16) -> String {
     fn digit(out: &mut String, count: u16, one: &str, five: &str, ten: &str) {
         match count {
@@ -1416,22 +1416,22 @@ pub fn roman_version(mut version: u16) -> String {
     out
 }
 
-/// Результат `Upg. All` — приказы и сообщение (`UnitsManager_Popup_OnClick_UpgradeAll`).
+/// Result of `Upg. All` — orders and the message (`UnitsManager_Popup_OnClick_UpgradeAll`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeAllReport {
-    /// `ORDER_UPGRADE`/`EXECUTING_ORDER` (P2) каждому улучшенному зданию.
+    /// `ORDER_UPGRADE`/`EXECUTING_ORDER` (P2) to each upgraded building.
     pub commands: Vec<max_core::input::Command>,
-    /// Сколько зданий улучшено.
+    /// How many buildings were upgraded.
     pub count: usize,
-    /// Потрачено сырья по комплексам.
+    /// Raw material spent by complexes.
     pub material_cost: i32,
-    /// Сообщение игроку (`_(a0ee)`/`_(8967)`/`_(2693)`).
+    /// Message to the player (`_(a0ee)`/`_(8967)`/`_(2693)`).
     pub message: String,
 }
 
 /// `UnitsManager_Popup_OnClick_UpgradeAll` (`units_manager.cpp:414-496`):
-/// улучшить **все** здания своей команды того же типа, что и выделенное, по
-/// комплексам, списывая стоимость из материалов комплекса (`GetCargoInfo`).
+/// upgrade **all** buildings of own team of the same type as the selected one, by
+/// complexes, debiting the cost from the complex materials (`GetCargoInfo`).
 ///
 /// `get_normal_rate_build_cost(unit) / 4` — `UnitInfo::GetUpgradeCost()`.
 pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeAllReport> {
@@ -1470,10 +1470,10 @@ pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeA
         let index = match complexes.iter().position(|known| *known == complex) {
             Some(index) => index,
             None => {
-                // `(*it).GetComplex()->GetCargoInfo(materials, capacity)`: в
-                // порте агрегат комплекса уже пересчитан `OptimizeComplexes`
-                // (`GameState::update_complex_resources`), поэтому берём его
-                // поле `raw` без повторного суммирования складов.
+                // `(*it).GetComplex()->GetCargoInfo(materials, capacity)`: in
+                // the port the complex aggregate is already recomputed by `OptimizeComplexes`
+                // (`GameState::update_complex_resources`), so we take its
+                // `raw` field without re-summing the storages.
                 let materials = state
                     .complex(team, complex.0 as u16)
                     .map(|complex| i32::from(complex.raw))
@@ -1531,7 +1531,7 @@ pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeA
     })
 }
 
-/// Приказ самоуничтожения здания — `UnitsManager_SetNewOrder(unit,
+/// Building self-destruct order — `UnitsManager_SetNewOrder(unit,
 /// ORDER_EXPLODE, ORDER_STATE_EXPLODE)` (`units_manager.cpp:506-511`).
 pub fn explode_order(
     state: &GameState,
@@ -1540,17 +1540,17 @@ pub fn explode_order(
     p1_order(state, unit_id, UnitOrder::Explode, UnitOrderState::Explode)
 }
 
-/// Строка журнала для пункта, который ничего не делает (отключён).
+/// A log line for an item that does nothing (disabled).
 pub fn disabled_line(item: &UnitMenuItem) -> String {
     format!("{}: {}", item.caption, item.note)
 }
 
-/// Строка журнала о выборе пункта (`App::activate_unit_menu_item`).
+/// A log line about choosing an item (`App::activate_unit_menu_item`).
 pub fn activation_line(item: &UnitMenuItem) -> String {
     format!("{} — {}", item.caption, item.id.name())
 }
 
-/// Проверка «пункт есть и включён» (QA `assert unit-menu-enabled`).
+/// Check "the item exists and is enabled" (QA `assert unit-menu-enabled`).
 pub fn item_enabled(menu: &UnitMenu, text: &str) -> Option<bool> {
     menu.index_by_text(text).map(|index| menu.items[index].enabled)
 }
@@ -1582,11 +1582,11 @@ mod tests {
         let items = items_for(&state, &unit);
         let names: Vec<&str> = items.iter().map(|item| item.id.name()).collect();
 
-        // `InitMilitary`: attack('3') → commons x-fer? (у танка нет груза) →
-        // enter('5') → sentry('8') → Done('9'). Сортировка по позиции.
+        // `InitMilitary`: attack('3') → commons x-fer? (the tank has no cargo) →
+        // enter('5') → sentry('8') → Done('9'). Sorting by position.
         assert_eq!(names, vec!["attack", "enter", "sentry", "Done"]);
 
-        // `attack` и `sentry` — порядок позиций 3 и 8, `Done` — 9.
+        // `attack` and `sentry` — positions 3 and 8, `Done` — 9.
         assert_eq!(items[0].id, ItemId::Attack);
         assert!(
             items[0].enabled,
@@ -1608,8 +1608,8 @@ mod tests {
 
         assert_eq!(items[0].id, ItemId::Build);
         assert!(items[0].enabled, "Build открывает BuildMenu");
-        // Строитель — `RAW`-груз, значит x-fer в списке и включён
-        // (`TransferMenu_Menu` + `ProcessOrderTransfer` портированы).
+        // The builder — `RAW` cargo, so x-fer is in the list and enabled
+        // (`TransferMenu_Menu` + `ProcessOrderTransfer` are ported).
         let transfer = items
             .iter()
             .find(|item| item.id == ItemId::Transfer)
@@ -1645,8 +1645,8 @@ mod tests {
         let id = spawn(&mut state, UnitType::Constructor);
         let mut unit = state.unit(id).expect("строитель").clone();
 
-        // C++ `UnitsManager_Popup_InitBuilders`: во время `ORDER_BUILD` пункт
-        // `Build` заменяется на `stop` (`GameManager_SelectBuildSite`).
+        // C++ `UnitsManager_Popup_InitBuilders`: during `ORDER_BUILD` the item
+        // `Build` is replaced with `stop` (`GameManager_SelectBuildSite`).
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::BuildInProgress;
         unit.build_list = vec![UnitType::TrainingHall];
@@ -1710,7 +1710,7 @@ mod tests {
         );
         assert!(load.note.is_empty());
 
-        // `activate` (RepairShopMenu) остаётся отключённым — экран не портирован.
+        // `activate` (RepairShopMenu) stays disabled — the screen is not ported.
         let activate = items
             .iter()
             .find(|item| item.id == ItemId::Activate)
@@ -1742,7 +1742,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::PowerStation);
 
-        // У апгрейда есть что улучшать: текущие значения команды выше базы.
+        // The upgrade has something to improve: the team's current values are above the base.
         if let Some(team_units) = state.team_units.get_mut(0) {
             let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
             let hits = values.get_attribute(ATTRIB_HITS);
@@ -1811,11 +1811,11 @@ mod tests {
         assert_eq!(rect.ulx, 400);
         assert_eq!(rect.uly, 200 - rect.height / 2);
 
-        // Правый край: сдвиг влево на ширину + одну клетку (`Gfx_ZoomLevel`).
+        // Right edge: shift left by width + one cell (`Gfx_ZoomLevel`).
         let rect = UnitMenu::layout((area.lrx() - 2, 100), 4, area, 64);
         assert_eq!(rect.ulx, area.lrx() - 2 - (BUTTON_WIDTH + 6) - 64);
 
-        // Нижний край прижимается к окну карты.
+        // The bottom edge is pinned to the map window.
         let rect = UnitMenu::layout((300, area.lry() - 2), 6, area, 64);
         assert_eq!(rect.lry(), area.lry());
     }
@@ -1859,9 +1859,9 @@ mod tests {
         )
         .expect("меню");
 
-        // '8' — позиция `sentry`.
+        // '8' — the `sentry` position.
         assert_eq!(menu.key(Key::Char('8')), Some(MenuKey::Item(2)));
-        // 'D' — первая буква `Done`.
+        // 'D' — the first letter of `Done`.
         assert_eq!(menu.key(Key::Char('d')), Some(MenuKey::Item(3)));
         assert_eq!(menu.key(Key::Escape), Some(MenuKey::Close));
         assert_eq!(menu.key(Key::Enter), None, "Enter в C++ попапе не работает");
@@ -1870,8 +1870,8 @@ mod tests {
 
     #[test]
     fn disabled_item_is_not_activated_by_click_or_key() {
-        // Меню с отключённым пунктом: в C++ кнопка без обработчика не реагирует
-        // (у нас остался только `activate` ремонтного цеха).
+        // Menu with a disabled item: in C++ a button without a handler does not react
+        // (we only have `activate` of the repair shop left).
         let menu = UnitMenu {
             unit: UnitId(1),
             items: vec![
@@ -1895,7 +1895,7 @@ mod tests {
             menu_event(&menu, crate::ui::InputEvent::Key(Key::Char('1'))),
             MenuEvent::None
         );
-        // Включённый пункт срабатывает.
+        // An enabled item triggers.
         let done = menu.button_rect(1);
         assert_eq!(
             menu_event(
@@ -1904,7 +1904,7 @@ mod tests {
             ),
             MenuEvent::Item(1)
         );
-        // Клик вне меню — закрытие.
+        // A click outside the menu — close.
         assert_eq!(
             menu_event(&menu, crate::ui::InputEvent::MouseClick(1, 1)),
             MenuEvent::Close
@@ -1932,7 +1932,7 @@ mod tests {
             other => panic!("ожидался Order, получен {other:?}"),
         }
 
-        // Применение: приказ доходит до юнита (`events::apply_command`).
+        // Application: the order reaches the unit (`events::apply_command`).
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
         let command = p1_order(&state, id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)

@@ -1,14 +1,14 @@
-//! P3: сохранение/загрузка V70 из живого `GameState` — сквозные тесты приложения.
+//! P3: V70 save/load from the live `GameState` — end-to-end application tests.
 //!
-//! Проверяется то, что нельзя проверить в `max_core`:
+//! What cannot be checked in `max_core` is checked:
 //!
-//! 1. партия, сыгранная локальным циклом, записывается настоящим V70-сейвом
-//!    (`App::save_v70_to` → `GameState::to_save_bytes`) и **читается обратно**
-//!    в свежем `App` (`App::load_v70_path` → `GameState::from_save`);
-//! 2. после загрузки совпадают ход, состав/позиции юнитов, золото и настройки;
-//! 3. автосейв конца хода создаёт `save10.<ext>` (C++ `SETUP.auto_save`);
-//! 4. окно сохранения/загрузки (`saveloadmenu.cpp`) перечисляет слоты с
-//!    превью-инфо, листает страницы, принимает имя и клики по кнопкам.
+//! 1. a match played by the local loop is written as a real V70 save
+//!    (`App::save_v70_to` → `GameState::to_save_bytes`) and **read back**
+//!    into a fresh `App` (`App::load_v70_path` → `GameState::from_save`);
+//! 2. after loading the turn, unit composition/positions, gold and settings match;
+//! 3. the end-of-turn autosave creates `save10.<ext>` (C++ `SETUP.auto_save`);
+//! 4. the save/load window (`saveloadmenu.cpp`) lists slots with
+//!    preview info, pages, accepts a name and button clicks.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ fn repo_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-/// Уникальный временный каталог теста (без внешних крейтов).
+/// Unique temporary test directory (without external crates).
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "max_app_saveload_{tag}_{}_{}",
@@ -42,7 +42,7 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-/// Приложение с настоящими ассетами (иначе карту не сгенерировать).
+/// Application with real assets (otherwise the map cannot be generated).
 fn local_app(save_dir: &Path) -> Option<App> {
     let data = repo_path("max-original");
 
@@ -62,7 +62,7 @@ fn local_app(save_dir: &Path) -> Option<App> {
     Some(app)
 }
 
-/// 1 человек (RED) + 1 компьютер (GREEN), без таймеров (детерминизм).
+/// 1 human (RED) + 1 computer (GREEN), no timers (determinism).
 fn setup_vs_one_ai() -> LocalSetup {
     LocalSetup {
         player_name: "Tester".to_string(),
@@ -88,7 +88,7 @@ fn setup_vs_one_ai() -> LocalSetup {
     }
 }
 
-/// Прокручивает локальный цикл до хода человека (не больше `limit` кадров).
+/// Runs the local loop until the human turn (at most `limit` frames).
 fn run_until_player_turn(app: &mut App, limit: usize) {
     for _ in 0..limit {
         if app
@@ -115,7 +115,7 @@ fn played_game_saves_as_v70_and_loads_in_a_fresh_app() {
 
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup).expect("локальная партия стартует");
-    // Пара кадров хода: состояние не пустое (юниты двигаются/тикают).
+    // A couple of turn frames: the state is not empty (units move/tick).
     for _ in 0..3 {
         app.local_update(0.0);
     }
@@ -127,13 +127,13 @@ fn played_game_saves_as_v70_and_loads_in_a_fresh_app() {
         .expect("V70-запись удалась");
     assert!(bytes > 10_000, "сейв содержит состояние: {bytes} байт");
 
-    // Файл — настоящий V70: парсится и содержит те же ключевые поля.
+    // The file is a real V70: it parses and contains the same key fields.
     let parsed = SaveFile::parse(&std::fs::read(&path).expect("файл записан")).expect("парсится");
     assert_eq!(parsed.header.save_name(), "QA turn 1");
     assert_eq!(parsed.game.turn_counter, before.turn);
     assert_eq!(parsed.units.len(), before.units.len());
 
-    // Свежий `App` (как после перезапуска клиента) загружает файл.
+    // A fresh `App` (like after a client restart) loads the file.
     let mut fresh = local_app(&dir).expect("ассеты");
     fresh.load_v70_path(&path).expect("V70 загружается");
     let after = snapshot(&fresh);
@@ -149,7 +149,7 @@ fn played_game_saves_as_v70_and_loads_in_a_fresh_app() {
         after.units.len()
     );
 
-    // Повторный сейв загруженной партии стабилен по ключевым полям.
+    // A repeated save of the loaded match is stable in the key fields.
     let path2 = dir.join("turn1-again.dta");
     fresh.save_v70_to(&path2, "QA turn 1").expect("повторный сейв");
     let reparsed = SaveFile::parse(&std::fs::read(&path2).expect("файл")).expect("парсится");
@@ -171,7 +171,7 @@ fn autosave_is_written_at_the_end_of_a_round() {
         .expect("локальная партия стартует");
     let first_turn = app.state().turn_counter;
 
-    // Конец хода человека → ход компьютера → `finish_turn` → автосейв.
+    // Human End Turn → computer turn → `finish_turn` → autosave.
     app.local_end_turn();
     run_until_player_turn(&mut app, 20_000);
     assert!(
@@ -180,7 +180,7 @@ fn autosave_is_written_at_the_end_of_a_round() {
         app.state().turn_counter
     );
 
-    // Категория custom → `dta`, слот автосейва — 10 (C++ `SaveLoad_GetSaveFileName`).
+    // Custom category → `dta`, the autosave slot — 10 (C++ `SaveLoad_GetSaveFileName`).
     let autosave = dir.join("save10.dta");
     assert!(
         autosave.is_file(),
@@ -212,7 +212,7 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
-    // Слот 1: пустая категория custom → `save1.dta`.
+    // Slot 1: empty custom category → `save1.dta`.
     app.save_game_to_slot(1, "First save").expect("сейв в слот 1");
 
     let mut menu = SaveLoadMenu::new(SaveLoadMode::Save, MissionCategory::Custom, &dir);
@@ -228,7 +228,7 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
     assert_eq!(preview.units, app.state().unit_count());
     assert_eq!(preview.version, max_core::SAVE_VERSION_V70);
 
-    // Имя: 30 байт как в V70, Backspace и печатные символы.
+    // Name: 30 bytes as in V70, Backspace and printable characters.
     menu.select(0);
     assert_eq!(menu.name, "First save", "имя слота подставляется");
     menu.name.clear();
@@ -239,28 +239,28 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
     menu.key(Key::Backspace);
     assert_eq!(menu.name, "Secon");
 
-    // Стрелки водят выбор по сетке 2×5.
+    // The arrows drive the selection over the 2×5 grid.
     menu.key(Key::Down);
     assert_eq!(menu.selected, Some(1));
     menu.key(Key::Right);
     assert_eq!(menu.selected, Some(6));
 
-    // Страницы: 10 слотов на страницу, границы как в C++.
+    // Pages: 10 slots per page, boundaries as in C++.
     assert!(menu.page(1));
     assert_eq!(menu.first_slot, 11);
     assert!(menu.page(-1));
     assert_eq!(menu.first_slot, 1);
 
-    // Возвращаем выбор на пустой слот 7 после листания страниц.
+    // Return the selection to the empty slot 7 after paging.
     menu.select(6);
     assert_eq!(menu.name, "Secon", "имя пустого слота не перетирается");
 
-    // Клик по кнопке `Cancel` закрывает окно (C++ `MNUBTN4U` в 354,438).
+    // A click on the `Cancel` button closes the window (C++ `MNUBTN4U` at 354,438).
     assert_eq!(menu.click(400, 450), SaveLoadAction::Cancel);
-    // Клик по «Load» (C++ `MNUBTN6U` в 514,438): выбран пустой слот 7 — не грузим.
+    // A click on "Load" (C++ `MNUBTN6U` at 514,438): empty slot 7 is selected — we do not load.
     assert_eq!(menu.click(560, 450), SaveLoadAction::None);
-    // Клик по «Save» в режиме сохранения — запись имени в выбранный слот
-    // (после стрелок выбран индекс 6 → слот 7).
+    // A click on "Save" in save mode — writing the name into the selected slot
+    // (after the arrows index 6 is selected → slot 7).
     assert_eq!(
         menu.click(200, 450),
         SaveLoadAction::Save {
@@ -269,7 +269,7 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
         }
     );
 
-    // Режим загрузки: тот же слот виден и загружается.
+    // Load mode: the same slot is visible and loads.
     let mut load = SaveLoadMenu::new(SaveLoadMode::Load, MissionCategory::Custom, &dir);
     assert!(load.slots[0].in_use);
     assert!(load.name.is_empty(), "в режиме загрузки имя не редактируется");
@@ -297,7 +297,7 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
     assert!(app.open_save_menu(false), "в локальной партии — доступно");
     assert!(app.save_load().is_some());
 
-    // Ввод уходит в окно: Esc закрывает, состояние партии не меняется.
+    // Input goes to the window: Esc closes it, the match state does not change.
     let turn = app.state().turn_counter;
     max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
     assert!(app.save_load().is_none(), "Esc закрывает окно");
@@ -312,7 +312,7 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// Снимок ключевых полей состояния для сравнения «до/после загрузки».
+/// Snapshot of the key state fields for the "before/after load" comparison.
 struct Snapshot {
     turn: i32,
     units: Vec<UnitId>,

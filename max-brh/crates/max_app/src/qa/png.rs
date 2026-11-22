@@ -1,47 +1,47 @@
-//! PNG-кодек слоя 3 QA: без внешних зависимостей (только std).
+//! PNG codec of QA layer 3: no external dependencies (std only).
 //!
-//! Зачем свой кодек: golden-кадры должны генерироваться и сверяться в
-//! `rust:1.94.0-bookworm` **без сети** и без `image`/`png`/`flate2` в
-//! `Cargo.lock` — иначе `cargo test` в CI тянет новые крейты, а сами кадры
-//! (640×480 × 3 байта = 900 КБ) не влезают в git.
+//! Why a custom codec: golden frames must be generated and compared in
+//! `rust:1.94.0-bookworm` **without network** and without `image`/`png`/`flate2` in
+//! `Cargo.lock` — otherwise `cargo test` in CI pulls new crates, and the frames
+//! themselves (640×480 × 3 bytes = 900 KB) do not fit into git.
 //!
-//! Что здесь есть:
+//! What is here:
 //!
-//! * [`Image`] — RGB-кадр (8 бит на канал);
-//! * [`encode`] / [`decode`] — PNG: `IHDR` + `PLTE` (для ≤256 цветов) +
+//! * [`Image`] — RGB frame (8 bits per channel);
+//! * [`encode`] / [`decode`] — PNG: `IHDR` + `PLTE` (for ≤256 colors) +
 //!   `IDAT` ([`zlib_compress`]: deflate fixed Huffman + LZ77) + `IEND`;
-//! * [`compare`] — попиксельная сверка двух кадров с порогом по каналу;
-//! * [`write`] / [`read`] — файловые обёртки.
+//! * [`compare`] — per-pixel comparison of two frames with a per-channel threshold;
+//! * [`write`] / [`read`] — file wrappers.
 //!
-//! Ограничения (осознанные, описаны в `max-brh-qa/scripts/README.md`):
-//! декодер понимает **stored** и **fixed Huffman** блоки deflate — ровно те,
-//! что пишет [`encode`]. Динамический Huffman (типичный вывод `libpng`,
-//! `optipng` и т.п.) отклоняется с внятной ошибкой, поэтому golden-кадры
-//! перегенерируются только через `qa_run`, а не сторонними утилитами.
+//! Limitations (deliberate, described in `max-brh-qa/scripts/README.md`):
+//! the decoder understands **stored** and **fixed Huffman** deflate blocks — exactly those
+//! that [`encode`] writes. Dynamic Huffman (the typical output of `libpng`,
+//! `optipng`, etc.) is rejected with a clear error, so golden frames are
+//! regenerated only via `qa_run`, not with third-party tools.
 //!
-//! Формат кадра — тот же, что у `RgbaBuffer` (RGBA, альфа = 255), но в PNG
-//! пишется RGB (или индекс палитры): альфа в кадрах приложения всегда
-//! непрозрачная. Это экономит и файл, и git: 8 экранов `visual-screens.qa`
-//! занимают ~870 КиБ вместо ~7 МБ сырых кадров.
+//! The frame format is the same as `RgbaBuffer` (RGBA, alpha = 255), but in PNG
+//! RGB (or a palette index) is written: the alpha in application frames is always
+//! opaque. This saves both the file and git: 8 screens of `visual-screens.qa`
+//! take ~870 KiB instead of ~7 MB of raw frames.
 
 const SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 
-/// Максимальный поддерживаемый размер кадра по каждой стороне.
+/// Maximum supported frame size per side.
 pub const MAX_DIMENSION: u32 = 8192;
 
-/// RGB-кадр (8 бит на канал, строки сверху вниз).
+/// RGB frame (8 bits per channel, rows top to bottom).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
-    /// Ширина в пикселях.
+    /// Width in pixels.
     pub width: u32,
-    /// Высота в пикселях.
+    /// Height in pixels.
     pub height: u32,
-    /// `width * height * 3` байт RGB.
+    /// `width * height * 3` bytes of RGB.
     pub rgb: Vec<u8>,
 }
 
 impl Image {
-    /// Чёрный кадр.
+    /// Black frame.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -50,7 +50,7 @@ impl Image {
         }
     }
 
-    /// Кадр из RGBA-буфера (`RgbaBuffer::pixels`): альфа отбрасывается.
+    /// Frame from an RGBA buffer (`RgbaBuffer::pixels`): alpha is dropped.
     pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Self {
         let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
 
@@ -65,12 +65,12 @@ impl Image {
         }
     }
 
-    /// Число пикселей.
+    /// Number of pixels.
     pub fn pixels(&self) -> usize {
         self.width as usize * self.height as usize
     }
 
-    /// Пиксель `(x, y)`.
+    /// Pixel `(x, y)`.
     pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 3]> {
         if x >= self.width || y >= self.height {
             return None;
@@ -81,7 +81,7 @@ impl Image {
         Some([self.rgb[offset], self.rgb[offset + 1], self.rgb[offset + 2]])
     }
 
-    /// Устанавливает пиксель (вне кадра — ничего не делает).
+    /// Sets a pixel (outside the frame — does nothing).
     pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 3]) {
         if x >= self.width || y >= self.height {
             return;
@@ -93,7 +93,7 @@ impl Image {
 }
 
 // ---------------------------------------------------------------------------
-// Контрольные суммы
+// Checksums
 // ---------------------------------------------------------------------------
 
 const fn crc_table() -> [u32; 256] {
@@ -122,7 +122,7 @@ const fn crc_table() -> [u32; 256] {
 
 const CRC_TABLE: [u32; 256] = crc_table();
 
-/// CRC32 (IEEE, как в PNG).
+/// CRC32 (IEEE, as in PNG).
 pub fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
 
@@ -133,7 +133,7 @@ pub fn crc32(data: &[u8]) -> u32 {
     crc ^ 0xFFFF_FFFF
 }
 
-/// Adler-32 (как в zlib).
+/// Adler-32 (as in zlib).
 pub fn adler32(data: &[u8]) -> u32 {
     const MOD: u32 = 65_521;
 
@@ -149,30 +149,30 @@ pub fn adler32(data: &[u8]) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Deflate: кодирование (fixed Huffman + LZ77)
+// Deflate: encoding (fixed Huffman + LZ77)
 // ---------------------------------------------------------------------------
 
-/// Базовые длины кодов 257…285 (`RFC 1951` §3.2.5).
+/// Base lengths of codes 257…285 (`RFC 1951` §3.2.5).
 const LENGTH_BASE: [u16; 29] = [
     3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
     163, 195, 227, 258,
 ];
-/// Дополнительные биты кодов длин.
+/// Extra bits of the length codes.
 const LENGTH_EXTRA: [u8; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
 ];
-/// Базовые расстояния кодов 0…29.
+/// Base distances of codes 0…29.
 const DIST_BASE: [u16; 30] = [
     1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
     2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
 ];
-/// Дополнительные биты кодов расстояний.
+/// Extra bits of the distance codes.
 const DIST_EXTRA: [u8; 30] = [
     0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
     13,
 ];
 
-/// Длина совпадения → (символ, число доп. бит, значение доп. бит).
+/// Match length → (symbol, number of extra bits, extra bits value).
 fn length_code(length: u16) -> (u16, u8, u16) {
     for index in (0..LENGTH_BASE.len()).rev() {
         if length >= LENGTH_BASE[index] {
@@ -187,7 +187,7 @@ fn length_code(length: u16) -> (u16, u8, u16) {
     (257, 0, 0)
 }
 
-/// Расстояние → (код, число доп. бит, значение доп. бит).
+/// Distance → (code, number of extra bits, extra bits value).
 fn distance_code(distance: u16) -> (u16, u8, u16) {
     for index in (0..DIST_BASE.len()).rev() {
         if distance >= DIST_BASE[index] {
@@ -198,7 +198,7 @@ fn distance_code(distance: u16) -> (u16, u8, u16) {
     (0, 0, distance.saturating_sub(1))
 }
 
-/// Код фиксированного дерева литералов/длин (`RFC 1951` §3.2.6).
+/// Fixed literal/length tree code (`RFC 1951` §3.2.6).
 fn fixed_literal(symbol: u16) -> (u32, u32) {
     match symbol {
         0..=143 => (0x30 + u32::from(symbol), 8),
@@ -208,8 +208,8 @@ fn fixed_literal(symbol: u16) -> (u32, u32) {
     }
 }
 
-/// Писатель битов: байты заполняются с младшего бита, коды Хаффмана
-/// отправляются начиная со старшего (как требует deflate).
+/// Bit writer: bytes are filled from the least significant bit, Huffman codes
+/// are sent starting from the most significant (as deflate requires).
 struct BitWriter {
     out: Vec<u8>,
     bits: u32,
@@ -225,7 +225,7 @@ impl BitWriter {
         }
     }
 
-    /// Записать `count` бит значения `value` (младший бит — первым).
+    /// Write `count` bits of the value `value` (least significant bit first).
     fn put(&mut self, value: u32, count: u32) {
         debug_assert!(count < 32);
 
@@ -243,7 +243,7 @@ impl BitWriter {
         }
     }
 
-    /// Записать код Хаффмана: биты кода идут от старшего к младшему.
+    /// Write a Huffman code: the code bits go from most to least significant.
     fn put_code(&mut self, code: u32, length: u32) {
         let mut reversed = 0u32;
         let mut value = code;
@@ -267,11 +267,11 @@ impl BitWriter {
     }
 }
 
-/// deflate одним блоком с фиксированным деревом (BTYPE = 01).
+/// deflate in a single block with a fixed tree (BTYPE = 01).
 ///
-/// Жадный LZ77 по 3-байтовым совпадениям: цепочка хэша до
-/// [`MAX_CHAIN`] кандидатов, окно 32 КиБ, совпадения до 258 байт. Этого
-/// достаточно для кадров 640×480 (см. замеры в `encode_indexed`).
+/// Greedy LZ77 over 3-byte matches: a hash chain of up to
+/// [`MAX_CHAIN`] candidates, a 32 KiB window, matches up to 258 bytes. This is
+/// enough for 640×480 frames (see the measurements in `encode_indexed`).
 fn deflate_fixed(data: &[u8]) -> Vec<u8> {
     const WINDOW: usize = 32_768;
     const MIN_MATCH: usize = 3;
@@ -341,8 +341,8 @@ fn deflate_fixed(data: &[u8]) -> Vec<u8> {
             writer.put_code(u32::from(distance), 5);
             writer.put(u32::from(distance_value), u32::from(distance_bits));
 
-            // Позиции внутри совпадения тоже попадают в цепочку хэшей, иначе
-            // следующие совпадения ищутся только по «головам» строк.
+            // Positions inside a match also go into the hash chain, otherwise
+            // the following matches are searched only by the "heads" of the strings.
             for offset in 1..best_length {
                 let position = index + offset;
 
@@ -367,7 +367,7 @@ fn deflate_fixed(data: &[u8]) -> Vec<u8> {
     writer.finish()
 }
 
-/// zlib-поток (`0x78 0x01` + deflate + Adler-32).
+/// zlib stream (`0x78 0x01` + deflate + Adler-32).
 fn zlib_compress(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() / 4 + 64);
     out.push(0x78);
@@ -379,10 +379,10 @@ fn zlib_compress(data: &[u8]) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Inflate: декодирование (stored + fixed Huffman)
+// Inflate: decoding (stored + fixed Huffman)
 // ---------------------------------------------------------------------------
 
-/// Читатель битов deflate.
+/// deflate bit reader.
 struct BitReader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -414,7 +414,7 @@ impl<'a> BitReader<'a> {
         Ok(value)
     }
 
-    /// `count` бит младшим битом вперёд (доп. биты длин/расстояний).
+    /// `count` bits least significant bit first (extra bits of lengths/distances).
     fn le_bits(&mut self, count: u32) -> Result<u32, String> {
         let mut value = 0u32;
 
@@ -425,7 +425,7 @@ impl<'a> BitReader<'a> {
         Ok(value)
     }
 
-    /// `count` бит старшим битом вперёд (коды Хаффмана).
+    /// `count` bits most significant bit first (Huffman codes).
     fn huff(&mut self, count: u32) -> Result<u32, String> {
         let mut value = 0u32;
 
@@ -436,7 +436,7 @@ impl<'a> BitReader<'a> {
         Ok(value)
     }
 
-    /// Выравнивание на границу байта (перед stored-блоком).
+    /// Byte boundary alignment (before a stored block).
     fn align(&mut self) {
         if self.bit != 0 {
             self.bit = 0;
@@ -455,7 +455,7 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// Символ фиксированного дерева литералов/длин.
+/// Symbol of the fixed literal/length tree.
 fn fixed_symbol(reader: &mut BitReader<'_>) -> Result<u16, String> {
     let first = reader.huff(7)?;
 
@@ -590,7 +590,7 @@ fn inflate(zlib: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// PNG: кодирование
+// PNG: encoding
 // ---------------------------------------------------------------------------
 
 fn push_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -604,11 +604,11 @@ fn push_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
 }
 
-/// PNG-байты кадра.
+/// PNG bytes of the frame.
 ///
-/// Если в кадре не больше 256 различных цветов (а кадры M.A.X. — 8-битная
-/// палитровая графика), пишется **индексированный** PNG (color type 3): один
-/// байт на пиксель вместо трёх. Иначе — truecolor (color type 2).
+/// If the frame has at most 256 distinct colors (and M.A.X. frames are 8-bit
+/// palette graphics), an **indexed** PNG is written (color type 3): one
+/// byte per pixel instead of three. Otherwise — truecolor (color type 2).
 pub fn encode(image: &Image) -> Vec<u8> {
     match palette_index(image) {
         Some((palette, indices)) => encode_indexed(image, &palette, &indices),
@@ -616,7 +616,7 @@ pub fn encode(image: &Image) -> Vec<u8> {
     }
 }
 
-/// Палитра (≤256 цветов) и индексы пикселей; `None` — цветов больше 256.
+/// Palette (≤256 colors) and pixel indices; `None` — more than 256 colors.
 fn palette_index(image: &Image) -> Option<(Vec<[u8; 3]>, Vec<u8>)> {
     let mut lookup: std::collections::HashMap<[u8; 3], u8> = std::collections::HashMap::new();
     let mut palette: Vec<[u8; 3]> = Vec::new();
@@ -649,7 +649,7 @@ fn encode_header(out: &mut Vec<u8>, width: u32, height: u32, color_type: u8) {
     let mut ihdr = Vec::with_capacity(13);
     ihdr.extend_from_slice(&width.to_be_bytes());
     ihdr.extend_from_slice(&height.to_be_bytes());
-    ihdr.extend_from_slice(&[8, color_type, 0, 0, 0]); // 8 бит, без interlace
+    ihdr.extend_from_slice(&[8, color_type, 0, 0, 0]); // 8 bit, no interlace
     push_chunk(out, b"IHDR", &ihdr);
 }
 
@@ -657,12 +657,12 @@ fn encode_indexed(image: &Image, palette: &[[u8; 3]], indices: &[u8]) -> Vec<u8>
     let stride = image.width as usize;
     let mut raw = Vec::with_capacity((stride + 1) * image.height as usize);
 
-    // Фильтр строки — None (0): для кадров QA он даёт самый маленький PNG.
-    // Замер на 8 экранах `visual-screens.qa` (этот кодировщик, фильтры):
-    // None 866 КиБ; «самый дешёвый из 0/1/2» 891 КиБ; все пять 1.2 МиБ.
-    // Причина: deflate здесь — LZ77 по 3-байтовым совпадениям, и сырые
-    // строки палитровых индексов дают длинные повторы, а фильтры
-    // превращают их в высокоэнтропийные остатки.
+    // Row filter — None (0): for QA frames it gives the smallest PNG.
+    // Measurement on 8 screens of `visual-screens.qa` (this encoder, filters):
+    // None 866 KiB; "the cheapest of 0/1/2" 891 KiB; all five 1.2 MiB.
+    // Reason: the deflate here is LZ77 over 3-byte matches, and raw
+    // palette index rows give long repeats, while filters
+    // turn them into high-entropy residuals.
     for y in 0..image.height as usize {
         raw.push(0);
         raw.extend_from_slice(&indices[y * stride..(y + 1) * stride]);
@@ -689,7 +689,7 @@ fn encode_truecolor(image: &Image) -> Vec<u8> {
     let stride = image.width as usize * 3;
     let mut raw = Vec::with_capacity((stride + 1) * image.height as usize);
 
-    // См. комментарий в `encode_indexed`: фильтр 0 меряется лучше остальных.
+    // See the comment in `encode_indexed`: filter 0 measures better than the rest.
     for y in 0..image.height as usize {
         raw.push(0);
         raw.extend_from_slice(&image.rgb[y * stride..(y + 1) * stride]);
@@ -707,7 +707,7 @@ fn encode_truecolor(image: &Image) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// PNG: декодирование
+// PNG: decoding
 // ---------------------------------------------------------------------------
 
 fn paeth(left: u8, up: u8, up_left: u8) -> u8 {
@@ -725,7 +725,7 @@ fn paeth(left: u8, up: u8, up_left: u8) -> u8 {
     }
 }
 
-/// Разбирает PNG-байты в RGB-кадр.
+/// Parses PNG bytes into an RGB frame.
 pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     if bytes.len() < SIGNATURE.len() || bytes[..SIGNATURE.len()] != SIGNATURE {
         return Err("png: нет сигнатуры PNG".to_string());
@@ -894,10 +894,10 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Файлы и сверка
+// Files and comparison
 // ---------------------------------------------------------------------------
 
-/// Записывает кадр в PNG-файл.
+/// Writes the frame to a PNG file.
 pub fn write(path: impl AsRef<std::path::Path>, image: &Image) -> Result<(), String> {
     let path = path.as_ref();
     let bytes = encode(image);
@@ -906,7 +906,7 @@ pub fn write(path: impl AsRef<std::path::Path>, image: &Image) -> Result<(), Str
         .map_err(|error| format!("png: запись {}: {error}", path.display()))
 }
 
-/// Читает PNG-файл.
+/// Reads a PNG file.
 pub fn read(path: impl AsRef<std::path::Path>) -> Result<Image, String> {
     let path = path.as_ref();
     let bytes =
@@ -915,21 +915,21 @@ pub fn read(path: impl AsRef<std::path::Path>) -> Result<Image, String> {
     decode(&bytes).map_err(|error| format!("png: {}: {error}", path.display()))
 }
 
-/// Разница двух кадров.
+/// Difference of two frames.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameDiff {
-    /// Пикселей всего.
+    /// Total pixels.
     pub total: usize,
-    /// Пикселей, у которых хотя бы один канал отличается больше порога.
+    /// Pixels where at least one channel differs by more than the threshold.
     pub changed: usize,
-    /// Максимальная дельта по каналу.
+    /// Maximum per-channel delta.
     pub max_delta: u8,
-    /// Карта различий (RGB): фон белый, изменённые пиксели — красные.
+    /// Difference map (RGB): white background, changed pixels — red.
     pub image: Image,
 }
 
 impl FrameDiff {
-    /// Доля изменённых пикселей (`0.0..=1.0`).
+    /// Fraction of changed pixels (`0.0..=1.0`).
     pub fn changed_ratio(&self) -> f64 {
         if self.total == 0 {
             return 0.0;
@@ -939,9 +939,9 @@ impl FrameDiff {
     }
 }
 
-/// Попиксельная сверка: пиксель «изменился», если `max|Δканал| > threshold`.
+/// Per-pixel comparison: a pixel "changed" if `max|Δchannel| > threshold`.
 ///
-/// Кадры обязаны быть одного размера.
+/// The frames must be the same size.
 pub fn compare(expected: &Image, actual: &Image, threshold: u8) -> Result<FrameDiff, String> {
     if expected.width != actual.width || expected.height != actual.height {
         return Err(format!(
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn palette_png_is_used_for_few_colors_and_roundtrips() {
-        // 8-битная графика: 4 цвета → индексированный PNG (color type 3).
+        // 8-bit graphics: 4 colors → indexed PNG (color type 3).
         let palette = [[10u8, 20, 30], [40, 50, 60], [255, 255, 255], [0, 0, 0]];
         let mut image = Image::new(64, 48);
 
@@ -1084,8 +1084,8 @@ mod tests {
         let expected = Image::new(10, 10);
         let mut actual = expected.clone();
 
-        actual.set_pixel(0, 0, [30, 0, 0]); // ровно порог — не изменение
-        actual.set_pixel(1, 0, [31, 0, 0]); // выше порога
+        actual.set_pixel(0, 0, [30, 0, 0]); // exactly the threshold — not a change
+        actual.set_pixel(1, 0, [31, 0, 0]); // above the threshold
 
         let diff = compare(&expected, &actual, 30).expect("сверка");
 
