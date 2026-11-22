@@ -47,8 +47,8 @@
 
 use crate::classification::UnitTypeClassify;
 use crate::enums::{
-    unit_flags, FileType, Opponent, ResearchTopic, UnitOrder, UnitOrderState, UnitType,
-    VictoryType, WinLossState,
+    unit_flags, Opponent, ResearchTopic, UnitOrder, UnitOrderState, UnitType, VictoryType,
+    WinLossState,
 };
 use crate::game::{GameState, PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use crate::team::{TeamId, TeamKind};
@@ -822,45 +822,9 @@ pub fn get_total_worth_of_assets(state: &GameState, team: TeamId) -> i32 {
 // Категории миссий
 // ---------------------------------------------------------------------------
 
-/// `MissionCategory` (`mission.hpp:31`) — категория миссии (не путать с
-/// `FileType` заголовка сейва; соответствие — [`MissionCategory::from_file_type`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MissionCategory {
-    /// `MISSION_CATEGORY_CUSTOM`.
-    Custom = 0,
-    /// `MISSION_CATEGORY_TRAINING`.
-    Training = 1,
-    /// `MISSION_CATEGORY_CAMPAIGN`.
-    Campaign = 2,
-    /// `MISSION_CATEGORY_HOT_SEAT`.
-    HotSeat = 3,
-    /// `MISSION_CATEGORY_MULTI`.
-    Multiplayer = 4,
-    /// `MISSION_CATEGORY_DEMO`.
-    Demo = 5,
-    /// `MISSION_CATEGORY_SCENARIO`.
-    Scenario = 6,
-    /// `MISSION_CATEGORY_MULTI_PLAYER_SCENARIO`.
-    MultiPlayerScenario = 7,
-}
-
-impl MissionCategory {
-    /// Соответствие `FileType` заголовка сейва категории миссии
-    /// (`saveload.cpp` передаёт категорию в `SaveLoad_LoadFormatV70`).
-    pub fn from_file_type(file_type: FileType) -> Self {
-        match file_type {
-            FileType::Custom | FileType::Debug | FileType::Text => Self::Custom,
-            FileType::Tutorial => Self::Training,
-            FileType::Campaign => Self::Campaign,
-            FileType::HotSeat => Self::HotSeat,
-            FileType::Multiplayer => Self::Multiplayer,
-            FileType::Demo => Self::Demo,
-            FileType::Scenario => Self::Scenario,
-            FileType::MultiScenario => Self::MultiPlayerScenario,
-        }
-    }
-}
+// `MissionCategory` — чистое перечисление нижнего слоя (`max_types`, Ф5.2);
+// здесь реэкспорт, чтобы путь `max_core::victory::MissionCategory` не менялся.
+pub use max_types::victory::MissionCategory;
 
 // ---------------------------------------------------------------------------
 // WinLoss_Status и generic-правила
@@ -1595,7 +1559,7 @@ pub const PLAYING_TEAMS: usize = PLAYER_TEAM_COUNT;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::TeamClan;
+    use crate::enums::{FileType, TeamClan};
     use crate::game::GameState;
     use crate::geo::Point;
     use crate::team::TeamUnits;

@@ -41,3 +41,4 @@ pub mod input;
 pub mod map;
 pub mod team;
 pub mod unit;
+pub mod victory;
