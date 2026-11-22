@@ -23,10 +23,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::enums::{TeamClan, UnitType, UNIT_END};
+use crate::enums::{TeamClan, UnitType};
 
-/// Количество игровых типов юнитов (`UNIT_END`).
-pub const UNIT_COUNT: usize = UNIT_END as usize;
+// Размер таблиц по типам юнитов (`UNIT_END`) — общая константа нижнего слоя
+// (`max_types`, Ф5.2); здесь реэкспорт, чтобы путь
+// `max_core::unit_values::UNIT_COUNT` не менялся.
+pub use max_types::UNIT_COUNT;
 
 // ---------------------------------------------------------------------------
 // ATTRIB_* — индексы атрибутов (unitvalues.hpp)

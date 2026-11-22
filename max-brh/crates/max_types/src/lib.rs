@@ -42,3 +42,10 @@ pub mod map;
 pub mod team;
 pub mod unit;
 pub mod victory;
+
+/// Количество игровых типов юнитов (`UNIT_END` from `resourcetable.hpp`, 93).
+///
+/// Живёт в нижнем слое, потому что это размер доменных массивов по типам
+/// (`UnitValues[UNIT_COUNT]`, счётчики команды, пакеты апгрейдов) — нужен и
+/// `max_core`, и `max_net`, и `max_assets`.
+pub const UNIT_COUNT: usize = enums::UNIT_END as usize;
