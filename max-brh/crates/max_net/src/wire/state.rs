@@ -462,6 +462,8 @@ pub fn encode_save_request(packet: &SaveRequest, w: &mut Writer) -> WireResult<(
 // ---------------------------------------------------------------------------
 
 impl UnitState {
+    /// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+    ///
     /// Собирает `Packet23Data` из авторитетного юнита.
     ///
     /// Порядок значений — `Remote_CreateNetPacket_23` (`remote.cpp`), точки
@@ -587,6 +589,8 @@ impl StateSync {
     }
 }
 
+/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+///
 /// Собирает пакеты 54 с авторитетным состоянием юнитов команды.
 ///
 /// Порт `Remote_SendUnitStates` (`remote.cpp:4333-4381`): юниты в порядке
@@ -674,6 +678,9 @@ fn chunk_sizes(total: usize) -> Vec<usize> {
     sizes
 }
 
+/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+///
+/// Хвост пакета 54 (экономика команды) из `TeamInfo`/`TeamUnits`.
 fn state_sync_tail(state: &max_core::game::GameState, team: TeamId) -> StateSyncTail {
     let info = &state.teams[team.0 as usize];
     let team_units = &state.team_units[team.0 as usize];

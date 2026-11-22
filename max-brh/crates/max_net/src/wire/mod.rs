@@ -11,6 +11,12 @@
 //! [`max_core::events::apply_command`] consumes it, so `max_net` does not
 //! duplicate packet structs. Types without a simulation counterpart (lobby
 //! nodes, audit snapshots) have their DTOs here.
+//!
+//! Зависимость от max_core намеренная (read-only проекция симуляции в провод,
+//! пакеты 23/45/53/54) — см. max-brh-docs/development/PLAN-refactor.md Ф5.3 /
+//! architect-rules.md. НЕ добавлять новые вызовы max_core без пересмотра
+//! решения. Вызов apply_* или мутация GameState из max_net аннулирует это
+//! решение.
 
 pub mod command;
 pub mod lobby;

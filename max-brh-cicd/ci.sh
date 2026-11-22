@@ -99,6 +99,12 @@ step() {
 
 started=$(date +%s)
 
+# Ф5.3/A: замок границы max_net → max_core. Зависимость разрешена только как
+# read-only проекция симуляции в провод (пять функций + два импорта данных);
+# любые новые вызовы max_core, apply_* или мутации GameState падают здесь.
+step "0/4 max_net boundary lock: check_maxnet_boundary.sh"
+bash "$ROOT/max-brh-cicd/scripts/check_maxnet_boundary.sh"
+
 step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 собирается из исходников
 # через CMake (vendored sdl3-src) — системный SDL3/vcpkg не нужен. На Linux

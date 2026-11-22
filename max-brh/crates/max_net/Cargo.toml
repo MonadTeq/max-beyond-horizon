@@ -7,8 +7,11 @@ license.workspace = true
 [dependencies]
 max_core = { path = "../max_core" }
 # Infrastructure: доменные/протокольные типы (enums/geo/input/team/unit/events/
-# victory/UNIT_COUNT) — из нижнего слоя (Ф5.2). `max_core` остаётся только для
-# симуляции: `game`, `crc`, `events::apply_*`, `unit::UnitInfo`, `team::TeamUnits`.
+# victory/UNIT_COUNT) — из нижнего слоя (Ф5.2). Зависимость от `max_core` —
+# намеренная read-only проекция симуляции в провод (Ф5.3, вариант 2): только
+# `game`, `crc`, `unit::UnitInfo`, `team::TeamUnits`. `apply_*` и мутации
+# GameState из max_net запрещены; CI-замок —
+# max-brh-cicd/scripts/check_maxnet_boundary.sh.
 max_types = { path = "../max_types" }
 anyhow.workspace = true
 serde.workspace = true

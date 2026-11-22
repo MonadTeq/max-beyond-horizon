@@ -18,6 +18,12 @@
 //! The ENet host is serviced with a non-blocking `enet_host_service(..., 0)`
 //! every [`SessionConfig::service_tick`] (10 ms, matching the C++ client),
 //! so the async runtime is never blocked inside the C library.
+//!
+//! Зависимость от max_core намеренная (read-only проекция симуляции в провод,
+//! пакеты 23/45/53/54) — см. max-brh-docs/development/PLAN-refactor.md Ф5.3 /
+//! architect-rules.md. НЕ добавлять новые вызовы max_core без пересмотра
+//! решения. Вызов apply_* или мутация GameState из max_net аннулирует это
+//! решение.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -714,6 +720,8 @@ fn records_barrier(tracked: bool, packet: &Packet) -> bool {
     tracked && is_tracked_barrier(packet)
 }
 
+/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+///
 /// Builds the packet 45 CRC barrier from the authoritative local state.
 ///
 /// The checksum is exactly what `max_core::crc::state_checksum` gives (the
@@ -731,6 +739,8 @@ pub fn crc_barrier_for(
     }))
 }
 
+/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+///
 /// Builds packet 53 — the owner's complex totals at the start of a turn.
 ///
 /// Port of `Remote_SendNetPacket_53` (`remote.cpp:4243-4258`): `turn` is the
