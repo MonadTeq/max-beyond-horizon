@@ -679,9 +679,7 @@ mod tests {
     fn processor_levels_match_cpp_init_table() {
         use UnitOrder::*;
         // Точная копия switch из Remote_Init (remote.cpp:661-724).
-        for order in [Order17] {
-            assert_eq!(PayloadLevel::for_order(order), PayloadLevel::Empty);
-        }
+        assert_eq!(PayloadLevel::for_order(Order17), PayloadLevel::Empty);
         for order in [
             PowerOn,
             PowerOff,

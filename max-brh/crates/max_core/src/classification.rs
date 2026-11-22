@@ -525,6 +525,12 @@ mod sealed {
 ///
 /// Импорт — **явный**, в месте вызова (`use max_core::UnitTypeClassify;`),
 /// никаких глоб-реэкспортов. `UnitType::tag()` остаётся inherent и едет с типом.
+//
+// `self` by value — как в прежних inherent-методах `UnitType` (тип `Copy`,
+// передача по значению бесплатна и сохраняет call-sites без изменений). Clippy
+// предупреждает о `is_*`/`self` только для trait-методов, где `Copy` реализатора
+// неизвестен; здесь это осознанное исключение, а не нарушение стиля.
+#[allow(clippy::wrong_self_convention)]
 pub trait UnitTypeClassify: sealed::Sealed {
     /// Боевая роль типа ([`CombatRole::classify`]).
     fn combat_role(self) -> CombatRole;

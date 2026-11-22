@@ -36,6 +36,7 @@
 #![deny(clippy::float_arithmetic)]
 
 pub mod enums;
+pub mod events;
 pub mod geo;
 pub mod input;
 pub mod map;
